@@ -16,6 +16,18 @@
 
 package hack
 
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
 type testMapTable = swissMapTable
 
 const testMapGroupSlots = swissMapGroupSlots
+
+func testMapSlotLayout(t *testing.T, typ *swissMapType, slotSize, elemOff uintptr) {
+	t.Helper()
+	require.Equal(t, slotSize, typ.SlotSize)
+	require.Equal(t, elemOff, typ.ElemOff)
+}

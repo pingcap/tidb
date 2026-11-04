@@ -241,6 +241,7 @@ func NonPreparedPlanCacheableWithCtx(sctx base.PlanContext, node ast.Node, is in
 
 	maxNumParam := getMaxParamLimit(sctx)
 	var tableNames []*ast.TableName
+	var updateAssignments []*ast.Assignment
 	switch x := node.(type) {
 	case *ast.SelectStmt:
 		tableNames, ok, reason = isSelectStmtNonPrepCacheableFastCheck(sctx, x)
@@ -257,6 +258,9 @@ func NonPreparedPlanCacheableWithCtx(sctx base.PlanContext, node ast.Node, is in
 		tableNames, ok, reason = extractTableNames(x.TableRefs.TableRefs, tableNames)
 		if !ok {
 			return ok, reason
+		}
+		if len(tableNames) == 1 {
+			updateAssignments = x.List
 		}
 	case *ast.InsertStmt:
 		if len(x.TableHints) > 0 {
@@ -307,6 +311,9 @@ func NonPreparedPlanCacheableWithCtx(sctx base.PlanContext, node ast.Node, is in
 	// allocate and init the checker
 	checker := nonPrepCacheCheckerPool.Get().(*nonPreparedPlanCacheableChecker)
 	checker.reset(sctx, is, tableNames, maxNumParam)
+	for _, assignment := range updateAssignments {
+		checker.coalesceAssignments = append(checker.coalesceAssignments, checker.supportedCoalesceAssignment(assignment)...)
+	}
 
 	ast.Walk(node, checker)
 	cacheable, reason := checker.cacheable, checker.reason
@@ -317,6 +324,7 @@ func NonPreparedPlanCacheableWithCtx(sctx base.PlanContext, node ast.Node, is in
 	}
 
 	// put the checker back
+	clear(checker.coalesceAssignments)
 	nonPrepCacheCheckerPool.Put(checker)
 	return cacheable, reason
 }
@@ -410,6 +418,8 @@ type nonPreparedPlanCacheableChecker struct {
 	constCnt  int // the number of constants/parameters in this query
 	filterCnt int // the number of filters in the current node
 
+	coalesceAssignments []*ast.FuncCallExpr
+
 	maxNumberParam int // the maximum number of parameters for a query to be cached.
 }
 
@@ -422,6 +432,7 @@ func (checker *nonPreparedPlanCacheableChecker) reset(sctx base.PlanContext, sch
 	checker.constCnt = 0
 	checker.filterCnt = 0
 	checker.maxNumberParam = maxNumberParam
+	checker.coalesceAssignments = checker.coalesceAssignments[:0]
 }
 
 // Enter implements InPlaceVisitor interface.
@@ -465,6 +476,9 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (skipChildren
 		}
 		return !checker.cacheable
 	case *ast.FuncCallExpr:
+		if node.FnName.L == ast.Coalesce && slices.Contains(checker.coalesceAssignments, node) {
+			return false
+		}
 		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
 			checker.cacheable = false
 			checker.reason = "query has un-cacheable functions"
@@ -719,4 +733,81 @@ func checkTableCacheable(ctx context.Context, sctx base.PlanContext, schema info
 	}
 
 	return true, ""
+}
+
+// supportedCoalesceAssignment returns every COALESCE node in an eligible
+// non-prepared UPDATE assignment, or nil if any part of the assignment fails.
+// Each node accepts a numeric literal (or nested COALESCE) followed by a column
+// (or nested COALESCE). All fallback columns must match the target column type.
+// This checks AST shape and column types, not inferred expression types; cached
+// plans separately require exact DECIMAL precision for all COALESCE parameters.
+// TODO: Rebuild dependent expression types and implicit casts before allowing
+// cross-precision reuse. Never mutate expression types in a shared cached plan.
+// TODO: Extend MySQL compatibility coverage (metadata, NULL transitions, rounding,
+// warnings and scalar/vectorized evaluation) before broadening this exception.
+func (checker *nonPreparedPlanCacheableChecker) supportedCoalesceAssignment(assignment *ast.Assignment) []*ast.FuncCallExpr {
+	fn, ok := assignment.Expr.(*ast.FuncCallExpr)
+	if !ok || fn.FnName.L != ast.Coalesce || len(checker.tableNodes) != 1 || checker.schema == nil {
+		return nil
+	}
+	table := checker.tableNodes[0]
+	tb, err := checker.schema.TableByName(context.Background(), table.Schema, table.Name)
+	if err != nil {
+		return nil
+	}
+	var target *types.FieldType
+	for _, c := range tb.Cols() {
+		if c.Name.L == assignment.Column.Name.L {
+			target = &c.FieldType
+			break
+		}
+	}
+	if target == nil {
+		return nil
+	}
+	switch target.GetType() {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal:
+	default:
+		return nil
+	}
+
+	var nodes []*ast.FuncCallExpr
+	var check func(ast.ExprNode) bool
+	check = func(expr ast.ExprNode) bool {
+		fn, ok := expr.(*ast.FuncCallExpr)
+		if !ok || fn.FnName.L != ast.Coalesce || len(fn.Args) != 2 {
+			return false
+		}
+		if value, ok := fn.Args[0].(*driver.ValueExpr); ok {
+			if value.Kind() != types.KindInt64 && value.Kind() != types.KindUint64 && value.Kind() != types.KindMysqlDecimal {
+				return false
+			}
+		} else if !check(fn.Args[0]) {
+			return false
+		}
+		if col, ok := fn.Args[1].(*ast.ColumnNameExpr); ok {
+			var fallback *types.FieldType
+			for _, c := range tb.Cols() {
+				if c.Name.L == col.Name.Name.L {
+					fallback = &c.FieldType
+					break
+				}
+			}
+			// Equal covers precision, signedness, charset and collation. Keep
+			// scale and value-related flags identical at every fallback leaf.
+			const flags = mysql.NotNullFlag | mysql.UnsignedFlag | mysql.ZerofillFlag
+			if fallback == nil || !target.Equal(fallback) || target.GetDecimal() != fallback.GetDecimal() ||
+				target.GetFlag()&flags != fallback.GetFlag()&flags {
+				return false
+			}
+		} else if !check(fn.Args[1]) {
+			return false
+		}
+		nodes = append(nodes, fn)
+		return true
+	}
+	if !check(fn) {
+		return nil // Never admit a valid subtree of an unsupported assignment.
+	}
+	return nodes
 }

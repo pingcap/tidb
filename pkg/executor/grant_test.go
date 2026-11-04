@@ -218,8 +218,8 @@ func TestGrantTableScopeCaseInsensitiveWithNewCollationDisabled(t *testing.T) {
 			Check(testkit.Rows("test issue68406_grant Select,Insert,Update,Delete,Operate View"))
 		tk.MustQuery(`SHOW GRANTS FOR 'testTblCaseSchema'@'%'`).
 			Check(testkit.Rows(
-				"GRANT USAGE ON *.* TO 'testTblCaseSchema'@'%'",
-				"GRANT SELECT,INSERT,UPDATE,DELETE,OPERATE VIEW ON `test`.`issue68406_grant` TO 'testTblCaseSchema'@'%'",
+				"GRANT USAGE ON *.* TO `testTblCaseSchema`@`%`",
+				"GRANT SELECT,INSERT,UPDATE,DELETE,OPERATE VIEW ON `test`.`issue68406_grant` TO `testTblCaseSchema`@`%`",
 			))
 
 		tkUser := testkit.NewTestKit(t, tk.Session().GetStore())
@@ -240,8 +240,8 @@ func TestGrantTableScopeCaseInsensitiveWithNewCollationDisabled(t *testing.T) {
 			Check(testkit.Rows("test missing_tbl Create"))
 		tk.MustQuery(`SHOW GRANTS FOR 'testTblCaseMissing'@'%'`).
 			Check(testkit.Rows(
-				"GRANT USAGE ON *.* TO 'testTblCaseMissing'@'%'",
-				"GRANT CREATE ON `test`.`missing_tbl` TO 'testTblCaseMissing'@'%'",
+				"GRANT USAGE ON *.* TO `testTblCaseMissing`@`%`",
+				"GRANT CREATE ON `test`.`missing_tbl` TO `testTblCaseMissing`@`%`",
 			))
 	})
 }

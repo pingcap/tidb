@@ -114,7 +114,7 @@ func (w writerGlue) Out() io.Writer {
 
 func testPrintFrame(t *testing.T) {
 	buf := bytes.NewBuffer(nil)
-	ops := glue.ConsoleOperations{writerGlue{w: buf}}
+	ops := glue.ConsoleOperations{ConsoleGlue: writerGlue{w: buf}}
 	f, ok := ops.RootFrame().OffsetLeft(10)
 	require.True(t, ok)
 	f = f.WithWidth(10)

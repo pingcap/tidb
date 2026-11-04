@@ -382,3 +382,18 @@ NULL	5
 2	2
 3	NULL
 3	1
+set @@tidb_hash_join_version = optimized;
+drop table if exists t0;
+create table t0(c0 BLOB(249));
+insert into t0 values ('');
+select v.c0
+from (select NULL as c0 from t0) v
+where v.c0 NOT IN (
+select t0.c0
+from t0
+where t0.c0 = v.c0
+);
+c0
+NULL
+drop table t0;
+set @@tidb_hash_join_version = default;

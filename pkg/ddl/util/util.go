@@ -68,6 +68,9 @@ const (
 	AddingDDLJobNotifyKey = "/tidb/ddl/add_ddl_job_general"
 	// ServerGlobalState is the path on etcd that is used to store the server global state.
 	ServerGlobalState = "/tidb/server/global_state"
+	// SysVarCacheKey is the path on etcd that is used to notify servers to
+	// reload their sysvar caches.
+	SysVarCacheKey = "/tidb/sysvars"
 	// SessionTTL is the etcd session's TTL in seconds.
 	SessionTTL = 90
 )

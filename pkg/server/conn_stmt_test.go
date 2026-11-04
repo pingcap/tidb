@@ -25,15 +25,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
-	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
+	"github.com/pingcap/tidb/pkg/server/internal/packetio"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -48,22 +45,6 @@ import (
 	clientutil "github.com/tikv/client-go/v2/util"
 )
 
-type mockCursorRUV2ConsumptionReporter struct {
-	group     string
-	tikvRUV2  float64
-	tidbRUV2  float64
-	tiflashRU float64
-}
-
-func (*mockCursorRUV2ConsumptionReporter) ReportConsumption(_ string, _ *rmpb.Consumption) {}
-
-func (m *mockCursorRUV2ConsumptionReporter) ReportRUV2Consumption(resourceGroupName string, tikvRUV2, tidbRUV2, tiflashRUV2 float64) {
-	m.group = resourceGroupName
-	m.tikvRUV2 += tikvRUV2
-	m.tidbRUV2 += tidbRUV2
-	m.tiflashRU += tiflashRUV2
-}
-
 type mockCursorTrackerRecordSet struct{}
 
 func (*mockCursorTrackerRecordSet) Fields() []*resolve.ResultField { return nil }
@@ -76,6 +57,23 @@ func (*mockCursorTrackerRecordSet) NewChunk(chunk.Allocator) *chunk.Chunk {
 func (*mockCursorTrackerRecordSet) Close() error { return nil }
 
 var _ sqlexec.RecordSet = &mockCursorTrackerRecordSet{}
+
+type detachableCursorRecordSet struct {
+	mockCursorTrackerRecordSet
+	detached      sqlexec.RecordSet
+	detachErr     error
+	detachOnError bool
+	closeCount    int
+}
+
+func (rs *detachableCursorRecordSet) TryDetach() (sqlexec.RecordSet, bool, error) {
+	return rs.detached, rs.detached != nil || rs.detachOnError, rs.detachErr
+}
+
+func (rs *detachableCursorRecordSet) Close() error {
+	rs.closeCount++
+	return nil
+}
 
 type executeStmtRecordSetSession struct {
 	sessionapi.Session
@@ -125,35 +123,6 @@ func (*firstNextErrRecordSet) NewChunk(chunk.Allocator) *chunk.Chunk {
 func (*firstNextErrRecordSet) Close() error { return nil }
 
 var _ sqlexec.RecordSet = &firstNextErrRecordSet{}
-
-type singleRowCursorRecordSet struct {
-	returned bool
-}
-
-func (*singleRowCursorRecordSet) Fields() []*resolve.ResultField {
-	return []*resolve.ResultField{{
-		Column:       &model.ColumnInfo{Name: ast.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeLonglong)},
-		ColumnAsName: ast.NewCIStr("a"),
-	}}
-}
-
-func (rs *singleRowCursorRecordSet) Next(_ context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
-	if rs.returned {
-		return nil
-	}
-	chk.AppendInt64(0, 1)
-	rs.returned = true
-	return nil
-}
-
-func (*singleRowCursorRecordSet) NewChunk(chunk.Allocator) *chunk.Chunk {
-	return chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1)
-}
-
-func (*singleRowCursorRecordSet) Close() error { return nil }
-
-var _ sqlexec.RecordSet = &singleRowCursorRecordSet{}
 
 type failedWriteResponseWriter struct {
 	delay       time.Duration
@@ -264,79 +233,33 @@ func TestResultSetWriteSQLRespDurationIncludesFailedRowWrite(t *testing.T) {
 
 func TestCursorWithParams(t *testing.T) {
 	t.Run("cursor ruv2 delta reporting", func(t *testing.T) {
-		original := config.GetGlobalConfig()
-		t.Cleanup(func() {
-			if original != nil {
-				config.StoreGlobalConfig(original)
-			}
-		})
-		cfg := config.NewConfig()
-		cfg.RUV2 = config.DefaultRUV2Config()
-		config.StoreGlobalConfig(cfg)
-
-		reporter := &mockCursorRUV2ConsumptionReporter{}
 		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
 		ruv2Metrics := execdetails.RUV2MetricsFromContext(goCtx)
 		require.NotNil(t, ruv2Metrics)
-		ruv2Metrics.AddPlanCnt(2)
 		ruDetails := goCtx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
-		ruDetails.AddTiKVRUV2(11)
-		ruDetails.AddRUV2(&kvrpcpb.RUV2{ReadRpcCount: 3})
-		weights := execdetails.RUV2Weights{
-			RUScale:                 cfg.RUV2.RUScale,
-			ResultChunkCells:        cfg.RUV2.ResultChunkCells,
-			ExecutorL1:              cfg.RUV2.ExecutorL1,
-			ExecutorL2:              cfg.RUV2.ExecutorL2,
-			ExecutorL3:              cfg.RUV2.ExecutorL3,
-			ExecutorL5InsertRows:    cfg.RUV2.ExecutorL5InsertRows,
-			PlanCnt:                 cfg.RUV2.PlanCnt,
-			PlanDeriveStatsPaths:    cfg.RUV2.PlanDeriveStatsPaths,
-			ResourceManagerReadCnt:  cfg.RUV2.ResourceManagerReadCnt,
-			ResourceManagerWriteCnt: cfg.RUV2.ResourceManagerWriteCnt,
-			SessionParserTotal:      cfg.RUV2.SessionParserTotal,
-			TxnCnt:                  cfg.RUV2.TxnCnt,
-		}
-		tracker := resultset.NewCursorRUV2Tracker(reporter, "rg1", ruv2Metrics, ruDetails, weights)
-		require.Equal(t, int64(3), ruv2Metrics.ResourceManagerReadCnt())
-		baselineTiDBRU := ruv2Metrics.CalculateRUValues(weights)
+		ruDetails.AddRUV2(&kvrpcpb.RUV2{CoprocessorResponseBytes: 3})
+		tracker := resultset.NewCursorRUV2Tracker(ruv2Metrics, ruDetails)
+		require.Equal(t, int64(3), ruv2Metrics.TiKVCoprocessorResponseBytes())
 		resultsetRS := resultset.New(&mockCursorTrackerRecordSet{}, nil)
 		resultset.AttachCursorRUV2Tracker(resultsetRS, tracker)
-		resultset.ReportCursorRUV2Delta(resultsetRS, 6)
+		ruDetails.AddRUV2(&kvrpcpb.RUV2{CoprocessorResponseBytes: 6})
+		resultset.ReportCursorRUV2Delta(resultsetRS)
 
-		require.Equal(t, "rg1", reporter.group)
-		expectedCursorDelta := ruv2Metrics.CalculateRUValues(weights) - baselineTiDBRU
-		require.Equal(t, expectedCursorDelta, reporter.tidbRUV2)
-		require.Equal(t, 0.0, reporter.tikvRUV2)
-		require.Equal(t, 0.0, reporter.tiflashRU)
+		require.Equal(t, int64(9), ruv2Metrics.TiKVCoprocessorResponseBytes())
 
-		postBaselineTiDBRU := ruv2Metrics.CalculateRUValues(weights)
-		ruDetails.AddRUV2(&kvrpcpb.RUV2{WriteRpcCount: 4})
-		resultset.ReportCursorRUV2Delta(resultsetRS, 0)
-		expectedPendingRawDelta := ruv2Metrics.CalculateRUValues(weights) - postBaselineTiDBRU
-		require.Equal(t, expectedCursorDelta+expectedPendingRawDelta, reporter.tidbRUV2)
-
-		ruDetails.AddTiKVRUV2(7)
-		ruDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 5, WRU: 8})
-		resultset.ReportCursorRUV2Delta(resultsetRS, 0)
-		require.Equal(t, "rg1", reporter.group)
-		require.Equal(t, float64(7), reporter.tikvRUV2)
-		require.Equal(t, float64(13), reporter.tiflashRU)
+		ruDetails.AddRUV2(&kvrpcpb.RUV2{CoprocessorResponseBytes: 4})
+		resultset.ReportCursorRUV2Delta(resultsetRS)
+		require.Equal(t, int64(13), ruv2Metrics.TiKVCoprocessorResponseBytes())
 	})
 
 	t.Run("cursor ruv2 bypass skips tracker creation", func(t *testing.T) {
-		reporter := &mockCursorRUV2ConsumptionReporter{}
 		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
 		ruv2Metrics := execdetails.RUV2MetricsFromContext(goCtx)
 		require.NotNil(t, ruv2Metrics)
 		ruv2Metrics.SetBypass(true)
 		ruDetails := goCtx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
-		ruDetails.AddTiKVRUV2(11)
-		tracker := resultset.NewCursorRUV2Tracker(reporter, "rg1", ruv2Metrics, ruDetails, execdetails.RUV2Weights{})
+		tracker := resultset.NewCursorRUV2Tracker(ruv2Metrics, ruDetails)
 		require.Nil(t, tracker)
-		require.Empty(t, reporter.group)
-		require.Zero(t, reporter.tikvRUV2)
-		require.Zero(t, reporter.tidbRUV2)
-		require.Zero(t, reporter.tiflashRU)
 	})
 
 	t.Run("write chunks skips column access on first next error", func(t *testing.T) {
@@ -352,28 +275,6 @@ func TestCursorWithParams(t *testing.T) {
 		retryable, err := c.writeChunks(ctx, rs, false, mysql.ServerStatusAutocommit)
 		require.True(t, retryable)
 		require.ErrorContains(t, err, "first next failed")
-		require.Zero(t, execdetails.RUV2MetricsFromContext(ctx).ResultChunkCells())
-	})
-
-	t.Run("write chunks with fetch size records result chunk cells once", func(t *testing.T) {
-		store, dom := testkit.CreateMockStoreAndDomain(t)
-		srv := CreateMockServer(t, store)
-		srv.SetDomain(dom)
-		defer srv.Close()
-
-		c := CreateMockConn(t, srv).(*mockConn)
-		ctx := execdetails.ContextWithInitializedExecDetails(context.Background())
-		ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
-		require.NotNil(t, ruv2Metrics)
-
-		rs := resultset.New(&singleRowCursorRecordSet{}, nil)
-		cursorRS := resultset.WrapWithLazyCursor(rs, 1, 1)
-		tracker := resultset.NewCursorRUV2Tracker(nil, "", ruv2Metrics, nil, execdetails.RUV2Weights{})
-		resultset.AttachCursorRUV2Tracker(cursorRS, tracker)
-
-		err := c.writeChunksWithFetchSize(ctx, cursorRS, mysql.ServerStatusAutocommit, 1)
-		require.NoError(t, err)
-		require.Equal(t, int64(1), ruv2Metrics.ResultChunkCells())
 	})
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -596,7 +497,7 @@ func getExpectOutput(t *testing.T, originalConn *mockConn, writeFn func(conn *cl
 	conn := &clientConn{
 		alloc:      arena.NewAllocator(1024),
 		capability: originalConn.capability,
-		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(buf)),
+		pkt:        packetio.NewForTest(bufio.NewWriter(buf)),
 	}
 	conn.pkt.SetSequence(originalConn.pkt.Sequence())
 	conn.SetCtx(originalConn.getCtx())
@@ -672,6 +573,16 @@ func TestCursorFetchExecuteWithOpenCursor(t *testing.T) {
 	require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 1)))
 	require.NoError(t, c.flush(context.Background()))
 	require.Equal(t, expected, out.Bytes())
+
+	// Re-executing without a cursor must release the previous cursor too.
+	require.NoError(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		0x0, 0x1, 0x0, 0x0, 0x0,
+	)))
+	require.False(t, stmt.GetCursorActive())
+	require.Nil(t, stmt.GetResultSet())
+	require.Nil(t, stmt.GetRowContainer())
+	require.Error(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 1)))
 }
 
 func TestCursorFetchReset(t *testing.T) {
@@ -714,6 +625,90 @@ func TestCursorFetchReset(t *testing.T) {
 	)))
 	// the following fetch will fail
 	require.Error(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 1)))
+
+	t.Run("lazy metadata failures release the detached cursor", func(t *testing.T) {
+		c.ctx.GetSessionVars().EnableLazyCursorFetch = true
+		for _, tc := range []struct {
+			name       string
+			bufferSize int
+		}{
+			{name: "column count", bufferSize: 1},
+			{name: "EOF", bufferSize: 5},
+			{name: "flush", bufferSize: 4096},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				writer := &failedWriteResponseWriter{failOnWrite: 1}
+				c.pkt.SetBufWriter(bufio.NewWriterSize(writer, tc.bufferSize))
+				detached := &detachableCursorRecordSet{}
+				source := resultset.New(&detachableCursorRecordSet{detached: detached}, nil)
+				defer source.Close()
+				cursorStmt := &TiDBStatement{}
+				_, err := c.executeWithCursor(ctx, cursorStmt, source)
+				require.Error(t, err)
+				require.Equal(t, 1, detached.closeCount)
+				require.Nil(t, cursorStmt.GetResultSet())
+				require.False(t, cursorStmt.GetCursorActive())
+				require.NoError(t, cursorStmt.Reset())
+				require.Equal(t, 1, detached.closeCount)
+			})
+		}
+	})
+
+	t.Run("detach errors do not fall back to eager execution", func(t *testing.T) {
+		c.ctx.GetSessionVars().EnableLazyCursorFetch = true
+		c.pkt.ResetBufWriter(new(bytes.Buffer))
+		for _, detached := range []bool{false, true} {
+			detachErr := errors.New("cannot detach cursor")
+			source := resultset.New(&detachableCursorRecordSet{detachErr: detachErr, detachOnError: detached}, nil)
+			defer source.Close()
+			cursorStmt := &TiDBStatement{}
+			gotDetached, err := c.executeWithCursor(ctx, cursorStmt, source)
+			require.ErrorIs(t, err, detachErr)
+			require.Equal(t, detached, gotDetached)
+			require.Nil(t, cursorStmt.GetRowContainer())
+			require.Nil(t, cursorStmt.GetResultSet())
+			require.False(t, cursorStmt.GetCursorActive())
+		}
+	})
+
+	t.Run("successful lazy cursor stays open until release", func(t *testing.T) {
+		c.ctx.GetSessionVars().EnableLazyCursorFetch = true
+		c.pkt.ResetBufWriter(new(bytes.Buffer))
+		detached := &detachableCursorRecordSet{}
+		source := resultset.New(&detachableCursorRecordSet{detached: detached}, nil)
+		defer source.Close()
+		cursorStmt := &TiDBStatement{boundParams: [][]byte{[]byte("long data")}}
+		gotDetached, err := c.executeWithCursor(ctx, cursorStmt, source)
+		require.NoError(t, err)
+		require.True(t, gotDetached)
+		require.True(t, cursorStmt.GetCursorActive())
+		require.Zero(t, detached.closeCount)
+		require.NoError(t, cursorStmt.CloseCursor())
+		require.Equal(t, [][]byte{[]byte("long data")}, cursorStmt.BoundParams())
+		require.NoError(t, cursorStmt.CloseCursor())
+		require.NoError(t, cursorStmt.Reset())
+		require.Nil(t, cursorStmt.BoundParams()[0])
+		require.Equal(t, 1, detached.closeCount)
+		require.Nil(t, cursorStmt.GetResultSet())
+		require.False(t, cursorStmt.GetCursorActive())
+	})
+
+	t.Run("eager metadata failures release the row container", func(t *testing.T) {
+		c.ctx.GetSessionVars().EnableLazyCursorFetch = false
+		for _, bufferSize := range []int{1, 5, 4096} {
+			writer := &failedWriteResponseWriter{failOnWrite: 1}
+			c.pkt.SetBufWriter(bufio.NewWriterSize(writer, bufferSize))
+			source := resultset.New(&mockCursorTrackerRecordSet{}, nil)
+			defer source.Close()
+			cursorStmt := &TiDBStatement{}
+			_, err := c.executeWithCursor(ctx, cursorStmt, source)
+			require.Error(t, err)
+			require.Nil(t, cursorStmt.GetRowContainer())
+			require.Nil(t, cursorStmt.GetResultSet())
+			require.False(t, cursorStmt.GetCursorActive())
+			require.NoError(t, cursorStmt.CloseCursor())
+		}
+	})
 }
 
 func dispatchSendLongData(c *mockConn, stmtID int, paramIndex uint16, parameter []byte) error {

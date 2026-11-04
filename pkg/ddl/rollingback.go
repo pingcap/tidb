@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"go.uber.org/zap"
@@ -238,8 +239,8 @@ func rollingbackDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, err e
 	return ver, nil
 }
 
-func rollingbackDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
-	_, indexInfo, _, err := checkDropIndex(jobCtx.infoCache, jobCtx.metaMut, job)
+func rollingbackDropIndex(sctx sessionctx.Context, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	_, indexInfo, _, err := checkDropIndex(sctx, jobCtx.infoCache, jobCtx.metaMut, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -273,6 +274,23 @@ func rollingbackAddColumanrIndex(w *worker, jobCtx *jobContext, job *model.Job) 
 func rollingbackAddIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	// add index's reorg workers are not running, remove the indexInfo in tableInfo.
 	return convertNotReorgAddIdxJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob)
+}
+
+func rollingbackCreateMaterializedView(_ *jobContext, job *model.Job) (ver int64, err error) {
+	if _, err = model.GetCreateMaterializedViewArgs(job); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	switch job.SchemaState {
+	case model.StateNone:
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	case model.StateWriteReorganization:
+		job.State = model.JobStateRollingback
+		return ver, dbterror.ErrCancelledDDLJob
+	default:
+		return ver, dbterror.ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
+	}
 }
 
 // rollbackExchangeTablePartition will clear the non-partitioned
@@ -328,7 +346,7 @@ func rollingbackTruncateTablePartition(jobCtx *jobContext, job *model.Job) (ver 
 
 func convertTruncateTablePartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, otherwiseErr error, tblInfo *model.TableInfo) (ver int64, err error) {
 	if !job.IsRollbackable() {
-		// Only Original state and StateWrite can be rolled back, otherwise new partitions
+		// Only StatePublic and StateWriteOnly can be rolled back, otherwise new partitions
 		// may have been used and new data would get lost.
 		// So we must continue to roll forward!
 		job.State = model.JobStateRunning
@@ -402,6 +420,31 @@ func rollbackReorganizePartitionWithErr(jobCtx *jobContext, job *model.Job, othe
 	return convertReorgPartitionJob2RollbackJob(jobCtx, job, otherwiseErr, tblInfo)
 }
 
+// restoreOriginalPartitionDefinitions rebuilds the original partition list in
+// OriginalPartitionIDsOrder. LIST partitions may be nonadjacent, so the current
+// and dropping definitions alone cannot determine where to restore each partition.
+// Walking only the original IDs also excludes newly added replacement partitions.
+// RANGE/HASH/KEY have consecutive replacements, but use the same restoration logic.
+// Match by physical ID because replacement partitions may reuse original names.
+func restoreOriginalPartitionDefinitions(originalIDs []int64, current, dropping []model.PartitionDefinition) ([]model.PartitionDefinition, error) {
+	definitionsByID := make(map[int64]model.PartitionDefinition, len(current)+len(dropping))
+	for _, definition := range current {
+		definitionsByID[definition.ID] = definition
+	}
+	for _, definition := range dropping {
+		definitionsByID[definition.ID] = definition
+	}
+	restored := make([]model.PartitionDefinition, 0, len(originalIDs))
+	for _, id := range originalIDs {
+		definition, ok := definitionsByID[id]
+		if !ok {
+			return nil, errors.Errorf("Internal error, failed to find original partition definitions: missing partition ID %d", id)
+		}
+		restored = append(restored, definition)
+	}
+	return clonePartitionDefinitions(restored), nil
+}
+
 func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, otherwiseErr error, tblInfo *model.TableInfo) (ver int64, err error) {
 	pi := tblInfo.Partition
 	addingDefinitions := pi.AddingDefinitions
@@ -409,11 +452,7 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, ot
 	for _, pd := range addingDefinitions {
 		partNames = append(partNames, pd.Name.L)
 	}
-	var dropIndices []*model.IndexInfo
 	for _, indexInfo := range tblInfo.Indices {
-		if !indexInfo.Unique {
-			continue
-		}
 		isNew, ok := pi.DDLChangedIndex[indexInfo.ID]
 		if !ok {
 			// non-changed index
@@ -424,18 +463,12 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, ot
 				// Revert the non-public state
 				indexInfo.State = model.StatePublic
 			}
-		} else {
-			if pi.DDLState == model.StateDeleteReorganization {
-				indexInfo.State = model.StateWriteOnly
-			} else {
-				dropIndices = append(dropIndices, indexInfo)
-			}
+		} else if indexInfo.State != model.StateDeleteOnly {
+			// A copy may be public in delete reorganization, so it keeps taking writes for one more
+			// schema version. rollbackLikeDropPartition then moves it to delete only and removes it.
+			// A copy still in delete only never took writes and stays as is.
+			indexInfo.State = model.StateWriteOnly
 		}
-	}
-	for _, indexInfo := range dropIndices {
-		DropIndexColumnFlag(tblInfo, indexInfo)
-		RemoveDependentHiddenColumns(tblInfo, indexInfo)
-		removeIndexInfo(tblInfo, indexInfo)
 	}
 	if pi.DDLState == model.StateDeleteReorganization {
 		// New partitions are public,
@@ -444,39 +477,9 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, ot
 		// Remove the AddingDefinitions
 		// Add back the DroppingDefinitions
 		if job.Type == model.ActionReorganizePartition {
-			// Reassemble the list of partitions in the OriginalPartitionIDsOrder
-			// Special handling, since for LIST partitioning,
-			// only pi.OriginalPartitionIDsOrder shows how to merge back the DroppingDefinitions.
-			// Implicitly it will also filter away AddingPartitions.
-			// pi.Definitions and pi.DroppingDefinitions contain the original partitions
-			// in the original order, but where the DroppingDefinitions should be placed,
-			// can only be known through pi.OriginalPartitionIDsOrder.
-			// RANGE/HASH/KEY would have consecutive added/dropped partitions, but use
-			// the same code to avoid confusion.
-			defPos := 0
-			dropPos := 0
-			newDefs := make([]model.PartitionDefinition, 0, len(pi.OriginalPartitionIDsOrder))
-			for _, id := range pi.OriginalPartitionIDsOrder {
-				if defPos < len(pi.Definitions) && pi.Definitions[defPos].ID == id {
-					newDefs = append(newDefs, pi.Definitions[defPos])
-					defPos++
-					continue
-				}
-				if dropPos < len(pi.DroppingDefinitions) && id == pi.DroppingDefinitions[dropPos].ID {
-					newDefs = append(newDefs, pi.DroppingDefinitions[dropPos])
-					dropPos++
-					continue
-				}
-				for {
-					defPos++
-					if defPos < len(pi.Definitions) && pi.Definitions[defPos].ID == id {
-						newDefs = append(newDefs, pi.Definitions[defPos])
-						break
-					}
-				}
-			}
-			if len(newDefs) != len(pi.OriginalPartitionIDsOrder) {
-				return ver, errors.Trace(errors.New("Internal error, failed to find original partition definitions"))
+			newDefs, err := restoreOriginalPartitionDefinitions(pi.OriginalPartitionIDsOrder, pi.Definitions, pi.DroppingDefinitions)
+			if err != nil {
+				return ver, errors.Trace(err)
 			}
 			pi.Definitions = newDefs
 		} else {
@@ -612,6 +615,8 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 		ver, err = rollingbackAddIndex(jobCtx, job)
 	case model.ActionAddColumnarIndex:
 		ver, err = rollingbackAddColumanrIndex(w, jobCtx, job)
+	case model.ActionCreateMaterializedView:
+		ver, err = rollingbackCreateMaterializedView(jobCtx, job)
 	case model.ActionAddTablePartition:
 		ver, err = rollingbackAddTablePartition(jobCtx, job)
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
@@ -620,8 +625,10 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 	case model.ActionDropColumn:
 		ver, err = rollingbackDropColumn(jobCtx, job)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		ver, err = rollingbackDropIndex(jobCtx, job)
-	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
+		ver, err = rollingbackDropIndex(w.sess.Session(), jobCtx, job)
+	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence,
+		model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog,
+		model.ActionDropMaterializedViewShadow:
 		err = rollingbackDropTableOrView(jobCtx, job)
 	case model.ActionDropTablePartition:
 		ver, err = rollingbackDropTablePartition(jobCtx, job)
@@ -639,9 +646,12 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 		ver, err = cancelOnlyNotHandledJob(job, model.StatePublic)
 	case model.ActionTruncateTablePartition:
 		ver, err = rollingbackTruncateTablePartition(jobCtx, job)
+	case model.ActionCreateMaterializedViewShadow:
+		ver, err = cancelOnlyNotHandledJob(job, model.StateNone)
 	case model.ActionRebaseAutoID, model.ActionShardRowID, model.ActionAddForeignKey,
 		model.ActionRenameTable, model.ActionRenameTables,
 		model.ActionModifyTableCharsetAndCollate,
+		model.ActionMViewRefreshOutOfPlaceCutover,
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
 		model.ActionModifyTableAutoIDCache, model.ActionAlterIndexVisibility,
 		model.ActionModifySchemaDefaultPlacement, model.ActionRecoverSchema:

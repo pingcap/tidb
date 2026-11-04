@@ -58,6 +58,7 @@ import (
 	advancercfg "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
@@ -67,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
@@ -1472,9 +1474,10 @@ func RunStreamRestore(
 		}
 	}
 	metaInfoProcessor := logclient.NewMetaKVInfoProcessor(logClient)
-	// doesn't need to build if id map has been saved
+	// Routed resumes also scan committed lifetimes before replaying metadata;
+	// the saved ID map remains authoritative for IDs, routes and filters.
 	idMapSaved := isCurrentIdMapSaved(taskInfo.CheckpointInfo)
-	if !idMapSaved {
+	if !idMapSaved || cfg.hasNameRouting() {
 		// we restore additional tables at full snapshot phase when it is renamed into the filter range
 		// later in log backup.
 		// we also ignore the tables that currently in filter range but later renamed out of the filter.
@@ -1485,6 +1488,15 @@ func RunStreamRestore(
 		}
 		dbReplace := metaInfoProcessor.GetTableMappingManager().DBReplaceMap
 		stream.LogDBReplaceMap("scanned log meta kv before snapshot restore", dbReplace)
+		nameRouter, err := cfg.getNameRouter()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if err := applyNameRoutesToTableMapping(
+			nameRouter, metaInfoProcessor.GetTableHistoryManager(), metaInfoProcessor.GetTableMappingManager(), nil,
+		); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	// Save PITR-related info to cfg for blocklist creation in defer function
@@ -1637,8 +1649,13 @@ func restoreStream(
 		if restoreGCFunc, oldGCRatio, err = DisableGC(g, mgr.GetStorage()); err != nil {
 			return errors.Trace(err)
 		}
-		restoreRocksDBMaxBackgroundJobsFunc, oldRocksDBMaxBackgroundJobs, err = KeepRocksDBMaxBackgroundJobsLow(g, mgr.GetStorage())
-		return errors.Trace(err)
+		if cfg.RetainLatestMVCCVersion {
+			restoreRocksDBMaxBackgroundJobsFunc, oldRocksDBMaxBackgroundJobs, err = KeepRocksDBMaxBackgroundJobsLow(g, mgr.GetStorage())
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
 	}); err != nil {
 		return errors.Trace(err)
 	}
@@ -1657,27 +1674,39 @@ func restoreStream(
 			log.Warn("the original gc-ratio is negative, reset by default value 1.1", zap.String("old-gc-ratio", oldGCRatio))
 			oldGCRatio = utils.DefaultGcRatioVal
 		}
-		log.Info("start to restore tikv config",
-			zap.String("gc-ratio", oldGCRatio),
-			zap.String("max-background-jobs", oldRocksDBMaxBackgroundJobs))
-		err = cfg.RestoreRegistry.GlobalOperationAfterSetResettingStatus(ctx, cfg.RestoreID, func() error {
+		restoreFields := []zap.Field{zap.String("gc-ratio", oldGCRatio)}
+		if oldRocksDBMaxBackgroundJobs != "" {
+			restoreFields = append(restoreFields, zap.String("max-background-jobs", oldRocksDBMaxBackgroundJobs))
+		}
+		log.Info("start to restore tikv config", restoreFields...)
+		restoreConfigErr := cfg.RestoreRegistry.GlobalOperationAfterSetResettingStatus(ctx, cfg.RestoreID, func() error {
 			if err := restoreGCFunc(oldGCRatio); err != nil {
 				log.Error("failed to restore gc", zap.Error(err))
 				return errors.Trace(err)
 			}
-			if err := restoreRocksDBMaxBackgroundJobsFunc(oldRocksDBMaxBackgroundJobs); err != nil {
-				log.Error("failed to restore rocksdb.max-background-jobs", zap.Error(err))
-				return errors.Trace(err)
+			// Only restore if we lowered it for retain-latest-mvcc-version.
+			if restoreRocksDBMaxBackgroundJobsFunc != nil {
+				if err := restoreRocksDBMaxBackgroundJobsFunc(oldRocksDBMaxBackgroundJobs); err != nil {
+					log.Error("failed to restore rocksdb.max-background-jobs", zap.Error(err))
+					return errors.Trace(err)
+				}
 			}
 			return nil
 		})
+		// Cleanup must not erase the error that stopped metadata or data replay.
+		err = multierr.Append(err, restoreConfigErr)
 		log.Info("finish restoring gc")
 	}()
 
 	var sstCheckpointSets map[string]struct{}
 	if cfg.UseCheckpoint {
+		routeFingerprint, err := cfg.nameRouteFingerprint()
+		if err != nil {
+			return errors.Trace(err)
+		}
 		gcRatioFromCheckpoint, oldRocksDBMaxBackgroundJobsFromCheckpoint, snapshotRestoreDataSize, err := client.LoadOrCreateCheckpointMetadataForLogRestore(
-			ctx, cfg.RestoreStartTS, cfg.StartTS, cfg.RestoreTS, oldGCRatio, oldRocksDBMaxBackgroundJobs, cfg.tiflashRecorder, cfg.logCheckpointMetaManager, cfg.snapshotRestoreDataSize)
+			ctx, cfg.RestoreStartTS, cfg.StartTS, cfg.RestoreTS, oldGCRatio, oldRocksDBMaxBackgroundJobs,
+			cfg.tiflashRecorder, cfg.logCheckpointMetaManager, cfg.snapshotRestoreDataSize, routeFingerprint)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1717,7 +1746,7 @@ func restoreStream(
 	var restoreSchedulersFunc pdutil.UndoFunc
 
 	// use fine-grained scheduler pausing if we have specific tables to restore (not full restore)
-	if cfg.ExplicitFilter {
+	if cfg.isPartialRestore() {
 		keyRanges := buildKeyRangesFromSchemasReplace(schemasReplace, cfg)
 		if len(keyRanges) > 0 {
 			log.Info("using fine-grained scheduler pausing for log restore",
@@ -1776,6 +1805,10 @@ func restoreStream(
 	var rp *logclient.RestoreMetaKVProcessor
 	if err = glue.WithProgress(ctx, g, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress, func(p glue.Progress) error {
 		rp = logclient.NewRestoreMetaKVProcessor(client, schemasReplace, updateStats, p.Inc)
+		// The metadata refresh granularity follows --filter: an unfiltered (full)
+		// restore uses a single global reload, while a filtered/partial restore
+		// refreshes only the affected tables. Routing alone does not make the
+		// restore a subset, so keep using ExplicitFilter here.
 		return rp.RestoreAndRewriteMetaKVFiles(ctx, cfg.ExplicitFilter, ddlFiles, schemasReplace)
 	}); err != nil {
 		return errors.Annotate(err, "failed to restore meta files")
@@ -1943,7 +1976,7 @@ func restoreStream(
 		return errors.Annotate(err, "failed to restore kv files")
 	}
 
-	if cfg.ExplicitFilter {
+	if cfg.isPartialRestore() {
 		failpoint.Inject("before-set-table-mode-to-normal", func(_ failpoint.Value) {
 			failpoint.Return(errors.New("fail before setting table mode to normal"))
 		})
@@ -2240,34 +2273,39 @@ func getFullBackupTS(
 	ctx context.Context,
 	cfg *RestoreConfig,
 ) (uint64, uint64, error) {
-	_, s, err := GetStorage(ctx, cfg.FullBackupStorage, &cfg.Config)
+	rootBackend, rootStorage, err := GetStorage(ctx, cfg.FullBackupStorage, &cfg.Config)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-
-	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
+	ref := &taskrepo.SnapshotStorageRef{
+		BackupID:    cfg.BackupID,
+		RootBackend: rootBackend,
+		RootStorage: rootStorage,
+	}
+	if err := ref.Validate(ctx); err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	backupMetaBytes, err := ref.GetBackupMetaBytes(ctx, &cfg.CipherInfo)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-
-	decryptedMetaData, err := metautil.DecryptFullBackupMetaIfNeeded(metaData, &cfg.CipherInfo)
-	if err != nil {
+	backupMeta := &backuppb.BackupMeta{}
+	if err = backupMeta.Unmarshal(backupMetaBytes); err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-
-	backupmeta := &backuppb.BackupMeta{}
-	if err = backupmeta.Unmarshal(decryptedMetaData); err != nil {
-		return 0, 0, errors.Trace(err)
-	}
-	if err = metautil.CheckBackupMetaCompatibilityFromBytes(decryptedMetaData, backupmeta); err != nil {
+	if err = metautil.CheckBackupMetaCompatibilityFromBytes(backupMetaBytes, backupMeta); err != nil {
 		if cfg.CheckRequirements {
 			return 0, 0, errors.Trace(err)
 		}
 		log.Warn("skip backupmeta compatibility check error", logutil.ShortError(err))
 	}
+	if cfg.hasNameRouting() && backupMeta.StartVersion != 0 && backupMeta.StartVersion != backupMeta.EndVersion {
+		return 0, 0, errors.Annotatef(berrors.ErrInvalidArgument,
+			"--%s is not supported for incremental snapshot restore", FlagRename)
+	}
 
 	// start and end are identical in full backup, pick random one
-	return backupmeta.GetEndVersion(), backupmeta.GetClusterId(), nil
+	return backupMeta.GetEndVersion(), backupMeta.GetClusterId(), nil
 }
 
 func buildRewriteRules(schemasReplace *stream.SchemasReplace) map[int64]*restoreutils.RewriteRules {
@@ -2449,7 +2487,7 @@ func isCurrentIdMapSaved(checkpointTaskInfo *checkpoint.TaskInfoForLogRestore) b
 
 func buildSchemaReplace(client *logclient.LogClient, cfg *LogRestoreConfig) (*stream.SchemasReplace, error) {
 	schemasReplace := stream.NewSchemasReplace(cfg.tableMappingManager.DBReplaceMap, cfg.tableMappingManager.IsFromPiTRIDMap(), cfg.tiflashRecorder,
-		client.CurrentTS(), client.RecordDeleteRange, cfg.ExplicitFilter)
+		client.CurrentTS(), client.RecordDeleteRange, cfg.isPartialRestore())
 	schemasReplace.AfterTableRewrittenFn = func(deleted bool, tableInfo *model.TableInfo) {
 		// When the table replica changed to 0, the tiflash replica might be set to `nil`.
 		// We should remove the table if we meet.
@@ -2464,24 +2502,115 @@ func buildSchemaReplace(client *logclient.LogClient, cfg *LogRestoreConfig) (*st
 	return schemasReplace, nil
 }
 
+type restoreConflictChecker interface {
+	CheckTablesWithRegisteredTasksAndRoutes(
+		context.Context,
+		uint64,
+		*utils.PiTRIdTracker,
+		[]*metautil.Database,
+		[]*metautil.Table,
+		[]string,
+	) error
+}
+
+func checkLogOnlyPiTRRegistryConflicts(
+	ctx context.Context,
+	cfg *LogRestoreConfig,
+	checker restoreConflictChecker,
+) error {
+	if len(cfg.FullBackupStorage) != 0 || cfg.RestoreID == 0 || checker == nil {
+		return nil
+	}
+
+	// The mapping has merged the previous PiTR ID map, applied name routes,
+	// and filtered unselected objects. Pass effective names with no routes so
+	// they cannot be applied twice by the registry.
+	targets := utils.NewPiTRIdTracker()
+	trackSchema := func(name string) {
+		if _, exists := targets.DBNameToTableNames[name]; !exists {
+			targets.DBNameToTableNames[name] = make(map[string]struct{})
+		}
+	}
+	for _, dbReplace := range cfg.tableMappingManager.DBReplaceMap {
+		if dbReplace.FilteredOut {
+			continue
+		}
+		if name, routed := dbReplace.SchemaRouteTarget(); routed {
+			trackSchema(name)
+		}
+		hasSelectedTable := false
+		for _, tableReplace := range dbReplace.TableMap {
+			if tableReplace.FilteredOut {
+				continue
+			}
+			hasSelectedTable = true
+			targets.TrackTableName(tableReplace.EffectiveDBName(dbReplace), tableReplace.Name)
+		}
+		if !hasSelectedTable {
+			trackSchema(dbReplace.Name)
+		}
+	}
+
+	log.Info("checking log-only PiTR target conflicts using restore registry",
+		zap.Int("target_schemas_count", len(targets.DBNameToTableNames)),
+		zap.Uint64("current_restore_id", cfg.RestoreID))
+	return checker.CheckTablesWithRegisteredTasksAndRoutes(
+		ctx, cfg.RestoreID, targets, nil, nil, nil)
+}
+
 func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient, cfg *LogRestoreConfig) error {
-	// get the schemas ID replace information.
-	saved := isCurrentIdMapSaved(cfg.checkpointTaskInfo)
-	hasFullBackupStorage := len(cfg.FullBackupStorage) != 0
-	err := client.GetBaseIDMapAndMerge(ctx, hasFullBackupStorage, saved,
-		cfg.logCheckpointMetaManager, cfg.tableMappingManager)
+	routeFingerprint, err := cfg.nameRouteFingerprint()
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	if saved {
-		return nil
+	// get the schemas ID replace information.
+	saved := isCurrentIdMapSaved(cfg.checkpointTaskInfo)
+	hasFullBackupStorage := len(cfg.FullBackupStorage) != 0
+	err = client.GetBaseIDMapAndMerge(ctx, hasFullBackupStorage, saved,
+		cfg.logCheckpointMetaManager, cfg.tableMappingManager, routeFingerprint)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	// either getting base id map from previous pitr or this is a new task and get base map from snapshot restore phase
 	// do filter
 	if cfg.PiTRTableTracker != nil {
 		cfg.tableMappingManager.ApplyFilterToDBReplaceMap(cfg.PiTRTableTracker)
+	}
+	// The dependency classification is persisted with the ID map, so a direct
+	// phase-2 run makes the same pre-DDL decision as the initial scan.
+	nameRouter, err := cfg.getNameRouter()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.hasNameRouting() {
+		if err := cfg.tableMappingManager.BindUnresolvedTableRoutes(func(schema, table string) (string, string, bool) {
+			targetSchema, targetTable, matched := nameRouter.Route(ast.NewCIStr(schema), ast.NewCIStr(table))
+			return targetSchema.O, targetTable.O, matched
+		}, true); err != nil {
+			return errors.Trace(err)
+		}
+		if err := cfg.tableMappingManager.ValidateUniqueTargetNames(ctx, client.GetDomain().InfoSchema()); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if err := cfg.tableMappingManager.ValidateRoutedDependenciesWithRoute(func(schema, table string) (string, string, bool) {
+		targetSchema, targetTable, matched := nameRouter.Route(ast.NewCIStr(schema), ast.NewCIStr(table))
+		return targetSchema.O, targetTable.O, matched
+	}); err != nil {
+		return errors.Trace(err)
+	}
+	if err := checkLogOnlyPiTRRegistryConflicts(ctx, cfg, cfg.RestoreRegistry); err != nil {
+		return errors.Trace(err)
+	}
+	// A routed target table must not silently collide with an existing table
+	// that has a different ID. Run this on the saved/resume path too so a table
+	// dropped and recreated between attempts is caught.
+	if err := client.ValidateTargetTableExistence(ctx, cfg.tableMappingManager); err != nil {
+		return errors.Trace(err)
+	}
+	if saved {
+		return client.ValidateTableRouteTargetDatabases(ctx, cfg.tableMappingManager)
 	}
 	// reuse existing database ids if it exists in the current cluster
 	cfg.tableMappingManager.ReuseExistingDatabaseIDs(client.GetDomain().InfoSchema())
@@ -2490,7 +2619,9 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = client.SaveIdMapWithFailPoints(ctx, cfg.tableMappingManager, cfg.logCheckpointMetaManager); err != nil {
+	if err = client.SaveIdMapWithFailPoints(
+		ctx, cfg.tableMappingManager, cfg.logCheckpointMetaManager, routeFingerprint,
+	); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -2545,10 +2676,16 @@ func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName st
 	}
 
 	originalRestoreTS := cfg.RestoreTS
+	router, err := cfg.getNameRouter()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	registrationInfo := registry.RegistrationInfo{
+		FilterHashInput:   taskrepo.SnapshotRegistrationFilterHashInput(cfg.FilterStr, cfg.BackupID),
 		StartTS:           cfg.StartTS,
 		RestoredTS:        cfg.RestoreTS,
 		FilterStrings:     cfg.FilterStr,
+		RouteStrings:      router.CanonicalRules(),
 		UpstreamClusterID: cfg.UpstreamClusterID,
 		WithSysTable:      cfg.WithSysTable,
 		Cmd:               cmdName,

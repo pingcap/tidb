@@ -707,6 +707,11 @@ func aggFuncResultMatchesArgForNonEmptyGroup(aggFunc *aggregation.AggFuncDesc) b
 	default:
 		return false
 	}
+	// MIN/MAX return string values for binary literals. Substituting the raw
+	// literal changes numeric coercion in predicates above the aggregation.
+	if expression.IsBinaryLiteral(aggFunc.Args[0]) {
+		return false
+	}
 	return aggFunc.Args[0].ConstLevel() >= expression.ConstOnlyInContext
 }
 

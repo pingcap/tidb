@@ -47,4 +47,6 @@ const (
 	FlagInLoadDataStmt = 1 << 10
 	// FlagInRestrictedSQL indicates if this request is in a restricted SQL. Auto Analyze is one example
 	FlagInRestrictedSQL = 1 << 11
+	// FlagEnableTiKVShortCircuitExpression indicates whether short-circuit expression evaluation is enabled in TiKV.
+	FlagEnableTiKVShortCircuitExpression = 1 << 12
 )

@@ -113,9 +113,7 @@ func TestActivateRequiresKeyspaceName(t *testing.T) {
 	_, mux := controller.Handler(nil)
 	req := httptest.NewRequest(http.MethodPost, "/tidb-pool/activate", strings.NewReader(`{}`))
 	resp := httptest.NewRecorder()
-
 	mux.ServeHTTP(resp, req)
-
 	require.Equal(t, http.StatusBadRequest, resp.Code)
 }
 
@@ -134,6 +132,10 @@ func TestActivateWaitsUntilServerReady(t *testing.T) {
 		defer close(done)
 		mux.ServeHTTP(resp, req)
 	}()
+	t.Cleanup(func() {
+		controller.EndStandby(nil)
+		wg.Wait()
+	})
 
 	require.Eventually(t, func() bool {
 		mu.RLock()

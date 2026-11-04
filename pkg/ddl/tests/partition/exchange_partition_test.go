@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/stretchr/testify/require"
 )
 
 func TestExchangeRangeColumnsPartition(t *testing.T) {
@@ -141,4 +143,171 @@ func TestExchangeRangeColumnsPartition(t *testing.T) {
 
 	// Clean up
 	tk.MustExec("DROP TABLE t1")
+}
+
+// TestIssue72478ExchangePartitionMaxIDs covers column, index, foreign key, and
+// check constraint ID allocators during EXCHANGE PARTITION. Column and index IDs
+// remain in exchanged data and the partitioned table's other partitions, so each
+// table must allocate past its physical data's historical IDs. Foreign key and
+// check constraint counters stay with each table's retained metadata.
+// See https://github.com/pingcap/tidb/issues/72478.
+func TestIssue72478ExchangePartitionMaxIDs(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	newKit := func(t *testing.T) *testkit.TestKit {
+		t.Helper()
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_enable_exchange_partition=1")
+		return tk
+	}
+	enableGlobalVar := func(t *testing.T, tk *testkit.TestKit, name string) {
+		t.Helper()
+		original := tk.MustQuery("SELECT @@GLOBAL." + name).Rows()[0][0]
+		t.Cleanup(func() {
+			tk.MustExec(fmt.Sprintf("SET @@GLOBAL.%s = %v", name, original))
+		})
+		tk.MustExec("SET @@GLOBAL." + name + " = 1")
+	}
+
+	// The non-partitioned table has the higher counters. Its dropped column
+	// value moves into p0, while p1 keeps the partitioned table's own rows.
+	t.Run("non-partitioned table has higher column and index id", func(t *testing.T) {
+		tk := newKit(t)
+		tk.MustExec(`CREATE TABLE pt (
+			a INT,
+			INDEX idx_a(a)
+		) PARTITION BY RANGE (a) (
+			PARTITION p0 VALUES LESS THAN (100),
+			PARTITION p1 VALUES LESS THAN (MAXVALUE)
+		)`)
+		tk.MustExec(`CREATE TABLE nt (
+			a INT,
+			b INT,
+			INDEX idx_a(a),
+			INDEX idx_b(b)
+		)`)
+		tk.MustExec(`INSERT INTO nt VALUES (1, 777)`)
+		tk.MustExec(`INSERT INTO pt VALUES (5), (150)`)
+		tk.MustExec(`ALTER TABLE nt DROP INDEX idx_b`)
+		tk.MustExec(`ALTER TABLE nt DROP COLUMN b`)
+		tk.MustExec(`ALTER TABLE pt EXCHANGE PARTITION p0 WITH TABLE nt`)
+		ntInfo := external.GetTableByName(t, tk, "test", "nt").Meta()
+		require.Equal(t, int64(1), ntInfo.MaxColumnID)
+		require.Equal(t, int64(1), ntInfo.MaxIndexID)
+
+		tk.MustExec(`ALTER TABLE pt ADD COLUMN c INT DEFAULT 0`)
+		tk.MustExec(`INSERT INTO pt (a) VALUES (2)`)
+		tk.MustQuery(`SELECT a, c FROM pt ORDER BY a`).Check(testkit.Rows("1 0", "2 0", "150 0"))
+		tk.MustExec(`ALTER TABLE nt ADD COLUMN c INT DEFAULT 0`)
+		tk.MustExec(`INSERT INTO nt (a) VALUES (6)`)
+		tk.MustQuery(`SELECT a, c FROM nt ORDER BY a`).Check(testkit.Rows("5 0", "6 0"))
+
+		// pt keeps the dropped idx_b ID from nt, so its next index is 3.
+		// nt receives pt's original partition, which has only used index ID 1.
+		tk.MustExec(`ALTER TABLE pt ADD INDEX idx_new(a)`)
+		tk.MustExec(`ALTER TABLE nt ADD INDEX idx_new(a)`)
+		tk.MustQuery(`SELECT table_name, index_id FROM information_schema.tidb_indexes
+			WHERE table_schema = 'test' AND key_name = 'idx_new' AND table_name IN ('pt', 'nt')
+			ORDER BY table_name`).Check(testkit.Rows("nt 2", "pt 3"))
+		tk.MustExec(`admin check table pt`)
+		tk.MustExec(`admin check table nt`)
+	})
+
+	// The partitioned table has the higher counters. p1 still contains the
+	// dropped column, and p0's rows move to the non-partitioned table.
+	t.Run("partitioned table has higher column and index id", func(t *testing.T) {
+		tk := newKit(t)
+		tk.MustExec(`CREATE TABLE rpt (
+			a INT,
+			b INT,
+			INDEX idx_a(a),
+			INDEX idx_b(b)
+		) PARTITION BY RANGE (a) (
+			PARTITION p0 VALUES LESS THAN (100),
+			PARTITION p1 VALUES LESS THAN (MAXVALUE)
+		)`)
+		tk.MustExec(`CREATE TABLE rnt (
+			a INT,
+			INDEX idx_a(a)
+		)`)
+		tk.MustExec(`INSERT INTO rpt VALUES (1, 888), (101, 999)`)
+		tk.MustExec(`ALTER TABLE rpt DROP INDEX idx_b`)
+		tk.MustExec(`ALTER TABLE rpt DROP COLUMN b`)
+		tk.MustExec(`ALTER TABLE rpt EXCHANGE PARTITION p0 WITH TABLE rnt`)
+
+		tk.MustExec(`ALTER TABLE rnt ADD COLUMN c INT DEFAULT 0`)
+		tk.MustQuery(`SELECT a, c FROM rnt`).Check(testkit.Rows("1 0"))
+		tk.MustExec(`ALTER TABLE rpt ADD COLUMN c INT DEFAULT 0`)
+		tk.MustQuery(`SELECT a, c FROM rpt`).Check(testkit.Rows("101 0"))
+
+		tk.MustExec(`ALTER TABLE rpt ADD INDEX idx_new(a)`)
+		tk.MustExec(`ALTER TABLE rnt ADD INDEX idx_new(a)`)
+		tk.MustQuery(`SELECT table_name, index_id FROM information_schema.tidb_indexes
+			WHERE table_schema = 'test' AND key_name = 'idx_new' AND table_name IN ('rpt', 'rnt')
+			ORDER BY table_name`).Check(testkit.Rows("rnt 3", "rpt 3"))
+		tk.MustExec(`admin check table rpt`)
+		tk.MustExec(`admin check table rnt`)
+	})
+
+	// Foreign key and check constraint IDs are not encoded in KV, so each
+	// table keeps its own counters. A partitioned table cannot own a foreign key.
+	t.Run("non-partitioned table has higher foreign key and constraint id", func(t *testing.T) {
+		tk := newKit(t)
+		enableGlobalVar(t, tk, "tidb_enable_foreign_key")
+		enableGlobalVar(t, tk, "tidb_enable_check_constraint")
+		tk.MustExec(`CREATE TABLE parent (a INT PRIMARY KEY)`)
+		tk.MustExec(`CREATE TABLE fk_nt (
+			a INT,
+			INDEX idx_a(a),
+			CONSTRAINT fk_old FOREIGN KEY (a) REFERENCES parent(a),
+			CONSTRAINT c_old CHECK (a < 1000),
+			CONSTRAINT c_live CHECK (a < 2000)
+		)`)
+		tk.MustExec(`ALTER TABLE fk_nt DROP FOREIGN KEY fk_old`)
+		tk.MustExec(`ALTER TABLE fk_nt DROP CONSTRAINT c_old`)
+		tk.MustExec(`CREATE TABLE fk_pt (
+			a INT,
+			INDEX idx_a(a)
+		) PARTITION BY RANGE (a) (
+			PARTITION p0 VALUES LESS THAN (100),
+			PARTITION p1 VALUES LESS THAN (MAXVALUE)
+		)`)
+		tk.MustExec(`ALTER TABLE fk_pt EXCHANGE PARTITION p0 WITH TABLE fk_nt`)
+		assertMaxForeignKeyAndConstraintID(t, tk, "fk_pt", 0, 0)
+		assertMaxForeignKeyAndConstraintID(t, tk, "fk_nt", 1, 2)
+		// NT retains its live constraint ID even though PT's original maximum
+		// was zero. A new constraint must not reuse that live ID.
+		tk.MustExec(`ALTER TABLE fk_nt ADD CONSTRAINT c_new CHECK (a >= 0)`)
+		ntInfo := external.GetTableByName(t, tk, "test", "fk_nt").Meta()
+		require.Equal(t, int64(3), ntInfo.MaxConstraintID)
+		require.Equal(t, int64(2), ntInfo.FindConstraintInfoByName("c_live").ID)
+		require.Equal(t, int64(3), ntInfo.FindConstraintInfoByName("c_new").ID)
+		tk.MustExec(`ALTER TABLE fk_pt ADD CONSTRAINT c_pt_new CHECK (a >= 0)`)
+		assertMaxForeignKeyAndConstraintID(t, tk, "fk_pt", 0, 1)
+	})
+
+	// The partitioned table keeps its higher check constraint ID counter.
+	t.Run("partitioned table has higher constraint id", func(t *testing.T) {
+		tk := newKit(t)
+		enableGlobalVar(t, tk, "tidb_enable_check_constraint")
+		tk.MustExec(`CREATE TABLE cst_pt (
+			a INT,
+			CONSTRAINT c_old CHECK (a < 1000)
+		) PARTITION BY RANGE (a) (
+			PARTITION p0 VALUES LESS THAN (100),
+			PARTITION p1 VALUES LESS THAN (MAXVALUE)
+		)`)
+		tk.MustExec(`ALTER TABLE cst_pt DROP CONSTRAINT c_old`)
+		tk.MustExec(`CREATE TABLE cst_nt (a INT)`)
+		tk.MustExec(`ALTER TABLE cst_pt EXCHANGE PARTITION p0 WITH TABLE cst_nt`)
+		assertMaxForeignKeyAndConstraintID(t, tk, "cst_pt", 0, 1)
+		assertMaxForeignKeyAndConstraintID(t, tk, "cst_nt", 0, 0)
+	})
+}
+
+func assertMaxForeignKeyAndConstraintID(t *testing.T, tk *testkit.TestKit, name string, fkID, constraintID int64) {
+	t.Helper()
+	meta := external.GetTableByName(t, tk, "test", name).Meta()
+	require.Equal(t, fkID, meta.MaxForeignKeyID, name)
+	require.Equal(t, constraintID, meta.MaxConstraintID, name)
 }

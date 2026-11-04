@@ -87,10 +87,10 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/server/handler/tikvhandler"
-	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/server/internal/dump"
 	"github.com/pingcap/tidb/pkg/server/internal/handshake"
+	"github.com/pingcap/tidb/pkg/server/internal/packetio"
 	"github.com/pingcap/tidb/pkg/server/internal/parse"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
 	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
@@ -100,7 +100,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
@@ -113,6 +112,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
@@ -169,7 +169,7 @@ func newClientConn(s *Server) *clientConn {
 // clientConn represents a connection between server and client, it maintains connection specific state,
 // handles client query.
 type clientConn struct {
-	pkt          *internal.PacketIO      // a helper to read and write data in packet format.
+	pkt          *packetio.PacketIO      // a helper to read and write data in packet format.
 	bufReadConn  *util2.BufferedReadConn // a buffered-read net.Conn or buffered-read tls.Conn.
 	tlsConn      *tls.Conn               // TLS connection, nil if not TLS.
 	tlsConnState *tls.ConnectionState    // forwarded TLS state from gateway when starter mode is enabled.
@@ -1298,7 +1298,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				txnMode = ctx.GetSessionVars().GetReadableTxnMode()
 			}
 			vars := cc.getCtx().GetSessionVars()
-			for _, dbName := range session.GetDBNames(vars) {
+			for _, dbName := range metricsutil.GetDBNames(vars) {
 				metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), dbName, vars.ResourceGroupName).Inc()
 			}
 
@@ -1414,13 +1414,20 @@ func (cc *clientConn) addQueryMetrics(cmd byte, startTime time.Time, err error) 
 	if stmtType != "" {
 		sqlType = stmtType
 	}
+	commandSQLType := sqlType
+	if cmd == mysql.ComQuery && vars.InMultiStmts {
+		// The duration covers the whole command, not just its last statement.
+		// Other commands must not inherit the previous COM_QUERY's multi-statement flag.
+		commandSQLType = "MultiStmt"
+	}
 	execDetails := vars.StmtCtx.GetExecDetails()
 
-	for _, dbName := range session.GetDBNames(vars) {
-		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost.Seconds())
+	for _, dbName := range metricsutil.GetDBNames(vars) {
+		metrics.CommandDurationHistogram.WithLabelValues(commandSQLType, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost.Seconds())
 		metrics.QueryRPCHistogram.WithLabelValues(sqlType, dbName).Observe(float64(execDetails.RequestCount))
 		if execDetails.ScanDetail != nil {
 			metrics.QueryProcessedKeyHistogram.WithLabelValues(sqlType, dbName).Observe(float64(execDetails.ScanDetail.ProcessedKeys))
+			metrics.IACacheHitCount.WithLabelValues(sqlType, dbName).Add(float64(execDetails.ScanDetail.IaCacheHitCount))
 			iaStats := execdetails.GetIARemoteReadSegmentStats(execDetails.ScanDetail)
 			metrics.IARemoteReadSegmentCount.WithLabelValues(sqlType, dbName).Add(float64(iaStats.Count))
 			metrics.IARemoteReadSegmentSize.WithLabelValues(sqlType, dbName).Add(float64(iaStats.Bytes))
@@ -1857,6 +1864,8 @@ func (cc *clientConn) audit(ctx context.Context, eventType plugin.GeneralEvent) 
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	defer trace.StartRegion(ctx, "handleQuery").End()
 	sessVars := cc.ctx.GetSessionVars()
+	// Reset before parsing so empty queries and parse errors cannot reuse the last request's flag.
+	sessVars.InMultiStmts = false
 	sc := sessVars.StmtCtx
 	prevWarns := sc.GetWarnings()
 	var stmts []ast.StmtNode
@@ -1877,11 +1886,12 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	}
 
 	warns := sc.GetWarnings()
-	parserWarns := warns[len(prevWarns):]
+	// Execution retries can reset and reuse this statement context's warning buffer.
+	parserWarns := append([]contextutil.SQLWarn(nil), warns[len(prevWarns):]...)
 
 	var pointPlans []base.Plan
-	cc.ctx.GetSessionVars().InMultiStmts = false
-	if len(stmts) > 1 {
+	sessVars.InMultiStmts = len(stmts) > 1
+	if sessVars.InMultiStmts {
 		// The client gets to choose if it allows multi-statements, and
 		// probably defaults OFF. This helps prevent against SQL injection attacks
 		// by early terminating the first statement, and then running an entirely
@@ -1902,7 +1912,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 				parserWarns = append(parserWarns, warn)
 			}
 		}
-		cc.ctx.GetSessionVars().InMultiStmts = true
 
 		// Only pre-build point plans for multi-statement query
 		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts, sql)
@@ -1917,7 +1926,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	if len(pointPlans) > 0 {
 		defer cc.ctx.ClearValue(plannercore.PointPlanKey)
 	}
-	var retryable bool
 	var lastStmt ast.StmtNode
 	var expiredStmtTaskID uint64
 	for i, stmt := range stmts {
@@ -1935,39 +1943,16 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			// Save the point plan in Session, so we don't need to build the point plan again.
 			cc.ctx.SetValue(plannercore.PointPlanKey, plannercore.PointPlanVal{Plan: pointPlans[i]})
 		}
-		retryable, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
+		err = cc.runStmtWithRetry(ctx, func(tiFlashErr error) (stmtRetrySafety, error) {
+			warns := parserWarns
+			if tiFlashErr != nil {
+				// Text execution attaches fallback and parser warnings before writing results.
+				warns = append(warns, contextutil.SQLWarn{Level: contextutil.WarnLevelError, Err: tiFlashErr})
+			}
+			return cc.handleStmt(ctx, stmt, warns, i == len(stmts)-1)
+		})
 		if err != nil {
-			action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(ctx, sessiontxn.StmtErrAfterQuery, err)
-			if txnErr != nil {
-				err = txnErr
-				break
-			}
-
-			if retryable && action == sessiontxn.StmtActionRetryReady {
-				cc.ctx.GetSessionVars().RetryInfo.Retrying = true
-				_, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
-				cc.ctx.GetSessionVars().RetryInfo.Retrying = false
-				if err != nil {
-					break
-				}
-				continue
-			}
-			if !retryable || !errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) {
-				break
-			}
-			_, allowTiFlashFallback := cc.ctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
-			if !allowTiFlashFallback {
-				break
-			}
-			// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
-			// server and fallback to TiKV.
-			warns := append(parserWarns, contextutil.SQLWarn{Level: contextutil.WarnLevelError, Err: err})
-			delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
-			_, err = cc.handleStmt(ctx, stmt, warns, i == len(stmts)-1)
-			cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
-			if err != nil {
-				break
-			}
+			break
 		}
 	}
 
@@ -2241,15 +2226,16 @@ unwrapStmt:
 	return true
 }
 
-// The first return value indicates whether the call of handleStmt has no side effect and can be retried.
-// Currently, the first return value is used to fall back to TiKV when TiFlash is down.
+// The first return value indicates whether handleStmt can be repeated without
+// replaying client-visible output or other protocol side effects.
 func (cc *clientConn) handleStmt(
 	ctx context.Context, stmt ast.StmtNode,
 	warns []contextutil.SQLWarn, lastStmt bool,
-) (bool, error) {
+) (stmtRetrySafety, error) {
 	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
 	cc.audit(context.Background(), plugin.Starting)
+	retrySafety := stmtRetrySafe
 
 	// if stmt is load data stmt, store the channel that reads from the conn
 	// into the ctx for executor to use
@@ -2258,8 +2244,10 @@ func (cc *clientConn) handleStmt(
 			err := cc.preprocessLoadDataLocal(ctx)
 			defer cc.postprocessLoadDataLocal()
 			if err != nil {
-				return false, err
+				return stmtRetryUnsafe, err
 			}
+			// ExecuteStmt can request a one-shot client file stream, even if it fails.
+			retrySafety = stmtRetryUnsafe
 		}
 	}
 
@@ -2288,7 +2276,7 @@ func (cc *clientConn) handleStmt(
 		if sv := cc.ctx.GetSessionVars(); sv != nil && sv.StmtCtx != nil {
 			sv.StmtCtx.DetachMemDiskTracker()
 		}
-		return true, err
+		return retrySafety, err
 	}
 
 	status := cc.ctx.Status()
@@ -2300,7 +2288,7 @@ func (cc *clientConn) handleStmt(
 
 	if rs != nil {
 		if cc.getStatus() == connStatusShutdown {
-			return false, exeerrors.ErrQueryInterrupted
+			return stmtRetryUnsafe, exeerrors.ErrQueryInterrupted
 		}
 		cc.ctx.GetSessionVars().SQLKiller.SetFinishFunc(
 			func() {
@@ -2311,9 +2299,9 @@ func (cc *clientConn) handleStmt(
 		defer cc.ctx.GetSessionVars().SQLKiller.InWriteResultSet.Store(false)
 		defer cc.ctx.GetSessionVars().SQLKiller.ClearFinishFunc()
 		if retryable, err := cc.writeResultSet(ctx, rs, false, status, 0); err != nil {
-			return retryable, err
+			return stmtRetrySafety(retryable), err
 		}
-		return false, nil
+		return stmtRetryUnsafe, nil
 	}
 
 	handled, err := cc.handleFileTransInConn(ctx, status)
@@ -2323,7 +2311,7 @@ func (cc *clientConn) handleStmt(
 			execStmt.(*executor.ExecStmt).FinishExecuteStmt(0, err, false)
 		}
 	}
-	return false, err
+	return stmtRetryUnsafe, err
 }
 
 // Preprocess LOAD DATA. Load data from a local file requires reading from the connection.
@@ -2557,25 +2545,10 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 	req := rs.NewChunk(cc.ctx.GetSessionVars().GetChunkAllocator())
 	gotColumnInfo := false
 	var columns []*column.Info
-	columnCount := 0
 	firstNext := true
 	validNextCount := 0
 	var start time.Time
 	stmtDetail := stmtExecDetailsFromContext(ctx)
-	totalRows := 0
-	defer func() {
-		cells := int64(totalRows) * int64(columnCount)
-		if cells <= 0 {
-			return
-		}
-		ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
-		if ruv2Metrics == nil {
-			ruv2Metrics = cc.ctx.GetSessionVars().RUV2Metrics
-		}
-		if ruv2Metrics != nil {
-			ruv2Metrics.AddResultChunkCells(cells)
-		}
-	}()
 	defer func() {
 		finishWriteSQLRespDuration(stmtDetail, &start)
 	}()
@@ -2604,7 +2577,6 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
 			columns = rs.Columns()
-			columnCount = len(columns)
 			start = beginWriteSQLRespDuration(stmtDetail)
 			if err = cc.writeColumnInfo(columns); err != nil {
 				return false, err
@@ -2622,7 +2594,6 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		if rowCount == 0 {
 			break
 		}
-		totalRows += rowCount
 		validNextCount++
 		firstNext = false
 		reg := trace.StartRegion(ctx, "WriteClientConn")
@@ -2668,12 +2639,8 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 		start      time.Time
 	)
 	data := cc.alloc.AllocWithLen(4, 1024)
-	writtenRows := 0
 	stmtDetail = stmtExecDetailsFromContext(ctx)
-	defer func() {
-		cells := int64(writtenRows) * int64(len(rs.Columns()))
-		resultset.ReportCursorRUV2Delta(rs, cells)
-	}()
+	defer resultset.ReportCursorRUV2Delta(rs)
 	defer func() {
 		finishWriteSQLRespDuration(stmtDetail, &start)
 	}()
@@ -2692,7 +2659,6 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 		if err = cc.writePacket(data); err != nil {
 			return err
 		}
-		writtenRows++
 
 		iter.Next(ctx)
 	}
@@ -2723,7 +2689,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 func (cc *clientConn) setConn(conn net.Conn) {
 	cc.bufReadConn = util2.NewBufferedReadConn(conn)
 	if cc.pkt == nil {
-		cc.pkt = internal.NewPacketIO(cc.bufReadConn)
+		cc.pkt = packetio.New(cc.bufReadConn)
 	} else {
 		// Preserve current sequence number.
 		cc.pkt.SetBufferedReadConn(cc.bufReadConn)

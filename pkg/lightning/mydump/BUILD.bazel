@@ -65,6 +65,7 @@ go_test(
         "csv_parser_test.go",
         "loader_test.go",
         "main_test.go",
+        "parser_internal_test.go",
         "parser_test.go",
         "reader_test.go",
         "region_test.go",

@@ -30,8 +30,10 @@ var (
 var (
 	PacketIOCounter                 *prometheus.CounterVec
 	QueryDurationHistogram          *prometheus.HistogramVec
+	CommandDurationHistogram        *prometheus.HistogramVec
 	QueryRPCHistogram               *prometheus.HistogramVec
 	QueryProcessedKeyHistogram      *prometheus.HistogramVec
+	IACacheHitCount                 *prometheus.CounterVec
 	IARemoteReadSegmentCount        *prometheus.CounterVec
 	IARemoteReadSegmentSize         *prometheus.CounterVec
 	IARemoteReadSegmentWaitDuration *prometheus.HistogramVec
@@ -101,8 +103,17 @@ func InitServerMetrics() {
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "handle_query_duration_seconds",
-			Help:      "Bucketed histogram of processing time (s) of handled queries.",
+			Help:      "Bucketed histogram of processing time (s) of individual SQL statements.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
+		}, []string{LblSQLType, LblDb, LblResourceGroup})
+
+	CommandDurationHistogram = metricscommon.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "handle_command_duration_seconds",
+			Help:      "Bucketed histogram of processing time (s) of handled commands and restricted SQL operations.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29),
 		}, []string{LblSQLType, LblDb, LblResourceGroup})
 
 	QueryRPCHistogram = metricscommon.NewHistogramVec(
@@ -121,6 +132,14 @@ func InitServerMetrics() {
 			Name:      "query_statement_processed_keys",
 			Help:      "Bucketed histogram of processed key count during the scan of handled query statements.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 32),
+		}, []string{LblSQLType, LblDb})
+
+	IACacheHitCount = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "ia_cache_hit_count",
+			Help:      "Counter of IA segment cache hits observed by TiDB.",
 		}, []string{LblSQLType, LblDb})
 
 	IARemoteReadSegmentCount = metricscommon.NewCounterVec(

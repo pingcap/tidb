@@ -293,9 +293,12 @@ func (c *client) MultipartWriter(ctx context.Context, name string) (objectio.Wri
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// OSS may return the canonical bucket name instead of the request alias.
 	return &multipartWriter{
 		svc:           c.svc,
-		createOutput:  resp,
+		bucket:        input.Bucket,
+		key:           input.Key,
+		uploadID:      resp.UploadId,
 		completeParts: make([]oss.UploadPart, 0, 128),
 	}, nil
 }
@@ -315,7 +318,9 @@ func (c *client) MultipartUploader(name string, partSize int64, concurrency int)
 // multipartWriter does multi-part upload.
 type multipartWriter struct {
 	svc           API
-	createOutput  *oss.InitiateMultipartUploadResult
+	bucket        *string
+	key           *string
+	uploadID      *string
 	completeParts []oss.UploadPart
 }
 
@@ -325,10 +330,10 @@ type multipartWriter struct {
 func (u *multipartWriter) Write(ctx context.Context, data []byte) (int, error) {
 	req := &oss.UploadPartRequest{
 		Body:          bytes.NewReader(data),
-		Bucket:        u.createOutput.Bucket,
-		Key:           u.createOutput.Key,
+		Bucket:        u.bucket,
+		Key:           u.key,
 		PartNumber:    int32(len(u.completeParts) + 1),
-		UploadId:      u.createOutput.UploadId,
+		UploadId:      u.uploadID,
 		ContentLength: oss.Ptr(int64(len(data))),
 	}
 
@@ -346,9 +351,9 @@ func (u *multipartWriter) Write(ctx context.Context, data []byte) (int, error) {
 // Close completes the multi-part upload request.
 func (u *multipartWriter) Close(ctx context.Context) error {
 	req := &oss.CompleteMultipartUploadRequest{
-		Bucket:   u.createOutput.Bucket,
-		Key:      u.createOutput.Key,
-		UploadId: u.createOutput.UploadId,
+		Bucket:   u.bucket,
+		Key:      u.key,
+		UploadId: u.uploadID,
 		CompleteMultipartUpload: &oss.CompleteMultipartUpload{
 			Parts: u.completeParts,
 		},

@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	pingcaperrors "github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -34,15 +36,104 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	tikvutil "github.com/tikv/client-go/v2/util"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
+
+func TestSelectLockEventSQLRedaction(t *testing.T) {
+	const (
+		originalSQL = "SELECT * FROM t WHERE a = 'lock-event-secret'"
+		redactedSQL = "select * from `t` where `a` = ?"
+		markedSQL   = "select * from `t` where `a` = ‹lock-event-secret›"
+	)
+	originalGlobalMode := pingcaperrors.RedactLogEnabled.Load()
+	t.Cleanup(func() { pingcaperrors.RedactLogEnabled.Store(originalGlobalMode) })
+	newLockInfo := func(redacted bool) *kvrpcpb.LockInfo {
+		key := func(value string) []byte {
+			if redacted {
+				return []byte("?")
+			}
+			return []byte(value)
+		}
+		return &kvrpcpb.LockInfo{
+			PrimaryLock: key("primary-key-secret"),
+			Key:         key("lock-key-secret"),
+			Secondaries: [][]byte{key("secondary-key-secret")},
+			LockVersion: 99,
+			SharedLockInfos: []*kvrpcpb.LockInfo{{
+				PrimaryLock: key("nested-primary-key-secret"),
+				Key:         key("nested-lock-key-secret"),
+				Secondaries: [][]byte{key("nested-secondary-key-secret")},
+				LockVersion: 100,
+			}},
+		}
+	}
+	for _, test := range []struct {
+		name              string
+		initialGlobalMode string
+		globalMode        string
+		stmt              string
+		redactLock        bool
+	}{
+		{name: "default", stmt: originalSQL},
+		{name: "OFF", initialGlobalMode: "OFF", globalMode: "OFF", stmt: originalSQL},
+		{name: "ON", initialGlobalMode: "ON", globalMode: "ON", stmt: redactedSQL, redactLock: true},
+		{name: "MARKER", initialGlobalMode: "MARKER", globalMode: "MARKER", stmt: markedSQL, redactLock: true},
+		{name: "OFF to ON", initialGlobalMode: "OFF", globalMode: "ON", stmt: redactedSQL, redactLock: true},
+		{name: "OFF to MARKER", initialGlobalMode: "OFF", globalMode: "MARKER", stmt: markedSQL, redactLock: true},
+		{name: "ON to OFF", initialGlobalMode: "ON", globalMode: "OFF", stmt: originalSQL},
+		{name: "MARKER to OFF", initialGlobalMode: "MARKER", globalMode: "OFF", stmt: originalSQL},
+		{name: "ON to MARKER", initialGlobalMode: "ON", globalMode: "MARKER", stmt: markedSQL, redactLock: true},
+		{name: "MARKER to ON", initialGlobalMode: "MARKER", globalMode: "ON", stmt: redactedSQL, redactLock: true},
+	} {
+		for _, sessionMode := range []string{"", "OFF", "ON", "MARKER"} {
+			t.Run(test.name+"/session="+sessionMode, func(t *testing.T) {
+				pingcaperrors.RedactLogEnabled.Store(test.initialGlobalMode)
+				sctx := newMockSessionContext()
+				sctx.GetSessionVars().StmtCtx.OriginalSQL = originalSQL
+				sctx.GetSessionVars().EnableRedactLog = sessionMode
+				dctx := sctx.GetDistSQLCtx()
+				client := &analyzeTestClient{response: &analyzeTestResponse{}}
+				dctx.Client = client
+				core, recorded := observer.New(zap.DebugLevel)
+				ctx := logutil.WithLogger(context.Background(), zap.New(core))
+				response, err := Select(ctx, dctx, &kv.Request{StartTs: 42}, nil)
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, response.Close()) })
+
+				// The callback can outlive the session's current statement context.
+				dctx.OriginalSQL = "SELECT 2"
+				pingcaperrors.RedactLogEnabled.Store(test.globalMode)
+				lockInfo := newLockInfo(false)
+				client.option.EventCb(trxevents.WrapCopMeetLock(&trxevents.CopMeetLock{
+					LockInfo: lockInfo,
+				}))
+				entries := recorded.FilterMessage("coprocessor encounters lock").All()
+				require.Len(t, entries, 1)
+				require.Equal(t, uint64(42), entries[0].ContextMap()["startTS"])
+				require.Equal(t, test.stmt, entries[0].ContextMap()["stmt"])
+				require.Equal(t, newLockInfo(test.redactLock).String(), entries[0].ContextMap()["lock"])
+				require.Equal(t, newLockInfo(false), lockInfo)
+				if test.redactLock {
+					require.NotContains(t, entries[0].ContextMap()["lock"], "key-secret")
+				}
+				if test.globalMode == "ON" {
+					require.NotContains(t, entries[0].ContextMap()["stmt"], "lock-event-secret")
+				}
+			})
+		}
+	}
+}
 
 func TestSelectNormal(t *testing.T) {
 	response, colTypes := createSelectNormal(t, 1, 2, nil, nil)
@@ -106,6 +197,81 @@ func TestSelectWithRuntimeStats(t *testing.T) {
 	}
 	require.Equal(t, 2, numAllRows)
 	require.NoError(t, response.Close())
+
+	emptyStats := &selectResultRuntimeStats{}
+	require.NotPanics(t, func() {
+		emptyStats.Clone()
+	})
+
+	reqStats := tikv.NewRegionRequestRuntimeStats()
+	reqStats.RecordRPCRuntimeStats(tikvrpc.CmdCop, time.Millisecond)
+	require.NotPanics(t, func() {
+		emptyStats.Merge(&selectResultRuntimeStats{reqStat: reqStats})
+	})
+	require.Equal(t, uint32(1), emptyStats.reqStat.GetCmdRPCCount(tikvrpc.CmdCop))
+}
+
+func TestSelectAppliesQueryCopStoreLimiter(t *testing.T) {
+	sctx := newMockSessionContext()
+	sctx.GetSessionVars().QueryCopStoreLimit = 3
+	dctx := sctx.GetDistSQLCtx()
+	require.NotNil(t, dctx.QueryCopStoreLimiter)
+	require.Equal(t, 3, dctx.QueryCopStoreLimiter.Capacity())
+
+	colTypes := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	buildRequest := func(storeType kv.StoreType) *kv.Request {
+		request, err := (&RequestBuilder{}).SetKeyRanges(nil).
+			SetDAGRequest(&tipb.DAGRequest{}).
+			SetStoreType(storeType).
+			SetFromSessionVars(DefaultDistSQLContext).
+			SetMemTracker(memory.NewTracker(-1, -1)).
+			Build()
+		require.NoError(t, err)
+		return request
+	}
+	checkRequest := func(check func(*kv.Request)) context.Context {
+		return context.WithValue(context.TODO(), "CheckSelectRequestHook", func(req *kv.Request) {
+			check(req)
+		})
+	}
+
+	request := buildRequest(kv.TiKV)
+	response, err := Select(checkRequest(func(req *kv.Request) {
+		require.Nil(t, req.CoprRequestLimiter)
+		require.Same(t, dctx.QueryCopStoreLimiter, req.QueryCopStoreLimiter)
+	}), dctx, request, colTypes)
+	require.NoError(t, err)
+	require.NoError(t, response.Close())
+
+	request = buildRequest(kv.TiFlash)
+	response, err = Select(checkRequest(func(req *kv.Request) {
+		require.Nil(t, req.CoprRequestLimiter)
+		require.Same(t, dctx.QueryCopStoreLimiter, req.QueryCopStoreLimiter)
+	}), dctx, request, colTypes)
+	require.NoError(t, err)
+	require.NoError(t, response.Close())
+
+	request = buildRequest(kv.TiKV)
+	explicitLimiter := kv.NewCoprRequestLimiter(7)
+	request.CoprRequestLimiter = explicitLimiter
+	response, err = Select(checkRequest(func(req *kv.Request) {
+		require.Same(t, explicitLimiter, req.CoprRequestLimiter)
+		require.Same(t, dctx.QueryCopStoreLimiter, req.QueryCopStoreLimiter)
+		require.True(t, req.CoprRequestLimiter.TryAcquire())
+		req.CoprRequestLimiter.Release()
+	}), dctx, request, colTypes)
+	require.NoError(t, err)
+	require.NoError(t, response.Close())
+
+	dctx.QueryCopStoreLimiter = nil
+	request = buildRequest(kv.TiKV)
+	request.CoprRequestLimiter = explicitLimiter
+	response, err = Select(checkRequest(func(req *kv.Request) {
+		require.Same(t, explicitLimiter, req.CoprRequestLimiter)
+		require.Nil(t, req.QueryCopStoreLimiter)
+	}), dctx, request, colTypes)
+	require.NoError(t, err)
+	require.NoError(t, response.Close())
 }
 
 func TestSelectResultRuntimeStats(t *testing.T) {
@@ -119,6 +285,10 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 		reqStat:            tikv.NewRegionRequestRuntimeStats(),
 		distSQLConcurrency: 15,
 		fetchRspDuration:   time.Second,
+		limiterWait: copr.LimiterWaitStats{
+			TotalTime: 3 * time.Millisecond,
+			MaxTime:   2 * time.Millisecond,
+		},
 	}
 	s1.copRespTime.Add(execdetails.Duration(time.Second))
 	s1.copRespTime.Add(execdetails.Duration(time.Millisecond))
@@ -129,7 +299,7 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 	stmtStats.RegisterStats(1, s1.Clone())
 	stmtStats.RegisterStats(1, s2)
 	stats := stmtStats.GetRootStats(1)
-	expect := "time:1s, open:0s, close:0s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s, copr_cache_hit_ratio: 0.00, max_distsql_concurrency: 15}, fetch_resp_duration: 2s, backoff{RegionMiss: 2ms}"
+	expect := "time:1s, open:0s, close:0s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s, copr_cache_hit_ratio: 0.00, limiter_wait:{total:6ms, max:2ms}, max_distsql_concurrency: 15}, fetch_resp_duration: 2s, backoff{RegionMiss: 2ms}"
 	require.Equal(t, expect, stats.String())
 	// Test for idempotence.
 	require.Equal(t, expect, stats.String())
@@ -139,7 +309,7 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 	s1.reqStat.RecordRPCErrorStats("server_is_busy")
 	stmtStats.RegisterStats(2, s1.Clone())
 	stats = stmtStats.GetRootStats(2)
-	expect = "cop_task: {num: 2, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 1s, tot_wait: 1s, copr_cache_hit_ratio: 0.00, max_distsql_concurrency: 15}, fetch_resp_duration: 1s, rpc_info:{Cop:{num_rpc:1, total_time:1s}, rpc_errors:{server_is_busy:2}}, backoff{RegionMiss: 1ms}"
+	expect = "cop_task: {num: 2, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 1s, tot_wait: 1s, copr_cache_hit_ratio: 0.00, limiter_wait:{total:3ms, max:2ms}, max_distsql_concurrency: 15}, fetch_resp_duration: 1s, rpc_info:{Cop:{num_rpc:1, total_time:1s}, rpc_errors:{server_is_busy:2}}, backoff{RegionMiss: 1ms}"
 	require.Equal(t, expect, stats.String())
 	// Test for idempotence.
 	require.Equal(t, expect, stats.String())
@@ -149,10 +319,14 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 		totalProcessTime: time.Second,
 		totalWaitTime:    time.Second,
 		reqStat:          tikv.NewRegionRequestRuntimeStats(),
+		limiterWait: copr.LimiterWaitStats{
+			TotalTime: time.Millisecond,
+			MaxTime:   time.Millisecond,
+		},
 	}
 	s1.copRespTime.Add(execdetails.Duration(time.Second))
 	s1.procKeys.Add(100)
-	expect = "cop_task: {num: 1, max: 1s, proc_keys: 100, tot_proc: 1s, tot_wait: 1s, copr_cache_hit_ratio: 0.00}, backoff{RegionMiss: 1ms}"
+	expect = "cop_task: {num: 1, max: 1s, proc_keys: 100, tot_proc: 1s, tot_wait: 1s, copr_cache_hit_ratio: 0.00, limiter_wait:{total:1ms, max:1ms}}, backoff{RegionMiss: 1ms}"
 	require.Equal(t, expect, s1.String())
 }
 
@@ -226,6 +400,31 @@ func TestAnalyze(t *testing.T) {
 	scanBytes, ok := dctx.RuntimeStatsColl.GetAnalyzeScanBytes(planID)
 	require.True(t, ok)
 	require.InDelta(t, float64(19)/13*17, scanBytes, 1e-9)
+	require.NoError(t, selectResponse.Close())
+	scanBytes, ok = dctx.RuntimeStatsColl.GetAnalyzeScanBytes(planID)
+	require.True(t, ok)
+	require.InDelta(t, float64(19)/13*17, scanBytes, 1e-9)
+	require.Equal(t, 1, dctx.ExecDetails.GetExecDetails().RequestCount)
+
+	t.Run("uses backend scan bytes", func(t *testing.T) {
+		for _, detail := range []*tikvutil.ScanDetail{
+			{TotalKeys: 10, ProcessedKeys: 2, ProcessedKeysSize: 6, TotalKeysSize: 123},
+			{TotalKeys: 10, TotalKeysSize: 123},
+		} {
+			dctx := newAnalyzeTestDistSQLContext()
+			response := &analyzeTestResponse{result: &analyzeTestResultSubset{
+				data:  []byte("analyze payload!"),
+				stats: &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{ScanDetail: detail}},
+			}}
+			result, _ := newResult(t, dctx, response)
+			_, err := result.NextRaw(context.TODO())
+			require.NoError(t, err)
+			require.NoError(t, result.Close())
+			scanBytes, found := dctx.RuntimeStatsColl.GetAnalyzeScanBytes(planID)
+			require.True(t, found)
+			require.Equal(t, float64(123), scanBytes)
+		}
+	})
 
 	t.Run("sums estimates before independent requests are flattened", func(t *testing.T) {
 		dctx := newAnalyzeTestDistSQLContext()
@@ -313,6 +512,11 @@ func TestAnalyze(t *testing.T) {
 		scanBytes, found := dctx.RuntimeStatsColl.GetAnalyzeScanBytes(planID)
 		require.True(t, found)
 		require.InDelta(t, 20, scanBytes, 1e-9)
+		require.NoError(t, result.Close())
+		scanBytes, found = dctx.RuntimeStatsColl.GetAnalyzeScanBytes(planID)
+		require.True(t, found)
+		require.InDelta(t, 20, scanBytes, 1e-9)
+		require.Equal(t, 1, dctx.ExecDetails.GetExecDetails().RequestCount)
 	})
 }
 
@@ -403,8 +607,14 @@ type mockResponse struct {
 	batch int
 	ctx   sessionctx.Context
 	// intermediateOutputs is used to mock the intermediate output from coprocessor.
-	intermediateOutputs [][]*tipb.IntermediateOutput
-	closed              bool
+	intermediateOutputs       [][]*tipb.IntermediateOutput
+	closed                    bool
+	closeCalls                int
+	closeErr                  error
+	limiterWait               copr.LimiterWaitStats
+	limiterWaitReadAfterClose bool
+	unconsumedCopStats        []*copr.CopRuntimeStats
+	unconsumedReadAfterClose  bool
 	sync.Mutex
 }
 
@@ -414,8 +624,25 @@ func (resp *mockResponse) Close() error {
 	defer resp.Unlock()
 
 	resp.closed = true
+	resp.closeCalls++
 	resp.count = 0
-	return nil
+	return resp.closeErr
+}
+
+func (resp *mockResponse) GetLimiterWaitStats() copr.LimiterWaitStats {
+	resp.Lock()
+	defer resp.Unlock()
+
+	resp.limiterWaitReadAfterClose = resp.closed
+	return resp.limiterWait
+}
+
+func (resp *mockResponse) CollectUnconsumedCopRuntimeStats() []*copr.CopRuntimeStats {
+	resp.Lock()
+	defer resp.Unlock()
+
+	resp.unconsumedReadAfterClose = resp.closed
+	return resp.unconsumedCopStats
 }
 
 // Next implements kv.Response interface.

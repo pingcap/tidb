@@ -2,19 +2,16 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "conflictrows",
-    srcs = [
-        "cleanup.go",
-        "path.go",
-    ],
+    srcs = ["cleanup.go"],
     importpath = "github.com/pingcap/tidb/pkg/dxf/importinto/conflictrows",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/storage",
+        "//pkg/dxf/importinto/conflictpath",
         "//pkg/executor/importer",
         "//pkg/objstore/storeapi",
         "//pkg/util/logutil",
-        "@com_github_google_uuid//:uuid",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -29,6 +26,7 @@ go_test(
     deps = [
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/storage",
+        "//pkg/dxf/importinto/conflictpath",
         "//pkg/objstore",
         "//pkg/objstore/storeapi",
         "@com_github_pingcap_log//:log",

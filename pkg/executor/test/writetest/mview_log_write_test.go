@@ -1,0 +1,1144 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package writetest_test
+
+import (
+	"io"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/stretchr/testify/require"
+)
+
+const (
+	addColumnStateWriteReorgFailpoint = "github.com/pingcap/tidb/pkg/ddl/onAddColumnStateWriteReorg"
+	dropColumnStateWriteOnlyFailpoint = "github.com/pingcap/tidb/pkg/ddl/onDropColumnStateWriteOnly"
+)
+
+// ddlCtrl controls DDL statements paused at a failpoint for testing mlog behavior during online DDL.
+type ddlCtrl struct {
+	paused chan struct{}
+	resume chan struct{}
+
+	ddlWg  sync.WaitGroup
+	ddlErr error
+
+	pausedOnce  sync.Once
+	releaseOnce sync.Once
+}
+
+// startDDLPausedAtFailpoint installs a failpoint callback and starts DDL in background.
+func startDDLPausedAtFailpoint(
+	t *testing.T,
+	tkDDL *testkit.TestKit,
+	failpointName string,
+	ddlSQL string,
+) *ddlCtrl {
+	ctrl := &ddlCtrl{
+		paused: make(chan struct{}),
+		resume: make(chan struct{}),
+	}
+
+	testfailpoint.EnableCall(t, failpointName, func() {
+		ctrl.pausedOnce.Do(func() {
+			close(ctrl.paused)
+		})
+		<-ctrl.resume
+	})
+
+	ctrl.ddlWg.Add(1)
+	go func() {
+		defer ctrl.ddlWg.Done()
+		ctrl.ddlErr = tkDDL.ExecToErr(ddlSQL)
+	}()
+	return ctrl
+}
+
+// waitUntilPaused waits until the failpoint callback is hit.
+func (c *ddlCtrl) waitUntilPaused(t *testing.T, desc string) {
+	select {
+	case <-c.paused:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "timed out waiting ddl failpoint", "desc=%s", desc)
+	}
+}
+
+// releaseAndWaitFinish resumes the paused DDL and waits for completion.
+// It is idempotent and safe to call multiple times.
+func (c *ddlCtrl) releaseAndWaitFinish(t *testing.T) {
+	c.releaseOnce.Do(func() {
+		close(c.resume)
+		c.ddlWg.Wait()
+		require.NoError(t, c.ddlErr)
+	})
+}
+
+func execAsMViewMaintenance(tk *testkit.TestKit, sql string) {
+	vars := tk.Session().GetSessionVars()
+	origMaint := vars.InMViewMaintenance
+	origRestr := vars.InRestrictedSQL
+	vars.InMViewMaintenance = true
+	vars.InRestrictedSQL = true
+	defer func() {
+		vars.InMViewMaintenance = origMaint
+		vars.InRestrictedSQL = origRestr
+	}()
+	tk.MustExec(sql)
+}
+
+func skipMLogTestRequiringMDLDisabled(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
+}
+
+func TestMLogInsertGeneratedColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	tk.MustExec("create table t_gen (" +
+		"id bigint primary key," +
+		"base int not null," +
+		"gv int as (base + 1) virtual," +
+		"gs int as (base + 2) stored" +
+		")")
+	tk.MustExec("create materialized view log on t_gen (id, gv, gs)")
+
+	tk.MustExec("insert into t_gen(id, base) values (1, 10), (2, 20)")
+	tk.MustQuery("select id, gv, gs, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t_gen` order by id").
+		Check(testkit.Rows("1 11 12 I 1", "2 21 22 I 1"))
+}
+
+func TestMLogInsertSelect(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	tk.MustExec("create table src (a int primary key, b int, c int)")
+	tk.MustExec("create table t (a int primary key, b int, c int)")
+	tk.MustExec("create materialized view log on t (a, b, c)")
+
+	// (a) Basic INSERT ... SELECT with no conflicts — all rows logged as I.
+	tk.MustExec("insert into src values (1,10,100), (2,20,200)")
+	tk.MustExec("insert into t select * from src")
+	tk.MustQuery(
+		"select a, b, c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by a",
+	).Check(testkit.Rows(
+		"1 10 100 I 1",
+		"2 20 200 I 1",
+	))
+
+	// (b) INSERT IGNORE ... SELECT — conflicting rows are skipped.
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+	tk.MustExec("delete from src")
+	tk.MustExec("insert into src values (1,11,111), (3,30,300)")
+	tk.MustExec("insert ignore into t select * from src")
+	tk.MustQuery("select a, b, c from t order by a").Check(
+		testkit.Rows("1 10 100", "2 20 200", "3 30 300"),
+	)
+	tk.MustQuery(
+		"select a, b, c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Check(testkit.Rows(
+		"3 30 300 I 1",
+	))
+
+	// (c) INSERT ... SELECT ... ON DUPLICATE KEY UPDATE — conflicting row updated, new row inserted.
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+	tk.MustExec("delete from src")
+	tk.MustExec("insert into src values (1,11,111), (4,40,400)")
+	tk.MustExec("insert into t select * from src on duplicate key update b=values(b), c=values(c)")
+	tk.MustQuery("select a, b, c from t order by a").Check(
+		testkit.Rows("1 11 111", "2 20 200", "3 30 300", "4 40 400"),
+	)
+	tk.MustQuery(
+		"select a, b, c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"1 10 100 U -1",
+		"1 11 111 U 1",
+		"4 40 400 I 1",
+	))
+}
+
+func TestMLogReplaceSelect(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	tk.MustExec("create table src (a int primary key, b int)")
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("insert into t values (1, 10)")
+	tk.MustExec("create materialized view log on t (a, b)")
+
+	// REPLACE ... SELECT: row (1,...) conflicts on PK → U; row (2,...) is new → I.
+	tk.MustExec("insert into src values (1, 11), (2, 20)")
+	tk.MustExec("replace into t select * from src")
+
+	tk.MustQuery("select a, b from t order by a").Check(
+		testkit.Rows("1 11", "2 20"),
+	)
+	tk.MustQuery(
+		"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"1 10 U -1",
+		"1 11 U 1",
+		"2 20 I 1",
+	))
+}
+
+func setLoadDataReader(tk *testkit.TestKit, data string) {
+	readerBuilder := executor.LoadDataReaderBuilder{
+		Build: func(_ string) (io.ReadCloser, error) {
+			return mydump.NewStringReader(data), nil
+		},
+		Wg: &sync.WaitGroup{},
+	}
+	tk.Session().(sessionctx.Context).SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
+}
+
+func TestMLogLoadData(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	tk.MustExec("create table t (a int primary key, b int, c int)")
+	tk.MustExec("create materialized view log on t (a, b, c)")
+
+	// Basic LOAD DATA with no conflicts — all rows logged as I.
+	setLoadDataReader(tk, "1,10,100\n2,20,200\n")
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table t fields terminated by ',' (a, b, c)")
+
+	tk.MustQuery("select a, b, c from t order by a").Check(
+		testkit.Rows("1 10 100", "2 20 200"),
+	)
+	tk.MustQuery(
+		"select a, b, c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by a",
+	).Check(testkit.Rows(
+		"1 10 100 I 1",
+		"2 20 200 I 1",
+	))
+}
+
+func TestMLogLoadDataIgnore(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	tk.MustExec("create table t (a int primary key, b int unique, c int)")
+	// Seed rows before creating mlog so that seed inserts won't be logged.
+	tk.MustExec("insert into t values (1,10,100)")
+	tk.MustExec("create materialized view log on t (a, b, c)")
+
+	setLoadDataReader(tk, "1,11,111\n2,10,222\n3,30,333\n")
+
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' ignore into table t fields terminated by ',' (a, b, c)")
+
+	tk.MustQuery("select a, b, c from t order by a").Check(
+		testkit.Rows("1 10 100", "3 30 333"),
+	)
+	tk.MustQuery(
+		"select a, b, c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Check(testkit.Rows(
+		"3 30 333 I 1",
+	))
+}
+
+func TestMLogLoadDataReplacePKAndUKConflict(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	tk.MustExec("create table t (a int primary key, b int unique, c int)")
+	tk.MustExec("insert into t values (1,10,100), (2,20,200)")
+	tk.MustExec("create materialized view log on t (a, b, c)")
+
+	// The first row conflicts with (1,10,100) on PK and with (2,20,200) on unique index.
+	// The second row is new and should be inserted as is, even though its primary key value
+	// conflicts with the old row that the first row removes.
+	setLoadDataReader(tk, "1,20,999\n2,30,100\n")
+
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' replace into table t fields terminated by ',' (a, b, c)")
+
+	tk.MustQuery("select a, b, c from t order by a").Check(
+		testkit.Rows(
+			"1 20 999",
+			"2 30 100",
+		),
+	)
+	tk.MustQuery(
+		"select a, b, c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"1 10 100 U -1",
+		"1 20 999 U 1",
+		"2 20 200 U -1",
+		"2 30 100 I 1",
+	))
+}
+
+func TestMLogLoadDataReplaceConflictAddFailureNoLeak(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
+
+	tk.MustExec("create table t (a int primary key, b int unique, c int, constraint chk_c check (c > 0))")
+	tk.MustExec("insert into t values (1,10,1), (2,20,1)")
+	tk.MustExec("create materialized view log on t (a, b, c)")
+
+	setLoadDataReader(tk, "1,20,-1\n3,30,1\n")
+
+	// First row removes old rows due to REPLACE conflicts but add fails with check constraint.
+	// The second row is a plain insert and must still be marked as I (not leaked U).
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' replace into table t fields terminated by ',' (a, b, c)")
+
+	tk.MustQuery("select a, b, c from t order by a").Check(
+		testkit.Rows("3 30 1"),
+	)
+	tk.MustQuery(
+		"select a, b, c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"1 10 1 U -1",
+		"2 20 1 U -1",
+		"3 30 1 I 1",
+	))
+}
+
+func TestMLogMultiTableUpdate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	tk.MustExec("create table t1 (a int primary key, b int)")
+	tk.MustExec("create table t2 (a int primary key, b int)")
+	tk.MustExec("insert into t1 values (1,10)")
+	tk.MustExec("insert into t2 values (1,100)")
+	tk.MustExec("create materialized view log on t1 (a, b)")
+	tk.MustExec("create materialized view log on t2 (a, b)")
+
+	tk.MustExec("update t1, t2 set t1.b=11, t2.b=111 where t1.a=t2.a")
+
+	tk.MustQuery(
+		"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t1`",
+	).Sort().Check(testkit.Rows(
+		"1 10 U -1",
+		"1 11 U 1",
+	))
+	tk.MustQuery(
+		"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t2`",
+	).Sort().Check(testkit.Rows(
+		"1 100 U -1",
+		"1 111 U 1",
+	))
+}
+
+func TestMLogMultiTableDelete(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	tk.MustExec("create table t1 (a int primary key, b int, c int)")
+	tk.MustExec("create table t2 (a int primary key, b int, c int)")
+	tk.MustExec("insert into t1 values (1,10,100), (2,20,200)")
+	tk.MustExec("insert into t2 values (1,100,1000), (2,200,2000)")
+	// Use different tracked columns for two tables to cover per-table mlog mapping in
+	// multi-table DELETE, including non-handle tracked columns that used to be pruned.
+	tk.MustExec("create materialized view log on t1 (b)")
+	tk.MustExec("create materialized view log on t2 (c)")
+
+	tk.MustExec("delete t1, t2 from t1, t2 where t1.a=t2.a and t1.a=1")
+
+	tk.MustQuery("select a, b, c from t1 order by a").Check(testkit.Rows("2 20 200"))
+	tk.MustQuery("select a, b, c from t2 order by a").Check(testkit.Rows("2 200 2000"))
+
+	tk.MustQuery(
+		"select b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t1`",
+	).Check(testkit.Rows(
+		"10 D -1",
+	))
+	tk.MustQuery(
+		"select c, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t2`",
+	).Check(testkit.Rows(
+		"1000 D -1",
+	))
+}
+
+func TestMLogSkipUntrackedColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	tk.MustExec("create table t (a int primary key, b int, c int)")
+	tk.MustExec("insert into t values (1,100,1000)")
+	// mlog tracks (a, b); c is untracked.
+	tk.MustExec("create materialized view log on t (a, b)")
+
+	// Modifying an untracked column should not affect the mlog physical table.
+	showBefore := tk.MustQuery("show create table `$mlog$t`").Rows()[0][1].(string)
+	tk.MustExec("alter table t modify column c bigint")
+	showAfter := tk.MustQuery("show create table `$mlog$t`").Rows()[0][1].(string)
+	require.Equal(t, showBefore, showAfter)
+
+	// Updating an untracked column should not produce any mlog entry.
+	tk.MustExec("update t set c=2000 where a=1")
+	tk.MustQuery("select * from `$mlog$t`").Check(testkit.Rows())
+
+	// Updating a tracked column should produce mlog entries.
+	tk.MustExec("update t set b=101 where a=1")
+	tk.MustQuery(
+		"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"1 100 U -1",
+		"1 101 U 1",
+	))
+}
+
+func TestMLogPartialColumnsMapping(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	tk.MustExec("create table t (a int primary key, b int, c int, d int)")
+	// Track columns in a different order to verify mapping by column name.
+	tk.MustExec("create materialized view log on t (d, b)")
+
+	tk.MustExec("insert into t values (1,10,20,30)")
+	tk.MustQuery(
+		"select d, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Check(testkit.Rows(
+		"30 10 I 1",
+	))
+
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+	tk.MustExec("update t set c=21 where a=1")
+	tk.MustQuery("select * from `$mlog$t`").Check(testkit.Rows())
+
+	tk.MustExec("update t set b=11 where a=1")
+	tk.MustQuery(
+		"select d, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"30 10 U -1",
+		"30 11 U 1",
+	))
+
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+	tk.MustExec("update t set d=31 where a=1")
+	tk.MustQuery(
+		"select d, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"30 11 U -1",
+		"31 11 U 1",
+	))
+}
+
+func TestMLogTrackedReferenceTypes(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	tk.MustExec("create table t (id int primary key, s varchar(20), txt text, d decimal(10,2), vb varbinary(20))")
+	tk.MustExec("create materialized view log on t (s, txt, d, vb)")
+
+	tk.MustExec("insert into t values (1, 'alpha', 'payload1', 12.34, 'bin1')")
+	tk.MustQuery(
+		"select s, txt, d, hex(vb), `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Check(testkit.Rows(
+		"alpha payload1 12.34 62696E31 I 1",
+	))
+
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+	tk.MustExec("update t set s='beta', txt='payload2', d=56.78, vb='bin2' where id=1")
+	tk.MustQuery(
+		"select s, txt, d, hex(vb), `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"alpha payload1 12.34 62696E31 U -1",
+		"beta payload2 56.78 62696E32 U 1",
+	))
+
+	// No-reorg modify on a tracked column should also update the mlog physical column type.
+	showBefore := tk.MustQuery("show create table `$mlog$t`").Rows()[0][1].(string)
+	require.Contains(t, showBefore, "`s` varchar(20)")
+	tk.MustExec("alter table t modify column s varchar(40)")
+	showAfter := tk.MustQuery("show create table `$mlog$t`").Rows()[0][1].(string)
+	require.Contains(t, showAfter, "`s` varchar(40)")
+
+	// Existing mlog rows are still readable after the type change.
+	tk.MustQuery(
+		"select s, txt, d, hex(vb), `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"alpha payload1 12.34 62696E31 U -1",
+		"beta payload2 56.78 62696E32 U 1",
+	))
+
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+	tk.MustExec(`update t set s='gamma' where id=1`)
+	tk.MustQuery(
+		"select s, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"beta U -1",
+		"gamma U 1",
+	))
+
+	// Reorg-required modify should be rejected for tracked columns on mlog-only base tables.
+	err := tk.ExecToErr("alter table t modify column s varchar(5)")
+	require.ErrorContains(t, err, "only supports no-reorg compatible type changes for tracked columns")
+}
+
+func TestMLogTrackedNullToNotNullChangeRejected(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	tk.MustExec("create table t (id int primary key, g int not null, c int)")
+	tk.MustExec("create materialized view log on t (g, c)")
+
+	tk.MustExec("insert into t values (1, 1, null)")
+	tk.MustExec("update t set c = 10 where id = 1")
+
+	err := tk.ExecToErr("alter table t modify column c bigint not null")
+	require.ErrorContains(t, err, "does not support changing tracked columns from NULL to NOT NULL")
+}
+
+func TestMLogPrunedColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	t.Run("delete", func(t *testing.T) {
+		tk.MustExec("create table t_mlog_pruned_delete (a int, b int)")
+		tk.MustExec("create materialized view log on t_mlog_pruned_delete (a, b)")
+		tk.MustExec("insert into t_mlog_pruned_delete values (1,10)")
+		execAsMViewMaintenance(tk, "delete from `$mlog$t_mlog_pruned_delete`")
+
+		// Delete normally can prune non-handle/index columns, but mlog RemoveRecord reads
+		// tracked columns by base offsets; pruning them would make mlog writing fail.
+		tk.MustExec("delete from t_mlog_pruned_delete where b=10")
+
+		tk.MustQuery("select a, b from t_mlog_pruned_delete").Check(testkit.Rows())
+		tk.MustQuery(
+			"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t_mlog_pruned_delete`",
+		).Check(testkit.Rows(
+			"1 10 D -1",
+		))
+	})
+
+	t.Run("update", func(t *testing.T) {
+		tk.MustExec("create table t_mlog_pruned_update (a int, b int)")
+		tk.MustExec("create materialized view log on t_mlog_pruned_update (a, b)")
+		tk.MustExec("insert into t_mlog_pruned_update values (1,10)")
+		execAsMViewMaintenance(tk, "delete from `$mlog$t_mlog_pruned_update`")
+
+		// Even if only column b is updated, UpdateRecord still needs full writable row data.
+		// If update column pruning drops tracked columns, mlog writing would fail.
+		tk.MustExec("update t_mlog_pruned_update set b=11 where b=10")
+
+		tk.MustQuery("select a, b from t_mlog_pruned_update").Check(testkit.Rows("1 11"))
+		tk.MustQuery(
+			"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t_mlog_pruned_update`",
+		).Sort().Check(testkit.Rows(
+			"1 10 U -1",
+			"1 11 U 1",
+		))
+	})
+}
+
+func TestMLogOnlineDDLAddUntrackedColumn(t *testing.T) {
+	skipMLogTestRequiringMDLDisabled(t)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+	tk.MustExec("set @@global.tidb_enable_metadata_lock=0")
+
+	tk.MustExec("create table t (id int primary key, tracked int, untracked int)")
+	tk.MustExec("create materialized view log on t (id, tracked)")
+	tk.MustExec("insert into t values (1, 10, 100)")
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+
+	tkDDL := testkit.NewTestKit(t, store)
+	tkDDL.MustExec("use test")
+	tkDDL.MustExec("set tidb_mview_enable = on")
+	ctrl := startDDLPausedAtFailpoint(
+		t,
+		tkDDL,
+		addColumnStateWriteReorgFailpoint,
+		"alter table t add column c_new int default 0 after id",
+	)
+	defer ctrl.releaseAndWaitFinish(t)
+
+	ctrl.waitUntilPaused(t, "add-column write-reorg")
+
+	// Update an untracked column during online DDL: mlog should stay empty.
+	tk.MustExec("update t set untracked = 101 where id = 1")
+	tk.MustQuery("select * from `$mlog$t`").Check(testkit.Rows())
+
+	// Insert during online DDL: mlog should still capture tracked columns.
+	tk.MustExec("insert into t (id, tracked, untracked) values (2, 20, 200)")
+	tk.MustQuery(
+		"select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Check(testkit.Rows(
+		"2 20 I 1",
+	))
+
+	ctrl.releaseAndWaitFinish(t)
+
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows(
+		"1 0 10 101",
+		"2 0 20 200",
+	))
+}
+
+// TestMLogAddColumnRejectsNonPublicBaseColumn verifies that ALTER MATERIALIZED
+// VIEW LOG only accepts public base-table columns. A column being added by
+// concurrent online DDL is visible in metadata before it becomes public, and mlog
+// tracking must reject it until the base DDL finishes.
+func TestMLogAddColumnRejectsNonPublicBaseColumn(t *testing.T) {
+	skipMLogTestRequiringMDLDisabled(t)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+	tk.MustExec("set @@global.tidb_enable_metadata_lock=0")
+
+	tk.MustExec("create table t (id int primary key, tracked int)")
+	tk.MustExec("create materialized view log on t (id)")
+
+	tkDDL := testkit.NewTestKit(t, store)
+	tkDDL.MustExec("use test")
+	tkDDL.MustExec("set tidb_mview_enable = on")
+	ctrl := startDDLPausedAtFailpoint(
+		t,
+		tkDDL,
+		addColumnStateWriteReorgFailpoint,
+		"alter table t add column added int default 0",
+	)
+	defer ctrl.releaseAndWaitFinish(t)
+
+	ctrl.waitUntilPaused(t, "base-table add-column write-reorg")
+
+	// The base column is non-public while ADD COLUMN is paused, so the mlog
+	// should treat it as unavailable instead of adding a transient column.
+	tk.MustGetErrCode("alter materialized view log on t add column (added)", errno.ErrBadField)
+
+	ctrl.releaseAndWaitFinish(t)
+
+	// Once the base ADD COLUMN completes, the same column is public and can be
+	// tracked by the mlog normally.
+	tk.MustExec("alter materialized view log on t add column (added)")
+	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'test' and table_name = '$mlog$t' order by ordinal_position").
+		Check(testkit.Rows("id", "added", "_MLOG$_DML_TYPE", "_MLOG$_OLD_NEW"))
+}
+
+// TestMLogOnlineDDLAddTrackedColumn verifies mlog writes while ADD COLUMN is in
+// progress: before the new mlog column is public, writes still use the old
+// tracked-column set; after it is public, the new tracked column participates in
+// update logging.
+func TestMLogOnlineDDLAddTrackedColumn(t *testing.T) {
+	skipMLogTestRequiringMDLDisabled(t)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+	tk.MustExec("set @@global.tidb_enable_metadata_lock=0")
+
+	tk.MustExec("create table t (id int primary key, tracked int, added int, untracked int)")
+	tk.MustExec("create materialized view log on t (id, tracked)")
+	tk.MustExec("insert into t values (1, 10, 100, 1000)")
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+
+	tkDDL := testkit.NewTestKit(t, store)
+	tkDDL.MustExec("use test")
+	tkDDL.MustExec("set tidb_mview_enable = on")
+	ctrl := startDDLPausedAtFailpoint(
+		t,
+		tkDDL,
+		addColumnStateWriteReorgFailpoint,
+		"alter materialized view log on t add column (added)",
+	)
+	defer ctrl.releaseAndWaitFinish(t)
+
+	ctrl.waitUntilPaused(t, "mlog add-column write-reorg")
+
+	// The new mlog column is not public yet, so mlog writing should continue with the
+	// previous tracked column set instead of treating the transient metadata as corrupt.
+	tk.MustExec("update t set tracked = 11 where id = 1")
+	tk.MustQuery(
+		"select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"1 10 U -1",
+		"1 11 U 1",
+	))
+
+	ctrl.releaseAndWaitFinish(t)
+
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+	tk.MustExec("update t set untracked = 1001 where id = 1")
+	tk.MustQuery("select * from `$mlog$t`").Check(testkit.Rows())
+
+	tk.MustExec("update t set added = 101 where id = 1")
+	tk.MustQuery(
+		"select id, tracked, added, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"1 11 100 U -1",
+		"1 11 101 U 1",
+	))
+
+	tk.MustExec("create table t_drop_race (id int primary key, tracked int, added int)")
+	tk.MustExec("create materialized view log on t_drop_race (id)")
+	tkDDL2 := testkit.NewTestKit(t, store)
+	tkDDL2.MustExec("use test")
+	tkDDL2.MustExec("set tidb_mview_enable = on")
+	ctrl2 := startDDLPausedAtFailpoint(
+		t,
+		tkDDL2,
+		addColumnStateWriteReorgFailpoint,
+		"alter materialized view log on t_drop_race add column (added)",
+	)
+	defer ctrl2.releaseAndWaitFinish(t)
+	ctrl2.waitUntilPaused(t, "mlog add-column write-reorg before base drop")
+
+	tkDrop := testkit.NewTestKit(t, store)
+	tkDrop.MustExec("use test")
+	tkDrop.MustExec("set tidb_mview_enable = on")
+	dropDone := make(chan error, 1)
+	go func() {
+		dropDone <- tkDrop.ExecToErr("alter table t_drop_race drop column added")
+	}()
+	select {
+	case err := <-dropDone:
+		require.FailNow(t, "base drop column finished before mlog add completed", "err=%v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	ctrl2.releaseAndWaitFinish(t)
+	select {
+	case err := <-dropDone:
+		require.ErrorContains(t, err, "referenced by materialized view log")
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "timed out waiting base drop column to finish")
+	}
+	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'test' and table_name = '$mlog$t_drop_race' order by ordinal_position").
+		Check(testkit.Rows("id", "added", "_MLOG$_DML_TYPE", "_MLOG$_OLD_NEW"))
+}
+
+func TestMLogOnlineDDLDropUntrackedColumn(t *testing.T) {
+	skipMLogTestRequiringMDLDisabled(t)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+	tk.MustExec("set @@global.tidb_enable_metadata_lock=0")
+
+	tk.MustExec("create table t (id int primary key, to_drop int, tracked int)")
+	tk.MustExec("create materialized view log on t (id, tracked)")
+	tk.MustExec("insert into t values (1, 100, 10)")
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+
+	tkDDL := testkit.NewTestKit(t, store)
+	tkDDL.MustExec("use test")
+	tkDDL.MustExec("set tidb_mview_enable = on")
+	ctrl := startDDLPausedAtFailpoint(
+		t,
+		tkDDL,
+		dropColumnStateWriteOnlyFailpoint,
+		"alter table t drop column to_drop",
+	)
+	defer ctrl.releaseAndWaitFinish(t)
+
+	ctrl.waitUntilPaused(t, "drop-untracked-column write-only")
+
+	// Update a tracked column during online DDL should still emit update logs.
+	tk.MustExec("update t set tracked = 11 where id = 1")
+	// Insert during online DDL should still emit insert logs.
+	tk.MustExec("insert into t (id, tracked) values (2, 20)")
+
+	tk.MustQuery(
+		"select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"1 10 U -1",
+		"1 11 U 1",
+		"2 20 I 1",
+	))
+
+	ctrl.releaseAndWaitFinish(t)
+
+	tk.MustQuery("select id, tracked from t order by id").Check(testkit.Rows(
+		"1 11",
+		"2 20",
+	))
+}
+
+func TestMLogOnlineDDLDropTrackedColumnRejected(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	tk.MustExec("create table t (id int primary key, tracked int, untracked int)")
+	tk.MustExec("create materialized view log on t (id, tracked)")
+	tk.MustExec("insert into t values (1, 10, 100)")
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+
+	tkDDL := testkit.NewTestKit(t, store)
+	tkDDL.MustExec("use test")
+	tkDDL.MustExec("set tidb_mview_enable = on")
+	err := tkDDL.ExecToErr("alter table t drop column tracked")
+	require.ErrorContains(t, err, "Unsupported ALTER TABLE on base table column tracked referenced by materialized view log")
+
+	// The tracked column remains valid after rejected DDL and mlog writing should work.
+	tk.MustExec("insert into t values (2, 20, 200)")
+	tk.MustQuery(
+		"select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"2 20 I 1",
+	))
+}
+
+func TestMLogDropTrackedColumnRejected(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	tk.MustExec("create table t (id int primary key, tracked int, untracked int)")
+	tk.MustExec("create materialized view log on t (id, tracked)")
+	err := tk.ExecToErr("alter table t drop column tracked")
+	require.ErrorContains(t, err, "Unsupported ALTER TABLE on base table column tracked referenced by materialized view log")
+
+	// DML remains writable and tracked-column change logs are still generated as expected.
+	tk.MustExec("insert into t values (1, 10, 100)")
+	tk.MustExec("update t set tracked = 11 where id = 1")
+	tk.MustExec("delete from t where id = 1")
+	tk.MustQuery(
+		"select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"1 10 I 1",
+		"1 10 U -1",
+		"1 11 D -1",
+		"1 11 U 1",
+	))
+	tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'test' and table_name = 't' and column_name = 'tracked'").Check(testkit.Rows("1"))
+}
+
+func TestMLogGeneratedColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	tk.MustExec("create table t (a int primary key, b int, c int, d int as (b+c) stored)")
+	// Track the stored generated column in the mlog.
+	tk.MustExec("create materialized view log on t (a, b, d)")
+
+	tk.MustExec("insert into t (a, b, c) values (1, 10, 20)")
+	tk.MustQuery(
+		"select a, b, d, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Check(testkit.Rows(
+		"1 10 30 I 1",
+	))
+
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+	tk.MustExec("update t set b=11 where a=1")
+	tk.MustQuery(
+		"select a, b, d, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"1 10 30 U -1",
+		"1 11 31 U 1",
+	))
+}
+
+func TestMLogVirtualGeneratedColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	tk.MustExec("create table t (a int primary key, b int, c int, d int as (b+c) virtual)")
+	// Track the stored generated column in the mlog.
+	tk.MustExec("create materialized view log on t (a, b, d)")
+
+	tk.MustExec("insert into t (a, b, c) values (1, 10, 20)")
+	tk.MustQuery(
+		"select a, b, d, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Check(testkit.Rows(
+		"1 10 30 I 1",
+	))
+
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+	tk.MustExec("update t set b=11 where a=1")
+	tk.MustQuery(
+		"select a, b, d, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"1 10 30 U -1",
+		"1 11 31 U 1",
+	))
+}
+
+func TestMLogUpdateTrackedGeneratedColumnOnly(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	cases := []struct {
+		name  string
+		table string
+		mlog  string
+		kind  string
+	}{
+		{name: "stored", table: "t_stored", mlog: "`$mlog$t_stored`", kind: "stored"},
+		{name: "virtual", table: "t_virtual", mlog: "`$mlog$t_virtual`", kind: "virtual"},
+	}
+	for _, ca := range cases {
+		t.Run(ca.name, func(t *testing.T) {
+			tk.MustExec("create table " + ca.table + " (a int primary key, b int, c int, d int as (b+c) " + ca.kind + ")")
+			tk.MustExec("create materialized view log on " + ca.table + " (a, d)")
+
+			tk.MustExec("insert into " + ca.table + " (a, b, c) values (1, 10, 20)")
+			execAsMViewMaintenance(tk, "delete from "+ca.mlog)
+			tk.MustExec("update " + ca.table + " set b=11 where a=1")
+
+			tk.MustQuery(
+				"select a, d, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from " + ca.mlog,
+			).Sort().Check(testkit.Rows(
+				"1 30 U -1",
+				"1 31 U 1",
+			))
+		})
+	}
+}
+
+func TestMLogAlterAddGeneratedColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	tk.MustExec("create table t (id int primary key, tracked int)")
+	tk.MustExec("create materialized view log on t (id, tracked)")
+
+	tk.MustExec("alter table t add column gv int as (tracked + 1) virtual")
+	err := tk.ExecToErr("alter table t add column gs int as (tracked + 2) stored")
+	require.ErrorContains(t, err, "Adding generated stored column through ALTER TABLE")
+
+	tk.MustExec("insert into t (id, tracked) values (1, 10)")
+	tk.MustQuery("select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`").
+		Check(testkit.Rows("1 10 I 1"))
+	tk.MustQuery("select id, tracked, gv from t").Check(testkit.Rows("1 10 11"))
+
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+	tk.MustExec("update t set tracked=20 where id=1")
+	tk.MustQuery("select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`").Sort().
+		Check(testkit.Rows("1 10 U -1", "1 20 U 1"))
+	tk.MustQuery("select id, tracked, gv from t").Check(testkit.Rows("1 20 21"))
+}
+
+func TestMLogAlterDropTrackedGeneratedColumnCurrentBehavior(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	cases := []struct {
+		name  string
+		table string
+		kind  string
+	}{
+		{name: "stored", table: "t_drop_stored", kind: "stored"},
+		{name: "virtual", table: "t_drop_virtual", kind: "virtual"},
+	}
+	for _, ca := range cases {
+		t.Run(ca.name, func(t *testing.T) {
+			tk.MustExec("create table " + ca.table + " (id int primary key, base int, g int as (base + 1) " + ca.kind + ")")
+			tk.MustExec("create materialized view log on " + ca.table + " (id, g)")
+			err := tk.ExecToErr("alter table " + ca.table + " drop column g")
+			require.ErrorContains(t, err, "referenced by materialized view log")
+		})
+	}
+}
+
+func TestMLogAlterGeneratedColumnConstraints(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+	tk.MustExec("create table t (id int primary key, base int, gv int as (base + 1) virtual, gs int as (base + 2) stored)")
+	tk.MustExec("create materialized view log on t (id, gv, gs)")
+
+	err := tk.ExecToErr("alter table t rename column base to base2")
+	require.ErrorContains(t, err, "generated column dependency")
+	err = tk.ExecToErr("alter table t modify column base bigint")
+	require.ErrorContains(t, err, "generated column dependency")
+	err = tk.ExecToErr("alter table t modify column gv bigint")
+	require.ErrorContains(t, err, "Changing the STORED status")
+}
+
+func TestMLogAlterModifyTrackedVirtualGeneratedColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	tk.MustExec("create table t (id int primary key, base int, g int as (base + 1) virtual)")
+	tk.MustExec("create materialized view log on t (id, g)")
+	tk.MustExec("alter table t modify column g int as (base + 2) virtual")
+
+	tk.MustExec("insert into t (id, base) values (1, 10)")
+	tk.MustQuery("select id, g, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`").
+		Check(testkit.Rows("1 12 I 1"))
+
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+	tk.MustExec("update t set base=20 where id=1")
+	tk.MustQuery("select id, g, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`").Sort().
+		Check(testkit.Rows("1 12 U -1", "1 22 U 1"))
+}
+
+func TestMLogAlterRenameTrackedGeneratedColumnCurrentBehavior(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+	tk.MustExec("create table t (id int primary key, base int, g int as (base + 1) virtual)")
+	tk.MustExec("create materialized view log on t (id, g)")
+	err := tk.ExecToErr("alter table t rename column g to g2")
+	require.ErrorContains(t, err, "referenced by materialized view log")
+}
+
+func TestMLogAutoIncrement(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	tk.MustExec("create table t (a int auto_increment primary key, b int)")
+	// Track the auto-increment PK in the mlog.
+	tk.MustExec("create materialized view log on t (a, b)")
+
+	tk.MustExec("insert into t (b) values (10), (20)")
+
+	tk.MustQuery(
+		"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by a",
+	).Check(testkit.Rows(
+		"1 10 I 1",
+		"2 20 I 1",
+	))
+
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+	tk.MustExec("delete from t where a=1")
+	tk.MustQuery(
+		"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Check(testkit.Rows(
+		"1 10 D -1",
+	))
+
+	// REPLACE with auto-increment PK conflict.
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+	tk.MustExec("replace into t values (2, 21)")
+	tk.MustQuery(
+		"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"2 20 U -1",
+		"2 21 U 1",
+	))
+
+	// REPLACE with new auto-increment allocation.
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+	tk.MustExec("replace into t (b) values (30)")
+	tk.MustQuery(
+		"select b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Check(testkit.Rows(
+		"30 I 1",
+	))
+}
+
+func TestMLogPartitionedTableNotSupported(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	tk.MustExec(
+		"create table t (a int, b int) " +
+			"partition by range (a) (" +
+			"partition p0 values less than (10)," +
+			"partition p1 values less than (maxvalue)" +
+			")",
+	)
+	tk.MustGetErrCode("create materialized view log on t (a, b)", errno.ErrUnsupportedDDLOperation)
+}
+
+func TestMLogTransactionRollback(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("create materialized view log on t (a, b)")
+
+	// BEGIN; INSERT; verify mlog has rows; ROLLBACK; mlog should be empty.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1, 10)")
+	tk.MustQuery(
+		"select a, b, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Check(testkit.Rows(
+		"1 10 I 1",
+	))
+	tk.MustExec("rollback")
+
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustQuery("select * from `$mlog$t`").Check(testkit.Rows())
+}
+
+func TestMLogImportIntoNotSupported(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("create materialized view log on t (a, b)")
+
+	tk.MustGetErrCode(
+		"import into t from '/nonexistent.csv'",
+		mysql.ErrNotSupportedYet,
+	)
+}

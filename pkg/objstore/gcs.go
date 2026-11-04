@@ -163,9 +163,9 @@ func (s *GCSStorage) CopyFrom(ctx context.Context, e storeapi.Storage, spec stor
 	return nil
 }
 
-// MarkStrongConsistency implements Storage interface.
-func (s *GCSStorage) MarkStrongConsistency() {
-	// See https://cloud.google.com/storage/docs/consistency#strongly_consistent_operations
+// Features implements FeatureProvider.
+func (s *GCSStorage) Features() storeapi.Features {
+	return storeapi.FeatureStrongConsistency | storeapi.FeatureSupportsStartAfter
 }
 
 // GetBucketHandle gets the handle to the GCS API on the bucket.
@@ -438,6 +438,13 @@ const gcsClientCnt = 16
 
 // NewGCSStorage creates a GCS external storage implementation.
 func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *storeapi.Options) (*GCSStorage, error) {
+	// url.Parse only checks syntax. SDK normalization and validation can reject
+	// endpoints accepted here and expose endpoint credentials in SDK errors.
+	// Error redaction should be fixed upstream rather than duplicating SDK rules here.
+	if _, err := url.Parse(gcs.Endpoint); err != nil {
+		// Do not retain the parser error, which contains the credential-bearing URL.
+		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "invalid GCS endpoint URL")
+	}
 	var clientOps []option.ClientOption
 	if opts.NoCredentials {
 		clientOps = append(clientOps, option.WithoutAuthentication())

@@ -429,6 +429,9 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 		return nil
 	}
 	tbl := tnW.TableInfo
+	if err := CheckMViewReadable(ctx.GetSessionVars(), tbl, tblAlias.O); err != nil {
+		return nil
+	}
 	// Skip the optimization with partition selection.
 	// TODO: Add test and remove this!
 	if len(tblName.PartitionNames) > 0 {
@@ -539,6 +542,9 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 		return nil
 	}
 	tbl := tnW.TableInfo
+	if err := CheckMViewReadable(ctx.GetSessionVars(), tbl, tblAlias.O); err != nil {
+		return nil
+	}
 
 	var pkColOffset int
 	for i, col := range tbl.Columns {
@@ -1171,6 +1177,19 @@ func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolv
 		return nil
 	}
 
+	tblName, tblAlias := getSingleTableNameAndAlias(updateStmt.TableRefs)
+	if tblName == nil {
+		return nil
+	}
+	// tnW might be nil, in some ut, query is directly 'optimized' without pre-process.
+	tnW := resolveCtx.GetTableName(tblName)
+	if tnW == nil {
+		return nil
+	}
+	if CheckMViewUpdatable(ctx.GetSessionVars(), tnW.TableInfo, tblAlias.O, "UPDATE") != nil {
+		return nil
+	}
+
 	selStmt := &ast.SelectStmt{
 		TableHints: updateStmt.TableHints,
 		Fields:     &ast.FieldList{},
@@ -1320,6 +1339,20 @@ func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCt
 	if delStmt.IsMultiTable {
 		return nil
 	}
+
+	tblName, tblAlias := getSingleTableNameAndAlias(delStmt.TableRefs)
+	if tblName == nil {
+		return nil
+	}
+	// tnW might be nil, in some ut, query is directly 'optimized' without pre-process.
+	tnW := resolveCtx.GetTableName(tblName)
+	if tnW == nil {
+		return nil
+	}
+	if CheckMViewUpdatable(ctx.GetSessionVars(), tnW.TableInfo, tblAlias.O, "DELETE") != nil {
+		return nil
+	}
+
 	selStmt := &ast.SelectStmt{
 		TableHints: delStmt.TableHints,
 		Fields:     &ast.FieldList{},
@@ -1436,22 +1469,28 @@ func buildHandleCols(dbName string, tbl *model.TableInfo, pointget base.Physical
 }
 
 // TODO: Remove this, by enabling all types of partitioning
-// and update/add tests
-func getHashOrKeyPartitionColumnName(ctx base.PlanContext, tbl *model.TableInfo) *ast.CIStr {
-	pi := tbl.GetPartitionInfo()
+// and update/add tests.
+func getHashOrKeyPartitionColumnName(tbl table.Table) *ast.CIStr {
+	if tbl == nil {
+		return nil
+	}
+	tblInfo := tbl.Meta()
+	if tblInfo == nil {
+		return nil
+	}
+	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		return nil
 	}
 	if pi.Type != ast.PartitionTypeHash && pi.Type != ast.PartitionTypeKey {
 		return nil
 	}
-	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
-	table, ok := is.TableByID(context.Background(), tbl.ID)
+	partTable, ok := tbl.(base.PartitionTable)
 	if !ok {
 		return nil
 	}
 	// PartitionExpr don't need columns and names for hash partition.
-	partitionExpr := table.(base.PartitionTable).PartitionExpr()
+	partitionExpr := partTable.PartitionExpr()
 	if pi.Type == ast.PartitionTypeKey {
 		// used to judge whether the key partition contains only one field
 		if len(pi.Columns) != 1 {
