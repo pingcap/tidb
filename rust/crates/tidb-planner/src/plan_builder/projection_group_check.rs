@@ -92,11 +92,11 @@ pub(super) fn check(
         return Err(if ungrouped {
             PlanError::from(
                 tidb_plannererrors::ERR_MIX_OF_GROUP_FUNC_AND_FIELDS
-                    .generate_with_stack_by_args(&[(offset + 1).into(), name.into()]),
+                    .gen_with_stack_by_args(&[(offset + 1).into(), name.into()]),
             )
         } else {
             PlanError::from(
-                tidb_plannererrors::ERR_FIELD_NOT_IN_GROUP_BY.generate_with_stack_by_args(
+                tidb_plannererrors::ERR_FIELD_NOT_IN_GROUP_BY.gen_with_stack_by_args(
                     &[(offset + 1).into(), "SELECT list".into(), name.into()],
                 ),
             )

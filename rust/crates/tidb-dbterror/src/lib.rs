@@ -397,7 +397,7 @@ mod tests {
 
             set_redaction_mode(RedactionMode::Enabled);
             let msg = prototype
-                .fast_generate(&template, &args)
+                .fast_gen(&template, &args)
                 .message()
                 .to_string();
             for want in case.enabled {
@@ -415,7 +415,7 @@ mod tests {
 
             set_redaction_mode(RedactionMode::Marker);
             let msg = prototype
-                .fast_generate(&template, &args)
+                .fast_gen(&template, &args)
                 .message()
                 .to_string();
             assert!(

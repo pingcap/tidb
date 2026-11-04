@@ -293,7 +293,7 @@ pub fn collect_physical_table_refs(stmt: &Stmt) -> Vec<Vec<String>> {
 /// [`tidb_planner::preprocess::handle_table_name`].
 pub fn pin_current_database(stmt: &mut Stmt, current_db: &str) -> Result<(), DriverError> {
     tidb_planner::preprocess::handle_table_name(stmt, current_db).map_err(|_| {
-        DriverError::from(tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]))
+        DriverError::from(tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]))
     })
 }
 

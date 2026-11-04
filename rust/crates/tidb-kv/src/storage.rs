@@ -466,6 +466,16 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
     /// into the enclosing stage.
     fn release(&mut self, _handle: StagingHandle) {}
 
+    /// Go `MemBuffer.InspectStage(h, f)`: every key written since `handle`
+    /// was opened, once, with its flags and current value (empty for a
+    /// deletion). A backend that stages nothing reports nothing.
+    fn inspect_stage(
+        &self,
+        _handle: StagingHandle,
+        _inspect: &mut dyn FnMut(&Key, tidb_txnkv::KeyFlags, &[u8]),
+    ) {
+    }
+
     /// Whether this backend's commit drops untouched index entries (Go
     /// `TiDBKVFilter.IsUnnecessaryKeyValue`), so an UPDATE may stage them as
     /// Go's `index.create(untouched = true)` does. A backend that would
@@ -586,6 +596,28 @@ impl TableStorage for MemTableStorage {
                     }
                 }
             }
+        }
+    }
+
+    fn inspect_stage(
+        &self,
+        handle: StagingHandle,
+        inspect: &mut dyn FnMut(&Key, tidb_txnkv::KeyFlags, &[u8]),
+    ) {
+        if handle.0 == 0 || self.stages.len() < handle.0 {
+            return;
+        }
+        // The map behind `MemStorage` is shared; this clone reads it.
+        let mut inner = self.inner.clone();
+        let mut seen = std::collections::HashSet::new();
+        for (key, _) in self.stages[handle.0 - 1..].iter().flatten() {
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            let value = Getter::get(&mut inner, key, GetOptions::default())
+                .map(|entry| entry.value)
+                .unwrap_or_default();
+            inspect(key, tidb_txnkv::KeyFlags::default(), &value);
         }
     }
 

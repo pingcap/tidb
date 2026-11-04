@@ -159,7 +159,7 @@ pub fn cluster_session_catalog_with_templates(
         }
         // Go `Builder.createSchemaTablesForDB`: the schema holds its
         // `DBInfo` -- charset, collation, placement and all.
-        catalog.register_database_info(database.clone());
+        catalog.create_schema_tables_for_db(database.clone());
         for table_handle in database.read().deprecated_tables.iter_deref() {
             // Go `ApplyDiff`: a table no diff names keeps the object the
             // previous image built, its cached table's runtime with it.

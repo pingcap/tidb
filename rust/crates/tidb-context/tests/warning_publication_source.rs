@@ -24,7 +24,7 @@ use tidb_context::warning_publication::{
 #[test]
 fn sql_warn_json_round_trips_levels_and_error_messages() {
     let undetermined = ERR_RESULT_UNDETERMINED
-        .fast_generate(
+        .fast_gen(
             ERR_RESULT_UNDETERMINED.message(),
             &[FormatArg::from("unknown")],
         )

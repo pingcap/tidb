@@ -98,11 +98,11 @@ pub(crate) fn build_fk_triggers(
     )
     .map_err(|error| match error {
         FkPlanError::NoReferencedRow(fk) => DriverError::from(
-            tidb_plannererrors::ERR_NO_REFERENCED_ROW2.fast_generate_by_args(&[fk.into()]),
+            tidb_plannererrors::ERR_NO_REFERENCED_ROW2.fast_gen_by_args(&[fk.into()]),
         ),
         FkPlanError::RowIsReferenced(fk) => DriverError::from(
             tidb_plannererrors::ERR_ROW_IS_REFERENCED2
-                .generate_with_stack_by_args(&[fk.into()]),
+                .gen_with_stack_by_args(&[fk.into()]),
         ),
         FkPlanError::Unsupported(message) => DriverError::unsupported(message),
     })

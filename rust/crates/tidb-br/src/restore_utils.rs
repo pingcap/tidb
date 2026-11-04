@@ -68,6 +68,6 @@ pub use rewrite_rule::{
     get_rewrite_encoded_keys, get_rewrite_raw_keys, get_rewrite_rule_of_table, get_rewrite_rules,
     get_rewrite_rules_map, get_rewrite_table_id, rewrite_and_encode_raw_key, rewrite_range,
     set_time_range_filter, validate_file_rewrite_rule, AppliedFile, RestoreError, RestoreErrorKind,
-    RewriteRules, RewrittenKeys, TableIdRemap,
+    RewriteRules, RewrittenKeys, TableIDRemap,
 };
 use tidb_proto::{backup::File, import_sstpb::RewriteRule};

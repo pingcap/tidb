@@ -326,7 +326,7 @@ pub fn check_modify_types(
     if can_reorganize && origin.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY) {
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN
-                .generate_with_stack_by_args(&["this column has primary key flag".into()]),
+                .gen_with_stack_by_args(&["this column has primary key flag".into()]),
         ));
     }
     check_modify_types_charset_and_collation(origin, to, can_reorganize, column_name, indexed)
@@ -505,7 +505,7 @@ fn check_type_change_supported(origin: &FieldType, to: &FieldType) -> Result<(),
 
     if refused {
         return Err(tidb_terror::MysqlError::from_terror(
-            &tidb_dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN.generate_with_stack_by_args(&[
+            &tidb_dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN.gen_with_stack_by_args(&[
                 format!(
                     "change from original type {} to {} is currently unsupported yet",
                     (origin.compact_str(false)),
@@ -535,15 +535,15 @@ impl CharsetChangeRefusal {
     pub fn into_error(self, collation_message: impl FnOnce() -> String) -> MysqlError {
         match self {
             Self::UnknownCharset(message) => MysqlError::from_terror(
-                &tidb_dbterror::ERR_UNKNOWN_CHARACTER_SET.generate_with_stack(message),
+                &tidb_dbterror::ERR_UNKNOWN_CHARACTER_SET.gen_with_stack(message),
             ),
             Self::Collation => MysqlError::from_terror(
                 &tidb_dbterror::ERR_UNSUPPORTED_MODIFY_COLLATION
-                    .generate_with_stack(collation_message()),
+                    .gen_with_stack(collation_message()),
             ),
             Self::Charset(reason) => MysqlError::from_terror(
                 &tidb_dbterror::ERR_UNSUPPORTED_MODIFY_CHARSET
-                    .generate_with_stack_by_args(&[reason.into()]),
+                    .gen_with_stack_by_args(&[reason.into()]),
             ),
         }
     }
@@ -605,7 +605,7 @@ mod type_change_gate_tests {
         assert_eq!(
             check_type_change_supported(&vector, &int),
             Err(tidb_terror::MysqlError::from_terror(
-                &tidb_dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN.generate_with_stack_by_args(&[
+                &tidb_dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN.gen_with_stack_by_args(&[
                     format!(
                         "change from original type {} to {} is currently unsupported yet",
                         (vector.compact_str(false)),
@@ -618,7 +618,7 @@ mod type_change_gate_tests {
         assert_eq!(
             check_type_change_supported(&int, &vector),
             Err(tidb_terror::MysqlError::from_terror(
-                &tidb_dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN.generate_with_stack_by_args(&[
+                &tidb_dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN.gen_with_stack_by_args(&[
                     format!(
                         "change from original type {} to {} is currently unsupported yet",
                         (int.compact_str(false)),

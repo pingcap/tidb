@@ -123,7 +123,7 @@ fn statement_hints_use_the_canonical_parse_result() {
 
     session.run("SELECT /*+ NO_INDEX_MERGE() */ 1").unwrap();
     assert!(session.stmt_hints.no_index_merge_hint);
-    assert!(!session.statement_context(false).index_merge());
+    assert!(!session.statement_context(false).get_enable_index_merge());
 
     session.run("SELECT /*+ STRAIGHT_JOIN() */ 1").unwrap();
     assert!(session.stmt_hints.straight_join_order);
@@ -154,7 +154,7 @@ fn statement_hints_use_the_canonical_parse_result() {
     // persistent session values again.
     session.run("SELECT 1").unwrap();
     let ctx = session.statement_context(false);
-    assert!(ctx.index_merge());
+    assert!(ctx.get_enable_index_merge());
     assert!(ctx.allow_in_subq_to_join_and_agg());
     assert_eq!(ctx.replica_read(), tidb_txnkv::ReplicaReadType::Leader,);
     assert_eq!(

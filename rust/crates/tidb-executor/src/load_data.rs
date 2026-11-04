@@ -89,14 +89,14 @@ fn wrong_format_config_by_args(detail: &str) -> DriverError {
     // `GenWithStackByArgs` renders its argument as an extra.
     DriverError::from(
         (&tidb_exeerrors::ERR_LOAD_DATA_WRONG_FORMAT_CONFIG)
-            .generate_with_stack(format!("%!(EXTRA string={detail})")),
+            .gen_with_stack(format!("%!(EXTRA string={detail})")),
     )
 }
 
 fn wrong_format_config(detail: String) -> DriverError {
     DriverError::from(
         (&tidb_exeerrors::ERR_LOAD_DATA_WRONG_FORMAT_CONFIG)
-            .generate_with_stack(detail),
+            .gen_with_stack(detail),
     )
 }
 
@@ -119,7 +119,7 @@ pub fn build_load_data(
         [database, name] => (database.clone(), name.clone()),
         [_] if current_db.is_empty() => {
             return Err(DriverError::from(
-                tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]),
             ));
         }
         [name] => (current_db.to_owned(), name.clone()),
@@ -128,14 +128,14 @@ pub fn build_load_data(
     let Some(entry) = catalog.table_in(&database, &name) else {
         return Err(DriverError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+                .gen_with_stack_by_args(&[(&database).into(), (&name).into()]),
         ));
     };
     check_privileges(&database, &name)?;
     let TableEntry::Kv(table) = entry else {
         return Err(DriverError::from(
             tidb_plannererrors::ERR_NON_UPDATABLE_TABLE
-                .generate_with_stack_by_args(&[name.into(), "LOAD".into()]),
+                .gen_with_stack_by_args(&[name.into(), "LOAD".into()]),
         ));
     };
 
@@ -178,7 +178,7 @@ pub fn build_load_data(
     // Go `LoadDataController.checkFieldParams`.
     if load.path.is_empty() {
         return Err(DriverError::from(
-            (&tidb_exeerrors::ERR_LOAD_DATA_EMPTY_PATH).generate_with_stack(
+            (&tidb_exeerrors::ERR_LOAD_DATA_EMPTY_PATH).gen_with_stack(
                 "The value of INFILE must not be empty when LOAD DATA from LOCAL".to_owned(),
             ),
         ));
@@ -257,7 +257,7 @@ pub fn build_load_data(
             });
         let Some(found) = found else {
             return Err(DriverError::from(
-                tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_UNKNOWN_COLUMN.gen_with_stack_by_args(&[
                     tidb_hack::go_to_lower(&name.clone()).into(),
                     ("field list".to_owned()).into(),
                 ]),
@@ -267,7 +267,7 @@ pub fn build_load_data(
         if seen.iter().any(|earlier| earlier.go_lower_eq(&found)) {
             return Err(DriverError::from(
                 (&tidb_table::table_errors::ERR_DUPLICATE_COLUMN)
-                    .generate_with_stack(format!("Column '{found}' specified twice")),
+                    .gen_with_stack(format!("Column '{found}' specified twice")),
             ));
         }
         seen.push(found);
@@ -375,7 +375,7 @@ fn decompress(path: &str, data: &[u8]) -> Result<Vec<u8>, DriverError> {
 }
 
 fn read_failure(error: &CsvError) -> DriverError {
-    DriverError::from((&tidb_exeerrors::ERR_LOAD_DATA_CANT_READ).generate_with_stack(format!(
+    DriverError::from((&tidb_exeerrors::ERR_LOAD_DATA_CANT_READ).gen_with_stack(format!(
             "Failed to read source files. Reason: {error}. Only the following formats delimited text file (csv, tsv), parquet, sql are supported. Please provide the valid source file(s)"
         )))
 }
@@ -408,7 +408,7 @@ pub fn run_load_data(
         .table_in(&prepared.database, &prepared.table)
         .ok_or_else(|| {
             DriverError::from(
-                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(
+                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.gen_with_stack_by_args(
                     &[(&prepared.database).into(), (&prepared.table).into()],
                 ),
             )
@@ -416,7 +416,7 @@ pub fn run_load_data(
     else {
         return Err(DriverError::from(
             tidb_plannererrors::ERR_NON_UPDATABLE_TABLE
-                .generate_with_stack_by_args(&[prepared.table.clone().into(), "LOAD".into()]),
+                .gen_with_stack_by_args(&[prepared.table.clone().into(), "LOAD".into()]),
         ));
     };
     let columns = table.columns().to_vec();
@@ -438,7 +438,7 @@ pub fn run_load_data(
         let expr = tidb_expr::rewriter::rewrite_expr_resolved(&assignment.value, &resolver)
             .map_err(|error| match error {
                 tidb_exprctx::EvalError::UnknownColumn(column) => DriverError::from(
-                    tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                    tidb_plannererrors::ERR_UNKNOWN_COLUMN.gen_with_stack_by_args(&[
                         tidb_hack::go_to_lower(&column.go_to_lower()).into(),
                         ("expression".to_owned()).into(),
                     ]),
@@ -503,7 +503,7 @@ pub fn run_load_data(
         };
         if let Some((proto, message)) = mismatch {
             if restrictive {
-                return Err(DriverError::from((proto).generate_with_stack(message)));
+                return Err(DriverError::from((proto).gen_with_stack(message)));
             }
             ctx.append_warning_parts(proto.to_sql_error().code, &message);
         }
@@ -684,7 +684,7 @@ pub trait LoadDataExec: crate::show::exec::ShowExec {
                     .unwrap_or_else(|| self.has_scoped_privilege(schema, table, privilege));
             if !granted {
                 return Err(DriverError::from(
-                    tidb_plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(
+                    tidb_plannererrors::ERR_TABLEACCESS_DENIED.gen_with_stack_by_args(
                         &[
                             privilege.print_name().into(),
                             user.to_owned().into(),

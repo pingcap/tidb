@@ -1223,7 +1223,7 @@ impl Session {
                 Some(_) => {
                     // Go refuses a statement naming two different instants.
                     return Err(DriverError::from(
-                        tidb_plannererrors::ERR_AS_OF.generate_with_stack_by_args(&[
+                        tidb_plannererrors::ERR_AS_OF.gen_with_stack_by_args(&[
                             ("can not set different time in the as of".to_owned()).into(),
                         ]),
                     ));
@@ -1238,7 +1238,7 @@ impl Session {
             self.vars.use_txn_read_ts();
             self.cleanup_txn_read_ts();
             return Err(DriverError::from(
-                tidb_plannererrors::ERR_AS_OF.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_AS_OF.gen_with_stack_by_args(&[
                     "can't use select as of while already set transaction as of".into(),
                 ]),
             ));
@@ -1396,6 +1396,9 @@ impl Session {
                 tidb_tracing::end_thread_region("executor.Compile");
             }
         }
+        if !compile.nested && result.is_ok() {
+            self.successful_compiles += 1;
+        }
         drop(compile);
         if result.is_err() && !self.in_transaction() {
             self.cleanup_txn_read_ts();
@@ -1426,7 +1429,7 @@ impl Session {
             };
             return Err(DriverError::from(
                 tidb_plannererrors::ERR_NOT_SUPPORTED_WITH_SEM
-                    .generate_with_stack_by_args(&[statement.into()]),
+                    .gen_with_stack_by_args(&[statement.into()]),
             ));
         }
         Ok(())
@@ -1464,7 +1467,7 @@ impl Session {
         // pseudo column is not yet usable by SELECT, UPDATE or DELETE.
         if scan.names_commit_ts {
             return Err(DriverError::Mysql(tidb_terror::MysqlError::from_terror(
-                &tidb_plannererrors::ERR_INTERNAL.generate_with_stack(format!(
+                &tidb_plannererrors::ERR_INTERNAL.gen_with_stack(format!(
                     "Usage of column name '{}' is not supported for now",
                     tidb_planner::plan_builder::EXTRA_COMMIT_TS_NAME
                 )),
@@ -1473,7 +1476,7 @@ impl Session {
         if let Some(function) = &scan.qualified_function {
             return Err(DriverError::Mysql(tidb_terror::MysqlError::from_terror(
                 &tidb_expr::expression_errors::ERR_FUNCTION_NOT_EXISTS
-                    .generate_with_stack(format!("FUNCTION {function} does not exist")),
+                    .gen_with_stack(format!("FUNCTION {function} does not exist")),
             )));
         }
         self.validate_statement_read_only_in_staleness(&stmt)?;
@@ -1520,7 +1523,7 @@ impl Session {
         }
         if scan.has_as_of && self.in_transaction() {
             return Err(DriverError::from(
-                tidb_plannererrors::ERR_AS_OF.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_AS_OF.gen_with_stack_by_args(&[
                     "as of timestamp can't be set in transaction.".into(),
                 ]),
             ));
@@ -2163,7 +2166,7 @@ impl Session {
                         // *ast.CallStmt` (8108), not a generic 1105.
                         Err(DriverError::from(
                             (&tidb_plannererrors::ERR_UNSUPPORTED_TYPE)
-                                .generate_with_stack("Unsupported type *ast.CallStmt".to_owned()),
+                                .gen_with_stack("Unsupported type *ast.CallStmt".to_owned()),
                         ))
                     }
                     DmlStmt::LoadData(load) => self.run_load_data_stmt(load, &stmt),

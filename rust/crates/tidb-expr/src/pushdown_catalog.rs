@@ -3565,7 +3565,7 @@ pub fn from_expression(expression: &Expression) -> Option<PbScalar> {
 
 /// Go `PbConverter.ExprToPB`: read constants and correlated columns from the
 /// current evaluation context, without cloning or rewriting the expression.
-pub fn from_expression_in(
+pub fn expr_to_pb(
     expression: &Expression,
     context: &dyn crate::Columns,
 ) -> Result<Option<PbScalar>, crate::EvalError> {
@@ -3587,7 +3587,7 @@ impl<T: crate::Columns + Send + Sync + ?Sized> PbConverterContext for T {}
 /// `expression` becomes the constant `context` holds for it now. The caller
 /// binds a request-owned copy, so the retained plan expression is untouched
 /// for the next Open.
-pub fn bind_deferred_leaves(
+pub fn con_or_cor_col_to_pb_expr(
     expression: &mut Expression,
     context: &dyn crate::Columns,
 ) -> Result<(), crate::EvalError> {
@@ -3620,7 +3620,7 @@ pub fn bind_deferred_leaves(
         }
         Expression::ScalarFunction(function) => {
             for argument in &mut function.args {
-                bind_deferred_leaves(argument, context)?;
+                con_or_cor_col_to_pb_expr(argument, context)?;
             }
         }
         Expression::Column(_) | Expression::Constant(_) | Expression::ScalarSubQuery(_) => {}

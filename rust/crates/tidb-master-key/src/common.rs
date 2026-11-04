@@ -53,7 +53,7 @@ pub struct Iv {
 
 impl Iv {
     /// Go `NewIVGcm`: 12 random bytes from the OS CSPRNG (`crypto/rand.Read`).
-    pub fn new_gcm() -> Result<Iv, String> {
+    pub fn new_iv_gcm() -> Result<Iv, String> {
         let mut data = vec![0u8; GCM_IV_12];
         getrandom::fill(&mut data).map_err(|error| error.to_string())?;
         Ok(Iv {
@@ -63,7 +63,7 @@ impl Iv {
     }
 
     /// Go `NewIVFromSlice`: the length decides the type.
-    pub fn from_slice(src: &[u8]) -> Result<Iv, String> {
+    pub fn new_iv_from_slice(src: &[u8]) -> Result<Iv, String> {
         match src.len() {
             CTR_IV_16 => Ok(Iv {
                 iv_type: IvType::Ctr,
@@ -93,24 +93,24 @@ mod tests {
     /// upstream, but the IV lengths are a wire contract with TiKV.
     #[test]
     fn test_iv_construction() {
-        let gcm = Iv::new_gcm().unwrap();
+        let gcm = Iv::new_iv_gcm().unwrap();
         assert_eq!(gcm.iv_type, IvType::Gcm);
         assert_eq!(gcm.as_slice().len(), GCM_IV_12);
 
         // Two draws must differ; a constant IV would be catastrophic for GCM.
-        assert_ne!(Iv::new_gcm().unwrap().data, Iv::new_gcm().unwrap().data);
+        assert_ne!(Iv::new_iv_gcm().unwrap().data, Iv::new_iv_gcm().unwrap().data);
 
-        let from_gcm = Iv::from_slice(&[1u8; 12]).unwrap();
+        let from_gcm = Iv::new_iv_from_slice(&[1u8; 12]).unwrap();
         assert_eq!(from_gcm.iv_type, IvType::Gcm);
         assert_eq!(from_gcm.as_slice(), &[1u8; 12]);
 
-        let from_ctr = Iv::from_slice(&[2u8; 16]).unwrap();
+        let from_ctr = Iv::new_iv_from_slice(&[2u8; 16]).unwrap();
         assert_eq!(from_ctr.iv_type, IvType::Ctr);
         assert_eq!(from_ctr.as_slice(), &[2u8; 16]);
 
         for length in [0usize, 8, 11, 13, 15, 17, 32] {
             assert_eq!(
-                Iv::from_slice(&vec![0u8; length]).unwrap_err(),
+                Iv::new_iv_from_slice(&vec![0u8; length]).unwrap_err(),
                 format!("invalid IV length, must be 12 or 16 bytes, got {length}")
             );
         }

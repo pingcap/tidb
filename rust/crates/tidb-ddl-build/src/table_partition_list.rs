@@ -41,7 +41,7 @@ pub fn build_list_columns_values(
     if columns.is_empty() || definitions.is_empty() {
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_ast::ast_errors::ERR_PARTITIONS_MUST_BE_DEFINED
-                .generate_with_stack_by_args(&["LIST".into()]),
+                .gen_with_stack_by_args(&["LIST".into()]),
         ));
     }
     let mut dependency_names = Vec::with_capacity(columns.len());
@@ -49,7 +49,7 @@ pub fn build_list_columns_values(
     for path in columns {
         let name = path.last().ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
-                &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[]),
+                &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.gen_with_stack_by_args(&[]),
             )
         })?;
         // Go `checkPartitionColumnsUnique`, from
@@ -60,7 +60,7 @@ pub fn build_list_columns_values(
         {
             return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_SAME_NAME_PARTITION_FIELD
-                    .generate_with_stack_by_args(&[(name.clone()).to_string().into()]),
+                    .gen_with_stack_by_args(&[(name.clone()).to_string().into()]),
             ));
         }
         let offset = names
@@ -71,7 +71,7 @@ pub fn build_list_columns_values(
             // not the 1054 the expression path raises.
             .ok_or_else(|| {
                 tidb_terror::MysqlError::from_terror(
-                    &tidb_dbterror::ERR_FIELD_NOT_FOUND_PART.generate_with_stack_by_args(&[]),
+                    &tidb_dbterror::ERR_FIELD_NOT_FOUND_PART.gen_with_stack_by_args(&[]),
                 )
             })?;
         let field_type = types[offset].clone();
@@ -79,7 +79,7 @@ pub fn build_list_columns_values(
         if !list_columns_type_allowed(&field_type) {
             return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_NOT_ALLOWED_TYPE_IN_PARTITION
-                    .generate_with_stack_by_args(&[(name.clone()).to_string().into()]),
+                    .gen_with_stack_by_args(&[(name.clone()).to_string().into()]),
             ));
         }
         dependency_names.push(name.clone());
@@ -112,7 +112,7 @@ pub fn build_list_columns_values(
                         _ => {
                             return Err(tidb_terror::MysqlError::from_terror(
                                 &tidb_ast::ast_errors::ERR_PARTITION_COLUMN_LIST
-                                    .generate_with_stack_by_args(&[]),
+                                    .gen_with_stack_by_args(&[]),
                             ))
                         }
                     };
@@ -128,14 +128,14 @@ pub fn build_list_columns_values(
                     .map_err(|_| {
                         tidb_terror::MysqlError::from_terror(
                             &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE
-                                .generate_with_stack_by_args(&[]),
+                                .gen_with_stack_by_args(&[]),
                         )
                     })?;
                     // Go `checkListPartitionValue`.
                     if keys.insert(key, ordinal).is_some() {
                         return Err(tidb_terror::MysqlError::from_terror(
                             &tidb_dbterror::ERR_MULTIPLE_DEF_CONST_IN_LIST_PART
-                                .generate_with_stack_by_args(&[]),
+                                .gen_with_stack_by_args(&[]),
                         ));
                     }
                     values.push((tuple, ordinal));
@@ -144,13 +144,13 @@ pub fn build_list_columns_values(
             PartitionDefinitionClause::LessThan(_) => {
                 return Err(tidb_terror::MysqlError::from_terror(
                     &tidb_ast::ast_errors::ERR_PARTITION_WRONG_VALUES
-                        .generate_with_stack_by_args(&["RANGE".into(), "LESS THAN".into()]),
+                        .gen_with_stack_by_args(&["RANGE".into(), "LESS THAN".into()]),
                 ));
             }
             _ => {
                 return Err(tidb_terror::MysqlError::from_terror(
                     &tidb_ast::ast_errors::ERR_PARTITIONS_MUST_BE_DEFINED
-                        .generate_with_stack_by_args(&["LIST".into()]),
+                        .gen_with_stack_by_args(&["LIST".into()]),
                 ))
             }
         }
@@ -177,7 +177,7 @@ fn set_default_partition(
     if slot.replace(ordinal).is_some() {
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_MULTIPLE_DEF_CONST_IN_LIST_PART
-                .generate_with_stack_by_args(&[]),
+                .gen_with_stack_by_args(&[]),
         ));
     }
     Ok(())

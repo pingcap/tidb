@@ -138,14 +138,14 @@ pub fn explain_normalized_info_4_in_list(expr: &Expression) -> String {
         // `Constant`'s `?` answers.
         Expression::Constant(_) | Expression::ScalarSubQuery(_) => "?".to_owned(),
         Expression::ScalarFunction(function) => {
-            scalar_func_explain_normalized_info_4_in_list(function)
+            explain_normalized_info4_in_list(function)
         }
     }
 }
 
 /// Go `ScalarFunction.ExplainNormalizedInfo4InList` (`explain.go:85`).
 #[must_use]
-pub fn scalar_func_explain_normalized_info_4_in_list(function: &ScalarFunction) -> String {
+pub fn explain_normalized_info4_in_list(function: &ScalarFunction) -> String {
     let name = go_function_name(function);
     let args = function.get_args();
     let mut buffer = format!("{name}(");

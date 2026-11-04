@@ -36,7 +36,7 @@ pub fn execute_use(
     // answers it, not an unknown database.
     if name.is_empty() {
         return Err(DriverError::from(
-            tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+            tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]),
         ));
     }
     if !ctx.privilege_manager().db_is_visible(name) {
@@ -47,7 +47,7 @@ pub fn execute_use(
             .and_then(|identity| identity.split_once('@'))
             .unwrap_or_default();
         return Err(DriverError::from(
-            tidb_plannererrors::ERR_DBACCESS_DENIED.generate_with_stack_by_args(&[
+            tidb_plannererrors::ERR_DBACCESS_DENIED.gen_with_stack_by_args(&[
                 user.to_owned().into(),
                 host.to_owned().into(),
                 name.to_owned().into(),
@@ -57,7 +57,7 @@ pub fn execute_use(
     let Some(charset) = is.database_charset(name) else {
         return Err(DriverError::from(
             tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                .generate_with_stack_by_args(&[(name.to_owned()).into()]),
+                .gen_with_stack_by_args(&[(name.to_owned()).into()]),
         ));
     };
     let vars = ctx.session_vars_mut();
@@ -86,7 +86,7 @@ pub fn execute_set_resource_group_name(
         if is.resource_group(&stmt.name).is_none() {
             return Err(DriverError::Mysql(crate::MysqlError::from_terror(
                 &tidb_infoschema::infoschema_errors::ERR_RESOURCE_GROUP_NOT_EXISTS
-                    .generate_with_stack_by_args(&[stmt.name.clone().into()]),
+                    .gen_with_stack_by_args(&[stmt.name.clone().into()]),
             )));
         }
         stmt.name.go_to_lower()
@@ -132,7 +132,7 @@ pub fn execute_set_role(
                 } else {
                     Err(DriverError::from(
                         tidb_exeerrors::ERR_ROLE_NOT_GRANTED
-                            .generate_with_stack_by_args(&[
+                            .gen_with_stack_by_args(&[
                                 format!("`{}`@`{}`", role.0, role.1).into(),
                                 format!("{}@{}", account.0.clone(), account.1.clone()).into(),
                             ]),

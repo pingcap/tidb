@@ -155,7 +155,7 @@ impl Session {
                     if !catalog.schema_exists(&database) {
                         return Err(DriverError::from(
                             tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                                .generate_with_stack_by_args(&[(database.clone()).into()]),
+                                .gen_with_stack_by_args(&[(database.clone()).into()]),
                         ));
                     }
                     // Go `BuildTableInfoWithLike`: the source must be a base
@@ -168,7 +168,7 @@ impl Session {
                         {
                             return Err(DriverError::from(
                                 tidb_infoschema::infoschema_errors::ERR_WRONG_OBJECT
-                                    .generate_with_stack_by_args(&[
+                                    .gen_with_stack_by_args(&[
                                         (&database).into(),
                                         (&name).into(),
                                         ("BASE TABLE").into(),
@@ -204,9 +204,9 @@ impl Session {
             return Ok(());
         }
         if let Some((_, user, host)) = self.privilege_context() {
-            if !self.has_any_scoped_privilege(&database, &name, tidb_privilege::any_priv_mask()) {
+            if !self.has_any_scoped_privilege(&database, &name, tidb_privilege::all_priv_mask()) {
                 return Err(DriverError::from(
-                    tidb_plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(
+                    tidb_plannererrors::ERR_TABLEACCESS_DENIED.gen_with_stack_by_args(
                         &[
                             verb.into(),
                             user.to_owned().into(),
@@ -219,7 +219,7 @@ impl Session {
         }
         Err(DriverError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+                .gen_with_stack_by_args(&[(&database).into(), (&name).into()]),
         ))
     }
 
@@ -237,7 +237,7 @@ impl Session {
             } else {
                 Err(DriverError::from(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                        .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+                        .gen_with_stack_by_args(&[(&database).into(), (&name).into()]),
                 ))
             }
         })
@@ -257,11 +257,11 @@ impl Session {
         self.with_catalog_mut(|catalog| match catalog.table_in(&database, &name) {
             None => Err(DriverError::from(
                 tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                    .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+                    .gen_with_stack_by_args(&[(&database).into(), (&name).into()]),
             )),
             Some(tidb_infoschema::TableEntry::View(_) | tidb_infoschema::TableEntry::Sequence(_)) => {
                 Err(DriverError::from(
-                    tidb_infoschema::infoschema_errors::ERR_WRONG_OBJECT.generate_with_stack_by_args(
+                    tidb_infoschema::infoschema_errors::ERR_WRONG_OBJECT.gen_with_stack_by_args(
                         &[(&database).into(), (&name).into(), ("BASE TABLE").into()],
                     ),
                 ))
@@ -298,7 +298,7 @@ impl Session {
             if name.go_lower_eq("mysql") {
                 return Err(DriverError::from(
                     (&tidb_dbterror::ERR_FORBIDDEN_DDL)
-                        .generate_with_stack("Drop 'mysql' database is forbidden".to_owned()),
+                        .gen_with_stack("Drop 'mysql' database is forbidden".to_owned()),
                 ));
             }
         }

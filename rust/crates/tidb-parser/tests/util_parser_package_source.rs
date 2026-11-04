@@ -19,7 +19,7 @@
 use tidb_parser::util_parser::{
     any_char, any_punct, digit, get_default_db,
     is_punct_byte, is_space_byte, number, one_char, restore_with_default_db,
-    simple_cases, space, space0, PatternNotMatch,
+    simple_cases, space, space0, ErrPatternNotMatch,
 };
 
 // Go `TestSimpleCases` (pkg/util/parser/ast_test.go:26).
@@ -73,7 +73,7 @@ fn test_space() {
     let err_table = [(1, "1"), (2, " 1")];
     for (times, input) in err_table {
         // Go returns (input, err); the Rust error keeps the input untouched.
-        assert_eq!(space(input, times), Err(PatternNotMatch), "{input}");
+        assert_eq!(space(input, times), Err(ErrPatternNotMatch), "{input}");
     }
 }
 
@@ -94,7 +94,7 @@ fn test_digit() {
 
     let err_table = [(1, "int"), (2, "1int"), (3, "12 int")];
     for (times, input) in err_table {
-        assert_eq!(digit(input, times), Err(PatternNotMatch), "{input}");
+        assert_eq!(digit(input, times), Err(ErrPatternNotMatch), "{input}");
     }
 }
 
@@ -115,7 +115,7 @@ fn test_number() {
 
     let err_table = ["int", "abcint", "@)@)int"];
     for input in err_table {
-        assert_eq!(number(input), Err(PatternNotMatch), "{input}");
+        assert_eq!(number(input), Err(ErrPatternNotMatch), "{input}");
     }
 }
 
@@ -137,7 +137,7 @@ fn test_char_and_any_char() {
 
     let err_table = [(b'i', "xint"), (b'1', "x1int"), (b'1', "x12 int")];
     for (c, input) in err_table {
-        assert_eq!(one_char(input, c), Err(PatternNotMatch), "{input}");
+        assert_eq!(one_char(input, c), Err(ErrPatternNotMatch), "{input}");
     }
 }
 
@@ -167,7 +167,7 @@ fn uncovered_surfaces_match_go_behavior() {
     assert!(is_space_byte(0xA0)); // NBSP
     assert!(!is_space_byte(b'x'));
     assert_eq!(any_punct(".x"), Ok("x"));
-    assert_eq!(any_punct("$x"), Err(PatternNotMatch));
+    assert_eq!(any_punct("$x"), Err(ErrPatternNotMatch));
 
     // Space0 never fails and skips all leading spaces.
     assert_eq!(space0("   x "), "x ");

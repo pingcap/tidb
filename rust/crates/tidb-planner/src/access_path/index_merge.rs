@@ -620,7 +620,7 @@ pub(super) fn estimate_index_ranges(
     .map_err(|error| {
         PlanError::from(
             tidb_plannererrors::ERR_INTERNAL
-                .generate_with_stack_by_args(&[(error.to_string()).into()]),
+                .gen_with_stack_by_args(&[(error.to_string()).into()]),
         )
     })
 }

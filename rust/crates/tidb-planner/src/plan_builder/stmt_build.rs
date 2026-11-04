@@ -183,7 +183,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 if analyze.no_write_to_binlog {
                     return Err(PlanError::from(
                         tidb_plannererrors::ERR_NOT_SUPPORTED_YET
-                            .generate_with_stack_by_args(&["[NO_WRITE_TO_BINLOG | LOCAL]".into()]),
+                            .gen_with_stack_by_args(&["[NO_WRITE_TO_BINLOG | LOCAL]".into()]),
                     ));
                 }
                 self.require_insert_and_select_priv(analyze.tables.iter());
@@ -215,7 +215,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 // through to the closing `ErrUnsupportedType`.
                 return Err(PlanError::from(
                     tidb_plannererrors::ERR_UNSUPPORTED_TYPE
-                        .generate_with_stack("Unsupported type *ast.ProcedureInfo"),
+                        .gen_with_stack("Unsupported type *ast.ProcedureInfo"),
                 ));
             }
             AdminStmt::SplitRegion(split) => return self.build_split_region(split),
@@ -429,7 +429,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             Stmt::Session(session) => match session.as_ref() {
                 SessionStmt::Use(name) if name.is_empty() => {
                     return Err(PlanError::from(
-                        tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                        tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]),
                     ))
                 }
                 SessionStmt::SetPassword(set) => {
@@ -542,7 +542,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let current = self.source.current_database();
             if current.is_empty() {
                 return Err(PlanError::from(
-                    tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                    tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]),
                 ));
             }
             db_name = if is_grant {
@@ -646,7 +646,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     let current = self.source.current_database();
                     if current.is_empty() {
                         return Err(PlanError::from(
-                            tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                            tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]),
                         ));
                     }
                     *database = Some(current.to_owned());
@@ -743,13 +743,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             if info.temp_table_type != tidb_model::TempTableType::NONE {
                 return Err(PlanError::from(
                     tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
-                        .generate_with_stack_by_args(&["split table".into()]),
+                        .gen_with_stack_by_args(&["split table".into()]),
                 ));
             }
             if split.partition_syntax && info.partition.is_none() {
                 return Err(PlanError::from(
                     tidb_plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
-                        .generate_with_stack_by_args(&[]),
+                        .gen_with_stack_by_args(&[]),
                 ));
             }
         }
@@ -827,7 +827,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             AdminStmt::CreateWorkloadSnapshot => Plan::WorkloadRepoCreate,
             _ => {
                 return Err(PlanError::from(
-                    tidb_plannererrors::ERR_UNSUPPORTED_TYPE.generate_with_stack(format!(
+                    tidb_plannererrors::ERR_UNSUPPORTED_TYPE.gen_with_stack(format!(
                         "Unsupported ast.AdminStmt({}) for buildAdmin",
                         stmt.label()
                     )),
@@ -855,7 +855,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     .unwrap_or_else(|| self.source.current_database().to_owned());
                 if database.is_empty() {
                     return Err(PlanError::from(
-                        tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                        tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]),
                     ));
                 }
                 self.visit_info.push(visit(
@@ -978,7 +978,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 if temporary && has_fk {
                     return Err(PlanError::from(
                         tidb_infoschema::infoschema_errors::ERR_CANNOT_ADD_FOREIGN
-                            .generate_with_stack_by_args(&[]),
+                            .gen_with_stack_by_args(&[]),
                     ));
                 }
                 let (database, table, _) = self.qualified(&create.name);
@@ -1242,7 +1242,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             DdlStmt::OptimizeTable(_) => {
                 return Err(PlanError::from(
                     tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL
-                        .generate_with_stack("OPTIMIZE TABLE is not supported"),
+                        .gen_with_stack("OPTIMIZE TABLE is not supported"),
                 ));
             }
             _ => {}

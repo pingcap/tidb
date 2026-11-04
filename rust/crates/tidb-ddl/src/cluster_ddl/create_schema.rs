@@ -49,13 +49,13 @@ pub fn create_schema<S: MetaSnapshot>(
                 ),
                 warnings: vec![crate::real_tikv_ddl::ddl_note(
                     tidb_infoschema::infoschema_errors::ERR_DATABASE_EXISTS
-                        .generate_with_stack_by_args(&[name.into()]),
+                        .gen_with_stack_by_args(&[name.into()]),
                 )],
             }));
         }
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_DATABASE_EXISTS
-                .generate_with_stack_by_args(&[(name.clone()).into()]),
+                .gen_with_stack_by_args(&[(name.clone()).into()]),
         ));
     }
     // Go `checkTooLongSchema`.

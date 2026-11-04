@@ -46,7 +46,7 @@ pub fn parse_one_sql(text: &str) -> Result<Stmt> {
 fn parse_failure(error: &tidb_parser::ParseError, sql: &str) -> tidb_driver_error::DriverError {
     match error.terror {
         Some(proto) => {
-            tidb_driver_error::DriverError::from((proto).generate_with_stack(error.message.clone()))
+            tidb_driver_error::DriverError::from((proto).gen_with_stack(error.message.clone()))
         }
         None => tidb_driver_error::DriverError::from(tidb_util::misc::syntax_error(
             error.compatibility_message(sql),

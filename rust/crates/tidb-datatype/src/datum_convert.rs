@@ -300,9 +300,9 @@ impl Datum {
                 } else if from_binary {
                     self.binary_string_decoded(flags, target.charset().name())
                 } else if to_binary {
-                    TransformResult::new(self.binary_string_encoded().unwrap(), None)
+                    TransformResult::new(self.get_binary_string_encoded().unwrap(), None)
                 } else {
-                    self.string_with_check(flags, target.charset().name())
+                    self.get_string_with_check(flags, target.charset().name())
                         .unwrap()
                 })
             }
@@ -766,7 +766,7 @@ impl Datum {
             };
         let dst = |text: &str| {
             crate::types_errors::ERR_TIMESTAMP_IN_DST_TRANSITION
-                .fast_generate_by_args(&[text.into(), zone.dag_zone().0.into()])
+                .fast_gen_by_args(&[text.into(), zone.dag_zone().0.into()])
         };
         if let Self::Time(value) = self {
             let (converted, adjusted) =
@@ -1333,7 +1333,7 @@ fn produce_decimal_reported(
 }
 
 /// Source `ProduceFloatWithSpecifiedTp`.
-pub fn produce_float_with_type(value: f64, target: &FieldType) -> Converted<f64> {
+pub fn produce_float_with_specified_tp(value: f64, target: &FieldType) -> Converted<f64> {
     produce_float_reported(value, target, &mut Diagnostics::new(None))
 }
 
@@ -1648,7 +1648,7 @@ pub fn get_min_value(target: &FieldType) -> Datum {
 }
 
 /// Source `ChangeReverseResultByUpperLowerBound`.
-pub fn change_reverse_result_by_bound(
+pub fn change_reverse_result_by_upper_lower_bound(
     target: &FieldType,
     result: &Datum,
     rounding: RoundingType,
@@ -2948,7 +2948,7 @@ mod tests {
                 Datum::new_decimal(Decimal::from_int(i64::MAX)),
             ),
         ] {
-            let converted = change_reverse_result_by_bound(
+            let converted = change_reverse_result_by_upper_lower_bound(
                 &target,
                 &input,
                 rounding,

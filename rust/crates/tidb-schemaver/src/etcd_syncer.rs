@@ -1015,12 +1015,12 @@ impl EtcdSyncer {
             // not its revisions.
             let mut kv = format!(
                 "key:{} ",
-                tidb_hack::go_strconv::quote_bytes(key.as_bytes())
+                tidb_go_strconv::quote_bytes(key.as_bytes())
             );
             if !value.is_empty() {
                 kv.push_str(&format!(
                     "value:{} ",
-                    tidb_hack::go_strconv::quote_bytes(value)
+                    tidb_go_strconv::quote_bytes(value)
                 ));
             }
             ddl_logger().error(
@@ -1099,7 +1099,7 @@ fn is_updated_latest_version(
                     Field::new("value", Value::Str(val.to_owned())),
                     zap_error(format!(
                         "strconv.Atoi: parsing {}: {reason}",
-                        tidb_hack::go_strconv::quote_bytes(val.as_bytes())
+                        tidb_go_strconv::quote_bytes(val.as_bytes())
                     )),
                 ],
             );

@@ -94,7 +94,7 @@ pub(crate) fn err_regexp(message: &str) -> EvalError {
     static ERR_REGEXP: std::sync::LazyLock<TerrorError> = std::sync::LazyLock::new(|| {
         tidb_dbterror::ErrClass(TerrorClass::Expression).new_std(1139)
     });
-    EvalError::Conversion(ERR_REGEXP.generate_with_stack_by_args(&[FormatArg::from(message)]))
+    EvalError::Conversion(ERR_REGEXP.gen_with_stack_by_args(&[FormatArg::from(message)]))
 }
 
 /// [`err_regexp`] for an argument that is itself a TiDB `*errors.Error`
@@ -107,7 +107,7 @@ pub(crate) fn err_regexp_wrapping_error(message: &str) -> EvalError {
     static ERR_REGEXP: std::sync::LazyLock<TerrorError> = std::sync::LazyLock::new(|| {
         tidb_dbterror::ErrClass(TerrorClass::Expression).new_std(1139)
     });
-    EvalError::Conversion(ERR_REGEXP.generate_with_stack_by_args(&[FormatArg::new(
+    EvalError::Conversion(ERR_REGEXP.gen_with_stack_by_args(&[FormatArg::new(
         message,
         message,
         "*errors.Error",

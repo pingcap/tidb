@@ -380,7 +380,7 @@ pub fn convert_json_2_tp(
     match target.eval_type() {
         EvalType::String => {
             if code != JSON_TYPE_CODE_STRING {
-                return Err(invalid_json_for_func_index());
+                return Err(err_invalid_json_for_func_index());
             }
             let text = item.as_string().unwrap_or_default().to_vec();
             // Go `ProduceStrWithSpecifiedTp`: only truncation can fail it,
@@ -394,7 +394,7 @@ pub fn convert_json_2_tp(
         }
         EvalType::Int => {
             if code != JSON_TYPE_CODE_INT64 && code != JSON_TYPE_CODE_UINT64 {
-                return Err(invalid_json_for_func_index());
+                return Err(err_invalid_json_for_func_index());
             }
             let unsigned = target.is_unsigned();
             let converted = tidb_datatype::json_to_int(
@@ -431,7 +431,7 @@ pub fn convert_json_2_tp(
                 && code != JSON_TYPE_CODE_INT64
                 && code != JSON_TYPE_CODE_UINT64
             {
-                return Err(invalid_json_for_func_index());
+                return Err(err_invalid_json_for_func_index());
             }
             let converted = tidb_datatype::json_to_float(item);
             if converted.event.is_some() {
@@ -446,7 +446,7 @@ pub fn convert_json_2_tp(
                 JSON_TYPE_CODE_DATETIME
             };
             if code != expected {
-                return Err(invalid_json_for_func_index());
+                return Err(err_invalid_json_for_func_index());
             }
             let mut time = item.as_time(target.decimal()).map_err(json_eval_error)?;
             if target.code() == FieldTypeCode::Date {
@@ -469,11 +469,11 @@ pub fn convert_json_2_tp(
         }
         EvalType::Duration => {
             if code != JSON_TYPE_CODE_DURATION {
-                return Err(invalid_json_for_func_index());
+                return Err(err_invalid_json_for_func_index());
             }
             Ok(Datum::Duration(item.as_duration().map_err(json_eval_error)?))
         }
-        _ => Err(invalid_json_for_func_index()),
+        _ => Err(err_invalid_json_for_func_index()),
     }
 }
 
@@ -589,7 +589,7 @@ fn array_element_json(value: Datum) -> Result<tidb_datatype::BinaryJSONValue, Ev
 /// Go `expression.ErrInvalidJSONForFuncIndex` (3903), raised without the
 /// index name: the DML that evaluated the expression names the index
 /// (`completeError`).
-pub fn invalid_json_for_func_index() -> EvalError {
+pub fn err_invalid_json_for_func_index() -> EvalError {
     EvalError::Conversion(tidb_dbterror::ErrClass(tidb_terror::TerrorClass::Expression).new_std(3903))
 }
 
@@ -1940,7 +1940,7 @@ fn cast_to_time_value(
         // Time.Convert's warning, ParseTime's returned error fails this cast.
         return Err(EvalError::Conversion(
             tidb_datatype::types_errors::ERR_TIMESTAMP_IN_DST_TRANSITION
-                .fast_generate_by_args(&[s.into(), ctx.time_zone().dag_zone().0.into()]),
+                .fast_gen_by_args(&[s.into(), ctx.time_zone().dag_zone().0.into()]),
         ));
     }
     // Go's SECOND check is the STRING signature's ALONE

@@ -49,7 +49,7 @@ fn password_validation_error(error: PwdError<VarError>) -> DriverError {
         ))),
         PwdError::NotValid(reason) => DriverError::from(
             tidb_variable::variable_errors::ERR_NOT_VALID_PASSWORD
-                .generate_with_stack_by_args(&[reason.into()]),
+                .gen_with_stack_by_args(&[reason.into()]),
         ),
     }
 }
@@ -153,7 +153,7 @@ impl PasswordOrLockOptions {
                     if *days <= 0 || *days > MAX_PASSWORD_EXPIRE_INTERVAL_DAYS {
                         return Err(DriverError::from(
                             tidb_datatype::types_errors::ERR_WRONG_VALUE2
-                                .generate_with_stack_by_args(&[
+                                .gen_with_stack_by_args(&[
                                     "DAY".into(),
                                     (*days).to_string().into(),
                                 ]),
@@ -492,7 +492,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
             return Ok(());
         }
         Err(DriverError::from(
-            tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED.generate_with_stack_by_args(&[
+            tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED.gen_with_stack_by_args(&[
                 (if is_role {
                     "CREATE ROLE or CREATE USER"
                 } else {
@@ -520,7 +520,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
             return Ok(());
         }
         Err(DriverError::from(
-            tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED.generate_with_stack_by_args(&[
+            tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED.gen_with_stack_by_args(&[
                 (if is_role {
                     "DROP ROLE or CREATE USER"
                 } else {
@@ -557,7 +557,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         if self.target_has_dynamic_privilege(user, host, "SYSTEM_USER") {
             return Err(DriverError::from(
                 tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
-                    .generate_with_stack_by_args(&["SYSTEM_USER or SUPER".into()]),
+                    .gen_with_stack_by_args(&["SYSTEM_USER or SUPER".into()]),
             ));
         }
         Ok(())
@@ -628,7 +628,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         if !tidb_privilege::is_create_user_plugin(&default_plugin) {
             return Err(DriverError::from(
                 tidb_exeerrors::ERR_PLUGIN_IS_NOT_LOADED
-                    .generate_with_stack_by_args(&[default_plugin.into()]),
+                    .gen_with_stack_by_args(&[default_plugin.into()]),
             ));
         }
         // Go `executeCreateUser` validates every account -- existence,
@@ -663,7 +663,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
             {
                 return Err(DriverError::from(
                     tidb_exeerrors::ERR_PASSWORD_EXPIRE_ANONYMOUS_USER
-                        .generate_with_stack_by_args(&[]),
+                        .gen_with_stack_by_args(&[]),
                 ));
             }
             if host.len() > tidb_parser::auth::HOST_NAME_MAX_LENGTH {
@@ -677,7 +677,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 if !if_not_exists {
                     return Err(DriverError::from(
                         tidb_exeerrors::ERR_CANNOT_USER
-                            .generate_with_stack_by_args(&[
+                            .gen_with_stack_by_args(&[
                                 "CREATE USER".into(),
                                 format!("'{}'@'{}'", user.to_owned(), host.to_owned()).into(),
                             ]),
@@ -688,7 +688,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 self.append_sql_warning(tidb_context::SqlWarn::raised(
                     tidb_context::WarningLevel::Note,
                     tidb_infoschema::infoschema_errors::ERR_USER_ALREADY_EXISTS
-                        .generate_with_stack_by_args(&[format!("'{}'@'{}'", user, host).into()]),
+                        .gen_with_stack_by_args(&[format!("'{}'@'{}'", user, host).into()]),
                 ));
                 continue;
             }
@@ -773,7 +773,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 )?;
             } else if !if_not_exists {
                 return Err(DriverError::from(
-                    tidb_exeerrors::ERR_CANNOT_USER.generate_with_stack_by_args(&[
+                    tidb_exeerrors::ERR_CANNOT_USER.gen_with_stack_by_args(&[
                         "CREATE USER".into(),
                         format!("'{}'@'{}'", user.to_owned(), host.to_owned()).into(),
                     ]),
@@ -818,7 +818,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 planned.push((role, host));
             } else if !if_not_exists {
                 return Err(DriverError::from(
-                    tidb_exeerrors::ERR_CANNOT_USER.generate_with_stack_by_args(&[
+                    tidb_exeerrors::ERR_CANNOT_USER.gen_with_stack_by_args(&[
                         "CREATE ROLE".into(),
                         (format!("'{role}'@'{host}'")).into(),
                     ]),
@@ -829,7 +829,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 self.append_sql_warning(tidb_context::SqlWarn::raised(
                     tidb_context::WarningLevel::Note,
                     tidb_infoschema::infoschema_errors::ERR_USER_ALREADY_EXISTS
-                        .generate_with_stack_by_args(&[format!("'{}'@'{}'", role, host).into()]),
+                        .gen_with_stack_by_args(&[format!("'{}'@'{}'", role, host).into()]),
                 ));
             }
         }
@@ -861,7 +861,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 )?;
             } else if !if_not_exists {
                 return Err(DriverError::from(
-                    tidb_exeerrors::ERR_CANNOT_USER.generate_with_stack_by_args(&[
+                    tidb_exeerrors::ERR_CANNOT_USER.gen_with_stack_by_args(&[
                         "CREATE ROLE".into(),
                         (format!("'{role}'@'{host}'")).into(),
                     ]),
@@ -890,7 +890,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         };
         let roles = self.resolve_roles(&grant.roles, |role, host| {
             DriverError::from(
-                tidb_exeerrors::ERR_GRANT_ROLE.generate_with_stack_by_args(&[
+                tidb_exeerrors::ERR_GRANT_ROLE.gen_with_stack_by_args(&[
                     format!("`{}`@`{}`", role.to_owned(), host.to_owned()).into(),
                 ]),
             )
@@ -920,7 +920,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         };
         let roles = self.resolve_roles(&revoke.roles, |role, host| {
             DriverError::from(
-                tidb_exeerrors::ERR_CANNOT_USER.generate_with_stack_by_args(&[
+                tidb_exeerrors::ERR_CANNOT_USER.gen_with_stack_by_args(&[
                     "REVOKE ROLE".into(),
                     (format!("`{role}`@`{host}`")).into(),
                 ]),
@@ -981,7 +981,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         {
             return Err(DriverError::from(
                 tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
-                    .generate_with_stack_by_args(&["CREATE USER".into()]),
+                    .gen_with_stack_by_args(&["CREATE USER".into()]),
             ));
         }
         // Only after the authorization gate does Go disclose whether a
@@ -1011,7 +1011,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                     } else {
                         Err(DriverError::from(
                             tidb_exeerrors::ERR_CANNOT_USER
-                                .generate_with_stack_by_args(&[
+                                .gen_with_stack_by_args(&[
                                     "SET DEFAULT ROLE".into(),
                                     (format!("{}@{}", spec.user, spec.host)).into(),
                                 ]),
@@ -1033,7 +1033,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 if !registry.user_exists(&role, &host) {
                     return Err(DriverError::from(
                         tidb_exeerrors::ERR_CANNOT_USER
-                            .generate_with_stack_by_args(&[
+                            .gen_with_stack_by_args(&[
                                 "SET DEFAULT ROLE".into(),
                                 (format!("`{role}`@`{host}`")).into(),
                             ]),
@@ -1061,7 +1061,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                             .expect("the parser requires at least one explicit default role");
                         return Err(DriverError::from(
                             tidb_exeerrors::ERR_ROLE_NOT_GRANTED
-                                .generate_with_stack_by_args(&[
+                                .gen_with_stack_by_args(&[
                                     format!("`{}`@`{}`", role.0, role.1).into(),
                                     format!("{}@{}", account.0.clone(), account.1.clone()).into(),
                                 ]),
@@ -1138,7 +1138,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 } else {
                     Err(DriverError::from(
                         tidb_exeerrors::ERR_CANNOT_USER
-                            .generate_with_stack_by_args(&[
+                            .gen_with_stack_by_args(&[
                                 operation.into(),
                                 (format!("{user}@{host}")).into(),
                             ]),
@@ -1170,7 +1170,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 } else {
                     Err(DriverError::from(
                         tidb_exeerrors::ERR_ROLE_NOT_GRANTED
-                            .generate_with_stack_by_args(&[
+                            .gen_with_stack_by_args(&[
                                 format!("`{}`@`{}`", role.0.clone(), role.1.clone()).into(),
                                 format!("{}@{}", account.0.clone(), account.1.clone()).into(),
                             ]),
@@ -1206,7 +1206,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 if !tidb_privilege::is_create_user_plugin(plugin) {
                     return Err(DriverError::from(
                         tidb_exeerrors::ERR_PLUGIN_IS_NOT_LOADED
-                            .generate_with_stack_by_args(&[plugin.clone().into()]),
+                            .gen_with_stack_by_args(&[plugin.clone().into()]),
                     ));
                 }
                 let credential = match credential {
@@ -1281,7 +1281,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 if old_missing || exists(new, &gone, &added) {
                     return Err(DriverError::from(
                         tidb_exeerrors::ERR_CANNOT_USER
-                            .generate_with_stack_by_args(&[
+                            .gen_with_stack_by_args(&[
                                 "RENAME USER".into(),
                                 format!(
                                     "{}@{} TO {}@{} {}",
@@ -1308,7 +1308,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         for ((old_user, old_host), (new_user, new_host)) in resolved {
             if !registry.rename_user(&old_user, &old_host, &new_user, &new_host) {
                 return Err(DriverError::from(
-                    tidb_exeerrors::ERR_CANNOT_USER.generate_with_stack_by_args(&[
+                    tidb_exeerrors::ERR_CANNOT_USER.gen_with_stack_by_args(&[
                         "RENAME USER".into(),
                         format!(
                             "{}@{} TO {}@{} {}",
@@ -1390,19 +1390,19 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                     return Err(if is_role {
                         DriverError::from(
                             tidb_exeerrors::ERR_CANNOT_USER
-                                .generate_with_stack_by_args(&["DROP ROLE".into(), account.into()]),
+                                .gen_with_stack_by_args(&["DROP ROLE".into(), account.into()]),
                         )
                     } else {
                         DriverError::from(
                             tidb_exeerrors::ERR_CANNOT_USER
-                                .generate_with_stack_by_args(&["DROP USER".into(), account.into()]),
+                                .gen_with_stack_by_args(&["DROP USER".into(), account.into()]),
                         )
                     });
                 }
                 self.append_sql_warning(tidb_context::SqlWarn::raised(
                     tidb_context::WarningLevel::Note,
                     tidb_infoschema::infoschema_errors::ERR_USER_DROP_EXISTS
-                        .generate_with_stack_by_args(&[account.into()]),
+                        .gen_with_stack_by_args(&[account.into()]),
                 ));
             }
             self.require_system_user_privilege_over(&spec.user, &spec.host)?;
@@ -1486,7 +1486,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                         if no_auto_create_user {
                             return Err(DriverError::from(
                                 tidb_exeerrors::ERR_CANT_CREATE_USER_WITH_GRANT
-                                    .generate_with_stack_by_args(&[]),
+                                    .gen_with_stack_by_args(&[]),
                             ));
                         }
                         missing.push(position);
@@ -1519,7 +1519,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                     if !registry.user_exists(user, host) {
                         return Err(DriverError::from(
                             tidb_exeerrors::ERR_CANT_CREATE_USER_WITH_GRANT
-                                .generate_with_stack_by_args(&[]),
+                                .gen_with_stack_by_args(&[]),
                         ));
                     }
                     registry.grant(user, host, mask);
@@ -1552,7 +1552,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                     if !registry.user_exists(user, host) {
                         return Err(DriverError::from(
                             tidb_exeerrors::ERR_CANT_CREATE_USER_WITH_GRANT
-                                .generate_with_stack_by_args(&[]),
+                                .gen_with_stack_by_args(&[]),
                         ));
                     }
                     registry.grant_db(user, host, &database, mask);
@@ -1576,7 +1576,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 if !table_exists && !privs.contains(&tidb_mysql::CreatePriv) {
                     return Err(DriverError::from(
                         tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                            .generate_with_stack_by_args(&[(&database).into(), table.into()]),
+                            .gen_with_stack_by_args(&[(&database).into(), table.into()]),
                     ));
                 }
                 // Go's `checkAndInitColumnPriv` resolves every named column
@@ -1605,7 +1605,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                     if !registry.user_exists(user, host) {
                         return Err(DriverError::from(
                             tidb_exeerrors::ERR_CANT_CREATE_USER_WITH_GRANT
-                                .generate_with_stack_by_args(&[]),
+                                .gen_with_stack_by_args(&[]),
                         ));
                     }
                     // The TABLE row is created even by a column-only grant
@@ -1721,7 +1721,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
             if !dynamic.is_empty() {
                 return Err(DriverError::from(
                     tidb_exeerrors::ERR_ILLEGAL_PRIVILEGE_LEVEL
-                        .generate_with_stack_by_args(&[(dynamic.join(",")).into()]),
+                        .gen_with_stack_by_args(&[(dynamic.join(",")).into()]),
                 ));
             }
         }
@@ -1791,7 +1791,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                     self.append_sql_warning(tidb_context::SqlWarn::raised(
                         tidb_context::WarningLevel::Warning,
                         tidb_exeerrors::ERR_DYNAMIC_PRIVILEGE_NOT_REGISTERED
-                            .generate_with_stack_by_args(&[name.into()]),
+                            .gen_with_stack_by_args(&[name.into()]),
                     ));
                 }
             }
@@ -1873,7 +1873,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 Ok(self.session_vars().current_db.clone())
             }
             None => Err(DriverError::from(
-                tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]),
             )),
         }
     }
@@ -1911,7 +1911,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                         .filter(|priv_| priv_.is_valid_at_column_scope())
                         .ok_or(DriverError::from(
                             tidb_exeerrors::ERR_WRONG_USAGE
-                                .generate_with_stack_by_args(&[
+                                .gen_with_stack_by_args(&[
                                     "COLUMN GRANT".into(),
                                     "NON-COLUMN PRIVILEGES".into(),
                                 ]),
@@ -2011,13 +2011,13 @@ pub trait AccountExec: super::account_tables::UserTableExec {
             if privilege.dynamic {
                 return Err(DriverError::from(
                     tidb_exeerrors::ERR_ILLEGAL_PRIVILEGE_LEVEL
-                        .generate_with_stack_by_args(&[privilege.name.clone().into()]),
+                        .gen_with_stack_by_args(&[privilege.name.clone().into()]),
                 ));
             }
             let Some(priv_) = tidb_privilege::privilege_from_grant_name(&privilege.name) else {
                 return Err(DriverError::from(
                     tidb_exeerrors::ERR_DYNAMIC_PRIVILEGE_NOT_REGISTERED
-                        .generate_with_stack_by_args(&[privilege.name.clone().into()]),
+                        .gen_with_stack_by_args(&[privilege.name.clone().into()]),
                 ));
             };
             let valid = match scope {
@@ -2028,14 +2028,14 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 return Err(match scope {
                     ScopeKind::Database => DriverError::from(
                         tidb_exeerrors::ERR_WRONG_USAGE
-                            .generate_with_stack_by_args(&[
+                            .gen_with_stack_by_args(&[
                                 "DB GRANT".into(),
                                 "GLOBAL PRIVILEGES".into(),
                             ]),
                     ),
                     ScopeKind::Table => DriverError::from(
                         tidb_exeerrors::ERR_ILLEGAL_GRANT_FOR_TABLE
-                            .generate_with_stack_by_args(&[]),
+                            .gen_with_stack_by_args(&[]),
                     ),
                 });
             }
@@ -2089,7 +2089,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 if reject_unregistered && !tidb_privilege::is_dynamic_privilege(&privilege.name) {
                     return Err(DriverError::from(
                         tidb_exeerrors::ERR_DYNAMIC_PRIVILEGE_NOT_REGISTERED
-                            .generate_with_stack_by_args(&[privilege.name.clone().into()]),
+                            .gen_with_stack_by_args(&[privilege.name.clone().into()]),
                     ));
                 }
                 dynamic.push(tidb_hack::go_to_upper(&privilege.name));
@@ -2103,7 +2103,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 None => {
                     return Err(DriverError::from(
                         tidb_exeerrors::ERR_DYNAMIC_PRIVILEGE_NOT_REGISTERED
-                            .generate_with_stack_by_args(&[privilege.name.clone().into()]),
+                            .gen_with_stack_by_args(&[privilege.name.clone().into()]),
                     ));
                 }
             }
@@ -2166,7 +2166,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 };
                 return Err(DriverError::from(
                     tidb_exeerrors::ERR_ROLE_NOT_GRANTED
-                        .generate_with_stack_by_args(&[
+                        .gen_with_stack_by_args(&[
                             format!("`{}`@`{}`", spec.user.clone(), role_host).into(),
                             format!("{}@{}", user, host).into(),
                         ]),
@@ -2174,7 +2174,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
             }
             return Err(DriverError::from(
                 tidb_privilege::privileges_errors::ERR_NONEXISTING_GRANT
-                    .fast_generate_by_args(&["root".into(), "%".into()]),
+                    .fast_gen_by_args(&["root".into(), "%".into()]),
             ));
         }
         // Go `executor/show.go`'s `fetchShowGrants` (around line 2018):
@@ -2191,7 +2191,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         {
             let (caller, caller_host) = self.own_account()?;
             return Err(DriverError::from(
-                tidb_plannererrors::ERR_DBACCESS_DENIED.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_DBACCESS_DENIED.gen_with_stack_by_args(&[
                     caller.into(),
                     caller_host.into(),
                     (tidb_mysql::consts::SystemDB.to_owned()).into(),
@@ -2236,7 +2236,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
             if !registry.find_role(&account, role) {
                 return Err(DriverError::from(
                     tidb_exeerrors::ERR_ROLE_NOT_GRANTED
-                        .generate_with_stack_by_args(&[
+                        .gen_with_stack_by_args(&[
                             format!("`{}`@`{}`", role.0.clone(), role.1.clone()).into(),
                             format!("{}@{}", user, host).into(),
                         ]),
@@ -2248,7 +2248,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         else {
             return Err(DriverError::from(
                 tidb_privilege::privileges_errors::ERR_NONEXISTING_GRANT
-                    .fast_generate_by_args(&[user.into(), host.into()]),
+                    .fast_gen_by_args(&[user.into(), host.into()]),
             ));
         };
         // Go `fetchShowGrants`: one row per GLOBAL/DB/TABLE-scope line, in

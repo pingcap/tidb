@@ -523,7 +523,7 @@ impl Drop for SystemSessionExecution<'_, '_> {
 
 pub(crate) struct SysProcessTrackGuard {
     process_id: u64,
-    untrack: tidb_sqlexec::UntrackSysProc,
+    untrack: tidb_sqlexec::UnTrackSysProc,
 }
 
 impl Drop for SysProcessTrackGuard {

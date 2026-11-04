@@ -209,7 +209,7 @@ struct StoredRow {
 
 fn locate(catalog: &SessionExtendedInfoSchema) -> Result<tidb_model::GoShared<TableInfo>, SysvarWriteError> {
     catalog
-        .schema_info_by_name(SYSTEM_DB)
+        .schema_by_name(SYSTEM_DB)
         .and_then(|database| {
             database
                 .read().deprecated_tables
@@ -250,7 +250,7 @@ fn column_id(table: &TableInfo, column: &str) -> Result<i64, SysvarWriteError> {
 
 fn system_db_id(catalog: &SessionExtendedInfoSchema) -> Result<i64, SysvarWriteError> {
     catalog
-        .schema_info_by_name(SYSTEM_DB)
+        .schema_by_name(SYSTEM_DB)
         .map(|database| database.read().id)
         .ok_or(SysvarWriteError::MissingTable)
 }

@@ -528,13 +528,13 @@ pub fn decode_range<'a>(
         ))?;
         match field_type {
             FieldTypeCode::Date => {
-                crate::package::decode_as_datetime(input, TimeType::Date, timezone)
+                crate::package::decode_as_date_time(input, TimeType::Date, timezone)
             }
             FieldTypeCode::Datetime => {
-                crate::package::decode_as_datetime(input, TimeType::DateTime, timezone)
+                crate::package::decode_as_date_time(input, TimeType::DateTime, timezone)
             }
             FieldTypeCode::Timestamp => {
-                crate::package::decode_as_datetime(input, TimeType::Timestamp, timezone)
+                crate::package::decode_as_date_time(input, TimeType::Timestamp, timezone)
             }
             FieldTypeCode::Float => crate::package::decode_as_float32(input),
             _ => decode_one(input),

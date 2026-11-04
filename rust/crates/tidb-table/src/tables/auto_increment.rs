@@ -193,7 +193,7 @@ impl TableCommon {
         if self.auto_id_cache() != 1 {
             return tidb_terror::MysqlError::from_terror(
                 &tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED
-                    .generate_with_stack_by_args(&[]),
+                    .gen_with_stack_by_args(&[]),
             );
         }
         let unsigned = self
@@ -205,7 +205,7 @@ impl TableCommon {
         // 1105 message.
         let message = if unsigned {
             tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED
-                .fast_generate_by_args(&[])
+                .fast_gen_by_args(&[])
                 .to_string()
         } else {
             "auto increment action failed".to_owned()

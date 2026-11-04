@@ -256,8 +256,8 @@ impl SqlKiller {
         let conn_id = self.conn_id.load(SeqCst);
         let by_args = |proto: &TerrorError, args: &[FormatArg]| {
             let template = proto.message().to_string();
-            let formatted = proto.fast_generate(&template, args);
-            proto.generate_with_stack(formatted.message().to_string())
+            let formatted = proto.fast_gen(&template, args);
+            proto.gen_with_stack(formatted.message().to_string())
         };
         Some(match KillSignal(status) {
             KillSignal::UnspecifiedKillSignal => return None,
@@ -274,7 +274,7 @@ impl SqlKiller {
             KillSignal::RunawayQueryExceeded => {
                 let proto = &exeerrors::ERR_RESOURCE_GROUP_QUERY_RUNAWAY_INTERRUPTED;
                 let template = proto.message().to_string();
-                proto.fast_generate(&template, &[FormatArg::from("runaway exceed tidb side")])
+                proto.fast_gen(&template, &[FormatArg::from("runaway exceed tidb side")])
             }
             KillSignal::KilledByMemArbitrator => by_args(
                 &exeerrors::ERR_QUERY_EXEC_STOPPED,

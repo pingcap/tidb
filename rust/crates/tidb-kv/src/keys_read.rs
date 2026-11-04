@@ -64,7 +64,7 @@ impl KeysReadBudget {
             return Err(crate::storage::StorageError::Sql(
                 tidb_terror::MysqlError::from_terror(
                     &tidb_exeerrors::ERR_MAX_KEYS_READ_EXCEEDED
-                        .generate_with_stack_by_args(&[]),
+                        .gen_with_stack_by_args(&[]),
                 ),
             ));
         }

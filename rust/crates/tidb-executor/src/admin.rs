@@ -195,7 +195,7 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
                 )),
                 None => Err(DriverError::from(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                        .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+                        .gen_with_stack_by_args(&[(&database).into(), (&name).into()]),
                 )),
             }
         })?;
@@ -228,7 +228,7 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
                     Some(crate::TableEntry::Kv(table)) if table.is_temporary() => {
                         return Err(DriverError::from(
                             tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
-                                .generate_with_stack_by_args(&["admin checksum table".into()]),
+                                .gen_with_stack_by_args(&["admin checksum table".into()]),
                         ));
                     }
                     Some(crate::TableEntry::Kv(table)) => {
@@ -244,7 +244,7 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
                     None => {
                         return Err(DriverError::from(
                             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                                .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+                                .gen_with_stack_by_args(&[(&database).into(), (&name).into()]),
                         ))
                     }
                 }
@@ -801,7 +801,7 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
                 let take_snapshot = self.take_snapshot().ok_or_else(|| {
                     DriverError::from(
                         tidb_plannererrors::ERR_NOT_SUPPORTED_YET
-                            .generate_with_stack_by_args(&[
+                            .gen_with_stack_by_args(&[
                                 "Workload repository is not enabled".into()
                             ]),
                     )
@@ -810,7 +810,7 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
                     if error == "Workload repository is not enabled" {
                         DriverError::from(
                             tidb_plannererrors::ERR_NOT_SUPPORTED_YET
-                                .generate_with_stack_by_args(&[error.into()]),
+                                .gen_with_stack_by_args(&[error.into()]),
                         )
                     } else {
                         DriverError::unsupported(error)
@@ -975,11 +975,11 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
                 // 8108).
                 tidb_ast::ServerControlStmt::Restart => Err(DriverError::from(
                     (&tidb_plannererrors::ERR_UNSUPPORTED_TYPE)
-                        .generate_with_stack("Unsupported type *ast.RestartStmt".to_owned()),
+                        .gen_with_stack("Unsupported type *ast.RestartStmt".to_owned()),
                 )),
                 tidb_ast::ServerControlStmt::Help(_) => Err(DriverError::from(
                     (&tidb_plannererrors::ERR_UNSUPPORTED_TYPE)
-                        .generate_with_stack("Unsupported type *ast.HelpStmt".to_owned()),
+                        .gen_with_stack("Unsupported type *ast.HelpStmt".to_owned()),
                 )),
             },
             _ => Ok(None),
@@ -1085,13 +1085,13 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
         let Some(registry) = self.process_registry() else {
             return Err(DriverError::from(
                 tidb_plannererrors::ERR_NO_SUCH_THREAD
-                    .generate_with_stack_by_args(&[target.into()]),
+                    .gen_with_stack_by_args(&[target.into()]),
             ));
         };
         let Some(target_row) = registry.snapshot().into_iter().find(|row| row.id == target) else {
             return Err(DriverError::from(
                 tidb_plannererrors::ERR_NO_SUCH_THREAD
-                    .generate_with_stack_by_args(&[target.into()]),
+                    .gen_with_stack_by_args(&[target.into()]),
             ));
         };
         let plan = registry.plan_of(target);
@@ -1103,7 +1103,7 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
             {
                 return Err(DriverError::from(
                     tidb_plannererrors::ERR_ACCESS_DENIED
-                        .generate_with_stack_by_args(&[user.into(), host.into()]),
+                        .gen_with_stack_by_args(&[user.into(), host.into()]),
                 ));
             }
         }
@@ -1295,7 +1295,7 @@ pub(crate) fn admin_check_table_mut<'a>(
     let Some(entry) = catalog.table_mut_in(database, name) else {
         return Err(DriverError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+                .gen_with_stack_by_args(&[(&database).into(), (&name).into()]),
         ));
     };
     match entry {
@@ -1307,7 +1307,7 @@ pub(crate) fn admin_check_table_mut<'a>(
         // the caller passes it.
         crate::TableEntry::Kv(table) if table.is_temporary() => Err(DriverError::from(
             tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
-                .generate_with_stack_by_args(&[statement.into()]),
+                .gen_with_stack_by_args(&[statement.into()]),
         )),
         crate::TableEntry::Kv(table) => Ok(std::sync::Arc::make_mut(table)),
         // A view has no rows of its own and a sequence has no index; a
@@ -1333,7 +1333,7 @@ pub(crate) fn admin_index_table_mut<'a>(
         )),
         None => Err(DriverError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+                .gen_with_stack_by_args(&[(&database).into(), (&name).into()]),
         )),
     }
 }
@@ -1356,7 +1356,7 @@ pub(crate) fn admin_check_error(error: crate::admin_check::AdminCheckError) -> D
             index,
             index_count,
         } => DriverError::from(
-            crate::admin_errors::ERR_ADMIN_CHECK_TABLE.generate_with_stack(format!(
+            crate::admin_errors::ERR_ADMIN_CHECK_TABLE.gen_with_stack(format!(
                 "table count {table_count} != index({index}) count {index_count}"
             )),
         ),
@@ -1367,7 +1367,7 @@ pub(crate) fn admin_check_error(error: crate::admin_check::AdminCheckError) -> D
             index_values,
             record_values,
         } => DriverError::from(
-            crate::consistency_errors::ERR_ADMIN_CHECK_INCONSISTENT.generate_with_stack(
+            crate::consistency_errors::ERR_ADMIN_CHECK_INCONSISTENT.gen_with_stack(
                 format!(
                     "data inconsistency in table: {table}, index: {index}, handle: {handle}, \
              index-values:{index_values} != record-values:{record_values}"
@@ -1386,7 +1386,7 @@ pub(crate) fn admin_check_error(error: crate::admin_check::AdminCheckError) -> D
             } = *mismatch;
             DriverError::from(
                 crate::consistency_errors::ERR_ADMIN_CHECK_INCONSISTENT_WITH_COL_INFO
-                    .generate_with_stack(format!(
+                    .gen_with_stack(format!(
                 "data inconsistency in table: {table}, index: {index}, col: {column}, handle: \
                  {handle:?}, index-values:{index_value:?} != record-values:{record_value:?}, \
                  compare err:{compare_error}"
@@ -1401,7 +1401,7 @@ pub(crate) fn admin_check_error(error: crate::admin_check::AdminCheckError) -> D
         }
         AdminCheckError::PartialIndexWithoutFastCheck => DriverError::from(
             crate::executor_errors::ERR_CHECK_PARTIAL_INDEX_WITHOUT_FAST_CHECK
-                .generate_with_stack_by_args(&[]),
+                .gen_with_stack_by_args(&[]),
         ),
     }
 }

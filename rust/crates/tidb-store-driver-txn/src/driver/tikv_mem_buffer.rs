@@ -176,7 +176,7 @@ fn to_tikv_flags_ops(operations: &[FlagsOp]) -> Vec<TikvFlagsOp> {
     operations.iter().copied().map(to_tikv_flags_op).collect()
 }
 
-fn to_driver_flags(flags: TikvKeyFlags) -> KeyFlags {
+pub(crate) fn to_driver_flags(flags: TikvKeyFlags) -> KeyFlags {
     let bits = flags.bits();
     let mut operations = Vec::with_capacity(4);
     if bits & presume_mask() != 0 {

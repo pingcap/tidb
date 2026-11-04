@@ -198,7 +198,7 @@ fn correlation_estimator_options_follow_session_variables() {
 fn ordering_index_selectivity_threshold_is_snapshotted_per_statement() {
     let mut session = Session::new();
     let original = session.statement_context(false);
-    assert_eq!(original.ordering_index_selectivity_threshold(), 0.0);
+    assert_eq!(original.opt_ordering_idx_sel_thresh(), 0.0);
 
     session
         .run("SET tidb_opt_ordering_index_selectivity_threshold = 0.1")
@@ -207,10 +207,10 @@ fn ordering_index_selectivity_threshold_is_snapshotted_per_statement() {
     assert_eq!(
         session
             .statement_context(false)
-            .ordering_index_selectivity_threshold(),
+            .opt_ordering_idx_sel_thresh(),
         0.1
     );
-    assert_eq!(original.ordering_index_selectivity_threshold(), 0.0);
+    assert_eq!(original.opt_ordering_idx_sel_thresh(), 0.0);
 }
 
 #[test]
@@ -510,7 +510,7 @@ fn index_lookup_pushdown_uses_one_typed_statement_snapshot() {
     let snapshot = context.index_lookup_push_down_session();
     assert_eq!(
         snapshot.policy,
-        tidb_sessionctx::IndexLookupPushDownPolicy::Force
+        tidb_sessionctx::IndexLookUpPushDownPolicy::Force
     );
     assert!(!snapshot.repeatable_read);
     assert!(!snapshot.leader_read);

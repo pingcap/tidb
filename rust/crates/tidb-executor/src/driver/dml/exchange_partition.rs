@@ -109,7 +109,7 @@ impl ExchangePartitionCheck {
         if located != *partition_id && located != *standalone_id {
             return Err(DriverError::from(
                 tidb_table::table_errors::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET
-                    .generate_with_stack_by_args(&[]),
+                    .gen_with_stack_by_args(&[]),
             ));
         }
         if ctx.enable_check_constraint() {

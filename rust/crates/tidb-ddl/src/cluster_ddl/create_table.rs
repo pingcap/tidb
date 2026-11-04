@@ -200,7 +200,7 @@ pub(super) fn create_table(
                 DdlPlanError::from(
                     tidb_dbterror::CLASS_SCHEMA
                         .new_std(tidb_errno::errcode::ErrCheckConstraintDupName)
-                        .generate_with_stack_by_args(&[FormatArg::from(wanted.as_str())]),
+                        .gen_with_stack_by_args(&[FormatArg::from(wanted.as_str())]),
                 ),
             ));
         }
@@ -313,7 +313,7 @@ pub(super) fn on_create_table(
         }
         state => {
             return Err(DdlPlanError::from(
-                tidb_dbterror::ERR_INVALID_DDL_JOB.generate_with_stack_by_args(&[
+                tidb_dbterror::ERR_INVALID_DDL_JOB.gen_with_stack_by_args(&[
                     FormatArg::from("table"),
                     FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
                 ]),

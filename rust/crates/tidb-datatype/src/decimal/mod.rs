@@ -1191,7 +1191,7 @@ impl Decimal {
     /// by the division while exposing `div_precision_increment` through
     /// `resultFrac`. Use [`Self::div_mysql_with_warning`] when the caller
     /// needs Go's fixed-word disposition as well.
-    pub fn div_mysql(&self, other: &Decimal, frac_increment: u32) -> Option<Decimal> {
+    pub fn decimal_div(&self, other: &Decimal, frac_increment: u32) -> Option<Decimal> {
         self.div_mysql_with_warning(other, frac_increment)
             .map(|(value, _)| value)
     }

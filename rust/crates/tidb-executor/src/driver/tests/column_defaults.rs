@@ -68,7 +68,7 @@ fn column_defaults_and_not_null() {
             && error.to_string()
                 == DriverError::from(
                     tidb_table::table_errors::ERR_NO_DEFAULT_VALUE
-                        .generate_with_stack_by_args(&["n".into()])
+                        .gen_with_stack_by_args(&["n".into()])
                 )
                 .to_string()
     ));
@@ -83,7 +83,7 @@ fn column_defaults_and_not_null() {
             && error.to_string()
                 == DriverError::from(
                     tidb_table::table_errors::ERR_COLUMN_CANT_NULL
-                        .generate_with_stack_by_args(&["n".into()])
+                        .gen_with_stack_by_args(&["n".into()])
                 )
                 .to_string()
     ));

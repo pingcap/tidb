@@ -264,7 +264,7 @@ pub(super) fn on_lock_tables(
             return Err(cancel_ddl_job(
                 active,
                 DdlPlanError::from(
-                    tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+                    tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack_by_args(&[
                         FormatArg::from("table lock"),
                         FormatArg::new(
                             state.to_string(),

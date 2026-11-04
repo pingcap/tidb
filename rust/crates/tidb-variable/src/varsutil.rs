@@ -182,7 +182,7 @@ impl TruncatedWrongValue {
     #[must_use]
     pub fn to_terror(&self) -> tidb_terror::TerrorError {
         crate::variable_errors::ERR_TRUNCATED_WRONG_VALUE
-            .generate_with_stack_by_args(&[self.name.as_str().into(), self.value.as_str().into()])
+            .gen_with_stack_by_args(&[self.name.as_str().into(), self.value.as_str().into()])
     }
 }
 
@@ -311,7 +311,7 @@ pub fn valid_analyze_skip_column_types(val: &str) -> Result<String, VarError> {
         if !ANALYZE_SKIP_ALLOWED_TYPES.contains(&column_type) {
             return Err(tidb_terror::MysqlError::from_terror(
                 &crate::variable_errors::ERR_WRONG_VALUE_FOR_VAR
-                    .generate_with_stack_by_args(&[
+                    .gen_with_stack_by_args(&[
                         (TIDB_ANALYZE_SKIP_COLUMN_TYPES.to_owned()).into(),
                         (val.to_owned()).into(),
                     ]),
@@ -476,7 +476,7 @@ mod tests {
             valid_analyze_skip_column_types("json,int"),
             Err(tidb_terror::MysqlError::from_terror(
                 &crate::variable_errors::ERR_WRONG_VALUE_FOR_VAR
-                    .generate_with_stack_by_args(&[
+                    .gen_with_stack_by_args(&[
                         (TIDB_ANALYZE_SKIP_COLUMN_TYPES.to_owned()).into(),
                         ("json,int".to_owned()).into()
                     ])

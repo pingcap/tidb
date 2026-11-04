@@ -190,7 +190,7 @@ impl UsernamePolicy {
         if user_prefix.is_empty() || username.starts_with(&format!("{user_prefix}.")) {
             return Ok(());
         }
-        Err(err_user_name_need_prefix().fast_generate(
+        Err(err_user_name_need_prefix().fast_gen(
             "User name must start with `%s.` (use `%s.%s` instead)",
             &[
                 FormatArg::from(user_prefix.as_str()),

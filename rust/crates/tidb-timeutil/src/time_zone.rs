@@ -346,7 +346,7 @@ pub fn parse_time_zone(s: &str) -> Result<TimeZone, TerrorError> {
 }
 
 fn unknown_time_zone(s: &str) -> TerrorError {
-    ERR_UNKNOWN_TIME_ZONE.generate_with_stack(format!("Unknown or incorrect time zone: '{s}'"))
+    ERR_UNKNOWN_TIME_ZONE.gen_with_stack(format!("Unknown or incorrect time zone: '{s}'"))
 }
 
 /// Parses the same MySQL duration grammar used by Go `ParseTimeZone` and

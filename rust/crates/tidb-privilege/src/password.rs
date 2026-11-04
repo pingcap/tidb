@@ -195,7 +195,7 @@ pub fn encode_password_for_plugin(
             } else {
                 Err(tidb_terror::MysqlError::from_terror(
                     &tidb_exeerrors::ERR_PASSWORD_FORMAT
-                        .generate_with_stack_by_args(&[]),
+                        .gen_with_stack_by_args(&[]),
                 ))
             }
         }

@@ -54,7 +54,7 @@
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
 use super::duration_parse::{
-    self, get_fsp_4_time_add_sub, get_fsp, is_duration, parse_datetime, parse_duration, GoDateTime,
+    get_fsp_4_time_add_sub, get_fsp, is_duration, parse_datetime, parse_duration, GoDateTime,
     GoDuration, Truncated, MAX_FSP, MIN_FSP,
 };
 use crate::coerce::coerce_str;
@@ -650,14 +650,14 @@ fn add_unit_to_time(unit: &str, base: GoDateTime, amount: f64) -> Option<Option<
     };
     // Go `validAddTime`: the sum, in floating point, must stay within
     // `0001-01-01 00:00:00`..`9999-12-31 23:59:59.999999`.
-    let base_micros = duration_parse::daynr(base.year, base.month, base.day) as f64
+    let base_micros = tidb_datatype::calc_daynr(base.year, i64::from(base.month), i64::from(base.day)) as f64
         * 86_400_000_000.0
         + f64::from(base.hour) * 3_600_000_000.0
         + f64::from(base.minute) * 60_000_000.0
         + f64::from(base.second) * 1_000_000.0
         + f64::from(base.micros);
-    let min_micros = duration_parse::daynr(1, 1, 1) as f64 * 86_400_000_000.0;
-    let max_micros = (duration_parse::daynr(9999, 12, 31) + 1) as f64 * 86_400_000_000.0 - 1.0;
+    let min_micros = tidb_datatype::calc_daynr(1, 1, 1) as f64 * 86_400_000_000.0;
+    let max_micros = (tidb_datatype::calc_daynr(9999, 12, 31) + 1) as f64 * 86_400_000_000.0 - 1.0;
     let sum = micros + base_micros;
     if !(sum >= min_micros && sum <= max_micros) {
         return Some(None);
@@ -690,8 +690,10 @@ fn add_months(base: GoDateTime, months: f64, clamp: bool) -> Option<GoDateTime> 
     };
     // A day past the target month's end rolls into the next month here,
     // which is exactly what Go's `time.Time.AddDate` normalization does.
-    let (year, month, day) =
-        duration_parse::get_date_from_daynr(duration_parse::daynr(year, month, 1) + i64::from(day) - 1);
+    let (year, month, day) = tidb_datatype::get_date_from_daynr(
+        (tidb_datatype::calc_daynr(year, i64::from(month), 1) + i64::from(day) - 1) as u64,
+    );
+    let (year, month, day) = (year as i64, month as u32, day as u32);
     Some(GoDateTime {
         year,
         month,
@@ -702,11 +704,11 @@ fn add_months(base: GoDateTime, months: f64, clamp: bool) -> Option<GoDateTime> 
 
 fn last_day_of_month(year: i64, month: u32) -> u32 {
     let next = if month == 12 {
-        duration_parse::daynr(year + 1, 1, 1)
+        tidb_datatype::calc_daynr(year + 1, 1, 1)
     } else {
-        duration_parse::daynr(year, month + 1, 1)
+        tidb_datatype::calc_daynr(year, i64::from(month + 1), 1)
     };
-    (next - duration_parse::daynr(year, month, 1)) as u32
+    (next - tidb_datatype::calc_daynr(year, i64::from(month), 1)) as u32
 }
 
 fn number_of(value: &Datum) -> Result<Option<f64>, EvalError> {

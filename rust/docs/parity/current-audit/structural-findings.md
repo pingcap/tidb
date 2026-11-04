@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**36 unresolved: 12 open, 24 partial.**
+**35 unresolved: 12 open, 23 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -42,11 +42,11 @@ unresolved until it is restated against its Go owner or closed.
 | E04 | partial | `enableParallelApply` follows Go's `SafeClone` (with its warning) and `KeepOrder`, but the executor runs an Apply whose inner child holds a CTE serially (`supports_apply_worker_clone`), where Go clones `PhysicalCTE` and runs its workers in parallel | `pkg/planner/core/optimizer.go` (`enableParallelApply`), `physicalop.SafeClone` |
 | E05 | open | IMPORT INTO refuses (`tidb-session/src/dispatch.rs`) | `pkg/executor/importer`, `pkg/disttask/importinto` |
 | E07 | open | BRIE statements are classified but never executed | `pkg/executor/brie.go` |
-| K03 | partial | Restate: datum conversion -- source/error taxonomy, unsigned table overflow, ANALYZE adapters (names no concrete mismatch yet) | `pkg/types`, `pkg/table/tables` |
+| K03 | partial | Go's `Datum.ConvertTo(ctx, target)` reports every truncation and overflow through the statement's `ctx.HandleTruncate` (its error-level context) and returns `(Datum, error)`; here `Datum::convert_to` / `convert_to_in` return a value plus a `ScalarConversionEvent` (`tidb-datatype/src/convert.rs`) that each caller maps to a warning or an error itself (14 files: `tidb-table` `column.rs` / `column_default.rs`, `write_cast.rs`, `tidb-expr` `cast.rs`, the ranger, point-get keys, ...), beside a second `Diagnostics` path (`convert_to_reported`) used only for YEAR / ENUM / SET / BIT targets | `pkg/types/datum.go` (`ConvertTo`), `pkg/types/context.go` (`HandleTruncate`) |
 | X01 | partial | SQL/PB signature construction and typed vector execution; Go's build-time argument casts (`WrapWithCastAsJSON`, `isnull`'s JSON-to-string cast) are applied per value at evaluation instead of appearing in the expression tree (and EXPLAIN) The planner's `BuiltinFunctionUsageInc` (`expressionRewriter.newFunction`) is not called: it needs the function's `PbCode`, which a planner-built Rust function only gets at pushdown resolution. | `pkg/expression` |
 | X02 | open | No `EMBED_TEXT` runtime or inference provider | `pkg/expression` (embedding), `pkg/domain` |
+| X04 | partial | `tidb-expr`'s date builtins carry their own copy of Go `pkg/types` date math (`time_fn/calendar.rs`: `week_of_year`, `days_in_month`, `is_leap_year`, `time_diff_daynr`, a local `calc_daynr`, and the chrono-style `days_from_civil` / `civil_from_days`) instead of calling the `tidb-datatype` port (`CoreTime::week` / `year_week`, `get_last_day`, `is_leap_year`, `calc_daynr`, `get_date_from_daynr`) as Go's `builtin_time.go` calls `types` | `pkg/expression/builtin_time.go`, `pkg/types/core_time.go` |
 | Q01 | open | No Cascades memo exploration/implementation in the production optimizer | `pkg/planner/cascades` |
-| T01 | partial | Go's write-time consistency check (`tables/mutation_checker.go` `CheckDataConsistency`, on by default through `tidb_enable_mutation_checker`) has no port, and key assertions are set by the store driver (`tidb-store-driver-txn` `cluster_storage.rs`) instead of `tables/assertion.go` `setAssertion` at each row and index write | `pkg/table/tables` |
 
 ### Privileges, wire and administration
 
@@ -64,8 +64,7 @@ unresolved until it is restated against its Go owner or closed.
 | O10 | open | No DXF scheduler/executor managers composed | `pkg/disttask/framework` |
 | O11 | partial | TopSQL has its `state`, `stmtstats` and the reporter's data models only: `topsql.go` (`SetupTopSQL`, `AttachSQLAndPlanInfo`, `RegisterSQL` / `RegisterPlan`), `collector/cpu.go` (the SQL CPU collector) and the reporter (`reporter.go` `RemoteTopSQLReporter`, `datasink.go`, `pubsub.go`, `single_target.go`, `report_ticker.go`) have no port, so nothing collects or reports TopSQL | `pkg/util/topsql` |
 | O15 | open | No cross-keyspace runtime (null keyspace only) | `pkg/keyspace`, `pkg/domain` |
-| O18 | partial | Statement-summary records (`exec_stmt_observation.rs`) leave Go fields unset: `plan_cache_unqualified` (empty), `mem_arbitration` (0) and every `CpuUsages` term but TiKV time (Go's `SQLCPUUsages` also records TiDB CPU, O11) | `pkg/util/stmtsummary` |
-| O19 | partial | A text query is counted once its compile boundary planned it, but a binary-protocol EXECUTE counts its prepared statement before any of its plan paths (cached point get, cached SELECT, cached DML, rebuilt) binds or plans it, so an EXECUTE whose planning fails is counted where Go's `Compile` error is not | `pkg/executor/compiler.go` (`CountStmtNode`) |
+| O18 | partial | Statement-summary records (`exec_stmt_observation.rs`) leave Go fields unset: `plan_cache_unqualified` (empty: a prepared statement's refusal is warned by the session (`prepare_bound_execution`) or recorded on a planning `StmtContext` whose `PlanCacheTracker` is not the one that publishes the process plan, so Go's `StmtCtx.PlanCacheUnqualified()` has no single owner), `mem_arbitration` (0) and every `CpuUsages` term but TiKV time (Go's `SQLCPUUsages` also records TiDB CPU, O11) | `pkg/util/stmtsummary` |
 
 ### Information schema
 
@@ -73,7 +72,7 @@ unresolved until it is restated against its Go owner or closed.
 | --- | --- | --- | --- |
 | I01 | partial | Every table Go's `buildMemTable` serves has a provider here (CLUSTER_* through their local sources) except the TiFlash system tables: TIFLASH_TABLES and TIFLASH_SEGMENTS answer no rows and TIFLASH_INDEXES has none, where Go's `tiflashSystemTableRetriever` queries each TiFlash store's system tables over HTTP | `pkg/executor/infoschema_reader.go` |
 | I05 | partial | SLOW_QUERY and CLUSTER_SLOW_QUERY are parsed in one serial pass over the selected files (`retrieve_slow_query_rows`, `tidb-executor/src/slow_query.rs`) that charges no memory tracker and reports no runtime stats, where Go's `slowQueryRetriever` reads line batches through its worker task list (`parseSlowLog` / `dataForSlowLog`), charges each batch's log size and every parsed row's `EstimatedMemUsage` to the reader's `memTracker`, and reports `slowQueryRuntimeStats` | `pkg/executor/slow_query.go` (`slowQueryRetriever`) |
-| I06 | partial | A CLUSTER_* memory-table read (a `TableReader` over a `cop[tidb]` MemTableScan) reports no memory (`N/A`), where Go's `TableReaderExecutor` charges what its coprocessor result returns to its `memTracker` (326 Bytes for a CLUSTER_MEMORY_USAGE read) | `pkg/executor/table_reader.go` (`TableReaderExecutor.memTracker`) |
+| I06 | partial | The coprocessor iterator (`tidb-copr` `cop_paging/cop_iterator.rs`, a `WorkerGroup` over `CopTaskSource`s) is not Go's `copIterator` / `copIteratorWorker` (`pkg/store/copr/coprocessor.go`): it has no `memTracker` (`checkRespOOM` / `memTrackerConsumeResp` charge each response's `MemSize` while it is queued, so a TableReader reports only its select-response size -- 66 Bytes where Go reports 262 -- and a CLUSTER_* memtable TableReader reports `N/A`), no `rateLimitAction` (`tidb_enable_rate_limit_action`) and no `sendRate` | `pkg/store/copr/coprocessor.go` (`copIterator`) |
 
 ### Transport, PD and MPP
 
@@ -81,5 +80,5 @@ unresolved until it is restated against its Go owner or closed.
 | --- | --- | --- | --- |
 | P03 | partial | PD's `serviceDiscovery` (`servicediscovery/service_discovery.go`) is not one owner here: member updates and the leader connection live in `pd/cluster.rs` / `pd/retry.rs`, with no per-member `serviceClient`, no `apiCandidateNodes` / `GetServiceClientByKind` (how Go picks a follower for a follower-handled region API) and no `checkServiceModeChanged` | PD client `servicediscovery` |
 | M01 | open | The MPP coordinator lowers a hand-built single-fragment scan DAG and refuses every pushed Selection, TopN and aggregation, where Go builds the fragment/task graph from the physical plan (including disaggregated compute placement) | `pkg/planner/core` (MPP fragments), `pkg/executor/mpp_gather.go`, `pkg/store/copr/mpp.go` |
-| M04 | partial | `pkg/executor/mppcoordmanager` (`MPPCoordinatorManager`: coordinator registration, `detectAndDelete` expiry, the server address) and the RPC server's `ReportMPPTaskStatus` have no port, so TiFlash's task-status reports reach no coordinator; TiFlash's stale regions are invalidated by exact epoch but without Go's `EpochNotMatch` reason | `pkg/executor/internal/mpp` |
+| M04 | partial | `pkg/executor/mppcoordmanager` (`MPPCoordinatorManager`: coordinator registration, `detectAndDelete` expiry, the server address) and the RPC server's `ReportMPPTaskStatus` have no port, so TiFlash's task-status reports reach no coordinator; and the native client's region cache drops an invalidated region (`invalidate_region_cache`) where client-go marks it with an `InvalidReason` (`InvalidateCachedRegionWithReason`, `EpochNotMatch` for TiFlash's stale regions) and keeps it, which `insertRegionToCache` reads to move a `NoLeader` region's reload to the next TiKV peer | `pkg/executor/internal/mpp` |
 

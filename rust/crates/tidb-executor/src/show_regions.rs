@@ -56,7 +56,7 @@ fn resolve<'a>(
     let Some(entry) = catalog.table_in(database, table_name) else {
         return Err(DriverError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                .generate_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
+                .gen_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
         ));
     };
     let target = match entry {
@@ -82,7 +82,7 @@ fn resolve<'a>(
     if target.table.is_some_and(TableCommon::is_temporary) {
         return Err(DriverError::from(
             tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
-                .generate_with_stack_by_args(&[what.into()]),
+                .gen_with_stack_by_args(&[what.into()]),
         ));
     }
     Ok(target)
@@ -99,7 +99,7 @@ fn physical_ids(
         if !partitions.is_empty() {
             return Err(DriverError::from(
                 tidb_plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
-                    .generate_with_stack_by_args(&[]),
+                    .gen_with_stack_by_args(&[]),
             ));
         }
         return Ok((vec![target.id], false));
@@ -112,7 +112,7 @@ fn physical_ids(
             .find(|definition| definition.name.lowercase().go_equal_fold(&name.go_to_lower()))
             .ok_or_else(|| {
                 DriverError::from(
-                    tidb_table::table_errors::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(
+                    tidb_table::table_errors::ERR_UNKNOWN_PARTITION.gen_with_stack_by_args(
                         &[name.go_to_lower().into(), target.name.clone().into()],
                     ),
                 )
@@ -370,7 +370,7 @@ pub fn show_table_regions(
             });
             let Some(found) = found else {
                 return Err(DriverError::from(
-                    tidb_plannererrors::ERR_KEY_DOES_NOT_EXIST.generate_with_stack_by_args(
+                    tidb_plannererrors::ERR_KEY_DOES_NOT_EXIST.gen_with_stack_by_args(
                         &[name.to_owned().into(), target.name.clone().into()],
                     ),
                 ));

@@ -129,7 +129,7 @@ impl SysVarCacheError {
         match self {
             Self::UnknownSystemVar(name) => Some(
                 tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                    .generate_with_stack_by_args(&[name.as_str().into()]),
+                    .gen_with_stack_by_args(&[name.as_str().into()]),
             ),
             Self::Exec(_) => None,
         }

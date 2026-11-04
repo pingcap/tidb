@@ -86,13 +86,13 @@ pub fn split_region(
     if table.is_temporary() {
         return Err(DriverError::from(
             tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
-                .generate_with_stack_by_args(&["split table".into()]),
+                .gen_with_stack_by_args(&["split table".into()]),
         ));
     }
     if stmt.partition_syntax && table.partition().is_none() {
         return Err(DriverError::from(
             tidb_plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
-                .generate_with_stack_by_args(&[]),
+                .gen_with_stack_by_args(&[]),
         ));
     }
     let columns: Vec<(String, FieldType)> = table
@@ -186,7 +186,7 @@ fn plan_index_split<'a>(
     let clustered = table.pk_handle_offset().is_some() || !table.common_handle_offsets().is_empty();
     if index_name.go_lower_eq("primary") && clustered {
         return Err(DriverError::Mysql(MysqlError::from_terror(
-            &tidb_plannererrors::ERR_KEY_DOES_NOT_EXIST.generate_with_stack(
+            &tidb_plannererrors::ERR_KEY_DOES_NOT_EXIST.gen_with_stack(
                 "unable to split clustered index, please split table instead.",
             ),
         )));
@@ -198,7 +198,7 @@ fn plan_index_split<'a>(
         .ok_or_else(|| {
             // Go `buildSplitIndexRegion`: `plannererrors.ErrKeyDoesNotExist`.
             DriverError::from(
-                tidb_plannererrors::ERR_KEY_DOES_NOT_EXIST.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_KEY_DOES_NOT_EXIST.gen_with_stack_by_args(&[
                     index_name.to_owned().into(),
                     table_name.to_owned().into(),
                 ]),
@@ -221,7 +221,7 @@ fn plan_index_split<'a>(
                 if list.len() > index.column_offsets.len() {
                     return Err(DriverError::from(
                         tidb_plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
-                            .generate_with_stack_by_args(&[(position + 1).into()]),
+                            .gen_with_stack_by_args(&[(position + 1).into()]),
                     ));
                 }
                 values.push(convert_tuple(list)?);
@@ -292,7 +292,7 @@ fn plan_table_split(
                 if converted.is_null() {
                     return Err(DriverError::from(
                         tidb_table::table_errors::ERR_COLUMN_CANT_NULL
-                            .generate_with_stack_by_args(&[((*name).to_owned()).into()]),
+                            .gen_with_stack_by_args(&[((*name).to_owned()).into()]),
                     ));
                 }
                 Ok(converted)
@@ -308,7 +308,7 @@ fn plan_table_split(
                     list,
                     DriverError::from(
                         tidb_plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
-                            .generate_with_stack_by_args(&[position.into()]),
+                            .gen_with_stack_by_args(&[position.into()]),
                     ),
                 )
             })
@@ -372,7 +372,7 @@ fn physical_ids(
                 .ok_or_else(|| {
                     DriverError::from(
                         tidb_table::table_errors::ERR_UNKNOWN_PARTITION
-                            .generate_with_stack_by_args(&[
+                            .gen_with_stack_by_args(&[
                                 name.go_to_lower().into(),
                                 table_name.to_owned().into(),
                             ]),
@@ -424,7 +424,7 @@ fn index_split_keys(
             if lower_key >= upper_key {
                 return Err(DriverError::Mysql(MysqlError::from_terror(
                     &tidb_exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
-                        .generate_with_stack_by_args(&[(format!(
+                        .gen_with_stack_by_args(&[(format!(
                     "Split index `{}` region lower value {} should less than the upper value {}",
                     index.read().name,
                     datums_text(lower),
@@ -483,7 +483,7 @@ fn table_split_keys(
             if handle_bytes(&lower_handle) >= handle_bytes(&upper_handle) {
                 return Err(DriverError::Mysql(MysqlError::from_terror(
         &tidb_exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
-            .generate_with_stack_by_args(&[(format!(
+            .gen_with_stack_by_args(&[(format!(
                     "Split table `{table_name}` region lower value {} should less than the upper value {}",
                     datums_text(lower),
                     datums_text(upper)
@@ -541,7 +541,7 @@ fn int_bound_and_step(
         if upper_bits <= lower_bits {
             return Err(DriverError::Mysql(MysqlError::from_terror(
                 &tidb_exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
-                    .generate_with_stack_by_args(&[(format!(
+                    .gen_with_stack_by_args(&[(format!(
                         "lower value {lower_bits} should less than the upper value {upper_bits}"
                     ))
                     .into()]),
@@ -556,7 +556,7 @@ fn int_bound_and_step(
         if up <= low {
             return Err(DriverError::Mysql(MysqlError::from_terror(
                 &tidb_exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
-                    .generate_with_stack_by_args(&[(format!(
+                    .gen_with_stack_by_args(&[(format!(
                         "lower value {low} should less than the upper value {up}"
                     ))
                     .into()]),
@@ -567,7 +567,7 @@ fn int_bound_and_step(
     if step < MIN_REGION_STEP_VALUE {
         return Err(DriverError::Mysql(MysqlError::from_terror(
         &tidb_exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
-            .generate_with_stack_by_args(&[(format!(
+            .gen_with_stack_by_args(&[(format!(
             "the region size is too small, expected at least {MIN_REGION_STEP_VALUE}, but got {step}"
         )).into()]),
     )));
@@ -681,7 +681,7 @@ impl ValueConverter<'_> {
             return Err(DriverError::Mysql(MysqlError::from_sql_error(reported)));
         };
         Err(DriverError::Mysql(MysqlError::from_terror(
-            &tidb_datatype::types_errors::ERR_TRUNCATED.generate_with_stack(format!(
+            &tidb_datatype::types_errors::ERR_TRUNCATED.gen_with_stack(format!(
                 "Incorrect value: '{}' for column '{}'",
                 truncate_chars(&text, 128),
                 truncate_chars(column_name, 192)

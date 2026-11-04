@@ -211,7 +211,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     }) {
                         return Err(PlanError::from(
                             tidb_plannererrors::ERR_NON_UPDATABLE_TABLE
-                                .generate_with_stack_by_args(&[
+                                .gen_with_stack_by_args(&[
                                     (table.name.join(".")).into(),
                                     "DELETE".into(),
                                 ]),

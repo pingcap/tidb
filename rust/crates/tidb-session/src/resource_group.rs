@@ -189,7 +189,7 @@ fn set_direct_resource_group_background_option(
                     continue;
                 }
                 if !EXPLICIT_TYPE_LIST.contains(&job_type.as_str()) {
-                    return Err(DriverError::Mysql(MysqlError::from_terror(&tidb_infoschema::infoschema_errors::ERR_RESOURCE_GROUP_INVALID_BACKGROUND_TASK_NAME.generate_with_stack_by_args(&[job_type.into()]))));
+                    return Err(DriverError::Mysql(MysqlError::from_terror(&tidb_infoschema::infoschema_errors::ERR_RESOURCE_GROUP_INVALID_BACKGROUND_TASK_NAME.gen_with_stack_by_args(&[job_type.into()]))));
                 }
                 job_types.push(job_type);
             }
@@ -273,7 +273,7 @@ impl Session {
         {
             return Err(DriverError::Mysql(MysqlError::from_terror(
                 &tidb_infoschema::infoschema_errors::ERR_RESOURCE_GROUP_NOT_EXISTS
-                    .generate_with_stack_by_args(&[(&lower).into()]),
+                    .gen_with_stack_by_args(&[(&lower).into()]),
             )));
         }
         Ok(lower)
@@ -296,7 +296,7 @@ impl Session {
         if exists {
             let error = DriverError::Mysql(MysqlError::from_terror(
                 &tidb_infoschema::infoschema_errors::ERR_RESOURCE_GROUP_EXISTS
-                    .generate_with_stack_by_args(&[(&stmt.name).into()]),
+                    .gen_with_stack_by_args(&[(&stmt.name).into()]),
             ));
             if stmt.if_not_exists {
                 self.append_suppressed(error);
@@ -318,7 +318,7 @@ impl Session {
         let Some(existing) = existing else {
             let error = DriverError::Mysql(MysqlError::from_terror(
                 &tidb_infoschema::infoschema_errors::ERR_RESOURCE_GROUP_NOT_EXISTS
-                    .generate_with_stack_by_args(&[(&stmt.name).into()]),
+                    .gen_with_stack_by_args(&[(&stmt.name).into()]),
             ));
             if stmt.if_exists {
                 self.append_suppressed(error);
@@ -344,7 +344,7 @@ impl Session {
         let Some(existing) = existing else {
             let error = DriverError::Mysql(MysqlError::from_terror(
                 &tidb_infoschema::infoschema_errors::ERR_RESOURCE_GROUP_NOT_EXISTS
-                    .generate_with_stack_by_args(&[(&stmt.name).into()]),
+                    .gen_with_stack_by_args(&[(&stmt.name).into()]),
             ));
             if stmt.if_exists {
                 self.append_suppressed(error);

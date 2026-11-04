@@ -290,7 +290,7 @@ impl Session {
             (warning
                 .terror
                 .unwrap_or(&tidb_parser::parser_errors::ERR_WARN_OPTIMIZER_HINT_UNSUPPORTED_HINT))
-            .generate_with_stack(message),
+            .gen_with_stack(message),
         ))
     }
 

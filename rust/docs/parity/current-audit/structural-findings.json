@@ -2,9 +2,9 @@
   "date": "2026-11-04",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 36,
+    "unresolved": 35,
     "open": 12,
-    "partial": 24
+    "partial": 23
   },
   "findings": [
     {
@@ -88,13 +88,6 @@
       "go_owner": "`pkg/executor/infoschema_reader.go`"
     },
     {
-      "id": "T01",
-      "status": "partial",
-      "group": "Transaction and routing ownership",
-      "finding": "Go's write-time consistency check (`tables/mutation_checker.go` `CheckDataConsistency`, on by default through `tidb_enable_mutation_checker`) has no port, and key assertions are set by the store driver (`tidb-store-driver-txn` `cluster_storage.rs`) instead of `tables/assertion.go` `setAssertion` at each row and index write",
-      "go_owner": "`pkg/table/tables`"
-    },
-    {
       "id": "O02",
       "status": "open",
       "group": "Domain and process services",
@@ -141,15 +134,8 @@
       "id": "O18",
       "status": "partial",
       "group": "Domain and process services",
-      "finding": "Statement-summary records (`exec_stmt_observation.rs`) leave Go fields unset: `plan_cache_unqualified` (empty), `mem_arbitration` (0) and every `CpuUsages` term but TiKV time (Go's `SQLCPUUsages` also records TiDB CPU, O11)",
+      "finding": "Statement-summary records (`exec_stmt_observation.rs`) leave Go fields unset: `plan_cache_unqualified` (empty: a prepared statement's refusal is warned by the session (`prepare_bound_execution`) or recorded on a planning `StmtContext` whose `PlanCacheTracker` is not the one that publishes the process plan, so Go's `StmtCtx.PlanCacheUnqualified()` has no single owner), `mem_arbitration` (0) and every `CpuUsages` term but TiKV time (Go's `SQLCPUUsages` also records TiDB CPU, O11)",
       "go_owner": "`pkg/util/stmtsummary`"
-    },
-    {
-      "id": "O19",
-      "status": "partial",
-      "group": "Domain and process services",
-      "finding": "A text query is counted once its compile boundary planned it, but a binary-protocol EXECUTE counts its prepared statement before any of its plan paths (cached point get, cached SELECT, cached DML, rebuilt) binds or plans it, so an EXECUTE whose planning fails is counted where Go's `Compile` error is not",
-      "go_owner": "`pkg/executor/compiler.go` (`CountStmtNode`)"
     },
     {
       "id": "F02",
@@ -169,7 +155,7 @@
       "id": "M04",
       "status": "partial",
       "group": "TiFlash and MPP",
-      "finding": "`pkg/executor/mppcoordmanager` (`MPPCoordinatorManager`: coordinator registration, `detectAndDelete` expiry, the server address) and the RPC server's `ReportMPPTaskStatus` have no port, so TiFlash's task-status reports reach no coordinator; TiFlash's stale regions are invalidated by exact epoch but without Go's `EpochNotMatch` reason",
+      "finding": "`pkg/executor/mppcoordmanager` (`MPPCoordinatorManager`: coordinator registration, `detectAndDelete` expiry, the server address) and the RPC server's `ReportMPPTaskStatus` have no port, so TiFlash's task-status reports reach no coordinator; and the native client's region cache drops an invalidated region (`invalidate_region_cache`) where client-go marks it with an `InvalidReason` (`InvalidateCachedRegionWithReason`, `EpochNotMatch` for TiFlash's stale regions) and keeps it, which `insertRegionToCache` reads to move a `NoLeader` region's reload to the next TiKV peer",
       "go_owner": "`pkg/executor/internal/mpp`"
     },
     {
@@ -201,11 +187,18 @@
       "go_owner": "`pkg/expression` (embedding), `pkg/domain`"
     },
     {
+      "id": "X04",
+      "status": "partial",
+      "group": "Expanded subsystem ownership review",
+      "finding": "`tidb-expr`'s date builtins carry their own copy of Go `pkg/types` date math (`time_fn/calendar.rs`: `week_of_year`, `days_in_month`, `is_leap_year`, `time_diff_daynr`, a local `calc_daynr`, and the chrono-style `days_from_civil` / `civil_from_days`) instead of calling the `tidb-datatype` port (`CoreTime::week` / `year_week`, `get_last_day`, `is_leap_year`, `calc_daynr`, `get_date_from_daynr`) as Go's `builtin_time.go` calls `types`",
+      "go_owner": "`pkg/expression/builtin_time.go`, `pkg/types/core_time.go`"
+    },
+    {
       "id": "K03",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "Restate: datum conversion -- source/error taxonomy, unsigned table overflow, ANALYZE adapters (names no concrete mismatch yet)",
-      "go_owner": "`pkg/types`, `pkg/table/tables`"
+      "finding": "Go's `Datum.ConvertTo(ctx, target)` reports every truncation and overflow through the statement's `ctx.HandleTruncate` (its error-level context) and returns `(Datum, error)`; here `Datum::convert_to` / `convert_to_in` return a value plus a `ScalarConversionEvent` (`tidb-datatype/src/convert.rs`) that each caller maps to a warning or an error itself (14 files: `tidb-table` `column.rs` / `column_default.rs`, `write_cast.rs`, `tidb-expr` `cast.rs`, the ranger, point-get keys, ...), beside a second `Diagnostics` path (`convert_to_reported`) used only for YEAR / ENUM / SET / BIT targets",
+      "go_owner": "`pkg/types/datum.go` (`ConvertTo`), `pkg/types/context.go` (`HandleTruncate`)"
     },
     {
       "id": "I04",
@@ -224,9 +217,9 @@
     {
       "id": "I06",
       "status": "partial",
-      "group": "Runtime information-schema providers",
-      "finding": "A CLUSTER_* memory-table read (a `TableReader` over a `cop[tidb]` MemTableScan) reports no memory (`N/A`), where Go's `TableReaderExecutor` charges what its coprocessor result returns to its `memTracker` (326 Bytes for a CLUSTER_MEMORY_USAGE read)",
-      "go_owner": "`pkg/executor/table_reader.go` (`TableReaderExecutor.memTracker`)"
+      "group": "Transaction and routing ownership",
+      "finding": "The coprocessor iterator (`tidb-copr` `cop_paging/cop_iterator.rs`, a `WorkerGroup` over `CopTaskSource`s) is not Go's `copIterator` / `copIteratorWorker` (`pkg/store/copr/coprocessor.go`): it has no `memTracker` (`checkRespOOM` / `memTrackerConsumeResp` charge each response's `MemSize` while it is queued, so a TableReader reports only its select-response size -- 66 Bytes where Go reports 262 -- and a CLUSTER_* memtable TableReader reports `N/A`), no `rateLimitAction` (`tidb_enable_rate_limit_action`) and no `sendRate`",
+      "go_owner": "`pkg/store/copr/coprocessor.go` (`copIterator`)"
     },
     {
       "id": "E07",

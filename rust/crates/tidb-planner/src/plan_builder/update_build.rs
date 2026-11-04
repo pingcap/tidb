@@ -89,7 +89,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         .map_err(|_| {
                             PlanError::from(
                                 tidb_plannererrors::ERR_AMBIGUOUS
-                                    .generate_with_stack_by_args(&[
+                                    .gen_with_stack_by_args(&[
                                         (column.display_name()).into(),
                                         "field list".into(),
                                     ]),
@@ -98,7 +98,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         .ok_or_else(|| {
                             PlanError::from(
                                 tidb_plannererrors::ERR_UNKNOWN_COLUMN
-                                    .generate_with_stack_by_args(&[
+                                    .gen_with_stack_by_args(&[
                                         tidb_hack::go_to_lower(column.column.original.clone())
                                             .into(),
                                         "field list".into(),
@@ -127,7 +127,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         .ok_or_else(|| {
                             PlanError::from(
                                 tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                                    .fast_generate_by_args(&[
+                                    .fast_gen_by_args(&[
                                         (&assigned.target.database).into(),
                                         (&assigned.target.table).into(),
                                     ]),
@@ -155,7 +155,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     if !same {
                         return Err(PlanError::from(
                             tidb_plannererrors::ERR_BAD_GENERATED_COLUMN
-                                .generate_with_stack_by_args(&[
+                                .gen_with_stack_by_args(&[
                                     (table.columns[offset].read().name.original().to_owned()).into(),
                                     (table.table_name()).into(),
                                 ]),

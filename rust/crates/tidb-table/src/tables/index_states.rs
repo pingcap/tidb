@@ -245,7 +245,7 @@ impl TableCommon {
                 if duplicate.is_some() {
                     return Err(KvTableError::Mysql(
                         tidb_terror::MysqlError::from_terror(
-                            &tidb_kv::kv_errors::ERR_KEY_EXISTS.fast_generate_by_args(&[
+                            &tidb_kv::kv_errors::ERR_KEY_EXISTS.fast_gen_by_args(&[
                                 (duplicate_value.clone()).into(),
                                 (self.qualified_key(kv_index.read().name.original())).into(),
                             ]),

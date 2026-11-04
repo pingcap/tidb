@@ -75,7 +75,7 @@ pub trait OptimizeContext: tidb_exprctx::Columns + PlanCacheMarker + HintWarning
     /// The TiFlash cluster `handleFineGrainedShuffle` sizes streams from.
     fn tiflash_cluster_info(&self) -> Option<&std::sync::Arc<dyn tidb_sessionctx::TiFlashClusterInfo>>;
     /// Go `SessionVars.GetEnableIndexMerge()`.
-    fn index_merge(&self) -> bool;
+    fn get_enable_index_merge(&self) -> bool;
     /// Go `StmtCtx.NoIndexMergeHint`.
     fn no_index_merge_hint(&self) -> bool;
     /// Go `StmtCtx.InExplainStmt`.
@@ -93,27 +93,27 @@ pub trait OptimizeContext: tidb_exprctx::Columns + PlanCacheMarker + HintWarning
     /// Go `SessionVars.EnableSemiJoinRewrite`.
     fn enable_semi_join_rewrite(&self) -> bool;
     /// Go `SessionVars.OptimizerEnableNAAJ`.
-    fn enable_null_aware_anti_join(&self) -> bool;
+    fn optimizer_enable_naaj(&self) -> bool;
     /// Go `SessionVars.EnableNoDecorrelateInSelect`.
     fn enable_no_decorrelate_in_select(&self) -> bool;
     /// Go `SessionVars.OptimizerFixControl`.
     fn optimizer_fix_control(&self) -> &OptimizerFixControl;
     /// Go `SessionVars.TiDBOptJoinReorderThreshold`.
-    fn join_reorder_threshold(&self) -> i32;
+    fn tidb_opt_join_reorder_threshold(&self) -> i32;
     /// Go `SessionVars.AllowAggPushDown`.
     fn allow_agg_push_down(&self) -> bool;
     /// Go `SessionVars.TiDBOptEnableAdvancedJoinReorder`.
-    fn advanced_join_reorder(&self) -> bool;
+    fn tidb_opt_enable_advanced_join_reorder(&self) -> bool;
     /// Go `SessionVars.CartesianJoinOrderThreshold`.
     fn cartesian_join_order_threshold(&self) -> f64;
     /// Go `SessionVars.TiDBOptJoinReorderThroughProj`.
-    fn join_reorder_through_proj(&self) -> bool;
+    fn tidb_opt_join_reorder_through_proj(&self) -> bool;
     /// Go `SessionVars.TiDBOptJoinReorderThroughSel`.
-    fn join_reorder_through_sel(&self) -> bool;
+    fn tidb_opt_join_reorder_through_sel(&self) -> bool;
     /// Go `SessionVars.EnableOuterJoinReorder`.
     fn enable_outer_join_reorder(&self) -> bool;
     /// Go `SessionVars.EnableAdvancedJoinHint`.
-    fn advanced_join_hint(&self) -> bool;
+    fn enable_advanced_join_hint(&self) -> bool;
     /// Go `StmtCtx.GetIndexForce()`.
     fn get_index_force(&self) -> bool;
     /// Go `SessionVars.EnableSkewDistinctAgg`.
@@ -125,13 +125,13 @@ pub trait OptimizeContext: tidb_exprctx::Columns + PlanCacheMarker + HintWarning
     /// Go `SessionVars.TiFlashPreAggMode`.
     fn tiflash_pre_agg_mode(&self) -> &str;
     /// Go `SessionVars.OptPartialOrderedIndexForTopN`.
-    fn partial_ordered_index_for_topn(&self) -> bool;
+    fn is_partial_ordered_index_for_top_n_enabled(&self) -> bool;
     /// Go `SessionVars.OptOrderingIdxSelRatio`.
-    fn ordering_index_selectivity_ratio(&self) -> f64;
+    fn opt_ordering_idx_sel_ratio(&self) -> f64;
     /// Go `SessionVars.IndexJoinMaxScanRowsRatio`.
     fn index_join_max_scan_rows_ratio(&self) -> f64;
     /// Go `SessionVars.OptOrderingIdxSelThresh`.
-    fn ordering_index_selectivity_threshold(&self) -> f64;
+    fn opt_ordering_idx_sel_thresh(&self) -> f64;
     /// Go `SessionVars.AllowProjectionPushDown`.
     fn allow_projection_push_down(&self) -> bool;
     /// Go `SessionVars.EnableINLJoinInnerMultiPattern`.
@@ -245,7 +245,7 @@ pub fn optimize_logical<C: OptimizeContext>(
         partition_pruning: Some(services.partition_pruning),
         opt_index_prune_threshold: ctx.opt_index_prune_threshold(),
         opt_prefix_index_single_scan: ctx.opt_prefix_index_single_scan(),
-        index_merge_enabled: ctx.index_merge(),
+        index_merge_enabled: ctx.get_enable_index_merge(),
         no_index_merge_hint: ctx.no_index_merge_hint(),
         in_explain_stmt: ctx.in_explain_stmt(),
         range_max_size: ctx.range_max_size(),
@@ -254,7 +254,7 @@ pub fn optimize_logical<C: OptimizeContext>(
         always_keep_join_key: ctx.always_keep_join_key(),
         enable_unsafe_substitute: ctx.enable_unsafe_substitute(),
         enable_semi_join_rewrite: ctx.enable_semi_join_rewrite(),
-        enable_null_aware_anti_join: ctx.enable_null_aware_anti_join(),
+        enable_null_aware_anti_join: ctx.optimizer_enable_naaj(),
         enable_no_decorrelate_in_select: ctx.enable_no_decorrelate_in_select(),
         allow_eliminate_apply: ctx
             .optimizer_fix_control()
@@ -267,16 +267,16 @@ pub fn optimize_logical<C: OptimizeContext>(
             .get_bool_with_default(tidb_fixcontrol::FIX_52869, true),
         index_lookup_push_down_session: ctx.index_lookup_push_down_session(),
         isolation_read_engines: ctx.isolation_read_engines(),
-        join_reorder_threshold: ctx.join_reorder_threshold(),
+        join_reorder_threshold: ctx.tidb_opt_join_reorder_threshold(),
         group_ndv_skew_ratio: optimizer_cost_env.session.group_ndv_skew_ratio,
         scale_ndv_skew_ratio: optimizer_cost_env.session.scale_ndv_skew_ratio,
         allow_agg_push_down: ctx.allow_agg_push_down(),
-        advanced_join_reorder: ctx.advanced_join_reorder(),
+        advanced_join_reorder: ctx.tidb_opt_enable_advanced_join_reorder(),
         cartesian_join_order_threshold: ctx.cartesian_join_order_threshold(),
-        join_reorder_through_proj: ctx.join_reorder_through_proj(),
-        join_reorder_through_sel: ctx.join_reorder_through_sel(),
+        join_reorder_through_proj: ctx.tidb_opt_join_reorder_through_proj(),
+        join_reorder_through_sel: ctx.tidb_opt_join_reorder_through_sel(),
         outer_join_reorder: ctx.enable_outer_join_reorder(),
-        advanced_join_hint: ctx.advanced_join_hint(),
+        advanced_join_hint: ctx.enable_advanced_join_hint(),
         hint_warning_sink: Some(ctx),
         used_stats_recorder: Some(services.used_stats_recorder),
         cte_optimizer: Some(services.cte_optimizer),
@@ -478,7 +478,7 @@ pub fn physical_optimize<C: OptimizeContext>(
     .with_enable_3_stage_distinct_agg(ctx.enable_3_stage_distinct_agg())
     .with_enable_3_stage_multi_distinct_agg(ctx.enable_3_stage_multi_distinct_agg())
     .with_tiflash_pre_agg_mode(ctx.tiflash_pre_agg_mode())
-    .with_partial_ordered_index_for_topn(ctx.partial_ordered_index_for_topn())
+    .with_partial_ordered_index_for_topn(ctx.is_partial_ordered_index_for_top_n_enabled())
     .with_opt_prefix_index_single_scan(ctx.opt_prefix_index_single_scan())
     .with_allow_prefer_range_scan(ctx.allow_prefer_range_scan())
     .with_prefer_index_merge_by_fix_control(
@@ -494,9 +494,9 @@ pub fn physical_optimize<C: OptimizeContext>(
     )
     .with_range_quota(ctx.range_max_size(), ctx.range_fallback_handler())
     .with_selectivity_factor(ctx.selectivity_factor())
-    .with_ordering_index_selectivity_ratio(ctx.ordering_index_selectivity_ratio())
+    .with_ordering_index_selectivity_ratio(ctx.opt_ordering_idx_sel_ratio())
     .with_index_join_max_scan_rows_ratio(ctx.index_join_max_scan_rows_ratio())
-    .with_ordering_index_selectivity_threshold(ctx.ordering_index_selectivity_threshold())
+    .with_ordering_index_selectivity_threshold(ctx.opt_ordering_idx_sel_thresh())
     .with_projection_push_down(ctx.allow_projection_push_down())
     .with_heavy_function_optimize(
         ctx.optimizer_fix_control()
@@ -526,7 +526,7 @@ pub fn physical_optimize<C: OptimizeContext>(
         .inspect_err(|_| ctx.set_physical_opt(begin_physical_opt.elapsed()))?;
     let mut physical = task.plan().cloned().ok_or_else(|| {
         PlanError::from(
-            tidb_plannererrors::ERR_INTERNAL.generate_with_stack_by_args(&[
+            tidb_plannererrors::ERR_INTERNAL.gen_with_stack_by_args(&[
                 "Can't find a proper physical plan for this query".into(),
             ]),
         )

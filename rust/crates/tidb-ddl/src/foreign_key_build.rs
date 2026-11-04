@@ -71,7 +71,7 @@ pub(crate) fn check_table_foreign_key_valid(
             None => {
                 return Err(refusal(tidb_terror::MysqlError::from_terror(
                     &tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_CANNOT_OPEN_PARENT
-                        .generate_with_stack_by_args(&[(fk.ref_table.original())
+                        .gen_with_stack_by_args(&[(fk.ref_table.original())
                             .to_string()
                             .into()]),
                 )))
@@ -390,7 +390,7 @@ pub(crate) fn check_modify_column_with_foreign_key_constraint(
             let refer_col = refer_col.read();
             if new.code() != refer_col.field_type.code() {
                 return Err(refusal(tidb_terror::MysqlError::from_terror(
-                    &tidb_dbterror::ERR_FK_INCOMPATIBLE_COLUMNS.generate_with_stack_by_args(
+                    &tidb_dbterror::ERR_FK_INCOMPATIBLE_COLUMNS.gen_with_stack_by_args(
                         &[
                             (new_col.name.original()).to_string().into(),
                             (ref_cols[i].original()).to_string().into(),
@@ -402,7 +402,7 @@ pub(crate) fn check_modify_column_with_foreign_key_constraint(
             if !is_acceptable_foreign_key_column_change(new_col, original_col, &refer_col) {
                 return Err(refusal(tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_FOREIGN_KEY_COLUMN_CANNOT_CHANGE
-                        .generate_with_stack_by_args(&[
+                        .gen_with_stack_by_args(&[
                             (original_col.name.original()).to_string().into(),
                             (fk.name.original()).to_string().into(),
                         ]),
@@ -438,7 +438,7 @@ pub(crate) fn check_modify_column_with_foreign_key_constraint(
             let child_col = child_col.read();
             if new.code() != child_col.field_type.code() {
                 return Err(refusal(tidb_terror::MysqlError::from_terror(
-                    &tidb_dbterror::ERR_FK_INCOMPATIBLE_COLUMNS.generate_with_stack_by_args(
+                    &tidb_dbterror::ERR_FK_INCOMPATIBLE_COLUMNS.gen_with_stack_by_args(
                         &[
                             (child_col.name.original()).to_string().into(),
                             (original_col.name.original()).to_string().into(),
@@ -450,7 +450,7 @@ pub(crate) fn check_modify_column_with_foreign_key_constraint(
             if !is_acceptable_foreign_key_column_change(new_col, original_col, &child_col) {
                 return Err(refusal(tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_FOREIGN_KEY_COLUMN_CANNOT_CHANGE_CHILD
-                        .generate_with_stack_by_args(&[
+                        .gen_with_stack_by_args(&[
                             (original_col.name.original()).to_string().into(),
                             (referred_fk.child_fk_name.original()).to_string().into(),
                             (format!(

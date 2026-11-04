@@ -302,7 +302,7 @@ fn merge_create_table_jobs_of_same_schema(
             return Err((
                 ClusterDdlError::Plan(tidb_ddl_build::plan_error::DdlPlanError::from(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS
-                        .fast_generate_by_args(&["can not batch create tables with same name".into()]),
+                        .fast_gen_by_args(&["can not batch create tables with same name".into()]),
                 )),
                 job_ws,
             ));

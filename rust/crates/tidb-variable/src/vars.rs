@@ -60,10 +60,10 @@ pub fn validation_var_error(name: &str, value: &str, error: ValidationError) -> 
     match error {
         ValidationError::WrongType => tidb_terror::MysqlError::from_terror(
             &crate::variable_errors::ERR_WRONG_TYPE_FOR_VAR
-                .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
         ),
         ValidationError::WrongValue => tidb_terror::MysqlError::from_terror(
-            &crate::variable_errors::ERR_WRONG_VALUE_FOR_VAR.generate_with_stack_by_args(&[
+            &crate::variable_errors::ERR_WRONG_VALUE_FOR_VAR.gen_with_stack_by_args(&[
                 (name.to_ascii_lowercase()).into(),
                 (value.to_owned()).into(),
             ]),
@@ -644,7 +644,7 @@ impl SessionVars {
         if max >= 0 && count > max {
             PREPARED_STMT_COUNT.fetch_sub(1, Ordering::SeqCst);
             return Err(crate::variable_errors::ERR_MAX_PREPARED_STMT_COUNT_REACHED
-                .generate_with_stack_by_args(&[max.into()]));
+                .gen_with_stack_by_args(&[max.into()]));
         }
         self.prepared_stmt_entries += 1;
         Ok(())
@@ -1201,38 +1201,32 @@ impl SessionVars {
 
     /// Go `SessionVars.TiFlashMaxBytesBeforeExternalJoin`.
     #[must_use]
-    pub const fn ti_flash_max_bytes_before_ext_join(&self) -> i64 {
+    pub const fn tiflash_max_bytes_before_external_join(&self) -> i64 {
         self.ti_flash_max_bytes_before_ext_join
     }
 
     /// Go `SessionVars.TiFlashMaxBytesBeforeExternalGroupBy`.
     #[must_use]
-    pub const fn ti_flash_max_bytes_before_ext_agg(&self) -> i64 {
+    pub const fn tiflash_max_bytes_before_external_group_by(&self) -> i64 {
         self.ti_flash_max_bytes_before_ext_agg
     }
 
     /// Go `SessionVars.TiFlashMaxBytesBeforeExternalSort`.
     #[must_use]
-    pub const fn ti_flash_max_bytes_before_ext_sort(&self) -> i64 {
+    pub const fn tiflash_max_bytes_before_external_sort(&self) -> i64 {
         self.ti_flash_max_bytes_before_ext_sort
     }
 
     /// Go `SessionVars.TiFlashMemQuotaQueryPerNode`.
     #[must_use]
-    pub const fn ti_flash_mem_quota_query_per_node(&self) -> i64 {
+    pub const fn tiflash_mem_quota_query_per_node(&self) -> i64 {
         self.ti_flash_mem_quota_query_per_node
     }
 
     /// Go `SessionVars.TiFlashQuerySpillRatio`.
     #[must_use]
-    pub const fn ti_flash_query_spill_ratio(&self) -> f64 {
+    pub const fn tiflash_query_spill_ratio(&self) -> f64 {
         self.ti_flash_query_spill_ratio
-    }
-
-    /// Go `SessionVars.PessimisticTransactionFairLocking`.
-    #[must_use]
-    pub const fn pessimistic_transaction_fair_locking_enabled(&self) -> bool {
-        self.pessimistic_transaction_fair_locking
     }
 
     /// Go `SessionVars.BulkDMLEnabled`, set by `tidb_dml_type`.
@@ -1335,7 +1329,7 @@ impl SessionVars {
         let Some(index) = crate::sysvar::sys_var_index_lookup(name) else {
             return Err(tidb_terror::MysqlError::from_terror(
                 &crate::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
         };
         self.system_value_at(index)
@@ -1428,7 +1422,7 @@ impl SessionVars {
     /// Go `vardef.EnableNoopVariables`: the GLOBAL
     /// `tidb_enable_noop_variables` switch.
     #[must_use]
-    pub fn noop_variables_enabled(&self) -> bool {
+    pub fn enable_noop_variables(&self) -> bool {
         self.get_global(tidb_vardef::tidb_vars::TIDB_ENABLE_NOOP_VARIABLES)
             .map_or(
                 tidb_vardef::defaults::DEF_TIDB_ENABLE_NOOP_VARIABLES,
@@ -1465,7 +1459,7 @@ impl SessionVars {
         let Some(index) = crate::sysvar::sys_var_index_lookup(name) else {
             return Err(tidb_terror::MysqlError::from_terror(
                 &crate::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
         };
         let definition = &crate::sysvar::SYS_VARS[index];
@@ -1743,12 +1737,12 @@ impl SessionVars {
         let def = get_sys_var(name).ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
                 &crate::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         if def.is_read_only() {
             return Err(tidb_terror::MysqlError::from_terror(
-                &crate::variable_errors::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
+                &crate::variable_errors::ERR_INCORRECT_SCOPE.gen_with_stack_by_args(&[
                     (name.to_ascii_lowercase()).into(),
                     "read only".into(),
                 ]),
@@ -1760,13 +1754,13 @@ impl SessionVars {
         if def.is_internal_session_variable() {
             return Err(tidb_terror::MysqlError::from_terror(
                 &crate::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
         }
         if !def.has_session_scope() {
             return Err(tidb_terror::MysqlError::from_terror(
                 &crate::variable_errors::ERR_GLOBAL_VARIABLE
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
         }
         // Go validates siblings through typed SessionVars fields. The textual
@@ -1795,7 +1789,7 @@ impl SessionVars {
         {
             return Err(tidb_terror::MysqlError::from_terror(
                 &crate::variable_errors::ERR_WRONG_VALUE_FOR_VAR
-                    .generate_with_stack_by_args(&[
+                    .gen_with_stack_by_args(&[
                         ("tidb_enforce_mpp".to_owned()).into(),
                         ("1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first."
                             .to_owned())
@@ -1831,7 +1825,7 @@ impl SessionVars {
         if get_sys_var(name).is_none() {
             return Err(tidb_terror::MysqlError::from_terror(
                 &crate::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
         }
         self.set_session_from_hook(name.to_ascii_lowercase(), value)
@@ -2111,7 +2105,7 @@ impl SessionVars {
         let def = get_sys_var(name).ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
                 &crate::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         let default = crate::sysvar::effective_default(def);
@@ -2128,7 +2122,7 @@ impl SessionVars {
         let def = get_sys_var(name).ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
                 &crate::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         let value = global_system_variable_initial_value(def);

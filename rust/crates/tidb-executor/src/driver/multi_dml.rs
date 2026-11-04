@@ -132,13 +132,13 @@ fn selected_partition_ids(
     let TableEntry::Kv(kv) = entry else {
         return Err(DriverError::from(
             tidb_table::table_errors::ERR_UNKNOWN_PARTITION
-                .generate_with_stack_by_args(&[first.clone().into(), name.to_owned().into()]),
+                .gen_with_stack_by_args(&[first.clone().into(), name.to_owned().into()]),
         ));
     };
     let Some(_) = kv.partition() else {
         return Err(DriverError::from(
             tidb_plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
-                .generate_with_stack_by_args(&[]),
+                .gen_with_stack_by_args(&[]),
         ));
     };
     tidb_planner_rule::ids_for_selected_partitions(
@@ -148,7 +148,7 @@ fn selected_partition_ids(
         .map_err(|partition| {
             DriverError::from(
                 tidb_table::table_errors::ERR_UNKNOWN_PARTITION
-                    .generate_with_stack_by_args(&[partition.into(), name.to_owned().into()]),
+                    .gen_with_stack_by_args(&[partition.into(), name.to_owned().into()]),
             )
         })
 }
@@ -185,7 +185,7 @@ pub(crate) fn run_multi_update(
             .ok_or_else(|| {
                 DriverError::from(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                        .generate_with_stack_by_args(&[
+                        .gen_with_stack_by_args(&[
                             (&table.database).into(),
                             (&table.table).into(),
                         ]),
@@ -497,7 +497,7 @@ fn check_update_list(
                 {
                     return Err(DriverError::Mysql(MysqlError::from_terror(
                         &tidb_plannererrors::ERR_MULTI_UPDATE_KEY_CONFLICT
-                            .generate_with_stack_by_args(&[
+                            .gen_with_stack_by_args(&[
                                 other.name.clone().into(),
                                 table.visible.clone().into(),
                             ]),

@@ -1131,104 +1131,104 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
         (
             DdlPlanError::from(
                 tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                    .generate_with_stack_by_args(&["db".into()]),
+                    .gen_with_stack_by_args(&["db".into()]),
             ),
             1049,
         ),
         (
             DdlPlanError::from(
                 tidb_infoschema::infoschema_errors::ERR_DATABASE_EXISTS
-                    .generate_with_stack_by_args(&["db".into()]),
+                    .gen_with_stack_by_args(&["db".into()]),
             ),
             1007,
         ),
         (
             DdlPlanError::from(
                 tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
-                    .generate_with_stack_by_args(&[format!("{}.{}", "db", "t").into()]),
+                    .gen_with_stack_by_args(&[format!("{}.{}", "db", "t").into()]),
             ),
             1051,
         ),
         (
             DdlPlanError::from(
                 tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
-                    .generate_with_stack_by_args(&["db.t".into()]),
+                    .gen_with_stack_by_args(&["db.t".into()]),
             ),
             1051,
         ),
         (
             DdlPlanError::from(
                 tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                    .generate_with_stack_by_args(&["db".into(), "t".into()]),
+                    .gen_with_stack_by_args(&["db".into(), "t".into()]),
             ),
             1146,
         ),
         (
             DdlPlanError::from(
                 tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS
-                    .generate_with_stack_by_args(&[format!("{}.{}", "db", "t").into()]),
+                    .gen_with_stack_by_args(&[format!("{}.{}", "db", "t").into()]),
             ),
             1050,
         ),
         (
             DdlPlanError::from(
-                tidb_dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&["idx".into()]),
+                tidb_dbterror::ERR_DUP_KEY_NAME.gen_with_stack_by_args(&["idx".into()]),
             ),
             1061,
         ),
         (
             DdlPlanError::from(
                 tidb_infoschema::infoschema_errors::ERR_COLUMN_EXISTS
-                    .generate_with_stack_by_args(&["col".into()]),
+                    .gen_with_stack_by_args(&["col".into()]),
             ),
             1060,
         ),
         (
             DdlPlanError::from(
                 tidb_dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS
-                    .generate_with_stack(format!("column does not exist: {}", "col")),
+                    .gen_with_stack(format!("column does not exist: {}", "col")),
             ),
             1072,
         ),
         (
             DdlPlanError::from(
                 tidb_infoschema::infoschema_errors::ERR_KEY_NOT_EXISTS
-                    .generate_with_stack_by_args(&["idx".into(), "t".into()]),
+                    .gen_with_stack_by_args(&["idx".into(), "t".into()]),
             ),
             1176,
         ),
         (
             DdlPlanError::from(
                 tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY
-                    .generate_with_stack_by_args(&["col".into()]),
+                    .gen_with_stack_by_args(&["col".into()]),
             ),
             1091,
         ),
         (
             DdlPlanError::from(
                 tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY
-                    .generate_with_stack_by_args(&["idx".into()]),
+                    .gen_with_stack_by_args(&["idx".into()]),
             ),
             1091,
         ),
         (
             DdlPlanError::from(
                 tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS
-                    .generate_with_stack_by_args(&["col".into(), "t".into()]),
+                    .gen_with_stack_by_args(&["col".into(), "t".into()]),
             ),
             1054,
         ),
         (
             DdlPlanError::from(
                 tidb_dbterror::ERR_INVALID_AUTO_RANDOM
-                    .generate_with_stack_by_args(&["invalid range".into()]),
+                    .gen_with_stack_by_args(&["invalid range".into()]),
             ),
             8216,
         ),
         (
             DdlPlanError::from(
                 tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED
-                    .generate_with_stack_by_args(&[]),
+                    .gen_with_stack_by_args(&[]),
             ),
             1467,
         ),
@@ -4802,7 +4802,7 @@ fn tiflash_batch_truncate_table_resets_all_availability() {
     apply(&mut store, &write);
     let catalog = load_info_schema(&mut store).unwrap();
     let table = catalog
-        .schema_info_by_name("u6")
+        .schema_by_name("u6")
         .unwrap()
         .read().deprecated_tables
         .iter_deref()
@@ -6105,41 +6105,41 @@ fn persisted_job_errors_carry_the_go_class() {
         (
             DdlPlanError::from(
                 tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                    .generate_with_stack_by_args(&["db".into()]),
+                    .gen_with_stack_by_args(&["db".into()]),
             ),
             "schema:1049",
         ),
         (
             DdlPlanError::from(
                 tidb_infoschema::infoschema_errors::ERR_DATABASE_EXISTS
-                    .generate_with_stack_by_args(&["db".into()]),
+                    .gen_with_stack_by_args(&["db".into()]),
             ),
             "schema:1007",
         ),
         (
             DdlPlanError::from(
                 tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS
-                    .generate_with_stack_by_args(&[format!("{}.{}", "db", "t").into()]),
+                    .gen_with_stack_by_args(&[format!("{}.{}", "db", "t").into()]),
             ),
             "schema:1050",
         ),
         (
             DdlPlanError::from(
-                tidb_dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&["idx".into()]),
+                tidb_dbterror::ERR_DUP_KEY_NAME.gen_with_stack_by_args(&["idx".into()]),
             ),
             "ddl:1061",
         ),
         (
             DdlPlanError::from(
                 tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY
-                    .generate_with_stack_by_args(&["c".into()]),
+                    .gen_with_stack_by_args(&["c".into()]),
             ),
             "ddl:1091",
         ),
         (
             DdlPlanError::from(
                 tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED
-                    .generate_with_stack_by_args(&[]),
+                    .gen_with_stack_by_args(&[]),
             ),
             "autoid:1467",
         ),

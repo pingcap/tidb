@@ -365,7 +365,7 @@ impl RangeTree {
     ///
     /// `FreeListG` is a Go allocation-reuse knob with no observable behavior,
     /// so only the physical ID survives the crossing.
-    pub fn new_with_physical_id(physical_id: i64) -> Self {
+    pub fn new_range_tree_with_free_list_g(physical_id: i64) -> Self {
         Self {
             tree: BTreeMap::new(),
             physical_id,
@@ -1033,7 +1033,7 @@ mod tests {
                 });
                 let range =
                     Range::with_files(&file.start_key[..], &file.end_key[..], vec![file.clone()]);
-                let mut tree = RangeTree::new_with_physical_id(1);
+                let mut tree = RangeTree::new_range_tree_with_free_list_g(1);
                 assert!(tree.update(range.clone()));
                 assert!(Arc::ptr_eq(
                     &tree.get(&file.start_key).unwrap().files[0],

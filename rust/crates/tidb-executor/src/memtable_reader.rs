@@ -379,7 +379,7 @@ impl MemTableRetriever for InstanceStateRetriever {
             if !self.viewer.process_scoped {
                 return Err(DriverError::from(
                     tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
-                        .generate_with_stack_by_args(&["PROCESS".into()]),
+                        .gen_with_stack_by_args(&["PROCESS".into()]),
                 ));
             }
             let Some(Extractor::MetricSummaryTable(extractor)) = &read.extractor else {
@@ -523,7 +523,7 @@ pub fn statement_summary_rows(
         if !has_process {
             return Err(DriverError::from(
                 tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
-                    .generate_with_stack_by_args(&["PROCESS".into()]),
+                    .gen_with_stack_by_args(&["PROCESS".into()]),
             ));
         }
         let full: Vec<Vec<tidb_datatype::Datum>> = if tidb_config::config_tree::config::get_global_config()
@@ -575,7 +575,7 @@ pub fn statement_summary_rows(
         // an unrelated v1 map for the selected persistent owner.
         if cumulative {
             return Err(DriverError::from(
-                tidb_plannererrors::ERR_NOT_SUPPORTED_YET.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_NOT_SUPPORTED_YET.gen_with_stack_by_args(&[
                     "cumulative statement summary table with persistent mode (v2)".into(),
                 ]),
             ));
@@ -692,7 +692,7 @@ pub fn set_data_for_client_errors_summary(
     {
         return Err(DriverError::from(
             tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
-                .generate_with_stack_by_args(&["PROCESS".into()]),
+                .gen_with_stack_by_args(&["PROCESS".into()]),
         ));
     }
 

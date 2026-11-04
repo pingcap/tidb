@@ -26,9 +26,9 @@ use tidb_datatype::Datum;
 use tidb_log::{Field, Value};
 use tidb_resolve::ResultFieldRef;
 use tidb_sqlexec::{
-    get_analyze_snapshot_option, exec_option_analyze_ver2, exec_option_use_current_session,
+    get_analyze_snapshot_option, exec_option_analyze_ver2, exec_option_use_cur_session,
     get_partition_prune_mode_option, exec_option_with_sys_proc_track, OptionFuncAlias, SqlExecError,
-    TrackSysProc, UntrackSysProc,
+    TrackSysProc, UnTrackSysProc,
 };
 use tidb_stats_handle_util::{AutoAnalyzeProcIdGenerator, AutoAnalyzeTracker, STATS_CONTEXT};
 use tidb_sqlescape::SqlArg;
@@ -88,7 +88,7 @@ fn exec_options<C: AutoAnalyzeSessionContext + ?Sized>(
     context: &C,
     generator: &dyn AutoAnalyzeProcIdGenerator,
     track: TrackSysProc,
-    untrack: UntrackSysProc,
+    untrack: UnTrackSysProc,
     stats_version: i32,
     need_version_rewrite_warn: bool,
     sql: &str,
@@ -111,14 +111,14 @@ fn exec_options<C: AutoAnalyzeSessionContext + ?Sized>(
         let tracker = Arc::clone(&tracker);
         Arc::new(move |id, process| tracker.track(id, process)) as TrackSysProc
     };
-    let untrack = Arc::new(move |id| tracker.un_track(id)) as UntrackSysProc;
+    let untrack = Arc::new(move |id| tracker.un_track(id)) as UnTrackSysProc;
     (
         process_id,
         vec![
             Arc::new(exec_option_analyze_ver2),
             get_analyze_snapshot_option(context.enable_analyze_snapshot()),
             get_partition_prune_mode_option(context.partition_prune_mode()),
-            Arc::new(exec_option_use_current_session),
+            Arc::new(exec_option_use_cur_session),
             exec_option_with_sys_proc_track(process_id, track, untrack),
         ],
     )
@@ -144,7 +144,7 @@ pub fn run_analyze_stmt<C: AutoAnalyzeSessionContext + ?Sized>(
     context: &C,
     generator: &dyn AutoAnalyzeProcIdGenerator,
     track: TrackSysProc,
-    untrack: UntrackSysProc,
+    untrack: UnTrackSysProc,
     stats_version: i32,
     need_version_rewrite_warn: bool,
     sql: &str,
@@ -196,7 +196,7 @@ pub fn auto_analyze<C: AutoAnalyzeSessionContext + ?Sized>(
     context: &C,
     generator: &dyn AutoAnalyzeProcIdGenerator,
     track: TrackSysProc,
-    untrack: UntrackSysProc,
+    untrack: UnTrackSysProc,
     stats_version: i32,
     need_version_rewrite_warn: bool,
     sql: &str,
@@ -412,12 +412,12 @@ use tidb_charset::Collation;
     fn callbacks(
         tracked: Arc<Mutex<Vec<u64>>>,
         untracked: Arc<Mutex<Vec<u64>>>,
-    ) -> (TrackSysProc, UntrackSysProc) {
+    ) -> (TrackSysProc, UnTrackSysProc) {
         let track = Arc::new(move |id, _context: Arc<dyn TrackProc>| {
             tracked.lock().unwrap().push(id);
             Ok(())
         }) as TrackSysProc;
-        let untrack = Arc::new(move |id| untracked.lock().unwrap().push(id)) as UntrackSysProc;
+        let untrack = Arc::new(move |id| untracked.lock().unwrap().push(id)) as UnTrackSysProc;
         (track, untrack)
     }
 

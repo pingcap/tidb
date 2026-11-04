@@ -81,12 +81,12 @@ impl TempTable {
 
 /// Go `TxnCtx.TemporaryTables`: the transaction's temporary tables by id,
 /// built fresh for each transaction.
-pub type TxnTemporaryTables = Arc<Mutex<HashMap<i64, Arc<TempTable>>>>;
+pub type TemporaryTables = Arc<Mutex<HashMap<i64, Arc<TempTable>>>>;
 
 /// Go `TxnCtx.CachedTables`: the cached tables this transaction wrote, by id
 /// (Go `map[int64]any`, the table's handle), built fresh for each
 /// transaction.
-pub type TxnCachedTables = Arc<Mutex<std::collections::BTreeMap<i64, Arc<dyn std::any::Any + Send + Sync>>>>;
+pub type CachedTables = Arc<Mutex<std::collections::BTreeMap<i64, Arc<dyn std::any::Any + Send + Sync>>>>;
 
 /// Go `TemporaryTableHandler`.
 #[derive(Clone, Debug)]
@@ -135,7 +135,7 @@ impl TemporaryTableHandler {
 /// Go `SessionVars.GetTemporaryTable`: the transaction's entry for a
 /// temporary table, created from its `TableInfo` on first use.
 #[must_use]
-pub fn get_temporary_table(tables: &TxnTemporaryTables, table: &tidb_model::TableInfo) -> Arc<TempTable> {
+pub fn get_temporary_table(tables: &TemporaryTables, table: &tidb_model::TableInfo) -> Arc<TempTable> {
     Arc::clone(
         tables
             .lock()
@@ -147,7 +147,7 @@ pub fn get_temporary_table(tables: &TxnTemporaryTables, table: &tidb_model::Tabl
 
 #[must_use]
 pub fn add_temporary_table_to_txn(
-    tables: &TxnTemporaryTables,
+    tables: &TemporaryTables,
     table: &tidb_model::TableInfo,
     data: Option<&SessionData>,
 ) -> TemporaryTableHandler {

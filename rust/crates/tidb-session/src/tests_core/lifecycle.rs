@@ -211,19 +211,19 @@ fn optimizer_cost_variables_reach_the_statement_snapshot() {
 #[test]
 fn advanced_join_reorder_switch_reaches_every_statement_context() {
     let mut session = Session::new();
-    assert!(session.statement_context(false).advanced_join_reorder());
-    assert!(session.statement_context(true).advanced_join_reorder());
+    assert!(session.statement_context(false).tidb_opt_enable_advanced_join_reorder());
+    assert!(session.statement_context(true).tidb_opt_enable_advanced_join_reorder());
 
     session
         .run("SET @@tidb_opt_enable_advanced_join_reorder = OFF")
         .unwrap();
-    assert!(!session.statement_context(false).advanced_join_reorder());
-    assert!(!session.statement_context(true).advanced_join_reorder());
+    assert!(!session.statement_context(false).tidb_opt_enable_advanced_join_reorder());
+    assert!(!session.statement_context(true).tidb_opt_enable_advanced_join_reorder());
 
     session
         .run("SET @@tidb_opt_enable_advanced_join_reorder = ON")
         .unwrap();
-    assert!(session.statement_context(false).advanced_join_reorder());
+    assert!(session.statement_context(false).tidb_opt_enable_advanced_join_reorder());
 }
 
 #[test]

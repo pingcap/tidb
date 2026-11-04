@@ -148,7 +148,7 @@ impl MockGlobalAccessor {
         let def = get_sys_var(name).ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
                 &crate::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         Ok(self
@@ -164,7 +164,7 @@ impl MockGlobalAccessor {
         let def = get_sys_var(name).ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
                 &crate::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         let mut vals = self
@@ -192,12 +192,12 @@ impl GlobalVarAccessor for MockGlobalAccessor {
         let def = get_sys_var(name).ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
                 &crate::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         if !def.has_global_scope() && !def.has_instance_scope() && def.has_session_scope() {
             return Err(tidb_terror::MysqlError::from_terror(
-                &crate::variable_errors::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
+                &crate::variable_errors::ERR_INCORRECT_SCOPE.gen_with_stack_by_args(&[
                     (name.to_ascii_lowercase()).into(),
                     "SESSION".into(),
                 ]),
@@ -219,7 +219,7 @@ impl GlobalVarAccessor for MockGlobalAccessor {
         let def = get_sys_var(name).ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
                 &crate::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         let value = def
@@ -233,7 +233,7 @@ impl GlobalVarAccessor for MockGlobalAccessor {
         get_sys_var(name).ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
                 &crate::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         Ok(false)
@@ -243,7 +243,7 @@ impl GlobalVarAccessor for MockGlobalAccessor {
         let def = get_sys_var(name).ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
                 &crate::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         self.store(name, crate::sysvar::effective_default(def))
@@ -254,7 +254,7 @@ impl GlobalVarAccessor for MockGlobalAccessor {
         get_sys_var(name).ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
                 &crate::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         Ok(())

@@ -60,7 +60,7 @@ pub fn get_temporary_table_ddl<C: TemporaryTableContext + ?Sized>(
 fn local_temporary_not_exists(schema: &str, name: &str) -> DriverError {
     DriverError::from(
         tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-            .generate_with_stack_by_args(&[(&schema).into(), (&name).into()]),
+            .gen_with_stack_by_args(&[(&schema).into(), (&name).into()]),
     )
 }
 

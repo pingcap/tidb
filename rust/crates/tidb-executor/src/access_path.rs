@@ -7611,7 +7611,7 @@ use std::collections::HashMap;
     fn index_join_reader_failures_preserve_sql_errors_without_replaying_probes() {
         let expected = crate::MysqlError::from_terror(
             &tidb_expr::expression_errors::ERR_DIVISION_BY_ZERO
-                .generate_with_stack("injected inner-reader division by zero"),
+                .gen_with_stack("injected inner-reader division by zero"),
         );
         let mut failures = Vec::new();
         let drain = |source: &mut IndexJoinLookupExec| -> Result<usize, ExecError> {

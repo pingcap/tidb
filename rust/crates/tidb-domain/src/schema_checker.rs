@@ -186,7 +186,7 @@ impl SchemaCheckError {
     /// The Go error value: the definition with this error's message.
     #[must_use]
     pub fn to_terror(self) -> tidb_terror::TerrorError {
-        self.proto().generate_with_stack(self.message())
+        self.proto().gen_with_stack(self.message())
     }
 
     /// The MySQL error code, as `dbterror.ClassDomain.NewStd*` assigns it.

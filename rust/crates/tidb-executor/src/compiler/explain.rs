@@ -91,7 +91,7 @@ pub trait ExplainCompile: super::CompilerSession {
             // answers `Unknown EXPLAIN format name: 'tree'`).
             return Err(DriverError::from(
                 tidb_plannererrors::ERR_UNKNOWN_EXPLAIN_FORMAT
-                    .generate_with_stack_by_args(&[explain.format.clone().into()]),
+                    .gen_with_stack_by_args(&[explain.format.clone().into()]),
             ));
         };
         if explain.analyze && matches!(format, crate::ExplainFormat::PlanTree) {

@@ -41,15 +41,15 @@ use tidb_hack::go_to_lower;
 
 /// Source `ErrPatternNotMatch`: patterns doesn't match.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct PatternNotMatch;
+pub struct ErrPatternNotMatch;
 
-impl fmt::Display for PatternNotMatch {
+impl fmt::Display for ErrPatternNotMatch {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("Pattern not match")
     }
 }
 
-impl Error for PatternNotMatch {}
+impl Error for ErrPatternNotMatch {}
 
 /// Source `GetDefaultDB`: if any table in the statement lacks an explicit
 /// schema name, returns `db_name`; otherwise every table is qualified and
@@ -178,7 +178,7 @@ fn default_restore_flags() -> RestoreFlags {
 
 /// Source `bindingRestoreFlag`: [`default_restore_flags`] plus skipping
 /// redundant expression parentheses, only for binding normalization.
-pub fn binding_restore_flags() -> RestoreFlags {
+pub fn binding_restore_flag() -> RestoreFlags {
     default_restore_flags() | RestoreFlags::SKIP_REDUNDANT_PARENTHESES
 }
 
@@ -192,7 +192,7 @@ pub fn restore_with_default_db(node: &Stmt, default_db: &str, origin: &str) -> S
         return s;
     }
     node.restore_with_context(
-        &RestoreContext::new(binding_restore_flags()).with_default_db(default_db),
+        &RestoreContext::new(binding_restore_flag()).with_default_db(default_db),
     )
 }
 
@@ -200,7 +200,7 @@ pub fn restore_with_default_db(node: &Stmt, default_db: &str, origin: &str) -> S
 /// schema qualifier erased, customized for universal (cross-DB) binding.
 pub fn restore_without_db(node: &Stmt) -> String {
     node.restore_with_context(&RestoreContext::new(
-        binding_restore_flags() | RestoreFlags::WITHOUT_SCHEMA_NAME,
+        binding_restore_flag() | RestoreFlags::WITHOUT_SCHEMA_NAME,
     ))
 }
 
@@ -253,51 +253,51 @@ pub const fn is_digit_byte(b: u8) -> bool {
 }
 
 /// Source `Match`: matches `pat` at least `times` times and returns the
-/// match and the rest, or the whole input with [`PatternNotMatch`].
+/// match and the rest, or the whole input with [`ErrPatternNotMatch`].
 pub fn match_pat(
     buf: &str,
     pat: impl Fn(u8) -> bool,
     times: usize,
-) -> Result<(&str, &str), PatternNotMatch> {
+) -> Result<(&str, &str), ErrPatternNotMatch> {
     let bytes = buf.as_bytes();
     let mut i = 0;
     while i < bytes.len() && pat(bytes[i]) {
         i += 1;
     }
     if i < times {
-        return Err(PatternNotMatch);
+        return Err(ErrPatternNotMatch);
     }
     Ok((&buf[..i], &buf[i..]))
 }
 
 /// Source `MatchOne`: matches `pat` exactly once and returns the rest, or
-/// the whole input with [`PatternNotMatch`].
-pub fn match_one(buf: &str, pat: impl Fn(u8) -> bool) -> Result<&str, PatternNotMatch> {
+/// the whole input with [`ErrPatternNotMatch`].
+pub fn match_one(buf: &str, pat: impl Fn(u8) -> bool) -> Result<&str, ErrPatternNotMatch> {
     let bytes = buf.as_bytes();
     if bytes.is_empty() || !pat(bytes[0]) {
-        return Err(PatternNotMatch);
+        return Err(ErrPatternNotMatch);
     }
     Ok(&buf[1..])
 }
 
 /// Source `AnyPunct`: matches one arbitrary punctuation byte.
-pub fn any_punct(buf: &str) -> Result<&str, PatternNotMatch> {
+pub fn any_punct(buf: &str) -> Result<&str, ErrPatternNotMatch> {
     match_one(buf, is_punct_byte)
 }
 
 /// Source `AnyChar`: matches one arbitrary byte.
-pub fn any_char(buf: &str) -> Result<&str, PatternNotMatch> {
+pub fn any_char(buf: &str) -> Result<&str, ErrPatternNotMatch> {
     match_one(buf, |_| true)
 }
 
 /// Source `Char`: matches exactly the byte `c`.
-pub fn one_char(buf: &str, c: u8) -> Result<&str, PatternNotMatch> {
+pub fn one_char(buf: &str, c: u8) -> Result<&str, ErrPatternNotMatch> {
     match_one(buf, |x| x == c)
 }
 
 /// Source `Space`: matches at least `times` space bytes and returns the
-/// rest, or the whole input with [`PatternNotMatch`].
-pub fn space(buf: &str, times: usize) -> Result<&str, PatternNotMatch> {
+/// rest, or the whole input with [`ErrPatternNotMatch`].
+pub fn space(buf: &str, times: usize) -> Result<&str, ErrPatternNotMatch> {
     match_pat(buf, is_space_byte, times).map(|(_, rest)| rest)
 }
 
@@ -312,7 +312,7 @@ pub fn space0(buf: &str) -> &str {
 
 /// Source `Digit`: matches at least `times` digit bytes and returns the
 /// digits and the rest.
-pub fn digit(buf: &str, times: usize) -> Result<(&str, &str), PatternNotMatch> {
+pub fn digit(buf: &str, times: usize) -> Result<(&str, &str), ErrPatternNotMatch> {
     match_pat(buf, is_digit_byte, times)
 }
 
@@ -320,8 +320,8 @@ pub fn digit(buf: &str, times: usize) -> Result<(&str, &str), PatternNotMatch> {
 /// Like Go's `strconv.Atoi` composition, a digit string that overflows is an
 /// error (Go additionally returns the clamped value; the error is the
 /// contract).
-pub fn number(s: &str) -> Result<(i64, &str), PatternNotMatch> {
+pub fn number(s: &str) -> Result<(i64, &str), ErrPatternNotMatch> {
     let (digits, rest) = digit(s, 1)?;
-    let num = digits.parse::<i64>().map_err(|_| PatternNotMatch)?;
+    let num = digits.parse::<i64>().map_err(|_| ErrPatternNotMatch)?;
     Ok((num, rest))
 }

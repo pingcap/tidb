@@ -60,15 +60,15 @@ mod session_vars {
     fn tiflash_set_session_hooks_update_typed_state() {
         let mut vars = session_vars();
         assert_eq!(
-            vars.ti_flash_max_bytes_before_ext_join(),
+            vars.tiflash_max_bytes_before_external_join(),
             tidb_vardef::defaults::DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_JOIN
         );
         assert_eq!(
-            vars.ti_flash_mem_quota_query_per_node(),
+            vars.tiflash_mem_quota_query_per_node(),
             tidb_vardef::defaults::DEF_TIFLASH_MEM_QUOTA_QUERY_PER_NODE
         );
         assert_eq!(
-            vars.ti_flash_query_spill_ratio(),
+            vars.tiflash_query_spill_ratio(),
             tidb_vardef::defaults::DEF_TIFLASH_QUERY_SPILL_RATIO
         );
 
@@ -100,15 +100,15 @@ mod session_vars {
         )
         .unwrap();
 
-        assert_eq!(vars.ti_flash_max_bytes_before_ext_join(), 10_000);
-        assert_eq!(vars.ti_flash_max_bytes_before_ext_agg(), 20_000);
-        assert_eq!(vars.ti_flash_max_bytes_before_ext_sort(), 30_000);
-        assert_eq!(vars.ti_flash_mem_quota_query_per_node(), 40_000);
-        assert_eq!(vars.ti_flash_query_spill_ratio(), 0.75);
+        assert_eq!(vars.tiflash_max_bytes_before_external_join(), 10_000);
+        assert_eq!(vars.tiflash_max_bytes_before_external_group_by(), 20_000);
+        assert_eq!(vars.tiflash_max_bytes_before_external_sort(), 30_000);
+        assert_eq!(vars.tiflash_mem_quota_query_per_node(), 40_000);
+        assert_eq!(vars.tiflash_query_spill_ratio(), 0.75);
 
         vars.restore_system(join_snapshot);
         assert_eq!(
-            vars.ti_flash_max_bytes_before_ext_join(),
+            vars.tiflash_max_bytes_before_external_join(),
             tidb_vardef::defaults::DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_JOIN
         );
     }
@@ -131,8 +131,8 @@ mod session_vars {
 
         let mut vars = session_vars();
         vars.seed_from_globals(Arc::new(globals)).unwrap();
-        assert_eq!(vars.ti_flash_query_spill_ratio(), 0.85);
-        assert_eq!(vars.ti_flash_mem_quota_query_per_node(), 10_000);
+        assert_eq!(vars.tiflash_query_spill_ratio(), 0.85);
+        assert_eq!(vars.tiflash_mem_quota_query_per_node(), 10_000);
         assert_eq!(
             vars.get_system(tidb_vardef::tidb_vars::TIFLASH_QUERY_SPILL_RATIO)
                 .unwrap(),
@@ -143,14 +143,14 @@ mod session_vars {
     #[test]
     fn pessimistic_fair_locking_uses_go_typed_session_hook() {
         let mut vars = session_vars();
-        assert!(!vars.pessimistic_transaction_fair_locking_enabled());
+        assert!(!vars.pessimistic_transaction_fair_locking());
 
         vars.set_system(
             tidb_vardef::tidb_vars::TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING,
             "OFF".to_owned(),
         )
         .unwrap();
-        assert!(!vars.pessimistic_transaction_fair_locking_enabled());
+        assert!(!vars.pessimistic_transaction_fair_locking());
 
         if tidb_config_kerneltype::is_next_gen() {
             let error = vars
@@ -160,14 +160,14 @@ mod session_vars {
                 )
                 .expect_err("nextgen rejects fair-locking ON");
             assert_eq!(error.code, 1235);
-            assert!(!vars.pessimistic_transaction_fair_locking_enabled());
+            assert!(!vars.pessimistic_transaction_fair_locking());
         } else {
             vars.set_system(
                 tidb_vardef::tidb_vars::TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING,
                 "ON".to_owned(),
             )
             .unwrap();
-            assert!(vars.pessimistic_transaction_fair_locking_enabled());
+            assert!(vars.pessimistic_transaction_fair_locking());
         }
     }
 
@@ -684,14 +684,14 @@ mod session_vars {
             vars.get_system("nope"),
             Err(tidb_terror::MysqlError::from_terror(
                 &tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                    .generate_with_stack_by_args(&[("nope".to_owned()).into()])
+                    .gen_with_stack_by_args(&[("nope".to_owned()).into()])
             ))
         );
         assert_eq!(
             vars.set_system("nope", "1".to_owned()),
             Err(tidb_terror::MysqlError::from_terror(
                 &tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                    .generate_with_stack_by_args(&[("nope".to_owned()).into()])
+                    .gen_with_stack_by_args(&[("nope".to_owned()).into()])
             ))
         );
     }
@@ -728,7 +728,7 @@ mod session_vars {
             globals.get("not_a_real_variable"),
             Err(tidb_terror::MysqlError::from_terror(
                 &tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                    .generate_with_stack_by_args(&[("not_a_real_variable".to_owned()).into()])
+                    .gen_with_stack_by_args(&[("not_a_real_variable".to_owned()).into()])
             ))
         );
         assert_eq!(globals.get("autocommit").unwrap(), "OFF");
@@ -741,7 +741,7 @@ mod session_vars {
         assert_eq!(
             vars.set_system("version", "9".to_owned()),
             Err(tidb_terror::MysqlError::from_terror(
-                &tidb_variable::variable_errors::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
+                &tidb_variable::variable_errors::ERR_INCORRECT_SCOPE.gen_with_stack_by_args(&[
                     ("version".to_owned()).into(),
                     "read only".into()
                 ])
@@ -841,7 +841,7 @@ mod session_vars {
             vars.set_system("tidb_enforce_mpp", "ON".to_owned()),
             Err(tidb_terror::MysqlError::from_terror(
                 &tidb_variable::variable_errors::ERR_WRONG_VALUE_FOR_VAR
-                    .generate_with_stack_by_args(&[
+                    .gen_with_stack_by_args(&[
                         ("tidb_enforce_mpp".to_owned()).into(),
                         ("1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first."
                             .to_owned())
@@ -1020,7 +1020,7 @@ mod session_vars {
             vars.set_global("debug_sync", "x".to_owned()),
             Err(tidb_terror::MysqlError::from_terror(
                 &tidb_variable::variable_errors::ERR_LOCAL_VARIABLE
-                    .generate_with_stack_by_args(&[("debug_sync".to_owned()).into()])
+                    .gen_with_stack_by_args(&[("debug_sync".to_owned()).into()])
             ))
         );
     }
@@ -1057,7 +1057,7 @@ mod session_vars {
         assert_eq!(
             vars.set_system("default_password_lifetime", "5".to_owned()),
             Err(tidb_terror::MysqlError::from_terror(
-                &tidb_variable::variable_errors::ERR_GLOBAL_VARIABLE.generate_with_stack_by_args(&[
+                &tidb_variable::variable_errors::ERR_GLOBAL_VARIABLE.gen_with_stack_by_args(&[
                     ("default_password_lifetime".to_owned()).into()
                 ])
             ))
@@ -1070,7 +1070,7 @@ mod session_vars {
         assert_eq!(
             vars.get_global("debug_sync"),
             Err(tidb_terror::MysqlError::from_terror(
-                &tidb_variable::variable_errors::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
+                &tidb_variable::variable_errors::ERR_INCORRECT_SCOPE.gen_with_stack_by_args(&[
                     ("debug_sync".to_owned()).into(),
                     "SESSION".into()
                 ])
@@ -1270,7 +1270,7 @@ mod pd_region_batch_tests {
         // row still wins, and the replaced value is what a missing row
         // serves.
         globals.set(name, "ON".to_owned()).unwrap();
-        globals.set_startup(name, "OFF".to_owned());
+        globals.set_sys_var(name, "OFF".to_owned());
         assert!(policy.0.load(Ordering::SeqCst));
         globals.reset(name).unwrap();
         assert!(!policy.0.load(Ordering::SeqCst));

@@ -70,7 +70,7 @@ impl Settings {
                 // HTTP stores uint32 directly; SQL's signed range clamp does
                 // not apply to this Go handler. Reuse the raw instance slot.
                 self.globals
-                    .set_startup("ddl_slow_threshold", (value as u32).to_string());
+                    .set_sys_var("ddl_slow_threshold", (value as u32).to_string());
             }
         }
         if let Some(value) = get("check_mb4_value_in_utf8") {

@@ -158,7 +158,7 @@ pub(super) fn build_add_foreign_key_jobs<S: MetaSnapshot>(
             Some(AddIndexSubmission::Job(spec, _)) => specs.push(*spec),
             _ => {
                 return Err(DdlPlanError::from(
-                    tidb_dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&[(created
+                    tidb_dbterror::ERR_DUP_KEY_NAME.gen_with_stack_by_args(&[(created
                         .fk
                         .name
                         .original()
@@ -350,7 +350,7 @@ pub(super) fn on_create_foreign_key(
             Ok(action_step(write))
         }
         state => Err(DdlPlanError::from(
-            tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+            tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack_by_args(&[
                 FormatArg::from("foreign key"),
                 FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
             ]),
@@ -412,7 +412,7 @@ pub fn check_foreign_key_constrain(
     if !rows.is_empty() {
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_NO_REFERENCED_ROW2
-                .generate_with_stack_by_args(&[fk.string(&check.schema, &check.table).into()]),
+                .gen_with_stack_by_args(&[fk.string(&check.schema, &check.table).into()]),
         ));
     }
     Ok(())
@@ -475,7 +475,7 @@ fn drop_foreign_key_step(
 }
 
 /// Go `rollingbackAddForeignKey`: `cancelOnlyNotHandledJob` at `StateNone`.
-pub(super) fn plan_cancel_add_foreign_key(
+pub(super) fn rollingback_add_foreign_key(
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     if active.job.schema_state == SchemaState::NONE {

@@ -86,13 +86,13 @@ pub fn check_column_default_value(
             .map_err(|_| {
                 tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
-                        .generate_with_stack_by_args(&[column.to_owned().into()]),
+                        .gen_with_stack_by_args(&[column.to_owned().into()]),
                 )
             })?;
         if matches!(converted.value, Datum::Time(time) if time.is_zero()) {
             return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
-                    .generate_with_stack_by_args(&[column.to_owned().into()]),
+                    .gen_with_stack_by_args(&[column.to_owned().into()]),
             ));
         }
     }
@@ -112,13 +112,13 @@ pub fn check_column_default_value(
     if ctx.get_sql_mode().has_strict_mode() || !empty {
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_BLOB_CANT_HAVE_DEFAULT
-                .generate_with_stack_by_args(&[column.to_owned().into()]),
+                .gen_with_stack_by_args(&[column.to_owned().into()]),
         ));
     }
     // Go `ctx.GetEvalCtx().AppendWarning(dbterror.ErrBlobCantHaveDefault.FastGenByArgs(col.Name.O))`.
     let reported = tidb_terror::MysqlError::from_terror(
         &tidb_dbterror::ERR_BLOB_CANT_HAVE_DEFAULT
-            .generate_with_stack_by_args(&[column.to_string().into()]),
+            .gen_with_stack_by_args(&[column.to_string().into()]),
     );
     ctx.append_warning(tidb_context::WarnErr::Terror(
         tidb_dbterror::ERR_BLOB_CANT_HAVE_DEFAULT.generate(reported.message),
@@ -165,7 +165,7 @@ pub fn check_default_value(
     let invalid = || {
         tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
-                .generate_with_stack_by_args(&[column.to_owned().into()]),
+                .gen_with_stack_by_args(&[column.to_owned().into()]),
         )
     };
     if stored.is_null() {
@@ -175,7 +175,7 @@ pub fn check_default_value(
         // when the column also spelled NOT NULL.
         if field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY) {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_dbterror::ERR_PRIMARY_CANT_HAVE_NULL.generate_with_stack_by_args(&[]),
+                &tidb_dbterror::ERR_PRIMARY_CANT_HAVE_NULL.gen_with_stack_by_args(&[]),
             ));
         }
         if field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL) {
@@ -219,7 +219,7 @@ pub fn get_default_value(
     let invalid = || {
         tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
-                .generate_with_stack_by_args(&[column.to_owned().into()]),
+                .gen_with_stack_by_args(&[column.to_owned().into()]),
         )
     };
 
@@ -348,7 +348,7 @@ pub fn convert_timestamp_default_val_to_utc(
     let invalid = || {
         tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
-                .generate_with_stack_by_args(&[column.to_owned().into()]),
+                .gen_with_stack_by_args(&[column.to_owned().into()]),
         )
     };
     let converted = stored
@@ -444,7 +444,7 @@ pub fn bit_column_default(
     let invalid = || {
         tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
-                .generate_with_stack_by_args(&[column.to_owned().into()]),
+                .gen_with_stack_by_args(&[column.to_owned().into()]),
         )
     };
     let bits = match value {

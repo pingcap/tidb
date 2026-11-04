@@ -1189,7 +1189,7 @@ fn test_lookup_pushdown_rejects_go_unsupported_index_metadata() {
 
 #[test]
 fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
-    use tidb_sessionctx::{IndexLookupPushDownPolicy, IndexLookupPushDownSession};
+    use tidb_sessionctx::{IndexLookUpPushDownPolicy, IndexLookupPushDownSession};
     use crate::access_path::{apply_table_index_hints, get_possible_access_paths};
     use tidb_planner_util::path::{IndexLookUpPushDownByType};
     use tidb_planner_core_operator_logicalop::data_source::DataSourceIndexHint;
@@ -1285,7 +1285,7 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
     let (forced, _) = resolve(
         &table,
         IndexLookupPushDownSession {
-            policy: IndexLookupPushDownPolicy::Force,
+            policy: IndexLookUpPushDownPolicy::Force,
             ..Default::default()
         },
     );
@@ -1304,7 +1304,7 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
         false,
         false,
         IndexLookupPushDownSession {
-            policy: IndexLookupPushDownPolicy::Force,
+            policy: IndexLookUpPushDownPolicy::Force,
             ..Default::default()
         },
         true,
@@ -1324,7 +1324,7 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
         false,
         false,
         IndexLookupPushDownSession {
-            policy: IndexLookupPushDownPolicy::AffinityForce,
+            policy: IndexLookUpPushDownPolicy::AffinityForce,
             ..Default::default()
         },
         true,

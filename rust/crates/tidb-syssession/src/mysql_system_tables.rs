@@ -249,7 +249,7 @@ impl SystemTableView {
         let missing = || SystemTableError::Missing {
             name: qualified.clone(),
         };
-        let database = catalog.schema_info_by_name(SYSTEM_DB).ok_or_else(missing)?;
+        let database = catalog.schema_by_name(SYSTEM_DB).ok_or_else(missing)?;
         let info = database
             .read().deprecated_tables
             .iter_deref()

@@ -256,12 +256,12 @@ pub fn datums_to_string(
 }
 
 /// Source `DatumsToStrNoErr`.
-pub fn datums_to_string_no_error(datums: &[Datum]) -> String {
+pub fn datums_to_str_no_err(datums: &[Datum]) -> String {
     datums_to_string(datums, true, false).unwrap_or_default()
 }
 
 /// Source `DatumsToStrNoErrSmart`.
-pub fn datums_to_string_no_error_smart(datums: &[Datum]) -> String {
+pub fn datums_to_str_no_err_smart(datums: &[Datum]) -> String {
     datums_to_string(datums, true, true).unwrap_or_default()
 }
 

@@ -82,7 +82,7 @@ fn set_sys_variable(
         }
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                .generate_with_stack_by_args(&[(name.to_owned()).into()]),
+                .gen_with_stack_by_args(&[(name.to_owned()).into()]),
         )
         .into());
     };
@@ -99,7 +99,7 @@ fn set_sys_variable(
                 };
                 return Err(DriverError::from(
                     tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
-                        .generate_with_stack_by_args(&[msg.into()]),
+                        .gen_with_stack_by_args(&[msg.into()]),
                 ));
             }
         }
@@ -113,17 +113,17 @@ fn set_sys_variable(
     {
         return Err(DriverError::from(
             tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
-                .generate_with_stack_by_args(&["RESTRICTED_VARIABLES_ADMIN".into()]),
+                .gen_with_stack_by_args(&["RESTRICTED_VARIABLES_ADMIN".into()]),
         ));
     }
-    if sys_var.is_noop() && !ctx.session_vars().noop_variables_enabled() {
+    if sys_var.is_noop() && !ctx.session_vars().enable_noop_variables() {
         // The variable is a noop. For compatibility we allow it to still be
         // changed, but we append a warning since users might be expecting
         // something that's not going to happen (Go `ErrSettingNoopVariable`).
         ctx.append_sql_warning(tidb_context::SqlWarn::raised(
             tidb_context::WarningLevel::Warning,
             tidb_exeerrors::ERR_SETTING_NOOP_VARIABLE
-                .generate_with_stack_by_args(&[sys_var.name.into()]),
+                .gen_with_stack_by_args(&[sys_var.name.into()]),
         ));
     }
     let mut is_instance = v.is_instance;
@@ -135,7 +135,7 @@ fn set_sys_variable(
         ctx.append_sql_warning(tidb_context::SqlWarn::raised(
             tidb_context::WarningLevel::Warning,
             tidb_exeerrors::ERR_INSTANCE_SCOPE
-                .generate_with_stack_by_args(&[sys_var.name.into()]),
+                .gen_with_stack_by_args(&[sys_var.name.into()]),
         ));
     }
 
@@ -166,7 +166,7 @@ fn set_sys_variable(
     {
         return Err(DriverError::Mysql(MysqlError::from_terror(
             &tidb_exeerrors::ERR_CANT_CHANGE_TX_CHARACTERISTICS
-                .generate_with_stack_by_args(&[]),
+                .gen_with_stack_by_args(&[]),
         )));
     }
     ctx.set_system_var(name, val_str)?;

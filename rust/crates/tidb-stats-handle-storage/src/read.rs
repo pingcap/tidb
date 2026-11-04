@@ -108,7 +108,7 @@ fn exec_rows_at_snapshot<C: StatsSessionContext + ?Sized>(
         sctx,
         &[
             tidb_sqlexec::exec_option_with_snapshot(snapshot),
-            std::sync::Arc::new(tidb_sqlexec::exec_option_use_current_session),
+            std::sync::Arc::new(tidb_sqlexec::exec_option_use_cur_session),
         ],
         sql,
         args,

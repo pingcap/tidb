@@ -62,8 +62,8 @@ pub use number::{
 };
 pub use package::{
     append_hash_group_key_in_timezone, convert_by_collation, convert_by_collation_string,
-    cut_column_id, decode_as_datetime, decode_as_float32, decode_one_typed,
-    decode_one_typed_in_timezone, encode_hash_datum, encode_mysql_time, equal_rows, hash_column,
+    cut_column_id, decode_as_date_time, decode_as_float32, decode_one_typed,
+    decode_one_typed_in_timezone, encode_hash_datum, encode_mysql_time, equal_chunk_row, hash_column,
     hash_group_key, hash_group_key_in_timezone, hash_row, serialize_keys, set_raw_values,
     HashColumnOutput, SerializeMode,
 };

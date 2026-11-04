@@ -128,7 +128,7 @@ impl TableCommon {
         match value {
             Ok(value) if !value.is_empty() => Err(KvTableError::Mysql(
                 tidb_terror::MysqlError::from_terror(
-                    &tidb_kv::kv_errors::ERR_KEY_EXISTS.fast_generate_by_args(&[
+                    &tidb_kv::kv_errors::ERR_KEY_EXISTS.fast_gen_by_args(&[
                         (duplicate_value.to_owned()).into(),
                         (duplicate_key.to_owned()).into(),
                     ]),
@@ -314,7 +314,7 @@ impl TableCommon {
     /// Go `IndexInfo.MVIndex`: whether one of `index`'s key parts is a
     /// multi-valued (`CAST(... AS ... ARRAY)`) hidden column. Go's DDL sets
     /// the flag from exactly this test (`buildIndexColumns`).
-    pub fn is_mv_index(&self, index: &Index) -> bool {
+    pub fn mv_index(&self, index: &Index) -> bool {
         index.column_offsets.iter().any(|offset| {
             self.write_column(*offset)
                 .is_some_and(|column| column.read().field_type.is_array())
@@ -331,7 +331,7 @@ impl TableCommon {
         index: &Index,
         values: Vec<Datum>,
     ) -> Result<Vec<Vec<Datum>>, KvTableError> {
-        if !self.is_mv_index(index) {
+        if !self.mv_index(index) {
             return Ok(vec![values]);
         }
         let is_array_part = |position: usize| {
@@ -584,7 +584,7 @@ impl TableCommon {
 
     /// Go `tables.NeedRestoredData`: whether ANY of `index`'s key parts stores
     /// a column whose new-collation sort key loses the original bytes.
-    fn index_needs_restored_data(&self, index: &Index) -> bool {
+    pub(crate) fn index_needs_restored_data(&self, index: &Index) -> bool {
         index
             .column_offsets
             .iter()
@@ -1001,7 +1001,7 @@ impl TableCommon {
             // old key and then creates every new one; a shared key keeps the
             // delete's AssertExist because the first assertion wins
             // (`setAssertion`).
-            if self.is_mv_index(index) {
+            if self.mv_index(index) {
                 self.remove_index_entries(store, index, old_row, handle, physical_id, zone)?;
                 self.create_index_entries(store, 
                     index,

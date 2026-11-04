@@ -449,7 +449,7 @@ impl Session {
         let as_of_error = |cause: &str| {
             DriverError::from(
                 tidb_plannererrors::ERR_AS_OF
-                    .generate_with_stack_by_args(&[(cause.to_owned()).into()]),
+                    .gen_with_stack_by_args(&[(cause.to_owned()).into()]),
             )
         };
         if matches!(value, Datum::Null) {
@@ -932,7 +932,7 @@ impl Session {
             // refused ROLLBACK TO carries the same 1305 row.
             let error = DriverError::from(
                 tidb_exeerrors::ERR_SAVEPOINT_NOT_EXISTS
-                    .generate_with_stack_by_args(&["SAVEPOINT".into(), (name.to_owned()).into()]),
+                    .gen_with_stack_by_args(&["SAVEPOINT".into(), (name.to_owned()).into()]),
             );
             self.append_driver_error(crate::WarningLevel::Error, &error);
             return Err(error);
@@ -955,7 +955,7 @@ impl Session {
         if !released {
             let error = DriverError::from(
                 tidb_exeerrors::ERR_SAVEPOINT_NOT_EXISTS
-                    .generate_with_stack_by_args(&["SAVEPOINT".into(), (name.to_owned()).into()]),
+                    .gen_with_stack_by_args(&["SAVEPOINT".into(), (name.to_owned()).into()]),
             );
             self.append_driver_error(crate::WarningLevel::Error, &error);
             return Err(error);

@@ -134,7 +134,7 @@ pub fn stats_session_error(message: impl Into<String>) -> tidb_sqlexec::SqlExecE
 
 pub fn system_process_trackers(
     processes: tidb_sessmgr::ProcessRegistry,
-) -> (tidb_sqlexec::TrackSysProc, tidb_sqlexec::UntrackSysProc) {
+) -> (tidb_sqlexec::TrackSysProc, tidb_sqlexec::UnTrackSysProc) {
     let tracking = processes.clone();
     let track: tidb_sqlexec::TrackSysProc = Arc::new(move |id, process| {
         let process = (&*process as &dyn std::any::Any)
@@ -144,7 +144,7 @@ pub fn system_process_trackers(
             .track_system_process(id, process.clone())
             .map_err(stats_session_error)
     });
-    let untrack: tidb_sqlexec::UntrackSysProc =
+    let untrack: tidb_sqlexec::UnTrackSysProc =
         Arc::new(move |id| processes.untrack_system_process(id));
     (track, untrack)
 }

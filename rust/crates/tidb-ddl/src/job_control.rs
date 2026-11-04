@@ -54,7 +54,7 @@ pub fn cancel_running_job(job: &mut Job, by_who: AdminCommandOperator) -> Result
     // These states can't be cancelled.
     if job.is_done() || job.is_synced() {
         return Err(
-            dbterror::ERR_CANCEL_FINISHED_DDL_JOB.generate_with_stack_by_args(&[job.id.into()])
+            dbterror::ERR_CANCEL_FINISHED_DDL_JOB.gen_with_stack_by_args(&[job.id.into()])
         );
     }
     // A rolling-back job is already cleaning up after a cancel.
@@ -63,7 +63,7 @@ pub fn cancel_running_job(job: &mut Job, by_who: AdminCommandOperator) -> Result
     }
     if !job.is_rollbackable() {
         return Err(
-            dbterror::ERR_CANNOT_CANCEL_DDL_JOB.generate_with_stack_by_args(&[job.id.into()])
+            dbterror::ERR_CANNOT_CANCEL_DDL_JOB.gen_with_stack_by_args(&[job.id.into()])
         );
     }
     job.state = JobState::CANCELLING;
@@ -79,7 +79,7 @@ pub fn cancel_running_job(job: &mut Job, by_who: AdminCommandOperator) -> Result
 /// for one that cannot pause in its state.
 pub fn pause_running_job(job: &mut Job, by_who: AdminCommandOperator) -> Result<(), TerrorError> {
     if job.is_pausing() || job.is_paused() {
-        return Err(dbterror::ERR_PAUSED_DDL_JOB.generate_with_stack_by_args(&[job.id.into()]));
+        return Err(dbterror::ERR_PAUSED_DDL_JOB.gen_with_stack_by_args(&[job.id.into()]));
     }
     if !job.is_pausable() {
         let message = format!(
@@ -87,7 +87,7 @@ pub fn pause_running_job(job: &mut Job, by_who: AdminCommandOperator) -> Result<
             job.state, job.schema_state
         );
         return Err(dbterror::ERR_CANNOT_PAUSE_DDL_JOB
-            .generate_with_stack_by_args(&[job.id.into(), message.into()]));
+            .gen_with_stack_by_args(&[job.id.into(), message.into()]));
     }
     job.state = JobState::PAUSING;
     job.admin_operator = by_who;
@@ -107,7 +107,7 @@ pub fn resume_paused_job(job: &mut Job, by_who: AdminCommandOperator) -> Result<
             job.state, job.schema_state
         );
         return Err(dbterror::ERR_CANNOT_RESUME_DDL_JOB
-            .generate_with_stack_by_args(&[job.id.into(), message.into()]));
+            .gen_with_stack_by_args(&[job.id.into(), message.into()]));
     }
     // Only the operator who paused the job resumes it, except a system
     // pause whose reason lets an end user recover.
@@ -117,7 +117,7 @@ pub fn resume_paused_job(job: &mut Job, by_who: AdminCommandOperator) -> Result<
             job.admin_operator, by_who
         );
         return Err(dbterror::ERR_CANNOT_RESUME_DDL_JOB
-            .generate_with_stack_by_args(&[job.id.into(), message.into()]));
+            .gen_with_stack_by_args(&[job.id.into(), message.into()]));
     }
     let resume_from_kv_disk_full_by_end_user =
         by_who == AdminCommandOperator::BY_END_USER && job.is_paused_by_system_for_kv_disk_full();
@@ -178,7 +178,7 @@ pub fn process_jobs(
             let Some(i) = job_map.remove(&job.id) else {
                 // Go reads index 0 of a missing map entry.
                 job_errs[0] = Some(JobCommandError::Terror(
-                    dbterror::ERR_INVALID_DDL_JOB.generate_with_stack_by_args(&[job.id.into()]),
+                    dbterror::ERR_INVALID_DDL_JOB.gen_with_stack_by_args(&[job.id.into()]),
                 ));
                 continue;
             };
@@ -198,7 +198,7 @@ pub fn process_jobs(
         }
         for (id, idx) in job_map {
             job_errs[idx] = Some(JobCommandError::Terror(
-                dbterror::ERR_DDL_JOB_NOT_FOUND.generate_with_stack_by_args(&[id.into()]),
+                dbterror::ERR_DDL_JOB_NOT_FOUND.gen_with_stack_by_args(&[id.into()]),
             ));
         }
         return Ok(job_errs);

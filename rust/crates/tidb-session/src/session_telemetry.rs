@@ -176,6 +176,11 @@ impl Session {
         }
     }
 
+    /// See the `successful_compiles` field.
+    pub(crate) fn successful_compiles(&self) -> u64 {
+        self.successful_compiles
+    }
+
     /// [`Self::count_stmt_node`]'s labels, taken before the statement is
     /// planned; [`tidb_executor::compiler::count_stmt_node::StmtNodeCount::record`]
     /// charges them once `Compile` succeeded.

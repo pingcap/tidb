@@ -78,7 +78,7 @@ pub fn prepare_cluster_stats_lock_parsed(
                 [table] if !default_schema.is_empty() => (default_schema.to_owned(), table.clone()),
                 [_table] => {
                     return Err(tidb_plannererrors::ERR_NO_DB
-                        .generate_with_stack_by_args(&[])
+                        .gen_with_stack_by_args(&[])
                         .into())
                 }
                 [schema, table] => (schema.clone(), table.clone()),
@@ -188,7 +188,7 @@ fn resolve_partitions(
             .next()
             .ok_or_else(|| {
                 ClusterStatsLockError::from(
-                    tidb_table::table_errors::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[
+                    tidb_table::table_errors::ERR_UNKNOWN_PARTITION.gen_with_stack_by_args(&[
                         written.go_to_lower().into(),
                         table.name.original().into(),
                     ]),
@@ -213,7 +213,7 @@ fn user_table<'a>(
     catalog.table_info_by_name(schema, table).map(|(_, table)| table).ok_or_else(|| {
         ClusterStatsLockError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                .generate_with_stack_by_args(&[schema.into(), table.into()]),
+                .gen_with_stack_by_args(&[schema.into(), table.into()]),
         )
     })
 }

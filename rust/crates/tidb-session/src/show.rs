@@ -136,7 +136,7 @@ impl Session {
                 "SHOW VIEW",
             )
         } else {
-            let mut mask = tidb_privilege::any_priv_mask();
+            let mut mask = tidb_privilege::all_priv_mask();
             if !self.is_local_temporary_table(database, table_name) {
                 mask &= !tidb_mysql::CreateTMPTablePriv.bit();
             }
@@ -149,7 +149,7 @@ impl Session {
             return Ok(());
         }
         Err(DriverError::from(
-            tidb_plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(&[
+            tidb_plannererrors::ERR_TABLEACCESS_DENIED.gen_with_stack_by_args(&[
                 command.into(),
                 user.to_owned().into(),
                 host.to_owned().into(),

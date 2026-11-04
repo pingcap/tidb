@@ -667,7 +667,7 @@ impl GlobalSysvars {
         let Some(index) = tidb_variable::sysvar::sys_var_index_lookup(name) else {
             return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
         };
         let def = &tidb_variable::sysvar::SYS_VARS[index];
@@ -758,12 +758,12 @@ impl GlobalSysvars {
         let def = get_sys_var(name).ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
                 &tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         if !def.has_global_scope() && !def.has_instance_scope() && def.has_session_scope() {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_variable::variable_errors::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
+                &tidb_variable::variable_errors::ERR_INCORRECT_SCOPE.gen_with_stack_by_args(&[
                     (name.to_ascii_lowercase()).into(),
                     "SESSION".into(),
                 ]),
@@ -1013,13 +1013,13 @@ impl GlobalSysvars {
         let def = get_sys_var(name).ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
                 &tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         if !def.is_read_only() && !def.has_instance_scope() {
             return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_variable::variable_errors::ERR_LOCAL_VARIABLE
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
         }
         self.write(name, value, SCOPE_INSTANCE)
@@ -1034,7 +1034,7 @@ impl GlobalSysvars {
     /// `mysql.global_variables` row, and new sessions copy it from the
     /// cache's session view. Runtime `SET` statements never come through
     /// here.
-    pub fn set_startup(&self, name: &str, value: String) {
+    pub fn set_sys_var(&self, name: &str, value: String) {
         let Some(def) = get_sys_var(name) else {
             return;
         };
@@ -1071,7 +1071,7 @@ impl GlobalSysvars {
             .lock()
             .expect("inited-from-config lock poisoned")
             .insert(def.name.to_owned());
-        self.set_startup(name, value);
+        self.set_sys_var(name, value);
     }
 
     fn is_inited_from_config(&self, name: &str) -> bool {
@@ -1379,12 +1379,12 @@ impl GlobalSysvars {
         let def = get_sys_var(name).ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
                 &tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         if def.is_read_only() {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_variable::variable_errors::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
+                &tidb_variable::variable_errors::ERR_INCORRECT_SCOPE.gen_with_stack_by_args(&[
                     (name.to_ascii_lowercase()).into(),
                     "read only".into(),
                 ]),
@@ -1393,7 +1393,7 @@ impl GlobalSysvars {
         if !def.has_global_scope() && !def.has_instance_scope() {
             return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_variable::variable_errors::ERR_LOCAL_VARIABLE
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
         }
         let lookup = |sibling: &str| self.get(sibling).ok();
@@ -1680,12 +1680,12 @@ impl GlobalSysvars {
         let def = get_sys_var(name).ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
                 &tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         if def.is_read_only() {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_variable::variable_errors::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
+                &tidb_variable::variable_errors::ERR_INCORRECT_SCOPE.gen_with_stack_by_args(&[
                     (name.to_ascii_lowercase()).into(),
                     "read only".into(),
                 ]),
@@ -1694,7 +1694,7 @@ impl GlobalSysvars {
         if !def.has_global_scope() && !def.has_instance_scope() {
             return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_variable::variable_errors::ERR_LOCAL_VARIABLE
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
         }
         if !def.has_global_scope() {
@@ -1716,12 +1716,12 @@ impl GlobalSysvars {
         let def = get_sys_var(name).ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
                 &tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         if def.is_read_only() {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_variable::variable_errors::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
+                &tidb_variable::variable_errors::ERR_INCORRECT_SCOPE.gen_with_stack_by_args(&[
                     (name.to_ascii_lowercase()).into(),
                     "read only".into(),
                 ]),
@@ -1730,7 +1730,7 @@ impl GlobalSysvars {
         if !def.has_instance_scope() {
             return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_variable::variable_errors::ERR_LOCAL_VARIABLE
-                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
         }
         if def.has_global_scope() {

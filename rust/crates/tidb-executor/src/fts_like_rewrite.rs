@@ -137,7 +137,7 @@ fn rewrite_boolean_root(
 fn not_supported_yet(feature: &str) -> DriverError {
     DriverError::from(
         tidb_plannererrors::ERR_NOT_SUPPORTED_YET
-            .generate_with_stack_by_args(&[feature.to_owned().into()]),
+            .gen_with_stack_by_args(&[feature.to_owned().into()]),
     )
 }
 
@@ -186,7 +186,7 @@ fn build_fts_like(
         |error| {
             DriverError::from(
                 tidb_plannererrors::ERR_NOT_SUPPORTED_YET
-                    .generate_with_stack_by_args(&[error.message.into()]),
+                    .gen_with_stack_by_args(&[error.message.into()]),
             )
         },
     )?;

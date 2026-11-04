@@ -111,9 +111,9 @@ impl CoreTime {
         if self.month() == 0 || self.day() == 0 {
             0
         } else {
-            calc_daynr(self.year(), self.month() as i32, self.day() as i32)
-                - calc_daynr(self.year(), 1, 1)
-                + 1
+            (calc_daynr(self.year() as i64, self.month() as i64, self.day() as i64)
+                - calc_daynr(self.year() as i64, 1, 1)
+                + 1) as i32
         }
     }
 
@@ -171,8 +171,8 @@ impl CoreTime {
 
     /// Returns the calendar day difference between two dates.
     pub const fn date_diff(self, other: Self) -> i32 {
-        calc_daynr(self.year(), self.month() as i32, self.day() as i32)
-            - calc_daynr(other.year(), other.month() as i32, other.day() as i32)
+        (calc_daynr(self.year() as i64, self.month() as i64, self.day() as i64)
+            - calc_daynr(other.year() as i64, other.month() as i64, other.day() as i64)) as i32
     }
 
     /// Calculates the absolute temporal difference with Go's signed operand rule.
@@ -242,11 +242,11 @@ impl CoreTime {
 
     /// Adds a signed duration while preserving the existing clock fields.
     pub fn add_duration(self, nanoseconds: i64) -> Self {
-        let own_micros = i64::from(calc_daynr(
-            self.year(),
-            self.month() as i32,
-            self.day() as i32,
-        )) * SECONDS_IN_24_HOURS
+        let own_micros = calc_daynr(
+            i64::from(self.year()),
+            i64::from(self.month()),
+            i64::from(self.day()),
+        ) * SECONDS_IN_24_HOURS
             * 1_000_000
             + i64::from(self.hour()) * 3_600_000_000
             + i64::from(self.minute()) * 60_000_000
@@ -255,7 +255,7 @@ impl CoreTime {
         let result = own_micros + nanoseconds / 1_000;
         let daynr = result.div_euclid(SECONDS_IN_24_HOURS * 1_000_000);
         let time = result.rem_euclid(SECONDS_IN_24_HOURS * 1_000_000);
-        let (year, month, day) = get_date_from_daynr(daynr as u32);
+        let (year, month, day) = get_date_from_daynr(daynr as u64);
         let seconds = time / 1_000_000;
         Self::from_date(
             year as u16,
@@ -606,8 +606,8 @@ pub const fn get_last_day(year: i32, month: u8) -> u8 {
     }
 }
 
-/// Calculates days since MySQL's `0000-00-00` epoch.
-pub const fn calc_daynr(mut year: i32, month: i32, day: i32) -> i32 {
+/// Go `calcDaynr`: days since MySQL's `0000-00-00` epoch, in Go's `int`.
+pub const fn calc_daynr(mut year: i64, month: i64, day: i64) -> i64 {
     if year == 0 && month == 0 {
         return 0;
     }
@@ -621,19 +621,20 @@ pub const fn calc_daynr(mut year: i32, month: i32, day: i32) -> i32 {
     sum + year / 4 - temp
 }
 
-/// Converts a MySQL day number back to a calendar date.
-pub const fn get_date_from_daynr(daynr: u32) -> (u32, u32, u32) {
+/// Go `getDateFromDaynr`: a MySQL day number back to a calendar date, in
+/// Go's `uint`; out of range is `(0, 0, 0)`.
+pub const fn get_date_from_daynr(daynr: u64) -> (u64, u64, u64) {
     if daynr <= 365 || daynr >= 3_652_500 {
         return (0, 0, 0);
     }
     let mut year = daynr * 100 / 36_525;
     let temp = (((year - 1) / 100 + 1) * 3) / 4;
     let mut day_of_year = daynr - year * 365 - (year - 1) / 4 + temp;
-    let mut days_in_year = calc_days_in_year(year as i32) as u32;
+    let mut days_in_year = calc_days_in_year(year as i64) as u64;
     while day_of_year > days_in_year {
         day_of_year -= days_in_year;
         year += 1;
-        days_in_year = calc_days_in_year(year as i32) as u32;
+        days_in_year = calc_days_in_year(year as i64) as u64;
     }
     let mut leap_day = 0;
     if days_in_year == 366 && day_of_year > 59 {
@@ -645,7 +646,7 @@ pub const fn get_date_from_daynr(daynr: u32) -> (u32, u32, u32) {
     let mut month = 1;
     let mut index = 0;
     while index < DAYS_BY_MONTH.len() {
-        let days = DAYS_BY_MONTH[index] as u32;
+        let days = DAYS_BY_MONTH[index] as u64;
         if day_of_year <= days {
             break;
         }
@@ -704,7 +705,7 @@ const fn week_mode(mode: u8) -> u8 {
 }
 
 /// Calculates weekday from a MySQL day number.
-pub const fn calc_weekday(mut daynr: i32, sunday_first: bool) -> i32 {
+pub const fn calc_weekday(mut daynr: i64, sunday_first: bool) -> i64 {
     daynr += 5;
     if sunday_first {
         daynr += 1;
@@ -712,8 +713,8 @@ pub const fn calc_weekday(mut daynr: i32, sunday_first: bool) -> i32 {
     daynr % 7
 }
 
-/// Returns 365 or 366 using TiDB's year-zero rule.
-pub const fn calc_days_in_year(year: i32) -> i32 {
+/// Go `calcDaysInYear`: 365 or 366, with TiDB's year-zero rule.
+pub const fn calc_days_in_year(year: i64) -> i64 {
     if year & 3 == 0 && (year % 100 != 0 || (year % 400 == 0 && year != 0)) {
         366
     } else {
@@ -722,9 +723,9 @@ pub const fn calc_days_in_year(year: i32) -> i32 {
 }
 
 const fn calc_week(time: CoreTime, behaviour: u8) -> (i32, i32) {
-    let mut year = time.year();
-    let month = time.month() as i32;
-    let day = time.day() as i32;
+    let mut year = time.year() as i64;
+    let month = time.month() as i64;
+    let day = time.day() as i64;
     let daynr = calc_daynr(year, month, day);
     let mut first_daynr = calc_daynr(year, 1, 1);
     let monday_first = behaviour & WEEK_BEHAVIOUR_MONDAY_FIRST != 0;
@@ -734,7 +735,7 @@ const fn calc_week(time: CoreTime, behaviour: u8) -> (i32, i32) {
 
     if month == 1 && day <= 7 - weekday {
         if !week_year && ((first_weekday && weekday != 0) || (!first_weekday && weekday >= 4)) {
-            return (year, 0);
+            return (year as i32, 0);
         }
         week_year = true;
         year -= 1;
@@ -750,10 +751,10 @@ const fn calc_week(time: CoreTime, behaviour: u8) -> (i32, i32) {
     if week_year && days >= 52 * 7 {
         weekday = (weekday + calc_days_in_year(year)) % 7;
         if (!first_weekday && weekday < 4) || (first_weekday && weekday == 0) {
-            return (year + 1, 1);
+            return (year as i32 + 1, 1);
         }
     }
-    (year, days / 7 + 1)
+    (year as i32, (days / 7 + 1) as i32)
 }
 
 const fn datetime_to_u64(time: CoreTime) -> u64 {
@@ -777,9 +778,9 @@ fn time_diff_internal(
     microsecond: i32,
     sign: i32,
 ) -> TimeDifference {
-    let days = calc_daynr(left.year(), left.month() as i32, left.day() as i32)
-        - sign * calc_daynr(year, month, day);
-    let mut micros = (i64::from(days) * SECONDS_IN_24_HOURS
+    let days = calc_daynr(i64::from(left.year()), i64::from(left.month()), i64::from(left.day()))
+        - i64::from(sign) * calc_daynr(i64::from(year), i64::from(month), i64::from(day));
+    let mut micros = (days * SECONDS_IN_24_HOURS
         + i64::from(left.hour()) * 3_600
         + i64::from(left.minute()) * 60
         + i64::from(left.second())

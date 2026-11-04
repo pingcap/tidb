@@ -14,7 +14,7 @@
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::FieldType;
-use crate::{driver::QueryRecordSet, DriverError, StmtContext, StmtOutput};
+use crate::{driver::RecordSet, DriverError, StmtContext, StmtOutput};
 
 use crate::stmt_ctx_build::StatementCompletion;
 
@@ -62,7 +62,7 @@ impl QueryTransactionEnd {
 }
 
 pub struct PendingQuery {
-    record_set: QueryRecordSet,
+    record_set: RecordSet,
     context: StmtContext,
     pub transaction_end: QueryTransactionEnd,
     /// Go `ExecStmt.startExecute`: the moment the executor was opened; the
@@ -71,7 +71,7 @@ pub struct PendingQuery {
 }
 
 impl PendingQuery {
-    pub fn new(record_set: QueryRecordSet, context: StmtContext) -> Self {
+    pub fn new(record_set: RecordSet, context: StmtContext) -> Self {
         Self {
             record_set,
             context,
@@ -175,7 +175,7 @@ impl StatementRecordSet {
         let result = if self.finished {
             Err(DriverError::Mysql(crate::MysqlError::from_terror(
                 &tidb_exeerrors::ERR_QUERY_INTERRUPTED
-                    .generate_with_stack_by_args(&[]),
+                    .gen_with_stack_by_args(&[]),
             )))
         } else if let Some(chunks) = &mut self.retained {
             req.reset();

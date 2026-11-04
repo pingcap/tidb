@@ -160,7 +160,7 @@ impl Session {
     }
 
     pub(crate) fn drain_eval_warnings(&mut self, ctx: &tidb_sessionctx::StmtContext) {
-        // The constant-fold stash travels thread-locally and a QueryRecordSet's
+        // The constant-fold stash travels thread-locally and a RecordSet's
         // finish would otherwise be its only drain -- statements that ERROR
         // before producing one (FORMAT('x', 'y')'s 1582) would leave their
         // fold-time warnings for the NEXT statement's drain to mis-attribute.
@@ -253,7 +253,7 @@ impl Session {
                 // a failed parse carried are dropped (go's failed parse
                 // never reaches the warning copy either).
                 let mapped = match error.terror {
-                    Some(proto) => DriverError::from((proto).generate_with_stack(error.message)),
+                    Some(proto) => DriverError::from((proto).gen_with_stack(error.message)),
                     None => DriverError::from(tidb_util::misc::syntax_error(
                         error.compatibility_message(sql),
                     )),

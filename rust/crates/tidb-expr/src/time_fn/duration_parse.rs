@@ -131,7 +131,7 @@ impl GoDateTime {
     /// caller reproducing the vectorized arm passes `fsp: -1` and the
     /// datetime's own fsp wins.
     pub(crate) fn add(self, delta: GoDuration) -> Option<GoDateTime> {
-        let total = daynr(self.year, self.month, self.day)
+        let total = tidb_datatype::calc_daynr(self.year, i64::from(self.month), i64::from(self.day))
             .checked_mul(86_400_000_000)?
             .checked_add(
                 i64::from(self.hour) * 3_600_000_000
@@ -143,7 +143,8 @@ impl GoDateTime {
         let total = total.abs();
         let seconds = total / 1_000_000;
         let micros = (total % 1_000_000) as u32;
-        let (year, month, day) = get_date_from_daynr(seconds / 86_400);
+        let (year, month, day) = tidb_datatype::get_date_from_daynr((seconds / 86_400) as u64);
+        let (year, month, day) = (year as i64, month as u32, day as u32);
         let rest = seconds % 86_400;
         Some(GoDateTime {
             year,
@@ -164,65 +165,6 @@ impl GoDateTime {
     pub(crate) fn in_range(self) -> bool {
         (1..=9999).contains(&self.year) && self.month >= 1 && self.day >= 1
     }
-}
-
-/// Go `calcDaynr`: days since 0000-00-00.
-pub(crate) fn daynr(year: i64, month: u32, day: u32) -> i64 {
-    if year == 0 && month == 0 {
-        return 0;
-    }
-    let month = i64::from(month);
-    let mut year = year;
-    let mut delsum = 365 * year + 31 * (month - 1) + i64::from(day);
-    if month <= 2 {
-        year -= 1;
-    } else {
-        delsum -= (month * 4 + 23) / 10;
-    }
-    let temp = ((year / 100 + 1) * 3) / 4;
-    delsum + year / 4 - temp
-}
-
-/// Go `calcDaysInYear`.
-fn days_in_year(year: i64) -> i64 {
-    if (year & 3) == 0 && (year % 100 != 0 || (year % 400 == 0 && year != 0)) {
-        366
-    } else {
-        365
-    }
-}
-
-/// Go `getDateFromDaynr`, the inverse of [`daynr`]. Out-of-range day numbers
-/// answer `(0, 0, 0)`, exactly as Go's early return does.
-pub(crate) fn get_date_from_daynr(daynr: i64) -> (i64, u32, u32) {
-    if daynr <= 365 || daynr >= 3_652_500 {
-        return (0, 0, 0);
-    }
-    let mut year = daynr * 100 / 36525;
-    let temp = (((year - 1) / 100 + 1) * 3) / 4;
-    let mut day_of_year = daynr - year * 365 - (year - 1) / 4 + temp;
-    let mut in_year = days_in_year(year);
-    while day_of_year > in_year {
-        day_of_year -= in_year;
-        year += 1;
-        in_year = days_in_year(year);
-    }
-    let mut leap_day = 0;
-    if in_year == 366 && day_of_year > 31 + 28 {
-        day_of_year -= 1;
-        if day_of_year == 31 + 28 {
-            leap_day = 1;
-        }
-    }
-    let mut month = 1;
-    for length in [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] {
-        if day_of_year <= length {
-            break;
-        }
-        day_of_year -= length;
-        month += 1;
-    }
-    (year, month, (day_of_year + leap_day) as u32)
 }
 
 /// Go `expression.isDuration`, whose `durationPattern` decides whether

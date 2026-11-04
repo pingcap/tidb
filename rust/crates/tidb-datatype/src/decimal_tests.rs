@@ -1618,13 +1618,13 @@ fn test_div_mod_my_decimal() {
         ("51", "0.003430", "14868.804664723032069970"),
     ] {
         let actual = parse_signed(left)
-            .div_mysql(&parse_signed(right), 5)
+            .decimal_div(&parse_signed(right), 5)
             .unwrap();
         assert_eq!(actual.storage_string(), output, "{left} / {right}");
     }
     for numerator in [123, 0] {
         assert!(Decimal::from_int(numerator)
-            .div_mysql(&Decimal::from_int(0), 5)
+            .decimal_div(&Decimal::from_int(0), 5)
             .is_none());
     }
 
@@ -1637,7 +1637,7 @@ fn test_div_mod_my_decimal() {
         ("0.000", "0.1", "0.0000000"),
     ] {
         let actual = parse_signed(left)
-            .div_mysql(&parse_signed(right), 4)
+            .decimal_div(&parse_signed(right), 4)
             .unwrap();
         assert_eq!(actual.to_string(), output, "{left} / {right}");
     }
@@ -1689,7 +1689,7 @@ fn integer_division_fast_path_matches_decimal_long_division() {
     ] {
         let lhs = parse_signed(left);
         let rhs = parse_signed(right);
-        let fast = lhs.div_mysql(&rhs, increment).unwrap();
+        let fast = lhs.decimal_div(&rhs, increment).unwrap();
         assert_eq!(fast.to_string(), expected, "{left} / {right}");
     }
 }

@@ -38,7 +38,7 @@ mod json_envelope;
 mod stringify;
 
 pub use stringify::{
-    datums_to_string, datums_to_string_no_error, datums_to_string_no_error_smart, is_printable,
+    datums_to_string, datums_to_str_no_err, datums_to_str_no_err_smart, is_printable,
     unwrap_from_single_quotes, wrap_in_single_quotes,
 };
 
@@ -556,7 +556,7 @@ impl Datum {
     }
 
     /// Source `Datum.GetBinaryStringEncoded`.
-    pub fn binary_string_encoded(&self) -> Option<Vec<u8>> {
+    pub fn get_binary_string_encoded(&self) -> Option<Vec<u8>> {
         let bytes = self.as_raw_bytes()?;
         let charset = self.charset()?;
         Some(
@@ -580,7 +580,7 @@ impl Datum {
     }
 
     /// Source `Datum.GetStringWithCheck`.
-    pub fn string_with_check(
+    pub fn get_string_with_check(
         &self,
         flags: ConversionFlags,
         charset: &str,
@@ -615,6 +615,51 @@ impl Datum {
     pub fn set_bytes(&mut self, bytes: impl Into<Vec<u8>>) {
         *self = Self::new_bytes_datum(bytes);
     }
+    /// Go `Datum.String`: the kind's name and the value (`%v %v`).
+    #[must_use]
+    pub fn string(&self) -> String {
+        let kind = match self {
+            Self::Null => "KindNull",
+            Self::Int(_) => "KindInt64",
+            Self::UInt(_) => "KindUint64",
+            Self::Real(_) => "KindFloat64",
+            Self::Float32(_) => "KindFloat32",
+            Self::String(_) => "KindString",
+            Self::Bytes(_) => "KindBytes",
+            Self::BinaryLiteral(_) => "KindBinaryLiteral",
+            Self::Decimal(_) => "KindMysqlDecimal",
+            Self::Duration(_) => "KindMysqlDuration",
+            Self::Enum(_, _) => "KindMysqlEnum",
+            Self::Bit(_) => "KindMysqlBit",
+            Self::Set(_, _) => "KindMysqlSet",
+            Self::Time(_) => "KindMysqlTime",
+            Self::MinNotNull => "KindMinNotNull",
+            Self::MaxValue => "KindMaxValue",
+            Self::Raw(_) => "KindRaw",
+            Self::Json(_) => "KindMysqlJSON",
+            Self::VectorFloat32(_) => "KindVectorFloat32",
+        };
+        // `%v` of `GetValue()`; a string or byte slice is `%q` without its
+        // quotes.
+        let unquoted = |bytes: &[u8]| {
+            let quoted = tidb_go_strconv::quote_bytes(bytes);
+            quoted[1..quoted.len() - 1].to_owned()
+        };
+        let value = match self {
+            Self::Null => "<nil>".to_owned(),
+            Self::Int(value) => value.to_string(),
+            Self::UInt(value) => value.to_string(),
+            Self::Real(value) => tidb_goruntime::go_strconv::format_float(*value, b'g', -1, 64),
+            Self::Float32(value) => {
+                tidb_goruntime::go_strconv::format_float(f64::from(*value), b'g', -1, 32)
+            }
+            Self::String(value) => unquoted(value.bytes()),
+            Self::Bytes(value) | Self::Raw(value) => unquoted(value),
+            _ => self.sql_string().unwrap_or_else(|_| self.label()),
+        };
+        format!("{kind} {value}")
+    }
+
     /// Go `Datum.MemUsage`: `EmptyDatumSize + cap(d.b) + len(d.collation)`.
     ///
     /// Go keeps every variable-length payload in the single `d.b` byte slice
@@ -732,8 +777,8 @@ pub fn estimated_mem_usage(array: &[Datum], num_of_rows: usize) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        clone_row, datums_contain_null, datums_to_string, datums_to_string_no_error,
-        datums_to_string_no_error_smart, estimated_mem_usage, is_printable, sort_datums, Datum,
+        clone_row, datums_contain_null, datums_to_string, datums_to_str_no_err,
+        datums_to_str_no_err_smart, estimated_mem_usage, is_printable, sort_datums, Datum,
         DatumKind,
     };
     use crate::{
@@ -781,7 +826,7 @@ mod tests {
             ),
             (Datum::new_bytes_datum(gbk), gbk.to_vec()),
         ] {
-            assert_eq!(datum.binary_string_encoded().unwrap(), expected);
+            assert_eq!(datum.get_binary_string_encoded().unwrap(), expected);
         }
 
         let decoded =
@@ -791,13 +836,13 @@ mod tests {
 
         let invalid_utf8 = Datum::new_string_datum([utf8, &[0x81]].concat());
         let checked = invalid_utf8
-            .string_with_check(ConversionFlags::default(), "utf8mb4")
+            .get_string_with_check(ConversionFlags::default(), "utf8mb4")
             .unwrap();
         assert!(checked.error().is_some());
         assert_eq!(checked.bytes(), [utf8, b"?"].concat());
 
         let skipped = invalid_utf8
-            .string_with_check(
+            .get_string_with_check(
                 ConversionFlags::default().with_skip_utf8_check(true),
                 "utf8mb4",
             )
@@ -807,12 +852,12 @@ mod tests {
 
         let utf8mb4 = Datum::new_string_datum("𠆢");
         assert!(utf8mb4
-            .string_with_check(ConversionFlags::default(), "utf8")
+            .get_string_with_check(ConversionFlags::default(), "utf8")
             .unwrap()
             .error()
             .is_some());
         assert!(utf8mb4
-            .string_with_check(
+            .get_string_with_check(
                 ConversionFlags::default().with_skip_utf8mb4_check(true),
                 "utf8",
             )
@@ -875,7 +920,7 @@ mod tests {
             ),
         ] {
             let checked = Datum::new_string_datum(input)
-                .string_with_check(flags, charset)
+                .get_string_with_check(flags, charset)
                 .unwrap();
             assert_eq!(checked.error().is_none(), valid, "{charset} {input:?}");
             if valid {
@@ -1006,6 +1051,19 @@ mod tests {
         assert_eq!(estimated_mem_usage(&row, 0), 0);
     }
 
+    /// Go `Datum.String`: `%v %v` of the kind and `GetValue()`, a string
+    /// or byte slice `%q`-escaped without its quotes.
+    #[test]
+    fn datum_string_is_gos_kind_and_value() {
+        assert_eq!(Datum::Null.string(), "KindNull <nil>");
+        assert_eq!(Datum::Int(-7).string(), "KindInt64 -7");
+        assert_eq!(Datum::UInt(7).string(), "KindUint64 7");
+        assert_eq!(Datum::Real(1e21).string(), "KindFloat64 1e+21");
+        assert_eq!(Datum::Real(0.5).string(), "KindFloat64 0.5");
+        assert_eq!(Datum::new_string_datum("a\"b\n").string(), "KindString a\\\"b\\n");
+        assert_eq!(Datum::new_bytes_datum(b"\xff\x01".to_vec()).string(), "KindBytes \\xff\\x01");
+    }
+
     #[test]
     fn test_datums_to_string() {
         let zero_time = Datum::new_time(
@@ -1046,11 +1104,11 @@ mod tests {
         sort_datums(&mut sortable).unwrap();
         assert_eq!(sortable, vec![Datum::Int(-1), Datum::Int(2), Datum::Int(3)]);
         assert_eq!(
-            datums_to_string_no_error(&[Datum::Int(1), Datum::UInt(2)]),
+            datums_to_str_no_err(&[Datum::Int(1), Datum::UInt(2)]),
             "(1, 2)"
         );
         assert_eq!(
-            datums_to_string_no_error_smart(&[Datum::new_string_datum("a\0b")]),
+            datums_to_str_no_err_smart(&[Datum::new_string_datum("a\0b")]),
             "0x610062"
         );
     }

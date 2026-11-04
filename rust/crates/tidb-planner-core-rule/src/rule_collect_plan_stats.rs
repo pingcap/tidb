@@ -1116,7 +1116,7 @@ mod tests {
                 if self.fail_wait {
                     Err(PlanError::from(
                         tidb_plannererrors::ERR_INTERNAL
-                            .generate_with_stack_by_args(&["wait failed".into()]),
+                            .gen_with_stack_by_args(&["wait failed".into()]),
                     ))
                 } else {
                     Ok(())
@@ -1131,7 +1131,7 @@ mod tests {
                     plan,
                     PlanError::from(
                         tidb_plannererrors::ERR_INTERNAL
-                            .generate_with_stack_by_args(&["estimation failed".into()]),
+                            .gen_with_stack_by_args(&["estimation failed".into()]),
                     ),
                 ))
             }
@@ -1155,7 +1155,7 @@ mod tests {
             assert_eq!(
                 error,
                 PlanError::from(
-                    tidb_plannererrors::ERR_INTERNAL.generate_with_stack_by_args(&[
+                    tidb_plannererrors::ERR_INTERNAL.gen_with_stack_by_args(&[
                         (if fail_wait {
                             "wait failed"
                         } else {

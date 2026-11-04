@@ -2911,7 +2911,7 @@ impl Domain {
     ) {
         self.processes.set_tls_manager(manager);
         for (name, value) in variables {
-            self.global_vars.set_startup(name, value);
+            self.global_vars.set_sys_var(name, value);
         }
     }
 

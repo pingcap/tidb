@@ -401,7 +401,7 @@ impl CteProducer {
             return Err(ExecError::Mysql(
                 tidb_terror::MysqlError::from_terror(
                     &tidb_exeerrors::ERR_CTE_MAX_RECURSION_DEPTH
-                        .generate_with_stack_by_args(&[(self.current_iteration as u64).into()]),
+                        .gen_with_stack_by_args(&[(self.current_iteration as u64).into()]),
                 ),
             ));
         }
@@ -442,7 +442,7 @@ impl CteProducer {
                 return Err(ExecError::Mysql(
                     tidb_terror::MysqlError::from_terror(
                         &tidb_exeerrors::ERR_CTE_MAX_RECURSION_DEPTH
-                            .generate_with_stack_by_args(&[(self.current_iteration as u64).into()]),
+                            .gen_with_stack_by_args(&[(self.current_iteration as u64).into()]),
                     ),
                 ));
             }

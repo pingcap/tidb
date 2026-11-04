@@ -50,7 +50,7 @@ pub(crate) fn assert_go_error<T: std::fmt::Debug>(
     assert!(error.equal(proto), "{error:?}");
     assert_eq!(
         error.to_string(),
-        DriverError::from(proto.generate_with_stack_by_args(args)).to_string()
+        DriverError::from(proto.gen_with_stack_by_args(args)).to_string()
     );
 }
 

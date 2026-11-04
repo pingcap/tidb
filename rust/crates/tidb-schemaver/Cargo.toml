@@ -14,6 +14,7 @@ workspace = true
 nextgen = ["tidb-config/nextgen"]
 
 [dependencies]
+tidb-go-strconv = { path = "../tidb-go-strconv" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }
 tidb-logutil = { path = "../tidb-logutil" }

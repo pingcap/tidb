@@ -335,7 +335,7 @@ mod builtin_ext;
 pub mod builtin_op;
 pub mod builtin_registry;
 pub mod cast;
-pub use cast::{convert_json_2_tp, invalid_json_for_func_index};
+pub use cast::{convert_json_2_tp, err_invalid_json_for_func_index};
 mod coerce;
 pub mod collation_derive;
 pub mod column;

@@ -2171,7 +2171,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                 if window_error.is_none() {
                     window_error = Some(PlanError::from(
                         tidb_plannererrors::ERR_WINDOW_INVALID_WINDOW_FUNC_USE
-                            .generate_with_stack_by_args(&[(name).to_ascii_lowercase().into()]),
+                            .gen_with_stack_by_args(&[(name).to_ascii_lowercase().into()]),
                     ));
                 }
                 return true;
@@ -2192,7 +2192,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             {
                 Err(PlanError::from(
                     tidb_plannererrors::ERR_AMBIGUOUS
-                        .generate_with_stack_by_args(&[column.into(), "field list".into()]),
+                        .gen_with_stack_by_args(&[column.into(), "field list".into()]),
                 ))
             }
             Err(error) => Err(PlanError::from(error)),
@@ -2962,19 +2962,19 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if !table_ref.partitions.is_empty() {
             return Err(PlanError::from(
                 tidb_plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
-                    .generate_with_stack_by_args(&[]),
+                    .gen_with_stack_by_args(&[]),
             ));
         }
         if let Some(index) = table_ref.hints.iter().flat_map(|hint| &hint.indexes).next() {
             return Err(PlanError::from(
                 tidb_plannererrors::ERR_KEY_DOES_NOT_EXIST
-                    .generate_with_stack_by_args(&[(index.clone()).into(), sequence_name.into()]),
+                    .gen_with_stack_by_args(&[(index.clone()).into(), sequence_name.into()]),
             ));
         }
         if table_ref.sample.is_some() {
             return Err(PlanError::from(
                 tidb_expr::expression_errors::ERR_INVALID_TABLE_SAMPLE
-                    .generate_with_stack_by_args(&["Unsupported TABLESAMPLE in sequences".into()]),
+                    .gen_with_stack_by_args(&["Unsupported TABLESAMPLE in sequences".into()]),
             ));
         }
         Ok(self.build_table_dual())
@@ -3092,7 +3092,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         {
             return Err(PlanError::from(
                 tidb_expr::expression_errors::ERR_INVALID_TABLE_SAMPLE
-                    .generate_with_stack_by_args(&["Only supports REGIONS sampling method".into()]),
+                    .gen_with_stack_by_args(&["Only supports REGIONS sampling method".into()]),
             ));
         }
         // `:4932` "Try CTE." An UNQUALIFIED name may name a CTE in scope, and
@@ -3109,7 +3109,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // planned -- never as an unknown database named ''.
             [_] if self.source.current_database().is_empty() => {
                 return Err(PlanError::from(
-                    tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                    tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]),
                 ));
             }
             [table] => (self.source.current_database().to_owned(), table.clone()),
@@ -3145,7 +3145,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // view has no index: an SQL index hint naming one is an error.
             if let Some(index) = table_ref.hints.iter().flat_map(|hint| &hint.indexes).next() {
                 return Err(PlanError::from(
-                    tidb_plannererrors::ERR_KEY_DOES_NOT_EXIST.generate_with_stack_by_args(
+                    tidb_plannererrors::ERR_KEY_DOES_NOT_EXIST.gen_with_stack_by_args(
                         &[(index.clone()).into(), (view.view_name.clone()).into()],
                     ),
                 ));
@@ -3153,7 +3153,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             if table_ref.sample.is_some() {
                 return Err(PlanError::from(
                     tidb_expr::expression_errors::ERR_INVALID_TABLE_SAMPLE
-                        .generate_with_stack_by_args(&["Unsupported TABLESAMPLE in views".into()]),
+                        .gen_with_stack_by_args(&["Unsupported TABLESAMPLE in views".into()]),
                 ));
             }
             let visible_name = table_ref.alias.as_deref().unwrap_or(&view.view_name);
@@ -3186,7 +3186,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // schema in lower case and the table as written (captured on the
             // oracle: `ACC2.NonExistent` answers `acc2.NonExistent`).
             return Err(PlanError::from(
-                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.fast_generate_by_args(&[
+                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.fast_gen_by_args(&[
                     (tidb_hack::go_to_lower(&db_name)).into(),
                     table_name.into(),
                 ]),
@@ -3204,7 +3204,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if self.is_create_view && table.is_local_temporary() {
             return Err(PlanError::from(
                 tidb_plannererrors::ERR_VIEW_SELECT_TEMPORARY_TABLE
-                    .generate_with_stack_by_args(&[(&table_name).into()]),
+                    .gen_with_stack_by_args(&[(&table_name).into()]),
             ));
         }
         self.append_select_visit(&db_name, &table.table_name());
@@ -3228,7 +3228,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             if table_ref.sample.is_some() {
                 return Err(PlanError::from(
                     tidb_expr::expression_errors::ERR_INVALID_TABLE_SAMPLE
-                        .generate_with_stack_by_args(&[
+                        .gen_with_stack_by_args(&[
                             "Unsupported TABLESAMPLE in virtual tables".into(),
                         ]),
                 ));
@@ -3260,7 +3260,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 {
                     return Err(PlanError::from(
                         tidb_table::table_errors::ERR_UNKNOWN_PARTITION
-                            .generate_with_stack_by_args(&[
+                            .gen_with_stack_by_args(&[
                                 tidb_mysql::to_lowercase(&(partition)).into(),
                                 (&table.table_name()).into(),
                             ]),
@@ -3270,7 +3270,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         } else if !table_ref.partitions.is_empty() {
             return Err(PlanError::from(
                 tidb_plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
-                    .generate_with_stack_by_args(&[]),
+                    .gen_with_stack_by_args(&[]),
             ));
         }
         // `:5102` "Try to substitute generate column only if there is an index
@@ -3698,7 +3698,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 // Go `ErrNoAvailablePath` answers as ErrInternal (1815):
                 // `Internal : No access path for table ... Please check
                 // tiflash replica.` -- the errno template adds the prefix.
-                return Err(PlanError::from(tidb_plannererrors::ERR_INTERNAL.generate_with_stack_by_args(&[(format!(
+                return Err(PlanError::from(tidb_plannererrors::ERR_INTERNAL.gen_with_stack_by_args(&[(format!(
                     "No access path for table '{}' is found with 'tidb_isolation_read_engines' = '{}', valid values can be '{}'{help}.",
                     table.table_name(),
                     self.isolation_read_engines_value,
@@ -4311,7 +4311,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     let list = Self::unfold_wild_star(path, wildcard_schema, wildcard_names);
                     if list.is_empty() {
                         return Err(PlanError::from(
-                            tidb_plannererrors::ERR_BAD_TABLE.generate_with_stack_by_args(
+                            tidb_plannererrors::ERR_BAD_TABLE.gen_with_stack_by_args(
                                 &[(path.last().map(String::as_str).unwrap_or("")).into()],
                             ),
                         ));
@@ -4890,7 +4890,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         .ok_or_else(|| {
                             PlanError::from(
                                 tidb_plannererrors::ERR_UNKNOWN_COLUMN
-                                    .generate_with_stack_by_args(&[
+                                    .gen_with_stack_by_args(&[
                                         tidb_hack::go_to_lower(position.to_string()).into(),
                                         "order clause".into(),
                                     ]),
@@ -5439,7 +5439,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if self.building_recursive_part_for_cte {
             if select.distinct {
                 return Err(PlanError::from(
-                    tidb_plannererrors::ERR_NOT_SUPPORTED_YET.generate_with_stack_by_args(
+                    tidb_plannererrors::ERR_NOT_SUPPORTED_YET.gen_with_stack_by_args(
                         &[
                             "SELECT DISTINCT in recursive query block of Common Table Expression"
                                 .into(),
@@ -5450,12 +5450,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             if (!select.order_by.is_empty() || select.limit.is_some())
                 && !self.building_lateral_subquery
             {
-                return Err(PlanError::from(tidb_plannererrors::ERR_NOT_SUPPORTED_YET.generate_with_stack_by_args(&["ORDER BY / LIMIT in recursive query block of Common Table Expression (except within LATERAL subqueries)".into()])));
+                return Err(PlanError::from(tidb_plannererrors::ERR_NOT_SUPPORTED_YET.gen_with_stack_by_args(&["ORDER BY / LIMIT in recursive query block of Common Table Expression (except within LATERAL subqueries)".into()])));
             }
             if !select.group_by.is_empty() {
                 return Err(PlanError::from(
                     tidb_plannererrors::ERR_CTERECURSIVE_FORBIDS_AGGREGATION
-                        .fast_generate_by_args(&[(self.gen_cte_table_name_for_error()).into()]),
+                        .fast_gen_by_args(&[(self.gen_cte_table_name_for_error()).into()]),
                 ));
             }
         }
@@ -5524,7 +5524,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         {
             return Err(PlanError::from(
                 tidb_plannererrors::ERR_CTERECURSIVE_FORBIDS_AGGREGATION
-                    .fast_generate_by_args(&[(self.gen_cte_table_name_for_error()).into()]),
+                    .fast_gen_by_args(&[(self.gen_cte_table_name_for_error()).into()]),
             ));
         }
 
@@ -5707,7 +5707,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         }
                         return Err(PlanError::from(
                             tidb_plannererrors::ERR_UNKNOWN_TABLE
-                                .generate_with_stack_by_args(&[
+                                .gen_with_stack_by_args(&[
                                     (target.join(".")).into(),
                                     "locking clause".into(),
                                 ]),
@@ -5764,7 +5764,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if has_agg && self.building_recursive_part_for_cte {
             return Err(PlanError::from(
                 tidb_plannererrors::ERR_CTERECURSIVE_FORBIDS_AGGREGATION
-                    .fast_generate_by_args(&[(self.gen_cte_table_name_for_error()).into()]),
+                    .fast_gen_by_args(&[(self.gen_cte_table_name_for_error()).into()]),
             ));
         }
         let mut having_field_base = fields.len();

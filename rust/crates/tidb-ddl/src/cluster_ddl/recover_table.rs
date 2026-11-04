@@ -105,7 +105,7 @@ fn gc_error(error: tidb_gcutil::Error<tidb_terror::MysqlError>) -> DdlPlanError 
         tidb_gcutil::Error::Context(error) => DdlPlanError::from_mysql_error(error),
         tidb_gcutil::Error::SnapshotTooOld { safe_point_time } => DdlPlanError::from(
             tidb_variable::variable_errors::ERR_SNAPSHOT_TOO_OLD
-                .generate_with_stack_by_args(&[safe_point_time.into()]),
+                .gen_with_stack_by_args(&[safe_point_time.into()]),
         ),
         other => DdlPlanError::from_mysql_error(tidb_terror::MysqlError::unknown(other.to_string())),
     }
@@ -168,7 +168,7 @@ pub(super) fn on_recover_table(
     let Some(database) = catalog.schema_by_id(schema_id) else {
         return Err(cancel_ddl_job(
             active,
-            DdlPlanError::from(tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS.generate_with_stack_by_args(&[
+            DdlPlanError::from(tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS.gen_with_stack_by_args(&[
                 format!("(Schema ID {schema_id})").into(),
             ])),
         ));
@@ -182,7 +182,7 @@ pub(super) fn on_recover_table(
     {
         return Err(cancel_ddl_job(
             active,
-            DdlPlanError::from(tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.generate_with_stack_by_args(&[
+            DdlPlanError::from(tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.gen_with_stack_by_args(&[
                 format!("{schema_name}.{}", name.original()).into(),
             ])),
         ));
@@ -195,7 +195,7 @@ pub(super) fn on_recover_table(
     if let Some(existing) = existing {
         return Err(cancel_ddl_job(
             active,
-            DdlPlanError::from(tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.generate_with_stack_by_args(&[
+            DdlPlanError::from(tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.gen_with_stack_by_args(&[
                 existing.name.original().into(),
             ])),
         ));
@@ -290,7 +290,7 @@ pub(super) fn on_recover_table(
             })
         }
         state => Err(DdlPlanError::from(
-            tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+            tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack_by_args(&[
                 FormatArg::from("table"),
                 FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
             ]),
@@ -640,7 +640,7 @@ pub(crate) fn build_recover_table_job<S: MetaSnapshot>(
             .map_err(DdlPlanError::Meta)?
             .ok_or_else(|| {
                 DdlPlanError::from(
-                    tidb_dbterror::ERR_DDL_JOB_NOT_FOUND.generate_with_stack_by_args(&[(*job_id).into()]),
+                    tidb_dbterror::ERR_DDL_JOB_NOT_FOUND.gen_with_stack_by_args(&[(*job_id).into()]),
                 )
             })?;
             if !matches!(
@@ -662,7 +662,7 @@ pub(crate) fn build_recover_table_job<S: MetaSnapshot>(
                 })
             })?;
             let table = at.table_at(snapshot_ts, job.schema_id, job.table_id)?.ok_or_else(|| {
-                DdlPlanError::from(tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(&[
+                DdlPlanError::from(tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.gen_with_stack_by_args(&[
                     format!("(Schema ID {})", job.schema_id).into(),
                     format!("(Table ID {})", job.table_id).into(),
                 ]))
@@ -710,7 +710,7 @@ pub(crate) fn build_recover_table_job<S: MetaSnapshot>(
     let Some(schema) = catalog.schema_by_id(schema_id) else {
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                .generate_with_stack_by_args(&[format!("(Schema ID {schema_id})").into()]),
+                .gen_with_stack_by_args(&[format!("(Schema ID {schema_id})").into()]),
         ));
     };
     let schema_name = schema.read().name.clone();
@@ -722,7 +722,7 @@ pub(crate) fn build_recover_table_job<S: MetaSnapshot>(
     {
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS
-                .generate_with_stack_by_args(&[table_info.name.original().into()]),
+                .gen_with_stack_by_args(&[table_info.name.original().into()]),
         ));
     }
     // FLASHBACK TABLE ... TO renames within the same schema.
@@ -828,7 +828,7 @@ fn recover_table_by_name<S: MetaSnapshot>(
         // Dropping a local temporary table leaves no DDL job.
         if table_info.temp_table_type == tidb_model::TempTableType::GLOBAL {
             return Err(DdlPlanError::from(
-                tidb_exeerrors::ERR_UNSUPPORTED_FLASHBACK_TMP_TABLE.generate_with_stack_by_args(&[]),
+                tidb_exeerrors::ERR_UNSUPPORTED_FLASHBACK_TMP_TABLE.gen_with_stack_by_args(&[]),
             ));
         }
         return Ok((job, table_info));
@@ -856,7 +856,7 @@ pub(crate) fn build_recover_schema_job<S: MetaSnapshot>(
     if super::find_database(catalog, db_name).is_some() {
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_DATABASE_EXISTS
-                .generate_with_stack_by_args(&[db_name.as_str().into()]),
+                .gen_with_stack_by_args(&[db_name.as_str().into()]),
         ));
     }
     let mut recover_schema_info = recover_schema_by_name(snapshot, name, gc_safe_point, at)?;

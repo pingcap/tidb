@@ -42,7 +42,7 @@ pub fn prepare_alter_schema_job_submission<S: MetaSnapshot>(
             let Some(database) = find_database(&catalog, name) else {
                 return Err(DdlPlanError::from(
                     tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                        .generate_with_stack_by_args(&[(name.clone()).into()]),
+                        .gen_with_stack_by_args(&[(name.clone()).into()]),
                 ));
             };
             if database.read().charset == *charset && database.read().collate == *collate {
@@ -70,7 +70,7 @@ pub fn prepare_alter_schema_job_submission<S: MetaSnapshot>(
             if find_database(&catalog, name).is_none() {
                 return Err(DdlPlanError::from(
                     tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                        .generate_with_stack_by_args(&[(name.clone()).into()]),
+                        .gen_with_stack_by_args(&[(name.clone()).into()]),
                 ));
             }
             if let Some(ignored) = check_ignore_placement_ddl(job_context) {
@@ -235,23 +235,23 @@ pub fn schema_tiflash_replica_tables<'catalog>(
     catalog: &'catalog SessionExtendedInfoSchema,
     name: &str,
 ) -> Result<(String, Vec<GoShared<TableInfo>>), DdlPlanError> {
-    let Some(database) = catalog.schema_info_by_name(name) else {
+    let Some(database) = catalog.schema_by_name(name) else {
         return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
             &tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                .generate_with_stack_by_args(&[name.into()]),
+                .gen_with_stack_by_args(&[name.into()]),
         )));
     };
     if tidb_metadef::is_mem_or_sys_db(database.read().name.lowercase()) {
         return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
             &tidb_dbterror::ERR_UNSUPPORTED_TI_FLASH_OPERATION_FOR_SYS_OR_MEM_TABLE
-                .generate_with_stack_by_args(&[]),
+                .gen_with_stack_by_args(&[]),
         )));
     }
     let tables = database.read().deprecated_tables.iter_deref().collect::<Vec<_>>();
     if tables.is_empty() {
         return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
             &tidb_infoschema::infoschema_errors::ERR_EMPTY_DATABASE
-                .generate_with_stack(format!("Empty database '{name}'")),
+                .gen_with_stack(format!("Empty database '{name}'")),
         )));
     }
     let name = database.read().name.original().to_owned();

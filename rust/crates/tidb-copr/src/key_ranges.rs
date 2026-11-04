@@ -290,7 +290,7 @@ fn write_go_quoted_character(formatter: &mut fmt::Formatter<'_>, character: char
         '\\' => formatter.write_str("\\\\"),
         '\"' => formatter.write_str("\\\""),
         ' '..='~' => write!(formatter, "{character}"),
-        character if tidb_hack::go_strconv::is_print(character) => {
+        character if tidb_go_strconv::is_print(character) => {
             write!(formatter, "{character}")
         }
         character if character < ' ' || character == '\u{007f}' => {

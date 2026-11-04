@@ -27,7 +27,7 @@
 use crate::chunk_util::MSG_ERR_SEL_NOT_NIL;
 use crate::column::Column;
 use crate::column_slot::{ColumnHandle, ColumnRead, ColumnRef, ColumnSlot, ColumnWrite};
-use crate::compare::{compare, sort_search};
+use crate::compare::{compare, search};
 use crate::row::Row;
 use std::cmp::Ordering;
 use tidb_datatype::{Datum, FieldType, MyDecimal, MySqlDuration, Time, VectorFloat32};
@@ -403,7 +403,7 @@ impl Chunk {
             return (self.num_rows(), false);
         }
         let mut matched = false;
-        let index = sort_search(self.num_rows(), |i| {
+        let index = search(self.num_rows(), |i| {
             let ordering = compare(self.get_row(i), col_idx, d);
             if ordering == Ordering::Equal {
                 matched = true;
@@ -416,7 +416,7 @@ impl Chunk {
     /// Go `UpperBound`: on the non-decreasing column `col_idx`, the smallest
     /// index whose value is larger than `d`.
     pub fn upper_bound(&self, col_idx: usize, d: &Datum) -> usize {
-        sort_search(self.num_rows(), |i| {
+        search(self.num_rows(), |i| {
             compare(self.get_row(i), col_idx, d) == Ordering::Greater
         })
     }

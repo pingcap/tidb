@@ -100,7 +100,7 @@ pub fn split_table_path<'a>(
         [name] => {
             if current_db.is_empty() {
                 return Err(DriverError::from(
-                    tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                    tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]),
                 ));
             }
             Ok((current_db, name))
@@ -602,7 +602,7 @@ impl SessionExtendedInfoSchema {
         let schema = self.database_mut(&database.go_to_lower()).ok_or_else(|| {
             DriverError::from(
                 crate::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                    .generate_with_stack_by_args(&[(database.to_owned()).into()]),
+                    .gen_with_stack_by_args(&[(database.to_owned()).into()]),
             )
         })?;
         // Go's infoschema key and `TableInfo.Name` are one identity. Keep the
@@ -752,7 +752,7 @@ impl SessionExtendedInfoSchema {
 
     /// Go `InfoSchema.SchemaByName`: the stored schema's `DBInfo`.
     #[must_use]
-    pub fn schema_info_by_name(&self, schema: &str) -> Option<tidb_model::GoShared<tidb_model::db::DBInfo>> {
+    pub fn schema_by_name(&self, schema: &str) -> Option<tidb_model::GoShared<tidb_model::db::DBInfo>> {
         self.schema
             .databases
             .get(&schema.go_to_lower())
@@ -771,7 +771,7 @@ impl SessionExtendedInfoSchema {
         tidb_model::GoShared<tidb_model::db::DBInfo>,
         tidb_model::GoShared<tidb_model::TableInfo>,
     )> {
-        let info = self.schema_info_by_name(schema)?;
+        let info = self.schema_by_name(schema)?;
         let found = info
             .read()
             .deprecated_tables
@@ -966,7 +966,7 @@ impl SessionExtendedInfoSchema {
     /// Go `Builder.createSchemaTablesForDB`: the schema `info` names, holding
     /// that very `DBInfo` pointer. `false` when the schema already existed
     /// (its pointer is replaced).
-    pub fn register_database_info(&mut self, info: tidb_model::GoShared<tidb_model::db::DBInfo>) -> bool {
+    pub fn create_schema_tables_for_db(&mut self, info: tidb_model::GoShared<tidb_model::db::DBInfo>) -> bool {
         self.bump_metadata_version();
         let key = info.read().name.lowercase().to_owned();
         if let Some(existing) = self.database_mut(&key) {
@@ -1006,7 +1006,7 @@ impl SessionExtendedInfoSchema {
             schema.set_policy(policy);
         }
         for database in databases {
-            schema.register_database_info(database);
+            schema.create_schema_tables_for_db(database);
         }
         schema
     }
@@ -1068,7 +1068,7 @@ impl SessionExtendedInfoSchema {
         edit(&mut copy);
         // The copy keeps its name (no DDL renames a schema), so it replaces
         // the original in its slot.
-        self.register_database_info(tidb_model::GoShared::new(copy));
+        self.create_schema_tables_for_db(tidb_model::GoShared::new(copy));
         true
     }
 

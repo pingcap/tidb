@@ -224,7 +224,7 @@ fn divide_union_select_plans(
 fn wrong_number_of_columns() -> PlanError {
     PlanError::from(
         tidb_plannererrors::ERR_WRONG_NUMBER_OF_COLUMNS_IN_SELECT
-            .generate_with_stack_by_args(&[]),
+            .gen_with_stack_by_args(&[]),
     )
 }
 

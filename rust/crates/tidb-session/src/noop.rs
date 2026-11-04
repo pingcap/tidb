@@ -70,7 +70,7 @@ impl Session {
                 // after the refused statement carries the same 1235 row.
                 let error = DriverError::from(
                     tidb_expr::expression_errors::ERR_FUNCTIONS_NOOP_IMPL
-                        .generate_with_stack_by_args(&[(clause).into()]),
+                        .gen_with_stack_by_args(&[(clause).into()]),
                 );
                 self.append_driver_error(WarningLevel::Error, &error);
                 Err(error)
@@ -81,7 +81,7 @@ impl Session {
                     WarningLevel::Warning,
                     &DriverError::from(
                         tidb_expr::expression_errors::ERR_FUNCTIONS_NOOP_IMPL
-                            .generate_with_stack_by_args(&[(clause).into()]),
+                            .gen_with_stack_by_args(&[(clause).into()]),
                     ),
                 );
                 Ok(())
@@ -120,7 +120,7 @@ impl Session {
         for clause in gated {
             let error = DriverError::from(
                 tidb_expr::expression_errors::ERR_FUNCTIONS_NOOP_IMPL
-                    .generate_with_stack_by_args(&[(clause).into()]),
+                    .gen_with_stack_by_args(&[(clause).into()]),
             );
             if mode == NoopFuncsMode::Off {
                 return Err(error);

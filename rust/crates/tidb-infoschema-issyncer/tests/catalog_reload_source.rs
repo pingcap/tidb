@@ -292,7 +292,7 @@ fn a_rename_table_diff_across_databases_moves_the_table() {
     };
     assert_eq!(applied, 1);
     let campaign = next
-        .schema_info_by_name("campaign")
+        .schema_by_name("campaign")
         .expect("campaign database");
     assert!(
         tables(&campaign.read()).is_empty(),
@@ -346,7 +346,7 @@ fn a_rename_tables_diff_moves_every_affected_table() {
     };
     assert_eq!(applied, 1);
     let campaign = next
-        .schema_info_by_name("campaign")
+        .schema_by_name("campaign")
         .expect("campaign database");
     assert_eq!(
         tables(&campaign.read()).len(),

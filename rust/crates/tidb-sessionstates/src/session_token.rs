@@ -183,7 +183,7 @@ pub fn reload_signing_cert() {
 
 fn cannot_migrate(arguments: &[&str]) -> TerrorError {
     let arguments: Vec<FormatArg> = arguments.iter().map(|argument| FormatArg::from(*argument)).collect();
-    crate::ERR_CANNOT_MIGRATE_SESSION.generate_with_stack_by_args(&arguments)
+    crate::ERR_CANNOT_MIGRATE_SESSION.gen_with_stack_by_args(&arguments)
 }
 
 static GLOBAL_SIGNING_CERT: LazyLock<RwLock<SigningCert>> = LazyLock::new(RwLock::default);

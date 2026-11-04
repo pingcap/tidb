@@ -34,14 +34,14 @@ pub fn reformat_errors(
     match error.code {
         tidb_errno::errcode::WarnDataTruncated
         | tidb_errno::errcode::ErrDataTooLong => tidb_terror::MysqlError::from_terror(
-            &tidb_datatype::types_errors::ERR_TRUNCATED.generate_with_stack(format!(
+            &tidb_datatype::types_errors::ERR_TRUNCATED.gen_with_stack(format!(
                 "Data truncated for column '{old_column}', value is '{}'",
                 value()
             )),
         ),
         tidb_errno::errcode::ErrWarnDataOutOfRange => {
             tidb_terror::MysqlError::from_terror(
-                &tidb_datatype::types_errors::ERR_WARN_DATA_OUT_OF_RANGE.generate_with_stack(
+                &tidb_datatype::types_errors::ERR_WARN_DATA_OUT_OF_RANGE.gen_with_stack(
                     format!(
                         "Out of range value for column '{old_column}', the value is '{}'",
                         value()

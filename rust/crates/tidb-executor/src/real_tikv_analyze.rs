@@ -670,7 +670,7 @@ fn select_index_tasks(
                     .ok_or_else(|| {
                         ClusterAnalyzeError::from(
                             tidb_plannererrors::ERR_ANALYZE_MISS_INDEX
-                                .generate_with_stack_by_args(&[
+                                .gen_with_stack_by_args(&[
                                     name.as_str().into(),
                                     table.name.original().into(),
                                 ]),
@@ -751,7 +751,7 @@ fn analyze_partition_ids(
             return Ok(Vec::new());
         }
         return Err(tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
-            .generate_with_stack_by_args(&[])
+            .gen_with_stack_by_args(&[])
             .into());
     };
     let partition = partition.read();
@@ -907,7 +907,7 @@ fn find_statement_table<'catalog>(
         })
         .ok_or_else(|| {
             ClusterAnalyzeError::from(
-                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(
+                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.gen_with_stack_by_args(
                     &[
                         statement.schema.as_str().into(),
                         statement.table.as_str().into(),
@@ -1789,7 +1789,7 @@ where
                     .map_or("", String::as_str);
                     return Err(
                         tidb_datatype::types_errors::ERR_PARTITION_COLUMN_STATS_MISSING
-                            .generate_with_stack_by_args(&[format!(
+                            .gen_with_stack_by_args(&[format!(
                                 "table `{}` partition `{}` {} `{name}`",
                                 statement.table,
                                 partition.name,
@@ -2072,7 +2072,7 @@ fn merge_global_items<TZ: TimeZone + Sync>(
                         continue;
                     }
                     return Err(tidb_datatype::types_errors::ERR_PARTITION_STATS_MISSING
-                        .generate_with_stack_by_args(&[format!(
+                        .gen_with_stack_by_args(&[format!(
                             "table `{}` partition `{partition_name}`",
                             statement.table
                         )
@@ -2109,7 +2109,7 @@ fn merge_global_items<TZ: TimeZone + Sync>(
                     } else {
                         &tidb_datatype::types_errors::ERR_PARTITION_STATS_MISSING
                     };
-                    return Err(proto.generate_with_stack_by_args(&[detail.into()]).into());
+                    return Err(proto.gen_with_stack_by_args(&[detail.into()]).into());
                 };
                 let topn_count = item.topn.as_ref().map_or(0, |topn| topn.total_count());
                 if mode == GlobalStatsMergeMode::Blocking
@@ -2128,7 +2128,7 @@ fn merge_global_items<TZ: TimeZone + Sync>(
                     .map_or("", String::as_str);
                     return Err(
                         tidb_datatype::types_errors::ERR_PARTITION_COLUMN_STATS_MISSING
-                            .generate_with_stack_by_args(&[format!(
+                            .gen_with_stack_by_args(&[format!(
                                 "table `{}` partition `{partition_name}` {} `{name}`",
                                 statement.table,
                                 if is_index { "index" } else { "column" }
@@ -3557,14 +3557,14 @@ mod tests {
         super::record_global_stats_result(
             &mut warnings,
             Err(tidb_datatype::types_errors::ERR_PARTITION_STATS_MISSING
-                .generate_with_stack_by_args(&["p0".into()])
+                .gen_with_stack_by_args(&["p0".into()])
                 .into()),
         );
         super::record_global_stats_result(
             &mut warnings,
             Err(
                 tidb_datatype::types_errors::ERR_PARTITION_COLUMN_STATS_MISSING
-                    .generate_with_stack_by_args(&["p1 index i".into()])
+                    .gen_with_stack_by_args(&["p1 index i".into()])
                     .into(),
             ),
         );

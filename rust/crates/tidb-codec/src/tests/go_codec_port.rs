@@ -1117,7 +1117,7 @@ fn test_hash_chunk_row_equal_matrix() {
     let sum2 = hash_row(&rows[0], &types, &indices).expect("hash row");
     assert_eq!(sum1, sum2);
     assert!(
-        equal_rows(&rows[0], &types, &indices, &rows[0], &types, &indices).expect("equal rows")
+        equal_chunk_row(&rows[0], &types, &indices, &rows[0], &types, &indices).expect("equal rows")
     );
 
     let mut unsigned_longlong = FieldType::new(FieldTypeCode::LongLong);
@@ -1134,7 +1134,7 @@ fn test_hash_chunk_row_equal_matrix() {
             "hash mismatch for {a:?}/{ta:?} vs {b:?}/{tb:?}"
         );
         assert_eq!(
-            equal_rows(
+            equal_chunk_row(
                 a,
                 std::slice::from_ref(ta),
                 &[0],

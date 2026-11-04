@@ -199,7 +199,7 @@ pub fn partition_spec_from_metadata(
     // shape because they are different code.
     if definitions.is_empty() {
         return Err(tidb_terror::MysqlError::from_terror(
-            &crate::table_errors::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[]),
+            &crate::table_errors::ERR_UNKNOWN_PARTITION.gen_with_stack_by_args(&[]),
         ));
     }
     // The COLUMNS forms name their inputs directly. The builders take the
@@ -228,7 +228,7 @@ pub fn partition_spec_from_metadata(
                 if !names.iter().any(|candidate| candidate.go_lower_eq(column)) {
                     return Err(tidb_terror::MysqlError::from_terror(
                         &tidb_dbterror::ERR_FIELD_NOT_FOUND_PART
-                            .generate_with_stack_by_args(&[]),
+                            .gen_with_stack_by_args(&[]),
                     ));
                 }
             }
@@ -378,7 +378,7 @@ fn build_stored_expression(
     );
     let unknown_column = |name: &str| {
         tidb_terror::MysqlError::from_terror(
-            &tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+            &tidb_plannererrors::ERR_UNKNOWN_COLUMN.gen_with_stack_by_args(&[
                 tidb_hack::go_to_lower(tidb_hack::go_to_lower(name)).into(),
                 ("partition function".to_owned()).to_string().into(),
             ]),
@@ -413,7 +413,7 @@ fn load_range_bounds(
     if definitions.is_empty() {
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_ast::ast_errors::ERR_PARTITIONS_MUST_BE_DEFINED
-                .generate_with_stack_by_args(&["RANGE".into()]),
+                .gen_with_stack_by_args(&["RANGE".into()]),
         ));
     }
     let mut bounds = Vec::with_capacity(definitions.len());
@@ -423,20 +423,20 @@ fn load_range_bounds(
             PartitionDefinitionClause::In(_) => {
                 return Err(tidb_terror::MysqlError::from_terror(
                     &tidb_ast::ast_errors::ERR_PARTITION_WRONG_VALUES
-                        .generate_with_stack_by_args(&["LIST".into(), "IN".into()]),
+                        .gen_with_stack_by_args(&["LIST".into(), "IN".into()]),
                 ))
             }
             _ => {
                 return Err(tidb_terror::MysqlError::from_terror(
                     &tidb_ast::ast_errors::ERR_PARTITIONS_MUST_BE_DEFINED
-                        .generate_with_stack_by_args(&["RANGE".into()]),
+                        .gen_with_stack_by_args(&["RANGE".into()]),
                 ))
             }
         };
         let [value] = values.as_slice() else {
             return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_ast::ast_errors::ERR_PARTITIONS_MUST_BE_DEFINED
-                    .generate_with_stack_by_args(&["RANGE".into()]),
+                    .gen_with_stack_by_args(&["RANGE".into()]),
             ));
         };
         bounds.push(match value {
@@ -446,7 +446,7 @@ fn load_range_bounds(
             ),
             PartitionValue::Default | PartitionValue::Tuple(_) => {
                 return Err(tidb_terror::MysqlError::from_terror(
-                    &tidb_dbterror::ERR_VALUES_IS_NOT_INT_TYPE.generate_with_stack_by_args(
+                    &tidb_dbterror::ERR_VALUES_IS_NOT_INT_TYPE.gen_with_stack_by_args(
                         &[(definition.name.clone()).to_string().into()],
                     ),
                 ))
@@ -469,7 +469,7 @@ fn load_partition_columns(
     for path in columns {
         let name = path.last().ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
-                &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[]),
+                &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.gen_with_stack_by_args(&[]),
             )
         })?;
         let offset = names
@@ -477,7 +477,7 @@ fn load_partition_columns(
             .position(|candidate| candidate.go_lower_eq(name))
             .ok_or_else(|| {
                 tidb_terror::MysqlError::from_terror(
-                    &tidb_dbterror::ERR_FIELD_NOT_FOUND_PART.generate_with_stack_by_args(&[]),
+                    &tidb_dbterror::ERR_FIELD_NOT_FOUND_PART.gen_with_stack_by_args(&[]),
                 )
             })?;
         dependency_names.push(name.clone());
@@ -501,7 +501,7 @@ fn load_range_columns_bounds(
     if columns.is_empty() || definitions.is_empty() {
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_ast::ast_errors::ERR_PARTITIONS_MUST_BE_DEFINED
-                .generate_with_stack_by_args(&["RANGE".into()]),
+                .gen_with_stack_by_args(&["RANGE".into()]),
         ));
     }
     let (dependency_names, field_types) = load_partition_columns(columns, names, types)?;
@@ -512,12 +512,12 @@ fn load_range_columns_bounds(
                 PartitionDefinitionClause::In(_) => {
                     Err(tidb_terror::MysqlError::from_terror(
                         &tidb_ast::ast_errors::ERR_PARTITION_WRONG_VALUES
-                            .generate_with_stack_by_args(&["LIST".into(), "IN".into()]),
+                            .gen_with_stack_by_args(&["LIST".into(), "IN".into()]),
                     ))
                 }
                 _ => Err(tidb_terror::MysqlError::from_terror(
                     &tidb_ast::ast_errors::ERR_PARTITIONS_MUST_BE_DEFINED
-                        .generate_with_stack_by_args(&["RANGE".into()]),
+                        .gen_with_stack_by_args(&["RANGE".into()]),
                 )),
             };
         };
@@ -532,14 +532,14 @@ fn load_range_columns_bounds(
                         .map_err(|_| {
                             tidb_terror::MysqlError::from_terror(
                                 &tidb_dbterror::ERR_PARTITION_CONST_DOMAIN
-                                    .generate_with_stack_by_args(&[]),
+                                    .gen_with_stack_by_args(&[]),
                             )
                         })
                 }
                 PartitionValue::Default | PartitionValue::Tuple(_) => {
                     Err(tidb_terror::MysqlError::from_terror(
                         &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE
-                            .generate_with_stack_by_args(&[]),
+                            .gen_with_stack_by_args(&[]),
                     ))
                 }
             })
@@ -563,7 +563,7 @@ fn load_list_columns_values(
     if columns.is_empty() || definitions.is_empty() {
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_ast::ast_errors::ERR_PARTITIONS_MUST_BE_DEFINED
-                .generate_with_stack_by_args(&["LIST".into()]),
+                .gen_with_stack_by_args(&["LIST".into()]),
         ));
     }
     let (dependency_names, field_types) = load_partition_columns(columns, names, types)?;
@@ -587,7 +587,7 @@ fn load_list_columns_values(
                         _ => {
                             return Err(tidb_terror::MysqlError::from_terror(
                                 &tidb_ast::ast_errors::ERR_PARTITION_COLUMN_LIST
-                                    .generate_with_stack_by_args(&[]),
+                                    .gen_with_stack_by_args(&[]),
                             ))
                         }
                     };
@@ -605,7 +605,7 @@ fn load_list_columns_values(
                     .map_err(|_| {
                         tidb_terror::MysqlError::from_terror(
                             &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE
-                                .generate_with_stack_by_args(&[]),
+                                .gen_with_stack_by_args(&[]),
                         )
                     })?;
                     keys.insert(key, ordinal);
@@ -615,13 +615,13 @@ fn load_list_columns_values(
             PartitionDefinitionClause::LessThan(_) => {
                 return Err(tidb_terror::MysqlError::from_terror(
                     &tidb_ast::ast_errors::ERR_PARTITION_WRONG_VALUES
-                        .generate_with_stack_by_args(&["RANGE".into(), "LESS THAN".into()]),
+                        .gen_with_stack_by_args(&["RANGE".into(), "LESS THAN".into()]),
                 ));
             }
             _ => {
                 return Err(tidb_terror::MysqlError::from_terror(
                     &tidb_ast::ast_errors::ERR_PARTITIONS_MUST_BE_DEFINED
-                        .generate_with_stack_by_args(&["LIST".into()]),
+                        .gen_with_stack_by_args(&["LIST".into()]),
                 ))
             }
         }

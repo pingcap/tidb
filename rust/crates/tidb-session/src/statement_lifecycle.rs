@@ -343,7 +343,7 @@ impl StatementLifecycle<'_> {
             return outcome.map_err(|error| {
                 SqlQueryError::from(tidb_terror::MysqlError::from_terror(
                     &tidb_exeerrors::ERR_LAZY_UNIQUENESS_CHECK_FAILURE
-                        .generate_with_stack_by_args(&[error.error_string().into()]),
+                        .gen_with_stack_by_args(&[error.error_string().into()]),
                 ))
             });
         }

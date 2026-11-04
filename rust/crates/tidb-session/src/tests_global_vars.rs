@@ -390,7 +390,7 @@ fn merge_partition_stats_concurrency_is_fixed_at_one_like_go() {
 
     // Startup/upgrade images may contain an old persisted value; Go's fixed
     // GetGlobal hook still masks it on read.
-    globals.set_startup("tidb_merge_partition_stats_concurrency", "99".to_owned());
+    globals.set_sys_var("tidb_merge_partition_stats_concurrency", "99".to_owned());
     assert_eq!(
         globals
             .get("tidb_merge_partition_stats_concurrency")
@@ -2694,7 +2694,7 @@ fn global_config_notifies_default_and_scratch_writes_but_not_cache_reloads() {
     let mut session = Session::new();
     session.set_global_config_syncer(std::sync::Arc::clone(&syncer));
     let globals = tidb_domain::global_sysvars::GlobalSysvars::new();
-    globals.set_startup("tidb_enable_top_sql", "ON".into());
+    globals.set_sys_var("tidb_enable_top_sql", "ON".into());
     globals.load_from_cluster(vec![("tidb_source_id".into(), "3".into())]);
     let scratch =
         tidb_domain::global_sysvars::GlobalSysvars::from_cluster_rows(vec![("tidb_source_id".into(), "4".into())]);

@@ -35,15 +35,15 @@ const SIZE_OF_SLICE_LOCATION: isize = std::mem::size_of::<SliceLocation>() as is
 
 /// Go `ErrCannotAcquireMemory`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CannotAcquireMemory;
+pub struct ErrCannotAcquireMemory;
 
-impl std::fmt::Display for CannotAcquireMemory {
+impl std::fmt::Display for ErrCannotAcquireMemory {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("cannot acquire memory from membuf limiter")
     }
 }
 
-impl std::error::Error for CannotAcquireMemory {}
+impl std::error::Error for ErrCannotAcquireMemory {}
 
 /// Go `GetAlignedSize`: `size` rounded up to a whole number of blocks.
 pub fn get_aligned_size(size: u64, block_size: u64) -> u64 {
@@ -778,7 +778,7 @@ impl Buffer {
     /// On failure the buffer is unchanged, which is why the quota for both a
     /// new block and the bookkeeping batch is reserved in one attempt before
     /// anything is mutated.
-    pub fn try_alloc_bytes(&mut self, n: isize) -> Result<Option<Bytes>, CannotAcquireMemory> {
+    pub fn try_alloc_bytes(&mut self, n: isize) -> Result<Option<Bytes>, ErrCannotAcquireMemory> {
         if n > self.pool.block_size {
             return Ok(Some(Bytes::standalone(
                 usize::try_from(n).expect("negative allocation size"),
@@ -800,7 +800,7 @@ impl Buffer {
                 need_bytes = need_bytes.wrapping_add(SMALL_OBJ_OVERHEAD_BATCH);
             }
             if need_bytes > 0 && !limiter.try_acquire(need_bytes) {
-                return Err(CannotAcquireMemory);
+                return Err(ErrCannotAcquireMemory);
             }
 
             if need_block {
@@ -858,7 +858,7 @@ impl Buffer {
     }
 
     /// Go `TryAddBytes`.
-    pub fn try_add_bytes(&mut self, bytes: &[u8]) -> Result<Option<Bytes>, CannotAcquireMemory> {
+    pub fn try_add_bytes(&mut self, bytes: &[u8]) -> Result<Option<Bytes>, ErrCannotAcquireMemory> {
         let Some(output) = self.try_alloc_bytes(bytes.len() as isize)? else {
             return Ok(None);
         };
@@ -985,7 +985,7 @@ mod tests {
         let mut second = pool.new_buffer([]);
         assert!(matches!(
             second.try_add_bytes(b"b"),
-            Err(CannotAcquireMemory)
+            Err(ErrCannotAcquireMemory)
         ));
         first.destroy();
         assert!(second.try_add_bytes(b"b").unwrap().is_some());
@@ -1001,7 +1001,7 @@ mod tests {
         let mut buffer = pool.new_buffer([]);
         assert!(matches!(
             buffer.try_alloc_bytes(1),
-            Err(CannotAcquireMemory)
+            Err(ErrCannotAcquireMemory)
         ));
         assert_eq!(limiter.limit(), 1024);
         assert!(buffer.blocks.is_empty());

@@ -305,7 +305,7 @@ fn func_call_default(
             if written_fsp != field_type.decimal() {
                 return Err(MysqlError::from_terror(
                     &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
-                        .generate_with_stack_by_args(&[column.into()]),
+                        .gen_with_stack_by_args(&[column.into()]),
                 ));
             }
         }
@@ -339,7 +339,7 @@ fn func_call_default(
         if written_fsp != field_type.decimal() {
             return Err(MysqlError::from_terror(
                 &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
-                    .generate_with_stack_by_args(&[column.into()]),
+                    .gen_with_stack_by_args(&[column.into()]),
             ));
         }
         return Ok(Some(ColumnDefault::Computed(Box::new(ComputedDefault {
@@ -363,13 +363,13 @@ fn func_call_default(
             ) {
                 return Err(MysqlError::from_terror(
                     &tidb_dbterror::ERR_COLUMN_TYPE_UNSUPPORTED_NEXT_VALUE
-                        .generate_with_stack_by_args(&[column.into()]),
+                        .gen_with_stack_by_args(&[column.into()]),
                 ));
             }
             let [Expr::Column(path)] = args else {
                 return Err(MysqlError::from_terror(
                     &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
-                        .generate_with_stack_by_args(&["nextval".into()]),
+                        .gen_with_stack_by_args(&["nextval".into()]),
                 ));
             };
             let mut path = path.clone();
@@ -401,7 +401,7 @@ fn func_call_default(
             if args.len() != 1 {
                 return Err(MysqlError::from_terror(
                     &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
-                        .generate_with_stack_by_args(&["vec_from_text".into()]),
+                        .gen_with_stack_by_args(&["vec_from_text".into()]),
                 ));
             }
             computed_default(expr, AddedOriginSafety::Safe, string_charset)
@@ -412,7 +412,7 @@ fn func_call_default(
             if args.len() > 1 {
                 return Err(MysqlError::from_terror(
                     &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
-                        .generate_with_stack_by_args(&["rand".into()]),
+                        .gen_with_stack_by_args(&["rand".into()]),
                 ));
             }
             computed_default(
@@ -425,7 +425,7 @@ fn func_call_default(
             if !args.is_empty() {
                 return Err(MysqlError::from_terror(
                     &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
-                        .generate_with_stack_by_args(&["uuid".into()]),
+                        .gen_with_stack_by_args(&["uuid".into()]),
                 ));
             }
             computed_default(
@@ -438,7 +438,7 @@ fn func_call_default(
             if !(1..=2).contains(&args.len()) {
                 return Err(MysqlError::from_terror(
                     &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
-                        .generate_with_stack_by_args(&["uuid_to_bin".into()]),
+                        .gen_with_stack_by_args(&["uuid_to_bin".into()]),
                 ));
             }
             computed_default(
@@ -451,13 +451,13 @@ fn func_call_default(
             let [now, format] = args else {
                 return Err(MysqlError::from_terror(
                     &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
-                        .generate_with_stack_by_args(&["date_format".into()]),
+                        .gen_with_stack_by_args(&["date_format".into()]),
                 ));
             };
             let Some(now_args) = function_args(now, "now") else {
                 return Err(MysqlError::from_terror(
                     &tidb_dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
-                        .generate_with_stack_by_args(&[
+                        .gen_with_stack_by_args(&[
                             column.into(),
                             format!("{name} with disallowed args").into(),
                         ]),
@@ -466,13 +466,13 @@ fn func_call_default(
             if !now_args.is_empty() {
                 return Err(MysqlError::from_terror(
                     &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
-                        .generate_with_stack_by_args(&["now".into()]),
+                        .gen_with_stack_by_args(&["now".into()]),
                 ));
             }
             let Some(format) = string_value(format) else {
                 return Err(MysqlError::from_terror(
                     &tidb_dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
-                        .generate_with_stack_by_args(&[
+                        .gen_with_stack_by_args(&[
                             column.into(),
                             format!("{name} with disallowed args").into(),
                         ]),
@@ -484,7 +484,7 @@ fn func_call_default(
             ) {
                 return Err(MysqlError::from_terror(
                     &tidb_dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
-                        .generate_with_stack_by_args(&[
+                        .gen_with_stack_by_args(&[
                             column.into(),
                             format!("KindString {format}").into(),
                         ]),
@@ -496,7 +496,7 @@ fn func_call_default(
             let [source, _, _] = args else {
                 return Err(MysqlError::from_terror(
                     &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
-                        .generate_with_stack_by_args(&["replace".into()]),
+                        .gen_with_stack_by_args(&["replace".into()]),
                 ));
             };
             let source = match source {
@@ -506,7 +506,7 @@ fn func_call_default(
             let Some(upper_args) = function_args(source, "upper") else {
                 return Err(MysqlError::from_terror(
                     &tidb_dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
-                        .generate_with_stack_by_args(&[
+                        .gen_with_stack_by_args(&[
                             column.into(),
                             format!("{name} with disallowed args").into(),
                         ]),
@@ -515,13 +515,13 @@ fn func_call_default(
             let [uuid] = upper_args else {
                 return Err(MysqlError::from_terror(
                     &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
-                        .generate_with_stack_by_args(&["upper".into()]),
+                        .gen_with_stack_by_args(&["upper".into()]),
                 ));
             };
             let Some(uuid_args) = function_args(uuid, "uuid") else {
                 return Err(MysqlError::from_terror(
                     &tidb_dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
-                        .generate_with_stack_by_args(&[
+                        .gen_with_stack_by_args(&[
                             column.into(),
                             format!("{name} with disallowed args").into(),
                         ]),
@@ -530,7 +530,7 @@ fn func_call_default(
             if !uuid_args.is_empty() {
                 return Err(MysqlError::from_terror(
                     &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
-                        .generate_with_stack_by_args(&["uuid".into()]),
+                        .gen_with_stack_by_args(&["uuid".into()]),
                 ));
             }
             computed_default(
@@ -543,13 +543,13 @@ fn func_call_default(
             let [substring] = args else {
                 return Err(MysqlError::from_terror(
                     &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
-                        .generate_with_stack_by_args(&["upper".into()]),
+                        .gen_with_stack_by_args(&["upper".into()]),
                 ));
             };
             let Some(substring_args) = function_args(substring, "substring_index") else {
                 return Err(MysqlError::from_terror(
                     &tidb_dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
-                        .generate_with_stack_by_args(&[
+                        .gen_with_stack_by_args(&[
                             column.into(),
                             format!("{name} with disallowed args").into(),
                         ]),
@@ -558,13 +558,13 @@ fn func_call_default(
             let [user, separator, _] = substring_args else {
                 return Err(MysqlError::from_terror(
                     &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
-                        .generate_with_stack_by_args(&["substring_index".into()]),
+                        .gen_with_stack_by_args(&["substring_index".into()]),
                 ));
             };
             let Some(user_args) = function_args(user, "user") else {
                 return Err(MysqlError::from_terror(
                     &tidb_dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
-                        .generate_with_stack_by_args(&[
+                        .gen_with_stack_by_args(&[
                             column.into(),
                             format!("{name} with disallowed args").into(),
                         ]),
@@ -573,7 +573,7 @@ fn func_call_default(
             if !user_args.is_empty() {
                 return Err(MysqlError::from_terror(
                     &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
-                        .generate_with_stack_by_args(&["user".into()]),
+                        .gen_with_stack_by_args(&["user".into()]),
                 ));
             }
             if let Some(separator) = string_value(separator) {
@@ -586,7 +586,7 @@ fn func_call_default(
                 }
                 return Err(MysqlError::from_terror(
                     &tidb_dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
-                        .generate_with_stack_by_args(&[
+                        .gen_with_stack_by_args(&[
                             column.into(),
                             format!("KindString {separator}").into(),
                         ]),
@@ -594,7 +594,7 @@ fn func_call_default(
             }
             Err(MysqlError::from_terror(
                 &tidb_dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
-                    .generate_with_stack_by_args(&[
+                    .gen_with_stack_by_args(&[
                         column.into(),
                         format!("{name} with disallowed args").into(),
                     ]),
@@ -604,13 +604,13 @@ fn func_call_default(
             if args.len() != 2 {
                 return Err(MysqlError::from_terror(
                     &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
-                        .generate_with_stack_by_args(&["str_to_date".into()]),
+                        .gen_with_stack_by_args(&["str_to_date".into()]),
                 ));
             }
             if !args.iter().all(is_value_expr) {
                 return Err(MysqlError::from_terror(
                     &tidb_dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
-                        .generate_with_stack_by_args(&[
+                        .gen_with_stack_by_args(&[
                             column.into(),
                             format!("{name} with disallowed args").into(),
                         ]),
@@ -622,7 +622,7 @@ fn func_call_default(
             if !args.len().is_multiple_of(2) {
                 return Err(MysqlError::from_terror(
                     &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
-                        .generate_with_stack_by_args(&["json_object".into()]),
+                        .gen_with_stack_by_args(&["json_object".into()]),
                 ));
             }
             computed_default(
@@ -640,7 +640,7 @@ fn func_call_default(
             if args.len() != 1 {
                 return Err(MysqlError::from_terror(
                     &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
-                        .generate_with_stack_by_args(&["json_quote".into()]),
+                        .gen_with_stack_by_args(&["json_quote".into()]),
                 ));
             }
             computed_default(
@@ -651,7 +651,7 @@ fn func_call_default(
         }
         _ => Err(MysqlError::from_terror(
             &tidb_dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
-                .generate_with_stack_by_args(&[column.into(), lower.into()]),
+                .gen_with_stack_by_args(&[column.into(), lower.into()]),
         )),
     }
 }
@@ -930,7 +930,7 @@ pub fn check_no_default_value_for_insert(
             ctx.append_sql_warn(tidb_context::SqlWarn::raised(
                 tidb_context::WarningLevel::Warning,
                 crate::table_errors::ERR_NO_DEFAULT_VALUE
-                    .generate_with_stack_by_args(&[name.into()]),
+                    .gen_with_stack_by_args(&[name.into()]),
             ));
         }
     }
@@ -1022,7 +1022,7 @@ pub fn get_col_default_value_from_nil(
             &crate::table_errors::ERR_NO_DEFAULT_VALUE,
             MysqlError::from_terror(
                 &crate::table_errors::ERR_NO_DEFAULT_VALUE
-                    .generate_with_stack_by_args(&[name.into()]),
+                    .gen_with_stack_by_args(&[name.into()]),
             )
             .message,
         ));

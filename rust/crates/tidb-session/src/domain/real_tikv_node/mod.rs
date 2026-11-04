@@ -117,7 +117,7 @@ pub fn node_accounts(
 ///
 /// The first load failed (a keyspace no TiDB bootstrapped has no
 /// `mysql.user`), or the reload thread could not start.
-pub fn start_privilege_loop(
+pub fn load_privilege_loop(
     config: &NodeConfig,
     users: &ConfiguredUserStore,
     session_pool: Arc<tidb_domain_core::sys_session::DomainSysSessionPool>,

@@ -222,7 +222,7 @@ fn complete_func_index_error(
     let completed = |code: u16, args: &[FormatArg]| {
         tidb_exprctx::EvalError::Conversion(
             tidb_dbterror::ErrClass(TerrorClass::Expression).new_std(code)
-                .generate_with_stack_by_args(args),
+                .gen_with_stack_by_args(args),
         )
     };
     let identity = cause.identity();
@@ -447,24 +447,24 @@ fn complete_typed_cast(
     match error.code {
         1690 if insert || update => MysqlError::from_terror(
             &tidb_datatype::types_errors::ERR_WARN_DATA_OUT_OF_RANGE
-                .generate_with_stack_by_args(&[column.into(), row.into()]),
+                .gen_with_stack_by_args(&[column.into(), row.into()]),
         ),
         1264 if insert => MysqlError::from_terror(
             &tidb_datatype::types_errors::ERR_WARN_DATA_OUT_OF_RANGE
-                .generate_with_stack_by_args(&[column.into(), row.into()]),
+                .gen_with_stack_by_args(&[column.into(), row.into()]),
         ),
         1406 if insert || update => MysqlError::from_terror(
             &tidb_datatype::types_errors::ERR_DATA_TOO_LONG
-                .generate_with_stack_by_args(&[column.into(), row.into()]),
+                .gen_with_stack_by_args(&[column.into(), row.into()]),
         ),
         1265 if insert => MysqlError::from_terror(
             &tidb_datatype::types_errors::ERR_TRUNCATED
-                .generate_with_stack_by_args(&[column.into(), row.into()]),
+                .gen_with_stack_by_args(&[column.into(), row.into()]),
         ),
         // Go `completeLoadErr`.
         1406 if shape == CastShape::LoadDataRow => MysqlError::from_terror(
             &tidb_datatype::types_errors::ERR_TRUNCATED
-                .generate_with_stack_by_args(&[column.into(), row.into()]),
+                .gen_with_stack_by_args(&[column.into(), row.into()]),
         ),
         1292 if insert
             && matches!(
@@ -477,7 +477,7 @@ fn complete_typed_cast(
         {
             MysqlError::from_terror(
                 &tidb_exeerrors::ERR_TRUNCATE_WRONG_INSERT_VALUE
-                    .generate_with_stack_by_args(&[
+                    .gen_with_stack_by_args(&[
                         tidb_datatype::type_str(field.code()).into(),
                         datum_error_text(source).into(),
                         column.into(),
@@ -487,7 +487,7 @@ fn complete_typed_cast(
         }
         1292 if insert => MysqlError::from_terror(
             &tidb_table::table_errors::ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD
-                .generate_with_stack_by_args(&[
+                .gen_with_stack_by_args(&[
                     tidb_datatype::type_str(field.code()).into(),
                     datum_error_text(source).into(),
                     column.into(),

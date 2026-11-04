@@ -136,14 +136,14 @@ pub use core_time::{
     CoreTime, DateAddError, TimeConversionError, TimeDifference, TimestampInterval, Weekday,
 };
 pub use datum::{
-    clone_row, datums_contain_null, datums_to_string, datums_to_string_no_error,
-    datums_to_string_no_error_smart, estimated_mem_usage, is_printable, sort_datums,
+    clone_row, datums_contain_null, datums_to_string, datums_to_str_no_err,
+    datums_to_str_no_err_smart, estimated_mem_usage, is_printable, sort_datums,
     unwrap_from_single_quotes, wrap_in_single_quotes, Datum, DatumKind, DatumStringError,
     DatumValueError, StringDatum, EMPTY_DATUM_SIZE,
 };
 pub use datum_convert::{
-    change_reverse_result_by_bound, get_max_value, get_min_value,
-    produce_dec_with_specified_tp, produce_float_with_type,
+    change_reverse_result_by_upper_lower_bound, get_max_value, get_min_value,
+    produce_dec_with_specified_tp, produce_float_with_specified_tp,
     produce_float_with_type_in_context, produce_string_with_type,
     produce_str_with_specified_tp, DatumConversion, RoundingType,
 };

@@ -272,7 +272,7 @@ fn test_time() {
     encode_mysql_time(&Utc, value, None, &mut encoded).unwrap();
     let mut tagged = vec![UINT_FLAG];
     tagged.extend_from_slice(&encoded);
-    let (_, decoded) = decode_as_datetime(&tagged, TimeType::DateTime, Some(&Utc)).unwrap();
+    let (_, decoded) = decode_as_date_time(&tagged, TimeType::DateTime, Some(&Utc)).unwrap();
     assert_eq!(decoded, Datum::new_time(value));
     let value_encoded = encode_value(&[Datum::new_time(value)]).unwrap();
     assert_eq!(value_encoded[0], UINT_FLAG);
@@ -569,7 +569,7 @@ fn test_hash_chunk_row() {
     let left = [Datum::Int(1), Datum::new_string_datum("a")];
     let equal = [Datum::Int(1), Datum::new_string_datum("A ")];
     let different = [Datum::Int(2), Datum::new_string_datum("a")];
-    assert!(equal_rows(
+    assert!(equal_chunk_row(
         &left,
         &[integer.clone(), string.clone()],
         &[0, 1],
@@ -578,7 +578,7 @@ fn test_hash_chunk_row() {
         &[0, 1]
     )
     .unwrap());
-    assert!(!equal_rows(
+    assert!(!equal_chunk_row(
         &left,
         &[integer.clone(), string.clone()],
         &[0, 1],
@@ -671,7 +671,7 @@ fn test_hash_group_key_collation() {
 #[test]
 fn test_hash_chunk_row_collation() {
     let field_type = varchar(Collation::Utf8Mb4GeneralCi);
-    assert!(equal_rows(
+    assert!(equal_chunk_row(
         &[Datum::new_string_datum("a")],
         std::slice::from_ref(&field_type),
         &[0],

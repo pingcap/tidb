@@ -21,7 +21,7 @@
 use std::collections::HashMap;
 
 use chrono::TimeZone;
-use tidb_codec::{decode_as_datetime, decode_as_float32, decode_one, CodecError};
+use tidb_codec::{decode_as_date_time, decode_as_float32, decode_one, CodecError};
 use tidb_datatype::{Datum, FieldTypeCode, TimeType};
 
 /// Caches decoded Datum values by their immutable encoded TopN bytes.
@@ -87,12 +87,12 @@ fn top_n_meta_to_datum<TZ: TimeZone>(
     }
 
     let datum = match FieldTypeCode::from_mysql_type(mysql_type) {
-        FieldTypeCode::Date => decode_as_datetime(encoded_value, TimeType::Date, timezone)?.1,
+        FieldTypeCode::Date => decode_as_date_time(encoded_value, TimeType::Date, timezone)?.1,
         FieldTypeCode::Datetime => {
-            decode_as_datetime(encoded_value, TimeType::DateTime, timezone)?.1
+            decode_as_date_time(encoded_value, TimeType::DateTime, timezone)?.1
         }
         FieldTypeCode::Timestamp => {
-            decode_as_datetime(encoded_value, TimeType::Timestamp, timezone)?.1
+            decode_as_date_time(encoded_value, TimeType::Timestamp, timezone)?.1
         }
         FieldTypeCode::Float => decode_as_float32(encoded_value)?.1,
         _ => decode_one(encoded_value)?.1,

@@ -37,8 +37,8 @@ use tidb_domain_core::node_config::NodeConfig;
 
 /// Applies the ported `setGlobalVars` writes to the node's sysvar registry.
 pub fn set_global_vars(config: &NodeConfig, globals: &GlobalSysvars) {
-    globals.set_startup("version", tidb_mysql::runtime_versions().server_version);
-    globals.set_startup(
+    globals.set_sys_var("version", tidb_mysql::runtime_versions().server_version);
+    globals.set_sys_var(
         "version_comment",
         format!(
             "TiDB Server (Apache License 2.0) {} Edition, MySQL 8.0 compatible",
@@ -92,36 +92,36 @@ pub fn set_global_vars(config: &NodeConfig, globals: &GlobalSysvars) {
     let on_off = |enabled: bool| if enabled { "ON" } else { "OFF" }.to_owned();
     // `variable.SetSysVar(vardef.TiDBForcePriority,
     // mysql.Priority2Str[mysql.Str2Priority(cfg.Instance.ForcePriority)])`.
-    globals.set_startup(
+    globals.set_sys_var(
         tidb_vardef::tidb_vars::TIDB_FORCE_PRIORITY,
         tidb_mysql::priority_from_str(&instance.force_priority)
             .as_name()
             .to_owned(),
     );
-    globals.set_startup(
+    globals.set_sys_var(
         tidb_vardef::tidb_vars::TIDB_OPT_DISTINCT_AGG_PUSH_DOWN,
         on_off(source.performance.distinct_agg_push_down),
     );
-    globals.set_startup(
+    globals.set_sys_var(
         tidb_vardef::tidb_vars::TIDB_OPT_PROJECTION_PUSH_DOWN,
         on_off(source.performance.projection_push_down),
     );
     // `variable.SetSysVar(vardef.Port, fmt.Sprintf("%d", cfg.Port))`.
-    globals.set_startup("port", config.port.to_string());
+    globals.set_sys_var("port", config.port.to_string());
     // `cfg.Socket` arrives with `{Port}` already substituted (the parse did
     // Go's one `strings.Replace`).
-    globals.set_startup("socket", config.socket.clone());
-    globals.set_startup("datadir", source.path.clone());
+    globals.set_sys_var("socket", config.socket.clone());
+    globals.set_sys_var("datadir", source.path.clone());
     // `strings.Join(cfg.IsolationRead.Engines, ",")`.
-    globals.set_startup(
+    globals.set_sys_var(
         "tidb_isolation_read_engines",
         config.isolation_read_engines.join(","),
     );
-    globals.set_startup(
+    globals.set_sys_var(
         tidb_vardef::tidb_vars::TIDB_ENFORCE_MPP_EXECUTION,
         on_off(source.performance.enforce_mpp),
     );
-    globals.set_startup(
+    globals.set_sys_var(
         tidb_vardef::tidb_vars::TIDB_CONSTRAINT_CHECK_IN_PLACE_PESSIMISTIC,
         on_off(source.pessimistic_txn.constraint_check_in_place_pessimistic),
     );
@@ -139,7 +139,7 @@ pub fn set_global_vars(config: &NodeConfig, globals: &GlobalSysvars) {
     // `--max-connections 5` refused the sixth connection while telling every
     // client that asked that it had no limit at all. Connection poolers and
     // monitoring read this variable to size themselves.
-    globals.set_startup("max_connections", config.max_connections.to_string());
+    globals.set_sys_var("max_connections", config.max_connections.to_string());
     // `vardef.MemoryUsageAlarmRatio.Store(cfg.Instance.MemoryUsageAlarmRatio)`.
     // Keep this after the startup registry writes: publishing a registry
     // value refreshes the typed process globals, while Go's direct atomic

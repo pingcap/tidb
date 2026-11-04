@@ -122,7 +122,7 @@ fn timezone_is_utc<TZ: TimeZone + 'static>(timezone: &TZ) -> bool {
 }
 
 /// Source `DecodeAsDateTime`.
-pub fn decode_as_datetime<'a, TZ: TimeZone>(
+pub fn decode_as_date_time<'a, TZ: TimeZone>(
     input: &'a [u8],
     kind: TimeType,
     timezone: Option<&TZ>,
@@ -338,7 +338,7 @@ pub fn hash_row(
 }
 
 /// Source `EqualChunkRow`.
-pub fn equal_rows(
+pub fn equal_chunk_row(
     left: &[Datum],
     left_types: &[FieldType],
     left_indices: &[usize],

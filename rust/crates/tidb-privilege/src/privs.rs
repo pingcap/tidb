@@ -89,7 +89,7 @@ fn mask_of(privs: &[PrivilegeType]) -> u64 {
 /// "does this account hold ANY privilege here" mask that `SHOW TABLES` and
 /// the `information_schema` retrievers test with.
 #[must_use]
-pub fn any_priv_mask() -> u64 {
+pub fn all_priv_mask() -> u64 {
     all_privs_mask() | tidb_mysql::GrantPriv.bit()
 }
 
@@ -98,7 +98,7 @@ pub fn any_priv_mask() -> u64 {
 /// `CREATE TEMPORARY TABLES` grant alone does not make a table listed.
 #[must_use]
 pub fn show_tables_priv_mask() -> u64 {
-    any_priv_mask() & !tidb_mysql::CreateTMPTablePriv.bit()
+    all_priv_mask() & !tidb_mysql::CreateTMPTablePriv.bit()
 }
 
 /// Go's `globalDBVisible` (`privileges/cache.go` line 60): the GLOBAL
@@ -108,7 +108,7 @@ pub fn show_tables_priv_mask() -> u64 {
 /// `LOCK TABLES`, and every server-admin privilege (`PROCESS`, `SUPER`,
 /// `CREATE USER`, `RELOAD`, `FILE`, ...). `PROCESS` gets its own
 /// `metrics_schema`-only arm in [`super::PrivilegeRegistry::db_is_visible`].
-pub(crate) fn global_db_visible_mask() -> u64 {
+pub(crate) fn global_db_visible() -> u64 {
     mask_of(&[
         tidb_mysql::CreatePriv,
         tidb_mysql::SelectPriv,

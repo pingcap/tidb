@@ -112,7 +112,7 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
             let Some(partitioning) = stored.get_partition_info() else {
                 return Err(admission(tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
-                        .generate_with_stack_by_args(&[]),
+                        .gen_with_stack_by_args(&[]),
                 )));
             };
             let partitioning = partitioning.read().clone_like_go();
@@ -268,7 +268,7 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
             let Some(partitioning) = stored.get_partition_info() else {
                 return Err(admission(tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
-                        .generate_with_stack_by_args(&[]),
+                        .gen_with_stack_by_args(&[]),
                 )));
             };
             let definitions = partitioning.read().definitions.snapshot();
@@ -289,7 +289,7 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
                         else {
                             return Err(admission(tidb_terror::MysqlError::from_terror(
                                 &tidb_table::table_errors::ERR_UNKNOWN_PARTITION
-                                    .generate_with_stack_by_args(&[
+                                    .gen_with_stack_by_args(&[
                                         (lower).to_string().into(),
                                         (table.clone()).to_string().into(),
                                     ]),
@@ -365,7 +365,7 @@ fn job_partition(
             active,
             admission(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
-                    .generate_with_stack_by_args(&[]),
+                    .gen_with_stack_by_args(&[]),
             )),
         )
     })
@@ -374,7 +374,7 @@ fn job_partition(
 /// Go `dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", state)`.
 fn invalid_partition_state(state: SchemaState) -> DdlPlanError {
     DdlPlanError::from(
-        tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+        tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack_by_args(&[
             FormatArg::from("partition"),
             FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
         ]),
@@ -959,7 +959,7 @@ fn check_drop_table_partition(info: &TableInfo, names: &[String]) -> Result<(), 
     let Some(partition) = info.get_partition_info() else {
         return Err(admission(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
-                .generate_with_stack_by_args(&[]),
+                .gen_with_stack_by_args(&[]),
         )));
     };
     let partition = partition.read();
@@ -969,7 +969,7 @@ fn check_drop_table_partition(info: &TableInfo, names: &[String]) -> Result<(), 
     ) {
         return Err(admission(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_ONLY_ON_RANGE_LIST_PARTITION
-                .generate_with_stack_by_args(&[("DROP").into()]),
+                .gen_with_stack_by_args(&[("DROP").into()]),
         )));
     }
     if info.affinity.is_some() {
@@ -981,7 +981,7 @@ fn check_drop_table_partition(info: &TableInfo, names: &[String]) -> Result<(), 
     let definitions = partition.definitions.snapshot();
     if definitions.len() <= names.len() {
         return Err(admission(tidb_terror::MysqlError::from_terror(
-            &tidb_dbterror::ERR_DROP_LAST_PARTITION.generate_with_stack_by_args(&[]),
+            &tidb_dbterror::ERR_DROP_LAST_PARTITION.gen_with_stack_by_args(&[]),
         )));
     }
     let mut seen = std::collections::HashSet::new();
@@ -992,7 +992,7 @@ fn check_drop_table_partition(info: &TableInfo, names: &[String]) -> Result<(), 
         if !found || !seen.insert(name.clone()) {
             return Err(admission(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_DROP_PARTITION_NON_EXISTENT
-                    .generate_with_stack_by_args(&["DROP".into()]),
+                    .gen_with_stack_by_args(&["DROP".into()]),
             )));
         }
     }
@@ -1209,7 +1209,7 @@ pub(super) fn on_truncate_table_partition(
             active,
             admission(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
-                    .generate_with_stack_by_args(&[]),
+                    .gen_with_stack_by_args(&[]),
             )),
         ));
     };

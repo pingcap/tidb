@@ -276,7 +276,7 @@ pub fn locate<'catalog>(
     name: &str,
 ) -> Result<tidb_model::GoShared<TableInfo>, StatsWriteError> {
     catalog
-        .schema_info_by_name(SYSTEM_DB)
+        .schema_by_name(SYSTEM_DB)
         .and_then(|database| {
             database
                 .read().deprecated_tables
@@ -288,7 +288,7 @@ pub fn locate<'catalog>(
 
 pub fn system_db_id(catalog: &SessionExtendedInfoSchema) -> Result<i64, StatsWriteError> {
     catalog
-        .schema_info_by_name(SYSTEM_DB)
+        .schema_by_name(SYSTEM_DB)
         .map(|database| database.read().id)
         .ok_or_else(|| StatsWriteError::MissingTable(SYSTEM_DB.to_owned()))
 }

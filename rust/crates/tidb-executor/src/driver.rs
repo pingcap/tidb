@@ -59,7 +59,7 @@ pub(crate) use multi_dml::{multi_dml_explain_plan, MultiDmlRef};
 
 pub use planner_bridge::{dml_visit_info, query_visit_info};
 mod record_set;
-pub use record_set::QueryRecordSet;
+pub use record_set::RecordSet;
 pub(crate) mod fk_trigger_plan;
 pub(crate) mod params;
 pub(crate) mod physical_builder;
@@ -380,14 +380,14 @@ pub(super) fn planner_error_to_driver(error: tidb_planner_core_base::PlanError) 
         tidb_planner_core_base::PlanErrorKind::Eval(tidb_exprctx::EvalError::InvalidGroupFuncUse) => {
             DriverError::from(
                 tidb_plannererrors::ERR_INVALID_GROUP_FUNC_USE
-                    .generate_with_stack_by_args(&[]),
+                    .gen_with_stack_by_args(&[]),
             )
         }
         tidb_planner_core_base::PlanErrorKind::Eval(
             tidb_exprctx::EvalError::FieldInGroupingNotGroupBy(index),
         ) => DriverError::from(
             tidb_plannererrors::ERR_FIELD_IN_GROUPING_NOT_GROUP_BY
-                .generate_with_stack_by_args(&[format!("#{}", *index).into()]),
+                .gen_with_stack_by_args(&[format!("#{}", *index).into()]),
         ),
         tidb_planner_core_base::PlanErrorKind::Eval(eval) => {
             DriverError::Exec(ExecError::Eval(eval.clone()))
@@ -452,7 +452,7 @@ pub fn open_query_meta_stmt_with_physical(
     catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<QueryRecordSet, DriverError> {
+) -> Result<RecordSet, DriverError> {
     validate_query_sequence_names(query, ctx)?;
     match physical {
         Some(physical) => physical_builder::open_query(query, physical, catalog, ctx),
@@ -475,7 +475,7 @@ pub fn open_query_meta_stmt_with_physical_without_sequence_validation(
     catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<QueryRecordSet, DriverError> {
+) -> Result<RecordSet, DriverError> {
     match physical {
         Some(physical) => physical_builder::open_query(query, physical, catalog, ctx),
         None => open_query_meta_stmt_with_physical(query, None, catalog, current_db, ctx),
@@ -614,7 +614,7 @@ pub fn open_show_plan(
     physical: &mut tidb_planner_core_operator_physicalop::PhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
-) -> Result<QueryRecordSet, DriverError> {
+) -> Result<RecordSet, DriverError> {
     physical_builder::open_show(physical, catalog, ctx)
 }
 

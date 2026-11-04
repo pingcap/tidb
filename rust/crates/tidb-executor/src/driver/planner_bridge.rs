@@ -852,7 +852,7 @@ pub(super) fn logical_from_plan(
     builder.set_tiflash_engine_removed_due_to_strict_sql_mode(
         ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
     );
-    builder.advanced_join_hint = ctx.advanced_join_hint();
+    builder.advanced_join_hint = ctx.enable_advanced_join_hint();
     builder.in_explain_stmt = ctx.in_explain_stmt();
     builder.in_explain_analyze_stmt = ctx.in_explain_analyze_stmt();
     builder.explain_non_evaled_sub_query = ctx.explain_non_evaled_sub_query();
@@ -1745,7 +1745,7 @@ impl tidb_expr::expression::ScalarSubqueryEval for RegisteredScalarSubquery {
             .evaluated
             .get_or_init(|| {
                 let mut physical = self.physical.clone();
-                crate::driver::physical_builder::execute_first_row(
+                crate::driver::physical_builder::eval_subquery_first_row(
                     &mut physical,
                     &self.catalog,
                     &self.ctx,
@@ -1985,7 +1985,7 @@ fn subquery_evaluator<'a>(
         // under it.
         let region = tidb_tracing::start_thread_region_ex("executor.EvalSubQuery");
         let evaluated =
-            crate::driver::physical_builder::execute_first_row(&mut physical, catalog, ctx);
+            crate::driver::physical_builder::eval_subquery_first_row(&mut physical, catalog, ctx);
         region.end();
         ctx.phase_durations()
             .add_preprocess_sub_query(begin_evaluation.elapsed());
@@ -2382,7 +2382,7 @@ impl QueryBuilderParts<'_> {
         builder.set_tiflash_engine_removed_due_to_strict_sql_mode(
             ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
         );
-        builder.advanced_join_hint = ctx.advanced_join_hint();
+        builder.advanced_join_hint = ctx.enable_advanced_join_hint();
         builder.in_explain_stmt = ctx.in_explain_stmt();
         builder.in_explain_analyze_stmt = ctx.in_explain_analyze_stmt();
         builder.explain_non_evaled_sub_query = ctx.explain_non_evaled_sub_query();
@@ -2444,7 +2444,7 @@ pub(crate) fn view_column_types(
             .ok_or_else(|| {
                 tidb_planner_core_base::PlanError::from(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                        .fast_generate_by_args(&[database.into(), view_name.into()]),
+                        .fast_gen_by_args(&[database.into(), view_name.into()]),
                 )
             })?;
         let plan = builder.build_data_source_from_view(&view)?;
@@ -2795,7 +2795,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     builder.set_tiflash_engine_removed_due_to_strict_sql_mode(
         ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
     );
-    builder.advanced_join_hint = ctx.advanced_join_hint();
+    builder.advanced_join_hint = ctx.enable_advanced_join_hint();
     builder.in_explain_stmt = ctx.in_explain_stmt();
     builder.in_explain_analyze_stmt = ctx.in_explain_analyze_stmt();
     builder.explain_non_evaled_sub_query = ctx.explain_non_evaled_sub_query();
@@ -3505,7 +3505,7 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     builder.set_tiflash_engine_removed_due_to_strict_sql_mode(
         ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
     );
-    builder.advanced_join_hint = ctx.advanced_join_hint();
+    builder.advanced_join_hint = ctx.enable_advanced_join_hint();
     builder.in_explain_stmt = ctx.in_explain_stmt();
     builder.in_explain_analyze_stmt = ctx.in_explain_analyze_stmt();
     builder.explain_non_evaled_sub_query = ctx.explain_non_evaled_sub_query();
@@ -4055,7 +4055,7 @@ mod statistics_initialization_tests {
                         assert!(message.ends_with("is not evaluated"));
                         tidb_planner_core_base::PlanError::from(
                             tidb_plannererrors::ERR_UNSUPPORTED_TYPE
-                                .generate_with_stack(message),
+                                .gen_with_stack(message),
                         )
                     }
                     other => panic!("unexpected error: {other:?}"),
@@ -4113,7 +4113,7 @@ mod subquery_error_identity_tests {
     #[test]
     fn a_planning_time_subquery_keeps_the_go_error_it_raised() {
         let raised = tidb_exeerrors::ERR_CTE_MAX_RECURSION_DEPTH
-            .generate_with_stack_by_args(&[1000_i64.into()]);
+            .gen_with_stack_by_args(&[1000_i64.into()]);
         let planned = driver_error_to_plan(crate::DriverError::from(raised.clone()));
         assert!(planned.equal(&tidb_exeerrors::ERR_CTE_MAX_RECURSION_DEPTH));
         let crate::DriverError::Mysql(back) = crate::driver::planner_error_to_driver(planned)

@@ -128,11 +128,11 @@ impl From<ColumnError> for crate::tables::KvTableError {
         match error {
             ColumnError::ColumnCannotBeNull(column) => Self::Mysql(MysqlError::from_terror(
                 &crate::table_errors::ERR_COLUMN_CANT_NULL
-                    .generate_with_stack_by_args(&[(&column).into()]),
+                    .gen_with_stack_by_args(&[(&column).into()]),
             )),
             ColumnError::NoDefaultForField(field) => Self::Mysql(MysqlError::from_terror(
                 &crate::table_errors::ERR_NO_DEFAULT_VALUE
-                    .generate_with_stack_by_args(&[(&field).into()]),
+                    .gen_with_stack_by_args(&[(&field).into()]),
             )),
             ColumnError::Mysql(error) => Self::Mysql(error),
             ColumnError::Eval(error) => Self::Mysql(error.to_mysql_error()),
@@ -356,7 +356,7 @@ pub fn cast_column_value(
             .collect();
         handle_raw_cast_error(
             MysqlError::from_terror(
-                &crate::table_errors::ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD.fast_generate(
+                &crate::table_errors::ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD.fast_gen(
                     "Incorrect string value '%s' for column '%s'",
                     &[invalid_hex.into(), column.into()],
                 ),
@@ -470,7 +470,7 @@ fn cast_contextual_value(
             )
         {
             raw = tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL
-                .generate_with_stack_by_args(&[
+                .gen_with_stack_by_args(&[
                     field.compact_str(false).into(),
                     datum_error_text(source).into(),
                 ])
@@ -598,7 +598,7 @@ fn conversion_failure(source: &Datum, field_type: &FieldType) -> tidb_terror::Te
     let source_is_string = matches!(source, Datum::Bytes(_) | Datum::String(_));
     let truncated = |kind: String| {
         tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL
-            .generate_with_stack_by_args(&[kind.into(), text.clone().into()])
+            .gen_with_stack_by_args(&[kind.into(), text.clone().into()])
     };
     if temporal || !source_is_string {
         return wrong_value(field_type, &text);
@@ -618,7 +618,7 @@ fn conversion_failure(source: &Datum, field_type: &FieldType) -> tidb_terror::Te
 
 /// Go `types.ErrWrongValue.GenWithStackByArgs(types.TypeStr(tp), str)`.
 fn wrong_value(field_type: &FieldType, text: &str) -> tidb_terror::TerrorError {
-    tidb_datatype::types_errors::ERR_WRONG_VALUE.generate_with_stack_by_args(&[
+    tidb_datatype::types_errors::ERR_WRONG_VALUE.gen_with_stack_by_args(&[
         tidb_datatype::type_str(field_type.code()).into(),
         text.into(),
     ])
@@ -629,7 +629,7 @@ fn wrong_value(field_type: &FieldType, text: &str) -> tidb_terror::TerrorError {
 fn dst_transition_error(source: &Datum, column: &str, row: usize) -> MysqlError {
     MysqlError::from_terror(
         &tidb_exeerrors::ERR_TRUNCATE_WRONG_INSERT_VALUE
-            .generate_with_stack_by_args(&[
+            .gen_with_stack_by_args(&[
                 "timestamp".into(),
                 datum_error_text(source).into(),
                 column.into(),
@@ -678,7 +678,7 @@ fn apply_zero_date(
     );
     let wrong_value_for = |value: &Datum| {
         tidb_datatype::types_errors::ERR_WRONG_VALUE
-            .generate_with_stack_by_args(&[
+            .gen_with_stack_by_args(&[
                 tidb_datatype::type_str(field_type.code()).into(),
                 datum_error_text(value).into(),
             ])

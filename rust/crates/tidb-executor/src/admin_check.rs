@@ -291,7 +291,7 @@ pub fn check_table(
     for index in &selected {
         // Go `CheckTableExec.Next` leaves a multi-valued index out of
         // `CheckIndicesCount`: one row files any number of entries.
-        if table.is_mv_index(index) {
+        if table.mv_index(index) {
             continue;
         }
         let entries = index_entries(table, store, index.read().id)?;
@@ -314,7 +314,7 @@ pub fn check_table(
         // `CheckRecordAndIndex` (ROW -> INDEX).
         let stored = index_entries(table, store, index.read().id)?;
         let matching_rows = partial_index_rows(table, index, &rows, context)?;
-        if table.is_mv_index(index) {
+        if table.mv_index(index) {
             check_mv_index(table, index, &stored, matching_rows, context)?;
             checked += 1;
             continue;

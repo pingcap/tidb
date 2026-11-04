@@ -89,7 +89,7 @@ impl KvTableError {
             }
             | KvTableError::PartitionEval(eval) => eval.to_mysql_error(),
             other => MysqlError::from_terror(
-                &tidb_parser::parser_errors::ERR_PARSE.generate_with_stack(format!(
+                &tidb_parser::parser_errors::ERR_PARSE.gen_with_stack(format!(
                     "You have an error in your SQL syntax; check the manual that corresponds \
                      to your TiDB version for the right syntax to use row encode failed: {other:?}"
                 )),

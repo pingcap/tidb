@@ -91,7 +91,7 @@ pub fn drop_table_object<S: MetaSnapshot>(
                         job_context.foreign_key_checks(),
                     )
                 {
-                    return Err(foreign_key_cannot_drop_parent(target_table, &referred));
+                    return Err(err_foreign_key_cannot_drop_parent(target_table, &referred));
                 }
             }
             let missing = || -> Result<Option<AddIndexSubmission>, DdlPlanError> {
@@ -103,7 +103,7 @@ pub fn drop_table_object<S: MetaSnapshot>(
                 }
                 Err(DdlPlanError::from(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
-                        .generate_with_stack_by_args(&[format!("{schema}.{table}").into()]),
+                        .gen_with_stack_by_args(&[format!("{schema}.{table}").into()]),
                 ))
             };
             let Some(database) = find_database(&catalog, schema) else {
@@ -144,7 +144,7 @@ pub fn drop_table_object<S: MetaSnapshot>(
                 }
                 return Err(DdlPlanError::from(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
-                        .generate_with_stack_by_args(&[format!("{schema}.{name}").into()]),
+                        .gen_with_stack_by_args(&[format!("{schema}.{name}").into()]),
                 ));
             };
             let table = table.read();
@@ -201,7 +201,7 @@ pub fn drop_table_object<S: MetaSnapshot>(
                 // Go `executor.DropSchema`: `ErrDatabaseDropExists` (1008).
                 return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
                     &tidb_infoschema::infoschema_errors::ERR_DATABASE_DROP_EXISTS
-                        .generate_with_stack_by_args(&[name.into()]),
+                        .gen_with_stack_by_args(&[name.into()]),
                 )));
             };
             // Go `DropSchema`: `checkDatabaseHasForeignKeyReferred`.
@@ -282,7 +282,7 @@ fn drop_table_like<S: MetaSnapshot>(
 
 /// Go `ErrForeignKeyCannotDropParent` (3730): `table` (as the statement or
 /// the schema names it) is cited by `referred`.
-pub(super) fn foreign_key_cannot_drop_parent(
+pub(super) fn err_foreign_key_cannot_drop_parent(
     table: &str,
     referred: &tidb_model::table::ReferredFKInfo,
 ) -> DdlPlanError {
@@ -325,7 +325,7 @@ pub(super) fn check_database_has_foreign_key_referred(
             &tables,
             true,
         ) {
-            return Err(foreign_key_cannot_drop_parent(table_name, &referred));
+            return Err(err_foreign_key_cannot_drop_parent(table_name, &referred));
         }
     }
     Ok(())

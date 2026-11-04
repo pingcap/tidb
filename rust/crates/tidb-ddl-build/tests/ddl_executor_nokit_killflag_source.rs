@@ -74,12 +74,12 @@ fn convert_kill_flag_maps_one_to_query_interrupted() {
 fn is_retryable_ddl_cancel_err_classifies_only_transient_failures() {
     let finished = &*dbterror::ERR_CANCEL_FINISHED_DDL_JOB;
     let finished_wrapped = dbterror::ERR_CANCEL_FINISHED_DDL_JOB
-        .generate_with_stack("cancel finished");
+        .gen_with_stack("cancel finished");
     let cannot_cancel = &*dbterror::ERR_CANNOT_CANCEL_DDL_JOB;
     let cannot_cancel_wrapped = dbterror::ERR_CANNOT_CANCEL_DDL_JOB
-        .generate_with_stack("cannot cancel");
+        .gen_with_stack("cannot cancel");
     let not_found = &*dbterror::ERR_DDL_JOB_NOT_FOUND;
-    let not_found_wrapped = dbterror::ERR_DDL_JOB_NOT_FOUND.generate_with_stack("not found");
+    let not_found_wrapped = dbterror::ERR_DDL_JOB_NOT_FOUND.gen_with_stack("not found");
 
     assert!(!is_retryable_ddl_cancel_err(finished));
     assert!(!is_retryable_ddl_cancel_err(&finished_wrapped));

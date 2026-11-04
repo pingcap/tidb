@@ -14,7 +14,7 @@
 
 //! boundary: Go package `br/pkg/kms`, narrowed to what `master_key` consumes.
 //!
-//! Ported here: `kms.Provider` (as [`KmsProvider`]), and the key wrappers from
+//! Ported here: `kms.Provider` (as [`Provider`]), and the key wrappers from
 //! `kms/common.go` — `EncryptedKey`, `PlainKey` and `CryptographyType`, which
 //! are what enforce the 32-byte AES-256-GCM key length.
 //!
@@ -109,7 +109,7 @@ impl PlainKey {
 /// no context type at this layer of the Rust workspace, and the only caller
 /// (`KmsBackend::decrypt`) uses it solely to abort the retry loop, so it is
 /// dropped.
-pub trait KmsProvider: Send + Sync {
+pub trait Provider: Send + Sync {
     /// Go `DecryptDataKey`.
     fn decrypt_data_key(&self, encrypted_key: &EncryptedKey) -> Result<Vec<u8>, String>;
     /// Go `Name`: the vendor name recorded in the encrypted content's metadata.

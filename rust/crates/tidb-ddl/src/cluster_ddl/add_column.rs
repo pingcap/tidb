@@ -74,7 +74,7 @@ pub(super) fn build_add_column_job<S: MetaSnapshot>(
                 detail,
                 warnings: vec![crate::real_tikv_ddl::ddl_note(
                     tidb_infoschema::infoschema_errors::ERR_COLUMN_EXISTS
-                        .generate_with_stack_by_args(&[column.name.clone().into()]),
+                        .gen_with_stack_by_args(&[column.name.clone().into()]),
                 )],
             }));
         }
@@ -128,7 +128,7 @@ fn column_exists(name: &str) -> DdlPlanError {
     DdlPlanError::from(
         tidb_dbterror::CLASS_SCHEMA
             .new_std(tidb_errno::errcode::ErrDupFieldName)
-            .generate_with_stack_by_args(&[FormatArg::from(name)]),
+            .gen_with_stack_by_args(&[FormatArg::from(name)]),
     )
 }
 
@@ -274,7 +274,7 @@ pub(super) fn on_add_column(
         SchemaState::WRITE_REORGANIZATION => SchemaState::PUBLIC,
         state => {
             return Err(DdlPlanError::from(
-                tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+                tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack_by_args(&[
                     FormatArg::from("column"),
                     FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
                 ]),

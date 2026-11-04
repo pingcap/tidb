@@ -64,7 +64,7 @@ impl BinaryLiteral {
     /// Comparison therefore drops redundant leading zero bytes -- all-zero
     /// keeps one, so a zero literal stays a byte string rather than becoming
     /// the empty one.
-    pub fn compare_bytes(&self) -> &[u8] {
+    pub fn get_binary_literal4_cmp(&self) -> &[u8] {
         trim_leading_zero_bytes(&self.0)
     }
 
@@ -158,7 +158,7 @@ impl BinaryLiteral {
             ),
             errname::ErrTruncatedWrongValue,
         )
-        .fast_generate(
+        .fast_gen(
             errname::ErrTruncatedWrongValue.raw,
             &[FormatArg::from("BINARY"), FormatArg::from(self.to_string())],
         )

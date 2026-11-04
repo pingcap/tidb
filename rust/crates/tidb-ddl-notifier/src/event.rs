@@ -450,7 +450,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetCreateSchemaInfo`.
-    pub fn create_schema_info(&self) -> &MiniDbInfoForSchemaEvent {
+    pub fn get_create_schema_info(&self) -> &MiniDbInfoForSchemaEvent {
         self.assert_type(ActionType::ACTION_CREATE_SCHEMA);
         self.inner
             .mini_db_info

@@ -334,7 +334,7 @@ pub(super) fn build_add_index_job<S: MetaSnapshot>(
         return Err(DdlPlanError::Admission(
             tidb_ddl_build::table_info_build::DdlAdmissionError::from_terror(
                 &tidb_infoschema::infoschema_errors::ERR_MULTIPLE_PRI_KEY
-                    .generate_with_stack_by_args(&[]),
+                    .gen_with_stack_by_args(&[]),
             ),
         ));
     }
@@ -355,12 +355,12 @@ pub(super) fn build_add_index_job<S: MetaSnapshot>(
                 ),
                 warnings: vec![crate::real_tikv_ddl::ddl_note(
                     tidb_dbterror::ERR_DUP_KEY_NAME
-                        .generate_with_stack_by_args(&[name.into()]),
+                        .gen_with_stack_by_args(&[name.into()]),
                 )],
             }));
         }
         return Err(DdlPlanError::from(
-            tidb_dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&[name.into()]),
+            tidb_dbterror::ERR_DUP_KEY_NAME.gen_with_stack_by_args(&[name.into()]),
         ));
     }
     let hypo = index.tp == tidb_ast::IndexType::HYPO && !index.primary;
@@ -744,12 +744,12 @@ fn check_and_build_index_info(
                 return Err(DdlPlanError::Admission(
                     tidb_ddl_build::table_info_build::DdlAdmissionError::from_terror(
                         &tidb_infoschema::infoschema_errors::ERR_MULTIPLE_PRI_KEY
-                            .generate_with_stack_by_args(&[]),
+                            .gen_with_stack_by_args(&[]),
                     ),
                 ));
             }
             return Err(DdlPlanError::from(
-                tidb_dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&[(arg
+                tidb_dbterror::ERR_DUP_KEY_NAME.gen_with_stack_by_args(&[(arg
                     .index_name
                     .original()
                     .to_owned())
@@ -993,7 +993,7 @@ pub(super) fn plan_persisted_add_index_job_step(
             txn, catalog, active, info, indexes, outcome, start_ts, is_pk, row_ids,
         ),
         state => Err(DdlPlanError::from(
-            tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+            tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack_by_args(&[
                 FormatArg::from("index"),
                 FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
             ]),
@@ -1411,7 +1411,7 @@ fn plan_rollback_add_index(
             })
         }
         state => Err(DdlPlanError::from(
-            tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+            tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack_by_args(&[
                 FormatArg::from("index"),
                 FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
             ]),

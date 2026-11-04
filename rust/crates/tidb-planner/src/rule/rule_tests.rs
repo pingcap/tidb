@@ -391,7 +391,7 @@ fn a_disabled_rule_is_skipped_by_name() {
 #[test]
 fn the_interaction_rule_table_is_empty_exactly_as_go_declares_it() {
     for rule in OPT_RULE_LIST {
-        assert_eq!(rule::opt_interaction_rule(rule), None);
+        assert_eq!(rule::opt_interaction_rule_list(rule), None);
     }
 }
 

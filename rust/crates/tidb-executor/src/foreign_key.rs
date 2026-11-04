@@ -219,12 +219,12 @@ fn planned_violation(node: &FkTriggerNode) -> DriverError {
     if node.kind == FkTriggerKind::ChildCheck {
         DriverError::from(
             tidb_plannererrors::ERR_NO_REFERENCED_ROW2
-                .fast_generate_by_args(&[node.fk_string.clone().into()]),
+                .fast_gen_by_args(&[node.fk_string.clone().into()]),
         )
     } else {
         DriverError::from(
             tidb_plannererrors::ERR_ROW_IS_REFERENCED2
-                .generate_with_stack_by_args(&[node.fk_string.clone().into()]),
+                .gen_with_stack_by_args(&[node.fk_string.clone().into()]),
         )
     }
 }
@@ -358,7 +358,7 @@ fn cascade_at_depth(
     if depth > MAX_CASCADE_DEPTH {
         return Err(DriverError::from(
             tidb_exeerrors::ERR_FOREIGN_KEY_CASCADE_DEPTH_EXCEEDED
-                .generate_with_stack_by_args(&[crate::foreign_key::MAX_CASCADE_DEPTH.into()]),
+                .gen_with_stack_by_args(&[crate::foreign_key::MAX_CASCADE_DEPTH.into()]),
         ));
     }
     let dependents: Vec<_> = triggers

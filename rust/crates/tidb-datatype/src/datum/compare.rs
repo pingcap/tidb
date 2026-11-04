@@ -251,7 +251,7 @@ impl Datum {
             Self::Set(left, _) => Ok(comparer.compare(left.name().as_bytes(), value)),
             Self::Enum(left, _) => Ok(comparer.compare(left.name().as_bytes(), value)),
             Self::BinaryLiteral(left) | Self::Bit(left) => {
-                Ok(comparer.compare(left.compare_bytes(), value))
+                Ok(comparer.compare(left.get_binary_literal4_cmp(), value))
             }
             _ => self.compare_f64(numeric_bytes_to_float(value)?),
         }
@@ -309,7 +309,7 @@ impl Datum {
             Self::BinaryLiteral(left) | Self::Bit(left) => left.as_bytes(),
             _ => return self.compare_f64(value.to_int().value() as f64),
         };
-        Ok(comparer.compare(BinaryLiteral::compare_bytes_of(left), value.compare_bytes()))
+        Ok(comparer.compare(BinaryLiteral::compare_bytes_of(left), value.get_binary_literal4_cmp()))
     }
 
     fn compare_json(&self, value: &BinaryJSON) -> Result<Ordering, DatumValueError> {

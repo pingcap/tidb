@@ -57,7 +57,7 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
             let Some(database) = find_database(&catalog, schema) else {
                 return Err(DdlPlanError::from(
                     tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                        .generate_with_stack_by_args(&[(schema.clone()).into()]),
+                        .gen_with_stack_by_args(&[(schema.clone()).into()]),
                 ));
             };
             tidb_ddl_build::table_lifecycle::check_view_target(
@@ -68,7 +68,7 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
             )
             .map_err(|error| match error.code {
                 tidb_mysql::errors::errcode::ErrTableExists => DdlPlanError::from(
-                    tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.generate_with_stack_by_args(
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.gen_with_stack_by_args(
                         &[format!("{}.{}", (schema.clone()), (name.clone())).into()],
                     ),
                 ),
@@ -170,7 +170,7 @@ pub(super) fn create_table_with_info_job<S: MetaSnapshot>(
     let Some(database) = find_database(catalog, schema) else {
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                .generate_with_stack_by_args(&[(schema.to_owned()).into()]),
+                .gen_with_stack_by_args(&[(schema.to_owned()).into()]),
         ));
     };
     handle_table_placement(snapshot, job_context, &mut info, warnings)?;
@@ -179,7 +179,7 @@ pub(super) fn create_table_with_info_job<S: MetaSnapshot>(
         let existing = existing.read();
         let exists = || {
             DdlPlanError::from(
-                tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.generate_with_stack_by_args(&[
+                tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.gen_with_stack_by_args(&[
                     format!(
                         "{}.{}",
                         (schema.to_owned()),
@@ -195,7 +195,7 @@ pub(super) fn create_table_with_info_job<S: MetaSnapshot>(
                     detail: format!("`{schema}`.`{}` already exists", info.name.original()),
                     warnings: vec![crate::real_tikv_ddl::ddl_note(
                         tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS
-                            .generate_with_stack_by_args(&[format!(
+                            .gen_with_stack_by_args(&[format!(
                                 "{}.{}",
                                 schema,
                                 info.name.original()
@@ -288,7 +288,7 @@ fn build_create_table_like_info(
     let Some(database) = find_database(catalog, schema) else {
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                .generate_with_stack_by_args(&[(schema.clone()).into()]),
+                .gen_with_stack_by_args(&[(schema.clone()).into()]),
         ));
     };
     // Go `BuildTableInfoWithLike` runs after the executor has found the
@@ -317,14 +317,14 @@ fn build_create_table_like_info(
                     existing.name.original()
                 ),
                 warnings: vec![crate::real_tikv_ddl::ddl_note(
-                    tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.generate_with_stack_by_args(
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.gen_with_stack_by_args(
                         &[format!("{}.{}", schema, existing.name.original()).into()],
                     ),
                 )],
             }));
         }
         return Err(DdlPlanError::from(
-            tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.generate_with_stack_by_args(&[
+            tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.gen_with_stack_by_args(&[
                 format!("{}.{}", (schema.clone()), (table.clone())).into(),
             ]),
         ));
@@ -349,7 +349,7 @@ pub fn resolve_like_source<'catalog>(
     // missing table.
     let Some((_, source)) = catalog.table_info_by_name(source_schema, source_table) else {
         return Err(DdlPlanError::from(
-            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(&[
+            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.gen_with_stack_by_args(&[
                 (source_schema.to_owned()).into(),
                 (source_table.to_owned()).into(),
             ]),
@@ -540,7 +540,7 @@ pub(super) fn create_sequence_with_check(
     let state = info.state;
     if !matches!(state, SchemaState::NONE | SchemaState::PUBLIC) {
         return Err(DdlPlanError::from(
-            tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+            tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack_by_args(&[
                 FormatArg::from("sequence"),
                 FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
             ]),
@@ -619,7 +619,7 @@ fn build_alter_sequence_job(
     let Some(database) = find_database(catalog, schema) else {
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                .generate_with_stack_by_args(&[(schema.clone()).into()]),
+                .gen_with_stack_by_args(&[(schema.clone()).into()]),
         ));
     };
     let Some(stored) = find_table(&database.read(), name) else {
@@ -628,13 +628,13 @@ fn build_alter_sequence_job(
                 detail: format!("sequence `{schema}`.`{name}` does not exist"),
                 warnings: vec![crate::real_tikv_ddl::ddl_note(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                        .generate_with_stack_by_args(&[schema.into(), name.into()]),
+                        .gen_with_stack_by_args(&[schema.into(), name.into()]),
                 )],
             }));
         }
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                .generate_with_stack_by_args(&[(schema.clone()).into(), (name.clone()).into()]),
+                .gen_with_stack_by_args(&[(schema.clone()).into(), (name.clone()).into()]),
         ));
     };
     let stored = stored.read();

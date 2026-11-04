@@ -470,7 +470,7 @@ pub fn is_table_alias_duplicate(
         };
         return Err(PlanError::from(
             tidb_plannererrors::ERR_NON_UNIQ_TABLE
-                .generate_with_stack_by_args(&[existing.into()]),
+                .gen_with_stack_by_args(&[existing.into()]),
         ));
     }
     table_aliases.insert(key, display.to_owned());
@@ -670,7 +670,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let visible = names.iter().filter(|name| !name.hidden).count();
             if visible != column_names.len() {
                 return Err(PlanError::from(
-                    tidb_dbterror::ERR_VIEW_WRONG_LIST.generate_with_stack_by_args(&[]),
+                    tidb_dbterror::ERR_VIEW_WRONG_LIST.gen_with_stack_by_args(&[]),
                 ));
             }
             let mut aliases = column_names.iter();
@@ -687,7 +687,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             if !seen.insert(name.names.column.original.clone()) {
                 return Err(PlanError::from(
                     tidb_infoschema::infoschema_errors::ERR_COLUMN_EXISTS
-                        .generate_with_stack_by_args(&[(&name.names.column.original).into()]),
+                        .gen_with_stack_by_args(&[(&name.names.column.original).into()]),
                 ));
             }
         }
@@ -779,7 +779,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             if join_node.tp == JoinType::Left {
                 return Err(PlanError::from(
                     tidb_plannererrors::ERR_CTERECURSIVE_FORBIDDEN_JOIN_ORDER
-                        .generate_with_stack_by_args(&[(cte.name.clone()).into()]),
+                        .gen_with_stack_by_args(&[(cte.name.clone()).into()]),
                 ));
             }
         }
@@ -933,14 +933,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // LATERAL derived tables."
         if join_node.natural {
             return Err(PlanError::from(
-                tidb_plannererrors::ERR_INVALID_LATERAL_JOIN.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_INVALID_LATERAL_JOIN.gen_with_stack_by_args(&[
                     "NATURAL JOIN is not supported with LATERAL".into(),
                 ]),
             ));
         }
         if !join_node.using.is_empty() {
             return Err(PlanError::from(
-                tidb_plannererrors::ERR_INVALID_LATERAL_JOIN.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_INVALID_LATERAL_JOIN.gen_with_stack_by_args(&[
                     "USING clause is not supported with LATERAL".into(),
                 ]),
             ));
@@ -950,7 +950,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             JoinType::Left => {
                 return Err(PlanError::from(
                     tidb_plannererrors::ERR_INVALID_LATERAL_JOIN
-                        .generate_with_stack_by_args(&[
+                        .gen_with_stack_by_args(&[
                             "LEFT JOIN is not supported with LATERAL".into()
                         ]),
                 ))
@@ -958,7 +958,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             JoinType::Right => {
                 return Err(PlanError::from(
                     tidb_plannererrors::ERR_INVALID_LATERAL_JOIN
-                        .generate_with_stack_by_args(&[
+                        .gen_with_stack_by_args(&[
                             "RIGHT JOIN is not supported with LATERAL".into()
                         ]),
                 ))
@@ -1260,7 +1260,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             if !filter.is_empty() && filter.len() != common_len {
                 if let Some((column, _)) = filter.iter().find(|(_, not_exist)| **not_exist) {
                     return Err(PlanError::from(
-                        tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(
+                        tidb_plannererrors::ERR_UNKNOWN_COLUMN.gen_with_stack_by_args(
                             &[tidb_hack::go_to_lower(column).into(), "from clause".into()],
                         ),
                     ));
@@ -1474,7 +1474,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if self.building_view_stack.contains(&key) {
             return Err(PlanError::from(
                 tidb_plannererrors::ERR_VIEW_RECURSIVE
-                    .generate_with_stack_by_args(&[db_name.into(), table_name.into()]),
+                    .gen_with_stack_by_args(&[db_name.into(), table_name.into()]),
             ));
         }
         // "If the view is being renamed, we return the mysql compatible error
@@ -1482,7 +1482,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if self.renaming_view_name.as_ref() == Some(&key) {
             return Err(PlanError::from(
                 tidb_plannererrors::ERR_NO_SUCH_TABLE
-                    .generate_with_stack_by_args(&[db_name.into(), table_name.into()]),
+                    .gen_with_stack_by_args(&[db_name.into(), table_name.into()]),
             ));
         }
         self.building_view_stack.insert(key.clone());
@@ -1559,7 +1559,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 ) {
                     return Err(PlanError::from(
                         tidb_plannererrors::ERR_VIEW_NO_EXPLAIN
-                            .generate_with_stack_by_args(&[]),
+                            .gen_with_stack_by_args(&[]),
                     ));
                 }
             }
@@ -1577,7 +1577,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     ) {
                         return Err(PlanError::from(
                             tidb_plannererrors::ERR_VIEW_INVALID
-                                .generate_with_stack_by_args(&[
+                                .gen_with_stack_by_args(&[
                                     (&view.db_name).into(),
                                     (&view.view_name).into(),
                                 ]),
@@ -1913,7 +1913,7 @@ fn is_extra_column_name(lower: &str) -> bool {
 fn ambiguous(column: &str) -> PlanError {
     PlanError::from(
         tidb_plannererrors::ERR_AMBIGUOUS
-            .generate_with_stack_by_args(&[column.into(), "from clause".into()]),
+            .gen_with_stack_by_args(&[column.into(), "from clause".into()]),
     )
 }
 
@@ -1921,7 +1921,7 @@ fn ambiguous(column: &str) -> PlanError {
 fn view_invalid(db_name: &str, view_name: &str) -> PlanError {
     PlanError::from(
         tidb_plannererrors::ERR_VIEW_INVALID
-            .generate_with_stack_by_args(&[db_name.into(), view_name.into()]),
+            .gen_with_stack_by_args(&[db_name.into(), view_name.into()]),
     )
 }
 

@@ -168,18 +168,18 @@ pub fn lock_failure_to_sql_error(failure: &PessimisticLockFailure) -> LockSqlErr
         // becomes `exeerrors.ErrDeadlock`.
         PessimisticLockFailure::Deadlock(_) => {
             LockSqlError::from(tidb_terror::MysqlError::from_terror(
-                &tidb_exeerrors::ERR_DEADLOCK.generate_with_stack_by_args(&[]),
+                &tidb_exeerrors::ERR_DEADLOCK.gen_with_stack_by_args(&[]),
             ))
         }
         PessimisticLockFailure::LockAcquireFailAndNoWaitSet { .. } => {
             LockSqlError::from(tidb_terror::MysqlError::from_terror(
                 &tidb_txnkv::tikv_errors::ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET
-                    .generate_with_stack_by_args(&[]),
+                    .gen_with_stack_by_args(&[]),
             ))
         }
         PessimisticLockFailure::LockWaitTimeout { .. } => {
             LockSqlError::from(tidb_terror::MysqlError::from_terror(
-                &tidb_txnkv::tikv_errors::ERR_LOCK_WAIT_TIMEOUT.generate_with_stack_by_args(&[]),
+                &tidb_txnkv::tikv_errors::ERR_LOCK_WAIT_TIMEOUT.gen_with_stack_by_args(&[]),
             ))
         }
         // Go retries or aborts the statement; only a commit's conflict is
@@ -252,7 +252,7 @@ pub fn commit_outcome_to_sql_error_with_hint(
 pub fn duplicate_key_sql_error(hint: &DuplicateKeyHint) -> LockSqlError {
     LockSqlError::from(tidb_terror::MysqlError::from_terror(
         &tidb_kv::kv_errors::ERR_KEY_EXISTS
-            .generate_with_stack_by_args(&[hint.value.as_str().into(), hint.key.as_str().into()]),
+            .gen_with_stack_by_args(&[hint.value.as_str().into(), hint.key.as_str().into()]),
     ))
 }
 
@@ -261,7 +261,7 @@ pub fn duplicate_key_sql_error(hint: &DuplicateKeyHint) -> LockSqlError {
 fn write_conflict_error(detail: &str) -> LockSqlError {
     LockSqlError::from(tidb_terror::MysqlError::from_terror(
         &tidb_kv::kv_errors::ERR_WRITE_CONFLICT
-            .generate_with_stack(format!("Write conflict, {detail} [try again later]")),
+            .gen_with_stack(format!("Write conflict, {detail} [try again later]")),
     ))
 }
 

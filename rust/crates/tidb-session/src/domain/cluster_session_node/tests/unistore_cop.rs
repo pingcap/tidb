@@ -3227,7 +3227,7 @@ fn run_tracked_auto_analyze(kill: Option<bool>) {
                 register(id, process)
             });
             let untracked_by_callback = Arc::clone(&untracked);
-            let untrack: tidb_sqlexec::UntrackSysProc = Arc::new(move |id| {
+            let untrack: tidb_sqlexec::UnTrackSysProc = Arc::new(move |id| {
                 assert_eq!(id, process_id);
                 untracked_by_callback.store(true, Ordering::SeqCst);
                 unregister(id);
@@ -4763,7 +4763,7 @@ fn drop_schema_ddl_retires_all_statistics_like_go() {
     let retired_ids = {
         let catalog = stack.factory.catalog.get_latest();
         let database = catalog
-            .schema_info_by_name("stats_drop_schema")
+            .schema_by_name("stats_drop_schema")
             .expect("created database is published");
         let mut ids = Vec::new();
         for table in database.read().deprecated_tables.iter_deref() {
@@ -26358,7 +26358,7 @@ fn ddl_history_row_is_gos_insert_on_the_step_session() {
         .factory
         .catalog
         .get_latest()
-        .schema_info_by_name("test")
+        .schema_by_name("test")
         .unwrap()
         .read()
         .id

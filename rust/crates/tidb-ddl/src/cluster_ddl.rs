@@ -1449,7 +1449,7 @@ pub fn lower_ddl_with_context(
             {
                 return Err(DdlAdmissionError::from_terror(
                     &tidb_dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES
-                        .generate_with_stack_by_args(&["set tiflash replica".into()]),
+                        .gen_with_stack_by_args(&["set tiflash replica".into()]),
                 ));
             }
             // Go `AlterSchema`'s option loop: ENCRYPTION is parsed and
@@ -1508,7 +1508,7 @@ pub fn lower_ddl_with_context(
             let conflict = |current: &str, other: &str| {
                 DdlAdmissionError::from_terror(
                     &tidb_dbterror::ERR_CONFLICTING_DECLARATIONS
-                        .generate_with_stack_by_args(&[current.into(), other.into()]),
+                        .gen_with_stack_by_args(&[current.into(), other.into()]),
                 )
             };
             for option in options {
@@ -1595,7 +1595,7 @@ pub fn lower_ddl_with_context(
             if create.or_replace && create.if_not_exists {
                 return Err(DdlAdmissionError::from_terror(
                     &tidb_dbterror::ERR_WRONG_USAGE
-                        .generate_with_stack("Incorrect usage of OR REPLACE and IF NOT EXISTS"),
+                        .gen_with_stack("Incorrect usage of OR REPLACE and IF NOT EXISTS"),
                 ));
             }
             Ok(Some(DdlStatement::CreatePlacementPolicy {
@@ -1810,7 +1810,7 @@ fn check_and_normalize_placement_policy<S: MetaSnapshot>(
     let Some(policy) = find_policy(snapshot, name)? else {
         return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
             &tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_NOT_EXISTS
-                .generate_with_stack_by_args(&[name.into()]),
+                .gen_with_stack_by_args(&[name.into()]),
         )));
     };
     Ok(Some(tidb_model::GoShared::new(tidb_model::PolicyRefInfo {
@@ -1971,7 +1971,7 @@ fn placement_settings_from_options(
 fn go_unsupported_multi_schema_change(job: &str) -> DdlAdmissionError {
     DdlAdmissionError::from_terror(
         &tidb_dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES
-            .generate_with_stack_by_args(&[job.into()]),
+            .gen_with_stack_by_args(&[job.into()]),
     )
 }
 
@@ -2038,7 +2038,7 @@ fn check_alter_table_spec_refusals(alter: &AlterTableStmt) -> Result<(), DdlAdmi
                     _ => continue,
                 };
                 return Err(DdlAdmissionError::from_terror(
-                    &proto.generate_with_stack(message),
+                    &proto.gen_with_stack(message),
                 ));
             }
             // `STATS_PERSISTENT` and `PRE_SPLIT_REGIONS` fall to the option
@@ -2053,7 +2053,7 @@ fn check_alter_table_spec_refusals(alter: &AlterTableStmt) -> Result<(), DdlAdmi
                 }) =>
             {
                 return Err(DdlAdmissionError::from_terror(
-                    &dbt::ERR_UNSUPPORTED_ALTER_TABLE_OPTION.generate_with_stack_by_args(&[]),
+                    &dbt::ERR_UNSUPPORTED_ALTER_TABLE_OPTION.gen_with_stack_by_args(&[]),
                 ));
             }
             _ => {}
@@ -2166,7 +2166,7 @@ fn resolve_alter_algorithm(
     );
     if rank(specify) > rank(supported) {
         return Err(DdlAdmissionError::from_terror(
-            &tidb_dbterror::ERR_ALTER_OPERATION_NOT_SUPPORTED.generate_with_stack(message),
+            &tidb_dbterror::ERR_ALTER_OPERATION_NOT_SUPPORTED.gen_with_stack(message),
         ));
     }
     context.append_sql_warn(tidb_context::SqlWarn::of(
@@ -2404,7 +2404,7 @@ fn lower_alter_table_catalog(
                             _ => actions.push(AlterColumnAction::Refused(
                                 DdlAdmissionError::from_terror(
                                     &tidb_dbterror::ERR_UNSUPPORTED_ALTER_TABLE_OPTION
-                                        .generate_with_stack_by_args(&[]),
+                                        .gen_with_stack_by_args(&[]),
                                 ),
                             )),
                         }
@@ -2483,14 +2483,14 @@ fn lower_alter_table_catalog(
                     context.append_sql_warn(tidb_context::SqlWarn::raised(
                         WarningLevel::Warning,
                         tidb_dbterror::ERR_UNSUPPORTED_ALTER_TABLE_WITH_VALIDATION
-                            .generate_with_stack_by_args(&[]),
+                            .gen_with_stack_by_args(&[]),
                     ))
                 }
                 tidb_ast::AlterTableAction::WithoutValidation => {
                     context.append_sql_warn(tidb_context::SqlWarn::raised(
                         WarningLevel::Warning,
                         tidb_dbterror::ERR_UNSUPPORTED_ALTER_TABLE_WITHOUT_VALIDATION
-                            .generate_with_stack_by_args(&[]),
+                            .gen_with_stack_by_args(&[]),
                     ))
                 }
                 tidb_ast::AlterTableAction::SetKeysEnabled(_) => {}
@@ -2841,7 +2841,7 @@ fn lower_alter_table_catalog(
                 _ => {
                     return Err(DdlAdmissionError::from_terror(
                         &tidb_dbterror::ERR_UNSUPPORTED_ALTER_TABLE_OPTION
-                            .generate_with_stack_by_args(&[]),
+                            .gen_with_stack_by_args(&[]),
                     ))
                 }
             };
@@ -2929,7 +2929,7 @@ fn lower_alter_table_catalog(
                 if tidb_charset::get_charset_info(name).is_err() {
                     return Err(DdlAdmissionError::from_terror(
                         &tidb_dbterror::ERR_UNKNOWN_CHARACTER_SET
-                            .generate_with_stack_by_args(&[name.into()]),
+                            .gen_with_stack_by_args(&[name.into()]),
                     ));
                 }
             }
@@ -3221,7 +3221,7 @@ fn lower_alter_table_catalog(
         }
         tidb_ast::AlterTableAction::SetStatsOptions(_) => Err(DdlAdmissionError::from_terror(
             &tidb_dbterror::ERR_UNSUPPORTED_ALTER_TABLE_OPTION
-                .generate_with_stack_by_args(&[]),
+                .gen_with_stack_by_args(&[]),
         )),
         // Go `AlterTable`'s default arm: the specifications it has no job for.
         tidb_ast::AlterTableAction::Force
@@ -3230,7 +3230,7 @@ fn lower_alter_table_catalog(
             tidb_ast::AlterPartitionAction::ImportTablespace { .. }
             | tidb_ast::AlterPartitionAction::DiscardTablespace { .. },
         ) => Err(DdlAdmissionError::from_terror(
-            &tidb_dbterror::ERR_UNSUPPORTED_ALTER_TABLE_SPEC.generate_with_stack_by_args(&[]),
+            &tidb_dbterror::ERR_UNSUPPORTED_ALTER_TABLE_SPEC.gen_with_stack_by_args(&[]),
         )),
         _ => Ok(None),
     }
@@ -3302,7 +3302,7 @@ fn lower_alter_add_index(
         )
     {
         return Err(DdlAdmissionError::from_terror(
-            &tidb_dbterror::ERR_UNSUPPORTED_MODIFY_PRIMARY_KEY.generate_with_stack(
+            &tidb_dbterror::ERR_UNSUPPORTED_MODIFY_PRIMARY_KEY.gen_with_stack(
                 "Adding clustered primary key is not supported. Please consider adding \
              NONCLUSTERED primary key instead",
             ),
@@ -3320,7 +3320,7 @@ fn lower_alter_add_index(
             // refusal (oracle g-alter: `8200 FULLTEXT index is only
             // supported in starter deployment mode`).
             return Err(DdlAdmissionError::from_terror(
-                &tidb_dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX.generate_with_stack(
+                &tidb_dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX.gen_with_stack(
                     "FULLTEXT index is only supported in starter deployment mode",
                 ),
             ));
@@ -3376,7 +3376,7 @@ fn prepare_rename_column(
         !candidate.hidden && candidate.name.lowercase() == wanted
     }) else {
         return Err(DdlPlanError::from(
-            tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS.generate_with_stack_by_args(&[
+            tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS.gen_with_stack_by_args(&[
                 (from.to_owned()).into(),
                 (table.to_owned()).into(),
             ]),
@@ -3388,12 +3388,12 @@ fn prepare_rename_column(
         tidb_ddl_build::check_constraint::uses_column(&constraint.read(), from)
     }) {
         let constraint = constraint.read();
-        let error = tidb_ddl_build::check_constraint::column_dependency_error(
+        let error = tidb_ddl_build::check_constraint::err_cant_drop_col_with_check_constraint(
             constraint.name.original(),
             from,
         );
         return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
-            &error.proto.generate_with_stack(error.message),
+            &error.proto.gen_with_stack(error.message),
         )));
     }
     if wanted == to.go_to_lower() {
@@ -3413,7 +3413,7 @@ fn prepare_rename_column(
     {
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_COLUMN_EXISTS
-                .generate_with_stack_by_args(&[(to.to_owned()).into()]),
+                .gen_with_stack_by_args(&[(to.to_owned()).into()]),
         ));
     }
     // Go `checkModifyColumnWithGeneratedColumnsConstraint`.
@@ -3707,7 +3707,7 @@ fn apply_rename_index(
 ) -> Result<AlterColumnOutcome, DdlPlanError> {
     if find_index(info, from).is_none() {
         return Err(DdlPlanError::from(
-            tidb_infoschema::infoschema_errors::ERR_KEY_NOT_EXISTS.generate_with_stack_by_args(&[
+            tidb_infoschema::infoschema_errors::ERR_KEY_NOT_EXISTS.gen_with_stack_by_args(&[
                 (from.to_owned()).into(),
                 (table.to_owned()).into(),
             ]),
@@ -3725,7 +3725,7 @@ fn apply_rename_index(
     if from_lower != to_lower {
         if let Some(existing) = find_index(info, to) {
             return Err(DdlPlanError::from(
-                tidb_dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&[(existing
+                tidb_dbterror::ERR_DUP_KEY_NAME.gen_with_stack_by_args(&[(existing
                     .read()
                     .name
                     .original()
@@ -3811,7 +3811,7 @@ fn apply_index_visibility(
         .filter(|candidate| candidate.read().state == tidb_model::SchemaState::PUBLIC);
     let Some(found) = found else {
         return Err(DdlPlanError::from(
-            tidb_infoschema::infoschema_errors::ERR_KEY_NOT_EXISTS.generate_with_stack_by_args(&[
+            tidb_infoschema::infoschema_errors::ERR_KEY_NOT_EXISTS.gen_with_stack_by_args(&[
                 (index.to_owned()).into(),
                 (table.to_owned()).into(),
             ]),
@@ -3862,7 +3862,7 @@ fn apply_set_column_default(
         candidate.name.lowercase() == wanted && candidate.state == tidb_model::SchemaState::PUBLIC
     }) else {
         return Err(DdlPlanError::from(
-            tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS.generate_with_stack_by_args(&[
+            tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS.gen_with_stack_by_args(&[
                 (column.to_owned()).into(),
                 (table.to_owned()).into(),
             ]),
@@ -3875,7 +3875,7 @@ fn apply_set_column_default(
         && target.read().field_type.has_flag(FieldTypeFlags::PRI_KEY)
     {
         return Err(DdlPlanError::from(
-            tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
+            tidb_dbterror::ERR_INVALID_AUTO_RANDOM.gen_with_stack_by_args(&[
                 ("auto_random is incompatible with default".to_owned()).into(),
             ]),
         ));
@@ -3892,7 +3892,7 @@ fn check_table_charset_named(charset: &str, collate: &str) -> Result<(), DdlPlan
         return Err(DdlPlanError::Admission(
             tidb_ddl_build::table_info_build::DdlAdmissionError::from_terror(
                 &tidb_dbterror::ERR_UNKNOWN_CHARACTER_SET
-                    .generate_with_stack_by_args(&["".into()]),
+                    .gen_with_stack_by_args(&["".into()]),
             ),
         ));
     }
@@ -4137,7 +4137,7 @@ pub(super) fn build_add_column(
         }
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_COLUMN_EXISTS
-                .generate_with_stack_by_args(&[(column.name.clone()).into()]),
+                .gen_with_stack_by_args(&[(column.name.clone()).into()]),
         ));
     }
     tidb_ddl_build::check_too_long_identifier(&column.name)
@@ -4215,7 +4215,7 @@ fn locate_offset_to_move(
                 // Go `infoschema.ErrColumnNotExists` (1054).
                 DdlPlanError::from(
                     tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS
-                        .generate_with_stack_by_args(&[
+                        .gen_with_stack_by_args(&[
                             (name.clone()).into(),
                             (info.name.original().to_owned()).into(),
                         ]),
@@ -4348,7 +4348,7 @@ fn check_unsupported_column_constraint(
 
 fn coded_refusal(proto: &'static TerrorError, message: impl Into<String>) -> DdlPlanError {
     DdlPlanError::Admission(DdlAdmissionError::from_terror(
-        &proto.generate_with_stack(message.into()),
+        &proto.gen_with_stack(message.into()),
     ))
 }
 
@@ -4378,7 +4378,7 @@ fn check_is_droppable_column(
         }
         return Err(DdlPlanError::from(
             tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY
-                .generate_with_stack_by_args(&[(column.to_owned()).into()]),
+                .gen_with_stack_by_args(&[(column.to_owned()).into()]),
         ));
     };
     is_droppable_column(info, column, info.columns.len())?;
@@ -4481,7 +4481,7 @@ fn is_droppable_column(
             && tidb_ddl_build::check_constraint::uses_column(&constraint, column)
     }) {
         let constraint = constraint.read();
-        let error = tidb_ddl_build::check_constraint::column_dependency_error(
+        let error = tidb_ddl_build::check_constraint::err_cant_drop_col_with_check_constraint(
             constraint.name.original(),
             column,
         );
@@ -4710,7 +4710,7 @@ fn split_name(
         // on a node that defaulted its sessions into `test`, the same
         // statement had silently created the table in the wrong schema.
         [object] if default_schema.is_empty() => Err(DdlAdmissionError::from_terror(
-            &tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+            &tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]),
         )),
         [object] => Ok((default_schema.to_owned(), object.clone())),
         [schema, object] => Ok((schema.clone(), object.clone())),
@@ -4936,7 +4936,7 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
             {
                 return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
                     &tidb_dbterror::ERR_CHECK_CONSTRAINT_DUP_NAME
-                        .generate_with_stack_by_args(&[constraint.name.original().into()]),
+                        .gen_with_stack_by_args(&[constraint.name.original().into()]),
                 )));
             }
             // Go's executor submits StateNone/ID zero. The first owner step
@@ -4970,7 +4970,7 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
                 .ok_or_else(|| {
                     DdlPlanError::Admission(DdlAdmissionError::from_terror(
                         &tidb_dbterror::ERR_CONSTRAINT_NOT_FOUND
-                            .generate_with_stack_by_args(&[name.into()]),
+                            .gen_with_stack_by_args(&[name.into()]),
                     ))
                 })?;
             let job = new_check_constraint_job(
@@ -5002,7 +5002,7 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
                 .ok_or_else(|| {
                     DdlPlanError::Admission(DdlAdmissionError::from_terror(
                         &tidb_dbterror::ERR_CONSTRAINT_NOT_FOUND
-                            .generate_with_stack_by_args(&[name.into()]),
+                            .gen_with_stack_by_args(&[name.into()]),
                     ))
                 })?;
             let job = new_check_constraint_job(
@@ -5894,7 +5894,7 @@ fn plan_persisted_check_constraint_job_step(
                         DdlPlanError::from(
                             tidb_dbterror::CLASS_SCHEMA
                                 .new_std(tidb_errno::errcode::ErrDupFieldName)
-                                .generate_with_stack_by_args(&[FormatArg::from(
+                                .gen_with_stack_by_args(&[FormatArg::from(
                                     constraint_handle.read().name.original(),
                                 )]),
                         ),
@@ -5918,7 +5918,7 @@ fn plan_persisted_check_constraint_job_step(
                     DdlPlanError::from(
                         tidb_dbterror::CLASS_SCHEMA
                             .new_std(tidb_errno::errcode::ErrCheckConstraintDupName)
-                            .generate_with_stack_by_args(&[FormatArg::from(wanted.as_str())]),
+                            .gen_with_stack_by_args(&[FormatArg::from(wanted.as_str())]),
                     ),
                 ));
             }
@@ -5972,7 +5972,7 @@ fn plan_persisted_check_constraint_job_step(
                         return Err(DdlPlanError::from(
                             tidb_dbterror::CLASS_SCHEMA
                                 .new_std(tidb_errno::errcode::ErrCheckConstraintDupName)
-                                .generate_with_stack_by_args(&[FormatArg::from(
+                                .gen_with_stack_by_args(&[FormatArg::from(
                                     constraint.name.lowercase(),
                                 )]),
                         ));
@@ -5985,7 +5985,7 @@ fn plan_persisted_check_constraint_job_step(
                         }) {
                             return Err(DdlPlanError::from(
                                 tidb_dbterror::ERR_TABLE_CHECK_CONSTRAINT_REFER_UNKNOWN
-                                    .generate_with_stack_by_args(&[
+                                    .gen_with_stack_by_args(&[
                                         FormatArg::from(constraint.name.original()),
                                         FormatArg::from(dependency.original()),
                                     ]),
@@ -6033,7 +6033,7 @@ fn plan_persisted_check_constraint_job_step(
                         state => {
                             return Err(DdlPlanError::from(
                                 tidb_dbterror::ERR_INVALID_DDL_STATE
-                                    .generate_with_stack_by_args(&[
+                                    .gen_with_stack_by_args(&[
                                         FormatArg::from("constraint"),
                                         FormatArg::new(
                                             state.to_string(),
@@ -6061,7 +6061,7 @@ fn plan_persisted_check_constraint_job_step(
                         active,
                         DdlPlanError::from(
                             tidb_dbterror::ERR_CONSTRAINT_NOT_FOUND
-                                .generate_with_stack_by_args(&[FormatArg::from(
+                                .gen_with_stack_by_args(&[FormatArg::from(
                                     args.read().constraint_name.get().original(),
                                 )]),
                         ),
@@ -6109,7 +6109,7 @@ fn plan_persisted_check_constraint_job_step(
                     }
                     _ => {
                         return Err(DdlPlanError::from(
-                            tidb_dbterror::ERR_INVALID_DDL_JOB.generate_with_stack_by_args(
+                            tidb_dbterror::ERR_INVALID_DDL_JOB.gen_with_stack_by_args(
                                 &[
                                     FormatArg::from("constraint"),
                                     FormatArg::new(
@@ -6140,7 +6140,7 @@ fn plan_persisted_check_constraint_job_step(
                         active,
                         DdlPlanError::from(
                             tidb_dbterror::ERR_CONSTRAINT_NOT_FOUND
-                                .generate_with_stack_by_args(&[FormatArg::from(
+                                .gen_with_stack_by_args(&[FormatArg::from(
                                     args.constraint_name.get().original(),
                                 )]),
                         ),
@@ -7142,7 +7142,7 @@ fn plan_cancel_persisted_ddl_job(
             return modify_column::rollingback_modify_column(catalog, active);
         }
         ActionType::ACTION_ADD_FOREIGN_KEY => {
-            return foreign_key::plan_cancel_add_foreign_key(active);
+            return foreign_key::rollingback_add_foreign_key(active);
         }
         ActionType::ACTION_MULTI_SCHEMA_CHANGE => {
             return multi_schema::rolling_back_multi_schema_change(active);
@@ -7972,7 +7972,7 @@ fn stored_partition_spec(
     let partition = stored.partition.as_ref().ok_or_else(|| {
         DdlPlanError::Admission(DdlAdmissionError::from_terror(
             &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
-                .generate_with_stack_by_args(&[]),
+                .gen_with_stack_by_args(&[]),
         ))
     })?;
     let columns = stored.columns.iter_deref().collect::<Vec<_>>();
@@ -8000,7 +8000,7 @@ fn apply_partition_change(
 
 fn exchange_refusal(proto: &'static TerrorError, message: impl Into<String>) -> DdlPlanError {
     DdlPlanError::Admission(DdlAdmissionError::from_terror(
-        &proto.generate_with_stack(message.into()),
+        &proto.gen_with_stack(message.into()),
     ))
 }
 
@@ -8381,7 +8381,7 @@ fn build_create_table_info<S: MetaSnapshot>(
     let Some(database) = find_database(catalog, schema) else {
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                .generate_with_stack_by_args(&[(schema.to_owned()).into()]),
+                .gen_with_stack_by_args(&[(schema.to_owned()).into()]),
         ));
     };
     // Go's create-table path publishes the TableInfo the builder produced;
@@ -8400,7 +8400,7 @@ fn build_create_table_info<S: MetaSnapshot>(
     {
         let error = tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_UNSUPPORTED_TTL_REFERENCED_BY_FK
-                .generate_with_stack_by_args(&[]),
+                .gen_with_stack_by_args(&[]),
         );
         return Err(DdlPlanError::from_mysql_error(error));
     }
@@ -8444,14 +8444,14 @@ fn build_create_table_info<S: MetaSnapshot>(
                     existing.name.original()
                 ),
                 vec![crate::real_tikv_ddl::ddl_note(
-                    tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.generate_with_stack_by_args(
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.gen_with_stack_by_args(
                         &[format!("{}.{}", schema, existing.name.original()).into()],
                     ),
                 )],
             )));
         }
         return Err(DdlPlanError::from(
-            tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.generate_with_stack_by_args(&[
+            tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.gen_with_stack_by_args(&[
                 format!("{}.{}", (schema.to_owned()), (table.to_owned())).into(),
             ]),
         ));
@@ -8688,7 +8688,7 @@ fn check_modify_charset_and_collation(
 fn unsupported_charset_change(proto: &'static TerrorError, reason: String) -> DdlPlanError {
     DdlPlanError::Admission(
         tidb_ddl_build::table_info_build::DdlAdmissionError::from_terror(
-            &proto.generate_with_stack(reason),
+            &proto.gen_with_stack(reason),
         ),
     )
 }
@@ -8754,7 +8754,7 @@ fn already(detail: String) -> DdlPlan {
 fn missing_table_note(schema: &str, table: &str) -> tidb_context::SqlWarn {
     crate::real_tikv_ddl::ddl_note(
         tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
-            .generate_with_stack_by_args(&[format!("{}.{}", schema, table).into()]),
+            .gen_with_stack_by_args(&[format!("{}.{}", schema, table).into()]),
     )
 }
 
@@ -8846,12 +8846,12 @@ fn locate_table<'catalog>(
     let Some(database) = find_database(catalog, schema) else {
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                .generate_with_stack_by_args(&[(schema.to_owned()).into()]),
+                .gen_with_stack_by_args(&[(schema.to_owned()).into()]),
         ));
     };
     let Some(stored) = find_table(&database.read(), table) else {
         return Err(DdlPlanError::from(
-            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(&[
+            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.gen_with_stack_by_args(&[
                 (schema.to_owned()).into(),
                 (table.to_owned()).into(),
             ]),
@@ -8962,7 +8962,7 @@ fn create_foreign_key(
     // Go `createIndex`'s duplicate-name check for the key's index.
     if needs_index && find_index(stored, fk.name.original()).is_some() {
         return Err(DdlPlanError::from(
-            tidb_dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&[(fk
+            tidb_dbterror::ERR_DUP_KEY_NAME.gen_with_stack_by_args(&[(fk
                 .name
                 .original()
                 .to_owned())

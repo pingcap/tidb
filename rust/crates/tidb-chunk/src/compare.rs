@@ -461,7 +461,7 @@ pub fn compare(row: Row<'_>, col_idx: usize, ad: &Datum) -> Ordering {
 /// sorted column that index is equal to the probe exactly when the value is
 /// present. So `match` means "the value is in the column", for any correct
 /// search.
-pub(crate) fn sort_search(n: usize, mut pred: impl FnMut(usize) -> bool) -> usize {
+pub(crate) fn search(n: usize, mut pred: impl FnMut(usize) -> bool) -> usize {
     let (mut i, mut j) = (0usize, n);
     while i < j {
         let h = (i + j) / 2;

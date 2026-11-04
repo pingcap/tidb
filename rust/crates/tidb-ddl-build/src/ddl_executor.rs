@@ -50,7 +50,7 @@ pub fn convert_kill_flag(killed: u32) -> Result<(), TerrorError> {
         return Ok(());
     }
     Err(exeerrors::ERR_QUERY_INTERRUPTED
-        .generate_with_stack(exeerrors::ERR_QUERY_INTERRUPTED.message()))
+        .gen_with_stack(exeerrors::ERR_QUERY_INTERRUPTED.message()))
 }
 
 /// Reports whether a failed system DDL cancellation should be retried.
@@ -77,18 +77,18 @@ pub fn is_table_tiflash_supported(
     if tidb_metadef::db::is_mem_or_sys_db(&db_name.go_to_lower()) {
         return Err(MysqlError::from_terror(
             &tidb_dbterror::ERR_UNSUPPORTED_TI_FLASH_OPERATION_FOR_SYS_OR_MEM_TABLE
-                .generate_with_stack_by_args(&[]),
+                .gen_with_stack_by_args(&[]),
         ));
     }
     if table.temp_table_type != tidb_model::TempTableType::NONE {
         return Err(MysqlError::from_terror(
             &tidb_dbterror::ERR_OPT_ON_TEMPORARY_TABLE
-                .generate_with_stack_by_args(&["set TiFlash replica".into()]),
+                .gen_with_stack_by_args(&["set TiFlash replica".into()]),
         ));
     }
     if table.is_view() || table.is_sequence() {
         return Err(MysqlError::from_terror(
-            &tidb_dbterror::ERR_WRONG_OBJECT.generate_with_stack(format!(
+            &tidb_dbterror::ERR_WRONG_OBJECT.gen_with_stack(format!(
                 "'{db_name}.{}' is not BASE TABLE",
                 table.name.original()
             )),
@@ -98,7 +98,7 @@ pub fn is_table_tiflash_supported(
         let column = column.read();
         let charset = column.field_type.charset_name();
         if !tidb_charset::TIFLASH_SUPPORTED_CHARSETS.contains(&charset) {
-            return Err(MysqlError::from_terror(&tidb_dbterror::ERR_UNSUPPORTED_TI_FLASH_OPERATION_FOR_UNSUPPORTED_CHARSET_TABLE.generate_with_stack_by_args(&[charset.into()])));
+            return Err(MysqlError::from_terror(&tidb_dbterror::ERR_UNSUPPORTED_TI_FLASH_OPERATION_FOR_UNSUPPORTED_CHARSET_TABLE.gen_with_stack_by_args(&[charset.into()])));
         }
     }
     Ok(())

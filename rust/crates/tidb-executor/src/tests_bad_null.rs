@@ -57,7 +57,7 @@ fn test_handle_bad_null() {
                 && error.to_string()
                     == DriverError::from(
                         tidb_table::table_errors::ERR_COLUMN_CANT_NULL
-                            .generate_with_stack_by_args(&["a".into()])
+                            .gen_with_stack_by_args(&["a".into()])
                     )
                     .to_string()
         )

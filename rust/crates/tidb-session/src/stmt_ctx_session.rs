@@ -237,11 +237,11 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &self.staged_writes
     }
 
-    fn txn_temporary_tables_ref(&self) -> &tidb_tblctx::temporary_table::TxnTemporaryTables {
+    fn txn_temporary_tables_ref(&self) -> &tidb_tblctx::temporary_table::TemporaryTables {
         &self.txn_temporary_tables
     }
 
-    fn txn_cached_tables_ref(&self) -> &tidb_tblctx::temporary_table::TxnCachedTables {
+    fn txn_cached_tables_ref(&self) -> &tidb_tblctx::temporary_table::CachedTables {
         &self.txn_cached_tables
     }
 

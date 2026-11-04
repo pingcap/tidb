@@ -3294,7 +3294,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                     .comparison_context()
                     .is_some_and(|ctx| !ctx.has_process_privilege())
             {
-                return Err(crate::builtin_ext::misc::process_privilege_denied());
+                return Err(crate::builtin_ext::misc::err_specific_access_denied());
             }
             let child_resolver = FoldModeResolver::for_function(resolver, &lowered);
             if lowered == "name_const" {

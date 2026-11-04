@@ -242,7 +242,7 @@ pub fn detach_conds_for_column(
 use tidb_datatype::Datum;
 
 use super::points::{
-    range_point_cmp, ExpressionEvaluator, Point, PointBuilder,
+    range_point_cmp, ExpressionEvaluator, Point, Builder,
 };
 
 /// The session switches Go's `rangerctx.RangerContext` carries into the
@@ -642,7 +642,7 @@ pub fn extract_eq_and_in_condition_in<'a, C: std::borrow::Borrow<Expression>>(
     regard_null_as_point: bool,
     eval_expression: &ExpressionEvaluator<'_>,
 ) -> EqAndInExtraction<'a> {
-    let mut builder = PointBuilder::new(eval_expression);
+    let mut builder = Builder::new(eval_expression);
     let mut accesses: Vec<Option<Expression>> = vec![None; cols.len()];
     let mut points: Vec<Vec<Point>> = vec![Vec::new(); cols.len()];
     let mut merged: Vec<bool> = vec![false; cols.len()];
@@ -878,7 +878,7 @@ impl RangeDetacher<'_> {
         (super::types::Ranges, Vec<Expression>, Vec<Expression>),
         super::points::PointBuilderError,
     > {
-        let mut builder = PointBuilder::new(self.eval_expression);
+        let mut builder = Builder::new(self.eval_expression);
         let mut ranges = super::types::Ranges::new();
         for i in 0..eq_and_in_count {
             let point = builder.build(
@@ -1610,7 +1610,7 @@ impl RangeDetacher<'_> {
             length: self.lengths[0],
             opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
         };
-        let mut builder = PointBuilder::new(self.eval_expression);
+        let mut builder = Builder::new(self.eval_expression);
         let dnf_items = flatten_dnf_conditions_ref(condition);
         let mut new_access_items = Vec::with_capacity(dnf_items.len());
         let mut min_access_conds: i64 = -1;

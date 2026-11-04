@@ -113,7 +113,7 @@ impl KvTableDdl for TableCommon {
             return Err(KvTableError::Mysql(
                 tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_DUP_KEY_NAME
-                        .generate_with_stack_by_args(&[(index.read().name.original().to_owned()).into()]),
+                        .gen_with_stack_by_args(&[(index.read().name.original().to_owned()).into()]),
                 ),
             ));
         }

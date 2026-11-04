@@ -107,7 +107,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
                         tidb_mysql::UpdatePriv,
                     ))
                 {
-                    return Err(DriverError::from(tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED.generate_with_stack_by_args(&["CREATE USER".into()])));
+                    return Err(DriverError::from(tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED.gen_with_stack_by_args(&["CREATE USER".into()])));
                 }
             }
             // Go: self-service dual-password additionally requires
@@ -122,7 +122,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
                     )
                     || self.has_dynamic_privilege("APPLICATION_PASSWORD_ADMIN", false))
             {
-                return Err(DriverError::from(tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED.generate_with_stack_by_args(&["APPLICATION_PASSWORD_ADMIN".into()])));
+                return Err(DriverError::from(tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED.gen_with_stack_by_args(&["APPLICATION_PASSWORD_ADMIN".into()])));
             }
         Ok(need_admin_check)
     }
@@ -223,10 +223,10 @@ pub trait AccountPasswordExec: super::account::AccountExec {
                 0 => {}
                 1 => {
                     let (user, host) = missing.remove(0);
-                    return Err(DriverError::from(tidb_exeerrors::ERR_CANNOT_USER.generate_with_stack_by_args(&["ALTER USER".into(), format!("'{}'@'{}'", user, host).into()])));
+                    return Err(DriverError::from(tidb_exeerrors::ERR_CANNOT_USER.gen_with_stack_by_args(&["ALTER USER".into(), format!("'{}'@'{}'", user, host).into()])));
                 }
                 _ => {
-                    return Err(DriverError::from(tidb_exeerrors::ERR_CANNOT_USER.generate_with_stack_by_args(&["ALTER USER".into(), (missing
+                    return Err(DriverError::from(tidb_exeerrors::ERR_CANNOT_USER.gen_with_stack_by_args(&["ALTER USER".into(), (missing
                             .iter()
                             .map(|(user, host)| format!("'{user}'@'{host}'"))
                             .collect::<Vec<_>>()
@@ -261,7 +261,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
                     skipped.push(format!("'{user}'@'{host}'"));
                     continue;
                 }
-                return Err(DriverError::from(tidb_exeerrors::ERR_CANNOT_USER.generate_with_stack_by_args(&["ALTER USER".into(), format!("'{}'@'{}'", user, host).into()])));
+                return Err(DriverError::from(tidb_exeerrors::ERR_CANNOT_USER.gen_with_stack_by_args(&["ALTER USER".into(), format!("'{}'@'{}'", user, host).into()])));
             }
             if need_admin_check {
                 self.require_system_user_privilege_over(&user, &host)?;
@@ -271,7 +271,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
             if user.is_empty()
                 && matches!(options.expire, Some(tidb_privilege::PasswordExpireSetting::Now))
             {
-                return Err(DriverError::from(tidb_exeerrors::ERR_PASSWORD_EXPIRE_ANONYMOUS_USER.generate_with_stack_by_args(&[])));
+                return Err(DriverError::from(tidb_exeerrors::ERR_PASSWORD_EXPIRE_ANONYMOUS_USER.gen_with_stack_by_args(&[])));
             }
             // Go's RETAIN CURRENT PASSWORD validation, in its order: plugin
             // capability, then "a new password must be set", then "same
@@ -283,11 +283,11 @@ pub trait AccountPasswordExec: super::account::AccountExec {
                 }
                 match &spec.auth {
                     None => {
-                        return Err(DriverError::from(tidb_exeerrors::ERR_CURRENT_PASSWORD_CANNOT_BE_RETAINED.generate_with_stack_by_args(&[user.into(), host.into()])));
+                        return Err(DriverError::from(tidb_exeerrors::ERR_CURRENT_PASSWORD_CANNOT_BE_RETAINED.gen_with_stack_by_args(&[user.into(), host.into()])));
                     }
                     Some(tidb_ast::CreateUserAuth::By(password)) => {
                         if password.is_empty() {
-                            return Err(DriverError::from(tidb_exeerrors::ERR_CURRENT_PASSWORD_CANNOT_BE_RETAINED.generate_with_stack_by_args(&[user.into(), host.into()])));
+                            return Err(DriverError::from(tidb_exeerrors::ERR_CURRENT_PASSWORD_CANNOT_BE_RETAINED.gen_with_stack_by_args(&[user.into(), host.into()])));
                         }
                     }
                     Some(tidb_ast::CreateUserAuth::With { plugin, credential }) => {
@@ -295,17 +295,17 @@ pub trait AccountPasswordExec: super::account::AccountExec {
                             // `IDENTIFIED WITH p` alone carries no new
                             // password (Go: neither ByAuthString nor
                             // ByHashString).
-                            return Err(DriverError::from(tidb_exeerrors::ERR_CURRENT_PASSWORD_CANNOT_BE_RETAINED.generate_with_stack_by_args(&[user.into(), host.into()])));
+                            return Err(DriverError::from(tidb_exeerrors::ERR_CURRENT_PASSWORD_CANNOT_BE_RETAINED.gen_with_stack_by_args(&[user.into(), host.into()])));
                         };
                         if !plugin.is_empty() && effective(plugin) != resolved {
-                            return Err(DriverError::from(tidb_exeerrors::ERR_PASSWORD_CANNOT_BE_RETAINED_ON_PLUGIN_CHANGE.generate_with_stack_by_args(&[user.into(), host.into()])));
+                            return Err(DriverError::from(tidb_exeerrors::ERR_PASSWORD_CANNOT_BE_RETAINED_ON_PLUGIN_CHANGE.gen_with_stack_by_args(&[user.into(), host.into()])));
                         }
                         let text = match credential {
                             tidb_ast::CreateUserCredential::By(text)
                             | tidb_ast::CreateUserCredential::As(text) => text,
                         };
                         if text.is_empty() {
-                            return Err(DriverError::from(tidb_exeerrors::ERR_CURRENT_PASSWORD_CANNOT_BE_RETAINED.generate_with_stack_by_args(&[user.into(), host.into()])));
+                            return Err(DriverError::from(tidb_exeerrors::ERR_CURRENT_PASSWORD_CANNOT_BE_RETAINED.gen_with_stack_by_args(&[user.into(), host.into()])));
                         }
                     }
                 }
@@ -319,7 +319,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
                 super::account::max_user_connections_option(&alter.resource_options)
             {
                 if !self.has_scoped_privilege("", "", tidb_mysql::CreateUserPriv) {
-                    return Err(DriverError::from(tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED.generate_with_stack_by_args(&["CREATE USER".into()])));
+                    return Err(DriverError::from(tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED.gen_with_stack_by_args(&["CREATE USER".into()])));
                 }
                 mirror_fields.push(format!("max_user_connections={count}"));
                 registry.set_max_user_connections(&user, &host, count);
@@ -367,7 +367,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
                 // touched: an empty current primary cannot become the
                 // secondary.
                 if spec_retain && current_auth_string.is_empty() {
-                    return Err(DriverError::from(tidb_exeerrors::ERR_SECOND_PASSWORD_CANNOT_BE_EMPTY.generate_with_stack_by_args(&[user.into(), host.into()])));
+                    return Err(DriverError::from(tidb_exeerrors::ERR_SECOND_PASSWORD_CANNOT_BE_EMPTY.gen_with_stack_by_args(&[user.into(), host.into()])));
                 }
                 self.maintain_password_history(
                     &registry,
@@ -389,7 +389,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
                     // reports `PASSWORD EXPIRE DEFAULT` again).
                     registry.mark_password_changed(&user, &host);
                 } else if !alter.if_exists {
-                    return Err(DriverError::from(tidb_exeerrors::ERR_CANNOT_USER.generate_with_stack_by_args(&["ALTER USER".into(), format!("'{}'@'{}'", user, host).into()])));
+                    return Err(DriverError::from(tidb_exeerrors::ERR_CANNOT_USER.gen_with_stack_by_args(&["ALTER USER".into(), format!("'{}'@'{}'", user, host).into()])));
                 }
                 mirror_fields.push(format!(
                     "authentication_string={}",
@@ -502,7 +502,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
             self.append_sql_warning(tidb_context::SqlWarn::raised(
                 tidb_context::WarningLevel::Note,
                 tidb_infoschema::infoschema_errors::ERR_USER_DROP_EXISTS
-                    .generate_with_stack_by_args(&[account.into()]),
+                    .gen_with_stack_by_args(&[account.into()]),
             ));
         }
         // A sandboxed session escapes by giving ITSELF a new password, which
@@ -560,7 +560,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
             )
         {
             let (caller, caller_host) = self.own_account()?;
-            return Err(DriverError::from(tidb_plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(&["SELECT".into(), caller.into(), caller_host.into(), (tidb_mysql::consts::UserTable.to_owned()).into()])));
+            return Err(DriverError::from(tidb_plannererrors::ERR_TABLEACCESS_DENIED.gen_with_stack_by_args(&["SELECT".into(), caller.into(), caller_host.into(), (tidb_mysql::consts::UserTable.to_owned()).into()])));
         }
         let Some(registry) = self.privilege_registry().cloned() else {
             return Err(DriverError::unsupported(
@@ -598,7 +598,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
             })
         };
         let Some(row) = row else {
-            return Err(DriverError::from(tidb_exeerrors::ERR_CANNOT_USER.generate_with_stack_by_args(&["SHOW CREATE USER".into(), (format!("'{user}'@'{host}'")).into()])));
+            return Err(DriverError::from(tidb_exeerrors::ERR_CANNOT_USER.gen_with_stack_by_args(&["SHOW CREATE USER".into(), (format!("'{user}'@'{host}'")).into()])));
         };
         // Go starts from the global `default_authentication_plugin` and takes
         // the row's plugin only when it is non-empty.
@@ -745,7 +745,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
         // check (the corpus's `dpsetap` case: 1044, not success).
         if !set_for_self && !self.has_scoped_privilege("", "", tidb_mysql::SuperPriv) {
             let (caller, caller_host) = self.own_account()?;
-            return Err(DriverError::from(tidb_plannererrors::ERR_DBACCESS_DENIED.generate_with_stack_by_args(&[caller.into(), caller_host.into(), (tidb_mysql::consts::SystemDB.to_owned()).into()])));
+            return Err(DriverError::from(tidb_plannererrors::ERR_DBACCESS_DENIED.gen_with_stack_by_args(&[caller.into(), caller_host.into(), (tidb_mysql::consts::SystemDB.to_owned()).into()])));
         }
         // Go: self-service `SET PASSWORD ... RETAIN CURRENT PASSWORD`
         // requires APPLICATION_PASSWORD_ADMIN (CREATE USER / UPDATE on the
@@ -761,10 +761,10 @@ pub trait AccountPasswordExec: super::account::AccountExec {
                     tidb_mysql::UpdatePriv,
                 ))
         {
-            return Err(DriverError::from(tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED.generate_with_stack_by_args(&["APPLICATION_PASSWORD_ADMIN".into()])));
+            return Err(DriverError::from(tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED.gen_with_stack_by_args(&["APPLICATION_PASSWORD_ADMIN".into()])));
         }
         let Some(plugin) = registry.plugin(&user, &host) else {
-            return Err(DriverError::from(tidb_exeerrors::ERR_PASSWORD_NO_MATCH.generate_with_stack_by_args(&[])));
+            return Err(DriverError::from(tidb_exeerrors::ERR_PASSWORD_NO_MATCH.gen_with_stack_by_args(&[])));
         };
         let current_auth_string = registry.auth_string(&user, &host).unwrap_or_default();
         // Go's RETAIN validation for SET PASSWORD: plugin capability, then
@@ -776,7 +776,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
                 return Err(DriverError::from(tidb_terror::MysqlError::unknown(format!("Dual password is not supported for users authenticating with plugin '{}'", plugin))));
             }
             if set_password.password.is_empty() {
-                return Err(DriverError::from(tidb_exeerrors::ERR_CURRENT_PASSWORD_CANNOT_BE_RETAINED.generate_with_stack_by_args(&[user.into(), host.into()])));
+                return Err(DriverError::from(tidb_exeerrors::ERR_CURRENT_PASSWORD_CANNOT_BE_RETAINED.gen_with_stack_by_args(&[user.into(), host.into()])));
             }
         }
         self.validate_password_if_enabled(&set_password.password)?;
@@ -787,7 +787,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
         // Go `buildAdditionalPasswordEntry`'s gate, before the UPDATE runs:
         // an empty current primary cannot be retained as the secondary.
         if set_password.retain_current_password && current_auth_string.is_empty() {
-            return Err(DriverError::from(tidb_exeerrors::ERR_SECOND_PASSWORD_CANNOT_BE_EMPTY.generate_with_stack_by_args(&[user.into(), host.into()])));
+            return Err(DriverError::from(tidb_exeerrors::ERR_SECOND_PASSWORD_CANNOT_BE_EMPTY.gen_with_stack_by_args(&[user.into(), host.into()])));
         }
         self.maintain_password_history(
             &registry,
@@ -809,7 +809,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
             );
         }
         if !registry.set_auth_string(&user, &host, &auth_string) {
-            return Err(DriverError::from(tidb_exeerrors::ERR_PASSWORD_NO_MATCH.generate_with_stack_by_args(&[])));
+            return Err(DriverError::from(tidb_exeerrors::ERR_PASSWORD_NO_MATCH.gen_with_stack_by_args(&[])));
         }
         // Same UPDATE as `ALTER USER ... IDENTIFIED BY`: a stored password
         // is an unexpired password.

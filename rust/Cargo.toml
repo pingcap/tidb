@@ -52,6 +52,7 @@ members = [
     "crates/tidb-generic",
     "crates/tidb-globalconn",
     "crates/tidb-go-regexp",
+    "crates/tidb-go-strconv",
     "crates/tidb-go-time-layout",
     "crates/tidb-intest",
     "crates/tidb-intset",

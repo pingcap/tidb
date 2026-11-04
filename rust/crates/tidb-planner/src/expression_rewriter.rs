@@ -2044,7 +2044,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         let clause = self.clause();
         let idx = find_field_name(&self.names, v).map_err(|_| {
             RewriteError::Mysql(tidb_terror::MysqlError::from_terror(
-                &tidb_plannererrors::ERR_AMBIGUOUS.generate_with_stack_by_args(&[
+                &tidb_plannererrors::ERR_AMBIGUOUS.gen_with_stack_by_args(&[
                     v.column.original.clone().into(),
                     ClauseCode::FieldList.message().into(),
                 ]),
@@ -2057,7 +2057,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
             if column.is_hidden {
                 return Err(RewriteError::Mysql(
                     tidb_terror::MysqlError::from_terror(
-                        &tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(
+                        &tidb_plannererrors::ERR_UNKNOWN_COLUMN.gen_with_stack_by_args(
                             &[
                                 tidb_hack::go_to_lower(v.column.original.clone()).into(),
                                 clause.message().into(),
@@ -2082,7 +2082,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
             let outer_names = &self.plan_ctx.outer_names[i];
             let idx = find_field_name(outer_names, v).map_err(|_| {
                 RewriteError::Mysql(tidb_terror::MysqlError::from_terror(
-                    &tidb_plannererrors::ERR_AMBIGUOUS.generate_with_stack_by_args(&[
+                    &tidb_plannererrors::ERR_AMBIGUOUS.gen_with_stack_by_args(&[
                         v.column.original.clone().into(),
                         ClauseCode::FieldList.message().into(),
                     ]),
@@ -2100,7 +2100,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         }
         Err(RewriteError::Mysql(
             tidb_terror::MysqlError::from_terror(
-                &tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                &tidb_plannererrors::ERR_UNKNOWN_COLUMN.gen_with_stack_by_args(&[
                     tidb_hack::go_to_lower(v.column.original.clone()).into(),
                     clause.message().into(),
                 ]),
@@ -2374,7 +2374,7 @@ fn lookup_full_names<'p>(
     match find_field_name(full_names, column) {
         Err(_) => Err(RewriteError::Mysql(
             tidb_terror::MysqlError::from_terror(
-                &tidb_plannererrors::ERR_AMBIGUOUS.generate_with_stack_by_args(&[
+                &tidb_plannererrors::ERR_AMBIGUOUS.gen_with_stack_by_args(&[
                     column.column.original.clone().into(),
                     ClauseCode::FieldList.message().into(),
                 ]),

@@ -69,3 +69,32 @@ fn observation_batch_text_and_binary_writes_publish_after_commit_verdict() {
         );
     }
 }
+
+/// Go `executor.Compile` counts an EXECUTE's prepared statement after its
+/// `Optimize` planned it (`CountStmtNode`): an EXECUTE whose plan fails --
+/// Go: `LIMIT ?` bound to -1 is refused while planning -- is not counted, a
+/// planned one is counted once.
+#[test]
+fn a_binary_execute_whose_planning_fails_is_not_counted() {
+    fn selects() -> f64 {
+        tidb_metrics::executor::STATEMENT_TOTAL
+            .with_label_values(&["", "default", "Select"])
+            .get()
+    }
+    let (mut session, _cluster) = open_session();
+    let prepared = session
+        .node_conn()
+        .prepare_general("SELECT id FROM t LIMIT ?")
+        .unwrap();
+    let before = selects();
+    assert!(session
+        .node_conn()
+        .execute_general(&prepared, &[tidb_param::PreparedValue::SignedLongLong(-1)])
+        .is_err());
+    assert_eq!(selects() - before, 0.0);
+    session
+        .node_conn()
+        .execute_general(&prepared, &[tidb_param::PreparedValue::SignedLongLong(1)])
+        .unwrap();
+    assert_eq!(selects() - before, 1.0);
+}

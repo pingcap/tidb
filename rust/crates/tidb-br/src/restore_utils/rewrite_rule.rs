@@ -139,7 +139,7 @@ impl AppliedFile for tidb_proto::backup::DataFileInfo {
 
 /// Go `utils.TableIDRemap`: a remapping of a table ID during rewriting.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct TableIdRemap {
+pub struct TableIDRemap {
     /// Go `TableIDRemap.Origin`.
     pub origin: i64,
     /// Go `TableIDRemap.Rewritten`.
@@ -164,7 +164,7 @@ pub struct RewriteRules {
     /// Go `RewriteRules.RestoredTs`.
     pub restored_ts: u64,
     /// Go `RewriteRules.TableIDRemapHint`, used to record backup files to PITR.
-    pub table_id_remap_hint: Vec<TableIdRemap>,
+    pub table_id_remap_hint: Vec<TableIDRemap>,
 }
 
 impl RewriteRules {
@@ -373,7 +373,7 @@ pub fn get_rewrite_rules(
     let mut data_rules = Vec::new();
 
     for (old_table_id, new_table_id) in &table_ids {
-        remaps.push(TableIdRemap {
+        remaps.push(TableIDRemap {
             origin: *old_table_id,
             rewritten: *new_table_id,
         });
@@ -407,7 +407,7 @@ pub fn get_rewrite_rules_map(
     let mut remaps = Vec::new();
 
     for (old_table_id, new_table_id) in &table_ids {
-        remaps.push(TableIdRemap {
+        remaps.push(TableIDRemap {
             origin: *old_table_id,
             rewritten: *new_table_id,
         });
@@ -443,7 +443,7 @@ pub fn get_rewrite_rule_of_table(
     RewriteRules {
         data: table_rules(old_table_id, new_table_id, index_ids, 0, get_detail_rule),
         new_table_id,
-        table_id_remap_hint: vec![TableIdRemap {
+        table_id_remap_hint: vec![TableIDRemap {
             origin: old_table_id,
             rewritten: new_table_id,
         }],
@@ -1164,7 +1164,7 @@ mod tests {
             assert_eq!(1, rules.data.len());
             assert_eq!(1, rules.new_table_id);
             assert_eq!(
-                vec![TableIdRemap {
+                vec![TableIDRemap {
                     origin: 2,
                     rewritten: 1
                 }],
@@ -1198,7 +1198,7 @@ mod tests {
             assert_eq!(50, rules.start_ts);
             assert_eq!(30, rules.shift_start_ts);
             assert_eq!(
-                vec![TableIdRemap {
+                vec![TableIDRemap {
                     origin: 2,
                     rewritten: 1
                 }],

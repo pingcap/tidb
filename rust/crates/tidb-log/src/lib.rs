@@ -41,7 +41,7 @@ pub use log::{
     ZAP_ENCODING_NAME,
 };
 pub use text_encoder::{
-    caller_string, default_time_encoder, format_time, short_caller_encoder, Entry, Field, Level,
+    get_caller_string, default_time_encoder, format_time, short_caller_encoder, Entry, Field, Level,
     TextEncoder, Value,
 };
 pub use zap_text_core::{AtomicLevel, TextIoCore, WriteSyncer};

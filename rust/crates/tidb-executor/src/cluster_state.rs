@@ -57,7 +57,7 @@ impl ViewerState {
         if !self.config_scoped {
             return Err(DriverError::from(
                 tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
-                    .generate_with_stack_by_args(&["CONFIG".into()]),
+                    .gen_with_stack_by_args(&["CONFIG".into()]),
             ));
         }
         let client = self.cluster_config.clone().ok_or_else(|| {
@@ -174,7 +174,7 @@ impl ViewerState {
         if !self.process_scoped {
             return Err(DriverError::from(
                 tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
-                    .generate_with_stack_by_args(&["PROCESS".into()]),
+                    .gen_with_stack_by_args(&["PROCESS".into()]),
             ));
         }
         let refusal = if extractor.start_time == 0 {
@@ -424,7 +424,7 @@ impl ViewerState {
                 if !self.has_process {
                     return Err(DriverError::from(
                         tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
-                            .generate_with_stack_by_args(&["PROCESS".into()]),
+                            .gen_with_stack_by_args(&["PROCESS".into()]),
                     ));
                 }
                 self.deadlock_history_rows(ctx, catalog, 
@@ -618,7 +618,7 @@ use tidb_charset::Collation;
         if !self.has_process {
             return Err(DriverError::from(
                 tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
-                    .generate_with_stack_by_args(&["PROCESS".into()]),
+                    .gen_with_stack_by_args(&["PROCESS".into()]),
             ));
         }
         let Some(provider) = self.data_lock_waits.as_ref().map(std::sync::Arc::clone) else {
@@ -874,7 +874,7 @@ use tidb_charset::Collation;
         if !self.process_scoped {
             return Err(DriverError::from(
                 tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
-                    .generate_with_stack_by_args(&["PROCESS".into()]),
+                    .gen_with_stack_by_args(&["PROCESS".into()]),
             ));
         }
         // Go `infoschema.GetPDServerInfo`, whose per-member failures are
@@ -921,7 +921,7 @@ use tidb_charset::Collation;
         if !allowed {
             return Err(DriverError::from(
                 tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
-                    .generate_with_stack_by_args(&[name.to_owned().into()]),
+                    .gen_with_stack_by_args(&[name.to_owned().into()]),
             ));
         }
         let extractors = [extractor
@@ -1067,7 +1067,7 @@ impl crate::mem_table_retrieval::MemTableRetriever for ClusterTablesRetriever {
         if !self.viewer.process_scoped {
             return Err(DriverError::from(
                 tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
-                    .generate_with_stack_by_args(&["PROCESS".into()]),
+                    .gen_with_stack_by_args(&["PROCESS".into()]),
             ));
         }
         self.viewer.cluster_info_rows(ctx)

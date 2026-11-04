@@ -644,7 +644,7 @@ fn resolve_insert_target(
     let table = catalog.get_in(&database, &table_name).ok_or_else(|| {
         DriverError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                .generate_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
+                .gen_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
         )
     })?;
     if table.is_view() {
@@ -659,7 +659,7 @@ fn resolve_insert_target(
     }
     let TableEntry::Kv(_) = table else {
         return Err(DriverError::Mysql(MysqlError::from_terror(
-            &tidb_table::table_errors::ERR_UNSUPPORTED_OP.generate_with_stack_by_args(&[]),
+            &tidb_table::table_errors::ERR_UNSUPPORTED_OP.gen_with_stack_by_args(&[]),
         )));
     };
     // Go `getAffectCols` (`buildInsert`): the columns the statement writes,
@@ -699,7 +699,7 @@ fn resolve_insert_target(
     for (position, &offset) in target_offsets.iter().enumerate() {
         if target_offsets[..position].contains(&offset) {
             return Err(DriverError::from(
-                (&tidb_table::table_errors::ERR_DUPLICATE_COLUMN).generate_with_stack(format!(
+                (&tidb_table::table_errors::ERR_DUPLICATE_COLUMN).gen_with_stack(format!(
                     "Column '{}' specified twice",
                     column_list[offset].0
                 )),
@@ -725,7 +725,7 @@ fn refuse_generated_insert_select_targets(layout: &InsertTargetLayout) -> Result
     for &offset in &layout.target_offsets {
         if layout.generated_targets[offset] {
             return Err(DriverError::from(
-                tidb_plannererrors::ERR_BAD_GENERATED_COLUMN.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_BAD_GENERATED_COLUMN.gen_with_stack_by_args(&[
                     (layout.column_list[offset].0.clone()).into(),
                     layout.table_name.clone().into(),
                 ]),
@@ -751,7 +751,7 @@ pub(crate) fn validate_insert_for_explain(
         if select_width.is_some_and(|width| width != target_width) {
             return Err(DriverError::from(
                 tidb_plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
-                    .generate_with_stack_by_args(&[1.into()]),
+                    .gen_with_stack_by_args(&[1.into()]),
             ));
         }
         return refuse_generated_insert_select_targets(&layout);
@@ -764,7 +764,7 @@ pub(crate) fn validate_insert_for_explain(
         if (index > 0 || names_a_column || width > 0) && width != expected {
             return Err(DriverError::from(
                 tidb_plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
-                    .generate_with_stack_by_args(&[(index + 1).into()]),
+                    .gen_with_stack_by_args(&[(index + 1).into()]),
             ));
         }
         previous_width = width;
@@ -1036,7 +1036,7 @@ fn run_insert_rows(
         let Some(_) = kv.partition() else {
             return Err(DriverError::from(
                 tidb_plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
-                    .generate_with_stack_by_args(&[]),
+                    .gen_with_stack_by_args(&[]),
             ));
         };
         Some(
@@ -1046,7 +1046,7 @@ fn run_insert_rows(
                 .map_err(|partition| {
                     DriverError::from(
                         tidb_table::table_errors::ERR_UNKNOWN_PARTITION
-                            .generate_with_stack_by_args(&[
+                            .gen_with_stack_by_args(&[
                                 partition.into(),
                                 table_name.clone().into(),
                             ]),
@@ -1130,7 +1130,7 @@ fn run_insert_rows(
                 // reports row 1.
                 return Err(DriverError::from(
                     tidb_plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
-                        .generate_with_stack_by_args(&[1.into()]),
+                        .gen_with_stack_by_args(&[1.into()]),
                 ));
             }
             previous_width = width;
@@ -1495,15 +1495,15 @@ fn run_insert_rows(
                         ctx.next_row_id_shard(1),
                     )
                     .map_err(|error| match error {
-                        AutoRandomError::ExplicitInsertDisabled => DriverError::from(tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[("Explicit insertion on auto_random column is disabled. Try to set @@allow_auto_random_explicit_insert = true."
+                        AutoRandomError::ExplicitInsertDisabled => DriverError::from(tidb_dbterror::ERR_INVALID_AUTO_RANDOM.gen_with_stack_by_args(&[("Explicit insertion on auto_random column is disabled. Try to set @@allow_auto_random_explicit_insert = true."
                                 .to_owned()).into()])),
                         AutoRandomError::AutoId(AutoIdError::Exhausted) => {
-                            DriverError::from(tidb_autoid::autoid_errors::ERR_AUTO_RAND_READ_FAILED.generate_with_stack_by_args(&[]))
+                            DriverError::from(tidb_autoid::autoid_errors::ERR_AUTO_RAND_READ_FAILED.gen_with_stack_by_args(&[]))
                         }
                         AutoRandomError::AutoId(AutoIdError::OutOfRange {
                             value,
                             type_name,
-                        }) => DriverError::from(tidb_datatype::types_errors::ERR_OVERFLOW.generate_with_stack(format!("constant {} overflows {}", value, type_name))),
+                        }) => DriverError::from(tidb_datatype::types_errors::ERR_OVERFLOW.gen_with_stack(format!("constant {} overflows {}", value, type_name))),
                         AutoRandomError::AutoId(AutoIdError::Store(detail)) => {
                             DriverError::from(tidb_terror::MysqlError::unknown(detail.0))
                         }
@@ -1584,7 +1584,7 @@ fn run_insert_rows(
                                 if ctx.strict() && !insert.ignore {
                                     return Err(DriverError::from(
                                         tidb_datatype::types_errors::ERR_OVERFLOW
-                                            .generate_with_stack(format!(
+                                            .gen_with_stack(format!(
                                                 "constant {} overflows {}",
                                                 value, type_name
                                             )),
@@ -1592,7 +1592,7 @@ fn run_insert_rows(
                                 }
                                 ctx.append_sql_warn(tidb_context::SqlWarn::raised(
                                     tidb_context::WarningLevel::Warning,
-                                    tidb_datatype::types_errors::ERR_OVERFLOW.generate_with_stack(
+                                    tidb_datatype::types_errors::ERR_OVERFLOW.gen_with_stack(
                                         format!("constant {value} overflows {type_name}"),
                                     ),
                                 ));
@@ -1600,13 +1600,13 @@ fn run_insert_rows(
                                     if !insert.ignore {
                                         return Err(DriverError::from(
                                             tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED
-                                                .generate_with_stack_by_args(&[]),
+                                                .gen_with_stack_by_args(&[]),
                                         ));
                                     }
                                     ctx.append_sql_warn(tidb_context::SqlWarn::raised(
                                         tidb_context::WarningLevel::Warning,
                                         tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED
-                                            .generate_with_stack_by_args(&[]),
+                                            .gen_with_stack_by_args(&[]),
                                     ));
                                     return Ok((0, None));
                                 }
@@ -2439,7 +2439,7 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
             super::planner_bridge::update_target_columns(update, catalog, current_db, ctx)?;
             return Err(DriverError::from(
                 tidb_plannererrors::ERR_NON_UPDATABLE_TABLE
-                    .generate_with_stack_by_args(&[(table.name.join(".")).into(), "UPDATE".into()]),
+                    .gen_with_stack_by_args(&[(table.name.join(".")).into(), "UPDATE".into()]),
             ));
         }
     }
@@ -2594,14 +2594,14 @@ fn update_assignments_for_plan(
     let table = catalog.get_in(&database, &name).ok_or_else(|| {
         DriverError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+                .gen_with_stack_by_args(&[(&database).into(), (&name).into()]),
         )
     })?;
     match table {
         TableEntry::View(_) => {
             return Err(DriverError::from(
                 tidb_plannererrors::ERR_NON_UPDATABLE_TABLE
-                    .generate_with_stack_by_args(&[(name.clone()).into(), "UPDATE".into()]),
+                    .gen_with_stack_by_args(&[(name.clone()).into(), "UPDATE".into()]),
             ))
         }
         TableEntry::Sequence(_) => {
@@ -3312,12 +3312,12 @@ fn run_update_with_physical(
     let table = catalog.get_in(&database, &name).ok_or_else(|| {
         DriverError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+                .gen_with_stack_by_args(&[(&database).into(), (&name).into()]),
         )
     })?;
     if !table_ref.partitions.is_empty() && !matches!(table, TableEntry::Kv(_)) {
         return Err(DriverError::from(
-            tidb_table::table_errors::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[
+            tidb_table::table_errors::ERR_UNKNOWN_PARTITION.gen_with_stack_by_args(&[
                 (table_ref.partitions[0].clone()).into(),
                 name.clone().into(),
             ]),
@@ -3328,7 +3328,7 @@ fn run_update_with_physical(
         TableEntry::View(_) => {
             return Err(DriverError::from(
                 tidb_plannererrors::ERR_NON_UPDATABLE_TABLE
-                    .generate_with_stack_by_args(&[(name.clone()).into(), "UPDATE".into()]),
+                    .gen_with_stack_by_args(&[(name.clone()).into(), "UPDATE".into()]),
             ))
         }
         TableEntry::Sequence(_) => {
@@ -3462,7 +3462,7 @@ fn run_update_with_physical(
         Some(TableEntry::Kv(kv)) => {
             let Some(_) = kv.partition() else {
                 return Err(DriverError::from(
-                    tidb_table::table_errors::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(
+                    tidb_table::table_errors::ERR_UNKNOWN_PARTITION.gen_with_stack_by_args(
                         &[
                             (table_ref.partitions[0].clone()).into(),
                             name.clone().into(),
@@ -3477,7 +3477,7 @@ fn run_update_with_physical(
                     .map_err(|partition| {
                         DriverError::from(
                             tidb_table::table_errors::ERR_UNKNOWN_PARTITION
-                                .generate_with_stack_by_args(&[
+                                .gen_with_stack_by_args(&[
                                     partition.into(),
                                     name.clone().into(),
                                 ]),
@@ -3802,7 +3802,7 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
         // `isCTE(tblW)` comes first: a CTE shadows any table of its name.
         if super::planner_bridge::is_cte(delete.with.as_ref(), table_ref) {
             return Err(DriverError::from(
-                tidb_plannererrors::ERR_NON_UPDATABLE_TABLE.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_NON_UPDATABLE_TABLE.gen_with_stack_by_args(&[
                     (table_ref.name.join(".")).into(),
                     "DELETE".into(),
                 ]),
@@ -3946,7 +3946,7 @@ fn run_delete_with_physical(
         && !matches!(catalog.get_in(&database, &name), Some(TableEntry::Kv(_)))
     {
         return Err(DriverError::from(
-            tidb_table::table_errors::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[
+            tidb_table::table_errors::ERR_UNKNOWN_PARTITION.gen_with_stack_by_args(&[
                 (table_ref.partitions[0].clone()).into(),
                 name.clone().into(),
             ]),
@@ -4046,12 +4046,12 @@ impl PhysicalWriteShape {
         let table = catalog.get_in(database, name).ok_or_else(|| {
             DriverError::from(
                 tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                    .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+                    .gen_with_stack_by_args(&[(&database).into(), (&name).into()]),
             )
         })?;
         let TableEntry::Kv(table) = table else {
             return Err(DriverError::Mysql(MysqlError::from_terror(
-                &tidb_table::table_errors::ERR_UNSUPPORTED_OP.generate_with_stack_by_args(&[]),
+                &tidb_table::table_errors::ERR_UNSUPPORTED_OP.gen_with_stack_by_args(&[]),
             )));
         };
         let stored_width = table.columns().len();

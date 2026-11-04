@@ -77,10 +77,10 @@ fn tidb_decode_key(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, Eva
 
 /// Go `ErrSpecificAccessDenied` (1227) for the PROCESS privilege
 /// `TIDB_DECODE_SQL_DIGESTS` requires, at build time and at evaluation.
-pub(crate) fn process_privilege_denied() -> EvalError {
+pub(crate) fn err_specific_access_denied() -> EvalError {
     EvalError::Conversion(
         tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
-            .generate_with_stack_by_args(&[tidb_mysql::errors::FormatArg::from("PROCESS")]),
+            .gen_with_stack_by_args(&[tidb_mysql::errors::FormatArg::from("PROCESS")]),
     )
 }
 
@@ -95,7 +95,7 @@ fn tidb_decode_sql_digests(
     ctx: &dyn crate::Columns,
 ) -> Result<Datum, EvalError> {
     if !ctx.has_process_privilege() {
-        return Err(process_privilege_denied());
+        return Err(err_specific_access_denied());
     }
     let Some(digests_str) = crate::arg_eval_type::eval_string(digests)? else {
         return Ok(Datum::Null);

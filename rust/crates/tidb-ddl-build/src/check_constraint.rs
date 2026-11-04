@@ -78,7 +78,7 @@ pub fn uses_column(info: &ConstraintInfo, column_name: &str) -> bool {
 
 /// Go `ErrCantDropColWithCheckConstraint` (3959).
 #[must_use]
-pub fn column_dependency_error(constraint_name: &str, column_name: &str) -> CheckConstraintError {
+pub fn err_cant_drop_col_with_check_constraint(constraint_name: &str, column_name: &str) -> CheckConstraintError {
     CheckConstraintError::new(
         &tidb_dbterror::ERR_CANT_DROP_COL_WITH_CHECK_CONSTRAINT,
         format!(

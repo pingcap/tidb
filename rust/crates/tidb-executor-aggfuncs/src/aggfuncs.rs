@@ -1848,7 +1848,7 @@ impl Partial {
                 return Err(ExecError::Mysql(
                     tidb_terror::MysqlError::from_terror(
                         &tidb_datatype::types_errors::ERR_JSON_DOCUMENT_NULL_KEY
-                            .generate_with_stack_by_args(&[]),
+                            .gen_with_stack_by_args(&[]),
                     )
                     .from_evaluation(),
                 ));
@@ -1864,7 +1864,7 @@ impl Partial {
                 return Err(ExecError::Mysql(
                     tidb_terror::MysqlError::from_terror(
                         &tidb_datatype::types_errors::ERR_INVALID_JSON_CHARSET
-                            .generate_with_stack_by_args(&[("binary".to_owned()).into()]),
+                            .gen_with_stack_by_args(&[("binary".to_owned()).into()]),
                     ),
                 ));
             }

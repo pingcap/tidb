@@ -156,7 +156,7 @@ fn writable_check_constraints_guard_insert_and_update() {
 
     let wire = crate::DriverError::from(
         tidb_table::table_errors::ERR_CHECK_CONSTRAINT_VIOLATED
-            .fast_generate_by_args(&["positive_a".into()]),
+            .fast_gen_by_args(&["positive_a".into()]),
     )
     .to_mysql_error();
     assert_eq!(
@@ -1275,4 +1275,54 @@ fn a_plain_integer_handle_key_stays_inline() {
         StagedKey::from_slice(&wide_key).spilled(),
         "a key wider than the inline capacity must still be stored correctly, on the heap"
     );
+}
+
+/// Go `CheckDataConsistency` (`mutation_checker.go`): the index entries a
+/// stage wrote must decode to the row they were written for, and a stage
+/// holds one row insertion.
+#[test]
+fn the_mutation_checker_compares_a_stage_with_its_row() {
+    let mut store = tidb_kv::storage::MemTableStorage::new();
+    let mut table = test_table();
+    table.set_pk_handle_offset(0);
+    table.add_index(
+        Index {
+            info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                id: 1,
+                name: tidb_ast::CiString::new("s"),
+                columns: vec![tidb_model::IndexColumn {
+                    length: tidb_datatype::UNSPECIFIED_LENGTH,
+                    ..tidb_model::IndexColumn::default()
+                }]
+                .into(),
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::IndexInfo::default()
+            }),
+            column_offsets: vec![1],
+            clustered_primary: false,
+        },
+        false,
+    );
+    let zone = tidb_datatype::SessionTimeZone::utc();
+    let written = [Datum::Int(1), Datum::Bytes(b"ab".to_vec())];
+    let sh = store.staging();
+    table.insert_row(&mut store, &written, &tidb_exprctx::NoColumns).unwrap();
+    table
+        .check_data_consistency(&store, &zone, 42, Some(&written), None, sh)
+        .unwrap();
+    let error = table
+        .check_data_consistency(&store, &zone, 42, Some(&[Datum::Int(1), Datum::Bytes(b"cd".to_vec())]), None, sh)
+        .unwrap_err();
+    assert!(
+        matches!(&error, KvTableError::Mysql(e) if e.code == tidb_errno::errcode::ErrInconsistentIndexedValue),
+        "{error:?}"
+    );
+    table
+        .insert_row(&mut store, &[Datum::Int(2), Datum::Bytes(b"ef".to_vec())], &tidb_exprctx::NoColumns)
+        .unwrap();
+    let error = table
+        .check_data_consistency(&store, &zone, 42, Some(&written), None, sh)
+        .unwrap_err();
+    assert!(format!("{error:?}").contains("multiple row mutations"), "{error:?}");
+    store.release(sh);
 }

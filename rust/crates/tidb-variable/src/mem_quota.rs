@@ -95,7 +95,7 @@ impl KillStop {
             // Go `sqlkiller`: `exeerrors.ErrMemoryExceedForQuery.GenWithStackByArgs(connID)`.
             KillStop::MemoryExceedForQuery { conn_id } => tidb_terror::MysqlError::from_terror(
                 &tidb_exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY
-                    .generate_with_stack_by_args(&[conn_id.into()]),
+                    .gen_with_stack_by_args(&[conn_id.into()]),
             ),
             KillStop::Killed(error) => tidb_terror::MysqlError::from_sql_error(error),
         }

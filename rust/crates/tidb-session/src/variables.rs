@@ -111,7 +111,7 @@ impl Visitor for VariableBinder<'_> {
         }
         if let tidb_ast::Expr::SysVar { name, .. } = &*expr {
             if let Some(def) = sysvar::get_sys_var(name) {
-                if def.is_noop() && !self.session.vars.noop_variables_enabled() {
+                if def.is_noop() && !self.session.vars.enable_noop_variables() {
                     self.noop_reads.push(def.name.to_owned());
                 }
             }
@@ -564,7 +564,7 @@ impl Session {
                 1 => Ok(rows[0].first().cloned().unwrap_or(Datum::Null)),
                 _ => Err(DriverError::from(
                     tidb_exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
-                        .generate_with_stack_by_args(&[]),
+                        .gen_with_stack_by_args(&[]),
                 )),
             };
         }
@@ -644,7 +644,7 @@ impl Session {
                         if let Some(reason) = sysvar::removed_sys_var_reason(name) {
                             return Err(var_error(tidb_terror::MysqlError::from_terror(
                                 &tidb_variable::variable_errors::ERR_VARIABLE_NO_LONGER_SUPPORTED
-                                    .generate_with_stack_by_args(&[
+                                    .gen_with_stack_by_args(&[
                                         (name.to_ascii_lowercase()).into(),
                                         (reason.to_owned()).into(),
                                     ]),
@@ -652,7 +652,7 @@ impl Session {
                         }
                         return Err(var_error(tidb_terror::MysqlError::from_terror(
                             &tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                                .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                                .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
                         )));
                     }
                 };
@@ -674,7 +674,7 @@ impl Session {
                     if let Some(allowed) = incorrect_scope {
                         return Err(var_error(tidb_terror::MysqlError::from_terror(
                             &tidb_variable::variable_errors::ERR_INCORRECT_SCOPE
-                                .generate_with_stack_by_args(&[
+                                .gen_with_stack_by_args(&[
                                     (name.to_ascii_lowercase()).into(),
                                     (allowed).into(),
                                 ]),
@@ -685,7 +685,7 @@ impl Session {
                     {
                         return Err(var_error(tidb_terror::MysqlError::from_terror(
                             &tidb_variable::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
-                                .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+                                .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
                         )));
                     }
                 }

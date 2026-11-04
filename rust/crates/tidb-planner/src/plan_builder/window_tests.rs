@@ -43,7 +43,7 @@ use tidb_infoschema::table_source::SourceTable;
 use tidb_infoschema::table_source::SourceColumn;
 use super::window::{
     all_by_items, bound_type_of, cmp_func_token, cmp_type_for_same_field_type, compare_items,
-    is_unbounded, merge_window_spec, spec_equal, window_name, NamedWindowSpec,
+    un_bounded, merge_window_spec, spec_equal, window_name, NamedWindowSpec,
 };
 use super::PlanBuilder;
 use tidb_planner_core_base::ColumnIdAllocator;
@@ -840,10 +840,10 @@ fn test_window_name_reports_an_unnamed_window() {
 #[test]
 fn test_bound_predicates_classify_every_ast_bound() {
     let one = || Box::new(Expr::Int("1".to_owned()));
-    assert!(is_unbounded(&AstFrameBound::UnboundedPreceding));
-    assert!(is_unbounded(&AstFrameBound::UnboundedFollowing));
-    assert!(!is_unbounded(&AstFrameBound::CurrentRow));
-    assert!(!is_unbounded(&AstFrameBound::Preceding(one())));
+    assert!(un_bounded(&AstFrameBound::UnboundedPreceding));
+    assert!(un_bounded(&AstFrameBound::UnboundedFollowing));
+    assert!(!un_bounded(&AstFrameBound::CurrentRow));
+    assert!(!un_bounded(&AstFrameBound::Preceding(one())));
     assert_eq!(
         bound_type_of(&AstFrameBound::UnboundedPreceding),
         BoundType::Preceding

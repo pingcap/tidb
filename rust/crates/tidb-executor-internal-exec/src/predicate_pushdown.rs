@@ -462,7 +462,7 @@ fn describe_condition(
     expression: &Expression,
     context: Option<&dyn PbConverterContext>,
 ) -> Result<ScanPredicate, ExecError> {
-    use tidb_expr::pushdown_catalog::{from_expression, from_expression_in, PbScalar};
+    use tidb_expr::pushdown_catalog::{from_expression, expr_to_pb, PbScalar};
 
     fn unsupported() -> ExecError {
         ExecError::unsupported("cop predicate lowering")
@@ -473,7 +473,7 @@ fn describe_condition(
         context: Option<&dyn PbConverterContext>,
     ) -> Result<PbScalar, ExecError> {
         match context {
-            Some(context) => from_expression_in(expression, context)?,
+            Some(context) => expr_to_pb(expression, context)?,
             None => from_expression(expression),
         }
         .ok_or_else(unsupported)

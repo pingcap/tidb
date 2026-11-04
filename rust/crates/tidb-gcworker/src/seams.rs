@@ -107,7 +107,7 @@ pub trait GcPdClient: Send + Sync {
 
 /// Go `rangetask.TaskStat`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct RangeTaskStat {
+pub struct TaskStat {
     /// Go `CompletedRegions`.
     pub completed_regions: usize,
     /// Go `FailedRegions`.

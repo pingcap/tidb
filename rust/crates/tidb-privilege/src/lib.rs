@@ -562,7 +562,7 @@ mod tests {
             .unwrap_err(),
             tidb_terror::MysqlError::from_terror(
                 &tidb_exeerrors::ERR_PASSWORD_FORMAT
-                    .generate_with_stack_by_args(&[])
+                    .gen_with_stack_by_args(&[])
             )
         );
         // Wrong length.
@@ -571,7 +571,7 @@ mod tests {
                 .unwrap_err(),
             tidb_terror::MysqlError::from_terror(
                 &tidb_exeerrors::ERR_PASSWORD_FORMAT
-                    .generate_with_stack_by_args(&[])
+                    .gen_with_stack_by_args(&[])
             )
         );
         // `AS ''` (or no clause at all) is always a passwordless account,
@@ -602,7 +602,7 @@ mod tests {
             .unwrap_err(),
             tidb_terror::MysqlError::from_terror(
                 &tidb_exeerrors::ERR_PASSWORD_FORMAT
-                    .generate_with_stack_by_args(&[])
+                    .gen_with_stack_by_args(&[])
             )
         );
     }
@@ -618,7 +618,7 @@ mod tests {
                 .unwrap_err(),
             tidb_terror::MysqlError::from_terror(
                 &tidb_exeerrors::ERR_PASSWORD_FORMAT
-                    .generate_with_stack_by_args(&[])
+                    .gen_with_stack_by_args(&[])
             )
         );
         assert_eq!(

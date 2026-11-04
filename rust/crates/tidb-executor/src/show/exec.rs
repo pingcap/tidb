@@ -231,7 +231,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                     catalog.database_definition(database).ok_or_else(|| {
                         DriverError::from(
                             tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                                .generate_with_stack_by_args(&[(database.clone()).into()]),
+                                .gen_with_stack_by_args(&[(database.clone()).into()]),
                         )
                     })?;
                 let placement = catalog
@@ -257,7 +257,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                 let group = catalog.resource_group(group_name).ok_or_else(|| {
                     DriverError::Mysql(tidb_terror::MysqlError::from_terror(
                         &tidb_infoschema::infoschema_errors::ERR_RESOURCE_GROUP_NOT_EXISTS
-                            .generate_with_stack_by_args(&[group_name.into()]),
+                            .gen_with_stack_by_args(&[group_name.into()]),
                     ))
                 })?;
                 let settings = group
@@ -296,7 +296,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                     .ok_or_else(|| {
                         DriverError::from(
                             tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_NOT_EXISTS
-                                .generate_with_stack_by_args(&[policy_name.clone().into()]),
+                                .gen_with_stack_by_args(&[policy_name.clone().into()]),
                         )
                     })
             })?;
@@ -339,14 +339,14 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
             let Some(entry) = catalog.table_in(&database, &table_name) else {
                 return Err(DriverError::from(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                        .generate_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
+                        .gen_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
                 ));
             };
             match entry {
                 // Go prints the object's stored name
                 // (`TableInfo.Name.O`), not the name as written.
                 crate::TableEntry::View(view) => Ok((
-                    crate::show::create::show_create_view_text(view, ansi_quotes),
+                    crate::show::create::construct_result_of_show_create_view(view, ansi_quotes),
                     view.name.clone(),
                     Some((
                         view.character_set_client.clone(),
@@ -354,7 +354,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                     )),
                 )),
                 _ if want_view => Err(DriverError::from(
-                    tidb_infoschema::infoschema_errors::ERR_WRONG_OBJECT.generate_with_stack_by_args(
+                    tidb_infoschema::infoschema_errors::ERR_WRONG_OBJECT.gen_with_stack_by_args(
                         &[(&database).into(), (&table_name).into(), "VIEW".into()],
                     ),
                 )),
@@ -364,7 +364,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                     None,
                 )),
                 _ if want_sequence => Err(DriverError::from(
-                    tidb_infoschema::infoschema_errors::ERR_WRONG_OBJECT.generate_with_stack_by_args(
+                    tidb_infoschema::infoschema_errors::ERR_WRONG_OBJECT.gen_with_stack_by_args(
                         &[(&database).into(), (&table_name).into(), "SEQUENCE".into()],
                     ),
                 )),
@@ -410,7 +410,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
             let Some(entry) = catalog.persistent_table_in(database, table_name) else {
                 return Err(DriverError::from(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                        .generate_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
+                        .gen_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
                 ));
             };
             let crate::TableEntry::Kv(table) = entry else {
@@ -615,7 +615,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                     let Some(entry) = catalog.table_in(&database, &table_name) else {
                         return Err(DriverError::from(
                             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                                .generate_with_stack_by_args(&[
+                                .gen_with_stack_by_args(&[
                                     (&database).into(),
                                     (&table_name).into(),
                                 ]),
@@ -677,7 +677,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                 if catalog.table_names(&database).is_none() {
                     return Err(DriverError::from(
                         tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                            .generate_with_stack_by_args(&[database.into()]),
+                            .gen_with_stack_by_args(&[database.into()]),
                     ));
                 }
                 crate::infoschema_reader::show_table_status_rows(&catalog, &visibility, &ctx, &database)
@@ -742,7 +742,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                 tidb_privilege::all_column_privs_mask(),
             ) {
                 return Err(DriverError::from(
-                    tidb_plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(
+                    tidb_plannererrors::ERR_TABLEACCESS_DENIED.gen_with_stack_by_args(
                         &[
                             "SELECT".into(),
                             user.to_owned().into(),
@@ -758,7 +758,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
             let Some(entry) = catalog.table_in(&database, &table_name) else {
                 return Err(DriverError::from(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                        .generate_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
+                        .gen_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
                 ));
             };
             if let crate::TableEntry::View(view) = entry {
@@ -1501,7 +1501,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                     else {
                         return Err(DriverError::from(
                             tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                                .generate_with_stack_by_args(&[(database.clone()).into()]),
+                                .gen_with_stack_by_args(&[(database.clone()).into()]),
                         ));
                     };
                     Ok(database_rows(catalog, &name)?.into_iter().collect())
@@ -1531,7 +1531,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                     let unknown = || {
                         DriverError::from(
                             tidb_table::table_errors::ERR_UNKNOWN_PARTITION
-                                .generate_with_stack_by_args(&[
+                                .gen_with_stack_by_args(&[
                                     partition.clone().into(),
                                     entry_name.clone().into(),
                                 ]),
@@ -1662,7 +1662,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
             if self.has_any_scoped_privilege(
                 &set.database,
                 &set.name,
-                tidb_privilege::any_priv_mask(),
+                tidb_privilege::all_priv_mask(),
             ) {
                 rows.extend(set.rows);
             }

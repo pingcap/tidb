@@ -37,7 +37,7 @@ pub fn check_operate_same_col_and_idx(info: &tidb_model::MultiSchemaInfo) -> Res
                 } else {
                     &tidb_dbterror::ERR_OPERATE_SAME_COLUMN
                 };
-                return Err(MysqlError::from_terror(&proto.generate_with_stack(
+                return Err(MysqlError::from_terror(&proto.gen_with_stack(
                     format!("Unsupported operate same {kind} '{canonical}'"),
                 )));
             }

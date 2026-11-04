@@ -42,7 +42,7 @@ fn catalog_error(
     let error = if arguments.is_empty() {
         prototype
     } else {
-        prototype.fast_generate(message.raw, arguments)
+        prototype.fast_gen(message.raw, arguments)
     };
     ConvertedDriverError::Terror(error)
 }

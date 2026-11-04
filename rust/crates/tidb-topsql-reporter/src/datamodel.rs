@@ -171,7 +171,7 @@ impl TsItem {
 pub type TsItems = Vec<TsItem>;
 
 /// Go `tsItems.sorted`.
-pub fn ts_items_sorted(items: &[TsItem]) -> bool {
+pub fn sorted(items: &[TsItem]) -> bool {
     items
         .windows(2)
         .all(|pair| pair[0].timestamp <= pair[1].timestamp)
@@ -273,7 +273,7 @@ impl Record {
         if other.ts_items.is_empty() {
             return;
         }
-        if !ts_items_sorted(&other.ts_items) {
+        if !sorted(&other.ts_items) {
             other.sort_by_timestamp(); // this may never happen
         }
         if self.ts_items.is_empty() {
@@ -787,7 +787,7 @@ mod tests {
     #[test]
     fn test_ts_items_sort() {
         let mut items: TsItems = Vec::new();
-        assert!(ts_items_sorted(&items));
+        assert!(sorted(&items));
         items = vec![
             TsItem {
                 timestamp: 2,
@@ -802,9 +802,9 @@ mod tests {
                 ..TsItem::default()
             },
         ];
-        assert!(!ts_items_sorted(&items));
+        assert!(!sorted(&items));
         items.sort_by_key(|item| item.timestamp);
-        assert!(ts_items_sorted(&items));
+        assert!(sorted(&items));
         assert_eq!(1, items[0].timestamp);
         assert_eq!(2, items[1].timestamp);
         assert_eq!(3, items[2].timestamp);

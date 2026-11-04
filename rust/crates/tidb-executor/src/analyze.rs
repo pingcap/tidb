@@ -1248,7 +1248,7 @@ mod tests {
     fn execution_errors_retain_column_and_storage_identity() {
         let original = crate::MysqlError::from_terror(
             &tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL
-                .generate_with_stack("Truncated incorrect date value: '0000-00-00'"),
+                .gen_with_stack("Truncated incorrect date value: '0000-00-00'"),
         )
             .from_evaluation();
         for error in [

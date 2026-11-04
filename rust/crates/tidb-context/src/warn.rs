@@ -467,7 +467,7 @@ mod tests {
             assert_eq!(warning.err.to_string(), message);
         }
 
-        let terror = ERR_RESULT_UNDETERMINED.fast_generate(
+        let terror = ERR_RESULT_UNDETERMINED.fast_gen(
             ERR_RESULT_UNDETERMINED.message(),
             &[FormatArg::from("unknown")],
         );

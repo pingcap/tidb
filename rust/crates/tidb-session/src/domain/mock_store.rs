@@ -333,7 +333,7 @@ impl NodeConn {
 
     /// removes the observer).
     #[cfg(test)]
-    pub(crate) fn set_store_send_hook(&self, hook: Option<tidb_unistore::rpc::SendHook>) {
+    pub(crate) fn set_store_send_hook(&self, hook: Option<tidb_unistore::rpc::UnistoreRPCClientSendHook>) {
         self.mock_store().stack.rpc.set_send_hook(hook);
     }
 

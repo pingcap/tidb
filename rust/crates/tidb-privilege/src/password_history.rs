@@ -282,7 +282,7 @@ impl PrivilegeRegistry {
                 ) {
                     return Err(tidb_terror::MysqlError::from_terror(
                         &tidb_exeerrors::ERR_PLUGIN_IS_NOT_LOADED
-                            .generate_with_stack_by_args(&[plugin.into()]),
+                            .gen_with_stack_by_args(&[plugin.into()]),
                     ));
                 }
                 for (index, row) in account.iter().enumerate() {
@@ -311,14 +311,14 @@ impl PrivilegeRegistry {
                         _ => {
                             return Err(tidb_terror::MysqlError::from_terror(
                                 &tidb_exeerrors::ERR_PLUGIN_IS_NOT_LOADED
-                                    .generate_with_stack_by_args(&[plugin.into()]),
+                                    .gen_with_stack_by_args(&[plugin.into()]),
                             ))
                         }
                     };
                     if matches {
                         return Err(tidb_terror::MysqlError::from_terror(
                             &tidb_exeerrors::ERR_EXISTS_IN_HISTORY_PASSWORD
-                                .generate_with_stack_by_args(&[user.into(), host.into()]),
+                                .gen_with_stack_by_args(&[user.into(), host.into()]),
                         ));
                     }
                 }
@@ -337,7 +337,7 @@ impl PrivilegeRegistry {
             if count > 0 || days > 0 {
                 if account.iter().any(|row| row.timestamp == timestamp) {
                     return Err(tidb_terror::MysqlError::from_terror(
-                        &tidb_kv::kv_errors::ERR_KEY_EXISTS.generate_with_stack_by_args(&[
+                        &tidb_kv::kv_errors::ERR_KEY_EXISTS.gen_with_stack_by_args(&[
                             format!("{host}-{user}-{timestamp}").into(),
                             "mysql.password_history.PRIMARY".into(),
                         ]),

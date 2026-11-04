@@ -21,7 +21,6 @@
 
 #![allow(unsafe_code)]
 
-pub mod go_strconv;
 mod map;
 pub mod raw_bytes;
 

@@ -57,7 +57,7 @@ pub fn resolve_view_definition(
     // every unqualified table name the current database.
     let locked_terms = check_create_view_with_select(&mut create.query)?;
     tidb_planner::preprocess::handle_table_name(&mut create, current_db).map_err(|_| {
-        DriverError::from(tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]))
+        DriverError::from(tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]))
     })?;
     // Go `buildDDL` builds the body and reads its schema; the body never runs
     // (a view over a large table must not scan it at CREATE time).
@@ -130,7 +130,7 @@ pub fn check_create_view_with_select(query: &mut QueryStmt) -> Result<Vec<bool>,
         if select.into_outfile.is_some() {
             return Err(DriverError::from(
                 (&tidb_dbterror::ERR_VIEW_SELECT_CLAUSE)
-                    .generate_with_stack("View's SELECT contains a 'INFO' clause".to_owned()),
+                    .gen_with_stack("View's SELECT contains a 'INFO' clause".to_owned()),
             ));
         }
         locked.push(select.lock.take().is_some());

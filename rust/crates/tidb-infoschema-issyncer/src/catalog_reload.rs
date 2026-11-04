@@ -356,7 +356,7 @@ fn apply_schema_diff<S: MetaSnapshot>(
                 )));
             };
             catalog.drop_schema_by_id(info.id);
-            catalog.register_database_info(GoShared::new(info));
+            catalog.create_schema_tables_for_db(GoShared::new(info));
             Ok(Ok(Vec::new()))
         }
         // Go `applyDropSchema` (`builder.go:747-771`): absent is a no-op;
@@ -673,10 +673,10 @@ fn recover_schema<S: MetaSnapshot>(
             affected_ids(table, &mut ids);
         }
         info.deprecated_tables = tables.into();
-        catalog.register_database_info(GoShared::new(info));
+        catalog.create_schema_tables_for_db(GoShared::new(info));
         return Ok(Ok(ids));
     }
-    catalog.register_database_info(GoShared::new(info));
+    catalog.create_schema_tables_for_db(GoShared::new(info));
     apply_affected_opts(
         snapshot,
         catalog,
@@ -847,7 +847,7 @@ fn refresh_meta<S: MetaSnapshot>(
                 }
             });
         } else {
-            catalog.register_database_info(GoShared::new(fresh));
+            catalog.create_schema_tables_for_db(GoShared::new(fresh));
         }
         return Ok(Ok(Vec::new()));
     }

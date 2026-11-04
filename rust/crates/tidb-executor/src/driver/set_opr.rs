@@ -61,7 +61,7 @@ pub(super) fn check_set_opr_select_list(stmt: &tidb_ast::SetOprStmt) -> Result<(
                 if select.into_outfile.is_some() {
                     return Err(DriverError::from(
                         tidb_plannererrors::ERR_WRONG_USAGE
-                            .generate_with_stack_by_args(&["UNION".into(), ("INTO").into()]),
+                            .gen_with_stack_by_args(&["UNION".into(), ("INTO").into()]),
                     ));
                 }
                 if term.in_braces {
@@ -70,13 +70,13 @@ pub(super) fn check_set_opr_select_list(stmt: &tidb_ast::SetOprStmt) -> Result<(
                 if select.limit.is_some() {
                     return Err(DriverError::from(
                         tidb_plannererrors::ERR_WRONG_USAGE
-                            .generate_with_stack_by_args(&["UNION".into(), ("LIMIT").into()]),
+                            .gen_with_stack_by_args(&["UNION".into(), ("LIMIT").into()]),
                     ));
                 }
                 if !select.order_by.is_empty() {
                     return Err(DriverError::from(
                         tidb_plannererrors::ERR_WRONG_USAGE
-                            .generate_with_stack_by_args(&["UNION".into(), ("ORDER BY").into()]),
+                            .gen_with_stack_by_args(&["UNION".into(), ("ORDER BY").into()]),
                     ));
                 }
             }
@@ -116,7 +116,7 @@ pub(crate) fn validate_query_usage(
                 if !self.oracle_mode && alias.as_ref().is_none_or(String::is_empty) {
                     self.error = Some(DriverError::from(
                         tidb_dbterror::ERR_DERIVED_MUST_HAVE_ALIAS
-                            .generate_with_stack_by_args(&[]),
+                            .gen_with_stack_by_args(&[]),
                     ));
                     return true;
                 }

@@ -1315,7 +1315,7 @@ impl crate::mem_table_retrieval::MemTableRetriever for InformationSchemaRetrieve
         // Go `updateStatsCacheIfNeed`: the size columns of TABLES and
         // PARTITIONS are read from the table-size cache, refreshed first.
         let sized;
-        let catalog = if read.needs_table_storage_statistics() {
+        let catalog = if read.update_stats_cache_if_need() {
             sized = table_storage_statistics_catalog_of(
                 catalog.clone(),
                 ctx.stats_handle(),

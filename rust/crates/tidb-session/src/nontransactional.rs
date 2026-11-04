@@ -406,7 +406,7 @@ impl Session {
         if unqualified && current_db.is_empty() {
             // Go `ErrNoDB`.
             return Err(DriverError::from(
-                tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]),
             ));
         }
         let mut qualify = Qualify {
@@ -709,7 +709,7 @@ impl Session {
             Some(TableEntry::Kv(kv)) => Ok(std::sync::Arc::clone(kv)),
             _ => Err(DriverError::from(
                 tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                    .generate_with_stack_by_args(&[(&schema).into(), (&name).into()]),
+                    .gen_with_stack_by_args(&[(&schema).into(), (&name).into()]),
             )),
         })
     }
@@ -998,11 +998,11 @@ fn non_transactional_job_failure(run: &JobRun, index: usize) -> Option<DriverErr
     if run.ignore_error {
         return None;
     }
-    Some(DriverError::from((&crate::session_errors::ERR_NON_TRANSACTIONAL_JOB_FAILURE).generate_with_stack(format!(
+    Some(DriverError::from((&crate::session_errors::ERR_NON_TRANSACTIONAL_JOB_FAILURE).gen_with_stack(format!(
             "non-transactional job failed, job id: {}, total jobs: {total}. job range: [{}, {}], job sql: {}, err: {}",
             job.job_id,
-            go_datum_string(&job.start),
-            go_datum_string(&job.end),
+            job.start.string(),
+            job.end.string(),
             job.describe(&run.redact),
             error.error_string(),
         ))))
@@ -1217,36 +1217,6 @@ fn value_expr(datum: &Datum, field_type: &FieldType) -> Option<Expr> {
     })
 }
 
-/// Go `Datum.String`: `(Kind, value)`.
-fn go_datum_string(datum: &Datum) -> String {
-    let (kind, value) = match datum {
-        Datum::Null => ("KindNull", "<nil>".to_owned()),
-        Datum::Int(value) => ("KindInt64", value.to_string()),
-        Datum::UInt(value) => ("KindUint64", value.to_string()),
-        Datum::Real(value) => ("KindFloat64", value.to_string()),
-        Datum::Float32(value) => ("KindFloat32", value.to_string()),
-        Datum::String(value) => (
-            "KindString",
-            String::from_utf8_lossy(value.bytes()).into_owned(),
-        ),
-        Datum::Bytes(value) => (
-            "KindBytes",
-            format!(
-                "[{}]",
-                value
-                    .iter()
-                    .map(u8::to_string)
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            ),
-        ),
-        Datum::Decimal(value) => ("KindMysqlDecimal", value.to_string()),
-        Datum::Duration(value) => ("KindMysqlDuration", value.to_string()),
-        Datum::Time(value) => ("KindMysqlTime", value.to_string()),
-        other => ("KindInterface", format!("{other:?}")),
-    };
-    format!("({kind}, {value})")
-}
 
 /// Go `buildDryRunResults`.
 fn dry_run_results(dry_run: BatchDmlDryRun, results: Vec<String>) -> StmtOutput {

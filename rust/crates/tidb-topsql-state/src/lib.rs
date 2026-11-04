@@ -57,15 +57,15 @@ impl ItemInterval {
 
 /// Go `ErrInvalidTopRUItemInterval`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct InvalidTopRuItemInterval(pub i32);
+pub struct ErrInvalidTopRUItemInterval(pub i32);
 
-impl std::fmt::Display for InvalidTopRuItemInterval {
+impl std::fmt::Display for ErrInvalidTopRUItemInterval {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(formatter, "invalid top ru item interval: {}", self.0)
     }
 }
 
-impl std::error::Error for InvalidTopRuItemInterval {}
+impl std::error::Error for ErrInvalidTopRUItemInterval {}
 
 /// Go `state.State`.
 #[derive(Debug)]
@@ -163,19 +163,19 @@ pub fn top_ru_enabled() -> bool {
 /// Go's private `normalizeTopRUItemIntervalSeconds`.
 fn normalize_top_ru_item_interval_seconds(
     interval: ItemInterval,
-) -> Result<i64, InvalidTopRuItemInterval> {
+) -> Result<i64, ErrInvalidTopRUItemInterval> {
     match interval {
         ItemInterval::UNSPECIFIED => Ok(DEF_TIDB_TOP_RU_ITEM_INTERVAL_SECONDS),
         ItemInterval::FIFTEEN_SECONDS
         | ItemInterval::THIRTY_SECONDS
         | ItemInterval::SIXTY_SECONDS => Ok(i64::from(interval.0)),
-        other => Err(InvalidTopRuItemInterval(other.0)),
+        other => Err(ErrInvalidTopRUItemInterval(other.0)),
     }
 }
 
 /// Go `SetTopRUItemInterval`: 15, 30, and 60 are accepted, unspecified falls
 /// back to the default, and anything else is rejected and changes nothing.
-pub fn set_top_ru_item_interval(interval: ItemInterval) -> Result<(), InvalidTopRuItemInterval> {
+pub fn set_top_ru_item_interval(interval: ItemInterval) -> Result<(), ErrInvalidTopRUItemInterval> {
     let current = get_top_ru_item_interval();
     let subscribers = GLOBAL_STATE.ru_consumer_count.load(Ordering::SeqCst);
     match normalize_top_ru_item_interval_seconds(interval) {
@@ -292,7 +292,7 @@ mod tests {
 
         assert_eq!(
             set_top_ru_item_interval(ItemInterval(1)),
-            Err(InvalidTopRuItemInterval(1))
+            Err(ErrInvalidTopRUItemInterval(1))
         );
         assert_eq!(
             get_top_ru_item_interval(),
@@ -312,7 +312,7 @@ mod tests {
         // A rejected value leaves the previous one in place.
         assert_eq!(
             set_top_ru_item_interval(ItemInterval(99)),
-            Err(InvalidTopRuItemInterval(99))
+            Err(ErrInvalidTopRUItemInterval(99))
         );
         assert_eq!(get_top_ru_item_interval(), 15);
 

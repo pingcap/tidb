@@ -228,7 +228,7 @@ fn window_frame_shape_is_refused_with_gos_own_code() {
     // The rendered codes and messages, exactly as TiDB writes them.
     let start = DriverError::from(
         tidb_plannererrors::ERR_WINDOW_FRAME_START_ILLEGAL
-            .generate_with_stack_by_args(&["<unnamed window>".into()]),
+            .gen_with_stack_by_args(&["<unnamed window>".into()]),
     )
     .to_mysql_error();
     assert_eq!(start.code, 3584);
@@ -238,7 +238,7 @@ fn window_frame_shape_is_refused_with_gos_own_code() {
     );
     let end = DriverError::from(
         tidb_plannererrors::ERR_WINDOW_FRAME_END_ILLEGAL
-            .generate_with_stack_by_args(&["<unnamed window>".into()]),
+            .gen_with_stack_by_args(&["<unnamed window>".into()]),
     )
     .to_mysql_error();
     assert_eq!(end.code, 3585);

@@ -260,7 +260,7 @@ use tidb_variable::GlobalSysvarAccessor;
 
 /// Go `SessionVars.IndexLookUpPushDownPolicy`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum IndexLookupPushDownPolicy {
+pub enum IndexLookUpPushDownPolicy {
     /// Go `IndexLookUpPushDownPolicyHintOnly`.
     #[default]
     HintOnly,
@@ -285,7 +285,7 @@ pub struct IndexLookupPushDownSession {
     /// Go `SessionVars.MaxKeysRead`.
     pub max_keys_read: u64,
     /// Go `IndexLookUpPushDownPolicy`.
-    pub policy: IndexLookupPushDownPolicy,
+    pub policy: IndexLookUpPushDownPolicy,
 }
 
 impl Default for IndexLookupPushDownSession {
@@ -296,7 +296,7 @@ impl Default for IndexLookupPushDownSession {
             staleness: false,
             historical_read: false,
             max_keys_read: 0,
-            policy: IndexLookupPushDownPolicy::HintOnly,
+            policy: IndexLookUpPushDownPolicy::HintOnly,
         }
     }
 }
@@ -481,9 +481,9 @@ pub struct StmtContextSessionState {
     /// staged-write tracker. See [`StmtContextData::staged_writes`].
     pub staged_writes: Arc<tidb_kv::staged_writes::StagedWrites>,
     /// Go `TxnCtx.TemporaryTables` of the current transaction.
-    pub txn_temporary_tables: tidb_tblctx::temporary_table::TxnTemporaryTables,
+    pub txn_temporary_tables: tidb_tblctx::temporary_table::TemporaryTables,
     /// Go `TxnCtx.CachedTables`.
-    pub txn_cached_tables: tidb_tblctx::temporary_table::TxnCachedTables,
+    pub txn_cached_tables: tidb_tblctx::temporary_table::CachedTables,
     /// Go `SessionVars.TemporaryTableData`.
     pub temporary_table_data: Option<tidb_variable::temporary_table_data::SessionData>,
     /// Go `sctx.Txn()`: the store every table of the session reads and
@@ -923,9 +923,9 @@ pub struct StmtContextData {
     staged_writes: Arc<tidb_kv::staged_writes::StagedWrites>,
     /// Go `TxnCtx.TemporaryTables`: what this transaction wrote to each
     /// temporary table.
-    txn_temporary_tables: tidb_tblctx::temporary_table::TxnTemporaryTables,
+    txn_temporary_tables: tidb_tblctx::temporary_table::TemporaryTables,
     /// Go `TxnCtx.CachedTables`: the cached tables this transaction wrote.
-    txn_cached_tables: tidb_tblctx::temporary_table::TxnCachedTables,
+    txn_cached_tables: tidb_tblctx::temporary_table::CachedTables,
     /// Go `SessionVars.TemporaryTableData`.
     temporary_table_data: Option<tidb_variable::temporary_table_data::SessionData>,
     /// Go `sctx.Txn()`, see [`StmtContextSessionState::txn_store`].
@@ -1046,6 +1046,8 @@ pub struct StmtContextData {
     optimistic_transaction: bool,
     /// Go DupKeyCheckInPrewrite for an explicit, unrestricted user transaction.
     pessimistic_check_in_prewrite: bool,
+    /// Go `SessionVars.EnableMutationChecker` (`@@tidb_enable_mutation_checker`).
+    enable_mutation_checker: bool,
     /// Go `SessionVars.ConstraintCheckInPlace` (`@@tidb_constraint_check_in_place`).
     /// `optimizeDupKeyCheckForNormalInsert` (`pkg/executor/insert.go:331-337`)
     /// combines this with the transaction mode to select lazy checking.
@@ -2443,6 +2445,13 @@ context_configuration! {
         self
     }
 
+    /// Sets `@@tidb_enable_mutation_checker` for this statement.
+    #[must_use]
+    pub fn with_enable_mutation_checker(mut self, enabled: bool) -> Self {
+        self.enable_mutation_checker = enabled;
+        self
+    }
+
     /// Sets `@@tidb_constraint_check_in_place` for this statement.
     #[must_use]
     pub fn with_constraint_check_in_place(mut self, enabled: bool) -> Self {
@@ -2897,6 +2906,7 @@ impl StmtContext {
             affected_rows: Arc::default(),
             optimistic_transaction: false,
             pessimistic_check_in_prewrite: false,
+            enable_mutation_checker: false,
             constraint_check_in_place: false,
             allow_remove_auto_inc: false,
             clustered_index_def_mode: tidb_vardef::modes::ClusteredIndexDefMode(
@@ -4185,13 +4195,13 @@ impl StmtContext {
 
     /// Go `SessionVars.OptOrderingIdxSelRatio`.
     #[must_use]
-    pub fn ordering_index_selectivity_ratio(&self) -> f64 {
+    pub fn opt_ordering_idx_sel_ratio(&self) -> f64 {
         self.ordering_index_selectivity_ratio
     }
 
     /// Go `SessionVars.OptOrderingIdxSelThresh`.
     #[must_use]
-    pub fn ordering_index_selectivity_threshold(&self) -> f64 {
+    pub fn opt_ordering_idx_sel_thresh(&self) -> f64 {
         self.ordering_index_selectivity_threshold
     }
 
@@ -4203,7 +4213,7 @@ impl StmtContext {
 
     /// Go `SessionVars.IsPartialOrderedIndexForTopNEnabled`.
     #[must_use]
-    pub fn partial_ordered_index_for_topn(&self) -> bool {
+    pub fn is_partial_ordered_index_for_top_n_enabled(&self) -> bool {
         self.partial_ordered_index_for_topn
     }
 
@@ -4221,7 +4231,7 @@ impl StmtContext {
 
     /// Go `SessionVars.OptimizerEnableNAAJ`.
     #[must_use]
-    pub fn enable_null_aware_anti_join(&self) -> bool {
+    pub fn optimizer_enable_naaj(&self) -> bool {
         self.enable_null_aware_anti_join
     }
 
@@ -4343,7 +4353,7 @@ impl StmtContext {
     /// Go `SessionVars.TiDBOptJoinReorderThreshold`. Non-positive -- and `0`
     /// is the shipped default -- means the DP join-reorder solver never runs.
     #[must_use]
-    pub fn join_reorder_threshold(&self) -> i32 {
+    pub fn tidb_opt_join_reorder_threshold(&self) -> i32 {
         self.join_reorder_threshold
     }
 
@@ -4374,7 +4384,7 @@ impl StmtContext {
     /// Go `SessionVars.TiDBOptEnableAdvancedJoinReorder`. The advanced
     /// framework is enabled by default.
     #[must_use]
-    pub fn advanced_join_reorder(&self) -> bool {
+    pub fn tidb_opt_enable_advanced_join_reorder(&self) -> bool {
         self.advanced_join_reorder
     }
 
@@ -4393,7 +4403,7 @@ impl StmtContext {
 
     /// Go `SessionVars.EnableAdvancedJoinHint`.
     #[must_use]
-    pub fn advanced_join_hint(&self) -> bool {
+    pub fn enable_advanced_join_hint(&self) -> bool {
         self.advanced_join_hint
     }
 
@@ -4401,7 +4411,7 @@ impl StmtContext {
     /// default, under which a `Projection` over a join is an atomic group
     /// leaf and the relations below it never join the group.
     #[must_use]
-    pub fn join_reorder_through_proj(&self) -> bool {
+    pub fn tidb_opt_join_reorder_through_proj(&self) -> bool {
         self.join_reorder_through_proj
     }
 
@@ -4411,7 +4421,7 @@ impl StmtContext {
     /// (`rule_join_reorder.go:67-80`), so the relations below it form their
     /// own group.
     #[must_use]
-    pub fn join_reorder_through_sel(&self) -> bool {
+    pub fn tidb_opt_join_reorder_through_sel(&self) -> bool {
         self.join_reorder_through_sel
     }
 
@@ -4644,7 +4654,7 @@ impl StmtContext {
     /// an applicable `USE_INDEX_MERGE` hint remains explicit unless
     /// `NO_INDEX_MERGE` overrides it.
     #[must_use]
-    pub fn index_merge(&self) -> bool {
+    pub fn get_enable_index_merge(&self) -> bool {
         self.index_merge
     }
 
@@ -6049,6 +6059,10 @@ impl tidb_tblctx::MutateContext for StmtContext {
 
     fn pessimistic_check_in_prewrite(&self) -> bool {
         StmtContext::pessimistic_check_in_prewrite(self)
+    }
+
+    fn enable_mutation_checker(&self) -> bool {
+        self.enable_mutation_checker
     }
 
     fn optimistic_transaction(&self) -> bool {

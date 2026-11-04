@@ -193,7 +193,7 @@ pub(super) fn on_drop_resource_group(
     let group = stored_group(catalog, active, group_id)?.clone();
     if group.state != SchemaState::PUBLIC {
         return Err(DdlPlanError::from(
-            tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+            tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack_by_args(&[
                 FormatArg::from("resource_group"),
                 FormatArg::new(
                     group.state.to_string(),

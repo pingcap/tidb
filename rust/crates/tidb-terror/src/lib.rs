@@ -140,7 +140,7 @@ impl TerrorError {
     }
 
     /// Source `GenWithStack`, using Rust's native captured backtrace.
-    pub fn generate_with_stack(&self, message: impl Into<String>) -> Self {
+    pub fn gen_with_stack(&self, message: impl Into<String>) -> Self {
         let mut generated = self.generate(message);
         generated.stack = Some(Arc::new(Backtrace::force_capture()));
         generated
@@ -148,10 +148,10 @@ impl TerrorError {
 
     /// Source `GenWithStackByArgs`: formats the prototype's catalog message,
     /// applying its precision and redaction rules before capturing a stack.
-    pub fn generate_with_stack_by_args(&self, arguments: &[FormatArg]) -> Self {
+    pub fn gen_with_stack_by_args(&self, arguments: &[FormatArg]) -> Self {
         if arguments.is_empty() {
             // Go GetMsg returns the template verbatim when there are no args.
-            return self.generate_with_stack(self.message());
+            return self.gen_with_stack(self.message());
         }
         let formatted = SqlError::new_f(
             self.protocol_code(),
@@ -159,12 +159,12 @@ impl TerrorError {
             self.redact_arg_pos,
             arguments,
         );
-        self.generate_with_stack(formatted.message)
+        self.gen_with_stack(formatted.message)
     }
 
     /// Source `FastGenByArgs`: formats the prototype's catalog message like
     /// [`Self::generate_with_stack_by_args`], without capturing a stack.
-    pub fn fast_generate_by_args(&self, arguments: &[FormatArg]) -> Self {
+    pub fn fast_gen_by_args(&self, arguments: &[FormatArg]) -> Self {
         if arguments.is_empty() {
             return self.generate(self.message());
         }
@@ -178,7 +178,7 @@ impl TerrorError {
     }
 
     /// Source `FastGen` formatting over the shared Go-format authority.
-    pub fn fast_generate(&self, format: &str, arguments: &[FormatArg]) -> Self {
+    pub fn fast_gen(&self, format: &str, arguments: &[FormatArg]) -> Self {
         let formatted =
             SqlError::new_f(self.protocol_code(), format, self.redact_arg_pos, arguments);
         self.generate(formatted.message)

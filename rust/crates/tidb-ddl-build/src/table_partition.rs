@@ -189,12 +189,12 @@ fn build_table_partitioning_inner(
     if partitioning.subpartition.is_some() {
         if matches!(method.kind, PartitionType::HASH | PartitionType::KEY) {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_ast::ast_errors::ERR_SUBPARTITION.generate_with_stack_by_args(&[]),
+                &tidb_ast::ast_errors::ERR_SUBPARTITION.gen_with_stack_by_args(&[]),
             ));
         }
         // Go `FastGen(fmt.Sprintf(...))`: the text replaces the template.
         ctx.append_warning(tidb_context::WarnErr::Terror(
-            tidb_dbterror::ERR_UNSUPPORTED_CREATE_PARTITION.fast_generate(
+            tidb_dbterror::ERR_UNSUPPORTED_CREATE_PARTITION.fast_gen(
                 &format!(
                     "Unsupported subpartitioning, only using {} partitioning",
                     method.kind.sql()
@@ -224,7 +224,7 @@ fn build_table_partitioning_inner(
             let name = path.last().ok_or_else(|| {
                 tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE
-                        .generate_with_stack_by_args(&[]),
+                        .gen_with_stack_by_args(&[]),
                 )
             })?;
             let offset = names
@@ -233,13 +233,13 @@ fn build_table_partitioning_inner(
                 .ok_or_else(|| {
                     tidb_terror::MysqlError::from_terror(
                         &tidb_dbterror::ERR_FIELD_NOT_FOUND_PART
-                            .generate_with_stack_by_args(&[]),
+                            .gen_with_stack_by_args(&[]),
                     )
                 })?;
             if !super::table_partition_list::list_columns_type_allowed(&types[offset]) {
                 return Err(tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_NOT_ALLOWED_TYPE_IN_PARTITION
-                        .generate_with_stack_by_args(&[(name.clone()).to_string().into()]),
+                        .gen_with_stack_by_args(&[(name.clone()).to_string().into()]),
                 ));
             }
             column = Some(&types[offset]);
@@ -277,14 +277,14 @@ fn build_table_partitioning_inner(
         check_partition_name_unique(&definitions)?;
         if definitions.len() as u64 > MAX_PARTITIONS {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_dbterror::ERR_TOO_MANY_PARTITIONS.generate_with_stack_by_args(&[]),
+                &tidb_dbterror::ERR_TOO_MANY_PARTITIONS.gen_with_stack_by_args(&[]),
             ));
         }
         check_partition_columns_unique(&dependencies)?;
         if definitions.is_empty() {
             return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_ast::ast_errors::ERR_NO_PARTS
-                    .generate_with_stack_by_args(&["partitions".into()]),
+                    .gen_with_stack_by_args(&["partitions".into()]),
             ));
         }
         if unresolved_with_keys {
@@ -327,7 +327,7 @@ fn build_table_partitioning_inner(
         check_partition_name_unique(&definitions)?;
         if definitions.len() as u64 > MAX_PARTITIONS {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_dbterror::ERR_TOO_MANY_PARTITIONS.generate_with_stack_by_args(&[]),
+                &tidb_dbterror::ERR_TOO_MANY_PARTITIONS.gen_with_stack_by_args(&[]),
             ));
         }
         check_partition_columns_unique(&dependencies)?;
@@ -371,7 +371,7 @@ fn build_table_partitioning_inner(
         check_partition_name_unique(&definitions)?;
         if definitions.len() as u64 > MAX_PARTITIONS {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_dbterror::ERR_TOO_MANY_PARTITIONS.generate_with_stack_by_args(&[]),
+                &tidb_dbterror::ERR_TOO_MANY_PARTITIONS.gen_with_stack_by_args(&[]),
             ));
         }
         check_partition_columns_unique(&dependencies)?;
@@ -459,7 +459,7 @@ fn build_table_partitioning_inner(
     check_partition_name_unique(&definitions)?;
     if definitions.len() as u64 > MAX_PARTITIONS {
         return Err(tidb_terror::MysqlError::from_terror(
-            &tidb_dbterror::ERR_TOO_MANY_PARTITIONS.generate_with_stack_by_args(&[]),
+            &tidb_dbterror::ERR_TOO_MANY_PARTITIONS.gen_with_stack_by_args(&[]),
         ));
     }
     // Go checks the partition definition constraints before
@@ -487,7 +487,7 @@ fn build_table_partitioning_inner(
     if definitions.is_empty() {
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_ast::ast_errors::ERR_NO_PARTS
-                .generate_with_stack_by_args(&["partitions".into()]),
+                .gen_with_stack_by_args(&["partitions".into()]),
         ));
     }
     let indexes = apply_update_indexes(partitioning, indexes, handle_offsets)?;
@@ -520,20 +520,20 @@ pub fn apply_update_indexes(
             if update.name.go_equal_fold("primary") && !handle_offsets.is_empty() {
                 return Err(tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_UNIQUE_KEY_NEED_ALL_FIELDS_IN_PF
-                        .generate_with_stack_by_args(&[("CLUSTERED INDEX".to_owned())
+                        .gen_with_stack_by_args(&[("CLUSTERED INDEX".to_owned())
                             .to_string()
                             .into()]),
                 ));
             }
             return Err(MysqlError::from_terror(
                 &tidb_dbterror::ERR_WRONG_NAME_FOR_INDEX
-                    .generate_with_stack_by_args(&[update.name.clone().into()]),
+                    .gen_with_stack_by_args(&[update.name.clone().into()]),
             ));
         };
         if !seen.insert(go_to_lower(&update.name)) {
             return Err(MysqlError::from_terror(
                 &tidb_dbterror::ERR_WRONG_NAME_FOR_INDEX
-                    .generate_with_stack_by_args(&[update.name.clone().into()]),
+                    .gen_with_stack_by_args(&[update.name.clone().into()]),
             ));
         }
         index.global = update.global;
@@ -600,7 +600,7 @@ fn build_key_partition_columns(
                 path.last().cloned().ok_or_else(|| {
                     tidb_terror::MysqlError::from_terror(
                         &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE
-                            .generate_with_stack_by_args(&[]),
+                            .gen_with_stack_by_args(&[]),
                     )
                 })
             })
@@ -616,13 +616,13 @@ fn build_key_partition_columns(
             // a DIFFERENT error from the 1054 the expression path raises.
             .ok_or_else(|| {
                 tidb_terror::MysqlError::from_terror(
-                    &tidb_dbterror::ERR_FIELD_NOT_FOUND_PART.generate_with_stack_by_args(&[]),
+                    &tidb_dbterror::ERR_FIELD_NOT_FOUND_PART.gen_with_stack_by_args(&[]),
                 )
             })?;
         if !key_partition_type_allowed(&types[offset]) {
             return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_NOT_ALLOWED_TYPE_IN_PARTITION
-                    .generate_with_stack_by_args(&[name.to_string().into()]),
+                    .gen_with_stack_by_args(&[name.to_string().into()]),
             ));
         }
         dependencies.push(name);
@@ -781,7 +781,7 @@ fn build_partition_expression(
     // wording describes.
     if !partition_expr_reads_a_column(expr) {
         return Err(tidb_terror::MysqlError::from_terror(
-            &tidb_dbterror::ERR_WRONG_EXPR_IN_PARTITION_FUNC.generate_with_stack_by_args(&[]),
+            &tidb_dbterror::ERR_WRONG_EXPR_IN_PARTITION_FUNC.gen_with_stack_by_args(&[]),
         ));
     }
     let resolver = TableColumnResolver::with_like_default_escape(
@@ -798,7 +798,7 @@ fn build_partition_expression(
             // the folded name, so a mixed-case `NoSuch` is reported as
             // `Unknown column 'nosuch'`.
             Some(name) => tidb_terror::MysqlError::from_terror(
-                &tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                &tidb_plannererrors::ERR_UNKNOWN_COLUMN.gen_with_stack_by_args(&[
                     tidb_hack::go_to_lower(go_to_lower(&name)).into(),
                     ("partition function".to_owned()).to_string().into(),
                 ]),
@@ -812,7 +812,7 @@ fn build_partition_expression(
     // authority on 1054.
     if let Some(name) = resolver.missing_name() {
         return Err(tidb_terror::MysqlError::from_terror(
-            &tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+            &tidb_plannererrors::ERR_UNKNOWN_COLUMN.gen_with_stack_by_args(&[
                 tidb_hack::go_to_lower(go_to_lower(&name)).into(),
                 ("partition function".to_owned()).to_string().into(),
             ]),
@@ -824,7 +824,7 @@ fn build_partition_expression(
     // 1486 -- `PARTITION BY HASH(1)` has nothing to partition ON.
     if dependencies.is_empty() {
         return Err(tidb_terror::MysqlError::from_terror(
-            &tidb_dbterror::ERR_WRONG_EXPR_IN_PARTITION_FUNC.generate_with_stack_by_args(&[]),
+            &tidb_dbterror::ERR_WRONG_EXPR_IN_PARTITION_FUNC.gen_with_stack_by_args(&[]),
         ));
     }
     Ok((
@@ -928,7 +928,7 @@ fn check_partition_expression_allowed(
             }
             Ok(())
         }
-        _ => Err(tidb_terror::MysqlError::from_terror(&tidb_dbterror::ERR_PARTITION_FUNCTION_IS_NOT_ALLOWED.generate_with_stack_by_args(&[]))),
+        _ => Err(tidb_terror::MysqlError::from_terror(&tidb_dbterror::ERR_PARTITION_FUNCTION_IS_NOT_ALLOWED.gen_with_stack_by_args(&[]))),
     }
 }
 
@@ -969,7 +969,7 @@ fn check_partition_expression_type(
         let name = path.last().cloned().unwrap_or_else(|| "?".to_owned());
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_NOT_ALLOWED_TYPE_IN_PARTITION
-                .generate_with_stack_by_args(&[(go_to_lower(&name)).to_string().into()]),
+                .gen_with_stack_by_args(&[(go_to_lower(&name)).to_string().into()]),
         ));
     }
     // Go's remaining `expression.Column` arm quotes `col.OrigName`, the name
@@ -979,12 +979,12 @@ fn check_partition_expression_type(
         let name = path.last().cloned().unwrap_or_else(|| "?".to_owned());
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_NOT_ALLOWED_TYPE_IN_PARTITION
-                .generate_with_stack_by_args(&[name.to_string().into()]),
+                .gen_with_stack_by_args(&[name.to_string().into()]),
         ));
     }
     Err(tidb_terror::MysqlError::from_terror(
         &tidb_dbterror::ERR_PARTITION_FUNC_NOT_ALLOWED
-            .generate_with_stack_by_args(&["PARTITION".into()]),
+            .gen_with_stack_by_args(&["PARTITION".into()]),
     ))
 }
 
@@ -1015,7 +1015,7 @@ fn build_hash_partition_definitions(
     // legal and 8193 are not.
     if count > MAX_PARTITIONS {
         return Err(tidb_terror::MysqlError::from_terror(
-            &tidb_dbterror::ERR_TOO_MANY_PARTITIONS.generate_with_stack_by_args(&[]),
+            &tidb_dbterror::ERR_TOO_MANY_PARTITIONS.gen_with_stack_by_args(&[]),
         ));
     }
     // A HASH partition definition carries no VALUES -- `tidb_parser`'s
@@ -1107,7 +1107,7 @@ pub fn partition_definition_comment(
     }
     if comment.len() > MAX_PARTITION_COMMENT_LENGTH {
         let too_long = tidb_terror::MysqlError::from_terror(
-            &tidb_dbterror::ERR_TOO_LONG_TABLE_PARTITION_COMMENT.generate_with_stack_by_args(
+            &tidb_dbterror::ERR_TOO_LONG_TABLE_PARTITION_COMMENT.gen_with_stack_by_args(
                 &[
                     (definition.name.clone()).to_string().into(),
                     MAX_PARTITION_COMMENT_LENGTH.into(),
@@ -1146,7 +1146,7 @@ pub fn partition_definition_comment(
 /// ever stops being true.
 #[must_use]
 pub fn hex_if_non_print(value: &str) -> String {
-    use tidb_hack::go_strconv::is_print as go_is_print;
+    use tidb_go_strconv::is_print as go_is_print;
     if value.chars().all(go_is_print) {
         return value.to_owned();
     }
@@ -1274,7 +1274,7 @@ fn collect_args_type(
             // so the message reads `Unknown column 'nosuch'` for a `NoSuch`
             // that was written in mixed case.
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                &tidb_plannererrors::ERR_UNKNOWN_COLUMN.gen_with_stack_by_args(&[
                     tidb_hack::go_to_lower(go_to_lower(column)).into(),
                     ("partition function".to_owned()).to_string().into(),
                 ]),
@@ -1304,7 +1304,7 @@ fn check_no_timestamp_args(
         .any(|code| matches!(code, FieldTypeCode::Timestamp))
     {
         return Err(tidb_terror::MysqlError::from_terror(
-            &tidb_dbterror::ERR_WRONG_EXPR_IN_PARTITION_FUNC.generate_with_stack_by_args(&[]),
+            &tidb_dbterror::ERR_WRONG_EXPR_IN_PARTITION_FUNC.gen_with_stack_by_args(&[]),
         ));
     }
     Ok(())
@@ -1340,7 +1340,7 @@ fn check_partition_call_args(
         } else {
             Err(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_WRONG_EXPR_IN_PARTITION_FUNC
-                    .generate_with_stack_by_args(&[]),
+                    .gen_with_stack_by_args(&[]),
             ))
         }
     };
@@ -1368,7 +1368,7 @@ fn check_partition_call_args(
             }
             _ => Err(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_WRONG_EXPR_IN_PARTITION_FUNC
-                    .generate_with_stack_by_args(&[]),
+                    .gen_with_stack_by_args(&[]),
             )),
         },
         // Go raises 1486 for a TIMESTAMP argument to these, because their
@@ -1377,7 +1377,7 @@ fn check_partition_call_args(
             if has_timestamp {
                 Err(tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_WRONG_EXPR_IN_PARTITION_FUNC
-                        .generate_with_stack_by_args(&[]),
+                        .gen_with_stack_by_args(&[]),
                 ))
             } else {
                 Ok(())
@@ -1639,7 +1639,7 @@ fn check_partition_columns_unique(columns: &[String]) -> Result<(), MysqlError> 
         if seen.contains(&folded) {
             return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_SAME_NAME_PARTITION_FIELD
-                    .generate_with_stack_by_args(&[folded.to_string().into()]),
+                    .gen_with_stack_by_args(&[folded.to_string().into()]),
             ));
         }
         seen.push(folded);
@@ -1657,7 +1657,7 @@ fn check_partition_name_unique(definitions: &[StoredDefinition]) -> Result<(), M
             // (`partition.go:1761`).
             return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_SAME_NAME_PARTITION
-                    .generate_with_stack_by_args(&[definition.name.original().to_owned().into()]),
+                    .gen_with_stack_by_args(&[definition.name.original().to_owned().into()]),
             ));
         }
     }
@@ -1693,7 +1693,7 @@ pub fn check_too_long_table(name: &str) -> Result<(), MysqlError> {
     if name.chars().count() > MAX_TABLE_NAME_LENGTH {
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_TOO_LONG_IDENT
-                .generate_with_stack_by_args(&[name.to_owned().into()]),
+                .gen_with_stack_by_args(&[name.to_owned().into()]),
         ));
     }
     Ok(())
@@ -1751,7 +1751,7 @@ fn check_unique_keys_include_partition_columns(
         if !handle_offsets.is_empty() && index.primary {
             return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_UNIQUE_KEY_NEED_ALL_FIELDS_IN_PF
-                    .generate_with_stack_by_args(&[("CLUSTERED INDEX".to_owned())
+                    .gen_with_stack_by_args(&[("CLUSTERED INDEX".to_owned())
                         .to_string()
                         .into()]),
             ));
@@ -1762,7 +1762,7 @@ fn check_unique_keys_include_partition_columns(
             continue;
         }
         return Err(tidb_terror::MysqlError::from_terror(
-            &tidb_dbterror::ERR_GLOBAL_INDEX_NOT_EXPLICITLY_SET.generate_with_stack_by_args(
+            &tidb_dbterror::ERR_GLOBAL_INDEX_NOT_EXPLICITLY_SET.gen_with_stack_by_args(
                 &[(index.name.original().to_owned()).to_string().into()],
             ),
         ));
@@ -1777,7 +1777,7 @@ fn check_unique_keys_include_partition_columns(
     {
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_UNIQUE_KEY_NEED_ALL_FIELDS_IN_PF
-                .generate_with_stack_by_args(&[("CLUSTERED INDEX".to_owned()).to_string().into()]),
+                .gen_with_stack_by_args(&[("CLUSTERED INDEX".to_owned()).to_string().into()]),
         ));
     }
     Ok(())
@@ -1961,7 +1961,7 @@ fn stored_value_text(datum: &Datum, field_type: Option<&FieldType>) -> Result<St
             .map_err(|_| {
                 tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE
-                        .generate_with_stack_by_args(&[]),
+                        .gen_with_stack_by_args(&[]),
                 )
             })
     };
@@ -2004,7 +2004,7 @@ fn stored_value_text(datum: &Datum, field_type: Option<&FieldType>) -> Result<St
         // Go's switch has no other arm and returns
         // `ErrWrongTypeColumnValue` for anything else.
         _ => Err(tidb_terror::MysqlError::from_terror(
-            &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[]),
+            &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.gen_with_stack_by_args(&[]),
         )),
     }
 }
@@ -2042,7 +2042,7 @@ pub fn stored_in_values(
             PartitionValue::MaxValue => {
                 return Err(tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE
-                        .generate_with_stack_by_args(&[]),
+                        .gen_with_stack_by_args(&[]),
                 ))
             }
             PartitionValue::Expr(expr) => {

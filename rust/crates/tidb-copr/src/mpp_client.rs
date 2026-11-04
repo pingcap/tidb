@@ -1111,7 +1111,7 @@ mod dispatch_context_tests {
 #[cfg(test)]
 mod mpp_read_batch_tests {
     use super::*;
-    use tidb_executor::mpp_coordinator::{MppRecoveryResponse, MppTaskResponses};
+    use tidb_executor::mpp_coordinator::{ExecutorWithRetry, MppTaskResponses};
     use tidb_txnkv::Response as _;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
@@ -1694,7 +1694,7 @@ mod mpp_read_batch_tests {
         let connections = fixture.connections.load(Ordering::SeqCst);
         let next_fixture = fixture.clone();
         let next_memory = memory.clone();
-        let mut response = MppRecoveryResponse::new(
+        let mut response = ExecutorWithRetry::new(
             MppTaskResponses {
                 streams: [Box::new(initial) as Box<dyn MppStreamResponse>].into(),
                 node_count: 1,
@@ -1733,7 +1733,7 @@ mod mpp_read_batch_tests {
             Fixture::with_opening(false, false, false, b"raw".to_vec(), Opening::TwoPackets);
         let memory = tidb_variable::mem_quota::StatementMemory::default();
         let raw = fixture.open_with_memory(memory.clone()).unwrap();
-        let mut response = MppRecoveryResponse::new(
+        let mut response = ExecutorWithRetry::new(
             MppTaskResponses {
                 streams: [Box::new(raw) as Box<dyn MppStreamResponse>].into(),
                 node_count: 1,

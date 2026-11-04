@@ -102,7 +102,7 @@ use tidb_exprctx::SequenceEvalError;
     /// its end (Go `table.ErrSequenceHasRunOut`).
     fn sequence_run_out(database: &str, sequence: &str) -> tidb_terror::TerrorError {
         tidb_table::table_errors::ERR_SEQUENCE_HAS_RUN_OUT
-            .generate_with_stack_by_args(&[database.into(), sequence.into()])
+            .gen_with_stack_by_args(&[database.into(), sequence.into()])
     }
 
     /// An error that carries a code carries its message with it. The two used
@@ -143,7 +143,7 @@ use tidb_exprctx::SequenceEvalError;
             ))),
             MysqlError::from_terror(
                 &tidb_table::table_errors::ERR_SEQUENCE_HAS_RUN_OUT
-                    .generate_with_stack("Sequence 'test.s1' has run out")
+                    .gen_with_stack("Sequence 'test.s1' has run out")
             )
             .from_evaluation()
         );
@@ -151,7 +151,7 @@ use tidb_exprctx::SequenceEvalError;
             rendered(ExecError::Eval(EvalError::DivisionByZero)),
             MysqlError::from_terror(
                 &tidb_expr::expression_errors::ERR_DIVISION_BY_ZERO
-                    .generate_with_stack_by_args(&[])
+                    .gen_with_stack_by_args(&[])
             )
             .from_evaluation()
         );
@@ -161,7 +161,7 @@ use tidb_exprctx::SequenceEvalError;
             ))),
             MysqlError::from_terror(
                 &tidb_expr::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
-                    .generate_with_stack_by_args(&["aes_encrypt".into()])
+                    .gen_with_stack_by_args(&["aes_encrypt".into()])
             )
             .from_evaluation()
         );
@@ -170,7 +170,7 @@ use tidb_exprctx::SequenceEvalError;
                 "The initialization vector supplied to aes_encrypt is too short".to_owned()
             ))),
             MysqlError::from_terror(
-                &tidb_expr::expression_errors::ERR_INCORRECT_ARGS.generate_with_stack(
+                &tidb_expr::expression_errors::ERR_INCORRECT_ARGS.gen_with_stack(
                     "The initialization vector supplied to aes_encrypt is too short"
                 )
             )
@@ -183,7 +183,7 @@ use tidb_exprctx::SequenceEvalError;
             })),
             MysqlError::from_terror(
                 &tidb_datatype::types_errors::ERR_OVERFLOW
-                    .generate_with_stack("length value is out of range in 'random_bytes'")
+                    .gen_with_stack("length value is out of range in 'random_bytes'")
             )
             .from_evaluation()
         );

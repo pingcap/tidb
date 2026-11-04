@@ -58,13 +58,13 @@ fn extract_tbl_infos(
     })
     .map_err(|error| match error.code {
         tidb_mysql::errors::errcode::ErrNoSuchTable => DdlPlanError::from(
-            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(&[
+            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.gen_with_stack_by_args(&[
                 (pair.from_schema.clone()).into(),
                 (pair.from_table.clone()).into(),
             ]),
         ),
         tidb_mysql::errors::errcode::ErrTableExists => DdlPlanError::from(
-            tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.generate_with_stack_by_args(&[
+            tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.gen_with_stack_by_args(&[
                 format!("{}.{}", (pair.to_schema.clone()), (pair.to_table.clone())).into(),
             ]),
         ),
@@ -381,7 +381,7 @@ fn rename_one(
         return Err(cancel_ddl_job(
             active,
             DdlPlanError::from(
-                tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+                tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack_by_args(&[
                     FormatArg::from("table"),
                     FormatArg::new(
                         table.state.to_string(),

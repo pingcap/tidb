@@ -335,5 +335,5 @@ impl tidb_util::misc::SequenceTable for SequenceDef {
 /// Go `table.ErrSequenceHasRunOut.GenWithStackByArgs(dbName, seqName)`.
 fn sequence_has_run_out(db_name: &str, seq_name: &str) -> tidb_terror::TerrorError {
     crate::table_errors::ERR_SEQUENCE_HAS_RUN_OUT
-        .generate_with_stack_by_args(&[db_name.into(), seq_name.into()])
+        .gen_with_stack_by_args(&[db_name.into(), seq_name.into()])
 }

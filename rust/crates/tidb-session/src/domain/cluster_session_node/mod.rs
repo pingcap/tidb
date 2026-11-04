@@ -1874,10 +1874,13 @@ impl<'s> ClusterServerSession<'s> {
             (Some(effective), binding_sql)
         });
         let effective = effective_template.as_deref();
-        // Go `Compile` of the EXECUTE counts the prepared statement.
-        if let Some(template) = effective {
-            self.session.count_stmt_node(template);
-        }
+        // Go `Compile` of the EXECUTE counts the prepared statement once its
+        // `Optimize` planned it: a cached plan when it binds, a rebuilt one
+        // when the compile boundary succeeds (counted once, however many
+        // attempts the statement takes).
+        let mut stmt_node_count =
+            effective.and_then(|template| self.session.stmt_node_count(template));
+        let compiles = self.session.successful_compiles();
         // Plan-cache validation must see the current schema before the read
         // policy is declared. Rebuilding only inside the statement lifecycle
         // would let a stale row-handle plan choose MaxTS and then fall back to
@@ -2022,6 +2025,11 @@ impl<'s> ClusterServerSession<'s> {
                     }
                 })();
                 session.set_binary_prepared_execution(false);
+                if direct || session.successful_compiles() != compiles {
+                    if let Some(count) = stmt_node_count.take() {
+                        count.record();
+                    }
+                }
                 opened.map_err(map_error)
             });
             telemetry.update_telemetry_metric();
@@ -2078,6 +2086,11 @@ impl<'s> ClusterServerSession<'s> {
         self.node.activate_statement_txn = false;
         self.session.set_binary_prepared_execution(false);
         self.session.update_telemetry_metric();
+        if direct || self.session.successful_compiles() != compiles {
+            if let Some(count) = stmt_node_count {
+                count.record();
+            }
+        }
         if attempt.is_ok() {
             self.session.count_executed_statement();
         }

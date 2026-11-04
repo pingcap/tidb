@@ -1097,7 +1097,7 @@ fn test_leader_tick() {
     s.add_offset(Duration::from_nanos((GC_DEFAULT_LIFE_TIME * 2) as u64));
     let reset_last_run = |s: &Suite| {
         let long_ago =
-            time_from_ts(s.must_alloc_ts()) - chrono::Duration::from_std(very_long).unwrap();
+            get_time_from_ts(s.must_alloc_ts()) - chrono::Duration::from_std(very_long).unwrap();
         s.job().save_time(GC_LAST_RUN_TIME_KEY, long_ago).unwrap();
     };
     let gc_safe_point = |s: &Suite| s.gc_state().gc_safe_point;
@@ -1193,7 +1193,7 @@ fn test_gc_with_pending_txn() {
     s.job()
         .save_time(
             GC_LAST_RUN_TIME_KEY,
-            time_from_ts(s.must_alloc_ts()) - very_long,
+            get_time_from_ts(s.must_alloc_ts()) - very_long,
         )
         .unwrap();
     s.worker.last_finish =
@@ -1229,7 +1229,7 @@ fn test_gc_with_pending_txn2() {
     s.job()
         .save_time(
             GC_LAST_RUN_TIME_KEY,
-            time_from_ts(s.must_alloc_ts()) - very_long,
+            get_time_from_ts(s.must_alloc_ts()) - very_long,
         )
         .unwrap();
     s.worker.last_finish =
@@ -1266,12 +1266,12 @@ fn test_skip_gc_and_only_resolve_lock() {
 
     assert_eq!(now, job.set_gc_worker_service_safe_point(now).unwrap());
     let very_long = chrono::Duration::nanoseconds(GC_DEFAULT_LIFE_TIME * 100);
-    let last_run_time = time_from_ts(s.must_alloc_ts()) - very_long;
+    let last_run_time = get_time_from_ts(s.must_alloc_ts()) - very_long;
     let new_gc_life_time: i64 = 24 * 60 * 60 * 1_000_000_000;
     job.save_time(GC_LAST_RUN_TIME_KEY, last_run_time).unwrap();
     job.save_time(
         GC_SAFE_POINT_KEY,
-        time_from_ts(s.must_alloc_ts()) - chrono::Duration::minutes(10),
+        get_time_from_ts(s.must_alloc_ts()) - chrono::Duration::minutes(10),
     )
     .unwrap();
     job.save_duration(GC_LIFE_TIME_KEY, new_gc_life_time)
@@ -1593,7 +1593,7 @@ fn test_resolve_lock_range_meet_region_enlarge_caused_by_region_merge() {
 fn test_resolve_locks_near_txn_safe_point() {
     let s = create_gc_worker_suite();
     let current_ts = s.must_alloc_ts();
-    let txn_safe_point = go_time_to_ts(time_from_ts(current_ts) - chrono::Duration::minutes(5));
+    let txn_safe_point = go_time_to_ts(get_time_from_ts(current_ts) - chrono::Duration::minutes(5));
 
     let mut txns = Vec::new();
     for (i, start_ts) in [txn_safe_point - 1, txn_safe_point, txn_safe_point + 1]
@@ -2035,10 +2035,10 @@ fn test_run_gc_job() {
     job.run_gc_job(safe_point, concurrency).unwrap();
     assert_eq!(safe_point, s.gc_state().gc_safe_point);
 
-    job.save_time(GC_SAFE_POINT_KEY, time_from_ts(safe_point))
+    job.save_time(GC_SAFE_POINT_KEY, get_time_from_ts(safe_point))
         .unwrap();
     assert_eq!(
-        time_from_ts(safe_point),
+        get_time_from_ts(safe_point),
         job.load_time(GC_SAFE_POINT_KEY).unwrap().unwrap()
     );
     assert_eq!(safe_point, s.gc_state().txn_safe_point);

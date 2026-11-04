@@ -121,7 +121,7 @@ impl<S: TableSource, C: tidb_exprctx::Columns> PlanBuilder<'_, S, C> {
                 [schema, name] => (go_to_lower(schema), name.as_str()),
                 _ => {
                     return Err(PlanError::from(
-                        tidb_plannererrors::ERR_UNKNOWN_TABLE.generate_with_stack_by_args(
+                        tidb_plannererrors::ERR_UNKNOWN_TABLE.gen_with_stack_by_args(
                             &[(target.join(".")).into(), "MULTI DELETE".into()],
                         ),
                     ))
@@ -144,13 +144,13 @@ impl<S: TableSource, C: tidb_exprctx::Columns> PlanBuilder<'_, S, C> {
             let Some((can_update, key)) = found else {
                 return Err(PlanError::from(
                     tidb_plannererrors::ERR_UNKNOWN_TABLE
-                        .generate_with_stack_by_args(&[written.into(), "MULTI DELETE".into()]),
+                        .gen_with_stack_by_args(&[written.into(), "MULTI DELETE".into()]),
                 ));
             };
             if !can_update {
                 return Err(PlanError::from(
                     tidb_plannererrors::ERR_NON_UPDATABLE_TABLE
-                        .generate_with_stack_by_args(&[written.into(), "DELETE".into()]),
+                        .gen_with_stack_by_args(&[written.into(), "DELETE".into()]),
                 ));
             }
             let table_ref = names
@@ -175,7 +175,7 @@ impl<S: TableSource, C: tidb_exprctx::Columns> PlanBuilder<'_, S, C> {
             let meta = self.source.find_table(database, table).ok_or_else(|| {
                 PlanError::from(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                        .fast_generate_by_args(&[database.into(), table.into()]),
+                        .fast_gen_by_args(&[database.into(), table.into()]),
                 )
             })?;
             let target = DeleteTarget {

@@ -117,7 +117,7 @@ pub fn handle_bad_null(
     ctx.append_sql_warn(tidb_context::SqlWarn::raised(
         tidb_context::WarningLevel::Warning,
         crate::table_errors::ERR_COLUMN_CANT_NULL
-            .generate_with_stack_by_args(&[column.into()]),
+            .gen_with_stack_by_args(&[column.into()]),
     ));
     *value = get_zero_value(field_type);
     Ok(true)
@@ -143,7 +143,7 @@ pub fn handle_bad_null_in_load_data(
     if level == NullLevel::Error {
         return Err(ColumnError::Mysql(
             tidb_terror::MysqlError::from_terror(
-                &crate::table_errors::ERR_WARN_NULL_TO_NOTNULL.generate_with_stack(message),
+                &crate::table_errors::ERR_WARN_NULL_TO_NOTNULL.gen_with_stack(message),
             ),
         ));
     }

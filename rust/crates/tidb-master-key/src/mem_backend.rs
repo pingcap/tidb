@@ -97,7 +97,7 @@ impl MemAesGcmBackend {
         let Some(iv_value) = content.metadata.get(METADATA_KEY_IV) else {
             return Err(format!("metadata {METADATA_KEY_IV} not found"));
         };
-        let iv = Iv::from_slice(iv_value)?;
+        let iv = Iv::new_iv_from_slice(iv_value)?;
 
         let Some(tag) = content.metadata.get(METADATA_KEY_AES_GCM_TAG) else {
             return Err(GCM_TAG_NOT_FOUND.to_owned());
@@ -136,7 +136,7 @@ mod tests {
         let backend = MemAesGcmBackend::new(&key).expect("Failed to create MemAesGcmBackend");
 
         let plaintext = b"Hello, World!";
-        let iv = Iv::new_gcm().expect("failed to create gcm iv");
+        let iv = Iv::new_iv_gcm().expect("failed to create gcm iv");
 
         let encrypted = backend
             .encrypt_content(plaintext, &iv)
@@ -161,7 +161,7 @@ mod tests {
         let backend2 = MemAesGcmBackend::new(&key2).unwrap();
 
         let plaintext = b"Hello, World!";
-        let iv = Iv::new_gcm().expect("failed to create gcm iv");
+        let iv = Iv::new_iv_gcm().expect("failed to create gcm iv");
 
         let encrypted = backend1.encrypt_content(plaintext, &iv).unwrap();
         backend2
@@ -176,7 +176,7 @@ mod tests {
         let backend = MemAesGcmBackend::new(&key).unwrap();
 
         let plaintext = b"Hello, World!";
-        let iv = Iv::new_gcm().expect("failed to create gcm iv");
+        let iv = Iv::new_iv_gcm().expect("failed to create gcm iv");
 
         let mut encrypted = backend.encrypt_content(plaintext, &iv).unwrap();
         encrypted.content[0] ^= 1; // Tamper with the ciphertext
@@ -193,7 +193,7 @@ mod tests {
         let backend = MemAesGcmBackend::new(&key).unwrap();
 
         let plaintext = b"Hello, World!";
-        let iv = Iv::new_gcm().expect("failed to create gcm iv");
+        let iv = Iv::new_iv_gcm().expect("failed to create gcm iv");
 
         let mut encrypted = backend.encrypt_content(plaintext, &iv).unwrap();
         encrypted.metadata.remove(METADATA_KEY_METHOD);
@@ -210,7 +210,7 @@ mod tests {
         let backend = MemAesGcmBackend::new(&key).unwrap();
 
         let plaintext = vec![0u8; 1_000_000]; // 1 MB of data
-        let iv = Iv::new_gcm().expect("failed to create gcm iv");
+        let iv = Iv::new_iv_gcm().expect("failed to create gcm iv");
 
         let encrypted = backend
             .encrypt_content(&plaintext, &iv)
@@ -231,7 +231,7 @@ mod tests {
     #[test]
     fn test_decrypt_metadata_errors() {
         let backend = MemAesGcmBackend::new(&[0u8; 32]).unwrap();
-        let iv = Iv::new_gcm().unwrap();
+        let iv = Iv::new_iv_gcm().unwrap();
         let encrypted = backend.encrypt_content(b"payload", &iv).unwrap();
 
         let mut wrong_method = encrypted.clone();
@@ -287,7 +287,7 @@ mod tests {
     #[test]
     fn test_ctr_iv_panics_like_go() {
         let backend = MemAesGcmBackend::new(&[0u8; 32]).unwrap();
-        let iv = Iv::from_slice(&[0u8; 16]).unwrap();
+        let iv = Iv::new_iv_from_slice(&[0u8; 16]).unwrap();
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _ = backend.encrypt_content(b"payload", &iv);
         }));
@@ -299,7 +299,7 @@ mod tests {
     #[test]
     fn test_encrypt_content_metadata_shape() {
         let backend = MemAesGcmBackend::new(&[9u8; 32]).unwrap();
-        let iv = Iv::from_slice(&[4u8; 12]).unwrap();
+        let iv = Iv::new_iv_from_slice(&[4u8; 12]).unwrap();
         let encrypted = backend.encrypt_content(b"0123456789abcdef!!", &iv).unwrap();
 
         assert_eq!(

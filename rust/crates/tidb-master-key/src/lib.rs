@@ -44,7 +44,7 @@
 //! - **`github.com/pingcap/kvproto/pkg/encryptionpb`** — [`pb`] redeclares
 //!   `EncryptedContent`, `MasterKey` and `MasterKeyKms` as plain structs. They
 //!   are flat messages; nothing here needs the protobuf codec.
-//! - **`br/pkg/kms`** — [`kms`] ports `Provider` (as [`KmsProvider`]) plus the
+//! - **`br/pkg/kms`** — [`kms`] ports `Provider` (as [`Provider`]) plus the
 //!   `EncryptedKey` / `PlainKey` / `CryptographyType` wrappers from
 //!   `kms/common.go`. `kms.NewAwsKms` and `kms.NewGcpKms` are AWS/GCP SDK
 //!   clients and are not ported; [`create_backend`] takes a
@@ -88,7 +88,7 @@ pub use common::{
 };
 pub use file_backend::{create_file_backend, FileBackend, AES_GCM_KEY_LEN};
 pub use gcm::{Aes256Gcm, GcmError};
-pub use kms::{CryptographyType, EncryptedKey, KmsProvider, PlainKey};
+pub use kms::{CryptographyType, EncryptedKey, Provider, PlainKey};
 pub use kms_backend::KmsBackend;
 pub use mem_backend::{MemAesGcmBackend, GCM_TAG_NOT_FOUND, WRONG_MASTER_KEY};
 pub use multi_master_key_backend::MultiMasterKeyBackend;
@@ -120,7 +120,7 @@ pub trait Backend: Send + Sync {
 /// them; [`create_backend`] still owns the vendor dispatch that decides whether
 /// a client should be built at all.
 pub type KmsProviderFactory =
-    Box<dyn Fn(&MasterKeyKms) -> Result<Arc<dyn KmsProvider>, String> + Send + Sync>;
+    Box<dyn Fn(&MasterKeyKms) -> Result<Arc<dyn Provider>, String> + Send + Sync>;
 
 /// Go `CreateBackend`.
 ///
@@ -189,7 +189,7 @@ mod tests {
     }
 
     struct StubProvider;
-    impl KmsProvider for StubProvider {
+    impl Provider for StubProvider {
         fn decrypt_data_key(&self, _encrypted_key: &EncryptedKey) -> Result<Vec<u8>, String> {
             Ok(vec![1u8; 32])
         }
@@ -252,7 +252,7 @@ mod tests {
         let _guard = tidb_logutil::global_logger_test_guard();
         let failing = no_kms();
         let working: KmsProviderFactory =
-            Box::new(|_| Ok(Arc::new(StubProvider) as Arc<dyn KmsProvider>));
+            Box::new(|_| Ok(Arc::new(StubProvider) as Arc<dyn Provider>));
 
         let kms = |vendor: &str| {
             MasterKey::Kms(MasterKeyKms {
@@ -313,7 +313,7 @@ mod tests {
         // A content sealed under a different master key fails every member.
         let other = MemAesGcmBackend::new(&[8u8; 32]).unwrap();
         let foreign = other
-            .encrypt_content(b"secret", &Iv::new_gcm().unwrap())
+            .encrypt_content(b"secret", &Iv::new_iv_gcm().unwrap())
             .unwrap();
         let error = multi.decrypt(&foreign).unwrap_err();
         assert!(

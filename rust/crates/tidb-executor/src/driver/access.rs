@@ -1924,7 +1924,7 @@ pub fn run_prepared_point_get(
     stmt_ctx: &crate::StmtContext,
 ) -> Result<Option<SelectMeta>, DriverError> {
     open_prepared_point_get(execution, catalog, ctx, stmt_ctx)?
-        .map(super::QueryRecordSet::collect)
+        .map(super::RecordSet::collect)
         .transpose()
 }
 
@@ -1935,7 +1935,7 @@ pub fn open_prepared_point_get(
     catalog: &SessionExtendedInfoSchema,
     ctx: &tidb_table::tables::PreparedPointGetDecodeContext,
     stmt_ctx: &crate::StmtContext,
-) -> Result<Option<super::QueryRecordSet>, DriverError> {
+) -> Result<Option<super::RecordSet>, DriverError> {
     let plan = execution.plan();
     if !plan.matches_catalog(catalog) {
         return Ok(None);
@@ -1978,7 +1978,7 @@ pub fn open_prepared_point_get(
         done: false,
     };
     let current_db = stmt_ctx.current_database_name().unwrap_or_default();
-    super::QueryRecordSet::open(Box::new(executor), columns, stmt_ctx.statement_memory())
+    super::RecordSet::open(Box::new(executor), columns, stmt_ctx.statement_memory())
         .map(|record_set| Some(record_set.with_output_names(output_names, current_db)))
 }
 

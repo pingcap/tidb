@@ -639,7 +639,7 @@ impl From<EvalError> for PlanError {
     fn from(error: EvalError) -> Self {
         match error {
             EvalError::UnknownColumnInClause(column, clause) => Self::from(
-                tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_UNKNOWN_COLUMN.gen_with_stack_by_args(&[
                     tidb_hack::go_to_lower(column).into(),
                     clause.into(),
                 ]),

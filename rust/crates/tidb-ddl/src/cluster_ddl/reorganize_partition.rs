@@ -84,7 +84,7 @@ impl tidb_ddl_build::partition_ddl::ReorgHost for AdmissionReorgHost {
                 else {
                     return Err(tidb_terror::MysqlError::from_terror(
                         &tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_NOT_EXISTS
-                            .generate_with_stack_by_args(&[(reference.name.original()).into()]),
+                            .gen_with_stack_by_args(&[(reference.name.original()).into()]),
                     ));
                 };
                 reference.id = found.id;
@@ -973,7 +973,7 @@ pub(super) fn on_reorganize_partition(
             Ok(action_step(write))
         }
         state => Err(DdlPlanError::from(
-            tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+            tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack_by_args(&[
                 FormatArg::from("partition"),
                 FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
             ]),

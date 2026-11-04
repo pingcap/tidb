@@ -42,7 +42,7 @@ impl FileBackend {
 
     /// Go `Encrypt`: seals with a fresh random GCM IV.
     pub fn encrypt(&self, plaintext: &[u8]) -> Result<EncryptedContent, String> {
-        let iv = Iv::new_gcm()?;
+        let iv = Iv::new_iv_gcm()?;
         self.mem_cache.encrypt_content(plaintext, &iv)
     }
 }
@@ -146,7 +146,7 @@ mod tests {
         let temp_key_file = create_master_key_file();
         let backend = create_file_backend(temp_key_file.path()).unwrap();
 
-        let iv = Iv::from_slice(&iv_bytes).unwrap();
+        let iv = Iv::new_iv_from_slice(&iv_bytes).unwrap();
         let encrypted_content = backend.mem_cache().encrypt_content(&pt, &iv).unwrap();
         assert_eq!(encrypted_content.content, ct);
 

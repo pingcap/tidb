@@ -24,7 +24,7 @@ use tidb_datatype::{Datum, UNSPECIFIED_LENGTH};
 use tidb_model::{IndexInfo, TableInfo};
 use tidb_resolve::ResultFieldRef;
 use tidb_sqlexec::{
-    exec_option_use_current_session, ExecutionContext, OptionFuncAlias, RecordSet,
+    exec_option_use_cur_session, ExecutionContext, OptionFuncAlias, RecordSet,
     RestrictedSqlExecutor, SqlExecError,
 };
 use tidb_sqlexec_mock::MockRestrictedSqlExecutor;
@@ -54,7 +54,7 @@ const INTERNAL_STATS_FOREGROUND_PRIORITY: &str = "StatsForegroundPriority";
 
 /// Go `UseCurrentSessionOpt`.
 pub static USE_CURRENT_SESSION_OPT: LazyLock<Vec<OptionFuncAlias>> =
-    LazyLock::new(|| vec![Arc::new(exec_option_use_current_session)]);
+    LazyLock::new(|| vec![Arc::new(exec_option_use_cur_session)]);
 
 /// Shared Go `StatsCtx` value.
 pub static STATS_CONTEXT: LazyLock<TraceContext> = LazyLock::new(|| {

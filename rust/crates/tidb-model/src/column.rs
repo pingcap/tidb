@@ -723,11 +723,11 @@ impl ColumnInfo {
             return Ok(());
         }
 
-        let formatted = ERR_INVALID_DEFAULT.fast_generate(
+        let formatted = ERR_INVALID_DEFAULT.fast_gen(
             errname::ErrInvalidDefault.raw,
             &[FormatArg::from(self.name.original())],
         );
-        Err(ERR_INVALID_DEFAULT.generate_with_stack(formatted.message().to_owned()))
+        Err(ERR_INVALID_DEFAULT.gen_with_stack(formatted.message().to_owned()))
     }
 
     /// Go `GetTypeDesc`: the column type description.

@@ -46,7 +46,7 @@ pub fn check_drop_object(
             ))
     {
         return Err(MysqlError::from_terror(
-            &tidb_dbterror::ERR_FORBIDDEN_DDL.generate_with_stack_by_args(&[format!(
+            &tidb_dbterror::ERR_FORBIDDEN_DDL.gen_with_stack_by_args(&[format!(
                 "Drop tidb system table '{}.{}'",
                 schema_key, name_key
             )
@@ -56,7 +56,7 @@ pub fn check_drop_object(
     match expected {
         DropObjectKind::View if actual != DropObjectKind::View => {
             Err(tidb_terror::MysqlError::from_terror(
-                &tidb_infoschema::infoschema_errors::ERR_WRONG_OBJECT.generate_with_stack_by_args(&[
+                &tidb_infoschema::infoschema_errors::ERR_WRONG_OBJECT.gen_with_stack_by_args(&[
                     schema.into(),
                     name.into(),
                     "VIEW".into(),
@@ -66,7 +66,7 @@ pub fn check_drop_object(
         DropObjectKind::Table if actual != DropObjectKind::Table => Ok(false),
         DropObjectKind::Table if cached => Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_OPT_ON_CACHE_TABLE
-                .generate_with_stack_by_args(&["Drop Table".into()]),
+                .gen_with_stack_by_args(&["Drop Table".into()]),
         )),
         _ => Ok(true),
     }
@@ -134,7 +134,7 @@ pub fn check_rename(admission: RenameAdmission<'_>) -> Result<bool, MysqlError> 
     let occupied = || {
         tidb_terror::MysqlError::from_terror(
             &tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS
-                .generate_with_stack_by_args(&[(&format!("{to_db}.{to_name}")).into()]),
+                .gen_with_stack_by_args(&[(&format!("{to_db}.{to_name}")).into()]),
         )
     };
     if !source_exists {
@@ -143,7 +143,7 @@ pub fn check_rename(admission: RenameAdmission<'_>) -> Result<bool, MysqlError> 
         }
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                .generate_with_stack_by_args(&[from_db.into(), from_name.into()]),
+                .gen_with_stack_by_args(&[from_db.into(), from_name.into()]),
         ));
     }
     if is_alter
@@ -155,12 +155,12 @@ pub fn check_rename(admission: RenameAdmission<'_>) -> Result<bool, MysqlError> 
     if source_is_view && from_db != to_db {
         return Err(MysqlError::from_terror(
             &tidb_infoschema::infoschema_errors::ERR_FORBID_SCHEMA_CHANGE
-                .generate_with_stack_by_args(&[from_db.into(), to_db.into()]),
+                .gen_with_stack_by_args(&[from_db.into(), to_db.into()]),
         ));
     }
     if !target_schema_exists {
         return Err(tidb_terror::MysqlError::from_terror(
-            &tidb_dbterror::ERR_ERROR_ON_RENAME.generate_with_stack_by_args(&[
+            &tidb_dbterror::ERR_ERROR_ON_RENAME.gen_with_stack_by_args(&[
                 (&format!("{from_db}.{from_name}")).into(),
                 (&format!("{to_db}.{to_name}")).into(),
                 168.into(),
@@ -174,7 +174,7 @@ pub fn check_rename(admission: RenameAdmission<'_>) -> Result<bool, MysqlError> 
     if to_name.go_to_lower().chars().count() > 64 {
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_TOO_LONG_IDENT
-                .generate_with_stack_by_args(&[to_name.to_string().into()]),
+                .gen_with_stack_by_args(&[to_name.to_string().into()]),
         ));
     }
     Ok(true)
@@ -215,10 +215,10 @@ pub fn check_view_target(
     match existing {
         Some(_) if !or_replace => Err(tidb_terror::MysqlError::from_terror(
             &tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS
-                .generate_with_stack_by_args(&[(&format!("{database}.{name}")).into()]),
+                .gen_with_stack_by_args(&[(&format!("{database}.{name}")).into()]),
         )),
         Some(false) => Err(tidb_terror::MysqlError::from_terror(
-            &tidb_infoschema::infoschema_errors::ERR_WRONG_OBJECT.generate_with_stack_by_args(&[
+            &tidb_infoschema::infoschema_errors::ERR_WRONG_OBJECT.gen_with_stack_by_args(&[
                 database.into(),
                 name.into(),
                 "VIEW".into(),

@@ -69,7 +69,7 @@ pub(super) fn build_drop_column_job<S: MetaSnapshot>(
             detail: format!("column `{column}` does not exist on `{schema}`.`{table}`"),
             warnings: vec![crate::real_tikv_ddl::ddl_note(
                 tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY
-                    .generate_with_stack_by_args(&[column.into()]),
+                    .gen_with_stack_by_args(&[column.into()]),
             )],
         }));
     }
@@ -261,7 +261,7 @@ pub(super) fn on_drop_column(
         }
         _ => {
             return Err(DdlPlanError::from(
-                tidb_dbterror::ERR_INVALID_DDL_JOB.generate_with_stack_by_args(&[
+                tidb_dbterror::ERR_INVALID_DDL_JOB.gen_with_stack_by_args(&[
                     FormatArg::from("table"),
                     FormatArg::new(
                         info.state.to_string(),
@@ -322,7 +322,7 @@ pub(super) fn rollingback_drop_column(
             SchemaState::PUBLIC => {}
             state => {
                 return Err(DdlPlanError::from(
-                    tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+                    tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack_by_args(&[
                         FormatArg::from("index"),
                         FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
                     ]),

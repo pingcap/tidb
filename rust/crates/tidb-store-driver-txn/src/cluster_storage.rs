@@ -65,7 +65,7 @@ use std::sync::{Arc, Mutex};
 use tidb_txnkv::Key;
 
 use tidb_kv::cluster_storage::{ClusterSnapshot, DuplicateKeyHint, SnapshotPairs};
-use tidb_kv::storage::{StorageError, StorageIterator, TableStorage};
+use tidb_kv::storage::{StagingHandle, StorageError, StorageIterator, TableStorage};
 
 
 /// A whole [`MutationBuffer`] as of one moment: what
@@ -566,6 +566,35 @@ impl MutationBuffer {
             .iter(Some(start.as_bytes()), Some(end.as_bytes()))
             .valid()
     }
+    /// Go `MemBuffer.Staging()` for one table write (`AddRecord` /
+    /// `UpdateRecord`), nested inside the statement's checkpoint.
+    pub fn staging(&self) -> usize {
+        self.state().memdb.staging()
+    }
+
+    /// Go `MemBuffer.Cleanup(h)` of [`Self::staging`].
+    pub fn cleanup(&self, handle: usize) {
+        self.state().memdb.cleanup(handle);
+    }
+
+    /// Go `MemBuffer.Release(h)` of [`Self::staging`].
+    pub fn release_staging(&self, handle: usize) {
+        self.state().memdb.release(handle);
+    }
+
+    /// Go `MemBuffer.InspectStage(h, f)`.
+    pub fn inspect_stage(&self, handle: usize, inspect: &mut dyn FnMut(&Key, tidb_txnkv::KeyFlags, &[u8])) {
+        self.state().memdb.read(|buffer| {
+            buffer.inspect_stage(handle, |key, flags, value| {
+                inspect(
+                    &Key::from(key.to_vec()),
+                    crate::driver::tikv_mem_buffer::to_driver_flags(flags),
+                    value,
+                );
+            });
+        });
+    }
+
     /// Starts a native staging scope and records the SQL delta position.
     pub fn checkpoint(&self) -> BufferCheckpoint {
         let mut state = self.state();
@@ -1319,6 +1348,32 @@ impl TableStorage for ClusterTableStorage {
 
     fn has_external_statement_rollback(&self) -> bool {
         true
+    }
+
+    fn staging(&mut self) -> StagingHandle {
+        StagingHandle(self.buffer.staging())
+    }
+
+    fn cleanup(&mut self, handle: StagingHandle) {
+        if handle.0 != 0 {
+            self.buffer.cleanup(handle.0);
+        }
+    }
+
+    fn release(&mut self, handle: StagingHandle) {
+        if handle.0 != 0 {
+            self.buffer.release_staging(handle.0);
+        }
+    }
+
+    fn inspect_stage(
+        &self,
+        handle: StagingHandle,
+        inspect: &mut dyn FnMut(&Key, tidb_txnkv::KeyFlags, &[u8]),
+    ) {
+        if handle.0 != 0 {
+            self.buffer.inspect_stage(handle.0, inspect);
+        }
     }
 
     fn point_rpc_counts(&mut self) -> (u64, u64) {

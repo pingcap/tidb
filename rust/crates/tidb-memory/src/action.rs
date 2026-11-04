@@ -272,7 +272,7 @@ impl ActionOnExceed for PanicOnExceed {
 /// limit, tree)`.
 fn mem_exceed_error(t: &Arc<Tracker>) -> TerrorError {
     let template = ERR_MEM_EXCEED_THRESHOLD.message().to_string();
-    ERR_MEM_EXCEED_THRESHOLD.fast_generate(
+    ERR_MEM_EXCEED_THRESHOLD.fast_gen(
         &template,
         &[
             FormatArg::from(t.label()),

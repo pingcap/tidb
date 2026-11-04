@@ -52,7 +52,7 @@ pub fn coded(
     proto: &'static tidb_terror::TerrorError,
     message: impl Into<String>,
 ) -> DdlAdmissionError {
-    DdlAdmissionError::from_terror(&proto.generate_with_stack(message.into()))
+    DdlAdmissionError::from_terror(&proto.gen_with_stack(message.into()))
 }
 
 pub fn part_column(part: &IndexPart) -> Refusal<String> {
@@ -84,7 +84,7 @@ pub fn build_fk_info(
     if keys.len() != ref_parts.len() {
         return Err(refusal(tidb_terror::MysqlError::from_terror(
             &tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_NOT_MATCH
-                .generate_with_stack_by_args(&[
+                .gen_with_stack_by_args(&[
                     fk_name.to_owned().into(),
                     ("Key reference and table reference don't match".to_owned())
                         .to_string()
@@ -128,7 +128,7 @@ pub fn build_fk_info(
         let Some(column) = find_column_info(&table.columns, &name) else {
             return Err(refusal(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS
-                    .generate_with_stack_by_args(&[name.to_string().into()]),
+                    .gen_with_stack_by_args(&[name.to_string().into()]),
             )));
         };
         let column = column.read();
@@ -136,7 +136,7 @@ pub fn build_fk_info(
             if !column.generated_stored {
                 return Err(refusal(tidb_terror::MysqlError::from_terror(
                     &tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_CANNOT_USE_VIRTUAL_COLUMN
-                        .generate_with_stack_by_args(&[
+                        .gen_with_stack_by_args(&[
                             fk_name.to_owned().into(),
                             (column.name.original().to_owned()).to_string().into(),
                         ]),
@@ -145,7 +145,7 @@ pub fn build_fk_info(
             if matches!(on_update, ReferOptionType::Cascade | ReferOptionType::SetNull | ReferOptionType::SetDefault) {
                 return Err(refusal(tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_WRONG_FK_OPTION_FOR_GENERATED_COLUMN
-                        .generate_with_stack_by_args(&[(format!(
+                        .gen_with_stack_by_args(&[(format!(
                             "ON UPDATE {}",
                             on_update.sql()
                         ))
@@ -156,7 +156,7 @@ pub fn build_fk_info(
             if matches!(on_delete, ReferOptionType::SetNull | ReferOptionType::SetDefault) {
                 return Err(refusal(tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_WRONG_FK_OPTION_FOR_GENERATED_COLUMN
-                        .generate_with_stack_by_args(&[(format!(
+                        .gen_with_stack_by_args(&[(format!(
                             "ON DELETE {}",
                             on_delete.sql()
                         ))
@@ -173,7 +173,7 @@ pub fn build_fk_info(
         {
             return Err(refusal(tidb_terror::MysqlError::from_terror(
                 &tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_COLUMN_NOT_NULL
-                    .generate_with_stack_by_args(&[
+                    .gen_with_stack_by_args(&[
                         (column.name.original().to_owned()).to_string().into(),
                         fk_name.to_owned().into(),
                     ]),
@@ -275,7 +275,7 @@ pub fn add_index_for_foreign_key(table: &mut TableInfo) -> Refusal<()> {
             let column = find_column_info(&table.columns, name.original()).ok_or_else(|| {
                 refusal(tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS
-                        .generate_with_stack_by_args(&[(name.original().to_owned())
+                        .gen_with_stack_by_args(&[(name.original().to_owned())
                             .to_string()
                             .into()]),
                 ))
@@ -309,13 +309,13 @@ pub fn check_table_foreign_key(refer: &TableInfo, table: &TableInfo, fk: &FKInfo
     if refer.ttl_info.is_some() {
         return Err(refusal(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_UNSUPPORTED_TTL_REFERENCED_BY_FK
-                .generate_with_stack_by_args(&[]),
+                .gen_with_stack_by_args(&[]),
         )));
     }
     if refer.partition.is_some() || table.partition.is_some() {
         return Err(refusal(tidb_terror::MysqlError::from_terror(
             &tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_ON_PARTITIONED
-                .generate_with_stack_by_args(&[]),
+                .gen_with_stack_by_args(&[]),
         )));
     }
     let ref_cols = fk.ref_cols.snapshot();
@@ -324,7 +324,7 @@ pub fn check_table_foreign_key(refer: &TableInfo, table: &TableInfo, fk: &FKInfo
         let Some(ref_col) = find_column_info(&refer.columns, ref_name.original()) else {
             return Err(refusal(tidb_terror::MysqlError::from_terror(
                 &tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_NO_COLUMN_IN_PARENT
-                    .generate_with_stack_by_args(&[
+                    .gen_with_stack_by_args(&[
                         (ref_name.original().to_owned()).to_string().into(),
                         (fk.name.original().to_owned()).to_string().into(),
                         (fk.ref_table.original().to_owned()).to_string().into(),
@@ -335,7 +335,7 @@ pub fn check_table_foreign_key(refer: &TableInfo, table: &TableInfo, fk: &FKInfo
         if ref_col.is_virtual_generated() {
             return Err(refusal(tidb_terror::MysqlError::from_terror(
                 &tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_CANNOT_USE_VIRTUAL_COLUMN
-                    .generate_with_stack_by_args(&[
+                    .gen_with_stack_by_args(&[
                         (fk.name.original().to_owned()).to_string().into(),
                         (ref_name.original().to_owned()).to_string().into(),
                     ]),
@@ -344,7 +344,7 @@ pub fn check_table_foreign_key(refer: &TableInfo, table: &TableInfo, fk: &FKInfo
         let Some(col) = cols.get(i).and_then(|name| find_column_info(&table.columns, name.original()))
         else {
             return Err(refusal(tidb_terror::MysqlError::from_terror(
-                &tidb_dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS.generate_with_stack_by_args(&[
+                &tidb_dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS.gen_with_stack_by_args(&[
                     (cols
                         .get(i)
                         .map(|n| n.original().to_owned())
@@ -362,7 +362,7 @@ pub fn check_table_foreign_key(refer: &TableInfo, table: &TableInfo, fk: &FKInfo
             || col.get_collate() != ref_col.get_collate()
         {
             return Err(refusal(tidb_terror::MysqlError::from_terror(
-                &tidb_dbterror::ERR_FK_INCOMPATIBLE_COLUMNS.generate_with_stack_by_args(&[
+                &tidb_dbterror::ERR_FK_INCOMPATIBLE_COLUMNS.gen_with_stack_by_args(&[
                     (col.name.original().to_owned()).to_string().into(),
                     (ref_col.name.original().to_owned()).to_string().into(),
                     (fk.name.original().to_owned()).to_string().into(),
@@ -379,7 +379,7 @@ pub fn check_table_foreign_key(refer: &TableInfo, table: &TableInfo, fk: &FKInfo
     if find_index_by_columns_for_foreign_key(refer, &refer.indices, &ref_cols).is_none() {
         return Err(refusal(tidb_terror::MysqlError::from_terror(
             &tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_NO_INDEX_IN_PARENT
-                .generate_with_stack_by_args(&[
+                .gen_with_stack_by_args(&[
                     (fk.name.original().to_owned()).to_string().into(),
                     (fk.ref_table.original().to_owned()).to_string().into(),
                 ]),

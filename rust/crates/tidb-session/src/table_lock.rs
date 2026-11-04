@@ -190,7 +190,7 @@ impl Session {
             if self.is_local_temporary_table(db, table) {
                 return Err(DriverError::from(
                     tidb_dbterror::ERR_UNSUPPORTED_LOCAL_TEMP_TABLE_DDL
-                        .generate_with_stack_by_args(&["LOCK TABLES".into()]),
+                        .gen_with_stack_by_args(&["LOCK TABLES".into()]),
                 ));
             }
         }
@@ -212,7 +212,7 @@ impl Session {
             let schema_id = catalog.database_id(db).ok_or_else(|| {
                 DriverError::from(
                     tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                        .generate_with_stack_by_args(&[(db.clone()).into()]),
+                        .gen_with_stack_by_args(&[(db.clone()).into()]),
                 )
             })?;
             let table = match catalog.table_in(db, name) {
@@ -220,13 +220,13 @@ impl Session {
                 Some(_) => {
                     return Err(DriverError::from(
                         tidb_table::table_errors::ERR_UNSUPPORTED_OP
-                            .generate_with_stack_by_args(&[]),
+                            .gen_with_stack_by_args(&[]),
                     ))
                 }
                 None => {
                     return Err(DriverError::from(
                         tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                            .generate_with_stack_by_args(&[(&db).into(), (&name).into()]),
+                            .gen_with_stack_by_args(&[(&db).into(), (&name).into()]),
                     ))
                 }
             };
@@ -234,7 +234,7 @@ impl Session {
             if !unique_table_id.insert(table.table_id()) {
                 return Err(DriverError::from(
                     tidb_infoschema::infoschema_errors::ERR_NONUNIQ_TABLE
-                        .generate_with_stack_by_args(&[table.name().into()]),
+                        .gen_with_stack_by_args(&[table.name().into()]),
                 ));
             }
             lock_tables.push(TableLockTpInfo {
@@ -397,7 +397,7 @@ impl Session {
             if self.is_local_temporary_table(db, table) {
                 return Err(DriverError::from(
                     tidb_dbterror::ERR_UNSUPPORTED_LOCAL_TEMP_TABLE_DDL
-                        .generate_with_stack_by_args(&["ADMIN CLEANUP TABLE LOCK".into()]),
+                        .gen_with_stack_by_args(&["ADMIN CLEANUP TABLE LOCK".into()]),
                 ));
             }
         }
@@ -419,7 +419,7 @@ impl Session {
             let schema_id = catalog.database_id(db).ok_or_else(|| {
                 DriverError::from(
                     tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                        .generate_with_stack_by_args(&[(db.clone()).into()]),
+                        .gen_with_stack_by_args(&[(db.clone()).into()]),
                 )
             })?;
             let table = match catalog.table_in(db, name) {
@@ -427,13 +427,13 @@ impl Session {
                 Some(_) => {
                     return Err(DriverError::from(
                         tidb_table::table_errors::ERR_UNSUPPORTED_OP
-                            .generate_with_stack_by_args(&[]),
+                            .gen_with_stack_by_args(&[]),
                     ))
                 }
                 None => {
                     return Err(DriverError::from(
                         tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                            .generate_with_stack_by_args(&[(&db).into(), (&name).into()]),
+                            .gen_with_stack_by_args(&[(&db).into(), (&name).into()]),
                     ))
                 }
             };
@@ -443,7 +443,7 @@ impl Session {
             if !unique_table_id.insert(table.table_id()) {
                 return Err(DriverError::from(
                     tidb_infoschema::infoschema_errors::ERR_NONUNIQ_TABLE
-                        .generate_with_stack_by_args(&[table.name().into()]),
+                        .gen_with_stack_by_args(&[table.name().into()]),
                 ));
             }
             cleanup.push(TableLockTpInfo {
@@ -492,7 +492,7 @@ impl Session {
     fn table_lock_name(&self, path: &[String]) -> Result<(String, String), DriverError> {
         match path {
             [_] if self.vars.current_db.is_empty() => Err(DriverError::from(
-                tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]),
             )),
             [table] => Ok((self.vars.current_db.clone(), table.clone())),
             [db, table] => Ok((db.clone(), table.clone())),

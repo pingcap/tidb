@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::common::{METADATA_KEY_KMS_CIPHERTEXT_KEY, METADATA_KEY_KMS_VENDOR};
-use super::kms::{CryptographyType, EncryptedKey, KmsProvider, PlainKey};
+use super::kms::{CryptographyType, EncryptedKey, Provider, PlainKey};
 use super::mem_backend::MemAesGcmBackend;
 use super::pb::EncryptedContent;
 use super::Backend;
@@ -39,13 +39,13 @@ struct CachedKeys {
 pub struct KmsBackend {
     /// Go's anonymous `struct { sync.Mutex; cached *CachedKeys }`.
     state: Mutex<Option<CachedKeys>>,
-    kms_provider: Arc<dyn KmsProvider>,
+    kms_provider: Arc<dyn Provider>,
 }
 
 impl KmsBackend {
     /// Go `NewKmsBackend`. Fallible in Go for symmetry with the other
     /// constructors; it can never actually fail.
-    pub fn new(kms_provider: Arc<dyn KmsProvider>) -> Result<KmsBackend, String> {
+    pub fn new(kms_provider: Arc<dyn Provider>) -> Result<KmsBackend, String> {
         Ok(KmsBackend {
             state: Mutex::new(None),
             kms_provider,
@@ -117,7 +117,7 @@ impl Backend for KmsBackend {
 /// asks of it is "retry every error, at most 10 attempts, sleeping 500ms and
 /// doubling up to a 5s cap", which is what this reproduces. Go's version also
 /// aborts early on context cancellation; there is no context here (see
-/// [`super::kms::KmsProvider`]).
+/// [`super::kms::Provider`]).
 fn retry_all_errors<T>(mut operation: impl FnMut() -> Result<T, String>) -> Result<T, String> {
     const REMAINING_ATTEMPTS: u32 = 10;
     const DELAY_TIME: Duration = Duration::from_millis(500);
@@ -163,7 +163,7 @@ mod tests {
         }
     }
 
-    impl KmsProvider for MockKmsProvider {
+    impl Provider for MockKmsProvider {
         fn decrypt_data_key(&self, _encrypted_key: &EncryptedKey) -> Result<Vec<u8>, String> {
             self.decrypt_counter.fetch_add(1, Ordering::SeqCst);
             let mut key = vec![0u8; 32]; // 256 bits = 32 bytes
@@ -203,7 +203,7 @@ mod tests {
     #[test]
     fn test_kms_backend_decrypt() {
         let mock_provider = MockKmsProvider::new("mock_kms");
-        let backend = KmsBackend::new(Arc::clone(&mock_provider) as Arc<dyn KmsProvider>).unwrap();
+        let backend = KmsBackend::new(Arc::clone(&mock_provider) as Arc<dyn Provider>).unwrap();
 
         let mut content = content_with("mock_kms", b"ciphertext_key");
 
@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn test_kms_backend_decrypt_errors() {
         let mock_provider = MockKmsProvider::new("mock_kms");
-        let backend = KmsBackend::new(mock_provider as Arc<dyn KmsProvider>).unwrap();
+        let backend = KmsBackend::new(mock_provider as Arc<dyn Provider>).unwrap();
 
         let mut missing_vendor = EncryptedContent::default();
         missing_vendor.metadata.insert(
@@ -291,7 +291,7 @@ mod tests {
             key: Vec<u8>,
             calls: AtomicUsize,
         }
-        impl KmsProvider for StableProvider {
+        impl Provider for StableProvider {
             fn decrypt_data_key(&self, _encrypted_key: &EncryptedKey) -> Result<Vec<u8>, String> {
                 self.calls.fetch_add(1, Ordering::SeqCst);
                 Ok(self.key.clone())
@@ -306,11 +306,11 @@ mod tests {
             key: vec![3u8; 32],
             calls: AtomicUsize::new(0),
         });
-        let backend = KmsBackend::new(Arc::clone(&provider) as Arc<dyn KmsProvider>).unwrap();
+        let backend = KmsBackend::new(Arc::clone(&provider) as Arc<dyn Provider>).unwrap();
 
         // Seal with the same data key the KMS will hand back.
         let sealer = MemAesGcmBackend::new(&[3u8; 32]).unwrap();
-        let iv = super::super::common::Iv::new_gcm().unwrap();
+        let iv = super::super::common::Iv::new_iv_gcm().unwrap();
         let mut content = sealer.encrypt_content(b"top secret", &iv).unwrap();
         content
             .metadata
@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn test_kms_backend_rejects_empty_ciphertext_key() {
         let mock_provider = MockKmsProvider::new("mock_kms");
-        let backend = KmsBackend::new(Arc::clone(&mock_provider) as Arc<dyn KmsProvider>).unwrap();
+        let backend = KmsBackend::new(Arc::clone(&mock_provider) as Arc<dyn Provider>).unwrap();
         let content = content_with("mock_kms", b"");
         let error = backend.decrypt(&content).unwrap_err();
         assert!(error.contains("encrypted key cannot be empty"), "{error}");

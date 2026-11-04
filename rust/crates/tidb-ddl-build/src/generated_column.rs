@@ -212,7 +212,7 @@ pub fn find_depended_column_names(
             if tidb_hack::go_to_lower(db) != schema {
                 return Err(MysqlError::from_terror(
                     &tidb_dbterror::ERR_WRONG_DB_NAME
-                        .generate_with_stack_by_args(&[db.into()]),
+                        .gen_with_stack_by_args(&[db.into()]),
                 ));
             }
         }
@@ -220,7 +220,7 @@ pub fn find_depended_column_names(
             if tidb_hack::go_to_lower(tbl) != table {
                 return Err(MysqlError::from_terror(
                     &tidb_dbterror::ERR_WRONG_TABLE_NAME
-                        .generate_with_stack_by_args(&[tbl.into()]),
+                        .gen_with_stack_by_args(&[tbl.into()]),
                 ));
             }
         }

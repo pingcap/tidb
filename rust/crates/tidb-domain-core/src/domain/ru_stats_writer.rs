@@ -87,7 +87,7 @@ where
             .map(|param| tidb_sqlescape::SqlArg::String(param.as_bytes()))
             .collect();
         let use_current_session: tidb_sqlexec::OptionFuncAlias =
-            Arc::new(tidb_sqlexec::exec_option_use_current_session);
+            Arc::new(tidb_sqlexec::exec_option_use_cur_session);
         self.pool
             .with_session(|session| {
                 session

@@ -270,20 +270,20 @@ pub fn merge_window_spec(
     if reference.def.spec.frame.is_some() {
         return Err(PlanError::from(
             tidb_plannererrors::ERR_WINDOW_NO_INHERENT_FRAME
-                .generate_with_stack_by_args(&[(&reference.name).into()]),
+                .gen_with_stack_by_args(&[(&reference.name).into()]),
         ));
     }
     if !spec.spec.partition_by.is_empty() {
         return Err(PlanError::from(
             tidb_plannererrors::ERR_WINDOW_NO_CHILD_PARTITIONING
-                .generate_with_stack_by_args(&[]),
+                .gen_with_stack_by_args(&[]),
         ));
     }
     if !reference.def.spec.order_by.is_empty() {
         if !spec.spec.order_by.is_empty() {
             return Err(PlanError::from(
                 tidb_plannererrors::ERR_WINDOW_NO_REDEFINE_ORDER_BY
-                    .generate_with_stack_by_args(&[
+                    .gen_with_stack_by_args(&[
                         (window_name(spec_name)).into(),
                         (&reference.name).into(),
                     ]),
@@ -318,7 +318,7 @@ fn resolve_window_spec(
     if in_stack.contains(name_lower) {
         return Err(PlanError::from(
             tidb_plannererrors::ERR_WINDOW_CIRCULARITY_IN_WINDOW_GRAPH
-                .generate_with_stack_by_args(&[]),
+                .gen_with_stack_by_args(&[]),
         ));
     }
     let Some(entry) = specs.get(name_lower) else {
@@ -331,7 +331,7 @@ fn resolve_window_spec(
     if !specs.contains_key(&reference_lower) {
         return Err(PlanError::from(
             tidb_plannererrors::ERR_WINDOW_NO_SUCH_WINDOW
-                .generate_with_stack_by_args(&[(&reference).into()]),
+                .gen_with_stack_by_args(&[(&reference).into()]),
         ));
     }
     in_stack.insert(name_lower.to_owned());
@@ -664,7 +664,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         if needs_frame {
             if let Some(frame) = &spec.spec.frame {
-                if is_unbounded(&frame.start) && is_unbounded(&frame.end) {
+                if un_bounded(&frame.start) && un_bounded(&frame.end) {
                     let mut new_spec = spec.clone();
                     new_spec.spec.frame = None;
                     return (new_spec, true);
@@ -758,7 +758,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     let Some(reference_spec) = self.window_specs.get(&lower) else {
                         return Err(PlanError::from(
                             tidb_plannererrors::ERR_WINDOW_NO_SUCH_WINDOW
-                                .generate_with_stack_by_args(&[(window_name(&reference)).into()]),
+                                .gen_with_stack_by_args(&[(window_name(&reference)).into()]),
                         ));
                     };
                     merge_window_spec(&mut def, "", reference_spec)?;
@@ -779,7 +779,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let Some(&spec_id) = named.get(&lower) else {
                 return Err(PlanError::from(
                     tidb_plannererrors::ERR_WINDOW_NO_SUCH_WINDOW
-                        .generate_with_stack_by_args(&[name.into()]),
+                        .gen_with_stack_by_args(&[name.into()]),
                 ));
             };
             let named_spec = arena.get(spec_id);
@@ -1033,7 +1033,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 return true;
             }
             error = Some(PlanError::from(
-                tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_UNKNOWN_COLUMN.gen_with_stack_by_args(&[
                     tidb_hack::go_to_lower(path.join(".")).into(),
                     (spec_clause.unwrap_or("field list")).into(),
                 ]),
@@ -1076,7 +1076,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 _ => {
                     return Err(PlanError::from(
                         tidb_plannererrors::ERR_WINDOW_FRAME_ILLEGAL
-                            .generate_with_stack_by_args(&[(window_name(&spec.name)).into()]),
+                            .gen_with_stack_by_args(&[(window_name(&spec.name)).into()]),
                     ))
                 }
             }
@@ -1085,7 +1085,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if order_by.len() != 1 {
             return Err(PlanError::from(
                 tidb_plannererrors::ERR_WINDOW_RANGE_FRAME_ORDER_TYPE
-                    .generate_with_stack_by_args(&[(window_name(&spec.name)).into()]),
+                    .gen_with_stack_by_args(&[(window_name(&spec.name)).into()]),
             ));
         }
         let order_type = order_by[0]
@@ -1097,19 +1097,19 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if !is_numeric && !is_temporal {
             return Err(PlanError::from(
                 tidb_plannererrors::ERR_WINDOW_RANGE_FRAME_ORDER_TYPE
-                    .generate_with_stack_by_args(&[(window_name(&spec.name)).into()]),
+                    .gen_with_stack_by_args(&[(window_name(&spec.name)).into()]),
             ));
         }
         if unit.is_some() && !is_temporal {
             return Err(PlanError::from(
                 tidb_plannererrors::ERR_WINDOW_RANGE_FRAME_NUMERIC_TYPE
-                    .generate_with_stack_by_args(&[(window_name(&spec.name)).into()]),
+                    .gen_with_stack_by_args(&[(window_name(&spec.name)).into()]),
             ));
         }
         if unit.is_none() && !is_numeric {
             return Err(PlanError::from(
                 tidb_plannererrors::ERR_WINDOW_RANGE_FRAME_TEMPORAL_TYPE
-                    .generate_with_stack_by_args(&[(window_name(&spec.name)).into()]),
+                    .gen_with_stack_by_args(&[(window_name(&spec.name)).into()]),
             ));
         }
         Ok(())
@@ -1137,7 +1137,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if frame.kind == FrameKind::Groups {
             return Err(PlanError::from(
                 tidb_plannererrors::ERR_NOT_SUPPORTED_YET
-                    .generate_with_stack_by_args(&["GROUPS".into()]),
+                    .gen_with_stack_by_args(&["GROUPS".into()]),
             ));
         }
         let start = &frame.start;
@@ -1145,13 +1145,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if matches!(start, AstFrameBound::UnboundedFollowing) {
             return Err(PlanError::from(
                 tidb_plannererrors::ERR_WINDOW_FRAME_START_ILLEGAL
-                    .generate_with_stack_by_args(&[(window_name(&spec.name)).into()]),
+                    .gen_with_stack_by_args(&[(window_name(&spec.name)).into()]),
             ));
         }
         if matches!(end, AstFrameBound::UnboundedPreceding) {
             return Err(PlanError::from(
                 tidb_plannererrors::ERR_WINDOW_FRAME_END_ILLEGAL
-                    .generate_with_stack_by_args(&[(window_name(&spec.name)).into()]),
+                    .gen_with_stack_by_args(&[(window_name(&spec.name)).into()]),
             ));
         }
         let start_following = matches!(
@@ -1165,13 +1165,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if start_following && (end_preceding || matches!(end, AstFrameBound::CurrentRow)) {
             return Err(PlanError::from(
                 tidb_plannererrors::ERR_WINDOW_FRAME_ILLEGAL
-                    .generate_with_stack_by_args(&[(window_name(&spec.name)).into()]),
+                    .gen_with_stack_by_args(&[(window_name(&spec.name)).into()]),
             ));
         }
         if (start_following || matches!(start, AstFrameBound::CurrentRow)) && end_preceding {
             return Err(PlanError::from(
                 tidb_plannererrors::ERR_WINDOW_FRAME_ILLEGAL
-                    .generate_with_stack_by_args(&[(window_name(&spec.name)).into()]),
+                    .gen_with_stack_by_args(&[(window_name(&spec.name)).into()]),
             ));
         }
         self.check_origin_window_frame_bound(start, spec, order_by)?;
@@ -1196,19 +1196,19 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             if func.ignore_null {
                 return Err(PlanError::from(
                     tidb_plannererrors::ERR_NOT_SUPPORTED_YET
-                        .generate_with_stack_by_args(&["IGNORE NULLS".into()]),
+                        .gen_with_stack_by_args(&["IGNORE NULLS".into()]),
                 ));
             }
             if func.distinct {
                 return Err(PlanError::from(
                     tidb_plannererrors::ERR_NOT_SUPPORTED_YET
-                        .generate_with_stack_by_args(&["<window function>(DISTINCT ..)".into()]),
+                        .gen_with_stack_by_args(&["<window function>(DISTINCT ..)".into()]),
                 ));
             }
             if func.from_last {
                 return Err(PlanError::from(
                     tidb_plannererrors::ERR_NOT_SUPPORTED_YET
-                        .generate_with_stack_by_args(&["FROM LAST".into()]),
+                        .gen_with_stack_by_args(&["FROM LAST".into()]),
                 ));
             }
             let spec = match &func.over {
@@ -1280,7 +1280,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .map_or(FrameKind::Rows, |frame| frame.kind);
         let mut built = FrameBound {
             bound_type: bound_type_of(bound),
-            unbounded: is_unbounded(bound),
+            unbounded: un_bounded(bound),
             is_explicit_range: false,
             ..FrameBound::default()
         };
@@ -1318,7 +1318,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let Some(item) = order_by.first() else {
             return Err(PlanError::from(
                 tidb_plannererrors::ERR_WINDOW_RANGE_FRAME_ORDER_TYPE
-                    .generate_with_stack_by_args(&[(window_name(&spec.name)).into()]),
+                    .gen_with_stack_by_args(&[(window_name(&spec.name)).into()]),
             ));
         };
         let col = item.col.clone();
@@ -1378,7 +1378,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             _ => {
                 return Err(PlanError::from(
                     tidb_plannererrors::ERR_WINDOW_FRAME_ILLEGAL
-                        .generate_with_stack_by_args(&[(window_name(&spec.name)).into()]),
+                        .gen_with_stack_by_args(&[(window_name(&spec.name)).into()]),
                 ))
             }
         }
@@ -1510,7 +1510,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             if func.name.eq_ignore_ascii_case("group_concat") {
                 return Err(PlanError::from(
                     tidb_plannererrors::ERR_NOT_SUPPORTED_YET
-                        .generate_with_stack_by_args(&["group_concat as window function".into()]),
+                        .gen_with_stack_by_args(&["group_concat as window function".into()]),
                 ));
             }
             let args = self.build_args_for_window_func(&func.args, schema, names, markers)?;
@@ -1521,7 +1521,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             if desc.is_none() {
                 return Err(PlanError::from(
                     tidb_plannererrors::ERR_WRONG_ARGUMENTS
-                        .generate_with_stack_by_args(&[(func.name.to_ascii_lowercase()).into()]),
+                        .gen_with_stack_by_args(&[(func.name.to_ascii_lowercase()).into()]),
                 ));
             }
         }
@@ -1568,7 +1568,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     None => {
                         return Err(PlanError::from(
                             tidb_plannererrors::ERR_UNKNOWN_COLUMN
-                                .generate_with_stack_by_args(&[
+                                .gen_with_stack_by_args(&[
                                     tidb_hack::go_to_lower(text).into(),
                                     (build_clause.message()).into(),
                                 ]),
@@ -1800,7 +1800,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     .map_err(|error| PlanError::internal(error.to_string()))?;
                 let Some(mut desc) = desc else {
                     return Err(PlanError::from(
-                        tidb_plannererrors::ERR_WRONG_ARGUMENTS.generate_with_stack_by_args(
+                        tidb_plannererrors::ERR_WRONG_ARGUMENTS.gen_with_stack_by_args(
                             &[(func.name.to_ascii_lowercase()).into()],
                         ),
                     ));
@@ -1889,7 +1889,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 
 /// Go `ast.FrameBound.UnBounded`.
 #[must_use]
-pub fn is_unbounded(bound: &AstFrameBound) -> bool {
+pub fn un_bounded(bound: &AstFrameBound) -> bool {
     matches!(
         bound,
         AstFrameBound::UnboundedPreceding | AstFrameBound::UnboundedFollowing

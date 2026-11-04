@@ -441,7 +441,7 @@ fn table_delta_follows_commit_rollback_and_savepoint_lifecycle() {
     let table_id = node
         .catalog
         .get_latest()
-        .schema_info_by_name("app")
+        .schema_by_name("app")
         .and_then(|database| {
             database
                 .read().deprecated_tables

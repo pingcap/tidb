@@ -1758,7 +1758,7 @@ impl PrivilegeRegistry {
     #[must_use]
     pub fn db_is_visible(&self, user: &str, host: &str, database: &str) -> bool {
         if let Some(record) = self.lock().get(&(user.to_owned(), host.to_owned())) {
-            if record.privs & global_db_visible_mask() != 0 {
+            if record.privs & global_db_visible() != 0 {
                 return true;
             }
             if record.privs & tidb_mysql::ProcessPriv.bit() != 0

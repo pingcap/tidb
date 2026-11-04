@@ -68,7 +68,7 @@ pub(super) fn path_column(path: &[String]) -> Result<QualifiedColumnName, PlanEr
         [table, column] => Ok(QualifiedColumnName::new("", table, column)),
         [database, table, column] => Ok(QualifiedColumnName::new(database, table, column)),
         _ => Err(PlanError::from(
-            tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+            tidb_plannererrors::ERR_UNKNOWN_COLUMN.gen_with_stack_by_args(&[
                 tidb_hack::go_to_lower(path.join(".")).into(),
                 "field list".into(),
             ]),
@@ -87,7 +87,7 @@ impl<S: TableSource, C: tidb_exprctx::Columns> PlanBuilder<'_, S, C> {
     pub(super) fn update_table_path(&self, table: &TableRef) -> Result<(String, String), PlanError> {
         match table.name.as_slice() {
             [_] if self.source.current_database().is_empty() => Err(PlanError::from(
-                tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]),
             )),
             [name] => Ok((self.source.current_database().to_owned(), name.clone())),
             [database, name] => Ok((database.clone(), name.clone())),
@@ -141,7 +141,7 @@ impl<S: TableSource, C: tidb_exprctx::Columns> PlanBuilder<'_, S, C> {
         }
         target.ok_or_else(|| {
             PlanError::from(
-                tidb_plannererrors::ERR_NON_UPDATABLE_TABLE.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_NON_UPDATABLE_TABLE.gen_with_stack_by_args(&[
                     (name.table.original.clone()).into(),
                     "UPDATE".into(),
                 ]),
@@ -197,7 +197,7 @@ impl<S: TableSource, C: tidb_exprctx::Columns> PlanBuilder<'_, S, C> {
                 tidb_expr::find_field_name(plan.output_names(), &column)
                     .map_err(|_| {
                         PlanError::from(
-                            tidb_plannererrors::ERR_AMBIGUOUS.generate_with_stack_by_args(
+                            tidb_plannererrors::ERR_AMBIGUOUS.gen_with_stack_by_args(
                                 &[(column.display_name()).into(), "field list".into()],
                             ),
                         )
@@ -205,7 +205,7 @@ impl<S: TableSource, C: tidb_exprctx::Columns> PlanBuilder<'_, S, C> {
                     .ok_or_else(|| {
                         PlanError::from(
                             tidb_plannererrors::ERR_UNKNOWN_COLUMN
-                                .generate_with_stack_by_args(&[
+                                .gen_with_stack_by_args(&[
                                     tidb_hack::go_to_lower(column.column.original.clone()).into(),
                                     "field list".into(),
                                 ]),

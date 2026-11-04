@@ -64,7 +64,7 @@ pub struct ExecOption {
     /// Go `TrackSysProc`.
     pub track_sys_proc: Option<TrackSysProc>,
     /// Go `UnTrackSysProc`.
-    pub untrack_sys_proc: Option<UntrackSysProc>,
+    pub untrack_sys_proc: Option<UnTrackSysProc>,
     /// Go `PartitionPruneMode`.
     pub partition_prune_mode: String,
     /// Go `SnapshotTS`.
@@ -86,7 +86,7 @@ pub type TrackSysProc =
     Arc<dyn Fn(u64, Arc<dyn TrackProc>) -> std::result::Result<(), SqlExecError> + Send + Sync>;
 
 /// Go `ExecOption.UnTrackSysProc`.
-pub type UntrackSysProc = Arc<dyn Fn(u64) + Send + Sync>;
+pub type UnTrackSysProc = Arc<dyn Fn(u64) + Send + Sync>;
 
 /// Go `OptionFuncAlias`.
 pub type OptionFuncAlias = Arc<dyn Fn(&mut ExecOption) + Send + Sync>;
@@ -118,7 +118,7 @@ pub fn get_analyze_snapshot_option(analyze_snapshot: bool) -> OptionFuncAlias {
 }
 
 /// Go `ExecOptionUseCurSession`.
-pub fn exec_option_use_current_session(option: &mut ExecOption) {
+pub fn exec_option_use_cur_session(option: &mut ExecOption) {
     option.use_cur_session = true;
 }
 
@@ -136,7 +136,7 @@ pub fn exec_option_with_snapshot(snapshot_ts: u64) -> OptionFuncAlias {
 pub fn exec_option_with_sys_proc_track(
     process_id: u64,
     track: TrackSysProc,
-    untrack: UntrackSysProc,
+    untrack: UnTrackSysProc,
 ) -> OptionFuncAlias {
     Arc::new(move |option| {
         option.track_sys_proc_id = process_id;

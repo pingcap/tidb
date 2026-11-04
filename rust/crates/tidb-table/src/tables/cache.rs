@@ -103,7 +103,7 @@ impl TableCommon {
             return Err(KvTableError::Mysql(
                 tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_OPT_ON_CACHE_TABLE
-                        .generate_with_stack_by_args(&["partition mode".into()]),
+                        .gen_with_stack_by_args(&["partition mode".into()]),
                 ),
             ));
         }
@@ -111,7 +111,7 @@ impl TableCommon {
             return Err(KvTableError::Mysql(
                 tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_OPT_ON_CACHE_TABLE
-                        .generate_with_stack_by_args(&["table too large".into()]),
+                        .gen_with_stack_by_args(&["table too large".into()]),
                 ),
             ));
         }
@@ -379,7 +379,7 @@ impl CachedTable {
         if self.total_size.load(std::sync::atomic::Ordering::SeqCst) > CACHED_TABLE_SIZE_LIMIT {
             return Err(KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_OPT_ON_CACHE_TABLE
-                    .generate_with_stack_by_args(&["table too large".into()]),
+                    .gen_with_stack_by_args(&["table too large".into()]),
             )));
         }
         Ok(())

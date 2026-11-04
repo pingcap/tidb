@@ -119,7 +119,7 @@ const MAX_KEYSPACE_ID: u32 = 0x00ff_ffff;
 pub const NULL_KEYSPACE_ID: u32 = u32::MAX;
 
 /// Go `gcVariableComments`.
-pub(crate) fn gc_variable_comment(key: &str) -> &'static str {
+pub(crate) fn gc_variable_comments(key: &str) -> &'static str {
     match key {
         GC_LEADER_UUID_KEY => "Current GC worker leader UUID. (DO NOT EDIT)",
         GC_LEADER_DESC_KEY => "Host name and pid of current GC leader. (DO NOT EDIT)",
@@ -161,7 +161,7 @@ pub struct GcConcurrency {
 }
 
 /// Go `oracle.GetTimeFromTS`.
-pub(crate) fn time_from_ts(ts: u64) -> DateTime<FixedOffset> {
+pub(crate) fn get_time_from_ts(ts: u64) -> DateTime<FixedOffset> {
     DateTime::from_timestamp_millis(tikv_client::oracle::extract_physical(ts))
         .expect("a TSO's physical part is a valid instant")
         .with_timezone(&Local)
@@ -629,7 +629,7 @@ impl tidb_variable::statusvar::Statistics for GcStatistics {
 
 impl GcJobContext {
     /// Go's `txnSafePointSyncWaitTime`.
-    pub(crate) fn sync_wait_time(&self) -> Duration {
+    pub(crate) fn txn_safe_point_sync_wait_time(&self) -> Duration {
         Duration::from_millis(
             TXN_SAFE_POINT_SYNC_WAIT_TIME_MS.load(std::sync::atomic::Ordering::Acquire),
         )
@@ -785,7 +785,7 @@ impl GcJobContext {
 
     /// Go `getOracleTime`.
     pub(crate) fn get_oracle_time(&self) -> GcResult<DateTime<FixedOffset>> {
-        Ok(time_from_ts(self.deps.store.current_version()?))
+        Ok(get_time_from_ts(self.deps.store.current_version()?))
     }
 
     /// Go `checkGCEnable`.
@@ -954,7 +954,7 @@ impl GcJobContext {
         // The safe point is saved as a time, which drops the logical part of
         // the timestamp, so compare in that form or an unchanged safe point
         // would keep the worker working.
-        Ok(Some((time_from_ts(new_txn_safe_point), new_txn_safe_point)))
+        Ok(Some((get_time_from_ts(new_txn_safe_point), new_txn_safe_point)))
     }
 
     /// Go `advanceTxnSafePoint`: 0 when PD did not advance it.
@@ -1034,7 +1034,7 @@ impl GcJobContext {
 
         // The txn safe point is synchronized to every component after
         // `txnSafePointSyncWaitTime`; nothing GC does may start before.
-        std::thread::sleep(self.sync_wait_time());
+        std::thread::sleep(self.txn_safe_point_sync_wait_time());
 
         // Resolve locks: settle every transaction that started before the
         // txn safe point, so none of them can proceed.
@@ -1850,7 +1850,7 @@ impl GcJobContext {
     pub(crate) fn save_value_to_sys_table(&self, key: &str, value: &str) -> GcResult<()> {
         let result = self
             .session()
-            .save_value(key, value, gc_variable_comment(key));
+            .save_value(key, value, gc_variable_comments(key));
         logger().debug(
             "save kv",
             &[
@@ -1924,7 +1924,7 @@ fn ddl_job_not_found(job_id: i64) -> GcError {
     // Go `dbterror.ErrDDLJobNotFound`: 8223, "DDL Job:%v not found".
     GcError::new(
         tidb_dbterror::ERR_DDL_JOB_NOT_FOUND
-            .fast_generate_by_args(&[job_id.into()])
+            .fast_gen_by_args(&[job_id.into()])
             .to_string(),
     )
 }
@@ -2155,7 +2155,7 @@ pub fn run_distributed_gc_job(
         GcWorker::with_identity(deps, identifier.to_owned(), String::new(), NULL_KEYSPACE_ID);
     let new_txn_safe_point = worker.job.advance_txn_safe_point(safe_point)?;
     // Let the txn safe point synchronize.
-    std::thread::sleep(worker.job.sync_wait_time());
+    std::thread::sleep(worker.job.txn_safe_point_sync_wait_time());
     worker.job.resolve_locks(new_txn_safe_point, concurrency)?;
     let gc_safe_point = new_txn_safe_point;
     worker.job.broadcast_gc_safe_point(gc_safe_point)

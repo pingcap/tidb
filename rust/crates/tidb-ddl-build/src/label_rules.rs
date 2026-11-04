@@ -389,7 +389,7 @@ pub fn drop_schema_label_rules(schema_name: &str, tables: &[LabelRuleTable]) -> 
 
 /// Go's `ErrInvalidAttributesSpec` (8237) message.
 #[must_use]
-pub fn invalid_attributes_spec_message(error: &ddl_label::LabelError) -> String {
+pub fn err_invalid_attributes_spec(error: &ddl_label::LabelError) -> String {
     format!("Invalid attributes: {error}")
 }
 

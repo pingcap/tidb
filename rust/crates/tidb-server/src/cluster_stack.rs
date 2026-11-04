@@ -550,7 +550,7 @@ pub fn cluster_session_stack(
     // cache: Go loads accounts at first use, so its pooled sessions never
     // copy the global tier before the cache is built. The reloader must drop
     // before the authority's shutdown drain, like the catalog reloader.
-    let privilege_reloader = tidb_session::domain::real_tikv_node::start_privilege_loop(
+    let privilege_reloader = tidb_session::domain::real_tikv_node::load_privilege_loop(
         config,
         &users,
         factory.advanced_sys_session_pool(),

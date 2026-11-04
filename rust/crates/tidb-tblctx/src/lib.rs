@@ -52,6 +52,10 @@ pub trait MutateContext: tidb_exprctx::Columns + Send + Sync {
 
     /// Go `TypeCtx().Flags()` for a statement that writes rows.
     fn write_conversion_flags(&self) -> ConversionFlags;
+    /// Go `MutateContext.EnableMutationChecker`
+    /// (`@@tidb_enable_mutation_checker`): `AddRecord` / `UpdateRecord`
+    /// check the mutations they staged (`CheckDataConsistency`).
+    fn enable_mutation_checker(&self) -> bool;
     /// Whether the statement runs under a strict SQL mode.
     fn strict(&self) -> bool;
     /// Go `ErrCtx` under `IGNORE`.

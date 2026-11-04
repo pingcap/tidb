@@ -342,7 +342,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             if *bits > 0 && (stored.pk_is_handle || stored.is_common_handle) {
                 return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
                     &tidb_dbterror::ERR_UNSUPPORTED_SHARD_ROW_ID_BITS
-                        .generate_with_stack_by_args(&[]),
+                        .gen_with_stack_by_args(&[]),
                 )));
             }
             (
@@ -427,7 +427,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             let stored = stored.read();
             if stored.auto_random_bits == 0 || stored.get_pk_col_info().is_none() {
                 return Err(DdlPlanError::from(
-                    tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
+                    tidb_dbterror::ERR_INVALID_AUTO_RANDOM.gen_with_stack_by_args(&[
                         ("alter auto_random_base of a non auto_random table".to_owned()).into(),
                     ]),
                 ));
@@ -442,7 +442,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             let maximum = (1_u64 << incremental_bits) - 1;
             let requested = *next as u64;
             if *next < 0 || requested & maximum != requested {
-                return Err(DdlPlanError::from(tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[(format!(
+                return Err(DdlPlanError::from(tidb_dbterror::ERR_INVALID_AUTO_RANDOM.gen_with_stack_by_args(&[(format!(
                     "alter auto_random_base to {next} overflows the incremental bits, max allowed base is {maximum}"
                 )).into()])));
             }
@@ -503,7 +503,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                     };
                     let error = tidb_terror::MysqlError::from_terror(
                         &tidb_dbterror::ERR_SET_TTL_OPTION_FOR_NON_TTL_TABLE
-                            .generate_with_stack_by_args(&[option.to_string().into()]),
+                            .gen_with_stack_by_args(&[option.to_string().into()]),
                     );
                     return Err(DdlPlanError::from_mysql_error(error));
                 }
@@ -610,7 +610,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             let Some(database) = find_database(catalog, schema) else {
                 return Err(DdlPlanError::from(
                     tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                        .generate_with_stack_by_args(&[(schema.clone()).into()]),
+                        .gen_with_stack_by_args(&[(schema.clone()).into()]),
                 ));
             };
             let (_, stored) = locate_table(catalog, schema, table)?;
@@ -642,7 +642,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             let Some(database) = find_database(catalog, schema) else {
                 return Err(DdlPlanError::from(
                     tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                        .generate_with_stack_by_args(&[(schema.clone()).into()]),
+                        .gen_with_stack_by_args(&[(schema.clone()).into()]),
                 ));
             };
             let (_, stored) = locate_table(catalog, schema, table)?;
@@ -806,7 +806,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             }) else {
                 return Err(DdlPlanError::from(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                        .generate_with_stack_by_args(&[
+                        .gen_with_stack_by_args(&[
                             (String::new()).into(),
                             (format!("(physical id {table_id})")).into(),
                         ]),
@@ -938,7 +938,7 @@ fn driver_refusal(error: impl Into<tidb_terror::MysqlError>) -> DdlPlanError {
 fn invalid_attributes_spec(error: tidb_ddl_label::LabelError) -> DdlPlanError {
     coded_refusal(
         &tidb_dbterror::ERR_INVALID_ATTRIBUTES_SPEC,
-        label_rules::invalid_attributes_spec_message(&error),
+        label_rules::err_invalid_attributes_spec(&error),
     )
 }
 
@@ -1002,7 +1002,7 @@ fn find_partition_id(table: &TableInfo, partition: &str) -> Result<i64, DdlPlanE
     let Some(partitioning) = table.get_partition_info() else {
         return Err(driver_refusal(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
-                .generate_with_stack_by_args(&[]),
+                .gen_with_stack_by_args(&[]),
         )));
     };
     let name = partition.go_to_lower();
@@ -1015,7 +1015,7 @@ fn find_partition_id(table: &TableInfo, partition: &str) -> Result<i64, DdlPlanE
         .map(|definition| definition.id);
     found.ok_or_else(|| {
         driver_refusal(tidb_terror::MysqlError::from_terror(
-            &tidb_table::table_errors::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[
+            &tidb_table::table_errors::ERR_UNKNOWN_PARTITION.gen_with_stack_by_args(&[
                 name.to_string().into(),
                 (table.name.original().to_owned()).to_string().into(),
             ]),
@@ -1149,7 +1149,7 @@ fn rebase_auto_increment_counter<S: MetaSnapshot>(
 ) -> Result<(), DdlPlanError> {
     if force && new_base == 0 {
         return Err(DdlPlanError::from(
-            tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED.generate_with_stack_by_args(&[]),
+            tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED.gen_with_stack_by_args(&[]),
         ));
     }
     let new_end = new_base.wrapping_sub(1);
@@ -1383,7 +1383,7 @@ pub(super) fn plan_persisted_alter_table_job_step(
             let set_ttl_option = |option: &str| {
                 let error = tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_SET_TTL_OPTION_FOR_NON_TTL_TABLE
-                        .generate_with_stack_by_args(&[option.to_string().into()]),
+                        .gen_with_stack_by_args(&[option.to_string().into()]),
                 );
                 DdlPlanError::from_mysql_error(error)
             };
@@ -1535,7 +1535,7 @@ pub(super) fn plan_persisted_alter_table_job_step(
                     active,
                     DdlPlanError::from(
                         tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS
-                            .generate_with_stack_by_args(&[
+                            .gen_with_stack_by_args(&[
                                 (changed.name.original().to_owned()).into(),
                                 (table.clone()).into(),
                             ]),
@@ -1719,7 +1719,7 @@ pub(super) fn plan_persisted_alter_table_job_step(
                     active,
                     DdlPlanError::from(
                         tidb_infoschema::infoschema_errors::ERR_KEY_NOT_EXISTS
-                            .generate_with_stack_by_args(&[
+                            .gen_with_stack_by_args(&[
                                 index_name.into(),
                                 (table.clone()).into(),
                             ]),

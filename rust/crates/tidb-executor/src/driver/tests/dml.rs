@@ -216,7 +216,7 @@ fn storage_failures_keep_sql_identity_through_read_and_write_adapters() {
     use tidb_kv::storage::StorageError;
     for storage in [
         StorageError::Sql(crate::MysqlError::from_terror(
-            &tidb_kv::kv_errors::ERR_WRITE_CONFLICT.generate_with_stack("write conflict"),
+            &tidb_kv::kv_errors::ERR_WRITE_CONFLICT.gen_with_stack("write conflict"),
         )),
         StorageError::Backend("backend unavailable".to_owned()),
         StorageError::Backend("Retryable(backend diagnostic text)".to_owned()),

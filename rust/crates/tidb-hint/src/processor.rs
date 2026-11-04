@@ -230,7 +230,7 @@ fn extract_dml_hints(
                     .find(|hint| hint.lower_name() == outer.lower_name())
                 {
                     if let Some(warnings) = warnings.as_mut() {
-                        warnings.push(HintWarning::conflicting(format!(
+                        warnings.push(HintWarning::err_warn_conflicting_hint(format!(
                             "{}(`{}`)",
                             inner.written_name(),
                             hint_scalar_value(inner)

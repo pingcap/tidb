@@ -455,7 +455,7 @@ impl JobSubmitError {
                 table,
             } => Some(
                 tidb_infoschema::infoschema_errors::ERR_INVALID_TABLE_MODE_SET
-                    .generate_with_stack_by_args(&[
+                    .gen_with_stack_by_args(&[
                         current.to_string().into(),
                         target.to_string().into(),
                         table.as_str().into(),
@@ -463,7 +463,7 @@ impl JobSubmitError {
             ),
             Self::BdrRestricted(role) => Some(
                 tidb_dbterror::ERR_BDR_RESTRICTED_DDL
-                    .generate_with_stack_by_args(&[role.as_str().into()]),
+                    .gen_with_stack_by_args(&[role.as_str().into()]),
             ),
             Self::InvalidInvolvingSchemaInfo(_)
             | Self::FlashbackClusterJob

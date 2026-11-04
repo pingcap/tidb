@@ -196,8 +196,8 @@ impl crate::optimize::OptimizeContext for StmtContext {
     fn tiflash_cluster_info(&self) -> Option<&Arc<dyn tidb_sessionctx::TiFlashClusterInfo>> {
         StmtContext::tiflash_cluster_info(self)
     }
-    fn index_merge(&self) -> bool {
-        StmtContext::index_merge(self)
+    fn get_enable_index_merge(&self) -> bool {
+        StmtContext::get_enable_index_merge(self)
     }
     fn no_index_merge_hint(&self) -> bool {
         StmtContext::no_index_merge_hint(self)
@@ -223,8 +223,8 @@ impl crate::optimize::OptimizeContext for StmtContext {
     fn enable_semi_join_rewrite(&self) -> bool {
         StmtContext::enable_semi_join_rewrite(self)
     }
-    fn enable_null_aware_anti_join(&self) -> bool {
-        StmtContext::enable_null_aware_anti_join(self)
+    fn optimizer_enable_naaj(&self) -> bool {
+        StmtContext::optimizer_enable_naaj(self)
     }
     fn enable_no_decorrelate_in_select(&self) -> bool {
         StmtContext::enable_no_decorrelate_in_select(self)
@@ -232,29 +232,29 @@ impl crate::optimize::OptimizeContext for StmtContext {
     fn optimizer_fix_control(&self) -> &tidb_fixcontrol::OptimizerFixControl {
         StmtContext::optimizer_fix_control(self)
     }
-    fn join_reorder_threshold(&self) -> i32 {
-        StmtContext::join_reorder_threshold(self)
+    fn tidb_opt_join_reorder_threshold(&self) -> i32 {
+        StmtContext::tidb_opt_join_reorder_threshold(self)
     }
     fn allow_agg_push_down(&self) -> bool {
         StmtContext::allow_agg_push_down(self)
     }
-    fn advanced_join_reorder(&self) -> bool {
-        StmtContext::advanced_join_reorder(self)
+    fn tidb_opt_enable_advanced_join_reorder(&self) -> bool {
+        StmtContext::tidb_opt_enable_advanced_join_reorder(self)
     }
     fn cartesian_join_order_threshold(&self) -> f64 {
         StmtContext::cartesian_join_order_threshold(self)
     }
-    fn join_reorder_through_proj(&self) -> bool {
-        StmtContext::join_reorder_through_proj(self)
+    fn tidb_opt_join_reorder_through_proj(&self) -> bool {
+        StmtContext::tidb_opt_join_reorder_through_proj(self)
     }
-    fn join_reorder_through_sel(&self) -> bool {
-        StmtContext::join_reorder_through_sel(self)
+    fn tidb_opt_join_reorder_through_sel(&self) -> bool {
+        StmtContext::tidb_opt_join_reorder_through_sel(self)
     }
     fn enable_outer_join_reorder(&self) -> bool {
         StmtContext::enable_outer_join_reorder(self)
     }
-    fn advanced_join_hint(&self) -> bool {
-        StmtContext::advanced_join_hint(self)
+    fn enable_advanced_join_hint(&self) -> bool {
+        StmtContext::enable_advanced_join_hint(self)
     }
     fn get_index_force(&self) -> bool {
         StmtContext::get_index_force(self)
@@ -271,17 +271,17 @@ impl crate::optimize::OptimizeContext for StmtContext {
     fn tiflash_pre_agg_mode(&self) -> &str {
         StmtContext::tiflash_pre_agg_mode(self)
     }
-    fn partial_ordered_index_for_topn(&self) -> bool {
-        StmtContext::partial_ordered_index_for_topn(self)
+    fn is_partial_ordered_index_for_top_n_enabled(&self) -> bool {
+        StmtContext::is_partial_ordered_index_for_top_n_enabled(self)
     }
-    fn ordering_index_selectivity_ratio(&self) -> f64 {
-        StmtContext::ordering_index_selectivity_ratio(self)
+    fn opt_ordering_idx_sel_ratio(&self) -> f64 {
+        StmtContext::opt_ordering_idx_sel_ratio(self)
     }
     fn index_join_max_scan_rows_ratio(&self) -> f64 {
         StmtContext::index_join_max_scan_rows_ratio(self)
     }
-    fn ordering_index_selectivity_threshold(&self) -> f64 {
-        StmtContext::ordering_index_selectivity_threshold(self)
+    fn opt_ordering_idx_sel_thresh(&self) -> f64 {
+        StmtContext::opt_ordering_idx_sel_thresh(self)
     }
     fn allow_projection_push_down(&self) -> bool {
         StmtContext::allow_projection_push_down(self)

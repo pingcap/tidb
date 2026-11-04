@@ -36,7 +36,7 @@ use tidb_expr::expression::Expression;
 
 use super::checker::UNSPECIFIED_LENGTH;
 use super::points::{
-    convert_point_in_place, get_full_range, ExpressionEvaluator, Point, PointBuilder,
+    convert_point_in_place, get_full_range, ExpressionEvaluator, Point, Builder,
     PointBuilderError,
 };
 use super::types::{Range, Ranges};
@@ -520,7 +520,7 @@ fn build_column_range_impl<'a, E: std::borrow::Borrow<Expression>>(
     range_max_size: i64,
     eval_expression: &super::points::ExpressionEvaluator<'_>,
 ) -> Result<ColumnRangeResult<'a, E>, PointBuilderError> {
-    let mut builder = PointBuilder::new(eval_expression);
+    let mut builder = Builder::new(eval_expression);
     let new_tp = new_field_type(tp);
     let mut range_points = get_full_range();
     for cond in access_conditions {

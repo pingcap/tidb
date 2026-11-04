@@ -47,7 +47,7 @@ pub const SYNTAX_ERROR_PREFIX: &str = "You have an error in your SQL syntax; che
 /// err.Error())`.
 pub fn syntax_error(message: impl Into<String>) -> tidb_terror::TerrorError {
     tidb_parser::parser_errors::ERR_PARSE
-        .generate_with_stack_by_args(&[SYNTAX_ERROR_PREFIX.into(), message.into().into()])
+        .gen_with_stack_by_args(&[SYNTAX_ERROR_PREFIX.into(), message.into().into()])
 }
 
 /// Go `util.SequenceTable`: the sequence operations a table object of a
@@ -140,6 +140,6 @@ impl SequenceSchema for NoSequences {
             tidb_dbterror::catalog_support::Class::Schema,
             tidb_errno::errcode::ErrNoSuchTable,
         )
-        .generate_with_stack_by_args(&[schema.into(), sequence.into()]))
+        .gen_with_stack_by_args(&[schema.into(), sequence.into()]))
     }
 }

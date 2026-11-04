@@ -131,7 +131,7 @@ fn a_bootstrapped_keyspace_loads_back_as_a_catalog_with_every_mysql_table() {
     let mut store = bootstrapped();
     let catalog = load_info_schema(&mut store).expect("the bootstrapped catalog loads");
     let database = catalog
-        .schema_info_by_name("mysql")
+        .schema_by_name("mysql")
         .expect("the bootstrap created the mysql database");
     // The five materialized-view tables are Go master's, not this tree's.
     let all_tables = DDL_TABLE_VERSION_TABLES
@@ -181,7 +181,7 @@ fn bootstrap_creates_all_ddl_tables_and_advances_their_version() {
     let state = read_bootstrap_state(&mut store, &catalog).expect("bootstrap state reads");
     assert!(state.already_bootstrapped());
     let mysql = catalog
-        .schema_info_by_name("mysql")
+        .schema_by_name("mysql")
         .expect("mysql database");
     let notifier = mysql
         .read().deprecated_tables
@@ -315,7 +315,7 @@ fn a_next_gen_bootstrap_spends_one_schema_version_per_ddl_job() {
     assert_eq!(sys.read().id, tidb_metadef::system::SYS_DATABASE_ID);
     assert_eq!(sys_view.id, 3);
     let test = catalog
-        .schema_info_by_name("test")
+        .schema_by_name("test")
         .unwrap();
     assert_eq!(test.read().id, 5);
     assert_eq!(store.pairs[&key::next_global_id_kv_key()], b"7");

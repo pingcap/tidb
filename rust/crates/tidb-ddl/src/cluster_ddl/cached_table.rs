@@ -46,7 +46,7 @@ pub fn check_cached_table_ddl(
     let refused = |operation: &str| {
         Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_OPT_ON_CACHE_TABLE
-                .generate_with_stack_by_args(&[(operation).into()]),
+                .gen_with_stack_by_args(&[(operation).into()]),
         ))
     };
     match ddl.as_ref() {

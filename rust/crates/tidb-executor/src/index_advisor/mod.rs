@@ -184,7 +184,7 @@ impl<S: RecommendIndexExec> SessionOptimizer<'_, S> {
                 Some(_) => Ok(Vec::new()),
                 None => Err(DriverError::from(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                        .generate_with_stack_by_args(&[(&schema).into(), (&table).into()]),
+                        .gen_with_stack_by_args(&[(&schema).into(), (&table).into()]),
                 )),
             })
     }
@@ -234,7 +234,7 @@ impl<S: RecommendIndexExec> SessionOptimizer<'_, S> {
                     };
                     Err(DriverError::Mysql(crate::MysqlError::from_terror(
                         &tidb_plannererrors::ERR_NON_UPDATABLE_TABLE
-                            .generate_with_stack_by_args(&[table.into(), verb.into()]),
+                            .gen_with_stack_by_args(&[table.into(), verb.into()]),
                     )))
                 }
                 _ => Err(advisor_error("plan is not a physical plan: *core.Simple")),
@@ -303,7 +303,7 @@ impl<S: RecommendIndexExec> Optimizer for SessionOptimizer<'_, S> {
             else {
                 return Err(DriverError::from(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                        .generate_with_stack_by_args(&[
+                        .gen_with_stack_by_args(&[
                             (&index.schema_name).into(),
                             (&index.table_name).into(),
                         ]),
@@ -335,7 +335,7 @@ impl<S: RecommendIndexExec> Optimizer for SessionOptimizer<'_, S> {
             let Some(names) = catalog.table_names(&schema) else {
                 return Err(DriverError::from(
                     tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                        .generate_with_stack_by_args(&[(schema.clone()).into()]),
+                        .gen_with_stack_by_args(&[(schema.clone()).into()]),
                 ));
             };
             let mut found = Vec::new();
@@ -375,7 +375,7 @@ impl<S: RecommendIndexExec> Optimizer for SessionOptimizer<'_, S> {
             else {
                 return Err(DriverError::from(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                        .generate_with_stack_by_args(&[(&schema).into(), (&table).into()]),
+                        .gen_with_stack_by_args(&[(&schema).into(), (&table).into()]),
                 ));
             };
             Ok(stored
@@ -392,7 +392,7 @@ impl<S: RecommendIndexExec> Optimizer for SessionOptimizer<'_, S> {
             else {
                 return Err(DriverError::from(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                        .generate_with_stack_by_args(&[(&database).into(), (&table).into()]),
+                        .gen_with_stack_by_args(&[(&database).into(), (&table).into()]),
                 ));
             };
             let statistics = catalog.table_statistics_in(&stats_handle, stored.table_id());

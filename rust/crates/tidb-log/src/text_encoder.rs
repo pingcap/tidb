@@ -204,7 +204,7 @@ pub fn default_time_encoder(t: &DateTime<FixedOffset>) -> String {
 
 /// Go `getCallerString`: strip the directory, keep only
 /// `[A-Za-z0-9._-]` bytes of the file name, append `:line`.
-pub fn caller_string(file: &str, line: u32) -> String {
+pub fn get_caller_string(file: &str, line: u32) -> String {
     if file.is_empty() && line == 0 {
         return "<unknown>".to_owned();
     }
@@ -224,7 +224,7 @@ pub fn caller_string(file: &str, line: u32) -> String {
 
 /// Go `ShortCallerEncoder` alias.
 pub fn short_caller_encoder(file: &str, line: u32) -> String {
-    caller_string(file, line)
+    get_caller_string(file, line)
 }
 
 // Go `needDoubleQuotes`.
@@ -528,7 +528,7 @@ impl TextEncoder {
         if let Some((file, line)) = &ent.caller {
             begin_quote_field(&mut out);
             add_element_separator(&mut out);
-            out.push_str(&caller_string(file, *line));
+            out.push_str(&get_caller_string(file, *line));
             end_quote_field(&mut out);
         }
         if !ent.message.is_empty() {
@@ -584,7 +584,7 @@ impl TextEncoder {
                 &mut out,
                 &mut first,
                 "caller",
-                &Value::Str(caller_string(file, *line)),
+                &Value::Str(get_caller_string(file, *line)),
             );
         }
         if !ent.message.is_empty() {
@@ -942,16 +942,16 @@ mod tests {
     // Go TestZapCaller goldens.
     #[test]
     fn test_zap_caller() {
-        assert_eq!(caller_string("server.go", 132), "server.go:132");
+        assert_eq!(get_caller_string("server.go", 132), "server.go:132");
         assert_eq!(
-            caller_string("server/coordinator.go", 20),
+            get_caller_string("server/coordinator.go", 20),
             "coordinator.go:20"
         );
         assert_eq!(
-            caller_string(r"z\test_coordinator1.go", 20),
+            get_caller_string(r"z\test_coordinator1.go", 20),
             "ztest_coordinator1.go:20"
         );
-        assert_eq!(caller_string("", 0), "<unknown>");
+        assert_eq!(get_caller_string("", 0), "<unknown>");
     }
 
     /// Exact output rows from pinned `zap_log_test.go::TestLogJSON`.

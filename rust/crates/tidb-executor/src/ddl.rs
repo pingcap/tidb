@@ -59,13 +59,13 @@ pub fn create_table_in_catalog(
     let Some(charset) = catalog.database_charset(&database) else {
         return Err(DriverError::from(
             tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                .generate_with_stack_by_args(&[(database).into()]),
+                .gen_with_stack_by_args(&[(database).into()]),
         ));
     };
     if catalog.contains_in(&database, &name) {
         let exists = DriverError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS
-                .generate_with_stack_by_args(&[(format!("{database}.{name}")).into()]),
+                .gen_with_stack_by_args(&[(format!("{database}.{name}")).into()]),
         );
         if create.if_not_exists {
             ctx.append_suppressed(&exists.clone().to_mysql_error());
@@ -86,7 +86,7 @@ pub fn create_table_in_catalog(
             let not_exists = || {
                 DriverError::from(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                        .generate_with_stack_by_args(&[
+                        .gen_with_stack_by_args(&[
                             (&source_database).into(),
                             (&source_name).into(),
                         ]),
@@ -99,7 +99,7 @@ pub fn create_table_in_catalog(
                 Some(crate::TableEntry::View(_) | crate::TableEntry::Sequence(_)) => {
                     return Err(DriverError::from(
                         tidb_infoschema::infoschema_errors::ERR_WRONG_OBJECT
-                            .generate_with_stack_by_args(&[
+                            .gen_with_stack_by_args(&[
                                 (&database).into(),
                                 (&source_name).into(),
                                 ("BASE TABLE").into(),

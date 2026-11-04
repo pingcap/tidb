@@ -268,7 +268,7 @@ pub fn open_mpp_scan(
     let response = open_gather(client, request).map_err(scanner_error)?;
     let retry_client = Arc::clone(client);
     let retry_request = request.clone();
-    let response = MppRecoveryResponse::new(
+    let response = ExecutorWithRetry::new(
         response,
         enabled,
         request.statement.memory.clone(),
@@ -451,7 +451,7 @@ pub type MppRecover = Box<dyn FnMut(usize) -> Result<(), String> + Send>;
 /// Go `ExecutorWithRetry` (`mppErrRecovery`): holds two raw responses and
 /// retries a TiFlash memory-limit failure at most three times. Once any
 /// response is exposed to `SelectResponseIter`, replay is permanently unsafe.
-pub struct MppRecoveryResponse {
+pub struct ExecutorWithRetry {
     gather: MppTaskResponses,
     recovering: bool,
     attempts: u32,
@@ -462,7 +462,7 @@ pub struct MppRecoveryResponse {
     closed: bool,
 }
 
-impl MppRecoveryResponse {
+impl ExecutorWithRetry {
     /// Wraps `gather`; `enabled` is Go's `enableMPPRecovery` (disaggregated
     /// TiFlash under the autoscaler, without TiFlash fallback).
     #[must_use]
@@ -535,7 +535,7 @@ impl MppRecoveryResponse {
     }
 }
 
-impl tidb_txnkv::Response for MppRecoveryResponse {
+impl tidb_txnkv::Response for ExecutorWithRetry {
     fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         if self.closed {
             return Ok(None);
@@ -558,7 +558,7 @@ impl tidb_txnkv::Response for MppRecoveryResponse {
     }
 }
 
-impl Drop for MppRecoveryResponse {
+impl Drop for ExecutorWithRetry {
     fn drop(&mut self) {
         tidb_txnkv::Response::close(self);
     }
@@ -744,7 +744,7 @@ mod recovery_tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let recovery_calls = calls.clone();
         let memory = crate::StatementMemory::default();
-        let mut response = MppRecoveryResponse::new(
+        let mut response = ExecutorWithRetry::new(
             gather(vec![Ok(packet(99)), Err(memory_error())], closed),
             true,
             memory.clone(),
@@ -772,7 +772,7 @@ mod recovery_tests {
     #[test]
     fn mpp_failure_batch_never_replays_delivered_packets_or_disabled_recovery() {
         for enabled in [true, false] {
-            let mut response = MppRecoveryResponse::new(
+            let mut response = ExecutorWithRetry::new(
                 gather(
                     vec![Ok(packet(1)), Ok(packet(2)), Err(memory_error())],
                     Arc::default(),
@@ -793,7 +793,7 @@ mod recovery_tests {
         use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
         let calls = Arc::new(AtomicUsize::new(0));
         let recoveries = calls.clone();
-        let mut response = MppRecoveryResponse::new(
+        let mut response = ExecutorWithRetry::new(
             gather(vec![Err(memory_error())], Arc::default()),
             true,
             crate::StatementMemory::default(),
@@ -807,7 +807,7 @@ mod recovery_tests {
         assert_eq!(calls.load(SeqCst), 3);
         for recovery_fails in [true, false] {
             let memory = crate::StatementMemory::default();
-            let mut response = MppRecoveryResponse::new(
+            let mut response = ExecutorWithRetry::new(
                 gather(vec![Ok(packet(5)), Err(memory_error())], Arc::default()),
                 true,
                 memory.clone(),
@@ -835,7 +835,7 @@ mod recovery_tests {
             },
             QueryResponseError::Source("memory limit lowercase is unrelated".into()),
         ] {
-            let mut response = MppRecoveryResponse::new(
+            let mut response = ExecutorWithRetry::new(
                 gather(vec![Err(error.clone())], Arc::default()),
                 true,
                 crate::StatementMemory::default(),
@@ -846,7 +846,7 @@ mod recovery_tests {
         }
         for count in 0..=2 {
             let memory = crate::StatementMemory::default();
-            let mut response = MppRecoveryResponse::new(
+            let mut response = ExecutorWithRetry::new(
                 gather((0..count).map(|i| Ok(packet(i))).collect(), Arc::default()),
                 true,
                 memory.clone(),
@@ -865,7 +865,7 @@ mod recovery_tests {
     fn mpp_failure_batch_close_releases_retry_capabilities() {
         let capability = Arc::new(());
         let observer = Arc::downgrade(&capability);
-        let mut response = MppRecoveryResponse::new(
+        let mut response = ExecutorWithRetry::new(
             gather(vec![], Arc::default()),
             true,
             crate::StatementMemory::default(),

@@ -727,14 +727,14 @@ pub fn check_exchange_partition_record_validation(
             Ok(())
         } else {
             Err(tidb_terror::MysqlError::from_terror(
-                &tidb_dbterror::ERR_ROW_DOES_NOT_MATCH_PARTITION.generate_with_stack_by_args(&[]),
+                &tidb_dbterror::ERR_ROW_DOES_NOT_MATCH_PARTITION.gen_with_stack_by_args(&[]),
             ))
         }
     };
     let pt = &plan.partitioned;
     let Some(pi) = pt.get_partition_info() else {
         return Err(tidb_terror::MysqlError::from_terror(
-            &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED.generate_with_stack_by_args(&[]),
+            &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED.gen_with_stack_by_args(&[]),
         ));
     };
     let pi = pi.read();
@@ -745,7 +745,7 @@ pub fn check_exchange_partition_record_validation(
         .position(|definition| definition.name.lowercase() == plan.partition_name)
         .ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
-                &tidb_table::table_errors::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[
+                &tidb_table::table_errors::ERR_UNKNOWN_PARTITION.gen_with_stack_by_args(&[
                     plan.partition_name.as_str().into(),
                     pt.name.original().into(),
                 ]),
@@ -803,7 +803,7 @@ pub fn check_exchange_partition_record_validation(
         _ => {
             return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_UNSUPPORTED_PARTITION_TYPE
-                    .generate_with_stack_by_args(&[pt.name.original().into()]),
+                    .gen_with_stack_by_args(&[pt.name.original().into()]),
             ));
         }
     }

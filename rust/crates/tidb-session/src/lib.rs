@@ -462,10 +462,10 @@ pub struct Session {
     temporary_table_data: Option<tidb_variable::temporary_table_data::SessionData>,
     /// Go `TxnCtx.TemporaryTables`: built fresh for each transaction
     /// ([`Session::reset_transaction_scope`]).
-    txn_temporary_tables: tidb_tblctx::temporary_table::TxnTemporaryTables,
+    txn_temporary_tables: tidb_tblctx::temporary_table::TemporaryTables,
     /// Go `TxnCtx.CachedTables`: the cached tables this transaction wrote,
     /// whose write locks its commit takes.
-    txn_cached_tables: tidb_tblctx::temporary_table::TxnCachedTables,
+    txn_cached_tables: tidb_tblctx::temporary_table::CachedTables,
     /// The transaction store and the published temporary tables (see
     /// [`temptable::SessionTemporaryTables`]).
     temporary: temptable::SessionTemporaryTables,
@@ -622,6 +622,10 @@ pub struct Session {
     snapshot_schema_provider: Option<Arc<txn::SnapshotSchemaProvider>>,
     /// Go `sctx.GetStore().GetMinSafeTS(txnScope)`.
     min_safe_ts_provider: Option<Arc<txn::MinSafeTsProvider>>,
+    /// How many top-level compiles (Go `executor.Compile`) have succeeded:
+    /// a prepared EXECUTE, which may compile once per attempt, counts its
+    /// statement once if any attempt planned it.
+    successful_compiles: u64,
     snapshot_schema: Option<(u64, SessionExtendedInfoSchema)>,
     /// Statement-only SnapshotTS override; the ordinary transaction stays intact.
     statement_snapshot: Option<(u64, txn::HistoricalRead)>,
@@ -954,6 +958,7 @@ impl Session {
             statement_txn_activator: None,
             snapshot_schema_provider: None,
             min_safe_ts_provider: None,
+            successful_compiles: 0,
             snapshot_schema: None,
             statement_snapshot: None,
             restricted_sql_executor: None,
@@ -1925,7 +1930,7 @@ impl Session {
     /// The current database, or Go's `ErrNoDB` when none is selected.
     fn require_current_database(&self) -> Result<&str, DriverError> {
         if self.vars.current_db.is_empty() {
-            return Err(DriverError::from(tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[])));
+            return Err(DriverError::from(tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[])));
         }
         Ok(&self.vars.current_db)
     }
@@ -2357,7 +2362,7 @@ impl Session {
         if !client_multi_statements {
             match self.vars().multi_statement_mode() {
                 0 => {
-                    return Err(DriverError::from((&tidb_server_err::servererr_errors::ERR_MULTI_STATEMENT_DISABLED).generate_with_stack(DISABLED.to_owned())))
+                    return Err(DriverError::from((&tidb_server_err::servererr_errors::ERR_MULTI_STATEMENT_DISABLED).gen_with_stack(DISABLED.to_owned())))
                 }
                 1 => {}
                 _ => self.deferred_multi_statement_warning = true,
@@ -2569,7 +2574,7 @@ impl Session {
     /// Observes the requests this session's store receives (`None` removes
     /// the observer).
     #[cfg(test)]
-    pub(crate) fn set_store_send_hook(&self, hook: Option<tidb_unistore::rpc::SendHook>) {
+    pub(crate) fn set_store_send_hook(&self, hook: Option<tidb_unistore::rpc::UnistoreRPCClientSendHook>) {
         self.node().set_store_send_hook(hook);
     }
 

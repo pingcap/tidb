@@ -761,23 +761,23 @@ impl ColumnAttributeError {
         use tidb_datatype::types_errors as types;
         let error = match self {
             Self::MBiggerThanD => {
-                types::ERR_M_BIGGER_THAN_D.generate_with_stack_by_args(&[column.into()])
+                types::ERR_M_BIGGER_THAN_D.gen_with_stack_by_args(&[column.into()])
             }
             Self::TooBigPrecision { precision, maximum } => types::ERR_TOO_BIG_PRECISION
-                .generate_with_stack_by_args(&[
+                .gen_with_stack_by_args(&[
                     (*precision).into(),
                     column.into(),
                     (*maximum).into(),
                 ]),
             Self::DuplicatedValueInType { value, type_name } => types::ERR_DUPLICATED_VALUE_IN_TYPE
-                .generate_with_stack_by_args(&[
+                .gen_with_stack_by_args(&[
                     column.into(),
                     value.as_str().into(),
                     (*type_name).into(),
                 ]),
             // Go `ErrTooLongValueForType.GenWithStackByArgs(col.Name)`.
             Self::TooLongEnumSetValue => tidb_dbterror::ERR_TOO_LONG_VALUE_FOR_TYPE
-                .generate_with_stack_by_args(&[column.into()]),
+                .gen_with_stack_by_args(&[column.into()]),
             Self::InvalidVectorDimension(message) => {
                 return tidb_terror::MysqlError::unknown(message.as_str())
             }

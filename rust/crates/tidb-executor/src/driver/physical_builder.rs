@@ -901,12 +901,12 @@ impl Executor for MaxOneRowExec {
                     Ok(())
                 } else {
                     Err(tidb_exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
-                        .generate_with_stack_by_args(&[])
+                        .gen_with_stack_by_args(&[])
                         .into())
                 }
             }
             _ => Err(tidb_exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
-                .generate_with_stack_by_args(&[])
+                .gen_with_stack_by_args(&[])
                 .into()),
         }
     }
@@ -2013,7 +2013,7 @@ fn build_window(
                     .cloned()
                     .ok_or(DriverError::from(
                         tidb_plannererrors::ERR_WRONG_ARGUMENTS
-                            .generate_with_stack_by_args(&["window value function".into()]),
+                            .gen_with_stack_by_args(&["window value function".into()]),
                     ))?;
                 let nth = if name == "nth_value" {
                     let (value, is_null) = descriptor
@@ -2023,7 +2023,7 @@ fn build_window(
                         .and_then(|arg| tidb_expr::expr_util::get_uint64_from_constant(arg, ctx))
                         .ok_or(DriverError::from(
                             tidb_plannererrors::ERR_WRONG_ARGUMENTS
-                                .generate_with_stack_by_args(&["nth_value".into()]),
+                                .gen_with_stack_by_args(&["nth_value".into()]),
                         ))?;
                     (!is_null).then_some(value)
                 } else {
@@ -2043,7 +2043,7 @@ fn build_window(
                             .filter(|(_, is_null)| !is_null)
                             .ok_or(DriverError::from(
                                 tidb_plannererrors::ERR_WRONG_ARGUMENTS
-                                    .generate_with_stack_by_args(&["lead/lag".into()]),
+                                    .gen_with_stack_by_args(&["lead/lag".into()]),
                             ))?
                             .0
                     }
@@ -2051,7 +2051,7 @@ fn build_window(
                 };
                 let arg = args.first().cloned().ok_or(DriverError::from(
                     tidb_plannererrors::ERR_WRONG_ARGUMENTS
-                        .generate_with_stack_by_args(&["lead/lag".into()]),
+                        .gen_with_stack_by_args(&["lead/lag".into()]),
                 ))?;
                 let mut default = args.get(2).cloned();
                 // Go buildLeadLag converts a constant default to RetTp.
@@ -2084,7 +2084,7 @@ fn build_window(
                     .and_then(|arg| tidb_expr::expr_util::get_uint64_from_constant(arg, ctx))
                     .ok_or(DriverError::from(
                         tidb_plannererrors::ERR_WRONG_ARGUMENTS
-                            .generate_with_stack_by_args(&["ntile".into()]),
+                            .gen_with_stack_by_args(&["ntile".into()]),
                     ))?;
                 WindowFunction::Ntile((!value.1).then_some(value.0))
             }
@@ -7983,7 +7983,7 @@ pub(super) fn open_query(
     physical: &mut PhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
-) -> Result<super::QueryRecordSet, DriverError> {
+) -> Result<super::RecordSet, DriverError> {
     // Go `runStmt` -> `ExecStmt.Exec`: build the executor and open it --
     // or, for a prepared point get in autocommit (`stmt.PsStmt`, set when
     // `IsSafeToReusePointGetExecutor` holds and the plan is a
@@ -8015,7 +8015,7 @@ pub(super) fn open_query(
         .collect();
     let current_db = ctx.current_database_name().unwrap_or_default();
     crate::notify_before_executor_first_run(ctx);
-    super::QueryRecordSet::open(root, columns, ctx.statement_memory())
+    super::RecordSet::open(root, columns, ctx.statement_memory())
         .map(|record_set| record_set.with_output_names(output_names, current_db))
 }
 
@@ -8025,7 +8025,7 @@ pub(super) fn open_show(
     physical: &mut PhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
-) -> Result<super::QueryRecordSet, DriverError> {
+) -> Result<super::RecordSet, DriverError> {
     super::begin_run_stmt_region();
     prepare_execution_plan(physical, catalog, ctx)?;
     let root = build(physical, catalog, ctx)?;
@@ -8036,7 +8036,7 @@ pub(super) fn open_show(
         .collect();
     let current_db = ctx.current_database_name().unwrap_or_default();
     crate::notify_before_executor_first_run(ctx);
-    super::QueryRecordSet::open(root, columns, ctx.statement_memory())
+    super::RecordSet::open(root, columns, ctx.statement_memory())
         .map(|record_set| record_set.with_output_names(output_names, current_db))
 }
 
@@ -8082,7 +8082,7 @@ pub(crate) fn execute_for_explain(
 /// query matched nothing, 1242 when it matched more than one) or an `EXISTS`
 /// child whose row count is the whole answer. Nothing is retained: the caller
 /// keeps the physical tree for the EXPLAIN root, so this borrows it.
-pub(crate) fn execute_first_row(
+pub(crate) fn eval_subquery_first_row(
     physical: &mut PhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,

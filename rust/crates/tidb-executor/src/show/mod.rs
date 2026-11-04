@@ -61,7 +61,7 @@ pub fn fetch_show_variables(
     extractor: Extractor<'_>,
 ) -> Vec<Vec<Datum>> {
     let vars = ctx.session_vars();
-    let noop_enabled = vars.noop_variables_enabled();
+    let noop_enabled = vars.enable_noop_variables();
     let mut rows = Vec::new();
     for definition in sysvar::SYS_VARS {
         if (global && definition.scope == sysvar::SCOPE_SESSION)
@@ -144,7 +144,7 @@ pub fn fetch_show_tables(
             .and_then(|identity| identity.split_once('@'))
             .unwrap_or_default();
         return Err(crate::DriverError::from(
-            tidb_plannererrors::ERR_DBACCESS_DENIED.generate_with_stack_by_args(&[
+            tidb_plannererrors::ERR_DBACCESS_DENIED.gen_with_stack_by_args(&[
                 user.to_owned().into(),
                 host.to_owned().into(),
                 database.to_owned().into(),
@@ -154,7 +154,7 @@ pub fn fetch_show_tables(
     let Some(names) = is.table_names(database) else {
         return Err(crate::DriverError::from(
             tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                .generate_with_stack_by_args(&[(database.to_owned()).into()]),
+                .gen_with_stack_by_args(&[(database.to_owned()).into()]),
         ));
     };
     let any_but_temporary = PrivilegeType(AllPrivMask.0 & !CreateTMPTablePriv.0);

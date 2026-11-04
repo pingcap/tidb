@@ -237,7 +237,7 @@ impl SessionVars {
                 );
                 Err(tidb_terror::MysqlError::from_terror(
                     &crate::variable_errors::ERR_FUNCTIONS_NOOP_IMPL
-                        .generate_with_stack_by_args(&[(clause).into()]),
+                        .gen_with_stack_by_args(&[(clause).into()]),
                 ))
             }
             NoopFuncsMode::Warn => {
@@ -293,7 +293,7 @@ impl SessionVars {
         if !skip {
             return Err(tidb_terror::MysqlError::from_terror(
                 &crate::variable_errors::ERR_UNSUPPORTED_ISOLATION_LEVEL
-                    .generate_with_stack_by_args(&[(normalized).into()]),
+                    .gen_with_stack_by_args(&[(normalized).into()]),
             ));
         }
         self.append_stmt_warning(
@@ -366,7 +366,7 @@ impl SessionVars {
             }
         }
         Err(tidb_terror::MysqlError::from_terror(
-            &crate::variable_errors::ERR_READ_ONLY.generate_with_stack_by_args(&[
+            &crate::variable_errors::ERR_READ_ONLY.gen_with_stack_by_args(&[
                 "SESSION".into(),
                 ("max_allowed_packet".to_owned()).into(),
                 "GLOBAL".into(),

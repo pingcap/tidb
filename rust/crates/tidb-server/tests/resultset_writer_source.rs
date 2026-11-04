@@ -221,7 +221,7 @@ fn first_next_error_is_retryable_and_never_reads_columns_or_writes() {
     {
         let expected = tidb_terror::MysqlError::from_terror(
             &tidb_datatype::types_errors::ERR_OVERFLOW
-                .generate_with_stack("DOUBLE value is out of range in 'cot(0)'"),
+                .gen_with_stack("DOUBLE value is out of range in 'cot(0)'"),
         );
         let mut source = Source {
             events: [Err(expected.clone())].into(),

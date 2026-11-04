@@ -85,7 +85,7 @@ impl<'a> Checker<'a> {
                 if self.has_locked_tables() {
                     return Err(DriverError::from(
                         tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_LOCKED
-                            .generate_with_stack_by_args(&[table.to_owned().into()]),
+                            .gen_with_stack_by_args(&[table.to_owned().into()]),
                     )
                     .into());
                 }
@@ -111,7 +111,7 @@ impl<'a> Checker<'a> {
                 ) {
                     return Err(DriverError::from(
                         tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_LOCKED_FOR_WRITE
-                            .generate_with_stack_by_args(&[tb.name().into()]),
+                            .gen_with_stack_by_args(&[tb.name().into()]),
                     )
                     .into());
                 }
@@ -124,13 +124,13 @@ impl<'a> Checker<'a> {
                 }
                 return Err(DriverError::from(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_LOCKED_FOR_WRITE
-                        .generate_with_stack_by_args(&[tb.name().into()]),
+                        .gen_with_stack_by_args(&[tb.name().into()]),
                 )
                 .into());
             }
             return Err(DriverError::from(
                 tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_LOCKED
-                    .generate_with_stack_by_args(&[tb.name().into()]),
+                    .gen_with_stack_by_args(&[tb.name().into()]),
             )
             .into());
         }
@@ -158,7 +158,7 @@ impl<'a> Checker<'a> {
         {
             return Err(DriverError::from(
                 tidb_table::table_errors::ERR_LOCK_OR_ACTIVE_TRANSACTION
-                    .generate_with_stack_by_args(&[]),
+                    .gen_with_stack_by_args(&[]),
             )
             .into());
         }

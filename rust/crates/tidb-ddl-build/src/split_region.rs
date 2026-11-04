@@ -56,7 +56,7 @@ pub fn normalize_split_policy(
     };
     if tb_info.has_clustered_index() && primary_key {
         return Err(MysqlError::from_terror(
-            &tidb_dbterror::ERR_FORBIDDEN_DDL.generate_with_stack_by_args(&[
+            &tidb_dbterror::ERR_FORBIDDEN_DDL.gen_with_stack_by_args(&[
                 "SPLIT PRIMARY is only for non-clustered table".into(),
             ]),
         ));
@@ -72,7 +72,7 @@ pub fn normalize_split_policy(
     };
     if regions < 1 {
         return Err(MysqlError::from_terror(
-            &tidb_dbterror::ERR_FORBIDDEN_DDL.generate_with_stack_by_args(&[
+            &tidb_dbterror::ERR_FORBIDDEN_DDL.gen_with_stack_by_args(&[
                 "SPLIT REGION number must not be zero or negative".into(),
             ]),
         ));
@@ -101,7 +101,7 @@ pub fn normalize_split_policy(
         else {
             return Err(MysqlError::from_terror(
                 &tidb_dbterror::ERR_WRONG_NAME_FOR_INDEX
-                    .generate_with_stack_by_args(&[index_name.into()]),
+                    .gen_with_stack_by_args(&[index_name.into()]),
             ));
         };
         count
@@ -109,7 +109,7 @@ pub fn normalize_split_policy(
     if column_count != upper.len() || column_count != lower.len() {
         return Err(MysqlError::from_terror(
             &tidb_exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
-                .generate_with_stack_by_args(&[
+                .gen_with_stack_by_args(&[
                     "length of index columns and split values differ".into()
                 ]),
         ));

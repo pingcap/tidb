@@ -435,7 +435,7 @@ pub fn verify_args_by_count(name: &str, count: usize) -> Result<(), crate::EvalE
     if matches!(key, "regexp_instr" | "regexp_replace") {
         return Err(crate::regexp::err_regexp_wrapping_error(
             &crate::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
-                .fast_generate_by_args(&[key.into()])
+                .fast_gen_by_args(&[key.into()])
                 .to_string(),
         ));
     }
@@ -520,7 +520,7 @@ pub(crate) fn unresolved_error(name: &str, current_database: Option<String>) -> 
                 std::sync::LazyLock::new(|| {
                     tidb_dbterror::ErrClass(TerrorClass::Expression).new_std(1235)
                 });
-            return crate::EvalError::Conversion(ERR_NOT_SUPPORTED_YET.generate_with_stack(
+            return crate::EvalError::Conversion(ERR_NOT_SUPPORTED_YET.gen_with_stack(
                 "FUNCTION tidb_row_checksum can only be used as a select field in a fast point \
                  plan",
             ));

@@ -40,7 +40,7 @@ use tidb_unistore_tikv::kv_handler::KvHandler;
 
 /// Go `UnistoreRPCClientSendHook`: a test's look at every request before the
 /// store serves it.
-pub type SendHook = Arc<dyn Fn(&dyn Request) + Send + Sync>;
+pub type UnistoreRPCClientSendHook = Arc<dyn Fn(&dyn Request) + Send + Sync>;
 
 /// Go `RPCClient`, addressed to one store (client-rust hands out a client
 /// per store address; Go checks the address per request).
@@ -50,7 +50,7 @@ pub struct RpcClient {
     cluster: Arc<Cluster>,
     addr: String,
     closed: Arc<AtomicBool>,
-    send_hook: Arc<Mutex<Option<SendHook>>>,
+    send_hook: Arc<Mutex<Option<UnistoreRPCClientSendHook>>>,
 }
 
 /// Go `RPCClient` as the connector client-rust's PD client opens store
@@ -109,7 +109,7 @@ impl RpcClient {
     /// Go `UnistoreRPCClientSendHook.Store` (with its failpoint enabled):
     /// every client sharing this store calls `hook` on each request first;
     /// `None` removes it.
-    pub fn set_send_hook(&self, hook: Option<SendHook>) {
+    pub fn set_send_hook(&self, hook: Option<UnistoreRPCClientSendHook>) {
         *self
             .send_hook
             .lock()

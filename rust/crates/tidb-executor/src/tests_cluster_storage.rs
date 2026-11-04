@@ -586,7 +586,7 @@ use tidb_txnkv::Key;
             for error in [
                 StorageError::Backend("index unavailable".to_owned()),
                 StorageError::Retryable("region changed".to_owned()),
-                StorageError::Sql(crate::MysqlError::from_terror(&tidb_kv::kv_errors::ERR_WRITE_CONFLICT.generate_with_stack("write conflict"))),
+                StorageError::Sql(crate::MysqlError::from_terror(&tidb_kv::kv_errors::ERR_WRITE_CONFLICT.gen_with_stack("write conflict"))),
             ] {
                 let (mut store, snapshot, buffer) = storage(&[]);
                 let mut table = TableCommon::new(

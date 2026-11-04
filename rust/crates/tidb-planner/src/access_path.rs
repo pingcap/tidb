@@ -20,7 +20,7 @@
 
 use tidb_planner_util::path::{IndexLookUpPushDownByType, AccessPath};
 use tidb_planner_core_operator_logicalop::data_source::PossibleAccessPath;
-use tidb_sessionctx::{IndexLookupPushDownPolicy, IndexLookupPushDownSession};
+use tidb_sessionctx::{IndexLookUpPushDownPolicy, IndexLookupPushDownSession};
 
 pub(crate) mod index_merge;
 pub(crate) mod mv_index;
@@ -30,7 +30,7 @@ pub(crate) mod ordinary;
 /// with its one-ARRAY-column check), which `GenerateHistCollFromColumnInfo`
 /// stores as `HistColl.MVIdx2Columns`.
 #[must_use]
-pub fn prepare_cols_for_mv_index(
+pub fn prepare_cols4_mv_index(
     ds: &tidb_planner_core_operator_logicalop::DataSource,
     index: &tidb_model::GoShared<tidb_model::IndexInfo>,
 ) -> Option<Vec<tidb_expr::column::Column>> {
@@ -525,9 +525,9 @@ pub fn apply_table_index_hints(
     if !force_no_index_lookup_push_down
         && matches!(
             session.policy,
-            IndexLookupPushDownPolicy::Force | IndexLookupPushDownPolicy::AffinityForce
+            IndexLookUpPushDownPolicy::Force | IndexLookUpPushDownPolicy::AffinityForce
         )
-        && (session.policy != IndexLookupPushDownPolicy::AffinityForce || table.has_affinity())
+        && (session.policy != IndexLookUpPushDownPolicy::AffinityForce || table.has_affinity())
     {
         for path in &mut public_paths {
             if path.index_info().is_some_and(|metadata| unsupported_reason(metadata).is_none()) {
@@ -590,7 +590,7 @@ pub fn apply_table_index_hints(
                 }
                 return Err(tidb_planner_core_base::PlanError::from(
                     tidb_plannererrors::ERR_KEY_DOES_NOT_EXIST
-                        .generate_with_stack_by_args(&[name.into(), (&table.table_name()).into()]),
+                        .gen_with_stack_by_args(&[name.into(), (&table.table_name()).into()]),
                 ));
             };
             let path = &mut public_paths[position];

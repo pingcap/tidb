@@ -463,7 +463,7 @@ pub const NORMALIZE_RULE_FLAGS: [u64; 35] = OPT_RULE_FLAGS;
 /// schedule exactly one other rule to run again afterwards. The table is empty
 /// here because it is empty in Go, not because entries were dropped.
 #[must_use]
-pub const fn opt_interaction_rule(_rule: RuleId) -> Option<RuleId> {
+pub const fn opt_interaction_rule_list(_rule: RuleId) -> Option<RuleId> {
     None
 }
 
@@ -541,7 +541,7 @@ fn run_rule_list(
         plan = next;
         applied.push(rule);
         // Go: compute interaction rules that should be optimized again.
-        if let Some(interaction) = opt_interaction_rule(rule) {
+        if let Some(interaction) = opt_interaction_rule_list(rule) {
             if plan_changed && is_logical_rule_disabled(&ctx.disabled_rules, interaction) {
                 again.push(interaction);
             }

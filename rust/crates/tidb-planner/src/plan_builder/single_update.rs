@@ -55,7 +55,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let table = self.source.find_table(&database, &written).ok_or_else(|| {
             PlanError::from(
                 tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                    .fast_generate_by_args(&[(&database).into(), (&written).into()]),
+                    .fast_gen_by_args(&[(&database).into(), (&written).into()]),
             )
         })?;
         let visible = table_ref.alias.as_deref().unwrap_or(&written);
@@ -98,7 +98,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         for assignment in &update.assignments {
             let column = find_field_name(&names, &assignment.col).ok_or_else(|| {
                 PlanError::from(
-                    tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                    tidb_plannererrors::ERR_UNKNOWN_COLUMN.gen_with_stack_by_args(&[
                         tidb_hack::go_to_lower(assignment.col.join(".")).into(),
                         "field list".into(),
                     ]),
@@ -116,7 +116,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 if !own_default {
                     return Err(PlanError::from(
                         tidb_plannererrors::ERR_BAD_GENERATED_COLUMN
-                            .generate_with_stack_by_args(&[
+                            .gen_with_stack_by_args(&[
                                 (columns[column].read().name.original().to_owned()).into(),
                                 written.into(),
                             ]),

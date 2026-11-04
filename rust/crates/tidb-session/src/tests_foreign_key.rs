@@ -2694,7 +2694,7 @@ fn fk_access_batch_read_errors_are_not_success_or_ignored_violations() {
     fn failure() -> StorageError {
         StorageError::Sql(tidb_terror::MysqlError::from_terror(
             &tidb_txnkv::tikv_errors::ERR_REGION_UNAVAILABLE
-                .generate_with_stack("FK read failed"),
+                .gen_with_stack("FK read failed"),
         ))
     }
     impl FailedParentReads {

@@ -576,7 +576,7 @@ impl PreparedStatementRegistry {
             return Some(SqlQueryError::from(
                 tidb_terror::MysqlError::from_terror(
                     &tidb_server_err::servererr_errors::ERR_NET_PACKET_TOO_LARGE
-                        .generate_with_stack_by_args(&[]),
+                        .gen_with_stack_by_args(&[]),
                 ),
             ));
         }
@@ -1504,7 +1504,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // Go `openSessionAndDoAuth`: `auth_socket` is refused off a Unix socket.
     if !peer_addr.is_unix_socket() && client_plugin == tidb_mysql::consts::AuthSocket {
         let error = tidb_server_err::ERR_ACCESS_DENIED_NO_PASSWORD
-            .generate_with_stack_by_args(&[
+            .gen_with_stack_by_args(&[
                 tidb_mysql::errors::FormatArg::from(response_user.as_str()),
                 tidb_mysql::errors::FormatArg::from(peer_addr.host()),
             ]);
@@ -2408,7 +2408,7 @@ fn run_connection_commands<S: QuerySession>(
                                             let error = SqlQueryError::from(
                                                 tidb_terror::MysqlError::from_terror(
                                                     &tidb_server_err::servererr_errors::ERR_NOT_ALLOWED_COMMAND
-                                                        .generate_with_stack_by_args(&[]),
+                                                        .gen_with_stack_by_args(&[]),
                                                 ),
                                             );
                                             write_query_error_at(

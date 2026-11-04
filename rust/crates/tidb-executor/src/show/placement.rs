@@ -106,7 +106,7 @@ pub fn placement_table<'a>(
     let missing = || {
         DriverError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                .generate_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
+                .gen_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
         )
     };
     let Some(entry) = catalog.table_in(database, table_name) else {

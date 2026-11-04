@@ -434,7 +434,7 @@ fn analyze_partition_ids(
         }
         return Err(DriverError::from(
             tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
-                .generate_with_stack_by_args(&[]),
+                .gen_with_stack_by_args(&[]),
         ));
     };
     let definitions = pi.read().definitions.snapshot();
@@ -595,7 +595,7 @@ fn skip_column_types(
     // integer handle, and what a virtual generated one of them is built from.
     let mut mandatory = HashSet::new();
     for index in table.indexes() {
-        if table.is_mv_index(index) {
+        if table.mv_index(index) {
             continue;
         }
         for offset in &index.column_offsets {
@@ -890,7 +890,7 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
                 None => {
                     return Err(DriverError::from(
                         tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                            .generate_with_stack_by_args(&[
+                            .gen_with_stack_by_args(&[
                                 schema.clone().into(),
                                 name.clone().into(),
                             ]),

@@ -432,7 +432,7 @@ pub trait SqlBindExec:
                 ) {
                     return Err(DriverError::from(
                         tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
-                            .generate_with_stack_by_args(&["create binding".into()]),
+                            .gen_with_stack_by_args(&["create binding".into()]),
                     ));
                 }
             }

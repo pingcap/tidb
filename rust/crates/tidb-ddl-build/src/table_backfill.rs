@@ -364,7 +364,7 @@ impl KvTableBackfill for TableCommon {
                         Some(owner) if entry.distinct && owner != *handle => {
                             return Err(KvTableError::Mysql(
                                 tidb_terror::MysqlError::from_terror(
-                                    &tidb_kv::kv_errors::ERR_KEY_EXISTS.fast_generate_by_args(
+                                    &tidb_kv::kv_errors::ERR_KEY_EXISTS.fast_gen_by_args(
                                         &[
                                             (duplicate_value_text(&self.index_values(&index, row)))
                                                 .into(),
@@ -520,7 +520,7 @@ impl KvTableBackfill for TableCommon {
                                 return Err(KvTableError::Mysql(
                                     tidb_terror::MysqlError::from_terror(
                                         &tidb_kv::kv_errors::ERR_KEY_EXISTS
-                                            .fast_generate_by_args(&[
+                                            .fast_gen_by_args(&[
                                                 (self.duplicate_text_of_key(
                                                     &index,
                                                     &record.origin_key,

@@ -456,8 +456,8 @@ fn format_datum(d: &Datum, is_left_side: bool) -> String {
             }
             v.to_string()
         }
-        Datum::Bytes(bytes) => tidb_hack::go_strconv::quote_bytes(bytes),
-        Datum::String(s) => tidb_hack::go_strconv::quote_bytes(s.bytes()),
+        Datum::Bytes(bytes) => tidb_go_strconv::quote_bytes(bytes),
+        Datum::String(s) => tidb_go_strconv::quote_bytes(s.bytes()),
         // Go's default arm is `fmt.Sprintf("%v", d.GetValue())`: floats
         // print through `strconv.FormatFloat(v, 'g', -1, 64)` — and a
         // KindFloat32 datum's GetValue is a float32, so its digits are the

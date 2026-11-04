@@ -61,7 +61,7 @@ impl ToTerror for SequenceEvalError {
                 user,
                 host,
                 sequence,
-            } => expression::ERR_SEQUENCE_ACCESS_DENIED.generate_with_stack_by_args(&[
+            } => expression::ERR_SEQUENCE_ACCESS_DENIED.gen_with_stack_by_args(&[
                 (*privilege).into(),
                 user.as_str().into(),
                 host.as_str().into(),
@@ -78,57 +78,57 @@ impl ToTerror for JsonError {
         use crate::expression_errors as expression;
         use tidb_datatype::types_errors as types;
         match self {
-            JsonError::InvalidText => types::ERR_INVALID_JSON_TEXT.generate_with_stack_by_args(&[
+            JsonError::InvalidText => types::ERR_INVALID_JSON_TEXT.gen_with_stack_by_args(&[
                 "The document root must not be followed by other values.".into(),
             ]),
             JsonError::EmptyText => types::ERR_INVALID_JSON_TEXT
-                .generate_with_stack_by_args(&["The document is empty".into()]),
+                .gen_with_stack_by_args(&["The document is empty".into()]),
             JsonError::InvalidCharset => {
-                types::ERR_INVALID_JSON_CHARSET.generate_with_stack_by_args(&["binary".into()])
+                types::ERR_INVALID_JSON_CHARSET.gen_with_stack_by_args(&["binary".into()])
             }
             JsonError::InvalidTextInParam {
                 argument,
                 function,
                 reason,
                 position,
-            } => types::ERR_INVALID_JSON_TEXT_IN_PARAM.generate_with_stack_by_args(&[
+            } => types::ERR_INVALID_JSON_TEXT_IN_PARAM.gen_with_stack_by_args(&[
                 (*argument).into(),
                 (*function).into(),
                 (*reason).into(),
                 (*position).into(),
             ]),
             JsonError::InvalidPath(position) => {
-                types::ERR_INVALID_JSON_PATH.generate_with_stack_by_args(&[(*position).into()])
+                types::ERR_INVALID_JSON_PATH.gen_with_stack_by_args(&[(*position).into()])
             }
             JsonError::InvalidPathMultipleSelection => {
-                types::ERR_INVALID_JSON_PATH_MULTIPLE_SELECTION.generate_with_stack_by_args(&[])
+                types::ERR_INVALID_JSON_PATH_MULTIPLE_SELECTION.gen_with_stack_by_args(&[])
             }
             JsonError::InvalidTypeForJson { argument, function } => {
                 expression::ERR_INVALID_TYPE_FOR_JSON
-                    .generate_with_stack_by_args(&[(*argument).into(), (*function).into()])
+                    .gen_with_stack_by_args(&[(*argument).into(), (*function).into()])
             }
             JsonError::InvalidJsonType {
                 argument,
                 function,
                 required,
-            } => types::ERR_INVALID_JSON_TYPE.generate_with_stack_by_args(&[
+            } => types::ERR_INVALID_JSON_TYPE.gen_with_stack_by_args(&[
                 (*argument).into(),
                 (*function).into(),
                 required.as_str().into(),
             ]),
             JsonError::IncorrectType { argument, function } => expression::ERR_INCORRECT_TYPE
-                .generate_with_stack_by_args(&[argument.to_string().into(), (*function).into()]),
+                .gen_with_stack_by_args(&[argument.to_string().into(), (*function).into()]),
             JsonError::NullMemberName => {
-                types::ERR_JSON_DOCUMENT_NULL_KEY.generate_with_stack_by_args(&[])
+                types::ERR_JSON_DOCUMENT_NULL_KEY.gen_with_stack_by_args(&[])
             }
-            JsonError::VacuousPath => types::ERR_JSON_VACUOUS_PATH.generate_with_stack_by_args(&[]),
+            JsonError::VacuousPath => types::ERR_JSON_VACUOUS_PATH.gen_with_stack_by_args(&[]),
             JsonError::InvalidPathArrayCell => {
-                types::ERR_INVALID_JSON_PATH_ARRAY_CELL.generate_with_stack_by_args(&[])
+                types::ERR_INVALID_JSON_PATH_ARRAY_CELL.gen_with_stack_by_args(&[])
             }
             JsonError::BadOneOrAllArg { function } => types::ERR_JSON_BAD_ONE_OR_ALL_ARG
-                .generate_with_stack_by_args(&[(*function).into()]),
+                .gen_with_stack_by_args(&[(*function).into()]),
             JsonError::DocumentTooDeep => {
-                types::ERR_JSON_DOCUMENT_TOO_DEEP.generate_with_stack_by_args(&[])
+                types::ERR_JSON_DOCUMENT_TOO_DEEP.gen_with_stack_by_args(&[])
             }
         }
     }
@@ -322,7 +322,7 @@ fn sql_error(code: u16, message: impl Into<String>) -> SqlError {
 /// Go `proto.GenWithStackByArgs(args...)`: the prototype's template formatted
 /// with Go's arguments.
 fn go(proto: &TerrorError, args: &[tidb_mysql::errors::FormatArg]) -> SqlError {
-    proto.generate_with_stack_by_args(args).to_sql_error()
+    proto.gen_with_stack_by_args(args).to_sql_error()
 }
 
 /// Go `proto.GenWithStack(message)`: the prototype's class and code with the

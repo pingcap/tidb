@@ -265,7 +265,7 @@ pub(crate) fn adjust_year_with_event(year: i64, adjust_zero: bool) -> Converted<
 #[must_use]
 pub fn time_from_days(day_number: i64) -> Time {
     let core = if let Ok(day_number) = u32::try_from(day_number) {
-        let (year, month, day) = crate::get_date_from_daynr(day_number);
+        let (year, month, day) = crate::get_date_from_daynr(u64::from(day_number));
         Time::from_date_checked(
             year as i32,
             month as i32,

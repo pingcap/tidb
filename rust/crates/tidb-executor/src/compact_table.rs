@@ -39,7 +39,7 @@ pub fn build_compact_table(
     let Some(entry) = catalog.table_in(database, name) else {
         return Err(DriverError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+                .gen_with_stack_by_args(&[(&database).into(), (&name).into()]),
         ));
     };
     if compact.replica_kind == CompactReplicaKind::TiKv {
@@ -65,7 +65,7 @@ pub fn build_compact_table(
                 .any(|definition| definition.name.original().go_lower_eq(written))
         }) {
             return Err(DriverError::from(
-                tidb_table::table_errors::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[
+                tidb_table::table_errors::ERR_UNKNOWN_PARTITION.gen_with_stack_by_args(&[
                     unknown.clone().into(),
                     table_name.to_owned().into(),
                 ]),

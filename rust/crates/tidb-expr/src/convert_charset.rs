@@ -191,7 +191,7 @@ pub fn from_binary(
         return Ok(retag(decoded, target_charset));
     }
     let error = tidb_dbterror::ErrClass(tidb_terror::TerrorClass::Expression).new_std(3854)
-    .fast_generate(
+    .fast_gen(
         tidb_errno::errname::ErrCannotConvertString.raw,
         &[
             tidb_mysql::errors::FormatArg::from(fmt_non_ascii_printable_char_to_hex(

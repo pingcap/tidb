@@ -149,7 +149,7 @@ fn ids_and_versions_are_the_classic_go_ones() {
     let catalog = load_info_schema(&mut store).expect("the bootstrapped catalog loads");
     let database = |name: &str| {
         catalog
-            .schema_info_by_name(name)
+            .schema_by_name(name)
             .unwrap_or_else(|| panic!("the bootstrap created {name}"))
     };
     assert_eq!(database("mysql").read().id, 1);

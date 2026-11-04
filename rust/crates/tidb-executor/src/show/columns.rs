@@ -164,7 +164,7 @@ pub fn new_col_desc(
             .map_err(|_| {
                 DriverError::from(
                     tidb_table::table_errors::ERR_GET_DEFAULT_FAILED
-                        .generate_with_stack_by_args(&[column.read().name.original().to_owned().into()]),
+                        .gen_with_stack_by_args(&[column.read().name.original().to_owned().into()]),
                 )
             })? {
                 Some(text) => Datum::Bytes(text.into_bytes()),

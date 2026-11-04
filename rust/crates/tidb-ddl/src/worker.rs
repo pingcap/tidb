@@ -2097,7 +2097,7 @@ mod schema_sync_tests {
             ) -> Result<(), DdlPlanError> {
                 (self.0)(buffer);
                 Err(tidb_dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED
-                    .fast_generate_by_args(&["c".into()])
+                    .fast_gen_by_args(&["c".into()])
                     .into())
             }
         }
@@ -2831,7 +2831,7 @@ where
                 &tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
             };
             let missing_raised =
-                |names: &str| missing_error.generate_with_stack_by_args(&[names.into()]);
+                |names: &str| missing_error.gen_with_stack_by_args(&[names.into()]);
             let missing = drop_objects(names, if_exists, |schema, name| {
                 let target = match object {
                     DropObject::View => DdlStatement::DropView {
@@ -3640,7 +3640,7 @@ impl CheckConstraintValidator for KvTableIndexBackfiller {
 fn check_constraint_violated(constraint_name: &str) -> DdlPlanError {
     use tidb_hack::GoToLower;
     tidb_dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED
-        .generate_with_stack_by_args(&[tidb_mysql::errors::FormatArg::from(
+        .gen_with_stack_by_args(&[tidb_mysql::errors::FormatArg::from(
             constraint_name.go_to_lower(),
         )])
         .into()

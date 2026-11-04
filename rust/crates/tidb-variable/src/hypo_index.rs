@@ -148,7 +148,7 @@ impl HypoIndexes {
             // Go `ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist")`.
             return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY
-                    .generate_with_stack(format!("index {index} doesn't exist")),
+                    .gen_with_stack(format!("index {index} doesn't exist")),
             ));
         }
         Ok(())

@@ -15,7 +15,7 @@
 use std::collections::HashSet;
 use std::sync::{Arc, LazyLock, RwLock};
 
-use tidb_sqlexec::{SqlExecError, TrackProc, TrackSysProc, UntrackSysProc};
+use tidb_sqlexec::{SqlExecError, TrackProc, TrackSysProc, UnTrackSysProc};
 
 /// Go `AutoAnalyzeProcIDGenerator`.
 pub trait AutoAnalyzeProcIdGenerator: Send + Sync {
@@ -104,12 +104,12 @@ pub static GLOBAL_AUTO_ANALYZE_PROCESS_LIST: LazyLock<AutoAnalyzeProcessList> =
 /// Go `AutoAnalyzeTracker`.
 pub struct AutoAnalyzeTracker {
     track: TrackSysProc,
-    untrack: UntrackSysProc,
+    untrack: UnTrackSysProc,
 }
 
 impl AutoAnalyzeTracker {
     /// Go `NewAutoAnalyzeTracker`.
-    pub fn new(track: TrackSysProc, untrack: UntrackSysProc) -> Self {
+    pub fn new(track: TrackSysProc, untrack: UnTrackSysProc) -> Self {
         Self { track, untrack }
     }
 

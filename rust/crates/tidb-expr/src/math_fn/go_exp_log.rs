@@ -97,7 +97,7 @@ pub(crate) fn go_exp(x: f64) -> f64 {
 
 /// Go `math.Frexp` (src/math/frexp.go), bit-exact: `(frac, exp)` with
 /// `f = frac × 2**exp`, `0.5 <= |frac| < 1`.
-pub(crate) fn go_frexp(f: f64) -> (f64, i32) {
+pub(crate) fn frexp(f: f64) -> (f64, i32) {
     if f == 0.0 || f.is_infinite() || f.is_nan() {
         return (f, 0);
     }
@@ -138,7 +138,7 @@ pub(crate) fn go_log(x: f64) -> f64 {
     }
 
     // reduce
-    let (mut f1, mut ki) = go_frexp(x);
+    let (mut f1, mut ki) = frexp(x);
     if f1 < core::f64::consts::SQRT_2 / 2.0 {
         f1 *= 2.0;
         ki -= 1;
@@ -171,7 +171,7 @@ pub(crate) fn go_log10(x: f64) -> f64 {
 
 /// Go `math.Ldexp` (src/math/ldexp.go): `frac * 2**exp`, with the same
 /// denormal and overflow handling.
-pub(crate) fn go_ldexp(frac: f64, exp: i32) -> f64 {
+pub(crate) fn ldexp(frac: f64, exp: i32) -> f64 {
     const SHIFT: u32 = 52;
     const MASK: u64 = 0x7ff;
     const BIAS: i32 = 1023;
@@ -300,7 +300,7 @@ pub(crate) fn go_pow(x: f64, y: f64) -> f64 {
     }
 
     // ans *= x**yi
-    let (mut x1, mut xe) = go_frexp(x);
+    let (mut x1, mut xe) = frexp(x);
     let mut i = yi as i64;
     while i != 0 {
         if xe < -(1 << 12) || (1 << 12) < xe {
@@ -326,5 +326,5 @@ pub(crate) fn go_pow(x: f64, y: f64) -> f64 {
         a1 = 1.0 / a1;
         ae = -ae;
     }
-    go_ldexp(a1, ae)
+    ldexp(a1, ae)
 }

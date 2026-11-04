@@ -84,13 +84,13 @@ pub(super) fn build_drop_index_job<S: MetaSnapshot>(
         if index.is_none() && !stored.pk_is_handle {
             return Err(DdlPlanError::from(
                 tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY
-                    .generate_with_stack_by_args(&[("PRIMARY".to_owned()).into()]),
+                    .gen_with_stack_by_args(&[("PRIMARY".to_owned()).into()]),
             ));
         }
         if stored.is_common_handle || stored.pk_is_handle {
             return Err(DdlPlanError::Admission(
                 tidb_ddl_build::table_info_build::DdlAdmissionError::from_terror(
-                    &tidb_dbterror::ERR_UNSUPPORTED_MODIFY_PRIMARY_KEY.generate_with_stack(
+                    &tidb_dbterror::ERR_UNSUPPORTED_MODIFY_PRIMARY_KEY.gen_with_stack(
                         "Unsupported drop primary key when the table is using clustered index",
                     ),
                 ),
@@ -105,13 +105,13 @@ pub(super) fn build_drop_index_job<S: MetaSnapshot>(
                 detail: format!("index `{index_name}` does not exist on `{schema}`.`{table}`"),
                 warnings: vec![crate::real_tikv_ddl::ddl_note(
                     tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY
-                        .generate_with_stack(format!("index {index_name} doesn't exist")),
+                        .gen_with_stack(format!("index {index_name} doesn't exist")),
                 )],
             }));
         }
         return Err(DdlPlanError::from(
             tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY
-                .generate_with_stack(format!("index {} doesn't exist", (index_name))),
+                .gen_with_stack(format!("index {} doesn't exist", (index_name))),
         ));
     };
     let index = index.read().clone_like_go();
@@ -183,7 +183,7 @@ fn check_drop_index(
                     arg.if_exist,
                     DdlPlanError::from(
                         tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY
-                            .generate_with_stack(format!("index {} doesn't exist", (name))),
+                            .gen_with_stack(format!("index {} doesn't exist", (name))),
                     ),
                 )),
             ));
@@ -256,7 +256,7 @@ pub(super) fn on_drop_index(
         SchemaState::DELETE_REORGANIZATION => SchemaState::NONE,
         state => {
             return Err(DdlPlanError::from(
-                tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+                tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack_by_args(&[
                     FormatArg::from("index"),
                     FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
                 ]),

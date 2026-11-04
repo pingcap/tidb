@@ -686,7 +686,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         let parsed =
             tidb_parser::parse_with_sql_mode_and_config(sql, self.scanner_sql_mode(), config);
         parsed.map_err(|e| match e.terror {
-            Some(proto) => DriverError::from((proto).generate_with_stack(e.message)),
+            Some(proto) => DriverError::from((proto).gen_with_stack(e.message)),
             // Go's session layer wraps a positional parser error through
             // `util.SyntaxError`, whose message body is the parser's own
             // `line L column C near "..."` text — not a Debug dump.
@@ -871,7 +871,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             _ => ("", ""),
         };
         Err(DriverError::from(
-            tidb_plannererrors::ERR_VIEW_INVALID.generate_with_stack_by_args(&[
+            tidb_plannererrors::ERR_VIEW_INVALID.gen_with_stack_by_args(&[
                 schema.go_to_lower().into(),
                 name.go_to_lower().into(),
             ]),
@@ -988,11 +988,11 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             .get_system(tidb_vardef::tidb_vars::TIDB_INDEX_LOOK_UP_PUSH_DOWN_POLICY)
             .as_deref()
         {
-            Ok("force") => tidb_sessionctx::IndexLookupPushDownPolicy::Force,
+            Ok("force") => tidb_sessionctx::IndexLookUpPushDownPolicy::Force,
             Ok("affinity-force") => {
-                tidb_sessionctx::IndexLookupPushDownPolicy::AffinityForce
+                tidb_sessionctx::IndexLookUpPushDownPolicy::AffinityForce
             }
-            _ => tidb_sessionctx::IndexLookupPushDownPolicy::HintOnly,
+            _ => tidb_sessionctx::IndexLookUpPushDownPolicy::HintOnly,
         };
         let read_staleness = self
             .session_vars()
@@ -1944,6 +1944,13 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     )
                     .with_row_encoding_config(self.row_encoding_config())
                 .with_constraint_check_in_place(constraint_check_in_place)
+                .with_enable_mutation_checker(
+                    self.session_vars()
+                        .system_value(tidb_vardef::tidb_vars::TIDB_ENABLE_MUTATION_CHECKER)
+                        .map_or(tidb_vardef::defaults::DEF_TIDB_ENABLE_MUTATION_CHECKER, |value| {
+                            tidb_vardef::option_values::tidb_opt_on(&value)
+                        }),
+                )
                 .with_pessimistic_check_in_prewrite(
                     !self.pessimistic_constraint_check_in_place()
                         && self.in_transaction()
@@ -2369,9 +2376,9 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// Go `SessionVars` / `StmtCtx` state `staged_writes`, read.
     fn staged_writes_ref(&self) -> &std::sync::Arc<tidb_kv::staged_writes::StagedWrites>;
     /// Go `TxnCtx.TemporaryTables`, read.
-    fn txn_temporary_tables_ref(&self) -> &tidb_tblctx::temporary_table::TxnTemporaryTables;
+    fn txn_temporary_tables_ref(&self) -> &tidb_tblctx::temporary_table::TemporaryTables;
     /// Go `TxnCtx.CachedTables`.
-    fn txn_cached_tables_ref(&self) -> &tidb_tblctx::temporary_table::TxnCachedTables;
+    fn txn_cached_tables_ref(&self) -> &tidb_tblctx::temporary_table::CachedTables;
     /// Go `sctx.Txn()`: a handle on the session's store.
     fn txn_store(&self) -> Option<Box<dyn tidb_kv::storage::TableStorage>>;
     /// Go `SessionVars.TemporaryTableData`, read.

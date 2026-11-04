@@ -59,11 +59,11 @@ impl tidb_util::misc::SequenceSchema for SequenceSnapshot {
             .or_else(|| self.databases.get(&key.database)?.tables.get(&key.table))
             .ok_or_else(|| {
                 crate::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                    .generate_with_stack_by_args(&[schema.into(), sequence.into()])
+                    .gen_with_stack_by_args(&[schema.into(), sequence.into()])
             })?;
         match entry.as_ref() {
             TableEntry::Sequence(found) => Ok(found as &dyn tidb_util::misc::SequenceTable),
-            _ => Err(crate::infoschema_errors::ERR_WRONG_OBJECT.generate_with_stack_by_args(
+            _ => Err(crate::infoschema_errors::ERR_WRONG_OBJECT.gen_with_stack_by_args(
                 &[schema.into(), sequence.into(), "SEQUENCE".into()],
             )),
         }

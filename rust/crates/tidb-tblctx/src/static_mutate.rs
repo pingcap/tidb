@@ -318,6 +318,11 @@ impl MutateContext for StaticMutateContext {
         false
     }
 
+    /// Go `StaticMutateContext.enableMutationChecker`'s default.
+    fn enable_mutation_checker(&self) -> bool {
+        false
+    }
+
     fn optimistic_transaction(&self) -> bool {
         false
     }

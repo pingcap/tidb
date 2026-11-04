@@ -856,7 +856,7 @@ fn parse_number<T: std::str::FromStr>(name: &str, val: &str) -> Result<T, EvalCt
     val.trim().parse::<T>().map_err(|_| {
         EvalCtxError::new(
             tidb_variable::variable_errors::ERR_WRONG_TYPE_FOR_VAR
-                .fast_generate_by_args(&[name.into()])
+                .fast_gen_by_args(&[name.into()])
                 .to_string(),
         )
     })
@@ -889,7 +889,7 @@ fn normalize_enum(name: &str, val: &str, values: &[&str]) -> Result<String, Eval
 fn wrong_value_for_var(name: &str, value: &str) -> EvalCtxError {
     EvalCtxError::new(
         tidb_variable::variable_errors::ERR_WRONG_VALUE_FOR_VAR
-            .fast_generate_by_args(&[name.into(), value.into()])
+            .fast_gen_by_args(&[name.into(), value.into()])
             .to_string(),
     )
 }

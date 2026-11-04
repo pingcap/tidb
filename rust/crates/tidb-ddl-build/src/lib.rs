@@ -93,7 +93,7 @@ pub fn validate_comment_length(
     };
     let message = format!("Comment for {owner} '{shown}' is too long (max = {max_len})");
     if ctx.get_sql_mode().has_strict_mode() {
-        return Err(MysqlError::from_terror(&proto.generate_with_stack(message)));
+        return Err(MysqlError::from_terror(&proto.gen_with_stack(message)));
     }
     ctx.append_warning(tidb_context::WarnErr::Terror(proto.generate(message)));
     let mut end = max_len;
@@ -109,7 +109,7 @@ pub fn table_affinity(level: &str) -> Result<Option<tidb_model::TableAffinityInf
     tidb_model::new_table_affinity_info_with_level(level).map_err(|_| {
         MysqlError::from_terror(
             &tidb_dbterror::ERR_CANNOT_SET_AFFINITY_ON_TABLE
-                .generate_with_stack(format!("Invalid AFFINITY '{level}'")),
+                .gen_with_stack(format!("Invalid AFFINITY '{level}'")),
         )
     })
 }
@@ -128,7 +128,7 @@ pub fn validate_table_affinity(
     let refuse = |what: String, kind: &str| {
         MysqlError::from_terror(
             &tidb_dbterror::ERR_CANNOT_SET_AFFINITY_ON_TABLE
-                .generate_with_stack_by_args(&[what.into(), kind.into()]),
+                .gen_with_stack_by_args(&[what.into(), kind.into()]),
         )
     };
     if temporary {
@@ -161,7 +161,7 @@ pub fn create_table_ttl_info(
         {
             return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_SET_TTL_OPTION_FOR_NON_TTL_TABLE
-                    .generate_with_stack_by_args(&[("TTL_ENABLE".to_owned()).to_string().into()]),
+                    .gen_with_stack_by_args(&[("TTL_ENABLE".to_owned()).to_string().into()]),
             ));
         }
         if options
@@ -170,7 +170,7 @@ pub fn create_table_ttl_info(
         {
             return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_SET_TTL_OPTION_FOR_NON_TTL_TABLE
-                    .generate_with_stack_by_args(&[("TTL_JOB_INTERVAL".to_owned())
+                    .gen_with_stack_by_args(&[("TTL_JOB_INTERVAL".to_owned())
                         .to_string()
                         .into()]),
             ));
@@ -207,13 +207,13 @@ pub fn validate_temporary_table_create(
                 tidb_ast::TableOption::ShardRowIdBits(_) => {
                     return Err(tidb_terror::MysqlError::from_terror(
                         &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
-                            .generate_with_stack_by_args(&["shard_row_id_bits".into()]),
+                            .gen_with_stack_by_args(&["shard_row_id_bits".into()]),
                     ));
                 }
                 tidb_ast::TableOption::PlacementPolicy(_) => {
                     return Err(tidb_terror::MysqlError::from_terror(
                         &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
-                            .generate_with_stack_by_args(&["PLACEMENT".into()]),
+                            .gen_with_stack_by_args(&["PLACEMENT".into()]),
                     ));
                 }
                 _ => {}
@@ -227,7 +227,7 @@ pub fn validate_temporary_table_create(
         }) {
             return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
-                    .generate_with_stack_by_args(&["auto_random".into()]),
+                    .gen_with_stack_by_args(&["auto_random".into()]),
             ));
         }
     }
@@ -246,7 +246,7 @@ pub fn check_create_table_like_source(
     if source.temp_table_type != tidb_model::TempTableType::NONE {
         return Err(MysqlError::from_terror(
             &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
-                .generate_with_stack_by_args(&["create table like".into()]),
+                .gen_with_stack_by_args(&["create table like".into()]),
         ));
     }
     if temporary == tidb_ast::CreateTableTemporary::None {
@@ -255,13 +255,13 @@ pub fn check_create_table_like_source(
     if source.auto_random_bits != 0 {
         return Err(MysqlError::from_terror(
             &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
-                .generate_with_stack_by_args(&["auto_random".into()]),
+                .gen_with_stack_by_args(&["auto_random".into()]),
         ));
     }
     if source.pre_split_regions != 0 {
         return Err(MysqlError::from_terror(
             &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
-                .generate_with_stack_by_args(&["pre split regions".into()]),
+                .gen_with_stack_by_args(&["pre split regions".into()]),
         ));
     }
     if source.partition.is_some() {
@@ -272,13 +272,13 @@ pub fn check_create_table_like_source(
     if source.shard_row_id_bits != 0 {
         return Err(MysqlError::from_terror(
             &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
-                .generate_with_stack_by_args(&["shard_row_id_bits".into()]),
+                .gen_with_stack_by_args(&["shard_row_id_bits".into()]),
         ));
     }
     if source.placement_policy_ref.is_some() {
         return Err(MysqlError::from_terror(
             &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
-                .generate_with_stack_by_args(&["placement".into()]),
+                .gen_with_stack_by_args(&["placement".into()]),
         ));
     }
     Ok(())
@@ -299,7 +299,7 @@ pub fn set_temporary_type(
             } else {
                 Err(tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_UNSUPPORTED_ON_COMMIT_PRESERVE
-                        .generate_with_stack_by_args(&[]),
+                        .gen_with_stack_by_args(&[]),
                 ))
             }
         }
@@ -318,7 +318,7 @@ pub fn check_too_long_identifier(name: &str) -> Result<(), MysqlError> {
     if name.chars().count() > MAX_IDENTIFIER_LENGTH {
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_TOO_LONG_IDENT
-                .generate_with_stack_by_args(&[name.to_owned().into()]),
+                .gen_with_stack_by_args(&[name.to_owned().into()]),
         ));
     }
     Ok(())

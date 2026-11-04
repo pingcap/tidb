@@ -40,6 +40,7 @@ pub mod auto_increment;
 pub mod auto_random;
 pub mod cache;
 pub mod index_entries;
+pub mod mutation_checker;
 pub(crate) mod index_states;
 pub mod nonpublic_columns;
 pub mod partition_reorg;
@@ -1408,7 +1409,7 @@ impl TableCommon {
             Err(KvTableError::Mysql(
                 tidb_terror::MysqlError::from_terror(
                     &crate::table_errors::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET
-                        .generate_with_stack_by_args(&[]),
+                        .gen_with_stack_by_args(&[]),
                 ),
             ))
         }
@@ -2268,7 +2269,7 @@ impl TableCommon {
 
     /// Go `TableInfo.Constraints`.
     #[must_use]
-    pub fn check_constraint_infos(&self) -> &[tidb_model::table::ConstraintInfo] {
+    pub fn constraints(&self) -> &[tidb_model::table::ConstraintInfo] {
         &self.check_constraint_infos
     }
 
@@ -2384,7 +2385,7 @@ impl TableCommon {
                     return Err(KvTableError::Mysql(
                         tidb_terror::MysqlError::from_terror(
                             &crate::table_errors::ERR_CHECK_CONSTRAINT_VIOLATED
-                                .fast_generate_by_args(&[(constraint.name.clone()).into()]),
+                                .fast_gen_by_args(&[(constraint.name.clone()).into()]),
                         ),
                     ));
                 }
@@ -2449,7 +2450,7 @@ impl TableCommon {
                         AutoIdError::Store(detail) => KvTableError::Encode(detail.0),
                         _ => KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
                             &tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED
-                                .generate_with_stack_by_args(&[]),
+                                .gen_with_stack_by_args(&[]),
                         )),
                     })?;
                 // Go `AllocHandleIDs`: `if meta.ShardRowIDBits > 0 { base =
@@ -3061,7 +3062,7 @@ impl TableCommon {
                     key: encode_row_key_with_handle(physical_id, &handle.record_handle()),
                     handle,
                     error: KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
-                        &tidb_kv::kv_errors::ERR_KEY_EXISTS.fast_generate_by_args(&[
+                        &tidb_kv::kv_errors::ERR_KEY_EXISTS.fast_gen_by_args(&[
                             value.into(),
                             (self.qualified_key("PRIMARY")).into(),
                         ]),
@@ -3102,7 +3103,7 @@ impl TableCommon {
                     found.push(RowConflict {
                         handle,
                         error: KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
-                            &tidb_kv::kv_errors::ERR_KEY_EXISTS.fast_generate_by_args(&[
+                            &tidb_kv::kv_errors::ERR_KEY_EXISTS.fast_gen_by_args(&[
                                 // Both renderings read the key's values: Go's
                                 // batch checker formats `FetchValues` after
                                 // `GenIndexKVIter`'s `Next` cut them in place.
@@ -3839,7 +3840,7 @@ impl TableCommon {
             if handler.get_committed_size() + handler.get_dirty_size() > ctx.tmp_table_max_size() {
                 return Err(KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
                     &crate::table_errors::ERR_TEMP_TABLE_FULL
-                        .generate_with_stack_by_args(&[self.name().into()]),
+                        .gen_with_stack_by_args(&[self.name().into()]),
                 )));
             }
         }
@@ -3955,6 +3956,9 @@ impl TableCommon {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Go `AddRecord`'s staging: `sh := memBuffer.Staging()`, `defer
+    /// memBuffer.Cleanup(sh)`, and `memBuffer.Release(sh)` once the record and
+    /// its indexes are written (and, with the mutation checker on, checked).
     fn insert_row_in(
         &mut self,
         store: &mut dyn TableStorage,
@@ -3966,6 +3970,39 @@ impl TableCommon {
         skip_primary_duplicate_check: bool,
         stats_ctx: Option<&dyn tidb_tblctx::MutateContext>,
         rebase_written_id: bool,
+    ) -> Result<TableHandle, KvTableError> {
+        let sh = store.staging();
+        let added = self.add_record_staged(
+            store,
+            row,
+            row_id,
+            shard,
+            ctx,
+            lazy_dup_check,
+            skip_primary_duplicate_check,
+            stats_ctx,
+            rebase_written_id,
+            sh,
+        );
+        match &added {
+            Ok(_) => store.release(sh),
+            Err(_) => store.cleanup(sh),
+        }
+        added
+    }
+
+    fn add_record_staged(
+        &mut self,
+        store: &mut dyn TableStorage,
+        row: &[Datum],
+        row_id: Option<i64>,
+        shard: i64,
+        ctx: &dyn tidb_exprctx::Columns,
+        lazy_dup_check: bool,
+        skip_primary_duplicate_check: bool,
+        stats_ctx: Option<&dyn tidb_tblctx::MutateContext>,
+        rebase_written_id: bool,
+        sh: tidb_kv::storage::StagingHandle,
     ) -> Result<TableHandle, KvTableError> {
         let zone = ctx.time_zone();
         // Go AddRecord receives a row completed by the mutation executor.
@@ -4081,6 +4118,9 @@ impl TableCommon {
             ctx,
             row_encoding,
         )?;
+        if stats_ctx.is_some_and(tidb_tblctx::MutateContext::enable_mutation_checker) {
+            self.check_data_consistency(&*store, &zone, physical_id, Some(row), None, sh)?;
+        }
         if let Some(stats_ctx) = stats_ctx {
             stats_ctx.update_delta_for_table(physical_id, 1, 1);
         }
@@ -4215,6 +4255,7 @@ impl TableCommon {
         self.with_txn_staging(store, ctx, |table, store| table.update_row_in(store, handle, old_row, row, ctx))
     }
 
+    /// Go `UpdateRecord`'s staging, as [`Self::insert_row_in`]'s.
     fn update_row_in(
         &mut self,
         store: &mut dyn TableStorage,
@@ -4222,6 +4263,24 @@ impl TableCommon {
         old_row: Option<&[Datum]>,
         row: &[Datum],
         ctx: &dyn tidb_tblctx::MutateContext,
+    ) -> Result<(), KvTableError> {
+        let sh = store.staging();
+        let updated = self.update_record_staged(store, handle, old_row, row, ctx, sh);
+        match &updated {
+            Ok(()) => store.release(sh),
+            Err(_) => store.cleanup(sh),
+        }
+        updated
+    }
+
+    fn update_record_staged(
+        &mut self,
+        store: &mut dyn TableStorage,
+        handle: &TableHandle,
+        old_row: Option<&[Datum]>,
+        row: &[Datum],
+        ctx: &dyn tidb_tblctx::MutateContext,
+        sh: tidb_kv::storage::StagingHandle,
     ) -> Result<(), KvTableError> {
         let zone = ctx.session_zone();
         // The shared update owner has already completed generated values.
@@ -4518,6 +4577,9 @@ impl TableCommon {
                 ctx,
             )?;
         }
+        if ctx.enable_mutation_checker() {
+            self.check_data_consistency(&*store, &zone, new_physical_id, Some(row), old_row, sh)?;
+        }
         if old_physical_id == new_physical_id {
             ctx.update_delta_for_table(old_physical_id, 0, 1);
         } else {
@@ -4680,12 +4742,12 @@ fn routing_error(error: crate::partition_routing::RoutingError) -> KvTableError 
         crate::partition_routing::RoutingError::NoPartitionForValue(value) => {
             KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
                 &crate::table_errors::ERR_NO_PARTITION_FOR_GIVEN_VALUE
-                    .generate_with_stack_by_args(&[value.into()]),
+                    .gen_with_stack_by_args(&[value.into()]),
             ))
         }
         crate::partition_routing::RoutingError::ValueOverflowsBigint(value) => {
             KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
-                &tidb_datatype::types_errors::ERR_OVERFLOW.generate_with_stack(format!(
+                &tidb_datatype::types_errors::ERR_OVERFLOW.gen_with_stack(format!(
                     "constant {} overflows {}",
                     (value),
                     "bigint"
@@ -4741,11 +4803,11 @@ pub fn convert_failure(column: &str, target: &FieldType, value: &Datum) -> KvTab
     if source_is_string && numeric_target {
         return KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
             &tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL
-                .generate_with_stack_by_args(&["DOUBLE".into(), text.into()]),
+                .gen_with_stack_by_args(&["DOUBLE".into(), text.into()]),
         ));
     }
     KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
-        &tidb_datatype::types_errors::ERR_TRUNCATED.generate_with_stack(format!(
+        &tidb_datatype::types_errors::ERR_TRUNCATED.gen_with_stack(format!(
             "Data truncated for column '{}', value is '{}'",
             (column.to_owned()),
             (text)

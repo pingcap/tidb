@@ -200,7 +200,7 @@ where
         let jobs = DdlJobTable::locate(&catalog)
             .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?;
         let system_db_id = catalog
-            .schema_info_by_name("mysql")
+            .schema_by_name("mysql")
             .map(|database| database.read().id)
             .ok_or_else(|| ClusterDdlError::Backfill("database mysql does not exist".to_owned()))?;
         Ok((

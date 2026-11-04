@@ -92,7 +92,7 @@ pub fn prepare_placement_policy_job_submission<S: MetaSnapshot>(
                         detail: format!("placement policy `{name}` already exists"),
                         warnings: vec![crate::real_tikv_ddl::ddl_note(
                             tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_EXISTS
-                                .generate_with_stack_by_args(&[name.into()]),
+                                .gen_with_stack_by_args(&[name.into()]),
                         )],
                     }));
                 }
@@ -152,7 +152,7 @@ pub fn prepare_placement_policy_job_submission<S: MetaSnapshot>(
                         detail: format!("placement policy `{name}` does not exist"),
                         warnings: vec![crate::real_tikv_ddl::ddl_note(
                             tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_NOT_EXISTS
-                                .generate_with_stack_by_args(&[name.into()]),
+                                .gen_with_stack_by_args(&[name.into()]),
                         )],
                     }));
                 }
@@ -405,7 +405,7 @@ pub(super) fn on_drop_placement_policy(
         SchemaState::DELETE_ONLY => true,
         state => {
             return Err(DdlPlanError::from(
-                tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+                tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack_by_args(&[
                     FormatArg::from("policy"),
                     FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
                 ]),

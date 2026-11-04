@@ -20,7 +20,7 @@ use crate::{Executor, StatementMemory};
 
 /// Go `recordSet`: an opened query executor whose results remain in chunks.
 /// The caller retains the statement and snapshot until `finish`.
-pub struct QueryRecordSet {
+pub struct RecordSet {
     executor: Option<Box<dyn Executor>>,
     columns: Vec<(String, FieldType)>,
     /// Go `ExecStmt.OutputNames`, one per column; empty when the plan has
@@ -33,7 +33,7 @@ pub struct QueryRecordSet {
     max_chunk_size: usize,
 }
 
-impl QueryRecordSet {
+impl RecordSet {
     pub(super) fn open(
         mut executor: Box<dyn Executor>,
         columns: Vec<(String, FieldType)>,
@@ -102,7 +102,7 @@ impl QueryRecordSet {
         let executor = self.executor.as_mut().ok_or_else(|| {
             DriverError::Mysql(crate::MysqlError::from_terror(
                 &tidb_exeerrors::ERR_QUERY_INTERRUPTED
-                    .generate_with_stack_by_args(&[]),
+                    .gen_with_stack_by_args(&[]),
             ))
         })?;
         executor.next(req)?;
@@ -138,7 +138,7 @@ impl QueryRecordSet {
     }
 }
 
-impl Drop for QueryRecordSet {
+impl Drop for RecordSet {
     fn drop(&mut self) {
         let _ = self.finish();
     }
@@ -148,7 +148,7 @@ impl Drop for QueryRecordSet {
 mod tests {
     use super::*;
 
-    fn opened_record_set() -> QueryRecordSet {
+    fn opened_record_set() -> RecordSet {
         let ctx = crate::StmtContext::for_query();
         let statement = ctx.parse("SELECT 1").unwrap();
         let tidb_ast::Stmt::Query(query) = &statement else {

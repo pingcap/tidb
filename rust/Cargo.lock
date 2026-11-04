@@ -3727,6 +3727,7 @@ dependencies = [
  "tidb-executor",
  "tidb-expr",
  "tidb-fastrand",
+ "tidb-go-strconv",
  "tidb-hack",
  "tidb-infoschema",
  "tidb-infoschema-perfschema",
@@ -3810,6 +3811,7 @@ dependencies = [
  "tidb-context",
  "tidb-dbterror",
  "tidb-errno",
+ "tidb-go-strconv",
  "tidb-goruntime",
  "tidb-hack",
  "tidb-kvcache",
@@ -3945,6 +3947,7 @@ dependencies = [
  "tidb-exeerrors",
  "tidb-expr",
  "tidb-exprctx",
+ "tidb-go-strconv",
  "tidb-goruntime",
  "tidb-hack",
  "tidb-infoschema",
@@ -5138,6 +5141,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-go-strconv"
+version = "0.0.0"
+
+[[package]]
 name = "tidb-go-time-layout"
 version = "0.0.0"
 dependencies = [
@@ -5635,6 +5642,7 @@ version = "0.0.0"
 name = "tidb-mysql"
 version = "0.0.0"
 dependencies = [
+ "tidb-go-strconv",
  "tidb-terror-identity",
 ]
 
@@ -6298,6 +6306,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-expr",
  "tidb-exprctx",
+ "tidb-go-strconv",
  "tidb-goruntime",
  "tidb-hack",
  "tidb-parser",
@@ -6470,6 +6479,7 @@ dependencies = [
  "tidb-config-kerneltype",
  "tidb-ddl-logutil",
  "tidb-domain-serverinfo",
+ "tidb-go-strconv",
  "tidb-hack",
  "tidb-log",
  "tidb-logutil",

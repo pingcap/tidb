@@ -906,40 +906,10 @@ fn checksum_datum_type_error(
         _ => "unknown",
     };
     RowPackageError::ChecksumDatumType {
-        datum: datum_debug_string(datum),
+        datum: datum.string(),
         field_type,
         expected,
     }
-}
-
-fn datum_debug_string(datum: &Datum) -> String {
-    let kind = match datum {
-        Datum::Null => "KindNull",
-        Datum::Int(_) => "KindInt64",
-        Datum::UInt(_) => "KindUint64",
-        Datum::Real(_) => "KindFloat64",
-        Datum::Float32(_) => "KindFloat32",
-        Datum::String(_) => "KindString",
-        Datum::Bytes(_) => "KindBytes",
-        Datum::BinaryLiteral(_) => "KindBinaryLiteral",
-        Datum::Decimal(_) => "KindMysqlDecimal",
-        Datum::Duration(_) => "KindMysqlDuration",
-        Datum::Enum(_, _) => "KindMysqlEnum",
-        Datum::Bit(_) => "KindMysqlBit",
-        Datum::Set(_, _) => "KindMysqlSet",
-        Datum::Time(_) => "KindMysqlTime",
-        Datum::MinNotNull => "KindMinNotNull",
-        Datum::MaxValue => "KindMaxValue",
-        Datum::Raw(_) => "KindRaw",
-        Datum::Json(_) => "KindMysqlJSON",
-        Datum::VectorFloat32(_) => "KindVectorFloat32",
-    };
-    let value = if datum.is_null() {
-        "<nil>".to_owned()
-    } else {
-        datum.sql_string().unwrap_or_else(|_| datum.label())
-    };
-    format!("{kind} {value}")
 }
 
 fn append_datum_for_checksum(
@@ -1031,7 +1001,7 @@ fn append_datum_for_checksum(
             let bytes = datum_go_bytes(datum);
             let (value, _) = deserialize_vector_float32(&bytes).map_err(|error| {
                 RowPackageError::ChecksumDatumValue {
-                    datum: datum_debug_string(datum),
+                    datum: datum.string(),
                     field_type: "vector",
                     cause: error.to_string(),
                 }

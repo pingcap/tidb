@@ -99,7 +99,7 @@ impl<'a> UpdateRecords<'a> {
         let entry = catalog.get_in(database, name).ok_or_else(|| {
             DriverError::from(
                 tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                    .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+                    .gen_with_stack_by_args(&[(&database).into(), (&name).into()]),
             )
         })?;
         if old == new {

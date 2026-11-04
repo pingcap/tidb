@@ -668,7 +668,7 @@ pub(crate) struct CachedTableRenewLease {
 impl CachedTableRenewLease {
     /// Go `start`: waits until every table's `LockForWrite` returned.
     pub(crate) fn start(
-        tables: &tidb_tblctx::temporary_table::TxnCachedTables,
+        tables: &tidb_tblctx::temporary_table::CachedTables,
     ) -> Result<Option<Self>, SqlQueryError> {
         let tables: Vec<_> = tables
             .lock()

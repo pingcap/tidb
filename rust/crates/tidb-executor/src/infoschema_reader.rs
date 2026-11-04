@@ -117,7 +117,7 @@ impl SchemaVisibility {
             database,
             table,
             match mask {
-                PrivMask::Any => tidb_privilege::any_priv_mask(),
+                PrivMask::Any => tidb_privilege::all_priv_mask(),
                 PrivMask::Column => tidb_privilege::all_column_privs_mask(),
                 PrivMask::Select => tidb_mysql::SelectPriv.bit(),
             },
@@ -815,7 +815,7 @@ fn check_constraints_rows(
         let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
             continue;
         };
-        for constraint in table.check_constraint_infos() {
+        for constraint in table.constraints() {
             if constraint.state != tidb_model::SchemaState::PUBLIC {
                 continue;
             }

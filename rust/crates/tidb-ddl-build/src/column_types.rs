@@ -46,7 +46,7 @@ fn get_charset_info(name: &str) -> Result<CharsetInfo, MysqlError> {
     tidb_charset::get_charset_info(name).map_err(|_| {
         MysqlError::from_terror(
             &tidb_dbterror::ERR_UNKNOWN_CHARACTER_SET
-                .generate_with_stack_by_args(&[name.into()]),
+                .gen_with_stack_by_args(&[name.into()]),
         )
     })
 }
@@ -58,10 +58,10 @@ pub fn get_collation_by_name(name: &str) -> Result<CollationInfo, MysqlError> {
     tidb_datatype::get_supported_collation_by_name(name).map_err(|error| match error {
         tidb_datatype::CollationError::UnsupportedCollation(name) => MysqlError::from_terror(
             &tidb_datatype::collate_errors::ERR_UNSUPPORTED_COLLATION
-                .generate_with_stack_by_args(&[name.into()]),
+                .gen_with_stack_by_args(&[name.into()]),
         ),
         tidb_datatype::CollationError::Registry(_) => MysqlError::from_terror(
-            &tidb_dbterror::ERR_UNKNOWN_COLLATION.generate_with_stack_by_args(&[name.into()]),
+            &tidb_dbterror::ERR_UNKNOWN_COLLATION.gen_with_stack_by_args(&[name.into()]),
         ),
     })
 }
@@ -114,7 +114,7 @@ pub fn resolve_charset_collation(
             if !chs.is_empty() && collation.charset_name != written_charset {
                 return Err(MysqlError::from_terror(
                     &tidb_dbterror::ERR_COLLATION_CHARSET_MISMATCH
-                        .generate_with_stack_by_args(&[col.into(), chs.into()]),
+                        .gen_with_stack_by_args(&[col.into(), chs.into()]),
                 ));
             }
             return Ok((collation.charset_name, collation.name));
@@ -162,7 +162,7 @@ pub fn get_charset_and_collate_in_table_option(
                 } else if chs != info.name {
                     return Err(MysqlError::from_terror(
                         &tidb_dbterror::ERR_CONFLICTING_DECLARATIONS
-                            .generate_with_stack_by_args(&[chs.into(), info.name.into()]),
+                            .gen_with_stack_by_args(&[chs.into(), info.name.into()]),
                     ));
                 }
                 if coll.is_empty() {
@@ -181,7 +181,7 @@ pub fn get_charset_and_collate_in_table_option(
                 } else if chs != info.charset_name {
                     return Err(MysqlError::from_terror(
                         &tidb_dbterror::ERR_COLLATION_CHARSET_MISMATCH
-                            .generate_with_stack_by_args(&[(&info.name).into(), (&chs).into()]),
+                            .gen_with_stack_by_args(&[(&info.name).into(), (&chs).into()]),
                     ));
                 }
                 coll = info.name;
@@ -219,7 +219,7 @@ pub fn get_charset_and_collate_in_column_def(
             } else if chs != info.charset_name {
                 return Err(MysqlError::from_terror(
                     &tidb_dbterror::ERR_COLLATION_CHARSET_MISMATCH
-                        .generate_with_stack_by_args(&[(&info.name).into(), (&chs).into()]),
+                        .gen_with_stack_by_args(&[(&info.name).into(), (&chs).into()]),
                 ));
             }
             coll = info.name;

@@ -230,7 +230,7 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
         match self.prepared_params() {
             Some(params) if !params.is_empty() => format!(
                 " [arguments: {}]",
-                tidb_datatype::datums_to_string_no_error_smart(params)
+                tidb_datatype::datums_to_str_no_err_smart(params)
             ),
             _ => String::new(),
         }

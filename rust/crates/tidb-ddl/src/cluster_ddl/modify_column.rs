@@ -140,7 +140,7 @@ pub(super) fn build_modify_column_job<S: MetaSnapshot>(
                         ),
                         warnings: vec![crate::real_tikv_ddl::ddl_note(
                             tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS
-                                .generate_with_stack_by_args(&[
+                                .gen_with_stack_by_args(&[
                                     original_col_name.into(),
                                     table.into(),
                                 ]),
@@ -286,7 +286,7 @@ fn get_modifiable_column_job(
         }) {
             return Err(DdlPlanError::from(
                 tidb_infoschema::infoschema_errors::ERR_COLUMN_EXISTS
-                    .generate_with_stack_by_args(&[(column.name.clone()).into()]),
+                    .gen_with_stack_by_args(&[(column.name.clone()).into()]),
             ));
         }
         if let Some((proto, message)) = &err_g {
@@ -367,7 +367,7 @@ fn get_modifiable_column_job(
     }
     if is_auto_increment && !new_col.default_value.is_nil() {
         return Err(driver_refusal(tidb_terror::MysqlError::from_terror(
-            &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE.generate_with_stack_by_args(&[
+            &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE.gen_with_stack_by_args(&[
                 (new_col.name.original().to_owned()).to_string().into(),
             ]),
         )));
@@ -427,7 +427,7 @@ fn get_modifiable_column_job(
         {
             return Err(driver_refusal(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_UNSUPPORTED_COLUMN_IN_TTL_CONFIG
-                    .generate_with_stack_by_args(&[(new_col.name.original().to_owned())
+                    .gen_with_stack_by_args(&[(new_col.name.original().to_owned())
                         .to_string()
                         .into()]),
             )));
@@ -963,14 +963,14 @@ fn extract_auto_random_bits_from_col_def(
     let shard_bits = option.shard_bits.unwrap_or(5);
     if shard_bits == 0 {
         return Err(DdlPlanError::from(
-            tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
+            tidb_dbterror::ERR_INVALID_AUTO_RANDOM.gen_with_stack_by_args(&[
                 ("the value of auto_random should be positive".to_owned()).into(),
             ]),
         ));
     }
     if shard_bits > 15 {
         return Err(DdlPlanError::from(
-            tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[(format!(
+            tidb_dbterror::ERR_INVALID_AUTO_RANDOM.gen_with_stack_by_args(&[(format!(
                 "max allowed auto_random shard bits is 15, but got {shard_bits} on column `{}`",
                 column.name
             ))
@@ -980,7 +980,7 @@ fn extract_auto_random_bits_from_col_def(
     let range_bits = option.range_bits.unwrap_or(64);
     if !(32..=64).contains(&range_bits) {
         return Err(DdlPlanError::from(
-            tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[(format!(
+            tidb_dbterror::ERR_INVALID_AUTO_RANDOM.gen_with_stack_by_args(&[(format!(
                 "auto_random range bits must be between 32 and 64, but got {range_bits}"
             ))
             .into()]),
@@ -1007,7 +1007,7 @@ fn check_auto_random(
     let invalid = |reason: String| {
         DdlPlanError::from(
             tidb_dbterror::ERR_INVALID_AUTO_RANDOM
-                .generate_with_stack_by_args(&[reason.into()]),
+                .gen_with_stack_by_args(&[reason.into()]),
         )
     };
     if old_shard_bits < new_shard_bits {
@@ -1109,7 +1109,7 @@ fn check_and_apply_auto_random_bits<S: MetaSnapshot>(
     if used_bits > incremental_bits {
         let overflow = used_bits - incremental_bits;
         return Err(DdlPlanError::from(
-            tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[(format!(
+            tidb_dbterror::ERR_INVALID_AUTO_RANDOM.gen_with_stack_by_args(&[(format!(
                 "max allowed auto_random shard bits is {}, but got {} on column `{}`",
                 new_shard_bits.wrapping_sub(overflow),
                 new_shard_bits,
@@ -1143,7 +1143,7 @@ fn check_and_apply_auto_random_bits<S: MetaSnapshot>(
 fn column_not_exists(column: &str, table: &str) -> DdlPlanError {
     DdlPlanError::from(
         tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS
-            .generate_with_stack_by_args(&[(column.to_owned()).into(), (table.to_owned()).into()]),
+            .gen_with_stack_by_args(&[(column.to_owned()).into(), (table.to_owned()).into()]),
     )
 }
 
@@ -1282,7 +1282,7 @@ fn check_column_already_exists(
     {
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_COLUMN_EXISTS
-                .generate_with_stack_by_args(&[(new.name.original().to_owned()).into()]),
+                .gen_with_stack_by_args(&[(new.name.original().to_owned()).into()]),
         ));
     }
     Ok(())
@@ -2874,7 +2874,7 @@ fn do_modify_column_index_reorg(
             }
         }
         state => Err(DdlPlanError::from(
-            tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+            tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack_by_args(&[
                 FormatArg::from("column"),
                 FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
             ]),
@@ -3160,7 +3160,7 @@ fn do_modify_column_type_with_data(
             Ok(action_step(write))
         }
         state => Err(DdlPlanError::from(
-            tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+            tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack_by_args(&[
                 FormatArg::from("column"),
                 FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
             ]),
@@ -3412,7 +3412,7 @@ pub fn check_modify_column_data(
     Err((
         true,
         tidb_terror::MysqlError::from_terror(
-            &tidb_datatype::types_errors::ERR_TRUNCATED.generate_with_stack(format!(
+            &tidb_datatype::types_errors::ERR_TRUNCATED.gen_with_stack(format!(
                 "Data truncated for column '{}', value is '{}'",
                 old_col.name.lowercase(),
                 String::from_utf8_lossy(&shown)

@@ -333,7 +333,7 @@ fn set_own_output_names(plan: &mut LogicalPlan, names: Vec<tidb_datatype::FieldN
 fn err_recursive_requires_non_recursive_first(name: &str) -> PlanError {
     PlanError::from(
         tidb_plannererrors::ERR_CTERECURSIVE_REQUIRES_NON_RECURSIVE_FIRST
-            .generate_with_stack_by_args(&[name.into()]),
+            .gen_with_stack_by_args(&[name.into()]),
     )
 }
 
@@ -341,7 +341,7 @@ fn err_recursive_requires_non_recursive_first(name: &str) -> PlanError {
 fn err_recursive_requires_union(name: &str) -> PlanError {
     PlanError::from(
         tidb_plannererrors::ERR_CTERECURSIVE_REQUIRES_UNION
-            .generate_with_stack_by_args(&[name.into()]),
+            .gen_with_stack_by_args(&[name.into()]),
     )
 }
 
@@ -349,7 +349,7 @@ fn err_recursive_requires_union(name: &str) -> PlanError {
 fn err_invalid_requires_single_reference(name: &str) -> PlanError {
     PlanError::from(
         tidb_plannererrors::ERR_INVALID_REQUIRES_SINGLE_REFERENCE
-            .fast_generate_by_args(&[name.into()]),
+            .fast_gen_by_args(&[name.into()]),
     )
 }
 
@@ -357,7 +357,7 @@ fn err_invalid_requires_single_reference(name: &str) -> PlanError {
 fn err_not_supported_yet(what: &str) -> PlanError {
     PlanError::from(
         tidb_plannererrors::ERR_NOT_SUPPORTED_YET
-            .generate_with_stack_by_args(&[what.into()]),
+            .gen_with_stack_by_args(&[what.into()]),
     )
 }
 
@@ -368,7 +368,7 @@ fn err_non_uniq_table() -> PlanError {
 
 /// Go `dbterror.ErrViewWrongList` (MySQL 1353).
 fn err_view_wrong_list() -> PlanError {
-    PlanError::from(tidb_dbterror::ERR_VIEW_WRONG_LIST.generate_with_stack_by_args(&[]))
+    PlanError::from(tidb_dbterror::ERR_VIEW_WRONG_LIST.gen_with_stack_by_args(&[]))
 }
 
 /// Whether `op` is one of the two operators a recursive CTE's fixpoint is
@@ -869,7 +869,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if seed_schema.columns.len() != recur_schema.columns.len() {
             return Err(PlanError::from(
                 tidb_plannererrors::ERR_WRONG_NUMBER_OF_COLUMNS_IN_SELECT
-                    .generate_with_stack_by_args(&[]),
+                    .gen_with_stack_by_args(&[]),
             ));
         }
         let res_schema = self.get_result_cte_schema(seed_schema);
@@ -1216,7 +1216,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if !cte.col_name_list.is_empty() {
             if cte.col_name_list.len() != names.len() {
                 return Err(PlanError::from(
-                    tidb_dbterror::ERR_VIEW_WRONG_LIST.generate_with_stack_by_args(&[]),
+                    tidb_dbterror::ERR_VIEW_WRONG_LIST.gen_with_stack_by_args(&[]),
                 ));
             }
             for (name, new_name) in names.iter_mut().zip(&cte.col_name_list) {

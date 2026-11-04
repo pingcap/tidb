@@ -46,7 +46,7 @@ pub fn table_locked_error(table: &str, lock: &TableLockInfo) -> MysqlError {
         .map(ToString::to_string)
         .unwrap_or_default();
     MysqlError::from_terror(
-        &tidb_infoschema::infoschema_errors::ERR_TABLE_LOCKED.generate_with_stack_by_args(&[
+        &tidb_infoschema::infoschema_errors::ERR_TABLE_LOCKED.gen_with_stack_by_args(&[
             table.into(),
             lock.tp.sql().into(),
             holder.into(),
@@ -192,7 +192,7 @@ pub fn throw_err_if_in_mem_or_sys_db(
     let (user, host) = login.unwrap_or(("", ""));
     // Go passes two of the message's three verbs.
     Err(MysqlError::from_terror(
-        &tidb_infoschema::infoschema_errors::ERR_ACCESS_DENIED.generate_with_stack(format!(
+        &tidb_infoschema::infoschema_errors::ERR_ACCESS_DENIED.gen_with_stack(format!(
             "Access denied for user '{user}'@'{host}' (using password: %!s(MISSING))"
         )),
     ))

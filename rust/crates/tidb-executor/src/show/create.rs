@@ -52,7 +52,7 @@ fn escape_name(name: &str, ansi_quotes: bool) -> String {
 /// is an in-process session rather than a served connection -- a served
 /// one prints its user, as the wire test in `tidb-server` captures
 /// (`DEFINER=\`alice\`@\`%\``).
-pub fn show_create_view_text(view: &crate::ViewDef, ansi_quotes: bool) -> String {
+pub fn construct_result_of_show_create_view(view: &crate::ViewDef, ansi_quotes: bool) -> String {
     let mut out = format!(
         "CREATE ALGORITHM={} DEFINER={}@{} SQL SECURITY {} VIEW {} (",
         view.algorithm,
@@ -221,7 +221,7 @@ pub fn construct_result_of_show_create_table(
                             .map_err(|_| {
                                 DriverError::from(
                                     tidb_table::table_errors::ERR_GET_DEFAULT_FAILED
-                                        .generate_with_stack_by_args(&[column.read().name.original().to_owned().into()]),
+                                        .gen_with_stack_by_args(&[column.read().name.original().to_owned().into()]),
                                 )
                             })?
                             .unwrap_or_default()
@@ -465,7 +465,7 @@ for foreign_key in table.meta().read().foreign_keys.iter_deref() {
     // expression is already normalized by DDL; SHOW adds one parenthesis
     // pair for CHECK and another around the expression itself.
     for constraint in table
-        .check_constraint_infos()
+        .constraints()
         .iter()
         .filter(|constraint| constraint.state == tidb_model::SchemaState::PUBLIC)
     {

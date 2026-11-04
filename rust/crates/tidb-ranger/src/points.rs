@@ -441,7 +441,7 @@ impl From<tidb_datatype::DatumValueError> for PointBuilderError {
 /// exactly as Go's field does; `skip_plan_cache_reason` carries what Go
 /// pushes through `sctx.SetSkipPlanCache`, for the plan-cache caller to
 /// consume when that surface wires in.
-pub struct PointBuilder<'a> {
+pub struct Builder<'a> {
     eval_expression: &'a ExpressionEvaluator<'a>,
     /// Go `builder.err`.
     pub err: Option<PointBuilderError>,
@@ -532,15 +532,15 @@ pub fn evaluate_static(expression: &Expression) -> Result<Datum, tidb_exprctx::E
     expression.eval(&tidb_exprctx::NoColumns, tidb_chunk::row::Row::empty())
 }
 
-impl Default for PointBuilder<'_> {
+impl Default for Builder<'_> {
     fn default() -> Self {
         Self::new(&crate::points::evaluate_static)
     }
 }
 
-impl std::fmt::Debug for PointBuilder<'_> {
+impl std::fmt::Debug for Builder<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PointBuilder")
+        f.debug_struct("Builder")
             .field("err", &self.err)
             .field("skip_plan_cache_reason", &self.skip_plan_cache_reason)
             .finish_non_exhaustive()
@@ -550,7 +550,7 @@ impl std::fmt::Debug for PointBuilder<'_> {
 use tidb_expr::expression::Expression;
 use tidb_expr::scalar_function::ScalarFunction;
 
-impl<'a> PointBuilder<'a> {
+impl<'a> Builder<'a> {
     /// Build ranges using this execution's parameters, flags and warnings.
     pub fn new(eval_expression: &'a ExpressionEvaluator<'a>) -> Self {
         Self {
@@ -1960,13 +1960,13 @@ mod tests {
     }
 
     fn build_points(expr: &Expression) -> Vec<Point> {
-        let mut builder = PointBuilder::default();
+        let mut builder = Builder::default();
         let points = build_on_long(expr, &mut builder);
         assert!(builder.err.is_none(), "{:?}", builder.err);
         points
     }
 
-    fn build_on_long(expr: &Expression, builder: &mut PointBuilder) -> Vec<Point> {
+    fn build_on_long(expr: &Expression, builder: &mut Builder) -> Vec<Point> {
         builder.build(
             expr,
             &FieldType::new(FieldTypeCode::LongLong),
@@ -2048,7 +2048,7 @@ mod tests {
             let ctx = Params(vec![value]);
             let evaluate =
                 |expression: &Expression| expression.eval(&ctx, tidb_chunk::row::Row::empty());
-            let mut builder = PointBuilder::new(&evaluate);
+            let mut builder = Builder::new(&evaluate);
             assert_eq!(show(&build_on_long(&expression, &mut builder)), expected);
             assert!(builder.err.is_none(), "{:?}", builder.err);
         }
@@ -2059,7 +2059,7 @@ mod tests {
             let ctx = Params(vec![Datum::Int(value)]);
             let evaluate =
                 |expression: &Expression| expression.eval(&ctx, tidb_chunk::row::Row::empty());
-            let mut builder = PointBuilder::new(&evaluate);
+            let mut builder = Builder::new(&evaluate);
             assert_eq!(
                 show(&build_on_long(&expression, &mut builder)),
                 format!("[{value} {value}]")
@@ -2067,10 +2067,10 @@ mod tests {
             assert!(builder.err.is_none());
         }
         // An unbound value must fail, not silently use the saved 1.
-        let mut builder = PointBuilder::default();
+        let mut builder = Builder::default();
         let _ = build_on_long(&bound, &mut builder);
         assert!(matches!(builder.err, Some(PointBuilderError::Eval(_))));
-        let mut builder = PointBuilder::default();
+        let mut builder = Builder::default();
         let _ = build_on_long(&func_expr("in", vec![int_col_expr(1), bound]), &mut builder);
         assert!(matches!(
             builder.err,
@@ -2122,7 +2122,7 @@ mod tests {
         ));
         let compare = |name: &str| {
             let expression = func_expr(name, vec![column.clone(), wrapped_negative.clone()]);
-            let mut builder = PointBuilder::default();
+            let mut builder = Builder::default();
             builder.build(
                 &expression,
                 &unsigned_decimal,
@@ -2224,7 +2224,7 @@ mod tests {
         );
         like.collation
             .set_charset_and_collation("utf8mb4", "utf8mb4_bin");
-        let mut builder = PointBuilder::default();
+        let mut builder = Builder::default();
         let points = builder.build(
             &Expression::ScalarFunction(like),
             &str_ft,
@@ -2261,7 +2261,7 @@ mod tests {
             }
             _ => evaluate_static(expression),
         };
-        let mut builder = PointBuilder::new(&evaluate);
+        let mut builder = Builder::new(&evaluate);
         let points = builder.build(
             &like,
             &str_ft,

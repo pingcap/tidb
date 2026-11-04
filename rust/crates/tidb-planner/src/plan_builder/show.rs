@@ -139,7 +139,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             | T::Affinity => {
                 if matches!(show.tp, T::Tables | T::TableStatus) && show.db_name.is_empty() {
                     return Err(PlanError::from(
-                        tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                        tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]),
                     ));
                 }
                 if let Some(extractor) = ShowBaseExtractor::extract(show) {
@@ -288,7 +288,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     };
                     return Err(PlanError::from(
                         tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                            .fast_generate_by_args(&[schema.into(), name.into()]),
+                            .fast_gen_by_args(&[schema.into(), name.into()]),
                     ));
                 };
                 let is_temporary = table
@@ -298,7 +298,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 if is_temporary {
                     return Err(PlanError::from(
                         tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
-                            .generate_with_stack_by_args(&[(if show.tp == T::Regions {
+                            .gen_with_stack_by_args(&[(if show.tp == T::Regions {
                                 "show table regions"
                             } else {
                                 "show table distributions"
@@ -310,7 +310,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             T::ReplicaStatus => {
                 return Err(PlanError::from(
                     tidb_plannererrors::ERR_NOT_SUPPORTED_YET
-                        .generate_with_stack_by_args(&["SHOW {REPLICA | SLAVE} STATUS".into()]),
+                        .gen_with_stack_by_args(&["SHOW {REPLICA | SLAVE} STATUS".into()]),
                 ));
             }
             _ => {}

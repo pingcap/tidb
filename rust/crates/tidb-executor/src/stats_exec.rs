@@ -104,7 +104,7 @@ pub trait StatsExec: AnalyzeExec {
                 let Some(TableEntry::Kv(table)) = catalog.table_in(database, table) else {
                     let error = tidb_terror::MysqlError::from_terror(
                         &tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                            .generate_with_stack_by_args(&[database.into(), table.into()]),
+                            .gen_with_stack_by_args(&[database.into(), table.into()]),
                     );
                     warnings.push((error.code, error.message));
                     return;
@@ -125,7 +125,7 @@ pub trait StatsExec: AnalyzeExec {
                         } else {
                             let error = tidb_terror::MysqlError::from_terror(
                                 &tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                                    .generate_with_stack_by_args(&[database.as_str().into()]),
+                                    .gen_with_stack_by_args(&[database.as_str().into()]),
                             );
                             warnings.push((error.code, error.message));
                         }
@@ -199,7 +199,7 @@ pub trait StatsExec: AnalyzeExec {
             };
             if database.is_empty() {
                 return Err(DriverError::from(
-                    tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                    tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]),
                 ));
             }
             let table =
@@ -207,7 +207,7 @@ pub trait StatsExec: AnalyzeExec {
                     Some(TableEntry::Kv(table)) => Ok(Arc::clone(table)),
                     _ => Err(DriverError::from(
                         tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                            .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
+                            .gen_with_stack_by_args(&[(&database).into(), (&name).into()]),
                     )),
                 })?;
             tables.push(table);
@@ -298,7 +298,7 @@ pub fn get_physical_ids_and_partition_names(
         if !partition_names.is_empty() {
             return Err(DriverError::from(
                 tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
-                    .generate_with_stack_by_args(&[]),
+                    .gen_with_stack_by_args(&[]),
             ));
         }
         return Ok(vec![table.table_id()]);

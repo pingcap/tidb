@@ -230,7 +230,7 @@ fn full_cluster_ddl_keeps_a_region_backoff_error_coded_on_the_wire() {
 fn auto_random_rebase_errors_keep_their_tidb_codes_on_the_cluster_wire() {
     let invalid = cluster_ddl_error(tidb_ddl::real_tikv_ddl::ClusterDdlError::Plan(
         tidb_ddl_build::plan_error::DdlPlanError::from(
-            tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
+            tidb_dbterror::ERR_INVALID_AUTO_RANDOM.gen_with_stack_by_args(&[
                 ("alter auto_random_base of a non auto_random table".to_owned()).into(),
             ]),
         ),
@@ -243,7 +243,7 @@ fn auto_random_rebase_errors_keep_their_tidb_codes_on_the_cluster_wire() {
 
     let zero = cluster_ddl_error(tidb_ddl::real_tikv_ddl::ClusterDdlError::Plan(
         tidb_ddl_build::plan_error::DdlPlanError::from(
-            tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED.generate_with_stack_by_args(&[]),
+            tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED.gen_with_stack_by_args(&[]),
         ),
     ));
     assert_query_error_packet(
@@ -559,7 +559,7 @@ fn create_and_drop_database_route_to_the_catalog_writer() {
     assert!(rows(&mut session, "SELECT id FROM here").is_empty());
     let catalog = node.catalog.get_latest();
     let database = catalog
-        .schema_info_by_name("extra")
+        .schema_by_name("extra")
         .expect("the created database is published");
     assert_eq!(database.read().charset, "utf8");
     assert_eq!(database.read().collate, "utf8_general_ci");
@@ -743,20 +743,20 @@ fn a_catalog_refusal_carries_the_code_mysql_clients_switch_on() {
 
     let (code, message) = coded(DdlPlanError::from(
         tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-            .generate_with_stack_by_args(&[("nope".to_owned()).into()]),
+            .gen_with_stack_by_args(&[("nope".to_owned()).into()]),
     ));
     assert_eq!(code, 1049);
     assert_eq!(message, "Unknown database 'nope'");
 
     let (code, message) = coded(DdlPlanError::from(
         tidb_infoschema::infoschema_errors::ERR_DATABASE_EXISTS
-            .generate_with_stack_by_args(&[("dup".to_owned()).into()]),
+            .gen_with_stack_by_args(&[("dup".to_owned()).into()]),
     ));
     assert_eq!(code, 1007);
     assert_eq!(message, "Can't create database 'dup'; database exists");
 
     let (code, message) = coded(DdlPlanError::from(
-        tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS.generate_with_stack_by_args(&[
+        tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS.gen_with_stack_by_args(&[
             format!("{}.{}", ("s".to_owned()), ("t".to_owned())).into(),
         ]),
     ));
@@ -765,7 +765,7 @@ fn a_catalog_refusal_carries_the_code_mysql_clients_switch_on() {
 
     let (code, message) =
         coded(DdlPlanError::from(
-            tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.generate_with_stack_by_args(&[
+            tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.gen_with_stack_by_args(&[
                 format!("{}.{}", ("s".to_owned()), ("t".to_owned())).into(),
             ]),
         ));
@@ -774,21 +774,21 @@ fn a_catalog_refusal_carries_the_code_mysql_clients_switch_on() {
 
     let (code, message) = coded(DdlPlanError::from(
         tidb_infoschema::infoschema_errors::ERR_COLUMN_EXISTS
-            .generate_with_stack_by_args(&[("a".to_owned()).into()]),
+            .gen_with_stack_by_args(&[("a".to_owned()).into()]),
     ));
     assert_eq!(code, 1060);
     assert_eq!(message, "Duplicate column name 'a'");
 
     let (code, message) = coded(DdlPlanError::from(
         tidb_dbterror::ERR_DUP_KEY_NAME
-            .generate_with_stack_by_args(&[("ix".to_owned()).into()]),
+            .gen_with_stack_by_args(&[("ix".to_owned()).into()]),
     ));
     assert_eq!(code, 1061);
     assert_eq!(message, "Duplicate key name 'ix'");
 
     let (code, message) = coded(DdlPlanError::from(
         tidb_dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS
-            .generate_with_stack(format!("column does not exist: {}", ("c".to_owned()))),
+            .gen_with_stack(format!("column does not exist: {}", ("c".to_owned()))),
     ));
     assert_eq!((code, message.as_str()), (1072, "column does not exist: c"));
 }

@@ -150,7 +150,7 @@ fn build_sequence_info(
     let info = apply_sequence_options(base, options, true);
     if !sequence_options_are_valid(&info) {
         return Err(tidb_terror::MysqlError::from_terror(
-            &tidb_dbterror::ERR_SEQUENCE_INVALID_DATA.generate_with_stack_by_args(&[
+            &tidb_dbterror::ERR_SEQUENCE_INVALID_DATA.gen_with_stack_by_args(&[
                 tidb_hack::go_to_lower(database).into(),
                 tidb_hack::go_to_lower(name).into(),
             ]),
@@ -241,7 +241,7 @@ pub fn build_create_sequence(
     if name.is_empty() || name.as_bytes().last() == Some(&b' ') {
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_WRONG_TABLE_NAME
-                .generate_with_stack_by_args(&[name.to_string().into()]),
+                .gen_with_stack_by_args(&[name.to_string().into()]),
         ));
     }
     let mut comment = String::new();
@@ -252,7 +252,7 @@ pub fn build_create_sequence(
             _ => {
                 return Err(tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_SEQUENCE_UNSUPPORTED_TABLE_OPTION
-                        .generate_with_stack_by_args(&[(sequence_table_option_string_value(
+                        .gen_with_stack_by_args(&[(sequence_table_option_string_value(
                             option,
                         ))
                         .to_string()
@@ -280,7 +280,7 @@ pub fn alter_sequence_options(
     let info = apply_sequence_options(existing, options, false);
     if !sequence_options_are_valid(&info) {
         return Err(tidb_terror::MysqlError::from_terror(
-            &tidb_dbterror::ERR_SEQUENCE_INVALID_DATA.generate_with_stack_by_args(&[
+            &tidb_dbterror::ERR_SEQUENCE_INVALID_DATA.gen_with_stack_by_args(&[
                 tidb_hack::go_to_lower(database).into(),
                 tidb_hack::go_to_lower(name).into(),
             ]),

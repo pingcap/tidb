@@ -41,7 +41,7 @@ impl HintWarning {
     }
 
     /// Go `plannererrors.ErrWarnConflictingHint`.
-    pub(crate) fn conflicting(hint: impl Into<String>) -> Self {
+    pub(crate) fn err_warn_conflicting_hint(hint: impl Into<String>) -> Self {
         Self::of(
             &tidb_plannererrors::ERR_WARN_CONFLICTING_HINT,
             format!("Hint {} is ignored as conflicting/duplicated.", hint.into()),
@@ -353,7 +353,7 @@ where
                     continue;
                 }
                 if result.set_vars.contains_key(var_name) {
-                    warnings.push(HintWarning::conflicting(format!(
+                    warnings.push(HintWarning::err_warn_conflicting_hint(format!(
                         "{}({var_name}={value})",
                         hint.written_name()
                     )));

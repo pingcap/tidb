@@ -61,7 +61,7 @@ impl Executor for MaxOneRowExec {
             1 => {}
             _ => {
                 return Err(tidb_exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
-                    .generate_with_stack_by_args(&[])
+                    .gen_with_stack_by_args(&[])
                     .into())
             }
         }
@@ -69,7 +69,7 @@ impl Executor for MaxOneRowExec {
         self.child.next(&mut next)?;
         if next.num_rows() != 0 {
             return Err(tidb_exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
-                .generate_with_stack_by_args(&[])
+                .gen_with_stack_by_args(&[])
                 .into());
         }
         Ok(())

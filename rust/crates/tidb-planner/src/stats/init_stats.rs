@@ -118,7 +118,7 @@ pub fn init_stats(
         // Go `statistics.PrepareCols4MVIndex`, which the planner injects.
         |_, index_info, _| {
             let index = source.table_indices().into_iter().find(|index| index.read().id == index_info.id)?;
-            crate::access_path::prepare_cols_for_mv_index(source, &index)
+            crate::access_path::prepare_cols4_mv_index(source, &index)
         },
     );
     // Go `fillIndexPath` extends `Idx2ColUniqueIDs` with the integer handle
