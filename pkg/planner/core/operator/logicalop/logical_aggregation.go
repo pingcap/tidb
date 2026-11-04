@@ -690,14 +690,15 @@ func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Ex
 		exprsOriginal = append(exprsOriginal, fun.Args[0])
 	}
 	groupByColumns := expression.NewSchema(la.GetGroupByCols()...)
-	// It's almost the same as pushDownCNFPredicatesForAggregation, except that the condition is a slice.
 	for _, cond := range predicates {
-		subCondsToPush, subRet := la.pushDownDNFPredicatesForAggregation(cond, groupByColumns, exprsOriginal)
-		if len(subCondsToPush) > 0 {
-			condsToPush = append(condsToPush, subCondsToPush...)
-		}
-		if len(subRet) > 0 {
-			ret = append(ret, subRet...)
+		for _, cnfItem := range expression.SplitCNFItems(cond) {
+			subCondsToPush, subRet := la.pushDownDNFPredicatesForAggregation(cnfItem, groupByColumns, exprsOriginal)
+			if len(subCondsToPush) > 0 {
+				condsToPush = append(condsToPush, subCondsToPush...)
+			}
+			if len(subRet) > 0 {
+				ret = append(ret, subRet...)
+			}
 		}
 	}
 	return condsToPush, ret
