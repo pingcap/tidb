@@ -378,6 +378,7 @@ impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
             source,
             Some(super::cop_iterator::start_concurrent::<NativeCopResponse<S>>),
             request.cop_lite_worker(),
+            request.session_mem_tracker(),
         )))
     }
 }

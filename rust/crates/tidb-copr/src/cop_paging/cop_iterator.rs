@@ -46,7 +46,130 @@ pub(crate) trait CopWorkerSource: CopTaskSource + Sized {
     fn start_worker(&mut self);
 }
 
-pub(crate) type ConcurrentStart<R> = fn(R, bool) -> Box<dyn tidb_txnkv::Response + Send>;
+pub(crate) type ConcurrentStart<R> =
+    fn(R, bool, Option<Arc<RateLimitAction>>) -> Box<dyn tidb_txnkv::Response + Send>;
+
+/// Go `rateLimitAction`: an OOM action on the session tracker that, while
+/// enabled, answers an exceeded quota by destroying one send token -- the
+/// next task the consumer retires does not return its token -- and hands
+/// over to its fallback once fewer than two tokens remain.
+pub struct RateLimitAction {
+    base: tidb_memory::BaseOomAction,
+    enabled: AtomicBool,
+    total_token_num: usize,
+    cond: Mutex<RateLimitCond>,
+}
+
+struct RateLimitCond {
+    exceeded: bool,
+    remaining_token_num: usize,
+    /// Go `cond.once`: one action per exceeded round.
+    acted: bool,
+}
+
+impl RateLimitAction {
+    /// Go `newRateLimitAction`.
+    pub(crate) fn new(total_token_num: usize) -> Self {
+        Self {
+            base: tidb_memory::BaseOomAction::default(),
+            enabled: AtomicBool::new(false),
+            total_token_num,
+            cond: Mutex::new(RateLimitCond {
+                exceeded: false,
+                remaining_token_num: total_token_num,
+                acted: false,
+            }),
+        }
+    }
+
+    fn set_enabled(&self, enabled: bool) {
+        self.enabled.store(enabled, Ordering::Release);
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled.load(Ordering::Acquire)
+    }
+
+    /// Go `destroyTokenIfNeeded` after a task finished: whether the task's
+    /// token is destroyed instead of returned.
+    pub(crate) fn destroy_token_if_needed(&self) -> bool {
+        if !self.is_enabled() {
+            return false;
+        }
+        let mut cond = self.cond.lock().unwrap_or_else(|p| p.into_inner());
+        if !cond.exceeded {
+            return false;
+        }
+        cond.remaining_token_num -= 1;
+        cond.exceeded = false;
+        cond.acted = false;
+        true
+    }
+
+    /// Go `rateLimitAction.close`.
+    pub(crate) fn close(&self) {
+        if !self.is_enabled() {
+            return;
+        }
+        self.set_enabled(false);
+        self.cond.lock().unwrap_or_else(|p| p.into_inner()).exceeded = false;
+        self.base.set_finished();
+    }
+}
+
+impl tidb_memory::ActionOnExceed for RateLimitAction {
+    fn action(&self, tracker: &Arc<tidb_memory::Tracker>) {
+        if !self.is_enabled() {
+            self.base.trigger_fall_back_action(tracker);
+            return;
+        }
+        let mut cond = self.cond.lock().unwrap_or_else(|p| p.into_inner());
+        if cond.acted {
+            return;
+        }
+        cond.acted = true;
+        if cond.remaining_token_num < 2 {
+            self.set_enabled(false);
+            tidb_logutil::bg_logger().info(
+                "memory exceeds quota, rateLimitAction delegate to fallback action",
+                &[tidb_log::Field::new("total token count", tidb_log::Value::U64(self.total_token_num as u64))],
+            );
+            drop(cond);
+            self.base.trigger_fall_back_action(tracker);
+            return;
+        }
+        tidb_logutil::bg_logger().info(
+            "memory exceeds quota, destroy one token now.",
+            &[
+                tidb_log::Field::new("consumed", tidb_log::Value::I64(tracker.bytes_consumed())),
+                tidb_log::Field::new("quota", tidb_log::Value::I64(tracker.get_bytes_limit())),
+                tidb_log::Field::new("total token count", tidb_log::Value::U64(self.total_token_num as u64)),
+                tidb_log::Field::new("remaining token count", tidb_log::Value::U64(cond.remaining_token_num as u64)),
+            ],
+        );
+        cond.exceeded = true;
+    }
+
+    fn set_fallback(&self, action: Option<tidb_memory::ArcAction>) {
+        self.base.set_fallback(action);
+    }
+
+    fn get_fallback(&self) -> Option<tidb_memory::ArcAction> {
+        self.base.get_fallback()
+    }
+
+    fn get_priority(&self) -> i64 {
+        tidb_memory::DEF_RATE_LIMIT_PRIORITY
+    }
+
+    fn set_finished(&self) {
+        self.base.set_finished();
+    }
+
+    fn is_finished(&self) -> bool {
+        self.base.is_finished()
+    }
+}
 
 enum Driver<R> {
     Inline(R),
@@ -62,6 +185,8 @@ pub struct CopIterator<R: tidb_txnkv::Response> {
     lite: Option<Arc<AtomicBool>>,
     limiter_wait: tidb_txnkv::LimiterWaitStats,
     info: Option<tidb_txnkv::CopInfo>,
+    /// Go `copIterator.actionOnExceed`.
+    action_on_exceed: Option<Arc<RateLimitAction>>,
 }
 
 impl<R: tidb_txnkv::Response> CopIterator<R> {
@@ -69,11 +194,26 @@ impl<R: tidb_txnkv::Response> CopIterator<R> {
         mut source: R,
         start: Option<ConcurrentStart<R>>,
         token: Option<Arc<AtomicBool>>,
+        session_mem_tracker: (Option<Arc<tidb_memory::Tracker>>, bool),
     ) -> Self
     where
-        R: CopTaskSource,
+        R: CopWorkerSource,
     {
         let info = source.cop_info();
+        // Go `copClient.Send`: `sendRate` holds `concurrency +
+        // smallTaskConcurrency` tokens, twice that under keep-order, and the
+        // `rateLimitAction` starts with as many.
+        let action_on_exceed = info.map(|info| {
+            let tokens = info.concurrency + info.extra_concurrency;
+            let tokens = if source.keep_order() { 2 * tokens } else { tokens };
+            let action = Arc::new(RateLimitAction::new(tokens));
+            let (tracker, enabled) = &session_mem_tracker;
+            if let (Some(tracker), true) = (tracker, *enabled) {
+                tracker.fallback_old_and_set_new_action(Arc::clone(&action) as tidb_memory::ArcAction);
+            }
+            action.set_enabled(*enabled);
+            action
+        });
         if start.is_some() {
             source.use_task_worker();
         }
@@ -89,7 +229,9 @@ impl<R: tidb_txnkv::Response> CopIterator<R> {
             None
         };
         let driver = match start {
-            Some(start) if lite.is_none() => Driver::Concurrent(start(source, false)),
+            Some(start) if lite.is_none() => {
+                Driver::Concurrent(start(source, false, action_on_exceed.clone()))
+            }
             _ => Driver::Inline(source),
         };
         Self {
@@ -98,6 +240,7 @@ impl<R: tidb_txnkv::Response> CopIterator<R> {
             lite,
             limiter_wait: tidb_txnkv::LimiterWaitStats::default(),
             info,
+            action_on_exceed,
         }
     }
 }
@@ -111,6 +254,9 @@ impl<R: tidb_txnkv::Response> CopIterator<R> {
 
     fn close_inner(&mut self) {
         self.release_lite();
+        if let Some(action) = &self.action_on_exceed {
+            action.close();
+        }
         match std::mem::replace(&mut self.driver, Driver::Closed) {
             Driver::Inline(mut source) => {
                 source.close();
@@ -135,6 +281,10 @@ impl<R: CopTaskSource> tidb_txnkv::Response for CopIterator<R> {
         // Go releases TryCopLiteWorker after the first response, including
         // errors. A retained iterator must never release a later owner's slot.
         self.release_lite();
+        // Go's lite worker returns no token: `destroyTokenIfNeeded(func(){})`.
+        if let (Ok(Some(_)), Some(action)) = (&result, &self.action_on_exceed) {
+            action.destroy_token_if_needed();
+        }
         if matches!(&result, Ok(Some(_))) {
             if let (Some(start), Driver::Inline(source)) = (self.start, &self.driver) {
                 if source.has_remaining_work() {
@@ -143,7 +293,7 @@ impl<R: CopTaskSource> tidb_txnkv::Response for CopIterator<R> {
                     else {
                         unreachable!()
                     };
-                    self.driver = Driver::Concurrent(start(source, true));
+                    self.driver = Driver::Concurrent(start(source, true, self.action_on_exceed.clone()));
                 }
             }
         } else if !matches!(&result, Err(QueryResponseError::Pending)) {
@@ -206,6 +356,9 @@ struct State<R> {
     waiting: [Option<usize>; 2],
     current: usize,
     retired: usize,
+    /// The send tokens `rateLimitAction` destroyed: never returned, so the
+    /// send window shrinks by each.
+    destroyed: usize,
     live_workers: usize,
     limiter_wait: tidb_txnkv::LimiterWaitStats,
 }
@@ -223,6 +376,8 @@ struct WorkerGroup<R> {
     ordered: bool,
     window: usize,
     closed: AtomicBool,
+    /// Go `copIterator.actionOnExceed`, consulted as each task retires.
+    action_on_exceed: Option<Arc<RateLimitAction>>,
 }
 
 struct TaskWake(Arc<tokio::sync::Notify>);
@@ -252,7 +407,9 @@ impl<R: CopTaskSource + Send + 'static> WorkerGroup<R> {
     /// wakes a receiver in that lane. A full target slot blocks later tasks.
     fn admit_tasks(&self, state: &mut State<R>) {
         let previous_next = state.next_task;
-        while state.next_task < state.tasks.len() && state.next_task < state.retired + self.window {
+        while state.next_task < state.tasks.len()
+            && state.next_task < (state.retired + self.window).saturating_sub(state.destroyed)
+        {
             let index = state.next_task;
             let lane = state.tasks[index].lane;
             if state.waiting[lane].is_some() {
@@ -364,6 +521,19 @@ impl<R: CopTaskSource + Send + 'static> WorkerGroup<R> {
         }
     }
 
+    /// Go `Next` on a finished task: its token returns to `sendRate` unless
+    /// `rateLimitAction.destroyTokenIfNeeded` destroys it.
+    fn retire_task(&self, state: &mut State<R>) {
+        state.retired += 1;
+        if self
+            .action_on_exceed
+            .as_ref()
+            .is_some_and(|action| action.destroy_token_if_needed())
+        {
+            state.destroyed += 1;
+        }
+    }
+
     fn receive(&self) -> Option<Result<Option<QueryResultSubset>, QueryResponseError>> {
         loop {
             let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
@@ -384,7 +554,7 @@ impl<R: CopTaskSource + Send + 'static> WorkerGroup<R> {
                     return None;
                 }
                 state.current += 1;
-                state.retired += 1;
+                self.retire_task(&mut state);
                 self.admit_tasks(&mut state);
                 drop(state);
                 continue;
@@ -399,7 +569,7 @@ impl<R: CopTaskSource + Send + 'static> WorkerGroup<R> {
                     return Some(row.map(Some));
                 }
                 Event::Finished => {
-                    state.retired += 1;
+                    self.retire_task(&mut state);
                     self.admit_tasks(&mut state);
                     drop(state);
                     self.spaces[index].notify_one();
@@ -564,6 +734,7 @@ impl<R: CopTaskSource + Send + 'static> Drop for ConcurrentResponse<R> {
 pub(crate) fn start_concurrent<R: CopWorkerSource + Send + 'static>(
     source: R,
     lite_fallback: bool,
+    action_on_exceed: Option<Arc<RateLimitAction>>,
 ) -> Box<dyn tidb_txnkv::Response + Send> {
     let call = source.call();
     let limiter_wait = source.limiter_wait_stats();
@@ -621,6 +792,7 @@ pub(crate) fn start_concurrent<R: CopWorkerSource + Send + 'static>(
             waiting: [None; 2],
             current: 0,
             retired: 0,
+            destroyed: 0,
             live_workers: workers,
             limiter_wait,
         }),
@@ -634,6 +806,7 @@ pub(crate) fn start_concurrent<R: CopWorkerSource + Send + 'static>(
         ordered,
         window: if ordered { 2 * workers } else { workers },
         closed: AtomicBool::new(false),
+        action_on_exceed,
     });
     for (index, wake) in group.worker_wakes.iter().enumerate() {
         drop(runtime.spawn(run_worker(
@@ -726,6 +899,62 @@ mod tests {
         fn use_task_worker(&mut self) {}
 
         fn set_waker(&mut self, _waker: Waker) {}
+    }
+
+    /// A fallback that counts its actions.
+    #[derive(Default)]
+    struct CountingFallback {
+        base: tidb_memory::BaseOomAction,
+        acted: std::sync::atomic::AtomicUsize,
+    }
+
+    impl tidb_memory::ActionOnExceed for CountingFallback {
+        fn action(&self, _: &Arc<tidb_memory::Tracker>) {
+            self.acted.fetch_add(1, Ordering::SeqCst);
+        }
+        fn set_fallback(&self, action: Option<tidb_memory::ArcAction>) {
+            self.base.set_fallback(action);
+        }
+        fn get_fallback(&self) -> Option<tidb_memory::ArcAction> {
+            self.base.get_fallback()
+        }
+        fn get_priority(&self) -> i64 {
+            0
+        }
+        fn set_finished(&self) {
+            self.base.set_finished();
+        }
+        fn is_finished(&self) -> bool {
+            self.base.is_finished()
+        }
+    }
+
+    /// Go `rateLimitAction`: each exceeded round marks one token for
+    /// destruction at the next retired task (acting once per round); with
+    /// fewer than two tokens left it disables itself and hands the round to
+    /// its fallback, as it does whenever it is disabled.
+    #[test]
+    fn rate_limit_action_destroys_one_token_per_exceeded_round() {
+        use tidb_memory::ActionOnExceed as _;
+        let tracker = tidb_memory::Tracker::new(1, 1);
+        let fallback = Arc::new(CountingFallback::default());
+        let action = RateLimitAction::new(3);
+        action.set_fallback(Some(Arc::clone(&fallback) as tidb_memory::ArcAction));
+        action.set_enabled(true);
+        assert!(!action.destroy_token_if_needed(), "no round is exceeded yet");
+        action.action(&tracker);
+        action.action(&tracker);
+        assert!(action.destroy_token_if_needed());
+        assert!(!action.destroy_token_if_needed(), "one token per round");
+        action.action(&tracker);
+        assert!(action.destroy_token_if_needed());
+        assert_eq!(fallback.acted.load(Ordering::SeqCst), 0);
+        // One token left: the round goes to the fallback.
+        action.action(&tracker);
+        assert_eq!(fallback.acted.load(Ordering::SeqCst), 1);
+        assert!(!action.destroy_token_if_needed());
+        action.action(&tracker);
+        assert_eq!(fallback.acted.load(Ordering::SeqCst), 2, "a disabled action falls back");
     }
 
     #[test]

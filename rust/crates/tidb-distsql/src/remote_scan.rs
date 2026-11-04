@@ -469,6 +469,8 @@ pub struct PushdownStatementContext {
     /// Go `SessionVars.DistSQLScanConcurrency()`, the request concurrency
     /// `SetFromSessionVars` gives every DistSQL request.
     pub dist_sql_scan_concurrency: u64,
+    /// Go `DistSQLContext.EnabledRateLimitAction`.
+    pub enabled_rate_limit_action: bool,
     /// Go `SessionVars.StoreBatchSize`, which `SetFromSessionVars` copies to
     /// every coprocessor request.
     pub store_batch_size: u64,
@@ -524,6 +526,7 @@ impl Default for PushdownStatementContext {
             priority: crate::Priority::None,
             not_fill_cache: false,
             dist_sql_scan_concurrency: tidb_vardef::defaults::DEF_DIST_SQL_SCAN_CONCURRENCY as u64,
+            enabled_rate_limit_action: false,
             store_batch_size: tidb_vardef::defaults::DEF_TIDB_STORE_BATCH_SIZE as u64,
             tiflash_replica_read: tidb_tiflash::ReplicaRead::AllReplicas,
             query_cop_store_limiter: None,

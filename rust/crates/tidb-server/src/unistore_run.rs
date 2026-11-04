@@ -128,6 +128,7 @@ pub fn run_unistore_cluster_session(
                 settings: Some(crate::node_status::status_settings(&factory)),
                 peer: Some(crate::node_status::peer_service(&factory)),
                 security: config.cluster_security.clone(),
+                server_info: factory.server_info(),
             },
         ) {
             Ok(server) => Some(server),

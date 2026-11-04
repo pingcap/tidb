@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**33 unresolved: 12 open, 21 partial.**
+**32 unresolved: 11 open, 21 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -51,7 +51,7 @@ unresolved until it is restated against its Go owner or closed.
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| N05 | open | The status port serves only `/status`, `/metrics`, `/settings`, `/config`, `/schema` and `/schema_storage` (`tidb-server/src/http_status.rs`); Go's other routes are absent: `/info`, `/info/all`, `/labels`, `/ddl/history`, `/ddl/owner/resign`, `/mvcc/*`, `/regions/*`, `/tables/*`, `/db-table/{id}`, `/stats/dump/*`, `/plan_replayer/dump`, `/optimize_trace/dump`, `/extract_task/dump`, `/dxf/*`, `/ingest/*`, `/tiflash/replica`, `/upgrade/*`, `/txn-gc-states`, `/debug/*`, test hooks | `pkg/server/http_status.go`, `pkg/server/handler` |
+| N05 | partial | The status port serves `/status`, `/metrics`, `/settings`, `/config`, `/schema`, `/schema_storage`, `/db-table/{tableID}`, `/tables/{colID}/{colTp}/{colFlag}/{colLen}` and `/labels` (`tidb-server/src/http_status.rs`); Go's other routes are absent: `/info` and `/info/all` (the status server has no DDL owner manager, and `gogc` has no Rust source), `/ddl/history`, `/ddl/owner/resign`, `/mvcc/*`, `/regions/*`, `/tables/{db}/{table}/{regions,ranges,scatter,stop-scatter,disk-usage}`, `/stats/dump/*`, `/plan_replayer/dump`, `/optimize_trace/dump`, `/extract_task/dump`, `/dxf/*`, `/ingest/*`, `/tiflash/replica`, `/upgrade/*`, `/txn-gc-states`, `/debug/*`, test hooks | `pkg/server/http_status.go`, `pkg/server/handler` |
 
 ### Domain and process services
 
@@ -69,7 +69,6 @@ unresolved until it is restated against its Go owner or closed.
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| I06 | partial | The coprocessor iterator charges each queued response's `MemSize` to the request's `MemTracker` (`CopPagingState::check_resp_oom` / `next_response`, Go `checkRespOOM` / `memTrackerConsumeResp`) and its `WorkerGroup` window plays Go's `sendRate`, but there is no `rateLimitAction`: `tidb_enable_rate_limit_action` is read into the statement context (`stmt_ctx_build.rs`) and nothing registers Go's OOM action that destroys send tokens. `MemSize` counts the start key's length where Go counts its capacity | `pkg/store/copr/coprocessor.go` (`copIterator`, `rateLimitAction`) |
 | I07 | partial | A CLUSTER_* table read is a hand-built fan-out (`ClusterPeerClient::scan_projected`: a TableScan plus at most a DIGEST IN selection, no key ranges, no `Desc`) where Go's planner builds a TableReader whose plan pushed to the `kv.TiDB` stores carries the selections, limit, TopN and aggregation, the key ranges and the scan order; so the receiving handler (`peer_rpc.rs`) builds no `SlowQueryExtractor` for CLUSTER_SLOW_QUERY (Go `PBPlanBuilder.pbToTableScan`'s `Desc` and `buildTimeRangeFromKeyRange`, `predicatePushDown`'s `Extract`, `SetRowLimitHint`), reads every slow-log file forward, and charges no reader tracker; the requesting node reads its own share in-process (`local_cluster_table_rows_for`) instead of through its own coprocessor handler | `pkg/planner/core` (TiDB-store pushdown), `pkg/planner/core/pb_to_plan.go`, `pkg/executor/coprocessor.go` |
 
 ### Transport, PD and MPP

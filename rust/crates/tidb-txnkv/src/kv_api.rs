@@ -142,7 +142,7 @@ impl Retriever for EmptyRetriever {
 /// Per-send client controls.
 pub struct ClientSendOption<W> {
     /// Session memory tracker.
-    pub session_memory_tracker: Option<Arc<AtomicI64>>,
+    pub session_memory_tracker: Option<Arc<tidb_memory::Tracker>>,
     /// Whether a rate-limit action is active.
     pub rate_limit_action_enabled: bool,
     /// Transaction event callback.

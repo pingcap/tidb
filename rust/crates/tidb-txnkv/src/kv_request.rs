@@ -135,6 +135,16 @@ pub enum TransportRequestError {
     InvalidRegionTopology,
 }
 
+/// The session tracker a request carries, printed by its label.
+#[derive(Clone)]
+struct SessionMemTracker(Arc<tidb_memory::Tracker>);
+
+impl std::fmt::Debug for SessionMemTracker {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "Tracker({})", self.0.label())
+    }
+}
+
 /// Immutable request metadata plus an explicit transport binding state.
 ///
 /// `bind` returns a new snapshot rather than mutating the original request.
@@ -150,6 +160,11 @@ pub struct TransportRequest {
     /// every send.
     kv_context: StatementKvContext,
     cop_lite_worker: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// Go `kv.ClientSendOption.SessionMemTracker` and
+    /// `EnabledRateLimitAction`: the tracker the coprocessor iterator's
+    /// `rateLimitAction` joins, and whether that action may act.
+    session_mem_tracker: Option<SessionMemTracker>,
+    enabled_rate_limit_action: bool,
     execution_cancellation: Arc<CancelHandle>,
     request_cancellation: Option<Arc<CancelHandle>>,
     bound_at: Option<Instant>,
@@ -165,6 +180,8 @@ impl TransportRequest {
             rpc_interceptor: Default::default(),
             kv_context: StatementKvContext::default(),
             cop_lite_worker: None,
+            session_mem_tracker: None,
+            enabled_rate_limit_action: false,
             execution_cancellation,
             request_cancellation: None,
             bound_at: None,
@@ -178,6 +195,23 @@ impl TransportRequest {
     pub fn with_cop_lite_worker(mut self, token: Arc<std::sync::atomic::AtomicBool>) -> Self {
         self.cop_lite_worker = Some(token);
         self
+    }
+
+    /// Go `ClientSendOption{SessionMemTracker, EnabledRateLimitAction}`.
+    #[must_use]
+    pub fn with_session_mem_tracker(mut self, tracker: Arc<tidb_memory::Tracker>, enabled_rate_limit_action: bool) -> Self {
+        self.session_mem_tracker = Some(SessionMemTracker(tracker));
+        self.enabled_rate_limit_action = enabled_rate_limit_action;
+        self
+    }
+
+    /// The session tracker and the rate-limit flag the send carries.
+    #[must_use]
+    pub fn session_mem_tracker(&self) -> (Option<Arc<tidb_memory::Tracker>>, bool) {
+        (
+            self.session_mem_tracker.as_ref().map(|tracker| Arc::clone(&tracker.0)),
+            self.enabled_rate_limit_action,
+        )
     }
 
     /// Go `WithSQLKvExecCounterInterceptor` on the request ctx: retains the
@@ -286,6 +320,8 @@ impl TransportRequest {
             rpc_interceptor: self.rpc_interceptor.clone(),
             kv_context: self.kv_context.clone(),
             cop_lite_worker: self.cop_lite_worker.clone(),
+            session_mem_tracker: self.session_mem_tracker.clone(),
+            enabled_rate_limit_action: self.enabled_rate_limit_action,
             execution_cancellation: Arc::clone(&self.execution_cancellation),
             request_cancellation: Some(self.execution_cancellation.request_child()),
             bound_at: Some(Instant::now()),
@@ -314,6 +350,8 @@ impl TransportRequest {
             rpc_interceptor: self.rpc_interceptor.clone(),
             kv_context: self.kv_context.clone(),
             cop_lite_worker: self.cop_lite_worker.clone(),
+            session_mem_tracker: self.session_mem_tracker.clone(),
+            enabled_rate_limit_action: self.enabled_rate_limit_action,
             execution_cancellation: Arc::clone(&self.execution_cancellation),
             request_cancellation: Some(self.execution_cancellation.request_child()),
             bound_at: Some(Instant::now()),

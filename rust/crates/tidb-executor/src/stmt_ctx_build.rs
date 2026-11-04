@@ -1781,6 +1781,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_replica_read(replica_read)
                     .with_read_consistency(read_replica_scope, is_staleness)
                     .with_coprocessor_read_policy(snapshot.coprocessor_read_policy.clone())
+                    .with_enabled_rate_limit_action(snapshot.rate_limit_action)
                     .with_dist_sql_scan_concurrency(
                         self.session_vars()
                             .get_system(tidb_vardef::tidb_vars::TIDB_DIST_SQL_SCAN_CONCURRENCY)

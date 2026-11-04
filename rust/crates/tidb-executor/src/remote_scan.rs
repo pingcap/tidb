@@ -56,6 +56,7 @@ pub fn pushdown_statement_context(ctx: &crate::StmtContext) -> PushdownStatement
         priority: get_kv_priority(ctx.statement_priority()),
         not_fill_cache: ctx.not_fill_cache(),
         dist_sql_scan_concurrency: ctx.dist_sql_scan_concurrency(),
+        enabled_rate_limit_action: ctx.enabled_rate_limit_action(),
         store_batch_size: ctx.store_batch_size(),
         tiflash_replica_read: ctx.tiflash_replica_read(),
         query_cop_store_limiter: ctx.query_cop_store_limiter(),

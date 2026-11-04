@@ -79,6 +79,9 @@ pub struct StatusRoutes {
     pub peer: Option<crate::peer_rpc::PeerService>,
     /// Cluster TLS policy, shared with outgoing transports.
     pub security: tidb_pd_client::ClusterSecurity,
+    /// Go `infosync`'s server-info syncer, which `/labels` republishes the
+    /// labels through.
+    pub server_info: Option<Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>>,
 }
 
 /// Bind HTTP and generated gRPC routes on Go's shared status port.
@@ -251,7 +254,19 @@ fn route_response(
     {
         match answer {
             Ok(body) => (200, "application/json", body),
-            Err(message) => (500, "text/plain", message),
+            // Go `handler.WriteError`: 400 with the error text.
+            Err(message) => (400, "text/plain", message),
+        }
+    } else if let Some(answer) = routes
+        .schema
+        .as_ref()
+        .and_then(|source| db_table_response(path, source.as_ref()))
+        .or_else(|| value_response(path))
+        .or_else(|| labels_response(path, request, routes.server_info.as_deref()))
+    {
+        match answer {
+            Ok(body) => (200, "application/json", body),
+            Err(message) => (400, "text/plain", message),
         }
     } else {
         (404, "text/plain", String::new())
@@ -559,6 +574,194 @@ fn settings_response(
     )
 }
 
+/// Go `LabelHandler.ServeHTTP` (`/labels`): a POSTed JSON object of labels
+/// is merged over the configured ones, republished through the server-info
+/// syncer (a failure is logged, as Go does) and stored in the global config;
+/// the answer is the config's labels.
+fn labels_response(
+    path: &str,
+    request: &str,
+    server_info: Option<&tidb_domain_serverinfo::serverinfo_syncer::Syncer>,
+) -> Option<Result<String, String>> {
+    let route = path.split_once('?').map_or(path, |(route, _)| route);
+    if route != "/labels" {
+        return None;
+    }
+    if request.split_whitespace().next() != Some("POST") {
+        return Some(Err("This api only support POST method".to_owned()));
+    }
+    let body = request.split_once("\r\n\r\n").map_or("", |(_, body)| body);
+    let mut labels: std::collections::HashMap<String, String> = match serde_json::from_str(body) {
+        Ok(labels) => labels,
+        Err(error) => return Some(Err(error.to_string())),
+    };
+    if !labels.is_empty() {
+        let mut config = (*tidb_config::config_tree::config::get_global_config()).clone();
+        for (key, value) in &config.labels {
+            labels.entry(key.clone()).or_insert_with(|| value.clone());
+        }
+        if let Some(syncer) = server_info {
+            if let Err(error) = syncer.update_server_label(&labels) {
+                tidb_logutil::bg_logger().error(
+                    "update etcd labels failed",
+                    &[tidb_log::Field::new("error", tidb_log::Value::Str(error))],
+                );
+            }
+        }
+        config.labels = labels;
+        tidb_config::config_tree::config::store_global_config(config);
+    }
+    // Go `WriteData` of the map: its keys sorted.
+    let labels: std::collections::BTreeMap<_, _> =
+        tidb_config::config_tree::config::get_global_config().labels.clone().into_iter().collect();
+    Some(serde_json::to_string(&labels).map_err(|error| error.to_string()))
+}
+
+/// Go `DBTableHandler.ServeHTTP` (`/db-table/{tableID}`): the database and
+/// table owning a table or partition ID, with the schema version, as
+/// `{"db_info", "table_info", "schema_version"}`.
+fn db_table_response(
+    path: &str,
+    source: &dyn Fn() -> tidb_infoschema::SessionExtendedInfoSchema,
+) -> Option<Result<String, String>> {
+    let route = path.split_once('?').map_or(path, |(route, _)| route);
+    let table_id = route.strip_prefix("/db-table/").filter(|id| !id.contains('/'))?;
+    let Ok(physical_id) = table_id.parse::<i64>() else {
+        return Some(Err(format!("Wrong tableID: {table_id}")));
+    };
+    let catalog = source();
+    // Go `TableByID`, then `FindTableByPartitionID` for a partition's ID.
+    let found = catalog.stored_schemas().into_iter().find_map(|database| {
+        let table = database.read().deprecated_tables.iter_deref().find(|table| {
+            let table = table.read();
+            table.id == physical_id
+                || table.get_partition_info().is_some_and(|partitions| {
+                    partitions
+                        .read()
+                        .definitions
+                        .with_visible(|definitions| definitions.iter().any(|definition| definition.id == physical_id))
+                })
+        });
+        table.map(|table| (database.clone(), table))
+    });
+    let Some((database, table)) = found else {
+        return Some(Err(format!("[schema:1146]Table which ID = {table_id} does not exist.")));
+    };
+    let encode = |bytes: Result<Vec<u8>, String>| -> Result<String, String> {
+        bytes.and_then(|body| String::from_utf8(body).map_err(|error| error.to_string()))
+    };
+    let db_info = encode(tidb_infoschema::cluster_catalog::stored_db_info_json(&database.read()));
+    let table_info = encode(tidb_infoschema::cluster_catalog::stored_table_info_json(&table.read()));
+    Some(db_info.and_then(|db_info| {
+        table_info.map(|table_info| {
+            format!(
+                "{{\"db_info\":{db_info},\"table_info\":{table_info},\"schema_version\":{}}}",
+                catalog.schema_meta_version()
+            )
+        })
+    }))
+}
+
+/// Go `strconv.ParseInt(s, 0, 64)`: base from the prefix (`0x`, `0o`, `0b`,
+/// a leading `0` for octal), `_` separators allowed after a prefix.
+fn go_parse_int_base0(s: &str) -> Result<i64, String> {
+    let syntax = || format!("strconv.ParseInt: parsing {}: invalid syntax", tidb_go_strconv::quote_bytes(s.as_bytes()));
+    let (negative, digits) = match s.as_bytes().first() {
+        Some(b'-') => (true, &s[1..]),
+        Some(b'+') => (false, &s[1..]),
+        _ => (false, s),
+    };
+    let lower = digits.to_ascii_lowercase();
+    let (radix, body, prefixed) = if let Some(rest) = lower.strip_prefix("0x") {
+        (16, rest.to_owned(), true)
+    } else if let Some(rest) = lower.strip_prefix("0o") {
+        (8, rest.to_owned(), true)
+    } else if let Some(rest) = lower.strip_prefix("0b") {
+        (2, rest.to_owned(), true)
+    } else if lower.len() > 1 && lower.starts_with('0') {
+        (8, lower[1..].to_owned(), true)
+    } else {
+        (10, lower.clone(), false)
+    };
+    if body.is_empty() || (!prefixed && body.contains('_')) || body.starts_with('_') || body.ends_with('_') || body.contains("__") {
+        return Err(syntax());
+    }
+    let magnitude = u64::from_str_radix(&body.replace('_', ""), radix).map_err(|error| match error.kind() {
+        std::num::IntErrorKind::PosOverflow => {
+            format!("strconv.ParseInt: parsing {}: value out of range", tidb_go_strconv::quote_bytes(s.as_bytes()))
+        }
+        _ => syntax(),
+    })?;
+    let range = || format!("strconv.ParseInt: parsing {}: value out of range", tidb_go_strconv::quote_bytes(s.as_bytes()));
+    if negative {
+        if magnitude > i64::MAX as u64 + 1 {
+            return Err(range());
+        }
+        Ok((magnitude as i64).wrapping_neg())
+    } else {
+        i64::try_from(magnitude).map_err(|_| range())
+    }
+}
+
+/// Go `ValueHandler.ServeHTTP` (`/tables/{colID}/{colTp}/{colFlag}/{colLen}`):
+/// decodes column `colID` of the base64 `rowBin` row as a column of that
+/// type (decimal 6, UTC) and answers its `ToString` as a JSON string.
+fn value_response(path: &str) -> Option<Result<String, String>> {
+    let (route, query) = path.split_once('?').unwrap_or((path, ""));
+    let parts: Vec<&str> = route.strip_prefix("/tables/")?.split('/').collect();
+    let [col_id, col_tp, col_flag, col_len] = parts.as_slice() else {
+        return None;
+    };
+    Some((|| {
+        let col_id = go_parse_int_base0(col_id)?;
+        let col_tp = go_parse_int_base0(col_tp)?;
+        let col_flag = go_parse_int_base0(col_flag)
+            .map_err(|error| error.replace("ParseInt", "ParseUint"))?;
+        let col_len = go_parse_int_base0(col_len)?;
+        // Go `parseQuery(RawQuery, values, false)`: `&` or `;` separated,
+        // values left escaped.
+        let row_bin: Vec<&str> = query
+            .split(['&', ';'])
+            .filter_map(|pair| pair.split_once('=').filter(|(key, _)| *key == "rowBin").map(|(_, value)| value))
+            .collect();
+        let [bin] = row_bin.as_slice() else {
+            return Err(format!(
+                "Invalid Query:[{}]",
+                row_bin.join(" ")
+            ));
+        };
+        use base64::Engine as _;
+        let value_data = base64::engine::general_purpose::STANDARD
+            .decode(bin)
+            .map_err(|error| format!("illegal base64 data at input byte {}", base64_error_offset(&error)))?;
+        // Go `byte(colTp)`.
+        let code = tidb_datatype::FieldTypeCode::from_mysql_type(col_tp as u8);
+        let mut field_type = tidb_datatype::FieldType::new(code);
+        field_type.set_flag(col_flag as u32);
+        field_type.set_flen(col_len);
+        field_type.set_decimal(6);
+        let columns = std::collections::BTreeMap::from([(col_id, field_type)]);
+        let values = tidb_tablecodec::decode_table_row_to_map(
+            &value_data,
+            &columns,
+            Some(&tidb_datatype::SessionTimeZone::utc()),
+        )
+        .map_err(|error| error.to_string())?;
+        let value = values.get(&col_id).cloned().unwrap_or(tidb_datatype::Datum::Null);
+        let text = value.sql_string().map_err(|error| error.to_string())?;
+        serde_json::to_string(&text).map_err(|error| error.to_string())
+    })())
+}
+
+/// The input offset Go's `base64.CorruptInputError` reports.
+fn base64_error_offset(error: &base64::DecodeError) -> usize {
+    match error {
+        base64::DecodeError::InvalidByte(offset, _) | base64::DecodeError::InvalidLastSymbol(offset, _) => *offset,
+        base64::DecodeError::InvalidLength(length) => *length,
+        base64::DecodeError::InvalidPadding => 0,
+    }
+}
+
 /// Go getTableByIDStr searches all schemas by globally unique table ID.
 fn find_table_by_id(
     catalog: &tidb_infoschema::SessionExtendedInfoSchema,
@@ -783,6 +986,93 @@ mod schema_route_tests {
             state: tidb_model::SchemaState::PUBLIC,
             ..tidb_model::TableInfo::default()
         }
+    }
+
+    /// Go `DBTableHandler`: `/db-table/{tableID}` answers the owning
+    /// database, the table and the schema version; an unknown ID or a
+    /// non-number is Go's `WriteError` text.
+    #[test]
+    fn the_db_table_route_answers_the_owner_of_a_table_id() {
+        let source = catalog_with(vec![database("test", vec![table("t1"), table("t2")])]);
+        let body = db_table_response("/db-table/32", source.as_ref()).unwrap().unwrap();
+        let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(value["db_info"]["db_name"]["O"], "test", "{body}");
+        assert_eq!(value["table_info"]["id"], 32, "{body}");
+        assert_eq!(value["table_info"]["name"]["O"], "t2", "{body}");
+        assert_eq!(value["schema_version"], 7, "{body}");
+        assert_eq!(
+            db_table_response("/db-table/999", source.as_ref()).unwrap().unwrap_err(),
+            "[schema:1146]Table which ID = 999 does not exist."
+        );
+        assert_eq!(db_table_response("/db-table/x", source.as_ref()).unwrap().unwrap_err(), "Wrong tableID: x");
+        assert!(db_table_response("/db-table/1/2", source.as_ref()).is_none());
+    }
+
+    /// Go's handlers answer an error with `handler.WriteError`: 400 and the
+    /// error text.
+    #[test]
+    fn a_route_error_is_gos_write_error_400() {
+        let routes = StatusRoutes {
+            schema: Some(catalog_with(vec![database("test", vec![table("t1")])])),
+            ..StatusRoutes::default()
+        };
+        let tracker = ConnectionTracker::default();
+        for path in ["/schema/nosuch", "/db-table/999", "/tables/x/8/0/20?rowBin=AA=="] {
+            let response = route_response(path, "", &tracker, "v", "h", &routes);
+            assert_eq!(response.status(), 400, "{path}");
+        }
+        assert_eq!(route_response("/db-table/31", "", &tracker, "v", "h", &routes).status(), 200);
+    }
+
+    /// Go `LabelHandler`: only POST; the posted labels merge over the
+    /// configured ones into the global config, which the answer shows.
+    #[test]
+    fn the_labels_route_merges_posted_labels_into_the_config() {
+        let mut config = (*tidb_config::config_tree::config::get_global_config()).clone();
+        config.labels = std::collections::HashMap::from([("host".to_owned(), "h1".to_owned())]);
+        tidb_config::config_tree::config::store_global_config(config);
+        let post = |body: &str| format!("POST /labels HTTP/1.1\r\nContent-Length: {}\r\n\r\n{body}", body.len());
+        assert_eq!(
+            labels_response("/labels", "GET /labels HTTP/1.1\r\n\r\n", None).unwrap().unwrap_err(),
+            "This api only support POST method"
+        );
+        assert_eq!(
+            labels_response("/labels", &post(r#"{"zone":"z1","host":"h2"}"#), None).unwrap().unwrap(),
+            r#"{"host":"h2","zone":"z1"}"#
+        );
+        assert_eq!(tidb_config::config_tree::config::get_global_config().labels["zone"], "z1");
+        // An empty object changes nothing and answers the labels.
+        assert_eq!(labels_response("/labels", &post("{}"), None).unwrap().unwrap(), r#"{"host":"h2","zone":"z1"}"#);
+        assert!(labels_response("/labels", &post("nope"), None).unwrap().is_err());
+        assert!(labels_response("/labelsx", &post("{}"), None).is_none());
+    }
+
+    /// Go `TestDecodeColumnValue`: each column of a new-format row decodes
+    /// through `/tables/{colID}/{colTp}/{colFlag}/{colLen}?rowBin=` to its
+    /// `ToString` as a JSON string.
+    #[test]
+    fn the_value_route_decodes_one_column_of_a_row() {
+        use base64::Engine as _;
+        let utc = tidb_datatype::SessionTimeZone::utc();
+        let row = [
+            tidb_datatype::Datum::Int(100),
+            tidb_datatype::Datum::Bytes(b"abc".to_vec()),
+            tidb_datatype::Datum::Decimal(tidb_datatype::Decimal::from_literal("1")),
+        ];
+        let bytes = tidb_tablecodec::encode_table_row(Some(&utc), &row, &[1, 2, 3], true, None).unwrap();
+        let bin = base64::engine::general_purpose::STANDARD.encode(bytes);
+        let decode = |column: &str| value_response(&format!("/tables/{column}?rowBin={bin}")).unwrap();
+        assert_eq!(decode("1/8/0/20").unwrap(), "\"100\"");
+        assert_eq!(decode("2/15/0/-1").unwrap(), "\"abc\"");
+        assert_eq!(decode("3/246/0/-1").unwrap(), "\"1\"");
+        // Go `strconv.ParseInt(s, 0, 64)` takes a base prefix.
+        assert_eq!(decode("0x1/0x8/0/20").unwrap(), "\"100\"");
+        assert_eq!(
+            decode("a/8/0/20").unwrap_err(),
+            "strconv.ParseInt: parsing \"a\": invalid syntax"
+        );
+        assert_eq!(value_response("/tables/1/8/0/20").unwrap().unwrap_err(), "Invalid Query:[]");
+        assert!(value_response("/tables/test/t/regions").is_none());
     }
 
     /// Go reads three form values on `/schema`, and each changes the answer.

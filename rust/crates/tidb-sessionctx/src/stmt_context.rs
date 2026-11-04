@@ -816,6 +816,9 @@ pub struct StmtContextData {
     /// `tidb_distsql_scan_concurrency`, which `SetFromSessionVars` copies to
     /// every coprocessor request as its concurrency and upper bound.
     dist_sql_scan_concurrency: u64,
+    /// Go `SessionVars.EnabledRateLimitAction` (`tidb_enable_rate_limit_action`),
+    /// which `distsql.Select` passes the coprocessor client.
+    enabled_rate_limit_action: bool,
     /// Go `SessionVars.StoreBatchSize`: the session's `tidb_store_batch_size`,
     /// which `SetFromSessionVars` copies to every coprocessor request.
     store_batch_size: u64,
@@ -2624,6 +2627,13 @@ context_configuration! {
         self
     }
 
+    /// Sets Go `SessionVars.EnabledRateLimitAction` for this statement.
+    #[must_use]
+    pub fn with_enabled_rate_limit_action(mut self, enabled: bool) -> Self {
+        self.enabled_rate_limit_action = enabled;
+        self
+    }
+
     /// Sets Go `SessionVars.DistSQLScanConcurrency()` for this statement.
     #[must_use]
     pub fn with_dist_sql_scan_concurrency(mut self, concurrency: u64) -> Self {
@@ -2834,6 +2844,7 @@ impl StmtContext {
             statement_priority: tidb_ast::StatementPriority::None,
             not_fill_cache: false,
             dist_sql_scan_concurrency: DEFAULT_DIST_SQL_SCAN_CONCURRENCY,
+            enabled_rate_limit_action: false,
             store_batch_size: tidb_vardef::defaults::DEF_TIDB_STORE_BATCH_SIZE as u64,
             tiflash_replica_read: tidb_tiflash::get_tiflash_replica_read_by_str(
                 tidb_vardef::defaults::DEF_TIFLASH_REPLICA_READ,
@@ -5022,6 +5033,12 @@ impl StmtContext {
     pub fn with_not_fill_cache(mut self, not_fill_cache: bool) -> Self {
         self.not_fill_cache = not_fill_cache;
         self
+    }
+
+    /// Go `SessionVars.EnabledRateLimitAction` for this statement.
+    #[must_use]
+    pub fn enabled_rate_limit_action(&self) -> bool {
+        self.enabled_rate_limit_action
     }
 
     /// Go `SessionVars.DistSQLScanConcurrency()` for this statement.

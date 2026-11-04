@@ -698,6 +698,8 @@ pub fn build_resp(
         keys_read: request.statement.keys_read.clone(),
         cop_response_sink: request.statement.cop_response_sink.clone(),
         memory_tracker,
+        session_mem_tracker: Arc::clone(request.statement.memory.session_tracker()),
+        enabled_rate_limit_action: request.statement.enabled_rate_limit_action,
     };
     let iter = scan_result(|| open_scan(client, plan))
         .map_err(|error| PushdownScannerError::Backend(StorageError::Backend(error)))?;
@@ -781,6 +783,9 @@ struct RemoteScanPlan {
     root_plan_id: isize,
     /// The reader's memory tracker the select result charges.
     memory_tracker: Option<Arc<tidb_memory::Tracker>>,
+    /// Go `kv.ClientSendOption.SessionMemTracker` / `EnabledRateLimitAction`.
+    session_mem_tracker: Arc<tidb_memory::Tracker>,
+    enabled_rate_limit_action: bool,
     /// The statement's `tidb_max_keys_read` budget and keys-examined counter.
     keys_read: crate::KeysReadBudget,
     /// The statement's consumer of per-response execution details.
@@ -910,6 +915,7 @@ fn open_scan(
         .build_transport_request(Arc::clone(&cancellation))
         .map_err(|error| format!("{error:?}"))?
         .with_cop_lite_worker(plan.cop_lite_worker)
+        .with_session_mem_tracker(plan.session_mem_tracker, plan.enabled_rate_limit_action)
         .with_rpc_interceptor(plan.rpc_interceptor)
         .with_kv_context(plan.kv_context);
     let result = tidb_distsql::select_with_runtime_stats_over_client(
