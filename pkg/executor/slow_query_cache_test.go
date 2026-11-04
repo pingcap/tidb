@@ -57,7 +57,7 @@ func TestSlowQueryCacheDuplicateKeyUsesLatestValue(t *testing.T) {
 	cache.handleRead(result)
 	require.Equal(t, []string{"select 2;"}, result.values)
 	// Both values stay. The index map is not charged.
-	require.Equal(t, getSlowQueryValueMemUsage(key, "select 1;")+getSlowQueryValueMemUsage(key, "select 2;"), cache.memoryUsage)
+	require.Equal(t, getSlowQueryValueMemUsage(key, "select 1;")+getSlowQueryValueMemUsage(key, "select 2;"), cache.memoryUsage.Load())
 }
 
 func TestSlowQueryCacheUsesPreallocatedRing(t *testing.T) {
@@ -96,10 +96,10 @@ func TestSlowQueryCacheEvictsOldestAndFreezesRing(t *testing.T) {
 	cache := newSlowQueryCacheWithLimits(4, afterThird, 8)
 	cache.handleWrite(slowQueryCacheWriteTask{key: first, sql: firstSQL})
 	cache.handleWrite(slowQueryCacheWriteTask{key: second, sql: secondSQL})
-	require.Equal(t, twoEntries, cache.memoryUsage)
+	require.Equal(t, twoEntries, cache.memoryUsage.Load())
 
 	cache.handleWrite(slowQueryCacheWriteTask{key: third, sql: thirdSQL})
-	require.Equal(t, afterThird, cache.memoryUsage)
+	require.Equal(t, afterThird, cache.memoryUsage.Load())
 	// The two unused slots are abandoned once the memory budget is reached.
 	require.Len(t, cache.slowQueries, 2)
 	require.Equal(t, 4, cap(cache.slowQueries))
@@ -107,10 +107,10 @@ func TestSlowQueryCacheEvictsOldestAndFreezesRing(t *testing.T) {
 	require.Equal(t, []string{"", secondSQL, thirdSQL}, lookupSlowQueryCache(cache, first, second, third))
 
 	// Replacing the next slot would pass the frozen ceiling, so the SQL is discarded.
-	before := cache.memoryUsage
+	before := cache.memoryUsage.Load()
 	pos := cache.writePos
 	cache.handleWrite(slowQueryCacheWriteTask{key: droppedKey, sql: droppedSQL})
-	require.Equal(t, before, cache.memoryUsage)
+	require.Equal(t, before, cache.memoryUsage.Load())
 	require.Equal(t, pos, cache.writePos)
 	require.True(t, cache.frozen)
 	require.Equal(t, []string{secondSQL}, lookupSlowQueryCache(cache, second))
@@ -152,17 +152,17 @@ func TestSlowQueryCacheEvictsOldestAndFreezesRing(t *testing.T) {
 	require.Len(t, shortCache.slowQueries, 2)
 	require.Equal(t, 4, cap(shortCache.slowQueries))
 	require.Equal(t, 1, shortCache.writePos)
-	require.Equal(t, mem[1]+mem[2], shortCache.memoryUsage)
+	require.Equal(t, mem[1]+mem[2], shortCache.memoryUsage.Load())
 	require.Equal(t, []string{"", sqls[1], sqls[2]}, lookupSlowQueryCache(shortCache, keys[0], keys[1], keys[2]))
 
 	for i := 3; i < len(keys); i++ {
 		writeAt(i)
 		require.True(t, shortCache.frozen)
 		require.Len(t, shortCache.slowQueries, 2)
-		require.LessOrEqual(t, shortCache.memoryUsage, shortBudget)
+		require.LessOrEqual(t, shortCache.memoryUsage.Load(), shortBudget)
 	}
 	require.Equal(t, 1, shortCache.writePos)
-	require.Equal(t, mem[5]+mem[6], shortCache.memoryUsage)
+	require.Equal(t, mem[5]+mem[6], shortCache.memoryUsage.Load())
 	require.Equal(t, []string{"", "", "", "", "", sqls[5], sqls[6]}, lookupSlowQueryCache(shortCache, keys...))
 }
 
@@ -178,12 +178,12 @@ func TestSlowQueryCacheDuplicateKeySurvivesEvictionOfOlderCopy(t *testing.T) {
 	cache.handleWrite(slowQueryCacheWriteTask{key: other, sql: otherSQL})
 
 	require.Equal(t, []string{latestSQL, otherSQL}, lookupSlowQueryCache(cache, key, other))
-	require.Equal(t, afterOther, cache.memoryUsage)
+	require.Equal(t, afterOther, cache.memoryUsage.Load())
 
 	replacement := slowQueryKeyOf(3, 1, "replacement")
 	cache.handleWrite(slowQueryCacheWriteTask{key: replacement, sql: otherSQL})
 	require.Equal(t, []string{"", otherSQL, otherSQL}, lookupSlowQueryCache(cache, key, other, replacement))
-	require.Equal(t, getSlowQueryValueMemUsage(other, otherSQL)+getSlowQueryValueMemUsage(replacement, otherSQL), cache.memoryUsage)
+	require.Equal(t, getSlowQueryValueMemUsage(other, otherSQL)+getSlowQueryValueMemUsage(replacement, otherSQL), cache.memoryUsage.Load())
 }
 
 func TestSlowQueryCacheDropsOversizedAndUnqueuedSQL(t *testing.T) {
@@ -196,27 +196,29 @@ func TestSlowQueryCacheDropsOversizedAndUnqueuedSQL(t *testing.T) {
 
 	cache := newSlowQueryCacheWithLimits(4, fitsMem, 1)
 	cache.handleWrite(slowQueryCacheWriteTask{key: hugeKey, sql: hugeSQL})
-	require.Zero(t, cache.memoryUsage)
+	require.Zero(t, cache.memoryUsage.Load())
 	require.Zero(t, cache.writePos)
 
 	cache.handleWrite(slowQueryCacheWriteTask{key: fitsKey, sql: fitsSQL})
-	require.Equal(t, fitsMem, cache.memoryUsage)
+	require.Equal(t, fitsMem, cache.memoryUsage.Load())
 
-	// The worker, not the producer, drops SQL larger than maxMem. Until then
-	// the text only occupies the channel and memoryUsage stays unchanged.
-	require.True(t, cache.tryToCache(slowQueryCacheWriteTask{key: slowQueryKeyOf(3, 1, "huge"), sql: strings.Repeat("a", 17)}))
-	require.Equal(t, fitsMem, cache.memoryUsage)
+	// Retained bytes already fill the budget, so neither statement is queued.
+	require.False(t, cache.tryToCache(slowQueryCacheWriteTask{key: slowQueryKeyOf(3, 1, "huge"), sql: strings.Repeat("a", 17)}))
 	require.False(t, cache.tryToCache(slowQueryCacheWriteTask{key: slowQueryKeyOf(4, 1, "queued"), sql: "one"}))
-	require.Equal(t, 1, len(cache.writeCh))
+	require.Equal(t, fitsMem, cache.memoryUsage.Load())
+	require.Zero(t, len(cache.writeCh))
 
-	startSlowQueryCacheForTest(t, cache)
-	require.Eventually(t, func() bool {
-		got, err := cache.getUnredactedQueries(context.Background(), []slowQueryKey{
-			slowQueryKeyOf(2, 1, "fits"),
-			slowQueryKeyOf(3, 1, "huge"),
-		})
-		return err == nil && len(cache.writeCh) == 0 && len(got) == 2 && got[0] == "12345" && got[1] == ""
-	}, time.Second, 5*time.Millisecond)
+	// The queue is full. The reservation for the statement that does not fit
+	// in the channel is released.
+	roomy := newSlowQueryCacheWithLimits(4, fitsMem*4, 1)
+	queuedKey := slowQueryKeyOf(5, 1, "queued")
+	queuedSQL := "12345"
+	queuedMem := getSlowQueryValueMemUsage(queuedKey, queuedSQL)
+	require.True(t, roomy.tryToCache(slowQueryCacheWriteTask{key: queuedKey, sql: queuedSQL}))
+	require.Equal(t, queuedMem, roomy.memoryUsage.Load())
+	require.False(t, roomy.tryToCache(slowQueryCacheWriteTask{key: slowQueryKeyOf(6, 1, "full"), sql: "12345"}))
+	require.Equal(t, queuedMem, roomy.memoryUsage.Load())
+	require.Equal(t, 1, len(roomy.writeCh))
 }
 
 func TestSlowQueryCacheAccountsMemoryOnWorker(t *testing.T) {
@@ -226,34 +228,54 @@ func TestSlowQueryCacheAccountsMemoryOnWorker(t *testing.T) {
 	secondSQL := strings.Repeat("b", 10)
 	firstMem := getSlowQueryValueMemUsage(first, firstSQL)
 	secondMem := getSlowQueryValueMemUsage(second, secondSQL)
-	cache := newSlowQueryCacheWithLimits(4, secondMem, 8)
+	cache := newSlowQueryCacheWithLimits(4, firstMem+secondMem, 8)
 	require.True(t, cache.tryToCache(slowQueryCacheWriteTask{key: first, sql: firstSQL}))
+	require.Equal(t, firstMem, cache.memoryUsage.Load())
 	require.True(t, cache.tryToCache(slowQueryCacheWriteTask{key: second, sql: secondSQL}))
+	require.Equal(t, firstMem+secondMem, cache.memoryUsage.Load())
 	require.Equal(t, 2, len(cache.writeCh))
-	require.Zero(t, cache.memoryUsage)
 
 	startSlowQueryCacheForTest(t, cache)
 	require.Eventually(t, func() bool {
 		got, err := cache.getUnredactedQueries(context.Background(), []slowQueryKey{first, second})
-		// The second insert freezes the ring and reuses the only slot.
-		return err == nil && len(got) == 2 && got[0] == "" && got[1] == secondSQL
+		return err == nil && len(cache.writeCh) == 0 && len(got) == 2 && got[0] == firstSQL && got[1] == secondSQL
 	}, time.Second, 5*time.Millisecond)
+	require.Equal(t, firstMem+secondMem, cache.memoryUsage.Load())
 
-	// The SQL can sit in the channel. The worker drops it because the ring is
-	// empty and the SlowQuery plus key exceeds maxMem.
-	droppedKey := slowQueryKeyOf(3, 1, "dropped-later")
+	// The budget is full, so a further statement is refused before enqueue.
+	extraKey := slowQueryKeyOf(3, 1, "extra")
+	require.False(t, cache.tryToCache(slowQueryCacheWriteTask{key: extraKey, sql: "x"}))
+	require.Equal(t, firstMem+secondMem, cache.memoryUsage.Load())
+	require.Zero(t, len(cache.writeCh))
+
+	// One statement larger than the whole budget is refused and leaves no reservation.
+	droppedKey := slowQueryKeyOf(4, 1, "dropped")
 	droppedSQL := strings.Repeat("c", 12)
 	require.Greater(t, getSlowQueryValueMemUsage(droppedKey, droppedSQL), firstMem)
 	dropped := newSlowQueryCacheWithLimits(4, firstMem, 4)
-	require.True(t, dropped.tryToCache(slowQueryCacheWriteTask{
+	require.False(t, dropped.tryToCache(slowQueryCacheWriteTask{
 		key: droppedKey,
 		sql: droppedSQL,
 	}))
-	require.Zero(t, dropped.memoryUsage)
-	startSlowQueryCacheForTest(t, dropped)
+	require.Zero(t, dropped.memoryUsage.Load())
+	require.Zero(t, len(dropped.writeCh))
+
+	// Capacity evicts the older statement. Its bytes stay reserved until the
+	// worker overwrites that slot, then only the survivor remains charged.
+	older := slowQueryKeyOf(5, 1, "older")
+	newer := slowQueryKeyOf(6, 1, "newer")
+	olderSQL, newerSQL := "older-sql", "newer-sql"
+	olderMem := getSlowQueryValueMemUsage(older, olderSQL)
+	newerMem := getSlowQueryValueMemUsage(newer, newerSQL)
+	ring := newSlowQueryCacheWithLimits(1, olderMem+newerMem, 4)
+	require.True(t, ring.tryToCache(slowQueryCacheWriteTask{key: older, sql: olderSQL}))
+	require.True(t, ring.tryToCache(slowQueryCacheWriteTask{key: newer, sql: newerSQL}))
+	require.Equal(t, olderMem+newerMem, ring.memoryUsage.Load())
+	startSlowQueryCacheForTest(t, ring)
 	require.Eventually(t, func() bool {
-		got, err := dropped.getUnredactedQueries(context.Background(), []slowQueryKey{droppedKey})
-		return err == nil && len(dropped.writeCh) == 0 && len(got) == 1 && got[0] == ""
+		got, err := ring.getUnredactedQueries(context.Background(), []slowQueryKey{older, newer})
+		return err == nil && len(ring.writeCh) == 0 && len(got) == 2 && got[0] == "" && got[1] == newerSQL &&
+			ring.memoryUsage.Load() == newerMem
 	}, time.Second, 5*time.Millisecond)
 }
 

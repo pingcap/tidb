@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -28,11 +29,13 @@ const (
 	// The backing array is allocated when the cache is initialized. The slice
 	// grows until this capacity is reached, then writes reuse its oldest slot.
 	slowQueryCacheCapacity = 50000
-	// slowQueryCacheMaxMem is the budget for retained entries. Once appending an
-	// entry would pass it, the unused slots are abandoned and the ring stays
-	// frozen. Later writes reuse existing slots even when a shorter replacement
-	// frees enough memory to append. The index map and the preallocated backing
-	// array are not counted.
+	// slowQueryCacheMaxMem is the budget for retained entries and for plaintext
+	// reserved in writeCh. A statement is queued only when adding its bytes
+	// still fits. Once appending an entry would pass the budget, the unused
+	// slots are abandoned and the ring stays frozen. A statement already queued
+	// can reuse an existing slot; the replaced entry's bytes are released when
+	// that write lands. The index map and the preallocated backing array are
+	// not counted.
 	slowQueryCacheMaxMem   = 50 * 1024 * 1024
 	slowQueryCacheChanSize = 1000
 )
@@ -58,6 +61,9 @@ type slowQuery struct {
 type slowQueryCacheWriteTask struct {
 	key slowQueryKey
 	sql string
+	// reservedBytes is included in memoryUsage before the task is queued.
+	// Zero means handleWrite still has to account for the statement.
+	reservedBytes int64
 }
 
 // slowQueryCacheReadTask is one batch lookup. values is filled by the cache
@@ -69,12 +75,12 @@ type slowQueryCacheReadTask struct {
 }
 
 // slowQueryCache is owned by one background goroutine. Callers only send tasks.
-// A full write queue drops the entry. Plaintext waiting in writeCh is not
-// counted; the worker applies maxMem when it handles the write. Readers block
-// until woken or their context ends. Non-diagnostic TiDB starts the worker in
-// Server.Run. Read and write entrypoints check that lifecycle state before
-// sending tasks; diagnostic mode neither starts the worker nor enqueues reads
-// or writes.
+// memoryUsage is atomic. A producer reserves a statement's bytes before sending
+// it on writeCh, and drops the statement when that reservation would pass
+// maxMem or the queue is full. Readers block until woken or their context ends.
+// Non-diagnostic TiDB starts the worker in Server.Run. Read and write
+// entrypoints check that lifecycle state before sending tasks; diagnostic mode
+// neither starts the worker nor enqueues reads or writes.
 type slowQueryCache struct {
 	writeCh chan slowQueryCacheWriteTask
 	readCh  chan *slowQueryCacheReadTask
@@ -92,7 +98,7 @@ type slowQueryCache struct {
 	// writePos behind the chronological order of the slots.
 	frozen      bool
 	locations   map[slowQueryKey]int
-	memoryUsage int64
+	memoryUsage atomic.Int64
 	maxMemUsage int64
 }
 
@@ -218,17 +224,42 @@ func (c *slowQueryCache) putIntoCache(key slowQueryKey, sql string) {
 	c.tryToCache(slowQueryCacheWriteTask{key: key, sql: sql})
 }
 
-// tryToCache reports whether the write was queued. A full queue drops the SQL.
-// Size limits are applied later by the worker.
+// tryToCache reports whether the write was queued. The statement's bytes are
+// reserved in memoryUsage before the send. The reservation is released when the
+// statement does not fit or the queue is full.
 func (c *slowQueryCache) tryToCache(task slowQueryCacheWriteTask) bool {
 	if task.sql == "" {
 		return false
 	}
+	entry := getSlowQueryValueMemUsage(task.key, task.sql)
+	if !c.reserve(entry) {
+		return false
+	}
+	task.reservedBytes = entry
 	select {
 	case c.writeCh <- task:
 		return true
 	default:
+		c.memoryUsage.Add(-entry)
 		return false
+	}
+}
+
+// reserve reports whether entry bytes now sit in memoryUsage. A statement
+// larger than the budget, or one that would pass it, is refused.
+func (c *slowQueryCache) reserve(entry int64) bool {
+	if entry <= 0 || entry > c.maxMemUsage {
+		return false
+	}
+	for {
+		current := c.memoryUsage.Load()
+		next := current + entry
+		if next > c.maxMemUsage {
+			return false
+		}
+		if c.memoryUsage.CompareAndSwap(current, next) {
+			return true
+		}
 	}
 }
 
@@ -292,10 +323,17 @@ func (c *slowQueryCache) handleRead(task *slowQueryCacheReadTask) {
 func (c *slowQueryCache) handleWrite(task slowQueryCacheWriteTask) {
 	entryMemUsage := getSlowQueryValueMemUsage(task.key, task.sql)
 	if task.sql == "" || entryMemUsage > c.maxMemUsage {
+		c.releaseReserved(task.reservedBytes)
 		return
 	}
 
-	if !c.frozen && len(c.slowQueries) < cap(c.slowQueries) && c.memoryUsage+entryMemUsage <= c.maxMemUsage {
+	// A queued statement is already included in memoryUsage. Compare against
+	// the total without it, as a direct handleWrite does.
+	used := c.memoryUsage.Load() - task.reservedBytes
+	if !c.frozen && len(c.slowQueries) < cap(c.slowQueries) && used+entryMemUsage <= c.maxMemUsage {
+		if task.reservedBytes == 0 {
+			c.memoryUsage.Add(entryMemUsage)
+		}
 		c.appendSlowQuery(task.key, task.sql)
 		return
 	}
@@ -303,6 +341,7 @@ func (c *slowQueryCache) handleWrite(task slowQueryCacheWriteTask) {
 	// Nothing has been stored, or this cache has no slots. An empty ring is not
 	// frozen, so a later smaller SQL can still become the first entry.
 	if len(c.slowQueries) == 0 {
+		c.releaseReserved(task.reservedBytes)
 		return
 	}
 	// Stay frozen from here, including when this replacement is discarded. A
@@ -311,23 +350,36 @@ func (c *slowQueryCache) handleWrite(task slowQueryCacheWriteTask) {
 	c.frozen = true
 
 	delta := c.getReplacementDelta(c.writePos, task.key, task.sql)
-	if c.memoryUsage+delta > c.maxMemUsage {
+	if used+delta > c.maxMemUsage {
+		c.releaseReserved(task.reservedBytes)
 		return
 	}
+	if task.reservedBytes == 0 {
+		c.memoryUsage.Add(delta)
+	} else {
+		// The new SQL was reserved before enqueue. Release the slot it replaces.
+		old := &c.slowQueries[c.writePos]
+		c.memoryUsage.Add(-getSlowQueryValueMemUsage(old.Key, old.UnredactedSQL))
+	}
 	c.overwrite(task.key, task.sql)
+}
+
+func (c *slowQueryCache) releaseReserved(reservedBytes int64) {
+	if reservedBytes != 0 {
+		c.memoryUsage.Add(-reservedBytes)
+	}
 }
 
 func (c *slowQueryCache) appendSlowQuery(key slowQueryKey, sql string) {
 	// A repeated key leaves the older slot in place until the ring reuses it.
 	// The map always refers to the latest insert and is not part of memoryUsage.
-	c.memoryUsage += getSlowQueryValueMemUsage(key, sql)
+	// handleWrite has already charged this statement.
 	c.slowQueries = append(c.slowQueries, slowQuery{Key: key, UnredactedSQL: sql})
 	c.locations[key] = len(c.slowQueries) - 1
 }
 
 func (c *slowQueryCache) overwrite(key slowQueryKey, sql string) {
 	index := c.writePos
-	delta := c.getReplacementDelta(index, key, sql)
 	old := &c.slowQueries[index]
 	// A duplicate key keeps the older copy until this slot is reused. Drop the
 	// index entry only when it still names this slot.
@@ -337,7 +389,6 @@ func (c *slowQueryCache) overwrite(key slowQueryKey, sql string) {
 
 	*old = slowQuery{Key: key, UnredactedSQL: sql}
 	c.locations[key] = index
-	c.memoryUsage += delta
 	c.advanceWritePos()
 }
 
