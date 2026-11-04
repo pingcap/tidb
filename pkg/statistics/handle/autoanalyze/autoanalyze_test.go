@@ -84,21 +84,34 @@ func TestEnableAutoAnalyzePriorityQueue(t *testing.T) {
 }
 
 func TestShouldSkipAutoAnalyzeTableNotReadyMV(t *testing.T) {
-	require.True(t, autoanalyze.ShouldSkipAutoAnalyzeTableForTest(&model.TableInfo{
+	require.True(t, autoanalyze.ShouldSkipAutoAnalyzeTable(&model.TableInfo{
 		Name: ast.NewCIStr("mv_not_ready"),
 		MaterializedView: &model.MaterializedViewInfo{
 			InitBuildState: model.MViewInitBuildBuilding,
 		},
 	}))
-	require.False(t, autoanalyze.ShouldSkipAutoAnalyzeTableForTest(&model.TableInfo{
+	require.True(t, autoanalyze.ShouldSkipAutoAnalyzeTable(&model.TableInfo{
+		Name: ast.NewCIStr("mv_deferred"),
+		MaterializedView: &model.MaterializedViewInfo{
+			InitBuildState: model.MViewInitBuildDeferred,
+		},
+	}))
+	require.False(t, autoanalyze.ShouldSkipAutoAnalyzeTable(&model.TableInfo{
 		Name: ast.NewCIStr("mv_ready"),
 		MaterializedView: &model.MaterializedViewInfo{
 			InitBuildState: model.MViewInitBuildReady,
 		},
 	}))
-	require.False(t, autoanalyze.ShouldSkipAutoAnalyzeTableForTest(&model.TableInfo{
+	require.False(t, autoanalyze.ShouldSkipAutoAnalyzeTable(&model.TableInfo{
 		Name: ast.NewCIStr("normal_table"),
 	}))
+	require.True(t, autoanalyze.ShouldSkipAutoAnalyzeTable(&model.TableInfo{
+		View: &model.ViewInfo{},
+	}))
+	require.True(t, autoanalyze.ShouldSkipAutoAnalyzeTable(&model.TableInfo{
+		MaterializedViewLog: &model.MaterializedViewLogInfo{},
+	}))
+	require.False(t, autoanalyze.ShouldSkipAutoAnalyzeTable(nil))
 }
 
 func TestAutoAnalyzeLockedTable(t *testing.T) {
