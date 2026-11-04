@@ -93,4 +93,44 @@ a	round(avg_f, 4)	round(sum_f, 4)	cnt_f	round(avg_d, 4)	round(sum_d, 4)	cnt_d	cn
 drop materialized view mv_avg_real_e2e;
 drop materialized view log on t_mv_avg_real_e2e;
 drop table if exists t_mv_avg_real_e2e;
+create table t_mv_avg_real_not_null (id int primary key, a int not null, f float not null, d double not null);
+insert into t_mv_avg_real_not_null values (1, 1, 10, 100), (2, 2, 20, 200);
+create materialized view log on t_mv_avg_real_not_null (id, a, f, d) purge next date_add(now(), interval 1 hour);
+create materialized view mv_avg_real_not_null (a, avg_f, sum_f, avg_d, sum_d, cnt_all)
+refresh fast as select a, avg(f), sum(f), avg(d), sum(d), count(*) from t_mv_avg_real_not_null group by a;
+create materialized view mv_avg_real_not_null_count (a, avg_f, sum_f, cnt_f, avg_d, sum_d, cnt_d, cnt_all)
+refresh fast as select a, avg(f), sum(f), count(f), avg(d), sum(d), count(d), count(*) from t_mv_avg_real_not_null group by a;
+delete from t_mv_avg_real_not_null where a = 1;
+refresh materialized view mv_avg_real_not_null fast;
+refresh materialized view mv_avg_real_not_null_count fast;
+select * from mv_avg_real_not_null order by a;
+a	avg_f	sum_f	avg_d	sum_d	cnt_all
+2	20	20	200	200	1
+select * from mv_avg_real_not_null_count order by a;
+a	avg_f	sum_f	cnt_f	avg_d	sum_d	cnt_d	cnt_all
+2	20	20	1	200	200	1	1
+insert into t_mv_avg_real_not_null values (3, 1, 30, 300);
+refresh materialized view mv_avg_real_not_null fast;
+refresh materialized view mv_avg_real_not_null_count fast;
+select * from mv_avg_real_not_null order by a;
+a	avg_f	sum_f	avg_d	sum_d	cnt_all
+1	30	30	300	300	1
+2	20	20	200	200	1
+select * from mv_avg_real_not_null_count order by a;
+a	avg_f	sum_f	cnt_f	avg_d	sum_d	cnt_d	cnt_all
+1	30	30	1	300	300	1	1
+2	20	20	1	200	200	1	1
+delete from t_mv_avg_real_not_null;
+refresh materialized view mv_avg_real_not_null fast;
+refresh materialized view mv_avg_real_not_null_count fast;
+select count(*) from mv_avg_real_not_null;
+count(*)
+0
+select count(*) from mv_avg_real_not_null_count;
+count(*)
+0
+drop materialized view mv_avg_real_not_null;
+drop materialized view mv_avg_real_not_null_count;
+drop materialized view log on t_mv_avg_real_not_null;
+drop table t_mv_avg_real_not_null;
 set tidb_mview_enable = off;

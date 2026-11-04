@@ -344,9 +344,9 @@ type AggInfo struct {
 	// The meaning depends on Kind:
 	//   - AggCountStar / AggCount: [self_delta]
 	//   - AggSum:
-	//     - [self_delta] when the SUM argument is NOT NULL (inferred from base table schema or passed by caller),
-	//       no COUNT(expr) dependency needed.
-	//     - [self_delta, matched_count_expr_mv] otherwise.
+	//     - [self_delta] when the SUM argument is NOT NULL and the SUM is not used by AVG.
+	//     - [self_delta, matched_count_expr_mv] otherwise; COUNT(*) can replace COUNT(expr)
+	//       for a NOT NULL argument used by AVG.
 	//     - self_delta: offset of SUM(expr) delta column.
 	//     - matched_count_expr_mv: absolute output offset of matched COUNT(expr) MV column.
 	//       COUNT(expr) must be updated before SUM(expr), and SUM should read this updated MV value.
@@ -671,13 +671,13 @@ func buildFromLocal(
 		}
 		switch di.Kind {
 		case AggSum:
-			if !aggArgNotNullByOffset[di.MVOffset] || requiredExactSum[i] {
-				countIdx, ok := sumToCountExprIdx[i]
-				if !ok {
-					return nil, errors.Errorf("internal error: SUM at mv offset %d has no COUNT(expr) dependency", di.MVOffset)
-				}
+			// AVG also needs a count dependency for NOT NULL floating-point SUM,
+			// so SUM becomes NULL when the last row in a group is deleted.
+			if countIdx, ok := sumToCountExprIdx[i]; ok {
 				countAgg := local.aggCols[countIdx]
 				deps = append(deps, mvColumnOffsetBase+countAgg.info.MVOffset)
+			} else if !aggArgNotNullByOffset[di.MVOffset] {
+				return nil, errors.Errorf("internal error: SUM at mv offset %d has no COUNT(expr) dependency", di.MVOffset)
 			}
 		case AggAvg:
 			matches, ok := avgDependencies[i]
@@ -1233,7 +1233,7 @@ func validateAggDependencies(
 				)
 			}
 		case AggSum:
-			// [self_delta] when SUM argument is NOT NULL; otherwise [self_delta, matched_count_expr_mv].
+			// [self_delta, matched_count_expr_mv] for nullable SUM or AVG state; otherwise [self_delta].
 			if len(ai.Dependencies) != 1 && len(ai.Dependencies) != 2 {
 				return errors.Errorf(
 					"SUM at mv offset %d expects dependencies [self_delta] or [self_delta, matched_count_expr_mv], got %v",

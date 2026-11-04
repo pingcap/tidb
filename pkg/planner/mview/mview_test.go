@@ -265,6 +265,33 @@ func TestBuildAvgUsesCountStarForNotNullArg(t *testing.T) {
 	}
 	require.True(t, hasAvg)
 	require.True(t, hasSum)
+
+	for _, tt := range []struct {
+		name string
+		tp   byte
+	}{
+		{name: "float", tp: mysql.TypeFloat},
+		{name: "double", tp: mysql.TypeDouble},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			base.Columns[1].SetType(tt.tp)
+			mlog.Columns[1].SetType(tt.tp)
+			mv.Columns[2].SetType(mysql.TypeDouble)
+			mv.Columns[3].SetType(mysql.TypeDouble)
+			is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+			domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+			res, err := mview.Build(sctx.GetPlanCtx(), is, mv, mview.BuildOptions{FromTS: 10}, nil)
+			require.NoError(t, err)
+			for _, ai := range res.AggInfos {
+				if ai.Kind == mview.AggSum {
+					// AVG needs the updated row count to make SUM NULL when the group is deleted.
+					requireDependencies(t, ai, []int{1, 3})
+					require.False(t, ai.RequiredExactState)
+				}
+			}
+		})
+	}
 }
 
 func TestBuildCountExprSumExpr(t *testing.T) {
