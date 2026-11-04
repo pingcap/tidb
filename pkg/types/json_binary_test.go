@@ -456,6 +456,8 @@ func BenchmarkParseBinaryJSONFromString(b *testing.B) {
 		name  string
 		input string
 	}{
+		{name: "NullArray", input: "[" + strings.TrimSuffix(strings.Repeat("null,", 100000), ",") + "]"},
+		{name: "BooleanArray", input: "[" + strings.TrimSuffix(strings.Repeat("true,false,", 50000), ",") + "]"},
 		{name: "SmallMixed", input: jsonBenchStr},
 		{
 			name: "AllJSONTypes",
@@ -600,6 +602,10 @@ func TestParseBinaryFromString(t *testing.T) {
 	require.Contains(t, err.Error(), "The document root must not be followed by other values.")
 
 	validInputs := []string{
+		`[null,false,true,null,false,true]`,
+		`[null,[false,{"a":[true,null]},true],false,[],null]`,
+		`{"a":[null,false],"a":[true,null],"b":false}`,
+		strings.Repeat("[", maxJSONDepth) + "null" + strings.Repeat("]", maxJSONDepth),
 		jsonBenchStr,
 		`null`,
 		`true`,
@@ -636,6 +642,9 @@ func TestParseBinaryFromString(t *testing.T) {
 	}
 
 	invalidInputs := []string{
+		`[null,true,1e400]`,
+		`[null,[false,tru]]`,
+		strings.Repeat("[", maxJSONDepth+1) + "null" + strings.Repeat("]", maxJSONDepth+1),
 		" ",
 		`01`,
 		`+1`,
