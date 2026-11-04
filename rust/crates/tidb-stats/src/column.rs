@@ -85,7 +85,7 @@ impl Column {
     }
 
     /// Go `GetIncreaseFactor`, including its zero-count identity fallback.
-    pub fn increase_factor(&self, realtime_row_count: i64) -> f64 {
+    pub fn get_increase_factor(&self, realtime_row_count: i64) -> f64 {
         let column_count = self.total_row_count();
         if column_count == 0.0 {
             1.0

@@ -958,7 +958,7 @@ mod tests {
         assert_eq!(int.next().int_value(), Some(101));
         assert_eq!(int.to_string(), "100");
 
-        let encoded = encode_key(&[Datum::new_int(100), Datum::new_string("abc")]).unwrap();
+        let encoded = encode_key(&[Datum::new_int(100), Datum::new_string_datum("abc")]).unwrap();
         let common = CommonHandle::new(encoded).unwrap();
         assert_eq!(common.num_columns(), 2);
         assert_eq!(common.to_string(), "{100, abc}");

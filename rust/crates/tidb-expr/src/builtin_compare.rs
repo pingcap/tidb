@@ -95,7 +95,7 @@ pub(crate) fn prepare_json_comparison_args(args: &mut [Expression]) {
             Expression::ScalarSubQuery(subquery) => subquery.constant.ret_type.as_mut(),
         };
         if let Some(ret_type) = ret_type {
-            ret_type.and_flags(!FieldTypeFlags::PARSE_TO_JSON);
+            ret_type.and_flag(!FieldTypeFlags::PARSE_TO_JSON);
         }
     }
 }
@@ -1310,7 +1310,7 @@ mod tests {
 
     fn string_constant(text: &str) -> Expression {
         Expression::Constant(Constant::new(
-            Datum::new_string(text),
+            Datum::new_string_datum(text),
             FieldType::new(FieldTypeCode::Varchar),
         ))
     }
@@ -2030,7 +2030,7 @@ mod tests {
     #[test]
     fn only_a_non_int_constant_against_an_int_non_constant_is_refined() {
         let (expr, warnings) = refine("gt", string_constant("10ab"), string_constant("10ab"));
-        assert_eq!(constant_of(&expr, 1), Datum::new_string("10ab"));
+        assert_eq!(constant_of(&expr, 1), Datum::new_string_datum("10ab"));
         assert!(warnings.is_empty(), "{warnings:?}");
 
         let int_constant = Expression::Constant(Constant::new(

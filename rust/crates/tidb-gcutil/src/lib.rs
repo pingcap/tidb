@@ -149,7 +149,7 @@ fn go_time_to_ts(value: chrono::DateTime<chrono::FixedOffset>) -> u64 {
 /// Go `model.TSConvert2Time(tso).String()`: the TSO's physical milliseconds
 /// as a `time.Local` value, printed by `time.Time.String()`.
 fn format_tso_in_process_location(tso: u64) -> String {
-    tidb_go_time_layout::go_unix_milli_string(tidb_model::GoTime::from_tso(tso).unix_millis())
+    tidb_go_time_layout::go_unix_milli_string(tidb_model::GoTime::from_tso(tso).unix_milli())
 }
 
 #[cfg(test)]

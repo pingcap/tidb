@@ -324,7 +324,7 @@ pub struct SavedAnalyzeOptions {
 /// Pinned Go `V2AnalyzeOptions` reduced to the fields both Rust execution
 /// tiers consume.
 #[derive(Clone, Debug)]
-pub struct PhysicalAnalyzeOptions {
+pub struct V2AnalyzeOptions {
     /// Logical table ID or physical partition ID receiving the statistics.
     pub physical_id: i64,
     /// Raw merged values saved after successful ANALYZE.
@@ -341,7 +341,7 @@ pub struct PhysicalAnalyzeOptions {
 #[derive(Clone, Debug)]
 pub struct AnalyzeOptionResolution {
     /// The table entry followed by requested physical partitions.
-    pub physical: Vec<PhysicalAnalyzeOptions>,
+    pub physical: Vec<V2AnalyzeOptions>,
     /// Whether dynamic mode ignored explicit options/columns on
     /// `ANALYZE ... PARTITION` and therefore requires Go's statement warning.
     pub ignored_partition_overrides: bool,
@@ -379,7 +379,7 @@ pub fn resolve_analyze_options(
     };
     let table_columns =
         choose_analyze_columns(&statement_columns, &table_saved.columns, whole_table);
-    let mut physical = vec![PhysicalAnalyzeOptions {
+    let mut physical = vec![V2AnalyzeOptions {
         physical_id: table_id,
         raw: table_raw,
         effective: table_raw.effective(),
@@ -402,7 +402,7 @@ pub fn resolve_analyze_options(
                 choose_analyze_columns(&statement_columns, &inherited_columns, true),
             )
         };
-        physical.push(PhysicalAnalyzeOptions {
+        physical.push(V2AnalyzeOptions {
             physical_id: partition_id,
             raw,
             effective: raw.effective(),

@@ -54,7 +54,7 @@ use crate::analyze::kv::{
 };
 use crate::analyze::panic_recovery::recover_analyze_panic;
 use crate::analyze::{
-    resolve_analyze_options, AnalyzeColumnChoice, AnalyzeStatement, PhysicalAnalyzeOptions,
+    resolve_analyze_options, AnalyzeColumnChoice, AnalyzeStatement, V2AnalyzeOptions,
     SampleMemoryQuota, SavedAnalyzeOptions, MEM_QUOTA_ANALYZE_VARIABLE,
 };
 use crate::analyze::ClusterAnalyzeReport;
@@ -668,7 +668,7 @@ fn skip_column_types(
 
 fn saved_options(
     table: &tidb_table::tables::TableCommon,
-    options: &PhysicalAnalyzeOptions,
+    options: &V2AnalyzeOptions,
     selected: Option<&HashSet<i64>>,
 ) -> SavedAnalyzeOptions {
     let columns = match &options.columns {

@@ -14,7 +14,7 @@
 
 //! The no-`ON` role branches of Go's `parseGrantStmt` and `parseRevokeStmt`.
 
-use tidb_ast::{GrantRoleStmt, RevokeRoleStmt, RoleSpec};
+use tidb_ast::{GrantRoleStmt, RevokeRoleStmt, RoleIdentity};
 use tidb_lexer::{is_reserved, TokenKind};
 
 use crate::{PResult, Parser};
@@ -59,7 +59,7 @@ impl Parser {
         })
     }
 
-    fn parse_grant_revoke_role_list(&mut self) -> PResult<Vec<RoleSpec>> {
+    fn parse_grant_revoke_role_list(&mut self) -> PResult<Vec<RoleIdentity>> {
         let mut roles = vec![self.parse_grant_revoke_role()?];
         while self.is_op(",") {
             self.bump();
@@ -79,7 +79,7 @@ impl Parser {
 
     /// Go's strict `parseRoleIdentity`, shared with CREATE ROLE rather than
     /// the looser account identity parser used for statement targets.
-    fn parse_grant_revoke_role(&mut self) -> PResult<RoleSpec> {
+    fn parse_grant_revoke_role(&mut self) -> PResult<RoleIdentity> {
         let token = self.peek().clone();
         let composed = self.peek_n(1).kind == TokenKind::UserVar;
         let role = match token.kind {
@@ -96,6 +96,6 @@ impl Parser {
         } else {
             "%".to_string()
         };
-        Ok(RoleSpec { role, host })
+        Ok(RoleIdentity { role, host })
     }
 }

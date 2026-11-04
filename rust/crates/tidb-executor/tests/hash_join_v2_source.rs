@@ -3270,8 +3270,8 @@ fn check_join_other_condition(join_type: JoinType, residual: bool, filtered: boo
     let left_result = |row: usize, value: Option<i64>, right_key: Option<i64>| {
         vec![
             value.map_or(Datum::Null, Datum::Int),
-            Datum::new_string(format!("l{row}c2")),
-            Datum::new_string(format!("l{row}c4")),
+            Datum::new_string_datum(format!("l{row}c2")),
+            Datum::new_string_datum(format!("l{row}c4")),
             right_key.map_or(Datum::Null, Datum::Int),
         ]
     };
@@ -3621,8 +3621,8 @@ use tidb_charset::Collation;
     cases.push((
         FieldType::new(FieldTypeCode::VarString).with_collation(Collation::Utf8Mb4GeneralCi),
         ColumnType::String,
-        Datum::new_string("A "),
-        Datum::new_string("B"),
+        Datum::new_string_datum("A "),
+        Datum::new_string_datum("B"),
     ));
     let time_value = |kind, day| {
         Datum::new_time(Time::new(CoreTime::from_date(2026, 9, day, 0, 0, 0, 0), kind, 0).unwrap())
@@ -3654,8 +3654,8 @@ use tidb_charset::Collation;
     cases.push((
         FieldType::new(FieldTypeCode::Blob).with_collation(Collation::Binary),
         ColumnType::BinaryString,
-        Datum::new_bytes(vec![0xff, 0]),
-        Datum::new_bytes(vec![0xfe, 0]),
+        Datum::new_bytes_datum(vec![0xff, 0]),
+        Datum::new_bytes_datum(vec![0xfe, 0]),
     ));
     assert_eq!(cases.len(), 18);
 

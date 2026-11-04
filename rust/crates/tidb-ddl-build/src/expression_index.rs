@@ -744,7 +744,7 @@ pub fn build_hidden_columns_with_like_default_escape(
         // have left, widens an unspecified temporal fsp to the maximum, and
         // gives an array the binary collation ("will influence how TiKV
         // handles the index value").
-        field_type.del_flags(
+        field_type.del_flag(
             tidb_datatype::FieldTypeFlags::PRI_KEY
                 | tidb_datatype::FieldTypeFlags::UNIQUE_KEY
                 | tidb_datatype::FieldTypeFlags::AUTO_INCREMENT,

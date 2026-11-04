@@ -63,15 +63,15 @@ fn binop_comparison_source_table() {
         (b(false), BinaryOp::Eq, b(true), 0),
         (b(true), BinaryOp::Eq, b(true), 1),
         (b(true), BinaryOp::Eq, b(false), 0),
-        (Datum::new_string("1"), BinaryOp::Eq, b(true), 1),
-        (Datum::new_string("1"), BinaryOp::Eq, b(false), 0),
+        (Datum::new_string_datum("1"), BinaryOp::Eq, b(true), 1),
+        (Datum::new_string_datum("1"), BinaryOp::Eq, b(false), 0),
         // test NEQ
         (Datum::Int(1), BinaryOp::Ne, Datum::Int(2), 1),
         (b(false), BinaryOp::Ne, b(false), 0),
         (b(false), BinaryOp::Ne, b(true), 1),
         (b(true), BinaryOp::Ne, b(true), 0),
-        (Datum::new_string("1"), BinaryOp::Ne, b(true), 0),
-        (Datum::new_string("1"), BinaryOp::Ne, b(false), 1),
+        (Datum::new_string_datum("1"), BinaryOp::Ne, b(true), 0),
+        (Datum::new_string_datum("1"), BinaryOp::Ne, b(false), 1),
         // test GT, GE
         (Datum::Int(1), BinaryOp::Gt, Datum::Int(0), 1),
         (Datum::Int(1), BinaryOp::Gt, Datum::Int(1), 0),
@@ -468,7 +468,7 @@ fn binop_numeric_source_zero_divisor_table() {
 fn binop_numeric_source_string_operand_rows() {
     // Go: 1 + '1' is 2, via the ETReal cast of the string.
     assert_eq!(
-        apply(BinaryOp::Plus, Datum::Int(1), Datum::new_string("1"))
+        apply(BinaryOp::Plus, Datum::Int(1), Datum::new_string_datum("1"))
             .to_f64()
             .expect("numeric result")
             .value,
@@ -483,7 +483,7 @@ fn binop_numeric_source_string_operand_rows() {
             2.0,
         ),
         (
-            Datum::new_string("1"),
+            Datum::new_string_datum("1"),
             BinaryOp::Minus,
             Datum::Bytes(b"1".to_vec()),
             0.0,
@@ -604,15 +604,15 @@ fn temporal_operand_takes_gos_numeric_context() {
     // select t = 'xyz'     from tt         NULL  and only there does 1292 fire
     // ```
     assert_eq!(
-        apply(BinaryOp::Eq, time.clone(), Datum::new_string("1:00:00")),
+        apply(BinaryOp::Eq, time.clone(), Datum::new_string_datum("1:00:00")),
         Datum::Int(0)
     );
     assert_eq!(
-        apply(BinaryOp::Eq, time.clone(), Datum::new_string("01:00:00")),
+        apply(BinaryOp::Eq, time.clone(), Datum::new_string_datum("01:00:00")),
         Datum::Int(1)
     );
     assert_eq!(
-        apply(BinaryOp::Gt, time.clone(), Datum::new_string("00:30:00")),
+        apply(BinaryOp::Gt, time.clone(), Datum::new_string_datum("00:30:00")),
         Datum::Int(1)
     );
     assert_eq!(
@@ -622,11 +622,11 @@ fn temporal_operand_takes_gos_numeric_context() {
     // An unparseable literal is FALSE here, not NULL: the 1292-and-NULL path
     // belongs to the duration domain, which a column-less pair never enters.
     assert_eq!(
-        apply(BinaryOp::NullEq, time.clone(), Datum::new_string("xyz")),
+        apply(BinaryOp::NullEq, time.clone(), Datum::new_string_datum("xyz")),
         Datum::Int(0)
     );
     assert_eq!(
-        apply(BinaryOp::Eq, time, Datum::new_string("zzz")),
+        apply(BinaryOp::Eq, time, Datum::new_string_datum("zzz")),
         Datum::Int(0)
     );
 }

@@ -17,7 +17,7 @@
 use crate::util::{back_quote, escape_string_literal};
 use crate::{Expr, PrimaryKeyStorage, RestoreContext, RestoreFlags};
 
-use super::{CheckConstraintDefinition, ColumnType, ForeignKeyReference};
+use super::{CheckConstraintDefinition, ColumnType, ReferenceDef};
 
 const FEATURE_AUTO_RANDOM: &str = "auto_rand";
 
@@ -178,7 +178,7 @@ pub enum ColumnOption {
     /// column-level reference as the same `ast.ReferenceDef` payload used by
     /// table-level foreign keys; keep that shared, lossless representation
     /// instead of flattening it into a special one-column constraint.
-    Reference(ForeignKeyReference),
+    Reference(ReferenceDef),
     /// `COLUMN_FORMAT {DEFAULT|FIXED|DYNAMIC}`.  This is a storage-layout
     /// declaration, not an arbitrary keyword string: TiDB's hand parser
     /// accepts exactly these three values and the AST restore owns their

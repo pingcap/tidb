@@ -404,9 +404,9 @@ pub fn decode_column_datums(
                     }
                     let bytes = column.value(row)?;
                     Ok(if field_type.is_binary_string() {
-                        Datum::new_bytes(bytes.to_vec())
+                        Datum::new_bytes_datum(bytes.to_vec())
                     } else {
-                        Datum::new_collation_string(bytes.to_vec(), field_type.collation())
+                        Datum::new_collation_string_datum(bytes.to_vec(), field_type.collation())
                     })
                 })
                 .collect()

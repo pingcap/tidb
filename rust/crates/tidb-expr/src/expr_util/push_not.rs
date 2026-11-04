@@ -463,7 +463,7 @@ mod native_cast_tests {
                         vec![
                             cast.clone(),
                             Expression::Constant(Constant::new(
-                                Datum::new_string("x"),
+                                Datum::new_string_datum("x"),
                                 target.clone(),
                             )),
                         ],

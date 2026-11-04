@@ -150,7 +150,7 @@ pub fn to_binary(value: &Datum, arg_charset: &str) -> Result<Datum, EvalError> {
     if error.is_some() {
         return Err(EvalError::Unsupported("invalid character string"));
     }
-    Ok(Datum::new_bytes(encoded))
+    Ok(Datum::new_bytes_datum(encoded))
 }
 
 /// [`to_binary`] driven by the datum's OWN collation rather than a static
@@ -292,5 +292,5 @@ pub fn convert_using(
 fn retag(bytes: Vec<u8>, charset: &str) -> Datum {
     let collation = Charset::from_name(charset)
         .map_or(Collation::DEFAULT, |charset| charset.default_collation());
-    Datum::new_collation_string(bytes, collation)
+    Datum::new_collation_string_datum(bytes, collation)
 }

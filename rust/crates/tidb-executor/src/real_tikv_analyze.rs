@@ -237,7 +237,7 @@ pub use crate::analyze::ClusterAnalyzeReport;
 pub struct ResolvedClusterAnalyze {
     statement: AnalyzeStatement,
     table: tidb_model::table_info::TableInfo,
-    physical_options: Vec<crate::analyze::PhysicalAnalyzeOptions>,
+    physical_options: Vec<crate::analyze::V2AnalyzeOptions>,
     partition_names: HashMap<i64, String>,
     selected_columns: HashMap<i64, Option<HashSet<i64>>>,
     predicate_columns_empty: HashMap<i64, bool>,
@@ -268,7 +268,7 @@ impl ResolvedClusterAnalyze {
 
     fn table_job_spec(
         &self,
-        options: &crate::analyze::PhysicalAnalyzeOptions,
+        options: &crate::analyze::V2AnalyzeOptions,
     ) -> AnalyzeJobSpec {
         let indexes = self
             .table
@@ -2251,7 +2251,7 @@ fn commit_cluster_analyze_target<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     stats_pool: &dyn StatsSessionPool,
     statement: &AnalyzeStatement,
-    options: &crate::analyze::PhysicalAnalyzeOptions,
+    options: &crate::analyze::V2AnalyzeOptions,
     timeout: Duration,
     stats_lease: Duration,
     record_history: &dyn Fn() -> bool,
@@ -2683,7 +2683,7 @@ pub fn analyze_table_job_info(
     public_index_count: usize,
     columns: Option<&[String]>,
     non_temp_columns: usize,
-    options: &crate::analyze::PhysicalAnalyzeOptions,
+    options: &crate::analyze::V2AnalyzeOptions,
 ) -> String {
     let mut job_info = if auto_analyze {
         "auto analyze table".to_owned()

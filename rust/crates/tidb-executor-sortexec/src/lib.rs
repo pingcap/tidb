@@ -331,7 +331,7 @@ where
     fn new_partition(&mut self, fields: &[FieldType]) -> SortPartition {
         let mut partition =
             SortPartition::new(fields.to_vec(), &self.tracker, self.memory.spill_storage());
-        partition.set_spill_chunk_size(self.spill_chunk_size);
+        partition.set_small_spill_chunk_size_for_test(self.spill_chunk_size);
         if self.enable_tmp_storage_on_oom {
             partition.disk_tracker().attach_to(&self.disk_tracker);
             let (action, need_spill) = spill_action(&partition, self.spill_limit);
@@ -1172,7 +1172,7 @@ mod tests {
             exec.partitions
                 .iter()
                 .filter(|run| run.num_rows() > 0)
-                .all(SortPartition::is_spilled),
+                .all(SortPartition::is_spill_triggered),
             "the non-empty run must be spilled; the fetch loop leaves an empty trailing run"
         );
         exec.close().unwrap();

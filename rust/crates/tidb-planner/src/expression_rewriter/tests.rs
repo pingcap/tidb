@@ -524,7 +524,7 @@ fn a_left_outer_apply_clears_the_inner_not_null_flags() {
     let f = Fixture::new();
     let er = f.rewriter(RewriterSessionFlags::default());
     let mut not_null = long_long();
-    not_null.set_flags(FieldTypeFlags::NOT_NULL);
+    not_null.set_flag(FieldTypeFlags::NOT_NULL);
     let inner = f.source(vec![Column::new(2, not_null)], vec![name("s", "b")]);
     let plan = er
         .build_apply_with_join_type(f.outer(), inner, LogicalJoinType::LeftOuter, false)
@@ -957,7 +957,7 @@ fn a_cte_consumer_anywhere_forces_the_apply_path() {
 fn expr_not_null_reads_the_flag_and_the_constant_value() {
     assert!(!expr_not_null(&Expression::Column(col(1))));
     let mut not_null = long_long();
-    not_null.set_flags(FieldTypeFlags::NOT_NULL);
+    not_null.set_flag(FieldTypeFlags::NOT_NULL);
     assert!(expr_not_null(&Expression::Column(Column::new(1, not_null))));
     assert!(expr_not_null(&one()));
     assert!(!expr_not_null(&null()));

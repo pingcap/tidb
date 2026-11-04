@@ -169,7 +169,7 @@ pub fn value_to_string(
             Err(error) => (error.values, error.remainder),
         };
     if !remainder.is_empty() {
-        decoded_values.push(Datum::new_bytes(remainder));
+        decoded_values.push(Datum::new_bytes_datum(remainder));
     }
     datums_to_string(&decoded_values, true, false)
 }

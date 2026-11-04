@@ -771,12 +771,12 @@ pub fn get_next_bytes_handle_datum(key: &[u8], record_prefix: &[u8]) -> Datum {
     }
 
     if key <= record_prefix {
-        return Datum::new_bytes(Vec::new());
+        return Datum::new_bytes_datum(Vec::new());
     }
 
     let encoded_val = &key[record_prefix.len()..];
     if encoded_val[0] < BYTES_FLAG {
-        return Datum::new_bytes(Vec::new());
+        return Datum::new_bytes_datum(Vec::new());
     }
 
     if encoded_val[0] > BYTES_FLAG {
@@ -785,7 +785,7 @@ pub fn get_next_bytes_handle_datum(key: &[u8], record_prefix: &[u8]) -> Datum {
 
     if let Ok((remain, mut v)) = decode_one(encoded_val) {
         if !remain.is_empty() {
-            v = Datum::new_bytes(Key::from_bytes(v.go_bytes().to_vec()).next().into_bytes());
+            v = Datum::new_bytes_datum(Key::from_bytes(v.go_bytes().to_vec()).next().into_bytes());
         }
         return v;
     }
@@ -813,7 +813,7 @@ pub fn get_next_bytes_handle_datum(key: &[u8], record_prefix: &[u8]) -> Datum {
 
     if broken_group_end_idx < 0 {
         // Go's `d.SetBytes(nil)`, a non-null bytes datum with no content.
-        return Datum::new_bytes(Vec::new());
+        return Datum::new_bytes_datum(Vec::new());
     }
 
     let val: Vec<u8> = encoded_val[..=broken_group_end_idx as usize]
@@ -821,7 +821,7 @@ pub fn get_next_bytes_handle_datum(key: &[u8], record_prefix: &[u8]) -> Datum {
         .enumerate()
         .filter_map(|(i, byte)| (i % 9 != 8).then_some(*byte))
         .collect();
-    Datum::new_bytes(val)
+    Datum::new_bytes_datum(val)
 }
 
 /// Go `GetASCIIPrefixDatumFromBytes`: converts bytes to a string datum holding
@@ -846,7 +846,7 @@ pub fn get_ascii_prefix_datum_from_bytes(bs: &[u8]) -> Datum {
         bs = &bs[..i];
         break;
     }
-    Datum::new_string(bs.to_vec())
+    Datum::new_string_datum(bs.to_vec())
 }
 
 // -------------------------------------------------------------------------

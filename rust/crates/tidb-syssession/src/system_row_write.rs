@@ -687,9 +687,9 @@ fn collated_value(value: Datum, field_type: &FieldType) -> Datum {
         return value;
     }
     match value {
-        Datum::Bytes(bytes) => Datum::new_collation_string(bytes, field_type.collation()),
+        Datum::Bytes(bytes) => Datum::new_collation_string_datum(bytes, field_type.collation()),
         Datum::String(string) => {
-            Datum::new_collation_string(string.bytes().to_vec(), field_type.collation())
+            Datum::new_collation_string_datum(string.bytes().to_vec(), field_type.collation())
         }
         other => other,
     }
@@ -1152,7 +1152,7 @@ mod tests {
             .expect("a built-in Go string is a valid VARCHAR default");
         assert_eq!(
             literal_default(&column, "t").expect("the raw string default materialises"),
-            Datum::new_collation_string(
+            Datum::new_collation_string_datum(
                 vec![0xff, 0x80, b'x'],
                 tidb_charset::Collation::Utf8Mb4Bin
             )

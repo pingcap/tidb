@@ -40,8 +40,8 @@ fn call() -> UnaryCallContext {
 /// Go `onTxnActiveFunc`: a pessimistic session's transaction is set to
 /// pessimistic mode as it activates.
 fn pessimistic<S: tikv_client::PdClient>(
-    mut transaction: tidb_store_driver_txn::transaction::RealTransaction<S>,
-) -> tidb_store_driver_txn::transaction::RealTransaction<S> {
+    mut transaction: tidb_store_driver_txn::transaction::TikvTxn<S>,
+) -> tidb_store_driver_txn::transaction::TikvTxn<S> {
     transaction.set_pessimistic(true);
     transaction
 }

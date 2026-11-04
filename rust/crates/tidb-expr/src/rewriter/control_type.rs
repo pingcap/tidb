@@ -199,7 +199,7 @@ fn try_to_fix_flen_of_datetime(ft: &mut FieldType) {
 fn add_result_flags(name: &str, result: &mut FieldType, args: &[&FieldType]) {
     let any_not_null = args.iter().any(|ft| ft.has_flag(FieldTypeFlags::NOT_NULL));
     match name {
-        "case" => result.del_flags(FieldTypeFlags::NOT_NULL),
+        "case" => result.del_flag(FieldTypeFlags::NOT_NULL),
         "ifnull" | "coalesce" if any_not_null => result.add_flags(FieldTypeFlags::NOT_NULL),
         "if" if result.eval_type() != EvalType::String => {
             result.add_flags(FieldTypeFlags::BINARY);
@@ -228,7 +228,7 @@ pub fn infer_type_4_control_funcs(name: &str, args: &[Expression]) -> Option<Fie
     // here without any of the fixups below.
     let Some(&first_not_null) = not_null_fields.first() else {
         let mut result = (*null_fields.first()?).clone();
-        result.del_flags(FieldTypeFlags::NOT_NULL);
+        result.del_flag(FieldTypeFlags::NOT_NULL);
         result.set_code(FieldTypeCode::Null);
         result.set_flen(0);
         result.set_decimal(0);
@@ -252,14 +252,14 @@ pub fn infer_type_4_control_funcs(name: &str, args: &[Expression]) -> Option<Fie
         // result and only the two flags that merge survive.
         let mut flags = 0_u32;
         let eval_type = aggregate_eval_type(&owned, &mut flags);
-        merged.set_flags(flags);
+        merged.set_flag(flags);
         set_decimal_from_args(&mut merged, eval_type, &not_null_fields);
         merged
     };
 
     // A NULL branch anywhere means the result can be NULL.
     if !null_fields.is_empty() {
-        result.del_flags(FieldTypeFlags::NOT_NULL);
+        result.del_flag(FieldTypeFlags::NOT_NULL);
     }
 
     let result_eval = result.eval_type();

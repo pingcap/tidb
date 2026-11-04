@@ -50,12 +50,12 @@ mod tests {
     fn numeric_production_batch_decimal_source_errors_survive_fitting() {
         for (input, code, message) in [
             (
-                Datum::new_string("invalid"),
+                Datum::new_string_datum("invalid"),
                 1292,
                 "Truncated incorrect DECIMAL value: 'invalid'",
             ),
             (
-                Datum::new_string("1e100"),
+                Datum::new_string_datum("1e100"),
                 1690,
                 "%s value is out of range in '%s'",
             ),
@@ -142,8 +142,8 @@ mod tests {
                 .with_truncate_as_warning(mode == 1)
                 .with_ignore_truncate_err(mode == 2);
             for (input, expected, warning) in [
-                (Datum::new_string("12tail"), 2012, "DOUBLE value: '12tail'"),
-                (Datum::new_string("0tail"), 2000, "DOUBLE value: '0tail'"),
+                (Datum::new_string_datum("12tail"), 2012, "DOUBLE value: '12tail'"),
+                (Datum::new_string_datum("0tail"), 2000, "DOUBLE value: '0tail'"),
                 (
                     Datum::Json(crate::BinaryJSON::parse(r#""1tail""#).unwrap()),
                     2001,
@@ -215,7 +215,7 @@ mod tests {
             let warnings = Warnings::default();
             let context =
                 ConversionContext::new(crate::STRICT_FLAGS, ConversionLocation::UTC, &warnings);
-            let result = Datum::new_string("bad")
+            let result = Datum::new_string_datum("bad")
                 .convert_to_in_context(&field, &context, &SessionTimeZone::utc())
                 .unwrap();
             assert_eq!(result.value.sql_string().unwrap(), "");
@@ -231,7 +231,7 @@ mod tests {
                 .with_ignore_truncate_err(mode == 2);
             let warnings = Warnings::default();
             let context = ConversionContext::new(flags, ConversionLocation::UTC, &warnings);
-            let result = Datum::new_bytes([1; 9])
+            let result = Datum::new_bytes_datum([1; 9])
                 .convert_to_in_context(
                     &FieldType::new(FieldTypeCode::Bit).with_flen(8),
                     &context,
@@ -335,7 +335,7 @@ mod tests {
         ] {
             let warnings = Warnings::default();
             let context = ConversionContext::new(flags, ConversionLocation::UTC, &warnings);
-            let converted = Datum::new_bytes([b'a', b'b', 0xff, b'c'])
+            let converted = Datum::new_bytes_datum([b'a', b'b', 0xff, b'c'])
                 .convert_to_in_context(&field, &context, &SessionTimeZone::utc())
                 .unwrap();
             assert_eq!(converted.value.as_raw_bytes(), Some(b"ab".as_slice()));
@@ -356,7 +356,7 @@ mod tests {
         let warnings = Warnings::default();
         let context =
             ConversionContext::new(crate::STRICT_FLAGS, ConversionLocation::UTC, &warnings);
-        let converted = Datum::new_string("ab中")
+        let converted = Datum::new_string_datum("ab中")
             .convert_to_in_context(&field, &context, &SessionTimeZone::utc())
             .unwrap();
         assert_eq!(converted.value.as_raw_bytes(), Some(b"ab?".as_slice()));
@@ -552,7 +552,7 @@ mod tests {
             }
             let warnings = Warnings::default();
             let context = ConversionContext::new(flags, ConversionLocation::UTC, &warnings);
-            let converted = Datum::new_string(row.input)
+            let converted = Datum::new_string_datum(row.input)
                 .convert_to_in_context(&target, &context, &SessionTimeZone::utc())
                 .unwrap_or_else(|error| panic!("{case}: {error}"));
             assert_eq!(
@@ -778,7 +778,7 @@ mod tests {
                 &warnings,
             );
             let target = FieldType::new(FieldTypeCode::from_mysql_type(code)).with_unsigned(true);
-            let converted = Datum::new_string(input)
+            let converted = Datum::new_string_datum(input)
                 .convert_to_in_context(&target, &context, &SessionTimeZone::utc())
                 .unwrap();
             assert_eq!(
@@ -845,7 +845,7 @@ mod tests {
         );
         let target = FieldType::new(FieldTypeCode::Tiny);
         let zone = SessionTimeZone::utc();
-        let overflow = Datum::new_string("128tail")
+        let overflow = Datum::new_string_datum("128tail")
             .convert_to_in_context(&target, &context, &zone)
             .unwrap();
         assert_eq!(overflow.value, Datum::Int(127));
@@ -860,7 +860,7 @@ mod tests {
         // Ignore wins when both bits are set. Existing caller-owned warnings
         // are neither cleared nor duplicated by another conversion.
         let ignored = context.with_flags(context.flags().with_ignore_truncate_err(true));
-        let converted = Datum::new_string("12tail")
+        let converted = Datum::new_string_datum("12tail")
             .convert_to_in_context(&target, &ignored, &zone)
             .unwrap();
         assert_eq!(converted.value, Datum::Int(12));

@@ -292,7 +292,7 @@ impl tikv_client::tikv::Client for RpcClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_unistore_tikv::region_manager::InProcessRegionManager;
+    use tidb_unistore_tikv::region_manager::MockRegionManager;
     use tikv_client::tikv::Client as _;
 
     fn client() -> RpcClient {

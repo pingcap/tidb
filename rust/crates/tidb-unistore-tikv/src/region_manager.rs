@@ -354,12 +354,12 @@ fn region_contains_key_by_end(region: &metapb::Region, key: &[u8]) -> bool {
 
 /// The embedded store's region manager, Go `MockRegionManager`.
 #[derive(Debug)]
-pub struct InProcessRegionManager {
+pub struct MockRegionManager {
     state: Mutex<State>,
 }
 
 #[cfg(test)]
-impl InProcessRegionManager {
+impl MockRegionManager {
     /// The tikv tests' fixture: store 1 (`store1`), region 2 over the whole
     /// keyspace, peer 3 -- the region the root's `BootstrapWithSingleStore`
     /// builds (Go's tikv tests set up their regions by hand).
@@ -387,7 +387,7 @@ impl InProcessRegionManager {
     }
 }
 
-impl InProcessRegionManager {
+impl MockRegionManager {
 
     /// Go `NewMockRegionManager`: no store, no region, ids from zero.
     #[must_use]
@@ -728,7 +728,7 @@ mod tests {
     /// memcomparable-encoded as a TiKV store keeps them.
     #[test]
     fn bootstraps_and_splits_like_go_mock_region_manager() {
-        let manager = InProcessRegionManager::single_store();
+        let manager = MockRegionManager::single_store();
         assert_eq!(manager.get_all_stores()[0].address, "store1");
         let (whole, leader) = manager.get_region_by_key(&encode_region_key(b"x")).unwrap();
         assert_eq!(id_version_peer(&whole), (2, 1, 3));
@@ -770,7 +770,7 @@ mod tests {
     /// region as the store holds it now.
     #[test]
     fn get_region_from_ctx_answers_tikvs_region_errors() {
-        let manager = InProcessRegionManager::single_store();
+        let manager = MockRegionManager::single_store();
         let region = manager.get_region_from_ctx(&ctx(2, 1, 1)).unwrap();
         assert!(region.raw_start().is_empty());
         assert_eq!(region.raw_end(), INTERNAL_KEY_PREFIX);
@@ -806,7 +806,7 @@ mod tests {
     /// Go `GetStoreInfoFromCtx`: the peer's store, else the checked store.
     #[test]
     fn get_store_info_from_ctx_resolves_the_peers_store() {
-        let manager = InProcessRegionManager::single_store();
+        let manager = MockRegionManager::single_store();
         assert_eq!(
             manager.get_store_info_from_ctx(&ctx(2, 1, 1)).unwrap(),
             ("store1".to_owned(), 1)
@@ -832,7 +832,7 @@ mod tests {
     /// so one request cuts each region its keys fall in.
     #[test]
     fn one_split_request_cuts_every_region_its_keys_fall_in() {
-        let manager = InProcessRegionManager::single_store();
+        let manager = MockRegionManager::single_store();
         manager.split_region(&split_request(ctx(2, 1, 1), &[b"m"]));
         let resp = manager.split_region(&split_request(ctx(2, 1, 2), &[b"c", b"p"]));
         let bounds: Vec<_> = resp

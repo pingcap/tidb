@@ -15,7 +15,7 @@
 //! TiDB store driver over the single client-rust transaction engine.
 mod opener;
 pub use super::client::{
-    RealTransaction, SnapshotGetResult,
+    TikvTxn, SnapshotGetResult,
 };
 pub use opener::{RealOptimisticTransactionOpener, StoreClient};
 
@@ -48,4 +48,4 @@ impl CommitProtocol {
 
 /// The one production transaction: real TiKV transport, real PD-backed region
 /// topology, and real PD timestamps.
-pub type ProductionTransaction = RealTransaction<tikv_client::PdRpcClient>;
+pub type ProductionTransaction = TikvTxn<tikv_client::PdRpcClient>;

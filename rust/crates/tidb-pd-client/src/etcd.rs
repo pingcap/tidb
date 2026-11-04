@@ -481,7 +481,7 @@ impl EtcdClient {
         key: impl Into<Vec<u8>>,
         start_revision: i64,
         is_cancelled: impl Fn() -> bool + Send + 'static,
-        on_response: impl Fn(&EtcdWatchResponse) + Send + 'static,
+        on_response: impl Fn(&WatchResponse) + Send + 'static,
     ) -> Result<EtcdWatcher, EtcdError> {
         EtcdWatcher::spawn_responses_from_revision(
             self.shared.endpoints.clone(),
@@ -503,7 +503,7 @@ impl EtcdClient {
         prefix: impl Into<Vec<u8>>,
         start_revision: i64,
         is_cancelled: impl Fn() -> bool + Send + 'static,
-        on_response: impl Fn(&EtcdWatchResponse) + Send + 'static,
+        on_response: impl Fn(&WatchResponse) + Send + 'static,
     ) -> Result<EtcdWatcher, EtcdError> {
         EtcdWatcher::spawn_responses_from_revision(
             self.shared.endpoints.clone(),
@@ -1730,7 +1730,7 @@ pub struct EtcdWatchEvent {
 
 /// One Go `clientv3.WatchResponse` after client-side create-frame filtering.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct EtcdWatchResponse {
+pub struct WatchResponse {
     /// Store revision carried by the response header.
     pub header_revision: i64,
     /// Key changes delivered in this response.
@@ -2033,7 +2033,7 @@ impl EtcdWatcher {
         start_revision: i64,
         with_prefix: bool,
         is_cancelled: impl Fn() -> bool + Send + 'static,
-        on_response: impl Fn(&EtcdWatchResponse) + Send + 'static,
+        on_response: impl Fn(&WatchResponse) + Send + 'static,
     ) -> Result<Self, EtcdError>
     where
         I: IntoIterator<Item = S>,
@@ -2109,7 +2109,7 @@ async fn watch_forever(
     mut next_revision: i64,
     with_prefix: bool,
     is_cancelled: &(impl Fn() -> bool + Send + 'static),
-    on_response: &(impl Fn(&EtcdWatchResponse) + Send + 'static),
+    on_response: &(impl Fn(&WatchResponse) + Send + 'static),
     stats: &WatchCounters,
     mut shutdown: watch::Receiver<bool>,
 ) {
@@ -2191,7 +2191,7 @@ async fn watch_one_stream(
     next_revision: &mut i64,
     with_prefix: bool,
     is_cancelled: &(impl Fn() -> bool + Send + 'static),
-    on_response: &(impl Fn(&EtcdWatchResponse) + Send + 'static),
+    on_response: &(impl Fn(&WatchResponse) + Send + 'static),
     stats: &WatchCounters,
     shutdown: &mut watch::Receiver<bool>,
 ) -> WatchEnd {
@@ -2272,7 +2272,7 @@ async fn watch_one_stream(
             });
         }
         let canceled = response.canceled();
-        on_response(&EtcdWatchResponse {
+        on_response(&WatchResponse {
             header_revision,
             events,
             canceled,

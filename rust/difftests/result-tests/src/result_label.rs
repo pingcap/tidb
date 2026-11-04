@@ -109,13 +109,13 @@ mod tests {
     fn go_format_cell_vectors_preserve_and_escape_bytes() {
         let cases = [
             (Datum::Null, "<nil>"),
-            (Datum::new_string("TiDB"), "TiDB"),
-            (Datum::new_string(vec![b'a', 0, b'b']), "a\0b"),
-            (Datum::new_string(vec![0xff, 0, b'A']), "BYTES_HEX:FF0041"),
-            (Datum::new_string("a\nb"), "BYTES_HEX:610A62"),
-            (Datum::new_string("a\rb"), "BYTES_HEX:610D62"),
-            (Datum::new_string("BYTES_HEX:FF"), "TEXT:BYTES_HEX:FF"),
-            (Datum::new_string("TEXT:value"), "TEXT:TEXT:value"),
+            (Datum::new_string_datum("TiDB"), "TiDB"),
+            (Datum::new_string_datum(vec![b'a', 0, b'b']), "a\0b"),
+            (Datum::new_string_datum(vec![0xff, 0, b'A']), "BYTES_HEX:FF0041"),
+            (Datum::new_string_datum("a\nb"), "BYTES_HEX:610A62"),
+            (Datum::new_string_datum("a\rb"), "BYTES_HEX:610D62"),
+            (Datum::new_string_datum("BYTES_HEX:FF"), "TEXT:BYTES_HEX:FF"),
+            (Datum::new_string_datum("TEXT:value"), "TEXT:TEXT:value"),
         ];
 
         for (value, expected) in cases {
@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn result_set_label_sorts_only_unordered_rows() {
-        let rows = vec![vec![Datum::new_string("z")], vec![Datum::new_string("a")]];
+        let rows = vec![vec![Datum::new_string_datum("z")], vec![Datum::new_string_datum("a")]];
         assert_eq!(rows_label(&rows, false), "RS:a;z");
         assert_eq!(rows_label(&rows, true), "RS:z;a");
     }

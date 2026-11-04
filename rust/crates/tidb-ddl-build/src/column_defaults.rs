@@ -125,7 +125,7 @@ pub fn check_column_default_value(
     ));
     Ok(match field_type.code() {
         FieldTypeCode::Blob | FieldTypeCode::LongBlob => (false, value),
-        FieldTypeCode::Json => (true, Datum::new_string("null")),
+        FieldTypeCode::Json => (true, Datum::new_string_datum("null")),
         _ => (true, value),
     })
 }
@@ -269,7 +269,7 @@ pub fn get_default_value(
             }
             outcome.value().to_string().into_bytes()
         };
-        return Ok(Datum::new_collation_string(bytes, field_type.collation()));
+        return Ok(Datum::new_collation_string_datum(bytes, field_type.collation()));
     }
 
     let normalized = match field_type.code() {
@@ -329,7 +329,7 @@ pub fn get_default_value(
         _ => value.clone(),
     };
     let bytes = normalized.sql_bytes().map_err(|_| invalid())?;
-    Ok(Datum::new_collation_string(bytes, field_type.collation()))
+    Ok(Datum::new_collation_string_datum(bytes, field_type.collation()))
 }
 
 /// Go `convertTimestampDefaultValToUTC`: a literal TIMESTAMP is persisted as
@@ -370,7 +370,7 @@ pub fn convert_timestamp_default_val_to_utc(
     time.convert_time_zone(zone, &tidb_datatype::SessionTimeZone::utc())
         .map_err(|_| invalid())?;
     let bytes = Datum::new_time(time).sql_bytes().map_err(|_| invalid())?;
-    Ok(Datum::new_collation_string(bytes, field_type.collation()))
+    Ok(Datum::new_collation_string_datum(bytes, field_type.collation()))
 }
 
 /// An `ENUM`/`SET` column's written `DEFAULT`, resolved to a MEMBER of the
@@ -416,7 +416,7 @@ pub fn pad_fixed_width_binary_default(value: Datum, field_type: &FieldType) -> D
     }
     let mut padded = bytes.to_vec();
     padded.resize(width as usize, 0);
-    Datum::new_collation_string(padded, field_type.collation())
+    Datum::new_collation_string_datum(padded, field_type.collation())
 }
 
 /// A `BIT(n)` column's written `DEFAULT`, settled to the BITS it names.
@@ -535,7 +535,7 @@ pub fn enum_set_column_default(value: &Datum, field_type: &FieldType) -> Option<
             }
         }
     };
-    Some(Datum::new_collation_string(member, datum_collation))
+    Some(Datum::new_collation_string_datum(member, datum_collation))
 }
 
 /// One `ADD COLUMN`.

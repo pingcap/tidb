@@ -34,7 +34,7 @@ use tidb_unistore_tikv::mock_pd::MockPd;
 use tidb_unistore_tikv::mvcc_store::MvccStore;
 use crate::pd::PdClient;
 use crate::redirector::ClientRedirector;
-use tidb_unistore_tikv::region_manager::InProcessRegionManager;
+use tidb_unistore_tikv::region_manager::MockRegionManager;
 use crate::rpc::{RpcClient, RpcConnect};
 use tidb_unistore_tikv::tso::Tso;
 
@@ -52,7 +52,7 @@ pub type StorePdClient = tikv_client::PdRpcClient<ClientRedirector, PdClient>;
 pub fn new(
     cluster_keyspaces: Vec<KeyspaceMeta>,
 ) -> Result<(RpcClient, Arc<PdClient>, Arc<Cluster>), String> {
-    let rm = Arc::new(InProcessRegionManager::new_mock_region_manager());
+    let rm = Arc::new(MockRegionManager::new_mock_region_manager());
     let tso = Arc::new(Tso::new());
     let handler = Arc::new(Mutex::new(KvHandler::new(
         MvccStore::with_pd(Arc::clone(&tso)),
@@ -65,7 +65,7 @@ pub fn new(
 /// the handler checks requests against, and the oracle its PD draws from.
 pub fn over(
     handler: Arc<Mutex<KvHandler>>,
-    rm: Arc<InProcessRegionManager>,
+    rm: Arc<MockRegionManager>,
     tso: Arc<Tso>,
     cluster_keyspaces: Vec<KeyspaceMeta>,
 ) -> Result<(RpcClient, Arc<PdClient>, Arc<Cluster>), String> {

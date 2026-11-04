@@ -1885,7 +1885,7 @@ pub(crate) mod tests {
             reader.close().unwrap();
             assert_eq!(1, all.len());
             assert_eq!(
-                Datum::new_string(b"old"),
+                Datum::new_string_datum(b"old"),
                 all[0][0],
                 "rotate_after={rotate_after_enumeration} fail_meta={fail_rotated_entry_metadata}"
             );
@@ -2057,7 +2057,7 @@ pub(crate) mod tests {
 
         let all = read_all!(None, Vec::new(), 4);
         for row in &all {
-            if row[0] == Datum::new_string(b"digest1") {
+            if row[0] == Datum::new_string_datum(b"digest1") {
                 assert_eq!(Datum::new_int(3), row[2]);
             } else {
                 assert_eq!(Datum::new_int(0), row[2]);

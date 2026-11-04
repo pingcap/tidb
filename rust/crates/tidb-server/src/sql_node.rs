@@ -1549,7 +1549,7 @@ mod tests {
 
     #[test]
     fn cluster_lifecycle_batch_standalone_publishes_its_allocator_identity() {
-        let mut info = tidb_session::domain::serverinfo_etcd::node_server_info(&test_config());
+        let mut info = tidb_session::domain::serverinfo_etcd::get_server_info(&test_config());
         let encoded = info.marshal().unwrap();
         let value: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
         assert_eq!(value["server_id"], 1);

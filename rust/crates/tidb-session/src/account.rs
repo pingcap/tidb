@@ -54,7 +54,7 @@ impl Session {
             .with_time_zone(tidb_datatype::SessionTimeZone::utc());
         let decode = tidb_table::tables::RowDecodeContext::for_query(&ctx);
         let loaded = self.with_persistent_catalog_mut(|catalog| {
-            tidb_privilege::cluster_privilege_load::load_privileges(
+            tidb_privilege::cluster_privilege_load::load_all(
                 &mut crate::privilege_tables::SessionPrivilegeTables { catalog, ctx: &ctx, decode },
             )
             .map_err(|error| DriverError::unsupported(format!("FLUSH PRIVILEGES: {error}")))

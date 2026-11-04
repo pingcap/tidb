@@ -26,7 +26,7 @@ pub struct RevokeStmt {
     /// Standard privileges in their written order.
     pub privileges: Vec<GrantPrivilege>,
     /// Optional object class after `ON`.
-    pub object_type: Option<GrantObjectType>,
+    pub object_type: Option<ObjectTypeType>,
     /// Scope from which the privileges are revoked.
     pub level: GrantLevel,
     /// Accounts in their written order.
@@ -45,9 +45,9 @@ impl RevokeStmt {
         out.push_str(" ON ");
         if let Some(object_type) = self.object_type {
             out.push_str(match object_type {
-                GrantObjectType::Table => "TABLE ",
-                GrantObjectType::Function => "FUNCTION ",
-                GrantObjectType::Procedure => "PROCEDURE ",
+                ObjectTypeType::Table => "TABLE ",
+                ObjectTypeType::Function => "FUNCTION ",
+                ObjectTypeType::Procedure => "PROCEDURE ",
             });
         }
         self.level.restore_into(out);
@@ -68,7 +68,7 @@ pub struct GrantStmt {
     /// Privileges in their written order.
     pub privileges: Vec<GrantPrivilege>,
     /// Optional object class after `ON`.
-    pub object_type: Option<GrantObjectType>,
+    pub object_type: Option<ObjectTypeType>,
     /// Scope to which the privileges apply.
     pub level: GrantLevel,
     /// Grantee accounts in their written order.
@@ -120,9 +120,9 @@ impl GrantStmt {
         out.push_str(" ON ");
         if let Some(object_type) = self.object_type {
             out.push_str(match object_type {
-                GrantObjectType::Table => "TABLE ",
-                GrantObjectType::Function => "FUNCTION ",
-                GrantObjectType::Procedure => "PROCEDURE ",
+                ObjectTypeType::Table => "TABLE ",
+                ObjectTypeType::Function => "FUNCTION ",
+                ObjectTypeType::Procedure => "PROCEDURE ",
             });
         }
         self.level.restore_into(out);
@@ -180,7 +180,7 @@ impl GrantPrivilege {
 
 /// Optional object class after `ON`, matching Go's `ObjectTypeType`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GrantObjectType {
+pub enum ObjectTypeType {
     /// `TABLE`.
     Table,
     /// `FUNCTION`.
@@ -352,7 +352,7 @@ impl crate::Visitable for GrantPrivilege {
     }
 }
 
-impl crate::Visitable for GrantObjectType {
+impl crate::Visitable for ObjectTypeType {
     fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
         if visitor.enter(self) {
             return visitor.leave(self);

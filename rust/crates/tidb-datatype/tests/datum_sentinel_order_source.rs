@@ -30,14 +30,14 @@ fn signed(ordering: Ordering) -> i8 {
 #[test]
 fn test_compare_datum() {
     let rows = [
-        (Datum::max_value(), Datum::new_string("00:00:00"), 1),
-        (Datum::min_not_null(), Datum::new_string("00:00:00"), -1),
-        (Datum::default(), Datum::new_string("00:00:00"), -1),
+        (Datum::max_value(), Datum::new_string_datum("00:00:00"), 1),
+        (Datum::min_not_null_datum(), Datum::new_string_datum("00:00:00"), -1),
+        (Datum::default(), Datum::new_string_datum("00:00:00"), -1),
         (Datum::default(), Datum::default(), 0),
-        (Datum::min_not_null(), Datum::min_not_null(), 0),
+        (Datum::min_not_null_datum(), Datum::min_not_null_datum(), 0),
         (Datum::max_value(), Datum::max_value(), 0),
-        (Datum::default(), Datum::min_not_null(), -1),
-        (Datum::min_not_null(), Datum::max_value(), -1),
+        (Datum::default(), Datum::min_not_null_datum(), -1),
+        (Datum::min_not_null_datum(), Datum::max_value(), -1),
     ];
 
     for (index, (left, right, expected)) in rows.into_iter().enumerate() {
@@ -57,22 +57,22 @@ fn test_compare_datum() {
 /// `MinNotNullDatum`, and `MaxValueDatum` in `pkg/types/datum.go`.
 #[test]
 fn sentinel_constructors_kinds_and_setter_share_the_datum_authority() {
-    assert_eq!(Datum::min_not_null().kind(), DatumKind::MinNotNull);
+    assert_eq!(Datum::min_not_null_datum().kind(), DatumKind::MinNotNull);
     assert_eq!(Datum::max_value().kind(), DatumKind::MaxValue);
-    assert!(Datum::min_not_null().is_min_not_null());
+    assert!(Datum::min_not_null_datum().is_min_not_null());
     assert!(Datum::max_value().is_max_value());
-    assert!(Datum::min_not_null().sql_string().is_err());
+    assert!(Datum::min_not_null_datum().sql_string().is_err());
     assert!(Datum::max_value().sql_string().is_err());
-    assert_eq!(Datum::min_not_null().label(), "SKIP:15");
+    assert_eq!(Datum::min_not_null_datum().label(), "SKIP:15");
     assert_eq!(Datum::max_value().label(), "SKIP:16");
     assert_eq!(
-        Datum::min_not_null().sql_string().unwrap_err().to_string(),
+        Datum::min_not_null_datum().sql_string().unwrap_err().to_string(),
         "cannot convert <nil>(type <nil>) to string"
     );
 
-    let mut value = Datum::new_string("payload that must be discarded");
+    let mut value = Datum::new_string_datum("payload that must be discarded");
     value.set_min_not_null();
-    assert_eq!(value, Datum::min_not_null());
+    assert_eq!(value, Datum::min_not_null_datum());
     assert_eq!(value.as_raw_bytes(), None);
     assert_eq!(value.collation(), None);
 }

@@ -3434,7 +3434,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         } else if table.handle_col_offsets().is_empty() {
             let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
             ret_type
-                .set_flags(ret_type.flags() | FieldTypeFlags::NOT_NULL | FieldTypeFlags::PRI_KEY);
+                .set_flag(ret_type.flags() | FieldTypeFlags::NOT_NULL | FieldTypeFlags::PRI_KEY);
             let mut extra = Column::new(self.column_ids.alloc(), ret_type);
             extra.id = EXTRA_HANDLE_ID;
             let name = self.table_field_name(
@@ -3471,7 +3471,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // [`Self::unfold_wild_star`] reproduces.
         if !table.is_cluster_table {
             let mut commit_ts_type = FieldType::new(FieldTypeCode::LongLong);
-            commit_ts_type.set_flags(commit_ts_type.flags() | FieldTypeFlags::UNSIGNED);
+            commit_ts_type.set_flag(commit_ts_type.flags() | FieldTypeFlags::UNSIGNED);
             let mut commit_ts = Column::new(self.column_ids.alloc(), commit_ts_type);
             commit_ts.id = EXTRA_COMMIT_TS_ID;
             let commit_ts_name = self.table_field_name(

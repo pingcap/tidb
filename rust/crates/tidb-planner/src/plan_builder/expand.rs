@@ -218,7 +218,7 @@ pub fn build_expand_field_name(
 /// Go's `gid` / `gpos` type: `LONGLONG UNSIGNED NOT NULL`.
 fn grouping_id_type() -> FieldType {
     let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
-    ret_type.set_flags(ret_type.flags() | FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL);
+    ret_type.set_flag(ret_type.flags() | FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL);
     ret_type
 }
 
@@ -315,7 +315,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 return;
             }
             if let Some(ret_type) = column.ret_type.as_mut() {
-                ret_type.set_flags(ret_type.flags() & !FieldTypeFlags::NOT_NULL);
+                ret_type.set_flag(ret_type.flags() & !FieldTypeFlags::NOT_NULL);
             }
         };
         let mut expand_columns = proj_columns;
@@ -579,7 +579,7 @@ use tidb_exprctx::EvalError;
             .grouping_mode
             .ok_or(EvalError::Unsupported("ROLLUP Expand has no grouping mode"))?;
         let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
-        ret_type.set_flags(ret_type.flags() | FieldTypeFlags::UNSIGNED);
+        ret_type.set_flag(ret_type.flags() | FieldTypeFlags::UNSIGNED);
         ret_type.set_flen(20);
         ret_type.set_decimal(0);
         let mut function = ScalarFunction::new(

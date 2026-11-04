@@ -164,7 +164,7 @@ fn add_batch_ddl_jobs<S: StoreClient>(
         .iter_mut()
         .map(|job_w| job_w.spec.clone())
         .collect();
-    let result = crate::real_tikv_ddl::gen_global_ids_and_insert_jobs_with_retry(
+    let result = crate::real_tikv_ddl::gen_gid_and_insert_jobs_with_retry(
         Arc::clone(opener),
         Some(sess_pool),
         &mut specs,

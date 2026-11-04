@@ -646,7 +646,7 @@ use tidb_exprctx::NoColumns;
                 .with_truncate_level(tidb_exprctx::ErrorLevel::Warn);
             let field = FieldType::new(FieldTypeCode::LongLong);
             let constant =
-                Expression::Constant(Constant::new(Datum::new_string("12tail"), field.clone()));
+                Expression::Constant(Constant::new(Datum::new_string_datum("12tail"), field.clone()));
             let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 4);
             for value in [1, 1, 2, 2] {
                 chunk.append_int64(0, value);
@@ -898,7 +898,7 @@ use tidb_exprctx::NoColumns;
                     vec![
                         column(0, field.clone()),
                         Expression::Constant(Constant::new(
-                            Datum::new_string("2tail"),
+                            Datum::new_string_datum("2tail"),
                             field.clone(),
                         )),
                     ],
@@ -947,7 +947,7 @@ use tidb_exprctx::NoColumns;
                 let item = match kind {
                     "deferred" | "nested" => {
                         let child = Expression::Constant(Constant::new(
-                            Datum::new_string("12tail"),
+                            Datum::new_string_datum("12tail"),
                             FieldType::new(FieldTypeCode::VarString),
                         ));
                         let mut outer = Constant::new(Datum::Int(0), field.clone());
@@ -1097,17 +1097,17 @@ use tidb_exprctx::ErrorLevel;
         let cases = [
             (
                 "prefix",
-                Datum::new_string("1.2tail"),
+                Datum::new_string_datum("1.2tail"),
                 truncated,
                 "0604038100c8",
             ),
             (
                 "invalid",
-                Datum::new_string(" +abc"),
+                Datum::new_string_datum(" +abc"),
                 (1292, "Truncated incorrect DECIMAL value: 'abc'"),
                 "0603038000",
             ),
-            ("overflow", Datum::new_string("1e9999"), overflow, ""),
+            ("overflow", Datum::new_string_datum("1e9999"), overflow, ""),
             ("float_overflow", Datum::Real(1e308), overflow, ""),
             (
                 "float_nan",
@@ -1217,7 +1217,7 @@ use tidb_exprctx::ErrorLevel;
                 "int_string",
                 FieldTypeCode::LongLong,
                 -1,
-                Datum::new_string("12.4tail"),
+                Datum::new_string_datum("12.4tail"),
                 "03800000000000000c",
                 "0131322e347461696cff0000000000000000f7",
                 Some((1292, "Truncated incorrect DOUBLE value: '12.4tail'")),
@@ -1226,7 +1226,7 @@ use tidb_exprctx::ErrorLevel;
                 "real_string",
                 FieldTypeCode::Double,
                 -1,
-                Datum::new_string("1.5tail"),
+                Datum::new_string_datum("1.5tail"),
                 "05bff8000000000000",
                 "01312e357461696c00fe",
                 Some((1292, "Truncated incorrect DOUBLE value: '1.5tail'")),
@@ -1262,7 +1262,7 @@ use tidb_exprctx::ErrorLevel;
                 "decimal_string",
                 FieldTypeCode::NewDecimal,
                 3,
-                Datum::new_string("1.2tail"),
+                Datum::new_string_datum("1.2tail"),
                 "0604038100c8",
                 "01312e327461696c00fe",
                 Some((1265, "Data truncated for column '%s' at row %d")),
@@ -1289,7 +1289,7 @@ use tidb_exprctx::ErrorLevel;
                 "null_type",
                 FieldTypeCode::Null,
                 -1,
-                Datum::new_string("present"),
+                Datum::new_string_datum("present"),
                 "00",
                 "0170726573656e7400fe",
                 None,
@@ -1965,7 +1965,7 @@ use tidb_exprctx::ErrorLevel;
     fn collation_and_padding_define_string_groups() {
         let keys = ["aaa", "AAA", "😜", "😃", "À", "A"]
             .into_iter()
-            .map(|value| vec![Datum::new_string(value)])
+            .map(|value| vec![Datum::new_string_datum(value)])
             .collect::<Vec<_>>();
         let mut checker = VecGroupChecker::new(Vec::new());
 
@@ -1988,7 +1988,7 @@ use tidb_exprctx::ErrorLevel;
 
         let padded = ["a", "a  ", "a    "]
             .into_iter()
-            .map(|value| vec![Datum::new_string(value)])
+            .map(|value| vec![Datum::new_string_datum(value)])
             .collect::<Vec<_>>();
         checker = VecGroupChecker::new(Vec::new());
         checker

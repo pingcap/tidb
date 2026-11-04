@@ -273,7 +273,7 @@ pub(crate) fn add_sub_time(
             let Some(delta) = second_as_duration(&right, kinds[1], cols, false)? else {
                 return Ok(Datum::Null);
             };
-            Ok(Datum::new_string(first.combine(delta, sign).format()))
+            Ok(Datum::new_string_datum(first.combine(delta, sign).format()))
         }
         // `...StringAnd*`: the ONE arm that decides between the duration and
         // the datetime reading at RUNTIME, from the first argument's text.
@@ -322,7 +322,7 @@ pub(crate) fn add_sub_time(
                 } else {
                     MAX_FSP
                 };
-                return Ok(Datum::new_string(GoDuration { fsp, ..sum }.format()));
+                return Ok(Datum::new_string_datum(GoDuration { fsp, ..sum }.format()));
             }
             // `strDatetimeAddDuration`/`strDatetimeSubDuration`: the datetime
             // is parsed at MaxFsp and the RESULT's fsp is MaxFsp only when
@@ -373,7 +373,7 @@ fn datetime_result(text: &str, delta: GoDuration, sign: i64) -> Result<Datum, Ev
         ..delta
     };
     match first.add(signed) {
-        Some(result) if result.in_range() => Ok(Datum::new_string(result.format())),
+        Some(result) if result.in_range() => Ok(Datum::new_string_datum(result.format())),
         _ => Ok(Datum::Null),
     }
 }
@@ -428,7 +428,7 @@ fn str_datetime_add_duration(
         return Ok(Datum::Null);
     }
     let fsp = if result.micros == 0 { MIN_FSP } else { MAX_FSP };
-    Ok(Datum::new_string(GoDateTime { fsp, ..result }.format()))
+    Ok(Datum::new_string_datum(GoDateTime { fsp, ..result }.format()))
 }
 
 /// The tail of `builtinAddStringAndStringSig.evalString`: a second argument
@@ -495,7 +495,7 @@ pub(crate) fn timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, Eva
         fsp: parsed.time.fsp().into(),
     };
     if vals.len() == 1 {
-        return Ok(Datum::new_string(base.format()));
+        return Ok(Datum::new_string_datum(base.format()));
     }
     let Some(second) = coerce_str(&vals[1])? else {
         return Ok(Datum::Null);
@@ -511,7 +511,7 @@ pub(crate) fn timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, Eva
         return Ok(Datum::Null);
     };
     match base.add(delta) {
-        Some(result) if result.in_range() => Ok(Datum::new_string(
+        Some(result) if result.in_range() => Ok(Datum::new_string_datum(
             GoDateTime {
                 fsp: base.fsp.max(delta.fsp),
                 ..result
@@ -626,7 +626,7 @@ pub(crate) fn timestamp_add(vals: &[Datum], cols: &dyn Columns) -> Result<Datum,
             }
         }
     }
-    Ok(Datum::new_string(GoDateTime { fsp, ..result }.format()))
+    Ok(Datum::new_string_datum(GoDateTime { fsp, ..result }.format()))
 }
 
 /// Go `addUnitToTime`. The outer `None` is an unknown unit (Go's
@@ -758,7 +758,7 @@ pub(crate) fn sysdate(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalE
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| EvalError::Unsupported("the host clock is before the Unix epoch"))?;
     let secs = elapsed.as_secs() as i64 + i64::from(tz_offset);
-    Ok(Datum::new_string(super::format_datetime(
+    Ok(Datum::new_string_datum(super::format_datetime(
         secs,
         elapsed.subsec_nanos(),
         fsp,
@@ -849,15 +849,15 @@ mod sysdate_source_tests {
     fn sysdate_is_now_uses_the_statement_clock_and_now_rounding() {
         assert_eq!(
             sysdate(&[], &AliasedStatementClock).unwrap(),
-            Datum::new_string("2023-11-15 06:13:20")
+            Datum::new_string_datum("2023-11-15 06:13:20")
         );
         assert_eq!(
             sysdate(&[Datum::Int(3)], &AliasedStatementClock).unwrap(),
-            Datum::new_string("2023-11-15 06:13:20.654")
+            Datum::new_string_datum("2023-11-15 06:13:20.654")
         );
         assert_eq!(
             sysdate(&[Datum::Int(6)], &AliasedStatementClock).unwrap(),
-            Datum::new_string("2023-11-15 06:13:20.654999")
+            Datum::new_string_datum("2023-11-15 06:13:20.654999")
         );
     }
 }

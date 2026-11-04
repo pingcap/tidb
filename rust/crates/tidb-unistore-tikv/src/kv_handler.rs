@@ -53,7 +53,7 @@ use crate::mvcc_store::{
 };
 use tidb_unistore_dbreader::ScanReq;
 use tidb_unistore_kverrors::KvError;
-use crate::region_manager::{InProcessRegionManager, RegionCtx};
+use crate::region_manager::{MockRegionManager, RegionCtx};
 
 /// Go `convertToKeyError` (`server.go:1174`): every store error becomes the
 /// `KeyError` arm a client's resolver switches on; anything unrecognized is
@@ -298,21 +298,21 @@ pub struct KvHandler {
     /// Go `mvccStore`.
     pub store: MvccStore,
     /// Go `regionManager`.
-    pub regions: Arc<InProcessRegionManager>,
+    pub regions: Arc<MockRegionManager>,
 }
 
 #[cfg(test)]
 impl Default for KvHandler {
     /// A fresh store over the single-store fixture.
     fn default() -> Self {
-        Self::new(MvccStore::new(), Arc::new(InProcessRegionManager::single_store()))
+        Self::new(MvccStore::new(), Arc::new(MockRegionManager::single_store()))
     }
 }
 
 impl KvHandler {
     /// Go `NewServer(rm, pdClient, store, innerServer)`.
     #[must_use]
-    pub fn new(store: MvccStore, regions: Arc<InProcessRegionManager>) -> Self {
+    pub fn new(store: MvccStore, regions: Arc<MockRegionManager>) -> Self {
         Self { store, regions }
     }
 

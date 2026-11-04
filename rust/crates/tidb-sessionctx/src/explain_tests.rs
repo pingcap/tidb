@@ -27,9 +27,9 @@ mod tests {
         use tidb_expr::constant::{Constant, ParamMarker};
         use tidb_expr::scalar_function::ScalarFunction;
         let ctx = crate::StmtContext::default()
-            .with_prepared_params(vec![Datum::new_string("current")].into());
+            .with_prepared_params(vec![Datum::new_string_datum("current")].into());
         let mut parameter = Constant::new(
-            Datum::new_string("stale"),
+            Datum::new_string_datum("stale"),
             FieldType::new(FieldTypeCode::VarString),
         );
         parameter.param_marker = Some(ParamMarker { order: 0 });
@@ -57,7 +57,7 @@ mod tests {
         ))));
         overflow.subquery_ref_id = 8;
         let mut converted = Constant::new(
-            Datum::new_string("stale"),
+            Datum::new_string_datum("stale"),
             FieldType::new(FieldTypeCode::VarString),
         );
         converted.deferred_expr = Some(Box::new(integer(42)));

@@ -55,7 +55,7 @@ impl tidb_bindinfo::cluster_binding_seam::BindingSessionPool for BindingSessions
         let (condition, args) = match boundary {
             Some(boundary) => (
                 "USE INDEX (time_index) WHERE update_time > %?",
-                vec![Datum::new_string(boundary.to_owned())],
+                vec![Datum::new_string_datum(boundary.to_owned())],
             ),
             None => ("", Vec::new()),
         };

@@ -17,7 +17,7 @@
 use super::*;
 
 fn string_datum(value: &str) -> Datum {
-    Datum::new_string(value.to_string())
+    Datum::new_string_datum(value.to_string())
 }
 
 /// A single argument as an `types.ETDatetime`-declaring signature
@@ -382,14 +382,14 @@ fn month_and_monthname_source_vectors() {
     }
 
     let monthname_cases = [
-        ("2017-12-01", Datum::new_string("December".to_string())),
+        ("2017-12-01", Datum::new_string_datum("December".to_string())),
         ("2017-00-01", Datum::Null),
         ("0000-00-00", Datum::Null),
         ("0000-00-00 00:00:00.000000", Datum::Null),
         ("0000-00-00 00:00:11.000000", Datum::Null),
-        ("2000-01-01", Datum::new_string("January".to_string())),
-        ("2011-11-11", Datum::new_string("November".to_string())),
-        ("0000-01-01", Datum::new_string("January".to_string())),
+        ("2000-01-01", Datum::new_string_datum("January".to_string())),
+        ("2011-11-11", Datum::new_string_datum("November".to_string())),
+        ("0000-01-01", Datum::new_string_datum("January".to_string())),
         ("2008-13-01", Datum::Null),
     ];
     for (input, want) in monthname_cases {
@@ -411,7 +411,7 @@ fn month_and_monthname_source_vectors() {
     );
     assert_eq!(
         monthname(&datetime_arg(Datum::Int(20_240_315)), &crate::NoColumns).unwrap(),
-        Datum::new_string("March".to_string())
+        Datum::new_string_datum("March".to_string())
     );
     assert!(month(&[]).is_err());
     assert!(monthname(
@@ -440,15 +440,15 @@ fn current_time_truncates_to_microseconds_before_fsp_rounding() {
     let clock = FractionalClock;
     assert_eq!(
         current_time(&[Datum::Int(6)], "curtime", &clock).unwrap(),
-        Datum::new_string("22:13:20.654320".to_string())
+        Datum::new_string_datum("22:13:20.654320".to_string())
     );
     assert_eq!(
         utc_time(&[Datum::Int(6)], &clock).unwrap(),
-        Datum::new_string("22:13:20.654320".to_string())
+        Datum::new_string_datum("22:13:20.654320".to_string())
     );
     assert_eq!(
         utc_timestamp(&[Datum::Int(6)], &clock).unwrap(),
-        Datum::new_string("2023-11-14 22:13:20.654321".to_string()),
+        Datum::new_string_datum("2023-11-14 22:13:20.654321".to_string()),
         "UTC_TIMESTAMP rounds raw nanoseconds instead of using the duration path"
     );
 }
@@ -471,8 +471,8 @@ fn current_clock_null_fsp_follows_each_go_signature() {
 #[test]
 fn go_time_vectors_cover_duration_scale_and_clamp() {
     assert_eq!(
-        sec_to_time(&[Datum::new_string("123.4".to_string())], &crate::NoColumns).unwrap(),
-        Datum::new_string("00:02:03.400000".to_string())
+        sec_to_time(&[Datum::new_string_datum("123.4".to_string())], &crate::NoColumns).unwrap(),
+        Datum::new_string_datum("00:02:03.400000".to_string())
     );
     // Go's TestSecToTime pins this row with the constant's field type set
     // to DECIMAL 1 (`SetDecimal(1)`): an SQL literal 86401.4 IS a DECIMAL,
@@ -484,11 +484,11 @@ fn go_time_vectors_cover_duration_scale_and_clamp() {
             &crate::NoColumns
         )
         .unwrap(),
-        Datum::new_string("24:00:01.4".to_string())
+        Datum::new_string_datum("24:00:01.4".to_string())
     );
     assert_eq!(
         sec_to_time(&[Datum::Real(86_401.543_21)], &crate::NoColumns).unwrap(),
-        Datum::new_string("24:00:01.543210".to_string())
+        Datum::new_string_datum("24:00:01.543210".to_string())
     );
     assert_eq!(
         maketime(
@@ -500,20 +500,20 @@ fn go_time_vectors_cover_duration_scale_and_clamp() {
             &crate::NoColumns
         )
         .unwrap(),
-        Datum::new_string("838:59:59.0".to_string())
+        Datum::new_string_datum("838:59:59.0".to_string())
     );
     assert_eq!(
         time_format(&[
-            Datum::new_string("1990-05-07 19:30:10".to_string()),
-            Datum::new_string("%H %i %s".to_string()),
+            Datum::new_string_datum("1990-05-07 19:30:10".to_string()),
+            Datum::new_string_datum("%H %i %s".to_string()),
         ])
         .unwrap(),
-        Datum::new_string("19 30 10".to_string())
+        Datum::new_string_datum("19 30 10".to_string())
     );
     assert_eq!(
         time_format(&[
-            Datum::new_string("12:34:56".to_string()),
-            Datum::new_string(String::new()),
+            Datum::new_string_datum("12:34:56".to_string()),
+            Datum::new_string_datum(String::new()),
         ])
         .unwrap(),
         Datum::Null
@@ -588,7 +588,7 @@ fn sec_to_time_source_vectors() {
     ] {
         assert_eq!(
             sec_to_time(std::slice::from_ref(&input), &crate::NoColumns).unwrap(),
-            Datum::new_string(want.to_string()),
+            Datum::new_string_datum(want.to_string()),
             "SEC_TO_TIME({input:?})"
         );
     }
@@ -613,11 +613,11 @@ fn go_week_vectors_cover_year_boundaries() {
     );
     assert_eq!(
         calendar::date_format(
-            &Datum::new_string("2020-01-01".to_string()),
-            &Datum::new_string("%U %u %V %v %X %x".to_string()),
+            &Datum::new_string_datum("2020-01-01".to_string()),
+            &Datum::new_string_datum("%U %u %V %v %X %x".to_string()),
         )
         .unwrap(),
-        Datum::new_string("00 01 52 01 2019 2020".to_string())
+        Datum::new_string_datum("00 01 52 01 2019 2020".to_string())
     );
 }
 
@@ -629,8 +629,8 @@ fn go_week_vectors_cover_year_boundaries() {
 #[test]
 fn dayname_source_vectors() {
     let cases = [
-        ("2017-12-01", Datum::new_string("Friday".to_string())),
-        ("0000-12-01", Datum::new_string("Friday".to_string())),
+        ("2017-12-01", Datum::new_string_datum("Friday".to_string())),
+        ("0000-12-01", Datum::new_string_datum("Friday".to_string())),
         ("2017-00-01", Datum::Null),
         ("2017-01-00", Datum::Null),
         ("0000-00-00", Datum::Null),
@@ -650,7 +650,7 @@ fn dayname_source_vectors() {
     );
     assert_eq!(
         dayname(&datetime_arg(Datum::Int(20_171_201)), &crate::NoColumns).unwrap(),
-        Datum::new_string("Friday".to_string())
+        Datum::new_string_datum("Friday".to_string())
     );
     assert!(dayname(&[], &crate::NoColumns).is_err());
 }
@@ -691,7 +691,7 @@ fn date_format_source_vectors() {
     for (date, format, want) in cases {
         assert_eq!(
             calendar::date_format(&string_datum(date), &string_datum(format)).unwrap(),
-            Datum::new_string(want.to_string()),
+            Datum::new_string_datum(want.to_string()),
             "DATE_FORMAT({date}, {format})"
         );
     }
@@ -709,7 +709,7 @@ fn date_format_source_vectors() {
 fn date_format_negative_week_year_uses_go_uint32_sentinel() {
     assert_eq!(
         calendar::date_format(&string_datum("0000-01-01"), &string_datum("%X %x"),).unwrap(),
-        Datum::new_string("0000 4294967295".to_owned())
+        Datum::new_string_datum("0000 4294967295".to_owned())
     );
 }
 
@@ -821,7 +821,7 @@ fn str_to_date_source_vectors() {
             &crate::NoColumns,
         )
         .unwrap();
-        let want = want.map_or(Datum::Null, |want| Datum::new_string(want.to_string()));
+        let want = want.map_or(Datum::Null, |want| Datum::new_string_datum(want.to_string()));
         assert_eq!(got, want, "STR_TO_DATE({date:?}, {format:?})");
     }
     assert_eq!(
@@ -845,7 +845,7 @@ fn str_to_date_punctuation_token_uses_go_unicode_categories() {
     assert_eq!(
         calendar::str_to_date(&[string_datum("2013¿5"), string_datum("%Y%.%c")], &relaxed,)
             .unwrap(),
-        Datum::new_string("2013-05-00".to_owned())
+        Datum::new_string_datum("2013-05-00".to_owned())
     );
     assert_eq!(
         calendar::str_to_date(&[string_datum("2013+5"), string_datum("%Y%.%c")], &relaxed,)
@@ -872,7 +872,7 @@ fn str_to_date_exhausted_tokens_preserve_go_meridiem_fix_state() {
             &crate::NoColumns,
         )
         .unwrap(),
-        Datum::new_string("11:30:45".to_owned())
+        Datum::new_string_datum("11:30:45".to_owned())
     );
     assert_eq!(
         calendar::str_to_date(&[string_datum(""), string_datum("%p")], &crate::NoColumns).unwrap(),
@@ -937,7 +937,7 @@ fn str_to_date_partial_formats_follow_no_zero_date() {
         );
         assert_eq!(
             calendar::str_to_date(&args, &relaxed).unwrap(),
-            Datum::new_string(want.to_string()),
+            Datum::new_string_datum(want.to_string()),
             "STR_TO_DATE({date:?}, {format:?}) without NO_ZERO_DATE"
         );
     }
@@ -962,7 +962,7 @@ fn str_to_date_duration_signature_ignores_no_zero_date() {
             &crate::NoColumns
         )
         .unwrap(),
-        Datum::new_string("20:23:10".to_string()),
+        Datum::new_string_datum("20:23:10".to_string()),
     );
 }
 
@@ -987,7 +987,7 @@ fn str_to_date_day_of_month_follows_allow_invalid_dates() {
             })
         )
         .unwrap(),
-        Datum::new_string("2021-02-30".to_string()),
+        Datum::new_string_datum("2021-02-30".to_string()),
         "ALLOW_INVALID_DATES keeps Go's maxDay = 31"
     );
 }
@@ -1030,7 +1030,7 @@ fn from_days_source_vectors() {
         } else {
             assert_eq!(
                 result,
-                Datum::new_string(want.to_string()),
+                Datum::new_string_datum(want.to_string()),
                 "FROM_DAYS({day})"
             );
         }
@@ -1050,7 +1050,7 @@ fn from_days_source_vectors() {
         } else {
             assert_eq!(
                 result,
-                Datum::new_string(want.to_string()),
+                Datum::new_string_datum(want.to_string()),
                 "FROM_DAYS({input:?})"
             );
         }
@@ -1357,13 +1357,13 @@ fn last_day_source_vectors() {
     ] {
         assert_eq!(
             last_day(&datetime_str_arg(input), &crate::NoColumns).unwrap(),
-            Datum::new_string(want.to_string()),
+            Datum::new_string_datum(want.to_string()),
             "LAST_DAY({input})"
         );
     }
     assert_eq!(
         last_day(&datetime_arg(Datum::Int(950501)), &crate::NoColumns).unwrap(),
-        Datum::new_string("1995-05-31".to_string())
+        Datum::new_string_datum("1995-05-31".to_string())
     );
     for input in [
         "0000-00-00",

@@ -70,7 +70,7 @@ use tidb_kv::storage::StorageError;
 use tidb_hack::GoToLower;
 use tidb_txnkv::rpc::{UnaryCallContext, UnaryCancellation};
 use tidb_txnkv::transaction::{BufferMutation, LockWaitTime, OptimisticCommitOutcome, OptimisticCoordinatorError, PessimisticLockFailure, SchemaLease, SchemaLeaseChecker, TransactionCause};
-use crate::transaction::{RealOptimisticTransactionOpener, RealTransaction, StoreClient};
+use crate::transaction::{RealOptimisticTransactionOpener, TikvTxn, StoreClient};
 use tidb_txnkv::Key;
 
 use tidb_store_driver_error::pessimistic_lock_error::{
@@ -191,7 +191,7 @@ pub fn stage_mutations(
 /// is re-executing the statement at the advanced `for_update_ts`, which only
 /// the session layer can do.
 fn acquire_statement_locks<S: StoreClient>(
-    transaction: &mut RealTransaction<S>,
+    transaction: &mut TikvTxn<S>,
     lock_values: &mut PessimisticLockCache,
     keys: &[Vec<u8>],
     presume_not_exists: &BTreeSet<Vec<u8>>,
@@ -293,7 +293,7 @@ where
 {
     /// `None` once the statement has finished; every read after that is
     /// refused because its transaction has already ended.
-    transaction: Option<RealTransaction<S>>,
+    transaction: Option<TikvTxn<S>>,
     start_ts: u64,
     timeout: Duration,
     /// Reused by all reads in this statement; see `SessionSnapshot`.
@@ -415,7 +415,7 @@ impl<S: StoreClient> StatementSnapshot<S> {
         UnaryCallContext::with_deadline(Instant::now() + self.timeout, self.cancellation.clone())
     }
 
-    fn reader(&mut self) -> Result<&mut RealTransaction<S>, StorageError> {
+    fn reader(&mut self) -> Result<&mut TikvTxn<S>, StorageError> {
         self.transaction
             .as_mut()
             .ok_or_else(|| StorageError::Backend("the transaction is already finished".to_owned()))
@@ -452,7 +452,7 @@ impl<S: StoreClient> ClusterSnapshot for StatementSnapshot<S> {
     fn point_rpc_counts(&mut self) -> (u64, u64) {
         self.transaction
             .as_ref()
-            .map_or((0, 0), RealTransaction::snapshot_point_rpc_counts)
+            .map_or((0, 0), TikvTxn::snapshot_point_rpc_counts)
     }
 
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
@@ -677,12 +677,12 @@ impl PessimisticLockCache {
 }
 
 enum SessionTransactionState<S: StoreClient> {
-    Optimistic(RealTransaction<S>),
+    Optimistic(TikvTxn<S>),
     /// A transaction in pessimistic mode (Go's `onTxnActiveFunc` sets
     /// `kv.Pessimistic` when the transaction activates), with the values its
     /// statement locks returned.
     Pessimistic {
-        transaction: RealTransaction<S>,
+        transaction: TikvTxn<S>,
         lock_values: PessimisticLockCache,
     },
     Finished,

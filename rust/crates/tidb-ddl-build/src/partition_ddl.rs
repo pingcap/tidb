@@ -104,7 +104,7 @@ pub fn refuse_affinity(table: &PartitionedTable<'_>, operation: &str) -> Result<
 
 /// What a HASH/KEY reorganization asks for (Go `hashPartitionManagement`).
 #[derive(Clone, Copy)]
-pub enum HashManagement<'a> {
+pub enum HashPartitionManagement<'a> {
     /// `ADD PARTITION PARTITIONS n` or `ADD PARTITION (definitions)`.
     Add {
         /// The written `PARTITIONS n`, zero for a definition list.
@@ -128,7 +128,7 @@ pub enum HashManagement<'a> {
 /// clause on an added definition (1480).
 pub fn hash_partition_management(
     table: &PartitionedTable<'_>,
-    change: HashManagement<'_>,
+    change: HashPartitionManagement<'_>,
     ctx: &tidb_metabuild::Context,
     host: &mut dyn ReorgHost,
 ) -> Result<PartitionReorgPlan, MysqlError> {
@@ -146,13 +146,13 @@ pub fn hash_partition_management(
     refuse_affinity(
         table,
         match change {
-            HashManagement::Add { .. } => "ADD PARTITION",
-            HashManagement::Coalesce(_) => "COALESCE PARTITION",
+            HashPartitionManagement::Add { .. } => "ADD PARTITION",
+            HashPartitionManagement::Coalesce(_) => "COALESCE PARTITION",
         },
     )?;
     let existing = table.definitions();
     let (count, written) = match change {
-        HashManagement::Add { count, definitions } => {
+        HashPartitionManagement::Add { count, definitions } => {
             for definition in definitions {
                 let (method, clause) = match definition.clause {
                     tidb_ast::PartitionDefinitionClause::None => continue,
@@ -178,7 +178,7 @@ pub fn hash_partition_management(
             };
             (existing.len() + added, definitions)
         }
-        HashManagement::Coalesce(count) => {
+        HashPartitionManagement::Coalesce(count) => {
             // Go's ErrCoalesceOnlyOnHashPartition fires on HASH and KEY
             // alike (oracle g-partition: COALESCE on a KEY table is ok).
             if !hash_or_key {
@@ -336,7 +336,7 @@ pub fn plan_partition_change(
             spec,
             ..
         } => {
-            if let Some((added, _)) = plan_add_partitions(table, *if_not_exists, spec, ctx)? {
+            if let Some((added, _)) = add_table_partitions(table, *if_not_exists, spec, ctx)? {
                 definitions.extend(added);
             }
         }
@@ -464,7 +464,7 @@ fn non_hash_partition_method(table: &PartitionedTable<'_>) -> &'static str {
 /// definitions `ADD PARTITION spec` appends to `table`, without ids, and the
 /// partitioning after the append; `None` when `IF NOT EXISTS` met an
 /// existing name (Go's note is left on `ctx`).
-pub fn plan_add_partitions(
+pub fn add_table_partitions(
     table: &PartitionedTable<'_>,
     if_not_exists: bool,
     spec: &tidb_ast::AddPartitionSpec,
@@ -1031,7 +1031,7 @@ pub fn plan_last_partition_less_than(
         table.definitions().len(),
         ctx,
     )?;
-    let (added_definitions, added_kind) = plan_add_partitions(
+    let (added_definitions, added_kind) = add_table_partitions(
         table,
         false,
         &tidb_ast::AddPartitionSpec::Definitions(definitions),

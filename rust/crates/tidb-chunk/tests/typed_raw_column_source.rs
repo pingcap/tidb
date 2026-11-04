@@ -94,13 +94,13 @@ fn typed_chunk_scalar_variable_values_keep_collation_or_binary_bytes() {
 
     let strings =
         decode_column_datums(&columns[0], FieldType::new(FieldTypeCode::Varchar)).unwrap();
-    assert_eq!(strings[0], Datum::new_string(b"ab".to_vec()));
-    assert_eq!(strings[1], Datum::new_string(Vec::<u8>::new()));
-    assert_eq!(strings[2], Datum::new_string(b"xyz".to_vec()));
+    assert_eq!(strings[0], Datum::new_string_datum(b"ab".to_vec()));
+    assert_eq!(strings[1], Datum::new_string_datum(Vec::<u8>::new()));
+    assert_eq!(strings[2], Datum::new_string_datum(b"xyz".to_vec()));
 
     let bytes = decode_column_datums(&columns[0], FieldType::new(FieldTypeCode::Blob)).unwrap();
-    assert_eq!(bytes[0], Datum::new_bytes(b"ab".to_vec()));
-    assert_eq!(bytes[1], Datum::new_bytes(Vec::<u8>::new()));
+    assert_eq!(bytes[0], Datum::new_bytes_datum(b"ab".to_vec()));
+    assert_eq!(bytes[1], Datum::new_bytes_datum(Vec::<u8>::new()));
 }
 
 #[test]
@@ -194,7 +194,7 @@ fn typed_chunk_nulls_decode_across_fixed_and_variable_columns() {
         )
         .unwrap(),
         vec![
-            Datum::new_collation_string(b"abc".to_vec(), Collation::Utf8Mb4Bin),
+            Datum::new_collation_string_datum(b"abc".to_vec(), Collation::Utf8Mb4Bin),
             Datum::Null,
             Datum::Null,
         ],
@@ -232,7 +232,7 @@ fn datum_row_nulls_decode_as_the_bare_nil_flag() {
         vec![
             Datum::new_int(7),
             Datum::Null,
-            Datum::new_bytes(b"abc".to_vec()),
+            Datum::new_bytes_datum(b"abc".to_vec()),
             Datum::Null,
         ]
     );

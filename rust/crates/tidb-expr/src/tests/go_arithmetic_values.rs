@@ -311,13 +311,13 @@ fn go_test_arithmetic_mod() {
 fn go_test_arithmetic_mod_hybrid_operand_kinds() {
     let cases: &[(Vec<Datum>, Datum)] = &[
         (
-            vec![Datum::new_string("1231".to_string()), i(12)],
+            vec![Datum::new_string_datum("1231".to_string()), i(12)],
             i(7), // StrToInt("1231") % 12
         ),
         (
             vec![
-                Datum::new_string("1231".to_string()),
-                Datum::new_string("12".to_string()),
+                Datum::new_string_datum("1231".to_string()),
+                Datum::new_string_datum("12".to_string()),
             ],
             r(7.0), // both strings force the REAL signature
         ),
@@ -334,7 +334,7 @@ fn go_test_arithmetic_mod_hybrid_operand_kinds() {
                     tidb_datatype::MysqlSet::new("abc", 7),
                     tidb_charset::Collation::Utf8Mb4Bin,
                 ),
-                Datum::new_string("12".to_string()),
+                Datum::new_string_datum("12".to_string()),
             ],
             r(7.0), // Set numeric value rides the REAL signature beside a string
         ),
@@ -1261,8 +1261,8 @@ fn strict_scalar_decimal_precision_probes_preserve_runtime_evaluation() {
                         tidb_ast::CiString::new("concat"),
                         FieldType::new(C::VarString),
                         vec![
-                            literal(Datum::new_string("2tail"), FieldType::new(C::VarString)),
-                            literal(Datum::new_string(""), FieldType::new(C::VarString)),
+                            literal(Datum::new_string_datum("2tail"), FieldType::new(C::VarString)),
+                            literal(Datum::new_string_datum(""), FieldType::new(C::VarString)),
                         ],
                     ),
                     "datetime_expr" => {
@@ -1283,7 +1283,7 @@ fn strict_scalar_decimal_precision_probes_preserve_runtime_evaluation() {
                             tidb_ast::CiString::new("cast_json"),
                             FieldType::new(C::Json).with_added_flags(FieldTypeFlags::PARSE_TO_JSON),
                             vec![literal(
-                                Datum::new_string(text),
+                                Datum::new_string_datum(text),
                                 FieldType::new(C::VarString),
                             )],
                         )
@@ -1433,19 +1433,19 @@ fn json_cast_arithmetic_batches_preserve_go_operand_passes() {
                     assert!(context.0.borrow().is_empty());
                     let mut input =
                         tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[string.clone(), string], 2);
-                    input.append_datum(0, &Datum::new_string(r#""2tail""#));
-                    input.append_datum(1, &Datum::new_string(r#""3tail""#));
+                    input.append_datum(0, &Datum::new_string_datum(r#""2tail""#));
+                    input.append_datum(1, &Datum::new_string_datum(r#""3tail""#));
                     input.append_datum(
                         0,
                         &match kind {
-                            "invalid" => Datum::new_string("notjson"),
+                            "invalid" => Datum::new_string_datum("notjson"),
                             "null" => Datum::Null,
-                            _ => Datum::new_string(r#""5tail""#),
+                            _ => Datum::new_string_datum(r#""5tail""#),
                         },
                     );
                     input.append_datum(
                         1,
-                        &Datum::new_string(if kind == "null" {
+                        &Datum::new_string_datum(if kind == "null" {
                             "notjson"
                         } else {
                             r#""4tail""#
@@ -1560,7 +1560,7 @@ fn json_cast_arithmetic_batches_preserve_go_operand_passes() {
                     )
                     .unwrap();
                     let mut input = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[string], 2);
-                    input.append_datum(0, &Datum::new_string("2"));
+                    input.append_datum(0, &Datum::new_string_datum("2"));
                     input.append_null(0);
                     let values = if vectorized {
                         try_eval_numeric_batch(&expression, &context, &input)

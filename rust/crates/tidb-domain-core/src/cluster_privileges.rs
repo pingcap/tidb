@@ -38,7 +38,7 @@ use tidb_privilege::cluster_privilege_load::{
     ClusterPrivileges, LoadedColumnGrant, LoadedDbGrant, LoadedDefaultRole, LoadedDynamicGrant,
     LoadedRoleEdge, LoadedTableGrant, LoadedUser,
 };
-use tidb_privilege::cluster_privilege_load::{load_privileges, PrivilegeTableRows, PrivilegeTables};
+use tidb_privilege::cluster_privilege_load::{load_all, PrivilegeTableRows, PrivilegeTables};
 use tidb_stats_handle_storage::stats_read_writer::StatsSessionPool;
 use tidb_syssession::mysql_system_tables::{SystemTableError, SystemTableView};
 
@@ -344,7 +344,7 @@ pub fn update_all(pool: &dyn StatsSessionPool) -> Result<ClusterPrivileges, Stri
     let mut loaded = ClusterPrivileges::default();
     pool.call_with_sctx(
         &mut |sctx| {
-            loaded = load_privileges(&mut SysSessionPrivilegeTables { sctx })?;
+            loaded = load_all(&mut SysSessionPrivilegeTables { sctx })?;
             Ok(())
         },
         &[],

@@ -263,7 +263,7 @@ pub(crate) fn eval_func(
         .map(|(index, arg)| {
             if name == "CHAR_FUNC" && index + 1 == args.len() {
                 if let Expr::RawString(charset) = arg {
-                    return Ok(Datum::new_string(charset.clone()));
+                    return Ok(Datum::new_string_datum(charset.clone()));
                 }
             }
             eval_in(arg, cols)
@@ -378,7 +378,7 @@ fn eval_session_state(
         // session-state table so the AST/value evaluator returns the same
         // effective statement group as the rewritten/chunk evaluator.
         ("CURRENT_RESOURCE_GROUP", []) => Ok(match cols.current_resource_group() {
-            Some(group) => Datum::new_string(group.into_bytes()),
+            Some(group) => Datum::new_string_datum(group.into_bytes()),
             None => Datum::Null,
         }),
         ("ROW_COUNT" | "LAST_INSERT_ID", _) => Err(EvalError::Unsupported("bad function arity")),
@@ -681,7 +681,7 @@ pub(crate) fn eval_func_values(
                 Err(error) => return Some(Err(error)),
             };
             return Some(Ok(match value.sql_string() {
-                Ok(text) => Datum::new_string(text.into_bytes()),
+                Ok(text) => Datum::new_string_datum(text.into_bytes()),
                 Err(_) => Datum::Null,
             }));
         }
@@ -1056,7 +1056,7 @@ mod tests {
     use super::*;
 
     fn d(s: &str) -> Datum {
-        Datum::new_string(s.to_string())
+        Datum::new_string_datum(s.to_string())
     }
 
     /// Go `builtinCastRealAsRealSig.evalReal`
@@ -1129,7 +1129,7 @@ mod tests {
     #[test]
     fn test_insert_binary_sig() {
         let ctx = PacketLimit::default();
-        let binary = |value: &str| Datum::new_bytes(value.as_bytes().to_vec());
+        let binary = |value: &str| Datum::new_bytes_datum(value.as_bytes().to_vec());
         let rows = [
             (
                 [binary("abc"), Datum::Int(3), Datum::Int(-1), binary("d")],

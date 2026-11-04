@@ -274,7 +274,7 @@ pub fn new_field_type(tp: &FieldType) -> FieldType {
         | FieldTypeCode::Long
         | FieldTypeCode::LongLong => {
             let mut new_tp = FieldType::new(FieldTypeCode::LongLong);
-            new_tp.set_flags(tp.flags());
+            new_tp.set_flag(tp.flags());
             new_tp.set_charset_name(tp.charset_name());
             new_tp
         }
@@ -869,8 +869,8 @@ mod tests {
         );
         assert_eq!(
             range_single_col_to_string(
-                &Datum::new_string("a\\b'c"),
-                &Datum::new_string("a\\b'c"),
+                &Datum::new_string_datum("a\\b'c"),
+                &Datum::new_string_datum("a\\b'c"),
                 false,
                 false,
                 "a",
@@ -1029,7 +1029,7 @@ mod tests {
     #[test]
     fn range_building_types_widen_like_go() {
         let mut tiny = FieldType::new(FieldTypeCode::Tiny);
-        tiny.set_flags(tiny.flags() | tidb_datatype::FieldTypeFlags::UNSIGNED);
+        tiny.set_flag(tiny.flags() | tidb_datatype::FieldTypeFlags::UNSIGNED);
         let widened = new_field_type(&tiny);
         assert_eq!(widened.code(), FieldTypeCode::LongLong);
         assert!(widened.is_unsigned());

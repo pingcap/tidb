@@ -466,10 +466,10 @@ pub fn decode_one(input: &[u8]) -> Result<(&[u8], Datum), CodecError> {
         }
         FLOAT_FLAG => decode_float(payload).map(|(remain, value)| (remain, Datum::new_real(value))),
         BYTES_FLAG => {
-            crate::decode_bytes(payload).map(|(remain, value)| (remain, Datum::new_bytes(value)))
+            crate::decode_bytes(payload).map(|(remain, value)| (remain, Datum::new_bytes_datum(value)))
         }
         COMPACT_BYTES_FLAG => crate::decode_compact_bytes(payload)
-            .map(|(remain, value)| (remain, Datum::new_bytes(value))),
+            .map(|(remain, value)| (remain, Datum::new_bytes_datum(value))),
         // Go `DecodeOne`'s `decimalFlag`: the datum keeps the encoded
         // precision and frac (`SetLength`/`SetFrac`).
         DECIMAL_FLAG => decode_decimal(payload).map(|(remain, value, precision, scale)| {
@@ -579,7 +579,7 @@ where
     if let Some(&flag) = input.first() {
         let value = match flag {
             NIL_FLAG => Datum::Null,
-            BYTES_FLAG => Datum::min_not_null(),
+            BYTES_FLAG => Datum::min_not_null_datum(),
             MAX_FLAG | PREFIX_NEXT_MAX_FLAG => Datum::max_value(),
             _ => {
                 return Err(DecodeRangeError {

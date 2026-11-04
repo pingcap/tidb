@@ -189,7 +189,7 @@ fn regexp_substr_with_compiler(
         .find_iter(trimmed)
         .nth((occurrence - 1) as usize)
         .map(|matched| matched.as_str().to_owned());
-    Ok(matched.map_or(Datum::Null, Datum::new_string))
+    Ok(matched.map_or(Datum::Null, Datum::new_string_datum))
 }
 
 fn regexp_instr(vals: &[Datum]) -> Result<Datum, EvalError> {
@@ -403,7 +403,7 @@ fn regexp_replace_with_compiler(
     let mut output = String::with_capacity(byte + replaced.len());
     output.push_str(&text[..byte]);
     output.push_str(&replaced);
-    Ok(Datum::new_string(output))
+    Ok(Datum::new_string_datum(output))
 }
 
 #[cfg(test)]
@@ -412,7 +412,7 @@ mod tests {
     use crate::{Datum, EvalError};
 
     fn string(value: &str) -> Datum {
-        Datum::new_string(value.to_owned())
+        Datum::new_string_datum(value.to_owned())
     }
 
     fn call(name: &str, values: &[Datum]) -> Result<Datum, EvalError> {

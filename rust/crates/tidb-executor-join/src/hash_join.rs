@@ -2235,7 +2235,7 @@ mod tests {
                 null_safe: false,
             },
         ];
-        let row = [Datum::Int(42), Datum::new_string("key")];
+        let row = [Datum::Int(42), Datum::new_string_datum("key")];
         let encoded = row_key(&keys, &row, |key| key.left).unwrap().unwrap();
         let mut expected = FastBytesHasher::default();
         expected.write(&encoded);
@@ -2350,13 +2350,13 @@ mod tests {
         let offset = |key: &EquiKey| key.left;
         let ab_c = row_key(
             &keys,
-            &[Datum::new_string("ab"), Datum::new_string("c")],
+            &[Datum::new_string_datum("ab"), Datum::new_string_datum("c")],
             offset,
         )
         .unwrap();
         let a_bc = row_key(
             &keys,
-            &[Datum::new_string("a"), Datum::new_string("bc")],
+            &[Datum::new_string_datum("a"), Datum::new_string_datum("bc")],
             offset,
         )
         .unwrap();

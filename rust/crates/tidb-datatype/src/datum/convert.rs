@@ -492,11 +492,11 @@ mod tests {
     #[test]
     fn to_bool_reads_the_numeric_prefix_of_non_utf8_bytes() {
         assert_eq!(
-            Datum::new_bytes(b"\xb5\xeb\x2d").to_bool().unwrap().value,
+            Datum::new_bytes_datum(b"\xb5\xeb\x2d").to_bool().unwrap().value,
             0
         );
         assert_eq!(
-            Datum::new_bytes(b" 830\x88\x01").to_bool().unwrap().value,
+            Datum::new_bytes_datum(b" 830\x88\x01").to_bool().unwrap().value,
             1
         );
         let string = Datum::String(crate::StringDatum::new(
@@ -518,10 +518,10 @@ mod tests {
             (Datum::Real(0.1), 1),
             (Datum::Real(0.5), 1),
             (Datum::Real(0.499), 1),
-            (Datum::new_string(""), 0),
-            (Datum::new_string("0.1"), 1),
-            (Datum::new_bytes([]), 0),
-            (Datum::new_bytes(b"0.1"), 1),
+            (Datum::new_string_datum(""), 0),
+            (Datum::new_string_datum("0.1"), 1),
+            (Datum::new_bytes_datum([]), 0),
+            (Datum::new_bytes_datum(b"0.1"), 1),
             (
                 Datum::new_binary_literal(BinaryLiteral::from_uint(0, None)),
                 0,
@@ -591,7 +591,7 @@ mod tests {
     #[test]
     fn source_to_int_float_and_decimal_rows() {
         for (datum, expected) in [
-            (Datum::new_string("0"), 0),
+            (Datum::new_string_datum("0"), 0),
             (Datum::Int(0), 0),
             (Datum::UInt(0), 0),
             (Datum::Float32(3.1), 3),
@@ -614,7 +614,7 @@ mod tests {
             (Datum::UInt(3), 3.0),
             (Datum::Float32(3.1), f64::from(3.1_f32)),
             (Datum::Real(3.1), 3.1),
-            (Datum::new_string("3.25"), 3.25),
+            (Datum::new_string_datum("3.25"), 3.25),
             (
                 Datum::new_decimal(Decimal::from_signed_literal("-4.5")),
                 -4.5,
@@ -626,7 +626,7 @@ mod tests {
 
         // `MyDecimal.FromString` keeps the accepted `1.1` prefix and reports
         // ErrTruncated for the trailing `.1`; it does not fall back to zero.
-        let malformed = Datum::new_string("1.1.1").to_decimal().unwrap();
+        let malformed = Datum::new_string_datum("1.1.1").to_decimal().unwrap();
         assert_eq!(malformed.value, Decimal::from_signed_literal("1.1"));
         assert_eq!(
             malformed.event,
@@ -696,7 +696,7 @@ mod tests {
             (Datum::Int(1), b"1".as_slice()),
             (Datum::new_decimal(Decimal::from_int(1)), b"1".as_slice()),
             (Datum::Real(1.23), b"1.23".as_slice()),
-            (Datum::new_string("abc"), b"abc".as_slice()),
+            (Datum::new_string_datum("abc"), b"abc".as_slice()),
             (Datum::Null, b"".as_slice()),
         ] {
             assert_eq!(datum.to_bytes().unwrap(), expected, "{datum:?}");
@@ -722,7 +722,7 @@ mod tests {
         // collation, not the code, at DDL time.
         let varbinary = FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Binary);
         assert_eq!(
-            Datum::new_bytes(*b"ab")
+            Datum::new_bytes_datum(*b"ab")
                 .to_mysql_json_with_source_type(&varbinary)
                 .unwrap()
                 .to_string(),
@@ -735,7 +735,7 @@ mod tests {
         let mut binary = FieldType::new(FieldTypeCode::String);
         binary.set_flen(3);
         assert_eq!(
-            Datum::new_bytes(*b"ab")
+            Datum::new_bytes_datum(*b"ab")
                 .to_mysql_json_with_source_type(&binary)
                 .unwrap()
                 .to_string(),
@@ -752,7 +752,7 @@ mod tests {
         ] {
             let field_type = FieldType::new(code);
             assert_eq!(
-                Datum::new_bytes(*b"ab")
+                Datum::new_bytes_datum(*b"ab")
                     .to_mysql_json_with_source_type(&field_type)
                     .unwrap()
                     .to_string(),
@@ -765,7 +765,7 @@ mod tests {
         // `JSON_ARRAY(CAST('ab' AS BINARY))` = `["base64:type253:YWI="]`.
         let cast_binary = FieldType::new(FieldTypeCode::VarString);
         assert_eq!(
-            Datum::new_bytes(*b"ab")
+            Datum::new_bytes_datum(*b"ab")
                 .to_mysql_json_with_source_type(&cast_binary)
                 .unwrap()
                 .to_string(),
@@ -777,7 +777,7 @@ mod tests {
         // `to_mysql_json`.
         let varchar = FieldType::new(FieldTypeCode::Varchar);
         assert_eq!(
-            Datum::new_string("ab")
+            Datum::new_string_datum("ab")
                 .to_mysql_json_with_source_type(&varchar)
                 .unwrap()
                 .to_string(),
@@ -793,7 +793,7 @@ mod tests {
         use crate::{FieldType, FieldTypeCode};
 
         let varbinary = FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Binary);
-        let opaque = Datum::new_bytes(*b"ab")
+        let opaque = Datum::new_bytes_datum(*b"ab")
             .to_mysql_json_with_source_type(&varbinary)
             .unwrap();
         assert_eq!(opaque.type_name().unwrap(), "BLOB");

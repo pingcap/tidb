@@ -342,7 +342,7 @@ impl MemoryOpsHistoryManager {
             process_id: Datum::new_uint(info.id),
             mem: Datum::new_int(info.mem_tracker.as_ref().map_or(0, |t| t.bytes_consumed())),
             disk: Datum::new_int(info.disk_tracker.as_ref().map_or(0, |t| t.bytes_consumed())),
-            client: Datum::new_string(
+            client: Datum::new_string_datum(
                 if info.port.is_empty() {
                     info.host.clone()
                 } else {
@@ -353,14 +353,14 @@ impl MemoryOpsHistoryManager {
             db: if info.db.is_empty() {
                 Datum::Null
             } else {
-                Datum::new_string(info.db.as_bytes())
+                Datum::new_string_datum(info.db.as_bytes())
             },
-            user: Datum::new_string(info.user.as_bytes()),
-            sql_digest: Datum::new_string(info.digest.as_bytes()),
+            user: Datum::new_string_datum(info.user.as_bytes()),
+            sql_digest: Datum::new_string_datum(info.digest.as_bytes()),
             sql_text: if info.info.is_empty() {
                 Datum::Null
             } else {
-                Datum::new_string(info.info.as_bytes())
+                Datum::new_string_datum(info.info.as_bytes())
             },
         };
         // Go takes a value copy of the SQL-text datum before applying the
@@ -396,7 +396,7 @@ impl MemoryOpsHistoryManager {
             .expect("fsp 0 is always valid");
             rows.push(vec![
                 Datum::new_time(kill_time),           // TIME
-                Datum::new_string("SessionKill"),     // OPS
+                Datum::new_string_datum("SessionKill"),     // OPS
                 Datum::new_uint(info.memory_limit),   // MEMORY_LIMIT
                 Datum::new_uint(info.memory_current), // MEMORY_CURRENT
                 info.process_id.clone(),              // PROCESSID

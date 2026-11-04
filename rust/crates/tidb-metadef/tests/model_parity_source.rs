@@ -301,8 +301,8 @@ fn model_basic_accessors_flags_and_corner_cases() {
     assert!(table_read.column_is_in_index(Some(&column.read())));
     assert!(table_read.indices.get(0).unwrap().read().has_prefix_index());
     assert_eq!(
-        ts_convert_2_time(table_read.update_ts).unix_millis(),
-        table_read.get_update_time().unix_millis()
+        ts_convert_2_time(table_read.update_ts).unix_milli(),
+        table_read.get_update_time().unix_milli()
     );
     drop(table_read);
 

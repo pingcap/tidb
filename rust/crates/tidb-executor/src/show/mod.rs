@@ -364,7 +364,7 @@ mod show_create_default_tests {
 
     #[test]
     fn literal_show_create_clause_uses_util_output_format() {
-        let default = ColumnDefault::Value(Datum::new_string("unused"));
+        let default = ColumnDefault::Value(Datum::new_string_datum("unused"));
         let field_type = FieldType::new(FieldTypeCode::Varchar);
         let clause = show_create_default_clause(&default, &field_type, "slash\\quote'\0nul\nline\rcarriage");
 

@@ -760,9 +760,9 @@ fn an_explicit_transaction_that_lost_the_race_fails_at_commit() {
 fn assert_failure_filed(session: &mut Session, error: &SqlQueryError) {
     // Go `buildShowWarningsSchema`: `Code` is an UNSIGNED column.
     let row = vec![
-        Datum::new_string("Error"),
+        Datum::new_string_datum("Error"),
         Datum::UInt(u64::from(error.code)),
-        Datum::new_string(error.message.clone()),
+        Datum::new_string_datum(error.message.clone()),
     ];
     assert_eq!(rows(session, "SHOW WARNINGS"), vec![row.clone()]);
     assert_eq!(rows(session, "SHOW ERRORS"), vec![row]);
@@ -1485,7 +1485,7 @@ fn tidb_current_ts_reports_the_open_transactions_timestamp() {
 
     assert_eq!(
         rows(&mut session, "SELECT @@tidb_current_ts"),
-        vec![vec![Datum::new_string("0")]],
+        vec![vec![Datum::new_string_datum("0")]],
         "no transaction is open outside one"
     );
 
@@ -1514,7 +1514,7 @@ fn tidb_current_ts_reports_the_open_transactions_timestamp() {
         .expect("commit");
     assert_eq!(
         rows(&mut session, "SELECT @@tidb_current_ts"),
-        vec![vec![Datum::new_string("0")]],
+        vec![vec![Datum::new_string_datum("0")]],
         "a committed transaction is no longer open"
     );
 }

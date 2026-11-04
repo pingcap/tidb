@@ -74,14 +74,14 @@ fn compress(arg: &Datum) -> Result<Datum, EvalError> {
         return Ok(Datum::Null);
     };
     if payload.is_empty() {
-        return Ok(Datum::new_string(Vec::new()));
+        return Ok(Datum::new_string_datum(Vec::new()));
     }
 
     // go's `deflate()` helper: zlib.NewWriter (level 6) + Write + Close —
     // transcribed bit-exactly in [`go_flate`]; a generic rust zlib backend
     // makes different encoder choices and diverges on the wire.
     let compressed = crate::go_flate::go_zlib_deflate(&payload);
-    Ok(Datum::new_string(frame_compressed(
+    Ok(Datum::new_string_datum(frame_compressed(
         payload.len() as u32,
         compressed,
     )))
@@ -161,7 +161,7 @@ fn uncompress(arg: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
         return Ok(Datum::Null);
     };
     if payload.is_empty() {
-        return Ok(Datum::new_string(Vec::new()));
+        return Ok(Datum::new_string_datum(Vec::new()));
     }
     if payload.len() <= 4 {
         ctx.append_go_warning(
@@ -195,7 +195,7 @@ fn uncompress(arg: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
         );
         return Ok(Datum::Null);
     }
-    Ok(Datum::new_string(bytes))
+    Ok(Datum::new_string_datum(bytes))
 }
 
 /// `UNCOMPRESSED_LENGTH(payload)`. Port of
@@ -347,7 +347,7 @@ fn eval_aes_bytes(
             }
         }
     };
-    Ok(result.map_or(Datum::Null, Datum::new_string))
+    Ok(result.map_or(Datum::Null, Datum::new_string_datum))
 }
 
 /// Lowercase hex of `bytes` — the same "0123456789abcdef" alphabet Go's
@@ -380,13 +380,13 @@ fn password_hash(value: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
         return Ok(Datum::Null);
     };
     if bytes.is_empty() {
-        return Ok(Datum::new_string(String::new()));
+        return Ok(Datum::new_string_datum(String::new()));
     }
     ctx.append_go_warning(
         &crate::expression_errors::ERR_DEPRECATED_SYNTAX_NO_REPLACEMENT,
         "PASSWORD is deprecated and will be removed in a future release.",
     );
-    Ok(Datum::new_string(tidb_parser::auth::encode_password_bytes(
+    Ok(Datum::new_string_datum(tidb_parser::auth::encode_password_bytes(
         &bytes,
     )))
 }
@@ -401,7 +401,7 @@ fn sql_encode(data: &Datum, password: &Datum) -> Result<Datum, EvalError> {
     let Some(password) = sql_string_bytes(password)? else {
         return Ok(Datum::Null);
     };
-    Ok(Datum::new_string(tidb_encrypt::sql_encode(
+    Ok(Datum::new_string_datum(tidb_encrypt::sql_encode(
         &data, &password,
     )))
 }
@@ -414,7 +414,7 @@ fn sql_decode(data: &Datum, password: &Datum) -> Result<Datum, EvalError> {
     let Some(password) = sql_string_bytes(password)? else {
         return Ok(Datum::Null);
     };
-    Ok(Datum::new_string(tidb_encrypt::sql_decode(
+    Ok(Datum::new_string_datum(tidb_encrypt::sql_decode(
         &data, &password,
     )))
 }
@@ -551,7 +551,7 @@ fn validate_password_strength(value: &Datum, ctx: &dyn Columns) -> Result<Datum,
 /// (numbers arrive as their decimal text) and hex-encode the sum.
 fn hash_unary<D: Digest>(v: &Datum) -> Result<Datum, EvalError> {
     match hash_input(v)? {
-        Some(bytes) => Ok(Datum::new_string(hex_lower(
+        Some(bytes) => Ok(Datum::new_string_datum(hex_lower(
             D::digest(bytes.as_slice()).as_slice(),
         ))),
         None => Ok(Datum::Null),
@@ -562,7 +562,7 @@ fn hash_unary<D: Digest>(v: &Datum) -> Result<Datum, EvalError> {
 /// SQL builtin and password plugin deliberately share this digest owner.
 fn sm3_hash(value: &Datum) -> Result<Datum, EvalError> {
     match hash_input(value)? {
-        Some(bytes) => Ok(Datum::new_string(hex_lower(&tidb_parser::auth::sm3_hash(
+        Some(bytes) => Ok(Datum::new_string_datum(hex_lower(&tidb_parser::auth::sm3_hash(
             &bytes,
         )))),
         None => Ok(Datum::Null),
@@ -586,7 +586,7 @@ fn random_bytes(length: &Datum) -> Result<Datum, EvalError> {
     let mut bytes = vec![0; length as usize];
     getrandom::fill(&mut bytes)
         .map_err(|_| EvalError::Unsupported("fail to generate random bytes"))?;
-    Ok(Datum::new_string(bytes))
+    Ok(Datum::new_string_datum(bytes))
 }
 
 /// Returns the exact bytes consumed by Go's `EvalString` at the hash
@@ -637,7 +637,7 @@ fn sha2_hash(arg: &Datum, len: &Datum) -> Result<Datum, EvalError> {
         512 => hex_lower(Sha512::digest(bytes.as_slice()).as_slice()),
         _ => return Ok(Datum::Null),
     };
-    Ok(Datum::new_string(hex))
+    Ok(Datum::new_string_datum(hex))
 }
 
 /// Ports the `ETInt` coercion requested by the encryption function classes.
@@ -842,7 +842,7 @@ mod tests {
     }
 
     fn s(text: &str) -> Datum {
-        Datum::new_string(text.to_string())
+        Datum::new_string_datum(text.to_string())
     }
 
     fn dec(text: &str) -> Datum {
@@ -962,7 +962,7 @@ mod tests {
     /// compatibility without coupling Rust to Go's DEFLATE block layout.
     #[test]
     fn compress_and_uncompress_vectors() {
-        let binary = Datum::new_bytes([b'a', 0, 0xff, b' ']);
+        let binary = Datum::new_bytes_datum([b'a', 0, 0xff, b' ']);
         let compressed = call("COMPRESS", std::slice::from_ref(&binary));
         let compressed_bytes = bytes_of(&compressed);
         assert_eq!(&compressed_bytes[..4], &4u32.to_le_bytes());
@@ -974,7 +974,7 @@ mod tests {
 
         // The strict decoder streams output beyond its fixed scratch buffer;
         // validation must not turn a large, complete stream into corruption.
-        let large = Datum::new_bytes(vec![b'x'; 20_000]);
+        let large = Datum::new_bytes_datum(vec![b'x'; 20_000]);
         let compressed = call("COMPRESS", std::slice::from_ref(&large));
         assert_eq!(
             bytes_of(&call("UNCOMPRESS", std::slice::from_ref(&compressed))),
@@ -991,11 +991,11 @@ mod tests {
         // compress('hello') = LE(5) + zlib stream.
         let hello = hex_bytes("05000000789CCA48CDC9C907040000FFFF062C0215");
         assert_eq!(
-            call("UNCOMPRESS", &[Datum::new_string(hello.clone())]),
+            call("UNCOMPRESS", &[Datum::new_string_datum(hello.clone())]),
             s("hello")
         );
         assert_eq!(
-            call("UNCOMPRESSED_LENGTH", &[Datum::new_string(hello)]),
+            call("UNCOMPRESSED_LENGTH", &[Datum::new_string_datum(hello)]),
             Datum::Int(5)
         );
 
@@ -1006,13 +1006,13 @@ mod tests {
 
         // Too-short (<= 4 bytes) payload is corrupted: NULL / 0.
         assert_eq!(
-            call("UNCOMPRESS", &[Datum::new_string(vec![0u8])]),
+            call("UNCOMPRESS", &[Datum::new_string_datum(vec![0u8])]),
             Datum::Null
         );
         assert_eq!(
             call(
                 "UNCOMPRESSED_LENGTH",
-                &[Datum::new_string(vec![0xAA, 0xBB])]
+                &[Datum::new_string_datum(vec![0xAA, 0xBB])]
             ),
             Datum::Int(0)
         );
@@ -1021,7 +1021,7 @@ mod tests {
         assert_eq!(
             call(
                 "UNCOMPRESS",
-                &[Datum::new_string(vec![0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF])]
+                &[Datum::new_string_datum(vec![0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF])]
             ),
             Datum::Null
         );
@@ -1056,7 +1056,7 @@ mod tests {
         assert_eq!(
             call_with(
                 "UNCOMPRESS",
-                &[Datum::new_string(b"12345".to_vec())],
+                &[Datum::new_string_datum(b"12345".to_vec())],
                 &warnings,
             ),
             Datum::Null
@@ -1069,7 +1069,7 @@ mod tests {
         warnings.0.borrow_mut().clear();
         let hello = hex_bytes("02000000789CCA48CDC9C907040000FFFF062C0215");
         assert_eq!(
-            call_with("UNCOMPRESS", &[Datum::new_string(hello)], &warnings,),
+            call_with("UNCOMPRESS", &[Datum::new_string_datum(hello)], &warnings,),
             Datum::Null
         );
         assert_eq!(warnings.0.borrow()[0].0, 1258);
@@ -1078,7 +1078,7 @@ mod tests {
         assert_eq!(
             call_with(
                 "UNCOMPRESSED_LENGTH",
-                &[Datum::new_string(vec![0x01, 0x00])],
+                &[Datum::new_string_datum(vec![0x01, 0x00])],
                 &warnings,
             ),
             Datum::Int(0)
@@ -1276,9 +1276,9 @@ mod tests {
     /// those bytes rather than rejecting them as non-UTF-8 text.
     #[test]
     fn hash_go_vectors_preserve_gbk_and_binary_bytes() {
-        let gbk = Datum::new_bytes([0xd2, 0xbb, 0xb6, 0xfe, 0xc8, 0xfd]);
+        let gbk = Datum::new_bytes_datum([0xd2, 0xbb, 0xb6, 0xfe, 0xc8, 0xfd]);
         let gbk_with_digits =
-            Datum::new_bytes([0xd2, 0xbb, 0xb6, 0xfe, 0xc8, 0xfd, b'1', b'2', b'3']);
+            Datum::new_bytes_datum([0xd2, 0xbb, 0xb6, 0xfe, 0xc8, 0xfd, b'1', b'2', b'3']);
         assert_eq!(
             call("SHA", std::slice::from_ref(&gbk)),
             s("30cda4eed59a2ff592f2881f39d42fed6e10cad8")
@@ -1332,7 +1332,7 @@ mod tests {
             s("9336a0844a5a1dc656d02ded28bf768cef9c39b47bd7292c75fc0d27fcb509ca765d24d502e5906e8afe1803fd5ea325e3d855a0206df6bc08fef5e7e34b0082")
         );
         assert_eq!(
-            call("MD5", &[Datum::new_bytes([0xff, 0x00, b'a'])]),
+            call("MD5", &[Datum::new_bytes_datum([0xff, 0x00, b'a'])]),
             s("310e56cdb9dccaf757dbcab30054500e")
         );
     }
@@ -1354,7 +1354,7 @@ mod tests {
             ),
             (s("一二三四"), "*D207780722F22B23C254CAC0580D3B6738C19E18"),
             (
-                Datum::new_bytes([0xd2, 0xbb, 0xb6, 0xfe, 0xc8, 0xfd, 0xcb, 0xc4]),
+                Datum::new_bytes_datum([0xd2, 0xbb, 0xb6, 0xfe, 0xc8, 0xfd, 0xcb, 0xc4]),
                 "*48E0460AD45CF66AC6B8C18CB8B4BC8A403D935B",
             ),
             (dec("123.123"), "*B15B84262DB34BFB2C817A45A55C405DC7C52BB1"),
@@ -1368,7 +1368,7 @@ mod tests {
         }
         assert_eq!(call("PASSWORD", &[Datum::Null]), Datum::Null);
         assert_eq!(
-            call("PASSWORD", &[Datum::new_bytes([0xff, 0x00, b'a'])]),
+            call("PASSWORD", &[Datum::new_bytes_datum([0xff, 0x00, b'a'])]),
             s("*F5A241511384DB827F22D2A2188A456E87F7D4F2")
         );
     }
@@ -1422,7 +1422,7 @@ mod tests {
 
             let crypt = decode_hex(encoded_hex);
             assert_eq!(
-                call("ENCODE", &[Datum::new_bytes(crypt), s(password)]),
+                call("ENCODE", &[Datum::new_bytes_datum(crypt), s(password)]),
                 s(origin),
                 "ENCODE({origin:?})"
             );
@@ -1431,7 +1431,7 @@ mod tests {
             ("DECODE", vec![Datum::Null, s("password")]),
             ("DECODE", vec![s("data"), Datum::Null]),
             ("ENCODE", vec![Datum::Null, s("password")]),
-            ("ENCODE", vec![Datum::new_bytes(b"data"), Datum::Null]),
+            ("ENCODE", vec![Datum::new_bytes_datum(b"data"), Datum::Null]),
         ] {
             assert_eq!(call(name, &args), Datum::Null);
         }

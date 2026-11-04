@@ -2295,7 +2295,7 @@ impl Partial {
             Partial::Count(n) | Partial::FinalCount(n) => Datum::Int(*n),
             // An empty group is SQL NULL, not the empty document `[]`/`{}`.
             Partial::JsonArrayAgg(entries, _) if entries.is_empty() => Datum::Null,
-            Partial::JsonArrayAgg(entries, _) => encode_json(BinaryJSONValue::Array(
+            Partial::JsonArrayAgg(entries, _) => create_binary_json_with_check(BinaryJSONValue::Array(
                 entries
                     .iter()
                     .cloned()
@@ -2303,7 +2303,7 @@ impl Partial {
                     .collect(),
             ))?,
             Partial::JsonObjectAgg(entries, _, _) if entries.is_empty() => Datum::Null,
-            Partial::JsonObjectAgg(entries, _, _) => encode_json(BinaryJSONValue::Object(
+            Partial::JsonObjectAgg(entries, _, _) => create_binary_json_with_check(BinaryJSONValue::Object(
                 entries
                     .iter()
                     .map(|(key, value)| (key.clone(), BinaryJSONValue::Binary(value.clone())))
@@ -2526,7 +2526,7 @@ pub fn json_object_key(value: &Datum) -> Result<String, ExecError> {
 }
 
 /// Encodes a finished JSON aggregate, Go's `CreateBinaryJSONWithCheck`.
-pub fn encode_json(value: BinaryJSONValue) -> Result<Datum, ExecError> {
+pub fn create_binary_json_with_check(value: BinaryJSONValue) -> Result<Datum, ExecError> {
     BinaryJSON::from_typed_value(&value)
         .map(Datum::Json)
         .map_err(|_| ExecError::unsupported("this JSON document cannot be encoded"))

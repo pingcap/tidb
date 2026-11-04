@@ -442,7 +442,7 @@ impl GoTime {
 
     /// The exact Unix millisecond value accepted by Go `time.UnixMilli`.
     #[must_use]
-    pub const fn unix_millis(self) -> i64 {
+    pub const fn unix_milli(self) -> i64 {
         self.unix_millis
     }
 
@@ -478,13 +478,13 @@ mod tests {
 
     #[test]
     fn go_time_retains_full_tso_physical_domain() {
-        assert_eq!(GoTime::default().unix_millis(), -62_135_596_800_000);
+        assert_eq!(GoTime::default().unix_milli(), -62_135_596_800_000);
         assert_eq!(GoTime::default().location(), GoTimeLocation::Utc);
-        assert_eq!(GoTime::from_tso(0).unix_millis(), 0);
+        assert_eq!(GoTime::from_tso(0).unix_milli(), 0);
         assert_eq!(GoTime::from_tso(0).location(), GoTimeLocation::Local);
-        assert_eq!(GoTime::from_tso((1_u64 << 18) - 1).unix_millis(), 0);
-        assert_eq!(GoTime::from_tso(1_u64 << 18).unix_millis(), 1);
-        assert_eq!(GoTime::from_tso(u64::MAX).unix_millis(), (1_i64 << 46) - 1);
+        assert_eq!(GoTime::from_tso((1_u64 << 18) - 1).unix_milli(), 0);
+        assert_eq!(GoTime::from_tso(1_u64 << 18).unix_milli(), 1);
+        assert_eq!(GoTime::from_tso(u64::MAX).unix_milli(), (1_i64 << 46) - 1);
         assert!(GoTime::from_tso(u64::MAX).to_chrono_utc().is_some());
         assert!(GoTime::from_unix_millis(i64::MAX).to_chrono_utc().is_none());
     }

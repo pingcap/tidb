@@ -447,7 +447,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
         let contents = &leaf.contents;
         let extractor = base_extractor(leaf);
                 let strings = |names: Vec<String>| -> Vec<Vec<Datum>> {
-            names.into_iter().map(|name| vec![Datum::new_string(name)]).collect()
+            names.into_iter().map(|name| vec![Datum::new_string_datum(name)]).collect()
         };
         Ok(match contents.tp {
             T::Charset => crate::show::fetch_show_charset(self),
@@ -487,8 +487,8 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                 )?
                 .into_iter()
                 .map(|(name, table_type)| {
-                    let mut row = vec![Datum::new_string(name)];
-                    row.extend(table_type.map(Datum::new_string));
+                    let mut row = vec![Datum::new_string_datum(name)];
+                    row.extend(table_type.map(Datum::new_string_datum));
                     row
                 })
                 .collect()
@@ -984,7 +984,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
             let domain = self.domain_info_schema();
             let catalog = domain.lock().map_err(|_| DriverError::CatalogPoisoned)?;
             let locked =
-                crate::stats_lock::query_catalog_locked_tables(&catalog, &context)?;
+                crate::stats_lock::query_locked_tables(&catalog, &context)?;
             let mut physical = std::collections::BTreeMap::new();
             for database in catalog.database_names() {
                 let Some(names) = catalog.table_names(&database) else {
@@ -1761,8 +1761,8 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
         Ok(vec![vec![
             Datum::Int(count),
             Datum::Int(count),
-            Datum::new_string(tidb_memory::format_bytes(usage)),
-            Datum::new_string(tidb_memory::format_bytes(quota)),
+            Datum::new_string_datum(tidb_memory::format_bytes(usage)),
+            Datum::new_string_datum(tidb_memory::format_bytes(quota)),
         ]])
     }
 

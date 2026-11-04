@@ -528,9 +528,9 @@ mod tests {
     /// every other temporal builtin raises it (`handleInvalidTimeError`).
     #[test]
     fn only_convert_tz_drops_its_datetime_argument_error() {
-        let unreadable = || Datum::new_string("NULL");
+        let unreadable = || Datum::new_string_datum("NULL");
         assert!(wrap_datetime_args("MONTH", vec![unreadable()], &[], &StrictColumns).is_err());
-        let vals = vec![unreadable(), Datum::new_string("+00:00"), Datum::new_string("+08:00")];
+        let vals = vec![unreadable(), Datum::new_string_datum("+00:00"), Datum::new_string_datum("+08:00")];
         assert_eq!(
             wrap_datetime_args("CONVERT_TZ", vals, &[], &StrictColumns).unwrap()[0],
             Datum::Null
@@ -605,7 +605,7 @@ mod tests {
     /// signature with its single argument untouched.
     #[test]
     fn a_mask_bit_past_the_arity_casts_nothing() {
-        let vals = vec![Datum::new_string("3.7".to_string())];
+        let vals = vec![Datum::new_string_datum("3.7".to_string())];
         let out = wrap_int_args("ROUND", vals.clone(), &[], &NoColumns).unwrap();
         assert_eq!(out, vals);
     }
@@ -617,14 +617,14 @@ mod tests {
     /// string into an integer.
     #[test]
     fn the_uncast_positions_keep_their_own_datum() {
-        let subject = Datum::new_string("abcdef".to_string());
+        let subject = Datum::new_string_datum("abcdef".to_string());
         let out = wrap_int_args(
             "INSERT",
             vec![
                 subject.clone(),
-                Datum::new_string("2".to_string()),
-                Datum::new_string("2".to_string()),
-                Datum::new_string("X".to_string()),
+                Datum::new_string_datum("2".to_string()),
+                Datum::new_string_datum("2".to_string()),
+                Datum::new_string_datum("X".to_string()),
             ],
             &[None, None, None, None],
             &NoColumns,
@@ -633,7 +633,7 @@ mod tests {
         assert_eq!(out[0], subject);
         assert_eq!(out[1], Datum::Int(2));
         assert_eq!(out[2], Datum::Int(2));
-        assert_eq!(out[3], Datum::new_string("X".to_string()));
+        assert_eq!(out[3], Datum::new_string_datum("X".to_string()));
     }
 
     /// Go's UNSIGNED inheritance: `WrapWithCastAsInt`'s `targetType` is `nil`

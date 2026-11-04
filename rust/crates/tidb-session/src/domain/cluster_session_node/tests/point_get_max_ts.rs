@@ -1188,9 +1188,9 @@ fn replica_read_serves_only_read_only_statements_off_check_ts() {
     assert_eq!(
         rows(&mut session, "SHOW WARNINGS"),
         vec![vec![
-            Datum::new_string("Warning"),
+            Datum::new_string_datum("Warning"),
             Datum::UInt(1105),
-            Datum::new_string("Ignore replica read hint for non-read-only statement"),
+            Datum::new_string_datum("Ignore replica read hint for non-read-only statement"),
         ]]
     );
     let _ = rows(&mut session, "SELECT /*+ read_consistent_replica() */ v FROM t WHERE v > 0");

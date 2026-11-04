@@ -39,7 +39,7 @@ fn source_cache_put_returns_and_retrieves_decoded_value() {
 #[test]
 fn source_cache_repeated_keys_replace_values() {
     let mut cache = DatumMapCache::new();
-    cache.put(b"encoded", Datum::new_bytes(b"first".to_vec()));
+    cache.put(b"encoded", Datum::new_bytes_datum(b"first".to_vec()));
     cache.put(b"encoded", Datum::new_uint(7));
     assert_eq!(cache.get(b"encoded"), Some(Datum::new_uint(7)));
     assert_eq!(cache.len(), 1);

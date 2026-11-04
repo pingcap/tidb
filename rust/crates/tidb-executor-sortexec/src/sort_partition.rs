@@ -191,7 +191,7 @@ impl SortPartition {
     }
 
     /// Test hook for Go `SetSmallSpillChunkSizeForTest`.
-    pub fn set_spill_chunk_size(&mut self, size: usize) {
+    pub fn set_small_spill_chunk_size_for_test(&mut self, size: usize) {
         self.spill_chunk_size = size;
     }
 
@@ -206,7 +206,7 @@ impl SortPartition {
     }
 
     /// Whether this partition's rows live on disk (Go `isSpillTriggered`).
-    pub fn is_spilled(&self) -> bool {
+    pub fn is_spill_triggered(&self) -> bool {
         self.in_disk.is_some()
     }
 

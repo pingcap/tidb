@@ -82,7 +82,7 @@ mod tests {
         // can be appended.
         let string_source =
             crate::expression::Expression::Constant(crate::constant::Constant::new(
-                Datum::new_string("-1"),
+                Datum::new_string_datum("-1"),
                 FieldType::new(FieldTypeCode::VarString),
             ));
         let string_cast = crate::wrap_cast::build_cast_function_4_union(
@@ -106,7 +106,7 @@ mod tests {
         source_type.add_flags(FieldTypeFlags::NOT_NULL);
         let source = |text: &str| {
             crate::expression::Expression::Constant(crate::constant::Constant::new(
-                Datum::new_string(text),
+                Datum::new_string_datum(text),
                 source_type.clone(),
             ))
         };
@@ -294,7 +294,7 @@ fn cast_char_binary_charset_truncates_bytes_not_chars() {
                 len,
                 charset: charset.map(str::to_owned),
             },
-            crate::Datum::new_string(value),
+            crate::Datum::new_string_datum(value),
             None,
             &tidb_exprctx::context::NoColumns,
         )

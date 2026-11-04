@@ -471,7 +471,7 @@ pub(crate) fn from_days(vals: &[Datum]) -> Result<Datum, EvalError> {
         return Ok(Datum::new_time(zero));
     }
     let (y, m, d) = civil_from_days(n - 719_528);
-    Ok(Datum::new_string(format!("{y:04}-{m:02}-{d:02}")))
+    Ok(Datum::new_string_datum(format!("{y:04}-{m:02}-{d:02}")))
 }
 
 /// `DATEDIFF(date1, date2)`, ported from `builtinDateDiffSig.evalInt` in
@@ -2025,7 +2025,7 @@ fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum,
     let (is_duration, is_date) = format_type(&format);
     if is_duration && !is_date {
         // `builtinStrToDateDurationSig`: no `NO_ZERO_DATE` rejection.
-        return Ok(Datum::new_string(if value.saw_fraction {
+        return Ok(Datum::new_string_datum(if value.saw_fraction {
             format!(
                 "{:02}:{:02}:{:02}.{:06}",
                 value.hour, value.minute, value.second, value.microsecond
@@ -2081,9 +2081,9 @@ fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum,
         }));
     }
     if is_date && !is_duration {
-        return Ok(Datum::new_string(date));
+        return Ok(Datum::new_string_datum(date));
     }
-    Ok(Datum::new_string(datetime))
+    Ok(Datum::new_string_datum(datetime))
 }
 
 /// Go `types.GetFormatType`: whether the format names time and date
@@ -2310,12 +2310,12 @@ fn format_ymdhms_result(
         format!(".{value:0width$}", width = fsp as usize)
     };
     if y == 0 {
-        return Datum::new_string(format!("0000-00-00 {h:02}:{mi:02}:{sec:02}{fraction}"));
+        return Datum::new_string_datum(format!("0000-00-00 {h:02}:{mi:02}:{sec:02}{fraction}"));
     }
     if !(1..=9999).contains(&y) {
         return Datum::Null;
     }
-    Datum::new_string(format!(
+    Datum::new_string_datum(format!(
         "{y:04}-{m:02}-{d:02} {h:02}:{mi:02}:{sec:02}{fraction}"
     ))
 }
@@ -2359,12 +2359,12 @@ fn add_months(y: i64, m: u32, d: u32, n: i64) -> Option<(i64, u32, u32)> {
 /// and `YEAR` alike, not assumed symmetric).
 pub(crate) fn format_ymd_result(y: i64, m: u32, d: u32, time_suffix: Option<&str>) -> Datum {
     if y == 0 {
-        return Datum::new_string("0000-00-00".to_string());
+        return Datum::new_string_datum("0000-00-00".to_string());
     }
     if !(1..=9999).contains(&y) {
         return Datum::Null;
     }
-    Datum::new_string(match time_suffix {
+    Datum::new_string_datum(match time_suffix {
         Some(t) => format!("{y:04}-{m:02}-{d:02} {t}"),
         None => format!("{y:04}-{m:02}-{d:02}"),
     })
@@ -2396,7 +2396,7 @@ pub(crate) fn date_format_in(
     // Go (MySQL compatibility, #11203): the format mask "0" answers "0" for
     // any time that evaluated, before the zero-date check below.
     if fmt == "0" {
-        return Ok(Datum::new_string("0"));
+        return Ok(Datum::new_string_datum("0"));
     }
     if let Datum::Time(time) = date {
         let core = time.core_time();
@@ -2430,7 +2430,7 @@ pub(crate) fn date_format_in(
     // mask "0" answers "0" for any time that evaluated, the zero time
     // included, before the zero-date check can turn the row into NULL.
     if fmt == "0" && (date_part == "0000-00-00" || parse_date_ymd(date_part).is_some()) {
-        return Ok(Datum::new_string("0"));
+        return Ok(Datum::new_string_datum("0"));
     }
     let Some((y, m, d)) = parse_date_ymd(date_part) else {
         return Ok(Datum::Null);
@@ -2538,7 +2538,7 @@ pub(crate) fn date_format_in(
             Some(other) => out.push(other),
         }
     }
-    Ok(Datum::new_string(out))
+    Ok(Datum::new_string_datum(out))
 }
 
 #[cfg(test)]
@@ -2605,7 +2605,7 @@ mod date_add_microsecond_tests {
     /// the amount alone never looks out of range.
     #[test]
     fn an_interval_amount_too_large_to_compute_is_null_rather_than_an_overflow() {
-        let date = Datum::new_string("1000-01-01 00:00:00");
+        let date = Datum::new_string_datum("1000-01-01 00:00:00");
         for unit in [
             "DAY",
             "WEEK",
@@ -2631,29 +2631,29 @@ mod date_add_microsecond_tests {
         // did not simply turn the unit off.
         assert_eq!(
             date_add("DAY", &date, &Datum::Int(1), 1),
-            Ok(Datum::new_string("1000-01-02 00:00:00"))
+            Ok(Datum::new_string_datum("1000-01-02 00:00:00"))
         );
         assert_eq!(
             date_add("YEAR", &date, &Datum::Int(1), 1),
-            Ok(Datum::new_string("1001-01-01 00:00:00"))
+            Ok(Datum::new_string_datum("1001-01-01 00:00:00"))
         );
     }
 
     #[test]
     fn microsecond_preserves_six_digit_results() {
-        let date = Datum::new_string("2026-07-25 10:00:00");
+        let date = Datum::new_string_datum("2026-07-25 10:00:00");
         let result = date_add("MICROSECOND", &date, &Datum::Int(1_500_000), 1).unwrap();
-        assert_eq!(result, Datum::new_string("2026-07-25 10:00:01.500000"));
+        assert_eq!(result, Datum::new_string_datum("2026-07-25 10:00:01.500000"));
 
         let result = date_add("MICROSECOND", &date, &Datum::Int(499_999), 1).unwrap();
-        assert_eq!(result, Datum::new_string("2026-07-25 10:00:00.499999"));
+        assert_eq!(result, Datum::new_string_datum("2026-07-25 10:00:00.499999"));
 
         let result = date_add("MICROSECOND", &date, &Datum::Int(1_500_000), -1).unwrap();
-        assert_eq!(result, Datum::new_string("2026-07-25 09:59:58.500000"));
+        assert_eq!(result, Datum::new_string_datum("2026-07-25 09:59:58.500000"));
 
-        let date = Datum::new_string("2026-07-25 10:00:00.250000");
+        let date = Datum::new_string_datum("2026-07-25 10:00:00.250000");
         let result = date_add("MICROSECOND", &date, &Datum::Int(500_000), 1).unwrap();
-        assert_eq!(result, Datum::new_string("2026-07-25 10:00:00.750000"));
+        assert_eq!(result, Datum::new_string_datum("2026-07-25 10:00:00.750000"));
     }
 }
 
@@ -2702,7 +2702,7 @@ mod composite_extract_tests {
     #[test]
     fn composite_extracts_concatenate_fields_like_go() {
         // DAY_MICROSECOND over a datetime: day 1 + 01:02:03.456700.
-        let date = Datum::new_string("2023-03-14 01:02:03.4567".to_string());
+        let date = Datum::new_string_datum("2023-03-14 01:02:03.4567".to_string());
         assert_eq!(
             extract_composite("DAY_MICROSECOND", &[date], &tidb_exprctx::context::NoColumns).unwrap(),
             Datum::Int(14_010_203_456_700)
@@ -2711,7 +2711,7 @@ mod composite_extract_tests {
         assert_eq!(
             extract_composite(
                 "HOUR_MICROSECOND",
-                &[Datum::new_string("01:02:03.4567".to_string())],
+                &[Datum::new_string_datum("01:02:03.4567".to_string())],
                 &tidb_exprctx::context::NoColumns,
             )
             .unwrap(),
@@ -2725,7 +2725,7 @@ mod composite_extract_tests {
         assert_eq!(
             extract_composite(
                 "MINUTE_MICROSECOND",
-                &[Datum::new_string("02:03.4567".to_string())],
+                &[Datum::new_string_datum("02:03.4567".to_string())],
                 &tidb_exprctx::context::NoColumns,
             )
             .unwrap(),
@@ -2735,7 +2735,7 @@ mod composite_extract_tests {
         assert_eq!(
             extract_composite(
                 "SECOND_MICROSECOND",
-                &[Datum::new_string("03.4567".to_string())],
+                &[Datum::new_string_datum("03.4567".to_string())],
                 &tidb_exprctx::context::NoColumns,
             )
             .unwrap(),
@@ -2745,14 +2745,14 @@ mod composite_extract_tests {
         assert_eq!(
             extract_composite(
                 "HOUR_MICROSECOND",
-                &[Datum::new_string("02:03.4567".to_string())],
+                &[Datum::new_string_datum("02:03.4567".to_string())],
                 &tidb_exprctx::context::NoColumns,
             )
             .unwrap(),
             Datum::Int(20_345_670_0)
         );
         // A negative duration applies its sign to the WHOLE composite result.
-        let dur = Datum::new_string("-01:02:03.4567".to_string());
+        let dur = Datum::new_string_datum("-01:02:03.4567".to_string());
         assert_eq!(
             extract_composite("DAY_MICROSECOND", &[dur], &tidb_exprctx::context::NoColumns).unwrap(),
             // A Duration has no day field: DAY_MICROSECOND degenerates to the

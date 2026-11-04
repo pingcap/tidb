@@ -208,8 +208,8 @@ use tidb_charset::Collation;
 
     let ci = Collation::Utf8Mb4GeneralCi;
     let bin = Collation::Utf8Mb4Bin;
-    let needle = Datum::new_string("b".to_string());
-    let haystack = Datum::new_string("ABC".to_string());
+    let needle = Datum::new_string_datum("b".to_string());
+    let haystack = Datum::new_string_datum("ABC".to_string());
     assert_eq!(
         locate(&needle, &haystack, ci).unwrap(),
         Datum::Int(2),
@@ -222,8 +222,8 @@ use tidb_charset::Collation;
     );
     assert_eq!(
         locate(
-            &Datum::new_string("É".to_string()),
-            &Datum::new_string("aéb".to_string()),
+            &Datum::new_string_datum("É".to_string()),
+            &Datum::new_string_datum("aéb".to_string()),
             ci
         )
         .unwrap(),
@@ -234,8 +234,8 @@ use tidb_charset::Collation;
     // the unfolded needle.
     assert_eq!(
         locate(
-            &Datum::new_string("b".to_string()),
-            &Datum::new_string("aéb".to_string()),
+            &Datum::new_string_datum("b".to_string()),
+            &Datum::new_string_datum("aéb".to_string()),
             Collation::Binary
         )
         .unwrap(),

@@ -153,7 +153,7 @@ pub fn disable_parse_json_flag_4_expr(expr: &mut Expression) {
         _ => None,
     };
     if let Some(ret_type) = ret_type {
-        ret_type.del_flags(FieldTypeFlags::PARSE_TO_JSON);
+        ret_type.del_flag(FieldTypeFlags::PARSE_TO_JSON);
     }
 }
 
@@ -598,12 +598,12 @@ mod mutable_constant_tests {
         ));
         let mut nested_overflow = constant(&deferred(overflow.clone())).clone();
         nested_overflow.param_marker = None;
-        let mut conversion = constant(&deferred(literal(Datum::new_string("12ab")))).clone();
+        let mut conversion = constant(&deferred(literal(Datum::new_string_datum("12ab")))).clone();
         conversion.param_marker = None;
         for (source, expected) in [
             (overflow, Datum::Null),
             (Expression::Constant(nested_overflow), Datum::Int(99)),
-            (Expression::Constant(conversion), Datum::new_string("12ab")),
+            (Expression::Constant(conversion), Datum::new_string_datum("12ab")),
         ] {
             let mut root = [
                 Expression::ScalarFunction(ScalarFunction::new(
@@ -614,7 +614,7 @@ mod mutable_constant_tests {
                 deferred(literal(Datum::Int(8))),
             ];
             let error = remove_mutable_const(&mut root, &Strict).unwrap_err();
-            if expected == Datum::new_string("12ab") {
+            if expected == Datum::new_string_datum("12ab") {
                 assert!(matches!(error, EvalError::Conversion(_)), "{error:?}");
             } else {
                 assert!(

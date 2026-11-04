@@ -460,7 +460,7 @@ mod tests {
             .labels
             .insert("zone".into(), "zone-1".into());
         config.global_config.lease = "45s".into();
-        let info = tidb_session::domain::serverinfo_etcd::node_server_info(&config);
+        let info = tidb_session::domain::serverinfo_etcd::get_server_info(&config);
         assert_eq!(info.dynamic_info.labels, config.global_config.labels);
         assert_eq!(info.static_info.lease, "45s");
         assert_eq!(info.static_info.port, config.global_config.port);

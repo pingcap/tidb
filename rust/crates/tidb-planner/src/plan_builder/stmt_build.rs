@@ -275,7 +275,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         match &mut statement {
             Stmt::Admin(admin) => match admin.as_mut() {
                 AdminStmt::Flush(flush) => match &mut flush.target {
-                    tidb_ast::FlushTarget::StatsDelta { objects, .. } => {
+                    tidb_ast::FlushStmtType::StatsDelta { objects, .. } => {
                         self.fill_default_db_for_stats_objects(objects)?;
                         dedup_stats_objects(objects);
                         self.require_select_priv_for_stats_objects(objects);

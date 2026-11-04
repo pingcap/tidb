@@ -57,7 +57,7 @@ struct WatchHandle {
 }
 
 /// The etcd-backed implementation of Go's `etcdNotifier`.
-pub struct EtcdTimerNotifier {
+pub struct EtcdNotifier {
     etcd: Arc<EtcdClient>,
     key_prefix: String,
     closed: Arc<AtomicBool>,
@@ -71,7 +71,7 @@ pub struct EtcdTimerNotifier {
 pub fn new_etcd_timer_watch_event_notifier(
     cluster_id: u64,
     etcd: Arc<EtcdClient>,
-) -> Arc<EtcdTimerNotifier> {
+) -> Arc<EtcdNotifier> {
     let key_prefix = format!("/tidb/timer/cluster/{cluster_id}/notify/");
     let key = format!("{}{}", key_prefix, new_uuid_hex());
     let closed = Arc::new(AtomicBool::new(false));
@@ -89,7 +89,7 @@ pub fn new_etcd_timer_watch_event_notifier(
         .spawn(move || notify_loop(worker_etcd, worker_key, worker_closed, worker_state))
         .expect("timer etcd notifier worker thread can be created");
 
-    Arc::new(EtcdTimerNotifier {
+    Arc::new(EtcdNotifier {
         etcd,
         key_prefix,
         closed,
@@ -99,7 +99,7 @@ pub fn new_etcd_timer_watch_event_notifier(
     })
 }
 
-impl TimerWatchEventNotifier for EtcdTimerNotifier {
+impl TimerWatchEventNotifier for EtcdNotifier {
     fn watch(&self, ctx: &Context) -> WatchTimerChan {
         let (sender, receiver) = sync_channel(0);
         if self.closed.load(Ordering::Acquire) || ctx.is_done() {
@@ -219,7 +219,7 @@ impl TimerWatchEventNotifier for EtcdTimerNotifier {
     }
 }
 
-impl Drop for EtcdTimerNotifier {
+impl Drop for EtcdNotifier {
     fn drop(&mut self) {
         self.close();
     }

@@ -351,13 +351,13 @@ mod tests {
     /// invalid UTF-8 instead of replacing or reinterpreting it.
     #[test]
     fn diagnostic_labels_are_lossless_but_sql_stringification_is_checked() {
-        assert_eq!(Datum::new_string("TiDB").label(), "STR:TiDB");
+        assert_eq!(Datum::new_string_datum("TiDB").label(), "STR:TiDB");
 
-        let invalid = Datum::new_bytes(vec![0xff, 0, b'A']);
+        let invalid = Datum::new_bytes_datum(vec![0xff, 0, b'A']);
         assert_eq!(invalid.label(), "STR_HEX:FF0041");
         assert!(invalid.sql_string().is_err());
 
-        let embedded_nul = Datum::new_string(vec![b'a', 0, b'b']);
+        let embedded_nul = Datum::new_string_datum(vec![b'a', 0, b'b']);
         assert_eq!(embedded_nul.label().as_bytes(), b"STR:a\0b");
         assert_eq!(embedded_nul.sql_string().unwrap().as_bytes(), b"a\0b");
 
@@ -378,7 +378,7 @@ mod tests {
     /// contract exercised by the implementation.
     #[test]
     fn source_datum_truncated_stringify_rows() {
-        let long = Datum::new_string("1".repeat(128));
+        let long = Datum::new_string_datum("1".repeat(128));
         assert_eq!(
             long.truncated_stringify().unwrap(),
             format!("{}...(len:128)", "1".repeat(64)).into_bytes()
@@ -387,7 +387,7 @@ mod tests {
             Datum::new_int(2).truncated_stringify().unwrap(),
             b"2".to_vec()
         );
-        let split_utf8 = Datum::new_string(format!("{}é", "a".repeat(63)));
+        let split_utf8 = Datum::new_string_datum(format!("{}é", "a".repeat(63)));
         assert_eq!(
             split_utf8.truncated_stringify().unwrap(),
             [

@@ -1078,7 +1078,7 @@ impl MemIndexLookUpReader {
 
 /// One partial reader of an index merge: Go's `memReader` interface (:41),
 /// which only ever holds a `memTableReader` or a `memIndexReader` (:1054).
-pub enum PartialMemReader {
+pub enum MemReader {
     /// A partial plan that is a table scan. Boxed only because the two
     /// readers differ greatly in size.
     Table(Box<MemTableReader>),
@@ -1086,11 +1086,11 @@ pub enum PartialMemReader {
     Index(Box<MemIndexReader>),
 }
 
-impl PartialMemReader {
+impl MemReader {
     fn set_kv_ranges(&mut self, ranges: Vec<MemKeyRange>) {
         match self {
-            PartialMemReader::Table(reader) => reader.set_kv_ranges(ranges),
-            PartialMemReader::Index(reader) => reader.set_kv_ranges(ranges),
+            MemReader::Table(reader) => reader.set_kv_ranges(ranges),
+            MemReader::Index(reader) => reader.set_kv_ranges(ranges),
         }
     }
 
@@ -1099,8 +1099,8 @@ impl PartialMemReader {
         source: &S,
     ) -> Result<Vec<MemHandle>, MemReaderError> {
         match self {
-            PartialMemReader::Table(reader) => reader.get_mem_rows_handle(source),
-            PartialMemReader::Index(reader) => reader.get_mem_rows_handle(source),
+            MemReader::Table(reader) => reader.get_mem_rows_handle(source),
+            MemReader::Index(reader) => reader.get_mem_rows_handle(source),
         }
     }
 }
@@ -1108,7 +1108,7 @@ impl PartialMemReader {
 /// Go `memIndexMergeReader` (:809).
 pub struct MemIndexMergeReader {
     /// Go `memReaders`, one per partial plan.
-    partial_readers: Vec<PartialMemReader>,
+    partial_readers: Vec<MemReader>,
     /// Go `partialWorkerKVRanges`: per partial reader, the range groups it
     /// reads, each tagged with its physical table id.
     partial_kv_ranges: Vec<Vec<(i64, Vec<MemKeyRange>)>>,
@@ -1125,7 +1125,7 @@ impl MemIndexMergeReader {
     /// construction the caller has already done.
     #[must_use]
     pub fn new(
-        partial_readers: Vec<PartialMemReader>,
+        partial_readers: Vec<MemReader>,
         partial_kv_ranges: Vec<Vec<(i64, Vec<MemKeyRange>)>>,
         is_intersection: bool,
         partition_mode: bool,

@@ -2429,7 +2429,7 @@ impl SysVarDef {
                 )
             }
             _ => (
-                Datum::new_string(val.as_bytes().to_vec()),
+                Datum::new_string_datum(val.as_bytes().to_vec()),
                 FieldTypeCode::VarString,
                 NativeValFlags::default(),
             ),
@@ -2642,7 +2642,7 @@ mod variable_core_tests {
 
         let string = sysvar_of_type(TypeFlag::Str);
         let (val, code, flags) = string.get_native_val_type("1234");
-        assert_eq!(val, Datum::new_string(b"1234".to_vec()));
+        assert_eq!(val, Datum::new_string_datum(b"1234".to_vec()));
         assert_eq!(code, FieldTypeCode::VarString);
         assert_eq!(flags, NativeValFlags::default());
     }

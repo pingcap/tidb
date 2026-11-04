@@ -43,8 +43,8 @@ fn operational_keys_follow_exact_name_and_process_mode() {
         convert_by_collation(b"A ", &canonical)
     );
     assert_eq!(
-        encode_hash_datum(&Datum::new_string("a"), &canonical).unwrap(),
-        encode_hash_datum(&Datum::new_string("A "), &canonical).unwrap()
+        encode_hash_datum(&Datum::new_string_datum("a"), &canonical).unwrap(),
+        encode_hash_datum(&Datum::new_string_datum("A "), &canonical).unwrap()
     );
 
     set_new_collation_enabled_for_test(false);
@@ -54,7 +54,7 @@ fn operational_keys_follow_exact_name_and_process_mode() {
         convert_by_collation(b"A ", &canonical)
     );
     assert_eq!(
-        encode_hash_datum(&Datum::new_string("A "), &canonical).unwrap(),
+        encode_hash_datum(&Datum::new_string_datum("A "), &canonical).unwrap(),
         (COMPACT_BYTES_FLAG, b"A ".to_vec())
     );
 

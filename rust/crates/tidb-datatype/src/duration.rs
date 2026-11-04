@@ -599,7 +599,7 @@ pub fn parse_duration(input: &[u8], target_fsp: i64) -> Result<ParsedDuration, D
     if input.is_empty() {
         return Err(DurationParseError::InvalidFormat);
     }
-    if let Some(kind) = classify_duration_datetime_fallback(input) {
+    if let Some(kind) = can_fallback_to_date_time(input) {
         return Err(DurationParseError::DateTimeFallback(kind));
     }
     let mut index = 0;
@@ -741,7 +741,7 @@ pub fn parse_mysql_duration<TZ: TimeZone>(
 /// call site in Go `ParseDuration`. The source parser treats each byte as a
 /// Unicode code point; for the 0..255 range that means ASCII digits and the
 /// Latin-1 punctuation code points listed by [`is_source_punctuation`].
-pub fn classify_duration_datetime_fallback(input: &[u8]) -> Option<DurationDateTimeFallbackKind> {
+pub fn can_fallback_to_date_time(input: &[u8]) -> Option<DurationDateTimeFallbackKind> {
     let first_len = source_digit_prefix(input);
     if first_len == 0 {
         return None;
@@ -778,7 +778,7 @@ pub fn classify_duration_datetime_fallback(input: &[u8]) -> Option<DurationDateT
 /// Boolean form of [`classify_duration_datetime_fallback`] for callers that
 /// only need the source `canFallbackToDateTime` predicate.
 pub fn can_fallback_to_datetime(input: &[u8]) -> bool {
-    classify_duration_datetime_fallback(input).is_some()
+    can_fallback_to_date_time(input).is_some()
 }
 
 fn source_digit_prefix(input: &[u8]) -> usize {

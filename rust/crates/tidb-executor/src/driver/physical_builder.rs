@@ -7396,7 +7396,7 @@ struct UnionScanHandleCols {
     zone: tidb_datatype::SessionTimeZone,
 }
 
-impl crate::union_scan::HandleColumns for UnionScanHandleCols {
+impl crate::union_scan::HandleCols for UnionScanHandleCols {
     fn build_handle(
         &self,
         row: tidb_chunk::row::Row<'_>,

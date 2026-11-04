@@ -57,7 +57,7 @@
 //!   Missing-range APIs return generated `kvrpcpb.KeyRange`; Go's separate
 //!   local algebra type remains [`rtree::KeyRange`].
 //! - `br/pkg/metautil` (`MetaWriter`, `ChecksumStats`, `Table`) is narrowed to
-//!   the [`rtree::MetaSink`] trait, the flat [`rtree::ChecksumStats`] struct,
+//!   the [`rtree::MetaWriter`] trait, the flat [`rtree::ChecksumStats`] struct,
 //!   and an opaque payload on [`restore_utils::CreatedTable`].
 //! - `br/pkg/logutil` and `go.uber.org/zap` carry no semantics; the two
 //!   renderings that tests assert on are reproduced directly

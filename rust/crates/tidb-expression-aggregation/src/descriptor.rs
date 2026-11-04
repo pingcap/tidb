@@ -386,7 +386,7 @@ impl AggFuncDesc {
         if remove_not_null {
             // Go clones before mutating so a shared `RetTp` pointer is not
             // touched; the Rust field is owned, so the clone is implicit.
-            self.base.ret_type.del_flags(FieldTypeFlags::NOT_NULL);
+            self.base.ret_type.del_flag(FieldTypeFlags::NOT_NULL);
         }
         Ok(())
     }

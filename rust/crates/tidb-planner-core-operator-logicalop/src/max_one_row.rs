@@ -61,7 +61,7 @@ impl LogicalMaxOneRow {
         let mut schema = child_schema.clone();
         for column in &mut schema.columns {
             if let Some(ret_type) = column.ret_type.as_mut() {
-                ret_type.del_flags(FieldTypeFlags::NOT_NULL);
+                ret_type.del_flag(FieldTypeFlags::NOT_NULL);
             }
         }
         schema

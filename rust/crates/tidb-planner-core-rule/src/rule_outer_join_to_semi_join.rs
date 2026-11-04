@@ -337,7 +337,7 @@ fn convert(
                 let mut field_type = column.get_static_type().cloned().unwrap_or_else(|| {
                     tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Tiny)
                 });
-                field_type.del_flags(FieldTypeFlags::NOT_NULL);
+                field_type.del_flag(FieldTypeFlags::NOT_NULL);
                 Expression::Constant(Constant::new(Datum::Null, field_type))
             } else {
                 Expression::Column(column.clone())

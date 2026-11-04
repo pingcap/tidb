@@ -85,7 +85,7 @@ pub(super) fn json_type(
     };
     document
         .type_name()
-        .map(|name| Datum::new_string(name.to_owned()))
+        .map(|name| Datum::new_string_datum(name.to_owned()))
         .map_err(binary_json_error)
 }
 
@@ -178,7 +178,7 @@ pub(super) fn json_pretty(
     let Some(document) = document(vals, arg_types)? else {
         return Ok(Datum::Null);
     };
-    Ok(Datum::new_string(tidb_datatype::json_scanner::indent(
+    Ok(Datum::new_string_datum(tidb_datatype::json_scanner::indent(
         &document.to_string(),
         "  ",
     )))
@@ -190,7 +190,7 @@ mod tests {
     use crate::Datum;
 
     fn document(text: &str) -> Datum {
-        Datum::new_string(text.to_string())
+        Datum::new_string_datum(text.to_string())
     }
 
     #[test]

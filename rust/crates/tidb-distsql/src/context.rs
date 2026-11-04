@@ -74,7 +74,7 @@ pub struct SessionContext {
 /// Fields that require a Go session, TiKV client, protobuf request, or runtime
 /// statistics collector are not represented until their real consumer exists.
 #[derive(Clone, Debug)]
-pub struct RequestContext {
+pub struct DistSQLContext {
     /// Shared statement warning handler.
     pub warning_handler: WarningCollector,
     /// Whether this request is running in restricted SQL mode.
@@ -131,7 +131,7 @@ pub struct RequestContext {
     pub query_cop_store_limiter: Option<std::sync::Arc<tidb_txnkv::QueryCopStoreLimiter>>,
 }
 
-impl Default for RequestContext {
+impl Default for DistSQLContext {
     fn default() -> Self {
         Self {
             warning_handler: WarningCollector::default(),
@@ -167,7 +167,7 @@ impl Default for RequestContext {
 #[derive(Debug, Default)]
 pub struct DistSqlContext {
     /// Read-only request fields consumed by a future request builder.
-    pub request: RequestContext,
+    pub request: DistSQLContext,
     /// Shared/deep-copied state needed while executing the request.
     pub execution: ExecutionState,
 }

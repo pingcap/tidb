@@ -231,7 +231,7 @@ impl DdlHistoryTable {
 
 fn tso_datetime(timestamp: u64) -> Result<Time, DdlHistoryTableError> {
     // Go `model.TSConvert2Time`.
-    let milliseconds = tidb_model::GoTime::from_tso(timestamp).unix_millis();
+    let milliseconds = tidb_model::GoTime::from_tso(timestamp).unix_milli();
     let utc = Utc
         .timestamp_millis_opt(milliseconds)
         .single()

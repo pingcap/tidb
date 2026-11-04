@@ -26,6 +26,6 @@ pub(crate) fn parse(parser: &mut Parser) -> PResult<Option<AlterPartitionAction>
         return Ok(None);
     }
     Ok(Some(AlterPartitionAction::Repartition(Box::new(
-        super::super::partition::parse_table_partitioning(parser)?,
+        super::super::partition::parse_partition_options(parser)?,
     ))))
 }

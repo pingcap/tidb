@@ -102,8 +102,8 @@ fn the_string_mask_positions_follow_the_argtps_tail() {
         .unwrap(),
         vec![
             Datum::Int(2),
-            Datum::new_string("7"),
-            Datum::new_string("8"),
+            Datum::new_string_datum("7"),
+            Datum::new_string_datum("8"),
         ]
     );
     // ...and the ETInt rung owns that selector, so the two masks are
@@ -117,7 +117,7 @@ fn the_string_mask_positions_follow_the_argtps_tail() {
     for one_argument in ["QUOTE", "LTRIM", "RTRIM"] {
         assert_eq!(
             wrap_string_args(one_argument, vec![Datum::Int(7)], &[], &NoColumns).unwrap(),
-            vec![Datum::new_string("7")],
+            vec![Datum::new_string_datum("7")],
             "{one_argument}"
         );
     }
@@ -153,12 +153,12 @@ fn the_masks_top_bit_covers_an_unbounded_argument_list() {
     vals.extend((0..40).map(Datum::Int));
     let out = wrap_string_args("ELT", vals, &[], &NoColumns).unwrap();
     assert_eq!(out[0], Datum::Int(35), "the selector stays an integer");
-    assert_eq!(out[31], Datum::new_string("30"));
-    assert_eq!(out[40], Datum::new_string("39"));
+    assert_eq!(out[31], Datum::new_string_datum("30"));
+    assert_eq!(out[40], Datum::new_string_datum("39"));
     // And the body reads the selected one, 35 positions in.
     assert_eq!(
         crate::string_fn::elt(&out).unwrap(),
-        Datum::new_string("34")
+        Datum::new_string_datum("34")
     );
 }
 
@@ -184,8 +184,8 @@ fn the_string_typed_hybrids_take_the_early_return_and_bit_does_not() {
         enum_value.clone(),
         set_value.clone(),
         literal.clone(),
-        Datum::new_string("kept"),
-        Datum::new_bytes(vec![0xFF]),
+        Datum::new_string_datum("kept"),
+        Datum::new_bytes_datum(vec![0xFF]),
         Datum::Null,
     ] {
         let out = wrap_string_args("QUOTE", vec![value.clone()], &[None], &NoColumns).unwrap();
@@ -203,7 +203,7 @@ fn the_string_typed_hybrids_take_the_early_return_and_bit_does_not() {
     // BIT alone is rewritten, and to its bytes.
     let bit = Datum::Bit(BinaryLiteral::from_uint(3, None));
     let out = wrap_string_args("LTRIM", vec![bit], &[None], &NoColumns).unwrap();
-    assert_eq!(out[0], Datum::new_bytes(vec![3]));
+    assert_eq!(out[0], Datum::new_bytes_datum(vec![3]));
 }
 
 /// The reader is Go's `EvalString`, which returns a Go `string`: a BYTE
@@ -218,13 +218,13 @@ fn the_string_typed_hybrids_take_the_early_return_and_bit_does_not() {
 /// no UTF-8-refusing one can reach.
 #[test]
 fn an_etstring_argument_is_read_as_bytes_not_as_utf8() {
-    let binary = Datum::new_bytes(vec![0xFF]);
+    let binary = Datum::new_bytes_datum(vec![0xFF]);
     let bit = Datum::Bit(BinaryLiteral::from_uint(0xFF, None));
     for value in [binary, bit] {
         let quoted = wrap_string_args("QUOTE", vec![value.clone()], &[None], &NoColumns).unwrap();
         assert_eq!(
             crate::string_fn::quote(&quoted).unwrap(),
-            Datum::new_bytes(vec![b'\'', 0xEF, 0xBF, 0xBD, b'\'']),
+            Datum::new_bytes_datum(vec![b'\'', 0xEF, 0xBF, 0xBD, b'\'']),
             "quote({value:?})"
         );
 
@@ -233,7 +233,7 @@ fn an_etstring_argument_is_read_as_bytes_not_as_utf8() {
             crate::builtin_ext::string2::dispatch("LTRIM", &trimmed, &NoColumns)
                 .unwrap()
                 .unwrap(),
-            Datum::new_bytes(vec![0xFF]),
+            Datum::new_bytes_datum(vec![0xFF]),
             "ltrim({value:?})"
         );
 
@@ -246,7 +246,7 @@ fn an_etstring_argument_is_read_as_bytes_not_as_utf8() {
         .unwrap();
         assert_eq!(
             crate::string_fn::elt(&selected).unwrap(),
-            Datum::new_bytes(vec![0xFF]),
+            Datum::new_bytes_datum(vec![0xFF]),
             "elt(1,{value:?})"
         );
     }
@@ -275,12 +275,12 @@ fn the_space_scan_is_one_sided_and_byte_exact() {
     ];
     for (name, input, want) in cases {
         let vals =
-            wrap_string_args(name, vec![Datum::new_string(input)], &[None], &NoColumns).unwrap();
+            wrap_string_args(name, vec![Datum::new_string_datum(input)], &[None], &NoColumns).unwrap();
         assert_eq!(
             crate::builtin_ext::string2::dispatch(name, &vals, &NoColumns)
                 .unwrap()
                 .unwrap(),
-            Datum::new_string(want),
+            Datum::new_string_datum(want),
             "{name}({input:?})"
         );
     }
@@ -354,12 +354,12 @@ fn elt_takes_its_result_charset_from_every_candidate() {
     // whole result `Datum::Bytes`, which is what `is_binary_str` then reads.
     let vals = vec![
         Datum::Int(1),
-        Datum::new_string("a"),
-        Datum::new_bytes(b"a".to_vec()),
+        Datum::new_string_datum("a"),
+        Datum::new_bytes_datum(b"a".to_vec()),
     ];
     assert_eq!(
         crate::string_fn::elt(&vals).unwrap(),
-        Datum::new_bytes(b"a".to_vec())
+        Datum::new_bytes_datum(b"a".to_vec())
     );
 }
 
@@ -387,16 +387,16 @@ fn field_reads_a_hybrid_by_its_own_eval_type() {
     let b = Datum::Bit(BinaryLiteral::from_uint(3, None));
     let hex = Datum::BinaryLiteral(BinaryLiteral::from_uint(0x61, None));
     let cases: [(Vec<Datum>, i64); 9] = [
-        (vec![e.clone(), Datum::new_string("b")], 1),
-        (vec![s.clone(), Datum::new_string("a,b")], 1),
-        (vec![hex, Datum::new_string("a")], 1),
+        (vec![e.clone(), Datum::new_string_datum("b")], 1),
+        (vec![s.clone(), Datum::new_string_datum("a,b")], 1),
+        (vec![hex, Datum::new_string_datum("a")], 1),
         (vec![e.clone(), Datum::Int(2)], 1),
-        (vec![e.clone(), Datum::new_string("b"), Datum::Int(2)], 2),
+        (vec![e.clone(), Datum::new_string_datum("b"), Datum::Int(2)], 2),
         (vec![e, b.clone()], 0),
         (vec![b.clone(), Datum::Int(3)], 1),
-        (vec![b, Datum::new_string("3")], 1),
+        (vec![b, Datum::new_string_datum("3")], 1),
         (
-            vec![Datum::new_bytes(b"a".to_vec()), Datum::new_string("a")],
+            vec![Datum::new_bytes_datum(b"a".to_vec()), Datum::new_string_datum("a")],
             1,
         ),
     ];

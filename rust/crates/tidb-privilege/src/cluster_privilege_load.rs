@@ -310,7 +310,7 @@ pub fn load_cluster_privileges<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &SessionExtendedInfoSchema,
 ) -> Result<ClusterPrivileges, SystemTableError> {
-    load_privileges(&mut ClusterPrivilegeTables { snapshot, catalog })
+    load_all(&mut ClusterPrivilegeTables { snapshot, catalog })
 }
 
 /// Where [`load_privileges`] reads `mysql.<table>` from: a cluster snapshot
@@ -367,7 +367,7 @@ impl<S: MetaSnapshot> PrivilegeTables for ClusterPrivilegeTables<'_, S> {
 ///
 /// A missing `mysql.user`, or a row whose stored value is not what its
 /// column declares.
-pub fn load_privileges(
+pub fn load_all(
     tables: &mut impl PrivilegeTables,
 ) -> Result<ClusterPrivileges, SystemTableError> {
     let mut loaded = ClusterPrivileges::default();

@@ -70,7 +70,7 @@ impl Parser {
     /// grammar accepted after a column's `ON UPDATE`. It is not a generic
     /// expression slot: only the NOW and CURDATE families are legal, and Go
     /// normalizes their aliases before AST restore.
-    pub(super) fn parse_on_update_expr(&mut self) -> PResult<Expr> {
+    pub(super) fn parse_now_sym_option_fraction(&mut self) -> PResult<Expr> {
         let (name, requires_parens, accepts_fraction) = if self.is_kw("CURRENT_TIMESTAMP")
             || self.is_kw("LOCALTIME")
             || self.is_kw("LOCALTIMESTAMP")

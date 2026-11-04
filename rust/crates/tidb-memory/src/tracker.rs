@@ -1010,7 +1010,7 @@ impl Tracker {
     }
 
     /// Children snapshot (Go `GetChildrenForTest`).
-    pub fn children_for_test(&self) -> Vec<Arc<Tracker>> {
+    pub fn get_children_for_test(&self) -> Vec<Arc<Tracker>> {
         self.children
             .lock()
             .unwrap()
@@ -1359,15 +1359,15 @@ mod tests {
         assert_eq!(child.bytes_consumed(), 100);
         assert_eq!(old_parent.bytes_consumed(), 100);
         assert!(Arc::ptr_eq(&child.get_parent().unwrap(), &old_parent));
-        assert_eq!(old_parent.children_for_test().len(), 1);
+        assert_eq!(old_parent.get_children_for_test().len(), 1);
 
         child.attach_to(&new_parent);
         assert_eq!(child.bytes_consumed(), 100);
         assert_eq!(old_parent.bytes_consumed(), 0);
         assert_eq!(new_parent.bytes_consumed(), 100);
         assert!(Arc::ptr_eq(&child.get_parent().unwrap(), &new_parent));
-        assert_eq!(new_parent.children_for_test().len(), 1);
-        assert_eq!(old_parent.children_for_test().len(), 0);
+        assert_eq!(new_parent.get_children_for_test().len(), 1);
+        assert_eq!(old_parent.get_children_for_test().len(), 0);
     }
 
     // Go `TestDetach`.
@@ -1378,12 +1378,12 @@ mod tests {
         child.consume(100);
         child.attach_to(&parent);
         assert_eq!(parent.bytes_consumed(), 100);
-        assert_eq!(parent.children_for_test().len(), 1);
+        assert_eq!(parent.get_children_for_test().len(), 1);
 
         child.detach();
         assert_eq!(child.bytes_consumed(), 100);
         assert_eq!(parent.bytes_consumed(), 0);
-        assert_eq!(parent.children_for_test().len(), 0);
+        assert_eq!(parent.get_children_for_test().len(), 0);
         assert!(child.get_parent().is_none());
     }
 
@@ -1401,17 +1401,17 @@ mod tests {
 
         parent.replace_child(&old_child, Some(&new_child));
         assert_eq!(parent.bytes_consumed(), 500);
-        assert_eq!(parent.children_for_test().len(), 1);
+        assert_eq!(parent.get_children_for_test().len(), 1);
         assert!(Arc::ptr_eq(&new_child.get_parent().unwrap(), &parent));
         assert!(old_child.get_parent().is_none());
 
         parent.replace_child(&old_child, None);
         assert_eq!(parent.bytes_consumed(), 500);
-        assert_eq!(parent.children_for_test().len(), 1);
+        assert_eq!(parent.get_children_for_test().len(), 1);
 
         parent.replace_child(&new_child, None);
         assert_eq!(parent.bytes_consumed(), 0);
-        assert_eq!(parent.children_for_test().len(), 0);
+        assert_eq!(parent.get_children_for_test().len(), 0);
         assert!(new_child.get_parent().is_none());
 
         let node1 = Tracker::new(1, -1);
@@ -1487,7 +1487,7 @@ mod tests {
         c2.attach_to_global_tracker(&r);
         assert_eq!(r.bytes_consumed(), 300);
         assert!(Arc::ptr_eq(&c1.get_parent().unwrap(), &r));
-        assert_eq!(r.children_for_test().len(), 0);
+        assert_eq!(r.get_children_for_test().len(), 0);
 
         c1.detach_from_global_tracker();
         c2.detach_from_global_tracker();

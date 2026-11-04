@@ -820,7 +820,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         for column in &mut columns {
             column.unique_id = self.column_ids.alloc();
             if let Some(ret_type) = column.ret_type.as_mut() {
-                ret_type.del_flags(FieldTypeFlags::NOT_NULL);
+                ret_type.del_flag(FieldTypeFlags::NOT_NULL);
             }
             // Go `col.CleanHashCode()`: the cached hash is stale once the
             // unique ID changed. `Column::new` starts with an empty cache, so

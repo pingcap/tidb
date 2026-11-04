@@ -287,7 +287,7 @@ pub fn unistore_cluster_session_stack(
 /// Go `mockstore.WithMockTiFlash(nodes)`: `nodes` stores labelled
 /// `engine=tiflash` (`tiflash0`, `tiflash1`, ...), each with a peer on every
 /// region (Go adds it to the only region before the first split).
-fn with_mock_tiflash(regions: &tidb_unistore_tikv::region_manager::InProcessRegionManager, nodes: usize) {
+fn with_mock_tiflash(regions: &tidb_unistore_tikv::region_manager::MockRegionManager, nodes: usize) {
     for index in 0..nodes {
         let store_id = regions.alloc_id();
         regions.add_store(
@@ -632,7 +632,7 @@ pub fn unistore_cluster_session_stack_from(
     // `information_schema.TIDB_SERVERS_INFO` shows on a single node.
     let server_info = Arc::new(
         tidb_domain_serverinfo::serverinfo_syncer::Syncer::new_with_status_endpoint_claim(
-            crate::domain::serverinfo_etcd::node_server_info(config),
+            crate::domain::serverinfo_etcd::get_server_info(config),
             None,
             config.report_status,
         ),

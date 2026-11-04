@@ -112,7 +112,7 @@ impl InfoColumn {
             _ => self.size,
         });
         field_type.set_decimal(i64::from(self.decimal));
-        field_type.set_flags(self.flag);
+        field_type.set_flag(self.flag);
         if self.name == "STATE" && self.tp == FieldTypeCode::Enum {
             field_type.set_elems(
                 [

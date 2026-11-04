@@ -1333,7 +1333,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 field_type.set_charset_name(separator.charset.clone());
                 field_type.set_collation_name(separator.collation.clone());
                 built_args.push(Expression::Constant(tidb_expr::constant::Constant::new(
-                    tidb_datatype::Datum::new_string(separator.value.clone()),
+                    tidb_datatype::Datum::new_string_datum(separator.value.clone()),
                     field_type,
                 )));
             }

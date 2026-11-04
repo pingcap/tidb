@@ -277,9 +277,9 @@ pub fn append_table_for_stats_meta<TZ: chrono::TimeZone>(
         Datum::Null
     };
     Some(vec![
-        Datum::new_string(db_name.as_bytes().to_vec()),
-        Datum::new_string(table_name.as_bytes().to_vec()),
-        Datum::new_string(partition.as_str().as_bytes().to_vec()),
+        Datum::new_string_datum(db_name.as_bytes().to_vec()),
+        Datum::new_string_datum(table_name.as_bytes().to_vec()),
+        Datum::new_string_datum(partition.as_str().as_bytes().to_vec()),
         version_to_time(stats.version, zone).map_or(Datum::Null, Datum::Time),
         Datum::Int(stats.hist_coll.modify_count),
         Datum::Int(stats.hist_coll.realtime_count),
@@ -300,10 +300,10 @@ pub fn append_table_for_stats_meta<TZ: chrono::TimeZone>(
 #[must_use]
 pub fn append_table_for_stats_locked(db_name: &str, table_name: &str, partition: &PartitionLabel) -> Vec<Datum> {
     vec![
-        Datum::new_string(db_name.as_bytes().to_vec()),
-        Datum::new_string(table_name.as_bytes().to_vec()),
-        Datum::new_string(partition.as_str().as_bytes().to_vec()),
-        Datum::new_string(b"locked".to_vec()),
+        Datum::new_string_datum(db_name.as_bytes().to_vec()),
+        Datum::new_string_datum(table_name.as_bytes().to_vec()),
+        Datum::new_string_datum(partition.as_str().as_bytes().to_vec()),
+        Datum::new_string_datum(b"locked".to_vec()),
     ]
 }
 
@@ -367,17 +367,17 @@ pub fn histogram_row<TZ: chrono::TimeZone>(
     zone: &TZ,
 ) -> Vec<Datum> {
     vec![
-        Datum::new_string(db_name.as_bytes().to_vec()),
-        Datum::new_string(table_name.as_bytes().to_vec()),
-        Datum::new_string(partition.as_str().as_bytes().to_vec()),
-        Datum::new_string(column_name.as_bytes().to_vec()),
+        Datum::new_string_datum(db_name.as_bytes().to_vec()),
+        Datum::new_string_datum(table_name.as_bytes().to_vec()),
+        Datum::new_string_datum(partition.as_str().as_bytes().to_vec()),
+        Datum::new_string_datum(column_name.as_bytes().to_vec()),
         Datum::Int(i64::from(is_index)),
         version_to_time(histogram.last_update_version, zone).map_or(Datum::Null, Datum::Time),
         Datum::Int(histogram.ndv),
         Datum::Int(histogram.null_count),
         Datum::Real(avg_col_size),
         Datum::Real(histogram.correlation),
-        Datum::new_string(load_status.as_bytes().to_vec()),
+        Datum::new_string_datum(load_status.as_bytes().to_vec()),
         Datum::Int(memory.total),
         Datum::Int(memory.histogram),
         Datum::Int(memory.topn),
@@ -425,16 +425,16 @@ pub fn buckets_to_rows<E>(
         let lower = render(&bucket.lower_bound, num_of_cols, index_column_types)?;
         let upper = render(&bucket.upper_bound, num_of_cols, index_column_types)?;
         rows.push(vec![
-            Datum::new_string(db_name.as_bytes().to_vec()),
-            Datum::new_string(table_name.as_bytes().to_vec()),
-            Datum::new_string(partition.as_str().as_bytes().to_vec()),
-            Datum::new_string(column_name.as_bytes().to_vec()),
+            Datum::new_string_datum(db_name.as_bytes().to_vec()),
+            Datum::new_string_datum(table_name.as_bytes().to_vec()),
+            Datum::new_string_datum(partition.as_str().as_bytes().to_vec()),
+            Datum::new_string_datum(column_name.as_bytes().to_vec()),
             Datum::Int(is_index),
             Datum::Int(position as i64),
             Datum::Int(bucket.count),
             Datum::Int(bucket.repeat),
-            Datum::new_string(lower.into_bytes()),
-            Datum::new_string(upper.into_bytes()),
+            Datum::new_string_datum(lower.into_bytes()),
+            Datum::new_string_datum(upper.into_bytes()),
             Datum::Int(bucket.ndv),
         ]);
     }
@@ -472,15 +472,15 @@ pub fn topn_to_rows<E>(
     let mut rows = Vec::with_capacity(topn.entries().len());
     for entry in topn.entries() {
         // Go wraps the encoded bytes in a scratch Datum before rendering.
-        let value = Datum::new_bytes(entry.encoded.clone());
+        let value = Datum::new_bytes_datum(entry.encoded.clone());
         let rendered = render(&value, num_of_cols, column_types)?;
         rows.push(vec![
-            Datum::new_string(db_name.as_bytes().to_vec()),
-            Datum::new_string(table_name.as_bytes().to_vec()),
-            Datum::new_string(partition.as_str().as_bytes().to_vec()),
-            Datum::new_string(column_name.as_bytes().to_vec()),
+            Datum::new_string_datum(db_name.as_bytes().to_vec()),
+            Datum::new_string_datum(table_name.as_bytes().to_vec()),
+            Datum::new_string_datum(partition.as_str().as_bytes().to_vec()),
+            Datum::new_string_datum(column_name.as_bytes().to_vec()),
             Datum::Int(i64::from(is_index)),
-            Datum::new_string(rendered.into_bytes()),
+            Datum::new_string_datum(rendered.into_bytes()),
             Datum::Int(entry.count as i64),
         ]);
     }
@@ -507,9 +507,9 @@ pub fn append_table_for_stats_healthy(
         return None;
     }
     Some(vec![
-        Datum::new_string(db_name.as_bytes().to_vec()),
-        Datum::new_string(table_name.as_bytes().to_vec()),
-        Datum::new_string(partition.as_str().as_bytes().to_vec()),
+        Datum::new_string_datum(db_name.as_bytes().to_vec()),
+        Datum::new_string_datum(table_name.as_bytes().to_vec()),
+        Datum::new_string_datum(partition.as_str().as_bytes().to_vec()),
         Datum::Int(healthy),
     ])
 }
@@ -595,10 +595,10 @@ pub fn column_stats_usage_row(
     last_analyzed_at: Option<Time>,
 ) -> Vec<Datum> {
     vec![
-        Datum::new_string(db_name.as_bytes().to_vec()),
-        Datum::new_string(table_name.as_bytes().to_vec()),
-        Datum::new_string(partition.as_str().as_bytes().to_vec()),
-        Datum::new_string(column_name.as_bytes().to_vec()),
+        Datum::new_string_datum(db_name.as_bytes().to_vec()),
+        Datum::new_string_datum(table_name.as_bytes().to_vec()),
+        Datum::new_string_datum(partition.as_str().as_bytes().to_vec()),
+        Datum::new_string_datum(column_name.as_bytes().to_vec()),
         last_used_at.map_or(Datum::Null, Datum::Time),
         last_analyzed_at.map_or(Datum::Null, Datum::Time),
     ]
@@ -757,8 +757,8 @@ mod tests {
     fn locked_row_always_says_locked() {
         let row = append_table_for_stats_locked("d", "t", &PartitionLabel::Definition("p0".to_owned()));
         assert_eq!(row.len(), 4);
-        assert_eq!(row[2], Datum::new_string(b"p0".to_vec()));
-        assert_eq!(row[3], Datum::new_string(b"locked".to_vec()));
+        assert_eq!(row[2], Datum::new_string_datum(b"p0".to_vec()));
+        assert_eq!(row[3], Datum::new_string_datum(b"locked".to_vec()));
     }
 
     // WRITTEN test for :258-278: the 15-column histogram row shape.

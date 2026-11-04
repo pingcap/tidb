@@ -55,7 +55,7 @@ fn static_type_reads_share_metadata_and_keep_null_defaults() {
     let field_type = string_field_type(UTF8MB4, UTF8MB4_UNICODE_CI);
     let expressions = [
         Expression::Column(Column::new(1, field_type.clone())),
-        Expression::Constant(Constant::new(Datum::new_string("a"), field_type.clone())),
+        Expression::Constant(Constant::new(Datum::new_string_datum("a"), field_type.clone())),
         Expression::CorrelatedColumn(crate::column::CorrelatedColumn {
             column: Column::new(2, field_type.clone()),
             data: Default::default(),
@@ -121,7 +121,7 @@ fn new_const_string(
     collation: &str,
 ) -> Expression {
     let mut constant = Constant::new(
-        Datum::new_string(value),
+        Datum::new_string_datum(value),
         string_field_type(charset, collation),
     );
     constant.collation.set_coercibility(coercibility);
@@ -146,7 +146,7 @@ fn new_expression(
     collation: &str,
 ) -> Expression {
     let mut constant = Constant::new(
-        Datum::new_string(value),
+        Datum::new_string_datum(value),
         string_field_type(charset, collation),
     );
     constant.collation.set_coercibility(coercibility);

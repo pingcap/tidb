@@ -723,9 +723,9 @@ pub fn cut_datum_by_prefix_len(value: &mut Datum, length: i64, column_type: &Fie
             }
             let truncated = bytes[..length].to_vec();
             *value = if was_bytes {
-                Datum::new_bytes(truncated)
+                Datum::new_bytes_datum(truncated)
             } else {
-                Datum::new_collation_string(truncated, collation)
+                Datum::new_collation_string_datum(truncated, collation)
             };
             true
         }
@@ -735,7 +735,7 @@ pub fn cut_datum_by_prefix_len(value: &mut Datum, length: i64, column_type: &Fie
                 return false;
             }
             let truncated: String = runes[..length].iter().collect();
-            *value = Datum::new_collation_string(truncated.into_bytes(), collation);
+            *value = Datum::new_collation_string_datum(truncated.into_bytes(), collation);
             true
         }
     }
@@ -1219,7 +1219,7 @@ pub fn decode_index_kv(
 }
 
 /// Allocation-reuse entry point corresponding to Go `DecodeIndexKVEx`.
-pub fn decode_index_kv_into(
+pub fn decode_index_kv_ex(
     use_new_collation: bool,
     key: &[u8],
     value: &[u8],
@@ -1566,7 +1566,7 @@ mod source_tests {
                 global_index_version: 0,
                 primary: false,
             };
-            let mut indexed_values = vec![Datum::new_collation_string(
+            let mut indexed_values = vec![Datum::new_collation_string_datum(
                 b"abc".to_vec(),
                 Collation::Utf8Mb4Bin,
             )];
@@ -1670,7 +1670,7 @@ mod source_tests {
         let encoded_handle = Encoder::new(true)
             .encode_key_in_timezone(
                 &zone,
-                &[Datum::new_collation_string(
+                &[Datum::new_collation_string_datum(
                     b"abc".to_vec(),
                     Collation::Utf8Mb4Bin,
                 )],
@@ -1863,7 +1863,7 @@ mod source_tests {
         let handle: Handle = CommonHandle::new(encoded_handle).unwrap().into();
         let mut padded = b"abc".to_vec();
         padded.resize(padded.len() + 128, b' ');
-        let mut indexed_values = vec![Datum::new_collation_string(
+        let mut indexed_values = vec![Datum::new_collation_string_datum(
             padded.clone(),
             Collation::Utf8Mb4Bin,
         )];
@@ -1972,7 +1972,7 @@ mod source_tests {
             .encode_key_in_timezone(&SessionTimeZone::utc(), &[Datum::Int(42)])
             .unwrap();
         let handle: Handle = CommonHandle::new(encoded_handle).unwrap().into();
-        let indexed_values = vec![Datum::new_collation_string(
+        let indexed_values = vec![Datum::new_collation_string_datum(
             padded.clone(),
             Collation::Utf8Mb4Bin,
         )];

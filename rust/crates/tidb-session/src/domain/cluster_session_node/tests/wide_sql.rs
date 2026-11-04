@@ -123,7 +123,7 @@ fn prepared_execution_uses_the_ast_parsed_at_prepare_time() {
             &statement,
             &[PreparedValue::SignedLongLong(7)],
         ),
-        vec![vec![Datum::new_string("literal"), Datum::Int(7)]]
+        vec![vec![Datum::new_string_datum("literal"), Datum::Int(7)]]
     );
 }
 

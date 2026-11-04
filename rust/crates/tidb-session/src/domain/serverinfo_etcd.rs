@@ -23,7 +23,7 @@ use std::sync::Arc;
 ///
 /// Reuses the domain constructor over the canonical effective config, including
 /// advertised address, lease text and labels, instead of a second projection.
-pub fn node_server_info(
+pub fn get_server_info(
     config: &tidb_domain_core::node_config::NodeConfig,
 ) -> tidb_domain_serverinfo::serverinfo::ServerInfo {
     tidb_domain_serverinfo::serverinfo_syncer::server_info_from_config(

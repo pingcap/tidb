@@ -472,7 +472,7 @@ mod tests {
                 "digest",
             ]
             .into_iter()
-            .map(|value| Datum::new_string(value.to_owned()))
+            .map(|value| Datum::new_string_datum(value.to_owned()))
             .collect::<Vec<_>>()
         };
         let old = "2026-09-07 00:00:00";
@@ -521,7 +521,7 @@ mod tests {
             0
         );
         let mut invalid = row("enabled", new);
-        invalid[1] = Datum::new_string("this is not SQL".to_owned());
+        invalid[1] = Datum::new_string_datum("this is not SQL".to_owned());
         assert_eq!(
             BindingCache::from_storage_rows(vec![invalid], 1_000_000).size(),
             0
@@ -563,7 +563,7 @@ mod tests {
                 "plan",
             ]
             .into_iter()
-            .map(|value| Datum::new_string(value.to_owned()))
+            .map(|value| Datum::new_string_datum(value.to_owned()))
             .collect::<Vec<_>>()
         };
         let quota = 1_000_000;

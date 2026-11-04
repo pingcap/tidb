@@ -731,7 +731,7 @@ fn check_broadcast_query(query: &str) -> Result<(), String> {
     match &**admin {
         tidb_ast::AdminStmt::Reload(tidb_ast::AdminReloadKind::Bindings) => Ok(()),
         tidb_ast::AdminStmt::Flush(flush) => match flush.target {
-            tidb_ast::FlushTarget::StatsDelta { .. } => Ok(()),
+            tidb_ast::FlushStmtType::StatsDelta { .. } => Ok(()),
             _ => Err(format!(
                 "unexpected flush statement {query} in broadcast query"
             )),
@@ -1342,8 +1342,8 @@ mod tests {
                 ] {
                     bytes.extend(
                         tidb_codec::encode_value(&[
-                            Datum::new_string(digest),
-                            Datum::new_string(text),
+                            Datum::new_string_datum(digest),
+                            Datum::new_string_datum(text),
                         ])
                         .unwrap(),
                     );
@@ -1566,7 +1566,7 @@ mod tests {
             let selected = tipb::SelectResponse::decode(response.data).unwrap();
             assert_eq!(
                 selected.chunks[0].rows_data.as_deref().unwrap(),
-                tidb_codec::encode_value(&[Datum::new_string("remote normalized statement")])
+                tidb_codec::encode_value(&[Datum::new_string_datum("remote normalized statement")])
                     .unwrap()
             );
         }
@@ -1986,7 +1986,7 @@ mod tests {
             };
             assert!(
                 rows.iter()
-                    .any(|row| row[0] == Datum::new_string("select ? + ?")),
+                    .any(|row| row[0] == Datum::new_string_datum("select ? + ?")),
                 "{table}: {rows:?}"
             );
         }

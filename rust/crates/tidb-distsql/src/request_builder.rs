@@ -800,8 +800,8 @@ mod tests {
     #[test]
     fn sticky_range_error_blocks_guarded_request_family_mutations() {
         let invalid = Range {
-            low_val: vec![Datum::new_string("not an integer")],
-            high_val: vec![Datum::new_string("not an integer")],
+            low_val: vec![Datum::new_string_datum("not an integer")],
+            high_val: vec![Datum::new_string_datum("not an integer")],
             collators: vec![tidb_charset::Collation::Binary],
             ..Range::default()
         };

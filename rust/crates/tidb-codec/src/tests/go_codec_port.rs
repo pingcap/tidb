@@ -48,14 +48,14 @@ fn test_codec_key() {
             &[
                 Datum::new_float32_from_f64(1.0),
                 Datum::new_real(3.15),
-                Datum::new_bytes(b"123".to_vec()),
-                Datum::new_string("123"),
+                Datum::new_bytes_datum(b"123".to_vec()),
+                Datum::new_string_datum("123"),
             ],
             &[
                 Datum::new_real(1.0),
                 Datum::new_real(3.15),
-                Datum::new_bytes(b"123".to_vec()),
-                Datum::new_bytes(b"123".to_vec()),
+                Datum::new_bytes_datum(b"123".to_vec()),
+                Datum::new_bytes_datum(b"123".to_vec()),
             ],
         ),
         (
@@ -63,13 +63,13 @@ fn test_codec_key() {
             &[
                 Datum::new_uint(1),
                 Datum::new_real(3.15),
-                Datum::new_bytes(b"123".to_vec()),
+                Datum::new_bytes_datum(b"123".to_vec()),
                 Datum::new_int(-1),
             ],
             &[
                 Datum::new_uint(1),
                 Datum::new_real(3.15),
-                Datum::new_bytes(b"123".to_vec()),
+                Datum::new_bytes_datum(b"123".to_vec()),
                 Datum::new_int(-1),
             ],
         ),
@@ -148,65 +148,65 @@ fn test_codec_key_compare() {
             Ordering::Greater,
         ),
         (
-            &[Datum::new_string("abc")],
-            &[Datum::new_string("abcd")],
+            &[Datum::new_string_datum("abc")],
+            &[Datum::new_string_datum("abcd")],
             Ordering::Less,
         ),
         (
-            &[Datum::new_string("abcdefgh")],
-            &[Datum::new_string("abcdefghi")],
+            &[Datum::new_string_datum("abcdefgh")],
+            &[Datum::new_string_datum("abcdefghi")],
             Ordering::Less,
         ),
         (
-            &[Datum::new_int(1), Datum::new_string("abc")],
-            &[Datum::new_int(1), Datum::new_string("abcd")],
+            &[Datum::new_int(1), Datum::new_string_datum("abc")],
+            &[Datum::new_int(1), Datum::new_string_datum("abcd")],
             Ordering::Less,
         ),
         (
             &[
                 Datum::new_int(1),
-                Datum::new_string("abc"),
-                Datum::new_string("def"),
+                Datum::new_string_datum("abc"),
+                Datum::new_string_datum("def"),
             ],
             &[
                 Datum::new_int(1),
-                Datum::new_string("abcd"),
-                Datum::new_string("af"),
+                Datum::new_string_datum("abcd"),
+                Datum::new_string_datum("af"),
             ],
             Ordering::Less,
         ),
         (
             &[
                 Datum::new_real(3.12),
-                Datum::new_string("ebc"),
-                Datum::new_string("def"),
+                Datum::new_string_datum("ebc"),
+                Datum::new_string_datum("def"),
             ],
             &[
                 Datum::new_real(2.12),
-                Datum::new_string("abcd"),
-                Datum::new_string("af"),
+                Datum::new_string_datum("abcd"),
+                Datum::new_string_datum("af"),
             ],
             Ordering::Greater,
         ),
         (
             &[
-                Datum::new_bytes(vec![0x01, 0x00]),
-                Datum::new_bytes(vec![0xFF]),
+                Datum::new_bytes_datum(vec![0x01, 0x00]),
+                Datum::new_bytes_datum(vec![0xFF]),
             ],
-            &[Datum::new_bytes(vec![0x01, 0x00, 0xFF])],
+            &[Datum::new_bytes_datum(vec![0x01, 0x00, 0xFF])],
             Ordering::Less,
         ),
         (
             &[
-                Datum::new_bytes(vec![0x01]),
+                Datum::new_bytes_datum(vec![0x01]),
                 Datum::new_uint(0xFFFFFFFFFFFFFFF),
             ],
-            &[Datum::new_bytes(vec![0x01, 0x10]), Datum::new_uint(0)],
+            &[Datum::new_bytes_datum(vec![0x01, 0x10]), Datum::new_uint(0)],
             Ordering::Less,
         ),
         (&[Datum::new_int(0)], &[Datum::Null], Ordering::Greater),
         (
-            &[Datum::new_bytes(vec![0x00])],
+            &[Datum::new_bytes_datum(vec![0x00])],
             &[Datum::Null],
             Ordering::Greater,
         ),
@@ -226,7 +226,7 @@ fn test_codec_key_compare() {
             Ordering::Greater,
         ),
         (
-            &[Datum::new_int(1), Datum::new_bytes(Vec::new()), Datum::Null],
+            &[Datum::new_int(1), Datum::new_bytes_datum(Vec::new()), Datum::Null],
             &[Datum::new_int(1), Datum::Null, Datum::new_int(123)],
             Ordering::Greater,
         ),
@@ -241,7 +241,7 @@ fn test_codec_key_compare() {
             Ordering::Less,
         ),
         (
-            &[Datum::min_not_null()],
+            &[Datum::min_not_null_datum()],
             &[Datum::max_value()],
             Ordering::Less,
         ),
@@ -808,13 +808,13 @@ fn test_cut_one_across_key_and_value_streams() {
         &[
             Datum::new_float32_from_f64(1.0),
             Datum::new_real(3.15),
-            Datum::new_bytes(b"123".to_vec()),
-            Datum::new_string("123"),
+            Datum::new_bytes_datum(b"123".to_vec()),
+            Datum::new_string_datum("123"),
         ],
         &[
             Datum::new_uint(1),
             Datum::new_real(3.15),
-            Datum::new_bytes(b"123".to_vec()),
+            Datum::new_bytes_datum(b"123".to_vec()),
             Datum::new_int(-1),
         ],
         &[Datum::new_int(1), Datum::new_int(0)],
@@ -830,7 +830,7 @@ fn test_cut_one_across_key_and_value_streams() {
         &[
             Datum::new_float32_from_f64(1.0),
             Datum::new_real(3.15),
-            Datum::new_bytes(b"123456789012345".to_vec()),
+            Datum::new_bytes_datum(b"123456789012345".to_vec()),
         ],
         &[
             Datum::new_decimal(Decimal::from_literal("0")),
@@ -882,9 +882,9 @@ fn test_cut_one_across_key_and_value_streams() {
 fn test_set_raw_values_slices_match_single_encoding() {
     let datums = [
         Datum::new_int(1),
-        Datum::new_string("abc"),
+        Datum::new_string_datum("abc"),
         Datum::new_real(1.1),
-        Datum::new_bytes(b"def".to_vec()),
+        Datum::new_bytes_datum(b"def".to_vec()),
     ];
     let row_data = encode_value(&datums).expect("encode value");
 
@@ -908,7 +908,7 @@ fn test_decode_one_typed_columns_survive_round_trip() {
     let mut dec_type = ft(FieldTypeCode::NewDecimal);
     dec_type.set_decimal(2);
     let mut unsigned_longlong = ft(FieldTypeCode::LongLong);
-    unsigned_longlong.toggle_flags(FieldTypeFlags::UNSIGNED);
+    unsigned_longlong.toggle_flag(FieldTypeFlags::UNSIGNED);
 
     let table: Vec<(Datum, FieldType)> = vec![
         (Datum::Null, ft(FieldTypeCode::LongLong)),
@@ -926,20 +926,20 @@ fn test_decode_one_typed_columns_survive_round_trip() {
             ft(FieldTypeCode::NewDecimal),
         ),
         (Datum::new_decimal(Decimal::from_literal("1.123")), dec_type),
-        (Datum::new_string("abc"), ft(FieldTypeCode::String)),
-        (Datum::new_string("def"), ft(FieldTypeCode::Varchar)),
-        (Datum::new_string("ghi"), ft(FieldTypeCode::VarString)),
-        (Datum::new_bytes(b"abc".to_vec()), ft(FieldTypeCode::Blob)),
+        (Datum::new_string_datum("abc"), ft(FieldTypeCode::String)),
+        (Datum::new_string_datum("def"), ft(FieldTypeCode::Varchar)),
+        (Datum::new_string_datum("ghi"), ft(FieldTypeCode::VarString)),
+        (Datum::new_bytes_datum(b"abc".to_vec()), ft(FieldTypeCode::Blob)),
         (
-            Datum::new_bytes(b"abc".to_vec()),
+            Datum::new_bytes_datum(b"abc".to_vec()),
             ft(FieldTypeCode::TinyBlob),
         ),
         (
-            Datum::new_bytes(b"abc".to_vec()),
+            Datum::new_bytes_datum(b"abc".to_vec()),
             ft(FieldTypeCode::MediumBlob),
         ),
         (
-            Datum::new_bytes(b"abc".to_vec()),
+            Datum::new_bytes_datum(b"abc".to_vec()),
             ft(FieldTypeCode::LongBlob),
         ),
         (
@@ -1050,7 +1050,7 @@ fn test_hash_group_decimal_shape_errors() {
 /// `datumsForTest` that the Rust datum model covers without a chunk column.
 fn hash_fixture() -> (Vec<Vec<Datum>>, Vec<FieldType>) {
     let mut unsigned_longlong = FieldType::new(FieldTypeCode::LongLong);
-    unsigned_longlong.toggle_flags(FieldTypeFlags::UNSIGNED);
+    unsigned_longlong.toggle_flag(FieldTypeFlags::UNSIGNED);
     let mut enum_tp = FieldType::new(FieldTypeCode::Enum);
     enum_tp.set_elems(vec![tidb_goruntime::GoString::from("a")]);
     let mut set_tp = FieldType::new(FieldTypeCode::Set);
@@ -1069,8 +1069,8 @@ fn hash_fixture() -> (Vec<Vec<Datum>>, Vec<FieldType>) {
         Datum::new_real(1.0),
         Datum::new_decimal(Decimal::from_literal("1")),
         Datum::new_decimal(Decimal::from_literal("1.123")),
-        Datum::new_string("abc"),
-        Datum::new_bytes(b"abc".to_vec()),
+        Datum::new_string_datum("abc"),
+        Datum::new_bytes_datum(b"abc".to_vec()),
         Datum::new_time(parse_datetime_str("2011-11-11 00:00:00")),
         Datum::new_duration(MySqlDuration::from_nanoseconds(1_000_000_000, 1).unwrap()),
         Datum::new_enum(MysqlEnum::new("a", 1), Collation::Utf8Mb4Bin),
@@ -1121,7 +1121,7 @@ fn test_hash_chunk_row_equal_matrix() {
     );
 
     let mut unsigned_longlong = FieldType::new(FieldTypeCode::LongLong);
-    unsigned_longlong.toggle_flags(FieldTypeFlags::UNSIGNED);
+    unsigned_longlong.toggle_flag(FieldTypeFlags::UNSIGNED);
     let signed_longlong = FieldType::new(FieldTypeCode::LongLong);
     let json_tp = FieldType::new(FieldTypeCode::Json);
 
@@ -1205,17 +1205,17 @@ fn test_hash_chunk_row_equal_matrix() {
     );
     // string "x" == bytes "x"
     check(
-        &[Datum::new_string("x")],
+        &[Datum::new_string_datum("x")],
         &FieldType::new(FieldTypeCode::Varchar),
-        &[Datum::new_bytes(b"x".to_vec())],
+        &[Datum::new_bytes_datum(b"x".to_vec())],
         &FieldType::new(FieldTypeCode::Blob),
         true,
     );
     // string "x" != bytes "y"
     check(
-        &[Datum::new_string("x")],
+        &[Datum::new_string_datum("x")],
         &FieldType::new(FieldTypeCode::Varchar),
-        &[Datum::new_bytes(b"y".to_vec())],
+        &[Datum::new_bytes_datum(b"y".to_vec())],
         &FieldType::new(FieldTypeCode::Blob),
         false,
     );
@@ -1371,8 +1371,8 @@ fn collation_strings() -> [(&'static str, &'static str); 3] {
 /// `encode_key` helper is checked to track the enabled mode.
 #[test]
 fn test_encoder_new_collation_enabled_mode_split() {
-    let lower = Datum::new_collation_string("aaa", Collation::Utf8GeneralCi);
-    let upper = Datum::new_collation_string("AAA", Collation::Utf8GeneralCi);
+    let lower = Datum::new_collation_string_datum("aaa", Collation::Utf8GeneralCi);
+    let upper = Datum::new_collation_string_datum("AAA", Collation::Utf8GeneralCi);
     let lower_b = lower.clone();
     let upper_b = upper.clone();
     let enabled_encoder = Encoder::new(true);
@@ -1406,9 +1406,9 @@ fn test_hash_group_key_collation_ci_equivalence() {
         let tp = FieldType::new(FieldTypeCode::String).with_collation(collation);
 
         for (a, b) in collation_strings() {
-            let buf1 = hash_group_key(&[Datum::new_collation_string(a, collation)], &tp)
+            let buf1 = hash_group_key(&[Datum::new_collation_string_datum(a, collation)], &tp)
                 .expect("hash group");
-            let buf2 = hash_group_key(&[Datum::new_collation_string(b, collation)], &tp)
+            let buf2 = hash_group_key(&[Datum::new_collation_string_datum(b, collation)], &tp)
                 .expect("hash group");
             assert_eq!(buf1.len(), buf2.len());
             assert_eq!(buf1[0].len(), buf2[0].len(), "{collation_name} {a}/{b}");
@@ -1426,13 +1426,13 @@ fn test_hash_chunk_row_collation() {
         let binary = collation_name == "binary";
         for (a, b) in collation_strings() {
             let h1 = hash_row(
-                &[Datum::new_collation_string(a, collation)],
+                &[Datum::new_collation_string_datum(a, collation)],
                 std::slice::from_ref(&tp),
                 &[0],
             )
             .expect("hash row");
             let h2 = hash_row(
-                &[Datum::new_collation_string(b, collation)],
+                &[Datum::new_collation_string_datum(b, collation)],
                 std::slice::from_ref(&tp),
                 &[0],
             )
@@ -1456,14 +1456,14 @@ fn test_hash_chunk_columns_collation() {
     ];
     let rows_a: Vec<Vec<Datum>> = collation_strings()
         .iter()
-        .map(|(a, _)| vec![Datum::new_string(*a)])
+        .map(|(a, _)| vec![Datum::new_string_datum(*a)])
         .collect();
     for (collation_name, should_match) in collation_pairs {
         let collation = Collation::from_name(collation_name).expect("known collation");
         let tp = FieldType::new(FieldTypeCode::String).with_collation(collation);
         let rows_b: Vec<Vec<Datum>> = collation_strings()
             .iter()
-            .map(|(_, b)| vec![Datum::new_string(*b)])
+            .map(|(_, b)| vec![Datum::new_string_datum(*b)])
             .collect();
         let (h1s, _) = hash_column(&rows_a, &tp, 0, None, false).expect("hash column");
         let (h2s, _) = hash_column(&rows_b, &tp, 0, None, false).expect("hash column");
@@ -1486,10 +1486,10 @@ fn test_datum_hash_equals_pairs() {
         (&Datum::new_int(1), &Datum::new_int(1), true),
         (&Datum::new_uint(1), &Datum::new_uint(1), true),
         (&Datum::new_real(1.1), &Datum::new_real(1.1), true),
-        (&Datum::new_string("abc"), &Datum::new_string("abc"), true),
+        (&Datum::new_string_datum("abc"), &Datum::new_string_datum("abc"), true),
         (
-            &Datum::new_bytes(b"abc".to_vec()),
-            &Datum::new_bytes(b"abc".to_vec()),
+            &Datum::new_bytes_datum(b"abc".to_vec()),
+            &Datum::new_bytes_datum(b"abc".to_vec()),
             true,
         ),
         (

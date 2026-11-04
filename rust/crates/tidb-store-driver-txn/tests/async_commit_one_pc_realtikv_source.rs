@@ -31,7 +31,7 @@ use tidb_store_driver_txn::transaction::{CommitProtocol, RealOptimisticTransacti
 /// Records the label of every RPC the transaction sends (client-go's
 /// `kv.RPCInterceptor`), retries included.
 fn record_rpc_labels(
-    transaction: &mut tidb_store_driver_txn::transaction::RealTransaction<tikv_client::PdRpcClient>,
+    transaction: &mut tidb_store_driver_txn::transaction::TikvTxn<tikv_client::PdRpcClient>,
 ) -> Arc<Mutex<Vec<&'static str>>> {
     let labels = Arc::new(Mutex::new(Vec::new()));
     let seen = Arc::clone(&labels);

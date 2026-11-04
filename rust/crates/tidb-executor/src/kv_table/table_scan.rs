@@ -4292,7 +4292,7 @@ impl RemoteIndexHandleCursor {
                 && !field_type.has_flag(tidb_datatype::FieldTypeFlags::BINARY)
             {
                 if let Datum::String(string) = value {
-                    *value = Datum::new_collation_string(
+                    *value = Datum::new_collation_string_datum(
                         string.bytes().to_vec(),
                         tidb_charset::Collation::Binary,
                     );
@@ -6747,7 +6747,7 @@ mod remote_cursor_tests {
     fn index_selection_predicate(offset: u32, field_type: FieldType) -> Expression {
         let collation = tidb_charset::Collation::Utf8Mb4Bin;
         let literal = if field_type.eval_type() == tidb_datatype::EvalType::String {
-            Datum::new_collation_string(b"abc".to_vec(), collation)
+            Datum::new_collation_string_datum(b"abc".to_vec(), collation)
         } else {
             Datum::Int(7)
         };
@@ -7752,10 +7752,10 @@ mod remote_cursor_tests {
         let actual = identity
             .record_handle(&[
                 Datum::Int(99),
-                Datum::new_collation_string("界Abdef".as_bytes().to_vec(), collation),
+                Datum::new_collation_string_datum("界Abdef".as_bytes().to_vec(), collation),
             ])
             .unwrap();
-        let truncated = Datum::new_collation_string("界Ab".as_bytes().to_vec(), collation);
+        let truncated = Datum::new_collation_string_datum("界Ab".as_bytes().to_vec(), collation);
         let expected = Encoder::new(true)
             .encode_key_in_timezone(&SessionTimeZone::utc(), &[truncated])
             .unwrap();
@@ -8258,7 +8258,7 @@ mod remote_cursor_tests {
         };
         let record = identity
             .record_handle(&[
-                Datum::new_collation_string(
+                Datum::new_collation_string_datum(
                     b"abc".to_vec(),
                     tidb_charset::Collation::Utf8Mb4GeneralCi,
                 ),

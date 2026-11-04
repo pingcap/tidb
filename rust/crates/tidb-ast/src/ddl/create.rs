@@ -44,7 +44,7 @@ pub enum CreateTableTemporary {
 /// the same payload as the result source prevents a dangling `IGNORE` from
 /// being restored for the source-accepted `CREATE TABLE t IGNORE` form.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum CreateTableOnDuplicate {
+pub enum OnDuplicateKeyHandlingType {
     /// The source's ordinary error-on-duplicate policy; restores as `AS`.
     #[default]
     Error,
@@ -65,7 +65,7 @@ pub enum CreateTableOnDuplicate {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateTableAsQuery {
     /// Go's duplicate-key policy for rows materialized by this CTAS.
-    pub on_duplicate: CreateTableOnDuplicate,
+    pub on_duplicate: OnDuplicateKeyHandlingType,
     /// The CTAS result source.
     pub query: crate::NodeBox<QueryStmt>,
     /// Whether the source result set was wrapped in outer `(...)`.
@@ -213,9 +213,9 @@ impl CreateTableStmt {
         }
         if let Some(ctas) = &self.ctas {
             out.push_str(match ctas.on_duplicate {
-                CreateTableOnDuplicate::Error => " AS ",
-                CreateTableOnDuplicate::Ignore => " IGNORE AS ",
-                CreateTableOnDuplicate::Replace => " REPLACE AS ",
+                OnDuplicateKeyHandlingType::Error => " AS ",
+                OnDuplicateKeyHandlingType::Ignore => " IGNORE AS ",
+                OnDuplicateKeyHandlingType::Replace => " REPLACE AS ",
             });
             if ctas.parenthesized {
                 out.push('(');
@@ -310,9 +310,9 @@ impl CreateTableStmt {
         }
         if let Some(ctas) = &self.ctas {
             out.extend_from_slice(match ctas.on_duplicate {
-                CreateTableOnDuplicate::Error => b" AS".as_slice(),
-                CreateTableOnDuplicate::Ignore => b" IGNORE AS".as_slice(),
-                CreateTableOnDuplicate::Replace => b" REPLACE AS".as_slice(),
+                OnDuplicateKeyHandlingType::Error => b" AS".as_slice(),
+                OnDuplicateKeyHandlingType::Ignore => b" IGNORE AS".as_slice(),
+                OnDuplicateKeyHandlingType::Replace => b" REPLACE AS".as_slice(),
             });
             if ctas.parenthesized {
                 out.push(b'(');
@@ -359,7 +359,7 @@ impl crate::Visitable for CreateTableTemporary {
     }
 }
 
-impl crate::Visitable for CreateTableOnDuplicate {
+impl crate::Visitable for OnDuplicateKeyHandlingType {
     fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
         if visitor.enter(self) {
             return visitor.leave(self);

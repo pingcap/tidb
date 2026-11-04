@@ -1728,11 +1728,11 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
         Box::new(store.clone()),
         index_id,
         vec![
-            vec![Datum::new_collation_string(
+            vec![Datum::new_collation_string_datum(
                 b"a".to_vec(),
                 table.columns()[1].read().field_type.collation(),
             )],
-            vec![Datum::new_collation_string(
+            vec![Datum::new_collation_string_datum(
                 b"b".to_vec(),
                 table.columns()[1].read().field_type.collation(),
             )],
@@ -2067,7 +2067,7 @@ fn fast_point_get_replaces_selection_and_projection_like_go() {
     );
     assert_eq!(
         run_select_on("SELECT c FROM fast_point WHERE id = 1", &catalog, &ctx).unwrap(),
-        vec![vec![Datum::new_string("one")]]
+        vec![vec![Datum::new_string_datum("one")]]
     );
 }
 
@@ -2104,7 +2104,7 @@ fn try_fast_plan_accepts_a_primary_key_point_read() {
     );
     assert_eq!(
         run_select_on("SELECT c FROM fast_order WHERE id = 1", &catalog, &ctx).unwrap(),
-        vec![vec![Datum::new_string("one")]]
+        vec![vec![Datum::new_string_datum("one")]]
     );
 }
 
@@ -2138,8 +2138,8 @@ fn row_checksum_is_a_fast_point_plan_select_field() {
         )
         .unwrap(),
         vec![vec![
-            Datum::new_string("3673005425"),
-            Datum::new_string("one")
+            Datum::new_string_datum("3673005425"),
+            Datum::new_string_datum("one")
         ]]
     );
     assert_eq!(
@@ -2149,7 +2149,7 @@ fn row_checksum_is_a_fast_point_plan_select_field() {
             &ctx,
         )
         .unwrap(),
-        vec![vec![Datum::new_string("3673005425")]]
+        vec![vec![Datum::new_string_datum("3673005425")]]
     );
     for sql in [
         "SELECT TIDB_ROW_CHECKSUM() IS NULL FROM fast_checksum WHERE id = 1",
@@ -2207,7 +2207,7 @@ fn fast_point_get_uses_gos_smaller_index_hint_check() {
     assert!(fast_plan(order_sql).is_some());
     assert_eq!(
         run_select_on(order_sql, &catalog, &ctx).unwrap(),
-        vec![vec![Datum::new_string("one")]]
+        vec![vec![Datum::new_string_datum("one")]]
     );
 
     let prefix_sql = "SELECT /*+ USE_INDEX(fast_hint, co) */ id FROM fast_hint WHERE code = 'one'";
@@ -2303,7 +2303,7 @@ fn fast_point_writes_remove_only_the_consumed_selection_like_go() {
     );
     assert_eq!(
         run_select_on("SELECT c FROM fast_write WHERE id = 1", &catalog, &ctx).unwrap(),
-        vec![vec![Datum::new_string("two")]]
+        vec![vec![Datum::new_string_datum("two")]]
     );
 
     assert_eq!(
@@ -2480,8 +2480,8 @@ fn exact_handle_range_uses_the_go_cop_projection_tree() {
         )
         .unwrap(),
         vec![
-            vec![Datum::new_string("one")],
-            vec![Datum::new_string("two")]
+            vec![Datum::new_string_datum("one")],
+            vec![Datum::new_string_datum("two")]
         ]
     );
 }
@@ -2643,7 +2643,7 @@ fn ordered_handle_range_keeps_the_go_cop_projection_below_sort() {
     );
     assert_eq!(
         run_select_on(sql, &catalog, &ctx).unwrap(),
-        vec![vec![Datum::new_string("a")], vec![Datum::new_string("z")]]
+        vec![vec![Datum::new_string_datum("a")], vec![Datum::new_string_datum("z")]]
     );
 }
 
@@ -2729,7 +2729,7 @@ fn prepared_point_plan_answers_an_out_of_range_handle_without_reading() {
             .expect("the BIGINT handle point read should build one plan"),
     );
     let execution = plan
-        .bind(&[Datum::new_string("99999999999999999999999999")], &zone)
+        .bind(&[Datum::new_string_datum("99999999999999999999999999")], &zone)
         .expect("an out-of-range value still binds to the empty answer");
     let decode = tidb_table::tables::PreparedPointGetDecodeContext::for_query(false, zone);
     let fast = run_prepared_point_get(

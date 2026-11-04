@@ -576,12 +576,12 @@ pub(crate) fn stamp_builtin_return_flags(name: &str, args: &[Expression], ft: &m
     };
     match name {
         "isnull" | "nulleq" => ft.add_flags(FieldTypeFlags::NOT_NULL),
-        "div" | "intdiv" | "mod" => ft.del_flags(FieldTypeFlags::NOT_NULL),
+        "div" | "intdiv" | "mod" => ft.del_flag(FieldTypeFlags::NOT_NULL),
         "plus" | "minus" | "mul" => {
             if args.iter().all(not_null) {
                 ft.add_flags(FieldTypeFlags::NOT_NULL);
             } else {
-                ft.del_flags(FieldTypeFlags::NOT_NULL);
+                ft.del_flag(FieldTypeFlags::NOT_NULL);
             }
         }
         _ => {}
@@ -1694,7 +1694,7 @@ fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<Field
         // non-string one (`expression_rewriter.go`'s `ast.Nullif` arm).
         "nullif" => {
             let mut ret = args.first()?.static_type()?.clone();
-            ret.del_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+            ret.del_flag(tidb_datatype::FieldTypeFlags::NOT_NULL);
             if !ret.eval_type().is_string_kind() {
                 ret.set_charset_name("binary");
                 ret.set_collation_name("binary");

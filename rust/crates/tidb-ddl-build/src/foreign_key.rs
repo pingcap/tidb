@@ -76,7 +76,7 @@ pub fn cannot_add() -> DdlAdmissionError {
 pub fn build_fk_info(
     fk_name: &str,
     keys: &[IndexPart],
-    refer: &tidb_ast::ForeignKeyReference,
+    refer: &tidb_ast::ReferenceDef,
     ref_schema: &str,
     table: &TableInfo,
 ) -> Refusal<FKInfo> {
@@ -211,7 +211,7 @@ pub fn build_fk_infos(create: &CreateTableStmt, schema: &str, table: &mut TableI
         let TableConstraint::ForeignKey(definition) = constraint else {
             continue;
         };
-        if definition.reference.match_type == tidb_ast::ForeignKeyMatch::Partial {
+        if definition.reference.match_type == tidb_ast::MatchType::Partial {
             return Err(refusal(tidb_terror::MysqlError::unknown(
                 "MATCH PARTIAL is not supported yet",
             )));

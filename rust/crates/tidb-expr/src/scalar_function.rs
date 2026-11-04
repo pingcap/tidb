@@ -1423,7 +1423,7 @@ impl ScalarFunction {
                 tidb_datatype::FieldType::decimal,
             );
             let prec = i32::try_from(decimal).unwrap_or(-1);
-            amount = Datum::new_string(tidb_goruntime::go_strconv::format_float(
+            amount = Datum::new_string_datum(tidb_goruntime::go_strconv::format_float(
                 *value, b'f', prec, 64,
             ));
         }
@@ -1995,7 +1995,7 @@ impl ScalarFunction {
                     let bytes = value
                         .to_bytes()
                         .map_err(|_| EvalError::Unsupported("ENUM/SET VALUES() name"))?;
-                    Ok(Datum::new_collation_string(bytes, self.derived_collation()))
+                    Ok(Datum::new_collation_string_datum(bytes, self.derived_collation()))
                 }
                 Some(value) => Ok(value),
             };
@@ -2309,7 +2309,7 @@ impl ScalarFunction {
                 }
                 output.extend_from_slice(&bytes);
             }
-            return Ok(Datum::new_string(output));
+            return Ok(Datum::new_string_datum(output));
         }
         if name == "concat_ws" && self.args.len() >= 2 {
             let separator = self.args[0].eval(ctx, row)?;
@@ -2348,7 +2348,7 @@ impl ScalarFunction {
                 }
                 output.extend_from_slice(part);
             }
-            return Ok(Datum::new_string(output));
+            return Ok(Datum::new_string_datum(output));
         }
         // Go builtinLikeSig/builtinIlikeSig evaluate each argument in order
         // and stop at NULL. The escape is EvalInt followed by byte(escape),
@@ -2609,7 +2609,7 @@ impl ScalarFunction {
             match name {
                 "database" | "schema" => {
                     return Ok(match ctx.current_database() {
-                        Some(name) => Datum::new_string(name.into_bytes()),
+                        Some(name) => Datum::new_string_datum(name.into_bytes()),
                         None => Datum::Null,
                     })
                 }
@@ -2617,7 +2617,7 @@ impl ScalarFunction {
                     return Ok(ctx.sysvar(None, "version").unwrap_or(Datum::Null));
                 }
                 "tidb_version" => {
-                    return Ok(Datum::new_string(ctx.tidb_info().into_bytes()));
+                    return Ok(Datum::new_string_datum(ctx.tidb_info().into_bytes()));
                 }
                 // Go `builtinCurrentUserSig` reports the MATCHED grant
                 // identity (`UserIdentity.String()`, which prefers
@@ -2629,7 +2629,7 @@ impl ScalarFunction {
                 // `UserIdentity.LoginString()` -- the authenticated identity.
                 "current_user" => {
                     return Ok(match ctx.current_user() {
-                        Some(user) => Datum::new_string(user.into_bytes()),
+                        Some(user) => Datum::new_string_datum(user.into_bytes()),
                         None => Datum::Null,
                     })
                 }
@@ -2638,7 +2638,7 @@ impl ScalarFunction {
                 // `SHOW GRANTS` prints.
                 "current_role" => {
                     return Ok(match ctx.current_role() {
-                        Some(roles) => Datum::new_string(roles.into_bytes()),
+                        Some(roles) => Datum::new_string_datum(roles.into_bytes()),
                         None => Datum::Null,
                     })
                 }
@@ -2648,13 +2648,13 @@ impl ScalarFunction {
                 // `StmtCtx.ResourceGroupName`).
                 "current_resource_group" => {
                     return Ok(match ctx.current_resource_group() {
-                        Some(group) => Datum::new_string(group.into_bytes()),
+                        Some(group) => Datum::new_string_datum(group.into_bytes()),
                         None => Datum::Null,
                     })
                 }
                 "user" | "session_user" | "system_user" => {
                     return Ok(match ctx.login_user() {
-                        Some(user) => Datum::new_string(user.into_bytes()),
+                        Some(user) => Datum::new_string_datum(user.into_bytes()),
                         None => Datum::Null,
                     })
                 }
@@ -2717,7 +2717,7 @@ impl ScalarFunction {
             }
             let remstr = match self.args.get(1) {
                 Some(argument) => argument.eval(ctx, row)?,
-                None => Datum::new_string(" "),
+                None => Datum::new_string_datum(" "),
             };
             if remstr.is_null() {
                 return Ok(Datum::Null);
@@ -3312,16 +3312,16 @@ impl ScalarFunction {
             && vals[0].is_null()
             && self.runs_vectorized_body()
         {
-            return Ok(Datum::new_string(String::new()));
+            return Ok(Datum::new_string_datum(String::new()));
         }
         // `TIMEDIFF` is the third family typed from its ARGUMENTS: Go's
         // `timeDiffFunctionClass` picks one of eight signatures from their
         // eval types.
         if upper == "TIMEDIFF" && vals.len() == 2 {
-            use crate::time_fn::time_diff::{arg_kind, time_diff};
+            use crate::time_fn::time_diff::{get_arg_eval_tp, time_diff};
             let kinds = [
-                arg_kind(arg_types[0].as_ref(), &vals[0]),
-                arg_kind(arg_types[1].as_ref(), &vals[1]),
+                get_arg_eval_tp(arg_types[0].as_ref(), &vals[0]),
+                get_arg_eval_tp(arg_types[1].as_ref(), &vals[1]),
             ];
             let fsp = self
                 .get_static_type()
@@ -3416,7 +3416,7 @@ impl ScalarFunction {
                         if ctx.date_modes().no_zero_date {
                             return Ok(Datum::Null);
                         }
-                        result = Datum::new_string(format!("0000-00-00 {text}"));
+                        result = Datum::new_string_datum(format!("0000-00-00 {text}"));
                     }
                 }
             }
@@ -4355,7 +4355,7 @@ fn cast_json_argument_value(function: &ScalarFunction, value: Datum) -> Result<D
             Datum::UInt(value as u64)
         }
         value @ (Datum::Enum(..) | Datum::Set(..)) if field.eval_type() == EvalType::String => {
-            Datum::new_bytes(
+            Datum::new_bytes_datum(
                 value
                     .sql_bytes()
                     .map_err(|_| EvalError::Unsupported("hybrid JSON string conversion"))?,
@@ -5088,8 +5088,8 @@ mod tests {
                         args,
                     ));
                     let mut chunk = Chunk::new_chunk_with_capacity(&[field.clone(), field], 1);
-                    chunk.append_datum(0, &Datum::new_string(text));
-                    chunk.append_datum(1, &Datum::new_string("1"));
+                    chunk.append_datum(0, &Datum::new_string_datum(text));
+                    chunk.append_datum(1, &Datum::new_string_datum("1"));
                     let result = if vectorized {
                         super::try_eval_numeric_batch(&expression, &ctx, &chunk)
                             .map(|batch| batch.unwrap().remove(0))
@@ -5202,7 +5202,7 @@ mod tests {
                         for (i, value) in row.into_iter().enumerate() {
                             chunk.append_datum(
                                 i,
-                                &value.map(Datum::new_string).unwrap_or(Datum::Null),
+                                &value.map(Datum::new_string_datum).unwrap_or(Datum::Null),
                             );
                         }
                     }
@@ -5477,7 +5477,7 @@ mod tests {
             warnings: RefCell::new(Vec::new()),
         };
         let string =
-            |value: &[u8]| Expression::Constant(Constant::new(Datum::new_string(value), text_ft()));
+            |value: &[u8]| Expression::Constant(Constant::new(Datum::new_string_datum(value), text_ft()));
         let unsupported = Expression::ScalarFunction(ScalarFunction::new(
             CiString::new("not_a_function"),
             text_ft(),
@@ -5512,7 +5512,7 @@ mod tests {
         assert_eq!(
             crate::func::eval_func_values_in(
                 "CONCAT",
-                &[Datum::new_string("abcd"), Datum::new_string("x")],
+                &[Datum::new_string_datum("abcd"), Datum::new_string_datum("x")],
                 &ctx,
             )
             .unwrap()
@@ -5680,11 +5680,11 @@ mod tests {
         let concat = ScalarFunction::new(
             CiString::new("concat"),
             text_ft(),
-            vec![konst(Datum::new_string("a")), konst(Datum::new_string("b"))],
+            vec![konst(Datum::new_string_datum("a")), konst(Datum::new_string_datum("b"))],
         );
         assert_eq!(
             concat.eval(&NoColumns, row).unwrap(),
-            Datum::new_string("ab")
+            Datum::new_string_datum("ab")
         );
 
         // COALESCE(NULL, 7) = 7 (eager over values, matching the old
@@ -5782,7 +5782,7 @@ use tidb_charset::Collation;
         );
         assert_eq!(
             json_array.eval(&NoColumns, row).unwrap(),
-            Datum::new_string(r#"["base64:type15:YWI="]"#.to_string())
+            Datum::new_string_datum(r#"["base64:type15:YWI="]"#.to_string())
         );
 
         let cast_json = ScalarFunction::new(
@@ -5894,7 +5894,7 @@ use tidb_charset::Collation;
         result_type.set_collation_name("utf8mb4_general_ci");
         let string_type = text_ft();
         let string = |value: &str| {
-            Expression::Constant(Constant::new(Datum::new_string(value), string_type.clone()))
+            Expression::Constant(Constant::new(Datum::new_string_datum(value), string_type.clone()))
         };
         let mut function = ScalarFunction::new(
             CiString::new("in"),
@@ -5918,7 +5918,7 @@ use tidb_charset::Collation;
         use tidb_charset::Collation;
 
         let string =
-            |value: &str| Expression::Constant(Constant::new(Datum::new_string(value), text_ft()));
+            |value: &str| Expression::Constant(Constant::new(Datum::new_string_datum(value), text_ft()));
         let chunk = Chunk::new_chunk_with_capacity(&[], 1);
 
         // Go's `builtinInStringSig.buildHashMapForConstArgs` stores the
@@ -5948,7 +5948,7 @@ use tidb_charset::Collation;
         pad.prepare_in_string_hash_set();
         assert_eq!(
             pad.eval(&crate::NoColumns, chunk.get_row(0)).unwrap(),
-            Datum::new_string("1")
+            Datum::new_string_datum("1")
         );
 
         // The Go map is built once for the immutable literal list. Reserving
@@ -6170,7 +6170,7 @@ use tidb_charset::Collation;
         let function = ScalarFunction::new(
             CiString::new("ge"),
             ft(),
-            vec![konst(Datum::new_string("a")), konst(Datum::new_string("b"))],
+            vec![konst(Datum::new_string_datum("a")), konst(Datum::new_string_datum("b"))],
         );
         assert_eq!(function.eval(&NoColumns, row).unwrap(), Datum::Int(0));
     }

@@ -527,7 +527,7 @@ fn each_request_carries_the_issuing_statements_time_zone() {
 /// A zero-value `kv.Request` is not "the defaults": `Concurrency: 0` and an
 /// EMPTY `ResourceGroupName` correspond to no TiDB session at all -- a stock
 /// one is `tidb_distsql_scan_concurrency = 15` (`DefDistSQLScanConcurrency`)
-/// and resource group `default`, which is what `RequestContext::default()`
+/// and resource group `default`, which is what `DistSQLContext::default()`
 /// holds and what the resource-control context on the wire is keyed by.
 #[test]
 fn the_request_carries_the_statement_concurrency_and_resource_group() {

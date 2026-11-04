@@ -98,7 +98,7 @@ fn owned_datum_row_matches_go_text_framing_without_cell_allocations() {
 
     let row = vec![
         Datum::new_int(-10),
-        Datum::new_string("go"),
+        Datum::new_string_datum("go"),
         Datum::new_decimal(Decimal::from_literal("1.25")),
         Datum::Null,
     ];
@@ -154,7 +154,7 @@ fn borrowed_chunk_row_matches_go_dump_text_row_framing() {
     let owned = datum_stream
         .row_packet_datums_owned(vec![
             Datum::new_int(-10),
-            Datum::new_string("go"),
+            Datum::new_string_datum("go"),
             Datum::new_decimal(Decimal::from_literal("1.25")),
             Datum::Null,
         ])
@@ -176,13 +176,13 @@ fn owned_text_row_expands_only_when_go_length_prefix_requires_it() {
     // the 0xfc + uint16 form at 251. The Rust writer starts with the same
     // one-byte reservation, expanding only for the second row.
     let short = stream
-        .row_packet_datums_owned(vec![Datum::new_string(vec![b'x'; 250])])
+        .row_packet_datums_owned(vec![Datum::new_string_datum(vec![b'x'; 250])])
         .unwrap();
     assert_eq!(short.len(), 251);
     assert_eq!(short[0], 250);
 
     let long = stream
-        .row_packet_datums_owned(vec![Datum::new_string(vec![b'x'; 251])])
+        .row_packet_datums_owned(vec![Datum::new_string_datum(vec![b'x'; 251])])
         .unwrap();
     assert_eq!(long.len(), 254);
     assert_eq!(&long[..3], &[0xfc, 251, 0]);

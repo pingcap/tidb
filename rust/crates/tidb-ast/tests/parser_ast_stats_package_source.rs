@@ -19,7 +19,7 @@
 //! nodes matching those parse results and restored through `Stmt::restore`.
 
 use tidb_ast::{
-    AdminStmt, FlushStmt, FlushTarget, NodeBox, RefreshStatsMode, RefreshStatsStmt, StatsObject,
+    AdminStmt, FlushStmt, FlushStmtType, NodeBox, RefreshStatsMode, RefreshStatsStmt, StatsObject,
     Stmt,
 };
 
@@ -36,7 +36,7 @@ fn refresh(objects: Vec<StatsObject>, mode: Option<RefreshStatsMode>, cluster_wi
 fn flush_stats(objects: Vec<StatsObject>, cluster: bool) -> Stmt {
     Stmt::Admin(NodeBox::new(AdminStmt::Flush(Box::new(FlushStmt {
         no_write_to_binlog: false,
-        target: FlushTarget::StatsDelta { objects, cluster },
+        target: FlushStmtType::StatsDelta { objects, cluster },
     }))))
 }
 
@@ -196,7 +196,7 @@ fn flush_stats_delta_scoped() {
         let AdminStmt::Flush(flush) = admin.as_ref() else {
             panic!("expected flush");
         };
-        let FlushTarget::StatsDelta {
+        let FlushStmtType::StatsDelta {
             objects: flush_objects,
             cluster: flush_cluster,
         } = &flush.target

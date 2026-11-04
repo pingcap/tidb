@@ -368,15 +368,15 @@ pub fn process_column_flags(field_type: &mut FieldType) {
         if field_type.charset_name() == BINARY_CHARSET {
             field_type.add_flags(FieldTypeFlags::BINARY);
         } else {
-            field_type.del_flags(FieldTypeFlags::BINARY);
+            field_type.del_flag(FieldTypeFlags::BINARY);
         }
     }
     if field_type.code() == FieldTypeCode::Bit {
-        field_type.del_flags(FieldTypeFlags::BINARY);
+        field_type.del_flag(FieldTypeFlags::BINARY);
         field_type.add_flags(FieldTypeFlags::UNSIGNED);
     }
     if field_type.code() == FieldTypeCode::Year {
-        field_type.del_flags(FieldTypeFlags::BINARY);
+        field_type.del_flag(FieldTypeFlags::BINARY);
         field_type.add_flags(FieldTypeFlags::ZEROFILL);
     }
     // Go: "If you specify ZEROFILL for a numeric column, MySQL automatically

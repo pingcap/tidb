@@ -107,7 +107,7 @@ fn cop_column_infos() -> Vec<tipb::ColumnInfo> {
 fn cop_row_value(handle: i64) -> Vec<u8> {
     let row = [
         Datum::Int(handle),
-        Datum::new_string("abc"),
+        Datum::new_string_datum("abc"),
         Datum::new_real(10.0),
     ];
     tidb_tablecodec::encode_table_row(None, &row, &[1, 2, 3], true, None).expect("row encodes")

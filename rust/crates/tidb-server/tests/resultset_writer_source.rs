@@ -510,8 +510,8 @@ fn a_null_cell_is_the_text_protocol_0xfb_sentinel() {
         columns: Some(vec![typed_column(TYPE_VAR_STRING, 0)]),
         events: [Ok(vec![
             vec![Datum::Null],
-            vec![Datum::new_bytes(Vec::new())],
-            vec![Datum::new_string("7")],
+            vec![Datum::new_bytes_datum(Vec::new())],
+            vec![Datum::new_string_datum("7")],
         ])]
         .into(),
         ..Source::default()
@@ -567,7 +567,7 @@ fn text_rows_use_column_type_and_precision_metadata() {
 fn unsupported_column_type_fails_before_a_row_packet_is_written() {
     let mut source = Source {
         columns: Some(vec![typed_column(TYPE_GEOMETRY, 0)]),
-        events: [Ok(vec![vec![Datum::new_bytes(b"point".to_vec())]])].into(),
+        events: [Ok(vec![vec![Datum::new_bytes_datum(b"point".to_vec())]])].into(),
         ..Source::default()
     };
     let mut sink = Sink::default();
@@ -602,7 +602,7 @@ fn text_rows_connect_every_supported_datum_family_to_the_wire_formatter() {
         Datum::new_uint(u64::MAX),
         Datum::new_float32_from_f64(1.2),
         Datum::new_decimal(Decimal::from_literal("1.2300")),
-        Datum::new_string(b"bar".to_vec()),
+        Datum::new_string_datum(b"bar".to_vec()),
         Datum::new_mysql_bit(BinaryLiteral::from(vec![1, 2])),
         Datum::new_time(
             Time::new(

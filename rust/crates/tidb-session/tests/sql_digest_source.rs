@@ -6,7 +6,7 @@ use tidb_session::Session;
 use tidb_executor::StmtOutput;
 
 fn digest(sql: &str) -> Datum {
-    Datum::new_string(tidb_parser::normalize_digest(sql).1.to_string())
+    Datum::new_string_datum(tidb_parser::normalize_digest(sql).1.to_string())
 }
 
 #[test]

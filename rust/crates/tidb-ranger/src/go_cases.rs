@@ -46,7 +46,7 @@ struct TestTable {
 impl TestTable {
     fn new() -> Self {
         let mut pk_type = FieldType::new(FieldTypeCode::LongLong);
-        pk_type.set_flags(pk_type.flags() | FieldTypeFlags::PRI_KEY | FieldTypeFlags::NOT_NULL);
+        pk_type.set_flag(pk_type.flags() | FieldTypeFlags::PRI_KEY | FieldTypeFlags::NOT_NULL);
         Self {
             a: Column::new(1, pk_type),
             b: Column::new(2, FieldType::new(FieldTypeCode::LongLong)),
@@ -355,7 +355,7 @@ impl ColumnRangeTable {
         });
         let e = Column::new(5, {
             let mut ft = FieldType::new(FieldTypeCode::LongLong);
-            ft.set_flags(ft.flags() | FieldTypeFlags::UNSIGNED);
+            ft.set_flag(ft.flags() | FieldTypeFlags::UNSIGNED);
             ft
         });
         Self {
@@ -536,7 +536,7 @@ impl UnsignedTable {
     fn new() -> Self {
         let unsigned = |code: FieldTypeCode, unique_id: i64| {
             let mut ft = FieldType::new(code);
-            ft.set_flags(ft.flags() | FieldTypeFlags::UNSIGNED);
+            ft.set_flag(ft.flags() | FieldTypeFlags::UNSIGNED);
             Column::new(unique_id, ft)
         };
         Self {
@@ -1184,7 +1184,7 @@ impl IndexRangeTable {
             ft.set_charset_name("binary");
             ft.set_collation_name("binary");
             ft.set_collation(tidb_charset::Collation::Binary);
-            ft.set_flags(ft.flags() | FieldTypeFlags::BINARY);
+            ft.set_flag(ft.flags() | FieldTypeFlags::BINARY);
             ft
         });
         let f = varchar(
@@ -1675,12 +1675,12 @@ impl Issue40997Table {
             ft.set_charset_name("utf8mb4");
             ft.set_collation_name("utf8mb4_bin");
             ft.set_collation(tidb_charset::Collation::Utf8Mb4Bin);
-            ft.set_flags(ft.flags() | FieldTypeFlags::NOT_NULL);
+            ft.set_flag(ft.flags() | FieldTypeFlags::NOT_NULL);
             ft
         });
         let bigint = |unique_id: i64| {
             let mut ft = FieldType::new(FieldTypeCode::LongLong);
-            ft.set_flags(ft.flags() | FieldTypeFlags::NOT_NULL);
+            ft.set_flag(ft.flags() | FieldTypeFlags::NOT_NULL);
             Column::new(unique_id, ft)
         };
         Self {
@@ -2495,7 +2495,7 @@ impl PrefixNullTable {
             ft.set_charset_name("binary");
             ft.set_collation_name("binary");
             ft.set_collation(tidb_charset::Collation::Binary);
-            ft.set_flags(ft.flags() | FieldTypeFlags::BINARY);
+            ft.set_flag(ft.flags() | FieldTypeFlags::BINARY);
             Column::new(unique_id, ft)
         };
         Self {

@@ -134,8 +134,8 @@ fn compare_string_source_column_pairs_agree_with_scalar() {
         assert_eq!(
             crate::ops::eval_binary_full(
                 tidb_ast::BinaryOp::Eq,
-                crate::Datum::new_string(left),
-                crate::Datum::new_string(right),
+                crate::Datum::new_string_datum(left),
+                crate::Datum::new_string_datum(right),
                 4,
                 tidb_charset::Collation::Utf8GeneralCi,
                 crate::ops::Operands::LITERALS,

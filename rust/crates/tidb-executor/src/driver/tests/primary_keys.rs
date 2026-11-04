@@ -442,7 +442,7 @@ fn analyzed_composite_index_dominates_single_equality_index() {
             });
             for id in evicted_ids {
                 current.delete_index(id);
-                current.existence_map().write().unwrap().insert_index(id, true);
+                current.col_and_idx_existence_map().write().unwrap().insert_index(id, true);
             }
         }
         ctx.stats_handle().set_table_statistics(table_id, Arc::new(current));

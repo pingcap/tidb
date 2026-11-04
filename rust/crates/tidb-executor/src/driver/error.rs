@@ -30,7 +30,7 @@ mod source_tests {
             .with_flen(10)
             .with_collation_name("utf8mb4_bin");
         let error = tidb_table::column::cast_value(
-            tidb_datatype::Datum::new_bytes([0x81]),
+            tidb_datatype::Datum::new_bytes_datum([0x81]),
             &field,
             "",
             &ctx,

@@ -97,7 +97,7 @@ impl SessionTransactionOptions {
     /// Applies the activation snapshot before the transaction is exposed.
     pub fn apply<S: crate::transaction::StoreClient>(
         self,
-        transaction: &mut crate::transaction::RealTransaction<S>,
+        transaction: &mut crate::transaction::TikvTxn<S>,
     ) {
         // Go `NewTiKVTxn`'s `txn.SetKVFilter(TiDBKVFilter{})`, which
         // `session.doCommit` replaces with `temporaryTableKVFilter` for a

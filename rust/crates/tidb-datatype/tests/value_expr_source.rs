@@ -33,11 +33,11 @@ fn test_value_expr_restore() {
         (Datum::new_float32_from_f64(1.1), "1.1e+00"),
         (Datum::new_real(1.1), "1.1e+00"),
         (
-            Datum::new_string("test `s't\"r."),
+            Datum::new_string_datum("test `s't\"r."),
             "'test `s''t\"r.'",
         ),
         (
-            Datum::new_bytes(b"test `s't\"r.".to_vec()),
+            Datum::new_bytes_datum(b"test `s't\"r.".to_vec()),
             "'test `s''t\"r.'",
         ),
         (
@@ -53,7 +53,7 @@ fn test_value_expr_restore() {
             ),
             "'0000-00-00 00:00:00'",
         ),
-        (Datum::new_string("\\"), "'\\\\'"),
+        (Datum::new_string_datum("\\"), "'\\\\'"),
     ];
 
     for (datum, expected) in rows {
@@ -71,11 +71,11 @@ fn test_value_expr_format() {
         (Datum::new_float32_from_f64(1.1), "1.1e+00"),
         (Datum::new_real(1.1), "1.1e+00"),
         (
-            Datum::new_string("test `s't\"r."),
+            Datum::new_string_datum("test `s't\"r."),
             "'test `s''t\"r.'",
         ),
         (
-            Datum::new_bytes(b"test `s't\"r.".to_vec()),
+            Datum::new_bytes_datum(b"test `s't\"r.".to_vec()),
             "'test `s''t\"r.'",
         ),
         (
@@ -83,9 +83,9 @@ fn test_value_expr_format() {
             "b'11101000110010101110011011101000010000001100000011100110010011101110100001000100111001000101110'",
         ),
         (Datum::new_decimal(Decimal::from_literal("321")), "321"),
-        (Datum::new_string("\\"), "'\\\\'"),
-        (Datum::new_string("''"), "''''''"),
-        (Datum::new_string("\\''\t\n"), "'\\\\''''\t\n'"),
+        (Datum::new_string_datum("\\"), "'\\\\'"),
+        (Datum::new_string_datum("''"), "''''''"),
+        (Datum::new_string_datum("\\''\t\n"), "'\\\\''''\t\n'"),
     ];
 
     for (datum, expected) in rows {

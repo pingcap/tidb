@@ -460,7 +460,7 @@ impl DecorrelateSolver {
                                             tidb_datatype::FieldTypeCode::LongLong,
                                         )
                                     });
-                                ret_type.del_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+                                ret_type.del_flag(tidb_datatype::FieldTypeFlags::NOT_NULL);
                                 let null_value = Expression::Constant(
                                     tidb_expr::constant::Constant::new(
                                         tidb_datatype::Datum::Null,
@@ -585,7 +585,7 @@ impl DecorrelateSolver {
             for column in &mut apply_schema.columns[outer_schema.len()..] {
                 if let Some(field_type) = column.ret_type.as_mut() {
                     let mut cloned = field_type.clone();
-                    cloned.del_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+                    cloned.del_flag(tidb_datatype::FieldTypeFlags::NOT_NULL);
                     *field_type = cloned;
                 }
             }
@@ -608,7 +608,7 @@ impl DecorrelateSolver {
                             let mut cloned = function.clone();
                             if let Some(field_type) = cloned.ret_type.as_mut() {
                                 let mut stripped = field_type.clone();
-                                stripped.del_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+                                stripped.del_flag(tidb_datatype::FieldTypeFlags::NOT_NULL);
                                 *field_type = stripped;
                             }
                             args.push(Expression::ScalarFunction(cloned));

@@ -290,7 +290,7 @@ pub fn cluster_session_stack(
             config.global_config.enable_32bits_connection_id,
         )
     });
-    let mut info = tidb_session::domain::serverinfo_etcd::node_server_info(config);
+    let mut info = tidb_session::domain::serverinfo_etcd::get_server_info(config);
     if let Some(identity) = &server_identity {
         let identity = Arc::clone(identity);
         info.static_info.server_id_getter = Some(Arc::new(move || identity.id()));
@@ -807,8 +807,8 @@ impl tidb_domain_infosync::resource_manager_client::ResourceManagerClient for Pd
 pub fn build_mpp_client(
     authority: &ProductionReadProcessAuthority,
     schema_version: impl Fn() -> i64 + Send + Sync + 'static,
-) -> tidb_copr::mpp_client::TiFlashMppClient {
-    tidb_copr::mpp_client::TiFlashMppClient::new(
+) -> tidb_copr::mpp_client::MPPClient {
+    tidb_copr::mpp_client::MPPClient::new(
         authority.tikv_store().clone(),
         schema_version,
     )

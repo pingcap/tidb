@@ -480,7 +480,7 @@ pub fn adjust_three_stage_multi_distinct_with_group_ndv_skew_ratio(
     }
 
     let mut gid_type = FieldType::new(FieldTypeCode::LongLong);
-    gid_type.set_flags(gid_type.flags() | FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL);
+    gid_type.set_flag(gid_type.flags() | FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL);
     let mut grouping_id_col = Column::new(column_ids.alloc(), gid_type.clone());
     grouping_id_col.index = child_schema.columns.len() as i64;
 
@@ -1042,7 +1042,7 @@ fn approx_count_distinct_column_type() -> FieldType {
     let mut ft = FieldType::new(FieldTypeCode::String);
     ft.set_charset_name("binary");
     ft.set_collation_name("binary");
-    ft.set_flags(ft.flags() | tidb_datatype::FieldTypeFlags::NOT_NULL);
+    ft.set_flag(ft.flags() | tidb_datatype::FieldTypeFlags::NOT_NULL);
     ft
 }
 

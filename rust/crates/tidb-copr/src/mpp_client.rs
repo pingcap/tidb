@@ -108,7 +108,7 @@ where
 
 /// Go `copr.MPPClient` over the node's `KVStore` -- its region cache, PD
 /// client and TiKV client.
-pub struct TiFlashMppClient<S: tikv_client::PdClient = tikv_client::PdRpcClient> {
+pub struct MPPClient<S: tikv_client::PdClient = tikv_client::PdRpcClient> {
     store: TikvStore<S>,
     /// Go `is.SchemaMetaVersion()`, read at dispatch time from the node's
     /// catalog watch: TiFlash resolves the request's table in the schema
@@ -119,7 +119,7 @@ pub struct TiFlashMppClient<S: tikv_client::PdClient = tikv_client::PdRpcClient>
     schema_version: Arc<dyn Fn() -> i64 + Send + Sync>,
 }
 
-impl<S: tikv_client::PdClient> Clone for TiFlashMppClient<S> {
+impl<S: tikv_client::PdClient> Clone for MPPClient<S> {
     fn clone(&self) -> Self {
         Self {
             store: self.store.clone(),
@@ -128,13 +128,13 @@ impl<S: tikv_client::PdClient> Clone for TiFlashMppClient<S> {
     }
 }
 
-impl<S: tikv_client::PdClient> std::fmt::Debug for TiFlashMppClient<S> {
+impl<S: tikv_client::PdClient> std::fmt::Debug for MPPClient<S> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("TiFlashMppClient")
+        formatter.write_str("MPPClient")
     }
 }
 
-impl<S: tikv_client::PdClient> TiFlashMppClient<S> {
+impl<S: tikv_client::PdClient> MPPClient<S> {
     /// Builds the client over the node's store and catalog watch.
     pub fn new(
         store: TikvStore<S>,
@@ -310,7 +310,7 @@ impl<S: tikv_client::PdClient> TiFlashMppClient<S> {
 
 }
 
-impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for TiFlashMppClient<S> {
+impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for MPPClient<S> {
     fn construct_mpp_tasks(
         &self,
         ctx: &Arc<dyn MppContext>,
@@ -1631,7 +1631,7 @@ mod mpp_read_batch_tests {
                     },
                 );
                 fixture.warm_compute_cache();
-                let client = TiFlashMppClient::new(fixture.store.clone(), || 1);
+                let client = MPPClient::new(fixture.store.clone(), || 1);
                 let ctx: Arc<dyn MppContext> =
                     Arc::new(tidb_variable::mem_quota::StatementMemory::default());
                 let result = tidb_txnkv::MppClient::dispatch_mpp_task(

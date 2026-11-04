@@ -2606,7 +2606,7 @@ mod tests {
                 ..tipb::Expr::default()
             };
             let converted = convert_expr(&expr).expect("a string comparison converts");
-            eval_expr(&converted, &[Datum::new_string(value.to_owned())]).expect("evals")
+            eval_expr(&converted, &[Datum::new_string_datum(value.to_owned())]).expect("evals")
         };
 
         // Case-sensitive under the binary collation.

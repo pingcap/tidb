@@ -319,9 +319,9 @@ fn regexp_cache_identity_by_statement_context() {
     let first = crate::builtin_ext::regexp::dispatch_with_cache(
         "REGEXP_REPLACE",
         &[
-            Datum::new_string("abc".to_owned()),
-            Datum::new_string("a".to_owned()),
-            Datum::new_string("X".to_owned()),
+            Datum::new_string_datum("abc".to_owned()),
+            Datum::new_string_datum("a".to_owned()),
+            Datum::new_string_datum("X".to_owned()),
         ],
         11,
         true,
@@ -332,13 +332,13 @@ fn regexp_cache_identity_by_statement_context() {
     )
     .expect("replace dispatch")
     .expect("replace result");
-    assert_eq!(first, Datum::new_string("Xbc".to_owned()));
+    assert_eq!(first, Datum::new_string_datum("Xbc".to_owned()));
     let same_context = crate::builtin_ext::regexp::dispatch_with_cache(
         "REGEXP_REPLACE",
         &[
-            Datum::new_string("abc".to_owned()),
-            Datum::new_string("c".to_owned()),
-            Datum::new_string("Y".to_owned()),
+            Datum::new_string_datum("abc".to_owned()),
+            Datum::new_string_datum("c".to_owned()),
+            Datum::new_string_datum("Y".to_owned()),
         ],
         11,
         true,
@@ -349,13 +349,13 @@ fn regexp_cache_identity_by_statement_context() {
     )
     .expect("replace dispatch")
     .expect("replace result");
-    assert_eq!(same_context, Datum::new_string("Xbc".to_owned()));
+    assert_eq!(same_context, Datum::new_string_datum("Xbc".to_owned()));
     let new_context = crate::builtin_ext::regexp::dispatch_with_cache(
         "REGEXP_REPLACE",
         &[
-            Datum::new_string("abc".to_owned()),
-            Datum::new_string("c".to_owned()),
-            Datum::new_string("Y".to_owned()),
+            Datum::new_string_datum("abc".to_owned()),
+            Datum::new_string_datum("c".to_owned()),
+            Datum::new_string_datum("Y".to_owned()),
         ],
         12,
         true,
@@ -366,5 +366,5 @@ fn regexp_cache_identity_by_statement_context() {
     )
     .expect("replace dispatch")
     .expect("replace result");
-    assert_eq!(new_context, Datum::new_string("abY".to_owned()));
+    assert_eq!(new_context, Datum::new_string_datum("abY".to_owned()));
 }

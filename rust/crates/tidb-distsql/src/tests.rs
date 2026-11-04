@@ -30,7 +30,7 @@ fn test_context_detach_preserves_handles_and_copies_owned_state() {
 
     let warning_handler = WarningCollector::new();
     let context = DistSqlContext {
-        request: RequestContext {
+        request: DistSQLContext {
             warning_handler: warning_handler.clone(),
             original_sql: "select 1".to_owned(),
             enable_chunk_rpc: true,
@@ -48,7 +48,7 @@ fn test_context_detach_preserves_handles_and_copies_owned_state() {
             },
             max_execution_time_ms: 250,
             max_keys_read: 100,
-            ..RequestContext::default()
+            ..DistSQLContext::default()
         },
         execution,
     };

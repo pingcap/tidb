@@ -245,9 +245,9 @@ impl Datum {
                 };
                 Ok(Converted {
                     value: if target.charset() == Charset::Binary {
-                        Self::new_bytes(produced.value)
+                        Self::new_bytes_datum(produced.value)
                     } else {
-                        Self::new_collation_string(produced.value, target.collation())
+                        Self::new_collation_string_datum(produced.value, target.collation())
                     },
                     event: produced.event,
                 })
@@ -1436,9 +1436,9 @@ pub fn produce_str_with_specified_tp(
     let produced = produce_string_reported(value, target, pad_zero, &mut diagnostics)?;
     Ok(DatumConversion {
         value: if target.charset() == Charset::Binary {
-            Datum::new_bytes(produced.value)
+            Datum::new_bytes_datum(produced.value)
         } else {
-            Datum::new_collation_string(produced.value, target.collation())
+            Datum::new_collation_string_datum(produced.value, target.collation())
         },
         error: diagnostics.error,
     })
@@ -1549,7 +1549,7 @@ pub fn get_max_value(target: &FieldType) -> Datum {
         | FieldTypeCode::Blob
         | FieldTypeCode::TinyBlob
         | FieldTypeCode::MediumBlob
-        | FieldTypeCode::LongBlob => Datum::new_collation_string([250], target.collation()),
+        | FieldTypeCode::LongBlob => Datum::new_collation_string_datum([250], target.collation()),
         FieldTypeCode::NewDecimal => {
             Datum::new_decimal(Decimal::from_signed_literal(&max_decimal_text(
                 target.flen().max(0) as usize,
@@ -1611,7 +1611,7 @@ pub fn get_min_value(target: &FieldType) -> Datum {
         | FieldTypeCode::Blob
         | FieldTypeCode::TinyBlob
         | FieldTypeCode::MediumBlob
-        | FieldTypeCode::LongBlob => Datum::new_collation_string([1], target.collation()),
+        | FieldTypeCode::LongBlob => Datum::new_collation_string_datum([1], target.collation()),
         FieldTypeCode::NewDecimal => Datum::new_decimal(Decimal::from_signed_literal(&format!(
             "-{}",
             max_decimal_text(
@@ -1900,7 +1900,7 @@ mod tests {
             .time;
         for source in [
             Datum::Time(time),
-            Datum::new_string("2024-01-02 03:04:05.123456"),
+            Datum::new_string_datum("2024-01-02 03:04:05.123456"),
             Datum::Json(BinaryJSON::parse("\"2024-01-02 03:04:05.123456\"").unwrap()),
         ] {
             let converted = source
@@ -1939,7 +1939,7 @@ mod tests {
             &warnings,
         );
         let field = FieldType::new(FieldTypeCode::Datetime).with_decimal(3);
-        let parsed = Datum::new_string("150101.a")
+        let parsed = Datum::new_string_datum("150101.a")
             .convert_to_in_context(&field, &ctx, &SessionTimeZone::utc())
             .unwrap();
         assert_eq!(
@@ -1989,7 +1989,7 @@ mod tests {
         assert_eq!(typed.value.sql_string().unwrap(), "2011-03-13 03:00:00");
         assert_eq!(warnings.0.borrow().len(), 1);
         assert_eq!(warnings.0.borrow()[0].to_sql_error().code, 8179);
-        let string = Datum::new_string(text)
+        let string = Datum::new_string_datum(text)
             .convert_to_in_context(&field, &ctx, &zone)
             .unwrap();
         assert_eq!(string.error.unwrap().to_sql_error().code, 8179);
@@ -2029,7 +2029,7 @@ mod tests {
             ("2024-01-01 23:59:59.999999", "24:00:00"),
             ("2024-02-31 12:34:56", "12:34:56"),
         ] {
-            let converted = crate::Datum::new_string(input.to_owned())
+            let converted = crate::Datum::new_string_datum(input.to_owned())
                 .convert_to_in(&target, flags, &zone)
                 .unwrap();
             assert_eq!(converted.value.sql_string().unwrap(), expected, "{input}");
@@ -2235,7 +2235,7 @@ mod tests {
 
     #[test]
     fn overflowing_year_text_returns_zero_beside_the_error() {
-        let converted = Datum::new_string("99999999999999999999999999999999999")
+        let converted = Datum::new_string_datum("99999999999999999999999999999999999")
             .convert_to(
                 &FieldType::new(FieldTypeCode::Year),
                 crate::DEFAULT_STATEMENT_FLAGS.with_ignore_truncate_err(true),
@@ -2251,7 +2251,7 @@ mod tests {
 
     #[test]
     fn contextual_legacy_numeric_events_preserve_first_fatal_error() {
-        let source = Datum::new_string("128tail");
+        let source = Datum::new_string_datum("128tail");
         let float = FieldType::new(FieldTypeCode::Double)
             .with_flen(3)
             .with_decimal(1);
@@ -2266,7 +2266,7 @@ mod tests {
 
     #[test]
     fn contextual_legacy_decimal_events_preserve_first_fatal_error() {
-        let source = Datum::new_string("128tail");
+        let source = Datum::new_string_datum("128tail");
         let decimal = FieldType::new(FieldTypeCode::NewDecimal)
             .with_flen(3)
             .with_decimal(1);
@@ -2284,7 +2284,7 @@ mod tests {
             .with_flen(10)
             .with_decimal(2)
             .with_added_flags(FieldTypeFlags::UNSIGNED);
-        let converted = Datum::new_string("-12.345")
+        let converted = Datum::new_string_datum("-12.345")
             .convert_to(&unsigned, crate::STRICT_FLAGS)
             .unwrap();
         assert!(
@@ -2298,7 +2298,7 @@ mod tests {
         let binary = FieldType::new(FieldTypeCode::String)
             .with_flen(2)
             .with_collation(Collation::Binary);
-        let converted = Datum::new_string("ab  ")
+        let converted = Datum::new_string_datum("ab  ")
             .convert_to(&binary, crate::STRICT_FLAGS)
             .unwrap();
         assert_eq!(converted.value.as_raw_bytes(), Some(&b"ab"[..]));
@@ -2307,7 +2307,7 @@ mod tests {
         let text = FieldType::new(FieldTypeCode::Blob)
             .with_flen(3)
             .with_collation(Collation::Utf8Mb4Bin);
-        let converted = Datum::new_string("a界z")
+        let converted = Datum::new_string_datum("a界z")
             .convert_to(&text, crate::STRICT_FLAGS)
             .unwrap();
         assert_eq!(converted.value.as_raw_bytes(), Some(&b"a"[..]));
@@ -2366,7 +2366,7 @@ mod tests {
         let string = FieldType::new(FieldTypeCode::Varchar)
             .with_flen(3)
             .with_collation(Collation::Utf8Mb4Bin);
-        let converted = Datum::new_string("abcd")
+        let converted = Datum::new_string_datum("abcd")
             .convert_to(&string, crate::DEFAULT_STATEMENT_FLAGS)
             .unwrap();
         assert_eq!(converted.value.as_raw_bytes(), Some(&b"abc"[..]));
@@ -2387,7 +2387,7 @@ mod tests {
     #[test]
     fn contextual_integer_conversion_keeps_first_fatal_error() {
         let target = FieldType::new(FieldTypeCode::Tiny);
-        let source = Datum::new_string("128tail".to_owned());
+        let source = Datum::new_string_datum("128tail".to_owned());
         let strict = source.convert_to(&target, crate::STRICT_FLAGS).unwrap();
         assert_eq!(strict.value, Datum::Int(127));
         // Go StrToInt retains the prefix error after successful ParseInt;
@@ -2415,8 +2415,8 @@ mod tests {
             FieldType::new(FieldTypeCode::Tiny).with_added_flags(FieldTypeFlags::UNSIGNED);
 
         for input in [
-            Datum::new_string("999abc"),
-            Datum::new_bytes(b"999abc".to_vec()),
+            Datum::new_string_datum("999abc"),
+            Datum::new_bytes_datum(b"999abc".to_vec()),
         ] {
             let signed = input
                 .clone()
@@ -2448,8 +2448,8 @@ mod tests {
         let unsigned = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
 
         for input in [
-            Datum::new_string("123..34"),
-            Datum::new_bytes(b"123..34".to_vec()),
+            Datum::new_string_datum("123..34"),
+            Datum::new_bytes_datum(b"123..34".to_vec()),
         ] {
             for (target, strict_value, warning_value) in [
                 (&signed, Datum::Int(0), Datum::Int(123)),
@@ -2534,7 +2534,7 @@ mod tests {
             (invalid_utf8, Collation::Utf8Bin, Collation::Utf8Bin, None),
             (invalid_gbk, Collation::GbkBin, Collation::GbkBin, None),
         ] {
-            let input = Datum::new_collation_string(input, input_collation);
+            let input = Datum::new_collation_string_datum(input, input_collation);
             let target = FieldType::new(FieldTypeCode::Varchar)
                 .with_flen(255)
                 .with_collation(output_collation);
@@ -2557,7 +2557,7 @@ mod tests {
             .with_elems(["a", "b"])
             .with_collation(Collation::Binary);
         assert_eq!(
-            Datum::new_string("b")
+            Datum::new_string_datum("b")
                 .convert_to(&enum_type, crate::DEFAULT_STATEMENT_FLAGS)
                 .unwrap()
                 .value,
@@ -2586,7 +2586,7 @@ mod tests {
 
         let json_type = FieldType::new(FieldTypeCode::Json);
         assert_eq!(
-            Datum::new_string(r#"{"a":1}"#)
+            Datum::new_string_datum(r#"{"a":1}"#)
                 .convert_to(&json_type, crate::DEFAULT_STATEMENT_FLAGS)
                 .unwrap()
                 .value,
@@ -2595,7 +2595,7 @@ mod tests {
 
         let vector_type = FieldType::new(FieldTypeCode::VectorFloat32).with_flen(2);
         assert_eq!(
-            Datum::new_string("[1,2]")
+            Datum::new_string_datum("[1,2]")
                 .convert_to(&vector_type, crate::DEFAULT_STATEMENT_FLAGS)
                 .unwrap()
                 .value,
@@ -2604,7 +2604,7 @@ mod tests {
 
         let datetime = FieldType::new(FieldTypeCode::Datetime).with_decimal(0);
         assert_eq!(
-            Datum::new_string("2011-01-01 11:11:11")
+            Datum::new_string_datum("2011-01-01 11:11:11")
                 .convert_to(&datetime, crate::DEFAULT_STATEMENT_FLAGS)
                 .unwrap()
                 .value
@@ -2614,7 +2614,7 @@ mod tests {
         );
         let duration = FieldType::new(FieldTypeCode::Duration).with_decimal(0);
         assert_eq!(
-            Datum::new_string("12:34:56")
+            Datum::new_string_datum("12:34:56")
                 .convert_to(&duration, crate::DEFAULT_STATEMENT_FLAGS)
                 .unwrap()
                 .value
@@ -2653,8 +2653,8 @@ mod tests {
         let double_rows = [
             (Datum::Float32(f64::from(3.0_f32)), 3.0),
             (Datum::Real(12_345.678), 12_345.678),
-            (Datum::new_string("12345.678"), 12_345.678),
-            (Datum::new_bytes(b"12345.678"), 12_345.678),
+            (Datum::new_string_datum("12345.678"), 12_345.678),
+            (Datum::new_bytes_datum(b"12345.678"), 12_345.678),
             (Datum::Int(12_345), 12_345.0),
             (Datum::UInt(123_456), 123_456.0),
         ];
@@ -2693,7 +2693,7 @@ mod tests {
         let float = FieldType::new(FieldTypeCode::Float);
         for input in [
             Datum::Float32(f64::from(281.37_f32)),
-            Datum::new_string("281.37"),
+            Datum::new_string_datum("281.37"),
         ] {
             let converted = input
                 .convert_to(&float, crate::DEFAULT_STATEMENT_FLAGS)
@@ -2709,7 +2709,7 @@ mod tests {
         for (input, expected, overflow) in [
             (Datum::Int(5_000_000_000), u32::MAX as u64, true),
             (Datum::Int(-1), u32::MAX as u64, true),
-            (Datum::new_string("5000000000"), u32::MAX as u64, true),
+            (Datum::new_string_datum("5000000000"), u32::MAX as u64, true),
             (Datum::Int(12_345), 12_345, false),
             (Datum::Int(0), 0, false),
             (Datum::Int(2_147_483_648), 2_147_483_648, false),
@@ -2757,17 +2757,17 @@ mod tests {
                 BinaryJSON::from_typed_value(&crate::BinaryJSONValue::Float64(2.0)).unwrap(),
             ),
             (
-                Datum::new_string("\"hello, 世界\""),
+                Datum::new_string_datum("\"hello, 世界\""),
                 BinaryJSON::parse("\"hello, 世界\"").unwrap(),
             ),
             (
-                Datum::new_string("[1, 2, 3]"),
+                Datum::new_string_datum("[1, 2, 3]"),
                 BinaryJSON::parse("[1, 2, 3]").unwrap(),
             ),
-            (Datum::new_string("{}"), BinaryJSON::parse("{}").unwrap()),
+            (Datum::new_string_datum("{}"), BinaryJSON::parse("{}").unwrap()),
             (Datum::new_time(timestamp), BinaryJSON::from_time(timestamp)),
             (
-                Datum::new_string(r#"{"a": "9223372036854775809"}"#),
+                Datum::new_string_datum(r#"{"a": "9223372036854775809"}"#),
                 BinaryJSON::parse(r#"{"a": "9223372036854775809"}"#).unwrap(),
             ),
         ] {
@@ -2780,7 +2780,7 @@ mod tests {
 
         for input in [
             Datum::new_binary_literal(BinaryLiteral::from(vec![0x81])),
-            Datum::new_string("hello, 世界"),
+            Datum::new_string_datum("hello, 世界"),
         ] {
             assert!(
                 input
@@ -2806,7 +2806,7 @@ mod tests {
             ("b'0'", 32, b"b'0'".to_vec(), false),
         ] {
             let target = FieldType::new(FieldTypeCode::Bit).with_flen(flen);
-            let converted = Datum::new_string(text)
+            let converted = Datum::new_string_datum(text)
                 .convert_to(&target, crate::DEFAULT_STATEMENT_FLAGS)
                 .unwrap();
             let Datum::Bit(value) = converted.value else {

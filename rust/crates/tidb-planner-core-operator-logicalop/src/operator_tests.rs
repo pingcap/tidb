@@ -2959,7 +2959,7 @@ fn cte_shallow_clone_shares_the_class() {
 #[test]
 fn max_one_row_makes_every_child_column_nullable() {
     let mut not_null = FieldType::new(FieldTypeCode::LongLong);
-    not_null.set_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+    not_null.set_flag(tidb_datatype::FieldTypeFlags::NOT_NULL);
     let child = Schema::new(vec![Column::new(1, not_null)]);
     assert!(child.columns[0]
         .ret_type

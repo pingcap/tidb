@@ -295,14 +295,14 @@ fn test_rpad_sig() {
             "RPAD",
             varchar().with_flen(1000),
             vec![
-                const_arg_typed(Datum::new_string("abc"), varchar()),
+                const_arg_typed(Datum::new_string_datum("abc"), varchar()),
                 const_arg_typed(Datum::Int(6), FieldType::new(FieldTypeCode::LongLong)),
-                const_arg_typed(Datum::new_string("123"), varchar()),
+                const_arg_typed(Datum::new_string_datum("123"), varchar()),
             ],
             &ctx,
         )
         .unwrap(),
-        Datum::new_string("abc123")
+        Datum::new_string_datum("abc123")
     );
     assert_eq!(ctx.drain(), vec![]);
 
@@ -311,9 +311,9 @@ fn test_rpad_sig() {
             "RPAD",
             varchar().with_flen(1000),
             vec![
-                const_arg_typed(Datum::new_string("abc"), varchar()),
+                const_arg_typed(Datum::new_string_datum("abc"), varchar()),
                 const_arg_typed(Datum::Int(10000), FieldType::new(FieldTypeCode::LongLong)),
-                const_arg_typed(Datum::new_string("123"), varchar()),
+                const_arg_typed(Datum::new_string_datum("123"), varchar()),
             ],
             &ctx,
         )
@@ -360,20 +360,20 @@ fn test_insert_binary_sig() {
 
     assert_eq!(
         eval([
-            Datum::new_string("abc"),
+            Datum::new_string_datum("abc"),
             Datum::Int(3),
             Datum::Int(-1),
-            Datum::new_string("d"),
+            Datum::new_string_datum("d"),
         ]),
-        Datum::new_string("abd")
+        Datum::new_string_datum("abd")
     );
     assert_eq!(ctx.drain(), vec![]);
     assert_eq!(
         eval([
-            Datum::new_string("abc"),
+            Datum::new_string_datum("abc"),
             Datum::Int(3),
             Datum::Int(-1),
-            Datum::new_string("de"),
+            Datum::new_string_datum("de"),
         ]),
         Datum::Null
     );
@@ -386,12 +386,12 @@ fn test_insert_binary_sig() {
     );
     assert_eq!(
         eval([
-            Datum::new_string("abc"),
+            Datum::new_string_datum("abc"),
             Datum::Int(0),
             Datum::Int(-1),
-            Datum::new_string("d"),
+            Datum::new_string_datum("d"),
         ]),
-        Datum::new_string("abc")
+        Datum::new_string_datum("abc")
     );
     assert_eq!(ctx.drain(), vec![]);
     for args in [
@@ -399,22 +399,22 @@ fn test_insert_binary_sig() {
             Datum::Null,
             Datum::Int(3),
             Datum::Int(-1),
-            Datum::new_string("d"),
+            Datum::new_string_datum("d"),
         ],
         [
-            Datum::new_string("abc"),
+            Datum::new_string_datum("abc"),
             Datum::Null,
             Datum::Int(-1),
-            Datum::new_string("d"),
+            Datum::new_string_datum("d"),
         ],
         [
-            Datum::new_string("abc"),
+            Datum::new_string_datum("abc"),
             Datum::Int(3),
             Datum::Null,
-            Datum::new_string("d"),
+            Datum::new_string_datum("d"),
         ],
         [
-            Datum::new_string("abc"),
+            Datum::new_string_datum("abc"),
             Datum::Int(3),
             Datum::Int(-1),
             Datum::Null,
@@ -620,7 +620,7 @@ fn test_from_base64() {
             None => assert_eq!(e(&expr), "NULL", "{expr}"),
             Some(value) => {
                 let got = v(&expr);
-                assert_eq!(got, Datum::new_bytes(value.as_bytes().to_vec()), "{expr}");
+                assert_eq!(got, Datum::new_bytes_datum(value.as_bytes().to_vec()), "{expr}");
             }
         }
     }
@@ -645,14 +645,14 @@ fn test_from_base64_sig() {
         let ctx = PacketWarnCtx::new(max_packet);
         let result = crate::func::eval_func_values_in(
             "FROM_BASE64",
-            &[Datum::new_string(input.to_owned())],
+            &[Datum::new_string_datum(input.to_owned())],
             &ctx,
         )
         .expect("FROM_BASE64 must dispatch")
         .expect("packet handling should return a value or NULL");
         match expected {
             Some(expected) => {
-                assert_eq!(result, Datum::new_bytes(expected), "packet={max_packet}");
+                assert_eq!(result, Datum::new_bytes_datum(expected), "packet={max_packet}");
                 assert!(ctx.drain().is_empty(), "packet={max_packet}");
             }
             None => {
@@ -711,7 +711,7 @@ fn test_ord_charset_table() {
     // keeps a gbk-typed field type carrying the payload's own bytes. Same
     // preconditions: a utf8 TEXT payload together with a gbk-declared type,
     // i.e. exactly what converted constants look like at signature time.
-    let s_gbk = |text: &str| Datum::new_string(text.to_string());
+    let s_gbk = |text: &str| Datum::new_string_datum(text.to_string());
     assert_eq!(ord_typed("gbk", s_gbk("数据库")), Datum::Int(51965));
     assert_eq!(ord_typed("gbk", s_gbk("abc")), Datum::Int(97));
     assert_eq!(ord_typed("gbk", s_gbk("一二三")), Datum::Int(53947));
@@ -800,7 +800,7 @@ fn test_quote() {
             "QUOTE",
             FieldType::new(FieldTypeCode::VarString),
             vec![const_arg_typed(
-                Datum::new_bytes(payload.clone()),
+                Datum::new_bytes_datum(payload.clone()),
                 FieldType::new(FieldTypeCode::VarString),
             )],
             &NoColumns,
@@ -824,7 +824,7 @@ fn test_quote() {
             &NoColumns,
         )
         .unwrap(),
-        Datum::new_string("NULL")
+        Datum::new_string_datum("NULL")
     );
 }
 
@@ -907,9 +907,9 @@ fn test_to_base64_gbk_session_rows() {
         rewritten.eval(&GbkSession, chunk.get_row(0)).unwrap()
     };
 
-    assert_eq!(eval("abc"), Datum::new_string("YWJj"));
-    assert_eq!(eval("一二三"), Datum::new_string("0ru2/sj9"));
-    assert_eq!(eval("一二三!"), Datum::new_string("0ru2/sj9IQ=="));
+    assert_eq!(eval("abc"), Datum::new_string_datum("YWJj"));
+    assert_eq!(eval("一二三"), Datum::new_string_datum("0ru2/sj9"));
+    assert_eq!(eval("一二三!"), Datum::new_string_datum("0ru2/sj9IQ=="));
 }
 
 /// Go `pkg/expression/builtin_string_test.go:2650 TestToBase64Sig`. The
@@ -936,7 +936,7 @@ fn test_to_base64_sig_packet_boundaries() {
             "TO_BASE64",
             FieldType::new(FieldTypeCode::VarString),
             vec![const_arg_typed(
-                Datum::new_bytes(payload.clone()),
+                Datum::new_bytes_datum(payload.clone()),
                 FieldType::new(FieldTypeCode::VarString),
             )],
             &ctx,
@@ -1062,7 +1062,7 @@ fn test_weight_string_binary_cut_warning() {
             .chunks(2)
             .map(|hex| u8::from_str_radix(std::str::from_utf8(hex).unwrap(), 16).unwrap())
             .collect::<Vec<_>>();
-        assert_eq!(result, Datum::new_bytes(expected), "{expr}");
+        assert_eq!(result, Datum::new_bytes_datum(expected), "{expr}");
         assert_eq!(
             ctx.drain(),
             vec![(1292, warning.to_owned())],
@@ -1250,11 +1250,11 @@ fn test_format_values_and_number_side_truncate_warnings() {
             FieldType::new(FieldTypeCode::VarString),
             vec![
                 const_arg_typed(
-                    Datum::new_string(number.to_string()),
+                    Datum::new_string_datum(number.to_string()),
                     FieldType::new(FieldTypeCode::VarString),
                 ),
                 const_arg_typed(
-                    Datum::new_string(precision.to_string()),
+                    Datum::new_string_datum(precision.to_string()),
                     FieldType::new(FieldTypeCode::VarString),
                 ),
             ],
@@ -1272,11 +1272,11 @@ fn test_format_values_and_number_side_truncate_warnings() {
             FieldType::new(FieldTypeCode::VarString),
             vec![
                 const_arg_typed(
-                    Datum::new_string(number.to_string()),
+                    Datum::new_string_datum(number.to_string()),
                     FieldType::new(FieldTypeCode::VarString),
                 ),
                 const_arg_typed(
-                    Datum::new_string(precision.to_string()),
+                    Datum::new_string_datum(precision.to_string()),
                     FieldType::new(FieldTypeCode::VarString),
                 ),
             ],
@@ -1338,11 +1338,11 @@ fn test_format_precision_side_truncate_warning_counts() {
             FieldType::new(FieldTypeCode::VarString),
             vec![
                 const_arg_typed(
-                    Datum::new_string(number.to_owned()),
+                    Datum::new_string_datum(number.to_owned()),
                     FieldType::new(FieldTypeCode::VarString),
                 ),
                 const_arg_typed(
-                    Datum::new_string(precision.to_owned()),
+                    Datum::new_string_datum(precision.to_owned()),
                     FieldType::new(FieldTypeCode::VarString),
                 ),
             ],
@@ -1550,7 +1550,7 @@ fn test_vectorized_builtin_string_eval_one_vec_2() {
     // FromBase64 whitespace tolerance / ToBase64 packet-safe short strings.
     assert_eq!(
         v("from_base64('YWIKYw==')"),
-        Datum::new_bytes(b"ab\nc".to_vec())
+        Datum::new_bytes_datum(b"ab\nc".to_vec())
     );
     assert_eq!(e("to_base64('ab c')"), "STR:YWIgYw==");
     // Format locale fallbacks + IsNull signature arms.
@@ -1899,7 +1899,7 @@ fn test_clock_parts_and_invalid_time_warning() {
     let clock = UtcClockCtx::new(0);
     let got = time_fn::dispatch(
         "TIME",
-        &[Datum::new_string("2011-11-11 10:10:10.11.12")],
+        &[Datum::new_string_datum("2011-11-11 10:10:10.11.12")],
         &clock,
     )
     .unwrap()
@@ -2003,11 +2003,11 @@ fn test_day_of_month_zero_date_rows() {
 fn test_date_format_zero_year_x_token() {
     assert_eq!(
         crate::time_fn::calendar::date_format(
-            &Datum::new_string("0000-01-01"),
-            &Datum::new_string("%x"),
+            &Datum::new_string_datum("0000-01-01"),
+            &Datum::new_string_datum("%x"),
         )
         .unwrap(),
-        Datum::new_string("4294967295")
+        Datum::new_string_datum("4294967295")
     );
 }
 
@@ -2166,15 +2166,15 @@ fn test_add_time_sig_value_tables() {
     };
     let zeroes = |h: u32| Datum::Duration(duration_new(i64::from(h), 0, 0, 0));
     for (left, right) in [
-        (Datum::new_string("0"), Datum::new_string("-32073")),
-        (Datum::new_string("-32073"), Datum::new_string("0")),
-        (zeroes(0), Datum::new_string("-32073")),
-        (Datum::new_string("-32073"), zeroes(0)),
+        (Datum::new_string_datum("0"), Datum::new_string_datum("-32073")),
+        (Datum::new_string_datum("-32073"), Datum::new_string_datum("0")),
+        (zeroes(0), Datum::new_string_datum("-32073")),
+        (Datum::new_string_datum("-32073"), zeroes(0)),
         (
             datetime_of(2020, 4, 29, 0, 0, 0),
-            Datum::new_string("-32073"),
+            Datum::new_string_datum("-32073"),
         ),
-        (date_of(2020, 4, 29), Datum::new_string("-32073")),
+        (date_of(2020, 4, 29), Datum::new_string_datum("-32073")),
     ] {
         let drained = null_at(left, right);
         assert_eq!(
@@ -2186,11 +2186,11 @@ fn test_add_time_sig_value_tables() {
     // Free-text inputs belong to the SAME warning table (master pins
     // ErrTruncatedWrongVal there too): one 1292 apiece over a SQL NULL.
     assert_eq!(
-        null_at(Datum::new_string("1"), Datum::new_string("xxcvadfgasd")).len(),
+        null_at(Datum::new_string_datum("1"), Datum::new_string_datum("xxcvadfgasd")).len(),
         1
     );
     assert_eq!(
-        null_at(Datum::new_string("xxcvadfgasd"), Datum::new_string("1")).len(),
+        null_at(Datum::new_string_datum("xxcvadfgasd"), Datum::new_string_datum("1")).len(),
         1
     );
 }
@@ -2230,7 +2230,7 @@ fn test_add_time_duration_operand_tables() {
                     FieldType::new(FieldTypeCode::Duration),
                 ),
                 const_arg_typed(
-                    Datum::new_string(right),
+                    Datum::new_string_datum(right),
                     FieldType::new(FieldTypeCode::VarString),
                 ),
             ],
@@ -2266,7 +2266,7 @@ fn test_sub_time_duration_operand_tables() {
                     FieldType::new(FieldTypeCode::Duration),
                 ),
                 const_arg_typed(
-                    Datum::new_string(right),
+                    Datum::new_string_datum(right),
                     FieldType::new(FieldTypeCode::VarString),
                 ),
             ],
@@ -2345,7 +2345,7 @@ fn test_add_sub_time_issue_56861_typed_tables() {
         vec![
             const_arg_typed(datetime.clone(), FieldType::new(FieldTypeCode::Datetime)),
             const_arg_typed(
-                Datum::new_string("12:00:01.341300"),
+                Datum::new_string_datum("12:00:01.341300"),
                 FieldType::new(FieldTypeCode::VarString),
             ),
         ],
@@ -2360,7 +2360,7 @@ fn test_add_sub_time_issue_56861_typed_tables() {
         vec![
             const_arg_typed(datetime.clone(), FieldType::new(FieldTypeCode::Datetime)),
             const_arg_typed(
-                Datum::new_string("anuverivr"),
+                Datum::new_string_datum("anuverivr"),
                 FieldType::new(FieldTypeCode::VarString),
             ),
         ],
@@ -2375,7 +2375,7 @@ fn test_add_sub_time_issue_56861_typed_tables() {
         vec![
             const_arg_typed(datetime.clone(), FieldType::new(FieldTypeCode::Datetime)),
             const_arg_typed(
-                Datum::new_string("12:00:01.341300"),
+                Datum::new_string_datum("12:00:01.341300"),
                 FieldType::new(FieldTypeCode::VarString),
             ),
         ],
@@ -2390,7 +2390,7 @@ fn test_add_sub_time_issue_56861_typed_tables() {
         vec![
             const_arg_typed(date_of(2024, 11, 1), FieldType::new(FieldTypeCode::Date)),
             const_arg_typed(
-                Datum::new_string("12:00:01.341300"),
+                Datum::new_string_datum("12:00:01.341300"),
                 FieldType::new(FieldTypeCode::VarString),
             ),
         ],
@@ -2405,7 +2405,7 @@ fn test_add_sub_time_issue_56861_typed_tables() {
         vec![
             const_arg_typed(date_of(2024, 11, 1), FieldType::new(FieldTypeCode::Date)),
             const_arg_typed(
-                Datum::new_string("12:00:01.000000"),
+                Datum::new_string_datum("12:00:01.000000"),
                 FieldType::new(FieldTypeCode::VarString),
             ),
         ],
@@ -2420,7 +2420,7 @@ fn test_add_sub_time_issue_56861_typed_tables() {
         vec![
             const_arg_typed(date_of(2024, 11, 1), FieldType::new(FieldTypeCode::Date)),
             const_arg_typed(
-                Datum::new_string("12:00:01.000000"),
+                Datum::new_string_datum("12:00:01.000000"),
                 FieldType::new(FieldTypeCode::VarString),
             ),
         ],
@@ -2504,14 +2504,14 @@ fn test_from_unixtime_utc_fixed() {
     let fmt = "%Y %D %M %h:%i:%s %x";
     let two_arg = |arg: Datum| {
         got_text(
-            &time_fn::dispatch("FROM_UNIXTIME", &[arg, Datum::new_string(fmt)], &utc)
+            &time_fn::dispatch("FROM_UNIXTIME", &[arg, Datum::new_string_datum(fmt)], &utc)
                 .unwrap()
                 .unwrap(),
         )
     };
     let oracle = |text: &str| {
         got_text(
-            &time_fn::calendar::date_format(&Datum::new_string(text), &Datum::new_string(fmt))
+            &time_fn::calendar::date_format(&Datum::new_string_datum(text), &Datum::new_string_datum(fmt))
                 .unwrap(),
         )
     };
@@ -2657,11 +2657,11 @@ fn locate_with_position_matches_go_three_args_signature() {
             FieldType::new(FieldTypeCode::LongLong),
             vec![
                 Expression::Constant(crate::constant::Constant::new(
-                    Datum::new_string(substr.as_bytes().to_vec()),
+                    Datum::new_string_datum(substr.as_bytes().to_vec()),
                     text.clone(),
                 )),
                 Expression::Constant(crate::constant::Constant::new(
-                    Datum::new_string(hay.as_bytes().to_vec()),
+                    Datum::new_string_datum(hay.as_bytes().to_vec()),
                     text.clone(),
                 )),
                 Expression::Constant(crate::constant::Constant::new(Datum::Int(pos), int.clone())),
@@ -2696,11 +2696,11 @@ fn locate_with_position_matches_go_three_args_signature() {
         FieldType::new(FieldTypeCode::LongLong),
         vec![
             Expression::Constant(crate::constant::Constant::new(
-                Datum::new_string(b"B".to_vec()),
+                Datum::new_string_datum(b"B".to_vec()),
                 text.clone(),
             )),
             Expression::Constant(crate::constant::Constant::new(
-                Datum::new_string(b"aBc".to_vec()),
+                Datum::new_string_datum(b"aBc".to_vec()),
                 text.clone(),
             )),
             Expression::Constant(crate::constant::Constant::new(Datum::Int(1), int.clone())),

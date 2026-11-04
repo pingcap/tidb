@@ -20,7 +20,7 @@
 
 use std::sync::{atomic::AtomicU64, Arc};
 
-use crate::{DistSqlContext, PagingConfig, Priority, ReplicaRead, ReplicaReadType, RequestContext};
+use crate::{DistSqlContext, PagingConfig, Priority, ReplicaRead, ReplicaReadType, DistSQLContext};
 use tidb_txnkv::{IsolationLevel, RequestSource};
 
 /// The immutable, dependency-closed request metadata produced by the builder.
@@ -125,7 +125,7 @@ impl ReadRequestBuilder {
 
     fn apply_request_context(
         &mut self,
-        context: &RequestContext,
+        context: &DistSQLContext,
         max_keys_read_counter: &Option<Arc<AtomicU64>>,
     ) {
         if self.request.concurrency == 0 || self.request.concurrency > context.dist_sql_concurrency

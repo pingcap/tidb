@@ -1874,7 +1874,7 @@ pub fn process_modify_column_options(
             ColumnOption::NotNull => field_type.add_flags(FieldTypeFlags::NOT_NULL),
             ColumnOption::Null => {
                 has_null_flag = true;
-                field_type.del_flags(FieldTypeFlags::NOT_NULL);
+                field_type.del_flag(FieldTypeFlags::NOT_NULL);
             }
             ColumnOption::AutoIncrement => field_type.add_flags(FieldTypeFlags::AUTO_INCREMENT),
             // `ErrUnsupportedModifyColumn.GenWithStack(...)`: the reason is
@@ -2443,7 +2443,7 @@ fn build_column(
         match option {
             ColumnOption::NotNull => field_type.add_flags(FieldTypeFlags::NOT_NULL),
             ColumnOption::Null => {
-                field_type.del_flags(FieldTypeFlags::NOT_NULL);
+                field_type.del_flag(FieldTypeFlags::NOT_NULL);
                 remove_on_update_now(&mut field_type);
                 has_null_flag = true;
             }
@@ -2784,7 +2784,7 @@ pub fn alter_column(
 ) -> Refusal<()> {
     // Go clears both marks first, then either re-sets them for the DROP form
     // or lets the staging path decide.
-    info.field_type.del_flags(FieldTypeFlags::NO_DEFAULT_VALUE);
+    info.field_type.del_flag(FieldTypeFlags::NO_DEFAULT_VALUE);
     info.default_is_expr = false;
     let Some(expr) = default_value else {
         info.set_default_value(GoAny::nil())
@@ -2876,7 +2876,7 @@ pub fn recheck_column_default_in_reorg_context(info: &ColumnInfo) -> Refusal<()>
 /// Go `removeOnUpdateNowFlag`.
 fn remove_on_update_now(field_type: &mut FieldType) {
     if field_type.has_flag(FieldTypeFlags::TIMESTAMP) {
-        field_type.del_flags(FieldTypeFlags::ON_UPDATE_NOW);
+        field_type.del_flag(FieldTypeFlags::ON_UPDATE_NOW);
     }
 }
 

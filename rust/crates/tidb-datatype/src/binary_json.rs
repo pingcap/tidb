@@ -558,7 +558,7 @@ pub fn unquote_string(text: &str) -> Result<String, BinaryJSONError> {
 
 /// Quotes a JSON path key, leaving an unescaped ECMAScript identifier bare.
 pub fn quote_json_string(text: &str) -> String {
-    let quoted = marshal_json_string(text);
+    let quoted = json_marshal_string_to(text);
     if is_ecmascript_identifier(text)
         && quoted.as_bytes()[1..quoted.len() - 1] == text.as_bytes()[..]
     {
@@ -572,7 +572,7 @@ pub fn quote_json_string(text: &str) -> String {
 /// `serde_json` deliberately emits U+2028 and U+2029 as raw UTF-8, while Go
 /// escapes both separators so a JSON document remains safe when embedded in
 /// JSONP/JavaScript. All other escaping stays delegated to `serde_json`.
-pub fn marshal_json_string(text: &str) -> String {
+pub fn json_marshal_string_to(text: &str) -> String {
     let quoted = serde_json::to_string(text).expect("Rust string is valid JSON text");
     if !quoted
         .chars()
@@ -1540,7 +1540,7 @@ fn format_value(value: &Value) -> String {
         Value::Null => "null".to_owned(),
         Value::Bool(value) => value.to_string(),
         Value::Number(value) => value.to_string(),
-        Value::String(value) => marshal_json_string(value),
+        Value::String(value) => json_marshal_string_to(value),
         Value::Array(values) => format!(
             "[{}]",
             values
@@ -1558,7 +1558,7 @@ fn format_value(value: &Value) -> String {
                     .into_iter()
                     .map(|(key, value)| format!(
                         "{}: {}",
-                        marshal_json_string(key),
+                        json_marshal_string_to(key),
                         format_value(value)
                     ))
                     .collect::<Vec<_>>()
@@ -1583,7 +1583,7 @@ fn format_node(value: &JSONNode) -> String {
             "{{{}}}",
             values
                 .iter()
-                .map(|(key, value)| format!("{}: {}", marshal_json_string(key), format_node(value)))
+                .map(|(key, value)| format!("{}: {}", json_marshal_string_to(key), format_node(value)))
                 .collect::<Vec<_>>()
                 .join(", ")
         ),

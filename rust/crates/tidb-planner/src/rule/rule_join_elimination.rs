@@ -78,7 +78,7 @@ fn null_extended_projection(
                     .ret_type
                     .clone()
                     .expect("logical schema column has RetType");
-                field_type.del_flags(FieldTypeFlags::NOT_NULL);
+                field_type.del_flag(FieldTypeFlags::NOT_NULL);
                 Expression::Constant(Constant::new(Datum::Null, field_type))
             }
         })

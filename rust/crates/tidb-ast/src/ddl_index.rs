@@ -480,7 +480,7 @@ impl IndexConstraintDefinition {
 
 /// Go's `ast.MatchType` for a foreign-key reference.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ForeignKeyMatch {
+pub enum MatchType {
     /// No `MATCH` clause.
     #[default]
     None,
@@ -492,7 +492,7 @@ pub enum ForeignKeyMatch {
     Simple,
 }
 
-impl ForeignKeyMatch {
+impl MatchType {
     fn sql(self) -> Option<&'static str> {
         match self {
             Self::None => None,
@@ -506,7 +506,7 @@ impl ForeignKeyMatch {
 /// Go's `ast.ReferenceDef`, including index-part syntax in the referenced
 /// key and the otherwise commonly dropped `MATCH` clause.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ForeignKeyReference {
+pub struct ReferenceDef {
     /// Referenced table. `None` is retained for the Go AST's partial node
     /// shape even though normal SQL construction supplies a table.
     pub table: Option<Vec<String>>,
@@ -514,14 +514,14 @@ pub struct ForeignKeyReference {
     /// Go's nil slice differs from an explicitly empty parenthesized list.
     pub parts: Option<Vec<IndexPart>>,
     /// Optional match mode.
-    pub match_type: ForeignKeyMatch,
+    pub match_type: MatchType,
     /// Parent-row delete action.
     pub on_delete: Option<ReferOptionType>,
     /// Parent-row update action.
     pub on_update: Option<ReferOptionType>,
 }
 
-impl ForeignKeyReference {
+impl ReferenceDef {
     /// Restores Go's canonical `REFERENCES` payload.
     pub fn restore(&self) -> String {
         let mut out = String::new();
@@ -563,7 +563,7 @@ pub struct ForeignKeyConstraintDefinition {
     /// Referencing key parts.
     pub parts: Vec<IndexPart>,
     /// Referenced table/key/action payload.
-    pub reference: ForeignKeyReference,
+    pub reference: ReferenceDef,
 }
 
 impl ForeignKeyConstraintDefinition {
@@ -818,7 +818,7 @@ impl crate::Visitable for IndexConstraintDefinition {
     }
 }
 
-impl crate::Visitable for ForeignKeyMatch {
+impl crate::Visitable for MatchType {
     fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
         if visitor.enter(self) {
             return visitor.leave(self);
@@ -833,7 +833,7 @@ impl crate::Visitable for ForeignKeyMatch {
     }
 }
 
-impl crate::Visitable for ForeignKeyReference {
+impl crate::Visitable for ReferenceDef {
     fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
         if visitor.enter(self) {
             return visitor.leave(self);
@@ -1161,7 +1161,7 @@ mod tests {
                 },
                 column("hello"),
             ],
-            reference: ForeignKeyReference {
+            reference: ReferenceDef {
                 table: Some(vec!["parent".to_string()]),
                 parts: Some(vec![IndexPart::Expr {
                     expr: Expr::Binary(
@@ -1171,7 +1171,7 @@ mod tests {
                     ),
                     desc: false,
                 }]),
-                match_type: ForeignKeyMatch::Full,
+                match_type: MatchType::Full,
                 on_delete: Some(ReferOptionType::Cascade),
                 on_update: Some(ReferOptionType::Restrict),
             },
@@ -1207,10 +1207,10 @@ mod tests {
                     prefix_len: Some(2),
                     desc: false,
                 }],
-                reference: ForeignKeyReference {
+                reference: ReferenceDef {
                     table: Some(vec!["parent".to_string()]),
                     parts: Some(vec![column("id")]),
-                    match_type: ForeignKeyMatch::Simple,
+                    match_type: MatchType::Simple,
                     on_delete: Some(ReferOptionType::Cascade),
                     on_update: None,
                 },
@@ -1243,10 +1243,10 @@ mod tests {
                     name: Some("fk".to_string()),
                     if_not_exists: true,
                     parts: vec![column("a")],
-                    reference: ForeignKeyReference {
+                    reference: ReferenceDef {
                         table: Some(vec!["p".to_string()]),
                         parts: Some(vec![column("id")]),
-                        match_type: ForeignKeyMatch::None,
+                        match_type: MatchType::None,
                         on_delete: None,
                         on_update: Some(ReferOptionType::SetNull),
                     },

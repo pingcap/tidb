@@ -45,7 +45,7 @@ fn index_options_fragment(stmt: &Stmt, _context: &RestoreContext) -> String {
     index.options.restore()
 }
 
-fn foreign_key_reference(stmt: &Stmt) -> &tidb_ast::ForeignKeyReference {
+fn foreign_key_reference(stmt: &Stmt) -> &tidb_ast::ReferenceDef {
     match expect_ddl(stmt) {
         DdlStmt::CreateTable(create) => match &create.table_constraints[1] {
             tidb_ast::TableConstraint::ForeignKey(constraint) => &constraint.reference,

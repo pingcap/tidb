@@ -177,7 +177,7 @@ pub fn convert_range_from_expected_cnt(
 /// filter column. Callers must reject non-full access ranges and pseudo stats,
 /// as the Go table-scan wrapper does before selecting the column.
 #[allow(clippy::too_many_arguments)]
-pub fn estimate_table_cross_row_count(
+pub fn cross_estimate_row_count(
     source_stats: &HistColl,
     table_stats: &HistColl,
     filters: &[Expression],
@@ -333,7 +333,7 @@ mod tests {
 
     use super::{
         CountedRange, EstimatorOptions, convert_range_from_expected_cnt,
-        estimate_table_cross_row_count,
+        cross_estimate_row_count,
     };
     use tidb_ranger::types::Range;
     use tidb_planner_property::stats_info::HistColl;
@@ -458,7 +458,7 @@ use tidb_charset::Collation;
     #[test]
     fn table_cross_estimate_uses_histogram_and_flips_negative_correlation_direction() {
         let (stats, column, filters) = correlated_fixture();
-        let ascending = estimate_table_cross_row_count(
+        let ascending = cross_estimate_row_count(
             &stats,
             &stats,
             &filters,
@@ -471,7 +471,7 @@ use tidb_charset::Collation;
             &tidb_ranger::points::evaluate_static,
             EstimatorOptions::default(),
         );
-        let negative_correlation = estimate_table_cross_row_count(
+        let negative_correlation = cross_estimate_row_count(
             &stats,
             &stats,
             &filters,
@@ -506,7 +506,7 @@ use tidb_charset::Collation;
                 )),
             ],
         )));
-        let without_residual = estimate_table_cross_row_count(
+        let without_residual = cross_estimate_row_count(
             &stats,
             &stats,
             &filters[..1],
@@ -519,7 +519,7 @@ use tidb_charset::Collation;
             &tidb_ranger::points::evaluate_static,
             EstimatorOptions::default(),
         );
-        let with_residual = estimate_table_cross_row_count(
+        let with_residual = cross_estimate_row_count(
             &stats,
             &stats,
             &filters,
@@ -541,7 +541,7 @@ use tidb_charset::Collation;
     fn table_cross_estimate_keeps_correlation_when_statistics_are_unusable() {
         let (_, column, filters) = correlated_fixture();
         let pseudo = bare_coll(true, 100, []);
-        let result = estimate_table_cross_row_count(
+        let result = cross_estimate_row_count(
             &pseudo,
             &pseudo,
             &filters,
@@ -597,7 +597,7 @@ use tidb_charset::Collation;
         let table_stats =
             loaded_hist_coll_for_test(false, 100, 0, [(7, payload)], [(11, later_index, vec![7])]);
 
-        let estimate = estimate_table_cross_row_count(
+        let estimate = cross_estimate_row_count(
             &source_stats,
             &table_stats,
             &filters,
@@ -613,7 +613,7 @@ use tidb_charset::Collation;
 
         assert_eq!(estimate, (0.0, false, 0.95));
         let later_index_is_first = bare_coll(false, 100, [(7, vec![11])]);
-        let estimate = estimate_table_cross_row_count(
+        let estimate = cross_estimate_row_count(
             &later_index_is_first,
             &table_stats,
             &filters,

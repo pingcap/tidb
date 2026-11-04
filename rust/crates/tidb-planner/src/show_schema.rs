@@ -82,7 +82,7 @@ fn build_column_with_name(
     field_type.set_collation(collation);
     field_type.set_flen(size);
     field_type.set_decimal(0);
-    field_type.set_flags(flags);
+    field_type.set_flag(flags);
     let name = FieldName::new(FieldNameMetadata {
         database: IdentifierMetadata::new(INFORMATION_SCHEMA),
         table: IdentifierMetadata::new(table_name),
@@ -374,7 +374,7 @@ pub fn convert2_output_schemas_and_names(
         field_type.set_decimal(i64::from(decimal));
         field_type.set_collation(default_collation_for_type(tp));
         if let Some(flag) = flags.get(index) {
-            field_type.set_flags(*flag);
+            field_type.set_flag(*flag);
         }
         cols.push(Column::new(0, field_type));
     }

@@ -214,7 +214,7 @@ pub(crate) fn date(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalErro
 fn now(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     let fsp = parse_fsp_with_null_as_zero(vals, "now")?.unwrap_or(0);
     let (utc_secs, nanos, tz_offset) = cols.now().ok_or(no_clock_err())?;
-    Ok(Datum::new_string(format_datetime(
+    Ok(Datum::new_string_datum(format_datetime(
         utc_secs + i64::from(tz_offset),
         nanos,
         fsp,
@@ -227,7 +227,7 @@ fn now(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
 fn utc_timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     let fsp = parse_fsp_with_null_as_zero(vals, "utc_timestamp")?.unwrap_or(0);
     let (utc_secs, nanos, _) = cols.now().ok_or(no_clock_err())?;
-    Ok(Datum::new_string(format_datetime(
+    Ok(Datum::new_string_datum(format_datetime(
         utc_secs, nanos, fsp, true,
     )))
 }
@@ -239,7 +239,7 @@ fn current_date(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> 
         return Err(EvalError::Unsupported("bad function arity"));
     }
     let (utc_secs, _, tz_offset) = cols.now().ok_or(no_clock_err())?;
-    Ok(Datum::new_string(format_date(
+    Ok(Datum::new_string_datum(format_date(
         utc_secs + i64::from(tz_offset),
     )))
 }
@@ -250,7 +250,7 @@ fn utc_date(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
         return Err(EvalError::Unsupported("bad function arity"));
     }
     let (utc_secs, _, _) = cols.now().ok_or(no_clock_err())?;
-    Ok(Datum::new_string(format_date(utc_secs)))
+    Ok(Datum::new_string_datum(format_date(utc_secs)))
 }
 
 /// `builtinCurrentTime0ArgSig` / `builtinCurrentTime1ArgSig`: local
@@ -268,7 +268,7 @@ fn current_time(
     // rounds to the requested FSP. Preserve that two-stage source algorithm;
     // it is observably different from UTC_TIMESTAMP's direct half-up path.
     let nanos = fsp.map_or(nanos, |_| nanos / 1_000 * 1_000);
-    Ok(Datum::new_string(format_time_only(
+    Ok(Datum::new_string_datum(format_time_only(
         utc_secs + i64::from(tz_offset),
         nanos,
         fsp.unwrap_or(0),
@@ -288,7 +288,7 @@ fn utc_time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     // builtinUTCTimeWithArgSig has the identical TimeFSPFormat-then-parse
     // conversion as CURRENT_TIME's explicit signature.
     let nanos = fsp.map_or(nanos, |_| nanos / 1_000 * 1_000);
-    Ok(Datum::new_string(format_time_only(
+    Ok(Datum::new_string_datum(format_time_only(
         utc_secs,
         nanos,
         fsp.unwrap_or(0),
@@ -326,7 +326,7 @@ fn time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     };
     let fsp = duration_parse::get_fsp(&value);
     if let Ok(duration) = duration_parse::parse_duration(&value, fsp) {
-        return Ok(Datum::new_string(duration.format()));
+        return Ok(Datum::new_string_datum(duration.format()));
     }
     // Go `builtinTimeSig.evalDuration`: when the text cannot be a datetime
     // `ParseDuration` still answers the value `matchDuration` managed to read,
@@ -350,7 +350,7 @@ fn time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
         "Truncated incorrect time value: '{}'",
         tidb_datatype::warning_subject_byte_cap(&value)
     ))?;
-    Ok(Datum::new_string(
+    Ok(Datum::new_string_datum(
         partial.unwrap_or_else(|| "00:00:00".to_owned()),
     ))
 }
@@ -666,7 +666,7 @@ fn get_format_value(vals: &[Datum]) -> Result<Datum, EvalError> {
     let Some(location) = crate::arg_eval_type::eval_string(location)? else {
         return Ok(Datum::Null);
     };
-    Ok(Datum::new_string(get_format_bytes(&format_type, &location)))
+    Ok(Datum::new_string_datum(get_format_bytes(&format_type, &location)))
 }
 
 fn get_format_bytes(format_type: &[u8], location: &[u8]) -> &'static str {
@@ -791,7 +791,7 @@ fn monthname(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
         .map(date_fields)
         .filter(|&(_, month, _)| month != 0)
         .map_or(Datum::Null, |(_, month, _)| {
-            Datum::new_string(MONTHS[(month - 1) as usize].to_string())
+            Datum::new_string_datum(MONTHS[(month - 1) as usize].to_string())
         }))
 }
 
@@ -812,7 +812,7 @@ fn dayname(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     };
     let time = checked_date_arg(value, cols, tidb_datatype::Time::invalid_zero)?;
     Ok(time.map(date_fields).map_or(Datum::Null, |(y, m, d)| {
-        Datum::new_string(DAYS[(days_from_civil(y, m, d) + 4).rem_euclid(7) as usize].to_string())
+        Datum::new_string_datum(DAYS[(days_from_civil(y, m, d) + 4).rem_euclid(7) as usize].to_string())
     }))
 }
 
@@ -831,7 +831,7 @@ fn last_day(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
         let next_month = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
         let (last_y, last_m, last_d) =
             civil_from_days(days_from_civil(next_month.0, next_month.1, 1) - 1);
-        Datum::new_string(format!("{last_y:04}-{last_m:02}-{last_d:02}"))
+        Datum::new_string_datum(format!("{last_y:04}-{last_m:02}-{last_d:02}"))
     }))
 }
 
@@ -1048,7 +1048,7 @@ fn sec_to_time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
             )),
         )?;
     }
-    Ok(Datum::new_string(format_duration(
+    Ok(Datum::new_string_datum(format_duration(
         seconds,
         duration_precision(&vals[0])?,
     )))
@@ -1167,7 +1167,7 @@ fn makedate(vals: &[Datum]) -> Result<Datum, EvalError> {
     if !(1..=9999).contains(&result_y) {
         return Ok(Datum::Null);
     }
-    Ok(Datum::new_string(format!(
+    Ok(Datum::new_string_datum(format!(
         "{result_y:04}-{result_m:02}-{result_d:02}"
     )))
 }
@@ -1209,7 +1209,7 @@ fn maketime(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     } else {
         hour_abs as f64 * 3600.0 + minute as f64 * 60.0 + second
     };
-    Ok(Datum::new_string(format_duration(
+    Ok(Datum::new_string_datum(format_duration(
         if negative { -total } else { total },
         duration_precision(&vals[2])?,
     )))
@@ -1345,7 +1345,7 @@ fn time_format(vals: &[Datum]) -> Result<Datum, EvalError> {
             Some(other) => out.push(other),
         }
     }
-    Ok(Datum::new_string(out))
+    Ok(Datum::new_string_datum(out))
 }
 
 #[cfg(test)]
@@ -1376,7 +1376,7 @@ mod clock_source_tests {
     }
 
     fn string(value: &str) -> Datum {
-        Datum::new_string(value.to_owned())
+        Datum::new_string_datum(value.to_owned())
     }
 
     /// Go raises `types.ErrTooBigPrecision` (1426) at EVALUATION time for an

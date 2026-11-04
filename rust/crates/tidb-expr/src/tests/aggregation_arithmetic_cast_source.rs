@@ -530,7 +530,7 @@ fn test_cast_functions_char_and_binary() {
     let ctx = WarningCtx::default();
     let out = cast_eval(
         "cast_char",
-        const_typed(Datum::new_string(you_world.to_string()), source.clone()),
+        const_typed(Datum::new_string_datum(you_world.to_string()), source.clone()),
         char5.clone(),
         &ctx,
     )
@@ -546,7 +546,7 @@ fn test_cast_functions_char_and_binary() {
     let ctx = WarningCtx::default();
     let out = cast_eval(
         "cast_char",
-        const_typed(Datum::new_string("a".to_string()), source.clone()),
+        const_typed(Datum::new_string_datum("a".to_string()), source.clone()),
         char5,
         &ctx,
     )
@@ -566,7 +566,7 @@ fn test_cast_functions_char_and_binary() {
     let ctx = WarningCtx::default();
     let out = cast_eval(
         "cast_binary",
-        const_typed(Datum::new_string(you_world.to_string()), source.clone()),
+        const_typed(Datum::new_string_datum(you_world.to_string()), source.clone()),
         bin5.clone(),
         &ctx,
     )
@@ -578,7 +578,7 @@ fn test_cast_functions_char_and_binary() {
     let ctx = WarningCtx::default();
     let out = cast_eval(
         "cast_binary",
-        const_typed(Datum::new_string("a".to_string()), source.clone()),
+        const_typed(Datum::new_string_datum("a".to_string()), source.clone()),
         bin5.clone(),
         &ctx,
     )
@@ -593,7 +593,7 @@ fn test_cast_functions_char_and_binary() {
     huge.set_flen(4294967295);
     let out = cast_eval(
         "cast_binary",
-        const_typed(Datum::new_string("a".to_string()), source),
+        const_typed(Datum::new_string_datum("a".to_string()), source),
         huge,
         &ctx,
     );
@@ -743,7 +743,7 @@ fn test_cast_functions_string_to_unsigned_and_signed() {
 }
 
 fn string_const(v: &str) -> Expression {
-    const_typed(Datum::new_string(v.to_string()), str_ft())
+    const_typed(Datum::new_string_datum(v.to_string()), str_ft())
 }
 
 fn int_binary_target(unsigned: bool) -> FieldType {
@@ -906,7 +906,7 @@ fn test_cast_func_sig_as_decimal() {
     let wants = [1i64, 1, 1, 20201010101010, 125959];
     let sources: Vec<Expression> = vec![
         const_typed(Datum::Int(1), int_ft()),
-        const_typed(Datum::new_string("1".to_string()), str_ft()),
+        const_typed(Datum::new_string_datum("1".to_string()), str_ft()),
         const_typed(Datum::Real(1.0), real_ft()),
         const_typed(Datum::Time(fixed_datetime()), FieldType::new(C::Datetime)),
         const_typed(
@@ -933,7 +933,7 @@ fn test_cast_func_sig_as_decimal() {
     let shaped_cases: Vec<(Expression, i64, i64, &str)> = vec![
         (const_typed(Datum::Int(1234), int_ft()), 7, 3, "1234.000"),
         (
-            const_typed(Datum::new_string("1234".to_string()), str_ft()),
+            const_typed(Datum::new_string_datum("1234".to_string()), str_ft()),
             7,
             3,
             "1234.000",
@@ -986,7 +986,7 @@ fn test_cast_func_sig_as_int() {
     let json_three = BinaryJSON::parse("3").unwrap();
     let cases: Vec<(Expression, C, i64)> = vec![
         (
-            const_typed(Datum::new_string("1".to_string()), str_ft()),
+            const_typed(Datum::new_string_datum("1".to_string()), str_ft()),
             C::LongLong,
             1,
         ),
@@ -1067,7 +1067,7 @@ fn test_cast_func_sig_as_real() {
     let json_three = BinaryJSON::parse("3").unwrap();
     let cases: Vec<(Expression, f64)> = vec![
         (
-            const_typed(Datum::new_string("1.1".to_string()), str_ft()),
+            const_typed(Datum::new_string_datum("1.1".to_string()), str_ft()),
             1.1,
         ),
         (
@@ -1157,7 +1157,7 @@ fn test_cast_func_sig_as_string() {
             "3",
         ),
         (
-            const_typed(Datum::new_string("1234".to_string()), str_ft()),
+            const_typed(Datum::new_string_datum("1234".to_string()), str_ft()),
             "1234",
         ),
     ];
@@ -1193,7 +1193,7 @@ fn test_cast_func_sig_as_string_truncates_at_flen() {
         ),
         (
             const_typed(
-                Datum::new_string("你好world".to_string()),
+                Datum::new_string_datum("你好world".to_string()),
                 source_with_flen(utf8_ft(), 6),
             ),
             "你好w",
@@ -1255,7 +1255,7 @@ fn test_cast_func_sig_as_time() {
         ),
         (
             const_typed(
-                Datum::new_string("2020-10-10 10:10:10".to_string()),
+                Datum::new_string_datum("2020-10-10 10:10:10".to_string()),
                 str_ft(),
             ),
             tm.clone(),
@@ -1355,7 +1355,7 @@ fn test_cast_func_sig_as_duration() {
         ),
         (const_typed(Datum::Int(125959), int_ft()), dur.clone()),
         (
-            const_typed(Datum::new_string("12:59:59".to_string()), str_ft()),
+            const_typed(Datum::new_string_datum("12:59:59".to_string()), str_ft()),
             dur.clone(),
         ),
         (
@@ -1382,7 +1382,7 @@ fn test_cast_func_sig_as_duration() {
             Datum::Real(125959.0),
             Datum::Decimal(Decimal::from_int(125959)),
             Datum::Int(125959),
-            Datum::new_string("12:59:59".to_string()),
+            Datum::new_string_datum("12:59:59".to_string()),
             Datum::Time(fixed_datetime()),
             Datum::Duration(dur.clone()),
         ] {
@@ -1556,7 +1556,7 @@ fn test_wrap_with_cast_as_types_classes_numeric_rows() {
             "123.555",
         ),
         (
-            const_typed(Datum::new_string("123.123".to_string()), str_ft()),
+            const_typed(Datum::new_string_datum("123.123".to_string()), str_ft()),
             123,
             123.123,
             "123.123",
@@ -1645,7 +1645,7 @@ fn test_wrap_with_cast_as_string_binary_literal_warns_invalid_utf8() {
     let out = wrapped
         .eval(&ctx, tidb_chunk::row::Row::empty())
         .expect("valid binary string");
-    assert_eq!(out, Datum::new_string("a"));
+    assert_eq!(out, Datum::new_string_datum("a"));
     assert!(ctx.0.borrow().is_empty());
 }
 
@@ -1764,7 +1764,7 @@ fn test_wrap_with_cast_as_time() {
         ),
         (
             const_typed(
-                Datum::new_string("2020-10-10 10:10:10".to_string()),
+                Datum::new_string_datum("2020-10-10 10:10:10".to_string()),
                 str_ft(),
             ),
             tm_ft(),
@@ -1832,7 +1832,7 @@ fn test_wrap_with_cast_as_duration() {
             dur.clone(),
         ),
         (
-            const_typed(Datum::new_string("125959".to_string()), str_ft()),
+            const_typed(Datum::new_string_datum("125959".to_string()), str_ft()),
             dur.clone(),
         ),
         (
@@ -1899,7 +1899,7 @@ fn test_wrap_with_cast_as_string() {
 
     // A valid single-byte literal renders verbatim; Go's warn=false rows.
     for (datum, code, want) in [
-        (Datum::new_bytes(vec![0x61]), C::VarString, "a"),
+        (Datum::new_bytes_datum(vec![0x61]), C::VarString, "a"),
         (Datum::Int(-1), C::Long, "-1"),
         (Datum::Int(-127), C::Tiny, "-127"),
         (Datum::Int(-127), C::Short, "-127"),
@@ -1940,7 +1940,7 @@ fn test_wrap_with_cast_as_json_passes_json_columns_through() {
         .ret_type
         .as_mut()
         .unwrap()
-        .set_flags(FieldTypeFlags::NOT_NULL);
+        .set_flag(FieldTypeFlags::NOT_NULL);
     let original = Expression::Column(json_col.clone());
     let wrapped = wrap_with_cast_as_json(original.clone()).unwrap();
     match wrapped {
@@ -1983,7 +1983,7 @@ fn test_cast_binary_string_as_json_sig() {
         let out = cast_eval(
             "cast_json",
             const_typed(
-                Datum::new_collation_string(input.as_bytes().to_vec(), Collation::Binary),
+                Datum::new_collation_string_datum(input.as_bytes().to_vec(), Collation::Binary),
                 source,
             ),
             target,
@@ -2072,7 +2072,7 @@ fn test_cast_const_as_decimal_field_type() {
         ("-1234567890.1234567890123456789", 29, 19),
     ] {
         cases.push((
-            const_typed(Datum::new_string(value), FieldType::new(C::String)),
+            const_typed(Datum::new_string_datum(value), FieldType::new(C::String)),
             flen,
             decimal,
         ));
@@ -2263,7 +2263,7 @@ fn test_cast_as_char_field_type() {
             -1
         });
         source.set_collation_name(collate);
-        cases.push((const_typed(Datum::new_string("abcde"), source), flen));
+        cases.push((const_typed(Datum::new_string_datum("abcde"), source), flen));
     }
 
     assert_eq!(cases.len(), 40, "complete Go TestCastAsCharFieldType table");
@@ -2290,7 +2290,7 @@ fn test_cast_string_as_decimal_sig_with_unsigned_flag_in_union() {
     target.set_decimal(0);
     target.add_flags(FieldTypeFlags::UNSIGNED);
     for (text, want) in [("1", "1"), ("-1", "0")] {
-        let source = const_typed(Datum::new_string(text.to_owned()), source_type.clone());
+        let source = const_typed(Datum::new_string_datum(text.to_owned()), source_type.clone());
         let wrapped = crate::wrap_cast::build_cast_function_4_union(source, target.clone())
             .expect("string UNION decimal cast builds");
         let ctx = WarningCtx::default();

@@ -640,7 +640,7 @@ mod session_vars {
     #[test]
     fn shared_lock_promotion_switch_uses_go_typed_state() {
         let mut vars = session_vars();
-        assert!(!vars.shared_lock_promotion_enabled());
+        assert!(!vars.shared_lock_promotion());
         let restore =
             vars.snapshot_system(tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_PROMOTION);
         vars.set_system(
@@ -648,9 +648,9 @@ mod session_vars {
             "ON".to_owned(),
         )
         .unwrap();
-        assert!(vars.shared_lock_promotion_enabled());
+        assert!(vars.shared_lock_promotion());
         vars.restore_system(restore);
-        assert!(!vars.shared_lock_promotion_enabled());
+        assert!(!vars.shared_lock_promotion());
 
         let globals = GlobalSysvars::new();
         globals
@@ -660,7 +660,7 @@ mod session_vars {
             )
             .unwrap();
         vars.seed_from_globals(Arc::new(globals)).unwrap();
-        assert!(vars.shared_lock_promotion_enabled());
+        assert!(vars.shared_lock_promotion());
     }
 
     #[test]

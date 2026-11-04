@@ -96,9 +96,9 @@ impl<'a> RawValue<'a> {
                     Err(CodecError::InvalidEncoding("NULL value has trailing bytes"))
                 }
             }
-            VALUE_BYTES_FLAG => finish(decode_bytes(self.payload)).map(Datum::new_bytes),
+            VALUE_BYTES_FLAG => finish(decode_bytes(self.payload)).map(Datum::new_bytes_datum),
             VALUE_COMPACT_BYTES_FLAG => finish(decode_compact_bytes(self.payload))
-                .map(|value| Datum::new_bytes(value.to_vec())),
+                .map(|value| Datum::new_bytes_datum(value.to_vec())),
             VALUE_INT_FLAG => finish(decode_int(self.payload)).map(Datum::new_int),
             VALUE_UINT_FLAG => finish(decode_uint(self.payload)).map(Datum::new_uint),
             VALUE_FLOAT_FLAG => finish(decode_float(self.payload)).map(Datum::new_real),

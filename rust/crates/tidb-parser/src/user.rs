@@ -19,7 +19,7 @@
 use tidb_ast::{
     AlterUserDualPassword, AlterUserResourceKind, AlterUserResourceOption, AlterUserStmt,
     AlterUserTlsOption, CreateUserAuth, CreateUserCredential, CreateUserSpec, AdminStmt,
-    RenameUserPair, RoleSpec, UserSpec,
+    RenameUserPair, RoleIdentity, UserSpec,
 };
 use tidb_lexer::{is_reserved, TokenKind};
 
@@ -405,7 +405,7 @@ impl Parser {
 
     /// CREATE ROLE uses Go's strict `parseRoleIdentity`, unlike SET ROLE's
     /// account-based `parseUserAsRole` path in `set.rs`.
-    fn parse_create_role_spec(&mut self) -> PResult<RoleSpec> {
+    fn parse_create_role_spec(&mut self) -> PResult<RoleIdentity> {
         let token = self.peek().clone();
         let composed = self.peek_n(1).kind == TokenKind::UserVar;
         let role = match token.kind {
@@ -422,10 +422,10 @@ impl Parser {
         } else {
             "%".to_string()
         };
-        Ok(RoleSpec { role, host })
+        Ok(RoleIdentity { role, host })
     }
 
-    fn parse_create_role_list(&mut self) -> PResult<Vec<RoleSpec>> {
+    fn parse_create_role_list(&mut self) -> PResult<Vec<RoleIdentity>> {
         let mut roles = vec![self.parse_create_role_spec()?];
         while self.is_op(",") {
             self.bump();

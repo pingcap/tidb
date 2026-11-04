@@ -920,7 +920,7 @@ mod tests {
                 FieldTypeCode::NewDecimal,
                 Datum::Decimal(Decimal::from_literal("1.2")),
             ),
-            (FieldTypeCode::Varchar, Datum::new_string("abc")),
+            (FieldTypeCode::Varchar, Datum::new_string_datum("abc")),
             (
                 FieldTypeCode::Duration,
                 Datum::Duration(MySqlDuration::new(0, 0, 0, 0, 0).expect("valid zero duration")),

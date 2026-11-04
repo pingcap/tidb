@@ -17,7 +17,7 @@
 use tidb_ast::{
     AdminStmt, AnalyzeTableStmt, BeginStmt, BinaryOp, BrieKind, BrieOption,
     BrieOptionValue, BrieStmt, CompactReplicaKind, CompletionType, DdlStmt, DropStatsStmt,
-    Expr, FlushStmt, FlushTarget, GrantLevel,
+    Expr, FlushStmt, FlushStmtType, GrantLevel,
     GrantStmt, Hint, HintKind, HintTable, JoinNode, KillStmt, KillTarget,
     LeadingElement, NodeBox, PlanReplayerStmt, PlanReplayerTarget,
     QueryWatchOption, QueryWatchTextOption, ResourceGroupRunawayAction, RunawayWatchType,
@@ -234,7 +234,7 @@ fn misc_visitor_cover() {
         // &ast.FlushStmt{}
         admin(AdminStmt::Flush(Box::new(FlushStmt {
             no_write_to_binlog: false,
-            target: FlushTarget::Status,
+            target: FlushStmtType::Status,
         }))),
         // &ast.VariableAssignment{Value} → covered by the SET assignment
         // above; Do's expression keeps an expression-level walk covered.

@@ -415,7 +415,7 @@ impl MemTableRetriever for InstanceStateRetriever {
             ));
         }
         if Self::is_client_errors_summary(table) {
-            return client_errors_summary_rows(
+            return set_data_for_client_errors_summary(
                 table,
                 self.viewer.has_process,
                 self.viewer.login_user.as_deref(),
@@ -462,7 +462,7 @@ pub fn memory_usage_table_rows() -> Vec<Vec<tidb_datatype::Datum>> {
     let stats = tidb_memory::read_mem_stats();
     let current_ops = tidb_servermemorylimit::IS_KILLING
         .load(Ordering::SeqCst)
-        .then(|| Datum::new_string("shrink"))
+        .then(|| Datum::new_string_datum("shrink"))
         .unwrap_or(Datum::Null);
     let session_kill_last = tidb_servermemorylimit::SESSION_KILL_LAST
         .lock()
@@ -631,7 +631,7 @@ pub fn statement_summary_rows(
 }
 
 /// Pinned Go `memtableRetriever.setDataForClientErrorsSummary`.
-pub fn client_errors_summary_rows(
+pub fn set_data_for_client_errors_summary(
     table_name: &str,
     has_process: bool,
     login_user: Option<&str>,
@@ -641,7 +641,7 @@ pub fn client_errors_summary_rows(
     use tidb_errno::infoschema::{self, ErrorStats};
 
     fn text(value: &str) -> Datum {
-        Datum::new_string(value.as_bytes())
+        Datum::new_string_datum(value.as_bytes())
     }
 
     fn count(value: isize) -> Datum {

@@ -224,7 +224,7 @@ fn assert_entry(name: &str, written: &Written) {
 fn a_unique_case_insensitive_entry_carries_gos_restored_data() {
     let (mut t, written, mut store) = table(vec![column(2, "s", varchar(Collation::Utf8Mb4GeneralCi))]);
     t.add_index(index(1, true, vec![0]), false);
-    t.insert_row(&mut store, &[Datum::new_collation_string(
+    t.insert_row(&mut store, &[Datum::new_collation_string_datum(
             b"A".to_vec(),
             Collation::Utf8Mb4GeneralCi,
         )],
@@ -244,7 +244,7 @@ fn one_captured_mode_drives_both_kv_index_key_and_value() {
     let (mut modern, modern_written, mut modern_store) = table_with_collation(columns, true);
     legacy.add_index(index(1, true, vec![0]), false);
     modern.add_index(index(1, true, vec![0]), false);
-    let row = [Datum::new_collation_string(
+    let row = [Datum::new_collation_string_datum(
         b"A".to_vec(),
         Collation::Utf8Mb4GeneralCi,
     )];
@@ -292,7 +292,7 @@ fn one_captured_mode_drives_both_kv_index_key_and_value() {
 fn a_non_unique_case_insensitive_entry_is_not_the_bare_marker_byte() {
     let (mut t, written, mut store) = table(vec![column(2, "s", varchar(Collation::Utf8Mb4GeneralCi))]);
     t.add_index(index(1, false, vec![0]), false);
-    t.insert_row(&mut store, &[Datum::new_collation_string(
+    t.insert_row(&mut store, &[Datum::new_collation_string_datum(
             b"A".to_vec(),
             Collation::Utf8Mb4GeneralCi,
         )],
@@ -309,7 +309,7 @@ fn a_non_unique_case_insensitive_entry_is_not_the_bare_marker_byte() {
 fn a_bin_collation_entry_restores_the_trailing_space_its_key_trimmed() {
     let (mut t, written, mut store) = table(vec![column(2, "s", varchar(Collation::Utf8Mb4Bin))]);
     t.add_index(index(1, true, vec![0]), false);
-    t.insert_row(&mut store, &[Datum::new_collation_string(
+    t.insert_row(&mut store, &[Datum::new_collation_string_datum(
             b"a ".to_vec(),
             Collation::Utf8Mb4Bin,
         )],
@@ -358,8 +358,8 @@ fn a_clustered_varchar_handle_restores_itself_into_every_secondary_entry() {
     t.set_common_handle_offsets(vec![0]);
     t.add_index(index(2, false, vec![1]), false);
     t.insert_row(&mut store, &[
-            Datum::new_collation_string(b"Key".to_vec(), Collation::Utf8Mb4GeneralCi),
-            Datum::new_collation_string(b"Val".to_vec(), Collation::Utf8Mb4GeneralCi),
+            Datum::new_collation_string_datum(b"Key".to_vec(), Collation::Utf8Mb4GeneralCi),
+            Datum::new_collation_string_datum(b"Val".to_vec(), Collation::Utf8Mb4GeneralCi),
         ],
         &tidb_exprctx::NoColumns,
     )

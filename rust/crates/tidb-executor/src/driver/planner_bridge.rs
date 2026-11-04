@@ -3838,7 +3838,7 @@ mod statistics_initialization_tests {
         // Index 11 is an unloaded placeholder that storage never recorded.
         statistics.hist_coll.get_index(11).unwrap().write().unwrap().stats_loaded_status =
             tidb_stats::StatsLoadedStatus::default();
-        statistics.existence_map().write().unwrap().delete_index_not_found(11);
+        statistics.col_and_idx_existence_map().write().unwrap().delete_index_not_found(11);
         for ndv in [2, 0] {
             let published = statistics.copy_as(tidb_stats::CopyIntent::AllDataWritable);
             let cache_usable = {

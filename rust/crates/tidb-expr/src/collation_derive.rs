@@ -154,10 +154,10 @@ pub fn coercibility_of(expr: &Expression) -> Coercibility {
 pub(crate) fn info_metadata_value(name: &str, arg: &Expression) -> Option<Datum> {
     let field_type = ret_type_of(arg);
     match name {
-        "charset" => Some(Datum::new_string(
+        "charset" => Some(Datum::new_string_datum(
             field_type.charset_name().as_bytes().to_vec(),
         )),
-        "collation" => Some(Datum::new_string(
+        "collation" => Some(Datum::new_string_datum(
             field_type.collation_name().as_bytes().to_vec(),
         )),
         "coercibility" => Some(Datum::Int(i64::from(coercibility_of(arg).0))),

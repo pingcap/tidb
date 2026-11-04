@@ -109,7 +109,7 @@ fn json_call(name: &str, vals: &[Datum]) -> Result<Datum, EvalError> {
 }
 
 fn json_s(value: &str) -> Datum {
-    Datum::new_string(value.to_string())
+    Datum::new_string_datum(value.to_string())
 }
 
 fn json_eq(left: &Datum, right: &str) {
@@ -168,7 +168,7 @@ impl Columns for InfoColumns {
 
     fn sysvar(&self, _: Option<tidb_ast::SysVarScope>, name: &str) -> Option<Datum> {
         name.eq_ignore_ascii_case("version").then(|| {
-            Datum::new_string(
+            Datum::new_string_datum(
                 self.version
                     .clone()
                     .unwrap_or_else(|| runtime_versions().server_version),
@@ -212,7 +212,7 @@ fn current_user() {
     };
     assert_eq!(
         eval_info("current_user", text_ft(), &ctx),
-        Datum::new_string(b"root@localhost".to_vec())
+        Datum::new_string_datum(b"root@localhost".to_vec())
     );
     assert_eq!(
         eval_info("current_user", text_ft(), &InfoColumns::default()),
@@ -233,7 +233,7 @@ fn current_role() {
         };
         assert_eq!(
             eval_info("current_role", text_ft(), &ctx),
-            Datum::new_string(expected.as_bytes().to_vec())
+            Datum::new_string_datum(expected.as_bytes().to_vec())
         );
     }
 }
@@ -258,7 +258,7 @@ fn version() {
     };
     assert_eq!(
         eval_info("version", text_ft(), &ctx),
-        Datum::new_string(expected.into_bytes())
+        Datum::new_string_datum(expected.into_bytes())
     );
     assert_eq!(rewrite("version()").static_type().unwrap().flen(), 64);
 }
@@ -345,7 +345,7 @@ fn tidb_version() {
         };
         assert_eq!(
             eval_info("tidb_version", text_ft(), &ctx),
-            Datum::new_string(expected.into_bytes())
+            Datum::new_string_datum(expected.into_bytes())
         );
     }
 }
@@ -393,29 +393,29 @@ fn format_bytes() {
     let ctx = NoColumns;
     for (arg, want) in [
         (Datum::Null, Datum::Null),
-        (Datum::Real(0.0), Datum::new_string("0 bytes")),
-        (Datum::Real(2048.0), Datum::new_string("2.00 KiB")),
-        (Datum::Real(75_295_729.0), Datum::new_string("71.81 MiB")),
-        (Datum::Real(5_287_242_702.0), Datum::new_string("4.92 GiB")),
+        (Datum::Real(0.0), Datum::new_string_datum("0 bytes")),
+        (Datum::Real(2048.0), Datum::new_string_datum("2.00 KiB")),
+        (Datum::Real(75_295_729.0), Datum::new_string_datum("71.81 MiB")),
+        (Datum::Real(5_287_242_702.0), Datum::new_string_datum("4.92 GiB")),
         (
             Datum::Real(5_039_757_204_245.0),
-            Datum::new_string("4.58 TiB"),
+            Datum::new_string_datum("4.58 TiB"),
         ),
         (
             Datum::Real(890_250_274_520_475_525.0),
-            Datum::new_string("790.70 PiB"),
+            Datum::new_string_datum("790.70 PiB"),
         ),
         (
             Datum::Real(18_446_644_073_709_551_615.0),
-            Datum::new_string("16.00 EiB"),
+            Datum::new_string_datum("16.00 EiB"),
         ),
         (
             Datum::Real(287_952_852_482_075_252_752_429_875.0),
-            Datum::new_string("2.50e+08 EiB"),
+            Datum::new_string_datum("2.50e+08 EiB"),
         ),
         (
             Datum::Real(-18_446_644_073_709_551_615.0),
-            Datum::new_string("-16.00 EiB"),
+            Datum::new_string_datum("-16.00 EiB"),
         ),
     ] {
         assert_eq!(
@@ -434,27 +434,27 @@ fn format_nano_time() {
     let ctx = NoColumns;
     for (arg, want) in [
         (Datum::Null, Datum::Null),
-        (Datum::Real(0.0), Datum::new_string("0 ns")),
-        (Datum::Real(2000.0), Datum::new_string("2.00 us")),
-        (Datum::Real(898_787_877.0), Datum::new_string("898.79 ms")),
-        (Datum::Real(9_999_999_991.0), Datum::new_string("10.00 s")),
+        (Datum::Real(0.0), Datum::new_string_datum("0 ns")),
+        (Datum::Real(2000.0), Datum::new_string_datum("2.00 us")),
+        (Datum::Real(898_787_877.0), Datum::new_string_datum("898.79 ms")),
+        (Datum::Real(9_999_999_991.0), Datum::new_string_datum("10.00 s")),
         (
             Datum::Real(898_787_877_424.0),
-            Datum::new_string("14.98 min"),
+            Datum::new_string_datum("14.98 min"),
         ),
         (
             Datum::Real(5_827_527_520_021.0),
-            Datum::new_string("1.62 h"),
+            Datum::new_string_datum("1.62 h"),
         ),
         (
             Datum::Real(42_566_623_663_736_353.0),
-            Datum::new_string("492.67 d"),
+            Datum::new_string_datum("492.67 d"),
         ),
         (
             Datum::Real(4_827_524_825_702_572_425_242_552.0),
-            Datum::new_string("5.59e+10 d"),
+            Datum::new_string_datum("5.59e+10 d"),
         ),
-        (Datum::Real(-9_999_999_991.0), Datum::new_string("-10.00 s")),
+        (Datum::Real(-9_999_999_991.0), Datum::new_string_datum("-10.00 s")),
     ] {
         assert_eq!(
             crate::builtin_ext::info::dispatch("FORMAT_NANO_TIME", &[arg.clone()], &ctx)
@@ -1817,19 +1817,19 @@ fn ceil() {
             Datum::Real(-1.0)
         );
         assert_eq!(
-            math_call(name, &[Datum::new_string("1.23")]).unwrap(),
+            math_call(name, &[Datum::new_string_datum("1.23")]).unwrap(),
             Datum::Real(2.0)
         );
         assert_eq!(
-            math_call(name, &[Datum::new_string("-1.23")]).unwrap(),
+            math_call(name, &[Datum::new_string_datum("-1.23")]).unwrap(),
             Datum::Real(-1.0)
         );
         assert_eq!(
-            math_call(name, &[Datum::new_string("tidb")]).unwrap(),
+            math_call(name, &[Datum::new_string_datum("tidb")]).unwrap(),
             Datum::Real(0.0)
         );
         assert_eq!(
-            math_call(name, &[Datum::new_string("1tidb")]).unwrap(),
+            math_call(name, &[Datum::new_string_datum("1tidb")]).unwrap(),
             Datum::Real(1.0)
         );
     }
@@ -1856,11 +1856,11 @@ fn exp() {
         Datum::Real(1.0)
     );
     assert_eq!(
-        math_call("EXP", &[Datum::new_string("0")]).unwrap(),
+        math_call("EXP", &[Datum::new_string_datum("0")]).unwrap(),
         Datum::Real(1.0)
     );
     assert_eq!(
-        math_call("EXP", &[Datum::new_string("tidb")]).unwrap(),
+        math_call("EXP", &[Datum::new_string_datum("tidb")]).unwrap(),
         Datum::Real(1.0)
     );
     assert_eq!(
@@ -1886,19 +1886,19 @@ fn floor() {
         Datum::Real(-2.0)
     );
     assert_eq!(
-        math_call("FLOOR", &[Datum::new_string("1.23")]).unwrap(),
+        math_call("FLOOR", &[Datum::new_string_datum("1.23")]).unwrap(),
         Datum::Real(1.0)
     );
     assert_eq!(
-        math_call("FLOOR", &[Datum::new_string("-1.23")]).unwrap(),
+        math_call("FLOOR", &[Datum::new_string_datum("-1.23")]).unwrap(),
         Datum::Real(-2.0)
     );
     assert_eq!(
-        math_call("FLOOR", &[Datum::new_string("-1.b23")]).unwrap(),
+        math_call("FLOOR", &[Datum::new_string_datum("-1.b23")]).unwrap(),
         Datum::Real(-1.0)
     );
     assert_eq!(
-        math_call("FLOOR", &[Datum::new_string("abce")]).unwrap(),
+        math_call("FLOOR", &[Datum::new_string_datum("abce")]).unwrap(),
         Datum::Real(0.0)
     );
 
@@ -1938,7 +1938,7 @@ fn log() {
         Datum::Real(2.0)
     );
     assert_eq!(
-        math_call("LOG", &[Datum::new_string("abc")]).unwrap(),
+        math_call("LOG", &[Datum::new_string_datum("abc")]).unwrap(),
         Datum::Null
     );
 }
@@ -1957,11 +1957,11 @@ fn log2() {
     );
     assert_eq!(math_call("LOG2", &[Datum::Int(-1)]).unwrap(), Datum::Null);
     assert_eq!(
-        math_call("LOG2", &[Datum::new_string("4abc")]).unwrap(),
+        math_call("LOG2", &[Datum::new_string_datum("4abc")]).unwrap(),
         Datum::Real(2.0)
     );
     assert_eq!(
-        math_call("LOG2", &[Datum::new_string("abc")]).unwrap(),
+        math_call("LOG2", &[Datum::new_string_datum("abc")]).unwrap(),
         Datum::Null
     );
 }
@@ -1980,11 +1980,11 @@ fn log10() {
     );
     assert_eq!(math_call("LOG10", &[Datum::Int(-1)]).unwrap(), Datum::Null);
     assert_eq!(
-        math_call("LOG10", &[Datum::new_string("100abc")]).unwrap(),
+        math_call("LOG10", &[Datum::new_string_datum("100abc")]).unwrap(),
         Datum::Real(2.0)
     );
     assert_eq!(
-        math_call("LOG10", &[Datum::new_string("abc")]).unwrap(),
+        math_call("LOG10", &[Datum::new_string_datum("abc")]).unwrap(),
         Datum::Null
     );
 }
@@ -2035,7 +2035,7 @@ fn pow() {
     assert_eq!(
         math_call(
             "POW",
-            &[Datum::new_string("test"), Datum::new_string("test")]
+            &[Datum::new_string_datum("test"), Datum::new_string_datum("test")]
         )
         .unwrap(),
         Datum::Real(1.0)

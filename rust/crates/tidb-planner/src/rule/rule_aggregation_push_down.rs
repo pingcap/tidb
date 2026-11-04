@@ -251,7 +251,7 @@ fn decompose(
     schema.append(std::iter::once(output.clone()));
     let arg = if null_generating {
         let mut arg_type = ret_type;
-        arg_type.del_flags(FieldTypeFlags::NOT_NULL);
+        arg_type.del_flag(FieldTypeFlags::NOT_NULL);
         let mut arg = output;
         arg.ret_type = Some(arg_type);
         arg

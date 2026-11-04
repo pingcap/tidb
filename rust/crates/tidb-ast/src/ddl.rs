@@ -180,7 +180,7 @@ pub use create_split::{CreateTableSplit, CreateTableSplitTarget};
 #[path = "ddl/create.rs"]
 mod create;
 pub use create::{
-    CreateTableAsQuery, CreateTableOnDuplicate, CreateTableStmt, CreateTableTemporary,
+    CreateTableAsQuery, OnDuplicateKeyHandlingType, CreateTableStmt, CreateTableTemporary,
 };
 
 // Partition payloads are shared by CREATE/ALTER table grammar, but their
@@ -200,7 +200,7 @@ pub use partition::{
 #[path = "ddl_index.rs"]
 mod index;
 pub use index::{
-    ForeignKeyConstraintDefinition, ForeignKeyMatch, ForeignKeyReference, IndexAlgorithm,
+    ForeignKeyConstraintDefinition, MatchType, ReferenceDef, IndexAlgorithm,
     IndexConstraintDefinition, IndexConstraintKind, IndexKind, IndexLock, IndexOnlineDdl,
     IndexOptions, IndexPreSplitRegions, IndexVisibility,
 };

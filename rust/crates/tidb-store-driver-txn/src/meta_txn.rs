@@ -47,12 +47,12 @@ use tidb_structure::transaction::{RawRangeVisitor, RawTransaction};
 use tidb_meta::MetaError;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{BufferMutation, OptimisticCommitOutcome};
-use crate::transaction::{RealOptimisticTransactionOpener, RealTransaction, StoreClient};
+use crate::transaction::{RealOptimisticTransactionOpener, TikvTxn, StoreClient};
 use tidb_txnkv::{NewTxnError, NewTxnStorage, NewTxnTransaction, OptionKey, TxnOptionValue};
 
 use tidb_kv::key::prefix_scan_end;
 
-type LiveTransaction<S> = RealTransaction<S>;
+type LiveTransaction<S> = TikvTxn<S>;
 
 /// Why an attempt failed, carrying Go's retry classification.
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -258,7 +258,7 @@ fn common_handle_padding_matches_go_on_both_sides_of_nine_bytes() {
 /// rather than wiring a new decode path.
 #[test]
 fn index_key_and_restored_data_value_match_go() {
-    let encoded_values = encode_key(&[Datum::new_bytes(b"abc".to_vec())]).unwrap();
+    let encoded_values = encode_key(&[Datum::new_bytes_datum(b"abc".to_vec())]).unwrap();
     assert_eq!(
         encode_index_seek_key(42, 7, &encoded_values),
         fixture("index_key_restored_data_key")
@@ -275,6 +275,6 @@ fn index_key_and_restored_data_value_match_go() {
     )];
     assert_eq!(
         decode(row, &columns),
-        vec![Datum::new_collation_string(b"abc", Collation::Binary)]
+        vec![Datum::new_collation_string_datum(b"abc", Collation::Binary)]
     );
 }

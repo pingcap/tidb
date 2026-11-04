@@ -606,7 +606,7 @@ pub fn build_cast_function(
         .static_type()
         .is_some_and(|source| !source.has_flag(FieldTypeFlags::NOT_NULL))
     {
-        target.del_flags(FieldTypeFlags::NOT_NULL);
+        target.del_flag(FieldTypeFlags::NOT_NULL);
     }
     // Go `castAsStringFunctionClass.getFunction`: a BIT source is first cast
     // to a binary string, and a binary source decodes into the target charset
@@ -1310,7 +1310,7 @@ mod tests {
         let chunk = Chunk::new_empty_chunk(&[]);
         assert_eq!(
             expr.eval(&NoColumns, chunk.get_row(0)).expect("eval"),
-            Datum::new_string(*b"6")
+            Datum::new_string_datum(*b"6")
         );
     }
 

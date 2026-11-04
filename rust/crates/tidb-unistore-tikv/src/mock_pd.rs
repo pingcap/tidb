@@ -36,7 +36,7 @@ use std::time::Duration;
 
 use tidb_proto::metapb;
 
-use crate::region_manager::InProcessRegionManager;
+use crate::region_manager::MockRegionManager;
 use crate::tso::Tso;
 
 /// PD's `constants.NullKeyspaceID`.
@@ -494,7 +494,7 @@ impl GcStatesClient<'_> {
 /// Go `MockPD`: the embedded store's PD.
 #[derive(Debug)]
 pub struct MockPd {
-    rm: Arc<InProcessRegionManager>,
+    rm: Arc<MockRegionManager>,
     gc_states: GcStatesManagerSimulator,
     external_timestamp: AtomicU64,
     tso: Arc<Tso>,
@@ -503,7 +503,7 @@ pub struct MockPd {
 impl MockPd {
     /// Go `NewMockPD`, over the store's oracle.
     #[must_use]
-    pub fn new(rm: Arc<InProcessRegionManager>, tso: Arc<Tso>) -> Self {
+    pub fn new(rm: Arc<MockRegionManager>, tso: Arc<Tso>) -> Self {
         Self {
             rm,
             gc_states: GcStatesManagerSimulator::new(),
@@ -514,7 +514,7 @@ impl MockPd {
 
     /// The region manager beneath.
     #[must_use]
-    pub fn region_manager(&self) -> &Arc<InProcessRegionManager> {
+    pub fn region_manager(&self) -> &Arc<MockRegionManager> {
         &self.rm
     }
 
@@ -864,7 +864,7 @@ mod tests {
     #[test]
     fn update_gc_safe_point_fails_silently_on_a_smaller_target() {
         let pd = MockPd::new(
-            Arc::new(InProcessRegionManager::single_store()),
+            Arc::new(MockRegionManager::single_store()),
             Arc::new(Tso::new()),
         );
         pd.gc_states()

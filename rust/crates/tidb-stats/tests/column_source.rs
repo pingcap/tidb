@@ -76,15 +76,15 @@ fn source_v1_and_v2_counts_and_increase_factor_match() {
     let v1 = populated_column(1);
     assert_eq!(v1.not_null_count(), 5.0);
     assert_eq!(v1.total_row_count(), 7.0);
-    assert_eq!(v1.increase_factor(14), 2.0);
+    assert_eq!(v1.get_increase_factor(14), 2.0);
 
     let v2 = populated_column(2);
     assert_eq!(v2.not_null_count(), 8.0);
     assert_eq!(v2.total_row_count(), 10.0);
-    assert_eq!(v2.increase_factor(15), 1.5);
+    assert_eq!(v2.get_increase_factor(15), 1.5);
 
     let empty = empty_column(9, false, ColumnInfo::new(tidb_model::ColumnInfo::default()));
-    assert_eq!(empty.increase_factor(200), 1.0);
+    assert_eq!(empty.get_increase_factor(200), 1.0);
 }
 
 /// Go `(*TopN).TotalCount` returns 0 for a nil TopN, so a version-2

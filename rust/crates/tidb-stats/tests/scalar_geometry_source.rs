@@ -100,13 +100,13 @@ fn source_datum_scalar_preserves_typed_cases_and_invalid_timestamp_fallback() {
         0.0
     );
 
-    let bytes = Datum::new_bytes([1_u8, 2]);
+    let bytes = Datum::new_bytes_datum([1_u8, 2]);
     assert_eq!(convert_datum_to_scalar(&bytes, 2), 0.0);
     assert_eq!(
         convert_datum_to_scalar(&bytes, 1),
         convert_bytes_to_scalar(&[2])
     );
-    let string = Datum::new_string([1_u8, 2]);
+    let string = Datum::new_string_datum([1_u8, 2]);
     assert_eq!(convert_datum_to_scalar(&string, 2), 0.0);
     assert_eq!(
         convert_datum_to_scalar(&string, 1),

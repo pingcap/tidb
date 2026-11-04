@@ -377,7 +377,7 @@ mod time_source_tests {
     fn string_arg(value: &str) -> Expression {
         let mut ft = FieldType::new(FieldTypeCode::VarString);
         ft.set_flen(value.len() as i64);
-        Expression::Constant(Constant::new(Datum::new_string(value.to_owned()), ft))
+        Expression::Constant(Constant::new(Datum::new_string_datum(value.to_owned()), ft))
     }
 
     fn chunk_time(value: &str) -> Datum {
@@ -446,7 +446,7 @@ mod vector_result_type_tests {
 
     fn string_arg() -> Expression {
         Expression::Constant(Constant::new(
-            Datum::new_string("[1,2]"),
+            Datum::new_string_datum("[1,2]"),
             FieldType::new(FieldTypeCode::VarString),
         ))
     }

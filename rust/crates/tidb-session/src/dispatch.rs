@@ -2404,7 +2404,7 @@ impl Session {
         };
         let takes_lock = match lock.kind {
             tidb_ast::LockKind::Update => true,
-            tidb_ast::LockKind::Share => self.vars.shared_lock_promotion_enabled(),
+            tidb_ast::LockKind::Share => self.vars.shared_lock_promotion(),
         };
         takes_lock && (!self.is_autocommit() || self.in_transaction())
     }

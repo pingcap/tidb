@@ -101,7 +101,7 @@ fn from_text(value: &Datum) -> Result<Datum, EvalError> {
 }
 
 fn as_text(value: &Datum) -> Result<Datum, EvalError> {
-    Ok(vector(value)?.map_or(Datum::Null, |value| Datum::new_string(value.to_string())))
+    Ok(vector(value)?.map_or(Datum::Null, |value| Datum::new_string_datum(value.to_string())))
 }
 
 #[cfg(test)]
@@ -145,10 +145,10 @@ mod tests {
         );
         assert_eq!(
             dispatch("VEC_AS_TEXT", &[vector(vec![1.0, 2.0])]),
-            Some(Ok(Datum::new_string("[1,2]")))
+            Some(Ok(Datum::new_string_datum("[1,2]")))
         );
         assert_eq!(
-            dispatch("VEC_FROM_TEXT", &[Datum::new_string("[1,2]")]),
+            dispatch("VEC_FROM_TEXT", &[Datum::new_string_datum("[1,2]")]),
             Some(Ok(vector(vec![1.0, 2.0])))
         );
     }

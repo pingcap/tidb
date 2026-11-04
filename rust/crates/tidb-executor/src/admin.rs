@@ -47,7 +47,7 @@ use crate::StmtOutput;
 /// that are NOT no-ops keep Go's exact answers.
 pub fn flush_stmt(flush: &tidb_ast::FlushStmt) -> Result<StmtOutput, DriverError> {
     match &flush.target {
-        tidb_ast::FlushTarget::Tables { read_lock, .. } => {
+        tidb_ast::FlushStmtType::Tables { read_lock, .. } => {
             if *read_lock {
                 // Go returns this as a plain error, double space and all.
                 return Err(DriverError::unsupported(
@@ -57,7 +57,7 @@ pub fn flush_stmt(flush: &tidb_ast::FlushStmt) -> Result<StmtOutput, DriverError
         }
         // Go `plugin.NotifyFlush` fails for a name no loaded plugin answers
         // to, and no plugin framework runs here, so every name fails.
-        tidb_ast::FlushTarget::TiDbPlugins(plugins) => {
+        tidb_ast::FlushStmtType::TiDbPlugins(plugins) => {
             if let Some(name) = plugins.first() {
                 return Err(DriverError::unsupported(format!(
                     "plugin '{name}' not found"
@@ -67,18 +67,18 @@ pub fn flush_stmt(flush: &tidb_ast::FlushStmt) -> Result<StmtOutput, DriverError
         // Go `executeFlushStatsDeltaOnCurrentInstance` dumps the domain's
         // buffered deltas through the statistics handle: the session's node
         // routes the statement to its statistics service.
-        tidb_ast::FlushTarget::StatsDelta { .. } => {
+        tidb_ast::FlushStmtType::StatsDelta { .. } => {
             return Err(DriverError::unsupported(
                 "statistics statements run on the session's node",
             ));
         }
-        tidb_ast::FlushTarget::ClientErrorsSummary => {
+        tidb_ast::FlushStmtType::ClientErrorsSummary => {
             tidb_errno::infoschema::flush_stats();
         }
-        tidb_ast::FlushTarget::Status
-        | tidb_ast::FlushTarget::Privileges
-        | tidb_ast::FlushTarget::Hosts
-        | tidb_ast::FlushTarget::Logs(_) => {}
+        tidb_ast::FlushStmtType::Status
+        | tidb_ast::FlushStmtType::Privileges
+        | tidb_ast::FlushStmtType::Hosts
+        | tidb_ast::FlushStmtType::Logs(_) => {}
     }
     Ok(StmtOutput::Done(true))
 }
@@ -105,7 +105,7 @@ pub fn show_ddl_output(rows: &[Vec<Datum>]) -> StmtOutput {
 
 /// Go `ShowImports`, which `buildShowSchema` has no case for: this tier
 /// answers the empty `Job_ID | State` listing.
-pub fn show_imports_output() -> StmtOutput {
+pub fn show_imports() -> StmtOutput {
     StmtOutput::Rows {
         columns: vec![
             ("Job_ID".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
@@ -916,10 +916,10 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
             }
             // Go `SimpleExec.executeFlush`.
             tidb_ast::AdminStmt::Flush(flush) => {
-                if matches!(flush.target, tidb_ast::FlushTarget::Status) {
+                if matches!(flush.target, tidb_ast::FlushStmtType::Status) {
                     self.session_vars_mut().keys_examined = 0;
                 }
-                if matches!(flush.target, tidb_ast::FlushTarget::Privileges) {
+                if matches!(flush.target, tidb_ast::FlushStmtType::Privileges) {
                     self.flush_privileges()?;
                 }
                 return flush_stmt(flush).map(Some);
@@ -935,7 +935,7 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
             // names no columns for it); this tier answers the empty
             // `Job_ID | State` listing.
             tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Imports => {
-                Ok(Some(show_imports_output()))
+                Ok(Some(show_imports()))
             }
             // Go `SimpleExec.executeKillStmt`.
             tidb_ast::AdminStmt::Kill(kill) => self.kill_stmt(kill),

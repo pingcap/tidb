@@ -239,7 +239,7 @@ pub(crate) fn conv(vals: &[Datum]) -> Result<Datum, EvalError> {
         }
     };
     match conv_text(&n, from, to)? {
-        Some(text) => Ok(Datum::new_string(text)),
+        Some(text) => Ok(Datum::new_string_datum(text)),
         None => Ok(Datum::Null),
     }
 }
@@ -1281,22 +1281,22 @@ mod tests {
     #[test]
     fn real_math_signatures_coerce_mysql_string_prefixes() {
         assert_eq!(
-            sqrt(&[Datum::new_string("4".to_owned())], &crate::NoColumns),
+            sqrt(&[Datum::new_string_datum("4".to_owned())], &crate::NoColumns),
             Ok(Datum::Real(2.0))
         );
         assert_eq!(
             sin(
-                &[Datum::new_string("not numeric".to_owned())],
+                &[Datum::new_string_datum("not numeric".to_owned())],
                 &crate::NoColumns
             ),
             Ok(Datum::Real(0.0))
         );
         assert_eq!(
-            log2(&[Datum::new_string("4abc".to_owned())], &crate::NoColumns),
+            log2(&[Datum::new_string_datum("4abc".to_owned())], &crate::NoColumns),
             Ok(Datum::Real(2.0))
         );
         assert_eq!(
-            log2(&[Datum::new_string("abc".to_owned())], &crate::NoColumns),
+            log2(&[Datum::new_string_datum("abc".to_owned())], &crate::NoColumns),
             Ok(Datum::Null)
         );
     }
@@ -1304,7 +1304,7 @@ mod tests {
     #[test]
     fn cot_preserves_go_overflow_after_string_coercion() {
         assert_eq!(
-            cot(&[Datum::new_string("tidb".to_owned())], &crate::NoColumns),
+            cot(&[Datum::new_string_datum("tidb".to_owned())], &crate::NoColumns),
             Err(EvalError::DataOutOfRange {
                 value: "DOUBLE",
                 expression: "cot(0)".to_owned(),

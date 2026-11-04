@@ -1071,7 +1071,7 @@ mod tests {
             (
                 FieldType::new(FieldTypeCode::Varchar)
                     .with_collation(tidb_charset::Collation::Utf8Mb4GeneralCi),
-                Datum::new_collation_string(
+                Datum::new_collation_string_datum(
                     b"AbC".to_vec(),
                     tidb_charset::Collation::Utf8Mb4GeneralCi,
                 ),

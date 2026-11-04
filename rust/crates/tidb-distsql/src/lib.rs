@@ -45,7 +45,7 @@ pub use chunk_decode::{
     decode_chunk, decode_response_chunks, decode_select_response, ChunkDecodeError, RawChunk,
     RawChunkRow, RawColumnarChunk, TypedColumnarChunk,
 };
-pub use context::{DistSqlContext, PagingConfig, RequestContext, SessionContext, DEFAULT_DIST_SQL_CONCURRENCY};
+pub use context::{DistSqlContext, PagingConfig, DistSQLContext, SessionContext, DEFAULT_DIST_SQL_CONCURRENCY};
 use tidb_mysql::Priority;
 pub use distsql_runtime::{analyze_request_source, analyze_result_metadata, checksum_result_metadata, mpp_result_metadata, select_result_metadata, select_with_runtime_stats, system_endian, EncodeType, SelectInput, SelectResultMetadata, SelectResultRuntimeStats, SystemEndian, ANALYZE_RESULT_LABEL, CHECKSUM_RESULT_LABEL, DAG_RESULT_LABEL, GENERAL_SQL_TYPE, INTERNAL_SQL_TYPE, INTERNAL_TXN_STATS_SOURCE, MPP_RESULT_LABEL};
 pub use envelope::{ExecutorKind, ExecutorShape, RequestEnvelope, ESTIMATED_REGION_ROW_COUNT};

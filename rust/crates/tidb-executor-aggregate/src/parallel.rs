@@ -3097,7 +3097,7 @@ mod tests {
                 vec![
                     (Datum::Null, vec![]),
                     (Datum::UInt(u64::MAX), vec![]),
-                    (Datum::new_string("quote\nslash\\"), vec![]),
+                    (Datum::new_string_datum("quote\nslash\\"), vec![]),
                     (Datum::Real(2.5), vec![]),
                 ],
                 "[null, 18446744073709551615, \"quote\\nslash\\\\\", 2.5]",
@@ -3108,10 +3108,10 @@ mod tests {
                     key_is_binary: false,
                 },
                 vec![
-                    (Datum::new_string("b"), vec![Datum::Null]),
-                    (Datum::new_string("a"), vec![Datum::Int(1)]),
-                    (Datum::new_string("a"), vec![Datum::UInt(u64::MAX)]),
-                    (Datum::new_string("quote\nkey"), vec![Datum::Int(2)]),
+                    (Datum::new_string_datum("b"), vec![Datum::Null]),
+                    (Datum::new_string_datum("a"), vec![Datum::Int(1)]),
+                    (Datum::new_string_datum("a"), vec![Datum::UInt(u64::MAX)]),
+                    (Datum::new_string_datum("quote\nkey"), vec![Datum::Int(2)]),
                 ],
                 "{\"a\": 18446744073709551615, \"b\": null, \"quote\\nkey\": 2}",
             ),

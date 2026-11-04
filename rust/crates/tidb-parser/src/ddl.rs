@@ -221,7 +221,7 @@ impl Parser {
         self.expect_kw("REPAIR")?;
         self.expect_kw("TABLE")?;
         let table = self.parse_table_name()?;
-        let create = self.parse_create_table()?;
+        let create = self.parse_create_table_stmt()?;
         Ok(RepairTableStmt { table, create })
     }
 
@@ -229,7 +229,7 @@ impl Parser {
     /// AST data rather than accepting them and then losing them before
     /// canonical restore. Go's parser test proves `CREATE SCHEMA` maps to the
     /// same `CreateDatabaseStmt` and restores as `CREATE DATABASE`.
-    pub(crate) fn parse_create_database(&mut self) -> PResult<(bool, String, Vec<DatabaseOption>)> {
+    pub(crate) fn parse_create_database_stmt(&mut self) -> PResult<(bool, String, Vec<DatabaseOption>)> {
         self.expect_kw("CREATE")?;
         if self.is_kw("DATABASE") || self.is_kw("SCHEMA") {
             self.bump();

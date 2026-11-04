@@ -128,7 +128,7 @@ fn test_row_codec() {
     ]);
     let row = vec![
         Datum::Int(100),
-        Datum::new_bytes(b"abc"),
+        Datum::new_bytes_datum(b"abc"),
         Datum::Decimal(Decimal::from_literal("1")),
         Datum::Enum(MysqlEnum::new("a", 1), Collation::Binary),
         Datum::Set(MysqlSet::new("a", 1), Collation::Binary),
@@ -244,7 +244,7 @@ fn test_unflatten_datums() {
     unflatten_datums(&mut values, &[field(FieldTypeCode::LongLong)], Some(&UTC)).unwrap();
     assert_eq!(values, [Datum::Int(1)]);
 
-    let mut values = vec![Datum::new_bytes(b"aaa")];
+    let mut values = vec![Datum::new_bytes_datum(b"aaa")];
     let blob = field(FieldTypeCode::Blob).with_collation(Collation::Utf8Mb4UnicodeCi);
     unflatten_datums(&mut values, &[blob], Some(&UTC)).unwrap();
     assert_eq!(values[0].collation(), Some(Collation::Utf8Mb4UnicodeCi));
@@ -279,7 +279,7 @@ fn test_time_codec() {
     let duration = MySqlDuration::new(12, 59, 59, 999_999, 6).unwrap();
     let row = [
         Datum::Int(100),
-        Datum::new_bytes(b"abc"),
+        Datum::new_bytes_datum(b"abc"),
         Datum::Time(timestamp),
         Datum::Duration(duration),
     ];
@@ -302,7 +302,7 @@ fn test_time_codec() {
 fn test_cut_row() {
     let row = [
         Datum::Int(100),
-        Datum::new_bytes(b"abc"),
+        Datum::new_bytes_datum(b"abc"),
         Datum::Decimal(Decimal::from_literal("1")),
     ];
     let encoded = encode_old_table_row(Some(&UTC), &row, &[1, 2, 3]).unwrap();
@@ -319,7 +319,7 @@ fn test_cut_row() {
 fn encoded_index_key() -> (Vec<Datum>, Vec<u8>) {
     let values = vec![
         Datum::Int(1),
-        Datum::new_bytes(b"abc"),
+        Datum::new_bytes_datum(b"abc"),
         Datum::Real(5.5),
         Datum::Int(100),
     ];
@@ -477,7 +477,7 @@ fn test_prefix() {
 /// Source: `tablecodec_test.go::TestDecodeIndexKey`.
 #[test]
 fn test_decode_index_key() {
-    let values = [Datum::Int(1), Datum::new_bytes(b"abc"), Datum::Real(123.45)];
+    let values = [Datum::Int(1), Datum::new_bytes_datum(b"abc"), Datum::Real(123.45)];
     let key = encode_index_seek_key(4, 5, &encode_key(&values).unwrap());
     assert_eq!(
         decode_index_key(&key).unwrap(),
@@ -907,10 +907,10 @@ fn truncate_index_values_preserve_byte_and_character_domains() {
         length: 2,
         use_changing_type: false,
     };
-    let mut binary = Datum::new_bytes("你好".as_bytes());
+    let mut binary = Datum::new_bytes_datum("你好".as_bytes());
     truncate_index_value(&mut binary, &index_column, &binary_column).unwrap();
     assert_eq!(binary.as_raw_bytes().unwrap(), &"你".as_bytes()[..2]);
-    let mut utf8 = Datum::new_collation_string("你好世界", Collation::Utf8Mb4Bin);
+    let mut utf8 = Datum::new_collation_string_datum("你好世界", Collation::Utf8Mb4Bin);
     truncate_index_value(&mut utf8, &index_column, &utf8_column).unwrap();
     assert_eq!(utf8.as_raw_bytes().unwrap(), "你好".as_bytes());
 
@@ -920,7 +920,7 @@ fn truncate_index_values_preserve_byte_and_character_domains() {
     // would produce instead would be asserting this crate against itself, and
     // that count is the one Go disagrees with elsewhere in the fixture.
     let invalid_utf8 = vec![0xf0, 0x28, 0x8c, 0x28];
-    let mut invalid = Datum::new_bytes(invalid_utf8.clone());
+    let mut invalid = Datum::new_bytes_datum(invalid_utf8.clone());
     truncate_index_value(&mut invalid, &index_column, &utf8_column).unwrap();
     assert_eq!(invalid.as_raw_bytes().unwrap(), &[0xef, 0xbf, 0xbd, 0x28]);
     // Go's rune branch always re-lands the value as a STRING, even when the
@@ -930,7 +930,7 @@ fn truncate_index_values_preserve_byte_and_character_domains() {
         length: 8,
         ..index_column
     };
-    let mut preserved = Datum::new_bytes(invalid_utf8.clone());
+    let mut preserved = Datum::new_bytes_datum(invalid_utf8.clone());
     truncate_index_value(&mut preserved, &no_truncation, &utf8_column).unwrap();
     assert_eq!(preserved.as_raw_bytes().unwrap(), invalid_utf8);
 
@@ -942,7 +942,7 @@ fn truncate_index_values_preserve_byte_and_character_domains() {
         ..index_column
     };
     let input = "éx".as_bytes();
-    let mut exact_binary = Datum::new_bytes(input);
+    let mut exact_binary = Datum::new_bytes_datum(input);
     truncate_index_value(&mut exact_binary, &one_rune, &binary_column).unwrap();
     assert_eq!(exact_binary.as_raw_bytes().unwrap(), &[0xc3]);
 
@@ -954,7 +954,7 @@ fn truncate_index_values_preserve_byte_and_character_domains() {
                 .with_charset_name(charset_name),
             ..binary_column.clone()
         };
-        let mut value = Datum::new_bytes(input);
+        let mut value = Datum::new_bytes_datum(input);
         truncate_index_value(&mut value, &one_rune, &column).unwrap();
         assert_eq!(value.as_raw_bytes().unwrap(), "é".as_bytes());
         assert!(matches!(value, Datum::String(_)));
@@ -1000,7 +1000,7 @@ fn restored_values_use_exact_collation_spelling() {
             true,
             false,
             false,
-            &[Datum::new_collation_string(
+            &[Datum::new_collation_string_datum(
                 source.clone(),
                 field_type.collation(),
             )],
@@ -1028,7 +1028,7 @@ fn clustered_v1_bin_padding_restores_memcomparable_bytes() {
         virtual_generated: false,
         field_type,
     }];
-    let indexed = encode_key(&[Datum::new_collation_string(
+    let indexed = encode_key(&[Datum::new_collation_string_datum(
         b"ab",
         Collation::Utf8Mb4Bin,
     )])
@@ -1135,7 +1135,7 @@ fn clustered_v1_uses_changing_index_field_type() {
         true,
         false,
         false,
-        &[Datum::new_collation_string(
+        &[Datum::new_collation_string_datum(
             "value",
             Collation::Utf8Mb4GeneralCi,
         )],
@@ -1169,7 +1169,7 @@ fn clustered_v1_uses_changing_index_field_type() {
         true,
         false,
         false,
-        &[Datum::new_bytes(b"value")],
+        &[Datum::new_bytes_datum(b"value")],
         &handle,
         0,
         &[],

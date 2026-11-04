@@ -710,7 +710,7 @@ impl AutoIdAllocator {
     }
     /// Go `NextGlobalAutoID`, which `SHOW CREATE TABLE` prints: the first id
     /// beyond every range reserved from the shared counter.
-    pub fn next_for_show(&self) -> Result<u64, AutoIdStoreError> {
+    pub fn next_global_auto_id(&self) -> Result<u64, AutoIdStoreError> {
         self.next_global()
     }
 

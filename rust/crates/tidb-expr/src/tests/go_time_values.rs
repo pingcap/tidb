@@ -47,7 +47,7 @@ fn eval_named(name: &str, args: Vec<Datum>) -> Result<Datum, crate::EvalError> {
 }
 
 fn s(v: &str) -> Datum {
-    Datum::new_string(v)
+    Datum::new_string_datum(v)
 }
 
 fn i(v: i64) -> Datum {

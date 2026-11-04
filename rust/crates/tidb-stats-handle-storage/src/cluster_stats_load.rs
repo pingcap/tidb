@@ -483,7 +483,7 @@ mod tests {
     #[test]
     fn storage_image_builds_the_canonical_full_statistics_table() {
         let mut primary_type = FieldType::new(FieldTypeCode::LongLong);
-        primary_type.set_flags(tidb_datatype::FieldTypeFlags::PRI_KEY);
+        primary_type.set_flag(tidb_datatype::FieldTypeFlags::PRI_KEY);
         let table_info = TableInfo {
             id: 7,
             update_ts: 55,

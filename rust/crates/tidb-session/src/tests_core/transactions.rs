@@ -349,7 +349,7 @@ fn a_begin_resolves_its_transaction_mode_from_the_keyword_then_the_variable() {
     assert_eq!(session.txn_mode(), None, "no transaction is open");
     assert_eq!(
         session.run("SELECT @@tidb_txn_mode").unwrap(),
-        StmtResult::Rows(vec![vec![Datum::new_string("pessimistic")]])
+        StmtResult::Rows(vec![vec![Datum::new_string_datum("pessimistic")]])
     );
 
     session.control_transaction("BEGIN").unwrap();
@@ -374,7 +374,7 @@ fn a_begin_resolves_its_transaction_mode_from_the_keyword_then_the_variable() {
     session.apply_set("SET tidb_txn_mode = ''").unwrap();
     assert_eq!(
         session.run("SELECT @@tidb_txn_mode").unwrap(),
-        StmtResult::Rows(vec![vec![Datum::new_string("")]])
+        StmtResult::Rows(vec![vec![Datum::new_string_datum("")]])
     );
     session.control_transaction("BEGIN").unwrap();
     assert_eq!(session.txn_mode(), Some(SessionTxnMode::Optimistic));

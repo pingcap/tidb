@@ -123,8 +123,8 @@ fn apply_cache_concurrent_get_and_set_is_safe() {
 fn vec_group_checker_datarace_owns_variable_length_and_complex_values() {
     let cases = [
         (
-            Datum::new_string("abc"),
-            Datum::new_string("replacement that grows the source"),
+            Datum::new_string_datum("abc"),
+            Datum::new_string_datum("replacement that grows the source"),
         ),
         (
             Datum::Decimal(Decimal::from_int(123)),

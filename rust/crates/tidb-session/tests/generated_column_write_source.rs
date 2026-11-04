@@ -286,7 +286,7 @@ fn generated_read_policy_uses_column_cast_and_raw_warning_shape() {
     assert_eq!(warnings.len(), 1);
     assert_eq!(
         warnings[0][2],
-        tidb_datatype::Datum::new_string("Truncated incorrect DOUBLE value: '12x'")
+        tidb_datatype::Datum::new_string_datum("Truncated incorrect DOUBLE value: '12x'")
     );
 }
 

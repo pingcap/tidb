@@ -1924,7 +1924,7 @@ impl TableCommon {
         }
         let next = self
             .row_id_allocator()
-            .next_for_show()
+            .next_global_auto_id()
             .map_err(|error| error.to_string())?;
         let mask = ((1u64 << bits) - 1) << (64 - bits - 1);
         if next & mask > 0 {
@@ -3474,7 +3474,7 @@ impl TableCommon {
         ctx: Option<&dyn tidb_tblctx::MutateContext>,
     ) -> Result<Option<i64>, AutoIdStoreError> {
         self.auto_increment_offset
-            .map(|_| self.auto_id_allocator_in(ctx).next_for_show().map(|v| v as i64))
+            .map(|_| self.auto_id_allocator_in(ctx).next_global_auto_id().map(|v| v as i64))
             .transpose()
     }
 

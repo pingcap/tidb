@@ -197,7 +197,7 @@ pub fn type_infer_for_null(args: &mut [Expression]) {
             continue;
         };
         let mut inferred = ret_field_type.clone();
-        inferred.del_flags(FieldTypeFlags::NOT_NULL);
+        inferred.del_flag(FieldTypeFlags::NOT_NULL);
         constant.ret_type = Some(inferred);
     }
 }
@@ -696,7 +696,7 @@ mod tests {
                         int_constant(-1)
                     }
                     _ => Expression::Constant(Constant::new(
-                        Datum::new_string(if kind == "truncated" { "10ab" } else { "10.5" }),
+                        Datum::new_string_datum(if kind == "truncated" { "10ab" } else { "10.5" }),
                         FieldType::new(FieldTypeCode::VarString),
                     )),
                 };

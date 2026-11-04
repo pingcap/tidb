@@ -212,7 +212,7 @@ fn fold_current_value_in(
     let mut ret_type = expr.static_type()?.clone();
     if !has_null_arg {
         if value.is_null() {
-            ret_type.del_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+            ret_type.del_flag(tidb_datatype::FieldTypeFlags::NOT_NULL);
         } else {
             ret_type.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
         }
@@ -519,7 +519,7 @@ fn fold_value(expr: &mut Expression) -> Option<Datum> {
         };
         if let Some(ret_type) = func.ret_type.as_mut() {
             if matches!(value, Datum::Null) {
-                ret_type.del_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+                ret_type.del_flag(tidb_datatype::FieldTypeFlags::NOT_NULL);
             } else {
                 ret_type.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
             }
@@ -879,11 +879,11 @@ mod deferred_function_tests {
             vec![
                 Expression::Constant(crate::constant::Constant::new(Datum::Int(0), int_type)),
                 Expression::Constant(crate::constant::Constant::new(
-                    Datum::new_string("0"),
+                    Datum::new_string_datum("0"),
                     string_type.clone(),
                 )),
                 Expression::Constant(crate::constant::Constant::new(
-                    Datum::new_string("abc"),
+                    Datum::new_string_datum("abc"),
                     string_type,
                 )),
             ],

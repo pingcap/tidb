@@ -125,7 +125,7 @@
 //! # Narrowings, every one named
 //!
 //! * **`plannerutil.HandleCols`** (`pkg/planner/util/handle_cols.go`) is
-//!   [`HandleColumns`]: `BuildHandle` (:261) and `Compare` (:327) are its two
+//!   [`HandleCols`]: `BuildHandle` (:261) and `Compare` (:327) are its two
 //!   uses, and it is a planner type, outside this Go package.
 //! * **`kv.MemBuffer.SnapshotGetter()`** (`pkg/kv/kv.go:224`, implemented in
 //!   `pkg/store/driver/txn/unionstore_driver.go:138`) is
@@ -219,7 +219,7 @@ fn from_mem_reader_error(error: MemReaderError) -> ExecError {
 /// is spelled -- one `PKIsHandle` column, a clustered tuple, or the hidden
 /// `_tidb_rowid` -- is a planner fact carried down with the plan. Only the two
 /// methods `union_scan.go` calls are declared.
-pub trait HandleColumns: Send {
+pub trait HandleCols: Send {
     /// Go `HandleCols.BuildHandle(sc, row)`
     /// (`pkg/executor/union_scan.go:261`): the handle of a CHILD chunk row.
     fn build_handle(&self, row: Row<'_>) -> Result<TableHandle, ExecError>;
@@ -273,7 +273,7 @@ pub struct CompareExec {
     /// `PropMatchedNeedMergeSort`). READ by `mem_reader.go`, not by this file.
     pub need_extra_sorting: bool,
     /// Go `handleCols`: "the handle's position of the below scan plan."
-    pub handle_cols: Box<dyn HandleColumns>,
+    pub handle_cols: Box<dyn HandleCols>,
 }
 
 impl CompareExec {
@@ -813,7 +813,7 @@ mod tests {
     /// Column 0 is the handle: Go's `PKIsHandle` shape.
     struct FirstColumnHandle;
 
-    impl HandleColumns for FirstColumnHandle {
+    impl HandleCols for FirstColumnHandle {
         fn build_handle(&self, row: Row<'_>) -> Result<TableHandle, ExecError> {
             Ok(TableHandle::Int(row.get_int64(0)))
         }

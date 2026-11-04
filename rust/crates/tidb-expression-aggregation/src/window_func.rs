@@ -108,18 +108,18 @@ impl WindowFuncDesc {
             | names::APPROX_COUNT_DISTINCT
             | names::BIT_AND
             | names::BIT_OR
-            | names::BIT_XOR => base.ret_type.set_flags(FieldTypeFlags::NOT_NULL),
+            | names::BIT_XOR => base.ret_type.set_flag(FieldTypeFlags::NOT_NULL),
             names::LEAD | names::LAG => {
                 if arg_count == 3
                     && arg_flags[0] & FieldTypeFlags::NOT_NULL != 0
                     && arg_flags[2] & FieldTypeFlags::NOT_NULL != 0
                 {
-                    base.ret_type.set_flags(FieldTypeFlags::NOT_NULL);
+                    base.ret_type.set_flag(FieldTypeFlags::NOT_NULL);
                 } else {
-                    base.ret_type.del_flags(FieldTypeFlags::NOT_NULL);
+                    base.ret_type.del_flag(FieldTypeFlags::NOT_NULL);
                 }
             }
-            _ => base.ret_type.del_flags(FieldTypeFlags::NOT_NULL),
+            _ => base.ret_type.del_flag(FieldTypeFlags::NOT_NULL),
         }
         Ok(Some(WindowFuncDesc { base }))
     }

@@ -281,7 +281,7 @@ fn preserve_not_null_flag(source: &Expression, target: &mut Expression) {
     if not_null {
         target_type.add_flags(FieldTypeFlags::NOT_NULL);
     } else {
-        target_type.del_flags(FieldTypeFlags::NOT_NULL);
+        target_type.del_flag(FieldTypeFlags::NOT_NULL);
     }
 }
 

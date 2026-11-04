@@ -31,32 +31,32 @@ fn conv_matches_go_prefix_and_base_semantics() {
     assert_eq!(conv_valid_prefix("+", 12), "");
 
     let cases = [
-        ("a", 16, 2, Datum::new_string("1010".to_string())),
-        ("6E", 18, 8, Datum::new_string("172".to_string())),
-        ("-17", 10, -18, Datum::new_string("-H".to_string())),
+        ("a", 16, 2, Datum::new_string_datum("1010".to_string())),
+        ("6E", 18, 8, Datum::new_string_datum("172".to_string())),
+        ("-17", 10, -18, Datum::new_string_datum("-H".to_string())),
         (
             "-17",
             10,
             18,
-            Datum::new_string("2D3FGB0B9CG4BD1H".to_string()),
+            Datum::new_string_datum("2D3FGB0B9CG4BD1H".to_string()),
         ),
-        ("+18aZ", 7, 36, Datum::new_string("1".to_string())),
+        ("+18aZ", 7, 36, Datum::new_string_datum("1".to_string())),
         (
             "18446744073709551615",
             -10,
             16,
-            Datum::new_string("7FFFFFFFFFFFFFFF".to_string()),
+            Datum::new_string_datum("7FFFFFFFFFFFFFFF".to_string()),
         ),
-        ("12F", -10, 16, Datum::new_string("C".to_string())),
-        ("  FF ", 16, 10, Datum::new_string("255".to_string())),
-        ("TIDB", 10, 8, Datum::new_string("0".to_string())),
-        ("aa", 10, 2, Datum::new_string("0".to_string())),
-        (" A", -10, 16, Datum::new_string("0".to_string())),
-        ("a6a", 10, 8, Datum::new_string("0".to_string())),
+        ("12F", -10, 16, Datum::new_string_datum("C".to_string())),
+        ("  FF ", 16, 10, Datum::new_string_datum("255".to_string())),
+        ("TIDB", 10, 8, Datum::new_string_datum("0".to_string())),
+        ("aa", 10, 2, Datum::new_string_datum("0".to_string())),
+        (" A", -10, 16, Datum::new_string_datum("0".to_string())),
+        ("a6a", 10, 8, Datum::new_string_datum("0".to_string())),
         ("a6a", 1, 8, Datum::Null),
     ];
     for (n, from, to, want) in cases {
-        assert_eq!(call_conv(Datum::new_string(n.to_string()), from, to), want);
+        assert_eq!(call_conv(Datum::new_string_datum(n.to_string()), from, to), want);
     }
     assert_eq!(call_conv(Datum::Null, 10, 10), Datum::Null);
 }
@@ -70,10 +70,10 @@ fn conv_matches_go_prefix_and_base_semantics() {
 /// ```
 #[test]
 fn conv_reads_the_unsigned_base_domain() {
-    let want = Datum::new_string("1010".to_string());
+    let want = Datum::new_string_datum("1010".to_string());
     assert_eq!(
         conv(&[
-            Datum::new_string("a".to_string()),
+            Datum::new_string_datum("a".to_string()),
             Datum::UInt(16),
             Datum::Int(2)
         ])
@@ -82,7 +82,7 @@ fn conv_reads_the_unsigned_base_domain() {
     );
     assert_eq!(
         conv(&[
-            Datum::new_string("a".to_string()),
+            Datum::new_string_datum("a".to_string()),
             Datum::Int(16),
             Datum::UInt(2)
         ])
@@ -92,7 +92,7 @@ fn conv_reads_the_unsigned_base_domain() {
     // A NULL base still short-circuits to NULL.
     assert_eq!(
         conv(&[
-            Datum::new_string("a".to_string()),
+            Datum::new_string_datum("a".to_string()),
             Datum::Null,
             Datum::Int(2)
         ])
@@ -114,7 +114,7 @@ fn conv_reinterprets_binary_literals_through_base_two() {
                 from,
                 to,
             ),
-            Datum::new_string(expected),
+            Datum::new_string_datum(expected),
         );
     }
 }
@@ -125,14 +125,14 @@ fn conv_reinterprets_binary_literals_through_base_two() {
 #[test]
 fn crc32_matches_go_utf8_source_vectors() {
     let cases = [
-        (Datum::new_string("".to_string()), 0),
+        (Datum::new_string_datum("".to_string()), 0),
         (Datum::Int(-1), 808_273_962),
-        (Datum::new_string("-1".to_string()), 808_273_962),
-        (Datum::new_string("mysql".to_string()), 2_501_908_538),
-        (Datum::new_string("MySQL".to_string()), 3_259_397_556),
-        (Datum::new_string("hello".to_string()), 907_060_870),
-        (Datum::new_string("一二三".to_string()), 1_785_250_883),
-        (Datum::new_string("一".to_string()), 2_416_838_398),
+        (Datum::new_string_datum("-1".to_string()), 808_273_962),
+        (Datum::new_string_datum("mysql".to_string()), 2_501_908_538),
+        (Datum::new_string_datum("MySQL".to_string()), 3_259_397_556),
+        (Datum::new_string_datum("hello".to_string()), 907_060_870),
+        (Datum::new_string_datum("一二三".to_string()), 1_785_250_883),
+        (Datum::new_string_datum("一".to_string()), 2_416_838_398),
     ];
     for (input, want) in cases {
         assert_eq!(crc32(&[input]), Ok(Datum::UInt(want)));

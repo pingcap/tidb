@@ -100,7 +100,7 @@ fn vectorized_time_harness_representative_cases_match_scalar_answers() {
                 if *text == "<NULL>" {
                     dispatched(name, &[Datum::Null], &NoColumns)
                 } else {
-                    dispatched(name, &[Datum::new_string(*text)], &NoColumns)
+                    dispatched(name, &[Datum::new_string_datum(*text)], &NoColumns)
                 }
                 .label()
             })
@@ -114,7 +114,7 @@ fn vectorized_time_harness_representative_cases_match_scalar_answers() {
         pairs
             .iter()
             .map(|(left, right)| {
-                eval(&[Datum::new_string(*left), Datum::new_string(*right)])
+                eval(&[Datum::new_string_datum(*left), Datum::new_string_datum(*right)])
                     .expect("source pair must evaluate")
                     .label()
             })
@@ -165,10 +165,10 @@ fn vectorized_time_format_empty_format_returns_null() {
     let noon = MySqlDuration::new(12, 34, 56, 0, 0).expect("a valid duration");
     let early = MySqlDuration::new(1, 2, 3, 0, 0).expect("a valid duration");
     let rows = [
-        (Datum::Duration(noon.clone()), Datum::new_string(""), "NULL"),
+        (Datum::Duration(noon.clone()), Datum::new_string_datum(""), "NULL"),
         (
             Datum::Duration(early),
-            Datum::new_string("%H:%i:%s"),
+            Datum::new_string_datum("%H:%i:%s"),
             "STR:01:02:03",
         ),
         (Datum::Duration(noon), Datum::Null, "NULL"),

@@ -369,7 +369,7 @@ fn fixture_chunk(
                     &encode_value_in_timezone(
                         &zone,
                         &[
-                            Datum::new_string(text.as_bytes()),
+                            Datum::new_string_datum(text.as_bytes()),
                             Datum::Int(*value),
                             Datum::Time(zone_time(when)),
                         ],

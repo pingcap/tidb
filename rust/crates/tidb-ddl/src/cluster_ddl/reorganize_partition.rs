@@ -170,7 +170,7 @@ pub fn prepare_reorganize_partition_job_submission<S: MetaSnapshot>(
         tidb_ast::AlterPartitionAction::Coalesce { count, .. } => {
             tidb_ddl_build::partition_ddl::hash_partition_management(
                 &kv,
-                tidb_ddl_build::partition_ddl::HashManagement::Coalesce(*count),
+                tidb_ddl_build::partition_ddl::HashPartitionManagement::Coalesce(*count),
                 &ctx,
                 &mut host,
             )
@@ -178,13 +178,13 @@ pub fn prepare_reorganize_partition_job_submission<S: MetaSnapshot>(
         tidb_ast::AlterPartitionAction::Add { spec, .. } => {
             let change = match spec {
                 tidb_ast::AddPartitionSpec::Definitions(definitions) => {
-                    tidb_ddl_build::partition_ddl::HashManagement::Add {
+                    tidb_ddl_build::partition_ddl::HashPartitionManagement::Add {
                         count: 0,
                         definitions,
                     }
                 }
                 tidb_ast::AddPartitionSpec::Count(count) => {
-                    tidb_ddl_build::partition_ddl::HashManagement::Add {
+                    tidb_ddl_build::partition_ddl::HashPartitionManagement::Add {
                         count: *count,
                         definitions: &[],
                     }

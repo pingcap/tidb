@@ -142,14 +142,14 @@ fn test_convert_type() {
     let blob4 = FieldType::new(FieldTypeCode::Blob)
         .with_flen(4)
         .with_collation(Collation::Utf8Bin);
-    let value = convert_err(&Datum::new_string("123456"), &blob4, "blob(4) '123456'").unwrap();
+    let value = convert_err(&Datum::new_string_datum("123456"), &blob4, "blob(4) '123456'").unwrap();
     assert_eq!(value.as_raw_bytes(), Some(&b"1234"[..]));
 
     let binary_string4 = FieldType::new(FieldTypeCode::String)
         .with_flen(4)
         .with_collation(Collation::Binary);
     let value = convert_err(
-        &Datum::new_string("12345"),
+        &Datum::new_string_datum("12345"),
         &binary_string4,
         "binary char(4) '12345'",
     )
@@ -192,13 +192,13 @@ fn test_convert_type() {
     // For TypeString: flen counts characters, and a binary charset returns
     // bytes rather than a collated string.
     let string3 = FieldType::new(FieldTypeCode::String).with_flen(3);
-    let value = convert_err(&Datum::new_string("12345"), &string3, "char(3) '12345'").unwrap();
+    let value = convert_err(&Datum::new_string_datum("12345"), &string3, "char(3) '12345'").unwrap();
     assert_eq!(value.as_raw_bytes(), Some(&b"123"[..]));
     let binary_string3 = FieldType::new(FieldTypeCode::String)
         .with_flen(3)
         .with_collation(Collation::Binary);
     let value = convert_err(
-        &Datum::new_string("12345"),
+        &Datum::new_string_datum("12345"),
         &binary_string3,
         "binary char(3) '12345'",
     )
@@ -209,7 +209,7 @@ fn test_convert_type() {
     // including when the source is a DATETIME or a TIMESTAMP.
     let duration3 = FieldType::new(FieldTypeCode::Duration).with_decimal(3);
     let value = convert_ok(
-        &Datum::new_string("10:11:12.123456"),
+        &Datum::new_string_datum("10:11:12.123456"),
         &duration3,
         "time(3) '10:11:12.123456'",
     );
@@ -239,7 +239,7 @@ fn test_convert_type() {
     // For mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate.
     let timestamp3 = FieldType::new(FieldTypeCode::Timestamp).with_decimal(3);
     let value = convert_ok(
-        &Datum::new_string("2010-10-10 10:11:11.12345"),
+        &Datum::new_string_datum("2010-10-10 10:11:11.12345"),
         &timestamp3,
         "timestamp(3) string",
     );
@@ -251,7 +251,7 @@ fn test_convert_type() {
     // For TypeLonglong.
     let bigint = FieldType::new(FieldTypeCode::LongLong);
     assert_eq!(
-        convert_ok(&Datum::new_string("100"), &bigint, "bigint '100'"),
+        convert_ok(&Datum::new_string_datum("100"), &bigint, "bigint '100'"),
         Datum::Int(100)
     );
     // issue 4287.
@@ -266,7 +266,7 @@ fn test_convert_type() {
     let unsigned_bigint = bigint.clone().with_added_flags(FieldTypeFlags::UNSIGNED);
     assert_eq!(
         convert_ok(
-            &Datum::new_string("100"),
+            &Datum::new_string_datum("100"),
             &unsigned_bigint,
             "bigint unsigned '100'"
         ),
@@ -306,7 +306,7 @@ fn test_convert_type() {
     // For TypeBit.
     let bit24 = FieldType::new(FieldTypeCode::Bit).with_flen(24);
     assert_eq!(
-        convert_ok(&Datum::new_string("100"), &bit24, "bit(24) '100'"),
+        convert_ok(&Datum::new_string_datum("100"), &bit24, "bit(24) '100'"),
         Datum::new_mysql_bit(BinaryLiteral::from_uint(
             3_223_600,
             Some(BinaryLiteralWidth::try_from(3_u8).unwrap())
@@ -348,7 +348,7 @@ fn test_convert_type() {
     );
     assert_eq!(
         convert_ok(
-            &Datum::new_string("3.1415926"),
+            &Datum::new_string_datum("3.1415926"),
             &decimal84,
             "decimal(8,4) '3.1415926'"
         )
@@ -363,12 +363,12 @@ fn test_convert_type() {
         ("1,999,999.00", "1.0000"),
     ] {
         let row = format!("decimal(8,4) {input:?}");
-        let value = convert_err(&Datum::new_string(input), &decimal84, &row).unwrap();
+        let value = convert_err(&Datum::new_string_datum(input), &decimal84, &row).unwrap();
         assert_eq!(value.sql_string().unwrap(), expected, "{row}");
     }
     assert_eq!(
         convert_ok(
-            &Datum::new_string("199.00 "),
+            &Datum::new_string_datum("199.00 "),
             &decimal84,
             "decimal(8,4) '199.00 '"
         )
@@ -380,14 +380,14 @@ fn test_convert_type() {
     // Go calls `Datum.ToDecimal` first with strict truncation and then with
     // `WithIgnoreTruncateErr(true)`. Rust returns the shared best-effort value
     // and recoverable event; the caller decides whether that event is an error.
-    let malformed = Datum::new_string("hello").to_decimal().unwrap();
+    let malformed = Datum::new_string_datum("hello").to_decimal().unwrap();
     assert_eq!(malformed.value, Decimal::from_int(0));
     assert_eq!(malformed.event, Some(ScalarConversionEvent::Truncated));
 
     // For TypeYear.
     let year = FieldType::new(FieldTypeCode::Year);
     assert_eq!(
-        convert_ok(&Datum::new_string("2015"), &year, "year '2015'"),
+        convert_ok(&Datum::new_string_datum("2015"), &year, "year '2015'"),
         Datum::Int(2015)
     );
     assert_eq!(
@@ -428,21 +428,21 @@ fn test_convert_type() {
     let enum_type = FieldType::new(FieldTypeCode::Enum).with_elems(["a", "b", "c"]);
     let collation = enum_type.collation();
     assert_eq!(
-        convert_ok(&Datum::new_string("a"), &enum_type, "enum 'a'"),
+        convert_ok(&Datum::new_string_datum("a"), &enum_type, "enum 'a'"),
         Datum::new_enum(parse_enum_value(&["a", "b", "c"], 1).unwrap(), collation)
     );
     assert_eq!(
         convert_ok(&Datum::Int(2), &enum_type, "enum 2"),
         Datum::new_enum(parse_enum_value(&["a", "b", "c"], 2).unwrap(), collation)
     );
-    convert_err(&Datum::new_string("d"), &enum_type, "enum 'd'");
+    convert_err(&Datum::new_string_datum("d"), &enum_type, "enum 'd'");
     convert_err(&Datum::Int(4), &enum_type, "enum 4");
 
     // For set.
     let set_type = FieldType::new(FieldTypeCode::Set).with_elems(["a", "b", "c"]);
     let collation = set_type.collation();
     for (input, expected) in [
-        (Datum::new_string("a"), 1_u64),
+        (Datum::new_string_datum("a"), 1_u64),
         (Datum::Int(2), 2),
         (Datum::Int(3), 3),
     ] {
@@ -456,7 +456,7 @@ fn test_convert_type() {
             "{row}"
         );
     }
-    convert_err(&Datum::new_string("d"), &set_type, "set 'd'");
+    convert_err(&Datum::new_string_datum("d"), &set_type, "set 'd'");
     convert_err(&Datum::Int(9), &set_type, "set 9");
 }
 
@@ -573,7 +573,7 @@ fn test_convert() {
     sd!(Long, Datum::Int(i64::from(i32::MAX) + 1), "2147483647");
     sd!(
         Long,
-        Datum::new_string("1343545435346432587475"),
+        Datum::new_string_datum("1343545435346432587475"),
         "2147483647"
     );
     sa!(Long, literal(i32::MAX as u64), "2147483647");
@@ -632,10 +632,10 @@ fn test_convert() {
         (" 999.4", "999"),
         (" -3.58", "-4"),
     ] {
-        sa!(Long, Datum::new_string(input), expected);
+        sa!(Long, Datum::new_string_datum(input), expected);
     }
-    sd!(Long, Datum::new_string(" 1a "), "1");
-    sd!(Long, Datum::new_string(" +1+ "), "1");
+    sd!(Long, Datum::new_string_datum(" 1a "), "1");
+    sd!(Long, Datum::new_string_datum(" +1+ "), "1");
 
     // Integer from float.
     sa!(Long, Datum::Real(234.5456), "235");
@@ -644,25 +644,25 @@ fn test_convert() {
     ud!(LongLong, Datum::Real(-23.45), "18446744073709551593");
 
     // Float from string and numeric kinds.
-    sa!(Float, Datum::new_string("23.523"), "23.523");
+    sa!(Float, Datum::new_string_datum("23.523"), "23.523");
     sa!(Float, Datum::Int(123), "123");
     sa!(Float, Datum::UInt(123), "123");
     sa!(Float, Datum::Int(123), "123");
     sa!(Float, Datum::Float32(f64::from(123_f32)), "123");
     sa!(Float, Datum::Real(123.0), "123");
-    sa!(Double, Datum::new_string(" -23.54"), "-23.54");
-    sd!(Double, Datum::new_string("-23.54a"), "-23.54");
-    sd!(Double, Datum::new_string("-23.54e2e"), "-2354");
-    sd!(Double, Datum::new_string("+.e"), "0");
-    sa!(Double, Datum::new_string("1e+1"), "10");
+    sa!(Double, Datum::new_string_datum(" -23.54"), "-23.54");
+    sd!(Double, Datum::new_string_datum("-23.54a"), "-23.54");
+    sd!(Double, Datum::new_string_datum("-23.54e2e"), "-2354");
+    sd!(Double, Datum::new_string_datum("+.e"), "0");
+    sa!(Double, Datum::new_string_datum("1e+1"), "10");
 
     // YEAR.
     sd!(Year, Datum::Int(123), "1901");
     sd!(Year, Datum::Int(3000), "2155");
-    sa!(Year, Datum::new_string("2000"), "2000");
-    sa!(Year, Datum::new_string("abc"), "0");
-    sa!(Year, Datum::new_string("00abc"), "2000");
-    sa!(Year, Datum::new_string("0019"), "2019");
+    sa!(Year, Datum::new_string_datum("2000"), "2000");
+    sa!(Year, Datum::new_string_datum("abc"), "0");
+    sa!(Year, Datum::new_string_datum("00abc"), "2000");
+    sa!(Year, Datum::new_string_datum("0019"), "2019");
     sa!(Year, Datum::Int(2155), "2155");
     sa!(Year, Datum::Real(2155.123), "2155");
     sd!(Year, Datum::Int(2156), "2155");
@@ -673,27 +673,27 @@ fn test_convert() {
     sd!(Year, Datum::Real(1900.456), "1901");
     sa!(Year, Datum::Int(0), "0");
     for input in ["0", "00", " 0", " 00"] {
-        sa!(Year, Datum::new_string(input), "2000");
+        sa!(Year, Datum::new_string_datum(input), "2000");
     }
-    sa!(Year, Datum::new_string(" 000"), "0");
-    sa!(Year, Datum::new_string(" 0000 "), "2000");
+    sa!(Year, Datum::new_string_datum(" 000"), "0");
+    sa!(Year, Datum::new_string_datum(" 0000 "), "2000");
     for input in [" 0ab", "00bc", "000a"] {
-        sa!(Year, Datum::new_string(input), "0");
+        sa!(Year, Datum::new_string_datum(input), "0");
     }
-    sa!(Year, Datum::new_string(" 000a "), "2000");
+    sa!(Year, Datum::new_string_datum(" 000a "), "2000");
     sa!(Year, Datum::Int(1), "2001");
-    sa!(Year, Datum::new_string("1"), "2001");
-    sa!(Year, Datum::new_string("01"), "2001");
+    sa!(Year, Datum::new_string_datum("1"), "2001");
+    sa!(Year, Datum::new_string_datum("01"), "2001");
     sa!(Year, Datum::Int(69), "2069");
-    sa!(Year, Datum::new_string("69"), "2069");
+    sa!(Year, Datum::new_string_datum("69"), "2069");
     sa!(Year, Datum::Int(70), "1970");
-    sa!(Year, Datum::new_string("70"), "1970");
+    sa!(Year, Datum::new_string_datum("70"), "1970");
     sa!(Year, Datum::Int(99), "1999");
-    sa!(Year, Datum::new_string("99"), "1999");
+    sa!(Year, Datum::new_string_datum("99"), "1999");
     sd!(Year, Datum::Int(100), "1901");
     sd!(
         Year,
-        Datum::new_string("99999999999999999999999999999999999"),
+        Datum::new_string_datum("99999999999999999999999999999999999"),
         "0"
     );
 
@@ -701,10 +701,10 @@ fn test_convert() {
     let zero_datetime = Time::new(CoreTime::default(), TimeType::DateTime, 0).unwrap();
     let zero_duration = MySqlDuration::from_nanoseconds(0, 0).unwrap();
     let temporal_decimal = Decimal::from_literal("20010101100000.123456");
-    sa!(Date, Datum::new_string("2012-08-23"), "2012-08-23");
+    sa!(Date, Datum::new_string_datum("2012-08-23"), "2012-08-23");
     sa!(
         Datetime,
-        Datum::new_string("2012-08-23 12:34:03.123456"),
+        Datum::new_string_datum("2012-08-23 12:34:03.123456"),
         "2012-08-23 12:34:03"
     );
     sa!(
@@ -720,7 +720,7 @@ fn test_convert() {
     );
     sa!(
         Timestamp,
-        Datum::new_string("2012-08-23 12:34:03.123456"),
+        Datum::new_string_datum("2012-08-23 12:34:03.123456"),
         "2012-08-23 12:34:03"
     );
     sa!(
@@ -728,28 +728,28 @@ fn test_convert() {
         Datum::new_decimal(temporal_decimal),
         "2001-01-01 10:00:00"
     );
-    sa!(Duration, Datum::new_string("10:11:12"), "10:11:12");
+    sa!(Duration, Datum::new_string_datum("10:11:12"), "10:11:12");
     sa!(Duration, Datum::new_time(zero_datetime), "00:00:00");
     sa!(Duration, Datum::new_duration(zero_duration), "00:00:00");
     sa!(Duration, Datum::Int(0), "00:00:00");
 
-    sd!(Date, Datum::new_string("2012-08-x"), "0000-00-00");
+    sd!(Date, Datum::new_string_datum("2012-08-x"), "0000-00-00");
     sd!(
         Datetime,
-        Datum::new_string("2012-08-x"),
+        Datum::new_string_datum("2012-08-x"),
         "0000-00-00 00:00:00"
     );
     sd!(
         Timestamp,
-        Datum::new_string("2012-08-x"),
+        Datum::new_string_datum("2012-08-x"),
         "0000-00-00 00:00:00"
     );
-    sd!(Duration, Datum::new_string("2012-08-x"), "00:20:12");
-    sd!(Duration, Datum::new_string("0000-00-00"), "00:00:00");
-    sd!(Duration, Datum::new_string("1234abc"), "00:12:34");
+    sd!(Duration, Datum::new_string_datum("2012-08-x"), "00:20:12");
+    sd!(Duration, Datum::new_string_datum("0000-00-00"), "00:00:00");
+    sd!(Duration, Datum::new_string_datum("1234abc"), "00:12:34");
 
     // String from string and the other source kinds in the Go table.
-    sa!(String, Datum::new_string("abc"), "abc");
+    sa!(String, Datum::new_string_datum("abc"), "abc");
     sa!(String, Datum::Int(5678), "5678");
     sa!(String, Datum::new_duration(zero_duration), "00:00:00");
     sa!(
@@ -757,7 +757,7 @@ fn test_convert() {
         Datum::new_time(zero_datetime),
         "0000-00-00 00:00:00"
     );
-    sa!(String, Datum::new_bytes("123"), "123");
+    sa!(String, Datum::new_bytes_datum("123"), "123");
 
     // NewDecimal.
     sa!(NewDecimal, Datum::Int(123), "123");
@@ -765,7 +765,7 @@ fn test_convert() {
     sa!(NewDecimal, Datum::UInt(123), "123");
     sa!(NewDecimal, Datum::Float32(f64::from(123_f32)), "123");
     sa!(NewDecimal, Datum::Real(123.456), "123.456");
-    sa!(NewDecimal, Datum::new_string("-123.456"), "-123.456");
+    sa!(NewDecimal, Datum::new_string_datum("-123.456"), "-123.456");
     sa!(
         NewDecimal,
         Datum::new_decimal(Decimal::from_literal("12300000")),
@@ -792,16 +792,16 @@ fn test_convert_to_string() {
         MySqlDuration::from_nanoseconds(parsed_duration.nanoseconds(), parsed_duration.fsp())
             .unwrap();
     let rows = [
-        (Datum::new_string("0"), b"0".as_slice()),
+        (Datum::new_string_datum("0"), b"0".as_slice()),
         // Go's bool and native int both normalize to an integer Datum.
         (Datum::Int(1), b"1"),
-        (Datum::new_string("false"), b"false"),
+        (Datum::new_string_datum("false"), b"false"),
         (Datum::Int(0), b"0"),
         (Datum::Int(0), b"0"),
         (Datum::UInt(0), b"0"),
         (Datum::Float32(f64::from(1.6_f32)), b"1.6"),
         (Datum::Real(-0.6), b"-0.6"),
-        (Datum::new_bytes([1]), b"\x01"),
+        (Datum::new_bytes_datum([1]), b"\x01"),
         (
             Datum::new_binary_literal(BinaryLiteral::from_uint(0x004D_7953_514C, None)),
             b"MySQL",
@@ -849,7 +849,7 @@ fn test_convert_to_string() {
         let target = FieldType::new(FieldTypeCode::Varchar)
             .with_flen(flen)
             .with_collation(collation);
-        let (converted, failed) = go_convert(&Datum::new_string(text), &target);
+        let (converted, failed) = go_convert(&Datum::new_string_datum(text), &target);
         assert_eq!(failed, text != expected, "flen={flen} {collation:?}");
         assert_eq!(
             converted.unwrap().as_raw_bytes(),
@@ -869,7 +869,7 @@ fn test_convert_to_string() {
 fn out_of_range_enum_and_set_keep_the_empty_value() {
     let enum_type = FieldType::new(FieldTypeCode::Enum).with_elems(["a", "b", "c"]);
     let collation = enum_type.collation();
-    for input in [Datum::Int(4), Datum::Int(0), Datum::new_string("d")] {
+    for input in [Datum::Int(4), Datum::Int(0), Datum::new_string_datum("d")] {
         let row = format!("enum {input:?}");
         let value = convert_err(&input, &enum_type, &row)
             .expect("Go returns the zero Enum beside ErrTruncated");
@@ -882,7 +882,7 @@ fn out_of_range_enum_and_set_keep_the_empty_value() {
 
     let set_type = FieldType::new(FieldTypeCode::Set).with_elems(["a", "b", "c"]);
     let collation = set_type.collation();
-    for input in [Datum::Int(9), Datum::Int(-1), Datum::new_string("d")] {
+    for input in [Datum::Int(9), Datum::Int(-1), Datum::new_string_datum("d")] {
         let row = format!("set {input:?}");
         let value = convert_err(&input, &set_type, &row)
             .expect("Go returns the zero Set beside ErrTruncated");
@@ -923,7 +923,7 @@ fn test_to_int64() {
     let decimal = Decimal::from_signed_literal("3.14159");
 
     let rows = [
-        (Datum::new_string("0"), 0_i64),
+        (Datum::new_string_datum("0"), 0_i64),
         // Go's `int(0)` and `int64(0)` both become signed Datums in Rust,
         // but remain separate source rows.
         (Datum::Int(0), 0),
@@ -1030,7 +1030,7 @@ fn session_zone_reaches_signed_and_duration_conversion() {
         ("20110313015959.999999", "02:00:00", "03:00:00"),
         ("20111106015959.999999", "02:00:00", "01:00:00"),
     ] {
-        let text = Datum::new_string(input.to_string());
+        let text = Datum::new_string_datum(input.to_string());
         for (zone, expected) in [(&utc, in_utc), (&la, in_la)] {
             let got = text
                 .convert_to_in(&duration_type, crate::DEFAULT_STATEMENT_FLAGS, zone)

@@ -28,7 +28,7 @@ fn call(name: &str, vals: &[Datum]) -> Datum {
 }
 
 fn s(value: &str) -> Datum {
-    Datum::new_string(value.to_string())
+    Datum::new_string_datum(value.to_string())
 }
 
 /// The expected result of a JSON-returning builtin: a native BinaryJSON cell
@@ -88,16 +88,16 @@ fn json_scalar_source_wave_boundaries() {
     // Go's encoder reads an invalid UTF-8 byte as U+FFFD (captured:
     // `hex(json_quote(x'ff41'))` is `22EFBFBD4122`).
     assert_eq!(
-        call("JSON_QUOTE", &[Datum::new_bytes([0xff, b'A'])]),
+        call("JSON_QUOTE", &[Datum::new_bytes_datum([0xff, b'A'])]),
         s("\"\u{fffd}A\"")
     );
 
     assert_eq!(call("JSON_UNQUOTE", &[Datum::Null]), Datum::Null);
     assert!(call_result("JSON_UNQUOTE", &[Datum::Int(3)]).is_err());
-    assert!(call_result("JSON_UNQUOTE", &[Datum::new_bytes([0xff])]).is_err());
+    assert!(call_result("JSON_UNQUOTE", &[Datum::new_bytes_datum([0xff])]).is_err());
 
     assert_eq!(
-        call("JSON_VALID", &[Datum::new_bytes([0xff])]),
+        call("JSON_VALID", &[Datum::new_bytes_datum([0xff])]),
         Datum::Int(0)
     );
     assert_eq!(call("JSON_VALID", &[Datum::Int(3)]), Datum::Int(0));
@@ -135,7 +135,7 @@ fn json_array_object_go_vectors() {
     // the JSON string "x" -- see [`json_sql_string`] for the named
     // binary-charset boundary this collapses.
     assert_eq!(
-        call("JSON_ARRAY", &[Datum::new_bytes(b"x".to_vec())]),
+        call("JSON_ARRAY", &[Datum::new_bytes_datum(b"x".to_vec())]),
         j(r#"["x"]"#)
     );
 
@@ -154,7 +154,7 @@ fn json_array_object_go_vectors() {
     );
     assert!(call_result("JSON_OBJECT", &[Datum::Null, Datum::Int(2)]).is_err());
     assert_eq!(
-        call("JSON_OBJECT", &[Datum::new_bytes(b"k"), Datum::Int(2)]),
+        call("JSON_OBJECT", &[Datum::new_bytes_datum(b"k"), Datum::Int(2)]),
         j(r#"{"k": 2}"#),
     );
 }
@@ -1867,7 +1867,7 @@ fn json_errors_carry_go_codes() {
 /// must answer identically -- see [`json_sql_string`].
 #[test]
 fn string_and_bytes_arguments_agree() {
-    let bytes = |value: &str| Datum::new_bytes(value.as_bytes().to_vec());
+    let bytes = |value: &str| Datum::new_bytes_datum(value.as_bytes().to_vec());
     for (name, text, path) in [
         ("JSON_TYPE", r#"{"a":1}"#, None),
         ("JSON_VALID", r#"{"a":1}"#, None),
@@ -1935,7 +1935,7 @@ use tidb_charset::Collation;
     // An ordinary (non-binary-charset) STRING datum is unaffected.
     let plain = dispatch_typed(
         "JSON_ARRAY",
-        &[Datum::new_string("ab".to_string())],
+        &[Datum::new_string_datum("ab".to_string())],
         &[Some(varchar)],
     )
     .expect("JSON_ARRAY is owned")

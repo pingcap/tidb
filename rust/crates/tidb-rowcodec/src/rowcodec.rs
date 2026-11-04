@@ -737,7 +737,7 @@ fn decode_column_datum(
         | FieldTypeCode::TinyBlob
         | FieldTypeCode::MediumBlob
         | FieldTypeCode::LongBlob => {
-            Datum::new_collation_string(bytes.to_vec(), field_type.collation())
+            Datum::new_collation_string_datum(bytes.to_vec(), field_type.collation())
         }
         FieldTypeCode::NewDecimal => {
             let (_, mut value, encoded_precision, encoded_scale) = decode_decimal(bytes)?;

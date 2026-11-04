@@ -246,7 +246,7 @@ fn build_final_mode_aggregation_max_min_count_schema_two_column_partial() {
     let mut arg_type = FieldType::new(FieldTypeCode::String);
     arg_type.set_charset_name("utf8mb4");
     arg_type.set_collation_name("utf8mb4_general_ci");
-    arg_type.set_flags(arg_type.flags() & !tidb_datatype::FieldTypeFlags::NOT_NULL);
+    arg_type.set_flag(arg_type.flags() & !tidb_datatype::FieldTypeFlags::NOT_NULL);
     let arg_col = Column::new(1, arg_type);
     let desc = agg_func(names::MAX_COUNT, &arg_col, false);
     let original = AggInfo {

@@ -831,9 +831,9 @@ mod tests {
             .with_charset_name("utf8mb4")
             .with_collation_name("utf8mb4_general_ci");
         let col = Expression::Column(Column::new(1, string_type.clone()));
-        let a = Expression::Constant(Constant::new(Datum::new_string("a"), string_type.clone()));
+        let a = Expression::Constant(Constant::new(Datum::new_string_datum("a"), string_type.clone()));
         let explicit_b = Constant::new(
-            Datum::new_string("b"),
+            Datum::new_string_datum("b"),
             string_type.with_collation_name("utf8mb4_bin"),
         );
         explicit_b
@@ -972,7 +972,7 @@ mod tests {
                 ("0garbage", PredicateType::False),
             ] {
                 let constant = Constant::new(
-                    Datum::new_string(input),
+                    Datum::new_string_datum(input),
                     FieldType::new(FieldTypeCode::VarString),
                 );
                 assert_eq!(
@@ -1012,7 +1012,7 @@ mod tests {
         let mut ctx = test_context(&allocator);
         ctx.eval_context = &context;
         let constant = Constant::new(
-            Datum::new_string("1garbage"),
+            Datum::new_string_datum("1garbage"),
             FieldType::new(FieldTypeCode::VarString),
         );
         assert!(short_circuit(&ctx, vec![Expression::Constant(constant.clone())]).is_empty());
@@ -1053,7 +1053,7 @@ mod tests {
                 vec![
                     column(1),
                     Expression::Constant(Constant::new(
-                        Datum::new_string(value),
+                        Datum::new_string_datum(value),
                         FieldType::new(FieldTypeCode::VarString),
                     )),
                 ],

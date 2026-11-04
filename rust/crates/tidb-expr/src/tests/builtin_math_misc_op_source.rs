@@ -188,13 +188,13 @@ fn chunk_row_value(sql: &str, columns: &[(&str, FieldType, Datum)]) -> String {
 }
 
 fn s(text: &str) -> Datum {
-    Datum::new_string(text.to_owned())
+    Datum::new_string_datum(text.to_owned())
 }
 
 /// A binary-collation string datum carrying raw bytes -- this tier's
 /// VARBINARY-constant stand-in for Go's byte-string data generators.
 fn bin_str(bytes: &[u8]) -> Datum {
-    Datum::new_collation_string(bytes.to_vec(), Collation::Binary)
+    Datum::new_collation_string_datum(bytes.to_vec(), Collation::Binary)
 }
 
 /// Dispatches one value through whichever ported family owns the name --
@@ -287,7 +287,7 @@ fn conv_digit_overflow_above_u64_errors_with_the_digits() {
     let error = eval_as(
         "CONV",
         vec![
-            Datum::new_string("18446744073709551616".to_owned()),
+            Datum::new_string_datum("18446744073709551616".to_owned()),
             Datum::Int(10),
             Datum::Int(16),
         ],
@@ -329,7 +329,7 @@ fn conv_source_table_type_and_valid_prefix_rows() {
     // Every CONV call reports TypeVarString / utf8mb4 / utf8mb4_bin with no
     // flag bits (the four type assertions at the top of the Go loop).
     let args = [
-        const_arg(Datum::new_string("a".to_owned())),
+        const_arg(Datum::new_string_datum("a".to_owned())),
         const_arg(Datum::Int(16)),
         const_arg(Datum::Int(2)),
     ];
@@ -371,7 +371,7 @@ fn math_string_coercion_raises_one_truncate_warning_each() {
     ] {
         for text in invalid_texts {
             let ctx = WarnCountCtx::new();
-            let got = math_dispatch_values(name, &[Datum::new_string(text.to_owned())], &ctx)
+            let got = math_dispatch_values(name, &[Datum::new_string_datum(text.to_owned())], &ctx)
                 .unwrap_or_else(|| panic!("{name} belongs to the math family"));
             assert!(matches!(&got, Ok(_)), "{name}({text:?}) must evaluate");
             // These cases ARE the getWarning branch: success + one warning.
@@ -382,7 +382,7 @@ fn math_string_coercion_raises_one_truncate_warning_each() {
         // Degrees' own `""` which coerces silently to 0).
         let clean = if name == "DEGREES" { "" } else { "0.000" };
         let ctx = WarnCountCtx::new();
-        let got = math_dispatch_values(name, &[Datum::new_string(clean.to_owned())], &ctx)
+        let got = math_dispatch_values(name, &[Datum::new_string_datum(clean.to_owned())], &ctx)
             .unwrap_or_else(|| panic!("{name} belongs to the math family"));
         assert!(
             matches!(&got, Ok(Datum::Real(_))),
@@ -698,11 +698,11 @@ fn vectorized_builtin_miscellaneous_eval_one_vec() {
     // Inet6Aton / IsIPv6 / IsIPv4 / InetNtoa / InetAton arms.
     assert_eq!(
         call("INET6_ATON", &[bin_str(b"127.0.0.1")]),
-        Datum::new_bytes([127, 0, 0, 1])
+        Datum::new_bytes_datum([127, 0, 0, 1])
     );
     assert_eq!(
         call("INET6_ATON", &[s("fdfe::5a55:caff:fefa:9089")]),
-        Datum::new_bytes([
+        Datum::new_bytes_datum([
             0xfd, 0xfe, 0, 0, 0, 0, 0, 0, 0x5a, 0x55, 0xca, 0xff, 0xfe, 0xfa, 0x90, 0x89,
         ])
     );
@@ -809,7 +809,7 @@ fn vectorized_builtin_miscellaneous_eval_one_vec() {
     assert!(matches!(timestamp, Datum::Decimal(_)));
     assert_eq!(
         call("UUID_TO_BIN", &[s(v1_text)]),
-        Datum::new_bytes([
+        Datum::new_bytes_datum([
             0x5f, 0x13, 0xf8, 0x54, 0xd7, 0x4a, 0x11, 0xf0, 0x9b, 0x7a, 0x0a, 0xe0, 0x15, 0x6b,
             0xd7, 0x6b,
         ])
@@ -828,20 +828,20 @@ fn vectorized_builtin_miscellaneous_func() {
         0xdb,
     ];
     assert_eq!(
-        call("BIN_TO_UUID", &[Datum::new_bytes(normal.clone())]),
+        call("BIN_TO_UUID", &[Datum::new_bytes_datum(normal.clone())]),
         s(canonical)
     );
     assert_eq!(
         call(
             "BIN_TO_UUID",
-            &[Datum::new_bytes(normal.clone()), Datum::Int(1)]
+            &[Datum::new_bytes_datum(normal.clone()), Datum::Int(1)]
         ),
         s("baba1026-780c-6ccd-9564-5b8c656024db")
     );
     // Too-short byte strings refuse to parse rather than truncating.
     assert!(misc_dispatch_in(
         "BIN_TO_UUID",
-        &[Datum::new_bytes(normal[..15].to_vec())],
+        &[Datum::new_bytes_datum(normal[..15].to_vec())],
         &tidb_exprctx::context::NoColumns
     )
     .unwrap()
@@ -852,7 +852,7 @@ fn vectorized_builtin_miscellaneous_func() {
             "UUID_TO_BIN",
             &[s("{6ccd780c-baba-1026-9564-5b8c656024db}")]
         ),
-        Datum::new_bytes(normal)
+        Datum::new_bytes_datum(normal)
     );
 }
 
@@ -1533,7 +1533,7 @@ fn r_(v: f64) -> Datum {
 }
 
 fn s_(text: &str) -> Datum {
-    Datum::new_string(text.to_owned())
+    Datum::new_string_datum(text.to_owned())
 }
 
 fn dec_(text: &str) -> Datum {

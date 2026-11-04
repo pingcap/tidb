@@ -30,7 +30,7 @@ use crate::sys_session::{DomainSysSession, DomainSysSessionPool};
 struct InternalTxnWorkloadLearning;
 
 /// Go `do.sysSessionPool` as `workloadlearning` uses it.
-pub struct WorkloadLearningSessionPool(pub Arc<DomainSysSessionPool>);
+pub struct SysSessionPool(pub Arc<DomainSysSessionPool>);
 
 struct PooledSession<'a> {
     session: &'a tidb_syssession::Session<dyn DomainSysSession>,
@@ -77,7 +77,7 @@ impl Session for PooledSession<'_> {
     }
 }
 
-impl SessionPool for WorkloadLearningSessionPool {
+impl SessionPool for SysSessionPool {
     fn with_session(&self, f: &mut dyn FnMut(&dyn Session) -> Result<(), String>) -> Result<(), String> {
         self.0
             .with_session(|session| f(&PooledSession { session }).map_err(tidb_syssession::SysSessionError::new))
@@ -98,7 +98,7 @@ impl WorkloadLearningWorker {
             wake: Condvar::new(),
         });
         let pool: Arc<dyn SessionPool> =
-            Arc::new(WorkloadLearningSessionPool(factory.advanced_sys_session_pool()));
+            Arc::new(SysSessionPool(factory.advanced_sys_session_pool()));
         let handle = Handle::new(Arc::clone(&pool));
         let cache = WlCacheWorker::new(pool);
         let weak: Weak<Domain> = Arc::downgrade(factory);

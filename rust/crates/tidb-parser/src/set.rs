@@ -17,7 +17,7 @@
 //! SET enters [`Parser::parse_set_stmt`], Go's `parseSetStmt`.
 
 use tidb_ast::{
-    DefaultRoleSelection, Expr, RoleSpec, SessionStmt, SetDefaultRoleStmt, SetPasswordStmt,
+    DefaultRoleSelection, Expr, RoleIdentity, SessionStmt, SetDefaultRoleStmt, SetPasswordStmt,
     SetResourceGroupStmt, SetRoleSelection, SetRoleStmt, SetSessionStatesStmt, SetStmt,
     VariableAssignment, SET_CHARSET, SET_NAMES,
 };
@@ -172,15 +172,15 @@ impl Parser {
     /// Direct translation of Go's `parseUserAsRole`: SET ROLE parses an
     /// account identity and then projects username/host into RoleIdentity.
     /// This is deliberately wider than CREATE ROLE's strict role-name helper.
-    fn parse_set_role_spec(&mut self) -> PResult<RoleSpec> {
+    fn parse_set_role_spec(&mut self) -> PResult<RoleIdentity> {
         let user = self.parse_user_spec()?;
-        Ok(RoleSpec {
+        Ok(RoleIdentity {
             role: user.user,
             host: user.host,
         })
     }
 
-    fn parse_set_role_list(&mut self) -> PResult<Vec<RoleSpec>> {
+    fn parse_set_role_list(&mut self) -> PResult<Vec<RoleIdentity>> {
         let mut roles = vec![self.parse_set_role_spec()?];
         while self.is_op(",") {
             self.bump();

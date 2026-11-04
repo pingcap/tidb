@@ -112,7 +112,7 @@ impl tidb_exprctx::context::Columns for InsertValuesStore {
 
 fn var_name(name: &str) -> Expression {
     Expression::Constant(Constant::new(
-        Datum::new_string(name.to_owned()),
+        Datum::new_string_datum(name.to_owned()),
         FieldType::new(C::VarString),
     ))
 }
@@ -147,7 +147,7 @@ fn eval_setvar(value: Datum, value_ft: FieldType, store: &VarStore) -> Result<Da
 #[test]
 fn setvar_stores_session_value_and_returns_it() {
     let store = VarStore::default();
-    let text = |v: &str| Datum::new_string(v.to_owned());
+    let text = |v: &str| Datum::new_string_datum(v.to_owned());
 
     // {a, "12"} / {b, "34"}: the string sig stores its stringified result.
     let returned = eval_setvar(text("12"), FieldType::new(C::VarString), &store).unwrap();
@@ -326,7 +326,7 @@ fn getvar_reads_typed_session_value_by_signature_kind() {
 }
 
 fn text_var(v: &str) -> Datum {
-    Datum::new_string(v.to_owned())
+    Datum::new_string_datum(v.to_owned())
 }
 
 /// Builds one typed GETVAR signature the way Go's `BuildGetVarFunction` does:
@@ -393,7 +393,7 @@ fn setvar_from_column_snapshots_the_row_value() {
     let build_chunk = |value: &str| {
         let mut chunk =
             tidb_chunk::chunk::Chunk::new_chunk_with_capacity(std::slice::from_ref(&string_ft()), 1);
-        chunk.append_datum(0, &Datum::new_string(value.to_owned()));
+        chunk.append_datum(0, &Datum::new_string_datum(value.to_owned()));
         chunk
     };
 
@@ -401,8 +401,8 @@ fn setvar_from_column_snapshots_the_row_value() {
     let assigned = assign
         .eval(&store, first.get_row(0))
         .expect("assignment must evaluate");
-    assert_eq!(assigned, Datum::new_string("a".to_owned()));
-    assert_eq!(store.get("a"), Some(Datum::new_string("a".to_owned())));
+    assert_eq!(assigned, Datum::new_string_datum("a".to_owned()));
+    assert_eq!(store.get("a"), Some(Datum::new_string_datum("a".to_owned())));
 
     // Change the underlying chunk cell WITHOUT evaluating SETVAR again: the
     // column now reads "b", proving the mutation is visible, while the user
@@ -412,9 +412,9 @@ fn setvar_from_column_snapshots_the_row_value() {
         assign.args[1]
             .eval(&store, second.get_row(0))
             .expect("column read"),
-        Datum::new_string("b".to_owned())
+        Datum::new_string_datum("b".to_owned())
     );
-    assert_eq!(store.get("a"), Some(Datum::new_string("a".to_owned())));
+    assert_eq!(store.get("a"), Some(Datum::new_string_datum("a".to_owned())));
 }
 
 /// GO PORT of `pkg/expression/builtin_other_test.go:200 TestValues` and
@@ -444,7 +444,7 @@ fn values_function_reads_the_current_insert_row() {
 
     // A non-empty row whose offset is outside the insert field list is the
     // exact Go runtime error, rather than a silent NULL.
-    store.set(vec![Datum::new_string("1".to_owned())]);
+    store.set(vec![Datum::new_string_datum("1".to_owned())]);
     let error = function.eval(&store, empty.get_row(0)).unwrap_err();
     assert!(
         matches!(error, EvalError::IncorrectArguments(ref message) if message.starts_with("Session current insert values len 1")),
@@ -454,14 +454,14 @@ fn values_function_reads_the_current_insert_row() {
     // Offset 1 reads the candidate row's second value and does not evaluate
     // any expression argument. A NULL slot is propagated as SQL NULL.
     store.set(vec![
-        Datum::new_string("1".to_owned()),
-        Datum::new_string("2".to_owned()),
+        Datum::new_string_datum("1".to_owned()),
+        Datum::new_string_datum("2".to_owned()),
     ]);
     assert_eq!(
         function.eval(&store, empty.get_row(0)).unwrap(),
-        Datum::new_string("2".to_owned())
+        Datum::new_string_datum("2".to_owned())
     );
-    store.set(vec![Datum::new_string("1".to_owned()), Datum::Null]);
+    store.set(vec![Datum::new_string_datum("1".to_owned()), Datum::Null]);
     assert_eq!(
         function.eval(&store, empty.get_row(0)).unwrap(),
         Datum::Null
@@ -492,7 +492,7 @@ fn values_function_reads_the_current_insert_row() {
 #[test]
 fn getparam_function_evaluation_matches_plan_cache_values() {
     let ctx = ParamStore {
-        params: vec![Datum::Int(123), Datum::new_string("abc".to_owned())],
+        params: vec![Datum::Int(123), Datum::new_string_datum("abc".to_owned())],
     };
     let empty = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     for (index, expected) in [(0, "123"), (1, "abc")] {
@@ -503,7 +503,7 @@ fn getparam_function_evaluation_matches_plan_cache_values() {
         );
         assert_eq!(
             function.eval(&ctx, empty.get_row(0)).unwrap(),
-            Datum::new_string(expected.to_owned())
+            Datum::new_string_datum(expected.to_owned())
         );
     }
 
@@ -526,7 +526,7 @@ fn getparam_function_evaluation_matches_plan_cache_values() {
     };
     assert_eq!(
         crate::func::eval_func("GETPARAM", &ast_args(&ast), &ctx, None),
-        Ok(Datum::new_string("abc".to_owned()))
+        Ok(Datum::new_string_datum("abc".to_owned()))
     );
 }
 
@@ -556,7 +556,7 @@ fn vectorized_builtin_other_func_representable_arms() {
     for (name, value, ft) in [
         (
             "sv_str",
-            Datum::new_string("9".to_owned()),
+            Datum::new_string_datum("9".to_owned()),
             FieldType::new(C::VarString),
         ),
         ("sv_int", Datum::Int(-7), FieldType::new(C::LongLong)),
@@ -579,7 +579,7 @@ fn vectorized_builtin_other_func_representable_arms() {
     // GETVAR string arm reflects the last write.
     assert_eq!(
         eval_getvar("string", "sv_str", &store).unwrap(),
-        Datum::new_string("9".to_owned())
+        Datum::new_string_datum("9".to_owned())
     );
 
     // ast.BitCount arm: both tiers agree on the packed-popcount builtin.

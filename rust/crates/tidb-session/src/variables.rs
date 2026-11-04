@@ -540,7 +540,7 @@ impl Session {
         // `gorun`).
         if let tidb_ast::Expr::Column(path) = bound {
             if let [word] = path.as_slice() {
-                return Ok(Datum::new_string(word.clone()));
+                return Ok(Datum::new_string_datum(word.clone()));
             }
         }
         // Go SetExecutor evaluates constants directly, without allocating a

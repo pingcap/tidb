@@ -260,7 +260,7 @@ impl EtcdWatchOps for EtcdClientOps {
         let (sender, receiver) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
         let canceled = Arc::clone(&stop);
-        let on_response = move |response: &tidb_pd_client::EtcdWatchResponse| {
+        let on_response = move |response: &tidb_pd_client::WatchResponse| {
             if response.canceled {
                 let message = if response.cancel_reason.is_empty() {
                     format!(

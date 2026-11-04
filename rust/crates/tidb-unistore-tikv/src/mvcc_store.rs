@@ -1034,7 +1034,7 @@ impl MvccStore {
         let buf = self.lock_bytes(key);
         if !buf.is_empty() {
             let lock = decode_lock(&buf);
-            info.lock = Some(MvccLockInfo {
+            info.lock = Some(MvccLock {
                 op: i32::from(lock.hdr.op),
                 start_ts: lock.hdr.start_ts,
                 primary: lock.primary.clone(),
@@ -1345,7 +1345,7 @@ pub struct MvccWrite {
 
 /// Go `kvrpcpb.MvccLock`, native, on the same boundary as [`MvccWrite`].
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MvccLockInfo {
+pub struct MvccLock {
     /// `Type`, the lock's `Op`.
     pub op: i32,
     /// `StartTs`.
@@ -1362,7 +1362,7 @@ pub struct MvccLockInfo {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MvccInfo {
     /// `Lock`, when one stands.
-    pub lock: Option<MvccLockInfo>,
+    pub lock: Option<MvccLock>,
     /// `Writes`, sorted by DESCENDING commit ts — Go's final sort.
     pub writes: Vec<MvccWrite>,
 }

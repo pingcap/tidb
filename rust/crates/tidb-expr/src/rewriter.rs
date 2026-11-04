@@ -495,7 +495,7 @@ fn constant_string(text: &str) -> Expression {
     // literal is unsized, and an unsized argument is what makes
     // `CONCAT('T','i','DB')` report `MaxBlobWidth - 1` instead of Go's 4.
     field_type.set_flen(text.len() as i64);
-    let datum = Datum::new_collation_string(text.as_bytes().to_vec(), field_type.collation());
+    let datum = Datum::new_collation_string_datum(text.as_bytes().to_vec(), field_type.collation());
     Expression::Constant(Constant::new(datum, field_type))
 }
 
@@ -1771,7 +1771,7 @@ fn rewrite_json_sum_crc32(
         .static_type()
         .is_some_and(|ft| ft.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL))
     {
-        array_type.del_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+        array_type.del_flag(tidb_datatype::FieldTypeFlags::NOT_NULL);
     }
     // `jsonSumCRC32FunctionClass.verifyArgs`.
     if arg.static_type().map(FieldType::eval_type) != Some(tidb_datatype::EvalType::Json) {
@@ -2091,7 +2091,7 @@ fn rewrite_leaf_literal(
             // Go `DefaultTypeForValue` adds NotNull for every non-nil value.
             field_type.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
             field_type.set_decimal(-1);
-            let datum = Datum::new_collation_string(bytes, field_type.collation());
+            let datum = Datum::new_collation_string_datum(bytes, field_type.collation());
             Ok(Expression::Constant(Constant::new(datum, field_type)))
         }
         // Go's parser folds a decimal literal into a `*MyDecimal` value whose
@@ -2320,7 +2320,7 @@ fn rewrite_leaf_literal(
                 ft.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
                 Datum::Bytes(bytes)
             } else {
-                Datum::new_collation_string(bytes, collation)
+                Datum::new_collation_string_datum(bytes, collation)
             };
             Ok(Expression::Constant(Constant::new(datum, ft)))
         }
@@ -3018,7 +3018,7 @@ fn finish_function_call(
         let condition = binary_expression(BinaryOp::Eq, first.clone(), second, resolver)?;
         let mut value = first;
         if let Some(mut value_type) = value.static_type().cloned() {
-            value_type.del_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+            value_type.del_flag(tidb_datatype::FieldTypeFlags::NOT_NULL);
             if !value_type.eval_type().is_string_kind() {
                 value_type.set_charset_name("binary");
                 value_type.set_collation_name("binary");
@@ -3175,7 +3175,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
         // EXTRACT's evaluator selects the value's datetime/duration signature
         // from this unit and the second argument's static type.
         Expr::Extract { unit, value } => {
-            let unit = constant(Datum::new_string(unit.clone()), FieldTypeCode::VarString);
+            let unit = constant(Datum::new_string_datum(unit.clone()), FieldTypeCode::VarString);
             let value = rewrite_expr_resolved(value, resolver)?;
             Ok(scalar("extract", vec![unit, value]))
         }
@@ -3381,7 +3381,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                     let args = vec![
                         rewrite_expr_resolved(date, &child_resolver)?,
                         rewrite_expr_resolved(value, &child_resolver)?,
-                        constant(Datum::new_string(unit), FieldTypeCode::Varchar),
+                        constant(Datum::new_string_datum(unit), FieldTypeCode::Varchar),
                     ];
                     let ret_type =
                         builtin_return_type(&lowered, &args).ok_or(EvalError::Unsupported(
@@ -3923,7 +3923,7 @@ mod tests {
 
     #[test]
     fn prepared_rewriter_keeps_changing_string_in_members() {
-        let text = |value: &str| Datum::new_string(value.to_owned());
+        let text = |value: &str| Datum::new_string_datum(value.to_owned());
         let planning = PreparedValues(vec![text("a"), text("a"), text("a")]);
         let compiled = crate::simple_expr::parse_simple_expr(
             &planning,
@@ -3946,7 +3946,7 @@ mod tests {
 
     #[test]
     fn prepared_nested_planning_values_determine_parent_result_types() {
-        let text = |value: &str| Datum::new_string(value.to_owned());
+        let text = |value: &str| Datum::new_string_datum(value.to_owned());
         // Live Go PREPARE/EXECUTE, plus builtin_time.go's getExpressionFsp,
         // strToDateFunctionClass.getRetTp and convertTzFunctionClass.getDecimal.
         for (sql, values, replay, code, flen, decimal, expected, replay_expected) in [
@@ -4731,7 +4731,7 @@ mod builtin_type_tests {
     }
 
     fn text_datum(value: &str) -> Datum {
-        Datum::new_string(value.as_bytes().to_vec())
+        Datum::new_string_datum(value.as_bytes().to_vec())
     }
 
     fn is_unsigned(ft: &FieldType) -> bool {

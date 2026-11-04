@@ -2987,7 +2987,7 @@ mod cross_estimate_dispatch_tests {
         let coster = Ver2Coster::default();
         let mut context = DispatchContext::new(&allocator, &coster, 1.0);
         let mut handle_type = FieldType::new(FieldTypeCode::LongLong);
-        handle_type.set_flags(handle_type.flags() | tidb_datatype::FieldTypeFlags::PRI_KEY);
+        handle_type.set_flag(handle_type.flags() | tidb_datatype::FieldTypeFlags::PRI_KEY);
         let handle = Column::new(1, handle_type);
         let filtered = Column::new(2, FieldType::new(FieldTypeCode::LongLong));
         let filter = Expression::ScalarFunction(ScalarFunction::new(
@@ -3023,7 +3023,7 @@ mod cross_estimate_dispatch_tests {
         let hist_coll = tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 100, 0, [(2, std::sync::Arc::unwrap_or_clone(histogram))], []);
         let stats = StatsInfo::new(100.0, []).with_hist_coll(hist_coll.clone());
         let expected_cross_count =
-            tidb_planner_cardinality::cross_estimation::estimate_table_cross_row_count(
+            tidb_planner_cardinality::cross_estimation::cross_estimate_row_count(
                 &hist_coll,
                 &hist_coll,
                 std::slice::from_ref(&filter),
@@ -3502,7 +3502,7 @@ fn find_best_task_4_logical_data_source_paths(
                                     let table_hist_coll = table_stats.hist_coll();
                                     match (source_hist_coll, table_hist_coll, correlation_column) {
                                         (Some(source), Some(table), Some(column)) => Some(
-                                            tidb_planner_cardinality::cross_estimation::estimate_table_cross_row_count(
+                                            tidb_planner_cardinality::cross_estimation::cross_estimate_row_count(
                                                 source,
                                                 table,
                                                 &table_filters,
@@ -6192,7 +6192,7 @@ mod tests {
         let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
         let pk = Column::new(11, {
             let mut ft = FieldType::new(FieldTypeCode::LongLong);
-            ft.set_flags(ft.flags() | tidb_datatype::FieldTypeFlags::PRI_KEY);
+            ft.set_flag(ft.flags() | tidb_datatype::FieldTypeFlags::PRI_KEY);
             ft
         });
         let b = Column::new(12, FieldType::new(FieldTypeCode::LongLong));

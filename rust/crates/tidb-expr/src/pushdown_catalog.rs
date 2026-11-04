@@ -3331,7 +3331,7 @@ fn metadata_expression(scalar: &PbScalar) -> Option<Expression> {
         PbScalar::RealLiteral { value, .. } => Datum::Real(*value),
         PbScalar::Float32Literal { value, .. } => Datum::Float32(*value),
         PbScalar::StringLiteral { value, field_type } => {
-            Datum::new_collation_string(value.clone(), field_type.collation())
+            Datum::new_collation_string_datum(value.clone(), field_type.collation())
         }
         PbScalar::BytesLiteral { value, .. } => Datum::Bytes(value.clone()),
         PbScalar::BitLiteral { value, .. } => Datum::Bit(value.clone()),

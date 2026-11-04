@@ -63,7 +63,7 @@ impl Session {
         select: Option<&tidb_executor::PreparedSelectPlan>,
         dml: Option<&tidb_executor::PreparedDmlPlan>,
     ) {
-        if !self.vars.prepared_plan_cache_enabled()
+        if !self.vars.enable_prepared_plan_cache()
             || self.session_bool("tidb_ignore_prepared_cache_close_stmt", false)
         {
             return;
@@ -84,7 +84,7 @@ impl Session {
     }
 
     pub(crate) fn configure_session_plan_cache(&self) {
-        if !self.vars.prepared_plan_cache_enabled()
+        if !self.vars.enable_prepared_plan_cache()
             && !self.session_bool("tidb_enable_non_prepared_plan_cache", false)
         {
             return;
@@ -120,7 +120,7 @@ impl Session {
                 "Do not support the 'admin flush global scope.'",
             ));
         }
-        if !self.vars.prepared_plan_cache_enabled() {
+        if !self.vars.enable_prepared_plan_cache() {
             self.append_routed_warning(
                 1105,
                 "The plan cache is disable. So there no need to flush the plan cache".to_owned(),

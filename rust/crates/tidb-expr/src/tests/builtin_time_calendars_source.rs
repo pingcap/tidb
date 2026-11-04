@@ -70,7 +70,7 @@ fn utc_date_answers_the_utc_statement_date() {
     };
     assert_eq!(
         dispatched("UTC_DATE", &[], &clock),
-        Datum::new_string("2021-03-01")
+        Datum::new_string_datum("2021-03-01")
     );
     // Midnight crossing picks up the new UTC day; nothing about a session
     // zone can shift it.
@@ -80,7 +80,7 @@ fn utc_date_answers_the_utc_statement_date() {
     };
     assert_eq!(
         dispatched("UTC_DATE", &[], &clock),
-        Datum::new_string("2021-03-02")
+        Datum::new_string_datum("2021-03-02")
     );
 }
 
@@ -98,7 +98,7 @@ fn yearweek_source_rows_pin_zero_month_null_and_boundary_years() {
     assert_eq!(
         dispatched(
             "YEARWEEK",
-            &args(vec![Datum::new_string("1987-01-01"), Datum::Int(0)]),
+            &args(vec![Datum::new_string_datum("1987-01-01"), Datum::Int(0)]),
             &NoColumns,
         ),
         Datum::Int(198_652)
@@ -106,7 +106,7 @@ fn yearweek_source_rows_pin_zero_month_null_and_boundary_years() {
     assert_eq!(
         dispatched(
             "YEARWEEK",
-            &args(vec![Datum::new_string("2000-01-01"), Datum::Int(0)]),
+            &args(vec![Datum::new_string_datum("2000-01-01"), Datum::Int(0)]),
             &NoColumns
         ),
         Datum::Int(199_952),
@@ -114,7 +114,7 @@ fn yearweek_source_rows_pin_zero_month_null_and_boundary_years() {
     assert_eq!(
         dispatched(
             "YEARWEEK",
-            &args(vec![Datum::new_string("2016-00-05")]),
+            &args(vec![Datum::new_string_datum("2016-00-05")]),
             &NoColumns
         ),
         Datum::Null
@@ -128,14 +128,14 @@ fn yearweek_source_rows_pin_zero_month_null_and_boundary_years() {
 fn timestamp_diff_flag_block_rows_stay_null() {
     for args in [
         vec![
-            Datum::new_string("DAY"),
-            Datum::new_string("2017-01-00"),
-            Datum::new_string("2017-01-01"),
+            Datum::new_string_datum("DAY"),
+            Datum::new_string_datum("2017-01-00"),
+            Datum::new_string_datum("2017-01-01"),
         ],
         vec![
-            Datum::new_string("DAY"),
+            Datum::new_string_datum("DAY"),
             Datum::Null,
-            Datum::new_string("2017-01-01"),
+            Datum::new_string_datum("2017-01-01"),
         ],
     ] {
         assert_eq!(dispatched("TIMESTAMPDIFF", &args, &NoColumns), Datum::Null);
@@ -150,15 +150,15 @@ fn timestamp_diff_flag_block_rows_stay_null() {
 /// DECIMAL otherwise, and 0 -- never NULL -- for out-of-range instants.
 #[test]
 fn unix_timestamp_value_table_under_utc() {
-    let s = |text: &str| Datum::new_string(text);
+    let s = |text: &str| Datum::new_string_datum(text);
     let utc = ZonedNoColumns(SessionTimeZone::utc());
 
     for (arg, want_label) in [
         (Datum::Int(151_113), "INT:1447372800"),
         (Datum::Int(20_151_113), "INT:1447372800"),
-        (Datum::new_string("2015-11-13 10:20:19"), "INT:1447410019"),
+        (Datum::new_string_datum("2015-11-13 10:20:19"), "INT:1447410019"),
         (
-            Datum::new_string("2015-11-13 10:20:19.012"),
+            Datum::new_string_datum("2015-11-13 10:20:19.012"),
             "DEC:1447410019.012",
         ),
         (s("1970-01-01 00:00:00"), "INT:0"),
@@ -752,12 +752,12 @@ fn time_format_hour_family_rows_match_master() {
     ] {
         let got = dispatched(
             "TIME_FORMAT",
-            &[Datum::new_string(time), Datum::new_string(format)],
+            &[Datum::new_string_datum(time), Datum::new_string_datum(format)],
             &NoColumns,
         );
         assert_eq!(
             got,
-            Datum::new_string(want),
+            Datum::new_string_datum(want),
             "TIME_FORMAT({time:?}, {format:?})"
         );
     }
@@ -765,7 +765,7 @@ fn time_format_hour_family_rows_match_master() {
     assert_eq!(
         dispatched(
             "TIME_FORMAT",
-            &[Datum::Null, Datum::new_string("%H %k %h %I %l")],
+            &[Datum::Null, Datum::new_string_datum("%H %k %h %I %l")],
             &NoColumns
         ),
         Datum::Null
@@ -803,21 +803,21 @@ fn with_time_zone_clock_builtins_render_the_session_zone() {
     // SYSDATE(2): timezone-local, fsp-2 truncation.
     assert_eq!(
         dispatched("SYSDATE", &[Datum::Int(2)], &ctx),
-        Datum::new_string("2021-03-01 17:01:09.00"),
+        Datum::new_string_datum("2021-03-01 17:01:09.00"),
         "SYSDATE(2) in Asia/Tokyo"
     );
     assert_eq!(
         dispatched("CURDATE", &[], &ctx),
-        Datum::new_string("2021-03-01")
+        Datum::new_string_datum("2021-03-01")
     );
     // CURRENT_TIME(2) renders a Duration at fsp 2; CURTIME() stays default.
     assert_eq!(
         dispatched("CURRENT_TIME", &[Datum::Int(2)], &ctx),
-        Datum::new_string("17:01:09.00")
+        Datum::new_string_datum("17:01:09.00")
     );
     assert_eq!(
         dispatched("CURTIME", &[], &ctx),
-        Datum::new_string("17:01:09")
+        Datum::new_string_datum("17:01:09")
     );
 }
 
@@ -834,7 +834,7 @@ fn tidb_parse_tso_master_vectors_under_utc() {
             "STR:2018-11-20 09:53:04.877000",
         ),
         (
-            Datum::new_string("404411537129996288"),
+            Datum::new_string_datum("404411537129996288"),
             "STR:2018-11-20 09:53:04.877000",
         ),
         (Datum::Int(1), "STR:1970-01-01 00:00:00.000000"),
@@ -848,7 +848,7 @@ fn tidb_parse_tso_master_vectors_under_utc() {
     for arg in [
         Datum::Int(0),
         Datum::Int(-1),
-        Datum::new_string("-1"),
+        Datum::new_string_datum("-1"),
         Datum::Null,
     ] {
         assert_eq!(
@@ -879,7 +879,7 @@ fn tidb_parse_tso_logical_consecutive_tso_counters() {
     for arg in [
         Datum::Int(0),
         Datum::Int(-1),
-        Datum::new_string("-1"),
+        Datum::new_string_datum("-1"),
         Datum::Null,
     ] {
         assert_eq!(
@@ -1010,7 +1010,7 @@ fn str_datetime_add_duration_warns_once_with_frozen_arg_text() {
 
     let sink = WarnSink(RefCell::new(Vec::new()));
     let zero_duration = v("'00:00:00'");
-    let result = dispatch("ADDTIME", &[Datum::new_string("abc"), zero_duration], &sink)
+    let result = dispatch("ADDTIME", &[Datum::new_string_datum("abc"), zero_duration], &sink)
         .unwrap()
         .unwrap();
     assert!(result.is_null());

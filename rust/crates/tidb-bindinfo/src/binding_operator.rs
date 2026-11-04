@@ -69,10 +69,10 @@ pub fn create_binding<S: BindingOperatorSession + ?Sized>(
         session.exec(
             "UPDATE mysql.bind_info SET status = ?, update_time = ? WHERE original_sql = ? AND update_time < ?",
             &[
-                Datum::new_string(STATUS_DELETED.to_owned()),
-                Datum::new_string(update_ts.clone()),
-                Datum::new_string(binding.original_sql.clone()),
-                Datum::new_string(update_ts.clone()),
+                Datum::new_string_datum(STATUS_DELETED.to_owned()),
+                Datum::new_string_datum(update_ts.clone()),
+                Datum::new_string_datum(binding.original_sql.clone()),
+                Datum::new_string_datum(update_ts.clone()),
             ],
         )?;
         // Go stores NULL for an empty digest.
@@ -80,7 +80,7 @@ pub fn create_binding<S: BindingOperatorSession + ?Sized>(
             if digest.is_empty() {
                 Datum::Null
             } else {
-                Datum::new_string(digest.to_owned())
+                Datum::new_string_datum(digest.to_owned())
             }
         };
         let (_, warnings) = session.exec(
@@ -89,15 +89,15 @@ pub fn create_binding<S: BindingOperatorSession + ?Sized>(
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             ),
             &[
-                Datum::new_string(binding.original_sql.clone()),
-                Datum::new_string(binding.bind_sql.clone()),
-                Datum::new_string(binding.db.go_to_lower()),
-                Datum::new_string(binding.status.to_owned()),
-                Datum::new_string(update_ts.clone()),
-                Datum::new_string(update_ts),
-                Datum::new_string(binding.charset.clone()),
-                Datum::new_string(binding.collation.clone()),
-                Datum::new_string(binding.source.to_owned()),
+                Datum::new_string_datum(binding.original_sql.clone()),
+                Datum::new_string_datum(binding.bind_sql.clone()),
+                Datum::new_string_datum(binding.db.go_to_lower()),
+                Datum::new_string_datum(binding.status.to_owned()),
+                Datum::new_string_datum(update_ts.clone()),
+                Datum::new_string_datum(update_ts),
+                Datum::new_string_datum(binding.charset.clone()),
+                Datum::new_string_datum(binding.collation.clone()),
+                Datum::new_string_datum(binding.source.to_owned()),
                 digest(&binding.sql_digest),
                 digest(&binding.plan_digest),
             ],
@@ -129,11 +129,11 @@ pub fn drop_binding<S: BindingOperatorSession + ?Sized>(
         let (affected, _) = session.exec(
             "UPDATE mysql.bind_info SET status = ?, update_time = ? WHERE sql_digest = ? AND update_time < ? AND status != ?",
             &[
-                Datum::new_string(STATUS_DELETED.to_owned()),
-                Datum::new_string(update_ts.clone()),
-                Datum::new_string(sql_digest.clone()),
-                Datum::new_string(update_ts),
-                Datum::new_string(STATUS_DELETED.to_owned()),
+                Datum::new_string_datum(STATUS_DELETED.to_owned()),
+                Datum::new_string_datum(update_ts.clone()),
+                Datum::new_string_datum(sql_digest.clone()),
+                Datum::new_string_datum(update_ts),
+                Datum::new_string_datum(STATUS_DELETED.to_owned()),
             ],
         )?;
         deleted_rows += affected;
@@ -163,12 +163,12 @@ pub fn set_binding_status<S: BindingOperatorSession + ?Sized>(
     let (affected, _) = session.exec(
         "UPDATE mysql.bind_info SET status = ?, update_time = ? WHERE sql_digest = ? AND update_time < ? AND status IN (?, ?)",
         &[
-            Datum::new_string(new_status.to_owned()),
-            Datum::new_string(update_ts.clone()),
-            Datum::new_string(sql_digest.to_owned()),
-            Datum::new_string(update_ts),
-            Datum::new_string(old_status0.to_owned()),
-            Datum::new_string(old_status1.to_owned()),
+            Datum::new_string_datum(new_status.to_owned()),
+            Datum::new_string_datum(update_ts.clone()),
+            Datum::new_string_datum(sql_digest.to_owned()),
+            Datum::new_string_datum(update_ts),
+            Datum::new_string_datum(old_status0.to_owned()),
+            Datum::new_string_datum(old_status1.to_owned()),
         ],
     )?;
     Ok(affected > 0)
@@ -185,7 +185,7 @@ pub fn gc_binding<S: BindingOperatorSession + ?Sized>(session: &mut S) -> Result
     let update_time = session.now_timestamp(-ten_leases);
     session.exec(
         "DELETE FROM mysql.bind_info WHERE status = 'deleted' and update_time < ?",
-        &[Datum::new_string(update_time)],
+        &[Datum::new_string_datum(update_time)],
     )?;
     Ok(())
 }

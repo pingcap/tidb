@@ -977,7 +977,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
             for col in &mut schema.columns[outer_len..] {
                 if let Some(ty) = col.ret_type.as_mut() {
                     let mut cloned = ty.clone();
-                    cloned.del_flags(FieldTypeFlags::NOT_NULL);
+                    cloned.del_flag(FieldTypeFlags::NOT_NULL);
                     *ty = cloned;
                 }
             }

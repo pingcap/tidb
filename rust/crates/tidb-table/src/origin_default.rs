@@ -201,7 +201,7 @@ pub fn materialise(
             // Go `types.NewDatum` sets a dynamic string with
             // `mysql.DefaultCollationName`: it is UTF-8 text, so a later cast
             // into a GBK column validates it rather than decoding it as GBK.
-            let text = Datum::new_collation_string(
+            let text = Datum::new_collation_string_datum(
                 bytes.as_bytes().to_vec(),
                 tidb_charset::Collation::Utf8Mb4Bin,
             );

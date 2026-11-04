@@ -524,7 +524,7 @@ fn go_json_string_round_trip(value: Datum) -> Datum {
     let replaced = |bytes: &[u8]| tidb_goruntime::decode_go_utf8_lossy(bytes).into_bytes();
     match value {
         Datum::String(string) => {
-            Datum::new_collation_string(replaced(string.bytes()), string.collation())
+            Datum::new_collation_string_datum(replaced(string.bytes()), string.collation())
         }
         Datum::Bytes(bytes) => Datum::Bytes(replaced(&bytes)),
         Datum::Enum(member, collation) => Datum::Enum(

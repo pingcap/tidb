@@ -1110,17 +1110,17 @@ mod tests {
         let field_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)
             .with_collation(tidb_charset::Collation::Utf8Mb4GeneralCi);
         let values = vec![
-            (vec![Datum::new_string("a")], 0),
-            (vec![Datum::new_string("b")], 1),
+            (vec![Datum::new_string_datum("a")], 0),
+            (vec![Datum::new_string_datum("b")], 1),
         ];
         let explicit = list_column_location_for_ranges(
             // The detacher gives a range its column's collator.
             &[Range {
                 collators: vec![field_type.collation()],
                 ..interval(
-                    Datum::new_string("A"),
+                    Datum::new_string_datum("A"),
                     false,
-                    Datum::new_string("A"),
+                    Datum::new_string_datum("A"),
                     false,
                 )
             }],
@@ -1138,9 +1138,9 @@ mod tests {
             &[Range {
                 collators: vec![field_type.collation()],
                 ..interval(
-                    Datum::new_string("z"),
+                    Datum::new_string_datum("z"),
                     false,
-                    Datum::new_string("z"),
+                    Datum::new_string_datum("z"),
                     false,
                 )
             }],
@@ -1631,13 +1631,13 @@ use tidb_charset::Collation;
             FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Utf8Mb4GeneralCi);
         let mut spec = range_columns_table();
         spec.kind = PartitionKind::RangeColumns {
-            less_than: vec![vec![Value(Datum::new_string("b"))], vec![MaxValue]],
+            less_than: vec![vec![Value(Datum::new_string_datum("b"))], vec![MaxValue]],
             field_types: vec![field_type],
         };
         spec.truncate_definitions(2);
         let range = tidb_ranger::types::Range {
-            low_val: vec![Datum::new_string("B")],
-            high_val: vec![Datum::new_string("B")],
+            low_val: vec![Datum::new_string_datum("B")],
+            high_val: vec![Datum::new_string_datum("B")],
             collators: vec![Collation::Utf8Mb4Bin],
             low_exclude: false,
             high_exclude: false,

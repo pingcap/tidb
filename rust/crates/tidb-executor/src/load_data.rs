@@ -534,7 +534,7 @@ pub fn run_load_data(
                             .read().field_type
                             .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL) =>
                         {
-                            row.push(Datum::new_collation_string(
+                            row.push(Datum::new_collation_string_datum(
                                 chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
                                 Collation::Utf8Mb4Bin,
                             ));

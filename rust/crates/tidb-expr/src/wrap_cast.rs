@@ -341,7 +341,7 @@ pub fn wrap_with_cast_as_json(expr: Expression) -> Result<Expression, EvalError>
         return Ok(expr);
     }
     let mut tp = FieldType::new(FieldTypeCode::Json);
-    tp.set_flags(FieldTypeFlags::BINARY);
+    tp.set_flag(FieldTypeFlags::BINARY);
     tp.set_flen(JSON_CAST_FLEN);
     tp.set_charset_name("utf8mb4");
     tp.set_collation_name("utf8mb4_bin");

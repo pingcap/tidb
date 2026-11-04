@@ -262,7 +262,7 @@ fn tagged_string_const(text: &str, charset: &str, collation: &str) -> Expression
     field_type.set_flen(255);
     field_type.set_charset_name(charset);
     field_type.set_collation_name(collation);
-    Expression::Constant(Constant::new(Datum::new_string(text), field_type))
+    Expression::Constant(Constant::new(Datum::new_string_datum(text), field_type))
 }
 
 /// A VARBINARY-shaped `to_binary` / `from_binary` internal-transcode node,
@@ -295,7 +295,7 @@ fn raw_binary_const(bytes: &[u8]) -> Expression {
     field_type.set_flen(255);
     field_type.set_charset_name("binary");
     field_type.set_collation_name("binary");
-    let value = Datum::new_collation_string(bytes.to_vec(), tidb_charset::Collation::Binary);
+    let value = Datum::new_collation_string_datum(bytes.to_vec(), tidb_charset::Collation::Binary);
     Expression::Constant(Constant::new(value, field_type))
 }
 
@@ -358,7 +358,7 @@ fn constant_folding_sees_through_internal_charset_transcodes() {
             tagged_string_const("中文", "binary", "binary"),
         ))],
     );
-    assert_eq!(folded_datum_of(plain_concat), Datum::new_string("中文"));
+    assert_eq!(folded_datum_of(plain_concat), Datum::new_string_datum("中文"));
 
     // concat(from_binary('\xd2\xbb' @binary -> gbk_bin flen -1), '中文' @gbk_bin)
     // -> '一中文'.
@@ -795,7 +795,7 @@ fn vectorized_constant_fills_whole_output_chunks() {
 
     // Var-length type with/without Sel: 'hello' over 1024 string cells.
     let expression = Expression::Constant(Constant::new(
-        Datum::new_string("hello"),
+        Datum::new_string_datum("hello"),
         string_type.clone(),
     ));
     let int_input_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
@@ -810,7 +810,7 @@ fn vectorized_constant_fills_whole_output_chunks() {
     for row in 0..rows {
         assert_eq!(
             output.get_row(row).get_datum(0, &string_type),
-            Datum::new_string("hello"),
+            Datum::new_string_datum("hello"),
             "row {row}"
         );
     }

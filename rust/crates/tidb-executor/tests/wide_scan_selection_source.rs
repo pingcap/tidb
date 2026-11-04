@@ -865,9 +865,9 @@ fn string_expression_in_lowers_with_the_tested_collation() {
     let predicate = string_scalar_in_with(
         tested,
         vec![
-            Datum::new_string("A"),
+            Datum::new_string_datum("A"),
             Datum::Bytes(b"a".to_vec()),
-            Datum::new_string("B"),
+            Datum::new_string_datum("B"),
         ],
         false,
         "utf8mb4_general_ci",

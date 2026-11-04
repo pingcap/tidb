@@ -702,7 +702,7 @@ mod tests {
             Datum::Int(-7),
             Datum::UInt(u64::MAX),
             Datum::Real(1.25),
-            Datum::new_bytes(vec![0, 255, 1]),
+            Datum::new_bytes_datum(vec![0, 255, 1]),
             Datum::Decimal(tidb_datatype::Decimal::from_scaled_i128(12340, 3)),
         ] {
             assert_eq!(

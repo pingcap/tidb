@@ -144,14 +144,14 @@ impl SessionStmt {
 /// `parseUserAsRole`: projecting `CURRENT_USER` produces an empty role and an
 /// empty host, whose Go restore is a single empty quoted name with no `@`.
 #[derive(Debug, Clone, PartialEq)]
-pub struct RoleSpec {
+pub struct RoleIdentity {
     /// The decoded role name.
     pub role: String,
     /// The decoded host, `%` when it was omitted.
     pub host: String,
 }
 
-impl RoleSpec {
+impl RoleIdentity {
     pub(crate) fn restore_into(&self, out: &mut String) {
         out.push_str(&back_quote(&self.role));
         if !self.host.is_empty() {
@@ -175,9 +175,9 @@ pub enum SetRoleSelection {
     /// Activate all granted roles.
     All,
     /// Activate every granted role except these roles.
-    AllExcept(Vec<RoleSpec>),
+    AllExcept(Vec<RoleIdentity>),
     /// Activate exactly these roles.
-    Roles(Vec<RoleSpec>),
+    Roles(Vec<RoleIdentity>),
 }
 
 /// The complete parser-visible payload of `SET ROLE`.
@@ -211,7 +211,7 @@ pub enum DefaultRoleSelection {
     /// Make every granted role a default role.
     All,
     /// Make exactly these roles default roles.
-    Roles(Vec<RoleSpec>),
+    Roles(Vec<RoleIdentity>),
 }
 
 /// The complete parser-visible payload of `SET DEFAULT ROLE`.
@@ -242,7 +242,7 @@ impl SetDefaultRoleStmt {
     }
 }
 
-fn restore_roles(out: &mut String, roles: &[RoleSpec]) {
+fn restore_roles(out: &mut String, roles: &[RoleIdentity]) {
     for (index, role) in roles.iter().enumerate() {
         out.push(' ');
         role.restore_into(out);
@@ -401,7 +401,7 @@ impl crate::Visitable for SessionStmt {
     }
 }
 
-impl crate::Visitable for RoleSpec {
+impl crate::Visitable for RoleIdentity {
     fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
         if visitor.enter(self) {
             return visitor.leave(self);

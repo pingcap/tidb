@@ -1262,7 +1262,7 @@ fn align_not_null_with_schema(expression: Expression, schema: &Schema) -> Expres
                 if source_not_null {
                     field_type.add_flags(FieldTypeFlags::NOT_NULL);
                 } else {
-                    field_type.del_flags(FieldTypeFlags::NOT_NULL);
+                    field_type.del_flag(FieldTypeFlags::NOT_NULL);
                 }
             }
         }

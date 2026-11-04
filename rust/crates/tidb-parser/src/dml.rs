@@ -117,7 +117,7 @@ impl Parser {
     /// or query import action stay at the executor's explicit Unsupported
     /// boundary; parsing a valid Go statement must not depend on an
     /// incomplete external-storage implementation.
-    pub(crate) fn parse_import_into(&mut self) -> PResult<ImportIntoStmt> {
+    pub(crate) fn parse_import_into_stmt(&mut self) -> PResult<ImportIntoStmt> {
         self.expect_kw("IMPORT")?;
         self.expect_kw("INTO")?;
         let table = self.parse_name_path()?;

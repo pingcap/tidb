@@ -308,7 +308,7 @@ pub fn bootstrap_mysql_schema<S: MetaSnapshot>(
 ///
 /// A keyspace no TiDB has touched has no such key, and Go's own reader treats
 /// that absence as `InitDDLTableVersion` — zero.
-pub fn read_ddl_table_version<S: MetaSnapshot>(snapshot: &mut S) -> Result<i64, BootstrapError> {
+pub fn get_ddl_table_version<S: MetaSnapshot>(snapshot: &mut S) -> Result<i64, BootstrapError> {
     match snapshot.get(&key::ddl_table_version_kv_key())? {
         Some(stored) => value::parse_int_value(&stored)
             .map_err(|error| BootstrapError::Encode(format!("DDLTableVersion: {error}"))),
@@ -320,7 +320,7 @@ pub fn read_ddl_table_version<S: MetaSnapshot>(snapshot: &mut S) -> Result<i64, 
 ///
 /// `None` is Go's `isNull=true` result when a keyspace bootstrap has not yet
 /// initialized it.
-pub fn read_schema_cache_size<S: MetaSnapshot>(
+pub fn get_schema_cache_size<S: MetaSnapshot>(
     snapshot: &mut S,
 ) -> Result<Option<u64>, BootstrapError> {
     match snapshot.get(&schema_cache_size_kv_key())? {
@@ -518,7 +518,7 @@ mod source_tests {
     #[test]
     fn test_schema_cache_size_var() {
         let mut snapshot = Snapshot::default();
-        assert_eq!(read_schema_cache_size(&mut snapshot).unwrap(), None);
+        assert_eq!(get_schema_cache_size(&mut snapshot).unwrap(), None);
 
         let environment = BootstrapEnvironment {
             system_tz: "Asia/Shanghai".to_owned(),
@@ -551,7 +551,7 @@ mod source_tests {
 
         snapshot.pairs.insert(raw_key, stored[0].clone());
         assert_eq!(
-            read_schema_cache_size(&mut snapshot).unwrap(),
+            get_schema_cache_size(&mut snapshot).unwrap(),
             Some(536_870_912)
         );
     }

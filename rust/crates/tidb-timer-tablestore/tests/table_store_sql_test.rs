@@ -802,7 +802,7 @@ impl SqlExecutor for MockSession {
                 })];
                 let rows = rows
                     .into_iter()
-                    .map(|row| vec![tidb_datatype::Datum::new_string(row.get_string(0))])
+                    .map(|row| vec![tidb_datatype::Datum::new_string_datum(row.get_string(0))])
                     .collect();
                 Ok(Some(Box::new(tidb_sqlexec::SimpleRecordSet::new(
                     fields, rows, 32,

@@ -1106,7 +1106,7 @@ pub fn fill_row_checksum(
     let checksum = row
         .checksum(Some(zone))
         .map_err(|error| decode_error(&error))?;
-    Ok(Datum::new_string(checksum.to_string()))
+    Ok(Datum::new_string_datum(checksum.to_string()))
 }
 
 /// Go `table.GetColOriginDefaultValue` with its `getColDefaultValueFromNil`

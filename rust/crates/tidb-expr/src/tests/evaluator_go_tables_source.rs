@@ -189,11 +189,11 @@ fn unary_op_kind_rows_match_source() {
         "unsigned minus promotes into the signed domain"
     );
     assert_eq!(
-        apply_unary_of(UnaryOp::Minus, Datum::new_string("1.0")),
+        apply_unary_of(UnaryOp::Minus, Datum::new_string_datum("1.0")),
         Datum::Real(-1.0)
     );
     assert_eq!(
-        apply_unary_of(UnaryOp::Minus, Datum::new_bytes(b"1.0".to_vec())),
+        apply_unary_of(UnaryOp::Minus, Datum::new_bytes_datum(b"1.0".to_vec())),
         Datum::Real(-1.0)
     );
 }

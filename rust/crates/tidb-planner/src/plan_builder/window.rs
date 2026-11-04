@@ -1399,7 +1399,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 constant,
                 // Go: `types.NewStringDatum(unit)` typed `TypeVarchar`.
                 Expression::Constant(tidb_expr::constant::Constant::new(
-                    tidb_datatype::Datum::new_string(unit.clone()),
+                    tidb_datatype::Datum::new_string_datum(unit.clone()),
                     FieldType::new(FieldTypeCode::Varchar),
                 )),
             ],

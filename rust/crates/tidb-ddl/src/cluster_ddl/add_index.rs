@@ -1293,7 +1293,7 @@ fn convert_add_index_to_rollback(
                     column
                         .write()
                         .field_type
-                        .del_flags(tidb_datatype::FieldTypeFlags::PREVENT_NULL_INSERT);
+                        .del_flag(tidb_datatype::FieldTypeFlags::PREVENT_NULL_INSERT);
                 }
             }
         }
@@ -1480,7 +1480,7 @@ fn drop_index_column_flag(info: &TableInfo, index: &IndexInfo) {
             .ok()
             .and_then(|offset| info.columns.get(offset))
         {
-            column.write().field_type.del_flags(flag);
+            column.write().field_type.del_flag(flag);
         }
     };
     let Some(first) = index.columns.get(0) else {

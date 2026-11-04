@@ -1152,7 +1152,7 @@ fn source_append_topn_aliases_the_callers_bytes() {
 
 #[test]
 fn source_query_value_supports_all_typed_datums_and_nil_cms_topn_hits() {
-    let value = Datum::new_string("typed");
+    let value = Datum::new_string_datum("typed");
     let encoded = tidb_codec::encode_value_in_timezone(&Utc, std::slice::from_ref(&value)).unwrap();
     let mut topn = TopN::new(1);
     topn.append(&encoded, 77);

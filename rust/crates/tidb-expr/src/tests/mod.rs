@@ -164,7 +164,7 @@ fn avg() {
     assert_eq!(avg_of(v("8.00"), 3).unwrap().label(), "DEC:2.666667"); // scale 2+4=6, rounds up
     assert_eq!(avg_of(v("4.0000"), 2).unwrap().label(), "DEC:2.00000000"); // scale 4+4=8, exact
     assert!(matches!(
-        avg_of(Datum::new_string("x".to_string()), 1),
+        avg_of(Datum::new_string_datum("x".to_string()), 1),
         Err(EvalError::Unsupported(_))
     ));
 }
@@ -207,19 +207,19 @@ fn bin_follows_tidb_implicit_integer_coercion() {
     // ties-to-even rule is distinct from decimal's half-up rule.
     assert_eq!(
         string_fn::bin(&[Datum::Real(10.0)], &NoColumns).unwrap(),
-        Datum::new_string("1010".to_string())
+        Datum::new_string_datum("1010".to_string())
     );
     assert_eq!(
         string_fn::bin(&[Datum::Real(10.5)], &NoColumns).unwrap(),
-        Datum::new_string("1010".to_string())
+        Datum::new_string_datum("1010".to_string())
     );
     assert_eq!(
-        string_fn::bin(&[Datum::new_bytes(b"10".to_vec())], &NoColumns).unwrap(),
-        Datum::new_string("1010".to_string())
+        string_fn::bin(&[Datum::new_bytes_datum(b"10".to_vec())], &NoColumns).unwrap(),
+        Datum::new_string_datum("1010".to_string())
     );
     assert_eq!(
-        string_fn::bin(&[Datum::new_bytes(vec![0xff])], &NoColumns).unwrap(),
-        Datum::new_string("0".to_string())
+        string_fn::bin(&[Datum::new_bytes_datum(vec![0xff])], &NoColumns).unwrap(),
+        Datum::new_string_datum("0".to_string())
     );
     assert_eq!(
         string_fn::bin(&[], &NoColumns),
@@ -251,11 +251,11 @@ fn ord_source_vectors_preserve_utf8_and_binary_bytes() {
         assert_eq!(e(expr), want, "{expr}");
     }
     assert_eq!(
-        string_fn::ord(&[Datum::new_bytes(vec![0xe4, 0xbd, 0xa0])]).unwrap(),
+        string_fn::ord(&[Datum::new_bytes_datum(vec![0xe4, 0xbd, 0xa0])]).unwrap(),
         Datum::Int(0xe4)
     );
     assert_eq!(
-        string_fn::ord(&[Datum::new_collation_string(
+        string_fn::ord(&[Datum::new_collation_string_datum(
             vec![0xe4, 0xbd, 0xa0],
             tidb_charset::Collation::Binary,
         )])
@@ -263,14 +263,14 @@ fn ord_source_vectors_preserve_utf8_and_binary_bytes() {
         Datum::Int(0xe4)
     );
     assert_eq!(
-        string_fn::ord(&[Datum::new_bytes(vec![0xff])]).unwrap(),
+        string_fn::ord(&[Datum::new_bytes_datum(vec![0xff])]).unwrap(),
         Datum::Int(0xff)
     );
     for charset in ["ascii", "latin1"] {
         let mut field_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
         field_type.set_charset_name(charset);
         assert_eq!(
-            string_fn::ord_with_type(&[Datum::new_string("你")], Some(&field_type)).unwrap(),
+            string_fn::ord_with_type(&[Datum::new_string_datum("你")], Some(&field_type)).unwrap(),
             Datum::Int(0xe4),
             "{charset}",
         );
@@ -324,12 +324,12 @@ fn hex_source_vectors_preserve_numeric_and_byte_signatures() {
 #[test]
 fn unhex_source_vectors_preserve_odd_digit_left_padding() {
     for (input, want) in [
-        ("'4D7953514C'", Datum::new_bytes(b"MySQL".to_vec())),
-        ("'1267'", Datum::new_bytes(b"\x12g".to_vec())),
-        ("'126'", Datum::new_bytes(b"\x01&".to_vec())),
-        ("''", Datum::new_bytes(Vec::new())),
-        ("1267", Datum::new_bytes(b"\x12g".to_vec())),
-        ("126", Datum::new_bytes(b"\x01&".to_vec())),
+        ("'4D7953514C'", Datum::new_bytes_datum(b"MySQL".to_vec())),
+        ("'1267'", Datum::new_bytes_datum(b"\x12g".to_vec())),
+        ("'126'", Datum::new_bytes_datum(b"\x01&".to_vec())),
+        ("''", Datum::new_bytes_datum(Vec::new())),
+        ("1267", Datum::new_bytes_datum(b"\x12g".to_vec())),
+        ("126", Datum::new_bytes_datum(b"\x01&".to_vec())),
         ("1267.3", Datum::Null),
         ("'string'", Datum::Null),
         ("'你好'", Datum::Null),
@@ -338,12 +338,12 @@ fn unhex_source_vectors_preserve_odd_digit_left_padding() {
         assert_eq!(v(&format!("unhex({input})")), want, "UNHEX({input})");
     }
 
-    assert_eq!(v("unhex('FF00')"), Datum::new_bytes(vec![0xff, 0]));
+    assert_eq!(v("unhex('FF00')"), Datum::new_bytes_datum(vec![0xff, 0]));
     // Go's ETString evaluator accepts arbitrary bytes.  Invalid UTF-8 is
     // therefore an invalid hex payload and returns NULL, rather than leaking
     // a Rust decoding error before `hex.DecodeString` gets to decide.
     assert_eq!(
-        string_fn::unhex(&[Datum::new_bytes(vec![0xff])]),
+        string_fn::unhex(&[Datum::new_bytes_datum(vec![0xff])]),
         Ok(Datum::Null)
     );
 }
@@ -369,7 +369,7 @@ fn bit_length_source_vectors_preserve_utf8_byte_count() {
 
     // Go's len(val) counts binary bytes without UTF-8 validation.
     assert_eq!(
-        string_fn::bit_length(&[Datum::new_bytes(vec![0xff, 0x00])]).unwrap(),
+        string_fn::bit_length(&[Datum::new_bytes_datum(vec![0xff, 0x00])]).unwrap(),
         Datum::Int(16)
     );
 }
@@ -424,8 +424,8 @@ fn oct_source_vectors_preserve_distinct_string_and_integer_signatures() {
     // value merely because the byte sequence is not UTF-8.
     assert_eq!(e("oct(unhex('FF'))"), "STR:0");
     assert_eq!(
-        string_fn::oct(&[Datum::new_bytes(vec![0xff])]),
-        Ok(Datum::new_string("0".to_string()))
+        string_fn::oct(&[Datum::new_bytes_datum(vec![0xff])]),
+        Ok(Datum::new_string_datum("0".to_string()))
     );
 }
 
@@ -532,7 +532,7 @@ fn ascii_source_vectors_preserve_first_byte_and_string_coercion() {
     // separate from the SQL source table because the parser does not expose
     // an invalid-UTF-8 string literal in this seed value domain.
     assert_eq!(
-        string_fn::ascii(&[Datum::new_bytes(vec![0xff, 0x00])]).unwrap(),
+        string_fn::ascii(&[Datum::new_bytes_datum(vec![0xff, 0x00])]).unwrap(),
         Datum::Int(255)
     );
 }
@@ -647,7 +647,7 @@ fn char_length_rejects_unresolved_field_type_before_runtime_datum() {
 
     impl Columns for RuntimeBytes {
         fn get(&self, _: &[String]) -> Option<Datum> {
-            Some(Datum::new_bytes("你".as_bytes().to_vec()))
+            Some(Datum::new_bytes_datum("你".as_bytes().to_vec()))
         }
     }
 
@@ -816,11 +816,11 @@ fn right_and_rpad_sig_source_vectors_preserve_scalar_boundaries() {
     ] {
         assert_eq!(e(expr), want, "{expr}");
     }
-    assert_eq!(v("right(unhex('6162FF'), 1)"), Datum::new_bytes(vec![0xff]));
+    assert_eq!(v("right(unhex('6162FF'), 1)"), Datum::new_bytes_datum(vec![0xff]));
     assert_eq!(
         string_fn::str_take(
             &[
-                Datum::new_collation_string(
+                Datum::new_collation_string_datum(
                     vec![0x61, 0x62, 0xff],
                     tidb_charset::Collation::Binary,
                 ),
@@ -829,7 +829,7 @@ fn right_and_rpad_sig_source_vectors_preserve_scalar_boundaries() {
             false,
         )
         .unwrap(),
-        Datum::new_bytes(vec![0xff])
+        Datum::new_bytes_datum(vec![0xff])
     );
 
     // The scalar value row in `TestRpadSig` (source line 1831) is the same
@@ -841,15 +841,15 @@ fn right_and_rpad_sig_source_vectors_preserve_scalar_boundaries() {
     assert_eq!(
         string_packet::pad(
             &[
-                Datum::new_bytes(b"ab".to_vec()),
+                Datum::new_bytes_datum(b"ab".to_vec()),
                 Datum::Int(3),
-                Datum::new_bytes(vec![0xff]),
+                Datum::new_bytes_datum(vec![0xff]),
             ],
             false,
             &NoColumns,
         )
         .unwrap(),
-        Datum::new_bytes(vec![b'a', b'b', 0xff])
+        Datum::new_bytes_datum(vec![b'a', b'b', 0xff])
     );
     assert_eq!(
         string_packet::pad(&[], false, &NoColumns),
@@ -981,12 +981,12 @@ fn lower_upper_source_vectors_preserve_case_and_binary_boundaries() {
         assert_eq!(e(expr), want, "{expr}");
     }
     assert_eq!(
-        string_fn::case_convert(&[Datum::new_bytes(vec![b'A', 0xff])], false).unwrap(),
-        Datum::new_bytes(vec![b'A', 0xff])
+        string_fn::case_convert(&[Datum::new_bytes_datum(vec![b'A', 0xff])], false).unwrap(),
+        Datum::new_bytes_datum(vec![b'A', 0xff])
     );
     assert_eq!(
-        string_fn::case_convert(&[Datum::new_bytes(vec![b'a', 0xff])], true).unwrap(),
-        Datum::new_bytes(vec![b'a', 0xff])
+        string_fn::case_convert(&[Datum::new_bytes_datum(vec![b'a', 0xff])], true).unwrap(),
+        Datum::new_bytes_datum(vec![b'a', 0xff])
     );
     assert!(string_fn::case_convert(&[], false).is_err());
 }
@@ -1020,27 +1020,27 @@ fn strcmp_source_vectors_preserve_coercion_and_nulls() {
         assert_eq!(e(expr), want, "{expr}");
     }
     assert_eq!(
-        string_fn::strcmp(&[Datum::new_bytes(vec![0xff]), Datum::new_bytes(vec![0x00]),]).unwrap(),
+        string_fn::strcmp(&[Datum::new_bytes_datum(vec![0xff]), Datum::new_bytes_datum(vec![0x00]),]).unwrap(),
         Datum::Int(1)
     );
     assert_eq!(
         string_fn::strcmp(&[
-            Datum::new_bytes(b"a".to_vec()),
-            Datum::new_bytes(b"a ".to_vec()),
+            Datum::new_bytes_datum(b"a".to_vec()),
+            Datum::new_bytes_datum(b"a ".to_vec()),
         ])
         .unwrap(),
         Datum::Int(-1)
     );
     assert_eq!(
         string_fn::strcmp(&[
-            Datum::new_string("a ".to_string()),
-            Datum::new_bytes(b"a".to_vec()),
+            Datum::new_string_datum("a ".to_string()),
+            Datum::new_bytes_datum(b"a".to_vec()),
         ])
         .unwrap(),
         Datum::Int(1)
     );
     assert_eq!(
-        string_fn::strcmp(&[Datum::new_string("a".to_string())]),
+        string_fn::strcmp(&[Datum::new_string_datum("a".to_string())]),
         Err(EvalError::Unsupported("bad STRCMP arity"))
     );
 }
@@ -1080,8 +1080,8 @@ fn left_right_source_vectors_preserve_count_and_byte_boundaries() {
     ] {
         assert_eq!(e(expr), want, "{expr}");
     }
-    assert_eq!(v("left(unhex('0102'), 1)"), Datum::new_bytes(vec![0x01]));
-    assert_eq!(v("right(unhex('0102'), 1)"), Datum::new_bytes(vec![0x02]));
+    assert_eq!(v("left(unhex('0102'), 1)"), Datum::new_bytes_datum(vec![0x01]));
+    assert_eq!(v("right(unhex('0102'), 1)"), Datum::new_bytes_datum(vec![0x02]));
     assert_eq!(e("left('你好世界', 2)"), "STR:你好");
     assert_eq!(e("right('你好世界', 2)"), "STR:世界");
 }
@@ -1111,16 +1111,16 @@ fn replace_source_vectors_preserve_byte_coercion() {
     }
     assert_eq!(
         string_fn::replace(&[
-            Datum::new_bytes(vec![0xff, 0x00, b'a']),
-            Datum::new_bytes(vec![0xff]),
-            Datum::new_bytes(vec![0xfe, b'b']),
+            Datum::new_bytes_datum(vec![0xff, 0x00, b'a']),
+            Datum::new_bytes_datum(vec![0xff]),
+            Datum::new_bytes_datum(vec![0xfe, b'b']),
         ])
         .unwrap(),
-        Datum::new_bytes(vec![0xfe, b'b', 0x00, b'a'])
+        Datum::new_bytes_datum(vec![0xfe, b'b', 0x00, b'a'])
     );
     assert!(string_fn::replace(&[
-        Datum::new_string("abc".to_string()),
-        Datum::new_string("a".to_string()),
+        Datum::new_string_datum("abc".to_string()),
+        Datum::new_string_datum("a".to_string()),
     ])
     .is_err());
 }
@@ -1181,37 +1181,37 @@ fn substring_index_source_vectors_preserve_count_and_bytes() {
     }
     assert_eq!(
         string_fn::substring_index(&[
-            Datum::new_bytes(b"a\xffb\xffc".to_vec()),
-            Datum::new_bytes(vec![0xff]),
+            Datum::new_bytes_datum(b"a\xffb\xffc".to_vec()),
+            Datum::new_bytes_datum(vec![0xff]),
             Datum::Int(-2),
         ])
         .unwrap(),
-        Datum::new_bytes(b"b\xffc".to_vec())
+        Datum::new_bytes_datum(b"b\xffc".to_vec())
     );
     assert_eq!(
         string_fn::substring_index(&[
-            Datum::new_string("a".to_string()),
-            Datum::new_string(".".to_string()),
+            Datum::new_string_datum("a".to_string()),
+            Datum::new_string_datum(".".to_string()),
         ]),
         Err(EvalError::Unsupported("bad SUBSTRING_INDEX arity"))
     );
     assert_eq!(
         string_fn::substring_index(&[
-            Datum::new_string("a.b.c".to_string()),
-            Datum::new_string(".".to_string()),
+            Datum::new_string_datum("a.b.c".to_string()),
+            Datum::new_string_datum(".".to_string()),
             Datum::UInt(i64::MAX as u64 + 1),
         ])
         .unwrap(),
-        Datum::new_string("a.b.c".to_string())
+        Datum::new_string_datum("a.b.c".to_string())
     );
     assert_eq!(
         string_fn::substring_index(&[
-            Datum::new_string("a.b.c".to_string()),
-            Datum::new_string(".".to_string()),
+            Datum::new_string_datum("a.b.c".to_string()),
+            Datum::new_string_datum(".".to_string()),
             Datum::Int(i64::MIN),
         ])
         .unwrap(),
-        Datum::new_string("a.b.c".to_string())
+        Datum::new_string_datum("a.b.c".to_string())
     );
 }
 
@@ -1244,7 +1244,7 @@ fn trim_source_vectors_preserve_direction_and_whole_remstr() {
             TrimDirection::Both,
             false,
         ),
-        Datum::new_string(b"\t   bar   \n".to_vec())
+        Datum::new_string_datum(b"\t   bar   \n".to_vec())
     );
     assert_eq!(
         string_fn::trim_value(
@@ -1253,7 +1253,7 @@ fn trim_source_vectors_preserve_direction_and_whole_remstr() {
             TrimDirection::Both,
             false,
         ),
-        Datum::new_string(b"\r   bar   \t".to_vec())
+        Datum::new_string_datum(b"\r   bar   \t".to_vec())
     );
     assert_eq!(
         string_fn::trim_value(
@@ -1262,7 +1262,7 @@ fn trim_source_vectors_preserve_direction_and_whole_remstr() {
             TrimDirection::Both,
             false,
         ),
-        Datum::new_string(b"\tbar\n".to_vec())
+        Datum::new_string_datum(b"\tbar\n".to_vec())
     );
     assert_eq!(
         string_fn::trim_value(
@@ -1271,7 +1271,7 @@ fn trim_source_vectors_preserve_direction_and_whole_remstr() {
             TrimDirection::Leading,
             false,
         ),
-        Datum::new_string("barxxx".to_string())
+        Datum::new_string_datum("barxxx".to_string())
     );
     assert_eq!(
         string_fn::trim_value(
@@ -1280,7 +1280,7 @@ fn trim_source_vectors_preserve_direction_and_whole_remstr() {
             TrimDirection::Trailing,
             false,
         ),
-        Datum::new_string("barx".to_string())
+        Datum::new_string_datum("barx".to_string())
     );
     assert_eq!(
         string_fn::trim_value(
@@ -1289,7 +1289,7 @@ fn trim_source_vectors_preserve_direction_and_whole_remstr() {
             TrimDirection::Both,
             true,
         ),
-        Datum::new_bytes(vec![0xff])
+        Datum::new_bytes_datum(vec![0xff])
     );
     assert_eq!(
         string_fn::trim_value(Some(b"bar".to_vec()), None, TrimDirection::Both, false,),
@@ -1323,8 +1323,8 @@ fn concat_source_vectors_preserve_scalar_and_binary_coercion() {
         assert_eq!(e(expr), want, "{expr}");
     }
     assert_eq!(
-        string_fn::concat(&[Datum::new_bytes(vec![0xff]), Datum::new_string("a")]).unwrap(),
-        Datum::new_string(vec![0xff, b'a'])
+        string_fn::concat(&[Datum::new_bytes_datum(vec![0xff]), Datum::new_string_datum("a")]).unwrap(),
+        Datum::new_string_datum(vec![0xff, b'a'])
     );
     assert!(string_fn::concat(&[]).is_err());
 }
@@ -1356,16 +1356,16 @@ fn concat_ws_source_vectors_preserve_separator_and_null_rules() {
     }
     assert_eq!(
         string_fn::concat_ws(&[
-            Datum::new_bytes(vec![b'|']),
-            Datum::new_bytes(vec![0xff]),
+            Datum::new_bytes_datum(vec![b'|']),
+            Datum::new_bytes_datum(vec![0xff]),
             Datum::Null,
-            Datum::new_string("b"),
+            Datum::new_string_datum("b"),
         ])
         .unwrap(),
-        Datum::new_string(vec![0xff, b'|', b'b'])
+        Datum::new_string_datum(vec![0xff, b'|', b'b'])
     );
     assert!(string_fn::concat_ws(&[]).is_err());
-    assert!(string_fn::concat_ws(&[Datum::new_string(",")]).is_err());
+    assert!(string_fn::concat_ws(&[Datum::new_string_datum(",")]).is_err());
 }
 
 #[test]

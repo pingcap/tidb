@@ -17,11 +17,11 @@ fn everyday_string_and_date_builtins() {
         session
             .run("SELECT SUBSTRING_INDEX('a.b.c', '.', 2)")
             .unwrap(),
-        StmtResult::Rows(vec![vec![Datum::new_string("a.b")]])
+        StmtResult::Rows(vec![vec![Datum::new_string_datum("a.b")]])
     );
     assert_eq!(
         session.run("SELECT CHAR(77, 121, 83, 81, 76)").unwrap(),
-        StmtResult::Rows(vec![vec![Datum::new_collation_string(
+        StmtResult::Rows(vec![vec![Datum::new_collation_string_datum(
             b"MySQL".to_vec(),
             tidb_charset::Collation::Binary,
         )]])
@@ -30,19 +30,19 @@ fn everyday_string_and_date_builtins() {
         session
             .run("SELECT INSERT('Quadratic', 3, 4, 'What')")
             .unwrap(),
-        StmtResult::Rows(vec![vec![Datum::new_string("QuWhattic")]])
+        StmtResult::Rows(vec![vec![Datum::new_string_datum("QuWhattic")]])
     );
     assert_eq!(
         session
             .run("SELECT EXPORT_SET(5, 'Y', 'N', ',', 4)")
             .unwrap(),
-        StmtResult::Rows(vec![vec![Datum::new_string("Y,N,Y,N")]])
+        StmtResult::Rows(vec![vec![Datum::new_string_datum("Y,N,Y,N")]])
     );
     assert_eq!(
         session
             .run("SELECT DATE_FORMAT('2024-01-01 10:00:00', '%Y-%m-%d %H:%i:%s')")
             .unwrap(),
-        StmtResult::Rows(vec![vec![Datum::new_string("2024-01-01 10:00:00")]])
+        StmtResult::Rows(vec![vec![Datum::new_string_datum("2024-01-01 10:00:00")]])
     );
     let str_to_date = session
         .run("SELECT STR_TO_DATE('01,5,2024','%d,%m,%Y')")
@@ -54,7 +54,7 @@ fn everyday_string_and_date_builtins() {
     assert_eq!(row_text(Ok(str_to_date)), [["2024-05-01"]]);
     assert_eq!(
         session.run("SELECT QUOTE('a''b')").unwrap(),
-        StmtResult::Rows(vec![vec![Datum::new_string("'a\\'b'")]])
+        StmtResult::Rows(vec![vec![Datum::new_string_datum("'a\\'b'")]])
     );
 }
 
@@ -80,10 +80,10 @@ fn get_format_reaches_the_sql_expression_path() {
     assert_eq!(
         rows,
         vec![vec![
-            Datum::new_string("%m.%d.%Y"),
-            Datum::new_string("%Y-%m-%d %H.%i.%s"),
-            Datum::new_string(""),
-            Datum::new_string(""),
+            Datum::new_string_datum("%m.%d.%Y"),
+            Datum::new_string_datum("%Y-%m-%d %H.%i.%s"),
+            Datum::new_string_datum(""),
+            Datum::new_string_datum(""),
             Datum::Null,
         ]]
     );

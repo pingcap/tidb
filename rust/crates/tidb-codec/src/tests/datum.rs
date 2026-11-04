@@ -20,8 +20,8 @@ use tidb_datatype::{Datum, Decimal};
 fn datum_key_round_trips_and_preserves_order() {
     let values = vec![
         Datum::new_int(-101),
-        Datum::new_string("abc"),
-        Datum::new_bytes(vec![0xff, 0]),
+        Datum::new_string_datum("abc"),
+        Datum::new_bytes_datum(vec![0xff, 0]),
         Datum::new_decimal(Decimal::from_literal("12.340").negate()),
         Datum::new_real(1.25),
         Datum::Null,
@@ -53,7 +53,7 @@ fn datum_key_round_trips_and_preserves_order() {
 /// Exact sentinel row from `pkg/util/codec/codec_test.go::TestCodecKeyCompare`.
 #[test]
 fn test_codec_key_compare_sentinel_vector() {
-    let min = encode_key(&[Datum::min_not_null()]).unwrap();
+    let min = encode_key(&[Datum::min_not_null_datum()]).unwrap();
     let max = encode_key(&[Datum::max_value()]).unwrap();
 
     assert_eq!(min, [BYTES_FLAG]);
@@ -67,16 +67,16 @@ fn test_codec_key_compare_sentinel_vector() {
 /// `MinNotNull` sentinel.
 #[test]
 fn test_decode_range_distinguishes_payload_bytes_from_terminal_sentinels() {
-    let ordinary = Datum::new_bytes(b"abc".to_vec());
+    let ordinary = Datum::new_bytes_datum(b"abc".to_vec());
     let mut encoded = encode_key(std::slice::from_ref(&ordinary)).unwrap();
     encoded.push(BYTES_FLAG);
     let (values, remain) = decode_range(&encoded, 2, None, None).unwrap();
     assert!(remain.is_empty());
-    assert_eq!(values, [ordinary, Datum::min_not_null()]);
+    assert_eq!(values, [ordinary, Datum::min_not_null_datum()]);
 
     for (flag, expected) in [
         (NIL_FLAG, Datum::Null),
-        (BYTES_FLAG, Datum::min_not_null()),
+        (BYTES_FLAG, Datum::min_not_null_datum()),
         (MAX_FLAG, Datum::max_value()),
         (MAX_FLAG + 1, Datum::max_value()),
     ] {

@@ -14,13 +14,13 @@
 
 //! Role-membership AST payloads from Go's `GrantRoleStmt` and `RevokeRoleStmt`.
 
-use crate::{RoleSpec, UserSpec};
+use crate::{RoleIdentity, UserSpec};
 
 /// Go `ast.GrantRoleStmt`: add roles to accounts in source order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GrantRoleStmt {
     /// Roles to grant, each using strict role identity grammar.
-    pub roles: Vec<RoleSpec>,
+    pub roles: Vec<RoleIdentity>,
     /// Accounts receiving the roles.
     pub users: Vec<UserSpec>,
 }
@@ -38,7 +38,7 @@ impl GrantRoleStmt {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RevokeRoleStmt {
     /// Roles to revoke, each using strict role identity grammar.
-    pub roles: Vec<RoleSpec>,
+    pub roles: Vec<RoleIdentity>,
     /// Accounts losing the roles.
     pub users: Vec<UserSpec>,
 }
@@ -52,7 +52,7 @@ impl RevokeRoleStmt {
     }
 }
 
-fn restore_roles(out: &mut String, roles: &[RoleSpec]) {
+fn restore_roles(out: &mut String, roles: &[RoleIdentity]) {
     for (index, role) in roles.iter().enumerate() {
         if index != 0 {
             out.push_str(", ");

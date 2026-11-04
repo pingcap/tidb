@@ -19,7 +19,7 @@
 use crate::{
     AlterTableAction, AlterTableStmt, ColumnDef, ColumnOption, ColumnPosition, CreateIndexStmt,
     CreateTableStmt, CreateTableTemporary, DdlStmt, DropIndexLock, DropIndexStmt, DropTableStmt,
-    DropTemporary, Expr, ForeignKeyConstraintDefinition, ForeignKeyMatch, ForeignKeyReference,
+    DropTemporary, Expr, ForeignKeyConstraintDefinition, MatchType, ReferenceDef,
     IndexConstraintDefinition, IndexConstraintKind, IndexKind, IndexPart, NodeBox, Stmt,
     TableConstraint, ViewCheckOption, ViewSecurity,
 };
@@ -95,11 +95,11 @@ fn key_constraint() -> IndexConstraintDefinition {
     }
 }
 
-fn reference_def() -> ForeignKeyReference {
-    ForeignKeyReference {
+fn reference_def() -> ReferenceDef {
+    ReferenceDef {
         table: Some(vec!["parent".to_string()]),
         parts: Some(vec![named_part("id"), named_part("hello")]),
-        match_type: ForeignKeyMatch::default(),
+        match_type: MatchType::default(),
         on_delete: None,
         on_update: None,
     }

@@ -23,7 +23,7 @@ use tidb_datatype::Datum;
 use crate::{SessionExtendedInfoSchema, DriverError, StmtContext};
 
 /// Reads every persisted lock ID, the query Go's `QueryLockedTables` runs.
-pub fn query_catalog_locked_tables(
+pub fn query_locked_tables(
     catalog: &SessionExtendedInfoSchema,
     context: &StmtContext,
 ) -> Result<BTreeSet<i64>, DriverError> {

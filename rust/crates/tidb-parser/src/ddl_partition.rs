@@ -24,7 +24,7 @@ use tidb_ast::{
 /// Direct source-shaped translation of Go's `parsePartitionOptions`.  CREATE
 /// TABLE owns this construction payload; ALTER actions only reuse individual
 /// definitions below.
-pub(super) fn parse_table_partitioning(parser: &mut Parser) -> PResult<TablePartitioning> {
+pub(super) fn parse_partition_options(parser: &mut Parser) -> PResult<TablePartitioning> {
     parser.expect_kw("PARTITION")?;
     parser.expect_kw("BY")?;
     let method = parse_partition_method(parser, false)?;

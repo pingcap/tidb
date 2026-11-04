@@ -2075,11 +2075,11 @@ mod tests {
         let fields = vec![FieldType::new(tidb_datatype::FieldTypeCode::VarString)];
         let values = vec![
             Datum::Null,
-            Datum::new_string("A"),
-            Datum::new_string("a"),
-            Datum::new_string("a "),
-            Datum::new_string("é"),
-            Datum::new_string("z".repeat(512)),
+            Datum::new_string_datum("A"),
+            Datum::new_string_datum("a"),
+            Datum::new_string_datum("a "),
+            Datum::new_string_datum("é"),
+            Datum::new_string_datum("z".repeat(512)),
         ];
         let mut chunk = Chunk::new_chunk_with_capacity(&fields, values.len());
         for value in &values {
@@ -2130,8 +2130,8 @@ mod tests {
             }]))
         };
         let mut partial = PartitionedHandleSource::new(vec![
-            source(&[1, 3], &[Datum::Null, Datum::new_string("b")]),
-            source(&[2, 4], &[Datum::new_string("a"), Datum::new_string("z")]),
+            source(&[1, 3], &[Datum::Null, Datum::new_string_datum("b")]),
+            source(&[2, 4], &[Datum::new_string_datum("a"), Datum::new_string_datum("z")]),
         ])
         .with_order(
             vec![MergeByItem {
@@ -2160,9 +2160,9 @@ mod tests {
             values,
             vec![
                 Datum::Null,
-                Datum::new_string("a"),
-                Datum::new_string("b"),
-                Datum::new_string("z")
+                Datum::new_string_datum("a"),
+                Datum::new_string_datum("b"),
+                Datum::new_string_datum("z")
             ]
         );
     }
@@ -2307,7 +2307,7 @@ mod tests {
             for index in 0..32 {
                 let encoded = tidb_codec::encode_key(&[
                     Datum::Int(index),
-                    Datum::new_string("x".repeat(100)),
+                    Datum::new_string_datum("x".repeat(100)),
                 ])
                 .unwrap();
                 let common = tidb_txnkv::CommonHandle::new(encoded.clone()).unwrap();

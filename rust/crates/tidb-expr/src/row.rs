@@ -187,7 +187,7 @@ use tidb_charset::Collation;
         );
         assert!(compare_datums_with_collation(
             &time,
-            &Datum::new_string("not-a-time"),
+            &Datum::new_string_datum("not-a-time"),
             Collation::Utf8Mb4Bin,
         )
         .is_err());

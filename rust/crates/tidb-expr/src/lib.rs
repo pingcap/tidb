@@ -585,7 +585,7 @@ pub fn get_time_value(
             if name.eq_ignore_ascii_case("CURRENT_TIMESTAMP")
                 || name.eq_ignore_ascii_case("CURRENT_DATE") =>
         {
-            return Ok(Datum::new_string(name.to_ascii_uppercase()));
+            return Ok(Datum::new_string_datum(name.to_ascii_uppercase()));
         }
         Expr::Func { .. } => {
             return Err(EvalError::Unsupported("default value expression"));
@@ -799,7 +799,7 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
             })
             .map_err(|_| EvalError::IntOverflow),
         Expr::Bool(b) => Ok(Datum::Int(i64::from(*b))),
-        Expr::String(s) => Ok(Datum::new_string(
+        Expr::String(s) => Ok(Datum::new_string_datum(
             tidb_hack::raw_bytes::str_to_bytes(s).into_owned(),
         )),
         Expr::CharsetString { charset, value } => {
@@ -811,7 +811,7 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
             Ok(if collation == tidb_charset::Collation::Binary {
                 Datum::Bytes(bytes)
             } else {
-                Datum::new_collation_string(bytes, collation)
+                Datum::new_collation_string_datum(bytes, collation)
             })
         }
         Expr::Decimal(s) => Ok(Datum::Decimal(Decimal::from_literal(s))),
@@ -942,7 +942,7 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
             expr,
         } => {
             let vals = vec![
-                Datum::new_string(unit.clone()),
+                Datum::new_string_datum(unit.clone()),
                 eval_in(interval, cols)?,
                 eval_in(expr, cols)?,
             ];
@@ -967,7 +967,7 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
                     GetFormatSelector::Time => "TIME",
                     GetFormatSelector::Datetime => "DATETIME",
                 };
-                Ok(Datum::new_string(time_fn::get_format(
+                Ok(Datum::new_string_datum(time_fn::get_format(
                     format_type,
                     &location,
                 )))
@@ -1029,7 +1029,7 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
                     source.set_charset_name(source_charset.name());
                     source.set_collation_name(collation.name());
                     (
-                        Datum::new_collation_string(value.go_bytes().to_vec(), collation),
+                        Datum::new_collation_string_datum(value.go_bytes().to_vec(), collation),
                         source,
                     )
                 } else {
@@ -1040,7 +1040,7 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
                         .collation()
                         .unwrap_or(tidb_charset::Collation::DEFAULT);
                     (
-                        Datum::new_collation_string(text.into_bytes(), collation),
+                        Datum::new_collation_string_datum(text.into_bytes(), collation),
                         tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString)
                             .with_collation(collation),
                     )

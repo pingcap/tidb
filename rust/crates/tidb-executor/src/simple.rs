@@ -122,7 +122,7 @@ pub fn execute_set_role(
             DriverError::unsupported("CURRENT_USER requires a session with an authenticated identity")
         })?;
     let checker = ctx.privilege_manager();
-    let granted = |roles: &[tidb_ast::RoleSpec]| -> Result<Vec<(String, String)>, DriverError> {
+    let granted = |roles: &[tidb_ast::RoleIdentity]| -> Result<Vec<(String, String)>, DriverError> {
         roles
             .iter()
             .map(|spec| {
@@ -160,7 +160,7 @@ pub fn execute_set_role(
 }
 
 /// Go `auth.RoleIdentity` of a written role: an omitted host is `%`.
-fn role_identity(spec: &tidb_ast::RoleSpec) -> (String, String) {
+fn role_identity(spec: &tidb_ast::RoleIdentity) -> (String, String) {
     let host = if spec.host.is_empty() {
         "%".to_owned()
     } else {

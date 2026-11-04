@@ -1501,7 +1501,7 @@ mod tests {
         }
         assert_eq!(row.get_datum_row(&fields), returned);
 
-        let mut cell = Datum::new_string("stale");
+        let mut cell = Datum::new_string_datum("stale");
         row.datum_with_buffer(0, &fields[0], &mut cell);
         assert_eq!(cell, Datum::Int(7));
     }

@@ -78,7 +78,7 @@ fn pb_literal(
             // Typed constant evaluation distinguishes it from KindBytes.
             let field = typed_or(expr, FieldTypeCode::String);
             Ok(constant(
-                Datum::new_collation_string(val.to_vec(), field.collation()),
+                Datum::new_collation_string_datum(val.to_vec(), field.collation()),
                 field,
             ))
         }

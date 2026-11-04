@@ -14,7 +14,7 @@
 
 //! Complete standalone `FLUSH` grammar from `pkg/parser/misc_stmt_parser.go`.
 
-use tidb_ast::{FlushLogType, FlushStmt, FlushTarget};
+use tidb_ast::{FlushLogType, FlushStmt, FlushStmtType};
 
 use crate::{is_ident_like_name, PResult, Parser};
 
@@ -30,10 +30,10 @@ impl Parser {
 
         let target = if self.is_kw("STATUS") {
             self.bump();
-            FlushTarget::Status
+            FlushStmtType::Status
         } else if self.is_kw("PRIVILEGES") {
             self.bump();
-            FlushTarget::Privileges
+            FlushStmtType::Privileges
         } else if self.is_kw("STATS_DELTA") {
             self.bump();
             let objects = self.parse_stats_object_list()?;
@@ -43,7 +43,7 @@ impl Parser {
             } else {
                 false
             };
-            FlushTarget::StatsDelta { objects, cluster }
+            FlushStmtType::StatsDelta { objects, cluster }
         } else if self.is_kw("TABLE") || self.is_kw("TABLES") {
             self.bump();
             let mut tables = Vec::new();
@@ -62,7 +62,7 @@ impl Parser {
             } else {
                 false
             };
-            FlushTarget::Tables { tables, read_lock }
+            FlushStmtType::Tables { tables, read_lock }
         } else if self.is_kw("TIDB") {
             self.bump();
             self.expect_kw("PLUGINS")?;
@@ -74,13 +74,13 @@ impl Parser {
                     plugins.push(self.parse_ident_like_name()?);
                 }
             }
-            FlushTarget::TiDbPlugins(plugins)
+            FlushStmtType::TiDbPlugins(plugins)
         } else if self.is_kw("HOSTS") {
             self.bump();
-            FlushTarget::Hosts
+            FlushStmtType::Hosts
         } else if self.is_kw("CLIENT_ERRORS_SUMMARY") {
             self.bump();
-            FlushTarget::ClientErrorsSummary
+            FlushStmtType::ClientErrorsSummary
         } else {
             let log_type = if self.is_kw("LOGS") {
                 self.bump();
@@ -108,7 +108,7 @@ impl Parser {
             } else {
                 None
             };
-            FlushTarget::Logs(log_type.ok_or_else(|| self.err_here("unsupported FLUSH target"))?)
+            FlushStmtType::Logs(log_type.ok_or_else(|| self.err_here("unsupported FLUSH target"))?)
         };
         Ok(FlushStmt {
             no_write_to_binlog,

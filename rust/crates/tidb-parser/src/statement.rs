@@ -215,7 +215,7 @@ impl Parser {
             ))))
         } else if self.is_kw("IMPORT") && self.is_kw_at(1, "INTO") {
             Ok(Stmt::Dml(tidb_ast::NodeBox::new(DmlStmt::ImportInto(
-                Box::new(self.parse_import_into()?),
+                Box::new(self.parse_import_into_stmt()?),
             ))))
         } else if self.is_kw("CANCEL") && self.is_kw_at(1, "IMPORT") && self.is_kw_at(2, "JOB") {
             self.bump();
@@ -352,7 +352,7 @@ impl Parser {
         } else if self.is_kw("CREATE")
             && (self.is_kw_at(1, "DATABASE") || self.is_kw_at(1, "SCHEMA"))
         {
-            let (if_not_exists, name, options) = self.parse_create_database()?;
+            let (if_not_exists, name, options) = self.parse_create_database_stmt()?;
             Ok(Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::CreateDatabase {
                 if_not_exists,
                 name,
@@ -390,7 +390,7 @@ impl Parser {
                     && self.is_kw_at(3, "TABLE")))
         {
             Ok(Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::CreateTable(
-                Box::new(self.parse_create_table()?),
+                Box::new(self.parse_create_table_stmt()?),
             ))))
         } else if self.is_kw("CREATE")
             && (self.is_kw_at(1, "BINDING")
@@ -606,7 +606,7 @@ impl Parser {
             ))))
         } else if self.is_kw("SET") && self.is_kw_at(1, "BINDING") {
             Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::SetBinding(
-                Box::new(self.parse_set_binding()?),
+                Box::new(self.parse_set_binding_stmt()?),
             ))))
         } else if self.is_kw("SET") {
             Ok(Stmt::Session(tidb_ast::NodeBox::new(

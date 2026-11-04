@@ -376,7 +376,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
     /// every EXECUTE because the strategy may change after PREPARE.
     #[must_use]
     fn prepared_plan_cache_allowed_for_statement(&self, statement: &Stmt) -> bool {
-        if !self.session_vars().prepared_plan_cache_enabled() {
+        if !self.session_vars().enable_prepared_plan_cache() {
             return false;
         }
         let hints = self.parse_statement_hints_without_catalog(
@@ -409,7 +409,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
         original: &Stmt,
         effective: &Stmt,
     ) -> Option<&'static str> {
-        if !self.session_vars().prepared_plan_cache_enabled() {
+        if !self.session_vars().enable_prepared_plan_cache() {
             return None;
         }
         let hints = self.parse_statement_hints_without_catalog(
@@ -451,7 +451,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
     /// visibility the ordinary planner would build for it (Go serves these
     /// from its prepared plan cache inside transactions as well).
     fn can_reuse_prepared_point_get(&self, plan: &PreparedPointGetPlan) -> bool {
-        if !self.session_vars().prepared_plan_cache_enabled() {
+        if !self.session_vars().enable_prepared_plan_cache() {
             return false;
         }
         if self
@@ -512,7 +512,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
         statement: &Stmt,
         binding_sql: Option<&str>,
     ) -> Option<PreparedDmlExecution> {
-        if !self.session_vars().prepared_plan_cache_enabled()
+        if !self.session_vars().enable_prepared_plan_cache()
             || self
                 .session_vars()
                 .optimizer_fix_control()
@@ -598,7 +598,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
         statement: &Stmt,
         binding_sql: Option<&str>,
     ) -> Option<PreparedSelectExecution> {
-        if !self.session_vars().prepared_plan_cache_enabled()
+        if !self.session_vars().enable_prepared_plan_cache()
             || self
                 .session_vars()
                 .optimizer_fix_control()

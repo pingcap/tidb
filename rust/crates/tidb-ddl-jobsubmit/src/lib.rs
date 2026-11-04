@@ -183,7 +183,7 @@ fn table_id_count(table: &TableInfo) -> usize {
 
 /// Pinned Go `getRequiredGIDCount`.
 #[must_use]
-pub fn required_global_id_count(specs: &[JobSpec]) -> usize {
+pub fn get_required_gid_count(specs: &[JobSpec]) -> usize {
     let mut count = specs.len();
     for spec in specs {
         if spec.id_allocated {
@@ -287,8 +287,8 @@ impl GlobalIdAssigner<'_> {
 /// This intentionally retains Go's panic boundaries for mismatched typed
 /// arguments or an ID slice whose length disagrees with
 /// [`required_global_id_count`].
-pub fn assign_global_ids(specs: &mut [JobSpec], ids: &[i64]) {
-    assert_eq!(ids.len(), required_global_id_count(specs));
+pub fn assign_g_ids_for_jobs(specs: &mut [JobSpec], ids: &[i64]) {
+    assert_eq!(ids.len(), get_required_gid_count(specs));
     let mut allocator = GlobalIdAssigner { ids, next: 0 };
     for spec in specs {
         match spec.job.type_ {
@@ -621,7 +621,7 @@ fn string_for_ids(ids: impl IntoIterator<Item = i64>) -> String {
 
 /// Pinned Go `job2SchemaIDs` for every currently source-typed job argument.
 #[must_use]
-pub fn job_schema_ids(spec: &JobSpec) -> String {
+pub fn job_2_schema_ids(spec: &JobSpec) -> String {
     match (spec.job.type_, &spec.args) {
         (ActionType::ACTION_RENAME_TABLES, JobArgsValue::RenameTables(Some(args))) => {
             string_for_ids(
@@ -651,7 +651,7 @@ pub fn job_schema_ids(spec: &JobSpec) -> String {
 
 /// Pinned Go `job2TableIDs` for every currently source-typed job argument.
 #[must_use]
-pub fn job_table_ids(spec: &JobSpec) -> String {
+pub fn job_2_table_ids(spec: &JobSpec) -> String {
     match (spec.job.type_, &spec.args) {
         (ActionType::ACTION_RENAME_TABLES, JobArgsValue::RenameTables(Some(args))) => {
             string_for_ids(
@@ -709,11 +709,11 @@ pub fn plan_assign_global_ids<S: MetaSnapshot>(
     if specs.is_empty() {
         return Ok(Vec::new());
     }
-    let count = i64::try_from(required_global_id_count(specs))
+    let count = i64::try_from(get_required_gid_count(specs))
         .map_err(|_| JobSubmitError::GlobalIdExhausted { wanted: i64::MAX })?;
     let mut allocator = GlobalIdAllocator::load(snapshot)?;
     let ids = allocator.allocate(count)?;
-    assign_global_ids(specs, &ids);
+    assign_g_ids_for_jobs(specs, &ids);
 
     let mut mutations = Vec::new();
     if let Some(global_id) = allocator.mutation()? {
@@ -766,8 +766,8 @@ pub fn insert_ddl_jobs_2_table(
             "({}, {}, \"{}\", \"{}\", {}, {}, {})",
             spec.job.id,
             spec.job.may_need_reorg(),
-            job_schema_ids(spec),
-            job_table_ids(spec),
+            job_2_schema_ids(spec),
+            job_2_table_ids(spec),
             wrap_key_2_string(&b),
             spec.job.type_.0,
             spec.job.started()
@@ -806,8 +806,8 @@ pub fn plan_insert_job_rows(
     for spec in specs {
         fill_args_with_sub_jobs(spec);
         let reorg = spec.job.may_need_reorg();
-        let schema_ids = job_schema_ids(spec);
-        let table_ids = job_table_ids(spec);
+        let schema_ids = job_2_schema_ids(spec);
+        let table_ids = job_2_table_ids(spec);
         job_table
             .append_insert(
                 &mut spec.job,
@@ -1203,8 +1203,8 @@ mod tests {
     #[test]
     fn global_id_count_and_assignment_match_go_create_actions() {
         let mut table = create_table_spec(2, false);
-        assert_eq!(required_global_id_count(std::slice::from_ref(&table)), 4);
-        assign_global_ids(std::slice::from_mut(&mut table), &[11, 12, 13, 14]);
+        assert_eq!(get_required_gid_count(std::slice::from_ref(&table)), 4);
+        assign_g_ids_for_jobs(std::slice::from_mut(&mut table), &[11, 12, 13, 14]);
         let args = create_table_args(&table);
         let table_info = args.read().table_info.get().unwrap();
         assert_eq!(table_info.read().id, 11);
@@ -1237,10 +1237,10 @@ mod tests {
 
         let mut allocated = create_table_spec(2, true);
         assert_eq!(
-            required_global_id_count(std::slice::from_ref(&allocated)),
+            get_required_gid_count(std::slice::from_ref(&allocated)),
             1
         );
-        assign_global_ids(std::slice::from_mut(&mut allocated), &[15]);
+        assign_g_ids_for_jobs(std::slice::from_mut(&mut allocated), &[15]);
         assert_eq!(allocated.job.table_id, 501);
         assert_eq!(allocated.job.id, 15);
 
@@ -1258,8 +1258,8 @@ mod tests {
             ))),
             id_allocated: false,
         };
-        assert_eq!(required_global_id_count(std::slice::from_ref(&batch)), 4);
-        assign_global_ids(std::slice::from_mut(&mut batch), &[21, 22, 23, 24]);
+        assert_eq!(get_required_gid_count(std::slice::from_ref(&batch)), 4);
+        assign_g_ids_for_jobs(std::slice::from_mut(&mut batch), &[21, 22, 23, 24]);
         let tables = batch_create_table_args(&batch).read().tables.get();
         assert_eq!(
             tables
@@ -1318,7 +1318,7 @@ mod tests {
             ))),
             id_allocated: false,
         };
-        assign_global_ids(std::slice::from_mut(&mut schema), &[31, 32]);
+        assign_g_ids_for_jobs(std::slice::from_mut(&mut schema), &[31, 32]);
         assert_eq!(database.read().id, 31);
         assert_eq!(schema.job.schema_id, 31);
         assert_eq!(schema.job.id, 32);
@@ -1331,12 +1331,12 @@ mod tests {
             }))),
             id_allocated: false,
         };
-        assign_global_ids(std::slice::from_mut(&mut group), &[33, 34]);
+        assign_g_ids_for_jobs(std::slice::from_mut(&mut group), &[33, 34]);
         assert_eq!(resource.read().id, 33);
         assert_eq!(group.job.id, 34);
 
         let mut alter = partition_spec(ActionType::ACTION_ALTER_TABLE_PARTITIONING, 2, false);
-        assign_global_ids(std::slice::from_mut(&mut alter), &[41, 42, 43, 44]);
+        assign_g_ids_for_jobs(std::slice::from_mut(&mut alter), &[41, 42, 43, 44]);
         let partition = table_partition_args(&alter).read().part_info.get().unwrap();
         assert_eq!(partition.read().definitions.get(0).id, 41);
         assert_eq!(partition.read().definitions.get(1).id, 42);
@@ -1348,7 +1348,7 @@ mod tests {
             ActionType::ACTION_REORGANIZE_PARTITION,
         ] {
             let mut spec = partition_spec(action, 2, false);
-            assign_global_ids(std::slice::from_mut(&mut spec), &[51, 52, 53]);
+            assign_g_ids_for_jobs(std::slice::from_mut(&mut spec), &[51, 52, 53]);
             let partition = table_partition_args(&spec).read().part_info.get().unwrap();
             assert_eq!(partition.read().definitions.get(0).id, 51);
             assert_eq!(partition.read().definitions.get(1).id, 52);
@@ -1356,7 +1356,7 @@ mod tests {
         }
 
         let mut remove = partition_spec(ActionType::ACTION_REMOVE_PARTITIONING, 1, false);
-        assign_global_ids(std::slice::from_mut(&mut remove), &[61, 62]);
+        assign_g_ids_for_jobs(std::slice::from_mut(&mut remove), &[61, 62]);
         let partition = table_partition_args(&remove)
             .read()
             .part_info
@@ -1370,8 +1370,8 @@ mod tests {
     #[test]
     fn global_id_count_and_assignment_match_go_truncate_actions() {
         let mut table = truncate_spec(ActionType::ACTION_TRUNCATE_TABLE, 2, false);
-        assert_eq!(required_global_id_count(std::slice::from_ref(&table)), 4);
-        assign_global_ids(std::slice::from_mut(&mut table), &[71, 72, 73, 74]);
+        assert_eq!(get_required_gid_count(std::slice::from_ref(&table)), 4);
+        assign_g_ids_for_jobs(std::slice::from_mut(&mut table), &[71, 72, 73, 74]);
         let args = truncate_table_args(&table);
         assert_eq!(args.read().new_table_id.get(), 71);
         assert_eq!(args.read().new_partition_ids.get().snapshot(), vec![72, 73]);
@@ -1379,10 +1379,10 @@ mod tests {
 
         let mut partitions = truncate_spec(ActionType::ACTION_TRUNCATE_TABLE_PARTITION, 2, false);
         assert_eq!(
-            required_global_id_count(std::slice::from_ref(&partitions)),
+            get_required_gid_count(std::slice::from_ref(&partitions)),
             3
         );
-        assign_global_ids(std::slice::from_mut(&mut partitions), &[81, 82, 83]);
+        assign_g_ids_for_jobs(std::slice::from_mut(&mut partitions), &[81, 82, 83]);
         let args = truncate_table_args(&partitions);
         assert_eq!(args.read().new_table_id.get(), 0);
         assert_eq!(args.read().new_partition_ids.get().snapshot(), vec![81, 82]);
@@ -1413,8 +1413,8 @@ mod tests {
             id_allocated: true,
         };
         // Go converts to decimal strings before sorting, so this is lexical.
-        assert_eq!(job_schema_ids(&rename_tables), "10,2,3");
-        assert_eq!(job_table_ids(&rename_tables), "100,20");
+        assert_eq!(job_2_schema_ids(&rename_tables), "10,2,3");
+        assert_eq!(job_2_table_ids(&rename_tables), "100,20");
 
         let mut rename_job = job(ActionType::ACTION_RENAME_TABLE);
         rename_job.schema_id = 10;
@@ -1426,7 +1426,7 @@ mod tests {
             }))),
             id_allocated: true,
         };
-        assert_eq!(job_schema_ids(&rename), "10,2");
+        assert_eq!(job_2_schema_ids(&rename), "10,2");
 
         let mut exchange_job = job(ActionType::ACTION_EXCHANGE_TABLE_PARTITION);
         exchange_job.schema_id = 2;
@@ -1442,12 +1442,12 @@ mod tests {
             ))),
             id_allocated: true,
         };
-        assert_eq!(job_schema_ids(&exchange), "10,2");
-        assert_eq!(job_table_ids(&exchange), "100,20");
+        assert_eq!(job_2_schema_ids(&exchange), "10,2");
+        assert_eq!(job_2_table_ids(&exchange), "100,20");
 
         let mut truncate = truncate_spec(ActionType::ACTION_TRUNCATE_TABLE, 0, true);
         truncate.job.table_id = 7;
         truncate_table_args(&truncate).read().new_table_id.set(9);
-        assert_eq!(job_table_ids(&truncate), "7,9");
+        assert_eq!(job_2_table_ids(&truncate), "7,9");
     }
 }

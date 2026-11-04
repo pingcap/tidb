@@ -354,7 +354,7 @@ impl<'a> BaseSemiJoin<'a> {
                 header = next;
             }
             self.base.set_matched_rows_header(row, 0);
-            if !self.base.is_spilled(row) && (self.outer_semi || self.matched[row] != self.anti) {
+            if !self.base.is_spill_triggered(row) && (self.outer_semi || self.matched[row] != self.anti) {
                 self.offsets.push(self.base.used_rows()[row]);
                 remaining -= 1;
             }
@@ -371,7 +371,7 @@ impl<'a> BaseSemiJoin<'a> {
         self.offsets.clear();
         while remaining > 0 && !self.base.is_current_chunk_probe_done() {
             let row = self.base.current_probe_row();
-            if !self.base.is_spilled(row) && (self.outer_semi || self.matched[row] != self.anti) {
+            if !self.base.is_spill_triggered(row) && (self.outer_semi || self.matched[row] != self.anti) {
                 self.offsets.push(self.base.used_rows()[row]);
                 remaining -= 1;
             }
@@ -405,7 +405,7 @@ impl<'a> BaseSemiJoin<'a> {
         if self.outer_semi {
             let flag = self.ctx.l_used.len();
             for row in start..self.base.current_probe_row() {
-                if self.base.is_spilled(row) {
+                if self.base.is_spill_triggered(row) {
                     continue;
                 }
                 if self.matched[row] {

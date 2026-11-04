@@ -117,7 +117,7 @@ impl TableCommon {
     /// TABLE prints as `AUTO_RANDOM_BASE`.
     pub fn next_auto_random_for_show(&self) -> Result<Option<u64>, AutoIdStoreError> {
         self.auto_random
-            .map(|_| self.auto_random_id.next_for_show())
+            .map(|_| self.auto_random_id.next_global_auto_id())
             .transpose()
     }
 

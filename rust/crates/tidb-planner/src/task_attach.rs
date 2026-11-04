@@ -5020,7 +5020,7 @@ fn convert_mpp_join_partition_keys_if_need(
                 continue;
             };
             let mut target = target.clone();
-            target.set_flags(key.col.get_static_type().map(tidb_datatype::FieldType::flags).unwrap_or_default());
+            target.set_flag(key.col.get_static_type().map(tidb_datatype::FieldType::flags).unwrap_or_default());
             let cast_expr =
                 tidb_expr::simple_expr::build_cast_function(Expression::Column(key.col.clone()), target.clone(), false)
                     .map_err(|error| PlanError::internal(format!("{error:?}")))?;

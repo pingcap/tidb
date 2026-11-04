@@ -25,7 +25,7 @@ use tikv_client::PdRpcClient;
 
 use tidb_txnkv::driver::tikv_store::TikvStore;
 
-use super::{CommitProtocol, RealTransaction};
+use super::{CommitProtocol, TikvTxn};
 use tidb_txnkv::transaction::OptimisticCoordinatorError;
 
 /// Process-level opener for TiDB transactions: Go `tikvStore.Begin`.
@@ -159,7 +159,7 @@ where
     }
 
     /// Opens a transaction.
-    pub fn begin(&self) -> Result<RealTransaction<S>, OptimisticCoordinatorError> {
+    pub fn begin(&self) -> Result<TikvTxn<S>, OptimisticCoordinatorError> {
         self.open(false)
     }
 
@@ -169,7 +169,7 @@ where
     pub fn begin_with_oracle(
         &self,
         low_resolution: bool,
-    ) -> Result<RealTransaction<S>, OptimisticCoordinatorError> {
+    ) -> Result<TikvTxn<S>, OptimisticCoordinatorError> {
         if !low_resolution {
             return self.begin();
         }
@@ -205,7 +205,7 @@ where
     pub fn begin_at(
         &self,
         start_ts: u64,
-    ) -> Result<RealTransaction<S>, OptimisticCoordinatorError> {
+    ) -> Result<TikvTxn<S>, OptimisticCoordinatorError> {
         if start_ts == u64::MAX {
             return Err(OptimisticCoordinatorError::Timestamp(
                 "refusing to publish at the max-ts read marker: u64::MAX is the latest-committed \
@@ -219,7 +219,7 @@ where
     /// Opens a transaction that may only read.
     ///
     /// The native snapshot option enforces read-only access.
-    pub fn begin_read_only(&self) -> Result<RealTransaction<S>, OptimisticCoordinatorError> {
+    pub fn begin_read_only(&self) -> Result<TikvTxn<S>, OptimisticCoordinatorError> {
         self.open(true)
     }
 
@@ -251,7 +251,7 @@ where
     pub fn begin_read_only_at(
         &self,
         start_ts: u64,
-    ) -> Result<RealTransaction<S>, OptimisticCoordinatorError> {
+    ) -> Result<TikvTxn<S>, OptimisticCoordinatorError> {
         self.open_at(Some(start_ts), true)
     }
 
@@ -295,9 +295,9 @@ where
     fn max_ts_snapshot(
         &self,
         options: &tidb_txnkv::SnapshotReadOptions,
-    ) -> Result<RealTransaction<S>, OptimisticCoordinatorError> {
+    ) -> Result<TikvTxn<S>, OptimisticCoordinatorError> {
         let mut snapshot =
-            RealTransaction::new_opened(&self.store, u64::MAX, true, self.authority_id())?;
+            TikvTxn::new_opened(&self.store, u64::MAX, true, self.authority_id())?;
         snapshot.set_snapshot_read_options(options);
         if let Some(name) = self.resource_group_name.as_deref() {
             tidb_txnkv::new_txn::TxnResourceGroup::set_resource_group_name(&mut snapshot, name);
@@ -305,7 +305,7 @@ where
         Ok(snapshot)
     }
 
-    fn open(&self, read_only: bool) -> Result<RealTransaction<S>, OptimisticCoordinatorError> {
+    fn open(&self, read_only: bool) -> Result<TikvTxn<S>, OptimisticCoordinatorError> {
         self.open_at(None, read_only)
     }
 
@@ -316,7 +316,7 @@ where
         &self,
         start_ts: Option<u64>,
         read_only: bool,
-    ) -> Result<RealTransaction<S>, OptimisticCoordinatorError> {
+    ) -> Result<TikvTxn<S>, OptimisticCoordinatorError> {
         let start_ts = match start_ts {
             Some(start_ts) => start_ts,
             None => self
@@ -331,7 +331,7 @@ where
             ));
         }
         let mut transaction =
-            RealTransaction::new_opened(&self.store, start_ts, read_only, self.authority_id())?;
+            TikvTxn::new_opened(&self.store, start_ts, read_only, self.authority_id())?;
         transaction.set_commit_protocol(self.protocol);
         if let Some(resource_group_name) = self.resource_group_name.as_deref() {
             tidb_txnkv::new_txn::TxnResourceGroup::set_resource_group_name(
@@ -364,12 +364,12 @@ where
 }
 
 /// Go `tikvTxn` as `kv.Transaction`.
-impl<S> tidb_txnkv::kv_storage::Transaction for RealTransaction<S>
+impl<S> tidb_txnkv::kv_storage::Transaction for TikvTxn<S>
 where
     S: StoreClient + 'static,
 {
     fn start_ts(&self) -> u64 {
-        RealTransaction::start_ts(self)
+        TikvTxn::start_ts(self)
     }
 
     fn get(
@@ -404,12 +404,12 @@ where
         mutations: Vec<tidb_txnkv::transaction::BufferMutation>,
         call: &tidb_txnkv::UnaryCallContext,
     ) -> Result<tidb_txnkv::transaction::OptimisticCommitOutcome, OptimisticCoordinatorError> {
-        RealTransaction::commit(*self, mutations, call)
+        TikvTxn::commit(*self, mutations, call)
     }
 
     fn finish_without_writes(
         self: Box<Self>,
     ) -> Result<tidb_txnkv::transaction::ReadOnlyTransaction, OptimisticCoordinatorError> {
-        RealTransaction::finish_without_writes(*self)
+        TikvTxn::finish_without_writes(*self)
     }
 }

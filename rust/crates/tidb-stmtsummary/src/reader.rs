@@ -744,7 +744,7 @@ fn nanos(duration: Duration) -> i64 {
 /// Go `types.NewDatum(string)` / `types.NewDatum(nil)` for the `any` that
 /// `convertEmptyToNil` returns.
 fn opt_string_datum(value: Option<&str>) -> Datum {
-    value.map_or(Datum::Null, |value| Datum::new_string(value.as_bytes()))
+    value.map_or(Datum::Null, |value| Datum::new_string_datum(value.as_bytes()))
 }
 
 /// Go `types.NewDatum(bool)`: `SetInt64(1)` or `SetInt64(0)`.
@@ -790,7 +790,7 @@ fn require_ssbd(ssbd: Option<&StmtSummaryByDigest>) -> &StmtSummaryByDigest {
 pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
     let factory: ColumnValueFactory = match name {
         CLUSTER_TABLE_INSTANCE_COLUMN_NAME_STR => {
-            |reader, _, _, _| Datum::new_string(reader.instance_addr.as_bytes())
+            |reader, _, _, _| Datum::new_string_datum(reader.instance_addr.as_bytes())
         }
         SUMMARY_BEGIN_TIME_STR => |reader, ss_element, _, _| {
             timestamp_datum(unix_seconds_in(
@@ -804,7 +804,7 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
                 &reader.tz,
             ))
         },
-        STMT_TYPE_STR => |_, _, ssbd, _| Datum::new_string(require_ssbd(ssbd).stmt_type.as_bytes()),
+        STMT_TYPE_STR => |_, _, ssbd, _| Datum::new_string_datum(require_ssbd(ssbd).stmt_type.as_bytes()),
         SCHEMA_NAME_STR => {
             |_, _, ssbd, _| opt_string_datum(convert_empty_to_nil(&require_ssbd(ssbd).schema_name))
         }
@@ -814,13 +814,13 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
         // Statement text carries a byte that is not UTF-8 as its `raw_bytes`
         // escape; Go's string holds the byte.
         DIGEST_TEXT_STR => |_, _, ssbd, _| {
-            Datum::new_string(str_to_bytes(&require_ssbd(ssbd).normalized_sql).into_owned())
+            Datum::new_string_datum(str_to_bytes(&require_ssbd(ssbd).normalized_sql).into_owned())
         },
         BINDING_DIGEST_STR => |_, _, ssbd, _| {
             opt_string_datum(convert_empty_to_nil(&require_ssbd(ssbd).binding_digest))
         },
         BINDING_DIGEST_TEXT_STR => {
-            |_, _, ssbd, _| Datum::new_string(require_ssbd(ssbd).binding_sql.as_bytes())
+            |_, _, ssbd, _| Datum::new_string_datum(require_ssbd(ssbd).binding_sql.as_bytes())
         }
         TABLE_NAMES_STR => {
             |_, _, ssbd, _| opt_string_datum(convert_empty_to_nil(&require_ssbd(ssbd).table_names))
@@ -1125,13 +1125,13 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
         // Statement text carries a byte that is not UTF-8 as its `raw_bytes`
         // escape; Go's string holds the byte.
         QUERY_SAMPLE_TEXT_STR => {
-            |_, _, _, stats| Datum::new_string(str_to_bytes(&stats.sample_sql).into_owned())
+            |_, _, _, stats| Datum::new_string_datum(str_to_bytes(&stats.sample_sql).into_owned())
         }
         PREV_SAMPLE_TEXT_STR => {
-            |_, _, _, stats| Datum::new_string(str_to_bytes(&stats.prev_sql).into_owned())
+            |_, _, _, stats| Datum::new_string_datum(str_to_bytes(&stats.prev_sql).into_owned())
         }
         PLAN_DIGEST_STR => {
-            |_, _, ssbd, _| Datum::new_string(require_ssbd(ssbd).plan_digest.as_bytes())
+            |_, _, ssbd, _| Datum::new_string_datum(require_ssbd(ssbd).plan_digest.as_bytes())
         }
         PLAN_STR => |_, _, _, stats| {
             let plan = tidb_plancodec::decode_plan(stats.sample_plan.as_bytes())
@@ -1141,12 +1141,12 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
                     // Go's empty plan.
                     Vec::new()
                 });
-            Datum::new_string(plan)
+            Datum::new_string_datum(plan)
         },
-        BINARY_PLAN => |_, _, _, stats| Datum::new_string(stats.sample_binary_plan.as_bytes()),
-        CHARSET => |_, _, _, stats| Datum::new_string(stats.charset.as_bytes()),
-        COLLATION => |_, _, _, stats| Datum::new_string(stats.collation.as_bytes()),
-        PLAN_HINT => |_, _, _, stats| Datum::new_string(stats.plan_hint.as_bytes()),
+        BINARY_PLAN => |_, _, _, stats| Datum::new_string_datum(stats.sample_binary_plan.as_bytes()),
+        CHARSET => |_, _, _, stats| Datum::new_string_datum(stats.charset.as_bytes()),
+        COLLATION => |_, _, _, stats| Datum::new_string_datum(stats.collation.as_bytes()),
+        PLAN_HINT => |_, _, _, stats| Datum::new_string_datum(stats.plan_hint.as_bytes()),
         REQUEST_UNIT_READ_STR => |_, _, _, stats| Datum::new_real(stats.ru.sum_rru),
         AVG_REQUEST_UNIT_READ_STR => {
             |_, _, _, stats| Datum::new_real(avg_sum_float(stats.ru.sum_rru, stats.exec_count))
@@ -1172,13 +1172,13 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
         }
         MAX_REQUEST_UNIT_V2_STR => |_, _, _, stats| Datum::new_real(stats.ru.max_ru_v2),
         RESOURCE_GROUP_NAME => {
-            |_, _, _, stats| Datum::new_string(stats.resource_group_name.as_bytes())
+            |_, _, _, stats| Datum::new_string_datum(stats.resource_group_name.as_bytes())
         }
         PLAN_CACHE_UNQUALIFIED_STR => {
             |_, _, _, stats| Datum::new_int(stats.plan_cache_unqualified_count)
         }
         PLAN_CACHE_UNQUALIFIED_LAST_REASON_STR => {
-            |_, _, _, stats| Datum::new_string(stats.last_plan_cache_unqualified.as_bytes())
+            |_, _, _, stats| Datum::new_string_datum(stats.last_plan_cache_unqualified.as_bytes())
         }
         SUM_UNPACKED_BYTES_SENT_TIKV_TOTAL_STR | UNPACKED_BYTES_SENT_TIKV_TOTAL_STR => {
             |_, _, _, stats| Datum::new_int(stats.network.unpacked_bytes_sent_tikv_total)
@@ -1623,15 +1623,15 @@ pub(crate) mod tests {
         let mut expected_datum = vec![
             n.clone(),
             e.clone(),
-            Datum::new_string("Select"),
-            Datum::new_string(stmt_exec_info1.schema_name.as_bytes()),
-            Datum::new_string(stmt_exec_info1.digest.as_bytes()),
-            Datum::new_string(stmt_exec_info1.normalized_sql.as_bytes()),
-            Datum::new_string(binding_digest.as_bytes()),
-            Datum::new_string(binding_sql.as_bytes()),
-            Datum::new_string("db1.tb1,db2.tb2"),
-            Datum::new_string("a"),
-            Datum::new_string(stmt_exec_info1.user.as_bytes()),
+            Datum::new_string_datum("Select"),
+            Datum::new_string_datum(stmt_exec_info1.schema_name.as_bytes()),
+            Datum::new_string_datum(stmt_exec_info1.digest.as_bytes()),
+            Datum::new_string_datum(stmt_exec_info1.normalized_sql.as_bytes()),
+            Datum::new_string_datum(binding_digest.as_bytes()),
+            Datum::new_string_datum(binding_sql.as_bytes()),
+            Datum::new_string_datum("db1.tb1,db2.tb2"),
+            Datum::new_string_datum("a"),
+            Datum::new_string_datum(stmt_exec_info1.user.as_bytes()),
             Datum::new_int(1),
             Datum::new_int(0),
             Datum::new_int(0),
@@ -1645,9 +1645,9 @@ pub(crate) mod tests {
             ns(stmt_exec_info1.compile_latency),
             Datum::new_int(cop_tasks.num_cop_tasks),
             ns(cop_tasks.max_process_time),
-            Datum::new_string(cop_tasks.max_process_address.as_bytes()),
+            Datum::new_string_datum(cop_tasks.max_process_address.as_bytes()),
             ns(cop_tasks.max_wait_time),
-            Datum::new_string(cop_tasks.max_wait_address.as_bytes()),
+            Datum::new_string_datum(cop_tasks.max_wait_address.as_bytes()),
             ns(time_detail.process_time),
             ns(time_detail.process_time),
             ns(time_detail.wait_time),
@@ -1691,7 +1691,7 @@ pub(crate) mod tests {
             Datum::new_int(0),
             Datum::new_int(0),
             Datum::new_int(1),
-            Datum::new_string(format!("{BO_TXN_LOCK_NAME}:1")),
+            Datum::new_string_datum(format!("{BO_TXN_LOCK_NAME}:1")),
             Datum::new_int(stmt_exec_info1.mem_max),
             Datum::new_int(stmt_exec_info1.mem_max),
             Datum::new_real(stmt_exec_info1.mem_arbitration),
@@ -1712,10 +1712,10 @@ pub(crate) mod tests {
             Datum::new_int(0),
             Datum::new_int(0),
             Datum::new_int(0),
-            Datum::new_string(stmt_exec_info1.lazy_info.original_sql().as_bytes()),
-            Datum::new_string(stmt_exec_info1.prev_sql.as_bytes()),
-            Datum::new_string("plan_digest"),
-            Datum::new_string(""),
+            Datum::new_string_datum(stmt_exec_info1.lazy_info.original_sql().as_bytes()),
+            Datum::new_string_datum(stmt_exec_info1.prev_sql.as_bytes()),
+            Datum::new_string_datum("plan_digest"),
+            Datum::new_string_datum(""),
             Datum::new_real(ru_detail.read_ru()),
             Datum::new_real(ru_detail.read_ru()),
             Datum::new_real(ru_detail.write_ru()),
@@ -1724,7 +1724,7 @@ pub(crate) mod tests {
             ns(ru_detail.ru_wait_duration()),
             Datum::new_real(stmt_exec_info1.total_ru_v2),
             Datum::new_real(stmt_exec_info1.total_ru_v2),
-            Datum::new_string(stmt_exec_info1.resource_group_name.as_bytes()),
+            Datum::new_string_datum(stmt_exec_info1.resource_group_name.as_bytes()),
             Datum::new_int(stmt_exec_info1.cpu_usages.tidb_cpu_time),
             Datum::new_int(stmt_exec_info1.cpu_usages.tikv_cpu_time),
             Datum::new_int(is_tikv),
@@ -1749,12 +1749,12 @@ pub(crate) mod tests {
         let expected_evicted_datum = vec![
             n,
             e,
-            Datum::new_string(""),
+            Datum::new_string_datum(""),
             Datum::Null,
             Datum::Null,
-            Datum::new_string(""),
+            Datum::new_string_datum(""),
             Datum::Null,
-            Datum::new_string(""),
+            Datum::new_string_datum(""),
             Datum::Null,
             Datum::Null,
             expected_datum[10].clone(),
@@ -1838,10 +1838,10 @@ pub(crate) mod tests {
             expected_datum[88].clone(),
             expected_datum[89].clone(),
             expected_datum[90].clone(),
-            Datum::new_string(""),
-            Datum::new_string(""),
-            Datum::new_string(""),
-            Datum::new_string(""),
+            Datum::new_string_datum(""),
+            Datum::new_string_datum(""),
+            Datum::new_string_datum(""),
+            Datum::new_string_datum(""),
             expected_datum[95].clone(),
             expected_datum[96].clone(),
             expected_datum[97].clone(),
@@ -1856,7 +1856,7 @@ pub(crate) mod tests {
             Datum::new_int(0),
             Datum::new_int(0),
         ];
-        expected_datum[4] = Datum::new_string(stmt_exec_info2.digest.as_bytes());
+        expected_datum[4] = Datum::new_string_datum(stmt_exec_info2.digest.as_bytes());
         match_row(&datums[0], &expected_datum);
         match_row(&datums[1], &expected_evicted_datum);
 
@@ -1930,7 +1930,7 @@ pub(crate) mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(
             rows[0][4],
-            Datum::new_string(current_stmt.digest.as_bytes())
+            Datum::new_string_datum(current_stmt.digest.as_bytes())
         );
         let tz = SessionTimeZone::utc();
         assert_eq!(
@@ -1988,7 +1988,7 @@ pub(crate) mod tests {
         assert_eq!(rows.len(), 1);
 
         let mut max_unsigned_type = FieldType::new(FieldTypeCode::LongLong);
-        max_unsigned_type.set_flags(FieldTypeFlags::UNSIGNED);
+        max_unsigned_type.set_flag(FieldTypeFlags::UNSIGNED);
         let ret_types = [
             FieldType::new(FieldTypeCode::LongLong),
             FieldType::new(FieldTypeCode::Double),

@@ -23,12 +23,12 @@ pub struct FlushStmt {
     /// `NO_WRITE_TO_BINLOG`; `LOCAL` parses to the same state.
     pub no_write_to_binlog: bool,
     /// Flush target and its target-specific payload.
-    pub target: FlushTarget,
+    pub target: FlushStmtType,
 }
 
 /// Complete Go `FlushStmtType` target set.
 #[derive(Debug, Clone, PartialEq)]
-pub enum FlushTarget {
+pub enum FlushStmtType {
     /// `STATUS`.
     Status,
     /// `PRIVILEGES`.
@@ -81,9 +81,9 @@ impl FlushStmt {
             out.push_str("NO_WRITE_TO_BINLOG ");
         }
         match &self.target {
-            FlushTarget::Status => out.push_str("STATUS"),
-            FlushTarget::Privileges => out.push_str("PRIVILEGES"),
-            FlushTarget::Tables { tables, read_lock } => {
+            FlushStmtType::Status => out.push_str("STATUS"),
+            FlushStmtType::Privileges => out.push_str("PRIVILEGES"),
+            FlushStmtType::Tables { tables, read_lock } => {
                 out.push_str("TABLES");
                 for (index, table) in tables.iter().enumerate() {
                     out.push_str(if index == 0 { " " } else { ", " });
@@ -93,15 +93,15 @@ impl FlushStmt {
                     out.push_str(" WITH READ LOCK");
                 }
             }
-            FlushTarget::TiDbPlugins(plugins) => {
+            FlushStmtType::TiDbPlugins(plugins) => {
                 out.push_str("TIDB PLUGINS");
                 for (index, plugin) in plugins.iter().enumerate() {
                     out.push_str(if index == 0 { " " } else { ", " });
                     out.push_str(plugin);
                 }
             }
-            FlushTarget::Hosts => out.push_str("HOSTS"),
-            FlushTarget::Logs(log_type) => out.push_str(match log_type {
+            FlushStmtType::Hosts => out.push_str("HOSTS"),
+            FlushStmtType::Logs(log_type) => out.push_str(match log_type {
                 FlushLogType::Default => "LOGS",
                 FlushLogType::Binary => "BINARY LOGS",
                 FlushLogType::Engine => "ENGINE LOGS",
@@ -109,8 +109,8 @@ impl FlushStmt {
                 FlushLogType::General => "GENERAL LOGS",
                 FlushLogType::Slow => "SLOW LOGS",
             }),
-            FlushTarget::ClientErrorsSummary => out.push_str("CLIENT_ERRORS_SUMMARY"),
-            FlushTarget::StatsDelta { objects, cluster } => {
+            FlushStmtType::ClientErrorsSummary => out.push_str("CLIENT_ERRORS_SUMMARY"),
+            FlushStmtType::StatsDelta { objects, cluster } => {
                 out.push_str("STATS_DELTA ");
                 for (index, object) in objects.iter().enumerate() {
                     if index > 0 {
@@ -127,7 +127,7 @@ impl FlushStmt {
 
     /// Applies Go's `FlushStmt.DedupFlushObjects` shadowing rules.
     pub fn dedup_stats_objects(&mut self) {
-        if let FlushTarget::StatsDelta { objects, .. } = &mut self.target {
+        if let FlushStmtType::StatsDelta { objects, .. } = &mut self.target {
             crate::traffic::dedup_stats_objects(objects);
         }
     }
@@ -153,7 +153,7 @@ impl crate::Visitable for FlushStmt {
     }
 }
 
-impl crate::Visitable for FlushTarget {
+impl crate::Visitable for FlushStmtType {
     fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
         if visitor.enter(self) {
             return visitor.leave(self);

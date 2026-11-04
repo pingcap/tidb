@@ -72,7 +72,7 @@
 //!   `strings.Index`, verbatim.
 //! * **`Binding.PlanDigest` and `Binding.UsageInfo`.** [`Binding`] retains the
 //!   plan digest and shared usage timestamps. The writer snapshots these into
-//!   [`BindingUsage`] records and acknowledges each committed batch; the
+//!   [`UsageInfo`] records and acknowledges each committed batch; the
 //!   server owner applies acknowledgements back to the retained bindings.
 //! * **`Binding.Status` / `Binding.Source` are `&'static str`** in this crate,
 //!   so a storage row carrying an unrecognised status is SKIPPED (Go keeps the
@@ -399,7 +399,7 @@ pub fn binding_source(source: &str) -> &'static str {
 /// One binding's usage counters, Go's `Binding.UsageInfo` (`binding.go:117`)
 /// lifted out of the binding -- see the module narrowings.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BindingUsage {
+pub struct UsageInfo {
     /// Go `Binding.SQLDigest`.
     pub sql_digest: String,
     /// Go `Binding.PlanDigest`; `""` means the stored column is `NULL`.
@@ -450,7 +450,7 @@ struct UsageWrite {
 /// `UpdateLastSavedAt` does.
 pub fn update_binding_usage_info_to_storage<R>(
     runner: &mut R,
-    usages: &mut [BindingUsage],
+    usages: &mut [UsageInfo],
     now: DateTime<Utc>,
 ) -> Result<usize, DriverError>
 where
@@ -485,7 +485,7 @@ where
 /// Go `updateBindingUsageInfoToStorageInternal` (lines 226-254).
 fn flush_usage_batch<R>(
     runner: &mut R,
-    usages: &[BindingUsage],
+    usages: &[UsageInfo],
     batch: &[usize],
     now: DateTime<Utc>,
 ) -> Result<(), DriverError>
@@ -510,8 +510,8 @@ where
             runner.exec(
                 &save_binding_usage_sql(&write.plan_digest),
                 &[
-                    Datum::new_string(format_last_used(write.last_used)),
-                    Datum::new_string(write.sql_digest.clone()),
+                    Datum::new_string_datum(format_last_used(write.last_used)),
+                    Datum::new_string_datum(write.sql_digest.clone()),
                 ],
             )?;
         }
@@ -622,7 +622,7 @@ mod tests {
         }
         let now = Utc::now();
         let mut usages = (0..101)
-            .map(|index| BindingUsage {
+            .map(|index| UsageInfo {
                 sql_digest: index.to_string(),
                 plan_digest: String::new(),
                 last_used_at: Some(now),
@@ -811,7 +811,7 @@ mod tests {
             "plan-1",
         ]
         .into_iter()
-        .map(|text| Datum::new_string(text.to_owned()))
+        .map(|text| Datum::new_string_datum(text.to_owned()))
         .collect();
 
         let binding = new_binding_from_storage(&row).expect("the row maps to a binding");
@@ -835,10 +835,10 @@ mod tests {
         // A status this crate cannot represent drops the row, as does an
         // unparsable bind_sql.
         let mut broken = row.clone();
-        broken[3] = Datum::new_string("deleted".to_owned());
+        broken[3] = Datum::new_string_datum("deleted".to_owned());
         assert!(new_binding_from_storage(&broken).is_none());
         let mut unparsable = row;
-        unparsable[1] = Datum::new_string("NOT A STATEMENT".to_owned());
+        unparsable[1] = Datum::new_string_datum("NOT A STATEMENT".to_owned());
         assert!(new_binding_from_storage(&unparsable).is_none());
     }
 
@@ -861,7 +861,7 @@ mod tests {
                 "",
             ]
             .into_iter()
-            .map(|text| Datum::new_string(text.to_owned()))
+            .map(|text| Datum::new_string_datum(text.to_owned()))
             .collect()
         };
         let mut runner = RecordingRunner {
@@ -919,27 +919,27 @@ mod tests {
     fn update_binding_usage_info_writes_the_go_statement_sequence() {
         let now = DateTime::from_timestamp(1_767_225_600, 0).unwrap();
         let mut usages = vec![
-            BindingUsage {
+            UsageInfo {
                 sql_digest: "sd1".to_owned(),
                 plan_digest: String::new(),
                 last_used_at: Some(now),
                 last_saved_at: None,
             },
-            BindingUsage {
+            UsageInfo {
                 sql_digest: "sd2".to_owned(),
                 plan_digest: "pd2".to_owned(),
                 last_used_at: Some(now),
                 last_saved_at: None,
             },
             // Never used -> never written.
-            BindingUsage {
+            UsageInfo {
                 sql_digest: "sd3".to_owned(),
                 plan_digest: String::new(),
                 last_used_at: None,
                 last_saved_at: None,
             },
             // Saved a minute ago -> not due.
-            BindingUsage {
+            UsageInfo {
                 sql_digest: "sd4".to_owned(),
                 plan_digest: String::new(),
                 last_used_at: Some(now),
@@ -988,8 +988,8 @@ mod tests {
     #[test]
     fn update_binding_usage_info_flushes_every_batch() {
         let now = DateTime::from_timestamp(1_767_225_600, 0).unwrap();
-        let mut usages: Vec<BindingUsage> = (0..UPDATE_BINDING_USAGE_INFO_BATCH_SIZE + 1)
-            .map(|i| BindingUsage {
+        let mut usages: Vec<UsageInfo> = (0..UPDATE_BINDING_USAGE_INFO_BATCH_SIZE + 1)
+            .map(|i| UsageInfo {
                 sql_digest: format!("sd{i}"),
                 plan_digest: String::new(),
                 last_used_at: Some(now),

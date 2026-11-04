@@ -2654,7 +2654,7 @@ mod tests {
             let mut partial = Partial::JsonArrayAgg(Vec::new(), Box::new(varbinary()));
             partial
                 .update(
-                    Some(Datum::new_bytes(*b"ab")),
+                    Some(Datum::new_bytes_datum(*b"ab")),
                     &[],
                     Vec::new(),
                     tidb_charset::Collation::DEFAULT,
@@ -2674,8 +2674,8 @@ mod tests {
             let mut partial = Partial::JsonObjectAgg(BTreeMap::new(), Box::new(varbinary()), false);
             partial
                 .update(
-                    Some(Datum::new_string("k")),
-                    &[Datum::new_bytes(*b"ab")],
+                    Some(Datum::new_string_datum("k")),
+                    &[Datum::new_bytes_datum(*b"ab")],
                     Vec::new(),
                     tidb_charset::Collation::DEFAULT,
                 )
@@ -2695,7 +2695,7 @@ mod tests {
             let mut partial = Partial::JsonObjectAgg(BTreeMap::new(), Box::new(long()), true);
             let err = partial
                 .update(
-                    Some(Datum::new_bytes(*b"ab")),
+                    Some(Datum::new_bytes_datum(*b"ab")),
                     &[Datum::Int(1)],
                     Vec::new(),
                     tidb_charset::Collation::DEFAULT,

@@ -64,7 +64,7 @@ impl TableSource for TestCatalog {
 fn column(offset: usize, name: &str, primary: bool) -> SourceColumn {
     let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
     if primary {
-        ret_type.set_flags(ret_type.flags() | FieldTypeFlags::NOT_NULL | FieldTypeFlags::PRI_KEY);
+        ret_type.set_flag(ret_type.flags() | FieldTypeFlags::NOT_NULL | FieldTypeFlags::PRI_KEY);
     }
     tidb_table::column::Column {
         info: tidb_model::GoShared::new({

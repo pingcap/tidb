@@ -33,7 +33,7 @@
 //! - boundary: `br/pkg/metautil`'s `MetaWriter` reaches object storage and
 //!   serializes backup metafiles — entirely outside this package's subject.
 //!   `ProgressRangeTree` only ever calls `Send(files, AppendDataFile)` on it,
-//!   so it is narrowed to the one-method [`MetaSink`] trait object.
+//!   so it is narrowed to the one-method [`MetaWriter`] trait object.
 //!   `metautil.ChecksumStats` is a flat three-`uint64` struct and is declared
 //!   locally as [`ChecksumStats`].
 //! - `GetIncompleteRange`/`GetIncompleteRanges` return generated
@@ -61,6 +61,6 @@ pub mod rtree;
 
 pub use logging::zap_ranges;
 pub use rtree::{
-    needs_merge, ChecksumStats, KeyRange, MetaSink, ProgressRange, ProgressRangeRef,
+    needs_merge, ChecksumStats, KeyRange, MetaWriter, ProgressRange, ProgressRangeRef,
     ProgressRangeTree, Range, RangeStats, RangeStatsTree, RangeTree, RtreeError,
 };

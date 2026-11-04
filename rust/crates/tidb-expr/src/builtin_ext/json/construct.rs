@@ -45,7 +45,7 @@ pub(super) fn json_quote(v: &Datum) -> Result<Datum, EvalError> {
             }))
         }
     };
-    Ok(Datum::new_string(tidb_datatype::marshal_json_string(
+    Ok(Datum::new_string_datum(tidb_datatype::json_marshal_string_to(
         &String::from_utf8_lossy(bytes),
     )))
 }
@@ -59,10 +59,10 @@ pub(super) fn json_unquote(v: &Datum) -> Result<Datum, EvalError> {
     if let Datum::Json(document) = v {
         return match document.as_string() {
             Some(bytes) => match std::str::from_utf8(bytes) {
-                Ok(text) => Ok(Datum::new_string(text)),
+                Ok(text) => Ok(Datum::new_string_datum(text)),
                 Err(_) => Err(EvalError::Unsupported("invalid UTF-8 JSON string")),
             },
-            None => Ok(Datum::new_string(document.to_string())),
+            None => Ok(Datum::new_string_datum(document.to_string())),
         };
     }
     let Some(text) = json_sql_string(v)? else {
@@ -80,7 +80,7 @@ pub(super) fn json_unquote(v: &Datum) -> Result<Datum, EvalError> {
         return Err(EvalError::Json(JsonError::InvalidText));
     }
     tidb_datatype::unquote_string(text)
-        .map(Datum::new_string)
+        .map(Datum::new_string_datum)
         .map_err(super::modify::binary_json_error)
 }
 
@@ -211,7 +211,7 @@ mod tests {
         // JSON_OBJECT threads the same value coercion for its values.
         assert_eq!(
             json_object(
-                &[Datum::new_string("k".to_owned()), zero],
+                &[Datum::new_string_datum("k".to_owned()), zero],
                 &[None, Some(boolean_int())],
             )
             .unwrap(),

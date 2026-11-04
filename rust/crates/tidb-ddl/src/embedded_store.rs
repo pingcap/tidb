@@ -54,7 +54,7 @@ pub struct InProcessStack {
     /// The transaction opener over the store, its regions and the oracle.
     pub opener: InProcessOpener,
     /// The region plane the store and its client share.
-    pub regions: Arc<tidb_unistore_tikv::region_manager::InProcessRegionManager>,
+    pub regions: Arc<tidb_unistore_tikv::region_manager::MockRegionManager>,
     /// The node's client-rust store, which the coprocessor reads through.
     pub tikv_store: Arc<TikvStore<tidb_unistore::mock::StorePdClient>>,
     /// The store's RPC client, whose send hook is Go's
@@ -115,7 +115,7 @@ pub fn in_process_stack_from_image(
 /// real cluster's.
 pub fn embedded_tikv_store(
     handler: Arc<std::sync::Mutex<KvHandler>>,
-    regions: Arc<tidb_unistore_tikv::region_manager::InProcessRegionManager>,
+    regions: Arc<tidb_unistore_tikv::region_manager::MockRegionManager>,
     pd: &InProcessPd,
     security: &ClusterSecurity,
 ) -> Result<

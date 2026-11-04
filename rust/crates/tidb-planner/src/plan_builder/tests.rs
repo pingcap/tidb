@@ -1343,7 +1343,7 @@ fn test_fast_index_hint_check_keeps_go_smaller_boundary() {
         other => panic!("expected table, got {other:?}"),
     };
     assert!(
-        !crate::access_path::fast_index_is_available_by_hints(
+        !crate::access_path::index_is_available_by_hints(
             "test",
             "test",
             "t",
@@ -1360,7 +1360,7 @@ fn test_fast_index_hint_check_keeps_go_smaller_boundary() {
         other => panic!("expected table, got {other:?}"),
     };
     assert!(
-        crate::access_path::fast_index_is_available_by_hints(
+        crate::access_path::index_is_available_by_hints(
             "test",
             "test",
             "t",
@@ -1376,7 +1376,7 @@ fn test_fast_index_hint_check_keeps_go_smaller_boundary() {
         tidb_ast::JoinNode::Table(table) => &table.hints,
         other => panic!("expected table, got {other:?}"),
     };
-    assert!(crate::access_path::fast_index_is_available_by_hints(
+    assert!(crate::access_path::index_is_available_by_hints(
         "test",
         "test",
         "t",
@@ -1384,7 +1384,7 @@ fn test_fast_index_hint_check_keeps_go_smaller_boundary() {
         &select.hints,
         table_hints,
     ));
-    assert!(!crate::access_path::fast_index_is_available_by_hints(
+    assert!(!crate::access_path::index_is_available_by_hints(
         "test",
         "test",
         "t",

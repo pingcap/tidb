@@ -15,7 +15,7 @@
 use super::{truncate_overflow_mysql_time, DurationOverflow, MAX_TIME_NANOS, MIN_TIME_NANOS};
 
 use super::{
-    can_fallback_to_datetime, classify_duration_datetime_fallback, parse_duration,
+    can_fallback_to_datetime, can_fallback_to_date_time, parse_duration,
     parse_mysql_duration, round_duration_fsp, DurationDateTimeFallbackKind, DurationParseError,
     DurationParseEvent, DurationRoundError, FieldTypeCode, MySqlDuration, ScalarConversionError,
     ScalarConversionEvent, TimeType,
@@ -26,24 +26,24 @@ fn can_fallback_to_datetime_matches_source_shape_rows() {
     // Source: pkg/types/time.go::canFallbackToDateTime, exercised by the
     // datetime-shaped rows in pkg/types/time_test.go::TestTime.
     assert_eq!(
-        classify_duration_datetime_fallback(b"201111111212"),
+        can_fallback_to_date_time(b"201111111212"),
         Some(DurationDateTimeFallbackKind::Compact12)
     );
     assert!(can_fallback_to_datetime(b"201111111212"));
     assert_eq!(
-        classify_duration_datetime_fallback(b"20111111121212.123"),
+        can_fallback_to_date_time(b"20111111121212.123"),
         Some(DurationDateTimeFallbackKind::Compact14)
     );
     assert_eq!(
-        classify_duration_datetime_fallback(b"2011-11-11 00:00:01"),
+        can_fallback_to_date_time(b"2011-11-11 00:00:01"),
         Some(DurationDateTimeFallbackKind::Separated)
     );
     assert_eq!(
-        classify_duration_datetime_fallback(b"2011-11-11T12:12:12"),
+        can_fallback_to_date_time(b"2011-11-11T12:12:12"),
         Some(DurationDateTimeFallbackKind::Separated)
     );
     assert_eq!(
-        classify_duration_datetime_fallback(b"2011@12@13 T"),
+        can_fallback_to_date_time(b"2011@12@13 T"),
         Some(DurationDateTimeFallbackKind::Separated)
     );
 
@@ -55,7 +55,7 @@ fn can_fallback_to_datetime_matches_source_shape_rows() {
         b" 201111111212".as_slice(),
         b"2011-11-11\n".as_slice(),
     ] {
-        assert_eq!(classify_duration_datetime_fallback(input), None);
+        assert_eq!(can_fallback_to_date_time(input), None);
         assert!(!can_fallback_to_datetime(input));
     }
 }

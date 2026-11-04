@@ -128,7 +128,7 @@ fn test_decode_key() {
     assert_eq!(decoded.index_values, None);
 
     let common =
-        RecordHandle::Common(encode_key(&[Datum::Int(100), Datum::new_string("abc")]).unwrap());
+        RecordHandle::Common(encode_key(&[Datum::Int(100), Datum::new_string_datum("abc")]).unwrap());
     let decoded = decode_key(&record_key(2, common), &catalog).unwrap();
     assert_eq!(decoded.db_id, 1);
     assert_eq!(decoded.db_name, "test");
@@ -144,7 +144,7 @@ fn test_decode_key() {
     assert_eq!(decoded.index_values, None);
 
     let decoded = decode_key(
-        &index_key(1, 1, &[Datum::new_string("abc"), Datum::Int(1)]),
+        &index_key(1, 1, &[Datum::new_string_datum("abc"), Datum::Int(1)]),
         &catalog,
     )
     .unwrap();
@@ -176,7 +176,7 @@ fn test_decode_key() {
     assert!(!decoded.is_partition_handle);
 
     let decoded = decode_key(
-        &index_key(6, 4, &[Datum::new_string("abcde"), Datum::Int(2)]),
+        &index_key(6, 4, &[Datum::new_string_datum("abcde"), Datum::Int(2)]),
         &catalog,
     )
     .unwrap();

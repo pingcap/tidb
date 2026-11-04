@@ -65,9 +65,9 @@ macro_rules! d {
         // reads the macro's `vec![]` as a needless allocation, but several
         // callers here do need an owned `Vec<Datum>`.
         Vec::from([$(match Val::from($value) {
-            Val::Str(text) => Datum::new_string(text.into_bytes()),
+            Val::Str(text) => Datum::new_string_datum(text.into_bytes()),
             Val::Int(number) => Datum::new_int(number),
-            Val::Bytes(bytes) => Datum::new_bytes(bytes),
+            Val::Bytes(bytes) => Datum::new_bytes_datum(bytes),
         }),*])
     };
 }
@@ -656,7 +656,7 @@ fn test_format_sql_datum() {
     // varchar / char: escaped text, never hex.
     assert_eq!(
         format_sql_datum(
-            &Datum::new_string(b"aa';delete from t where 1;".to_vec()),
+            &Datum::new_string_datum(b"aa';delete from t where 1;".to_vec()),
             &FieldType::new(FieldTypeCode::Varchar)
         )
         .unwrap(),
@@ -664,7 +664,7 @@ fn test_format_sql_datum() {
     );
     assert_eq!(
         format_sql_datum(
-            &Datum::new_string("\n123".as_bytes().to_vec()),
+            &Datum::new_string_datum("\n123".as_bytes().to_vec()),
             &FieldType::new(FieldTypeCode::String)
         )
         .unwrap(),
@@ -672,7 +672,7 @@ fn test_format_sql_datum() {
     );
     assert_eq!(
         format_sql_datum(
-            &Datum::new_string("你好👋".as_bytes().to_vec()),
+            &Datum::new_string_datum("你好👋".as_bytes().to_vec()),
             &FieldType::new(FieldTypeCode::Varchar)
         )
         .unwrap(),
@@ -686,22 +686,22 @@ fn test_format_sql_datum() {
         .flags_set(FieldTypeFlags::BINARY)
         .build();
     let formatted =
-        format_sql_datum(&Datum::new_bytes(vec![0xf1, 0xf2, 0xf3, 0xf4]), &binary).unwrap();
+        format_sql_datum(&Datum::new_bytes_datum(vec![0xf1, 0xf2, 0xf3, 0xf4]), &binary).unwrap();
     assert!(formatted.starts_with("x'"));
     assert_eq!(formatted, "x'f1f2f3f4'");
     assert_eq!(
-        format_sql_datum(&Datum::new_bytes("你好👋".as_bytes().to_vec()), &binary).unwrap(),
+        format_sql_datum(&Datum::new_bytes_datum("你好👋".as_bytes().to_vec()), &binary).unwrap(),
         "x'e4bda0e5a5bdf09f918b'"
     );
     assert_eq!(
-        format_sql_datum(&Datum::new_bytes(b"abcdef".to_vec()), &binary).unwrap(),
+        format_sql_datum(&Datum::new_bytes_datum(b"abcdef".to_vec()), &binary).unwrap(),
         "x'616263646566'"
     );
 
     // blob and bit likewise.
     assert_eq!(
         format_sql_datum(
-            &Datum::new_bytes(vec![0xf1, 0xf2]),
+            &Datum::new_bytes_datum(vec![0xf1, 0xf2]),
             &FieldType::new(FieldTypeCode::Blob)
         )
         .unwrap(),
@@ -709,7 +709,7 @@ fn test_format_sql_datum() {
     );
     assert_eq!(
         format_sql_datum(
-            &Datum::new_bytes(vec![0x01]),
+            &Datum::new_bytes_datum(vec![0x01]),
             &FieldType::new(FieldTypeCode::Bit)
         )
         .unwrap(),

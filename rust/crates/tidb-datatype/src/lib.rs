@@ -82,7 +82,7 @@ mod overflow_tests;
 mod type_name_tests;
 
 pub use binary_json::{
-    compare_binary_json, decode_escaped_unicode, marshal_json_string, quote_json_string,
+    compare_binary_json, decode_escaped_unicode, json_marshal_string_to, quote_json_string,
     unquote_json_string, unquote_string, BinaryJSON, BinaryJSONError, BinaryJSONValue, Opaque,
     JSON_LITERAL_FALSE, JSON_LITERAL_NULL, JSON_LITERAL_TRUE, JSON_TYPE_CODE_ARRAY,
     JSON_TYPE_CODE_DATE, JSON_TYPE_CODE_DATETIME, JSON_TYPE_CODE_DURATION, JSON_TYPE_CODE_FLOAT64,
@@ -153,7 +153,7 @@ pub use decimal::{
     DecimalIntegerWarning, DecimalParseError,
 };
 pub use duration::{
-    can_fallback_to_datetime, classify_duration_datetime_fallback, parse_duration,
+    can_fallback_to_datetime, can_fallback_to_date_time, parse_duration,
     parse_mysql_duration, round_duration_fsp, truncate_overflow_mysql_time,
     DurationDateTimeFallbackKind, DurationOverflow, DurationParseError, DurationParseEvent,
     DurationRangeResult, DurationRoundError, DurationValueError, MySqlDuration, ParsedDuration,

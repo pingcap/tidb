@@ -703,9 +703,9 @@ impl Parser<'_> {
                         detail.push(' ');
                     }
                     detail.push_str(value);
-                    Datum::new_string(detail)
+                    Datum::new_string_datum(detail)
                 }
-                ColumnKind::Plan => Datum::new_string(parse_plan(value)),
+                ColumnKind::Plan => Datum::new_string_datum(parse_plan(value)),
                 ColumnKind::BinaryPlan => {
                     let value = if value.starts_with(SLOW_LOG_BINARY_PLAN_PREFIX)
                         && value.len()
@@ -716,7 +716,7 @@ impl Parser<'_> {
                     } else {
                         value
                     };
-                    Datum::new_string(value)
+                    Datum::new_string_datum(value)
                 }
                 ColumnKind::Uint => Datum::UInt(value.parse::<u64>().map_err(|_| {
                     format!("strconv.ParseUint: parsing {value:?}: invalid syntax")
@@ -724,7 +724,7 @@ impl Parser<'_> {
                 ColumnKind::Float => Datum::Real(value.parse::<f64>().map_err(|_| {
                     format!("strconv.ParseFloat: parsing {value:?}: invalid syntax")
                 })?),
-                ColumnKind::Text => Datum::new_string(value),
+                ColumnKind::Text => Datum::new_string_datum(value),
                 ColumnKind::Int => {
                     Datum::Int(value.parse::<i64>().map_err(|_| {
                         format!("strconv.ParseInt: parsing {value:?}: invalid syntax")

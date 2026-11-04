@@ -121,11 +121,11 @@ mod tests {
             Some(Datum::Int(1))
         );
         assert_eq!(
-            point_get_value(&int_column(), &Datum::new_string("1")),
+            point_get_value(&int_column(), &Datum::new_string_datum("1")),
             Some(Datum::Int(1))
         );
         assert_eq!(
-            point_get_value(&int_column(), &Datum::new_string("1.5")),
+            point_get_value(&int_column(), &Datum::new_string_datum("1.5")),
             None
         );
     }
@@ -166,7 +166,7 @@ mod tests {
         // event is the Rust signal because `convert_to` clamps and records it.
         assert!(point_get_value_overflowed(
             &int_column(),
-            &Datum::new_string("99999999999999999999999999")
+            &Datum::new_string_datum("99999999999999999999999999")
         ));
         assert!(point_get_value_overflowed(
             &int_column(),
@@ -174,7 +174,7 @@ mod tests {
         ));
         assert!(!point_get_value_overflowed(
             &int_column(),
-            &Datum::new_string("1")
+            &Datum::new_string_datum("1")
         ));
         assert!(!point_get_value_overflowed(&int_column(), &Datum::Int(1)));
         assert!(!point_get_value_overflowed(&int_column(), &Datum::Null));
@@ -182,7 +182,7 @@ mod tests {
         // `ErrTruncatedWrongVal` arm keeps comparing it.
         assert!(!point_get_value_overflowed(
             &varchar_column(3),
-            &Datum::new_string("abcdef")
+            &Datum::new_string_datum("abcdef")
         ));
     }
 
@@ -201,11 +201,11 @@ mod tests {
         // stored value can compare equal, so the empty set is the answer.
         assert!(names_no_rows(
             &varchar_column(10),
-            &Datum::new_string("310110194401061214")
+            &Datum::new_string_datum("310110194401061214")
         ));
         assert!(!names_no_rows(
             &varchar_column(10),
-            &Datum::new_string("1002041840")
+            &Datum::new_string_datum("1002041840")
         ));
     }
 
@@ -216,12 +216,12 @@ mod tests {
         let value = format!("{}{}", "0123456789", " ".repeat(8));
         assert!(!names_no_rows(
             &varchar_column(10),
-            &Datum::new_string(value)
+            &Datum::new_string_datum(value)
         ));
         let longer = format!("{}{}", "01234567890", " ".repeat(8));
         assert!(names_no_rows(
             &varchar_column(10),
-            &Datum::new_string(longer)
+            &Datum::new_string_datum(longer)
         ));
     }
 
@@ -230,7 +230,7 @@ mod tests {
         // Byte length is not char length outside ASCII, so no verdict.
         assert!(!names_no_rows(
             &varchar_column(1),
-            &Datum::new_string("你好")
+            &Datum::new_string_datum("你好")
         ));
     }
 
@@ -238,7 +238,7 @@ mod tests {
     fn non_string_domains_are_left_to_the_planner() {
         // An integer that fails its conversion may still be a saturation or
         // rounding question; only provable string overlength short-circuits.
-        assert!(!names_no_rows(&int_column(), &Datum::new_string("1")));
+        assert!(!names_no_rows(&int_column(), &Datum::new_string_datum("1")));
         assert!(!names_no_rows(&int_column(), &Datum::Int(-1)));
     }
 }

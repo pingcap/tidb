@@ -76,7 +76,7 @@ pub(crate) fn eval_string_cast_with_type(
         }
         let mut padded = bytes.to_vec();
         padded.resize(target.flen() as usize, 0);
-        return Ok(Datum::new_bytes(padded));
+        return Ok(Datum::new_bytes_datum(padded));
     }
     Ok(converted.value)
 }
@@ -390,7 +390,7 @@ pub fn convert_json_2_tp(
             if produced.event.is_some() {
                 return Err(EvalError::Conversion(tidb_datatype::types_errors::ERR_DATA_TOO_LONG.clone()));
             }
-            Ok(Datum::new_string(produced.value))
+            Ok(Datum::new_string_datum(produced.value))
         }
         EvalType::Int => {
             if code != JSON_TYPE_CODE_INT64 && code != JSON_TYPE_CODE_UINT64 {
@@ -1745,7 +1745,7 @@ fn cast_to_time_value(
                 return cast_to_time_value(&Datum::Duration(duration), None, ctx, kind, fsp);
             }
             JSON_TYPE_CODE_STRING => {
-                json_string = Datum::new_string(
+                json_string = Datum::new_string_datum(
                     value
                         .unquote()
                         .map_err(|_| EvalError::Unsupported("JSON string payload"))?,
@@ -2197,12 +2197,12 @@ pub(crate) fn cast_arg_as_string(
         | Datum::BinaryLiteral(_) => Ok(v.clone()),
         // The BIT arm above: raw bytes under the binary charset Go's `tp`
         // was given, which in this tier is `Datum::Bytes`.
-        Datum::Bit(bits) => Ok(Datum::new_bytes(bits.as_bytes().to_vec())),
+        Datum::Bit(bits) => Ok(Datum::new_bytes_datum(bits.as_bytes().to_vec())),
         // Everything else takes one of `castAsStringFunctionClass`'s
         // per-source signatures, all of which render the value's own text
         // under the connection charset -- which is exactly what
         // `crate::coerce::coerce_str_bytes` already is.
-        _ => Ok(crate::coerce::coerce_str_bytes(v)?.map_or(Datum::Null, Datum::new_string)),
+        _ => Ok(crate::coerce::coerce_str_bytes(v)?.map_or(Datum::Null, Datum::new_string_datum)),
     }
 }
 
@@ -2638,7 +2638,7 @@ mod tests {
             tidb_exprctx::context::ErrorLevel::Ignore,
         ] {
             let ctx = Policy(level, RefCell::new(Vec::new()));
-            let result = eval_cast(&cast, Datum::new_string("abc"), None, &ctx);
+            let result = eval_cast(&cast, Datum::new_string_datum("abc"), None, &ctx);
             if level == tidb_exprctx::context::ErrorLevel::Error {
                 assert!(
                     matches!(result, Err(EvalError::Conversion(ref e)) if e.to_sql_error().code == 1406),
@@ -2686,7 +2686,7 @@ mod tests {
             let ctx = WarningContext(RefCell::new(Vec::new()));
             let got = eval_cast(
                 &CastType::DateTime { fsp: Some(0) },
-                Datum::new_string(input),
+                Datum::new_string_datum(input),
                 None,
                 &ctx,
             )
@@ -2729,7 +2729,7 @@ mod tests {
             assert_eq!(
                 eval_cast(
                     &CastType::Signed,
-                    Datum::new_string(input),
+                    Datum::new_string_datum(input),
                     None,
                     &ctx,
                 )
@@ -2770,7 +2770,7 @@ mod tests {
         let long = format!("x{margin}", margin = "9".repeat(300));
         let got = eval_cast(
             &CastType::Double,
-            Datum::new_string(long.clone()),
+            Datum::new_string_datum(long.clone()),
             None,
             &ctx,
         )
@@ -2793,7 +2793,7 @@ mod tests {
     #[test]
     fn double_cast_warning_subject_stops_at_nul_like_go() {
         let ctx = WarningContext(RefCell::new(Vec::new()));
-        let got = eval_cast(&CastType::Double, Datum::new_string("\0 12"), None, &ctx)
+        let got = eval_cast(&CastType::Double, Datum::new_string_datum("\0 12"), None, &ctx)
             .expect("a truncated DOUBLE cast remains a successful read");
         assert_eq!(got, Datum::Real(0.0));
         assert_eq!(
@@ -2971,7 +2971,7 @@ mod tests {
         ] {
             for (ctx, expected) in [(&utc, in_utc), (&la, in_la)] {
                 let got = cast_to_time(
-                    &Datum::new_string(input.to_string()),
+                    &Datum::new_string_datum(input.to_string()),
                     None,
                     ctx,
                     tidb_datatype::TimeType::DateTime,
@@ -3011,7 +3011,7 @@ mod tests {
             warnings: RefCell::new(Vec::new()),
         };
         let got = cast_to_time(
-            &Datum::new_string("2018-03-11 02:00:16".to_owned()),
+            &Datum::new_string_datum("2018-03-11 02:00:16".to_owned()),
             None,
             &ctx,
             tidb_datatype::TimeType::Timestamp,
@@ -3111,7 +3111,7 @@ mod tests {
         );
         // The STRING signature keeps Go's zero-date rejection under NO_ZERO_DATE.
         assert_eq!(
-            datetime(Datum::new_string("0000-00-00 00:00:00".to_string())),
+            datetime(Datum::new_string_datum("0000-00-00 00:00:00".to_string())),
             "NULL",
             "a zero-date STRING is still rejected"
         );
@@ -3121,14 +3121,14 @@ mod tests {
     #[test]
     fn a_string_source_is_unchanged() {
         assert_eq!(
-            datetime(Datum::new_string("2017-01-18 12:34:56".to_string())),
+            datetime(Datum::new_string_datum("2017-01-18 12:34:56".to_string())),
             "2017-01-18 12:34:56",
         );
     }
 
     #[test]
     fn temporal_target_fsp_rounds_at_boundaries() {
-        let text = |s: &str| Datum::new_string(s.to_owned());
+        let text = |s: &str| Datum::new_string_datum(s.to_owned());
         assert_eq!(
             datetime_fsp(text("2020-02-03 11:22:33.987654"), 3),
             "2020-02-03 11:22:33.988"
@@ -3154,7 +3154,7 @@ mod tests {
     #[test]
     fn temporal_cast_preserves_value_and_zero_date_fields() {
         let got = cast_to_time(
-            &Datum::new_string("0000-01-02 03:04:05".to_owned()),
+            &Datum::new_string_datum("0000-01-02 03:04:05".to_owned()),
             None,
             &NoColumns,
             tidb_datatype::TimeType::DateTime,
@@ -3165,7 +3165,7 @@ mod tests {
         assert_eq!(render_time(&got), "0000-01-02 03:04:05");
 
         let date = cast_to_time(
-            &Datum::new_string("2020-01-01 10:30:00".to_owned()),
+            &Datum::new_string_datum("2020-01-01 10:30:00".to_owned()),
             None,
             &NoColumns,
             tidb_datatype::TimeType::Date,
@@ -3230,7 +3230,7 @@ mod tests {
                 "12:59:59.000",
             ),
             (
-                Datum::new_string("12:59:59".to_owned()),
+                Datum::new_string_datum("12:59:59".to_owned()),
                 &string_type,
                 "12:59:59.000",
             ),
@@ -3250,7 +3250,7 @@ mod tests {
         // a truncation warning, whereas the numeric signature returns NULL.
         let text = eval_cast(
             &CastType::Time { fsp: None },
-            Datum::new_string("1x".to_owned()),
+            Datum::new_string_datum("1x".to_owned()),
             Some(&string_type),
             &warnings,
         )
@@ -3311,7 +3311,7 @@ mod tests {
     fn duration_batch_string_calendar_fallback_keeps_midnight_carry() {
         let result = eval_cast(
             &CastType::Time { fsp: Some(0) },
-            Datum::new_string("2024-01-01 23:59:59.999999".to_owned()),
+            Datum::new_string_datum("2024-01-01 23:59:59.999999".to_owned()),
             Some(&FieldType::new(FieldTypeCode::VarString)),
             &NoColumns,
         )
@@ -3393,7 +3393,7 @@ mod tests {
         assert_eq!(value.sql_string().unwrap(), "0000-00-00 00:00:00.000");
         assert!(zero_ctx.0.borrow().is_empty());
         let value = cast_to_time(
-            &Datum::new_string("0000-00-00"),
+            &Datum::new_string_datum("0000-00-00"),
             None,
             &zero_ctx,
             tidb_datatype::TimeType::DateTime,

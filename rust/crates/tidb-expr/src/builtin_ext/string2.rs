@@ -90,7 +90,7 @@ fn translate(vals: &[Datum]) -> Result<Datum, EvalError> {
             None => out.push(ch),
         }
     }
-    Ok(Datum::new_string(out))
+    Ok(Datum::new_string_datum(out))
 }
 
 /// `builtinTranslateBinarySig.evalString` + `buildTranslateMap4Binary`: the
@@ -148,9 +148,9 @@ fn translate_binary(vals: &[Datum]) -> Result<Datum, EvalError> {
         }
     }
     if is_binary_str(&vals[0]) {
-        return Ok(Datum::new_bytes(out));
+        return Ok(Datum::new_bytes_datum(out));
     }
-    Ok(Datum::new_string(out))
+    Ok(Datum::new_string_datum(out))
 }
 
 /// `LTRIM(str)`, ported from `builtinLTrimSig.evalString` in
@@ -196,9 +196,9 @@ fn trimmed(value: &Datum, strip: fn(&[u8]) -> Vec<u8>) -> Result<Datum, EvalErro
     };
     let stripped = strip(&bytes);
     Ok(if crate::string_signature::is_binary_str(value) {
-        Datum::new_bytes(stripped)
+        Datum::new_bytes_datum(stripped)
     } else {
-        Datum::new_string(stripped)
+        Datum::new_string_datum(stripped)
     })
 }
 
@@ -404,7 +404,7 @@ fn export_set(vals: &[Datum]) -> Result<Datum, EvalError> {
             off.as_str()
         });
     }
-    Ok(Datum::new_string(parts.join(&separator)))
+    Ok(Datum::new_string_datum(parts.join(&separator)))
 }
 
 #[cfg(test)]
@@ -418,7 +418,7 @@ mod tests {
 use tidb_charset::Collation;
 
     fn string(value: &str) -> Datum {
-        Datum::new_string(value.to_string())
+        Datum::new_string_datum(value.to_string())
     }
 
     fn call(name: &str, vals: &[Datum]) -> Datum {
@@ -439,7 +439,7 @@ use tidb_charset::Collation;
     /// ```
     #[test]
     fn export_set_reads_the_unsigned_integer_domain() {
-        let want = Datum::new_string("Y,N,Y,N,N".to_string());
+        let want = Datum::new_string_datum("Y,N,Y,N,N".to_string());
         assert_eq!(
             call(
                 "EXPORT_SET",
@@ -606,7 +606,7 @@ use tidb_charset::Collation;
                 string("utf8"),
             ])
             .unwrap(),
-            Datum::new_collation_string(b"AAdD".to_vec(), Collation::Utf8Bin)
+            Datum::new_collation_string_datum(b"AAdD".to_vec(), Collation::Utf8Bin)
         );
         assert_eq!(
             char_func(&[
@@ -616,11 +616,11 @@ use tidb_charset::Collation;
                 Datum::Null,
             ])
             .unwrap(),
-            Datum::new_bytes(b"AAdD".to_vec())
+            Datum::new_bytes_datum(b"AAdD".to_vec())
         );
         assert_eq!(
             char_func(&[string("a"), Datum::Int(-1), Datum::Real(67.5), Datum::Null]).unwrap(),
-            Datum::new_bytes(vec![0, 0xff, 0xff, 0xff, 0xff, b'D'])
+            Datum::new_bytes_datum(vec![0, 0xff, 0xff, 0xff, 0xff, b'D'])
         );
 
         for (needle, list, want) in [
@@ -738,7 +738,7 @@ use tidb_charset::Collation;
         ] {
             let result = format_num(&[number, precision], &crate::NoColumns).unwrap();
             let expected = want
-                .map(|text| Datum::new_bytes(text.as_bytes().to_vec()))
+                .map(|text| Datum::new_bytes_datum(text.as_bytes().to_vec()))
                 .unwrap_or(Datum::Null);
             assert_eq!(result, expected);
         }
@@ -747,18 +747,18 @@ use tidb_charset::Collation;
                 "FORMAT",
                 &[string("-12332.123456"), Datum::Int(-4), string("zh_CN")]
             ),
-            Datum::new_bytes(b"-12,332".to_vec())
+            Datum::new_bytes_datum(b"-12,332".to_vec())
         );
         assert_eq!(
             call(
                 "FORMAT",
                 &[string("-12332.123456"), string("4"), string("de_GE")]
             ),
-            Datum::new_bytes(b"-12,332.1235".to_vec())
+            Datum::new_bytes_datum(b"-12,332.1235".to_vec())
         );
         assert_eq!(
             call("FORMAT", &[Datum::Int(1), Datum::Int(4), Datum::Null]),
-            Datum::new_bytes(b"1.0000".to_vec())
+            Datum::new_bytes_datum(b"1.0000".to_vec())
         );
     }
 
@@ -813,7 +813,7 @@ use tidb_charset::Collation;
             let result = format_num_locale(&[number.clone(), two.clone()], locale, &sink).unwrap();
             assert_eq!(
                 result,
-                Datum::new_bytes(text.as_bytes().to_vec()),
+                Datum::new_bytes_datum(text.as_bytes().to_vec()),
                 "{locale:?}"
             );
             assert_eq!(sink.0.into_inner(), warnings, "{locale:?}");
@@ -835,10 +835,10 @@ use tidb_charset::Collation;
                 vec![(1649_u16, "Unknown locale: 'NULL'".to_owned())],
             ),
             (
-                Datum::new_string("nope_XX".to_owned()),
+                Datum::new_string_datum("nope_XX".to_owned()),
                 vec![(1649_u16, "Unknown locale: 'nope_XX'".to_owned())],
             ),
-            (Datum::new_string("en_US".to_owned()), vec![]),
+            (Datum::new_string_datum("en_US".to_owned()), vec![]),
         ] {
             let sink = Sink::default();
             dispatch(
@@ -1002,14 +1002,14 @@ use tidb_charset::Collation;
         );
         assert_eq!(
             to_base64(
-                &[Datum::new_bytes(vec![0xd2, 0xbb, 0xb6, 0xfe, 0xc8, 0xfd])],
+                &[Datum::new_bytes_datum(vec![0xd2, 0xbb, 0xb6, 0xfe, 0xc8, 0xfd])],
                 &crate::NoColumns
             )
             .unwrap(),
             string("0ru2/sj9")
         );
         assert_eq!(
-            to_base64(&[Datum::new_bytes(vec![0xff, 0x00])], &crate::NoColumns).unwrap(),
+            to_base64(&[Datum::new_bytes_datum(vec![0xff, 0x00])], &crate::NoColumns).unwrap(),
             string("/wA=")
         );
         let long = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -1138,11 +1138,11 @@ use tidb_charset::Collation;
         }
 
         let binary = [
-            (Datum::new_bytes(b"BaR".to_vec()), string("foobArbar"), 0),
-            (string("BaR"), Datum::new_bytes(b"foobArbar".to_vec()), 0),
-            (Datum::new_bytes(b"bAr".to_vec()), string("foobarBaR"), 0),
-            (string("bAr"), Datum::new_bytes(b"foobarBaR".to_vec()), 0),
-            (string("bAr"), Datum::new_bytes(b"foobarbAr".to_vec()), 7),
+            (Datum::new_bytes_datum(b"BaR".to_vec()), string("foobArbar"), 0),
+            (string("BaR"), Datum::new_bytes_datum(b"foobArbar".to_vec()), 0),
+            (Datum::new_bytes_datum(b"bAr".to_vec()), string("foobarBaR"), 0),
+            (string("bAr"), Datum::new_bytes_datum(b"foobarBaR".to_vec()), 0),
+            (string("bAr"), Datum::new_bytes_datum(b"foobarbAr".to_vec()), 7),
         ];
         for (needle, haystack, want) in binary {
             assert_eq!(
@@ -1245,7 +1245,7 @@ use tidb_charset::Collation;
         );
         assert_eq!(
             char_func(&[Datum::Int(-1), Datum::Null]).unwrap(),
-            Datum::new_bytes(vec![0xff; 4])
+            Datum::new_bytes_datum(vec![0xff; 4])
         );
     }
 }

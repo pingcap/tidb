@@ -169,21 +169,21 @@ fn the_int_cast_raises_the_cast_s_own_1292() {
     for (name, vals, want) in [
         (
             "ROUND",
-            vec![Datum::Int(3), Datum::new_string("abc".to_string())],
+            vec![Datum::Int(3), Datum::new_string_datum("abc".to_string())],
             "1292 Truncated incorrect INTEGER value: 'abc'",
         ),
         (
             "MAKE_SET",
-            vec![Datum::new_string("x".to_string())],
+            vec![Datum::new_string_datum("x".to_string())],
             "1292 Truncated incorrect INTEGER value: 'x'",
         ),
         (
             "INSERT",
             vec![
-                Datum::new_string("abcdef".to_string()),
-                Datum::new_string("2x".to_string()),
+                Datum::new_string_datum("abcdef".to_string()),
+                Datum::new_string_datum("2x".to_string()),
                 Datum::Int(2),
-                Datum::new_string("X".to_string()),
+                Datum::new_string_datum("X".to_string()),
             ],
             "1292 Truncated incorrect INTEGER value: '2x'",
         ),
@@ -198,7 +198,7 @@ fn the_int_cast_raises_the_cast_s_own_1292() {
     let sink = Sink::default();
     wrap_int_args(
         "ROUND",
-        vec![Datum::Int(3), Datum::new_string("2".to_string())],
+        vec![Datum::Int(3), Datum::new_string_datum("2".to_string())],
         &[],
         &sink,
     )
@@ -242,7 +242,7 @@ fn oct_is_signature_selected_and_not_a_member_of_the_layer() {
     );
     // The string signature keeps its own contract for every non-hybrid,
     // non-integer source: captured `oct('A')` is `0` and `oct(1.2345)` is `1`.
-    assert_eq!(oct(Datum::new_string("A".to_string())), "STR:0");
+    assert_eq!(oct(Datum::new_string_datum("A".to_string())), "STR:0");
     assert_eq!(e("oct(1.2345)"), "STR:1");
     // The two BOUNDARIES that separate `builtinOctStringSig` from the
     // `types.ETInt` cast by VALUE, not just by classification -- routing

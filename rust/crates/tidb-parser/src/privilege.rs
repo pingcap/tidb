@@ -19,7 +19,7 @@
 mod role_grant;
 
 use tidb_ast::{
-    GrantLevel, GrantObjectType, GrantPrivilege, GrantProxyStmt, GrantStmt, RevokeStmt,
+    GrantLevel, ObjectTypeType, GrantPrivilege, GrantProxyStmt, GrantStmt, RevokeStmt,
 };
 use tidb_lexer::TokenKind;
 
@@ -248,16 +248,16 @@ impl Parser {
     }
 
     /// Go's shared `parseObjectType` helper for privilege GRANT/REVOKE.
-    fn parse_grant_object_type(&mut self) -> Option<GrantObjectType> {
+    fn parse_grant_object_type(&mut self) -> Option<ObjectTypeType> {
         if self.is_kw("TABLE") {
             self.bump();
-            Some(GrantObjectType::Table)
+            Some(ObjectTypeType::Table)
         } else if self.is_kw("FUNCTION") {
             self.bump();
-            Some(GrantObjectType::Function)
+            Some(ObjectTypeType::Function)
         } else if self.is_kw("PROCEDURE") {
             self.bump();
-            Some(GrantObjectType::Procedure)
+            Some(ObjectTypeType::Procedure)
         } else {
             None
         }

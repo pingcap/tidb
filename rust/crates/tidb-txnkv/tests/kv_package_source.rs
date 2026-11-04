@@ -264,11 +264,11 @@ fn TestQueryCopStoreLimiter() {
 
 #[test]
 fn TestPartialNext() {
-    let key_a = tidb_codec::encode_value(&[Datum::new_string("abc"), Datum::new_string("def")])
+    let key_a = tidb_codec::encode_value(&[Datum::new_string_datum("abc"), Datum::new_string_datum("def")])
         .expect("encode key A");
-    let key_b = tidb_codec::encode_value(&[Datum::new_string("abca"), Datum::new_string("def")])
+    let key_b = tidb_codec::encode_value(&[Datum::new_string_datum("abca"), Datum::new_string_datum("def")])
         .expect("encode key B");
-    let seek = tidb_codec::encode_value(&[Datum::new_string("abc")]).expect("encode seek");
+    let seek = tidb_codec::encode_value(&[Datum::new_string_datum("abc")]).expect("encode seek");
     let seek = Key::from_bytes(seek);
     assert!(seek.next().as_bytes() < key_a.as_slice());
     assert!(seek.prefix_next().as_bytes() > key_a.as_slice());
@@ -319,7 +319,7 @@ fn TestHandle() {
     assert_eq!(int.to_string(), "100");
 
     let common = CommonHandle::new(
-        encode_key(&[Datum::new_int(100), Datum::new_string("abc")]).expect("common key"),
+        encode_key(&[Datum::new_int(100), Datum::new_string_datum("abc")]).expect("common key"),
     )
     .expect("common handle");
     let next = common.next();
@@ -366,7 +366,7 @@ fn TestHandleMap() {
 
     let common = Handle::from(
         CommonHandle::new(
-            encode_key(&[Datum::new_int(100), Datum::new_string("abc")]).expect("key"),
+            encode_key(&[Datum::new_int(100), Datum::new_string_datum("abc")]).expect("key"),
         )
         .expect("handle"),
     );
@@ -382,7 +382,7 @@ fn TestHandleMap() {
             CommonHandle::new(
                 encode_key(&[
                     Datum::new_int(value),
-                    Datum::new_string(if value == 99 { "def" } else { "abc" }),
+                    Datum::new_string_datum(if value == 99 { "def" } else { "abc" }),
                 ])
                 .expect("key"),
             )
@@ -412,12 +412,12 @@ fn TestCommonHandlesFitIntHandleRange() {
     let minimum = IntHandle::new(i64::MIN).encoded();
     let maximum = IntHandle::new(i64::MAX).encoded();
     let cases = [
-        vec![Datum::new_int(101), Datum::new_string("abc")],
-        vec![Datum::new_string("abc"), Datum::new_int(101)],
-        vec![Datum::new_int(-101), Datum::new_string("abc")],
+        vec![Datum::new_int(101), Datum::new_string_datum("abc")],
+        vec![Datum::new_string_datum("abc"), Datum::new_int(101)],
+        vec![Datum::new_int(-101), Datum::new_string_datum("abc")],
         vec![Datum::new_int(i64::MIN), Datum::new_int(i64::MAX)],
-        vec![Datum::new_bytes(vec![0xff, 0xff])],
-        vec![Datum::new_bytes(vec![0, 0])],
+        vec![Datum::new_bytes_datum(vec![0xff, 0xff])],
+        vec![Datum::new_bytes_datum(vec![0, 0])],
         vec![Datum::BinaryLiteral(BinaryLiteral::from(vec![0xff, 0xff]))],
     ];
     for data in cases {

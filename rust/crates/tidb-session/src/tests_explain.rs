@@ -1860,7 +1860,7 @@ fn explain_marks_missing_stats_for_selected_index() {
     let mut statistics = original_statistics.copy_as(tidb_stats::CopyIntent::AllDataWritable);
     statistics.delete_column(column_b_id);
     statistics
-        .existence_map()
+        .col_and_idx_existence_map()
         .write()
         .unwrap()
         .insert_column(column_b_id, true);

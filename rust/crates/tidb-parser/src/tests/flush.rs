@@ -43,7 +43,7 @@ fn flush_tables_restore_and_shape_match_go() {
         statement,
         tidb_ast::Stmt::Admin(admin)
             if matches!(admin.as_ref(), tidb_ast::AdminStmt::Flush(flush)
-                if matches!(&flush.target, tidb_ast::FlushTarget::Tables { tables, read_lock }
+                if matches!(&flush.target, tidb_ast::FlushStmtType::Tables { tables, read_lock }
                     if tables.len() == 2 && *read_lock))
     ));
 }
@@ -64,7 +64,7 @@ fn test_flush_table_source_of_truth() {
         panic!("expected FLUSH statement");
     };
     assert!(flush.no_write_to_binlog);
-    let tidb_ast::FlushTarget::Tables { tables, read_lock } = &flush.target else {
+    let tidb_ast::FlushStmtType::Tables { tables, read_lock } = &flush.target else {
         panic!("expected FLUSH TABLES target");
     };
     assert_eq!(
@@ -82,7 +82,7 @@ fn flush_status_and_privileges_keep_distinct_payloads() {
         parse("flush privileges"),
         Ok(tidb_ast::Stmt::Admin(admin))
             if matches!(admin.as_ref(), tidb_ast::AdminStmt::Flush(flush)
-                if matches!(flush.target, tidb_ast::FlushTarget::Privileges))
+                if matches!(flush.target, tidb_ast::FlushStmtType::Privileges))
     ));
 }
 
@@ -172,7 +172,7 @@ fn test_flush_stats_delta_scoped() {
             statement,
             tidb_ast::Stmt::Admin(admin)
                 if matches!(admin.as_ref(), tidb_ast::AdminStmt::Flush(flush)
-                    if matches!(&flush.target, tidb_ast::FlushTarget::StatsDelta { objects, cluster: actual_cluster }
+                    if matches!(&flush.target, tidb_ast::FlushStmtType::StatsDelta { objects, cluster: actual_cluster }
                         if objects.len() == object_count && *actual_cluster == cluster))
         ));
     }

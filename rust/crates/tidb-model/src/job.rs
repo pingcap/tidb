@@ -1485,7 +1485,7 @@ impl std::fmt::Display for Job {
 fn format_tso_in_process_location(tso: u64) -> String {
     use chrono::TimeZone as _;
 
-    let millis = crate::bdr::ts_convert_2_time(tso).unix_millis();
+    let millis = crate::bdr::ts_convert_2_time(tso).unix_milli();
     let value = chrono::Local
         .timestamp_millis_opt(millis)
         .single()

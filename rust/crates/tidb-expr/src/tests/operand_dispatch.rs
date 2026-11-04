@@ -90,7 +90,7 @@ fn varchar(name: &str, text: &str) -> (String, FieldType, Datum) {
     (
         name.to_owned(),
         FieldType::new(FieldTypeCode::VarString),
-        Datum::new_string(text),
+        Datum::new_string_datum(text),
     )
 }
 

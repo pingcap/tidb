@@ -66,7 +66,7 @@ fn test_handle() {
     assert_eq!(int_handle.compare(&next), Ok(Ordering::Less));
     assert_eq!(int_handle.to_string(), "100");
 
-    let encoded = encode_key(&[Datum::new_int(100), Datum::new_string("abc")]).unwrap();
+    let encoded = encode_key(&[Datum::new_int(100), Datum::new_string_datum("abc")]).unwrap();
     assert_eq!(encoded, fixture("handle_100_abc"));
     let common = common_100_abc();
     let common_handle = Handle::from(common.clone());
@@ -166,22 +166,22 @@ fn test_common_handles_fit_int_handle_range() {
     let production_cases = [
         (
             "range_int_string",
-            vec![Datum::new_int(101), Datum::new_string("abc")],
+            vec![Datum::new_int(101), Datum::new_string_datum("abc")],
         ),
         (
             "range_string_int",
-            vec![Datum::new_string("abc"), Datum::new_int(101)],
+            vec![Datum::new_string_datum("abc"), Datum::new_int(101)],
         ),
         (
             "range_negative_int_string",
-            vec![Datum::new_int(-101), Datum::new_string("abc")],
+            vec![Datum::new_int(-101), Datum::new_string_datum("abc")],
         ),
         (
             "range_min_max_int",
             vec![Datum::new_int(i64::MIN), Datum::new_int(i64::MAX)],
         ),
-        ("range_bytes_ff", vec![Datum::new_bytes(vec![0xff, 0xff])]),
-        ("range_bytes_00", vec![Datum::new_bytes(vec![0x00, 0x00])]),
+        ("range_bytes_ff", vec![Datum::new_bytes_datum(vec![0xff, 0xff])]),
+        ("range_bytes_00", vec![Datum::new_bytes_datum(vec![0x00, 0x00])]),
     ];
 
     for (name, values) in production_cases {

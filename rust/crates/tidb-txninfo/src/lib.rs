@@ -222,8 +222,8 @@ impl TransactionHistoryRecorder {
             .into_iter()
             .map(|summary| {
                 vec![
-                    tidb_datatype::Datum::new_string(summary.digest_hex()),
-                    tidb_datatype::Datum::new_string(
+                    tidb_datatype::Datum::new_string_datum(summary.digest_hex()),
+                    tidb_datatype::Datum::new_string_datum(
                         serde_json::to_string(summary.sql_digests())
                             .expect("digest strings serialize"),
                     ),

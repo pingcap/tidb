@@ -63,7 +63,7 @@ impl Parser {
             } else if self.is_kw("ON") {
                 self.bump();
                 self.expect_kw("UPDATE")?;
-                ColumnOption::OnUpdate(self.parse_on_update_expr()?)
+                ColumnOption::OnUpdate(self.parse_now_sym_option_fraction()?)
             } else if self.is_kw("COMMENT") {
                 self.bump();
                 let token = self.peek().clone();

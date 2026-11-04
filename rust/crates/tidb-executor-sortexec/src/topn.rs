@@ -1573,11 +1573,11 @@ mod tests {
         )
         .with_rank_prefix(0, tidb_datatype::UNSPECIFIED_LENGTH, field_type);
 
-        let upper = vec![Datum::new_collation_string(
+        let upper = vec![Datum::new_collation_string_datum(
             b"Prefix".to_vec(),
             tidb_charset::Collation::Utf8Mb4GeneralCi,
         )];
-        let lower = vec![Datum::new_collation_string(
+        let lower = vec![Datum::new_collation_string_datum(
             b"prefix".to_vec(),
             tidb_charset::Collation::Utf8Mb4GeneralCi,
         )];

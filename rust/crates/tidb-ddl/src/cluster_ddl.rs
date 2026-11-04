@@ -8311,7 +8311,7 @@ fn add_history_ddl_job(
         quote(&job.table_id.to_string()),
         // Go `model.TSConvert2Time(job.StartTS).String()`.
         quote(&tidb_go_time_layout::go_unix_milli_string(
-            tidb_model::GoTime::from_tso(job.start_ts).unix_millis(),
+            tidb_model::GoTime::from_tso(job.start_ts).unix_milli(),
         )),
     );
     if let Err(error) = session.execute(start_ts, &sql, &[]) {
@@ -8915,7 +8915,7 @@ fn create_foreign_key(
             "Cannot add foreign key constraint",
         ));
     }
-    if definition.reference.match_type == tidb_ast::ForeignKeyMatch::Partial {
+    if definition.reference.match_type == tidb_ast::MatchType::Partial {
         return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
             "MATCH PARTIAL is not supported yet",
         )));

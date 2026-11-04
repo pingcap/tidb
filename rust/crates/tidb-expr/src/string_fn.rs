@@ -57,7 +57,7 @@ pub(crate) fn concat_with_context(
             None => return Ok(Datum::Null),
         }
     }
-    Ok(Datum::new_string(out))
+    Ok(Datum::new_string_datum(out))
 }
 
 /// `LOWER`/`UPPER`: text signatures apply Unicode case mapping while binary
@@ -86,11 +86,11 @@ pub(crate) fn case_convert_with_type(
         return Ok(Datum::Null);
     };
     if binary {
-        return Ok(Datum::new_bytes(bytes));
+        return Ok(Datum::new_bytes_datum(bytes));
     }
     let encoding = find_encoding(source.map_or("utf8mb4", FieldType::charset_name));
     let text = GoString::from(bytes).to_utf8_lossy_go();
-    Ok(Datum::new_string(if upper {
+    Ok(Datum::new_string_datum(if upper {
         encoding.to_upper(&text)
     } else {
         encoding.to_lower(&text)
@@ -109,13 +109,13 @@ use tidb_charset::Collation;
         let binary = Datum::new_enum(MysqlEnum::new([0xff], 1), Collation::Binary);
         assert_eq!(
             case_convert(&[binary], true),
-            Ok(Datum::new_bytes(vec![0xff]))
+            Ok(Datum::new_bytes_datum(vec![0xff]))
         );
 
         let text = Datum::new_enum(MysqlEnum::new([0xe2, 0x82], 1), Collation::Utf8Mb4Bin);
         assert_eq!(
             case_convert(&[text], true),
-            Ok(Datum::new_string("\u{fffd}\u{fffd}"))
+            Ok(Datum::new_string_datum("\u{fffd}\u{fffd}"))
         );
     }
 }
@@ -540,9 +540,9 @@ fn replace_bytes(value: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
 /// SQL strings retain the ordinary String datum/collation boundary.
 fn string_result(source: &Datum, bytes: Vec<u8>) -> Datum {
     if matches!(source, Datum::Bytes(_)) {
-        Datum::new_bytes(bytes)
+        Datum::new_bytes_datum(bytes)
     } else {
-        Datum::new_string(bytes)
+        Datum::new_string_datum(bytes)
     }
 }
 
@@ -632,7 +632,7 @@ pub(crate) fn hex(vals: &[Datum]) -> Result<Datum, EvalError> {
         | Datum::Float32(_)
         | Datum::Bit(_) => {
             let bits = radix_integer_bits(&vals[0])?.expect("non-NULL numeric HEX input");
-            Ok(Datum::new_string(format!("{bits:X}")))
+            Ok(Datum::new_string_datum(format!("{bits:X}")))
         }
         Datum::String(_)
         | Datum::Bytes(_)
@@ -642,7 +642,7 @@ pub(crate) fn hex(vals: &[Datum]) -> Result<Datum, EvalError> {
         | Datum::Set(_, _)
         | Datum::Time(_)
         | Datum::Json(_) => hex_string_value(&vals[0]),
-        Datum::Raw(value) => Ok(Datum::new_string(
+        Datum::Raw(value) => Ok(Datum::new_string_datum(
             value
                 .iter()
                 .map(|byte| format!("{byte:02X}"))
@@ -655,7 +655,7 @@ pub(crate) fn hex(vals: &[Datum]) -> Result<Datum, EvalError> {
             let bytes = other
                 .to_bytes()
                 .map_err(|_| EvalError::Unsupported("HEX argument conversion"))?;
-            Ok(Datum::new_string(
+            Ok(Datum::new_string_datum(
                 bytes
                     .iter()
                     .map(|byte| format!("{byte:02X}"))
@@ -669,7 +669,7 @@ fn hex_string_value(value: &Datum) -> Result<Datum, EvalError> {
     let Some(bytes) = coerce_str_bytes(value)? else {
         return Ok(Datum::Null);
     };
-    Ok(Datum::new_string(
+    Ok(Datum::new_string_datum(
         bytes
             .iter()
             .map(|byte| format!("{byte:02X}"))
@@ -736,7 +736,7 @@ pub(crate) fn unhex(vals: &[Datum]) -> Result<Datum, EvalError> {
             _ => return Ok(Datum::Null),
         }
     }
-    Ok(Datum::new_bytes(bytes))
+    Ok(Datum::new_bytes_datum(bytes))
 }
 
 /// `BIN(n)`: the base-2 form of an implicitly-cast integer as an unsigned
@@ -764,7 +764,7 @@ pub(crate) fn bin(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, Eva
         }
     }
     Ok(radix_integer_bits(&vals[0])?
-        .map_or(Datum::Null, |bits| Datum::new_string(format!("{bits:b}"))))
+        .map_or(Datum::Null, |bits| Datum::new_string_datum(format!("{bits:b}"))))
 }
 
 /// `OCT(n)`: the base-8 form of an integer as an unsigned 64-bit value.
@@ -797,13 +797,13 @@ pub(crate) fn bin(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, Eva
 pub(crate) fn oct(vals: &[Datum]) -> Result<Datum, EvalError> {
     match &vals[0] {
         Datum::Null => Ok(Datum::Null),
-        Datum::Int(value) => Ok(Datum::new_string(format!("{:o}", *value as u64))),
-        Datum::UInt(value) => Ok(Datum::new_string(format!("{value:o}"))),
+        Datum::Int(value) => Ok(Datum::new_string_datum(format!("{:o}", *value as u64))),
+        Datum::UInt(value) => Ok(Datum::new_string_datum(format!("{value:o}"))),
         Datum::Bit(bits) | Datum::BinaryLiteral(bits) => {
-            Ok(Datum::new_string(format!("{:o}", bits.to_int().value())))
+            Ok(Datum::new_string_datum(format!("{:o}", bits.to_int().value())))
         }
         value => Ok(oct_string_bits(value)?
-            .map_or(Datum::Null, |bits| Datum::new_string(format!("{bits:o}")))),
+            .map_or(Datum::Null, |bits| Datum::new_string_datum(format!("{bits:o}")))),
     }
 }
 
@@ -1135,9 +1135,9 @@ pub(crate) fn elt(vals: &[Datum]) -> Result<Datum, EvalError> {
     };
     Ok(
         if vals[1..].iter().any(crate::string_signature::is_binary_str) {
-            Datum::new_bytes(selected)
+            Datum::new_bytes_datum(selected)
         } else {
-            Datum::new_string(selected)
+            Datum::new_string_datum(selected)
         },
     )
 }
@@ -1184,7 +1184,7 @@ pub(crate) fn concat_ws_with_context(
         out.extend_from_slice(&value);
         have_part = true;
     }
-    Ok(Datum::new_string(out))
+    Ok(Datum::new_string_datum(out))
 }
 
 /// `SUBSTRING_INDEX(str, delim, count)`: the substring before the `count`-th
@@ -1321,7 +1321,7 @@ pub(crate) fn make_set(vals: &[Datum]) -> Result<Datum, EvalError> {
             }
         }
     }
-    Ok(Datum::new_string(parts.join(",")))
+    Ok(Datum::new_string_datum(parts.join(",")))
 }
 /// Go `EXPORT_SET(bits, on, off[, separator[, number_of_bits]])`
 /// (`builtin_string.go:3403`/`:3434-3542`): bit 0 first, `separator`
@@ -1378,7 +1378,7 @@ pub(crate) fn export_set(vals: &[Datum]) -> Result<Datum, EvalError> {
             result.push_str(&separator);
         }
     }
-    Ok(Datum::new_string(result))
+    Ok(Datum::new_string_datum(result))
 }
 
 /// `FROM_BASE64(str)`: inverse of [`to_base64`], ported from
@@ -1420,7 +1420,7 @@ pub(crate) fn from_base64_with_packet_limit(
         .filter(|byte| !matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
         .collect();
     if cleaned.is_empty() {
-        return Ok(Datum::new_bytes(Vec::new()));
+        return Ok(Datum::new_bytes_datum(Vec::new()));
     }
     if !cleaned.len().is_multiple_of(4) {
         return Ok(Datum::Null);
@@ -1466,7 +1466,7 @@ pub(crate) fn from_base64_with_packet_limit(
         };
         bytes.push((c << 6) | d);
     }
-    Ok(Datum::new_bytes(bytes))
+    Ok(Datum::new_bytes_datum(bytes))
 }
 
 #[cfg(test)]
@@ -1475,7 +1475,7 @@ mod from_base64_tests {
     use crate::Datum;
 
     fn s(value: &str) -> Datum {
-        Datum::new_string(value.to_string())
+        Datum::new_string_datum(value.to_string())
     }
 
     #[test]
@@ -1498,12 +1498,12 @@ mod from_base64_tests {
         ] {
             assert_eq!(
                 from_base64(&[s(input)]).unwrap(),
-                Datum::new_bytes(expected.to_vec())
+                Datum::new_bytes_datum(expected.to_vec())
             );
         }
         assert_eq!(
-            from_base64(&[Datum::new_bytes(b"/wA=".to_vec())]).unwrap(),
-            Datum::new_bytes(vec![0xff, 0x00])
+            from_base64(&[Datum::new_bytes_datum(b"/wA=".to_vec())]).unwrap(),
+            Datum::new_bytes_datum(vec![0xff, 0x00])
         );
         assert_eq!(from_base64(&[Datum::Null]).unwrap(), Datum::Null);
     }
@@ -1515,11 +1515,11 @@ mod from_base64_tests {
         }
         assert_eq!(
             from_base64(&[s("YQ==")]).unwrap(),
-            Datum::new_bytes(b"a".to_vec())
+            Datum::new_bytes_datum(b"a".to_vec())
         );
         assert_eq!(
             from_base64(&[s("YWI=")]).unwrap(),
-            Datum::new_bytes(b"ab".to_vec())
+            Datum::new_bytes_datum(b"ab".to_vec())
         );
         assert!(from_base64(&[]).is_err());
         assert!(from_base64(&[s("YWJj"), s("extra")]).is_err());
@@ -1593,7 +1593,7 @@ pub(crate) fn ord_with_type(
 /// (`builtin_string.go:3180`).
 pub(crate) fn quote(vals: &[Datum]) -> Result<Datum, EvalError> {
     let Some(bytes) = crate::arg_eval_type::eval_string(&vals[0])? else {
-        return Ok(Datum::new_string("NULL".to_string()));
+        return Ok(Datum::new_string_datum("NULL".to_string()));
     };
     let mut out = String::with_capacity(bytes.len() + 2);
     out.push('\'');
@@ -1612,9 +1612,9 @@ pub(crate) fn quote(vals: &[Datum]) -> Result<Datum, EvalError> {
     // Go's `SetBinFlagOrBinStr(args[0].GetType(...), bf.tp)` (`:3184`): a
     // binary argument makes the quoted result binary too.
     Ok(if crate::string_signature::is_binary_str(&vals[0]) {
-        Datum::new_bytes(out.into_bytes())
+        Datum::new_bytes_datum(out.into_bytes())
     } else {
-        Datum::new_string(out)
+        Datum::new_string_datum(out)
     })
 }
 
@@ -1787,7 +1787,7 @@ pub(crate) fn format_num_locale(
     if !is_null_locale && !found {
         append_unknown_locale_warning(ctx, locale);
     }
-    Ok(Datum::new_bytes(formatted))
+    Ok(Datum::new_bytes_datum(formatted))
 }
 
 /// Go `formatMaxDecimals` (`pkg/expression/builtin_string.go`).
@@ -1948,7 +1948,7 @@ pub(crate) fn char_func_with_context(
             // captured: `CHAR(65, j)` over `{}` warns
             // "Truncated incorrect INTEGER value: '{}'".
             Datum::Json(value) => {
-                let as_text = Datum::new_string(value.to_string());
+                let as_text = Datum::new_string_datum(value.to_string());
                 crate::cast::report_int_truncation(&as_text, ctx)?;
                 append_char_integer(&mut bytes, crate::cast::to_i64_signed(&as_text));
             }
@@ -1964,7 +1964,7 @@ pub(crate) fn char_func_with_context(
         }
     }
     if *charset == Datum::Null {
-        return Ok(Datum::new_bytes(bytes));
+        return Ok(Datum::new_bytes_datum(bytes));
     }
 
     // go evaluates the charset argument as a STRING (a numeric source
@@ -1997,7 +1997,7 @@ pub(crate) fn char_func_with_context(
             format!("Unknown charset {charset}").into_boxed_str(),
         ))
     })?;
-    Ok(Datum::new_collation_string(decoded, collation))
+    Ok(Datum::new_collation_string_datum(decoded, collation))
 }
 
 fn append_char_integer(bytes: &mut Vec<u8>, mut value: i64) {
@@ -2038,9 +2038,9 @@ pub(crate) fn trim_value(
     };
     if remstr.is_empty() {
         return if binary {
-            Datum::new_bytes(str)
+            Datum::new_bytes_datum(str)
         } else {
-            Datum::new_string(str)
+            Datum::new_string_datum(str)
         };
     }
     use tidb_ast::TrimDirection::*;
@@ -2056,9 +2056,9 @@ pub(crate) fn trim_value(
         }
     }
     if binary {
-        Datum::new_bytes(str)
+        Datum::new_bytes_datum(str)
     } else {
-        Datum::new_string(str)
+        Datum::new_string_datum(str)
     }
 }
 
@@ -2085,9 +2085,9 @@ mod bit_count_tests {
             (Datum::UInt(u64::MAX), 64),
             // The Go ETInt cast preserves the low 64 bits for a positive
             // string up to UINT64_MAX; it does not saturate at INT64_MAX.
-            (Datum::new_string("9223372036854775808"), 1),
-            (Datum::new_string("18446744073709551616"), 64),
-            (Datum::new_string("xxx".to_string()), 0),
+            (Datum::new_string_datum("9223372036854775808"), 1),
+            (Datum::new_string_datum("18446744073709551616"), 64),
+            (Datum::new_string_datum("xxx".to_string()), 0),
             (Datum::Decimal(Decimal::from_literal("3.1")), 2),
         ];
         for (input, want) in cases {
@@ -2104,7 +2104,7 @@ mod bit_count_tests {
         // after an ASCII number must not erase the numeric prefix.
         assert_eq!(
             bit_count(
-                &[Datum::new_bytes(vec![b'1', 0xff])],
+                &[Datum::new_bytes_datum(vec![b'1', 0xff])],
                 &tidb_exprctx::context::NoColumns
             ),
             Ok(Datum::Int(1))
@@ -2118,7 +2118,7 @@ mod concat_source_tests {
     use crate::{Datum, Decimal, EvalError};
 
     fn string(value: &str) -> Datum {
-        Datum::new_string(value.to_string())
+        Datum::new_string_datum(value.to_string())
     }
 
     /// Representable scalar rows from `TestConcat` in
@@ -2152,8 +2152,8 @@ mod concat_source_tests {
         // argument must survive CONCAT rather than becoming an evaluator
         // error or replacement character.
         assert_eq!(
-            concat(&[Datum::new_bytes(vec![0xff]), string("a")]),
-            Ok(Datum::new_string(vec![0xff, b'a']))
+            concat(&[Datum::new_bytes_datum(vec![0xff]), string("a")]),
+            Ok(Datum::new_string_datum(vec![0xff, b'a']))
         );
         assert_eq!(
             concat(&[]),
@@ -2225,12 +2225,12 @@ mod concat_source_tests {
         );
         assert_eq!(
             concat_ws(&[
-                Datum::new_bytes(vec![b'|']),
-                Datum::new_bytes(vec![0xff]),
+                Datum::new_bytes_datum(vec![b'|']),
+                Datum::new_bytes_datum(vec![0xff]),
                 Datum::Null,
                 string("b")
             ]),
-            Ok(Datum::new_string(vec![0xff, b'|', b'b']))
+            Ok(Datum::new_string_datum(vec![0xff, b'|', b'b']))
         );
         assert_eq!(
             concat_ws(&[string(",")]),
@@ -2308,32 +2308,32 @@ mod hex_bit_column_tests {
         let payload = [0x00, 0x08, 0x0A, 0x0D, 0x09, 0x1A];
         assert_eq!(
             hex(&[bit(&payload)]).unwrap(),
-            Datum::new_string("80A0D091A".to_owned())
+            Datum::new_string_datum("80A0D091A".to_owned())
         );
         // The same six bytes as a blob keep their leading zero byte: this is
         // the pair the recording compares, and the whole difference is which
         // signature the argument's TYPE selects.
         assert_eq!(
-            hex(&[Datum::new_bytes(payload.to_vec())]).unwrap(),
-            Datum::new_string("00080A0D091A".to_owned())
+            hex(&[Datum::new_bytes_datum(payload.to_vec())]).unwrap(),
+            Datum::new_string_datum("00080A0D091A".to_owned())
         );
         assert_eq!(
             hex(&[bit(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x41])]).unwrap(),
-            Datum::new_string("41".to_owned())
+            Datum::new_string_datum("41".to_owned())
         );
         // A `bit(64)` with the high bit set is why this reads the payload as
         // UNSIGNED: the signed conversion would refuse it outright.
         assert_eq!(
             hex(&[bit(&[0xFF; 8])]).unwrap(),
-            Datum::new_string("FFFFFFFFFFFFFFFF".to_owned())
+            Datum::new_string_datum("FFFFFFFFFFFFFFFF".to_owned())
         );
         assert_eq!(
             hex(&[bit(&[0x01])]).unwrap(),
-            Datum::new_string("1".to_owned())
+            Datum::new_string_datum("1".to_owned())
         );
         assert_eq!(
             hex(&[bit(&[0x00; 6])]).unwrap(),
-            Datum::new_string("0".to_owned())
+            Datum::new_string_datum("0".to_owned())
         );
     }
 
@@ -2345,7 +2345,7 @@ mod hex_bit_column_tests {
     fn a_binary_literal_keeps_the_string_signature() {
         assert_eq!(
             hex(&[Datum::BinaryLiteral(BinaryLiteral::from(vec![0x00, 0x41]))]).unwrap(),
-            Datum::new_string("0041".to_owned())
+            Datum::new_string_datum("0041".to_owned())
         );
     }
 }
@@ -2355,7 +2355,7 @@ mod export_set_tests {
     use super::*;
 
     fn d(s: &str) -> Datum {
-        Datum::new_string(s.to_string())
+        Datum::new_string_datum(s.to_string())
     }
 
     #[test]

@@ -75,7 +75,7 @@ fn charset_and_collation_read_the_arguments_static_type() {
         .has_flag(tidb_datatype::FieldTypeFlags::UNDERSCORE_CHARSET));
     assert_eq!(
         tidb_expr::eval(&parse_expr("_latin1'a'")).expect("AST value evaluates"),
-        Datum::new_collation_string(b"a".to_vec(), Collation::Latin1Bin)
+        Datum::new_collation_string_datum(b"a".to_vec(), Collation::Latin1Bin)
     );
     assert_eq!(
         text(eval("collation('a' collate utf8mb4_general_ci)")),

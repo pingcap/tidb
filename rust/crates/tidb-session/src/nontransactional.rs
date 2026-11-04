@@ -851,7 +851,7 @@ impl Session {
                 ],
                 rows: vec![vec![
                     Datum::Int(i64::try_from(jobs.len()).unwrap_or(i64::MAX)),
-                    Datum::new_string("all succeeded"),
+                    Datum::new_string_datum("all succeeded"),
                 ]],
             });
         }
@@ -1259,7 +1259,7 @@ fn dry_run_results(dry_run: BatchDmlDryRun, results: Vec<String>) -> StmtOutput 
         columns: vec![(field_name.to_owned(), FieldType::new(FieldTypeCode::String))],
         rows: results
             .into_iter()
-            .map(|result| vec![Datum::new_string(result)])
+            .map(|result| vec![Datum::new_string_datum(result)])
             .collect(),
     }
 }

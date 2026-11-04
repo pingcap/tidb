@@ -108,7 +108,7 @@ mod tests {
             Err(DatumArithmeticError::InvalidOperands(..))
         ));
         assert!(matches!(
-            compute_plus(&Datum::new_string("abcd"), &Datum::Int(42)),
+            compute_plus(&Datum::new_string_datum("abcd"), &Datum::Int(42)),
             Err(DatumArithmeticError::InvalidOperands(..))
         ));
     }

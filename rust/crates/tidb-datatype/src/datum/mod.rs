@@ -292,7 +292,7 @@ pub enum Datum {
 
 impl Datum {
     /// Equivalent to Go `MinNotNullDatum`.
-    pub const fn min_not_null() -> Self {
+    pub const fn min_not_null_datum() -> Self {
         Self::MinNotNull
     }
 
@@ -374,20 +374,20 @@ impl Datum {
     /// Equivalent to Go `NewStringDatum`: the payload uses TiDB's default
     /// collation. `Into<Vec<u8>>` deliberately accepts raw bytes as well as
     /// Rust strings because a Go string is not required to be valid UTF-8.
-    pub fn new_string(bytes: impl Into<Vec<u8>>) -> Self {
-        Self::new_collation_string(bytes, Collation::DEFAULT)
+    pub fn new_string_datum(bytes: impl Into<Vec<u8>>) -> Self {
+        Self::new_collation_string_datum(bytes, Collation::DEFAULT)
     }
 
     /// Equivalent to Go `NewCollationStringDatum` / `SetString`, except the
     /// typed collation makes an unregistered name impossible.
-    pub fn new_collation_string(bytes: impl Into<Vec<u8>>, collation: Collation) -> Self {
+    pub fn new_collation_string_datum(bytes: impl Into<Vec<u8>>, collation: Collation) -> Self {
         Self::String(StringDatum::new(bytes, collation))
     }
 
     /// Equivalent to Go `NewBytesDatum` / `SetBytes`. A byte datum always has
     /// the binary collation; there is no metadata field that can contradict
     /// that invariant.
-    pub fn new_bytes(bytes: impl Into<Vec<u8>>) -> Self {
+    pub fn new_bytes_datum(bytes: impl Into<Vec<u8>>) -> Self {
         Self::Bytes(bytes.into())
     }
 
@@ -608,12 +608,12 @@ impl Datum {
 
     /// Replaces the datum with raw string bytes and a registered collation.
     pub fn set_string(&mut self, bytes: impl Into<Vec<u8>>, collation: Collation) {
-        *self = Self::new_collation_string(bytes, collation);
+        *self = Self::new_collation_string_datum(bytes, collation);
     }
 
     /// Replaces the datum with arbitrary binary bytes.
     pub fn set_bytes(&mut self, bytes: impl Into<Vec<u8>>) {
-        *self = Self::new_bytes(bytes);
+        *self = Self::new_bytes_datum(bytes);
     }
     /// Go `Datum.MemUsage`: `EmptyDatumSize + cap(d.b) + len(d.collation)`.
     ///
@@ -714,14 +714,14 @@ mod tests {
     fn go_string_and_bytes_contract_keeps_arbitrary_octets() {
         let raw = vec![b'a', 0, 0xff, 0xfe, b'z'];
 
-        let string = Datum::new_collation_string(raw.clone(), Collation::Utf8Mb4Bin);
+        let string = Datum::new_collation_string_datum(raw.clone(), Collation::Utf8Mb4Bin);
         assert_eq!(string.kind(), DatumKind::String);
         assert_eq!(string.as_raw_bytes(), Some(raw.as_slice()));
         assert_eq!(string.collation(), Some(Collation::Utf8Mb4Bin));
         assert_eq!(string.charset(), Some(Charset::Utf8Mb4));
         assert!(std::str::from_utf8(string.as_raw_bytes().unwrap()).is_err());
 
-        let bytes = Datum::new_bytes(raw.clone());
+        let bytes = Datum::new_bytes_datum(raw.clone());
         assert_eq!(bytes.kind(), DatumKind::Bytes);
         assert_eq!(bytes.as_raw_bytes(), Some(raw.as_slice()));
         assert_eq!(bytes.collation(), Some(Collation::Binary));
@@ -735,28 +735,28 @@ mod tests {
 
         for (datum, expected) in [
             (
-                Datum::new_collation_string(utf8, Collation::Utf8Bin),
+                Datum::new_collation_string_datum(utf8, Collation::Utf8Bin),
                 utf8.to_vec(),
             ),
             (
-                Datum::new_collation_string(utf8, Collation::Utf8Mb4Bin),
+                Datum::new_collation_string_datum(utf8, Collation::Utf8Mb4Bin),
                 utf8.to_vec(),
             ),
             (
-                Datum::new_collation_string(utf8, Collation::GbkBin),
+                Datum::new_collation_string_datum(utf8, Collation::GbkBin),
                 gbk.to_vec(),
             ),
-            (Datum::new_bytes(gbk), gbk.to_vec()),
+            (Datum::new_bytes_datum(gbk), gbk.to_vec()),
         ] {
             assert_eq!(datum.binary_string_encoded().unwrap(), expected);
         }
 
         let decoded =
-            Datum::new_bytes(gbk).binary_string_decoded(ConversionFlags::default(), "gbk");
+            Datum::new_bytes_datum(gbk).binary_string_decoded(ConversionFlags::default(), "gbk");
         assert_eq!(decoded.bytes(), utf8);
         assert!(decoded.error().is_none());
 
-        let invalid_utf8 = Datum::new_string([utf8, &[0x81]].concat());
+        let invalid_utf8 = Datum::new_string_datum([utf8, &[0x81]].concat());
         let checked = invalid_utf8
             .string_with_check(ConversionFlags::default(), "utf8mb4")
             .unwrap();
@@ -772,7 +772,7 @@ mod tests {
         assert!(skipped.error().is_none());
         assert_eq!(skipped.bytes(), [utf8, &[0x81]].concat());
 
-        let utf8mb4 = Datum::new_string("𠆢");
+        let utf8mb4 = Datum::new_string_datum("𠆢");
         assert!(utf8mb4
             .string_with_check(ConversionFlags::default(), "utf8")
             .unwrap()
@@ -841,7 +841,7 @@ mod tests {
                 true,
             ),
         ] {
-            let checked = Datum::new_string(input)
+            let checked = Datum::new_string_datum(input)
                 .string_with_check(flags, charset)
                 .unwrap();
             assert_eq!(checked.error().is_none(), valid, "{charset} {input:?}");
@@ -862,8 +862,8 @@ mod tests {
             (Datum::Int(1), DatumKind::Int, "1"),
             (Datum::UInt(1), DatumKind::UInt, "1"),
             (Datum::Real(1.1), DatumKind::Real, "1.1"),
-            (Datum::new_string("abc"), DatumKind::String, "abc"),
-            (Datum::new_bytes("abc"), DatumKind::Bytes, "abc"),
+            (Datum::new_string_datum("abc"), DatumKind::String, "abc"),
+            (Datum::new_bytes_datum("abc"), DatumKind::Bytes, "abc"),
         ];
         assert_eq!(rows.len(), 5, "all representable Go source rows");
         for (datum, kind, text) in rows {
@@ -889,7 +889,7 @@ mod tests {
             Some(&decimal)
         );
 
-        let string = Datum::new_string("abc");
+        let string = Datum::new_string_datum("abc");
         assert_eq!(string.as_raw_bytes(), Some(&b"abc"[..]));
         assert_eq!(string.collation(), Some(Collation::DEFAULT));
     }
@@ -901,8 +901,8 @@ mod tests {
             (Datum::Int(0), false),
             (Datum::Int(1), false),
             (Datum::Real(1.1), false),
-            (Datum::new_string("string"), false),
-            (Datum::new_string(""), false),
+            (Datum::new_string_datum("string"), false),
+            (Datum::new_string_datum(""), false),
         ] {
             assert_eq!(datum.is_null(), expected, "{datum:?}");
         }
@@ -912,7 +912,7 @@ mod tests {
     /// metadata as well. The enum assignment makes that transition atomic.
     #[test]
     fn setters_replace_kind_and_string_metadata_together() {
-        let mut datum = Datum::new_bytes(vec![0xff, 0]);
+        let mut datum = Datum::new_bytes_datum(vec![0xff, 0]);
         datum.set_string(vec![0xfe, 0], Collation::Utf8Mb4Bin);
         assert_eq!(datum.kind(), DatumKind::String);
         assert_eq!(datum.collation(), Some(Collation::Utf8Mb4Bin));
@@ -932,8 +932,8 @@ mod tests {
         let row = vec![
             Datum::Int(72),
             Datum::UInt(72),
-            Datum::new_string("abcd"),
-            Datum::new_bytes(b"abcd"),
+            Datum::new_string_datum("abcd"),
+            Datum::new_bytes_datum(b"abcd"),
             Datum::new_raw(b"raw"),
         ];
         let cloned = clone_row(&row);
@@ -972,8 +972,8 @@ mod tests {
             Datum::Int(1),
             Datum::Real(1.0),
             Datum::Float32(1.0),
-            Datum::new_string(bytes),
-            Datum::new_bytes(bytes),
+            Datum::new_string_datum(bytes),
+            Datum::new_bytes_datum(bytes),
             Datum::new_decimal(Decimal::from_signed_literal("1234.1234")),
             Datum::new_enum(parse_enum_value(&["a"], 1).unwrap(), Collation::Binary),
         ];
@@ -999,11 +999,11 @@ mod tests {
             Datum::Real(4.123),
             Datum::Real(f64::INFINITY),
             Datum::new_decimal(Decimal::from_signed_literal("6.6")),
-            Datum::new_string("abc"),
-            Datum::new_collation_string("", Collation::Binary),
+            Datum::new_string_datum("abc"),
+            Datum::new_collation_string_datum("", Collation::Binary),
             Datum::new_duration(MySqlDuration::from_nanoseconds(11_111, 0).unwrap()),
             zero_time,
-            Datum::new_bytes(b"xxx"),
+            Datum::new_bytes_datum(b"xxx"),
             Datum::new_binary_literal(BinaryLiteral::from(Vec::<u8>::new())),
             Datum::new_json(BinaryJSON::parse("null").unwrap()),
             Datum::MinNotNull,
@@ -1029,7 +1029,7 @@ mod tests {
             "(1, 2)"
         );
         assert_eq!(
-            datums_to_string_no_error_smart(&[Datum::new_string("a\0b")]),
+            datums_to_string_no_error_smart(&[Datum::new_string_datum("a\0b")]),
             "0x610062"
         );
     }

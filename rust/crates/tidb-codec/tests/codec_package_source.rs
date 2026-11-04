@@ -120,13 +120,13 @@ fn test_codec_key() {
         vec![
             Datum::Float32(1.0),
             Datum::Real(3.15),
-            Datum::new_bytes(b"123"),
-            Datum::new_string("123"),
+            Datum::new_bytes_datum(b"123"),
+            Datum::new_string_datum("123"),
         ],
         vec![
             Datum::UInt(1),
             Datum::Real(3.15),
-            Datum::new_bytes(b"123"),
+            Datum::new_bytes_datum(b"123"),
             Datum::Int(-1),
         ],
         vec![Datum::Null],
@@ -178,8 +178,8 @@ fn test_codec_key_compare() {
         (Datum::Int(-1), Datum::Int(1), Ordering::Less),
         (Datum::Real(3.15), Datum::Real(3.12), Ordering::Greater),
         (
-            Datum::new_string("abc"),
-            Datum::new_string("abcd"),
+            Datum::new_string_datum("abc"),
+            Datum::new_string_datum("abcd"),
             Ordering::Less,
         ),
         (Datum::Null, Datum::Int(0), Ordering::Less),
@@ -369,7 +369,7 @@ fn test_cut() {
         Datum::Int(-1),
         Datum::UInt(1),
         Datum::Real(1.25),
-        Datum::new_bytes(b"abc"),
+        Datum::new_bytes_datum(b"abc"),
         Datum::new_decimal(Decimal::from_signed_literal("1.2")),
         Datum::new_duration(MySqlDuration::from_nanoseconds(1, 6).unwrap()),
         Datum::new_json(BinaryJSON::parse("[1]").unwrap()),
@@ -395,7 +395,7 @@ fn test_cut_one_error() {
 
 #[test]
 fn test_set_raw_values() {
-    let encoded = encode_value(&[Datum::Int(1), Datum::new_string("abc")]).unwrap();
+    let encoded = encode_value(&[Datum::Int(1), Datum::new_string_datum("abc")]).unwrap();
     let values = set_raw_values(&encoded, 2).unwrap();
     assert_eq!(values.len(), 2);
     assert_eq!(
@@ -566,9 +566,9 @@ fn test_decode_range_restores_index_field_types() {
 fn test_hash_chunk_row() {
     let integer = FieldType::new(FieldTypeCode::LongLong);
     let string = varchar(Collation::Utf8Mb4GeneralCi);
-    let left = [Datum::Int(1), Datum::new_string("a")];
-    let equal = [Datum::Int(1), Datum::new_string("A ")];
-    let different = [Datum::Int(2), Datum::new_string("a")];
+    let left = [Datum::Int(1), Datum::new_string_datum("a")];
+    let equal = [Datum::Int(1), Datum::new_string_datum("A ")];
+    let different = [Datum::Int(2), Datum::new_string_datum("a")];
     assert!(equal_rows(
         &left,
         &[integer.clone(), string.clone()],
@@ -622,7 +622,7 @@ fn test_datum_hash_equals() {
             Datum::new_decimal(Decimal::from_signed_literal("1.0")),
             true,
         ),
-        (Datum::new_bytes(b"a"), Datum::new_bytes(b"b"), false),
+        (Datum::new_bytes_datum(b"a"), Datum::new_bytes_datum(b"b"), false),
     ] {
         assert_eq!(hash_code(&left) == hash_code(&right), equal);
     }
@@ -630,8 +630,8 @@ fn test_datum_hash_equals() {
 
 #[test]
 fn test_encoder_new_collation_enabled() {
-    let lower = Datum::new_collation_string("a", Collation::Utf8Mb4GeneralCi);
-    let upper = Datum::new_collation_string("A ", Collation::Utf8Mb4GeneralCi);
+    let lower = Datum::new_collation_string_datum("a", Collation::Utf8Mb4GeneralCi);
+    let upper = Datum::new_collation_string_datum("A ", Collation::Utf8Mb4GeneralCi);
     assert_eq!(
         Encoder::new(true).encode_key(std::slice::from_ref(&lower)),
         Encoder::new(true).encode_key(std::slice::from_ref(&upper))
@@ -644,8 +644,8 @@ fn test_encoder_new_collation_enabled() {
 
 #[test]
 fn encode_value_uses_raw_string_bytes_without_encoder_collation_mode() {
-    let collated = Datum::new_collation_string("A ", Collation::Utf8Mb4GeneralCi);
-    let plain = Datum::new_string("A ");
+    let collated = Datum::new_collation_string_datum("A ", Collation::Utf8Mb4GeneralCi);
+    let plain = Datum::new_string_datum("A ");
     assert_eq!(
         encode_value(std::slice::from_ref(&collated)).unwrap(),
         encode_value(std::slice::from_ref(&plain)).unwrap()
@@ -654,8 +654,8 @@ fn encode_value_uses_raw_string_bytes_without_encoder_collation_mode() {
 
 #[test]
 fn hash_code_uses_raw_string_bytes_without_encoder_collation_mode() {
-    let collated = Datum::new_collation_string("A ", Collation::Utf8Mb4GeneralCi);
-    let plain = Datum::new_string("A ");
+    let collated = Datum::new_collation_string_datum("A ", Collation::Utf8Mb4GeneralCi);
+    let plain = Datum::new_string_datum("A ");
     assert_eq!(hash_code(&collated), hash_code(&plain));
 }
 
@@ -663,8 +663,8 @@ fn hash_code_uses_raw_string_bytes_without_encoder_collation_mode() {
 fn test_hash_group_key_collation() {
     let field_type = varchar(Collation::Utf8Mb4GeneralCi);
     assert_eq!(
-        hash_group_key(&[Datum::new_string("a")], &field_type).unwrap(),
-        hash_group_key(&[Datum::new_string("A ")], &field_type).unwrap()
+        hash_group_key(&[Datum::new_string_datum("a")], &field_type).unwrap(),
+        hash_group_key(&[Datum::new_string_datum("A ")], &field_type).unwrap()
     );
 }
 
@@ -672,10 +672,10 @@ fn test_hash_group_key_collation() {
 fn test_hash_chunk_row_collation() {
     let field_type = varchar(Collation::Utf8Mb4GeneralCi);
     assert!(equal_rows(
-        &[Datum::new_string("a")],
+        &[Datum::new_string_datum("a")],
         std::slice::from_ref(&field_type),
         &[0],
-        &[Datum::new_string("A ")],
+        &[Datum::new_string_datum("A ")],
         std::slice::from_ref(&field_type),
         &[0],
     )
@@ -684,7 +684,7 @@ fn test_hash_chunk_row_collation() {
 
 #[test]
 fn test_hash_chunk_columns_collation() {
-    let rows = vec![vec![Datum::new_string("a")], vec![Datum::new_string("A ")]];
+    let rows = vec![vec![Datum::new_string_datum("a")], vec![Datum::new_string_datum("A ")]];
     let (hashes, _) =
         hash_column(&rows, &varchar(Collation::Utf8Mb4GeneralCi), 0, None, false).unwrap();
     assert_eq!(hashes[0], hashes[1]);
@@ -731,8 +731,8 @@ fn source_collation_keys_use_exact_name_and_runtime_mode() {
 #[test]
 fn source_serialize_keys_modes_and_nulls() {
     let rows = vec![
-        vec![Datum::Int(-1), Datum::new_string("abc")],
-        vec![Datum::Null, Datum::new_string("x")],
+        vec![Datum::Int(-1), Datum::new_string_datum("abc")],
+        vec![Datum::Null, Datum::new_string_datum("x")],
     ];
     let (keys, nulls) = serialize_keys(
         &rows,
@@ -759,7 +759,7 @@ fn source_serialize_keys_marks_type_null_columns_as_null() {
     // A TypeNull chunk has no payload.  Keep a non-NULL placeholder datum in
     // the row to model the typed-column path: Go's codec uses the field type
     // itself to call canSkip, so this row must not remain an empty valid key.
-    let rows = vec![vec![Datum::new_bytes(Vec::new())]];
+    let rows = vec![vec![Datum::new_bytes_datum(Vec::new())]];
     let (keys, nulls) = serialize_keys(
         &rows,
         &[0],
@@ -844,6 +844,6 @@ fn test_bench_daily() {
         decode_one_typed(&raw, &FieldType::new(FieldTypeCode::LongLong))
             .unwrap()
             .1,
-        Datum::new_bytes(b"a")
+        Datum::new_bytes_datum(b"a")
     );
 }

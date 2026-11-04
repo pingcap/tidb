@@ -22,7 +22,7 @@ mod call_interceptor;
 mod coordinator;
 
 pub use coordinator::{
-    CommitProtocol, ProductionTransaction, RealOptimisticTransactionOpener, RealTransaction,
+    CommitProtocol, ProductionTransaction, RealOptimisticTransactionOpener, TikvTxn,
     SnapshotGetResult, StoreClient,
 };
 

@@ -138,7 +138,7 @@ pub fn unflatten_datum(
         | FieldTypeCode::TinyBlob
         | FieldTypeCode::MediumBlob
         | FieldTypeCode::Blob
-        | FieldTypeCode::LongBlob => Datum::new_collation_string(
+        | FieldTypeCode::LongBlob => Datum::new_collation_string_datum(
             datum
                 .into_raw_bytes()
                 .ok_or(TableRowError::InvalidDatum("string"))?,

@@ -42,7 +42,7 @@ fn encode_sql_digest(value: &Datum) -> Result<Datum, EvalError> {
     };
     let sql = std::str::from_utf8(&sql)
         .map_err(|_| EvalError::Unsupported("non-UTF-8 SQL digest input"))?;
-    Ok(Datum::new_string(
+    Ok(Datum::new_string_datum(
         tidb_parser::normalize_digest(sql).1.to_string(),
     ))
 }
@@ -55,8 +55,8 @@ fn decode_plan(value: &Datum) -> Result<Datum, EvalError> {
         return Ok(Datum::Null);
     };
     Ok(match tidb_plancodec::decode_plan(&input) {
-        Ok(decoded) => Datum::new_string(decoded),
-        Err(_) => Datum::new_string(input),
+        Ok(decoded) => Datum::new_string_datum(decoded),
+        Err(_) => Datum::new_string_datum(input),
     })
 }
 
@@ -69,10 +69,10 @@ fn decode_binary_plan(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, 
     let decoded =
         tidb_plancodec::decode_binary_plan(&input).map_err(|error| error.to_string());
     match decoded {
-        Ok(decoded) => Ok(Datum::new_string(decoded)),
+        Ok(decoded) => Ok(Datum::new_string_datum(decoded)),
         Err(error) => {
             ctx.append_warning(1105, &error);
-            Ok(Datum::new_string(Vec::new()))
+            Ok(Datum::new_string_datum(Vec::new()))
         }
     }
 }
@@ -83,7 +83,7 @@ fn format_bytes(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalEr
     let Some(value) = real_arg(value, ctx)? else {
         return Ok(Datum::Null);
     };
-    Ok(Datum::new_string(format_scaled(
+    Ok(Datum::new_string_datum(format_scaled(
         value,
         &[
             (1_u64 << 60, "EiB"),
@@ -105,7 +105,7 @@ fn format_nano_time(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, Ev
     let Some(value) = real_arg(value, ctx)? else {
         return Ok(Datum::Null);
     };
-    Ok(Datum::new_string(format_scaled(
+    Ok(Datum::new_string_datum(format_scaled(
         value,
         &[
             (86_400_000_000_000, "d"),
@@ -211,7 +211,7 @@ mod tests {
         }
         assert_eq!(call("FORMAT_BYTES", Datum::Null), Datum::Null);
         assert_eq!(
-            call("FORMAT_BYTES", Datum::new_string("1e9999".to_string()))
+            call("FORMAT_BYTES", Datum::new_string_datum("1e9999".to_string()))
                 .sql_string()
                 .unwrap(),
             "1.56e+290 EiB",
@@ -250,7 +250,7 @@ mod tests {
         }
         assert_eq!(call("FORMAT_NANO_TIME", Datum::Null), Datum::Null);
         assert_eq!(
-            call("FORMAT_NANO_TIME", Datum::new_string("1e9999".to_string()))
+            call("FORMAT_NANO_TIME", Datum::new_string_datum("1e9999".to_string()))
                 .sql_string()
                 .unwrap(),
             "2.08e+294 d"
@@ -289,7 +289,7 @@ mod tests {
         let encoded = tidb_plancodec::compress(raw.as_bytes());
         let decoded = dispatch(
             "TIDB_DECODE_PLAN",
-            &[Datum::new_string(encoded)],
+            &[Datum::new_string_datum(encoded)],
             &crate::NoColumns,
         )
         .unwrap()
@@ -301,7 +301,7 @@ mod tests {
         let encoded = tidb_plancodec::compress(b"0\t1\t0\t1\t\xff\n");
         let decoded = dispatch(
             "TIDB_DECODE_PLAN",
-            &[Datum::new_string(encoded)],
+            &[Datum::new_string_datum(encoded)],
             &crate::NoColumns,
         )
         .unwrap()
@@ -314,7 +314,7 @@ mod tests {
         let encoded = tidb_plancodec::compress(b"0\t2147483648\t0\tinfo\n");
         let decoded = dispatch(
             "TIDB_DECODE_PLAN",
-            &[Datum::new_string(encoded)],
+            &[Datum::new_string_datum(encoded)],
             &crate::NoColumns,
         )
         .unwrap()
@@ -327,7 +327,7 @@ mod tests {
         assert_eq!(
             dispatch(
                 "TIDB_DECODE_PLAN",
-                &[Datum::new_string("malformed")],
+                &[Datum::new_string_datum("malformed")],
                 &crate::NoColumns,
             )
             .unwrap()
@@ -346,7 +346,7 @@ mod tests {
             assert_eq!(
                 dispatch(
                     "TIDB_DECODE_BINARY_PLAN",
-                    &[Datum::new_string(input)],
+                    &[Datum::new_string_datum(input)],
                     &warnings,
                 )
                 .unwrap()
@@ -363,7 +363,7 @@ mod tests {
         assert_eq!(
             dispatch(
                 "TIDB_DECODE_BINARY_PLAN",
-                &[Datum::new_string(
+                &[Datum::new_string_datum(
                     tidb_plancodec::BINARY_PLAN_DISCARDED_ENCODED.as_str(),
                 )],
                 &warnings,
@@ -390,7 +390,7 @@ mod tests {
         );
         let decoded = dispatch(
             "TIDB_DECODE_BINARY_PLAN",
-            &[Datum::new_string(encoded)],
+            &[Datum::new_string_datum(encoded)],
             &warnings,
         )
         .unwrap()
@@ -408,22 +408,22 @@ mod tests {
         assert_eq!(
             dispatch(
                 "TIDB_DECODE_PLAN",
-                &[Datum::new_string(vec![0xff])],
+                &[Datum::new_string_datum(vec![0xff])],
                 &warnings,
             )
             .unwrap()
             .unwrap(),
-            Datum::new_string(vec![0xff])
+            Datum::new_string_datum(vec![0xff])
         );
         assert_eq!(
             dispatch(
                 "TIDB_DECODE_BINARY_PLAN",
-                &[Datum::new_string(vec![0xff])],
+                &[Datum::new_string_datum(vec![0xff])],
                 &warnings,
             )
             .unwrap()
             .unwrap(),
-            Datum::new_string(Vec::new())
+            Datum::new_string_datum(Vec::new())
         );
         assert_eq!(
             warnings.0.borrow().last().unwrap(),

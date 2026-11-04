@@ -48,7 +48,7 @@ fn value_to_string_preserves_an_invalid_key_suffix() {
         .expect("valid key prefix");
     encoded.push(tidb_codec::VECTOR_FLOAT32_FLAG);
 
-    let actual = value_to_string(&Datum::new_bytes(encoded), 3, None, None)
+    let actual = value_to_string(&Datum::new_bytes_datum(encoded), 3, None, None)
         .expect("invalid codec suffix is rendered as bytes");
     assert_eq!(actual, "(1, 0.5, \x14)");
 }
@@ -315,8 +315,8 @@ fn str_bucket(lower: &str, upper: &str, count: i64, repeat: i64, ndv: i64) -> Bu
         count,
         repeat,
         ndv,
-        lower_bound: Datum::new_string(lower.as_bytes().to_vec()),
-        upper_bound: Datum::new_string(upper.as_bytes().to_vec()),
+        lower_bound: Datum::new_string_datum(lower.as_bytes().to_vec()),
+        upper_bound: Datum::new_string_datum(upper.as_bytes().to_vec()),
     }
 }
 
@@ -362,7 +362,7 @@ fn source_string_histogram_probes() {
         ("zzz", 0.0, false, 26.0, 0.0),
     ];
     for &(probe, equal, matched, less, greater) in cases {
-        let value = Datum::new_string(probe.as_bytes().to_vec());
+        let value = Datum::new_string_datum(probe.as_bytes().to_vec());
         let (eq, m) = hist.equal_row_count(&value, true, Collation::Binary);
         assert_close(eq, equal, &format!("str-equal({probe})"));
         assert_eq!(m, matched, "str-matched({probe})");

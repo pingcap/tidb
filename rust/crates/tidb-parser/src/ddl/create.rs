@@ -18,7 +18,7 @@
 //! partitioning, and creation-side SPLIT remain shared parser leaves.
 
 use tidb_ast::{
-    CreateTableAsQuery, CreateTableOnDuplicate, CreateTableStmt, CreateTableTemporary, QueryStmt,
+    CreateTableAsQuery, OnDuplicateKeyHandlingType, CreateTableStmt, CreateTableTemporary, QueryStmt,
 };
 
 use tidb_lexer::{is_builtin_function_keyword, TokenKind};
@@ -32,7 +32,7 @@ mod elements;
 
 impl Parser {
     /// Parses Go's `HandParser.parseCreateTableStmt` statement envelope.
-    pub(crate) fn parse_create_table(&mut self) -> PResult<CreateTableStmt> {
+    pub(crate) fn parse_create_table_stmt(&mut self) -> PResult<CreateTableStmt> {
         self.expect_kw("CREATE")?;
         let temporary = if self.is_kw("TEMPORARY") {
             self.bump();
@@ -98,18 +98,18 @@ impl Parser {
             }
         }
         let partitioning = if self.is_kw("PARTITION") {
-            Some(partition::parse_table_partitioning(self)?)
+            Some(partition::parse_partition_options(self)?)
         } else {
             None
         };
         let on_duplicate = if self.is_kw("IGNORE") {
             self.bump();
-            CreateTableOnDuplicate::Ignore
+            OnDuplicateKeyHandlingType::Ignore
         } else if self.is_kw("REPLACE") {
             self.bump();
-            CreateTableOnDuplicate::Replace
+            OnDuplicateKeyHandlingType::Replace
         } else {
-            CreateTableOnDuplicate::Error
+            OnDuplicateKeyHandlingType::Error
         };
         if self.is_kw("AS") {
             self.bump();
@@ -176,7 +176,7 @@ impl Parser {
     /// `CreateTableStmt`, preserving the CTAS source and outer parentheses.
     fn parse_create_table_result_source(
         &mut self,
-        on_duplicate: CreateTableOnDuplicate,
+        on_duplicate: OnDuplicateKeyHandlingType,
     ) -> PResult<Option<CreateTableAsQuery>> {
         let parenthesized = if self.is_op("(") {
             self.bump();

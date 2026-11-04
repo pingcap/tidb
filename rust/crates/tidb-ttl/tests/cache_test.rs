@@ -210,7 +210,7 @@ fn test_get_next_bytes_handle_datum() {
     let tbl_id: i64 = 7;
     let record_prefix = gen_table_record_prefix(tbl_id);
     let build_handle_bytes = |data: &[u8]| {
-        encode_key(&[Datum::new_bytes(data.to_vec())]).expect("a bytes datum is always encodable")
+        encode_key(&[Datum::new_bytes_datum(data.to_vec())]).expect("a bytes datum is always encodable")
     };
     let build_row_key = |handle_bytes: &[u8]| encode_row_key(tbl_id, handle_bytes);
     let build_bytes_row_key = |data: &[u8]| build_row_key(&build_handle_bytes(data));
@@ -586,7 +586,7 @@ fn common_handle(datums: &[Datum]) -> Vec<u8> {
 }
 
 fn bytes_handle(data: &[u8]) -> Vec<u8> {
-    common_handle(&[Datum::new_bytes(data.to_vec())])
+    common_handle(&[Datum::new_bytes_datum(data.to_vec())])
 }
 
 /// A TTL table with a single clustered key column of the given type.
@@ -624,13 +624,13 @@ fn signed(code: FieldTypeCode) -> FieldType {
 
 fn unsigned(code: FieldTypeCode) -> FieldType {
     let mut ft = FieldType::new(code);
-    ft.set_flags(tidb_mysql::UnsignedFlag as u32);
+    ft.set_flag(tidb_mysql::UnsignedFlag as u32);
     ft
 }
 
 fn binary_string(code: FieldTypeCode) -> FieldType {
     let mut ft = FieldType::new(code);
-    ft.set_flags(tidb_mysql::BinaryFlag as u32);
+    ft.set_flag(tidb_mysql::BinaryFlag as u32);
     ft.set_charset_name("binary");
     ft.set_collation_name("binary");
     ft
@@ -958,8 +958,8 @@ fn test_split_ttl_scan_ranges_with_bytes() {
         string_expected: Vec<(Datum, Datum)>,
     }
 
-    let bytes = |data: &[u8]| Datum::new_bytes(data.to_vec());
-    let text = |data: &str| Datum::new_string(data.as_bytes().to_vec());
+    let bytes = |data: &[u8]| Datum::new_bytes_datum(data.to_vec());
+    let text = |data: &str| Datum::new_string_datum(data.as_bytes().to_vec());
 
     let cases = vec![
         Case {
@@ -1231,7 +1231,7 @@ fn test_new_ttl_table() {
     // `pk_is_handle`, so the primary-key column is the key column.
     let id_col = column(1, 0, "id", {
         let mut ft = FieldType::new(FieldTypeCode::Long);
-        ft.set_flags(tidb_mysql::PriKeyFlag as u32);
+        ft.set_flag(tidb_mysql::PriKeyFlag as u32);
         ft
     });
     let tbl = GoShared::new(TableInfo {

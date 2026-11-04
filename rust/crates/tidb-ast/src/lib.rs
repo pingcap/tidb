@@ -99,7 +99,7 @@ pub use admin::{
     AdminDdlJobControlStmt, AdminPlanCacheScope, AdminRecoverIndexStmt, AdminReloadKind,
     AdminShowDdlJobQueriesStmt, AdminShowDdlJobsStmt, AdminShowNextRowIdStmt, AdminShowSlowMode,
     AdminShowSlowStmt, AdminShowSlowTopScope, AdminStmt, BdrRole, DropStatsStmt, GrantLevel,
-    GrantObjectType, GrantPrivilege, GrantProxyStmt, GrantRoleStmt, GrantStmt, LoadStatsStmt,
+    ObjectTypeType, GrantPrivilege, GrantProxyStmt, GrantRoleStmt, GrantStmt, LoadStatsStmt,
     PlanReplayerStmt, PlanReplayerTarget, RevokeRoleStmt, RevokeStmt, };
 pub use analyze::{
     AnalyzeIncrementalStmt, AnalyzeOption, AnalyzeOptionKind, AnalyzeTableStmt, AnalyzeTarget,
@@ -120,7 +120,7 @@ pub use dml::*;
 pub use dml_stmt::{BatchDml, BatchDmlDryRun, BatchDmlStmt, CallStmt, DmlStmt};
 pub use explain::{ExplainStmt, ExplainTarget, StatsLockStmt, StatsLockTable};
 pub use expr::*;
-pub use flush::{FlushLogType, FlushStmt, FlushTarget};
+pub use flush::{FlushLogType, FlushStmt, FlushStmtType};
 pub use format::RestoreContext;
 use tidb_parser_format::RestoreFlags;
 pub use load_data::{
@@ -157,7 +157,7 @@ pub use sequence::{
     JobSequenceOption, SequenceOption,
 };
 pub use session::{
-    DefaultRoleSelection, RoleSpec, SessionStmt, SetDefaultRoleStmt, SetPasswordStmt,
+    DefaultRoleSelection, RoleIdentity, SessionStmt, SetDefaultRoleStmt, SetPasswordStmt,
     SetRoleSelection, SetRoleStmt,
 };
 pub use set::{

@@ -116,7 +116,7 @@ mod tests {
     fn integer_type(not_null: bool) -> FieldType {
         let mut field_type = FieldType::new(FieldTypeCode::LongLong);
         if not_null {
-            field_type.set_flags(FieldTypeFlags::NOT_NULL);
+            field_type.set_flag(FieldTypeFlags::NOT_NULL);
         }
         field_type
     }
@@ -202,9 +202,9 @@ mod tests {
         ] {
             let context = WarningContext::new(level);
             let input = [
-                Datum::new_string(" 1garbage "),
+                Datum::new_string_datum(" 1garbage "),
                 Datum::Bytes(b"0garbage".to_vec()),
-                Datum::new_string("2"),
+                Datum::new_string_datum("2"),
             ]
             .into_iter()
             .map(|value| {
@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn strict_conversion_does_not_delete_truncated_true_constant() {
         let condition = Expression::Constant(Constant::new(
-            Datum::new_string("1garbage"),
+            Datum::new_string_datum("1garbage"),
             FieldType::new(FieldTypeCode::VarString),
         ));
         let context = WarningContext::new(tidb_exprctx::ErrorLevel::Error);

@@ -113,9 +113,9 @@ fn edge_table() -> (TableCommon, tidb_kv::storage::MemTableStorage) {
         .insert_row(&mut store, &[
                 Datum::Int(848250056732),
                 Datum::Int(1947761684552),
-                Datum::new_string("3"),
+                Datum::new_string_datum("3"),
                 Datum::Int(1660627540589311589),
-                Datum::new_string("hello"),
+                Datum::new_string_datum("hello"),
             ],
             &tidb_exprctx::NoColumns,
         )
@@ -404,9 +404,9 @@ fn edges_table_on_capturing_store(captured: Arc<Mutex<Vec<DagRequest>>>) -> (Tab
         .insert_row(&mut store, &[
                 Datum::Int(848250056732),
                 Datum::Int(1947761684552),
-                Datum::new_string("3"),
+                Datum::new_string_datum("3"),
                 Datum::Int(1660627540589311589),
-                Datum::new_string("hello"),
+                Datum::new_string_datum("hello"),
             ],
             &tidb_exprctx::NoColumns,
         )

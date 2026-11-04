@@ -72,7 +72,7 @@ fn tidb_decode_key(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, Eva
     let input = value
         .sql_bytes()
         .map_err(|_| EvalError::IncorrectArguments("tidb_decode_key".to_owned()))?;
-    Ok(Datum::new_string(ctx.tidb_decode_key(&input)))
+    Ok(Datum::new_string_datum(ctx.tidb_decode_key(&input)))
 }
 
 /// Go `ErrSpecificAccessDenied` (1227) for the PROCESS privilege
@@ -171,7 +171,7 @@ fn tidb_decode_sql_digests(
         }
     }
     result.push(']');
-    Ok(Datum::new_string(result.into_bytes()))
+    Ok(Datum::new_string_datum(result.into_bytes()))
 }
 
 #[derive(Default)]
@@ -234,7 +234,7 @@ fn uuid_v1() -> Result<Datum, EvalError> {
     uuid[6..8].copy_from_slice(&(((timestamp >> 48) as u16 & 0x0fff) | 0x1000).to_be_bytes());
     uuid[8..10].copy_from_slice(&state.clock_sequence.to_be_bytes());
     uuid[10..].copy_from_slice(&state.node);
-    Ok(Datum::new_string(format_uuid(&uuid)))
+    Ok(Datum::new_string_datum(format_uuid(&uuid)))
 }
 
 /// `UUID_V4()`: 122 random bits with the RFC version and variant bits.
@@ -243,7 +243,7 @@ fn uuid_v4() -> Result<Datum, EvalError> {
     random_bytes(&mut uuid)?;
     uuid[6] = (uuid[6] & 0x0f) | 0x40;
     uuid[8] = (uuid[8] & 0x3f) | 0x80;
-    Ok(Datum::new_string(format_uuid(&uuid)))
+    Ok(Datum::new_string_datum(format_uuid(&uuid)))
 }
 
 /// `UUID_V7()`: the Unix-millisecond prefix and sub-millisecond sequence
@@ -280,7 +280,7 @@ fn uuid_v7() -> Result<Datum, EvalError> {
     uuid[..6].copy_from_slice(&time[2..]);
     uuid[6] = 0x70 | (sequence >> 8) as u8;
     uuid[7] = sequence as u8;
-    Ok(Datum::new_string(format_uuid(&uuid)))
+    Ok(Datum::new_string_datum(format_uuid(&uuid)))
 }
 
 /// `UUID_TO_BIN(string_uuid, swap_flag)`, ported from
@@ -366,7 +366,7 @@ fn bin_to_uuid(
     } else {
         format_uuid(&uuid)
     };
-    Ok(Datum::new_string(output))
+    Ok(Datum::new_string_datum(output))
 }
 
 /// The Go `EvalString` payload boundary used by UUID_TO_BIN/BIN_TO_UUID.
@@ -685,8 +685,8 @@ use tidb_charset::Collation;
             (Datum::Int(-0x99), Datum::Int(-0x99)),
             (Datum::Real(source_float), Datum::Real(source_float)),
             (
-                Datum::new_string("Hello, World".to_string()),
-                Datum::new_string("Hello, World".to_string()),
+                Datum::new_string_datum("Hello, World".to_string()),
+                Datum::new_string_datum("Hello, World".to_string()),
             ),
         ];
         for (argument, want) in cases {
@@ -741,7 +741,7 @@ use tidb_charset::Collation;
         assert!(dispatch("ANY_VALUE", &[]).is_none());
         assert!(dispatch("ANY_VALUE", &[Datum::Int(1), Datum::Int(2)]).is_none());
         assert!(dispatch("NAME_CONST", &[]).is_none());
-        assert!(dispatch("NAME_CONST", &[Datum::new_string("name".to_string())]).is_none());
+        assert!(dispatch("NAME_CONST", &[Datum::new_string_datum("name".to_string())]).is_none());
         assert!(dispatch("NAME_CONST", &[Datum::Int(1)]).is_none());
         assert!(dispatch("NAME_CONST", &[Datum::Int(1), Datum::Int(2), Datum::Int(3)]).is_none());
     }
@@ -761,16 +761,16 @@ use tidb_charset::Collation;
             .parse::<f64>()
             .expect("the exact Go vector is a valid float");
         let cases = [
-            (Datum::new_string("test_int"), Datum::Int(3)),
-            (Datum::new_string("test_uint"), Datum::UInt(u64::MAX)),
-            (Datum::new_string("test_float"), Datum::Real(source_float)),
-            (Datum::new_string("test_string"), Datum::new_string("TiDB")),
+            (Datum::new_string_datum("test_int"), Datum::Int(3)),
+            (Datum::new_string_datum("test_uint"), Datum::UInt(u64::MAX)),
+            (Datum::new_string_datum("test_float"), Datum::Real(source_float)),
+            (Datum::new_string_datum("test_string"), Datum::new_string_datum("TiDB")),
             (
-                Datum::new_string("test_binary"),
-                Datum::new_bytes(vec![0, 0xff, 0x80]),
+                Datum::new_string_datum("test_binary"),
+                Datum::new_bytes_datum(vec![0, 0xff, 0x80]),
             ),
-            (Datum::new_string("test_null"), Datum::Null),
-            (Datum::new_string("test_decimal"), Datum::Decimal(decimal)),
+            (Datum::new_string_datum("test_null"), Datum::Null),
+            (Datum::new_string_datum("test_decimal"), Datum::Decimal(decimal)),
             // A NULL label is accepted by Go's ETString conversion; it does
             // not alter the value returned by NAME_CONST.
             (Datum::Null, Datum::Int(-7)),
@@ -802,7 +802,7 @@ use tidb_charset::Collation;
         ];
         for (text, want) in cases {
             assert_eq!(
-                dispatch("UUID_VERSION", &[Datum::new_string(text.to_string())])
+                dispatch("UUID_VERSION", &[Datum::new_string_datum(text.to_string())])
                     .expect("UUID_VERSION must dispatch")
                     .expect("well-formed UUID must evaluate"),
                 Datum::Int(want),
@@ -816,7 +816,7 @@ use tidb_charset::Collation;
             Datum::Null
         );
         assert!(
-            dispatch("UUID_VERSION", &[Datum::new_string("abc".to_string())])
+            dispatch("UUID_VERSION", &[Datum::new_string_datum("abc".to_string())])
                 .expect("UUID_VERSION must dispatch")
                 .is_err()
         );
@@ -844,7 +844,7 @@ use tidb_charset::Collation;
         ];
         for (text, want) in cases {
             assert_eq!(
-                dispatch("IS_UUID", &[Datum::new_string(text.to_string())])
+                dispatch("IS_UUID", &[Datum::new_string_datum(text.to_string())])
                     .expect("IS_UUID must dispatch")
                     .expect("IS_UUID must evaluate"),
                 Datum::Int(want),
@@ -876,7 +876,7 @@ use tidb_charset::Collation;
     #[test]
     fn is_uuid_preserves_go_byte_string_boundaries() {
         for value in [
-            Datum::new_string(vec![0xff]),
+            Datum::new_string_datum(vec![0xff]),
             Datum::Bytes(vec![0xff]),
             Datum::BinaryLiteral(BinaryLiteral::from(vec![0xff])),
         ] {
@@ -926,7 +926,7 @@ use tidb_charset::Collation;
                 crate::Decimal::from_literal(want)
             };
             assert_eq!(
-                dispatch("UUID_TIMESTAMP", &[Datum::new_string(text.to_string())])
+                dispatch("UUID_TIMESTAMP", &[Datum::new_string_datum(text.to_string())])
                     .expect("UUID_TIMESTAMP must dispatch")
                     .expect("timestamp UUID must evaluate"),
                 Datum::Decimal(expected),
@@ -941,7 +941,7 @@ use tidb_charset::Collation;
             "ffffffff-ffff-ffff-ffff-ffffffffffff",
         ] {
             assert_eq!(
-                dispatch("UUID_TIMESTAMP", &[Datum::new_string(text.to_string())])
+                dispatch("UUID_TIMESTAMP", &[Datum::new_string_datum(text.to_string())])
                     .expect("UUID_TIMESTAMP must dispatch")
                     .expect("valid non-timestamp UUID must evaluate"),
                 Datum::Null,
@@ -955,7 +955,7 @@ use tidb_charset::Collation;
             Datum::Null
         );
         assert!(
-            dispatch("UUID_TIMESTAMP", &[Datum::new_string("abc".to_string())])
+            dispatch("UUID_TIMESTAMP", &[Datum::new_string_datum("abc".to_string())])
                 .expect("UUID_TIMESTAMP must dispatch")
                 .is_err()
         );
@@ -987,7 +987,7 @@ use tidb_charset::Collation;
             "{6ccd780c-baba-1026-9564-5b8c656024db}",
         ] {
             assert_eq!(
-                dispatch("UUID_TO_BIN", &[Datum::new_string(spelling)])
+                dispatch("UUID_TO_BIN", &[Datum::new_string_datum(spelling)])
                     .expect("UUID_TO_BIN must dispatch")
                     .expect("valid UUID must evaluate"),
                 Datum::Bytes(normal.clone()),
@@ -997,14 +997,14 @@ use tidb_charset::Collation;
         assert_eq!(
             dispatch(
                 "UUID_TO_BIN",
-                &[Datum::new_string(canonical), Datum::Int(1)],
+                &[Datum::new_string_datum(canonical), Datum::Int(1)],
             )
             .expect("UUID_TO_BIN must dispatch")
             .expect("swap flag must evaluate"),
             Datum::Bytes(swapped.clone())
         );
         assert_eq!(
-            dispatch("UUID_TO_BIN", &[Datum::new_string(canonical), Datum::Null],)
+            dispatch("UUID_TO_BIN", &[Datum::new_string_datum(canonical), Datum::Null],)
                 .expect("UUID_TO_BIN must dispatch")
                 .expect("NULL swap flag defaults to zero"),
             Datum::Bytes(normal.clone())
@@ -1015,7 +1015,7 @@ use tidb_charset::Collation;
         assert_eq!(
             dispatch(
                 "UUID_TO_BIN",
-                &[Datum::new_string(canonical), Datum::new_string("a")],
+                &[Datum::new_string_datum(canonical), Datum::new_string_datum("a")],
             )
             .expect("UUID_TO_BIN must dispatch")
             .expect("textual flag coercion must evaluate"),
@@ -1034,7 +1034,7 @@ use tidb_charset::Collation;
             " 6ccd780c-baba-1026-9564-5b8c656024db ",
         ] {
             assert!(
-                dispatch("UUID_TO_BIN", &[Datum::new_string(invalid)])
+                dispatch("UUID_TO_BIN", &[Datum::new_string_datum(invalid)])
                     .expect("UUID_TO_BIN must dispatch")
                     .is_err(),
                 "invalid UUID_TO_BIN input {invalid:?}"
@@ -1045,7 +1045,7 @@ use tidb_charset::Collation;
             dispatch("BIN_TO_UUID", &[Datum::Bytes(normal.clone())])
                 .expect("BIN_TO_UUID must dispatch")
                 .expect("binary UUID must evaluate"),
-            Datum::new_string(canonical)
+            Datum::new_string_datum(canonical)
         );
         assert_eq!(
             dispatch(
@@ -1054,23 +1054,23 @@ use tidb_charset::Collation;
             )
             .expect("BIN_TO_UUID must dispatch")
             .expect("swap flag must evaluate"),
-            Datum::new_string("baba1026-780c-6ccd-9564-5b8c656024db")
+            Datum::new_string_datum("baba1026-780c-6ccd-9564-5b8c656024db")
         );
         assert_eq!(
             dispatch(
                 "BIN_TO_UUID",
-                &[Datum::Bytes(normal.clone()), Datum::new_string("a")],
+                &[Datum::Bytes(normal.clone()), Datum::new_string_datum("a")],
             )
             .expect("BIN_TO_UUID must dispatch")
             .expect("textual flag coercion must evaluate"),
-            Datum::new_string(canonical)
+            Datum::new_string_datum(canonical)
         );
         // A raw binary UUID is valid even though the payload is not UTF-8.
         assert_eq!(
             dispatch("BIN_TO_UUID", &[Datum::Bytes(swapped)])
                 .expect("BIN_TO_UUID must dispatch")
                 .expect("raw bytes must evaluate"),
-            Datum::new_string("1026baba-6ccd-780c-9564-5b8c656024db")
+            Datum::new_string_datum("1026baba-6ccd-780c-9564-5b8c656024db")
         );
         assert_eq!(
             dispatch("BIN_TO_UUID", &[Datum::Null])
@@ -1131,7 +1131,7 @@ use tidb_charset::Collation;
             ("1.9", 214),
         ] {
             assert_eq!(
-                dispatch("TIDB_SHARD", &[Datum::new_string(text.to_string())])
+                dispatch("TIDB_SHARD", &[Datum::new_string_datum(text.to_string())])
                     .expect("TIDB_SHARD must dispatch")
                     .expect("string TIDB_SHARD must evaluate"),
                 Datum::UInt(want),
@@ -1180,7 +1180,7 @@ use tidb_charset::Collation;
             let ctx = WarningContext::default();
             let value = dispatch_in(
                 name,
-                &[Datum::new_string("18446744073709551614".to_owned())],
+                &[Datum::new_string_datum("18446744073709551614".to_owned())],
                 &ctx,
             )
             .expect("the builtin must dispatch")
@@ -1199,7 +1199,7 @@ use tidb_charset::Collation;
         let ctx = WarningContext::default();
         let value = dispatch_in(
             "VITESS_HASH",
-            &[Datum::new_string("18446744073709551616".to_owned())],
+            &[Datum::new_string_datum("18446744073709551616".to_owned())],
             &ctx,
         )
         .expect("VITESS_HASH must dispatch")

@@ -191,9 +191,9 @@ pub(crate) fn from_unixtime_with_precision(
     };
     let formatted = format_local(local, fsp);
     if vals.len() == 2 {
-        return date_format(&Datum::new_string(formatted), &vals[1]);
+        return date_format(&Datum::new_string_datum(formatted), &vals[1]);
     }
-    Ok(Datum::new_string(formatted))
+    Ok(Datum::new_string_datum(formatted))
 }
 
 /// `UNIX_TIMESTAMP([datetime])`.
@@ -444,7 +444,7 @@ mod tests {
     }
 
     fn s(v: &str) -> Datum {
-        Datum::new_string(v.to_string())
+        Datum::new_string_datum(v.to_string())
     }
 
     fn dec(v: &str) -> Datum {

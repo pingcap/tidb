@@ -108,7 +108,7 @@ impl Session {
         let mode = self.vars.noop_funcs_mode(false);
         let mut gated: Vec<&'static str> = Vec::new();
         tidb_planner::preprocess::collect_noop_clauses(query, &mut gated);
-        if self.vars.shared_lock_promotion_enabled() {
+        if self.vars.shared_lock_promotion() {
             // Go's preprocessor rewrites the shared-lock clause to the real
             // FOR UPDATE path before `checkNoopFuncs`; it must not warn or
             // refuse the source-shaped `FOR SHARE` spelling here.

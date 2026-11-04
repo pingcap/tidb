@@ -550,7 +550,7 @@ pub struct ChecksumStats {
 
 /// Go's `metautil.MetaWriter`, narrowed to the one call this package makes:
 /// `metaWriter.Send(files, metautil.AppendDataFile)`.
-pub trait MetaSink {
+pub trait MetaWriter {
     /// Go `(*MetaWriter).Send(files, AppendDataFile)`.
     ///
     /// # Errors
@@ -567,7 +567,7 @@ pub enum RtreeError {
     OverlappingRange(String),
     /// Go `(*ProgressRangeTree).FindContained`'s not-contained error.
     NotContained(String),
-    /// An error surfaced by the [`MetaSink`].
+    /// An error surfaced by the [`MetaWriter`].
     Meta(String),
 }
 
@@ -605,13 +605,13 @@ pub struct ProgressRangeTree {
     tree: BTreeMap<Vec<u8>, ProgressRangeRef>,
     checksum_map: BTreeMap<i64, ChecksumStats>,
     skip_checksum: bool,
-    meta_writer: Option<Box<dyn MetaSink>>,
+    meta_writer: Option<Box<dyn MetaWriter>>,
     complete_call_back: Box<dyn FnMut()>,
 }
 
 impl ProgressRangeTree {
     /// Go `NewProgressRangeTree`.
-    pub fn new(meta_writer: Option<Box<dyn MetaSink>>, skip_checksum: bool) -> Self {
+    pub fn new(meta_writer: Option<Box<dyn MetaWriter>>, skip_checksum: bool) -> Self {
         Self {
             tree: BTreeMap::new(),
             checksum_map: BTreeMap::new(),
@@ -719,7 +719,7 @@ impl ProgressRangeTree {
     ///
     /// # Errors
     ///
-    /// Propagates the first [`MetaSink`] failure, as Go propagates
+    /// Propagates the first [`MetaWriter`] failure, as Go propagates
     /// `rangeAscendErr`.
     pub fn get_incomplete_ranges(&mut self) -> Result<Vec<kvrpcpb::KeyRange>, RtreeError> {
         // About 64 MB of memory if there are one million ranges.
@@ -788,7 +788,7 @@ fn summary_files(files: &[Arc<File>]) -> (u64, u64, u64) {
 
 /// Go `(*ProgressRangeTree).collectRangeFiles`.
 fn collect_range_files(
-    meta_writer: Option<&mut (dyn MetaSink + 'static)>,
+    meta_writer: Option<&mut (dyn MetaWriter + 'static)>,
     item: &ProgressRangeRef,
 ) -> Result<ChecksumStats, RtreeError> {
     let mut checksum = ChecksumStats::default();
@@ -864,7 +864,7 @@ mod tests {
             record: ProgressRangeRef,
             expected: Arc<File>,
         }
-        impl MetaSink for InspectSink {
+        impl MetaWriter for InspectSink {
             fn send(&mut self, files: &[Arc<File>]) -> Result<(), RtreeError> {
                 let record = self
                     .record
@@ -984,7 +984,7 @@ mod tests {
         struct FailSecondSend {
             sent: Rc<RefCell<Vec<Arc<File>>>>,
         }
-        impl MetaSink for FailSecondSend {
+        impl MetaWriter for FailSecondSend {
             fn send(&mut self, files: &[Arc<File>]) -> Result<(), RtreeError> {
                 let mut sent = self.sent.borrow_mut();
                 sent.extend_from_slice(files);
@@ -1615,14 +1615,14 @@ mod tests {
         assert_eq!(rpc_range(b"e", b"f"), ranges[1]);
     }
 
-    /// A [`MetaSink`] that records what a real `metautil.MetaWriter` would have
+    /// A [`MetaWriter`] that records what a real `metautil.MetaWriter` would have
     /// serialized into object storage.
     #[derive(Default)]
     struct RecordingSink {
         sent: Rc<RefCell<Vec<Vec<Arc<File>>>>>,
     }
 
-    impl MetaSink for RecordingSink {
+    impl MetaWriter for RecordingSink {
         fn send(&mut self, files: &[Arc<File>]) -> Result<(), RtreeError> {
             self.sent.borrow_mut().push(files.to_vec());
             Ok(())
@@ -1648,7 +1648,7 @@ mod tests {
     /// Go `TestProgreeRangeTreeCallBack2` (`rtree_test.go`).
     ///
     /// Go drives a real `metautil.MetaWriter` over a local-storage backend; the
-    /// [`MetaSink`] narrowing replaces it with a recorder. Every assertion the
+    /// [`MetaWriter`] narrowing replaces it with a recorder. Every assertion the
     /// Go test makes is about the checksum map, which is unaffected.
     #[test]
     fn progress_range_tree_call_back2() {

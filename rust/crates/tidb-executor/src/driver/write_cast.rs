@@ -632,7 +632,7 @@ use tidb_charset::Collation;
     fn ordinal_owner_batch_table_bit_keeps_two_diagnostics() {
         let ctx = crate::StmtContext::for_dml(false, false, false);
         let value = cast_value(
-            Datum::new_bytes([1; 9]),
+            Datum::new_bytes_datum([1; 9]),
             &FieldType::new(FieldTypeCode::Bit).with_flen(8),
             "a",
             &ctx,
@@ -741,7 +741,7 @@ use tidb_charset::Collation;
             ("1.9tail", "1.9"),
         ] {
             let error = cast_value(
-                Datum::new_string(input),
+                Datum::new_string_datum(input),
                 &FieldType::new(FieldTypeCode::LongLong),
                 "a",
                 &ctx,
@@ -762,7 +762,7 @@ use tidb_charset::Collation;
         let ctx = crate::StmtContext::for_query();
         let field = FieldType::new(FieldTypeCode::Tiny);
         let result =
-            cast_value(Datum::new_string("128tail"), &field, "a", &ctx, false).unwrap();
+            cast_value(Datum::new_string_datum("128tail"), &field, "a", &ctx, false).unwrap();
         assert_eq!(result, Datum::Int(127));
         let warnings = ctx.take_warnings();
         assert_eq!(warnings.len(), 2, "{warnings:?}");
@@ -777,7 +777,7 @@ use tidb_charset::Collation;
     fn table_mutation_batch_varchar_space_truncation_warns() {
         let ctx = crate::StmtContext::for_dml(false, true, false);
         let field = FieldType::new(FieldTypeCode::Varchar).with_flen(2);
-        let value = cast_value(Datum::new_string("ab  "), &field, "a", &ctx, false).unwrap();
+        let value = cast_value(Datum::new_string_datum("ab  "), &field, "a", &ctx, false).unwrap();
         assert_eq!(datum_error_text(&value), "ab");
         let warnings = ctx.take_warnings();
         assert_eq!(warnings.len(), 1);
@@ -804,7 +804,7 @@ use tidb_charset::Collation;
         ] {
             let ctx = crate::StmtContext::for_dml(false, false, false);
             let result = cast_value_shaped(
-                Datum::new_string("ab中"),
+                Datum::new_string_datum("ab中"),
                 &field,
                 "a",
                 4,
@@ -823,7 +823,7 @@ use tidb_charset::Collation;
             );
         }
         let ctx = crate::StmtContext::for_dml(false, true, false);
-        let result = cast_value(Datum::new_string("ab中"), &field, "a", &ctx, true).unwrap();
+        let result = cast_value(Datum::new_string_datum("ab中"), &field, "a", &ctx, true).unwrap();
         assert_eq!(datum_error_text(&result), "ab?");
         assert!(ctx.take_warnings().is_empty());
     }
@@ -903,30 +903,30 @@ use tidb_charset::Collation;
 
         // Go returns the best-effort zero beside this error.  Rust separates
         // that conversion pair from the write Result, so assert both halves.
-        let converted = Datum::new_string("test")
+        let converted = Datum::new_string_datum("test")
             .convert_to_in(&integer, ctx.write_conversion_flags(), &ctx.session_zone())
             .unwrap();
         assert_eq!(converted.value, Datum::Int(0));
         assert!(converted.event.is_some());
-        assert!(cast_value(Datum::new_string("test"), &integer, "", &ctx, false).is_err());
+        assert!(cast_value(Datum::new_string_datum("test"), &integer, "", &ctx, false).is_err());
 
         let plain_string = FieldType::new(FieldTypeCode::String);
         assert!(
-            cast_value(Datum::new_string("test"), &plain_string, "", &ctx, false).is_ok()
+            cast_value(Datum::new_string_datum("test"), &plain_string, "", &ctx, false).is_ok()
         );
 
         let utf8 = FieldType::new(FieldTypeCode::String).with_charset_name("utf8");
-        let mb4_rune = Datum::new_bytes([0xf0, 0x9f, 0x8c, 0x80]);
+        let mb4_rune = Datum::new_bytes_datum([0xf0, 0x9f, 0x8c, 0x80]);
         assert!(cast_value(mb4_rune.clone(), &utf8, "", &ctx, false).is_err());
         assert!(cast_value(mb4_rune, &utf8, "", &ctx, true).is_ok());
 
         let utf8mb4 = FieldType::new(FieldTypeCode::String).with_charset_name("utf8mb4");
-        let incomplete_rune = Datum::new_bytes([0xf0, 0x9f, 0x80]);
+        let incomplete_rune = Datum::new_bytes_datum([0xf0, 0x9f, 0x80]);
         assert!(cast_value(incomplete_rune.clone(), &utf8mb4, "", &ctx, false).is_err());
         assert!(cast_value(incomplete_rune, &utf8mb4, "", &ctx, true).is_ok());
 
         let ascii = FieldType::new(FieldTypeCode::String).with_charset_name("ascii");
-        let non_ascii = Datum::new_bytes([0x32, 0xf0]);
+        let non_ascii = Datum::new_bytes_datum([0x32, 0xf0]);
         assert!(cast_value(non_ascii.clone(), &ascii, "", &ctx, false).is_err());
         assert!(cast_value(non_ascii, &ascii, "", &ctx, true).is_ok());
 
@@ -939,7 +939,7 @@ use tidb_charset::Collation;
 
         for invalid in [
             Datum::new_binary_literal(BinaryLiteral::from(&[0xE5, 0xA5, 0xBD, 0x81])),
-            Datum::new_bytes([0xE5, 0xA5, 0xBD, 0x81]),
+            Datum::new_bytes_datum([0xE5, 0xA5, 0xBD, 0x81]),
         ] {
             let error = cast_value(invalid, &general_ci, "", &ctx, false)
                 .unwrap_err()
@@ -956,7 +956,7 @@ use tidb_charset::Collation;
     fn timestamp_dst_gap_keeps_table_warning_and_strict_insert_diagnostic() {
         let field_type = FieldType::new(FieldTypeCode::Timestamp);
         let zone = tidb_datatype::SessionTimeZone::Named(chrono_tz::America::Los_Angeles);
-        let input = Datum::new_string("2018-03-11 02:00:16");
+        let input = Datum::new_string_datum("2018-03-11 02:00:16");
 
         let lenient = crate::StmtContext::for_dml(false, false, false).with_time_zone(zone.clone());
         let stored = cast_value_for_column(input.clone(), &field_type, "ts", 0, &lenient, false)
@@ -1012,15 +1012,15 @@ use tidb_charset::Collation;
 
         let char_two = FieldType::new(FieldTypeCode::String).with_flen(2);
         assert_strict_cast(
-            Datum::new_string("abcd"),
+            Datum::new_string_datum("abcd"),
             &char_two,
-            Datum::new_string("ab"),
+            Datum::new_string_datum("ab"),
             true,
         );
         assert_strict_cast(
-            Datum::new_string("a   "),
+            Datum::new_string_datum("a   "),
             &char_two,
-            Datum::new_string("a"),
+            Datum::new_string_datum("a"),
             false,
         );
     }
@@ -1045,7 +1045,7 @@ use tidb_charset::Collation;
         let decimal = FieldType::new(FieldTypeCode::NewDecimal)
             .with_flen(5)
             .with_decimal(1);
-        let value = cast_value(Datum::new_string("1.25"), &decimal, "b", &ctx, true).unwrap();
+        let value = cast_value(Datum::new_string_datum("1.25"), &decimal, "b", &ctx, true).unwrap();
         assert_eq!(datum_error_text(&value), "1.3");
         let warnings = ctx.take_warnings();
         assert_eq!(

@@ -183,7 +183,7 @@ fn row_decoder_matches_defaults_generated_values_and_integer_handles() {
     let stored_ids = [1, 2, 3, 4];
     let stored_values = [
         Datum::Int(100),
-        Datum::new_bytes(b"abc".to_vec()),
+        Datum::new_bytes_datum(b"abc".to_vec()),
         Datum::Decimal(Decimal::from_int(1)),
         Datum::Int(8),
     ];
@@ -207,7 +207,7 @@ fn row_decoder_matches_defaults_generated_values_and_integer_handles() {
             decoded.values(),
             &[
                 Datum::Int(100),
-                Datum::new_string(b"abc".to_vec()),
+                Datum::new_string_datum(b"abc".to_vec()),
                 Datum::Decimal(Decimal::from_int(1)),
                 Datum::Int(8),
                 Datum::Int(2),
@@ -266,7 +266,7 @@ fn row_decoder_matches_defaults_generated_values_and_integer_handles() {
                     encode(&stored_ids, &stored_values, new_format, &zone),
                     vec![
                         Datum::Int(100),
-                        Datum::new_string("abc"),
+                        Datum::new_string_datum("abc"),
                         Datum::Decimal(Decimal::from_int(1)),
                         Datum::Int(8),
                         Datum::Int(2),
@@ -300,7 +300,7 @@ fn row_decoder_matches_temporal_defaults_and_null_rows() {
         ),
         column(2, "duration", duration_type),
     ];
-    columns[1].origin_default = Some(Datum::new_string("02:00:02"));
+    columns[1].origin_default = Some(Datum::new_string_datum("02:00:02"));
     let mut generated = column(
         3,
         "result",
@@ -391,7 +391,7 @@ fn row_decoder_restores_every_common_handle_column() {
         column(3, "c3", FieldType::new(FieldTypeCode::NewDecimal)),
     ];
     let handle =
-        tidb_codec::encode_key(&[Datum::Int(100), Datum::new_bytes(b"abc".to_vec())]).unwrap();
+        tidb_codec::encode_key(&[Datum::Int(100), Datum::new_bytes_datum(b"abc".to_vec())]).unwrap();
     let bytes = encode(&[3], &[Datum::Decimal(Decimal::from_int(1))], true, &zone);
     let decoded = RowDecoder::new(
         columns,
@@ -426,10 +426,10 @@ fn restored_common_handle_value_wins_over_its_lossy_sort_key_even_when_fast_path
     // key. The original bytes are stored in the row value because that sort
     // key is lossy (case folding is visible here as the upper-case weights).
     let handle =
-        tidb_codec::encode_key(&[Datum::new_bytes(vec![0, b'A', 0, b'B', 0, b'C'])]).unwrap();
+        tidb_codec::encode_key(&[Datum::new_bytes_datum(vec![0, b'A', 0, b'B', 0, b'C'])]).unwrap();
     let bytes = encode(
         &[1, 2],
-        &[Datum::new_string("abc"), Datum::Int(9)],
+        &[Datum::new_string_datum("abc"), Datum::Int(9)],
         true,
         &zone,
     );
@@ -453,7 +453,7 @@ fn restored_common_handle_value_wins_over_its_lossy_sort_key_even_when_fast_path
     let mut store = tidb_kv::storage::MemTableStorage::new();
     table.set_common_handle_offsets(vec![0]);
     table
-        .insert_row(&mut store, &[Datum::new_string("abc"), Datum::Int(9)], &statement)
+        .insert_row(&mut store, &[Datum::new_string_datum("abc"), Datum::Int(9)], &statement)
         .unwrap();
     let (_, stored) = table
         .row_cursor_with_context(&mut *store.clone_box(), &RowDecodeContext::for_query(&statement))
@@ -472,7 +472,7 @@ fn restored_common_handle_value_wins_over_its_lossy_sort_key_even_when_fast_path
     let mut old_collation_table_store = tidb_kv::storage::MemTableStorage::new();
     old_collation_table.set_common_handle_offsets(vec![0]);
     old_collation_table
-        .insert_row(&mut old_collation_table_store, &[Datum::new_string("abc"), Datum::Int(10)], &statement)
+        .insert_row(&mut old_collation_table_store, &[Datum::new_string_datum("abc"), Datum::Int(10)], &statement)
         .unwrap();
     let (_, stored) = old_collation_table
         .row_cursor_with_context(&mut *old_collation_table_store.clone_box(), &RowDecodeContext::for_query(&statement))
@@ -497,7 +497,7 @@ fn projected_row_decoder_keeps_common_handle_component_positions() {
         column(3, "payload", FieldType::new(FieldTypeCode::LongLong)),
     ];
     let handle =
-        tidb_codec::encode_key(&[Datum::Int(100), Datum::new_bytes(b"abc".to_vec())]).unwrap();
+        tidb_codec::encode_key(&[Datum::Int(100), Datum::new_bytes_datum(b"abc".to_vec())]).unwrap();
     let bytes = encode(&[3], &[Datum::Int(9)], true, &zone);
 
     let decoded = RowDecoder::projected(
@@ -524,7 +524,7 @@ fn projected_row_decoder_keeps_common_handle_component_positions() {
     let mut store = tidb_kv::storage::MemTableStorage::new();
     table.set_common_handle_offsets(vec![0, 1]);
     table
-        .insert_row(&mut store, &[Datum::Int(100), Datum::new_string("abc"), Datum::Int(9)],
+        .insert_row(&mut store, &[Datum::Int(100), Datum::new_string_datum("abc"), Datum::Int(9)],
             &statement,
         )
         .unwrap();
@@ -607,7 +607,7 @@ fn full_decode_recomputes_stored_values_and_retains_cast_warnings() {
     columns.push(generated);
     let bytes = encode(
         &[1, 2],
-        &[Datum::new_bytes(b"12x".to_vec()), Datum::Int(999)],
+        &[Datum::new_bytes_datum(b"12x".to_vec()), Datum::Int(999)],
         true,
         &zone,
     );
@@ -846,7 +846,7 @@ fn generated_read_policy_trims_char_before_dependent_evaluation() {
     c.generated = Some(generated_column("length(b)", false, &columns, &zone));
     columns.push(c);
     for new_format in [false, true] {
-        let bytes = encode(&[1], &[Datum::new_string("a  ")], new_format, &zone);
+        let bytes = encode(&[1], &[Datum::new_string_datum("a  ")], new_format, &zone);
         let decoder = RowDecoder::projected(
             columns.clone(),
             None,
@@ -889,7 +889,7 @@ fn generated_read_policy_preserves_query_warnings_before_forced_suppression() {
             context,
         )
         .unwrap();
-        let bytes = encode(&[1], &[Datum::new_string("12x")], true, &zone);
+        let bytes = encode(&[1], &[Datum::new_string_datum("12x")], true, &zone);
         let decoded = decoder
             .decode_and_eval(&TableHandle::Int(1), &bytes)
             .unwrap();
@@ -926,7 +926,7 @@ fn generated_read_policy_zero_date_errors_survive_decoder_transport() {
         RowDecodeContext::for_ddl(&ctx),
     )
     .unwrap();
-    let bytes = encode(&[1], &[Datum::new_string("0000-00-00")], true, &zone);
+    let bytes = encode(&[1], &[Datum::new_string_datum("0000-00-00")], true, &zone);
     let error = decoder
         .decode_and_eval(&TableHandle::Int(1), &bytes)
         .expect_err("forceIgnoreTruncate cannot suppress handleZeroDatetime");
@@ -986,7 +986,7 @@ fn legacy_generated_enum_set_cursor_preserves_members_and_declared_collation() {
             let mut table = TableCommon::new(42, vec![source, generated]).with_new_collation_mode(mode);
             let mut store = tidb_kv::storage::MemTableStorage::new();
             table
-                .insert_row(&mut store, &[Datum::new_string("a"), Datum::Null], &statement)
+                .insert_row(&mut store, &[Datum::new_string_datum("a"), Datum::Null], &statement)
                 .unwrap();
             let context = RowDecodeContext::for_query(&statement);
             let (_, row) = table

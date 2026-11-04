@@ -102,8 +102,8 @@ fn truncate_index_value_go_vectors() {
 
         let raw = case_bytes(case);
         let mut value = match datum_tag {
-            "string" => Datum::new_collation_string(raw, Collation::Utf8Mb4Bin),
-            "bytes" => Datum::new_bytes(raw),
+            "string" => Datum::new_collation_string_datum(raw, Collation::Utf8Mb4Bin),
+            "bytes" => Datum::new_bytes_datum(raw),
             "int" => Datum::Int(7),
             other => panic!("unknown datum tag {other}"),
         };
@@ -142,8 +142,8 @@ fn ranger_cut_matches_the_go_truncation_vectors() {
         let length: i64 = parts.next().expect("length").parse().expect("length");
         let raw = case_bytes(case);
         let original = match datum_tag {
-            "string" => Datum::new_collation_string(raw, Collation::Utf8Mb4Bin),
-            "bytes" => Datum::new_bytes(raw),
+            "string" => Datum::new_collation_string_datum(raw, Collation::Utf8Mb4Bin),
+            "bytes" => Datum::new_bytes_datum(raw),
             "int" => Datum::Int(7),
             other => panic!("unknown datum tag {other}"),
         };
@@ -165,7 +165,7 @@ fn ranger_cut_matches_the_go_truncation_vectors() {
 #[test]
 fn reach_prefix_len_counts_invalid_bytes_as_go_runes() {
     let utf8 = column_for("utf8mb4").field_type;
-    let value = Datum::new_bytes(vec![0xF0, 0x9F]);
+    let value = Datum::new_bytes_datum(vec![0xF0, 0x9F]);
     assert!(reach_prefix_len(&value, 2, &utf8));
     assert!(!reach_prefix_len(&value, 1, &utf8));
 }

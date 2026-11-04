@@ -88,7 +88,7 @@ impl FieldTypeBuilder {
     }
 
     /// Toggles flags.
-    pub fn toggle_flags(mut self, flags: u32) -> Self {
+    pub fn toggle_flag(mut self, flags: u32) -> Self {
         self.field_type = self.field_type.with_toggled_flags(flags);
         self
     }
@@ -165,7 +165,7 @@ mod builder_zero_tests {
             .with_code(FieldTypeCode::NewDecimal)
             .flags_set(FieldTypeFlags::BINARY)
             .add_flags(FieldTypeFlags::UNSIGNED)
-            .toggle_flags(FieldTypeFlags::BINARY)
+            .toggle_flag(FieldTypeFlags::BINARY)
             .remove_flags(FieldTypeFlags::ZEROFILL)
             .flen_set(12)
             .decimal_set(3)

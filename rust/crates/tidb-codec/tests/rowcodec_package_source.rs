@@ -118,7 +118,7 @@ fn test_remove_keyspace_prefix() {
 #[test]
 fn test_encode_large_small_reuse_bug() {
     let mut buffer = Vec::new();
-    encode_row(None, &[300], &[Datum::new_bytes([])], &mut buffer).unwrap();
+    encode_row(None, &[300], &[Datum::new_bytes_datum([])], &mut buffer).unwrap();
     assert!(RowLayout::parse(&buffer).unwrap().0.header().is_large());
 
     buffer.clear();
@@ -303,7 +303,7 @@ fn test_types_new_row_codec() {
         Datum::UInt(2),
         Datum::Real(2.0),
         Datum::Float32(6.0),
-        Datum::new_collation_string(b"abc", Collation::Binary),
+        Datum::new_collation_string_datum(b"abc", Collation::Binary),
         Datum::Decimal(decimal),
         Datum::Duration(duration),
         Datum::Enum(MysqlEnum::new("n", 2), Collation::DEFAULT),
@@ -366,7 +366,7 @@ fn test_types_new_row_codec() {
         if mutate == 1 {
             case_ids[0] = 300;
         } else if mutate == 2 {
-            case_values[4] = Datum::new_bytes(vec![b'a'; 65_536]);
+            case_values[4] = Datum::new_bytes_datum(vec![b'a'; 65_536]);
         }
         let mut case_columns = columns.clone();
         case_columns[0].id = case_ids[0];
@@ -529,7 +529,7 @@ fn test_65535_bug() {
     let value = vec![b'a'; 65_535];
     let decoded = round_trip(
         &[1],
-        &[Datum::new_bytes(value.clone())],
+        &[Datum::new_bytes_datum(value.clone())],
         &[column(1, FieldTypeCode::String)],
     );
     assert_eq!(decoded[0].as_raw_bytes(), Some(value.as_slice()));
@@ -609,8 +609,8 @@ fn test_column_encode() {
         FieldTypeCode::MediumBlob,
         FieldTypeCode::TinyBlob,
     ] {
-        assert_encoding(field_type, Datum::new_bytes(b"foo"), length_value(b"foo"));
-        assert_encoding(field_type, Datum::new_bytes(b""), length_value(b""));
+        assert_encoding(field_type, Datum::new_bytes_datum(b"foo"), length_value(b"foo"));
+        assert_encoding(field_type, Datum::new_bytes_datum(b""), length_value(b""));
     }
 
     for (field_type, datum, expected) in [
@@ -741,7 +741,7 @@ fn test_column_encode() {
     // checking its logical kind. These cross-kind cases protect that behavior.
     assert_encoding(
         FieldTypeCode::Tiny,
-        Datum::new_bytes([0x12, 0x34]),
+        Datum::new_bytes_datum([0x12, 0x34]),
         0_u64.to_le_bytes().to_vec(),
     );
     assert_encoding(
@@ -771,7 +771,7 @@ fn test_column_encode() {
     );
     assert_encoding(
         FieldTypeCode::Bit,
-        Datum::new_bytes([0x12, 0x34]),
+        Datum::new_bytes_datum([0x12, 0x34]),
         0x1234_u64.to_le_bytes().to_vec(),
     );
     assert_encoding(
@@ -835,7 +835,7 @@ fn test_row_checksum() {
         DatumColumn {
             id: 3,
             field_type: field(FieldTypeCode::Varchar),
-            datum: Datum::new_bytes(b"foobar"),
+            datum: Datum::new_bytes_datum(b"foobar"),
         },
         DatumColumn {
             id: 1,
@@ -866,12 +866,12 @@ fn row_data_preserves_caller_order() {
         DatumColumn {
             id: 2,
             field_type: field(FieldTypeCode::Varchar),
-            datum: Datum::new_bytes(b"second"),
+            datum: Datum::new_bytes_datum(b"second"),
         },
         DatumColumn {
             id: 1,
             field_type: field(FieldTypeCode::Varchar),
-            datum: Datum::new_bytes(b"first"),
+            datum: Datum::new_bytes_datum(b"first"),
         },
     ];
     let mut row = RowData {
@@ -943,7 +943,7 @@ fn test_encode_decode_row_with_checksum() {
     encode_row_with_checksum(
         None,
         &[1],
-        &[Datum::new_bytes(b"aaaa")],
+        &[Datum::new_bytes_datum(b"aaaa")],
         &RowChecksumPolicy::RawHandle(Handle::Int(1)),
         &mut prefixed,
     )
@@ -963,7 +963,7 @@ fn test_encode_decode_row_with_checksum() {
         row,
         None,
         &[1],
-        &[Datum::new_bytes(b"b")],
+        &[Datum::new_bytes_datum(b"b")],
         b"unused-key",
         &Handle::Int(1),
         b"crc-prefix",
@@ -1003,7 +1003,7 @@ fn test_decode_with_commit_ts() {
     encode_row(
         None,
         &[1, 2],
-        &[Datum::new_bytes(b"test1"), Datum::new_bytes(b"test2")],
+        &[Datum::new_bytes_datum(b"test1"), Datum::new_bytes_datum(b"test2")],
         &mut encoded,
     )
     .unwrap();
@@ -1020,9 +1020,9 @@ fn test_decode_with_commit_ts() {
     assert_eq!(
         decoded.values,
         [
-            Datum::new_collation_string(b"test1", Collation::DEFAULT),
+            Datum::new_collation_string_datum(b"test1", Collation::DEFAULT),
             Datum::UInt(123_456),
-            Datum::new_collation_string(b"test2", Collation::DEFAULT),
+            Datum::new_collation_string_datum(b"test2", Collation::DEFAULT),
         ]
     );
 }
@@ -1147,8 +1147,8 @@ fn test_types_new_row_codec_full_table_with_old_format_outputs() {
         Datum::Int(1),
         Datum::UInt(1),
         Datum::Real(2.0),
-        Datum::new_collation_string(b"abc", Collation::DEFAULT),
-        Datum::new_collation_string(b"ab", Collation::DEFAULT),
+        Datum::new_collation_string_datum(b"abc", Collation::DEFAULT),
+        Datum::new_collation_string_datum(b"ab", Collation::DEFAULT),
         Datum::Time(
             Time::new(
                 CoreTime::from_date(2011, 11, 10, 11, 11, 11, 999_999),
@@ -1171,7 +1171,7 @@ fn test_types_new_row_codec_full_table_with_old_format_outputs() {
             3_223_600,
             Some(BinaryLiteralWidth::try_from(3_u8).unwrap()),
         )),
-        Datum::new_collation_string(b"", Collation::DEFAULT),
+        Datum::new_collation_string_datum(b"", Collation::DEFAULT),
     ];
     // Expected value after `DecodeToBytes` + `codec.DecodeOne`: strings stay
     // octets, timestamps become their packed uint (Go: 1840446893366133311),
@@ -1227,7 +1227,7 @@ fn test_types_new_row_codec_full_table_with_old_format_outputs() {
         } else if case == 2 {
             let oversized = vec![b'a'; u16::MAX as usize + 1];
             case_inputs[BLOB_ENTRY] =
-                Datum::new_collation_string(oversized.clone(), Collation::DEFAULT);
+                Datum::new_collation_string_datum(oversized.clone(), Collation::DEFAULT);
             case_old[BLOB_ENTRY] = Datum::Bytes(oversized);
         }
 
@@ -1438,7 +1438,7 @@ fn test_row_checksum_unordered_columns_sort_before_crc() {
     };
     let mut row = RowData {
         columns: vec![
-            make_column(3, Datum::new_collation_string(b"foobar", Collation::Binary)),
+            make_column(3, Datum::new_collation_string_datum(b"foobar", Collation::Binary)),
             make_column(1, Datum::Null),
             make_column(4, Datum::Time(timestamp)),
             make_column(2, Datum::Int(42)),

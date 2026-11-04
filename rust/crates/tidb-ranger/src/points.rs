@@ -1765,7 +1765,7 @@ mod tests {
     #[test]
     fn unsigned_columns_clamp_negative_constants() {
         let mut unsigned_ft = FieldType::new(FieldTypeCode::LongLong);
-        unsigned_ft.set_flags(unsigned_ft.flags() | tidb_datatype::FieldTypeFlags::UNSIGNED);
+        unsigned_ft.set_flag(unsigned_ft.flags() | tidb_datatype::FieldTypeFlags::UNSIGNED);
 
         let (val, op, valid) = handle_unsigned_col(&unsigned_ft, Datum::Int(-1), OP_GT);
         assert!(valid);
@@ -2251,7 +2251,7 @@ mod tests {
         let evaluate = |expression: &Expression| match expression {
             Expression::Constant(constant) => {
                 match constant.param_marker.map(|marker| marker.order) {
-                    Some(0) => Ok(Datum::new_collation_string(
+                    Some(0) => Ok(Datum::new_collation_string_datum(
                         b"new!_%".to_vec(),
                         Collation::Utf8Mb4Bin,
                     )),
@@ -2283,7 +2283,7 @@ mod tests {
 
     fn like_for_parameters(str_ft: &FieldType) -> Expression {
         let mut pattern = tidb_expr::constant::Constant::new(
-            Datum::new_collation_string(b"old%".to_vec(), Collation::Utf8Mb4Bin),
+            Datum::new_collation_string_datum(b"old%".to_vec(), Collation::Utf8Mb4Bin),
             str_ft.clone(),
         );
         pattern.param_marker = Some(tidb_expr::constant::ParamMarker { order: 0 });

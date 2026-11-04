@@ -402,7 +402,7 @@ impl ViewerState {
         };
         let instance = self.cluster_instance_address();
         for row in &mut rows {
-            row.insert(0, tidb_datatype::Datum::new_string(instance.as_str()));
+            row.insert(0, tidb_datatype::Datum::new_string_datum(instance.as_str()));
         }
         Ok(rows)
     }
@@ -571,10 +571,10 @@ use tidb_charset::Collation;
                     transaction
                         .current_sql_digest
                         .clone()
-                        .map(Datum::new_string)
+                        .map(Datum::new_string_datum)
                         .unwrap_or(Datum::Null),
                     current_sql_digest_text
-                        .map(Datum::new_string)
+                        .map(Datum::new_string_datum)
                         .unwrap_or(Datum::Null),
                     Datum::new_enum(
                         MysqlEnum::new(transaction.state, state_index),
@@ -584,13 +584,13 @@ use tidb_charset::Collation;
                     Datum::UInt(transaction.mem_buffer_keys),
                     Datum::Int(transaction.mem_buffer_bytes),
                     Datum::UInt(transaction.session_id),
-                    Datum::new_string(transaction.user),
-                    Datum::new_string(transaction.db),
-                    Datum::new_string(
+                    Datum::new_string_datum(transaction.user),
+                    Datum::new_string_datum(transaction.db),
+                    Datum::new_string_datum(
                         serde_json::to_string(&transaction.all_sql_digests)
                             .expect("SQL digest strings serialize"),
                     ),
-                    Datum::new_string(
+                    Datum::new_string_datum(
                         transaction
                             .related_table_ids
                             .iter()
@@ -676,14 +676,14 @@ use tidb_charset::Collation;
                     .and_then(|digest| texts.get(digest))
                     .filter(|text| !text.is_empty())
                     .cloned()
-                    .map(Datum::new_string)
+                    .map(Datum::new_string_datum)
                     .unwrap_or(Datum::Null);
                 vec![
-                    Datum::new_string(key_hex),
+                    Datum::new_string_datum(key_hex),
                     key_info,
                     Datum::UInt(wait.txn),
                     Datum::UInt(wait.wait_for_txn),
-                    digest.map(Datum::new_string).unwrap_or(Datum::Null),
+                    digest.map(Datum::new_string_datum).unwrap_or(Datum::Null),
                     digest_text,
                 ]
             })
@@ -818,7 +818,7 @@ use tidb_charset::Collation;
                                 .get(&item.sql_digest)
                                 .filter(|text| !text.is_empty())
                                 .cloned()
-                                .map(Datum::new_string)
+                                .map(Datum::new_string_datum)
                                 .unwrap_or(Datum::Null);
                             let key_info = if item.key.is_empty() || !needs_key_info {
                                 Datum::Null

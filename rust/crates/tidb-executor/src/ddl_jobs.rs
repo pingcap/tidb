@@ -26,7 +26,7 @@ use crate::SessionExtendedInfoSchema;
 pub fn ts_2_time(timestamp: u64) -> Time {
     use chrono::TimeZone;
     // Go `model.TSConvert2Time`.
-    let milliseconds = tidb_model::GoTime::from_tso(timestamp).unix_millis();
+    let milliseconds = tidb_model::GoTime::from_tso(timestamp).unix_milli();
     let utc = chrono::Utc
         .timestamp_millis_opt(milliseconds)
         .single()

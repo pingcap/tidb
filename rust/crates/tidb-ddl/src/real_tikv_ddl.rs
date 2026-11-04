@@ -1065,7 +1065,7 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
 /// Pinned Go `GenGIDAndInsertJobsWithRetry`: lock the global-ID key, assign
 /// every action-owned ID, run the caller's registration callback, encode all
 /// rows, and commit the allocation and inserts atomically.
-pub fn gen_global_ids_and_insert_jobs_with_retry<S, F, Cleanup>(
+pub fn gen_gid_and_insert_jobs_with_retry<S, F, Cleanup>(
     opener: Arc<RealOptimisticTransactionOpener<S>>,
     sess_pool: Option<&dyn tidb_ddl_build::session_pool::DdlSessionPool>,
     specs: &mut [tidb_ddl_jobsubmit::JobSpec],
@@ -1230,7 +1230,7 @@ pub fn submit_check_constraint_job_with_retry<S: StoreClient>(
         .map_err(ClusterDdlError::NotCommitted)?;
 
     // Go `BeforeInsertWithAssignedIDs: s.registerJobDoneChannels`.
-    gen_global_ids_and_insert_jobs_with_retry(
+    gen_gid_and_insert_jobs_with_retry(
         opener,
         None,
         std::slice::from_mut(&mut spec),
@@ -1699,7 +1699,7 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
             let (id, mutation) = tidb_ddl_jobsubmit::reserve_placement_policy_id(meta)?;
             Ok((id, vec![mutation]))
         })?;
-        crate::cluster_ddl::placement_policy::set_placement_policy_id(&spec, policy_id);
+        crate::cluster_ddl::placement_policy::gen_placement_policy_id(&spec, policy_id);
     }
     // Go `deliveryJob`: the node's submit loop inserts the job, maybe merged
     // with others (`BeforeInsertWithAssignedIDs: s.registerJobDoneChannels`).
@@ -1712,7 +1712,7 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
             submitted.merged_table_id,
         ));
     }
-    gen_global_ids_and_insert_jobs_with_retry(
+    gen_gid_and_insert_jobs_with_retry(
         opener,
         backfiller.session_pool().as_deref(),
         std::slice::from_mut(&mut spec),

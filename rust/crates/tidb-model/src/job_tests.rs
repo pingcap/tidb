@@ -48,7 +48,7 @@ fn go_test_job_start_time() {
     let _ = &mut job;
     // Go: `TSConvert2Time(job.StartTS) == time.Unix(0, 0)` -- a zero StartTS
     // decodes to the epoch.
-    assert_eq!(crate::bdr::ts_convert_2_time(0).unix_millis(), 0);
+    assert_eq!(crate::bdr::ts_convert_2_time(0).unix_milli(), 0);
 }
 
 /// Go `TestState` (`job_test.go:48`): every live job state renders a name.

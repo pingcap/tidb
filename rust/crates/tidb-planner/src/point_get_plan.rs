@@ -325,7 +325,7 @@ fn build_fast_point_physical_plan(
                 },
                 None => None,
             };
-            crate::access_path::fast_index_is_available_by_hints(
+            crate::access_path::index_is_available_by_hints(
                 current_db,
                 database,
                 visible,
@@ -524,7 +524,7 @@ fn build_fast_point_physical_plan(
     if point.index_id.is_some() && index_name.is_none() {
         return Ok(None);
     }
-    if !crate::access_path::fast_index_is_available_by_hints(
+    if !crate::access_path::index_is_available_by_hints(
         current_db,
         database,
         visible,
@@ -602,7 +602,7 @@ fn overflow_plans_table_dual(
     table_ref: &tidb_ast::TableRef,
 ) -> bool {
     let index_available = |index_name: Option<&str>| {
-        crate::access_path::fast_index_is_available_by_hints(
+        crate::access_path::index_is_available_by_hints(
             current_db,
             database,
             visible,

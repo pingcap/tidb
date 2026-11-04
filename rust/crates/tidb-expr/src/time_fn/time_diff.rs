@@ -36,7 +36,7 @@ pub(crate) enum TimeDiffArg {
 
 /// The kind Go's `getArgEvalTp` gives an argument of static type `field`.
 /// Without a static type the datum's own kind stands in for it.
-pub(crate) fn arg_kind(field: Option<&FieldType>, value: &Datum) -> TimeDiffArg {
+pub(crate) fn get_arg_eval_tp(field: Option<&FieldType>, value: &Datum) -> TimeDiffArg {
     match field.map(FieldType::eval_type) {
         Some(EvalType::Duration) => TimeDiffArg::Duration,
         Some(EvalType::Datetime | EvalType::Timestamp) => TimeDiffArg::Time,
@@ -116,7 +116,7 @@ pub(crate) fn time_diff_untyped(vals: &[Datum], cols: &dyn Columns) -> Result<Da
     let fsp = value_fsp(left)?.max(value_fsp(right)?);
     time_diff(
         vals,
-        [arg_kind(None, left), arg_kind(None, right)],
+        [get_arg_eval_tp(None, left), get_arg_eval_tp(None, right)],
         fsp,
         cols,
     )

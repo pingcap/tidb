@@ -206,7 +206,7 @@ impl PasswordOrLockOptions {
 /// The account identity a written role names. Go's role grammar defaults the
 /// omitted host to `%`, the same wildcard host `CREATE USER r` gets, which is
 /// what makes `CREATE ROLE r` and `CREATE USER r` collide.
-fn role_identity(spec: &tidb_ast::RoleSpec) -> tidb_privilege::Account {
+fn role_identity(spec: &tidb_ast::RoleIdentity) -> tidb_privilege::Account {
     let host = if spec.host.is_empty() {
         "%".to_owned()
     } else {
@@ -794,7 +794,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
     fn create_role_stmt(
         &mut self,
         if_not_exists: bool,
-        roles: &[tidb_ast::RoleSpec],
+        roles: &[tidb_ast::RoleIdentity],
     ) -> Result<(), DriverError> {
         self.require_create_user_privilege(true)?;
         let Some(registry) = self.privilege_registry().cloned() else {
@@ -1095,7 +1095,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
     /// `REVOKE` report a missing role differently (3523 vs 1396).
     fn resolve_roles(
         &self,
-        roles: &[tidb_ast::RoleSpec],
+        roles: &[tidb_ast::RoleIdentity],
         missing: impl Fn(&str, &str) -> DriverError,
     ) -> Result<Vec<tidb_privilege::Account>, DriverError> {
         let Some(registry) = self.privilege_registry() else {
@@ -1154,7 +1154,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         &self,
         registry: &tidb_privilege::PrivilegeRegistry,
         account: &tidb_privilege::Account,
-        roles: &[tidb_ast::RoleSpec],
+        roles: &[tidb_ast::RoleIdentity],
     ) -> Result<Vec<tidb_privilege::Account>, DriverError> {
         roles
             .iter()

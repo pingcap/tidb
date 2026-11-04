@@ -93,7 +93,7 @@ fn source_copy_nil_and_deep_boundaries_match() {
 fn source_count_factor_query_and_accessors_match() {
     let v1 = populated_index(1);
     assert_eq!(v1.total_row_count(), 7.0);
-    assert_eq!(v1.increase_factor(14), 2.0);
+    assert_eq!(v1.get_increase_factor(14), 2.0);
     assert_eq!(v1.query_bytes(b"top", 8), 3);
     assert_eq!(v1.query_bytes(b"cms", 8), 4);
     let mut histogram_only = v1.clone();
@@ -111,7 +111,7 @@ fn source_count_factor_query_and_accessors_match() {
     v2.histogram.buckets.clear();
     v2.histogram.null_count = 0;
     v2.top_n = Some(TopN::default());
-    assert_eq!(v2.increase_factor(100), 1.0);
+    assert_eq!(v2.get_increase_factor(100), 1.0);
 }
 
 /// Go `(*TopN).TotalCount` returns 0 for a nil TopN, so a version-2

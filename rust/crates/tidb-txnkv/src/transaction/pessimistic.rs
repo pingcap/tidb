@@ -109,7 +109,7 @@ pub struct AcquiredLocks {
     /// Keys fair locking locked *despite* a conflict, with the commit
     /// timestamp of the version that beat this statement.
     ///
-    /// Non-empty only under [`crate::transaction::RealTransaction::set_fair_locking`].
+    /// Non-empty only under [`crate::transaction::TikvTxn::set_fair_locking`].
     /// Each entry says "the lock exists, but at this higher timestamp": the
     /// statement's own result is stale and must be recomputed, while the lock
     /// itself carries over to the retry. Go turns the same fact into
@@ -121,7 +121,7 @@ pub struct AcquiredLocks {
     /// (`pkg/executor/point_get.go:614 InitReturnValues(1)`; the response
     /// lands in `TxnCtx.SetPessimisticLockCache`, and the executor's own
     /// `get` then reads from that cache instead of storage). Empty unless
-    /// [`crate::transaction::RealTransaction::acquire_locks_returning_values`] was
+    /// [`crate::transaction::TikvTxn::acquire_locks_returning_values`] was
     /// used. A key maps to `None` when TiKV reports it absent.
     pub values: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
     /// client-go `LockCtx.Stats` of the call, which Go hands the statement

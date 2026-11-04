@@ -576,7 +576,7 @@ mod tests {
         ] {
             let ctx = crate::StmtContext::for_query()
                 .with_truncate_level(level)
-                .with_prepared_params(vec![Datum::new_string(input)].into());
+                .with_prepared_params(vec![Datum::new_string_datum(input)].into());
             let result = tidb_expr::eval_expression_once(&expression, &ctx);
             if let Some(expected) = expected {
                 assert_eq!(result.unwrap(), expected, "{level:?} / {input}");

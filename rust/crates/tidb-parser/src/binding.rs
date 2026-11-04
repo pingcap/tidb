@@ -178,7 +178,7 @@ impl Parser {
     }
 
     /// Direct translation of Go's `parseSetBindingStmt` branch.
-    pub(crate) fn parse_set_binding(&mut self) -> PResult<SetBindingStmt> {
+    pub(crate) fn parse_set_binding_stmt(&mut self) -> PResult<SetBindingStmt> {
         self.expect_kw("SET")?;
         self.expect_kw("BINDING")?;
         let status = if self.is_kw("ENABLED") {

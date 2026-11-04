@@ -278,7 +278,7 @@ fn substitute_cast_or_grouping(
         collation.set_coercibility(coercibility);
     }
     if let (Some(flags), Some(ret_type)) = (original_flags, static_type_mut(&mut rebuilt)) {
-        ret_type.set_flags(flags);
+        ret_type.set_flag(flags);
     }
     SubstituteOutcome {
         substituted: true,
@@ -838,7 +838,7 @@ mod native_cast_tests {
                     };
                     let expected = match &value {
                         Datum::Int(v) if kind == "unsigned" => Datum::UInt(*v as u64),
-                        Datum::Int(v) if kind == "char" => Datum::new_string(v.to_string()),
+                        Datum::Int(v) if kind == "char" => Datum::new_string_datum(v.to_string()),
                         _ => value,
                     };
                     assert_eq!(result.value, expected);

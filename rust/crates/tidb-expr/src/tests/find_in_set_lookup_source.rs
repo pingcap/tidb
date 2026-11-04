@@ -134,7 +134,7 @@ fn find_in_set_strlist_cache_lifecycle() {
 
     let cache = BuiltinFuncCache::default();
     let collation = tidb_charset::Collation::Utf8Mb4GeneralCi;
-    let list = Datum::new_collation_string("a,b,a", collation);
+    let list = Datum::new_collation_string_datum("a,b,a", collation);
     let first = cache
         .get_or_init_cache(11, || build_find_in_set_lookup(&list, collation))
         .expect("lookup constructor");
@@ -149,7 +149,7 @@ fn find_in_set_strlist_cache_lifecycle() {
     assert!(Arc::ptr_eq(&first, &hit));
     assert_eq!(
         crate::builtin_ext::find_in_set_lookup(
-            &Datum::new_collation_string("a", collation),
+            &Datum::new_collation_string_datum("a", collation),
             &first,
             collation,
         )

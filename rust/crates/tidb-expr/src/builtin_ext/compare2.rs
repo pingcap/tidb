@@ -286,7 +286,7 @@ pub(crate) fn extremum_with_signature(
                 best = Some(text);
             }
         }
-        return Ok(Datum::new_string(best.unwrap_or_default()));
+        return Ok(Datum::new_string_datum(best.unwrap_or_default()));
     }
     // Go `builtinGreatestStringSig.evalString`: every argument is rendered
     // with `EvalString` -- the cast `newBaseBuiltinFuncWithTp` already wrapped
@@ -306,7 +306,7 @@ pub(crate) fn extremum_with_signature(
             best = candidate;
         }
     }
-    Ok(Datum::new_string(best))
+    Ok(Datum::new_string_datum(best))
 }
 
 /// Go's ETDatetime/ETTimestamp arm (`builtinGreatestTimeSig.evalTime`): every
@@ -808,7 +808,7 @@ fn inet_ntoa(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError
     let Ok(value) = u32::try_from(value) else {
         return Ok(Datum::Null);
     };
-    Ok(Datum::new_string(format!(
+    Ok(Datum::new_string_datum(format!(
         "{}.{}.{}.{}",
         value >> 24,
         (value >> 16) & 0xff,
@@ -856,11 +856,11 @@ fn inet6_aton_text(text: &str) -> Result<Datum, EvalError> {
     // bytes Go copies from `ip.To16()`/`ip.To4()`.
     if !text.contains(':') {
         if let Ok(ip) = Ipv4Addr::from_str(text) {
-            return Ok(Datum::new_bytes(ip.octets()));
+            return Ok(Datum::new_bytes_datum(ip.octets()));
         }
     }
     Ok(Ipv6Addr::from_str(text)
-        .map(|ip| Datum::new_bytes(ip.octets()))
+        .map(|ip| Datum::new_bytes_datum(ip.octets()))
         .unwrap_or(Datum::Null))
 }
 
@@ -881,10 +881,10 @@ fn inet6_ntoa(value: &Datum) -> Result<Datum, EvalError> {
         _ => coerce_str(value)?.expect("non-NULL scalar").into_bytes(),
     };
     match bytes.len() {
-        4 => Ok(Datum::new_string(
+        4 => Ok(Datum::new_string_datum(
             Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3]).to_string(),
         )),
-        16 => Ok(Datum::new_string(
+        16 => Ok(Datum::new_string_datum(
             Ipv6Addr::from(<[u8; 16]>::try_from(bytes).unwrap()).to_string(),
         )),
         _ => Ok(Datum::Null),
@@ -994,7 +994,7 @@ mod tests {
     }
 
     fn s(value: &str) -> Datum {
-        Datum::new_string(value.to_string())
+        Datum::new_string_datum(value.to_string())
     }
 
     /// `TestIntervalFunc` vectors that fit the current signed `Datum` domain.
@@ -1137,18 +1137,18 @@ mod tests {
         let cases = [
             (
                 Datum::Int(167_773_449),
-                Datum::new_string("10.0.5.9".to_string()),
+                Datum::new_string_datum("10.0.5.9".to_string()),
             ),
             (
                 Datum::Int(2_063_728_641),
-                Datum::new_string("123.2.0.1".to_string()),
+                Datum::new_string_datum("123.2.0.1".to_string()),
             ),
-            (Datum::Int(0), Datum::new_string("0.0.0.0".to_string())),
+            (Datum::Int(0), Datum::new_string_datum("0.0.0.0".to_string())),
             (Datum::Int(545_460_846_593), Datum::Null),
             (Datum::Int(-1), Datum::Null),
             (
                 Datum::Int(4_294_967_295),
-                Datum::new_string("255.255.255.255".to_string()),
+                Datum::new_string_datum("255.255.255.255".to_string()),
             ),
             (Datum::Null, Datum::Null),
         ];
@@ -1163,17 +1163,17 @@ mod tests {
     #[test]
     fn inet6_aton_go_vectors() {
         let cases = [
-            ("0.0.0.0", Datum::new_bytes([0, 0, 0, 0])),
-            ("10.0.5.9", Datum::new_bytes([0x0a, 0, 5, 9])),
+            ("0.0.0.0", Datum::new_bytes_datum([0, 0, 0, 0])),
+            ("10.0.5.9", Datum::new_bytes_datum([0x0a, 0, 5, 9])),
             (
                 "fdfe::5a55:caff:fefa:9089",
-                Datum::new_bytes([
+                Datum::new_bytes_datum([
                     0xfd, 0xfe, 0, 0, 0, 0, 0, 0, 0x5a, 0x55, 0xca, 0xff, 0xfe, 0xfa, 0x90, 0x89,
                 ]),
             ),
             (
                 "::ffff:1.2.3.4",
-                Datum::new_bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 1, 2, 3, 4]),
+                Datum::new_bytes_datum([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 1, 2, 3, 4]),
             ),
             ("", Datum::Null),
             ("Not IP address", Datum::Null),
@@ -1181,7 +1181,7 @@ mod tests {
             ("1.2.256", Datum::Null),
             (
                 "::ffff:255.255.255.255",
-                Datum::new_bytes([
+                Datum::new_bytes_datum([
                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
                 ]),
             ),
@@ -1204,20 +1204,20 @@ mod tests {
     #[test]
     fn inet6_ntoa_go_vectors() {
         let cases = [
-            (Datum::new_bytes([0, 0, 0, 0]), "0.0.0.0"),
-            (Datum::new_bytes([0x0a, 0, 5, 9]), "10.0.5.9"),
+            (Datum::new_bytes_datum([0, 0, 0, 0]), "0.0.0.0"),
+            (Datum::new_bytes_datum([0x0a, 0, 5, 9]), "10.0.5.9"),
             (
-                Datum::new_bytes([
+                Datum::new_bytes_datum([
                     0xfd, 0xfe, 0, 0, 0, 0, 0, 0, 0x5a, 0x55, 0xca, 0xff, 0xfe, 0xfa, 0x90, 0x89,
                 ]),
                 "fdfe::5a55:caff:fefa:9089",
             ),
             (
-                Datum::new_bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 1, 2, 3, 4]),
+                Datum::new_bytes_datum([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 1, 2, 3, 4]),
                 "::ffff:1.2.3.4",
             ),
             (
-                Datum::new_bytes([
+                Datum::new_bytes_datum([
                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
                 ]),
                 "::ffff:255.255.255.255",
@@ -1227,7 +1227,7 @@ mod tests {
             assert_eq!(call("INET6_NTOA", &[value]), s(want));
         }
         for bytes in [Vec::new(), vec![0x0a, 0, 5], vec![0; 15]] {
-            assert_eq!(call("INET6_NTOA", &[Datum::new_bytes(bytes)]), Datum::Null);
+            assert_eq!(call("INET6_NTOA", &[Datum::new_bytes_datum(bytes)]), Datum::Null);
         }
         assert_eq!(call("INET6_NTOA", &[Datum::Null]), Datum::Null);
     }
@@ -1286,7 +1286,7 @@ mod tests {
         ];
         for (bytes, want) in mapped_cases {
             assert_eq!(
-                call("IS_IPV4_MAPPED", &[Datum::new_bytes(bytes)]),
+                call("IS_IPV4_MAPPED", &[Datum::new_bytes_datum(bytes)]),
                 Datum::Int(want)
             );
         }
@@ -1306,7 +1306,7 @@ mod tests {
         ];
         for (bytes, want) in compat_cases {
             assert_eq!(
-                call("IS_IPV4_COMPAT", &[Datum::new_bytes(bytes)]),
+                call("IS_IPV4_COMPAT", &[Datum::new_bytes_datum(bytes)]),
                 Datum::Int(want)
             );
         }
@@ -1375,7 +1375,7 @@ mod tests {
         assert_eq!(
             call(
                 "GREATEST",
-                &[vector(vec![1.0, 2.0]), Datum::new_string("[1,3]")]
+                &[vector(vec![1.0, 2.0]), Datum::new_string_datum("[1,3]")]
             ),
             vector(vec![1.0, 3.0])
         );

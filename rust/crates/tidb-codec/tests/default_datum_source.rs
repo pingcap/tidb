@@ -62,12 +62,12 @@ fn decode_one_source_scalar_rows_materialize_losslessly() {
     encode_bytes(&mut encoded, b"binary\0bytes");
     assert_eq!(
         decode(&encoded).unwrap(),
-        Datum::new_bytes(b"binary\0bytes")
+        Datum::new_bytes_datum(b"binary\0bytes")
     );
 
     let mut encoded = vec![VALUE_COMPACT_BYTES_FLAG];
     encode_compact_bytes(&mut encoded, b"compact");
-    assert_eq!(decode(&encoded).unwrap(), Datum::new_bytes(b"compact"));
+    assert_eq!(decode(&encoded).unwrap(), Datum::new_bytes_datum(b"compact"));
 
     let decimal = Decimal::from_literal("12.340");
     let mut encoded = vec![VALUE_DECIMAL_FLAG];

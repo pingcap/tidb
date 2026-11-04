@@ -792,9 +792,9 @@ mod tests {
         let context = crate::StmtContext::for_query();
         let plan = cluster_analyze_plan(&table, None).unwrap();
         let samples = super::virtual_samples::VirtualSamples::new(&table, &plan, &context).unwrap();
-        let mut row = vec![Datum::new_string("a  "), Datum::Null];
+        let mut row = vec![Datum::new_string_datum("a  "), Datum::Null];
         samples.materialize(&mut row, &context).unwrap();
-        assert_eq!(row[1], Datum::new_string("a"));
+        assert_eq!(row[1], Datum::new_string_datum("a"));
         {
             let column = table.columns.get(1).unwrap();
             let mut column = column.write();

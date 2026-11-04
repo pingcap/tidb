@@ -131,7 +131,7 @@ fn set_bin_flag_or_bin_str(source: &FieldType, target: &mut FieldType) {
     } else if source.flags() & FieldTypeFlags::BINARY != 0 {
         target.add_flags(FieldTypeFlags::BINARY);
     } else {
-        target.del_flags(FieldTypeFlags::BINARY);
+        target.del_flag(FieldTypeFlags::BINARY);
     }
 }
 
@@ -156,7 +156,7 @@ pub fn union_join_field_type(a: &FieldType, b: &FieldType) -> FieldType {
         // every OTHER flag `AggFieldType` carried is cleared here too — which
         // is why this is a `set_flags` of the masked value and not a
         // `del_flags(UNSIGNED)`.
-        result.set_flags(result.flags() & (b.flags() & FieldTypeFlags::UNSIGNED));
+        result.set_flag(result.flags() & (b.flags() & FieldTypeFlags::UNSIGNED));
     } else {
         // "Non-decimal results will be unsigned when a,b both unsigned."
         result.add_flags(

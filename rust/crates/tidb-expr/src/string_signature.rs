@@ -162,9 +162,9 @@ impl StrUnits {
     /// `SetBinFlagOrBinStr` arranges in Go.
     pub(crate) fn pack(&self, bytes: Vec<u8>) -> Datum {
         if self.binary {
-            Datum::new_bytes(bytes)
+            Datum::new_bytes_datum(bytes)
         } else {
-            Datum::new_string(bytes)
+            Datum::new_string_datum(bytes)
         }
     }
 }
@@ -179,8 +179,8 @@ use tidb_charset::Collation;
     fn binary_charset_selects_the_byte_signature() {
         // `aéb` is four bytes and three characters, so byte and character
         // answers cannot coincide.
-        let binary = Datum::new_bytes("aéb".as_bytes().to_vec());
-        let text = Datum::new_string("aéb".to_string());
+        let binary = Datum::new_bytes_datum("aéb".as_bytes().to_vec());
+        let text = Datum::new_string_datum("aéb".to_string());
         assert!(is_binary_str(&binary));
         assert!(!is_binary_str(&text));
         assert_eq!(StrUnits::of(&binary).unwrap().unwrap().len(), 4);
@@ -199,35 +199,35 @@ use tidb_charset::Collation;
 
     #[test]
     fn slicing_clamps_and_keeps_charset() {
-        let text = Datum::new_string("aéb".to_string());
+        let text = Datum::new_string_datum("aéb".to_string());
         let units = StrUnits::of(&text).unwrap().unwrap();
         assert_eq!(units.slice(1, 2), "é".as_bytes());
         assert_eq!(units.slice(2, 99), b"b");
         assert_eq!(units.slice(3, 1), b"");
         assert_eq!(
             units.pack(units.slice(0, 2).to_vec()),
-            Datum::new_string("aé".to_string())
+            Datum::new_string_datum("aé".to_string())
         );
 
-        let binary = Datum::new_bytes("aéb".as_bytes().to_vec());
+        let binary = Datum::new_bytes_datum("aéb".as_bytes().to_vec());
         let units = StrUnits::of(&binary).unwrap().unwrap();
         assert_eq!(units.slice(1, 3), &[0xC3, 0xA9]);
         assert_eq!(
             units.pack(units.slice(1, 3).to_vec()),
-            Datum::new_bytes(vec![0xC3, 0xA9])
+            Datum::new_bytes_datum(vec![0xC3, 0xA9])
         );
     }
 
     #[test]
     fn malformed_utf8_groups_one_unit_per_bad_byte() {
         // Go's `[]rune("a\xffb")` is three runes: 'a', RuneError, 'b'.
-        let value = Datum::new_string(vec![b'a', 0xFF, b'b']);
+        let value = Datum::new_string_datum(vec![b'a', 0xFF, b'b']);
         let units = StrUnits::of(&value).unwrap().unwrap();
         assert_eq!(units.len(), 3);
         assert_eq!(units.slice(1, 2), "\u{fffd}".as_bytes());
         assert_eq!(
             units.pack(units.slice(0, 2).to_vec()),
-            Datum::new_string("a\u{fffd}")
+            Datum::new_string_datum("a\u{fffd}")
         );
     }
 

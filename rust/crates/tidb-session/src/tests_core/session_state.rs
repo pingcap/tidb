@@ -425,7 +425,7 @@ fn sql_mode_is_normalized_when_it_is_set() {
     session.apply_set("SET sql_mode = 'TRADITIONAL'").unwrap();
     assert_eq!(
         session.run("SELECT @@sql_mode").unwrap(),
-        StmtResult::Rows(vec![vec![Datum::new_string(
+        StmtResult::Rows(vec![vec![Datum::new_string_datum(
             "STRICT_TRANS_TABLES,STRICT_ALL_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,\
              ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION,TRADITIONAL"
         )]])
@@ -443,7 +443,7 @@ fn sql_mode_is_normalized_when_it_is_set() {
     session.apply_set("SET sql_mode = 'ansi'").unwrap();
     assert_eq!(
         session.run("SELECT @@sql_mode").unwrap(),
-        StmtResult::Rows(vec![vec![Datum::new_string(
+        StmtResult::Rows(vec![vec![Datum::new_string_datum(
             "REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI"
         )]])
     );
@@ -454,7 +454,7 @@ fn sql_mode_is_normalized_when_it_is_set() {
         .unwrap();
     assert_eq!(
         session.run("SELECT @@sql_mode").unwrap(),
-        StmtResult::Rows(vec![vec![Datum::new_string("ANSI_QUOTES")]])
+        StmtResult::Rows(vec![vec![Datum::new_string_datum("ANSI_QUOTES")]])
     );
 
     // Captured: an unknown mode and a numeric bitmask are both 1231, and the
@@ -484,7 +484,7 @@ fn sql_mode_is_normalized_when_it_is_set() {
     // A rejected SET left the previous value in place.
     assert_eq!(
         session.run("SELECT @@sql_mode").unwrap(),
-        StmtResult::Rows(vec![vec![Datum::new_string("ANSI_QUOTES")]])
+        StmtResult::Rows(vec![vec![Datum::new_string_datum("ANSI_QUOTES")]])
     );
 }
 
@@ -575,7 +575,7 @@ fn shared_lock_promotion_bypasses_noop_share_gate() {
     session
         .run("SET tidb_enable_shared_lock_promotion = ON")
         .unwrap();
-    assert!(session.vars().shared_lock_promotion_enabled());
+    assert!(session.vars().shared_lock_promotion());
     session
         .run("SELECT b FROM t WHERE a = 1 FOR SHARE")
         .unwrap();
@@ -584,7 +584,7 @@ fn shared_lock_promotion_bypasses_noop_share_gate() {
     session
         .run("SET tidb_enable_shared_lock_promotion = OFF")
         .unwrap();
-    assert!(!session.vars().shared_lock_promotion_enabled());
+    assert!(!session.vars().shared_lock_promotion());
     crate::tests_support::assert_err(session.run("SELECT b FROM t WHERE a = 1 LOCK IN SHARE MODE"), 1235, "function LOCK IN SHARE MODE has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions");
 }
 
@@ -703,7 +703,7 @@ fn noop_gate_cannot_be_disabled_while_session_read_only_is_on() {
     );
     assert_eq!(
         session.run("SELECT @@tidb_enable_noop_functions").unwrap(),
-        StmtResult::Rows(vec![vec![Datum::new_string("ON")]])
+        StmtResult::Rows(vec![vec![Datum::new_string_datum("ON")]])
     );
 
     session.run("SET tx_read_only = OFF").unwrap();
@@ -1440,7 +1440,7 @@ fn session_migration_batch_grant_accounts_print_raw_in_single_quotes() {
         session.run(&format!("SET sql_mode={sql_mode}")).unwrap();
         assert_eq!(
             session.run("SHOW GRANTS FOR 'quote`\"user'@'%'").unwrap(),
-            StmtResult::Rows(vec![vec![Datum::new_string(
+            StmtResult::Rows(vec![vec![Datum::new_string_datum(
                 "GRANT USAGE ON *.* TO 'quote`\"user'@'%'"
             )]])
         );

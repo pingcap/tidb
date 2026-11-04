@@ -853,7 +853,7 @@ mod tests {
 
     fn null_reject_string(value: &str) -> Expression {
         null_reject_constant(
-            Datum::new_string(value),
+            Datum::new_string_datum(value),
             FieldType::new(FieldTypeCode::VarString),
         )
     }

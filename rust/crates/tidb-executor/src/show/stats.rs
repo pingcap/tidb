@@ -129,7 +129,7 @@ pub fn data_for_analyze_status_helper(
                         job.processed_rows,
                         elapsed_seconds,
                     );
-                remaining = Datum::new_string(
+                remaining = Datum::new_string_datum(
                     crate::show_stats::format_analyze_remaining_seconds(
                         remaining_seconds,
                     )
@@ -145,17 +145,17 @@ pub fn data_for_analyze_status_helper(
             }
         }
         result_rows.push(vec![
-            Datum::new_string(job.table_schema.into_bytes()),
-            Datum::new_string(job.table_name.into_bytes()),
-            Datum::new_string(job.partition_name.into_bytes()),
-            Datum::new_string(job.job_info.into_bytes()),
+            Datum::new_string_datum(job.table_schema.into_bytes()),
+            Datum::new_string_datum(job.table_name.into_bytes()),
+            Datum::new_string_datum(job.partition_name.into_bytes()),
+            Datum::new_string_datum(job.job_info.into_bytes()),
             Datum::Int(job.processed_rows),
             start_time,
             end_time,
-            Datum::new_string(job.state.into_bytes()),
+            Datum::new_string_datum(job.state.into_bytes()),
             job.fail_reason
-                .map_or(Datum::Null, |value| Datum::new_string(value.into_bytes())),
-            Datum::new_string(job.instance.into_bytes()),
+                .map_or(Datum::Null, |value| Datum::new_string_datum(value.into_bytes())),
+            Datum::new_string_datum(job.instance.into_bytes()),
             job.process_id.map_or(Datum::Null, Datum::UInt),
             remaining,
             progress,

@@ -561,8 +561,8 @@ fn source_pseudo_estimates_when_the_column_has_no_statistics() {
         (
             "pseudo_string_range",
             vec![range_of(
-                Datum::new_collation_string("a", Collation::Binary),
-                Datum::new_collation_string("b", Collation::Binary),
+                Datum::new_collation_string_datum("a", Collation::Binary),
+                Datum::new_collation_string_datum("b", Collation::Binary),
                 false,
                 true,
             )],

@@ -25938,9 +25938,9 @@ fn a_tiflash_fallback_rerun_reads_tikv_and_carries_the_timeout() {
     assert!(!parser_warnings.is_empty(), "the hint warns");
     let mut expected = parser_warnings;
     expected.push(vec![
-        Datum::new_string("Error"),
+        Datum::new_string_datum("Error"),
         Datum::UInt(u64::from(tidb_errno::errcode::ErrTiFlashServerTimeout)),
-        Datum::new_string("TiFlash server timeout"),
+        Datum::new_string_datum("TiFlash server timeout"),
     ]);
     assert_eq!(run(&mut session, true), expected);
 
@@ -27465,7 +27465,7 @@ fn column_distribution_stats_read_on_a_statistics_session_as_go() {
 }
 
 fn workload_learning_pool(stack: &UnistoreClusterStack) -> Arc<dyn tidb_workloadlearning::SessionPool> {
-    Arc::new(tidb_domain_core::domain::workload_learning::WorkloadLearningSessionPool(
+    Arc::new(tidb_domain_core::domain::workload_learning::SysSessionPool(
         stack.factory.advanced_sys_session_pool(),
     ))
 }

@@ -4406,7 +4406,7 @@ impl StmtContext {
     /// stop `extractJoinGroupImpl` spells right after its own list: "If the
     /// session var is set to off, we will still reject the outer joins."
     #[must_use]
-    pub fn outer_join_reorder(&self) -> bool {
+    pub fn enable_outer_join_reorder(&self) -> bool {
         self.outer_join_reorder
     }
 
@@ -6942,7 +6942,7 @@ mod tests {
             expression
                 .eval(&ctx, dual.get_row(0))
                 .expect("CURRENT_RESOURCE_GROUP evaluates"),
-            Datum::new_string(b"rg1".to_vec())
+            Datum::new_string_datum(b"rg1".to_vec())
         );
     }
 

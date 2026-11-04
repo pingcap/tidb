@@ -126,7 +126,7 @@ fn test_get_lock_call_semantics_table() {
             tidb_ast::CiString::new("get_lock"),
             FieldType::new(FieldTypeCode::LongLong),
             vec![Expression::Constant(Constant::new(
-                Datum::new_string("testlock".to_owned()),
+                Datum::new_string_datum("testlock".to_owned()),
                 FieldType::new(FieldTypeCode::VarString),
             ))],
         );

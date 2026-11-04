@@ -72,7 +72,7 @@ pub trait StatsExec: AnalyzeExec {
         let tidb_ast::AdminStmt::Flush(flush) = admin.as_ref() else {
             return None;
         };
-        let tidb_ast::FlushTarget::StatsDelta { objects, .. } = &flush.target else {
+        let tidb_ast::FlushStmtType::StatsDelta { objects, .. } = &flush.target else {
             return None;
         };
         Some(self.flush_stats_delta_objects(objects))

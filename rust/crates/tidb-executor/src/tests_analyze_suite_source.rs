@@ -480,7 +480,7 @@ fn analyze_full_sampling_on_virtual_or_prefix_column_index() {
     assert_eq!(topn.num(), 1);
     assert_eq!(topn.entries()[0].count, 3);
     assert_eq!(
-        text_of_encoded(&Datum::new_bytes(topn.entries()[0].encoded.clone())),
+        text_of_encoded(&Datum::new_bytes_datum(topn.entries()[0].encoded.clone())),
         "a"
     );
     assert_eq!(index.histogram.buckets.len(), 1);

@@ -606,7 +606,7 @@ impl Table {
             .hist_coll
             .stats_version
             .max(i32::try_from(column.stats_version).unwrap_or(i32::MAX));
-        write(self.existence_map()).insert_column(id, true);
+        write(self.col_and_idx_existence_map()).insert_column(id, true);
         self.hist_coll.set_column(id, column);
     }
 
@@ -618,13 +618,13 @@ impl Table {
             .hist_coll
             .stats_version
             .max(i32::try_from(index.stats_version).unwrap_or(i32::MAX));
-        write(self.existence_map()).insert_index(id, true);
+        write(self.col_and_idx_existence_map()).insert_index(id, true);
         self.hist_coll.set_index(id, index);
     }
 
     /// Go `Table.ColAndIdxExistenceMap`, created empty on first use as
     /// `NewTable` does.
-    pub fn existence_map(&mut self) -> &RwLock<ColAndIdxExistenceMap> {
+    pub fn col_and_idx_existence_map(&mut self) -> &RwLock<ColAndIdxExistenceMap> {
         self.existence_map
             .get_or_insert_with(|| Arc::new(RwLock::new(ColAndIdxExistenceMap::new_without_size())))
     }

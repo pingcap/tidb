@@ -28,7 +28,7 @@ use std::collections::BTreeSet;
 
 use tidb_ast::{
     AdminCheckStmt, AdminStmt, BindingStatementTarget, CreateBindingSource, DdlStmt, DeleteKind,
-    DmlStmt, DropBindingTarget, FlushTarget, Join, JoinNode, QueryStmt, SessionStmt,
+    DmlStmt, DropBindingTarget, FlushStmtType, Join, JoinNode, QueryStmt, SessionStmt,
     SetBindingTarget, ShowStmt, Stmt, TableRef, UpdateKind,
 };
 
@@ -275,7 +275,7 @@ pub fn get_stmt_db_label(
                 }
             }
             AdminStmt::Flush(x) => {
-                if let FlushTarget::Tables { tables, .. } = &x.target {
+                if let FlushStmtType::Tables { tables, .. } = &x.target {
                     for table in tables {
                         db_label_set.insert(resolved.schema(table));
                     }

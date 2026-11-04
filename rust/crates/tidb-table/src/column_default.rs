@@ -1055,7 +1055,7 @@ mod tests {
     fn version1_timestamp_uses_stored_utc_then_consumer_zone() {
         // Written as 08:00 in a +08 session, the DDL path persists this UTC
         // wall clock. Reading it must recover the same instant everywhere.
-        let stored = Datum::new_string("2020-01-02 00:00:00");
+        let stored = Datum::new_string_datum("2020-01-02 00:00:00");
         let field_type = FieldType::new(FieldTypeCode::Timestamp);
         let utc = SessionTimeZone::utc();
         let plus_eight = fixed_zone("+08:00", 8 * 60 * 60);
@@ -1079,7 +1079,7 @@ mod tests {
 
     #[test]
     fn version0_timestamp_uses_injected_system_zone() {
-        let stored = Datum::new_string("2020-01-02 08:00:00");
+        let stored = Datum::new_string_datum("2020-01-02 08:00:00");
         let field_type = FieldType::new(FieldTypeCode::Timestamp);
         let system_plus_eight = fixed_zone("System", 8 * 60 * 60);
         let converted = materialize_stored_literal_with_system_zone(
@@ -1097,7 +1097,7 @@ mod tests {
 
     #[test]
     fn zero_timestamp_is_not_projected() {
-        let stored = Datum::new_string("0000-00-00 00:00:00");
+        let stored = Datum::new_string_datum("0000-00-00 00:00:00");
         let field_type = FieldType::new(FieldTypeCode::Timestamp);
         let converted = materialize_stored_literal(
             &stored,
@@ -1139,7 +1139,7 @@ mod tests {
             assert_eq!(converted.value, expected);
         }
 
-        let stored = Datum::new_string("12x");
+        let stored = Datum::new_string_datum("12x");
         let consumer = fixed_zone("+08:00", 8 * 60 * 60);
         let expected = stored
             .convert_to_in(&field_type, STRICT_FLAGS, &consumer)

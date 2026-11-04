@@ -751,7 +751,7 @@ impl PbBuiltin {
                             *value = if binary {
                                 Datum::Bytes(bytes)
                             } else {
-                                Datum::new_string(bytes)
+                                Datum::new_string_datum(bytes)
                             };
                         }
                         match operation {

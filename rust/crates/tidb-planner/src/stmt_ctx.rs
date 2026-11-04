@@ -250,8 +250,8 @@ impl crate::optimize::OptimizeContext for StmtContext {
     fn join_reorder_through_sel(&self) -> bool {
         StmtContext::join_reorder_through_sel(self)
     }
-    fn outer_join_reorder(&self) -> bool {
-        StmtContext::outer_join_reorder(self)
+    fn enable_outer_join_reorder(&self) -> bool {
+        StmtContext::enable_outer_join_reorder(self)
     }
     fn advanced_join_hint(&self) -> bool {
         StmtContext::advanced_join_hint(self)

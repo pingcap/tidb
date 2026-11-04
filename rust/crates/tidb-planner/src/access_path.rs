@@ -679,7 +679,7 @@ pub fn apply_table_index_hints(
 /// (not by unique prefix), and performs no warning or name validation. A
 /// rejected fast candidate falls back to ordinary planning, which owns those
 /// full behaviors.
-pub fn fast_index_is_available_by_hints(
+pub fn index_is_available_by_hints(
     current_db: &str,
     db_name: &str,
     table_alias: &str,
@@ -963,8 +963,8 @@ mod index_range_collation_tests {
         let collation = Collation::Utf8Mb4GeneralCi;
         let range = Range {
             collators: vec![collation],
-            low_val: vec![Datum::new_collation_string("A", collation)],
-            high_val: vec![Datum::new_collation_string("a", collation)],
+            low_val: vec![Datum::new_collation_string_datum("A", collation)],
+            high_val: vec![Datum::new_collation_string_datum("a", collation)],
             low_exclude: false,
             high_exclude: false,
         };
@@ -985,8 +985,8 @@ mod index_range_collation_tests {
     #[test]
     fn range_prefix_and_point_checks_use_their_source_collator_positions() {
         let range = Range {
-            low_val: vec![Datum::Int(1), Datum::new_string("A")],
-            high_val: vec![Datum::Int(1), Datum::new_string("a")],
+            low_val: vec![Datum::Int(1), Datum::new_string_datum("A")],
+            high_val: vec![Datum::Int(1), Datum::new_string_datum("a")],
             collators: vec![Collation::Binary, Collation::Utf8Mb4GeneralCi],
             low_exclude: false,
             high_exclude: false,

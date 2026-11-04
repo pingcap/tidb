@@ -14,7 +14,7 @@
 //! Shared index, index-part, and foreign-key action parser routines.
 
 use tidb_ast::{
-    CreateIndexStmt, ForeignKeyConstraintDefinition, ForeignKeyMatch, ForeignKeyReference,
+    CreateIndexStmt, ForeignKeyConstraintDefinition, MatchType, ReferenceDef,
     IndexAlgorithm, IndexConstraintDefinition, IndexConstraintKind, IndexKind, IndexLock,
     IndexOnlineDdl, IndexOptions, IndexPart, IndexPreSplitRegions, IndexType, IndexVisibility,
     PrimaryKeyStorage, ReferOptionType,
@@ -319,7 +319,7 @@ impl Parser {
     /// Parses Go's `ast.ReferenceDef`, the single reusable payload behind
     /// both table-level `FOREIGN KEY (...) REFERENCES ...` constraints and a
     /// column's own `REFERENCES ...` option.
-    pub(super) fn parse_foreign_key_reference(&mut self) -> PResult<ForeignKeyReference> {
+    pub(super) fn parse_foreign_key_reference(&mut self) -> PResult<ReferenceDef> {
         self.expect_kw("REFERENCES")?;
         let table = Some(self.parse_table_name()?);
         let reference_parts = if self.is_op("(") {
@@ -331,13 +331,13 @@ impl Parser {
             self.bump();
             let match_type = if self.is_kw("FULL") {
                 self.bump();
-                ForeignKeyMatch::Full
+                MatchType::Full
             } else if self.is_kw("PARTIAL") {
                 self.bump();
-                ForeignKeyMatch::Partial
+                MatchType::Partial
             } else if self.is_kw("SIMPLE") {
                 self.bump();
-                ForeignKeyMatch::Simple
+                MatchType::Simple
             } else {
                 // Go's `parseReferenceDef` consumes MATCH and only assigns a
                 // mode when the next token is FULL, PARTIAL, or SIMPLE.  It
@@ -345,12 +345,12 @@ impl Parser {
                 // ignored and the following clause is parsed normally.
                 // Preserve that source boundary instead of making the Rust
                 // parser stricter than TiDB's yacc grammar.
-                ForeignKeyMatch::None
+                MatchType::None
             };
             self.warn_near_next("The MATCH clause is parsed but ignored by all storage engines.");
             match_type
         } else {
-            ForeignKeyMatch::None
+            MatchType::None
         };
         let mut on_delete = None;
         let mut on_update = None;
@@ -376,7 +376,7 @@ impl Parser {
                 on_update = (action != ReferOptionType::NoOption).then_some(action);
             }
         }
-        Ok(ForeignKeyReference {
+        Ok(ReferenceDef {
             table,
             parts: reference_parts,
             match_type,

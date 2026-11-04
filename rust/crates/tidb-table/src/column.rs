@@ -366,9 +366,9 @@ pub fn cast_column_value(
             force_ignore_truncate,
         )?;
         let converted = if field_type.is_binary_string() {
-            Datum::new_bytes(converted_bytes)
+            Datum::new_bytes_datum(converted_bytes)
         } else {
-            Datum::new_collation_string(converted_bytes, field_type.collation())
+            Datum::new_collation_string_datum(converted_bytes, field_type.collation())
         };
         return Ok(truncate_trailing_spaces(converted, field_type));
     }
@@ -564,7 +564,7 @@ pub fn truncate_trailing_spaces(value: Datum, field_type: &FieldType) -> Datum {
             .rposition(|byte| *byte != b' ')
             .map_or(0, |i| i + 1),
     );
-    Datum::new_collation_string(bytes, collation)
+    Datum::new_collation_string_datum(bytes, collation)
 }
 
 /// The error `types.Datum.ConvertTo` raises when a cast fails outright: the

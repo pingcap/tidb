@@ -350,9 +350,9 @@ impl Binding {
         self.usage.lock().unwrap().last_used_at = Some(chrono::Utc::now());
     }
     /// Snapshot fields required by Go's batched usage writer.
-    pub fn usage_snapshot(&self) -> crate::binding_utils::BindingUsage {
+    pub fn usage_snapshot(&self) -> crate::binding_utils::UsageInfo {
         let usage = self.usage.lock().unwrap();
-        crate::binding_utils::BindingUsage {
+        crate::binding_utils::UsageInfo {
             sql_digest: self.sql_digest.clone(),
             plan_digest: self.plan_digest.clone(),
             last_used_at: usage.last_used_at,

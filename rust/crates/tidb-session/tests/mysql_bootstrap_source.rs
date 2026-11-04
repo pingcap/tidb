@@ -173,7 +173,7 @@ fn a_bootstrapped_keyspace_loads_back_as_a_catalog_with_every_mysql_table() {
 fn bootstrap_creates_all_ddl_tables_and_advances_their_version() {
     let mut store = bootstrapped();
     assert_eq!(
-        tidb_session::mysql_bootstrap::read_ddl_table_version(&mut store)
+        tidb_session::mysql_bootstrap::get_ddl_table_version(&mut store)
             .expect("DDL table version reads"),
         4
     );

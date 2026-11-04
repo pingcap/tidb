@@ -122,9 +122,9 @@ fn ddl_reports_preserve_warning_order_levels_and_statement_lifetime() {
             .iter()
             .map(|note| {
                 vec![
-                    Datum::new_string("Note"),
+                    Datum::new_string_datum("Note"),
                     Datum::UInt(u64::from(note.code())),
-                    Datum::new_string(note.message()),
+                    Datum::new_string_datum(note.message()),
                 ]
             })
             .collect();
@@ -156,9 +156,9 @@ fn ddl_reports_preserve_warning_order_levels_and_statement_lifetime() {
     assert_eq!(
         rows(&mut session, "SHOW WARNINGS"),
         vec![vec![
-            Datum::new_string("Warning"),
+            Datum::new_string_datum("Warning"),
             Datum::UInt(8200),
-            Datum::new_string(message),
+            Datum::new_string_datum(message),
         ]]
     );
     assert_eq!(node.ddl.applied.load(Ordering::Acquire), 0);

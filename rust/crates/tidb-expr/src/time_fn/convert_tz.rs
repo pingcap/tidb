@@ -177,7 +177,7 @@ pub(super) fn convert_tz(vals: &[Datum]) -> Result<Datum, EvalError> {
         out.push('.');
         out.push_str(&frac);
     }
-    Ok(Datum::new_string(out))
+    Ok(Datum::new_string_datum(out))
 }
 
 #[cfg(test)]
@@ -188,7 +188,7 @@ mod tests {
     use chrono_tz::Tz;
 
     fn s(v: &str) -> Datum {
-        Datum::new_string(v.to_string())
+        Datum::new_string_datum(v.to_string())
     }
 
     fn call(dt: &str, from: &str, to: &str) -> Datum {

@@ -1056,7 +1056,7 @@ impl FieldType {
     }
 
     /// Mirrors Go `FieldType.SetFlag`: replaces the flag word.
-    pub fn set_flags(&mut self, flags: u32) {
+    pub fn set_flag(&mut self, flags: u32) {
         self.flags = flags as u64;
     }
 
@@ -1076,7 +1076,7 @@ impl FieldType {
     }
 
     /// Mirrors Go `FieldType.AndFlag`: `flags &= f`.
-    pub fn and_flags(&mut self, flags: u32) {
+    pub fn and_flag(&mut self, flags: u32) {
         self.flags &= flags as u64;
     }
 
@@ -1086,7 +1086,7 @@ impl FieldType {
     }
 
     /// Mirrors Go `FieldType.ToggleFlag`: `flags ^= f`.
-    pub fn toggle_flags(&mut self, flags: u32) {
+    pub fn toggle_flag(&mut self, flags: u32) {
         self.flags ^= flags as u64;
     }
 
@@ -1096,7 +1096,7 @@ impl FieldType {
     }
 
     /// Mirrors Go `FieldType.DelFlag`: `flags &= ^f`.
-    pub fn del_flags(&mut self, flags: u32) {
+    pub fn del_flag(&mut self, flags: u32) {
         self.flags &= !(flags as u64);
     }
 
@@ -1463,19 +1463,19 @@ mod tests {
     #[test]
     fn go_style_setters() {
         let mut ft = FieldType::new(FieldTypeCode::Long);
-        ft.set_flags(FieldTypeFlags::NOT_NULL);
+        ft.set_flag(FieldTypeFlags::NOT_NULL);
         assert_eq!(ft.flags(), FieldTypeFlags::NOT_NULL);
         ft.add_flags(FieldTypeFlags::UNSIGNED);
         assert_eq!(
             ft.flags(),
             FieldTypeFlags::NOT_NULL | FieldTypeFlags::UNSIGNED
         );
-        ft.del_flags(FieldTypeFlags::NOT_NULL);
+        ft.del_flag(FieldTypeFlags::NOT_NULL);
         assert_eq!(ft.flags(), FieldTypeFlags::UNSIGNED);
-        ft.toggle_flags(FieldTypeFlags::UNSIGNED);
+        ft.toggle_flag(FieldTypeFlags::UNSIGNED);
         assert_eq!(ft.flags(), 0);
-        ft.set_flags(FieldTypeFlags::NOT_NULL | FieldTypeFlags::UNSIGNED);
-        ft.and_flags(FieldTypeFlags::UNSIGNED);
+        ft.set_flag(FieldTypeFlags::NOT_NULL | FieldTypeFlags::UNSIGNED);
+        ft.and_flag(FieldTypeFlags::UNSIGNED);
         assert_eq!(ft.flags(), FieldTypeFlags::UNSIGNED);
 
         // Unconditional set (unlike the _under_limit variants).
@@ -2128,7 +2128,7 @@ mod tests {
 
         // The legacy low-word setters intentionally replace the whole Go word,
         // just as Go SetFlag does when called with a low-bit value.
-        field_type.set_flags(FieldTypeFlags::NOT_NULL);
+        field_type.set_flag(FieldTypeFlags::NOT_NULL);
         assert_eq!(field_type.raw_flags(), FieldTypeFlags::NOT_NULL as u64);
     }
 

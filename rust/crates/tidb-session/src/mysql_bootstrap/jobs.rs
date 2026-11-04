@@ -44,7 +44,7 @@ use tidb_txnkv::transaction::{BufferMutation, BufferMutationOp};
 
 use super::{
     bootstrap_default_resource_group, build_bootstrap_table, build_bootstrap_view, encode_error,
-    read_schema_cache_size, rows, schema_cache_size_kv_key, BootstrapEnvironment, BootstrapError,
+    get_schema_cache_size, rows, schema_cache_size_kv_key, BootstrapEnvironment, BootstrapError,
     BootstrapLayout, BootstrapSplits, BootstrapWrite, BOOTSTRAP_VIEWS, SYSTEM_DB,
     SYSTEM_DB_CHARSET, SYSTEM_DB_COLLATION, SYS_DB,
 };
@@ -610,7 +610,7 @@ fn plan_with<S: MetaSnapshot>(
     overlay.apply(&seeded);
 
     // Go `InitTiDBSchemaCacheSize`.
-    if read_schema_cache_size(&mut overlay)?.is_none() {
+    if get_schema_cache_size(&mut overlay)?.is_none() {
         let schema_cache_size = u64::try_from(tidb_vardef::defaults::DEF_TIDB_SCHEMA_CACHE_SIZE)
             .expect("the source schema-cache default is non-negative");
         overlay.apply(&[BufferMutation::set(

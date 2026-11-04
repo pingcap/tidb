@@ -124,11 +124,11 @@ fn test_ilike() {
             let int_type = FieldType::new(FieldTypeCode::Long);
             let args = vec![
                 Expression::Constant(Constant::new(
-                    Datum::new_string(input.as_bytes().to_vec()),
+                    Datum::new_string_datum(input.as_bytes().to_vec()),
                     text_type.clone(),
                 )),
                 Expression::Constant(Constant::new(
-                    Datum::new_string(pattern.as_bytes().to_vec()),
+                    Datum::new_string_datum(pattern.as_bytes().to_vec()),
                     text_type.clone(),
                 )),
                 Expression::Constant(Constant::new(
@@ -279,11 +279,11 @@ fn test_database() {
     ctx.current_db = Some("test".to_owned());
     assert_eq!(
         eval_zero_arg("database", &ctx),
-        Datum::new_string(b"test".to_vec())
+        Datum::new_string_datum(b"test".to_vec())
     );
     assert_eq!(
         eval_zero_arg("schema", &ctx),
-        Datum::new_string(b"test".to_vec())
+        Datum::new_string_datum(b"test".to_vec())
     );
 }
 
@@ -304,7 +304,7 @@ fn test_user() {
     ctx.login_user = Some("root@localhost".to_owned());
     assert_eq!(
         eval_zero_arg("user", &ctx),
-        Datum::new_string(b"root@localhost".to_vec())
+        Datum::new_string_datum(b"root@localhost".to_vec())
     );
 }
 
@@ -318,7 +318,7 @@ fn test_current_user() {
     ctx.login_user = Some("root@localhost".to_owned());
     assert_eq!(
         eval_zero_arg("current_user", &ctx),
-        Datum::new_string(b"root@localhost".to_vec())
+        Datum::new_string_datum(b"root@localhost".to_vec())
     );
 }
 
@@ -330,7 +330,7 @@ fn test_current_resource_group() {
     ctx.current_resource_group = Some("rg1".to_owned());
     assert_eq!(
         eval_zero_arg("current_resource_group", &ctx),
-        Datum::new_string(b"rg1".to_vec())
+        Datum::new_string_datum(b"rg1".to_vec())
     );
     assert_eq!(
         eval_zero_arg("current_resource_group", &InfoSession::default()),
@@ -353,7 +353,7 @@ fn test_current_resource_group_ast_path() {
     ctx.current_resource_group = Some("rg_ast".to_owned());
     assert_eq!(
         crate::eval_in(&expression, &ctx),
-        Ok(Datum::new_string(b"rg_ast".to_vec()))
+        Ok(Datum::new_string_datum(b"rg_ast".to_vec()))
     );
     assert_eq!(
         crate::eval_in(&expression, &InfoSession::default()),

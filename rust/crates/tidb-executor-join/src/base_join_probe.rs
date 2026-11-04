@@ -559,7 +559,7 @@ impl BaseJoinProbe {
         &self.spilled_idx
     }
     /// A deferred row must not be emitted as unmatched in this round.
-    pub fn is_spilled(&self, row: usize) -> bool {
+    pub fn is_spill_triggered(&self, row: usize) -> bool {
         self.spilled_idx.binary_search(&row).is_ok()
     }
 

@@ -27,12 +27,12 @@ use std::time::Duration;
 
 use tidb_proto::metapb;
 
-use tidb_unistore_tikv::region_manager::{encode_region_key, new_peer_meta, InProcessRegionManager};
+use tidb_unistore_tikv::region_manager::{encode_region_key, new_peer_meta, MockRegionManager};
 
 /// Go `Cluster`: the region manager plus the delays tests schedule.
 #[derive(Debug)]
 pub struct Cluster {
-    rm: Arc<InProcessRegionManager>,
+    rm: Arc<MockRegionManager>,
     /// Go `delayEvents`: `(start ts, region id)` -> delay.
     delay_events: Mutex<HashMap<(u64, u64), Duration>>,
 }
@@ -40,7 +40,7 @@ pub struct Cluster {
 impl Cluster {
     /// Go `newCluster`.
     #[must_use]
-    pub fn new(rm: Arc<InProcessRegionManager>) -> Self {
+    pub fn new(rm: Arc<MockRegionManager>) -> Self {
         Self {
             rm,
             delay_events: Mutex::new(HashMap::new()),
@@ -49,7 +49,7 @@ impl Cluster {
 
     /// The region manager beneath.
     #[must_use]
-    pub fn region_manager(&self) -> &Arc<InProcessRegionManager> {
+    pub fn region_manager(&self) -> &Arc<MockRegionManager> {
         &self.rm
     }
 
@@ -91,9 +91,9 @@ impl Cluster {
 }
 
 impl std::ops::Deref for Cluster {
-    type Target = InProcessRegionManager;
+    type Target = MockRegionManager;
 
-    fn deref(&self) -> &InProcessRegionManager {
+    fn deref(&self) -> &MockRegionManager {
         &self.rm
     }
 }
@@ -102,8 +102,8 @@ impl std::ops::Deref for Cluster {
 /// `BootstrapWithSingleStore` -- store 1 (`store1`), region 2 over the whole
 /// keyspace, peer 3.
 #[must_use]
-pub fn new_region_manager() -> InProcessRegionManager {
-    let manager = InProcessRegionManager::new_mock_region_manager();
+pub fn new_region_manager() -> MockRegionManager {
+    let manager = MockRegionManager::new_mock_region_manager();
     let (store_id, peer_id, region_id) = bootstrap_with_single_store(&manager);
     debug_assert_eq!(
         (store_id, region_id, peer_id),
@@ -119,7 +119,7 @@ pub fn new_region_manager() -> InProcessRegionManager {
 /// Go `BootstrapWithSingleStore` (`unistore/cluster.go`): one store named
 /// `store<id>`, one region over the whole keyspace with one peer on it.
 /// Answers `(store_id, peer_id, region_id)`.
-pub fn bootstrap_with_single_store(cluster: &InProcessRegionManager) -> (u64, u64, u64) {
+pub fn bootstrap_with_single_store(cluster: &MockRegionManager) -> (u64, u64, u64) {
     let store_id = cluster.alloc_id();
     let region_id = cluster.alloc_id();
     let peer_id = cluster.alloc_id();
@@ -145,7 +145,7 @@ pub fn bootstrap_with_single_store(cluster: &InProcessRegionManager) -> (u64, u6
 /// region with a peer on each, the first peer leading. Answers
 /// `(store_ids, peer_ids, region_id, leader_peer)`.
 pub fn bootstrap_with_multi_stores(
-    cluster: &InProcessRegionManager,
+    cluster: &MockRegionManager,
     n: usize,
 ) -> (Vec<u64>, Vec<u64>, u64, u64) {
     let store_ids = cluster.alloc_ids(n);
@@ -182,7 +182,7 @@ pub fn bootstrap_with_multi_stores(
 /// `split_keys.len() + 1` regions cut at the raw `split_keys`. Answers
 /// `(store_id, region_ids, peer_ids)`.
 pub fn bootstrap_with_multi_regions(
-    cluster: &InProcessRegionManager,
+    cluster: &MockRegionManager,
     split_keys: &[Vec<u8>],
 ) -> (u64, Vec<u64>, Vec<u64>) {
     let (store_id, first_peer_id, first_region_id) = bootstrap_with_single_store(cluster);
@@ -230,7 +230,7 @@ mod tests {
     /// Go `BootstrapWithMultiRegions` and `BootstrapWithMultiStores`.
     #[test]
     fn bootstraps_multi_region_and_multi_store_clusters() {
-        let manager = InProcessRegionManager::new_mock_region_manager();
+        let manager = MockRegionManager::new_mock_region_manager();
         let (store_id, region_ids, peer_ids) =
             bootstrap_with_multi_regions(&manager, &[b"b".to_vec(), b"d".to_vec()]);
         assert_eq!(
@@ -244,7 +244,7 @@ mod tests {
             .collect();
         assert_eq!(ranges, vec![(2, 3), (4, 3), (5, 6)]);
 
-        let manager = InProcessRegionManager::new_mock_region_manager();
+        let manager = MockRegionManager::new_mock_region_manager();
         let (store_ids, peer_ids, region_id, leader) = bootstrap_with_multi_stores(&manager, 3);
         assert_eq!(store_ids, vec![1, 2, 3]);
         assert_eq!(peer_ids, vec![4, 5, 6]);

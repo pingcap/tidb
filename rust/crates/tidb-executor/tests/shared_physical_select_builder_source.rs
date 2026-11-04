@@ -96,7 +96,7 @@ fn index_join_cuts_equality_probe_to_go_prefix_index_key() {
     .unwrap();
     assert_eq!(
         rows,
-        vec![vec![Datum::new_collation_string(
+        vec![vec![Datum::new_collation_string_datum(
             b"abcdef".to_vec(),
             tidb_charset::Collation::Utf8Mb4Bin,
         )]]
@@ -138,11 +138,11 @@ fn index_join_deduplicates_go_prefix_lookup_keys_before_reading() {
     assert_eq!(
         rows,
         vec![
-            vec![Datum::new_collation_string(
+            vec![Datum::new_collation_string_datum(
                 b"abcdef".to_vec(),
                 tidb_charset::Collation::Utf8Mb4Bin,
             )],
-            vec![Datum::new_collation_string(
+            vec![Datum::new_collation_string_datum(
                 b"abcxyz".to_vec(),
                 tidb_charset::Collation::Utf8Mb4Bin,
             )],

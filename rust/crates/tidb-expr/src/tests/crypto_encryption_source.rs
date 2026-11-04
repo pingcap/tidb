@@ -136,11 +136,11 @@ fn try_call(name: &str, vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, Eval
 }
 
 fn s(text: &str) -> Datum {
-    Datum::new_string(text.to_string())
+    Datum::new_string_datum(text.to_string())
 }
 
 fn gbk(hex: &str) -> Datum {
-    Datum::new_bytes(decode_hex(hex))
+    Datum::new_bytes_datum(decode_hex(hex))
 }
 
 fn bytes_of(d: &Datum) -> Vec<u8> {
@@ -226,7 +226,7 @@ fn origin_datum(utf8_text: &str, charset_marker: &str) -> Datum {
     if charset_marker == "gbk" {
         panic!("GBK origins must carry pre-encoded bytes; see CRYPT_GBK_ROWS")
     }
-    Datum::new_string(utf8_text.to_string())
+    Datum::new_string_datum(utf8_text.to_string())
 }
 
 /// GO PORT of `pkg/expression/builtin_encryption_test.go:67 TestSQLDecode`
@@ -287,7 +287,7 @@ fn test_sql_decode() {
 fn test_sql_encode() {
     for (origin, password, _chs, crypt_hex) in CRYPT_ROWS {
         let h = decode_hex(crypt_hex);
-        let out = call("ENCODE", &[Datum::new_bytes(h), s(password)], &NoColumns);
+        let out = call("ENCODE", &[Datum::new_bytes_datum(h), s(password)], &NoColumns);
         assert_eq!(
             bytes_of(&out),
             origin.as_bytes(),
@@ -298,7 +298,7 @@ fn test_sql_encode() {
     for (gbk_origin, gbk_password, crypt_hex) in CRYPT_GBK_ROWS {
         let out = call(
             "ENCODE",
-            &[Datum::new_bytes(decode_hex(crypt_hex)), gbk(gbk_password)],
+            &[Datum::new_bytes_datum(decode_hex(crypt_hex)), gbk(gbk_password)],
             &NoColumns,
         );
         assert_eq!(bytes_of(&out), decode_hex(gbk_origin));
@@ -309,7 +309,7 @@ fn test_sql_encode() {
     let out = call(
         "ENCODE",
         &[
-            Datum::new_bytes(decode_hex("79E22979BD860EF58229")),
+            Datum::new_bytes_datum(decode_hex("79E22979BD860EF58229")),
             s("123.435"),
         ],
         &NoColumns,
@@ -564,7 +564,7 @@ fn test_aes_encrypt() {
     // byte is ASCII and unchanged by either charset.
     let key_hello = |gbk_params: bool| -> Datum {
         if gbk_params {
-            Datum::new_bytes(vec![0xc4, 0xe3, 0xba, 0xc3])
+            Datum::new_bytes_datum(vec![0xc4, 0xe3, 0xba, 0xc3])
         } else {
             s("你好")
         }
@@ -573,7 +573,7 @@ fn test_aes_encrypt() {
         if text == "你好" {
             key_hello(gbk_params)
         } else {
-            Datum::new_bytes(text.as_bytes().to_vec())
+            Datum::new_bytes_datum(text.as_bytes().to_vec())
         }
     };
     let rows = [
@@ -641,7 +641,7 @@ fn test_aes_encrypt() {
         };
         // utf8mb4 connection: plain UTF-8 string datums.
         let encrypted_utf8 = eval_encrypt_args(
-            &Datum::new_string(row.origin_utf8.as_bytes().to_vec()),
+            &Datum::new_string_datum(row.origin_utf8.as_bytes().to_vec()),
             &row.params
                 .iter()
                 .map(|p| param(p, false))
@@ -655,7 +655,7 @@ fn test_aes_encrypt() {
         );
         // gbk connection: origin AND key constants already transformed.
         let encrypted_gbk = eval_encrypt_args(
-            &Datum::new_bytes(row.origin_gbk.hex_bytes()),
+            &Datum::new_bytes_datum(row.origin_gbk.hex_bytes()),
             &row.params
                 .iter()
                 .map(|p| param(p, true))
@@ -718,7 +718,7 @@ fn eval_encrypt_args(origin: &Datum, params: &[Datum], mode_value: &str) -> Datu
 fn test_aes_decrypt() {
     for (origin, params, mode, want_hex) in AES_ECB_EXTRA.iter().chain(AES_ROWS.iter()) {
         let ctx = aes_context(mode);
-        let mut vals = vec![Datum::new_bytes(decode_hex(want_hex))];
+        let mut vals = vec![Datum::new_bytes_datum(decode_hex(want_hex))];
         vals.extend(params.iter().map(|p| s(p)));
         let plain = call("AES_DECRYPT", &vals, &ctx);
         assert_eq!(bytes_of(&plain), origin.as_bytes(), "{mode} {want_hex}");
@@ -760,7 +760,7 @@ fn test_aes_decrypt() {
         bytes_of(&call(
             "AES_DECRYPT",
             &[
-                Datum::new_bytes("CEBD80EEC6423BEAFA1BB30FD7625CBC".hex_bytes()),
+                Datum::new_bytes_datum("CEBD80EEC6423BEAFA1BB30FD7625CBC".hex_bytes()),
                 s("123")
             ],
             &aes_context("aes-128-ecb")
@@ -771,7 +771,7 @@ fn test_aes_decrypt() {
         bytes_of(&call(
             "AES_DECRYPT",
             &[
-                Datum::new_bytes("6AFA9D7BA2C1AED1603E804F75BB0127".hex_bytes()),
+                Datum::new_bytes_datum("6AFA9D7BA2C1AED1603E804F75BB0127".hex_bytes()),
                 s("123")
             ],
             &aes_context("aes-128-ecb")
@@ -821,15 +821,15 @@ fn test_sha1_hash() {
 fn gsk(text: &str) -> Datum {
     // SHA accepts the raw byte stream; the GBK session could not alter these
     // ASCII digits.
-    Datum::new_bytes(text.as_bytes().to_vec())
+    Datum::new_bytes_datum(text.as_bytes().to_vec())
 }
 
 fn gsk_d2bb_b6fe_c8fd() -> Datum {
-    Datum::new_bytes(vec![0xd2, 0xbb, 0xb6, 0xfe, 0xc8, 0xfd])
+    Datum::new_bytes_datum(vec![0xd2, 0xbb, 0xb6, 0xfe, 0xc8, 0xfd])
 }
 
 fn gsk_one_two_three_123() -> Datum {
-    Datum::new_bytes(vec![0xd2, 0xbb, 0xb6, 0xfe, 0xc8, 0xfd, b'1', b'2', b'3'])
+    Datum::new_bytes_datum(vec![0xd2, 0xbb, 0xb6, 0xfe, 0xc8, 0xfd, b'1', b'2', b'3'])
 }
 
 /// GO PORT of `pkg/expression/builtin_encryption_test.go:392 TestSha2Hash`
@@ -904,15 +904,15 @@ fn test_sha2_hash() {
         ("384", "c50955b6b0c7b9919740d956849eedcb0f0f90bf8a34e8c1f4e071e3773f53bd6f8f16c04425ff728bed04de1b63db51"),
         ("512", "ea903c574370774c4844a83b7122105a106e04211673810e1baae7c2ae7aba2cf07465e02f6c413126111ef74a417232683ce7ba210052e63c15fc82204aad80"),
     ] {
-        cases.push((Datum::new_bytes(b"pingcap".to_vec()), Datum::Int(length.parse::<i64>().unwrap()), Some(expect)));
+        cases.push((Datum::new_bytes_datum(b"pingcap".to_vec()), Datum::Int(length.parse::<i64>().unwrap()), Some(expect)));
     }
     cases.push((
-        Datum::new_bytes(vec![0xd2, 0xbb, 0xb6, 0xfe, 0xc8, 0xfd]),
+        Datum::new_bytes_datum(vec![0xd2, 0xbb, 0xb6, 0xfe, 0xc8, 0xfd]),
         Datum::Int(0),
         Some("b6c1ae1f8d8a07426ddb13fca5124fb0b9f1f0ef1cca6730615099cf198ca8af"),
     ));
     cases.push((
-        Datum::new_bytes([0xd2, 0xbb, 0xb6, 0xfe, 0xc8, 0xfd].to_vec()),
+        Datum::new_bytes_datum([0xd2, 0xbb, 0xb6, 0xfe, 0xc8, 0xfd].to_vec()),
         Datum::Int(512),
         Some("54fae3d0bb68bb4645af4a97a01fee1a6e3ecf7850f1ba41a994a46d23b60082262d00d9c635ff7ed02203e4806794dfa57c3654b3a4549bfb77ef1ddeab0224"),
     ));
@@ -961,7 +961,7 @@ fn test_md5_hash() {
         (s("abc"), "900150983cd24fb0d6963f7d28e17f72"),
         // {"abc"/gbk}: GBK cannot change ASCII bytes, same digest.
         (
-            Datum::new_bytes(b"abc".to_vec()),
+            Datum::new_bytes_datum(b"abc".to_vec()),
             "900150983cd24fb0d6963f7d28e17f72",
         ),
         (Datum::Int(123), "202cb962ac59075b964b07152d234b70"),
@@ -971,7 +971,7 @@ fn test_md5_hash() {
         (s("一二三"), "8093a32450075324682d01456d6e3919"),
         // {"一二三"/gbk} -> GBK bytes d2bbb6fec8fd.
         (
-            Datum::new_bytes(gsk_one_two_three_bytes()),
+            Datum::new_bytes_datum(gsk_one_two_three_bytes()),
             "a45d4af7b243e7f393fa09bed72ac73e",
         ),
         // {"ㅂ123" utf8mb4}.
@@ -1044,11 +1044,11 @@ fn encoding_error_rows_follow_session_charset_conversion() {
     // Go's valid GBK rows are encoded before MD5/PASSWORD see the bytes.
     assert_eq!(
         eval("md5('一二三')").expect("MD5 evaluates"),
-        Datum::new_string("a45d4af7b243e7f393fa09bed72ac73e")
+        Datum::new_string_datum("a45d4af7b243e7f393fa09bed72ac73e")
     );
     assert_eq!(
         eval("password('一二三四')").expect("PASSWORD evaluates"),
-        Datum::new_string("*48E0460AD45CF66AC6B8C18CB8B4BC8A403D935B")
+        Datum::new_string_datum("*48E0460AD45CF66AC6B8C18CB8B4BC8A403D935B")
     );
 
     // U+3142 is not representable in GBK, so Go's constant construction and
@@ -1104,7 +1104,7 @@ fn test_compress_and_uncompress_length_framing() {
     // identically because the bytes are identical.
     let again = call(
         "COMPRESS",
-        &[Datum::new_bytes(b"hello world".to_vec())],
+        &[Datum::new_bytes_datum(b"hello world".to_vec())],
         &NoColumns,
     );
     assert_eq!(payload.len(), bytes_of(&again).len());
@@ -1115,7 +1115,7 @@ fn test_compress_and_uncompress_length_framing() {
         ("你好".as_bytes(), 6u32),
         (&[0xc4u8, 0xe3, 0xba, 0xc3][..], 4),
     ] {
-        let compressed = call("COMPRESS", &[Datum::new_bytes(raw.to_vec())], &NoColumns);
+        let compressed = call("COMPRESS", &[Datum::new_bytes_datum(raw.to_vec())], &NoColumns);
         assert_eq!(
             &bytes_of(&compressed)[..4],
             &declared.to_le_bytes(),
@@ -1140,7 +1140,7 @@ fn test_uncompress() {
         assert_eq!(
             bytes_of(&call(
                 "UNCOMPRESS",
-                &[Datum::new_string(payload.clone())],
+                &[Datum::new_string_datum(payload.clone())],
                 &NoColumns
             )),
             b"hello world".to_vec()
@@ -1150,7 +1150,7 @@ fn test_uncompress() {
     // Wrong declared length (02 != 11): corrupt framing -> NULL.
     let wrong_len = decode_hex("02000000789CCB48CDC9C95728CF2FCA4901001A0B045D");
     assert_eq!(
-        call("UNCOMPRESS", &[Datum::new_string(wrong_len)], &NoColumns),
+        call("UNCOMPRESS", &[Datum::new_string_datum(wrong_len)], &NoColumns),
         Datum::Null
     );
 
@@ -1166,7 +1166,7 @@ fn test_uncompress() {
     ] {
         let out = try_call(
             "UNCOMPRESS",
-            &[Datum::new_string(decode_hex(&malformed))],
+            &[Datum::new_string_datum(decode_hex(&malformed))],
             &NoColumns,
         )
         .expect("UNCOMPRESS evaluates malformed payloads");
@@ -1189,7 +1189,7 @@ fn test_uncompress_length() {
     let tidb_zlib = decode_hex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D");
     for payload in [&mysql_zlib, &tidb_zlib] {
         assert_eq!(
-            length_of([Datum::new_string(payload.clone())]),
+            length_of([Datum::new_string_datum(payload.clone())]),
             Datum::Int(11)
         );
     }
@@ -1198,22 +1198,22 @@ fn test_uncompress_length() {
     assert_eq!(length_of([s("1")]), Datum::Int(0));
     assert_eq!(length_of([s("123")]), Datum::Int(0));
     assert_eq!(
-        length_of([Datum::new_string(decode_hex("0B"))]),
+        length_of([Datum::new_string_datum(decode_hex("0B"))]),
         Datum::Int(0)
     );
     assert_eq!(
-        length_of([Datum::new_string(decode_hex("0B00"))]),
+        length_of([Datum::new_string_datum(decode_hex("0B00"))]),
         Datum::Int(0)
     );
 
     // Header-only payload: still int64(0) per the Go table's `0x0` row.
     assert_eq!(
-        length_of([Datum::new_string(decode_hex("0B000000"))]),
+        length_of([Datum::new_string_datum(decode_hex("0B000000"))]),
         Datum::Int(0x0)
     );
     // Header plus two bytes: the DECLARED length is readable.
     assert_eq!(
-        length_of([Datum::new_string(decode_hex("0B0000001234"))]),
+        length_of([Datum::new_string_datum(decode_hex("0B0000001234"))]),
         Datum::Int(0x0B)
     );
     // The int64(12345) reinterprets to the little-endian uint32 875770417.
@@ -1282,7 +1282,7 @@ fn test_password() {
         (s("abc"), "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E"),
         // {"abc"/gbk}: identical bytes, same digest.
         (
-            Datum::new_bytes(b"abc".to_vec()),
+            Datum::new_bytes_datum(b"abc".to_vec()),
             "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E",
         ),
         (Datum::Int(123), "*23AE809DDACAF96AF0FD78ED04B6A265E05AA257"),
@@ -1334,7 +1334,7 @@ fn uncompress_rejects_payload_deeper_than_declared_length() {
     framed.extend_from_slice(&stream);
 
     let warnings = WarningSink::default();
-    let out = try_call("UNCOMPRESS", &[Datum::new_bytes(framed)], &warnings)
+    let out = try_call("UNCOMPRESS", &[Datum::new_bytes_datum(framed)], &warnings)
         .expect("malformed-but-complete frames evaluate");
     assert_eq!(
         out,
@@ -1383,7 +1383,7 @@ fn uncompress_rejects_handcrafted_payload_larger_than_declared_length() {
     assert_eq!(raw, vec![b'A'; 1024]);
 
     let warnings = WarningSink::default();
-    let out = try_call("UNCOMPRESS", &[Datum::new_bytes(payload)], &warnings)
+    let out = try_call("UNCOMPRESS", &[Datum::new_bytes_datum(payload)], &warnings)
         .expect("well-formed-but-overlong frames evaluate");
     assert_eq!(out, Datum::Null);
     let logged = warnings.0.borrow();

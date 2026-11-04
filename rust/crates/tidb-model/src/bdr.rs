@@ -267,14 +267,14 @@ mod tests {
 
     #[test]
     fn ts_convert() {
-        assert_eq!(ts_convert_2_time(0).unix_millis(), 0);
-        assert_eq!(ts_convert_2_time((1_u64 << 18) - 1).unix_millis(), 0);
-        assert_eq!(ts_convert_2_time(1_u64 << 18).unix_millis(), 1);
+        assert_eq!(ts_convert_2_time(0).unix_milli(), 0);
+        assert_eq!(ts_convert_2_time((1_u64 << 18) - 1).unix_milli(), 0);
+        assert_eq!(ts_convert_2_time(1_u64 << 18).unix_milli(), 1);
         // 1700000000000 ms shifted into the physical position.
         let ts = 1_700_000_000_000u64 << 18;
-        assert_eq!(ts_convert_2_time(ts).unix_millis(), 1_700_000_000_000);
+        assert_eq!(ts_convert_2_time(ts).unix_milli(), 1_700_000_000_000);
         assert_eq!(
-            ts_convert_2_time(u64::MAX).unix_millis(),
+            ts_convert_2_time(u64::MAX).unix_milli(),
             (u64::MAX >> 18) as i64
         );
         assert_eq!(

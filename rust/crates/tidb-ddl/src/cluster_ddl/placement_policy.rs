@@ -199,7 +199,7 @@ pub fn prepare_placement_policy_job_submission<S: MetaSnapshot>(
 
 /// Go `genPlacementPolicyID`, set on a CREATE PLACEMENT POLICY job before
 /// it is queued.
-pub fn set_placement_policy_id(spec: &tidb_ddl_jobsubmit::JobSpec, id: i64) {
+pub fn gen_placement_policy_id(spec: &tidb_ddl_jobsubmit::JobSpec, id: i64) {
     if let JobArgsValue::PlacementPolicy(Some(args)) = &spec.args {
         if let Some(policy) = &args.read().policy {
             policy.write().id = id;

@@ -546,28 +546,28 @@ mod tests {
 
         let rows = vec![
             (Datum::Real(1.0), Datum::Real(1.0), Equal),
-            (Datum::Real(1.0), Datum::new_string("1"), Equal),
+            (Datum::Real(1.0), Datum::new_string_datum("1"), Equal),
             (Datum::Int(1), Datum::Int(1), Equal),
             (Datum::Int(-1), Datum::UInt(1), Less),
-            (Datum::Int(-1), Datum::new_string("-1"), Equal),
+            (Datum::Int(-1), Datum::new_string_datum("-1"), Equal),
             (Datum::UInt(1), Datum::UInt(1), Equal),
             (Datum::UInt(1), Datum::Int(-1), Greater),
-            (Datum::UInt(1), Datum::new_string("1"), Equal),
+            (Datum::UInt(1), Datum::new_string_datum("1"), Equal),
             (decimal_one(), decimal_one(), Equal),
-            (decimal_one(), Datum::new_string("1"), Equal),
-            (decimal_one(), Datum::new_bytes(b"1"), Equal),
-            (Datum::new_string("1"), Datum::new_string("1"), Equal),
-            (Datum::new_string("1"), Datum::Int(-1), Greater),
-            (Datum::new_string("1"), Datum::Real(2.0), Less),
-            (Datum::new_string("1"), Datum::UInt(1), Equal),
-            (Datum::new_string("1"), decimal_one(), Equal),
+            (decimal_one(), Datum::new_string_datum("1"), Equal),
+            (decimal_one(), Datum::new_bytes_datum(b"1"), Equal),
+            (Datum::new_string_datum("1"), Datum::new_string_datum("1"), Equal),
+            (Datum::new_string_datum("1"), Datum::Int(-1), Greater),
+            (Datum::new_string_datum("1"), Datum::Real(2.0), Less),
+            (Datum::new_string_datum("1"), Datum::UInt(1), Equal),
+            (Datum::new_string_datum("1"), decimal_one(), Equal),
             (
-                Datum::new_string("2011-01-01 11:11:11"),
+                Datum::new_string_datum("2011-01-01 11:11:11"),
                 current_time.clone(),
                 Less,
             ),
             (
-                Datum::new_string("12:00:00"),
+                Datum::new_string_datum("12:00:00"),
                 zero_duration.clone(),
                 Greater,
             ),
@@ -596,31 +596,31 @@ mod tests {
             (Datum::UInt(133), Datum::UInt(183), Less),
             (Datum::UInt(2), Datum::Int(-2), Greater),
             (Datum::UInt(2), Datum::Int(1), Greater),
-            (Datum::new_string(""), Datum::Null, Greater),
-            (Datum::new_string(""), Datum::new_string("24"), Less),
-            (Datum::new_string("aasf"), Datum::new_string("4"), Greater),
-            (Datum::new_string(""), Datum::new_string(""), Equal),
-            (Datum::new_bytes(b""), Datum::Null, Greater),
-            (Datum::new_bytes(b""), Datum::new_bytes(b"sff"), Less),
+            (Datum::new_string_datum(""), Datum::Null, Greater),
+            (Datum::new_string_datum(""), Datum::new_string_datum("24"), Less),
+            (Datum::new_string_datum("aasf"), Datum::new_string_datum("4"), Greater),
+            (Datum::new_string_datum(""), Datum::new_string_datum(""), Equal),
+            (Datum::new_bytes_datum(b""), Datum::Null, Greater),
+            (Datum::new_bytes_datum(b""), Datum::new_bytes_datum(b"sff"), Less),
             (zero_time.clone(), Datum::Null, Greater),
             (zero_time.clone(), current_time.clone(), Less),
             (
                 current_time,
-                Datum::new_string("0000-00-00 00:00:00"),
+                Datum::new_string_datum("0000-00-00 00:00:00"),
                 Greater,
             ),
             (duration(34), Datum::Null, Greater),
             (duration(34), duration(29_034), Less),
             (duration(3_340), duration(34), Greater),
             (duration(34), duration(34), Equal),
-            (Datum::new_bytes(b""), Datum::new_bytes(b""), Equal),
-            (Datum::new_bytes(b"abc"), Datum::new_bytes(b"ab"), Greater),
-            (Datum::new_bytes(b"123"), Datum::Int(1234), Less),
-            (Datum::new_bytes(b""), Datum::Null, Greater),
+            (Datum::new_bytes_datum(b""), Datum::new_bytes_datum(b""), Equal),
+            (Datum::new_bytes_datum(b"abc"), Datum::new_bytes_datum(b"ab"), Greater),
+            (Datum::new_bytes_datum(b"123"), Datum::Int(1234), Less),
+            (Datum::new_bytes_datum(b""), Datum::Null, Greater),
             (literal(1), Datum::Int(1), Equal),
             (
                 Datum::new_binary_literal(BinaryLiteral::from_uint(0x004D_7953_514C, None)),
-                Datum::new_string("MySQL"),
+                Datum::new_string_datum("MySQL"),
                 Equal,
             ),
             (literal(0), Datum::UInt(10), Less),
@@ -629,7 +629,7 @@ mod tests {
             (literal(1), literal(0), Greater),
             (literal(1), literal(1), Equal),
             (enum_one(), Datum::Int(1), Equal),
-            (enum_one(), Datum::new_string("a"), Equal),
+            (enum_one(), Datum::new_string_datum("a"), Equal),
             (enum_one(), Datum::UInt(10), Less),
             (enum_one(), Datum::Real(0.0), Greater),
             (enum_one(), decimal_one(), Equal),
@@ -637,7 +637,7 @@ mod tests {
             (enum_one(), literal(1), Equal),
             (enum_one(), enum_one(), Equal),
             (set_one(), Datum::Int(1), Equal),
-            (set_one(), Datum::new_string("a"), Equal),
+            (set_one(), Datum::new_string_datum("a"), Equal),
             (set_one(), Datum::UInt(10), Less),
             (set_one(), Datum::Real(0.0), Greater),
             (set_one(), decimal_one(), Equal),
@@ -645,8 +645,8 @@ mod tests {
             (set_one(), literal(1), Equal),
             (set_one(), enum_one(), Equal),
             (set_one(), set_one(), Equal),
-            (Datum::new_string("hello"), decimal_zero(), Equal),
-            (decimal_zero(), Datum::new_string("hello"), Equal),
+            (Datum::new_string_datum("hello"), decimal_zero(), Equal),
+            (decimal_zero(), Datum::new_string_datum("hello"), Equal),
         ];
         assert_eq!(rows.len(), 86, "one entry per Go TestCompare source row");
 
@@ -677,7 +677,7 @@ mod tests {
             ),
             (
                 Datum::new_mysql_bit(BinaryLiteral::from(vec![0x00, 0x01])),
-                Datum::new_string(vec![0x01]),
+                Datum::new_string_datum(vec![0x01]),
             ),
             (
                 Datum::new_mysql_bit(BinaryLiteral::from(vec![0x00, 0x00])),
@@ -703,13 +703,13 @@ mod tests {
     /// rather than becoming a Rust UTF-8 conversion error.
     #[test]
     fn non_utf8_numeric_bytes_keep_go_zero_prefix_ordering() {
-        let invalid = Datum::new_bytes(vec![0xff]);
+        let invalid = Datum::new_bytes_datum(vec![0xff]);
         assert_eq!(
             invalid.compare(&Datum::Int(0), Collation::Binary).unwrap(),
             std::cmp::Ordering::Equal
         );
 
-        let invalid = Datum::new_bytes(vec![0xff]);
+        let invalid = Datum::new_bytes_datum(vec![0xff]);
         let zero = Datum::new_decimal(crate::Decimal::from_int(0));
         assert_eq!(
             invalid.compare(&zero, Collation::Binary).unwrap(),
@@ -728,7 +728,7 @@ mod tests {
                 .unwrap()
                 .time,
         );
-        let invalid = Datum::new_string("not a date");
+        let invalid = Datum::new_string_datum("not a date");
 
         let (ordering, error) = value.compare_with_error(&invalid, Collation::Binary);
         assert_eq!(ordering, std::cmp::Ordering::Greater);
@@ -746,7 +746,7 @@ mod tests {
     #[test]
     fn compare_with_error_keeps_numeric_prefix_ordering_beside_error() {
         let (ordering, error) =
-            Datum::Int(1).compare_with_error(&Datum::new_string("1abc"), Collation::Binary);
+            Datum::Int(1).compare_with_error(&Datum::new_string_datum("1abc"), Collation::Binary);
         assert_eq!(ordering, std::cmp::Ordering::Equal);
         assert!(matches!(
             error,
@@ -767,7 +767,7 @@ mod tests {
                 .unwrap()
                 .time,
         );
-        let right = Datum::new_string("2020-02-31");
+        let right = Datum::new_string_datum("2020-02-31");
         let strict = ConversionContext::strict();
         let relaxed = strict.with_flags(
             STRICT_FLAGS
@@ -798,7 +798,7 @@ mod tests {
                 .unwrap()
                 .time,
         );
-        let right = Datum::new_string("2020-01-01 00:00:00+01:00");
+        let right = Datum::new_string_datum("2020-01-01 00:00:00+01:00");
         let context = ConversionContext::strict();
 
         let (ordering, error) =
@@ -827,11 +827,11 @@ mod tests {
             Datum::Real(0.0),
             Datum::Real(f64::INFINITY),
             Datum::new_decimal(Decimal::from_int(0)),
-            Datum::new_string(""),
-            Datum::new_collation_string("", Collation::Binary),
+            Datum::new_string_datum(""),
+            Datum::new_collation_string_datum("", Collation::Binary),
             zero_duration,
             zero_time,
-            Datum::new_bytes([]),
+            Datum::new_bytes_datum([]),
             Datum::new_binary_literal(BinaryLiteral::from(Vec::<u8>::new())),
             Datum::new_mysql_bit(BinaryLiteral::from(vec![0, 0, 0, 0])),
             Datum::new_json(BinaryJSON::parse("null").unwrap()),

@@ -333,12 +333,12 @@ use tidb_charset::Collation;
 
         assert_eq!(utf8.signature(), StringLengthSignature::Length);
         assert_eq!(binary.signature(), StringLengthSignature::Length);
-        assert_eq!(utf8.eval(&Datum::new_string("你好")), Ok(Datum::Int(6)));
+        assert_eq!(utf8.eval(&Datum::new_string_datum("你好")), Ok(Datum::Int(6)));
         assert_eq!(
-            binary.eval(&Datum::new_bytes(vec![0xff, 0, b'a'])),
+            binary.eval(&Datum::new_bytes_datum(vec![0xff, 0, b'a'])),
             Ok(Datum::Int(3))
         );
-        assert_eq!(utf8.eval(&Datum::new_string("a\0b")), Ok(Datum::Int(3)));
+        assert_eq!(utf8.eval(&Datum::new_string_datum("a\0b")), Ok(Datum::Int(3)));
         assert_eq!(utf8.eval(&Datum::Null), Ok(Datum::Null));
     }
 
@@ -353,7 +353,7 @@ use tidb_charset::Collation;
         let context = BuildContext::default();
         let binary = context.build_string_length(StringLengthFunction::CharLength, binary_type());
         let utf8 = context.build_string_length(StringLengthFunction::CharLength, utf8_type());
-        let raw_multibyte = Datum::new_bytes("你好".as_bytes().to_vec());
+        let raw_multibyte = Datum::new_bytes_datum("你好".as_bytes().to_vec());
 
         assert_eq!(binary.signature(), StringLengthSignature::CharLengthBinary);
         assert_eq!(utf8.signature(), StringLengthSignature::CharLengthUtf8);
@@ -362,9 +362,9 @@ use tidb_charset::Collation;
 
         // Runtime metadata must not re-select the signature: a character
         // datum follows the explicitly binary field type.
-        assert_eq!(binary.eval(&Datum::new_string("33")), Ok(Datum::Int(2)));
-        assert_eq!(binary.eval(&Datum::new_string("CAFÉ")), Ok(Datum::Int(5)));
-        assert_eq!(binary.eval(&Datum::new_string("")), Ok(Datum::Int(0)));
+        assert_eq!(binary.eval(&Datum::new_string_datum("33")), Ok(Datum::Int(2)));
+        assert_eq!(binary.eval(&Datum::new_string_datum("CAFÉ")), Ok(Datum::Int(5)));
+        assert_eq!(binary.eval(&Datum::new_string_datum("")), Ok(Datum::Int(0)));
         assert_eq!(binary.eval(&Datum::Null), Ok(Datum::Null));
     }
 
@@ -384,12 +384,12 @@ use tidb_charset::Collation;
             (vec![b'a', 0xe4, 0xbd], 3),
             (vec![b'a', 0xe4, 0xb8, 0xad, 0xff], 3),
         ] {
-            let value = Datum::new_bytes(raw.clone());
+            let value = Datum::new_bytes_datum(raw.clone());
             assert_eq!(binary.eval(&value), Ok(Datum::Int(raw.len() as i64)));
             assert_eq!(utf8.eval(&value), Ok(Datum::Int(rune_count)));
         }
 
-        let embedded_nul = Datum::new_bytes(b"a\0b".to_vec());
+        let embedded_nul = Datum::new_bytes_datum(b"a\0b".to_vec());
         assert_eq!(binary.eval(&embedded_nul), Ok(Datum::Int(3)));
         assert_eq!(utf8.eval(&embedded_nul), Ok(Datum::Int(3)));
     }

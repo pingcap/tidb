@@ -1155,20 +1155,20 @@ fn circuit_breaker_pd_metadata_ratio_global_hook_publishes_float() {
 #[test]
 fn enable_window_function_session_hook_updates_typed_state() {
     let mut session = Session::new();
-    assert!(session.vars().window_function_enabled());
+    assert!(session.vars().enable_window_function());
 
     session.run("SET tidb_enable_window_function = ON").unwrap();
-    assert!(session.vars().window_function_enabled());
+    assert!(session.vars().enable_window_function());
 
     session.run("SET tidb_enable_window_function = 0").unwrap();
-    assert!(!session.vars().window_function_enabled());
+    assert!(!session.vars().enable_window_function());
     assert_eq!(
         scalar_text(&mut session, "SELECT @@tidb_enable_window_function"),
         Some("0".to_owned())
     );
 
     session.run("SET tidb_enable_window_function = 1").unwrap();
-    assert!(session.vars().window_function_enabled());
+    assert!(session.vars().enable_window_function());
 }
 
 /// Go `SessionVars.BuildParserConfig`: the session parses under its own

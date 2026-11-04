@@ -54,7 +54,7 @@ fn int_const(value: i64) -> Expression {
 
 fn string_const(value: &str) -> Expression {
     let mut constant = Constant::default();
-    constant.value = Datum::new_string(value.as_bytes().to_vec());
+    constant.value = Datum::new_string_datum(value.as_bytes().to_vec());
     let mut ft = FieldType::new(FieldTypeCode::VarString);
     ft.set_charset_name("utf8mb4");
     ft.set_collation_name("utf8mb4_bin");
@@ -108,14 +108,14 @@ fn group_concat_keeps_a_non_binary_input_collation() {
     let mut col_type = FieldType::new(FieldTypeCode::VarString);
     col_type.set_charset_name("utf8mb4");
     col_type.set_collation_name("utf8mb4_0900_ai_ci");
-    col_type.del_flags(FieldTypeFlags::BINARY);
+    col_type.del_flag(FieldTypeFlags::BINARY);
 
     let mut sep_type = FieldType::new(FieldTypeCode::VarString);
     sep_type.set_charset_name("utf8mb4");
     sep_type.set_collation_name("utf8mb4_0900_ai_ci");
-    sep_type.del_flags(FieldTypeFlags::BINARY);
+    sep_type.del_flag(FieldTypeFlags::BINARY);
     let mut separator = Constant::default();
-    separator.value = Datum::new_string(" ");
+    separator.value = Datum::new_string_datum(" ");
     separator.ret_type = Some(sep_type);
 
     let d = BaseFuncDesc::new(
@@ -155,13 +155,13 @@ fn group_concat_keeps_input_collation_with_empty_separator_metadata() {
     let mut col_type = FieldType::new(FieldTypeCode::VarString);
     col_type.set_charset_name("utf8mb4");
     col_type.set_collation_name("utf8mb4_0900_ai_ci");
-    col_type.del_flags(FieldTypeFlags::BINARY);
+    col_type.del_flag(FieldTypeFlags::BINARY);
 
     // Go builds the separator with a bare NewFieldType: no charset, no
     // collation.
     let empty_sep = FieldType::new(FieldTypeCode::VarString);
     let mut separator = Constant::default();
-    separator.value = Datum::new_string("|");
+    separator.value = Datum::new_string_datum("|");
     separator.ret_type = Some(empty_sep);
 
     let d = BaseFuncDesc::new(
@@ -820,7 +820,7 @@ fn approx_percentile_reads_constants_like_go_eval_int() {
             false,
         )
     };
-    assert!(make(Datum::new_string("50"), FieldTypeCode::VarString).is_ok());
+    assert!(make(Datum::new_string_datum("50"), FieldTypeCode::VarString).is_ok());
     assert_eq!(
         make(Datum::UInt(u64::MAX), FieldTypeCode::LongLong).unwrap_err(),
         AggDescError::ApproxPercentileOutOfRange(-1)

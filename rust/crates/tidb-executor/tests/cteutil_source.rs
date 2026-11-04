@@ -195,7 +195,7 @@ fn test_swap_data() {
     strings.open_and_ref().unwrap();
     let mut string_chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&string_type), 10);
     for value in 0..10 {
-        string_chunk.append_datum(0, &Datum::new_string(value.to_string()));
+        string_chunk.append_datum(0, &Datum::new_string_datum(value.to_string()));
     }
     strings.add_chunk(string_chunk).unwrap();
 
@@ -205,7 +205,7 @@ fn test_swap_data() {
             .map(|row| ints.get_row(0, row).unwrap())
             .collect::<Vec<_>>(),
         (0..10)
-            .map(|value| vec![Datum::new_string(value.to_string())])
+            .map(|value| vec![Datum::new_string_datum(value.to_string())])
             .collect::<Vec<_>>()
     );
     assert_eq!(

@@ -141,7 +141,7 @@ fn nanos(duration: Duration) -> i64 {
 /// Go `types.NewDatum(string)` / `types.NewDatum(nil)` for the `any` that
 /// `convertEmptyToNil` returns.
 fn opt_string_datum(value: Option<&str>) -> Datum {
-    value.map_or(Datum::Null, |value| Datum::new_string(value.as_bytes()))
+    value.map_or(Datum::Null, |value| Datum::new_string_datum(value.as_bytes()))
 }
 
 /// Go `types.NewDatum(bool)`: `SetInt64(1)` or `SetInt64(0)`.
@@ -175,7 +175,7 @@ fn unix_seconds_in(seconds: i64, tz: SessionTimeZone) -> DateTime<SessionTimeZon
 pub fn column_factory(name: &str) -> Option<ColumnFactory> {
     let factory: ColumnFactory = match name {
         CLUSTER_TABLE_INSTANCE_COLUMN_NAME_STR => {
-            |info, _| Datum::new_string(info.instance_addr().as_bytes())
+            |info, _| Datum::new_string_datum(info.instance_addr().as_bytes())
         }
         SUMMARY_BEGIN_TIME_STR => {
             |info, record| timestamp_datum(unix_seconds_in(record.begin, info.time_location()))
@@ -183,18 +183,18 @@ pub fn column_factory(name: &str) -> Option<ColumnFactory> {
         SUMMARY_END_TIME_STR => {
             |info, record| timestamp_datum(unix_seconds_in(record.end, info.time_location()))
         }
-        STMT_TYPE_STR => |_, record| Datum::new_string(record.stmt_type.as_bytes()),
+        STMT_TYPE_STR => |_, record| Datum::new_string_datum(record.stmt_type.as_bytes()),
         SCHEMA_NAME_STR => |_, record| opt_string_datum(convert_empty_to_nil(&record.schema_name)),
         DIGEST_STR => |_, record| opt_string_datum(convert_empty_to_nil(&record.digest)),
         // Statement text carries a byte that is not UTF-8 as its `raw_bytes`
         // escape; Go's string holds the byte.
         DIGEST_TEXT_STR => {
-            |_, record| Datum::new_string(str_to_bytes(&record.normalized_sql).into_owned())
+            |_, record| Datum::new_string_datum(str_to_bytes(&record.normalized_sql).into_owned())
         }
         BINDING_DIGEST_STR => {
             |_, record| opt_string_datum(convert_empty_to_nil(&record.binding_digest))
         }
-        BINDING_DIGEST_TEXT_STR => |_, record| Datum::new_string(record.binding_sql.as_bytes()),
+        BINDING_DIGEST_TEXT_STR => |_, record| Datum::new_string_datum(record.binding_sql.as_bytes()),
         TABLE_NAMES_STR => |_, record| opt_string_datum(convert_empty_to_nil(&record.table_names)),
         INDEX_NAMES_STR => |_, record| {
             let joined = record.index_names.join(",");
@@ -390,7 +390,7 @@ pub fn column_factory(name: &str) -> Option<ColumnFactory> {
         SUM_EXEC_RETRY_TIME_STR => |_, record| Datum::new_int(nanos(record.exec_retry_time)),
         SUM_BACKOFF_TIMES_STR => |_, record| Datum::new_int(record.sum_backoff_times),
         BACKOFF_TYPES_STR => |_, record| {
-            format_backoff_types(&record.backoff_types).map_or(Datum::Null, Datum::new_string)
+            format_backoff_types(&record.backoff_types).map_or(Datum::Null, Datum::new_string_datum)
         },
         AVG_MEM_STR => |_, record| Datum::new_int(avg_int(record.sum_mem, record.exec_count)),
         MAX_MEM_STR => |_, record| Datum::new_int(record.max_mem),
@@ -440,21 +440,21 @@ pub fn column_factory(name: &str) -> Option<ColumnFactory> {
         PLAN_CACHE_HITS_STR => |_, record| Datum::new_int(record.plan_cache_hits),
         PLAN_IN_BINDING_STR => |_, record| bool_datum(record.plan_in_binding),
         QUERY_SAMPLE_TEXT_STR => {
-            |_, record| Datum::new_string(str_to_bytes(&record.sample_sql).into_owned())
+            |_, record| Datum::new_string_datum(str_to_bytes(&record.sample_sql).into_owned())
         }
         PREV_SAMPLE_TEXT_STR => {
-            |_, record| Datum::new_string(str_to_bytes(&record.prev_sql).into_owned())
+            |_, record| Datum::new_string_datum(str_to_bytes(&record.prev_sql).into_owned())
         }
-        PLAN_DIGEST_STR => |_, record| Datum::new_string(record.plan_digest.as_bytes()),
+        PLAN_DIGEST_STR => |_, record| Datum::new_string_datum(record.plan_digest.as_bytes()),
         PLAN_STR => |_, record| {
             // Go logs the decode failure and falls back to the empty plan.
             let plan = decode_plan(&record.sample_plan).unwrap_or_default();
-            Datum::new_string(plan)
+            Datum::new_string_datum(plan)
         },
-        BINARY_PLAN => |_, record| Datum::new_string(record.sample_binary_plan.as_bytes()),
-        CHARSET => |_, record| Datum::new_string(record.charset.as_bytes()),
-        COLLATION => |_, record| Datum::new_string(record.collation.as_bytes()),
-        PLAN_HINT => |_, record| Datum::new_string(record.plan_hint.as_bytes()),
+        BINARY_PLAN => |_, record| Datum::new_string_datum(record.sample_binary_plan.as_bytes()),
+        CHARSET => |_, record| Datum::new_string_datum(record.charset.as_bytes()),
+        COLLATION => |_, record| Datum::new_string_datum(record.collation.as_bytes()),
+        PLAN_HINT => |_, record| Datum::new_string_datum(record.plan_hint.as_bytes()),
         AVG_REQUEST_UNIT_READ => {
             |_, record| Datum::new_real(avg_sum_float(record.ru.sum_rru, record.exec_count))
         }
@@ -474,12 +474,12 @@ pub fn column_factory(name: &str) -> Option<ColumnFactory> {
             |_, record| Datum::new_real(avg_sum_float(record.ru.sum_ru_v2, record.exec_count))
         }
         MAX_REQUEST_UNIT_V2 => |_, record| Datum::new_real(record.ru.max_ru_v2),
-        RESOURCE_GROUP_NAME => |_, record| Datum::new_string(record.resource_group_name.as_bytes()),
+        RESOURCE_GROUP_NAME => |_, record| Datum::new_string_datum(record.resource_group_name.as_bytes()),
         PLAN_CACHE_UNQUALIFIED_STR => {
             |_, record| Datum::new_int(record.plan_cache_unqualified_count)
         }
         PLAN_CACHE_UNQUALIFIED_LAST_REASON_STR => {
-            |_, record| Datum::new_string(record.plan_cache_unqualified_last_reason.as_bytes())
+            |_, record| Datum::new_string_datum(record.plan_cache_unqualified_last_reason.as_bytes())
         }
         SUM_UNPACKED_BYTES_SENT_TIKV_TOTAL_STR => {
             |_, record| Datum::new_int(record.network.unpacked_bytes_sent_tikv_total)
@@ -651,23 +651,23 @@ mod tests {
             }
             match column_name {
                 CLUSTER_TABLE_INSTANCE_COLUMN_NAME_STR => {
-                    assert_eq!(column, Datum::new_string("instance_addr"));
+                    assert_eq!(column, Datum::new_string_datum("instance_addr"));
                 }
-                STMT_TYPE_STR => assert_eq!(column, Datum::new_string(record.stmt_type.as_bytes())),
+                STMT_TYPE_STR => assert_eq!(column, Datum::new_string_datum(record.stmt_type.as_bytes())),
                 SCHEMA_NAME_STR => {
-                    assert_eq!(column, Datum::new_string(record.schema_name.as_bytes()));
+                    assert_eq!(column, Datum::new_string_datum(record.schema_name.as_bytes()));
                 }
-                DIGEST_STR => assert_eq!(column, Datum::new_string(record.digest.as_bytes())),
+                DIGEST_STR => assert_eq!(column, Datum::new_string_datum(record.digest.as_bytes())),
                 DIGEST_TEXT_STR => {
-                    assert_eq!(column, Datum::new_string(record.normalized_sql.as_bytes()));
+                    assert_eq!(column, Datum::new_string_datum(record.normalized_sql.as_bytes()));
                 }
                 TABLE_NAMES_STR => {
-                    assert_eq!(column, Datum::new_string(record.table_names.as_bytes()));
+                    assert_eq!(column, Datum::new_string_datum(record.table_names.as_bytes()));
                 }
                 INDEX_NAMES_STR => {
-                    assert_eq!(column, Datum::new_string(record.index_names.join(",")));
+                    assert_eq!(column, Datum::new_string_datum(record.index_names.join(",")));
                 }
-                SAMPLE_USER_STR => assert_eq!(column, Datum::new_string(info.user.as_bytes())),
+                SAMPLE_USER_STR => assert_eq!(column, Datum::new_string_datum(info.user.as_bytes())),
                 EXEC_COUNT_STR => assert_eq!(column, Datum::new_int(1)),
                 SUM_LATENCY_STR => {
                     assert_eq!(column, Datum::new_int(nanos(record.sum_latency)));
@@ -824,7 +824,7 @@ mod tests {
             .collect();
 
         let mut max_unsigned_type = FieldType::new(FieldTypeCode::LongLong);
-        max_unsigned_type.set_flags(FieldTypeFlags::UNSIGNED);
+        max_unsigned_type.set_flag(FieldTypeFlags::UNSIGNED);
         let ret_types = vec![
             FieldType::new(FieldTypeCode::LongLong),
             FieldType::new(FieldTypeCode::Double),

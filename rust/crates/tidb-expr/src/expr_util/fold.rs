@@ -240,7 +240,7 @@ fn fold_scalar_function(
     if !has_null_arg {
         if let Some(ret_type) = ret_type.as_mut() {
             if value.is_null() {
-                ret_type.del_flags(FieldTypeFlags::NOT_NULL);
+                ret_type.del_flag(FieldTypeFlags::NOT_NULL);
             } else {
                 ret_type.add_flags(FieldTypeFlags::NOT_NULL);
             }

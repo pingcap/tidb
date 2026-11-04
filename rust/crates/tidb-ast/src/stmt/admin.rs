@@ -5,7 +5,7 @@
 use crate::util::{back_quote, escape_string_literal, push_name_path};
 use crate::{
     AlterInstanceStmt, AlterRangeStmt, CompactTableStmt, CreateUserCommentOrAttribute, CreateUserPasswordOption,
-    CreateProcedureStmt, CreateUserSpec, DropProcedureStmt, RenameUserPair, RoleSpec,
+    CreateProcedureStmt, CreateUserSpec, DropProcedureStmt, RenameUserPair, RoleIdentity,
 };
 use crate::{
     AddQueryWatchStmt, AnalyzeIncrementalStmt, AnalyzeTableStmt, BinlogStmt, BrieStmt,
@@ -42,7 +42,7 @@ pub use ddl_job_alter::{AdminAlterDdlJobOption, AdminAlterDdlJobsStmt};
 pub use ddl_job_control::{AdminDdlJobControlKind, AdminDdlJobControlStmt};
 pub use flush_plan_cache::AdminPlanCacheScope;
 pub use grant::{
-    GrantLevel, GrantObjectType, GrantPrivilege, GrantProxyStmt, GrantStmt, RevokeStmt,
+    GrantLevel, ObjectTypeType, GrantPrivilege, GrantProxyStmt, GrantStmt, RevokeStmt,
     };
 pub use plan_replayer::{PlanReplayerStmt, PlanReplayerTarget};
 pub use role_grant::{GrantRoleStmt, RevokeRoleStmt};
@@ -250,14 +250,14 @@ pub enum AdminStmt {
     },
     /// A `CREATE ROLE [IF NOT EXISTS] role_spec [, ...]` statement.
     ///
-    /// Roles deliberately use [`RoleSpec`] rather than [`UserSpec`]: Go's
+    /// Roles deliberately use [`RoleIdentity`] rather than [`UserSpec`]: Go's
     /// `Rolename` grammar rejects a bare non-reserved keyword unless it is in
     /// the composed `role@host` form, and it never permits `CURRENT_USER`.
     CreateRole {
         /// Whether duplicate-role errors are suppressed.
         if_not_exists: bool,
         /// The role identities in source order.
-        roles: Vec<RoleSpec>,
+        roles: Vec<RoleIdentity>,
     },
     /// An `ALTER USER [IF EXISTS] user_spec [, ...] [PASSWORD EXPIRE ...]`
     /// statement.

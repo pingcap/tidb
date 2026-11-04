@@ -621,8 +621,8 @@ mod source_tests {
         ];
         let cases = [
             (
-                vec![Datum::Int(1), Datum::new_string("some string")],
-                vec![Datum::Int(1), Datum::new_string("some string")],
+                vec![Datum::Int(1), Datum::new_string_datum("some string")],
+                vec![Datum::Int(1), Datum::new_string_datum("some string")],
                 [
                     tidb_datatype::UNSPECIFIED_LENGTH,
                     tidb_datatype::UNSPECIFIED_LENGTH,
@@ -630,8 +630,8 @@ mod source_tests {
                 true,
             ),
             (
-                vec![Datum::Int(1), Datum::new_string("some string")],
-                vec![Datum::Int(1), Datum::new_string("some string2")],
+                vec![Datum::Int(1), Datum::new_string_datum("some string")],
+                vec![Datum::Int(1), Datum::new_string_datum("some string2")],
                 [
                     tidb_datatype::UNSPECIFIED_LENGTH,
                     tidb_datatype::UNSPECIFIED_LENGTH,
@@ -639,8 +639,8 @@ mod source_tests {
                 false,
             ),
             (
-                vec![Datum::Int(1), Datum::new_string("some string")],
-                vec![Datum::Int(1), Datum::new_string("some string2")],
+                vec![Datum::Int(1), Datum::new_string_datum("some string")],
+                vec![Datum::Int(1), Datum::new_string_datum("some string2")],
                 [tidb_datatype::UNSPECIFIED_LENGTH, 11],
                 true,
             ),

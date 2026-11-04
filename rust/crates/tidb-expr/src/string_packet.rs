@@ -64,7 +64,7 @@ pub(crate) fn repeat_in_mode(
     }
     let count = crate::cast::to_i64_signed(count);
     if count <= 0 || value.is_empty() {
-        return Ok(Datum::new_string(Vec::<u8>::new()));
+        return Ok(Datum::new_string_datum(Vec::<u8>::new()));
     }
     let count = count.min(i64::from(i32::MAX)) as usize;
     let Some(output_len) = value.len().checked_mul(count) else {
@@ -82,7 +82,7 @@ pub(crate) fn repeat_in_mode(
     for _ in 0..count {
         output.extend_from_slice(&value);
     }
-    Ok(Datum::new_string(output))
+    Ok(Datum::new_string_datum(output))
 }
 /// `SPACE(n)`: a string of `n` spaces (empty for `n <= 0`); `NULL` if the
 /// argument is `NULL`.  This is the `ETInt` signature from
@@ -110,7 +110,7 @@ pub(crate) fn space(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, E
     if width > MAX_BLOB_WIDTH {
         return Ok(Datum::Null);
     }
-    Ok(Datum::new_string(" ".repeat(width as usize)))
+    Ok(Datum::new_string_datum(" ".repeat(width as usize)))
 }
 /// `LPAD(str, len, pad)` / `RPAD(str, len, pad)`: pad (or truncate) `str` to
 /// `len` characters using `pad` on the left/right. Ported from
@@ -174,17 +174,17 @@ pub(crate) fn pad(
     let chars: Vec<char> = s.chars().collect();
     let len = len as usize;
     if chars.len() >= len {
-        return Ok(Datum::new_string(
+        return Ok(Datum::new_string_datum(
             chars.into_iter().take(len).collect::<String>(),
         ));
     }
     let pad_chars: Vec<char> = padstr.chars().collect();
     if pad_chars.is_empty() {
-        return Ok(Datum::new_string(String::new()));
+        return Ok(Datum::new_string_datum(String::new()));
     }
     let need = len - chars.len();
     let fill: String = pad_chars.iter().cycle().take(need).collect();
-    Ok(Datum::new_string(if left {
+    Ok(Datum::new_string_datum(if left {
         format!("{fill}{s}")
     } else {
         format!("{s}{fill}")
@@ -195,21 +195,21 @@ pub(crate) fn pad(
 /// the first `len` bytes on truncation, and preserve arbitrary pad octets.
 fn pad_bytes(source: &[u8], len: usize, pad: &[u8], left: bool) -> Datum {
     if source.len() >= len {
-        return Datum::new_bytes(source[..len].to_vec());
+        return Datum::new_bytes_datum(source[..len].to_vec());
     }
     if pad.is_empty() {
-        return Datum::new_bytes(Vec::new());
+        return Datum::new_bytes_datum(Vec::new());
     }
     let need = len - source.len();
     let mut fill = Vec::with_capacity(need);
     fill.extend(pad.iter().copied().cycle().take(need));
     if left {
         fill.extend_from_slice(source);
-        Datum::new_bytes(fill)
+        Datum::new_bytes_datum(fill)
     } else {
         let mut result = source.to_vec();
         result.extend_from_slice(&fill);
-        Datum::new_bytes(result)
+        Datum::new_bytes_datum(result)
     }
 }
 /// `WEIGHT_STRING(str [AS {CHAR|BINARY}(n)])`, ported from
@@ -298,7 +298,7 @@ pub(crate) fn weight_string(
             }
         }
     };
-    Ok(Datum::new_bytes(
+    Ok(Datum::new_bytes_datum(
         tidb_datatype::get_collator(collation.name()).key(&bytes),
     ))
 }
@@ -370,7 +370,7 @@ pub(crate) fn to_base64(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datu
         }
         out = wrapped;
     }
-    Ok(Datum::new_string(out))
+    Ok(Datum::new_string_datum(out))
 }
 #[cfg(test)]
 mod space_tests {
@@ -443,7 +443,7 @@ mod space_tests {
         let ctx = Packet::new(1_000);
         assert_eq!(
             space(&[Datum::Int(6)], &ctx),
-            Ok(Datum::new_string("      ".to_string()))
+            Ok(Datum::new_string_datum("      ".to_string()))
         );
         assert!(
             ctx.warnings().is_empty(),
@@ -454,7 +454,7 @@ mod space_tests {
 
         let ctx = Packet::new(1_000);
         let repeated = repeat(
-            &[Datum::new_string("a".to_string()), Datum::Int(1_001)],
+            &[Datum::new_string_datum("a".to_string()), Datum::Int(1_001)],
             &ctx,
         );
         over("repeat", repeated.unwrap(), &ctx);
@@ -464,9 +464,9 @@ mod space_tests {
         // characters already exceed a 1000-byte packet while 250 do not.
         let lpad_args = |len: i64| {
             [
-                Datum::new_string("a".to_string()),
+                Datum::new_string_datum("a".to_string()),
                 Datum::Int(len),
-                Datum::new_string("x".to_string()),
+                Datum::new_string_datum("x".to_string()),
             ]
         };
         let ctx = Packet::new(1_000);
@@ -481,12 +481,12 @@ mod space_tests {
         // per 76 output characters: 741 input bytes need exactly 1000 and fit,
         // 742 need 1005 and do not.
         let ctx = Packet::new(1_000);
-        assert!(to_base64(&[Datum::new_string("a".repeat(741))], &ctx).unwrap() != Datum::Null);
+        assert!(to_base64(&[Datum::new_string_datum("a".repeat(741))], &ctx).unwrap() != Datum::Null);
         assert!(ctx.warnings().is_empty());
         let ctx = Packet::new(1_000);
         over(
             "to_base64",
-            to_base64(&[Datum::new_string("a".repeat(742))], &ctx).unwrap(),
+            to_base64(&[Datum::new_string_datum("a".repeat(742))], &ctx).unwrap(),
             &ctx,
         );
     }
@@ -497,20 +497,20 @@ mod space_tests {
     #[test]
     fn space_matches_go_source_scalar_vectors() {
         let cases = [
-            (Datum::Int(0), Datum::new_string(String::new())),
-            (Datum::Int(3), Datum::new_string("   ".to_string())),
+            (Datum::Int(0), Datum::new_string_datum(String::new())),
+            (Datum::Int(3), Datum::new_string_datum("   ".to_string())),
             (Datum::Int(16_777_217), Datum::Null),
-            (Datum::Int(-1), Datum::new_string(String::new())),
+            (Datum::Int(-1), Datum::new_string_datum(String::new())),
             (
-                Datum::new_string("abc".to_string()),
-                Datum::new_string(String::new()),
+                Datum::new_string_datum("abc".to_string()),
+                Datum::new_string_datum(String::new()),
             ),
             (
-                Datum::new_string("3".to_string()),
-                Datum::new_string("   ".to_string()),
+                Datum::new_string_datum("3".to_string()),
+                Datum::new_string_datum("   ".to_string()),
             ),
-            (Datum::Real(1.2), Datum::new_string(" ".to_string())),
-            (Datum::Real(1.9), Datum::new_string("  ".to_string())),
+            (Datum::Real(1.2), Datum::new_string_datum(" ".to_string())),
+            (Datum::Real(1.9), Datum::new_string_datum("  ".to_string())),
             (Datum::Null, Datum::Null),
         ];
         for (input, want) in cases {
@@ -521,11 +521,11 @@ mod space_tests {
         // in TiDB; retain that distinction at this function boundary.
         assert_eq!(
             space(&[Datum::Decimal(Decimal::from_literal("2.5"))], &NoColumns),
-            Ok(Datum::new_string("   ".to_string()))
+            Ok(Datum::new_string_datum("   ".to_string()))
         );
         assert_eq!(
             space(&[Datum::Real(2.5)], &NoColumns),
-            Ok(Datum::new_string("  ".to_string()))
+            Ok(Datum::new_string_datum("  ".to_string()))
         );
         assert_eq!(
             space(&[], &NoColumns),
@@ -541,34 +541,34 @@ mod space_tests {
         let ctx = Packet::new(1_000);
         let args = |s: &str, len: i64, pad_str: &str| {
             [
-                Datum::new_string(s.to_string()),
+                Datum::new_string_datum(s.to_string()),
                 Datum::Int(len),
-                Datum::new_string(pad_str.to_string()),
+                Datum::new_string_datum(pad_str.to_string()),
             ]
         };
         // Truncation: the target length wins over the source.
         assert_eq!(
             pad(&args("hi", 1, "??"), true, &ctx).unwrap(),
-            Datum::new_string("h".to_string())
+            Datum::new_string_datum("h".to_string())
         );
         assert_eq!(
             pad(&args("hi", 1, "??"), false, &ctx).unwrap(),
-            Datum::new_string("h".to_string())
+            Datum::new_string_datum("h".to_string())
         );
         // Padding: `??` repeats left/right to the target length.
         assert_eq!(
             pad(&args("hi", 5, "??"), true, &ctx).unwrap(),
-            Datum::new_string("???hi".to_string())
+            Datum::new_string_datum("???hi".to_string())
         );
         assert_eq!(
             pad(&args("hi", 5, "??"), false, &ctx).unwrap(),
-            Datum::new_string("hi???".to_string())
+            Datum::new_string_datum("hi???".to_string())
         );
         // The rune signature counts CHARACTERS: `好` is one character even
         // though it is three bytes.
         assert_eq!(
             pad(&args("好", 2, "xy"), true, &ctx).unwrap(),
-            Datum::new_string("x好".to_string())
+            Datum::new_string_datum("x好".to_string())
         );
         // A negative target length yields NULL (Go's out-of-range arm).
         assert_eq!(pad(&args("hi", -1, "??"), true, &ctx).unwrap(), Datum::Null);
@@ -581,7 +581,7 @@ mod to_base64_tests {
 
     /// Length and newline count of `TO_BASE64` over `byte_count` `'a'` bytes.
     fn shape(byte_count: usize) -> (usize, usize) {
-        match to_base64(&[Datum::new_bytes(vec![b'a'; byte_count])], &NoColumns).unwrap() {
+        match to_base64(&[Datum::new_bytes_datum(vec![b'a'; byte_count])], &NoColumns).unwrap() {
             Datum::String(text) => {
                 let bytes = text.bytes();
                 (bytes.len(), bytes.iter().filter(|&&b| b == b'\n').count())
@@ -639,7 +639,7 @@ mod to_base64_tests {
         ] {
             assert_eq!(
                 to_base64(
-                    &[Datum::new_string(input.clone())],
+                    &[Datum::new_string_datum(input.clone())],
                     &Limit(max_allowed_packet)
                 )
                 .unwrap(),
@@ -662,12 +662,12 @@ mod weight_string_source_tests {
         for &(input, padding, expected) in cases {
             assert_eq!(
                 weight_string(
-                    &Datum::new_string(input.to_string()),
+                    &Datum::new_string_datum(input.to_string()),
                     padding,
                     collation,
                     &NoColumns,
                 ),
-                Ok(Datum::new_bytes(expected.to_vec())),
+                Ok(Datum::new_bytes_datum(expected.to_vec())),
                 "{} {input:?} {padding:?}",
                 collation.name()
             );

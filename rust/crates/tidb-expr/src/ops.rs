@@ -565,7 +565,7 @@ pub(crate) fn eval_binary_full(
     if matches!(op, Eq | Ge | Gt | Le | Lt | Ne | NullEq) {
         let is_text = |value: &Datum| matches!(value, Datum::String(_) | Datum::Bytes(_));
         let as_text = |duration: &tidb_datatype::MySqlDuration| {
-            Datum::new_collation_string(duration.to_string(), collation)
+            Datum::new_collation_string_datum(duration.to_string(), collation)
         };
         let rewritten = match (&l, &r) {
             (Datum::Duration(a), other) if is_text(other) => Some((as_text(a), r.clone())),
@@ -1515,7 +1515,7 @@ mod tests {
             eval_binary(
                 BinaryOp::Eq,
                 vector(vec![1.0, 2.0]),
-                Datum::new_string("[1,2]")
+                Datum::new_string_datum("[1,2]")
             ),
             Ok(Datum::Int(1))
         );
@@ -1599,7 +1599,7 @@ mod tests {
                 .unwrap()
                 .time,
         );
-        let right = Datum::new_string("2020-02-31");
+        let right = Datum::new_string_datum("2020-02-31");
         let strict = TemporalContext::new(
             tidb_datatype::DateModes {
                 no_zero_date: true,
@@ -1661,7 +1661,7 @@ mod tests {
                 .unwrap()
                 .time,
         );
-        let right = Datum::new_string("2020-01-01 00:00:00+01:00");
+        let right = Datum::new_string_datum("2020-01-01 00:00:00+01:00");
         let utc_ctx = TemporalContext::new(tidb_datatype::DateModes::default(), utc);
         assert_eq!(
             eval_binary_full(
@@ -1715,7 +1715,7 @@ mod tests {
     #[test]
     fn string_to_real_coercion_raises_go_truncation_warnings() {
         let log = WarningLog::default();
-        let s = |text: &str| Datum::new_string(text.to_owned());
+        let s = |text: &str| Datum::new_string_datum(text.to_owned());
 
         assert_eq!(to_f64_with_mysql_string(&s("12abc"), &log), Ok(12.0));
         assert_eq!(log.taken(), vec![truncated("12abc")]);
@@ -2135,14 +2135,14 @@ use tidb_charset::Collation;
         assert_eq!(bytes_to_f64(&[0xFF], &crate::NoColumns).unwrap(), 0.0);
         for datum in [
             Datum::Bytes(vec![b'4', 0xFF]),
-            Datum::new_string(vec![b'4', 0xFF]),
+            Datum::new_string_datum(vec![b'4', 0xFF]),
         ] {
             assert_eq!(to_f64_with_mysql_string(&datum, &crate::NoColumns), Ok(4.0));
         }
         assert_eq!(
             eval_binary(
                 BinaryOp::Eq,
-                Datum::new_string("12x".to_owned()),
+                Datum::new_string_datum("12x".to_owned()),
                 Datum::Int(12),
             ),
             Ok(Datum::Int(1))
@@ -2151,17 +2151,17 @@ use tidb_charset::Collation;
             eval_binary(
                 BinaryOp::NullEq,
                 Datum::Null,
-                Datum::new_string("1".to_owned())
+                Datum::new_string_datum("1".to_owned())
             ),
             Ok(Datum::Int(0))
         );
-        for sentinel in [Datum::min_not_null(), Datum::max_value()] {
+        for sentinel in [Datum::min_not_null_datum(), Datum::max_value()] {
             assert_eq!(
                 eval_binary(BinaryOp::NullEq, Datum::Null, sentinel.clone()),
                 Err(EvalError::Unsupported("range sentinel expression operand"))
             );
             assert_eq!(
-                eval_binary(BinaryOp::Eq, sentinel, Datum::new_string("1")),
+                eval_binary(BinaryOp::Eq, sentinel, Datum::new_string_datum("1")),
                 Err(EvalError::Unsupported("range sentinel expression operand"))
             );
         }

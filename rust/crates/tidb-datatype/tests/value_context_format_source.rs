@@ -69,7 +69,7 @@ fn conversion_generated_truncation_uses_context_warning_port() {
 /// FieldType compatibility predicate is involved.
 #[test]
 fn datum_scalar_and_range_sentinel_paths_remain_distinct() {
-    let scalar = Datum::new_string("'nul\0\n\r\\");
+    let scalar = Datum::new_string_datum("'nul\0\n\r\\");
     assert_eq!(scalar.sql_string().unwrap(), "'nul\0\n\r\\");
 
     let sentinel = Datum::max_value();

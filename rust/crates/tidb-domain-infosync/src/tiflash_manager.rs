@@ -126,11 +126,11 @@ impl TiFlashReplicaManager for TiFlashReplicaManagerCtx {
 /// Go `mockTiFlashReplicaManagerCtx` with no mock TiFlash: every write is a
 /// no-op. Its record of the calls is what tests read.
 #[derive(Default)]
-pub struct MockTiFlashReplicaManager {
+pub struct MockTiFlashReplicaManagerCtx {
     calls: Mutex<Vec<String>>,
 }
 
-impl MockTiFlashReplicaManager {
+impl MockTiFlashReplicaManagerCtx {
     /// The calls made so far, as `set <rule id> <count>`, `accel <ids>`.
     pub fn calls(&self) -> Vec<String> {
         self.calls.lock().unwrap_or_else(PoisonError::into_inner).clone()
@@ -141,7 +141,7 @@ impl MockTiFlashReplicaManager {
     }
 }
 
-impl TiFlashReplicaManager for MockTiFlashReplicaManager {
+impl TiFlashReplicaManager for MockTiFlashReplicaManagerCtx {
     fn set_tiflash_group_config(&self) -> Result<(), String> {
         Ok(())
     }
@@ -178,7 +178,7 @@ pub fn init_tiflash_replica_manager(manager: Option<Arc<dyn TiFlashReplicaManage
     *TIFLASH_REPLICA_MANAGER
         .lock()
         .unwrap_or_else(PoisonError::into_inner) =
-        Some(manager.unwrap_or_else(|| Arc::new(MockTiFlashReplicaManager::default())));
+        Some(manager.unwrap_or_else(|| Arc::new(MockTiFlashReplicaManagerCtx::default())));
 }
 
 /// The node's TiFlash replica manager; a node that installed none gets a mock.
@@ -187,7 +187,7 @@ pub fn tiflash_replica_manager() -> Arc<dyn TiFlashReplicaManager> {
         TIFLASH_REPLICA_MANAGER
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .get_or_insert_with(|| Arc::new(MockTiFlashReplicaManager::default())),
+            .get_or_insert_with(|| Arc::new(MockTiFlashReplicaManagerCtx::default())),
     )
 }
 

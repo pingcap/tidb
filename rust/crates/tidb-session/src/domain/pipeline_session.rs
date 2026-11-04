@@ -50,10 +50,10 @@ pub fn prepared_parameters(
                 tidb_datatype::Datum::UInt(*value)
             }
             tidb_param::PreparedValue::String(bytes) => {
-                tidb_datatype::Datum::new_string(bytes.clone())
+                tidb_datatype::Datum::new_string_datum(bytes.clone())
             }
             tidb_param::PreparedValue::Bytes(bytes) => {
-                tidb_datatype::Datum::new_bytes(bytes.clone())
+                tidb_datatype::Datum::new_bytes_datum(bytes.clone())
             }
             tidb_param::PreparedValue::Float(value) => {
                 tidb_datatype::Datum::Float32(f64::from(*value))
@@ -77,7 +77,7 @@ pub fn prepared_parameters(
             // date/time builtins carry -- so the text IS the value here, and
             // it is the string datum a quoted temporal literal would be.
             tidb_param::PreparedValue::Temporal(text) => {
-                tidb_datatype::Datum::new_string(text.clone())
+                tidb_datatype::Datum::new_string_datum(text.clone())
             }
         })
         .collect()
@@ -143,7 +143,7 @@ fn result_field_type(field_type: &FieldType) -> ResultFieldTypeMetadata {
 /// inverse.
 pub fn field_type_of(metadata: &ResultFieldTypeMetadata) -> FieldType {
     let mut field_type = FieldType::new(metadata.code);
-    field_type.set_flags(u32::from(metadata.flags));
+    field_type.set_flag(u32::from(metadata.flags));
     field_type.set_flen(metadata.flen.map_or(UNSPECIFIED_LENGTH, i64::from));
     field_type.set_decimal(metadata.decimal.map_or(UNSPECIFIED_LENGTH, i64::from));
     field_type.set_collation_name(metadata.collation.name());
@@ -301,12 +301,12 @@ mod tests {
         );
         assert_eq!(
             bound[0],
-            Datum::new_string(b"BARBARBAR".to_vec()),
+            Datum::new_string_datum(b"BARBARBAR".to_vec()),
             "the collation must be TiDB's default (utf8mb4_bin), matching a literal"
         );
 
         // The BLOB family stays a bytes datum, as Go's `NewBytesDatum` arm is.
         let blob = prepared_parameters(&[tidb_param::PreparedValue::Bytes(b"raw".to_vec())]);
-        assert_eq!(blob[0], Datum::new_bytes(b"raw".to_vec()));
+        assert_eq!(blob[0], Datum::new_bytes_datum(b"raw".to_vec()));
     }
 }

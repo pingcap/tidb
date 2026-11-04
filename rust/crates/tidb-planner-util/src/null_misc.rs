@@ -83,7 +83,7 @@ pub fn reset_not_null_flag(schema: &mut tidb_expr::schema::Schema, start: usize,
             if ret_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL) {
                 // Go clones the type before clearing so the SOURCE column's
                 // type is untouched; `ret_type` is already owned here.
-                ret_type.del_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+                ret_type.del_flag(tidb_datatype::FieldTypeFlags::NOT_NULL);
             }
         }
     }

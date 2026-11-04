@@ -46,7 +46,7 @@ fn default_chunk_materializes_codec_decode_one_scalar_rows() {
     .unwrap();
     rows_data.extend_from_slice(
         &encode_value(&[
-            Datum::new_bytes(b"abc"),
+            Datum::new_bytes_datum(b"abc"),
             Datum::new_int(-7),
             Datum::Null,
             Datum::new_real(2.5),
@@ -65,7 +65,7 @@ fn default_chunk_materializes_codec_decode_one_scalar_rows() {
     assert_eq!(rows[0][1], Datum::new_int(1));
     assert_eq!(rows[0][2], Datum::new_uint(300));
     assert_eq!(rows[0][3], Datum::new_real(1.25));
-    assert_eq!(rows[1][0], Datum::new_bytes(b"abc"));
+    assert_eq!(rows[1][0], Datum::new_bytes_datum(b"abc"));
     assert_eq!(rows[1][1], Datum::new_int(-7));
     assert_eq!(rows[1][2], Datum::Null);
     assert_eq!(rows[1][3], Datum::new_real(2.5));

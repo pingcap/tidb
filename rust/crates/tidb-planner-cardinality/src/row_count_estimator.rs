@@ -416,7 +416,7 @@ pub fn equal_row_count_on_column(
         histogram,
         column.top_n.as_ref(),
         column.total_row_count(),
-        column.increase_factor(realtime_row_count),
+        column.get_increase_factor(realtime_row_count),
         realtime_row_count,
         modify_count,
         options,
@@ -524,7 +524,7 @@ pub fn get_column_row_count(
     options: &EstimatorOptions,
 ) -> Result<RowEstimate, EstimationError> {
     let mut total = tidb_stats::default_row_est(0.0);
-    let increase_factor = column.increase_factor(realtime_row_count);
+    let increase_factor = column.get_increase_factor(realtime_row_count);
 
     for range in ranges {
         // Go `getColumnRowCount` enters its point branch after preparing both
@@ -1069,7 +1069,7 @@ pub fn equal_row_count_on_index(
         histogram,
         index.top_n.as_ref(),
         index.total_row_count(),
-        index.increase_factor(realtime_row_count),
+        index.get_increase_factor(realtime_row_count),
         realtime_row_count,
         modify_count,
         options,
@@ -1621,7 +1621,7 @@ pub fn get_index_row_count_for_stats_v2(
                 }
                 let mut point =
                     equal_row_count_on_index(index, &lb, realtime_row_count, modify_count, options);
-                point.multiply_all(index.increase_factor(realtime_row_count));
+                point.multiply_all(index.get_increase_factor(realtime_row_count));
                 total.add(point);
                 continue;
             }
@@ -1687,7 +1687,7 @@ pub fn get_index_row_count_for_stats_v2(
             count.add(between_row_count_on_index(index, &lb, &rb, options));
         }
 
-        count.multiply_all(index.increase_factor(realtime_row_count));
+        count.multiply_all(index.get_increase_factor(realtime_row_count));
 
         let l = Datum::Bytes(lb.clone());
         let r = Datum::Bytes(rb.clone());
@@ -2940,13 +2940,13 @@ mod version_one_index_dispatch_tests {
         let mut candidate = index();
         candidate.histogram.ndv = 2;
         candidate.histogram.buckets[0].lower_bound =
-            Datum::Bytes(encode_key(&[Datum::new_string("A")]).unwrap());
+            Datum::Bytes(encode_key(&[Datum::new_string_datum("A")]).unwrap());
         candidate.histogram.buckets[0].upper_bound =
-            Datum::Bytes(encode_key(&[Datum::new_string("a")]).unwrap());
+            Datum::Bytes(encode_key(&[Datum::new_string_datum("a")]).unwrap());
         candidate.histogram.buckets[0].repeat = 80;
         let mut cms = CmsSketch::new(5, 2048);
-        cms.insert_bytes_by_count(&encode_key(&[Datum::new_string("A")]).unwrap(), 20);
-        cms.insert_bytes_by_count(&encode_key(&[Datum::new_string("a")]).unwrap(), 80);
+        cms.insert_bytes_by_count(&encode_key(&[Datum::new_string_datum("A")]).unwrap(), 20);
+        cms.insert_bytes_by_count(&encode_key(&[Datum::new_string_datum("a")]).unwrap(), 80);
         candidate.cmsketch = Some(cms);
         let context = IndexEstimationStats::new(
             Some(&candidate),
@@ -2954,8 +2954,8 @@ mod version_one_index_dispatch_tests {
             IndexRowCounts::unscaled(100, 0),
         );
         let mut range = range(
-            vec![Datum::Int(1), Datum::new_string("A")],
-            vec![Datum::Int(1), Datum::new_string("a")],
+            vec![Datum::Int(1), Datum::new_string_datum("A")],
+            vec![Datum::Int(1), Datum::new_string_datum("a")],
         );
         range.collators = vec![Collation::Utf8Mb4GeneralCi, Collation::Binary];
         let recursive = [Vec::new(), vec![context]];
@@ -2966,9 +2966,9 @@ mod version_one_index_dispatch_tests {
         main.histogram.ndv = 2;
         main.histogram.buckets[0].repeat = 80;
         main.histogram.buckets[0].lower_bound =
-            Datum::Bytes(encode_key(&[Datum::Int(1), Datum::new_string("A")]).unwrap());
+            Datum::Bytes(encode_key(&[Datum::Int(1), Datum::new_string_datum("A")]).unwrap());
         main.histogram.buckets[0].upper_bound =
-            Datum::Bytes(encode_key(&[Datum::Int(1), Datum::new_string("a")]).unwrap());
+            Datum::Bytes(encode_key(&[Datum::Int(1), Datum::new_string_datum("a")]).unwrap());
         let columns = vec![None, None];
         let estimate = exp_backoff_estimation(
             &main,

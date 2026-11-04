@@ -1139,21 +1139,21 @@ impl SessionVars {
     /// Go `SessionVars.EnablePreparedPlanCache`, updated when its normalized
     /// ON/OFF sysvar changes rather than looked up by each execution.
     #[must_use]
-    pub const fn prepared_plan_cache_enabled(&self) -> bool {
+    pub const fn enable_prepared_plan_cache(&self) -> bool {
         self.enable_prepared_plan_cache
     }
 
     /// Go `SessionVars.SharedLockPromotion`, which makes `FOR SHARE` use the
     /// exclusive-lock path instead of the no-op shared-lock path.
     #[must_use]
-    pub const fn shared_lock_promotion_enabled(&self) -> bool {
+    pub const fn shared_lock_promotion(&self) -> bool {
         self.shared_lock_promotion
     }
 
     /// Go `SessionVars.EnableWindowFunction`, updated by the normalized
     /// `tidb_enable_window_function` bool sysvar.
     #[must_use]
-    pub const fn window_function_enabled(&self) -> bool {
+    pub const fn enable_window_function(&self) -> bool {
         self.enable_window_function
     }
 

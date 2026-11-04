@@ -301,7 +301,7 @@ impl BaseFuncDesc {
             | FieldTypeCode::Timestamp => arg,
             _ => {
                 let mut ret = arg;
-                ret.del_flags(FieldTypeFlags::NOT_NULL);
+                ret.del_flag(FieldTypeFlags::NOT_NULL);
                 ret
             }
         };
@@ -525,7 +525,7 @@ impl BaseFuncDesc {
             self.name.as_str(),
             names::MAX | names::MIN | names::LEAD | names::LAG
         ) {
-            self.ret_type.del_flags(FieldTypeFlags::NOT_NULL);
+            self.ret_type.del_flag(FieldTypeFlags::NOT_NULL);
         }
         // TiDB issues #13027 and #13961.
         if matches!(
@@ -624,7 +624,7 @@ impl BaseFuncDesc {
             clippy::cast_possible_truncation,
             reason = "reproducing the source's SetFlag(MaxRealWidth) verbatim"
         )]
-        ret.set_flags(MAX_REAL_WIDTH as u32);
+        ret.set_flag(MAX_REAL_WIDTH as u32);
         ret.set_decimal(NOT_FIXED_DEC);
         self.ret_type = ret;
     }

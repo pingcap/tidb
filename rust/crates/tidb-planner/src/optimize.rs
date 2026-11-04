@@ -111,7 +111,7 @@ pub trait OptimizeContext: tidb_exprctx::Columns + PlanCacheMarker + HintWarning
     /// Go `SessionVars.TiDBOptJoinReorderThroughSel`.
     fn join_reorder_through_sel(&self) -> bool;
     /// Go `SessionVars.EnableOuterJoinReorder`.
-    fn outer_join_reorder(&self) -> bool;
+    fn enable_outer_join_reorder(&self) -> bool;
     /// Go `SessionVars.EnableAdvancedJoinHint`.
     fn advanced_join_hint(&self) -> bool;
     /// Go `StmtCtx.GetIndexForce()`.
@@ -275,7 +275,7 @@ pub fn optimize_logical<C: OptimizeContext>(
         cartesian_join_order_threshold: ctx.cartesian_join_order_threshold(),
         join_reorder_through_proj: ctx.join_reorder_through_proj(),
         join_reorder_through_sel: ctx.join_reorder_through_sel(),
-        outer_join_reorder: ctx.outer_join_reorder(),
+        outer_join_reorder: ctx.enable_outer_join_reorder(),
         advanced_join_hint: ctx.advanced_join_hint(),
         hint_warning_sink: Some(ctx),
         used_stats_recorder: Some(services.used_stats_recorder),
