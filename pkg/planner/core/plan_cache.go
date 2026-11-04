@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"maps"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -276,6 +277,14 @@ func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context, cachedVal *P
 	if !RebuildPlan4CachedPlan(cachedVal.Plan) {
 		return nil, nil, false, nil
 	}
+	// Keep cached metadata independent from the statement context, which is reset for each execution.
+	clear(stmtCtx.LockTableIDs)
+	if len(cachedVal.lockTableIDs) > 0 && stmtCtx.LockTableIDs == nil {
+		stmtCtx.LockTableIDs = make(map[int64]struct{}, len(cachedVal.lockTableIDs))
+	}
+	for tableID := range cachedVal.lockTableIDs {
+		stmtCtx.LockTableIDs[tableID] = struct{}{}
+	}
 	sessVars.FoundInPlanCache = true
 	if len(bindSQL) > 0 { // We're using binding, set this to true.
 		sessVars.FoundInBinding = true
@@ -317,6 +326,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	// put this plan into the plan cache.
 	if stmtCtx.UseCache() {
 		cached := NewPlanCacheValue(p, names, paramTypes, &stmtCtx.StmtHints)
+		cached.lockTableIDs = maps.Clone(stmtCtx.LockTableIDs)
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
