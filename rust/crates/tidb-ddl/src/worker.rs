@@ -144,7 +144,7 @@ fn job_version_settled() -> bool {
 fn detect_and_update_job_version_once(
     server_info: &tidb_domain_serverinfo::serverinfo_syncer::Syncer,
 ) -> Result<(), String> {
-    let infos = server_info.all_server_info()?;
+    let infos = server_info.get_all_server_info()?;
     let mut all_support_v2 = true;
     let mut all_support_global_idx_v1 = true;
     for info in infos.values() {
@@ -543,7 +543,7 @@ where
                 load_active_persisted_ddl_jobs_cached(
                     Arc::clone(&opener),
                     timeout,
-                    min_job_id_refresher.current_min_job_id(),
+                    min_job_id_refresher.get_curr_min_job_id(),
                     &mut cached_job_table,
                 )
             };
@@ -2905,7 +2905,7 @@ where
                 statement,
                 self.timeout,
                 self.server_state.is_upgrading_state(),
-                self.min_job_id_refresher.current_min_job_id(),
+                self.min_job_id_refresher.get_curr_min_job_id(),
                 Some(&self.scheduler.ddl_job_done_ch_map),
             )
             .map_err(cluster_ddl_error)?;
@@ -2970,7 +2970,7 @@ where
                 targets,
                 self.timeout,
                 self.server_state.is_upgrading_state(),
-                self.min_job_id_refresher.current_min_job_id(),
+                self.min_job_id_refresher.get_curr_min_job_id(),
                 &KvTableIndexBackfiller::new(&self.scheduler.row_ids, &self.scheduler.session_pool),
                 self.auto_ids.as_ref(),
                 Some(&self.scheduler.ddl_job_done_ch_map),

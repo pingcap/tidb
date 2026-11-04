@@ -177,7 +177,7 @@ max_connections = 200
     assert_eq!(conf.tikv_client.resolve_lock_lite_threshold, 16);
     assert_eq!(conf.tikv_client.copr_req_timeout, 120 * 1_000_000_000);
     assert_eq!(
-        conf.tikv_client.grpc_keep_alive_timeout_nanos(),
+        conf.tikv_client.get_grpc_keep_alive_timeout(),
         200_000_000
     );
     assert_eq!(conf.tikv_client.async_commit.keys_limit, 123);

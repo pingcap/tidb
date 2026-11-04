@@ -603,7 +603,7 @@ pub fn plan_add_partitions(
                         // so there is no comment length to validate.
                         &mut |ordinal: usize| {
                             definitions.get(ordinal).map_or(Ok(()), |definition| {
-                                crate::table_partition::check_too_long_partition_name(
+                                crate::table_partition::check_too_long_table(
                                     &definition.name,
                                 )
                             })
@@ -664,7 +664,7 @@ pub fn plan_add_partitions(
                     // so there is no comment length to validate.
                     &mut |ordinal: usize| {
                         definitions.get(ordinal).map_or(Ok(()), |definition| {
-                            crate::table_partition::check_too_long_partition_name(&definition.name)
+                            crate::table_partition::check_too_long_table(&definition.name)
                         })
                     },
                 )?;
@@ -704,7 +704,7 @@ pub fn plan_add_partitions(
                                 Some(crate::table_partition::partition_definition_comment(
                                     definition, ctx, true,
                                 )?);
-                            crate::table_partition::check_too_long_partition_name(&definition.name)
+                            crate::table_partition::check_too_long_table(&definition.name)
                         })
                     },
                 )?;
@@ -787,7 +787,7 @@ pub fn plan_add_partitions(
                                     Some(crate::table_partition::partition_definition_comment(
                                         definition, ctx, true,
                                     )?);
-                                crate::table_partition::check_too_long_partition_name(
+                                crate::table_partition::check_too_long_table(
                                     &definition.name,
                                 )
                             })

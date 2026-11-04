@@ -128,7 +128,7 @@ impl ClusterTopology {
             return Ok(());
         }
         let mut local_ids = Vec::new();
-        for server in self.syncer.all_server_info()?.values() {
+        for server in self.syncer.get_all_server_info()?.values() {
             if let Some(server_zone) = server.dynamic_info.labels.get("zone") {
                 if let Some(count) = zones.get_mut(server_zone) {
                     *count += 1;
@@ -160,7 +160,7 @@ impl ClusterTopology {
 
     /// Go `infoschema.GetStoreServerInfo`: the TiKV and TiFlash stores PD
     /// lists. A node without PD discovery has no store to ask.
-    pub fn store_servers(&self) -> Result<Vec<ClusterServer>, String> {
+    pub fn get_store_server_info(&self) -> Result<Vec<ClusterServer>, String> {
         let Some(discovery) = &self.discovery else {
             return Err("pd unavailable".to_owned());
         };
@@ -176,7 +176,7 @@ impl ClusterTopology {
         let custom_version = !tidb_config::config_tree::config::get_global_config()
             .server_version
             .is_empty();
-        for info in self.syncer.all_server_info()?.into_values() {
+        for info in self.syncer.get_all_server_info()?.into_values() {
             let info = info.static_info;
             let version = if custom_version {
                 info.version_info.version.clone()

@@ -71,7 +71,7 @@ pub fn find_system_table<S: MetaSnapshot>(
             continue;
         }
         return Ok(
-            tidb_infoschema::cluster_catalog::load_database_tables(snapshot, database.id)?
+            tidb_infoschema::cluster_catalog::list_tables(snapshot, database.id)?
                 .into_iter()
                 .find(|table| table.name.lowercase() == table_name),
         );

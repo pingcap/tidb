@@ -642,7 +642,7 @@ mod tests {
             let column = factory(&MockColumnInfo, &record);
             let column_name = column_names[n];
             if double_column_expected.contains(&column_name) {
-                let mut row = MutRow::from_types(&[FieldType::new(FieldTypeCode::Double)]);
+                let mut row = MutRow::mut_row_from_types(&[FieldType::new(FieldTypeCode::Double)]);
                 row.set_datums(std::slice::from_ref(&column));
                 assert!(
                     (row.to_row().get_float64(0) - avg_rocksdb_sum).abs() < f64::EPSILON,
@@ -715,7 +715,7 @@ mod tests {
             let factory =
                 column_factory(name).unwrap_or_else(|| panic!("missing column factory: {name}"));
             let datum = factory(&MockColumnInfo, &small_record);
-            let mut row = MutRow::from_types(&[FieldType::new(FieldTypeCode::Double)]);
+            let mut row = MutRow::mut_row_from_types(&[FieldType::new(FieldTypeCode::Double)]);
             row.set_datums(&[datum]);
             assert!(
                 (row.to_row().get_float64(0) - expected).abs() < f64::EPSILON,
@@ -834,7 +834,7 @@ mod tests {
             FieldType::new(FieldTypeCode::LongLong),
             FieldType::new(FieldTypeCode::LongLong),
         ];
-        let mut mut_row = MutRow::from_types(&ret_types);
+        let mut mut_row = MutRow::mut_row_from_types(&ret_types);
         mut_row.set_datums(&row_datums);
         let row = mut_row.to_row();
 

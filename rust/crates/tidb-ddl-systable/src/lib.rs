@@ -301,14 +301,14 @@ impl MinJobIdRefresher {
 
     /// Go `GetCurrMinJobID`.
     #[must_use]
-    pub fn current_min_job_id(&self) -> i64 {
+    pub fn get_curr_min_job_id(&self) -> i64 {
         self.current_min_job_id.load(Ordering::SeqCst)
     }
 
     /// One Go `refresh` call. Read failures leave the cached lower bound
     /// unchanged, and an empty table's zero never moves it backwards.
     pub fn refresh<E: fmt::Display>(&self, get_min_job_id: impl FnOnce(i64) -> Result<i64, E>) {
-        let current = self.current_min_job_id();
+        let current = self.get_curr_min_job_id();
         match get_min_job_id(current) {
             Ok(next) => self
                 .current_min_job_id
@@ -353,17 +353,17 @@ mod tests {
             assert_eq!(current, 0);
             Ok(1)
         });
-        assert_eq!(refresher.current_min_job_id(), 1);
+        assert_eq!(refresher.get_curr_min_job_id(), 1);
         refresher.refresh(|current| -> Result<_, &'static str> {
             assert_eq!(current, 1);
             Ok(100)
         });
-        assert_eq!(refresher.current_min_job_id(), 100);
+        assert_eq!(refresher.get_curr_min_job_id(), 100);
         refresher.refresh(|current| -> Result<_, &'static str> {
             assert_eq!(current, 100);
             Ok(0)
         });
-        assert_eq!(refresher.current_min_job_id(), 100);
+        assert_eq!(refresher.get_curr_min_job_id(), 100);
     }
 
     #[test]
@@ -381,6 +381,6 @@ mod tests {
             }
         });
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert_eq!(refresher.current_min_job_id(), 7);
+        assert_eq!(refresher.get_curr_min_job_id(), 7);
     }
 }

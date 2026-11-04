@@ -447,7 +447,7 @@ fn restore_lock(out: &mut String, lock: &Option<SelectLock>, context: &RestoreCo
     let Some(lock) = lock else { return };
     // Go `SelectStmt.Restore`: the clause is `WriteKeyWord` text in Go's own
     // spelling (`for update`, `OF`, `nowait`), cased only by a keyword flag.
-    let keyword = |text: &str| crate::expr::keyword_case(context, text);
+    let keyword = |text: &str| crate::expr::write_key_word(context, text);
     out.push(' ');
     out.push_str(&keyword(match lock.kind {
         LockKind::Update => "for update",

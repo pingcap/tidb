@@ -589,7 +589,7 @@ fn plan_with<S: MetaSnapshot>(
     overlay.show_all();
     let mut table_ids = Vec::with_capacity(table_names.len());
     if classic {
-        let stored = tidb_infoschema::cluster_catalog::load_database_tables(&mut overlay, database_id)?;
+        let stored = tidb_infoschema::cluster_catalog::list_tables(&mut overlay, database_id)?;
         for name in &table_names {
             let info = stored
                 .iter()

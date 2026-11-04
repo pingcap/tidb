@@ -124,12 +124,12 @@ pub struct AdminRecoverIndexStmt {
 
 /// Go's `CleanupTableLockStmt` payload for stale table-lock cleanup.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AdminCleanupTableLockStmt {
+pub struct CleanupTableLockStmt {
     /// Table-name paths in source order.
     pub tables: Vec<Vec<String>>,
 }
 
-impl AdminCleanupTableLockStmt {
+impl CleanupTableLockStmt {
     pub(crate) fn restore_into(&self, out: &mut String) {
         out.push_str("ADMIN CLEANUP TABLE LOCK ");
         for (index, table) in self.tables.iter().enumerate() {
@@ -222,7 +222,7 @@ impl crate::Visitable for AdminRecoverIndexStmt {
     }
 }
 
-impl crate::Visitable for AdminCleanupTableLockStmt {
+impl crate::Visitable for CleanupTableLockStmt {
     fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
         if visitor.enter(self) {
             return visitor.leave(self);

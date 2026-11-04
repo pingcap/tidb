@@ -87,7 +87,7 @@ pub fn find_field_name(
 }
 
 /// Go's `FindFieldNameIdxByColName`: first exact normalized-name match.
-pub fn find_field_name_index_by_column(names: &[FieldName], column: &str) -> Option<usize> {
+pub fn find_field_name_idx_by_col_name(names: &[FieldName], column: &str) -> Option<usize> {
     names
         .iter()
         .position(|name| name.names.column.lower == column)
@@ -191,7 +191,7 @@ mod tests {
             field_name("db", "tbl", "colb"),
             field_name("db", "tbl", "cola"),
         ];
-        assert_eq!(find_field_name_index_by_column(&names, "cola"), Some(0));
-        assert_eq!(find_field_name_index_by_column(&names, "missing"), None);
+        assert_eq!(find_field_name_idx_by_col_name(&names, "cola"), Some(0));
+        assert_eq!(find_field_name_idx_by_col_name(&names, "missing"), None);
     }
 }

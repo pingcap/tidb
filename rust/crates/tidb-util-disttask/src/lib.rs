@@ -52,7 +52,7 @@ pub fn find_server_info(server_infos: &[ServerInfo], scheduler_id: &str) -> isiz
 /// Discovery errors, an empty server map, and a missing ID all return the
 /// empty string.
 pub fn generate_subtask_exec_id(syncer: &Syncer, id: &str) -> String {
-    let Ok(server_infos) = syncer.all_server_info() else {
+    let Ok(server_infos) = syncer.get_all_server_info() else {
         return String::new();
     };
     generate_subtask_exec_id_4_test(&server_infos, id)

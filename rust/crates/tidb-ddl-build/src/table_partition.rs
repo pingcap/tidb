@@ -1607,7 +1607,7 @@ fn definition_tail<'a>(
             return Ok(());
         };
         let comment = partition_definition_comment(definition, ctx, validate_comment_length)?;
-        check_too_long_partition_name(&definition.name)?;
+        check_too_long_table(&definition.name)?;
         // `LessThan` / `InValues` are filled by `fill_stored_bounds` once
         // the spec is complete; the storage class is resolved from the
         // table's ENGINE_ATTRIBUTE once the table is built
@@ -1688,7 +1688,7 @@ pub fn go_to_lower(name: &str) -> String {
 /// ones are not. Go runs it INSIDE the per-definition loop for RANGE and
 /// LIST only -- HASH and KEY partition names are never length-checked at all,
 /// which is a quirk of where the call sits rather than a rule.
-pub fn check_too_long_partition_name(name: &str) -> Result<(), MysqlError> {
+pub fn check_too_long_table(name: &str) -> Result<(), MysqlError> {
     const MAX_TABLE_NAME_LENGTH: usize = 64;
     if name.chars().count() > MAX_TABLE_NAME_LENGTH {
         return Err(tidb_terror::MysqlError::from_terror(

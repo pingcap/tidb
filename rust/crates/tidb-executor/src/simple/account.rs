@@ -1770,7 +1770,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                         registry.revoke_all_dynamic(user, host);
                     }
                     for name in &dynamic {
-                        registry.revoke_dynamic(user, host, name);
+                        registry.revoke_dynamic_priv(user, host, name);
                     }
                     // Go `revoke.go` `composeGlobalPrivUpdate(.., "N")`: the
                     // revoked bits flip the same `mysql.user` columns back.
@@ -1808,7 +1808,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                             format!("Unknown user: {}@{}", user.to_owned(), host.to_owned()),
                         )));
                     }
-                    if !registry.db_grant_row_exists(user, host, &database) {
+                    if !registry.db_user_exists(user, host, &database) {
                         return Err(DriverError::from(tidb_terror::MysqlError::unknown(format!("There is no such grant defined for user '{}' on host '{}' on database {}", user.to_owned(), host.to_owned(), database.clone()))));
                     }
                     registry.revoke_db(user, host, &database, mask);
@@ -1837,7 +1837,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                     // name, so revoking a nonexistent column from an account
                     // with no grant on the table reports this and not
                     // `Unknown column` (captured).
-                    if !registry.table_grant_row_exists(user, host, &database, table) {
+                    if !registry.table_user_exists(user, host, &database, table) {
                         return Err(DriverError::from(tidb_terror::MysqlError::unknown(format!("There is no such grant defined for user '{}' on host '{}' on table {}.{}", user.to_owned(), host.to_owned(), database.clone(), table.clone()))));
                     }
                 }

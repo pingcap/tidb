@@ -276,7 +276,7 @@ pub fn set_preferred_join_type_and_order(
             .collect::<Vec<_>>();
         let candidates = aliases.iter().map(Some).collect::<Vec<_>>();
         let mut canonical = canonical.borrow_mut();
-        join.prefer_join_order = tidb_hint::PlanHints::match_table_names(
+        join.prefer_join_order = tidb_hint::PlanHints::match_table_name(
             &candidates,
             &mut canonical.leading_join_order,
         );

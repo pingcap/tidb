@@ -14,7 +14,7 @@
 //! Data-definition statements and their shared restore boundary.
 
 use crate::util::{back_quote, push_name_path};
-use crate::AdminCleanupTableLockStmt;
+use crate::CleanupTableLockStmt;
 use crate::{
     AlterSequenceStmt, AlterTableStmt, CreateIndexStmt, CreateSequenceStmt,
     CreateTableStmt, CreateViewStmt, DropIndexStmt, DropSequenceStmt, DropTableStmt, Expr,
@@ -275,7 +275,7 @@ pub enum DdlStmt {
     /// named tables. The parser/restore contract is kept separate from
     /// `ADMIN CLEANUP INDEX`: Go uses a distinct `CleanupTableLockStmt` AST
     /// payload and executor path.
-    CleanupTableLock(Box<AdminCleanupTableLockStmt>),
+    CleanupTableLock(Box<CleanupTableLockStmt>),
 }
 
 impl DdlStmt {

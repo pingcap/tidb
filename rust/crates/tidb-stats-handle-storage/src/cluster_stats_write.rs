@@ -110,8 +110,8 @@ pub fn save_buckets_sql(
         let mut sql = String::from("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound, ndv) values ");
         for index in range.clone() {
             let bucket = &buckets[index];
-            let lower = bound_blob(&bucket.lower_bound)?;
-            let upper = bound_blob(&bucket.upper_bound)?;
+            let lower = convert_bound_to_blob(&bucket.lower_bound)?;
+            let upper = convert_bound_to_blob(&bucket.upper_bound)?;
             let blob = |value: &Datum| match value {
                 Datum::Bytes(bytes) => Some(bytes.clone()),
                 _ => None,
@@ -355,8 +355,8 @@ fn loaded_bucket_batches(
         let mut end = (start + LOADED_STATS_BATCH_INSERT_SIZE).min(buckets.len());
         let mut sql_len = PREFIX.len();
         for (index, bucket) in buckets.iter().enumerate().take(end).skip(start) {
-            let lower = bound_blob(&bucket.lower_bound)?;
-            let upper = bound_blob(&bucket.upper_bound)?;
+            let lower = convert_bound_to_blob(&bucket.lower_bound)?;
+            let upper = convert_bound_to_blob(&bucket.upper_bound)?;
             let lower = match &lower {
                 Datum::Null => None,
                 Datum::Bytes(value) => Some(value.as_slice()),
@@ -403,7 +403,7 @@ fn loaded_bucket_batches(
 /// convert to themselves; every other column bound becomes its text form,
 /// which Go's `convertBoundFromBlob` parses back at the column's declared
 /// type.
-pub fn bound_blob(bound: &Datum) -> Result<Datum, StatsWriteError> {
+pub fn convert_bound_to_blob(bound: &Datum) -> Result<Datum, StatsWriteError> {
     if bound.is_null() {
         return Ok(Datum::Null);
     }

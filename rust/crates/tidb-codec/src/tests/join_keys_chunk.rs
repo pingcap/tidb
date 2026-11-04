@@ -52,7 +52,7 @@ fn serialize_keys_reads_shared_and_response_backed_columns() {
     let mut new_chk = Chunk::new_chunk_with_capacity(&col_types, num_rows);
     assert!(codec.decode_to_chunk(&buffer, &mut new_chk).is_empty());
     let mut shared = old_chk.clone();
-    let mut alias = tidb_chunk::mutrow::MutRow::from_types(&col_types);
+    let mut alias = tidb_chunk::mutrow::MutRow::mut_row_from_types(&col_types);
     alias.shallow_copy_partial_row(0, &mut shared, 0);
     let mut frozen = Chunk::new_chunk_with_capacity(&col_types, num_rows);
     assert!(codec

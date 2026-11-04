@@ -1227,7 +1227,7 @@ impl Domain {
     }
 
     /// Go `statsAnalyze.DeleteAnalyzeJobs`.
-    pub fn delete_analyze_jobs_before(&self, cutoff: tidb_datatype::Time) -> Result<(), String> {
+    pub fn delete_analyze_jobs(&self, cutoff: tidb_datatype::Time) -> Result<(), String> {
         let pool = self.stats_session_pool()?;
         let update_time = go_time_format(cutoff)?;
         tidb_stats_handle_util::call_with_sctx(
@@ -1327,7 +1327,7 @@ impl Domain {
                     return Ok(());
                 }
                 let instances = syncer
-                    .all_server_info()
+                    .get_all_server_info()
                     .map_err(crate::sys_session::stats_session_error)?
                     .into_values()
                     .map(|info| {
@@ -2025,7 +2025,7 @@ impl AnalyzeJobsCleanupWorker {
                         {
                             match timestamp_before(Duration::from_secs(7 * 24 * 60 * 60)) {
                                 Ok(cutoff) => {
-                                    if let Err(error) = factory.delete_analyze_jobs_before(cutoff) {
+                                    if let Err(error) = factory.delete_analyze_jobs(cutoff) {
                                         log_gc_analyze_history_failed(error);
                                     }
                                 }

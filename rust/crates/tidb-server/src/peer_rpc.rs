@@ -658,7 +658,7 @@ fn peer_aggregate(
         output.push(ret);
     }
     let ctx = peer_context(zone);
-    let mut row = tidb_chunk::mutrow::MutRow::from_types(fields);
+    let mut row = tidb_chunk::mutrow::MutRow::mut_row_from_types(fields);
     let mut index: std::collections::HashMap<Vec<u8>, usize> = std::collections::HashMap::new();
     let mut groups: Vec<(Vec<u8>, Vec<tidb_expression_aggregation::DistAggregateState>)> = Vec::new();
     let new_states = || -> Vec<_> { functions.iter().map(|f| f.create_state()).collect() };

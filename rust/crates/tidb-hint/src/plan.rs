@@ -255,7 +255,7 @@ pub struct PlanHints {
 
 impl PlanHints {
     /// Go `MatchTableName`; either join side matching is sufficient.
-    pub fn match_table_names(
+    pub fn match_table_name(
         candidates: &[Option<&HintedTable>],
         hinted: &mut [HintedTable],
     ) -> bool {
@@ -271,72 +271,72 @@ impl PlanHints {
 
     /// Go `IfPreferMergeJoin`.
     pub fn prefer_merge_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
-        Self::match_table_names(tables, &mut self.sort_merge_join)
+        Self::match_table_name(tables, &mut self.sort_merge_join)
     }
 
     /// Go `IfPreferBroadcastJoin`.
     pub fn if_prefer_broadcast_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
-        Self::match_table_names(tables, &mut self.broadcast_join)
+        Self::match_table_name(tables, &mut self.broadcast_join)
     }
 
     /// Go `IfPreferShuffleJoin`.
     pub fn if_prefer_shuffle_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
-        Self::match_table_names(tables, &mut self.shuffle_join)
+        Self::match_table_name(tables, &mut self.shuffle_join)
     }
 
     /// Go `IfPreferHashJoin`.
     pub fn prefer_hash_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
-        Self::match_table_names(tables, &mut self.hash_join)
+        Self::match_table_name(tables, &mut self.hash_join)
     }
 
     /// Go `IfPreferNoHashJoin`.
     pub fn if_prefer_no_hash_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
-        Self::match_table_names(tables, &mut self.no_hash_join)
+        Self::match_table_name(tables, &mut self.no_hash_join)
     }
 
     /// Go `IfPreferNoMergeJoin`.
     pub fn if_prefer_no_merge_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
-        Self::match_table_names(tables, &mut self.no_merge_join)
+        Self::match_table_name(tables, &mut self.no_merge_join)
     }
 
     /// Go `IfPreferHJBuild`.
     pub fn if_prefer_hj_build(&mut self, tables: &[Option<&HintedTable>]) -> bool {
-        Self::match_table_names(tables, &mut self.hash_join_build)
+        Self::match_table_name(tables, &mut self.hash_join_build)
     }
 
     /// Go `IfPreferHJProbe`.
     pub fn if_prefer_hj_probe(&mut self, tables: &[Option<&HintedTable>]) -> bool {
-        Self::match_table_names(tables, &mut self.hash_join_probe)
+        Self::match_table_name(tables, &mut self.hash_join_probe)
     }
 
     /// Go `IfPreferINLJ`.
     pub fn if_prefer_inlj(&mut self, tables: &[Option<&HintedTable>]) -> bool {
-        Self::match_table_names(tables, &mut self.index_join.inlj_tables)
+        Self::match_table_name(tables, &mut self.index_join.inlj_tables)
     }
 
     /// Go `IfPreferINLHJ`.
     pub fn if_prefer_inlhj(&mut self, tables: &[Option<&HintedTable>]) -> bool {
-        Self::match_table_names(tables, &mut self.index_join.inlhj_tables)
+        Self::match_table_name(tables, &mut self.index_join.inlhj_tables)
     }
 
     /// Go `IfPreferINLMJ`.
     pub fn if_prefer_inlmj(&mut self, tables: &[Option<&HintedTable>]) -> bool {
-        Self::match_table_names(tables, &mut self.index_join.inlmj_tables)
+        Self::match_table_name(tables, &mut self.index_join.inlmj_tables)
     }
 
     /// Go `IfPreferNoIndexJoin`.
     pub fn if_prefer_no_index_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
-        Self::match_table_names(tables, &mut self.no_index_join.inlj_tables)
+        Self::match_table_name(tables, &mut self.no_index_join.inlj_tables)
     }
 
     /// Go `IfPreferNoIndexHashJoin`.
     pub fn if_prefer_no_index_hash_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
-        Self::match_table_names(tables, &mut self.no_index_join.inlhj_tables)
+        Self::match_table_name(tables, &mut self.no_index_join.inlhj_tables)
     }
 
     /// Go `IfPreferNoIndexMergeJoin`.
     pub fn if_prefer_no_index_merge_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
-        Self::match_table_names(tables, &mut self.no_index_join.inlmj_tables)
+        Self::match_table_name(tables, &mut self.no_index_join.inlmj_tables)
     }
 
     /// Go `IfPreferTiFlash`, including its returned value-copy behavior.

@@ -40,7 +40,7 @@ impl TempTable {
     /// `RowIDAllocType` allocator for `_tidb_rowid` and the auto-increment
     /// column alike), rebased to `AutoIncID - 1` when CREATE set it.
     #[must_use]
-    pub fn from_meta(table: &tidb_model::TableInfo) -> Self {
+    pub fn temp_table_from_meta(table: &tidb_model::TableInfo) -> Self {
         let has_row_id = !table.pk_is_handle && !table.is_common_handle;
         let has_auto_inc_id = table.get_auto_increment_col_info().is_some();
         Self {
@@ -141,7 +141,7 @@ pub fn get_temporary_table(tables: &TxnTemporaryTables, table: &tidb_model::Tabl
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .entry(table.id)
-            .or_insert_with(|| Arc::new(TempTable::from_meta(table))),
+            .or_insert_with(|| Arc::new(TempTable::temp_table_from_meta(table))),
     )
 }
 

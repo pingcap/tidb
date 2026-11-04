@@ -336,7 +336,7 @@ fn concurrency_for_stores(stores: u64) -> u64 {
 /// Go `adaptiveAnlayzeDistSQLConcurrency`: the store count comes from
 /// `helper.TryGetPDHTTPClient` (the store's PD HTTP client, caller ID
 /// `tidb-store-helper`) and `GetStores`.
-pub(crate) fn scan_concurrency(
+pub(crate) fn adaptive_anlayze_dist_sql_concurrency(
     configured: i64,
     pd_http_client: Option<tikv_client::pd_http::Client>,
     timeout: std::time::Duration,

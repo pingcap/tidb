@@ -245,7 +245,7 @@ impl SchemaSyncAck {
         };
         syncer.set_server_info_syncer(Arc::new(move || {
             server_info
-                .all_server_info()
+                .get_all_server_info()
                 .map(|servers| servers.into_values().collect())
         }));
         let syncer_context = SchemaVersionContext::background();
@@ -486,7 +486,7 @@ fn run_ack_loop<S>(
                 reload_pass,
                 last_reload_pass,
             ) {
-                let min_job_id = min_job_id_refresher.current_min_job_id();
+                let min_job_id = min_job_id_refresher.get_curr_min_job_id();
                 match refresh_mdl_check_table_info(opener, timeout, &catalog.get_latest(), min_job_id) {
                     Ok(jobs) => {
                         scanned_version = Some(loaded);

@@ -826,7 +826,7 @@ pub fn cluster_table(
     if table.partition.is_none()
         && table.table_cache_status_type != tidb_model::TableCacheStatusType::DISABLE
     {
-        kv_table.set_cached_table(std::sync::Arc::new(crate::tables::cache::CachedTable::new(table.id)));
+        kv_table.new_cached_table(std::sync::Arc::new(crate::tables::cache::CachedTable::new(table.id)));
     }
     Ok(kv_table)
 }

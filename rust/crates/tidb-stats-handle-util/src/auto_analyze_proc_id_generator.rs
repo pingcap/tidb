@@ -121,7 +121,7 @@ impl AutoAnalyzeTracker {
     }
 
     /// Go `UnTrack`. The global list is updated before the delegated callback.
-    pub fn untrack(&self, id: u64) {
+    pub fn un_track(&self, id: u64) {
         GLOBAL_AUTO_ANALYZE_PROCESS_LIST.untracker(id);
         (self.untrack)(id);
     }
@@ -181,7 +181,7 @@ mod tests {
             }),
         );
         tracker.track(ID, Arc::new(())).unwrap();
-        tracker.untrack(ID);
+        tracker.un_track(ID);
         assert_eq!(*events.lock().unwrap(), ["track", "untrack"]);
     }
 }

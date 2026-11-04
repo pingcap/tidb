@@ -118,7 +118,7 @@ impl Worker {
     }
 
     /// Go `GetMaxConcurrency`.
-    pub fn max_concurrency(&self) -> usize {
+    pub fn get_max_concurrency(&self) -> usize {
         self.lock_state().max_concurrency
     }
 
@@ -203,7 +203,7 @@ impl Refresher {
         }
 
         self.worker.update_concurrency(parameters.max_concurrency);
-        let max_concurrency = self.worker.max_concurrency();
+        let max_concurrency = self.worker.get_max_concurrency();
         let running_jobs = self.worker.running_jobs();
         let remaining = max_concurrency.saturating_sub(running_jobs.len());
         if remaining == 0 {
@@ -387,7 +387,7 @@ mod tests {
     #[test]
     fn source_worker_new_update_submit_capacity_and_running_copy() {
         let worker = Worker::new(2);
-        assert_eq!(worker.max_concurrency(), 2);
+        assert_eq!(worker.get_max_concurrency(), 2);
         worker.update_concurrency(2);
         let (started_tx, started_rx) = mpsc::channel();
         let (release_one_tx, release_one_rx) = mpsc::channel();
@@ -419,7 +419,7 @@ mod tests {
         worker.stop();
         assert!(worker.running_jobs().is_empty());
         worker.update_concurrency(10);
-        assert_eq!(worker.max_concurrency(), 10);
+        assert_eq!(worker.get_max_concurrency(), 10);
     }
 
     #[test]

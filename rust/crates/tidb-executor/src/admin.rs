@@ -1063,7 +1063,7 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
         let syncer = self
             .server_info_syncer()
             .ok_or("TiDB peer discovery is not installed")?;
-        let servers: Vec<_> = syncer.all_server_info()?.into_values().collect();
+        let servers: Vec<_> = syncer.get_all_server_info()?.into_values().collect();
         client.kill(
             &servers,
             id,

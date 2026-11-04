@@ -724,7 +724,7 @@ impl MvccStore {
 
     /// Go `MVCCStore.getLatestTS`.
     #[must_use]
-    pub fn latest_ts(&self) -> u64 {
+    pub fn get_latest_ts(&self) -> u64 {
         self.latest_ts
     }
 

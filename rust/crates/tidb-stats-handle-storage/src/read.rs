@@ -384,7 +384,7 @@ pub fn check_skip_partition<C: StatsSessionContext + ?Sized>(
 
 /// Go `CheckSkipColumnPartiion`: whether the partition has this item's
 /// histogram row (`false` is Go's `ErrPartitionColumnStatsMissing`).
-pub fn check_skip_column_partition<C: StatsSessionContext + ?Sized>(
+pub fn check_skip_column_partiion<C: StatsSessionContext + ?Sized>(
     sctx: &C,
     tbl_id: i64,
     is_index: bool,
@@ -478,7 +478,7 @@ pub fn load_histogram<C: StatsSessionContext + ?Sized>(
 }
 
 /// Go `CMSketchAndTopNFromStorageWithHighPriority`.
-pub fn cm_sketch_and_topn_from_storage_with_high_priority<C: StatsSessionContext + ?Sized>(
+pub fn cm_sketch_and_top_n_from_storage_with_high_priority<C: StatsSessionContext + ?Sized>(
     sctx: &C,
     tbl_id: i64,
     is_index: bool,
@@ -517,7 +517,7 @@ fn topn_rows(rows: &[Vec<Datum>]) -> Vec<(Vec<u8>, u64)> {
 }
 
 /// Go `TopNFromStorage`.
-pub fn topn_from_storage<C: StatsSessionContext + ?Sized>(
+pub fn top_n_from_storage<C: StatsSessionContext + ?Sized>(
     sctx: &C,
     tbl_id: i64,
     is_index: bool,
@@ -667,7 +667,7 @@ fn index_stats_from_storage<C: StatsSessionContext + ?Sized>(
                 0.0,
                 Priority::Normal,
             )?;
-            let (cms, top_n) = cm_sketch_and_topn_from_storage_with_high_priority(
+            let (cms, top_n) = cm_sketch_and_top_n_from_storage_with_high_priority(
                 sctx,
                 physical_id,
                 true,
@@ -808,7 +808,7 @@ fn column_stats_from_storage<C: StatsSessionContext + ?Sized>(
                 correlation,
                 Priority::Normal,
             )?;
-            let (cms, top_n) = cm_sketch_and_topn_from_storage_with_high_priority(
+            let (cms, top_n) = cm_sketch_and_top_n_from_storage_with_high_priority(
                 sctx,
                 physical_id,
                 false,

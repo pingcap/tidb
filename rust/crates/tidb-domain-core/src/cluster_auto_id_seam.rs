@@ -245,7 +245,7 @@ where
             if let Some(service) = &self.service {
                 let unsigned = table.is_auto_inc_col_unsigned();
                 let allocator = TableAutoId::service(Arc::new(
-                    tidb_autoid::cluster_auto_id::AutoIdServiceAllocator::new(
+                    tidb_autoid::cluster_auto_id::SinglePointAlloc::new(
                         service.clone(),
                         db_id,
                         table.id,

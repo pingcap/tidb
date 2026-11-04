@@ -688,7 +688,7 @@ mod tests {
         );
         assert!(built
             .registry
-            .table_grant_row_exists("bridge", "%", "test", "rows"));
+            .table_user_exists("bridge", "%", "test", "rows"));
     }
 
     #[test]
@@ -704,7 +704,7 @@ mod tests {
             ..ClusterPrivileges::default()
         };
         let built = registry_from_cluster(&loaded);
-        assert!(built.registry.db_grant_row_exists("bridge", "%", "test"));
+        assert!(built.registry.db_user_exists("bridge", "%", "test"));
         assert!(!built
             .registry
             .has_global_priv("bridge", "%", tidb_mysql::SelectPriv));

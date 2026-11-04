@@ -1378,7 +1378,7 @@ impl RegionAggregator {
         Ok(Self {
             group_by,
             functions,
-            row: tidb_chunk::mutrow::MutRow::from_types(&context.column_types),
+            row: tidb_chunk::mutrow::MutRow::mut_row_from_types(&context.column_types),
             context: Arc::clone(context),
             group_indices: std::collections::HashMap::new(),
             groups: Vec::new(),
@@ -1837,7 +1837,7 @@ fn eval_shared(
     expr: &SharedExpression,
     row: &[tidb_datatype::Datum],
 ) -> Result<tidb_datatype::Datum, CopExecError> {
-    let row = tidb_chunk::mutrow::MutRow::from_datums(row);
+    let row = tidb_chunk::mutrow::MutRow::mut_row_from_datums(row);
     expr.expression
         .eval(expr.context.as_ref(), row.to_row())
         .map_err(CopExecError::from)

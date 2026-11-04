@@ -20,7 +20,7 @@ use cast::restore_cast_type;
 use tidb_mysql::to_lowercase as identifier_to_lower;
 mod op;
 mod restore;
-pub(crate) use restore::keyword_case;
+pub(crate) use restore::write_key_word;
 
 pub use cast::*;
 pub use op::*;

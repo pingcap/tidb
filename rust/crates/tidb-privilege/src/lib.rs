@@ -495,9 +495,9 @@ mod tests {
     fn revoke_db_clears_bits_and_row_existence_is_tracked_separately() {
         let registry = PrivilegeRegistry::default();
         registry.create_user("u", "%", "");
-        assert!(!registry.db_grant_row_exists("u", "%", "db1"));
+        assert!(!registry.db_user_exists("u", "%", "db1"));
         registry.grant_db("u", "%", "db1", tidb_mysql::SelectPriv.bit());
-        assert!(registry.db_grant_row_exists("u", "%", "db1"));
+        assert!(registry.db_user_exists("u", "%", "db1"));
         // Revoking a privilege the row never had is a silent no-op.
         registry.revoke_db("u", "%", "db1", tidb_mysql::UpdatePriv.bit());
         assert_eq!(
@@ -511,7 +511,7 @@ mod tests {
         // Go `revokeDBPriv` deletes the row once every privilege is 'N'
         // (captured: `mysql.db` holds no row and a second REVOKE reports
         // "There is no such grant defined"), so nothing prints for it.
-        assert!(!registry.db_grant_row_exists("u", "%", "db1"));
+        assert!(!registry.db_user_exists("u", "%", "db1"));
         assert_eq!(
             registry.show_grants("u", "%", &[], tidb_mysql::SqlMode::default()).as_deref(),
             Some("GRANT USAGE ON *.* TO 'u'@'%'")

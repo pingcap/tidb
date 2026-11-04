@@ -31,7 +31,7 @@ impl TableCommon {
     }
 
     /// Go `newCachedTable`: makes the table a cached table.
-    pub fn set_cached_table(&mut self, cached: std::sync::Arc<CachedTable>) {
+    pub fn new_cached_table(&mut self, cached: std::sync::Arc<CachedTable>) {
         self.cached = Some(cached);
     }
 

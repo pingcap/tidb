@@ -226,7 +226,7 @@ pub fn read_stats_for_one_item<C: tidb_stats_handle_util::StatsSessionContext + 
             read::Priority::High,
         )?;
         (cms, topn) =
-            read::cm_sketch_and_topn_from_storage_with_high_priority(sctx, table_id, is_index, id, stats_ver)?;
+            read::cm_sketch_and_top_n_from_storage_with_high_priority(sctx, table_id, is_index, id, stats_ver)?;
     }
     // Go: an index with a nonzero `stats_ver`, a column whose
     // `StatsAvailable()`, is loaded (fully or with its payload evicted).

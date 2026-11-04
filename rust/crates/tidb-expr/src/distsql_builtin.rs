@@ -580,7 +580,7 @@ mod tests {
                     tidb_codec::decode_uint(pb.val()).unwrap().1,
                     wire.to_packed_uint().unwrap()
                 );
-                let row = tidb_chunk::mutrow::MutRow::from_datums(&[]);
+                let row = tidb_chunk::mutrow::MutRow::mut_row_from_datums(&[]);
                 let value = pb_to_expr_in(&pb, &[], &zone)
                     .unwrap()
                     .eval(&crate::ZonedNoColumns(zone.clone()), row.to_row())
@@ -602,7 +602,7 @@ mod tests {
             val: Some(val),
             ..Default::default()
         };
-        let row = tidb_chunk::mutrow::MutRow::from_datums(&[]);
+        let row = tidb_chunk::mutrow::MutRow::mut_row_from_datums(&[]);
         assert_eq!(
             pb_to_expr(&pb, &[])
                 .unwrap()
@@ -652,7 +652,7 @@ mod tests {
                 field_type: FieldType::new(FieldTypeCode::VectorFloat32),
             },
         ];
-        let row = tidb_chunk::mutrow::MutRow::from_datums(&[]);
+        let row = tidb_chunk::mutrow::MutRow::mut_row_from_datums(&[]);
         for literal in literals {
             let pb = to_pb(&literal, &|_| None).unwrap();
             let decoded = pb_to_expr(&pb, &[]).unwrap();
@@ -695,7 +695,7 @@ mod tests {
             val: Some(tidb_codec::encode_value(&[Datum::Json(value.clone())]).unwrap()),
             ..pb
         };
-        let row = tidb_chunk::mutrow::MutRow::from_datums(&[]);
+        let row = tidb_chunk::mutrow::MutRow::mut_row_from_datums(&[]);
         assert_eq!(
             pb_to_expr(&good, &[])
                 .unwrap()
@@ -731,7 +731,7 @@ mod tests {
         );
         function = function.clone();
         function.func_name = CiString::new("lower");
-        let row = tidb_chunk::mutrow::MutRow::from_datums(&[]);
+        let row = tidb_chunk::mutrow::MutRow::mut_row_from_datums(&[]);
         assert_eq!(
             function
                 .eval(&crate::NoColumns, row.to_row())
@@ -783,7 +783,7 @@ mod tests {
                     .with_charset_name("binary")
                     .with_collation_name("binary"),
             ));
-            let row = tidb_chunk::mutrow::MutRow::from_datums(&[]);
+            let row = tidb_chunk::mutrow::MutRow::mut_row_from_datums(&[]);
             assert_eq!(
                 function
                     .eval(&crate::NoColumns, row.to_row())
@@ -806,7 +806,7 @@ mod tests {
                 ..Default::default()
             }
         };
-        let row = tidb_chunk::mutrow::MutRow::from_datums(&[]);
+        let row = tidb_chunk::mutrow::MutRow::mut_row_from_datums(&[]);
         for (signature, expected) in [
             (tipb::ScalarFuncSig::ModIntSignedSigned, -2),
             (tipb::ScalarFuncSig::ModIntUnsignedSigned, 2),
@@ -856,7 +856,7 @@ mod tests {
         )
         .unwrap();
         for number in [2, 3] {
-            let row = tidb_chunk::mutrow::MutRow::from_datums(&[
+            let row = tidb_chunk::mutrow::MutRow::mut_row_from_datums(&[
                 Datum::Json(tidb_datatype::BinaryJSON::parse("{\"a\": 1}").unwrap()),
                 Datum::Int(number),
             ]);
@@ -902,7 +902,7 @@ mod tests {
                 crate::ErrorLevel::Error
             }
         }
-        let row = tidb_chunk::mutrow::MutRow::from_datums(&[]);
+        let row = tidb_chunk::mutrow::MutRow::mut_row_from_datums(&[]);
         assert_eq!(
             pb_to_expr(&pb, &[])
                 .unwrap()
@@ -913,7 +913,7 @@ mod tests {
     }
     #[test]
     fn protobuf_binary_and_utf8_signatures_stay_distinct() {
-        let row = tidb_chunk::mutrow::MutRow::from_datums(&[]);
+        let row = tidb_chunk::mutrow::MutRow::mut_row_from_datums(&[]);
         for (sig, expected) in [
             (tipb::ScalarFuncSig::CharLength, 2),
             (tipb::ScalarFuncSig::CharLengthUtf8, 1),

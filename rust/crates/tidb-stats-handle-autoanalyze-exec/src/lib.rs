@@ -111,7 +111,7 @@ fn exec_options<C: AutoAnalyzeSessionContext + ?Sized>(
         let tracker = Arc::clone(&tracker);
         Arc::new(move |id, process| tracker.track(id, process)) as TrackSysProc
     };
-    let untrack = Arc::new(move |id| tracker.untrack(id)) as UntrackSysProc;
+    let untrack = Arc::new(move |id| tracker.un_track(id)) as UntrackSysProc;
     (
         process_id,
         vec![

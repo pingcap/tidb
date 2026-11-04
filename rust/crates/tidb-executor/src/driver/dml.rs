@@ -1201,7 +1201,7 @@ fn run_insert_rows(
             .iter()
             .map(|meta| meta.field_type.clone())
             .collect();
-        tidb_chunk::mutrow::MutRow::from_types(&field_types)
+        tidb_chunk::mutrow::MutRow::mut_row_from_types(&field_types)
     });
     let mut new_rows: Vec<Vec<Datum>> = Vec::with_capacity(row_count);
     // Go `getColDefaultValue`/`lazilyInitColDefaultValBuf`: with more than one

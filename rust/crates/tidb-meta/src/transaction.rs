@@ -1464,7 +1464,7 @@ impl<T: MetaTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.GetMetadataLock`; `None` is Go's `isNull=true` result.
-    pub fn metadata_lock(&self) -> Result<Option<bool>> {
+    pub fn get_metadata_lock(&self) -> Result<Option<bool>> {
         let mut transaction = self.lock()?;
         let stored = meta_structure(&mut *transaction)
             .get(key::METADATA_LOCK)?

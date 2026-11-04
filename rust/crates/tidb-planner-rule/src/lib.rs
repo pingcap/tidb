@@ -649,7 +649,7 @@ fn prune_list_ids(
             return Ok(full());
         }
         if range.is_point(true) {
-            let row = tidb_chunk::mutrow::MutRow::from_datums(&range.high_val);
+            let row = tidb_chunk::mutrow::MutRow::mut_row_from_datums(&range.high_val);
             let value = spec.expr.eval(ctx, row.to_row())?;
             let (value, is_null) = list_pruning_integer(&value)?;
             let ordinal = if is_null {
@@ -831,7 +831,7 @@ fn prune_hash_ids(
             if range.high_val.len() != spec.dependencies.len() {
                 return None;
             }
-            let row = tidb_chunk::mutrow::MutRow::from_datums(&range.high_val);
+            let row = tidb_chunk::mutrow::MutRow::mut_row_from_datums(&range.high_val);
             let Ok(value) = spec.expr.eval(ctx, row.to_row()) else {
                 // Pinned Go skips a point whose partition expression cannot
                 // be evaluated; another ranger point may still be usable.

@@ -42,7 +42,7 @@ use tidb_model::schema_state::SchemaState;
 use tidb_model::{GoShared, GoSharedPointerSlice};
 
 use tidb_infoschema::cluster_catalog::{
-    load_info_schema, load_database_tables, normalize_diff_loaded_table_info, with_meta_reader,
+    load_info_schema, list_tables, normalize_diff_loaded_table_info, with_meta_reader,
     ClusterCatalogError, MetaSnapshot,
 };
 use tidb_infoschema::SessionExtendedInfoSchema;
@@ -667,7 +667,7 @@ fn recover_schema<S: MetaSnapshot>(
     };
     if diff.read_table_from_meta {
         let mut info = info;
-        let tables = load_database_tables(snapshot, info.id)?;
+        let tables = list_tables(snapshot, info.id)?;
         let mut ids = Vec::new();
         for table in &tables {
             affected_ids(table, &mut ids);

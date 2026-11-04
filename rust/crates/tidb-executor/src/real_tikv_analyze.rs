@@ -1775,7 +1775,7 @@ where
                 }
                 // Go `skipColumnPartition` (`CheckSkipColumnPartiion`).
                 let exists =
-                    tidb_stats_handle_storage::read::check_skip_column_partition(sctx, partition.id, is_index, id)
+                    tidb_stats_handle_storage::read::check_skip_column_partiion(sctx, partition.id, is_index, id)
                         .map_err(sql_exec_error)?;
                 if !exists {
                     if statement.skip_missing_partition_stats {
@@ -1952,7 +1952,7 @@ where
                     })?;
                     histograms.push(histogram);
                     topns.push(
-                        tidb_stats_handle_storage::read::topn_from_storage(
+                        tidb_stats_handle_storage::read::top_n_from_storage(
                             sctx,
                             partition.id,
                             item.is_index,
@@ -2291,7 +2291,7 @@ fn commit_cluster_analyze_target<S: StoreClient>(
             realtime_count,
             sample_ts,
             selected_columns_for_task,
-            crate::cluster_analyze::sampling::scan_concurrency(
+            crate::cluster_analyze::sampling::adaptive_anlayze_dist_sql_concurrency(
                 statement.scan_concurrency,
                 opener.store().pd_http_client(),
                 timeout,

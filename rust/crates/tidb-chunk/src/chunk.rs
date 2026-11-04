@@ -1352,13 +1352,13 @@ mod tests {
         chunk.append_datum(0, &datum);
         assert_eq!(chunk.get_row(0).get_my_decimal(0), expected);
 
-        let mut mut_row = MutRow::from_types(std::slice::from_ref(&field_type));
+        let mut mut_row = MutRow::mut_row_from_types(std::slice::from_ref(&field_type));
         mut_row.set_datum(0, &datum);
         assert_eq!(mut_row.to_row().get_my_decimal(0), expected);
         mut_row.set_value(0, &datum);
         assert_eq!(mut_row.to_row().get_my_decimal(0), expected);
 
-        let from_datums = MutRow::from_datums(std::slice::from_ref(&datum));
+        let from_datums = MutRow::mut_row_from_datums(std::slice::from_ref(&datum));
         assert_eq!(from_datums.to_row().get_my_decimal(0), expected);
     }
 

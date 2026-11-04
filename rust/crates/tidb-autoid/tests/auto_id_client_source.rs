@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 use tidb_autoid::auto_id_client::{AutoIdClient, AutoIdLeader};
-use tidb_autoid::cluster_auto_id::AutoIdServiceAllocator;
+use tidb_autoid::cluster_auto_id::SinglePointAlloc;
 use tidb_autoid::cluster_auto_id::AutoIdServiceRpcError as Error;
 use tidb_autoid::AutoIdCall as UnaryCallContext;
 use tidb_pd_client::ClusterSecurity;
@@ -153,8 +153,8 @@ fn auto_id_owner_two_nodes_share_service_and_all_table_operations() {
     let server = Server::start(state.clone());
     let (first, lookups) = client(vec![server.address.clone()]);
     let (second, _) = client(vec![server.address.clone()]);
-    let a = AutoIdServiceAllocator::new(first.clone(), 1, 2, false, u32::MAX);
-    let b = AutoIdServiceAllocator::new(second, 1, 2, false, u32::MAX);
+    let a = SinglePointAlloc::new(first.clone(), 1, 2, false, u32::MAX);
+    let b = SinglePointAlloc::new(second, 1, 2, false, u32::MAX);
     assert_eq!(a.alloc(&call(), 1, 1, 1).unwrap(), (0, 1));
     assert_eq!(b.alloc(&call(), 1, 1, 1).unwrap(), (1, 2));
     a.rebase(&call(), 100, false).unwrap();
@@ -162,7 +162,7 @@ fn auto_id_owner_two_nodes_share_service_and_all_table_operations() {
     assert_eq!(a.alloc(&call(), 0, 1, 1).unwrap(), (104, 104));
     a.rebase(&call(), 10, true).unwrap();
     assert_eq!(b.alloc(&call(), 1, 1, 1).unwrap(), (10, 11));
-    let other = AutoIdServiceAllocator::new(first, 1, 3, true, u32::MAX);
+    let other = SinglePointAlloc::new(first, 1, 3, true, u32::MAX);
     other.rebase(&call(), i64::MIN, false).unwrap();
     assert_eq!(other.alloc(&call(), 1, 1, 1).unwrap().1, i64::MIN + 1);
     assert_eq!(
@@ -191,8 +191,8 @@ fn auto_id_owner_recovery_replaces_shared_generation_without_replaying_success()
     let old = Server::start(state.clone());
     let new = Server::start(state.clone());
     let (client, leader) = client(vec![old.address.clone(), new.address.clone()]);
-    let a = AutoIdServiceAllocator::new(client.clone(), 1, 2, false, u32::MAX);
-    let b = AutoIdServiceAllocator::new(client, 1, 3, false, u32::MAX);
+    let a = SinglePointAlloc::new(client.clone(), 1, 2, false, u32::MAX);
+    let b = SinglePointAlloc::new(client, 1, 3, false, u32::MAX);
     assert_eq!(a.alloc(&call(), 1, 1, 1).unwrap(), (0, 1));
     assert_eq!(b.alloc(&call(), 1, 1, 1).unwrap(), (0, 1));
     assert_eq!(leader.lookups.load(Ordering::SeqCst), 2);
@@ -204,13 +204,13 @@ fn auto_id_owner_application_error_keeps_discovery_and_is_not_retried() {
     let state = Arc::new(State::default());
     let server = Server::start(state.clone());
     let (client, leader) = client(vec![server.address.clone()]);
-    let refused = AutoIdServiceAllocator::new(client.clone(), 1, 99, false, u32::MAX);
+    let refused = SinglePointAlloc::new(client.clone(), 1, 99, false, u32::MAX);
     assert!(refused
         .alloc(&call(), 1, 1, 1)
         .unwrap_err()
         .to_string()
         .contains("service rejected allocation"));
-    let accepted = AutoIdServiceAllocator::new(client, 1, 2, false, u32::MAX);
+    let accepted = SinglePointAlloc::new(client, 1, 2, false, u32::MAX);
     assert_eq!(accepted.alloc(&call(), 1, 1, 1).unwrap(), (0, 1));
     assert_eq!(state.requests.lock().unwrap().len(), 2);
     assert_eq!(leader.lookups.load(Ordering::SeqCst), 1);
@@ -219,7 +219,7 @@ fn auto_id_owner_application_error_keeps_discovery_and_is_not_retried() {
 #[test]
 fn auto_id_owner_discovery_deadline_and_cancellation_join() {
     let (client, _) = client(vec![]);
-    let alloc = AutoIdServiceAllocator::new(client.clone(), 1, 2, false, u32::MAX);
+    let alloc = SinglePointAlloc::new(client.clone(), 1, 2, false, u32::MAX);
     let short = UnaryCallContext::with_timeout(Duration::from_millis(25));
     assert!(alloc
         .alloc(&short, 1, 1, 1)
@@ -239,7 +239,7 @@ fn auto_id_owner_discovery_deadline_and_cancellation_join() {
 #[test]
 fn auto_id_owner_sql_kill_interrupts_service_discovery() {
     let (client, leader) = client(vec![]);
-    let alloc = Arc::new(AutoIdServiceAllocator::new(client, 1, 2, false, u32::MAX));
+    let alloc = Arc::new(SinglePointAlloc::new(client, 1, 2, false, u32::MAX));
     let memory = tidb_variable::mem_quota::StatementMemory::default();
     let call = UnaryCallContext::statement(&memory);
     let worker = std::thread::spawn(move || alloc.alloc(&call, 1, 1, 1));

@@ -22,7 +22,7 @@ use tidb_sqlexec::SqlExecError;
 use tidb_stats_handle_util::{exec_rows, get_start_ts, StatsSessionContext};
 
 use crate::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
-use crate::cluster_stats_write::{bound_blob, save_stats_item_sql, LastAnalyzedAt};
+use crate::cluster_stats_write::{convert_bound_to_blob, save_stats_item_sql, LastAnalyzedAt};
 use tidb_model::ColumnInfo;
 use tidb_model::table_info::TableInfo;
 
@@ -442,7 +442,7 @@ pub fn insert_col_stats_2_kv<C: StatsSessionContext + ?Sized>(
             continue;
         }
         has_stats_update = true;
-        let bound = bound_blob(&value).map_err(|error| Box::new(error) as SqlExecError)?;
+        let bound = convert_bound_to_blob(&value).map_err(|error| Box::new(error) as SqlExecError)?;
         let bound = bound.go_bytes();
         // The one bucket of this column: the default value.
         exec(

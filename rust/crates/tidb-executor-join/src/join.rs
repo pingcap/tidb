@@ -4791,7 +4791,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 table
-                    .index_chunk_selected(
+                    .put_chunk_selected(
                         chunk,
                         indexing_keys,
                         &build_types,
@@ -4802,7 +4802,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     .map_err(build_error)?;
             } else {
                 table
-                    .index_chunk_selected(
+                    .put_chunk_selected(
                         chunk,
                         indexing_keys,
                         &build_types,

@@ -68,12 +68,12 @@ impl MutRow {
 
     /// Go `MutRowFromDatums` (and `MutRowFromValues`, which differs only in
     /// taking Go's `any` where this takes the same value as a [`Datum`]).
-    pub fn from_datums(datums: &[Datum]) -> MutRow {
+    pub fn mut_row_from_datums(datums: &[Datum]) -> MutRow {
         MutRow::from_columns(datums.iter().map(make_mut_row_column).collect())
     }
 
     /// Go `MutRowFromTypes`: every column initialized to its type's zero value.
-    pub fn from_types(field_types: &[FieldType]) -> MutRow {
+    pub fn mut_row_from_types(field_types: &[FieldType]) -> MutRow {
         MutRow::from_columns(field_types.iter().map(zero_column_for_type).collect())
     }
 
@@ -726,7 +726,7 @@ use tidb_charset::Collation;
     /// an empty NULL cell rather than as nothing at all.
     #[test]
     fn from_datums_matches_go() {
-        assert_matches_go("from_datums", &MutRow::from_datums(&the_datums()));
+        assert_matches_go("from_datums", &MutRow::mut_row_from_datums(&the_datums()));
     }
 
     /// `MutRowFromTypes` hits every `zeroValForType` arm. The `NewDecimal`
@@ -735,7 +735,7 @@ use tidb_charset::Collation;
     /// would give.
     #[test]
     fn from_types_matches_go() {
-        assert_matches_go("from_types", &MutRow::from_types(&the_types()));
+        assert_matches_go("from_types", &MutRow::mut_row_from_types(&the_types()));
     }
 
     /// The field types the `set_datum` sweep is built on.
@@ -775,7 +775,7 @@ use tidb_charset::Collation;
             // Go's `types.InitVectorFloat32(3)`: three zero elements.
             Datum::VectorFloat32(VectorFloat32::init(3)),
         ];
-        let mut mut_row = MutRow::from_types(&set_datum_types());
+        let mut mut_row = MutRow::mut_row_from_types(&set_datum_types());
         mut_row.set_datums(&datums);
         assert_matches_go("set_datum", &mut_row);
 
@@ -795,7 +795,7 @@ use tidb_charset::Collation;
     #[test]
     fn set_datum_null_does_not_reallocate() {
         let types = the_types();
-        let mut mut_row = MutRow::from_types(&types);
+        let mut mut_row = MutRow::mut_row_from_types(&types);
         let before: Vec<_> = mut_row
             .chunk
             .column_slots()
@@ -821,7 +821,7 @@ use tidb_charset::Collation;
     /// `setMutRowBytes`' grow / reslice / regrow rule.
     #[test]
     fn set_bytes_grow_and_shrink_matches_go() {
-        let mut mut_row = MutRow::from_types(&[ft(C::Varchar)]);
+        let mut mut_row = MutRow::mut_row_from_types(&[ft(C::Varchar)]);
         mut_row.set_datum(0, &string("0123456789abcdef"));
         assert_matches_go("bytes_grow", &mut_row);
         mut_row.set_datum(0, &string("xy"));
@@ -859,7 +859,7 @@ use tidb_charset::Collation;
             }),
         ];
         for (name, datum, read) in cases {
-            let mut mut_row = MutRow::from_types(&[ft(C::Varchar)]);
+            let mut mut_row = MutRow::mut_row_from_types(&[ft(C::Varchar)]);
             mut_row.set_datum(0, &datum);
             assert_matches_go(name, &mut_row);
             assert_eq!(
@@ -889,7 +889,7 @@ use tidb_charset::Collation;
             ft(C::Json),
             ft(C::Bit),
         ];
-        let mut mut_row = MutRow::from_types(&types);
+        let mut mut_row = MutRow::mut_row_from_types(&types);
         mut_row.set_values(&[
             Datum::Int(-3),
             Datum::UInt(9),
@@ -914,7 +914,7 @@ use tidb_charset::Collation;
 
     #[test]
     fn enum_and_set_mutations_preserve_non_utf8_name_bytes() {
-        let mut mut_row = MutRow::from_datums(&[
+        let mut mut_row = MutRow::mut_row_from_datums(&[
             Datum::Enum(MysqlEnum::new(vec![0xff], 1), Collation::Binary),
             Datum::Set(MysqlSet::new(vec![0xfe], 1), Collation::Binary),
         ]);
@@ -949,7 +949,7 @@ use tidb_charset::Collation;
         chunk.append_time(2, a_time());
         chunk.append_null(3);
 
-        let mut mut_row = MutRow::from_types(&types);
+        let mut mut_row = MutRow::mut_row_from_types(&types);
         mut_row.set_row(chunk.get_row(0));
         assert_matches_go("set_row", &mut_row);
 
@@ -979,12 +979,12 @@ use tidb_charset::Collation;
             ft(C::Varchar),
             ft(C::Varchar),
         ];
-        let mut mut_row = MutRow::from_types(&dest_types);
+        let mut mut_row = MutRow::mut_row_from_types(&dest_types);
         mut_row.set_datum(0, &string("kept"));
         mut_row.shallow_copy_partial_row(1, &mut chunk, 1);
         assert_matches_go("shallow_copy", &mut_row);
 
-        let mut second = MutRow::from_types(&dest_types);
+        let mut second = MutRow::mut_row_from_types(&dest_types);
         second.shallow_copy_partial_row(1, &mut chunk, 0);
         assert_matches_go("shallow_copy_null", &second);
 
@@ -1023,7 +1023,7 @@ use tidb_charset::Collation;
     #[test]
     fn go_test_mut_row() {
         // MutRowFromValues("abc", 123).
-        let mut mut_row = MutRow::from_datums(&[string("abc"), Datum::Int(123)]);
+        let mut mut_row = MutRow::mut_row_from_datums(&[string("abc"), Datum::Int(123)]);
         let mut row = mut_row.to_row();
         assert!(!row.is_null(0));
         assert_eq!(row.get_string(0).as_bytes(), b"abc");
@@ -1045,14 +1045,14 @@ use tidb_charset::Collation;
         assert_eq!(row.get_int64(1), 33);
 
         // SetRow copies values and nullity in either column.
-        let source = MutRow::from_datums(&[string("foobar"), Datum::Null]);
+        let source = MutRow::mut_row_from_datums(&[string("foobar"), Datum::Null]);
         mut_row.set_row(source.to_row());
         let row = mut_row.to_row();
         assert_eq!(row.get_string(0).as_bytes(), b"foobar");
         assert!(!row.is_null(0));
         assert!(row.is_null(1));
 
-        let n_source = MutRow::from_datums(&[Datum::Null, Datum::Int(111)]);
+        let n_source = MutRow::mut_row_from_datums(&[Datum::Null, Datum::Int(111)]);
         let n_row = n_source.to_row();
         assert!(n_row.is_null(0));
         assert!(!n_row.is_null(1));
@@ -1078,7 +1078,7 @@ use tidb_charset::Collation;
             time,
             Time::new(CoreTime::default(), TimeType::DateTime, 6).expect("zero datetime"),
         ] {
-            let mut_row = MutRow::from_datums(&[j.clone(), Datum::Time(time)]);
+            let mut_row = MutRow::mut_row_from_datums(&[j.clone(), Datum::Time(time)]);
             let row = mut_row.to_row();
             assert_eq!(row.get_json(0), json_value);
             assert_eq!(row.get_time(1), time);
@@ -1091,7 +1091,7 @@ use tidb_charset::Collation;
         let dur = MySqlDuration::from_nanoseconds((1 * 3_600 + 23 * 60 + 45) * 1_000_000_000, 0)
             .expect("01:23:45");
         chk.append_duration(0, dur);
-        let mut mut_row = MutRow::from_types(&ret_types);
+        let mut mut_row = MutRow::mut_row_from_types(&ret_types);
         mut_row.set_value(0, &Datum::Duration(dur));
         assert_eq!(
             mut_row.chunk.column(0).data.snapshot(),
@@ -1119,7 +1119,7 @@ use tidb_charset::Collation;
         )
         .expect("the zero timestamp is representable");
 
-        let mut mut_row = MutRow::from_types(&col_types);
+        let mut mut_row = MutRow::mut_row_from_types(&col_types);
         let mut row_chunk = Chunk::new_chunk_with_capacity(&col_types, 1);
         row_chunk.append_string(0, "abc");
         row_chunk.append_int64(1, 123);
@@ -1177,7 +1177,7 @@ use tidb_charset::Collation;
     #[test]
     fn go_test_issue29947() {
         let all_types = all_types();
-        let mut mut_row = MutRow::from_types(&all_types);
+        let mut mut_row = MutRow::mut_row_from_types(&all_types);
 
         fn snapshot(mut_row: &MutRow, index: usize) -> (Vec<u8>, Option<Vec<u8>>) {
             let column = mut_row.chunk.columns[index].read();

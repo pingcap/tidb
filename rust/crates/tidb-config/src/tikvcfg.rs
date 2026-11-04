@@ -380,7 +380,7 @@ impl TiKVClient {
     }
 
     /// Go `GetGrpcKeepAliveTimeout`: the timeout as nanoseconds.
-    pub fn grpc_keep_alive_timeout_nanos(&self) -> i64 {
+    pub fn get_grpc_keep_alive_timeout(&self) -> i64 {
         (self.grpc_keep_alive_timeout * 1_000_000_000.0) as i64
     }
 
@@ -395,7 +395,7 @@ impl TiKVClient {
                 self.grpc_compression_type
             ));
         }
-        if self.grpc_keep_alive_timeout_nanos() < 50 * 1_000_000 {
+        if self.get_grpc_keep_alive_timeout() < 50 * 1_000_000 {
             return Err(format!(
                 "grpc-keepalive-timeout should be at least 0.05, but got {:.6}",
                 self.grpc_keep_alive_timeout
@@ -585,10 +585,10 @@ mod tests {
     fn test_validate_grpc_keepalive_timeout() {
         let mut cfg = TiKVClient::default();
         assert!(cfg.valid().is_ok());
-        assert_eq!(cfg.grpc_keep_alive_timeout_nanos(), 3 * 1_000_000_000);
+        assert_eq!(cfg.get_grpc_keep_alive_timeout(), 3 * 1_000_000_000);
         cfg.grpc_keep_alive_timeout = 0.05;
         assert!(cfg.valid().is_ok());
-        assert_eq!(cfg.grpc_keep_alive_timeout_nanos(), 50 * 1_000_000);
+        assert_eq!(cfg.get_grpc_keep_alive_timeout(), 50 * 1_000_000);
         cfg.grpc_keep_alive_timeout = 0.04;
         assert_eq!(
             cfg.valid().unwrap_err(),

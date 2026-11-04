@@ -18,7 +18,7 @@ use tidb_datatype::{
     contains_column, FieldName, FieldNameMetadata, IdentifierMetadata, QualifiedColumnName,
     EMPTY_NAME,
 };
-use tidb_expr::{find_field_name, find_field_name_index_by_column};
+use tidb_expr::{find_field_name, find_field_name_idx_by_col_name};
 
 fn identifier(value: &str) -> IdentifierMetadata {
     IdentifierMetadata::new(value)
@@ -193,7 +193,7 @@ fn field_name_source_helpers_and_unusable_filter_are_shared() {
 
     assert!(contains_column(&names, &column));
     assert_eq!(find_field_name(&names, &column).unwrap(), Some(1));
-    assert_eq!(find_field_name_index_by_column(&names, "col"), Some(0));
+    assert_eq!(find_field_name_idx_by_col_name(&names, "col"), Some(0));
     assert_eq!(visible.display_name(), "db.tbl.col");
 
     let mut hidden = visible;

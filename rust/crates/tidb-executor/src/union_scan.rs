@@ -668,7 +668,7 @@ impl<C: Columns + Send> Executor for UnionScanExec<C> {
         req.grow_and_reset(self.meta.max_chunk_size());
 
         // :147. One scratch row per Next call, over THIS operator's types.
-        let mut mutable_row = MutRow::from_types(self.meta.ret_field_types());
+        let mut mutable_row = MutRow::mut_row_from_types(self.meta.ret_field_types());
         let batch_size = req.capacity();
         while req.num_rows() < batch_size {
             // :149-156.
@@ -777,7 +777,7 @@ mod tests {
             req.reset();
             if self.cursor < self.batches.len() {
                 for datums in &self.batches[self.cursor] {
-                    req.append_row(MutRow::from_datums(datums).to_row());
+                    req.append_row(MutRow::mut_row_from_datums(datums).to_row());
                 }
                 self.cursor += 1;
             }

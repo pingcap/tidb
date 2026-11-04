@@ -567,7 +567,7 @@ impl KvHandler {
             reason: kvrpcpb::write_conflict::Reason::Unknown,
             start_ts: req.for_update_ts,
             conflict_ts: waiter.lock_ts,
-            conflict_commit_ts: self.store.latest_ts(),
+            conflict_commit_ts: self.store.get_latest_ts(),
             key: Vec::new(),
         })];
         response

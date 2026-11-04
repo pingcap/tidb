@@ -268,7 +268,7 @@ pub struct BaseJoiner<C: Columns> {
 impl<C: Columns + Clone> BaseJoiner<C> {
     /// Go `baseJoiner.initDefaultInner`.
     fn init_default_inner(&mut self, inner_types: &[FieldType], default_inner: &[Datum]) {
-        let mut mutable_row = MutRow::from_types(inner_types);
+        let mut mutable_row = MutRow::mut_row_from_types(inner_types);
         mutable_row.set_datums(&default_inner[..inner_types.len()]);
         self.default_inner = Some(mutable_row);
     }

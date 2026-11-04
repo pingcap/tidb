@@ -1267,7 +1267,7 @@ impl PrivilegeRegistry {
     /// one privilege. Revoking one the account never held is a silent no-op
     /// (the 3929 warning for an UNREGISTERED name is raised by the caller,
     /// which still reaches this delete).
-    pub fn revoke_dynamic(&self, user: &str, host: &str, name: &str) {
+    pub fn revoke_dynamic_priv(&self, user: &str, host: &str, name: &str) {
         if let Some(privs) = self
             .lock_dynamic()
             .get_mut(&(user.to_owned(), host.to_owned()))
@@ -1406,7 +1406,7 @@ impl PrivilegeRegistry {
     /// Go's `dbUserExists`: whether this account has a `mysql.DB` row for
     /// `database` at all (any privilege, even zero after later revokes).
     #[must_use]
-    pub fn db_grant_row_exists(&self, user: &str, host: &str, database: &str) -> bool {
+    pub fn db_user_exists(&self, user: &str, host: &str, database: &str) -> bool {
         let rows = self.lock_db();
         rows.contains_key(&Self::db_row_key(&rows, user, host, database))
     }
@@ -1445,7 +1445,7 @@ impl PrivilegeRegistry {
     /// Go's `tableUserExists`: whether this account has a
     /// `mysql.Tables_priv` row for `(database, table)` at all.
     #[must_use]
-    pub fn table_grant_row_exists(
+    pub fn table_user_exists(
         &self,
         user: &str,
         host: &str,

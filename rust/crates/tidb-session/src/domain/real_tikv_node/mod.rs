@@ -201,7 +201,7 @@ where
     let result = tidb_txnkv::run_in_new_txn(&context, &mut storage, true, |transaction| {
         let mutator = tidb_meta::transaction::Mutator::new(&mut *transaction);
         match mutator
-            .metadata_lock()
+            .get_metadata_lock()
             .map_err(tidb_store_driver_txn::meta_txn::MetaTxnError::from)?
         {
             Some(stored) => enable = stored,

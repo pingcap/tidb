@@ -34,7 +34,7 @@ impl TiFlashClusterInfo for SessionTiFlashCluster {
         }
         Ok(self
             .topology
-            .store_servers()?
+            .get_store_server_info()?
             .into_iter()
             .filter(|server| server.server_type == "tiflash")
             .map(|server| TiFlashServer {

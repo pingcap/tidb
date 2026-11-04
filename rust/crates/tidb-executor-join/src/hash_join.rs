@@ -1543,7 +1543,7 @@ impl BuildTable {
         types: &[FieldType],
         build_is_left: bool,
     ) -> Result<(), BuildError> {
-        self.index_chunk_selected(chunk, keys, types, build_is_left, &[], false)
+        self.put_chunk_selected(chunk, keys, types, build_is_left, &[], false)
     }
 
     /// Go `PutChunkSelected` keeps every build row for the preserved-side
@@ -1556,7 +1556,7 @@ impl BuildTable {
     /// stays off in this mode: it has no null bucket of its own, so routing
     /// a null-aware row through it would silently drop it exactly the way
     /// an ordinary null key already is.
-    pub fn index_chunk_selected(
+    pub fn put_chunk_selected(
         &mut self,
         chunk: Chunk,
         keys: &[EquiKey],

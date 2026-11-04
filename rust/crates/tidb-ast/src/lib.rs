@@ -95,7 +95,7 @@ mod visitor;
 
 pub use admin::{
     AdminAlterDdlJobOption, AdminAlterDdlJobsStmt, AdminBindingControlKind, AdminCheckHandleRange,
-    AdminCheckStmt, AdminChecksumStmt, AdminCleanupTableLockStmt, AdminDdlJobControlKind,
+    AdminCheckStmt, AdminChecksumStmt, CleanupTableLockStmt, AdminDdlJobControlKind,
     AdminDdlJobControlStmt, AdminPlanCacheScope, AdminRecoverIndexStmt, AdminReloadKind,
     AdminShowDdlJobQueriesStmt, AdminShowDdlJobsStmt, AdminShowNextRowIdStmt, AdminShowSlowMode,
     AdminShowSlowStmt, AdminShowSlowTopScope, AdminStmt, BdrRole, DropStatsStmt, GrantLevel,

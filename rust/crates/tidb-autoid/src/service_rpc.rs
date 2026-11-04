@@ -72,7 +72,7 @@ impl std::fmt::Display for AutoIdServiceRpcError {
 
 impl std::error::Error for AutoIdServiceRpcError {}
 
-/// The transport/discovery seam used by [`AutoIdServiceAllocator`].
+/// The transport/discovery seam used by [`SinglePointAlloc`].
 ///
 /// Transports own generation-safe retirement across every table binding.
 /// The transport retires the exact borrowed generation before returning an RPC error.

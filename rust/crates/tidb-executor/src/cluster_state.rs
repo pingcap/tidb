@@ -316,7 +316,7 @@ impl ViewerState {
         let Some(syncer) = self.server_info_syncer.as_ref() else {
             return Ok(Vec::new());
         };
-        let all = syncer.all_server_info().map_err(DriverError::unsupported)?;
+        let all = syncer.get_all_server_info().map_err(DriverError::unsupported)?;
         let mut ids: Vec<&String> = all.keys().collect();
         ids.sort();
         let redact = self.hides_cluster_metadata;

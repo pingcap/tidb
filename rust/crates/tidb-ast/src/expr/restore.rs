@@ -556,7 +556,7 @@ impl Expr {
                 }
                 // Go `FuncCallExpr.Restore`: `WriteKeyWord(FnName.O)`, which
                 // changes the case only under a keyword-case flag.
-                out.push_str(&keyword_case(context, name));
+                out.push_str(&write_key_word(context, name));
                 out.push('(');
                 for (i, a) in args.iter().enumerate() {
                     if i > 0 {
@@ -592,7 +592,7 @@ impl Expr {
                 if context.flags().has_keyword_uppercase() {
                     out.push_str(name);
                 } else {
-                    out.push_str(&keyword_case(context, written.as_deref().unwrap_or(name)));
+                    out.push_str(&write_key_word(context, written.as_deref().unwrap_or(name)));
                 }
                 out.push('(');
                 if *distinct {
@@ -613,7 +613,7 @@ impl Expr {
                 order_by,
                 separator,
             } => {
-                out.push_str(&keyword_case(
+                out.push_str(&write_key_word(
                     context,
                     written.as_deref().unwrap_or("GROUP_CONCAT"),
                 ));
@@ -650,7 +650,7 @@ impl Expr {
             } => {
                 // Go `WindowFuncExpr.Restore` writes the name with
                 // `WriteKeyWord`; the AST keeps it as written.
-                out.push_str(&keyword_case(context, name));
+                out.push_str(&write_key_word(context, name));
                 out.push('(');
                 for (i, a) in args.iter().enumerate() {
                     if i > 0 {
@@ -1036,7 +1036,7 @@ impl Expr {
 
 /// Go `RestoreCtx.WriteKeyWord`: the text in the flagged case, or as it is
 /// when no keyword-case flag is set.
-pub(crate) fn keyword_case(context: &RestoreContext, text: &str) -> String {
+pub(crate) fn write_key_word(context: &RestoreContext, text: &str) -> String {
     if context.flags().has_keyword_uppercase() {
         text.to_ascii_uppercase()
     } else if context.flags().has_keyword_lowercase() {

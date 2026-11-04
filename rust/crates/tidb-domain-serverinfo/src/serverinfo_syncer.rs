@@ -395,7 +395,7 @@ impl Syncer {
     /// Go `GetAllServerInfo`: every peer's entry, keyed by server id.
     /// Without a client the map is this node alone, which is Go's
     /// single-node answer.
-    pub fn all_server_info(&self) -> Result<HashMap<String, ServerInfo>, String> {
+    pub fn get_all_server_info(&self) -> Result<HashMap<String, ServerInfo>, String> {
         let Some(etcd) = self.etcd.as_ref() else {
             let info = self.get_local_server_info();
             return Ok(HashMap::from([(info.static_info.id.clone(), info)]));
@@ -1063,7 +1063,7 @@ mod tests {
         let syncer = Syncer::new(info_at("uuid-1", "10.0.0.1", 4000), Some(etcd.clone()));
         syncer.new_session_and_store_server_info().unwrap();
 
-        let all = syncer.all_server_info().unwrap();
+        let all = syncer.get_all_server_info().unwrap();
         assert_eq!(all.len(), 2);
         assert_eq!(all["peer"].static_info.ip, "10.0.0.2");
         assert_eq!(all["uuid-1"].static_info.ip, "10.0.0.1");
@@ -1425,7 +1425,7 @@ mod tests {
         syncer.update_topology_aliveness().unwrap();
         syncer.remove_topology_info();
         assert!(syncer.get_all_tidb_topology().unwrap().is_empty());
-        let all = syncer.all_server_info().unwrap();
+        let all = syncer.get_all_server_info().unwrap();
         assert_eq!(all.len(), 1);
         assert!(all.contains_key("uuid-1"));
         assert_eq!(

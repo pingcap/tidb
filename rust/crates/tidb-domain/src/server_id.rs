@@ -160,7 +160,7 @@ impl LeaseState {
             return random_id(1, MAX_SERVER_ID64);
         }
         if conflicts < 3 {
-            let peers = syncer.all_server_info()?;
+            let peers = syncer.get_all_server_info()?;
             if peers.len() as f32 <= 0.9 * MAX_SERVER_ID32 as f32 {
                 let ids = peers
                     .values()

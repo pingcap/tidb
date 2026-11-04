@@ -481,7 +481,7 @@ fn raw_storage_failures_propagate_and_keep_go_partial_mutation_order() {
         scalar_write.set_metadata_lock(true),
         Err(MetaError::Storage("scalar write".to_owned()))
     );
-    assert_eq!(scalar_write.metadata_lock().unwrap(), None);
+    assert_eq!(scalar_write.get_metadata_lock().unwrap(), None);
 
     let table_delete = Mutator::new(base.clone().with_delete_error(0, "table delete"));
     assert_eq!(
@@ -1211,11 +1211,11 @@ fn scalar_settings_preserve_absence_formatting_and_non_boolean_lock_bytes() {
         NextGenBootTableVersion::MASKING_POLICY
     );
 
-    assert_eq!(meta.metadata_lock().unwrap(), None);
+    assert_eq!(meta.get_metadata_lock().unwrap(), None);
     meta.set_metadata_lock(true).unwrap();
-    assert_eq!(meta.metadata_lock().unwrap(), Some(true));
+    assert_eq!(meta.get_metadata_lock().unwrap(), Some(true));
     meta.set_metadata_lock(false).unwrap();
-    assert_eq!(meta.metadata_lock().unwrap(), Some(false));
+    assert_eq!(meta.get_metadata_lock().unwrap(), Some(false));
 
     assert_eq!(meta.schema_cache_size().unwrap(), None);
     meta.set_schema_cache_size(u64::MAX).unwrap();
@@ -1345,7 +1345,7 @@ fn malformed_scalar_storage_returns_the_source_parse_error_class() {
     }
 
     assert_eq!(
-        with_string_value(key::METADATA_LOCK, b"not-one").metadata_lock(),
+        with_string_value(key::METADATA_LOCK, b"not-one").get_metadata_lock(),
         Ok(Some(false))
     );
 }

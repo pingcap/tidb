@@ -19,7 +19,7 @@
 
 use tidb_ast::{
     AdminBindingControlKind, AdminCheckHandleRange, AdminCheckStmt, AdminChecksumStmt,
-    AdminCleanupTableLockStmt, AdminRecoverIndexStmt, AdminReloadKind, AdminShowDdlJobQueriesStmt,
+    CleanupTableLockStmt, AdminRecoverIndexStmt, AdminReloadKind, AdminShowDdlJobQueriesStmt,
     AdminShowDdlJobsStmt, AdminShowNextRowIdStmt, AdminShowSlowMode, AdminShowSlowStmt,
     AdminShowSlowTopScope, AdminStmt, BdrRole,
 };
@@ -211,7 +211,7 @@ impl Parser {
     /// Parses Go's distinct `CleanupTableLockStmt` production. The table
     /// list is nonempty; restore uses Go's canonical comma spacing and quoted
     /// table-name paths.
-    pub(crate) fn parse_admin_cleanup_table_lock(&mut self) -> PResult<AdminCleanupTableLockStmt> {
+    pub(crate) fn parse_admin_cleanup_table_lock(&mut self) -> PResult<CleanupTableLockStmt> {
         self.expect_kw("ADMIN")?;
         self.expect_kw("CLEANUP")?;
         self.expect_kw("TABLE")?;
@@ -221,7 +221,7 @@ impl Parser {
             self.bump();
             tables.push(self.parse_table_name()?);
         }
-        Ok(AdminCleanupTableLockStmt { tables })
+        Ok(CleanupTableLockStmt { tables })
     }
 
     /// Parses `ADMIN CHECK`: table lists, or one index with optional ranges.

@@ -1452,7 +1452,7 @@ pub(crate) mod tests {
             let datum = factory(&reader, None, None, &stats);
             assert_eq!(datum, Datum::new_real(expected), "{name}");
 
-            let mut row = MutRow::from_types(&[FieldType::new(FieldTypeCode::Double)]);
+            let mut row = MutRow::mut_row_from_types(&[FieldType::new(FieldTypeCode::Double)]);
             row.set_datums(&[datum]);
             assert!(
                 (row.to_row().get_float64(0) - expected).abs() < f64::EPSILON,
@@ -1478,7 +1478,7 @@ pub(crate) mod tests {
                 .unwrap_or_else(|| panic!("missing column value factory: {name}"));
             let datum = factory(&reader, None, None, &chunk_stats);
 
-            let mut row = MutRow::from_types(&[FieldType::new(FieldTypeCode::Double)]);
+            let mut row = MutRow::mut_row_from_types(&[FieldType::new(FieldTypeCode::Double)]);
             row.set_datums(&[datum]);
             assert!(
                 (row.to_row().get_float64(0) - expected).abs() < f64::EPSILON,
@@ -1998,7 +1998,7 @@ pub(crate) mod tests {
             FieldType::new(FieldTypeCode::LongLong),
             FieldType::new(FieldTypeCode::LongLong),
         ];
-        let mut mut_row = MutRow::from_types(&ret_types);
+        let mut mut_row = MutRow::mut_row_from_types(&ret_types);
         mut_row.set_datums(&rows[0]);
         let row = mut_row.to_row();
 

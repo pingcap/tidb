@@ -932,7 +932,7 @@ pub fn peer_cluster_table_rows(
         return Ok((rows, Vec::new()));
     };
     let local_id = syncer.get_local_server_info().static_info.id;
-    let discovered = syncer.all_server_info().map_err(DriverError::unsupported)?;
+    let discovered = syncer.get_all_server_info().map_err(DriverError::unsupported)?;
     if !discovered
         .values()
         .any(|server| server.static_info.id == local_id && server.static_info.ip != "<nil>")

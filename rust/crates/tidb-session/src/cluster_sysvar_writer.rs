@@ -123,7 +123,7 @@ fn switch_mdl<S: StoreClient>(
     };
     let written = tidb_txnkv::run_in_new_txn(&context, &mut storage, true, |transaction| {
         let mutator = Mutator::new(&mut *transaction);
-        let old_enable = mutator.metadata_lock().map_err(MetaTxnError::from)?.unwrap_or(false);
+        let old_enable = mutator.get_metadata_lock().map_err(MetaTxnError::from)?.unwrap_or(false);
         if old_enable != enable {
             mutator.set_metadata_lock(enable).map_err(MetaTxnError::from)?;
         }

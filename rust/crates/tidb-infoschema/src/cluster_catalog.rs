@@ -308,7 +308,7 @@ fn database_tables<S: MetaSnapshot + ?Sized>(
 
 /// Go `Mutator.ListTables`: every stored `TableInfo` under one database, in
 /// stored key order, as a full load normalizes them.
-pub fn load_database_tables<S: MetaSnapshot + ?Sized>(
+pub fn list_tables<S: MetaSnapshot + ?Sized>(
     snapshot: &mut S,
     db_id: i64,
 ) -> Result<Vec<TableInfo>, ClusterCatalogError> {

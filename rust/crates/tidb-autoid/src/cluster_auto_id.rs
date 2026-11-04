@@ -158,7 +158,7 @@ impl std::error::Error for AutoIdServiceError {}
 
 /// Go `singlePointAlloc`: an AutoID service client with generation-safe
 /// reconnect and cancellation-aware retries.
-pub struct AutoIdServiceAllocator<C: ?Sized> {
+pub struct SinglePointAlloc<C: ?Sized> {
     client: Arc<C>,
     binding: RwLock<AutoIdServiceBinding>,
     unsigned: bool,
@@ -212,7 +212,7 @@ impl AutoIdServiceRetryState {
     }
 }
 
-impl<C: AutoIdServiceRpc + ?Sized> AutoIdServiceAllocator<C> {
+impl<C: AutoIdServiceRpc + ?Sized> SinglePointAlloc<C> {
     /// Binds one table to a service transport/discovery implementation.
     #[must_use]
     pub fn new(
@@ -477,14 +477,14 @@ fn stopped(call: &UnaryCallContext) -> Result<(), AutoIdServiceError> {
     }
 }
 
-impl<C: AutoIdServiceRpc + ?Sized> std::fmt::Debug for AutoIdServiceAllocator<C> {
+impl<C: AutoIdServiceRpc + ?Sized> std::fmt::Debug for SinglePointAlloc<C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AutoIdServiceAllocator")
+        f.debug_struct("SinglePointAlloc")
             .field("binding", &self.binding)
             .finish_non_exhaustive()
     }
 }
-impl<C: AutoIdServiceRpc + ?Sized> crate::AutoIdService for AutoIdServiceAllocator<C> {
+impl<C: AutoIdServiceRpc + ?Sized> crate::AutoIdService for SinglePointAlloc<C> {
     fn alloc(
         &self,
         call: &UnaryCallContext,
@@ -1021,7 +1021,7 @@ mod tests {
             )),
             rebase_error: None,
         });
-        let allocator = AutoIdServiceAllocator::new(Arc::clone(&client), 1, 1, false, 0);
+        let allocator = SinglePointAlloc::new(Arc::clone(&client), 1, 1, false, 0);
         let start = Instant::now();
 
         assert_eq!(
@@ -1044,7 +1044,7 @@ mod tests {
                 "rpc error: code = Canceled desc = context canceled".to_owned(),
             )),
         });
-        let allocator = AutoIdServiceAllocator::new(Arc::clone(&client), 1, 1, false, 0);
+        let allocator = SinglePointAlloc::new(Arc::clone(&client), 1, 1, false, 0);
         let start = Instant::now();
 
         assert_eq!(
@@ -1068,7 +1068,7 @@ mod tests {
             alloc_responses: Mutex::new(VecDeque::from([Ok((40, 42))])),
             rebase_responses: Mutex::new(VecDeque::from([Ok(()), Ok(())])),
         });
-        let allocator = AutoIdServiceAllocator::new(Arc::clone(&client), 1, 9, false, 0);
+        let allocator = SinglePointAlloc::new(Arc::clone(&client), 1, 9, false, 0);
         let call = UnaryCallContext::new(
             Duration::from_secs(1),
             tidb_txnkv::rpc::UnaryCancellation::new(),
@@ -1141,7 +1141,7 @@ mod tests {
                 )),
             ])),
         });
-        let allocator = AutoIdServiceAllocator::new(Arc::clone(&client), 1, 9, false, 0);
+        let allocator = SinglePointAlloc::new(Arc::clone(&client), 1, 9, false, 0);
         let call = UnaryCallContext::new(
             Duration::from_secs(1),
             tidb_txnkv::rpc::UnaryCancellation::new(),
@@ -1176,7 +1176,7 @@ mod tests {
             alloc_responses: Mutex::new(VecDeque::from([Ok((0, 7)), Ok((1, 3))])),
             alloc_calls: AtomicUsize::new(0),
         });
-        let allocator = AutoIdServiceAllocator::new(Arc::clone(&successful), 1, 1, false, 0);
+        let allocator = SinglePointAlloc::new(Arc::clone(&successful), 1, 1, false, 0);
         let call = UnaryCallContext::new(
             Duration::from_secs(5),
             tidb_txnkv::rpc::UnaryCancellation::new(),
@@ -1194,7 +1194,7 @@ mod tests {
             alloc_responses: Mutex::new(VecDeque::from([Ok((0, 2)), Ok((1, -2))])),
             alloc_calls: AtomicUsize::new(0),
         });
-        let unsigned_allocator = AutoIdServiceAllocator::new(Arc::clone(&unsigned), 1, 1, true, 0);
+        let unsigned_allocator = SinglePointAlloc::new(Arc::clone(&unsigned), 1, 1, true, 0);
         assert_eq!(unsigned_allocator.alloc(&call, 1, 1, 1), Ok((0, 2)));
         assert_eq!(unsigned_allocator.alloc(&call, 1, 1, 1), Ok((1, -2)));
         assert_eq!(unsigned_allocator.last_allocated(), -2);
@@ -1213,7 +1213,7 @@ mod tests {
             ])),
             alloc_calls: AtomicUsize::new(0),
         });
-        let mut allocator = AutoIdServiceAllocator::new(Arc::clone(&failing), 1, 1, false, 0);
+        let mut allocator = SinglePointAlloc::new(Arc::clone(&failing), 1, 1, false, 0);
         allocator.rpc_retry_policy = AutoIdServiceRetryPolicy {
             min_errors: 2,
             min_duration: Duration::ZERO,

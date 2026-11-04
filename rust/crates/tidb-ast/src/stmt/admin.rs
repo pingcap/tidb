@@ -35,7 +35,7 @@ mod show;
 mod stats;
 
 pub use check::{
-    AdminCheckHandleRange, AdminCheckStmt, AdminChecksumStmt, AdminCleanupTableLockStmt,
+    AdminCheckHandleRange, AdminCheckStmt, AdminChecksumStmt, CleanupTableLockStmt,
     AdminRecoverIndexStmt,
 };
 pub use ddl_job_alter::{AdminAlterDdlJobOption, AdminAlterDdlJobsStmt};

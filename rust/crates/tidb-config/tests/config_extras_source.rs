@@ -53,7 +53,7 @@ fn grpc_keepalive_timeout_minimum_matches_source() {
     let mut conf = new_config();
     conf.load_str("config.toml", "[tikv-client]\ngrpc-keepalive-timeout = 3\n")
         .unwrap();
-    assert_eq!(conf.tikv_client.grpc_keep_alive_timeout_nanos(), 3_000_000_000);
+    assert_eq!(conf.tikv_client.get_grpc_keep_alive_timeout(), 3_000_000_000);
 
     let mut conf = new_config();
     conf.load_str(

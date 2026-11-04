@@ -4628,7 +4628,7 @@ mod tests {
                         (Datum::Real(0.0), 0),
                         (Datum::Null, 0),
                     ] {
-                        let row = tidb_chunk::mutrow::MutRow::from_datums(&[value]);
+                        let row = tidb_chunk::mutrow::MutRow::mut_row_from_datums(&[value]);
                         assert_eq!(
                             expression.eval(&crate::NoColumns, row.to_row()).unwrap(),
                             Datum::Int(expected)
@@ -4656,7 +4656,7 @@ mod tests {
             let pb = lower(&call).unwrap();
             assert_eq!(pb.children[0].sig(), ScalarFuncSig::RealIsTrueWithNull);
             let expression = crate::distsql_builtin::pb_to_expr(&pb, &[]).unwrap();
-            let row = tidb_chunk::mutrow::MutRow::from_datums(&[Datum::Real(0.5)]);
+            let row = tidb_chunk::mutrow::MutRow::mut_row_from_datums(&[Datum::Real(0.5)]);
             assert_eq!(
                 expression.eval(&crate::NoColumns, row.to_row()).unwrap(),
                 Datum::Int(1)

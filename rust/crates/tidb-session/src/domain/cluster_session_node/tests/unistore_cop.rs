@@ -5334,7 +5334,7 @@ fn analyze_job_lifecycle_is_persisted_like_go() {
         .unwrap();
     stack
         .factory
-        .delete_analyze_jobs_before(cutoff)
+        .delete_analyze_jobs(cutoff)
         .expect("analyze-job cleanup commits");
     assert!(displayed(rows(
         &mut session,
