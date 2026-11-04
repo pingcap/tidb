@@ -37,7 +37,7 @@ func VisibleColumns(table *model.TableInfo, includeStoredGenerated bool) []*mode
 	return columns
 }
 
-func kvPhysicalTableIDs(table *model.TableInfo) []int64 {
+func physicalTableIDs(table *model.TableInfo) []int64 {
 	partition := table.GetPartitionInfo()
 	if partition == nil || len(partition.Definitions) == 0 {
 		return []int64{table.ID}
@@ -49,8 +49,8 @@ func kvPhysicalTableIDs(table *model.TableInfo) []int64 {
 	return tableIDs
 }
 
-func kvPhysicalTableRanges(table *model.TableInfo) []dumpservice.Range {
-	tableIDs := kvPhysicalTableIDs(table)
+func physicalTableRanges(table *model.TableInfo) []dumpservice.Range {
+	tableIDs := physicalTableIDs(table)
 	ranges := make([]dumpservice.Range, 0, len(tableIDs))
 	for _, tableID := range tableIDs {
 		start := tablecodec.GenTableRecordPrefix(tableID)
@@ -65,7 +65,7 @@ func ShardTableRanges(
 	scanner Scanner,
 	table *model.TableInfo,
 ) ([]dumpservice.Range, error) {
-	physicalRanges := kvPhysicalTableRanges(table)
+	physicalRanges := physicalTableRanges(table)
 	shards := make([]dumpservice.Range, 0, len(physicalRanges))
 	for _, physicalRange := range physicalRanges {
 		ranges, err := scanner.Shards(ctx, physicalRange.Start, physicalRange.End)

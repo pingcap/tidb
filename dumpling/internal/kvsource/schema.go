@@ -26,7 +26,7 @@ import (
 // CreateDatabaseSQL renders a database schema with the offline export session settings.
 func CreateDatabaseSQL(database *model.DBInfo) (string, error) {
 	var output bytes.Buffer
-	if err := executor.ConstructResultOfShowCreateDatabase(newKVContext(), database, true, &output); err != nil {
+	if err := executor.ConstructResultOfShowCreateDatabase(newSchemaContext(), database, true, &output); err != nil {
 		return "", errors.Annotatef(err, "build schema for kv database %q", database.Name.O)
 	}
 	return output.String(), nil
@@ -34,13 +34,13 @@ func CreateDatabaseSQL(database *model.DBInfo) (string, error) {
 
 // CreateTableSQL renders a table schema using persisted snapshot AutoID bases.
 func CreateTableSQL(reader tidbmeta.Reader, database *model.DBInfo, table *model.TableInfo) (string, error) {
-	allocators, err := kvMetadataAllocators(reader, database.ID, table)
+	allocators, err := metadataAllocators(reader, database.ID, table)
 	if err != nil {
 		return "", errors.Annotatef(err, "read auto ID bases for kv table %q", table.Name.O)
 	}
 	var output bytes.Buffer
 	if err := executor.ConstructResultOfShowCreateTable(
-		newKVContext(), database.Name, table, allocators, &output,
+		newSchemaContext(), database.Name, table, allocators, &output,
 	); err != nil {
 		return "", errors.Annotatef(err, "build schema for kv table %q", table.Name.O)
 	}

@@ -28,9 +28,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestKVMetadataSnapshotMatchesSQLMetadata(t *testing.T) {
+func TestMetadataSnapshotMatchesSQLMetadata(t *testing.T) {
 	t.Run("session migration is unavailable", func(t *testing.T) {
-		ctx := newKVContext()
+		ctx := newSchemaContext()
 		require.Panics(t, func() { _ = ctx.CheckCanMigrateStates() })
 	})
 

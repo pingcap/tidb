@@ -49,17 +49,17 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
-// kvContext supplies the session state used by SHOW CREATE schema rendering.
+// schemaContext supplies the session state used by SHOW CREATE schema rendering.
 // Storage, SQL execution, and other session services are unavailable; unsupported
 // methods panic so new dependencies cannot silently change offline export behavior.
-type kvContext struct {
+type schemaContext struct {
 	sessionVars *variable.SessionVars
 	exprCtx     *sessionexpr.ExprContext
 }
 
-var _ sessionctx.Context = (*kvContext)(nil)
+var _ sessionctx.Context = (*schemaContext)(nil)
 
-func newKVContext() *kvContext {
+func newSchemaContext() *schemaContext {
 	vars := variable.NewSessionVars(nil)
 	if err := vars.SetSystemVar(vardef.SQLModeVar, mysql.DefaultSQLMode); err != nil {
 		panic(err)
@@ -74,140 +74,144 @@ func newKVContext() *kvContext {
 		WithSkipUTF8Check(vars.SkipUTF8Check).
 		WithSkipSACIICheck(vars.SkipASCIICheck).
 		WithSkipUTF8MB4Check(!config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Load()))
-	ctx := &kvContext{sessionVars: vars}
+	ctx := &schemaContext{sessionVars: vars}
 	ctx.exprCtx = sessionexpr.NewExprContext(ctx)
 	return ctx
 }
 
-func (c *kvContext) GetSessionVars() *variable.SessionVars { return c.sessionVars }
-func (c *kvContext) GetExprCtx() exprctx.ExprContext       { return c.exprCtx }
+func (c *schemaContext) GetSessionVars() *variable.SessionVars { return c.sessionVars }
+func (c *schemaContext) GetExprCtx() exprctx.ExprContext       { return c.exprCtx }
 
-func (*kvContext) CheckCanMigrateStates() error { panic("unimplemented") }
+func (*schemaContext) CheckCanMigrateStates() error { panic("unimplemented") }
 
-func (*kvContext) EncodeStates(context.Context, *sessionstates.SessionStates) error {
+func (*schemaContext) EncodeStates(context.Context, *sessionstates.SessionStates) error {
 	panic("unimplemented")
 }
 
-func (*kvContext) DecodeStates(context.Context, *sessionstates.SessionStates) error {
+func (*schemaContext) DecodeStates(context.Context, *sessionstates.SessionStates) error {
 	panic("unimplemented")
 }
 
-func (*kvContext) RollbackTxn(context.Context) { panic("unimplemented") }
+func (*schemaContext) RollbackTxn(context.Context) { panic("unimplemented") }
 
-func (*kvContext) CommitTxn(context.Context) error { panic("unimplemented") }
+func (*schemaContext) CommitTxn(context.Context) error { panic("unimplemented") }
 
-func (*kvContext) GetSchemaValidator() validatorapi.Validator { panic("unimplemented") }
+func (*schemaContext) GetSchemaValidator() validatorapi.Validator { panic("unimplemented") }
 
-func (*kvContext) GetSQLServer() sqlsvrapi.Server { panic("unimplemented") }
+func (*schemaContext) GetSQLServer() sqlsvrapi.Server { panic("unimplemented") }
 
-func (*kvContext) GetTableCtx() tblctx.MutateContext { panic("unimplemented") }
+func (*schemaContext) GetTableCtx() tblctx.MutateContext { panic("unimplemented") }
 
-func (*kvContext) GetPlanCtx() planctx.PlanContext { panic("unimplemented") }
+func (*schemaContext) GetPlanCtx() planctx.PlanContext { panic("unimplemented") }
 
-func (*kvContext) GetDistSQLCtx() *distsqlctx.DistSQLContext { panic("unimplemented") }
+func (*schemaContext) GetDistSQLCtx() *distsqlctx.DistSQLContext { panic("unimplemented") }
 
-func (*kvContext) RefreshTxnCtx(context.Context) error { panic("unimplemented") }
+func (*schemaContext) RefreshTxnCtx(context.Context) error { panic("unimplemented") }
 
-func (*kvContext) GetSessionPlanCache() sessionctx.SessionPlanCache { panic("unimplemented") }
+func (*schemaContext) GetSessionPlanCache() sessionctx.SessionPlanCache { panic("unimplemented") }
 
-func (*kvContext) StmtCommit(context.Context) { panic("unimplemented") }
+func (*schemaContext) StmtCommit(context.Context) { panic("unimplemented") }
 
-func (*kvContext) StmtRollback(context.Context, bool) { panic("unimplemented") }
+func (*schemaContext) StmtRollback(context.Context, bool) { panic("unimplemented") }
 
-func (*kvContext) IsDDLOwner() bool { panic("unimplemented") }
+func (*schemaContext) IsDDLOwner() bool { panic("unimplemented") }
 
-func (*kvContext) PrepareTSFuture(context.Context, oracle.Future, string) error {
+func (*schemaContext) PrepareTSFuture(context.Context, oracle.Future, string) error {
 	panic("unimplemented")
 }
 
-func (*kvContext) GetPreparedTxnFuture() sessionctx.TxnFuture { panic("unimplemented") }
+func (*schemaContext) GetPreparedTxnFuture() sessionctx.TxnFuture { panic("unimplemented") }
 
-func (*kvContext) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI { panic("unimplemented") }
+func (*schemaContext) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI { panic("unimplemented") }
 
-func (*kvContext) GetBuiltinFunctionUsage() map[string]uint32 { panic("unimplemented") }
+func (*schemaContext) GetBuiltinFunctionUsage() map[string]uint32 { panic("unimplemented") }
 
-func (*kvContext) GetStmtStats() *stmtstats.StatementStats { panic("unimplemented") }
+func (*schemaContext) GetStmtStats() *stmtstats.StatementStats { panic("unimplemented") }
 
-func (*kvContext) ShowProcess() *sessmgr.ProcessInfo { panic("unimplemented") }
+func (*schemaContext) ShowProcess() *sessmgr.ProcessInfo { panic("unimplemented") }
 
-func (*kvContext) GetAdvisoryLock(string, int64) error { panic("unimplemented") }
+func (*schemaContext) GetAdvisoryLock(string, int64) error { panic("unimplemented") }
 
-func (*kvContext) IsUsedAdvisoryLock(string) uint64 { panic("unimplemented") }
+func (*schemaContext) IsUsedAdvisoryLock(string) uint64 { panic("unimplemented") }
 
-func (*kvContext) ReleaseAdvisoryLock(string) bool { panic("unimplemented") }
+func (*schemaContext) ReleaseAdvisoryLock(string) bool { panic("unimplemented") }
 
-func (*kvContext) ReleaseAllAdvisoryLocks() int { panic("unimplemented") }
+func (*schemaContext) ReleaseAllAdvisoryLocks() int { panic("unimplemented") }
 
-func (*kvContext) GetExtensions() *extension.SessionExtensions { panic("unimplemented") }
+func (*schemaContext) GetExtensions() *extension.SessionExtensions { panic("unimplemented") }
 
-func (*kvContext) InSandBoxMode() bool { panic("unimplemented") }
+func (*schemaContext) InSandBoxMode() bool { panic("unimplemented") }
 
-func (*kvContext) EnableSandBoxMode() { panic("unimplemented") }
+func (*schemaContext) EnableSandBoxMode() { panic("unimplemented") }
 
-func (*kvContext) DisableSandBoxMode() { panic("unimplemented") }
+func (*schemaContext) DisableSandBoxMode() { panic("unimplemented") }
 
-func (*kvContext) ReportUsageStats() { panic("unimplemented") }
+func (*schemaContext) ReportUsageStats() { panic("unimplemented") }
 
-func (*kvContext) NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollector {
+func (*schemaContext) NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollector {
 	panic("unimplemented")
 }
 
-func (*kvContext) GetCursorTracker() cursor.Tracker { panic("unimplemented") }
+func (*schemaContext) GetCursorTracker() cursor.Tracker { panic("unimplemented") }
 
-func (*kvContext) GetCommitWaitGroup() *sync.WaitGroup { panic("unimplemented") }
+func (*schemaContext) GetCommitWaitGroup() *sync.WaitGroup { panic("unimplemented") }
 
-func (*kvContext) GetTraceCtx() context.Context { panic("unimplemented") }
+func (*schemaContext) GetTraceCtx() context.Context { panic("unimplemented") }
 
-func (*kvContext) GetStore() kv.Storage { panic("unimplemented") }
+func (*schemaContext) GetStore() kv.Storage { panic("unimplemented") }
 
-func (*kvContext) GetInfoSchema() infoschema.MetaOnlyInfoSchema { panic("unimplemented") }
+func (*schemaContext) GetInfoSchema() infoschema.MetaOnlyInfoSchema { panic("unimplemented") }
 
-func (*kvContext) GetLatestInfoSchema() infoschema.MetaOnlyInfoSchema { panic("unimplemented") }
+func (*schemaContext) GetLatestInfoSchema() infoschema.MetaOnlyInfoSchema { panic("unimplemented") }
 
-func (*kvContext) GetLatestISWithoutSessExt() infoschema.MetaOnlyInfoSchema { panic("unimplemented") }
+func (*schemaContext) GetLatestISWithoutSessExt() infoschema.MetaOnlyInfoSchema {
+	panic("unimplemented")
+}
 
-func (*kvContext) GetClient() kv.Client { panic("unimplemented") }
+func (*schemaContext) GetClient() kv.Client { panic("unimplemented") }
 
-func (*kvContext) GetMPPClient() kv.MPPClient { panic("unimplemented") }
+func (*schemaContext) GetMPPClient() kv.MPPClient { panic("unimplemented") }
 
-func (*kvContext) GetSessionManager() sessmgr.Manager { panic("unimplemented") }
+func (*schemaContext) GetSessionManager() sessmgr.Manager { panic("unimplemented") }
 
-func (*kvContext) GetSQLExecutor() sqlexec.SQLExecutor { panic("unimplemented") }
+func (*schemaContext) GetSQLExecutor() sqlexec.SQLExecutor { panic("unimplemented") }
 
-func (*kvContext) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor { panic("unimplemented") }
+func (*schemaContext) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {
+	panic("unimplemented")
+}
 
-func (*kvContext) GetRangerCtx() *rangerctx.RangerContext { panic("unimplemented") }
+func (*schemaContext) GetRangerCtx() *rangerctx.RangerContext { panic("unimplemented") }
 
-func (*kvContext) GetBuildPBCtx() *planctx.BuildPBContext { panic("unimplemented") }
+func (*schemaContext) GetBuildPBCtx() *planctx.BuildPBContext { panic("unimplemented") }
 
-func (*kvContext) IsCrossKS() bool { panic("unimplemented") }
+func (*schemaContext) IsCrossKS() bool { panic("unimplemented") }
 
-func (*kvContext) UpdateColStatsUsage(iter.Seq[model.TableItemID]) { panic("unimplemented") }
+func (*schemaContext) UpdateColStatsUsage(iter.Seq[model.TableItemID]) { panic("unimplemented") }
 
-func (*kvContext) Txn(bool) (kv.Transaction, error) { panic("unimplemented") }
+func (*schemaContext) Txn(bool) (kv.Transaction, error) { panic("unimplemented") }
 
-func (*kvContext) HasDirtyContent(int64) bool { panic("unimplemented") }
+func (*schemaContext) HasDirtyContent(int64) bool { panic("unimplemented") }
 
-func (*kvContext) BuiltinFunctionUsageInc(string) { panic("unimplemented") }
+func (*schemaContext) BuiltinFunctionUsageInc(string) { panic("unimplemented") }
 
-func (*kvContext) CheckTableLocked(int64) (bool, ast.TableLockType) { panic("unimplemented") }
+func (*schemaContext) CheckTableLocked(int64) (bool, ast.TableLockType) { panic("unimplemented") }
 
-func (*kvContext) GetAllTableLocks() []model.TableLockTpInfo { panic("unimplemented") }
+func (*schemaContext) GetAllTableLocks() []model.TableLockTpInfo { panic("unimplemented") }
 
-func (*kvContext) HasLockedTables() bool { panic("unimplemented") }
+func (*schemaContext) HasLockedTables() bool { panic("unimplemented") }
 
-func (*kvContext) AddTableLock([]model.TableLockTpInfo) { panic("unimplemented") }
+func (*schemaContext) AddTableLock([]model.TableLockTpInfo) { panic("unimplemented") }
 
-func (*kvContext) ReleaseTableLocks([]model.TableLockTpInfo) { panic("unimplemented") }
+func (*schemaContext) ReleaseTableLocks([]model.TableLockTpInfo) { panic("unimplemented") }
 
-func (*kvContext) ReleaseTableLockByTableIDs([]int64) { panic("unimplemented") }
+func (*schemaContext) ReleaseTableLockByTableIDs([]int64) { panic("unimplemented") }
 
-func (*kvContext) ReleaseAllTableLocks() { panic("unimplemented") }
+func (*schemaContext) ReleaseAllTableLocks() { panic("unimplemented") }
 
-func (*kvContext) SetValue(fmt.Stringer, any) { panic("unimplemented") }
+func (*schemaContext) SetValue(fmt.Stringer, any) { panic("unimplemented") }
 
-func (*kvContext) Value(fmt.Stringer) any { panic("unimplemented") }
+func (*schemaContext) Value(fmt.Stringer) any { panic("unimplemented") }
 
-func (*kvContext) ClearValue(fmt.Stringer) { panic("unimplemented") }
+func (*schemaContext) ClearValue(fmt.Stringer) { panic("unimplemented") }
 
-func (*kvContext) GetDomain() any { panic("unimplemented") }
+func (*schemaContext) GetDomain() any { panic("unimplemented") }

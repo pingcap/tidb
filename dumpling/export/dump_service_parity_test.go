@@ -314,7 +314,7 @@ func dumpParityOutputs(
 
 	sqlOutput := dump("", editSQLConfig)
 	socket := dumpservicetest.Start(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		dumpservicetest.ServeKVRequest(server.Store, writer, request)
+		dumpservicetest.ServeRequest(server.Store, writer, request)
 	}))
 	service := (&url.URL{Scheme: "unix", Path: socket}).String()
 	return sqlOutput, dump(service, editServiceConfig)

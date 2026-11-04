@@ -64,8 +64,8 @@ func Start(t *testing.T, handler http.Handler) string {
 	return socketPath
 }
 
-// ServeKVRequest serves logical keys from the test store.
-func ServeKVRequest(store kv.Storage, writer http.ResponseWriter, request *http.Request) {
+// ServeRequest serves logical keys from the test store.
+func ServeRequest(store kv.Storage, writer http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodGet {
 		http.Error(writer, "unsupported kv test request", http.StatusNotFound)
 		return

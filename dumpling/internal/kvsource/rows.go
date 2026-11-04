@@ -47,7 +47,7 @@ func NewRows(
 		scanner: scanner,
 		ranges:  ranges,
 		table:   table,
-		decoder: newKVRowDecoder(table, columns),
+		decoder: newRowDecoder(table, columns),
 		encoder: textrow.NewResultEncoder(charset.CharsetUTF8MB4),
 	}
 	iter.readNext()
@@ -62,7 +62,7 @@ type Rows struct {
 	nextRange int
 	scan      *dumpservice.Scan
 	table     *model.TableInfo
-	decoder   *kvRowDecoder
+	decoder   *rowDecoder
 	encoder   *textrow.ResultEncoder
 	key       []byte
 	value     []byte
@@ -175,7 +175,7 @@ func (i *Rows) readNext() {
 	}
 }
 
-type kvRowDecoder struct {
+type rowDecoder struct {
 	columns []*model.ColumnInfo
 	ctx     *mock.Context
 	schema  *expression.Schema
@@ -183,7 +183,7 @@ type kvRowDecoder struct {
 	chunk   *chunk.Chunk
 }
 
-func newKVRowDecoder(table *model.TableInfo, columns []*model.ColumnInfo) *kvRowDecoder {
+func newRowDecoder(table *model.TableInfo, columns []*model.ColumnInfo) *rowDecoder {
 	schema := expression.NewSchema()
 	fieldTypes := make([]*types.FieldType, 0, len(columns))
 	for _, column := range columns {
@@ -192,7 +192,7 @@ func newKVRowDecoder(table *model.TableInfo, columns []*model.ColumnInfo) *kvRow
 	}
 	ctx := mock.NewContextDeprecated()
 	ctx.ResetSessionAndStmtTimeZone(time.UTC)
-	return &kvRowDecoder{
+	return &rowDecoder{
 		columns: columns,
 		ctx:     ctx,
 		schema:  schema,
@@ -201,7 +201,7 @@ func newKVRowDecoder(table *model.TableInfo, columns []*model.ColumnInfo) *kvRow
 	}
 }
 
-func (d *kvRowDecoder) decode(table *model.TableInfo, key, value []byte) (chunk.Row, error) {
+func (d *rowDecoder) decode(table *model.TableInfo, key, value []byte) (chunk.Row, error) {
 	handle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
 		return chunk.Row{}, errors.Annotatef(err, "decode KV row key %x", key)

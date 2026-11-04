@@ -58,7 +58,7 @@ func TestDumpServiceFromTiDBStorage(t *testing.T) {
 	tk.MustExec("insert into kv_partition values (1, 'first'), (11, 'second')")
 
 	socketPath := dumpservicetest.Start(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		dumpservicetest.ServeKVRequest(store, writer, request)
+		dumpservicetest.ServeRequest(store, writer, request)
 	}))
 	outputDir := t.TempDir()
 	config := DefaultConfig()
@@ -154,7 +154,7 @@ func TestDumpServiceLifecycle(t *testing.T) {
 					http.Error(writer, "source unavailable", http.StatusServiceUnavailable)
 					return
 				}
-				dumpservicetest.ServeKVRequest(store, writer, request)
+				dumpservicetest.ServeRequest(store, writer, request)
 			}))
 			conf := DefaultConfig()
 			conf.DumpService = (&url.URL{Scheme: "unix", Path: socket}).String()
@@ -244,7 +244,7 @@ func TestDumpServiceColumnFilterValidation(t *testing.T) {
 						return
 					}
 				}
-				dumpservicetest.ServeKVRequest(store, writer, request)
+				dumpservicetest.ServeRequest(store, writer, request)
 			}))
 			conf := DefaultConfig()
 			conf.DumpService = (&url.URL{Scheme: "unix", Path: socket}).String()
