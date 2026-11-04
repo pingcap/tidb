@@ -976,6 +976,11 @@ func (s *indexWriteResultSink) collectResult() error {
 			return s.ctx.Err()
 		case rs, ok := <-s.source.Channel():
 			if !ok {
+				// The worker pool also closes the channel after the context is
+				// canceled; do not start the final flush and import then.
+				if err := s.ctx.Err(); err != nil {
+					return err
+				}
 				err := s.flush()
 				if err != nil {
 					s.ctx.OnError(err)
