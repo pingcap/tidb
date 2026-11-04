@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -576,6 +577,19 @@ func (helper extractHelper) extractTimeRange(
 		}
 
 		if colName == extractColName {
+			if _, columnOnRight := fn.GetArgs()[1].(*expression.Column); columnOnRight {
+				switch fnName {
+				case ast.GT:
+					fnName = ast.LT
+				case ast.GE:
+					fnName = ast.LE
+				case ast.LT:
+					fnName = ast.GT
+				case ast.LE:
+					fnName = ast.GE
+				}
+			}
+
 			timeType := types.NewFieldType(mysql.TypeDatetime)
 			timeType.SetDecimal(6)
 			timeDatum, err := datums[0].ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), timeType)
@@ -598,7 +612,7 @@ func (helper extractHelper) extractTimeRange(
 				// SQL datetime bounds can exceed UnixNano's range or identify more
 				// than one instant. Neither conversion is safe for coarse pruning.
 				if localTime.Before(time.Unix(0, math.MinInt64)) || localTime.After(time.Unix(0, math.MaxInt64)) ||
-					!isUniqueLocalTime(localTime, mysqlTime.CoreTime()) {
+					types.FromGoTime(localTime) != mysqlTime.CoreTime() || !timeutil.IsUniqueLocalTime(localTime) {
 					remained = append(remained, expr)
 					continue
 				}
@@ -646,30 +660,6 @@ func (helper extractHelper) extractTimeRange(
 		}
 	}
 	return
-}
-
-// isUniqueLocalTime rejects nonexistent wall-clock times and repeated times
-// whose SQL comparison can match records on either side of a zone transition.
-func isUniqueLocalTime(localTime time.Time, civil types.CoreTime) bool {
-	if types.FromGoTime(localTime) != civil {
-		return false
-	}
-	_, offset := localTime.Zone()
-	start, end := localTime.ZoneBounds()
-	for i, boundary := range []time.Time{start, end} {
-		if boundary.IsZero() {
-			continue
-		}
-		if i == 0 {
-			boundary = boundary.Add(-time.Nanosecond)
-		}
-		_, adjacentOffset := boundary.Zone()
-		if adjacentOffset != offset &&
-			types.FromGoTime(localTime.Add(time.Duration(offset-adjacentOffset)*time.Second)) == civil {
-			return false
-		}
-	}
-	return true
 }
 
 func (extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 {
@@ -1648,10 +1638,8 @@ func (e *StatementsSummaryExtractor) ExplainInfo(pp base.PhysicalPlan) string {
 	}
 	if e.CoarseTimeRange != nil && p.SCtx().GetSessionVars() != nil && p.SCtx().GetSessionVars().StmtCtx != nil {
 		stmtCtx := p.SCtx().GetSessionVars().StmtCtx
-		startTime := e.CoarseTimeRange.StartTime.In(stmtCtx.TimeZone())
-		endTime := e.CoarseTimeRange.EndTime.In(stmtCtx.TimeZone())
-		startTimeStr := types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String()
-		endTimeStr := types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String()
+		startTimeStr := formatStatementsSummaryTime(e.CoarseTimeRange.StartTime, stmtCtx.TimeZone())
+		endTimeStr := formatStatementsSummaryTime(e.CoarseTimeRange.EndTime, stmtCtx.TimeZone())
 		fmt.Fprintf(buf, "start_time: %v, end_time: %v, ", startTimeStr, endTimeStr)
 	}
 	// remove the last ", " in the message info
@@ -1660,6 +1648,19 @@ func (e *StatementsSummaryExtractor) ExplainInfo(pp base.PhysicalPlan) string {
 		return s[:len(s)-2]
 	}
 	return s
+}
+
+func formatStatementsSummaryTime(t time.Time, timezone *time.Location) string {
+	minDatetime, _ := types.MinDatetime.GoTime(time.UTC)
+	if t.Equal(minDatetime) {
+		return types.NewTime(types.MinDatetime, mysql.TypeDatetime, types.MaxFsp).String()
+	}
+	maxDatetime, _ := types.MaxDatetime.GoTime(time.UTC)
+	if t.Equal(maxDatetime) {
+		return types.NewTime(types.MaxDatetime, mysql.TypeDatetime, types.MaxFsp).String()
+	}
+	t = t.In(timezone)
+	return types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.MaxFsp).String()
 }
 
 func (e *StatementsSummaryExtractor) findCoarseTimeRange(

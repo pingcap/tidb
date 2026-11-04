@@ -307,10 +307,8 @@ func TestStatementsSummaryExtractorOpenEndedTimeRange(t *testing.T) {
 
 	tk := testkit.NewTestKitWithSession(t, store, se)
 	tk.MustExec("set time_zone = '+08:00'")
-	// This branch renders the bound in the session time zone without clamping
-	// it to MaxDatetime. The logical bound is checked above.
 	tk.MustQuery("explain select * from information_schema.statements_summary where summary_end_time >= '2020-01-01 00:00:00'").MultiCheckContain([]string{
-		"end_time: " + maxTime.In(se.GetSessionVars().Location()).Format("2006-01-02 15:04:05.999999"),
+		"end_time: 9999-12-31 23:59:59.999999",
 	})
 }
 
@@ -351,6 +349,7 @@ func TestStatementsSummaryExtractorPreparedTimeRangeDST(t *testing.T) {
 		{"NewYorkFold", "America/New_York", "2024-11-03 01:30:00", true},
 		{"NewYorkGap", "America/New_York", "2024-03-10 02:30:00", true},
 		{"LordHoweFold", "Australia/Lord_Howe", "2024-04-07 01:45:00", true},
+		{"LordHoweGap", "Australia/Lord_Howe", "2024-10-06 02:15:00", true},
 		{"NewYorkAfterFold", "America/New_York", "2024-11-03 03:30:00", false},
 		{"UTC", "+00:00", "2024-11-03 01:30:00", false},
 	} {
@@ -394,6 +393,20 @@ func TestStatementsSummaryExtractorConservativeTimeRange(t *testing.T) {
 		start     string
 		end       string
 	}{
+		{
+			name:      "ConstantLeftBeginLowerBound",
+			predicate: "'2022-12-27 02:00:00' <= summary_begin_time",
+		},
+		{
+			name:      "ConstantLeftEndUpperBound",
+			predicate: "'2022-12-27 03:00:00' >= summary_end_time",
+		},
+		{
+			name:      "ConstantLeftRange",
+			predicate: "'2022-12-27 03:00:00' >= summary_begin_time and '2022-12-27 02:00:00' <= summary_end_time",
+			start:     "2022-12-27T02:00:00Z",
+			end:       "2022-12-27T03:00:00Z",
+		},
 		{
 			name:      "CrossedEndpoints",
 			predicate: "summary_begin_time <= '2022-12-27 02:01:00' and summary_end_time >= '2022-12-27 02:02:00'",

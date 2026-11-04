@@ -751,6 +751,24 @@ func TestStmtSummaryHistoryPreparedTimeRange(t *testing.T) {
 			want      []string
 		}{
 			{
+				name:      "ConstantLeftBeginLowerBound",
+				predicate: "from_unixtime(?) <= summary_begin_time",
+				args:      []any{begin + 3600},
+				want:      []string{"window1", "window2"},
+			},
+			{
+				name:      "ConstantLeftEndUpperBound",
+				predicate: "from_unixtime(?) >= summary_end_time",
+				args:      []any{begin + 4200},
+				want:      []string{"window0", "window1"},
+			},
+			{
+				name:      "ConstantLeftRange",
+				predicate: "from_unixtime(?) >= summary_begin_time and from_unixtime(?) <= summary_end_time",
+				args:      []any{begin + 4200, begin + 3600},
+				want:      []string{"window1"},
+			},
+			{
 				name:      "CrossedEndpoints",
 				predicate: "summary_begin_time <= from_unixtime(?) and summary_end_time >= from_unixtime(?)",
 				args:      []any{begin + 100, begin + 500},
