@@ -68,7 +68,7 @@ func TestAffinityDDLFailsWhenPDDoesNotServeAffinityAPI(t *testing.T) {
 	groups := map[string][]pdhttp.AffinityGroupKeyRange{
 		"_tidb_t_1": {{StartKey: []byte("a"), EndKey: []byte("b")}},
 	}
-	require.ErrorContains(t, affinity.CreateGroupsIfNotExists(context.Background(), groups), "404")
+	require.ErrorIs(t, affinity.CreateGroupsIfNotExists(context.Background(), groups), affinity.ErrPDNotSupportAffinity)
 	// Reads and forced deletes see no groups, as before.
 	got, err := affinity.GetGroups(context.Background(), []string{"_tidb_t_1"})
 	require.NoError(t, err)

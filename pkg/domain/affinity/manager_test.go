@@ -21,8 +21,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -101,27 +99,6 @@ func TestCreateAffinityGroupsIfNotExistsFallbackWhenSkipExistRejected(t *testing
 	client.AssertExpectations(t)
 }
 
-func TestCreateAffinityGroupsIfNotExistsFallbackForHTTPServiceError(t *testing.T) {
-	ctx := context.Background()
-	client := &mockPDClient{}
-	manager := &pdManager{Client: client}
-
-	groups := map[string][]pdhttp.AffinityGroupKeyRange{
-		"g1": {{StartKey: []byte("a"), EndKey: []byte("b")}},
-		"g2": {{StartKey: []byte("c"), EndKey: []byte("d")}},
-	}
-	client.On("CreateAffinityGroups", mock.Anything, groups, 1).Return(nil, pdHTTPServiceErr("mock service error")).Once()
-	client.On("GetAffinityGroups", mock.Anything, []string{"g1", "g2"}).Return(
-		map[string]*pdhttp.AffinityGroupState{"g1": affinityGroupState("g1")}, nil,
-	).Once()
-	client.On("CreateAffinityGroups", mock.Anything, map[string][]pdhttp.AffinityGroupKeyRange{
-		"g2": groups["g2"],
-	}, 0).Return(nil, nil).Once()
-
-	require.NoError(t, manager.CreateAffinityGroupsIfNotExists(ctx, groups))
-	client.AssertExpectations(t)
-}
-
 func TestCreateAffinityGroupsIfNotExistsDoNotFallbackForNonCompatibilityError(t *testing.T) {
 	ctx := context.Background()
 	client := &mockPDClient{}
@@ -150,7 +127,7 @@ func TestPDWithoutAffinityAPI(t *testing.T) {
 		"g1": {{StartKey: []byte("a"), EndKey: []byte("b")}},
 	}
 	client.On("CreateAffinityGroups", mock.Anything, groups, 1).Return(nil, notFound).Once()
-	require.ErrorIs(t, manager.CreateAffinityGroupsIfNotExists(ctx, groups), notFound)
+	require.ErrorIs(t, manager.CreateAffinityGroupsIfNotExists(ctx, groups), ErrPDNotSupportAffinity)
 
 	// Reads see no groups.
 	client.On("GetAffinityGroups", mock.Anything, []string{"g1"}).Return(nil, notFound).Once()
@@ -237,28 +214,6 @@ func TestGetAffinityGroupsFallbackWhenIDsQueryUnsupported(t *testing.T) {
 	client.AssertExpectations(t)
 }
 
-func TestGetAffinityGroupsFallbackForHTTPServiceError(t *testing.T) {
-	ctx := context.Background()
-	client := &mockPDClient{}
-	manager := &pdManager{Client: client}
-
-	ids := []string{"g1"}
-	client.On("GetAffinityGroups", mock.Anything, ids).Return(nil, pdHTTPServiceErr("mock service error")).Once()
-	client.On("GetAllAffinityGroups", mock.Anything).Return(
-		map[string]*pdhttp.AffinityGroupState{
-			"g1": affinityGroupState("g1"),
-			"g2": affinityGroupState("g2"),
-		}, nil,
-	).Once()
-
-	result, err := manager.GetAffinityGroups(ctx, ids)
-	require.NoError(t, err)
-	require.Len(t, result, 1)
-	require.Contains(t, result, "g1")
-	require.NotContains(t, result, "g2")
-	client.AssertExpectations(t)
-}
-
 func TestAffinityGroupIDsEscapedQueryLenBoundary(t *testing.T) {
 	require.Equal(t, maxAffinityGroupIDsQueryLen, affinityGroupIDsEscapedQueryLen([]string{strings.Repeat("/", 1364)}))
 	require.Equal(t, maxAffinityGroupIDsQueryLen+3, affinityGroupIDsEscapedQueryLen([]string{strings.Repeat("/", 1365)}))
@@ -284,8 +239,4 @@ func affinityGroupState(id string) *pdhttp.AffinityGroupState {
 
 func pdStatusErr(statusCode int) error {
 	return fmt.Errorf("request pd http api failed with status: '%d %s', body: 'test'", statusCode, http.StatusText(statusCode))
-}
-
-func pdHTTPServiceErr(msg string) error {
-	return terror.ClassDomain.Synthesize(terror.ErrCode(errno.ErrHTTPServiceError), fmt.Sprintf("HTTP request failed with status %s", msg))
 }

@@ -17,6 +17,8 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
@@ -33,6 +35,7 @@ import (
 	"github.com/stretchr/testify/require"
 	tikv "github.com/tikv/client-go/v2/tikv"
 	pdhttp "github.com/tikv/pd/client/http"
+	sd "github.com/tikv/pd/client/servicediscovery"
 )
 
 // Unit tests for keyrange building
@@ -382,4 +385,28 @@ func TestAffinityDropDatabase(t *testing.T) {
 	groups, err := affinity.GetGroups(ctx, groupIDs)
 	require.NoError(t, err)
 	require.Empty(t, groups, "all affinity groups should be deleted after dropping database")
+}
+
+func TestAffinityDDLFailsWhenPDDoesNotServeAffinityAPI(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_plain (a int)")
+
+	// A PD without the affinity API answers 404.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	discovery := sd.NewMockServiceDiscovery([]string{server.URL}, nil)
+	require.NoError(t, discovery.Init())
+	cli := pdhttp.NewClientWithServiceDiscovery("test", discovery)
+	defer cli.Close()
+	affinity.InitManager(cli)
+	defer affinity.InitManager(nil)
+
+	tk.MustContainErrMsg("create table t_aff (a int) affinity = 'table'", affinity.ErrPDNotSupportAffinity.Error())
+	tk.MustQuery("show tables like 't_aff'").Check(testkit.Rows())
+	tk.MustContainErrMsg("alter table t_plain affinity = 'table'", affinity.ErrPDNotSupportAffinity.Error())
+	tk.MustQuery("select count(*) from information_schema.tables where table_name = 't_plain' and tidb_affinity is not null").Check(testkit.Rows("0"))
 }

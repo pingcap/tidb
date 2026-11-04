@@ -16,6 +16,7 @@ package affinity
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"sort"
@@ -23,8 +24,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/errno"
 	pdhttp "github.com/tikv/pd/client/http"
 )
 
@@ -52,6 +51,9 @@ func NewPDManager(client pdhttp.Client) Manager {
 	return &pdManager{client}
 }
 
+// ErrPDNotSupportAffinity is returned when PD does not serve the affinity API.
+var ErrPDNotSupportAffinity = errors.New("PD does not support affinity groups, please upgrade PD")
+
 // CreateAffinityGroupsIfNotExists creates affinity groups in PD.
 // It first uses the skip_exist_check API. If that behavior is rejected by an older
 // PD, it falls back to checking existing IDs and creating only missing groups.
@@ -64,6 +66,9 @@ func (m *pdManager) CreateAffinityGroupsIfNotExists(ctx context.Context, groups 
 	_, err := m.Client.CreateAffinityGroups(ctx, groups, pdhttp.WithSkipExistCheck())
 	if err == nil {
 		return nil
+	}
+	if isPDHTTPStatusError(err, http.StatusNotFound) {
+		return ErrPDNotSupportAffinity
 	}
 	if !shouldFallbackCreateAffinityGroups(err) {
 		return err
@@ -170,15 +175,13 @@ func affinityGroupIDsEscapedQueryLen(ids []string) int {
 
 func shouldFallbackCreateAffinityGroups(err error) bool {
 	return isPDHTTPStatusError(err, http.StatusBadRequest) ||
-		isPDHTTPStatusError(err, http.StatusConflict) ||
-		isPDHTTPServiceErrorWithoutStatus(err)
+		isPDHTTPStatusError(err, http.StatusConflict)
 }
 
 func shouldFallbackGetAffinityGroups(err error) bool {
 	return isPDHTTPStatusError(err, http.StatusBadRequest) ||
 		isPDHTTPStatusError(err, http.StatusNotFound) ||
-		isPDHTTPStatusError(err, http.StatusRequestURITooLong) ||
-		isPDHTTPServiceErrorWithoutStatus(err)
+		isPDHTTPStatusError(err, http.StatusRequestURITooLong)
 }
 
 func isPDHTTPStatusError(err error, statusCode int) bool {
@@ -212,23 +215,6 @@ func extractPDHTTPStatusCode(err error) (int, bool) {
 		return 0, false
 	}
 	return code, true
-}
-
-func isPDHTTPServiceErrorWithoutStatus(err error) bool {
-	if err == nil {
-		return false
-	}
-	if _, ok := extractPDHTTPStatusCode(err); ok {
-		return false
-	}
-
-	rootErr, ok := errors.Cause(err).(*errors.Error)
-	if !ok {
-		return false
-	}
-	// TiDB's injected PD response handler returns ErrHTTPServiceError without the
-	// original HTTP status code in the message, so treat it as compatibility case.
-	return rootErr.Code() == errors.ErrCode(errno.ErrHTTPServiceError)
 }
 
 func filterAffinityGroups(groups map[string]*pdhttp.AffinityGroupState, ids []string) map[string]*pdhttp.AffinityGroupState {
