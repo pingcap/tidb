@@ -390,6 +390,14 @@ impl tidb_executor::admin::AdminExec for Session {
         Session::plan_replayer_stmt(self, stmt)
     }
 
+    fn query_watch_stmt(&mut self, stmt: &tidb_ast::AdminStmt) -> Result<StmtOutput, DriverError> {
+        match stmt {
+            tidb_ast::AdminStmt::AddQueryWatch(add) => self.add_query_watch(add),
+            tidb_ast::AdminStmt::DropQueryWatch(drop) => self.drop_query_watch(drop).map(|()| StmtOutput::Done(true)),
+            _ => unreachable!("only QUERY WATCH reaches query_watch_stmt"),
+        }
+    }
+
     fn server_id(&self) -> u64 {
         (self.server_id_getter)()
     }

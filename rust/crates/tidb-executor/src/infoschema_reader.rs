@@ -309,7 +309,6 @@ pub const SERVED_TABLES: &[&str] = &[
     "PARAMETERS",
     "PLUGINS",
     "SEQUENCES",
-    "RUNAWAY_WATCHES",
     "RESOURCE_GROUPS",
     "COLLATIONS",
     "COLLATION_CHARACTER_SET_APPLICABILITY",
@@ -404,9 +403,6 @@ pub fn table_rows(
     }
     if name.go_lower_eq("SEQUENCES") {
         return Some(sequences_rows(catalog, visibility));
-    }
-    if name.go_lower_eq("RUNAWAY_WATCHES") {
-        return Some(runaway_watches_rows());
     }
     if name.go_lower_eq("RESOURCE_GROUPS") {
         return Some(resource_groups_rows(catalog));
@@ -2487,10 +2483,6 @@ fn sequences_rows(catalog: &SessionExtendedInfoSchema, visibility: &SchemaVisibi
             ])
         })
         .collect()
-}
-
-fn runaway_watches_rows() -> Vec<Vec<Datum>> {
-    Vec::new()
 }
 
 /// Go `tiflashTargetTableName`: the TiFlash system table each table reads.

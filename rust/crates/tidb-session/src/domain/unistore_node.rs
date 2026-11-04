@@ -757,6 +757,13 @@ pub fn unistore_cluster_session_stack_from(
     };
     let factory = factory.shared();
     ddl_session_pool.bind(&factory);
+    // Go `initResourceGroupsController`'s runaway manager over unistore's
+    // mock PD client; `Domain.Start` runs its loops.
+    crate::domain::resource_groups_controller::start_runaway_manager(
+        &factory,
+        &resource_groups.store,
+        &resource_groups.controller,
+    );
     crate::domain::cluster_session_node::NodeServices::new(analyze)
     .with_cluster_peer_client(Arc::new(tidb_executor::cluster_peer::ClusterPeerClient::new(
         peer_store,

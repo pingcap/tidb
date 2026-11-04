@@ -1,0 +1,27 @@
+[package]
+name = "tidb-resourcegroup-runaway"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/resourcegroup/runaway: runaway query checker, watch list and record flushers"
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono.workspace = true
+tikv-client.workspace = true
+tidb-ast = { path = "../tidb-ast" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-exeerrors = { path = "../tidb-exeerrors" }
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-metrics = { path = "../tidb-metrics" }
+tidb-model = { path = "../tidb-model" }
+tidb-proto = { path = "../tidb-proto" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-terror = { path = "../tidb-terror" }
+tidb-ttl = { path = "../tidb-ttl" }
+tidb-txnkv = { path = "../tidb-txnkv" }

@@ -67,4 +67,5 @@ pub(crate) fn apply_session_metadata(
     request.max_keys_read = session.max_keys_read;
     request.max_keys_read_counter = session.max_keys_read_counter;
     request.query_cop_store_limiter = session.query_cop_store_limiter;
+    request.runaway_checker = session.runaway_checker;
 }

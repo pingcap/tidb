@@ -53,3 +53,5 @@ workspace = true
 [dev-dependencies]
 tidb-expr = { path = "../tidb-expr" }
 tidb-driver-error = { path = "../tidb-driver-error" }
+tidb-exeerrors = { path = "../tidb-exeerrors" }
+tidb-proto = { path = "../tidb-proto" }

@@ -71,6 +71,8 @@ enum NativeCopError {
     Client(tikv_client::Error),
     /// Go `copIterator.Next`'s `CheckVisibility` failure.
     Visibility(tidb_txnkv::VisibilityError),
+    /// A TiDB error raised on the request path (the runaway checker's).
+    Terror(tidb_terror::TerrorError),
     Other(String),
 }
 
@@ -158,6 +160,10 @@ impl From<NativeCopError> for QueryResponseError {
                     other => Self::Source(other.to_string()),
                 }
             }
+            NativeCopError::Terror(error) => Self::Sql {
+                code: u16::try_from(error.code().value()).expect("registered TiDB error fits the MySQL protocol"),
+                message: error.message().to_owned(),
+            },
             NativeCopError::Other(message) => Self::Source(message),
         }
     }
@@ -535,6 +541,10 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
             self.trace.as_ref(),
             self.cluster_id,
         );
+        // Go `handleTaskOnce`: `RunawayChecker.BeforeCopRequest(req)`.
+        if let Some(checker) = &self.metadata.runaway_checker {
+            checker.before_cop_request(&mut request.context).map_err(NativeCopError::Terror)?;
+        }
         // Go `ClientHelper.SendReqCtx` stamps both lock sets on every send.
         self.snapshot_locks
             .lock()
@@ -555,7 +565,15 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
             self.timeout.min(self.call.timeout()),
             &self.kv_context,
             Some(Arc::clone(&req_stats)),
-        )?;
+        );
+        // Go `err = worker.req.RunawayChecker.CheckThresholds(nil, 0, err)`.
+        let sent = match (sent, &self.metadata.runaway_checker) {
+            (Err(error), Some(checker)) => match checker.check_thresholds(None, 0, Some(&error.to_string())) {
+                Some(runaway) => return Err(NativeCopError::Terror(runaway)),
+                None => return Err(error.into()),
+            },
+            (sent, _) => sent?,
+        };
         let cost_time = send_started.elapsed();
         let (encoded, address) = match sent {
             NativeCopSend::Response(encoded, address) => (encoded, address.unwrap_or_default()),
@@ -578,6 +596,13 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
         };
         let response =
             decode_tikv_unary_response(encoded.as_slice()).map_err(|error| error.to_string())?;
+        // Go `copStats.ScanDetail.ProcessedKeys` of this response.
+        let processed_keys = response
+            .response_ref()
+            .exec_details_v2
+            .as_ref()
+            .and_then(|details| details.scan_detail_v2.as_ref())
+            .map_or(0, |scan| scan.processed_versions as i64);
         // Go `handleBatchCopResponse` / `handleBatchRemainsOnErr`: the batched
         // children are served, or remain, whatever the parent's own outcome.
         let remains =
@@ -593,6 +618,15 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
             response,
             (cost_time, req_stats),
         )?;
+        // Go `handleCopResponse`'s last step: the statement's RU details and
+        // this response's processed keys against the thresholds.
+        if let Some(checker) = &self.metadata.runaway_checker {
+            if let Some(runaway) =
+                checker.check_thresholds(self.kv_context.ru_details.as_deref(), processed_keys, None)
+            {
+                return Err(NativeCopError::Terror(runaway));
+            }
+        }
         self.schedule_batched_remains(logical_task_id, &backoffer, &request.context, remains)
     }
 
@@ -971,6 +1005,11 @@ impl<S: NativeCopStore + ?Sized> tidb_txnkv::Response for NativeCopResponse<S> {
 
     fn close(&mut self) {
         self.closed = true;
+        // Go: the runaway checker counts every task's processed keys of one
+        // read; the next read starts from zero.
+        if let Some(checker) = &self.metadata.runaway_checker {
+            checker.reset_total_processed_keys();
+        }
     }
 
     /// Go `copClient.Send`'s concurrency: the request's, capped by the task
@@ -995,6 +1034,11 @@ impl<S: NativeCopStore + ?Sized> tidb_txnkv::Response for NativeCopResponse<S> {
             concurrency = tasks - small.min(tasks);
         }
         concurrency = concurrency.max(1);
+        // A read the runaway checker cooled down runs slowly.
+        if self.cooled_down() {
+            concurrency = 1;
+            extra = 0;
+        }
         if self.metadata.keep_order {
             extra = extra.min(20);
         }
@@ -1006,6 +1050,16 @@ impl<S: NativeCopStore + ?Sized> tidb_txnkv::Response for NativeCopResponse<S> {
     }
 }
 
+
+impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
+    /// Go `copIterator`'s `RunawayChecker.CheckAction() == CoolDown`.
+    fn cooled_down(&self) -> bool {
+        self.metadata
+            .runaway_checker
+            .as_ref()
+            .is_some_and(|checker| checker.check_action() == tidb_proto::resource_manager::RunawayAction::CoolDown)
+    }
+}
 
 impl<S: NativeCopStore + ?Sized> super::cop_iterator::CopTaskSource for NativeCopResponse<S> {
     fn try_next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
@@ -1035,6 +1089,9 @@ impl<S: NativeCopStore + ?Sized> super::cop_iterator::CopWorkerSource for Native
     }
 
     fn concurrency(&self) -> usize {
+        if self.cooled_down() {
+            return 1;
+        }
         usize::try_from(self.metadata.concurrency)
             .unwrap_or(1)
             .max(1)

@@ -1571,6 +1571,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 }),
             advisory_locks: self.advisory_locks_ref().clone(),
             before_executor_first_run: Arc::clone(&self.executor_first_run_breakpoint_ref()),
+            runaway: Arc::clone(self.statement_runaway_ref()),
             breakpoint_notify_func: self.breakpoint_notify_func(),
             last_insert_id: Arc::clone(&self.published_last_insert_id_ref()),
             current_tso: self.current_tso(),
@@ -2300,6 +2301,8 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     fn current_sql_digest_key_mut(&mut self) -> &mut String;
     /// Go `SessionVars` / `StmtCtx` state `executor_first_run_breakpoint`, read.
     fn executor_first_run_breakpoint_ref(&self) -> &Arc<std::sync::atomic::AtomicBool>;
+    /// Go `StmtCtx.RunawayChecker` of the running statement.
+    fn statement_runaway_ref(&self) -> &Arc<tidb_sessionctx::StatementRunaway>;
     /// Go `SessionVars` / `StmtCtx` state `executor_first_run_breakpoint`, mutably.
     fn executor_first_run_breakpoint_mut(&mut self) -> &mut Arc<std::sync::atomic::AtomicBool>;
     /// Go `SessionVars` / `StmtCtx` state `hypo_tiflash_replicas`, read.

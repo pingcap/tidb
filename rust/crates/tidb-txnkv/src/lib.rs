@@ -113,8 +113,7 @@ pub use kv_contract::{
     find_keys_in_stage, new_copr_request_limiter, new_query_cop_store_limiter,
     set_txn_entry_size_limit, set_txn_total_size_limit, txn_entry_size_limit, txn_total_size_limit,
     CoprRequestLimiter, CoprocessorRequestAdjuster, IsolationLevel, Paging, PartitionIdAndRanges,
-    PartitionedKeyRanges, Priority, QueryCopStoreLimiter, Request, RequestType, RunawayAction,
-    RunawayChecker, StoreLabel, StoreType, DEFAULT_TXN_ENTRY_SIZE_LIMIT,
+    PartitionedKeyRanges, Priority, QueryCopStoreLimiter, Request, RequestType, RunawayChecker, StoreLabel, StoreType, DEFAULT_TXN_ENTRY_SIZE_LIMIT,
     DEFAULT_TXN_TOTAL_SIZE_LIMIT, GLOBAL_REPLICA_SCOPE, UNCOMMITTED_INDEX_KV_FLAG,
 };
 pub use kv_request::{

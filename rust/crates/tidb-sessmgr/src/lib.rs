@@ -890,6 +890,10 @@ impl ProcessRegistry {
                 state: entry.state.clone(),
                 cur_txn_create_time: entry.transaction.as_ref().map(|txn| txn.created),
                 in_restricted_sql: entry.restricted,
+                runaway_rule_kill_action: plan_info
+                    .runaway_rule_kill_action
+                    .filter(|_| running)
+                    .map(|action| action.0),
                 ..ProcessInfo::default()
             })
         })

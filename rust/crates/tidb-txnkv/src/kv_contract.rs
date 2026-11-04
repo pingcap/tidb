@@ -764,41 +764,40 @@ where
     }
 }
 
-/// Runaway-query action carried by a storage request.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum RunawayAction {
-    /// No action.
-    #[default]
-    None,
-    /// Observe without enforcement.
-    DryRun,
-    /// Rate-limit the request.
-    CoolDown,
-    /// Kill the query.
-    Kill,
-    /// Move the query to another resource group.
-    SwitchGroup,
-}
-
-/// Runaway-query checker carried into the coprocessor layer.
+/// Go `resourcegroup.RunawayChecker`: checks runaway queries.
 pub trait RunawayChecker: Send + Sync {
-    /// Error type is erased only at this cross-package carrier boundary.
-    fn before_executor(&self) -> Result<Option<String>, String>;
-    /// Checks and optionally rewrites an encoded storage request.
-    fn before_coprocessor_request(&self, request: &mut Vec<u8>) -> Result<(), String>;
-    /// Applies post-request thresholds.
+    /// Go `BeforeExecutor`: whether the query is in the watch list before
+    /// executing and after compiling; a resource group to switch to.
+    ///
+    /// # Errors
+    /// The quarantine error of a KILL watch.
+    fn before_executor(&self) -> Result<String, tidb_terror::TerrorError>;
+    /// Go `BeforeCopRequest`: checks runaway and modifies the request's
+    /// context if necessary before sending coprocessor request.
+    ///
+    /// # Errors
+    /// The interruption error of a KILL group.
+    fn before_cop_request(&self, req: &mut tidb_proto::kvrpcpb::Context) -> Result<(), tidb_terror::TerrorError>;
+    /// Go `CheckThresholds`: checks the response's error (`err`, its text)
+    /// against the thresholds; the error that replaces it, `None` to keep it.
     fn check_thresholds(
         &self,
-        read_units: Option<f64>,
-        processed_keys: i64,
-        storage_error: Option<&str>,
-    ) -> Result<(), String>;
-    /// Resets total processed keys.
+        ru_detail: Option<&tikv_client::RuDetails>,
+        process_keys: i64,
+        err: Option<&str>,
+    ) -> Option<tidb_terror::TerrorError>;
+    /// Go `ResetTotalProcessedKeys`.
     fn reset_total_processed_keys(&self);
-    /// Returns the current action.
-    fn action(&self) -> RunawayAction;
-    /// Returns a kill reason when a watch rule requires termination.
-    fn rule_kill_action(&self) -> Option<String>;
+    /// Go `CheckAction`: the query's current action; safe concurrently.
+    fn check_action(&self) -> tidb_proto::resource_manager::RunawayAction;
+    /// Go `CheckRuleKillAction`: whether the group settings kill the query.
+    fn check_rule_kill_action(&self) -> (String, bool);
+}
+
+impl std::fmt::Debug for dyn RunawayChecker {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("RunawayChecker")
+    }
 }
 
 /// Returns every key in one stage that satisfies `predicate`.

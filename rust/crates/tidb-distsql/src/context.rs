@@ -129,6 +129,8 @@ pub struct DistSQLContext {
     /// Query-scoped per-store coprocessor limiter, when enabled by the
     /// session's `tidb_query_cop_store_limit` value.
     pub query_cop_store_limiter: Option<std::sync::Arc<tidb_txnkv::QueryCopStoreLimiter>>,
+    /// Go `DistSQLContext.RunawayChecker`: the statement's runaway checker.
+    pub runaway_checker: Option<std::sync::Arc<dyn tidb_txnkv::RunawayChecker>>,
 }
 
 impl Default for DistSQLContext {
@@ -159,6 +161,7 @@ impl Default for DistSQLContext {
             max_execution_time_ms: 0,
             max_keys_read: 0,
             query_cop_store_limiter: None,
+            runaway_checker: None,
         }
     }
 }

@@ -3337,14 +3337,19 @@ fn plan_encodings(
 }
 
 /// Derives and publishes the process-info fields for `physical`, rendering
-/// the brief binary plan only when this statement publishes one.
+/// the brief binary plan only when this statement publishes one. Go
+/// `ExecStmt.Exec`'s runaway check runs on the plan digest before the
+/// executor is built.
+///
+/// # Errors
+/// The quarantine error of a KILL runaway watch.
 pub fn publish_physical_process_info(
     ctx: &crate::StmtContext,
     physical: &tidb_planner_core_operator_physicalop::PhysicalPlan,
     catalog: &tidb_infoschema::SessionExtendedInfoSchema,
-) {
+) -> Result<(), tidb_driver_error::DriverError> {
     let Some(execution_started) = ctx.begin_physical_process_info() else {
-        return;
+        return Ok(());
     };
     let plan = process_plan_info_with_brief(
         ctx,
@@ -3352,7 +3357,9 @@ pub fn publish_physical_process_info(
         catalog,
         ctx.publishes_brief_binary_plan(),
     );
+    ctx.check_runaway_before_executor(&plan.plan_digest)?;
     ctx.finish_physical_process_info(plan, Some(execution_started));
+    Ok(())
 }
 
 /// [`process_plan_info`] with the brief binary plan published only when
@@ -3817,6 +3824,9 @@ fn render_built_plan(
     catalog: &SessionExtendedInfoSchema,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    // Go `ExecStmt.Exec` over the `Explain` plan: its target's plan digest
+    // is published (and runaway-checked) before the executor is built.
+    publish_physical_process_info(ctx, physical, catalog)?;
     crate::driver::physical_builder::build_for_explain(physical, catalog, ctx)?;
     render_physical_plan(ctx, ctx, physical, catalog, format, false, None, &[])
 }
@@ -3836,6 +3846,7 @@ fn render_physical_query(
         crate::driver::physical_builder::prepare_execution_plan(&mut physical, catalog, ctx)?;
     } else {
         crate::driver::physical_builder::prepare_plan_for_explain(&mut physical, catalog, ctx)?;
+        publish_physical_process_info(ctx, &physical, catalog)?;
         crate::driver::physical_builder::build_for_explain(&physical, catalog, ctx)?;
     }
     let runtime = analyze

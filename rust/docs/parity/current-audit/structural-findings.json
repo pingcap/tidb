@@ -2,8 +2,8 @@
   "date": "2026-11-04",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 32,
-    "open": 10,
+    "unresolved": 31,
+    "open": 9,
     "partial": 22
   },
   "findings": [
@@ -94,13 +94,6 @@
       "group": "Domain and process services",
       "finding": "No TTL job/task manager (`tidb-ttl` has helpers only)",
       "go_owner": "`pkg/ttl/ttlworker`"
-    },
-    {
-      "id": "O05",
-      "status": "open",
-      "group": "Domain and process services",
-      "finding": "`pkg/resourcegroup/runaway` (`RunawayChecker`, `Manager`, the `mysql.tidb_runaway_queries` flusher and the watch syncer) has no port: `kv_contract.rs`'s `RunawayChecker` trait has no implementation, so a resource group's QUERY_LIMIT is stored but no statement is checked, killed, cooled down or watched",
-      "go_owner": "`pkg/resourcegroup/runaway`"
     },
     {
       "id": "O08",

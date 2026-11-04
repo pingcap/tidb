@@ -101,3 +101,38 @@ pub fn stop_resource_groups_controller<PdC: tikv_client::PdClient>(
     // Go cancels the controller's context and logs nothing.
     let _ = store.block_on(controller.stop());
 }
+
+/// Go `runaway.NewRunawayManager(control, ...)`: the domain's runaway manager
+/// over the started controller.
+pub fn start_runaway_manager<PdC: tikv_client::PdClient>(
+    domain: &Arc<tidb_domain_core::domain::Domain>,
+    store: &tidb_txnkv::driver::tikv_store::TikvStore<PdC>,
+    controller: &Arc<tikv_client::pd_resource_group::controller::ResourceGroupsController>,
+) {
+    domain.start_runaway_manager(Arc::new(RunawayResourceGroups {
+        store: store.clone(),
+        controller: Arc::clone(controller),
+    }));
+}
+
+/// Go `*rmclient.ResourceGroupsController.GetResourceGroup`, blocking.
+struct RunawayResourceGroups<PdC: tikv_client::PdClient> {
+    store: tidb_txnkv::driver::tikv_store::TikvStore<PdC>,
+    controller: Arc<tikv_client::pd_resource_group::controller::ResourceGroupsController>,
+}
+
+impl<PdC: tikv_client::PdClient> tidb_resourcegroup_runaway::ResourceGroupsController for RunawayResourceGroups<PdC> {
+    fn get_resource_group(&self, name: &str) -> Result<Option<tidb_proto::resource_manager::ResourceGroup>, String> {
+        use futures::FutureExt as _;
+        // Go's lookup is the controller's cache first, which resolves on the
+        // first poll; only a miss waits for the resource manager.
+        let cached = {
+            let _runtime = self.store.runtime().enter();
+            self.controller.get_resource_group(name).now_or_never()
+        };
+        cached
+            .unwrap_or_else(|| self.store.block_on(self.controller.get_resource_group(name)))
+            .map(|group| Some((*group).clone()))
+            .map_err(|error| error.to_string())
+    }
+}

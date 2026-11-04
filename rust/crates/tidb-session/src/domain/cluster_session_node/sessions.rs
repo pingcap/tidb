@@ -1384,7 +1384,7 @@ pub fn open_pool_session(
     connection_id: u64,
 ) -> Result<Arc<dyn tidb_domain_core::sys_session::DomainSysSession>, String> {
     let global_vars = domain.global_vars.clone();
-    let session = domain
+    let mut session = domain
         .open_session(SessionContext {
             connection_id,
             peer_addr: crate::domain::peer_address::PeerAddress::Tcp(
@@ -1399,6 +1399,7 @@ pub fn open_pool_session(
             close: crate::domain::session_api::ConnectionClose::default(),
         })
         .map_err(|error| error.message)?;
+    session.vars.mark_common_global_loaded();
     Ok(Arc::new(ClusterStatsSessionContext::new(session, global_vars)))
 }
 

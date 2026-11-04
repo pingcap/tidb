@@ -1096,6 +1096,15 @@ impl SessionVars {
         self.sql_mode
     }
 
+    /// Go `getSessionFactoryInternal`'s `sessionVars.CommonGlobalLoaded =
+    /// true` on a pooled internal session: the global tier is never copied
+    /// in, so its typed `SQLMode` keeps `NewSessionVars`'s zero value
+    /// (`mysql.ModeNone`) while `@@sql_mode` still reads its default.
+    pub fn mark_common_global_loaded(&mut self) {
+        self.common_global_loaded = true;
+        self.sql_mode = tidb_mysql::ModeNone;
+    }
+
     /// Go `SessionVars.MaxAllowedPacket`, parsed by the sysvar hook when the
     /// session copy changes rather than by each consumer.
     #[must_use]

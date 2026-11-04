@@ -4283,6 +4283,7 @@ dependencies = [
  "tidb-privilege",
  "tidb-proto",
  "tidb-replayer",
+ "tidb-resourcegroup-runaway",
  "tidb-sessionctx",
  "tidb-sessionstates",
  "tidb-sessmgr",
@@ -6376,6 +6377,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-resourcegroup-runaway"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-exeerrors",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-metrics",
+ "tidb-model",
+ "tidb-proto",
+ "tidb-sqlescape",
+ "tidb-terror",
+ "tidb-ttl",
+ "tidb-txnkv",
+ "tikv-client",
+]
+
+[[package]]
 name = "tidb-resourcegrouptag"
 version = "0.0.0"
 dependencies = [
@@ -6864,6 +6885,7 @@ dependencies = [
  "tidb-redact",
  "tidb-replayer",
  "tidb-resolve",
+ "tidb-resourcegroup-runaway",
  "tidb-sem",
  "tidb-sem-compat",
  "tidb-sem-v2",
@@ -6953,6 +6975,7 @@ dependencies = [
  "tidb-driver-error",
  "tidb-errctx",
  "tidb-execdetails",
+ "tidb-exeerrors",
  "tidb-expr",
  "tidb-exprctx",
  "tidb-fastrand",
@@ -6968,6 +6991,7 @@ dependencies = [
  "tidb-parser",
  "tidb-ppcpuusage",
  "tidb-printer",
+ "tidb-proto",
  "tidb-spill-storage",
  "tidb-stats-handle-usage-indexusage",
  "tidb-stmtctx",

@@ -136,4 +136,24 @@ pub struct ProcessPlanInfo {
     pub is_tiflash: bool,
     /// The encodings of a plan published without them, rendered on demand.
     pub plan_source: Option<PlanSource>,
+    /// Go `ProcessInfo.RunawayChecker`'s `CheckRuleKillAction`, set once the
+    /// statement's checker is derived.
+    pub runaway_rule_kill_action: Option<RunawayRuleKillAction>,
+}
+
+/// Go `RunawayChecker.CheckRuleKillAction` as the process list calls it: the
+/// exceed cause when the group settings kill the query.
+#[derive(Clone)]
+pub struct RunawayRuleKillAction(pub Arc<dyn Fn() -> Option<String> + Send + Sync>);
+
+impl std::fmt::Debug for RunawayRuleKillAction {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("RunawayRuleKillAction")
+    }
+}
+
+impl PartialEq for RunawayRuleKillAction {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
 }

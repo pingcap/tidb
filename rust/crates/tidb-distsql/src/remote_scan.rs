@@ -479,6 +479,8 @@ pub struct PushdownStatementContext {
     /// Go's query-scoped per-store coprocessor limiter, shared by every
     /// remote scan in this statement.
     pub query_cop_store_limiter: Option<std::sync::Arc<tidb_txnkv::QueryCopStoreLimiter>>,
+    /// Go `StmtCtx.RunawayChecker`, copied to every DistSQL request.
+    pub runaway_checker: Option<std::sync::Arc<dyn tidb_txnkv::RunawayChecker>>,
     /// Go `SessionVars.DivPrecisionIncrement`, copied to every DAG request's
     /// `DivPrecisionIncrement` when it differs from the default.
     pub div_precision_increment: u32,
@@ -530,6 +532,7 @@ impl Default for PushdownStatementContext {
             store_batch_size: tidb_vardef::defaults::DEF_TIDB_STORE_BATCH_SIZE as u64,
             tiflash_replica_read: tidb_tiflash::ReplicaRead::AllReplicas,
             query_cop_store_limiter: None,
+            runaway_checker: None,
             // Go `vardef.DefDivPrecisionIncrement`; a caller with no statement
             // behind it has no session value to send.
             div_precision_increment: 4,

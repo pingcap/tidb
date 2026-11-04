@@ -85,6 +85,10 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &self.executor_first_run_breakpoint
     }
 
+    fn statement_runaway_ref(&self) -> &Arc<tidb_sessionctx::StatementRunaway> {
+        &self.statement_runaway
+    }
+
     fn executor_first_run_breakpoint_mut(&mut self) -> &mut Arc<std::sync::atomic::AtomicBool> {
         &mut self.executor_first_run_breakpoint
     }

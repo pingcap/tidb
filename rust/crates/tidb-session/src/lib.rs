@@ -392,6 +392,9 @@ pub struct Session {
     context_values: HashMap<String, Box<dyn std::any::Any + Send + Sync>>,
     /// Shared with every executor context built for the current attempt.
     executor_first_run_breakpoint: Arc<std::sync::atomic::AtomicBool>,
+    /// Go `StmtCtx.RunawayChecker` of the running statement, replaced when
+    /// each statement starts.
+    statement_runaway: Arc<tidb_sessionctx::StatementRunaway>,
     /// The cluster transaction layer owns the attempt boundary while this is
     /// true, so inner pessimistic retries do not re-arm the first-run hook.
     external_executor_breakpoint_scope: bool,
@@ -876,6 +879,7 @@ impl Session {
             privilege_change_notifier: None,
             context_values: HashMap::new(),
             executor_first_run_breakpoint: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            statement_runaway: Arc::default(),
             external_executor_breakpoint_scope: false,
             tidb_decode_key_cache: std::sync::Mutex::new(None),
             session_memory: tidb_executor::SessionMemory::new(
@@ -1227,6 +1231,7 @@ mod tests_privilege_tls;
 mod process_arm;
 mod show;
 mod plan_replayer;
+mod query_watch;
 use tidb_variable::vars;
 #[cfg(test)]
 mod tests_variable_session;

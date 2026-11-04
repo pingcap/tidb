@@ -691,6 +691,7 @@ pub fn build_resp(
         dist_sql_scan_concurrency: request.statement.dist_sql_scan_concurrency,
         store_batch_size: request.statement.store_batch_size,
         query_cop_store_limiter: request.statement.query_cop_store_limiter.clone(),
+        runaway_checker: request.statement.runaway_checker.clone(),
         warnings: request.statement.warnings.clone(),
         cop_lite_worker: Arc::clone(&request.statement.cop_lite_worker),
         cop_plan_ids,
@@ -773,6 +774,8 @@ struct RemoteScanPlan {
     /// Query-scoped per-store limiter shared by all region tasks for this
     /// statement.
     query_cop_store_limiter: Option<Arc<tidb_txnkv::QueryCopStoreLimiter>>,
+    /// Go `StmtCtx.RunawayChecker` for this request.
+    runaway_checker: Option<Arc<dyn tidb_txnkv::RunawayChecker>>,
     /// The statement's warning sink. It is an `Arc` handler, so warnings
     /// appended while the query worker decodes land in the buffer
     /// `SHOW WARNINGS` reads.
@@ -868,6 +871,7 @@ fn open_scan(
     context.request.rc_check_ts = plan.rc_check_ts;
     context.request.weak_consistency = plan.weak_consistency;
     context.request.query_cop_store_limiter = plan.query_cop_store_limiter;
+    context.request.runaway_checker = plan.runaway_checker;
     // Go `SetFromSessionVars` copies `MaxKeysRead` and the statement-wide
     // `MaxKeysReadCounter`; the counter is passed even without a limit so the
     // processed keys still reach `tidb_keys_examined`.

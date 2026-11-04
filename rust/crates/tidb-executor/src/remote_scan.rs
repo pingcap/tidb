@@ -60,6 +60,7 @@ pub fn pushdown_statement_context(ctx: &crate::StmtContext) -> PushdownStatement
         store_batch_size: ctx.store_batch_size(),
         tiflash_replica_read: ctx.tiflash_replica_read(),
         query_cop_store_limiter: ctx.query_cop_store_limiter(),
+        runaway_checker: ctx.runaway_checker(),
         div_precision_increment: ctx.div_precision_increment(),
         staged_writes: ctx.staged_writes_handle(),
         keys_read: ctx.keys_read().clone(),

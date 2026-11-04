@@ -6457,6 +6457,149 @@ fn plan_replayer_capture_dumps_a_matching_statement_and_gc_expires_files() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// Go `querywatch`: QUERY WATCH ADD validates and records a manual watch,
+/// RUNAWAY_WATCHES syncs and lists them, QUERY WATCH REMOVE moves one to
+/// `tidb_runaway_watch_done`; the values are the Go oracle's over unistore.
+#[test]
+fn query_watch_adds_lists_and_removes_gos_watches() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
+    let mut session = stack.factory.open_session(session_context(79)).expect("session opens");
+    rows(&mut session, "CREATE RESOURCE GROUP rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL)");
+    assert_eq!(displayed(rows(&mut session, "QUERY WATCH ADD RESOURCE GROUP rg1 SQL TEXT EXACT TO 'select 1'")), [["1"]]);
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "QUERY WATCH ADD RESOURCE GROUP rg1 ACTION COOLDOWN SQL TEXT SIMILAR TO 'select * from t where a = 1'"
+        )),
+        [["2"]]
+    );
+    let refused = |session: &mut crate::Session, sql: &str| session.run(sql).unwrap_err().to_mysql_error().message;
+    assert_eq!(refused(&mut session, "QUERY WATCH ADD RESOURCE GROUP rg1 SQL DIGEST 'xyz'"), "digest format error");
+    rows(&mut session, "CREATE RESOURCE GROUP rg_plain RU_PER_SEC=100");
+    assert_eq!(
+        refused(&mut session, "QUERY WATCH ADD RESOURCE GROUP rg_plain SQL TEXT EXACT TO 'select 2'"),
+        "must set runaway config for resource group `rg_plain`"
+    );
+    // No group is the default group.
+    assert_eq!(
+        refused(&mut session, "QUERY WATCH ADD SQL TEXT EXACT TO 'select 2'"),
+        "must set runaway config for resource group `default`"
+    );
+    assert!(refused(&mut session, "QUERY WATCH ADD RESOURCE GROUP rgx SQL TEXT EXACT TO 'select 2'").contains("rgx"));
+    assert_eq!(
+        refused(&mut session, "QUERY WATCH ADD RESOURCE GROUP rg1 SQL TEXT EXACT TO 'select 1; select 2'"),
+        "only support one SQL"
+    );
+    let watches = "SELECT id, resource_group_name, end_time, watch, watch_text, source, action, rule FROM information_schema.runaway_watches ORDER BY id";
+    assert_eq!(
+        displayed(rows(&mut session, watches)),
+        [
+            ["1", "rg1", "UNLIMITED", "Exact", "select 1", "manual", "Kill", "None"],
+            [
+                "2",
+                "rg1",
+                "UNLIMITED",
+                "Similar",
+                "077a87a576e42360c95530ccdac7a1771c4efba17619e26be50a4cfd967204a0",
+                "manual",
+                "CoolDown",
+                "None"
+            ],
+        ]
+    );
+    rows(&mut session, "QUERY WATCH REMOVE 1");
+    assert_eq!(displayed(rows(&mut session, "SELECT id FROM information_schema.runaway_watches")), [["2"]]);
+    // Go `handleRunawayWatchDone` moves the row out of the watch table.
+    assert_eq!(displayed(rows(&mut session, "SELECT id FROM mysql.tidb_runaway_watch")), [["2"]]);
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT record_id, watch_text FROM mysql.tidb_runaway_watch_done")),
+        [["1", "select 1"]]
+    );
+    assert_eq!(refused(&mut session, "QUERY WATCH REMOVE 99"), "no runaway watch with the specific ID");
+    // Go explains the statement on a session of its own for its plan digest.
+    rows(&mut session, "QUERY WATCH ADD RESOURCE GROUP rg1 SQL TEXT PLAN TO 'select 1'");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT watch_text FROM information_schema.runaway_watches WHERE watch = 'Plan'")),
+        [["4df89435536060a4528770d1c135410a71890415043b7cd580da88c2e5ebcfbf"]]
+    );
+    rows(&mut session, "QUERY WATCH REMOVE RESOURCE GROUP rg1");
+    assert!(rows(&mut session, "SELECT id FROM information_schema.runaway_watches").is_empty());
+}
+
+/// Go `getSessionFactoryInternal` marks a pooled internal session's globals
+/// loaded without loading them: `@@sql_mode` reads its default while the
+/// typed `SQLMode` stays `ModeNone`, so a zero date converts (the Go probe
+/// over unistore printed the strict text and `0`). The runaway syncer's first
+/// window starts at that zero date.
+#[test]
+fn domain_pool_sessions_keep_gos_zero_sql_mode() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
+    let pool = stack.factory.advanced_sys_session_pool();
+    let rows = pool
+        .with_session(|session| {
+            session.with_session_context(|context| {
+                context
+                    .query_internal("select @@sql_mode, cast('0000-00-00' as datetime) is null")
+                    .map_err(tidb_syssession::SysSessionError::new)
+            })
+        })
+        .unwrap();
+    assert_eq!(
+        displayed(rows),
+        [[
+            "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION",
+            "0"
+        ]]
+    );
+}
+
+/// Go's identify path over unistore: a KILL group's PROCESSED_KEYS rule
+/// interrupts the scan with its cause and quarantines the exact text, so the
+/// same statement is refused before it runs; the oracle's watch row follows.
+#[test]
+fn runaway_processed_keys_rule_kills_then_quarantines() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
+    let mut session = stack.factory.open_session(session_context(80)).expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "CREATE TABLE runaway_t1 (a INT, b INT)");
+    rows(&mut session, "INSERT INTO runaway_t1 VALUES (1,1),(2,2),(3,3)");
+    rows(
+        &mut session,
+        "CREATE RESOURCE GROUP rg2 RU_PER_SEC=1000 QUERY_LIMIT=(PROCESSED_KEYS=2 ACTION=KILL WATCH=EXACT DURATION='10m')",
+    );
+    rows(&mut session, "SET RESOURCE GROUP rg2");
+    let error = session.run("SELECT * FROM runaway_t1").unwrap_err().to_mysql_error();
+    assert_eq!(error.code, 8253, "{}", error.message);
+    assert_eq!(error.message, "Query execution was interrupted, identified as runaway query [ProcessedKeys = 3(2)]");
+    let error = session.run("SELECT * FROM runaway_t1").unwrap_err().to_mysql_error();
+    assert_eq!(error.code, 8254, "{}", error.message);
+    assert_eq!(error.message, "Quarantined and interrupted because of being in runaway watch list");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT resource_group_name, watch, watch_text, action, rule FROM information_schema.runaway_watches"
+        )),
+        [["rg2", "Exact", "SELECT * FROM runaway_t1", "Kill", "ProcessedKeys = 3(2)"]]
+    );
+    // An unrelated statement of the group still runs.
+    assert_eq!(displayed(rows(&mut session, "SELECT 1")), [["1"]]);
+    // Go's quarantine flusher writes the watch within its 1s interval.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let flushed = "SELECT resource_group_name, watch, watch_text, action, rule FROM mysql.tidb_runaway_watch";
+    loop {
+        let found = displayed(rows(&mut session, flushed));
+        if !found.is_empty() {
+            assert_eq!(found, [["rg2", "1", "SELECT * FROM runaway_t1", "3", "ProcessedKeys = 3(2)"]]);
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "the quarantine record was never flushed");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
 /// Go `DumpStatsToJSONBySnapshot` at snapshot 0: a plain table dumps its
 /// own statistics; a partitioned one dumps `global`, plus its partitions
 /// under static pruning or `dumpPartitionStats`.

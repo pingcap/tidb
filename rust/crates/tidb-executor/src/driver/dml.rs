@@ -164,7 +164,7 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
             plan,
             insert.replace || !insert.on_duplicate.is_empty(),
         );
-        crate::explain::publish_physical_process_info(ctx, plan, catalog);
+        crate::explain::publish_physical_process_info(ctx, plan, catalog)?;
     }
     // Go `runStmt` -> `handleNoDelayExecutor` -> the DML executor's `Next`.
     let _execution = super::begin_dml_execution(if insert.replace {
@@ -2472,7 +2472,7 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
         mark_dml_point_source_lock(plan, ctx.pessimistic_transaction());
         super::physical_builder::prepare_execution_plan(plan, catalog, ctx)?;
         crate::isolation_advise::advise_optimize_with_plan(ctx, plan, false);
-        crate::explain::publish_physical_process_info(ctx, plan, catalog);
+        crate::explain::publish_physical_process_info(ctx, plan, catalog)?;
     }
     // Go `runStmt` -> `handleNoDelayExecutor` -> the DML executor's `Next`.
     let _execution = super::begin_dml_execution("*executor.UpdateExec.Next");
@@ -3852,7 +3852,7 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
         mark_dml_point_source_lock(plan, ctx.pessimistic_transaction());
         super::physical_builder::prepare_execution_plan(plan, catalog, ctx)?;
         crate::isolation_advise::advise_optimize_with_plan(ctx, plan, false);
-        crate::explain::publish_physical_process_info(ctx, plan, catalog);
+        crate::explain::publish_physical_process_info(ctx, plan, catalog)?;
     }
     // Go `runStmt` -> `handleNoDelayExecutor` -> the DML executor's `Next`.
     let _execution = super::begin_dml_execution("*executor.DeleteExec.Next");

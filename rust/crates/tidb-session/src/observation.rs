@@ -307,6 +307,24 @@ impl Session {
             .map(|observation| (observation.normalized.as_str(), &observation.digest))
     }
 
+    /// Go `vardef.EnableResourceControl.Load() && rm != nil`: the deriver of
+    /// this statement's runaway checker over its original SQL, SQL digest and
+    /// start time.
+    fn runaway_deriver(&self, original_sql: &str, digest: &tidb_parser::Digest) -> Option<tidb_sessionctx::RunawayDeriver> {
+        if !tidb_vardef::ENABLE_RESOURCE_CONTROL.load(std::sync::atomic::Ordering::SeqCst) {
+            return None;
+        }
+        let manager = self.domain_services()?.domain.upgrade()?.runaway_manager()?;
+        let original_sql = original_sql.to_owned();
+        let sql_digest = digest.as_str().to_owned();
+        let start_time = chrono::Local::now();
+        Some(Arc::new(move |resource_group_name: &str, plan_digest: &str| {
+            manager
+                .derive_checker(resource_group_name, &original_sql, &sql_digest, plan_digest, start_time)
+                .map(|checker| checker as Arc<dyn tidb_txnkv::RunawayChecker>)
+        }))
+    }
+
     pub(crate) fn begin_statement_observation(&mut self, sql: &str) {
         if self.routed_statement_observation_depth != 0 {
             return;
@@ -368,6 +386,10 @@ impl Session {
             .statement_commit_details
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        // Go `ExecStmt.Exec`'s `rm.DeriveChecker(...)` inputs, bound now; the
+        // statement's group and plan digest complete them once it is planned.
+        self.statement_runaway =
+            Arc::new(tidb_sessionctx::StatementRunaway::new(self.runaway_deriver(&text, &digest)));
         self.statement_observation = Some(StatementObservation {
             sql: sql.to_owned(),
             text,

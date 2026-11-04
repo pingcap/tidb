@@ -514,6 +514,76 @@ pub static TIDB_SERVER_BINDING_CACHE_MISS_TOTAL: LazyLock<Counter> = LazyLock::n
 /// Go `BindingCacheNumBindings` (`pkg/metrics`).
 pub use crate::bindinfo::BINDING_CACHE_NUM_BINDINGS as TIDB_SERVER_BINDING_CACHE_NUM_BINDINGS;
 
+/// Go `RunawayCheckerCounter` (`pkg/metrics`).
+pub static TIDB_SERVER_QUERY_RUNAWAY_CHECK: LazyLock<CounterVec> = LazyLock::new(|| {
+    register(CounterVec::new(
+        Opts::new("tidb_server_query_runaway_check", "Counter of query triggering runaway check."),
+        &["resource_group", "type", "action"],
+    ))
+});
+
+/// Go `RunawayFlusherBatchSizeHistogram` (`pkg/metrics`).
+pub static TIDB_SERVER_RUNAWAY_FLUSHER_BATCH_SIZE: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new("tidb_server_runaway_flusher_batch_size", "Batch size of runaway flusher operations.")
+            // 1, 2, 4, ..., 512
+            .buckets(prometheus::exponential_buckets(1.0, 2.0, 10).expect("valid buckets")),
+        &["name"],
+    ))
+});
+
+/// Go `RunawayFlusherDurationHistogram` (`pkg/metrics`).
+pub static TIDB_SERVER_RUNAWAY_FLUSHER_DURATION_SECONDS: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_server_runaway_flusher_duration_seconds",
+            "Duration of runaway flusher operations in seconds.",
+        )
+        // 1ms ~ 16s
+        .buckets(prometheus::exponential_buckets(0.001, 2.0, 15).expect("valid buckets")),
+        &["name"],
+    ))
+});
+
+/// Go `RunawayFlusherIntervalHistogram` (`pkg/metrics`).
+pub static TIDB_SERVER_RUNAWAY_FLUSHER_INTERVAL_SECONDS: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_server_runaway_flusher_interval_seconds",
+            "Interval between runaway flusher operations in seconds.",
+        )
+        // 0.1s ~ 200s
+        .buckets(prometheus::exponential_buckets(0.1, 2.0, 12).expect("valid buckets")),
+        &["name"],
+    ))
+});
+
+/// Go `RunawaySyncerDurationHistogram` (`pkg/metrics`).
+pub static TIDB_SERVER_RUNAWAY_SYNCER_DURATION_SECONDS: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_server_runaway_syncer_duration_seconds",
+            "Duration of runaway syncer read operations in seconds.",
+        )
+        // 1ms ~ 16s
+        .buckets(prometheus::exponential_buckets(0.001, 2.0, 15).expect("valid buckets")),
+        &["type"],
+    ))
+});
+
+/// Go `RunawaySyncerIntervalHistogram` (`pkg/metrics`).
+pub static TIDB_SERVER_RUNAWAY_SYNCER_INTERVAL_SECONDS: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_server_runaway_syncer_interval_seconds",
+            "Interval between runaway syncer read operations in seconds.",
+        )
+        // 0.1s ~ 200s
+        .buckets(prometheus::exponential_buckets(0.1, 2.0, 12).expect("valid buckets")),
+        &["type"],
+    ))
+});
+
 /// Go `RunawayFlusherAddCounter` (`pkg/metrics`).
 pub static TIDB_SERVER_RUNAWAY_FLUSHER_ADD_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
     register(CounterVec::new(

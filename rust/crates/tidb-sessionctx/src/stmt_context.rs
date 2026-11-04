@@ -453,6 +453,37 @@ impl std::ops::DerefMut for StmtContext {
     }
 }
 
+/// Go `rm.DeriveChecker(resourceGroupName, originalSQL, sqlDigest,
+/// planDigest, startTime)` with everything but the group and the plan digest
+/// bound by the session when the statement starts.
+pub type RunawayDeriver =
+    Arc<dyn Fn(&str, &str) -> Option<Arc<dyn tidb_txnkv::RunawayChecker>> + Send + Sync>;
+
+/// One statement's Go `StmtCtx.RunawayChecker`, shared by every context of
+/// the statement and by its process-list row.
+#[derive(Default)]
+pub struct StatementRunaway {
+    /// `None` when resource control is off or the node has no runaway
+    /// manager (Go's `EnableResourceControl && rm != nil`).
+    deriver: Option<RunawayDeriver>,
+    checker: std::sync::OnceLock<Option<Arc<dyn tidb_txnkv::RunawayChecker>>>,
+    switch_group: std::sync::OnceLock<String>,
+}
+
+impl StatementRunaway {
+    /// A statement whose checker `deriver` derives.
+    #[must_use]
+    pub fn new(deriver: Option<RunawayDeriver>) -> Self {
+        Self { deriver, ..Self::default() }
+    }
+
+    /// The derived checker, if any.
+    #[must_use]
+    pub fn checker(&self) -> Option<Arc<dyn tidb_txnkv::RunawayChecker>> {
+        self.checker.get().cloned().flatten()
+    }
+}
+
 /// Existing session inputs and statement owners supplied to a new context.
 ///
 /// Passing owners directly avoids constructing and discarding defaults. State
@@ -471,6 +502,8 @@ pub struct StmtContextSessionState {
     pub advisory_locks: crate::advisory_lock_state::AdvisoryLockSession,
     /// Statement-attempt executor-first-run latch.
     pub before_executor_first_run: Arc<AtomicBool>,
+    /// Go `StmtCtx.RunawayChecker`, derived once the statement is planned.
+    pub runaway: Arc<StatementRunaway>,
     /// Session's executor breakpoint callback.
     pub breakpoint_notify_func: Option<Arc<dyn Fn(String) + Send + Sync + 'static>>,
     /// Statement publication cell retained by the session.
@@ -561,6 +594,7 @@ impl Default for StmtContextSessionState {
             allow_tiflash_fallback: false,
             advisory_locks: Default::default(),
             before_executor_first_run: Arc::default(),
+            runaway: Arc::default(),
             breakpoint_notify_func: None,
             last_insert_id: Arc::default(),
             current_tso: CurrentTso::default(),
@@ -728,6 +762,9 @@ pub struct StmtContextData {
     /// `beforeExecutorFirstRun` only for the initial executor; pessimistic
     /// lock retries use their separate after-retry breakpoint.
     before_executor_first_run: Arc<AtomicBool>,
+    /// Go `StmtCtx.RunawayChecker` and the group its `BeforeExecutor`
+    /// switched the statement to.
+    runaway: Arc<StatementRunaway>,
     /// Go `StatementContext.indexForce` (`stmtctx.go:1010`): a USE/FORCE
     /// INDEX hint matched a path somewhere in the statement, so
     /// `getTableScanPenalty` surcharges EVERY risky full table scan, hinted
@@ -2806,6 +2843,7 @@ impl StmtContext {
             cop_eval_depth: Arc::new(AtomicU32::new(0)),
             used_stats_info: Arc::default(),
             before_executor_first_run: session.before_executor_first_run,
+            runaway: session.runaway,
             index_force: Arc::default(),
             read_from_table_cache: Arc::clone(&session.read_from_table_cache),
             telemetry_info: Arc::clone(&session.telemetry_info),
@@ -4639,6 +4677,7 @@ impl StmtContext {
             .clone();
         plan.is_sync_stats_failed = self.sync_stats_failed();
         plan.is_tiflash = self.is_tiflash.load(Ordering::Relaxed);
+        plan.runaway_rule_kill_action = self.runaway_rule_kill_action();
         self.publish_process_plan_info(plan);
     }
 
@@ -5071,10 +5110,55 @@ impl StmtContext {
         self.not_fill_cache
     }
 
-    /// The resource group selected for this statement.
+    /// The resource group selected for this statement: Go
+    /// `StmtCtx.ResourceGroupName`, which a runaway `SWITCH_GROUP` watch
+    /// replaces before the executor runs.
     #[must_use]
     pub fn resource_group_name(&self) -> &str {
-        &self.resource_group_name
+        self.runaway.switch_group.get().map_or(&self.resource_group_name, String::as_str)
+    }
+
+    /// Go `SetProcessInfo`'s `RunawayChecker: StmtCtx.RunawayChecker`, as
+    /// the process list calls it.
+    #[must_use]
+    pub fn runaway_rule_kill_action(&self) -> Option<tidb_stmtctx::RunawayRuleKillAction> {
+        self.runaway_checker().map(|checker| {
+            tidb_stmtctx::RunawayRuleKillAction(Arc::new(move || {
+                let (cause, kill) = checker.check_rule_kill_action();
+                kill.then_some(cause)
+            }))
+        })
+    }
+
+    /// Go `StmtCtx.RunawayChecker`.
+    #[must_use]
+    pub fn runaway_checker(&self) -> Option<Arc<dyn tidb_txnkv::RunawayChecker>> {
+        self.runaway.checker.get().cloned().flatten()
+    }
+
+    /// Go `ExecStmt.Exec`'s runaway step once the plan digest is known:
+    /// `DeriveChecker` over the statement's group, then `BeforeExecutor`,
+    /// whose switch group the statement's later requests carry.
+    ///
+    /// # Errors
+    /// The quarantine error of a KILL watch.
+    pub fn check_runaway_before_executor(&self, plan_digest: &str) -> Result<(), tidb_terror::TerrorError> {
+        let Some(deriver) = &self.runaway.deriver else {
+            return Ok(());
+        };
+        let checker = self
+            .runaway
+            .checker
+            .get_or_init(|| deriver(&self.resource_group_name, plan_digest))
+            .clone();
+        let Some(checker) = checker else {
+            return Ok(());
+        };
+        let switch_group_name = checker.before_executor()?;
+        if !switch_group_name.is_empty() {
+            let _ = self.runaway.switch_group.set(switch_group_name);
+        }
+        Ok(())
     }
 
     /// Settings shared by all coprocessor scans in this statement.
@@ -6710,6 +6794,58 @@ fn sequence_error(error: tidb_terror::TerrorError) -> tidb_exprctx::EvalError {
 
 #[cfg(test)]
 mod tests {
+    /// Go `ExecStmt.Exec`: `DeriveChecker` over the statement's group and
+    /// plan digest, then `BeforeExecutor`; a switch group becomes the
+    /// statement's `ResourceGroupName`, a quarantine fails the statement.
+    #[test]
+    fn runaway_before_executor_switches_or_refuses_the_statement() {
+        struct Switching(Result<String, tidb_terror::TerrorError>);
+        impl tidb_txnkv::RunawayChecker for Switching {
+            fn before_executor(&self) -> Result<String, tidb_terror::TerrorError> {
+                self.0.clone()
+            }
+            fn before_cop_request(&self, _: &mut tidb_proto::kvrpcpb::Context) -> Result<(), tidb_terror::TerrorError> {
+                Ok(())
+            }
+            fn check_thresholds(&self, _: Option<&tikv_client::RuDetails>, _: i64, _: Option<&str>) -> Option<tidb_terror::TerrorError> {
+                None
+            }
+            fn reset_total_processed_keys(&self) {}
+            fn check_action(&self) -> tidb_proto::resource_manager::RunawayAction {
+                tidb_proto::resource_manager::RunawayAction::NoneAction
+            }
+            fn check_rule_kill_action(&self) -> (String, bool) {
+                (String::new(), false)
+            }
+        }
+        let derived = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let context = |answer: Result<String, tidb_terror::TerrorError>| {
+            let derived = Arc::clone(&derived);
+            let answer = std::sync::Mutex::new(Some(answer));
+            let deriver: RunawayDeriver = Arc::new(move |group: &str, plan_digest: &str| {
+                derived.lock().unwrap().push((group.to_owned(), plan_digest.to_owned()));
+                answer.lock().unwrap().take().map(|answer| Arc::new(Switching(answer)) as Arc<dyn tidb_txnkv::RunawayChecker>)
+            });
+            StmtContext::for_query_with_session(
+                StatementMemory::default(),
+                StmtContextSessionState {
+                    resource_group_name: "rg1".to_owned(),
+                    runaway: Arc::new(StatementRunaway::new(Some(deriver))),
+                    ..StmtContextSessionState::default()
+                },
+            )
+        };
+        let ctx = context(Ok("rg2".to_owned()));
+        assert_eq!(ctx.resource_group_name(), "rg1");
+        ctx.check_runaway_before_executor("pd").unwrap();
+        assert_eq!(ctx.resource_group_name(), "rg2");
+        assert!(ctx.runaway_checker().is_some());
+        assert_eq!(*derived.lock().unwrap(), [("rg1".to_owned(), "pd".to_owned())]);
+        let ctx = context(Err(tidb_exeerrors::ERR_RESOURCE_GROUP_QUERY_RUNAWAY_QUARANTINE.clone()));
+        assert!(ctx.check_runaway_before_executor("pd").is_err());
+        assert_eq!(ctx.resource_group_name(), "rg1");
+    }
+
     /// Go `StmtCtx.IsDDLJobInQueue`: a DDL marking its job queued reaches the
     /// cell the process list reads.
     #[test]

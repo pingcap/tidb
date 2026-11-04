@@ -216,6 +216,16 @@ impl Time {
         )
     }
 
+    /// Go `Time.GoTime(loc)`: the wall-clock fields in `timezone`, refusing
+    /// a value `gotime.Date` would normalize (a zero month or day, a day past
+    /// the month's end, a local time in a transition gap).
+    ///
+    /// # Errors
+    /// The fields do not name one instant in `timezone`.
+    pub fn go_time<TZ: TimeZone>(self, timezone: &TZ) -> Result<DateTime<TZ>, TimeError> {
+        Ok(self.core.to_datetime(timezone)?)
+    }
+
     /// Returns the internal calendar fields.
     pub const fn core_time(self) -> CoreTime {
         self.core
@@ -887,6 +897,16 @@ pub fn format_int_width(value: i32, width: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// Go `CoreTime.GoTime`: fields `gotime.Date` keeps convert, a zero day
+    /// (which it would normalize into the previous month) does not.
+    #[test]
+    fn go_time_refuses_fields_go_would_normalize() {
+        let at = |day| Time::new(CoreTime::from_date(2026, 11, day, 1, 2, 3, 4), TimeType::DateTime, 6).unwrap();
+        let converted = at(5).go_time(&chrono::Utc).unwrap();
+        assert_eq!(converted.to_rfc3339(), "2026-11-05T01:02:03.000004+00:00");
+        assert!(at(0).go_time(&chrono::Utc).is_err());
+    }
+
     use super::*;
 
     #[test]

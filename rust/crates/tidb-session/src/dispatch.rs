@@ -454,6 +454,12 @@ impl Session {
         &self,
         read: &tidb_executor::mem_table_retrieval::MemTableRead,
     ) -> Option<std::sync::Arc<dyn tidb_executor::mem_table_retrieval::MemTableRetriever>> {
+        let retriever = crate::query_watch::RunawayWatchesRetriever(
+            self.domain_services().and_then(|services| services.domain.upgrade()).and_then(|domain| domain.runaway_manager()),
+        );
+        if tidb_executor::mem_table_retrieval::MemTableRetriever::serves(&retriever, read) {
+            return Some(std::sync::Arc::new(retriever));
+        }
         let retriever = tidb_executor::memtable_retrievers::InformationSchemaRetriever::new(
             self.schema_visibility(),
             self.table_storage_stats.clone(),
@@ -816,6 +822,8 @@ impl Session {
                 .map(|info| (info.encoded_plan, info.summary_binary_plan))
             }))
         };
+        // Go `ExecStmt.Exec`'s runaway check over the cached plan's digest.
+        stmt_ctx.check_runaway_before_executor(&plan_digest)?;
         {
             let mut info = self
                 .process_plan_info
@@ -825,6 +833,7 @@ impl Session {
             info.plan_digest = plan_digest;
             info.is_fast_plan = true;
             info.plan_source = Some(source);
+            info.runaway_rule_kill_action = stmt_ctx.runaway_rule_kill_action();
         }
         if let Some(observer) = self.statement_phase_observer() {
             observer(tidb_sessionctx::StatementPhase::PlanReady);

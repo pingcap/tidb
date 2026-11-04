@@ -64,6 +64,8 @@ pub struct ReadRequestMetadata {
     pub max_keys_read_counter: Option<Arc<AtomicU64>>,
     /// Query-scoped per-store coprocessor limiter.
     pub query_cop_store_limiter: Option<Arc<tidb_txnkv::QueryCopStoreLimiter>>,
+    /// Go `SetFromSessionVars`'s `RunawayChecker`.
+    pub runaway_checker: Option<Arc<dyn tidb_txnkv::RunawayChecker>>,
 }
 
 impl ReadRequestMetadata {
@@ -164,6 +166,7 @@ impl ReadRequestBuilder {
         self.request.max_keys_read = context.max_keys_read;
         self.request.max_keys_read_counter = max_keys_read_counter.clone();
         self.request.query_cop_store_limiter = context.query_cop_store_limiter.clone();
+        self.request.runaway_checker = context.runaway_checker.clone();
     }
 }
 
