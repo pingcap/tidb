@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**30 unresolved: 8 open, 22 partial.**
+**29 unresolved: 7 open, 22 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -44,14 +44,13 @@ unresolved until it is restated against its Go owner or closed.
 | E07 | open | BRIE statements are classified but never executed | `pkg/executor/brie.go` |
 | K03 | partial | Go's `Datum.ConvertTo(ctx, target)` reports every truncation and overflow through the statement's `ctx.HandleTruncate` (its error-level context) and returns `(Datum, error)`; here `Datum::convert_to` / `convert_to_in` return a value plus a `ScalarConversionEvent` (`tidb-datatype/src/convert.rs`) that each caller maps to a warning or an error itself (14 files: `tidb-table` `column.rs` / `column_default.rs`, `write_cast.rs`, `tidb-expr` `cast.rs`, the ranger, point-get keys, ...), beside a second `Diagnostics` path (`convert_to_reported`) used only for YEAR / ENUM / SET / BIT targets | `pkg/types/datum.go` (`ConvertTo`), `pkg/types/context.go` (`HandleTruncate`) |
 | X01 | partial | SQL/PB signature construction and typed vector execution; Go's build-time argument casts (`WrapWithCastAsJSON`, `isnull`'s JSON-to-string cast) are applied per value at evaluation instead of appearing in the expression tree (and EXPLAIN) The planner's `BuiltinFunctionUsageInc` (`expressionRewriter.newFunction`) is not called: it needs the function's `PbCode`, which a planner-built Rust function only gets at pushdown resolution. | `pkg/expression` |
-| X02 | open | No `EMBED_TEXT` runtime or inference provider | `pkg/expression` (embedding), `pkg/domain` |
 | Q01 | open | No Cascades memo exploration/implementation in the production optimizer | `pkg/planner/cascades` |
 
 ### Privileges, wire and administration
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| N05 | partial | The status port serves `/status`, `/metrics`, `/settings`, `/config`, `/schema`, `/schema_storage`, `/db-table/{tableID}`, `/tables/{colID}/{colTp}/{colFlag}/{colLen}`, `/labels`, `/info`, `/info/all`, `/ddl/history`, `/ddl/owner/resign`, `/txn-gc-states`, `/tiflash/replica`, `/stats/dump/{db}/{table}[/{snapshot}]`, `/plan_replayer/dump/{filename}` and `/optimize_trace/dump/{filename}` (`tidb-server/src/http_status.rs`, JSON through Go `WriteData`'s `json.Indent`; the capture-archive download reads `schema_meta.txt` as its writer and `PLAN REPLAYER LOAD` do, where Go's `loadSchemaMeta` misreads it and fails); Go's other routes are absent: `/mvcc/*`, `/regions/*`, `/tables/{db}/{table}/{regions,ranges,scatter,stop-scatter,disk-usage}` (no region-cache handler tool), `/stats/priority-queue`, `/extract_task/dump` (no `ExtractHandle`), `/dxf/*`, `/ddl/check/*`, `/ingest/*`, `/tiflash/replica-deprecated` (needs the dropped/truncated-table history and `UpdateTableReplicaInfo`), `/upgrade/*`, `/owner_manager/auto_id_service`, `/metrics/profile`, `/debug/*`, test hooks | `pkg/server/http_status.go`, `pkg/server/handler` |
+| N05 | partial | The status port serves `/status`, `/metrics`, `/settings`, `/config`, `/schema`, `/schema_storage`, `/db-table/{tableID}`, `/tables/{colID}/{colTp}/{colFlag}/{colLen}`, `/labels`, `/info`, `/info/all`, `/ddl/history`, `/ddl/owner/resign`, `/txn-gc-states`, `/tiflash/replica`, `/stats/dump/{db}/{table}[/{snapshot}]`, `/plan_replayer/dump/{filename}`, `/optimize_trace/dump/{filename}`, `/stats/priority-queue`, `/test/ttl/trigger/{db}/{table}` and, for a TiKV store, `/regions/meta`, `/regions/{regionID}` and `/tables/{db}/{table}/{regions,ranges,disk-usage}` (`region_routes.rs`) (`tidb-server/src/http_status.rs`, JSON through Go `WriteData`'s `json.Indent`; the capture-archive download reads `schema_meta.txt` as its writer and `PLAN REPLAYER LOAD` do, where Go's `loadSchemaMeta` misreads it and fails); Go's other routes are absent: `/mvcc/*`, `/regions/hot` (PD hot-region scrape), `/tables/{db}/{table}/{scatter,stop-scatter}` (PD scatter schedulers), `/extract_task/dump` (no `ExtractHandle`), `/dxf/*`, `/ddl/check/*`, `/ingest/*`, `/tiflash/replica-deprecated` (needs the dropped/truncated-table history and `UpdateTableReplicaInfo`), `/upgrade/*`, `/owner_manager/auto_id_service`, `/metrics/profile`, `/debug/*`, the other test hooks | `pkg/server/http_status.go`, `pkg/server/handler` |
 
 ### Domain and process services
 

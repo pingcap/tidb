@@ -155,6 +155,27 @@ impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
             .map(|stores| stores.len())
     }
 
+    fn pd_region_by_id(&self, region_id: u64) -> Result<crate::region_map::PdRegion, String> {
+        let pd = self.store.store().pd_client();
+        let region = self
+            .block_on(async move { pd.region_for_id(region_id).await })
+            .map_err(|error| error.to_string())?;
+        Ok(pd_region(region))
+    }
+
+    fn pd_scan_regions(&self, start: &[u8], end: &[u8]) -> Result<Vec<crate::region_map::PdRegion>, String> {
+        let pd = self.store.store().pd_client();
+        let mut backoffer = tikv_client::retry::RetryBackoffer::new(
+            tikv_client::async_util::Cancellation::default(),
+            LOAD_REGIONS_BACKOFF_MS,
+        );
+        let (start, end) = (start.to_vec().into(), end.to_vec().into());
+        let regions = self
+            .block_on(async move { pd.load_regions_in_key_range(start, end, &mut backoffer).await })
+            .map_err(|error| error.to_string())?;
+        Ok(regions.into_iter().map(pd_region).collect())
+    }
+
     fn locate_key_range(&self, start: &[u8], end: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
         let pd = self.store.store().pd_client();
         // Go `splitRawKeyRanges`' `tikv.NewBackofferWithVars(ctx, maxSleep,
@@ -189,5 +210,30 @@ impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
             .block_on(async move { pd.region_for_id(region_id).await })
             .map_err(|error| error.to_string())?;
         Ok((region.region.start_key, region.region.end_key))
+    }
+}
+
+fn pd_peer(peer: &tikv_client::proto::metapb::Peer) -> crate::region_map::PdPeer {
+    crate::region_map::PdPeer {
+        id: peer.id,
+        store_id: peer.store_id,
+        role: peer.role,
+        is_witness: peer.is_witness,
+    }
+}
+
+/// client-go `pd.Region` of a cached region.
+fn pd_region(region: tikv_client::RegionWithLeader) -> crate::region_map::PdRegion {
+    crate::region_map::PdRegion {
+        id: region.region.id,
+        leader: region.leader.as_ref().map(pd_peer),
+        peers: region.region.peers.iter().map(pd_peer).collect(),
+        region_epoch: region
+            .region
+            .region_epoch
+            .as_ref()
+            .map(|epoch| (epoch.conf_ver, epoch.version)),
+        start_key: region.region.start_key,
+        end_key: region.region.end_key,
     }
 }

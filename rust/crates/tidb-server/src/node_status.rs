@@ -246,6 +246,78 @@ mod tests {
             .unwrap();
     }
 
+    /// Go `RegionHandler` and `TableHandler`'s `regions` / `ranges` over the
+    /// embedded store's region cache: the table's regions carry PD's meta,
+    /// a region's frames name the table, ranges are the table's key spans.
+    #[test]
+    fn region_routes_answer_like_go() {
+        let stack = stack();
+        let factory = &stack.factory;
+        run(factory, "CREATE TABLE test.rt (id INT PRIMARY KEY, b INT, KEY ib (b))");
+        run(factory, "SPLIT TABLE test.rt BETWEEN (0) AND (100000) REGIONS 2");
+        let store = factory.region_store.clone().expect("the embedded store has a region cache");
+        let catalog_factory = Arc::clone(factory);
+        let schema = move || catalog_factory.catalog_snapshot();
+        let answer = |path: &str| crate::region_routes::region_response(path, store.as_ref(), &schema).expect(path);
+        let json = |path: &str| -> serde_json::Value { serde_json::from_str(&answer(path).unwrap()).unwrap() };
+
+        let table_id = factory
+            .catalog_snapshot()
+            .table_info_by_name("test", "rt")
+            .map(|(_, table)| table.read().id)
+            .unwrap();
+        let regions = json("/tables/test/rt/regions");
+        assert_eq!(regions["name"], "rt");
+        assert_eq!(regions["id"], table_id);
+        let record_regions = regions["record_regions"].as_array().unwrap();
+        assert_eq!(record_regions.len(), 2, "{regions}");
+        assert!(record_regions[0]["leader"]["store_id"].as_u64().unwrap() > 0);
+        assert!(record_regions[0]["region_epoch"]["version"].as_u64().unwrap() > 0);
+        assert_eq!(regions["indices"][0]["name"], "ib");
+        assert_eq!(regions["indices"][0]["id"], 1);
+        // The split is at a record key, so the index's range is in one
+        // region (the split also cuts at the record prefix).
+        let index_regions = regions["indices"][0]["regions"].as_array().unwrap();
+        assert_eq!(index_regions.len(), 1, "{regions}");
+
+        // The second record region starts at the split key: its first frame
+        // is that record of the table.
+        let region_id = record_regions[1]["region_id"].as_u64().unwrap();
+        let detail = json(&format!("/regions/{region_id}"));
+        assert_eq!(detail["region_id"], region_id);
+        let frames = detail["frames"].as_array().unwrap();
+        assert!(
+            frames.iter().any(|frame| frame["db_name"] == "test"
+                && frame["table_name"] == "rt"
+                && frame["table_id"] == table_id
+                && frame["is_record"] == true
+                && frame["record_id"] == 50000),
+            "{detail}"
+        );
+        // Go `strconv.ParseInt(id, 0, 64)`: a hex region id is a region id.
+        assert_eq!(json(&format!("/regions/{region_id:#x}"))["region_id"], region_id);
+        assert_eq!(
+            answer("/regions/abc").unwrap_err(),
+            "strconv.ParseInt: parsing \"abc\": invalid syntax"
+        );
+        assert!(json("/regions/meta").as_array().is_some_and(|metas| !metas.is_empty()));
+
+        let ranges = json("/tables/test/rt/ranges");
+        let hex = |key: Vec<u8>| key.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        assert_eq!(ranges["table"]["start_key_hex"], hex(tidb_tablecodec::table_key::encode_table_prefix(table_id)));
+        assert_eq!(ranges["record"]["end_key_hex"], hex(tidb_tablecodec::table_key::encode_table_prefix(table_id + 1)));
+        assert_eq!(
+            ranges["indices"]["ib"]["start_key_hex"],
+            hex(tidb_tablecodec::table_key::encode_table_index_prefix(table_id, 1))
+        );
+        assert_eq!(
+            answer("/tables/test/nope/regions").unwrap_err(),
+            "[schema:1146]Table 'test.nope' doesn't exist"
+        );
+        // Go `/regions/hot` needs PD's hot statistics; it is not served.
+        assert!(crate::region_routes::region_response("/regions/hot", store.as_ref(), &schema).is_none());
+    }
+
     /// Go `SchemaStorageHandler` and `StatsHistoryHandler` over a node:
     /// the named database and table must exist; the history route needs
     /// `tidb_enable_historical_stats` and a parsable snapshot.
@@ -303,5 +375,15 @@ pub fn ttl_job_trigger(factory: &Arc<Domain>) -> crate::http_status::TtlJobTrigg
             table_name,
         )?;
         serde_json::to_string(&response).map_err(|error| error.to_string())
+    })
+}
+
+/// Go `StatsPriorityQueueHandler`'s `sh.do.StatsHandle().GetPriorityQueueSnapshot()`.
+pub fn stats_priority_queue(factory: &Arc<Domain>) -> crate::http_status::StatsPriorityQueue {
+    let domain = Arc::downgrade(factory);
+    Arc::new(move || {
+        let domain = domain.upgrade().ok_or_else(|| "the domain is closed".to_owned())?;
+        let snapshot = domain.get_priority_queue_snapshot()?;
+        serde_json::to_string(&snapshot).map_err(|error| error.to_string())
     })
 }

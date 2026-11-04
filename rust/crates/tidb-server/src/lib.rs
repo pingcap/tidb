@@ -52,6 +52,7 @@ pub mod handshake;
 mod handshake_response;
 pub mod http_settings;
 pub mod http_status;
+mod region_routes;
 pub mod main_flags;
 mod mysql_connection;
 pub mod node_flags;

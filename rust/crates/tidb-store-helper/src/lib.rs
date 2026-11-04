@@ -380,16 +380,33 @@ pub fn region_metrics(
     metric
 }
 
-/// Go `helper.FrameItem`, without the record ID and index values no reader
-/// here prints.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// Go `helper.FrameItem`: what one end of a region's key range names.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct FrameItem {
+    /// Go `DBName`.
     pub db_name: String,
+    /// Go `TableName`.
     pub table_name: String,
+    /// Go `TableID`.
     pub table_id: i64,
+    /// Go `IsRecord`.
     pub is_record: bool,
+    /// Go `RecordID`, `omitempty`.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub record_id: i64,
+    /// Go `IndexName`, `omitempty`.
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub index_name: String,
+    /// Go `IndexID`, `omitempty`.
+    #[serde(skip_serializing_if = "is_zero")]
     pub index_id: i64,
+    /// Go `IndexValues`, `omitempty`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub index_values: Vec<String>,
+}
+
+fn is_zero(value: &i64) -> bool {
+    *value == 0
 }
 
 /// Go `helper.RegionFrameRange`: the frames at a region's two ends.
@@ -429,24 +446,33 @@ pub fn new_region_frame_range(
     Ok(RegionFrameRange { first, last })
 }
 
-/// Go `helper.NewFrameItemFromRegionKey`. A record key with a common handle
-/// names the `PRIMARY` index; Go decodes the handle's values and index
-/// values too, which no reader here prints, and ignores decode errors past
-/// the key head.
+/// Go `helper.NewFrameItemFromRegionKey`: an int handle is the record ID, a
+/// common handle names the `PRIMARY` index with its values, an index key
+/// carries its values; decode errors past the key head are ignored.
 pub fn new_frame_item_from_region_key(key: &[u8]) -> Result<FrameItem, String> {
     let mut frame = FrameItem::default();
     match decode_key_head(key) {
         Ok(KeyHead::Record { table_id }) => {
             frame.table_id = table_id;
             frame.is_record = true;
-            if let Ok((_, RecordHandle::Common(_))) = decode_record_key(key) {
-                frame.index_name = "PRIMARY".to_owned();
+            match decode_record_key(key) {
+                Ok((_, RecordHandle::Int(handle))) => frame.record_id = handle,
+                Ok((_, RecordHandle::Common(data))) => {
+                    frame.index_name = "PRIMARY".to_owned();
+                    if let Ok(values) = tidb_tablecodec::table_key::decode_values_bytes_to_strings(&data) {
+                        frame.index_values = values;
+                    }
+                }
+                Ok((_, RecordHandle::Partition { .. })) | Err(_) => {}
             }
             return Ok(frame);
         }
         Ok(KeyHead::Index { table_id, index_id }) => {
             frame.table_id = table_id;
             frame.index_id = index_id;
+            if let Ok((_, _, values)) = tidb_tablecodec::table_key::decode_index_key(key) {
+                frame.index_values = values;
+            }
             return Ok(frame);
         }
         Err(_) => {}
@@ -555,6 +581,7 @@ impl RegionFrameRange {
                 is_record: false,
                 index_name: index_name.to_owned(),
                 index_id,
+                ..FrameItem::default()
             });
         }
         None

@@ -6663,6 +6663,7 @@ dependencies = [
  "tidb-memory",
  "tidb-memoryusagealarm",
  "tidb-meta",
+ "tidb-metadef",
  "tidb-metrics",
  "tidb-model",
  "tidb-monotime",
@@ -6696,6 +6697,7 @@ dependencies = [
  "tidb-spill-storage",
  "tidb-sqlescape",
  "tidb-sqlkiller",
+ "tidb-stats-handle-autoanalyze-priorityqueue",
  "tidb-stats-handle-cache",
  "tidb-stats-handle-initstats",
  "tidb-stats-handle-lockstats",
@@ -6707,6 +6709,7 @@ dependencies = [
  "tidb-store-driver",
  "tidb-store-driver-error",
  "tidb-store-driver-txn",
+ "tidb-store-helper",
  "tidb-stringutil",
  "tidb-sys-linux",
  "tidb-syssession",
@@ -7742,6 +7745,7 @@ dependencies = [
 name = "tidb-store-helper"
 version = "0.0.0"
 dependencies = [
+ "serde",
  "tidb-codec",
  "tidb-hack",
  "tidb-kv",

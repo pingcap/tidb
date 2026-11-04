@@ -1113,6 +1113,18 @@ impl Domain {
 
 
 
+    /// Go `StatsHandle().GetPriorityQueueSnapshot()`: the refresher's
+    /// queue, `priority queue not initialized` until the queue exists and
+    /// has been initialized.
+    pub fn get_priority_queue_snapshot(
+        &self,
+    ) -> Result<tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueSnapshot, String> {
+        match self.auto_analyze_priority_queue.get() {
+            Some(queue) => queue.snapshot().map_err(|error| error.to_string()),
+            None => Err(tidb_stats_handle_autoanalyze_priorityqueue::QueueError::NotInitialized.to_string()),
+        }
+    }
+
     /// Returns Go StatsHandle's single auto-analyze refresher.
     pub fn auto_analyze_refresher(
         self: &Arc<Self>,

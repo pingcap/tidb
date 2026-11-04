@@ -12,6 +12,9 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-metadef = { path = "../tidb-metadef" }
+tidb-store-helper = { path = "../tidb-store-helper" }
+tidb-stats-handle-autoanalyze-priorityqueue = { path = "../tidb-stats-handle-autoanalyze-priorityqueue" }
 tidb-ttl-client = { path = "../tidb-ttl-client" }
 tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-server-internal-dump = { path = "../tidb-server-internal-dump" }

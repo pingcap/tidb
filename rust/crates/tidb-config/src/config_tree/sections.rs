@@ -192,6 +192,32 @@ pub struct Standby {
     pub enable_zero_backend: bool,
 }
 
+/// Go `HostedEmbedding`: the TiDB Cloud hosted embedding provider (the
+/// `tidbcloud_free/` prefix in `EMBED_TEXT`).
+#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HostedEmbedding {
+    /// Whether the hosted embedding service is enabled. It is only valid for
+    /// Starter deploy mode and only takes effect for NextGen kernels.
+    #[serde(rename = "enabled", skip_serializing_if = "std::ops::Not::not")]
+    pub enabled: bool,
+    /// The service's base URL; TiDB appends
+    /// `/api/v1/inference/embeddings/<billing-id>` to it. Empty fails
+    /// hosted embedding requests without preventing TiDB from starting.
+    #[serde(rename = "api-endpoint", skip_serializing_if = "String::is_empty")]
+    pub api_endpoint: String,
+    /// The path of the Bearer API key file.
+    #[serde(rename = "api-key-path", skip_serializing_if = "String::is_empty")]
+    pub api_key_path: String,
+}
+
+impl HostedEmbedding {
+    /// Go `configured`.
+    pub fn configured(&self) -> bool {
+        self.enabled || !self.api_endpoint.is_empty() || !self.api_key_path.is_empty()
+    }
+}
+
 /// Starter-only extension params (Go `StarterParams`).
 #[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]

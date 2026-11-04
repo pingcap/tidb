@@ -99,6 +99,25 @@ pub struct StatusRoutes {
     /// Go `TTLJobTriggerHandler`'s `ttlclient.TriggerNewTTLJob` over the
     /// domain's TTL job manager.
     pub ttl_job_trigger: Option<TtlJobTrigger>,
+    /// Go `StatsPriorityQueueHandler`'s `GetPriorityQueueSnapshot`, as JSON
+    /// text.
+    pub stats_priority_queue: Option<StatsPriorityQueue>,
+    /// Go `TikvHandlerTool`'s region cache and PD for `/regions/*` and
+    /// `/tables/{db}/{table}/{regions,ranges,disk-usage}`, which Go serves
+    /// only for a TiKV store.
+    pub regions: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
+}
+
+/// Go `StatsHandle().GetPriorityQueueSnapshot()` marshaled.
+pub type StatsPriorityQueue = Arc<dyn Fn() -> Result<String, String> + Send + Sync>;
+
+/// Go `StatsPriorityQueueHandler` (`/stats/priority-queue`).
+fn stats_priority_queue_response(path: &str, source: Option<&StatsPriorityQueue>) -> Option<Result<String, String>> {
+    let route = path.split_once('?').map_or(path, |(route, _)| route);
+    if route != "/stats/priority-queue" {
+        return None;
+    }
+    Some(source?())
 }
 
 /// Go `ttlcient.TriggerNewTTLJob(ctx, dom.TTLJobManager().GetCommandCli(),
@@ -616,6 +635,11 @@ fn route_response(
         .or_else(|| stats_dump_response(path, routes.stats_dump.as_ref()))
         .or_else(|| schema_storage_response(path, routes.schema_storage.as_ref()))
         .or_else(|| ttl_job_trigger_response(path, request, routes.ttl_job_trigger.as_ref()))
+        .or_else(|| stats_priority_queue_response(path, routes.stats_priority_queue.as_ref()))
+        .or_else(|| {
+            let (store, schema) = routes.regions.as_ref().zip(routes.schema.as_ref())?;
+            crate::region_routes::region_response(path, store.as_ref(), schema.as_ref())
+        })
     {
         match answer {
             Ok(body) => (200, "application/json", write_data(&body)),
@@ -2044,6 +2068,29 @@ mod schema_route_tests {
             .unwrap()
             .to_vec();
         (code, format!("{content_type}|{disposition}"), body)
+    }
+
+    /// Go `StatsPriorityQueueHandler`: the snapshot through `WriteData`,
+    /// the queue's error through `WriteError`.
+    #[test]
+    fn stats_priority_queue_route_writes_the_snapshot() {
+        let snapshot = tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueSnapshot {
+            current_jobs: Vec::new(),
+            must_retry_tables: vec![7],
+        };
+        let body = serde_json::to_string(&snapshot).unwrap();
+        let source: StatsPriorityQueue = Arc::new(move || Ok(body.clone()));
+        let routes = StatusRoutes { stats_priority_queue: Some(source), ..StatusRoutes::default() };
+        let (code, _, body) = routed("/stats/priority-queue", &routes);
+        assert_eq!(code, 200);
+        assert_eq!(
+            String::from_utf8(body).unwrap(),
+            "{\n \"current_jobs\": [],\n \"must_retry_tables\": [\n  7\n ]\n}"
+        );
+        let failing: StatsPriorityQueue = Arc::new(|| Err("priority queue not initialized".to_owned()));
+        let routes = StatusRoutes { stats_priority_queue: Some(failing), ..StatusRoutes::default() };
+        let (code, _, body) = routed("/stats/priority-queue", &routes);
+        assert_eq!((code, String::from_utf8(body).unwrap().as_str()), (400, "priority queue not initialized"));
     }
 
     /// Go `TTLJobTriggerHandler`: POST only, the names lowered, the

@@ -409,6 +409,16 @@ impl Config {
                 "error-msg-extension can only be configured when deploy-mode is starter".into(),
             ));
         }
+        // Go `isHostedEmbeddingDefined`.
+        let hosted_embedding_defined = is_defined(&table, &["hosted-embedding"])
+            || is_defined(&table, &["hosted-embedding", "enabled"])
+            || is_defined(&table, &["hosted-embedding", "api-endpoint"])
+            || is_defined(&table, &["hosted-embedding", "api-key-path"]);
+        if hosted_embedding_defined && self.deploy_mode != Mode::Starter {
+            return Err(LoadError::Other(
+                "hosted-embedding can only be configured for starter deploy mode".into(),
+            ));
+        }
         if is_defined(&table, &["external-workload"]) && self.deploy_mode != Mode::Starter {
             return Err(LoadError::Other(
                 "external-workload can only be configured when deploy-mode is starter".into(),

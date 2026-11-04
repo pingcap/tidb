@@ -2,8 +2,8 @@
   "date": "2026-11-04",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 30,
-    "open": 8,
+    "unresolved": 29,
+    "open": 7,
     "partial": 22
   },
   "findings": [
@@ -159,13 +159,6 @@
       "go_owner": "`pkg/expression`"
     },
     {
-      "id": "X02",
-      "status": "open",
-      "group": "Expanded subsystem ownership review",
-      "finding": "No `EMBED_TEXT` runtime or inference provider",
-      "go_owner": "`pkg/expression` (embedding), `pkg/domain`"
-    },
-    {
       "id": "K03",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
@@ -197,7 +190,7 @@
       "id": "N05",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "The status port serves `/status`, `/metrics`, `/settings`, `/config`, `/schema`, `/schema_storage`, `/db-table/{tableID}`, `/tables/{colID}/{colTp}/{colFlag}/{colLen}`, `/labels`, `/info`, `/info/all`, `/ddl/history`, `/ddl/owner/resign`, `/txn-gc-states`, `/tiflash/replica`, `/stats/dump/{db}/{table}[/{snapshot}]`, `/plan_replayer/dump/{filename}` and `/optimize_trace/dump/{filename}` (`tidb-server/src/http_status.rs`, JSON through Go `WriteData`'s `json.Indent`; the capture-archive download reads `schema_meta.txt` as its writer and `PLAN REPLAYER LOAD` do, where Go's `loadSchemaMeta` misreads it and fails); Go's other routes are absent: `/mvcc/*`, `/regions/*`, `/tables/{db}/{table}/{regions,ranges,scatter,stop-scatter,disk-usage}` (no region-cache handler tool), `/stats/priority-queue`, `/extract_task/dump` (no `ExtractHandle`), `/dxf/*`, `/ddl/check/*`, `/ingest/*`, `/tiflash/replica-deprecated` (needs the dropped/truncated-table history and `UpdateTableReplicaInfo`), `/upgrade/*`, `/owner_manager/auto_id_service`, `/metrics/profile`, `/debug/*`, test hooks",
+      "finding": "The status port serves `/status`, `/metrics`, `/settings`, `/config`, `/schema`, `/schema_storage`, `/db-table/{tableID}`, `/tables/{colID}/{colTp}/{colFlag}/{colLen}`, `/labels`, `/info`, `/info/all`, `/ddl/history`, `/ddl/owner/resign`, `/txn-gc-states`, `/tiflash/replica`, `/stats/dump/{db}/{table}[/{snapshot}]`, `/plan_replayer/dump/{filename}`, `/optimize_trace/dump/{filename}`, `/stats/priority-queue`, `/test/ttl/trigger/{db}/{table}` and, for a TiKV store, `/regions/meta`, `/regions/{regionID}` and `/tables/{db}/{table}/{regions,ranges,disk-usage}` (`region_routes.rs`) (`tidb-server/src/http_status.rs`, JSON through Go `WriteData`'s `json.Indent`; the capture-archive download reads `schema_meta.txt` as its writer and `PLAN REPLAYER LOAD` do, where Go's `loadSchemaMeta` misreads it and fails); Go's other routes are absent: `/mvcc/*`, `/regions/hot` (PD hot-region scrape), `/tables/{db}/{table}/{scatter,stop-scatter}` (PD scatter schedulers), `/extract_task/dump` (no `ExtractHandle`), `/dxf/*`, `/ddl/check/*`, `/ingest/*`, `/tiflash/replica-deprecated` (needs the dropped/truncated-table history and `UpdateTableReplicaInfo`), `/upgrade/*`, `/owner_manager/auto_id_service`, `/metrics/profile`, `/debug/*`, the other test hooks",
       "rust_evidence": "`rust/crates/tidb-autoid/src/service_rpc.rs`",
       "go_owner": "`pkg/server/http_status.go`, `pkg/server/handler`"
     },

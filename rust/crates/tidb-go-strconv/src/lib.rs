@@ -228,6 +228,194 @@ fn push_escaped_rune(out: &mut String, character: char) {
     }
 }
 
+/// Go `strconv.NumError`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NumError {
+    /// Go `Func`: the failing function (`ParseInt`, `ParseUint`).
+    pub func: &'static str,
+    /// Go `Num`: the input.
+    pub num: String,
+    /// Go `Err`: `invalid syntax`, `value out of range`, or a base or bit
+    /// size error.
+    pub err: String,
+}
+
+impl std::fmt::Display for NumError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "strconv.{}: parsing {}: {}", self.func, quote_bytes(self.num.as_bytes()), self.err)
+    }
+}
+
+impl std::error::Error for NumError {}
+
+/// Go `strconv.ErrSyntax`.
+pub const ERR_SYNTAX: &str = "invalid syntax";
+/// Go `strconv.ErrRange`.
+pub const ERR_RANGE: &str = "value out of range";
+
+fn num_error(func: &'static str, num: &str, err: &str) -> NumError {
+    NumError {
+        func,
+        num: num.to_owned(),
+        err: err.to_owned(),
+    }
+}
+
+fn lower(c: u8) -> u8 {
+    c | (b'x' - b'X')
+}
+
+/// Go `underscoreOK`: whether the underscores in `s` are where Go literal
+/// syntax allows them.
+fn underscore_ok(s: &str) -> bool {
+    let mut s = s.as_bytes();
+    // saw tracks the last character (class) we saw:
+    // ^ for beginning of number, 0 for a base prefix, _ for an underscore,
+    // and ! for none of the above.
+    let mut saw = b'^';
+    let mut i = 0;
+    if !s.is_empty() && (s[0] == b'-' || s[0] == b'+') {
+        s = &s[1..];
+    }
+    let mut hex = false;
+    if s.len() >= 2 && s[0] == b'0' && matches!(lower(s[1]), b'b' | b'o' | b'x') {
+        i = 2;
+        saw = b'0';
+        hex = lower(s[1]) == b'x';
+    }
+    while i < s.len() {
+        let c = s[i];
+        i += 1;
+        if c.is_ascii_digit() || hex && (b'a'..=b'f').contains(&lower(c)) {
+            saw = b'!';
+            continue;
+        }
+        if c == b'_' {
+            if saw != b'0' && saw != b'!' {
+                return false;
+            }
+            saw = b'_';
+            continue;
+        }
+        if saw == b'_' {
+            return false;
+        }
+        saw = b'!';
+    }
+    saw != b'_'
+}
+
+/// Go `strconv.ParseUint(s, base, bitSize)`; on a range error the value is
+/// the maximum, as Go returns it.
+pub fn parse_uint(s: &str, base: u32, bit_size: u32) -> Result<u64, (u64, NumError)> {
+    const FN: &str = "ParseUint";
+    if s.is_empty() {
+        return Err((0, num_error(FN, s, ERR_SYNTAX)));
+    }
+    let base0 = base == 0;
+    let s0 = s;
+    let mut digits = s.as_bytes();
+    let base = match base {
+        2..=36 => base,
+        0 => {
+            let mut base = 10;
+            if digits[0] == b'0' {
+                if digits.len() >= 3 && lower(digits[1]) == b'b' {
+                    base = 2;
+                    digits = &digits[2..];
+                } else if digits.len() >= 3 && lower(digits[1]) == b'o' {
+                    base = 8;
+                    digits = &digits[2..];
+                } else if digits.len() >= 3 && lower(digits[1]) == b'x' {
+                    base = 16;
+                    digits = &digits[2..];
+                } else {
+                    base = 8;
+                    digits = &digits[1..];
+                }
+            }
+            base
+        }
+        _ => return Err((0, num_error(FN, s0, &format!("invalid base {base}")))),
+    };
+    let bit_size = match bit_size {
+        0 => 64,
+        1..=64 => bit_size,
+        _ => return Err((0, num_error(FN, s0, &format!("invalid bit size {bit_size}")))),
+    };
+    // Cutoff is the smallest number such that cutoff*base > maxUint64.
+    let cutoff = u64::MAX / u64::from(base) + 1;
+    let max_val = if bit_size == 64 { u64::MAX } else { (1_u64 << bit_size) - 1 };
+    let mut underscores = false;
+    let mut n: u64 = 0;
+    for &c in digits {
+        let d = if c == b'_' && base0 {
+            underscores = true;
+            continue;
+        } else if c.is_ascii_digit() {
+            c - b'0'
+        } else if lower(c).is_ascii_lowercase() {
+            lower(c) - b'a' + 10
+        } else {
+            return Err((0, num_error(FN, s0, ERR_SYNTAX)));
+        };
+        if u32::from(d) >= base {
+            return Err((0, num_error(FN, s0, ERR_SYNTAX)));
+        }
+        if n >= cutoff {
+            // n*base overflows
+            return Err((max_val, num_error(FN, s0, ERR_RANGE)));
+        }
+        n *= u64::from(base);
+        let n1 = n.wrapping_add(u64::from(d));
+        if n1 < n || n1 > max_val {
+            // n+d overflows
+            return Err((max_val, num_error(FN, s0, ERR_RANGE)));
+        }
+        n = n1;
+    }
+    if underscores && !underscore_ok(s0) {
+        return Err((0, num_error(FN, s0, ERR_SYNTAX)));
+    }
+    Ok(n)
+}
+
+/// Go `strconv.ParseInt(s, base, bitSize)`; on a range error the value is
+/// the clamped bound, as Go returns it.
+pub fn parse_int(s: &str, base: u32, bit_size: u32) -> Result<i64, (i64, NumError)> {
+    const FN: &str = "ParseInt";
+    if s.is_empty() {
+        return Err((0, num_error(FN, s, ERR_SYNTAX)));
+    }
+    // Pick off leading sign.
+    let s0 = s;
+    let (neg, unsigned) = match s.as_bytes()[0] {
+        b'+' => (false, &s[1..]),
+        b'-' => (true, &s[1..]),
+        _ => (false, s),
+    };
+    // Convert unsigned and check range.
+    let un = match parse_uint(unsigned, base, bit_size) {
+        Ok(un) => un,
+        Err((un, error)) if error.err == ERR_RANGE => un,
+        Err((_, mut error)) => {
+            error.func = FN;
+            error.num = s0.to_owned();
+            return Err((0, error));
+        }
+    };
+    let bit_size = if bit_size == 0 { 64 } else { bit_size };
+    let cutoff = 1_u64 << (bit_size - 1);
+    if !neg && un >= cutoff {
+        return Err(((cutoff - 1) as i64, num_error(FN, s0, ERR_RANGE)));
+    }
+    if neg && un > cutoff {
+        return Err(((cutoff as i64).wrapping_neg(), num_error(FN, s0, ERR_RANGE)));
+    }
+    let n = un as i64;
+    Ok(if neg { n.wrapping_neg() } else { n })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{is_print, quote_bytes};
@@ -240,6 +428,37 @@ mod tests {
         assert_eq!(quote_bytes("\u{8}\u{c}\u{b}\u{1}\u{7f}".as_bytes()), r#""\b\f\v\x01\x7f""#);
         assert_eq!(quote_bytes("猫\u{a0}\u{feff}\u{e0001}".as_bytes()), r#""猫\u00a0\ufeff\U000e0001""#);
         assert!(is_print('猫') && !is_print('\u{ad}'));
+    }
+
+    /// Go `strconv` `TestParseInt64` / `TestParseInt64Base` cases.
+    #[test]
+    fn parse_int_follows_go() {
+        use super::{parse_int, parse_uint};
+        let ok = |s: &str, base: u32| parse_int(s, base, 64).unwrap();
+        let err = |s: &str, base: u32| parse_int(s, base, 64).unwrap_err().1.to_string();
+        assert_eq!(ok("12345", 10), 12345);
+        assert_eq!(ok("-012345", 10), -12345);
+        assert_eq!(ok("0x1f", 0), 31);
+        assert_eq!(ok("-0X1F", 0), -31);
+        assert_eq!(ok("0b101", 0), 5);
+        assert_eq!(ok("0o17", 0), 15);
+        assert_eq!(ok("017", 0), 15);
+        assert_eq!(ok("1_000", 0), 1000);
+        assert_eq!(ok("9223372036854775807", 10), i64::MAX);
+        assert_eq!(ok("-9223372036854775808", 10), i64::MIN);
+        assert_eq!(err("abc", 0), "strconv.ParseInt: parsing \"abc\": invalid syntax");
+        assert_eq!(err("", 0), "strconv.ParseInt: parsing \"\": invalid syntax");
+        assert_eq!(err("1_000", 10), "strconv.ParseInt: parsing \"1_000\": invalid syntax");
+        assert_eq!(err("_1", 0), "strconv.ParseInt: parsing \"_1\": invalid syntax");
+        assert_eq!(err("08", 0), "strconv.ParseInt: parsing \"08\": invalid syntax");
+        assert_eq!(
+            err("9223372036854775808", 10),
+            "strconv.ParseInt: parsing \"9223372036854775808\": value out of range"
+        );
+        assert_eq!(parse_int("9223372036854775808", 10, 64).unwrap_err().0, i64::MAX);
+        assert_eq!(parse_int("-9223372036854775809", 10, 64).unwrap_err().0, i64::MIN);
+        assert_eq!(parse_uint("18446744073709551616", 10, 64).unwrap_err().0, u64::MAX);
+        assert_eq!(parse_int("128", 10, 8).unwrap_err().0, 127);
     }
 }
 

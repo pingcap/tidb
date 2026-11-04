@@ -141,6 +141,9 @@ pub fn run_unistore_cluster_session(
                 stats_dump: Some(crate::node_status::stats_dump(&factory)),
                 schema_storage: Some(crate::node_status::schema_storage(&factory)),
                 ttl_job_trigger: Some(crate::node_status::ttl_job_trigger(&factory)),
+                stats_priority_queue: Some(crate::node_status::stats_priority_queue(&factory)),
+                // Go registers the region routes only for a TiKV store.
+                regions: None,
                 schema_reload: {
                     let ddl = Arc::clone(&factory.ddl);
                     Some(Arc::new(move || ddl.reload_schema()))

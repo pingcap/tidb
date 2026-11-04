@@ -56,6 +56,37 @@ pub struct RegionMeta {
     pub approximate_keys: i64,
 }
 
+/// PD's `metapb.Peer` as the status port prints it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PdPeer {
+    /// `Peer.Id`.
+    pub id: u64,
+    /// `Peer.StoreId`.
+    pub store_id: u64,
+    /// `Peer.Role` (`metapb.PeerRole`).
+    pub role: i32,
+    /// `Peer.IsWitness`.
+    pub is_witness: bool,
+}
+
+/// PD's view of one region: `pd.Region` (`Meta` and `Leader`), as client-go
+/// `GetRegionByID` / `BatchScanRegions` answer it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PdRegion {
+    /// `Meta.Id`.
+    pub id: u64,
+    /// `Meta.StartKey`, decoded.
+    pub start_key: Vec<u8>,
+    /// `Meta.EndKey`, decoded.
+    pub end_key: Vec<u8>,
+    /// `Leader`.
+    pub leader: Option<PdPeer>,
+    /// `Meta.Peers`.
+    pub peers: Vec<PdPeer>,
+    /// `Meta.RegionEpoch` as `(ConfVer, Version)`.
+    pub region_epoch: Option<(u64, u64)>,
+}
+
 /// Go `kv.SplittableStore` with the reads `SHOW TABLE ... REGIONS` and
 /// `TABLESAMPLE REGIONS()` make of the store's region cache and PD.
 pub trait RegionStore: Send + Sync + std::fmt::Debug {
@@ -110,6 +141,20 @@ pub trait RegionStore: Send + Sync + std::fmt::Debug {
     /// assertion), such as the in-process region map.
     fn tikv_store_count(&self) -> Option<usize> {
         None
+    }
+
+    /// client-go `RegionCache.PDClient().GetRegionByID(id)`: the region's
+    /// meta and leader. Only asked of a store whose
+    /// [`Self::tikv_store_count`] answered.
+    fn pd_region_by_id(&self, region_id: u64) -> Result<PdRegion, String> {
+        Err(format!("region cache unavailable: cannot get region {region_id}"))
+    }
+
+    /// client-go `pdClient.BatchScanRegions([{start, end}], -1)`: every
+    /// region of `[start, end)` with its meta and leader.
+    fn pd_scan_regions(&self, start: &[u8], end: &[u8]) -> Result<Vec<PdRegion>, String> {
+        let _ = (start, end);
+        Err("region cache unavailable".to_owned())
     }
 
     /// client-go `RegionCache.LocateKeyRange(bo, start, end)`: the `[start,

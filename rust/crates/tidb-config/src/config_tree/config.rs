@@ -40,7 +40,7 @@ use super::log_instance::{Instance, Log};
 use super::marshal::AtomicBool;
 use super::sections::{
     Experimental, IsolationRead, OpenTracing, PessimisticTxn, Plugin, PreparedPlanCache,
-    ProxyProtocol, RuV2Config, Standby, StarterParams, TopSql,
+    ProxyProtocol, RuV2Config, Standby, StarterParams, TopSql, HostedEmbedding,
 };
 use tidb_config_deploymode::Mode;
 use crate::external_workload::ExternalWorkload;
@@ -267,6 +267,8 @@ pub struct Config {
     pub standby: Standby,
     #[serde(rename = "starter-params")]
     pub starter_params: StarterParams,
+    #[serde(rename = "hosted-embedding")]
+    pub hosted_embedding: HostedEmbedding,
     #[serde(rename = "external-workload")]
     pub external_workload: ExternalWorkload,
     // Deprecated (upgrade-only) fields.
@@ -398,6 +400,7 @@ impl Default for Config {
             keyspace_activate_mode: false,
             standby: Standby::default(),
             starter_params: StarterParams::default(),
+            hosted_embedding: HostedEmbedding::default(),
             external_workload: ExternalWorkload::default(),
             enable_batch_dml: false,
             mem_quota_query: 1 << 30,
@@ -750,6 +753,9 @@ impl Config {
                 "starter-params.max-import-data-size can only be configured for starter deploy mode"
                     .into(),
             );
+        }
+        if self.hosted_embedding.configured() && self.deploy_mode != Mode::Starter {
+            return Err("hosted-embedding can only be configured for starter deploy mode".into());
         }
         if !self.keyspace_observability.fields.is_empty() && self.deploy_mode != Mode::Starter {
             return Err(
@@ -1137,6 +1143,42 @@ metric-label = "keyspace_meta_label_a"
         assert!(config.valid().unwrap_err().contains(
             "keyspace-observability.fields can only be configured when deploy-mode is starter"
         ));
+    }
+
+    // Go TestConfig's hosted-embedding cases.
+    #[test]
+    fn test_hosted_embedding_is_starter_only() {
+        let hosted_embedding_err = "hosted-embedding can only be configured for starter deploy mode";
+        let mut config = new_config();
+        assert!(config
+            .load_str("tidb.toml", "[hosted-embedding]")
+            .unwrap_err()
+            .to_string()
+            .contains(hosted_embedding_err));
+
+        let mut config = new_config();
+        config.hosted_embedding.enabled = true;
+        assert!(config.valid().unwrap_err().contains(hosted_embedding_err));
+
+        let mut config = new_config();
+        config.hosted_embedding.api_endpoint = "https://example.com/v1".to_owned();
+        assert!(config.valid().unwrap_err().contains(hosted_embedding_err));
+
+        if tidb_config_kerneltype::is_next_gen() {
+            let mut config = new_config();
+            config
+                .load_str(
+                    "tidb.toml",
+                    "deploy-mode = \"starter\"\n[hosted-embedding]\nenabled = true\napi-endpoint = \"https://example.com/v1\"\napi-key-path = \"/tmp/embedding-api-key\"\n",
+                )
+                .unwrap();
+            assert!(config.hosted_embedding.enabled);
+            assert_eq!(config.hosted_embedding.api_endpoint, "https://example.com/v1");
+            assert_eq!(config.hosted_embedding.api_key_path, "/tmp/embedding-api-key");
+            config.valid().unwrap();
+        }
+        // Go's `json:",omitempty"` fields: the unset section marshals as `{}`.
+        assert_eq!(serde_json::to_string(&HostedEmbedding::default()).unwrap(), "{}");
     }
 
     // Go TestExternalWorkloadValid.
