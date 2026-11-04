@@ -35,7 +35,13 @@ import (
 )
 
 // NewRows opens the first range and prefetches its first row. Check Error before use.
-func NewRows(ctx context.Context, scanner Scanner, table *model.TableInfo, columns []*model.ColumnInfo, ranges []dumpservice.Range) *Rows {
+func NewRows(
+	ctx context.Context,
+	scanner Scanner,
+	table *model.TableInfo,
+	columns []*model.ColumnInfo,
+	ranges []dumpservice.Range,
+) *Rows {
 	iter := &Rows{
 		ctx:     ctx,
 		scanner: scanner,

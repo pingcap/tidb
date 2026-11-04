@@ -39,7 +39,9 @@ func CreateTableSQL(reader tidbmeta.Reader, database *model.DBInfo, table *model
 		return "", errors.Annotatef(err, "read auto ID bases for kv table %q", table.Name.O)
 	}
 	var output bytes.Buffer
-	if err := executor.ConstructResultOfShowCreateTable(newKVContext(), database.Name, table, allocators, &output); err != nil {
+	if err := executor.ConstructResultOfShowCreateTable(
+		newKVContext(), database.Name, table, allocators, &output,
+	); err != nil {
 		return "", errors.Annotatef(err, "build schema for kv table %q", table.Name.O)
 	}
 	return output.String(), nil

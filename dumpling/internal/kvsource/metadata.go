@@ -127,7 +127,9 @@ func (r *kvMetadataSnapshot) Get(ctx context.Context, key kv.Key, options ...kv.
 	return kv.NewValueEntry(pairs[position].value, 0), nil
 }
 
-func (r *kvMetadataSnapshot) BatchGet(ctx context.Context, keys []kv.Key, options ...kv.BatchGetOption) (map[string]kv.ValueEntry, error) {
+func (r *kvMetadataSnapshot) BatchGet(
+	ctx context.Context, keys []kv.Key, options ...kv.BatchGetOption,
+) (map[string]kv.ValueEntry, error) {
 	values := make(map[string]kv.ValueEntry, len(keys))
 	getOptions := kv.BatchGetToGetOptions(options)
 	for _, key := range keys {

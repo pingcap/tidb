@@ -39,8 +39,10 @@ func TestKVMetadataSnapshotMatchesSQLMetadata(t *testing.T) {
 	tk.MustExec("set @@sql_mode = default, @@time_zone = '+00:00'")
 	tk.MustExec("create placement policy metadata_policy followers=2")
 	tk.MustExec("create database metadata charset utf8mb4 collate utf8mb4_bin placement policy=metadata_policy")
-	tk.MustExec("create table metadata.shared (id bigint primary key auto_increment) auto_id_cache=1000 auto_increment=201 placement policy=metadata_policy")
-	tk.MustExec("create table metadata.separate (id bigint unsigned primary key auto_increment) auto_id_cache=1 auto_increment=701")
+	tk.MustExec("create table metadata.shared (id bigint primary key auto_increment) " +
+		"auto_id_cache=1000 auto_increment=201 placement policy=metadata_policy")
+	tk.MustExec("create table metadata.separate (id bigint unsigned primary key auto_increment) " +
+		"auto_id_cache=1 auto_increment=701")
 	tk.MustExec("create table metadata.random (id bigint primary key auto_random(5)) auto_random_base=901")
 	tk.MustExec(`create table metadata.partitioned (id int primary key)
 		partition by range (id) (
