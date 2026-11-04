@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"text/template"
 	"time"
 
@@ -140,16 +141,7 @@ func main() {
 	}
 
 	outputFile := filepath.Join(outDir, pluginName+"-"+version+".so")
-	ctx := context.Background()
-	buildCmd := exec.CommandContext(ctx, "go", "build",
-		"-tags=codes",
-		"-buildmode=plugin",
-		"-o", outputFile, pkgDir)
-	buildCmd.Dir = pkgDir
-	buildCmd.Stderr = os.Stderr
-	buildCmd.Stdout = os.Stdout
-	buildCmd.Env = append(os.Environ(), "GO111MODULE=on")
-	err = buildCmd.Run()
+	err = buildPlugin(context.Background(), pkgDir, outputFile)
 	if err != nil {
 		log.Printf("compile plugin source code failure, %+v\n", err)
 		os.Exit(1)
@@ -161,4 +153,84 @@ func main() {
 	if err != nil {
 		log.Printf("print manifest detail failure, err: %v", err)
 	}
+}
+
+func buildPlugin(ctx context.Context, pkgDir, outputFile string) error {
+	workDir, err := os.MkdirTemp("", "tidb-plugin-work-")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := os.RemoveAll(workDir); err != nil {
+			log.Printf("remove temporary plugin workspace failure: %v", err)
+		}
+	}()
+	buildEnv, err := pluginBuildEnv(ctx, pkgDir, filepath.Join(workDir, "go.work"))
+	if err != nil {
+		return err
+	}
+
+	buildCmd := exec.CommandContext(ctx, "go", "build",
+		"-tags=codes",
+		"-buildmode=plugin",
+		"-o", outputFile, pkgDir)
+	buildCmd.Dir = pkgDir
+	buildCmd.Stderr = os.Stderr
+	buildCmd.Stdout = os.Stdout
+	buildCmd.Env = buildEnv
+	return buildCmd.Run()
+}
+
+func pluginBuildEnv(ctx context.Context, pkgDir, workFile string) ([]string, error) {
+	env := append(os.Environ(), "GO111MODULE=on")
+	runGo := func(args ...string) (string, error) {
+		cmd := exec.CommandContext(ctx, "go", args...)
+		cmd.Dir = pkgDir
+		cmd.Env = env
+		cmd.Stderr = os.Stderr
+		output, err := cmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("go %s: %w", strings.Join(args, " "), err)
+		}
+		return strings.TrimSpace(string(output)), nil
+	}
+	work, err := runGo("env", "GOWORK")
+	if err != nil {
+		return nil, err
+	}
+	if work != "" && work != "off" {
+		return env, nil
+	}
+	modFile, err := runGo("env", "GOMOD")
+	if err != nil {
+		return nil, err
+	}
+	if modFile == "" || modFile == os.DevNull {
+		return nil, fmt.Errorf("plugin package %s must belong to a Go module", pkgDir)
+	}
+	tidbDir, err := runGo("list", "-m", "-f", "{{.Dir}}", "github.com/pingcap/tidb")
+	if err != nil {
+		return nil, err
+	}
+	if tidbDir == "" {
+		if _, err := runGo("mod", "download", "github.com/pingcap/tidb"); err != nil {
+			return nil, err
+		}
+		tidbDir, err = runGo("list", "-m", "-f", "{{.Dir}}", "github.com/pingcap/tidb")
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Dependency replacements are not inherited by importing modules. Include
+	// TiDB as a workspace main module so plugins use its compatibility pins too.
+	args := []string{"work", "init", filepath.Dir(modFile)}
+	if tidbDir != filepath.Dir(modFile) {
+		args = append(args, tidbDir)
+	}
+	env = append(env, "GOWORK="+workFile)
+	if _, err := runGo(args...); err != nil {
+		return nil, err
+	}
+	return env, nil
 }
