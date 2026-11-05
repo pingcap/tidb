@@ -109,6 +109,13 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	require.Equal(t, 1, len(metas))
 	require.Equal(t, proto.BackfillStepReadIndex, task.Step)
 
+	t.Run("snapshot scan error is not an empty table", func(t *testing.T) {
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockIterateSnapshotKeysError", "return()")
+		metas, err := sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
+		require.ErrorContains(t, err, "mock snapshot scan error")
+		require.Empty(t, metas)
+	})
+
 	// 2.2.2 transient region discontinuity should be retried.
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockPhysicalTableRegionDiscontinuity", "1*return()")
 	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
