@@ -141,7 +141,7 @@ go_test(
     ],
     embed = [":domain"],
     flaky = True,
-    shard_count = 31,
+    shard_count = 32,
     deps = [
         "//pkg/config",
         "//pkg/ddl",
@@ -158,11 +158,7 @@ go_test(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
-<<<<<<< HEAD
-=======
         "//pkg/planner/core/resolve",
-        "//pkg/planner/extstore",
->>>>>>> 8bab3c26d76 (util: fix incorrect statement summary Others rows (#69914))
         "//pkg/server",
         "//pkg/session",
         "//pkg/sessionctx/variable",
@@ -170,12 +166,8 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "//pkg/types",
-<<<<<<< HEAD
         "//pkg/util",
-=======
         "//pkg/util/chunk",
-        "//pkg/util/logutil",
->>>>>>> 8bab3c26d76 (util: fix incorrect statement summary Others rows (#69914))
         "//pkg/util/mathutil",
         "//pkg/util/mock",
         "//pkg/util/replayer",

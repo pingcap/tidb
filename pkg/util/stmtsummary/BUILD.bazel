@@ -40,11 +40,7 @@ go_test(
     ],
     embed = [":stmtsummary"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 32,
-=======
-    shard_count = 33,
->>>>>>> 8bab3c26d76 (util: fix incorrect statement summary Others rows (#69914))
+    shard_count = 34,
     deps = [
         "//pkg/meta/model",
         "//pkg/parser/auth",

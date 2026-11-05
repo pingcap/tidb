@@ -1031,98 +1031,6 @@ func TestToDatum(t *testing.T) {
 	match(t, datums[1], expectedEvictedDatum...)
 }
 
-<<<<<<< HEAD
-=======
-func TestToDatumIAColumns(t *testing.T) {
-	ssMap := newStmtSummaryByDigestMap()
-	now := time.Now().Unix()
-	ssMap.beginTimeForCurInterval = now + 60
-
-	stmtExecInfo1 := generateAnyExecInfo()
-	stmtExecInfo1.ExecDetail.ScanDetail.IaRemoteReadSegmentCount = 3
-	stmtExecInfo1.ExecDetail.ScanDetail.IaRemoteReadSegmentBytes = 4096
-	stmtExecInfo1.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 5 * time.Millisecond
-
-	stmtExecInfo2 := generateAnyExecInfo()
-	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentCount = 5
-	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentBytes = 8192
-	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 9 * time.Millisecond
-
-	ssMap.AddStatement(stmtExecInfo1)
-	ssMap.AddStatement(stmtExecInfo2)
-	reader := newStmtSummaryReaderWithColumnNamesForTest(
-		ssMap,
-		AvgIARemoteReadSegmentCountStr,
-		MaxIARemoteReadSegmentCountStr,
-		AvgIARemoteReadSegmentSizeStr,
-		MaxIARemoteReadSegmentSizeStr,
-		AvgIARemoteReadSegmentWaitTimeStr,
-		MaxIARemoteReadSegmentWaitTimeStr,
-	)
-
-	rows := reader.GetStmtSummaryCurrentRows()
-	require.Len(t, rows, 1)
-	require.Equal(t, 4.0, rows[0][0].GetFloat64())
-	require.Equal(t, uint64(5), rows[0][1].GetUint64())
-	require.Equal(t, 6144.0, rows[0][2].GetFloat64())
-	require.Equal(t, uint64(8192), rows[0][3].GetUint64())
-	require.Equal(t, int64(7*time.Millisecond), rows[0][4].GetInt64())
-	require.Equal(t, int64(9*time.Millisecond), rows[0][5].GetInt64())
-}
-
-func TestToDatumIAColumnsChunkRoundTrip(t *testing.T) {
-	ssMap := newStmtSummaryByDigestMap()
-	now := time.Now().Unix()
-	ssMap.beginTimeForCurInterval = now + 60
-
-	stmtExecInfo1 := generateAnyExecInfo()
-	stmtExecInfo1.ExecDetail.ScanDetail.IaRemoteReadSegmentCount = 3
-	stmtExecInfo1.ExecDetail.ScanDetail.IaRemoteReadSegmentBytes = 4096
-	stmtExecInfo1.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 5 * time.Millisecond
-
-	stmtExecInfo2 := generateAnyExecInfo()
-	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentCount = 5
-	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentBytes = 8192
-	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 9 * time.Millisecond
-
-	ssMap.AddStatement(stmtExecInfo1)
-	ssMap.AddStatement(stmtExecInfo2)
-
-	reader := newStmtSummaryReaderWithColumnNamesForTest(
-		ssMap,
-		AvgIARemoteReadSegmentCountStr,
-		MaxIARemoteReadSegmentCountStr,
-		AvgIARemoteReadSegmentSizeStr,
-		MaxIARemoteReadSegmentSizeStr,
-		AvgIARemoteReadSegmentWaitTimeStr,
-		MaxIARemoteReadSegmentWaitTimeStr,
-	)
-
-	rows := reader.GetStmtSummaryCurrentRows()
-	require.Len(t, rows, 1)
-
-	maxUnsignedType := types.NewFieldType(mysql.TypeLonglong)
-	maxUnsignedType.SetFlag(mysql.UnsignedFlag)
-	retTypes := []*types.FieldType{
-		types.NewFieldType(mysql.TypeDouble),
-		maxUnsignedType,
-		types.NewFieldType(mysql.TypeDouble),
-		maxUnsignedType.Clone(),
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeLonglong),
-	}
-	mutRow := chunk.MutRowFromTypes(retTypes)
-	mutRow.SetDatums(rows[0]...)
-	row := mutRow.ToRow()
-
-	require.Equal(t, 4.0, row.GetFloat64(0))
-	require.Equal(t, uint64(5), row.GetUint64(1))
-	require.Equal(t, 6144.0, row.GetFloat64(2))
-	require.Equal(t, uint64(8192), row.GetUint64(3))
-	require.Equal(t, int64(7*time.Millisecond), row.GetInt64(4))
-	require.Equal(t, int64(9*time.Millisecond), row.GetInt64(5))
-}
-
 // Regression test for issue #69913.
 func TestCurrentRowsExcludePreviousIntervalEvictedOther(t *testing.T) {
 	ssMap := newStmtSummaryByDigestMap()
@@ -1233,10 +1141,10 @@ func TestDisablingInternalQueryPreservesLRUOrder(t *testing.T) {
 	var othersExecCount int64
 	for _, row := range rows {
 		if row[4].IsNull() {
-			othersExecCount = row[11].GetInt64()
+			othersExecCount = row[9].GetInt64()
 			continue
 		}
-		normalExecCounts[row[4].GetString()] = row[11].GetInt64()
+		normalExecCounts[row[4].GetString()] = row[9].GetInt64()
 	}
 	require.Len(t, normalExecCounts, capacity)
 	require.Equal(t, int64(2), normalExecCounts[hotDigests[0]])
@@ -1248,7 +1156,6 @@ func TestDisablingInternalQueryPreservesLRUOrder(t *testing.T) {
 	require.Equal(t, int64(2), othersExecCount)
 }
 
->>>>>>> 8bab3c26d76 (util: fix incorrect statement summary Others rows (#69914))
 // Test AddStatement and ToDatum parallel.
 func TestAddStatementParallel(t *testing.T) {
 	ssMap := newStmtSummaryByDigestMap()

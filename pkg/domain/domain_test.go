@@ -36,11 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
->>>>>>> 8bab3c26d76 (util: fix incorrect statement summary Others rows (#69914))
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/types"
@@ -236,10 +232,6 @@ func unixSocketAvailable() bool {
 	return false
 }
 
-func mockFactory() (pools.Resource, error) {
-	return nil, errors.New("mock factory should not be called")
-}
-
 type stmtSummarySysVarContext struct {
 	*mock.Context
 	rows []chunk.Row
@@ -259,7 +251,7 @@ func TestLoadSysVarCacheLoopReappliesStmtSummaryInternalQuery(t *testing.T) {
 
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
-	dom := NewDomain(store, 80*time.Millisecond, 0, 0, mockFactory)
+	dom := NewDomain(store, 80*time.Millisecond, 0, 0, mockFactory, nil)
 	t.Cleanup(func() {
 		dom.Close()
 		require.NoError(t, store.Close())
@@ -268,10 +260,10 @@ func TestLoadSysVarCacheLoopReappliesStmtSummaryInternalQuery(t *testing.T) {
 	ctx := &stmtSummarySysVarContext{
 		Context: mock.NewContext(),
 		rows: []chunk.Row{
-			chunk.MutRowFromValues(vardef.TiDBStmtSummaryInternalQuery, vardef.Off).ToRow(),
+			chunk.MutRowFromValues(variable.TiDBStmtSummaryInternalQuery, variable.Off).ToRow(),
 			// This lightweight Domain does not start DDL, so keep the MDL callback
 			// from calling its DDL-owned hook while rebuilding unrelated sysvars.
-			chunk.MutRowFromValues(vardef.TiDBEnableMDL, variable.BoolToOnOff(vardef.IsMDLEnabled())).ToRow(),
+			chunk.MutRowFromValues(variable.TiDBEnableMDL, variable.BoolToOnOff(variable.EnableMDL.Load())).ToRow(),
 		},
 	}
 
@@ -282,13 +274,13 @@ func TestLoadSysVarCacheLoopReappliesStmtSummaryInternalQuery(t *testing.T) {
 	require.NoError(t, stmtsummaryv2.SetEnableInternalQuery(false))
 	require.False(t, stmtsummaryv2.EnabledInternal())
 
-	stmtSummarySysVar := variable.GetSysVar(vardef.TiDBStmtSummaryInternalQuery)
+	stmtSummarySysVar := variable.GetSysVar(variable.TiDBStmtSummaryInternalQuery)
 	require.NotNil(t, stmtSummarySysVar)
 	wrappedStmtSummarySysVar := *stmtSummarySysVar
 	originalSetGlobal := wrappedStmtSummarySysVar.SetGlobal
 	appliedCount := 0
 	wrappedStmtSummarySysVar.SetGlobal = func(ctx context.Context, vars *variable.SessionVars, val string) error {
-		require.Equal(t, vardef.Off, val)
+		require.Equal(t, variable.Off, val)
 		appliedCount++
 		return originalSetGlobal(ctx, vars, val)
 	}
@@ -306,6 +298,10 @@ func TestLoadSysVarCacheLoopReappliesStmtSummaryInternalQuery(t *testing.T) {
 	require.NoError(t, dom.rebuildSysVarCache(ctx))
 	require.False(t, stmtsummaryv2.EnabledInternal())
 	require.Equal(t, 2, appliedCount)
+}
+
+func mockFactory() (pools.Resource, error) {
+	return nil, errors.New("mock factory should not be called")
 }
 
 func sysMockFactory(*Domain) (pools.Resource, error) {

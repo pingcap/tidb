@@ -65,9 +65,6 @@ func TestStmtWindow(t *testing.T) {
 	require.Equal(t, 0, ss.window.lru.Size())
 	require.Equal(t, 0, ss.window.evicted.count())
 	require.Equal(t, int64(0), ss.window.evicted.other.ExecCount)
-<<<<<<< HEAD
-=======
-	require.Equal(t, int64(0), ss.window.evictedCount.Load())
 
 	t.Run("disabling internal query preserves LRU order", func(t *testing.T) {
 		ss := NewStmtSummary4Test(6)
@@ -149,7 +146,6 @@ func TestStmtWindow(t *testing.T) {
 
 		require.Equal(t, 0, ss.window.lru.Size())
 	})
->>>>>>> 8bab3c26d76 (util: fix incorrect statement summary Others rows (#69914))
 }
 
 func TestStmtSummary(t *testing.T) {
