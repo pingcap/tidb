@@ -208,9 +208,9 @@ func TestIndexKVGenerator(t *testing.T) {
 			var retained [][]types.Datum
 			for _, want := range tc.want {
 				require.True(t, iter.Valid())
-				values := iter.IndexedValues()
+				values := iter.PeekIndexedValues()
 				require.Equal(t, want, values)
-				require.Equal(t, values, iter.IndexedValues()) // Access does not advance.
+				require.Equal(t, values, iter.PeekIndexedValues()) // Access does not advance.
 				retained = append(retained, values)
 				wantKey, wantDistinct, err := idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), want, kv.IntHandle(1), nil)
 				require.NoError(t, err)
@@ -250,13 +250,13 @@ func TestIndexKVGeneratorErrors(t *testing.T) {
 	_, _, _, err := iter.Next(nil, nil)
 	require.ErrorIs(t, err, keyErr)
 	require.True(t, iter.Valid())
-	require.Equal(t, values, iter.IndexedValues())
+	require.Equal(t, values, iter.PeekIndexedValues())
 
 	idx.keyErr = nil
 	_, _, _, err = iter.Next(nil, nil)
 	require.ErrorIs(t, err, valueErr)
 	require.True(t, iter.Valid())
-	require.Equal(t, values, iter.IndexedValues())
+	require.Equal(t, values, iter.PeekIndexedValues())
 
 	idx.valueErr = nil
 	key, _, distinct, err := iter.Next(nil, nil)
