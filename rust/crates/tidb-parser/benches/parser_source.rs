@@ -67,3 +67,29 @@ fn benchmark_hand_parser() {
         }
     }
 }
+
+/// Repeated simple statements around the AST check's 4,096-token boundary.
+#[test]
+fn benchmark_batch_statement_boundaries() {
+    for count in [100, 1_365, 1_366] {
+        let sql = "SELECT 1;".repeat(count);
+        for _ in 0..10 {
+            black_box(tidb_parser::parse_multi(black_box(&sql)).unwrap());
+        }
+    }
+}
+
+#[test]
+fn benchmark_nested_lookahead_and_restore() {
+    for depth in [128, 256, 512] {
+        let sql = format!("SELECT * FROM {}t{}", "(".repeat(depth), ")".repeat(depth));
+        for _ in 0..100 {
+            black_box(tidb_parser::parse(black_box(&sql)).unwrap());
+        }
+        let sql = format!("SELECT {}1{}", "(".repeat(depth), ")".repeat(depth));
+        let statement = tidb_parser::parse(&sql).unwrap();
+        for _ in 0..100 {
+            black_box(statement.try_restore().unwrap());
+        }
+    }
+}

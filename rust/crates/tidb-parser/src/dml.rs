@@ -43,7 +43,7 @@ impl Parser {
         };
         let mut name = vec![first_name];
         if self.is_op(".") {
-            self.bump();
+            self.advance();
             if self.at_eof() {
                 return Err(self.err_here("expected procedure name after schema"));
             }
@@ -57,11 +57,11 @@ impl Parser {
         }
         let mut args = Vec::new();
         if self.is_op("(") {
-            self.bump();
+            self.advance();
             if !self.is_op(")") {
                 args.push(self.parse_expr(prec::NONE)?);
                 while self.is_op(",") {
-                    self.bump();
+                    self.advance();
                     args.push(self.parse_expr(prec::NONE)?);
                 }
             }
@@ -94,9 +94,9 @@ impl Parser {
         if !self.is_kw(name) {
             return Ok(None);
         }
-        self.bump();
+        self.advance();
         if self.is_op("=") {
-            self.bump();
+            self.advance();
         }
         if self.peek().kind != TokenKind::Str {
             return Err(self.err_here("DISTRIBUTE TABLE option requires a string"));
@@ -123,7 +123,7 @@ impl Parser {
         let table = self.parse_name_path()?;
 
         let columns_and_user_vars = if self.is_op("(") {
-            self.bump();
+            self.advance();
             let mut columns = Vec::new();
             // Go's hand parser accepts the same empty/trailing-comma shape
             // as its `for { item; if !comma { break } }` loop: neither
@@ -144,7 +144,7 @@ impl Parser {
                     columns.push(ColumnOrUserVar::Column(self.parse_name_or_keyword()?));
                 }
                 if self.is_op(",") {
-                    self.bump();
+                    self.advance();
                 } else {
                     break;
                 }
@@ -156,10 +156,10 @@ impl Parser {
         };
 
         let column_assignments = if self.is_kw("SET") {
-            self.bump();
+            self.advance();
             let mut assignments = vec![self.parse_assignment(false)?];
             while self.is_op(",") {
-                self.bump();
+                self.advance();
                 assignments.push(self.parse_assignment(false)?);
             }
             assignments
@@ -171,7 +171,7 @@ impl Parser {
         let source = if self.peek().kind == TokenKind::Str {
             let path = self.bumped_string();
             let format = if self.is_kw("FORMAT") {
-                self.bump();
+                self.advance();
                 if self.peek().kind != TokenKind::Str {
                     return Err(self.err_here("expected IMPORT FORMAT string"));
                 }
@@ -183,7 +183,7 @@ impl Parser {
         } else {
             let parenthesized = self.is_op("(");
             let query = if parenthesized {
-                self.bump();
+                self.advance();
                 // Go's `FROM (SELECT ...)` branch invokes its select parser
                 // directly; unlike the unparenthesized source branch it
                 // does not admit a leading WITH clause inside these parens.
@@ -232,10 +232,10 @@ impl Parser {
         };
 
         let options = if self.is_kw("WITH") {
-            self.bump();
+            self.advance();
             let mut options = vec![self.parse_import_option()?];
             while self.is_op(",") {
-                self.bump();
+                self.advance();
                 options.push(self.parse_import_option()?);
             }
             options
@@ -260,9 +260,9 @@ impl Parser {
         if !matches!(token.kind, TokenKind::Ident | TokenKind::Keyword) {
             return Err(self.err_here("expected IMPORT option name"));
         }
-        self.bump();
+        self.advance();
         let value = if self.is_op("=") || self.is_op(":=") {
-            self.bump();
+            self.advance();
             Some(self.parse_import_signed_literal()?)
         } else {
             None
@@ -284,7 +284,7 @@ impl Parser {
             } else {
                 UnaryOp::Minus
             };
-            self.bump();
+            self.advance();
             if !matches!(
                 self.peek().kind,
                 TokenKind::IntLit | TokenKind::FloatLit | TokenKind::DecLit
@@ -322,7 +322,7 @@ impl Parser {
     pub(crate) fn parse_batch_dml(&mut self) -> PResult<BatchDmlStmt> {
         self.expect_kw("BATCH")?;
         let shard_column = if self.is_kw("ON") {
-            self.bump();
+            self.advance();
             Some(self.parse_name_path()?)
         } else {
             None
@@ -332,17 +332,17 @@ impl Parser {
         if limit_token.kind != tidb_lexer::TokenKind::IntLit {
             return Err(self.err_here("expected BATCH LIMIT integer"));
         }
-        self.bump();
+        self.advance();
         let limit = limit_token
             .text
             .parse::<u64>()
             .map_err(|_| self.err_here("BATCH LIMIT integer is out of range"))?;
 
         let dry_run = if self.is_kw("DRY") {
-            self.bump();
+            self.advance();
             self.expect_kw("RUN")?;
             if self.is_kw("QUERY") {
-                self.bump();
+                self.advance();
                 BatchDmlDryRun::Query
             } else {
                 BatchDmlDryRun::SplitDml
@@ -376,20 +376,20 @@ impl Parser {
         // carries `IGNORE` or `ON DUPLICATE KEY UPDATE`.
         let replace = self.is_kw("REPLACE");
         if replace {
-            self.bump();
+            self.advance();
         } else {
             self.expect_kw("INSERT")?;
         }
         let hints = self.parse_dml_hints()?;
         let priority = self.parse_statement_priority();
         let ignore = if !replace && self.is_kw("IGNORE") {
-            self.bump();
+            self.advance();
             true
         } else {
             false
         };
         if self.is_kw("INTO") {
-            self.bump();
+            self.advance();
         }
         let table = self.parse_name_path()?;
         // `PARTITION (...)` comes right after the table name, before the
@@ -409,13 +409,13 @@ impl Parser {
             source_parenthesized = true;
             Vec::new()
         } else if self.is_op("(") {
-            self.bump();
+            self.advance();
             columns_specified = true;
             let mut cols = Vec::new();
             if !self.is_op(")") {
                 cols.push(self.parse_name_or_keyword()?);
                 while self.is_op(",") {
-                    self.bump();
+                    self.advance();
                     cols.push(self.parse_name_or_keyword()?);
                 }
             }
@@ -441,7 +441,7 @@ impl Parser {
             if columns_specified {
                 return Err(self.err_here("INSERT column list cannot be followed by SET"));
             }
-            self.bump();
+            self.advance();
             set_syntax = true;
             let (set_cols, set_vals) = self.parse_set_assignment_list()?;
             set_columns = set_cols;
@@ -466,26 +466,26 @@ impl Parser {
             // grammar; both restore as `VALUES` — confirmed via `godump
             // restore`).
             if self.is_kw("VALUE") {
-                self.bump();
+                self.advance();
             } else {
                 self.expect_kw("VALUES")?;
             }
             rows.push(self.parse_value_row()?);
             while self.is_op(",") {
-                self.bump();
+                self.advance();
                 rows.push(self.parse_value_row()?);
             }
         }
         let (row_alias, column_aliases) =
             if self.is_kw("AS") && (set_syntax || (source.is_none() && !rows.is_empty())) {
-                self.bump();
+                self.advance();
                 let alias = self.parse_name()?;
                 let mut aliases = Vec::new();
                 if self.is_op("(") {
-                    self.bump();
+                    self.advance();
                     aliases.push(self.parse_name()?);
                     while self.is_op(",") {
-                        self.bump();
+                        self.advance();
                         aliases.push(self.parse_name()?);
                     }
                     self.expect_op(")")?;
@@ -499,7 +499,7 @@ impl Parser {
         }
         // `REPLACE` never carries `ON DUPLICATE KEY UPDATE`.
         let on_duplicate = if !replace && self.is_kw("ON") {
-            self.bump();
+            self.advance();
             self.expect_kw("DUPLICATE")?;
             self.expect_kw("KEY")?;
             self.expect_kw("UPDATE")?;
@@ -508,7 +508,7 @@ impl Parser {
             // is in INSERT VALUES/SET and a single-table UPDATE.
             let mut assignments = vec![self.parse_assignment(true)?];
             while self.is_op(",") {
-                self.bump();
+                self.advance();
                 assignments.push(self.parse_assignment(true)?);
             }
             assignments
@@ -580,7 +580,7 @@ impl Parser {
             cols.push(assignment.col);
             vals.push(assignment.value);
             if self.is_op(",") {
-                self.bump();
+                self.advance();
             } else {
                 break;
             }
@@ -599,7 +599,7 @@ impl Parser {
             row.reserve_exact(1);
             row.push(self.parse_insert_value()?);
             while self.is_op(",") {
-                self.bump();
+                self.advance();
                 row.push(self.parse_insert_value()?);
             }
         }
@@ -624,7 +624,7 @@ impl Parser {
     /// expression parser's dedicated default node.
     pub(crate) fn parse_expr_or_default(&mut self) -> PResult<Expr> {
         if self.is_kw("DEFAULT") && !self.is_op_at(1, "(") {
-            self.bump();
+            self.advance();
             return Ok(Expr::Default(None));
         }
         self.parse_expr(prec::NONE)
@@ -635,7 +635,7 @@ impl Parser {
         let hints = self.parse_dml_hints()?;
         let priority = self.parse_statement_priority();
         let ignore = if self.is_kw("IGNORE") {
-            self.bump();
+            self.advance();
             true
         } else {
             false
@@ -679,11 +679,11 @@ impl Parser {
         // before mutation).
         let mut assignments = vec![self.parse_assignment(true)?];
         while self.is_op(",") {
-            self.bump();
+            self.advance();
             assignments.push(self.parse_assignment(true)?);
         }
         let where_clause = if self.is_kw("WHERE") {
-            self.bump();
+            self.advance();
             Some(self.parse_expr(prec::NONE)?)
         } else {
             None
@@ -717,7 +717,7 @@ impl Parser {
     pub(crate) fn parse_assignment(&mut self, allow_bare_default: bool) -> PResult<Assignment> {
         let col = self.parse_name_path()?;
         if self.is_op("=") || self.is_op(":=") {
-            self.bump();
+            self.advance();
         } else {
             return Err(self.err_here("expected '=' or ':='"));
         }
@@ -734,19 +734,19 @@ impl Parser {
         let hints = self.parse_dml_hints()?;
         let priority = self.parse_statement_priority();
         let quick = if self.is_kw("QUICK") {
-            self.bump();
+            self.advance();
             true
         } else {
             false
         };
         let ignore = if self.is_kw("IGNORE") {
-            self.bump();
+            self.advance();
             true
         } else {
             false
         };
         let kind = if self.is_kw("FROM") {
-            self.bump();
+            self.advance();
             // Either single-table `FROM tbl` or multi-table `FROM targets
             // USING join`. Parse a name path and peek: a following `,` or
             // `USING` means the multi-table `USING` spelling; otherwise it's
@@ -781,7 +781,7 @@ impl Parser {
             }
         };
         let where_clause = if self.is_kw("WHERE") {
-            self.bump();
+            self.advance();
             Some(self.parse_expr(prec::NONE)?)
         } else {
             None
@@ -813,19 +813,19 @@ impl Parser {
         if !self.is_kw("RETURNING") {
             return Ok(tidb_ast::SelectFieldList::default());
         }
-        self.bump();
+        self.advance();
         self.parse_select_list()
     }
 
     pub(crate) fn parse_statement_priority(&mut self) -> StatementPriority {
         if self.is_kw("LOW_PRIORITY") {
-            self.bump();
+            self.advance();
             StatementPriority::Low
         } else if self.is_kw("HIGH_PRIORITY") {
-            self.bump();
+            self.advance();
             StatementPriority::High
         } else if self.is_kw("DELAYED") {
-            self.bump();
+            self.advance();
             StatementPriority::Delayed
         } else {
             StatementPriority::None
@@ -838,14 +838,14 @@ impl Parser {
         &mut self,
     ) -> PResult<(Vec<tidb_ast::OrderItem>, Option<tidb_ast::Limit>)> {
         let order_by = if self.is_kw("ORDER") {
-            self.bump();
+            self.advance();
             self.expect_kw("BY")?;
             self.parse_order_list()?
         } else {
             Vec::new()
         };
         let limit = if self.is_kw("LIMIT") {
-            self.bump();
+            self.advance();
             Some(self.parse_dml_limit()?)
         } else {
             None
@@ -888,7 +888,7 @@ impl Parser {
     fn parse_delete_targets(&mut self) -> PResult<Vec<Vec<String>>> {
         let mut targets = vec![self.parse_delete_target()?];
         while self.is_op(",") {
-            self.bump();
+            self.advance();
             targets.push(self.parse_delete_target()?);
         }
         Ok(targets)
@@ -898,8 +898,8 @@ impl Parser {
         let name = self.parse_name_path()?;
         // `t1.*` — the `.*` is a redundant wildcard on a delete target.
         if self.is_op(".") && self.is_op_at(1, "*") {
-            self.bump();
-            self.bump();
+            self.advance();
+            self.advance();
         }
         Ok(name)
     }

@@ -360,6 +360,13 @@ impl Expr {
     /// Fallible restore for source AST shapes whose validity is checked at
     /// restore time rather than parse time.
     pub fn try_restore(&self) -> Result<String, String> {
+        self.validate_restore()?;
+        Ok(self.restore())
+    }
+
+    /// Validate this node without formatting its subtree. Statement validation
+    /// visits descendants separately, so restoring here would repeat their work.
+    pub(crate) fn validate_restore(&self) -> Result<(), String> {
         if let Self::Func { name, args, .. } = self {
             if name.eq_ignore_ascii_case("JSON_MEMBEROF") && args.len() != 2 {
                 return Err(
@@ -368,7 +375,7 @@ impl Expr {
                 );
             }
         }
-        Ok(self.restore())
+        Ok(())
     }
 
     pub(crate) fn restore_into(&self, out: &mut String) {

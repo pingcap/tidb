@@ -106,6 +106,7 @@ fn assert_full_visitor_traversal_statement(statement: &mut Stmt, sql: &str) {
 }
 
 mod admin;
+mod performance_regressions;
 mod admin_alter_ddl_jobs_source;
 mod admin_cleanup_table_lock_source;
 mod admin_ddl_job_control_source;
