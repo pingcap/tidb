@@ -43,13 +43,6 @@ SELECTED_TEST_NAME="${TEST_NAME-$(find tests -mindepth 2 -maxdepth 2 -name run.s
 trap stop_services EXIT
 start_services $@
 
-WITH_TIDB=true
-for arg in "$@"; do
-    if [ "$arg" = '--no-tidb' ]; then
-        WITH_TIDB=false
-    fi
-done
-
 # Intermediate file needed because read can be used as a pipe target.
 # https://stackoverflow.com/q/2746553/
 run_curl "https://$PD_ADDR/pd/api/v1/version" | grep -o 'v[0-9.]\+' > "$TEST_DIR/cluster_version.txt"
@@ -67,9 +60,7 @@ run_case() {
     local script=$2
     echo "*===== Running test $script... =====*"
     # Tests inspect error values, including after earlier cases restart the cluster.
-    if $WITH_TIDB; then
-        TEST_NAME="$case" run_sql "SET GLOBAL tidb_redact_log = OFF"
-    fi
+    TEST_NAME="$case" run_sql "SET GLOBAL tidb_redact_log = OFF"
     INTEGRATION_TEST=1 \
     TEST_DIR="$TEST_DIR" \
     TEST_NAME="$case" \

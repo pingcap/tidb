@@ -266,6 +266,9 @@ func TestGlobalVarAccessor(t *testing.T) {
 	originalRedactLog := errors.RedactLogEnabled.Load()
 	t.Cleanup(func() { errors.RedactLogEnabled.Store(originalRedactLog) })
 	originalGlobalRedactLog := tk.MustQuery("select @@global.tidb_redact_log").Rows()[0][0].(string)
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_redact_log = " + originalGlobalRedactLog)
+	})
 
 	// Persisted redaction settings must override the compiled default in new sessions.
 	for _, value := range []string{variable.Off, variable.Marker} {
@@ -275,7 +278,6 @@ func TestGlobalVarAccessor(t *testing.T) {
 		newSession.MustQuery("select @@global.tidb_redact_log, @@session.tidb_redact_log").Check(testkit.Rows(value + " " + value))
 		newSession.Session().Close()
 	}
-	tk.MustExec("set global tidb_redact_log = " + originalGlobalRedactLog)
 
 	se := tk.Session().(variable.GlobalVarAccessor)
 	// Get globalSysVar twice and get the same value
