@@ -81,6 +81,7 @@ func ParseRawURL(rawURL string) (*url.URL, error) {
 	rawURL = strings.ReplaceAll(rawURL, "+", "%2B")
 	u, err := url.Parse(rawURL)
 	if err != nil {
+		// Both url.Error and its inner reason may carry the whole URL or fragments of it.
 		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "parse storage URL failed: invalid format")
 	}
 	return u, nil

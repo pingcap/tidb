@@ -16,8 +16,12 @@ package executor_test
 
 import (
 	"crypto/tls"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"hash/crc32"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
@@ -28,6 +32,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -129,14 +134,14 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 		}, nil
 	}))
 	// mock regions
-	router.Handle(pd.Regions, fn.Wrap(func() (*pd.RegionsInfo, error) {
+	regionsResp := func(regionID int64, startKey, endKey string) *pd.RegionsInfo {
 		return &pd.RegionsInfo{
 			Count: 1,
 			Regions: []pd.RegionInfo{
 				{
-					ID:       1,
-					StartKey: "",
-					EndKey:   "",
+					ID:       regionID,
+					StartKey: startKey,
+					EndKey:   endKey,
 					Epoch: pd.RegionEpoch{
 						ConfVer: 1,
 						Version: 2,
@@ -147,8 +152,31 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 					ApproximateKeys: 1000,
 				},
 			},
-		}, nil
+		}
+	}
+	router.Handle(pd.Regions, fn.Wrap(func() (*pd.RegionsInfo, error) {
+		return regionsResp(1, "", ""), nil
 	}))
+	router.HandleFunc("/pd/api/v1/regions/key", func(w http.ResponseWriter, r *http.Request) {
+		startKey := strings.ToUpper(hex.EncodeToString([]byte(r.URL.Query().Get("key"))))
+		endKey := strings.ToUpper(hex.EncodeToString([]byte(r.URL.Query().Get("end_key"))))
+		regionID := int64(crc32.ChecksumIEEE([]byte(startKey+"|"+endKey))) + 1
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(regionsResp(regionID, startKey, endKey)); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	})
+	router.HandleFunc(pd.MinResolvedTSPrefix, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"min_resolved_ts":1,"is_real_time":true}`))
+	})
+	router.HandleFunc(pd.PlacementRuleGroupByID(placement.TiFlashRuleGroupID), func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(fmt.Sprintf(`{"id":"%s","index":%d,"override":false}`, placement.TiFlashRuleGroupID, placement.RuleIndexTiFlash)))
+	})
+	router.HandleFunc("/pd/api/v1/config/rule_group", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
 	// mock PD API
 	router.Handle(pd.Status, fn.Wrap(func() (any, error) {
 		return struct {
@@ -309,21 +337,26 @@ func TestTikvRegionStatus(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test_t1")
 	tk.MustExec(`CREATE TABLE test_t1 ( a int(11) DEFAULT NULL, b int(11) DEFAULT NULL, c int(11) DEFAULT NULL)`)
-	tk.MustQuery("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_ID, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t1'").Check(testkit.Rows(
-		"1 test test_t1 0 <nil> <nil> 0 <nil>",
+	tk.MustQuery("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_ID, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t1'").Check(testkit.Rows(
+		"test test_t1 0 <nil> <nil> 0 <nil>",
 	))
 
 	tk.MustExec("alter table test_t1 add index p_a (a)")
-	tk.MustQuery("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t1' order by IS_INDEX").Check(testkit.Rows(
-		"1 test test_t1 0 <nil> 0 <nil>",
-		"1 test test_t1 1 p_a 0 <nil>",
+	tk.MustQuery("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t1' order by IS_INDEX").Check(testkit.Rows(
+		"test test_t1 0 <nil> 0 <nil>",
+		"test test_t1 1 p_a 0 <nil>",
+	))
+	tableID := tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA = 'test' and TABLE_NAME = 'test_t1'").Rows()[0][0]
+	tk.MustQuery(fmt.Sprintf("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where TABLE_ID = %v order by IS_INDEX", tableID)).Check(testkit.Rows(
+		"test test_t1 0 <nil> 0 <nil>",
+		"test test_t1 1 p_a 0 <nil>",
 	))
 
 	tk.MustExec("alter table test_t1 add unique p_b (b);")
-	tk.MustQuery("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t1' order by IS_INDEX, INDEX_NAME").Check(testkit.Rows(
-		"1 test test_t1 0 <nil> 0 <nil>",
-		"1 test test_t1 1 p_a 0 <nil>",
-		"1 test test_t1 1 p_b 0 <nil>",
+	tk.MustQuery("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t1' order by IS_INDEX, INDEX_NAME").Check(testkit.Rows(
+		"test test_t1 0 <nil> 0 <nil>",
+		"test test_t1 1 p_a 0 <nil>",
+		"test test_t1 1 p_b 0 <nil>",
 	))
 
 	tk.MustExec("drop table if exists test_t2")
@@ -331,26 +364,34 @@ func TestTikvRegionStatus(t *testing.T) {
 		PARTITION BY RANGE (c) (
 		PARTITION p0 VALUES LESS THAN (10),
 		PARTITION p1 VALUES LESS THAN (MAXVALUE))`)
-	tk.MustQuery("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_ID, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t2' order by PARTITION_NAME").Check(testkit.Rows(
-		"1 test test_t2 0 <nil> <nil> 1 p0",
-		"1 test test_t2 0 <nil> <nil> 1 p1",
+	tk.MustQuery("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_ID, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t2' order by PARTITION_NAME").Check(testkit.Rows(
+		"test test_t2 0 <nil> <nil> 1 p0",
+		"test test_t2 0 <nil> <nil> 1 p1",
 	))
 
 	tk.MustExec("alter table test_t2 add index p_a (a)")
-	tk.MustQuery("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t2' order by IS_INDEX, PARTITION_NAME").Check(testkit.Rows(
-		"1 test test_t2 0 <nil> 1 p0",
-		"1 test test_t2 0 <nil> 1 p1",
-		"1 test test_t2 1 p_a 1 p0",
-		"1 test test_t2 1 p_a 1 p1",
+	tk.MustQuery("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t2' order by IS_INDEX, PARTITION_NAME").Check(testkit.Rows(
+		"test test_t2 0 <nil> 1 p0",
+		"test test_t2 0 <nil> 1 p1",
+		"test test_t2 1 p_a 1 p0",
+		"test test_t2 1 p_a 1 p1",
 	))
 
 	tk.MustExec("alter table test_t2 add unique p_b (b) global")
-	tk.MustQuery("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t2' order by IS_INDEX, IS_PARTITION desc, PARTITION_NAME").Check(testkit.Rows(
-		"1 test test_t2 0 <nil> 1 p0",
-		"1 test test_t2 0 <nil> 1 p1",
-		"1 test test_t2 1 p_a 1 p0",
-		"1 test test_t2 1 p_a 1 p1",
-		"1 test test_t2 1 p_b 0 <nil>",
+	tk.MustQuery("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t2' order by IS_INDEX, IS_PARTITION desc, PARTITION_NAME").Check(testkit.Rows(
+		"test test_t2 0 <nil> 1 p0",
+		"test test_t2 0 <nil> 1 p1",
+		"test test_t2 1 p_a 1 p0",
+		"test test_t2 1 p_a 1 p1",
+		"test test_t2 1 p_b 0 <nil>",
+	))
+	tableID = tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA = 'test' and TABLE_NAME = 'test_t2'").Rows()[0][0]
+	tk.MustQuery(fmt.Sprintf("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where TABLE_ID = %v order by IS_INDEX, IS_PARTITION desc, PARTITION_NAME", tableID)).Check(testkit.Rows(
+		"test test_t2 0 <nil> 1 p0",
+		"test test_t2 0 <nil> 1 p1",
+		"test test_t2 1 p_a 1 p0",
+		"test test_t2 1 p_a 1 p1",
+		"test test_t2 1 p_b 0 <nil>",
 	))
 }
 
@@ -466,4 +507,27 @@ func TestIssue42619(t *testing.T) {
 			"test tp 1 1 1 1 1",
 			"test tp 1 1 1 1 1",
 		))
+}
+
+func TestSkipNonServingTiDBRPCNodesForTiDBTypeCoprocessor(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	const fp = "github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo"
+	// A valid address must not make a standalone BR process an RPC target.
+	const brInfo = `{"br":{"ddl_id":"br","ip":"127.0.0.1","status_port":10080,"disable_rpc":true}}`
+	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf("return(`%s`)", brInfo)))
+	t.Cleanup(func() { require.NoError(t, failpoint.Disable(fp)) })
+	tk.MustQuery("select * from information_schema.cluster_slow_query").Check(testkit.Rows())
+	require.Zero(t, tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	// cluster_info supplies addresses for config/log/metrics fanout.
+	tk.MustQuery("select instance from information_schema.cluster_info where type = 'tidb'").Check(testkit.Rows())
+
+	// Missing and explicit false flags both describe serving TiDB nodes.
+	const mixedInfo = `{
+  "br":{"disable_rpc":true},
+  "tidb":{"ddl_id":"tidb","ip":"127.0.0.1","listening_port":4000,"version":"8.0.11-TiDB-v8.5.0"},
+  "tidb2":{"ddl_id":"tidb2","ip":"127.0.0.2","listening_port":4001,"version":"8.0.11-TiDB-v8.5.0","disable_rpc":false}
+ }`
+	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf("return(`%s`)", mixedInfo)))
+	tk.MustQuery("select instance from information_schema.cluster_info where type = 'tidb' order by instance").Check(testkit.Rows("127.0.0.1:4000", "127.0.0.2:4001"))
 }

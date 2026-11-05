@@ -44,7 +44,7 @@ func TestExtractQueryParametersRejectsMalformedQuery(t *testing.T) {
 	}
 }
 
-func TestBackendOptionsRedacted(t *testing.T) {
+func TestBackendOptionsRedactedWithEndpointValidation(t *testing.T) {
 	opts := BackendOptions{
 		S3: S3BackendOptions{
 			AccessKey: "FAKE_AK", SecretAccessKey: "FAKE_SK", SessionToken: "FAKE_STS",
@@ -153,7 +153,7 @@ func TestStorageErrorsDoNotLeakCredentials(t *testing.T) {
 	}
 }
 
-func TestRedactURL(t *testing.T) {
+func TestRedactURLWithStrictCredentialFiltering(t *testing.T) {
 	for _, tc := range []struct{ raw, expected string }{
 		{"/local/path", "/local/path"},
 		{"/local/path#name", "/local/path#name"},

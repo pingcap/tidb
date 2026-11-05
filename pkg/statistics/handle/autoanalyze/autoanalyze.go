@@ -246,6 +246,10 @@ func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 	}
 	instances := make(map[string]struct{}, len(serverInfo))
 	for _, info := range serverInfo {
+		// A BR process at the same address does not keep analyze jobs alive.
+		if info.DisableRPC {
+			continue
+		}
 		instance := net.JoinHostPort(info.IP, strconv.Itoa(int(info.Port)))
 		instances[instance] = struct{}{}
 	}
