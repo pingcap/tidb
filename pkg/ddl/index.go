@@ -1354,7 +1354,6 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 				// We can continue to finish the job even if analyze table failed.
 				doneCh <- err
 			}
-			failpoint.InjectCall("afterAnalyzeTable")
 			return nil
 		})
 		w.ddlCtx.setAnalyzeDoneCh(job.ID, doneCh)
