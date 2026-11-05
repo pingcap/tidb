@@ -1387,6 +1387,8 @@ func doReorgWorkForModifyColumn(
 	return true, ver, nil
 }
 
+// isRetryableModifyColumnReorgJobError applies the retry limit and rejects
+// deterministic conversion errors before matching transient error messages.
 func isRetryableModifyColumnReorgJobError(err error, jobErrCnt int64) bool {
 	if jobErrCnt+1 >= variable.GetDDLErrorCountLimit() {
 		return false
@@ -1395,7 +1397,8 @@ func isRetryableModifyColumnReorgJobError(err error, jobErrCnt int64) bool {
 	// structured types before matching transient error messages in that text.
 	var typedErr *errors.Error
 	if goerrors.As(err, &typedErr) && (dbterror.ClassTypes.EqualClass(typedErr) ||
-		dbterror.ClassJSON.EqualClass(typedErr) || table.ErrColumnCantNull.Equal(typedErr)) {
+		dbterror.ClassJSON.EqualClass(typedErr) || table.ErrTruncatedWrongValueForField.Equal(typedErr) ||
+		table.ErrColumnCantNull.Equal(typedErr)) {
 		return false
 	}
 	// Modify column reorg can return deterministic data conversion errors. Retrying unknown errors may

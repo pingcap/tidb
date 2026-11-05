@@ -1618,6 +1618,8 @@ func TestStatsAfterModifyColumn(t *testing.T) {
 	}
 }
 
+// TestModifyColumnLoadTableRangeError verifies transient range-loading retries
+// preserve converted values and table consistency in both persisted job formats.
 func TestModifyColumnLoadTableRangeError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	originalVersion := model.GetJobVerInUse()
@@ -1639,6 +1641,7 @@ func TestModifyColumnLoadTableRangeError(t *testing.T) {
 				`1*return("All returned regions have no leaders, limit: 1")`)
 
 			tk.MustExec("alter table t change column b b varchar(16);")
+			tk.MustQuery("select b from t where a in (0, 99) order by a").Check(testkit.Rows("0", "99"))
 			tk.MustExec("admin check table t;")
 		})
 	}

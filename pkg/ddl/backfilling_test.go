@@ -67,6 +67,8 @@ func TestDoneTaskKeeper(t *testing.T) {
 	require.True(t, bytes.Equal(n.nextKey, kv.Key("h")))
 }
 
+// TestBackfillRetryableErrors covers executor retryability and MODIFY COLUMN
+// retry limits, wrapped PD timeouts and deterministic conversion errors.
 func TestBackfillRetryableErrors(t *testing.T) {
 	t.Run("local-sort disk probe errors are retryable", func(t *testing.T) {
 		err := errors.New("mock local sort disk probe failed")
@@ -96,12 +98,13 @@ func TestBackfillRetryableErrors(t *testing.T) {
 	t.Run("modify column rejects conversion errors containing retry text", func(t *testing.T) {
 		for _, text := range dbterror.ReorgRetryableErrMsgs {
 			for name, conversionErr := range map[string]error{
-				"invalid integer":  types.ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", text),
-				"truncated column": types.ErrTruncated.GenWithStackByArgs(text, 1),
-				"long data":        types.ErrDataTooLong.GenWithStackByArgs(text, 1),
-				"out of range":     types.ErrOverflow.GenWithStackByArgs(text, 1),
-				"invalid JSON":     types.ErrInvalidJSONText.GenWithStack("invalid JSON value: %s", text),
-				"null column":      table.ErrColumnCantNull.GenWithStackByArgs(text),
+				"invalid integer":          types.ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", text),
+				"truncated column":         types.ErrTruncated.GenWithStackByArgs(text, 1),
+				"long data":                types.ErrDataTooLong.GenWithStackByArgs(text, 1),
+				"out of range":             types.ErrOverflow.GenWithStackByArgs(text, 1),
+				"invalid JSON":             types.ErrInvalidJSONText.GenWithStack("invalid JSON value: %s", text),
+				"null column":              table.ErrColumnCantNull.GenWithStackByArgs(text),
+				"invalid character string": table.ErrTruncatedWrongValueForField.FastGen("Incorrect string value '%s' for column '%s'", "0xFF", text),
 			} {
 				t.Run(name+"/"+text, func(t *testing.T) {
 					for _, err := range []error{conversionErr, errors.Annotate(conversionErr, "cast value"), fmt.Errorf("cast value: %w", conversionErr)} {
