@@ -2,8 +2,8 @@
   "date": "2026-11-06",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 23,
-    "open": 6,
+    "unresolved": 24,
+    "open": 7,
     "partial": 17
   },
   "findings": [
@@ -64,6 +64,13 @@
       "group": "DML and executor handoff",
       "finding": "The coprocessor row cursor (`RemoteRowCursor::append_clean_chunk`) decodes into its caller's chunk as Go's `selectResult.Next(chk)` / `readFromChunk` does (`SelectResponseIter::fill_chunk_with_required_rows`), but the partial-aggregate remote stream (`table_scan.rs` `append_partial_remote_chunk`) still moves the decoder's own chunk over its caller's, which loses that chunk's capacity",
       "go_owner": "`pkg/distsql/select_result.go` (`readFromChunk`), `pkg/util/chunk` (`Decoder`)"
+    },
+    {
+      "id": "E10",
+      "status": "open",
+      "group": "DML and executor handoff",
+      "finding": "Parallel HashAgg is not Go's worker model (`tidb-executor-aggregate/src/parallel.rs`): partial workers hand their maps over at a barrier (`TakeMaps`) and final buckets merge as pooled tasks, only for non-empty buckets, where Go's partial workers `shuffleIntermData` one `AggPartialResultMapper` to every final worker and all M final workers merge and send (`final_worker` `task_num` 1 where Go counts 5); memory is charged per Rust group (`PipelineMap`), not Go's mapper bucket growth, empty mappers and worker chunks (`initPartialWorkers` / `initFinalWorkers`): one-group `sum(a)` is 2.79 KB, Go 12.6 KB",
+      "go_owner": "`pkg/executor/aggregate` (`agg_hash_executor.go`, `agg_hash_partial_worker.go`, `agg_hash_final_worker.go`)"
     },
     {
       "id": "E04",
