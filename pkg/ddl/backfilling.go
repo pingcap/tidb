@@ -314,6 +314,7 @@ type backfillWorker struct {
 	wg        *sync.WaitGroup
 }
 
+// newBackfillWorker lets workCtx retire a worker without canceling its active task or results.
 func newBackfillWorker(workCtx, resultCtx context.Context, bf backfiller) *backfillWorker {
 	workCtx, cancel := context.WithCancel(workCtx)
 	return &backfillWorker{
@@ -376,6 +377,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 		}
 
 		taskCtx, err := bf.BackfillData(w.resultCtx, handleRange)
+		failpoint.InjectCall("afterBackfillBatch", task.jobID, w.GetCtx().id, w.workCtx, taskCtx.done, &err)
 		if err != nil {
 			result.err = err
 			return result
@@ -423,6 +425,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 	return result
 }
 
+// sendResult uses resultCtx so retiring a worker does not discard its task result.
 func (w *backfillWorker) sendResult(result *backfillResult) {
 	select {
 	case <-w.resultCtx.Done():
@@ -430,6 +433,7 @@ func (w *backfillWorker) sendResult(result *backfillResult) {
 	}
 }
 
+// run lets the active task report its result before observing worker retirement.
 func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 	logger := logutil.DDLLogger().With(zap.Stringer("worker", w), zap.Int64("jobID", job.ID))
 	var (
@@ -1057,6 +1061,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				cnt++
 
 				if result.err != nil {
+					failpoint.InjectCall("onBackfillTaskError", reorgInfo.ID, result.err)
 					logutil.DDLLogger().Warn("backfill worker failed",
 						zap.Int64("job ID", reorgInfo.ID),
 						zap.Int64("total added count", totalAddedCount),

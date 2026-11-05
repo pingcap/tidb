@@ -19,13 +19,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/owner"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	sqlexecmock "github.com/pingcap/tidb/pkg/util/sqlexec/mock"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
+// TestBackfillWorkerSendsInFlightResultAfterClose separates retirement, complete-range execution and executor cancellation.
 func TestBackfillWorkerSendsInFlightResultAfterClose(t *testing.T) {
 	t.Run("worker downscale preserves result", func(t *testing.T) {
 		workCtx, cancelWork := context.WithCancel(context.Background())
@@ -152,10 +160,12 @@ func TestBackfillWorkerSendsInFlightResultAfterClose(t *testing.T) {
 
 type backfillWorkerTestOwner struct{ owner.Manager }
 
+// IsOwner removes lease changes from the lifecycle fixture.
 func (backfillWorkerTestOwner) IsOwner() bool { return true }
 
 type backfillWorkerTestTable struct{ table.PhysicalTable }
 
+// GetPhysicalID identifies the fake range without creating a persistent table.
 func (backfillWorkerTestTable) GetPhysicalID() int64 { return 1 }
 
 type backfillWorkerTestBackfiller struct {
@@ -163,15 +173,43 @@ type backfillWorkerTestBackfiller struct {
 	backfill func(context.Context, reorgBackfillTask) (backfillTaskContext, error)
 }
 
+// BackfillData lets each case control batch completion and errors.
 func (b *backfillWorkerTestBackfiller) BackfillData(ctx context.Context, task reorgBackfillTask) (backfillTaskContext, error) {
 	return b.backfill(ctx, task)
 }
 
+// AddMetricInfo omits throughput metrics from the lifecycle fixture.
 func (*backfillWorkerTestBackfiller) AddMetricInfo(float64) {}
-func (*backfillWorkerTestBackfiller) GetCtx() *backfillCtx  { return &backfillCtx{} }
-func (*backfillWorkerTestBackfiller) String() string        { return "test" }
 
+// GetCtx supplies minimal worker metadata for the fake backfiller.
+func (*backfillWorkerTestBackfiller) GetCtx() *backfillCtx { return &backfillCtx{} }
+
+// String gives the fake a stable label in worker logs.
+func (*backfillWorkerTestBackfiller) String() string { return "test" }
+
+// backfillWorkerTestSession keeps the resize test independent of real SQL sessions.
+type backfillWorkerTestSession struct {
+	*mock.Context
+	executor sqlexec.RestrictedSQLExecutor
+}
+
+// GetRestrictedSQLExecutor lets the release-8.5 variable loader run against the expected query.
+func (s *backfillWorkerTestSession) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {
+	return s.executor
+}
+
+// TestTxnBackfillExecutorDownscalePreservesInFlightError exercises resize and late-error delivery with a valid session pool.
 func TestTxnBackfillExecutorDownscalePreservesInFlightError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	sqlExec := sqlexecmock.NewMockRestrictedSQLExecutor(ctrl)
+	sqlExec.EXPECT().ExecRestrictedSQL(gomock.Any(), nil, gomock.Any(),
+		variable.TiDBDDLReorgWorkerCount, variable.TiDBDDLReorgBatchSize, variable.TiDBRowFormatVersion).
+		Return(nil, nil, nil).Times(1)
+	resPool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return &backfillWorkerTestSession{Context: mock.NewContext(), executor: sqlExec}, nil
+	}, 1, 1, 0)
+	sessPool := sess.NewSessionPool(resPool)
+	t.Cleanup(sessPool.Close)
 	resultCtx, cancelResult := context.WithCancel(context.Background())
 	t.Cleanup(cancelResult)
 	resultCh := make(chan *backfillResult)
@@ -184,6 +222,8 @@ func TestTxnBackfillExecutorDownscalePreservesInFlightError(t *testing.T) {
 	}
 
 	exec := &txnBackfillExecutor{
+		ctx:       resultCtx,
+		sessPool:  sessPool,
 		reorgInfo: &reorgInfo{Job: &model.Job{ReorgMeta: &model.DDLReorgMeta{}}},
 		workers:   workers,
 		resultCtx: resultCtx,
@@ -202,6 +242,7 @@ func TestTxnBackfillExecutorDownscalePreservesInFlightError(t *testing.T) {
 	}
 }
 
+// TestTxnBackfillExecutorForceCloseUnblocksResult verifies shutdown cancels delivery before waiting for workers.
 func TestTxnBackfillExecutorForceCloseUnblocksResult(t *testing.T) {
 	workCtx, cancelWork := context.WithCancel(context.Background())
 	t.Cleanup(cancelWork)
@@ -262,34 +303,30 @@ func TestTxnBackfillExecutorForceCloseUnblocksResult(t *testing.T) {
 	exec.close(true)
 }
 
+// TestExpectedIngestWorkerCnt covers the release-8.5 reader fanout and concurrency caps.
 func TestExpectedIngestWorkerCnt(t *testing.T) {
 	tests := []struct {
-		concurrency   int
-		avgRowSize    int
-		useGlobalSort bool
-		expReader     int
-		expWriter     int
+		concurrency int
+		avgRowSize  int
+		expReader   int
+		expWriter   int
 	}{
-		// Global sort path
-		{10, 100, true, 10, 10},
-		{20, 500, true, 20, 20},
+		// Without row-size statistics, both worker counts are capped.
+		{10, 0, 5, 7},
+		{40, 0, 16, 16},
+		{1, 0, 1, 2},
 
-		// Non-global sort path, avgRowSize = 0
-		{10, 0, false, 5, 7},
-		{40, 0, false, 16, 16},
-		{1, 0, false, 1, 2},
-
-		// Non-global sort path, various avgRowSize
-		{10, 100, false, 5, 10},
-		{10, 300, false, 10, 10},
-		{10, 600, false, 20, 10},
-		{10, 2000, false, 40, 10},
-		{10, 5000, false, 80, 10},
+		// Row-size estimates vary reader fanout while retaining writer concurrency.
+		{10, 100, 5, 10},
+		{10, 300, 10, 10},
+		{10, 600, 20, 10},
+		{10, 2000, 40, 10},
+		{10, 5000, 80, 10},
 	}
 
 	for _, tt := range tests {
-		reader, writer := expectedIngestWorkerCnt(tt.concurrency, tt.avgRowSize, tt.useGlobalSort)
-		require.Equal(t, tt.expReader, reader, "concurrency: %d, avgRowSize: %d, useGlobalSort: %v", tt.concurrency, tt.avgRowSize, tt.useGlobalSort)
-		require.Equal(t, tt.expWriter, writer, "concurrency: %d, avgRowSize: %d, useGlobalSort: %v", tt.concurrency, tt.avgRowSize, tt.useGlobalSort)
+		reader, writer := expectedIngestWorkerCnt(tt.concurrency, tt.avgRowSize)
+		require.Equal(t, tt.expReader, reader, "concurrency: %d, avgRowSize: %d", tt.concurrency, tt.avgRowSize)
+		require.Equal(t, tt.expWriter, writer, "concurrency: %d, avgRowSize: %d", tt.concurrency, tt.avgRowSize)
 	}
 }

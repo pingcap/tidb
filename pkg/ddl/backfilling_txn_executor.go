@@ -83,6 +83,7 @@ type txnBackfillExecutor struct {
 	closed       bool
 }
 
+// newTxnBackfillExecutor owns the shared context for active tasks and their result delivery.
 func newTxnBackfillExecutor(ctx context.Context, info *reorgInfo, sessPool *sess.Pool,
 	tp backfillerType, tbl table.PhysicalTable,
 	jobCtx *ReorgContext) (backfillExecutor, error) {
@@ -90,12 +91,8 @@ func newTxnBackfillExecutor(ctx context.Context, info *reorgInfo, sessPool *sess
 	if err != nil {
 		return nil, err
 	}
-<<<<<<< HEAD
 	workerCnt := info.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
-=======
-	workerCnt := info.ReorgMeta.GetConcurrency()
 	resultCtx, cancelResult := context.WithCancel(ctx)
->>>>>>> 4fb7a0cda19 (ddl: preserve in-flight backfill errors on worker downscale (#71073))
 	return &txnBackfillExecutor{
 		ctx:          ctx,
 		reorgInfo:    info,
@@ -260,6 +257,7 @@ func (b *txnBackfillExecutor) currentWorkerSize() int {
 	return len(b.workers)
 }
 
+// adjustWorkerSize retires workers without canceling their active tasks or results.
 func (b *txnBackfillExecutor) adjustWorkerSize() error {
 	reorgInfo := b.reorgInfo
 	job := reorgInfo.Job
@@ -339,6 +337,7 @@ func (b *txnBackfillExecutor) adjustWorkerSize() error {
 	return injectCheckBackfillWorkerNum(len(b.workers), b.tp == typeAddIndexMergeTmpWorker)
 }
 
+// close cancels result delivery before waiting when shutdown is forced.
 func (b *txnBackfillExecutor) close(force bool) {
 	if b.closed {
 		return

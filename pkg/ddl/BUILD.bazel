@@ -219,6 +219,7 @@ go_test(
         "attributes_sql_test.go",
         "backfilling_dist_scheduler_test.go",
         "backfilling_test.go",
+        "backfilling_txn_executor_test.go",
         "bdr_test.go",
         "bench_test.go",
         "cancel_test.go",
@@ -323,10 +324,6 @@ go_test(
         "//pkg/meta/autoid",
         "//pkg/meta/metabuild",
         "//pkg/meta/model",
-<<<<<<< HEAD
-=======
-        "//pkg/metrics",
->>>>>>> 4fb7a0cda19 (ddl: preserve in-flight backfill errors on worker downscale (#71073))
         "//pkg/owner",
         "//pkg/parser",
         "//pkg/parser/ast",
@@ -371,6 +368,7 @@ go_test(
         "//pkg/util/mock",
         "//pkg/util/sem",
         "//pkg/util/sqlexec",
+        "//pkg/util/sqlexec/mock",
         "//pkg/util/sqlkiller",
         "//pkg/util/timeutil",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
