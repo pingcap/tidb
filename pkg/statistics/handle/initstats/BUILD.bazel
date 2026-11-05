@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "initstats",
@@ -15,4 +15,13 @@ go_library(
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
+)
+
+go_test(
+    name = "initstats_test",
+    timeout = "short",
+    srcs = ["load_stats_page_test.go"],
+    embed = [":initstats"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
 )
