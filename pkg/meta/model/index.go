@@ -427,6 +427,13 @@ type RegionSplitPolicy struct {
 
 	// Number of regions to split into
 	Regions int64 `json:"regions"`
+
+	// TimeZone is the session time zone that defined this policy. Temporal
+	// bounds are interpreted in this zone when the policy is applied later, so
+	// a DDL worker in another zone reproduces the same split keys.
+	// Empty means the policy was stored before the zone was persisted; the
+	// applying session's zone is used.
+	TimeZone string `json:"time_zone,omitempty"`
 }
 
 // Clone clones RegionSplitPolicy

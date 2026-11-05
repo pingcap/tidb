@@ -9,6 +9,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/gluetikv"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/br/pkg/trace"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/config"
@@ -48,9 +49,6 @@ func runBackupCommand(command *cobra.Command, cmdName string) error {
 	}
 
 	config.UpdateGlobal(func(conf *config.Config) {
-		// Need to be skipped when the cluster has TiDB type coprocessor tasks
-		conf.AdvertiseAddress = config.UnavailableIP
-
 		// No need to cache the coproceesor result
 		conf.TiKVClient.CoprCache.CapacityMB = 0
 	})
@@ -154,6 +152,7 @@ func newFullBackupCommand() *cobra.Command {
 		},
 	}
 	task.DefineFilterFlags(command, acceptAllTables, false)
+	taskrepo.DefineSnapshotRepoWriterFlags(command.Flags())
 	task.DefineBackupEBSFlags(command.PersistentFlags())
 	return command
 }
@@ -169,6 +168,7 @@ func newDBBackupCommand() *cobra.Command {
 		},
 	}
 	task.DefineDatabaseFlags(command)
+	taskrepo.DefineSnapshotRepoWriterFlags(command.Flags())
 	return command
 }
 
@@ -183,6 +183,7 @@ func newTableBackupCommand() *cobra.Command {
 		},
 	}
 	task.DefineTableFlags(command)
+	taskrepo.DefineSnapshotRepoWriterFlags(command.Flags())
 	return command
 }
 

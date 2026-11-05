@@ -22,6 +22,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/mock"
@@ -35,6 +36,7 @@ import (
 	utilmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/mock/gomock"
 )
 
@@ -127,6 +129,56 @@ func (s *importIntoSuite) TestUpdateCurrentTask() {
 	})
 	require.Equal(s.T(), int64(1), sch.currTaskID.Load())
 	require.True(s.T(), sch.disableTiKVImportMode.Load())
+}
+
+type closeTrackedTaskRegister struct {
+	utils.TaskRegister
+	closeCalled bool
+}
+
+func (r *closeTrackedTaskRegister) Close(context.Context) error {
+	r.closeCalled = true
+	return nil
+}
+
+func (s *importIntoSuite) TestSchedulerClose() {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.T().Cleanup(cancel)
+	sch := NewImportScheduler(ctx, &proto.Task{
+		TaskBase: proto.TaskBase{ID: 1},
+	}, scheduler.Param{}).(*importScheduler)
+	clients := make([]*clientv3.Client, 0, 2)
+	registrations := make([]*closeTrackedTaskRegister, 0, 2)
+	for _, taskID := range []int64{1, 2} {
+		client := clientv3.NewCtxClient(context.Background())
+		s.T().Cleanup(func() { _ = client.Close() })
+		clients = append(clients, client)
+		registration := &closeTrackedTaskRegister{}
+		registrations = append(registrations, registration)
+		sch.taskInfoMap.Store(taskID, &taskInfo{
+			taskID:     taskID,
+			etcdClient: client,
+			// Closing the scheduler must not revoke a registration lease that
+			// the next owner may already have adopted.
+			taskRegister: registration,
+			logger:       sch.GetLogger(),
+		})
+	}
+
+	// Owner loss cancels scheduling before the active task reaches a terminal state.
+	cancel()
+	sch.Close()
+	for _, client := range clients {
+		s.ErrorIs(client.Ctx().Err(), context.Canceled)
+	}
+	for _, registration := range registrations {
+		s.False(registration.closeCalled, "scheduler shutdown must preserve the task registration lease")
+	}
+	sch.taskInfoMap.Range(func(_, _ any) bool {
+		s.Fail("closed scheduler must not retain task registrations")
+		return true
+	})
+	sch.Close()
 }
 
 func (s *importIntoSuite) TestSchedulerInit() {

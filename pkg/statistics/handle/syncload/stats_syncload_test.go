@@ -372,6 +372,54 @@ func TestSendLoadRequestsWaitTooLong(t *testing.T) {
 	}
 }
 
+// TestSyncWaitStatsLoadWithFailedResultBeforeTimer tests that SyncWaitStatsLoad still reports an
+// error when the failed result arrives before its own timer fires, so the outcome of a timed-out
+// sync load does not depend on which of the two racing timers fires first. See issue #67629.
+func TestSyncWaitStatsLoadWithFailedResultBeforeTimer(t *testing.T) {
+	originConfig := config.GetGlobalConfig()
+	newConfig := config.NewConfig()
+	newConfig.Performance.StatsLoadConcurrency = -1 // no worker to consume channel
+	newConfig.Performance.StatsLoadQueueSize = 1
+	config.StoreGlobalConfig(newConfig)
+	defer config.StoreGlobalConfig(originConfig)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, primary key(a))")
+	tk.MustExec("insert into t values (1,1),(2,2),(3,3)")
+
+	oriLease := dom.StatsHandle().Lease()
+	dom.StatsHandle().SetLease(1)
+	defer func() {
+		dom.StatsHandle().SetLease(oriLease)
+	}()
+	tk.MustExec("analyze table t")
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	neededColumns := []model.StatsLoadItem{
+		{TableItemID: model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[1].ID, IsIndex: false}, FullLoad: true},
+	}
+	timeout := 50 * time.Millisecond
+	stmtCtx := stmtctx.NewStmtCtx()
+	require.NoError(t, h.SendLoadRequests(stmtCtx, neededColumns, timeout))
+	// Send the same request from an observer statement context. It normally joins the singleflight
+	// call above, so once the observer receives the errored result, the same result has already
+	// been sent to stmtCtx's result channel. Even if the observer starts a new singleflight call,
+	// receiving its result still guarantees the first call has finished delivery.
+	observerCtx := stmtctx.NewStmtCtx()
+	require.NoError(t, h.SendLoadRequests(observerCtx, neededColumns, timeout))
+	require.Len(t, observerCtx.StatsLoad.ResultCh, 1)
+	rs := <-observerCtx.StatsLoad.ResultCh[0]
+	require.Error(t, rs.Err) // no worker handles the request, so it times out
+	// The errored result is waiting in stmtCtx's result channel, so SyncWaitStatsLoad consumes it
+	// instead of hitting its own timer. It must still report the failure.
+	require.Error(t, h.SyncWaitStatsLoad(stmtCtx))
+}
+
 func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

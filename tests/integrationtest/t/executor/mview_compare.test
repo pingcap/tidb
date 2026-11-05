@@ -1,0 +1,153 @@
+use test;
+set tidb_mview_enable = on;
+set global tidb_mview_enable = on;
+set time_zone = '+00:00';
+insert into mysql.tidb(variable_name, variable_value, comment)
+values ('tikv_gc_safe_point', '20060102-15:04:05 +0000', '')
+on duplicate key update variable_value = values(variable_value);
+
+create table t_compare (a int, b int not null);
+insert into t_compare values (null, 10), (1, 20), (1, 30);
+create materialized view log on t_compare (a, b);
+create materialized view mv_compare (_Differ_type_, s, cnt)
+as select a, sum(b), count(*) from t_compare group by a;
+
+# Move past the commit millisecond, then let the captured timestamp become safely historical.
+do sleep(0.01);
+set @compare_ts = now(6);
+do sleep(0.1);
+--replace_regex /timestamp '[^']*'/timestamp '<timestamp>'/ /TSO: [0-9]+/TSO: <tso>/
+compare materialized view mv_compare as of timestamp @compare_ts;
+compare materialized view mv_compare as of timestamp @compare_ts output into table mv_compare_output;
+select count(*) from mv_compare_output;
+select column_name from information_schema.columns
+where table_schema = 'test' and table_name = 'mv_compare_output'
+order by ordinal_position;
+show index from mv_compare_output;
+
+# Base-table writes after the refresh watermark do not make the MV inconsistent.
+insert into t_compare values (1, 40), (2, 50);
+set @compare_ts = now(6);
+do sleep(0.1);
+--replace_regex /timestamp '[^']*'/timestamp '<timestamp>'/ /TSO: [0-9]+/TSO: <tso>/
+compare materialized view mv_compare as of timestamp @compare_ts;
+
+# The comparison remains consistent after both refresh implementations.
+refresh materialized view mv_compare fast;
+do sleep(0.01);
+set @compare_ts = now(6);
+do sleep(0.1);
+--replace_regex /timestamp '[^']*'/timestamp '<timestamp>'/ /TSO: [0-9]+/TSO: <tso>/
+compare materialized view mv_compare as of timestamp @compare_ts;
+refresh materialized view mv_compare complete out of place;
+do sleep(0.01);
+set @compare_ts = now(6);
+do sleep(0.1);
+--replace_regex /timestamp '[^']*'/timestamp '<timestamp>'/ /TSO: [0-9]+/TSO: <tso>/
+compare materialized view mv_compare as of timestamp @compare_ts;
+
+--error 1050
+compare materialized view mv_compare as of timestamp now(6) output into table mv_compare_output;
+--error 1347
+compare materialized view t_compare as of timestamp now(6);
+
+drop table mv_compare_output;
+drop materialized view mv_compare;
+drop materialized view log on t_compare;
+drop table t_compare;
+
+# A NULL BIT payload before a changed BIT value must not hide the difference.
+create table t_compare_bit (id int primary key, g int, b bit(8), index (g, b));
+insert into t_compare_bit values (1, 1, null), (2, 2, b'00000010');
+create materialized view log on t_compare_bit (id, g, b);
+create materialized view mv_compare_bit (g, m, cnt)
+as select /*+ stream_agg() */ g, min(b), count(*) from t_compare_bit group by g;
+set @bit_mview_id = (select tidb_table_id from information_schema.tables
+where table_schema = 'test' and table_name = 'mv_compare_bit');
+set @bit_read_tso = (select last_success_read_tso from mysql.tidb_mview_refresh_info
+where mview_id = @bit_mview_id);
+update t_compare_bit set b = b'00000011' where id = 2;
+refresh materialized view mv_compare_bit complete in place;
+
+# Keep the refreshed MV, but compare it against the previous base-table snapshot.
+update mysql.tidb_mview_refresh_info set last_success_read_tso = @bit_read_tso
+where mview_id = @bit_mview_id;
+do sleep(0.01);
+set @compare_ts = now(6);
+do sleep(0.1);
+--replace_regex /timestamp '[^']*'/timestamp '<timestamp>'/ /TSO: [0-9]+/TSO: <tso>/
+compare materialized view mv_compare_bit as of timestamp @compare_ts;
+compare materialized view mv_compare_bit as of timestamp @compare_ts output into table mv_compare_bit_output;
+select g, hex(m), cnt, _Differ_type_ from mv_compare_bit_output order by g;
+
+drop table mv_compare_bit_output;
+drop materialized view mv_compare_bit;
+drop materialized view log on t_compare_bit;
+drop table t_compare_bit;
+
+# COMPARE privileges are independent of the SHOW/GRANT integration suite.
+drop database if exists mview_compare_privilege_test;
+create database mview_compare_privilege_test;
+use mview_compare_privilege_test;
+create table t (a int not null, b int not null);
+insert into t values (1, 10), (1, 5), (2, 7);
+create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour);
+create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as
+select a, sum(b), count(1) from t group by a;
+
+create user 'u_compare_none'@'%';
+create user 'u_compare_operate'@'%';
+grant operate view on mview_compare_privilege_test.mv to 'u_compare_operate'@'%';
+create user 'u_compare_no_create'@'%';
+grant operate view on mview_compare_privilege_test.mv to 'u_compare_no_create'@'%';
+grant select on mview_compare_privilege_test.t to 'u_compare_no_create'@'%';
+create user 'u_compare_no_insert'@'%';
+grant operate view on mview_compare_privilege_test.mv to 'u_compare_no_insert'@'%';
+grant select on mview_compare_privilege_test.t to 'u_compare_no_insert'@'%';
+grant create on mview_compare_privilege_test.* to 'u_compare_no_insert'@'%';
+create user 'u_compare_output_exists'@'%';
+grant operate view on mview_compare_privilege_test.mv to 'u_compare_output_exists'@'%';
+grant select on mview_compare_privilege_test.t to 'u_compare_output_exists'@'%';
+grant create, insert on mview_compare_privilege_test.* to 'u_compare_output_exists'@'%';
+create table mv_compare_output_exists (a int);
+
+connect (u_compare_none, localhost, u_compare_none,,);
+connection u_compare_none;
+-- error 1142
+compare materialized view mview_compare_privilege_test.mv as of timestamp now();
+disconnect u_compare_none;
+
+connect (u_compare_operate, localhost, u_compare_operate,,mview_compare_privilege_test);
+connection u_compare_operate;
+-- error 1142
+compare materialized view mv as of timestamp now();
+disconnect u_compare_operate;
+
+connect (u_compare_no_create, localhost, u_compare_no_create,,mview_compare_privilege_test);
+connection u_compare_no_create;
+-- error 1142
+compare materialized view mv as of timestamp now() output into table mv_compare_output;
+disconnect u_compare_no_create;
+
+connect (u_compare_no_insert, localhost, u_compare_no_insert,,mview_compare_privilege_test);
+connection u_compare_no_insert;
+-- error 1142
+compare materialized view mv as of timestamp now() output into table mv_compare_output;
+disconnect u_compare_no_insert;
+
+connect (u_compare_output_exists, localhost, u_compare_output_exists,,mview_compare_privilege_test);
+connection u_compare_output_exists;
+-- error 1050
+compare materialized view mv as of timestamp now() output into table mv_compare_output_exists;
+disconnect u_compare_output_exists;
+
+connection default;
+drop user if exists 'u_compare_none'@'%';
+drop user if exists 'u_compare_operate'@'%';
+drop user if exists 'u_compare_no_create'@'%';
+drop user if exists 'u_compare_no_insert'@'%';
+drop user if exists 'u_compare_output_exists'@'%';
+drop database mview_compare_privilege_test;
+use test;
+set global tidb_mview_enable = off;
+set tidb_mview_enable = off;

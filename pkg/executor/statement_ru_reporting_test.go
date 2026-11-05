@@ -43,10 +43,12 @@ func requireStatementRUReportConservation(t *testing.T, finalized statementRUFin
 			engineRU[engine] += result.TotalRU
 		}
 	}
+	engineRU[statementRUTiFlash] *= statementRUTiFlashMultiplier
 	require.Equal(t, finalized.units, total)
 	require.InDelta(t, finalized.engineRU.TiDB, engineRU[statementRUTiDB], 1e-9)
 	require.InDelta(t, finalized.engineRU.TiKV, engineRU[statementRUTiKV], 1e-9)
-	require.InDelta(t, finalized.result.TotalRU, finalized.engineRU.TiDB+finalized.engineRU.TiKV, 1e-9)
+	require.InDelta(t, finalized.engineRU.TiFlash, engineRU[statementRUTiFlash], 1e-9)
+	require.InDelta(t, finalized.result.TotalRU, finalized.engineRU.TiDB+finalized.engineRU.TiKV+finalized.engineRU.TiFlash, 1e-9)
 }
 
 func TestStatementRUReportingModes(t *testing.T) {
@@ -83,12 +85,12 @@ func TestStatementRUReportingModes(t *testing.T) {
 			}
 
 			diagnostics := prometheus.NewRegistry()
-			diagnostics.MustRegister(metrics.RUV3Unit, metrics.RUV3Statements)
-			totalBefore := testutil.ToFloat64(metrics.RUV3Total)
-			sqlTypeBefore := testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("select"))
-			tidbBefore := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues("tidb"))
-			tikvBefore := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues("tikv"))
-			success := metrics.RUV3Statements.WithLabelValues("success", "incomplete")
+			diagnostics.MustRegister(metrics.RUV2Unit, metrics.RUV2Statements)
+			totalBefore := testutil.ToFloat64(metrics.RUV2Total)
+			sqlTypeBefore := testutil.ToFloat64(metrics.RUV2BySQLType.WithLabelValues("select"))
+			tidbBefore := testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues("tidb"))
+			tikvBefore := testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues("tikv"))
+			success := metrics.RUV2Statements.WithLabelValues("success", "incomplete")
 			successBefore := testutil.ToFloat64(success)
 			before, err := diagnostics.Gather()
 			require.NoError(t, err)
@@ -101,10 +103,10 @@ func TestStatementRUReportingModes(t *testing.T) {
 			fixture.stmt.RecordStatementRUFinalOutcome(true)
 			fixture.stmt.finishStatementRU(nil)
 			fixture.stmt.finishStatementRU(nil)
-			require.InDelta(t, finalized.engineRU.TiDB, testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues("tidb"))-tidbBefore, 1e-9)
-			require.InDelta(t, finalized.engineRU.TiKV, testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues("tikv"))-tikvBefore, 1e-9)
-			require.InDelta(t, finalized.result.TotalRU, testutil.ToFloat64(metrics.RUV3Total)-totalBefore, 1e-9)
-			require.InDelta(t, finalized.result.TotalRU, testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("select"))-sqlTypeBefore, 1e-9)
+			require.InDelta(t, finalized.engineRU.TiDB, testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues("tidb"))-tidbBefore, 1e-9)
+			require.InDelta(t, finalized.engineRU.TiKV, testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues("tikv"))-tikvBefore, 1e-9)
+			require.InDelta(t, finalized.result.TotalRU, testutil.ToFloat64(metrics.RUV2Total)-totalBefore, 1e-9)
+			require.InDelta(t, finalized.result.TotalRU, testutil.ToFloat64(metrics.RUV2BySQLType.WithLabelValues("select"))-sqlTypeBefore, 1e-9)
 			require.Equal(t, "ru-test", reporter.group)
 			require.Equal(t, [3]float64{finalized.engineRU.TiKV, finalized.engineRU.TiDB, 0}, reporter.ru)
 			require.Equal(t, 1, reporter.calls)
@@ -123,13 +125,13 @@ func TestStatementRUReportingModes(t *testing.T) {
 
 func TestStatementRUFullReportFreeze(t *testing.T) {
 	t.Run("skip zero-valued series", func(t *testing.T) {
-		original := metrics.RUV3Unit
-		metrics.RUV3Unit = prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "tidb_ruv2_unit_total", Help: "RUv3 units under test.",
+		original := metrics.RUV2Unit
+		metrics.RUV2Unit = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tidb_ruv2_unit_total", Help: "RUv2 units under test.",
 		}, []string{"engine", "opclass", "unit"})
-		t.Cleanup(func() { metrics.RUV3Unit = original })
+		t.Cleanup(func() { metrics.RUV2Unit = original })
 		registry := prometheus.NewRegistry()
-		registry.MustRegister(metrics.RUV3Unit)
+		registry.MustRegister(metrics.RUV2Unit)
 		report := &statementRUFullReport{}
 		report.add(statementRUTiDB, statementRUProjection, ruv2.StmtUnits{CPUWork: 3})
 		report.add(statementRUTiKV, statementRUReader, ruv2.StmtUnits{})
@@ -178,24 +180,24 @@ func TestStatementRUFullReportFreeze(t *testing.T) {
 		engine, operator, unit string
 		want, before           float64
 	}{
-		{"tidb", "hash_agg", metrics.LblRUV3UnitCPUWork, 2, 0},
-		{"tikv", "hash_agg", metrics.LblRUV3UnitScanBytes, 23, 0},
-		{"tikv", "hash_agg", metrics.LblRUV3UnitNetBytes, 29, 0},
-		{"tidb", "sql_frontend", metrics.LblRUV3UnitFrontendCompileBytes, 11, 0},
-		{"tidb", "hash_agg", metrics.LblRUV3UnitHashStateRows, 3, 0},
-		{"tidb", "hash_agg", metrics.LblRUV3UnitJoinOutputRows, 5, 0},
-		{"tidb", "write", metrics.LblRUV3UnitWriteStatement, 1, 0},
-		{"tidb", "hash_agg", metrics.LblRUV3UnitOperatorNum, 7, 0},
-		{"tikv", "kv_write", metrics.LblRUV3UnitWriteKeys, 31, 0},
-		{"tikv", "kv_write", metrics.LblRUV3UnitWriteBytes, 37, 0},
+		{"tidb", "hash_agg", metrics.LblRUV2UnitCPUWork, 2, 0},
+		{"tikv", "hash_agg", metrics.LblRUV2UnitScanBytes, 23, 0},
+		{"tikv", "hash_agg", metrics.LblRUV2UnitNetBytes, 29, 0},
+		{"tidb", "sql_frontend", metrics.LblRUV2UnitFrontendCompileBytes, 11, 0},
+		{"tidb", "hash_agg", metrics.LblRUV2UnitHashStateRows, 3, 0},
+		{"tidb", "hash_agg", metrics.LblRUV2UnitJoinOutputRows, 5, 0},
+		{"tidb", "write", metrics.LblRUV2UnitWriteStatement, 1, 0},
+		{"tidb", "hash_agg", metrics.LblRUV2UnitOperatorNum, 7, 0},
+		{"tikv", "kv_write", metrics.LblRUV2UnitWriteKeys, 31, 0},
+		{"tikv", "kv_write", metrics.LblRUV2UnitWriteBytes, 37, 0},
 	}
 	for i := range checks {
 		c := &checks[i]
-		c.before = testutil.ToFloat64(metrics.RUV3Unit.WithLabelValues(c.engine, c.operator, c.unit))
+		c.before = testutil.ToFloat64(metrics.RUV2Unit.WithLabelValues(c.engine, c.operator, c.unit))
 	}
 	publishStatementRUMetricsSafely(first)
 	for _, c := range checks {
-		require.InDelta(t, c.want, testutil.ToFloat64(metrics.RUV3Unit.WithLabelValues(c.engine, c.operator, c.unit))-c.before, 1e-9, c.unit)
+		require.InDelta(t, c.want, testutil.ToFloat64(metrics.RUV2Unit.WithLabelValues(c.engine, c.operator, c.unit))-c.before, 1e-9, c.unit)
 	}
 	// The same input has exactly the same result without the full report.
 	calculator.report = nil
@@ -233,10 +235,10 @@ func TestStatementRUReportingFailures(t *testing.T) {
 				if tc.prepare != nil {
 					tc.prepare(fixture)
 				}
-				counter := metrics.RUV3Statements.WithLabelValues(tc.status, string(tc.reason))
+				counter := metrics.RUV2Statements.WithLabelValues(tc.status, string(tc.reason))
 				before := testutil.ToFloat64(counter)
 				billable := prometheus.NewRegistry()
-				billable.MustRegister(metrics.RUV3ByEngine, metrics.RUV3Total, metrics.RUV3Unit)
+				billable.MustRegister(metrics.RUV2ByEngine, metrics.RUV2Total, metrics.RUV2Unit)
 				beforeUnits, err := billable.Gather()
 				require.NoError(t, err)
 				fixture.stmt.RecordStatementRUFinalOutcome(true)
