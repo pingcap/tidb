@@ -605,6 +605,13 @@ pub(crate) fn observe_region_cache_scan(duration: Duration, succeeded: bool) {
         .inc();
 }
 
+/// Source `RegionCacheCounterWithInvalidateRegionFromCacheOK`.
+pub(crate) fn observe_region_cache_invalidate_region() {
+    TIKV_REGION_CACHE_OPERATIONS
+        .with_label_values(&["invalidate_region_from_cache", "ok"])
+        .inc();
+}
+
 /// Source `LoadRegionCacheHistogramWithBatchScanRegions` and paired result
 /// counter for each PD BatchScanRegions attempt.
 pub(crate) fn observe_region_cache_batch_scan(duration: Duration, succeeded: bool) {

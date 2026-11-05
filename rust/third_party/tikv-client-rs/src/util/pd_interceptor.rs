@@ -240,6 +240,14 @@ where
         self.inner.invalidate_region_cache(id).await;
     }
 
+    async fn invalidate_cached_region_with_reason(
+        &self,
+        id: RegionVerId,
+        reason: crate::region_cache::InvalidReason,
+    ) {
+        self.inner.invalidate_cached_region_with_reason(id, reason).await;
+    }
+
     async fn invalidate_store_cache(&self, store_id: StoreId) {
         self.inner.invalidate_store_cache(store_id).await;
     }

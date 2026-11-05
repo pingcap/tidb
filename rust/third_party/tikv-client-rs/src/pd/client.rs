@@ -576,6 +576,15 @@ pub trait PdClient: Send + Sync + 'static {
 
     async fn invalidate_region_cache(&self, ver_id: RegionVerId);
 
+    /// Source `InvalidateCachedRegionWithReason`.
+    async fn invalidate_cached_region_with_reason(
+        &self,
+        ver_id: RegionVerId,
+        _reason: crate::region_cache::InvalidReason,
+    ) {
+        self.invalidate_region_cache(ver_id).await;
+    }
+
     async fn invalidate_store_cache(&self, store_id: StoreId);
 
     /// Closes an address only if its cached connection generation is no newer
@@ -1766,6 +1775,16 @@ where
 
     async fn invalidate_region_cache(&self, ver_id: RegionVerId) {
         self.region_cache.invalidate_region_cache(ver_id).await
+    }
+
+    async fn invalidate_cached_region_with_reason(
+        &self,
+        ver_id: RegionVerId,
+        reason: crate::region_cache::InvalidReason,
+    ) {
+        self.region_cache
+            .invalidate_cached_region_with_reason(ver_id, reason)
+            .await
     }
 
     async fn invalidate_store_cache(&self, store_id: StoreId) {

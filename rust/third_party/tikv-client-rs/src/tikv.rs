@@ -52,7 +52,7 @@ pub use crate::region::{RegionId, RegionVerId, RegionWithLeader, StoreId};
 pub use crate::region_cache::StoreLiveness;
 pub use crate::region_cache::{
     change_pd_region_meta_circuit_breaker_settings, set_region_cache_ttl_secs,
-    set_region_cache_ttl_with_jitter, PdRegionMetaCircuitBreakerSettings, RegionCache,
+    set_region_cache_ttl_with_jitter, InvalidReason, PdRegionMetaCircuitBreakerSettings, RegionCache,
     TiFlashLabelFilter, TiFlashRpcContextUnavailableDetail, TiFlashRpcContextUnavailableReason,
     TiFlashSelectionError,
 };

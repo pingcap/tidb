@@ -112,7 +112,7 @@
       "id": "M04",
       "status": "partial",
       "group": "TiFlash and MPP",
-      "finding": "`pkg/executor/mppcoordmanager` (`MPPCoordinatorManager`: coordinator registration, `detectAndDelete` expiry, the server address) and the RPC server's `ReportMPPTaskStatus` have no port, so TiFlash's task-status reports reach no coordinator; and the native client's region cache drops an invalidated region (`invalidate_region_cache`) where client-go marks it with an `InvalidReason` (`InvalidateCachedRegionWithReason`, `EpochNotMatch` for TiFlash's stale regions) and keeps it, which `insertRegionToCache` reads to move a `NoLeader` region's reload to the next TiKV peer",
+      "finding": "`pkg/executor/mppcoordmanager` (`MPPCoordinatorManager`: coordinator registration, `detectAndDelete` expiry, the server address) and the RPC server's `ReportMPPTaskStatus` have no port, so TiFlash's task-status reports reach no coordinator; Go's coordinator only asks TiFlash for reports when its plan has a Limit above the table reader (`needReportExecutionSummary`), which the single-fragment scan never builds (M01)",
       "go_owner": "`pkg/executor/internal/mpp`"
     },
     {

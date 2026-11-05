@@ -2488,7 +2488,9 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
             // the Raft group is in an election, but it's possible that the peer is
             // isolated and removed from the Raft group. So it's necessary to reload
             // the region from PD.
-            pd_client.invalidate_region_cache(ver_id).await;
+            pd_client
+                .invalidate_cached_region_with_reason(ver_id, crate::region_cache::InvalidReason::NoLeader)
+                .await;
             Ok(RegionErrorRetry::Backoff(BO_REGION_SCHEDULING))
         }
     } else if e.disk_full.is_some() {
@@ -2619,7 +2621,9 @@ pub(crate) async fn on_region_epoch_not_match<PdC: PdClient>(
 ) -> Result<EpochNotMatchOutcome> {
     let ver_id = region_store.region_with_leader.ver_id();
     if error.current_regions.is_empty() {
-        pd_client.invalidate_region_cache(ver_id).await;
+        pd_client
+            .invalidate_cached_region_with_reason(ver_id, crate::region_cache::InvalidReason::EpochNotMatch)
+            .await;
         return Ok(EpochNotMatchOutcome::Stop);
     }
 
@@ -2660,7 +2664,9 @@ pub(crate) async fn on_region_epoch_not_match<PdC: PdClient>(
             })
     });
     if !preserves_old_region {
-        pd_client.invalidate_region_cache(ver_id).await;
+        pd_client
+            .invalidate_cached_region_with_reason(ver_id, crate::region_cache::InvalidReason::EpochNotMatch)
+            .await;
     }
     let replacements = error
         .current_regions
@@ -5447,6 +5453,43 @@ mod test {
         assert!(matches!(result, Err(Error::RegionError(_))));
         assert_eq!(pd_client.invalidated_regions(), vec![ver_id]);
         assert!(pd_client.closed_client_addresses().is_empty());
+    }
+
+    /// Source `onNotLeader` (`InvalidateCachedRegionWithReason(NoLeader)`
+    /// for a NotLeader without a leader) and `OnRegionEpochNotMatch`
+    /// (`EpochNotMatch`); other region errors invalidate with `Other`.
+    #[tokio::test]
+    async fn region_errors_invalidate_with_gos_reasons() {
+        use crate::region_cache::InvalidReason;
+        let reason_of = |error: errorpb::Error| async move {
+            let pd_client = Arc::new(MockPdClient::default());
+            let _ = handle_region_error(pd_client.clone(), error, region_store()).await;
+            pd_client.invalidation_reasons()
+        };
+        assert_eq!(
+            reason_of(errorpb::Error {
+                not_leader: Some(errorpb::NotLeader::default()),
+                ..Default::default()
+            })
+            .await,
+            [InvalidReason::NoLeader]
+        );
+        assert_eq!(
+            reason_of(errorpb::Error {
+                epoch_not_match: Some(errorpb::EpochNotMatch::default()),
+                ..Default::default()
+            })
+            .await,
+            [InvalidReason::EpochNotMatch]
+        );
+        assert_eq!(
+            reason_of(errorpb::Error {
+                region_not_found: Some(Default::default()),
+                ..Default::default()
+            })
+            .await,
+            [InvalidReason::Other]
+        );
     }
 
     #[tokio::test]

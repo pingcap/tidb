@@ -36,10 +36,10 @@ Hard requirements remain in the repository root `AGENTS.md`.
 - `pkg/server/`
 - Typical changes: session lifecycle, statement context behavior, protocol-level behavior.
 - Rust server entrypoint: `rust/crates/tidb-server/src/lib.rs`. TiKV and
-  unistore use `cluster_session_node` for ordinary SQL sessions and the shared
-  catalog lifecycle; storage selection does not select a separate SQL engine.
-  Shared bootstrap, schema reload and shutdown helpers live in
-  `rust/crates/tidb-server/src/real_tikv_node/`.
+  unistore use `rust/crates/tidb-session/src/domain/cluster_session_node/` for
+  ordinary SQL sessions and the shared catalog lifecycle; storage selection
+  does not select a separate SQL engine. Shared bootstrap, schema reload and
+  shutdown helpers live in `rust/crates/tidb-session/src/domain/real_tikv_node/`.
 
 ### DDL and metadata
 - `pkg/ddl/`
@@ -58,9 +58,10 @@ Hard requirements remain in the repository root `AGENTS.md`.
 ### Domain and statistics
 - `pkg/domain/`
 - `pkg/statistics/`
-- Rust statistics maintenance: `rust/crates/tidb-server/src/cluster_session_node/stats_maintenance.rs`
-  owns the positive-lease GC, health and cache-eviction lifetime for both stores;
-  it consumes shared statistics initialization from `rust/crates/tidb-exec/src/stats_watch.rs`.
+- Rust statistics maintenance: `rust/crates/tidb-domain-core/src/domain/stats_maintenance.rs`
+  (Go `Domain.gcStatsWorker`) owns the positive-lease GC, health and
+  cache-eviction lifetime for both stores; it consumes shared statistics
+  initialization from `rust/crates/tidb-stats-handle-syncload/src/stats_watch.rs`.
 - Typical changes: schema/statistics lifecycle, cardinality/estimation behavior.
 
 ### Parser and AST

@@ -95,6 +95,8 @@ pub struct MockPdClient {
     #[new(default)]
     invalidated_regions: Arc<Mutex<Vec<RegionVerId>>>,
     #[new(default)]
+    invalidation_reasons: Arc<Mutex<Vec<crate::region_cache::InvalidReason>>>,
+    #[new(default)]
     closed_client_addresses: Arc<Mutex<Vec<String>>>,
     #[new(default)]
     bucket_updates: BucketUpdates,
@@ -158,6 +160,7 @@ impl MockPdClient {
             timestamp_sequence: Arc::default(),
             epoch_not_match_regions: Arc::default(),
             invalidated_regions: Arc::default(),
+            invalidation_reasons: Arc::default(),
             closed_client_addresses: Arc::default(),
             bucket_updates: Arc::default(),
             keyspace_meta: Arc::default(),
@@ -253,6 +256,11 @@ impl MockPdClient {
 
     pub(crate) fn invalidated_regions(&self) -> Vec<RegionVerId> {
         self.invalidated_regions.lock().unwrap().clone()
+    }
+
+    /// The reason of each invalidation, in order.
+    pub(crate) fn invalidation_reasons(&self) -> Vec<crate::region_cache::InvalidReason> {
+        self.invalidation_reasons.lock().unwrap().clone()
     }
 
     pub(crate) fn closed_client_addresses(&self) -> Vec<String> {
@@ -453,7 +461,17 @@ impl PdClient for MockPdClient {
     }
 
     async fn invalidate_region_cache(&self, ver_id: crate::region::RegionVerId) {
+        self.invalidate_cached_region_with_reason(ver_id, crate::region_cache::InvalidReason::Other)
+            .await;
+    }
+
+    async fn invalidate_cached_region_with_reason(
+        &self,
+        ver_id: crate::region::RegionVerId,
+        reason: crate::region_cache::InvalidReason,
+    ) {
         self.invalidated_regions.lock().unwrap().push(ver_id);
+        self.invalidation_reasons.lock().unwrap().push(reason);
     }
 
     async fn invalidate_store_cache(&self, _store_id: crate::region::StoreId) {}

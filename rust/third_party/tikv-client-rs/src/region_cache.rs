@@ -69,6 +69,44 @@ const NEED_DELAYED_RELOAD_READY: u8 = 1 << 3;
 pub(crate) type HealthFeedbackCallback =
     Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>> + Send + Sync>;
 
+/// Source `expiredTTL`: the TTL an invalidated region gets.
+const EXPIRED_TTL: i64 = -1;
+
+/// Source `InvalidReason` is the reason why a cached region is invalidated.
+/// The region cache may take different strategies to handle different
+/// reasons. For example, when a cached region is invalidated due to no
+/// leader, region cache will always access to a different peer.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum InvalidReason {
+    /// The cached region is valid.
+    #[default]
+    Ok,
+    /// Invalidated due to no leader.
+    NoLeader,
+    /// Invalidated due to region not found in the store.
+    RegionNotFound,
+    /// Invalidated due to epoch not match.
+    EpochNotMatch,
+    /// Invalidated due to store not found in PD.
+    StoreNotFound,
+    /// Invalidated due to other reasons, e.g., the store is removed from the
+    /// cluster, fail to send requests to the store.
+    Other,
+}
+
+impl std::fmt::Display for InvalidReason {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Ok => "Ok",
+            Self::Other => "Other",
+            Self::EpochNotMatch => "EpochNotMatch",
+            Self::RegionNotFound => "RegionNotFound",
+            Self::StoreNotFound => "StoreNotFound",
+            Self::NoLeader => "NoLeader",
+        })
+    }
+}
+
 /// Cache-local state that client-go keeps beside immutable PD region metadata.
 #[derive(Clone, Debug)]
 struct CachedRegion {
@@ -86,6 +124,8 @@ struct CachedRegion {
     /// Last forwarding proxy that completed successfully for this cached
     /// region. Source prefers it before walking the remaining replicas.
     proxy_store_id: Option<StoreId>,
+    /// Source `Region.invalidReason`: why the region is invalidated.
+    invalid_reason: InvalidReason,
 }
 
 impl CachedRegion {
@@ -102,6 +142,19 @@ impl CachedRegion {
             sync_flags,
             tiflash_cursor: Arc::new(AtomicUsize::new(0)),
             proxy_store_id: None,
+            invalid_reason: InvalidReason::Ok,
+        }
+    }
+
+    /// Source `Region.invalidate` invalidates a region, next time it will got
+    /// null result. Only the first reason is kept.
+    fn invalidate(&mut self, reason: InvalidReason, count: bool) {
+        if self.invalid_reason == InvalidReason::Ok {
+            self.invalid_reason = reason;
+            if count {
+                crate::stats::observe_region_cache_invalidate_region();
+            }
+            self.ttl = EXPIRED_TTL;
         }
     }
 
@@ -1611,11 +1664,11 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 Err(error) => Err(error),
             };
             return match loaded {
-                Ok(region) => {
+                Ok(mut region) => {
                     crate::trace::client_span_event(|| {
                         format!("load region {} from pd, due to need-reload", region.id())
                     });
-                    self.add_region(region.clone()).await;
+                    self.insert_region_to_cache(&mut region).await;
                     Ok(region)
                 }
                 Err(_) => {
@@ -1701,8 +1754,8 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 ),
             )
             .await?;
-        let region = self.prepare_region_from_pd(region).await?;
-        self.add_region(region.clone()).await;
+        let mut region = self.prepare_region_from_pd(region).await?;
+        self.insert_region_to_cache(&mut region).await;
         Ok(region)
     }
 
@@ -1757,11 +1810,11 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 Err(error) => Err(error),
             };
             return match loaded {
-                Ok(region) => {
+                Ok(mut region) => {
                     crate::trace::client_span_event(|| {
                         format!("load region {} from pd, due to need-reload", region.id())
                     });
-                    self.add_region(region.clone()).await;
+                    self.insert_region_to_cache(&mut region).await;
                     Ok(region)
                 }
                 Err(_) => {
@@ -1816,8 +1869,8 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                         Err(error) => Err(error),
                     };
                     return match loaded {
-                        Ok(region) => {
-                            self.add_region(region.clone()).await;
+                        Ok(mut region) => {
+                            self.insert_region_to_cache(&mut region).await;
                             Ok(region)
                         }
                         Err(_) => {
@@ -1861,8 +1914,8 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         let region =
             pd_region_meta_call(self.inner_client.clone().get_region_by_id_with_buckets(id))
                 .await?;
-        let region = self.prepare_region_from_pd(region).await?;
-        self.add_region(region.clone()).await;
+        let mut region = self.prepare_region_from_pd(region).await?;
+        self.insert_region_to_cache(&mut region).await;
         Ok(region)
     }
 
@@ -1929,11 +1982,11 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         let region = self
             .query_region_with_backoff(&key, previous, false, backoffer)
             .await?;
-        let region = self.prepare_region_from_pd(region).await?;
+        let mut region = self.prepare_region_from_pd(region).await?;
         crate::trace::client_span_event(|| {
             format!("load region {} from pd, due to cache-miss", region.id())
         });
-        if self.add_region(region.clone()).await {
+        if self.insert_region_to_cache(&mut region).await {
             return Ok(region);
         }
         // findRegionByKey retries a rejected cache insertion once. Keep the
@@ -1941,8 +1994,8 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         let region = self
             .query_region_with_backoff(&key, previous, true, backoffer)
             .await?;
-        let region = self.prepare_region_from_pd(region).await?;
-        self.add_region(region.clone()).await;
+        let mut region = self.prepare_region_from_pd(region).await?;
+        self.insert_region_to_cache(&mut region).await;
         Ok(region)
     }
 
@@ -2192,8 +2245,8 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             }
             let mut prepared_regions = Vec::with_capacity(valid_regions.len());
             for region in valid_regions {
-                let region = self.prepare_region_from_pd(region).await?;
-                self.add_region(region.clone()).await;
+                let mut region = self.prepare_region_from_pd(region).await?;
+                self.insert_region_to_cache(&mut region).await;
                 prepared_regions.push(region);
             }
             return Ok(prepared_regions);
@@ -2363,8 +2416,8 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             }
             let mut prepared_regions = Vec::with_capacity(valid_regions.len());
             for region in valid_regions {
-                let region = self.prepare_region_from_pd(region).await?;
-                self.add_region(region.clone()).await;
+                let mut region = self.prepare_region_from_pd(region).await?;
+                self.insert_region_to_cache(&mut region).await;
                 prepared_regions.push(region);
             }
             return Ok(prepared_regions);
@@ -2700,12 +2753,12 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             pd_region_meta_call(self.inner_client.clone().get_region_by_id_with_buckets(id)),
         )
         .await;
-        let result = match loaded {
+        let mut result = match loaded {
             Ok(region) => self.prepare_region_from_pd(region).await,
             Err(error) => Err(error),
         };
-        if let Ok(region) = &result {
-            self.add_region(region.clone()).await;
+        if let Ok(region) = &mut result {
+            self.insert_region_to_cache(region).await;
         }
 
         // Notify waiters even when PD failed. Leaving the singleflight entry
@@ -2762,6 +2815,13 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
     /// delayed PD response must not replace a newer version, and a region whose
     /// end key is empty intersects every following key.
     pub async fn add_region(&self, mut region: RegionWithLeader) -> bool {
+        self.insert_region_to_cache(&mut region).await
+    }
+
+    /// Source `insertRegionToCache`: caches `region`, which takes the
+    /// runtime state its predecessor leaves (buckets, the working peer after
+    /// no-leader), so the caller routes with what was cached.
+    pub(crate) async fn insert_region_to_cache(&self, region: &mut RegionWithLeader) -> bool {
         let store_epochs = {
             let stores = self.store_cache.read().unwrap();
             region
@@ -2841,14 +2901,30 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             .key_to_ver_id
             .iter()
             .find_map(|(_, ver_id)| to_be_removed.contains(ver_id).then(|| ver_id.clone()));
-        let inherited_state = first_intersected
-            .and_then(|ver_id| cache.ver_id_to_region.get(&ver_id))
-            .map(|cached| {
-                (
-                    cached.tiflash_cursor.load(Ordering::Relaxed),
-                    cached.region.buckets.clone(),
-                )
+        let first_intersected_region = first_intersected
+            .as_ref()
+            .and_then(|ver_id| cache.ver_id_to_region.get(ver_id));
+        // Source: always try a different peer if the invalid reason of the
+        // old cached region is no-leader (a leader may step down as a
+        // learner during a conf change, and with hibernate regions PD's
+        // leader stays stale until requests reach the followers).
+        if let Some(old_region) =
+            first_intersected_region.filter(|cached| cached.invalid_reason == InvalidReason::NoLeader)
+        {
+            let old_work_tikv_idx = old_region.region.leader.as_ref().map_or(0, |leader| {
+                self.access_index(&old_region.region, leader, EndpointType::TiKv)
             });
+            let tikv_peers = self.access_peers(region, EndpointType::TiKv);
+            if !tikv_peers.is_empty() {
+                region.leader = Some(tikv_peers[(old_work_tikv_idx + 1) % tikv_peers.len()].clone());
+            }
+        }
+        let inherited_state = first_intersected_region.map(|cached| {
+            (
+                cached.tiflash_cursor.load(Ordering::Relaxed),
+                cached.region.buckets.clone(),
+            )
+        });
         let inherited_tiflash_cursor = inherited_state.as_ref().map(|state| state.0);
         if let Some(inherited_buckets) = inherited_state.and_then(|state| state.1) {
             if region
@@ -2871,7 +2947,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         }
         cache.key_to_ver_id.insert(start_key, new_ver_id.clone());
         cache.id_to_ver_id.insert(region.id(), new_ver_id.clone());
-        let cached_region = CachedRegion::new(region, store_epochs, now_epoch_secs());
+        let cached_region = CachedRegion::new(region.clone(), store_epochs, now_epoch_secs());
         if let Some(cursor) = inherited_tiflash_cursor {
             cached_region
                 .tiflash_cursor
@@ -2907,16 +2983,13 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 .expect("cached region disappeared while write-locked");
             region.region.leader = Some(leader);
         } else {
-            let region = cache
+            // Source: invalidate region cache due to cannot find peer when
+            // updating leader.
+            cache
                 .ver_id_to_region
-                .remove(&ver_id)
-                .expect("cached region disappeared while write-locked");
-            let id = region.region.id();
-            let start_key = region.region.start_key();
-            cache.key_to_ver_id.remove(&start_key);
-            if cache.id_to_ver_id.get(&id) == Some(&ver_id) {
-                cache.id_to_ver_id.remove(&id);
-            }
+                .get_mut(&ver_id)
+                .expect("cached region disappeared while write-locked")
+                .invalidate(InvalidReason::StoreNotFound, true);
         }
 
         Ok(())
@@ -3001,16 +3074,34 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         }));
     }
 
+    /// Source `InvalidateCachedRegion`.
     pub async fn invalidate_region_cache(&self, ver_id: crate::region::RegionVerId) {
+        self.invalidate_cached_region_with_reason(ver_id, InvalidReason::Other)
+            .await;
+    }
+
+    /// Source `InvalidateCachedRegionWithReason`: the cached region stays,
+    /// expired, so the next access reloads it and the reload can act on the
+    /// reason.
+    pub async fn invalidate_cached_region_with_reason(
+        &self,
+        ver_id: crate::region::RegionVerId,
+        reason: InvalidReason,
+    ) {
         let mut cache = self.region_cache.write().await;
-        let region_entry = cache.ver_id_to_region.get(&ver_id);
-        if let Some(region) = region_entry {
-            let id = region.region.id();
-            let start_key = region.region.start_key();
-            cache.ver_id_to_region.remove(&ver_id);
-            cache.id_to_ver_id.remove(&id);
-            cache.key_to_ver_id.remove(&start_key);
+        if let Some(cached_region) = cache.ver_id_to_region.get_mut(&ver_id) {
+            cached_region.invalidate(reason, true);
         }
+    }
+
+    /// The reason the cached region `ver_id` was invalidated, if cached.
+    pub async fn invalid_reason(&self, ver_id: &crate::region::RegionVerId) -> Option<InvalidReason> {
+        self.region_cache
+            .read()
+            .await
+            .ver_id_to_region
+            .get(ver_id)
+            .map(|cached_region| cached_region.invalid_reason)
     }
 
     pub(crate) async fn mark_region_reload_on_access(&self, ver_id: &RegionVerId) -> bool {
@@ -3269,6 +3360,30 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 })
             })
             .count()
+    }
+
+    /// Source `regionStore.accessIndex[mode]`'s peers: region peer order
+    /// without unroutable peers and stores of the other endpoint class.
+    pub(crate) fn access_peers(
+        &self,
+        region: &RegionWithLeader,
+        endpoint_type: EndpointType,
+    ) -> Vec<metapb::Peer> {
+        let stores = self.store_cache.read().unwrap();
+        let selected_is_tiflash = endpoint_type.is_tiflash_related();
+        region
+            .region
+            .peers
+            .iter()
+            .filter(|peer| !is_unroutable_peer(region, peer))
+            .filter(|peer| {
+                stores
+                    .get(&peer.store_id)
+                    .is_some_and(|store| EndpointType::from_store(&store.meta).is_tiflash_related())
+                    == selected_is_tiflash
+            })
+            .cloned()
+            .collect()
     }
 
     /// Returns the selected peer's index in client-go's endpoint-specific
@@ -4961,6 +5076,76 @@ mod test {
         );
         assert_eq!(end_client.get_region_with_buckets_count.load(SeqCst), 1);
         Ok(())
+    }
+
+    /// Source `TestSwitchPeerWhenNoLeader`: a region invalidated for no
+    /// leader keeps its reason, and its reload works on the next TiKV peer,
+    /// cycling through every peer.
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestSwitchPeerWhenNoLeader() {
+        let client = Arc::new(MockRetryClient::default());
+        let mut three_peers = region_with_leader(1, b"", b"");
+        three_peers.region.peers = (1..=3)
+            .map(|store_id| metapb::Peer {
+                id: 10 + store_id,
+                store_id,
+                ..Default::default()
+            })
+            .collect();
+        three_peers.leader = three_peers.region.peers.first().cloned();
+        client.regions.lock().await.insert(1, three_peers);
+        let cache = RegionCache::new(client.clone());
+
+        let mut previous: Option<metapb::Peer> = None;
+        for i in 0..=3 {
+            let located = cache.get_region_by_key(&Key::from(b"a".to_vec())).await.unwrap();
+            let leader = located.leader.clone().expect("a working peer");
+            match &previous {
+                None => assert_eq!(i, 0),
+                Some(previous) => assert_ne!(previous, &leader),
+            }
+            cache
+                .invalidate_cached_region_with_reason(located.ver_id(), super::InvalidReason::NoLeader)
+                .await;
+            assert_eq!(cache.invalid_reason(&located.ver_id()).await, Some(super::InvalidReason::NoLeader));
+            previous = Some(leader);
+        }
+        // The fifth lookup wraps back to the first peer.
+        let located = cache.get_region_by_key(&Key::from(b"a".to_vec())).await.unwrap();
+        assert_eq!(located.leader.unwrap().store_id, 2);
+    }
+
+    /// Source `Region.invalidate` / `InvalidateCachedRegionWithReason`: the
+    /// region stays cached, expired, with the first reason only, and the
+    /// next lookup reloads it from PD.
+    #[tokio::test]
+    async fn invalidated_regions_stay_cached_with_their_first_reason() {
+        let client = Arc::new(MockRetryClient::default());
+        client.regions.lock().await.insert(1, region_with_leader(1, b"", b""));
+        let cache = RegionCache::new(client.clone());
+        let located = cache.get_region_by_key(&Key::from(b"a".to_vec())).await.unwrap();
+        let loads = client.get_region_count.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(cache.invalid_reason(&located.ver_id()).await, Some(super::InvalidReason::Ok));
+
+        cache
+            .invalidate_cached_region_with_reason(located.ver_id(), super::InvalidReason::EpochNotMatch)
+            .await;
+        cache.invalidate_region_cache(located.ver_id()).await;
+        assert_eq!(
+            cache.invalid_reason(&located.ver_id()).await,
+            Some(super::InvalidReason::EpochNotMatch)
+        );
+        assert_eq!(
+            cache.region_cache.read().await.ver_id_to_region[&located.ver_id()].ttl,
+            super::EXPIRED_TTL
+        );
+        // Source `GetCachedRegionWithRLock` still answers the invalid region.
+        assert!(cache.get_cached_region(&located.ver_id()).await.is_some());
+        cache.get_region_by_key(&Key::from(b"a".to_vec())).await.unwrap();
+        assert_eq!(client.get_region_count.load(std::sync::atomic::Ordering::SeqCst), loads + 1);
+        assert_eq!(cache.invalid_reason(&located.ver_id()).await, Some(super::InvalidReason::Ok));
+        assert_eq!(super::InvalidReason::NoLeader.to_string(), "NoLeader");
     }
 
     #[tokio::test]

@@ -639,11 +639,10 @@ async fn invalidate_mpp_retry_regions<S: tikv_client::PdClient>(
     let pd = store.store().pd_client();
     for region in retries {
         if let Some(epoch) = &region.region_epoch {
-            pd.invalidate_region_cache(tikv_client::tikv::new_region_ver_id(
-                region.id,
-                epoch.conf_ver,
-                epoch.version,
-            ))
+            pd.invalidate_cached_region_with_reason(
+                tikv_client::tikv::new_region_ver_id(region.id, epoch.conf_ver, epoch.version),
+                tikv_client::tikv::InvalidReason::EpochNotMatch,
+            )
             .await;
         }
     }

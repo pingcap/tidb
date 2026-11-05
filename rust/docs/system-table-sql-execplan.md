@@ -58,7 +58,7 @@ raw rows. Go's order (`bootstrapSessionImpl`):
 The Rust builders (`tidb-server/src/cluster_stack.rs`,
 `tidb-session/src/domain/unistore_node.rs`) build the privilege, sysvar and
 statistics loaders before `Domain::new`. The binding cache already follows
-Go (`attach_binding_sessions` after the domain); the other loaders take the
+Go (`init_binding_handle` after the domain); the other loaders take the
 same shape: the domain over the empty live tables, then each loop attached
 to its session before the node serves.
 
