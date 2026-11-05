@@ -4196,9 +4196,9 @@ func (e *executor) dropTableObject(
 			if referredFK := checkTableHasForeignKeyReferred(is, tn.Schema.L, tn.Name.L, objectIdents, fkCheck); referredFK != nil {
 				return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tn.Name, referredFK.ChildFKName, referredFK.ChildTable))
 			}
-			if fkCheck {
-				objects = orderDropTableObjectsByForeignKey(is, objects)
-			}
+		}
+		if fkCheck {
+			objects = orderDropTableObjectsByForeignKey(is, objects)
 		}
 	case viewObject:
 		dropExistErr = infoschema.ErrTableDropExists
@@ -4318,8 +4318,6 @@ func (e *executor) dropTableObject(
 	return nil
 }
 
-<<<<<<< HEAD
-=======
 // orderDropTableObjectsByForeignKey orders children before their referenced
 // parents. Each table is dropped by an independent DDL job, so this prevents a
 // referring child from being renamed between an earlier parent job and its own
@@ -4388,63 +4386,6 @@ func orderDropTableObjectsByForeignKey(is infoschema.InfoSchema, objects []*ast.
 	return ordered
 }
 
-func buildDropTableInvolvingSchemaInfo(
-	ctx context.Context,
-	is infoschema.InfoSchema,
-	schemaName string,
-	tableInfo *model.TableInfo,
-) ([]model.InvolvingSchemaInfo, error) {
-	involvingSchemas := []model.InvolvingSchemaInfo{{
-		Database: schemaName,
-		Table:    tableInfo.Name.L,
-	}}
-	if tableInfo.MaterializedViewLog != nil {
-		if baseTbl, ok := is.TableByID(ctx, tableInfo.MaterializedViewLog.BaseTableID); ok {
-			involvingSchemas = append(involvingSchemas, model.InvolvingSchemaInfo{
-				Database: schemaName,
-				Table:    baseTbl.Meta().Name.L,
-			})
-		}
-	}
-	if tableInfo.MaterializedView != nil {
-		for _, baseTableID := range tableInfo.MaterializedView.BaseTableIDs {
-			baseTbl, ok := is.TableByID(ctx, baseTableID)
-			if !ok {
-				continue
-			}
-			involvingSchemas = append(involvingSchemas, model.InvolvingSchemaInfo{
-				Database: schemaName,
-				Table:    baseTbl.Meta().Name.L,
-			})
-
-			baseMViewInfo := baseTbl.Meta().MaterializedViewBase
-			if baseMViewInfo == nil || baseMViewInfo.MLogID == 0 {
-				continue
-			}
-			mlogTbl, ok := is.TableByID(ctx, baseMViewInfo.MLogID)
-			if !ok {
-				return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(
-					schemaName, fmt.Sprintf("(Table ID %d)", baseMViewInfo.MLogID),
-				)
-			}
-			mlogInfo := mlogTbl.Meta().MaterializedViewLog
-			if mlogInfo == nil || mlogInfo.BaseTableID != baseTableID {
-				return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
-					"drop materialized view: invalid materialized view log metadata",
-				)
-			}
-			if hasMaterializedViewID(mlogInfo.DependentMViewIDs, tableInfo.ID) {
-				involvingSchemas = append(involvingSchemas, model.InvolvingSchemaInfo{
-					Database: schemaName,
-					Table:    mlogTbl.Meta().Name.L,
-				})
-			}
-		}
-	}
-	return involvingSchemas, nil
-}
-
->>>>>>> 4fdca3d058f (ddl: drop foreign key children before parents (#71096))
 // adminCheckTableBeforeDrop runs `admin check table` for the table to be dropped.
 // Actually this function doesn't do anything specific for `DROP TABLE`, but to avoid
 // using it in other places by mistake, it's named like this.

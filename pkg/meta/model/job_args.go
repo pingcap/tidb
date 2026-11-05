@@ -282,15 +282,10 @@ func GetBatchCreateTableArgs(job *Job) (*BatchCreateTableArgs, error) {
 // DropTableArgs is the arguments for drop table/view/sequence job.
 // when dropping multiple objects, each object will have a separate job
 type DropTableArgs struct {
-<<<<<<< HEAD
-	// below fields are only for drop table.
-	// when dropping multiple tables, the Identifiers is the same, but each drop-table
-	// runs in a separate job.
-=======
-	// The following fields are only for DROP TABLE and materialized view drop jobs.
-	// New DROP TABLE submissions carry the current identifier. The executor uses
-	// the full statement list for admission checks before submitting independent jobs.
->>>>>>> 4fdca3d058f (ddl: drop foreign key children before parents (#71096))
+	// Below fields are only for DROP TABLE.
+	// New DROP TABLE submissions carry only the current table identifier. The
+	// executor uses the full statement list for admission checks before it
+	// submits independent jobs.
 	Identifiers []ast.Ident `json:"identifiers,omitempty"`
 	FKCheck     bool        `json:"fk_check,omitempty"`
 

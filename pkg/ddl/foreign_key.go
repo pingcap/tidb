@@ -407,7 +407,7 @@ func checkDropTableHasForeignKeyReferredInOwner(infoCache *infoschema.InfoCache,
 	}
 	// DROP TABLE jobs commit independently. Only a self-reference is safe to
 	// ignore; another table named in the statement may survive a later job.
-	objectIdents := []ast.Ident{{Schema: ast.NewCIStr(job.SchemaName), Name: ast.NewCIStr(job.TableName)}}
+	objectIdents := []ast.Ident{{Schema: pmodel.NewCIStr(job.SchemaName), Name: pmodel.NewCIStr(job.TableName)}}
 	fkCheck := args.FKCheck
 	referredFK, err := checkTableHasForeignKeyReferredInOwner(infoCache, job.SchemaName, job.TableName, objectIdents, fkCheck)
 	if err != nil {
