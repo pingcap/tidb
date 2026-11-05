@@ -3928,6 +3928,7 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 
 		for i, idxRecord := range idxRecords {
 			taskCtx.scanCount++
+			// Count records with empty arrays as processed even though they have no index keys to delete.
 			cleaned := len(recordKeys[i]) == 0
 			for j, key := range recordKeys[i] {
 				if val, ok := found[string(key)]; ok {
