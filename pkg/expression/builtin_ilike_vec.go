@@ -72,7 +72,10 @@ func (b *builtinIlikeSig) tryToVecMemorize(ctx EvalContext, param *funcParam, es
 	return pattern, true
 }
 
-func (b *builtinIlikeSig) getEscape(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) (int64, bool, error) {
+// getEscape evaluates the constant ESCAPE argument. The returned bool is true
+// when the caller should stop: either an error is returned, or result has been
+// filled with NULLs.
+func (b *builtinIlikeSig) getEscape(ctx EvalContext, input *chunk.Chunk, params []*funcParam, result *chunk.Column) (int64, bool, error) {
 	rowNum := input.NumRows()
 	escape := int64('\\')
 
@@ -84,6 +87,13 @@ func (b *builtinIlikeSig) getEscape(ctx EvalContext, input *chunk.Chunk, result 
 	// Check the error first: a failed evaluation may also report isNull=true,
 	// and the row-based evaluation returns that error instead of NULL.
 	if err != nil {
+		// The row-based evaluation returns NULL without evaluating ESCAPE when
+		// the value or the pattern is NULL, so only report the error if at
+		// least one row would have evaluated it.
+		if !hasRowWithoutNullParam(params, rowNum) {
+			result.ResizeInt64(rowNum, true)
+			return escape, true, nil
+		}
 		return escape, true, err
 	}
 	if isConstNull {
@@ -91,6 +101,25 @@ func (b *builtinIlikeSig) getEscape(ctx EvalContext, input *chunk.Chunk, result 
 		return escape, true, nil
 	}
 	return escape, false, nil
+}
+
+// hasRowWithoutNullParam reports whether there is a row in which none of the
+// params is NULL. Constant params are never NULL here because constant NULLs
+// are handled before.
+func hasRowWithoutNullParam(params []*funcParam, rowNum int) bool {
+	for i := range rowNum {
+		hasNull := false
+		for _, param := range params {
+			if col := param.getCol(); col != nil && col.IsNull(i) {
+				hasNull = true
+				break
+			}
+		}
+		if !hasNull {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *builtinIlikeSig) lowerExpr(param *funcParam, rowNum int) {
@@ -194,7 +223,7 @@ func (b *builtinIlikeSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 		params = append(params, param)
 	}
 
-	escape, ret, err := b.getEscape(ctx, input, result)
+	escape, ret, err := b.getEscape(ctx, input, params, result)
 	if err != nil || ret {
 		return err
 	}
