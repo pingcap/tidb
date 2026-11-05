@@ -74,6 +74,8 @@ pub fn run_upgrade(
     state_syncer: &dyn tidb_ddl_serverstate::Syncer,
 ) -> Result<(), String> {
     let context = super::open_pool_session(domain, 0)?;
+    // Go's bootstrap and upgrade run under `kv.InternalTxnBootstrap`.
+    cluster_stats_session(&*context).state.adopt_request_source_type(tidb_txnkv::INTERNAL_TXN_BOOTSTRAP);
     // For the bootstrap SQLs, the following variables should be compatible with old TiDB versions.
     cluster_stats_session(&*context).set_var(
         tidb_vardef::tidb_vars::TIDB_ENABLE_CLUSTERED_INDEX,

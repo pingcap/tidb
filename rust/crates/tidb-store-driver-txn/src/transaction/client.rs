@@ -300,10 +300,21 @@ impl<S: PdClient> TikvTxn<S> {
     /// Go `KVTxn.SetRequestSourceInternal` / `SetRequestSourceType` /
     /// `SetExplicitRequestSourceType`.
     pub fn set_request_source(&mut self, source: &tidb_txnkv::RequestSource) {
-        let transaction = self.engine.transaction_mut().inner_mut();
-        transaction.set_request_source_internal(source.internal);
-        transaction.set_request_source_type(source.source_type.clone());
-        transaction.set_explicit_request_source_type(source.explicit_source_type.clone());
+        self.set_request_source_internal(source.internal);
+        self.set_request_source_type(source.source_type.clone());
+        self.set_explicit_request_source_type(source.explicit_source_type.clone());
+    }
+    /// Go `KVTxn.SetRequestSourceInternal`.
+    pub fn set_request_source_internal(&mut self, internal: bool) {
+        self.engine.transaction_mut().inner_mut().set_request_source_internal(internal);
+    }
+    /// Go `KVTxn.SetRequestSourceType`.
+    pub fn set_request_source_type(&mut self, source_type: String) {
+        self.engine.transaction_mut().inner_mut().set_request_source_type(source_type);
+    }
+    /// Go `KVTxn.SetExplicitRequestSourceType`.
+    pub fn set_explicit_request_source_type(&mut self, source_type: String) {
+        self.engine.transaction_mut().inner_mut().set_explicit_request_source_type(source_type);
     }
     /// Sets the protocols the client may choose for this transaction.
     pub fn set_commit_protocol(&mut self, protocol: CommitProtocol) {

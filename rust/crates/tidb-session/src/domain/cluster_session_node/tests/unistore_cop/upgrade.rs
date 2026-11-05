@@ -267,3 +267,29 @@ fn upgrade_backfills_only_missing_global_variables_like_go() {
     assert_eq!(value(&mut se_cur_ver, "tidb_analyze_distsql_scan_concurrency"), [["9"]]);
     assert_eq!(value(&mut se_cur_ver, "tidb_analyze_version"), [["2"]]);
 }
+
+/// Go `BootstrapSession`: the upgrade's own statements run under
+/// `kv.InternalTxnBootstrap`.
+#[test]
+fn the_upgrade_runs_under_the_bootstrap_request_source() {
+    let (stack, _users) = cop_backed_stack();
+    let mut se_v250 = stack.factory.open_session(session_context(95)).expect("session opens");
+    store(&stack).finish_bootstrap(250).unwrap();
+    revert_version_and_variables(&mut se_v250, 250);
+    let sources: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let recorded = Arc::clone(&sources);
+    stack.rpc.set_send_hook(Some(Arc::new(move |request| {
+        use tikv_client::proto::kvrpcpb;
+        if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::PrewriteRequest>() {
+            recorded
+                .lock()
+                .unwrap()
+                .push(request.context.as_ref().map(|context| context.request_source.clone()).unwrap_or_default());
+        }
+    })));
+    bootstrap_session(&stack);
+    stack.rpc.set_send_hook(None);
+    let sources = sources.lock().unwrap().clone();
+    assert!(sources.contains(&"internal_others".to_owned()), "{sources:?}");
+    assert!(!sources.iter().any(|source| source == "unknown"), "{sources:?}");
+}

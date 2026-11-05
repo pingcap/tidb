@@ -260,9 +260,25 @@ where
     }
 
     /// Go `setRequestSourceForInnerTxn` sets the request source on the inner
-    /// transaction. The live transaction derives its own internal source, so
-    /// the options are accepted without a separate effect here.
-    fn set_option(&mut self, _option: OptionKey, _value: TxnOptionValue) {}
+    /// transaction (`kv.RequestSourceInternal` / `kv.RequestSourceType` /
+    /// `kv.ExplicitRequestSourceType`).
+    fn set_option(&mut self, option: OptionKey, value: TxnOptionValue) {
+        let Some(transaction) = self.transaction.as_mut() else {
+            return;
+        };
+        match (option, value) {
+            (OptionKey::RequestSourceInternal, TxnOptionValue::Bool(internal)) => {
+                transaction.set_request_source_internal(internal);
+            }
+            (OptionKey::RequestSourceType, TxnOptionValue::String(source_type)) => {
+                transaction.set_request_source_type(source_type);
+            }
+            (OptionKey::ExplicitRequestSourceType, TxnOptionValue::String(source_type)) => {
+                transaction.set_explicit_request_source_type(source_type);
+            }
+            _ => {}
+        }
+    }
 
     fn rollback(&mut self) -> Result<(), MetaTxnError> {
         self.writes.clear();
