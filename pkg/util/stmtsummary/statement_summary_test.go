@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -872,6 +873,38 @@ func TestExecutionAverageColumnsUseExecCount(t *testing.T) {
 		require.Truef(t, ok, "missing column value factory: %s", tc.name)
 		require.Equal(t, tc.expected, factory(nil, element, nil), tc.name)
 	}
+
+	t.Run("unsigned averages in DOUBLE columns", func(t *testing.T) {
+		for _, tc := range []struct {
+			sum      uint64
+			count    int64
+			expected float64
+		}{
+			{3, 2, 1.5},
+			{1 << 63, 2, 1 << 62},
+			{3, 0, 0},
+		} {
+			element := &stmtSummaryByDigestElement{
+				execCount:                    tc.count,
+				sumRocksdbDeleteSkippedCount: tc.sum,
+				sumRocksdbKeySkippedCount:    tc.sum,
+				sumRocksdbBlockCacheHitCount: tc.sum,
+				sumRocksdbBlockReadCount:     tc.sum,
+				sumRocksdbBlockReadByte:      tc.sum,
+				sumAffectedRows:              tc.sum,
+			}
+			for _, name := range []string{
+				AvgRocksdbDeleteSkippedCountStr, AvgRocksdbKeySkippedCountStr,
+				AvgRocksdbBlockCacheHitCountStr, AvgRocksdbBlockReadCountStr,
+				AvgRocksdbBlockReadByteStr, AvgAffectedRowsStr,
+			} {
+				datum := types.NewDatum(columnValueFactoryMap[name](nil, element, nil))
+				row := chunk.MutRowFromTypes([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)})
+				row.SetDatums(datum)
+				require.Equal(t, tc.expected, row.ToRow().GetFloat64(0), name)
+			}
+		}
+	})
 }
 
 func TestTableNamesSkipEmptyTables(t *testing.T) {
