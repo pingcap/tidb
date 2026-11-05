@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -98,6 +99,7 @@ var optRuleList = []base.LogicalOptRule{
 	&PushDownTopNOptimizer{},
 	&SyncWaitStatsLoadPoint{},
 	&JoinReOrderSolver{},
+	&CorrelateSolver{},
 	&ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 	&PushDownSequenceSolver{},
 	&ResolveExpand{},
@@ -304,10 +306,6 @@ func doOptimize(
 }
 
 func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
-	// If there is something after flagPrunColumns, do FlagPruneColumnsAgain.
-	if flag&rule.FlagPruneColumns > 0 && flag-rule.FlagPruneColumns > rule.FlagPruneColumns {
-		flag |= rule.FlagPruneColumnsAgain
-	}
 	if checkStableResultMode(logic.SCtx()) {
 		flag |= rule.FlagStabilizeResults
 	}
@@ -322,6 +320,16 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 	}
 	if !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
 		flag |= rule.FlagPartitionProcessor // apply partition pruning under static mode
+	}
+	// FlagCorrelate is added by the correlate alternative round's flag adjuster,
+	// not here. EnableCorrelateSubquery is an internal flag toggled by the round.
+	// A second column-prune pass is worthwhile when any rule above column
+	// pruning is enabled.
+	if flag&rule.FlagPruneColumns != 0 {
+		const abovePruneColumns = ^(rule.FlagPruneColumns | (rule.FlagPruneColumns - 1))
+		if flag&abovePruneColumns != 0 {
+			flag |= rule.FlagPruneColumnsAgain
+		}
 	}
 	return flag
 }
@@ -648,6 +656,21 @@ func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *physicalop.B
 	h.plans = append(h.plans, p)
 }
 
+func splitTiFlashLogicalCoreCache(serversInfo []infoschema.ServerInfo) (serversNeedingRefresh []infoschema.ServerInfo, minLogicalCores uint64) {
+	minLogicalCores = initialMaxCores
+	for _, info := range serversInfo {
+		mppServerInfo := copr.GlobalMPPServerInfoManager.Get(info.Address)
+		// TiFlash may restart with a different CPU configuration while keeping the same
+		// address, so refresh the cached logical core count when StartTimestamp changes.
+		if mppServerInfo == nil || mppServerInfo.StartTimestamp != info.StartTimestamp {
+			serversNeedingRefresh = append(serversNeedingRefresh, info)
+			continue
+		}
+		minLogicalCores = min(minLogicalCores, mppServerInfo.LogicalCPUCount)
+	}
+	return
+}
+
 func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
 	failpoint.Inject("mockTiFlashStreamCountUsingMinLogicalCores", func(val failpoint.Value) {
 		intVal, err := strconv.Atoi(val.(string))
@@ -657,19 +680,28 @@ func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext,
 			failpoint.Return(false, 0)
 		}
 	})
-	rows, err := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), serversInfo, diagnosticspb.ServerInfoType_HardwareInfo, false)
-	if err != nil {
-		return false, 0
-	}
-	var minLogicalCores = initialMaxCores // set to a large enough value here
-	for _, row := range rows {
-		if row[4].GetString() == "cpu-logical-cores" {
-			logicalCpus, err := strconv.Atoi(row[5].GetString())
-			if err == nil && logicalCpus > 0 {
-				minLogicalCores = min(minLogicalCores, uint64(logicalCpus))
+
+	serversNeedingRefresh, minLogicalCores := splitTiFlashLogicalCoreCache(serversInfo)
+
+	if len(serversNeedingRefresh) > 0 {
+		infos := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), serversNeedingRefresh, diagnosticspb.ServerInfoType_HardwareInfo, false)
+		for _, info := range infos {
+			for _, row := range info.Rows {
+				if row[4].GetString() == "cpu-logical-cores" {
+					logicalCpus, err := strconv.Atoi(row[5].GetString())
+					if err == nil && logicalCpus > 0 {
+						copr.GlobalMPPServerInfoManager.Add(&copr.MPPServerInfo{
+							Address:         serversNeedingRefresh[info.Idx].Address,
+							LogicalCPUCount: uint64(logicalCpus),
+							StartTimestamp:  serversNeedingRefresh[info.Idx].StartTimestamp,
+						})
+						minLogicalCores = min(minLogicalCores, uint64(logicalCpus))
+					}
+				}
 			}
 		}
 	}
+
 	// No need to check len(serersInfo) == serverCount here, since missing some servers' info won't affect the correctness
 	return true, minLogicalCores
 }

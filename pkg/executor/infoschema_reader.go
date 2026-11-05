@@ -59,7 +59,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
+	statsStorage "github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -381,6 +381,16 @@ func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx s
 	if len(chunkRows) == 0 {
 		return nil
 	}
+	var filter privileges.UserAttrFilter
+	viewer := sctx.GetSessionVars().User
+	if viewer != nil {
+		filter = privileges.NewUserAttrFilter(
+			sctx.GetSessionVars().ActiveRoles,
+			viewer.Username,
+			viewer.Hostname,
+			privilege.GetPrivilegeManager(sctx),
+		)
+	}
 	rows := make([][]types.Datum, 0, len(chunkRows))
 	for _, chunkRow := range chunkRows {
 		if chunkRow.Len() != 3 {
@@ -388,6 +398,9 @@ func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx s
 		}
 		user := chunkRow.GetString(0)
 		host := chunkRow.GetString(1)
+		if filter != nil && !filter.Visible(user, host) {
+			continue
+		}
 		// Compatible with results in MySQL
 		var attribute any
 		if attribute = chunkRow.GetString(2); attribute == "" {
@@ -625,17 +638,31 @@ func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sess
 	return nil
 }
 
-func (e *memtableRetriever) updateStatsCacheIfNeed(sctx sessionctx.Context, tbls []*model.TableInfo) {
-	needUpdate := false
+// buildTableSizeStats reads the statistics needed to fill the size-related
+// columns of information_schema.tables and .partitions for the given tables.
+// It returns nil when no such column is requested, in which case the getters
+// report zero and no system table is read. When only TABLE_ROWS is requested it
+// reads just mysql.stats_meta and skips the more expensive mysql.stats_histograms;
+// see https://github.com/pingcap/tidb/issues/69818.
+func (e *memtableRetriever) buildTableSizeStats(sctx sessionctx.Context, tbls []*model.TableInfo) *statsStorage.TableSizeStats {
+	needRowCount := false
+	needColLength := false
+findCols:
 	for _, col := range e.columns {
-		// only the following columns need stats cache.
-		if col.Name.O == "AVG_ROW_LENGTH" || col.Name.O == "DATA_LENGTH" || col.Name.O == "INDEX_LENGTH" || col.Name.O == "TABLE_ROWS" {
-			needUpdate = true
-			break
+		// only the following columns need statistics.
+		switch col.Name.O {
+		case "TABLE_ROWS":
+			needRowCount = true
+		case "AVG_ROW_LENGTH", "DATA_LENGTH", "INDEX_LENGTH":
+			// The size columns are derived from both the row counts and the
+			// column lengths.
+			needRowCount = true
+			needColLength = true
+			break findCols
 		}
 	}
-	if !needUpdate {
-		return
+	if !needRowCount {
+		return nil
 	}
 
 	tableIDs := make([]int64, 0, len(tbls))
@@ -645,16 +672,21 @@ func (e *memtableRetriever) updateStatsCacheIfNeed(sctx sessionctx.Context, tbls
 				tableIDs = append(tableIDs, def.ID)
 			}
 		}
+		// Even for partitioned tables, we must read the stats for the main table
+		// itself. This is necessary because the global index length from the
+		// table also needs to be included.
+		// For further details, see: https://github.com/pingcap/tidb/issues/54173
 		tableIDs = append(tableIDs, tbl.ID)
 	}
-	// Even for partitioned tables, we must update the stats cache for the main table itself.
-	// This is necessary because the global index length from the table also needs to be included.
-	// For further details, see: https://github.com/pingcap/tidb/issues/54173
-	err := cache.TableRowStatsCache.UpdateByID(sctx, tableIDs...)
+	statsSizes, err := statsStorage.GetTableSizeStats(sctx, needColLength, tableIDs...)
 	if err != nil {
-		logutil.BgLogger().Warn("cannot update stats cache for tables", zap.Error(err))
+		// A statistics read failure only affects the size-related columns, so we
+		// keep serving the query with zeroed sizes rather than failing it.
+		logutil.BgLogger().Warn("cannot read stats for tables", zap.Error(err))
+		intest.AssertNoError(err)
+		return nil
 	}
-	intest.AssertNoError(err)
+	return statsSizes
 }
 
 func (e *memtableRetriever) setDataFromOneTable(
@@ -663,6 +695,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 	checker privilege.Manager,
 	schema pmodel.CIStr,
 	table *model.TableInfo,
+	statsSizes *statsStorage.TableSizeStats,
 	rows [][]types.Datum,
 ) ([][]types.Datum, error) {
 	collation := table.Collate
@@ -709,7 +742,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 			affinity = info.Level
 		}
 
-		rowCount, avgRowLength, dataLength, indexLength := cache.TableRowStatsCache.EstimateDataLength(table)
+		rowCount, avgRowLength, dataLength, indexLength := statsSizes.EstimateDataLength(table)
 
 		record := types.MakeDatums(
 			infoschema.CatalogVal, // TABLE_CATALOG
@@ -892,13 +925,13 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.updateStatsCacheIfNeed(sctx, tables)
+	statsSizes := e.buildTableSizeStats(sctx, tables)
 	loc := sctx.GetSessionVars().TimeZone
 	if loc == nil {
 		loc = time.Local
 	}
 	for i, table := range tables {
-		rows, err = e.setDataFromOneTable(sctx, loc, checker, schemas[i], table, rows)
+		rows, err = e.setDataFromOneTable(sctx, loc, checker, schemas[i], table, statsSizes, rows)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1271,7 +1304,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.updateStatsCacheIfNeed(sctx, tables)
+	statsSizes := e.buildTableSizeStats(sctx, tables)
 	for i, table := range tables {
 		schema := schemas[i]
 		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.SelectPriv) {
@@ -1290,8 +1323,8 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 
 		var rowCount, dataLength, indexLength uint64
 		if table.GetPartitionInfo() == nil {
-			rowCount = cache.TableRowStatsCache.GetTableRows(table.ID)
-			dataLength, indexLength = cache.TableRowStatsCache.GetDataAndIndexLength(table, table.ID, rowCount)
+			rowCount = statsSizes.GetTableRows(table.ID)
+			dataLength, indexLength = statsSizes.GetDataAndIndexLength(table, table.ID, rowCount)
 			avgRowLength := uint64(0)
 			if rowCount != 0 {
 				avgRowLength = dataLength / rowCount
@@ -1337,8 +1370,8 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				if !ex.HasPartition(pi.Name.L) {
 					continue
 				}
-				rowCount = cache.TableRowStatsCache.GetTableRows(pi.ID)
-				dataLength, indexLength = cache.TableRowStatsCache.GetDataAndIndexLength(table, pi.ID, rowCount)
+				rowCount = statsSizes.GetTableRows(pi.ID)
+				dataLength, indexLength = statsSizes.GetDataAndIndexLength(table, pi.ID, rowCount)
 				avgRowLength := uint64(0)
 				if rowCount != 0 {
 					avgRowLength = dataLength / rowCount
@@ -1492,6 +1525,7 @@ func (e *memtableRetriever) setDataFromIndex(
 			"YES",        // IS_VISIBLE
 			"YES",        // CLUSTERED
 			0,            // IS_GLOBAL
+			nil,          // PREDICATE
 		)
 		rows = append(rows, record)
 		e.recordMemoryConsume(record)
@@ -1525,6 +1559,12 @@ func (e *memtableRetriever) setDataFromIndex(
 			if idxInfo.Invisible {
 				visible = "NO"
 			}
+
+			var predicate any
+			if idxInfo.ConditionExprString != "" {
+				predicate = idxInfo.ConditionExprString
+			}
+
 			record := types.MakeDatums(
 				schema.O,        // TABLE_SCHEMA
 				tb.Name.O,       // TABLE_NAME
@@ -1539,6 +1579,7 @@ func (e *memtableRetriever) setDataFromIndex(
 				visible,         // IS_VISIBLE
 				isClustered,     // CLUSTERED
 				idxInfo.Global,  // IS_GLOBAL
+				predicate,       // PREDICATE
 			)
 			rows = append(rows, record)
 			e.recordMemoryConsume(record)
@@ -2062,11 +2103,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 		}
 	}
 	if !requestByTableRange {
-		pdCli, err := tikvHelper.TryGetPDHTTPClient()
-		if err != nil {
-			return err
-		}
-		allRegionsInfo, err = pdCli.GetRegions(ctx)
+		allRegionsInfo, err = tikvHelper.GetRegions(ctx)
 		if err != nil {
 			return err
 		}
@@ -2102,16 +2139,16 @@ func (e *memtableRetriever) getRegionsInfoForTable(ctx context.Context, h *helpe
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tableID)
 	}
 
-	pt := tbl.Meta().GetPartitionInfo()
-	if pt == nil {
-		regionsInfo, err := e.getRegionsInfoForSingleTable(ctx, h, tableID)
-		if err != nil {
-			return nil, err
-		}
-		return regionsInfo, nil
+	allRegionsInfo, err := e.getRegionsInfoForSingleTable(ctx, h, tableID)
+	if err != nil {
+		return nil, err
 	}
 
-	var allRegionsInfo *pd.RegionsInfo
+	pt := tbl.Meta().GetPartitionInfo()
+	if pt == nil {
+		return allRegionsInfo, nil
+	}
+
 	for _, def := range pt.Definitions {
 		regionsInfo, err := e.getRegionsInfoForSingleTable(ctx, h, def.ID)
 		if err != nil {
@@ -2127,24 +2164,11 @@ func (*memtableRetriever) getRegionsInfoForSingleTable(ctx context.Context, help
 	if err != nil {
 		return nil, err
 	}
-	sk, ek := tablecodec.GetTableHandleKeyRange(tableID)
-	sRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, sk))
-	if err != nil {
-		return nil, err
-	}
-	eRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, ek))
-	if err != nil {
-		return nil, err
-	}
-	sk, err = hex.DecodeString(sRegion.StartKey)
-	if err != nil {
-		return nil, err
-	}
-	ek, err = hex.DecodeString(eRegion.EndKey)
-	if err != nil {
-		return nil, err
-	}
-	return pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(sk, ek), -1)
+	// Query the whole table prefix so both record and index regions are covered.
+	sk := tablecodec.EncodeTablePrefix(tableID)
+	ek := sk.PrefixNext()
+	start, end := helper.Store.GetCodec().EncodeRegionRange(sk, ek)
+	return pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(start, end), -1)
 }
 
 func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *pd.RegionInfo, table *helper.TableInfo) {
@@ -2502,7 +2526,7 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 	const maxAnalyzeJobs = 30
 	const sql = "SELECT table_schema, table_name, partition_name, job_info, processed_rows, CONVERT_TZ(start_time, @@TIME_ZONE, '+00:00'), CONVERT_TZ(end_time, @@TIME_ZONE, '+00:00'), state, fail_reason, instance, process_id FROM mysql.analyze_jobs ORDER BY update_time DESC LIMIT %?"
 	exec := sctx.GetRestrictedSQLExecutor()
-	kctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	kctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 	chunkRows, _, err := exec.ExecRestrictedSQL(kctx, nil, sql, maxAnalyzeJobs)
 	if err != nil {
 		return nil, err
@@ -2519,11 +2543,15 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 		jobInfo := chunkRow.GetString(3)
 		processedRows := chunkRow.GetInt64(4)
 		var startTime, endTime any
+		// startTime and endTime use the local timezone for displaying.
+		// startTimeUTC is used to calculate the remaining duration of the job.
+		var startTimeUTC *time.Time
 		if !chunkRow.IsNull(5) {
 			t, err := chunkRow.GetTime(5).GoTime(time.UTC)
 			if err != nil {
 				return nil, err
 			}
+			startTimeUTC = &t
 			startTime = types.NewTime(types.FromGoTime(t.In(sctx.GetSessionVars().TimeZone)), mysql.TypeDatetime, 0)
 		}
 		if !chunkRow.IsNull(6) {
@@ -2547,11 +2575,10 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 
 		var remainDurationStr, progressDouble, estimatedRowCntStr any
 		if state == statistics.AnalyzeRunning && !strings.HasPrefix(jobInfo, "merge global stats") {
-			startTime, ok := startTime.(types.Time)
-			if !ok {
+			if startTimeUTC == nil {
 				return nil, errors.New("invalid start time")
 			}
-			remainingDuration, progress, estimatedRowCnt, remainDurationErr := getRemainDurationForAnalyzeStatusHelper(ctx, sctx, &startTime,
+			remainingDuration, progress, estimatedRowCnt, remainDurationErr := getRemainDurationForAnalyzeStatusHelper(ctx, sctx, startTimeUTC,
 				dbName, tableName, partitionName, processedRows)
 			if remainDurationErr != nil {
 				logutil.BgLogger().Warn("get remaining duration failed", zap.Error(remainDurationErr))
@@ -2588,17 +2615,13 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 
 func getRemainDurationForAnalyzeStatusHelper(
 	ctx context.Context,
-	sctx sessionctx.Context, startTime *types.Time,
-	dbName, tableName, partitionName string, processedRows int64) (*time.Duration, float64, float64, error) {
-	var remainingDuration = time.Duration(0)
-	var percentage = 0.0
-	var totalCnt = float64(0)
-	if startTime != nil {
-		start, err := startTime.GoTime(time.UTC)
-		if err != nil {
-			return nil, percentage, totalCnt, err
-		}
-		duration := time.Now().UTC().Sub(start)
+	sctx sessionctx.Context, startTimeUTC *time.Time,
+	dbName, tableName, partitionName string, processedRows int64,
+) (_ *time.Duration, percentage, totalCnt float64, err error) {
+	remainingDuration := time.Duration(0)
+	if startTimeUTC != nil {
+		// time.Time.Sub uses the actual instant.
+		duration := time.Since(*startTimeUTC)
 		if intest.InTest {
 			if val := ctx.Value(AnalyzeProgressTest); val != nil {
 				remainingDuration, percentage = calRemainInfoForAnalyzeStatus(ctx, int64(totalCnt), processedRows, duration)

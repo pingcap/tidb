@@ -750,6 +750,7 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 				filteredVals = append(filteredVals, idxVals)
 			}
 		}
+		clear(p.IndexValues[len(filteredVals):])
 		p.IndexValues = filteredVals
 		if pi != nil {
 			partIdxs := p.getPartitionIdxs(sctx)
@@ -769,17 +770,18 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 			if partitionsFound == 0 {
 				return nil, true, nil
 			}
-			skipped := 0
+			filteredVals = p.IndexValues[:0]
 			for i, idx := range partIdxs {
 				if idx < 0 {
-					curr := i - skipped
-					next := curr + 1
-					p.IndexValues = append(p.IndexValues[:curr], p.IndexValues[next:]...)
-					skipped++
-				} else if !p.SinglePartition {
+					continue
+				}
+				filteredVals = append(filteredVals, p.IndexValues[i])
+				if !p.SinglePartition {
 					p.PartitionIdxs = append(p.PartitionIdxs, idx)
 				}
 			}
+			clear(p.IndexValues[len(filteredVals):])
+			p.IndexValues = filteredVals
 			intest.Assert(p.SinglePartition || partitionsFound == len(p.PartitionIdxs))
 			intest.Assert(partitionsFound == len(p.IndexValues))
 		}
@@ -833,24 +835,25 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 			if partitionsFound == 0 {
 				return nil, true, nil
 			}
-			skipped := 0
+			filteredHandles := handles[:0]
 			for i, idx := range partIdxs {
 				if idx < 0 {
-					curr := i - skipped
-					next := curr + 1
-					handles = append(handles[:curr], handles[next:]...)
-					skipped++
-				} else if !p.SinglePartition {
+					continue
+				}
+				filteredHandles = append(filteredHandles, handles[i])
+				if !p.SinglePartition {
 					p.PartitionIdxs = append(p.PartitionIdxs, idx)
 				}
 			}
+			clear(handles[len(filteredHandles):])
+			handles = filteredHandles
 			intest.Assert(p.SinglePartition || partitionsFound == len(p.PartitionIdxs))
 			intest.Assert(p.SinglePartition || partitionsFound == len(handles))
 		}
 		p.Handles = handles
 	} else {
-		usedValues := make([]bool, len(p.IndexValues))
-		for i, value := range p.IndexValues {
+		filteredValues := p.IndexValues[:0]
+		for _, value := range p.IndexValues {
 			if types.DatumsContainNull(value) {
 				continue
 			}
@@ -872,39 +875,39 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 			}
 			dedup.Set(handle, true)
 			handles = append(handles, handle)
-			usedValues[i] = true
+			filteredValues = append(filteredValues, value)
 		}
-		skipped := 0
-		for i, use := range usedValues {
-			if !use {
-				curr := i - skipped
-				p.IndexValues = append(p.IndexValues[:curr], p.IndexValues[curr+1:]...)
-				skipped++
-			}
-		}
+		clear(p.IndexValues[len(filteredValues):])
+		p.IndexValues = filteredValues
 		if pi != nil {
 			partIdxs := p.getPartitionIdxs(sctx)
-			skipped = 0
+			filteredHandles := handles[:0]
+			filteredValues = p.IndexValues[:0]
 			partitionsFound := 0
 			for i, idx := range partIdxs {
-				if partIdxs[i] < 0 ||
+				if idx < 0 ||
 					(p.SinglePartition &&
-						partIdxs[i] != p.PartitionIdxs[0]) ||
+						idx != p.PartitionIdxs[0]) ||
 					!isInExplicitPartitions(pi, idx, p.PartitionNames) {
-					curr := i - skipped
-					handles = append(handles[:curr], handles[curr+1:]...)
-					p.IndexValues = append(p.IndexValues[:curr], p.IndexValues[curr+1:]...)
-					skipped++
 					continue
-				} else if !p.SinglePartition {
+				}
+				filteredHandles = append(filteredHandles, handles[i])
+				filteredValues = append(filteredValues, p.IndexValues[i])
+				if !p.SinglePartition {
 					p.PartitionIdxs = append(p.PartitionIdxs, idx)
 				}
 				partitionsFound++
 			}
+			clear(handles[len(filteredHandles):])
+			clear(p.IndexValues[len(filteredValues):])
+			handles = filteredHandles
+			p.IndexValues = filteredValues
 			if partitionsFound == 0 {
 				return nil, true, nil
 			}
 			intest.Assert(p.SinglePartition || partitionsFound == len(p.PartitionIdxs))
+			intest.Assert(partitionsFound == len(handles))
+			intest.Assert(partitionsFound == len(p.IndexValues))
 		}
 	}
 	return handles, false, nil
@@ -1172,14 +1175,14 @@ func newBatchPointGetPlan(
 	}
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique || idxInfo.State != model.StatePublic || (idxInfo.Invisible && !ctx.GetSessionVars().OptimizerUseInvisibleIndexes) || idxInfo.MVIndex ||
-			!indexIsAvailableByHints(
-				ctx.GetSessionVars().CurrentDB,
-				dbName,
-				tblAlias,
-				idxInfo,
-				tblHints,
-				indexHints,
-			) {
+			idxInfo.HasCondition() || !indexIsAvailableByHints(
+			ctx.GetSessionVars().CurrentDB,
+			dbName,
+			tblAlias,
+			idxInfo,
+			tblHints,
+			indexHints,
+		) {
 			continue
 		}
 		if len(idxInfo.Columns) != len(whereColNames) || idxInfo.HasPrefixIndex() {
@@ -1544,14 +1547,14 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 	}
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique || idxInfo.State != model.StatePublic || (idxInfo.Invisible && !ctx.GetSessionVars().OptimizerUseInvisibleIndexes) || idxInfo.MVIndex ||
-			!indexIsAvailableByHints(
-				ctx.GetSessionVars().CurrentDB,
-				dbName,
-				tblAlias,
-				idxInfo,
-				tblHints,
-				tblName.IndexHints,
-			) {
+			idxInfo.HasCondition() || !indexIsAvailableByHints(
+			ctx.GetSessionVars().CurrentDB,
+			dbName,
+			tblAlias,
+			idxInfo,
+			tblHints,
+			tblName.IndexHints,
+		) {
 			continue
 		}
 		if idxInfo.Global {
@@ -2263,10 +2266,27 @@ func buildOrderedList(ctx base.PlanContext, pointPlan base.Plan, list []*ast.Ass
 		}
 		visitInfos = append(visitInfos, vs...)
 		castToTP := col.GetStaticType()
-		if castToTP.GetType() == mysql.TypeEnum && assign.Expr.GetType().EvalType() == types.ETInt {
+		if (castToTP.GetType() == mysql.TypeEnum || castToTP.GetType() == mysql.TypeSet) &&
+			assign.Expr.GetType().EvalType() == types.ETInt {
 			castToTP.AddFlag(mysql.EnumSetAsIntFlag)
 		}
-		expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
+		// Point-update builds assignment expressions directly in the planner.
+		// Keep the implicit CAST for most target column types so the fast path stays
+		// aligned with normal UPDATE typing, but do not CAST unsigned numeric targets:
+		// CAST(-1 AS UNSIGNED) wraps to MAX_UINT64, while UPDATE assignment conversion
+		// must be decided by executor-side table.CastValue under the current statement
+		// context and sql_mode.
+		//
+		// This applies to more than integer columns. Unsigned decimal/real also uses the
+		// CAST path which treats negative inputs as uint64 (e.g. -1 -> 1844...),
+		// diverging from assignment semantics.
+		isUnsignedNumericTarget := mysql.HasUnsignedFlag(castToTP.GetFlag()) &&
+			(castToTP.EvalType() == types.ETInt ||
+				castToTP.EvalType() == types.ETDecimal ||
+				castToTP.EvalType() == types.ETReal)
+		if !isUnsignedNumericTarget {
+			expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
+		}
 		if allAssignmentsAreConstant {
 			_, isConst := expr.(*expression.Constant)
 			allAssignmentsAreConstant = isConst

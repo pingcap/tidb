@@ -17,10 +17,14 @@ package storage_test
 import (
 	"context"
 	"testing"
+	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
+	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
@@ -43,7 +47,7 @@ func TestLoadStats(t *testing.T) {
 	testKit.MustExec("analyze table t")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	colAID := tableInfo.Columns[0].ID
@@ -99,4 +103,95 @@ func TestLoadStats(t *testing.T) {
 	topN := idx.TopN
 	require.Greater(t, float64(cms.TotalCount()+topN.TotalCount())+hg.TotalRowCount(), float64(0))
 	require.True(t, idx.IsFullLoad())
+}
+
+func TestColumnStatsIsInvalidSkipsInternalColumnID(t *testing.T) {
+	clearAsyncLoadHistogramNeededItems()
+	t.Cleanup(clearAsyncLoadHistogramNeededItems)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	histColl := &statistics.HistColl{
+		PhysicalID: 1,
+	}
+	statistics.ColumnStatsIsInvalid(nil, tk.Session().GetPlanCtx(), histColl, -1)
+
+	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
+	for _, item := range items {
+		require.False(t, !item.IsIndex && item.TableID == histColl.PhysicalID && item.ID <= 0)
+	}
+}
+
+func TestLoadNeededHistogramsSkipsInternalColumnID(t *testing.T) {
+	clearAsyncLoadHistogramNeededItems()
+	t.Cleanup(clearAsyncLoadHistogramNeededItems)
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t value(1,1), (2,2);")
+	h := dom.StatsHandle()
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select * from t where a = 2 and b = 2 and _tidb_rowid > 0;").Check(testkit.Rows("2 2"))
+
+	table, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	colAID := tableInfo.Columns[0].ID
+	colBID := tableInfo.Columns[1].ID
+	// 1. query-triggered async loading should enqueue only real columns (a, b) and should never enqueue the internal pseudo column _tidb_rowid (ID=-1).
+	require.Eventually(t, func() bool {
+		items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
+		hasA, hasB := false, false
+		for _, item := range items {
+			if item.TableID != tableInfo.ID || item.IsIndex {
+				continue
+			}
+			// if column _tidb_rowid (ID=-1) should never enqueue,
+			if item.ID <= 0 {
+				return false
+			}
+			if item.ID == colAID {
+				hasA = true
+			}
+			if item.ID == colBID {
+				hasB = true
+			}
+		}
+		return hasA && hasB
+	}, 5*time.Second, 100*time.Millisecond)
+
+	// Clear query-triggered items so this test can isolate the nil-sctx internal-column path.
+	clearAsyncLoadHistogramNeededItems()
+
+	// 2. even if an internal pseudo column item (ID=-1) is inserted into the queue by mistake,
+	// LoadNeededHistograms should skip it safely and remove it without panic.
+	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	require.NotNil(t, statsTbl)
+	require.Equal(t, tableInfo.ID, statsTbl.PhysicalID)
+
+	internalColumnItem := model.TableItemID{
+		TableID: tableInfo.ID,
+		ID:      -1,
+	}
+	asyncload.AsyncLoadHistogramNeededItems.Insert(internalColumnItem, true)
+
+	require.NotPanics(t, func() {
+		err = storage.LoadNeededHistograms(nil, dom.InfoSchema(), h, false)
+		require.NoError(t, err)
+	})
+	require.NotContains(t, asyncload.AsyncLoadHistogramNeededItems.AllItems(), model.StatsLoadItem{
+		TableItemID: internalColumnItem,
+		FullLoad:    true,
+	})
+}
+
+func clearAsyncLoadHistogramNeededItems() {
+	for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
+		asyncload.AsyncLoadHistogramNeededItems.Delete(item.TableItemID)
+	}
 }

@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -97,6 +98,99 @@ func TestNonPreparedPlanCachePlanString(t *testing.T) {
 	tk.MustExec("set session tidb_redact_log=ON")
 	require.Equal(t, planString("select * from t where b < 10"), "TableReader(Table(t)->Sel([lt(test.t.b, 10)]))") // filter 1 -> 10
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
+func TestJSONExtractPlanCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_json_extract_plan_cache (id int primary key, doc varchar(255))")
+	tk.MustExec(`insert into t_json_extract_plan_cache values (1, '{"a": 1, "b": 2}')`)
+
+	tk.MustExec("set @@tidb_enable_prepared_plan_cache=1")
+	tk.MustExec(`prepare stmt from 'select id from t_json_extract_plan_cache where json_unquote(json_extract(doc, ?)) = ?'`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec(`set @path = '$.a', @val = '1'`)
+	tk.MustQuery("execute stmt using @path, @val").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`set @path = '$.b', @val = '2'`)
+	tk.MustQuery("execute stmt using @path, @val").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec(`set @path = '$.missing', @val = '1'`)
+	tk.MustQuery("execute stmt using @path, @val").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@tidb_enable_non_prepared_plan_cache=1")
+	tk.MustQuery(`select id from t_json_extract_plan_cache where json_unquote(json_extract(doc, '$.a')) = '1'`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery(`select id from t_json_extract_plan_cache where json_unquote(json_extract(doc, '$.b')) = '2'`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery(`select id from t_json_extract_plan_cache where json_unquote(json_extract(doc, '$.missing')) = '1'`).Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("create table t_json_extract_plan_cache_json (id int primary key, doc json)")
+	tk.MustExec(`insert into t_json_extract_plan_cache_json values (1, '{"a": 1}')`)
+	tk.MustQuery(`select id from t_json_extract_plan_cache_json where json_extract(doc, '$.a') is not null`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery(`select id from t_json_extract_plan_cache_json where json_extract(doc, '$.a') is not null`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestJSONExtractPlanCacheWithExpressionIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t_json_extract_expr_idx (
+		id int primary key,
+		doc varchar(255),
+		key idx_a ((cast(json_unquote(json_extract(doc, '$.a')) as char(20))))
+	)`)
+	tk.MustExec(`insert into t_json_extract_expr_idx values
+		(1, '{"a": "match", "b": "no"}'),
+		(2, '{"a": "no", "b": "match"}')`)
+
+	tk.MustExec("set @@tidb_enable_prepared_plan_cache=1")
+	tk.MustExec(`prepare stmt from 'select id from t_json_extract_expr_idx where cast(json_unquote(json_extract(doc, ?)) as char(20)) = ?'`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec(`set @path = '$.a', @val = 'match'`)
+	tk.MustQuery("execute stmt using @path, @val").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`set @path = '$.b', @val = 'match'`)
+	tk.MustQuery("execute stmt using @path, @val").Check(testkit.Rows("2"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tidb_enable_non_prepared_plan_cache=1")
+	tk.MustQuery(`select id from t_json_extract_expr_idx where cast(json_unquote(json_extract(doc, '$.a')) as char(20)) = 'match'`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery(`select id from t_json_extract_expr_idx where cast(json_unquote(json_extract(doc, '$.a')) as char(20)) = 'match'`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery(`select id from t_json_extract_expr_idx where cast(json_unquote(json_extract(doc, '$.b')) as char(20)) = 'match'`).Check(testkit.Rows("2"))
+
+	tk.MustExec(`create table t_json_extract_expr_idx_group (
+		id int primary key,
+		doc varchar(255),
+		key idx_a ((cast(json_unquote(json_extract(doc, '$.a')) as char(20))))
+	)`)
+	tk.MustExec(`insert into t_json_extract_expr_idx_group values
+		(1, '{"a": "one", "b": "same"}'),
+		(2, '{"a": "two", "b": "same"}')`)
+	tk.MustExec(`prepare stmt_group from 'select count(*) from t_json_extract_expr_idx_group group by cast(json_unquote(json_extract(doc, ?)) as char(20)) order by 1'`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec(`set @path = '$.a'`)
+	tk.MustQuery("execute stmt_group using @path").Check(testkit.Rows("1", "1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`set @path = '$.b'`)
+	tk.MustQuery("execute stmt_group using @path").Check(testkit.Rows("2"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustExec(`prepare stmt_agg from 'select max(cast(json_unquote(json_extract(doc, ?)) as char(20))) from t_json_extract_expr_idx_group'`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec(`set @path = '$.a'`)
+	tk.MustQuery("execute stmt_agg using @path").Check(testkit.Rows("two"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`set @path = '$.b'`)
+	tk.MustQuery("execute stmt_agg using @path").Check(testkit.Rows("same"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
 func TestNonPreparedPlanCacheInformationSchema(t *testing.T) {
@@ -285,14 +379,14 @@ func TestIssue38269(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-		"IndexJoin_12 37.46 root  inner join, inner:IndexLookUp_11, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-		"├─TableReader_24(Build) 9990.00 root  data:Selection_23",
-		"│ └─Selection_23 9990.00 cop[tikv]  not(isnull(test.t1.a))",
-		"│   └─TableFullScan_22 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-		"└─IndexLookUp_11(Probe) 37.46 root  ",
-		"  ├─Selection_10(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
-		"  │ └─IndexRangeScan_8 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ‹40›, ‹50›, ‹60›)], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan_9(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
+		"IndexJoin_14 37.46 root  inner join, inner:IndexLookUp_13, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+		"├─TableReader_26(Build) 9990.00 root  data:Selection_25",
+		"│ └─Selection_25 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+		"│   └─TableFullScan_24 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─IndexLookUp_13(Probe) 37.46 root  ",
+		"  ├─Selection_12(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
+		"  │ └─IndexRangeScan_10 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ‹40›, ‹50›, ‹60›)], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_11(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 }
 
 func TestIssue38533(t *testing.T) {
@@ -362,18 +456,19 @@ func TestIssue40093(t *testing.T) {
 
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
-			{"Projection_9"},
-			{"└─HashJoin_21"},
-			{"  ├─IndexReader_26(Build)"},
-			{"  │ └─IndexRangeScan_25"}, // RangeScan instead of FullScan
-			{"  └─TableReader_24(Probe)"},
-			{"    └─Selection_23"},
-			{"      └─TableFullScan_22"},
+			{"Projection_10"},
+			{"└─HashJoin_12"},
+			{"  ├─IndexReader_27(Build)"},
+			{"  │ └─IndexRangeScan_26"}, // RangeScan instead of FullScan
+			{"  └─TableReader_25(Probe)"},
+			{"    └─Selection_24"},
+			{"      └─TableFullScan_23"},
 		})
 
 	tk.MustExec("execute st using @b")
 	tk.MustExec("execute st using @b")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("deallocate prepare st")
 }
 
 func TestIssue38205(t *testing.T) {
@@ -394,18 +489,19 @@ func TestIssue38205(t *testing.T) {
 
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
-			{"IndexJoin_10"},
-			{"├─TableReader_19(Build)"},
-			{"│ └─Selection_18"},
-			{"│   └─TableFullScan_17"}, // RangeScan instead of FullScan
-			{"└─IndexReader_9(Probe)"},
-			{"  └─Selection_8"},
-			{"    └─IndexRangeScan_7"},
+			{"IndexJoin_12"},
+			{"├─TableReader_21(Build)"},
+			{"│ └─Selection_20"},
+			{"│   └─TableFullScan_19"},
+			{"└─IndexReader_11(Probe)"},
+			{"  └─Selection_10"},
+			{"    └─IndexRangeScan_9"},
 		})
 
 	tk.MustExec("execute stmt using @a, @b, @c")
 	tk.MustExec("execute stmt using @a, @b, @c")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("deallocate prepare stmt")
 }
 
 func TestIssue49736(t *testing.T) {
@@ -1041,6 +1137,7 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"select * from t1 where a in (select a from t)",                                    // uncorrelated sub-query
 		"select * from t1 where a in (select a from t where a > t1.a)",                     // correlated sub-query
 		"select * from t where j < 1",                                                      // json
+		"select * from t where json_extract(j, '$.a') is not null",                         // json
 		"select * from t where a > 1 and j < 1",
 		"select * from t where e < '1'", // enum
 		"select * from t where a > 1 and e < '1'",
@@ -1061,6 +1158,7 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: query has some unsupported Node",
 		"skip non-prepared plan-cache: query has some unsupported Node",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: query has some unsupported Node",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
@@ -1726,4 +1824,161 @@ func TestPreparedPlanCacheWorkWithoutMetadataLock(t *testing.T) {
 	tk.MustExec(`rollback`)
 	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 1"))
+}
+
+func TestNonPreparedPlanSupportsSetVar(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (pk int, a int, primary key(pk))`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1;`)
+
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`select /*+ set_var(max_execution_time=2000) */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`select /*+ set_var(max_execution_time=2000) */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`prepare st from 'select /*+ set_var(max_execution_time=2000) */ * from t where pk >= ?'`)
+	tk.MustExec(`set @pk=1`)
+	tk.MustExec(`execute st using @pk`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`execute st using @pk`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
+func TestNonPreparedPlanCacheResourceGroup(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (pk int, a int, primary key(pk))`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1;`)
+
+	// Check that the hint sets the resource group.
+	tk.MustExec(`select  /*+ RESOURCE_GROUP(rg1) */ * from t where pk >= 1`)
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.StmtHints.HasResourceGroup)
+	require.Equal(t, "rg1", tk.Session().GetSessionVars().StmtCtx.StmtHints.ResourceGroup)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 0"))
+
+	tk.MustExec(`select  /*+ RESOURCE_GROUP(rg10) */ * from t where pk >= 1`)
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.StmtHints.HasResourceGroup)
+	require.Equal(t, "rg10", tk.Session().GetSessionVars().StmtCtx.StmtHints.ResourceGroup)
+
+	tk.MustExec(`select  /*+ RESOURCE_GROUP(rg1) */ * from t where pk >= 1`)
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.StmtHints.HasResourceGroup)
+	require.Equal(t, "rg1", tk.Session().GetSessionVars().StmtCtx.StmtHints.ResourceGroup)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 1"))
+
+	tk.MustExec(`CREATE BINDING FOR select * from t where pk >= ? USING select /*+ RESOURCE_GROUP(rg2) */ * from t where pk >= ?`)
+
+	// Test that the resource group comes from the binding.
+	tk.MustExec(`select * from t where pk >= 1`)
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.StmtHints.HasResourceGroup)
+	require.Equal(t, "rg2", tk.Session().GetSessionVars().StmtCtx.StmtHints.ResourceGroup)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+
+	tk.MustExec(`select * from t where pk >= 1`)
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.StmtHints.HasResourceGroup)
+	require.Equal(t, "rg2", tk.Session().GetSessionVars().StmtCtx.StmtHints.ResourceGroup)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+
+	// Test that the resource group comes from the binding and the value in query is ignored.
+	tk.MustExec(`select  /*+ RESOURCE_GROUP(rg1) */ * from t where pk >= 1`)
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.StmtHints.HasResourceGroup)
+	require.Equal(t, "rg2", tk.Session().GetSessionVars().StmtCtx.StmtHints.ResourceGroup)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+}
+
+func TestPreparedPlanCacheResourceGroup(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (pk int, a int, primary key(pk))`)
+
+	tk.MustExec(`prepare st from 'select /*+ RESOURCE_GROUP(rg1) */ * from t where pk >= ?'`)
+	tk.MustExec(`set @pk=1`)
+
+	tk.MustExec(`execute st using @pk`)
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.StmtHints.HasResourceGroup)
+	require.Equal(t, "rg1", tk.Session().GetSessionVars().StmtCtx.StmtHints.ResourceGroup)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+	tk.MustExec(`execute st using @pk`)
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.StmtHints.HasResourceGroup)
+	require.Equal(t, "rg1", tk.Session().GetSessionVars().StmtCtx.StmtHints.ResourceGroup)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`CREATE BINDING FOR select * from t where a >= ? USING select /*+ RESOURCE_GROUP(rg2) */ * from t where a >= ?`)
+	tk.MustExec(`prepare st_bind from 'select * from t where a >= ?'`)
+	tk.MustExec(`set @a=1`)
+
+	tk.MustExec(`execute st_bind using @a`)
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.StmtHints.HasResourceGroup)
+	require.Equal(t, "rg2", tk.Session().GetSessionVars().StmtCtx.StmtHints.ResourceGroup)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+
+	tk.MustExec(`execute st_bind using @a`)
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.StmtHints.HasResourceGroup)
+	require.Equal(t, "rg2", tk.Session().GetSessionVars().StmtCtx.StmtHints.ResourceGroup)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+}
+
+func TestDropPrepare(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null, b int not null, key(a), key(b))")
+	tk.MustExec(`insert into t values (1, 1), (2, 2), (3, 3)`)
+	tk.MustExec("set @@tidb_enable_prepared_plan_cache=1")
+
+	// 1. Prepare and execute statement A to cache its plan.
+	tk.MustExec(`prepare stmt from 'select * from t where a = ?'`)
+	tk.MustExec(`set @a=1`)
+	tk.MustQuery(`execute stmt using @a`) // First execution to generate a plan.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`set @a=2`)
+	tk.MustQuery(`execute stmt using @a`) // Second execution to cache the plan.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// 2. Get the cached plan for statement A.
+	// Note: `explain for connection` is used to get the real cached plan.
+	tk.MustQuery(`execute stmt using @a`)
+	planA := tk.MustQuery("explain for connection " + strconv.FormatUint(tk.Session().ShowProcess().ID, 10))
+	// 3. Deallocate/drop the prepared statement.
+	tk.MustExec(`deallocate prepare stmt`)
+
+	// 4. Prepare and execute statement B with the same name.
+	// This statement has a different structure and should generate a different plan.
+	tk.MustExec(`prepare stmt from 'select * from t where b = ?'`)
+	tk.MustExec(`set @b=1`)
+	tk.MustExec(`execute stmt using @b`)
+
+	// 5. Check if the cache was hit. It must NOT be hit because of the deallocation.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`set @b=3`)
+	tk.MustExec(`execute stmt using @b`)
+	// 6. Get the new plan for statement B.
+	planB := tk.MustQuery("explain for connection " + strconv.FormatUint(tk.Session().ShowProcess().ID, 10))
+
+	// 7. Core Assertions:
+	//    a. Assert that Plan A and Plan B are different.
+	require.NotEqual(t, planA.Rows(), planB.Rows(), "Plan A and Plan B should be different")
+	//    b. Check the content of the plans to be sure.
+	//       Plan A should use index `a`. Plan B should use index `b`.
+	planA.CheckContain("index:a(a)")
+	planA.CheckContain("range:[2,2]")
+	planB.CheckContain("index:b(b)")
+	planB.CheckContain("range:[3,3]")
+
+	// 8. Execute statement B again and verify it hits the cache now.
+	tk.MustExec(`execute stmt using @b`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }

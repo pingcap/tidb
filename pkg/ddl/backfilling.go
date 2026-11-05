@@ -1130,6 +1130,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 			case <-doneCh:
 				break outer
 			case <-ticker.C:
+				reorgInfo.UpdateConfigFromSysTbl(ctx)
 				currentWorkerCnt := exec.currentWorkerSize()
 				targetWorkerCnt := reorgInfo.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 				if currentWorkerCnt != targetWorkerCnt {

@@ -127,15 +127,15 @@ func deriveStats4DataSource(lp base.LogicalPlan, colGroups [][]*expression.Colum
 		debugtrace.EnterContextCommon(ds.SCtx())
 		defer debugtrace.LeaveContextCommon(ds.SCtx())
 	}
-	// two preprocess here.
-	// 1: PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
-	// 2: EliminateNoPrecisionCast here can convert query 'cast(c<int> as bigint) = 1' to 'c = 1' to leverage access range.
 	exprCtx := ds.SCtx().GetExprCtx()
 	for i, expr := range ds.PushedDownConds {
 		ds.PushedDownConds[i] = expression.PushDownNot(exprCtx, expr)
 		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, ds.PushedDownConds[i])
 	}
-	for _, path := range ds.PossibleAccessPaths {
+	ds.CheckPartialIndexes()
+	// Index pruning is now done earlier in CollectPredicateColumnsPoint to avoid loading stats for pruned indexes.
+	// Fill index paths for all paths.
+	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsTablePath() {
 			continue
 		}
@@ -146,12 +146,15 @@ func deriveStats4DataSource(lp base.LogicalPlan, colGroups [][]*expression.Colum
 	}
 	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
 	// when ds.PossibleAccessPaths are pruned.
-	ds.SetStats(deriveStatsByFilter(ds, ds.PushedDownConds, ds.PossibleAccessPaths))
+	ds.SetStats(deriveStatsByFilter(ds, ds.PushedDownConds, ds.AllPossibleAccessPaths))
+	// after heuristic pruning, the new path are stored into ds.PossibleAccessPaths.
 	err := derivePathStatsAndTryHeuristics(ds)
 	if err != nil {
 		return nil, err
 	}
 
+	// index merge path is generated from all conditions from ds based on ds.PossibleAccessPath.
+	// we should renew ds.PossibleAccessPath to AllPossibleAccessPath once a new DS is generated.
 	if err := generateIndexMergePath(ds); err != nil {
 		return nil, err
 	}
@@ -198,9 +201,59 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 				}
 			}
 		}
+		tryAppendCommonHandleColsToIndexPath(ds, path)
 	}
 	err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl)
 	return err
+}
+
+// tryAppendCommonHandleColsToIndexPath is the common-handle counterpart of the int-handle
+// append in fillIndexPath. The key of a non-unique secondary index on a clustered table
+// physically ends with the full common handle, so appending the primary key columns to the
+// path lets ranger turn predicates on them into tighter scan ranges instead of filters.
+// The caller must have checked that the index is non-unique, non-primary, and that all
+// declared index columns are resolved (len(path.Index.Columns) == len(path.IdxCols)).
+func tryAppendCommonHandleColsToIndexPath(ds *logicalop.DataSource, path *util.AccessPath) {
+	if !ds.TableInfo.IsCommonHandle || len(ds.CommonHandleCols) == 0 ||
+		len(ds.CommonHandleLens) != len(ds.CommonHandleCols) {
+		return
+	}
+	// Global indexes (V1+) encode the partition ID between the index columns and the handle,
+	// and MV/vector indexes build their ranges specially, so appended columns would not
+	// align with the physical key layout.
+	if path.Index.Global || path.Index.MVIndex || path.Index.VectorInfo != nil {
+		return
+	}
+	// In CommonHandleVersion 0 with new collation, string handle columns are stored as
+	// collation sortKey bytes without restored data. Skip them to stay consistent with the
+	// coverage check (indexCoveringColumn) and the ordering check (matchProperty).
+	if hasV0NewCollationStringHandle(ds) {
+		return
+	}
+	for _, handleCol := range ds.CommonHandleCols {
+		if handleCol == nil {
+			return
+		}
+		// If a primary key column is already among the declared index columns, the physical
+		// key contains it twice: once in the index columns and once in the handle suffix.
+		// Appending only the missing columns would misalign the ranges with the key layout,
+		// and repeating a column breaks range building, so skip the append entirely.
+		for _, col := range path.IdxCols {
+			if col.EqualColumn(handleCol) {
+				return
+			}
+		}
+	}
+	path.FullIdxCols = append(path.FullIdxCols, ds.CommonHandleCols...)
+	path.FullIdxColLens = append(path.FullIdxColLens, ds.CommonHandleLens...)
+	path.IdxCols = append(path.IdxCols, ds.CommonHandleCols...)
+	path.IdxColLens = append(path.IdxColLens, ds.CommonHandleLens...)
+	// Also updates the map that maps the index id to its prefix column ids.
+	if len(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID]) == len(path.Index.Columns) {
+		for _, handleCol := range ds.CommonHandleCols {
+			ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID] = append(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID], handleCol.UniqueID)
+		}
+	}
 }
 
 // deriveIndexPathStats will fulfill the information that the AccessPath need.
@@ -408,7 +461,7 @@ func detachCondAndBuildRangeForPath(
 			path.ConstCols[i] = res.ColumnValues[i] != nil
 		}
 	}
-	path.CountAfterAccess, err = cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges)
+	path.CountAfterAccess, err = cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges, path.IdxCols)
 	return err
 }
 
@@ -446,7 +499,9 @@ func getGroupNDVs(ds *logicalop.DataSource, colGroups [][]*expression.Column) []
 		if colsLen < len(idx.Info.Columns) {
 			return false
 		} else if colsLen > len(idx.Info.Columns) {
-			colsLen--
+			// Ignore the appended handle columns: one column for an int handle, and
+			// possibly several for a common handle.
+			colsLen = len(idx.Info.Columns)
 		}
 		idxCols := make([]int64, colsLen)
 		copy(idxCols, tbl.Idx2ColUniqueIDs[idxID])
@@ -568,8 +623,8 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 		debugtrace.EnterContextCommon(ds.SCtx())
 		defer debugtrace.LeaveContextCommon(ds.SCtx())
 	}
-	uniqueIdxsWithDoubleScan := make([]*util.AccessPath, 0, len(ds.PossibleAccessPaths))
-	singleScanIdxs := make([]*util.AccessPath, 0, len(ds.PossibleAccessPaths))
+	uniqueIdxsWithDoubleScan := make([]*util.AccessPath, 0, len(ds.AllPossibleAccessPaths))
+	singleScanIdxs := make([]*util.AccessPath, 0, len(ds.AllPossibleAccessPaths))
 	var (
 		selected, uniqueBest, refinedBest *util.AccessPath
 		isRefinedPath                     bool
@@ -577,7 +632,7 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 	// step1: if user prefer tiFlash store type, tiFlash path should always be built anyway ahead.
 	var tiflashPath *util.AccessPath
 	if ds.PreferStoreType&h.PreferTiFlash != 0 {
-		for _, path := range ds.PossibleAccessPaths {
+		for _, path := range ds.AllPossibleAccessPaths {
 			if path.StoreType == kv.TiFlash {
 				err := deriveTablePathStats(ds, path, ds.PushedDownConds, false)
 				if err != nil {
@@ -590,7 +645,7 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 		}
 	}
 	// step2: kv path should follow the heuristic rules.
-	for _, path := range ds.PossibleAccessPaths {
+	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsTablePath() {
 			err := deriveTablePathStats(ds, path, ds.PushedDownConds, false)
 			if err != nil {
@@ -599,7 +654,9 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 			path.IsSingleScan = true
 		} else {
 			deriveIndexPathStats(ds, path, ds.PushedDownConds, false)
-			path.IsSingleScan = isSingleScan(ds, path.FullIdxCols, path.FullIdxColLens)
+			// Reevaluate path.IsSingleScan because it may have been set incorrectly
+			// in the pruning logic.
+			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
 		}
 		// step: 3
 		// Try some heuristic rules to select access path.
@@ -672,6 +729,7 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 	// heuristic rule pruning other path should consider hint prefer.
 	// If no hints and some path matches a heuristic rule, just remove other possible paths.
 	if selected != nil {
+		// heuristic rule pruning only affect current DS's PossibleAccessPaths, where physical plan will be generated.
 		ds.PossibleAccessPaths[0] = selected
 		ds.PossibleAccessPaths = ds.PossibleAccessPaths[:1]
 		// if user wanna tiFlash read, while current heuristic choose a TiKV path. so we shouldn't prune tiFlash path.
@@ -695,7 +753,7 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 			if selected.Index.Unique {
 				sb.WriteString("unique ")
 			}
-			sb.WriteString(fmt.Sprintf("index %s of %s is selected since the path", selected.Index.Name.O, tableName))
+			fmt.Fprintf(&sb, "index %s of %s is selected since the path", selected.Index.Name.O, tableName)
 			if isRefinedPath {
 				sb.WriteString(" only fetches limited number of rows")
 			} else {

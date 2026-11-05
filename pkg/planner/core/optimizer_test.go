@@ -16,6 +16,7 @@ package core
 
 import (
 	"math"
+	"math/bits"
 	"reflect"
 	"strings"
 	"testing"
@@ -23,14 +24,17 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -270,6 +274,38 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 
 // Test for core.handleFineGrainedShuffle()
 func TestHandleFineGrainedShuffle(t *testing.T) {
+	t.Run("refresh cached logical cores when tiflash restarts", func(t *testing.T) {
+		const staleAddr = "127.0.0.1:3933"
+		const validAddr = "127.0.0.2:3933"
+		copr.GlobalMPPServerInfoManager.Delete(staleAddr)
+		copr.GlobalMPPServerInfoManager.Delete(validAddr)
+		t.Cleanup(func() {
+			copr.GlobalMPPServerInfoManager.Delete(staleAddr)
+			copr.GlobalMPPServerInfoManager.Delete(validAddr)
+		})
+
+		copr.GlobalMPPServerInfoManager.Add(&copr.MPPServerInfo{
+			Address:         staleAddr,
+			LogicalCPUCount: 8,
+			StartTimestamp:  100,
+		})
+		copr.GlobalMPPServerInfoManager.Add(&copr.MPPServerInfo{
+			Address:         validAddr,
+			LogicalCPUCount: 16,
+			StartTimestamp:  200,
+		})
+
+		serversNeedingRefresh, minLogicalCores := splitTiFlashLogicalCoreCache([]infoschema.ServerInfo{
+			{Address: staleAddr, StartTimestamp: 101},
+			{Address: validAddr, StartTimestamp: 200},
+		})
+
+		require.Equal(t, uint64(16), minLogicalCores)
+		require.Len(t, serversNeedingRefresh, 1)
+		require.Equal(t, staleAddr, serversNeedingRefresh[0].Address)
+		require.Equal(t, int64(101), serversNeedingRefresh[0].StartTimestamp)
+	})
+
 	sortItem := property.SortItem{
 		Col:  nil,
 		Desc: true,
@@ -557,4 +593,19 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	tableScan1.Schema().Columns = append(tableScan1.Schema().Columns, col0)
 	start(hashJoin, 0, 3, 0)
 	require.NoError(t, failpoint.Disable(fpName2))
+}
+
+func TestOptRuleListFlagAlignment(t *testing.T) {
+	// Each position i in optRuleList is gated by the flag bit 1<<i.
+	// The Flag* constants in rule/logical_rules.go are declared via iota in the
+	// same order. This test catches silent misalignment when a rule or flag is
+	// added/removed without updating the other.
+	//
+	// bits.Len64(lastFlag) == bit-position + 1 == expected list length.
+	numFlags := bits.Len64(rule.FlagResolveExpand)
+	require.Equalf(t, numFlags, len(optRuleList),
+		"optRuleList length (%d) does not match Flag* count (%d); "+
+			"did you add a rule without a flag or vice versa? "+
+			"Update both optRuleList and the Flag* iota block in rule/logical_rules.go.",
+		len(optRuleList), numFlags)
 }

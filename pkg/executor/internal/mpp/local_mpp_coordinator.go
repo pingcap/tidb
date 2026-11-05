@@ -40,11 +40,13 @@ import (
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
+	"github.com/pingcap/tidb/pkg/store/helper"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -129,6 +131,9 @@ type localMppCoordinator struct {
 	firstErrMsg     string
 
 	mppReqs []*kv.MPPDispatchRequest
+	// For dispatch logging, reused across fragments.
+	dispatchTaskIDs  []int64
+	dispatchStoreIDs []uint64
 
 	planIDs    []int
 	mppQueryID kv.MPPQueryID
@@ -182,7 +187,7 @@ func NewLocalMPPCoordinator(ctx context.Context, sctx sessionctx.Context, is inf
 	return coord
 }
 
-func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) error {
+func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment, allTiFlashStoreInfo map[string]uint64) error {
 	dagReq, err := builder.ConstructDAGReq(c.sessionCtx, []base.PhysicalPlan{pf.ExchangeSender}, kv.TiFlash)
 	if err != nil {
 		return errors.Trace(err)
@@ -195,7 +200,22 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 	} else {
 		dagReq.EncodeType = tipb.EncodeType_TypeChunk
 	}
-	for _, mppTask := range pf.ExchangeSender.Tasks {
+	tasks := pf.ExchangeSender.Tasks
+	if cap(c.dispatchTaskIDs) < len(tasks) {
+		c.dispatchTaskIDs = make([]int64, 0, len(tasks))
+	} else {
+		c.dispatchTaskIDs = c.dispatchTaskIDs[:0]
+	}
+	if cap(c.dispatchStoreIDs) < len(tasks) {
+		c.dispatchStoreIDs = make([]uint64, 0, len(tasks))
+	} else {
+		c.dispatchStoreIDs = c.dispatchStoreIDs[:0]
+	}
+	rgName := c.sessionCtx.GetSessionVars().StmtCtx.ResourceGroupName
+	if !variable.EnableResourceControl.Load() {
+		rgName = ""
+	}
+	for _, mppTask := range tasks {
 		if mppTask.PartitionTableIDs != nil {
 			err = util.UpdateExecutorTableID(context.Background(), dagReq.RootExecutor, true, mppTask.PartitionTableIDs)
 		} else if !mppTask.TiFlashStaticPrune {
@@ -215,19 +235,8 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 			return errors.Trace(err)
 		}
 
-		rgName := c.sessionCtx.GetSessionVars().StmtCtx.ResourceGroupName
-		if !variable.EnableResourceControl.Load() {
-			rgName = ""
-		}
-		logutil.BgLogger().Info("Dispatch mpp task", zap.Uint64("timestamp", mppTask.StartTs),
-			zap.Int64("ID", mppTask.ID), zap.Uint64("QueryTs", mppTask.MppQueryID.QueryTs), zap.Uint64("LocalQueryId", mppTask.MppQueryID.LocalQueryID),
-			zap.Uint64("ServerID", mppTask.MppQueryID.ServerID), zap.String("address", mppTask.Meta.GetAddress()),
-			zap.String("plan", plannercore.ToString(pf.ExchangeSender)),
-			zap.Int64("mpp-version", mppTask.MppVersion.ToInt64()),
-			zap.String("exchange-compression-mode", pf.ExchangeSender.CompressionMode.Name()),
-			zap.Uint64("GatherID", c.gatherID),
-			zap.String("resource_group", rgName),
-		)
+		c.dispatchTaskIDs = append(c.dispatchTaskIDs, mppTask.ID)
+		c.dispatchStoreIDs = append(c.dispatchStoreIDs, allTiFlashStoreInfo[mppTask.Meta.GetAddress()])
 		req := &kv.MPPDispatchRequest{
 			Data:                   pbData,
 			Meta:                   mppTask.Meta,
@@ -248,6 +257,19 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 		}
 		c.reqMap[req.ID] = &mppRequestReport{mppReq: req, receivedReport: false, errMsg: "", executionSummaries: nil}
 		c.mppReqs = append(c.mppReqs, req)
+	}
+	if len(tasks) > 0 {
+		firstTask := tasks[0]
+		logutil.BgLogger().Info("Dispatch mpp tasks", zap.Uint64("timestamp", firstTask.StartTs),
+			zap.Int64s("IDs", c.dispatchTaskIDs), zap.Uint64s("storeIDs", c.dispatchStoreIDs),
+			zap.Uint64("QueryTs", firstTask.MppQueryID.QueryTs), zap.Uint64("LocalQueryId", firstTask.MppQueryID.LocalQueryID),
+			zap.Uint64("ServerID", firstTask.MppQueryID.ServerID),
+			zap.String("plan", plannercore.ToString(pf.ExchangeSender)),
+			zap.Int64("mpp-version", firstTask.MppVersion.ToInt64()),
+			zap.String("exchange-compression-mode", pf.ExchangeSender.CompressionMode.Name()),
+			zap.Uint64("GatherID", c.gatherID),
+			zap.String("resource_group", rgName),
+		)
 	}
 	return nil
 }
@@ -752,8 +774,29 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.Ke
 	}
 	c.nodeCnt = len(nodeInfo)
 
+	var allTiFlashStoreInfo map[string]uint64
+	if tikvStore, ok := c.sessionCtx.GetStore().(helper.Storage); ok {
+		cache := tikvStore.GetRegionCache()
+		allTiFlashStores := cache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
+		allTiFlashStoreInfo = make(map[string]uint64, len(allTiFlashStores))
+		for _, tiflashStore := range allTiFlashStores {
+			allTiFlashStoreInfo[tiflashStore.GetAddr()] = tiflashStore.StoreID()
+		}
+		if config.GetGlobalConfig().DisaggregatedTiFlash {
+			computeStores, getStoreErr := cache.GetTiFlashComputeStores(
+				backoff.NewBackoffer(ctx, copr.CopNextMaxBackoff).TiKVBackoffer())
+			if getStoreErr == nil {
+				for _, tiflashStore := range computeStores {
+					allTiFlashStoreInfo[tiflashStore.GetAddr()] = tiflashStore.StoreID()
+				}
+			}
+		}
+	} else {
+		allTiFlashStoreInfo = make(map[string]uint64)
+	}
+
 	for _, frag := range frags {
-		err = c.appendMPPDispatchReq(frag)
+		err = c.appendMPPDispatchReq(frag, allTiFlashStoreInfo)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

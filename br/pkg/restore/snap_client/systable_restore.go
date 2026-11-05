@@ -5,6 +5,7 @@ package snapclient
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -21,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -29,6 +31,13 @@ import (
 const (
 	sysUserTableName = "user"
 )
+
+var planPeplayerTables = map[string]map[string]struct{}{
+	"mysql": {
+		"plan_replayer_status": {},
+		"plan_replayer_task":   {},
+	},
+}
 
 var statsTables = map[string]map[string]struct{}{
 	"mysql": {
@@ -78,11 +87,55 @@ var unRecoverableTable = map[string]map[string]struct{}{
 		"tidb":                             {},
 		"global_variables":                 {},
 		"capture_plan_baselines_blacklist": {},
+		// GET_LOCK() or IS_USED_LOCK() try to insert a lock into the table in a pessimistic transaction but finally rollback.
+		// Therefore actually the table is empty.
+		"advisory_locks": {},
+		// Table ID is recorded in the column `job_info` so that the table cannot be recovered simply.
+		"analyze_jobs": {},
+		// Table ID is recorded in the column `table_id` so that the table cannot be recovered simply.
+		"analyze_options": {},
+		// Distributed eXecution Framework
+		// Records the tidb node information, no need to recovered.
+		"dist_framework_meta":             {},
+		"tidb_global_task":                {},
+		"tidb_global_task_history":        {},
+		"tidb_background_subtask":         {},
+		"tidb_background_subtask_history": {},
+		// DDL internal system tables.
+		"tidb_ddl_history": {},
+		"tidb_ddl_job":     {},
+		"tidb_ddl_reorg":   {},
+		// Table ID is recorded in the column `schema_change` so that the table cannot be recovered simply.
+		"tidb_ddl_notifier": {},
+		// v7.2.0. Based on Distributed eXecution Framework, records running import jobs.
+		"tidb_import_jobs": {},
+
+		"help_topic": {},
+		// records the RU for each resource group temporary, no need to recovered.
+		"request_unit_by_group": {},
+		// load the table data into the memory.
+		"table_cache_meta": {},
+
+		// TiDB runaway internal information.
+		"tidb_runaway_queries":    {},
+		"tidb_runaway_watch":      {},
+		"tidb_runaway_watch_done": {},
+
+		// TiDB internal ttl information.
+		"tidb_ttl_job_history":  {},
+		"tidb_ttl_table_status": {},
+		"tidb_ttl_task":         {},
+
+		// TiDB internal timers.
+		"tidb_timers": {},
+
 		// gc info don't need to recover.
 		"gc_delete_range":       {},
 		"gc_delete_range_done":  {},
 		"index_advisor_results": {},
 
+		// TiDB internal system table to synchronize metadata locks across nodes.
+		"tidb_mdl_info": {},
 		// replace into view is not supported now
 		"tidb_mdl_view": {},
 
@@ -95,13 +148,13 @@ var unRecoverableTable = map[string]map[string]struct{}{
 	},
 }
 
-type checkPrivilegeTableRowsCollateCompatiblitySQLPair struct {
+type checkPrivilegeTableRowsCollateCompatibilitySQLPair struct {
 	upstreamCollateSQL   string
 	downstreamCollateSQL string
 	columns              map[string]struct{}
 }
 
-var collateCompatibilityTables = map[string]map[string]checkPrivilegeTableRowsCollateCompatiblitySQLPair{
+var collateCompatibilityTables = map[string]map[string]checkPrivilegeTableRowsCollateCompatibilitySQLPair{
 	"mysql": {
 		"db": {
 			upstreamCollateSQL:   "SELECT COUNT(1) FROM __TiDB_BR_Temporary_mysql.db",
@@ -268,6 +321,15 @@ func isRenameableSysTable(schemaName string, tableName string) bool {
 	return ok
 }
 
+func isPlanReplayerTables(schemaName string, tableName string) bool {
+	tableMap, ok := planPeplayerTables[schemaName]
+	if !ok {
+		return false
+	}
+	_, ok = tableMap[tableName]
+	return ok
+}
+
 func removeUserResourceGroup(ctx context.Context, dbName string, execSQL func(context.Context, string) error) error {
 	sql := fmt.Sprintf("UPDATE %s SET User_attributes = JSON_REMOVE(User_attributes, '$.resource_group');",
 		utils.EncloseDBAndTable(dbName, sysUserTableName))
@@ -408,9 +470,27 @@ func (rc *SnapClient) afterSystemTablesReplaced(ctx context.Context, db string, 
 }
 
 // replaceTemporaryTableToSystable replaces the temporary table to real system table.
-func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *model.TableInfo, db *database) error {
+func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *model.TableInfo, db *database) (retErr error) {
 	dbName := db.Name.L
 	tableName := ti.Name.L
+	if rc.txnTotalSizeLimit > 0 {
+		sessionVars := rc.db.Session().GetSessionCtx().GetSessionVars()
+		originMemQuota := sessionVars.MemQuotaQuery
+		if err := sessionVars.SetSystemVar(variable.TiDBMemQuotaQuery, strconv.FormatUint(rc.txnTotalSizeLimit, 10)); err != nil {
+			return berrors.ErrUnknown.Wrap(err).GenWithStack("failed to set session variable %s", variable.TiDBMemQuotaQuery)
+		}
+		defer func() {
+			if err := sessionVars.SetSystemVar(variable.TiDBMemQuotaQuery, strconv.FormatInt(originMemQuota, 10)); err != nil {
+				log.Warn("failed to restore session variable",
+					zap.String("var", variable.TiDBMemQuotaQuery),
+					zap.Int64("restore-to", originMemQuota),
+					zap.Error(err),
+				)
+				retErr = multierr.Append(retErr, berrors.ErrUnknown.Wrap(err).GenWithStack("failed to set session variable %s", variable.TiDBMemQuotaQuery))
+			}
+		}()
+	}
+
 	execSQL := func(ctx context.Context, sql string) error {
 		// SQLs here only contain table name and database name, seems it is no need to redact them.
 		if err := rc.db.Session().Execute(ctx, sql); err != nil {
@@ -442,6 +522,10 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 		return nil
 	}
 
+	if isPlanReplayerTables(dbName, tableName) {
+		return nil
+	}
+
 	if isUnrecoverableTable(dbName, tableName) {
 		return nil
 	}
@@ -460,7 +544,7 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 		log.Info("replace into existing table",
 			zap.String("table", tableName),
 			zap.Stringer("schema", db.Name))
-		if rc.checkPrivilegeTableRowsCollateCompatiblity {
+		if rc.privilegeTableRowsCollateCompatibility {
 			if err := rc.checkPrivilegeTableRowsCollateCompatibility(ctx, dbName, tableName, ti, db.ExistingTables[tableName]); err != nil {
 				return err
 			}
@@ -536,11 +620,17 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table, co
 			col := ti.Columns[i]
 			backupCol := backupColMap[col.Name.L]
 			if backupCol == nil {
-				// skip when the backed up mysql.user table is missing columns.
+				// mysql.user may gain new columns in newer TiDB versions. In that case the
+				// schemas are still logically compatible, but loading the backed-up data
+				// directly into the temporary table with the newer schema can fail checksum
+				// validation because the upstream snapshot does not contain the new column.
+				// Fall back to non-physical loading for mysql.user when the backup is
+				// missing target columns.
 				if backupTi.Name.L == sysUserTableName {
 					log.Warn("missing column in backup data",
 						zap.Stringer("table", table.Info.Name),
 						zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
+					canLoadSysTablePhysical = false
 					continue
 				}
 				log.Error("missing column in backup data",
@@ -617,11 +707,11 @@ func (rc *SnapClient) checkPrivilegeTableRowsCollateCompatibility(
 	dbNameL, tableNameL string,
 	upstreamTable, downstreamTable *model.TableInfo,
 ) error {
-	collateCompatiblityTableMap, exists := collateCompatibilityTables[dbNameL]
+	collateCompatibilityTableMap, exists := collateCompatibilityTables[dbNameL]
 	if !exists {
 		return nil
 	}
-	collateCompatibilityColumnMap, exists := collateCompatiblityTableMap[tableNameL]
+	collateCompatibilityColumnMap, exists := collateCompatibilityTableMap[tableNameL]
 	if !exists {
 		return nil
 	}

@@ -33,7 +33,6 @@ var UnCacheableFunctions = map[string]struct{}{
 	ast.Like:                 {},
 
 	// functions below are incompatible with (non-prep) plan cache, we'll fix them one by one later.
-	ast.JSONExtract:      {}, // cannot pass TestFuncJSON
 	ast.JSONObject:       {},
 	ast.JSONArray:        {},
 	ast.Coalesce:         {},

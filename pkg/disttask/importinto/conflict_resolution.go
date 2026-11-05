@@ -222,14 +222,14 @@ func (d *conflictKVDeleter) deleteKeysWithRetry(ctx context.Context, keys []tidb
 	})
 }
 
-func (d *conflictKVDeleter) deleteBufferedKeys(ctx context.Context, keys []tidbkv.Key) error {
+func (d *conflictKVDeleter) deleteBufferedKeys(ctx context.Context, keys []tidbkv.Key) (resErr error) {
 	txn, err := d.store.Begin()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		if err == nil {
-			err = txn.Commit(ctx)
+		if resErr == nil {
+			resErr = txn.Commit(ctx)
 		} else {
 			if rollbackErr := txn.Rollback(); rollbackErr != nil {
 				d.logger.Warn("failed to rollback transaction", zap.Error(rollbackErr))

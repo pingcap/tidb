@@ -71,7 +71,7 @@ func NewCoprocessorDAGHandler(sctx sessionctx.Context) *CoprocessorDAGHandler {
 func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coprocessor.Request) *coprocessor.Response {
 	ctx = copHandlerCtx(ctx, req)
 
-	e, err := h.buildDAGExecutor(req)
+	e, err := h.buildDAGExecutor(ctx, req)
 	if err != nil {
 		return h.buildErrorResponse(err)
 	}
@@ -114,7 +114,7 @@ func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *co
 	ctx = copHandlerCtx(ctx, req)
 	logutil.Logger(ctx).Debug("handle coprocessor stream request")
 
-	e, err := h.buildDAGExecutor(req)
+	e, err := h.buildDAGExecutor(ctx, req)
 	if err != nil {
 		return stream.Send(h.buildErrorResponse(err))
 	}
@@ -155,7 +155,7 @@ func (h *CoprocessorDAGHandler) buildResponseAndSendToStream(chk *chunk.Chunk, t
 	return nil
 }
 
-func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (exec.Executor, error) {
+func (h *CoprocessorDAGHandler) buildDAGExecutor(ctx context.Context, req *coprocessor.Request) (exec.Executor, error) {
 	if req.GetTp() != kv.ReqTypeDAG {
 		return nil, errors.Errorf("unsupported request type %d", req.GetTp())
 	}
@@ -200,7 +200,7 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (exec
 	}
 	plan = core.InjectExtraProjection(plan)
 	// Build executor.
-	b := newExecutorBuilder(h.sctx, is, nil)
+	b := newExecutorBuilder(ctx, h.sctx, is, nil)
 	return b.build(plan), nil
 }
 

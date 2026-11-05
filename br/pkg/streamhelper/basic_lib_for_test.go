@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	streamconfig "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -34,6 +35,8 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/clients/router"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -265,6 +268,12 @@ func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.Ge
 	}
 	log.Debug("Get last flush ts of region", zap.Stringer("in", in), zap.Stringer("out", resp))
 	return resp, nil
+}
+
+func (f *fakeCluster) SetCurrentTS(ts uint64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.currentTS = ts
 }
 
 // Updates the service GC safe point for the cluster.
@@ -657,6 +666,9 @@ type testEnv struct {
 	task           streamhelper.TaskEvent
 
 	resolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
+	scanLocks    func(key []byte, maxVersion uint64) ([]*txnlock.Lock, *tikv.KeyLocation, error)
+
+	getLogBackupFlushInterval func(context.Context) (time.Duration, error)
 
 	mu sync.Mutex
 	pd.Client
@@ -687,6 +699,13 @@ func (t *testEnv) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) e
 	ch <- t.task
 	t.taskCh = ch
 	return nil
+}
+
+func (t *testEnv) GetLogBackupFlushInterval(ctx context.Context) (time.Duration, error) {
+	if t.getLogBackupFlushInterval != nil {
+		return t.getLogBackupFlushInterval(ctx)
+	}
+	return streamconfig.DefaultCommandConfig().GetResolveLockInterval(), nil
 }
 
 func (t *testEnv) UploadV3GlobalCheckpointForTask(ctx context.Context, _ string, checkpoint uint64) error {
@@ -788,10 +807,13 @@ func (t *testEnv) putTask() {
 	t.taskCh <- tsk
 }
 
-func (t *testEnv) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
+func (t *testEnv) ScanLocksInOneRegion(_ *tikv.Backoffer, key []byte, maxVersion uint64, _ uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.maxTs != maxVersion {
+	if t.scanLocks != nil {
+		return t.scanLocks(key, maxVersion)
+	}
+	if t.maxTs != 0 && t.maxTs != maxVersion {
 		return nil, nil, errors.Errorf("unexpect max version in scan lock, expected %d, actual %d", t.maxTs, maxVersion)
 	}
 	for _, r := range t.regions {
@@ -862,12 +884,12 @@ type mockPDClient struct {
 	fakeRegions []*region
 }
 
-func (p *mockPDClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int, _ ...pd.GetRegionOption) ([]*pd.Region, error) {
+func (p *mockPDClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int, _ ...opt.GetRegionOption) ([]*router.Region, error) {
 	sort.Slice(p.fakeRegions, func(i, j int) bool {
 		return bytes.Compare(p.fakeRegions[i].rng.StartKey, p.fakeRegions[j].rng.StartKey) < 0
 	})
 
-	result := make([]*pd.Region, 0, len(p.fakeRegions))
+	result := make([]*router.Region, 0, len(p.fakeRegions))
 	for _, region := range p.fakeRegions {
 		if spans.Overlaps(kv.KeyRange{StartKey: key, EndKey: endKey}, region.rng) && len(result) < limit {
 			regionInfo := newMockRegion(region.id, region.rng.StartKey, region.rng.EndKey)
@@ -886,7 +908,7 @@ func (p *mockPDClient) GetStore(_ context.Context, storeID uint64) (*metapb.Stor
 	}, nil
 }
 
-func (p *mockPDClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
+func (p *mockPDClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	// only used for GetRegionCache once in resolve lock
 	return []*metapb.Store{
 		{
@@ -900,14 +922,14 @@ func (p *mockPDClient) GetClusterID(ctx context.Context) uint64 {
 	return 1
 }
 
-func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *pd.Region {
+func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *router.Region {
 	leader := &metapb.Peer{
 		Id:      regionID,
 		StoreId: 1,
 		Role:    metapb.PeerRole_Voter,
 	}
 
-	return &pd.Region{
+	return &router.Region{
 		Meta: &metapb.Region{
 			Id:       regionID,
 			StartKey: startKey,

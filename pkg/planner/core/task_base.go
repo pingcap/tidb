@@ -249,6 +249,15 @@ type CopTask struct {
 	idxMergePartPlans      []base.PhysicalPlan
 	idxMergeIsIntersection bool
 	idxMergeAccessMVIndex  bool
+	// idxMergeMatchWithAdvisorySortItems indicates the IndexMerge property matching
+	// used advisory sort items (i.e. no SortItems but AdvisorySortItems was set).
+	idxMergeMatchWithAdvisorySortItems bool
+	// idxMergePartPlansMatchResults stores each partial path's matchProperty result.
+	// Set by convertToIndexMergeScan. Length equals len(idxMergePartPlans)
+	// or 0.
+	// 0 length may be caused by cases like Intersection type IndexMerge, which can't satisfy any order property. When
+	// its length is 0, it should be considered as all property.PropNotMatched.
+	idxMergePartPlansMatchResults []property.PhysicalPropMatchResult
 
 	// rootTaskConds stores select conditions containing virtual columns.
 	// These conditions can't push to TiKV, so we have to add a selection for rootTask
@@ -260,6 +269,9 @@ type CopTask struct {
 	// expectCnt is the expected row count of upper task, 0 for unlimited.
 	// It's used for deciding whether using paging distsql.
 	expectCnt uint64
+
+	// partialOrderMatchResult stores the match result for partial order optimization.
+	partialOrderMatchResult *property.PartialOrderMatchResult
 }
 
 // Invalid implements Task interface.

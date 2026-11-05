@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -56,7 +57,7 @@ func (m mockPDClient) GetClusterID(_ context.Context) uint64 {
 	return 1
 }
 
-func (m mockPDClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
+func (m mockPDClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	return []*metapb.Store{}, nil
 }
 
@@ -68,15 +69,17 @@ func TestConfigureRestoreClient(t *testing.T) {
 		Online: true,
 	}
 	restoreCfg := &RestoreConfig{
-		Config:              cfg,
-		RestoreCommonConfig: restoreComCfg,
-		DdlBatchSize:        128,
+		Config:                cfg,
+		RestoreCommonConfig:   restoreComCfg,
+		DdlBatchSize:          128,
+		RegionScanConcurrency: 3,
 	}
 	client := snapclient.NewRestoreClient(mockPDClient{}, nil, nil, keepalive.ClientParameters{})
 	ctx := context.Background()
 	err := configureRestoreClient(ctx, client, restoreCfg)
 	require.NoError(t, err)
 	require.Equal(t, uint(128), client.GetBatchDdlSize())
+	require.Equal(t, uint(3), client.GetRegionScanConcurrency())
 }
 
 func TestAdjustRestoreConfigForStreamRestore(t *testing.T) {

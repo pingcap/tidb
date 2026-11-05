@@ -399,3 +399,8 @@ drop table pt1;
 drop table pt2;
 drop table pt3;
 use executor__infoschema_reader;
+
+# TestPartialIndexInTiDBIndexes
+drop table if exists t;
+create table t (col1 int primary key, col2 int, key idx(col2) where col1 > 100);
+select TABLE_SCHEMA,TABLE_NAME,PREDICATE from information_schema.tidb_indexes where predicate is not null;

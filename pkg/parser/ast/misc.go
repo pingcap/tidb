@@ -880,6 +880,7 @@ const (
 	FlushHosts
 	FlushLogs
 	FlushClientErrorsSummary
+	FlushStatsDelta
 )
 
 // LogType is the log type used in FLUSH statement.
@@ -904,6 +905,8 @@ type FlushStmt struct {
 	Tables          []*TableName // For FlushTableStmt, if Tables is empty, it means flush all tables.
 	ReadLock        bool
 	Plugins         []string
+	IsCluster       bool           // For FlushStatsDelta, whether to flush cluster-wide stats delta
+	FlushObjects    []*StatsObject // For FlushStatsDelta, scoped objects (db.tbl, db.*, *.*). Always non-empty.
 }
 
 // Restore implements Node interface.
@@ -963,6 +966,22 @@ func (n *FlushStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(logType)
 	case FlushClientErrorsSummary:
 		ctx.WriteKeyWord("CLIENT_ERRORS_SUMMARY")
+	case FlushStatsDelta:
+		ctx.WriteKeyWord("STATS_DELTA")
+		for i, obj := range n.FlushObjects {
+			if i == 0 {
+				ctx.WritePlain(" ")
+			} else {
+				ctx.WritePlain(", ")
+			}
+			if err := obj.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore FlushStmt.FlushObjects[%d]", i)
+			}
+		}
+		if n.IsCluster {
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord("CLUSTER")
+		}
 	default:
 		return errors.New("Unsupported type of FlushStmt")
 	}
@@ -3710,8 +3729,11 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-// RedactURL redacts the secret tokens in the URL. only S3 url need redaction for now.
-// if the url is not a valid url, return the original string.
+// RedactedValue replaces a secret in redacted output.
+const RedactedValue = "xxxxxx"
+
+// RedactURL redacts sensitive query parameters in supported storage URLs.
+// If the URL is not valid, it returns the original string.
 func RedactURL(str string) string {
 	// FIXME: this solution is not scalable, and duplicates some logic from BR.
 	u, err := url.Parse(str)
@@ -3725,7 +3747,7 @@ func RedactURL(str string) string {
 
 	var redactKeys map[string]struct{}
 	switch strings.ToLower(scheme) {
-	case "s3", "ks3":
+	case "s3", "ks3", "oss":
 		redactKeys = map[string]struct{}{
 			"access-key":        {},
 			"secret-access-key": {},
@@ -3733,7 +3755,12 @@ func RedactURL(str string) string {
 		}
 	case "azure", "azblob":
 		redactKeys = map[string]struct{}{
-			"sas-token": {},
+			"account-key":    {},
+			"encryption-key": {},
+			"sas-token":      {},
+			// Azure endpoints can contain SAS tokens used directly by the storage
+			// client, so masking only the separate sas-token parameter is insufficient.
+			"endpoint": {},
 		}
 	}
 
@@ -3744,7 +3771,7 @@ func RedactURL(str string) string {
 			// https://github.com/pingcap/tidb/blob/a7c0d95f16ea2582bb569278c3f829403e6c3a7e/br/pkg/storage/parse.go#L163
 			normalizedKey := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
 			if _, ok := redactKeys[normalizedKey]; ok {
-				values[k] = []string{"xxxxxx"}
+				values[k] = []string{RedactedValue}
 			}
 		}
 		// In go1.25.5, url.Values.Encode() will sort the keys.
@@ -3877,6 +3904,16 @@ type HintTimeRange struct {
 	To   string
 }
 
+// LeadingList represents a nested structure in LEADING hints.
+// It could be *HintTable or LeadingList
+//
+//	eg: LEADING(a, (b, c), d)
+//	will be parsed into a LeadingList like:
+//	Items = [HintTable("a"), LeadingList{[HintTable("b"), HintTable("c")]}, HintTable("d")]
+type LeadingList struct {
+	Items []interface{}
+}
+
 // HintSetVar is the payload of `SET_VAR` hint
 type HintSetVar struct {
 	VarName string
@@ -3889,6 +3926,25 @@ type HintTable struct {
 	TableName     model.CIStr
 	QBName        model.CIStr
 	PartitionList []model.CIStr
+}
+
+// FlattenLeadingList collects all HintTable nodes from a possibly nested LeadingList into a flat slice.
+// Note:
+//   - Only table names are preserved.
+func FlattenLeadingList(list *LeadingList) []HintTable {
+	if list == nil {
+		return nil
+	}
+	var result []HintTable
+	for _, item := range list.Items {
+		switch t := item.(type) {
+		case *HintTable:
+			result = append(result, *t)
+		case *LeadingList:
+			result = append(result, FlattenLeadingList(t)...)
+		}
+	}
+	return result
 }
 
 func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
@@ -3916,11 +3972,52 @@ func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
 	}
 }
 
+func (lt *LeadingList) RestoreWithQB(ctx *format.RestoreCtx, qbName model.CIStr, needParen bool, isTop bool, qbOnTable bool) error {
+	if lt == nil || len(lt.Items) == 0 {
+		return nil
+	}
+	if needParen {
+		ctx.WritePlain("(")
+	}
+
+	currentQBName := qbName // hint level QBName
+
+	for i, item := range lt.Items {
+		if i > 0 {
+			ctx.WritePlain(", ")
+		}
+
+		switch t := item.(type) {
+		case *HintTable:
+			if i == 0 && currentQBName.L != "" && !qbOnTable {
+				ctx.WriteKeyWord("@")
+				ctx.WriteName(currentQBName.String())
+				ctx.WritePlain(" ")
+				t.Restore(ctx)
+				currentQBName = model.CIStr{}
+			} else {
+				t.Restore(ctx)
+			}
+		case *LeadingList:
+			if err := t.RestoreWithQB(ctx, currentQBName, true, false, qbOnTable); err != nil {
+				return err
+			}
+			currentQBName = model.CIStr{}
+		default:
+			return fmt.Errorf("unexpected type in LeadingList: %T", t)
+		}
+	}
+	if needParen {
+		ctx.WritePlain(")")
+	}
+	return nil
+}
+
 // Restore implements Node interface.
 func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(n.HintName.String())
 	ctx.WritePlain("(")
-	if n.QBName.L != "" {
+	if n.HintName.L != "leading" && n.QBName.L != "" {
 		if n.HintName.L != "qb_name" {
 			ctx.WriteKeyWord("@")
 		}
@@ -3936,7 +4033,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 		return nil
 	}
-	if n.QBName.L != "" {
+	if n.HintName.L != "leading" && n.QBName.L != "" {
 		ctx.WritePlain(" ")
 	}
 	// Hints with args except query block.
@@ -3947,8 +4044,26 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(n.HintData.(string))
 	case "nth_plan":
 		ctx.WritePlainf("%d", n.HintData.(int64))
+	case "leading":
+		if list, ok := n.HintData.(*LeadingList); ok && list != nil {
+			// if table level QBName or not
+			qbOnTable := false
+			if len(n.Tables) > 0 && n.Tables[0].QBName.L != "" {
+				qbOnTable = true
+			}
+			if err := list.RestoreWithQB(ctx, n.QBName, false, true, qbOnTable); err != nil {
+				return err
+			}
+		} else {
+			for i, table := range n.Tables {
+				if i != 0 {
+					ctx.WritePlain(", ")
+				}
+				table.Restore(ctx)
+			}
+		}
 	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join",
-		"broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "leading", "no_hash_join", "no_merge_join",
+		"broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "no_hash_join", "no_merge_join",
 		"no_index_join", "no_index_hash_join", "no_index_merge_join":
 		for i, table := range n.Tables {
 			if i != 0 {

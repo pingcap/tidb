@@ -187,6 +187,7 @@ func (t *mockTimer) GetTS(ctx context.Context) (int64, int64, error) {
 
 func TestCheckpointBackupRunner(t *testing.T) {
 	ctx := context.Background()
+
 	base := t.TempDir()
 	s, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)

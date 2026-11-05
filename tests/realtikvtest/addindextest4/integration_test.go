@@ -146,13 +146,20 @@ func TestFixAdminAlterDDLJobs(t *testing.T) {
 			}
 
 			ch := make(chan struct{})
+			workerStarted := make(chan struct{}, 1)
 			testfailpoint.EnableCall(t, tc.stuckFp, func() {
+				select {
+				case workerStarted <- struct{}{}:
+				default:
+				}
 				<-ch
 			})
 			var wg util.WaitGroupWrapper
 			wg.Run(func() {
 				tk1.MustExec(tc.sql)
 			})
+			// Wait for workers to start first, then adjust parameters and check.
+			<-workerStarted
 			var (
 				realWorkerCnt     atomic.Int64
 				realBatchSize     atomic.Int64
@@ -382,6 +389,7 @@ func TestCancelAfterReorgTimeout(t *testing.T) {
 	tk.MustExec("use test;")
 
 	tk.MustExec("create view all_global_tasks as select * from mysql.tidb_global_task union all select * from mysql.tidb_global_task_history;")
+	defer tk.MustExec("drop view if exists all_global_tasks;")
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustExec("insert into t values (1, 1);")
 

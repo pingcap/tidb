@@ -108,6 +108,24 @@ func TestCheckpointManager(t *testing.T) {
 	require.NoError(t, mgr.AdvanceWatermark(true))
 	require.False(t, mgr.IsKeyProcessed([]byte{'2', '9'}))
 	require.False(t, mgr.IsKeyProcessed([]byte{'3', '9'}))
+
+	// Finish the remaining chunk so we can continue to new tasks.
+	mgr.UpdateWrittenKeys(2, 100)
+	require.NoError(t, mgr.AdvanceWatermark(true))
+	require.True(t, mgr.IsKeyProcessed([]byte{'2', '9'}))
+	require.True(t, mgr.IsKeyProcessed([]byte{'3', '9'}))
+	require.True(t, mgr.IsKeyProcessed([]byte{'4', '9'}))
+
+	// Chunk completion counter: progress only after all chunks finish.
+	mgr.Register(5, []byte{'5', '9'})
+	// mock wrong row count
+	mgr.UpdateTotalKeys(5, 100, false)
+	mgr.UpdateTotalKeys(5, 0, true)
+	mgr.UpdateWrittenKeys(5, 100)
+	require.NoError(t, mgr.AdvanceWatermark(true))
+	mgr.UpdateWrittenKeys(5, 0)
+	require.NoError(t, mgr.AdvanceWatermark(true))
+	require.True(t, mgr.IsKeyProcessed([]byte{'5', '9'}))
 }
 
 func TestCheckpointManagerUpdateReorg(t *testing.T) {

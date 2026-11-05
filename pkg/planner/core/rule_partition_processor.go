@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -1771,6 +1772,10 @@ func (*PartitionProcessor) resolveAccessPaths(ds *logicalop.DataSource) error {
 	if err != nil {
 		return err
 	}
+	// partition processor path pruning should affect the all paths.
+	allPaths := make([]*util.AccessPath, len(possiblePaths))
+	copy(allPaths, possiblePaths)
+	ds.AllPossibleAccessPaths = allPaths
 	ds.PossibleAccessPaths = possiblePaths
 	return nil
 }

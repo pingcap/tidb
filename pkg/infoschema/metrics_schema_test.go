@@ -33,6 +33,7 @@ func mockGenPromQL(promQL string) string {
 }
 
 func TestMetricSchemaDef(t *testing.T) {
+	promQLParser := parser.NewParser(parser.Options{})
 	for name, def := range infoschema.MetricTableMap {
 		if strings.Contains(def.PromQL, "$QUANTILE") || strings.Contains(def.PromQL, "histogram_quantile") {
 			require.Greaterf(t, def.Quantile, float64(0), "the quantile of metric table %v should > 0", name)
@@ -63,7 +64,7 @@ func TestMetricSchemaDef(t *testing.T) {
 			require.Equalf(t, "instance", def.Labels[0], "metrics table %v: expect `instance`is the first label but got %v", name, def.Labels)
 		}
 
-		_, err := parser.ParseExpr(mockGenPromQL(def.PromQL))
+		_, err := promQLParser.ParseExpr(mockGenPromQL(def.PromQL))
 		require.NoError(t, err, "fail to parser PromQL %s", def.PromQL)
 	}
 }

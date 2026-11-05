@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/types"
@@ -105,20 +106,22 @@ type VectorIndexInfo struct {
 // It corresponds to the statement `CREATE INDEX Name ON Table (Column);`
 // See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 type IndexInfo struct {
-	ID            int64            `json:"id"`
-	Name          model.CIStr      `json:"idx_name"` // Index name.
-	Table         model.CIStr      `json:"tbl_name"` // Table name.
-	Columns       []*IndexColumn   `json:"idx_cols"` // Index columns.
-	State         SchemaState      `json:"state"`
-	BackfillState BackfillState    `json:"backfill_state"`
-	Comment       string           `json:"comment"`      // Comment
-	Tp            model.IndexType  `json:"index_type"`   // Index type: Btree, Hash, Rtree or HNSW
-	Unique        bool             `json:"is_unique"`    // Whether the index is unique.
-	Primary       bool             `json:"is_primary"`   // Whether the index is primary key.
-	Invisible     bool             `json:"is_invisible"` // Whether the index is invisible.
-	Global        bool             `json:"is_global"`    // Whether the index is global.
-	MVIndex       bool             `json:"mv_index"`     // Whether the index is multivalued index.
-	VectorInfo    *VectorIndexInfo `json:"vector_index"` // VectorInfo is the vector index information.
+	ID                  int64            `json:"id"`
+	Name                model.CIStr      `json:"idx_name"` // Index name.
+	Table               model.CIStr      `json:"tbl_name"` // Table name.
+	Columns             []*IndexColumn   `json:"idx_cols"` // Index columns.
+	State               SchemaState      `json:"state"`
+	BackfillState       BackfillState    `json:"backfill_state"`
+	Comment             string           `json:"comment"`                       // Comment
+	Tp                  model.IndexType  `json:"index_type"`                    // Index type: Btree, Hash, Rtree or HNSW
+	Unique              bool             `json:"is_unique"`                     // Whether the index is unique.
+	Primary             bool             `json:"is_primary"`                    // Whether the index is primary key.
+	Invisible           bool             `json:"is_invisible"`                  // Whether the index is invisible.
+	Global              bool             `json:"is_global"`                     // Whether the index is global.
+	MVIndex             bool             `json:"mv_index"`                      // Whether the index is multivalued index.
+	VectorInfo          *VectorIndexInfo `json:"vector_index"`                  // VectorInfo is the vector index information.
+	ConditionExprString string           `json:"partial_condition_expr_string"` // ConditionExprString is the string representation of the partial index condition.
+	AffectColumn        []*IndexColumn   `json:"affect_column,omitempty"`       // AffectColumn is the columns related to the index.
 	// Version of global index key format for non-clustered tables.
 	// Set to V1 when the handle can appear in the index key (non-unique indexes,
 	// or unique indexes with any nullable column) to prevent collisions after EXCHANGE PARTITION.
@@ -137,6 +140,12 @@ func (index *IndexInfo) Clone() *IndexInfo {
 	ni.Columns = make([]*IndexColumn, len(index.Columns))
 	for i := range index.Columns {
 		ni.Columns[i] = index.Columns[i].Clone()
+	}
+	if index.AffectColumn != nil {
+		ni.AffectColumn = make([]*IndexColumn, len(index.AffectColumn))
+		for i := range index.AffectColumn {
+			ni.AffectColumn[i] = index.AffectColumn[i].Clone()
+		}
 	}
 	return &ni
 }
@@ -204,6 +213,21 @@ func (index *IndexInfo) IsTiFlashLocalIndex() bool {
 	return index.VectorInfo != nil
 }
 
+// HasCondition checks whether the index has a partial index condition.
+func (index *IndexInfo) HasCondition() bool {
+	return len(index.ConditionExprString) > 0
+}
+
+// ConditionExpr parses and returns the condition expression of the partial index.
+func (index *IndexInfo) ConditionExpr() (ast.ExprNode, error) {
+	stmtStr := "select " + index.ConditionExprString
+	stmts, _, err := parser.New().ParseSQL(stmtStr)
+	if err != nil {
+		return nil, err
+	}
+	return stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr, nil
+}
+
 // FindIndexByColumns find IndexInfo in indices which is cover the specified columns.
 func FindIndexByColumns(tbInfo *TableInfo, indices []*IndexInfo, cols ...model.CIStr) *IndexInfo {
 	for _, index := range indices {
@@ -230,6 +254,58 @@ func IsIndexPrefixCovered(tbInfo *TableInfo, index *IndexInfo, cols ...model.CIS
 		}
 	}
 	return true
+}
+
+// FindIndexByColumnsForForeignKey finds an index that can be safely used by a foreign key.
+func FindIndexByColumnsForForeignKey(tbInfo *TableInfo, indices []*IndexInfo, cols ...model.CIStr) *IndexInfo {
+	for _, index := range indices {
+		if IsIndexPrefixCoveredForForeignKey(tbInfo, index, cols...) {
+			return index
+		}
+	}
+	return nil
+}
+
+// IsIndexPrefixCoveredForForeignKey checks whether the index covers the foreign key columns
+// and whether the partial index predicate, if any, is safe for foreign key checks.
+func IsIndexPrefixCoveredForForeignKey(tbInfo *TableInfo, index *IndexInfo, cols ...model.CIStr) bool {
+	if !IsIndexPrefixCovered(tbInfo, index, cols...) {
+		return false
+	}
+	return isIndexConditionCoveredByForeignKeyCols(index, cols...)
+}
+
+// isIndexConditionCoveredByForeignKeyCols returns whether the partial index predicate
+// is implied by the rows that need foreign key checks.
+//
+// Foreign keys currently use MATCH SIMPLE semantics: for a composite foreign key,
+// a row participates in checks and cascades only when all foreign key columns are
+// non-NULL. Therefore, a predicate of "<fk-col> IS NOT NULL" on any one foreign
+// key column is safe, because every row that needs a foreign key lookup satisfies
+// it. Predicates on non-foreign-key columns, or stricter predicates such as
+// comparisons, may filter out rows that still need checks and are not safe here.
+func isIndexConditionCoveredByForeignKeyCols(index *IndexInfo, cols ...model.CIStr) bool {
+	if !index.HasCondition() {
+		return true
+	}
+	expr, err := index.ConditionExpr()
+	if err != nil {
+		return false
+	}
+	isNullExpr, ok := expr.(*ast.IsNullExpr)
+	if !ok || !isNullExpr.Not {
+		return false
+	}
+	colExpr, ok := isNullExpr.Expr.(*ast.ColumnNameExpr)
+	if !ok {
+		return false
+	}
+	for _, col := range cols {
+		if colExpr.Name.Name.L == col.L {
+			return true
+		}
+	}
+	return false
 }
 
 // FindIndexInfoByID finds IndexInfo in indices by id.

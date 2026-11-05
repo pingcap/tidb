@@ -149,6 +149,17 @@ func TestPreCheckTableClusterIndex(t *testing.T) {
 	require.Error(t, err)
 	require.Regexp(t, `.*@@tidb_enable_clustered_index should be ON \(backup table = true, created table = false\).*`, err.Error())
 
+	// A routed restore checks the target name. An incompatible table at the
+	// source name must not block restoring a copy to a new target name.
+	routedTable := &metautil.Table{
+		DB: &model.DBInfo{Name: pmodel.NewCIStr("target")},
+		Info: &model.TableInfo{
+			Name:           pmodel.NewCIStr("copy"),
+			IsCommonHandle: true,
+		},
+	}
+	require.NoError(t, task.PreCheckTableClusterIndex([]*metautil.Table{routedTable}, nil, m.Domain))
+
 	// exist different DDLs
 	jobs := []*model.Job{{
 		ID:         5,
@@ -300,6 +311,7 @@ func TestFilterDDLJobs(t *testing.T) {
 	require.NoError(t, err)
 	// check the schema version
 	require.Equal(t, int32(metautil.MetaV1), mockMeta.Version)
+	require.Equal(t, backuppb.BackupSchemaVersion, mockMeta.BackupSchemaVersion)
 	metaReader := metautil.NewMetaReader(mockMeta, s.Storage, &cipher)
 	allDDLJobsBytes, err := metaReader.ReadDDLs(ctx)
 	require.NoError(t, err)
@@ -365,6 +377,7 @@ func TestFilterDDLJobsV2(t *testing.T) {
 	require.NoError(t, err)
 	// check the schema version
 	require.Equal(t, int32(metautil.MetaV2), mockMeta.Version)
+	require.Equal(t, backuppb.BackupSchemaVersion, mockMeta.BackupSchemaVersion)
 	metaReader := metautil.NewMetaReader(mockMeta, s.Storage, &cipher)
 	allDDLJobsBytes, err := metaReader.ReadDDLs(ctx)
 	require.NoError(t, err)

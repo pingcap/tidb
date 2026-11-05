@@ -10,13 +10,14 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 )
 
 func getAllTiKVs(ctx context.Context, p pd.Client) ([]*metapb.Store, error) {
-	stores, err := p.GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := p.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return nil, err
 	}

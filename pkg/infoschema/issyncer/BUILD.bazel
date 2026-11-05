@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "issyncer",
+    srcs = ["filter.go"],
+    importpath = "github.com/pingcap/tidb/pkg/infoschema/issyncer",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/meta/model",
+    ],
+)
