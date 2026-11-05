@@ -479,7 +479,7 @@ fn dml_batch_context_rebuild_keeps_one_active_statement_tracker() {
     );
     drop(first);
     assert!(second
-        .write_accountant(tidb_variable::mem_quota::label::UPDATE)
+        .write_accountant(1)
         .account_row(&[tidb_datatype::Datum::Int(1)])
         .is_err());
 }
@@ -498,7 +498,7 @@ fn dml_batch_late_previous_authority_drop_cannot_unbind_current_oom_action() {
     drop(previous);
     assert!(
         current
-            .write_accountant(tidb_variable::mem_quota::label::UPDATE)
+            .write_accountant(1)
             .account_row(&[tidb_datatype::Datum::Int(1)])
             .is_err(),
         "retiring an old result must not clear the new statement's OOM action"

@@ -3112,6 +3112,95 @@ fn explain_analyze_delete_executes() {
     );
 }
 
+/// Go `UpdateExec` / `DeleteExec` (`pkg/executor/update.go`, `delete.go`):
+/// the `Update_N` / `Delete_N` row carries the write executor's own basic
+/// stats (its one `Next` drains the child and writes every row) and the peak
+/// of its `memTracker`, labelled by its plan ID. That tracker holds one child
+/// chunk at a time (`newDMLChildChunk`, renewed per chunk) and, for UPDATE,
+/// `updatedRowKeys`' growth; the point readers below it hold no tracker.
+///
+/// Every memory figure is `./gorun` on this branch over the same rows
+/// (`tidb_max_chunk_size=32` for the 40-key statements, so the batch point
+/// read is two chunks):
+///
+/// ```text
+/// update t set b=b+1 where a=1          Update_3 ... loops:1 ... 258 Bytes  Point_Get_1 N/A
+/// delete from t where a in (2,3)        Delete_2 ... loops:1 ... 274 Bytes
+/// delete from t where b > 100           Delete_3 ... loops:1 ... 0 Bytes
+/// update t set b=b+1 where a in (1..40) Update_3 ... loops:1 ... 1.43 KB
+/// delete from t where a in (1..40)      Delete_2 ... loops:1 ... 760 Bytes
+/// -- c (a VARCHAR(10) PRIMARY KEY CLUSTERED, b INT): a common handle also
+/// -- charges its own ExtraMemSize when it first enters updatedRowKeys
+/// update c set b=b+1 where a='x'        Update_3 ... loops:1 ... 284 Bytes
+/// update c set b=b+1 where a in ('x','y') Update_3 ... loops:1 ... 326 Bytes
+/// ```
+///
+/// A multi-table write reports the same basic stats; its memory is not yet
+/// Go's (see the register's E03).
+#[test]
+fn explain_analyze_dml_roots_report_their_executor_stats_and_memory_like_go() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT PRIMARY KEY, b INT, KEY(b))")
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1,1),(2,2),(3,3)").unwrap();
+    let root = |session: &mut Session, sql: &str| {
+        let rows = row_text(session.run(sql));
+        let info = &rows[0][5];
+        assert!(
+            info.starts_with("time:") && info.contains(", open:") && info.contains(", loops:1,"),
+            "{sql}: {info}"
+        );
+        (rows[0][0].clone(), rows[0][7].clone(), rows[1][7].clone())
+    };
+    assert_eq!(
+        root(&mut session, "EXPLAIN ANALYZE UPDATE t SET b=b+1 WHERE a=1"),
+        ("Update_3".to_owned(), "258 Bytes".to_owned(), "N/A".to_owned())
+    );
+    assert_eq!(
+        root(&mut session, "EXPLAIN ANALYZE DELETE FROM t WHERE a IN (2,3)"),
+        ("Delete_2".to_owned(), "274 Bytes".to_owned(), "N/A".to_owned())
+    );
+    assert_eq!(
+        root(&mut session, "EXPLAIN ANALYZE DELETE FROM t WHERE b > 100").1,
+        "0 Bytes"
+    );
+
+    session.run("DELETE FROM t").unwrap();
+    let values: Vec<String> = (1..=40).map(|i| format!("({i},{i})")).collect();
+    session
+        .run(&format!("INSERT INTO t VALUES {}", values.join(",")))
+        .unwrap();
+    session.run("SET tidb_max_chunk_size = 32").unwrap();
+    let keys: Vec<String> = (1..=40).map(|i| i.to_string()).collect();
+    let keys = keys.join(",");
+    assert_eq!(
+        root(&mut session, &format!("EXPLAIN ANALYZE UPDATE t SET b=b+1 WHERE a IN ({keys})")).1,
+        "1.43 KB"
+    );
+    assert_eq!(
+        root(&mut session, &format!("EXPLAIN ANALYZE DELETE FROM t WHERE a IN ({keys})")).1,
+        "760 Bytes"
+    );
+    assert!(row_text(session.run("SELECT * FROM t")).is_empty());
+
+    session.run("SET tidb_max_chunk_size = DEFAULT").unwrap();
+    session
+        .run("CREATE TABLE c (a VARCHAR(10) PRIMARY KEY CLUSTERED, b INT)")
+        .unwrap();
+    session.run("INSERT INTO c VALUES ('x',1),('y',2)").unwrap();
+    assert_eq!(
+        root(&mut session, "EXPLAIN ANALYZE UPDATE c SET b=b+1 WHERE a='x'").1,
+        "284 Bytes"
+    );
+    assert_eq!(
+        root(&mut session, "EXPLAIN ANALYZE UPDATE c SET b=b+1 WHERE a IN ('x','y')").1,
+        "326 Bytes"
+    );
+    root(&mut session, "EXPLAIN ANALYZE UPDATE c x JOIN c y ON x.a = y.a SET x.b = x.b + 1");
+    root(&mut session, "EXPLAIN ANALYZE DELETE x FROM c x JOIN c y ON x.a = y.a WHERE x.a = 'x'");
+}
+
 /// `EXPLAIN ANALYZE` of a `Point_Get`/`Batch_Point_Get`/`IndexRangeScan`
 /// access path: real `actRows`, not `N/A`. Exact point and batch predicates
 /// take Go's replacement fast-plan path; an index range may retain a reader

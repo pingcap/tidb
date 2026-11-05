@@ -168,6 +168,7 @@ pub(crate) fn run_multi_update(
     ),
     expressions: &[Option<Expression>],
     fk_triggers: &[tidb_planner_core_operator_physicalop::FkTriggerNode],
+    dml: &super::physical_builder::DmlExec,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
     let (tables, assigns) = layout;
@@ -263,7 +264,7 @@ pub(crate) fn run_multi_update(
         catalog,
         ctx,
         runtime,
-        tidb_variable::mem_quota::label::UPDATE,
+        dml,
         true,
     )?;
 
@@ -293,145 +294,147 @@ pub(crate) fn run_multi_update(
         })
         .collect();
     let mut merged: BTreeMap<((String, String), TableHandle), Vec<Datum>> = BTreeMap::new();
-    let accountant = ctx
-        .statement_memory()
-        .write_accountant(tidb_variable::mem_quota::label::UPDATE);
+    let accountant = &dml.mem_tracker;
     let mut records = UpdateRecords::new(fk_triggers);
     let mut once: UpdateOnce = BTreeMap::new();
     let mut matched_rows = 0u64;
     let mut touched_rows = 0u64;
     let mut changed_rows = 0u64;
-    for (row_index, row) in rows.iter().enumerate() {
-        let ids = &row.ids;
-        let chunk = row_chunk(&row.raw, &field_types)?;
-        let evaluated = assigns
-            .iter()
-            .map(|assign| {
-                let table = &tables[assign.table];
-                let extra = assign.column == table.stored_width;
-                if !extra && ids[assign.table].is_none() {
-                    return Ok(None);
+    // The rest of Go `UpdateExec.Next`: the writes, after the whole read.
+    dml.next_continued(|| -> Result<(), DriverError> {
+        for (row_index, row) in rows.iter().enumerate() {
+            let ids = &row.ids;
+            let chunk = row_chunk(&row.raw, &field_types)?;
+            let evaluated = assigns
+                .iter()
+                .map(|assign| {
+                    let table = &tables[assign.table];
+                    let extra = assign.column == table.stored_width;
+                    if !extra && ids[assign.table].is_none() {
+                        return Ok(None);
+                    }
+                    let expression = expressions
+                        .get(assign.expr)
+                        .and_then(Option::as_ref)
+                        .ok_or_else(|| DriverError::unsupported("an UPDATE assignment was not planned"))?;
+                    let value = expression
+                        .eval(ctx, chunk.get_row(0))
+                        .map_err(|error| DriverError::Exec(ExecError::Eval(error)))?;
+                    if extra {
+                        return Ok(None);
+                    }
+                    let columns = &updated[assign.table].columns;
+                    handle_update_error(
+                        value,
+                        &columns[assign.column].1,
+                        &columns[assign.column].0,
+                        row_index,
+                        ctx,
+                    )
+                    .map(Some)
+                    .map_err(DriverError::from)
+                })
+                .collect::<Result<Vec<_>, DriverError>>()?;
+            let mut prepared = Vec::with_capacity(tables.len());
+            // Compose every target from the same input row before merging aliases.
+            for (slot, table) in updated.iter().enumerate() {
+                let Some(id) = ids[slot].as_ref().filter(|_| targets[slot].is_some()) else {
+                    prepared.push(None);
+                    continue;
+                };
+                if table.skip_repeated_updates && once.get(&(slot, id.clone())) == Some(&true) {
+                    prepared.push(None);
+                    continue;
                 }
-                let expression = expressions
-                    .get(assign.expr)
-                    .and_then(Option::as_ref)
-                    .ok_or_else(|| DriverError::unsupported("an UPDATE assignment was not planned"))?;
-                let value = expression
-                    .eval(ctx, chunk.get_row(0))
-                    .map_err(|error| DriverError::Exec(ExecError::Eval(error)))?;
-                if extra {
-                    return Ok(None);
-                }
-                let columns = &updated[assign.table].columns;
-                handle_update_error(
-                    value,
-                    &columns[assign.column].1,
-                    &columns[assign.column].0,
-                    row_index,
-                    ctx,
-                )
-                .map(Some)
-                .map_err(DriverError::from)
-            })
-            .collect::<Result<Vec<_>, DriverError>>()?;
-        let mut prepared = Vec::with_capacity(tables.len());
-        // Compose every target from the same input row before merging aliases.
-        for (slot, table) in updated.iter().enumerate() {
-            let Some(id) = ids[slot].as_ref().filter(|_| targets[slot].is_some()) else {
-                prepared.push(None);
-                continue;
-            };
-            if table.skip_repeated_updates && once.get(&(slot, id.clone())) == Some(&true) {
-                prepared.push(None);
-                continue;
-            }
-            let mut old = row.stored[slot].clone();
-            let mut new = old.clone();
-            for (assign, value) in assigns.iter().zip(&evaluated) {
-                if assign.table == slot {
-                    if let Some(value) = value {
-                        new[assign.column] = value.clone();
+                let mut old = row.stored[slot].clone();
+                let mut new = old.clone();
+                for (assign, value) in assigns.iter().zip(&evaluated) {
+                    if assign.table == slot {
+                        if let Some(value) = value {
+                            new[assign.column] = value.clone();
+                        }
                     }
                 }
-            }
-            if multiple[slot] {
-                let key = (
-                    targets[slot].clone().expect("an assigned base table"),
-                    id.clone(),
-                );
-                if let Some(previous) = merged.get_mut(&key) {
-                    for (column, meta) in table.default_meta.iter().enumerate() {
-                        if meta.generated {
-                            continue;
+                if multiple[slot] {
+                    let key = (
+                        targets[slot].clone().expect("an assigned base table"),
+                        id.clone(),
+                    );
+                    if let Some(previous) = merged.get_mut(&key) {
+                        for (column, meta) in table.default_meta.iter().enumerate() {
+                            if meta.generated {
+                                continue;
+                            }
+                            old[column] = previous[column].clone();
+                            if assigns
+                                .iter()
+                                .any(|a| a.table == slot && a.column == column)
+                            {
+                                previous[column] = new[column].clone();
+                            } else {
+                                new[column] = previous[column].clone();
+                            }
                         }
+                    } else {
+                        merged.insert(key, new.clone());
+                    }
+                    accountant.account_row(&new).map_err(DriverError::from)?;
+                }
+                prepared.push(Some((old, new)));
+            }
+            for (slot, prepared) in prepared.iter_mut().enumerate() {
+                let Some((old, new)) = prepared else { continue };
+                let table = &updated[slot];
+                let id = ids[slot].as_ref().expect("prepared target has an identity");
+                let (database, name) = targets[slot]
+                    .as_ref()
+                    .expect("prepared target is a base table");
+                let merge_key = ((database.clone(), name.clone()), id.clone());
+                if multiple[slot] {
+                    let previous = &merged[&merge_key];
+                    for &column in &table.generated_columns {
                         old[column] = previous[column].clone();
-                        if assigns
-                            .iter()
-                            .any(|a| a.table == slot && a.column == column)
-                        {
-                            previous[column] = new[column].clone();
-                        } else {
-                            new[column] = previous[column].clone();
-                        }
+                        new[column] = previous[column].clone();
                     }
-                } else {
-                    merged.insert(key, new.clone());
                 }
-                accountant.account_row(&new).map_err(DriverError::from)?;
-            }
-            prepared.push(Some((old, new)));
-        }
-        for (slot, prepared) in prepared.iter_mut().enumerate() {
-            let Some((old, new)) = prepared else { continue };
-            let table = &updated[slot];
-            let id = ids[slot].as_ref().expect("prepared target has an identity");
-            let (database, name) = targets[slot]
-                .as_ref()
-                .expect("prepared target is a base table");
-            let merge_key = ((database.clone(), name.clone()), id.clone());
-            if multiple[slot] {
-                let previous = &merged[&merge_key];
-                for &column in &table.generated_columns {
-                    old[column] = previous[column].clone();
-                    new[column] = previous[column].clone();
+                if !once.contains_key(&(slot, id.clone())) {
+                    matched_rows += 1;
                 }
-            }
-            if !once.contains_key(&(slot, id.clone())) {
-                matched_rows += 1;
-            }
-            on_update_now[slot].apply(old, new, ctx, chunk.get_row(0))?;
-            let outcome = records.write(
-                catalog,
-                database,
-                name,
-                id,
-                old,
-                new,
-                table.selected_partitions.as_deref(),
-                update.ignore,
-                super::GeneratedWrite::Update { row_index },
-                &assigns
-                    .iter()
-                    .filter(|assign| assign.table == slot)
-                    .map(|assign| assign.column)
-                    .collect::<Vec<_>>(),
-                ctx,
-            )?;
-            if multiple[slot] {
-                let previous = merged
-                    .get_mut(&merge_key)
-                    .expect("non-generated merge ran first");
-                for &column in &table.generated_columns {
-                    previous[column] = new[column].clone();
+                on_update_now[slot].apply(old, new, ctx, chunk.get_row(0))?;
+                let outcome = records.write(
+                    catalog,
+                    database,
+                    name,
+                    id,
+                    old,
+                    new,
+                    table.selected_partitions.as_deref(),
+                    update.ignore,
+                    super::GeneratedWrite::Update { row_index },
+                    &assigns
+                        .iter()
+                        .filter(|assign| assign.table == slot)
+                        .map(|assign| assign.column)
+                        .collect::<Vec<_>>(),
+                    ctx,
+                )?;
+                if multiple[slot] {
+                    let previous = merged
+                        .get_mut(&merge_key)
+                        .expect("non-generated merge ran first");
+                    for &column in &table.generated_columns {
+                        previous[column] = new[column].clone();
+                    }
                 }
-            }
-            changed_rows += u64::from(outcome.changed());
-            touched_rows += u64::from(outcome.touched());
-            if !outcome.ignored() {
-                once.insert((slot, id.clone()), outcome.changed());
+                changed_rows += u64::from(outcome.changed());
+                touched_rows += u64::from(outcome.touched());
+                if !outcome.ignored() {
+                    once.insert((slot, id.clone()), outcome.changed());
+                }
             }
         }
-    }
+        Ok(())
+    })?;
     records.finish(catalog, ctx)?;
     ctx.set_message(format!(
         "Rows matched: {matched_rows}  Changed: {changed_rows}  Warnings: {}",
@@ -527,6 +530,7 @@ pub(crate) fn run_multi_delete(
     physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
     tables: &[tidb_planner_core_operator_physicalop::DeleteTablePos],
     fk_triggers: &[tidb_planner_core_operator_physicalop::FkTriggerNode],
+    dml: &super::physical_builder::DmlExec,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
     if tables.is_empty() {
@@ -543,7 +547,7 @@ pub(crate) fn run_multi_delete(
             catalog,
             ctx,
             runtime,
-            tidb_variable::mem_quota::label::DELETE,
+            dml,
             false,
         )?
     };
@@ -566,11 +570,15 @@ pub(crate) fn run_multi_delete(
 
     let mut records = super::dml::delete_record::DeleteRecords::new(fk_triggers);
     let mut deleted = 0;
-    for ((database, name, id), location) in doomed {
-        let old = &rows[location.0].stored[location.1];
-        deleted +=
-            u64::from(records.write(catalog, &database, &name, &id, old, delete.ignore, ctx)?);
-    }
+    // The rest of Go `DeleteExec.Next`: the removals, after the whole read.
+    dml.next_continued(|| -> Result<(), DriverError> {
+        for ((database, name, id), location) in doomed {
+            let old = &rows[location.0].stored[location.1];
+            deleted +=
+                u64::from(records.write(catalog, &database, &name, &id, old, delete.ignore, ctx)?);
+        }
+        Ok(())
+    })?;
     records.finish(catalog, ctx)?;
 
     Ok(deleted)
@@ -595,7 +603,7 @@ fn delete_source_rows(
     catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
-    memory_label: i64,
+    dml: &super::physical_builder::DmlExec,
     keep_raw: bool,
 ) -> Result<Vec<DeleteSourceRow>, DriverError> {
     use tidb_planner_core_operator_physicalop::DeleteHandle;
@@ -607,7 +615,7 @@ fn delete_source_rows(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let zone = ctx.session_zone();
-    let accountant = ctx.statement_memory().write_accountant(memory_label);
+    let accountant = &dml.mem_tracker;
     let integer = |datum: &Datum| match datum {
         Datum::Int(value) => Some(TableHandle::Int(*value)),
         Datum::UInt(value) => Some(TableHandle::Int(*value as i64)),
@@ -619,6 +627,7 @@ fn delete_source_rows(
         catalog,
         ctx,
         runtime.is_some(),
+        Some(dml),
         |row| {
             let mut ids = Vec::with_capacity(tables.len());
             let mut stored = Vec::with_capacity(tables.len());

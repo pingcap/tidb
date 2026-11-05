@@ -262,12 +262,8 @@ impl<'a> UpdateRecords<'a> {
                 }
             }
         }
+        // Go's `FKCheckExec` keeps the rows' keys without a memory tracker.
         if let Some(index) = fk_target {
-            let accountant = ctx
-                .statement_memory()
-                .write_accountant(mem_quota::label::UPDATE);
-            accountant.account_row(old).map_err(DriverError::from)?;
-            accountant.account_row(new).map_err(DriverError::from)?;
             self.tables[index].updates.push(ForeignKeyUpdate {
                 old: old.to_vec(),
                 new: new.clone(),

@@ -783,36 +783,47 @@ fn visit_executor_rows(
     memory: &crate::StatementMemory,
     visit: impl FnMut(Vec<Datum>) -> Result<(), DriverError>,
 ) -> Result<(), DriverError> {
-    visit_executor_row_chunks(exec, types, memory, visit, |_| {})
+    visit_executor_row_chunks(exec, types, memory, None, visit, |_| {})
 }
 
 /// [`visit_executor_rows`], telling `chunk_end` each chunk's row count once
 /// its rows were visited: the batches Go's `insertRowsFromSelect` executes.
+///
+/// With `dml`, the reading is that write executor's: its `Open` and `Close`
+/// open and close the source, and the read loop is (the start of) its `Next`.
 fn visit_executor_row_chunks(
     mut exec: Box<dyn Executor>,
     types: &[FieldType],
     memory: &crate::StatementMemory,
+    dml: Option<&physical_builder::DmlExec>,
     mut visit: impl FnMut(Vec<Datum>) -> Result<(), DriverError>,
     mut chunk_end: impl FnMut(usize),
 ) -> Result<(), DriverError> {
+    let timed = |phase: fn(&physical_builder::DmlExec, &mut dyn FnMut() -> Result<(), DriverError>) -> Result<(), DriverError>,
+                 run: &mut dyn FnMut() -> Result<(), DriverError>| match dml {
+        Some(dml) => phase(dml, run),
+        None => run(),
+    };
     let result = (|| {
-        exec.open()?;
-        let mut req = exec.new_chunk();
-        loop {
-            next_executor(exec.as_mut(), &mut req, memory)?;
-            if req.num_rows() == 0 {
-                break;
+        timed(|dml, run| dml.open(run), &mut || exec.open().map_err(DriverError::from))?;
+        timed(|dml, run| dml.next(run), &mut || {
+            let mut req = exec.new_chunk();
+            loop {
+                next_executor(exec.as_mut(), &mut req, memory)?;
+                if req.num_rows() == 0 {
+                    break;
+                }
+                for r in 0..req.num_rows() {
+                    visit(req.get_row(r).get_datum_row(types))?;
+                }
+                chunk_end(req.num_rows());
             }
-            for r in 0..req.num_rows() {
-                visit(req.get_row(r).get_datum_row(types))?;
-            }
-            chunk_end(req.num_rows());
-        }
-        Ok(())
+            Ok(())
+        })
     })();
     // Close even after partial open, next, conversion or quota failure.
     // Preserve the primary read/write error if cleanup also fails.
-    let close = exec.close().map_err(DriverError::from);
+    let close = timed(|dml, run| dml.close(run), &mut || exec.close().map_err(DriverError::from));
     result.and(close)
 }
 
@@ -824,31 +835,74 @@ fn visit_executor_row_chunks(
 /// The source is asked for its next chunk only after every row of the
 /// previous one was written, which is what puts the source's own end-of-input
 /// work (`SelectLockExec`'s lock) after the last chunk's writes.
+///
+/// `dml` is the write executor: its `Open` and `Close` open and close the
+/// source, and its one `Next` is this loop, which holds one source chunk at a
+/// time on the executor's `memTracker`.
 fn visit_executor_rows_writing<C: ?Sized>(
     mut exec: Box<dyn Executor>,
     types: &[FieldType],
     memory: &crate::StatementMemory,
+    dml: &physical_builder::DmlExec,
     state: &mut C,
     mut visit: impl FnMut(&mut C, Vec<Datum>) -> Result<(), DriverError>,
 ) -> Result<(), DriverError> {
     let result = (|| {
-        exec.open()?;
-        let mut req = exec.new_chunk();
-        loop {
-            next_executor(exec.as_mut(), &mut req, memory)?;
-            if req.num_rows() == 0 {
-                break;
+        dml.open(|| exec.open())?;
+        dml.next(|| {
+            let max_chunk_size = dml.max_chunk_size;
+            let mut req = new_dml_child_chunk(types, max_chunk_size, exec.init_cap());
+            let mut mem_usage_of_chk = 0;
+            loop {
+                dml.mem_tracker.consume_checked(-mem_usage_of_chk)?;
+                next_executor(exec.as_mut(), &mut req, memory)?;
+                if req.num_rows() == 0 {
+                    break;
+                }
+                mem_usage_of_chk = req.memory_usage();
+                dml.mem_tracker.consume_checked(mem_usage_of_chk)?;
+                for r in 0..req.num_rows() {
+                    visit(state, req.get_row(r).get_datum_row(types))?;
+                }
+                req = req.renew(max_chunk_size);
             }
-            for r in 0..req.num_rows() {
-                visit(state, req.get_row(r).get_datum_row(types))?;
-            }
-        }
-        Ok(())
+            Ok(())
+        })
     })();
     // Close even after partial open, next, conversion or write failure.
     // Preserve the primary read/write error if cleanup also fails.
-    let close = exec.close().map_err(DriverError::from);
+    let close = dml.close(|| exec.close()).map_err(DriverError::from);
     result.and(close)
+}
+
+/// Go `dmlChildChunkTargetBytes`: the bytes a write executor's child chunk is
+/// sized to start at.
+const DML_CHILD_CHUNK_TARGET_BYTES: i64 = 256 * 1024;
+
+/// Go `newDMLChildChunk(dmlExec, fields, maxInitCap)`: the chunk a write
+/// executor reads its child into, starting no larger than the child's
+/// `InitCap` nor than [`DML_CHILD_CHUNK_TARGET_BYTES`] of estimated rows.
+fn new_dml_child_chunk(
+    fields: &[FieldType],
+    max_chunk_size: usize,
+    max_init_cap: usize,
+) -> tidb_chunk::chunk::Chunk {
+    let init_cap = estimate_dml_child_chunk_init_cap(fields, max_chunk_size, max_init_cap);
+    tidb_chunk::chunk::Chunk::new(fields, init_cap, max_chunk_size)
+}
+
+/// Go `estimateDMLChildChunkInitCap`.
+fn estimate_dml_child_chunk_init_cap(fields: &[FieldType], max_chunk_size: usize, max_init_cap: usize) -> usize {
+    if max_chunk_size == 0 || max_init_cap == 0 {
+        // Go `chunk.ZeroCapacity`.
+        return 0;
+    }
+    let row_width: i64 = fields.iter().map(tidb_chunk::codec::estimate_type_width).sum();
+    if row_width <= 0 {
+        return max_chunk_size.min(max_init_cap);
+    }
+    let by_width = usize::try_from(DML_CHILD_CHUNK_TARGET_BYTES / row_width).unwrap_or(0);
+    max_chunk_size.min(max_init_cap).min(by_width).max(1)
 }
 
 #[cfg(test)]
@@ -921,7 +975,7 @@ mod dml_batch_tests {
     fn quota_failure_stops_reading_and_closes_source() {
         let (exec, nexts, closes, types) = source(false);
         let memory = crate::StatementMemory::new(1024, tidb_vardef::OomAction::Cancel, 7);
-        let accountant = memory.write_accountant(tidb_variable::mem_quota::label::UPDATE);
+        let accountant = memory.write_accountant(1);
         let result = visit_executor_rows(exec, &types, &memory, |row| {
             accountant.account_row(&row).map_err(DriverError::from)
         });

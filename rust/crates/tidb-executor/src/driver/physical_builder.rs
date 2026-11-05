@@ -299,6 +299,88 @@ struct PhysicalCallStats {
     loops: u64,
 }
 
+/// Go `UpdateExec` / `DeleteExec`'s own executor state, which this tier's
+/// write drivers carry around the source they stream: the `memTracker` its
+/// `Open` creates (`memory.NewTracker(e.ID(), -1)` attached to the statement
+/// tracker) and, when runtime stats are collected, the `BasicRuntimeStats`
+/// `exec.Open` / `exec.Next` / `exec.Close` record for the plan.
+///
+/// Dropping it is Go `Close`'s deferred `memTracker.ReplaceBytesUsed(0)`.
+pub(crate) struct DmlExec {
+    pub(crate) mem_tracker: tidb_variable::mem_quota::WriteMemory,
+    /// Go `e.MaxChunkSize()`.
+    pub(crate) max_chunk_size: usize,
+    calls: Option<Arc<Mutex<PhysicalCallStats>>>,
+}
+
+impl DmlExec {
+    /// Go `executorBuilder.buildUpdate` / `buildDelete` + `Open`'s tracker:
+    /// the executor for the `Update_N` / `Delete_N` root `plan`, its basic
+    /// stats registered under the plan when `runtime` collects them.
+    pub(crate) fn new(
+        plan: &PhysicalPlan,
+        ctx: &crate::StmtContext,
+        runtime: Option<&mut PhysicalRuntimeStats>,
+    ) -> Self {
+        let calls = runtime.map(|runtime| {
+            let counter = runtime
+                .entry(runtime_plan_key(plan))
+                .or_insert_with(|| tidb_executor_internal_exec::RowCount::default().into());
+            Arc::clone(
+                counter
+                    .calls
+                    .get_or_insert_with(|| Arc::new(Mutex::new(PhysicalCallStats::default()))),
+            )
+        });
+        Self {
+            mem_tracker: ctx.statement_memory().write_accountant(i64::from(plan.id())),
+            max_chunk_size: ctx.executor_chunk_sizes().1,
+            calls,
+        }
+    }
+
+    /// Go `exec.Open(ctx, e)`: the executor's `Open`, which opens its child.
+    pub(crate) fn open<T>(&self, open: impl FnOnce() -> T) -> T {
+        self.record(open, |calls, elapsed| calls.open += elapsed)
+    }
+
+    /// Go `exec.Next(ctx, e, req)`: the one `Next` that drains the child and
+    /// writes every row.
+    pub(crate) fn next<T>(&self, next: impl FnOnce() -> T) -> T {
+        self.record(next, |calls, elapsed| {
+            calls.next += elapsed;
+            calls.loops += 1;
+        })
+    }
+
+    /// More of the same `Next`, after the part [`Self::next`] timed: a
+    /// multi-table write's writes, which follow its whole read.
+    pub(crate) fn next_continued<T>(&self, next: impl FnOnce() -> T) -> T {
+        self.record(next, |calls, elapsed| calls.next += elapsed)
+    }
+
+    /// Go `exec.Close(e)`: the executor's `Close`, which closes its child.
+    pub(crate) fn close<T>(&self, close: impl FnOnce() -> T) -> T {
+        self.record(close, |calls, elapsed| calls.close += elapsed)
+    }
+
+    fn record<T>(&self, run: impl FnOnce() -> T, add: impl FnOnce(&mut PhysicalCallStats, Duration)) -> T {
+        let Some(calls) = &self.calls else {
+            return run();
+        };
+        let start = Instant::now();
+        let result = run();
+        add(&mut calls.lock().unwrap(), start.elapsed());
+        result
+    }
+}
+
+impl Drop for DmlExec {
+    fn drop(&mut self) {
+        self.mem_tracker.replace_bytes_used(0);
+    }
+}
+
 /// A reader's pushed plan nodes (leaf first) and its select-result root.
 type CopChain = (Vec<CopPlanId>, i64);
 
@@ -8257,9 +8339,10 @@ pub(crate) fn execute_dml_source(
     catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     analyze: bool,
+    dml: Option<&DmlExec>,
     visit: impl FnMut(Vec<tidb_datatype::Datum>) -> Result<(), DriverError>,
 ) -> Result<PhysicalRuntimeStats, DriverError> {
-    execute_dml_source_chunks(physical, catalog, ctx, analyze, visit, |_| {})
+    execute_dml_source_chunks(physical, catalog, ctx, analyze, dml, visit, |_| {})
 }
 
 /// [`execute_dml_source`] for a statement that writes each row as the source
@@ -8271,6 +8354,7 @@ pub(crate) fn execute_dml_source_writing(
     physical: &mut PhysicalPlan,
     catalog: &mut SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
+    dml: &DmlExec,
     analyze: bool,
     visit: impl FnMut(&mut SessionExtendedInfoSchema, Vec<tidb_datatype::Datum>) -> Result<(), DriverError>,
 ) -> Result<PhysicalRuntimeStats, DriverError> {
@@ -8286,6 +8370,7 @@ pub(crate) fn execute_dml_source_writing(
         root,
         &field_types,
         &ctx.statement_memory(),
+        dml,
         catalog,
         visit,
     )?;
@@ -8299,6 +8384,7 @@ pub(crate) fn execute_dml_source_chunks(
     catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     analyze: bool,
+    dml: Option<&DmlExec>,
     visit: impl FnMut(Vec<tidb_datatype::Datum>) -> Result<(), DriverError>,
     chunk_end: impl FnMut(usize),
 ) -> Result<PhysicalRuntimeStats, DriverError> {
@@ -8314,6 +8400,7 @@ pub(crate) fn execute_dml_source_chunks(
         root,
         &field_types,
         &ctx.statement_memory(),
+        dml,
         visit,
         chunk_end,
     )?;

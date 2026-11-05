@@ -4087,7 +4087,9 @@ pub fn explain_analyze_insert_stmt(
         Some(&mut runtime),
     )?;
     ctx.add_affected_rows(affected);
-    runtime.insert(root_key, tidb_executor_internal_exec::RowCount::default().into());
+    runtime
+        .entry(root_key)
+        .or_insert_with(|| tidb_executor_internal_exec::RowCount::default().into());
     render_physical_plan(
         ctx,
         ctx,
@@ -4217,7 +4219,9 @@ pub fn explain_analyze_update_stmt(
         Some(&mut runtime),
     )?;
     ctx.add_affected_rows(affected);
-    runtime.insert(root_key, tidb_executor_internal_exec::RowCount::default().into());
+    runtime
+        .entry(root_key)
+        .or_insert_with(|| tidb_executor_internal_exec::RowCount::default().into());
     render_physical_plan(
         ctx,
         ctx,
@@ -4272,7 +4276,9 @@ pub fn explain_analyze_delete_stmt(
         Some(&mut runtime),
     )?;
     ctx.add_affected_rows(affected);
-    runtime.insert(root_key, tidb_executor_internal_exec::RowCount::default().into());
+    runtime
+        .entry(root_key)
+        .or_insert_with(|| tidb_executor_internal_exec::RowCount::default().into());
     render_physical_plan(
         ctx,
         ctx,

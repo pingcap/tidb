@@ -982,6 +982,7 @@ fn run_insert_rows(
                 catalog,
                 ctx,
                 runtime.is_some(),
+                None,
                 |row| {
                     accountant.account_row(&row).map_err(DriverError::from)?;
                     rows.push(row);
@@ -2476,39 +2477,33 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
     }
     // Go `runStmt` -> `handleNoDelayExecutor` -> the DML executor's `Next`.
     let _execution = super::begin_dml_execution("*executor.UpdateExec.Next");
-    let (physical_source, update_expressions, fast_update_list, fk_triggers, multi_layout) = match physical_plan {
-        Some(plan) => {
-            let tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(root) = plan else {
-                return Err(DriverError::unsupported(
-                    "UPDATE execution received a non-DML physical root",
-                ));
-            };
-            if !root.go_operator.eq_ignore_ascii_case("Update") {
-                return Err(DriverError::unsupported(format!(
-                    "Update execution received a {} physical root",
-                    root.go_operator
-                )));
-            }
-            (
-                root.select_plan.as_deref_mut(),
-                Some(root.update_expressions.as_slice()),
-                root.fast_update_list,
-                root.fk_triggers.as_slice(),
-                (root.update_tables.as_slice(), root.update_assigns.as_slice()),
-            )
-        }
-        None => (None, None, false, &[][..], (&[][..], &[][..])),
+    let Some(plan) = physical_plan else {
+        return Err(DriverError::unsupported("UPDATE execution has no physical plan"));
     };
+    let mut runtime = runtime;
+    let dml = super::physical_builder::DmlExec::new(plan, ctx, runtime.as_deref_mut());
+    let tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(root) = plan else {
+        return Err(DriverError::unsupported(
+            "UPDATE execution received a non-DML physical root",
+        ));
+    };
+    if !root.go_operator.eq_ignore_ascii_case("Update") {
+        return Err(DriverError::unsupported(format!(
+            "Update execution received a {} physical root",
+            root.go_operator
+        )));
+    }
     run_update_with_physical(
         update,
         catalog,
         current_db,
         ctx,
-        physical_source,
-        update_expressions,
-        fast_update_list,
-        fk_triggers,
-        multi_layout,
+        root.select_plan.as_deref_mut(),
+        Some(root.update_expressions.as_slice()),
+        root.fast_update_list,
+        root.fk_triggers.as_slice(),
+        (root.update_tables.as_slice(), root.update_assigns.as_slice()),
+        &dml,
         runtime,
     )
 }
@@ -3320,6 +3315,7 @@ fn run_update_with_physical(
         &[tidb_planner_core_operator_physicalop::UpdateTablePos],
         &[tidb_planner_core_operator_physicalop::UpdateAssign],
     ),
+    dml: &super::physical_builder::DmlExec,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
     // A `RETURNING` clause is parsed and silently ignored, matching Go: the
@@ -3340,6 +3336,7 @@ fn run_update_with_physical(
                 multi_layout,
                 planned_update_expressions.unwrap_or_default(),
                 fk_triggers,
+                dml,
                 runtime,
             );
         }
@@ -3537,9 +3534,9 @@ fn run_update_with_physical(
     // The SET columns, whose generated dependents Go's `buildUpdateLists`
     // appends to the ordered list.
     let assigned_offsets: Vec<usize> = set_exprs.iter().map(|(offset, _)| *offset).collect();
-    let accountant = ctx
-        .statement_memory()
-        .write_accountant(mem_quota::label::UPDATE);
+    // Go `UpdateExec.updatedRowKeys`: each handle the statement updated, and
+    // whether the update changed it.
+    let mut updated_row_keys = tidb_txnkv::MemAwareHandleMap::<bool>::new();
     // Go `UpdateExec.updateRows` composes each row and writes it before the
     // next, and asks its source for the next chunk only afterwards: row 1's
     // write error or `HandleBadNull` warning comes before row 2's cast
@@ -3555,7 +3552,7 @@ fn run_update_with_physical(
             &name,
             ctx,
             runtime,
-            mem_quota::label::UPDATE,
+            dml,
             None,
             |catalog, row, physical_field_types| {
                 let handle = extra_handle_value(&row.id);
@@ -3574,9 +3571,6 @@ fn run_update_with_physical(
                     Some((&row.output, physical_field_types)),
                     &mut matched,
                 )?;
-                accountant
-                    .account_row(&new_row)
-                    .map_err(DriverError::from)?;
                 let outcome = records.write(
                     catalog,
                     &database,
@@ -3593,7 +3587,7 @@ fn run_update_with_physical(
                 row_index += 1;
                 touched += u64::from(outcome.touched());
                 changed += u64::from(outcome.changed());
-                Ok(())
+                record_updated_row_key(&mut updated_row_keys, &row.id, outcome, dml)
             },
         )?;
         records.finish(catalog, ctx)?;
@@ -3617,7 +3611,7 @@ fn run_update_with_physical(
         &name,
         ctx,
         runtime,
-        mem_quota::label::UPDATE,
+        dml,
         None,
     )?;
     let row_evaluator = UpdateRowEvaluator {
@@ -3637,9 +3631,6 @@ fn run_update_with_physical(
             Some((&row.output, &physical_field_types)),
             &mut matched,
         )?;
-        accountant
-            .account_row(&new_row)
-            .map_err(DriverError::from)?;
         rewrites.push((row.id, row.stored, new_row));
     }
     if !writes_stored_columns {
@@ -3663,6 +3654,7 @@ fn run_update_with_physical(
         )?;
         touched += u64::from(outcome.touched());
         changed += u64::from(outcome.changed());
+        record_updated_row_key(&mut updated_row_keys, &id, outcome, dml)?;
     }
     records.finish(catalog, ctx)?;
     ctx.set_message(format!(
@@ -3674,6 +3666,35 @@ fn run_update_with_physical(
     } else {
         changed
     })
+}
+
+/// Go `UpdateExec.exec` after `updateRecord`: a row it wrote, changed or not,
+/// is entered in `updatedRowKeys`, whose growth -- and a new handle's own
+/// `ExtraMemSize` -- the executor's tracker is charged. A row `updateRecord`
+/// ignored, or whose duplicate key `IGNORE` downgraded, is not entered.
+fn record_updated_row_key(
+    updated_row_keys: &mut tidb_txnkv::MemAwareHandleMap<bool>,
+    id: &TableHandle,
+    outcome: update_record::UpdateOutcome,
+    dml: &super::physical_builder::DmlExec,
+) -> Result<(), DriverError> {
+    if !outcome.touched() {
+        return Ok(());
+    }
+    let handle = match id {
+        TableHandle::Int(value) => tidb_txnkv::Handle::from(tidb_txnkv::IntHandle::new(*value)),
+        TableHandle::Common(encoded) => tidb_txnkv::Handle::from(
+            tidb_txnkv::CommonHandle::new(encoded.clone())
+                .map_err(|error| DriverError::unsupported(format!("bad common handle: {error:?}")))?,
+        ),
+    };
+    let exist = updated_row_keys.get(&handle).is_some();
+    let extra = i64::try_from(handle.extra_mem_size()).unwrap_or(i64::MAX);
+    let mut mem_delta = updated_row_keys.set(handle, outcome.changed());
+    if !exist {
+        mem_delta += extra;
+    }
+    dml.mem_tracker.consume_checked(mem_delta).map_err(DriverError::from)
 }
 
 struct UpdateRowEvaluator<'a> {
@@ -3892,6 +3913,10 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
     }
     // Go `runStmt` -> `handleNoDelayExecutor` -> the DML executor's `Next`.
     let _execution = super::begin_dml_execution("*executor.DeleteExec.Next");
+    let mut runtime = runtime;
+    let dml = physical_plan
+        .as_deref()
+        .map(|plan| super::physical_builder::DmlExec::new(plan, ctx, runtime.as_deref_mut()));
     let (physical_source, fk_triggers, delete_col_pos, delete_tables) =
         dml_execution_parts(physical_plan, "Delete")?;
     run_delete_with_physical(
@@ -3903,6 +3928,7 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
         fk_triggers,
         delete_col_pos,
         delete_tables,
+        dml.as_ref().expect("dml_execution_parts found the root"),
         runtime,
     )
 }
@@ -3957,6 +3983,7 @@ fn run_delete_with_physical(
     fk_triggers: &[FkTriggerNode],
     delete_col_pos: Option<&tidb_planner_core_operator_physicalop::DeleteColPos>,
     delete_tables: &[tidb_planner_core_operator_physicalop::DeleteTablePos],
+    dml: &super::physical_builder::DmlExec,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
     // `DELETE IGNORE` differs from a plain `DELETE` only in what it does with
@@ -3973,6 +4000,7 @@ fn run_delete_with_physical(
                 physical_source,
                 delete_tables,
                 fk_triggers,
+                dml,
                 runtime,
             );
         }
@@ -4002,7 +4030,7 @@ fn run_delete_with_physical(
         &name,
         ctx,
         runtime,
-        mem_quota::label::DELETE,
+        dml,
         delete_col_pos,
         |catalog, row, _| {
             deleted += u64::from(records.write(
@@ -4196,7 +4224,7 @@ fn execute_physical_write_rows(
     name: &str,
     ctx: &crate::StmtContext,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
-    memory_label: i64,
+    dml: &super::physical_builder::DmlExec,
     pruning: Option<&tidb_planner_core_operator_physicalop::DeleteColPos>,
 ) -> Result<PhysicalWriteRows, DriverError> {
     let mut rows = Vec::new();
@@ -4207,7 +4235,7 @@ fn execute_physical_write_rows(
         name,
         ctx,
         runtime,
-        memory_label,
+        dml,
         pruning,
         |_, row, _| {
             rows.push(row);
@@ -4221,7 +4249,7 @@ fn execute_physical_write_rows(
 /// loop: `apply` writes each row the source delivers before the source is
 /// asked for the next chunk, so what the source does when it is drained (a
 /// `SelectLockExec`'s lock) comes after the last chunk's writes. Returns the
-/// source's column types.
+/// source's column types. `dml` is the write executor the loop runs as.
 fn stream_physical_write_rows(
     physical: &mut tidb_planner_core_operator_physicalop::PhysicalPlan,
     catalog: &mut SessionExtendedInfoSchema,
@@ -4229,26 +4257,19 @@ fn stream_physical_write_rows(
     name: &str,
     ctx: &crate::StmtContext,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
-    memory_label: i64,
+    dml: &super::physical_builder::DmlExec,
     pruning: Option<&tidb_planner_core_operator_physicalop::DeleteColPos>,
     mut apply: impl FnMut(&mut SessionExtendedInfoSchema, PhysicalWriteRow, &[FieldType]) -> Result<(), DriverError>,
 ) -> Result<Vec<FieldType>, DriverError> {
     let shape = PhysicalWriteShape::new(physical, catalog, database, name, pruning)?;
-    let accountant = ctx.statement_memory().write_accountant(memory_label);
     let collected = super::physical_builder::execute_dml_source_writing(
         physical,
         catalog,
         ctx,
+        dml,
         runtime.is_some(),
         |catalog, row| {
             let row = shape.row(row, ctx)?;
-            // Both representations stay live until the write.
-            accountant
-                .account_row(&row.output)
-                .map_err(DriverError::from)?;
-            accountant
-                .account_row(&row.stored)
-                .map_err(DriverError::from)?;
             apply(catalog, row, &shape.field_types)
         },
     )?;

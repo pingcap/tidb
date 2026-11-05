@@ -83,11 +83,8 @@ impl<'a> DeleteRecords<'a> {
                 ))
             }
         }
+        // Go's `FKCheckExec` keeps the rows' keys without a memory tracker.
         if has_triggers {
-            ctx.statement_memory()
-                .write_accountant(tidb_variable::mem_quota::label::DELETE)
-                .account_row(old)
-                .map_err(DriverError::from)?;
             let slot = self
                 .tables
                 .iter()

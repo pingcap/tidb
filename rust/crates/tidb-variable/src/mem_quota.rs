@@ -766,7 +766,8 @@ impl StatementMemory {
     }
 
     /// An accountant for one write operator, labelled by the operator it
-    /// stands for. See [`WriteMemory`].
+    /// stands for: Go's `memory.NewTracker(e.ID(), -1)` attached to the
+    /// statement tracker in the write executor's `Open`. See [`WriteMemory`].
     #[must_use]
     pub fn write_accountant(&self, label: i64) -> WriteMemory {
         WriteMemory {
@@ -789,16 +790,11 @@ impl StatementMemory {
     }
 }
 
-/// Operator labels for the write path. Go labels an operator's tracker with
-/// its PLAN ID, which is per-statement and carries no meaning across
-/// statements; this tier's writes are not plan nodes, so each write operator
-/// gets one stable label instead. Labels are diagnostic only -- the quota is
-/// enforced at the session root either way.
+/// Labels for the write accounting that is not yet an executor labelled by
+/// its PLAN ID, as Go labels every operator's tracker. `UPDATE` and `DELETE`
+/// are: their trackers carry the `Update_N` / `Delete_N` plan's ID, which is
+/// what EXPLAIN ANALYZE's memory column searches.
 pub mod label {
-    /// Go `UpdateExec.memTracker`.
-    pub const UPDATE: i64 = 1;
-    /// Go `DeleteExec.memTracker`.
-    pub const DELETE: i64 = 2;
     /// Go `InsertValues.memTracker`, shared by `INSERT` and `REPLACE`.
     pub const INSERT: i64 = 3;
     /// The `UpdateExec`/`DeleteExec` a foreign-key cascade builds for its
@@ -822,22 +818,19 @@ pub mod label {
 ///   (`UpdateExec.updateRows`, `DeleteExec.deleteSingleTableByChunk`,
 ///   `InsertValues.insertRowsFromSelect`).
 ///
-/// [`Self::account_row`] is the second shape's analogue and
-/// [`Self::account_rows`] is the first, ported literally.
+/// A single-table UPDATE or DELETE streams its source and charges exactly
+/// Go's numbers through [`Self::consume_checked`]: each child chunk's
+/// `MemoryUsage` while it is held, and UPDATE's `updatedRowKeys` growth.
 ///
-/// DELIBERATE DIVERGENCE, in the direction Go's own comment justifies: there
-/// is no chunk pipeline on this tier's write path -- `scan_rows_with_handles`
-/// materializes the whole table as `Vec<Datum>` rows before the statement
-/// walks them -- so the per-row number here is what the process HOLDS, and it
-/// is never released mid-statement the way Go releases a spent chunk. Against
-/// Go that is smaller per row (a chunk over-allocates to its capacity) and
-/// larger in total (every row read is still held). Both halves are the truth
-/// about this process, which is the property a quota has to bound; a tracker
-/// reporting Go's number while holding different memory would not protect.
-/// The consequence is that the exact byte at which a statement crosses a given
-/// quota differs from Go's, so only quotas far from the boundary -- which is
-/// what the suite sets, 244 and 81920 against a 1GiB default -- classify
-/// identically.
+/// [`Self::account_row`] / [`Self::account_rows`] remain for the writes that
+/// still materialize their source -- a multi-table UPDATE / DELETE, `INSERT`
+/// (and its `INSERT ... SELECT` source), a foreign-key cascade -- where the
+/// per-row number is what the process HOLDS: smaller per row than a Go chunk
+/// (which over-allocates to its capacity) and larger in total (every row read
+/// is still held). The quota has to bound what is held, so the byte at which
+/// such a statement crosses a given quota differs from Go's; only quotas far
+/// from the boundary -- what the suite sets, 244 and 81920 against a 1GiB
+/// default -- classify identically. The register's E03 and E02 track them.
 #[derive(Clone)]
 pub struct WriteMemory {
     tracker: Arc<Tracker>,
@@ -867,6 +860,20 @@ impl WriteMemory {
         };
         self.consume(estimated_mem_usage(first, rows.len()));
         self.memory.check()
+    }
+
+    /// Go `memTracker.Consume(bytes)`, then the check that turns an overrun
+    /// into 8175. A release (`bytes < 0`) cannot overrun.
+    pub fn consume_checked(&self, bytes: i64) -> Result<(), KillStop> {
+        self.consume(bytes);
+        self.memory.check()
+    }
+
+    /// Go `memTracker.ReplaceBytesUsed(bytes)`, which a write executor's
+    /// `Close` defers with `0`: what it still holds is released, and its
+    /// `MaxConsumed` is kept for EXPLAIN ANALYZE.
+    pub fn replace_bytes_used(&self, bytes: i64) {
+        self.tracker.replace_bytes_used(bytes);
     }
 
     fn consume(&self, bytes: i64) {
