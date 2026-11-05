@@ -84,6 +84,8 @@ tidb-test-isolation = { path = "../tidb-test-isolation" }
 tidb-timeutil = { path = "../tidb-timeutil" }
 tidb-tls = { path = "../tidb-tls" }
 tidb-topsql-state = { path = "../tidb-topsql-state" }
+tidb-topsql = { path = "../tidb-topsql" }
+tidb-cpuprofile = { path = "../tidb-cpuprofile" }
 tidb-topsql-stmtstats = { path = "../tidb-topsql-stmtstats" }
 tidb-traceevent = { path = "../tidb-traceevent" }
 tidb-tracing = { path = "../tidb-tracing" }
@@ -199,6 +201,8 @@ tidb-syssession = { path = "../tidb-syssession" }
 tidb-resolve = { path = "../tidb-resolve" }
 
 [dev-dependencies]
+tidb-topsql-collector = { path = "../tidb-topsql-collector" }
+tidb-topsql-reporter = { path = "../tidb-topsql-reporter" }
 tidb-stats-handle-types = { path = "../tidb-stats-handle-types" }
 tidb-stats-asyncload = { path = "../tidb-stats-asyncload" }
 tidb-ddl = { path = "../tidb-ddl", features = ["failpoints"] }

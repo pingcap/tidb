@@ -46,89 +46,17 @@ pub const KEY_OTHERS: &[u8] = b"";
 /// caused by an incorrect configuration.
 pub const MAX_TS_ITEMS_CAPACITY: i64 = 1000;
 
-/// boundary: Go `collector.SQLCPUTimeRecord`, declared locally rather than
-/// pulling in `pkg/util/topsql/collector` (whose profiler machinery is not
-/// part of this port). The four fields, and only they, are what the reporter
-/// data model consumes.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct SqlCpuTimeRecord {
-    /// Go `SQLCPUTimeRecord.SQLDigest`.
-    pub sql_digest: Vec<u8>,
-    /// Go `SQLCPUTimeRecord.PlanDigest`.
-    pub plan_digest: Vec<u8>,
-    /// Go `SQLCPUTimeRecord.CPUTimeMs`.
-    pub cpu_time_ms: u32,
-}
+/// Go `collector.SQLCPUTimeRecord`.
+pub use tidb_topsql_collector::SqlCpuTimeRecord;
 
-/// boundary: Go `tipb.TopSQLRecordItem`. `tidb-proto` generates no tipb
-/// top-sql messages, so the flat repeated-message shapes this file converts
-/// into are declared locally instead of adding a proto-generation dependency.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct TopSqlRecordItem {
-    /// Go `TimestampSec`.
-    pub timestamp_sec: u64,
-    /// Go `CpuTimeMs`.
-    pub cpu_time_ms: u32,
-    /// Go `StmtExecCount`.
-    pub stmt_exec_count: u64,
-    /// Go `StmtKvExecCount`.
-    pub stmt_kv_exec_count: HashMap<String, u64>,
-    /// Go `StmtDurationSumNs`.
-    pub stmt_duration_sum_ns: u64,
-    /// Go `StmtDurationCount`.
-    pub stmt_duration_count: u64,
-    /// Go `StmtNetworkInBytes`.
-    pub stmt_network_in_bytes: u64,
-    /// Go `StmtNetworkOutBytes`.
-    pub stmt_network_out_bytes: u64,
-}
-
-/// boundary: Go `tipb.TopSQLRecord`, declared locally (see
-/// [`TopSqlRecordItem`]).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct TopSqlRecordProto {
-    /// Go `KeyspaceName`.
-    pub keyspace_name: Vec<u8>,
-    /// Go `SqlDigest`.
-    pub sql_digest: Vec<u8>,
-    /// Go `PlanDigest`.
-    pub plan_digest: Vec<u8>,
-    /// Go `Items`.
-    pub items: Vec<TopSqlRecordItem>,
-}
-
-impl TopSqlRecordProto {
-    /// Go's generated `GetKeyspaceName`.
-    pub fn get_keyspace_name(&self) -> &[u8] {
-        &self.keyspace_name
-    }
-}
-
-/// boundary: Go `tipb.SQLMeta`, declared locally (see [`TopSqlRecordItem`]).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct SqlMetaProto {
-    /// Go `KeyspaceName`.
-    pub keyspace_name: Vec<u8>,
-    /// Go `SqlDigest`.
-    pub sql_digest: Vec<u8>,
-    /// Go `NormalizedSql`.
-    pub normalized_sql: String,
-    /// Go `IsInternalSql`.
-    pub is_internal_sql: bool,
-}
-
-/// boundary: Go `tipb.PlanMeta`, declared locally (see [`TopSqlRecordItem`]).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct PlanMetaProto {
-    /// Go `KeyspaceName`.
-    pub keyspace_name: Vec<u8>,
-    /// Go `PlanDigest`.
-    pub plan_digest: Vec<u8>,
-    /// Go `NormalizedPlan`.
-    pub normalized_plan: String,
-    /// Go `EncodedNormalizedPlan`.
-    pub encoded_normalized_plan: String,
-}
+/// Go `tipb.TopSQLRecordItem`.
+pub use tidb_proto::tipb::TopSqlRecordItem;
+/// Go `tipb.TopSQLRecord`.
+pub use tidb_proto::tipb::TopSqlRecord as TopSqlRecordProto;
+/// Go `tipb.SQLMeta`.
+pub use tidb_proto::tipb::SqlMeta as SqlMetaProto;
+/// Go `tipb.PlanMeta`.
+pub use tidb_proto::tipb::PlanMeta as PlanMetaProto;
 
 /// Go `tsItem`: a self-contained complete piece of data for a certain
 /// timestamp.
@@ -967,7 +895,7 @@ mod tests {
         };
         let name = b"123";
         let pb = r.to_proto(name);
-        assert_eq!(name, pb.get_keyspace_name());
+        assert_eq!(name, pb.keyspace_name.as_slice());
         assert_eq!(b"SQL-1".to_vec(), pb.sql_digest);
         assert_eq!(b"PLAN-1".to_vec(), pb.plan_digest);
         assert_eq!(3, pb.items.len());

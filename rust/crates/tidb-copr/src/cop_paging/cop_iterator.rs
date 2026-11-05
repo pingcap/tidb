@@ -809,11 +809,13 @@ pub(crate) fn start_concurrent<R: CopWorkerSource + Send + 'static>(
         action_on_exceed,
     });
     for (index, wake) in group.worker_wakes.iter().enumerate() {
-        drop(runtime.spawn(run_worker(
+        // Go's `copIteratorWorker` goroutines inherit the statement's
+        // profiler labels.
+        drop(runtime.spawn(tidb_cpuprofile::labels::inherit_future(run_worker(
             WorkerExit(Arc::clone(&group)),
             Arc::clone(wake),
             usize::from(index >= normal_workers),
-        )));
+        ))));
     }
     Box::new(ConcurrentResponse { group })
 }

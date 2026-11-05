@@ -16,6 +16,13 @@ pub mod tipb {
     }
 }
 
+/// Go `github.com/google/pprof/profile`'s protobuf format.
+pub mod perftools {
+    pub mod profiles {
+        include!(concat!(env!("OUT_DIR"), "/perftools.profiles.rs"));
+    }
+}
+
 /// Complete coprocessor contracts shared with the native client.
 pub mod coprocessor {
     // Keep the public aliases while sharing the upstream-owned nested types.

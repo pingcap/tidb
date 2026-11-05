@@ -91,6 +91,9 @@ pub struct StatementPhases {
     pub exec_retry_count: u64,
     /// Go `ExecStmt.retryStartTime`: when the last re-execution began.
     pub retry_start: Option<std::time::Instant>,
+    /// Go `StmtCtx.IsSQLRegistered`: `ExecuteStmt` registered the SQL text
+    /// with Top SQL.
+    pub sql_registered: bool,
 }
 
 impl StatementPhases {
@@ -190,6 +193,9 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
     fn statement_warning_count(&self) -> usize;
     /// Go `SQLCPUUsages.GetCPUUsages().TikvCPUTime` of the point readers.
     fn sql_tikv_cpu_time(&self) -> i64;
+    /// Go `SQLCPUUsages.GetCPUUsages().TidbCPUTime`: what the Top SQL
+    /// profiler attributed to the statement so far, in nanoseconds.
+    fn sql_tidb_cpu_time(&self) -> i64;
     /// Go `ConnectionInfo.Attributes`.
     fn connection_attributes(&self) -> &std::collections::BTreeMap<String, String>;
     /// Go `PlanCacheParams`: the prepared execution's arguments.
@@ -511,7 +517,7 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
                         u64::try_from(self.sql_tikv_cpu_time())
                             .unwrap_or(0),
                     ),
-                ..tidb_variable::slow_log::CpuUsages::default()
+                tidb_cpu_time: Duration::from_nanos(u64::try_from(self.sql_tidb_cpu_time()).unwrap_or(0)),
             },
             storage_kv,
             storage_mpp,
@@ -765,7 +771,7 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
                 )
                 .unwrap_or(i64::MAX)
                 .wrapping_add(self.sql_tikv_cpu_time()),
-                ..Default::default()
+                tidb_cpu_time: self.sql_tidb_cpu_time(),
             },
             plan_cache_unqualified: String::new(),
             lazy_info: Arc::new(LazyStatement {

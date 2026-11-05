@@ -494,7 +494,7 @@ impl HashJoinV2Exec {
                     killed.clone(),
                 );
                 let stats = self.ctx.stats.clone();
-                handles.push(scope.spawn(move || {
+                handles.push(scope.spawn(tidb_cpuprofile::labels::inherit(move || {
                     let mut cost = std::time::Duration::ZERO;
                     let result = recover_worker_panic(|| {
                         let mut build_context = BuildContext::new(context.meta, context.partition, context.key_serializer);
@@ -546,7 +546,7 @@ impl HashJoinV2Exec {
                     }
                     if let Err(error) = &result { let _ = errors.send(error.clone()); }
                     result
-                }));
+                })));
             }
             drop(input_rx);
             drop(resource_tx);

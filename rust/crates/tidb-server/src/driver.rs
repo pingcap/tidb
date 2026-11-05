@@ -32,6 +32,12 @@ pub trait QuerySession {
     /// Shared SQL state used by connection-owned migration handlers.
     fn migration_session(&mut self) -> Option<&mut tidb_session::Session> { None }
 
+    /// Go `SessionVars.SQLCPUUsages`, which TopSQL numbers each command's
+    /// statement in.
+    fn sql_cpu_usages(&self) -> Option<std::sync::Arc<tidb_ppcpuusage::SqlCpuUsages>> {
+        None
+    }
+
     /// Go SessionVars.ResourceGroupName for command metrics.
     fn metrics_resource_group(&self) -> &str {
         "default"

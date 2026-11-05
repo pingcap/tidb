@@ -1,0 +1,21 @@
+[package]
+name = "tidb-cpuprofile"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/cpuprofile: Go pkg/util/cpuprofile (Rust rewrite) over pprof-rs."
+
+[lints]
+workspace = true
+
+[dependencies]
+pprof = "0.15"
+prost.workspace = true
+flate2 = "1"
+nix = { version = "0.26", default-features = false, features = ["pthread"] }
+tidb-proto = { path = "../tidb-proto" }
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-metrics = { path = "../tidb-metrics" }

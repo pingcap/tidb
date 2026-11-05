@@ -1862,6 +1862,68 @@ struct ConnInfo {
     user: String,
 }
 
+/// Go `clientConn.dispatch`'s profiler labels: TopSQL's connection and
+/// statement id (`AttachAndRegisterProcessInfo`), and `tidb_pprof_sql_cpu`'s
+/// `sql` label. Returns the thread's labels to restore when the command ends
+/// (Go's deferred `pprof.SetGoroutineLabels`), when any were set.
+#[allow(clippy::option_option)]
+fn attach_dispatch_labels<S: QuerySession>(
+    engine: &mut S,
+    connection_id: u64,
+    payload: &[u8],
+    prepared: &PreparedStatementRegistry,
+) -> Option<Option<tidb_cpuprofile::labels::LabelSet>> {
+    let raw = tidb_cpuprofile::labels::goroutine_labels();
+    let mut restore = None;
+    let mut ctx = raw.clone();
+    if tidb_topsql_state::top_profiling_enabled() {
+        if let Some(usages) = engine.sql_cpu_usages() {
+            restore = Some(raw.clone());
+            let sql_id = usages.alloc_new_sql_id();
+            ctx = Some(tidb_topsql::attach_and_register_process_info(ctx, connection_id, sql_id));
+        }
+    }
+    if tidb_config::config_tree::config::get_global_config().instance.enable_pprof_sql_cpu {
+        let label = pprof_label(engine, payload, prepared);
+        if !label.is_empty() {
+            restore.get_or_insert_with(|| raw.clone());
+            let ctx = tidb_cpuprofile::labels::with_labels(ctx.as_ref(), &[("sql", label)]);
+            tidb_cpuprofile::labels::set_goroutine_labels(Some(ctx));
+        }
+    }
+    restore
+}
+
+/// Go `getLastStmtInConn.PProfLabel`. A session-less engine (the protocol
+/// tests' fakes) labels nothing.
+fn pprof_label<S: QuerySession>(engine: &mut S, payload: &[u8], prepared: &PreparedStatementRegistry) -> String {
+    let Some((&command, data)) = payload.split_first() else {
+        return String::new();
+    };
+    let Some(session) = engine.migration_session() else {
+        return String::new();
+    };
+    match command {
+        tidb_mysql::consts::ComInitDB => "UseDB".to_owned(),
+        tidb_mysql::consts::ComFieldList => "ListFields".to_owned(),
+        tidb_mysql::consts::ComStmtClose => "CloseStmt".to_owned(),
+        tidb_mysql::consts::ComStmtReset => "ResetStmt".to_owned(),
+        tidb_mysql::consts::ComQuery | tidb_mysql::consts::ComStmtPrepare => {
+            session.pprof_label_sql(&String::from_utf8_lossy(data), false)
+        }
+        tidb_mysql::consts::ComStmtExecute | tidb_mysql::consts::ComStmtFetch => {
+            let id = data.get(..4).map_or(0, |id| u32::from_le_bytes([id[0], id[1], id[2], id[3]]));
+            // Go `preparedStmt2StringNoArgs`.
+            let text = match prepared.statements.get(&id) {
+                Some(statement) => statement.statement.sql().to_owned(),
+                None => format!("prepared statement not found, ID: {id}"),
+            };
+            session.pprof_label_sql(&text, true)
+        }
+        _ => String::new(),
+    }
+}
+
 /// Go `clientConn.Run`'s log for a dispatch that answered an error
 /// (`pkg/server/conn.go:1305-1337`): NOWAIT's expected refusal and the
 /// MySQL client's `select $$` probe at debug level, every other failure as a
@@ -2166,6 +2228,7 @@ fn run_connection_commands<S: QuerySession>(
         }
         let _command_token = command_limiter.acquire();
         let _ = crate::connection_writers::take_query_failure();
+        let raw_labels = attach_dispatch_labels(engine, connection_id, &payload, prepared);
         let dispatch_result = (|| -> Result<Option<ConnectionReport>, MysqlConnectionError> {
             let command = match decode_command(&payload) {
                 Ok(command) => command,
@@ -3194,6 +3257,9 @@ fn run_connection_commands<S: QuerySession>(
             }
             Ok(None)
         })();
+        if let Some(raw_labels) = raw_labels {
+            tidb_cpuprofile::labels::set_goroutine_labels(raw_labels);
+        }
         last_metrics_sql_type = command_metrics.sql_type;
         command_metrics.set_resource_groups(
             engine.metrics_resource_group(),
@@ -3403,6 +3469,52 @@ mod dispatch_failure_log_tests {
         ) -> Result<Option<QueryResult<'a>>, SqlQueryError> {
             panic!("the log reads no statement")
         }
+    }
+
+    /// A session-less engine with Go's `SessionVars.SQLCPUUsages`.
+    struct CpuSession(Arc<tidb_ppcpuusage::SqlCpuUsages>);
+
+    impl QuerySession for CpuSession {
+        fn sql_cpu_usages(&self) -> Option<Arc<tidb_ppcpuusage::SqlCpuUsages>> {
+            Some(Arc::clone(&self.0))
+        }
+
+        fn parse_statement(&mut self, sql: &str) -> Result<tidb_ast::Stmt, SqlQueryError> {
+            NoSession.parse_statement(sql)
+        }
+
+        fn execute_stmt<'a>(
+            &'a mut self,
+            _sql: &str,
+            _stmt: &tidb_ast::Stmt,
+        ) -> Result<Option<QueryResult<'a>>, SqlQueryError> {
+            panic!("the labels read no statement")
+        }
+    }
+
+    /// Go `clientConn.dispatch`: with Top SQL on, each command numbers a new
+    /// statement in `SQLCPUUsages` and labels the thread `{connID}_{sqlID}`;
+    /// the thread's own labels come back when the command ends.
+    #[test]
+    fn dispatch_labels_the_command_with_its_connection_and_statement() {
+        let usages = Arc::new(tidb_ppcpuusage::SqlCpuUsages::default());
+        let mut engine = CpuSession(Arc::clone(&usages));
+        let registry = PreparedStatementRegistry::default();
+        let payload = [tidb_mysql::consts::ComPing];
+        tidb_topsql_state::disable_top_sql();
+        assert_eq!(attach_dispatch_labels(&mut engine, 7, &payload, &registry), None);
+        assert_eq!(tidb_cpuprofile::labels::goroutine_labels(), None);
+
+        tidb_topsql_state::enable_top_sql();
+        let raw = attach_dispatch_labels(&mut engine, 7, &payload, &registry);
+        assert_eq!(raw, Some(None));
+        assert_eq!(tidb_cpuprofile::labels::goroutine_labels().unwrap()["sql_global_uid"], "7_1");
+        let raw = attach_dispatch_labels(&mut engine, 7, &payload, &registry);
+        assert_eq!(tidb_cpuprofile::labels::goroutine_labels().unwrap()["sql_global_uid"], "7_2");
+        tidb_topsql_state::disable_top_sql();
+        assert_eq!(usages.alloc_new_sql_id(), 3);
+        tidb_cpuprofile::labels::set_goroutine_labels(raw.unwrap());
+        assert_eq!(tidb_cpuprofile::labels::goroutine_labels().unwrap()["sql_global_uid"], "7_1");
     }
 
     fn conn_info() -> ConnInfo {

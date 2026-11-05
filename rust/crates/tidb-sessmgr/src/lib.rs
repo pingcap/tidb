@@ -113,6 +113,9 @@ pub struct ProcessRow {
     /// Go `StmtCtx.MemTracker.WaitArbitrate()`: the start (Unix nanoseconds)
     /// and size of the grant the statement is waiting for, when any.
     pub mem_wait_arbitrate: Option<(i64, i64)>,
+    /// Go `ProcessInfo.SQLCPUUsage.GetCPUUsages()`: the statement's TiDB and
+    /// TiKV CPU time.
+    pub cpu_usages: tidb_ppcpuusage::CpuUsages,
 }
 
 /// One live transaction exposed by `information_schema.TIDB_TRX`.
@@ -198,6 +201,8 @@ struct ProcessEntry {
     external_transaction_owner: bool,
     transaction_history: Arc<tidb_txninfo::TransactionHistoryRecorder>,
     process_plan_info: Option<Arc<Mutex<tidb_stmtctx::ProcessPlanInfo>>>,
+    /// Go `ProcessInfo.SQLCPUUsage`: the session's `SessionVars.SQLCPUUsages`.
+    sql_cpu_usage: Option<Arc<tidb_ppcpuusage::SqlCpuUsages>>,
     /// An internal session's entry: its statements are restricted SQL (Go
     /// `StmtCtx.InRestrictedSQL`).
     restricted: bool,
@@ -531,6 +536,7 @@ impl ProcessRegistry {
             external_transaction_owner: false,
             transaction_history: Arc::clone(&self.transaction_history),
             process_plan_info: None,
+            sql_cpu_usage: None,
             restricted: false,
             statement_holds: 0,
         }));
@@ -763,6 +769,11 @@ impl ProcessRegistry {
                         let (ts, size) = tracker.wait_arbitrate();
                         (size > 0).then_some((ts, size))
                     }),
+                    cpu_usages: entry
+                        .sql_cpu_usage
+                        .as_ref()
+                        .map(|usage| usage.get_cpu_usages())
+                        .unwrap_or_default(),
                 }
             })
             .collect();
@@ -859,6 +870,27 @@ impl ProcessRegistry {
         self.with_entry(id, |entry| {
             entry.process_plan_info = Some(plan);
         });
+    }
+
+    fn set_sql_cpu_usage(&self, id: u64, usage: Arc<tidb_ppcpuusage::SqlCpuUsages>) {
+        self.with_entry(id, |entry| {
+            entry.sql_cpu_usage = Some(usage);
+        });
+    }
+
+    /// Go `Server.UpdateProcessCPUTime`: adds the profiler's TiDB CPU time to
+    /// the connection's statement `sql_id`, if that is still the one running.
+    pub fn update_process_cpu_time(&self, conn_id: u64, sql_id: u64, cpu_time: std::time::Duration) {
+        let Some(usage) = self.lock().get(&conn_id).and_then(|entry| {
+            entry
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .sql_cpu_usage
+                .clone()
+        }) else {
+            return;
+        };
+        usage.merge_tidb_cpu_time(sql_id, i64::try_from(cpu_time.as_nanos()).unwrap_or(i64::MAX));
     }
 
     fn process_info(&self, id: u64) -> Option<Arc<ProcessInfo>> {
@@ -1082,6 +1114,11 @@ impl ProcessGuard {
         self.registry.set_process_plan_info(self.id, plan);
     }
 
+    /// Go `ProcessInfo.SQLCPUUsage = &vars.SQLCPUUsages`.
+    pub fn set_sql_cpu_usage(&self, usage: Arc<tidb_ppcpuusage::SqlCpuUsages>) {
+        self.registry.set_sql_cpu_usage(self.id, usage);
+    }
+
     /// Publishes one running statement for the lifetime of the returned guard.
     #[must_use]
     pub fn statement_started(
@@ -1192,6 +1229,26 @@ mod tests {
         assert!(!queued());
         plan.lock().unwrap().is_ddl_job_in_queue = true;
         assert!(queued());
+        drop(guard);
+    }
+    /// Go `Server.UpdateProcessCPUTime`: the profiler's TiDB CPU time lands
+    /// on the connection's statement only while that statement (`sqlID`) is
+    /// the one running, and the process list's TIDB_CPU / TIKV_CPU read the
+    /// session's `SQLCPUUsages`.
+    #[test]
+    fn process_cpu_time_reaches_the_running_statement_only() {
+        let registry = ProcessRegistry::default();
+        let guard = registry.register(7, "root".to_owned(), "%".to_owned(), String::new(), None);
+        let usage = Arc::new(tidb_ppcpuusage::SqlCpuUsages::default());
+        guard.set_sql_cpu_usage(Arc::clone(&usage));
+        let sql_id = usage.alloc_new_sql_id();
+        registry.update_process_cpu_time(7, sql_id, std::time::Duration::from_millis(3));
+        registry.update_process_cpu_time(7, sql_id + 1, std::time::Duration::from_millis(50));
+        registry.update_process_cpu_time(8, sql_id, std::time::Duration::from_millis(50));
+        usage.merge_tikv_cpu_time(5);
+        let row = registry.snapshot().into_iter().find(|row| row.id == 7).expect("registered");
+        assert_eq!(row.cpu_usages.tidb_cpu_time, 3_000_000);
+        assert_eq!(row.cpu_usages.tikv_cpu_time, 5);
         drop(guard);
     }
 }

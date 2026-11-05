@@ -300,7 +300,7 @@ impl ChecksumTableExec {
             for _ in 0..concurrency.max(1) {
                 let result_tx = result_tx.clone();
                 let queue = &queue;
-                scope.spawn(move || exec.checksum_worker(queue, &result_tx));
+                scope.spawn(tidb_cpuprofile::labels::inherit(move || exec.checksum_worker(queue, &result_tx)));
             }
         });
         drop(result_tx);

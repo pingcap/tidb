@@ -962,9 +962,9 @@ pub fn format_process_rows(
                 Datum::Bytes(row.session_alias.into_bytes()),
                 row.affected_rows.map_or(Datum::Null, Datum::UInt),
                 // TIDB_CPU
-                Datum::Int(0),
+                Datum::Int(row.cpu_usages.tidb_cpu_time),
                 // TIKV_CPU
-                Datum::Int(0),
+                Datum::Int(row.cpu_usages.tikv_cpu_time),
             ]
         })
         .collect()

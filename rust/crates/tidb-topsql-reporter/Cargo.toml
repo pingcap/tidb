@@ -11,7 +11,19 @@ description = "TiDB util/topsql/reporter: Go pkg/util/topsql/reporter (Rust rewr
 workspace = true
 
 [dependencies]
+crossbeam-channel = "0.5"
+futures.workspace = true
+prost.workspace = true
+prometheus = { version = "0.14", default-features = false }
+tidb-config = { path = "../tidb-config" }
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-topsql-collector = { path = "../tidb-topsql-collector" }
+tokio.workspace = true
+tokio-stream = { workspace = true, features = ["net"] }
+tonic.workspace = true
 tidb-pd-client = { path = "../tidb-pd-client" }
+tidb-proto = { path = "../tidb-proto" }
 tidb-topsql-reporter-metrics = { path = "../tidb-topsql-reporter-metrics" }
 tidb-topsql-state = { path = "../tidb-topsql-state" }
 tidb-topsql-stmtstats = { path = "../tidb-topsql-stmtstats" }

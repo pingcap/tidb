@@ -53,7 +53,12 @@ tidb-store-driver-error = { path = "../tidb-store-driver-error" }
 tidb-domainutil = { path = "../tidb-domainutil" }
 tidb-sessmgr = { path = "../tidb-sessmgr" }
 tidb-txninfo = { path = "../tidb-txninfo" }
+tidb-topsql = { path = "../tidb-topsql" }
+tidb-topsql-collector = { path = "../tidb-topsql-collector" }
 tidb-topsql-reporter-metrics = { path = "../tidb-topsql-reporter-metrics" }
+tidb-cpuprofile = { path = "../tidb-cpuprofile" }
+tidb-ppcpuusage = { path = "../tidb-ppcpuusage" }
+tidb-topsql-state = { path = "../tidb-topsql-state" }
 tidb-cgmon = { path = "../tidb-cgmon" }
 tidb-cpu = { path = "../tidb-cpu" }
 tidb-disk = { path = "../tidb-disk" }
@@ -170,6 +175,7 @@ tidb-syssession = { path = "../tidb-syssession" }
 serde = { workspace = true }
 
 [dev-dependencies]
+flate2 = "1"
 tidb-sem-v2 = { path = "../tidb-sem-v2" }
 tidb-ddl = { path = "../tidb-ddl", features = ["failpoints"] }
 tidb-build-tags = { path = "../tidb-build-tags", features = ["failpoints"] }

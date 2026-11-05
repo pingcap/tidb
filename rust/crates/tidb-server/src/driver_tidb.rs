@@ -98,6 +98,10 @@ impl QuerySession for Session {
         self.record_parse_failure_coded(error.code, error.message.clone(), error.identity);
     }
 
+    fn sql_cpu_usages(&self) -> Option<std::sync::Arc<tidb_ppcpuusage::SqlCpuUsages>> {
+        Some(std::sync::Arc::clone(Session::sql_cpu_usages(self)))
+    }
+
     fn metrics_resource_group(&self) -> &str {
         self.current_resource_group()
     }

@@ -3,6 +3,15 @@
 version = 4
 
 [[package]]
+name = "addr2line"
+version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e567177890eb1617b1f774005b66b26b2377afd138a2ca37aae7d8f0c81429d4"
+dependencies = [
+ "gimli",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -43,6 +52,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "aligned-vec"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc890384c8602f339876ded803c97ad529f3842aba97f6392b3dba0dd171769b"
+dependencies = [
+ "equator",
+]
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -69,7 +87,7 @@ version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73cd58deff2140a0a8eae87e417bd01db68a33e148aa93d1e8cd837e55e312b6"
 dependencies = [
- "object",
+ "object 0.39.1",
 ]
 
 [[package]]
@@ -240,6 +258,21 @@ dependencies = [
  "sync_wrapper 1.0.2",
  "tower-layer",
  "tower-service",
+]
+
+[[package]]
+name = "backtrace"
+version = "0.3.77"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42f4220217f3288537b83684130f42fad43320b1c3b805f1910d683d52ded24f"
+dependencies = [
+ "addr2line",
+ "cfg-if",
+ "libc",
+ "miniz_oxide 0.9.1",
+ "object 0.40.0",
+ "rustc-demangle",
+ "windows-link",
 ]
 
 [[package]]
@@ -490,6 +523,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
+name = "cpp_demangle"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2bb79cb74d735044c972aae58ed0aaa9a837e85b01106a54c39e42e97f62253"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
 name = "cpubits"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -563,7 +605,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e0b1fab2ae45819af2d0731d60f2afe17227ebb1a1538a236da84c93e9a60162"
 dependencies = [
  "dispatch2",
- "nix",
+ "nix 0.31.3",
  "windows-sys 0.61.2",
 ]
 
@@ -572,6 +614,15 @@ name = "data-encoding"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8"
+
+[[package]]
+name = "debugid"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bef552e6f588e446098f6ba40d89ac146c8c7b64aade83c051ee00bb5d2bc18d"
+dependencies = [
+ "uuid",
+]
 
 [[package]]
 name = "der-parser"
@@ -706,6 +757,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "equator"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4711b213838dfee0117e3be6ac926007d7f433d7bbe33595975d4190cb07e6fc"
+dependencies = [
+ "equator-macro",
+]
+
+[[package]]
+name = "equator-macro"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44f23cf4b44bfce11a86ace86f8a73ffdec849c9fd00a386a53d278bd9e81fb3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -791,6 +862,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
+name = "findshlibs"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "40b9e59cd0f7e0806cca4be089683ecb6434e602038df21fe6bf6711b2f07f64"
+dependencies = [
+ "cc",
+ "lazy_static",
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "fixedbitset"
 version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -803,7 +886,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
  "crc32fast",
- "miniz_oxide",
+ "miniz_oxide 0.8.9",
 ]
 
 [[package]]
@@ -1050,6 +1133,12 @@ dependencies = [
  "rand_core 0.10.1",
  "wasm-bindgen",
 ]
+
+[[package]]
+name = "gimli"
+version = "0.34.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1033caf0b349c518623b5396bfb2cf0bddf44f0306d543a250e5743297aafd10"
 
 [[package]]
 name = "glob"
@@ -1706,6 +1795,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "memmap2"
+version = "0.9.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b0ca1155a9ecc25aa12e8313a119f32edf0255fea2f44839c4ac0a12b2ac157"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "memoffset"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1743,6 +1841,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "miniz_oxide"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c"
+dependencies = [
+ "adler2",
+]
+
+[[package]]
 name = "mio"
 version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1774,6 +1881,17 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "tempfile",
+]
+
+[[package]]
+name = "nix"
+version = "0.26.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "598beaf3cc6fdd9a5dfb1630c2800c7acd31df7aaf0f565796fba2b53ca1af1b"
+dependencies = [
+ "bitflags 1.3.2",
+ "cfg-if",
+ "libc",
 ]
 
 [[package]]
@@ -1903,6 +2021,15 @@ name = "object"
 version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e5a6c098c7a3b6547378093f5cc30bc54fd361ce711e05293a5cc589562739b"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
+name = "object"
+version = "0.40.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd229a0361b9d0d4396176e02d65897f487eebeab7caa6d443855ee152ca0b9c"
 dependencies = [
  "memchr",
 ]
@@ -2095,6 +2222,27 @@ name = "powerfmt"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
+
+[[package]]
+name = "pprof"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38a01da47675efa7673b032bf8efd8214f1917d89685e07e395ab125ea42b187"
+dependencies = [
+ "aligned-vec",
+ "backtrace",
+ "cfg-if",
+ "findshlibs",
+ "libc",
+ "log",
+ "nix 0.26.4",
+ "once_cell",
+ "smallvec",
+ "spin",
+ "symbolic-demangle",
+ "tempfile",
+ "thiserror 2.0.19",
+]
 
 [[package]]
 name = "ppv-lite86"
@@ -2711,6 +2859,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustc-demangle"
+version = "0.1.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b74b56ffa8bb2830709a538c2cbcae9aa062db0d2a42563bfb09bdaae44020eb"
+
+[[package]]
 name = "rustc-hash"
 version = "2.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3112,6 +3266,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "spin"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "023a211cb3138dbc438680b32560ad89f699977624c9f8dbb95a47d5b4c07dd3"
+dependencies = [
+ "lock_api",
+]
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3234,6 +3397,29 @@ dependencies = [
  "serde_core",
  "sval",
  "sval_nested",
+]
+
+[[package]]
+name = "symbolic-common"
+version = "12.18.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "332615d90111d8eeaf86a84dc9bbe9f65d0d8c5cf11b4caccedc37754eb0dcfd"
+dependencies = [
+ "debugid",
+ "memmap2",
+ "stable_deref_trait",
+ "uuid",
+]
+
+[[package]]
+name = "symbolic-demangle"
+version = "12.18.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "912017718eb4d21930546245af9a3475c9dccf15675a5c215664e76621afc471"
+dependencies = [
+ "cpp_demangle",
+ "rustc-demangle",
+ "symbolic-common",
 ]
 
 [[package]]
@@ -3721,6 +3907,7 @@ dependencies = [
  "tidb-config-kerneltype",
  "tidb-context",
  "tidb-copr-metrics",
+ "tidb-cpuprofile",
  "tidb-datatype",
  "tidb-distsql",
  "tidb-errno",
@@ -3776,13 +3963,27 @@ dependencies = [
  "crossbeam-channel",
  "fail",
  "fs4",
- "nix",
+ "nix 0.31.3",
  "prometheus 0.14.0",
  "tidb-cgroup",
  "tidb-intest",
  "tidb-mathutil",
  "tracing",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "tidb-cpuprofile"
+version = "0.0.0"
+dependencies = [
+ "flate2",
+ "nix 0.26.4",
+ "pprof",
+ "prost 0.14.4",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-metrics",
+ "tidb-proto",
 ]
 
 [[package]]
@@ -4512,6 +4713,7 @@ dependencies = [
  "tidb-config-kerneltype",
  "tidb-context",
  "tidb-copr",
+ "tidb-cpuprofile",
  "tidb-cteutil",
  "tidb-datatype",
  "tidb-dbterror",
@@ -4780,6 +4982,7 @@ dependencies = [
  "tidb-charset",
  "tidb-chunk",
  "tidb-codec",
+ "tidb-cpuprofile",
  "tidb-datatype",
  "tidb-disk",
  "tidb-driver-error",
@@ -6597,9 +6800,10 @@ dependencies = [
  "ctrlc",
  "difftest-result-tests",
  "fail",
+ "flate2",
  "futures",
  "hyper-util",
- "nix",
+ "nix 0.31.3",
  "openssl",
  "prometheus 0.14.0",
  "prost 0.14.4",
@@ -6630,6 +6834,7 @@ dependencies = [
  "tidb-context",
  "tidb-copr",
  "tidb-cpu",
+ "tidb-cpuprofile",
  "tidb-datatype",
  "tidb-dbterror",
  "tidb-ddl",
@@ -6681,6 +6886,7 @@ dependencies = [
  "tidb-planner-core-metrics",
  "tidb-planner-extstore",
  "tidb-plannererrors",
+ "tidb-ppcpuusage",
  "tidb-printer",
  "tidb-privilege",
  "tidb-proto",
@@ -6726,7 +6932,10 @@ dependencies = [
  "tidb-tiflashcompute",
  "tidb-timeutil",
  "tidb-tls",
+ "tidb-topsql",
+ "tidb-topsql-collector",
  "tidb-topsql-reporter-metrics",
+ "tidb-topsql-state",
  "tidb-topsql-stmtstats",
  "tidb-traceevent",
  "tidb-ttl-client",
@@ -6831,6 +7040,7 @@ dependencies = [
  "tidb-config-kerneltype",
  "tidb-context",
  "tidb-copr",
+ "tidb-cpuprofile",
  "tidb-datatype",
  "tidb-dbterror",
  "tidb-ddl",
@@ -6958,6 +7168,9 @@ dependencies = [
  "tidb-timer-tablestore",
  "tidb-timeutil",
  "tidb-tls",
+ "tidb-topsql",
+ "tidb-topsql-collector",
+ "tidb-topsql-reporter",
  "tidb-topsql-state",
  "tidb-topsql-stmtstats",
  "tidb-traceevent",
@@ -7093,6 +7306,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-memory",
  "tidb-parser",
+ "tidb-ppcpuusage",
  "tidb-sqlkiller",
  "tidb-stmtctx",
  "tidb-txninfo",
@@ -7791,7 +8005,7 @@ dependencies = [
 name = "tidb-sys-linux"
 version = "0.0.0"
 dependencies = [
- "nix",
+ "nix 0.31.3",
  "rustix 1.1.4",
 ]
 
@@ -7851,7 +8065,7 @@ dependencies = [
  "flate2",
  "futures",
  "libc",
- "nix",
+ "nix 0.31.3",
  "regex",
  "tempfile",
  "tidb-goruntime",
@@ -8133,14 +8347,53 @@ name = "tidb-tls"
 version = "0.0.0"
 
 [[package]]
+name = "tidb-topsql"
+version = "0.0.0"
+dependencies = [
+ "tidb-cpuprofile",
+ "tidb-parser",
+ "tidb-plancodec",
+ "tidb-proto",
+ "tidb-topsql-collector",
+ "tidb-topsql-reporter",
+ "tidb-topsql-state",
+ "tidb-topsql-stmtstats",
+]
+
+[[package]]
+name = "tidb-topsql-collector"
+version = "0.0.0"
+dependencies = [
+ "hex",
+ "prost 0.14.4",
+ "tidb-cpuprofile",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-proto",
+ "tidb-topsql-state",
+]
+
+[[package]]
 name = "tidb-topsql-reporter"
 version = "0.0.0"
 dependencies = [
+ "crossbeam-channel",
+ "futures",
+ "prometheus 0.14.0",
+ "prost 0.14.4",
+ "tidb-config",
  "tidb-hack",
+ "tidb-log",
+ "tidb-logutil",
  "tidb-pd-client",
+ "tidb-proto",
+ "tidb-topsql-collector",
  "tidb-topsql-reporter-metrics",
  "tidb-topsql-state",
  "tidb-topsql-stmtstats",
+ "tokio",
+ "tokio-stream",
+ "tonic",
  "tracing",
 ]
 
@@ -9064,6 +9317,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 
 [[package]]
+name = "uuid"
+version = "1.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a0e2d11620c50695fe12bbbfde96b3477fe606e7284c22d505c12ce51214514"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "uuid-simd"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9252,6 +9515,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "winapi"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c839a674fcd7a98952e593242ea400abe93992746761e38641405d28b00f419"
+dependencies = [
+ "winapi-i686-pc-windows-gnu",
+ "winapi-x86_64-pc-windows-gnu",
+]
+
+[[package]]
+name = "winapi-i686-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6"
+
+[[package]]
 name = "winapi-util"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9259,6 +9538,12 @@ checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "winapi-x86_64-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "windows-core"

@@ -87,6 +87,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
         let cluster_upgrade = crate::node_status::cluster_upgrade(&factory);
         let flash_replica_deprecated = Some(crate::node_status::flash_replica_deprecated(&factory));
         let extract_handle = factory.get_extract_handle();
+        crate::node_status::setup_top_profiling(&factory);
         let node =
             ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users)).map_err(|error| {
                 tidb_session::domain::real_tikv_node::emit_connections_startup_failure(&error);

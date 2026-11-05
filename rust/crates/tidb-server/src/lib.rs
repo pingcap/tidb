@@ -315,14 +315,21 @@ fn start_statement_observation() -> StatementObservationCleanup {
                 .error("failed to setup statements summary", &[zap_error(error)]);
         }
     }
-    tidb_topsql_stmtstats::setup_aggregator();
+    // Go `main`: `terror.MustNil(cpuprofile.StartCPUProfiler())`; the one
+    // error is a second start.
+    if let Err(error) = tidb_cpuprofile::start_cpu_profiler() {
+        tidb_logutil::bg_logger().error("start cpu profiler failed", &[zap_error(error)]);
+    }
     StatementObservationCleanup
 }
 
 impl Drop for StatementObservationCleanup {
     fn drop(&mut self) {
-        tidb_topsql_stmtstats::close_aggregator();
+        // Go `cleanup`: `topsql.Close()`, then `closeStmtSummary()`; `main`
+        // stops the CPU profiler last.
+        tidb_topsql::close();
         tidb_stmtsummary::v2::stmtsummary::close();
+        tidb_cpuprofile::stop_cpu_profiler();
     }
 }
 

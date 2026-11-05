@@ -247,6 +247,8 @@ impl Session {
         let kv_exec_counter = observation.kv_exec_counter.clone();
         let plan = Arc::clone(&self.process_plan_info);
         let digest = observation.digest.clone();
+        let normalized = observation.normalized.clone();
+        let restricted_sql = self.vars.restricted_sql;
         let statement_started = observation.started;
         let ru_details = Arc::clone(&observation.ru_details);
         let user = self.top_ru_user();
@@ -281,19 +283,49 @@ impl Session {
                     phases.compile_finished = true;
                 }
             }
-            // Go admits non-fast executions even while profiling is disabled,
-            // so enabling it during execution can still observe their begin.
-            let fast = plan
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .is_fast_plan;
-            if !fast || tidb_topsql_state::top_profiling_enabled() {
-                let info = top_profiling_begin_info(&ru_details, &user);
-                stats.on_execution_begin(digest.as_bytes(), &[], Some(&info));
-                if tidb_topsql_state::top_sql_enabled() {
-                    kv_exec_counter.initialize(&stats, digest.as_bytes(), &[]);
-                }
+            // Go `observeStmtBeginForTopProfiling`: non-fast executions are
+            // admitted even while profiling is disabled, so enabling it during
+            // execution can still observe their begin.
+            let (fast, normalized_plan, plan_digest) = {
+                let plan = plan.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                (plan.is_fast_plan, plan.normalized_plan.clone(), plan.plan_digest.clone())
+            };
+            let top_profiling = tidb_topsql_state::top_profiling_enabled();
+            if fast && !top_profiling {
+                return;
             }
+            // Go `GetPlanDigest`: empty until the plan is published.
+            let plan_digest_bytes = decode_hex_digest(&plan_digest);
+            let sql_digest = (!normalized.is_empty()).then_some(&digest);
+            let plan_digest = (!plan_digest.is_empty()).then(|| tidb_parser::Digest::new(plan_digest_bytes.clone()));
+            let info = top_profiling_begin_info(&ru_details, &user);
+            stats.on_execution_begin(digest.as_bytes(), &plan_digest_bytes, Some(&info));
+            if !top_profiling {
+                // Always attach the SQL and plan info uses to catch the
+                // running SQL when Top Profiling is enabled in execution.
+                tidb_topsql::attach_sql_and_plan_info(
+                    tidb_cpuprofile::labels::goroutine_labels(),
+                    sql_digest,
+                    plan_digest.as_ref(),
+                );
+                return;
+            }
+            if tidb_topsql_state::top_sql_enabled() {
+                // This is a special logic prepared for TiKV's SQLExecCount.
+                kv_exec_counter.initialize(&stats, digest.as_bytes(), &plan_digest_bytes);
+            }
+            if !phases.sql_registered {
+                tidb_topsql::register_sql(&normalized, sql_digest, restricted_sql);
+            }
+            if normalized_plan.is_empty() {
+                return;
+            }
+            tidb_topsql::register_plan(&normalized_plan, plan_digest.as_ref());
+            tidb_topsql::attach_sql_and_plan_info(
+                tidb_cpuprofile::labels::goroutine_labels(),
+                sql_digest,
+                plan_digest.as_ref(),
+            );
         }))
     }
 
@@ -423,6 +455,26 @@ impl Session {
             })),
         });
         self.publish_statement_kv_context();
+        self.attach_and_register_top_sql_info();
+    }
+
+    /// Go `ExecuteStmt`'s (and a prepared execution's, `conn_stmt.go`)
+    /// `topsql.AttachAndRegisterSQLInfo`: with Top Profiling on, the
+    /// statement's SQL digest labels this thread and its text is registered.
+    fn attach_and_register_top_sql_info(&self) {
+        if !tidb_topsql_state::top_profiling_enabled() {
+            return;
+        }
+        let Some(observation) = &self.statement_observation else {
+            return;
+        };
+        observation.phases.lock().unwrap_or_else(std::sync::PoisonError::into_inner).sql_registered = true;
+        tidb_topsql::attach_and_register_sql_info(
+            tidb_cpuprofile::labels::goroutine_labels(),
+            &observation.normalized,
+            Some(&observation.digest),
+            self.vars.restricted_sql,
+        );
     }
 
     /// Publishes the running statement's ctx values to the transactions,
@@ -572,6 +624,7 @@ impl Session {
             observation.prepared = true;
         }
         self.publish_statement_kv_context();
+        self.attach_and_register_top_sql_info();
     }
 
     pub(crate) fn observe_statement_node(&mut self, stmt: &Stmt, prepared: bool) {
@@ -780,9 +833,17 @@ impl Session {
         // the finish, with the statement's `RUDetails` and user.
         let top_ru = tidb_topsql_state::top_ru_enabled();
         if phases.execution_started && (tidb_topsql_state::top_sql_enabled() || top_ru) {
+            // Go `GetPlanDigest(sc)`, as the begin observed it.
+            let plan_digest = decode_hex_digest(
+                &self
+                    .process_plan_info
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .plan_digest,
+            );
             self.statement_stats.on_execution_finished(
                 observation.digest.as_bytes(),
-                &[],
+                &plan_digest,
                 Some(&ExecFinishInfo {
                     exec_duration_ns: i64::try_from(elapsed.as_nanos()).unwrap_or(i64::MAX),
                     top_ru_enabled: top_ru,
@@ -855,6 +916,24 @@ impl Session {
             &tidb_parser::normalize(sql, self.redact_mode()),
             self.query_log_max_len(),
         )
+    }
+
+    /// Go `getLastStmtInConn.PProfLabel`'s statement text: a query's
+    /// `parser.Normalize(executor.FormatSQL(sql).String(),
+    /// errors.RedactLogEnable)` (the process redaction mode), a prepared
+    /// statement's `executor.FormatSQL(text).String()`.
+    #[must_use]
+    pub fn pprof_label_sql(&self, sql: &str, prepared: bool) -> String {
+        let sql = tidb_variable::slow_log::format_sql(sql, self.query_log_max_len());
+        if prepared {
+            return sql;
+        }
+        let mode = match tidb_mysql::errors::redaction_mode() {
+            tidb_mysql::errors::RedactionMode::Disabled => tidb_parser::RedactMode::Disabled,
+            tidb_mysql::errors::RedactionMode::Enabled => tidb_parser::RedactMode::Enabled,
+            tidb_mysql::errors::RedactionMode::Marker => tidb_parser::RedactMode::Marker,
+        };
+        tidb_parser::normalize(&sql, mode)
     }
 
     /// Go `clientConn.preparedStmt2String` under `FormatSQL`: the prepared
@@ -1266,6 +1345,10 @@ impl tidb_executor::exec_stmt_observation::ExecStmtObservation for Session {
 
     fn statement_warning_count(&self) -> usize {
         self.warnings.len()
+    }
+
+    fn sql_tidb_cpu_time(&self) -> i64 {
+        self.sql_cpu_usages.get_cpu_usages().tidb_cpu_time
     }
 
     fn sql_tikv_cpu_time(&self) -> i64 {

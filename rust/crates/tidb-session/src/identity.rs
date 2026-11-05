@@ -1002,6 +1002,12 @@ impl Session {
         self.has_process_priv = granted;
     }
 
+    /// Go `SessionVars.SQLCPUUsages`.
+    #[must_use]
+    pub fn sql_cpu_usages(&self) -> &std::sync::Arc<tidb_ppcpuusage::SqlCpuUsages> {
+        &self.sql_cpu_usages
+    }
+
     /// Joins this session to the server's process list under `connection_id`.
     ///
     /// Go's server registers each connection with the `sessmgr.Manager` right
@@ -1014,6 +1020,7 @@ impl Session {
             std::sync::Arc::clone(self.session_memory.session_disk_tracker()),
         );
         guard.set_process_plan_info(std::sync::Arc::clone(&self.process_plan_info));
+        guard.set_sql_cpu_usage(std::sync::Arc::clone(&self.sql_cpu_usages));
         self.process = Some(guard);
     }
 

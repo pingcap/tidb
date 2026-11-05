@@ -1,0 +1,21 @@
+[package]
+name = "tidb-topsql"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/topsql: Go pkg/util/topsql (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-cpuprofile = { path = "../tidb-cpuprofile" }
+tidb-parser = { path = "../tidb-parser" }
+tidb-plancodec = { path = "../tidb-plancodec" }
+tidb-proto = { path = "../tidb-proto" }
+tidb-topsql-collector = { path = "../tidb-topsql-collector" }
+tidb-topsql-reporter = { path = "../tidb-topsql-reporter" }
+tidb-topsql-state = { path = "../tidb-topsql-state" }
+tidb-topsql-stmtstats = { path = "../tidb-topsql-stmtstats" }

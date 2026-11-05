@@ -38,6 +38,7 @@ fn native_service(package: &str) -> FileDescriptorSet {
 fn main() {
     println!("cargo:rerun-if-changed=proto/tipb");
     println!("cargo:rerun-if-changed=proto/etcd");
+    println!("cargo:rerun-if-changed=proto/pprof");
     println!("cargo:rerun-if-changed={NATIVE}");
     println!("cargo:rerun-if-changed=../../third_party/tikv-client-rs/kvproto/src/generated");
     let output = PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo output directory"));
@@ -68,6 +69,14 @@ fn main() {
             .map(PathBuf::from),
         )
         .expect("compile complete TiPB and etcd inputs");
+
+    // Go's `github.com/google/pprof/profile` wire format (`profile.proto` of
+    // the module version go.mod pins), which `runtime/pprof` writes.
+    tonic_prost_build::configure()
+        .build_client(false)
+        .build_server(false)
+        .compile_protos(&[PathBuf::from("proto/pprof/profile.proto")], &[PathBuf::from("proto/pprof")])
+        .expect("compile the pprof profile format");
 
     // All message and enum identities belong to the native client. This
     // generated test-server adapter adds default stubs, without maintaining

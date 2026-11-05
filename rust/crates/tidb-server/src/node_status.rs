@@ -1002,3 +1002,23 @@ pub fn stats_priority_queue(factory: &Arc<Domain>) -> crate::http_status::StatsP
         serde_json::to_string(&snapshot).map_err(|error| error.to_string())
     })
 }
+
+/// Go `Server.UpdateProcessCPUTime`, over the domain's client list.
+struct ProcessCpuTimeUpdater(tidb_sessmgr::ProcessRegistry);
+
+impl tidb_topsql_collector::ProcessCpuTimeUpdater for ProcessCpuTimeUpdater {
+    fn update_process_cpu_time(&self, conn_id: u64, sql_id: u64, cpu_time: std::time::Duration) {
+        self.0.update_process_cpu_time(conn_id, sql_id, cpu_time);
+    }
+}
+
+/// Go `main`'s `topsql.SetupTopProfiling(keyspace.GetKeyspaceNameBytesBySettings(), svr, dom)`,
+/// before `svr.Run`. The domain binds itself as the RU-version provider when
+/// its resource-groups controller starts, so none is passed here.
+pub(crate) fn setup_top_profiling(factory: &Arc<Domain>) {
+    tidb_topsql::setup_top_profiling(
+        tidb_keyspace::get_keyspace_name_bytes_by_settings().map(<[u8]>::to_vec).unwrap_or_default(),
+        Arc::new(ProcessCpuTimeUpdater(factory.processes())),
+        None,
+    );
+}

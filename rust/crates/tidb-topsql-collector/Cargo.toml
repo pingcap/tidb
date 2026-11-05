@@ -1,0 +1,20 @@
+[package]
+name = "tidb-topsql-collector"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/topsql/collector: Go pkg/util/topsql/collector (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+prost.workspace = true
+hex = "0.4"
+tidb-cpuprofile = { path = "../tidb-cpuprofile" }
+tidb-proto = { path = "../tidb-proto" }
+tidb-topsql-state = { path = "../tidb-topsql-state" }
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }

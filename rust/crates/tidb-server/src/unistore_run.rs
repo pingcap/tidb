@@ -117,6 +117,7 @@ pub fn run_unistore_cluster_session(
 
     let node = ConcurrentSqlNode::bind(&config, Arc::clone(&factory), Arc::clone(&users))
         .map_err(|error| RunConfiguredNodeError::Node(Box::new(error)))?;
+    crate::node_status::setup_top_profiling(&factory);
     // Go starts the status HTTP server beside the SQL listener
     // (`cfg.Status.ReportStatus`, default true); `/status` is the first
     // thing `main_test.go` and every health probe reads. A failed bind ends

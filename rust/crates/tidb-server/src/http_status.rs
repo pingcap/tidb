@@ -249,6 +249,10 @@ pub fn start_status_listener_with_routes(
                             .max_encoding_message_size(max_send),
                     );
                 }
+                // Go `topsql.RegisterPubSubServer(s)`.
+                if let Some(pub_sub) = tidb_topsql::register_pub_sub_server() {
+                    grpc = grpc.add_service(pub_sub.max_encoding_message_size(max_send));
+                }
                 let router = grpc.into_axum_router();
                 let router = router.fallback(move |request: axum::extract::Request| {
                     let (tracker, version, git_hash, routes) = (
@@ -321,6 +325,51 @@ async fn http_response(
         )
             .into_response(),
     }
+}
+
+/// Go `withProfilingRequestLog(cpuprofile.ProfileHTTPHandler)` on
+/// `/debug/pprof/profile`: a `seconds` (default 30) CPU profile of this
+/// process, gzipped `profile.proto`, collected from the global profiler.
+fn debug_pprof_profile_response(path: &str, request: &str) -> Option<axum::response::Response> {
+    let (route, query) = path.split_once('?').unwrap_or((path, ""));
+    if route != "/debug/pprof/profile" {
+        return None;
+    }
+    let form_value = |key: &str| {
+        query
+            .split('&')
+            .filter_map(|pair| pair.split_once('=').or(Some((pair, ""))))
+            .find(|(name, _)| *name == key)
+            .map_or_else(String::new, |(_, value)| value.to_owned())
+    };
+    // Go `withProfilingRequestLog`.
+    let method = request.split(' ').next().unwrap_or_default();
+    let mut fields = vec![
+        tidb_log::Field::new("method", tidb_log::Value::Str(method.to_owned())),
+        tidb_log::Field::new("path", tidb_log::Value::Str(route.to_owned())),
+    ];
+    for key in ["seconds", "debug", "gc"] {
+        let value = form_value(key);
+        if !value.is_empty() {
+            fields.push(tidb_log::Field::new(key, tidb_log::Value::Str(value)));
+        }
+    }
+    tidb_logutil::bg_logger().info("profiling request received", &fields);
+    let builder = axum::http::Response::builder().header("x-content-type-options", "nosniff");
+    let response = match tidb_cpuprofile::profile_http_handler(&form_value("seconds")) {
+        Ok(profile) => builder
+            .status(200)
+            .header("content-type", "application/octet-stream")
+            .header("content-disposition", "attachment; filename=\"profile\"")
+            .body(axum::body::Body::from(profile)),
+        // Go `serveError`.
+        Err((code, text)) => builder
+            .status(code)
+            .header("content-type", "text/plain; charset=utf-8")
+            .header("x-go-pprof", "1")
+            .body(axum::body::Body::from(format!("{text}\n"))),
+    };
+    Some(response.expect("status response headers"))
 }
 
 /// Go `downloadFileHandler`: one dump file of the global storage.
@@ -578,6 +627,9 @@ fn route_response(
     if let Some(response) =
         crate::extractor_handler::extract_task_serve_response(path, routes.extract_handle.as_ref())
     {
+        return response;
+    }
+    if let Some(response) = debug_pprof_profile_response(path, request) {
         return response;
     }
     let route = path.split_once('?').map_or(path, |(route, _)| route);
@@ -2163,6 +2215,47 @@ mod schema_route_tests {
             .unwrap()
             .to_vec();
         (code, format!("{content_type}|{disposition}"), body)
+    }
+
+    /// Go `/debug/pprof/profile` (`cpuprofile.ProfileHTTPHandler`): a
+    /// `seconds`-long CPU profile, gzipped `profile.proto` whose samples carry
+    /// only the `sql` label; with the profiler stopped the request fails as
+    /// Go's `serveError` does.
+    #[test]
+    fn debug_pprof_profile_serves_a_gzipped_cpu_profile() {
+        use prost::Message as _;
+        use std::io::Read as _;
+        tidb_cpuprofile::start_cpu_profiler().unwrap();
+        let busy = std::thread::spawn(|| {
+            tidb_cpuprofile::labels::set_goroutine_labels(Some(tidb_cpuprofile::labels::with_labels(
+                None,
+                &[("sql", "select ?".to_owned()), ("sql_digest", "aa".to_owned())],
+            )));
+            let start = std::time::Instant::now();
+            let mut x = 0u64;
+            while start.elapsed() < std::time::Duration::from_millis(1500) {
+                x = std::hint::black_box(x.wrapping_mul(31).wrapping_add(7));
+            }
+            x
+        });
+        let (code, header, body) = routed("/debug/pprof/profile?seconds=1", &StatusRoutes::default());
+        busy.join().unwrap();
+        tidb_cpuprofile::stop_cpu_profiler();
+        assert_eq!(code, 200);
+        assert_eq!(header, "application/octet-stream|attachment; filename=\"profile\"");
+        let mut raw = Vec::new();
+        flate2::read::GzDecoder::new(body.as_slice()).read_to_end(&mut raw).unwrap();
+        let profile = tidb_proto::perftools::profiles::Profile::decode(raw.as_slice()).unwrap();
+        let text = |id: i64| profile.string_table[id as usize].as_str();
+        assert_eq!(text(profile.sample_type[0].r#type), "samples");
+        assert!(!profile.sample.is_empty());
+        let keys: std::collections::BTreeSet<&str> =
+            profile.sample.iter().flat_map(|sample| sample.label.iter().map(|label| text(label.key))).collect();
+        assert_eq!(keys, std::collections::BTreeSet::from(["sql"]));
+        assert!(profile
+            .sample
+            .iter()
+            .any(|sample| sample.label.iter().any(|label| text(label.str) == "select ?")));
     }
 
     /// Go `StatsPriorityQueueHandler`: the snapshot through `WriteData`,

@@ -1176,3 +1176,112 @@ fn observation_binary_point_get_reaches_summary_and_top_sql() {
         .unwrap()
         .contains("observation_point_get"));
 }
+
+/// Go `ExecuteStmt`'s `topsql.AttachAndRegisterSQLInfo` and
+/// `observeStmtBeginForTopProfiling`: with Top SQL on, a statement registers
+/// its SQL and plan texts and labels the running thread with its SQL and
+/// plan digests, which the CPU profiler attributes samples by; the stmt
+/// stats key carries the same plan digest.
+#[test]
+fn observation_batch_top_sql_registers_texts_and_labels_the_thread() {
+    use std::sync::{Arc, Mutex};
+    use tidb_topsql_reporter::reporter::TopSqlReporter;
+
+    #[derive(Default)]
+    struct Registered {
+        sqls: Mutex<Vec<(Vec<u8>, String)>>,
+        plans: Mutex<Vec<Vec<u8>>>,
+    }
+    impl tidb_topsql_collector::Collector for Registered {
+        fn collect(&self, _stats: Vec<tidb_topsql_collector::SqlCpuTimeRecord>) {}
+    }
+    impl tidb_topsql_stmtstats::Collector for Registered {
+        fn collect_stmt_stats_map(&self, _data: &tidb_topsql_stmtstats::StatementStatsMap) {}
+    }
+    impl TopSqlReporter for Registered {
+        fn start(self: Arc<Self>) {}
+        fn register_sql(&self, sql_digest: &[u8], normalized_sql: &str, _is_internal: bool) {
+            self.sqls.lock().unwrap().push((sql_digest.to_vec(), normalized_sql.to_owned()));
+        }
+        fn register_plan(&self, plan_digest: &[u8], _normalized_plan: &str, _is_large: bool) {
+            self.plans.lock().unwrap().push(plan_digest.to_vec());
+        }
+        fn bind_process_cpu_time_updater(&self, _: Arc<dyn tidb_topsql_collector::ProcessCpuTimeUpdater>) {}
+        fn bind_keyspace_name(&self, _: Vec<u8>) {}
+        fn close(&self) {}
+    }
+
+    let reporter = Arc::new(Registered::default());
+    tidb_topsql::setup_top_profiling_for_test(Arc::clone(&reporter) as _);
+    tidb_topsql_state::enable_top_sql();
+    tidb_cpuprofile::labels::set_goroutine_labels(None);
+    let mut session = Session::new();
+    session.run("CREATE TABLE top_sql_label_t (id INT PRIMARY KEY, v INT)").unwrap();
+    let sql = "SELECT v FROM top_sql_label_t WHERE v > 1";
+    session.run(sql).unwrap();
+    let labels = tidb_cpuprofile::labels::goroutine_labels();
+    let data = session.statement_stats.take();
+    // Go attaches at `ExecuteStmt`, before compiling: a statement that never
+    // plans still registers its SQL and labels the thread.
+    let failing = "SELECT * FROM top_sql_label_missing";
+    assert!(session.run(failing).is_err());
+    let failing_labels = tidb_cpuprofile::labels::goroutine_labels();
+    tidb_topsql_state::disable_top_sql();
+    let (failing_normalized, failing_digest) = normalize_statement_digest(failing);
+    assert!(reporter
+        .sqls
+        .lock()
+        .unwrap()
+        .contains(&(failing_digest.as_bytes().to_vec(), failing_normalized)));
+    assert_eq!(failing_labels.unwrap()["sql_digest"], failing_digest.as_str());
+
+    let (normalized, digest) = normalize_statement_digest(sql);
+    assert!(reporter
+        .sqls
+        .lock()
+        .unwrap()
+        .contains(&(digest.as_bytes().to_vec(), normalized.clone())));
+    let labels = labels.expect("the statement labels its thread");
+    assert_eq!(labels["sql_digest"], digest.as_str());
+    let plan_digest = labels["plan_digest"].clone();
+    assert!(!plan_digest.is_empty(), "the planned statement labels its plan digest");
+    let plan_digest_bytes: Vec<u8> = (0..plan_digest.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&plan_digest[i..i + 2], 16).unwrap())
+        .collect();
+    assert!(reporter.plans.lock().unwrap().contains(&plan_digest_bytes));
+    assert!(
+        data.iter().any(|(key, item)| key.sql_digest.as_bytes() == digest.as_bytes()
+            && key.plan_digest.as_bytes() == plan_digest_bytes.as_slice()
+            && item.exec_count == 1),
+        "stmt stats keyed by the plan digest: {data:?}"
+    );
+}
+
+/// Go `SQLCPUUsages.GetCPUUsages()` in the statement's summary: the TiDB CPU
+/// time the Top SQL profiler merged into the running statement (Go
+/// `MergeTidbCPUTime`) is summed as the summary's TiDB CPU.
+#[test]
+fn observation_batch_summary_records_the_profilers_tidb_cpu_time() {
+    let mut session = Session::new();
+    session.set_user("root@%".into(), "root@localhost".into());
+    let usages = std::sync::Arc::clone(session.sql_cpu_usages());
+    let profiler = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        // `Session::run` numbers no command: the running statement is 0.
+        usages.merge_tidb_cpu_time(0, 7_000_000);
+    });
+    let sql = "SELECT SLEEP(0.6) AS observation_tidb_cpu";
+    session.run(sql).unwrap();
+    profiler.join().unwrap();
+    let (_, digest) = normalize_statement_digest(sql);
+    let records =
+        tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP.summary_map_values();
+    let record = records
+        .iter()
+        .find(|record| record.lock().unwrap().digest == digest.as_str())
+        .unwrap()
+        .lock()
+        .unwrap();
+    assert_eq!(record.cumulative.sum_tidb_cpu, 7_000_000);
+}

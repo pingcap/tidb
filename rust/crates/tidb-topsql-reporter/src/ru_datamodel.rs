@@ -59,36 +59,7 @@ pub const MAX_PRE_TOP_N_USERS: usize = MAX_TOP_USERS * 2;
 /// Go `maxPreTopNSQLsPerUser`: the collection-phase per-user SQL cap.
 pub const MAX_PRE_TOP_N_SQLS_PER_USER: usize = MAX_TOP_SQLS_PER_USER * 2;
 
-/// boundary: Go `tipb.TopRURecordItem`, declared locally for the same reason
-/// as [`super::datamodel::TopSqlRecordItem`] — `tidb-proto` generates no tipb
-/// top-sql/top-ru messages.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct TopRuRecordItem {
-    /// Go `TimestampSec`.
-    pub timestamp_sec: u64,
-    /// Go `TotalRu`.
-    pub total_ru: f64,
-    /// Go `ExecCount`.
-    pub exec_count: u64,
-    /// Go `ExecDuration`.
-    pub exec_duration: u64,
-}
-
-/// boundary: Go `tipb.TopRURecord`, declared locally (see
-/// [`TopRuRecordItem`]).
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct TopRuRecord {
-    /// Go `KeyspaceName`.
-    pub keyspace_name: Vec<u8>,
-    /// Go `User`.
-    pub user: String,
-    /// Go `SqlDigest`; empty stands for Go's nil.
-    pub sql_digest: Vec<u8>,
-    /// Go `PlanDigest`; empty stands for Go's nil.
-    pub plan_digest: Vec<u8>,
-    /// Go `Items`.
-    pub items: Vec<TopRuRecordItem>,
-}
+pub use tidb_proto::tipb::{TopRuRecord, TopRuRecordItem};
 
 /// Go `ruItem`: RU statistics for one timestamp.
 #[derive(Clone, Debug, Default, PartialEq)]

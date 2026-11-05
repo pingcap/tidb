@@ -596,11 +596,12 @@ impl<C: Columns + Send + 'static> ShuffleExec<C> {
         // Builder::spawn drops its closure on failure, so moving the executor
         // directly into that closure would prevent Close from releasing it.
         let (sender, receiver) = bounded(1);
-        match std::thread::Builder::new().spawn(move || {
+        // Go's worker goroutines inherit the statement's profiler labels.
+        match std::thread::Builder::new().spawn(tidb_cpuprofile::labels::inherit(move || {
             let mut job = receiver.recv().expect("shuffle startup job");
             run(&mut job);
             job
-        }) {
+        })) {
             Ok(handle) => {
                 assert!(sender.send(job).is_ok(), "shuffle startup receiver exited");
                 Ok(handle)
