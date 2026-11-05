@@ -153,7 +153,6 @@ go_test(
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/model",
-        "//pkg/parser/ast",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/statistics/handle/util",
