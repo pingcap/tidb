@@ -100,7 +100,7 @@ func (ba *bindingAuto) ExplorePlansForSQL(stmtSCtx base.PlanContext, sqlOrDigest
 		return nil, err
 	}
 
-	generatedPlans, err := ba.planGenerator.Generate(currentDB, sqlOrDigest, charset, collation)
+	generatedPlans, err := ba.planGenerator.Generate(currentDB, sqlOrDigest, charset, collation, stmtSCtx.GetSessionVars().EnableRedactLog)
 	if err != nil {
 		return nil, err
 	}
