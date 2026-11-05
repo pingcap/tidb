@@ -17,7 +17,6 @@ package privileges_test
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"strings"
 	"testing"
 	"time"
@@ -624,20 +623,10 @@ func TestColumnPrivilegeCacheCorrectness(t *testing.T) {
 	tk.MustExec("set global tidb_accelerate_user_creation_update = on")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/privilege/privileges/forceResetChunkForLoadTable", "return(true)")
 
-	var seededRand *rand.Rand = rand.New(rand.NewSource(time.Now().UnixNano()))
-	const charset = "abcdefghijklmnopqrstuvwxyz"
-	generateRandomString := func(length int) string {
-		b := make([]byte, length)
-		for i := range b {
-			b[i] = charset[seededRand.Intn(len(charset))]
-		}
-		return string(b)
-	}
-
 	const colNum = 512
 	colNames := make([]string, 0, colNum)
-	for range colNum {
-		colNames = append(colNames, generateRandomString(5))
+	for i := range colNum {
+		colNames = append(colNames, fmt.Sprintf("c%d", i))
 	}
 	var sb strings.Builder
 	sb.WriteString("create table t(")
@@ -652,8 +641,8 @@ func TestColumnPrivilegeCacheCorrectness(t *testing.T) {
 
 	const userNum = 3
 	userNames := make([]string, 0, userNum)
-	for range userNum {
-		userName := generateRandomString(5)
+	for i := range userNum {
+		userName := fmt.Sprintf("u%d", i)
 		userNames = append(userNames, userName)
 		tk.MustExec(fmt.Sprintf("create user %s", userName))
 	}
