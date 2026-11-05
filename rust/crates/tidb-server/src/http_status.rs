@@ -436,6 +436,66 @@ fn traceevent_response(body: &str) -> axum::response::Response {
         .expect("status response headers")
 }
 
+/// Go's `enableTestAPI`-failpoint route `/fail/{name}` over
+/// `failpoint.HttpHandler`: PUT enables the named failpoint with the body's
+/// terms, GET reads one (or, at `/fail/`, every enabled one) and DELETE
+/// disables it.
+#[cfg(feature = "failpoints")]
+fn failpoint_response(path: &str, request: &str) -> Option<axum::response::Response> {
+    let route = path.split_once('?').map_or(path, |(route, _)| route);
+    if !route.starts_with("/fail/") || fail::eval("enableTestAPI", |_| ()).is_none() {
+        return None;
+    }
+    let key = &route["/fail/".len()..];
+    let method = request.split(' ').next().unwrap_or_default();
+    let no_content = || {
+        axum::http::Response::builder()
+            .status(204)
+            .body(axum::body::Body::empty())
+            .expect("status response headers")
+    };
+    let enabled = || fail::list().into_iter().collect::<std::collections::BTreeMap<_, _>>();
+    let not_exist = |key: &str| format!("error on {key}: failpoint: failpoint does not exist");
+    let text = |code: u16, body: String| {
+        axum::http::Response::builder()
+            .status(code)
+            .header("content-type", "text/plain; charset=utf-8")
+            .header("x-content-type-options", "nosniff")
+            .body(axum::body::Body::from(body))
+            .expect("status response headers")
+    };
+    Some(match method {
+        "PUT" => {
+            let terms = request.split_once("\r\n\r\n").map_or("", |(_, body)| body);
+            match fail::cfg(key, terms) {
+                Ok(()) => no_content(),
+                Err(_) => http_error(400, &format!("failed to set failpoint {key}")),
+            }
+        }
+        "GET" if key.is_empty() => {
+            let lines: Vec<String> = enabled().into_iter().map(|(name, status)| format!("{name}={status}")).collect();
+            text(200, format!("{}\n", lines.join("\n")))
+        }
+        // Go writes the (empty) status after the error text.
+        "GET" => match enabled().get(key) {
+            Some(status) => text(200, format!("{status}\n")),
+            None => text(404, format!("failed to GET: {}\n\n", not_exist(key))),
+        },
+        "DELETE" if enabled().contains_key(key) => {
+            fail::remove(key);
+            no_content()
+        }
+        "DELETE" => http_error(400, &format!("failed to delete failpoint {}", not_exist(key))),
+        _ => {
+            let mut response = http_error(405, "Method not allowed");
+            response
+                .headers_mut()
+                .insert("allow", axum::http::HeaderValue::from_static("PUT"));
+            response
+        }
+    })
+}
+
 /// Go `withProfilingRequestLog(pprof.Cmdline)`: the process's arguments,
 /// NUL-separated.
 fn debug_pprof_cmdline_response(request: &str) -> axum::response::Response {
@@ -822,6 +882,10 @@ fn route_response(
     if path.split_once('?').map_or(path, |(route, _)| route) == "/debug/pprof/symbol" {
         return debug_pprof_symbol_response(path, request);
     }
+    #[cfg(feature = "failpoints")]
+    if let Some(response) = failpoint_response(path, request) {
+        return response;
+    }
     let route = path.split_once('?').map_or(path, |(route, _)| route);
     let (code, content_type, body) = if route == "/status" {
         let percentage = tidb_stats_handle_initstats::INIT_STATS_PERCENTAGE.load();
@@ -977,6 +1041,39 @@ mod tests {
         ));
         assert!(posted.starts_with(&format!("{pc:#x} ")), "{posted}");
         assert_eq!(read(debug_pprof_symbol_response("/debug/pprof/symbol", "GET / HTTP/1.1\r\n\r\n")), "num_symbols: 1\n");
+    }
+
+    /// Go `failpoint.HttpHandler` behind `enableTestAPI`: PUT enables a
+    /// failpoint, GET reads it and the enabled list, DELETE disables it;
+    /// without `enableTestAPI` the route does not exist.
+    #[cfg(feature = "failpoints")]
+    #[test]
+    fn failpoint_routes_follow_the_test_api() {
+        let call = |method: &str, path: &str, body: &str| {
+            let request = format!("{method} {path} HTTP/1.1\r\nContent-Length: {}\r\n\r\n{body}", body.len());
+            let response = failpoint_response(path, &request);
+            response.map(|response| {
+                let code = response.status().as_u16();
+                let body = tokio::runtime::Builder::new_current_thread()
+                    .build()
+                    .unwrap()
+                    .block_on(axum::body::to_bytes(response.into_body(), usize::MAX))
+                    .unwrap();
+                (code, String::from_utf8(body.to_vec()).unwrap())
+            })
+        };
+        assert!(call("GET", "/fail/", "").is_none(), "no test API without enableTestAPI");
+        fail::cfg("enableTestAPI", "return").unwrap();
+        assert_eq!(call("PUT", "/fail/test-api-point", "return(5)"), Some((204, String::new())));
+        assert_eq!(call("GET", "/fail/test-api-point", ""), Some((200, "return(5)\n".to_owned())));
+        let listed = call("GET", "/fail/", "").unwrap();
+        assert_eq!(listed.0, 200);
+        assert!(listed.1.lines().any(|line| line == "test-api-point=return(5)"), "{}", listed.1);
+        assert_eq!(call("DELETE", "/fail/test-api-point", ""), Some((204, String::new())));
+        assert_eq!(call("GET", "/fail/test-api-point", "").unwrap().0, 404);
+        assert_eq!(call("DELETE", "/fail/test-api-point", "").unwrap().0, 400);
+        assert_eq!(call("POST", "/fail/test-api-point", "").unwrap().0, 405);
+        fail::remove("enableTestAPI");
     }
 
     /// Go `pprof.Cmdline`: the arguments joined by NUL.

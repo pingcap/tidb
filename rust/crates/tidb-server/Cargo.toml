@@ -112,6 +112,7 @@ base64.workspace = true
 chrono.workspace = true
 crossbeam-channel = "0.5"
 backtrace = "0.3"
+fail = { version = "0.4", optional = true }
 prometheus = { version = "0.14", default-features = false }
 tikv-jemallocator = { version = "0.7", optional = true }
 tikv-jemalloc-sys = { version = "0.7", optional = true }
@@ -217,6 +218,8 @@ nextgen = ["tidb-config/nextgen"]
 # for builds that must stay on the platform allocator.
 default = ["jemalloc"]
 failpoints = [
+    "dep:fail",
+    "fail/failpoints",
     "tidb-ddl/failpoints",
     "tidb-ddl-serverstate/failpoints",
     "tidb-resourcemanager/failpoints",
