@@ -46,6 +46,8 @@ impl BindingSessions {
             .open_storage_session(self.next_id.fetch_add(2, Ordering::Relaxed))
             .map_err(|e| e.message)?;
         session.enable_privilege_bypass();
+        // Go bindinfo's `kv.WithInternalSourceType(ctx, kv.InternalTxnBindInfo)`.
+        session.set_internal_request_source(tidb_txnkv::INTERNAL_TXN_BIND_INFO);
         Ok(BindingRunner { session })
     }
 }

@@ -55,8 +55,10 @@ pub trait BindingSessionPool: Send + Sync {
 pub trait ClusterBindings: Send + Sync {
     /// Shared live planner cache.
     fn cache(&self) -> SharedBindingCache;
-    /// Refresh from committed storage; failures retain the prior image.
-    fn reload(&self) -> Result<(), String>;
+    /// Go `LoadFromStorageToCache(fullLoad, ...)`: refresh from committed
+    /// storage, every row when `full_load` and otherwise those updated since
+    /// the last load; failures retain the prior image.
+    fn reload(&self, full_load: bool) -> Result<(), String>;
     /// Whether a pending commit modifies a binding record.
     fn has_changes(&self, buffer: &MutationBuffer) -> bool;
     /// Run owner-gated tombstone collection.
@@ -84,7 +86,7 @@ impl ClusterBindings for StoredBindings {
         self.cache.clone()
     }
 
-    fn reload(&self) -> Result<(), String> {
+    fn reload(&self, full_load: bool) -> Result<(), String> {
         let _refresh = self
             .refresh
             .lock()
@@ -97,16 +99,19 @@ impl ClusterBindings for StoredBindings {
         // Record prefixes end in '_r'; its successor bounds precisely this table.
         *end.last_mut().expect("record prefix") += 1;
         // Go `readBindingsFromStorage`: a SELECT through an internal session.
-        let rows = self
-            .sessions
-            .load(self.cache.load().update_time_boundary().as_deref())?;
+        let boundary = if full_load {
+            None
+        } else {
+            self.cache.load().update_time_boundary()
+        };
+        let rows = self.sessions.load(boundary.as_deref())?;
         let quota = self
             .globals
             .get("tidb_mem_quota_binding_cache")
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or_else(|| self.cache.load().mem_capacity());
-        self.cache.load().update_storage_rows(rows, quota, false);
+        self.cache.load().update_storage_rows(rows, quota, full_load);
         *self
             .record_range
             .write()
@@ -180,7 +185,8 @@ pub fn start_binding_cache(
         refresh: Mutex::new(()),
         record_range: RwLock::new(None),
     });
-    bindings.reload()?;
+    // Go `InitBindingHandle`'s `LoadFromStorageToCache(true, false)`.
+    bindings.reload(true)?;
     owner.campaign_owner(&[]).map_err(|error| {
         bindings.close();
         error
@@ -226,7 +232,7 @@ impl BindingReloader {
                             let logger = tidb_logutil::bg_logger();
                             match index {
                                 0 => {
-                                    if let Err(error) = target.reload() {
+                                    if let Err(error) = target.reload(false) {
                                         logger.error(
                                             "update bindinfo failed",
                                             &[tidb_logutil::zap_error(error)],
@@ -357,7 +363,7 @@ mod tests {
         fn cache(&self) -> SharedBindingCache {
             self.cache.clone()
         }
-        fn reload(&self) -> Result<(), String> {
+        fn reload(&self, _full_load: bool) -> Result<(), String> {
             self.reload.fetch_add(1, Ordering::SeqCst);
             Err("injected reload failure".to_owned())
         }

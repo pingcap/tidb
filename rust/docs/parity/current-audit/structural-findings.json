@@ -2,9 +2,9 @@
   "date": "2026-11-05",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 24,
+    "unresolved": 23,
     "open": 6,
-    "partial": 18
+    "partial": 17
   },
   "findings": [
     {
@@ -172,13 +172,6 @@
       "finding": "The DDL scheduler, systable manager, history and MDL readers scan records instead of running SQL on `DdlSessionPool::sess_pool`; the bootstrap stages raw rows; accounts load eagerly where Go loads per active user",
       "rust_evidence": "`rust/crates/tidb-executor/src/real_tikv_analyze.rs`",
       "go_owner": "`pkg/ddl` (`systable`, job scheduler), `pkg/session` bootstrap, `pkg/privilege/privileges` (`ensureActiveUser`)"
-    },
-    {
-      "id": "K04",
-      "status": "partial",
-      "group": "Expanded subsystem ownership review",
-      "finding": "A user session's transactions, snapshots and DistSQL requests carry Go's request source (the statement's label from `setRequestSource`, `tidb_request_source_type`, internal for restricted SQL: `set_options_on_txn_active`, the statement kv context, `StmtContext::request_source`), the DDL step transaction `internal_ddl` / `internal_ddl_<backfiller>` (`job_ctx.rs` `setDDLSourceForDiagnosis`), and the backfill's transactions `ddl_<backfiller>` with `ExplicitTypeDDL` (`reorg_transaction`). The DDL session pool's sessions and the submitter's and scheduler's transactions are internal `ddl` (Go `ddl.Start`'s context), and the step transaction carries the job's resource group (`jobContext(...).resourceGroupName`). Restricted SQL takes its caller's source per call (`RestrictedSqlExecutor::exec_restricted_sql(source, ..)`, Go `ExecRestrictedSQL(ctx, ..)`: privilege, GC, telemetry, plan replayer, analyze options, the blacklist reloads, the inspection retrievers), as do the advisory-lock, plan-replayer, extract, metric-profile and DDL-job-command sessions; the domain's pool sessions adopt the source their caller's context carries (Go `ctx.Value(kv.RequestSourceKey)`, so the stats handle's `StatsCtx`), `query_internal` takes it per call, and the auto-ID allocator's transactions are `kv.InternalTxnMeta`. The global binding writer is `kv.InternalTxnBindInfo`, TTL's statements `kv.InternalTxnTTL`, the timer store's `kv.InternalTimer`, the upgrade session `kv.InternalTxnBootstrap`, and `RunInNewTxn`'s meta transactions the source their caller names (`setRequestSourceForInnerTxn`). Unported: the binding cache's maintenance session (`binding_maintenance.rs`, Go `kv.InternalTxnBindInfo`)",
-      "go_owner": "`pkg/sessiontxn/internal/txn.go`, `pkg/ddl/job_worker.go` (`prepareTxn`), `pkg/ddl/backfilling.go`"
     }
   ]
 }

@@ -1075,6 +1075,12 @@ pub(crate) struct InternalBindingWriter {
 }
 
 impl crate::binding_arm::GlobalBindingWriter for InternalBindingWriter {
+    fn reload(&self) -> Result<(), tidb_driver_error::DriverError> {
+        self.bindings
+            .reload(true)
+            .map_err(|error| tidb_driver_error::DriverError::Mysql(tidb_terror::MysqlError::unknown(error)))
+    }
+
     fn execute(
         &self,
         operation: &mut dyn FnMut(&mut Session) -> Result<u64, tidb_driver_error::DriverError>,
@@ -1118,7 +1124,7 @@ impl crate::binding_arm::GlobalBindingWriter for InternalBindingWriter {
         match result {
             Ok(changed) => {
                 // Do not replay a successful commit if cache refresh fails.
-                if let Err(error) = self.bindings.reload() {
+                if let Err(error) = self.bindings.reload(false) {
                     eprintln!("committed binding cache reload failed: {error}");
                 }
                 Ok(changed)

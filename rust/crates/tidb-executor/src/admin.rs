@@ -133,6 +133,9 @@ pub fn ddl_jobs_not_found(job_ids: &[i64]) -> Vec<Option<String>> {
 }
 
 pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
+    /// Go `SQLBindExec.reloadBindings`: `BindingHandle().
+    /// LoadFromStorageToCache(true, false)`.
+    fn reload_bindings(&mut self) -> Result<(), DriverError>;
     /// Go `DDLJobRetriever.initial`: the running jobs, then the meta
     /// history newest first, read on a fresh system-session transaction.
     fn all_ddl_jobs(&mut self) -> Result<(Vec<tidb_model::Job>, Vec<tidb_model::Job>), DriverError>;
@@ -843,6 +846,7 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
             // the reload re-syncs the binding cache from storage and answers
             // no rows, like every maintenance statement.
             tidb_ast::AdminStmt::Reload(tidb_ast::AdminReloadKind::Bindings) => {
+                self.reload_bindings()?;
                 Ok(Some(StmtOutput::Done(true)))
             }
             // Go `executeAdminReloadStatistics`.

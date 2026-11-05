@@ -612,7 +612,7 @@ impl CommitHooks for NodeCommitHooks {
     fn refresh_committed_bindings(&self, changed: bool) {
         if changed {
             if let Some(bindings) = self.bindings.get() {
-                if let Err(error) = bindings.reload() {
+                if let Err(error) = bindings.reload(false) {
                     // The commit succeeded. Retain the last image and let the
                     // lease worker retry; never replay a committed statement.
                     eprintln!("committed binding cache reload failed: {error}");

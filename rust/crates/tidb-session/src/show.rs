@@ -315,6 +315,9 @@ impl tidb_executor::index_advisor::RecommendIndexExec for Session {
 }
 
 impl tidb_executor::admin::AdminExec for Session {
+    fn reload_bindings(&mut self) -> Result<(), DriverError> {
+        self.reload_global_bindings()
+    }
 
     fn command_ddl_jobs(
         &mut self,

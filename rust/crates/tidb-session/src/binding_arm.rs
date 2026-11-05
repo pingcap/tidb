@@ -57,6 +57,15 @@ impl Session {
         self.global_binding_writer = Some(writer);
     }
 
+    /// Go `SQLBindExec.reloadBindings`; a session with no global binding
+    /// storage has no cache to refresh.
+    pub(crate) fn reload_global_bindings(&mut self) -> Result<(), DriverError> {
+        match self.global_binding_writer.clone() {
+            Some(writer) => writer.reload(),
+            None => Ok(()),
+        }
+    }
+
     pub(crate) fn with_global_binding_storage(
         &mut self,
         mut operation: impl FnMut(&mut Self) -> Result<u64, DriverError>,
@@ -348,6 +357,10 @@ pub trait GlobalBindingWriter: Send + Sync {
         &self,
         operation: &mut dyn FnMut(&mut crate::Session) -> Result<u64, tidb_driver_error::DriverError>,
     ) -> Result<u64, tidb_driver_error::DriverError>;
+
+    /// Go `BindingHandle().LoadFromStorageToCache(true, ...)`: the node's
+    /// binding cache refreshed in full from `mysql.bind_info`.
+    fn reload(&self) -> Result<(), tidb_driver_error::DriverError>;
 }
 
 /// The binding operator's internal session (Go `binding_operator.go`'s

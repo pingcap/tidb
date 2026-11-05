@@ -13393,7 +13393,7 @@ fn binding_maintenance_preserves_usage_and_collects_tombstones_without_writes() 
         .find(|b| b.usage_snapshot().last_used_at.is_some())
         .expect("matching records shared usage");
     let digest = binding.usage_snapshot().sql_digest;
-    bindings.reload().unwrap();
+    bindings.reload(false).unwrap();
     assert!(Arc::ptr_eq(&owner, &bindings.cache().load()));
     assert!(Arc::ptr_eq(&binding, &owner.get_binding(&digest).unwrap()));
     rows(&mut session, "SET GLOBAL tidb_enable_binding_usage=OFF");
@@ -28781,4 +28781,58 @@ fn a_statements_requests_carry_its_label_as_their_source() {
     let sent = sent.lock().unwrap().clone();
     assert!(sent.contains(&"internal_others".to_owned()), "{sent:?}");
     assert!(!sent.iter().any(|source| source == "unknown"), "{sent:?}");
+
+    // Go `SQLBindExec.reloadBindings`: the reload reads `mysql.bind_info`
+    // on the binding maintenance session, under `kv.InternalTxnBindInfo`.
+    let sent: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let recorded = Arc::clone(&sent);
+    stack.rpc.set_send_hook(Some(Arc::new(move |request| {
+        let any = request.as_any();
+        let context = if let Some(request) = any.downcast_ref::<coprocessor::Request>() {
+            request.context.as_ref()
+        } else if let Some(request) = any.downcast_ref::<kvrpcpb::ScanRequest>() {
+            request.context.as_ref()
+        } else {
+            return;
+        };
+        recorded
+            .lock()
+            .unwrap()
+            .push(context.map(|context| context.request_source.clone()).unwrap_or_default());
+    })));
+    rows(&mut session, "ADMIN RELOAD BINDINGS");
+    stack.rpc.set_send_hook(None);
+    let sent = sent.lock().unwrap().clone();
+    assert!(sent.contains(&"internal_others".to_owned()), "{sent:?}");
+    assert!(!sent.iter().any(|source| source == "unknown"), "{sent:?}");
+}
+
+/// Go `SQLBindExec.reloadBindings`' full load (`LoadFromStorageToCache(true,
+/// ...)`): a stored binding older than the incremental load's boundary
+/// reaches the cache only once the bindings are reloaded (checked against
+/// Go: the restored row is listed only after `ADMIN RELOAD BINDINGS`).
+#[test]
+fn admin_reload_bindings_loads_every_stored_binding() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(96)).expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "CREATE TABLE rb (a INT, b INT, KEY ia (a))");
+    rows(
+        &mut session,
+        "CREATE GLOBAL BINDING FOR SELECT * FROM rb WHERE a = 1 USING SELECT /*+ use_index(rb, ia) */ * FROM rb WHERE a = 1",
+    );
+    rows(&mut session, "CREATE TABLE bind_copy LIKE mysql.bind_info");
+    rows(&mut session, "INSERT INTO bind_copy SELECT * FROM mysql.bind_info WHERE source = 'manual'");
+    rows(&mut session, "DROP GLOBAL BINDING FOR SELECT * FROM rb WHERE a = 1");
+    rows(&mut session, "DELETE FROM mysql.bind_info WHERE source = 'manual'");
+    rows(
+        &mut session,
+        "UPDATE bind_copy SET update_time = '2000-01-01 00:00:00', create_time = '2000-01-01 00:00:00'",
+    );
+    rows(&mut session, "INSERT INTO mysql.bind_info SELECT * FROM bind_copy");
+    assert!(displayed(rows(&mut session, "SHOW GLOBAL BINDINGS")).is_empty());
+    rows(&mut session, "ADMIN RELOAD BINDINGS");
+    let listed = displayed(rows(&mut session, "SHOW GLOBAL BINDINGS"));
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(listed[0][3], "enabled");
 }
