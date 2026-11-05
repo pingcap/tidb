@@ -1161,10 +1161,12 @@ func TestGlobalStatsMergePathConsistency(t *testing.T) {
 
 	// --- Phase 2: Analyze with async merge ---
 	tk.MustExec("SET @@tidb_enable_async_merge_global_stats = ON")
-	// show analyze status reports start_time in UTC (CONVERT_TZ to '+00:00'),
-	// so capture the cutoff in UTC. Phase 1 already left finished
-	// merge-global-stats rows; filtering by start_time >= preMerge ensures
-	// the wait below only counts rows produced by this Phase-2 analyze.
+	// Pin the session time zone to UTC so that show analyze status and the
+	// cutoff use the same zone whatever the process time zone is. Phase 1
+	// already left finished merge-global-stats rows; filtering by
+	// start_time >= preMerge ensures the wait below only counts rows
+	// produced by this Phase-2 analyze.
+	tk.MustExec("SET @@time_zone = '+00:00'")
 	preMerge := time.Now().UTC().Format("2006-01-02 15:04:05")
 	tk.MustExec("ANALYZE TABLE t " + analyzeOpts)
 	// ANALYZE TABLE returns once partition-level stats are collected; the
