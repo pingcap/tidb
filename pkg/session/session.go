@@ -132,6 +132,7 @@ import (
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvutil "github.com/tikv/client-go/v2/util"
+	gouberatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -2785,7 +2786,19 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	sc := vars.StmtCtx
 
 	dctx := sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
+<<<<<<< HEAD
 		return &distsqlctx.DistSQLContext{
+=======
+		// cross ks session does not have domain.
+		dom := s.GetDomain().(*domain.Domain)
+		var ruConsumptionReporter resourcegroup.ConsumptionReporter
+		if dom != nil {
+			if rgCtl := dom.ResourceGroupsController(); rgCtl != nil {
+				ruConsumptionReporter = rgCtl
+			}
+		}
+		ret := &distsqlctx.DistSQLContext{
+>>>>>>> a624c28d81f (sessionctx/variable: add tidb_max_keys_read (#68047))
 			WarnHandler:     sc.WarnHandler,
 			InRestrictedSQL: sc.InRestrictedSQL,
 			Client:          s.GetClient(),
@@ -2829,6 +2842,11 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			LoadBasedReplicaReadThreshold: vars.LoadBasedReplicaReadThreshold,
 			RunawayChecker:                sc.RunawayChecker,
 			TiKVClientReadTimeout:         vars.GetTiKVClientReadTimeout(),
+<<<<<<< HEAD
+=======
+			MaxExecutionTime:              vars.GetMaxExecutionTime(),
+			MaxKeysRead:                   vars.GetMaxKeysRead(),
+>>>>>>> a624c28d81f (sessionctx/variable: add tidb_max_keys_read (#68047))
 
 			ReplicaClosestReadThreshold: vars.ReplicaClosestReadThreshold,
 			ConnectionID:                vars.ConnectionID,
@@ -2836,6 +2854,10 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 
 			ExecDetails: &sc.SyncExecDetails,
 		}
+		if ret.MaxKeysRead > 0 {
+			ret.MaxKeysReadCounter = new(gouberatomic.Uint64)
+		}
+		return ret
 	})
 
 	// Check if the runaway checker is updated. This is to avoid that evaluating a non-correlated subquery

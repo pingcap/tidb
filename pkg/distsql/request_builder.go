@@ -372,6 +372,12 @@ func (builder *RequestBuilder) SetFromSessionVars(dctx *distsqlctx.DistSQLContex
 	builder.Request.StoreBusyThreshold = dctx.LoadBasedReplicaReadThreshold
 	builder.Request.RunawayChecker = dctx.RunawayChecker
 	builder.Request.TiKVClientReadTimeout = dctx.TiKVClientReadTimeout
+<<<<<<< HEAD
+=======
+	builder.Request.MaxExecutionTime = dctx.MaxExecutionTime
+	builder.Request.MaxKeysRead = dctx.MaxKeysRead
+	builder.Request.MaxKeysReadCounter = dctx.MaxKeysReadCounter
+>>>>>>> a624c28d81f (sessionctx/variable: add tidb_max_keys_read (#68047))
 	return builder
 }
 
