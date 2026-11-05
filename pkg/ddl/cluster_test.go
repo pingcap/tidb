@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -236,4 +237,162 @@ func TestCancelFlashbackCluster(t *testing.T) {
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
+}
+
+func TestFlashbackClusterWithMaterializedViews(t *testing.T) {
+	const createLog = "create materialized view log on mv_guard.base (a)"
+	const createMV = "create materialized view mv_guard.mv (a, cnt) as select a, count(*) from mv_guard.base group by a"
+	const dropLog = "drop materialized view log on mv_guard.base"
+	const dropMV = "drop materialized view mv_guard.mv"
+	for _, tc := range []struct {
+		name     string
+		before   []string
+		after    []string
+		snapshot string
+	}{
+		{
+			name:   "neither snapshot has materialized objects",
+			before: []string{"create view mv_guard.mv as select a from mv_guard.base", "create table mv_guard.`$mlog$ordinary` (a int)"},
+		},
+		{
+			name:     "current materialized view log without dependents",
+			after:    []string{createLog},
+			snapshot: "current state",
+		},
+		{
+			name:     "current materialized views sharing a log",
+			after:    []string{createLog, createMV, "create materialized view mv_guard.mv2 (a, cnt) as select a, count(*) from mv_guard.base group by a"},
+			snapshot: "current state",
+		},
+		{
+			name:     "target materialized view log dropped now",
+			before:   []string{createLog},
+			after:    []string{dropLog},
+			snapshot: "target snapshot",
+		},
+		{
+			name:     "target materialized view and log dropped now",
+			before:   []string{createLog, createMV},
+			after:    []string{dropMV, dropLog},
+			snapshot: "target snapshot",
+		},
+		{
+			name:     "target schema dropped now",
+			before:   []string{createLog, createMV},
+			after:    []string{"drop database mv_guard"},
+			snapshot: "target snapshot",
+		},
+		{
+			name:  "materialized objects only between snapshots",
+			after: []string{createLog, createMV, dropMV, dropLog},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("create database mv_guard")
+			tk.MustExec("create table mv_guard.base (a int)")
+			tk.MustExec("create table test.flashback_guard (a int)")
+			tk.MustExec("insert into test.flashback_guard values (1)")
+			for _, sql := range tc.before {
+				tk.MustExec(sql)
+			}
+
+			timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+			defer resetGC()
+			tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+			// Historical DDL-job checks use the physical time of the target TSO.
+			time.Sleep(10 * time.Millisecond)
+			ts, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+			require.NoError(t, err)
+			for _, sql := range tc.after {
+				tk.MustExec(sql)
+			}
+			tk.MustExec("insert into test.flashback_guard values (2)")
+
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", `return(true)`)
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
+				fmt.Sprintf("return(%v)", oracle.GoTimeToTS(time.Now().Add(10*time.Second))))
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+				if job.Type == model.ActionFlashbackCluster && tc.snapshot != "" {
+					assert.NotEqual(t, model.StateWriteOnly, job.SchemaState, "must reject before preparing flashback regions")
+					assert.NotEqual(t, model.StateWriteReorganization, job.SchemaState, "must reject before restoring data")
+				}
+			})
+			sql := fmt.Sprintf("flashback cluster to tso %d", ts)
+			if tc.snapshot == "" {
+				tk.MustExec(sql)
+				return
+			}
+			err = tk.ExecToErr(sql)
+			require.ErrorContains(t, err, "materialized view")
+			require.ErrorContains(t, err, "(ID: ")
+			require.ErrorContains(t, err, tc.snapshot)
+			if tc.snapshot == "target snapshot" {
+				require.ErrorContains(t, err, fmt.Sprintf("TSO %d", ts))
+			}
+			tk.MustQuery("select * from test.flashback_guard order by a").Check(testkit.Rows("1", "2"))
+			tk.MustExec("insert into test.flashback_guard values (3)")
+		})
+	}
+}
+
+func TestFlashbackTableMaterializedViews(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	tk.MustExec("create table base (a int not null)")
+	tk.MustExec("insert into base values (1)")
+	// Older ordinary tables must not be recovered past a newer MV/MLog drop.
+	for _, name := range []string{"mv", "$mlog$base"} {
+		tk.MustExec(fmt.Sprintf("create table `%s` (a int)", name))
+		tk.MustExec(fmt.Sprintf("insert into `%s` values (10)", name))
+		tk.MustExec(fmt.Sprintf("drop table `%s`", name))
+	}
+	tk.MustExec("create materialized view log on base (a)")
+	tk.MustExec("create materialized view mv (a, cnt) as select a, count(*) from base group by a")
+
+	checkUnsupported := func(name, objectType string) {
+		t.Helper()
+		for _, suffix := range []string{"", " to restored"} {
+			tk.MustGetErrMsg(fmt.Sprintf("flashback table `%s`%s", name, suffix),
+				"[ddl:8200]Unsupported FLASHBACK TABLE on "+objectType)
+		}
+	}
+	checkUnsupported("mv", "materialized view table")
+	checkUnsupported("$mlog$base", "materialized view log table")
+
+	mv, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	shadow := mv.Meta().Clone()
+	shadow.ID = 0
+	shadow.Name = pmodel.NewCIStr("mv_shadow")
+	shadow.MaterializedView = nil
+	shadow.MaterializedViewBase = nil
+	shadow.MaterializedViewShadow = &model.MaterializedViewShadowInfo{SourceMViewID: mv.Meta().ID}
+	schema, ok := dom.InfoSchema().SchemaByName(pmodel.NewCIStr("test"))
+	require.True(t, ok)
+	require.NoError(t, dom.DDLExecutor().CreateMaterializedViewShadowTable(tk.Session(), schema.ID, schema.Name, shadow))
+	checkUnsupported("mv_shadow", "materialized view shadow table")
+	require.NoError(t, dom.DDLExecutor().DropMaterializedViewShadowTable(tk.Session(), pmodel.NewCIStr("test"), shadow.Name))
+	checkUnsupported("mv_shadow", "materialized view shadow table")
+
+	tk.MustExec("drop materialized view mv")
+	checkUnsupported("mv", "materialized view table")
+	tk.MustExec("drop materialized view log on base")
+	checkUnsupported("$mlog$base", "materialized view log table")
+	tk.MustQuery("show tables").Check(testkit.Rows("base"))
+
+	// A newer ordinary table must still take precedence over older MV history.
+	for _, name := range []string{"mv", "$mlog$base", "mv_shadow"} {
+		tk.MustExec(fmt.Sprintf("create table `%s` (a int)", name))
+		tk.MustExec(fmt.Sprintf("insert into `%s` values (20)", name))
+		tk.MustExec(fmt.Sprintf("drop table `%s`", name))
+		tk.MustExec(fmt.Sprintf("flashback table `%s` to restored", name))
+		tk.MustQuery("select * from restored").Check(testkit.Rows("20"))
+		tk.MustExec("drop table restored")
+	}
 }

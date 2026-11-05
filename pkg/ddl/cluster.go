@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -196,6 +197,33 @@ func checkSystemSchemaID(t meta.Reader, schemaID int64, flashbackTSString string
 	return nil
 }
 
+func checkFlashbackMaterializedViews(ctx context.Context, se sessionctx.Context, snapshotTS uint64) error {
+	snapshot := "current state"
+	if snapshotTS != 0 {
+		snapshot = fmt.Sprintf("target snapshot at TSO %d", snapshotTS)
+	}
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
+	opts := []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(snapshotTS)}
+	for _, object := range []struct {
+		tableName  string
+		idColumn   string
+		objectType string
+	}{
+		{"tidb_mview_refresh_info", "MVIEW_ID", "materialized view"},
+		{"tidb_mlog_purge_info", "MLOG_ID", "materialized view log"},
+	} {
+		rows, _, err := se.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, opts,
+			"SELECT %n FROM mysql.%n LIMIT 1", object.idColumn, object.tableName)
+		if err != nil {
+			return errors.Annotatef(err, "check %s in %s failed, can't do flashback", object.objectType, snapshot)
+		}
+		if len(rows) != 0 {
+			return errors.Errorf("Detected %s (ID: %d) in %s, can't do flashback", object.objectType, rows[0].GetInt64(0), snapshot)
+		}
+	}
+	return nil
+}
+
 func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context, store kv.Storage, t *meta.Mutator, job *model.Job, flashbackTS uint64) (err error) {
 	if err = ValidateFlashbackTS(ctx, se, flashbackTS); err != nil {
 		return err
@@ -288,7 +316,12 @@ func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context,
 		}
 		return errors.Errorf("have other ddl jobs(jobID: %d) in queue, can't do flashback", otherJob.ID)
 	}
-	return nil
+	// MV maintenance tables are not flashed back. Check both endpoints because
+	// objects dropped after flashbackTS can reappear without their maintenance state.
+	if err := checkFlashbackMaterializedViews(ctx, se, 0); err != nil {
+		return err
+	}
+	return checkFlashbackMaterializedViews(ctx, se, flashbackTS)
 }
 
 func addToSlice(schema string, tableName string, tableID int64, flashbackIDs []int64) []int64 {
