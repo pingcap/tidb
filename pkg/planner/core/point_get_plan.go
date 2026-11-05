@@ -1523,8 +1523,7 @@ func getHashOrKeyPartitionColumnName(tbl table.Table) *ast.CIStr {
 }
 
 // buildMaskingExprsForPointGet builds masking expressions for PointGetPlan/BatchPointGetPlan.
-// This is similar to buildMaskingReplaceExprs in logical_plan_builder.go
-// but adapted for the fast path.
+// Their result datums must fit the fast executor's original column representation.
 func buildMaskingExprsForPointGet(
 	_ context.Context,
 	sctx base.PlanContext,
@@ -1569,6 +1568,13 @@ func buildMaskingExprsForPointGet(
 			continue
 		}
 		masked := expression.ColumnSubstitute(sctx.GetExprCtx(), expr, expression.NewSchema(placeholder), []expression.Expression{col})
+		maskedType := masked.GetType(sctx.GetExprCtx().GetEvalCtx())
+		// Fast executors append datums to the original column representation.
+		// Scalar real expressions produce float64 datums even for FLOAT columns.
+		if maskedType.EvalType() != col.RetType.EvalType() || col.RetType.GetType() == mysql.TypeFloat ||
+			mysql.HasUnsignedFlag(maskedType.GetFlag()) != mysql.HasUnsignedFlag(col.RetType.GetFlag()) {
+			return nil, errors.New("masking result requires a different column representation")
+		}
 		replaceExprs[i] = masked
 		hasMask = true
 	}
