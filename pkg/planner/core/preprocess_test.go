@@ -406,11 +406,21 @@ func TestValidator(t *testing.T) {
 		{"SELECT * FROM t, LATERAL (SELECT t.a) AS dt", false, nil},
 		{"SELECT * FROM t LEFT JOIN LATERAL (SELECT t.a) AS dt ON true", false, nil},
 
-		// SELECT can resolve _tidb_commit_ts. Unsupported access paths are rejected
-		// later while choosing a physical plan.
-		{"SELECT _tidb_commit_ts FROM t WHERE a = 1", false, nil},
-		{"SELECT a FROM t WHERE _tidb_commit_ts > 0", false, nil},
-		{"SELECT _tidb_commit_ts FROM t UNION ALL SELECT _tidb_commit_ts FROM t", false, nil},
+		// _tidb_commit_ts reads are reserved for materialized view maintenance.
+		{"SELECT _tidb_commit_ts FROM t WHERE a = 1", false,
+			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
+		{"SELECT a FROM t WHERE _tidb_commit_ts > 0", false,
+			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
+		{"SELECT _tidb_commit_ts FROM t UNION ALL SELECT _tidb_commit_ts FROM t", false,
+			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
+		{"UPDATE t SET a = a + 1 WHERE _tidb_commit_ts > 0", false,
+			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
+		{"DELETE FROM t WHERE _tidb_commit_ts > 0", false,
+			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
+		{"UPDATE t SET a = (SELECT 1) WHERE _tidb_commit_ts > 0", false,
+			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
+		{"INSERT INTO t SELECT _tidb_commit_ts FROM t", false,
+			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
 	}
 
 	store := testkit.CreateMockStore(t)
@@ -420,6 +430,26 @@ func TestValidator(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable()})
 	for _, tt := range tests {
 		runSQL(t, tk.Session(), is, tt.sql, tt.inPrepare, tt.err)
+	}
+
+	// Materialized view maintenance sessions explicitly enable the capability.
+	tk.MustExec("set tidb_mview_enable = on")
+	for _, sql := range []string{
+		"SELECT _tidb_commit_ts FROM t WHERE a = 1",
+		"SELECT a FROM t WHERE _tidb_commit_ts > 0",
+		"SELECT _tidb_commit_ts FROM t UNION ALL SELECT _tidb_commit_ts FROM t",
+		"DELETE FROM t WHERE _tidb_commit_ts > 0",
+		"DELETE FROM t WHERE _tidb_commit_ts > 0 AND _tidb_commit_ts <= 1 LIMIT 1",
+	} {
+		runSQL(t, tk.Session(), is, sql, false, nil)
+	}
+	for _, sql := range []string{
+		"UPDATE t SET a = a + 1 WHERE _tidb_commit_ts > 0",
+		"UPDATE t SET a = (SELECT 1) WHERE _tidb_commit_ts > 0",
+		"INSERT INTO t SELECT _tidb_commit_ts FROM t",
+	} {
+		runSQL(t, tk.Session(), is, sql, false,
+			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now"))
 	}
 }
 
