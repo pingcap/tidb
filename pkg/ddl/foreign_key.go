@@ -405,7 +405,10 @@ func checkDropTableHasForeignKeyReferredInOwner(infoCache *infoschema.InfoCache,
 	if !vardef.EnableForeignKey.Load() {
 		return nil
 	}
-	objectIdents, fkCheck := args.Identifiers, args.FKCheck
+	// DROP TABLE jobs commit independently. Only a self-reference is safe to
+	// ignore; another table named in the statement may survive a later job.
+	objectIdents := []ast.Ident{{Schema: ast.NewCIStr(job.SchemaName), Name: ast.NewCIStr(job.TableName)}}
+	fkCheck := args.FKCheck
 	referredFK, err := checkTableHasForeignKeyReferredInOwner(infoCache, job.SchemaName, job.TableName, objectIdents, fkCheck)
 	if err != nil {
 		return err
