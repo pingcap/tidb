@@ -930,7 +930,6 @@ func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryRead
 	return reader
 }
 
-<<<<<<< HEAD
 func TestExecutionAverageColumnsUseExecCount(t *testing.T) {
 	stats := &stmtSummaryStats{
 		execCount:            2,
@@ -999,7 +998,9 @@ func BenchmarkStmtSummaryByDigestInitTableNames(b *testing.B) {
 	for range b.N {
 		var summary stmtSummaryByDigest
 		summary.init(stmtExecInfo, 0, 0, 0)
-=======
+	}
+}
+
 func TestColumnValueFactoryDoubleUintMetrics(t *testing.T) {
 	const uintMetricSum = uint64(1 << 63)
 	stats := &stmtSummaryStats{
@@ -1077,7 +1078,6 @@ func TestColumnValueFactoryDoubleUintMetrics(t *testing.T) {
 		row := chunk.MutRowFromTypes([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)})
 		row.SetDatums(datum)
 		require.Equal(t, tc.expected, row.ToRow().GetFloat64(0), tc.name)
->>>>>>> 59ca78807ec (stmtsummary: fix AVG_ROCKSDB_* columns returning subnormal floats (#69708))
 	}
 }
 
