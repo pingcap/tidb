@@ -79,7 +79,7 @@ func TestIsSpecialGlobalIndex(t *testing.T) {
 }
 
 func TestCallSCtxFailed(t *testing.T) {
-	_, dom := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	var sctxWithFailure sessionctx.Context
 	err := util.CallWithSCtx(dom.StatsHandle().SPool(), func(sctx sessionctx.Context) error {
@@ -96,6 +96,17 @@ func TestCallSCtxFailed(t *testing.T) {
 		panic("simulated panic")
 	})
 	require.ErrorContains(t, err, "panic in CallWithSCtx")
+
+	// A panic in the function of WrapTxn commits the writes made before the panic.
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create table test.t (a int)")
+	err = util.CallWithSCtx(dom.StatsHandle().SPool(), func(sctx sessionctx.Context) error {
+		_, _, err := util.ExecRows(sctx, "insert into test.t values (1)")
+		require.NoError(t, err)
+		panic("simulated panic")
+	}, util.FlagWrapTxn)
+	require.ErrorContains(t, err, "panic in CallWithSCtx")
+	tk.MustQuery("select count(*) from test.t").Check(testkit.Rows("1"))
 }
 
 func newStatsSessionContextForRestoreTest(t *testing.T) *mock.Context {
