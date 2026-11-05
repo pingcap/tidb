@@ -421,6 +421,11 @@ func onCreateMaterializedViewBaseCheck(metaMut *meta.Mutator, schemaID int64, ba
 	if err := validateMaterializedViewSourceState(schemaName, baseTblInfo); err != nil {
 		return nil, err
 	}
+	if err := validateMaterializedViewNestingDepth(baseTblInfo, func(tableID int64) (*model.TableInfo, error) {
+		return getTableInfo(metaMut, tableID, schemaID)
+	}); err != nil {
+		return nil, err
+	}
 	if baseTblInfo.MaterializedViewBase == nil || baseTblInfo.MaterializedViewBase.MLogID == 0 {
 		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: base table has no materialized view log")
 	}

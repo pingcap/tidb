@@ -32,8 +32,11 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
@@ -702,6 +705,164 @@ func TestMaterializedViewBaseModifyColumnMultiSchemaInvolvingSchemaInfo(t *testi
 	showCreate = tk.MustQuery("show create table mv_multi_schema").Rows()[0][1].(string)
 	require.Contains(t, showCreate, "`a` bigint")
 	require.Contains(t, showCreate, "`b` bigint")
+}
+
+func TestNestedMaterializedViewModifyColumn(t *testing.T) {
+	for _, multiColumn := range []bool{false, true} {
+		t.Run(fmt.Sprintf("multi_column=%t", multiColumn), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table t (a int not null, b int not null)")
+			tk.MustExec("insert into t values (1, 10)")
+			tk.MustExec("create materialized view log on t (a, b)")
+			tk.MustExec("create materialized view mv1 (k, l, cnt) as select a, b, count(1) from t group by a, b")
+			tk.MustExec("create materialized view log on mv1 (k, l)")
+			tk.MustExec("create materialized view mv2 (x, y, cnt) as select k, l, count(1) from mv1 group by k, l")
+			tk.MustExec("create materialized view sibling (q, r, cnt) as select k, l, count(1) from mv1 group by k, l")
+			tk.MustExec("create materialized view log on mv2 (x, y)")
+			tk.MustExec("create materialized view mv3 (i, j, cnt) as select x, y, count(1) from mv2 group by x, y")
+			tk.MustExec("create materialized view log on mv3 (i, j)")
+			if multiColumn {
+				tk.MustExec("alter table t modify column a bigint not null, modify column b bigint not null")
+			} else {
+				tk.MustExec("alter table t change column a a bigint not null")
+			}
+			secondType := "int"
+			if multiColumn {
+				secondType = "bigint"
+			}
+			tk.MustQuery("select table_name, column_name, data_type from information_schema.columns where table_schema = 'test' and column_name in ('a', 'b', 'k', 'l', 'x', 'y', 'i', 'j', 'q', 'r') order by table_name, ordinal_position").Check(testkit.Rows(
+				"$mlog$mv1 k bigint", "$mlog$mv1 l "+secondType,
+				"$mlog$mv2 x bigint", "$mlog$mv2 y "+secondType,
+				"$mlog$mv3 i bigint", "$mlog$mv3 j "+secondType,
+				"$mlog$t a bigint", "$mlog$t b "+secondType,
+				"mv1 k bigint", "mv1 l "+secondType,
+				"mv2 x bigint", "mv2 y "+secondType,
+				"mv3 i bigint", "mv3 j "+secondType,
+				"sibling q bigint", "sibling r "+secondType,
+				"t a bigint", "t b "+secondType,
+			))
+
+			jobID, err := strconv.ParseInt(fmt.Sprint(tk.MustQuery("admin show ddl jobs 1").Rows()[0][0]), 10, 64)
+			require.NoError(t, err)
+			job, err := ddl.GetHistoryJobByID(tk.Session(), jobID)
+			require.NoError(t, err)
+			require.Equal(t, map[string]struct{}{
+				"test\x00t": {}, "test\x00$mlog$t": {},
+				"test\x00mv1": {}, "test\x00$mlog$mv1": {},
+				"test\x00mv2": {}, "test\x00$mlog$mv2": {},
+				"test\x00mv3": {}, "test\x00$mlog$mv3": {},
+				"test\x00sibling": {},
+			}, involvingSchemaInfoSet(job.GetInvolvingSchemaInfo()))
+
+			tk.MustExec("insert into t values (2147483648, 20)")
+			for _, name := range []string{"mv1", "mv2", "mv3", "sibling"} {
+				tk.MustExec("refresh materialized view " + name + " fast")
+			}
+			tk.MustQuery("select * from mv3 order by i").Check(testkit.Rows("1 10 1", "2147483648 20 1"))
+			tk.MustQuery("select * from sibling order by q").Check(testkit.Rows("1 10 1", "2147483648 20 1"))
+		})
+	}
+}
+
+func TestNestedMaterializedViewModifyColumnUnreferencedOutput(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null)")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("create materialized view log on t (a)")
+	tk.MustExec("create materialized view mv1 (k, cnt) as select a, count(1) from t group by a")
+	tk.MustExec("create materialized view log on mv1 (k, cnt)")
+	tk.MustExec("create materialized view mv2 (x, cnt) as select k, count(1) from mv1 group by k")
+	tk.MustExec("create materialized view unaffected (c, n) as select cnt, count(1) from mv1 where cnt > 0 group by cnt")
+	tk.MustExec("create materialized view log on unaffected (c)")
+	tk.MustExec("create materialized view unaffected_nested (z, n) as select c, count(1) from unaffected where c > 0 group by c")
+	const unaffectedSQL = "select table_name, column_name, column_type from information_schema.columns where table_schema = 'test' and table_name in ('unaffected', '$mlog$unaffected', 'unaffected_nested') order by table_name, ordinal_position"
+	before := tk.MustQuery(unaffectedSQL).Rows()
+	tk.MustExec("alter table t modify column a bigint not null")
+	tk.MustQuery("select table_name, column_name, data_type from information_schema.columns where table_schema = 'test' and column_name in ('a', 'k', 'x') order by table_name, ordinal_position").Check(testkit.Rows(
+		"$mlog$mv1 k bigint", "$mlog$t a bigint", "mv1 k bigint", "mv2 x bigint", "t a bigint",
+	))
+	require.Equal(t, before, tk.MustQuery(unaffectedSQL).Rows())
+}
+
+func TestNestedMaterializedViewModifyColumnRejectsDownstreamUsage(t *testing.T) {
+	for _, mode := range []string{"preflight", "worker", "multi_worker"} {
+		for _, tc := range []struct {
+			name      string
+			column    string
+			columns   string
+			selectSQL string
+			err       string
+		}{
+			{name: "where", column: "a", columns: "(z, cnt)", selectSQL: "select x, count(1) from mv2 where x > 0 group by x", err: "WHERE clause"},
+			{name: "aggregate", column: "b", columns: "(z, total, cnt)", selectSQL: "select x, sum(y), count(1) from mv2 group by x", err: "non-direct SELECT expressions"},
+		} {
+			t.Run(tc.name+"/"+mode, func(t *testing.T) {
+				store, dom := testkit.CreateMockStoreAndDomain(t)
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec("use test")
+				tk.MustExec("create table t (a int not null, b int not null)")
+				tk.MustExec("insert into t values (1, 10)")
+				tk.MustExec("create materialized view log on t (a, b)")
+				tk.MustExec("create materialized view mv1 (k, l, cnt) as select a, b, count(1) from t group by a, b")
+				tk.MustExec("create materialized view log on mv1 (k, l)")
+				tk.MustExec("create materialized view mv2 (x, y, cnt) as select k, l, count(1) from mv1 group by k, l")
+				tk.MustExec("create materialized view log on mv2 (x, y)")
+				alterSQL := fmt.Sprintf("alter table t modify column %s bigint not null", tc.column)
+				if mode == "multi_worker" {
+					alterSQL = "alter table t modify column a bigint not null, modify column b bigint not null"
+				}
+				var jobW *ddl.JobWrapper
+				if mode != "preflight" {
+					require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
+					stmt, err := parser.New().ParseOneStmt(alterSQL, "", "")
+					require.NoError(t, err)
+					is := dom.InfoSchema()
+					schema, ok := is.SchemaByName(pmodel.NewCIStr("test"))
+					require.True(t, ok)
+					base, err := is.TableByName(context.Background(), schema.Name, pmodel.NewCIStr("t"))
+					require.NoError(t, err)
+					var subJobs []*model.SubJob
+					for _, spec := range stmt.(*ast.AlterTableStmt).Specs {
+						columnJob, err := ddl.GetModifiableColumnJob(context.Background(), tk.Session(), is,
+							ast.Ident{Schema: schema.Name, Name: base.Meta().Name}, spec.NewColumns[0].Name.Name, schema, base, spec)
+						require.NoError(t, err)
+						if jobW == nil {
+							jobW = columnJob
+						}
+						subJobs = append(subJobs, &model.SubJob{
+							Type: columnJob.Type, JobArgs: columnJob.JobArgs,
+							Revertible: true, ReorgTp: columnJob.ReorgMeta.ReorgTp,
+							CtxVars: columnJob.CtxVars, InvolvingSchemaInfo: columnJob.InvolvingSchemaInfo,
+						})
+					}
+					if mode == "multi_worker" {
+						jobW.Type = model.ActionMultiSchemaChange
+						jobW.MultiSchemaInfo = &model.MultiSchemaInfo{Revertible: true, SubJobs: subJobs}
+						jobW = ddl.NewJobWrapperWithArgs(jobW.Job, &model.EmptyArgs{}, false)
+					}
+				}
+				// Build the worker's job before adding the incompatible downstream dependency.
+				tk.MustExec("create materialized view mv3 " + tc.columns + " as " + tc.selectSQL)
+				const typesSQL = "select table_name, column_name, column_type from information_schema.columns where table_schema = 'test' order by table_name, ordinal_position"
+				before := tk.MustQuery(typesSQL).Rows()
+				var err error
+				if mode != "preflight" {
+					require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
+					tk.Session().SetValue(sessionctx.QueryString, alterSQL)
+					err = dom.DDLExecutor().(ddl.ExecutorForTest).DoDDLJobWrapper(tk.Session(), jobW)
+				} else {
+					err = tk.ExecToErr(alterSQL)
+				}
+				require.ErrorContains(t, err, tc.err)
+				require.Equal(t, before, tk.MustQuery(typesSQL).Rows())
+				tk.MustQuery("select * from mv2").Check(testkit.Rows("1 10 1"))
+			})
+		}
+	}
 }
 
 func TestCreateMaterializedViewHistoryJobSchemaVersion(t *testing.T) {
@@ -2503,6 +2664,32 @@ func TestMaterializedViewNestedDependencyChain(t *testing.T) {
 	tk.MustExec("drop materialized view mv_dependency_chain_1")
 	tk.MustExec("drop materialized view log on mv_dependency_chain_base")
 	tk.MustExec("drop table mv_dependency_chain_base")
+}
+
+func TestMaterializedViewNestingDepthLimit(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table mv_depth_base (a int not null)")
+	tk.MustExec("insert into mv_depth_base values (1), (1), (2)")
+	source := "mv_depth_base"
+	for depth := 1; depth <= 16; depth++ {
+		tk.MustExec(fmt.Sprintf("create materialized view log on %s (a)", source))
+		name := fmt.Sprintf("mv_depth_%d", depth)
+		tk.MustExec(fmt.Sprintf("create materialized view %s (a, cnt) refresh fast as select a, count(1) from %s group by a", name, source))
+		source = name
+	}
+	tk.MustQuery("select * from mv_depth_16 order by a").Check(testkit.Rows("1 1", "2 1"))
+	tk.MustExec("create materialized view log on mv_depth_16 (a)")
+	err := tk.ExecToErr("create materialized view mv_depth_17 (a, cnt) refresh fast as select a, count(1) from mv_depth_16 group by a")
+	require.ErrorContains(t, err, "materialized view nesting depth exceeds maximum of 16")
+	tk.MustQuery("show tables like 'mv_depth_17'").Check(testkit.Rows())
+	tk.MustQuery("select * from mv_depth_1 order by a").Check(testkit.Rows("1 2", "2 1"))
+	tk.MustQuery("select * from mv_depth_16 order by a").Check(testkit.Rows("1 1", "2 1"))
+
+	parent, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_depth_16"))
+	require.NoError(t, err)
+	require.Empty(t, parent.Meta().MaterializedViewBase.MViewIDs)
 }
 
 func TestCreateMaterializedViewOnMaterializedViewRequiresTrackedColumns(t *testing.T) {

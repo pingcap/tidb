@@ -1036,6 +1036,91 @@ func TestOnCreateMaterializedViewBaseCheckNestedSource(t *testing.T) {
 	}
 }
 
+func TestValidateMaterializedViewNestingDepth(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		sharedDepth int
+		cycle       bool
+		missing     bool
+		err         string
+	}{
+		{name: "shared_sources_at_limit", sharedDepth: 13},
+		{name: "shared_sources_above_limit", sharedDepth: 14, err: "materialized view nesting depth exceeds maximum of 16"},
+		{name: "cycle", cycle: true, err: "materialized view nesting depth exceeds maximum of 16"},
+		{name: "missing_source", missing: true, err: "table 99 missing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tables := map[int64]*model.TableInfo{1: {ID: 1}}
+			for depth := 1; depth <= tc.sharedDepth; depth++ {
+				id := int64(depth + 1)
+				tables[id] = &model.TableInfo{ID: id, MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{id - 1}}}
+			}
+			sharedID := int64(tc.sharedDepth + 1)
+			tables[100] = &model.TableInfo{ID: 100, MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{sharedID}}}
+			source := &model.TableInfo{ID: 101, MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{sharedID, 100}}}
+			if tc.cycle {
+				source.MaterializedView.BaseTableIDs = []int64{source.ID}
+				tables[source.ID] = source
+			}
+			if tc.missing {
+				source.MaterializedView.BaseTableIDs = []int64{99}
+			}
+			err := validateMaterializedViewNestingDepth(source, func(id int64) (*model.TableInfo, error) {
+				if tbl, ok := tables[id]; ok {
+					return tbl, nil
+				}
+				return nil, fmt.Errorf("table %d missing", id)
+			})
+			if tc.err == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tc.err)
+			}
+		})
+	}
+}
+
+func TestOnCreateMaterializedViewBaseCheckNestingDepth(t *testing.T) {
+	for _, sourceDepth := range []int{0, 1, 15, 16, 17} {
+		t.Run(fmt.Sprintf("source_depth_%d", sourceDepth), func(t *testing.T) {
+			store := createMockStore(t)
+			defer func() { require.NoError(t, store.Close()) }()
+			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+			err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+				m := meta.NewMutator(txn)
+				require.NoError(t, m.CreateDatabase(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("test")}))
+				const mlogID int64 = 100
+				var source *model.TableInfo
+				for depth := 0; depth <= sourceDepth; depth++ {
+					source = &model.TableInfo{
+						ID: int64(depth + 2), Name: pmodel.NewCIStr(fmt.Sprintf("source_%d", depth)), State: model.StatePublic,
+					}
+					if depth > 0 {
+						source.MaterializedView = &model.MaterializedViewInfo{BaseTableIDs: []int64{source.ID - 1}}
+					}
+					if depth == sourceDepth {
+						source.MaterializedViewBase = &model.MaterializedViewBaseInfo{MLogID: mlogID}
+					}
+					require.NoError(t, m.CreateTableOrView(1, source))
+				}
+				require.NoError(t, m.CreateTableOrView(1, &model.TableInfo{
+					ID: mlogID, Name: pmodel.NewCIStr("$mlog$source"), State: model.StatePublic,
+					MaterializedViewLog: &model.MaterializedViewLogInfo{BaseTableID: source.ID},
+				}))
+				_, err := onCreateMaterializedViewBaseCheck(m, 1, source.ID, "test")
+				if sourceDepth < 16 {
+					require.NoError(t, err)
+				} else {
+					require.ErrorContains(t, err, "materialized view nesting depth exceeds maximum of 16")
+					require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(err))
+				}
+				return nil
+			})
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestBuildCreateMaterializedViewImportSQLThreadAndDiskQuota(t *testing.T) {
 	mvTblInfo := &model.TableInfo{
 		Name: pmodel.NewCIStr("mv"),
