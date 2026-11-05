@@ -709,6 +709,8 @@ func (w *worker) transitOneJobStep(
 				w.cleanupMViewOutOfPlaceCutoverAfterCommit(jobCtx, job)
 			case model.ActionTruncateTable:
 				cleanupTruncateTableAffinityGroupsAfterCommit(jobCtx, job)
+			case model.ActionAlterTableAffinity:
+				cleanupAlterTableAffinityGroupsAfterCommit(jobCtx, job)
 			}
 			job.State = model.JobStateSynced
 		}
@@ -803,6 +805,9 @@ func (w *worker) transitOneJobStep(
 		// Internal SQL may have flushed metadata into the transaction. Finish
 		// cancellation only after the full rollback above has discarded it.
 		w.sess.Reset()
+		// Delete PD groups before the cancellation commits. If the commit fails,
+		// the job runs again and repeats this idempotent cleanup.
+		deleteAffinityGroupsOfCancelledJob(jobCtx, job)
 		return 0, w.handleJobDone(jobCtx, job)
 	}
 
