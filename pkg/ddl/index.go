@@ -3947,7 +3947,7 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 			index := w.indexes[i%n]
 			iter := index.GenIndexKVIter(ec, loc, idxRecord.vals, idxRecord.handle, idxRecord.rsData)
 			for iter.Valid() {
-				values := iter.IndexedValues()
+				values := iter.PeekIndexedValues()
 				key, _, distinct, err := iter.Next(nil, nil)
 				if err != nil {
 					return errors.Trace(err)
