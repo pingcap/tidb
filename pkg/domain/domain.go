@@ -79,7 +79,6 @@ import (
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/store"
-	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/types"
@@ -431,19 +430,7 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 
 // Returns the timestamp of a schema version, which is the commit timestamp of the schema diff
 func (do *Domain) getTimestampForSchemaVersionWithNonEmptyDiff(m meta.Reader, version int64, startTS uint64) (uint64, error) {
-	tikvStore, ok := do.Store().(helper.Storage)
-	if ok {
-		newHelper := helper.NewHelper(tikvStore)
-		mvccResp, err := newHelper.GetMvccByEncodedKeyWithTS(m.EncodeSchemaDiffKey(version), startTS)
-		if err != nil {
-			return 0, err
-		}
-		if mvccResp == nil || mvccResp.Info == nil || len(mvccResp.Info.Writes) == 0 {
-			return 0, errors.Errorf("There is no Write MVCC info for the schema version")
-		}
-		return mvccResp.Info.Writes[0].CommitTs, nil
-	}
-	return 0, errors.Errorf("cannot get store from domain")
+	return meta.GetSchemaDiffCommitTS(m, do.Store(), version, startTS)
 }
 
 func (do *Domain) sysFacHack() (pools.Resource, error) {
