@@ -679,6 +679,42 @@ impl SelectResponseIter {
         &mut self,
         required_rows: usize,
     ) -> Result<Option<SelectResultRow<DecodedChunk>>, ResponseChannelError> {
+        self.next_chunk_reusing(required_rows, &mut None)
+    }
+
+    /// Go `selectResult.Next(ctx, chk)` / `readFromChunk`: decodes the next
+    /// rows INTO the caller's `chk`, which keeps its own columns -- and so
+    /// its capacity -- unless a response chunk holds more than 0.8 x
+    /// `required_rows` rows, which `ReuseIntermChk` swaps in instead.
+    /// Answers whether the response had rows left to decode.
+    pub fn fill_chunk_with_required_rows(
+        &mut self,
+        required_rows: usize,
+        chk: &mut DecodedChunk,
+    ) -> Result<bool, ResponseChannelError> {
+        chk.reset();
+        let mut reuse = Some(std::mem::take(chk));
+        let next = self.next_chunk_reusing(required_rows, &mut reuse);
+        match next {
+            Ok(Some(row)) => {
+                *chk = row.row;
+                Ok(true)
+            }
+            other => {
+                *chk = reuse.take().expect("an unused caller chunk is handed back");
+                other.map(|_| false)
+            }
+        }
+    }
+
+    /// [`Self::next_chunk_with_required_rows`], whose output is `reuse`'s
+    /// chunk when there is one; that chunk goes back to `reuse` if it is left
+    /// empty.
+    fn next_chunk_reusing(
+        &mut self,
+        required_rows: usize,
+        reuse: &mut Option<DecodedChunk>,
+    ) -> Result<Option<SelectResultRow<DecodedChunk>>, ResponseChannelError> {
         if required_rows == 0 {
             return Ok(None);
         }
@@ -686,6 +722,7 @@ impl SelectResponseIter {
             return Ok(None);
         }
         let mut output: Option<SelectResultRow<DecodedChunk>> = None;
+        let mut output_reused = false;
         loop {
             while let Some(channel_index) =
                 self.channels.last().map(|channel| channel.channel_index)
@@ -708,9 +745,11 @@ impl SelectResponseIter {
                     // any buffer they came with (a `required_rows`-sized
                     // jemalloc extent per column, faulted in and freed per
                     // chunk); the append path grows its columns on demand.
+                    let reused = reuse.take();
+                    output_reused = reused.is_some();
                     SelectResultRow::new(
                         channel_index,
-                        DecodedChunk::new(field_types, 0, required_rows),
+                        reused.unwrap_or_else(|| DecodedChunk::new(field_types, 0, required_rows)),
                     )
                 });
                 let ready = self
@@ -724,7 +763,10 @@ impl SelectResponseIter {
                 self.pop_last_channel();
                 let output_is_empty = output_chunk.row.num_rows() == 0;
                 if output_is_empty {
-                    output = None;
+                    let output = output.take();
+                    if std::mem::take(&mut output_reused) {
+                        *reuse = output.map(|output| output.row);
+                    }
                 }
             }
 

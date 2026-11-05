@@ -3201,6 +3201,120 @@ fn explain_analyze_dml_roots_report_their_executor_stats_and_memory_like_go() {
     root(&mut session, "EXPLAIN ANALYZE DELETE x FROM c x JOIN c y ON x.a = y.a WHERE x.a = 'x'");
 }
 
+/// Go `selectResult.Next(ctx, chk)` / `readFromChunk`
+/// (`pkg/distsql/select_result.go`): a reader decodes its rows INTO the
+/// chunk its consumer passed, so that chunk keeps its own capacity -- and the
+/// consumer's tracker charges it -- unless a response chunk holds over 0.8 x
+/// its `RequiredRows` and is swapped in. `./gorun` on this branch:
+///
+/// ```text
+/// update t set b=b+1 where a<10              Update_4 | 760 Bytes  (a 32-row DML child chunk)
+/// select * from t where a < 10 order by b    Sort_5   | 808 Bytes
+/// ```
+#[test]
+fn a_reader_decodes_into_its_consumers_chunk_like_go() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT PRIMARY KEY, b INT, KEY(b))")
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1,1),(2,2),(3,3)").unwrap();
+    for (sql, root, memory) in [
+        ("EXPLAIN ANALYZE UPDATE t SET b=b+1 WHERE a<10", "Update_4", "760 Bytes"),
+        ("EXPLAIN ANALYZE SELECT * FROM t WHERE a < 10 ORDER BY b", "Sort_5", "808 Bytes"),
+    ] {
+        let rows = row_text(session.run(sql));
+        assert_eq!((rows[0][0].as_str(), rows[0][7].as_str()), (root, memory), "{sql}");
+    }
+}
+
+/// `text` with every duration (`583ns`, `6.42µs`, `1.2ms`, `0s`) as `D`, so
+/// execution info can be compared by shape.
+fn mask_durations(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find(|c: char| c.is_ascii_digit()) {
+        out.push_str(&rest[..start]);
+        let number = rest[start..]
+            .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+            .map_or(rest.len(), |end| start + end);
+        let unit = ["ns", "µs", "ms", "s"]
+            .into_iter()
+            .find(|unit| rest[number..].starts_with(unit));
+        match unit {
+            Some(unit) => {
+                out.push('D');
+                rest = &rest[number + unit.len()..];
+            }
+            None => {
+                out.push_str(&rest[start..number]);
+                rest = &rest[number..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Go `InsertExec` / `ReplaceExec`: the `Insert_1` row carries the
+/// executor's basic stats, then Go's `InsertRuntimeStat` -- registered by
+/// its `Close`, which the no-delay run of an EXPLAIN ANALYZE'd write reaches
+/// before the RU stats are registered -- and the peak of its `memTracker`
+/// (`insertRows` charges the batch's rows while it writes them).
+///
+/// Each text is `./gorun` on this branch over the same statements, its
+/// durations masked:
+///
+/// ```text
+/// insert into t values (5,5)            prepare: 6.42µs, insert:15.6µs | 144 Bytes
+/// insert into t values (6,6),(7,7),(8,8)                                | 432 Bytes
+/// insert ignore into t values (1,1),(9,9)
+///   prepare: 8.17µs, check_insert: {total_time: 49.9µs, mem_insert_time: 22µs,
+///   prefetch: 27.9µs, fk_check: 3.79µs, rpc:{BatchGet:{num_rpc:1, total_time:8µs}}} | 288 Bytes
+/// insert into t values (1,1) on duplicate key update b=b+1
+///   prepare: 8.83µs, check_insert: {total_time: 48.5µs, mem_insert_time: 30.8µs,
+///   prefetch: 17.7µs, rpc:{BatchGet:{num_rpc:1, total_time:4.83µs}}}  | 144 Bytes
+/// replace into t values (1,2)
+///   prefetch: 12.5µs, rpc: {BatchGet:{num_rpc:1, total_time:3µs}}      | 144 Bytes
+/// ```
+#[test]
+fn explain_analyze_insert_root_reports_insert_runtime_stats_like_go() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT PRIMARY KEY, b INT, KEY(b))")
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1,1)").unwrap();
+    let basic = "time:D, open:D, close:D, loops:1, ";
+    let rpc = "{BatchGet:{num_rpc:1, total_time:D}}";
+    for (sql, stats, memory) in [
+        ("INSERT INTO t VALUES (5,5)", "prepare: D, insert:D".to_owned(), "144 Bytes"),
+        ("INSERT INTO t VALUES (6,6),(7,7),(8,8)", "prepare: D, insert:D".to_owned(), "432 Bytes"),
+        (
+            "INSERT IGNORE INTO t VALUES (1,1),(9,9)",
+            format!(
+                "prepare: D, check_insert: {{total_time: D, mem_insert_time: D, prefetch: D, \
+                 fk_check: D, rpc:{rpc}}}"
+            ),
+            "288 Bytes",
+        ),
+        (
+            "INSERT INTO t VALUES (1,1) ON DUPLICATE KEY UPDATE b=b+1",
+            format!("prepare: D, check_insert: {{total_time: D, mem_insert_time: D, prefetch: D, rpc:{rpc}}}"),
+            "144 Bytes",
+        ),
+        ("REPLACE INTO t VALUES (1,2)", format!("prefetch: D, rpc: {rpc}"), "144 Bytes"),
+    ] {
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        assert_eq!(rows[0][0], "Insert_1", "{sql}");
+        // `Open` creates the executor's tracker and `Close` releases it.
+        assert!(!rows[0][5].contains("open:0s") && !rows[0][5].contains("close:0s"), "{}", rows[0][5]);
+        let info = mask_durations(&rows[0][5]);
+        let (stats_text, ru) = info.split_once(", RU:").unwrap_or((&info, ""));
+        assert_eq!(stats_text, format!("{basic}{stats}"), "{sql}");
+        assert!(!ru.is_empty(), "{sql}: the RU stats follow: {info}");
+        assert_eq!(rows[0][7], memory, "{sql}");
+    }
+}
+
 /// `EXPLAIN ANALYZE` of a `Point_Get`/`Batch_Point_Get`/`IndexRangeScan`
 /// access path: real `actRows`, not `N/A`. Exact point and batch predicates
 /// take Go's replacement fast-plan path; an index range may retain a reader

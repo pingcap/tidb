@@ -3918,6 +3918,36 @@ impl RemoteRowCursor {
         }
         let before = output.num_rows();
         while output.num_rows() < target_rows {
+            if self.pending_chunk.is_none()
+                && output.num_rows() == 0
+                && output.num_cols() == self.width
+                && self.field_types.len() == self.width
+                && output.sel().is_none()
+            {
+                // Go `selectResult.Next(ctx, chk)`: the rows are decoded into
+                // the caller's chunk, which keeps its columns unless a whole
+                // response chunk is swapped in (`ReuseIntermChk`).
+                let required_rows = output.required_rows();
+                let produced = self
+                    .stream
+                    .next_chunk_into(target_rows, output)
+                    .map_err(KvTableError::from)?;
+                self.note_wire_rows();
+                if !produced {
+                    break;
+                }
+                let rows = output.num_rows();
+                if allow_oversized || rows <= target_rows {
+                    return Ok(Some(rows));
+                }
+                // A swapped-in response chunk past the target: the rest
+                // waits for the next call.
+                let batch = std::mem::take(output);
+                *output = batch.renew_with_capacity(target_rows, required_rows);
+                self.pending_chunk = Some(batch);
+                self.pending_chunk_row = 0;
+                continue;
+            }
             if self.pending_chunk.is_none() {
                 let next = self
                     .stream

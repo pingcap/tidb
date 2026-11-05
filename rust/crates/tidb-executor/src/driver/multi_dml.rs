@@ -258,15 +258,9 @@ pub(crate) fn run_multi_update(
             handle: table.handle.clone(),
         })
         .collect();
-    let rows = delete_source_rows(
-        &delete_layout,
-        plan,
-        catalog,
-        ctx,
-        runtime,
-        dml,
-        true,
-    )?;
+    // Go `UpdateExec.Next` reads the child chunk by chunk; this read takes it
+    // all first.
+    let rows = dml.next(|| delete_source_rows(&delete_layout, plan, catalog, ctx, runtime, dml, true))?;
 
     // Go keeps updatedRowKeys per target position, but mergedRowData per
     // base table and handle. Neither map can stand in for the other.
@@ -301,7 +295,7 @@ pub(crate) fn run_multi_update(
     let mut touched_rows = 0u64;
     let mut changed_rows = 0u64;
     // The rest of Go `UpdateExec.Next`: the writes, after the whole read.
-    dml.next_continued(|| -> Result<(), DriverError> {
+    dml.next(|| -> Result<(), DriverError> {
         for (row_index, row) in rows.iter().enumerate() {
             let ids = &row.ids;
             let chunk = row_chunk(&row.raw, &field_types)?;
@@ -541,15 +535,7 @@ pub(crate) fn run_multi_delete(
     let rows = {
         let plan = physical_plan
             .ok_or_else(|| DriverError::unsupported("a multi-table write has no read plan"))?;
-        delete_source_rows(
-            tables,
-            plan,
-            catalog,
-            ctx,
-            runtime,
-            dml,
-            false,
-        )?
+        dml.next(|| delete_source_rows(tables, plan, catalog, ctx, runtime, dml, false))?
     };
 
     // Go's `tblRowMap` is keyed by TABLE ID, so a row reachable through
@@ -571,7 +557,7 @@ pub(crate) fn run_multi_delete(
     let mut records = super::dml::delete_record::DeleteRecords::new(fk_triggers);
     let mut deleted = 0;
     // The rest of Go `DeleteExec.Next`: the removals, after the whole read.
-    dml.next_continued(|| -> Result<(), DriverError> {
+    dml.next(|| -> Result<(), DriverError> {
         for ((database, name, id), location) in doomed {
             let old = &rows[location.0].stored[location.1];
             deleted +=

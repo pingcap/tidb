@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 23,
-    "open": 7,
-    "partial": 16
+    "open": 6,
+    "partial": 17
   },
   "findings": [
     {
@@ -55,14 +55,14 @@
       "id": "E03",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "A single-table UPDATE / DELETE runs as Go's write executor (`DmlExec`: plan-ID `memTracker`, `newDMLChildChunk` accounting, `updatedRowKeys`, basic stats), but a multi-table one (`multi_dml.rs`) materializes its whole read before writing instead of streaming chunk by chunk, so its memory is not Go's (no per-chunk release, `mergedRowData` / `tblRowMap` deltas; it charges each row it holds); and the `Insert` / `Replace` row lacks `InsertExec`'s basic and `prepare` / `insert` stats, and its memory, which `INSERT ... SELECT` also materializes",
+      "finding": "INSERT, UPDATE and DELETE run as Go's write executors (`DmlExec`: plan-ID `memTracker`, basic stats; `newDMLChildChunk` accounting and `updatedRowKeys` for a single-table UPDATE / DELETE, `insertRows`' row charge and `InsertRuntimeStat` for INSERT / REPLACE), but a multi-table UPDATE / DELETE (`multi_dml.rs`) and an `INSERT ... SELECT` materialize their whole source before writing instead of streaming it chunk by chunk, so their memory is not Go's (no per-chunk charge and release, no `mergedRowData` / `tblRowMap` / extra-column deltas; they charge each row they hold); and the insert stats lack Go's `AllocatorRuntimeStats` (`auto_id_allocator: {...}`), which this tier's auto-ID allocator does not record",
       "go_owner": "`pkg/executor/update.go`, `delete.go`, `insert.go`"
     },
     {
       "id": "E09",
-      "status": "open",
+      "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "A reader's next chunk is the decoder's own (`tidb-distsql` `SelectResponseIter::next_chunk_with_required_rows` fills a fresh zero-capacity chunk, which `TableScanExec` then swaps into the caller's), where Go's `selectResult.Next(chk)` / `readFromChunk` decodes INTO the caller's chunk unless a response chunk holds over 0.8 x its `RequiredRows`: the consumer's chunk loses its capacity, so the memory every operator above a TableReader / IndexReader charges for it differs (an UPDATE over a 3-row range read: 304 Bytes, Go 760)",
+      "finding": "The coprocessor row cursor (`RemoteRowCursor::append_clean_chunk`) decodes into its caller's chunk as Go's `selectResult.Next(chk)` / `readFromChunk` does (`SelectResponseIter::fill_chunk_with_required_rows`), but the partial-aggregate remote stream (`table_scan.rs` `append_partial_remote_chunk`) still moves the decoder's own chunk over its caller's, which loses that chunk's capacity",
       "go_owner": "`pkg/distsql/select_result.go` (`readFromChunk`), `pkg/util/chunk` (`Decoder`)"
     },
     {

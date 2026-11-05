@@ -172,17 +172,26 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
     } else {
         "*executor.InsertExec.Next"
     });
+    let mut runtime = runtime;
+    let dml = physical_plan
+        .as_deref()
+        .map(|plan| super::physical_builder::DmlExec::new_insert(plan, ctx, runtime.as_deref_mut()));
     let (physical_source, fk_triggers, _, _) = dml_execution_parts(physical_plan, "Insert")?;
-    run_insert_with_physical(
-        insert,
-        Some(&planned),
-        catalog,
-        current_db,
-        ctx,
-        physical_source,
-        fk_triggers,
-        runtime,
-    )
+    let dml = dml.as_ref().expect("dml_execution_parts found the root");
+    dml.next(|| {
+        run_insert_rows(
+            insert,
+            Some(&planned),
+            catalog,
+            current_db,
+            ctx,
+            physical_source,
+            fk_triggers,
+            runtime,
+            None,
+            Some(dml),
+        )
+    })
 }
 
 /// Builds the physical plan of an INSERT: its source (Go's ON DUPLICATE
@@ -818,30 +827,6 @@ fn plan_insert(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_insert_with_physical(
-    insert: &tidb_ast::InsertStmt,
-    planned: Option<&PlannedInsert>,
-    catalog: &mut SessionExtendedInfoSchema,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-    physical_source: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
-    fk_triggers: &[FkTriggerNode],
-    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
-) -> Result<(u64, Option<u64>), DriverError> {
-    run_insert_rows(
-        insert,
-        planned,
-        catalog,
-        current_db,
-        ctx,
-        physical_source,
-        fk_triggers,
-        runtime,
-        None,
-    )
-}
-
 /// The rows a `LOAD DATA` statement hands Go's `InsertValues`: each already
 /// laid out in the statement's insert-column order, to be cast and filled by
 /// `getRow` as an `INSERT ... SELECT` row is.
@@ -896,6 +881,7 @@ pub fn check_and_insert_one_batch(
         &[],
         None,
         Some((rows, &mut counts)),
+        None,
     )?;
     Ok((counts, first_allocated))
 }
@@ -911,6 +897,7 @@ fn run_insert_rows(
     fk_triggers: &[FkTriggerNode],
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
     load: Option<(LoadDataRows<'_>, &mut LoadDataCounts)>,
+    dml: Option<&super::physical_builder::DmlExec>,
 ) -> Result<(u64, Option<u64>), DriverError> {
     let (mut load_rows, mut load_counts) = match load {
         Some((rows, counts)) => (Some(rows), Some(counts)),
@@ -974,15 +961,13 @@ fn run_insert_rows(
                 DriverError::unsupported("INSERT SELECT has no retained physical child")
             })?;
             let mut rows = Vec::new();
-            let accountant = ctx
-                .statement_memory()
-                .write_accountant(mem_quota::label::INSERT);
+            let accountant = insert_mem_tracker(dml, ctx);
             let collected = super::physical_builder::execute_dml_source_chunks(
                 physical,
                 catalog,
                 ctx,
                 runtime.is_some(),
-                None,
+                dml,
                 |row| {
                     accountant.account_row(&row).map_err(DriverError::from)?;
                     rows.push(row);
@@ -1470,10 +1455,8 @@ fn run_insert_rows(
     // `types.EstimatedMemUsage(rows[0], len(rows))` over the staged rows.
     // Accounting HERE, before a single row is written, is what makes a
     // cancelled INSERT leave the table exactly as it found it.
-    ctx.statement_memory()
-        .write_accountant(mem_quota::label::INSERT)
-        .account_rows(&new_rows)
-        .map_err(DriverError::from)?;
+    let mem_tracker = insert_mem_tracker(dml, ctx);
+    mem_tracker.account_rows(&new_rows).map_err(DriverError::from)?;
     {
         let kv = std::sync::Arc::make_mut(kv);
         if let Some(auto_offset) = auto_random_offset {
@@ -1753,10 +1736,25 @@ fn run_insert_rows(
             None => (candidate, None),
         }
     }
+    let insert_stats = dml.and_then(|dml| dml.insert_stats());
+    let _collect_snapshot_stats =
+        insert_stats.map(|stats| CollectInsertSnapshotStats::install(ctx, &stats.lock().unwrap()));
+    // Go `InsertExec.exec`'s `CheckInsertTime`: the time each batch took
+    // (REPLACE times only its prefetch).
+    let mut batch_started: Option<std::time::Instant> = None;
+    let finish_batch = |started: &mut Option<std::time::Instant>| {
+        if let (Some(stats), Some(start)) = (insert_stats, started.take()) {
+            if !insert.replace {
+                stats.lock().unwrap().check_insert_time += start.elapsed();
+            }
+        }
+    };
     for (position, candidate) in new_rows.iter().enumerate() {
         if load_restrictive.is_none() && position == batch_start {
             if let Some(end) = batches.next() {
                 drop(batch_check.take());
+                finish_batch(&mut batch_started);
+                batch_started = insert_stats.map(|_| std::time::Instant::now());
                 let rows = new_rows[batch_start..end]
                     .iter()
                     .map(|candidate| split_candidate(candidate, extra_handle_offset, ctx))
@@ -1774,6 +1772,7 @@ fn run_insert_rows(
                 }
                 if resolves_conflicts && !lazy_dup_check {
                     let table = target(catalog, &database, &table_name);
+                    let prefetch_start = std::time::Instant::now();
                     if has_on_duplicate || insert.replace {
                         // Go `prefetchDataCache` (none for a temporary table).
                         if !table.is_temporary() {
@@ -1784,6 +1783,14 @@ fn run_insert_rows(
                                     table.prefetch_conflicted_old_rows(store, &rows, &values, ctx)
                                 })
                                 .map_err(kv_write_error)?;
+                        }
+                        if let Some(stats) = insert_stats {
+                            let mut stats = stats.lock().unwrap();
+                            if insert.replace {
+                                stats.prefetch = prefetch_start.elapsed();
+                            } else {
+                                stats.prefetch += prefetch_start.elapsed();
+                            }
                         }
                     } else {
                         // Go `batchCheckAndInsert`, which IGNORE runs over
@@ -1796,6 +1803,11 @@ fn run_insert_rows(
                                     table.prefetch_unique_indices(store, &rows, ctx)
                                 })
                                 .map_err(kv_write_error)?;
+                        }
+                        if let (Some(stats), Some(start)) = (insert_stats, batch_started) {
+                            let mut stats = stats.lock().unwrap();
+                            stats.fk_check_time += prefetch_start.saturating_duration_since(start);
+                            stats.prefetch += prefetch_start.elapsed();
                         }
                     }
                 }
@@ -2032,6 +2044,7 @@ fn run_insert_rows(
             }
         }
     }
+    finish_batch(&mut batch_started);
     if !inserted_rows.is_empty() {
         let written: Vec<_> = inserted_rows
             .into_iter()
@@ -2080,6 +2093,99 @@ fn run_insert_rows(
         ));
     }
     Ok((inserted, first_allocated))
+}
+
+/// Go `InsertValues.memTracker`: the `InsertExec` / `ReplaceExec`'s own
+/// tracker, labelled by its plan ID. `LOAD DATA`'s rows have no plan.
+fn insert_mem_tracker(
+    dml: Option<&super::physical_builder::DmlExec>,
+    ctx: &crate::StmtContext,
+) -> tidb_variable::mem_quota::WriteMemory {
+    dml.map_or_else(
+        || ctx.statement_memory().write_accountant(mem_quota::label::INSERT),
+        |dml| dml.mem_tracker.clone(),
+    )
+}
+
+/// Go `InsertRuntimeStat` (`pkg/executor/insert_common.go`): the write
+/// phases an `InsertExec` / `ReplaceExec` times, and the RPCs its snapshot
+/// sent while it wrote. Go's `AllocatorRuntimeStats` part is not kept: this
+/// tier's auto-ID allocator records no runtime stats (the register's E03).
+#[derive(Default)]
+pub(crate) struct InsertRuntimeStat {
+    snapshot: Arc<tikv_client::SnapshotRuntimeStats>,
+    check_insert_time: std::time::Duration,
+    prefetch: std::time::Duration,
+    fk_check_time: std::time::Duration,
+}
+
+impl InsertRuntimeStat {
+    /// Go `InsertRuntimeStat.String`, whose `prepare` is the executor's
+    /// `BasicRuntimeStats.GetTime()` (`basic_time`) less the insert's own.
+    pub(crate) fn string(&self, basic_time: std::time::Duration) -> String {
+        let format = |elapsed: std::time::Duration| {
+            tidb_model::go_duration::format_explain_duration(
+                i64::try_from(elapsed.as_nanos()).unwrap_or(i64::MAX),
+            )
+        };
+        let rpc = self.snapshot.to_string();
+        if self.check_insert_time.is_zero() {
+            // For replace statement.
+            if self.prefetch.is_zero() {
+                return String::new();
+            }
+            return format!("prefetch: {}, rpc: {{{rpc}}}", format(self.prefetch));
+        }
+        let mut text = format!(
+            "prepare: {}, ",
+            format(basic_time.saturating_sub(self.check_insert_time))
+        );
+        if !self.prefetch.is_zero() {
+            text.push_str(&format!(
+                "check_insert: {{total_time: {}, mem_insert_time: {}, prefetch: {}",
+                format(self.check_insert_time),
+                format(self.check_insert_time.saturating_sub(self.prefetch)),
+                format(self.prefetch),
+            ));
+            if !self.fk_check_time.is_zero() {
+                text.push_str(&format!(", fk_check: {}", format(self.fk_check_time)));
+            }
+            if !rpc.is_empty() {
+                text.push_str(&format!(", rpc:{{{rpc}}}"));
+            }
+            text.push('}');
+        } else {
+            text.push_str(&format!("insert:{}", format(self.check_insert_time)));
+            if !rpc.is_empty() {
+                text.push_str(&format!(", rpc:{{{rpc}}}"));
+            }
+        }
+        text
+    }
+}
+
+/// Go `InsertExec.exec` / `ReplaceExec.exec`'s
+/// `snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)`
+/// and its deferred reset: while it lives, the statement's snapshot collects
+/// its RPCs into the insert's stats.
+struct CollectInsertSnapshotStats<'a> {
+    ctx: &'a crate::StmtContext,
+}
+
+impl<'a> CollectInsertSnapshotStats<'a> {
+    fn install(ctx: &'a crate::StmtContext, stats: &InsertRuntimeStat) -> Self {
+        crate::statement_store(ctx).set_snapshot_read_options(tidb_txnkv::SnapshotReadOptions {
+            runtime_stats: Some(tidb_txnkv::SnapshotRuntimeStatsHandle(Arc::clone(&stats.snapshot))),
+            ..ctx.snapshot_read_options(0.0)
+        });
+        Self { ctx }
+    }
+}
+
+impl Drop for CollectInsertSnapshotStats<'_> {
+    fn drop(&mut self) {
+        crate::statement_store(self.ctx).set_snapshot_read_options(self.ctx.snapshot_read_options(0.0));
+    }
 }
 
 /// Go `adjustImplicitRowID`'s reading of a written `_tidb_rowid`: the handle

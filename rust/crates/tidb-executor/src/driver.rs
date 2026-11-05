@@ -790,7 +790,8 @@ fn visit_executor_rows(
 /// its rows were visited: the batches Go's `insertRowsFromSelect` executes.
 ///
 /// With `dml`, the reading is that write executor's: its `Open` and `Close`
-/// open and close the source, and the read loop is (the start of) its `Next`.
+/// open and close the source, and the caller times the read as (part of)
+/// its `Next` ([`physical_builder::DmlExec::next`]).
 fn visit_executor_row_chunks(
     mut exec: Box<dyn Executor>,
     types: &[FieldType],
@@ -806,20 +807,18 @@ fn visit_executor_row_chunks(
     };
     let result = (|| {
         timed(|dml, run| dml.open(run), &mut || exec.open().map_err(DriverError::from))?;
-        timed(|dml, run| dml.next(run), &mut || {
-            let mut req = exec.new_chunk();
-            loop {
-                next_executor(exec.as_mut(), &mut req, memory)?;
-                if req.num_rows() == 0 {
-                    break;
-                }
-                for r in 0..req.num_rows() {
-                    visit(req.get_row(r).get_datum_row(types))?;
-                }
-                chunk_end(req.num_rows());
+        let mut req = exec.new_chunk();
+        loop {
+            next_executor(exec.as_mut(), &mut req, memory)?;
+            if req.num_rows() == 0 {
+                break;
             }
-            Ok(())
-        })
+            for r in 0..req.num_rows() {
+                visit(req.get_row(r).get_datum_row(types))?;
+            }
+            chunk_end(req.num_rows());
+        }
+        Ok(())
     })();
     // Close even after partial open, next, conversion or quota failure.
     // Preserve the primary read/write error if cleanup also fails.
@@ -838,7 +837,9 @@ fn visit_executor_row_chunks(
 ///
 /// `dml` is the write executor: its `Open` and `Close` open and close the
 /// source, and its one `Next` is this loop, which holds one source chunk at a
-/// time on the executor's `memTracker`.
+/// time on the executor's `memTracker`. Go renews that chunk after each one
+/// (`chunk.Renew`) because its datum rows alias the chunk; these rows own
+/// their values, so the chunk is reused.
 fn visit_executor_rows_writing<C: ?Sized>(
     mut exec: Box<dyn Executor>,
     types: &[FieldType],
@@ -864,7 +865,6 @@ fn visit_executor_rows_writing<C: ?Sized>(
                 for r in 0..req.num_rows() {
                     visit(state, req.get_row(r).get_datum_row(types))?;
                 }
-                req = req.renew(max_chunk_size);
             }
             Ok(())
         })

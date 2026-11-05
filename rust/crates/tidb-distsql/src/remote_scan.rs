@@ -654,6 +654,21 @@ pub trait PushdownRowStream: Send {
         Ok(None)
     }
 
+    /// Go `selectResult.Next(ctx, chk)`: [`Self::next_chunk`] decoded into
+    /// the caller's `chk` (reset first), which keeps its columns unless the
+    /// backend hands over a whole decoded batch. Answers whether the stream
+    /// had rows left.
+    fn next_chunk_into(&mut self, required_rows: usize, chk: &mut Chunk) -> Result<bool, StorageError> {
+        chk.reset();
+        match self.next_chunk(required_rows)? {
+            Some(batch) => {
+                *chk = batch;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
     /// How many rows have crossed the network so far. This is the wire
     /// receipt: with a lowered predicate it is smaller than the table holds.
     fn rows_returned(&self) -> u64;

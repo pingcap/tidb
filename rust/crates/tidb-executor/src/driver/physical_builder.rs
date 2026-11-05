@@ -212,6 +212,11 @@ pub(crate) struct PhysicalRuntimeCounter {
     /// Go `runtimeStatsWithSnapshot`, which a PointGet/BatchPointGet
     /// registers from its `Close`: its snapshot's RPC, time and scan details.
     snapshot: Option<Arc<tikv_client::SnapshotRuntimeStats>>,
+    /// Go `InsertRuntimeStat`, which `InsertExec` / `ReplaceExec` register
+    /// from their `Close`. An EXPLAIN ANALYZE'd write runs through
+    /// `handleNoDelayExecutor`, which closes it before `executeAnalyzeExec`
+    /// registers the RU stats, so this group prints before them.
+    insert: Option<Arc<Mutex<super::dml::InsertRuntimeStat>>>,
 }
 
 impl From<tidb_executor_internal_exec::RowCount> for PhysicalRuntimeCounter {
@@ -222,6 +227,7 @@ impl From<tidb_executor_internal_exec::RowCount> for PhysicalRuntimeCounter {
             apply: None,
             ru: None,
             snapshot: None,
+            insert: None,
         }
     }
 }
@@ -246,8 +252,8 @@ impl PhysicalRuntimeCounter {
             )
         };
         let mut details = Vec::new();
-        if let Some(calls) = &self.calls {
-            let calls = *calls.lock().unwrap();
+        let calls = self.calls.as_ref().map(|calls| *calls.lock().unwrap());
+        if let Some(calls) = calls {
             details.push(format!(
                 "time:{}, open:{}, close:{}, loops:{}",
                 format(calls.open + calls.next + calls.close),
@@ -255,6 +261,13 @@ impl PhysicalRuntimeCounter {
                 format(calls.close),
                 calls.loops,
             ));
+        }
+        if let Some(insert) = &self.insert {
+            let basic_time = calls.map_or(Duration::ZERO, |calls| calls.open + calls.next + calls.close);
+            let insert = insert.lock().unwrap().string(basic_time);
+            if !insert.is_empty() {
+                details.push(insert);
+            }
         }
         if let Some(ru) = self.ru.as_ref().map(|ru| ru.string()) {
             if !ru.is_empty() {
@@ -305,12 +318,16 @@ struct PhysicalCallStats {
 /// tracker) and, when runtime stats are collected, the `BasicRuntimeStats`
 /// `exec.Open` / `exec.Next` / `exec.Close` record for the plan.
 ///
-/// Dropping it is Go `Close`'s deferred `memTracker.ReplaceBytesUsed(0)`.
+/// Building it is Go `Open`'s tracker creation and dropping it `Close`'s
+/// deferred `memTracker.ReplaceBytesUsed(0)`; each is timed as that phase.
 pub(crate) struct DmlExec {
     pub(crate) mem_tracker: tidb_variable::mem_quota::WriteMemory,
     /// Go `e.MaxChunkSize()`.
     pub(crate) max_chunk_size: usize,
     calls: Option<Arc<Mutex<PhysicalCallStats>>>,
+    /// Go `InsertValues.stats` of an `InsertExec` / `ReplaceExec` whose
+    /// runtime stats are collected (`collectRuntimeStatsEnabled`).
+    insert: Option<Arc<Mutex<super::dml::InsertRuntimeStat>>>,
 }
 
 impl DmlExec {
@@ -332,11 +349,42 @@ impl DmlExec {
                     .get_or_insert_with(|| Arc::new(Mutex::new(PhysicalCallStats::default()))),
             )
         });
+        // Go `Open`'s `memory.NewTracker(e.ID(), -1)` + `AttachTo`.
+        let start = Instant::now();
+        let mem_tracker = ctx.statement_memory().write_accountant(i64::from(plan.id()));
+        if let Some(calls) = &calls {
+            calls.lock().unwrap().open += start.elapsed();
+        }
         Self {
-            mem_tracker: ctx.statement_memory().write_accountant(i64::from(plan.id())),
+            mem_tracker,
             max_chunk_size: ctx.executor_chunk_sizes().1,
             calls,
+            insert: None,
         }
+    }
+
+    /// [`Self::new`] for an `InsertExec` / `ReplaceExec`, whose collected
+    /// stats also carry Go's `InsertRuntimeStat`.
+    pub(crate) fn new_insert(
+        plan: &PhysicalPlan,
+        ctx: &crate::StmtContext,
+        mut runtime: Option<&mut PhysicalRuntimeStats>,
+    ) -> Self {
+        let mut dml = Self::new(plan, ctx, runtime.as_deref_mut());
+        if let Some(runtime) = runtime {
+            let stats = Arc::new(Mutex::new(super::dml::InsertRuntimeStat::default()));
+            runtime
+                .get_mut(&runtime_plan_key(plan))
+                .expect("Self::new registered the plan")
+                .insert = Some(Arc::clone(&stats));
+            dml.insert = Some(stats);
+        }
+        dml
+    }
+
+    /// The `InsertRuntimeStat` this executor's runtime stats carry.
+    pub(crate) fn insert_stats(&self) -> Option<&Arc<Mutex<super::dml::InsertRuntimeStat>>> {
+        self.insert.as_ref()
     }
 
     /// Go `exec.Open(ctx, e)`: the executor's `Open`, which opens its child.
@@ -344,19 +392,24 @@ impl DmlExec {
         self.record(open, |calls, elapsed| calls.open += elapsed)
     }
 
-    /// Go `exec.Next(ctx, e, req)`: the one `Next` that drains the child and
-    /// writes every row.
+    /// Go `exec.Next(ctx, e, req)`: (part of) the one `Next` that reads the
+    /// child and writes every row. A driver that opens or closes the child
+    /// inside the region -- one that reads its whole source before writing --
+    /// has that time recorded by [`Self::open`] / [`Self::close`], not here.
     pub(crate) fn next<T>(&self, next: impl FnOnce() -> T) -> T {
-        self.record(next, |calls, elapsed| {
-            calls.next += elapsed;
-            calls.loops += 1;
-        })
-    }
-
-    /// More of the same `Next`, after the part [`Self::next`] timed: a
-    /// multi-table write's writes, which follow its whole read.
-    pub(crate) fn next_continued<T>(&self, next: impl FnOnce() -> T) -> T {
-        self.record(next, |calls, elapsed| calls.next += elapsed)
+        let Some(calls) = &self.calls else {
+            return next();
+        };
+        let lifecycle = |calls: &PhysicalCallStats| calls.open + calls.close;
+        let before = lifecycle(&calls.lock().unwrap());
+        let start = Instant::now();
+        let result = next();
+        let elapsed = start.elapsed();
+        let mut calls = calls.lock().unwrap();
+        let nested = lifecycle(&calls).saturating_sub(before);
+        calls.next += elapsed.saturating_sub(nested);
+        calls.loops = 1;
+        result
     }
 
     /// Go `exec.Close(e)`: the executor's `Close`, which closes its child.
@@ -377,7 +430,11 @@ impl DmlExec {
 
 impl Drop for DmlExec {
     fn drop(&mut self) {
+        let start = Instant::now();
         self.mem_tracker.replace_bytes_used(0);
+        if let Some(calls) = &self.calls {
+            calls.lock().unwrap().close += start.elapsed();
+        }
     }
 }
 
@@ -553,6 +610,7 @@ impl BuildState {
                     apply: None,
                     ru: None,
                     snapshot: None,
+                    insert: None,
                 });
         let counter = stats.rows.clone();
         let calls = Arc::clone(
@@ -8487,6 +8545,41 @@ use super::*;
         assert_eq!(names, ["limitExec.Close", "trace"]);
         assert_eq!(spans[0].parent_span_id, root.context().span_id);
         assert!(spans[0].start >= spans[1].start);
+    }
+
+    /// Go's write executor (`UpdateExec` / `DeleteExec` / `InsertExec`):
+    /// `Open`, its one `Next` and `Close` are timed apart, so a driver that
+    /// opens and closes the child inside its `Next` region still counts that
+    /// time once, as open and close; `loops` is the one `Next` however many
+    /// regions it was timed in; and the `memTracker` is labelled by the plan
+    /// and released by `Close`, keeping its peak.
+    #[test]
+    fn a_write_executor_times_open_next_and_close_apart() {
+        let plan = dual(7, 0);
+        let ctx = crate::StmtContext::default();
+        let mut runtime = PhysicalRuntimeStats::new();
+        let pause = Duration::from_millis(30);
+        let tracker = {
+            let dml = DmlExec::new(&plan, &ctx, Some(&mut runtime));
+            dml.next(|| {
+                dml.open(|| std::thread::sleep(pause));
+                dml.close(|| std::thread::sleep(pause));
+            });
+            dml.next(|| ());
+            dml.mem_tracker.consume_checked(100).unwrap();
+            let tracker = ctx
+                .statement_memory()
+                .stmt_tracker()
+                .search_tracker_without_lock(7)
+                .expect("labelled by the plan ID");
+            assert_eq!(tracker.bytes_consumed(), 100);
+            tracker
+        };
+        assert_eq!((tracker.bytes_consumed(), tracker.max_consumed()), (0, 100));
+        let calls = *runtime[&runtime_plan_key(&plan)].calls.as_ref().unwrap().lock().unwrap();
+        assert!(calls.open >= pause && calls.close >= pause, "{:?} {:?}", calls.open, calls.close);
+        assert!(calls.next < pause, "{:?}", calls.next);
+        assert_eq!(calls.loops, 1);
     }
 
     /// Go `ExplainExec.executeAnalyzeExec` registers `RURuntimeStats` on the

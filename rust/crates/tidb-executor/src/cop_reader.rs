@@ -1008,6 +1008,15 @@ struct CopRowStream {
     exhausted: bool,
 }
 
+fn select_response_error(error: tidb_copr::response_channel::ResponseChannelError) -> StorageError {
+    match error {
+        tidb_copr::response_channel::ResponseChannelError::SelectResponse { code, message } => {
+            StorageError::Sql(tidb_dbterror::ErrClass::tikv_select_response_error(code as u16, message))
+        }
+        other => StorageError::Backend(other.to_string()),
+    }
+}
+
 impl CopRowStream {
     fn pull_chunk(&mut self, required_rows: usize) -> Result<Option<Chunk>, StorageError> {
         if self.exhausted {
@@ -1019,15 +1028,7 @@ impl CopRowStream {
             };
             let batch = iter
                 .next_chunk_with_required_rows(required_rows.max(1))
-                .map_err(|error| match error {
-                    tidb_copr::response_channel::ResponseChannelError::SelectResponse { code, message } => {
-                        StorageError::Sql(tidb_dbterror::ErrClass::tikv_select_response_error(
-                            code as u16,
-                            message,
-                        ))
-                    }
-                    other => StorageError::Backend(other.to_string()),
-                })?;
+                .map_err(select_response_error)?;
             let Some(batch) = batch else {
                 self.exhausted = true;
                 return Ok(None);
@@ -1037,6 +1038,32 @@ impl CopRowStream {
             }
             scan_receipt::add_wire_rows(batch.row.num_rows() as u64);
             return Ok(Some(batch.row));
+        }
+    }
+
+    /// [`Self::pull_chunk`] into the caller's `chk` (Go `readFromChunk`).
+    fn pull_chunk_into(&mut self, required_rows: usize, chk: &mut Chunk) -> Result<bool, StorageError> {
+        loop {
+            if self.exhausted {
+                chk.reset();
+                return Ok(false);
+            }
+            let Some(iter) = self.iter.as_mut() else {
+                chk.reset();
+                return Ok(false);
+            };
+            if !iter
+                .fill_chunk_with_required_rows(required_rows.max(1), chk)
+                .map_err(select_response_error)?
+            {
+                self.exhausted = true;
+                return Ok(false);
+            }
+            if chk.num_rows() == 0 {
+                continue;
+            }
+            scan_receipt::add_wire_rows(chk.num_rows() as u64);
+            return Ok(true);
         }
     }
 }
@@ -1075,6 +1102,24 @@ impl PushdownRowStream for CopRowStream {
 
     fn supports_chunks(&self) -> bool {
         true
+    }
+
+    fn next_chunk_into(&mut self, required_rows: usize, chk: &mut Chunk) -> Result<bool, StorageError> {
+        if self.pending.is_some() {
+            chk.reset();
+            return match self.next_chunk(required_rows)? {
+                Some(batch) => {
+                    *chk = batch;
+                    Ok(true)
+                }
+                None => Ok(false),
+            };
+        }
+        let produced = self.pull_chunk_into(required_rows, chk)?;
+        if produced {
+            self.returned += chk.num_rows() as u64;
+        }
+        Ok(produced)
     }
 
     fn next_chunk(&mut self, required_rows: usize) -> Result<Option<Chunk>, StorageError> {
