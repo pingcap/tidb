@@ -76,9 +76,11 @@ type txnBackfillExecutor struct {
 	workers []*backfillWorker
 	wg      sync.WaitGroup
 
-	taskCh   chan *reorgBackfillTask
-	resultCh chan *backfillResult
-	closed   bool
+	taskCh       chan *reorgBackfillTask
+	resultCh     chan *backfillResult
+	resultCtx    context.Context
+	cancelResult context.CancelFunc
+	closed       bool
 }
 
 func newTxnBackfillExecutor(ctx context.Context, info *reorgInfo, sessPool *sess.Pool,
@@ -88,7 +90,12 @@ func newTxnBackfillExecutor(ctx context.Context, info *reorgInfo, sessPool *sess
 	if err != nil {
 		return nil, err
 	}
+<<<<<<< HEAD
 	workerCnt := info.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+=======
+	workerCnt := info.ReorgMeta.GetConcurrency()
+	resultCtx, cancelResult := context.WithCancel(ctx)
+>>>>>>> 4fb7a0cda19 (ddl: preserve in-flight backfill errors on worker downscale (#71073))
 	return &txnBackfillExecutor{
 		ctx:          ctx,
 		reorgInfo:    info,
@@ -100,6 +107,8 @@ func newTxnBackfillExecutor(ctx context.Context, info *reorgInfo, sessPool *sess
 		workers:      make([]*backfillWorker, 0, workerCnt),
 		taskCh:       make(chan *reorgBackfillTask, backfillTaskChanSize),
 		resultCh:     make(chan *backfillResult, backfillTaskChanSize),
+		resultCtx:    resultCtx,
+		cancelResult: cancelResult,
 	}, nil
 }
 
@@ -277,7 +286,7 @@ func (b *txnBackfillExecutor) adjustWorkerSize() error {
 			if err != nil {
 				return err
 			}
-			runner = newBackfillWorker(b.ctx, idxWorker)
+			runner = newBackfillWorker(b.ctx, b.resultCtx, idxWorker)
 			worker = idxWorker
 		case typeAddIndexMergeTmpWorker:
 			backfillCtx, err := newBackfillCtx(i, reorgInfo, job.SchemaName, b.tbl, jc, metrics.LblMergeTmpIdxRate, false, false)
@@ -288,28 +297,28 @@ func (b *txnBackfillExecutor) adjustWorkerSize() error {
 			if err != nil {
 				return err
 			}
-			runner = newBackfillWorker(b.ctx, tmpIdxWorker)
+			runner = newBackfillWorker(b.ctx, b.resultCtx, tmpIdxWorker)
 			worker = tmpIdxWorker
 		case typeUpdateColumnWorker:
 			updateWorker, err := newUpdateColumnWorker(i, b.tbl, b.decodeColMap, reorgInfo, jc)
 			if err != nil {
 				return err
 			}
-			runner = newBackfillWorker(b.ctx, updateWorker)
+			runner = newBackfillWorker(b.ctx, b.resultCtx, updateWorker)
 			worker = updateWorker
 		case typeCleanUpIndexWorker:
 			idxWorker, err := newCleanUpIndexWorker(i, b.tbl, b.decodeColMap, reorgInfo, jc)
 			if err != nil {
 				return err
 			}
-			runner = newBackfillWorker(b.ctx, idxWorker)
+			runner = newBackfillWorker(b.ctx, b.resultCtx, idxWorker)
 			worker = idxWorker
 		case typeReorgPartitionWorker:
 			partWorker, err := newReorgPartitionWorker(i, b.tbl, b.decodeColMap, reorgInfo, jc)
 			if err != nil {
 				return err
 			}
-			runner = newBackfillWorker(b.ctx, partWorker)
+			runner = newBackfillWorker(b.ctx, b.resultCtx, partWorker)
 			worker = partWorker
 		default:
 			return errors.New("unknown backfill type")
@@ -337,9 +346,11 @@ func (b *txnBackfillExecutor) close(force bool) {
 	b.closed = true
 	close(b.taskCh)
 	if force {
+		b.cancelResult()
 		closeBackfillWorkers(b.workers)
 	}
 	b.wg.Wait()
+	b.cancelResult()
 	close(b.resultCh)
 }
 

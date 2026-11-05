@@ -323,6 +323,10 @@ go_test(
         "//pkg/meta/autoid",
         "//pkg/meta/metabuild",
         "//pkg/meta/model",
+<<<<<<< HEAD
+=======
+        "//pkg/metrics",
+>>>>>>> 4fb7a0cda19 (ddl: preserve in-flight backfill errors on worker downscale (#71073))
         "//pkg/owner",
         "//pkg/parser",
         "//pkg/parser/ast",
