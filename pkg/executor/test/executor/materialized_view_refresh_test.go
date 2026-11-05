@@ -4391,21 +4391,32 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceBuildFailureCleansShadow(t *te
 }
 
 func TestMaterializedViewRefreshCompleteOutOfPlacePanicCleansShadow(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int not null)")
-	tk.MustExec("insert into t values (1)")
-	tk.MustExec("create materialized view log on t (a)")
-	tk.MustExec("create materialized view mv (a, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, count(*) from t group by a")
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewOutOfPlaceAfterCreateShadow", func() {
-		panic("mock panic after shadow creation")
-	})
+	for _, stage := range []string{"create", "load"} {
+		t.Run(stage, func(t *testing.T) {
+			store, _ := testkit.CreateMockStoreAndDomain(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table t (a int not null)")
+			tk.MustExec("insert into t values (1)")
+			tk.MustExec("create materialized view log on t (a)")
+			tk.MustExec("create materialized view mv (a, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, count(*) from t group by a")
+			tk.MustExec("insert into t values (2)")
+			if stage == "create" {
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewOutOfPlaceAfterCreateShadow", func() {
+					panic("mock shadow build panic")
+				})
+			} else {
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewOutOfPlaceAfterBuildDataLoad", func(uint64) {
+					panic("mock shadow build panic")
+				})
+			}
 
-	err := tk.ExecToErr("refresh materialized view mv complete out of place")
-	require.ErrorContains(t, err, "mock panic after shadow creation")
-	tk.MustQuery("show tables like '\\_\\_mv\\_shadow\\_%'").Check(testkit.Rows())
-	tk.MustQuery("select * from mv").Check(testkit.Rows("1 1"))
+			err := tk.ExecToErr("refresh materialized view mv complete out of place")
+			require.ErrorContains(t, err, "mock shadow build panic")
+			tk.MustQuery("show tables like '\\_\\_mv\\_shadow\\_%'").Check(testkit.Rows())
+			tk.MustQuery("select * from mv").Check(testkit.Rows("1 1"))
+		})
+	}
 }
 
 func TestMaterializedViewShadowManualDrop(t *testing.T) {

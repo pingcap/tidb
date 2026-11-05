@@ -4863,6 +4863,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 	shadowLoadStmtResult := mvRefreshStmtResult{}
 	buildSQLExec := buildSctx.GetSQLExecutor()
 	defer func() {
+		// err can still be nil while a panic unwinds this function.
 		if !shadowNeedsCleanup {
 			return
 		}
@@ -4876,7 +4877,9 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 				zap.String("shadowTable", shadowTableName),
 				zap.Error(dropErr),
 			)
-			err = errors.Annotatef(err, "cleanup shadow table %s.%s failed: %v", schemaName.O, shadowTableName, dropErr)
+			if err != nil {
+				err = errors.Annotatef(err, "cleanup shadow table %s.%s failed: %v", schemaName.O, shadowTableName, dropErr)
+			}
 		}
 	}()
 
@@ -4888,9 +4891,6 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		if err := kctx.Err(); err != nil {
 			return err
 		}
-		// Creation can commit before the caller observes an error or panic.
-		// Keep cleanup armed until cutover succeeds, including while unwinding a panic.
-		shadowNeedsCleanup = true
 		if execErr := domain.GetDomain(e.Ctx()).DDLExecutor().CreateMaterializedViewShadowTable(
 			refreshSctx,
 			tblInfo.DBID,
@@ -4899,6 +4899,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		); execErr != nil {
 			return execErr
 		}
+		shadowNeedsCleanup = true
 		return nil
 	}); err != nil {
 		return 0, err
@@ -4994,7 +4995,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		if err := kctx.Err(); err != nil {
 			return err
 		}
-		return domain.GetDomain(e.Ctx()).DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
+		if err := domain.GetDomain(e.Ctx()).DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
 			e.Ctx(),
 			tblInfo.DBID,
 			schemaName,
@@ -5008,11 +5009,15 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 			expectedLastSuccessReadTSONull,
 			nextRefreshUnixSeconds,
 			shouldUpdateNextRefreshUnixSeconds,
-		)
+		); err != nil {
+			return err
+		}
+		// Disarm cleanup before observeMVRefreshStep invokes OnStepEnd.
+		shadowNeedsCleanup = false
+		return nil
 	}); err != nil {
 		return 0, err
 	}
-	shadowNeedsCleanup = false
 	applyMVRefreshStmtResult(refreshSctx.GetSessionVars().StmtCtx, shadowLoadStmtResult)
 	return buildReadTSO, nil
 }
