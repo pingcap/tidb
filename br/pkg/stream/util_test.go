@@ -3,9 +3,12 @@
 package stream
 
 import (
+	"context"
+	"math"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -45,4 +48,10 @@ func TestPrefix(t *testing.T) {
 	require.True(t, MaybeDBOrDDLJobHistoryKey([]byte("mDB:")))
 	require.True(t, MaybeDBOrDDLJobHistoryKey([]byte("mDDLHistory")))
 	require.False(t, MaybeDBOrDDLJobHistoryKey([]byte("DDL")))
+}
+
+// LoadFrom loads data from an external storage into the stream metadata set. (Now only for test)
+func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storage.ExternalStorage) error {
+	_, err := ms.LoadUntilAndCalculateShiftTS(ctx, s, math.MaxUint64)
+	return err
 }

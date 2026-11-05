@@ -22,6 +22,7 @@ import (
 // see the `Help` field for details.
 var (
 	LastCheckpoint                    *prometheus.GaugeVec
+	ExternalStorageCheckpoint         *prometheus.GaugeVec
 	AdvancerOwner                     prometheus.Gauge
 	AdvancerTickDuration              *prometheus.HistogramVec
 	GetCheckpointBatchSize            *prometheus.HistogramVec
@@ -40,6 +41,13 @@ func InitLogBackupMetrics() {
 		Subsystem: "log_backup",
 		Name:      "last_checkpoint",
 		Help:      "The last global checkpoint of log backup.",
+	}, []string{"task"})
+
+	ExternalStorageCheckpoint = NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "tidb",
+		Subsystem: "log_backup",
+		Name:      "external_storage_checkpoint",
+		Help:      "The global checkpoint that has been successfully persisted to external storage.",
 	}, []string{"task"})
 
 	AdvancerOwner = NewGauge(prometheus.GaugeOpts{

@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -36,6 +37,7 @@ var (
 	hasLogFile      uint64
 	tidbGlue        = gluetidb.New()
 	envLogToTermKey = "BR_LOG_TO_TERM"
+	statusPreparers sync.Map
 
 	filterOutSysAndMemTables = []string{
 		"*.*",
@@ -81,8 +83,23 @@ const (
 	flagVersionShort = "V"
 )
 
+type statusServerRegistrar func(*http.ServeMux)
+type statusServerPreparer func(*cobra.Command) (statusServerRegistrar, error)
+
 func timestampLogFileName() string {
 	return filepath.Join(os.TempDir(), time.Now().Format("br.log.2006-01-02T15.04.05Z0700"))
+}
+
+func registerStatusServerPreparer(cmd *cobra.Command, preparer statusServerPreparer) {
+	statusPreparers.Store(cmd, preparer)
+}
+
+func prepareStatusServer(cmd *cobra.Command) (statusServerRegistrar, error) {
+	preparer, ok := statusPreparers.Load(cmd)
+	if !ok {
+		return nil, nil
+	}
+	return preparer.(statusServerPreparer)(cmd)
 }
 
 // DefineCommonFlags defines the common flags for all BR cmd operation.
@@ -227,13 +244,17 @@ func Init(cmd *cobra.Command) (err error) {
 			return
 		}
 		redact.InitRedact(redactLog || redactInfoLog)
-		err = startPProf(cmd)
+		err = startStatusServer(cmd)
 	})
 	return errors.Trace(err)
 }
 
-func startPProf(cmd *cobra.Command) error {
-	// Initialize the pprof server.
+// Initialize the metrics/pprof server.
+func startStatusServer(cmd *cobra.Command) error {
+	registrar, err := prepareStatusServer(cmd)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	statusAddr, err := cmd.Flags().GetString(FlagStatusAddr)
 	if err != nil {
 		return errors.Trace(err)
@@ -248,8 +269,14 @@ func startPProf(cmd *cobra.Command) error {
 		return errors.Trace(err)
 	}
 
+	mux := http.NewServeMux()
+	utils.RegisterDefaultStatusHandlers(mux)
+	if registrar != nil {
+		registrar(mux)
+	}
+
 	if statusAddr != "" {
-		return utils.StartPProfListener(statusAddr, tls)
+		return utils.StartStatusListenerWithHandler(statusAddr, tls, mux)
 	}
 	utils.StartDynamicPProfListener(tls)
 	return nil

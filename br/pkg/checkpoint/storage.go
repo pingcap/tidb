@@ -38,7 +38,6 @@ type checkpointStorage interface {
 
 	initialLock(ctx context.Context) error
 	updateLock(ctx context.Context) error
-	deleteLock(ctx context.Context)
 
 	close()
 }
@@ -48,8 +47,9 @@ type checkpointStorage interface {
 // 2. BR regards the metadata table as a file so that it is not empty if the table exists.
 // 3. BR regards the checkpoint table as a directory which is managed by metadata table.
 const (
-	LogRestoreCheckpointDatabaseName      string = "__TiDB_BR_Temporary_Log_Restore_Checkpoint"
-	SnapshotRestoreCheckpointDatabaseName string = "__TiDB_BR_Temporary_Snapshot_Restore_Checkpoint"
+	LogRestoreCheckpointDatabaseName       string = "__TiDB_BR_Temporary_Log_Restore_Checkpoint"
+	SnapshotRestoreCheckpointDatabaseName  string = "__TiDB_BR_Temporary_Snapshot_Restore_Checkpoint"
+	CustomSSTRestoreCheckpointDatabaseName string = "__TiDB_BR_Temporary_Custom_SST_Restore_Checkpoint"
 
 	// directory level table
 	checkpointDataTableName     string = "cpt_data"
@@ -90,7 +90,9 @@ const (
 
 // IsCheckpointDB checks whether the dbname is checkpoint database.
 func IsCheckpointDB(dbname pmodel.CIStr) bool {
-	return dbname.O == LogRestoreCheckpointDatabaseName || dbname.O == SnapshotRestoreCheckpointDatabaseName
+	return dbname.O == LogRestoreCheckpointDatabaseName ||
+		dbname.O == SnapshotRestoreCheckpointDatabaseName ||
+		dbname.O == CustomSSTRestoreCheckpointDatabaseName
 }
 
 const CheckpointIdMapBlockSize int = 524288
@@ -141,8 +143,6 @@ func (s *tableCheckpointStorage) updateLock(ctx context.Context) error {
 	log.Fatal("unimplement!")
 	return nil
 }
-
-func (s *tableCheckpointStorage) deleteLock(ctx context.Context) {}
 
 func (s *tableCheckpointStorage) flushCheckpointData(ctx context.Context, data []byte) error {
 	sqls, argss := chunkInsertCheckpointSQLs(s.checkpointDBName, checkpointDataTableName, data)

@@ -17,16 +17,19 @@ package ingestrec_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
+	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -111,6 +114,7 @@ func createMeta(t *testing.T, store kv.Storage, fn func(m *meta.Mutator)) {
 }
 
 func TestAddIngestRecorder(t *testing.T) {
+	ctx := context.Background()
 	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	defer func() {
@@ -184,7 +188,7 @@ func TestAddIngestRecorder(t *testing.T) {
 		nil,
 	), false)
 	require.NoError(t, err)
-	err = recorder.UpdateIndexInfo(infoSchema)
+	err = recorder.UpdateIndexInfo(ctx, infoSchema)
 	require.NoError(t, err)
 	err = recorder.Iterate(noItem)
 	require.NoError(t, err)
@@ -201,7 +205,7 @@ func TestAddIngestRecorder(t *testing.T) {
 		nil,
 	), false)
 	require.NoError(t, err)
-	err = recorder.UpdateIndexInfo(infoSchema)
+	err = recorder.UpdateIndexInfo(ctx, infoSchema)
 	require.NoError(t, err)
 	err = recorder.Iterate(noItem)
 	require.NoError(t, err)
@@ -218,7 +222,7 @@ func TestAddIngestRecorder(t *testing.T) {
 		nil,
 	), false)
 	require.NoError(t, err)
-	err = recorder.UpdateIndexInfo(infoSchema)
+	err = recorder.UpdateIndexInfo(ctx, infoSchema)
 	require.NoError(t, err)
 	err = recorder.Iterate(noItem)
 	require.NoError(t, err)
@@ -238,7 +242,7 @@ func TestAddIngestRecorder(t *testing.T) {
 		), false)
 		require.NoError(t, err)
 		f, cnt := hasOneItem(1, "%n,%n", []any{"x", "y"})
-		err = recorder.UpdateIndexInfo(infoSchema)
+		err = recorder.UpdateIndexInfo(ctx, infoSchema)
 		require.NoError(t, err)
 		err = recorder.Iterate(f)
 		require.NoError(t, err)
@@ -260,7 +264,7 @@ func TestAddIngestRecorder(t *testing.T) {
 		), false)
 		require.NoError(t, err)
 		f, cnt := hasOneItem(1, "%n,%n", []any{"x", "y"})
-		err = recorder.UpdateIndexInfo(infoSchema)
+		err = recorder.UpdateIndexInfo(ctx, infoSchema)
 		require.NoError(t, err)
 		err = recorder.Iterate(f)
 		require.NoError(t, err)
@@ -281,7 +285,7 @@ func TestAddIngestRecorder(t *testing.T) {
 		), true)
 		require.NoError(t, err)
 		f, cnt := hasOneItem(1, "%n,%n", []any{"x", "y"})
-		err = recorder.UpdateIndexInfo(infoSchema)
+		err = recorder.UpdateIndexInfo(ctx, infoSchema)
 		require.NoError(t, err)
 		err = recorder.Iterate(f)
 		require.NoError(t, err)
@@ -290,7 +294,7 @@ func TestAddIngestRecorder(t *testing.T) {
 }
 
 func TestIndexesKind(t *testing.T) {
-	//ctx := context.Background()
+	ctx := context.Background()
 	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	defer func() {
@@ -378,7 +382,7 @@ func TestIndexesKind(t *testing.T) {
 		json.RawMessage(`[1, false, [], false]`),
 	), false)
 	require.NoError(t, err)
-	err = recorder.UpdateIndexInfo(infoSchema)
+	err = recorder.UpdateIndexInfo(ctx, infoSchema)
 	require.NoError(t, err)
 	var (
 		tableID int64
@@ -403,6 +407,7 @@ func TestIndexesKind(t *testing.T) {
 }
 
 func TestRewriteTableID(t *testing.T) {
+	ctx := context.Background()
 	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	defer func() {
@@ -475,7 +480,7 @@ func TestRewriteTableID(t *testing.T) {
 		json.RawMessage(`[1, false, [], false]`),
 	), false)
 	require.NoError(t, err)
-	err = recorder.UpdateIndexInfo(infoSchema)
+	err = recorder.UpdateIndexInfo(ctx, infoSchema)
 	require.NoError(t, err)
 	recorder.RewriteTableID(func(tableID int64) (int64, bool, error) {
 		return tableID + 1, false, nil
@@ -494,4 +499,99 @@ func TestRewriteTableID(t *testing.T) {
 	err = recorder.Iterate(noItem)
 	require.NoError(t, err)
 	require.Equal(t, 2, count)
+}
+
+func fakeJobWithName(
+	schemaName string,
+	tableName string,
+	tableID int64,
+	indexID int64,
+	indexName string,
+	columnName string,
+	args json.RawMessage,
+) *model.Job {
+	return &model.Job{
+		Version:    model.JobVersion1,
+		SchemaName: schemaName,
+		TableName:  tableName,
+		TableID:    tableID,
+		Type:       model.ActionAddIndex,
+		State:      model.JobStateSynced,
+		RowCount:   100,
+		RawArgs:    args,
+		ReorgMeta: &model.DDLReorgMeta{
+			ReorgTp: model.ReorgTypeIngest,
+		},
+		BinlogInfo: &model.HistoryInfo{
+			TableInfo: &model.TableInfo{
+				Indices: []*model.IndexInfo{
+					{
+						ID:   indexID,
+						Name: pmodel.NewCIStr(indexName),
+						Columns: []*model.IndexColumn{{
+							Name: pmodel.NewCIStr(columnName),
+						}},
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestRepairIndexNeededInForeignKey(t *testing.T) {
+	ctx := context.Background()
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+
+	tk.MustExec("create table test.parent (id int, index i1(id))")
+	tk.MustExec("create table test.child (id int, pid int, index i1(pid), foreign key (pid) references test.parent (id) on delete cascade)")
+
+	infoSchema := s.Mock.InfoSchema()
+	childTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("child"))
+	require.NoError(t, err)
+	parentTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("parent"))
+	require.NoError(t, err)
+	childTableIndexI1 := childTableInfo.Indices[0]
+	parentTableIndexI1 := parentTableInfo.Indices[0]
+	{
+		recorder := ingestrec.New()
+		err = recorder.TryAddJob(
+			fakeJobWithName("test", "parent", parentTableInfo.ID, parentTableIndexI1.ID, "i1", "id", json.RawMessage(fmt.Sprintf("[%d, false, [], false]", parentTableIndexI1.ID))),
+			false,
+		)
+		require.NoError(t, err)
+		err = recorder.TryAddJob(
+			fakeJobWithName("test", "child", childTableInfo.ID, childTableIndexI1.ID, "i1", "pid", json.RawMessage(fmt.Sprintf("[%d, false, [], false]", childTableIndexI1.ID))),
+			false,
+		)
+		require.NoError(t, err)
+		recorder.UpdateIndexInfo(ctx, infoSchema)
+		require.Len(t, recorder.GetFKRecordMap(), 1)
+	}
+	{
+		recorder := ingestrec.New()
+		err = recorder.TryAddJob(
+			fakeJobWithName("test", "child", childTableInfo.ID, childTableIndexI1.ID, "i1", "pid", json.RawMessage(fmt.Sprintf("[%d, false, [], false]", childTableIndexI1.ID))),
+			false,
+		)
+		require.NoError(t, err)
+		recorder.UpdateIndexInfo(ctx, infoSchema)
+		require.Len(t, recorder.GetFKRecordMap(), 1)
+	}
+	{
+		recorder := ingestrec.New()
+		err = recorder.TryAddJob(
+			fakeJobWithName("test", "parent", parentTableInfo.ID, parentTableIndexI1.ID, "i1", "id", json.RawMessage(fmt.Sprintf("[%d, false, [], false]", parentTableIndexI1.ID))),
+			false,
+		)
+		require.NoError(t, err)
+		recorder.UpdateIndexInfo(ctx, infoSchema)
+		require.Len(t, recorder.GetFKRecordMap(), 1)
+	}
+	{
+		recorder := ingestrec.New()
+		require.NoError(t, err)
+		recorder.UpdateIndexInfo(ctx, infoSchema)
+		require.Len(t, recorder.GetFKRecordMap(), 0)
+	}
 }

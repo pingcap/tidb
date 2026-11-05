@@ -7,8 +7,12 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 func init() {
@@ -48,22 +52,34 @@ func UnmarshalDir[T any](ctx context.Context, walkOpt *WalkOption, s ExternalSto
 	errCh := make(chan error, 1)
 	reader := func() {
 		defer close(ch)
-		err := s.WalkDir(ctx, walkOpt, func(path string, size int64) error {
-			metaBytes, err := s.ReadFile(ctx, path)
-			if err != nil {
-				return errors.Annotatef(err, "failed during reading file %s", path)
-			}
-			var meta T
-			if err := unmarshal(&meta, path, metaBytes); err != nil {
-				return errors.Annotatef(err, "failed to parse subcompaction meta of file %s", path)
-			}
-			select {
-			case ch <- &meta:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
+		pool := util.NewWorkerPool(128, "metadata")
+		eg, ectx := errgroup.WithContext(ctx)
+		err := s.WalkDir(ectx, walkOpt, func(path string, size int64) error {
+			pool.ApplyOnErrorGroup(eg, func() error {
+				metaBytes, err := s.ReadFile(ectx, path)
+				if err != nil {
+					log.Error("failed to read file", zap.String("file", path))
+					return errors.Annotatef(err, "during reading meta file %s from storage", path)
+				}
+
+				var meta T
+				if err := unmarshal(&meta, path, metaBytes); err != nil {
+					return errors.Annotatef(err, "failed to unmarshal file %s", path)
+				}
+				select {
+				case ch <- &meta:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+				return nil
+			})
 			return nil
 		})
+		// Workers can still send results after WalkDir fails. Join them before
+		// closing ch, while preserving the original listing error.
+		if workerErr := eg.Wait(); err == nil {
+			err = workerErr
+		}
 		if err != nil {
 			select {
 			case errCh <- err:
@@ -80,7 +96,14 @@ func UnmarshalDir[T any](ctx context.Context, walkOpt *WalkOption, s ExternalSto
 			return iter.Throw[*T](err)
 		case meta, ok := <-ch:
 			if !ok {
-				return iter.Done[*T]()
+				// An error is published before ch is closed. Both select cases may
+				// be ready, so do not mistake a listing/worker error for normal EOF.
+				select {
+				case err := <-errCh:
+					return iter.Throw[*T](err)
+				default:
+					return iter.Done[*T]()
+				}
 			}
 			return iter.Emit(meta)
 		}

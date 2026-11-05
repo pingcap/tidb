@@ -31,15 +31,17 @@ func IsContextCanceled(err error) bool {
 
 // BR errors.
 var (
-	ErrUnknown                   = errors.Normalize("internal error", errors.RFCCodeText("BR:Common:ErrUnknown"))
-	ErrInvalidArgument           = errors.Normalize("invalid argument", errors.RFCCodeText("BR:Common:ErrInvalidArgument"))
-	ErrUndefinedRestoreDbOrTable = errors.Normalize("undefined restore databases or tables", errors.RFCCodeText("BR:Common:ErrUndefinedDbOrTable"))
-	ErrVersionMismatch           = errors.Normalize("version mismatch", errors.RFCCodeText("BR:Common:ErrVersionMismatch"))
-	ErrFailedToConnect           = errors.Normalize("failed to make gRPC channels", errors.RFCCodeText("BR:Common:ErrFailedToConnect"))
-	ErrInvalidMetaFile           = errors.Normalize("invalid metafile: %s", errors.RFCCodeText("BR:Common:ErrInvalidMetaFile"))
-	ErrEnvNotSpecified           = errors.Normalize("environment variable not found", errors.RFCCodeText("BR:Common:ErrEnvNotSpecified"))
-	ErrUnsupportedOperation      = errors.Normalize("the operation is not supported", errors.RFCCodeText("BR:Common:ErrUnsupportedOperation"))
-	ErrInvalidRange              = errors.Normalize("invalid restore range", errors.RFCCodeText("BR:Common:ErrInvalidRange"))
+	ErrUnknown                      = errors.Normalize("internal error", errors.RFCCodeText("BR:Common:ErrUnknown"))
+	ErrInvalidArgument              = errors.Normalize("invalid argument", errors.RFCCodeText("BR:Common:ErrInvalidArgument"))
+	ErrUndefinedRestoreDbOrTable    = errors.Normalize("undefined restore databases or tables", errors.RFCCodeText("BR:Common:ErrUndefinedDbOrTable"))
+	ErrVersionMismatch              = errors.Normalize("version mismatch", errors.RFCCodeText("BR:Common:ErrVersionMismatch"))
+	ErrFailedToConnect              = errors.Normalize("failed to make gRPC channels", errors.RFCCodeText("BR:Common:ErrFailedToConnect"))
+	ErrInvalidMetaFile              = errors.Normalize("invalid metafile: %s", errors.RFCCodeText("BR:Common:ErrInvalidMetaFile"))
+	ErrEnvNotSpecified              = errors.Normalize("environment variable not found", errors.RFCCodeText("BR:Common:ErrEnvNotSpecified"))
+	ErrUnsupportedOperation         = errors.Normalize("the operation is not supported", errors.RFCCodeText("BR:Common:ErrUnsupportedOperation"))
+	ErrInvalidRange                 = errors.Normalize("invalid restore range", errors.RFCCodeText("BR:Common:ErrInvalidRange"))
+	ErrMigrationVersionNotSupported = errors.Normalize("the migration version isn't supported", errors.RFCCodeText("BR:Common:ErrMigrationVersionNotSupported"))
+	ErrMigrationNotFound            = errors.Normalize("no migration found", errors.RFCCodeText("BR:Common:ErrMigrationNotFound"))
 
 	ErrPDUpdateFailed           = errors.Normalize("failed to update PD", errors.RFCCodeText("BR:PD:ErrPDUpdateFailed"))
 	ErrPDLeaderNotFound         = errors.Normalize("PD leader not found", errors.RFCCodeText("BR:PD:ErrPDLeaderNotFound"))
@@ -79,10 +81,14 @@ var (
 	// TODO maybe it belongs to PiTR.
 	ErrRestoreRTsConstrain = errors.Normalize("resolved ts constrain violation", errors.RFCCodeText("BR:Restore:ErrRestoreResolvedTsConstrain"))
 
-	ErrPiTRInvalidCDCLogFormat = errors.Normalize("invalid cdc log format", errors.RFCCodeText("BR:PiTR:ErrPiTRInvalidCDCLogFormat"))
-	ErrPiTRTaskNotFound        = errors.Normalize("task not found", errors.RFCCodeText("BR:PiTR:ErrTaskNotFound"))
-	ErrPiTRInvalidTaskInfo     = errors.Normalize("task info is invalid", errors.RFCCodeText("BR:PiTR:ErrInvalidTaskInfo"))
-	ErrPiTRMalformedMetadata   = errors.Normalize("malformed metadata", errors.RFCCodeText("BR:PiTR:ErrMalformedMetadata"))
+	ErrPiTRInvalidCDCLogFormat    = errors.Normalize("invalid cdc log format", errors.RFCCodeText("BR:PiTR:ErrPiTRInvalidCDCLogFormat"))
+	ErrPiTRTaskNotFound           = errors.Normalize("task not found", errors.RFCCodeText("BR:PiTR:ErrTaskNotFound"))
+	ErrPiTRInvalidTaskInfo        = errors.Normalize("task info is invalid", errors.RFCCodeText("BR:PiTR:ErrInvalidTaskInfo"))
+	ErrPiTRMalformedMetadata      = errors.Normalize("malformed metadata", errors.RFCCodeText("BR:PiTR:ErrMalformedMetadata"))
+	ErrPiTRCheckpointWatchRestart = errors.Normalize(
+		"checkpoint watch needs restart",
+		errors.RFCCodeText("BR:PiTR:ErrCheckpointWatchRestart"),
+	)
 
 	ErrStorageUnknown           = errors.Normalize("unknown external storage error", errors.RFCCodeText("BR:ExternalStorage:ErrStorageUnknown"))
 	ErrStorageInvalidConfig     = errors.Normalize("invalid external storage config", errors.RFCCodeText("BR:ExternalStorage:ErrStorageInvalidConfig"))
