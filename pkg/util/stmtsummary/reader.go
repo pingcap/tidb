@@ -85,7 +85,7 @@ func (ssr *stmtSummaryReader) GetStmtSummaryCurrentRows() [][]types.Datum {
 		}
 	}
 	if ssr.checker == nil {
-		if otherDatum := ssr.getStmtEvictedOtherRow(other); otherDatum != nil {
+		if otherDatum := ssr.getStmtEvictedOtherRow(other, beginTime); otherDatum != nil {
 			rows = append(rows, otherDatum)
 		}
 	}
@@ -167,7 +167,7 @@ func (ssr *stmtSummaryReader) getStmtByDigestHistoryRow(ssbd *stmtSummaryByDiges
 	return rows
 }
 
-func (ssr *stmtSummaryReader) getStmtEvictedOtherRow(ssbde *stmtSummaryByDigestEvicted) []types.Datum {
+func (ssr *stmtSummaryReader) getStmtEvictedOtherRow(ssbde *stmtSummaryByDigestEvicted, beginTimeForCurInterval int64) []types.Datum {
 	var seElement *stmtSummaryByDigestEvictedElement
 
 	ssbde.Lock()
@@ -176,7 +176,9 @@ func (ssr *stmtSummaryReader) getStmtEvictedOtherRow(ssbde *stmtSummaryByDigestE
 	}
 	ssbde.Unlock()
 
-	if seElement == nil {
+	// Evicted summaries are lazy expired just like regular summaries. Do not
+	// expose the latest evicted row when it belongs to an earlier interval.
+	if seElement == nil || seElement.beginTime < beginTimeForCurInterval {
 		return nil
 	}
 
