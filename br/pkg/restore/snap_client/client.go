@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -52,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -149,6 +151,8 @@ type SnapClient struct {
 	// checkpoint information for snapshot restore
 	checkpointRunner   *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 	checkpointChecksum map[int64]*checkpoint.ChecksumItem
+
+	g glue.Glue
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -214,6 +218,10 @@ func (rc *SnapClient) GetTLSConfig() *tls.Config {
 // GetSupportPolicy tells whether target tidb support placement policy.
 func (rc *SnapClient) GetSupportPolicy() bool {
 	return rc.supportPolicy
+}
+
+func (rc *SnapClient) SetGlue(g glue.Glue) {
+	rc.g = g
 }
 
 func (rc *SnapClient) updateConcurrency() {
@@ -1013,12 +1021,14 @@ func (rc *SnapClient) execAndValidateChecksum(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
+	checksumTs := uint64(0)
 	item, exists := rc.checkpointChecksum[tbl.Table.ID]
 	if !exists {
 		startTS, err := restore.GetTSWithRetry(ctx, rc.pdClient)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		checksumTs = startTS
 		exe, err := checksum.NewExecutorBuilder(tbl.Table, startTS).
 			SetOldTable(tbl.OldTable).
 			SetConcurrency(concurrency).
@@ -1056,6 +1066,7 @@ func (rc *SnapClient) execAndValidateChecksum(
 	})
 	if !checksumMatch {
 		logger.Error("failed in validate checksum",
+			zap.Uint64("start ts", checksumTs),
 			zap.Uint64("expected tidb crc64", expectedChecksumStats.Crc64Xor),
 			zap.Uint64("calculated crc64", item.Crc64xor),
 			zap.Uint64("expected tidb total kvs", expectedChecksumStats.TotalKvs),
@@ -1063,9 +1074,45 @@ func (rc *SnapClient) execAndValidateChecksum(
 			zap.Uint64("expected tidb total bytes", expectedChecksumStats.TotalBytes),
 			zap.Uint64("calculated total bytes", item.TotalBytes),
 		)
+
+		if logErr := rc.logTableRows(ctx, tbl.OldTable.DB.Name.O, tbl.OldTable.Info.Name.O, tbl.Table); logErr != nil {
+			log.Error("failed to log table rows", zap.Error(logErr), zap.String("table_info", tbl.Table.Name.String()))
+		}
 		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
 	}
 	logger.Info("success in validating checksum")
+	return nil
+}
+
+func (rc *SnapClient) logTableRows(ctx context.Context, dbName, tableName string, tableInfo *model.TableInfo) error {
+	columnNames := make([]string, 0, len(tableInfo.Columns))
+	tps := make([]*types.FieldType, 0, len(tableInfo.Columns))
+	for _, column := range tableInfo.Columns {
+		columnNames = append(columnNames, column.Name.O)
+		tps = append(tps, column.FieldType.Clone())
+	}
+	se, _, err := tidallocdb.NewDB(rc.g, rc.dom.Store(), rc.policyMode)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ectx := se.Session().GetSessionCtx().GetRestrictedSQLExecutor()
+	rows, _, err := ectx.ExecRestrictedSQL(
+		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+		nil,
+		fmt.Sprintf("SELECT %s FROM `%s`.`%s`;",
+			strings.Join(columnNames, ","), dbName, tableName,
+		),
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, row := range rows {
+		log.Info("select rows from table",
+			zap.String("db", dbName),
+			zap.String("table", tableName),
+			zap.String("row", row.ToString(tps)),
+		)
+	}
 	return nil
 }
 
