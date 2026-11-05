@@ -19,11 +19,40 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMaterializedViewShadowTableExpiration(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	cutoff := now.Add(-7 * 24 * time.Hour)
+	name := func(created time.Time) string {
+		return fmt.Sprintf("__mv_shadow_1_%d", created.UnixNano())
+	}
+	for _, tc := range []struct {
+		name    string
+		expired bool
+	}{
+		{name(cutoff.Add(-time.Nanosecond)), true},
+		{name(cutoff), true},
+		{name(cutoff.Add(time.Nanosecond)), false},
+		{name(now.Add(time.Hour)), false},
+		{"__mv_shadow_1", false},
+		{"__mv_shadow_1_invalid", false},
+		{"__mv_shadow_1_0", false},
+		{"__mv_shadow_1_-1", false},
+		{"__mv_shadow_1_9223372036854775808", false},
+		{name(cutoff) + "_suffix", false},
+		{strings.TrimPrefix(name(cutoff), "__"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.expired, isMaterializedViewShadowTableExpired(tc.name, now))
+		})
+	}
+}
 
 func TestBuildQueryStringFromJobs(t *testing.T) {
 	testCases := []struct {

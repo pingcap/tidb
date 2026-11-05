@@ -2143,6 +2143,15 @@ func checkProtectedMaterializedViewShadowConstraint(
 	if allowInternalMViewShadowBypass(sv) {
 		return nil
 	}
+	if op == "DROP TABLE" {
+		// The DDL owner runs this check again before dropping the table.
+		if isMaterializedViewShadowTableExpired(tblInfo.Name.L, time.Now()) {
+			return nil
+		}
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			"DROP TABLE on materialized view shadow table younger than 7 days or with an invalid creation timestamp",
+		)
+	}
 	return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view shadow table", op))
 }
 

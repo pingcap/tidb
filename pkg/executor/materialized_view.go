@@ -150,7 +150,6 @@ const (
 	purgeHistStatusFailed           = "failed"
 	purgeHistStatusOrphaned         = "orphaned"
 	mvRefreshAdvisoryLockTimeoutSec = int64(1)
-	mvRefreshShadowTablePrefix      = "__mv_shadow_"
 	mvRefreshImportIntoStoreName    = "TiKV"
 	mvTaskMonitorPollInterval       = 5 * time.Second
 	mvTaskHistHeartbeatInterval     = 10 * time.Minute
@@ -4860,11 +4859,11 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 	}
 
 	shadowTableName := buildMVRefreshShadowTableName(tblInfo.ID)
-	shadowCreated := false
+	shadowNeedsCleanup := false
 	shadowLoadStmtResult := mvRefreshStmtResult{}
 	buildSQLExec := buildSctx.GetSQLExecutor()
 	defer func() {
-		if err == nil || !shadowCreated {
+		if !shadowNeedsCleanup {
 			return
 		}
 		if dropErr := domain.GetDomain(e.Ctx()).DDLExecutor().DropMaterializedViewShadowTable(
@@ -4889,6 +4888,9 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		if err := kctx.Err(); err != nil {
 			return err
 		}
+		// Creation can commit before the caller observes an error or panic.
+		// Keep cleanup armed until cutover succeeds, including while unwinding a panic.
+		shadowNeedsCleanup = true
 		if execErr := domain.GetDomain(e.Ctx()).DDLExecutor().CreateMaterializedViewShadowTable(
 			refreshSctx,
 			tblInfo.DBID,
@@ -4897,7 +4899,6 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		); execErr != nil {
 			return execErr
 		}
-		shadowCreated = true
 		return nil
 	}); err != nil {
 		return 0, err
@@ -5011,6 +5012,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 	}); err != nil {
 		return 0, err
 	}
+	shadowNeedsCleanup = false
 	applyMVRefreshStmtResult(refreshSctx.GetSessionVars().StmtCtx, shadowLoadStmtResult)
 	return buildReadTSO, nil
 }
@@ -5211,7 +5213,7 @@ func applyRefreshExecutionSessionVars(
 }
 
 func buildMVRefreshShadowTableName(mviewID int64) string {
-	return fmt.Sprintf("%s%d_%d", mvRefreshShadowTablePrefix, mviewID, time.Now().UnixNano())
+	return fmt.Sprintf("%s%d_%d", mviewutil.ShadowTablePrefix, mviewID, time.Now().UnixNano())
 }
 
 func buildMVRefreshOutOfPlaceShadowTableInfo(
