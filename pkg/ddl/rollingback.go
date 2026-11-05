@@ -691,7 +691,7 @@ func getTableOfCancelledJob(jobCtx *jobContext, job *model.Job) (*model.TableInf
 // a cancelled CREATE TABLE job leaves out of the metadata.
 func deleteAffinityGroupsOfTablesNotCreated(jobCtx *jobContext, job *model.Job, tables []*model.TableInfo) error {
 	codec := jobCtx.store.GetCodec()
-	var ids []string
+	ids := make([]string, 0, len(tables))
 	for _, tblInfo := range tables {
 		if tblInfo == nil || tblInfo.Affinity == nil {
 			continue
