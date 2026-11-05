@@ -1026,13 +1026,11 @@ func TestStatsCacheUpdateTimeout(t *testing.T) {
 	require.Equal(t, 6, int(globalStats.RealtimeCount))
 	require.Equal(t, 2, int(globalStats.ModifyCount))
 
-	// A panic in the per-table loop escapes Update.
+	// A panic in the per-table loop is returned as an error.
 	panicCache, err := cache.NewStatsCacheImpl(panicOnTableInfoByIDHandle{h})
 	require.NoError(t, err)
 	defer panicCache.Close()
-	require.Panics(t, func() {
-		_ = panicCache.Update(context.Background(), dom.InfoSchema())
-	})
+	require.ErrorContains(t, panicCache.Update(context.Background(), dom.InfoSchema()), "panic in StatsCacheImpl.Update")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/util/ExecRowsTimeout", "return()"))
 	defer func() {
