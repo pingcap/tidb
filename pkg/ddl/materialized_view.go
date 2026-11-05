@@ -56,6 +56,7 @@ const (
 	alterMaterializedScheduleInfoUpdateLockWaitTimeoutSec = int64(10)
 	mviewCutoverPurgeLockWaitTimeoutSec                   = int64(5)
 	mviewCutoverPurgeLockTimeout                          = time.Minute
+	mviewShadowTableRetention                             = 7 * 24 * time.Hour
 )
 
 func (w *worker) acquireMLogPurgeAdvisoryLockForCutover(jobCtx *jobContext, job *model.Job, mlogID int64) (err error) {
@@ -1111,6 +1112,20 @@ func (e *executor) CreateMaterializedViewShadowTable(
 		scatterScope = val
 	}
 	return errors.Trace(e.createTableWithInfoPost(ctx, shadowTableInfo, schemaID, scatterScope))
+}
+
+func isMaterializedViewShadowTableExpired(name string, now time.Time) bool {
+	// Generated shadow names are __mv_shadow_<mviewID>_<UnixNano>.
+	suffix, ok := strings.CutPrefix(name, mviewutil.ShadowTablePrefix)
+	if !ok {
+		return false
+	}
+	_, timestamp, ok := strings.Cut(suffix, "_")
+	if !ok {
+		return false
+	}
+	createdNano, err := strconv.ParseInt(timestamp, 10, 64)
+	return err == nil && createdNano > 0 && createdNano <= now.Add(-mviewShadowTableRetention).UnixNano()
 }
 
 func (e *executor) DropMaterializedViewShadowTable(ctx sessionctx.Context, schemaName, shadowName pmodel.CIStr) error {

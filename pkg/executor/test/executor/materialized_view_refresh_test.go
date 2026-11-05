@@ -4390,6 +4390,107 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceBuildFailureCleansShadow(t *te
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 }
 
+func TestMaterializedViewRefreshCompleteOutOfPlacePanicCleansShadow(t *testing.T) {
+	for _, stage := range []string{"create", "load"} {
+		t.Run(stage, func(t *testing.T) {
+			store, _ := testkit.CreateMockStoreAndDomain(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table t (a int not null)")
+			tk.MustExec("insert into t values (1)")
+			tk.MustExec("create materialized view log on t (a)")
+			tk.MustExec("create materialized view mv (a, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, count(*) from t group by a")
+			tk.MustExec("insert into t values (2)")
+			if stage == "create" {
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewOutOfPlaceAfterCreateShadow", func() {
+					panic("mock shadow build panic")
+				})
+			} else {
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewOutOfPlaceAfterBuildDataLoad", func(uint64) {
+					panic("mock shadow build panic")
+				})
+			}
+
+			err := tk.ExecToErr("refresh materialized view mv complete out of place")
+			require.ErrorContains(t, err, "mock shadow build panic")
+			tk.MustQuery("show tables like '\\_\\_mv\\_shadow\\_%'").Check(testkit.Rows())
+			tk.MustQuery("select * from mv").Check(testkit.Rows("1 1"))
+		})
+	}
+}
+
+func TestMaterializedViewShadowManualDrop(t *testing.T) {
+	for _, dropSource := range []bool{false, true} {
+		t.Run(fmt.Sprintf("source_dropped_%t", dropSource), func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table t (a int not null)")
+			tk.MustExec("insert into t values (1)")
+			tk.MustExec("create materialized view log on t (a)")
+			tk.MustExec("create materialized view mv (a, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, count(*) from t group by a")
+			schema, ok := dom.InfoSchema().SchemaByName(pmodel.NewCIStr("test"))
+			require.True(t, ok)
+			mv, err := dom.InfoSchema().TableByName(context.Background(), schema.Name, pmodel.NewCIStr("mv"))
+			require.NoError(t, err)
+			now := time.Now()
+			shadowName := func(created time.Time) string {
+				return fmt.Sprintf("__mv_shadow_%d_%d", mv.Meta().ID, created.UnixNano())
+			}
+			ordinaryName := shadowName(now)
+			expiredName := shadowName(now.Add(-8 * 24 * time.Hour))
+			recentName := shadowName(now.Add(-6 * 24 * time.Hour))
+			futureName := shadowName(now.Add(24 * time.Hour))
+			invalidName := fmt.Sprintf("__mv_shadow_%d_invalid", mv.Meta().ID)
+			tk.MustExec(fmt.Sprintf("create table `%s` (a int)", ordinaryName))
+			for _, name := range []string{expiredName, recentName, futureName, invalidName} {
+				shadow := mv.Meta().Clone()
+				shadow.ID = 0
+				shadow.Name = pmodel.NewCIStr(name)
+				shadow.MaterializedView = nil
+				shadow.MaterializedViewBase = nil
+				shadow.MaterializedViewShadow = &model.MaterializedViewShadowInfo{SourceMViewID: mv.Meta().ID}
+				// Creation time comes from the name; all these tables have fresh UpdateTS.
+				require.NoError(t, dom.DDLExecutor().CreateMaterializedViewShadowTable(tk.Session(), schema.ID, schema.Name, shadow))
+			}
+			if dropSource {
+				tk.MustExec("drop materialized view mv")
+			}
+
+			for _, name := range []string{recentName, futureName, invalidName} {
+				err := tk.ExecToErr(fmt.Sprintf("drop table `%s`", name))
+				require.ErrorContains(t, err, "DROP TABLE on materialized view shadow table")
+			}
+
+			// The worker must enforce retention even when executor prechecks are bypassed.
+			recent, err := dom.InfoSchema().TableByName(context.Background(), schema.Name, pmodel.NewCIStr(recentName))
+			require.NoError(t, err)
+			job := &model.Job{
+				Version:             model.GetJobVerInUse(),
+				SchemaID:            schema.ID,
+				SchemaName:          schema.Name.L,
+				TableID:             recent.Meta().ID,
+				TableName:           recentName,
+				Type:                model.ActionDropTable,
+				BinlogInfo:          &model.HistoryInfo{},
+				InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{Database: schema.Name.L, Table: recentName}},
+			}
+			args := &model.DropTableArgs{Identifiers: []ast.Ident{{Schema: schema.Name, Name: pmodel.NewCIStr(recentName)}}}
+			err = dom.DDLExecutor().(ddl.ExecutorForTest).DoDDLJobWrapper(tk.Session(), ddl.NewJobWrapperWithArgs(job, args, false))
+			require.ErrorContains(t, err, "DROP TABLE on materialized view shadow table")
+
+			// An expired name with fresh UpdateTS is droppable; ordinary tables have no retention.
+			tk.MustExec(fmt.Sprintf("drop table `%s`, `%s`", expiredName, ordinaryName))
+			tk.MustExec(fmt.Sprintf("drop table if exists `%s`", expiredName))
+			tk.MustQuery("show tables like '\\_\\_mv\\_shadow\\_%'").Sort().Check(testkit.Rows(recentName, futureName, invalidName))
+			if !dropSource {
+				tk.MustQuery("select * from mv").Check(testkit.Rows("1 1"))
+				require.ErrorContains(t, tk.ExecToErr("drop table mv"), "DROP TABLE on materialized view table")
+			}
+		})
+	}
+}
+
 func TestMaterializedViewRefreshCompleteOutOfPlaceCancelWatcherStopsBeforeCreateShadow(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

@@ -24,6 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
+// ShadowTablePrefix identifies candidate tables for abandoned refresh-shadow cleanup.
+const ShadowTablePrefix = "__mv_shadow_"
+
 // RefreshAdvisoryLockName identifies the lock shared by MV refresh and DDL that
 // must exclude an in-flight refresh of the same MV.
 func RefreshAdvisoryLockName(schemaID, mviewID int64) string {

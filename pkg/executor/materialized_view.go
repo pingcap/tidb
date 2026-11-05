@@ -150,7 +150,6 @@ const (
 	purgeHistStatusFailed           = "failed"
 	purgeHistStatusOrphaned         = "orphaned"
 	mvRefreshAdvisoryLockTimeoutSec = int64(1)
-	mvRefreshShadowTablePrefix      = "__mv_shadow_"
 	mvRefreshImportIntoStoreName    = "TiKV"
 	mvTaskMonitorPollInterval       = 5 * time.Second
 	mvTaskHistHeartbeatInterval     = 10 * time.Minute
@@ -4860,11 +4859,12 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 	}
 
 	shadowTableName := buildMVRefreshShadowTableName(tblInfo.ID)
-	shadowCreated := false
+	shadowNeedsCleanup := false
 	shadowLoadStmtResult := mvRefreshStmtResult{}
 	buildSQLExec := buildSctx.GetSQLExecutor()
 	defer func() {
-		if err == nil || !shadowCreated {
+		// err can still be nil while a panic unwinds this function.
+		if !shadowNeedsCleanup {
 			return
 		}
 		if dropErr := domain.GetDomain(e.Ctx()).DDLExecutor().DropMaterializedViewShadowTable(
@@ -4877,7 +4877,9 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 				zap.String("shadowTable", shadowTableName),
 				zap.Error(dropErr),
 			)
-			err = errors.Annotatef(err, "cleanup shadow table %s.%s failed: %v", schemaName.O, shadowTableName, dropErr)
+			if err != nil {
+				err = errors.Annotatef(err, "cleanup shadow table %s.%s failed: %v", schemaName.O, shadowTableName, dropErr)
+			}
 		}
 	}()
 
@@ -4897,7 +4899,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		); execErr != nil {
 			return execErr
 		}
-		shadowCreated = true
+		shadowNeedsCleanup = true
 		return nil
 	}); err != nil {
 		return 0, err
@@ -4993,7 +4995,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		if err := kctx.Err(); err != nil {
 			return err
 		}
-		return domain.GetDomain(e.Ctx()).DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
+		if err := domain.GetDomain(e.Ctx()).DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
 			e.Ctx(),
 			tblInfo.DBID,
 			schemaName,
@@ -5007,7 +5009,12 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 			expectedLastSuccessReadTSONull,
 			nextRefreshUnixSeconds,
 			shouldUpdateNextRefreshUnixSeconds,
-		)
+		); err != nil {
+			return err
+		}
+		// Disarm cleanup before observeMVRefreshStep invokes OnStepEnd.
+		shadowNeedsCleanup = false
+		return nil
 	}); err != nil {
 		return 0, err
 	}
@@ -5211,7 +5218,7 @@ func applyRefreshExecutionSessionVars(
 }
 
 func buildMVRefreshShadowTableName(mviewID int64) string {
-	return fmt.Sprintf("%s%d_%d", mvRefreshShadowTablePrefix, mviewID, time.Now().UnixNano())
+	return fmt.Sprintf("%s%d_%d", mviewutil.ShadowTablePrefix, mviewID, time.Now().UnixNano())
 }
 
 func buildMVRefreshOutOfPlaceShadowTableInfo(
