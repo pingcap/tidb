@@ -20,6 +20,108 @@ use tidb_parser::{parse, parse_multi, parse_multi_with_sql_mode, parse_with_sql_
 use tidb_lexer::SqlMode;
 
 #[test]
+fn test_parentheses_depth_on_native_stack() {
+    fn assert_nested_parentheses(statement: Stmt, depth: usize) {
+        let Stmt::Query(query) = statement else {
+            panic!("expected SELECT");
+        };
+        let QueryStmt::Select(mut select) = query.into_inner() else {
+            panic!("expected SELECT");
+        };
+        let tidb_ast::SelectField::Expr { mut expr, .. } = std::mem::replace(
+            &mut select.fields[0],
+            tidb_ast::SelectField::Wildcard(Vec::new()),
+        ) else {
+            panic!("expected an expression");
+        };
+        // Check and dismantle the AST iteratively: this regression isolates
+        // parsing from recursive AST formatting and destruction in debug builds.
+        let mut actual_depth = 0;
+        while let Expr::Paren(inner) = expr {
+            actual_depth += 1;
+            expr = *inner;
+        }
+        assert_eq!(actual_depth, depth);
+        assert_eq!(expr, Expr::Int("1".to_owned()));
+    }
+
+    // Cargo sets RUST_MIN_STACK=32 MiB for unrelated integration tests.
+    // Use an explicit native stack so that setting cannot hide parser overflow.
+    for depth in [8_192, 10_000] {
+        let sql = format!("SELECT {}1{}", "(".repeat(depth), ")".repeat(depth));
+        let input = sql.clone();
+        let statement = std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(move || parse(&input).expect("nesting is within the parser limit"))
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_nested_parentheses(statement, depth);
+
+        let input = format!("{sql}; SELECT 2");
+        let statements = std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(move || parse_multi(&input).expect("multi-statement parsing shares the stack"))
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(statements.len(), 2);
+        let mut statements = statements.into_iter();
+        assert_nested_parentheses(statements.next().unwrap(), depth);
+        assert_eq!(statements.next().unwrap().restore(), "SELECT 2");
+    }
+}
+
+#[test]
+fn test_parenthesized_query_depth_on_native_stack() {
+    let sql = format!("{}SELECT 1{}", "(".repeat(10_000), ")".repeat(10_000));
+    let statement = std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(move || parse(&sql).expect("query parentheses share the nesting limit"))
+        .unwrap()
+        .join()
+        .unwrap();
+    // Go collapses repeated whole-query parentheses into one pair.
+    assert_eq!(statement.restore(), "(SELECT 1)");
+}
+
+#[test]
+fn test_parenthesized_join_depth_on_native_stack() {
+    let sql = format!(
+        "SELECT * FROM {}t{}",
+        "(".repeat(10_000),
+        ")".repeat(10_000)
+    );
+    let statement = std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(move || parse(&sql).expect("join parentheses share the nesting limit"))
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(statement.restore(), "SELECT * FROM `t`");
+}
+
+#[test]
+fn test_parentheses_error_on_native_stack() {
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(|| {
+            // Fail at the innermost expression, then after a complete subtree.
+            for sql in [
+                format!("SELECT {}1 +{}", "(".repeat(10_000), ")".repeat(10_000)),
+                format!("SELECT {}1{}", "(".repeat(10_000), ")".repeat(9_999)),
+                format!("SELECT {}1{}", "(".repeat(10_001), ")".repeat(10_001)),
+            ] {
+                assert!(parse(&sql).is_err());
+                assert!(parse_multi(&sql).is_err());
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
 fn test_parentheses_depth_limit() {
     let sql = format!("SELECT {}1{}", "(".repeat(10_001), ")".repeat(10_001));
     let error = parse(&sql).expect_err("deeply nested parentheses must be rejected");
