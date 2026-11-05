@@ -55,6 +55,8 @@ pub struct AddIndexReorg {
     pub physical_ids: Vec<i64>,
     /// Go `ReorgMeta.GetBatchSize`.
     pub batch_size: usize,
+    /// Go `ReorgMeta.GetConcurrency`: the backfill workers to run.
+    pub concurrency: usize,
     /// Go `ReorgMeta`'s SQL mode and time zone, for decoding rows and
     /// evaluating index expressions.
     pub session_vars: ReorgSessionVars,
@@ -580,7 +582,7 @@ pub(super) fn reorg_sub_job(job: &Job) -> Option<i32> {
 use tidb_ddl_build::session_pool::ReorgSessionVars;
 
 
-pub(super) fn job_batch_size(job: &Job) -> usize {
+pub(crate) fn job_batch_size(job: &Job) -> usize {
     let defaults = tidb_model::DDLReorgProcessDefaults::new(
         || tidb_vardef::defaults::DEF_TIDB_DDL_REORG_WORKER_COUNT,
         || tidb_vardef::defaults::DEF_TIDB_DDL_REORG_BATCH_SIZE,
@@ -590,6 +592,21 @@ pub(super) fn job_batch_size(job: &Job) -> usize {
         .map_or(
             tidb_vardef::defaults::DEF_TIDB_DDL_REORG_BATCH_SIZE,
             |meta| meta.read().get_batch_size(defaults),
+        )
+        .max(1) as usize
+}
+
+/// Go `ReorgMeta.GetConcurrency`.
+pub(crate) fn job_concurrency(job: &Job) -> usize {
+    let defaults = tidb_model::DDLReorgProcessDefaults::new(
+        || tidb_vardef::defaults::DEF_TIDB_DDL_REORG_WORKER_COUNT,
+        || tidb_vardef::defaults::DEF_TIDB_DDL_REORG_BATCH_SIZE,
+    );
+    job.reorg_meta
+        .as_ref()
+        .map_or(
+            tidb_vardef::defaults::DEF_TIDB_DDL_REORG_WORKER_COUNT,
+            |meta| meta.read().get_concurrency(defaults),
         )
         .max(1) as usize
 }
@@ -1208,6 +1225,7 @@ pub(super) fn do_reorg_work_for_create_index(
             merging,
             physical_ids: physical_ids(info),
             batch_size: job_batch_size(&active.job),
+            concurrency: job_concurrency(&active.job),
             session_vars: ReorgSessionVars::of_job(&active.job),
             row_count: active.job.row_count,
             column: None,

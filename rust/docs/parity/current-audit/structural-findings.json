@@ -2,9 +2,9 @@
   "date": "2026-11-05",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 26,
+    "unresolved": 25,
     "open": 6,
-    "partial": 20
+    "partial": 19
   },
   "findings": [
     {
@@ -29,13 +29,6 @@
       "finding": "No ingest (fast-reorg) backfill: it falls back to the transactional merge (`tidb-ddl/src/cluster_ddl/add_index.rs`)",
       "rust_evidence": "`rust/crates/tidb-ddl/src/cluster_ddl/add_index.rs`",
       "go_owner": "`pkg/ddl/backfilling*.go`, `pkg/ddl/ingest`"
-    },
-    {
-      "id": "D03",
-      "status": "partial",
-      "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "Backfill runs one batch per reorg step on the DDL worker (`worker.rs` `AddIndexReorgWork::Backfill` -> `KvTableBackfill::backfill_index_batch`), where Go's `txnBackfillScheduler` (`backfilling_scheduler.go`) runs `tidb_ddl_reorg_worker_cnt` backfill workers over split task ranges and resizes them (`adjustWorkerSize`)",
-      "go_owner": "`pkg/ddl/backfilling_scheduler.go`"
     },
     {
       "id": "D05",

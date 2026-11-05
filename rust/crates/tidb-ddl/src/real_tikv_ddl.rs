@@ -52,6 +52,7 @@ use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
 use tidb_infoschema_issyncer::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 
 mod add_index_reorg;
+mod backfilling;
 pub mod delete_range;
 
 /// What undoes a delivered label step: the rules its IDs held before it.
@@ -408,7 +409,7 @@ impl SchemaVersionNotifier for tidb_pd_client::EtcdClient {
 /// rows that are, with no error either way.
 ///
 /// [`ClusterTableStorage`]: tidb_store_driver_txn::cluster_storage::ClusterTableStorage
-pub trait IndexBackfiller {
+pub trait IndexBackfiller: Sync {
     /// Go `w.sessPool`: the worker's sessions, which a RECOVER step reaches
     /// GC through. `None` for a worker without one.
     fn session_pool(&self) -> Option<Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>> {
@@ -492,6 +493,9 @@ pub trait IndexBackfiller {
 }
 
 /// See [`IndexBackfiller::reorg_add_index`].
+/// See [`IndexBackfiller::reorg_add_index`].
+/// See [`IndexBackfiller::reorg_add_index`].
+/// See [`IndexBackfiller::reorg_add_index`].
 pub enum AddIndexReorgWork<'a> {
     /// Go `getTableRange` for one physical table.
     TableRange {
@@ -507,6 +511,8 @@ pub enum AddIndexReorgWork<'a> {
         start: &'a [u8],
         /// The range's end.
         end: &'a [u8],
+        /// Go `backfillCtx.batchCnt`: the rows of one batch.
+        batch_size: usize,
     },
     /// Go `updateColumnWorker.BackfillData` over the rows in
     /// `[start, end)` (the reorganization's `column`).
@@ -517,6 +523,8 @@ pub enum AddIndexReorgWork<'a> {
         start: &'a [u8],
         /// The range's end.
         end: &'a [u8],
+        /// Go `backfillCtx.batchCnt`: the rows of one batch.
+        batch_size: usize,
     },
     /// Go `reorgPartitionWorker.BackfillData` over a reorganized partition's
     /// rows in `[start, end)`: each is copied to the partition the new scheme
@@ -528,6 +536,8 @@ pub enum AddIndexReorgWork<'a> {
         start: &'a [u8],
         /// The range's end.
         end: &'a [u8],
+        /// Go `backfillCtx.batchCnt`: the rows of one batch.
+        batch_size: usize,
     },
     /// Go `cleanUpIndexWorker.BackfillData` over a dropped partition's rows
     /// in `[start, end)`: their entries in the reorganization's global
@@ -538,6 +548,15 @@ pub enum AddIndexReorgWork<'a> {
         /// The batch's first key.
         start: &'a [u8],
         /// The range's end.
+        end: &'a [u8],
+        /// Go `backfillCtx.batchCnt`: the rows of one batch.
+        batch_size: usize,
+    },
+    /// Go `GetRangeEndKey` over a backfill task's `[start, end)`.
+    RangeEndKey {
+        /// The task's first key.
+        start: &'a [u8],
+        /// The task's region end.
         end: &'a [u8],
     },
     /// Go `checkModifyColumnData` over the whole table.
@@ -553,6 +572,8 @@ pub enum AddIndexReorgWork<'a> {
         start: &'a [u8],
         /// The range's end.
         end: &'a [u8],
+        /// Go `backfillCtx.batchCnt`: the rows of one batch.
+        batch_size: usize,
     },
 }
 
@@ -564,6 +585,8 @@ pub enum AddIndexReorgAnswer {
     Batch(tidb_ddl_build::backfilling::ReorgBatch),
     /// What a column check found: `None` when every row fits.
     Checked(Option<LockSqlError>),
+    /// A task's actual end key.
+    EndKey(Vec<u8>),
 }
 
 /// The default for a backfiller that cannot read a table's stored bytes.
@@ -907,7 +930,7 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
     backfiller: &dyn IndexBackfiller,
     check_constraint_validator: &dyn CheckConstraintValidator,
     schema_sync: &dyn DdlSchemaSync,
-    check_owner: &dyn Fn() -> Result<(), String>,
+    check_owner: &(dyn Fn() -> Result<(), String> + Sync),
     wait_retry: &dyn Fn(Duration) -> Result<(), String>,
 ) -> Result<PersistedDdlJobOutcome, ClusterDdlError> {
     let mut schema_state = crate::cluster_ddl::DdlJobSchemaState::new(tidb_vardef::is_mdl_enabled(

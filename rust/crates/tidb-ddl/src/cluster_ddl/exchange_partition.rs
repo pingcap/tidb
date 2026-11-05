@@ -424,6 +424,7 @@ pub(super) fn on_exchange_table_partition(
                         merging: false,
                         physical_ids: Vec::new(),
                         batch_size: 0,
+                        concurrency: 1,
                         session_vars: tidb_ddl_build::session_pool::ReorgSessionVars::of_job(&active.job),
                         row_count: active.job.row_count,
                         column: None,

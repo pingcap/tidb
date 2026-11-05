@@ -61,6 +61,20 @@ fn key_next(key: &[u8]) -> Vec<u8> {
     next
 }
 
+/// Go `GetRangeEndKey`: the key past the last record in `[start, end)` at
+/// this storage's snapshot, `start.Next()` when there is none, so a backfill
+/// task does not chase rows written after it was cut.
+pub fn get_range_end_key(
+    store: &mut dyn tidb_kv::storage::TableStorage,
+    start: &[u8],
+    end: &[u8],
+) -> Result<Vec<u8>, KvTableError> {
+    let mut iter = store.iter_reverse(Some(&Key::from_bytes(end.to_vec())), Some(&Key::from_bytes(start.to_vec())))?;
+    let last = iter.valid().then(|| iter.key().as_bytes().to_vec());
+    iter.close();
+    Ok(key_next(last.as_deref().unwrap_or(start)))
+}
+
 /// Go's DDL backfill (`addIndexTxnWorker.BackfillData`, the column and temp-index workers) over a [`TableCommon`].
 pub trait KvTableBackfill {
     /// Go `getTableRange`: the first record key of `physical_id` and the key

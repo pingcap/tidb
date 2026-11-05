@@ -29,6 +29,7 @@ use crate::cluster_ddl::add_index::{
     INDEX_ELEMENT_KEY, TEMP_INDEX_PREFIX,
 };
 use crate::ddl_reorg_table::DdlReorgTable;
+use super::backfilling::{write_physical_table_record, BackfillExecutor, BatchStep, TableRecordOutcome};
 
 /// Runs what `reorg` asks for and answers its outcome. A storage or owner
 /// failure is the caller's error; a SQL failure of the reorganization itself
@@ -39,7 +40,7 @@ pub(super) fn run_add_index_reorg<S>(
     timeout: Duration,
     backfiller: &dyn IndexBackfiller,
     reorg: &AddIndexReorg,
-    check_owner: &dyn Fn() -> Result<(), String>,
+    check_owner: &(dyn Fn() -> Result<(), String> + Sync),
 ) -> Result<ReorgOutcome, ClusterDdlError>
 where
     S: StoreClient,
@@ -328,7 +329,7 @@ fn table_range(
             buffer,
         ) {
             Ok(AddIndexReorgAnswer::Range(range)) => Ok(range),
-            Ok(AddIndexReorgAnswer::Batch(_) | AddIndexReorgAnswer::Checked(_)) => {
+            Ok(_) => {
                 return Err(ClusterDdlError::Backfill(
                     "a table-range request answered something else".to_owned(),
                 ))
@@ -461,7 +462,7 @@ fn reorg_runnable(
     meta: &mut SnapshotMetaSnapshot,
     tables: &ReorgTables,
     job_id: i64,
-    check_owner: &dyn Fn() -> Result<(), String>,
+    check_owner: &(dyn Fn() -> Result<(), String> + Sync),
 ) -> Result<bool, ClusterDdlError> {
     check_owner().map_err(ClusterDdlError::SchemaSync)?;
     let job = tables
@@ -480,18 +481,6 @@ fn reorg_runnable(
     })
 }
 
-enum BatchStep {
-    /// The batch committed; `true` when its range is exhausted.
-    Advanced {
-        next_key: Vec<u8>,
-        done: bool,
-        added: u64,
-        batch_warnings: Vec<(u16, String, i64)>,
-    },
-    Interrupted,
-    Failed(LockSqlError),
-}
-
 /// Go `runReorgJob` from the persisted handle: every physical table from
 /// the handle's on, each in batches of `batch_size` rows (or temporary
 /// entries, for each index in turn while merging).
@@ -504,7 +493,7 @@ fn run_reorg<S>(
     reorg: &AddIndexReorg,
     tables: &ReorgTables,
     handle: &ReorgHandle,
-    check_owner: &dyn Fn() -> Result<(), String>,
+    check_owner: &(dyn Fn() -> Result<(), String> + Sync),
     warnings: &mut Vec<(u16, String, i64)>,
 ) -> Result<ReorgResult, ClusterDdlError>
 where
@@ -566,104 +555,164 @@ where
                 end_key: end,
                 physical_id: *physical_id,
             };
-            while current.start_key < current.end_key {
-                match run_batch(
+            if current.start_key >= current.end_key {
+                continue;
+            }
+            let handle = current.clone();
+            let backfill_data = |start: &[u8], end: &[u8], batch_size: usize| {
+                run_batch(
                     opener,
                     timeout,
                     backfiller,
-                    sess_pool,
                     reorg,
                     tables,
-                    &current,
+                    handle.physical_id,
+                    start,
+                    end,
+                    batch_size,
                     index_id,
                     check_owner,
-                )? {
-                    BatchStep::Advanced {
-                        next_key,
-                        done,
-                        added,
-                        batch_warnings,
-                    } => {
-                        total += added as i64;
-                        // Go `mergeWarnings`: each code's first warning,
-                        // counted.
-                        for (code, message, count) in batch_warnings {
-                            match warnings.iter_mut().find(|(seen, _, _)| *seen == code) {
-                                Some((_, _, seen_count)) => *seen_count += count,
-                                None => warnings.push((code, message, count)),
-                            }
-                        }
-                        current.start_key = next_key;
-                        if done {
-                            break;
-                        }
-                        if started.elapsed() >= REORG_WAIT_TIMEOUT {
-                            return Ok(ReorgResult::Progress(total));
-                        }
-                    }
-                    BatchStep::Interrupted => return Ok(ReorgResult::Interrupted),
-                    BatchStep::Failed(error) => return Ok(sql_failure(&error, total)),
-                }
+                )
+            };
+            // Go `reorgInfo.UpdateConfigFromSysTbl`.
+            let reload_config = || {
+                reorg_transaction(opener, timeout, |meta, _, _, _| {
+                    let job = tables
+                        .jobs
+                        .load_by_id(meta, reorg.job_id)
+                        .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?;
+                    Ok((
+                        job.filter(|active| {
+                            active.job.state == JobState::RUNNING && active.job.is_alterable()
+                        })
+                        .map(|active| {
+                            (
+                                crate::cluster_ddl::add_index::job_concurrency(&active.job),
+                                crate::cluster_ddl::add_index::job_batch_size(&active.job),
+                            )
+                        }),
+                        Vec::new(),
+                    ))
+                })
+                .inspect_err(|error| {
+                    tidb_ddl_logutil::ddl_logger().warn(
+                        "failed to get latest job from system table",
+                        &[
+                            tidb_log::Field::new("jobID", tidb_log::Value::I64(reorg.job_id)),
+                            tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string())),
+                        ],
+                    );
+                })
+                .ok()
+                .flatten()
+            };
+            let range_end_key = |start: &[u8], end: &[u8]| {
+                reorg_transaction(opener, timeout, |_, snapshot, buffer, _| {
+                    let answer = backfiller.reorg_add_index(
+                        reorg,
+                        AddIndexReorgWork::RangeEndKey { start, end },
+                        snapshot,
+                        buffer,
+                    );
+                    buffer.reset();
+                    Ok((answer, Vec::new()))
+                })
+                .and_then(|answer| match answer {
+                    Ok(AddIndexReorgAnswer::EndKey(key)) => Ok(key),
+                    Ok(_) => Err(ClusterDdlError::Backfill(
+                        "a range-end request answered something else".to_owned(),
+                    )),
+                    Err(error) => Err(ClusterDdlError::Backfill(error.message)),
+                })
+            };
+            let update_reorg_meta = |next_key: &[u8]| {
+                let next = ReorgHandle {
+                    start_key: next_key.to_vec(),
+                    ..handle.clone()
+                };
+                update_reorg_meta(opener, timeout, sess_pool, reorg, tables, &next);
+            };
+            let region_store = backfiller.region_store();
+            let exec = BackfillExecutor {
+                region_store: region_store.as_deref(),
+                physical_id: current.physical_id,
+                concurrency: reorg.concurrency,
+                batch_size: reorg.batch_size,
+                reload_config: &reload_config,
+                // Go `getActualEndKey`: the temp-index merge keeps the region
+                // end; the row workers stop at the rows the range has.
+                shrink_end_key: index_id.is_none(),
+                backfill_data: &backfill_data,
+                range_end_key: &range_end_key,
+                update_reorg_meta: &update_reorg_meta,
+                deadline: started + REORG_WAIT_TIMEOUT,
+            };
+            let (outcome, next_key) = write_physical_table_record(
+                &exec,
+                &current.start_key,
+                &current.end_key,
+                &mut total,
+                warnings,
+            )?;
+            current.start_key = next_key;
+            match outcome {
+                TableRecordOutcome::Done => {}
+                TableRecordOutcome::Progress => return Ok(ReorgResult::Progress(total)),
+                TableRecordOutcome::Interrupted => return Ok(ReorgResult::Interrupted),
+                TableRecordOutcome::Failed(error) => return Ok(sql_failure(&error, total)),
             }
         }
     }
     Ok(ReorgResult::Done(total))
 }
 
+/// Go `BackfillData` for one batch of `[start, end)`, in its own
+/// transaction, after Go's `isReorgRunnable`.
 #[allow(clippy::too_many_arguments)]
 fn run_batch<S>(
     opener: &Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
     backfiller: &dyn IndexBackfiller,
-    sess_pool: Option<&dyn tidb_ddl_build::session_pool::DdlSessionPool>,
     reorg: &AddIndexReorg,
     tables: &ReorgTables,
-    current: &ReorgHandle,
+    physical_id: i64,
+    start: &[u8],
+    end: &[u8],
+    batch_size: usize,
     merge_index: Option<i64>,
-    check_owner: &dyn Fn() -> Result<(), String>,
+    check_owner: &(dyn Fn() -> Result<(), String> + Sync),
 ) -> Result<BatchStep, ClusterDdlError>
 where
     S: StoreClient,
 {
-    let step = reorg_transaction(opener, timeout, |meta, snapshot, buffer, _| {
+    reorg_transaction(opener, timeout, |meta, snapshot, buffer, _| {
         if !reorg_runnable(meta, tables, reorg.job_id, check_owner)? {
             return Ok((BatchStep::Interrupted, Vec::new()));
         }
         let work = match merge_index {
             Some(index_id) => AddIndexReorgWork::Merge {
                 index_id,
-                physical_id: current.physical_id,
-                start: &current.start_key,
-                end: &current.end_key,
+                physical_id,
+                start,
+                end,
+                batch_size,
             },
             None if reorg.partition_phase
                 == Some(crate::cluster_ddl::add_index::PartitionReorgPhase::CopyRows) =>
             {
-                AddIndexReorgWork::PartitionCopy {
-                    physical_id: current.physical_id,
-                    start: &current.start_key,
-                    end: &current.end_key,
-                }
+                AddIndexReorgWork::PartitionCopy { physical_id, start, end, batch_size }
             }
-            None if reorg.clean_up_global_index => AddIndexReorgWork::CleanUpGlobalIndex {
-                physical_id: current.physical_id,
-                start: &current.start_key,
-                end: &current.end_key,
-            },
-            None if reorg.column.is_some() => AddIndexReorgWork::UpdateColumn {
-                physical_id: current.physical_id,
-                start: &current.start_key,
-                end: &current.end_key,
-            },
-            None => AddIndexReorgWork::Backfill {
-                physical_id: current.physical_id,
-                start: &current.start_key,
-                end: &current.end_key,
-            },
+            None if reorg.clean_up_global_index => {
+                AddIndexReorgWork::CleanUpGlobalIndex { physical_id, start, end, batch_size }
+            }
+            None if reorg.column.is_some() => {
+                AddIndexReorgWork::UpdateColumn { physical_id, start, end, batch_size }
+            }
+            None => AddIndexReorgWork::Backfill { physical_id, start, end, batch_size },
         };
         let batch = match backfiller.reorg_add_index(reorg, work, snapshot, buffer) {
             Ok(AddIndexReorgAnswer::Batch(batch)) => batch,
-            Ok(AddIndexReorgAnswer::Range(_) | AddIndexReorgAnswer::Checked(_)) => {
+            Ok(_) => {
                 return Err(ClusterDdlError::Backfill(
                     "a batch request answered something else".to_owned(),
                 ))
@@ -674,35 +723,12 @@ where
                 return Ok((BatchStep::Failed(error), Vec::new()));
             }
         };
-        let mut mutations = Vec::with_capacity(batch.locks.len() + 1);
+        let mut mutations = Vec::with_capacity(batch.locks.len());
         for key in &batch.locks {
             mutations.push(
                 BufferMutation::lock_only(key.clone())
                     .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
             );
-        }
-        // Go `UpdateReorgMeta`: the handle advances with the batch (staged
-        // here only by a worker whose pool has no sessions yet).
-        let existing = match sess_pool {
-            Some(_) => Vec::new(),
-            None => tables
-                .reorg
-                .load(meta, reorg.job_id)
-                .map_err(ClusterDdlError::Backfill)?,
-        };
-        if let Some(row) = existing.first() {
-            let next = ReorgHandle {
-                start_key: batch.next_key.clone(),
-                ..current.clone()
-            };
-            if row.handle != next {
-                mutations.extend(
-                    tables
-                        .reorg
-                        .update_ddl_reorg_handle(row, &next)
-                        .map_err(ClusterDdlError::Backfill)?,
-                );
-            }
         }
         Ok((
             BatchStep::Advanced {
@@ -713,26 +739,52 @@ where
             },
             mutations,
         ))
-    })?;
-    // Go `reorgInfo.UpdateReorgMeta(keeper.nextKey, sessPool)`: a
-    // transaction of its own once the batch is in; a failure is only logged.
-    if let (Some(sess_pool), BatchStep::Advanced { next_key, .. }) = (sess_pool, &step) {
-        let next = ReorgHandle {
-            start_key: next_key.clone(),
-            ..current.clone()
-        };
-        let updated = sess_pool.open_sql_session().and_then(|mut se| {
-            crate::ddl_reorg_table::update_reorg_meta(se.as_mut(), reorg.job_id, &next)
-        });
-        if let Err(error) = updated {
-            tidb_ddl_logutil::ddl_logger().warn(
-                "update reorg meta failed",
-                &[
-                    tidb_log::Field::new("job ID", tidb_log::Value::I64(reorg.job_id)),
-                    tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string())),
-                ],
-            );
-        }
+    })
+}
+
+/// Go `reorgInfo.UpdateReorgMeta(nextKey, sessPool)`: the handle in a
+/// transaction of its own (on the worker's sessions, or staged on the reorg
+/// table by a worker whose pool has no sessions yet); a failure is only
+/// logged.
+fn update_reorg_meta<S>(
+    opener: &Arc<RealOptimisticTransactionOpener<S>>,
+    timeout: Duration,
+    sess_pool: Option<&dyn tidb_ddl_build::session_pool::DdlSessionPool>,
+    reorg: &AddIndexReorg,
+    tables: &ReorgTables,
+    next: &ReorgHandle,
+) where
+    S: StoreClient,
+{
+    let updated = match sess_pool {
+        Some(sess_pool) => sess_pool
+            .open_sql_session()
+            .and_then(|mut se| crate::ddl_reorg_table::update_reorg_meta(se.as_mut(), reorg.job_id, next))
+            .map_err(|error| error.to_string()),
+        None => reorg_transaction(opener, timeout, |meta, _, _, _| {
+            let existing = tables.reorg.load(meta, reorg.job_id).map_err(ClusterDdlError::Backfill)?;
+            let mut mutations = Vec::new();
+            if let Some(row) = existing.first() {
+                if row.handle != *next {
+                    mutations.extend(
+                        tables
+                            .reorg
+                            .update_ddl_reorg_handle(row, next)
+                            .map_err(ClusterDdlError::Backfill)?,
+                    );
+                }
+            }
+            Ok(((), mutations))
+        })
+        .map_err(|error| error.to_string()),
+    };
+    if let Err(error) = updated {
+        tidb_ddl_logutil::ddl_logger().warn(
+            "update reorg meta failed",
+            &[
+                tidb_log::Field::new("job ID", tidb_log::Value::I64(reorg.job_id)),
+                tidb_log::Field::new("error", tidb_log::Value::Str(error)),
+            ],
+        );
     }
-    Ok(step)
 }

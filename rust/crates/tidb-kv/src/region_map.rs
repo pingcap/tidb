@@ -128,6 +128,21 @@ pub trait RegionStore: Send + Sync + std::fmt::Debug {
         end: &[u8],
     ) -> Result<Vec<RegionMeta>, String>;
 
+    /// client-go `RegionCache.BatchLoadRegionsWithKeyRange(bo, start, end,
+    /// limit)`: the `[start, end)` bounds of at most `limit` consecutive
+    /// regions from the one holding `start`, in key order. A store without
+    /// a PD region cache answers its own regions.
+    fn batch_load_regions_with_key_range(
+        &self,
+        start: &[u8],
+        end: &[u8],
+        limit: usize,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
+        let mut regions = self.load_regions_in_key_range(start, end)?;
+        regions.truncate(limit);
+        Ok(regions.into_iter().map(|region| (region.start_key, region.end_key)).collect())
+    }
+
     /// Go `helper.Storage.GetPDHTTPClient()`: the store's PD HTTP client,
     /// `None` for a store without PD (the in-process store), on which Go's
     /// `helper.TryGetPDHTTPClient` fails `pd http client unavailable`.

@@ -153,6 +153,31 @@ impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
         Ok(metas)
     }
 
+    fn batch_load_regions_with_key_range(
+        &self,
+        start: &[u8],
+        end: &[u8],
+        limit: usize,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
+        let pd = self.store.store().pd_client();
+        // Go `loadTableRanges`: `tikv.NewBackofferWithVars(ctx, 10000, nil)`.
+        let mut backoffer = tikv_client::retry::RetryBackoffer::new(
+            tikv_client::async_util::Cancellation::default(),
+            10_000,
+        );
+        let (start, end) = (start.to_vec().into(), end.to_vec().into());
+        let regions = self
+            .block_on(async move {
+                pd.batch_load_regions_with_key_range(start, end, limit, &mut backoffer)
+                    .await
+            })
+            .map_err(|error| error.to_string())?;
+        Ok(regions
+            .into_iter()
+            .map(|region| (region.region.start_key.clone(), region.region.end_key.clone()))
+            .collect())
+    }
+
     fn tikv_store_count(&self) -> Option<usize> {
         self.store
             .store()

@@ -24,7 +24,7 @@
 //! An ADD on a HASH or KEY table is a reorganization in Go
 //! (`hashPartitionManagement`); it is not queued here.
 
-use super::add_index::{action_step, job_batch_size, get_ddl_reorg_handle, reorg_step, reorg_sub_job, update_version_and_table_info, table_step_with_diff, AddIndexReorg, AddIndexSubmission, ReorgOutcome, ReorgResult, ReorgStageRequest};
+use super::add_index::{action_step, job_batch_size, job_concurrency, get_ddl_reorg_handle, reorg_step, reorg_sub_job, update_version_and_table_info, table_step_with_diff, AddIndexReorg, AddIndexSubmission, ReorgOutcome, ReorgResult, ReorgStageRequest};
 use tidb_ddl_build::session_pool::ReorgSessionVars;
 use super::*;
 
@@ -532,6 +532,7 @@ fn clean_global_index_entries_from_dropped_partitions<S: MetaSnapshot>(
             merging: false,
             physical_ids: old_ids.to_vec(),
             batch_size: job_batch_size(&active.job),
+            concurrency: job_concurrency(&active.job),
             session_vars: ReorgSessionVars::of_job(&active.job),
             row_count: active.job.row_count,
             column: None,

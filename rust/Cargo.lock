@@ -4039,7 +4039,9 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "crossbeam-channel",
  "fail",
+ "hex",
  "reqwest 0.13.4",
  "serde_json",
  "tidb-ast",
@@ -4050,6 +4052,7 @@ dependencies = [
  "tidb-config",
  "tidb-config-kerneltype",
  "tidb-context",
+ "tidb-cpuprofile",
  "tidb-datatype",
  "tidb-dbterror",
  "tidb-ddl-bdr",

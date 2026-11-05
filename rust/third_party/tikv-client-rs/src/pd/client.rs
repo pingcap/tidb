@@ -337,6 +337,19 @@ pub trait PdClient: Send + Sync + 'static {
         Err(crate::Error::Unimplemented)
     }
 
+    /// client-go `RegionCache.BatchLoadRegionsWithKeyRange(bo, startKey,
+    /// endKey, count)`: at most `count` consecutive regions from `start_key`,
+    /// freshly loaded from PD. Clients without a region cache refuse.
+    async fn batch_load_regions_with_key_range(
+        &self,
+        _start_key: Key,
+        _end_key: Key,
+        _count: usize,
+        _backoffer: &mut crate::retry::RetryBackoffer,
+    ) -> Result<Vec<RegionWithLeader>> {
+        Err(crate::Error::Unimplemented)
+    }
+
     /// client-go `RegionCache.GetStoresByType(typ)`; `None` for a client
     /// without a region cache (Go's failed `tikv.Storage` assertion).
     fn get_stores_by_type(
@@ -1880,6 +1893,18 @@ where
     ) -> Result<Vec<RegionWithLeader>> {
         self.region_cache
             .locate_key_range(start_key, end_key, backoffer)
+            .await
+    }
+
+    async fn batch_load_regions_with_key_range(
+        &self,
+        start_key: Key,
+        end_key: Key,
+        count: usize,
+        backoffer: &mut crate::retry::RetryBackoffer,
+    ) -> Result<Vec<RegionWithLeader>> {
+        self.region_cache
+            .batch_load_regions_with_key_range(start_key, end_key, count, backoffer)
             .await
     }
 

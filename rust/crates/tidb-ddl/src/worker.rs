@@ -1689,7 +1689,7 @@ mod schema_sync_tests {
         };
         let run = |id,
                    notifier: Option<&dyn SchemaVersionNotifier>,
-                   check: &dyn Fn() -> Result<(), String>| {
+                   check: &(dyn Fn() -> Result<(), String> + Sync)| {
             run_persisted_ddl_job(
                 opener.clone(),
                 id,
@@ -3440,6 +3440,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
             physical_id,
             start,
             end,
+            batch_size,
         } = &work
         {
             let ids = DdlTransactionAutoIds {
@@ -3458,7 +3459,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                     *physical_id,
                     start,
                     end,
-                    reorg.batch_size,
+                    *batch_size,
                     context,
                 )
                 .map(AddIndexReorgAnswer::Batch)
@@ -3519,7 +3520,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                 unreachable!("answered above")
             }
             // Go `updateColumnWorker.BackfillData`.
-            AddIndexReorgWork::UpdateColumn { start, end, .. } => {
+            AddIndexReorgWork::UpdateColumn { start, end, batch_size, .. } => {
                 let spec = reorg.column.as_ref().ok_or_else(|| {
                     exchange_validation_internal("a column rewrite names no column".to_owned())
                 })?;
@@ -3544,7 +3545,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                         changing,
                         start,
                         end,
-                        reorg.batch_size,
+                        batch_size,
                         &RowDecodeContext::for_ddl(context),
                         context,
                     )
@@ -3558,10 +3559,16 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                 .physical_record_range(&mut storage.clone(), physical_id)
                 .map(AddIndexReorgAnswer::Range)
                 .map_err(backfill_failure),
+            AddIndexReorgWork::RangeEndKey { start, end } => {
+                tidb_ddl_build::table_backfill::get_range_end_key(&mut storage.clone(), start, end)
+                    .map(AddIndexReorgAnswer::EndKey)
+                    .map_err(backfill_failure)
+            }
             AddIndexReorgWork::Backfill {
                 physical_id,
                 start,
                 end,
+                batch_size,
             } => {
                 // A partial index's entries are the rows its condition holds
                 // for (Go `buildIndexConditionChecker` in the backfill).
@@ -3593,7 +3600,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                             physical_id,
                             start,
                             end,
-                            reorg.batch_size,
+                            batch_size,
                             &decode,
                         )
                         .map_err(backfill_failure)?;
@@ -3622,6 +3629,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                 physical_id,
                 start,
                 end,
+                batch_size,
             } => table
                 .clean_up_global_index_batch(
                     &mut storage.clone(),
@@ -3629,7 +3637,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                     physical_id,
                     start,
                     end,
-                    reorg.batch_size,
+                    batch_size,
                     &RowDecodeContext::for_write(context),
                 )
                 .map(AddIndexReorgAnswer::Batch)
@@ -3639,6 +3647,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                 physical_id,
                 start,
                 end,
+                batch_size,
             } => table
                 .merge_temp_index_batch(
                     &mut storage.clone(),
@@ -3646,7 +3655,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                     physical_id,
                     start,
                     end,
-                    reorg.batch_size,
+                    batch_size,
                 )
                 .map(AddIndexReorgAnswer::Batch)
                 .map_err(backfill_failure),

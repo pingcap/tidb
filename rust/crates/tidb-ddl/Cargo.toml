@@ -12,6 +12,9 @@ description = "Go pkg/ddl's worker side: the owner-stepped DDL job scheduler, th
 workspace = true
 
 [dependencies]
+hex = "0.4"
+crossbeam-channel = "0.5"
+tidb-cpuprofile = { path = "../tidb-cpuprofile" }
 tidb-exeerrors = { path = "../tidb-exeerrors" }
 tidb-gcutil = { path = "../tidb-gcutil" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
