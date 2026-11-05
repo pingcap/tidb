@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -2284,6 +2285,14 @@ func TestAutoRandomAllocatorMigration(t *testing.T) {
 					other.MustExec("use test")
 					other.MustExec("insert into t(payload) values (30),(40)")
 					tk.MustExec("insert into t(payload) values (50)")
+					if cache == 1 {
+						tbl := external.GetTableByName(t, tk, "test", "t")
+						alloc := tbl.Allocators(tk.Session().GetTableCtx()).Get(autoid.AutoRandomType)
+						require.NotNil(t, alloc)
+						require.Positive(t, alloc.Base())
+						// Cache-one conversion must not reserve unused IDs.
+						require.Equal(t, alloc.Base(), alloc.End())
+					}
 					mask := (uint64(1) << incrementalBits) - 1
 					tk.MustQuery(fmt.Sprintf("select count(*),count(distinct id),min(id & %d)>%d from t where payload>=30", mask, base)).Check(testkit.Rows("3 3 1"))
 					if populated {
@@ -2353,6 +2362,14 @@ func TestMultiSchemaChangeAutoIncToAutoRandom(t *testing.T) {
 			// Pre-fix this insert recovered a nil-pointer panic (ERROR 1105):
 			// the runtime auto_random allocator was never created.
 			tk.MustExec("insert into t(v) values (3)")
+			if tc.name == "auto_id_cache_1" {
+				tbl := external.GetTableByName(t, tk, "test", "t")
+				alloc := tbl.Allocators(tk.Session().GetTableCtx()).Get(autoid.AutoRandomType)
+				require.NotNil(t, alloc)
+				require.Positive(t, alloc.Base())
+				// A single generated ID must exhaust a cache of size one.
+				require.Equal(t, alloc.Base(), alloc.End())
+			}
 			// The new id must come from the auto_random allocator: the
 			// incremental part (below the 5 shard bits) continues after the
 			// migrated auto_increment base rather than restarting from 1.
