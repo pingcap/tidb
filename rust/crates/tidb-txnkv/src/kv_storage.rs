@@ -39,6 +39,10 @@ pub trait Transaction: Send {
     /// Go `StartTS`.
     fn start_ts(&self) -> u64;
 
+    /// Go `SetOption(kv.RequestSourceInternal / kv.RequestSourceType /
+    /// kv.ExplicitRequestSourceType, ...)`.
+    fn set_request_source(&mut self, source: &crate::RequestSource);
+
     /// Go `Get` at the transaction's start timestamp.
     fn get(
         &mut self,

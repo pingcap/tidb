@@ -372,6 +372,10 @@ where
         TikvTxn::start_ts(self)
     }
 
+    fn set_request_source(&mut self, source: &tidb_txnkv::RequestSource) {
+        TikvTxn::set_request_source(self, source);
+    }
+
     fn get(
         &mut self,
         key: &[u8],

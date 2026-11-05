@@ -33,8 +33,9 @@ pub trait DomainSysSession:
     /// Go `ExecuteInternal` of a write: the rows it affected.
     fn execute_internal_write(&self, sql: &str) -> Result<u64, String>;
 
-    /// Go `ExecuteInternal` of a query, its rows drained.
-    fn query_internal(&self, sql: &str) -> Result<Vec<Vec<Datum>>, String>;
+    /// Go `ExecuteInternal(ctx, sql)` of a query, its rows drained, under
+    /// `ctx`'s request source (`kv.WithInternalSourceType(ctx, source)`).
+    fn query_internal(&self, source: &str, sql: &str) -> Result<Vec<Vec<Datum>>, String>;
 
     /// Go `sessiontxn.NewTxn` (`pessimistic`: `EnterNewTxn` pessimistic), as
     /// `pkg/ddl/session.Session.Begin` / `BeginPessimistic` call it: the

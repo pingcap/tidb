@@ -2433,7 +2433,14 @@ impl ClusterHistoricalStatsHandle {
                 plan.mutations,
                 read_ts,
                 "default",
-                crate::session_transaction::restricted_transaction_options(&self.global_vars),
+                // Go's stats writes run under `StatsCtx`
+                // (`kv.InternalTxnStatsForegroundPriority`).
+                crate::session_transaction::restricted_transaction_options(&self.global_vars)
+                    .with_request_source(tidb_txnkv::RequestSource {
+                        internal: true,
+                        source_type: tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY.to_owned(),
+                        explicit_source_type: String::new(),
+                    }),
             )
             .map_err(|error| error.message)
     }
@@ -3562,7 +3569,8 @@ impl TiDBTableValues {
         let value = sql
             .map_err(|error| error.to_string())
             .and_then(|sql| {
-                self.with_session(|session| session.query_internal(&sql))
+                // Go `GetTiDBTableValue`'s `kv.InternalTxnSysVar`.
+                self.with_session(|session| session.query_internal(tidb_txnkv::INTERNAL_TXN_SYS_VAR, &sql))
             })
             .ok()
             .and_then(|rows| rows.into_iter().next())

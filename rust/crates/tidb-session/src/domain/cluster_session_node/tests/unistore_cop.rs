@@ -6902,7 +6902,7 @@ fn domain_pool_sessions_keep_gos_zero_sql_mode() {
         .with_session(|session| {
             session.with_session_context(|context| {
                 context
-                    .query_internal("select @@sql_mode, cast('0000-00-00' as datetime) is null")
+                    .query_internal(tidb_txnkv::INTERNAL_TXN_OTHERS, "select @@sql_mode, cast('0000-00-00' as datetime) is null")
                     .map_err(tidb_syssession::SysSessionError::new)
             })
         })
@@ -28660,6 +28660,7 @@ fn a_statements_requests_carry_its_label_as_their_source() {
     let sent = sent.lock().unwrap().clone();
     assert!(sent.contains(&"internal_ddl_add_index".to_owned()), "{sent:?}");
     assert!(sent.contains(&"internal_ddl_add_index_ddl".to_owned()), "{sent:?}");
+    assert!(!sent.iter().any(|source| source == "unknown"), "{sent:?}");
     // The worker's pooled sessions write the job's rows as `ddl`, and the
     // submitter allocates the job's id as `ddl` (Go `ddl.Start`'s context).
     assert!(sent.contains(&"internal_ddl".to_owned()), "{sent:?}");
@@ -28722,4 +28723,25 @@ fn a_statements_requests_carry_its_label_as_their_source() {
     let sent = sent.lock().unwrap().clone();
     assert!(sent.contains(&"internal_others".to_owned()), "{sent:?}");
     assert!(!sent.iter().any(|source| source == "unknown"), "{sent:?}");
+    let sent: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let recorded = Arc::clone(&sent);
+    stack.rpc.set_send_hook(Some(Arc::new(move |request| {
+        let any = request.as_any();
+        let (kind, key, context): (&str, Vec<u8>, _) = if let Some(request) = any.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+            ("prewrite", request.mutations.first().map(|m| m.key.clone()).unwrap_or_default(), request.context.as_ref())
+        } else if let Some(request) = any.downcast_ref::<coprocessor::Request>() {
+            ("cop", request.ranges.first().map(|r| r.start.clone()).unwrap_or_default(), request.context.as_ref())
+        } else {
+            return;
+        };
+        let source = context.map(|context| context.request_source.clone()).unwrap_or_default();
+        recorded.lock().unwrap().push(format!("{kind} {} {source}", String::from_utf8_lossy(&key[..key.len().min(12)])));
+    })));
+    rows(&mut session, "ANALYZE TABLE request_source");
+    stack.rpc.set_send_hook(None);
+    // Go's analyze: the stats writes under `StatsCtx`, the scans under
+    // `kv.InternalTxnStats`, and the auto IDs under `kv.InternalTxnMeta`.
+    let sent = sent.lock().unwrap().clone();
+    assert!(sent.iter().any(|request| request.ends_with(" internal_StatsForegroundPriority")), "{sent:?}");
+    assert!(!sent.iter().any(|request| request.ends_with(" unknown")), "{sent:?}");
 }

@@ -175,7 +175,7 @@ pub(crate) fn schema_storage(factory: &Arc<Domain>) -> crate::http_status::Schem
             .advanced_sys_session_pool()
             .with_session(|session| {
                 session.with_session_context(|context| {
-                    context.query_internal(&sql).map_err(tidb_syssession::SysSessionError::new)
+                    context.query_internal(tidb_txnkv::INTERNAL_TXN_OTHERS, &sql).map_err(tidb_syssession::SysSessionError::new)
                 })
             })
             .map_err(|error| error.to_string())?;
@@ -240,7 +240,7 @@ mod tests {
             .advanced_sys_session_pool()
             .with_session(|session| {
                 session.with_session_context(|context| {
-                    context.query_internal(sql).map_err(tidb_syssession::SysSessionError::new)
+                    context.query_internal(tidb_txnkv::INTERNAL_TXN_OTHERS, sql).map_err(tidb_syssession::SysSessionError::new)
                 })
             })
             .unwrap();
@@ -351,7 +351,7 @@ mod tests {
                 .with_session(|session| {
                     session.with_session_context(|context| {
                         let rows = context
-                            .query_internal("SELECT job_meta FROM mysql.tidb_ddl_job")
+                            .query_internal(tidb_txnkv::INTERNAL_TXN_OTHERS, "SELECT job_meta FROM mysql.tidb_ddl_job")
                             .map_err(tidb_syssession::SysSessionError::new)?;
                         state = rows.first().map(|row| {
                             let mut job = tidb_model::Job::default();

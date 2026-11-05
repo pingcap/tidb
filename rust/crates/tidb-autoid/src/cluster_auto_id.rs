@@ -634,6 +634,12 @@ impl ClusterAutoIdStore {
                     .begin()
                     .map_err(|error| store_error("open", &error))?
             };
+            // Go `autoid`'s `kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)`.
+            transaction.set_request_source(&tidb_txnkv::RequestSource {
+                internal: true,
+                source_type: tidb_txnkv::INTERNAL_TXN_META.to_owned(),
+                explicit_source_type: String::new(),
+            });
             let region = region.map(tidb_tracing::start_thread_region);
             let stored = {
                 let _untraced = tidb_tracing::with_thread_span(None);

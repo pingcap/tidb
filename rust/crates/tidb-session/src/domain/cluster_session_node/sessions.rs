@@ -543,6 +543,25 @@ impl ClusterStatsSessionState {
         callback(&mut conn)
     }
 
+    /// Go `session.setRequestSource` for an internal session: the source
+    /// type its caller's context carries (`ctx.Value(kv.RequestSourceKey)`).
+    pub(crate) fn adopt_request_source(&self, context: &dyn tidb_sqlexec::ExecutionContext) {
+        if let Some(source) = context_request_source(context) {
+            self.adopt_request_source_type(&source.source_type);
+        }
+    }
+
+    /// [`Self::adopt_request_source`] of a source type the caller names.
+    pub(crate) fn adopt_request_source_type(&self, source_type: &str) {
+        if source_type.is_empty() {
+            return;
+        }
+        let _ = self.with_session(|session| {
+            session.session.set_internal_request_source(source_type);
+            Ok(())
+        });
+    }
+
     pub(crate) fn materialize(
         &self,
         sql: &str,
@@ -674,27 +693,30 @@ impl ClusterStatsSqlExecutor {
 impl tidb_sqlexec::SqlExecutor for ClusterStatsSqlExecutor {
     fn execute(
         &self,
-        _context: &dyn tidb_sqlexec::ExecutionContext,
+        context: &dyn tidb_sqlexec::ExecutionContext,
         sql: &str,
     ) -> Result<Vec<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
+        self.state.adopt_request_source(context);
         Ok(self.materialized_record_set(sql)?.into_iter().collect())
     }
 
     fn execute_internal(
         &self,
-        _context: &dyn tidb_sqlexec::ExecutionContext,
+        context: &dyn tidb_sqlexec::ExecutionContext,
         sql: &str,
         arguments: &[tidb_sqlescape::SqlArg<'_>],
     ) -> Result<Option<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
+        self.state.adopt_request_source(context);
         let escaped = tidb_sqlescape::escape_sql_text(sql, arguments)?;
         self.materialized_record_set(&escaped)
     }
 
     fn execute_stmt(
         &self,
-        _context: &dyn tidb_sqlexec::ExecutionContext,
+        context: &dyn tidb_sqlexec::ExecutionContext,
         statement: &tidb_ast::Stmt,
     ) -> Result<Option<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
+        self.state.adopt_request_source(context);
         let sql = String::from_utf8(statement.original_text().to_vec())?;
         self.materialized_record_set(&sql)
     }
@@ -713,7 +735,7 @@ impl tidb_sqlexec::RestrictedSqlExecutor for ClusterStatsSqlExecutor {
 
     fn exec_restricted_stmt(
         &self,
-        _context: &dyn tidb_sqlexec::ExecutionContext,
+        context: &dyn tidb_sqlexec::ExecutionContext,
         statement: &tidb_ast::Stmt,
         _options: &[tidb_sqlexec::OptionFuncAlias],
     ) -> Result<
@@ -723,13 +745,14 @@ impl tidb_sqlexec::RestrictedSqlExecutor for ClusterStatsSqlExecutor {
         ),
         tidb_sqlexec::SqlExecError,
     > {
+        self.state.adopt_request_source(context);
         let sql = String::from_utf8(statement.original_text().to_vec())?;
         self.state.materialize(&sql)
     }
 
     fn exec_restricted_sql(
         &self,
-        _context: &dyn tidb_sqlexec::ExecutionContext,
+        context: &dyn tidb_sqlexec::ExecutionContext,
         options: &[tidb_sqlexec::OptionFuncAlias],
         sql: &str,
         arguments: &[tidb_sqlescape::SqlArg<'_>],
@@ -740,6 +763,7 @@ impl tidb_sqlexec::RestrictedSqlExecutor for ClusterStatsSqlExecutor {
         ),
         tidb_sqlexec::SqlExecError,
     > {
+        self.state.adopt_request_source(context);
         let escaped = tidb_sqlescape::escape_sql_text(sql, arguments)?;
         if is_analyze_table_sql(&escaped) && !options.is_empty() {
             self.state.execute_auto_analyze(&escaped, options)
@@ -1170,8 +1194,8 @@ impl tidb_ddl_session::SessionContext for ClusterStatsSessionContext {
         <Self as tidb_syssession::SessionContext>::rollback_txn(self, context);
     }
 
-    fn request_source(&self, _context: &dyn tidb_sqlexec::ExecutionContext) -> Option<String> {
-        None
+    fn request_source(&self, context: &dyn tidb_sqlexec::ExecutionContext) -> Option<String> {
+        context_request_source(context).map(|source| source.source_type.clone())
     }
 
     fn execute_internal(
@@ -1253,7 +1277,8 @@ impl tidb_domain_core::sys_session::DomainSysSession for ClusterStatsSessionCont
         .map_err(|error| error.to_string())
     }
 
-    fn query_internal(&self, sql: &str) -> Result<Vec<Vec<tidb_datatype::Datum>>, String> {
+    fn query_internal(&self, source: &str, sql: &str) -> Result<Vec<Vec<tidb_datatype::Datum>>, String> {
+        self.state.adopt_request_source_type(source);
         self.state
             .materialize(sql)
             .map(|(rows, _)| rows)
@@ -1474,4 +1499,13 @@ pub fn get_snapshot_info_schema(
         domain.auto_ids.as_ref(),
         cached_table_session.as_ref(),
     )
+}
+
+/// Go `ctx.Value(kv.RequestSourceKey)`: the request source a caller's
+/// context carries.
+fn context_request_source(context: &dyn tidb_sqlexec::ExecutionContext) -> Option<&tikv_client::util::RequestSource> {
+    context
+        .as_any()
+        .downcast_ref::<tikv_client::trace::TraceContext>()
+        .and_then(tikv_client::util::request_source_value)
 }

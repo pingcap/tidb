@@ -130,6 +130,12 @@ pub fn with_request_source(context: &TraceContext, source: RequestSource) -> Tra
     context.with_value::<RequestSourceKey, _>(source)
 }
 
+/// Go `ctx.Value(kv.RequestSourceKey).(kv.RequestSource)`: the source the
+/// context carries, if any.
+pub fn request_source_value(context: &TraceContext) -> Option<&RequestSource> {
+    context.value::<RequestSourceKey, RequestSource>()
+}
+
 pub fn request_source_from_context(context: &TraceContext) -> String {
     context
         .value::<RequestSourceKey, RequestSource>()

@@ -42,7 +42,7 @@ impl PooledSql {
         self.0
             .with_session(|session| {
                 session.with_session_context(|context| {
-                    context.query_internal(sql).map_err(tidb_syssession::SysSessionError::new)
+                    context.query_internal(tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY, sql).map_err(tidb_syssession::SysSessionError::new)
                 })
             })
             .map_err(|error| PlanReplayerError::Other(error.to_string()))
