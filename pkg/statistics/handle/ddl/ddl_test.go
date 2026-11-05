@@ -140,6 +140,11 @@ func TestDDLTable(t *testing.T) {
 	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
+
+	// A panic in handling an event escapes HandleDDLEvent. The event has no table info.
+	require.Panics(t, func() {
+		_ = h.HandleDDLEvent(context.Background(), nil, notifier.NewDropTableEvent(nil))
+	})
 }
 
 func TestSystemTableDDLHasNoEvent(t *testing.T) {
