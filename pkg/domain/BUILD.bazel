@@ -184,6 +184,7 @@ go_test(
         "//pkg/meta",
         "//pkg/meta/model",
         "//pkg/metrics",
+        "//pkg/owner",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
