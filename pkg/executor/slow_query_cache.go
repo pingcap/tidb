@@ -35,8 +35,8 @@ const (
 	// entry's bytes are released when that write lands. The index map and the
 	// preallocated backing array are not counted.
 	slowQueryCacheMaxMem        = 50 * 1024 * 1024
-	slowQueryCacheWriteChanSize = 100
-	slowQueryCacheReadChanSize  = 1000
+	slowQueryCacheWriteChanSize = 10
+	slowQueryCacheReadChanSize  = 100
 )
 
 // slowQueryKey identifies one slow query in the plaintext cache. Digest is
