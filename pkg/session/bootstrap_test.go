@@ -17,6 +17,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -2965,4 +2966,134 @@ func TestTiDBUpgradeToVer232(t *testing.T) {
 		createSQL := getTableCreateSQLFn(seCurVer, tbl)
 		require.Contains(t, createSQL, "i_user")
 	}
+}
+
+func TestUpgradeToVer233AddsRestoreRouteIdentity(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// Simulate a cluster bootstrapped before version 233: the restore registry
+	// still has the legacy unique index and no route identity columns.
+	sePre := CreateSessionAndSetID(t, store)
+	MustExec(t, sePre, "ALTER TABLE mysql.tidb_restore_registry DROP INDEX unique_registration_params_v2")
+	MustExec(t, sePre, "ALTER TABLE mysql.tidb_restore_registry DROP COLUMN route_hash")
+	MustExec(t, sePre, "ALTER TABLE mysql.tidb_restore_registry DROP COLUMN route_strings")
+	MustExec(t, sePre, "ALTER TABLE mysql.tidb_restore_registry DROP COLUMN source_filter_strings")
+	MustExec(t, sePre, `ALTER TABLE mysql.tidb_restore_registry ADD UNIQUE INDEX unique_registration_params (
+		filter_hash, start_ts, restored_ts, upstream_cluster_id, with_sys_table, cmd(256))`)
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	require.NoError(t, m.FinishBootstrap(int64(version232)))
+	revertVersionAndVariables(t, sePre, version232)
+	require.NoError(t, txn.Commit(ctx))
+	unsetStoreBootstrapped(store.UUID())
+	sePre.Close()
+	dom.Close()
+
+	domCurrent, err := BootstrapSession(store)
+	require.NoError(t, err)
+	seCurrent := CreateSessionAndSetID(t, store)
+
+	result := MustExecToRecodeSet(t, seCurrent, `SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_schema='mysql' AND table_name='tidb_restore_registry'
+		AND column_name IN ('source_filter_strings', 'route_strings', 'route_hash')`)
+	chunk := result.NewChunk(nil)
+	require.NoError(t, result.Next(ctx, chunk))
+	require.Equal(t, int64(3), chunk.GetRow(0).GetInt64(0))
+	require.NoError(t, result.Close())
+
+	result = MustExecToRecodeSet(t, seCurrent, `SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_schema='mysql' AND table_name='tidb_restore_registry'
+		AND column_name IN ('source_filter_strings', 'route_strings') AND data_type='mediumtext'`)
+	chunk = result.NewChunk(nil)
+	require.NoError(t, result.Next(ctx, chunk))
+	require.Equal(t, int64(2), chunk.GetRow(0).GetInt64(0))
+	require.NoError(t, result.Close())
+
+	result = MustExecToRecodeSet(t, seCurrent, `SELECT column_name, sub_part FROM information_schema.statistics
+		WHERE table_schema='mysql' AND table_name='tidb_restore_registry'
+		AND index_name='unique_registration_params_v2' AND non_unique=0 ORDER BY seq_in_index`)
+	chunk = result.NewChunk(nil)
+	require.NoError(t, result.Next(ctx, chunk))
+	require.Equal(t, 7, chunk.NumRows())
+	expectedIndexColumns := []string{"filter_hash", "route_hash", "start_ts", "restored_ts",
+		"upstream_cluster_id", "with_sys_table", "cmd"}
+	for i, expected := range expectedIndexColumns {
+		require.Equal(t, expected, chunk.GetRow(i).GetString(0))
+		if expected == "cmd" {
+			require.Equal(t, int64(256), chunk.GetRow(i).GetInt64(1))
+		} else {
+			require.True(t, chunk.GetRow(i).IsNull(1))
+		}
+	}
+	require.NoError(t, result.Close())
+
+	result = MustExecToRecodeSet(t, seCurrent, `SELECT COUNT(*) FROM information_schema.statistics
+		WHERE table_schema='mysql' AND table_name='tidb_restore_registry'
+		AND index_name='unique_registration_params'`)
+	chunk = result.NewChunk(nil)
+	require.NoError(t, result.Next(ctx, chunk))
+	require.Equal(t, int64(0), chunk.GetRow(0).GetInt64(0))
+	require.NoError(t, result.Close())
+
+	// Two independent restores may share a source filter as long as their route
+	// fingerprints differ: the v2 unique index must accept both.
+	insert := `INSERT INTO mysql.tidb_restore_registry
+		(filter_strings, filter_hash, source_filter_strings, route_strings, route_hash, start_ts, restored_ts,
+		 upstream_cluster_id, with_sys_table, status, cmd)
+		VALUES ('*.*', 'filter', 'db.t', ?, ?, 1, 2, 3, false, 'running', 'restore')`
+	MustExec(t, seCurrent, insert, "[\"`db`.`t`:`x`.`t`\"]", "route-1")
+	MustExec(t, seCurrent, insert, "[\"`db`.`t`:`y`.`t`\"]", "route-2")
+
+	// The upgraded schema must be indistinguishable from a freshly bootstrapped
+	// one (column order and index included), otherwise two clusters running the
+	// same binary would report different `SHOW CREATE TABLE` output.
+	freshStore, freshDom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, freshStore.Close()) }()
+	defer freshDom.Close()
+	seFresh := CreateSessionAndSetID(t, freshStore)
+	defer seFresh.Close()
+	require.Equal(t, restoreRegistrySchema(t, seFresh), restoreRegistrySchema(t, seCurrent))
+
+	// Re-running the migration against an already migrated schema (the state a
+	// cluster is in when a newer branch already applied its own restore-registry
+	// migration) must be a no-op: every DDL is reentrant on
+	// ErrColumnExists / ErrDupKeyName / ErrCantDropFieldOrKey.
+	upgradedSchema := restoreRegistrySchema(t, seCurrent)
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(int64(version232)))
+	revertVersionAndVariables(t, seCurrent, version232)
+	require.NoError(t, txn.Commit(ctx))
+	unsetStoreBootstrapped(store.UUID())
+	seCurrent.Close()
+	domCurrent.Close()
+
+	domAgain, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domAgain.Close()
+	seAgain := CreateSessionAndSetID(t, store)
+	defer seAgain.Close()
+	ver, err := getBootstrapVersion(seAgain)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+	require.Equal(t, upgradedSchema, restoreRegistrySchema(t, seAgain))
+}
+
+// restoreRegistrySchema renders the user-visible schema of
+// mysql.tidb_restore_registry, including the column order.
+func restoreRegistrySchema(t *testing.T, se sessiontypes.Session) string {
+	ctx := context.Background()
+	res := MustExecToRecodeSet(t, se, "SHOW CREATE TABLE mysql.tidb_restore_registry")
+	chunk := res.NewChunk(nil)
+	require.NoError(t, res.Next(ctx, chunk))
+	require.Equal(t, 1, chunk.NumRows())
+	ddl := chunk.GetRow(0).GetString(1)
+	require.NoError(t, res.Close())
+	// The auto-increment counter depends on how many registrations the cluster
+	// has seen, not on the schema.
+	return regexp.MustCompile(` AUTO_INCREMENT=\d+`).ReplaceAllString(ddl, "")
 }

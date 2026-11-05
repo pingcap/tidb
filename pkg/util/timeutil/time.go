@@ -32,3 +32,31 @@ func Sleep(ctx context.Context, d time.Duration) error {
 		return ctx.Err()
 	}
 }
+
+// IsUniqueLocalTime reports whether t's local wall-clock reading occurs only once
+// in t.Location(). Callers parsing civil input must also check that it round-trips:
+// time.Date and time.ParseInLocation can normalize nonexistent local times.
+func IsUniqueLocalTime(t time.Time) bool {
+	_, offset := t.Zone()
+	start, end := t.ZoneBounds()
+	if !start.IsZero() && repeatsInAdjacentOffset(t, offset, start.Add(-time.Nanosecond)) {
+		return false
+	}
+	if !end.IsZero() && repeatsInAdjacentOffset(t, offset, end) {
+		return false
+	}
+	return true
+}
+
+// repeatsInAdjacentOffset reports whether t's wall-clock reading also occurs
+// with the UTC offset in effect at adjacent.
+func repeatsInAdjacentOffset(t time.Time, offset int, adjacent time.Time) bool {
+	_, adjacentOffset := adjacent.Zone()
+	if adjacentOffset == offset {
+		return false
+	}
+	// Shifting by the offset difference preserves the wall-clock reading
+	// exactly when the candidate instant uses the adjacent offset.
+	_, candidateOffset := t.Add(time.Duration(offset-adjacentOffset) * time.Second).Zone()
+	return candidateOffset == adjacentOffset
+}

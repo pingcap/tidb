@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/repo"
+	"github.com/pingcap/tidb/br/pkg/restore/nameroute"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config"
@@ -360,6 +361,12 @@ func expectedDefaultBackupConfig() BackupConfig {
 
 func expectedDefaultRestoreConfig() RestoreConfig {
 	defaultConfig := expectedDefaultConfig()
+	// ParseFromFlags validates and caches the (empty) name router, and the flag
+	// parser materializes Rename as an empty slice, so mirror both here.
+	emptyRouter, err := nameroute.Parse([]string{})
+	if err != nil {
+		panic(err)
+	}
 	return RestoreConfig{
 		Config: defaultConfig,
 		RestoreCommonConfig: RestoreCommonConfig{
@@ -372,6 +379,7 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 			ResetSysUsers:             []string{"cloud_admin", "root"},
 		},
 		NoSchema:                 false,
+		Rename:                   []string{},
 		LoadStats:                true,
 		FastLoadSysTables:        true,
 		PDConcurrency:            0x1,
@@ -383,6 +391,8 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 		Layout:                   repo.LayoutLegacy,
 		UseCheckpoint:            true,
 		AllowPITRFromIncremental: true,
+		nameRouter:               emptyRouter,
+		nameRouterRules:          []string{},
 	}
 }
 
