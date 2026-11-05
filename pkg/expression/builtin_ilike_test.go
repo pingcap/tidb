@@ -234,3 +234,44 @@ func TestVectorizedBuiltinIlikeForConstants(t *testing.T) {
 		})
 	}
 }
+
+func TestVectorizedBuiltinIlikeEscapeError(t *testing.T) {
+	ctx := createContext(t)
+	fieldTypes := []*types.FieldType{
+		types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetCharset(charset.CharsetUTF8MB4).SetCollate("utf8mb4_general_ci").BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetCharset(charset.CharsetUTF8MB4).SetCollate("utf8mb4_general_ci").BuildP(),
+	}
+	input := chunk.New(fieldTypes, 2, 2)
+	for _, v := range []string{"a", "b"} {
+		input.AppendString(0, v)
+		input.AppendString(1, "a")
+	}
+
+	// JSON_CONTAINS_PATH('{}', 'one', 'invalid') returns isNull=true together
+	// with an "Invalid JSON path expression" error.
+	escape, err := newFunctionForTest(ctx, ast.JSONContainsPath,
+		getStringConstant("{}", false), getStringConstant("one", false), getStringConstant("invalid", false))
+	require.NoError(t, err)
+	require.Equal(t, ConstStrict, escape.ConstLevel())
+
+	args := []Expression{
+		&Column{Index: 0, RetType: fieldTypes[0]},
+		&Column{Index: 1, RetType: fieldTypes[1]},
+		escape,
+	}
+	f, err := funcs[ast.Ilike].getFunction(ctx, args)
+	require.NoError(t, err)
+	f.SetCharsetAndCollation(charset.CharsetUTF8MB4, "utf8mb4_general_ci")
+	require.True(t, f.vectorized() && f.isChildrenVectorized())
+
+	// Row-based evaluation reports the error of the ESCAPE argument.
+	_, err = evalBuiltinFunc(f, ctx, input.GetRow(0))
+	require.Error(t, err)
+	require.True(t, types.ErrInvalidJSONPath.Equal(err), err.Error())
+
+	// Vectorized evaluation must report the same error instead of returning NULL.
+	output := chunk.NewColumn(eType2FieldType(types.ETInt), 2)
+	err = vecEvalType(ctx, f, types.ETInt, input, output)
+	require.Error(t, err)
+	require.True(t, types.ErrInvalidJSONPath.Equal(err), err.Error())
+}

@@ -81,11 +81,14 @@ func (b *builtinIlikeSig) getEscape(ctx EvalContext, input *chunk.Chunk, result 
 	}
 
 	escape, isConstNull, err := b.args[2].EvalInt(ctx, chunk.Row{})
+	// Check the error first: a failed evaluation may also report isNull=true,
+	// and the row-based evaluation returns that error instead of NULL.
+	if err != nil {
+		return escape, true, err
+	}
 	if isConstNull {
 		fillNullStringIntoResult(result, rowNum)
 		return escape, true, nil
-	} else if err != nil {
-		return escape, true, err
 	}
 	return escape, false, nil
 }
