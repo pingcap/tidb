@@ -143,7 +143,7 @@ where
     let mut old_start_key = task.start_key.clone();
     loop {
         // One transaction deletes up to `delBatchSize` keys.
-        let next_start_key = reorg_transaction(opener, timeout, |meta, _, _, _| {
+        let next_start_key = reorg_transaction(opener, timeout, &crate::job_ctx::internal_ddl_source(), |meta, _, _, _| {
             let pairs = meta
                 .scan_page(&old_start_key, &task.end_key, DEL_BATCH_SIZE)
                 .map_err(DdlPlanError::from)?;

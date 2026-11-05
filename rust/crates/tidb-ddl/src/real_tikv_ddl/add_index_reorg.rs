@@ -73,7 +73,7 @@ where
             &mut warnings,
         )?,
         ReorgStageRequest::Check(check) => {
-            reorg_transaction(opener, timeout, |_, snapshot, buffer, _| {
+            reorg_transaction(opener, timeout, &crate::job_ctx::internal_ddl_source(), |_, snapshot, buffer, _| {
                 let answer = backfiller.reorg_add_index(
                     reorg,
                     AddIndexReorgWork::CheckColumn(check),
@@ -96,7 +96,7 @@ where
             })?
         }
         ReorgStageRequest::CheckForeignKey(check) => {
-            reorg_transaction(opener, timeout, |_, snapshot, buffer, _| {
+            reorg_transaction(opener, timeout, &crate::job_ctx::internal_ddl_source(), |_, snapshot, buffer, _| {
                 let answer = backfiller.stage_foreign_key_check(check, snapshot, buffer);
                 buffer.reset();
                 Ok((answer, Vec::new()))
@@ -108,7 +108,7 @@ where
             })?
         }
         ReorgStageRequest::CheckExchangePartition(check) => {
-            reorg_transaction(opener, timeout, |_, snapshot, buffer, _| {
+            reorg_transaction(opener, timeout, &crate::job_ctx::internal_ddl_source(), |_, snapshot, buffer, _| {
                 let answer = backfiller.stage_exchange_partition_check(check, snapshot, buffer);
                 buffer.reset();
                 Ok((answer, Vec::new()))
@@ -169,7 +169,7 @@ where
         return Ok(());
     }
     let tables = locate_tables(opener, timeout)?;
-    reorg_transaction(opener, timeout, |meta, _, _, _| {
+    reorg_transaction(opener, timeout, &crate::job_ctx::internal_ddl_source(), |meta, _, _, _| {
         let existing = tables
             .reorg
             .load(meta, job_id)
@@ -195,7 +195,7 @@ fn locate_tables<S>(
 where
     S: StoreClient,
 {
-    reorg_transaction(opener, timeout, |meta, _, _, _| {
+    reorg_transaction(opener, timeout, &crate::job_ctx::internal_ddl_source(), |meta, _, _, _| {
         let catalog = load_info_schema(meta).map_err(DdlPlanError::from)?;
         let reorg = DdlReorgTable::locate(&catalog).map_err(ClusterDdlError::Backfill)?;
         let jobs = DdlJobTable::locate(&catalog)
@@ -221,6 +221,7 @@ where
 pub(super) fn reorg_transaction<S, T>(
     opener: &Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
+    source: &tidb_txnkv::RequestSource,
     mut work: impl FnMut(
         &mut SnapshotMetaSnapshot,
         Arc<Mutex<dyn ClusterSnapshot>>,
@@ -236,7 +237,10 @@ where
         let transaction = SessionTransaction::begin(
             Arc::clone(opener),
             timeout,
-            tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
+            tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions::from(
+                tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
+            )
+            .with_request_source(source.clone()),
         )?;
         let start_ts = transaction.start_ts();
         let buffer = MutationBuffer::new();
@@ -361,7 +365,7 @@ where
         .ok_or_else(|| ClusterDdlError::Backfill("ADD INDEX reorg names no table".to_owned()))?;
     let row_ids = backfiller.system_row_ids();
     let mut initialized = None;
-    let result = reorg_transaction(opener, timeout, |meta, snapshot, buffer, start_ts| {
+    let result = reorg_transaction(opener, timeout, &crate::job_ctx::backfill_request_source(reorg.job_id), |meta, snapshot, buffer, start_ts| {
         let handle = if reorg.merging {
             let mut empty = true;
             for physical_id in &reorg.physical_ids {
@@ -535,7 +539,7 @@ where
             items.push((None, current.start_key.clone(), current.end_key.clone()));
         } else {
             // Go `updateReorgInfo`: the next partition's range, persisted.
-            let range = reorg_transaction(opener, timeout, |_, snapshot, buffer, _| {
+            let range = reorg_transaction(opener, timeout, &crate::job_ctx::backfill_request_source(reorg.job_id), |_, snapshot, buffer, _| {
                 Ok((
                     table_range(backfiller, reorg, *physical_id, snapshot, buffer)?,
                     Vec::new(),
@@ -576,7 +580,7 @@ where
             };
             // Go `reorgInfo.UpdateConfigFromSysTbl`.
             let reload_config = || {
-                reorg_transaction(opener, timeout, |meta, _, _, _| {
+                reorg_transaction(opener, timeout, &crate::job_ctx::internal_ddl_source(), |meta, _, _, _| {
                     let job = tables
                         .jobs
                         .load_by_id(meta, reorg.job_id)
@@ -607,7 +611,7 @@ where
                 .flatten()
             };
             let range_end_key = |start: &[u8], end: &[u8]| {
-                reorg_transaction(opener, timeout, |_, snapshot, buffer, _| {
+                reorg_transaction(opener, timeout, &crate::job_ctx::backfill_request_source(reorg.job_id), |_, snapshot, buffer, _| {
                     let answer = backfiller.reorg_add_index(
                         reorg,
                         AddIndexReorgWork::RangeEndKey { start, end },
@@ -688,7 +692,7 @@ fn run_batch<S>(
 where
     S: StoreClient,
 {
-    reorg_transaction(opener, timeout, |meta, snapshot, buffer, _| {
+    reorg_transaction(opener, timeout, &crate::job_ctx::backfill_request_source(reorg.job_id), |meta, snapshot, buffer, _| {
         if !reorg_runnable(meta, tables, reorg.job_id, check_owner)? {
             return Ok((BatchStep::Interrupted, Vec::new()));
         }
@@ -764,7 +768,7 @@ fn update_reorg_meta<S>(
             .open_sql_session()
             .and_then(|mut se| crate::ddl_reorg_table::update_reorg_meta(se.as_mut(), reorg.job_id, next))
             .map_err(|error| error.to_string()),
-        None => reorg_transaction(opener, timeout, |meta, _, _, _| {
+        None => reorg_transaction(opener, timeout, &crate::job_ctx::internal_ddl_source(), |meta, _, _, _| {
             let existing = tables.reorg.load(meta, reorg.job_id).map_err(ClusterDdlError::Backfill)?;
             let mut mutations = Vec::new();
             if let Some(row) = existing.first() {

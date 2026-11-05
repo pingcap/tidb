@@ -28619,10 +28619,35 @@ fn a_statements_requests_carry_its_label_as_their_source() {
     rows(&mut session, "INSERT INTO request_source VALUES (1, 1), (2, 2)");
     rows(&mut session, "SELECT b FROM request_source WHERE b > 0");
     rows(&mut session, "SELECT b FROM request_source WHERE a = 1");
+    // Go labels an EXECUTE with its prepared statement (`resolvePreparedStmt`).
+    rows(&mut session, "PREPARE request_source_update FROM 'UPDATE request_source SET b = b + 1 WHERE b > ?'");
+    rows(&mut session, "SET @request_source_bound = 0");
+    rows(&mut session, "EXECUTE request_source_update USING @request_source_bound");
     stack.rpc.set_send_hook(None);
     let sent = sent.lock().unwrap().clone();
     assert!(sent.contains(&("prewrite", "external_Insert".to_owned())), "{sent:?}");
+    assert!(sent.contains(&("prewrite", "external_Update".to_owned())), "{sent:?}");
+    assert!(!sent.iter().any(|(_, source)| source == "external_Execute"), "{sent:?}");
     assert!(sent.contains(&("cop", "external_Select".to_owned())), "{sent:?}");
     // Go `GetSnapshotWithTS`: the point read's snapshot carries it as well.
     assert!(sent.contains(&("get", "external_Select".to_owned())), "{sent:?}");
+
+    // Go's DDL worker: an ADD INDEX job's steps commit as `ddl_add_index`
+    // (`prepareTxn`'s `setDDLSourceForDiagnosis`), and its backfill writes
+    // the index with `ExplicitTypeDDL` beside it.
+    let sent: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let recorded = Arc::clone(&sent);
+    stack.rpc.set_send_hook(Some(Arc::new(move |request| {
+        if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::PrewriteRequest>() {
+            recorded
+                .lock()
+                .unwrap()
+                .push(request.context.as_ref().map(|context| context.request_source.clone()).unwrap_or_default());
+        }
+    })));
+    rows(&mut session, "ALTER TABLE request_source ADD INDEX request_source_b (b)");
+    stack.rpc.set_send_hook(None);
+    let sent = sent.lock().unwrap().clone();
+    assert!(sent.contains(&"internal_ddl_add_index".to_owned()), "{sent:?}");
+    assert!(sent.contains(&"internal_ddl_add_index_ddl".to_owned()), "{sent:?}");
 }

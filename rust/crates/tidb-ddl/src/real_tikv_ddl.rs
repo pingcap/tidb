@@ -1697,7 +1697,7 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
         let sess_pool = backfiller
             .session_pool()
             .filter(|sess_pool| sess_pool.has_step_sessions());
-        add_index_reorg::reorg_transaction(&opener, timeout, |meta, handle, buffer, _| {
+        add_index_reorg::reorg_transaction(&opener, timeout, &crate::job_ctx::internal_ddl_source(), |meta, handle, buffer, _| {
             let catalog = load_info_schema(meta).map_err(DdlPlanError::Meta)?;
             let table = catalog
                 .stored_schemas()
@@ -1728,7 +1728,7 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
     // Go `genPlacementPolicyID`: the executor draws the policy's id from the
     // policies' own sequence, in a transaction of its own, before the job.
     if spec.job.type_ == tidb_model::action_type::ActionType::ACTION_CREATE_PLACEMENT_POLICY {
-        let policy_id = add_index_reorg::reorg_transaction(&opener, timeout, |meta, _, _, _| {
+        let policy_id = add_index_reorg::reorg_transaction(&opener, timeout, &crate::job_ctx::internal_ddl_source(), |meta, _, _, _| {
             let (id, mutation) = tidb_ddl_jobsubmit::reserve_placement_policy_id(meta)?;
             Ok((id, vec![mutation]))
         })?;

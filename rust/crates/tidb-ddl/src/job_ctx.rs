@@ -145,6 +145,34 @@ pub(crate) fn set_ddl_source_for_diagnosis(job_id: i64, job_type: ActionType) ->
     })
 }
 
+/// Go's DDL scheduler context, `kv.WithInternalSourceType(ctx,
+/// kv.InternalTxnDDL)`: the source of a DDL transaction that reads or
+/// writes the job's metadata.
+pub(crate) fn internal_ddl_source() -> tidb_txnkv::RequestSource {
+    tidb_txnkv::RequestSource {
+        internal: true,
+        source_type: tidb_txnkv::INTERNAL_TXN_DDL.to_owned(),
+        explicit_source_type: String::new(),
+    }
+}
+
+/// Go `kv.WithInternalSourceAndTaskType(ctx, jobContext.ddlJobSourceType(),
+/// kvutil.ExplicitTypeDDL)`: the source of the job's backfill reads and
+/// writes (`BackfillData`, `GetRangeEndKey`, `getTableRange`).
+pub(crate) fn backfill_request_source(job_id: i64) -> tidb_txnkv::RequestSource {
+    tidb_txnkv::RequestSource {
+        internal: true,
+        // Go `ddlCtx.jobContext(jobID).ddlJobSourceType()`.
+        source_type: JOB_CTX_MAP
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&job_id)
+            .map(|ctx| ctx.tp.clone())
+            .unwrap_or_default(),
+        explicit_source_type: tikv_client::util::EXPLICIT_TYPE_DDL.to_owned(),
+    }
+}
+
 /// Go `ddlCtx.getResourceGroupTaggerForTopSQL`: none for a job with no
 /// context.
 pub(crate) fn get_resource_group_tagger_for_top_sql(
@@ -181,6 +209,16 @@ mod tests {
             "ddl_reorganize_partition"
         );
         assert_eq!(set_ddl_source_for_diagnosis(9_102, ActionType::ACTION_CREATE_TABLE), "ddl");
+        // Go `WithInternalSourceAndTaskType(ctx, ddlJobSourceType(),
+        // ExplicitTypeDDL)` for the job's backfill.
+        assert_eq!(
+            backfill_request_source(9_100),
+            tidb_txnkv::RequestSource {
+                internal: true,
+                source_type: "ddl_add_index".to_owned(),
+                explicit_source_type: "ddl".to_owned(),
+            }
+        );
         for job_id in [9_100, 9_101, 9_102] {
             remove_job_ctx(job_id);
         }
