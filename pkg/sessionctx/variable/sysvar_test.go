@@ -1728,6 +1728,11 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 			vardef.Off,
 		},
 		{
+			vardef.TiDBRedactLog,
+			vardef.On,
+			vardef.Off,
+		},
+		{
 			vardef.TiDBEnableAdaptiveLimitScan,
 			BoolToOnOff(vardef.DefTiDBEnableAdaptiveLimitScan),
 			vardef.On,
@@ -2494,6 +2499,13 @@ func TestSysVarCacheValues(t *testing.T) {
 	require.NotContains(t, session, "test_cache_global_var")
 	require.Equal(t, "y", global["test_cache_global_var"])
 	require.Equal(t, "c", global["test_cache_config_var"])
+	require.Equal(t, vardef.On, session[vardef.TiDBRedactLog])
+	require.Equal(t, vardef.On, global[vardef.TiDBRedactLog])
+	for _, value := range []string{vardef.Off, vardef.Marker} {
+		session, global = SysVarCacheValues(map[string]string{vardef.TiDBRedactLog: value})
+		require.Equal(t, value, session[vardef.TiDBRedactLog])
+		require.Equal(t, value, global[vardef.TiDBRedactLog])
+	}
 }
 
 func TestMVServiceGlobalSysVars(t *testing.T) {
