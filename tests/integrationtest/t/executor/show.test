@@ -466,6 +466,12 @@ grant select(x) on test_show_columns_db.v to test_show_columns_user;
 connection test_show_columns_user;
 show columns from test_show_columns_db.t;
 show columns from test_show_columns_db.v;
+
+--echo // an output filter must not turn an authorized statement into a privilege error: filtering to a column the user cannot see returns an empty result.
+show columns from test_show_columns_db.t like 'a';
+show columns from test_show_columns_db.t like 'b';
+show columns from test_show_columns_db.t like 'missing';
+
 connection default;
 grant insert(b) on test_show_columns_db.t to test_show_columns_user;
 grant update(y) on test_show_columns_db.v to test_show_columns_user;

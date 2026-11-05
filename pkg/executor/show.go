@@ -742,17 +742,27 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 		return err
 	}
 	for _, col := range cols {
+		// SHOW COLUMNS authorization is independent of the output filter: the
+		// statement succeeds (possibly with an empty result) as long as the user
+		// holds a qualifying privilege on the table or on any column. Determine
+		// column-level authorization before applying the filter, so that filtering
+		// the result down to columns the user cannot see does not turn an
+		// authorized statement into a privilege error.
+		hasColPriv := false
+		if !passTblPrivCheck {
+			hasColPriv = checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, col.Name.O, priv)
+			if hasColPriv {
+				passColPrivCheck = true
+			}
+		}
 		if fieldFilter != "" && col.Name.L != fieldFilter {
 			continue
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(col.Name.L) {
 			continue
 		}
-		if !passTblPrivCheck {
-			if !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, col.Name.O, priv) {
-				// check privileges in column level
-				continue
-			}
-			passColPrivCheck = true
+		// Only columns the user is privileged to see are displayed.
+		if !passTblPrivCheck && !hasColPriv {
+			continue
 		}
 		desc := table.NewColDesc(col)
 		var columnDefault any

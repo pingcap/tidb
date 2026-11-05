@@ -1190,6 +1190,14 @@ a	int	YES		NULL
 show columns from test_show_columns_db.v;
 Field	Type	Null	Key	Default	Extra
 x	int	YES		NULL	
+// an output filter must not turn an authorized statement into a privilege error: filtering to a column the user cannot see returns an empty result.
+show columns from test_show_columns_db.t like 'a';
+Field	Type	Null	Key	Default	Extra
+a	int	YES		NULL	
+show columns from test_show_columns_db.t like 'b';
+Field	Type	Null	Key	Default	Extra
+show columns from test_show_columns_db.t like 'missing';
+Field	Type	Null	Key	Default	Extra
 grant insert(b) on test_show_columns_db.t to test_show_columns_user;
 grant update(y) on test_show_columns_db.v to test_show_columns_user;
 show columns from test_show_columns_db.t;
