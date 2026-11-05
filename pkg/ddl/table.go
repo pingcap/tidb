@@ -835,13 +835,10 @@ func onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 
 	fkh := newForeignKeyHelper()
 	metaMut := jobCtx.metaMut
-<<<<<<< HEAD
-=======
 	is := jobCtx.infoCache.GetLatest()
 	firstRenameByTableID := make(map[int64]*model.RenameTableArgs)
 	finalRenameByTableID := make(map[int64]*model.RenameTableArgs)
 	renamedTableByID := make(map[int64]schemaIDAndTableInfo)
->>>>>>> 3a025027921 (ddl: preserve foreign key bindings across table renames (#71092))
 	for _, info := range args.RenameTableInfos {
 		job.TableID = info.TableID
 		job.TableName = info.OldTableName.L
@@ -856,21 +853,8 @@ func onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		if _, ok := firstRenameByTableID[info.TableID]; !ok {
 			firstRenameByTableID[info.TableID] = info
 		}
-<<<<<<< HEAD
-=======
 		finalRenameByTableID[info.TableID] = info
 		renamedTableByID[info.TableID] = schemaIDAndTableInfo{schemaID: info.NewSchemaID, tblInfo: tblInfo}
-		// Update masking policy names after table rename.
-		newDB, ok := is.SchemaByID(info.NewSchemaID)
-		if !ok {
-			job.State = model.JobStateCancelled
-			return ver, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", info.NewSchemaID))
-		}
-		if err = w.updateMaskingPolicyNamesAfterRename(jobCtx.stepCtx, tblInfo.ID,
-			info.OldSchemaName, newDB.Name, info.OldTableName, info.NewTableName); err != nil {
-			return ver, errors.Wrapf(err, "failed to update masking policy names after table rename")
-		}
->>>>>>> 3a025027921 (ddl: preserve foreign key bindings across table renames (#71092))
 	}
 	err = adjustForeignKeyChildTableInfoAfterRenameTables(
 		is, metaMut, &fkh, firstRenameByTableID, finalRenameByTableID, renamedTableByID)
@@ -969,7 +953,7 @@ func adjustForeignKeyChildTableInfoAfterRenameTables(
 	firstRenameByTableID, finalRenameByTableID map[int64]*model.RenameTableArgs,
 	renamedTableByID map[int64]schemaIDAndTableInfo,
 ) error {
-	if !vardef.EnableForeignKey.Load() {
+	if !variable.EnableForeignKey.Load() {
 		return nil
 	}
 
@@ -1006,7 +990,7 @@ func adjustReferredForeignKeysAfterRename(
 	t *meta.Mutator,
 	fkh *foreignKeyHelper,
 	referredFKs []*model.ReferredFKInfo,
-	newSchemaName, newTableName ast.CIStr,
+	newSchemaName, newTableName pmodel.CIStr,
 ) error {
 	for _, referredFK := range referredFKs {
 		childTableInfo, err := fkh.getTableFromStorage(is, t, referredFK.ChildSchema, referredFK.ChildTable)
