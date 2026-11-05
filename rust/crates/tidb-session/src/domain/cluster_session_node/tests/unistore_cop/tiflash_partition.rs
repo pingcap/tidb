@@ -139,6 +139,9 @@ fn add_partition_rolls_back_when_tiflash_stores_are_too_few_like_go() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(2102)).unwrap();
     available_replica_table(&stack, &mut session, 1);
+    // A refusal that turned into a replica wait fails at its first retry
+    // instead of the default 512.
+    rows(&mut session, "set @@global.tidb_ddl_error_count_limit = 1");
 
     let error = session
         .node_conn()

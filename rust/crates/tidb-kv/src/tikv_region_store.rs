@@ -169,6 +169,10 @@ impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
         Ok(pd_region(region))
     }
 
+    fn get_pd_addrs(&self) -> Result<Vec<String>, String> {
+        Ok(self.pd_endpoints.clone())
+    }
+
     fn pd_get_all_stores(&self) -> Result<Vec<crate::region_map::PdStoreMeta>, String> {
         let pd = self.store.store().pd_client();
         let stores = self

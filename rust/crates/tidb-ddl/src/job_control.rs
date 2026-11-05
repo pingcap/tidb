@@ -289,3 +289,101 @@ fn update_ddl_job_2_table(
     )?;
     Ok(())
 }
+
+/// Go `resumePausedJobForUpgradeFinish`: a job the system paused for a full
+/// KV disk stays paused.
+pub fn resume_paused_job_for_upgrade_finish(
+    job: &mut Job,
+    by_who: AdminCommandOperator,
+) -> Result<(), TerrorError> {
+    if job.is_paused_by_system_for_kv_disk_full() {
+        return Ok(());
+    }
+    resume_paused_job(job, by_who)
+}
+
+/// Go `processAllJobs`: `process` on every job of `mysql.tidb_ddl_job`, a
+/// hundred at a time, all in one transaction of `sess`. The failures, by
+/// job id.
+///
+/// # Errors
+///
+/// The transaction's begin, read or commit error.
+pub fn process_all_jobs(
+    process: JobCommand,
+    sess: &mut dyn StepSqlSession,
+    by_who: AdminCommandOperator,
+) -> Result<std::collections::BTreeMap<i64, JobCommandError>, MysqlError> {
+    let mut job_errs = std::collections::BTreeMap::new();
+
+    sess.begin()?;
+
+    let mut job_id: i64 = 0;
+    let mut job_id_max: i64 = 0;
+    let limit = 100;
+    loop {
+        let jobs = match get_jobs_by_sql(
+            sess,
+            &format!("job_id >= {job_id} order by job_id asc limit {limit}"),
+        ) {
+            Ok(jobs) => jobs,
+            Err(error) => {
+                sess.rollback();
+                return Err(error);
+            }
+        };
+
+        for mut job in jobs.iter().cloned() {
+            if let Err(error) = process(&mut job, by_who) {
+                job_errs.insert(job.id, JobCommandError::Terror(error));
+                continue;
+            }
+
+            if let Err(error) = update_ddl_job_2_table(sess, &mut job, false) {
+                job_errs.insert(job.id, JobCommandError::Sql(error));
+                continue;
+            }
+        }
+
+        // Just in case the job ID is not sequential
+        if let Some(last) = jobs.last() {
+            if last.id > job_id_max {
+                job_id_max = last.id;
+            }
+        }
+
+        // If rows returned is smaller than $limit, then there is no more records
+        if jobs.len() < limit {
+            break;
+        }
+
+        job_id = job_id_max + 1;
+    }
+
+    sess.commit()?;
+    Ok(job_errs)
+}
+
+/// Go `PauseAllJobsBySystem` pauses all running Jobs because of internal
+/// reasons.
+///
+/// # Errors
+///
+/// See [`process_all_jobs`].
+pub fn pause_all_jobs_by_system(
+    sess: &mut dyn StepSqlSession,
+) -> Result<std::collections::BTreeMap<i64, JobCommandError>, MysqlError> {
+    process_all_jobs(pause_running_job, sess, AdminCommandOperator::BY_SYSTEM)
+}
+
+/// Go `ResumeAllJobsBySystem` resumes all paused Jobs because of internal
+/// reasons.
+///
+/// # Errors
+///
+/// See [`process_all_jobs`].
+pub fn resume_all_jobs_by_system(
+    sess: &mut dyn StepSqlSession,
+) -> Result<std::collections::BTreeMap<i64, JobCommandError>, MysqlError> {
+    process_all_jobs(resume_paused_job_for_upgrade_finish, sess, AdminCommandOperator::BY_SYSTEM)
+}

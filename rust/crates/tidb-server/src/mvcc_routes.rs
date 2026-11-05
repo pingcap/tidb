@@ -264,7 +264,7 @@ fn extract_table_and_partition_name(text: &str) -> (&str, &str) {
 
 /// Go `TikvHandlerTool.GetTable` + `GetPartition`: the physical table's
 /// meta and physical id.
-fn get_table(
+pub(crate) fn get_table(
     schema: &Schema,
     db_name: &str,
     table_name: &str,

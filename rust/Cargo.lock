@@ -6630,6 +6630,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-dbterror",
  "tidb-ddl",
+ "tidb-ddl-build",
  "tidb-ddl-serverstate",
  "tidb-ddl-systable",
  "tidb-deadlockhistory",

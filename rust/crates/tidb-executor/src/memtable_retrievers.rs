@@ -1429,7 +1429,7 @@ impl crate::mem_table_retrieval::MemTableRetriever for CatalogTablesRetriever {
 /// Go table IDs (`perfschema.tableIDMap`) have no port here. Its IDs lie
 /// between the other two memory schemas' and hold no keys, so no region
 /// boundary falls among them.
-fn all_schemas(catalog: &tidb_infoschema::SessionExtendedInfoSchema) -> Vec<store_helper::HelperSchema> {
+pub fn all_schemas(catalog: &tidb_infoschema::SessionExtendedInfoSchema) -> Vec<store_helper::HelperSchema> {
     let mut stored = catalog
         .database_names()
         .into_iter()

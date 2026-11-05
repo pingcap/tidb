@@ -235,7 +235,12 @@ fn to_json(value: &impl Serialize) -> Result<String, String> {
 /// Go `RegionHandler.ServeHTTP` and `TableHandler.ServeHTTP`'s `regions`,
 /// `ranges` and `disk-usage` operations: the JSON `WriteData` writes, or the
 /// error `WriteError` writes.
-pub fn region_response(path: &str, store: &dyn RegionStore, schema: &Schema) -> Option<Result<String, String>> {
+pub fn region_response(
+    path: &str,
+    store: &dyn RegionStore,
+    schema: &Schema,
+    security: &tidb_pd_client::ClusterSecurity,
+) -> Option<Result<String, String>> {
     let route = path.split_once('?').map_or(path, |(route, _)| route);
     if let Some(rest) = route.strip_prefix("/regions/") {
         if rest.contains('/') {
@@ -243,8 +248,7 @@ pub fn region_response(path: &str, store: &dyn RegionStore, schema: &Schema) -> 
         }
         return match rest {
             "meta" => Some(regions_meta(store)),
-            // Go `/regions/hot` scrapes PD's hot statistics, not ported here.
-            "hot" => None,
+            "hot" => Some(regions_hot(store, schema)),
             region_id => Some(region_detail(store, schema, region_id)),
         };
     }
@@ -253,10 +257,20 @@ pub fn region_response(path: &str, store: &dyn RegionStore, schema: &Schema) -> 
     let [db_name, table_name, op] = parts.as_slice() else {
         return None;
     };
-    if !matches!(*op, "regions" | "ranges" | "disk-usage") {
-        return None;
+    match *op {
+        "regions" | "ranges" | "disk-usage" => Some(table_response(store, schema, db_name, table_name, op)),
+        // supports partition table, only get one physical table, prevent too many scatter schedulers.
+        "scatter" | "stop-scatter" => Some((|| {
+            let (table, physical_id) = crate::mvcc_routes::get_table(schema, db_name, table_name)?;
+            let tbl = table.read();
+            if *op == "scatter" {
+                handle_scatter_table_request(store, security, &tbl, physical_id)
+            } else {
+                handle_stop_scatter_table_request(store, security, &tbl, physical_id)
+            }
+        })()),
+        _ => None,
     }
-    Some(table_response(store, schema, db_name, table_name, op))
 }
 
 /// Go `RegionHandler` for `RegionsMeta`: the meta regions (`[m, n)`).
@@ -405,5 +419,380 @@ fn table_response(
             let stats = tidb_store_helper::get_pd_region_stats(&client, meta.id)?;
             to_json(&stats.storage_size)
         }
+    }
+}
+
+/// Go `RegionHandler` for `RegionHot`: `ScrapeHotInfo` of the hot writes and
+/// reads, each hot region with the table or index its range covers.
+fn regions_hot(store: &dyn RegionStore, schema: &Schema) -> Result<String, String> {
+    let catalog = schema();
+    let schemas = tidb_executor::memtable_retrievers::all_schemas(&catalog);
+    let scrape_hot_info = |hot_type| -> Result<Vec<HotTableIndex>, String> {
+        let client = tidb_store_helper::try_get_pdhttp_client(store)
+            .ok_or_else(|| tidb_store_helper::PD_HTTP_CLIENT_UNAVAILABLE.to_owned())?;
+        let region_metrics = tidb_store_helper::fetch_hot_region(&client, hot_type)?;
+        Ok(tidb_store_helper::fetch_region_table_index(store, &region_metrics, &schemas)?
+            .iter()
+            .map(HotTableIndex::from)
+            .collect())
+    };
+    let hot_read = scrape_hot_info(tidb_store_helper::HotType::Read)?;
+    let hot_write = scrape_hot_info(tidb_store_helper::HotType::Write)?;
+    to_json(&std::collections::BTreeMap::from([("read", hot_read), ("write", hot_write)]))
+}
+
+/// Go `helper.RegionMetric` as `WriteData` marshals it.
+#[derive(Serialize)]
+struct RegionMetric {
+    flow_bytes: u64,
+    max_hot_degree: i64,
+    #[serde(rename = "region_count")]
+    count: i64,
+}
+
+/// Go `helper.HotTableIndex` as `WriteData` marshals it.
+#[derive(Serialize)]
+struct HotTableIndex {
+    region_id: u64,
+    region_metric: RegionMetric,
+    db_name: String,
+    table_name: String,
+    table_id: i64,
+    index_name: String,
+    index_id: i64,
+}
+
+impl From<&tidb_store_helper::HotTableIndex> for HotTableIndex {
+    fn from(index: &tidb_store_helper::HotTableIndex) -> Self {
+        Self {
+            region_id: index.region_id,
+            region_metric: RegionMetric {
+                flow_bytes: index.region_metric.flow_bytes,
+                max_hot_degree: index.region_metric.max_hot_degree,
+                count: index.region_metric.count,
+            },
+            db_name: index.db_name.clone(),
+            table_name: index.table_name.clone(),
+            table_id: index.table_id,
+            index_name: index.index_name.clone(),
+            index_id: index.index_id,
+        }
+    }
+}
+
+/// Go `net/url.QueryEscape` over a key's bytes.
+fn query_escape(bytes: &[u8]) -> String {
+    let mut escaped = String::with_capacity(bytes.len());
+    for byte in bytes {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                escaped.push(char::from(*byte));
+            }
+            b' ' => escaped.push('+'),
+            _ => escaped.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    escaped
+}
+
+/// Go `TableHandler.getPDAddr`.
+fn get_pd_addr(store: &dyn RegionStore) -> Result<Vec<String>, String> {
+    let pd_addrs = store.get_pd_addrs()?;
+    if pd_addrs.is_empty() {
+        return Err("pd unavailable".to_owned());
+    }
+    Ok(pd_addrs)
+}
+
+/// Go `TableHandler.addScatterSchedule`: a PD `scatter-range` scheduler over
+/// `[start_key, end_key)`.
+fn add_scatter_schedule(
+    store: &dyn RegionStore,
+    security: &tidb_pd_client::ClusterSecurity,
+    start_key: &[u8],
+    end_key: &[u8],
+    name: &str,
+) -> Result<(), String> {
+    let pd_addrs = get_pd_addr(store)?;
+    let input = std::collections::BTreeMap::from([
+        ("end_key", query_escape(end_key)),
+        ("name", "scatter-range".to_owned()),
+        ("range_name", name.to_owned()),
+        ("start_key", query_escape(start_key)),
+    ]);
+    // Go `json.Marshal` escapes HTML characters.
+    let v = tidb_stringutil::go_json_html_escape(
+        &serde_json::to_string(&input).map_err(|error| error.to_string())?,
+    );
+    let schedule_url = format!(
+        "{}://{}{}",
+        internal_http_schema(security),
+        pd_addrs[0],
+        tikv_client::pd_http::SCHEDULERS
+    );
+    tidb_store_driver_txn::cluster_http::internal_http_client(security)?
+        .post(schedule_url)
+        .header("Content-Type", "application/json")
+        .body(v)
+        .send()
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// Go `TableHandler.deleteScatterSchedule`.
+fn delete_scatter_schedule(
+    store: &dyn RegionStore,
+    security: &tidb_pd_client::ClusterSecurity,
+    name: &str,
+) -> Result<(), String> {
+    let pd_addrs = get_pd_addr(store)?;
+    let schedule_url = format!(
+        "{}://{}{}",
+        internal_http_schema(security),
+        pd_addrs[0],
+        tikv_client::pd_http::scatter_range_scheduler_with_name(name)
+    );
+    tidb_store_driver_txn::cluster_http::internal_http_client(security)?
+        .delete(schedule_url)
+        .send()
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// Go `util.InternalHTTPSchema`.
+fn internal_http_schema(security: &tidb_pd_client::ClusterSecurity) -> &'static str {
+    if security.is_tls_enabled() {
+        "https"
+    } else {
+        "http"
+    }
+}
+
+/// Go `TableHandler.handleScatterTableRequest`.
+fn handle_scatter_table_request(
+    store: &dyn RegionStore,
+    security: &tidb_pd_client::ClusterSecurity,
+    tbl: &tidb_model::TableInfo,
+    table_id: i64,
+) -> Result<String, String> {
+    // for record
+    let (start_key, end_key) = tidb_tablecodec::table_key::get_table_handle_key_range(table_id);
+    let start_key = encode_bytes(&start_key);
+    let end_key = encode_bytes(&end_key);
+    let table_name = format!("{}-{table_id}", tbl.name.original());
+    add_scatter_schedule(store, security, &start_key, &end_key, &table_name)
+        .map_err(|error| format!("scatter record error: {error}"))?;
+    // for indices
+    for index in tbl.indices.iter_deref() {
+        let index = index.read();
+        let (start_key, end_key) = tidb_tablecodec::get_table_index_key_range(table_id, index.id);
+        let start_key = encode_bytes(&start_key);
+        let end_key = encode_bytes(&end_key);
+        let name = format!("{table_name}-{}", index.name.original());
+        add_scatter_schedule(store, security, &start_key, &end_key, &name)
+            .map_err(|error| format!("scatter index({name}) error: {error}"))?;
+    }
+    to_json(&"success!")
+}
+
+/// Go `TableHandler.handleStopScatterTableRequest`.
+fn handle_stop_scatter_table_request(
+    store: &dyn RegionStore,
+    security: &tidb_pd_client::ClusterSecurity,
+    tbl: &tidb_model::TableInfo,
+    table_id: i64,
+) -> Result<String, String> {
+    // for record
+    let table_name = format!("{}-{table_id}", tbl.name.original());
+    delete_scatter_schedule(store, security, &table_name)
+        .map_err(|error| format!("stop scatter record error: {error}"))?;
+    // for indices
+    for index in tbl.indices.iter_deref() {
+        let name = format!("{table_name}-{}", index.read().name.original());
+        delete_scatter_schedule(store, security, &name)
+            .map_err(|error| format!("delete scatter index({name}) error: {error}"))?;
+    }
+    to_json(&"success!")
+}
+
+/// Go `codec.EncodeBytes([]byte{}, key)`.
+fn encode_bytes(key: &[u8]) -> Vec<u8> {
+    let mut buffer = Vec::new();
+    tidb_codec::encode_bytes(&mut buffer, key);
+    buffer
+}
+
+#[cfg(test)]
+pub(crate) mod hot_scatter_tests {
+    use super::*;
+    use std::io::{BufRead, Read, Write};
+    use std::sync::{Arc, Mutex};
+
+    /// A PD HTTP server answering each request with `reply(method, path)`,
+    /// recording `(method, path, body)`.
+    pub(crate) fn pd_fixture(
+        reply: impl Fn(&str, &str) -> String + Send + 'static,
+    ) -> (String, Arc<Mutex<Vec<(String, String, String)>>>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&requests);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = stream.unwrap();
+                let mut reader = std::io::BufReader::new(&mut stream);
+                let mut request = String::new();
+                reader.read_line(&mut request).unwrap();
+                let mut length = 0;
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" || line.is_empty() {
+                        break;
+                    }
+                    if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = value.trim().parse().unwrap();
+                    }
+                }
+                let mut body = vec![0; length];
+                reader.read_exact(&mut body).unwrap();
+                let mut parts = request.split_whitespace();
+                let method = parts.next().unwrap().to_owned();
+                let path = parts.next().unwrap().to_owned();
+                let answer = reply(&method, &path);
+                recorded.lock().unwrap().push((method, path, String::from_utf8(body).unwrap()));
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{answer}",
+                    answer.len()
+                )
+                .unwrap();
+            }
+        });
+        (address, requests)
+    }
+
+    pub(crate) struct Store {
+        pub(crate) pd_http: Option<tikv_client::pd_http::Client>,
+        pub(crate) pd_addrs: Vec<String>,
+        pub(crate) regions: Vec<(u64, Vec<u8>, Vec<u8>)>,
+    }
+
+    impl std::fmt::Debug for Store {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("Store")
+        }
+    }
+
+    impl RegionStore for Store {
+        fn split_regions(&self, _: Vec<Vec<u8>>, _: bool, _: Option<i64>) -> (Vec<u64>, Option<String>) {
+            unreachable!()
+        }
+        fn wait_scatter_region_finish(&self, _: u64, _: i64) -> Result<(), String> {
+            unreachable!()
+        }
+        fn check_region_in_scattering(&self, _: u64) -> Result<bool, String> {
+            unreachable!()
+        }
+        fn load_regions_in_key_range(&self, _: &[u8], _: &[u8]) -> Result<Vec<tidb_kv::region_map::RegionMeta>, String> {
+            unreachable!()
+        }
+        fn pd_http_client(&self) -> Option<tikv_client::pd_http::Client> {
+            self.pd_http.clone()
+        }
+        fn locate_region_by_id(&self, region_id: u64) -> Result<(Vec<u8>, Vec<u8>), String> {
+            self.regions
+                .iter()
+                .find(|(id, _, _)| *id == region_id)
+                .map(|(_, start, end)| (start.clone(), end.clone()))
+                .ok_or_else(|| format!("region {region_id} not found"))
+        }
+        fn get_pd_addrs(&self) -> Result<Vec<String>, String> {
+            Ok(self.pd_addrs.clone())
+        }
+    }
+
+    fn table(id: i64, name: &str, indexes: &[(i64, &str)]) -> tidb_model::TableInfo {
+        tidb_model::TableInfo {
+            id,
+            name: tidb_ast::CiString::new(name),
+            state: tidb_model::SchemaState::PUBLIC,
+            columns: vec![tidb_model::ColumnInfo {
+                id: 1,
+                name: tidb_ast::CiString::new("a"),
+                offset: 0,
+                state: tidb_model::SchemaState::PUBLIC,
+                field_type: tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Long),
+                ..tidb_model::ColumnInfo::default()
+            }]
+            .into(),
+            indices: indexes
+                .iter()
+                .map(|(id, name)| tidb_model::IndexInfo {
+                    id: *id,
+                    name: tidb_ast::CiString::new(*name),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            ..tidb_model::TableInfo::default()
+        }
+    }
+
+    fn schema_with(table: tidb_model::TableInfo) -> impl Fn() -> tidb_infoschema::SessionExtendedInfoSchema {
+        move || {
+            tidb_infoschema::SessionExtendedInfoSchema::init_with_db_infos(
+                vec![tidb_model::GoShared::new(tidb_model::DBInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("test"),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    deprecated_tables: vec![table.clone_like_go()].into(),
+                    ..tidb_model::DBInfo::default()
+                })],
+                Vec::new(),
+                Vec::new(),
+                1,
+            )
+        }
+    }
+
+    /// Go `TableHandler.handleScatterTableRequest` and
+    /// `handleStopScatterTableRequest`: one PD `scatter-range` scheduler for
+    /// the records and one per index, named `<table>-<id>[-<index>]`.
+    #[test]
+    fn table_scatter_adds_and_deletes_gos_schedulers() {
+        let (address, requests) = pd_fixture(|_, _| "\"ok\"".to_owned());
+        let store = Store { pd_http: None, pd_addrs: vec![address], regions: Vec::new() };
+        let schema = schema_with(table(41, "t", &[(1, "idx")]));
+        let security = tidb_pd_client::ClusterSecurity::plaintext();
+        assert_eq!(
+            region_response("/tables/test/t/scatter", &store, &schema, &security).unwrap().unwrap(),
+            "\"success!\""
+        );
+        assert_eq!(
+            region_response("/tables/test/t/stop-scatter", &store, &schema, &security).unwrap().unwrap(),
+            "\"success!\""
+        );
+        let requests = requests.lock().unwrap().clone();
+        let (start, end) = tidb_tablecodec::table_key::get_table_handle_key_range(41);
+        let record: serde_json::Value = serde_json::from_str(&requests[0].2).unwrap();
+        assert_eq!(
+            (requests[0].0.as_str(), requests[0].1.as_str()),
+            ("POST", "/pd/api/v1/schedulers")
+        );
+        assert_eq!(record["name"], "scatter-range");
+        assert_eq!(record["range_name"], "t-41");
+        assert_eq!(record["start_key"], query_escape(&encode_bytes(&start)));
+        assert_eq!(record["end_key"], query_escape(&encode_bytes(&end)));
+        let index: serde_json::Value = serde_json::from_str(&requests[1].2).unwrap();
+        assert_eq!(index["range_name"], "t-41-idx");
+        assert_eq!(
+            requests[2..].iter().map(|(method, path, _)| (method.as_str(), path.as_str())).collect::<Vec<_>>(),
+            [
+                ("DELETE", "/pd/api/v1/schedulers/scatter-range-scheduler-t-41"),
+                ("DELETE", "/pd/api/v1/schedulers/scatter-range-scheduler-t-41-idx"),
+            ]
+        );
     }
 }

@@ -600,13 +600,11 @@ pub fn cluster_session_stack(
                         .max(0) as u64,
                 ));
             }
-            let state_syncer: Box<dyn tidb_ddl_serverstate::Syncer> = match &etcd {
-                Some(client) => Box::new(tidb_ddl_serverstate::EtcdSyncer::new(
-                    Arc::clone(client),
-                    tidb_ddl_serverstate::SERVER_GLOBAL_STATE,
-                )),
-                None => Box::new(tidb_ddl_serverstate::MemSyncer::new()),
-            };
+            // Go `domain.GetDomain(s).DDL().StateSyncer()`.
+            let state_syncer = factory
+                .ddl
+                .state_syncer()
+                .expect("a started DDL has its state syncer");
             tidb_session::domain::cluster_session_node::run_upgrade(
                 &factory,
                 &upgrade_store,

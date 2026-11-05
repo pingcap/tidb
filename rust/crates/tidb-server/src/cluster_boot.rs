@@ -84,6 +84,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
         // node always is.
         let regions = factory.region_store.clone();
         let mvcc = factory.region_store.clone();
+        let cluster_upgrade = crate::node_status::cluster_upgrade(&factory);
         let node =
             ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users)).map_err(|error| {
                 tidb_session::domain::real_tikv_node::emit_connections_startup_failure(&error);
@@ -106,6 +107,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             stats_priority_queue,
             regions,
             mvcc,
+            cluster_upgrade,
         )
         .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
         let address = node.local_addr().map_err(|error| {
@@ -165,6 +167,7 @@ fn start_cluster_status(
     stats_priority_queue: Option<crate::http_status::StatsPriorityQueue>,
     regions: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
     mvcc: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
+    cluster_upgrade: Option<crate::upgrade_handler::ClusterUpgrade>,
 ) -> std::io::Result<Option<crate::http_status::StatusServer>> {
     // Go Server.Run starts status HTTP beside SQL when ReportStatus is set.
     // Publishing server info alone does not make that endpoint reachable.
@@ -194,6 +197,7 @@ fn start_cluster_status(
             stats_priority_queue,
             regions,
             mvcc,
+            cluster_upgrade,
         },
     ) {
         Ok(server) => Ok(Some(server)),
@@ -246,14 +250,14 @@ mod status_tests {
             None,
             None,
             None,
-            None, None, None, None, None, None
+            None, None, None, None, None, None, None
         )
         .unwrap()
         .is_none());
         let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         config.report_status = true;
         config.status_port = occupied.local_addr().unwrap().port();
-        assert!(start_cluster_status(&config, tracker, schema, test_settings(), None, None, None, None, None, None, None, None, None, None, None, None).is_err());
+        assert!(start_cluster_status(&config, tracker, schema, test_settings(), None, None, None, None, None, None, None, None, None, None, None, None, None).is_err());
     }
 
     #[test]
@@ -272,7 +276,7 @@ mod status_tests {
             Vec::new(),
             1,
         ));
-        let server = start_cluster_status(&config, tracker, schema, test_settings(), None, None, None, None, None, None, None, None, None, None, None, None)
+        let server = start_cluster_status(&config, tracker, schema, test_settings(), None, None, None, None, None, None, None, None, None, None, None, None, None)
             .unwrap()
             .expect("cluster startup must bind the advertised status service like Go");
         for path in ["/status", "/metrics", "/settings", "/config", "/schema"] {

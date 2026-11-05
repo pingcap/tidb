@@ -3390,6 +3390,7 @@ mod tests_zero_date;
 pub mod mysql_bootstrap;
 pub mod upgrade_def;
 pub mod upgrade_run;
+pub mod sync_upgrade;
 pub mod bootstrap_publish;
 pub mod ddl_session_pool;
 pub mod cluster_sysvar_writer;

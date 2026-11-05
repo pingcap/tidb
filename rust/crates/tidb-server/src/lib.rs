@@ -54,6 +54,7 @@ pub mod http_settings;
 pub mod http_status;
 mod mvcc_routes;
 mod region_routes;
+pub mod upgrade_handler;
 pub mod main_flags;
 mod mysql_connection;
 pub mod node_flags;

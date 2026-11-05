@@ -246,6 +246,172 @@ mod tests {
             .unwrap();
     }
 
+    /// Go `RegionHandler` for `RegionHot`: PD's hot read and write leaders,
+    /// each with the table or index its range covers.
+    #[test]
+    fn hot_regions_name_their_tables_like_go() {
+        let stack = stack();
+        let factory = &stack.factory;
+        run(factory, "CREATE TABLE test.hot (id INT PRIMARY KEY, b INT, KEY ib (b))");
+        let catalog_factory = Arc::clone(factory);
+        let schema = move || catalog_factory.catalog_snapshot();
+        let (table_id, index_id) = {
+            let (_, table) = factory.catalog_snapshot().table_info_by_name("test", "hot").unwrap();
+            let table = table.read();
+            let index_id = table.indices.iter_deref().next().unwrap().read().id;
+            (table.id, index_id)
+        };
+        let (address, requests) = crate::region_routes::hot_scatter_tests::pd_fixture(|_, path| {
+            let (region, rate, degree) = if path.ends_with("/read") { (7, 10.0, 3) } else { (8, 20.0, 4) };
+            format!(
+                r#"{{"as_peer":{{}},"as_leader":{{"1":{{"total_flow_bytes":0,"regions_count":1,"statistics":[{{"store_id":1,"region_id":{region},"hot_degree":{degree},"flow_bytes":{rate},"byte_rate":{rate},"key_rate":1,"query_rate":1,"anti_count":0,"last_update_time":"2026-01-01T00:00:00Z"}}]}}}}}}"#
+            )
+        });
+        let (record_start, record_end) = tidb_tablecodec::table_key::get_table_handle_key_range(table_id);
+        let (index_start, index_end) = tidb_tablecodec::get_table_index_key_range(table_id, index_id);
+        let store = crate::region_routes::hot_scatter_tests::Store {
+            pd_http: Some(
+                tidb_txnkv::driver::tikv_store::new_pd_http_client_with_mock_service_discovery(
+                    "test",
+                    &[format!("http://{address}")],
+                    Vec::new(),
+                )
+                .unwrap(),
+            ),
+            pd_addrs: Vec::new(),
+            regions: vec![(7, record_start, record_end), (8, index_start, index_end)],
+        };
+        let answer = crate::region_routes::region_response(
+            "/regions/hot",
+            &store,
+            &schema,
+            &tidb_pd_client::ClusterSecurity::plaintext(),
+        )
+        .expect("served")
+        .unwrap();
+        let hot: serde_json::Value = serde_json::from_str(&answer).unwrap();
+        assert_eq!(hot["read"][0]["region_id"], 7);
+        assert_eq!(hot["read"][0]["region_metric"]["max_hot_degree"], 3);
+        assert_eq!(hot["read"][0]["region_metric"]["flow_bytes"], 10);
+        assert_eq!(hot["read"][0]["region_metric"]["region_count"], 0);
+        assert_eq!(hot["read"][0]["db_name"], "test");
+        assert_eq!(hot["read"][0]["table_name"], "hot");
+        assert_eq!(hot["read"][0]["table_id"], table_id);
+        assert_eq!(hot["read"][0]["index_name"], "");
+        assert_eq!(hot["write"][0]["region_id"], 8);
+        assert_eq!(hot["write"][0]["index_name"], "ib");
+        assert_eq!(hot["write"][0]["index_id"], index_id);
+        let paths: Vec<String> = requests.lock().unwrap().iter().map(|(_, path, _)| path.clone()).collect();
+        assert_eq!(paths, ["/pd/api/v1/hotspot/regions/read", "/pd/api/v1/hotspot/regions/write"]);
+    }
+
+    /// Go `TestUpgrade` (`pkg/server/handler/tests`): `/upgrade/start`
+    /// enters the upgrading state once the DDL owner acknowledges it,
+    /// `/upgrade/show` reports the servers' versions, `/upgrade/finish`
+    /// leaves it; a repeated operation says so.
+    #[test]
+    fn upgrade_routes_answer_like_go() {
+        let stack = stack();
+        let upgrade = crate::node_status::cluster_upgrade(&stack.factory).expect("the DDL is started");
+        let answer = |path: &str, method: &str| {
+            crate::upgrade_handler::cluster_upgrade_response(
+                path,
+                &format!("{method} {path} HTTP/1.1\r\n\r\n"),
+                Some(&upgrade),
+            )
+            .expect(path)
+        };
+        let is_upgrading = || {
+            tidb_session::sync_upgrade::is_upgrading_cluster_state(upgrade.state_syncer.as_ref()).unwrap()
+        };
+
+        assert_eq!(
+            answer("/upgrade/start", "GET").unwrap_err(),
+            "This API only support POST method"
+        );
+        // test upgrade start
+        assert_eq!(answer("/upgrade/start", "POST").unwrap(), ["\"success!\""]);
+        assert!(is_upgrading());
+        // Do start upgrade again.
+        assert_eq!(
+            answer("/upgrade/start", "POST").unwrap(),
+            ["\"It's a duplicated operation and the cluster is already in upgrading state.\""]
+        );
+        assert!(is_upgrading());
+
+        // A user DDL submitted while upgrading is paused by the system
+        // (`processJobDuringUpgrade`) until `/upgrade/finish` resumes it.
+        let ddl_factory = Arc::clone(&stack.factory);
+        let ddl = std::thread::spawn(move || run(&ddl_factory, "CREATE TABLE test.during_upgrade (a INT)"));
+        let job_state = || -> Option<String> {
+            let mut state = None;
+            stack
+                .factory
+                .advanced_sys_session_pool()
+                .with_session(|session| {
+                    session.with_session_context(|context| {
+                        let rows = context
+                            .query_internal("SELECT job_meta FROM mysql.tidb_ddl_job")
+                            .map_err(tidb_syssession::SysSessionError::new)?;
+                        state = rows.first().map(|row| {
+                            let mut job = tidb_model::Job::default();
+                            job.decode(row[0].go_bytes()).unwrap();
+                            job.state.to_string()
+                        });
+                        Ok(())
+                    })
+                })
+                .unwrap();
+            state
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while job_state().as_deref() != Some("paused") {
+            assert!(std::time::Instant::now() < deadline, "the job is not paused: {:?}", job_state());
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(!ddl.is_finished());
+
+        // test upgrade show for 1 server
+        let shown = answer("/upgrade/show", "POST").unwrap();
+        assert_eq!(shown.len(), 2, "{shown:?}");
+        let cluster_info: serde_json::Value = serde_json::from_str(&shown[0]).unwrap();
+        let ddl_id = stack
+            .factory
+            .server_info()
+            .unwrap()
+            .get_local_server_info()
+            .static_info
+            .id
+            .clone();
+        assert_eq!(cluster_info["owner_id"], ddl_id);
+        assert_eq!(cluster_info["servers_num"], 1);
+        assert_eq!(cluster_info["upgraded_percent"], 100);
+        assert_eq!(cluster_info["is_all_server_version_consistent"], true);
+        assert!(cluster_info.get("all_servers_diff_info").is_none());
+        assert_eq!(shown[1], "\"success!\"");
+        assert!(is_upgrading());
+
+        // test upgrade finish
+        assert_eq!(answer("/upgrade/finish", "POST").unwrap(), ["\"success!\""]);
+        assert!(!is_upgrading());
+        // Go `ResumeAllJobsBySystem` resumed the job before the answer.
+        assert_ne!(job_state().as_deref(), Some("paused"));
+        ddl.join().expect("the resumed job finishes");
+        assert_eq!(job_state(), None);
+        // test upgrade show failed
+        assert_eq!(
+            answer("/upgrade/show", "POST").unwrap(),
+            ["\"The cluster state is normal.\"", "\"success!\""]
+        );
+        // Do finish upgrade again.
+        assert_eq!(
+            answer("/upgrade/finish", "POST").unwrap(),
+            ["\"It's a duplicated operation and the cluster is already in normal state.\""]
+        );
+        assert!(!is_upgrading());
+        assert_eq!(answer("/upgrade/stop", "POST").unwrap_err(), "wrong operation:stop");
+    }
+
     /// Go `MvccTxnHandler` over the embedded store: a row's MVCC record by
     /// handle, by hex key and by its transaction's start ts.
     #[test]
@@ -318,7 +484,10 @@ mod tests {
         let store = factory.region_store.clone().expect("the embedded store has a region cache");
         let catalog_factory = Arc::clone(factory);
         let schema = move || catalog_factory.catalog_snapshot();
-        let answer = |path: &str| crate::region_routes::region_response(path, store.as_ref(), &schema).expect(path);
+        let security = tidb_pd_client::ClusterSecurity::plaintext();
+        let answer = |path: &str| {
+            crate::region_routes::region_response(path, store.as_ref(), &schema, &security).expect(path)
+        };
         let json = |path: &str| -> serde_json::Value { serde_json::from_str(&answer(path).unwrap()).unwrap() };
 
         let table_id = factory
@@ -374,8 +543,14 @@ mod tests {
             answer("/tables/test/nope/regions").unwrap_err(),
             "[schema:1146]Table 'test.nope' doesn't exist"
         );
-        // Go `/regions/hot` needs PD's hot statistics; it is not served.
-        assert!(crate::region_routes::region_response("/regions/hot", store.as_ref(), &schema).is_none());
+        // Go `/regions/hot` needs the store's PD HTTP client, which the
+        // embedded store has none of.
+        assert_eq!(answer("/regions/hot").unwrap_err(), tidb_store_helper::PD_HTTP_CLIENT_UNAVAILABLE);
+        // Go `getPDAddr`: no PD addresses.
+        assert_eq!(
+            answer("/tables/test/rt/scatter").unwrap_err(),
+            "scatter record error: pd unavailable"
+        );
     }
 
     /// Go `SchemaStorageHandler` and `StatsHistoryHandler` over a node:
@@ -420,6 +595,23 @@ mod tests {
 /// Go `TTLJobTriggerHandler.ServeHTTP`'s `dom.TTLJobManager().GetCommandCli()`
 /// and `ttlcient.TriggerNewTTLJob`, read at request time as Go reads the
 /// domain's manager.
+/// Go `NewClusterUpgradeHandler(store)`'s reach: the DDL's state syncer, the
+/// domain's etcd client, sessions over the domain, the server-info syncer
+/// and the DDL owner manager. `None` before the DDL starts.
+pub fn cluster_upgrade(factory: &Arc<Domain>) -> Option<crate::upgrade_handler::ClusterUpgrade> {
+    let sess_pool = Arc::new(tidb_session::ddl_session_pool::NodeDdlSessionPool::default());
+    sess_pool.bind(factory);
+    Some(crate::upgrade_handler::ClusterUpgrade {
+        state_syncer: factory.ddl.state_syncer()?,
+        etcd_cli: factory
+            .etcd_client()
+            .map(|client| client as Arc<dyn tidb_owner::OwnerStore>),
+        sess_pool,
+        server_info: factory.server_info()?,
+        ddl_owner: factory.ddl.owner_manager()?,
+    })
+}
+
 pub fn ttl_job_trigger(factory: &Arc<Domain>) -> crate::http_status::TtlJobTrigger {
     let domain = Arc::downgrade(factory);
     Arc::new(move |db_name: &str, table_name: &str| {

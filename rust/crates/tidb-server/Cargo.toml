@@ -125,6 +125,7 @@ tidb-chunk = { path = "../tidb-chunk" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-ddl = { path = "../tidb-ddl" }
+tidb-ddl-build = { path = "../tidb-ddl-build" }
 tidb-ddl-serverstate = { path = "../tidb-ddl-serverstate" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-planner = { path = "../tidb-planner" }

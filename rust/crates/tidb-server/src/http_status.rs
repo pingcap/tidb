@@ -109,6 +109,8 @@ pub struct StatusRoutes {
     /// Go `TikvHandlerTool`'s store for `/mvcc/*`, which Go serves for
     /// every store.
     pub mvcc: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
+    /// Go `ClusterUpgradeHandler`'s store for `/upgrade/{op}`.
+    pub cluster_upgrade: Option<crate::upgrade_handler::ClusterUpgrade>,
 }
 
 /// Go `StatsHandle().GetPriorityQueueSnapshot()` marshaled.
@@ -626,6 +628,22 @@ fn route_response(
             // Go `handler.WriteError`: 400 with the error text.
             Err(message) => (400, "text/plain", message),
         }
+    } else if route == "/debug/gogc" {
+        debug_gogc_response(request)
+    } else if let Some(answer) = crate::upgrade_handler::cluster_upgrade_response(
+        path,
+        request,
+        routes.cluster_upgrade.as_ref(),
+    ) {
+        match answer {
+            // Each of Go's `WriteData` calls writes its own indented document.
+            Ok(documents) => (
+                200,
+                "application/json",
+                documents.iter().map(|document| write_data(document)).collect(),
+            ),
+            Err(message) => (400, "text/plain", message),
+        }
     } else if let Some(answer) = routes
         .schema
         .as_ref()
@@ -641,7 +659,7 @@ fn route_response(
         .or_else(|| stats_priority_queue_response(path, routes.stats_priority_queue.as_ref()))
         .or_else(|| {
             let (store, schema) = routes.regions.as_ref().zip(routes.schema.as_ref())?;
-            crate::region_routes::region_response(path, store.as_ref(), schema.as_ref())
+            crate::region_routes::region_response(path, store.as_ref(), schema.as_ref(), &routes.security)
         })
         .or_else(|| {
             let (store, schema) = routes.mvcc.as_ref().zip(routes.schema.as_ref())?;
@@ -667,6 +685,32 @@ fn route_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Go's `/debug/gogc`: GET reads the value, POST sets it, a bad value
+    /// is `strconv.Atoi`'s error with 400.
+    #[test]
+    fn debug_gogc_reads_and_sets_like_go() {
+        let previous = tidb_util::gogc::get_gogc();
+        assert_eq!(
+            debug_gogc_response("GET /debug/gogc HTTP/1.1\r\n\r\n"),
+            (200, "text/plain; charset=utf-8", previous.to_string())
+        );
+        assert_eq!(
+            debug_gogc_response("POST /debug/gogc HTTP/1.1\r\n\r\n200"),
+            (200, "text/plain; charset=utf-8", String::new())
+        );
+        assert_eq!(tidb_util::gogc::get_gogc(), 200);
+        assert_eq!(
+            debug_gogc_response("POST /debug/gogc HTTP/1.1\r\n\r\nabc"),
+            (
+                400,
+                "text/plain; charset=utf-8",
+                "strconv.Atoi: parsing \"abc\": invalid syntax".to_owned()
+            )
+        );
+        assert_eq!(tidb_util::gogc::get_gogc(), 200);
+        tidb_util::gogc::set_gogc(previous);
+    }
 
     #[test]
     fn peer_host_batch_drop_releases_the_listener() {
@@ -1204,6 +1248,30 @@ fn ddl_history_response(
         out.push(']');
         Ok(out)
     })())
+}
+
+/// Go's `/debug/gogc` handler: GET answers `util.GetGOGC()`, POST sets it
+/// from the body (`strconv.Atoi`, a bad value answering 400 with its
+/// error); any other method writes nothing.
+fn debug_gogc_response(request: &str) -> (u16, &'static str, String) {
+    const TEXT: &str = "text/plain; charset=utf-8";
+    match request.split_whitespace().next() {
+        Some("GET") => (200, TEXT, tidb_util::gogc::get_gogc().to_string()),
+        Some("POST") => {
+            let body = request.split_once("\r\n\r\n").map_or("", |(_, body)| body);
+            match tidb_go_strconv::parse_int(body, 10, 64) {
+                Ok(val) => {
+                    tidb_util::gogc::set_gogc(val);
+                    (200, TEXT, String::new())
+                }
+                Err((_, mut error)) => {
+                    error.func = "Atoi";
+                    (400, TEXT, error.to_string())
+                }
+            }
+        }
+        _ => (200, TEXT, String::new()),
+    }
 }
 
 /// Go `DDLResignOwnerHandler` (`/ddl/owner/resign`): POST resigns this

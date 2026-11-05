@@ -95,6 +95,11 @@ pub trait ClusterDdl: Send + Sync {
         None
     }
 
+    /// Go `do.DDL().StateSyncer()`, absent before a DDL starts.
+    fn state_syncer(&self) -> Option<Arc<dyn Syncer>> {
+        None
+    }
+
     /// Go `Domain.Reload`: brings this node's schema up to the latest
     /// published version.
     fn reload_schema(&self) -> Result<(), String> {
@@ -2851,6 +2856,10 @@ where
 
     fn owner_manager(&self) -> Option<Arc<dyn tidb_owner::Manager>> {
         Some(Arc::clone(&self.owner))
+    }
+
+    fn state_syncer(&self) -> Option<Arc<dyn Syncer>> {
+        Some(Arc::clone(&self.server_state))
     }
 
     fn reload_schema(&self) -> Result<(), String> {

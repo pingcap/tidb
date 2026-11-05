@@ -160,6 +160,12 @@ pub trait RegionStore: Send + Sync + std::fmt::Debug {
         Err(format!("region cache unavailable: cannot get region {region_id}"))
     }
 
+    /// Go `kv.EtcdBackend.GetPDAddrs`: the PD addresses the store was opened
+    /// with; Go's `not implemented` for a store that is no etcd backend.
+    fn get_pd_addrs(&self) -> Result<Vec<String>, String> {
+        Err("not implemented".to_owned())
+    }
+
     /// client-go `pdClient.GetAllStores()`: every store PD knows. Only asked
     /// of a store whose [`Self::tikv_store_count`] answered.
     fn pd_get_all_stores(&self) -> Result<Vec<PdStoreMeta>, String> {
