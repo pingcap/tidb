@@ -26,7 +26,7 @@ func TestRangeWorkerTaskPanic(t *testing.T) {
 	}, 1, 1, 0)
 	ls.SendTask(Task{StartTid: 1, EndTid: 2})
 	close(ls.taskChan)
-	// A panic in a task escapes the worker loop. The worker goroutines have no
-	// recover, so the panic crashes the process.
-	require.Panics(t, ls.loadStats)
+	// A panic in a task is logged as an error, and the worker loop goes on.
+	require.NotPanics(t, ls.loadStats)
+	require.Equal(t, uint64(1), ls.completeTaskCnt.Load())
 }
