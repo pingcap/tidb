@@ -5659,6 +5659,8 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         )
         .map(PersistedDdlJobPlan::Step);
     }
+    // Go `transitOneJobStep`, before `runOneJobStep`.
+    crate::failpoint_call::inject_call("beforeRunOneJobStep", &active.job);
 
     // Go processJobPausingRequest runs before action dispatch. The pause
     // signal is control flow, not an action error: keep the prior error and

@@ -63,10 +63,10 @@ pub fn start_gc_worker(
 
 /// The store, PD and sessions this node's GC worker (and Go's test API's
 /// `RunResolveLocks`) runs over.
-pub fn gc_worker_deps(
+pub fn gc_worker_deps<S: tidb_store_driver_txn::transaction::StoreClient + 'static>(
     factory: &Arc<Domain>,
-    store: &tidb_txnkv::driver::tikv_store::TikvStore,
-    opener: Arc<tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener>,
+    store: &tidb_txnkv::driver::tikv_store::TikvStore<S>,
+    opener: Arc<tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>>,
 ) -> GcWorkerDeps {
     // The node serves the null keyspace.
     let client = Arc::new(TikvStoreClient::new(

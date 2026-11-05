@@ -78,7 +78,7 @@ pub fn run_unistore_cluster_session(
         _async_stats_loader,
         _stats_maintenance: stats_maintenance,
         rpc: _rpc,
-        opener: _opener,
+        opener,
         // Go `initResourceGroupsController`: the controller lives as long as
         // the server, stopped by its guard when this function returns.
         _resource_groups,
@@ -152,9 +152,19 @@ pub fn run_unistore_cluster_session(
                 flash_replica_deprecated: Some(crate::node_status::flash_replica_deprecated(&factory)),
                 extract_handle: factory.get_extract_handle(),
                 metrics_profile: Some(crate::node_status::metrics_profile_session(&factory)),
-                // The embedded store has no GC client (`GcKvClient`) for
-                // `gcworker.RunResolveLocks` yet.
-                gc_resolve_locks: None,
+                gc_resolve_locks: Some({
+                    // Go `TestHandler`'s `gcworker.RunResolveLocks` over the
+                    // embedded store.
+                    let gc_deps = tidb_gcworker::node::gc_worker_deps(
+                        &factory,
+                        opener.store(),
+                        Arc::new(opener.clone()),
+                    );
+                    Arc::new(move |safe_point| {
+                        tidb_gcworker::run_resolve_locks(gc_deps.clone(), safe_point, "testGCWorker", 3)
+                            .map_err(|error| error.to_string())
+                    })
+                }),
                 schema_reload: {
                     let ddl = Arc::clone(&factory.ddl);
                     Some(Arc::new(move || ddl.reload_schema()))

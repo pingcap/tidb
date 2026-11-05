@@ -692,15 +692,16 @@ mod tests {
         let answer = |method: &str, path: &str| {
             crate::mvcc_routes::delete_key_response(path, &format!("{method} {path} HTTP/1.1"), &schema, &factory.transactions)
         };
-        // Go `CheckTableExec` (`tidb_enable_fast_table_check` OFF): Rust
-        // has no `FastCheckTableExec` (register E08).
-        let check = |sql: &str| {
+        // Go `FastCheckTableExec` (`tidb_enable_fast_table_check`, the
+        // default) or, with `fast` off, `CheckTableExec`.
+        let check_with = |fast: bool, sql: &str| {
             factory
                 .advanced_sys_session_pool()
                 .with_session(|session| {
                     session.with_session_context(|context| {
+                        let fast = format!("set @@tidb_enable_fast_table_check = {}", u8::from(fast));
                         context
-                            .query_internal(tidb_txnkv::INTERNAL_TXN_OTHERS, "set @@tidb_enable_fast_table_check = 0")
+                            .query_internal(tidb_txnkv::INTERNAL_TXN_OTHERS, &fast)
                             .and_then(|_| context.query_internal(tidb_txnkv::INTERNAL_TXN_OTHERS, sql))
                             .map_err(tidb_syssession::SysSessionError::new)
                     })
@@ -708,6 +709,7 @@ mod tests {
                 .map(|_| ())
                 .map_err(|error| error.to_string())
         };
+        let check = |sql: &str| check_with(false, sql);
         run(factory, "create database tidb");
         run(factory, "create table tidb.delete_idx (a int primary key, b int, key idx_ab(a, b))");
         run(factory, "insert into tidb.delete_idx values (1, 2)");
@@ -726,16 +728,38 @@ mod tests {
         );
 
         check("admin check index tidb.delete_idx idx_ab").unwrap();
-        // Go `kv.WithInternalSourceType(ctx, kv.InternalTxnTools)`.
+        // Go `HandleTask`'s `kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin)`
+        // on every read of the checked table (background workers read their
+        // own tables meanwhile).
+        let (_, delete_idx) = factory.catalog_snapshot().table_info_by_name("tidb", "delete_idx").unwrap();
+        let table_prefix = tidb_tablecodec::table_key::gen_table_prefix(delete_idx.read().id);
         let sources: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
         let recorded = Arc::clone(&sources);
         stack.rpc.set_send_hook(Some(Arc::new(move |request| {
+            use tikv_client::proto::coprocessor;
+            if let Some(request) = request.as_any().downcast_ref::<coprocessor::Request>() {
+                if request.ranges.iter().any(|range| range.start.starts_with(&table_prefix)) {
+                    recorded
+                        .lock()
+                        .unwrap()
+                        .push(request.context.as_ref().map(|context| context.request_source.clone()).unwrap_or_default());
+                }
+            }
+        })));
+        check_with(true, "admin check table tidb.delete_idx").unwrap();
+        stack.rpc.set_send_hook(None);
+        let sources = std::mem::take(&mut *sources.lock().unwrap());
+        assert!(!sources.is_empty() && sources.iter().all(|source| source == "internal_admin"), "{sources:?}");
+        // Go `kv.WithInternalSourceType(ctx, kv.InternalTxnTools)`.
+        let prewrites: Arc<std::sync::Mutex<Vec<(String, Vec<Vec<u8>>)>>> = Arc::default();
+        let recorded = Arc::clone(&prewrites);
+        stack.rpc.set_send_hook(Some(Arc::new(move |request| {
             use tikv_client::proto::kvrpcpb;
             if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::PrewriteRequest>() {
-                recorded
-                    .lock()
-                    .unwrap()
-                    .push(request.context.as_ref().map(|context| context.request_source.clone()).unwrap_or_default());
+                recorded.lock().unwrap().push((
+                    request.context.as_ref().map(|context| context.request_source.clone()).unwrap_or_default(),
+                    request.mutations.iter().map(|mutation| mutation.key.clone()).collect(),
+                ));
             }
         })));
         let deleted: serde_json::Value = serde_json::from_str(
@@ -743,10 +767,29 @@ mod tests {
         )
         .unwrap();
         stack.rpc.set_send_hook(None);
-        assert_eq!(*sources.lock().unwrap(), ["internal_tools"]);
-        // Go `admin.CheckIndicesCount`'s error is `ADMIN CHECK INDEX`'s.
+        let deleted_key: Vec<u8> = (0..deleted["key"].as_str().unwrap().len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&deleted["key"].as_str().unwrap()[i..i + 2], 16).unwrap())
+            .collect();
+        let sources: Vec<String> = std::mem::take(&mut *prewrites.lock().unwrap())
+            .into_iter()
+            .filter(|(_, keys)| keys.contains(&deleted_key))
+            .map(|(source, _)| source)
+            .collect();
+        assert_eq!(sources, ["internal_tools"]);
+        // Go `admin.CheckIndicesCount`'s error is `CheckTableExec`'s for
+        // `ADMIN CHECK INDEX`.
         let error = check("admin check index tidb.delete_idx idx_ab").unwrap_err();
         assert!(error.contains("table count 1 != index(idx_ab) count 0"), "{error}");
+        // `FastCheckTableExec` names the row whose entry is gone.
+        let error = check_with(true, "admin check index tidb.delete_idx idx_ab").unwrap_err();
+        assert!(
+            error.contains(
+                "data inconsistency in table: delete_idx, index: idx_ab, handle: 1, \
+                 index-values:\"\" != record-values:\"handle: 1, values: [KindInt64 1 KindInt64 2]\""
+            ),
+            "{error}"
+        );
         let (_, table) = factory.catalog_snapshot().table_info_by_name("tidb", "delete_idx").unwrap();
         let table_id = table.read().id;
         let index_id = table.read().indices.iter_deref().find(|index| index.read().name.original() == "idx_ab").unwrap().read().id;
@@ -762,6 +805,15 @@ mod tests {
             serde_json::from_str(&answer("POST", "/test/delete/rowkey/tidb/delete_row?handle=1").unwrap().unwrap()).unwrap();
         let error = check("admin check table tidb.delete_row").unwrap_err();
         assert!(error.contains("data inconsistency"), "{error}");
+        let error = check_with(true, "admin check table tidb.delete_row").unwrap_err();
+        assert!(
+            error.contains(
+                "data inconsistency in table: delete_row, index: idx_b, handle: 1, \
+                 index-values:\"handle: 1, values: [KindInt64 2]\" != record-values:\"\""
+            ),
+            "{error}"
+        );
+        check_with(true, "admin check table tidb.delete_idx").unwrap_err();
         let (_, table) = factory.catalog_snapshot().table_info_by_name("tidb", "delete_row").unwrap();
         let key: String = tidb_tablecodec::table_key::encode_row_key_with_handle(
             table.read().id,
@@ -772,6 +824,80 @@ mod tests {
         .collect();
         assert_eq!(deleted["key"], key);
         fail::remove("enableTestAPI");
+    }
+
+    /// Go `TestHandler`'s `gcworker.RunResolveLocks` over the embedded store
+    /// (the deps `/test/gc/resolvelock` resolves with): a lock older than the
+    /// safe point is resolved; one newer is left.
+    #[test]
+    fn gc_resolve_locks_resolves_the_embedded_stores_locks_like_go() {
+        use tidb_proto::{KvrpcMutation, KvrpcOp};
+        let stack = stack();
+        let ts = || stack.factory.transactions.fresh_timestamp().unwrap();
+        let handler = Arc::clone(stack.rpc.handler());
+        let prewrite = |key: &[u8], start: u64| {
+            handler
+                .lock()
+                .unwrap()
+                .store
+                .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
+                    mutations: vec![KvrpcMutation { op: KvrpcOp::Put as i32, key: key.to_vec(), value: b"v".to_vec(), ..KvrpcMutation::default() }],
+                    primary_lock: key.to_vec(),
+                    start_version: start,
+                    lock_ttl: 1,
+                    ..tidb_unistore_tikv::mvcc_store::PrewriteReq::default()
+                })
+                .unwrap();
+        };
+        let locks = || {
+            let mut keys: Vec<Vec<u8>> = handler
+                .lock()
+                .unwrap()
+                .store
+                .scan_lock(&[], &[], u64::MAX, 16)
+                .into_iter()
+                .map(|lock| lock.key)
+                .collect();
+            keys.sort();
+            keys
+        };
+        prewrite(b"x_gc_old", ts());
+        let safe_point = ts();
+        prewrite(b"x_gc_new", ts());
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert_eq!(locks(), [b"x_gc_new".to_vec(), b"x_gc_old".to_vec()]);
+        let deps = tidb_gcworker::node::gc_worker_deps(&stack.factory, stack.opener.store(), Arc::new(stack.opener.clone()));
+        tidb_gcworker::run_resolve_locks(deps, safe_point, "testGCWorker", 3).unwrap();
+        assert_eq!(locks(), [b"x_gc_new".to_vec()]);
+    }
+
+    /// Go `DDLHookHandler`: `ctc_hook` holds each reorganizing state of a
+    /// `MODIFY COLUMN` job half a second (`beforeRunOneJobStep`), so the
+    /// three states take at least 1.5s; `default_hook` removes it.
+    #[cfg(feature = "failpoints")]
+    #[test]
+    fn ddl_hook_route_holds_column_type_changes_like_go() {
+        let stack = stack();
+        let factory = &stack.factory;
+        let hook = |method: &str, body: &str| {
+            crate::http_status::ddl_hook_answer(
+                "/test/ddl/hook",
+                &format!(
+                    "{method} /test/ddl/hook HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n{body}"
+                ),
+            )
+            .unwrap()
+        };
+        run(factory, "create table test.hooked (a int)");
+        run(factory, "insert into test.hooked values (1)");
+        assert_eq!(hook("GET", "ddl_hook=ctc_hook").unwrap_err(), "This api only support POST method");
+        assert_eq!(hook("POST", "ddl_hook=ctc_hook").unwrap(), "\"success!\"");
+        assert!(tidb_ddl::failpoint_call::is_enabled("beforeRunOneJobStep"));
+        let start = std::time::Instant::now();
+        run(factory, "alter table test.hooked modify column a varchar(10)");
+        assert!(start.elapsed() >= std::time::Duration::from_millis(1500), "{:?}", start.elapsed());
+        assert_eq!(hook("POST", "ddl_hook=default_hook").unwrap(), "\"success!\"");
+        assert!(!tidb_ddl::failpoint_call::is_enabled("beforeRunOneJobStep"));
     }
 
     /// Go `TestGetIndexMVCC` and `TestGetTableMVCC`'s query-string forms:

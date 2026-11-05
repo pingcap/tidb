@@ -442,6 +442,59 @@ fn traceevent_response(body: &str) -> axum::response::Response {
         .expect("status response headers")
 }
 
+/// Go `DDLHookHandler` at `/test/ddl/hook`: POST `ddl_hook=ctc_hook` makes
+/// each step of a `MODIFY COLUMN` job in a delete-only, write-only or
+/// write-reorganization state wait half a second before it runs
+/// (`beforeRunOneJobStep`), and `default_hook` removes that.
+pub(crate) fn ddl_hook_answer(path: &str, request: &str) -> Option<Result<String, String>> {
+    const BEFORE_RUN_ONE_JOB_STEP: &str = "beforeRunOneJobStep";
+    let (route, query) = path.split_once('?').unwrap_or((path, ""));
+    if route != "/test/ddl/hook" {
+        return None;
+    }
+    if request.split(' ').next() != Some("POST") {
+        return Some(Err("This api only support POST method".to_owned()));
+    }
+    let hook = request_form(query, request).unwrap_or_default().remove("ddl_hook").unwrap_or_default();
+    match hook.as_str() {
+        "ctc_hook" => tidb_ddl::failpoint_call::enable_call(
+            BEFORE_RUN_ONE_JOB_STEP,
+            Arc::new(|job: &dyn std::any::Any| {
+                let Some(job) = job.downcast_ref::<tidb_model::Job>() else {
+                    return;
+                };
+                tidb_logutil::bg_logger().info(
+                    "on job run before",
+                    &[tidb_log::Field::new("job", tidb_log::Value::Str(job.to_string()))],
+                );
+                // Only block the ctc type ddl here.
+                if job.type_ != tidb_model::ActionType::ACTION_MODIFY_COLUMN {
+                    return;
+                }
+                if matches!(
+                    job.schema_state,
+                    tidb_model::SchemaState::DELETE_ONLY
+                        | tidb_model::SchemaState::WRITE_ONLY
+                        | tidb_model::SchemaState::WRITE_REORGANIZATION
+                ) {
+                    tidb_logutil::bg_logger().warn(
+                        &format!("[DDL_HOOK] Hang for 0.5 seconds on {} state triggered", job.schema_state),
+                        &[],
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+            }),
+        ),
+        "default_hook" => tidb_ddl::failpoint_call::disable(BEFORE_RUN_ONE_JOB_STEP),
+        _ => {}
+    }
+    tidb_logutil::bg_logger().info(
+        "change ddl hook success",
+        &[tidb_log::Field::new("to_ddl_hook", tidb_log::Value::Str(hook))],
+    );
+    Some(Ok("\"success!\"".to_owned()))
+}
+
 /// Go's `enableTestAPI`-failpoint `TestHandler` at `/test/{mod}/{op}`:
 /// module `gc`'s `resolvelock?safepoint={uint64}` resolves every lock
 /// before the safe point, one GC at a time.
@@ -637,6 +690,95 @@ fn debug_pprof_symbol_response(path: &str, request: &str) -> axum::response::Res
         .expect("status response headers")
 }
 
+/// Go `r.URL.Query().Get(key)` without unescaping.
+fn query_value(query: &str, key: &str) -> String {
+    query
+        .split('&')
+        .filter_map(|pair| pair.split_once('=').or(Some((pair, ""))))
+        .find(|(name, _)| *name == key)
+        .map_or_else(String::new, |(_, value)| value.to_owned())
+}
+
+/// Go `withProfilingRequestLog`.
+fn with_profiling_request_log(route: &str, query: &str, request: &str) {
+    let method = request.split(' ').next().unwrap_or_default();
+    let mut fields = vec![
+        tidb_log::Field::new("method", tidb_log::Value::Str(method.to_owned())),
+        tidb_log::Field::new("path", tidb_log::Value::Str(route.to_owned())),
+    ];
+    for key in ["seconds", "debug", "gc"] {
+        let value = query_value(query, key);
+        if !value.is_empty() {
+            fields.push(tidb_log::Field::new(key, tidb_log::Value::Str(value)));
+        }
+    }
+    tidb_logutil::bg_logger().info("profiling request received", &fields);
+}
+
+/// Go `serveError`.
+fn serve_error(code: u16, text: &str) -> axum::response::Response {
+    axum::http::Response::builder()
+        .status(code)
+        .header("content-type", "text/plain; charset=utf-8")
+        .header("x-go-pprof", "1")
+        .header("x-content-type-options", "nosniff")
+        .body(axum::body::Body::from(format!("{text}\n")))
+        .expect("status response headers")
+}
+
+/// Go `/debug/zip` (`withProfilingRequestLog`): a zip of the process's
+/// `goroutine`, `heap` and `mutex` profiles, a `seconds`-long (default 10)
+/// CPU `profile`, the `config` and the `version`. The first three are Go
+/// runtime profiles this process does not have.
+fn debug_zip_response(path: &str, request: &str) -> Option<axum::response::Response> {
+    let (route, query) = path.split_once('?').unwrap_or((path, ""));
+    if route != "/debug/zip" {
+        return None;
+    }
+    with_profiling_request_log(route, query, request);
+    let disposition = format!(
+        "attachment; filename=\"tidb_debug\"{}.zip",
+        chrono::Local::now().format("%Y%m%d%H%M%S")
+    );
+    let mut zw = tidb_replayer::zip::ZipWriter::new(Vec::new());
+    // Dump profile.
+    let mut pc = tidb_cpuprofile::Collector::new();
+    if let Err(error) = pc.start_cpu_profile() {
+        return Some(serve_error(500, &format!("Could not enable CPU profiling: {error}")));
+    }
+    let sec = tidb_go_strconv::parse_int(&query_value(query, "seconds"), 10, 64)
+        .ok()
+        .filter(|sec| *sec > 0)
+        .unwrap_or(10);
+    std::thread::sleep(std::time::Duration::from_secs(sec as u64));
+    let profile = match pc.stop_cpu_profile() {
+        Ok(profile) => profile,
+        Err(error) => return Some(serve_error(500, &format!("Could not enable CPU profiling: {error}"))),
+    };
+    // Dump config: Go `json.MarshalIndent(config.GetGlobalConfig(), "", " ")`.
+    let config = match serde_json::to_string(tidb_config::config_tree::config::get_global_config().as_ref()) {
+        Ok(compact) => write_data(&compact),
+        Err(error) => return Some(serve_error(500, &format!("get config info fail{error}"))),
+    };
+    let written = zw
+        .create_file("profile", &profile)
+        .and_then(|()| zw.create_file("config", config.as_bytes()))
+        // Dump version.
+        .and_then(|()| zw.create_file("version", tidb_printer::get_tidb_info().as_bytes()))
+        .and_then(|()| zw.close());
+    if let Err(error) = written {
+        tidb_logutil::bg_logger().error("write debug zip", &[tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string()))]);
+    }
+    Some(
+        axum::http::Response::builder()
+            .status(200)
+            .header("content-type", "application/zip")
+            .header("content-disposition", disposition)
+            .body(axum::body::Body::from(zw.into_inner()))
+            .expect("status response headers"),
+    )
+}
+
 /// Go `withProfilingRequestLog(cpuprofile.ProfileHTTPHandler)` on
 /// `/debug/pprof/profile`: a `seconds` (default 30) CPU profile of this
 /// process, gzipped `profile.proto`, collected from the global profiler.
@@ -645,28 +787,9 @@ fn debug_pprof_profile_response(path: &str, request: &str) -> Option<axum::respo
     if route != "/debug/pprof/profile" {
         return None;
     }
-    let form_value = |key: &str| {
-        query
-            .split('&')
-            .filter_map(|pair| pair.split_once('=').or(Some((pair, ""))))
-            .find(|(name, _)| *name == key)
-            .map_or_else(String::new, |(_, value)| value.to_owned())
-    };
-    // Go `withProfilingRequestLog`.
-    let method = request.split(' ').next().unwrap_or_default();
-    let mut fields = vec![
-        tidb_log::Field::new("method", tidb_log::Value::Str(method.to_owned())),
-        tidb_log::Field::new("path", tidb_log::Value::Str(route.to_owned())),
-    ];
-    for key in ["seconds", "debug", "gc"] {
-        let value = form_value(key);
-        if !value.is_empty() {
-            fields.push(tidb_log::Field::new(key, tidb_log::Value::Str(value)));
-        }
-    }
-    tidb_logutil::bg_logger().info("profiling request received", &fields);
+    with_profiling_request_log(route, query, request);
     let builder = axum::http::Response::builder().header("x-content-type-options", "nosniff");
-    let response = match tidb_cpuprofile::profile_http_handler(&form_value("seconds")) {
+    let response = match tidb_cpuprofile::profile_http_handler(&query_value(query, "seconds")) {
         Ok(profile) => builder
             .status(200)
             .header("content-type", "application/octet-stream")
@@ -942,6 +1065,9 @@ fn route_response(
     if let Some(response) = debug_pprof_profile_response(path, request) {
         return response;
     }
+    if let Some(response) = debug_zip_response(path, request) {
+        return response;
+    }
     if path.split_once('?').map_or(path, |(route, _)| route) == "/debug/pprof/cmdline" {
         return debug_pprof_cmdline_response(request);
     }
@@ -1063,6 +1189,7 @@ fn route_response(
         })
         .or_else(|| delete_key_answer(path, request, routes))
         .or_else(|| test_handler_answer(path, request, routes))
+        .or_else(|| ddl_hook_answer(path, request))
     {
         match answer {
             Ok(body) => (200, "application/json", write_data(&body)),
@@ -2734,6 +2861,38 @@ mod schema_route_tests {
             .sample
             .iter()
             .any(|sample| sample.label.iter().any(|label| text(label.str) == "select ?")));
+    }
+
+    /// Go `/debug/zip`: a `seconds`-long CPU profile, the config as
+    /// `json.MarshalIndent` writes it and the version, zipped under a
+    /// timestamped `tidb_debug` name.
+    #[test]
+    fn debug_zip_serves_the_profile_config_and_version() {
+        use std::io::Read as _;
+        tidb_cpuprofile::start_cpu_profiler().unwrap();
+        let (code, header, body) = routed("/debug/zip?seconds=1", &StatusRoutes::default());
+        tidb_cpuprofile::stop_cpu_profiler();
+        assert_eq!(code, 200, "{}", String::from_utf8_lossy(&body));
+        let (content_type, disposition) = header.split_once('|').unwrap();
+        assert_eq!(content_type, "application/zip");
+        let stamp = disposition
+            .strip_prefix("attachment; filename=\"tidb_debug\"")
+            .and_then(|rest| rest.strip_suffix(".zip"))
+            .unwrap_or_else(|| panic!("{disposition}"));
+        assert!(stamp.len() == 14 && stamp.bytes().all(|byte| byte.is_ascii_digit()), "{stamp}");
+        let files: Vec<(String, Vec<u8>)> = tidb_replayer::zip::read_zip(&body).unwrap();
+        let names: Vec<&str> = files.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, ["profile", "config", "version"]);
+        let mut raw = Vec::new();
+        flate2::read::GzDecoder::new(files[0].1.as_slice()).read_to_end(&mut raw).unwrap();
+        assert!(!raw.is_empty());
+        let config = String::from_utf8(files[1].1.clone()).unwrap();
+        assert!(config.starts_with("{\n \""), "{config}");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&config).unwrap(),
+            serde_json::to_value(tidb_config::config_tree::config::get_global_config().as_ref()).unwrap()
+        );
+        assert_eq!(String::from_utf8(files[2].1.clone()).unwrap(), tidb_printer::get_tidb_info());
     }
 
     /// Go `ProfileHandler` (`/metrics/profile`): the `dot` graph of the
