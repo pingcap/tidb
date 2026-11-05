@@ -416,6 +416,13 @@ impl Parser {
     /// first TERM may independently be parenthesized before this table
     /// factor's own wrapping paren is seen) — or a plain table reference.
     fn parse_table_factor(&mut self) -> PResult<JoinNode> {
+        // Nested join groups recurse without entering the expression parser.
+        stacker::maybe_grow(256 * 1024, 4 * 1024 * 1024, || {
+            self.parse_table_factor_inner()
+        })
+    }
+
+    fn parse_table_factor_inner(&mut self) -> PResult<JoinNode> {
         // `LATERAL (subquery) [AS] alias [(col, ...)]` — checked first
         // since the keyword unambiguously marks this shape (unlike a plain
         // derived table, which needs `looks_like_derived_table`'s own
