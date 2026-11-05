@@ -43,6 +43,10 @@ func DefineRawRestoreFlags(command *cobra.Command) {
 
 // ParseFromFlags parses the backup-related flags from the flag set.
 func (cfg *RestoreRawConfig) ParseFromFlags(flags *pflag.FlagSet) error {
+	if renameFlag := flags.Lookup(FlagRename); renameFlag != nil && flags.Changed(FlagRename) {
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"--%s is not supported by raw or transactional KV restore", FlagRename)
+	}
 	var err error
 	cfg.Online, err = flags.GetBool(flagOnline)
 	if err != nil {

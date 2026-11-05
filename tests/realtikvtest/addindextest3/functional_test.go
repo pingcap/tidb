@@ -86,6 +86,9 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 }
 
 func TestBackendCtxConcurrentUnregister(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("this test exercises the local ingest backend which is not used on NextGen")
+	}
 	store, _ := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -139,6 +142,7 @@ func TestMockMemoryUsedUp(t *testing.T) {
 func TestTiDBEncodeKeyTempIndexKey(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b int);")
 	tk.MustExec("insert into t values (1, 1);")
@@ -265,6 +269,7 @@ func TestAddIndexPreSplitFunctional(t *testing.T) {
 	testutil.ReduceCheckInterval(t)
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b int);")
 

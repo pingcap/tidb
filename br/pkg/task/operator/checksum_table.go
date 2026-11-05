@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/task"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -147,23 +148,32 @@ func (c *checksumTableCtx) getTables(ctx context.Context) (res []tableInDB, err 
 }
 
 func (c *checksumTableCtx) loadOldTableIDs(ctx context.Context) (res []*metautil.Table, err error) {
-	_, strg, err := task.GetStorage(ctx, c.cfg.Storage, &c.cfg.Config)
+	rootBackend, rootStorage, err := task.GetStorage(
+		ctx,
+		c.cfg.Storage,
+		&c.cfg.Config,
+	)
 	if err != nil {
-		return nil, errors.Annotate(err, "failed to create storage")
+		return nil, errors.Annotate(err, "failed to open backup storage")
 	}
-
-	mPath := metautil.MetaFile
-	metaContent, err := strg.ReadFile(ctx, mPath)
+	resolved := &taskrepo.SnapshotStorageRef{
+		BackupID:    c.cfg.BackupID,
+		RootBackend: rootBackend,
+		RootStorage: rootStorage,
+	}
+	if err := resolved.Validate(ctx); err != nil {
+		return nil, errors.Annotate(err, "failed to init backupmeta storage")
+	}
+	backupMeta, err := resolved.LoadBackupMeta(ctx, &c.cfg.CipherInfo, c.cfg.CheckRequirements)
 	if err != nil {
-		return nil, errors.Annotatef(err, "failed to open metafile %s", mPath)
+		return nil, errors.Annotate(err, "failed to load backupmeta")
 	}
 
-	var backupMeta backup.BackupMeta
-	if err := backupMeta.Unmarshal(metaContent); err != nil {
-		return nil, errors.Annotate(err, "failed to parse backupmeta")
-	}
-
-	metaReader := metautil.NewMetaReader(&backupMeta, strg, &c.cfg.CipherInfo)
+	metaReader := metautil.NewMetaReader(
+		backupMeta,
+		resolved.MetadataStorage(),
+		&c.cfg.CipherInfo,
+	)
 
 	tblCh := make(chan *metautil.Table, 1024)
 	errCh := make(chan error, 1)
@@ -193,13 +203,22 @@ func (c *checksumTableCtx) loadOldTableIDs(ctx context.Context) (res []*metautil
 	}
 }
 
-func (c *checksumTableCtx) loadPitrIdMap(ctx context.Context, g glue.Glue, restoredTS uint64, clusterID uint64) ([]*backup.PitrDBMap, error) {
+func (c *checksumTableCtx) loadPitrIdMap(ctx context.Context, g glue.Glue, restoredTS uint64, upstreamClusterID uint64) ([]*backup.PitrDBMap, error) {
 	if len(c.cfg.Storage) > 0 {
 		_, stg, err := task.GetStorage(ctx, c.cfg.Storage, &c.cfg.Config)
 		if err != nil {
 			return nil, errors.Annotate(err, "failed to create storage")
 		}
-		metaFileName := logclient.PitrIDMapsFilename(clusterID, restoredTS)
+		downstreamClusterID := c.mgr.GetPDClient().GetClusterID(ctx)
+		metaFileName, err := logclient.FindUniquePitrIDMapFile(ctx, stg, downstreamClusterID, upstreamClusterID, restoredTS)
+		if err != nil {
+			return nil, errors.Annotate(err, "failed to select pitr id map file")
+		}
+		if metaFileName == "" {
+			// Read-only checksum may use an old map, but never prefer a stale
+			// ownerless file over a v2 candidate or bypass an owner ambiguity.
+			metaFileName = logclient.PitrIDMapsFilename(downstreamClusterID, restoredTS)
+		}
 		log.Info("get pitr id map from the external storage", zap.String("file name", metaFileName))
 		metaData, err := stg.ReadFile(ctx, metaFileName)
 		if err != nil {
@@ -245,11 +264,34 @@ func (c *checksumTableCtx) loadPitrIdMap(ctx context.Context, g glue.Glue, resto
 	}
 	defer se.Close()
 	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
+	if hasRestoreIDColumn {
+		// A checksum describes one task's mapping. Several independent tasks can
+		// restore to the same restored TS; merging their maps could silently pick
+		// the wrong table identity, so refuse instead. This mirrors the restore
+		// path's storage map owner selection.
+		owners, _, err := execCtx.ExecRestrictedSQL(
+			kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+			nil,
+			"SELECT DISTINCT restore_id FROM mysql.tidb_pitr_id_map "+
+				"WHERE restored_ts = %? AND upstream_cluster_id = %? LIMIT 2;",
+			restoredTS, upstreamClusterID,
+		)
+		if err != nil {
+			return nil, errors.Annotate(err, "failed to find the PiTR ID map owner")
+		}
+		ownerIDs := make([]uint64, 0, len(owners))
+		for _, owner := range owners {
+			ownerIDs = append(ownerIDs, owner.GetUint64(0))
+		}
+		if err := ensureUniquePitrIDMapOwner(ownerIDs, restoredTS, upstreamClusterID); err != nil {
+			return nil, err
+		}
+	}
 	rows, _, errSQL := execCtx.ExecRestrictedSQL(
 		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
 		nil,
 		getPitrIDMapSQL,
-		restoredTS, clusterID,
+		restoredTS, upstreamClusterID,
 	)
 	if errSQL != nil {
 		return nil, errors.Annotate(err, "failed to get pitr id map from mysql.tidb_pitr_id_map")
@@ -294,6 +336,25 @@ type request struct {
 	copReq    *checksum.Executor
 	tableName string
 	dbName    string
+}
+
+// ensureUniquePitrIDMapOwner refuses a restored TS whose ID map is owned by
+// several independent restore tasks. The callers then read segments of one
+// unambiguous owner; merging independent maps could silently pick the wrong
+// table identity. A missing owner (no rows) is not an error here: the callers
+// decide whether a map is required. Owners are compared as a set, so the
+// callers may pass either the raw or the DISTINCT restore IDs.
+func ensureUniquePitrIDMapOwner(owners []uint64, restoredTS, upstreamClusterID uint64) error {
+	uniqueOwners := make(map[uint64]struct{}, len(owners))
+	for _, owner := range owners {
+		uniqueOwners[owner] = struct{}{}
+	}
+	if len(uniqueOwners) > 1 {
+		return errors.Errorf(
+			"multiple PiTR ID maps exist at restored TS %d for upstream cluster %d; cannot choose a unique task owner",
+			restoredTS, upstreamClusterID)
+	}
+	return nil
 }
 
 func (c *checksumTableCtx) genRequests(ctx context.Context, bkup []*metautil.Table, curr []tableInDB) (reqs []request, err error) {
@@ -349,16 +410,23 @@ func (c *checksumTableCtx) genRequestsWithIDMap(curr []tableInDB, idmaps []*back
 	c.checksumTS = checksumTS
 	router := make(map[string]map[string]map[int64]int64)
 	for _, dbidmap := range idmaps {
-		tableRouter, exists := router[dbidmap.Name]
-		if !exists {
-			tableRouter = make(map[string]map[int64]int64)
-			router[dbidmap.Name] = tableRouter
-		}
 		for _, tableidmap := range dbidmap.Tables {
-			down2upmap, exists := tableRouter[tableidmap.Name]
+			// A table route can use a different schema from its source parent.
+			// Match the effective target using infoschema's normalized names.
+			dbName := ast.NewCIStr(dbidmap.Name).L
+			if tableidmap.DownstreamDbName != "" {
+				dbName = ast.NewCIStr(tableidmap.DownstreamDbName).L
+			}
+			tableRouter, exists := router[dbName]
+			if !exists {
+				tableRouter = make(map[string]map[int64]int64)
+				router[dbName] = tableRouter
+			}
+			tableName := ast.NewCIStr(tableidmap.Name).L
+			down2upmap, exists := tableRouter[tableName]
 			if !exists {
 				down2upmap = make(map[int64]int64)
-				tableRouter[tableidmap.Name] = down2upmap
+				tableRouter[tableName] = down2upmap
 			}
 			down2upmap[tableidmap.IdMap.DownstreamId] = tableidmap.IdMap.UpstreamId
 			for _, phyidmap := range tableidmap.Partitions {
@@ -375,7 +443,7 @@ func (c *checksumTableCtx) genRequestsWithIDMap(curr []tableInDB, idmaps []*back
 		if !exists {
 			return nil, errors.Errorf("no db map found by db name: %s", t.dbName)
 		}
-		idRouter, exists := tableRouter[t.info.Name.O]
+		idRouter, exists := tableRouter[t.info.Name.L]
 		if !exists {
 			return nil, errors.Errorf("no table map found by table name: %s", t.info.Name.O)
 		}

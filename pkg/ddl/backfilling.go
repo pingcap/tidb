@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -151,6 +152,7 @@ type backfillTaskContext struct {
 	done          bool
 	addedCount    int
 	scanCount     int
+	writtenBytes  int
 	warnings      map[errors.ErrorID]*terror.Error
 	warningsCount map[errors.ErrorID]int64
 	finishTS      uint64
@@ -252,6 +254,17 @@ func updateTxnEntrySizeLimitIfNeeded(txn kv.Transaction) {
 	}
 }
 
+// accountBackfillTxnRU converts the bytes written by one committed reorg
+// backfill transaction into RU and accumulates it with the other per-task
+// statistics on the job's reorg context.
+func accountBackfillTxnRU(rc *reorgCtx, jobID int64, writtenBytes int) {
+	failpoint.InjectCall("accountBackfillTxnRU", jobID, writtenBytes)
+	if !kerneltype.IsNextGen() {
+		return
+	}
+	rc.increaseRU(float64(writtenBytes) * currentDDLRUWeights().TxnKVBytes)
+}
+
 type backfiller interface {
 	BackfillData(ctx context.Context, handleRange reorgBackfillTask) (taskCtx backfillTaskContext, err error)
 	AddMetricInfo(float64)
@@ -302,18 +315,22 @@ type backfillWorker struct {
 	backfiller
 	taskCh   chan *reorgBackfillTask
 	resultCh chan *backfillResult
-	ctx      context.Context
-	cancel   func()
-	wg       *sync.WaitGroup
+	workCtx  context.Context
+	// resultCtx covers execution and delivery of in-flight tasks. Worker retirement
+	// stops taking new tasks without interrupting a partially completed range.
+	resultCtx context.Context
+	cancel    func()
+	wg        *sync.WaitGroup
 }
 
-func newBackfillWorker(ctx context.Context, bf backfiller) *backfillWorker {
-	bfCtx, cancel := context.WithCancel(ctx)
+func newBackfillWorker(workCtx, resultCtx context.Context, bf backfiller) *backfillWorker {
+	workCtx, cancel := context.WithCancel(workCtx)
 	return &backfillWorker{
 		backfiller: bf,
 		taskCh:     make(chan *reorgBackfillTask, 1),
 		resultCh:   make(chan *backfillResult, 1),
-		ctx:        bfCtx,
+		workCtx:    workCtx,
+		resultCtx:  resultCtx,
 		cancel:     cancel,
 	}
 }
@@ -322,6 +339,9 @@ func (w *backfillWorker) String() string {
 	return fmt.Sprintf("backfill-worker %d, tp %s", w.GetCtx().id, w.backfiller.String())
 }
 
+// Close retires this worker by canceling only workCtx. During downscaling, the
+// executor keeps resultCtx active so in-flight tasks finish and report their results.
+// Forced executor shutdown cancels resultCtx before Close to unblock result sends.
 func (w *backfillWorker) Close() {
 	if w.cancel != nil {
 		w.cancel()
@@ -364,7 +384,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			return result
 		}
 
-		taskCtx, err := bf.BackfillData(w.ctx, handleRange)
+		taskCtx, err := bf.BackfillData(w.resultCtx, handleRange)
 		if err != nil {
 			result.err = err
 			return result
@@ -383,6 +403,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 		// successfully committed small ranges rather than fetching it in the total result.
 		rc.increaseRowCount(int64(taskCtx.addedCount))
 		rc.mergeWarnings(taskCtx.warnings, taskCtx.warningsCount)
+		accountBackfillTxnRU(rc, jobID, taskCtx.writtenBytes)
 
 		if num := result.scanCount - lastLogCount; num >= 90000 {
 			lastLogCount = result.scanCount
@@ -414,7 +435,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 
 func (w *backfillWorker) sendResult(result *backfillResult) {
 	select {
-	case <-w.ctx.Done():
+	case <-w.resultCtx.Done():
 	case w.resultCh <- result:
 	}
 }
@@ -432,8 +453,12 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		w.sendResult(&backfillResult{taskID: curTaskID, err: dbterror.ErrReorgPanic})
 	}, false)
 	for {
+		// Prefer retirement over queued work after the current task finishes.
+		if w.workCtx.Err() != nil {
+			return
+		}
 		select {
-		case <-w.ctx.Done():
+		case <-w.workCtx.Done():
 			logger.Info("backfill worker exit on context done")
 			return
 		case task, ok = <-w.taskCh:
@@ -1161,6 +1186,7 @@ func iterateSnapshotKeys(ctx *ReorgContext, store kv.Storage, priority int, keyP
 	snap.SetOption(kv.ResourceGroupName, ctx.resourceGroupName)
 
 	it, err := snap.Iter(firstKey, upperBound)
+	failpoint.InjectCall("mockSnapshotIterError", &err)
 	if err != nil {
 		return errors.Trace(err)
 	}
