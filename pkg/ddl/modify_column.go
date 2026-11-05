@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	goerrors "errors"
 	"fmt"
 	"strings"
 
@@ -1388,6 +1389,13 @@ func doReorgWorkForModifyColumn(
 
 func isRetryableModifyColumnReorgJobError(err error, jobErrCnt int64) bool {
 	if jobErrCnt+1 >= variable.GetDDLErrorCountLimit() {
+		return false
+	}
+	// Cast errors can contain arbitrary values or column names. Classify their
+	// structured types before matching transient error messages in that text.
+	var typedErr *errors.Error
+	if goerrors.As(err, &typedErr) && (dbterror.ClassTypes.EqualClass(typedErr) ||
+		dbterror.ClassJSON.EqualClass(typedErr) || table.ErrColumnCantNull.Equal(typedErr)) {
 		return false
 	}
 	// Modify column reorg can return deterministic data conversion errors. Retrying unknown errors may
