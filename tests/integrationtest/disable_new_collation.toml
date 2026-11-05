@@ -16,6 +16,7 @@ lease = "0"
 host = "127.0.0.1"
 new_collations_enabled_on_first_bootstrap = false
 enable-table-lock = true
+enable-storage-class = true
 
 [status]
 status-host = "127.0.0.1"

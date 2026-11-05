@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -47,30 +46,6 @@ type mockErrorOperator struct {
 	exec.BaseExecutor
 	toPanic bool
 	closed  bool
-}
-
-func TestInsertRowsColMultiplyRUV2Metrics(t *testing.T) {
-	ctx := mock.NewContext()
-	ctx.GetSessionVars().StmtCtx.StmtType = "Insert"
-	ctx.GetSessionVars().RUV2Metrics = execdetails.NewRUV2Metrics()
-
-	insertValues := &InsertValues{
-		BaseExecutor:              exec.NewBaseExecutor(ctx, nil, 0),
-		rowCount:                  4,
-		recordRUV2RowsColMultiply: true,
-		insertColumns:             make([]*table.Column, 3),
-	}
-	require.Equal(t, int64(12), insertValues.rowsColMultiply())
-
-	insertValues.recordRowsColMultiply2RUV2Metrics()
-	require.Equal(t, int64(12), ctx.GetSessionVars().RUV2Metrics.ExecutorL5InsertRows())
-
-	insertValues.recordRowsColMultiply2RUV2Metrics()
-	require.Equal(t, int64(12), ctx.GetSessionVars().RUV2Metrics.ExecutorL5InsertRows())
-
-	insertValues.rowCount = 5
-	insertValues.recordRowsColMultiply2RUV2Metrics()
-	require.Equal(t, int64(15), ctx.GetSessionVars().RUV2Metrics.ExecutorL5InsertRows())
 }
 
 type mockEmptyOperator struct {
@@ -165,41 +140,6 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 	require.EqualError(t, err, "next panic, close error")
 	require.True(t, mockOpr.closed)
 
-	t.Run("insert ru snapshot is complete before finish", func(t *testing.T) {
-		ctx := mock.NewContext()
-		ctx.GetSessionVars().StmtCtx.StmtType = "Insert"
-		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
-
-		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
-		ctx.GetSessionVars().RUV2Metrics = execdetails.RUV2MetricsFromContext(goCtx)
-		require.NotNil(t, ctx.GetSessionVars().RUV2Metrics)
-
-		analyzeExec := &mockEmptyOperator{
-			BaseExecutor: exec.NewBaseExecutor(ctx, expression.NewSchema(), 1),
-		}
-		targetPlan := physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, &property.StatsInfo{RowCount: 1}, 0)
-		explainExec := &ExplainExec{
-			BaseExecutor: exec.NewBaseExecutor(ctx, expression.NewSchema(getColumns()...), 0),
-			explain: &core.Explain{
-				Analyze:    true,
-				TargetPlan: targetPlan,
-			},
-			analyzeExec: analyzeExec,
-		}
-
-		recordInsertRowsColMultiply2Metrics(ctx.GetSessionVars(), 15)
-		require.NoError(t, explainExec.executeAnalyzeExec(goCtx))
-
-		metrics := ctx.GetSessionVars().RUV2Metrics
-		require.Equal(t, int64(15), metrics.ExecutorL5InsertRows())
-		// DefaultRUVersion is v1 (no domain in unit test), so RU stats show RRU+WRU format.
-		// Verify the stats are registered and contain "RU:" prefix.
-		rootStatsStr := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(targetPlan.ID()).String()
-		require.Contains(t, rootStatsStr, "RU:")
-
-		require.Equal(t, int64(15), ctx.GetSessionVars().RUV2Metrics.ExecutorL5InsertRows())
-	})
-
 	t.Run("RU format snapshots committed writes before normal finalization", func(t *testing.T) {
 		ctx := mock.NewContext()
 		coll := execdetails.NewRuntimeStatsColl(nil)
@@ -225,8 +165,6 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 			require.NoError(t, explainExec.explain.RenderResult())
 			require.Len(t, explainExec.explain.Rows, 1)
 			require.Equal(t, strconv.FormatFloat(wantRU, 'f', 2, 64), explainExec.explain.Rows[0][3])
-			require.Zero(t, ruMetrics.WriteKeys(), "EXPLAIN must not consume or duplicate the normal commit counters")
-			require.Zero(t, ruMetrics.WriteSize())
 		}
 	})
 
@@ -240,8 +178,7 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 
 		ruDetails := goCtx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
 		ruDetails.AddRUV2(&kvrpcpb.RUV2{
-			ReadRpcCount:  2,
-			WriteRpcCount: 3,
+			CoprocessorResponseBytes: 5,
 		})
 
 		analyzeExec := &mockEmptyOperator{
@@ -259,18 +196,7 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 
 		require.NoError(t, explainExec.executeAnalyzeExec(goCtx))
 
-		rootStats := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(targetPlan.ID())
-		_, groups := rootStats.MergeStats()
-		var ruStats *execdetails.RURuntimeStats
-		for _, group := range groups {
-			if stats, ok := group.(*execdetails.RURuntimeStats); ok {
-				ruStats = stats
-				break
-			}
-		}
-		require.NotNil(t, ruStats)
-		require.Equal(t, int64(2), ruStats.Metrics.ResourceManagerReadCnt())
-		require.Equal(t, int64(3), ruStats.Metrics.ResourceManagerWriteCnt())
+		require.Equal(t, int64(5), ctx.GetSessionVars().RUV2Metrics.TiKVCoprocessorResponseBytes())
 	})
 
 	t.Run("detached static recordset inherits statement ru context", func(t *testing.T) {

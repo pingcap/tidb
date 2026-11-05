@@ -46,6 +46,18 @@ var (
 	SetGlobalResourceControl atomic.Pointer[func(bool)]
 	// UpdateExternalWorkloadTTLJobEnable is the func registered by domain to update external TTL worker scheduling.
 	UpdateExternalWorkloadTTLJobEnable func(ctx context.Context, enable bool) error
+	// SetMVServiceTaskMaxConcurrency applies global tidb_mview_task_max to the local MV service.
+	SetMVServiceTaskMaxConcurrency atomic.Pointer[func(int)]
+	// SetMVServiceRefreshTaskConcurrencyRatio applies global tidb_mview_task_refresh_ratio to the local MV service.
+	SetMVServiceRefreshTaskConcurrencyRatio atomic.Pointer[func(float64)]
+	// SetMVServiceTaskThresholdCPU applies global tidb_mview_task_threshold_cpu to the local MV service.
+	SetMVServiceTaskThresholdCPU atomic.Pointer[func(float64)]
+	// SetMVServiceTaskThresholdMemory applies global tidb_mview_task_threshold_memory to the local MV service.
+	SetMVServiceTaskThresholdMemory atomic.Pointer[func(float64)]
+	// SetMVServiceMViewRefreshHistRetention applies global tidb_mview_refresh_hist_time to the local MV service.
+	SetMVServiceMViewRefreshHistRetention atomic.Pointer[func(time.Duration)]
+	// SetMVServiceMLogPurgeHistRetention applies global tidb_mlog_purge_hist_time to the local MV service.
+	SetMVServiceMLogPurgeHistRetention atomic.Pointer[func(time.Duration)]
 	// ValidateCloudStorageURI validates the cloud storage URI.
 	ValidateCloudStorageURI func(ctx context.Context, uri string) error
 	// SetLowResolutionTSOUpdateInterval is the func registered by domain to set slow resolution tso update interval.

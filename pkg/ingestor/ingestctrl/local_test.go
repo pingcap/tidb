@@ -1800,21 +1800,22 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 
 	extEngine := globalsort.NewExternalEngine(
 		ctx,
-		memStore,
-		dataFiles,
-		statFiles,
-		[]byte{1},
-		[]byte{10},
-		keys,
-		[][]byte{{1}, {11}},
+		&globalsort.EngineConfig{
+			ExtStore:      memStore,
+			DataFiles:     dataFiles,
+			StatFiles:     statFiles,
+			StartKey:      []byte{1},
+			EndKey:        []byte{10},
+			JobKeys:       keys,
+			SplitKeys:     [][]byte{{1}, {11}},
+			TotalFileSize: 456,
+			TotalKVCount:  789,
+			CheckHotspot:  true,
+			MemCapacity:   16 * units.GiB,
+			OnDup:         engineapi.OnDuplicateKeyIgnore,
+		},
 		10,
 		123,
-		456,
-		789,
-		true,
-		16*units.GiB,
-		engineapi.OnDuplicateKeyIgnore,
-		"",
 	)
 
 	jobCh := make(chan *regionJob, 9)
@@ -2624,7 +2625,7 @@ func TestExternalEngine(t *testing.T) {
 	dataFiles, statFiles, err := globalsort.MockExternalEngine(extStorage, keys, values)
 	require.NoError(t, err)
 
-	externalCfg := &backend.ExternalEngineConfig{
+	externalCfg := &globalsort.EngineConfig{
 		ExtStore:      extStorage,
 		DataFiles:     dataFiles,
 		StatFiles:     statFiles,
@@ -2636,7 +2637,6 @@ func TestExternalEngine(t *testing.T) {
 		TotalKVCount:  int64(config.SplitRegionKeys) + 1,
 		MemCapacity:   8 * units.GiB,
 	}
-	engineUUID := uuid.New()
 	hook := &recordScanRegionsHook{}
 	local := &Backend{
 		BackendConfig: BackendConfig{
@@ -2663,14 +2663,10 @@ func TestExternalEngine(t *testing.T) {
 		}
 	}()
 	go func() {
-		err2 := local.CloseEngine(
-			ctx,
-			&backend.EngineConfig{External: externalCfg},
-			engineUUID,
-		)
+		eng := globalsort.NewExternalEngine(ctx, externalCfg, local.GetWorkerConcurrency(), 123)
+		err2 := local.IngestExternalEngine(ctx, eng, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 		require.NoError(t, err2)
-		err2 = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
-		require.NoError(t, err2)
+		require.NoError(t, eng.Close())
 		close(done)
 	}()
 
@@ -2758,9 +2754,8 @@ func TestBackendCloseWithoutTiKVClient(t *testing.T) {
 			BackendConfig: BackendConfig{
 				LocalStoreDir: localStoreDir,
 			},
-			externalEngine: map[uuid.UUID]engineapi.Engine{},
-			bufferPool:     membuf.NewPool(),
-			logger:         log.L(),
+			bufferPool: membuf.NewPool(),
+			logger:     log.L(),
 		},
 		importClientFactory: &mockImportClientFactory{},
 	}

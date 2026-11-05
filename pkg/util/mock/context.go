@@ -259,7 +259,6 @@ func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 		OriginalSQL:                          sc.OriginalSQL,
 		KVVars:                               vars.KVVars,
 		KvExecCounter:                        sc.KvExecCounter,
-		RUV2Metrics:                          vars.RUV2Metrics,
 		SessionMemTracker:                    vars.MemTracker,
 		Location:                             sc.TimeZone(),
 		RuntimeStatsColl:                     sc.RuntimeStatsColl,
@@ -613,6 +612,11 @@ func (*Context) ReleaseAdvisoryLock(_ string) bool {
 // ReleaseAllAdvisoryLocks releases all advisory locks
 func (*Context) ReleaseAllAdvisoryLocks() int {
 	return 0
+}
+
+// CheckCanMigrateStates implements the sessionapi.Session interface
+func (*Context) CheckCanMigrateStates() error {
+	return nil
 }
 
 // EncodeStates implements the sessionapi.Session interface

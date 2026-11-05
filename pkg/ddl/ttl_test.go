@@ -17,11 +17,14 @@ package ddl
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -154,6 +157,75 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 		assert.Equal(t, c.ttlCronJobSchedule, ttlCronJobSchedule)
 		assert.Equal(t, c.err, err)
 	}
+}
+
+func TestGetTTLInfoInOptionsStarterDefault(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("starter deployment mode is only available in nextgen")
+	}
+
+	originalMode := deploymode.Get()
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+
+	ttlInfo, _, _, err := getTTLInfoInOptions([]*ast.TableOption{
+		{
+			Tp:            ast.TableOptionTTL,
+			ColumnName:    &ast.ColumnName{Name: ast.NewCIStr("test_column")},
+			Value:         ast.NewValueExpr(5, "", ""),
+			TimeUnitValue: &ast.TimeUnitExpr{Unit: ast.TimeUnitYear},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, model.StarterDefaultTTLJobInterval, ttlInfo.JobInterval)
+
+	explicitInterval := model.StarterDefaultTTLJobInterval
+	ttlInfo, _, _, err = getTTLInfoInOptions([]*ast.TableOption{
+		{
+			Tp:            ast.TableOptionTTL,
+			ColumnName:    &ast.ColumnName{Name: ast.NewCIStr("test_column")},
+			Value:         ast.NewValueExpr(5, "", ""),
+			TimeUnitValue: &ast.TimeUnitExpr{Unit: ast.TimeUnitYear},
+		},
+		{
+			Tp:       ast.TableOptionTTLJobInterval,
+			StrValue: explicitInterval,
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, explicitInterval, ttlInfo.JobInterval)
+
+	_, _, _, err = getTTLInfoInOptions([]*ast.TableOption{
+		{
+			Tp:            ast.TableOptionTTL,
+			ColumnName:    &ast.ColumnName{Name: ast.NewCIStr("test_column")},
+			Value:         ast.NewValueExpr(5, "", ""),
+			TimeUnitValue: &ast.TimeUnitExpr{Unit: ast.TimeUnitYear},
+		},
+		{
+			Tp:       ast.TableOptionTTLJobInterval,
+			StrValue: "1h",
+		},
+	})
+	require.ErrorContains(t, err, "TTL_JOB_INTERVAL")
+}
+
+func TestCheckTTLJobIntervalInStarter(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("starter deployment mode is only available in nextgen")
+	}
+
+	originalMode := deploymode.Get()
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+
+	require.NoError(t, checkTTLJobInterval("15m"))
+	require.ErrorContains(t, checkTTLJobInterval("1h"),
+		fmt.Sprintf("TTL_JOB_INTERVAL other than '%s'", model.StarterDefaultTTLJobInterval))
 }
 
 type fakeExternalWorkloadManager struct {

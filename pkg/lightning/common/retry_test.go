@@ -77,6 +77,17 @@ func TestIsRetryableError(t *testing.T) {
 	require.False(t, IsRetryableError(errors.Trace(&errdef.HTTPStatusError{StatusCode: http.StatusNotFound})))
 	require.True(t, IsRetryableError(errors.Trace(&errdef.HTTPStatusError{StatusCode: http.StatusInternalServerError})))
 
+	// transient failure to fetch OSS credentials from the Aliyun ECS metadata
+	// service
+	require.True(t, IsRetryableError(fmt.Errorf(
+		"failed to get credentials from default provider: unable to get credentials from any of the providers in the chain: "+
+			`get role name failed: Get "http://100.100.100.200/latest/meta-data/ram/security-credentials/?": `+
+			"dial tcp 100.100.100.200:80: i/o timeout")))
+	// a permanently missing credential configuration is not retryable
+	require.False(t, IsRetryableError(fmt.Errorf(
+		"failed to get credentials from default provider: unable to get credentials from any of the providers in the chain: "+
+			"open /home/pingcap/.aliyun/config.json: no such file or directory")))
+
 	// kv errors
 	require.True(t, IsRetryableError(errors.Annotatef(errdef.ErrNoLeader.GenWithStackByArgs(123), "when write to tikv, expected leader id %d", 111)))
 	require.True(t, IsRetryableError(errdef.ErrKVNotLeader))

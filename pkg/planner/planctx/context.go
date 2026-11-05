@@ -94,6 +94,20 @@ type PlanContext interface {
 	Reset()
 }
 
+// MLogCommitTSEstimationContext is an optional planning capability for mview fast-refresh.
+// It stays outside PlanContext because most planning contexts do not need mview-specific state.
+type MLogCommitTSEstimationContext interface {
+	GetMLogCommitTSEstimation() *MLogCommitTSEstimation
+	WithMLogCommitTSEstimation(estimation *MLogCommitTSEstimation, fn func() error) error
+}
+
+// MLogCommitTSEstimation carries the retained commit-ts window for an mlog refresh plan.
+type MLogCommitTSEstimation struct {
+	MLogTableID      int64
+	RetainedLowerTSO uint64
+	RetainedUpperTSO uint64
+}
+
 // EmptyPlanContextExtended is used to provide some empty implementations for PlanContext.
 // It is used by some mock contexts that are only required to implement PlanContext
 // but do not care about the actual implementation.
