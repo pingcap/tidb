@@ -106,6 +106,7 @@ func TestBackfillRetryableErrors(t *testing.T) {
 		err := errdef.ErrSetTSBeforeImport.GenWithStackByArgs("00000000-0000-0000-0000-000000000000", 20, context.DeadlineExceeded)
 		require.False(t, (&backfillDistExecutor{}).IsRetryableError(err))
 		require.False(t, (&backfillDistExecutor{}).IsRetryableError(errors.Annotate(err, "wrapped")))
+		require.False(t, (&backfillDistExecutor{}).IsRetryableError(fmt.Errorf("wrapped: %w", err)))
 	})
 }
 

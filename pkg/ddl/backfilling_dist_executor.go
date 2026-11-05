@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"encoding/json"
+	goerrors "errors"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -256,7 +257,7 @@ func (*backfillDistExecutor) IsIdempotent(*proto.Subtask) bool {
 }
 
 func (*backfillDistExecutor) IsRetryableError(err error) bool {
-	if isIndexInfoNotFoundErr(err) || errdef.ErrSetTSBeforeImport.Equal(errors.Cause(err)) {
+	if isIndexInfoNotFoundErr(err) || goerrors.Is(err, errdef.ErrSetTSBeforeImport) {
 		return false
 	}
 	// Retry in DXF so NextGen can continue after storage capacity is expanded.
