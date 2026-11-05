@@ -55,7 +55,7 @@
       "id": "E03",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "UPDATE and DELETE are driver functions that stream their physical child (`driver/dml.rs` `run_delete_with_physical` / the update runners, `multi_dml.rs`), not Go's `UpdateExec` / `DeleteExec` executors: no executor node owns their `memTracker`, `updatedRowKeys` (`kv.MemAwareHandleMap`, charged per handle) or runtime stats",
+      "finding": "UPDATE and DELETE are driver functions that stream their physical child (`driver/dml.rs` `run_delete_with_physical` / the update runners, `multi_dml.rs`), not Go's `UpdateExec` / `DeleteExec` executors: no executor node owns their `memTracker`, `updatedRowKeys` (`kv.MemAwareHandleMap`, charged per handle) or runtime stats, so EXPLAIN ANALYZE prints no `time/open/close/loops` and no memory on the `Update` / `Delete` row; the `Insert` row likewise lacks `InsertExec`'s basic and `prepare` / `insert` stats and its memory",
       "go_owner": "`pkg/executor/update.go`, `delete.go`"
     },
     {
