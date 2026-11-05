@@ -314,6 +314,9 @@ pub struct StatementKvContext {
     /// Go `txn.SetOption(kv.RequestSourceType, ...)` for the statement that
     /// runs (`session.setRequestSource`, the DDL worker's `prepareTxn`).
     pub request_source_type: Option<String>,
+    /// Go `txn.SetOption(kv.ResourceGroupName, ...)` for the statement that
+    /// runs (the DDL worker's `prepareTxn`).
+    pub resource_group_name: Option<String>,
 }
 
 impl std::fmt::Debug for StatementKvContext {
@@ -333,6 +336,7 @@ impl std::fmt::Debug for StatementKvContext {
             )
             .field("commit_details", &self.commit_details.is_some())
             .field("request_source_type", &self.request_source_type)
+            .field("resource_group_name", &self.resource_group_name)
             .finish()
     }
 }

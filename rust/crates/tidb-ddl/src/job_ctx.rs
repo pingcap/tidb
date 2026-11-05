@@ -38,6 +38,8 @@ pub(crate) struct ReorgContext {
     cache_digest: Option<Digest>,
     /// Go `tp`: the job's request source (`setDDLLabelForDiagnosis`).
     tp: String,
+    /// Go `resourceGroupName`.
+    resource_group_name: String,
     /// Go `analyzeDone`: the running ANALYZE's report, an error or none.
     pub(crate) analyze_done: Option<mpsc::Receiver<Option<String>>>,
     /// Go `analyzeStartTime`.
@@ -173,6 +175,22 @@ pub(crate) fn backfill_request_source(job_id: i64) -> tidb_txnkv::RequestSource 
     }
 }
 
+/// Go `ddlCtx.jobContext(jobID, reorgMeta).resourceGroupName`: the job's
+/// context's group, which a context without one takes from the job's reorg
+/// meta.
+pub(crate) fn job_resource_group_name(job_id: i64, reorg_meta_group: Option<&str>) -> String {
+    let mut map = JOB_CTX_MAP.lock().unwrap_or_else(PoisonError::into_inner);
+    match map.get_mut(&job_id) {
+        Some(ctx) => {
+            if let (Some(group), true) = (reorg_meta_group, ctx.resource_group_name.is_empty()) {
+                group.clone_into(&mut ctx.resource_group_name);
+            }
+            ctx.resource_group_name.clone()
+        }
+        None => reorg_meta_group.unwrap_or_default().to_owned(),
+    }
+}
+
 /// Go `ddlCtx.getResourceGroupTaggerForTopSQL`: none for a job with no
 /// context.
 pub(crate) fn get_resource_group_tagger_for_top_sql(
@@ -219,6 +237,12 @@ mod tests {
                 explicit_source_type: "ddl".to_owned(),
             }
         );
+        // Go `jobContext(jobID, reorgMeta)`: a context without a group takes
+        // the reorg meta's, and keeps it.
+        assert_eq!(job_resource_group_name(9_100, Some("rg1")), "rg1");
+        assert_eq!(job_resource_group_name(9_100, Some("rg2")), "rg1");
+        assert_eq!(job_resource_group_name(9_103, Some("rg3")), "rg3");
+        assert_eq!(job_resource_group_name(9_103, None), "");
         for job_id in [9_100, 9_101, 9_102] {
             remove_job_ctx(job_id);
         }

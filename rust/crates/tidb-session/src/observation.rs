@@ -552,6 +552,9 @@ impl Session {
                 // transactions at activation.
                 request_source_type: Some(self.vars.request_source_type.clone())
                     .filter(|source_type| !self.vars.restricted_sql && !source_type.is_empty()),
+                // The session sets its transaction's group per statement
+                // itself (`SessionTransaction::set_resource_group_name`).
+                resource_group_name: None,
             });
     }
 

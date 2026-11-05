@@ -5630,6 +5630,15 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         step_kv_context.publish(tidb_txnkv::StatementKvContext {
             resource_group_tagger: crate::job_ctx::get_resource_group_tagger_for_top_sql(active.job.id),
             request_source_type: Some(source_type),
+            resource_group_name: Some(crate::job_ctx::job_resource_group_name(
+                active.job.id,
+                active
+                    .job
+                    .reorg_meta
+                    .as_ref()
+                    .map(|meta| meta.read().resource_group_name.to_utf8_lossy_go())
+                    .as_deref(),
+            )),
             ..tidb_txnkv::StatementKvContext::default()
         });
     }

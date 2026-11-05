@@ -290,6 +290,11 @@ impl<S: PdClient> TikvTxn<S> {
                     .set_request_source_type(source_type.clone());
             }
         }
+        if let Some(name) = &context.resource_group_name {
+            if self.applied_kv_context.resource_group_name.as_ref() != Some(name) {
+                tidb_txnkv::new_txn::TxnResourceGroup::set_resource_group_name(self, name);
+            }
+        }
         self.applied_kv_context = context;
     }
     /// Go `KVTxn.SetRequestSourceInternal` / `SetRequestSourceType` /

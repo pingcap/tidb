@@ -836,6 +836,9 @@ fn a_worker_step_runs_under_the_jobs_sql_digest() {
     // Go `prepareTxn`'s `kv.RequestSourceType`: `ddl` for a job with no
     // backfill.
     assert_eq!(step_kv_context.get().request_source_type.as_deref(), Some("ddl"));
+    // Go `txn.SetOption(kv.ResourceGroupName, jobContext.resourceGroupName)`:
+    // a job without reorg meta has none.
+    assert_eq!(step_kv_context.get().resource_group_name.as_deref(), Some(""));
     let tag = tagger().encode_tag_with_key(b"");
     assert!(
         tag.windows(digest.as_bytes().len()).any(|window| window == digest.as_bytes()),

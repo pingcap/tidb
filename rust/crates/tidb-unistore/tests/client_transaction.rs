@@ -1235,3 +1235,42 @@ fn store_facade_requests_carry_the_transactions_request_source() {
         .iter()
         .all(|source| source.as_deref() == Some("internal_ddl_add_index")));
 }
+
+/// Go `prepareTxn`'s `txn.SetOption(kv.ResourceGroupName, ...)`: a group the
+/// statement kv context carries reaches the transaction's requests.
+#[test]
+fn store_facade_requests_carry_the_published_resource_group() {
+    use tidb_store_driver_txn::session_commit_protocol::{bootstrap_commit_protocol, SessionTransactionOptions};
+    use tidb_txnkv::transaction::BufferMutation;
+    use tikv_client::proto::kvrpcpb::PrewriteRequest;
+    let store = Store::new();
+    let call = UnaryCallContext::with_timeout(Duration::from_secs(2));
+    let groups = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed = groups.clone();
+    let mut writer = store.facade();
+    writer.add_rpc_interceptor(tikv_client::new_rpc_interceptor("resource-group", move |_, request, next| {
+        if let Some(prewrite) = request.as_any().downcast_ref::<PrewriteRequest>() {
+            observed.lock().unwrap().push(
+                prewrite
+                    .context
+                    .as_ref()
+                    .and_then(|context| context.resource_control_context.as_ref())
+                    .map(|control| control.resource_group_name.clone()),
+            );
+        }
+        Box::pin(async move { next().await })
+    }));
+    let kv_context = tidb_txnkv::StatementKvContextCell::default();
+    SessionTransactionOptions::from(bootstrap_commit_protocol())
+        .with_statement_kv_context(kv_context.clone())
+        .apply(&mut writer);
+    kv_context.publish(tidb_txnkv::StatementKvContext {
+        resource_group_name: Some("rg_ddl".to_owned()),
+        ..tidb_txnkv::StatementKvContext::default()
+    });
+    writer
+        .commit(vec![BufferMutation::set(b"rg".to_vec(), b"v".to_vec()).unwrap()], &call)
+        .unwrap();
+    let groups = groups.lock().unwrap().clone();
+    assert!(!groups.is_empty() && groups.iter().all(|group| group.as_deref() == Some("rg_ddl")), "{groups:?}");
+}
