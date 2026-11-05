@@ -17,8 +17,11 @@ package s3store
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/base64"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -347,7 +350,7 @@ func TestClientDeleteObjects(t *testing.T) {
 		BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
 	}
 
-	s.MockS3.EXPECT().DeleteObjects(gomock.Any(), gomock.Any()).DoAndReturn(
+	s.MockS3.EXPECT().DeleteObjects(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, input *s3.DeleteObjectsInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error) {
 			require.Len(t, input.Delete.Objects, 3)
 			require.Equal(t, "prefix/sub/object1", *input.Delete.Objects[0].Key)
@@ -360,10 +363,50 @@ func TestClientDeleteObjects(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, s.Controller.Satisfied())
 
-	s.MockS3.EXPECT().DeleteObjects(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock delete error"))
+	s.MockS3.EXPECT().DeleteObjects(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("mock delete error"))
 	err = cli.DeleteObjects(ctx, []string{"sub/object1", "object2"})
 	require.ErrorContains(t, err, "mock delete error")
 	require.True(t, s.Controller.Satisfied())
+}
+
+func TestDeleteObjectsRequestFields(t *testing.T) {
+	var request *http.Request
+	var body []byte
+	var readErr error
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		request = r
+		body, readErr = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = io.WriteString(w, `<DeleteResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"></DeleteResult>`)
+	}))
+	defer server.Close()
+
+	svc := s3.New(s3.Options{
+		Region:       "us-east-1",
+		BaseEndpoint: aws.String(server.URL),
+		UsePathStyle: true,
+		Credentials: aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {
+			return aws.Credentials{AccessKeyID: "access-key", SecretAccessKey: "secret-key"}, nil
+		}),
+	})
+	cli := &s3Client{
+		svc:          svc,
+		BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
+	}
+
+	require.NoError(t, cli.DeleteObjects(context.Background(), []string{"object-1", "object-2"}))
+	require.NoError(t, readErr)
+	require.NotNil(t, request)
+	require.Equal(t, http.MethodPost, request.Method)
+	require.Equal(t, "/bucket", request.URL.Path)
+	require.Contains(t, request.URL.Query(), "delete")
+	require.Equal(t, "application/xml", request.Header.Get("Content-Type"))
+	require.Equal(t, int64(len(body)), request.ContentLength)
+	digest := md5.Sum(body)
+	require.Equal(t, base64.StdEncoding.EncodeToString(digest[:]), request.Header.Get("Content-MD5"))
+	require.NotEmpty(t, request.Header.Get("Authorization"))
+	require.Contains(t, string(body), "<Key>prefix/object-1</Key>")
+	require.Contains(t, string(body), "<Key>prefix/object-2</Key>")
 }
 
 func TestClientIsObjectExists(t *testing.T) {
