@@ -52,6 +52,19 @@ func TestInitCreateMaterializedViewBuildSessionAppliesDefinitionDivPrecisionIncr
 	restore()
 	require.Equal(t, 2, sessVars.DivPrecisionIncrement)
 	require.Equal(t, "before", sessVars.CurrentDB)
+	mviewTableInfo.MaterializedView.DefinitionDivPrecisionIncrement = 0
+	restore, err = initCreateMaterializedViewBuildSession(sessCtx, job, mviewTableInfo, "test")
+	require.NoError(t, err)
+	require.Zero(t, sessVars.DivPrecisionIncrement)
+	restore()
+	require.Equal(t, 2, sessVars.DivPrecisionIncrement)
+
+	mviewTableInfo.MaterializedView.DefinitionDivPrecisionIncrement = 31
+	restore, err = initCreateMaterializedViewBuildSession(sessCtx, job, mviewTableInfo, "test")
+	require.ErrorContains(t, err, "invalid maintenance numeric metadata")
+	require.Nil(t, restore)
+	require.Equal(t, 2, sessVars.DivPrecisionIncrement)
+
 }
 
 func TestAnalyzeMVColumnUsageGroupByAlias(t *testing.T) {

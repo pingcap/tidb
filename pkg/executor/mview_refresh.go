@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	plannererrors "github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1439,7 +1440,10 @@ func buildMVRefreshOutOfPlaceBuildSQL(
 	if tblInfo.MaterializedView == nil || len(tblInfo.MaterializedView.SQLContent) == 0 {
 		return "", errors.New("refresh materialized view: invalid select sql")
 	}
-	selectSQL := tblInfo.MaterializedView.SQLContent
+	selectSQL, err := mviewutil.BuildMaintenanceSelectSQL(tblInfo)
+	if err != nil {
+		return "", err
+	}
 	if shouldUseImportIntoForMVRefreshOutOfPlace(storeName) {
 		prefix := sqlescape.MustEscapeSQL("IMPORT INTO %n.%n FROM ", schemaName, shadowTableName)
 		options := ddl.BuildMViewImportIntoOptions(importThreads, importDiskQuota)
@@ -1521,6 +1525,9 @@ func initRefreshMaterializedViewSession(
 		return nil, errors.Annotate(err, "refresh materialized view: invalid definition timezone")
 	}
 
+	if mviewInfo.DefinitionDivPrecisionIncrement < 0 || mviewInfo.DefinitionDivPrecisionIncrement > vardef.MaxDivPrecisionIncrement {
+		return nil, errors.New("refresh materialized view: invalid maintenance numeric metadata")
+	}
 	origEnableMView := sessVars.EnableMView
 	if err := sessVars.SetSystemVar(vardef.TiDBMViewEnable, "on"); err != nil {
 		return nil, errors.Annotate(err, "refresh materialized view: failed to enable materialized view support")
@@ -2068,8 +2075,12 @@ func executeRefreshMaterializedViewCompleteInPlace(
 ) error {
 	deleteSQL := sqlescape.MustEscapeSQL("DELETE FROM %n.%n", schemaName.O, s.ViewName.Name.O)
 	insertPrefix := sqlescape.MustEscapeSQL("INSERT INTO %n.%n ", schemaName.O, s.ViewName.Name.O)
-	/* #nosec G202: SQLContent is restored from AST (single SELECT statement, no user-provided placeholders). */
-	insertSQL := insertPrefix + tblInfo.MaterializedView.SQLContent
+	selectSQL, err := mviewutil.BuildMaintenanceSelectSQL(tblInfo)
+	if err != nil {
+		return err
+	}
+	/* #nosec G202: selectSQL is restored from AST (single SELECT statement, no user-provided placeholders). */
+	insertSQL := insertPrefix + selectSQL
 	deleteRows := int64(0)
 	if err := observeMVRefreshStep(stepObserver, stepSet.dataChangeCompleteDelete, func() error {
 		_, deleteErr := sqlExec.ExecuteInternal(kctx, deleteSQL)

@@ -29,7 +29,9 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"go.uber.org/zap"
 )
@@ -519,8 +521,12 @@ func buildCreateMaterializedViewImportSQL(schemaName string, mviewTableInfo *mod
 	if mviewTableInfo.MaterializedView == nil || mviewTableInfo.MaterializedView.SQLContent == "" {
 		return "", dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid select sql")
 	}
+	selectSQL, err := mviewutil.BuildMaintenanceSelectSQL(mviewTableInfo)
+	if err != nil {
+		return "", err
+	}
 	prefix := sqlescape.MustEscapeSQL("IMPORT INTO %n.%n FROM ", schemaName, mviewTableInfo.Name.O)
-	return prefix + "(" + mviewTableInfo.MaterializedView.SQLContent + ") WITH " + strings.Join(BuildMViewImportIntoOptions(threadCnt, diskQuota), ", "), nil
+	return prefix + "(" + selectSQL + ") WITH " + strings.Join(BuildMViewImportIntoOptions(threadCnt, diskQuota), ", "), nil
 }
 
 func getCreateMaterializedViewBuildReadTS(ctx context.Context, ddlSess *sess.Session) (uint64, error) {
@@ -556,7 +562,11 @@ func buildCreateMaterializedViewInsertSQL(schemaName string, mviewTableInfo *mod
 	if mviewTableInfo.MaterializedView == nil || mviewTableInfo.MaterializedView.SQLContent == "" {
 		return "", dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid select sql")
 	}
-	return sqlescape.MustEscapeSQL("REPLACE INTO %n.%n ", schemaName, mviewTableInfo.Name.O) + mviewTableInfo.MaterializedView.SQLContent, nil
+	selectSQL, err := mviewutil.BuildMaintenanceSelectSQL(mviewTableInfo)
+	if err != nil {
+		return "", err
+	}
+	return sqlescape.MustEscapeSQL("REPLACE INTO %n.%n ", schemaName, mviewTableInfo.Name.O) + selectSQL, nil
 }
 
 func (w *worker) hasCreateMaterializedViewBuildRows(ctx context.Context, schemaName, mvTableName string) (bool, error) {
@@ -577,6 +587,13 @@ func (w *worker) hasCreateMaterializedViewBuildRows(ctx context.Context, schemaN
 func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *model.Job, mviewTableInfo *model.TableInfo, currentDB string) (func(), error) {
 	if job == nil || job.ReorgMeta == nil {
 		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: missing reorg metadata")
+	}
+	if mviewTableInfo == nil || mviewTableInfo.MaterializedView == nil {
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: missing materialized view metadata")
+	}
+	mviewInfo := mviewTableInfo.MaterializedView
+	if mviewInfo.DefinitionDivPrecisionIncrement < 0 || mviewInfo.DefinitionDivPrecisionIncrement > vardef.MaxDivPrecisionIncrement {
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid maintenance numeric metadata")
 	}
 	sessVars := sessCtx.GetSessionVars() //nolint:forbidigo
 	restore := restoreSessCtx(sessCtx)

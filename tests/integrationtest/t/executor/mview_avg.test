@@ -1,0 +1,223 @@
+# TestMaterializedViewAvgRefresh
+
+use test;
+set tidb_mview_enable = on;
+
+drop materialized view if exists mv_avg_e2e;
+drop table if exists t_mv_avg_e2e;
+
+create table t_mv_avg_e2e (a int not null, b int);
+insert into t_mv_avg_e2e values (1, 1), (1, 2), (2, null);
+create materialized view log on t_mv_avg_e2e (a, b) purge next date_add(now(), interval 1 hour);
+
+set @@session.div_precision_increment = 4;
+create materialized view mv_avg_e2e (a, cnt_all, avg_b, cnt_b, sum_b) refresh fast next date_add(now(), interval 1 hour) as
+select a, count(*), avg(b), count(b), sum(b) from t_mv_avg_e2e group by a;
+select a, cnt_all, avg_b, cnt_b, sum_b from mv_avg_e2e order by a;
+
+# FAST refresh must use updated SUM/COUNT state and preserve the definition-time DPI.
+set @@session.div_precision_increment = 0;
+insert into t_mv_avg_e2e values (1, 4), (2, null), (3, 10);
+delete from t_mv_avg_e2e where a = 1 and b = 1;
+refresh materialized view mv_avg_e2e fast;
+select a, cnt_all, avg_b, cnt_b, sum_b from mv_avg_e2e order by a;
+
+# A group with only NULL AVG inputs remains materialized while COUNT(*) is positive.
+delete from t_mv_avg_e2e where a = 2 and b is null limit 1;
+refresh materialized view mv_avg_e2e fast;
+select a, cnt_all, avg_b, cnt_b, sum_b from mv_avg_e2e order by a;
+
+# COMPLETE modes must produce the same AVG state.
+update t_mv_avg_e2e set b = 8 where a = 1 and b = 2;
+refresh materialized view mv_avg_e2e complete in place;
+select a, cnt_all, avg_b, cnt_b, sum_b from mv_avg_e2e order by a;
+
+insert into t_mv_avg_e2e values (3, 14);
+refresh materialized view mv_avg_e2e complete out of place;
+select a, cnt_all, avg_b, cnt_b, sum_b from mv_avg_e2e order by a;
+
+delete from t_mv_avg_e2e where a = 2;
+insert into t_mv_avg_e2e values (4, 9);
+refresh materialized view mv_avg_e2e complete delta apply;
+select a, cnt_all, avg_b, cnt_b, sum_b from mv_avg_e2e order by a;
+
+set @@session.div_precision_increment = 4;
+drop materialized view mv_avg_e2e;
+drop materialized view log on t_mv_avg_e2e;
+drop table if exists t_mv_avg_e2e;
+
+# FLOAT and DOUBLE AVG follow the existing approximate floating-point SUM semantics.
+drop materialized view if exists mv_avg_real_e2e;
+drop table if exists t_mv_avg_real_e2e;
+
+create table t_mv_avg_real_e2e (id int primary key, a int not null, f float, d double);
+insert into t_mv_avg_real_e2e values
+    (1, 1, 1.1, 10.1), (2, 1, 2.2, 20.2), (3, 2, null, null);
+create materialized view log on t_mv_avg_real_e2e (id, a, f, d) purge next date_add(now(), interval 1 hour);
+create materialized view mv_avg_real_e2e
+    (a, avg_f, sum_f, cnt_f, avg_d, sum_d, cnt_d, cnt_all)
+    refresh fast as
+select a, avg(f), sum(f), count(f), avg(d), sum(d), count(d), count(*)
+from t_mv_avg_real_e2e group by a;
+select a, round(avg_f, 4), round(sum_f, 4), cnt_f,
+       round(avg_d, 4), round(sum_d, 4), cnt_d, cnt_all
+from mv_avg_real_e2e order by a;
+
+insert into t_mv_avg_real_e2e values (4, 1, 4.4, 40.4), (5, 2, null, null), (6, 3, 30.3, 300.3);
+delete from t_mv_avg_real_e2e where id = 1;
+refresh materialized view mv_avg_real_e2e fast;
+select a, round(avg_f, 4), round(sum_f, 4), cnt_f,
+       round(avg_d, 4), round(sum_d, 4), cnt_d, cnt_all
+from mv_avg_real_e2e order by a;
+
+update t_mv_avg_real_e2e set f = 8.8, d = 80.8 where id = 2;
+refresh materialized view mv_avg_real_e2e fast;
+select a, round(avg_f, 4), round(sum_f, 4), cnt_f,
+       round(avg_d, 4), round(sum_d, 4), cnt_d, cnt_all
+from mv_avg_real_e2e order by a;
+
+drop materialized view mv_avg_real_e2e;
+drop materialized view log on t_mv_avg_real_e2e;
+drop table if exists t_mv_avg_real_e2e;
+
+# Non-null floating-point AVG must allow FAST refresh to delete and recreate a group,
+# both with explicit COUNT(column) state and with COUNT(*) as the count dependency.
+create table t_mv_avg_real_not_null (id int primary key, a int not null, f float not null, d double not null);
+insert into t_mv_avg_real_not_null values (1, 1, 10, 100), (2, 2, 20, 200);
+create materialized view log on t_mv_avg_real_not_null (id, a, f, d) purge next date_add(now(), interval 1 hour);
+create materialized view mv_avg_real_not_null (a, avg_f, sum_f, avg_d, sum_d, cnt_all)
+refresh fast as select a, avg(f), sum(f), avg(d), sum(d), count(*) from t_mv_avg_real_not_null group by a;
+create materialized view mv_avg_real_not_null_count (a, avg_f, sum_f, cnt_f, avg_d, sum_d, cnt_d, cnt_all)
+refresh fast as select a, avg(f), sum(f), count(f), avg(d), sum(d), count(d), count(*) from t_mv_avg_real_not_null group by a;
+
+delete from t_mv_avg_real_not_null where a = 1;
+refresh materialized view mv_avg_real_not_null fast;
+refresh materialized view mv_avg_real_not_null_count fast;
+select * from mv_avg_real_not_null order by a;
+select * from mv_avg_real_not_null_count order by a;
+
+insert into t_mv_avg_real_not_null values (3, 1, 30, 300);
+refresh materialized view mv_avg_real_not_null fast;
+refresh materialized view mv_avg_real_not_null_count fast;
+select * from mv_avg_real_not_null order by a;
+select * from mv_avg_real_not_null_count order by a;
+
+delete from t_mv_avg_real_not_null;
+refresh materialized view mv_avg_real_not_null fast;
+refresh materialized view mv_avg_real_not_null_count fast;
+select count(*) from mv_avg_real_not_null;
+select count(*) from mv_avg_real_not_null_count;
+
+drop materialized view mv_avg_real_not_null;
+drop materialized view mv_avg_real_not_null_count;
+drop materialized view log on t_mv_avg_real_not_null;
+drop table t_mv_avg_real_not_null;
+
+# Column spelling is case-insensitive across AVG, SUM and COUNT dependencies.
+create table t_mv_avg_case (a int not null, b int);
+insert into t_mv_avg_case values (1, 10), (1, 20);
+create materialized view log on t_mv_avg_case (a, b) purge next date_add(now(), interval 1 hour);
+create materialized view mv_avg_case (a, av, s, c, n) refresh fast as
+select a, avg(B), sum(b), count(B), count(*) from t_mv_avg_case group by a;
+insert into t_mv_avg_case values (1, 30);
+refresh materialized view mv_avg_case fast;
+select * from mv_avg_case;
+drop materialized view mv_avg_case;
+drop materialized view log on t_mv_avg_case;
+drop table t_mv_avg_case;
+
+# Preserve legacy SET-zero behavior: MV snapshots the effective runtime default.
+set div_precision_increment = 0;
+create table t_mv_avg_zero (a int not null, b int);
+insert into t_mv_avg_zero values (1, 2), (1, 4);
+create materialized view log on t_mv_avg_zero (a, b) purge next date_add(now(), interval 1 hour);
+create materialized view mv_avg_zero (a, av, s, c, n) refresh fast as
+select a, avg(b), sum(b), count(b), count(*) from t_mv_avg_zero group by a;
+select column_type from information_schema.columns where table_schema='test' and table_name='mv_avg_zero' and column_name='av';
+select * from mv_avg_zero;
+set div_precision_increment = 30;
+insert into t_mv_avg_zero values (1, 6);
+refresh materialized view mv_avg_zero fast;
+select * from mv_avg_zero;
+refresh materialized view mv_avg_zero complete in place;
+select * from mv_avg_zero;
+refresh materialized view mv_avg_zero complete out of place;
+select * from mv_avg_zero;
+refresh materialized view mv_avg_zero complete delta apply;
+select * from mv_avg_zero;
+drop materialized view mv_avg_zero;
+drop materialized view log on t_mv_avg_zero;
+drop table t_mv_avg_zero;
+
+# decimal(65,30) AVG uses a legal physical scale while retaining all integer digits.
+set div_precision_increment = 4;
+create table t_mv_avg_high (id int primary key, a int not null, b decimal(65,30));
+insert into t_mv_avg_high values (1, 1, 1), (2, 1, 2), (3, 1, 2), (4, 2, null), (5, 3, 99999999999999999999999999999999999.123456789012345678901234567890);
+create materialized view log on t_mv_avg_high (id, a, b) purge next date_add(now(), interval 1 hour);
+create materialized view mv_avg_high (a, av, s, c, n) refresh fast as
+select a, avg(b), sum(b), count(b), count(*) from t_mv_avg_high group by a;
+select column_type from information_schema.columns where table_schema='test' and table_name='mv_avg_high' and column_name='av';
+select * from mv_avg_high order by a;
+set div_precision_increment = 8;
+insert into t_mv_avg_high values (6, 1, 1);
+refresh materialized view mv_avg_high fast;
+select * from mv_avg_high order by a;
+refresh materialized view mv_avg_high complete in place;
+select * from mv_avg_high order by a;
+refresh materialized view mv_avg_high complete out of place;
+select * from mv_avg_high order by a;
+refresh materialized view mv_avg_high complete delta apply;
+select * from mv_avg_high order by a;
+drop materialized view mv_avg_high;
+drop materialized view log on t_mv_avg_high;
+drop table t_mv_avg_high;
+
+# decimal(10,2) AVG uses a legal physical scale while retaining all integer digits.
+set div_precision_increment = 30;
+create table t_mv_avg_dpi (id int primary key, a int not null, b decimal(10,2));
+insert into t_mv_avg_dpi values (1, 1, 1), (2, 1, 2), (3, 1, 2), (4, 2, null), (5, 3, 99999999.99);
+create materialized view log on t_mv_avg_dpi (id, a, b) purge next date_add(now(), interval 1 hour);
+create materialized view mv_avg_dpi (a, av, s, c, n) refresh fast as
+select a, avg(b), sum(b), count(b), count(*) from t_mv_avg_dpi group by a;
+select column_type from information_schema.columns where table_schema='test' and table_name='mv_avg_dpi' and column_name='av';
+select * from mv_avg_dpi order by a;
+set div_precision_increment = 0;
+insert into t_mv_avg_dpi values (6, 1, 1);
+refresh materialized view mv_avg_dpi fast;
+select * from mv_avg_dpi order by a;
+refresh materialized view mv_avg_dpi complete in place;
+select * from mv_avg_dpi order by a;
+refresh materialized view mv_avg_dpi complete out of place;
+select * from mv_avg_dpi order by a;
+refresh materialized view mv_avg_dpi complete delta apply;
+select * from mv_avg_dpi order by a;
+drop materialized view mv_avg_dpi;
+drop materialized view log on t_mv_avg_dpi;
+drop table t_mv_avg_dpi;
+
+# Finalizing AVG through its wider query type would double-round this quotient.
+# Initial build, FAST and every COMPLETE mode must all round the exact state once.
+set div_precision_increment = 1;
+create table t_mv_avg_round (id int primary key, a int not null, b decimal(65,30));
+insert into t_mv_avg_round values (1, 1, 0), (2, 1, 0), (3, 1, 0), (4, 1, 0), (5, 1, 0), (6, 1, 0), (7, 1, 0), (8, 1, 0), (9, 1, 0), (10, 1, 0), (11, 1, 0), (12, 1, 0), (13, 1, 0), (14, 1, 0), (15, 1, 0), (16, 1, 0), (17, 1, 0), (18, 1, 0), (19, 1, 0), (20, 1, 0), (21, 1, 0.000000000000000000000000000010);
+create materialized view log on t_mv_avg_round (id, a, b) purge next date_add(now(), interval 1 hour);
+create materialized view mv_avg_round (a, av, s, c, n) refresh fast as
+select a, avg(b), sum(b), count(b), count(*) from t_mv_avg_round group by a;
+select av from mv_avg_round;
+delete from t_mv_avg_round where id = 1;
+insert into t_mv_avg_round values (22, 1, 0);
+refresh materialized view mv_avg_round fast;
+select av from mv_avg_round;
+refresh materialized view mv_avg_round complete in place;
+select av from mv_avg_round;
+refresh materialized view mv_avg_round complete out of place;
+select av from mv_avg_round;
+refresh materialized view mv_avg_round complete delta apply;
+select av from mv_avg_round;
+drop materialized view mv_avg_round;
+drop materialized view log on t_mv_avg_round;
+drop table t_mv_avg_round;
+
+set div_precision_increment = 4;
+
+set tidb_mview_enable = off;
