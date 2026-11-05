@@ -120,7 +120,6 @@ func TestBackfillRetryableErrors(t *testing.T) {
 		require.False(t, isRetryableModifyColumnReorgJobError(errors.New("unknown reorg error"), 0))
 		require.True(t, isRetryableError(errors.New("unknown reorg error"), true))
 	})
-
 }
 
 func TestPickBackfillType(t *testing.T) {
