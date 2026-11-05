@@ -237,6 +237,7 @@ use tidb_store_driver_txn::cluster_table_storage::LockKeysOutcome;
 mod node_services;
 pub use node_services::{node_services, NodeServices};
 mod non_transactional_dml;
+mod plan_replayer_load;
 mod record_set;
 use tidb_domain_core::schema_sync;
 mod statistics;
@@ -459,7 +460,40 @@ impl<'s> ClusterServerSession<'s> {
     }
 }
 
-/// A LOAD DATA LOCAL or LOAD STATS waiting for the client's file.
+/// The client file a `PLAN REPLAYER LOAD 'file'` restores.
+fn plan_replayer_load_file(stmt: &Stmt) -> Option<&str> {
+    let Stmt::Admin(admin) = stmt else {
+        return None;
+    };
+    let tidb_ast::AdminStmt::PlanReplayer(replayer) = admin.as_ref() else {
+        return None;
+    };
+    match replayer.as_ref() {
+        tidb_ast::PlanReplayerStmt::Load(path) => Some(path),
+        _ => None,
+    }
+}
+
+/// The client file a `PLAN REPLAYER DUMP EXPLAIN 'file'` reads its
+/// statements from.
+fn plan_replayer_dump_file(stmt: &Stmt) -> Option<&str> {
+    let Stmt::Admin(admin) = stmt else {
+        return None;
+    };
+    let tidb_ast::AdminStmt::PlanReplayer(replayer) = admin.as_ref() else {
+        return None;
+    };
+    let tidb_ast::PlanReplayerStmt::Dump { target, .. } = replayer.as_ref() else {
+        return None;
+    };
+    match target.as_ref() {
+        tidb_ast::PlanReplayerTarget::File(path) => Some(path),
+        _ => None,
+    }
+}
+
+/// A LOAD DATA LOCAL, LOAD STATS or PLAN REPLAYER DUMP of a file waiting for
+/// the client's file.
 struct ParkedLocalInfile {
     sql: String,
     stmt: Stmt,
@@ -2170,6 +2204,15 @@ impl<'s> ClusterServerSession<'s> {
                 return Ok(load.local.then(|| load.path.clone()));
             }
         }
+        // Go `clientConn.handlePlanReplayerDump`'s and
+        // `handlePlanReplayerLoad`'s `getDataFromPath`; an empty LOAD path
+        // fails in the executor.
+        if let Some(path) = plan_replayer_dump_file(stmt) {
+            return Ok(Some(path.to_owned()));
+        }
+        if let Some(path) = plan_replayer_load_file(stmt).filter(|path| !path.is_empty()) {
+            return Ok(Some(path.to_owned()));
+        }
         let Some(statement) = prepare_cluster_load_stats_parsed(stmt) else {
             return Ok(None);
         };
@@ -2187,6 +2230,12 @@ impl<'s> ClusterServerSession<'s> {
         // The executor is built against the current schema, as the write
         // door builds every statement.
         self.rebuild_catalog_if_stale();
+        if let Stmt::Admin(admin) = stmt {
+            if let tidb_ast::AdminStmt::PlanReplayer(replayer) = admin.as_ref() {
+                // Go `PlanReplayerExec.Next` up to `prepare`.
+                return self.session.plan_replayer_stmt(replayer).map(drop).map_err(map_error);
+            }
+        }
         self.session.preprocess_load_data_local(stmt).map_err(map_error)
     }
 
@@ -2206,6 +2255,18 @@ impl<'s> ClusterServerSession<'s> {
             });
             self.session.clear_local_infile();
             return outcome;
+        }
+        if plan_replayer_dump_file(stmt).is_some() {
+            self.session.handle_plan_replayer_dump(data).map_err(map_error)?;
+            return Ok(WriteOutcome::default());
+        }
+        if plan_replayer_load_file(stmt).is_some() {
+            // Go `handlePlanReplayerLoad`.
+            self.session.take_plan_replayer_load_info().map_err(map_error)?;
+            if !data.is_empty() {
+                self.plan_replayer_load_update(data)?;
+            }
+            return Ok(WriteOutcome::default());
         }
         if prepare_cluster_load_stats_parsed(stmt).is_none() {
             return Err(SqlQueryError::unknown(

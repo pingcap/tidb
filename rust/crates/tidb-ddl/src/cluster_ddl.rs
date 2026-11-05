@@ -5175,7 +5175,10 @@ pub mod resource_group;
 pub mod table_lock;
 pub mod truncate;
 mod recover_table;
-pub use recover_table::{DdlStepWorker, SnapshotMetaAt};
+pub use recover_table::{
+    get_drop_or_truncate_table_info_from_jobs_by_store, get_gc_safe_point, get_recover_snapshot_ts, DdlStepWorker,
+    SnapshotMetaAt,
+};
 pub(crate) use recover_table::{
     build_recover_schema_job, build_recover_table_job, gc_safe_point as recover_gc_safe_point,
 };

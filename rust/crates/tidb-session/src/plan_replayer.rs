@@ -24,6 +24,7 @@ use std::collections::BTreeMap;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_domain::plan_replayer as replayer;
 use tidb_driver_error::DriverError;
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_executor::StmtOutput;
 use tidb_infoschema::SessionExtendedInfoSchema;
 
@@ -215,6 +216,38 @@ impl replayer::DumpArchiveWriter for ArchiveWriter {
     }
 }
 
+/// Go `PlanReplayerDumpInfo`: a dump between `PlanReplayerExec.Next` and
+/// its statements' dump.
+pub(crate) struct PlanReplayerDumpInfo {
+    analyze: bool,
+    file: Option<Box<dyn tidb_replayer::WriteCloser + Send>>,
+    file_name: String,
+    start_ts: u64,
+    historical_stats_ts: u64,
+}
+
+impl PlanReplayerDumpInfo {
+    /// Go's deferred `e.DumpInfo.File.Close()` of a failed statement.
+    fn close_file(&mut self) {
+        if let Some(mut file) = self.file.take() {
+            let _ = file.close();
+        }
+    }
+
+    fn into_closed(mut self) {
+        self.close_file();
+    }
+}
+
+/// Go `PlanReplayerExec.createFile`.
+fn create_file() -> Result<(Box<dyn tidb_replayer::WriteCloser + Send>, String), DriverError> {
+    let unknown = |message: String| DriverError::Mysql(tidb_terror::MysqlError::unknown(message));
+    let storage = tidb_planner_extstore::get_global_ext_storage().map_err(unknown)?;
+    let (file, file_name) = tidb_replayer::generate_plan_replayer_file(storage.as_ref(), false, false, false)
+        .map_err(|error| unknown(error.to_string()))?;
+    Ok((Box::new(file), file_name))
+}
+
 /// Go `buildPlanReplayer`'s output schema.
 fn item_value_columns() -> Vec<(String, FieldType)> {
     vec![
@@ -238,30 +271,62 @@ impl Session {
                 }
                 Ok(Some(StmtOutput::Rows { columns: item_value_columns(), rows: Vec::new() }))
             }
-            tidb_ast::PlanReplayerStmt::Load(_) => {
-                Err(DriverError::unsupported("PLAN REPLAYER LOAD is not supported"))
+            // Go `PlanReplayerLoadExec.Next`: the load waits on the session
+            // (Go's `PlanReplayerLoadVarKey`) for the client's file.
+            tidb_ast::PlanReplayerStmt::Load(path) => {
+                if path.is_empty() {
+                    return Err(DriverError::Mysql(tidb_terror::MysqlError::unknown(
+                        "plan replayer: file path is empty",
+                    )));
+                }
+                if self.plan_replayer_load_info.take().is_some() {
+                    return Err(DriverError::Mysql(tidb_terror::MysqlError::unknown(
+                        "plan replayer: previous plan replayer load option isn't closed normally, please try again",
+                    )));
+                }
+                self.plan_replayer_load_info = Some(path.clone());
+                Ok(None)
             }
             tidb_ast::PlanReplayerStmt::Dump { historical_stats, analyze, target } => {
-                if historical_stats.is_some() {
-                    return Err(DriverError::unsupported("PLAN REPLAYER DUMP WITH STATS AS OF is not supported"));
-                }
+                // Go `buildPlanReplayer` and `executorBuilder.buildPlanReplayer`.
+                let historical_stats_ts =
+                    historical_stats.as_ref().map_or(0, |ts_expr| self.calc_ts_for_plan_replayer(ts_expr));
                 let exec_stmts = match target.as_ref() {
                     // Go `execStmt.Text()`: the statement's own source text.
                     tidb_ast::PlanReplayerTarget::Statement(statement) => {
                         let text = String::from_utf8_lossy(statement.text()).into_owned();
-                        vec![if text.is_empty() { statement.restore() } else { text }]
+                        Some(vec![if text.is_empty() { statement.restore() } else { text }])
                     }
-                    tidb_ast::PlanReplayerTarget::Statements(statements) => statements.clone(),
-                    _ => {
-                        return Err(DriverError::unsupported(
-                            "PLAN REPLAYER DUMP of a file or the slow log is not supported",
-                        ))
-                    }
+                    tidb_ast::PlanReplayerTarget::Statements(statements) => Some(statements.clone()),
+                    // A file's statements arrive with the client's file; Go's
+                    // builder ignores the slow-query selector.
+                    tidb_ast::PlanReplayerTarget::File(_) | tidb_ast::PlanReplayerTarget::SlowQuery { .. } => None,
                 };
-                if exec_stmts.is_empty() {
-                    return Err(DriverError::Mysql(tidb_terror::MysqlError::unknown("plan replayer: sql is empty")));
+
+                // Go `PlanReplayerExec.Next`.
+                let (file, file_name) = create_file()?;
+                // Go `GetTxnManager(sctx).GetStmtReadTS()`: the statement's read
+                // snapshot.
+                let start_ts = self.statement_snapshot.as_ref().map_or(0, |(ts, _)| *ts);
+                let mut dump_info = PlanReplayerDumpInfo {
+                    analyze: *analyze,
+                    file: Some(file),
+                    file_name,
+                    start_ts,
+                    historical_stats_ts,
+                };
+                if let tidb_ast::PlanReplayerTarget::File(_) = target.as_ref() {
+                    // As we can only read file from the connection (which
+                    // requests the path), the dump info waits on the session
+                    // for the client's file.
+                    self.prepare_plan_replayer_dump(dump_info)?;
+                    return Ok(None);
                 }
-                let token = self.dump_plan_replayer(*analyze, &exec_stmts)?;
+                let Some(exec_stmts) = exec_stmts else {
+                    dump_info.close_file();
+                    return Err(DriverError::Mysql(tidb_terror::MysqlError::unknown("plan replayer: sql is empty")));
+                };
+                let token = self.plan_replayer_dump(&mut dump_info, exec_stmts)?;
                 Ok(Some(StmtOutput::Rows {
                     columns: item_value_columns(),
                     rows: vec![vec![
@@ -273,31 +338,184 @@ impl Session {
         }
     }
 
-    /// Go `PlanReplayerExec.createFile` + `PlanReplayerDumpInfo.dump`: the
-    /// archive is written to the global storage's replayer directory, the
-    /// status records inserted, and the token (the file name, or a
-    /// presigned URL) kept as `LastPlanReplayerToken`.
-    fn dump_plan_replayer(&mut self, analyze: bool, exec_stmts: &[String]) -> Result<String, DriverError> {
+    /// Go `PlanReplayerExec.prepare`: the dump waits on the session (Go's
+    /// `PlanReplayerDumpVarKey`) until the connection reads the client's file.
+    fn prepare_plan_replayer_dump(&mut self, dump_info: PlanReplayerDumpInfo) -> Result<(), DriverError> {
+        if let Some(mut previous) = self.plan_replayer_dump_info.take() {
+            previous.close_file();
+            dump_info.into_closed();
+            return Err(DriverError::Mysql(tidb_terror::MysqlError::unknown(
+                "plan replayer: previous plan replayer dump option isn't closed normally, please try again",
+            )));
+        }
+        self.plan_replayer_dump_info = Some(dump_info);
+        Ok(())
+    }
+
+    /// Go `handlePlanReplayerLoad`'s info: the load's file path, taken once
+    /// the connection read the client's file.
+    pub(crate) fn take_plan_replayer_load_info(&mut self) -> Result<String, DriverError> {
+        self.plan_replayer_load_info
+            .take()
+            .ok_or_else(|| DriverError::Mysql(tidb_terror::MysqlError::unknown("plan replayer load: info is empty")))
+    }
+
+    /// Go `clientConn.handlePlanReplayerDump` once the connection read the
+    /// client's file: an empty file dumps nothing.
+    pub(crate) fn handle_plan_replayer_dump(&mut self, data: &[u8]) -> Result<(), DriverError> {
+        let Some(mut dump_info) = self.plan_replayer_dump_info.take() else {
+            return Err(DriverError::Mysql(tidb_terror::MysqlError::unknown(
+                "plan replayer dump: executor is empty",
+            )));
+        };
+        if data.is_empty() {
+            return Ok(());
+        }
+        self.dump_sqls_from_file(&mut dump_info, data)
+    }
+
+    /// Go `PlanReplayerDumpInfo.DumpSQLsFromFile` dumps plan replayer results
+    /// for sqls from file.
+    fn dump_sqls_from_file(&mut self, dump_info: &mut PlanReplayerDumpInfo, b: &[u8]) -> Result<(), DriverError> {
+        let text = String::from_utf8_lossy(b).into_owned();
+        let mut exec_stmts = Vec::new();
+        for sql in text.split(';') {
+            let s = sql.trim_matches('\n');
+            if s.is_empty() {
+                continue;
+            }
+            // Go `GetRestrictedSQLExecutor().ParseWithParams`.
+            if let Err(error) = tidb_executor::stmt_ctx_build::ResetContextOfStmt::parse_statement(self, s) {
+                return Err(DriverError::Mysql(tidb_terror::MysqlError::unknown(format!(
+                    "parse sql error, sql:{s}, err:{}",
+                    error.error_string()
+                ))));
+            }
+            exec_stmts.push(s.to_owned());
+        }
+        self.plan_replayer_dump(dump_info, exec_stmts).map(drop)
+    }
+
+    /// Go `PlanReplayerDumpInfo.dump`: the archive is written to the global
+    /// storage's replayer directory, the status records inserted, and the
+    /// token (the file name, or a presigned URL) kept as
+    /// `LastPlanReplayerToken`.
+    fn plan_replayer_dump(
+        &mut self,
+        dump_info: &mut PlanReplayerDumpInfo,
+        exec_stmts: Vec<String>,
+    ) -> Result<String, DriverError> {
         let unknown = |message: String| DriverError::Mysql(tidb_terror::MysqlError::unknown(message));
-        let storage = tidb_planner_extstore::get_global_ext_storage().map_err(unknown)?;
-        let (mut file, file_name) =
-            tidb_replayer::generate_plan_replayer_file(storage.as_ref(), false, false, false)
-                .map_err(|error| unknown(error.to_string()))?;
-        // Go `GetTxnManager(sctx).GetStmtReadTS()`: the statement's read
-        // snapshot.
-        let start_ts = self.statement_snapshot.as_ref().map_or(0, |(ts, _)| *ts);
         let mut task = replayer::PlanReplayerDumpTask {
-            file_name: Some(file_name.clone()),
-            start_ts,
-            analyze,
+            file_name: Some(dump_info.file_name.clone()),
+            start_ts: dump_info.start_ts,
+            analyze: dump_info.analyze,
+            historical_stats_ts: dump_info.historical_stats_ts,
             session_vars: self.plan_replayer_session_vars(),
-            exec_stmts: exec_stmts.to_vec(),
+            exec_stmts,
             ..replayer::PlanReplayerDumpTask::default()
         };
-        self.dump_plan_replayer_info(&mut task, &mut file).map_err(|error| unknown(error.to_string()))?;
-        let token = task.presigned_url.filter(|url| !url.is_empty()).unwrap_or(file_name);
+        let mut file = dump_info.file.take().expect("the dump's file is open");
+        self.dump_plan_replayer_info(&mut task, file.as_mut()).map_err(|error| unknown(error.to_string()))?;
+        let token = task.presigned_url.filter(|url| !url.is_empty()).unwrap_or_else(|| dump_info.file_name.clone());
         self.vars.last_plan_replayer_token = token.clone();
         Ok(token)
+    }
+
+    /// Go `calcTSForPlanReplayer`: the `WITH STATS AS OF TIMESTAMP` value as
+    /// a TSO, else as a date/time; 0 (the latest statistics) with a warning
+    /// when it is neither.
+    fn calc_ts_for_plan_replayer(&mut self, ts_expr: &tidb_ast::Expr) -> u64 {
+        let ts_val = match self.eval_value(ts_expr) {
+            Ok(value) => value,
+            Err(error) => {
+                self.append_driver_error(tidb_context::WarningLevel::Warning, &error);
+                return 0;
+            }
+        };
+        // mustn't be NULL
+        if ts_val.is_null() {
+            return 0;
+        }
+        let ctx = self.statement_context(false);
+        let location = ctx.session_zone();
+
+        // first, treat it as a TSO
+        let tp_longlong = FieldType::new(FieldTypeCode::LongLong).with_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+        // We need a strict check, which means no truncate or any other
+        // warnings/errors, or it will wrongly try to parse a date/time string
+        // into a TSO (Go `types.DefaultStmtNoWarningContext.WithLocation`).
+        let no_warning = tidb_datatype::ConversionContext::new(
+            tidb_datatype::STRICT_FLAGS,
+            tidb_datatype::ConversionLocation::from_time_zone(&location),
+            &tidb_context::IGNORE_CONVERSION_WARNINGS,
+        );
+        if let Ok(tso) = ts_val.convert_to_in_context(&tp_longlong, &no_warning, &location) {
+            if tso.error.is_none() {
+                return match tso.value {
+                    Datum::UInt(value) => value,
+                    Datum::Int(value) => value as u64,
+                    _ => 0,
+                };
+            }
+        }
+
+        // if failed, treat it as a date/time
+        // this part is similar to CalculateAsOfTsExpr
+        #[derive(Default)]
+        struct Warnings(RefCell<Vec<tidb_terror::TerrorError>>);
+        impl tidb_context::ConversionWarningAppender for Warnings {
+            fn append_conversion_warning(&self, warning: tidb_terror::TerrorError) {
+                self.0.borrow_mut().push(warning);
+            }
+        }
+        let warnings = Warnings::default();
+        let tp_date_time = FieldType::new(FieldTypeCode::Datetime).with_decimal(6);
+        // Go `StmtCtx.TypeCtx()`.
+        let type_ctx = tidb_datatype::ConversionContext::new(
+            tidb_exprctx::Columns::type_flags(&ctx),
+            tidb_datatype::ConversionLocation::from_time_zone(&location),
+            &warnings,
+        );
+        let converted = ts_val.convert_to_in_context(&tp_date_time, &type_ctx, &location);
+        for warning in warnings.0.take() {
+            let reported = warning.to_sql_error();
+            self.append_sql_warning(tidb_context::SqlWarn::from_error(
+                tidb_context::WarningLevel::Warning,
+                reported.code,
+                reported.message,
+                reported.identity,
+            ));
+        }
+        let timestamp = match converted {
+            Ok(converted) => match converted.error {
+                None => converted.value,
+                Some(error) => {
+                    self.append_driver_error(tidb_context::WarningLevel::Warning, &DriverError::from(error));
+                    return 0;
+                }
+            },
+            Err(error) => {
+                self.append_driver_error(
+                    tidb_context::WarningLevel::Warning,
+                    &DriverError::Mysql(tidb_terror::MysqlError::unknown(error.to_string())),
+                );
+                return 0;
+            }
+        };
+        let Datum::Time(timestamp) = timestamp else {
+            return 0;
+        };
+        match timestamp.go_time(&location) {
+            Ok(go_time) => tikv_client::oracle::go_time_to_ts(std::time::SystemTime::from(go_time)),
+            Err(error) => {
+                self.append_driver_error(
+                    tidb_context::WarningLevel::Warning,
+                    &DriverError::Mysql(tidb_terror::MysqlError::unknown(error.to_string())),
+                );
+                0
+            }
+        }
     }
 
     /// Go `DumpPlanReplayerInfo(ctx, sctx, task)` with this session as

@@ -588,7 +588,12 @@ pub(super) fn finish_recover(
 
 /// Go `gcutil.GetGCSafePoint` on one of the worker's sessions.
 pub(crate) fn gc_safe_point(sessions: &DdlStepWorker) -> Result<u64, DdlPlanError> {
-    tidb_gcutil::get_gc_safe_point(&mut WorkerGcContext(sessions.sess_pool.as_ref())).map_err(gc_error)
+    get_gc_safe_point(sessions.sess_pool.as_ref())
+}
+
+/// Go `gcutil.GetGCSafePoint(sctx)` over one of the pool's sessions.
+pub fn get_gc_safe_point(sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool) -> Result<u64, DdlPlanError> {
+    tidb_gcutil::get_gc_safe_point(&mut WorkerGcContext(sess_pool)).map_err(gc_error)
 }
 
 /// Meta reads at a past timestamp (Go `dom.GetSnapshotMeta(ts)` /
@@ -776,7 +781,7 @@ pub(crate) fn build_recover_table_job<S: MetaSnapshot>(
 }
 
 /// Go `GetRecoverSnapshotTS`.
-fn get_recover_snapshot_ts(job: &Job) -> u64 {
+pub fn get_recover_snapshot_ts(job: &Job) -> u64 {
     if job.real_start_ts != 0 {
         job.real_start_ts
     } else {
@@ -784,8 +789,52 @@ fn get_recover_snapshot_ts(job: &Job) -> u64 {
     }
 }
 
+/// Go `GetDropOrTruncateTableInfoFromJobsByStore`: each drop or truncate
+/// of `jobs`, inside the GC safe point, with its table read at the job's
+/// snapshot, handed to `f` until it finishes. A snapshot older than the
+/// safe point fails with `ErrSnapshotTooOld`.
+pub fn get_drop_or_truncate_table_info_from_jobs_by_store(
+    jobs: &[Job],
+    gc_safe_point: u64,
+    get_table: &dyn Fn(u64, i64, i64) -> Result<Option<TableInfo>, DdlPlanError>,
+    f: &mut dyn FnMut(&Job, TableInfo) -> Result<bool, DdlPlanError>,
+) -> Result<bool, DdlPlanError> {
+    for job in jobs {
+        if !matches!(
+            job.type_,
+            ActionType::ACTION_DROP_TABLE | ActionType::ACTION_TRUNCATE_TABLE
+        ) {
+            continue;
+        }
+
+        let snapshot_ts = get_recover_snapshot_ts(job);
+        // Check GC safe point for getting snapshot infoSchema.
+        tidb_gcutil::validate_snapshot_with_gc_safe_point(snapshot_ts, gc_safe_point).map_err(|error| {
+            gc_error(match error {
+                tidb_gcutil::Error::SnapshotTooOld { safe_point_time } => {
+                    tidb_gcutil::Error::SnapshotTooOld { safe_point_time }
+                }
+                other => tidb_gcutil::Error::Context(tidb_terror::MysqlError::unknown(other.to_string())),
+            })
+        })?;
+
+        // The dropped/truncated DDL maybe execute failed that caused by the
+        // parallel DDL execution, then can't find the table from the snapshot
+        // info-schema. Should just ignore it here (`meta.ErrDBNotExists` is
+        // `None` too), see more in TestParallelDropSchemaAndDropTable.
+        let Some(tbl) = get_table(snapshot_ts, job.schema_id, job.table_id)? else {
+            continue;
+        };
+        let finish = f(job, tbl)?;
+        if finish {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Go `getRecoverTableByTableName` over `IterHistoryDDLJobs` and
-/// `GetDropOrTruncateTableInfoFromJobsByStore`.
+/// `GetDropOrTruncateTableInfoFromJobs`.
 fn recover_table_by_name<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &SessionExtendedInfoSchema,
@@ -796,48 +845,52 @@ fn recover_table_by_name<S: MetaSnapshot>(
 ) -> Result<(Job, TableInfo), DdlPlanError> {
     let schema_name = schema.go_to_lower();
     let table_name = table.go_to_lower();
-    for job in history_ddl_jobs(snapshot)? {
-        if !matches!(
-            job.type_,
-            ActionType::ACTION_DROP_TABLE | ActionType::ACTION_TRUNCATE_TABLE
-        ) {
-            continue;
-        }
-        let snapshot_ts = get_recover_snapshot_ts(&job);
-        if let Err(error) = tidb_gcutil::validate_snapshot_with_gc_safe_point(snapshot_ts, gc_safe_point) {
-            // Go: `ErrSnapshotTooOld` from the walk becomes this message.
-            let tidb_gcutil::Error::SnapshotTooOld { safe_point_time } = error else {
-                return Err(unknown(error.to_string()));
-            };
-            return Err(unknown(format!(
-                "Can't find dropped/truncated table '{table}' in GC safe point {safe_point_time}"
-            )));
-        }
-        // A drop whose schema is gone at its snapshot (a failed parallel
-        // DDL) is skipped, as Go does.
-        let Some(table_info) = at.table_at(snapshot_ts, job.schema_id, job.table_id)? else {
-            continue;
-        };
-        if table_info.name.lowercase() != table_name {
-            continue;
+    let mut found = None;
+    let mut handle_job_and_table_info = |job: &Job, tbl_info: TableInfo| {
+        if tbl_info.name.lowercase() != table_name {
+            return Ok(false);
         }
         let Some(job_schema) = catalog.schema_by_id(job.schema_id) else {
-            continue;
+            return Ok(false);
         };
-        if job_schema.read().name.lowercase() != schema_name {
-            continue;
+        if job_schema.read().name.lowercase() == schema_name {
+            found = Some((job.clone(), tbl_info));
+            return Ok(true);
         }
-        // Dropping a local temporary table leaves no DDL job.
-        if table_info.temp_table_type == tidb_model::TempTableType::GLOBAL {
-            return Err(DdlPlanError::from(
-                tidb_exeerrors::ERR_UNSUPPORTED_FLASHBACK_TMP_TABLE.gen_with_stack_by_args(&[]),
-            ));
+        Ok(false)
+    };
+    let get_table = |ts: u64, schema_id: i64, table_id: i64| at.table_at(ts, schema_id, table_id);
+    if let Err(error) = get_drop_or_truncate_table_info_from_jobs_by_store(
+        &history_ddl_jobs(snapshot)?,
+        gc_safe_point,
+        &get_table,
+        &mut handle_job_and_table_info,
+    ) {
+        if error.equal(&tidb_variable::variable_errors::ERR_SNAPSHOT_TOO_OLD) {
+            return Err(unknown(format!(
+                "Can't find dropped/truncated table '{table}' in GC safe point {}",
+                ts_convert2_time_string(gc_safe_point)
+            )));
         }
-        return Ok((job, table_info));
+        return Err(error);
     }
-    Err(unknown(format!(
-        "Can't find localTemporary/dropped/truncated table: {table} in DDL history jobs"
-    )))
+    let Some((job, table_info)) = found else {
+        return Err(unknown(format!(
+            "Can't find localTemporary/dropped/truncated table: {table} in DDL history jobs"
+        )));
+    };
+    // Dropping local temporary tables won't appear in DDL jobs.
+    if table_info.temp_table_type == tidb_model::TempTableType::GLOBAL {
+        return Err(DdlPlanError::from(
+            tidb_exeerrors::ERR_UNSUPPORTED_FLASHBACK_TMP_TABLE.gen_with_stack_by_args(&[]),
+        ));
+    }
+    Ok((job, table_info))
+}
+
+/// Go `model.TSConvert2Time(ts).String()`.
+fn ts_convert2_time_string(ts: u64) -> String {
+    tidb_go_time_layout::go_unix_milli_string(tidb_model::GoTime::from_tso(ts).unix_milli())
 }
 
 /// Go `DDLExec.executeFlashbackDatabase` over `getRecoverDBByName`, then

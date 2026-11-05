@@ -111,6 +111,8 @@ pub struct StatusRoutes {
     pub mvcc: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
     /// Go `ClusterUpgradeHandler`'s store for `/upgrade/{op}`.
     pub cluster_upgrade: Option<crate::upgrade_handler::ClusterUpgrade>,
+    /// Go `FlashReplicaDeprecatedHandler`'s store.
+    pub flash_replica_deprecated: Option<crate::tikv_handler::FlashReplicaDeprecated>,
 }
 
 /// Go `StatsHandle().GetPriorityQueueSnapshot()` marshaled.
@@ -630,6 +632,17 @@ fn route_response(
         }
     } else if route == "/debug/gogc" {
         debug_gogc_response(request)
+    } else if let Some(answer) = crate::tikv_handler::flash_replica_deprecated_response(
+        path,
+        request,
+        routes.flash_replica_deprecated.as_ref(),
+    ) {
+        match answer {
+            Ok(Some(body)) => (200, "application/json", write_data(&body)),
+            // A status report that succeeds writes nothing.
+            Ok(None) => (200, "text/plain", String::new()),
+            Err(message) => (400, "text/plain", message),
+        }
     } else if let Some(answer) = crate::upgrade_handler::cluster_upgrade_response(
         path,
         request,

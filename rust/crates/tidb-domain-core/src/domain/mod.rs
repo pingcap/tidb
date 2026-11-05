@@ -2006,6 +2006,13 @@ impl Domain {
         (*self.catalog.get_latest()).clone()
     }
 
+    /// Go `Domain.GetSnapshotMeta(startTS)`: a meta reader over the store's
+    /// snapshot at `start_ts`.
+    pub fn get_snapshot_meta(&self, start_ts: u64) -> Result<SnapshotMetaSnapshot, String> {
+        let snapshot = self.transactions.open_snapshot_at(start_ts, "default")?;
+        Ok(SnapshotMetaSnapshot::new(snapshot))
+    }
+
     /// The process list of every connection this factory has open.
     #[must_use]
     pub fn processes(&self) -> ProcessRegistry {

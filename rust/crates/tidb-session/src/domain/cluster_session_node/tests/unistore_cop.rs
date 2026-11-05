@@ -6357,6 +6357,206 @@ fn plan_replayer_dump_writes_gos_archive_and_status() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// Go `calcTSForPlanReplayer` (`TestDumpPlanReplayerAPIWithHistoryStats`):
+/// `WITH STATS AS OF TIMESTAMP` takes a TSO, else a date/time in the
+/// session zone, records it as `historicalStatsTS` and dumps the statistics
+/// as of it, falling back to the latest with Go's message; with historical
+/// statistics off the dump fails as Go's does, and NULL dumps the latest.
+#[test]
+fn plan_replayer_dump_with_stats_as_of_timestamp_runs_gos_calc() {
+    let base = std::env::temp_dir().join(format!("plan-replayer-as-of-{}", std::process::id()));
+    tidb_planner_extstore::set_global_ext_storage_for_test(Some(Arc::new(
+        tidb_planner_extstore::LocalStorage::new(&base).unwrap(),
+    )));
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
+    let mut session = stack.factory.open_session(session_context(78)).expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET time_zone = '+00:00'");
+    rows(&mut session, "CREATE TABLE t (a INT, b INT, INDEX ia(a))");
+    rows(&mut session, "INSERT INTO t VALUES (1, 1), (2, 2)");
+    rows(&mut session, "ANALYZE TABLE t");
+    let dump = |session: &mut Session, ts: &str| -> std::collections::BTreeMap<String, Vec<u8>> {
+        let answer = displayed(rows(
+            session,
+            &format!("PLAN REPLAYER DUMP WITH STATS AS OF TIMESTAMP {ts} EXPLAIN SELECT * FROM t WHERE a > 1"),
+        ));
+        let archive = std::fs::read(base.join("replayer").join(&answer[0][1])).expect("the archive is written");
+        tidb_replayer::zip::read_zip(&archive).unwrap().into_iter().collect()
+    };
+    let text = |files: &std::collections::BTreeMap<String, Vec<u8>>, name: &str| {
+        files.get(name).map(|bytes| String::from_utf8(bytes.clone()).unwrap())
+    };
+
+    // first, treat it as a TSO: with historical stats off, Go's
+    // `DumpHistoricalStatsBySnapshot` refuses.
+    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = OFF");
+    let tso = tikv_client::oracle::compose_ts(1_700_000_000_000, 0);
+    let error = session
+        .run(&format!("PLAN REPLAYER DUMP WITH STATS AS OF TIMESTAMP {tso} EXPLAIN SELECT * FROM t"))
+        .unwrap_err();
+    assert_eq!(error.to_mysql_error().message, "tidb_enable_historical_stats should be enabled");
+
+    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = ON");
+    let files = dump(&mut session, &format!("'{tso}'"));
+    let meta = text(&files, "sql_meta.toml").unwrap();
+    assert!(meta.contains(&format!("historicalStatsTS = \"{tso}\"")), "{meta}");
+    assert_eq!(
+        text(&files, "errors.txt").as_deref(),
+        Some("Historical stats for test.t are unavailable, fallback to latest stats\n")
+    );
+
+    // if failed, treat it as a date/time, in the session's zone.
+    let files = dump(&mut session, "'2023-11-14 22:13:20.5'");
+    let expected = tikv_client::oracle::compose_ts(1_700_000_000_500, 0);
+    let meta = text(&files, "sql_meta.toml").unwrap();
+    assert!(meta.contains(&format!("historicalStatsTS = \"{expected}\"")), "{meta}");
+    rows(&mut session, "SET time_zone = '+08:00'");
+    let files = dump(&mut session, "'2023-11-15 06:13:20.5'");
+    let meta = text(&files, "sql_meta.toml").unwrap();
+    assert!(meta.contains(&format!("historicalStatsTS = \"{expected}\"")), "{meta}");
+
+    // mustn't be NULL: the latest statistics, no recorded TS.
+    let files = dump(&mut session, "NULL");
+    let meta = text(&files, "sql_meta.toml").unwrap();
+    assert!(!meta.contains("historicalStatsTS"), "{meta}");
+    assert_eq!(text(&files, "errors.txt"), None);
+
+    tidb_planner_extstore::set_global_ext_storage_for_test(None);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+/// Go `TestIssue46197`: `PLAN REPLAYER DUMP EXPLAIN 'file'` asks the client
+/// for the file, then `DumpSQLsFromFile` dumps each `;`-separated statement
+/// and keeps the token; an empty file dumps nothing, a statement that does
+/// not parse fails with Go's message, and the slow-query form (which Go's
+/// builder ignores) answers "sql is empty".
+#[test]
+fn plan_replayer_dump_of_a_client_file_runs_gos_file_dump() {
+    let base = std::env::temp_dir().join(format!("plan-replayer-file-{}", std::process::id()));
+    tidb_planner_extstore::set_global_ext_storage_for_test(Some(Arc::new(
+        tidb_planner_extstore::LocalStorage::new(&base).unwrap(),
+    )));
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
+    let mut session = stack.factory.open_session(session_context(79)).expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "CREATE TABLE t1 (a INT, b INT)");
+    let replayer_files = || std::fs::read_dir(base.join("replayer")).map_or(0, |dir| dir.count());
+    let mut run_with_file = |session: &mut Session, sql: &str, data: &[u8]| {
+        let stmt = session.parse_at_statement_boundary(sql).unwrap();
+        assert!(session.node_conn().execute_stmt(sql, &stmt).unwrap().is_none(), "{sql} answers no rows");
+        assert_eq!(session.local_infile_request().as_deref(), Some("a.txt"));
+        session.node_conn().finish_local_infile(data)
+    };
+
+    run_with_file(&mut session, "plan replayer dump explain 'a.txt'", b"select * from t1;").unwrap();
+    let token = displayed(rows(&mut session, "select @@tidb_last_plan_replayer_token"))[0][0].clone();
+    assert!(token.starts_with("replayer_") && token.ends_with(".zip"), "{token}");
+    let archive = std::fs::read(base.join("replayer").join(&token)).expect("the archive is written");
+    let files: std::collections::BTreeMap<String, Vec<u8>> =
+        tidb_replayer::zip::read_zip(&archive).unwrap().into_iter().collect();
+    assert_eq!(String::from_utf8(files["sql/sql0.sql"].clone()).unwrap(), "select * from t1");
+    assert!(files.contains_key("schema/test.t1.schema.txt"), "{:?}", files.keys().collect::<Vec<_>>());
+
+    // Two statements, newlines trimmed.
+    run_with_file(&mut session, "plan replayer dump explain 'a.txt'", b"select a from t1;\nselect b from t1;\n")
+        .unwrap();
+    let token = displayed(rows(&mut session, "select @@tidb_last_plan_replayer_token"))[0][0].clone();
+    let archive = std::fs::read(base.join("replayer").join(&token)).unwrap();
+    let files: std::collections::BTreeMap<String, Vec<u8>> =
+        tidb_replayer::zip::read_zip(&archive).unwrap().into_iter().collect();
+    assert_eq!(String::from_utf8(files["sql/sql0.sql"].clone()).unwrap(), "select a from t1");
+    assert_eq!(String::from_utf8(files["sql/sql1.sql"].clone()).unwrap(), "select b from t1");
+
+    // An empty file: the file was created, nothing is dumped, the token stays.
+    let before = replayer_files();
+    run_with_file(&mut session, "plan replayer dump explain 'a.txt'", b"").unwrap();
+    assert_eq!(replayer_files(), before + 1);
+    assert_eq!(displayed(rows(&mut session, "select @@tidb_last_plan_replayer_token"))[0][0], token);
+
+    let error = run_with_file(&mut session, "plan replayer dump explain 'a.txt'", b"selec 1;").unwrap_err();
+    assert!(error.message.starts_with("parse sql error, sql:selec 1, err:[parser:1064]"), "{}", error.message);
+
+    let error = session.run("plan replayer dump explain slow query where a > 1 limit 2").unwrap_err();
+    assert_eq!(error.to_mysql_error().message, "plan replayer: sql is empty");
+
+    tidb_planner_extstore::set_global_ext_storage_for_test(None);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+/// Go `PlanReplayerLoadInfo.Update` (`TestPlanReplayerLoad`'s round
+/// trip): `PLAN REPLAYER LOAD 'file'` asks the client for the archive, then
+/// recreates the dumped table, its statistics and its global binding,
+/// turns auto-analyze off with Go's warning; an empty path fails in the
+/// executor and an empty file loads nothing.
+#[test]
+fn plan_replayer_load_restores_a_dump_like_go() {
+    let base = std::env::temp_dir().join(format!("plan-replayer-load-{}", std::process::id()));
+    tidb_planner_extstore::set_global_ext_storage_for_test(Some(Arc::new(
+        tidb_planner_extstore::LocalStorage::new(&base).unwrap(),
+    )));
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
+    let mut session = stack.factory.open_session(session_context(80)).expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "CREATE TABLE replayed_load (a INT, b INT, INDEX ia(a))");
+    rows(&mut session, "INSERT INTO replayed_load VALUES (1, 1), (2, 2), (3, 3)");
+    rows(&mut session, "ANALYZE TABLE replayed_load");
+    rows(
+        &mut session,
+        "CREATE GLOBAL BINDING FOR SELECT * FROM replayed_load WHERE a = 1 USING SELECT * FROM replayed_load USE INDEX (ia) WHERE a = 1",
+    );
+    let answer = displayed(rows(&mut session, "PLAN REPLAYER DUMP EXPLAIN SELECT * FROM replayed_load WHERE a = 1"));
+    let archive = std::fs::read(base.join("replayer").join(&answer[0][1])).expect("the archive is written");
+    rows(&mut session, "DROP GLOBAL BINDING FOR SELECT * FROM replayed_load WHERE a = 1");
+    rows(&mut session, "DROP TABLE replayed_load");
+    rows(&mut session, "SET GLOBAL tidb_enable_auto_analyze = ON");
+    rows(&mut session, "USE mysql");
+
+    let mut run_with_file = |session: &mut Session, sql: &str, data: &[u8]| {
+        let stmt = session.parse_at_statement_boundary(sql).unwrap();
+        assert!(session.node_conn().execute_stmt(sql, &stmt).unwrap().is_none(), "{sql} answers no rows");
+        assert_eq!(session.local_infile_request().as_deref(), Some("r.zip"));
+        session.node_conn().finish_local_infile(data)
+    };
+    // An empty file loads nothing.
+    run_with_file(&mut session, "plan replayer load 'r.zip'", b"").unwrap();
+    assert!(session.run("select * from test.replayed_load").is_err());
+
+    run_with_file(&mut session, "plan replayer load 'r.zip'", &archive).unwrap();
+    let warnings = displayed(rows(&mut session, "show warnings"));
+    assert_eq!(
+        warnings.last().map(|warning| warning[2].as_str()),
+        Some("`PLAN REPLAYER LOAD` sets @@global.tidb_enable_auto_analyze=OFF to keep restored statistics stable; re-enable it manually if needed"),
+        "{warnings:?}"
+    );
+    assert_eq!(displayed(rows(&mut session, "select @@global.tidb_enable_auto_analyze")), [["0"]]);
+    // The schema file's `use` moved the session to the dump's database.
+    assert_eq!(displayed(rows(&mut session, "select database()")), [["test"]]);
+    assert_eq!(displayed(rows(&mut session, "select count(*) from replayed_load")), [["0"]]);
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "select modify_count, count from mysql.stats_meta m join information_schema.tables t on m.table_id = t.tidb_table_id where t.table_name = 'replayed_load'",
+        )),
+        [["0", "3"]]
+    );
+    let bindings = displayed(rows(&mut session, "show global bindings"));
+    assert!(
+        bindings.iter().any(|binding| binding[1].contains("USE INDEX (`ia`)") && binding[2] == "test"),
+        "{bindings:?}"
+    );
+
+    let error = session.run("plan replayer load ''").unwrap_err();
+    assert_eq!(error.to_mysql_error().message, "plan replayer: file path is empty");
+    let error = run_with_file(&mut session, "plan replayer load 'r.zip'", b"not a zip").unwrap_err();
+    assert_eq!(error.message, "zip: not a valid zip file");
+
+    tidb_planner_extstore::set_global_ext_storage_for_test(None);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
 /// Go's capture path: `PLAN REPLAYER CAPTURE` reloads the handle's tasks,
 /// a matching statement's `FinishExecuteStmt` sends a dump task carrying its
 /// own variables, statement and encoded plan, a dump worker writes the

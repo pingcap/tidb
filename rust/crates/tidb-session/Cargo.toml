@@ -53,6 +53,7 @@ tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }
 tidb-store-driver-error = { path = "../tidb-store-driver-error" }
 tidb-domainutil = { path = "../tidb-domainutil" }
 tidb-replayer = { path = "../tidb-replayer" }
+tidb-util-config = { path = "../tidb-util-config" }
 tidb-resourcegroup-runaway = { path = "../tidb-resourcegroup-runaway" }
 tidb-planner-extstore = { path = "../tidb-planner-extstore" }
 tidb-lock = { path = "../tidb-lock" }

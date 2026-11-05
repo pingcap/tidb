@@ -456,6 +456,23 @@ impl TableCommon {
         Ok(keys)
     }
 
+    /// Go `table.Index.GenIndexKey(ec, loc, indexedValues, h, nil)` for
+    /// the index `index_id` of this table on `physical_id` (the table or one
+    /// of its partitions): the key and whether its values are distinct.
+    pub fn gen_index_key(
+        &self,
+        index_id: i64,
+        values: Vec<Datum>,
+        handle: &TableHandle,
+        physical_id: i64,
+        zone: &SessionTimeZone,
+    ) -> Result<(Vec<u8>, bool), KvTableError> {
+        let Some(index) = self.indexes.iter().find(|index| index.read().id == index_id) else {
+            return Err(KvTableError::Decode("no such index".to_owned()));
+        };
+        self.index_key_of_values(index, values, handle, physical_id, zone)
+    }
+
     /// Go `GenIndexKey` over one value tuple.
     fn index_key_of_values(
         &self,

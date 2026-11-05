@@ -2,9 +2,9 @@
   "date": "2026-11-04",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 27,
+    "unresolved": 26,
     "open": 6,
-    "partial": 21
+    "partial": 20
   },
   "findings": [
     {
@@ -81,13 +81,6 @@
       "go_owner": "`pkg/executor/importer`, `pkg/disttask/importinto`"
     },
     {
-      "id": "O08",
-      "status": "partial",
-      "group": "Domain and process services",
-      "finding": "`PLAN REPLAYER DUMP EXPLAIN [ANALYZE]` of a statement or a statement list and `PLAN REPLAYER CAPTURE [REMOVE]` run Go's `PlanReplayerExec` / `DumpPlanReplayerInfo`, and the domain composes Go's plan-replayer owner (`tidb-domain-core` `plan_replayer_owner.rs`: the 10s task collector, the dump workers on system sessions, the statement-end `checkPlanReplayerCapture` with continuous capture, and the `DumpFileGcCheckerLoop` on `vardef.GetPlanReplayerGCLease()`); `PLAN REPLAYER LOAD`, the file and slow-query dump targets and `WITH STATS AS OF TIMESTAMP` (Go `calcTSForPlanReplayer`, whose strict unsigned `ConvertTo` has no port) refuse; a next-gen `tidb_cloud_storage_uri` storage has no port",
-      "go_owner": "`pkg/domain/plan_replayer*.go`, `pkg/executor/plan_replayer.go`, `pkg/planner/extstore`"
-    },
-    {
       "id": "O09",
       "status": "partial",
       "group": "Domain and process services",
@@ -98,8 +91,8 @@
       "id": "O15",
       "status": "open",
       "group": "Domain and process services",
-      "finding": "No cross-keyspace runtime (null keyspace only)",
-      "go_owner": "`pkg/keyspace`, `pkg/domain`"
+      "finding": "No cross-keyspace runtime (null keyspace only); the next-gen-only surfaces built on it have no port either: the status port's `/dxf/*` and `/ddl/check/*`, and plan replayer's `tidb_cloud_storage_uri` storage (`pkg/planner/extstore` `createGlobalExtStorage`, local files on a classic kernel)",
+      "go_owner": "`pkg/keyspace`, `pkg/domain`, `pkg/planner/extstore`"
     },
     {
       "id": "O18",
@@ -175,7 +168,7 @@
       "id": "N05",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "The status port serves `/status`, `/metrics`, `/settings`, `/config`, `/schema`, `/schema_storage`, `/db-table/{tableID}`, `/tables/{colID}/{colTp}/{colFlag}/{colLen}`, `/labels`, `/info`, `/info/all`, `/ddl/history`, `/ddl/owner/resign`, `/txn-gc-states`, `/tiflash/replica`, `/stats/dump/{db}/{table}[/{snapshot}]`, `/plan_replayer/dump/{filename}`, `/optimize_trace/dump/{filename}`, `/stats/priority-queue`, `/test/ttl/trigger/{db}/{table}` and, for a TiKV store, `/regions/meta`, `/regions/hot`, `/regions/{regionID}` and `/tables/{db}/{table}/{regions,ranges,disk-usage,scatter,stop-scatter}` (`region_routes.rs`), `/mvcc/hex/{hexKey}`, `/mvcc/key/{db}/{table}/{handle}` and `/mvcc/txn/{startTS}/{db}/{table}` (`mvcc_routes.rs`), and `/upgrade/{start,finish,show}` (`upgrade_handler.rs`) and `/debug/gogc` (`tidb-server/src/http_status.rs`, JSON through Go `WriteData`'s `json.Indent`; the capture-archive download reads `schema_meta.txt` as its writer and `PLAN REPLAYER LOAD` do, where Go's `loadSchemaMeta` misreads it and fails); Go's other routes are absent: the clustered-handle `/mvcc/key/{db}/{table}?...` form, `/mvcc/index/*` and the `decode` option (Go `formValue2DatumRow`'s `ConvertTo`, `DecodeRowToDatumMap`), `/extract_task/dump` (no `ExtractHandle`), `/dxf/*`, `/ddl/check/*`, `/ingest/*`, `/tiflash/replica-deprecated` (needs the dropped/truncated-table history and `UpdateTableReplicaInfo`), `/owner_manager/auto_id_service`, `/metrics/profile`, the other `/debug/*`, the other test hooks",
+      "finding": "The status port serves `/status`, `/metrics`, `/settings`, `/config`, `/schema`, `/schema_storage`, `/db-table/{tableID}`, `/tables/{colID}/{colTp}/{colFlag}/{colLen}`, `/labels`, `/info`, `/info/all`, `/ddl/history`, `/ddl/owner/resign`, `/txn-gc-states`, `/tiflash/replica`, `/stats/dump/{db}/{table}[/{snapshot}]`, `/plan_replayer/dump/{filename}`, `/optimize_trace/dump/{filename}`, `/stats/priority-queue`, `/test/ttl/trigger/{db}/{table}` and, for a TiKV store, `/regions/meta`, `/regions/hot`, `/regions/{regionID}` and `/tables/{db}/{table}/{regions,ranges,disk-usage,scatter,stop-scatter}` (`region_routes.rs`), `/mvcc/hex/{hexKey}`, `/mvcc/key/{db}/{table}[/{handle}]` (with `decode`), `/mvcc/index/{db}/{table}/{index}[/{handle}]` and `/mvcc/txn/{startTS}/{db}/{table}` (`mvcc_routes.rs`), `/tiflash/replica-deprecated` (`tikv_handler.rs`), and `/upgrade/{start,finish,show}` (`upgrade_handler.rs`) and `/debug/gogc` (`tidb-server/src/http_status.rs`, JSON through Go `WriteData`'s `json.Indent`; the capture-archive download reads `schema_meta.txt` as its writer and `PLAN REPLAYER LOAD` do, where Go's `loadSchemaMeta` misreads it and fails); Go's other routes are absent: `/extract_task/dump` (no `ExtractHandle`), `/ingest/*` (Go `ingestctrl`'s rate-limit parameters, which belong to the ingest port, D02), `/metrics/profile`, the other `/debug/*`, the other test hooks; `/dxf/*` and `/ddl/check/*` (next-gen or the system keyspace only, O15) and `/owner_manager/auto_id_service` (starter deploy mode only) are not registered on a classic server",
       "rust_evidence": "`rust/crates/tidb-autoid/src/service_rpc.rs`",
       "go_owner": "`pkg/server/http_status.go`, `pkg/server/handler`"
     },

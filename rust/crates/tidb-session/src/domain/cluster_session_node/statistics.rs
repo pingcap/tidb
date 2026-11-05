@@ -290,7 +290,7 @@ impl<'s> ClusterServerSession<'s> {
 
     /// The statistics handle the session's services hold, for the running
     /// statement.
-    fn stats_statement_service(
+    pub(super) fn stats_statement_service(
         &self,
     ) -> Box<dyn tidb_executor::stats_exec::StatsStatementService> {
         let stats = Arc::clone(&self.domain_services().stats);

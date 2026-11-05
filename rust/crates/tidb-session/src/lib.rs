@@ -531,6 +531,12 @@ pub struct Session {
     /// The client file a `LOAD DATA LOCAL` statement was answered with (Go's
     /// `LoadDataReaderBuilder`), taken by the statement that runs next.
     local_infile_data: Option<Vec<u8>>,
+    /// Go `ctx.Value(PlanReplayerDumpVarKey)`: a `PLAN REPLAYER DUMP` of a
+    /// client file, waiting for the connection to read it.
+    plan_replayer_dump_info: Option<crate::plan_replayer::PlanReplayerDumpInfo>,
+    /// Go `ctx.Value(PlanReplayerLoadVarKey)`: a `PLAN REPLAYER LOAD`'s file
+    /// path, waiting for the connection to read it.
+    plan_replayer_load_info: Option<String>,
     /// Whether the connection accepted this statement's client-file request:
     /// Go refuses a LOCAL load without the capability BEFORE the statement
     /// context resets.
@@ -930,6 +936,8 @@ impl Session {
             statement_message: String::new(),
             statement_affected_rows: 0,
             local_infile_data: None,
+            plan_replayer_dump_info: None,
+            plan_replayer_load_info: None,
             local_infile_accepted: false,
             set_var_hint_restore: Vec::new(),
             statement_kind: StatementKind::Other,

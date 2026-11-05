@@ -806,10 +806,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             }) else {
                 return Err(DdlPlanError::from(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                        .gen_with_stack_by_args(&[
-                            (String::new()).into(),
-                            (format!("(physical id {table_id})")).into(),
-                        ]),
+                        .gen_with_stack(format!("Table which ID = {table_id} does not exist.")),
                 ));
             };
             let stored = stored.read();

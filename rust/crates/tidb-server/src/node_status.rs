@@ -412,6 +412,151 @@ mod tests {
         assert_eq!(answer("/upgrade/stop", "POST").unwrap_err(), "wrong operation:stop");
     }
 
+    /// Go `TestTiFlashReplica` (`pkg/server/handler/tests`): the replica
+    /// list TiFlash polls, the progress it posts, a dropped table read from
+    /// the DDL history once (and not again after FLASHBACK), and a
+    /// partitioned table's partitions.
+    #[test]
+    fn tiflash_replica_deprecated_answers_like_go() {
+        let config = crate::parse_node_config([
+            "tidb-server", "--store", "unistore", "--port", "0", "--socket", "", "--auth-file", "/dev/null",
+        ])
+        .unwrap();
+        let users = Arc::new(
+            tidb_session::domain::configured_user_store::ConfiguredUserStore::parse(&format!(
+                "root\t%\tmysql_native_password\t{}\n",
+                crate::domain_test_support::ABC_HASH
+            ))
+            .unwrap(),
+        );
+        // Go `mockstore.WithMockTiFlash(2)`.
+        let stack =
+            tidb_session::domain::unistore_node::unistore_cluster_session_stack_from(&config, &users, None, None, None, 2)
+                .unwrap();
+        let factory = &stack.factory;
+        let handler = crate::node_status::flash_replica_deprecated(factory);
+        #[derive(serde::Deserialize, Debug)]
+        struct Info {
+            id: i64,
+            replica_count: u64,
+            location_labels: Option<Vec<String>>,
+            available: bool,
+            high_priority: bool,
+        }
+        let fetch = || -> Vec<Info> {
+            let answer = crate::tikv_handler::flash_replica_deprecated_response(
+                "/tiflash/replica-deprecated",
+                "GET /tiflash/replica-deprecated HTTP/1.1\r\n\r\n",
+                Some(&handler),
+            )
+            .expect("served")
+            .unwrap()
+            .expect("a GET answers a list");
+            serde_json::from_str(&answer).unwrap()
+        };
+        let post = |body: &str| -> Result<(), String> {
+            crate::tikv_handler::flash_replica_deprecated_response(
+                "/tiflash/replica-deprecated",
+                &format!("POST /tiflash/replica-deprecated HTTP/1.1\r\n\r\n{body}"),
+                Some(&handler),
+            )
+            .expect("served")
+            .map(|answer| assert!(answer.is_none()))
+        };
+        run(factory, "create database tidb");
+        run(factory, "create table tidb.test (a int auto_increment primary key, b varchar(20))");
+        run(
+            factory,
+            "create table tidb.pt (a int primary key, b varchar(20), key idx(a, b)) partition by range (a) \
+             (partition p0 values less than (256), partition p1 values less than (512), partition p2 values less than (1024))",
+        );
+        // Set GC safe point and enable GC.
+        let time_before_drop = (chrono::Local::now() - chrono::Duration::hours(48)).format("%Y%m%d-%H:%M:%S %z");
+        run(
+            factory,
+            &format!(
+                "INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '{time_before_drop}', ''),('tikv_gc_enable','true','') \
+                 ON DUPLICATE KEY UPDATE variable_value = '{time_before_drop}'"
+            ),
+        );
+        assert!(fetch().is_empty());
+
+        run(factory, "alter table tidb.test set tiflash replica 2 location labels 'a','b'");
+        let data = fetch();
+        assert_eq!(data.len(), 1, "{data:?}");
+        assert_eq!(data[0].replica_count, 2);
+        assert_eq!(data[0].location_labels.as_deref(), Some(&["a".to_owned(), "b".to_owned()][..]));
+        assert!(!data[0].available);
+        assert!(!data[0].high_priority);
+
+        assert_eq!(
+            post(r#"{"id":184,"region_count":3,"flash_region_count":3}"#).unwrap_err(),
+            "[schema:1146]Table which ID = 184 does not exist."
+        );
+        let table_id = factory.catalog_snapshot().table_info_by_name("tidb", "test").unwrap().1.read().id;
+        assert_eq!(data[0].id, table_id);
+        // A partial report records the progress instead of the cache's
+        // availability.
+        post(&format!(r#"{{"id":{table_id},"region_count":4,"flash_region_count":1}}"#)).unwrap();
+        assert_eq!(
+            tidb_domain_infosync::tiflash_manager::get_tiflash_progress_from_cache(table_id),
+            Some(0.25)
+        );
+        assert!(!fetch()[0].available);
+        assert!(post("not json").is_err());
+        post(&format!(r#"{{"id":{table_id},"region_count":3,"flash_region_count":3}}"#)).unwrap();
+        let check = || {
+            let data = fetch();
+            assert_eq!(data.len(), 1, "{data:?}");
+            assert_eq!(data[0].id, table_id);
+            assert_eq!(data[0].replica_count, 2);
+            assert_eq!(data[0].location_labels.as_deref(), Some(&["a".to_owned(), "b".to_owned()][..]));
+            assert!(data[0].available);
+        };
+        check();
+
+        // Should not take effect.
+        run(factory, "alter table tidb.test set tiflash replica 2 location labels 'a','b'");
+        // Test for get dropped table tiflash replica info.
+        run(factory, "drop table tidb.test");
+        check();
+        // Test unique table id replica info.
+        run(factory, "flashback table tidb.test");
+        check();
+        run(factory, "drop table tidb.test");
+        check();
+        run(factory, "flashback table tidb.test");
+        check();
+
+        // Test for partition table.
+        run(factory, "alter table tidb.pt set tiflash replica 2 location labels 'a','b'");
+        run(factory, "alter table tidb.test set tiflash replica 0");
+        let data = fetch();
+        assert_eq!(data.len(), 3, "{data:?}");
+        assert_eq!(data[0].replica_count, 2);
+        assert!(data.iter().all(|info| !info.available));
+        let pids: Vec<i64> = data.iter().map(|info| info.id).collect();
+
+        // Mock for partition 1 replica was available.
+        post(&format!(r#"{{"id":{},"region_count":3,"flash_region_count":3}}"#, pids[1])).unwrap();
+        let available: Vec<bool> = fetch().iter().map(|info| info.available).collect();
+        assert_eq!(available, [false, true, false]);
+
+        // Mock for partition 0,2 replica was available.
+        post(&format!(r#"{{"id":{},"region_count":3,"flash_region_count":3}}"#, pids[0])).unwrap();
+        post(&format!(r#"{{"id":{},"region_count":3,"flash_region_count":3}}"#, pids[2])).unwrap();
+        let available: Vec<bool> = fetch().iter().map(|info| info.available).collect();
+        assert_eq!(available, [true, true, true]);
+
+
+        // Test for get truncated table tiflash replica info.
+        run(factory, "truncate table tidb.pt");
+        run(factory, "alter table tidb.pt set tiflash replica 0");
+        let data = fetch();
+        assert_eq!(data.iter().map(|info| info.id).collect::<Vec<_>>(), pids);
+        assert!(data.iter().all(|info| info.available), "{data:?}");
+    }
+
     /// Go `MvccTxnHandler` over the embedded store: a row's MVCC record by
     /// handle, by hex key and by its transaction's start ts.
     #[test]
@@ -470,6 +615,151 @@ mod tests {
         assert_eq!(answer("/mvcc/hex/abc").unwrap_err(), "encoding/hex: odd length hex string");
         assert_eq!(answer("/mvcc/key/test/nope/1").unwrap_err(), "[schema:1146]Table 'test.nope' doesn't exist");
         assert_eq!(answer("/mvcc/key/test/mv(p0)/1").unwrap_err(), "mv is not a partitionted table");
+    }
+
+    /// Go `TestGetIndexMVCC` and `TestGetTableMVCC`'s query-string forms:
+    /// an index entry (and its temporary entry) by the index's column values
+    /// and handle, NULL and empty values, a clustered table's row and index
+    /// by its primary key's values, a partition's index, and `decode`.
+    #[test]
+    fn mvcc_index_and_clustered_key_routes_answer_like_go() {
+        let stack = stack();
+        let factory = &stack.factory;
+        // Go `prepareData`.
+        run(factory, "create database tidb");
+        run(factory, "create table tidb.test (a int auto_increment primary key, b varchar(20))");
+        run(factory, "insert tidb.test values (1, 1)");
+        run(factory, "update tidb.test set b = b + 1 where a = 1");
+        run(factory, "insert tidb.test values (2, 2)");
+        run(factory, "insert tidb.test (a) values (3)");
+        run(factory, "insert tidb.test values (4, '')");
+        run(factory, "alter table tidb.test add index idx1 (a, b)");
+        run(factory, "alter table tidb.test drop index idx1");
+        run(factory, "alter table tidb.test add index idx1 (a, b)");
+        run(factory, "alter table tidb.test add unique index idx2 (a, b)");
+        run(
+            factory,
+            "create table tidb.pt (a int primary key, b varchar(20), key idx(a, b)) partition by range (a) \
+             (partition p0 values less than (256), partition p1 values less than (512), partition p2 values less than (1024))",
+        );
+        run(factory, "insert into tidb.pt values (42, '123'), (256, 'b'), (666, 'def')");
+        run(factory, "create table tidb.t (a double, b varchar(20), c int, primary key(a,b) clustered, key idx(c))");
+        run(factory, "insert into tidb.t values(1.1,'111',1),(2.2,'222',2)");
+        // A trailing space the new collation's PAD SPACE key drops.
+        run(factory, "insert into tidb.t values(3.3,'ab ',3)");
+
+        let store = factory.region_store.clone().expect("the embedded store has a region cache");
+        let catalog_factory = Arc::clone(factory);
+        let schema = move || catalog_factory.catalog_snapshot();
+        let answer = |path: &str| crate::mvcc_routes::mvcc_response(path, store.as_ref(), &schema).expect(path);
+        let json = |path: &str| -> serde_json::Value {
+            serde_json::from_str(&answer(path).unwrap_or_else(|error| panic!("{path}: {error}"))).unwrap()
+        };
+        // Go `decodeKeyMvcc`.
+        let decode_key_mvcc = |path: &str, valid: bool| {
+            let data = json(path);
+            let data = data.as_array().unwrap_or_else(|| panic!("{path}: {data}"));
+            assert_eq!(data.len(), 2, "{path}");
+            let info = &data[0]["value"]["info"];
+            if valid {
+                assert!(!info["writes"].as_array().unwrap_or_else(|| panic!("{path}: {info}")).is_empty());
+            } else {
+                assert!(info.is_object(), "{path}: {info}");
+                assert!(info.get("lock").is_none() && info.get("writes").is_none() && info.get("values").is_none());
+            }
+            data[0]["key"].as_str().unwrap().to_owned()
+        };
+        // tests for normal index key
+        let idx1_key = decode_key_mvcc("/mvcc/index/tidb/test/idx1/1?a=1&b=2", true);
+        decode_key_mvcc("/mvcc/index/tidb/test/idx2/1?a=1&b=2", true);
+        // tests for index key which includes null
+        decode_key_mvcc("/mvcc/index/tidb/test/idx1/3?a=3&b", true);
+        decode_key_mvcc("/mvcc/index/tidb/test/idx2/3?a=3&b", true);
+        // tests for index key which includes empty string
+        decode_key_mvcc("/mvcc/index/tidb/test/idx1/4?a=4&b=", true);
+        decode_key_mvcc("/mvcc/index/tidb/test/idx2/3?a=4&b=", true);
+        decode_key_mvcc("/mvcc/index/tidb/t/idx?a=1.1&b=111&c=1", true);
+        // tests for wrong key
+        decode_key_mvcc("/mvcc/index/tidb/test/idx1/5?a=5&b=1", false);
+        decode_key_mvcc("/mvcc/index/tidb/test/idx2/5?a=5&b=1", false);
+        // tests for missing column value
+        assert_eq!(
+            answer("/mvcc/index/tidb/test/idx1/1?a=1").unwrap_err(),
+            "Missing value for index column b. bad request"
+        );
+        assert_eq!(
+            answer("/mvcc/index/tidb/test/idx2/1?a=1").unwrap_err(),
+            "Missing value for index column b. bad request"
+        );
+        decode_key_mvcc("/mvcc/index/tidb/pt(p2)/idx/666?a=666&b=def", true);
+
+        // The index key is Go's: the table's idx1 entry for (1, '2') and
+        // handle 1, then its temporary index key.
+        let (table_id, idx1_id) = {
+            let (_, table) = factory.catalog_snapshot().table_info_by_name("tidb", "test").unwrap();
+            let table = table.read();
+            let idx1 = table.indices.iter_deref().find(|index| index.read().name.lowercase() == "idx1").unwrap();
+            let id = idx1.read().id;
+            (table.id, id)
+        };
+        let mut expected = tidb_tablecodec::table_key::encode_index_seek_key(
+            table_id,
+            idx1_id,
+            &tidb_codec::encode_key(&[
+                tidb_datatype::Datum::Int(1),
+                tidb_datatype::Datum::new_string_datum("2"),
+            ])
+            .unwrap(),
+        );
+        expected.push(tidb_codec::INT_FLAG);
+        tidb_codec::encode_int(&mut expected, 1);
+        assert_eq!(idx1_key, expected.iter().map(|byte| format!("{byte:02X}")).collect::<String>());
+        let both = json("/mvcc/index/tidb/test/idx1/1?a=1&b=2");
+        tidb_tablecodec::index_key_to_temp_index_key(&mut expected).unwrap();
+        assert_eq!(both[1]["key"], expected.iter().map(|byte| format!("{byte:02X}")).collect::<String>());
+
+        // Go `TestGetTableMVCC`'s decode and clustered forms.
+        let decoded = json("/mvcc/key/tidb/test/1?decode=true");
+        assert!(decoded["key"].is_string() && decoded["info"].is_object(), "{decoded}");
+        assert!(decoded.get("decode_error").is_none(), "{decoded}");
+        // Both versions of the row, keyed by their start ts; the int handle
+        // `a` is the key, not a stored column.
+        let data = decoded["data"].as_object().unwrap();
+        let mut rows: Vec<_> = data.values().cloned().collect();
+        rows.sort_by_key(|row| row["b"].to_string());
+        assert_eq!(rows, [serde_json::json!({"b": "1"}), serde_json::json!({"b": "2"})], "{decoded}");
+        let decoded = json("/mvcc/key/tidb/pt(p0)/42?decode=true");
+        assert_eq!(decoded["data"].as_object().unwrap().values().next().unwrap()["b"], "123");
+        assert_eq!(
+            answer("/mvcc/key/tidb/t/42").unwrap_err(),
+            "For clustered index tables, please use query strings to specify the column values. bad request"
+        );
+        assert_eq!(answer("/mvcc/key/tidb/t?a=1.1").unwrap_err(), "Missing value for index column b. bad request");
+        let decoded = json("/mvcc/key/tidb/t?a=1.1&b=111&decode=1");
+        let row = decoded["data"].as_object().unwrap().values().next().unwrap().clone();
+        assert_eq!(row["c"], "1", "{decoded}");
+        // The clustered key is encoded under the new collation, as the row's
+        // key is.
+        let padded = json("/mvcc/key/tidb/t?a=3.3&b=ab%20&decode=1");
+        let row = padded["data"].as_object().unwrap_or_else(|| panic!("{padded}")).values().next().unwrap().clone();
+        assert_eq!(row["c"], "3", "{padded}");
+        // Without `decode`, the plain record.
+        let plain = json("/mvcc/key/tidb/t?a=1.1&b=111");
+        assert_eq!(plain["key"], decoded["key"]);
+        assert!(plain["value"]["info"]["writes"].is_array());
+        assert_eq!(
+            answer("/mvcc/key/tidb/test?a=1").unwrap_err(),
+            "Clustered common handle not found. bad request"
+        );
+        assert_eq!(
+            answer("/mvcc/index/tidb/test/nope/1?a=1&b=2").unwrap_err(),
+            "Index nope not found! not found"
+        );
+        assert_eq!(
+            answer("/mvcc/index/tidb/test/idx1/1?a=1&a=2&b=2").unwrap_err(),
+            "Invalid query form for column 'a', it's values are [1 2]. Column value should be unique for one index record. bad request"
+        );
+        assert_eq!(answer("/mvcc/index/tidb/test/idx1/1?a=%zz").unwrap_err(), "invalid URL escape \"%zz\"");
     }
 
     /// Go `RegionHandler` and `TableHandler`'s `regions` / `ranges` over the
@@ -610,6 +900,17 @@ pub fn cluster_upgrade(factory: &Arc<Domain>) -> Option<crate::upgrade_handler::
         server_info: factory.server_info()?,
         ddl_owner: factory.ddl.owner_manager()?,
     })
+}
+
+/// Go `FlashReplicaDeprecatedHandler{tikvHandler}`'s reach: the domain and
+/// sessions over it.
+pub fn flash_replica_deprecated(factory: &Arc<Domain>) -> crate::tikv_handler::FlashReplicaDeprecated {
+    let sess_pool = Arc::new(tidb_session::ddl_session_pool::NodeDdlSessionPool::default());
+    sess_pool.bind(factory);
+    crate::tikv_handler::FlashReplicaDeprecated {
+        domain: Arc::downgrade(factory),
+        sess_pool,
+    }
 }
 
 pub fn ttl_job_trigger(factory: &Arc<Domain>) -> crate::http_status::TtlJobTrigger {

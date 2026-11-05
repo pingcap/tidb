@@ -3330,11 +3330,43 @@ pub struct DumpOutcome {
 pub fn flat_toml(records: &std::collections::BTreeMap<String, String>) -> String {
     let mut out = String::new();
     for (key, value) in records {
-        out.push_str(key);
-        out.push_str(" = \"");
-        out.push_str(value);
-        out.push_str("\"\n");
+        out.push_str(&toml_maybe_quoted_key(key));
+        out.push_str(" = ");
+        out.push_str(&toml_quoted(value));
+        out.push('\n');
     }
+    out
+}
+
+/// BurntSushi/toml `Key.maybeQuoted`: a bare key stays bare.
+fn toml_maybe_quoted_key(key: &str) -> String {
+    if key.is_empty() {
+        return "\"\"".to_owned();
+    }
+    if key.chars().all(|r| r.is_ascii_alphanumeric() || r == '_' || r == '-') {
+        return key.to_owned();
+    }
+    toml_quoted(key)
+}
+
+/// BurntSushi/toml `Encoder.writeQuoted`: `"` + `dblQuotedReplacer` + `"`.
+fn toml_quoted(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for c in value.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\u{8}' => out.push_str("\\b"),
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\u{c}' => out.push_str("\\f"),
+            '\r' => out.push_str("\\r"),
+            '\u{0}'..='\u{1f}' | '\u{7f}' => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
     out
 }
 
@@ -3797,5 +3829,32 @@ mod dump_assembly_tests {
         assert_eq!(outcome.error.unwrap().to_string(), "unexpected show create table `db2`.`t9`");
         assert_eq!(domain_metrics::plan_replayer_dump_task_failed().get(), failed + 1.0);
         assert!(outcome.records.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod flat_toml_tests {
+    use super::flat_toml;
+
+    /// BurntSushi/toml's `Encode(map[string]string)`: sorted keys, quoted
+    /// values escaped by `dblQuotedReplacer`, keys bare unless they need
+    /// quoting, so `LoadConfigForPlanReplayerLoad` decodes them back.
+    #[test]
+    fn flat_toml_escapes_like_gos_encoder() {
+        let records = [
+            ("ft_boolean_syntax", "+ -><()~*:\"\"&|"),
+            ("a.b", "x"),
+            ("path", "C:\\tmp\n\t\r\u{1}\u{7f}é"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_owned(), value.to_owned()))
+        .collect();
+        let text = flat_toml(&records);
+        assert_eq!(
+            text,
+            "\"a.b\" = \"x\"\nft_boolean_syntax = \"+ -><()~*:\\\"\\\"&|\"\npath = \"C:\\\\tmp\\n\\t\\r\\u0001\\u007fé\"\n"
+        );
+        let decoded: std::collections::BTreeMap<String, String> = toml::from_str(&text).unwrap();
+        assert_eq!(decoded, records);
     }
 }
