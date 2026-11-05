@@ -1091,6 +1091,8 @@ impl crate::binding_arm::GlobalBindingWriter for InternalBindingWriter {
         let mut internal_session = factory
             .open_storage_session(self.connection_id)
             .map_err(to_driver)?;
+        // Go bindinfo's `kv.WithInternalSourceType(ctx, kv.InternalTxnBindInfo)`.
+        internal_session.set_internal_request_source(tidb_txnkv::INTERNAL_TXN_BIND_INFO);
         let mut internal = internal_session.node_conn();
         internal
             .session

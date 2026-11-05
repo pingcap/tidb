@@ -28744,4 +28744,25 @@ fn a_statements_requests_carry_its_label_as_their_source() {
     let sent = sent.lock().unwrap().clone();
     assert!(sent.iter().any(|request| request.ends_with(" internal_StatsForegroundPriority")), "{sent:?}");
     assert!(!sent.iter().any(|request| request.ends_with(" unknown")), "{sent:?}");
+
+    // Go bindinfo: the binding's rows are written under
+    // `kv.InternalTxnBindInfo`.
+    let sent: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let recorded = Arc::clone(&sent);
+    stack.rpc.set_send_hook(Some(Arc::new(move |request| {
+        if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::PrewriteRequest>() {
+            recorded
+                .lock()
+                .unwrap()
+                .push(request.context.as_ref().map(|context| context.request_source.clone()).unwrap_or_default());
+        }
+    })));
+    rows(
+        &mut session,
+        "CREATE GLOBAL BINDING FOR SELECT b FROM request_source USING SELECT b FROM request_source",
+    );
+    stack.rpc.set_send_hook(None);
+    let sent = sent.lock().unwrap().clone();
+    assert!(sent.contains(&"internal_others".to_owned()), "{sent:?}");
+    assert!(!sent.iter().any(|source| source == "unknown"), "{sent:?}");
 }
