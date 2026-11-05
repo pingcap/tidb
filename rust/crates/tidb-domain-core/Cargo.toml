@@ -88,6 +88,7 @@ tidb-stats-handle-logutil = { path = "../tidb-stats-handle-logutil" }
 tidb-stats-handle-metrics = { path = "../tidb-stats-handle-metrics" }
 tidb-stats-handle-usage = { path = "../tidb-stats-handle-usage" }
 tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-errno = { path = "../tidb-errno" }
 tidb-vardef = { path = "../tidb-vardef" }
 tidb-variable = { path = "../tidb-variable" }
 tikv-client.workspace = true

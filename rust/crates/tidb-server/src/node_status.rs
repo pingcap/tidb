@@ -679,6 +679,101 @@ mod tests {
         assert_eq!(answer("/mvcc/key/test/mv(p0)/1").unwrap_err(), "mv is not a partitionted table");
     }
 
+    /// Go `TestDeleteKeyHandler`: behind `enableTestAPI`, POST deletes an
+    /// index entry or a row's record key, which `ADMIN CHECK` then reports
+    /// as an inconsistency.
+    #[cfg(feature = "failpoints")]
+    #[test]
+    fn delete_key_routes_answer_like_go() {
+        let stack = stack();
+        let factory = &stack.factory;
+        let catalog_factory = Arc::clone(factory);
+        let schema = move || catalog_factory.catalog_snapshot();
+        let answer = |method: &str, path: &str| {
+            crate::mvcc_routes::delete_key_response(path, &format!("{method} {path} HTTP/1.1"), &schema, &factory.transactions)
+        };
+        // Go `CheckTableExec` (`tidb_enable_fast_table_check` OFF): Rust
+        // has no `FastCheckTableExec` (register E08).
+        let check = |sql: &str| {
+            factory
+                .advanced_sys_session_pool()
+                .with_session(|session| {
+                    session.with_session_context(|context| {
+                        context
+                            .query_internal(tidb_txnkv::INTERNAL_TXN_OTHERS, "set @@tidb_enable_fast_table_check = 0")
+                            .and_then(|_| context.query_internal(tidb_txnkv::INTERNAL_TXN_OTHERS, sql))
+                            .map_err(tidb_syssession::SysSessionError::new)
+                    })
+                })
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        };
+        run(factory, "create database tidb");
+        run(factory, "create table tidb.delete_idx (a int primary key, b int, key idx_ab(a, b))");
+        run(factory, "insert into tidb.delete_idx values (1, 2)");
+        run(factory, "create table tidb.delete_row (a int primary key, b int, key idx_b(b))");
+        run(factory, "insert into tidb.delete_row values (1, 2)");
+
+        assert!(answer("POST", "/test/delete/rowkey/tidb/delete_row?handle=1").is_none(), "no test API without enableTestAPI");
+        fail::cfg("enableTestAPI", "return").unwrap();
+        assert_eq!(
+            answer("GET", "/test/delete/rowkey/tidb/delete_row?handle=1").unwrap().unwrap_err(),
+            "This api only support POST method"
+        );
+        assert_eq!(
+            answer("POST", "/test/delete/indexkey/tidb/delete_idx/nope?handle=1&a=1&b=2").unwrap().unwrap_err(),
+            "Index nope not found! not found"
+        );
+
+        check("admin check index tidb.delete_idx idx_ab").unwrap();
+        // Go `kv.WithInternalSourceType(ctx, kv.InternalTxnTools)`.
+        let sources: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+        let recorded = Arc::clone(&sources);
+        stack.rpc.set_send_hook(Some(Arc::new(move |request| {
+            use tikv_client::proto::kvrpcpb;
+            if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::PrewriteRequest>() {
+                recorded
+                    .lock()
+                    .unwrap()
+                    .push(request.context.as_ref().map(|context| context.request_source.clone()).unwrap_or_default());
+            }
+        })));
+        let deleted: serde_json::Value = serde_json::from_str(
+            &answer("POST", "/test/delete/indexkey/tidb/delete_idx/idx_ab?handle=1&a=1&b=2").unwrap().unwrap(),
+        )
+        .unwrap();
+        stack.rpc.set_send_hook(None);
+        assert_eq!(*sources.lock().unwrap(), ["internal_tools"]);
+        // Go `admin.CheckIndicesCount`'s error is `ADMIN CHECK INDEX`'s.
+        let error = check("admin check index tidb.delete_idx idx_ab").unwrap_err();
+        assert!(error.contains("table count 1 != index(idx_ab) count 0"), "{error}");
+        let (_, table) = factory.catalog_snapshot().table_info_by_name("tidb", "delete_idx").unwrap();
+        let table_id = table.read().id;
+        let index_id = table.read().indices.iter_deref().find(|index| index.read().name.original() == "idx_ab").unwrap().read().id;
+        let key = deleted["key"].as_str().unwrap();
+        let prefix: String = tidb_tablecodec::table_key::encode_table_index_prefix(table_id, index_id)
+            .iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect();
+        assert!(key.starts_with(&prefix), "{key}");
+
+        check("admin check table tidb.delete_row").unwrap();
+        let deleted: serde_json::Value =
+            serde_json::from_str(&answer("POST", "/test/delete/rowkey/tidb/delete_row?handle=1").unwrap().unwrap()).unwrap();
+        let error = check("admin check table tidb.delete_row").unwrap_err();
+        assert!(error.contains("data inconsistency"), "{error}");
+        let (_, table) = factory.catalog_snapshot().table_info_by_name("tidb", "delete_row").unwrap();
+        let key: String = tidb_tablecodec::table_key::encode_row_key_with_handle(
+            table.read().id,
+            &tidb_tablecodec::table_key::RecordHandle::Int(1),
+        )
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect();
+        assert_eq!(deleted["key"], key);
+        fail::remove("enableTestAPI");
+    }
+
     /// Go `TestGetIndexMVCC` and `TestGetTableMVCC`'s query-string forms:
     /// an index entry (and its temporary entry) by the index's column values
     /// and handle, NULL and empty values, a clustered table's row and index

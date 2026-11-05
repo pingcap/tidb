@@ -152,6 +152,9 @@ pub fn run_unistore_cluster_session(
                 flash_replica_deprecated: Some(crate::node_status::flash_replica_deprecated(&factory)),
                 extract_handle: factory.get_extract_handle(),
                 metrics_profile: Some(crate::node_status::metrics_profile_session(&factory)),
+                // The embedded store has no GC client (`GcKvClient`) for
+                // `gcworker.RunResolveLocks` yet.
+                gc_resolve_locks: None,
                 schema_reload: {
                     let ddl = Arc::clone(&factory.ddl);
                     Some(Arc::new(move || ddl.reload_schema()))

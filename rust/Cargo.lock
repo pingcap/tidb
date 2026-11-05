@@ -4469,6 +4469,7 @@ dependencies = [
  "tidb-domain-globalconfigsync",
  "tidb-domain-serverinfo",
  "tidb-driver-error",
+ "tidb-errno",
  "tidb-executor",
  "tidb-expensivequery",
  "tidb-exprctx",

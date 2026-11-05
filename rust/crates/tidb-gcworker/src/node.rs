@@ -55,6 +55,19 @@ pub fn start_gc_worker(
     store: &tidb_txnkv::driver::tikv_store::TikvStore,
     opener: Arc<tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener>,
 ) -> Result<NodeGcWorker, String> {
+    let worker = GcWorker::new(gc_worker_deps(factory, store, opener)).map_err(|error| error.to_string())?;
+    Ok(NodeGcWorker {
+        _handle: worker.start(),
+    })
+}
+
+/// The store, PD and sessions this node's GC worker (and Go's test API's
+/// `RunResolveLocks`) runs over.
+pub fn gc_worker_deps(
+    factory: &Arc<Domain>,
+    store: &tidb_txnkv::driver::tikv_store::TikvStore,
+    opener: Arc<tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener>,
+) -> GcWorkerDeps {
     // The node serves the null keyspace.
     let client = Arc::new(TikvStoreClient::new(
         Arc::clone(store.runtime()),
@@ -62,7 +75,7 @@ pub fn start_gc_worker(
         None,
     ));
     let pd_http_client = store.pd_http_client();
-    let worker = GcWorker::new(GcWorkerDeps {
+    GcWorkerDeps {
         store: client.clone(),
         pd: client.clone(),
         kv: client,
@@ -79,11 +92,7 @@ pub fn start_gc_worker(
         )),
         rules: Arc::new(NodeGcRules { pd_http_client }),
         gcv2: None,
-    })
-    .map_err(|error| error.to_string())?;
-    Ok(NodeGcWorker {
-        _handle: worker.start(),
-    })
+    }
 }
 
 fn gc_error(error: impl std::fmt::Display) -> GcError {

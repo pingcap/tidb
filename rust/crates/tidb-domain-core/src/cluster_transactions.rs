@@ -1936,3 +1936,134 @@ impl tidb_kv::storage::KvStorage for ClusterKvStorage {
         f(start_ts, &mut storage)
     }
 }
+
+/// Go `kv.Storage` as `kv.RunInNewTxn` writes through it: each attempt is a
+/// fresh snapshot whose buffered mutations commit at its timestamp, in the
+/// default resource group and with Go `Storage.Begin`'s plain options.
+pub struct ClusterNewTxnStorage(pub Arc<dyn ClusterTransactions>);
+
+/// One `ClusterNewTxnStorage` attempt.
+pub struct ClusterNewTxn {
+    transactions: Arc<dyn ClusterTransactions>,
+    start_ts: u64,
+    resource_group: String,
+    request_source: tidb_txnkv::RequestSource,
+    mutations: Vec<tidb_txnkv::transaction::BufferMutation>,
+}
+
+impl ClusterNewTxn {
+    /// Go `kv.Transaction.Delete`.
+    ///
+    /// # Errors
+    ///
+    /// The mutation's refusal of `key`.
+    pub fn delete(&mut self, key: Vec<u8>) -> Result<(), ClusterNewTxnError> {
+        let mutation = tidb_txnkv::transaction::BufferMutation::delete(key)
+            .map_err(|error| ClusterNewTxnError(SqlQueryError::unknown(error.to_string())))?;
+        self.mutations.push(mutation);
+        Ok(())
+    }
+}
+
+/// A `ClusterNewTxnStorage` attempt's failure.
+#[derive(Debug)]
+pub struct ClusterNewTxnError(pub SqlQueryError);
+
+impl fmt::Display for ClusterNewTxnError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0.message)
+    }
+}
+
+impl std::error::Error for ClusterNewTxnError {}
+
+impl tidb_txnkv::NewTxnError for ClusterNewTxnError {
+    /// Go `kv.IsTxnRetryableError`.
+    fn is_retryable(&self) -> bool {
+        use tidb_errno::errcode::{ErrTxnRetryable, ErrWriteConflict, ErrWriteConflictInTiDB};
+        matches!(self.0.code, ErrTxnRetryable | ErrWriteConflict | ErrWriteConflictInTiDB)
+    }
+}
+
+impl tidb_txnkv::TxnResourceGroup for ClusterNewTxn {
+    fn set_resource_group_name(&mut self, name: &str) {
+        name.clone_into(&mut self.resource_group);
+    }
+}
+
+impl tidb_txnkv::NewTxnTransaction for ClusterNewTxn {
+    type Error = ClusterNewTxnError;
+
+    fn start_ts(&self) -> u64 {
+        self.start_ts
+    }
+
+    fn set_option(&mut self, option: tidb_txnkv::OptionKey, value: tidb_txnkv::TxnOptionValue) {
+        use tidb_txnkv::{OptionKey, TxnOptionValue};
+        match (option, value) {
+            (OptionKey::RequestSourceInternal, TxnOptionValue::Bool(internal)) => {
+                self.request_source.internal = internal;
+            }
+            (OptionKey::RequestSourceType, TxnOptionValue::String(source_type)) => {
+                self.request_source.source_type = source_type;
+            }
+            (OptionKey::ExplicitRequestSourceType, TxnOptionValue::String(source_type)) => {
+                self.request_source.explicit_source_type = source_type;
+            }
+            (option, value) => unreachable!("RunInNewTxn sets no option {option:?} = {value:?}"),
+        }
+    }
+
+    fn rollback(&mut self) -> Result<(), ClusterNewTxnError> {
+        self.mutations.clear();
+        Ok(())
+    }
+
+    fn commit(&mut self) -> Result<(), ClusterNewTxnError> {
+        let options = SessionTransactionOptions::from(
+            tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
+        )
+        .with_request_source(self.request_source.clone());
+        self.transactions
+            .commit_optimistic_mutations(std::mem::take(&mut self.mutations), self.start_ts, &self.resource_group, options)
+            .map_err(ClusterNewTxnError)
+    }
+}
+
+impl tidb_txnkv::NewTxnStorage for ClusterNewTxnStorage {
+    type Transaction = ClusterNewTxn;
+    type Error = ClusterNewTxnError;
+
+    fn begin(&mut self) -> Result<ClusterNewTxn, ClusterNewTxnError> {
+        // Go's internal transactions run in the default resource group.
+        let snapshot = self
+            .0
+            .open_snapshot("default")
+            .map_err(|error| ClusterNewTxnError(SqlQueryError::unknown(error)))?;
+        Ok(ClusterNewTxn {
+            transactions: Arc::clone(&self.0),
+            start_ts: snapshot.start_ts(),
+            resource_group: "default".to_owned(),
+            request_source: tidb_txnkv::RequestSource::default(),
+            mutations: Vec::new(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod cluster_new_txn_tests {
+    use super::*;
+    use tidb_txnkv::NewTxnError as _;
+
+    /// Go `kv.IsTxnRetryableError`: `RunInNewTxn` retries the retryable
+    /// transaction error, the write conflicts and nothing else.
+    #[test]
+    fn cluster_new_txn_retries_gos_retryable_errors() {
+        let error = |code| ClusterNewTxnError(SqlQueryError::new(code, *b"HY000", "e"));
+        assert!(error(tidb_errno::errcode::ErrTxnRetryable).is_retryable());
+        assert!(error(tidb_errno::errcode::ErrWriteConflict).is_retryable());
+        assert!(error(tidb_errno::errcode::ErrWriteConflictInTiDB).is_retryable());
+        assert!(!error(tidb_errno::errcode::ErrLockExpire).is_retryable());
+        assert!(!error(tidb_errno::errcode::ErrUnknown).is_retryable());
+    }
+}

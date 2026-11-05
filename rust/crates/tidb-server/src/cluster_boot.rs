@@ -59,6 +59,16 @@ pub(crate) fn run_cluster_session_node_with_spill(
         )))
     })?;
     stack.workers.insert(1, Box::new(gc_worker));
+    // Go `TestHandler`'s `gcworker.RunResolveLocks(ctx, h.Store,
+    // h.RegionCache.PDClient(), safePoint, "testGCWorker", 3)`.
+    let gc_deps = tidb_gcworker::node::gc_worker_deps(
+        &stack.factory,
+        authority.tikv_store(),
+        Arc::new(authority.transaction_opener()),
+    );
+    let gc_resolve_locks: Option<crate::http_status::GcResolveLocks> = Some(Arc::new(move |safe_point| {
+        tidb_gcworker::run_resolve_locks(gc_deps.clone(), safe_point, "testGCWorker", 3).map_err(|error| error.to_string())
+    }));
     // Go `repository.SetupRepository(dom)` in the server's main; the worker
     // retires last of the workers, and `StopRepository` stops it first.
     let workload_repository = tidb_workloadrepo::node::setup_repository(&stack.factory);
@@ -115,6 +125,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             flash_replica_deprecated,
             extract_handle,
             metrics_profile,
+            gc_resolve_locks,
         )
         .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
         let address = node.local_addr().map_err(|error| {
@@ -178,6 +189,7 @@ fn start_cluster_status(
     flash_replica_deprecated: Option<crate::tikv_handler::FlashReplicaDeprecated>,
     extract_handle: Option<Arc<tidb_domain::extract::ExtractHandle>>,
     metrics_profile: Option<crate::tikv_handler::MetricsProfileSession>,
+    gc_resolve_locks: Option<crate::http_status::GcResolveLocks>,
 ) -> std::io::Result<Option<crate::http_status::StatusServer>> {
     // Go Server.Run starts status HTTP beside SQL when ReportStatus is set.
     // Publishing server info alone does not make that endpoint reachable.
@@ -211,6 +223,7 @@ fn start_cluster_status(
             flash_replica_deprecated,
             extract_handle,
             metrics_profile,
+            gc_resolve_locks,
         },
     ) {
         Ok(server) => Ok(Some(server)),
@@ -263,14 +276,14 @@ mod status_tests {
             None,
             None,
             None,
-            None, None, None, None, None, None, None, None, None, None
+            None, None, None, None, None, None, None, None, None, None, None
         )
         .unwrap()
         .is_none());
         let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         config.report_status = true;
         config.status_port = occupied.local_addr().unwrap().port();
-        assert!(start_cluster_status(&config, tracker, schema, test_settings(), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None).is_err());
+        assert!(start_cluster_status(&config, tracker, schema, test_settings(), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None).is_err());
     }
 
     #[test]
@@ -289,7 +302,7 @@ mod status_tests {
             Vec::new(),
             1,
         ));
-        let server = start_cluster_status(&config, tracker, schema, test_settings(), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None)
+        let server = start_cluster_status(&config, tracker, schema, test_settings(), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None)
             .unwrap()
             .expect("cluster startup must bind the advertised status service like Go");
         for path in ["/status", "/metrics", "/settings", "/config", "/schema"] {

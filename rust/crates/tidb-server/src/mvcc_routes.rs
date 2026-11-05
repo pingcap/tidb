@@ -247,6 +247,106 @@ pub fn mvcc_response(path: &str, store: &dyn RegionStore, schema: &Schema) -> Op
     }
 }
 
+#[derive(Serialize)]
+#[cfg(feature = "failpoints")]
+struct RowKeyDeleteResponse {
+    key: String,
+}
+
+/// Go's `enableTestAPI`-failpoint `DeleteKeyHandler` at
+/// `/test/delete/rowkey/{db}/{table}` and
+/// `/test/delete/indexkey/{db}/{table}/{index}`: POST deletes the row's
+/// record key, or its index entry, in a new internal `tools` transaction.
+#[cfg(feature = "failpoints")]
+pub fn delete_key_response(
+    path: &str,
+    request: &str,
+    schema: &Schema,
+    transactions: &std::sync::Arc<dyn tidb_domain_core::cluster_transactions::ClusterTransactions>,
+) -> Option<Result<String, String>> {
+    let route = path.split_once('?').map_or(path, |(route, _)| route);
+    let (db_name, table_name, index_name) = match route.split('/').collect::<Vec<_>>().as_slice() {
+        ["", "test", "delete", "rowkey", db_name, table_name] => (*db_name, *table_name, ""),
+        ["", "test", "delete", "indexkey", db_name, table_name, index_name] => (*db_name, *table_name, *index_name),
+        _ => return None,
+    };
+    fail::eval("enableTestAPI", |_| ())?;
+    if request.split(' ').next() != Some("POST") {
+        return Some(Err("This api only support POST method".to_owned()));
+    }
+    let raw_query = path.split_once('?').map_or("", |(_, query)| query);
+    Some(parse_query(raw_query, true).and_then(|values| {
+        handle_delete_key(schema, transactions, db_name, table_name, index_name, &values)
+    }))
+}
+
+#[cfg(feature = "failpoints")]
+fn handle_delete_key(
+    schema: &Schema,
+    transactions: &std::sync::Arc<dyn tidb_domain_core::cluster_transactions::ClusterTransactions>,
+    db_name: &str,
+    table_name: &str,
+    index_name: &str,
+    values: &Values,
+) -> Result<String, String> {
+    let handle_str = values_get(values, "handle").and_then(|handles| handles.first()).map_or("", String::as_str);
+    if db_name.is_empty() {
+        return Err("db is required bad request".to_owned());
+    }
+    if table_name.is_empty() {
+        return Err("table is required bad request".to_owned());
+    }
+    let (table, physical_id) = get_table(schema, db_name, table_name)?;
+    let catalog = schema();
+    let table = table.read();
+    let kv_table = kv_table(&catalog, &table)?;
+    let handle = get_handle(&table, kv_table, Some(handle_str).filter(|handle| !handle.is_empty()), values)?;
+
+    let encoded_key = if index_name.is_empty() {
+        let record_handle = match &handle {
+            tidb_table::tables::TableHandle::Int(value) => tidb_tablecodec::table_key::RecordHandle::Int(*value),
+            tidb_table::tables::TableHandle::Common(bytes) => {
+                tidb_tablecodec::table_key::RecordHandle::Common(bytes.clone())
+            }
+        };
+        tidb_tablecodec::table_key::encode_row_key_with_handle(physical_id, &record_handle)
+    } else {
+        let mut idx_cols = Vec::new();
+        let mut idx = None;
+        for v in table.indices.iter_deref() {
+            let v = v.read();
+            if v.name.original().eq_ignore_ascii_case(index_name) {
+                for c in v.columns.iter_deref() {
+                    idx_cols.push(table.columns.get(c.read().offset as usize).expect("index column offset").clone());
+                }
+                idx = Some(v.id);
+                break;
+            }
+        }
+        let Some(idx) = idx else {
+            return Err(format!("Index {index_name} not found! not found"));
+        };
+        let idx_row = form_value2_datum_row(values, &idx_cols)?;
+        kv_table
+            .gen_index_key(idx, idx_row, &handle, physical_id, &tidb_datatype::SessionTimeZone::utc())
+            .map_err(|error| format!("{error:?}"))?
+            .0
+    };
+    let context = tidb_txnkv::RunInNewTxnContext {
+        request_source: Some(tidb_txnkv::RequestSource {
+            internal: true,
+            source_type: tidb_txnkv::INTERNAL_TXN_TOOLS.to_owned(),
+            explicit_source_type: String::new(),
+        }),
+    };
+    let mut storage = tidb_domain_core::cluster_transactions::ClusterNewTxnStorage(std::sync::Arc::clone(transactions));
+    tidb_txnkv::run_in_new_txn(&context, &mut storage, true, |txn| txn.delete(encoded_key.clone()))
+        .map_err(|error| error.to_string())?;
+    to_json(&RowKeyDeleteResponse {
+        key: upper_hex(&encoded_key),
+    })
+}
+
 /// Go `url.Values`, in the request's key order of first appearance.
 pub(crate) type Values = Vec<(String, Vec<String>)>;
 

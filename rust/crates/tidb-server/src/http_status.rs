@@ -117,7 +117,13 @@ pub struct StatusRoutes {
     pub extract_handle: Option<Arc<tidb_domain::extract::ExtractHandle>>,
     /// Go `ProfileHandler`'s session for `/metrics/profile`.
     pub metrics_profile: Option<crate::tikv_handler::MetricsProfileSession>,
+    /// Go `TestHandler`'s `gcworker.RunResolveLocks` over the node's store,
+    /// for the `enableTestAPI` route `/test/gc/resolvelock`.
+    pub gc_resolve_locks: Option<GcResolveLocks>,
 }
+
+/// Go `gcworker.RunResolveLocks(ctx, store, pd, safePoint, "testGCWorker", 3)`.
+pub type GcResolveLocks = Arc<dyn Fn(u64) -> Result<(), String> + Send + Sync>;
 
 /// Go `StatsHandle().GetPriorityQueueSnapshot()` marshaled.
 pub type StatsPriorityQueue = Arc<dyn Fn() -> Result<String, String> + Send + Sync>;
@@ -434,6 +440,66 @@ fn traceevent_response(body: &str) -> axum::response::Response {
         .header("connection", "keep-alive")
         .body(axum::body::Body::from_stream(stream))
         .expect("status response headers")
+}
+
+/// Go's `enableTestAPI`-failpoint `TestHandler` at `/test/{mod}/{op}`:
+/// module `gc`'s `resolvelock?safepoint={uint64}` resolves every lock
+/// before the safe point, one GC at a time.
+#[cfg(feature = "failpoints")]
+fn test_handler_answer(path: &str, request: &str, routes: &StatusRoutes) -> Option<Result<String, String>> {
+    // Go `TestHandler.gcIsRunning`.
+    static GC_IS_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let (route, query) = path.split_once('?').unwrap_or((path, ""));
+    let ["", "test", module, op] = route.split('/').collect::<Vec<_>>()[..] else {
+        return None;
+    };
+    fail::eval("enableTestAPI", |_| ())?;
+    let (module, op) = (module.to_lowercase(), op.to_lowercase());
+    if module != "gc" {
+        return Some(Err(format!("module({module}) not supported")));
+    }
+    if GC_IS_RUNNING
+        .compare_exchange(false, true, std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst)
+        .is_err()
+    {
+        return Some(Err("GC is running".to_owned()));
+    }
+    let answer = (|| {
+        if op != "resolvelock" {
+            return Err(format!("operation({op}) not supported"));
+        }
+        // Go `req.FormValue` ignores a malformed form.
+        let safe_point = request_form(query, request).unwrap_or_default().remove("safepoint").unwrap_or_default();
+        let parsed = tidb_go_strconv::parse_uint(&safe_point, 10, 64)
+            .map_err(|_| format!("parse safePoint({safe_point}) failed"))?;
+        tidb_logutil::bg_logger().info(
+            "start resolving locks",
+            &[tidb_log::Field::new("safePoint", tidb_log::Value::U64(parsed))],
+        );
+        let resolve_locks = routes.gc_resolve_locks.as_ref().ok_or_else(|| "resolveLocks failed: no store".to_owned())?;
+        resolve_locks(parsed).map_err(|error| format!("resolveLocks failed: {error}"))?;
+        // Go writes nothing on success.
+        Ok(String::new())
+    })();
+    GC_IS_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+    Some(answer)
+}
+
+#[cfg(not(feature = "failpoints"))]
+fn test_handler_answer(_path: &str, _request: &str, _routes: &StatusRoutes) -> Option<Result<String, String>> {
+    None
+}
+
+/// Go's `enableTestAPI`-failpoint `DeleteKeyHandler` routes.
+#[cfg(feature = "failpoints")]
+fn delete_key_answer(path: &str, request: &str, routes: &StatusRoutes) -> Option<Result<String, String>> {
+    let (schema, transactions) = routes.schema.as_ref().zip(routes.transactions.as_ref())?;
+    crate::mvcc_routes::delete_key_response(path, request, schema.as_ref(), transactions)
+}
+
+#[cfg(not(feature = "failpoints"))]
+fn delete_key_answer(_path: &str, _request: &str, _routes: &StatusRoutes) -> Option<Result<String, String>> {
+    None
 }
 
 /// Go's `enableTestAPI`-failpoint route `/fail/{name}` over
@@ -995,6 +1061,8 @@ fn route_response(
             let (store, schema) = routes.mvcc.as_ref().zip(routes.schema.as_ref())?;
             crate::mvcc_routes::mvcc_response(path, store.as_ref(), schema.as_ref())
         })
+        .or_else(|| delete_key_answer(path, request, routes))
+        .or_else(|| test_handler_answer(path, request, routes))
     {
         match answer {
             Ok(body) => (200, "application/json", write_data(&body)),
@@ -1420,6 +1488,15 @@ fn settings_response(
     if route == "/config" || method != "POST" {
         return Some(settings.read());
     }
+    Some(request_form(query, request).and_then(|form| {
+        settings.apply(&form)?;
+        Ok(String::new())
+    }))
+}
+
+/// Go `Request.ParseForm`: a form-encoded POST body's values, then the
+/// query's.
+fn request_form(query: &str, request: &str) -> Result<std::collections::HashMap<String, String>, String> {
     let (headers, body) = request.split_once("\r\n\r\n").unwrap_or((request, ""));
     let is_form = headers
         .lines()
@@ -1430,12 +1507,7 @@ fn settings_response(
                     kind.eq_ignore_ascii_case("application/x-www-form-urlencoded")
                 })
         });
-    Some(
-        crate::http_settings::parse_form(query, if is_form { body } else { "" }).and_then(|form| {
-            settings.apply(&form)?;
-            Ok(String::new())
-        }),
-    )
+    crate::http_settings::parse_form(query, if is_form { body } else { "" })
 }
 
 /// Go `ServerInfoHandler` (`/info`) and `AllServerInfoHandler`
@@ -2556,6 +2628,48 @@ mod schema_route_tests {
         }
         // A query string is stripped before matching, as Go's mux does.
         assert!(schema_response("/schema?id_name_only=true", source.as_ref()).is_some());
+    }
+
+    /// Go `TestHandler` behind `enableTestAPI`: `/test/gc/resolvelock`
+    /// resolves locks before the form's safe point, one GC at a time, and
+    /// refuses another module or operation.
+    #[cfg(feature = "failpoints")]
+    #[test]
+    fn test_handler_resolves_locks_like_go() {
+        let resolved = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let nested = Arc::new(std::sync::Mutex::new(None));
+        let routes = Arc::new(std::sync::Mutex::new(StatusRoutes::default()));
+        let (seen, inner, inner_routes) = (Arc::clone(&resolved), Arc::clone(&nested), Arc::downgrade(&routes));
+        let resolver: GcResolveLocks = Arc::new(move |safe_point| {
+            seen.lock().unwrap().push(safe_point);
+            if safe_point == 7 {
+                let routes = inner_routes.upgrade().unwrap().lock().unwrap().clone();
+                *inner.lock().unwrap() = Some(routed("/test/gc/resolvelock?safepoint=8", &routes));
+                return Err("region unavailable".to_owned());
+            }
+            Ok(())
+        });
+        routes.lock().unwrap().gc_resolve_locks = Some(resolver);
+        let routes = routes.lock().unwrap().clone();
+        let text = |(code, _, body): (u16, String, Vec<u8>)| (code, String::from_utf8(body).unwrap());
+
+        assert_eq!(text(routed("/test/gc/resolvelock?safepoint=5", &routes)).0, 404, "no test API without enableTestAPI");
+        fail::cfg("enableTestAPI", "return").unwrap();
+        assert_eq!(text(routed("/test/gc/resolvelock?safepoint=5", &routes)), (200, String::new()));
+        assert_eq!(text(routed("/test/GC/ResolveLock?safepoint=6", &routes)), (200, String::new()));
+        assert_eq!(*resolved.lock().unwrap(), [5, 6]);
+        assert_eq!(text(routed("/test/gc/resolvelock?safepoint=x", &routes)), (400, "parse safePoint(x) failed".to_owned()));
+        assert_eq!(text(routed("/test/gc/resolvelock", &routes)), (400, "parse safePoint() failed".to_owned()));
+        assert_eq!(text(routed("/test/gc/other", &routes)), (400, "operation(other) not supported".to_owned()));
+        assert_eq!(text(routed("/test/ddl/hook", &routes)), (400, "module(ddl) not supported".to_owned()));
+        assert_eq!(
+            text(routed("/test/gc/resolvelock?safepoint=7", &routes)),
+            (400, "resolveLocks failed: region unavailable".to_owned())
+        );
+        // The nested request ran while the first held the GC.
+        assert_eq!(text(nested.lock().unwrap().take().unwrap()), (400, "GC is running".to_owned()));
+        assert_eq!(*resolved.lock().unwrap(), [5, 6, 7]);
+        fail::remove("enableTestAPI");
     }
 
     fn routed(path: &str, routes: &StatusRoutes) -> (u16, String, Vec<u8>) {
