@@ -14,7 +14,7 @@
 
 //! Vector SQL functions from `pkg/expression/builtin_vec.go`.
 
-use tidb_datatype::{ConversionFlags, FieldType, FieldTypeCode, VectorFloat32};
+use tidb_datatype::{FieldType, FieldTypeCode, VectorFloat32};
 
 use crate::{Datum, EvalError};
 
@@ -46,9 +46,12 @@ fn vector(value: &Datum) -> Result<Option<VectorFloat32>, EvalError> {
     }
     let target = FieldType::new(FieldTypeCode::VectorFloat32);
     match value
-        .convert_to(&target, ConversionFlags::default())
-        .map_err(|error| EvalError::Vector(error.to_string()))?
-        .value
+        .convert_to_in_context(&target, &tidb_datatype::ConversionContext::strict(), &tidb_datatype::SessionTimeZone::utc())
+        .map_err(|error| EvalError::Vector(error.to_string()))
+        .and_then(|converted| match converted.error {
+            None => Ok(converted.value),
+            Some(error) => Err(EvalError::Vector(error.message().to_owned())),
+        })?
     {
         Datum::VectorFloat32(value) => Ok(Some(value)),
         _ => unreachable!("a VectorFloat32 conversion returns a vector datum"),

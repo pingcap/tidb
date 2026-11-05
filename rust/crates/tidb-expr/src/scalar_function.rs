@@ -1190,9 +1190,13 @@ impl ScalarFunction {
         // answers `1.00`, not `1`: the integer branch is widened to the
         // merged scale, exactly as IF/IFNULL/CASE widen theirs. Handled by
         // the shared conversion below rather than a COALESCE-only rule.
-        match value.convert_to(ret_type, tidb_datatype::DEFAULT_STATEMENT_FLAGS) {
-            Ok(converted) => Ok(converted.value),
-            Err(_) => Ok(value),
+        match value.convert_to_in_context(
+            ret_type,
+            &tidb_datatype::ConversionContext::default_statement_no_warning(),
+            &tidb_datatype::SessionTimeZone::utc(),
+        ) {
+            Ok(converted) if converted.error.is_none() => Ok(converted.value),
+            _ => Ok(value),
         }
     }
 

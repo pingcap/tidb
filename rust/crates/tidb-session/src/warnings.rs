@@ -239,6 +239,7 @@ impl Session {
         self.prepared_params = None;
         self.statement_boundary_open = true;
         self.parse_warnings = None;
+        self.reset_plan_cache_tracker();
         let previous = std::mem::take(&mut self.warnings);
         self.pending_observation_parse = None;
         let parse_started = std::time::Instant::now();
@@ -380,6 +381,7 @@ impl Session {
             return;
         }
         self.prepared_params = None;
+        self.reset_plan_cache_tracker();
         let previous = std::mem::take(&mut self.warnings);
         self.install_statement_warning_state(stmt, previous);
     }
@@ -411,6 +413,7 @@ impl Session {
         if std::mem::take(&mut self.statement_boundary_open) {
             return;
         }
+        self.reset_plan_cache_tracker();
         self.snapshot_previous_warning_counts();
         self.warnings.clear();
         self.in_show_warning = false;
@@ -487,6 +490,18 @@ impl Session {
     pub fn restore_statement_variables(&mut self) {
         self.vars
             .restore_system(std::mem::take(&mut self.set_var_hint_restore));
+    }
+
+    /// Go `ResetContextOfStmt`'s new `StmtCtx` carries a fresh
+    /// `PlanCacheTracker`: no refusal reason recorded yet. It runs where a
+    /// statement starts, before its plan is chosen; the boundaries a cached
+    /// prepared plan opens after planning keep what planning recorded, as
+    /// they keep its warnings.
+    pub(crate) fn reset_plan_cache_tracker(&mut self) {
+        self.statement_plan_cache_unqualified
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
     }
 
     /// Go `ResetContextOfStmt`'s

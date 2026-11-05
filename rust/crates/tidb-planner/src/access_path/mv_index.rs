@@ -397,6 +397,8 @@ fn build_partial_path_for_mv_index(
             tidb_ranger::points::PointBuilderError::Unsupported(message) => PlanError::from(
                 tidb_plannererrors::ERR_UNSUPPORTED_TYPE.gen_with_stack(message),
             ),
+            // Go returns `ConvertTo`'s typed error as it is.
+            tidb_ranger::points::PointBuilderError::Terror(error) => PlanError::from(error),
         })?;
     // Not all filters are used in this case.
     if detached.access_conds.len() != access_filters.len() || !detached.remained_conds.is_empty() {

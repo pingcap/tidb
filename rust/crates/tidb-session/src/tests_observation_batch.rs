@@ -1285,3 +1285,57 @@ fn observation_batch_summary_records_the_profilers_tidb_cpu_time() {
         .unwrap();
     assert_eq!(record.cumulative.sum_tidb_cpu, 7_000_000);
 }
+
+/// Go `StmtCtx.PlanCacheUnqualified()` in the statement summary: an EXECUTE
+/// whose prepared plan cache is refused (`warnSkipPlanCache`) counts the
+/// refusal and keeps its reason.
+#[test]
+fn observation_batch_summary_records_why_the_plan_cache_was_refused() {
+    let mut session = Session::new();
+    session.set_user("root@%".into(), "root@localhost".into());
+    let sql = "SELECT ? + 1 AS observation_unqualified";
+    let prepared = crate::tests_support::prepare_binary(&mut session, sql);
+    crate::tests_support::execute_binary(&mut session, &prepared, &[1]);
+    let (_, digest) = normalize_statement_digest(sql);
+    let records =
+        tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP.summary_map_values();
+    let record = records
+        .iter()
+        .find(|record| record.lock().unwrap().digest == digest.as_str())
+        .unwrap()
+        .lock()
+        .unwrap();
+    assert_eq!(record.cumulative.plan_cache_unqualified_count, 1);
+    assert_eq!(
+        record.cumulative.last_plan_cache_unqualified,
+        "get a TableDual plan"
+    );
+}
+
+/// Go's new `StmtCtx` per statement: an EXECUTE whose plan cache qualifies
+/// records no reason, though the statement before it was refused.
+#[test]
+fn observation_batch_summary_keeps_no_refusal_reason_from_the_previous_statement() {
+    let mut session = Session::new();
+    session.set_user("root@%".into(), "root@localhost".into());
+    session
+        .run("CREATE TABLE observation_qualified (id BIGINT PRIMARY KEY)")
+        .unwrap();
+    let refused =
+        crate::tests_support::prepare_binary(&mut session, "SELECT ? + 2 AS observation_refused");
+    crate::tests_support::execute_binary(&mut session, &refused, &[1]);
+    let sql = "SELECT id FROM observation_qualified WHERE id = ?";
+    let qualified = crate::tests_support::prepare_binary(&mut session, sql);
+    crate::tests_support::execute_binary(&mut session, &qualified, &[1]);
+    let (_, digest) = normalize_statement_digest(sql);
+    let records =
+        tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP.summary_map_values();
+    let record = records
+        .iter()
+        .find(|record| record.lock().unwrap().digest == digest.as_str())
+        .unwrap()
+        .lock()
+        .unwrap();
+    assert_eq!(record.cumulative.plan_cache_unqualified_count, 0);
+    assert_eq!(record.cumulative.last_plan_cache_unqualified, "");
+}

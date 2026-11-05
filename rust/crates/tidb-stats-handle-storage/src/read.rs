@@ -975,10 +975,22 @@ fn convert_bound_from_blob(blob: Vec<u8>, tp: &FieldType) -> Result<Datum, SqlEx
             Some(width),
         )));
     }
-    Datum::Bytes(blob)
-        .convert_to(tp, UTC_WITH_ALLOW_INVALID_DATE)
-        .map(|converted| converted.value)
-        .map_err(boxed)
+    // Go `d.ConvertTo(types.UTCWithAllowInvalidDateCtx, tp)`.
+    let converted = Datum::Bytes(blob)
+        .convert_to_in_context(
+            tp,
+            &tidb_datatype::ConversionContext::new(
+                UTC_WITH_ALLOW_INVALID_DATE,
+                tidb_datatype::ConversionLocation::UTC,
+                &tidb_context::IGNORE_CONVERSION_WARNINGS,
+            ),
+            &tidb_datatype::SessionTimeZone::utc(),
+        )
+        .map_err(boxed)?;
+    match converted.error {
+        None => Ok(converted.value),
+        Some(error) => Err(error.message().to_owned().into()),
+    }
 }
 
 #[cfg(test)]
@@ -994,6 +1006,13 @@ mod tests {
         let bound = convert_bound_from_blob(b"11".to_vec(), &FieldType::new(FieldTypeCode::LongLong))
             .expect("the bound converts");
         assert_eq!(bound, Datum::Int(11));
+    }
+
+    /// Go `convertBoundFromBlob` returns `ConvertTo`'s error: a bound that
+    /// does not convert under `UTCWithAllowInvalidDateCtx` fails the load.
+    #[test]
+    fn a_bound_that_does_not_convert_is_an_error() {
+        assert!(convert_bound_from_blob(b"12x".to_vec(), &FieldType::new(FieldTypeCode::LongLong)).is_err());
     }
 
     /// `c DECIMAL(10,2)` keeps its stored scale; `d DATETIME` parses back

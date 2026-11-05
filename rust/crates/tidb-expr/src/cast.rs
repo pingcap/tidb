@@ -777,13 +777,16 @@ fn eval_cast_value(
             let source_name = source
                 .map(|field_type| tidb_datatype::type_str(field_type.code()))
                 .unwrap_or("unspecified");
-            v.convert_to(&target, ConversionFlags::default())
-                .map(|converted| converted.value)
+            v.convert_to_in_context(&target, &tidb_datatype::ConversionContext::strict(), &tidb_datatype::SessionTimeZone::utc())
                 .map_err(|error| match error {
                     DatumValueError::Unsupported(_, _) => {
                         EvalError::Vector(format!("cannot cast from {source_name} to vector"))
                     }
                     error => EvalError::Vector(error.to_string()),
+                })
+                .and_then(|converted| match converted.error {
+                    None => Ok(converted.value),
+                    Some(error) => Err(EvalError::Vector(error.message().to_owned())),
                 })
         }
         CastType::Time { fsp } => cast_to_duration(&v, source, ctx, i64::from(fsp.unwrap_or(0))),
@@ -911,8 +914,18 @@ fn cast_to_duration(
             .map(|converted| (Datum::new_duration(converted.value), converted.event))
             .map_err(|error| DatumValueError::Comparison(error.to_string()))
     } else if matches!(v, Datum::Time(_) | Datum::Duration(_)) {
-        v.convert_to_in(&target, ctx.type_flags(), &ctx.time_zone())
-            .map(|converted| (converted.value, converted.event))
+        let zone = ctx.time_zone();
+        v.convert_to_in_context(
+            &target,
+            &tidb_datatype::ConversionContext::new(
+                ctx.type_flags(),
+                tidb_datatype::ConversionLocation::from_time_zone(&zone),
+                &tidb_context::IGNORE_CONVERSION_WARNINGS,
+            ),
+            &zone,
+        )
+        // The conversion's error is the truncation this cast reports itself.
+        .map(|converted| (converted.value, converted.error.map(|_| ScalarConversionEvent::Truncated)))
     } else {
         tidb_datatype::parse_duration_with_flags(&input, fsp, ctx.type_flags(), &ctx.time_zone())
             .map(|converted| (Datum::Duration(converted.value), converted.event))

@@ -404,6 +404,9 @@ pub enum PointBuilderError {
     Value(tidb_datatype::DatumValueError),
     /// Failure evaluating a parameter or deferred endpoint in this statement.
     Eval(tidb_exprctx::EvalError),
+    /// Go `ConvertTo`'s typed error that `convertPointInPlace` does not
+    /// tolerate.
+    Terror(tidb_terror::TerrorError),
 }
 
 impl std::fmt::Display for PointBuilderError {
@@ -412,6 +415,7 @@ impl std::fmt::Display for PointBuilderError {
             Self::Unsupported(message) => f.write_str(message),
             Self::Value(error) => error.fmt(f),
             Self::Eval(error) => write!(f, "{error:?}"),
+            Self::Terror(error) => f.write_str(error.message()),
         }
     }
 }
@@ -420,7 +424,7 @@ impl std::error::Error for PointBuilderError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Value(error) => Some(error),
-            Self::Unsupported(_) | Self::Eval(_) => None,
+            Self::Unsupported(_) | Self::Eval(_) | Self::Terror(_) => None,
         }
     }
 }
@@ -467,6 +471,11 @@ pub trait RangerEvaluator {
         tidb_datatype::SessionTimeZone::utc()
     }
 
+    /// Go `TypeCtx.Flags()`.
+    fn type_flags(&self) -> tidb_datatype::ConversionFlags {
+        tidb_datatype::ConversionFlags::default()
+    }
+
     /// Go `TypeCtx.AppendWarning`.
     fn append_warning(&self, _code: u16, _message: &str) {}
 
@@ -487,6 +496,16 @@ where
     }
 }
 
+/// Go `TypeCtx`'s warning sink over a ranger context.
+struct RangerWarnings<'a>(&'a ExpressionEvaluator<'a>);
+
+impl tidb_context::ConversionWarningAppender for RangerWarnings<'_> {
+    fn append_conversion_warning(&self, warning: tidb_terror::TerrorError) {
+        let error = warning.to_sql_error();
+        self.0.append_warning(error.code, &error.message);
+    }
+}
+
 /// A ranger context that evaluates and converts as `inner` does but
 /// publishes no warnings: for a range set Go builds once and reuses -- an
 /// access path's ranges, which `fillIndexPath` builds (and warns for) and
@@ -502,6 +521,10 @@ impl RangerEvaluator for QuietRangerEvaluator<'_> {
     fn location(&self) -> tidb_datatype::SessionTimeZone {
         self.0.location()
     }
+
+    fn type_flags(&self) -> tidb_datatype::ConversionFlags {
+        self.0.type_flags()
+    }
 }
 
 /// The ranger context of one statement: its expressions evaluate, and its
@@ -516,6 +539,10 @@ impl RangerEvaluator for StatementRangerEvaluator<'_> {
 
     fn location(&self) -> tidb_datatype::SessionTimeZone {
         self.0.time_zone()
+    }
+
+    fn type_flags(&self) -> tidb_datatype::ConversionFlags {
+        self.0.type_flags()
     }
 
     fn append_warning(&self, code: u16, message: &str) {
@@ -634,6 +661,7 @@ impl<'a> Builder<'a> {
         col_type: &FieldType,
         value: &mut Datum,
         op: &mut String,
+        evaluator: &ExpressionEvaluator<'_>,
     ) -> Result<(), ()> {
         if col_type.eval_type() == EvalType::String {
             // Go `value.SetString(value.GetString(), ft.GetCollate())` for a
@@ -660,12 +688,27 @@ impl<'a> Builder<'a> {
                 Ok(converted) => converted.value,
                 Err(_) => return Err(()),
             };
-            match value.convert_to(col_type, tidb_datatype::ConversionFlags::default()) {
+            // Go `value.ConvertToMysqlYear(tc, col.RetType)` under the
+            // statement's `TypeCtx`.
+            let location = evaluator.location();
+            let warnings = RangerWarnings(evaluator);
+            let ctx = tidb_datatype::ConversionContext::new(
+                evaluator.type_flags(),
+                tidb_datatype::ConversionLocation::from_time_zone(&location),
+                &warnings,
+            );
+            match value.convert_to_in_context(col_type, &ctx, &location) {
                 Ok(converted) => {
-                    let out_of_range = matches!(
-                        converted.event,
-                        Some(tidb_datatype::ScalarConversionEvent::Overflow(_))
-                    );
+                    let out_of_range = match &converted.error {
+                        None => false,
+                        Some(error)
+                            if tidb_datatype::types_errors::ERR_WARN_DATA_OUT_OF_RANGE
+                                .equal(Some(error)) =>
+                        {
+                            true
+                        }
+                        Some(_) => return Err(()),
+                    };
                     let new_value = converted.value;
                     let new_int = match new_value.to_i64() {
                         Ok(converted) => converted.value,
@@ -734,7 +777,7 @@ impl<'a> Builder<'a> {
         if op != OP_NULL_EQ && matches!(value, Datum::Null) {
             return Vec::new();
         }
-        if Self::refine_value_and_op(ft, &mut value, &mut op).is_err() {
+        if Self::refine_value_and_op(ft, &mut value, &mut op, self.eval_expression).is_err() {
             if op == OP_NE {
                 // col != an impossible value (not a valid year).
                 return get_not_null_full_range();
@@ -968,6 +1011,19 @@ impl<'a> Builder<'a> {
                 has_null = true;
                 continue;
             }
+            // Go's `tc`: the statement's `TypeCtx`.
+            let location = self.eval_expression.location();
+            let warnings = RangerWarnings(self.eval_expression);
+            let tc = tidb_datatype::ConversionContext::new(
+                self.eval_expression.type_flags(),
+                tidb_datatype::ConversionLocation::from_time_zone(&location),
+                &warnings,
+            );
+            let convert = |dt: &Datum| {
+                dt.convert_to_in_context(&ft, &tc, &location)
+                    .ok()
+                    .and_then(|converted| converted.error.is_none().then_some(converted.value))
+            };
             if ft.code() == FieldTypeCode::Enum {
                 let converted = match &dt {
                     Datum::String(_) | Datum::Bytes(_) | Datum::BinaryLiteral(_) => {
@@ -983,10 +1039,7 @@ impl<'a> Builder<'a> {
                         };
                         parse_enum_from_elements(&ft, &text)
                     }
-                    _ => dt
-                        .convert_to(&ft, tidb_datatype::ConversionFlags::default())
-                        .ok()
-                        .map(|converted| converted.value),
+                    _ => convert(&dt),
                 };
                 // in (..., an impossible enum, ...): the member is empty —
                 // skip it.
@@ -994,18 +1047,10 @@ impl<'a> Builder<'a> {
                 dt = converted;
             }
             if ft.code() == FieldTypeCode::Year {
-                match dt.convert_to(&ft, tidb_datatype::ConversionFlags::default()) {
-                    Ok(converted)
-                        if !matches!(
-                            converted.event,
-                            Some(tidb_datatype::ScalarConversionEvent::Overflow(_))
-                        ) =>
-                    {
-                        dt = converted.value;
-                    }
-                    // in (..., an impossible year, ...): skip it.
-                    _ => continue,
-                }
+                // Go `ConvertToMysqlYear`: in (..., an impossible year, ...)
+                // the range is empty, so skip it.
+                let Some(converted) = convert(&dt) else { continue };
+                dt = converted;
             }
             // "refine the string like what we did in builder.buildFromBinOp":
             // a string or binary literal's untrimmed bytes, re-collated.
@@ -1533,60 +1578,74 @@ pub fn convert_point_in_place(
         return Ok(());
     }
     let location = evaluator.location();
-    let casted = match p.value.convert_to_in(
-        new_tp,
-        tidb_datatype::ConversionFlags::default(),
-        &location,
-    ) {
-        Ok(converted) => {
-            // Go `Time.Convert`: a DATETIME point moved out of a TIMESTAMP
-            // column's DST gap is adjusted, and the statement warned
-            // whatever its flags.
-            if let (
-                Datum::Time(time),
-                Some(tidb_datatype::ScalarConversionEvent::TimestampInDSTTransition),
-            ) = (&p.value, &converted.event)
-            {
-                evaluator.append_go_warning(
-                    &tidb_datatype::types_errors::ERR_TIMESTAMP_IN_DST_TRANSITION,
-                    &format!(
-                        "Timestamp is not valid, since it is in Daylight Saving Time transition '{:?}' for time zone '{}'",
-                        time.core_time(),
-                        tidb_datatype::ConversionLocation::from_time_zone(&location).name()
-                    ),
-                );
-            }
-            if let Some(event) = &converted.event {
-                // Go reaches its tolerance ladder only through an ERROR;
-                // this port's convert reports the same conditions as
-                // EVENTS. The tolerated pairs are the same: year/int/
-                // decimal/float overflow trims to the boundary, enum
-                // truncation clamps, bit too-long is ignored.
-                *skip_plan_cache_reason = Some(format!("{event:?} when converting {:?}", p.value));
-                // Go: "We should cover Enum upper overflow, and convert to
-                // the biggest value" -- when `p.value.GetInt64() > 0`.
-                if new_tp.code() == FieldTypeCode::Enum
-                    && matches!(event, tidb_datatype::ScalarConversionEvent::Truncated)
-                    && go_datum_int64_field(&p.value) > 0
+    let warnings = RangerWarnings(evaluator);
+    // Go `p.value.ConvertTo(sctx.TypeCtx, newTp)`: truncations and the DST
+    // adjustment reach the statement through the context; the error is what
+    // the ladder below tolerates.
+    let ctx = tidb_datatype::ConversionContext::new(
+        evaluator.type_flags(),
+        tidb_datatype::ConversionLocation::from_time_zone(&location),
+        &warnings,
+    );
+    let casted = match p.value.convert_to_in_context(new_tp, &ctx, &location) {
+        Ok(converted) => match converted.error {
+            None => converted.value,
+            Some(error) => {
+                // skip plan cache in this case for safety.
+                *skip_plan_cache_reason =
+                    Some(format!("{} when converting {:?}", error.message(), p.value));
+                let is = |proto: &tidb_terror::TerrorError| proto.equal(Some(&error));
+                if (new_tp.code() == FieldTypeCode::Year
+                    && is(&tidb_datatype::types_errors::ERR_WARN_DATA_OUT_OF_RANGE))
+                    || (new_tp.code() == FieldTypeCode::Bit
+                        && is(&tidb_datatype::types_errors::ERR_DATA_TOO_LONG))
+                    || (matches!(
+                        new_tp.code(),
+                        FieldTypeCode::NewDecimal
+                            | FieldTypeCode::Tiny
+                            | FieldTypeCode::Short
+                            | FieldTypeCode::Int24
+                            | FieldTypeCode::Long
+                            | FieldTypeCode::LongLong
+                            | FieldTypeCode::Float
+                    ) && is(&tidb_datatype::types_errors::ERR_OVERFLOW))
+                    || (matches!(p.value, Datum::Time(_))
+                        && new_tp.code() == FieldTypeCode::Timestamp
+                        && is(&tidb_datatype::types_errors::ERR_WRONG_VALUE))
                 {
-                    let upper = new_tp.with_elems_visible(|elems| {
-                        elems.last().map(|last| {
-                            tidb_datatype::MysqlEnum::new(last.clone(), elems.len() as u64)
-                        })
-                    });
-                    let Some(upper) = upper else {
-                        return Err(PointBuilderError::Unsupported(
-                            "an enum without members has no upper value".to_owned(),
-                        ));
-                    };
-                    Datum::Enum(upper, new_tp.collation())
-                } else {
+                    // A trimmed valid boundary point value is returned and
+                    // the `excl` adjusted below (issues #20101, #19067,
+                    // #28424); impossible ranges are skipped later.
                     converted.value
+                } else if new_tp.code() == FieldTypeCode::Enum
+                    && is(&tidb_datatype::types_errors::ERR_TRUNCATED)
+                {
+                    // "We should cover Enum upper overflow, and convert to
+                    // the biggest value."
+                    if go_datum_int64_field(&p.value) > 0 {
+                        let upper = new_tp.with_elems_visible(|elems| {
+                            elems.last().map(|last| {
+                                tidb_datatype::MysqlEnum::new(last.clone(), elems.len() as u64)
+                            })
+                        });
+                        let Some(upper) = upper else {
+                            return Err(PointBuilderError::Unsupported(
+                                "an enum without members has no upper value".to_owned(),
+                            ));
+                        };
+                        Datum::Enum(upper, new_tp.collation())
+                    } else {
+                        converted.value
+                    }
+                } else if is(&tidb_charset::charset_errors::ERR_INVALID_CHARACTER_STRING) {
+                    // The invalid string can be produced by changing datum's
+                    // underlying bytes directly; skip it.
+                    return Ok(());
+                } else {
+                    return Err(PointBuilderError::Terror(error));
                 }
-            } else {
-                converted.value
             }
-        }
+        },
         Err(error) => {
             *skip_plan_cache_reason = Some(format!("{error} when converting {:?}", p.value));
             match error {
@@ -2181,6 +2240,39 @@ mod tests {
         assert_eq!(show(&build_points(&in_expr)), "[1 1] [3 3]");
         let not_in = func_expr("not", vec![in_expr]);
         assert_eq!(show(&build_points(&not_in)), "(<nil> 1) (1 3) (3 +inf]");
+    }
+
+    /// Go `convertPointInPlace`'s tolerance ladder: an integer overflow
+    /// trims the point to the type's boundary and moves its exclusion
+    /// (`a < 300` on TINYINT is `a <= 127`); an ENUM ordinal past the members
+    /// is the biggest member; any other error surfaces.
+    #[test]
+    fn convert_point_tolerates_go_s_conversion_errors() {
+        let evaluator = evaluate_static;
+        let mut skip = None;
+        let mut point = end(Datum::Int(300), true);
+        convert_point_in_place(&mut point, &FieldType::new(FieldTypeCode::Tiny), &evaluator, &mut skip)
+            .expect("an overflow is tolerated");
+        assert_eq!(point.value, Datum::Int(127));
+        assert!(!point.excl);
+        assert!(skip.is_some(), "a tolerated error skips the plan cache");
+
+        let mut enum_ft = FieldType::new(FieldTypeCode::Enum);
+        enum_ft.set_elems(vec!["a".into(), "b".into()]);
+        let mut point = end(Datum::Int(5), false);
+        convert_point_in_place(&mut point, &enum_ft, &evaluator, &mut skip)
+            .expect("an enum truncation is tolerated");
+        let Datum::Enum(upper, _) = &point.value else {
+            panic!("an enum point: {:?}", point.value);
+        };
+        assert_eq!(upper.name(), "b");
+
+        let mut point = end(Datum::new_string_datum("1x"), false);
+        assert!(
+            convert_point_in_place(&mut point, &FieldType::new(FieldTypeCode::LongLong), &evaluator, &mut skip)
+                .is_err(),
+            "a truncation under strict flags surfaces"
+        );
     }
 
     /// The YEAR refinement: `y < 2156` clamps to `y <= 2155` (Go's

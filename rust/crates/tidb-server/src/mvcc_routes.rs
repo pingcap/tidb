@@ -316,7 +316,7 @@ pub(crate) fn url_query(mut query: &str) -> Values {
 }
 
 /// Go `url.QueryUnescape`.
-fn query_unescape(s: &str) -> Result<String, String> {
+pub(crate) fn query_unescape(s: &str) -> Result<String, String> {
     let bytes = s.as_bytes();
     let is_hex = |byte: u8| byte.is_ascii_hexdigit();
     let mut out = Vec::with_capacity(bytes.len());

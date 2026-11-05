@@ -2054,13 +2054,25 @@ fn build_window(
                         .gen_with_stack_by_args(&["lead/lag".into()]),
                 ))?;
                 let mut default = args.get(2).cloned();
-                // Go buildLeadLag converts a constant default to RetTp.
+                // Go buildLeadLag converts a constant default to RetTp with
+                // `evalCtx.TypeCtx()`, keeping it only when that succeeds.
                 if let Some(Expression::Constant(constant)) = &default {
-                    if let Ok(converted) = constant.value.convert_to_in(
-                        &output_type,
+                    let zone = ctx.session_zone();
+                    let warnings = crate::split_region::StatementWarnings(ctx);
+                    let type_ctx = tidb_datatype::ConversionContext::new(
                         tidb_exprctx::Columns::type_flags(ctx),
-                        &ctx.session_zone(),
-                    ) {
+                        tidb_datatype::ConversionLocation::from_time_zone(&zone),
+                        &warnings,
+                    );
+                    if let Ok(converted) = constant
+                        .value
+                        .convert_to_in_context(&output_type, &type_ctx, &zone)
+                        .map_err(drop)
+                        .and_then(|converted| match converted.error {
+                            None => Ok(converted),
+                            Some(_) => Err(()),
+                        })
+                    {
                         default = Some(Expression::Constant(tidb_expr::constant::Constant::new(
                             converted.value,
                             output_type.clone(),

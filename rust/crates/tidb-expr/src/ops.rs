@@ -292,9 +292,16 @@ pub(crate) fn eval_binary_full(
             tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VectorFloat32);
         let as_vector = |value: Datum| -> Result<tidb_datatype::VectorFloat32, EvalError> {
             match value
-                .convert_to(&vector_type, tidb_datatype::ConversionFlags::default())
-                .map_err(|error| EvalError::Vector(error.to_string()))?
-                .value
+                .convert_to_in_context(
+                    &vector_type,
+                    &tidb_datatype::ConversionContext::strict(),
+                    &tidb_datatype::SessionTimeZone::utc(),
+                )
+                .map_err(|error| EvalError::Vector(error.to_string()))
+                .and_then(|converted| match converted.error {
+                    None => Ok(converted.value),
+                    Some(error) => Err(EvalError::Vector(error.message().to_owned())),
+                })?
             {
                 Datum::VectorFloat32(vector) => Ok(vector),
                 _ => unreachable!("a VectorFloat32 conversion returns a vector datum"),

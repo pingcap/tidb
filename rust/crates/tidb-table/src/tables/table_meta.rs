@@ -447,10 +447,17 @@ impl crate::column::Column {
             &value,
             &self.read().field_type,
             self.read().version,
-            flags,
+            &tidb_datatype::ConversionContext::new(
+                flags,
+                tidb_datatype::ConversionLocation::from_time_zone(zone),
+                &tidb_context::IGNORE_CONVERSION_WARNINGS,
+            ),
             zone,
         )
-        .map(|converted| converted.value)
+        .and_then(|converted| match converted.error {
+            None => Ok(converted.value),
+            Some(error) => Err(tidb_datatype::DatumValueError::Comparison(error.message().to_owned())),
+        })
     }
 
     /// The column as Go's infoschema holds it once the DDL that built it

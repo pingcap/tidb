@@ -493,9 +493,12 @@ fn extremum_vector(vals: &[Datum], want: Ordering) -> Result<Datum, EvalError> {
     let target = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VectorFloat32);
     let mut values = vals.iter().map(|value| {
         match value
-            .convert_to(&target, tidb_datatype::ConversionFlags::default())
-            .map_err(|error| EvalError::Vector(error.to_string()))?
-            .value
+            .convert_to_in_context(&target, &tidb_datatype::ConversionContext::strict(), &tidb_datatype::SessionTimeZone::utc())
+            .map_err(|error| EvalError::Vector(error.to_string()))
+            .and_then(|converted| match converted.error {
+                None => Ok(converted.value),
+                Some(error) => Err(EvalError::Vector(error.message().to_owned())),
+            })?
         {
             Datum::VectorFloat32(value) => Ok(value),
             _ => unreachable!("a VectorFloat32 conversion returns a vector datum"),

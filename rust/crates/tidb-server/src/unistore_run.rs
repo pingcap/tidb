@@ -151,6 +151,7 @@ pub fn run_unistore_cluster_session(
                 cluster_upgrade: crate::node_status::cluster_upgrade(&factory),
                 flash_replica_deprecated: Some(crate::node_status::flash_replica_deprecated(&factory)),
                 extract_handle: factory.get_extract_handle(),
+                metrics_profile: Some(crate::node_status::metrics_profile_session(&factory)),
                 schema_reload: {
                     let ddl = Arc::clone(&factory.ddl);
                     Some(Arc::new(move || ddl.reload_schema()))

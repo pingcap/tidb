@@ -302,9 +302,12 @@ pub fn predicate_time_value(
         .field_type
         .clone();
     Datum::Time(value)
-        .convert_to(&field_type, ConversionFlags::from_bits(0))
-        .map(|converted| converted.value)
+        .convert_to_in_context(&field_type, &tidb_datatype::ConversionContext::strict(), &tidb_datatype::SessionTimeZone::utc())
         .map_err(|error| StatsWriteError::PredicateTime(format!("{value:?}: {error}")))
+        .and_then(|converted| match converted.error {
+            None => Ok(converted.value),
+            Some(error) => Err(StatsWriteError::PredicateTime(format!("{value:?}: {}", error.message()))),
+        })
 }
 
 fn loaded_topn_batches(table_id: i64, item: &ClusterStatsItem) -> Vec<Range<usize>> {
@@ -409,11 +412,15 @@ pub fn convert_bound_to_blob(bound: &Datum) -> Result<Datum, StatsWriteError> {
     }
     let blob = FieldType::new(FieldTypeCode::Blob).with_flen(UNSPECIFIED_LENGTH);
     bound
-        .convert_to(&blob, ConversionFlags::from_bits(0))
-        .map(|converted| match converted.value {
+        .convert_to_in_context(&blob, &tidb_datatype::ConversionContext::strict(), &tidb_datatype::SessionTimeZone::utc())
+        .map_err(|error| StatsWriteError::Bound(error.to_string()))
+        .and_then(|converted| match converted.error {
+            None => Ok(converted.value),
+            Some(error) => Err(StatsWriteError::Bound(error.message().to_owned())),
+        })
+        .map(|value| match value {
             Datum::String(string) => Datum::Bytes(string.bytes().to_vec()),
             other => other,
         })
-        .map_err(|error| StatsWriteError::Bound(error.to_string()))
 }
 

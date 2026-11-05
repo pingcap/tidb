@@ -1665,6 +1665,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_statement_phase_observer(self.statement_phase_observer())
                     .with_phase_durations(self.phase_durations_ref().clone())
                     .with_sql_cpu_usages(Some(Arc::clone(&self.sql_cpu_usages_ref())))
+                    .with_plan_cache_unqualified(Some(Arc::clone(self.plan_cache_unqualified_ref())))
                     .with_kv_exec_counter(self.statement_kv_exec_counter())
                     .with_statement_kv_context(Some(self.statement_kv_context_cell()))
                     .with_cop_response_sink(cop_response_sink.clone())
@@ -1830,6 +1831,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_statement_phase_observer(self.statement_phase_observer())
                 .with_phase_durations(self.phase_durations_ref().clone())
                 .with_sql_cpu_usages(Some(Arc::clone(&self.sql_cpu_usages_ref())))
+                .with_plan_cache_unqualified(Some(Arc::clone(self.plan_cache_unqualified_ref())))
                 .with_kv_exec_counter(self.statement_kv_exec_counter())
                 .with_statement_kv_context(Some(self.statement_kv_context_cell()))
                 .with_cop_response_sink(cop_response_sink.clone())
@@ -2376,6 +2378,8 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     fn session_memory_mut(&mut self) -> &mut crate::SessionMemory;
     /// Go `SessionVars` / `StmtCtx` state `sql_cpu_usages`, read.
     fn sql_cpu_usages_ref(&self) -> &Arc<tidb_ppcpuusage::SqlCpuUsages>;
+    /// Go `StmtCtx.PlanCacheTracker`'s unqualified reason, the statement's.
+    fn plan_cache_unqualified_ref(&self) -> &Arc<std::sync::Mutex<String>>;
     /// Go `SessionVars` / `StmtCtx` state `sql_cpu_usages`, mutably.
     fn sql_cpu_usages_mut(&mut self) -> &mut Arc<tidb_ppcpuusage::SqlCpuUsages>;
     /// Go `SessionVars` / `StmtCtx` state `staged_writes`, read.

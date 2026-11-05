@@ -696,7 +696,7 @@ fn truncate_chars(text: &str, limit: usize) -> String {
 }
 
 /// The statement's warning buffer as the conversion's warning sink.
-struct StatementWarnings<'a>(&'a StmtContext);
+pub(crate) struct StatementWarnings<'a>(pub(crate) &'a StmtContext);
 
 impl tidb_context::ConversionWarningAppender for StatementWarnings<'_> {
     fn append_conversion_warning(&self, warning: tidb_terror::TerrorError) {

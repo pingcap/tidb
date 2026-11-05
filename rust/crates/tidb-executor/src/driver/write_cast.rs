@@ -863,20 +863,22 @@ use tidb_charset::Collation;
         should_fail: bool,
     ) {
         let ctx = crate::StmtContext::for_dml(false, true, false);
-        // Go returns its best-effort value beside the error. Rust represents
-        // that pair as Converted { value, event }; recover that half before
-        // the write layer turns a non-silent event into DriverError.
+        // Go returns its best-effort value beside the error: assert both
+        // halves before the write layer turns the error into DriverError.
+        let zone = ctx.session_zone();
         let mut converted = input
-            .convert_to_in(
+            .convert_to_in_context(
                 field_type,
-                ctx.write_conversion_flags(),
-                &ctx.session_zone(),
+                &tidb_datatype::ConversionContext::new(
+                    ctx.write_conversion_flags(),
+                    tidb_datatype::ConversionLocation::from_time_zone(&zone),
+                    &tidb_context::IGNORE_CONVERSION_WARNINGS,
+                ),
+                &zone,
             )
             .unwrap();
         converted.value = truncate_trailing_spaces(converted.value, field_type);
-        let conversion_failed = converted.event.as_ref().is_some_and(|event| {
-            !matches!(event, tidb_datatype::ScalarConversionEvent::RoundedToScale)
-        });
+        let conversion_failed = converted.error.is_some();
         assert_eq!(
             conversion_failed, should_fail,
             "{input:?} -> {field_type:?}"
@@ -903,11 +905,20 @@ use tidb_charset::Collation;
 
         // Go returns the best-effort zero beside this error.  Rust separates
         // that conversion pair from the write Result, so assert both halves.
+        let zone = ctx.session_zone();
         let converted = Datum::new_string_datum("test")
-            .convert_to_in(&integer, ctx.write_conversion_flags(), &ctx.session_zone())
+            .convert_to_in_context(
+                &integer,
+                &tidb_datatype::ConversionContext::new(
+                    ctx.write_conversion_flags(),
+                    tidb_datatype::ConversionLocation::from_time_zone(&zone),
+                    &tidb_context::IGNORE_CONVERSION_WARNINGS,
+                ),
+                &zone,
+            )
             .unwrap();
         assert_eq!(converted.value, Datum::Int(0));
-        assert!(converted.event.is_some());
+        assert!(converted.error.is_some());
         assert!(cast_value(Datum::new_string_datum("test"), &integer, "", &ctx, false).is_err());
 
         let plain_string = FieldType::new(FieldTypeCode::String);

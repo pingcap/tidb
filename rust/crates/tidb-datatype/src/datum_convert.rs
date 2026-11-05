@@ -60,7 +60,7 @@ impl Datum {
     /// keeps the zone-free callers unchanged by supplying UTC; a caller that
     /// owns a session zone must use [`Datum::convert_to_in`], because a
     /// `TIMESTAMP` target is range-checked in that zone.
-    pub fn convert_to(
+    pub(crate) fn convert_to(
         &self,
         target: &FieldType,
         flags: ConversionFlags,
@@ -76,7 +76,7 @@ impl Datum {
     /// against `MinTimestamp`/`MaxTimestamp`, so which literals a
     /// `TIMESTAMP` column admits MOVES with the session zone -- on the write
     /// path and on the DDL `DEFAULT` path alike.
-    pub fn convert_to_in(
+    pub(crate) fn convert_to_in(
         &self,
         target: &FieldType,
         flags: ConversionFlags,

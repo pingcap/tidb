@@ -1022,3 +1022,20 @@ pub(crate) fn setup_top_profiling(factory: &Arc<Domain>) {
         None,
     );
 }
+
+/// Go `ProfileHandler`'s `session.CreateSession(h.Store)`: one system session
+/// per request, its restricted SQL the metric profile's queries.
+pub(crate) fn metrics_profile_session(factory: &Arc<Domain>) -> crate::tikv_handler::MetricsProfileSession {
+    use tidb_session::domain::cluster_session_node::DomainSessions as _;
+    let factory = Arc::clone(factory);
+    Arc::new(move |body| {
+        let session = factory.open_system_session().map_err(|error| error.message)?;
+        let session = std::cell::RefCell::new(session);
+        body(&|sql| {
+            session
+                .borrow_mut()
+                .exec_restricted_sql_rows(sql)
+                .map_err(|error| error.to_mysql_error().message)
+        })
+    })
+}

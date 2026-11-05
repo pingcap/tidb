@@ -52,18 +52,23 @@ fn convert(
     let Some(column) = column else {
         return Ok(value);
     };
+    let zone = ctx.get_expr_ctx().get_eval_ctx().time_zone();
     value
-        .convert_to_in(
+        .convert_to_in_context(
             column,
-            ctx.get_expr_ctx().get_eval_ctx().type_ctx_flags(),
-            &ctx.get_expr_ctx().get_eval_ctx().time_zone(),
+            &tidb_datatype::ConversionContext::new(
+                ctx.get_expr_ctx().get_eval_ctx().type_ctx_flags(),
+                tidb_datatype::ConversionLocation::from_time_zone(&zone),
+                &tidb_context::IGNORE_CONVERSION_WARNINGS,
+            ),
+            &zone,
         )
-        .map(|converted| converted.value)
-        .map_err(|error| {
-            tidb_terror::MysqlError::from_terror(&tidb_util::misc::syntax_error(
-                error.to_string(),
-            ))
+        .map_err(|error| error.to_string())
+        .and_then(|converted| match converted.error {
+            None => Ok(converted.value),
+            Some(error) => Err(error.message().to_owned()),
         })
+        .map_err(|error| tidb_terror::MysqlError::from_terror(&tidb_util::misc::syntax_error(error)))
 }
 
 fn compare(left: &Datum, right: &Datum) -> Result<std::cmp::Ordering, MysqlError> {

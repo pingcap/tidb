@@ -144,9 +144,19 @@ pub fn origin_default(column: &ColumnInfo, table: &str) -> Result<Datum, RowEnco
             | tidb_datatype::ConversionFlags::IGNORE_INVALID_DATE_ERR,
     );
     datum
-        .convert_to(&column.field_type, flags)
+        .convert_to_in_context(
+            &column.field_type,
+            &tidb_datatype::ConversionContext::new(
+                flags,
+                tidb_datatype::ConversionLocation::UTC,
+                &tidb_context::IGNORE_CONVERSION_WARNINGS,
+            ),
+            &tidb_datatype::SessionTimeZone::utc(),
+        )
+        .ok()
+        .filter(|converted| converted.error.is_none())
         .map(|converted| converted.value)
-        .map_err(|_| unmaterialisable(column, table))
+        .ok_or_else(|| unmaterialisable(column, table))
 }
 
 /// Go `getColDefaultValue` evaluates the clock words through `GetTimeValue`

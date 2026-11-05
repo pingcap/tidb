@@ -131,18 +131,23 @@ fn convert_column_value(
     field_type: &FieldType,
     ctx: &tidb_metabuild::Context,
 ) -> Result<Datum, MysqlError> {
+    let zone = ctx.get_expr_ctx().get_eval_ctx().time_zone();
     let converted = value
-        .convert_to_in(
+        .convert_to_in_context(
             field_type,
-            ctx.get_expr_ctx().get_eval_ctx().type_ctx_flags(),
-            &ctx.get_expr_ctx().get_eval_ctx().time_zone(),
+            &tidb_datatype::ConversionContext::new(
+                ctx.get_expr_ctx().get_eval_ctx().type_ctx_flags(),
+                tidb_datatype::ConversionLocation::from_time_zone(&zone),
+                &tidb_context::IGNORE_CONVERSION_WARNINGS,
+            ),
+            &zone,
         )
         .map_err(|_| {
             tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.gen_with_stack_by_args(&[]),
             )
         })?;
-    if converted.event.is_some() {
+    if converted.error.is_some() {
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.gen_with_stack_by_args(&[]),
         ));

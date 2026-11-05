@@ -57,5 +57,8 @@ tidb-ttl = { path = "../tidb-ttl" }
 tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
 
+[dev-dependencies]
+tidb-exprstatic = { path = "../tidb-exprstatic" }
+
 [lints]
 workspace = true

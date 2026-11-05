@@ -150,10 +150,6 @@ impl From<CastError> for ColumnError {
     }
 }
 
-/// DDL's legacy value/event callers treat scale rounding as nonfatal.
-pub fn conversion_event_is_silent(event: &tidb_datatype::ScalarConversionEvent) -> bool {
-    matches!(event, tidb_datatype::ScalarConversionEvent::RoundedToScale)
-}
 
 /// Go `table.CastValue`: the raw conversion before an INSERT/UPDATE caller
 /// completes its error, including the exceptional `forceIgnoreTruncate`

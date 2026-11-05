@@ -648,6 +648,26 @@ impl Session {
         }
     }
 
+    /// Go `PlanCacheTracker.warnSkipPlanCache` for a prepared execution:
+    /// the statement's unqualified reason (the first one recorded) and the
+    /// `skip prepared plan-cache: <reason>` warning.
+    fn warn_skip_prepared_plan_cache(&mut self, reason: &str) {
+        {
+            let mut unqualified = self
+                .statement_plan_cache_unqualified
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if unqualified.is_empty() {
+                reason.clone_into(&mut unqualified);
+            }
+        }
+        self.append_warning(
+            tidb_context::WarningLevel::Warning,
+            1105,
+            format!("skip prepared plan-cache: {reason}"),
+        );
+    }
+
     pub(crate) fn prepare_bound_execution(
         &mut self,
         sql: &str,
@@ -657,11 +677,7 @@ impl Session {
         let parameters = tidb_executor::bound_parameter_values(&mut stmt)?;
         self.begin_prepared_statement_boundary(&stmt, parameters);
         if let Some(reason) = self.pending_plan_cache_refusal.take() {
-            self.append_warning(
-                tidb_context::WarningLevel::Warning,
-                1105,
-                format!("skip prepared plan-cache: {reason}"),
-            );
+            self.warn_skip_prepared_plan_cache(reason);
         }
         // The plan-cache refusal warnings land AFTER the boundary reset so
         // they survive it: go records the refusals on every EXECUTE (oracle
@@ -672,17 +688,9 @@ impl Session {
             self.prepared_statement_cacheable(&mut stmt, &catalog)
         };
         if let Err(reason) = cacheable {
-            self.append_warning(
-                tidb_context::WarningLevel::Warning,
-                1105,
-                format!("skip prepared plan-cache: {reason}"),
-            );
+            self.warn_skip_prepared_plan_cache(&reason);
         } else if tidb_executor::compiler::prepared::plans_over_table_dual(&stmt) {
-            self.append_warning(
-                tidb_context::WarningLevel::Warning,
-                1105,
-                "skip prepared plan-cache: get a TableDual plan".to_owned(),
-            );
+            self.warn_skip_prepared_plan_cache("get a TableDual plan");
         }
         self.prepare_parsed_statement_with_optional_physical_plan(
             sql,

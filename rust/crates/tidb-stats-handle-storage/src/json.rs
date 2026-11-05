@@ -638,14 +638,25 @@ fn column_from_json(
         for bucket in &mut histogram.buckets {
             for bound in [&mut bucket.lower_bound, &mut bucket.upper_bound] {
                 let converted = bound
-                    .convert_to_in(
+                    .convert_to_in_context(
                         &column.field_type,
-                        STATS_CONVERSION_FLAGS,
+                        &tidb_datatype::ConversionContext::new(
+                            STATS_CONVERSION_FLAGS,
+                            tidb_datatype::ConversionLocation::UTC,
+                            &tidb_context::IGNORE_CONVERSION_WARNINGS,
+                        ),
                         &SessionTimeZone::utc(),
                     )
                     .map_err(|error| {
                         LoadStatsError::Convert(format!("column `{}`: {error:?}", column.name.original()))
                     })?;
+                if let Some(error) = converted.error {
+                    return Err(LoadStatsError::Convert(format!(
+                        "column `{}`: {}",
+                        column.name.original(),
+                        error.message()
+                    )));
+                }
                 *bound = converted.value;
             }
         }

@@ -1351,6 +1351,13 @@ impl tidb_executor::exec_stmt_observation::ExecStmtObservation for Session {
         self.sql_cpu_usages.get_cpu_usages().tidb_cpu_time
     }
 
+    fn plan_cache_unqualified(&self) -> String {
+        self.statement_plan_cache_unqualified
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
     fn sql_tikv_cpu_time(&self) -> i64 {
         self.sql_cpu_usages.get_cpu_usages().tikv_cpu_time
     }

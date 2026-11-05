@@ -238,3 +238,81 @@ impl FlashReplicaDeprecated {
         ddl_result
     }
 }
+
+/// Go `sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL` on the session
+/// Go `ProfileHandler` creates per request (`session.CreateSession`): the
+/// caller's body runs with one session's SQL runner.
+pub(crate) type MetricsProfileSession = Arc<
+    dyn Fn(
+            &mut dyn FnMut(&dyn Fn(&str) -> Result<Vec<Vec<tidb_datatype::Datum>>, String>) -> Result<Vec<u8>, String>,
+        ) -> Result<Vec<u8>, String>
+        + Send
+        + Sync,
+>;
+
+/// The session location's abbreviation at `time` when `time` is in its
+/// offset (Go `ParseInLocation`'s zone naming), else none.
+fn local_profile_time(time: chrono::DateTime<chrono::FixedOffset>) -> tidb_executor::inspection_profile::ProfileTime {
+    use chrono::Offset as _;
+    let offset = time.offset().local_minus_utc();
+    let zone_abbreviation = match tidb_timeutil::system_location() {
+        tidb_timeutil::TimeZone::Named(tz) => {
+            let local = time.with_timezone(&tz);
+            (local.offset().fix().local_minus_utc() == offset).then(|| local.format("%Z").to_string())
+        }
+        tidb_timeutil::TimeZone::Fixed { name, offset_secs } => (offset_secs == offset).then_some(name),
+        // chrono names no abbreviation for the process-local zone.
+        tidb_timeutil::TimeZone::Local => None,
+    };
+    tidb_executor::inspection_profile::ProfileTime { time, zone_abbreviation }
+}
+
+/// Go `ProfileHandler.ServeHTTP` (`/metrics/profile`): the metric profile of
+/// `[start, end]` (RFC 3339 in the session location; `end` defaults to now
+/// and `start` to ten minutes before it) by `type` (`sum`, `avg` or
+/// `count`), as graphviz `dot`. Go `handler.WriteError` answers 400 with the
+/// error text.
+pub(crate) fn metrics_profile_response(path: &str, session: Option<&MetricsProfileSession>) -> Option<(u16, String)> {
+    let (route, query) = path.split_once('?').unwrap_or((path, ""));
+    if route != "/metrics/profile" {
+        return None;
+    }
+    let Some(session) = session else {
+        return Some((400, "metric profile has no session on this node".to_owned()));
+    };
+    let form_value = |key: &str| {
+        query
+            .split('&')
+            .filter_map(|pair| pair.split_once('=').or(Some((pair, ""))))
+            .find(|(name, _)| crate::mvcc_routes::query_unescape(name).is_ok_and(|name| name == key))
+            .map_or(Ok(String::new()), |(_, value)| crate::mvcc_routes::query_unescape(value))
+    };
+    let parse = |key: &str| -> Result<Option<chrono::DateTime<chrono::FixedOffset>>, String> {
+        let value = form_value(key)?;
+        if value.is_empty() {
+            return Ok(None);
+        }
+        chrono::DateTime::parse_from_rfc3339(&value)
+            .map(Some)
+            .map_err(|error| format!("parsing time {value:?} as \"2006-01-02T15:04:05Z07:00\": {error}"))
+    };
+    let result = (|| -> Result<Vec<u8>, String> {
+        let end = parse("end")?.unwrap_or_else(|| chrono::Local::now().fixed_offset());
+        let start = parse("start")?.unwrap_or_else(|| end - chrono::Duration::minutes(10));
+        let value_tp = form_value("type")?;
+        session(&mut |exec| {
+            let mut pb = tidb_executor::inspection_profile::ProfileBuilder::new(
+                exec,
+                local_profile_time(start),
+                local_profile_time(end),
+                &value_tp,
+            )?;
+            pb.collect()?;
+            Ok(pb.build())
+        })
+    })();
+    Some(match result {
+        Ok(dot) => (200, String::from_utf8_lossy(&dot).into_owned()),
+        Err(error) => (400, error),
+    })
+}

@@ -30,18 +30,19 @@ pub use crate::point_get_value::point_get_value;
 /// `d.ConvertTo` reports `types.ErrOverflow`, and `tryPointGetPlan` then plans
 /// a `TableDual`: a value outside the column's domain can equal no stored
 /// value, so the statement's answer is the empty set. Rust's callers use this
-/// to answer the same empty set without a storage read. The event, not the
-/// value, is the signal: `convert_to` clamps to a representable value and
-/// records the overflow.
+/// to answer the same empty set without a storage read.
 pub fn point_get_value_overflowed(column: &FieldType, value: &Datum) -> bool {
     if value.is_null() || !check_can_convert_in_point_get(column, value) {
         return false;
     }
-    match value.convert_to(column, tidb_datatype::STRICT_FLAGS) {
-        Ok(converted) => matches!(
-            converted.event,
-            Some(tidb_datatype::ScalarConversionEvent::Overflow(_))
-        ),
+    match value.convert_to_in_context(
+        column,
+        &tidb_datatype::ConversionContext::strict(),
+        &tidb_datatype::SessionTimeZone::utc(),
+    ) {
+        Ok(converted) => converted
+            .error
+            .is_some_and(|error| tidb_datatype::types_errors::ERR_OVERFLOW.equal(Some(&error))),
         Err(_) => false,
     }
 }

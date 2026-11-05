@@ -850,6 +850,9 @@ pub struct Session {
     /// Go `SessionVars.SQLCPUUsages`: the running statement's TiDB and TiKV
     /// CPU time.
     sql_cpu_usages: Arc<tidb_ppcpuusage::SqlCpuUsages>,
+    /// Go `StmtCtx.PlanCacheUnqualified()`: why the running statement's
+    /// plan cache was refused, the first reason recorded.
+    statement_plan_cache_unqualified: Arc<Mutex<String>>,
     /// Go `SessionVars.RUV2PendingSessionParserTotal`.
     ruv2_pending_session_parser_total: i64,
     /// Set while a binary-protocol EXECUTE runs. Go keeps the plan detail out
@@ -1040,6 +1043,7 @@ impl Session {
             process_plan_info: Arc::default(),
             phase_durations: Default::default(),
             sql_cpu_usages: Arc::default(),
+            statement_plan_cache_unqualified: Arc::default(),
             ruv2_pending_session_parser_total: 0,
             binary_prepared_execution: false,
             node: Some(node),

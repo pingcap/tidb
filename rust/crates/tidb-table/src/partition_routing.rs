@@ -404,16 +404,21 @@ fn partition_column_tuple<S: crate::generated_column::GeneratedColumnSlot>(
         let offset = crate::generated_column::offset_of(columns, name).ok_or_else(|| {
             RoutingError::Conversion(format!("partition column '{name}' no longer exists"))
         })?;
+        let zone = ctx.time_zone();
         let converted = row
             .get(offset)
             .unwrap_or(&Datum::Null)
-            .convert_to_in(
+            .convert_to_in_context(
                 field_type,
-                tidb_datatype::ConversionFlags::default(),
-                &ctx.time_zone(),
+                &tidb_datatype::ConversionContext::new(
+                    tidb_datatype::ConversionFlags::default(),
+                    tidb_datatype::ConversionLocation::from_time_zone(&zone),
+                    &tidb_context::IGNORE_CONVERSION_WARNINGS,
+                ),
+                &zone,
             )
             .map_err(|error| RoutingError::Conversion(error.to_string()))?;
-        if converted.event.is_some() {
+        if converted.error.is_some() {
             return Err(RoutingError::Conversion(format!(
                 "partition column '{name}' does not convert exactly"
             )));
@@ -640,12 +645,13 @@ pub fn locate_hash_partition(value: &Datum, num: u64) -> Result<usize, RoutingEr
         other => {
             let rejected = || RoutingError::ValueOverflowsBigint(overflow_text(other));
             let converted = other
-                .convert_to(
+                .convert_to_in_context(
                     &tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                    tidb_datatype::ConversionFlags::from_bits(0),
+                    &tidb_datatype::ConversionContext::strict(),
+                    &tidb_datatype::SessionTimeZone::utc(),
                 )
                 .map_err(|_| rejected())?;
-            if converted.event.is_some() {
+            if converted.error.is_some() {
                 return Err(rejected());
             }
             match converted.value {
@@ -749,6 +755,50 @@ mod tests {
         );
     }
     use super::*;
+
+    /// A column a COLUMNS partition names, for the tuple tests.
+    struct Slot(&'static str, FieldType);
+
+    impl crate::generated_column::GeneratedColumnSlot for Slot {
+        fn generation(&self) -> Option<&crate::generated_column::GeneratedColumn> {
+            None
+        }
+        fn column_type(&self) -> FieldType {
+            self.1.clone()
+        }
+        fn column_name(&self) -> String {
+            self.0.to_owned()
+        }
+    }
+
+    /// Go's COLUMNS partition locate converts each value to its column's
+    /// type with the statement's `TypeCtx`; a value that does not convert
+    /// (`ConvertTo`'s error) routes nowhere.
+    #[test]
+    fn a_columns_partition_value_must_convert_to_its_column() {
+        let int = FieldType::new(tidb_datatype::FieldTypeCode::Long);
+        let columns = [Slot("a", int.clone())];
+        let names = ["a".to_owned()];
+        let tuple = partition_column_tuple(
+            &[Datum::new_string_datum("12")],
+            &columns,
+            &names,
+            std::slice::from_ref(&int),
+            &tidb_exprctx::NoColumns,
+        )
+        .expect("an integer string converts");
+        assert_eq!(tuple, [Datum::Int(12)]);
+        assert!(matches!(
+            partition_column_tuple(
+                &[Datum::new_string_datum("1x")],
+                &columns,
+                &names,
+                std::slice::from_ref(&int),
+                &tidb_exprctx::NoColumns,
+            ),
+            Err(RoutingError::Conversion(_))
+        ));
+    }
 
     /// Every hash routing this unit captured from real TiDB, as the rule
     /// rather than as the SQL: `|v| mod n`, NULL to the first partition.

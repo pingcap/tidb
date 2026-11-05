@@ -115,6 +115,8 @@ pub struct StatusRoutes {
     pub flash_replica_deprecated: Option<crate::tikv_handler::FlashReplicaDeprecated>,
     /// Go `s.dom.GetExtractHandle()` for `/extract_task/dump`.
     pub extract_handle: Option<Arc<tidb_domain::extract::ExtractHandle>>,
+    /// Go `ProfileHandler`'s session for `/metrics/profile`.
+    pub metrics_profile: Option<crate::tikv_handler::MetricsProfileSession>,
 }
 
 /// Go `StatsHandle().GetPriorityQueueSnapshot()` marshaled.
@@ -691,6 +693,10 @@ fn route_response(
         }
     } else if route == "/debug/gogc" {
         debug_gogc_response(request)
+    } else if let Some((code, body)) =
+        crate::tikv_handler::metrics_profile_response(path, routes.metrics_profile.as_ref())
+    {
+        (code, "text/plain; charset=utf-8", body)
     } else if let Some(answer) = crate::tikv_handler::flash_replica_deprecated_response(
         path,
         request,
@@ -2256,6 +2262,41 @@ mod schema_route_tests {
             .sample
             .iter()
             .any(|sample| sample.label.iter().any(|label| text(label.str) == "select ?")));
+    }
+
+    /// Go `ProfileHandler` (`/metrics/profile`): the `dot` graph of the
+    /// window's `metrics_schema` rows, each request on a session of its own;
+    /// a bad `type` or time is `WriteError`'s 400 with the error text.
+    #[test]
+    fn metrics_profile_route_draws_the_window_from_metrics_schema() {
+        let queries = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = Arc::clone(&queries);
+        let session: crate::tikv_handler::MetricsProfileSession = Arc::new(move |body| {
+            body(&|sql| {
+                seen.lock().unwrap().push(sql.to_owned());
+                Ok(Vec::new())
+            })
+        });
+        let routes = StatusRoutes { metrics_profile: Some(session), ..StatusRoutes::default() };
+        let (code, header, body) = routed(
+            "/metrics/profile?start=2026-11-05T00%3A00%3A00Z&end=2026-11-05T00%3A10%3A00Z&type=count",
+            &routes,
+        );
+        let body = String::from_utf8(body).unwrap();
+        assert_eq!((code, header.as_str()), (200, "text/plain; charset=utf-8|"), "{body}");
+        assert!(body.starts_with("digraph \"tidb_profile\" {\n"), "{body}");
+        assert!(body.contains("Type: tidb_query_total_count"), "{body}");
+        assert!(body.contains("Duration: 10m0s"), "{body}");
+        assert!(queries.lock().unwrap()[0].contains("time >= '2026-11-05 00:00:00' and time <= '2026-11-05 00:10:00'"));
+
+        let (code, _, body) = routed("/metrics/profile?type=max", &routes);
+        assert_eq!(code, 400);
+        assert_eq!(
+            String::from_utf8(body).unwrap(),
+            "unknown metric profile type: max, expect value should be one of 'sum', 'avg' or 'count'"
+        );
+        let (code, _, _) = routed("/metrics/profile?end=yesterday", &routes);
+        assert_eq!(code, 400);
     }
 
     /// Go `StatsPriorityQueueHandler`: the snapshot through `WriteData`,

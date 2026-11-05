@@ -55,7 +55,7 @@
 use tidb_ast::Expr;
 use tidb_terror::MysqlError;
 use tidb_datatype::{
-    ConversionFlags, Converted, Datum, DatumValueError, FieldType, FieldTypeCode, SessionTimeZone,
+    ConversionFlags, Datum, DatumValueError, FieldType, FieldTypeCode, SessionTimeZone,
 };
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::{rewrite_expr_resolved, NoResolver};
@@ -800,20 +800,21 @@ pub fn on_update_current_timestamp(
 /// zone, so Go reads it in `timeutil.SystemLocation()`. After parsing in that
 /// source zone, Go projects every nonzero timestamp into the session zone.
 ///
-/// The conversion event belongs to the original cast. Reprojection changes
-/// only the produced wall clock and deliberately leaves that event intact.
+/// The conversion error belongs to the original cast (`ctx`'s
+/// `HandleTruncate`). Reprojection changes only the produced wall clock and
+/// deliberately leaves that error intact.
 pub fn materialize_stored_literal(
     stored: &Datum,
     field_type: &FieldType,
     column_info_version: u64,
-    flags: ConversionFlags,
+    ctx: &tidb_datatype::ConversionContext<'_>,
     session_zone: &SessionTimeZone,
-) -> Result<Converted<Datum>, DatumValueError> {
+) -> Result<tidb_datatype::DatumConversion, DatumValueError> {
     materialize_stored_literal_with_system_zone(
         stored,
         field_type,
         column_info_version,
-        flags,
+        ctx,
         session_zone,
         system_location_as_session_zone,
     )
@@ -833,12 +834,12 @@ fn materialize_stored_literal_with_system_zone(
     stored: &Datum,
     field_type: &FieldType,
     column_info_version: u64,
-    flags: ConversionFlags,
+    ctx: &tidb_datatype::ConversionContext<'_>,
     session_zone: &SessionTimeZone,
     system_zone: impl FnOnce() -> SessionTimeZone,
-) -> Result<Converted<Datum>, DatumValueError> {
+) -> Result<tidb_datatype::DatumConversion, DatumValueError> {
     if field_type.code() != FieldTypeCode::Timestamp {
-        return stored.convert_to_in(field_type, flags, session_zone);
+        return stored.convert_to_in_context(field_type, ctx, session_zone);
     }
 
     let utc = SessionTimeZone::utc();
@@ -849,7 +850,9 @@ fn materialize_stored_literal_with_system_zone(
         resolved_system_zone = system_zone();
         &resolved_system_zone
     };
-    let mut converted = stored.convert_to_in(field_type, flags, source_zone)?;
+    let source_ctx =
+        ctx.with_location(tidb_datatype::ConversionLocation::from_time_zone(source_zone));
+    let mut converted = stored.convert_to_in_context(field_type, &source_ctx, source_zone)?;
     let Datum::Time(time) = &mut converted.value else {
         return Ok(converted);
     };
@@ -880,15 +883,22 @@ pub fn evaluate(
         let ColumnDefault::Value(value) = default else {
             unreachable!("a default is settled or computed")
         };
+        let zone = ctx.time_zone();
         return materialize_stored_literal(
             value,
             field_type,
             column_info_version,
-            flags,
-            &ctx.time_zone(),
+            &tidb_datatype::ConversionContext::new(
+                flags,
+                tidb_datatype::ConversionLocation::from_time_zone(&zone),
+                &tidb_context::IGNORE_CONVERSION_WARNINGS,
+            ),
+            &zone,
         )
+        .ok()
+        .filter(|converted| converted.error.is_none())
         .map(|converted| converted.value)
-        .map_err(|_| tidb_exprctx::EvalError::Unsupported("a stored DEFAULT the column cannot hold"));
+        .ok_or(tidb_exprctx::EvalError::Unsupported("a stored DEFAULT the column cannot hold"));
     };
     let value = computed.expr.as_ref().map_err(Clone::clone)?.eval(ctx, row)?;
     if value.is_null() {
@@ -897,15 +907,30 @@ pub fn evaluate(
     // Go `CastColumnValue`: the computed value is cast into the column's own
     // type before it is stored, which is what gives a `TIMESTAMP(0)` column a
     // second-resolution reading of a clock that has more.
+    let zone = ctx.time_zone();
     value
-        .convert_to_in(field_type, flags, &ctx.time_zone())
-        .map(|converted| converted.value)
+        .convert_to_in_context(
+            field_type,
+            &tidb_datatype::ConversionContext::new(
+                flags,
+                tidb_datatype::ConversionLocation::from_time_zone(&zone),
+                &tidb_context::IGNORE_CONVERSION_WARNINGS,
+            ),
+            &zone,
+        )
         .map_err(|error| {
             if field_type.code() == FieldTypeCode::VectorFloat32 {
                 tidb_exprctx::EvalError::Vector(error.to_string())
             } else {
                 tidb_exprctx::EvalError::Unsupported("a computed DEFAULT the column cannot hold")
             }
+        })
+        .and_then(|converted| match converted.error {
+            None => Ok(converted.value),
+            Some(error) if field_type.code() == FieldTypeCode::VectorFloat32 => {
+                Err(tidb_exprctx::EvalError::Vector(error.message().to_owned()))
+            }
+            Some(error) => Err(tidb_exprctx::EvalError::Conversion(error)),
         })
 }
 
@@ -1044,7 +1069,25 @@ mod tests {
         }
     }
 
-    fn materialized_time_text(converted: &Converted<Datum>) -> String {
+    /// Records what the conversion appends (Go's `ctx.AppendWarning`).
+    #[derive(Default)]
+    struct Warnings(std::cell::RefCell<Vec<tidb_terror::TerrorError>>);
+
+    impl tidb_context::ConversionWarningAppender for Warnings {
+        fn append_conversion_warning(&self, warning: tidb_terror::TerrorError) {
+            self.0.borrow_mut().push(warning);
+        }
+    }
+
+    fn strict_in<'a>(zone: &SessionTimeZone, warnings: &'a Warnings) -> tidb_datatype::ConversionContext<'a> {
+        tidb_datatype::ConversionContext::new(
+            STRICT_FLAGS,
+            tidb_datatype::ConversionLocation::from_time_zone(zone),
+            warnings,
+        )
+    }
+
+    fn materialized_time_text(converted: &tidb_datatype::DatumConversion) -> String {
         match &converted.value {
             Datum::Time(time) => time.to_string(),
             other => panic!("expected materialized time, got {other:?}"),
@@ -1064,16 +1107,18 @@ mod tests {
             (&utc, "2020-01-02 00:00:00"),
             (&plus_eight, "2020-01-02 08:00:00"),
         ] {
+            let warnings = Warnings::default();
             let converted = materialize_stored_literal(
                 &stored,
                 &field_type,
                 COLUMN_INFO_VERSION1,
-                STRICT_FLAGS,
+                &strict_in(consumer, &warnings),
                 consumer,
             )
             .unwrap();
             assert_eq!(materialized_time_text(&converted), expected);
-            assert_eq!(converted.event, None);
+            assert!(converted.error.is_none());
+            assert!(warnings.0.borrow().is_empty());
         }
     }
 
@@ -1082,11 +1127,12 @@ mod tests {
         let stored = Datum::new_string_datum("2020-01-02 08:00:00");
         let field_type = FieldType::new(FieldTypeCode::Timestamp);
         let system_plus_eight = fixed_zone("System", 8 * 60 * 60);
+        let warnings = Warnings::default();
         let converted = materialize_stored_literal_with_system_zone(
             &stored,
             &field_type,
             COLUMN_INFO_VERSION0,
-            STRICT_FLAGS,
+            &strict_in(&SessionTimeZone::utc(), &warnings),
             &SessionTimeZone::utc(),
             || system_plus_eight.clone(),
         )
@@ -1099,12 +1145,17 @@ mod tests {
     fn zero_timestamp_is_not_projected() {
         let stored = Datum::new_string_datum("0000-00-00 00:00:00");
         let field_type = FieldType::new(FieldTypeCode::Timestamp);
+        let zone = fixed_zone("+08:00", 8 * 60 * 60);
         let converted = materialize_stored_literal(
             &stored,
             &field_type,
             COLUMN_INFO_VERSION1,
-            tidb_datatype::DEFAULT_STATEMENT_FLAGS,
-            &fixed_zone("+08:00", 8 * 60 * 60),
+            &tidb_datatype::ConversionContext::new(
+                tidb_datatype::DEFAULT_STATEMENT_FLAGS,
+                tidb_datatype::ConversionLocation::from_time_zone(&zone),
+                &tidb_context::IGNORE_CONVERSION_WARNINGS,
+            ),
+            &zone,
         )
         .unwrap();
 
@@ -1112,7 +1163,7 @@ mod tests {
     }
 
     #[test]
-    fn non_timestamp_uses_consumer_conversion_and_preserves_event() {
+    fn non_timestamp_uses_consumer_conversion_and_preserves_error() {
         let field_type = FieldType::new(FieldTypeCode::LongLong);
         let temporal = Datum::new_time(
             Time::new(
@@ -1128,38 +1179,33 @@ mod tests {
             (&utc, Datum::Int(20_110_313_020_000)),
             (&los_angeles, Datum::Int(20_110_313_030_000)),
         ] {
+            let warnings = Warnings::default();
             let converted = materialize_stored_literal(
                 &temporal,
                 &field_type,
                 COLUMN_INFO_VERSION1,
-                STRICT_FLAGS,
+                &strict_in(consumer, &warnings),
                 consumer,
             )
             .unwrap();
             assert_eq!(converted.value, expected);
         }
 
+        // Go `ConvertTo` under strict flags: the truncated prefix and
+        // `ErrTruncatedWrongVal` through `HandleTruncate`.
         let stored = Datum::new_string_datum("12x");
         let consumer = fixed_zone("+08:00", 8 * 60 * 60);
-        let expected = stored
-            .convert_to_in(&field_type, STRICT_FLAGS, &consumer)
-            .unwrap();
-        assert_eq!(
-            expected.event,
-            Some(tidb_datatype::ScalarConversionEvent::Truncated)
-        );
-
-        assert_eq!(
-            materialize_stored_literal(
-                &stored,
-                &field_type,
-                COLUMN_INFO_VERSION1,
-                STRICT_FLAGS,
-                &consumer,
-            )
-            .unwrap(),
-            expected
-        );
+        let warnings = Warnings::default();
+        let converted = materialize_stored_literal(
+            &stored,
+            &field_type,
+            COLUMN_INFO_VERSION1,
+            &strict_in(&consumer, &warnings),
+            &consumer,
+        )
+        .unwrap();
+        assert_eq!(converted.value, Datum::Int(12));
+        assert!(converted.error.is_some());
     }
 
     #[test]
@@ -1181,21 +1227,21 @@ mod tests {
         );
         let field_type = FieldType::new(FieldTypeCode::Timestamp);
         let system_zone = SessionTimeZone::Named(chrono_tz::America::Los_Angeles);
+        let warnings = Warnings::default();
         let converted = materialize_stored_literal_with_system_zone(
             &stored,
             &field_type,
             COLUMN_INFO_VERSION0,
-            STRICT_FLAGS,
+            &strict_in(&SessionTimeZone::utc(), &warnings),
             &SessionTimeZone::utc(),
             || system_zone.clone(),
         )
         .unwrap();
 
         assert_eq!(materialized_time_text(&converted), "2011-03-13 10:00:00");
-        assert_eq!(
-            converted.event,
-            Some(tidb_datatype::ScalarConversionEvent::TimestampInDSTTransition)
-        );
+        // Go appends `ErrTimestampInDSTTransition` as a warning.
+        assert!(converted.error.is_none());
+        assert_eq!(warnings.0.borrow().len(), 1);
     }
 
     #[test]
@@ -1213,11 +1259,12 @@ mod tests {
         );
         let field_type = FieldType::new(FieldTypeCode::Timestamp);
         let system_zone = SessionTimeZone::Named(chrono_tz::America::Los_Angeles);
+        let warnings = Warnings::default();
         let error = materialize_stored_literal_with_system_zone(
             &stored,
             &field_type,
             COLUMN_INFO_VERSION0,
-            STRICT_FLAGS,
+            &strict_in(&SessionTimeZone::utc(), &warnings),
             &SessionTimeZone::utc(),
             || system_zone.clone(),
         )

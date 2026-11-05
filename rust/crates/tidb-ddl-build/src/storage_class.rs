@@ -715,13 +715,19 @@ fn compare_range_columns_partition_values(
         let expr = tidb_model::generated_expr::parse_expression(text).ok()?;
         let value = tidb_table::partition_fold::eval_column_value(&expr, ctx).ok()?;
         // Go casts with `WithCastExprTo`; a lossy cast only warns.
+        let zone = ctx.get_expr_ctx().get_eval_ctx().time_zone();
         value
-            .convert_to_in(
+            .convert_to_in_context(
                 column,
-                ctx.get_expr_ctx().get_eval_ctx().type_ctx_flags(),
-                &ctx.get_expr_ctx().get_eval_ctx().time_zone(),
+                &tidb_datatype::ConversionContext::new(
+                    ctx.get_expr_ctx().get_eval_ctx().type_ctx_flags(),
+                    tidb_datatype::ConversionLocation::from_time_zone(&zone),
+                    &tidb_context::IGNORE_CONVERSION_WARNINGS,
+                ),
+                &zone,
             )
             .ok()
+            .filter(|converted| converted.error.is_none())
             .map(|converted| converted.value)
     };
     let (Some(left), Some(right_value)) = (cast(left), cast(&right)) else {
@@ -787,13 +793,19 @@ fn get_range_value(text: &str, unsigned: bool, ctx: &tidb_metabuild::Context) ->
         target.add_flags(FieldTypeFlags::UNSIGNED);
     }
     // Go `EvalInt`: a NULL result is not a range value.
+    let zone = ctx.get_expr_ctx().get_eval_ctx().time_zone();
     match value
-        .convert_to_in(
+        .convert_to_in_context(
             &target,
-            ctx.get_expr_ctx().get_eval_ctx().type_ctx_flags(),
-            &ctx.get_expr_ctx().get_eval_ctx().time_zone(),
+            &tidb_datatype::ConversionContext::new(
+                ctx.get_expr_ctx().get_eval_ctx().type_ctx_flags(),
+                tidb_datatype::ConversionLocation::from_time_zone(&zone),
+                &tidb_context::IGNORE_CONVERSION_WARNINGS,
+            ),
+            &zone,
         )
-        .ok()?
+        .ok()
+        .filter(|converted| converted.error.is_none())?
         .value
     {
         Datum::Int(value) => Some(value),

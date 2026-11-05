@@ -75,7 +75,13 @@ pub fn point_get_value(column: &FieldType, value: &Datum) -> Option<Datum> {
     }
     let value = &*in_column_collation(column, value);
     let converted = value
-        .convert_to(column, tidb_datatype::STRICT_FLAGS)
+        .convert_to_in_context(
+            column,
+            &tidb_datatype::ConversionContext::strict(),
+            &tidb_datatype::SessionTimeZone::utc(),
+        )
+        // The best-effort value even beside an error: the equality check
+        // below decides.
         .ok()?
         .value;
     // "The converted result must be same as original datum." A comparison in
@@ -252,7 +258,7 @@ fn compares_equal(
 }
 
 /// The statement's warning list as the conversion's warning sink.
-struct StatementWarnings<'a>(&'a dyn Columns);
+pub(crate) struct StatementWarnings<'a>(pub(crate) &'a dyn Columns);
 
 impl tidb_context::ConversionWarningAppender for StatementWarnings<'_> {
     fn append_conversion_warning(&self, warning: tidb_terror::TerrorError) {

@@ -116,8 +116,13 @@ impl TableCommon {
         let Some(changing) = self.changing_field_types.get(&offset) else {
             return value;
         };
-        match value.convert_to(changing, tidb_datatype::STRICT_FLAGS) {
-            Ok(converted) if converted.event.is_none() => converted.value,
+        // Go `CastColumnValueWithStrictMode`: `strictCtx`.
+        match value.convert_to_in_context(
+            changing,
+            &tidb_datatype::ConversionContext::strict(),
+            &SessionTimeZone::utc(),
+        ) {
+            Ok(converted) if converted.error.is_none() => converted.value,
             _ => value,
         }
     }
@@ -137,7 +142,17 @@ impl TableCommon {
                     .map_err(|error| KvTableError::Mysql(error.to_mysql_error()))
             }
             None => Ok(value
-                .convert_to_in(&column.read().field_type, flags, zone)
+                .convert_to_in_context(
+                    &column.read().field_type,
+                    &tidb_datatype::ConversionContext::new(
+                        flags,
+                        tidb_datatype::ConversionLocation::from_time_zone(zone),
+                        &tidb_context::IGNORE_CONVERSION_WARNINGS,
+                    ),
+                    zone,
+                )
+                .ok()
+                .filter(|converted| converted.error.is_none())
                 .map_or(Datum::Null, |converted| converted.value)),
         }
     }
@@ -165,8 +180,12 @@ impl TableCommon {
                     false,
                 )
                 .map_err(|error| KvTableError::Mysql(error.to_mysql_error()))?,
-                None => match data.convert_to(changing, tidb_datatype::STRICT_FLAGS) {
-                    Ok(converted) if converted.event.is_none() => converted.value,
+                None => match data.convert_to_in_context(
+                    changing,
+                    &tidb_datatype::ConversionContext::strict(),
+                    &SessionTimeZone::utc(),
+                ) {
+                    Ok(converted) if converted.error.is_none() => converted.value,
                     _ => {
                         return Err(KvTableError::Mysql(tidb_terror::MysqlError::unknown(
                             "data truncation error during modify column",

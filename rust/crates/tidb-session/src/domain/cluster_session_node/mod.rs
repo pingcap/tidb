@@ -1848,6 +1848,7 @@ impl<'s> ClusterServerSession<'s> {
         values: &[tidb_param::PreparedValue],
     ) -> Result<GeneralExecuteOutcome<'s>, SqlQueryError> {
         self.session.restore_statement_variables();
+        self.session.reset_plan_cache_tracker();
         // Go `ExecutePreparedStmt` runs `ExecuteStmt`: `Compile`'s fresh
         // `TelemetryInfo` and `runStmt`'s `updateTelemetryMetric`.
         self.session.reset_telemetry_info();

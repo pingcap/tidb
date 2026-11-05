@@ -2269,13 +2269,16 @@ fn go_test_chunk_size_control() {
 /// precision and scale.
 #[test]
 fn go_test_get_decimal_datum() {
-    use tidb_datatype::ConversionFlags;
     let datum = Datum::Real(1.01);
     let dec_type = FieldType::new(FieldTypeCode::NewDecimal)
         .with_flen(4)
         .with_decimal(2);
     let converted = datum
-        .convert_to(&dec_type, ConversionFlags::default())
+        .convert_to_in_context(
+            &dec_type,
+            &tidb_datatype::ConversionContext::strict(),
+            &tidb_datatype::SessionTimeZone::utc(),
+        )
         .expect("decimal conversion succeeds")
         .value;
     let dec_datum = match converted {

@@ -193,6 +193,8 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
     fn statement_warning_count(&self) -> usize;
     /// Go `SQLCPUUsages.GetCPUUsages().TikvCPUTime` of the point readers.
     fn sql_tikv_cpu_time(&self) -> i64;
+    /// Go `StmtCtx.PlanCacheUnqualified()`.
+    fn plan_cache_unqualified(&self) -> String;
     /// Go `SQLCPUUsages.GetCPUUsages().TidbCPUTime`: what the Top SQL
     /// profiler attributed to the statement so far, in nanoseconds.
     fn sql_tidb_cpu_time(&self) -> i64;
@@ -773,7 +775,7 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
                 .wrapping_add(self.sql_tikv_cpu_time()),
                 tidb_cpu_time: self.sql_tidb_cpu_time(),
             },
-            plan_cache_unqualified: String::new(),
+            plan_cache_unqualified: self.plan_cache_unqualified(),
             lazy_info: Arc::new(LazyStatement {
                 plan_hint: if observation.routed || internal {
                     String::new()

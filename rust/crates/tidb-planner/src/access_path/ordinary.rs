@@ -84,6 +84,8 @@ pub(crate) fn fill_index_path(
                 tidb_ranger::points::PointBuilderError::Unsupported(message) => PlanError::from(
                     tidb_plannererrors::ERR_UNSUPPORTED_TYPE.gen_with_stack(message),
                 ),
+                // Go returns `ConvertTo`'s typed error as it is.
+                tidb_ranger::points::PointBuilderError::Terror(error) => PlanError::from(error),
             })?
     };
     // IndexMerge partial readers do not rebuild ranges per outer row yet, so
@@ -322,6 +324,8 @@ pub(crate) fn detach_table_path(
         tidb_ranger::points::PointBuilderError::Unsupported(message) => PlanError::from(
             tidb_plannererrors::ERR_UNSUPPORTED_TYPE.gen_with_stack(message),
         ),
+        // Go returns `ConvertTo`'s typed error as it is.
+        tidb_ranger::points::PointBuilderError::Terror(error) => PlanError::from(error),
     };
     let mut correlated_access_count = 0;
     let detached = if common_index.is_some() {

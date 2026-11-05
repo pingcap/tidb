@@ -31,7 +31,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use tidb_datatype::{
-    core_time_from_datetime, ConversionFlags, Datum, FieldName, FieldType, FieldTypeCode,
+    core_time_from_datetime, Datum, FieldName, FieldType, FieldTypeCode,
     SessionTimeZone, Time, TimeType,
 };
 use tidb_expr::constant::Constant;
@@ -641,9 +641,22 @@ fn datum_to_unix_nanos(
 ) -> Option<i64> {
     let mut target = FieldType::new(FieldTypeCode::Datetime);
     target.set_decimal(6);
+    // Go `datums[0].ConvertTo(StmtCtx.TypeCtx(), timeType)`; an error keeps
+    // the predicate.
+    let zone = ctx.time_zone();
+    let warnings = crate::point_get_value::StatementWarnings(ctx);
     let converted = datum
-        .convert_to_in(&target, ConversionFlags::default(), &ctx.time_zone())
-        .ok()?;
+        .convert_to_in_context(
+            &target,
+            &tidb_datatype::ConversionContext::new(
+                ctx.type_flags(),
+                tidb_datatype::ConversionLocation::from_time_zone(&zone),
+                &warnings,
+            ),
+            &zone,
+        )
+        .ok()
+        .filter(|converted| converted.error.is_none())?;
     let Datum::Time(time) = converted.value else {
         return None;
     };
@@ -2342,4 +2355,22 @@ pub fn cluster_log_extractors(plan: &PhysicalPlan) -> Vec<ClusterLogTableExtract
                 .unwrap_or_default()
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Go `extractTimeRange`: a time constant that does not convert to
+    /// `DATETIME(6)` (`ConvertTo`'s error) keeps its predicate.
+    #[test]
+    fn a_time_that_does_not_convert_keeps_its_predicate() {
+        let utc = SessionTimeZone::utc();
+        assert!(datum_to_unix_nanos(&tidb_exprctx::NoColumns, &Datum::new_string_datum("2026-11-05 01:00:00"), &utc)
+            .is_some());
+        assert_eq!(
+            datum_to_unix_nanos(&tidb_exprctx::NoColumns, &Datum::new_string_datum("2026-11-05 25:00:00"), &utc),
+            None
+        );
+    }
 }

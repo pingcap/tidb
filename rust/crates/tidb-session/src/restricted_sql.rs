@@ -44,6 +44,12 @@ impl Session {
         self.restricted_sql_executor.clone()
     }
 
+    /// Go `sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, sql)`
+    /// for a caller outside this crate (the status port's metric profile).
+    pub fn exec_restricted_sql_rows(&mut self, sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
+        self.exec_restricted_sql(sql)
+    }
+
     /// Go `ExecRestrictedSQL(ctx, nil, sql)`.
     pub(crate) fn exec_restricted_sql(
         &mut self,

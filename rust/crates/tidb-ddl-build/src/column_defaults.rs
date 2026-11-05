@@ -78,9 +78,13 @@ pub fn check_column_default_value(
         )
     {
         let converted = value
-            .convert_to_in(
+            .convert_to_in_context(
                 field_type,
-                ctx.get_expr_ctx().get_eval_ctx().type_ctx_flags(),
+                &tidb_datatype::ConversionContext::new(
+                    ctx.get_expr_ctx().get_eval_ctx().type_ctx_flags(),
+                    tidb_datatype::ConversionLocation::from_time_zone(zone),
+                    &tidb_context::IGNORE_CONVERSION_WARNINGS,
+                ),
                 zone,
             )
             .map_err(|_| {
@@ -89,6 +93,10 @@ pub fn check_column_default_value(
                         .gen_with_stack_by_args(&[column.to_owned().into()]),
                 )
             })?;
+        // Go returns `GetTimeValue`'s own error (`errors.Trace(err)`).
+        if let Some(error) = converted.error {
+            return Err(tidb_terror::MysqlError::from_terror(&error));
+        }
         if matches!(converted.value, Datum::Time(time) if time.is_zero()) {
             return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
@@ -188,15 +196,15 @@ pub fn check_default_value(
         stored,
         field_type,
         column_info_version,
-        flags,
+        &tidb_datatype::ConversionContext::new(
+            flags,
+            tidb_datatype::ConversionLocation::from_time_zone(zone),
+            &tidb_context::IGNORE_CONVERSION_WARNINGS,
+        ),
         zone,
     )
     .map_err(|_| invalid())?;
-    if checked
-        .event
-        .as_ref()
-        .is_some_and(|event| !tidb_table::column::conversion_event_is_silent(event))
-    {
+    if checked.error.is_some() {
         return Err(invalid());
     }
     Ok(checked.value)
@@ -283,8 +291,12 @@ pub fn get_default_value(
             // Go adopts the converted value only when the conversion itself
             // succeeded (`if temp, err := v.ConvertTo(...); err == nil`), and
             // otherwise keeps the original for the check below to report.
-            match value.convert_to_in(field_type, flags, zone) {
-                Ok(converted) if converted.event.is_none() => converted.value,
+            match value.convert_to_in_context(field_type, &tidb_datatype::ConversionContext::new(
+                flags,
+                tidb_datatype::ConversionLocation::from_time_zone(zone),
+                &tidb_context::IGNORE_CONVERSION_WARNINGS,
+            ), zone) {
+                Ok(converted) if converted.error.is_none() => converted.value,
                 _ => value.clone(),
             }
         }
@@ -352,13 +364,13 @@ pub fn convert_timestamp_default_val_to_utc(
         )
     };
     let converted = stored
-        .convert_to_in(field_type, flags, zone)
+        .convert_to_in_context(field_type, &tidb_datatype::ConversionContext::new(
+                flags,
+                tidb_datatype::ConversionLocation::from_time_zone(zone),
+                &tidb_context::IGNORE_CONVERSION_WARNINGS,
+            ), zone)
         .map_err(|_| invalid())?;
-    if converted
-        .event
-        .as_ref()
-        .is_some_and(|event| !tidb_table::column::conversion_event_is_silent(event))
-    {
+    if converted.error.is_some() {
         return Err(invalid());
     }
     let Datum::Time(mut time) = converted.value else {
@@ -636,5 +648,34 @@ use tidb_goruntime::GoString;
                 other => panic!("expected a string default, got {other:?}"),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod check_column_default_value_tests {
+    use super::check_column_default_value;
+    use std::sync::Arc;
+    use tidb_datatype::{Datum, FieldType, FieldTypeCode, SessionTimeZone};
+
+    /// Go `checkColumnDefaultValue` under strict NO_ZERO_DATE: a temporal
+    /// default `GetTimeValue` cannot parse returns that error itself.
+    #[test]
+    fn a_temporal_default_that_does_not_parse_returns_the_parse_error() {
+        let mode = tidb_mysql::SqlMode(
+            tidb_mysql::consts::ModeStrictTransTables.0 | tidb_mysql::consts::ModeNoZeroDate.0,
+        );
+        let eval_ctx = tidb_exprstatic::EvalContext::new([tidb_exprstatic::with_sql_mode(mode)]);
+        let ctx = tidb_metabuild::Context::new([tidb_metabuild::with_expr_ctx(Arc::new(
+            tidb_exprstatic::ExprContext::new([tidb_exprstatic::with_eval_ctx(Arc::new(eval_ctx))]),
+        ))]);
+        let error = check_column_default_value(
+            Datum::new_string_datum("2026-11"),
+            &FieldType::new(FieldTypeCode::Date),
+            "d",
+            &ctx,
+            &SessionTimeZone::utc(),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, 1292, "{error:?}");
     }
 }

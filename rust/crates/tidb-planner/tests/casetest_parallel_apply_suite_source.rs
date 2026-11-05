@@ -82,9 +82,11 @@ fn parallel_apply_keeps_the_order_its_outer_child_requires() {
 }
 #[test]
 fn parallel_apply_warns_with_the_first_operator_that_does_not_clone() {
+    // Go's `PhysicalCTETable.Init` sets no `Self`, so the base `Clone`'s
+    // `%T` formats a nil interface.
     for (inner, type_name) in [
-        (PhysicalPlan::CTETable(Default::default()), "PhysicalCTETable"),
-        (PhysicalPlan::TableDual(Default::default()), "PhysicalTableDual"),
+        (PhysicalPlan::CTETable(Default::default()), "<nil>"),
+        (PhysicalPlan::TableDual(Default::default()), "*physicalop.PhysicalTableDual"),
     ] {
         let ctx = tidb_sessionctx::StmtContext::default();
         let mut plan = apply(cloneable(), inner, false);
@@ -96,7 +98,7 @@ fn parallel_apply_warns_with_the_first_operator_that_does_not_clone() {
         assert_eq!(
             warnings[0].err.to_string(),
             format!(
-                "Some apply operators can not be executed in parallel: *physicalop.{type_name} doesn't support cloning"
+                "Some apply operators can not be executed in parallel: {type_name} doesn't support cloning"
             )
         );
     }

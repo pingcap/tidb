@@ -28,7 +28,7 @@ use std::collections::BTreeMap;
 use tidb_codec::{encode_key, encode_value};
 use tidb_rowcodec::{decode_row_to_map, encode_row, ColumnInfo};
 use tidb_datatype::{
-    Datum, Decimal, FieldType, FieldTypeCode, SessionTimeZone, DEFAULT_STATEMENT_FLAGS,
+    Datum, Decimal, FieldType, FieldTypeCode, SessionTimeZone,
 };
 
 const FIXTURE: &str =
@@ -126,7 +126,11 @@ fn declared_decimal_key_and_value_are_go_byte_exact() {
 
 fn column_value(literal: &str, flen: i64, decimal: i64) -> Datum {
     Datum::new_decimal(Decimal::from_signed_literal(literal))
-        .convert_to(&decimal_type(flen, decimal), DEFAULT_STATEMENT_FLAGS)
+        .convert_to_in_context(
+            &decimal_type(flen, decimal),
+            &tidb_datatype::ConversionContext::default_statement_no_warning(),
+            &tidb_datatype::SessionTimeZone::utc(),
+        )
         .unwrap()
         .value
 }

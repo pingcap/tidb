@@ -1247,6 +1247,11 @@ pub struct StmtContextData {
     /// Go `SessionVars.SQLCPUUsages`, which point readers charge their TiKV
     /// process time to.
     sql_cpu_usages: Option<Arc<tidb_ppcpuusage::SqlCpuUsages>>,
+    /// Go `PlanCacheTracker.planCacheUnqualified` as the statement's summary
+    /// reads it (`StmtCtx.PlanCacheUnqualified()`): the reason the first
+    /// plan-cache refusal of the statement recorded, shared by every context
+    /// the statement plans with.
+    plan_cache_unqualified: Option<Arc<Mutex<String>>>,
     /// Go `StmtCtx.IsTiFlash` as `buildDataSource` sets it: MPP is allowed
     /// and a table the statement reads has an available TiFlash replica.
     is_tiflash: Arc<AtomicBool>,
@@ -2257,6 +2262,13 @@ context_configuration! {
         self
     }
 
+    /// Shares the statement's plan-cache-unqualified reason cell.
+    #[must_use]
+    pub fn with_plan_cache_unqualified(mut self, cell: Option<Arc<Mutex<String>>>) -> Self {
+        self.plan_cache_unqualified = cell;
+        self
+    }
+
     /// Shares the session's SQL CPU usages (Go `SessionVars.SQLCPUUsages`).
     #[must_use]
     pub fn with_sql_cpu_usages(
@@ -3016,6 +3028,7 @@ impl StmtContext {
             statement_phase_observer: None,
             phase_durations: Default::default(),
             sql_cpu_usages: None,
+            plan_cache_unqualified: None,
             is_tiflash: Arc::default(),
             kv_exec_counter: Default::default(),
             rpc_interceptor: Default::default(),
@@ -4042,6 +4055,14 @@ impl StmtContext {
         if let Some(state) = self.range_fallback.get() {
             if state.cache_started.load(Ordering::Acquire) {
                 state.tracker.set_skip_plan_cache(&reason);
+                // Go `warnSkipPlanCache` records the tracker's reason.
+                let unqualified = state.tracker.plan_cache_unqualified();
+                if let (Some(cell), false) = (&self.plan_cache_unqualified, unqualified.is_empty()) {
+                    let mut cell = cell.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    if cell.is_empty() {
+                        *cell = unqualified;
+                    }
+                }
             }
         }
         let mut current = self

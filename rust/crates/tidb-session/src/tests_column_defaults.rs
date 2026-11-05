@@ -2047,3 +2047,29 @@ fn only_a_columns_last_default_is_checked_for_now() {
         crate::tests_support::show_create(&mut session, "t4").contains("`a` double DEFAULT '2'")
     );
 }
+
+/// Go `getDefaultValue`: under strict NO_ZERO_DATE a DATE column's computed
+/// default that does not parse as a date fails with `GetTimeValue`'s own
+/// 1292, and the column is not added.
+#[test]
+fn add_column_rejects_a_computed_date_default_that_is_no_date() {
+    let mut session = Session::new();
+    session.run("SET timestamp = 1700000000").unwrap();
+    session
+        .run("CREATE TABLE computed_no_date (id INT PRIMARY KEY)")
+        .unwrap();
+    crate::tests_support::assert_err(
+        session.run(
+            "ALTER TABLE computed_no_date ADD COLUMN c2 DATE DEFAULT (date_format(now(),'%Y-%m'))",
+        ),
+        1292,
+        "Incorrect date value: '2023-11'",
+    );
+    assert!(!show_create(&mut session, "computed_no_date").contains("`c2`"));
+    // A literal fails earlier, in `getDefaultValue`'s own check.
+    crate::tests_support::assert_err(
+        session.run("CREATE TABLE literal_no_date (id INT, d DATE DEFAULT '2026-11')"),
+        1067,
+        "Invalid default value for 'd'",
+    );
+}

@@ -2073,31 +2073,25 @@ fn expression_default_origin(
     if value.is_null() {
         return Ok(String::new());
     }
-    let converted = value
-        .convert_to_in(
-            &info.field_type,
-            context.get_expr_ctx().get_eval_ctx().type_ctx_flags(),
-            &context.get_expr_ctx().get_eval_ctx().time_zone(),
-        )
-        .map_err(|_| {
-            default_admission_error(tidb_terror::MysqlError::from_terror(
-                &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
-                    .gen_with_stack_by_args(&[name.to_owned().into()]),
-            ))
-        })?;
-    // Go `castColumnValue`: a value an ENUM / SET cannot hold is
-    // `types.ErrTruncated` with no arguments, which strict DDL raises.
-    if converted.event.is_some()
-        && matches!(
-            info.field_type.code(),
-            FieldTypeCode::Enum | FieldTypeCode::Set
-        )
-    {
-        return Err(DdlAdmissionError::from_terror(
-            &tidb_datatype::types_errors::ERR_TRUNCATED,
-        ));
-    }
-    let value = converted.value;
+    // Go `generateOriginDefaultValue` -> `table.GetColDefaultValue`
+    // (`getColDefaultExprValue`): `CastColumnValue` under the build
+    // context's type flags, SQL mode and location, so a value the column
+    // cannot hold fails with the cast's own error (`handleZeroDatetime`'s
+    // 1292 for a DATE, `ErrTruncated` for an ENUM / SET).
+    let eval_ctx = context.get_expr_ctx().get_eval_ctx();
+    let cast_ctx = tidb_tblctx::StaticMutateContext::for_reorg_meta(
+        context.get_sql_mode().0,
+        eval_ctx.time_zone(),
+    );
+    let value = tidb_table::column::cast_table_value_with_flags(
+        value,
+        &info.field_type,
+        name,
+        &cast_ctx,
+        eval_ctx.type_ctx_flags(),
+        false,
+    )
+    .map_err(|error| DdlAdmissionError::from_mysql_error(error.to_mysql_error()))?;
     let bytes = value
         .to_bytes()
         .map_err(|error| failed(error.to_string()))?;

@@ -237,6 +237,10 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &mut self.sql_cpu_usages
     }
 
+    fn plan_cache_unqualified_ref(&self) -> &Arc<std::sync::Mutex<String>> {
+        &self.statement_plan_cache_unqualified
+    }
+
     fn staged_writes_ref(&self) -> &std::sync::Arc<tidb_kv::staged_writes::StagedWrites> {
         &self.staged_writes
     }

@@ -85,9 +85,16 @@ pub fn literal_column_default_text(
         value,
         &column.read().field_type,
         column.read().version,
-        flags,
+        &tidb_datatype::ConversionContext::new(
+            flags,
+            tidb_datatype::ConversionLocation::from_time_zone(session_zone),
+            &tidb_context::IGNORE_CONVERSION_WARNINGS,
+        ),
         session_zone,
     )?;
+    if let Some(error) = converted.error {
+        return Err(tidb_datatype::DatumValueError::Comparison(error.message().to_owned()));
+    }
     Ok(match converted.value {
         Datum::Time(time) => Some(time.to_string()),
         other => column_default_text(&other, &column.read().field_type),
