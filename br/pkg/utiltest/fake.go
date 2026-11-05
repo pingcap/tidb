@@ -25,7 +25,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pkg/errors"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/clients/router"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -149,7 +151,7 @@ func (fpdh *FakePDHTTPClient) DeletePlacementRule(_ context.Context, groupID str
 type FakePDClient struct {
 	pd.Client
 	stores  []*metapb.Store
-	regions []*pd.Region
+	regions []*router.Region
 
 	notLeader  bool
 	retryTimes *int
@@ -172,11 +174,11 @@ func NewFakePDClient(stores []*metapb.Store, notLeader bool, retryTime *int) *Fa
 	}
 }
 
-func (fpdc *FakePDClient) SetRegions(regions []*pd.Region) {
+func (fpdc *FakePDClient) SetRegions(regions []*router.Region) {
 	fpdc.regions = regions
 }
 
-func (fpdc *FakePDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
+func (fpdc *FakePDClient) GetAllStores(context.Context, ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	return append([]*metapb.Store{}, fpdc.stores...), nil
 }
 
@@ -184,9 +186,9 @@ func (fpdc *FakePDClient) ScanRegions(
 	ctx context.Context,
 	key, endKey []byte,
 	limit int,
-	opts ...pd.GetRegionOption,
-) ([]*pd.Region, error) {
-	regions := make([]*pd.Region, 0, len(fpdc.regions))
+	opts ...opt.GetRegionOption,
+) ([]*router.Region, error) {
+	regions := make([]*router.Region, 0, len(fpdc.regions))
 	fpdc.peerStoreId = fpdc.peerStoreId + 1
 	peerStoreId := (fpdc.peerStoreId + 1) / 2
 	for _, region := range fpdc.regions {
@@ -204,11 +206,11 @@ func (fpdc *FakePDClient) ScanRegions(
 
 func (fpdc *FakePDClient) BatchScanRegions(
 	ctx context.Context,
-	ranges []pd.KeyRange,
+	ranges []router.KeyRange,
 	limit int,
-	opts ...pd.GetRegionOption,
-) ([]*pd.Region, error) {
-	regions := make([]*pd.Region, 0, len(fpdc.regions))
+	opts ...opt.GetRegionOption,
+) ([]*router.Region, error) {
+	regions := make([]*router.Region, 0, len(fpdc.regions))
 	fpdc.peerStoreId = fpdc.peerStoreId + 1
 	peerStoreId := (fpdc.peerStoreId + 1) / 2
 	for _, region := range fpdc.regions {
@@ -265,7 +267,7 @@ func (f *FakeSplitClient) AppendRegion(startKey, endKey []byte) {
 	})
 }
 
-func (f *FakeSplitClient) AppendPdRegion(region *pd.Region) {
+func (f *FakeSplitClient) AppendPdRegion(region *router.Region) {
 	f.regions = append(f.regions, &split.RegionInfo{
 		Region: region.Meta,
 		Leader: region.Leader,

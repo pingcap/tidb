@@ -580,6 +580,19 @@ func TestTiDBLastTxnInfo(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, variable.ErrIncorrectScope), fmt.Sprintf("err: %v", err))
 }
 
+func TestTiDBLastTxnInfoForInternalSession(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().SetConnectionID(0)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int primary key)")
+	tk.MustExec("insert into t values (1)")
+
+	rows := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()
+	require.Greater(t, rows[0][0].(string), "0")
+	require.Less(t, rows[0][0].(string), rows[0][1].(string))
+}
+
 func TestTiDBLastQueryInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	pd "github.com/tikv/pd/client"
+	sd "github.com/tikv/pd/client/servicediscovery"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -50,7 +50,7 @@ type BackendCtxMgr interface {
 		job *model.Job,
 		hasUnique bool,
 		etcdClient *clientv3.Client,
-		pdSvcDiscovery pd.ServiceDiscovery,
+		pdSvcDiscovery sd.ServiceDiscovery,
 		resourceGroupName string,
 		importConc int,
 		maxWriteSpeed int,
@@ -119,7 +119,7 @@ func (m *litBackendCtxMgr) Register(
 	job *model.Job,
 	hasUnique bool,
 	etcdClient *clientv3.Client,
-	pdSvcDiscovery pd.ServiceDiscovery,
+	pdSvcDiscovery sd.ServiceDiscovery,
 	resourceGroupName string,
 	concurrency int,
 	maxWriteSpeed int,
@@ -187,7 +187,7 @@ func (m *litBackendCtxMgr) EncodeJobSortPath(jobID int64) string {
 func createLocalBackend(
 	ctx context.Context,
 	cfg *local.BackendConfig,
-	pdSvcDiscovery pd.ServiceDiscovery,
+	pdSvcDiscovery sd.ServiceDiscovery,
 	adjustedWorkerConcurrency int,
 ) (*local.Backend, error) {
 	if adjustedWorkerConcurrency > 0 {

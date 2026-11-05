@@ -568,7 +568,12 @@ func (s *session) doCommit(ctx context.Context) error {
 		return err
 	}
 
-	err = s.commitTxnWithTemporaryData(tikvutil.SetSessionID(ctx, sessVars.ConnectionID), &s.txn)
+	commitCtx := ctx
+	// Internal sessions use connection ID 0. Leave it unset so the commit callback still updates LastTxnInfo.
+	if sessVars.ConnectionID != 0 {
+		commitCtx = tikvutil.SetSessionID(ctx, sessVars.ConnectionID)
+	}
+	err = s.commitTxnWithTemporaryData(commitCtx, &s.txn)
 	if err != nil {
 		err = s.handleAssertionFailure(ctx, err)
 	}

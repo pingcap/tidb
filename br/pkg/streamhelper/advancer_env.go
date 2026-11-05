@@ -16,6 +16,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -89,7 +90,7 @@ func (c PDRegionScanner) RegionScan(ctx context.Context, key, endKey []byte, lim
 }
 
 func (c PDRegionScanner) Stores(ctx context.Context) ([]Store, error) {
-	res, err := c.Client.GetAllStores(ctx, pd.WithExcludeTombstone())
+	res, err := c.Client.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return nil, err
 	}

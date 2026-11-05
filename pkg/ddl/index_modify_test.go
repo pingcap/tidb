@@ -941,7 +941,7 @@ func checkGlobalIndexRow(
 	require.NoError(t, err)
 	var value []byte
 	if indexInfo.Unique {
-		value, err = txn.Get(context.Background(), key)
+		value, err = kv.GetValue(context.Background(), txn, key)
 	} else {
 		var iter kv.Iterator
 		iter, err = txn.Iter(key, key.PrefixNext())
@@ -968,7 +968,7 @@ func checkGlobalIndexRow(
 	require.NoError(t, err)
 	h := kv.IntHandle(d.GetInt64())
 	rowKey := tablecodec.EncodeRowKey(pid, h.Encoded())
-	rowValue, err := txn.Get(context.Background(), rowKey)
+	rowValue, err := kv.GetValue(context.Background(), txn, rowKey)
 	require.NoError(t, err)
 	rowValueDatums, err := tablecodec.DecodeRowToDatumMap(rowValue, tblColMap, time.UTC)
 	require.NoError(t, err)

@@ -30,9 +30,9 @@ type tikvBatchGetter struct {
 	tidbBatchGetter BatchGetter
 }
 
-func (b tikvBatchGetter) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
+func (b tikvBatchGetter) BatchGet(ctx context.Context, keys [][]byte, options ...kv.BatchGetOption) (map[string]kv.ValueEntry, error) {
 	kvKeys := *(*[]kv.Key)(unsafe.Pointer(&keys))
-	vals, err := b.tidbBatchGetter.BatchGet(ctx, kvKeys)
+	vals, err := b.tidbBatchGetter.BatchGet(ctx, kvKeys, options...)
 	return vals, err
 }
 
@@ -44,9 +44,9 @@ type tikvBatchBufferGetter struct {
 	tidbBuffer      BatchBufferGetter
 }
 
-func (b tikvBatchBufferGetter) Get(ctx context.Context, k []byte) ([]byte, error) {
+func (b tikvBatchBufferGetter) Get(ctx context.Context, k []byte, options ...kv.GetOption) (kv.ValueEntry, error) {
 	// Get from buffer
-	val, err := b.tidbBuffer.Get(ctx, k)
+	val, err := b.tidbBuffer.Get(ctx, k, options...)
 	if err == nil || !kv.IsErrNotFound(err) || b.tidbMiddleCache == nil {
 		if kv.IsErrNotFound(err) {
 			err = tikverr.ErrNotExist
@@ -54,7 +54,7 @@ func (b tikvBatchBufferGetter) Get(ctx context.Context, k []byte) ([]byte, error
 		return val, err
 	}
 	// Get from middle cache
-	val, err = b.tidbMiddleCache.Get(ctx, k)
+	val, err = b.tidbMiddleCache.Get(ctx, k, options...)
 	if err == nil {
 		return val, err
 	}
@@ -65,17 +65,19 @@ func (b tikvBatchBufferGetter) Get(ctx context.Context, k []byte) ([]byte, error
 	return val, err
 }
 
-func (b tikvBatchBufferGetter) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
-	bufferValues, err := b.tidbBuffer.BatchGet(ctx, keys)
+func (b tikvBatchBufferGetter) BatchGet(ctx context.Context, keys [][]byte, options ...kv.BatchGetOption) (map[string]kv.ValueEntry, error) {
+	bufferValues, err := b.tidbBuffer.BatchGet(ctx, keys, options...)
 	if err != nil {
 		return nil, err
 	}
 	if b.tidbMiddleCache == nil {
 		return bufferValues, nil
 	}
+
+	getOptions := kv.BatchGetToGetOptions(options)
 	for _, key := range keys {
 		if _, ok := bufferValues[string(key)]; !ok {
-			val, err := b.tidbMiddleCache.Get(ctx, key)
+			val, err := b.tidbMiddleCache.Get(ctx, key, getOptions...)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
 					continue
@@ -97,20 +99,20 @@ type BatchBufferGetter interface {
 	Len() int
 	Getter
 	// BatchGet gets a batch of values, keys are in bytes slice format.
-	BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error)
+	BatchGet(ctx context.Context, keys [][]byte, options ...kv.BatchGetOption) (map[string]kv.ValueEntry, error)
 }
 
 // BatchGetter is the interface for BatchGet.
 type BatchGetter interface {
 	// BatchGet gets a batch of values.
-	BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error)
+	BatchGet(ctx context.Context, keys []kv.Key, options ...kv.BatchGetOption) (map[string]kv.ValueEntry, error)
 }
 
 // Getter is the interface for the Get method.
 type Getter interface {
 	// Get gets the value for key k from kv store.
 	// If corresponding kv pair does not exist, it returns nil and ErrNotExist.
-	Get(ctx context.Context, k kv.Key) ([]byte, error)
+	Get(ctx context.Context, k kv.Key, options ...kv.GetOption) (kv.ValueEntry, error)
 }
 
 // BufferBatchGetter is the type for BatchGet with MemBuffer.
@@ -126,9 +128,9 @@ func NewBufferBatchGetter(buffer BatchBufferGetter, middleCache Getter, snapshot
 }
 
 // BatchGet implements the BatchGetter interface.
-func (b *BufferBatchGetter) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+func (b *BufferBatchGetter) BatchGet(ctx context.Context, keys []kv.Key, options ...kv.BatchGetOption) (map[string]kv.ValueEntry, error) {
 	tikvKeys := toTiKVKeys(keys)
-	storageValues, err := b.tikvBufferBatchGetter.BatchGet(ctx, tikvKeys)
+	storageValues, err := b.tikvBufferBatchGetter.BatchGet(ctx, tikvKeys, options...)
 
 	return storageValues, err
 }

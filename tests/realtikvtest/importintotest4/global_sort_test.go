@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
-	pd "github.com/tikv/pd/client"
+	pdopt "github.com/tikv/pd/client/opt"
 )
 
 func urlEqual(t *testing.T, expected, actual string) {
@@ -214,7 +214,7 @@ func (s *mockGCSSuite) TestSplitRangeForTable() {
 	})
 	dom, err := session.GetDomain(s.store)
 	require.NoError(s.T(), err)
-	stores, err := dom.GetPDClient().GetAllStores(context.Background(), pd.WithExcludeTombstone())
+	stores, err := dom.GetPDClient().GetAllStores(context.Background(), pdopt.WithExcludeTombstone())
 	require.NoError(s.T(), err)
 
 	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)

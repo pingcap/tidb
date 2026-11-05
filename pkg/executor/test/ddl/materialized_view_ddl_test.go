@@ -2644,7 +2644,7 @@ func TestCreateMaterializedViewPauseAndResume(t *testing.T) {
 			return false
 		}
 		state := strings.ToLower(fmt.Sprint(rows[0][len(rows[0])-2]))
-		return state == "paused" || state == "pausing"
+		return state == "paused"
 	}, 30*time.Second, 100*time.Millisecond)
 
 	// Current Stage-1 semantics: MV table is visible once phase-1 finishes, even before job completion.

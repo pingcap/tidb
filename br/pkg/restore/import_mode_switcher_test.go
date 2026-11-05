@@ -40,6 +40,20 @@ type mockImportServer struct {
 	ch    chan struct{}
 }
 
+type blockingImportServer struct {
+	import_sstpb.ImportSSTServer
+
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *blockingImportServer) SwitchMode(_ context.Context, _ *import_sstpb.SwitchModeRequest) (*import_sstpb.SwitchModeResponse, error) {
+	s.once.Do(func() { close(s.started) })
+	<-s.release
+	return &import_sstpb.SwitchModeResponse{}, nil
+}
+
 func (s *mockImportServer) SwitchMode(_ context.Context, req *import_sstpb.SwitchModeRequest) (*import_sstpb.SwitchModeResponse, error) {
 	s.count -= 1
 	if s.count == 0 {
@@ -142,4 +156,56 @@ func TestRestorePreWorkOnline(t *testing.T) {
 	undo, _, err := restore.RestorePreWork(ctx, nil, nil, true, false)
 	require.NoError(t, err)
 	restore.RestorePostWork(ctx, nil, undo, true)
+}
+
+func TestRestorePreWorkWaitsForInitialModeSwitch(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	server := grpc.NewServer()
+	import_sstpb.RegisterImportSSTServer(server, &blockingImportServer{
+		started: started,
+		release: release,
+	})
+	go func() {
+		require.NoError(t, server.Serve(lis))
+	}()
+
+	pdClient := utiltest.NewFakePDClient([]*metapb.Store{{
+		Id:      1,
+		Address: lis.Addr().String(),
+	}}, false, nil)
+	pdHTTPCli := utiltest.NewFakePDHTTPClient()
+	mgr := &conn.Mgr{
+		PdController: pdutil.NewPdControllerWithPDClient(
+			pdClient, pdHTTPCli, &semver.Version{Major: 4, Minor: 0, Patch: 9}),
+	}
+	mgr.PdController.SchedulerPauseTTL = 3 * time.Second
+	switcher := restore.NewImportModeSwitcher(pdClient, time.Hour, nil)
+
+	type result struct {
+		undo pdutil.UndoFunc
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		undo, _, err := restore.RestorePreWork(context.Background(), mgr, switcher, false, true)
+		done <- result{undo: undo, err: err}
+	}()
+
+	<-started
+	select {
+	case <-done:
+		require.Fail(t, "restore pre-work returned before the initial mode switch completed")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(release)
+	res := <-done
+	require.NoError(t, res.err)
+	restore.RestorePostWork(context.Background(), switcher, res.undo, false)
+
+	server.Stop()
 }

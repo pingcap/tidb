@@ -137,14 +137,13 @@ func (rm *Manager) RunawayRecordFlushLoop() {
 
 	// this times used to batch flushing records, with 1s duration,
 	// we can guarantee a watch record can be seen by the user within 1s.
-	runawayRecordFlushTimer := time.NewTimer(runawayRecordFlushInterval)
-	runawayRecordGCTicker := time.NewTicker(runawayRecordGCInterval)
+	flushInterval, gcInterval := runawayRecordFlushInterval, runawayRecordGCInterval
 	failpoint.Inject("FastRunawayGC", func() {
-		runawayRecordFlushTimer.Stop()
-		runawayRecordGCTicker.Stop()
-		runawayRecordFlushTimer = time.NewTimer(time.Millisecond * 50)
-		runawayRecordGCTicker = time.NewTicker(time.Millisecond * 200)
+		flushInterval = time.Millisecond * 50
+		gcInterval = time.Millisecond * 200
 	})
+	runawayRecordFlushTimer := time.NewTimer(flushInterval)
+	runawayRecordGCTicker := time.NewTicker(gcInterval)
 
 	fired := false
 	recordCh := rm.runawayRecordChan()

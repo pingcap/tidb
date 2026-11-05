@@ -5,6 +5,7 @@ package restore
 import (
 	"context"
 	"crypto/tls"
+	"sync"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql" // mysql driver
@@ -30,7 +31,9 @@ type ImportModeSwitcher struct {
 	switchModeInterval time.Duration
 	tlsConf            *tls.Config
 
-	switchCh chan struct{}
+	mu     sync.Mutex
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 func NewImportModeSwitcher(
@@ -42,13 +45,21 @@ func NewImportModeSwitcher(
 		pdClient:           pdClient,
 		switchModeInterval: switchModeInterval,
 		tlsConf:            tlsConf,
-		switchCh:           make(chan struct{}),
 	}
 }
 
 // switchToNormalMode switch tikv cluster to normal mode.
 func (switcher *ImportModeSwitcher) switchToNormalMode(ctx context.Context) error {
-	close(switcher.switchCh)
+	switcher.mu.Lock()
+	defer switcher.mu.Unlock()
+
+	if switcher.cancel == nil {
+		log.Info("TiKV is already in normal mode")
+		return nil
+	}
+	switcher.cancel()
+	switcher.cancel = nil
+	switcher.wg.Wait()
 	return switcher.switchTiKVMode(ctx, import_sstpb.SwitchMode_Normal)
 }
 
@@ -92,16 +103,17 @@ func (switcher *ImportModeSwitcher) switchTiKVMode(
 				if err != nil {
 					return errors.Trace(err)
 				}
+				defer func() {
+					if err := connection.Close(); err != nil {
+						log.Error("close grpc connection failed in switch mode", zap.Error(err))
+					}
+				}()
 				client := import_sstpb.NewImportSSTClient(connection)
 				_, err = client.SwitchMode(ctx, &import_sstpb.SwitchModeRequest{
 					Mode: mode,
 				})
 				if err != nil {
 					return errors.Trace(err)
-				}
-				err = connection.Close()
-				if err != nil {
-					log.Error("close grpc connection failed in switch mode", zap.Error(err))
 				}
 				return nil
 			})
@@ -113,22 +125,39 @@ func (switcher *ImportModeSwitcher) switchTiKVMode(
 	return nil
 }
 
-// switchToImportMode switch tikv cluster to import mode.
+// switchToImportMode switches the cluster to import mode and keeps it there.
 func (switcher *ImportModeSwitcher) switchToImportMode(
 	ctx context.Context,
-) {
+) error {
+	switcher.mu.Lock()
+	defer switcher.mu.Unlock()
+
+	if switcher.cancel != nil {
+		log.Info("TiKV is already in import mode")
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	switcher.cancel = cancel
+
+	// The initial switch must finish before restore starts. Otherwise post-work
+	// can race with it and leave TiKV mode-switch connections behind.
+	log.Info("switch to import mode at beginning")
+	if err := switcher.switchTiKVMode(ctx, import_sstpb.SwitchMode_Import); err != nil {
+		switcher.cancel = nil
+		cancel()
+		return errors.Trace(err)
+	}
+
+	switcher.wg.Add(1)
 	// tikv automatically switch to normal mode in every 10 minutes
 	// so we need ping tikv in less than 10 minute
 	go func() {
 		tick := time.NewTicker(switcher.switchModeInterval)
-		defer tick.Stop()
-
-		// [important!] switch tikv mode into import at the beginning
-		log.Info("switch to import mode at beginning")
-		err := switcher.switchTiKVMode(ctx, import_sstpb.SwitchMode_Import)
-		if err != nil {
-			log.Warn("switch to import mode failed", zap.Error(err))
-		}
+		defer func() {
+			tick.Stop()
+			switcher.wg.Done()
+		}()
 
 		for {
 			select {
@@ -140,12 +169,10 @@ func (switcher *ImportModeSwitcher) switchToImportMode(
 				if err != nil {
 					log.Warn("switch to import mode failed", zap.Error(err))
 				}
-			case <-switcher.switchCh:
-				log.Info("stop automatic switch to import mode")
-				return
 			}
 		}
 	}()
+	return nil
 }
 
 // RestorePreWork executes some prepare work before restore.
@@ -163,7 +190,9 @@ func RestorePreWork(
 
 	if switchToImport {
 		// Switch TiKV cluster to import mode (adjust rocksdb configuration).
-		switcher.switchToImportMode(ctx)
+		if err := switcher.switchToImportMode(ctx); err != nil {
+			return pdutil.Nop, nil, errors.Trace(err)
+		}
 	}
 
 	return mgr.RemoveSchedulersWithConfig(ctx)

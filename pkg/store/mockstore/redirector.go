@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/util/async"
 )
 
 type clientRedirector struct {
@@ -70,6 +71,17 @@ func (c *clientRedirector) SendRequest(ctx context.Context, addr string, req *ti
 		return c.rpcClient.SendRequest(ctx, addr, req, timeout)
 	}
 	return c.mockClient.SendRequest(ctx, addr, req, timeout)
+}
+
+func (c *clientRedirector) SendRequestAsync(ctx context.Context, addr string, req *tikvrpc.Request, cb async.Callback[*tikvrpc.Response]) {
+	if req.StoreTp == tikvrpc.TiDB {
+		c.Once.Do(func() {
+			c.rpcClient = tikv.NewRPCClient(tikv.WithSecurity(config.GetGlobalConfig().Security.ClusterSecurity()))
+		})
+		c.rpcClient.SendRequestAsync(ctx, addr, req, cb)
+		return
+	}
+	c.mockClient.SendRequestAsync(ctx, addr, req, cb)
 }
 
 func (c *clientRedirector) SetEventListener(listener tikv.ClientEventListener) {

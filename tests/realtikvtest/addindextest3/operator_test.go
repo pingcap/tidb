@@ -312,7 +312,7 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 				require.NoError(t, opCtx.OperatorErr())
 			} else {
 				require.Error(t, opCtx.OperatorErr())
-				require.Equal(t, tc.operatorErrMsg, opCtx.OperatorErr().Error())
+				require.ErrorContains(t, opCtx.OperatorErr(), tc.operatorErrMsg)
 			}
 		})
 	}
