@@ -364,7 +364,7 @@ func buildIntoAccessPath(
 					ds.SCtx(),
 					unfinishedPath.accessFilters,
 					idxCols,
-					unfinishedPath.path.Index,
+					unfinishedPath.index,
 				)
 				if len(accessFilters) == 0 {
 					continue
