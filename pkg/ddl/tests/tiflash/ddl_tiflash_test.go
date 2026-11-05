@@ -592,7 +592,7 @@ func TestTiFlashMassiveReplicaAvailable(t *testing.T) {
 }
 
 // When set TiFlash replica, tidb shall add one Pd Rule for this table.
-// When drop/truncate table, Pd Rule shall be removed in limited time.
+// After dropping the table, the PD rule remains until delete-range GC attempts to remove it.
 func TestSetPlacementRuleNormal(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
@@ -608,7 +608,7 @@ func TestSetPlacementRuleNormal(t *testing.T) {
 	res := s.tiflash.CheckPlacementRule(expectRule)
 	require.True(t, res)
 
-	// Set lastSafePoint to a timepoint in future, so all dropped table can be reckon as gc-ed.
+	// Move the safe point into the future so delete-range cleanup is eligible to run.
 	ChangeGCSafePoint(tk, time.Now().Add(+3*time.Second), "true", "10m0s")
 	defer func() {
 		ChangeGCSafePoint(tk, time.Now(), "true", "10m0s")
@@ -666,7 +666,7 @@ func TestSetPlacementRuleWithGCWorker(t *testing.T) {
 
 	ChangeGCSafePoint(tk, time.Now().Add(-time.Hour), "true", "10m0s")
 	tk.MustExec("drop table ddltiflash_gc")
-	// Now gc will trigger, and will remove dropped table.
+	// Run delete-range GC to remove the old KV range and its associated rules.
 	require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
 
 	// Wait GC

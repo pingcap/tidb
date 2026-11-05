@@ -1,3 +1,19 @@
+SET GLOBAL tidb_redact_log = DEFAULT;
+SELECT @@global.tidb_redact_log;
+@@global.tidb_redact_log
+ON
+SELECT variable_value FROM mysql.global_variables WHERE variable_name = 'tidb_redact_log';
+variable_value
+ON
+SET GLOBAL tidb_redact_log = OFF;
+SELECT @@global.tidb_redact_log;
+@@global.tidb_redact_log
+OFF
+SET GLOBAL tidb_redact_log = DEFAULT;
+SELECT @@global.tidb_redact_log;
+@@global.tidb_redact_log
+ON
+SET GLOBAL tidb_redact_log = OFF;
 set @@global.tidb_max_delta_schema_count= -1;
 show warnings;
 Level	Code	Message

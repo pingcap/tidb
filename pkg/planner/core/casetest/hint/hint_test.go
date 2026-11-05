@@ -296,11 +296,20 @@ func TestOptimizeHintOnPartitionTable(t *testing.T) {
 			testKit.MustQuery("explain format = 'plan_tree' " + tt).Check(testkit.Rows(output[i].Plan...))
 			testKit.MustQuery("show warnings").Check(testkit.Rows(output[i].Warn...))
 		}
-		testKit.MustQuery("SELECT /*+ MAX_EXECUTION_TIME(10)  */ SLEEP(5)").Check(testkit.Rows("0"))
-		testKit.MustQuery("SELECT /*+ MAX_EXECUTION_TIME(10), dtc(name=tt)  */ SLEEP(5)").Check(testkit.Rows("0"))
-		require.Len(t, testKit.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
-		testKit.MustQuery("SELECT /*+ MAX_EXECUTION_TIME(10), dtc(name=tt) unknow(t1,t2) */ SLEEP(5)").Check(testkit.Rows("0"))
-		require.Len(t, testKit.Session().GetSessionVars().StmtCtx.GetWarnings(), 2)
+		// Verify hint parsing with an explicitly disabled deadline, even when statement
+		// preparation takes longer than the old 10 ms timeout.
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/session/mockStmtSlow", "return(20)")
+		for warnCount, sql := range []string{
+			"SELECT /*+ MAX_EXECUTION_TIME(0) */ /* sleep */ SLEEP(0.001)",
+			"SELECT /*+ MAX_EXECUTION_TIME(0), dtc(name=tt) */ /* sleep */ SLEEP(0.001)",
+			"SELECT /*+ MAX_EXECUTION_TIME(0), dtc(name=tt) unknow(t1,t2) */ /* sleep */ SLEEP(0.001)",
+		} {
+			testKit.MustQuery(sql).Check(testkit.Rows("0"))
+			stmtCtx := testKit.Session().GetSessionVars().StmtCtx
+			require.True(t, stmtCtx.HasMaxExecutionTime, "sql: %s", sql)
+			require.Zero(t, stmtCtx.MaxExecutionTime, "sql: %s", sql)
+			require.Len(t, stmtCtx.GetWarnings(), warnCount, "sql: %s", sql)
+		}
 	})
 }
 

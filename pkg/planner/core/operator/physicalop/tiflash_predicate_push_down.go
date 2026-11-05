@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -204,6 +205,15 @@ func predicatePushDownToTableScan(sctx base.PlanContext, conds []expression.Expr
 	if ts.hasFullTextIndexPushDown() {
 		return
 	}
+	// A forced column list is exclusive from cost-based filter selection.
+	if len(ts.ForcedLateMaterializationFilterColumnIDs) > 0 {
+		forcedConds, _ := splitForcedLateMaterializationConds(conds, ts)
+		if len(forcedConds) > 0 {
+			ts.LateMaterializationFilterCondition = forcedConds
+			ts.LateMaterializationSelectivity = calcLateMaterializationSelectivity(sctx, ts, forcedConds)
+		}
+		return
+	}
 	// group the conditions by columns and sort them by selectivity
 	sortedConds := groupByColumnsSortBySelectivity(sctx, conds, ts)
 
@@ -245,6 +255,65 @@ func predicatePushDownToTableScan(sctx base.PlanContext, conds []expression.Expr
 	ts.LateMaterializationSelectivity = selectedSelectivity
 }
 
+func splitForcedLateMaterializationConds(conds []expression.Expression, ts *PhysicalTableScan) (forcedConds, remainingConds []expression.Expression) {
+	if len(ts.ForcedLateMaterializationFilterColumnIDs) == 0 {
+		return nil, conds
+	}
+	forcedColumnIDs := make(map[int64]struct{}, len(ts.ForcedLateMaterializationFilterColumnIDs))
+	for _, colID := range ts.ForcedLateMaterializationFilterColumnIDs {
+		forcedColumnIDs[colID] = struct{}{}
+	}
+	// FORCE INDEX can retain an inverted index even when its predicates did not
+	// pass the selectivity heuristic. Those predicates must also stay out of LM.
+	invertedColumnIDs := make(map[int64]struct{}, len(ts.UsedColumnarIndexes))
+	for _, index := range ts.UsedColumnarIndexes {
+		if index == nil || index.QueryInfo == nil {
+			continue
+		}
+		if info := index.QueryInfo.GetInvertedQueryInfo(); info != nil {
+			invertedColumnIDs[info.ColumnId] = struct{}{}
+		}
+	}
+	forcedConds = make([]expression.Expression, 0)
+	remainingConds = make([]expression.Expression, 0, len(conds))
+	for _, cond := range conds {
+		columns := expression.ExtractColumns(cond)
+		if len(columns) == 0 {
+			remainingConds = append(remainingConds, cond)
+			continue
+		}
+		matched := true
+		usesInvertedIndex := isPredicateSimpleCompare(cond)
+		for _, col := range columns {
+			if _, ok := forcedColumnIDs[col.UniqueID]; !ok {
+				matched = false
+				break
+			}
+			if _, ok := invertedColumnIDs[col.ID]; !ok {
+				usesInvertedIndex = false
+			}
+		}
+		if matched && !usesInvertedIndex {
+			forcedConds = append(forcedConds, cond)
+		} else {
+			remainingConds = append(remainingConds, cond)
+		}
+	}
+	return forcedConds, remainingConds
+}
+
+func calcLateMaterializationSelectivity(sctx base.PlanContext, ts *PhysicalTableScan, conds []expression.Expression) float64 {
+	if len(conds) == 0 {
+		return 1.0
+	}
+	selectivity, err := cardinality.Selectivity(sctx, ts.TblColHists, conds, nil)
+	if err != nil {
+		logutil.BgLogger().Warn("calculate selectivity failed, use selection factor for late materialization", zap.Error(err))
+		return cost.SelectionFactor
+	}
+	return selectivity
+}
+
 // isPredicateSimpleCompare is used to check if the condition is a simple comparison predicate
 // which only contains >, >=, =, !=, <=, <, in.
 func isPredicateSimpleCompare(cond expression.Expression) bool {
@@ -265,8 +334,10 @@ func isPredicateSimpleCompare(cond expression.Expression) bool {
 // 1. Whether to use the inverted index.
 // 2. Whether to push down the conditions to the table scan.
 func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan, indexHints []*ast.IndexHint) {
-	// When the table is small, there is no need to push down the conditions.
-	if ts.TblColHists.RealtimeCount <= tiflashDataPackSize || ts.KeepOrder || len(ts.FilterCondition) == 0 {
+	// A forced late-materialization hint can bypass the small-table heuristic.
+	smallTable := ts.TblColHists.RealtimeCount <= tiflashDataPackSize
+	forcedLateMaterialization := pctx.GetSessionVars().EnableLateMaterialization && len(ts.ForcedLateMaterializationFilterColumnIDs) > 0
+	if (smallTable && !forcedLateMaterialization) || ts.KeepOrder || len(ts.FilterCondition) == 0 {
 		return
 	}
 
@@ -312,8 +383,9 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 	}
 
 	indexedColumnNameToIndexInfoMap := make(map[string]*model.IndexInfo, len(ts.Table.Indices))
+	// The LM hint does not bypass the small-table heuristic for inverted indexes.
 	for _, index := range ts.Table.Indices {
-		if index.State == model.StatePublic && index.InvertedInfo != nil {
+		if !smallTable && index.State == model.StatePublic && index.InvertedInfo != nil {
 			if len(indexHints) > 0 && indexMap[index.Name.L] <= 0 {
 				continue
 			}

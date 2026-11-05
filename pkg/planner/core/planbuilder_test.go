@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
 	"net/url"
 	"reflect"
@@ -29,6 +30,8 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -715,7 +718,7 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := handleAnalyzeOptions(tt.opts)
+			_, _, err := handleAnalyzeOptions(tt.opts)
 			if tt.ExpectedErr != "" {
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tt.ExpectedErr)
@@ -724,6 +727,102 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHandleAnalyzeOptionsWithDefault(t *testing.T) {
+	// An option specified as DEFAULT is reported in the reset set rather than
+	// being dropped.
+	optMap, resetOpts, err := handleAnalyzeOptions([]ast.AnalyzeOpt{
+		{Type: ast.AnalyzeOptNumBuckets},
+		{Type: ast.AnalyzeOptNumSamples},
+		{Type: ast.AnalyzeOptSampleRate, Value: ast.NewValueExpr(0.1, "", "")},
+	})
+	require.NoError(t, err)
+	require.Equal(t, map[ast.AnalyzeOptionType]uint64{
+		ast.AnalyzeOptSampleRate: math.Float64bits(0.1),
+	}, optMap)
+	require.Equal(t, map[ast.AnalyzeOptionType]struct{}{
+		ast.AnalyzeOptNumBuckets: {},
+		ast.AnalyzeOptNumSamples: {},
+	}, resetOpts)
+
+	// DEFAULT SAMPLES does not conflict with an explicit sample rate and vice versa.
+	_, _, err = handleAnalyzeOptions([]ast.AnalyzeOpt{
+		{Type: ast.AnalyzeOptSampleRate},
+		{Type: ast.AnalyzeOptNumSamples, Value: ast.NewValueExpr(100, "", "")},
+	})
+	require.NoError(t, err)
+
+	// A DEFAULT clears an earlier value of the same option for the sample
+	// num/rate conflict check too, so resetting SAMPLES makes room for a
+	// SAMPLERATE that would otherwise be rejected as setting both.
+	_, _, err = handleAnalyzeOptions([]ast.AnalyzeOpt{
+		{Type: ast.AnalyzeOptNumSamples, Value: ast.NewValueExpr(100, "", "")},
+		{Type: ast.AnalyzeOptNumSamples},
+		{Type: ast.AnalyzeOptSampleRate, Value: ast.NewValueExpr(0.1, "", "")},
+	})
+	require.NoError(t, err)
+
+	// Without the reset the same combination is still rejected.
+	_, _, err = handleAnalyzeOptions([]ast.AnalyzeOpt{
+		{Type: ast.AnalyzeOptNumSamples, Value: ast.NewValueExpr(100, "", "")},
+		{Type: ast.AnalyzeOptSampleRate, Value: ast.NewValueExpr(0.1, "", "")},
+	})
+	require.ErrorContains(t, err, "You can only either set the value of the sample num or set the value of the sample rate")
+
+	// The last mention of an option wins, as for duplicated literals.
+	optMap, resetOpts, err = handleAnalyzeOptions([]ast.AnalyzeOpt{
+		{Type: ast.AnalyzeOptNumTopN, Value: ast.NewValueExpr(10, "", "")},
+		{Type: ast.AnalyzeOptNumTopN},
+	})
+	require.NoError(t, err)
+	require.Empty(t, optMap)
+	require.Equal(t, map[ast.AnalyzeOptionType]struct{}{ast.AnalyzeOptNumTopN: {}}, resetOpts)
+	optMap, resetOpts, err = handleAnalyzeOptions([]ast.AnalyzeOpt{
+		{Type: ast.AnalyzeOptNumTopN},
+		{Type: ast.AnalyzeOptNumTopN, Value: ast.NewValueExpr(10, "", "")},
+	})
+	require.NoError(t, err)
+	require.Equal(t, map[ast.AnalyzeOptionType]uint64{ast.AnalyzeOptNumTopN: 10}, optMap)
+	require.Empty(t, resetOpts)
+
+	// TOPN 0 is a pinned value that disables TopN collection, not a reset, so it
+	// must not be confused with DEFAULT TOPN.
+	optMap, resetOpts, err = handleAnalyzeOptions([]ast.AnalyzeOpt{
+		{Type: ast.AnalyzeOptNumTopN, Value: ast.NewValueExpr(0, "", "")},
+	})
+	require.NoError(t, err)
+	require.Equal(t, map[ast.AnalyzeOptionType]uint64{ast.AnalyzeOptNumTopN: 0}, optMap)
+	require.Empty(t, resetOpts)
+}
+
+func TestMergeAnalyzeOptionsWithResets(t *testing.T) {
+	saved := map[ast.AnalyzeOptionType]uint64{
+		ast.AnalyzeOptNumBuckets: 100,
+		ast.AnalyzeOptNumTopN:    20,
+	}
+	// A reset drops the saved value, an explicit option overrides it, and
+	// untouched saved options are inherited.
+	merged := mergeAnalyzeOptions(
+		map[ast.AnalyzeOptionType]uint64{ast.AnalyzeOptNumSamples: 1000},
+		map[ast.AnalyzeOptionType]struct{}{ast.AnalyzeOptNumBuckets: {}},
+		saved,
+	)
+	require.Equal(t, map[ast.AnalyzeOptionType]uint64{
+		ast.AnalyzeOptNumTopN:    20,
+		ast.AnalyzeOptNumSamples: 1000,
+	}, merged)
+
+	// A pinned TOPN 0 overrides the saved value instead of unsetting it.
+	merged = mergeAnalyzeOptions(
+		map[ast.AnalyzeOptionType]uint64{ast.AnalyzeOptNumTopN: 0},
+		nil,
+		saved,
+	)
+	require.Equal(t, map[ast.AnalyzeOptionType]uint64{
+		ast.AnalyzeOptNumBuckets: 100,
+		ast.AnalyzeOptNumTopN:    0,
+	}, merged)
 }
 
 func TestAnalyzeBucketAndTopNDefaultsFromGlobalVars(t *testing.T) {
@@ -737,11 +836,12 @@ func TestAnalyzeBucketAndTopNDefaultsFromGlobalVars(t *testing.T) {
 	vardef.AnalyzeDefaultNumBuckets.Store(512)
 	vardef.AnalyzeDefaultNumTopN.Store(150)
 
-	optMap, err := handleAnalyzeOptions(nil)
+	optMap, resetOpts, err := handleAnalyzeOptions(nil)
 	require.NoError(t, err)
 	require.Empty(t, optMap)
+	require.Empty(t, resetOpts)
 
-	filledMap := fillAnalyzeOptions(optMap)
+	filledMap := fillAnalyzeOptions(mergeAnalyzeOptions(optMap, resetOpts, nil))
 	require.Equal(t, uint64(512), filledMap[ast.AnalyzeOptNumBuckets])
 	require.Equal(t, uint64(150), filledMap[ast.AnalyzeOptNumTopN])
 
@@ -749,14 +849,14 @@ func TestAnalyzeBucketAndTopNDefaultsFromGlobalVars(t *testing.T) {
 	require.Equal(t, uint64(512), testDefaults[ast.AnalyzeOptNumBuckets])
 	require.Equal(t, uint64(150), testDefaults[ast.AnalyzeOptNumTopN])
 
-	optMap, err = handleAnalyzeOptions([]ast.AnalyzeOpt{
+	optMap, resetOpts, err = handleAnalyzeOptions([]ast.AnalyzeOpt{
 		{
 			Type:  ast.AnalyzeOptNumBuckets,
 			Value: ast.NewValueExpr(1024, "", ""),
 		},
 	})
 	require.NoError(t, err)
-	filledMap = fillAnalyzeOptions(optMap)
+	filledMap = fillAnalyzeOptions(mergeAnalyzeOptions(optMap, resetOpts, nil))
 	require.Equal(t, uint64(1024), filledMap[ast.AnalyzeOptNumBuckets])
 	require.Equal(t, uint64(150), filledMap[ast.AnalyzeOptNumTopN])
 }
@@ -1192,6 +1292,13 @@ func TestProcessNextGenS3Path(t *testing.T) {
 			conf.KeyspaceName = bak
 		})
 	})
+	if kerneltype.IsNextGen() {
+		originalMode := deploymode.Get()
+		require.NoError(t, deploymode.Set(deploymode.Premium))
+		t.Cleanup(func() {
+			require.NoError(t, deploymode.Set(originalMode))
+		})
+	}
 
 	for _, str := range []string{
 		"S3://bucket?External-id=abc&access-key=ak&secret-access-key=sk",
@@ -1237,6 +1344,41 @@ func TestProcessNextGenS3Path(t *testing.T) {
 		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
 		require.ErrorContains(t, err, "IMPORT INTO from S3-like storage without access key/secret access key or role ARN")
 	}
+
+	if kerneltype.IsClassic() {
+		return
+	}
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	for _, str := range []string{
+		"S3://bucket?External-id=abc&access-key=ak&secret-access-key=sk",
+		"s3://bucket?external_id=abc&access-key=ak&secret-access-key=sk",
+		"s3://bucket?external-id=aaa&external_id=abc&access-key=ak&secret-access-key=sk",
+		"oss://bucket?External-id=abc&role-arn=arn",
+	} {
+		u, err := url.Parse(str)
+		require.NoError(t, err)
+		require.NoError(t, checkStarterS3Path(u))
+		require.NoError(t, checkNextGenS3PathWithSem(u))
+	}
+
+	for _, str := range []string{
+		"s3://bucket?access-key=ak&secret-access-key=sk",
+		"s3://bucket?external-id=&access-key=ak&secret-access-key=sk",
+		"s3://bucket?external-id=abc&external_id=&access-key=ak&secret-access-key=sk",
+		"oss://bucket?role-arn=arn",
+	} {
+		u, err := url.Parse(str)
+		require.NoError(t, err)
+		err = checkStarterS3Path(u)
+		require.ErrorContains(t, err, "external ID is required for Starter deployments")
+	}
+
+	u, err := url.Parse("s3://bucket?external-id=allowed")
+	require.NoError(t, err)
+	require.NoError(t, checkStarterS3Path(u))
+	err = checkNextGenS3PathWithSem(u)
+	require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
+	require.ErrorContains(t, err, "IMPORT INTO from S3-like storage without access key/secret access key or role ARN")
 }
 
 func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {

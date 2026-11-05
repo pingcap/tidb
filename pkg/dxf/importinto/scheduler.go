@@ -132,9 +132,13 @@ func (t *taskInfo) close(ctx context.Context) {
 		}
 		t.taskRegister = nil
 	}
+	t.closeEtcdClient()
+}
+
+func (t *taskInfo) closeEtcdClient() {
 	if t.etcdClient != nil {
 		if err := t.etcdClient.Close(); err != nil {
-			logger.Warn("close etcd client failed", zap.Error(err))
+			t.logger.Warn("close etcd client failed", zap.Error(err))
 		}
 		t.etcdClient = nil
 	}
@@ -209,6 +213,13 @@ func (sch *importScheduler) Init() (err error) {
 }
 
 func (sch *importScheduler) Close() {
+	// A new owner may have adopted the same registration lease. Release only
+	// local clients here; terminal job paths are responsible for revoking leases.
+	sch.taskInfoMap.Range(func(key, value any) bool {
+		value.(*taskInfo).closeEtcdClient()
+		sch.taskInfoMap.Delete(key)
+		return true
+	})
 	metricsManager.unregister(sch.GetTask().ID)
 	sch.BaseScheduler.Close()
 }
