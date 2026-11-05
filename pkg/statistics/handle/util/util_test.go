@@ -97,7 +97,7 @@ func TestCallSCtxFailed(t *testing.T) {
 	})
 	require.ErrorContains(t, err, "panic in CallWithSCtx")
 
-	// A panic in the function of WrapTxn commits the writes made before the panic.
+	// A panic in the function of WrapTxn rolls back the writes made before the panic.
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create table test.t (a int)")
 	err = util.CallWithSCtx(dom.StatsHandle().SPool(), func(sctx sessionctx.Context) error {
@@ -106,7 +106,7 @@ func TestCallSCtxFailed(t *testing.T) {
 		panic("simulated panic")
 	}, util.FlagWrapTxn)
 	require.ErrorContains(t, err, "panic in CallWithSCtx")
-	tk.MustQuery("select count(*) from test.t").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from test.t").Check(testkit.Rows("0"))
 }
 
 func newStatsSessionContextForRestoreTest(t *testing.T) *mock.Context {

@@ -300,10 +300,17 @@ func WrapTxn(sctx sessionctx.Context, f func(sctx sessionctx.Context) error) (er
 	if _, _, err := ExecRows(sctx, "BEGIN PESSIMISTIC"); err != nil {
 		return err
 	}
+	fReturned := false
 	defer func() {
+		// If f panics, this call runs while err is still nil.
+		// Roll back then, so that the panic does not commit the partial writes of f.
+		if !fReturned {
+			err = errors.New("panic in WrapTxn")
+		}
 		err = finishTransaction(sctx, err)
 	}()
 	err = f(sctx)
+	fReturned = true
 	return
 }
 
