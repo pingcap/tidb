@@ -638,7 +638,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 	case *ast.UnlockStatsStmt:
 		return b.buildUnlockStats(x), nil
 	case *ast.PlanReplayerStmt:
-		return b.buildPlanReplayer(x), nil
+		return b.buildPlanReplayer(x)
 	case *ast.TrafficStmt:
 		return b.buildTraffic(x), nil
 	case *ast.PrepareStmt:
@@ -6476,7 +6476,15 @@ func convert2OutputSchemasAndNames(names []string, ftypes []byte, flags []uint) 
 	return
 }
 
-func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) base.Plan {
+func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) (base.Plan, error) {
+	if pc.Capture || pc.Remove {
+		if !validPlanReplayerDigest(pc.SQLDigest) {
+			return nil, errors.New("invalid SQL digest: expected a non-empty hexadecimal string of at most 128 characters")
+		}
+		if pc.PlanDigest != "*" && !validPlanReplayerDigest(pc.PlanDigest) {
+			return nil, errors.New("invalid plan digest: expected a non-empty hexadecimal string of at most 128 characters or '*'")
+		}
+	}
 	p := &PlanReplayer{ExecStmt: pc.Stmt, StmtList: pc.StmtList, Analyze: pc.Analyze, Load: pc.Load, File: pc.File,
 		Capture: pc.Capture, Remove: pc.Remove, SQLDigest: pc.SQLDigest, PlanDigest: pc.PlanDigest}
 
@@ -6489,7 +6497,19 @@ func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) base.Plan {
 	schema.Append(buildColumnWithName("", "Value", mysql.TypeVarchar, mysql.MaxBlobWidth))
 	p.SetSchema(schema.col2Schema())
 	p.SetOutputNames(schema.names)
-	return p
+	return p, nil
+}
+
+func validPlanReplayerDigest(digest string) bool {
+	if len(digest) == 0 || len(digest) > 128 {
+		return false
+	}
+	for _, c := range digest {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 func calcTSForPlanReplayer(sctx base.PlanContext, tsExpr ast.ExprNode) uint64 {
