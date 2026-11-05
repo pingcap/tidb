@@ -246,4 +246,21 @@ func TestRevokeColumnPriv(t *testing.T) {
 	tk.MustExec("REVOKE ALL on t1 from u1")
 	tk.MustQuery("select table_priv,column_priv from mysql.tables_priv where user='u1'").
 		Check(testkit.Rows())
+
+	// REVOKE ALL on a subset of columns must preserve the remaining column grants.
+	// mysql.columns_priv stores individual privilege names, so REVOKE ALL(c1) must
+	// recompute the tables_priv summary from the surviving privileges instead of
+	// matching the "ALL PRIVILEGES" pseudo-name, which never appears there.
+	tk.MustExec("DROP USER u1")
+	tk.MustExec("CREATE USER u1")
+	tk.MustExec("GRANT SELECT(c1, c2) ON test.t1 TO u1")
+	tk.MustExec("REVOKE ALL(c1) ON test.t1 FROM u1")
+	tk.MustQuery("SELECT column_name, column_priv FROM mysql.columns_priv WHERE user='u1' ORDER BY column_name").
+		Check(testkit.RowsWithSep("|", "c2|Select"))
+	tk.MustQuery("SELECT table_priv, column_priv FROM mysql.tables_priv WHERE user='u1'").
+		Check(testkit.RowsWithSep("|", "|Select"))
+	// The surviving c2 grant must still be revocable.
+	tk.MustExec("REVOKE SELECT(c2) ON test.t1 FROM u1")
+	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv WHERE user='u1'").Check(testkit.Rows())
+	tk.MustQuery("SELECT table_priv, column_priv FROM mysql.tables_priv WHERE user='u1'").Check(testkit.Rows())
 }
