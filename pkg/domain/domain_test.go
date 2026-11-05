@@ -242,12 +242,15 @@ func TestStatWorkRecoverFromPanic(t *testing.T) {
 	require.Equal(t, float64(2), pb.GetCounter().GetValue())
 
 	// The domain has no stats handle, so each tick of gcStatsWorker panics on a nil pointer.
-	// The panic stops the worker, and the worker marks stats as not updating.
+	// The worker recovers each panic and keeps running, so stats stay marked as updating.
 	dom.statsLease = 10 * time.Millisecond
 	dom.statsOwner = owner.NewMockManager(context.Background(), "test", store, "stats-owner-test")
 	dom.SetStatsUpdating(true)
 	dom.wg.Run(dom.gcStatsWorker, "gcStatsWorker")
-	require.Eventually(t, func() bool { return !dom.StatsUpdating() }, 5*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		return counter.Write(pb) == nil && pb.GetCounter().GetValue() >= 4
+	}, 5*time.Second, 10*time.Millisecond)
+	require.True(t, dom.StatsUpdating())
 
 	scope := dom.GetScope("status")
 	require.Equal(t, variable.DefaultStatusVarScopeFlag, scope)
