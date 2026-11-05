@@ -16,6 +16,7 @@ package globalstats
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -344,7 +345,7 @@ func blockingMergePartitionStats2GlobalStats(
 		}
 		allCms[i] = nil // Release for GC.
 
-		if hasV1Stats[i] {
+		if hasV1Stats[i] || exceedsCombinedMergeBuckets(allHg[i]) {
 			globalStats.TopN[i], globalStats.Hg[i], err = mergeV1TopNAndHist(gpool, sc, sc.GetSessionVars().StmtCtx,
 				NewStatsWrapper(allHg[i], allTopN[i]), sc.GetSessionVars().AnalyzeVersion, opts, isIndex)
 		} else {
@@ -385,6 +386,19 @@ func isV1Stats(partitionStats *statistics.Table, histID int64, isIndex bool) boo
 	return col != nil && col.StatsVer == statistics.Version1
 }
 
+// exceedsCombinedMergeBuckets reports whether a partition histogram has
+// more buckets than the combined merge can address (math.MaxUint16).
+// ANALYZE accepts up to 100000 buckets, and the previous merge has no
+// such limit.
+func exceedsCombinedMergeBuckets(hists []*statistics.Histogram) bool {
+	for _, h := range hists {
+		if h != nil && h.Len() > math.MaxUint16 {
+			return true
+		}
+	}
+	return false
+}
+
 // mergeV1TopNAndHist merges the partition TopNs and histograms of one
 // column or index the way global stats were merged before the combined
 // merge: TopN first, then the histograms with the TopN values left over.
@@ -394,6 +408,8 @@ func isV1Stats(partitionStats *statistics.Table, histID int64, isIndex bool) boo
 // rather than the key encoding, and version 1 range estimation reads
 // only the histogram. The combined merge assumes none of that, so
 // whenever some partition has version 1 stats, the merge takes this path.
+// It is also used when a partition histogram has more buckets than the
+// combined merge supports, see exceedsCombinedMergeBuckets.
 // sctx provides the merge concurrency and the SQLKiller.
 func mergeV1TopNAndHist(
 	gpool *gp.Pool,

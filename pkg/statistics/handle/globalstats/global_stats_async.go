@@ -563,7 +563,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			var err error
 			wrapper := item.item
 			globalHg := &(a.globalStats.Hg[item.idx])
-			if a.hasV1Stats[item.idx] {
+			if a.hasV1Stats[item.idx] || exceedsCombinedMergeBuckets(wrapper.AllHg) {
 				a.globalStats.TopN[item.idx], *globalHg, err = mergeV1TopNAndHist(a.statsHandle.GPool(), sctx, stmtCtx,
 					wrapper, analyzeVersion, opts, isIndex)
 			} else {
