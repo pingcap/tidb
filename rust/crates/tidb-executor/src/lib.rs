@@ -88,6 +88,7 @@ pub mod split_region;
 pub mod access_cost;
 pub mod access_path;
 pub mod admin_check;
+pub mod fast_check_table;
 pub mod checksum;
 
 pub mod analyze;

@@ -134,16 +134,10 @@ pub struct AdminValueMismatch {
 /// `%#v` form, which for a slice of datums is its Go debug rendering. This
 /// engine prints the values it holds; the *presence* of the two sides is what
 /// the error is about, and both are named.
+/// Go `fmt.Sprint([]types.Datum)`: each datum's `String()`, space-separated.
 fn render_values(values: &[Datum]) -> String {
-    let mut out = String::from("[");
-    for (i, value) in values.iter().enumerate() {
-        if i > 0 {
-            out.push_str(", ");
-        }
-        out.push_str(&format!("{value:?}"));
-    }
-    out.push(']');
-    out
+    let rendered: Vec<String> = values.iter().map(render_go_datum).collect();
+    format!("[{}]", rendered.join(" "))
 }
 
 fn render_go_datum(value: &Datum) -> String {
@@ -183,6 +177,25 @@ fn render_record(handle: &TableHandle, values: &[Datum]) -> String {
         render_handle(handle),
         render_values(values)
     )
+}
+
+/// Go `consistency.Reporter.ReportAdminCheckInconsistent(handle, idxRow,
+/// tblRow)`'s error; an absent side prints as `""`.
+pub(crate) fn inconsistent(
+    table: &str,
+    index: &str,
+    handle: &TableHandle,
+    index_row: Option<(&TableHandle, &[Datum])>,
+    table_row: Option<(&TableHandle, &[Datum])>,
+) -> AdminCheckError {
+    let render = |row: Option<(&TableHandle, &[Datum])>| row.map_or_else(String::new, |(handle, values)| render_record(handle, values));
+    AdminCheckError::Inconsistent {
+        table: table.to_owned(),
+        index: index.to_owned(),
+        handle: render_handle(handle),
+        index_values: render(index_row),
+        record_values: render(table_row),
+    }
 }
 
 /// How Go prints a row handle in the inconsistency message: an integer handle

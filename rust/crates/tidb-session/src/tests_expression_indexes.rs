@@ -1539,3 +1539,41 @@ fn an_order_by_position_never_names_a_hidden_column() {
     );
     assert_eq!(code(&mut s, "SELECT * FROM t ORDER BY 3"), None);
 }
+
+/// Go `FastCheckTableExec`'s index-side checksum over an expression index:
+/// Go plans an `IndexLookUp` (the index's handles, then the table's rows for
+/// `lower(b)`) and answers the same checksum as the table side. gorun:
+/// `493463851|2` both ways.
+#[test]
+fn the_fast_check_index_side_reads_an_expression_index_like_go() {
+    let mut session = Session::new();
+    session.run("create table t(a int, b varchar(10), key idx((lower(b))))").unwrap();
+    session.run("insert into t values (1,'Aa'),(2,'bB')").unwrap();
+    let checksum = "bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, lower(`b`))))), count(*) from `test`.`t`";
+    assert_eq!(
+        rows(&mut session, &format!("select /*+ AGG_TO_COP() */ {checksum} use index(`idx`) where (0 = 0)")),
+        [["493463851", "2"]]
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            &format!("select /*+ read_from_storage(tikv[`test`.`t`]), AGG_TO_COP() */ {checksum} use index() where (0 = 0)")
+        ),
+        [["493463851", "2"]]
+    );
+}
+
+/// An index lookup whose table side carries a cop partial aggregate the
+/// in-process source cannot take (`bit_xor`, an aggregate over `crc32(b)`)
+/// aggregates the looked-up rows itself; the root's final aggregate reads
+/// partial rows either way (gorun answers each).
+#[test]
+fn an_index_lookup_aggregates_rows_the_source_cannot_aggregate() {
+    let mut session = Session::new();
+    session.run("create table t(a int, b varchar(10), key idx((lower(b))))").unwrap();
+    session.run("insert into t values (1,'Aa'),(2,'bB')").unwrap();
+    assert_eq!(rows(&mut session, "select bit_xor(a), count(*) from t use index(idx)"), [["3", "2"]]);
+    assert_eq!(rows(&mut session, "select bit_xor(crc32(b)) from t use index(idx)"), [["483264019"]]);
+    assert_eq!(rows(&mut session, "select sum(crc32(b)) from t use index(idx)"), [["4845369563"]]);
+    assert_eq!(rows(&mut session, "select count(b), max(lower(b)) from t use index(idx)"), [["2", "bb"]]);
+}

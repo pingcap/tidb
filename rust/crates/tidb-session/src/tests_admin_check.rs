@@ -39,6 +39,14 @@ fn error_of(session: &mut Session, sql: &str) -> (u16, String) {
     (mysql.code, mysql.message)
 }
 
+/// Go `set tidb_enable_fast_table_check`: `FastCheckTableExec` (the
+/// default) or `CheckTableExec`.
+fn set_fast_check(session: &mut Session, enabled: bool) {
+    session
+        .run(&format!("set tidb_enable_fast_table_check = {}", u8::from(enabled)))
+        .unwrap();
+}
+
 /// Asserts a statement passed `ADMIN CHECK` and produced NO OUTPUT.
 ///
 /// Go's `CheckTable` plan is a `SimpleSchemaProducer` that never sets a
@@ -370,8 +378,16 @@ fn a_corrupted_index_is_caught() {
         .delete_store_key_for_test(&entry)
         .expect("delete the entry");
 
-    // Go reports the row/entry count difference as 8003 for `ADMIN CHECK
-    // INDEX` (`admin.CheckIndicesCount`'s own error) ...
+    // Go `FastCheckTableExec` names the row whose entry is gone, for either
+    // statement.
+    let missing = "data inconsistency in table: t, index: idx_b, handle: 1, \
+                   index-values:\"\" != record-values:\"handle: 1, values: [KindString aa]\"";
+    assert_eq!(error_of(&mut session, "admin check index t idx_b"), (8223, missing.to_owned()));
+    assert_eq!(error_of(&mut session, "admin check table t"), (8223, missing.to_owned()));
+
+    // Go `CheckTableExec` reports the row/entry count difference as 8003 for
+    // `ADMIN CHECK INDEX` (`admin.CheckIndicesCount`'s own error) ...
+    set_fast_check(&mut session, false);
     let (code, message) = error_of(&mut session, "admin check index t idx_b");
     assert_eq!(code, 8003, "{message}");
     assert!(
@@ -403,20 +419,33 @@ fn an_orphaned_index_entry_is_caught() {
         .run("insert into t values (1, 'aa'), (2, 'bb'), (3, 'cc')")
         .unwrap();
 
-    let mut store = session.transaction_store().expect("a node session has a store");
-    session
+    let table_id = session
         .with_committed_catalog_mut(|catalog| {
             let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t")
             else {
                 panic!("t is not stored as bytes");
             };
-            std::sync::Arc::make_mut(table)
-                .delete_record_for_test(&mut *store, &tidb_table::tables::TableHandle::Int(2))
-                .expect("delete the row");
-            Ok(())
+            Ok(table.table_id())
         })
         .unwrap();
+    // The delete commits into the store, as Go's test does.
+    session
+        .delete_store_key_for_test(&tidb_tablecodec::table_key::encode_row_key_with_handle(
+            table_id,
+            &tidb_tablecodec::table_key::RecordHandle::Int(2),
+        ))
+        .expect("delete the row");
 
+    assert_eq!(
+        error_of(&mut session, "admin check table t"),
+        (
+            8223,
+            "data inconsistency in table: t, index: idx_b, handle: 2, \
+             index-values:\"handle: 2, values: [KindString bb]\" != record-values:\"\""
+                .to_owned()
+        )
+    );
+    set_fast_check(&mut session, false);
     let (code, message) = error_of(&mut session, "admin check table t");
     assert_eq!(code, 8223, "{message}");
     assert!(message.contains("index: idx_b"), "{message}");
@@ -437,7 +466,7 @@ fn a_unique_index_entry_naming_the_wrong_row_reports_both_records() {
         .unwrap();
 
     let mut store = session.transaction_store().expect("a node session has a store");
-    session
+    let swapped = session
         .with_committed_catalog_mut(|catalog| {
             let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t")
             else {
@@ -451,13 +480,27 @@ fn a_unique_index_entry_naming_the_wrong_row_reports_both_records() {
                 .expect("idx_b");
             let entries = table.index_entries_for_check(&mut *store, index.read().id).expect("entries");
             assert_eq!(entries.len(), 2);
-            table
-                .swap_raw_values_for_test(&mut *store, &entries[0].0, &entries[1].0)
-                .expect("swap the unique-index handles");
-            Ok(())
+            Ok((entries[0].0.clone(), entries[1].0.clone()))
         })
         .unwrap();
+    // Swap the unique-index handles in a committed write, as Go's test does.
+    let (first, second) = swapped;
+    let first_value = session.get_store_key_for_test(&first).unwrap().expect("first entry");
+    let second_value = session.get_store_key_for_test(&second).unwrap().expect("second entry");
+    session.put_store_key_for_test(&first, &second_value).unwrap();
+    session.put_store_key_for_test(&second, &first_value).unwrap();
 
+    // Go `FastCheckTableExec`: row 1's index columns differ from its entry's.
+    assert_eq!(
+        error_of(&mut session, "admin check table t"),
+        (
+            8223,
+            "data inconsistency in table: t, index: idx_b, handle: 1, \
+             index-values:\"handle: 1, values: [KindInt64 20]\" != record-values:\"handle: 1, values: [KindInt64 10]\""
+                .to_owned()
+        )
+    );
+    set_fast_check(&mut session, false);
     let (code, message) = error_of(&mut session, "admin check table t");
     assert_eq!(code, 8134, "{message}");
     assert!(
@@ -486,7 +529,7 @@ fn an_index_value_mismatch_reports_the_column_and_both_values() {
         .unwrap();
 
     let mut store = session.transaction_store().expect("a node session has a store");
-    session
+    let moved = session
         .with_committed_catalog_mut(|catalog| {
             let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t")
             else {
@@ -514,13 +557,26 @@ fn an_index_value_mismatch_reports_the_column_and_both_values() {
                 )
                 .expect("wrong index key")
                 .remove(0);
-            table
-                .move_raw_value_for_test(&mut *store, old_key, new_key)
-                .expect("move the index entry");
-            Ok(())
+            Ok((old_key.clone(), new_key))
         })
         .unwrap();
+    // Move the entry in a committed write, as Go's test does.
+    let (old_key, new_key) = moved;
+    let value = session.get_store_key_for_test(&old_key).unwrap().expect("row 2 index entry");
+    session.delete_store_key_for_test(&old_key).unwrap();
+    session.put_store_key_for_test(&new_key, &value).unwrap();
 
+    // Go `TestAdminCheckGlobalIndex` with fast check: 8223 with both records.
+    assert_eq!(
+        error_of(&mut session, "admin check table t"),
+        (
+            8223,
+            "data inconsistency in table: t, index: idx_b, handle: 2, \
+             index-values:\"handle: 2, values: [KindInt64 100]\" != record-values:\"handle: 2, values: [KindInt64 20]\""
+                .to_owned()
+        )
+    );
+    set_fast_check(&mut session, false);
     let (code, message) = error_of(&mut session, "admin check table t");
     assert_eq!(code, 8134, "{message}");
     assert_eq!(
@@ -629,7 +685,12 @@ fn recover_and_cleanup_index_repair_what_check_finds() {
         [["0", "3"]]
     );
     corrupt(&mut session, true);
+    // Go `FastCheckTableExec` (the default) names the row (8223);
+    // `CheckTableExec` reports `CheckIndicesCount`'s 8003.
+    assert_eq!(error_of(&mut session, "admin check index t idx_b").0, 8223);
+    set_fast_check(&mut session, false);
     assert_eq!(error_of(&mut session, "admin check index t idx_b").0, 8003);
+    set_fast_check(&mut session, true);
     assert_eq!(
         row_text(session.run("admin recover index t idx_b")),
         [["1", "3"]]

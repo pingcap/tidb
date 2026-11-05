@@ -354,7 +354,22 @@ impl NodeConn {
     /// commits the delete of `key` straight into the embedded store.
     #[cfg(test)]
     pub(crate) fn delete_key_for_test(&self, key: &[u8]) -> Result<(), String> {
+        self.write_key_for_test(key, None)
+    }
+
+    /// commits `key = value` straight into the embedded store.
+    #[cfg(test)]
+    pub(crate) fn put_key_for_test(&self, key: &[u8], value: &[u8]) -> Result<(), String> {
+        self.write_key_for_test(key, Some(value))
+    }
+
+    #[cfg(test)]
+    fn write_key_for_test(&self, key: &[u8], value: Option<&[u8]>) -> Result<(), String> {
         use tidb_proto::{KvrpcMutation, KvrpcOp};
+        let (op, value) = match value {
+            Some(value) => (KvrpcOp::Put, value.to_vec()),
+            None => (KvrpcOp::Del, Vec::new()),
+        };
         let start = self.fresh_timestamp_for_test()?;
         let commit = self.fresh_timestamp_for_test()?;
         let handler = self.mock_store().stack.rpc.handler();
@@ -365,8 +380,9 @@ impl NodeConn {
             .store
             .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
                 mutations: vec![KvrpcMutation {
-                    op: KvrpcOp::Del as i32,
+                    op: op as i32,
                     key: key.to_vec(),
+                    value,
                     ..KvrpcMutation::default()
                 }],
                 primary_lock: key.to_vec(),

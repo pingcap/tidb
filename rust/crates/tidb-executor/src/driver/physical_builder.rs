@@ -2364,17 +2364,9 @@ fn reader_partial_aggregate(
     child_schema: &Schema,
     ctx: &crate::StmtContext,
 ) -> Result<Option<PushdownPartialAggregate>, DriverError> {
-    let (descriptors, group_by, stream) = match table_plan {
-        PhysicalPlan::HashAgg(agg) => (&agg.agg_funcs, &agg.group_by_items, false),
-        PhysicalPlan::StreamAgg(agg) => (&agg.agg_funcs, &agg.group_by_items, true),
-        _ => return Ok(None),
-    };
-    if !descriptors
-        .iter()
-        .all(|descriptor| descriptor.mode == AggFunctionMode::Partial1)
-    {
+    let Some((descriptors, group_by, stream)) = partial_aggregate_parts(table_plan) else {
         return Ok(None);
-    }
+    };
     let functions = descriptors
         .iter()
         .map(|descriptor| aggregate_function(descriptor, child_schema, ctx))
@@ -2387,6 +2379,20 @@ fn reader_partial_aggregate(
         child_schema,
         &plan_schema(table_plan)?,
     )
+}
+
+/// The cop partial aggregate (`Partial1` functions, group-by items,
+/// streamed) an index-lookup table plan carries at its root.
+fn partial_aggregate_parts(table_plan: &PhysicalPlan) -> Option<(&[AggFuncDesc], &[Expression], bool)> {
+    let (descriptors, group_by, stream) = match table_plan {
+        PhysicalPlan::HashAgg(agg) => (&agg.agg_funcs, &agg.group_by_items, false),
+        PhysicalPlan::StreamAgg(agg) => (&agg.agg_funcs, &agg.group_by_items, true),
+        _ => return None,
+    };
+    descriptors
+        .iter()
+        .all(|descriptor| descriptor.mode == AggFunctionMode::Partial1)
+        .then_some((descriptors.as_slice(), group_by.as_slice(), stream))
 }
 
 fn embedded_index_scan(plan: &PhysicalPlan) -> Option<&PhysicalIndexScan> {
@@ -2875,11 +2881,19 @@ fn build_index_reader(
     if let Some(table_plan) = table_plan.filter(|_| !lookup_pushdown) {
         lower_index_lookup_selections(table_plan, &mut source, ctx)?;
     }
+    // The table side's cop partial aggregate runs in the source when it
+    // accepts it, and over the source's rows otherwise; the root's final
+    // aggregate reads partial rows either way.
+    let mut local_partial_aggregate = None;
     if let Some(table_plan) = table_plan {
-        if let Some(partial) = reader_partial_aggregate(table_plan, source.schema(), ctx)? {
-            if source.accept_partial_aggregate(&partial, ctx) {
-                source.set_partial_output_schema(plan_schema(table_plan)?);
-            }
+        let pushed = match reader_partial_aggregate(table_plan, source.schema(), ctx)? {
+            Some(partial) => source.accept_partial_aggregate(&partial, ctx),
+            None => false,
+        };
+        if pushed {
+            source.set_partial_output_schema(plan_schema(table_plan)?);
+        } else if partial_aggregate_parts(table_plan).is_some() {
+            local_partial_aggregate = Some(table_plan);
         }
     }
     if let Some(limit) = pushed_limit {
@@ -2902,17 +2916,25 @@ fn build_index_reader(
     // by `compareExec.compare`. This tier folds that merge into the source;
     // arming it here keeps every other read untouched.
     source.enable_dirty_union_scan_merge();
-    if storage.is_mem_buffer() {
-        return Ok(Box::new(source));
+    let source: Box<dyn Executor> = if storage.is_mem_buffer() {
+        Box::new(source)
+    } else {
+        Box::new(CopIndexUsageExec::new(
+            Box::new(source),
+            logical_table_id,
+            stats,
+            ctx.index_usage_collector().cloned(),
+            Some(scan.index_id),
+        ))
+    };
+    match local_partial_aggregate {
+        Some(table_plan) => {
+            let (descriptors, group_by, stream) =
+                partial_aggregate_parts(table_plan).expect("a partial aggregate table plan");
+            build_aggregation_over_child(table_plan, descriptors, group_by, stream, source, ctx, false)
+        }
+        None => Ok(source),
     }
-    let source = Box::new(CopIndexUsageExec::new(
-        Box::new(source),
-        logical_table_id,
-        stats,
-        ctx.index_usage_collector().cloned(),
-        Some(scan.index_id),
-    ));
-    Ok(source)
 }
 
 fn join_kind(join_type: LogicalJoinType) -> Result<JoinKind, DriverError> {

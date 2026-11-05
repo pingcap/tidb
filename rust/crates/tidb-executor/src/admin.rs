@@ -680,16 +680,41 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
         let only_index = only_index.map(str::to_owned);
         let ctx = self.statement_context(false);
         let decode_context = crate::RowDecodeContext::for_query(&ctx);
+        // Go `buildCheckTable`: `FastCheckTableExec` under
+        // `tidb_enable_fast_table_check` when no checked index is
+        // multi-valued, columnar or over a column prefix.
         let fast_check = self.session_vars().system_bool("tidb_enable_fast_table_check", true);
+        let plan = self.with_catalog_mut(|catalog| {
+            let table = admin_check_table_mut(catalog, &database, &name, statement)?;
+            Ok(fast_check_plan(&table.meta().read(), only_index.as_deref()))
+        })?;
+        if let Some((table_info, index_infos)) = plan.filter(|_| fast_check) {
+            let vars = crate::fast_check_table::FastCheckSessionVars {
+                copied: crate::fast_check_table::FAST_CHECK_COPIED_VARS
+                    .iter()
+                    .map(|name| (*name, self.session_vars().get_system(name).unwrap_or_default()))
+                    .collect(),
+                snapshot_ts: self.session_vars().snapshot_ts(),
+            };
+            crate::fast_check_table::fast_check_table(
+                &mut || self.get_sys_session(),
+                &vars,
+                &database,
+                &table_info.read(),
+                &index_infos,
+            )?;
+            return Ok(index_infos.len());
+        }
         self.with_catalog_mut(|catalog| {
             let table = admin_check_table_mut(catalog, &database, &name, statement)?;
             let mut store = crate::statement_store(&ctx);
+            // Go `CheckTableExec`, which refuses a partial index.
             crate::admin_check::check_table(
                 table,
                 &mut *store,
                 only_index.as_deref(),
                 &decode_context,
-                fast_check,
+                false,
             )
             .map_err(admin_check_error)
         })
@@ -715,6 +740,9 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
     ) -> Result<(), DriverError>;
     /// Go `executor.TakeSnapshot`, which the workload repository installs.
     fn take_snapshot(&self) -> Option<TakeSnapshot>;
+    /// Go `BaseExecutor.GetSysSession`: a system session of the domain, whose
+    /// SQL `FastCheckTableExec` runs under `kv.InternalTxnAdmin`.
+    fn get_sys_session(&self) -> Result<Box<dyn crate::fast_check_table::SysSession>, DriverError>;
     /// Go `SimpleExec.executeFlush`'s `FlushPrivileges` arm: reload the
     /// privilege cache and notify the domain.
     fn flush_privileges(&mut self) -> Result<(), DriverError>;
@@ -1305,6 +1333,42 @@ pub(crate) fn admin_check_passed() -> StmtOutput {
 
 /// The storage-backed table `ADMIN CHECK` needs, or the refusal that names
 /// why it is not checkable.
+/// Go `buildAdminCheckTable`'s checked indexes (`buildPhysicalIndexLookUpReaders`:
+/// public, not the clustered primary key) when `buildCheckTable` can use
+/// `FastCheckTableExec` for them; `None` for `CheckTableExec`, or for an
+/// `ADMIN CHECK INDEX` whose index the table lacks or has not made public,
+/// which that path refuses.
+fn fast_check_plan(
+    table: &tidb_model::TableInfo,
+    only_index: Option<&str>,
+) -> Option<(tidb_model::GoShared<tidb_model::TableInfo>, Vec<tidb_model::GoShared<tidb_model::IndexInfo>>)> {
+    let candidates: Vec<_> = match only_index {
+        Some(name) => {
+            let found = table
+                .indices
+                .iter_deref()
+                .find(|index| index.read().name.lowercase() == name.to_lowercase())
+                .filter(|index| index.read().state == tidb_model::SchemaState::PUBLIC)?;
+            vec![found]
+        }
+        None => table.indices.iter_deref().collect(),
+    };
+    let index_infos: Vec<_> = candidates
+        .into_iter()
+        .filter(|index| {
+            let index = index.read();
+            !(table.is_common_handle && index.primary) && index.state == tidb_model::SchemaState::PUBLIC
+        })
+        .collect();
+    let can_use_fast_check = index_infos.iter().all(|index| {
+        let index = index.read();
+        !index.mv_index
+            && !index.is_columnar_index()
+            && index.columns.iter_deref().all(|col| col.read().length == tidb_datatype::UNSPECIFIED_LENGTH)
+    });
+    can_use_fast_check.then(|| (tidb_model::GoShared::new(table.clone()), index_infos))
+}
+
 pub(crate) fn admin_check_table_mut<'a>(
     catalog: &'a mut crate::SessionExtendedInfoSchema,
     database: &str,
@@ -1391,7 +1455,7 @@ pub(crate) fn admin_check_error(error: crate::admin_check::AdminCheckError) -> D
             crate::consistency_errors::ERR_ADMIN_CHECK_INCONSISTENT.gen_with_stack(
                 format!(
                     "data inconsistency in table: {table}, index: {index}, handle: {handle}, \
-             index-values:{index_values} != record-values:{record_values}"
+             index-values:{index_values:?} != record-values:{record_values:?}"
                 ),
             ),
         ),

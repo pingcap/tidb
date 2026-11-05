@@ -2620,6 +2620,13 @@ impl Session {
         self.node().delete_key_for_test(key)
     }
 
+    /// Commits `key = value` into this session's store, as Go's corruption
+    /// tests do through a transaction of their own.
+    #[cfg(test)]
+    pub(crate) fn put_store_key_for_test(&self, key: &[u8], value: &[u8]) -> Result<(), String> {
+        self.node().put_key_for_test(key, value)
+    }
+
     fn run_with_columns_using(
         &mut self,
         sql: &str,

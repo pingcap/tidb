@@ -2687,7 +2687,7 @@ impl crate::stored_state_service::PendingSysvarChange for ClusterPendingSysvarCh
     }
 }
 
-fn sql_query_error_to_driver(error: SqlQueryError) -> tidb_driver_error::DriverError {
+pub(crate) fn sql_query_error_to_driver(error: SqlQueryError) -> tidb_driver_error::DriverError {
     tidb_driver_error::DriverError::Mysql(
         tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
             .with_identity_opt(error.identity),
