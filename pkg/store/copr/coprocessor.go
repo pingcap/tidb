@@ -605,6 +605,11 @@ func buildTiDBMemCopTasks(ranges *KeyRanges, req *kv.Request) ([]*copTask, error
 		if req.TiDBServerID > 0 && req.TiDBServerID != ser.ServerIDGetter() {
 			continue
 		}
+		// Skip processes that register server info but cannot receive TiDB RPC,
+		// such as standalone BR.
+		if ser.DisableRPC {
+			continue
+		}
 
 		addr := net.JoinHostPort(ser.IP, strconv.FormatUint(uint64(ser.StatusPort), 10))
 		tasks = append(tasks, &copTask{

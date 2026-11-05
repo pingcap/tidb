@@ -322,7 +322,7 @@ CTE_0	26.00	root		Recursive CTE
   └─Apply	16.00	root		CARTESIAN inner join
     ├─Selection(Build)	8.00	root		lt(Column#14, 3)
     │ └─CTETable	10.00	root		Scan on CTE_0
-    └─TopN(Probe)	16.00	root		planner__core__lateral_join.category.sort_order, offset:0, count:2
-      └─IndexReader	16.00	root		index:TopN
-        └─TopN	16.00	cop[tikv]		planner__core__lateral_join.category.sort_order, offset:0, count:2
-          └─IndexRangeScan	80.00	cop[tikv]	table:category, index:idx_parent(parent_id, sort_order, name)	range: decided by [eq(planner__core__lateral_join.category.parent_id, planner__core__lateral_join.category.id)], keep order:false, stats:pseudo
+    └─Limit(Probe)	16.00	root		offset:0, count:2
+      └─IndexReader	16.00	root		index:Limit
+        └─Limit	16.00	cop[tikv]		offset:0, count:2
+          └─IndexRangeScan	16.00	cop[tikv]	table:category, index:idx_parent(parent_id, sort_order, name)	range: decided by [eq(planner__core__lateral_join.category.parent_id, planner__core__lateral_join.category.id)], keep order:true, stats:pseudo

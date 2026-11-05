@@ -241,6 +241,9 @@ type PlanBuilder struct {
 	windowSpecs  map[string]*ast.WindowSpec
 	inUpdateStmt bool
 	inDeleteStmt bool
+	// inSelect is true while building a SELECT, including subqueries and view
+	// bodies. It distinguishes a SELECT source from an UPDATE/DELETE target.
+	inSelect bool
 	// inStraightJoin represents whether the current "SELECT" statement has
 	// "STRAIGHT_JOIN" option.
 	inStraightJoin bool

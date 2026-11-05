@@ -1618,6 +1618,12 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBEnableConnectionEventLog, Value: BoolToOnOff(DefTiDBEnableConnectionEventLog), Type: TypeBool, SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+		EnableConnectionEventLog.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+		return BoolToOnOff(EnableConnectionEventLog.Load()), nil
+	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerContinuousCapture, Value: BoolToOnOff(false), Type: TypeBool,
@@ -2042,6 +2048,10 @@ var defaultSysVars = []*SysVar{
 			s.SetAllowPreferRangeScan(TiDBOptOn(val))
 			return nil
 		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptAlwaysKeepJoinKey, Value: BoolToOnOff(DefOptAlwaysKeepJoinKey), Type: TypeBool, IsHintUpdatableVerified: true, SetSession: func(s *SessionVars, val string) error {
+		s.AlwaysKeepJoinKey = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptLimitPushDownThreshold, Value: strconv.Itoa(DefOptLimitPushDownThreshold), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.LimitPushDownThreshold = TidbOptInt64(val, DefOptLimitPushDownThreshold)
 		return nil
