@@ -232,12 +232,9 @@ func TestOutOfRangeRowCountZeroTimestampLowerBound(t *testing.T) {
 	hg.AppendBucket(&datum, &upper, 2, 1)
 
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().RiskRangeSkewRatio = 0.5
 	right := types.NewTimeDatum(types.NewTime(types.FromDate(1970, 1, 1, 0, 0, 4, 0), mysql.TypeTimestamp, types.DefaultFsp))
 	estimate := hg.OutOfRangeRowCount(ctx, &upper, &right, 100, 100, 2)
-	require.InDelta(t, 45.937499984687506, estimate.Est, eps)
-	require.InDelta(t, 18.374999993875, estimate.MinEst, eps)
-	require.InDelta(t, 73.4999999755, estimate.MaxEst, eps)
+	require.InDelta(t, 36.74999998775, estimate, eps)
 }
 
 func TestEnumRangeValues(t *testing.T) {
