@@ -484,6 +484,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             snapshot.arbitrator_reserved,
             &self.current_sql_digest_key_ref(),
         );
+        self.publish_statement_tracker(memory.stmt_tracker());
         ResultMaterializationAuthority::new(
             memory,
             snapshot.init_chunk_size,
@@ -2409,6 +2410,9 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     fn statement_result_authority_ref(&self) -> &std::cell::RefCell<Option<ResultMaterializationAuthority>>;
     /// Go `SessionVars` / `StmtCtx` state `statement_result_authority`, mutably.
     fn statement_result_authority_mut(&mut self) -> &mut std::cell::RefCell<Option<ResultMaterializationAuthority>>;
+    /// Go `ProcessInfo.StmtCtx`: publishes a new statement's memory tracker
+    /// to the process list.
+    fn publish_statement_tracker(&self, _tracker: &Arc<tidb_memory::Tracker>) {}
     /// Go `SessionVars` / `StmtCtx` state `statement_var_cache`, read.
     fn statement_var_cache_ref(&self) -> &std::cell::RefCell<Option<std::sync::Arc<StatementVarSnapshot>>>;
     /// Go `SessionVars` / `StmtCtx` state `statement_var_cache`, mutably.

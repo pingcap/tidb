@@ -205,6 +205,46 @@ struct BigBudget {
     grow_threshold: i64,
 }
 
+/// Go `memArbitrator.AwaitAlloc`: the time the statement spent waiting
+/// for its root pool's grants, and the grant in progress.
+#[derive(Default)]
+struct AwaitAlloc {
+    /// Total time spent waiting for memory allocation in nanoseconds.
+    total_dur: AtomicI64,
+    /// Start time of the last allocation attempt in nanoseconds.
+    start_utime: AtomicI64,
+    /// Size of the last allocation attempt in bytes; 0 means no allocation
+    /// attempt is in progress.
+    size: AtomicI64,
+}
+
+impl AwaitAlloc {
+    fn now_unix_nano() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+            .try_into()
+            .unwrap_or(i64::MAX)
+    }
+
+    /// The bracket Go's `growBigBudget` / `reserveBigBudget` put around
+    /// `upper.Pool.allocate(extra)`.
+    fn timed<T>(&self, extra: i64, allocate: impl FnOnce() -> T) -> T {
+        let start = Self::now_unix_nano();
+        self.start_utime.store(start, SeqCst);
+        self.size.store(extra, SeqCst);
+        let result = allocate();
+        let duration = Self::now_unix_nano() - start;
+        self.start_utime.store(0, SeqCst);
+        self.size.store(0, SeqCst);
+        if duration > 0 {
+            self.total_dur.fetch_add(duration, SeqCst);
+        }
+        result
+    }
+}
+
 /// One statement's registration in the process memory arbitrator.
 ///
 /// Go keeps the fast small-budget path until a statement becomes material,
@@ -224,6 +264,9 @@ struct TrackerArbitration {
     /// Go `prevMaxMem`: the digest profile's recorded peak, when known.
     prev_max_mem: i64,
     budget: Mutex<TrackerArbitrationBudget>,
+    /// Go `AwaitAlloc`, shared with the tracker, which keeps it past detach
+    /// as Go's tracker keeps its `memArbitrator`.
+    await_alloc: Arc<AwaitAlloc>,
 }
 
 impl TrackerArbitration {
@@ -304,7 +347,7 @@ impl TrackerArbitration {
             .max(big.capacity)
             .max(big.used * 1053 / 1000)
             - big.capacity;
-        if big.budget.grow(extra).is_err() {
+        if self.await_alloc.timed(extra, || big.budget.grow(extra)).is_err() {
             return false;
         }
         big.capacity += extra;
@@ -324,7 +367,7 @@ impl TrackerArbitration {
         let mut extra = (((big.used * 2783) >> 10) - big.capacity).max(align);
         extra = extra.min(profile.max_pool_alloc_unit);
         extra = extra.max(big.used - big.capacity);
-        if big.budget.grow(extra).is_err() {
+        if self.await_alloc.timed(extra, || big.budget.grow(extra)).is_err() {
             return false;
         }
         big.capacity += extra;
@@ -413,6 +456,8 @@ pub struct Tracker {
     pub killer: Arc<SqlKiller>,
     kill_signal_transport: AtomicU8,
     arbitration: Mutex<Option<Arc<TrackerArbitration>>>,
+    /// Go `t.MemArbitrator.AwaitAlloc` of the last `InitMemArbitrator`.
+    await_alloc: Mutex<Option<Arc<AwaitAlloc>>>,
 }
 
 impl Tracker {
@@ -452,6 +497,7 @@ impl Tracker {
             killer: Arc::new(SqlKiller::default()),
             kill_signal_transport: AtomicU8::new(KillSignalTransport::Panic as u8),
             arbitration: Mutex::new(None),
+            await_alloc: Mutex::new(None),
         })
     }
 
@@ -519,7 +565,9 @@ impl Tracker {
             digest_id,
             prev_max_mem,
             budget: Mutex::new(TrackerArbitrationBudget::Small { used: 0 }),
+            await_alloc: Arc::new(AwaitAlloc::default()),
         });
+        *lock_unpoison(&self.await_alloc) = Some(Arc::clone(&registration.await_alloc));
 
         let previous = lock_unpoison(&self.arbitration).replace(Arc::clone(&registration));
         if let Some(previous) = previous {
@@ -547,6 +595,23 @@ impl Tracker {
         };
         registration.finish(exception, self.max_consumed());
         true
+    }
+
+    /// Go `MemArbitration` returns the time cost of memory arbitration.
+    #[must_use]
+    pub fn mem_arbitration(&self) -> std::time::Duration {
+        lock_unpoison(&self.await_alloc).as_ref().map_or(std::time::Duration::ZERO, |await_alloc| {
+            std::time::Duration::from_nanos(await_alloc.total_dur.load(SeqCst).max(0) as u64)
+        })
+    }
+
+    /// Go `WaitArbitrate` returns the start time (Unix nanoseconds) and size
+    /// of the allocation attempt in progress.
+    #[must_use]
+    pub fn wait_arbitrate(&self) -> (i64, i64) {
+        lock_unpoison(&self.await_alloc).as_ref().map_or((0, 0), |await_alloc| {
+            (await_alloc.start_utime.load(SeqCst), await_alloc.size.load(SeqCst))
+        })
     }
 
     /// Go `CheckBytesLimit` (test helper).
@@ -1105,6 +1170,25 @@ fn byte_unit(b: i64) -> (i64, &'static str) {
 
 #[cfg(test)]
 mod tests {
+
+    /// Go `growBigBudget` / `reserveBigBudget`'s bracket: the attempt is
+    /// visible while it waits, and its duration is added once it returns.
+    #[test]
+    fn await_alloc_records_the_attempt_in_progress_and_its_duration() {
+        let await_alloc = super::AwaitAlloc::default();
+        let observed = await_alloc.timed(4096, || {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            (
+                await_alloc.start_utime.load(std::sync::atomic::Ordering::SeqCst),
+                await_alloc.size.load(std::sync::atomic::Ordering::SeqCst),
+            )
+        });
+        assert!(observed.0 > 0);
+        assert_eq!(observed.1, 4096);
+        assert_eq!(await_alloc.start_utime.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(await_alloc.size.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(await_alloc.total_dur.load(std::sync::atomic::Ordering::SeqCst) >= 5_000_000);
+    }
     use std::sync::mpsc;
     use std::time::Duration;
 

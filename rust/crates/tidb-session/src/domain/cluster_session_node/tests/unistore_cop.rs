@@ -6674,6 +6674,47 @@ fn extract_handle_dumps_the_summarized_plans_like_go() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// Go `stmtExecInfo.MemArbitration = stmtCtx.MemTracker.MemArbitration()`:
+/// a statement reserved in the memory arbitrator's root pool waited for
+/// that grant, which the statement summary records.
+#[test]
+fn statement_summary_records_the_memory_arbitration_wait() {
+    struct Recorder;
+    impl tidb_memory::RecordMemState for Recorder {
+        fn load(&self) -> Result<Option<tidb_memory::RuntimeMemStateV1>, String> {
+            Ok(None)
+        }
+        fn store(&self, _: &tidb_memory::RuntimeMemStateV1) -> Result<(), String> {
+            Ok(())
+        }
+    }
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(82)).expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "CREATE TABLE arb (id BIGINT PRIMARY KEY)");
+    let arbitrator = tidb_memory::MemArbitrator::new(1 << 30, 4, 3, 0, Box::new(Recorder));
+    assert!(arbitrator.auto_run(
+        tidb_memory::MemArbitratorActions::default(),
+        tidb_memory::DEF_AWAIT_FREE_POOL_ALLOC_ALIGN_SIZE,
+        4,
+        tidb_memory::DEF_TASK_TICK_DUR,
+    ));
+    arbitrator.set_work_mode(tidb_memory::ArbitratorWorkMode::Standard);
+    session.set_mem_arbitrator(arbitrator.clone());
+    rows(&mut session, "SET tidb_mem_arbitrator_query_reserved = 4096");
+    rows(&mut session, "SELECT id FROM arb WHERE id > 7");
+    rows(&mut session, "SET tidb_mem_arbitrator_query_reserved = 0");
+    let waited = displayed(rows(
+        &mut session,
+        "SELECT MAX_MEM_ARBITRATION, AVG_MEM_ARBITRATION > 0 FROM information_schema.statements_summary WHERE QUERY_SAMPLE_TEXT = 'SELECT id FROM arb WHERE id > 7'",
+    ));
+    assert_eq!(waited.len(), 1, "{waited:?}");
+    assert!(waited[0][0].parse::<f64>().unwrap() > 0.0, "{waited:?}");
+    assert_eq!(waited[0][1], "1", "{waited:?}");
+    arbitrator.set_work_mode(tidb_memory::ArbitratorWorkMode::Disable);
+    assert!(arbitrator.stop());
+}
+
 /// Go's capture path: `PLAN REPLAYER CAPTURE` reloads the handle's tasks,
 /// a matching statement's `FinishExecuteStmt` sends a dump task carrying its
 /// own variables, statement and encoded plan, a dump worker writes the

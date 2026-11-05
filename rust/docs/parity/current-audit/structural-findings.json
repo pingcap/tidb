@@ -98,7 +98,7 @@
       "id": "O18",
       "status": "partial",
       "group": "Domain and process services",
-      "finding": "Statement-summary records (`exec_stmt_observation.rs`) leave Go fields unset: `plan_cache_unqualified` (empty: a prepared statement's refusal is warned by the session (`prepare_bound_execution`) or recorded on a planning `StmtContext` whose `PlanCacheTracker` is not the one that publishes the process plan, so Go's `StmtCtx.PlanCacheUnqualified()` has no single owner), `mem_arbitration` (0) and every `CpuUsages` term but TiKV time (Go's `SQLCPUUsages` also records TiDB CPU, O11)",
+      "finding": "Statement-summary records (`exec_stmt_observation.rs`) leave Go fields unset: `plan_cache_unqualified` (empty: a prepared statement's refusal is warned by the session (`prepare_bound_execution`) or recorded on a planning `StmtContext` whose `PlanCacheTracker` is not the one that publishes the process plan, so Go's `StmtCtx.PlanCacheUnqualified()` has no single owner) and every `CpuUsages` term but TiKV time (Go's `SQLCPUUsages` also records TiDB CPU, O11)",
       "go_owner": "`pkg/util/stmtsummary`"
     },
     {

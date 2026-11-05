@@ -76,6 +76,8 @@ pub struct ProcessInfo {
     pub mem_tracker: Option<Arc<Tracker>>,
     /// Go `DiskTracker`.
     pub disk_tracker: Option<Arc<Tracker>>,
+    /// Go `StmtCtx.MemTracker`.
+    pub stmt_mem_tracker: Option<Arc<Tracker>>,
     /// Go `CurTxnStartTS`.
     pub cur_txn_start_ts: u64,
     /// Go `StmtCtx.IsDDLJobInQueue`.
@@ -132,6 +134,7 @@ impl Default for ProcessInfo {
             started_instant: None,
             mem_tracker: None,
             disk_tracker: None,
+            stmt_mem_tracker: None,
             cur_txn_start_ts: 0,
             is_ddl_job_in_queue: false,
             resource_group_name: String::new(),

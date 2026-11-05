@@ -871,6 +871,34 @@ pub fn gen_log_fields(cost_time: ChronoDuration, info: &ProcessInfo) -> Vec<Fiel
             )),
         ));
     }
+    if let Some(mem_tracker) = &info.stmt_mem_tracker {
+        let mut s = String::new();
+        let dur = mem_tracker.mem_arbitration();
+        if !dur.is_zero() {
+            // mem quota arbitration time of current SQL
+            s.push_str(&format!("cost_time {}s", format_go_float(dur.as_secs_f64())));
+        }
+        let (ts, sz) = mem_tracker.wait_arbitrate();
+        if sz > 0 {
+            if !s.is_empty() {
+                s.push_str(", ");
+            }
+            // mem quota wait arbitrate time of current SQL; Go formats
+            // "2006-01-02 15:04:05.999 MST" in UTC.
+            let time = chrono::DateTime::from_timestamp_nanos(ts);
+            let millis = time.format("%3f").to_string();
+            let millis = millis.trim_end_matches('0');
+            let start = if millis.is_empty() {
+                time.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+            } else {
+                format!("{}.{millis} UTC", time.format("%Y-%m-%d %H:%M:%S"))
+            };
+            s.push_str(&format!("wait_start {start}, wait_bytes {sz} Bytes ({})", format_bytes(sz)));
+        }
+        if !s.is_empty() {
+            log_fields.push(Field::new("mem_arbitration", Value::Str(s)));
+        }
+    }
     let sql = tidb_parser::normalize(&info.info, info.redact_sql);
     log_fields.push(Field::new("sql", Value::Str(sql)));
     log_fields.push(Field::new(

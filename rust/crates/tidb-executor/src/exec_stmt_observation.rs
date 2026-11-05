@@ -167,6 +167,9 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
     fn statement_mem_max(&self) -> i64;
     /// The session disk tracker's peak.
     fn statement_disk_max(&self) -> i64;
+    /// Go `stmtCtx.MemTracker.MemArbitration().Seconds()`: the time the
+    /// statement waited for the memory arbitrator's grants.
+    fn statement_mem_arbitration(&self) -> f64;
     /// Go `SessionVars.DurationOptimizer` / `RewritePhaseInfo` /
     /// `DurationWaitTS`.
     fn session_phase_durations(&self) -> &tidb_variable::phase_durations::SessionPhaseDurations;
@@ -518,6 +521,7 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
             resource_group_name: self.observed_resource_group(),
             ru_details: Some(Arc::clone(&observation.ru_details)),
             mem_max,
+            mem_arbitration: self.statement_mem_arbitration(),
             disk_max,
             session_connect_attrs: self.connection_attributes().clone(),
             used_stats: if observation.routed {
@@ -719,7 +723,7 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
             cop_tasks: observation.cop_stats.cop_tasks_summary(),
             exec_detail: observation.cop_stats.exec_details(),
             mem_max: self.statement_mem_max(),
-            mem_arbitration: 0.0,
+            mem_arbitration: self.statement_mem_arbitration(),
             disk_max: self.statement_disk_max(),
             start_time: observation.start_time,
             is_internal: internal,

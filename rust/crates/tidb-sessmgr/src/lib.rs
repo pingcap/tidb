@@ -108,6 +108,11 @@ pub struct ProcessRow {
     pub session_alias: String,
     /// Statement affected rows; absent when no statement trackers are attached.
     pub affected_rows: Option<u64>,
+    /// Go `StmtCtx.MemTracker.MemArbitration()` in seconds, when positive.
+    pub mem_arbitration: Option<f64>,
+    /// Go `StmtCtx.MemTracker.WaitArbitrate()`: the start (Unix nanoseconds)
+    /// and size of the grant the statement is waiting for, when any.
+    pub mem_wait_arbitrate: Option<(i64, i64)>,
 }
 
 /// One live transaction exposed by `information_schema.TIDB_TRX`.
@@ -180,6 +185,8 @@ struct ProcessEntry {
     started_at: DateTime<Utc>,
     mem_tracker: Option<Arc<Tracker>>,
     disk_tracker: Option<Arc<Tracker>>,
+    /// Go `StmtCtx.MemTracker`: the running statement's tracker.
+    stmt_mem_tracker: Option<Arc<Tracker>>,
     cur_txn_start_ts: u64,
     resource_group_name: String,
     session_alias: String,
@@ -512,6 +519,7 @@ impl ProcessRegistry {
             started_at: Utc::now(),
             mem_tracker: None,
             disk_tracker: None,
+            stmt_mem_tracker: None,
             cur_txn_start_ts: 0,
             resource_group_name: "default".to_owned(),
             session_alias: String::new(),
@@ -747,6 +755,14 @@ impl ProcessRegistry {
                     session_alias: entry.session_alias.clone(),
                     affected_rows: (entry.mem_tracker.is_some() || entry.disk_tracker.is_some())
                         .then_some(entry.affected_rows),
+                    mem_arbitration: entry.stmt_mem_tracker.as_ref().and_then(|tracker| {
+                        let dur = tracker.mem_arbitration();
+                        (!dur.is_zero()).then(|| dur.as_secs_f64())
+                    }),
+                    mem_wait_arbitrate: entry.stmt_mem_tracker.as_ref().and_then(|tracker| {
+                        let (ts, size) = tracker.wait_arbitrate();
+                        (size > 0).then_some((ts, size))
+                    }),
                 }
             })
             .collect();
@@ -805,6 +821,10 @@ impl ProcessRegistry {
             target.kill_connection();
         }
         true
+    }
+
+    fn set_statement_tracker(&self, id: u64, tracker: Arc<Tracker>) {
+        self.with_entry(id, |entry| entry.stmt_mem_tracker = Some(tracker));
     }
 
     fn set_trackers(&self, id: u64, mem: Arc<Tracker>, disk: Arc<Tracker>) {
@@ -872,6 +892,7 @@ impl ProcessRegistry {
                 started_instant: Some(since),
                 mem_tracker: entry.mem_tracker.as_ref().map(Arc::clone),
                 disk_tracker: entry.disk_tracker.as_ref().map(Arc::clone),
+                stmt_mem_tracker: entry.stmt_mem_tracker.as_ref().map(Arc::clone),
                 cur_txn_start_ts: entry.cur_txn_start_ts,
                 resource_group_name: entry.resource_group_name.clone(),
                 session_alias: entry.session_alias.clone(),
@@ -1049,6 +1070,11 @@ impl ProcessGuard {
     /// Installs the session memory and disk trackers exposed by ProcessInfo.
     pub fn set_trackers(&self, mem: Arc<Tracker>, disk: Arc<Tracker>) {
         self.registry.set_trackers(self.id, mem, disk);
+    }
+
+    /// Go `ProcessInfo.StmtCtx.MemTracker`: the running statement's tracker.
+    pub fn set_statement_tracker(&self, tracker: Arc<Tracker>) {
+        self.registry.set_statement_tracker(self.id, tracker);
     }
 
     /// Installs the session's live `BriefBinaryPlan` publication cell.

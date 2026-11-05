@@ -301,6 +301,12 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &mut self.statement_result_authority
     }
 
+    fn publish_statement_tracker(&self, tracker: &std::sync::Arc<tidb_memory::Tracker>) {
+        if let Some(process) = &self.process {
+            process.set_statement_tracker(std::sync::Arc::clone(tracker));
+        }
+    }
+
     fn statement_var_cache_ref(&self) -> &std::cell::RefCell<Option<std::sync::Arc<tidb_executor::stmt_ctx_build::StatementVarSnapshot>>> {
         &self.statement_var_cache
     }

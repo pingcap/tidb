@@ -101,6 +101,29 @@ fn nolimit_skips_global_memory_arbitration_but_reserve_promotes_immediately() {
     assert!(arbitrator.stop());
 }
 
+/// Go `Tracker.MemArbitration` / `WaitArbitrate`: the grant a statement's
+/// root pool waited for is accounted on its tracker, nothing is in progress
+/// once it is granted, and the total survives the detach (Go `reset` keeps
+/// the `memArbitrator`, so the statement summary still reads it).
+#[test]
+fn a_reserved_statement_accounts_its_arbitration_wait() {
+    let arbitrator = test_mem_arbitrator();
+    let session = SessionMemory::new(4096, OomAction::Cancel, 99)
+        .with_mem_arbitrator(Arc::clone(&arbitrator));
+    let bypass = session.statement_with_arbitration(None, 0, "");
+    assert_eq!(bypass.stmt_tracker().mem_arbitration(), std::time::Duration::ZERO);
+    bypass.finish_statement();
+
+    let reserved = session.statement_with_arbitration(Some(true), 64, "");
+    let tracker = Arc::clone(reserved.stmt_tracker());
+    let waited = tracker.mem_arbitration();
+    assert!(waited > std::time::Duration::ZERO, "{waited:?}");
+    assert_eq!(tracker.wait_arbitrate(), (0, 0));
+    reserved.finish_statement();
+    assert_eq!(tracker.mem_arbitration(), waited);
+    assert!(arbitrator.stop());
+}
+
 #[test]
 fn the_shipped_default_is_cancel_at_one_gibibyte() {
     // Captured: `select @@tidb_mem_quota_query` -> 1073741824, and

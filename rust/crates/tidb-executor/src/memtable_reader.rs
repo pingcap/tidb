@@ -945,11 +945,17 @@ pub fn format_process_rows(
                 Datum::Bytes(row.digest.into_bytes()),
                 Datum::Int(row.mem_bytes),
                 // MEM_ARBITRATION
-                Datum::Null,
-                // MEM_WAIT_ARBITRATE_START
-                Datum::Null,
+                row.mem_arbitration.map_or(Datum::Null, Datum::Real),
+                // MEM_WAIT_ARBITRATE_START: Go `ts.In(tz).Format("2006-01-02 15:04:05.999")`.
+                row.mem_wait_arbitrate.map_or(Datum::Null, |(ts, _)| {
+                    let time = chrono::DateTime::from_timestamp_nanos(ts).with_timezone(zone);
+                    let millis = time.format("%3f").to_string();
+                    let millis = millis.trim_end_matches('0');
+                    let base = time.format("%Y-%m-%d %H:%M:%S").to_string();
+                    Datum::Bytes(if millis.is_empty() { base } else { format!("{base}.{millis}") }.into_bytes())
+                }),
                 // MEM_WAIT_ARBITRATE_BYTES
-                Datum::Null,
+                row.mem_wait_arbitrate.map_or(Datum::Null, |(_, size)| Datum::Int(size)),
                 Datum::Int(row.disk_bytes),
                 Datum::Bytes(txn_start.into_bytes()),
                 Datum::Bytes(row.resource_group.into_bytes()),
@@ -1029,5 +1035,30 @@ pub fn go_uptime_string(seconds: i64) -> String {
         format!("{minutes}m{seconds}s")
     } else {
         format!("{seconds}s")
+    }
+}
+
+#[cfg(test)]
+mod process_row_tests {
+    use super::*;
+
+    /// Go `ProcessInfo.ToRow`: MEM_ARBITRATION is the arbitration time in
+    /// seconds, MEM_WAIT_ARBITRATE_START the waited grant's start in the
+    /// session zone (`2006-01-02 15:04:05.999`), MEM_WAIT_ARBITRATE_BYTES its
+    /// size; all NULL for a statement that never waited.
+    #[test]
+    fn process_rows_carry_the_memory_arbitration_columns() {
+        let zone = tidb_datatype::SessionTimeZone::utc();
+        let waited = process::ProcessRow {
+            mem_arbitration: Some(1.5),
+            // 2026-11-05 01:02:03.120 UTC.
+            mem_wait_arbitrate: Some((1_793_840_523_120_000_000, 4096)),
+            ..process::ProcessRow::default()
+        };
+        let row = &format_process_rows(vec![waited, process::ProcessRow::default()], &zone);
+        assert_eq!(row[0][10], Datum::Real(1.5));
+        assert_eq!(row[0][11], Datum::Bytes(b"2026-11-05 01:02:03.12".to_vec()));
+        assert_eq!(row[0][12], Datum::Int(4096));
+        assert_eq!(row[1][10..13], [Datum::Null, Datum::Null, Datum::Null]);
     }
 }

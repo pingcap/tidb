@@ -1212,6 +1212,12 @@ impl tidb_executor::exec_stmt_observation::ExecStmtObservation for Session {
         self.session_memory.session_tracker().max_consumed()
     }
 
+    fn statement_mem_arbitration(&self) -> f64 {
+        self.statement_result_authority.borrow().as_ref().map_or(0.0, |authority| {
+            authority.statement_memory().stmt_tracker().mem_arbitration().as_secs_f64()
+        })
+    }
+
     fn statement_disk_max(&self) -> i64 {
         self.session_memory.session_disk_tracker().max_consumed()
     }
