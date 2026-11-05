@@ -91,11 +91,11 @@ func TestCallSCtxFailed(t *testing.T) {
 	notReleased := infosync.ContainsInternalSession(sctxWithFailure)
 	require.False(t, notReleased)
 
-	// A panic in the function is recovered, and CallWithSCtx returns no error.
+	// A panic in the function is recovered and returned as an error.
 	err = util.CallWithSCtx(dom.StatsHandle().SPool(), func(sessionctx.Context) error {
 		panic("simulated panic")
 	})
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "panic in CallWithSCtx")
 }
 
 func newStatsSessionContextForRestoreTest(t *testing.T) *mock.Context {

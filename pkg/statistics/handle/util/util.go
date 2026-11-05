@@ -80,7 +80,11 @@ var (
 
 // CallWithSCtx allocates a sctx from the pool and call the f().
 func CallWithSCtx(pool syssession.Pool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
-	defer util.Recover(metrics.LabelStats, "CallWithSCtx", nil, false)
+	// Return a panic as an error, because callers use the results of f when the error is nil.
+	// For example, TableStatsFromStorage would return the cached table as newly loaded stats.
+	defer util.Recover(metrics.LabelStats, "CallWithSCtx", func() {
+		err = errors.New("panic in CallWithSCtx")
+	}, false)
 	return pool.WithSession(func(se *syssession.Session) error {
 		return se.WithSessionContext(func(sctx sessionctx.Context) error {
 			restoreStatsVars, err := UpdateSCtxVarsForStats(sctx)
