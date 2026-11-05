@@ -667,14 +667,22 @@ func TestWarningsInSlowQuery(t *testing.T) {
 	}
 }
 
-// checkStorageEngines polls slow_query because the prior MustExec's slow-log
-// write isn't always immediately visible to the read here under CI load
-// (issue #66727).
-func checkStorageEngines(t *testing.T, tk *testkit.TestKit, where, expected string) {
+// checkStorageEngines polls slow_query because the prior statement's slow-log
+// write isn't always immediately visible under CI load (issue #66727).
+// executedSQL is the text passed to MustExec/MustQuery. The slow log stores
+// that text with a trailing semicolon.
+//
+// Match it by equality. A LIKE pattern can also match this checker, because
+// tidb_slow_log_threshold is 0. ORDER BY time DESC LIMIT is pushed into the
+// slow-log reader before WHERE, so a newer line hides the target row.
+func checkStorageEngines(t *testing.T, tk *testkit.TestKit, executedSQL, expected string) {
 	t.Helper()
+	loggedSQL := executedSQL
+	if !strings.HasSuffix(loggedSQL, ";") {
+		loggedSQL += ";"
+	}
 	tk.EventuallyMustQueryAndCheck(
-		"select storage_from_kv, storage_from_mpp from information_schema.slow_query where "+where+
-			" order by time desc limit 1",
+		"select storage_from_kv, storage_from_mpp from information_schema.slow_query where query = '"+loggedSQL+"'",
 		nil, testkit.Rows(expected), 2*time.Second, 50*time.Millisecond)
 }
 
@@ -709,21 +717,24 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 	tk.MustExec("use test")
 
 	// Query that doesn't read from any storage engines
-	tk.MustExec("select 1")
-	checkStorageEngines(t, tk, "query = 'select 1;'", "0 0")
+	query := "select 1"
+	tk.MustExec(query)
+	checkStorageEngines(t, tk, query, "0 0")
 
 	// Query that only reads from TiKV
 	tk.MustExec("create table t_tikv (a int)")
-	tk.MustExec("select /*+ read_from_storage(tikv[t_tikv]) */ a from t_tikv")
-	checkStorageEngines(t, tk, "query like 'select%t_tikv;'", "1 0")
+	query = "select /*+ read_from_storage(tikv[t_tikv]) */ a from t_tikv"
+	tk.MustExec(query)
+	checkStorageEngines(t, tk, query, "1 0")
 
 	// Query that only reads from TiFlash
 	tk.MustExec("create table t_tiflash (a int)")
 	tk.MustExec("alter table t_tiflash set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t_tiflash")
 	require.NoError(t, dom.DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true))
-	tk.MustExec("select /*+ read_from_storage(tiflash[t_tiflash]) */ a from t_tiflash;")
-	checkStorageEngines(t, tk, "query like 'select%t_tiflash;'", "0 1")
+	query = "select /*+ read_from_storage(tiflash[t_tiflash]) */ a from t_tiflash;"
+	tk.MustExec(query)
+	checkStorageEngines(t, tk, query, "0 1")
 
 	// Table has an available TiFlash replica, but the chosen plan reads from TiKV only.
 	// Having TiFlash available must not set Storage_from_mpp. (issue #70296)
@@ -731,46 +742,48 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 	tk.MustExec("alter table t_kv_with_tiflash set tiflash replica 1")
 	tbKV := external.GetTableByName(t, tk, "test", "t_kv_with_tiflash")
 	require.NoError(t, dom.DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tbKV.Meta().ID, true))
-	query := "select /*+ read_from_storage(tikv[t_kv_with_tiflash]) */ a from t_kv_with_tiflash"
+	query = "select /*+ read_from_storage(tikv[t_kv_with_tiflash]) */ a from t_kv_with_tiflash"
 	require.False(t, tk.HasTiFlashPlan(query))
 	tk.MustExec(query)
-	checkStorageEngines(t, tk, "query like 'select%t_kv_with_tiflash;'", "1 0")
+	checkStorageEngines(t, tk, query, "1 0")
 
 	// Query that reads from both TiKV and TiFlash
-	tk.MustExec("select /*+ read_from_storage(tikv[t_tikv]) */ t_tikv.a, /*+ read_from_storage(tiflash[t_tiflash]) */ t_tiflash.a from t_tikv, t_tiflash")
-	checkStorageEngines(t, tk, "query like 'select%t_tikv, t_tiflash;'", "1 1")
+	query = "select /*+ read_from_storage(tikv[t_tikv]) */ t_tikv.a, /*+ read_from_storage(tiflash[t_tiflash]) */ t_tiflash.a from t_tikv, t_tiflash"
+	tk.MustExec(query)
+	checkStorageEngines(t, tk, query, "1 1")
 
 	// Point get queries should register as reading from TiKV
 	tk.MustExec("create table t_pointget (a int primary key)")
 	query = "select a from t_pointget where a = 1"
 	tk.MustHavePlan(query, "Point_Get")
 	tk.MustExec(query)
-	checkStorageEngines(t, tk, "query like 'select%t_pointget%;'", "1 0")
+	checkStorageEngines(t, tk, query, "1 0")
 
 	// Index readers should register as reading from TiKV
 	tk.MustExec("create table t_index_reader (a int, key (a))")
 	query = "select a from t_index_reader where a = 1"
 	tk.MustHavePlan(query, "IndexReader")
 	tk.MustQuery(query)
-	checkStorageEngines(t, tk, "query like 'select%t_index_reader%;'", "1 0")
+	checkStorageEngines(t, tk, query, "1 0")
 
 	// Index lookups should register as reading from TiKV
 	tk.MustExec("create table t_index_lookup (a int, b int, index (a))")
-	tk.MustIndexLookup("select a, b from t_index_lookup where a = 1")
-	checkStorageEngines(t, tk, "query like 'select%t_index_lookup%;'", "1 0")
+	query = "select a, b from t_index_lookup where a = 1"
+	tk.MustIndexLookup(query)
+	checkStorageEngines(t, tk, query, "1 0")
 
 	// Index merge readers should register as reading from TiKV
 	tk.MustExec("create table t_index_merge(a int, b int, primary key (a), unique key (b))")
 	query = "select /*+ use_index_merge(t_index_merge, a, b) */ * from t_index_merge where a = 1 or b = 1"
 	tk.MustHavePlan(query, "IndexMerge")
 	tk.MustExec(query)
-	checkStorageEngines(t, tk, "query like 'select%t_index_merge%;'", "1 0")
+	checkStorageEngines(t, tk, query, "1 0")
 
 	// TABLESAMPLE queries should register as reading from TiKV
 	query = "select * from t_tikv tablesample regions();"
 	tk.MustHavePlan(query, "TableSample")
 	tk.MustExec(query)
-	checkStorageEngines(t, tk, "query like 'select%tablesample%;'", "1 0")
+	checkStorageEngines(t, tk, query, "1 0")
 }
 
 func TestReadPoolTaskDetailsInDiagnostics(t *testing.T) {
