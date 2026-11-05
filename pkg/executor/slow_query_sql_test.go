@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -686,6 +685,23 @@ func checkStorageEngines(t *testing.T, tk *testkit.TestKit, executedSQL, expecte
 		nil, testkit.Rows(expected), 2*time.Second, 50*time.Millisecond)
 }
 
+// execForStorageLog runs a statement whose storage_from_kv / storage_from_mpp
+// flags are checked afterwards. Those flags are recorded when the executor is
+// built. A TiFlash read can still return tikv:9012 when the mock region has no
+// TiFlash peer; the slow log has already captured the flag.
+func execForStorageLog(t *testing.T, tk *testkit.TestKit, sql string) {
+	t.Helper()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	rs, err := tk.ExecWithContext(ctx, sql)
+	if err != nil {
+		require.Containsf(t, err.Error(), "TiFlash server timeout", "sql: %s err: %v", sql, err)
+		return
+	}
+	if rs != nil {
+		require.NoError(t, rs.Close())
+	}
+}
+
 func TestStorageEnginesInSlowQuery(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
@@ -707,7 +723,10 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
 	})
 	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
-	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithMockTiFlash(2))
+	// Keep the cluster so TiFlash peers can be added to regions created by later
+	// table splits. WithMockTiFlash only peers the bootstrap region.
+	var cluster *unistore.Cluster
+	store, dom := testkit.CreateMockStoreAndDomain(t, withMockTiFlashCluster(2, &cluster))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
 	tk.MustExec("set tidb_slow_log_threshold=0;")
@@ -732,8 +751,9 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 	tk.MustExec("alter table t_tiflash set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t_tiflash")
 	require.NoError(t, dom.DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true))
+	addTiFlashPeersToAllRegions(t, cluster, store)
 	query = "select /*+ read_from_storage(tiflash[t_tiflash]) */ a from t_tiflash;"
-	tk.MustExec(query)
+	execForStorageLog(t, tk, query)
 	checkStorageEngines(t, tk, query, "0 1")
 
 	// Table has an available TiFlash replica, but the chosen plan reads from TiKV only.
@@ -747,9 +767,11 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 	tk.MustExec(query)
 	checkStorageEngines(t, tk, query, "1 0")
 
-	// Query that reads from both TiKV and TiFlash
+	// Query that reads from both TiKV and TiFlash.
+	// Later DDL may split t_tiflash onto a region that again has only the TiKV peer.
+	addTiFlashPeersToAllRegions(t, cluster, store)
 	query = "select /*+ read_from_storage(tikv[t_tikv]) */ t_tikv.a, /*+ read_from_storage(tiflash[t_tiflash]) */ t_tiflash.a from t_tikv, t_tiflash"
-	tk.MustExec(query)
+	execForStorageLog(t, tk, query)
 	checkStorageEngines(t, tk, query, "1 1")
 
 	// Point get queries should register as reading from TiKV
