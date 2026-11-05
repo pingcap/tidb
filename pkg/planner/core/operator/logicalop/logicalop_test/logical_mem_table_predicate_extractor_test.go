@@ -466,6 +466,81 @@ func TestStatementsSummaryExtractorConservativeTimeRange(t *testing.T) {
 	}
 }
 
+func TestSlowQueryExtractorEpochZeroTimeBound(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	se.GetSessionVars().TimeZone = time.UTC
+	se.GetSessionVars().StmtCtx.SetTimeZone(time.UTC)
+	p := parser.New()
+	for _, ca := range []struct {
+		name      string
+		predicate string
+		// remained is the number of time predicates left for the SQL layer.
+		remained int
+		start    string
+		end      string
+	}{
+		{
+			name:      "EqualEpoch",
+			predicate: "time = '1970-01-01 00:00:00'",
+			remained:  1,
+		},
+		{
+			name:      "LessEqualEpoch",
+			predicate: "time <= '1970-01-01 00:00:00'",
+			remained:  1,
+		},
+		{
+			name:      "LessThanEpochPlusOneMillisecond",
+			predicate: "time < '1970-01-01 00:00:00.001'",
+			remained:  1,
+		},
+		{
+			name:      "BetweenEpoch",
+			predicate: "time between '1970-01-01 00:00:00' and '1970-01-01 00:00:00'",
+			remained:  2,
+		},
+		{
+			name:      "EpochWithOtherBound",
+			predicate: "time = '1970-01-01 00:00:00' and time <= '2020-01-01 00:00:00'",
+			remained:  1,
+			start:     "0000-01-01T00:00:00Z",
+			end:       "2020-01-01T00:00:00Z",
+		},
+		{
+			name:      "OneSecondAfterEpoch",
+			predicate: "time = '1970-01-01 00:00:01'",
+			start:     "1970-01-01T00:00:01Z",
+			end:       "1970-01-01T00:00:01Z",
+		},
+	} {
+		t.Run(ca.name, func(t *testing.T) {
+			memTable, ok, remained := getLogicalMemTableWithRemained(t, dom, se, p,
+				"select query from information_schema.slow_query where "+ca.predicate)
+			require.True(t, ok)
+			extractor := memTable.Extractor.(*plannercore.SlowQueryExtractor)
+			require.False(t, extractor.SkipRequest)
+			require.Len(t, remained, ca.remained)
+			if ca.start == "" {
+				require.False(t, extractor.Enable)
+				require.Empty(t, extractor.TimeRanges)
+				return
+			}
+			require.True(t, extractor.Enable)
+			require.Len(t, extractor.TimeRanges, 1)
+			end, err := time.Parse(time.RFC3339Nano, ca.end)
+			require.NoError(t, err)
+			require.True(t, end.Equal(extractor.TimeRanges[0].EndTime))
+			if ca.start != "0000-01-01T00:00:00Z" {
+				start, err := time.Parse(time.RFC3339Nano, ca.start)
+				require.NoError(t, err)
+				require.True(t, start.Equal(extractor.TimeRanges[0].StartTime))
+			}
+		})
+	}
+}
+
 func TestClusterLogTableExtractor(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
