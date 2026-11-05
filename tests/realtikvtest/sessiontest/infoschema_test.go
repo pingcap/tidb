@@ -62,16 +62,51 @@ func uniqueSortedRegionIDs(rows [][]any) []string {
 func TestTableReaderWithSnapshot(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MockGCSavePoint()
+	querySafePoint := "select variable_value from mysql.tidb where variable_name = 'tikv_gc_safe_point'"
+	originalSafePoint := tk.MustQuery(querySafePoint).Rows()
+	restoreSafePoint := func(tk *testkit.TestKit, rows [][]any) {
+		// End the historical transaction before restoring the persistent row.
+		tk.MustExec("rollback")
+		tk.MustExec("set @@tidb_snapshot = ''")
+		if len(rows) == 0 {
+			tk.MustExec("delete from mysql.tidb where variable_name = 'tikv_gc_safe_point'")
+		} else {
+			tk.MustExec("update mysql.tidb set variable_value = ? where variable_name = 'tikv_gc_safe_point'", rows[0][0])
+		}
+	}
+	t.Cleanup(func() { restoreSafePoint(tk, originalSafePoint) })
 
-	tk.MustExec("use test")
-	tk.MustExec("create table t(id int);")
-	tk.MustExec("begin")
-	tk.MustExec("set @ts := @@tidb_current_ts;")
-	tk.MustExec("rollback")
-	tk.MustQuery("select sleep(2);")
-	tk.MustExec("drop table t;")
-	tk.MustExec("begin")
-	tk.MustExec("set @@tidb_snapshot=@ts;")
-	tk.MustQuery("SELECT TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='test' AND (TABLE_TYPE='BASE TABLE')").Check(testkit.Rows("t BASE TABLE 0"))
+	for _, tc := range []struct {
+		name          string
+		seedSafePoint bool
+	}{
+		{name: "original prior state"},
+		{name: "existing prior safe point", seedSafePoint: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.seedSafePoint {
+				tk.MustExec("insert into mysql.tidb(variable_name, variable_value) values('tikv_gc_safe_point', ?) on duplicate key update variable_value = values(variable_value)", "20170102-15:04:05 -0700")
+			}
+			previousSafePoint := tk.MustQuery(querySafePoint).Rows()
+			t.Run("historical metadata", func(t *testing.T) {
+				tk := testkit.NewTestKit(t, store)
+				// Child cleanups run before its session closes, while the parent
+				// session and store remain available to check the persistent state.
+				t.Cleanup(func() { restoreSafePoint(tk, previousSafePoint) })
+				tk.MockGCSavePoint()
+
+				tk.MustExec("use test")
+				tk.MustExec("create table t(id int);")
+				tk.MustExec("begin")
+				tk.MustExec("set @ts := @@tidb_current_ts;")
+				tk.MustExec("rollback")
+				tk.MustQuery("select sleep(2);")
+				tk.MustExec("drop table t;")
+				tk.MustExec("begin")
+				tk.MustExec("set @@tidb_snapshot=@ts;")
+				tk.MustQuery("SELECT TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='test' AND (TABLE_TYPE='BASE TABLE')").Check(testkit.Rows("t BASE TABLE 0"))
+			})
+			require.Equal(t, previousSafePoint, tk.MustQuery(querySafePoint).Rows())
+		})
+	}
 }
