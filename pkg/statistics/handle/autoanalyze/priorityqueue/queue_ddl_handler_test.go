@@ -322,9 +322,9 @@ func TestDropTable(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, isEmpty)
 
-	// A panic in handling an event escapes HandleDDLEvent. The event has no table info.
-	require.Panics(t, func() {
-		_ = pq.HandleDDLEvent(ctx, sctx, notifier.NewDropTableEvent(nil))
+	// A panic in handling an event does not escape HandleDDLEvent. The event has no table info.
+	require.NotPanics(t, func() {
+		require.NoError(t, pq.HandleDDLEvent(ctx, sctx, notifier.NewDropTableEvent(nil)))
 	})
 }
 
