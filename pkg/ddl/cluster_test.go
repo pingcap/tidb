@@ -326,7 +326,7 @@ func TestFlashbackClusterWithMaterializedViews(t *testing.T) {
 			}
 			err = tk.ExecToErr(sql)
 			require.ErrorContains(t, err, "materialized view")
-			require.ErrorContains(t, err, "mv_guard.")
+			require.ErrorContains(t, err, "(ID: ")
 			require.ErrorContains(t, err, tc.snapshot)
 			if tc.snapshot == "target snapshot" {
 				require.ErrorContains(t, err, fmt.Sprintf("TSO %d", ts))
