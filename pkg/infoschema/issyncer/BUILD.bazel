@@ -14,7 +14,6 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/config/diagnosticmode",
-        "//pkg/config/kerneltype",
         "//pkg/ddl/schemaver",
         "//pkg/ddl/systable",
         "//pkg/infoschema",

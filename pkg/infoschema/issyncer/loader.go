@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -336,7 +335,7 @@ func (l *Loader) skipLoadingDiff(m meta.Reader, diff *model.SchemaDiff) (bool, e
 	isLegacyNextGen := l.isLegacyNextGen()
 	isRelatedToSystemTables := infoschema.IsSystemTableInNextGen(is, isLegacyNextGen, diff.TableID) ||
 		infoschema.IsSystemTableInNextGen(is, isLegacyNextGen, diff.OldTableID)
-	if isRelatedToSystemTables || !isLegacyNextGen || kerneltype.IsClassic() {
+	if isRelatedToSystemTables || !isLegacyNextGen {
 		return !isRelatedToSystemTables, nil
 	}
 
