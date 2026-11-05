@@ -189,6 +189,10 @@ impl QuerySession for Session {
         Session::split_statements(self, sql, client_multi_statements).map_err(map_error)
     }
 
+    fn prefetch_point_plan_keys(&mut self, statements: &[String], sql: &str) -> Result<(), SqlQueryError> {
+        self.node_conn().prefetch_point_plan_keys(statements, sql)
+    }
+
     fn flush_multi_statement_warning(&mut self) {
         Session::flush_multi_statement_warning(self);
     }

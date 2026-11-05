@@ -2531,6 +2531,42 @@ pub(crate) fn update_source_query(update: &tidb_ast::UpdateStmt) -> Option<tidb_
     }
 }
 
+/// Go `prefetchPointPlanKeys` over one statement of a multi-statement query:
+/// `TryFastPlan`'s point plan for a point UPDATE or DELETE (Go prefetches no
+/// other statement), and the unique-index and row keys it reads. `None` when
+/// the statement has no fast point plan.
+pub fn prefetch_point_plan_keys(
+    stmt: &tidb_ast::DmlStmt,
+    catalog: &SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)>, DriverError> {
+    let source = match stmt {
+        tidb_ast::DmlStmt::Update(update) if try_update_point_plan(update) => update_source_query(update),
+        tidb_ast::DmlStmt::Delete(delete) => delete_source_query(delete),
+        _ => None,
+    };
+    let Some(tidb_ast::QueryStmt::Select(select)) = source else {
+        return Ok(None);
+    };
+    // The statement plans again when it runs, and reports the fast plan's
+    // conversion warnings then.
+    let warning_bookmark = ctx.warning_count();
+    let fast = super::point_get_plan::try_fast_dml_point_physical_plan_with_allocator(
+        &select,
+        catalog,
+        current_db,
+        ctx,
+        &tidb_planner_core_base::PlanIdAllocator::new(),
+    );
+    ctx.truncate_warnings(warning_bookmark);
+    // Go `TryFastPlan` answers no plan rather than an error.
+    let Ok(Some(plan)) = fast else {
+        return Ok(None);
+    };
+    super::physical_builder::point_plan_prefetch_keys(&plan, catalog, ctx).map(Some)
+}
+
 /// Go `tryUpdatePointPlan` declines the complete fast DML plan when any SET
 /// expression contains a subquery. The ordinary builder must then attach the
 /// subquery plan while rewriting the assignment.

@@ -2372,9 +2372,18 @@ fn run_connection_commands<S: QuerySession>(
                         queries += 1;
                         return Ok(None);
                     }
-                    // Go `conn.go:1915`: `NumOfMultiQueryHistogram` observes
-                    // how many statements one multi-statement text carried.
-                    tidb_metrics::server::MULTI_QUERY_NUM.observe(statements.len() as f64);
+                    // Go `conn.go:1908`: only pre-build point plans for a
+                    // multi-statement query.
+                    if statements.len() > 1 {
+                        if let Err(error) = engine.prefetch_point_plan_keys(&statements, sql) {
+                            write_query_error(output, &error, protocol_41)?;
+                            return Ok(None);
+                        }
+                        // Go `conn.go:1915`: `NumOfMultiQueryHistogram`
+                        // observes how many statements one multi-statement
+                        // text carried.
+                        tidb_metrics::server::MULTI_QUERY_NUM.observe(statements.len() as f64);
+                    }
                     let last_index = statements.len().saturating_sub(1);
                     // One COM_QUERY, one packet numbering: the chained results
                     // CONTINUE the sequence rather than restarting at 1.

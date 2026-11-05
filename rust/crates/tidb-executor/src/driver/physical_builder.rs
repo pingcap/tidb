@@ -5314,6 +5314,74 @@ fn point_store(
     }
 }
 
+/// Go `prefetchPointPlanKeys`' `handlePlan`: the unique-index keys and row
+/// keys a point plan reads, after its partition pruning (nothing for a plan
+/// whose key matches no partition).
+pub(super) fn point_plan_prefetch_keys(
+    plan: &PhysicalPlan,
+    catalog: &SessionExtendedInfoSchema,
+    ctx: &crate::StmtContext,
+) -> Result<(Vec<Vec<u8>>, Vec<Vec<u8>>), DriverError> {
+    let key_error = |error| DriverError::unsupported(format!("unique index key encoding failed: {error:?}"));
+    let row_key = |physical_id: i64, handle: &TableHandle| {
+        let handle = match handle {
+            TableHandle::Int(value) => tidb_tablecodec::table_key::RecordHandle::Int(*value),
+            TableHandle::Common(bytes) => tidb_tablecodec::table_key::RecordHandle::Common(bytes.clone()),
+        };
+        tidb_tablecodec::table_key::encode_row_key_with_handle(physical_id, &handle)
+    };
+    let mut idx_keys = Vec::new();
+    let mut row_keys = Vec::new();
+    match plan {
+        PhysicalPlan::PointGet(point) => {
+            let Some(physical_id) = point_partition_id(point, catalog, ctx)? else {
+                return Ok((idx_keys, row_keys));
+            };
+            let table = catalog
+                .physical_kv_table_by_id(physical_id)
+                .ok_or_else(|| DriverError::unsupported("physical point-get table ID is absent"))?;
+            let table = table_with_plan_index(table, point.index_id, ctx)?;
+            if let Some(index_id) = point.index_id {
+                for values in unique_index_point_values(&table, index_id, &point.ranges, ctx, false, false, false)? {
+                    let keys = table
+                        .encode_unique_index_key(index_id, &values, &ctx.session_zone())
+                        .map_err(key_error)?;
+                    idx_keys.extend(keys.iter().map(|key| key.as_bytes().to_vec()));
+                }
+            } else {
+                for handle in point_handles(&table, &point.ranges, ctx)? {
+                    row_keys.push(row_key(physical_id, &handle));
+                }
+            }
+        }
+        PhysicalPlan::BatchPointGet(batch) => {
+            let table = catalog
+                .physical_kv_table_by_id(batch.table_id)
+                .ok_or_else(|| DriverError::unsupported("physical batch-point table ID is absent"))?;
+            let table = table_with_plan_index(table, batch.index_id, ctx)?;
+            if let Some(index_id) = batch.index_id {
+                let values = unique_index_point_values(&table, index_id, &batch.ranges, ctx, true, false, false)?;
+                let keys = table
+                    .unique_batch_index_keys(index_id, &values, &ctx.session_zone(), None)
+                    .map_err(key_error)?;
+                idx_keys.extend(keys.into_iter().flatten().map(|(key, _)| key.as_bytes().to_vec()));
+            } else {
+                let handles = point_handles(&table, &batch.ranges, ctx)?;
+                for (i, handle) in handles.iter().enumerate() {
+                    let physical_id = batch
+                        .partition_ids
+                        .as_ref()
+                        .and_then(|ids| ids.get(i).copied())
+                        .unwrap_or(batch.table_id);
+                    row_keys.push(row_key(physical_id, handle));
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok((idx_keys, row_keys))
+}
+
 fn build_point_get(
     plan: &PhysicalPlan,
     point: &PointGetPlan,

@@ -15,6 +15,7 @@ mod catalog_load;
 mod compile_path;
 mod global_variables;
 mod point_get_max_ts;
+mod prefetch;
 mod prepared_transactions;
 mod schema_changes;
 mod statistics;

@@ -167,6 +167,12 @@ pub trait QuerySession {
         Ok(vec![sql.to_owned()])
     }
 
+    /// Go `clientConn.prefetchPointPlanKeys` for a multi-statement query's
+    /// statements, before the first runs.
+    fn prefetch_point_plan_keys(&mut self, _statements: &[String], _sql: &str) -> Result<(), SqlQueryError> {
+        Ok(())
+    }
+
     /// Called once after a multi-statement chain's LAST statement completes;
     /// Go appends the admission's parser warnings there (`conn.go:2262`).
     /// An aborted chain is never flushed, as Go's error return drops them.

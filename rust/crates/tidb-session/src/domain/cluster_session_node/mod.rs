@@ -238,6 +238,7 @@ mod node_services;
 pub use node_services::{node_services, NodeServices};
 mod non_transactional_dml;
 mod plan_replayer_load;
+mod prefetch;
 mod record_set;
 use tidb_domain_core::schema_sync;
 mod statistics;
