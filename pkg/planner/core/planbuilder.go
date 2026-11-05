@@ -4015,8 +4015,13 @@ func (b *PlanBuilder) getDefaultValueForInsert(col *table.Column) (*expression.C
 // resolveGeneratedColumns resolves generated columns with their generation expressions respectively.
 // If not-nil onDups is passed in, it will be **modified in place** and record columns in on-duplicate list
 func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*table.Column, onDups map[string]struct{}, mockPlan base.LogicalPlan) (igc physicalop.InsertGeneratedColumns, err error) {
+	// A generated column's expression is evaluated internally from the incoming
+	// row, not read on behalf of the user, so collecting column-level SELECT
+	// visits here would wrongly require SELECT on the referenced columns (for
+	// example it would reject an INSERT-only user writing a generated-column
+	// table). Disable privilege collection while rewriting these expressions.
 	originColPriv := b.checkColPriv
-	b.checkColPriv = reportColumnErrOption
+	b.checkColPriv = noCheckOption
 	defer func() {
 		b.checkColPriv = originColPriv
 	}()

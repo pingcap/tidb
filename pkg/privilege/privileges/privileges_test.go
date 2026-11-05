@@ -2745,6 +2745,14 @@ func TestInsertColumnPrivilege(t *testing.T) {
 
 	userTk.MustExec(`INSERT INTO test.t1(a) SELECT a FROM test.t2;`)
 	userTk.MustGetErrCode(`INSERT INTO test.t1(a) SELECT b FROM test.t2;`, errno.ErrColumnaccessDenied)
+
+	// A generated column's generation expression is evaluated internally from the
+	// incoming row; INSERT must not require SELECT on the columns it references.
+	tk.MustExec(`DROP TABLE IF EXISTS test.g;`)
+	tk.MustExec(`CREATE TABLE test.g (a int, b int AS (a + 1));`)
+	tk.MustExec(`GRANT INSERT(a) ON test.g TO 'testuser'@'localhost';`)
+	userTk.MustExec(`INSERT INTO test.g(a) VALUES (1);`)
+	userTk.MustExec(`INSERT INTO test.g SET a = 2;`)
 }
 
 func TestUpdateColumnPrivilege(t *testing.T) {
