@@ -867,6 +867,7 @@ func getRowsAndFields(sctx sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Ro
 		req = chunk.Renew(req, sctx.GetSessionVars().MaxChunkSize)
 	}
 	if err != nil {
+		terror.Call(rs.Close)
 		return nil, nil, err
 	}
 	if err = rs.Close(); err != nil {
