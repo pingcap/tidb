@@ -26,6 +26,11 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/operator"
+>>>>>>> 49d87f99ff2 (ddl: do not flush the index write result sink after its context is canceled (#72695))
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -42,7 +47,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
+<<<<<<< HEAD
 	tikverr "github.com/tikv/client-go/v2/error"
+=======
+	"go.uber.org/atomic"
+>>>>>>> 49d87f99ff2 (ddl: do not flush the index write result sink after its context is canceled (#72695))
 )
 
 func TestDoneTaskKeeper(t *testing.T) {
@@ -659,3 +668,71 @@ func TestSplitRangesByKeys(t *testing.T) {
 		require.EqualValues(t, len(tt.expected), len(result), "keys mismatch", tt.name)
 	}
 }
+<<<<<<< HEAD
+=======
+
+func TestMergeTempIndexResultSinkReportsWrittenBytes(t *testing.T) {
+	wctx := workerpool.NewContext(context.Background())
+	defer wctx.Cancel()
+
+	src := operator.NewSimpleDataChannel(make(chan tempIdxResult, 2))
+	src.Channel() <- tempIdxResult{addCount: 2, writtenBytes: 120}
+	src.Channel() <- tempIdxResult{addCount: 3, writtenBytes: 80}
+	close(src.Channel())
+
+	collector := &mergeTempIndexCollector{}
+	sink := newTempIndexResultSink(wctx, nil, collector)
+	sink.SetSource(src)
+	require.NoError(t, sink.Open())
+	require.NoError(t, sink.Close())
+
+	require.Equal(t, 5, collector.addCount)
+	require.Equal(t, int64(200), collector.writtenBytes)
+}
+
+type ingestCountingBackendCtx struct {
+	ingest.BackendCtx
+	ingestCalls atomic.Int32
+}
+
+func (b *ingestCountingBackendCtx) Ingest(context.Context) error {
+	b.ingestCalls.Inc()
+	return nil
+}
+
+func (*ingestCountingBackendCtx) TotalKeyCount() int {
+	return 0
+}
+
+func TestIndexWriteResultSinkCloseAfterCancel(t *testing.T) {
+	// When the context is canceled and the source channel is closed before the
+	// sink selects, both cases are ready and Go picks one at random, so repeat.
+	for range 50 {
+		wctx := workerpool.NewContext(context.Background())
+		bc := &ingestCountingBackendCtx{}
+		sink := newIndexWriteResultSink(wctx, bc, nil, nil, &execute.TestCollector{})
+		src := operator.NewSimpleDataChannel(make(chan IndexWriteResult))
+		sink.SetSource(src)
+		wctx.Cancel()
+		close(src.Channel())
+
+		require.NoError(t, sink.Open())
+		require.ErrorIs(t, sink.Close(), context.Canceled)
+		require.Zero(t, bc.ingestCalls.Load())
+	}
+}
+
+func TestIndexWriteResultSinkFlushesOnSourceFinish(t *testing.T) {
+	wctx := workerpool.NewContext(context.Background())
+	defer wctx.Cancel()
+	bc := &ingestCountingBackendCtx{}
+	sink := newIndexWriteResultSink(wctx, bc, nil, nil, &execute.TestCollector{})
+	src := operator.NewSimpleDataChannel(make(chan IndexWriteResult))
+	sink.SetSource(src)
+	close(src.Channel())
+
+	require.NoError(t, sink.Open())
+	require.NoError(t, sink.Close())
+	require.Equal(t, int32(1), bc.ingestCalls.Load())
+}
+>>>>>>> 49d87f99ff2 (ddl: do not flush the index write result sink after its context is canceled (#72695))
