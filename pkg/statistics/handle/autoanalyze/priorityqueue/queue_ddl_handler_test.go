@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -320,6 +321,11 @@ func TestDropTable(t *testing.T) {
 	isEmpty, err = pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.True(t, isEmpty)
+
+	// A panic in handling an event escapes HandleDDLEvent. The event has no table info.
+	require.Panics(t, func() {
+		_ = pq.HandleDDLEvent(ctx, sctx, notifier.NewDropTableEvent(nil))
+	})
 }
 
 func TestDropPartitionedTableWithStaticPartition(t *testing.T) {
