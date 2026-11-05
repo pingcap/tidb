@@ -632,11 +632,45 @@ func cancelOnlyNotHandledJob(job *model.Job, initialState model.SchemaState) (ve
 }
 
 func rollingbackTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
-	_, err = GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	return cancelOnlyNotHandledJob(job, model.StateNone)
+	ver, err = cancelOnlyNotHandledJob(job, model.StateNone)
+	if job.IsCancelled() {
+		deleteTruncateTableReplacementAffinityGroups(jobCtx, job, tblInfo)
+	}
+	return ver, err
+}
+
+// deleteTruncateTableReplacementAffinityGroups deletes the groups that an
+// earlier attempt of a cancelled TRUNCATE TABLE job may have created before its
+// transaction failed. Only the job arguments retain the replacement IDs.
+func deleteTruncateTableReplacementAffinityGroups(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo) {
+	if tblInfo.Affinity == nil {
+		return
+	}
+	args, err := model.GetTruncateTableArgs(job)
+	if err != nil {
+		logutil.DDLLogger().Warn("failed to decode truncate table args for replacement affinity group cleanup",
+			zap.Int64("jobID", job.ID), zap.Error(err))
+		return
+	}
+	replacement := &model.TableInfo{ID: args.NewTableID, Name: tblInfo.Name, Affinity: tblInfo.Affinity}
+	var replacementDefs []model.PartitionDefinition
+	if tblInfo.Affinity.Level == ast.TableAffinityLevelPartition {
+		if len(args.NewPartitionIDs) == 0 {
+			return
+		}
+		replacementDefs = make([]model.PartitionDefinition, 0, len(args.NewPartitionIDs))
+		for _, id := range args.NewPartitionIDs {
+			replacementDefs = append(replacementDefs, model.PartitionDefinition{ID: id})
+		}
+	}
+	if err := deleteTableAffinityGroupsInPD(jobCtx, replacement, replacementDefs); err != nil {
+		logutil.DDLLogger().Warn("failed to delete replacement table affinity groups during rollback",
+			zap.Error(err), zap.Int64("tableID", replacement.ID))
+	}
 }
 
 func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {

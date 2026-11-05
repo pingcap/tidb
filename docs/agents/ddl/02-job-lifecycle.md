@@ -54,6 +54,11 @@ on error before persisting either a retry or a cancelled job. This also protects
 TRUNCATE TABLE when masking-policy SQL has already flushed the old table deletion;
 `sess.Reset()` alone only discards the current statement buffer.
 
+Rolling back the DDL transaction does not undo changes a step has made in PD.
+TRUNCATE TABLE keeps the old table's affinity groups until its step commits and
+deletes them in the done-job branch of `transitOneJobStep`. If the job is
+cancelled instead, `rollingbackTruncateTable` deletes the replacement groups.
+
 ## Schema version + diff and cluster-wide synchronization
 
 After schema changes, TiDB relies on a global schema version + per-job synchronization to coordinate all nodes.

@@ -704,8 +704,11 @@ func (w *worker) transitOneJobStep(
 			if err := w.checkBeforeCommit(); err != nil {
 				return 0, err
 			}
-			if job.Type == model.ActionMViewRefreshOutOfPlaceCutover {
+			switch job.Type {
+			case model.ActionMViewRefreshOutOfPlaceCutover:
 				w.cleanupMViewOutOfPlaceCutoverAfterCommit(jobCtx, job)
+			case model.ActionTruncateTable:
+				cleanupTruncateTableAffinityGroupsAfterCommit(jobCtx, job)
 			}
 			job.State = model.JobStateSynced
 		}

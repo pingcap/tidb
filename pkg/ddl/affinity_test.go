@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -57,6 +58,17 @@ type truncateAffinityPDClient struct {
 	createCalls      atomic.Int64
 	createFailures   atomic.Int64
 	nilDeleteContext atomic.Bool
+	// labelRules maps a group ID to its key ranges. PD stores them in a label
+	// rule that is created and force-deleted together with the group.
+	labelRules sync.Map
+}
+
+func (c *truncateAffinityPDClient) labelRule(id string) ([]pdhttp.AffinityGroupKeyRange, bool) {
+	ranges, ok := c.labelRules.Load(id)
+	if !ok {
+		return nil, false
+	}
+	return ranges.([]pdhttp.AffinityGroupKeyRange), true
 }
 
 func (c *truncateAffinityPDClient) CreateAffinityGroups(ctx context.Context, groups map[string][]pdhttp.AffinityGroupKeyRange, _ ...pdhttp.CreateAffinityGroupsOption) (map[string]*pdhttp.AffinityGroupState, error) {
@@ -68,8 +80,9 @@ func (c *truncateAffinityPDClient) CreateAffinityGroups(ctx context.Context, gro
 	err := c.manager.CreateAffinityGroupsIfNotExists(ctx, groups)
 	if err == nil {
 		ids := make([]string, 0, len(groups))
-		for id := range groups {
+		for id, ranges := range groups {
 			ids = append(ids, id)
+			c.labelRules.LoadOrStore(id, ranges)
 		}
 		c.lastCreatedIDs.Store(ids)
 		if c.failAfterCreate.Swap(false) {
@@ -88,7 +101,13 @@ func (c *truncateAffinityPDClient) BatchDeleteAffinityGroups(ctx context.Context
 	if c.failDelete.Load() {
 		return fmt.Errorf("injected affinity deletion failure")
 	}
-	return c.manager.DeleteAffinityGroups(ctx, ids)
+	if err := c.manager.DeleteAffinityGroups(ctx, ids); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		c.labelRules.Delete(id)
+	}
+	return nil
 }
 
 func (c *truncateAffinityPDClient) GetAffinityGroups(ctx context.Context, ids []string) (map[string]*pdhttp.AffinityGroupState, error) {
@@ -196,6 +215,210 @@ func TestAffinityTruncateTableFailureAtomicity(t *testing.T) {
 			tk.MustExec("truncate table t")
 			tk.MustQuery("select * from t").Check(testkit.Rows())
 		})
+	}
+}
+
+// requireAffinityGroupsWithLabelRules checks both the groups and the label
+// rules that hold their key ranges.
+func requireAffinityGroupsWithLabelRules(t *testing.T, cli *truncateAffinityPDClient, groups map[string][]pdhttp.AffinityGroupKeyRange, shouldExist bool, msg string) {
+	require.NotEmpty(t, groups, msg)
+	ids := make([]string, 0, len(groups))
+	for id := range groups {
+		ids = append(ids, id)
+	}
+	states, err := affinity.GetGroups(context.Background(), ids)
+	require.NoError(t, err, msg)
+	for id, ranges := range groups {
+		rule, ok := cli.labelRule(id)
+		if shouldExist {
+			require.Contains(t, states, id, msg)
+			require.True(t, ok, "label rule of group %s should exist: %s", id, msg)
+			require.Equal(t, ranges, rule, msg)
+		} else {
+			require.NotContains(t, states, id, msg)
+			require.False(t, ok, "label rule of group %s should be deleted: %s", id, msg)
+		}
+	}
+}
+
+func TestAffinityTruncateTableCancelKeepsOriginalGroups(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	cli := &truncateAffinityPDClient{manager: affinity.NewMockManager()}
+	affinity.InitManager(cli)
+	t.Cleanup(func() { affinity.InitManager(nil) })
+	waitTime := ddl.GetWaitTimeWhenErrorOccurred()
+	ddl.SetWaitTimeWhenErrorOccurred(time.Millisecond)
+	t.Cleanup(func() { ddl.SetWaitTimeWhenErrorOccurred(waitTime) })
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tkCancel := testkit.NewTestKit(t, store)
+	db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
+	codec := store.GetCodec()
+
+	const (
+		afterRunStep     = "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep"
+		beforeRefreshJob = "github.com/pingcap/tidb/pkg/ddl/beforeRefreshJob"
+	)
+	// Each failure happens after the step has created the replacement groups
+	// and before its metadata transaction commits.
+	failures := []struct {
+		name      string
+		failpoint string
+		enable    func(t *testing.T, failpoint string, isTarget func(*model.Job) bool)
+		// errorCountLimit, when set, lets the error count limit cancel the job.
+		// Otherwise the user cancels it after the failed attempt.
+		errorCountLimit int
+		wantErr         string
+	}{
+		{
+			name:      "schema version update fails",
+			failpoint: "github.com/pingcap/tidb/pkg/ddl/beforeUpdateSchemaVersion",
+			enable: func(t *testing.T, failpoint string, isTarget func(*model.Job) bool) {
+				var injected atomic.Bool
+				testfailpoint.EnableCall(t, failpoint, func(job *model.Job, err *error) {
+					if isTarget(job) && injected.CompareAndSwap(false, true) {
+						*err = fmt.Errorf("injected schema version update failure")
+					}
+				})
+			},
+			wantErr: "injected schema version update failure",
+		},
+		{
+			name:      "event notification fails",
+			failpoint: "github.com/pingcap/tidb/pkg/ddl/asyncNotifyEventError",
+			enable: func(t *testing.T, failpoint string, _ func(*model.Job) bool) {
+				testfailpoint.Enable(t, failpoint, "return")
+			},
+			errorCountLimit: 1,
+			wantErr:         "mock publish event error",
+		},
+		{
+			name:      "commit fails",
+			failpoint: "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable",
+			enable: func(t *testing.T, failpoint string, isTarget func(*model.Job) bool) {
+				var injected atomic.Bool
+				testfailpoint.EnableCall(t, failpoint, func(job *model.Job, err *error) {
+					if isTarget(job) && job.IsDone() && injected.CompareAndSwap(false, true) {
+						*err = fmt.Errorf("injected commit failure")
+					}
+				})
+			},
+			wantErr: "Cancelled DDL job",
+		},
+	}
+	for _, level := range []string{"table", "partition"} {
+		for _, failure := range failures {
+			t.Run(level+"/"+failure.name, func(t *testing.T) {
+				tk.MustExec("drop table if exists t")
+				if level == "table" {
+					tk.MustExec("create table t(a int) affinity='table'")
+				} else {
+					tk.MustExec("create table t(a int) affinity='partition' partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+				}
+				tk.MustExec("insert into t values (1),(11)")
+				original, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+				require.NoError(t, err)
+				originalMeta := original.Meta().Clone()
+				persistedBefore, err := meta.NewReader(store.GetSnapshot(kv.MaxVersion)).GetTable(db.ID, originalMeta.ID)
+				require.NoError(t, err)
+				originalGroups, err := ddl.BuildAffinityGroupDefinitionsForTest(codec, originalMeta, nil)
+				require.NoError(t, err)
+				requireAffinityGroupsWithLabelRules(t, cli, originalGroups, true, "created table")
+
+				originalID := originalMeta.ID
+				isTarget := func(job *model.Job) bool {
+					return job.Type == model.ActionTruncateTable && job.TableID == originalID
+				}
+				// Keep the submitted arguments. They hold the replacement IDs.
+				var (
+					attempted   atomic.Bool
+					jobVersion  atomic.Int64
+					rawArgsCopy atomic.Value
+				)
+				testfailpoint.EnableCall(t, afterRunStep, func(job *model.Job) {
+					if isTarget(job) && attempted.CompareAndSwap(false, true) {
+						jobVersion.Store(int64(job.Version))
+						rawArgsCopy.Store(append([]byte(nil), job.RawArgs...))
+					}
+				})
+				cancelByUser := failure.errorCountLimit == 0
+				cancelDone := make(chan error, 1)
+				if cancelByUser {
+					var cancelled atomic.Bool
+					testfailpoint.EnableCall(t, beforeRefreshJob, func(job *model.Job) {
+						if isTarget(job) && attempted.Load() && cancelled.CompareAndSwap(false, true) {
+							errs, err := ddl.CancelJobs(context.Background(), tkCancel.Session(), []int64{job.ID})
+							if err == nil && len(errs) > 0 {
+								err = errs[0]
+							}
+							cancelDone <- err
+						}
+					})
+				}
+				if failure.errorCountLimit > 0 {
+					tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", failure.errorCountLimit))
+				}
+				failure.enable(t, failure.failpoint, isTarget)
+				truncateErr := tk.ExecToErr("truncate table t")
+				testfailpoint.Disable(t, failure.failpoint)
+				testfailpoint.Disable(t, afterRunStep)
+				if failure.errorCountLimit > 0 {
+					tk.MustExec("set @@global.tidb_ddl_error_count_limit = default")
+				}
+				require.ErrorContains(t, truncateErr, failure.wantErr)
+				if cancelByUser {
+					testfailpoint.Disable(t, beforeRefreshJob)
+					select {
+					case cancelErr := <-cancelDone:
+						require.NoError(t, cancelErr)
+					default:
+						require.FailNow(t, "expected the truncate job to be cancelled by the user")
+					}
+				}
+				require.True(t, attempted.Load())
+
+				persisted, err := meta.NewReader(store.GetSnapshot(kv.MaxVersion)).GetTable(db.ID, originalID)
+				require.NoError(t, err)
+				require.Equal(t, persistedBefore, persisted, "cancelled truncate must preserve table metadata")
+				tk.MustQuery("select * from t order by a").Check(testkit.Rows("1", "11"))
+				checkAffinityGroupsInPD(t, dom, "test", "t", true)
+				requireAffinityGroupsWithLabelRules(t, cli, originalGroups, true, "cancelled truncate must keep the original groups")
+
+				args, err := model.GetTruncateTableArgs(&model.Job{
+					Type:    model.ActionTruncateTable,
+					Version: model.JobVersion(jobVersion.Load()),
+					RawArgs: rawArgsCopy.Load().([]byte),
+				})
+				require.NoError(t, err)
+				replacementMeta := originalMeta.Clone()
+				replacementMeta.ID = args.NewTableID
+				if pi := replacementMeta.Partition; pi != nil {
+					require.Len(t, args.NewPartitionIDs, len(pi.Definitions))
+					for i := range pi.Definitions {
+						pi.Definitions[i].ID = args.NewPartitionIDs[i]
+					}
+				}
+				replacementGroups, err := ddl.BuildAffinityGroupDefinitionsForTest(codec, replacementMeta, nil)
+				require.NoError(t, err)
+				replacementIDs := make([]string, 0, len(replacementGroups))
+				for id := range replacementGroups {
+					replacementIDs = append(replacementIDs, id)
+				}
+				require.ElementsMatch(t, replacementIDs, cli.lastCreatedIDs.Load().([]string), "the failed attempt must have created the replacement groups")
+				requireAffinityGroupsWithLabelRules(t, cli, replacementGroups, false, "cancelled truncate must delete the replacement groups")
+
+				// A committed truncate deletes the original groups.
+				tk.MustExec("truncate table t")
+				tk.MustQuery("select * from t").Check(testkit.Rows())
+				truncated, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+				require.NoError(t, err)
+				newGroups, err := ddl.BuildAffinityGroupDefinitionsForTest(codec, truncated.Meta(), nil)
+				require.NoError(t, err)
+				requireAffinityGroupsWithLabelRules(t, cli, newGroups, true, "committed truncate must create the new groups")
+				requireAffinityGroupsWithLabelRules(t, cli, originalGroups, false, "committed truncate must delete the original groups")
+			})
+		}
 	}
 }
 
