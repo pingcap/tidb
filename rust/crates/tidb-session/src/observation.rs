@@ -461,6 +461,37 @@ impl Session {
     /// Go `ExecuteStmt`'s (and a prepared execution's, `conn_stmt.go`)
     /// `topsql.AttachAndRegisterSQLInfo`: with Top Profiling on, the
     /// statement's SQL digest labels this thread and its text is registered.
+    /// Go `executorStats.RegisterSQLAndPlanInExecForTopProfiling`: the
+    /// statement's executors register its SQL and plan with Top SQL once,
+    /// when Top profiling is on as they run (so a statement that began
+    /// before Top SQL was enabled still names its text).
+    pub(crate) fn statement_top_profiling_registration(&self) -> Option<Arc<dyn Fn() + Send + Sync>> {
+        let observation = self.statement_observation.as_ref()?;
+        let normalized = observation.normalized.clone();
+        let digest = observation.digest.clone();
+        let restricted = self.vars.restricted_sql;
+        let plan = Arc::clone(&self.process_plan_info);
+        let registered = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        Some(Arc::new(move || {
+            if !tidb_topsql_state::top_profiling_enabled()
+                || registered.swap(true, std::sync::atomic::Ordering::SeqCst)
+            {
+                return;
+            }
+            tidb_topsql::register_sql(&normalized, (!normalized.is_empty()).then_some(&digest), restricted);
+            let (normalized_plan, plan_digest) = {
+                let plan = plan.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                (plan.normalized_plan.clone(), plan.plan_digest.clone())
+            };
+            if !normalized_plan.is_empty() {
+                tidb_topsql::register_plan(
+                    &normalized_plan,
+                    Some(&tidb_parser::Digest::new(decode_hex_digest(&plan_digest))),
+                );
+            }
+        }))
+    }
+
     fn attach_and_register_top_sql_info(&self) {
         if !tidb_topsql_state::top_profiling_enabled() {
             return;

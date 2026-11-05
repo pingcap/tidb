@@ -1255,6 +1255,10 @@ pub struct StmtContextData {
     /// plan-cache refusal of the statement recorded, shared by every context
     /// the statement plans with.
     plan_cache_unqualified: Option<Arc<Mutex<String>>>,
+    /// Go `executorStats.RegisterSQLAndPlanInExecForTopProfiling` for this
+    /// statement: registers its SQL and plan with Top SQL once, when Top
+    /// profiling is on as an executor runs.
+    top_profiling_registration: Option<Arc<dyn Fn() + Send + Sync>>,
     /// Go `StmtCtx.IsTiFlash` as `buildDataSource` sets it: MPP is allowed
     /// and a table the statement reads has an available TiFlash replica.
     is_tiflash: Arc<AtomicBool>,
@@ -2273,6 +2277,14 @@ context_configuration! {
         self
     }
 
+    /// Go `executorStats`' Top SQL registration for the statement's
+    /// executors.
+    #[must_use]
+    pub fn with_top_profiling_registration(mut self, register: Option<Arc<dyn Fn() + Send + Sync>>) -> Self {
+        self.top_profiling_registration = register;
+        self
+    }
+
     /// Shares the statement's plan-cache-unqualified reason cell.
     #[must_use]
     pub fn with_plan_cache_unqualified(mut self, cell: Option<Arc<Mutex<String>>>) -> Self {
@@ -3041,6 +3053,7 @@ impl StmtContext {
             phase_durations: Default::default(),
             sql_cpu_usages: None,
             plan_cache_unqualified: None,
+            top_profiling_registration: None,
             is_tiflash: Arc::default(),
             kv_exec_counter: Default::default(),
             rpc_interceptor: Default::default(),
@@ -5080,6 +5093,13 @@ impl StmtContext {
     pub fn with_time_zone(mut self, time_zone: tidb_datatype::SessionTimeZone) -> Self {
         self.time_zone = Some(time_zone);
         self
+    }
+
+    /// Go `RegisterSQLAndPlanInExecForTopProfiling` for the statement's
+    /// executors, when the session supplies one.
+    #[must_use]
+    pub fn top_profiling_registration(&self) -> Option<Arc<dyn Fn() + Send + Sync>> {
+        self.top_profiling_registration.clone()
     }
 
     /// The source the statement's DistSQL requests carry.

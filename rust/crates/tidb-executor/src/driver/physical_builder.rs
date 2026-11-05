@@ -181,6 +181,8 @@ struct BuildState {
     table_task_source: Option<(i32, Box<dyn Executor>)>,
     /// Reader subplans use coprocessor expression semantics.
     in_reader: bool,
+    /// Go `executorStats`' Top SQL registration of the statement being built.
+    top_profiling: Option<Arc<dyn Fn() + Send + Sync>>,
     /// Whether a `PhysicalProjection` may run Go's projection workers. Go
     /// keeps every projection serial inside INSERT/UPDATE/DELETE (its
     /// `inUpdateStmt`/`inDeleteStmt`/`inInsertStmt` builder flags, because
@@ -438,6 +440,7 @@ impl BuildState {
             chunk_memory,
             next_region,
             trace,
+            top_profiling: self.top_profiling.clone(),
         });
         let Some(counters) = self.runtime_counters.as_mut() else {
             return executor;
@@ -501,6 +504,8 @@ struct SqlKillerCheckExec {
     next_region: Option<&'static str>,
     /// The regions and events the node's Go executor adds itself.
     trace: Option<Box<GoExecutorTrace>>,
+    /// Go `exec.Next`'s `RegisterSQLAndPlanInExecForTopProfiling`.
+    top_profiling: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 /// The trace a node's Go executor adds to its own `Open`, `Next` and
@@ -631,6 +636,7 @@ fn checked_executor_with_stats(
         chunk_memory: None,
         next_region: None,
         trace: None,
+        top_profiling: None,
     })
 }
 
@@ -678,6 +684,9 @@ impl Executor for SqlKillerCheckExec {
             tidb_tracing::thread_event(|| event.clone());
         }
         let start = self.runtime_stats.as_ref().map(|_| Instant::now());
+        if let Some(register) = &self.top_profiling {
+            register();
+        }
         let result = tidb_driver_error::panic_recovery::recover_executor_panic(|| {
             self.memory.check().map_err(crate::ExecError::from)?;
             self.child.next(req)?;
@@ -6853,6 +6862,9 @@ fn build_with_state(
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
+    if state.top_profiling.is_none() {
+        state.top_profiling = ctx.top_profiling_registration();
+    }
     if matches!(plan, PhysicalPlan::TableScan(_))
         && state
             .table_task_source
@@ -8279,6 +8291,7 @@ use super::*;
                 runtime_stats: None,
                 chunk_memory: None,
                 next_region: Some("*executor.LimitExec.Next"),
+                top_profiling: None,
                 trace: Some(Box::new(GoExecutorTrace {
                     limit_close: true,
                     ..GoExecutorTrace::default()

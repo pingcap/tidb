@@ -1339,3 +1339,60 @@ fn observation_batch_summary_keeps_no_refusal_reason_from_the_previous_statement
     assert_eq!(record.cumulative.plan_cache_unqualified_count, 0);
     assert_eq!(record.cumulative.last_plan_cache_unqualified, "");
 }
+
+/// Go `exec.Next`'s `RegisterSQLAndPlanInExecForTopProfiling`: a statement
+/// that began before Top SQL was enabled registers its SQL once its
+/// executors run with Top SQL on.
+#[test]
+fn observation_batch_executors_register_the_statement_once_top_sql_is_on() {
+    use std::sync::{Arc, Mutex};
+    use tidb_topsql_reporter::reporter::TopSqlReporter;
+
+    #[derive(Default)]
+    struct Registered {
+        sqls: Mutex<Vec<(Vec<u8>, String)>>,
+    }
+    impl tidb_topsql_collector::Collector for Registered {
+        fn collect(&self, _stats: Vec<tidb_topsql_collector::SqlCpuTimeRecord>) {}
+    }
+    impl tidb_topsql_stmtstats::Collector for Registered {
+        fn collect_stmt_stats_map(&self, _data: &tidb_topsql_stmtstats::StatementStatsMap) {}
+    }
+    impl TopSqlReporter for Registered {
+        fn start(self: Arc<Self>) {}
+        fn register_sql(&self, sql_digest: &[u8], normalized_sql: &str, _is_internal: bool) {
+            self.sqls.lock().unwrap().push((sql_digest.to_vec(), normalized_sql.to_owned()));
+        }
+        fn register_plan(&self, _plan_digest: &[u8], _normalized_plan: &str, _is_large: bool) {}
+        fn bind_process_cpu_time_updater(&self, _: Arc<dyn tidb_topsql_collector::ProcessCpuTimeUpdater>) {}
+        fn bind_keyspace_name(&self, _: Vec<u8>) {}
+        fn close(&self) {}
+    }
+
+    let reporter = Arc::new(Registered::default());
+    tidb_topsql::setup_top_profiling_for_test(Arc::clone(&reporter) as _);
+    tidb_topsql_state::disable_top_sql();
+    let mut session = Session::new();
+    session.run("CREATE TABLE top_sql_exec_t (id INT PRIMARY KEY, v INT)").unwrap();
+    session.run("INSERT INTO top_sql_exec_t VALUES (1, 2), (2, 3)").unwrap();
+    let sql = "SELECT v FROM top_sql_exec_t WHERE v > 1";
+    let (normalized, digest) = normalize_statement_digest(sql);
+    let registered = |reporter: &Registered| {
+        reporter
+            .sqls
+            .lock()
+            .unwrap()
+            .contains(&(digest.as_bytes().to_vec(), normalized.clone()))
+    };
+    {
+        let mut result = crate::tests_support::execute_stmt(&mut session, sql).expect("a query");
+        assert!(!registered(&reporter), "nothing registers while Top SQL is off");
+        tidb_topsql_state::enable_top_sql();
+        let source = result.source();
+        while !source.next_batch(64).unwrap().is_empty() {}
+        source.finish().unwrap();
+        source.close().unwrap();
+    }
+    tidb_topsql_state::disable_top_sql();
+    assert!(registered(&reporter), "the executors registered the statement");
+}

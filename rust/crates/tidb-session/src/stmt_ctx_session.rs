@@ -153,6 +153,10 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &self.process_plan_info
     }
 
+    fn top_profiling_registration(&self) -> Option<Arc<dyn Fn() + Send + Sync>> {
+        self.statement_top_profiling_registration()
+    }
+
     fn process_plan_info_mut(&mut self) -> &mut Arc<std::sync::Mutex<tidb_stmtctx::ProcessPlanInfo>> {
         &mut self.process_plan_info
     }
