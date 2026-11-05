@@ -557,6 +557,68 @@ mod tests {
         assert!(data.iter().all(|info| info.available), "{data:?}");
     }
 
+    /// Go `TestExtractHandler`: `/extract_task/dump?type=plan` answers the
+    /// package's file name, `isDump` streams the file, and another type is
+    /// refused.
+    #[test]
+    fn extract_task_dump_answers_like_go() {
+        let base = std::env::temp_dir().join(format!("extract-route-{}", std::process::id()));
+        tidb_planner_extstore::set_global_ext_storage_for_test(Some(Arc::new(
+            tidb_planner_extstore::LocalStorage::new(&base).unwrap(),
+        )));
+        let stack = stack();
+        tidb_session::domain::cluster_session_node::setup_extract_handle(&stack.factory);
+        let handle = stack.factory.get_extract_handle();
+        let answer = |path: &str| {
+            let response = crate::extractor_handler::extract_task_serve_response(path, handle.as_ref()).expect(path);
+            let status = response.status().as_u16();
+            let headers = response.headers().clone();
+            let body = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap()
+                .block_on(axum::body::to_bytes(response.into_body(), usize::MAX))
+                .unwrap()
+                .to_vec();
+            (status, headers, body)
+        };
+        assert!(crate::extractor_handler::extract_task_serve_response("/extract_task", handle.as_ref()).is_none());
+
+        let (status, _, body) = answer("/extract_task/dump?type=other");
+        assert_eq!((status, String::from_utf8(body).unwrap().as_str()), (400, "unknown extract task type"));
+        // The history view needs persisted statement summaries.
+        let (status, _, body) = answer("/extract_task/dump?type=plan");
+        assert_eq!(
+            (status, String::from_utf8(body).unwrap().as_str()),
+            (400, "tidb_stmt_summary_enable_persistent should be enabled for extract task")
+        );
+        let (status, _, body) = answer("/extract_task/dump?type=plan&begin=2024-13-01%2000:00:00");
+        assert_eq!(status, 400, "{}", String::from_utf8_lossy(&body));
+
+        let (status, headers, body) =
+            answer("/extract_task/dump?type=PLAN&isHistoryView=false&begin=2000-01-01%2000:00:00&end=2100-01-01%2000:00:00");
+        let name = String::from_utf8(body).unwrap();
+        assert_eq!(status, 200, "{name}");
+        assert_eq!(headers["content-type"], "text/plain; charset=utf-8");
+        assert!(name.starts_with("extract_") && name.ends_with(".zip"), "{name}");
+        let on_disk = std::fs::read(base.join("extract").join(&name)).unwrap();
+        let files: std::collections::BTreeMap<String, Vec<u8>> =
+            tidb_replayer::zip::read_zip(&on_disk).unwrap().into_iter().collect();
+        assert_eq!(String::from_utf8(files["extract_meta.txt"].clone()).unwrap(), "SkipStats = \"false\"\ntaskType = \"Plan\"\n");
+
+        let (status, headers, body) =
+            answer("/extract_task/dump?type=plan&isHistoryView=0&isDump=true&isSkipStats=1");
+        assert_eq!(status, 200);
+        assert_eq!(headers["content-type"], "application/zip");
+        let disposition = headers["content-disposition"].to_str().unwrap().to_owned();
+        assert!(disposition.starts_with("attachment; filename=\"extract_") && disposition.ends_with(".zip.zip\""), "{disposition}");
+        let files: std::collections::BTreeMap<String, Vec<u8>> =
+            tidb_replayer::zip::read_zip(&body).unwrap().into_iter().collect();
+        assert_eq!(String::from_utf8(files["extract_meta.txt"].clone()).unwrap(), "SkipStats = \"true\"\ntaskType = \"Plan\"\n");
+
+        tidb_planner_extstore::set_global_ext_storage_for_test(None);
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
     /// Go `MvccTxnHandler` over the embedded store: a row's MVCC record by
     /// handle, by hex key and by its transaction's start ts.
     #[test]

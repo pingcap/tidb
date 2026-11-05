@@ -745,6 +745,7 @@ pub fn cluster_session_stack(
     // Go `BootstrapSession`: the plan replayer handle and the dump-file GC
     // loop start before the historical stats worker.
     tidb_session::domain::cluster_session_node::start_plan_replayer_handle(&factory);
+    tidb_session::domain::cluster_session_node::setup_extract_handle(&factory);
     // Go `initResourceGroupsController`'s runaway manager, whose loops
     // `Domain.Start` runs.
     tidb_session::domain::resource_groups_controller::start_runaway_manager(

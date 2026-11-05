@@ -1403,6 +1403,16 @@ pub fn start_plan_replayer_handle(domain: &Arc<Domain>) {
     })));
 }
 
+/// Go `SetupExtractHandle(sctxs)` in `BootstrapSession`: the extract
+/// worker runs on system sessions.
+pub fn setup_extract_handle(domain: &Arc<Domain>) {
+    let sessions = Arc::downgrade(domain);
+    domain.setup_extract_handle(Box::new(crate::plan_replayer::ExtractWorkerSession::new(move || {
+        let domain = sessions.upgrade().ok_or_else(|| "the domain is closed".to_owned())?;
+        domain.open_system_session().map_err(|error| error.error_string())
+    })));
+}
+
 /// The schema image of `snapshot`: the info cache's `load_with_ts` over its
 /// meta, built into a session catalog.
 fn load_snapshot_catalog(

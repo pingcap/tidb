@@ -113,6 +113,8 @@ pub struct StatusRoutes {
     pub cluster_upgrade: Option<crate::upgrade_handler::ClusterUpgrade>,
     /// Go `FlashReplicaDeprecatedHandler`'s store.
     pub flash_replica_deprecated: Option<crate::tikv_handler::FlashReplicaDeprecated>,
+    /// Go `s.dom.GetExtractHandle()` for `/extract_task/dump`.
+    pub extract_handle: Option<Arc<tidb_domain::extract::ExtractHandle>>,
 }
 
 /// Go `StatsHandle().GetPriorityQueueSnapshot()` marshaled.
@@ -571,6 +573,11 @@ fn route_response(
     routes: &StatusRoutes,
 ) -> axum::response::Response {
     if let Some(response) = download_file_response(path, routes) {
+        return response;
+    }
+    if let Some(response) =
+        crate::extractor_handler::extract_task_serve_response(path, routes.extract_handle.as_ref())
+    {
         return response;
     }
     let route = path.split_once('?').map_or(path, |(route, _)| route);

@@ -771,6 +771,8 @@ pub struct Domain {
     historical_stats_runtime: std::sync::OnceLock<HistoricalStatsRuntime>,
     /// Go `planReplayerHandle` and the dump-file GC loop.
     plan_replayer: std::sync::OnceLock<plan_replayer_owner::PlanReplayerRuntime>,
+    /// Go `Domain.extractTaskHandle`.
+    extract_task_handle: std::sync::OnceLock<Arc<tidb_domain::extract::ExtractHandle>>,
     /// Go `runawayManager` and its loops.
     runaway: std::sync::OnceLock<runaway_owner::RunawayRuntime>,
     /// Go `ttlJobManager`.
@@ -1083,6 +1085,7 @@ impl Domain {
             historical_stats_worker,
             historical_stats_runtime: std::sync::OnceLock::new(),
             plan_replayer: std::sync::OnceLock::new(),
+            extract_task_handle: std::sync::OnceLock::new(),
             runaway: std::sync::OnceLock::new(),
             ttl_job_manager: std::sync::OnceLock::new(),
             signing_cert_loop: std::sync::OnceLock::new(),

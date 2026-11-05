@@ -106,6 +106,7 @@ pub fn run_unistore_cluster_session(
     // Go `BootstrapSession`: the plan replayer handle and the dump-file GC
     // loop start before the historical stats worker.
     tidb_session::domain::cluster_session_node::start_plan_replayer_handle(&factory);
+    tidb_session::domain::cluster_session_node::setup_extract_handle(&factory);
     factory.start_historical_stats_worker();
     // Go `BootstrapSession`: after the statistics loops.
     factory.setup_workload_based_learning_worker();
@@ -148,6 +149,7 @@ pub fn run_unistore_cluster_session(
                 mvcc: factory.region_store.clone(),
                 cluster_upgrade: crate::node_status::cluster_upgrade(&factory),
                 flash_replica_deprecated: Some(crate::node_status::flash_replica_deprecated(&factory)),
+                extract_handle: factory.get_extract_handle(),
                 schema_reload: {
                     let ddl = Arc::clone(&factory.ddl);
                     Some(Arc::new(move || ddl.reload_schema()))

@@ -6557,6 +6557,123 @@ fn plan_replayer_load_restores_a_dump_like_go() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// Go `TestExtractPlanWithoutHistoryView`,
+/// `TestExtractWithoutStmtSummaryPersistedEnabled` and
+/// `TestExtractHandlePlanTask`: the extract handle dumps the plans the
+/// statement summary recorded in the range, with their schemas, statistics,
+/// variables and bindings, into the extract directory; the history view
+/// needs persisted statement summaries.
+#[test]
+fn extract_handle_dumps_the_summarized_plans_like_go() {
+    let base = std::env::temp_dir().join(format!("extract-task-{}", std::process::id()));
+    tidb_planner_extstore::set_global_ext_storage_for_test(Some(Arc::new(
+        tidb_planner_extstore::LocalStorage::new(&base).unwrap(),
+    )));
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
+    crate::domain::cluster_session_node::setup_extract_handle(&stack.factory);
+    let handle = stack.factory.get_extract_handle().expect("the extract handle is set up");
+    let now = || chrono::Local::now().fixed_offset();
+
+    // Without the history view an empty range still dumps a package.
+    let mut task = tidb_domain::extract::new_extract_plan_task(now(), now());
+    task.use_history_view = false;
+    let name = handle.extract_task(&task).unwrap();
+    assert!(name.starts_with("extract_") && name.ends_with(".zip"), "{name}");
+    assert!(base.join("extract").join(&name).exists());
+
+    // The history view needs persisted statement summaries.
+    task.use_history_view = true;
+    assert_eq!(
+        handle.extract_task(&task).unwrap_err().to_string(),
+        "tidb_stmt_summary_enable_persistent should be enabled for extract task"
+    );
+
+    let mut session = stack.factory.open_session(session_context(81)).expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "CREATE TABLE extracted (id INT)");
+    rows(&mut session, "CREATE VIEW extracted_v AS SELECT id FROM extracted");
+    let start = now() - chrono::Duration::seconds(1);
+    rows(&mut session, "SELECT * FROM extracted");
+    rows(&mut session, "SELECT * FROM extracted_v");
+    let end = now() + chrono::Duration::seconds(1);
+    let mut task = tidb_domain::extract::new_extract_plan_task(start, end);
+    task.use_history_view = false;
+    let name = handle.extract_task(&task).unwrap();
+    let archive = std::fs::read(base.join("extract").join(&name)).expect("the package is written");
+    let files: std::collections::BTreeMap<String, Vec<u8>> =
+        tidb_replayer::zip::read_zip(&archive).unwrap().into_iter().collect();
+    let text = |name: &str| String::from_utf8(files[name].clone()).unwrap();
+    for name in [
+        "config.toml",
+        "meta.txt",
+        "extract_meta.txt",
+        "schema/schema_meta.txt",
+        "schema/test.extracted.schema.txt",
+        "view/test.extracted_v.view.txt",
+        "table_tiflash_replica.txt",
+        "variables.toml",
+        "global_bindings.sql",
+        "stats/test.extracted.json",
+    ] {
+        assert!(files.contains_key(name), "missing {name}: {:?}", files.keys().collect::<Vec<_>>());
+    }
+    assert_eq!(text("extract_meta.txt"), "SkipStats = \"false\"\ntaskType = \"Plan\"\n");
+    let records: Vec<serde_json::Value> = files
+        .iter()
+        .filter(|(name, _)| name.starts_with("SQLs/"))
+        .map(|(_, bytes)| serde_json::from_slice(bytes).unwrap())
+        .collect();
+    let sqls: std::collections::BTreeSet<String> =
+        records.iter().map(|record| record["sql"].as_str().unwrap().to_owned()).collect();
+    assert!(sqls.contains("SELECT * FROM extracted"), "{records:?}");
+    assert!(sqls.contains("SELECT * FROM extracted_v"), "{records:?}");
+    for record in &records {
+        assert_eq!(record["schema"], "test");
+        assert!(!record["plan"].as_str().unwrap().is_empty(), "{record}");
+        assert!(!record["plan"].as_str().unwrap().ends_with('\n'), "{record}");
+    }
+
+    // STATEMENTS_SUMMARY is the current window only: a statement an expired
+    // window recorded is in the history view, not in this package.
+    rows(&mut session, "SET GLOBAL tidb_stmt_summary_refresh_interval = 1");
+    rows(&mut session, "SELECT id FROM extracted WHERE id = 42");
+    std::thread::sleep(std::time::Duration::from_millis(2200));
+    rows(&mut session, "SELECT 1");
+    let expired = displayed(rows(
+        &mut session,
+        "SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY WHERE QUERY_SAMPLE_TEXT = 'SELECT id FROM extracted WHERE id = 42'",
+    ));
+    assert_eq!(expired, [["1"]]);
+    let mut current = tidb_domain::extract::new_extract_plan_task(start, now() + chrono::Duration::seconds(1));
+    current.use_history_view = false;
+    let name = handle.extract_task(&current).unwrap();
+    let archive = std::fs::read(base.join("extract").join(&name)).unwrap();
+    let files: std::collections::BTreeMap<String, Vec<u8>> =
+        tidb_replayer::zip::read_zip(&archive).unwrap().into_iter().collect();
+    let sqls: Vec<String> = files
+        .iter()
+        .filter(|(name, _)| name.starts_with("SQLs/"))
+        .map(|(_, bytes)| serde_json::from_slice::<serde_json::Value>(bytes).unwrap()["sql"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(!sqls.iter().any(|sql| sql.contains("id = 42")), "{sqls:?}");
+    rows(&mut session, "SET GLOBAL tidb_stmt_summary_refresh_interval = DEFAULT");
+    let mut task = tidb_domain::extract::new_extract_plan_task(start, now() + chrono::Duration::seconds(1));
+    task.use_history_view = false;
+
+    // SkipStats leaves the statistics out.
+    task.skip_stats = true;
+    let name = handle.extract_task(&task).unwrap();
+    let archive = std::fs::read(base.join("extract").join(&name)).unwrap();
+    let files: std::collections::BTreeMap<String, Vec<u8>> =
+        tidb_replayer::zip::read_zip(&archive).unwrap().into_iter().collect();
+    assert!(!files.keys().any(|name| name.starts_with("stats/")), "{:?}", files.keys().collect::<Vec<_>>());
+    assert_eq!(String::from_utf8(files["extract_meta.txt"].clone()).unwrap(), "SkipStats = \"true\"\ntaskType = \"Plan\"\n");
+
+    tidb_planner_extstore::set_global_ext_storage_for_test(None);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
 /// Go's capture path: `PLAN REPLAYER CAPTURE` reloads the handle's tasks,
 /// a matching statement's `FinishExecuteStmt` sends a dump task carrying its
 /// own variables, statement and encoded plan, a dump worker writes the

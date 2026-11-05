@@ -40,6 +40,8 @@ tidb-mysql = { path = "../tidb-mysql" }
 # `pkg/domain/serverinfo` imports `pkg/config`.
 tidb-config = { path = "../tidb-config" }
 tidb-log = { path = "../tidb-log" }
+tidb-planner-extstore = { path = "../tidb-planner-extstore" }
+tidb-stringutil = { path = "../tidb-stringutil" }
 # The node id Go mints with `uuid.New()` for its DDL owner and publishes as
 # `TIDB_SERVERS_INFO.DDL_ID`.
 getrandom.workspace = true

@@ -3440,7 +3440,7 @@ fn get_show_create_table(
 
 /// Go `dumpSchemas`: every pair's `SHOW CREATE`, then the schema meta of
 /// the non-view tables.
-fn dump_schemas(
+pub(crate) fn dump_schemas(
     pairs: &BTreeSet<TableNamePair>,
     zw: &mut dyn DumpArchiveWriter,
     sql: &dyn PlanReplayerSqlExecutor,
@@ -3456,6 +3456,15 @@ fn dump_schemas(
         &format!("schema/{}", dump_file::PLAN_REPLAYER_SCHEMA_META_FILE),
         build_schema_meta_file(&tables).as_bytes(),
     )
+}
+
+/// Go `dumpGlobalBindings`.
+pub(crate) fn dump_global_bindings(
+    sql: &dyn PlanReplayerSqlExecutor,
+    zw: &mut dyn DumpArchiveWriter,
+) -> Result<(), PlanReplayerError> {
+    let global_bindings = result_set_to_string_slice(sql.execute("show global bindings")?, false);
+    zw.create_file(dump_file::PLAN_REPLAYER_GLOBAL_BINDING_FILE, tab_lines(&global_bindings).as_bytes())
 }
 
 /// Go `dumpExplain`: `explain [analyze]` of each statement, all in
@@ -3574,11 +3583,7 @@ pub fn dump_plan_replayer_info(
             tab_lines(&session_bindings).as_bytes(),
         )?;
         // Dump global bindings
-        let global_bindings = result_set_to_string_slice(seams.sql.execute("show global bindings")?, false);
-        zw.create_file(
-            dump_file::PLAN_REPLAYER_GLOBAL_BINDING_FILE,
-            tab_lines(&global_bindings).as_bytes(),
-        )?;
+        dump_global_bindings(seams.sql, zw)?;
         if task.encoded_plan.is_empty() {
             // Go `dumpPlanReplayerExplain`: an explain failure is reported in
             // the error file, not as the dump's error.

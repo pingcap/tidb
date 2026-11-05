@@ -258,6 +258,19 @@ impl Domain {
         self.plan_replayer.get().map(|runtime| Arc::clone(&runtime.handle))
     }
 
+    /// Go `SetupExtractHandle` setups extract handler; a second call keeps
+    /// the first handle.
+    pub fn setup_extract_handle(&self, sctx: Box<dyn tidb_domain::extract::ExtractSessionContext + Send>) {
+        let _ = self
+            .extract_task_handle
+            .get_or_init(|| Arc::new(tidb_domain::extract::ExtractHandle::new(sctx)));
+    }
+
+    /// Go `GetExtractHandle` returns extract handle, absent until set up.
+    pub fn get_extract_handle(&self) -> Option<Arc<tidb_domain::extract::ExtractHandle>> {
+        self.extract_task_handle.get().cloned()
+    }
+
     /// A weak domain for the dumper's sessions.
     pub fn weak(self: &Arc<Self>) -> Weak<Self> {
         Arc::downgrade(self)

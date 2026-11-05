@@ -849,6 +849,49 @@ impl replayer::PlanReplayerDumper for PlanReplayerWorkerDumper {
     }
 }
 
+/// Go `SetupExtractHandle`'s worker session (`createSessions(store, 1)`):
+/// a system session the extract worker runs each task on. It is opened per
+/// task, as the plan-replayer dump workers' sessions are, so the domain
+/// holds no session of its own.
+pub struct ExtractWorkerSession {
+    open_session: Box<dyn Fn() -> Result<Session, String> + Send + Sync>,
+}
+
+impl ExtractWorkerSession {
+    /// A worker whose session `open_session` opens.
+    pub fn new(open_session: impl Fn() -> Result<Session, String> + Send + Sync + 'static) -> Self {
+        Self { open_session: Box::new(open_session) }
+    }
+}
+
+impl tidb_domain::extract::ExtractSessionContext for ExtractWorkerSession {
+    fn with_seams(
+        &mut self,
+        run: &mut dyn FnMut(&tidb_domain::extract::ExtractSeams<'_>) -> Result<String, replayer::PlanReplayerError>,
+    ) -> Result<String, replayer::PlanReplayerError> {
+        let mut session = (self.open_session)().map_err(replayer::PlanReplayerError::Other)?;
+        let catalog = CatalogSource(
+            session
+                .with_catalog_mut(|catalog| Ok(catalog.clone()))
+                .map_err(|error| replayer::PlanReplayerError::Other(error.to_mysql_error().message))?,
+        );
+        let stats = StatsSource(session.domain_services().map(|services| (services.stats)(&session)));
+        let variables = session.plan_replayer_sys_var_registry();
+        let session_vars = session.plan_replayer_session_vars();
+        let sql = SessionSql(RefCell::new(&mut session));
+        let seams = tidb_domain::extract::ExtractSeams {
+            sql: &sql,
+            extract_schema: &catalog,
+            view_parser: &ViewParser,
+            stats: &stats,
+            tiflash: &catalog,
+            variables: &variables,
+            session_vars,
+        };
+        run(&seams)
+    }
+}
+
 /// Go `%?` of a string parameter.
 fn quote(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);

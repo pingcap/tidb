@@ -248,7 +248,7 @@ pub fn mvcc_response(path: &str, store: &dyn RegionStore, schema: &Schema) -> Op
 }
 
 /// Go `url.Values`, in the request's key order of first appearance.
-type Values = Vec<(String, Vec<String>)>;
+pub(crate) type Values = Vec<(String, Vec<String>)>;
 
 fn values_get<'a>(values: &'a Values, key: &str) -> Option<&'a Vec<String>> {
     values.iter().find(|(name, _)| name == key).map(|(_, list)| list)
@@ -291,6 +291,28 @@ fn parse_query(mut query: &str, should_unescape: bool) -> Result<Values, String>
         }
     }
     Ok(m)
+}
+
+/// Go `URL.Query()`: `url.ParseQuery` with its error dropped, so a pair
+/// holding a `;` or a bad escape is skipped.
+pub(crate) fn url_query(mut query: &str) -> Values {
+    let mut m: Values = Vec::new();
+    while !query.is_empty() {
+        let key;
+        (key, query) = query.split_once('&').unwrap_or((query, ""));
+        if key.contains(';') || key.is_empty() {
+            continue;
+        }
+        let (key, value) = key.split_once('=').unwrap_or((key, ""));
+        let (Ok(key), Ok(value)) = (query_unescape(key), query_unescape(value)) else {
+            continue;
+        };
+        match m.iter_mut().find(|(name, _)| *name == key) {
+            Some((_, list)) => list.push(value),
+            None => m.push((key, vec![value])),
+        }
+    }
+    m
 }
 
 /// Go `url.QueryUnescape`.
