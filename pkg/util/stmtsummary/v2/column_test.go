@@ -20,20 +20,15 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
-<<<<<<< HEAD
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-=======
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
->>>>>>> 59ca78807ec (stmtsummary: fix AVG_ROCKSDB_* columns returning subnormal floats (#69708))
 	"github.com/stretchr/testify/require"
 )
 
 func TestColumn(t *testing.T) {
 	columns := []*model.ColumnInfo{
-<<<<<<< HEAD
 		{Name: pmodel.NewCIStr(ClusterTableInstanceColumnNameStr)},
 		{Name: pmodel.NewCIStr(StmtTypeStr)},
 		{Name: pmodel.NewCIStr(SchemaNameStr)},
@@ -45,29 +40,14 @@ func TestColumn(t *testing.T) {
 		{Name: pmodel.NewCIStr(ExecCountStr)},
 		{Name: pmodel.NewCIStr(SumLatencyStr)},
 		{Name: pmodel.NewCIStr(MaxLatencyStr)},
+		{Name: pmodel.NewCIStr(AvgRocksdbDeleteSkippedCountStr)},
+		{Name: pmodel.NewCIStr(AvgRocksdbKeySkippedCountStr)},
+		{Name: pmodel.NewCIStr(AvgRocksdbBlockCacheHitCountStr)},
+		{Name: pmodel.NewCIStr(AvgRocksdbBlockReadCountStr)},
+		{Name: pmodel.NewCIStr(AvgRocksdbBlockReadByteStr)},
+		{Name: pmodel.NewCIStr(AvgAffectedRowsStr)},
 		{Name: pmodel.NewCIStr(AvgTidbCPUTimeStr)},
 		{Name: pmodel.NewCIStr(AvgTikvCPUTimeStr)},
-=======
-		{Name: ast.NewCIStr(ClusterTableInstanceColumnNameStr)},
-		{Name: ast.NewCIStr(StmtTypeStr)},
-		{Name: ast.NewCIStr(SchemaNameStr)},
-		{Name: ast.NewCIStr(DigestStr)},
-		{Name: ast.NewCIStr(DigestTextStr)},
-		{Name: ast.NewCIStr(TableNamesStr)},
-		{Name: ast.NewCIStr(IndexNamesStr)},
-		{Name: ast.NewCIStr(SampleUserStr)},
-		{Name: ast.NewCIStr(ExecCountStr)},
-		{Name: ast.NewCIStr(SumLatencyStr)},
-		{Name: ast.NewCIStr(MaxLatencyStr)},
-		{Name: ast.NewCIStr(AvgRocksdbDeleteSkippedCountStr)},
-		{Name: ast.NewCIStr(AvgRocksdbKeySkippedCountStr)},
-		{Name: ast.NewCIStr(AvgRocksdbBlockCacheHitCountStr)},
-		{Name: ast.NewCIStr(AvgRocksdbBlockReadCountStr)},
-		{Name: ast.NewCIStr(AvgRocksdbBlockReadByteStr)},
-		{Name: ast.NewCIStr(AvgAffectedRowsStr)},
-		{Name: ast.NewCIStr(AvgTidbCPUTimeStr)},
-		{Name: ast.NewCIStr(AvgTikvCPUTimeStr)},
->>>>>>> 59ca78807ec (stmtsummary: fix AVG_ROCKSDB_* columns returning subnormal floats (#69708))
 	}
 	factories := makeColumnFactories(columns)
 	info := GenerateStmtExecInfo4Test("digest")

@@ -40,11 +40,7 @@ go_test(
     ],
     embed = [":stmtsummary"],
     flaky = True,
-<<<<<<< HEAD
     shard_count = 32,
-=======
-    shard_count = 29,
->>>>>>> 59ca78807ec (stmtsummary: fix AVG_ROCKSDB_* columns returning subnormal floats (#69708))
     deps = [
         "//pkg/meta/model",
         "//pkg/parser/auth",
