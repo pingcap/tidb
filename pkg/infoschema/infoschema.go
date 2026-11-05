@@ -342,9 +342,11 @@ func IsSystemTableInNextGen(is InfoSchema, isLegacyNextGen bool, id int64) bool 
 		return false
 	}
 	if isLegacyNextGen {
-		// for newly created system table during upgrade, the IS might not contain
-		// it, but it's ok now as they mostly are not used in cross keyspace
-		// scenario. for same keyspace usage, the checking is enough now.
+		// Current cross-keyspace DXF, statistics and import tables already exist
+		// in the TiDB 8.5 baseline used by legacy NextGen. Newly created built-ins
+		// may not yet be in this InfoSchema. The cross-keyspace loader resolves
+		// those IDs from snapshot metadata before applying diffs, so they can
+		// participate in MDL once loaded.
 		tbl, ok := is.TableItemByID(id)
 		return ok && metadef.IsBuiltinSystemTable(tbl.DBName.L, tbl.TableName.L)
 	}

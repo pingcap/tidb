@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -1098,10 +1099,15 @@ ORDER BY index_name, seq_in_index`).Check(testkit.Rows(
 }
 
 func TestUpgradeVersion280MaskingPolicy(t *testing.T) {
+	fromVersions := []int{251, 254}
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+		originalMode := deploymode.Get()
+		require.NoError(t, deploymode.Set(deploymode.Starter))
+		t.Cleanup(func() { require.NoError(t, deploymode.Set(originalMode)) })
+	} else {
+		fromVersions = append(fromVersions, 189)
 	}
-	for _, fromVersion := range []int{189, 254} {
+	for _, fromVersion := range fromVersions {
 		t.Run(fmt.Sprintf("from_version_%d", fromVersion), func(t *testing.T) {
 			store, dom := session.CreateStoreAndBootstrap(t)
 			defer func() { require.NoError(t, store.Close()) }()
@@ -1115,13 +1121,19 @@ func TestUpgradeVersion280MaskingPolicy(t *testing.T) {
 			err = txn.Commit(context.Background())
 			require.NoError(t, err)
 			revertVersionAndVariables(t, se, fromVersion)
+			if fromVersion < 252 {
+				// Ensure upgrade252 performs a column change, rather than a no-op.
+				session.MustExec(t, se, "SET SESSION sql_mode = ''")
+				session.MustExec(t, se, "ALTER TABLE mysql.bind_info CHANGE create_time create_time TIMESTAMP")
+				session.MustExec(t, se, "ALTER TABLE mysql.bind_info CHANGE update_time update_time TIMESTAMP")
+			}
 
 			is := dom.InfoSchema()
 			policyTbl, err := is.TableByName(context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb_masking_policy"))
 			require.NoError(t, err)
 			policyDBID := policyTbl.Meta().DBID
 			policyTblID := policyTbl.Meta().ID
-			require.False(t, metadef.IsReservedID(policyTblID), "classic bootstrap should allocate a global table ID")
+			require.Equal(t, kerneltype.IsNextGen(), metadef.IsReservedID(policyTblID))
 
 			txn, err = store.Begin()
 			require.NoError(t, err)
@@ -1140,6 +1152,22 @@ func TestUpgradeVersion280MaskingPolicy(t *testing.T) {
 			require.Equal(t, int64(fromVersion), ver)
 			dom.Close()
 
+			if kerneltype.IsNextGen() {
+				// Model the legacy mysql layout while preserving physical
+				// table IDs so the existing rows remain readable after the move.
+				txn, err := store.Begin()
+				require.NoError(t, err)
+				m := meta.NewMutator(txn)
+				tables, err := m.ListTables(context.Background(), policyDBID)
+				require.NoError(t, err)
+				require.NoError(t, m.CreateSysDatabaseByID("mysql", 1))
+				for _, tbl := range tables {
+					require.NoError(t, m.CreateTableOrView(1, tbl))
+				}
+				require.NoError(t, m.DropDatabase(policyDBID))
+				require.NoError(t, txn.Commit(context.Background()))
+			}
+
 			newVer, err := session.BootstrapSession(store)
 			require.NoError(t, err)
 			defer newVer.Close()
@@ -1152,14 +1180,23 @@ func TestUpgradeVersion280MaskingPolicy(t *testing.T) {
 			upgradedPolicyTbl, err := newVer.InfoSchema().TableByName(
 				context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb_masking_policy"))
 			require.NoError(t, err)
+			if kerneltype.IsNextGen() {
+				require.Equal(t, int64(1), upgradedPolicyTbl.Meta().DBID)
+				_, exists := newVer.InfoSchema().SchemaByID(metadef.SystemDatabaseID)
+				require.False(t, exists, "upgrade must preserve the legacy mysql database")
+			}
 			require.False(t, metadef.IsReservedID(upgradedPolicyTbl.Meta().ID),
-				"classic upgrade should allocate a global table ID")
+				"legacy upgrade should allocate a global table ID")
 			require.NotEqual(t, policyTblID, upgradedPolicyTbl.Meta().ID,
 				"recreating the table must not reuse a dropped physical table ID")
 
 			tk := testkit.NewTestKit(t, store)
 			checkTiDBMaskingPolicyTableSchema(t, tk)
 		})
+	}
+
+	if kerneltype.IsNextGen() {
+		return // NextGen forbids renaming built-in system tables.
 	}
 
 	for _, tc := range []struct {

@@ -131,6 +131,29 @@ func TestBootstrapSchemasDeploymentCheck(t *testing.T) {
 	}
 }
 
+func TestBootstrapDependentTablesNativeNextGen(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		return meta.NewMutator(txn).CreateSysDatabaseByID(mysql.SystemDB, metadef.SystemDatabaseID)
+	}))
+	// Native NextGen must leave missing tables to its reserved-ID bootstrap.
+	require.NoError(t, initBootstrapDependentTables(store, version251))
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		tables, err := m.ListTables(ctx, metadef.SystemDatabaseID)
+		require.NoError(t, err)
+		require.Empty(t, tables)
+		globalID, err := m.GetGlobalID()
+		require.NoError(t, err)
+		require.Zero(t, globalID)
+		return nil
+	}))
+}
+
 type upgradeGCV2Manager struct {
 	extworkload.Manager
 	abortCount int

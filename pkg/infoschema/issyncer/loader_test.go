@@ -16,6 +16,7 @@ package issyncer
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"testing"
 
@@ -228,6 +229,21 @@ func TestLoadFromTSForCrossKS(t *testing.T) {
 					TableID:  testTblID,
 				}))
 
+				// Both diffs must be recognized while the cached schema still
+				// lacks this table, including the ALTER after its CREATE.
+				tbl, err := mu.GetTable(systemDBID, testTblID)
+				require.NoError(t, err)
+				tbl.Comment = "updated after creation"
+				require.NoError(t, mu.UpdateTable(systemDBID, tbl))
+				schVer, err = mu.GenSchemaVersion()
+				require.NoError(t, err)
+				require.NoError(t, mu.SetSchemaDiff(&model.SchemaDiff{
+					Version:  schVer,
+					Type:     model.ActionModifyTableComment,
+					SchemaID: systemDBID,
+					TableID:  testTblID,
+				}))
+
 				require.NoError(t, mu.CreateTableOrView(systemDBID, &model.TableInfo{ID: 200, Name: ast.NewCIStr("t200"), State: model.StatePublic}))
 				schVer, err = mu.GenSchemaVersion()
 				require.NoError(t, err)
@@ -246,41 +262,37 @@ func TestLoadFromTSForCrossKS(t *testing.T) {
 			}))
 			ver, err = store.CurrentVersion(tidbkv.GlobalTxnScope)
 			require.NoError(t, err)
+			// The owner can observe the new table before the assumed server.
+			ownerLoader := newLoader(store, infoschema.NewCache(nil, 1), nil, nil)
+			ownerIS, _, _, _, err := ownerLoader.LoadWithTS(ver.Ver, false)
+			require.NoError(t, err)
+			require.True(t, infoschema.IsSystemTableInNextGen(ownerIS, tc.name == "classic", tc.tableID+1))
+			_, cached := l.infoCache.GetLatest().TableItemByID(tc.tableID + 1)
+			require.False(t, cached)
 			is, hitCache, oldSchemaVersion, changes, err = l.LoadWithTS(ver.Ver, false)
 			require.NoError(t, err)
 			allSchemas = is.AllSchemas()
-			require.EqualValues(t, 4, is.SchemaMetaVersion())
+			require.EqualValues(t, 5, is.SchemaMetaVersion())
 			require.Len(t, allSchemas, 1)
 			require.Equal(t, mysql.SystemDB, allSchemas[0].Name.L)
 			require.Equal(t, systemDBID, allSchemas[0].ID)
 			require.False(t, hitCache)
 			require.EqualValues(t, 1, oldSchemaVersion)
 			require.NotNil(t, changes)
-			if tc.name == "classic" {
-				// New legacy-ID built-ins are recognized after a full reload.
-				require.Empty(t, changes.PhyTblIDS)
-			} else {
-				require.Len(t, changes.PhyTblIDS, 1)
-			}
+			require.Equal(t, []int64{tc.tableID + 1, tc.tableID + 1}, changes.PhyTblIDS)
 			tbls, err = is.SchemaTableInfos(ctx, ast.NewCIStr(mysql.SystemDB))
 			require.NoError(t, err)
-			if tc.name == "classic" {
-				require.Len(t, tbls, 1)
-				l.mode = LoadModeFull
-				l.infoCache.Reset(1)
-				is, _, _, _, err = l.LoadWithTS(ver.Ver, false)
-				require.NoError(t, err)
-				tbls, err = is.SchemaTableInfos(ctx, ast.NewCIStr(mysql.SystemDB))
-				require.NoError(t, err)
-			}
-			// Full reload also includes the custom mysql table.
-			if tc.name == "classic" {
-				require.Len(t, tbls, 3)
-			} else {
-				require.Len(t, tbls, 2)
-			}
+			require.Len(t, tbls, 2)
 			require.True(t, slices.ContainsFunc(tbls, func(t *model.TableInfo) bool { return t.Name.L == "user" }))
 			require.True(t, slices.ContainsFunc(tbls, func(t *model.TableInfo) bool { return t.Name.L == "global_priv" }))
+			created, err := is.TableByName(ctx, ast.NewCIStr(mysql.SystemDB), ast.NewCIStr("global_priv"))
+			require.NoError(t, err)
+			require.Equal(t, "updated after creation", created.Meta().Comment)
+			syncer := &Syncer{crossKS: true, loader: l}
+			require.False(t, syncer.skipMDLCheck(map[int64]struct{}{created.Meta().ID: {}}, is),
+				"the assumed server must acknowledge MDL for the new built-in")
+			require.True(t, syncer.skipMDLCheck(map[int64]struct{}{200: {}}, is),
+				"custom mysql tables must remain ordinary user tables")
 		})
 	}
 }
@@ -295,7 +307,9 @@ func (testStoreWithKS) GetKeyspace() string {
 
 func mustSkipLoadingDiff(t *testing.T, loader *Loader, diff *model.SchemaDiff) bool {
 	t.Helper()
-	return loader.skipLoadingDiff(diff)
+	skip, err := loader.skipLoadingDiff(nil, diff)
+	require.NoError(t, err)
+	return skip
 }
 
 func TestLoaderSkipLoadingDiff(t *testing.T) {
@@ -346,6 +360,82 @@ func TestLoaderSkipLoadingDiff(t *testing.T) {
 				TableID: 100, OldTableID: 100, AffectedOpts: []*model.AffectedOption{affected},
 			}))
 		}
+	}
+}
+
+type tableLookupReader struct {
+	meta.Reader
+	getTable func(int64, int64) (*model.TableInfo, error)
+}
+
+func (r tableLookupReader) GetTable(dbID, tableID int64) (*model.TableInfo, error) {
+	return r.getTable(dbID, tableID)
+}
+
+func TestLoaderSkipLoadingDiffMetadata(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("snapshot classification of legacy system tables requires NextGen")
+	}
+	db := &model.DBInfo{ID: 2, Name: ast.NewCIStr(mysql.SystemDB), State: model.StatePublic}
+	db.Deprecated.Tables = []*model.TableInfo{
+		{ID: 9999, DBID: db.ID, Name: ast.NewCIStr("stats_meta"), State: model.StatePublic},
+		{ID: 10000, DBID: db.ID, Name: ast.NewCIStr("custom_table"), State: model.StatePublic},
+	}
+	builder := infoschema.NewBuilder(nil, 0, nil, infoschema.NewData(), false)
+	require.NoError(t, builder.InitWithDBInfos([]*model.DBInfo{
+		db, {ID: 1, Name: ast.NewCIStr("test"), State: model.StatePublic},
+	}, nil, nil, nil, 1))
+	cache := infoschema.NewCache(nil, 1)
+	cache.Insert(builder.Build(0), 0)
+	lookupErr := errors.New("table metadata read failed")
+	for _, tt := range []struct {
+		name                   string
+		diff                   model.SchemaDiff
+		tableName              string
+		err                    error
+		native, skip, wantRead bool
+	}{
+		{name: "new built-in", diff: model.SchemaDiff{SchemaID: 2, TableID: 101}, tableName: "global_priv", wantRead: true},
+		{name: "custom mysql table", diff: model.SchemaDiff{SchemaID: 2, TableID: 101}, tableName: "custom_new", skip: true, wantRead: true},
+		{name: "missing table", diff: model.SchemaDiff{SchemaID: 2, TableID: 101}, skip: true, wantRead: true},
+		{name: "lookup error", diff: model.SchemaDiff{SchemaID: 2, TableID: 101}, err: lookupErr, wantRead: true},
+		{name: "cached built-in", diff: model.SchemaDiff{SchemaID: 2, TableID: 9999}},
+		{name: "cached custom table", diff: model.SchemaDiff{SchemaID: 2, TableID: 10000}, skip: true},
+		{name: "user database", diff: model.SchemaDiff{SchemaID: 1, TableID: 101}, skip: true},
+		{name: "unknown database", diff: model.SchemaDiff{SchemaID: 3, TableID: 101}, skip: true},
+		{name: "zero table ID", diff: model.SchemaDiff{SchemaID: 2}, skip: true},
+		{name: "old ID in same database", diff: model.SchemaDiff{SchemaID: 2, OldTableID: 101}, tableName: "global_priv", wantRead: true},
+		{name: "old database ID", diff: model.SchemaDiff{SchemaID: 1, OldSchemaID: 2, OldTableID: 101}, tableName: "global_priv", wantRead: true},
+		{name: "old user database", diff: model.SchemaDiff{SchemaID: 2, OldSchemaID: 1, OldTableID: 101}, skip: true},
+		{name: "native NextGen", diff: model.SchemaDiff{SchemaID: 2, TableID: 101}, native: true, skip: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			loader := NewLoaderForCrossKS(testStoreWithKS{}, cache)
+			legacy := !tt.native
+			loader.legacyNextGen.Store(&legacy)
+			reads := 0
+			m := tableLookupReader{getTable: func(dbID, tableID int64) (*model.TableInfo, error) {
+				reads++
+				require.EqualValues(t, 2, dbID)
+				require.EqualValues(t, 101, tableID)
+				if tt.err != nil || tt.tableName == "" {
+					return nil, tt.err
+				}
+				return &model.TableInfo{ID: tableID, Name: ast.NewCIStr(tt.tableName)}, nil
+			}}
+			skip, err := loader.skipLoadingDiff(m, &tt.diff)
+			if tt.err != nil {
+				require.ErrorIs(t, err, tt.err)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tt.skip, skip)
+			}
+			if tt.wantRead {
+				require.Equal(t, 1, reads)
+			} else {
+				require.Zero(t, reads)
+			}
+		})
 	}
 }
 

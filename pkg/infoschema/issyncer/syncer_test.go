@@ -15,13 +15,28 @@
 package issyncer
 
 import (
+	"context"
 	"testing"
+	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl/schemaver"
+	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -68,3 +83,112 @@ func TestSyncerSkipMDLCheck(t *testing.T) {
 		}
 	}
 }
+
+func TestSyncerMDLForNewLegacySystemTable(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("cross-keyspace schema synchronization requires NextGen")
+	}
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnAdmin)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		require.NoError(t, m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr(mysql.SystemDB), State: model.StatePublic}))
+		require.NoError(t, m.CreateTableOrView(1, &model.TableInfo{ID: 100, Name: ast.NewCIStr("user"), State: model.StatePublic}))
+		require.NoError(t, m.CreateTableOrView(1, &model.TableInfo{ID: 200, Name: ast.NewCIStr("custom_table"), State: model.StatePublic}))
+		version, err := m.GenSchemaVersion()
+		require.NoError(t, err)
+		return m.SetSchemaDiff(&model.SchemaDiff{Version: version, Type: model.ActionCreateTable, SchemaID: 1, TableID: 100})
+	}))
+	cache := infoschema.NewCache(nil, 1)
+	follower := NewCrossKSSyncer(store, cache, 0, nil, nil, "legacy-ks")
+	version, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	_, _, _, _, err = follower.LoadWithTS(version.Ver, false)
+	require.NoError(t, err)
+	require.True(t, follower.loader.isLegacyNextGen())
+
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		require.NoError(t, m.CreateTableOrView(1, &model.TableInfo{ID: 101, Name: ast.NewCIStr("global_priv"), State: model.StatePublic}))
+		version, err := m.GenSchemaVersion()
+		require.NoError(t, err)
+		return m.SetSchemaDiff(&model.SchemaDiff{Version: version, Type: model.ActionCreateTable, SchemaID: 1, TableID: 101})
+	}))
+	version, err = store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	// The owner can discover the built-in and start waiting for assumed servers
+	// before their cached schemas contain it.
+	owner := newLoader(store, infoschema.NewCache(nil, 1), nil, nil)
+	owner.mode = LoadModeFull
+	ownerIS, _, _, _, err := owner.LoadWithTS(version.Ver, false)
+	require.NoError(t, err)
+	require.True(t, infoschema.IsSystemTableInNextGen(ownerIS, true, 101))
+	_, exists := cache.GetLatest().TableItemByID(101)
+	require.False(t, exists)
+	_, hitCache, oldVersion, changes, err := follower.LoadWithTS(version.Ver, false)
+	require.NoError(t, err)
+	require.False(t, hitCache)
+	require.EqualValues(t, 1, oldVersion)
+	require.NotNil(t, changes, "the follower must use incremental schema loading")
+
+	const builtinJobID, customJobID = int64(10), int64(11)
+	se := &mdlTestSession{rows: &sqlexec.SimpleRecordSet{
+		ResultFields: []*resolve.ResultField{
+			{Column: &model.ColumnInfo{FieldType: *types.NewFieldType(mysql.TypeLonglong)}},
+			{Column: &model.ColumnInfo{FieldType: *types.NewFieldType(mysql.TypeLonglong)}},
+			{Column: &model.ColumnInfo{FieldType: *types.NewFieldType(mysql.TypeVarchar)}},
+		},
+		Rows:         [][]any{{builtinJobID, int64(2), "101"}, {customJobID, int64(2), "200"}},
+		MaxChunkSize: 2,
+	}}
+	pool := util.NewSessionPool(1, func() (pools.Resource, error) { return se, nil }, nil, nil, nil)
+	t.Cleanup(pool.Close)
+	versionSyncer := schemaver.NewMemSyncer()
+	require.NoError(t, versionSyncer.Init(ctx))
+	follower.sysSessionPool = pool
+	follower.SetMinJobIDRefresher(systable.NewMinJobIDRefresher(nil))
+	follower.InitRequiredFields(func() sessmgr.InfoSchemaCoordinator { return nil }, versionSyncer, nil, nil)
+	follower.refreshMDLCheckTableInfo(ctx)
+	require.Contains(t, follower.mdlCheckTableInfo.jobs, builtinJobID)
+	require.NotContains(t, follower.mdlCheckTableInfo.jobs, customJobID)
+
+	loopCtx, cancel := context.WithCancel(ctx)
+	loopDone := make(chan struct{})
+	go func() {
+		defer close(loopDone)
+		follower.MDLCheckLoop(loopCtx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-loopDone
+	})
+	select {
+	case follower.mdlCheckCh <- struct{}{}:
+	case <-time.After(5 * time.Second):
+		t.Fatal("MDL checker did not start")
+	}
+	waitCtx, waitCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer waitCancel()
+	_, err = versionSyncer.WaitVersionSynced(waitCtx, builtinJobID, 2, true)
+	require.NoError(t, err, "the assumed server must acknowledge the newly discovered built-in")
+}
+
+// mdlTestSession supplies the persisted MDL rows without starting a SQL server.
+type mdlTestSession struct {
+	sessionctx.Context
+	sqlexec.SQLExecutor
+	rows *sqlexec.SimpleRecordSet
+}
+
+func (s *mdlTestSession) GetSQLExecutor() sqlexec.SQLExecutor { return s }
+
+func (s *mdlTestSession) ExecuteInternal(_ context.Context, sql string, _ ...any) (sqlexec.RecordSet, error) {
+	if sql == "rollback" {
+		return nil, nil
+	}
+	return s.rows, nil
+}
+
+func (*mdlTestSession) Close() {}

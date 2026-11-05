@@ -23,11 +23,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -311,19 +313,19 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 	return is, false, currentSchemaVersion, nil, nil
 }
 
-func (l *Loader) skipLoadingDiff(diff *model.SchemaDiff) bool {
+func (l *Loader) skipLoadingDiff(m meta.Reader, diff *model.SchemaDiff) (bool, error) {
 	if l.filter != nil {
 		var latestIS infoschema.InfoSchema
 		if l.infoCache != nil {
 			latestIS = l.infoCache.GetLatest()
 		}
 		if l.filter.SkipLoadDiff(diff, latestIS) {
-			return true
+			return true, nil
 		}
 	}
 
 	if !l.crossKS {
-		return false
+		return false, nil
 	}
 
 	// for cross keyspace loader, we only load diff related to system tables.
@@ -334,7 +336,39 @@ func (l *Loader) skipLoadingDiff(diff *model.SchemaDiff) bool {
 	isLegacyNextGen := l.isLegacyNextGen()
 	isRelatedToSystemTables := infoschema.IsSystemTableInNextGen(is, isLegacyNextGen, diff.TableID) ||
 		infoschema.IsSystemTableInNextGen(is, isLegacyNextGen, diff.OldTableID)
-	return !isRelatedToSystemTables
+	if isRelatedToSystemTables || !isLegacyNextGen || kerneltype.IsClassic() {
+		return !isRelatedToSystemTables, nil
+	}
+
+	// A newly created legacy built-in is absent from the cached schema. Resolve
+	// unknown IDs from the same snapshot used to apply the diffs, including later
+	// changes in this batch, so assumed servers can acknowledge the table's MDL.
+	oldSchemaID := diff.OldSchemaID
+	if oldSchemaID == 0 {
+		oldSchemaID = diff.SchemaID
+	}
+	for _, ref := range [...]struct{ schemaID, tableID int64 }{
+		{diff.SchemaID, diff.TableID}, {oldSchemaID, diff.OldTableID},
+	} {
+		if ref.tableID == 0 {
+			continue
+		}
+		if _, ok := is.TableItemByID(ref.tableID); ok {
+			continue
+		}
+		db, ok := is.SchemaByID(ref.schemaID)
+		if !ok || !metadef.IsSystemDB(db.Name.L) {
+			continue
+		}
+		tbl, err := m.GetTable(ref.schemaID, ref.tableID)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if tbl != nil && metadef.IsBuiltinSystemTable(db.Name.L, tbl.Name.L) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // tryLoadSchemaDiffs tries to only load latest schema changes.
@@ -388,7 +422,11 @@ func (l *Loader) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, newV
 	actions := make([]uint64, 0, len(diffs))
 	diffTypes := make([]string, 0, len(diffs))
 	for _, diff := range diffs {
-		if l.skipLoadingDiff(diff) {
+		skip, err := l.skipLoadingDiff(m, diff)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if skip {
 			// we still need to set the schema version even if we skip loading
 			// the diff to reflect where the I_S has been synced to.
 			builder.SetSchemaVersion(diff.Version)
