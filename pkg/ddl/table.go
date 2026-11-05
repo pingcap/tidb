@@ -2019,6 +2019,14 @@ func onAlterTableAffinity(jobCtx *jobContext, job *model.Job) (ver int64, err er
 	// Create new affinity groups first (critical operation - must succeed)
 	if tblInfo.Affinity != nil {
 		if err = createTableAffinityGroupsInPD(jobCtx, tblInfo); err != nil {
+			// PD may have committed some or all of the groups before it returned the
+			// error. Groups of an unchanged level belong to the table's current
+			// affinity, so only delete groups of a new level.
+			if oldTblInfo.Affinity == nil || oldTblInfo.Affinity.Level != tblInfo.Affinity.Level {
+				if deleteErr := deleteTableAffinityGroupsInPD(jobCtx, tblInfo, nil); deleteErr != nil {
+					logutil.DDLLogger().Warn("failed to delete new table affinity groups", zap.Error(deleteErr), zap.Int64("tableID", tblInfo.ID))
+				}
+			}
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}

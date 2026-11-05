@@ -59,6 +59,14 @@ TRUNCATE TABLE keeps the old table's affinity groups until its step commits and
 deletes them in the done-job branch of `transitOneJobStep`. If the job is
 cancelled instead, `rollingbackTruncateTable` deletes the replacement groups.
 
+PD can also commit part of an affinity group creation request before it returns
+an error. When that error cancels CREATE TABLE, TRUNCATE TABLE, or
+ALTER TABLE ... AFFINITY, the step deletes the requested groups before it
+cancels the job. If a table in a batch create job cannot be created, the job
+also deletes the groups of the tables it created earlier in the batch.
+ALTER TABLE ... AFFINITY keeps the groups when the level is unchanged, because
+the table already uses that level.
+
 ## Schema version + diff and cluster-wide synchronization
 
 After schema changes, TiDB relies on a global schema version + per-job synchronization to coordinate all nodes.

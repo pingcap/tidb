@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -61,6 +62,12 @@ type truncateAffinityPDClient struct {
 	// labelRules maps a group ID to its key ranges. PD stores them in a label
 	// rule that is created and force-deleted together with the group.
 	labelRules sync.Map
+	// partialCreateLimit, when positive, makes a creation request commit at
+	// most that many of its groups and then fail, after partialCreateSkip
+	// requests have succeeded. partialCreatedIDs records the committed IDs.
+	partialCreateLimit atomic.Int64
+	partialCreateSkip  atomic.Int64
+	partialCreatedIDs  atomic.Value
 }
 
 func (c *truncateAffinityPDClient) labelRule(id string) ([]pdhttp.AffinityGroupKeyRange, bool) {
@@ -77,6 +84,9 @@ func (c *truncateAffinityPDClient) CreateAffinityGroups(ctx context.Context, gro
 		c.createFailures.Add(1)
 		return nil, fmt.Errorf("injected affinity creation failure")
 	}
+	if c.partialCreateLimit.Load() > 0 && c.partialCreateSkip.Add(-1) < 0 {
+		return nil, c.createPartially(ctx, groups, int(c.partialCreateLimit.Swap(0)))
+	}
 	err := c.manager.CreateAffinityGroupsIfNotExists(ctx, groups)
 	if err == nil {
 		ids := make([]string, 0, len(groups))
@@ -90,6 +100,30 @@ func (c *truncateAffinityPDClient) CreateAffinityGroups(ctx context.Context, gro
 		}
 	}
 	return nil, err
+}
+
+// createPartially commits the first limit groups in ID order and then fails.
+// PD does this when a request spans several etcd transactions and a later one
+// fails after the earlier ones have committed.
+func (c *truncateAffinityPDClient) createPartially(ctx context.Context, groups map[string][]pdhttp.AffinityGroupKeyRange, limit int) error {
+	ids := make([]string, 0, len(groups))
+	for id := range groups {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	committedIDs := ids[:min(limit, len(ids))]
+	committed := make(map[string][]pdhttp.AffinityGroupKeyRange, len(committedIDs))
+	for _, id := range committedIDs {
+		committed[id] = groups[id]
+	}
+	if err := c.manager.CreateAffinityGroupsIfNotExists(ctx, committed); err != nil {
+		return err
+	}
+	for id, ranges := range committed {
+		c.labelRules.LoadOrStore(id, ranges)
+	}
+	c.partialCreatedIDs.Store(committedIDs)
+	return fmt.Errorf("injected affinity creation failure after %d of %d groups", len(committedIDs), len(ids))
 }
 
 func (c *truncateAffinityPDClient) BatchDeleteAffinityGroups(ctx context.Context, ids []string, _ bool) error {
@@ -419,6 +453,205 @@ func TestAffinityTruncateTableCancelKeepsOriginalGroups(t *testing.T) {
 				requireAffinityGroupsWithLabelRules(t, cli, originalGroups, false, "committed truncate must delete the original groups")
 			})
 		}
+	}
+}
+
+// TestAffinityPartialGroupCreationCleanup covers DDLs that are cancelled after
+// PD has committed only part of a group creation request.
+func TestAffinityPartialGroupCreationCleanup(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	cli := &truncateAffinityPDClient{manager: affinity.NewMockManager()}
+	affinity.InitManager(cli)
+	t.Cleanup(func() { affinity.InitManager(nil) })
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
+	codec := store.GetCodec()
+
+	const (
+		afterRunStep = "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep"
+		partitions   = "partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)"
+	)
+	tableID := func(t *testing.T, name string) int64 {
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(name))
+		require.NoError(t, err)
+		return tbl.Meta().ID
+	}
+	persisted := func(t *testing.T, id int64) *model.TableInfo {
+		tblInfo, err := meta.NewReader(store.GetSnapshot(kv.MaxVersion)).GetTable(db.ID, id)
+		require.NoError(t, err)
+		return tblInfo
+	}
+	groupsOf := func(t *testing.T, tblInfo *model.TableInfo) map[string][]pdhttp.AffinityGroupKeyRange {
+		groups, err := ddl.BuildAffinityGroupDefinitionsForTest(codec, tblInfo, nil)
+		require.NoError(t, err)
+		return groups
+	}
+	withAffinity := func(tblInfo *model.TableInfo, level string) *model.TableInfo {
+		tblInfo = tblInfo.Clone()
+		tblInfo.Affinity = &model.TableAffinityInfo{Level: level}
+		return tblInfo
+	}
+	// failCreation makes the creation request after skip successful ones commit
+	// only its first group and then fail.
+	failCreation := func(skip int64) {
+		cli.partialCreatedIDs.Store([]string(nil))
+		cli.partialCreateSkip.Store(skip)
+		cli.partialCreateLimit.Store(1)
+	}
+	// requirePartiallyCreated checks that the failed request committed some of
+	// the groups before the DDL deleted them.
+	requirePartiallyCreated := func(t *testing.T, groups map[string][]pdhttp.AffinityGroupKeyRange) {
+		require.Zero(t, cli.partialCreateLimit.Load(), "the partial creation failure must have been injected")
+		committed := cli.partialCreatedIDs.Load().([]string)
+		require.NotEmpty(t, committed)
+		for _, id := range committed {
+			require.Contains(t, groups, id)
+		}
+	}
+	// captureCreateJob returns the tables of the first create job of the given
+	// type, with the IDs allocated when the job was submitted.
+	captureCreateJob := func(t *testing.T, tp model.ActionType) func() []*model.TableInfo {
+		var (
+			version atomic.Int64
+			rawArgs atomic.Value
+		)
+		testfailpoint.EnableCall(t, afterRunStep, func(job *model.Job) {
+			if job.Type == tp && job.SchemaName == "test" && version.CompareAndSwap(0, int64(job.Version)) {
+				rawArgs.Store(append([]byte(nil), job.RawArgs...))
+			}
+		})
+		return func() []*model.TableInfo {
+			job := &model.Job{Type: tp, Version: model.JobVersion(version.Load()), RawArgs: rawArgs.Load().([]byte)}
+			if tp == model.ActionCreateTables {
+				args, err := model.GetBatchCreateTableArgs(job)
+				require.NoError(t, err)
+				infos := make([]*model.TableInfo, 0, len(args.Tables))
+				for _, tblArgs := range args.Tables {
+					infos = append(infos, tblArgs.TableInfo)
+				}
+				return infos
+			}
+			args, err := model.GetCreateTableArgs(job)
+			require.NoError(t, err)
+			return []*model.TableInfo{args.TableInfo}
+		}
+	}
+
+	for _, level := range []string{ast.TableAffinityLevelTable, ast.TableAffinityLevelPartition} {
+		t.Run("create table/"+level, func(t *testing.T) {
+			createSQL := "create table c(a int) affinity='table'"
+			if level == ast.TableAffinityLevelPartition {
+				createSQL = "create table c(a int) affinity='partition' " + partitions
+			}
+			tk.MustExec("drop table if exists c")
+			createdTables := captureCreateJob(t, model.ActionCreateTable)
+			failCreation(0)
+			require.ErrorContains(t, tk.ExecToErr(createSQL), "injected affinity creation failure after 1 of")
+			created := createdTables()
+			require.Len(t, created, 1)
+			groups := groupsOf(t, created[0])
+			requirePartiallyCreated(t, groups)
+			require.ErrorContains(t, tk.ExecToErr("select * from c"), "doesn't exist")
+			requireAffinityGroupsWithLabelRules(t, cli, groups, false, "failed CREATE TABLE must delete the groups of the new table")
+
+			tk.MustExec(createSQL)
+			checkAffinityGroupsInPD(t, dom, "test", "c", true)
+		})
+	}
+
+	t.Run("create tables", func(t *testing.T) {
+		tk.MustExec("drop table if exists src_t, src_p, b1, b2")
+		tk.MustExec("create table src_t(a int) affinity='table'")
+		tk.MustExec("create table src_p(a int) affinity='partition' " + partitions)
+		sourceGroups := make(map[string][]pdhttp.AffinityGroupKeyRange)
+		infos := make([]*model.TableInfo, 0, 2)
+		for _, names := range [][2]string{{"src_t", "b1"}, {"src_p", "b2"}} {
+			src := persisted(t, tableID(t, names[0]))
+			for id, ranges := range groupsOf(t, src) {
+				sourceGroups[id] = ranges
+			}
+			info, err := ddl.BuildTableInfoWithLike(ast.Ident{Name: ast.NewCIStr(names[1])}, src, &ast.CreateTableStmt{})
+			require.NoError(t, err)
+			infos = append(infos, info)
+		}
+		createdTables := captureCreateJob(t, model.ActionCreateTables)
+		// b1 creates its group, then b2 commits one of its two groups and fails.
+		failCreation(1)
+		err := dom.DDLExecutor().BatchCreateTableWithInfo(tk.Session(), ast.NewCIStr("test"), infos, ddl.WithOnExist(ddl.OnExistError))
+		require.ErrorContains(t, err, "injected affinity creation failure after 1 of 2")
+		created := createdTables()
+		require.Len(t, created, 2)
+		requirePartiallyCreated(t, groupsOf(t, created[1]))
+		for _, info := range created {
+			require.ErrorContains(t, tk.ExecToErr("select * from "+info.Name.L), "doesn't exist")
+			requireAffinityGroupsWithLabelRules(t, cli, groupsOf(t, info), false, "a cancelled batch must delete the groups of all its tables")
+		}
+		requireAffinityGroupsWithLabelRules(t, cli, sourceGroups, true, "the source tables must keep their groups")
+	})
+
+	t.Run("alter table/none to partition", func(t *testing.T) {
+		tk.MustExec("drop table if exists a")
+		tk.MustExec("create table a(a int) " + partitions)
+		id := tableID(t, "a")
+		before := persisted(t, id)
+		newGroups := groupsOf(t, withAffinity(before, ast.TableAffinityLevelPartition))
+		failCreation(0)
+		require.ErrorContains(t, tk.ExecToErr("alter table a affinity='partition'"), "injected affinity creation failure after 1 of 2")
+		requirePartiallyCreated(t, newGroups)
+		require.Equal(t, before, persisted(t, id), "failed ALTER must keep the table metadata")
+		requireAffinityGroupsWithLabelRules(t, cli, newGroups, false, "failed ALTER must delete the groups of the new level")
+
+		tk.MustExec("alter table a affinity='partition'")
+		requireAffinityGroupsWithLabelRules(t, cli, newGroups, true, "successful ALTER must create the groups")
+	})
+
+	t.Run("alter table/table to partition", func(t *testing.T) {
+		tk.MustExec("drop table if exists a")
+		tk.MustExec("create table a(a int) " + partitions)
+		id := tableID(t, "a")
+		// SQL rejects AFFINITY='table' on a partitioned table, so write the old
+		// level into the metadata directly.
+		oldInfo := withAffinity(persisted(t, id), ast.TableAffinityLevelTable)
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+		require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+			return meta.NewMutator(txn).UpdateTable(db.ID, oldInfo)
+		}))
+		oldGroups := groupsOf(t, oldInfo)
+		require.NoError(t, affinity.CreateGroupsIfNotExists(context.Background(), oldGroups))
+		before := persisted(t, id)
+		newGroups := groupsOf(t, withAffinity(before, ast.TableAffinityLevelPartition))
+		failCreation(0)
+		require.ErrorContains(t, tk.ExecToErr("alter table a affinity='partition'"), "injected affinity creation failure after 1 of 2")
+		requirePartiallyCreated(t, newGroups)
+		require.Equal(t, before, persisted(t, id), "failed ALTER must keep the table metadata")
+		requireAffinityGroupsWithLabelRules(t, cli, oldGroups, true, "failed ALTER must keep the groups of the old level")
+		requireAffinityGroupsWithLabelRules(t, cli, newGroups, false, "failed ALTER must delete the groups of the new level")
+
+		tk.MustExec("alter table a affinity='partition'")
+		requireAffinityGroupsWithLabelRules(t, cli, newGroups, true, "successful ALTER must create the groups of the new level")
+		requireAffinityGroupsWithLabelRules(t, cli, oldGroups, false, "successful ALTER must delete the groups of the old level")
+	})
+
+	for _, level := range []string{ast.TableAffinityLevelTable, ast.TableAffinityLevelPartition} {
+		t.Run("alter table/unchanged "+level, func(t *testing.T) {
+			tk.MustExec("drop table if exists a")
+			if level == ast.TableAffinityLevelTable {
+				tk.MustExec("create table a(a int) affinity='table'")
+			} else {
+				tk.MustExec("create table a(a int) affinity='partition' " + partitions)
+			}
+			id := tableID(t, "a")
+			before := persisted(t, id)
+			groups := groupsOf(t, before)
+			requireAffinityGroupsWithLabelRules(t, cli, groups, true, "created table")
+			failCreation(0)
+			require.ErrorContains(t, tk.ExecToErr(fmt.Sprintf("alter table a affinity='%s'", level)), "injected affinity creation failure after 1 of")
+			require.Zero(t, cli.partialCreateLimit.Load(), "the partial creation failure must have been injected")
+			require.Equal(t, before, persisted(t, id), "failed ALTER must keep the table metadata")
+			requireAffinityGroupsWithLabelRules(t, cli, groups, true, "failed ALTER with an unchanged level must keep the existing groups")
+		})
 	}
 }
 

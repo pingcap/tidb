@@ -154,6 +154,10 @@ func createTable(w *worker, jobCtx *jobContext, job *model.Job, r autoid.Require
 
 		if tbInfo.Affinity != nil {
 			if err = createTableAffinityGroupsInPD(jobCtx, tbInfo); err != nil {
+				// PD may have committed some or all of the groups before it returned the error.
+				if deleteErr := deleteTableAffinityGroupsInPD(jobCtx, tbInfo, nil); deleteErr != nil {
+					logutil.DDLLogger().Warn("failed to delete new table affinity groups", zap.Error(deleteErr), zap.Int64("tableID", tbInfo.ID))
+				}
 				job.State = model.JobStateCancelled
 				return tbInfo, errors.Wrapf(err, "failed to create table affinity groups in PD")
 			}
@@ -396,6 +400,11 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 				autoidCli: w.autoidCli,
 			}, tblArgs)
 			if err != nil {
+				// Cancelling the batch discards the tables created before this one,
+				// so their affinity groups in PD are no longer used.
+				if deleteErr := batchDeleteTableAffinityGroups(jobCtx, tableInfos); deleteErr != nil {
+					logutil.DDLLogger().Warn("failed to delete affinity groups of tables in the cancelled batch", zap.Error(deleteErr))
+				}
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
