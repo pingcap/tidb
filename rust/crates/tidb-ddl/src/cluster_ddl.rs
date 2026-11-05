@@ -1065,6 +1065,10 @@ pub enum DdlStatement {
         condition: Option<tidb_ast::Expr>,
         /// SQL mode and location captured for existing-row evaluation.
         context: DdlStatementContext,
+        /// A vector, inverted (columnar) or full-text index: Go
+        /// `createColumnarIndex`, whose checks the plan runs against the
+        /// stored table.
+        columnar: Option<tidb_model::ColumnarIndexType>,
     },
     /// `DROP INDEX name ON [schema.]table`.
     DropIndex {
@@ -2421,6 +2425,11 @@ fn lower_alter_table_catalog(
                     // The standalone lowering owns the validation; reuse it
                     // whole so the bundled and single spellings cannot drift.
                     match lower_alter_add_index(alter, index, default_schema, context)? {
+                        DdlStatement::CreateIndex { columnar: Some(_), .. } => {
+                            return Err(DdlAdmissionError::unsupported(
+                                "a columnar index in a multi-schema change is not supported by this node",
+                            ))
+                        }
                         DdlStatement::CreateIndex {
                             if_not_exists,
                             index,
@@ -3314,27 +3323,9 @@ fn lower_alter_add_index(
         | IndexConstraintKind::UniqueKey
         | IndexConstraintKind::UniqueIndex => tidb_ast::IndexKind::Unique,
         IndexConstraintKind::PrimaryKey => tidb_ast::IndexKind::Unique,
-        IndexConstraintKind::Fulltext => {
-            // go's message carries its own wording; `unsupported` would
-            // prefix `Unsupported ` onto a sentence that already reads as a
-            // refusal (oracle g-alter: `8200 FULLTEXT index is only
-            // supported in starter deployment mode`).
-            return Err(DdlAdmissionError::from_terror(
-                &tidb_dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX.gen_with_stack(
-                    "FULLTEXT index is only supported in starter deployment mode",
-                ),
-            ));
-        }
-        IndexConstraintKind::Vector => {
-            return Err(DdlAdmissionError::unsupported(
-                "ALTER TABLE ADD VECTOR INDEX is not supported by this node",
-            ))
-        }
-        IndexConstraintKind::Columnar => {
-            return Err(DdlAdmissionError::unsupported(
-                "ALTER TABLE ADD COLUMNAR INDEX is not supported by this node",
-            ))
-        }
+        IndexConstraintKind::Fulltext => tidb_ast::IndexKind::Fulltext,
+        IndexConstraintKind::Vector => tidb_ast::IndexKind::Vector,
+        IndexConstraintKind::Columnar => tidb_ast::IndexKind::Columnar,
     };
     // go's `ADD PRIMARY KEY` has a FIXED reserved name (`PRIMARY`); any
     // other anonymous index stays unnamed here, and the plan names it with
@@ -4811,6 +4802,25 @@ fn lower_create_index(
     // `primary = true`; the caller decides, since the AST's own
     // `CREATE INDEX` grammar has no PRIMARY spelling.
     let (schema, table) = split_name(&create.table, default_schema, "table")?;
+    // Go `createColumnarIndex`: its checks need the stored table.
+    let columnar = match create.kind {
+        tidb_ast::IndexKind::Vector => Some(tidb_model::ColumnarIndexType::VECTOR),
+        tidb_ast::IndexKind::Columnar => Some(tidb_model::ColumnarIndexType::INVERTED),
+        tidb_ast::IndexKind::Fulltext => Some(tidb_model::ColumnarIndexType::FULLTEXT),
+        _ => None,
+    };
+    if columnar.is_some() {
+        return Ok(DdlStatement::CreateIndex {
+            schema,
+            table,
+            if_not_exists: create.if_not_exists,
+            expressions: Vec::new(),
+            condition: None,
+            context: DdlStatementContext(context.clone()),
+            index: Box::default(),
+            columnar,
+        });
+    }
     let (index, expressions) = tidb_ddl_build::index::index_template(create, primary)?;
     Ok(DdlStatement::CreateIndex {
         schema,
@@ -4820,6 +4830,7 @@ fn lower_create_index(
         condition: create.options.condition.clone(),
         context: DdlStatementContext(context.clone()),
         index: Box::new(index),
+        columnar: None,
     })
 }
 

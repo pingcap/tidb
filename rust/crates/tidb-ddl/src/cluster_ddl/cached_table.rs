@@ -60,7 +60,12 @@ pub fn check_cached_table_ddl(
                 return refused("Alter Table");
             }
         }
-        tidb_ast::DdlStmt::CreateIndex(create) if cached(&create.table) => {
+        // Go `createIndex` turns a spatial or columnar index away before it
+        // looks at the table's cache state.
+        tidb_ast::DdlStmt::CreateIndex(create)
+            if cached(&create.table)
+                && matches!(create.kind, tidb_ast::IndexKind::Ordinary | tidb_ast::IndexKind::Unique) =>
+        {
             return refused("Create Index");
         }
         tidb_ast::DdlStmt::DropIndex(drop) if cached(&drop.table) => {

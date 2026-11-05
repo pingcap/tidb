@@ -95,6 +95,7 @@ fn single_statement(
             expressions,
             condition,
             context,
+            columnar: None,
         },
         AlterColumnAction::DropIndex { if_exists, name } => DdlStatement::DropIndex {
             hypo: false,

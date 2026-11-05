@@ -34,7 +34,7 @@
       "id": "D05",
       "status": "partial",
       "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "Cancellation follows Go's `convertJob2RollbackJob` for every action the worker runs; ADD COLUMNAR INDEX has no worker step here, so its `rollingbackAddColumanrIndex` is absent with it",
+      "finding": "Cancellation follows Go's `convertJob2RollbackJob` for every action the worker runs. A columnar (vector, inverted, full-text) index is checked against its table as Go's `createColumnarIndex` does (`add_index.rs` `create_columnar_index`, `checkTableTypeForColumnarIndex`), but on a table with a columnar replica this node builds no `ActionAddColumnarIndex` job: `onCreateColumnarIndex` (TiFlash schema sync, `checkColumnarIndexProcess`) and its `rollingbackAddColumanrIndex` are absent",
       "go_owner": "`pkg/ddl`"
     },
     {

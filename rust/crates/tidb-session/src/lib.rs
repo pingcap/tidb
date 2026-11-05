@@ -3170,6 +3170,8 @@ mod tests_cast_int_truncation;
 #[cfg(test)]
 mod tests_cast_vector;
 #[cfg(test)]
+mod tests_columnar_index;
+#[cfg(test)]
 mod tests_charset;
 #[cfg(test)]
 mod tests_charset_introducer;

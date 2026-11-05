@@ -84,14 +84,14 @@ fn a_multi_statement_query_prefetches_its_point_writes_like_go() {
 
     rows(&mut session, "begin optimistic");
     rows(&mut session, "update prefetch set c = c + 1 where a = 2 and b = 2");
-    let statements = session.split_statements(query, true).unwrap();
-    // The prefetch reads the unique index keys, then the rows they name.
-    let prefetched = point_reads(&stack, || session.node_conn().prefetch_point_plan_keys(&statements, query).unwrap());
-    assert!(prefetched > 0);
     // A `use` statement anywhere in the query stops the prefetch.
     let with_use = format!("use test;{query}");
     let used = session.split_statements(&with_use, true).unwrap();
     assert_eq!(point_reads(&stack, || session.node_conn().prefetch_point_plan_keys(&used, &with_use).unwrap()), 0);
+    let statements = session.split_statements(query, true).unwrap();
+    // The prefetch reads the unique index keys, then the rows they name.
+    let prefetched = point_reads(&stack, || session.node_conn().prefetch_point_plan_keys(&statements, query).unwrap());
+    assert!(prefetched > 0);
     // The statements read nothing more from the store.
     assert_eq!(
         point_reads(&stack, || {

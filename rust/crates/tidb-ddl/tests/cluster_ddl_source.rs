@@ -4943,16 +4943,22 @@ fn a_duplicate_index_name_is_refused_and_if_not_exists_is_a_no_op() {
 /// own catalog loader then drops, so the table would vanish from the very
 /// connection that indexed it.
 #[test]
-fn index_shapes_this_node_cannot_maintain_are_refused_at_admission() {
-    for (sql, expected) in [(
-        "CREATE FULLTEXT INDEX fi ON u6.minimal (c)",
-        "CREATE FULLTEXT INDEX",
-    )] {
-        let reason = refusal(sql);
-        assert!(
-            reason.contains(expected),
-            "`{sql}` must be refused for {expected}, got: {reason}"
-        );
+fn columnar_index_shapes_lower_for_gos_table_checks() {
+    // Go `createIndex` hands a full-text, vector or columnar index to
+    // `createColumnarIndex`, whose checks need the stored table, so the
+    // statement lowers and its plan refuses it.
+    for (sql, expected) in [
+        ("CREATE FULLTEXT INDEX fi ON u6.minimal (c)", tidb_model::ColumnarIndexType::FULLTEXT),
+        (
+            "CREATE VECTOR INDEX vi ON u6.minimal ((vec_cosine_distance(v))) USING HNSW",
+            tidb_model::ColumnarIndexType::VECTOR,
+        ),
+    ] {
+        let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
+        match lower_ddl(&parsed, "u6") {
+            Ok(Some(DdlStatement::CreateIndex { columnar, .. })) => assert_eq!(columnar, Some(expected), "{sql}"),
+            other => panic!("`{sql}` lowered to {other:?}"),
+        }
     }
 }
 
