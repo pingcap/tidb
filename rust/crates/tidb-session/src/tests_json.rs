@@ -1786,3 +1786,24 @@ fn json_quote_and_unquote_answer_like_go() {
         (1105, "Invalid unicode: d800")
     );
 }
+
+/// Go `newBaseBuiltinFuncWithTp`'s argument casts are part of the expression
+/// tree, so EXPLAIN prints them: a string argument of a JSON function is cast
+/// to JSON (`WrapWithCastAsJSON`), a JSON argument of a string function or of
+/// `isnull` to a string. gorun, `explain format='brief'`, each projection.
+#[test]
+fn json_argument_casts_are_in_the_expression_tree_like_go() {
+    let mut session = Session::new();
+    session.run("create table t(a varchar(20), j json, i int)").unwrap();
+    for (sql, projected) in [
+        ("select json_extract(a, '$') from t", "json_extract(cast(test.t.a, json BINARY), $)->Column#6"),
+        ("select isnull(j) from t", "isnull(cast(test.t.j, var_string(4294967295)))->Column#6"),
+        ("select json_length(a) from t", "json_length(cast(test.t.a, json BINARY))->Column#6"),
+        ("select j is null from t", "isnull(cast(test.t.j, var_string(4294967295)))->Column#6"),
+        ("select json_unquote(j) from t", "json_unquote(cast(test.t.j, var_string(4294967295)))->Column#6"),
+        ("select concat(j, 'x') from t", "concat(cast(test.t.j, var_string(4294967295)), x)->Column#6"),
+    ] {
+        let rows = crate::tests_support::row_text(session.run(&format!("explain format='brief' {sql}")));
+        assert!(rows.iter().any(|row| row.last().is_some_and(|info| info == projected)), "{sql}: {rows:?}");
+    }
+}
