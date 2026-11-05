@@ -2634,23 +2634,25 @@ func TestCreateMaterializedViewPauseAndResume(t *testing.T) {
 		return jobID != ""
 	}, 30*time.Second, 100*time.Millisecond)
 
-	tkCtl.MustExec("admin pause ddl jobs " + jobID)
+	tkCtl.MustQuery("admin pause ddl jobs " + jobID).Check(testkit.Rows(jobID + " successful"))
 	require.NoError(t, failpoint.Disable(pauseBuildFailpoint))
 	enabled = false
 
+	// Resume only accepts fully paused jobs. A pausing job can still be held by
+	// the DDL worker, and the per-job resume error is returned in the result set.
 	require.Eventually(t, func() bool {
 		rows := tkCtl.MustQuery("admin show ddl jobs where JOB_ID=" + jobID).Rows()
 		if len(rows) == 0 {
 			return false
 		}
 		state := strings.ToLower(fmt.Sprint(rows[0][len(rows[0])-2]))
-		return state == "paused" || state == "pausing"
+		return state == "paused"
 	}, 30*time.Second, 100*time.Millisecond)
 
 	// Current Stage-1 semantics: MV table is visible once phase-1 finishes, even before job completion.
 	tk.MustQuery("show tables like 'mv_pause'").Check(testkit.Rows("mv_pause"))
 
-	tkCtl.MustExec("admin resume ddl jobs " + jobID)
+	tkCtl.MustQuery("admin resume ddl jobs " + jobID).Check(testkit.Rows(jobID + " successful"))
 	select {
 	case err := <-ddlDone:
 		if err != nil {

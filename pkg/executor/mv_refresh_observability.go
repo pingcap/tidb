@@ -560,6 +560,11 @@ func (e *RefreshMaterializedViewDryRunExec) renderPlanRowsForInternalStmt(ctx co
 	if err := txnPreparer.PrepareTxnCtx(ctx); err != nil {
 		return nil, err
 	}
+	// Planning directly bypasses ExecuteStmt, which normally initializes the
+	// statement context, including the map used to register MDL table IDs.
+	if err := ResetContextOfStmt(internalSctx, stmt); err != nil {
+		return nil, err
+	}
 	if scanUserTable {
 		restoreInternalSQLScanUserTable := enableInternalSQLScanUserTableForPlan(internalSctx)
 		defer restoreInternalSQLScanUserTable()
