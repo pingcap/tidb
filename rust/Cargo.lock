@@ -4080,6 +4080,7 @@ dependencies = [
  "tidb-infoschema",
  "tidb-infoschema-issyncer",
  "tidb-infoschema-isvalidator",
+ "tidb-keyspace",
  "tidb-kv",
  "tidb-log",
  "tidb-logutil",

@@ -2,8 +2,8 @@
   "date": "2026-11-05",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 23,
-    "open": 6,
+    "unresolved": 24,
+    "open": 7,
     "partial": 17
   },
   "findings": [
@@ -162,7 +162,7 @@
       "id": "O11",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "TopSQL is ported over pprof-rs (`tidb-cpuprofile`, `tidb-topsql-collector`, `tidb-topsql-reporter`, `tidb-topsql`): the status port serves `TopSQLPubSub`, the single-target sink reports to `top-sql.receiver-address`, each command labels its thread `{connID}_{sqlID}`, each statement registers its SQL and plan and labels the thread with both digests, and the profiler's TiDB CPU reaches PROCESSLIST and the statement summary. The DDL worker attaches each job step and each backfill task to the job's SQL (`tidb-ddl` `job_ctx.rs`, Go `ReorgContext.attachTopProfilingInfo`). Unported: the step transaction's request source and resource-group tagger (`prepareTxn`'s `setDDLSourceForDiagnosis` / `getResourceGroupTaggerForTopSQL`), the DXF backfill executor's attach (O10) and the fast-reorg skip checks' (`checkIfTableReorgWorkCanSkip` / `checkIfTempIndexReorgWorkCanSkip`, D02), multi-statement prefetch (`setResourceGroupTaggerForMultiStmtPrefetch`) and executors' `RegisterSQLAndPlanInExecForTopProfiling`; profiler labels follow Go's goroutine inheritance (`labels::inherit`) only into the shuffle, hash-join build, checksum and coprocessor workers, so CPU on other worker threads (index merge, analyze, ...) is attributed to no statement",
+      "finding": "TopSQL is ported over pprof-rs (`tidb-cpuprofile`, `tidb-topsql-collector`, `tidb-topsql-reporter`, `tidb-topsql`): the status port serves `TopSQLPubSub`, the single-target sink reports to `top-sql.receiver-address`, each command labels its thread `{connID}_{sqlID}`, each statement registers its SQL and plan and labels the thread with both digests, and the profiler's TiDB CPU reaches PROCESSLIST and the statement summary. The DDL worker attaches each job step and each backfill task to the job's SQL (`tidb-ddl` `job_ctx.rs`, Go `ReorgContext.attachTopProfilingInfo`). The step's transaction carries the job's resource-group tagger (`getResourceGroupTaggerForTopSQL`, published into its statement kv context once the step loads the job). Unported: the DXF backfill executor's attach (O10) and the fast-reorg skip checks' (`checkIfTableReorgWorkCanSkip` / `checkIfTempIndexReorgWorkCanSkip`, D02), multi-statement prefetch (`setResourceGroupTaggerForMultiStmtPrefetch`) and executors' `RegisterSQLAndPlanInExecForTopProfiling`; profiler labels follow Go's goroutine inheritance (`labels::inherit`) only into the shuffle, hash-join build, checksum and coprocessor workers, so CPU on other worker threads (index merge, analyze, ...) is attributed to no statement",
       "go_owner": "`pkg/util/topsql`"
     },
     {
@@ -172,6 +172,13 @@
       "finding": "The DDL scheduler, systable manager, history and MDL readers scan records instead of running SQL on `DdlSessionPool::sess_pool`; the bootstrap stages raw rows; accounts load eagerly where Go loads per active user",
       "rust_evidence": "`rust/crates/tidb-executor/src/real_tikv_analyze.rs`",
       "go_owner": "`pkg/ddl` (`systable`, job scheduler), `pkg/session` bootstrap, `pkg/privilege/privileges` (`ensureActiveUser`)"
+    },
+    {
+      "id": "K04",
+      "status": "open",
+      "group": "Expanded subsystem ownership review",
+      "finding": "No transaction or snapshot carries Go's request source or a per-job resource group: client-rust's `set_request_source_internal` / `set_request_source_type` / `set_explicit_request_source_type` have no caller, where Go sets them on every session transaction and snapshot (`sessiontxn/internal` `SetTxnOption` from `RequestSourceType` / `ExplicitRequestSourceType`, internal for restricted SQL), on the DDL step transaction (`prepareTxn`'s `RequestSourceType` from `setDDLSourceForDiagnosis`, `ddl_<backfiller>` for reorganizing jobs, and its `ResourceGroupName` from the job's reorg meta) and on the backfill snapshots (`ExplicitTypeDDL`)",
+      "go_owner": "`pkg/sessiontxn/internal/txn.go`, `pkg/ddl/job_worker.go` (`prepareTxn`), `pkg/ddl/backfilling.go`"
     }
   ]
 }

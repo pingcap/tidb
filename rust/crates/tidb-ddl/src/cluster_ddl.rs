@@ -5114,6 +5114,10 @@ pub struct DdlJobSchemaState {
     /// store snapshots), which RECOVER needs. `None` for a run without one
     /// (bootstrap, tests).
     pub worker: Option<DdlStepWorker>,
+    /// The statement kv context of the step's transaction, which Go's
+    /// `prepareTxn` tags with the job's SQL (`kv.ResourceGroupTagger`).
+    /// `None` for a run without a transaction of its own.
+    pub step_kv_context: Option<tidb_txnkv::StatementKvContextCell>,
 }
 
 impl DdlJobSchemaState {
@@ -5125,6 +5129,7 @@ impl DdlJobSchemaState {
             pending_version: None,
             reorg: Vec::new(),
             worker: None,
+            step_kv_context: None,
         }
     }
 }
@@ -5618,6 +5623,12 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     // Go `transitOneJobStep` -> `prepareTxn`'s `attachTopProfilingInfo`:
     // every step, finishing ones included, runs under the job's SQL.
     crate::job_ctx::attach_top_profiling_info(active.job.id, &active.job.query.to_utf8_lossy_go());
+    if let Some(step_kv_context) = &schema_state.step_kv_context {
+        step_kv_context.publish(tidb_txnkv::StatementKvContext {
+            resource_group_tagger: crate::job_ctx::get_resource_group_tagger_for_top_sql(active.job.id),
+            ..tidb_txnkv::StatementKvContext::default()
+        });
+    }
     if matches!(
         active.job.state,
         JobState::DONE | JobState::ROLLBACK_DONE | JobState::CANCELLED

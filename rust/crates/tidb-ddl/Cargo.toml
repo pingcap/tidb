@@ -15,6 +15,7 @@ workspace = true
 hex = "0.4"
 crossbeam-channel = "0.5"
 tidb-cpuprofile = { path = "../tidb-cpuprofile" }
+tidb-keyspace = { path = "../tidb-keyspace" }
 tidb-topsql = { path = "../tidb-topsql" }
 tidb-topsql-state = { path = "../tidb-topsql-state" }
 tidb-exeerrors = { path = "../tidb-exeerrors" }

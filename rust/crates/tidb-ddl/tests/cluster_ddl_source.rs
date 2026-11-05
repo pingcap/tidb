@@ -810,11 +810,34 @@ fn a_worker_step_runs_under_the_jobs_sql_digest() {
         .unwrap();
     apply_mutations(&mut store, &mutations);
     tidb_topsql_state::enable_top_sql();
-    plan_worker_step(&mut store, job.id, 10_000).unwrap();
+    // Go `prepareTxn` also tags the step's transaction with the job's SQL
+    // (`txn.SetOption(kv.ResourceGroupTagger, ...)`).
+    let step_kv_context = tidb_txnkv::StatementKvContextCell::default();
+    let mut schema_state = DdlJobSchemaState::new(true);
+    schema_state.step_kv_context = Some(step_kv_context.clone());
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
+    plan_persisted_ddl_job_step(
+        &mut store,
+        job.id,
+        10_000,
+        schema_state,
+        &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
+        Some(&*row_ids),
+    )
+    .unwrap();
     tidb_topsql_state::disable_top_sql();
     let (_, digest) = tidb_parser::normalize_digest("CREATE DATABASE attach_step");
     let labels = tidb_cpuprofile::labels::goroutine_labels().expect("the step attached labels");
     assert!(labels.values().any(|value| value == digest.as_str()), "{labels:?}");
+    let tagger = step_kv_context
+        .get()
+        .resource_group_tagger
+        .expect("the step's transaction is tagged");
+    let tag = tagger().encode_tag_with_key(b"");
+    assert!(
+        tag.windows(digest.as_bytes().len()).any(|window| window == digest.as_bytes()),
+        "the tag carries the job's SQL digest"
+    );
 }
 
 #[test]

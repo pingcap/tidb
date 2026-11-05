@@ -2038,10 +2038,16 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
     owner_id: &str,
 ) -> Result<DdlPhaseOutcome, ClusterDdlError> {
     (phase.check_owner)().map_err(ClusterDdlError::SchemaSync)?;
+    // Go `prepareTxn`: the step's transaction carries the job's resource
+    // group tagger, published once the step has loaded the job.
+    let step_kv_context = tidb_txnkv::StatementKvContextCell::default();
     let transaction = SessionTransaction::begin(
         Arc::clone(&opener),
         timeout,
-        tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
+        tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions::from(
+            tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
+        )
+        .with_statement_kv_context(step_kv_context.clone()),
     )?;
     let start_ts = transaction.start_ts();
     let row_ids = backfiller.system_row_ids();
@@ -2049,6 +2055,7 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
     // stage into it, and it commits with the step's meta writes.
     let mut buffer = MutationBuffer::new();
     let mut schema_state = phase.schema_state.clone();
+    schema_state.step_kv_context = Some(step_kv_context);
     // Go `w.sess` for this step, kept until the step commits: the MDL row
     // below runs on it too.
     let mut step_sql: crate::job_txn::StepSqlSlot = Default::default();

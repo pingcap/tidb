@@ -73,6 +73,24 @@ impl ReorgContext {
     }
 }
 
+impl ReorgContext {
+    /// Go `ReorgContext.getResourceGroupTaggerForTopSQL`: the tag the job's
+    /// requests carry, its SQL digest, while Top SQL is on.
+    fn get_resource_group_tagger_for_top_sql(&self) -> Option<tidb_txnkv::StatementResourceGroupTagger> {
+        if !tidb_topsql_state::top_sql_enabled() {
+            return None;
+        }
+        let digest = self.cache_digest.as_ref()?.as_bytes().to_vec();
+        Some(std::sync::Arc::new(move || {
+            let mut tagger = tidb_txnkv::ResourceGroupTagBuilder::new(
+                tidb_keyspace::get_keyspace_name_bytes_by_settings(),
+            );
+            tagger.set_sql_digest(&digest);
+            tagger
+        }))
+    }
+}
+
 /// Go `ddlCtx.jobCtx.jobCtxMap`.
 static JOB_CTX_MAP: LazyLock<Mutex<HashMap<i64, ReorgContext>>> = LazyLock::new(Mutex::default);
 
@@ -86,6 +104,18 @@ pub(crate) fn with_job_ctx<T>(job_id: i64, f: impl FnOnce(&mut ReorgContext) -> 
 /// Go `ddlCtx.attachTopProfilingInfo`.
 pub(crate) fn attach_top_profiling_info(job_id: i64, job_query: &str) {
     with_job_ctx(job_id, |ctx| ctx.attach_top_profiling_info(job_query));
+}
+
+/// Go `ddlCtx.getResourceGroupTaggerForTopSQL`: none for a job with no
+/// context.
+pub(crate) fn get_resource_group_tagger_for_top_sql(
+    job_id: i64,
+) -> Option<tidb_txnkv::StatementResourceGroupTagger> {
+    JOB_CTX_MAP
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&job_id)
+        .and_then(ReorgContext::get_resource_group_tagger_for_top_sql)
 }
 
 /// Go `removeJobCtx`: the job is done with its context.
@@ -117,9 +147,16 @@ mod tests {
             assert_eq!(labelled_digest(), None);
 
             tidb_topsql_state::enable_top_sql();
+            assert!(get_resource_group_tagger_for_top_sql(job_id).is_none(), "no digest yet");
             attach_top_profiling_info(job_id, "ALTER TABLE t ADD INDEX i (a)");
             let (_, add_index) = tidb_parser::normalize_digest("ALTER TABLE t ADD INDEX i (a)");
             assert_eq!(labelled_digest().as_deref(), Some(add_index.as_str()));
+            assert!(get_resource_group_tagger_for_top_sql(job_id).is_some());
+            // Go `getResourceGroupTaggerForTopSQL`: no tagger while Top SQL
+            // is off, though the digest is cached.
+            tidb_topsql_state::disable_top_sql();
+            assert!(get_resource_group_tagger_for_top_sql(job_id).is_none());
+            tidb_topsql_state::enable_top_sql();
 
             // Another thread of the same job reuses the cached digest.
             std::thread::spawn(move || {
