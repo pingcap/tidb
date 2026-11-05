@@ -28636,13 +28636,23 @@ fn a_statements_requests_carry_its_label_as_their_source() {
     // (`prepareTxn`'s `setDDLSourceForDiagnosis`), and its backfill writes
     // the index with `ExplicitTypeDDL` beside it.
     let sent: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
-    let recorded = Arc::clone(&sent);
+    let submitted: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let reorg_meta: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let (recorded, recorded_submission, recorded_reorg) =
+        (Arc::clone(&sent), Arc::clone(&submitted), Arc::clone(&reorg_meta));
+    let reorg_table =
+        tidb_tablecodec::table_key::gen_table_prefix(tidb_metadef::system::TI_DBDDLREORG_TABLE_ID);
     stack.rpc.set_send_hook(Some(Arc::new(move |request| {
         if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::PrewriteRequest>() {
-            recorded
-                .lock()
-                .unwrap()
-                .push(request.context.as_ref().map(|context| context.request_source.clone()).unwrap_or_default());
+            let source = request.context.as_ref().map(|context| context.request_source.clone()).unwrap_or_default();
+            // Go's `NextGlobalID` meta key, memcomparable-encoded.
+            if request.mutations.iter().any(|mutation| mutation.key.starts_with(b"mNextGlob")) {
+                recorded_submission.lock().unwrap().push(source.clone());
+            }
+            if request.mutations.iter().any(|mutation| mutation.key.starts_with(&reorg_table)) {
+                recorded_reorg.lock().unwrap().push(source.clone());
+            }
+            recorded.lock().unwrap().push(source);
         }
     })));
     rows(&mut session, "ALTER TABLE request_source ADD INDEX request_source_b (b)");
@@ -28650,4 +28660,16 @@ fn a_statements_requests_carry_its_label_as_their_source() {
     let sent = sent.lock().unwrap().clone();
     assert!(sent.contains(&"internal_ddl_add_index".to_owned()), "{sent:?}");
     assert!(sent.contains(&"internal_ddl_add_index_ddl".to_owned()), "{sent:?}");
+    // The worker's pooled sessions write the job's rows as `ddl`, and the
+    // submitter allocates the job's id as `ddl` (Go `ddl.Start`'s context).
+    assert!(sent.contains(&"internal_ddl".to_owned()), "{sent:?}");
+    // The reorganization's handle rows go through the worker's pooled
+    // sessions (`UpdateReorgMeta` on `sessPool`).
+    let reorg_meta = reorg_meta.lock().unwrap().clone();
+    assert!(
+        !reorg_meta.is_empty() && !reorg_meta.iter().any(|source| source == "unknown"),
+        "{reorg_meta:?}"
+    );
+    let submitted = submitted.lock().unwrap().clone();
+    assert!(!submitted.is_empty() && submitted.iter().all(|source| source == "internal_ddl"), "{submitted:?}");
 }

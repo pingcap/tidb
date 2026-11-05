@@ -547,8 +547,11 @@ impl Session {
                     tagger.encode_tag_with_key(key)
                 })),
                 commit_details: Some(Arc::clone(&self.statement_commit_details)),
+                // Go `setRequestSource` sets the open transaction's type for
+                // a user session only; an internal one's reaches its own
+                // transactions at activation.
                 request_source_type: Some(self.vars.request_source_type.clone())
-                    .filter(|source_type| !source_type.is_empty()),
+                    .filter(|source_type| !self.vars.restricted_sql && !source_type.is_empty()),
             });
     }
 

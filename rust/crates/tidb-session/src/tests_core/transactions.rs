@@ -1162,4 +1162,7 @@ fn the_statement_label_is_the_transactions_request_source() {
     let internal = source(&session);
     assert!(internal.internal);
     assert_eq!(internal.source_type, "stats");
+    // Go sets an open transaction's type per statement for a user session
+    // only: an internal statement leaves the transaction's own.
+    assert_eq!(session.statement_kv_context_cell().get().request_source_type, None);
 }

@@ -886,7 +886,7 @@ pub fn answer_ddl_without_job<S: StoreClient>(
     let transaction = SessionTransaction::begin(
         opener,
         timeout,
-        tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
+        ddl_transaction_options(),
     )?;
     let plan = transaction
         .snapshot()
@@ -1114,7 +1114,7 @@ where
         let transaction = SessionTransaction::begin_pessimistic(
             Arc::clone(&opener),
             timeout,
-            tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
+            ddl_transaction_options(),
         )?;
         let buffer = MutationBuffer::new();
         let lock_outcome =
@@ -1227,7 +1227,7 @@ pub fn submit_check_constraint_job_with_retry<S: StoreClient>(
     let preparation = SessionTransaction::begin(
         Arc::clone(&opener),
         timeout,
-        tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
+        ddl_transaction_options(),
     )?;
     let start_ts = preparation.start_ts();
     let prepared = {
@@ -1578,7 +1578,7 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
     let preparation = SessionTransaction::begin(
         Arc::clone(&opener),
         timeout,
-        tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
+        ddl_transaction_options(),
     )?;
     let start_ts = preparation.start_ts();
     let prepared = {
@@ -1867,7 +1867,7 @@ pub fn load_active_persisted_ddl_jobs_cached<S: StoreClient>(
     let transaction = SessionTransaction::begin(
         opener,
         timeout,
-        tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
+        ddl_transaction_options(),
     )?;
     let jobs = {
         let mut snapshot = SnapshotMetaSnapshot::new(
@@ -1929,7 +1929,7 @@ pub fn load_min_persisted_ddl_job_id_cached<S: StoreClient>(
     let transaction = SessionTransaction::begin(
         opener,
         timeout,
-        tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
+        ddl_transaction_options(),
     )?;
     let minimum = {
         let mut snapshot = SnapshotMetaSnapshot::new(
@@ -1971,7 +1971,7 @@ pub fn load_history_persisted_ddl_job<S: StoreClient>(
     let transaction = SessionTransaction::begin(
         opener,
         timeout,
-        tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
+        ddl_transaction_options(),
     )?;
     let history = {
         let mut snapshot = SnapshotMetaSnapshot::new(
@@ -2343,7 +2343,7 @@ fn clean_mdl_info_with_retry<S: StoreClient>(
         let transaction = SessionTransaction::begin(
             Arc::clone(&opener),
             timeout,
-            tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
+            ddl_transaction_options(),
         )?;
         let mut mutations = Vec::new();
         let cleanup = {
@@ -2582,4 +2582,15 @@ pub fn cluster_ddl_error(error: ClusterDdlError) -> tidb_store_driver_error::sql
         .with_identity(error.identity()),
         other => tidb_store_driver_error::sql_query_error::SqlQueryError::unknown(other.to_string()),
     }
+}
+
+
+/// Go's DDL context (`ddl.Start`'s `kv.WithInternalSourceType(ctx,
+/// kv.InternalTxnDDL)`), from which the submitter's and scheduler's
+/// transactions begin.
+fn ddl_transaction_options() -> tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions {
+    tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions::from(
+        tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
+    )
+    .with_request_source(crate::job_ctx::internal_ddl_source())
 }

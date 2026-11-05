@@ -66,6 +66,13 @@ impl NodeDdlSessionPool {
     }
 }
 
+/// Go's DDL callers run the pool's sessions under the DDL context
+/// (`kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)`), whose source a
+/// restricted session adopts (`setRequestSource`).
+fn set_ddl_request_source(session: &mut crate::Session) {
+    tidb_txnkv::INTERNAL_TXN_DDL.clone_into(&mut session.vars.request_source_type);
+}
+
 /// Go `ddl.WithResourcePool(sysCtxPool)`: the domain's system sessions as
 /// the resource pool `sess.NewSessionPool` wraps.
 struct NodeDdlResourcePool {
@@ -78,9 +85,10 @@ impl tidb_ddl_session::ResourcePool<dyn tidb_ddl_session::SessionContext> for No
             .domain
             .upgrade()
             .ok_or_else(|| tidb_ddl_session::Error::new("the DDL session pool has no running node"))?;
-        let session = domain
+        let mut session = domain
             .open_system_session()
             .map_err(|error| tidb_ddl_session::Error::new(error.message))?;
+        set_ddl_request_source(&mut session);
         Ok(Arc::new(
             crate::domain::cluster_session_node::ClusterStatsSessionContext::new(
                 session,
@@ -126,6 +134,7 @@ impl DdlSessionPool for NodeDdlSessionPool {
                 .with_identity_opt(error.identity)
         };
         let mut session = domain.open_system_session().map_err(to_mysql)?;
+        set_ddl_request_source(&mut session);
         let rows = session.node_conn().execute_internal(sql).map_err(to_mysql);
         rows
     }
@@ -148,6 +157,7 @@ impl DdlSessionPool for NodeDdlSessionPool {
         let sql = tidb_sqlescape::escape_sql_text(sql, args)
             .map_err(|error| MysqlError::unknown(error.to_string()))?;
         let mut session = domain.open_system_session().map_err(to_mysql)?;
+        set_ddl_request_source(&mut session);
         if options.utc_time_zone {
             session
                 .set_session_sys_var("time_zone", "UTC".to_owned())
@@ -187,7 +197,8 @@ impl DdlSessionPool for NodeDdlSessionPool {
             .get()
             .and_then(Weak::upgrade)
             .ok_or_else(|| MysqlError::unknown("the DDL session pool has no running node"))?;
-        let session = domain.open_system_session().map_err(sql_to_mysql)?;
+        let mut session = domain.open_system_session().map_err(sql_to_mysql)?;
+        set_ddl_request_source(&mut session);
         Ok(Box::new(NodeSqlSession::new(session)))
     }
 
