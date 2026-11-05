@@ -929,8 +929,12 @@ func (b *Builder) buildAllocsForCreateTable(tp model.ActionType, dbInfo *model.D
 		case model.ActionRebaseAutoRandomBase:
 			newAlloc := autoid.NewAllocator(b.Requirement, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType, tblVer)
 			allocs = allocs.Append(newAlloc)
-		case model.ActionModifyColumn:
+		case model.ActionModifyColumn, model.ActionMultiSchemaChange:
 			// Change column attribute from auto_increment to auto_random.
+			// The conversion can also arrive as a sub-action of a multi schema
+			// change; the sub-action list is irrelevant here because the new
+			// TableInfo is the authoritative signal: a table that has
+			// auto_random bits but no auto_random allocator must get one.
 			if tblInfo.ContainsAutoRandomBits() && allocs.Get(autoid.AutoRandomType) == nil {
 				// Remove auto_increment allocator.
 				allocs = allocs.Filter(func(a autoid.Allocator) bool {

@@ -2323,6 +2323,64 @@ func TestAutoRandomAllocatorMigration(t *testing.T) {
 	}
 }
 
+func TestMultiSchemaChangeAutoIncToAutoRandom(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	// A multi-spec ALTER that contains the auto_increment -> auto_random
+	// conversion must leave the table with a working auto_random allocator,
+	// just like the single-spec conversion does.
+	for _, tc := range []struct {
+		name  string
+		alter string
+	}{
+		{"add_column", "alter table t modify column id bigint auto_random(5), add column x int"},
+		{"conversion_second", "alter table t add index idx_v(v), modify column id bigint auto_random(5)"},
+		{"drop_column", "alter table t modify column id bigint auto_random(5), drop column pad"},
+		{"auto_id_cache_1", "alter table t modify column id bigint auto_random(5), add column x int"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set @@tidb_allow_remove_auto_inc = true")
+			autoIDCache := ""
+			if tc.name == "auto_id_cache_1" {
+				autoIDCache = " auto_id_cache=1"
+			}
+			tk.MustExec(fmt.Sprintf("create table t (id bigint primary key clustered auto_increment, v int, pad int)%s", autoIDCache))
+			t.Cleanup(func() { tk.MustExec("drop table if exists t") })
+			tk.MustExec("insert into t(v, pad) values (1, 0), (2, 0)")
+			tk.MustExec(tc.alter)
+			// Pre-fix this insert recovered a nil-pointer panic (ERROR 1105):
+			// the runtime auto_random allocator was never created.
+			tk.MustExec("insert into t(v) values (3)")
+			// The new id must come from the auto_random allocator: the
+			// incremental part (below the 5 shard bits) continues after the
+			// migrated auto_increment base rather than restarting from 1.
+			tk.MustQuery("select (id & 288230376151711743) > 2 from t where v = 3").Check(testkit.Rows("1"))
+			tk.MustExec("insert into t(v) values (4)")
+			tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
+			tk.MustExec("admin check table t")
+		})
+	}
+
+	t.Run("already_auto_random_keeps_allocator", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		// Tables already on auto_random keep their existing allocator through
+		// multi-spec ALTERs: no allocator is rebuilt and ids continue.
+		tk.MustExec("create table t (id bigint primary key clustered auto_random(5), v int)")
+		t.Cleanup(func() { tk.MustExec("drop table if exists t") })
+		tk.MustExec("insert into t(v) values (1)")
+		before := tk.MustQuery("select id from t where v = 1").Rows()
+		tk.MustExec("alter table t add column x int, add index idx_v(v)")
+		tk.MustExec("insert into t(v) values (2)")
+		tk.MustQuery("select count(*) from t").Check(testkit.Rows("2"))
+		after := tk.MustQuery("select id from t order by v").Rows()
+		require.Equal(t, before[0][0], after[0][0])
+		tk.MustExec("admin check table t")
+	})
+}
+
 func TestAutoIncrementForceAutoIDCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
