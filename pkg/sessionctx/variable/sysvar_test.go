@@ -1569,6 +1569,11 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 			Off,
 		},
 		{
+			TiDBRedactLog,
+			On,
+			Off,
+		},
+		{
 			TiDBRowFormatVersion,
 			strconv.Itoa(DefTiDBRowFormatV1),
 			strconv.Itoa(DefTiDBRowFormatV2),

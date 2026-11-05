@@ -1524,6 +1524,9 @@ func NewConfig() *Config {
 			Threshold:                    -1,
 			MaxRecordRows:                -1,
 		},
+		Security: Security{
+			RedactInfoLog: true,
+		},
 	}
 }
 
