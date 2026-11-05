@@ -561,11 +561,7 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 		},
 		{
 			name:  strings.ToUpper("tidb_redact_log"), // test for settings an upper case variable
-<<<<<<< HEAD
-			val:   "on",
-=======
 			val:   "MARKER",
->>>>>>> 47dc1214658 (session, lightning: enable log redaction by default (#72666))
 			field: "$.enableRedactLog",
 			assert: func(ctx *EvalContext, vars *variable.SessionVars) {
 				require.Equal(t, "MARKER", ctx.GetTiDBRedactLog())

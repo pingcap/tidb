@@ -51,8 +51,8 @@ func TestTiDBOptOn(t *testing.T) {
 
 func TestNewSessionVars(t *testing.T) {
 	vars := NewSessionVars(nil)
-	require.Equal(t, vardef.On, vars.EnableRedactLog)
-	require.Equal(t, vardef.On, GetSysVar(vardef.TiDBRedactLog).Value)
+	require.Equal(t, On, vars.EnableRedactLog)
+	require.Equal(t, On, GetSysVar(TiDBRedactLog).Value)
 
 	require.Same(t, &vars.SQLKiller, vars.KVVars.KillSignalHandler)
 	require.Equal(t, DefIndexJoinBatchSize, vars.IndexJoinBatchSize)

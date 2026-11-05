@@ -1,75 +1,6 @@
 # IntegrationTest
 
-<<<<<<< HEAD
 IntegrationTest is a integration test command tool, also with some useful test cases for TiDB execute plan logic, we can run case via `run-tests.sh`.
-=======
-This directory contains the integration test suite for TiDB, including tools and test cases for validating TiDB's execution plan logic and end-to-end behavior. You can run these tests using either the classic `run-tests.sh` script or the next-generation `run-tests-next-gen.sh` script, which runs tests against a real TiKV cluster.
-
----
-
-## Quick Start
-
-### 1. Classic Integration Test Runner
-
-Run all integration tests with the default configuration:
-
-```sh
-./run-tests.sh
-```
-
-### 2. Next-Generation Runner (with Real TiKV Cluster)
-
-To run integration tests against a real TiKV cluster, use:
-
-```sh
-./run-tests-next-gen.sh [run-tests.sh options]
-```
-
-This script sets up a real cluster environment and then invokes `run-tests.sh` with your provided options.
-
-### 3. Diagnostic Mode Test
-
-Run the diagnostic-mode DDL integration test through the standard runner:
-
-```sh
-./run-tests.sh -t ddl/diagnostic_mode
-```
-
-The standard runner bootstraps a dedicated persistent UniStore with a normal
-TiDB, stops that server, and then starts TiDB with `--diagnostic-mode` against
-the same store. A full classic test run executes this case separately after the
-regular cases.
-
-The diagnostic test also verifies that the diagnostic TiDB log does not contain
-`start DDL`. Missing, unreadable or empty logs fail the test. This case does not
-support `-P`, because the runner must capture the diagnostic startup log.
-
-### 4. External Servers and Reused TiKV Stores
-
-Golden results require `tidb_redact_log = OFF` to preserve literal values in
-errors and EXPLAIN output. Before using `-P <port>` with an existing test server,
-connect to that server and run:
-
-```sql
-SET GLOBAL tidb_redact_log = OFF;
-```
-
-This changes the persisted global setting and disables log redaction on the
-server. Use a dedicated test server; restore its previous setting afterward if
-needed. The `-P` option skips server startup and does not apply `init.sql`.
-
-For servers started by the runner, `-initialize-sql-file init.sql` applies this
-setting only on first bootstrap. A reused TiKV store bootstrapped with this
-`init.sql` already has the setting, unless it was subsequently changed. If the
-store was bootstrapped without it, or redaction has since been enabled, run the
-same statement against the test server before running golden cases.
-
----
-
-## Script Options
-
-### `run-tests.sh` Options
->>>>>>> 47dc1214658 (session, lightning: enable log redaction by default (#72666))
 
 ```
 Usage: ./run-tests.sh [options]
@@ -90,13 +21,28 @@ Usage: ./run-tests.sh [options]
                     This option will be ignored if "-r <test-name>" is provided.
                     Run all tests if this option is not provided.
 
-    -P <port>: Use an existing tidb-server; first set its global tidb_redact_log to OFF.
-        See "External Servers and Reused TiKV Stores" above for persistence details.
-
     -v <vendor-path>: Add <vendor-path> to $GOPATH.
 
     -p <portgenerator-path>: Use port generator in <portgenerator-path> for generating port numbers.
 ```
+
+## Reused TiKV Stores
+
+Golden results require `tidb_redact_log = OFF` to preserve literal values in
+errors and EXPLAIN output. The runner passes `-initialize-sql-file init.sql`,
+which applies this setting only on first bootstrap. A reused TiKV store
+bootstrapped with this `init.sql` already has the setting, unless it was
+subsequently changed. If the store was bootstrapped without it, or redaction
+has since been enabled, run the following statement against the test server
+before running golden cases:
+
+```sql
+SET GLOBAL tidb_redact_log = OFF;
+```
+
+This changes the persisted global setting and disables log redaction on the
+server. Use a dedicated test server; restore its previous setting afterward if
+needed.
 
 ## How it works
 

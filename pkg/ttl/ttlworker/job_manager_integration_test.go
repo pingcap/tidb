@@ -326,30 +326,6 @@ func TestTriggerTTLJob(t *testing.T) {
 	tk.MustExec("insert into t values(3, ?)", expreDateStr)
 	tk.MustExec("insert into t values(4, ?)", nowDateStr)
 
-<<<<<<< HEAD
-=======
-	var ruMu sync.Mutex
-	scanJobs, deleteJobs := make(map[string]int), make(map[string]int)
-	var unexpectedJobSQL []string
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/observeStatementRUOwnerInstallForTest", func(stmt *executor.ExecStmt) {
-		if !stmt.Ctx.GetSessionVars().InRestrictedSQL {
-			return
-		}
-		// Classify the original SQL independently of log redaction.
-		sql := stmt.Text()
-		ruMu.Lock()
-		defer ruMu.Unlock()
-		if strings.HasPrefix(sql, "SELECT LOW_PRIORITY SQL_NO_CACHE") {
-			scanJobs[stmt.Ctx.GetSessionVars().TTLJobID]++
-		} else if strings.HasPrefix(sql, "DELETE LOW_PRIORITY FROM") {
-			deleteJobs[stmt.Ctx.GetSessionVars().TTLJobID]++
-		} else if stmt.Ctx.GetSessionVars().TTLJobID != "" &&
-			!strings.HasPrefix(sql, "BEGIN ") && sql != "COMMIT" && sql != "ROLLBACK" {
-			unexpectedJobSQL = append(unexpectedJobSQL, sql)
-		}
-	})
-
->>>>>>> 47dc1214658 (session, lightning: enable log redaction by default (#72666))
 	cli := do.TTLJobManager().GetCommandCli()
 	res, err := client.TriggerNewTTLJob(ctx, cli, "test", "t")
 	require.NoError(t, err)
