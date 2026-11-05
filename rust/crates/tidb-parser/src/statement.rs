@@ -33,10 +33,7 @@ impl Parser {
     }
 
     pub(crate) fn starts_parenthesized_query(&self) -> bool {
-        let mut offset = 0;
-        while self.peek_n(offset).kind == TokenKind::Op && self.peek_n(offset).text == "(" {
-            offset += 1;
-        }
+        let offset = self.open_parens_len();
         offset > 0 && self.is_query_start_at(offset)
     }
 
@@ -75,8 +72,8 @@ impl Parser {
                 AdminStmt::CreateStatistics(Box::new(self.parse_create_statistics()?)),
             )))
         } else if self.is_kw("DROP") && self.is_kw_at(1, "STATISTICS") {
-            self.bump();
-            self.bump();
+            self.advance();
+            self.advance();
             Ok(Stmt::Admin(tidb_ast::NodeBox::new(
                 AdminStmt::DropStatistics(self.bumped_table_name()),
             )))
@@ -88,9 +85,9 @@ impl Parser {
             && self.is_kw_at(1, "DISTRIBUTION")
             && self.is_kw_at(2, "JOB")
         {
-            self.bump();
-            self.bump();
-            self.bump();
+            self.advance();
+            self.advance();
+            self.advance();
             let token = self.bump();
             let job_id = token
                 .text
@@ -106,7 +103,7 @@ impl Parser {
         } else if self.is_kw("EXPLAIN") {
             self.parse_explain()
         } else if self.is_kw("DESCRIBE") || self.is_kw("DESC") {
-            self.bump();
+            self.advance();
             // Go gives all three leaders to `parseExplainStmt`.  A bare
             // table target is its ShowColumns/`DESC` normal form, while a
             // query, DML, or ALTER target remains an EXPLAIN wrapper even
@@ -133,8 +130,8 @@ impl Parser {
                 Box::new(self.parse_distribute_table()?),
             ))))
         } else if self.is_kw("LOAD") && self.is_kw_at(1, "STATS") {
-            self.bump();
-            self.bump();
+            self.advance();
+            self.advance();
             if self.peek().kind != TokenKind::Str {
                 return Err(self.err_here("expected LOAD STATS path string"));
             }
@@ -144,15 +141,15 @@ impl Parser {
                 }),
             ))))
         } else if self.is_kw("DROP") && self.is_kw_at(1, "STATS") {
-            self.bump();
-            self.bump();
+            self.advance();
+            self.advance();
             let mut tables = vec![self.parse_table_name()?];
             while self.is_op(",") {
-                self.bump();
+                self.advance();
                 tables.push(self.parse_table_name()?);
             }
             let global = if self.is_kw("GLOBAL") {
-                self.bump();
+                self.advance();
                 // Go `ErrWarnDeprecatedSyntax` (1287).
                 self.warn_coded(&crate::parser_errors::ERR_WARN_DEPRECATED_SYNTAX, "'DROP STATS ... GLOBAL' is deprecated and will be removed in a future release. Please use DROP STATS ... instead");
                 true
@@ -161,10 +158,10 @@ impl Parser {
             };
             let mut partitions = Vec::new();
             if self.is_kw("PARTITION") {
-                self.bump();
+                self.advance();
                 partitions.push(self.parse_non_string_ident_like_name()?);
                 while self.is_op(",") {
-                    self.bump();
+                    self.advance();
                     partitions.push(self.parse_non_string_ident_like_name()?);
                 }
                 // Go `ErrWarnDeprecatedSyntaxNoReplacement` (1681).
@@ -218,9 +215,9 @@ impl Parser {
                 Box::new(self.parse_import_into_stmt()?),
             ))))
         } else if self.is_kw("CANCEL") && self.is_kw_at(1, "IMPORT") && self.is_kw_at(2, "JOB") {
-            self.bump();
-            self.bump();
-            self.bump();
+            self.advance();
+            self.advance();
+            self.advance();
             let token = self.bump();
             if token.kind != TokenKind::IntLit {
                 return Err(self.err_here("expected import job ID"));
@@ -463,16 +460,16 @@ impl Parser {
                 Box::new(self.parse_drop_binding()?),
             ))))
         } else if self.is_kw("DROP") && self.is_kw_at(1, "VIEW") {
-            self.bump(); // DROP
-            self.bump(); // VIEW
+            self.advance(); // DROP
+            self.advance(); // VIEW
             let if_exists = self.parse_if_exists()?;
             let mut names = vec![self.parse_table_name()?];
             while self.is_op(",") {
-                self.bump();
+                self.advance();
                 names.push(self.parse_table_name()?);
             }
             if self.is_kw("RESTRICT") || self.is_kw("CASCADE") {
-                self.bump();
+                self.advance();
             }
             Ok(Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::DropView {
                 if_exists,
@@ -480,8 +477,8 @@ impl Parser {
             })))
         } else if self.is_kw("DROP") && (self.is_kw_at(1, "DATABASE") || self.is_kw_at(1, "SCHEMA"))
         {
-            self.bump(); // DROP
-            self.bump(); // DATABASE / SCHEMA
+            self.advance(); // DROP
+            self.advance(); // DATABASE / SCHEMA
             let if_exists = self.parse_if_exists()?;
             Ok(Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::DropDatabase {
                 if_exists,
@@ -503,16 +500,16 @@ impl Parser {
         } else if self.is_kw("TRUNCATE") {
             // `TRUNCATE [TABLE] name` — the `TABLE` keyword is optional
             // (always restored). A single table only.
-            self.bump();
+            self.advance();
             if self.is_kw("TABLE") {
-                self.bump();
+                self.advance();
             }
             Ok(Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::TruncateTable(
                 Box::new(self.parse_table_name()?),
             ))))
         } else if self.is_kw("USE") {
             // `USE dbname` — a single database identifier.
-            self.bump();
+            self.advance();
             Ok(Stmt::Session(tidb_ast::NodeBox::new(SessionStmt::Use(
                 // Go's parseUseStmt uses isIdentLike: non-reserved
                 // keywords such as PLAN_CACHE are valid bare database names,
@@ -522,7 +519,7 @@ impl Parser {
                 self.parse_ident_like_name()?,
             ))))
         } else if self.is_kw("PREPARE") {
-            self.bump();
+            self.advance();
             let name = self.parse_name_or_keyword()?;
             self.expect_kw("FROM")?;
             let source = if self.at_user_variable() {
@@ -536,21 +533,21 @@ impl Parser {
                 SessionStmt::Prepare { name, source },
             )))
         } else if self.is_kw("EXECUTE") {
-            self.bump();
+            self.advance();
             // Go's `parseExecuteStmt` uses its ident-like `parseName`
             // production, so a non-reserved keyword is a valid prepared
             // statement name here (unlike generic strict identifier slots).
             let name = self.parse_name_or_keyword()?;
             let mut using = Vec::new();
             if self.is_kw("USING") {
-                self.bump();
+                self.advance();
                 loop {
                     if !self.at_user_variable() {
                         return Err(self.err_here("expected an @variable in USING"));
                     }
                     using.push(Expr::UserVar(self.bumped_at_name()));
                     if self.is_op(",") {
-                        self.bump();
+                        self.advance();
                     } else {
                         break;
                     }
@@ -560,8 +557,8 @@ impl Parser {
                 SessionStmt::Execute { name, using },
             )))
         } else if (self.is_kw("DEALLOCATE") || self.is_kw("DROP")) && self.is_kw_at(1, "PREPARE") {
-            self.bump(); // DEALLOCATE / DROP
-            self.bump(); // PREPARE
+            self.advance(); // DEALLOCATE / DROP
+            self.advance(); // PREPARE
             Ok(Stmt::Session(tidb_ast::NodeBox::new(
                 SessionStmt::Deallocate(self.parse_name_or_keyword()?),
             )))
@@ -613,16 +610,16 @@ impl Parser {
                 self.parse_set_stmt()?,
             )))
         } else if self.is_kw("BEGIN") {
-            self.bump();
+            self.advance();
             // Go's hand parser (`parseBeginStmt`) carries an explicit
             // PESSIMISTIC/OPTIMISTIC token in `ast.BeginStmt.Mode`; it is
             // not merely execution metadata because AST restore preserves
             // the selected `BEGIN` spelling.
             let mode = if self.is_kw("OPTIMISTIC") {
-                self.bump();
+                self.advance();
                 TransactionMode::Optimistic
             } else if self.is_kw("PESSIMISTIC") {
-                self.bump();
+                self.advance();
                 TransactionMode::Pessimistic
             } else {
                 TransactionMode::Default
@@ -634,8 +631,8 @@ impl Parser {
                 }),
             ))))
         } else if self.is_kw("START") && self.is_kw_at(1, "TRANSACTION") {
-            self.bump(); // START
-            self.bump(); // TRANSACTION
+            self.advance(); // START
+            self.advance(); // TRANSACTION
                          // Mirrors Go's `parseBeginStmt` directly. `READ WRITE` and
                          // `WITH CONSISTENT SNAPSHOT` are intentionally represented by
                          // the all-default payload because Go restores both as a bare
@@ -643,25 +640,25 @@ impl Parser {
                          // are AST-visible and cannot be collapsed.
             let mut begin = BeginStmt::default();
             if self.is_kw("READ") {
-                self.bump();
+                self.advance();
                 if self.is_kw("WRITE") {
-                    self.bump();
+                    self.advance();
                 } else if self.is_kw("ONLY") {
-                    self.bump();
+                    self.advance();
                     begin.read_only = true;
                     if self.is_kw("AS OF") {
-                        self.bump();
+                        self.advance();
                         self.expect_kw("TIMESTAMP")?;
                         begin.as_of = Some(self.parse_expr(prec::NONE)?);
                     }
                 }
             } else if self.is_kw("WITH") {
-                self.bump();
+                self.advance();
                 if self.is_kw("CONSISTENT") {
-                    self.bump();
+                    self.advance();
                     self.expect_kw("SNAPSHOT")?;
                 } else if self.is_kw("CAUSAL") {
-                    self.bump();
+                    self.advance();
                     self.expect_kw("CONSISTENCY")?;
                     self.expect_kw("ONLY")?;
                     begin.causal_consistency_only = true;
@@ -671,16 +668,16 @@ impl Parser {
                 Box::new(begin),
             ))))
         } else if self.is_kw("COMMIT") {
-            self.bump();
+            self.advance();
             let completion = self.parse_completion_type()?;
             Ok(Stmt::Session(tidb_ast::NodeBox::new(SessionStmt::Commit(
                 completion,
             ))))
         } else if self.is_kw("ROLLBACK") && self.is_kw_at(1, "TO") {
-            self.bump(); // ROLLBACK
-            self.bump(); // TO
+            self.advance(); // ROLLBACK
+            self.advance(); // TO
             if self.is_kw("SAVEPOINT") {
-                self.bump();
+                self.advance();
             }
             let name = self.parse_name_or_keyword()?;
             Ok(Stmt::Session(tidb_ast::NodeBox::new(
@@ -690,7 +687,7 @@ impl Parser {
                 },
             )))
         } else if self.is_kw("ROLLBACK") {
-            self.bump();
+            self.advance();
             let completion = self.parse_completion_type()?;
             Ok(Stmt::Session(tidb_ast::NodeBox::new(
                 SessionStmt::Rollback {
@@ -699,13 +696,13 @@ impl Parser {
                 },
             )))
         } else if self.is_kw("SAVEPOINT") {
-            self.bump();
+            self.advance();
             let name = self.parse_name_or_keyword()?;
             Ok(Stmt::Session(tidb_ast::NodeBox::new(
                 SessionStmt::Savepoint(Box::new(name)),
             )))
         } else if self.is_kw("RELEASE") {
-            self.bump();
+            self.advance();
             self.expect_kw("SAVEPOINT")?;
             let name = self.parse_name_or_keyword()?;
             Ok(Stmt::Session(tidb_ast::NodeBox::new(
@@ -767,11 +764,11 @@ impl Parser {
 
     fn parse_completion_type(&mut self) -> PResult<CompletionType> {
         if self.is_kw("AND") {
-            self.bump();
+            self.advance();
             if self.is_kw("CHAIN") {
-                self.bump();
+                self.advance();
                 if self.is_kw("NO") {
-                    self.bump();
+                    self.advance();
                     self.expect_kw("RELEASE")?;
                 }
                 return Ok(CompletionType::Chain);
@@ -780,21 +777,21 @@ impl Parser {
             self.expect_kw("NO")?;
             self.expect_kw("CHAIN")?;
             if self.is_kw("RELEASE") {
-                self.bump();
+                self.advance();
                 return Ok(CompletionType::Release);
             }
             if self.is_kw("NO") {
-                self.bump();
+                self.advance();
                 self.expect_kw("RELEASE")?;
             }
             return Ok(CompletionType::Default);
         }
         if self.is_kw("RELEASE") {
-            self.bump();
+            self.advance();
             return Ok(CompletionType::Release);
         }
         if self.is_kw("NO") {
-            self.bump();
+            self.advance();
             self.expect_kw("RELEASE")?;
         }
         Ok(CompletionType::Default)

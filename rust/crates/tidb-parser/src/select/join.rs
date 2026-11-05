@@ -48,7 +48,7 @@ impl Parser {
         // `MEMBER OF` two-word merges), so this checks for that single
         // token, not two.
         let (alias, as_of) = if self.is_kw("AS OF") {
-            self.bump(); // AS OF
+            self.advance(); // AS OF
             self.expect_kw("TIMESTAMP")?;
             (None, Some(Box::new(self.parse_expr(prec::NONE)?)))
         } else {
@@ -80,8 +80,8 @@ impl Parser {
     /// becoming a general identifier in DDL or expression paths.
     pub(crate) fn parse_table_name_path(&mut self) -> PResult<Vec<String>> {
         if self.is_op("*") && self.is_op_at(1, ".") && is_name_or_keyword(self.peek_n(2)) {
-            self.bump(); // wildcard schema
-            self.bump(); // '.'
+            self.advance(); // wildcard schema
+            self.advance(); // '.'
             return Ok(vec!["*".to_owned(), self.parse_name_or_keyword()?]);
         }
         self.parse_name_path()
@@ -96,15 +96,15 @@ impl Parser {
         if !self.is_kw("TABLESAMPLE") {
             return Ok(None);
         }
-        self.bump();
+        self.advance();
         let method = if self.is_kw("SYSTEM") {
-            self.bump();
+            self.advance();
             Some(SampleMethod::System)
         } else if self.is_kw("BERNOULLI") {
-            self.bump();
+            self.advance();
             Some(SampleMethod::Bernoulli)
         } else if self.is_kw("REGION") || self.is_kw("REGIONS") {
-            self.bump();
+            self.advance();
             Some(SampleMethod::Region)
         } else {
             None
@@ -115,10 +115,10 @@ impl Parser {
         } else {
             let expr = self.parse_expr(prec::NONE)?;
             let unit = if self.is_kw("PERCENT") {
-                self.bump();
+                self.advance();
                 Some(SampleUnit::Percent)
             } else if self.is_kw("ROWS") {
-                self.bump();
+                self.advance();
                 Some(SampleUnit::Rows)
             } else {
                 None
@@ -127,7 +127,7 @@ impl Parser {
         };
         self.expect_op(")")?;
         let repeatable = if self.is_kw("REPEATABLE") {
-            self.bump();
+            self.advance();
             self.expect_op("(")?;
             let seed = self.parse_expr(prec::NONE)?;
             self.expect_op(")")?;
@@ -161,31 +161,31 @@ impl Parser {
     /// Ident-or-Keyword acceptance.
     fn parse_index_hint(&mut self) -> PResult<tidb_ast::IndexHint> {
         let kind = if self.is_kw("USE") {
-            self.bump();
+            self.advance();
             tidb_ast::IndexHintKind::Use
         } else if self.is_kw("FORCE") {
-            self.bump();
+            self.advance();
             tidb_ast::IndexHintKind::Force
         } else {
-            self.bump(); // IGNORE
+            self.advance(); // IGNORE
             tidb_ast::IndexHintKind::Ignore
         };
         if self.is_kw("INDEX") || self.is_kw("KEY") {
-            self.bump();
+            self.advance();
         } else {
             return Err(self.err_here("expected INDEX or KEY"));
         }
         let scope = if self.is_kw("FOR") {
-            self.bump();
+            self.advance();
             if self.is_kw("JOIN") {
-                self.bump();
+                self.advance();
                 tidb_ast::IndexHintScope::Join
             } else if self.is_kw("ORDER") {
-                self.bump();
+                self.advance();
                 self.expect_kw("BY")?;
                 tidb_ast::IndexHintScope::OrderBy
             } else if self.is_kw("GROUP") {
-                self.bump();
+                self.advance();
                 self.expect_kw("BY")?;
                 tidb_ast::IndexHintScope::GroupBy
             } else {
@@ -199,7 +199,7 @@ impl Parser {
         if !self.is_op(")") {
             indexes.push(self.parse_index_hint_name()?);
             while self.is_op(",") {
-                self.bump();
+                self.advance();
                 indexes.push(self.parse_index_hint_name()?);
             }
         }
@@ -257,7 +257,7 @@ impl Parser {
         let mut has_comma = false;
         while self.is_op(",") {
             has_comma = true;
-            self.bump();
+            self.advance();
             let right = self.parse_join_table()?;
             refs = Join {
                 left: JoinNode::Join(Box::new(refs)),
@@ -294,7 +294,7 @@ impl Parser {
             // uses.
             let natural = self.is_kw("NATURAL");
             if natural {
-                self.bump();
+                self.advance();
                 if self.is_kw("INNER") || self.is_kw("CROSS") || self.is_kw("STRAIGHT_JOIN") {
                     return Err(
                         self.err_here("NATURAL cannot be combined with INNER/CROSS/STRAIGHT_JOIN")
@@ -426,7 +426,7 @@ impl Parser {
         // extra multi-paren lookahead needed here since the `(` right
         // after `LATERAL` is unambiguous.
         if self.is_kw("LATERAL") {
-            self.bump();
+            self.advance();
             self.expect_op("(")?;
             let query_start = self.peek().offset;
             let subquery = self.parse_derived_query_payload()?;
@@ -438,15 +438,15 @@ impl Parser {
             }
             self.expect_op(")")?;
             if self.is_kw("AS") {
-                self.bump();
+                self.advance();
             }
             let alias = self.parse_name()?;
             let mut column_names = Vec::new();
             if self.is_op("(") {
-                self.bump();
+                self.advance();
                 column_names.push(self.parse_name()?);
                 while self.is_op(",") {
-                    self.bump();
+                    self.advance();
                     column_names.push(self.parse_name()?);
                 }
                 self.expect_op(")")?;
@@ -467,7 +467,7 @@ impl Parser {
         // this distinction the generic derived-table branch below consumes
         // the outer `(` and incorrectly expects `)` before the alias/join.
         if self.starts_parenthesized_derived_join() {
-            self.bump(); // structural outer `(`
+            self.advance(); // structural outer `(`
             let grouped = self.parse_join_table()?;
             self.expect_op(")")?;
             let mut grouped = match grouped {
@@ -487,7 +487,7 @@ impl Parser {
             return Ok(JoinNode::Join(grouped));
         }
         if self.looks_like_derived_table() {
-            self.bump(); // (
+            self.advance(); // (
             let query_start = self.peek().offset;
             let subquery = self.parse_derived_query_payload()?;
             let query_end = self.peek().offset;
@@ -528,7 +528,7 @@ impl Parser {
         // allows a comma-joined list inside these parens too, not just a
         // single explicit-`JOIN` chain.
         if self.is_op("(") {
-            self.bump();
+            self.advance();
             let mut inner = self.parse_from()?;
             self.expect_op(")")?;
             inner.explicit_parens = true;
@@ -567,10 +567,7 @@ impl Parser {
     /// bounded lookahead ring, unlike real TiDB's own streaming lexer
     /// bridge) makes this safe to do unconditionally.
     fn looks_like_derived_table(&self) -> bool {
-        let mut n = 0;
-        while self.peek_n(n).kind == TokenKind::Op && self.peek_n(n).text == "(" {
-            n += 1;
-        }
+        let n = self.open_parens_len();
         // go's `parseTableSource` accepts `VALUES ROW(...), ...` as a
         // derived-table payload too (the oracle parses the payload and only
         // fails at a following column-alias list).
@@ -589,28 +586,9 @@ impl Parser {
         if !self.is_op("(") || !self.is_op_at(1, "(") {
             return false;
         }
-        let mut depth = 0usize;
-        let mut offset = 1usize;
-        loop {
-            let token = self.peek_n(offset);
-            if token.kind == TokenKind::Eof {
-                return false;
-            }
-            match token.text.as_str() {
-                "(" => depth += 1,
-                ")" => {
-                    depth = match depth.checked_sub(1) {
-                        Some(depth) => depth,
-                        None => return false,
-                    };
-                    if depth == 0 {
-                        break;
-                    }
-                }
-                _ => {}
-            }
-            offset += 1;
-        }
+        let Some(offset) = self.matching_paren_offset(1) else {
+            return false;
+        };
         // The factor after the immediate inner close is either `AS alias`
         // or a bare alias. This selected Go grammar then requires an explicit
         // join inside the still-open outer grouping paren.
@@ -654,34 +632,34 @@ impl Parser {
     /// `STRAIGHT_JOIN`, or `{LEFT|RIGHT} [OUTER] JOIN`.
     fn consume_join_kind(&mut self) {
         if self.is_kw("STRAIGHT_JOIN") {
-            self.bump();
+            self.advance();
             return;
         }
         if self.is_kw("INNER") || self.is_kw("CROSS") {
-            self.bump();
+            self.advance();
         } else if self.is_kw("LEFT") || self.is_kw("RIGHT") {
-            self.bump();
+            self.advance();
             if self.is_kw("OUTER") {
-                self.bump();
+                self.advance();
             }
         }
         // The trailing JOIN keyword (present for every form except STRAIGHT_JOIN).
         if self.is_kw("JOIN") {
-            self.bump();
+            self.advance();
         }
     }
 
     /// Parses an optional `ON expr` or `USING (col, ...)` join condition.
     fn parse_join_cond(&mut self) -> PResult<(Option<Expr>, Vec<String>)> {
         if self.is_kw("ON") {
-            self.bump();
+            self.advance();
             Ok((Some(self.parse_expr(prec::NONE)?), Vec::new()))
         } else if self.is_kw("USING") {
-            self.bump();
+            self.advance();
             self.expect_op("(")?;
             let mut names = vec![self.parse_name()?];
             while self.is_op(",") {
-                self.bump();
+                self.advance();
                 names.push(self.parse_name()?);
             }
             self.expect_op(")")?;

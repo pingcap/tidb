@@ -38,11 +38,11 @@ impl Parser {
         let window_name = window_name_as_written(&written);
         self.expect_op("(")?;
         if self.is_op("*") {
-            self.bump();
+            self.advance();
             self.expect_op(")")?;
             let arg = Expr::Int("1".to_string());
             if self.is_kw("OVER") {
-                self.bump();
+                self.advance();
                 let over = self.parse_over_clause()?;
                 return Ok(Expr::Window {
                     name: window_name,
@@ -61,11 +61,11 @@ impl Parser {
             });
         }
         let distinct = if self.is_kw("DISTINCT") || self.is_kw("DISTINCTROW") {
-            self.bump();
+            self.advance();
             true
         } else {
             if self.is_kw("ALL") {
-                self.bump(); // ALL is the default
+                self.advance(); // ALL is the default
             }
             false
         };
@@ -73,7 +73,7 @@ impl Parser {
             if name == "COUNT" {
                 return Err(self.err_here("COUNT does not accept DISTINCT ALL"));
             }
-            self.bump();
+            self.advance();
         }
         if distinct
             && matches!(
@@ -87,9 +87,9 @@ impl Parser {
         // not just the first (`JSON_OBJECTAGG(c1, ALL c2)` parses).
         let mut args = vec![self.parse_expr(prec::NONE)?];
         while self.is_op(",") {
-            self.bump();
+            self.advance();
             if self.is_kw("ALL") {
-                self.bump();
+                self.advance();
             }
             args.push(self.parse_expr(prec::NONE)?);
         }
@@ -112,7 +112,7 @@ impl Parser {
             return Err(self.err_here("JSON_OBJECTAGG takes exactly two arguments"));
         }
         if self.is_kw("OVER") {
-            self.bump();
+            self.advance();
             let over = self.parse_over_clause()?;
             return Ok(Expr::Window {
                 name: window_name,
@@ -159,7 +159,7 @@ impl Parser {
             _ => {
                 let mut args = vec![self.parse_expr(prec::NONE)?];
                 if self.is_op(",") {
-                    self.bump();
+                    self.advance();
                     // go's yacc grammar for the offset slot refuses a unary
                     // minus AT the sign token (oracle g-window2:
                     // `LAG(v, -1) OVER ...` errors 1064 near "-1) OVER ...",
@@ -171,7 +171,7 @@ impl Parser {
                     }
                     args.push(self.parse_expr(prec::NONE)?);
                     if self.is_op(",") {
-                        self.bump();
+                        self.advance();
                         args.push(self.parse_expr(prec::NONE)?);
                     }
                 }
@@ -180,13 +180,13 @@ impl Parser {
         };
         self.expect_op(")")?;
         let from_last = if self.is_kw("FROM") && self.is_kw_at(1, "LAST") {
-            self.bump();
-            self.bump();
+            self.advance();
+            self.advance();
             true
         } else {
             if self.is_kw("FROM") && self.is_kw_at(1, "FIRST") {
-                self.bump();
-                self.bump();
+                self.advance();
+                self.advance();
             } else if self.is_kw("FROM") {
                 // go's nth_value production consumes `FROM` expecting
                 // FIRST|LAST: a stray FROM (the query's own clause, when the
@@ -194,20 +194,20 @@ impl Parser {
                 // g-window2: `NTH_VALUE(s, 2) FROM w2` errors 1064 near
                 // "w2").
                 if name == "NTH_VALUE" {
-                    self.bump();
+                    self.advance();
                     return Err(self.err_here(""));
                 }
             }
             false
         };
         let ignore_nulls = if self.is_kw("IGNORE") && self.is_kw_at(1, "NULLS") {
-            self.bump();
-            self.bump();
+            self.advance();
+            self.advance();
             true
         } else {
             if self.is_kw("RESPECT") && self.is_kw_at(1, "NULLS") {
-                self.bump();
-                self.bump();
+                self.advance();
+                self.advance();
             }
             false
         };
@@ -268,24 +268,24 @@ impl Parser {
         };
         let mut partition_by = Vec::new();
         if self.is_kw("PARTITION") {
-            self.bump();
+            self.advance();
             self.expect_kw("BY")?;
             partition_by = self.parse_expr_list()?;
         }
         let mut order_by = Vec::new();
         if self.is_kw("ORDER") {
-            self.bump();
+            self.advance();
             self.expect_kw("BY")?;
             order_by = self.parse_order_list()?;
         }
         let frame = if self.is_kw("ROWS") {
-            self.bump();
+            self.advance();
             Some(self.parse_window_frame(FrameKind::Rows)?)
         } else if self.is_kw("RANGE") {
-            self.bump();
+            self.advance();
             Some(self.parse_window_frame(FrameKind::Range)?)
         } else if self.is_kw("GROUPS") {
-            self.bump();
+            self.advance();
             Some(self.parse_window_frame(FrameKind::Groups)?)
         } else {
             None
@@ -309,7 +309,7 @@ impl Parser {
     /// one shape past this point, for EITHER kind).
     fn parse_window_frame(&mut self, kind: FrameKind) -> PResult<WindowFrame> {
         if self.is_kw("BETWEEN") {
-            self.bump();
+            self.advance();
             let start = self.parse_frame_bound()?;
             self.expect_kw("AND")?;
             let end = self.parse_frame_bound()?;
@@ -333,22 +333,22 @@ impl Parser {
     /// (nonsensical) boolean expression.
     fn parse_frame_bound(&mut self) -> PResult<FrameBound> {
         if self.is_kw("UNBOUNDED") {
-            self.bump();
+            self.advance();
             if self.is_kw("PRECEDING") {
-                self.bump();
+                self.advance();
                 return Ok(FrameBound::UnboundedPreceding);
             }
             self.expect_kw("FOLLOWING")?;
             return Ok(FrameBound::UnboundedFollowing);
         }
         if self.is_kw("CURRENT") {
-            self.bump();
+            self.advance();
             self.expect_kw("ROW")?;
             return Ok(FrameBound::CurrentRow);
         }
         let n = self.parse_expr(prec::PREDICATE + 1)?;
         if self.is_kw("PRECEDING") {
-            self.bump();
+            self.advance();
             return Ok(FrameBound::Preceding(Box::new(n)));
         }
         self.expect_kw("FOLLOWING")?;
@@ -372,14 +372,14 @@ impl Parser {
         let written = self.bump().text.clone(); // GROUP_CONCAT
         self.expect_op("(")?;
         let distinct = if self.is_kw("DISTINCT") || self.is_kw("DISTINCTROW") {
-            self.bump();
+            self.advance();
             true
         } else {
             false
         };
         let mut args = vec![self.parse_expr(prec::NONE)?];
         while self.is_op(",") {
-            self.bump();
+            self.advance();
             args.push(self.parse_expr(prec::NONE)?);
         }
         // `ORDER BY` controls the row order within the concatenated
@@ -388,26 +388,26 @@ impl Parser {
         // same `parse_order_list`, confirmed via `godump restore`:
         // `GROUP_CONCAT(a, b ORDER BY 1 DESC, a)`.
         let order_by = if self.is_kw("ORDER") {
-            self.bump();
+            self.advance();
             self.expect_kw("BY")?;
             self.parse_order_list()?
         } else {
             Vec::new()
         };
         let separator = if self.is_kw("SEPARATOR") {
-            self.bump();
+            self.advance();
             let t = self.peek().clone();
             if t.kind != TokenKind::Str {
                 return Err(self.err_here("expected a string literal after SEPARATOR"));
             }
-            self.bump();
+            self.advance();
             self.decode_string(&t.text)
         } else {
             ",".to_string()
         };
         self.expect_op(")")?;
         if self.is_kw("OVER") {
-            self.bump();
+            self.advance();
             let over = self.parse_over_clause()?;
             // `order_by`/`separator` were consumed above to stay on-grammar
             // (Go's own hand-written parser parses them into the aggregate

@@ -71,7 +71,7 @@ impl Parser {
                 if no_more_predicate || min_prec > prec::PREDICATE {
                     break;
                 }
-                self.bump(); // NOT
+                self.advance(); // NOT
                 left = self.parse_predicate(left, true)?;
                 no_more_predicate = true;
                 continue;
@@ -81,7 +81,7 @@ impl Parser {
                 // cannot complete a NOT IN/LIKE/BETWEEN/REGEXP predicate.
                 // Consume it so the reported yacc boundary belongs to the
                 // actual unexpected token, not to NOT itself.
-                self.bump();
+                self.advance();
                 return Err(self.err_here("expected a predicate after NOT"));
             }
             if self.is_kw("IN")
@@ -125,7 +125,7 @@ impl Parser {
                 if min_prec > prec::COLLATE {
                     break;
                 }
-                self.bump(); // COLLATE
+                self.advance(); // COLLATE
                 let raw = self.parse_using_charset_name()?;
                 let collation = collation_name(&raw)
                     .ok_or_else(|| {
@@ -171,7 +171,7 @@ impl Parser {
                     break;
                 }
                 let unquote = self.is_op("->>");
-                self.bump();
+                self.advance();
                 if self.peek().kind != TokenKind::Str {
                     return Err(
                         self.err_here("-> requires a string literal JSON path on the right side")
@@ -210,7 +210,7 @@ impl Parser {
                 if no_more_predicate || min_prec > prec::PREDICATE {
                     break;
                 }
-                self.bump();
+                self.advance();
                 self.expect_op("(")?;
                 let array = self.parse_expr(prec::UNARY)?;
                 self.expect_op(")")?;
@@ -230,7 +230,7 @@ impl Parser {
                 if prec::CONCAT < min_prec {
                     break;
                 }
-                self.bump();
+                self.advance();
                 let right = self.parse_expr(prec::CONCAT + 1)?; // left-associative
                 left = Expr::Func {
                     name: "concat".to_string(),
@@ -247,14 +247,14 @@ impl Parser {
             if p < min_prec {
                 break;
             }
-            self.bump(); // operator
+            self.advance(); // operator
 
             // `expr <cmp> ANY|SOME|ALL (subquery)` at comparison precedence.
             if p == prec::COMPARISON
                 && (self.is_kw("ANY") || self.is_kw("SOME") || self.is_kw("ALL"))
             {
                 let all = self.is_kw("ALL");
-                self.bump(); // ANY / SOME / ALL
+                self.advance(); // ANY / SOME / ALL
                 let subquery = self.parse_query_subquery()?;
                 left = Expr::CompareSubquery {
                     op,
@@ -364,7 +364,7 @@ impl Parser {
         let t = self.peek().clone();
         match t.kind {
             TokenKind::Op if t.text == "?" => {
-                self.bump();
+                self.advance();
                 Ok(Expr::ParamMarker {
                     offset: t.offset,
                     order: self.next_param_marker_position(),
@@ -374,15 +374,15 @@ impl Parser {
                 })
             }
             TokenKind::IntLit => {
-                self.bump();
+                self.advance();
                 Ok(Expr::Int(t.text))
             }
             TokenKind::DecLit => {
-                self.bump();
+                self.advance();
                 Ok(Expr::Decimal(t.text))
             }
             TokenKind::FloatLit => {
-                self.bump();
+                self.advance();
                 let f = t
                     .text
                     .parse::<f64>()
@@ -412,11 +412,11 @@ impl Parser {
                 // 0X.. is rejected. Keep that contract in the shared helper so
                 // this arm and the charset-introduced arm cannot drift.
                 let digits = normalize_hex(&t.text).map_err(|reason| self.err_here(reason))?;
-                self.bump();
+                self.advance();
                 Ok(Expr::Hex(digits))
             }
             TokenKind::BitLit => {
-                self.bump();
+                self.advance();
                 Ok(Expr::Bit(bit_literal_digits(&t.text)))
             }
             // MySQL/TiDB concatenates adjacent bare string-literal tokens:
@@ -439,7 +439,7 @@ impl Parser {
             // `case stringLit:` arm is likewise never reached for an
             // `N`/charset-introduced literal either.
             TokenKind::Str => {
-                self.bump();
+                self.advance();
                 let mut val = self.decode_string(&t.text);
                 let first_len = val.len();
                 let mut concatenated = false;
@@ -467,7 +467,7 @@ impl Parser {
             // restoring as `_LATIN1'a' AS \`b\`` instead (the bare `'b'`
             // token is left for the caller's own implicit-alias parsing).
             TokenKind::CharsetIntroducer => {
-                self.bump();
+                self.advance();
                 // The scanner recognizes every name in TiDB's charset table,
                 // but Go's `parseCharsetIntroducer` immediately validates it
                 // through `charset.GetDefaultCollationLegacy`. Keep that
@@ -507,7 +507,7 @@ impl Parser {
                     TokenKind::HexLit => {
                         let digits = normalize_hex(&self.peek().text)
                             .map_err(|reason| self.err_here(reason))?;
-                        self.bump();
+                        self.advance();
                         if charset == "binary" {
                             Ok(Expr::Hex(digits))
                         } else if charset == "utf8mb4" {
@@ -618,15 +618,15 @@ impl Parser {
             }
             TokenKind::Keyword => match t.text.to_ascii_uppercase().as_str() {
                 "NULL" => {
-                    self.bump();
+                    self.advance();
                     Ok(Expr::Null)
                 }
                 "TRUE" => {
-                    self.bump();
+                    self.advance();
                     Ok(Expr::Bool(true))
                 }
                 "FALSE" => {
-                    self.bump();
+                    self.advance();
                     Ok(Expr::Bool(false))
                 }
                 // These nine (unlike `NOW`/`CURDATE`/`CURTIME`) have a
@@ -645,7 +645,7 @@ impl Parser {
                     if !(self.peek_n(1).kind == TokenKind::Op && self.peek_n(1).text == "(") =>
                 {
                     let name = t.text.to_ascii_uppercase();
-                    self.bump();
+                    self.advance();
                     Ok(Expr::Func {
                         name,
                         args: vec![],
@@ -661,7 +661,7 @@ impl Parser {
                     if min_prec > precedence {
                         return Err(self.err_here("NOT not allowed at this precedence"));
                     }
-                    self.bump();
+                    self.advance();
                     let e = self.parse_expr(precedence)?;
                     if let Expr::Exists { subquery, not } = e {
                         Ok(Expr::Exists {
@@ -682,7 +682,7 @@ impl Parser {
                 // `[NOT] EXISTS (subquery)`; `NOT` is handled by the unary path,
                 // so restore of `NOT EXISTS (...)` matches.
                 "EXISTS" => {
-                    self.bump();
+                    self.advance();
                     let subquery = self.parse_query_subquery()?;
                     Ok(Expr::Exists {
                         subquery,
@@ -799,9 +799,9 @@ impl Parser {
                 // anything — a bare `SELECT next, value FROM t` (unrelated
                 // uses of these names) is unaffected.
                 "NEXT" if self.is_kw_at(1, "VALUE") && self.is_kw_at(2, "FOR") => {
-                    self.bump(); // NEXT
-                    self.bump(); // VALUE
-                    self.bump(); // FOR
+                    self.advance(); // NEXT
+                    self.advance(); // VALUE
+                    self.advance(); // FOR
                     let path = self.parse_name_path()?;
                     Ok(Expr::Func {
                         name: "NEXTVAL".to_string(),
@@ -891,7 +891,7 @@ impl Parser {
                 // it to a plain `Expr::Func` call, which restores subtly
                 // differently.
                 "MOD" => {
-                    self.bump();
+                    self.advance();
                     self.expect_op("(")?;
                     let left = self.parse_expr(prec::NONE)?;
                     self.expect_op(",")?;
@@ -911,13 +911,13 @@ impl Parser {
                 // their own name unchanged — already covered by
                 // `is_scalar_kw_func` above, needing no rename here.
                 "INSERT" => {
-                    self.bump();
+                    self.advance();
                     self.expect_op("(")?;
                     let mut args = Vec::new();
                     if !self.is_op(")") {
                         args.push(self.parse_expr(prec::NONE)?);
                         while self.is_op(",") {
-                            self.bump();
+                            self.advance();
                             args.push(self.parse_expr(prec::NONE)?);
                         }
                     }
@@ -1011,7 +1011,7 @@ impl Parser {
                         let sub = self.parse_query_subquery()?;
                         Ok(Expr::Subquery(sub))
                     } else {
-                        self.bump();
+                        self.advance();
                         let e = self.parse_expr(prec::NONE)?;
                         if matches!(e, Expr::Interval { .. }) {
                             return Err(self.err_here("INTERVAL is not a standalone expression"));
@@ -1019,7 +1019,7 @@ impl Parser {
                         if self.is_op(",") {
                             let mut values = vec![e];
                             while self.is_op(",") {
-                                self.bump();
+                                self.advance();
                                 let value = self.parse_expr(prec::NONE)?;
                                 if matches!(value, Expr::Interval { .. }) {
                                     return Err(
@@ -1045,7 +1045,7 @@ impl Parser {
             },
             TokenKind::Ident => self.parse_ident_or_func(),
             TokenKind::UserVar => {
-                self.bump();
+                self.advance();
                 let var = self
                     .parse_variable(&t.text)
                     .ok_or_else(|| self.err_here("malformed variable"))?;
@@ -1059,7 +1059,7 @@ impl Parser {
                 // `p.parseExpression(precNone)`, so a further nested
                 // `:=` naturally chains right-associatively.
                 if self.is_op(":=") {
-                    self.bump();
+                    self.advance();
                     let name = match var {
                         Expr::UserVar(name) | Expr::SysVar { name, .. } => name,
                         _ => unreachable!("parse_variable only ever returns UserVar or SysVar"),
@@ -1078,7 +1078,7 @@ impl Parser {
 
     /// Unary `+ - ~ !` bind at `precUnary` (see `parseUnaryOp`).
     fn unary(&mut self, op: UnaryOp) -> PResult<Expr> {
-        self.bump();
+        self.advance();
         let e = self.parse_expr(prec::UNARY)?;
         Ok(Expr::Unary(op, Box::new(e)))
     }

@@ -105,7 +105,7 @@ impl Parser {
     pub(crate) fn parse_with_clause(&mut self) -> PResult<WithClause> {
         self.expect_kw("WITH")?;
         let recursive = if self.is_kw("RECURSIVE") {
-            self.bump();
+            self.advance();
             true
         } else {
             false
@@ -121,10 +121,10 @@ impl Parser {
             let name = self.parse_name_or_keyword()?;
             let mut columns = Vec::new();
             if self.is_op("(") {
-                self.bump();
+                self.advance();
                 columns.push(self.parse_name_or_keyword()?);
                 while self.is_op(",") {
-                    self.bump();
+                    self.advance();
                     columns.push(self.parse_name_or_keyword()?);
                 }
                 self.expect_op(")")?;
@@ -155,7 +155,7 @@ impl Parser {
                 query,
             });
             if self.is_op(",") {
-                self.bump();
+                self.advance();
                 continue;
             }
             break;
@@ -168,7 +168,7 @@ impl Parser {
         // query node. Derived-table parsing owns its wrapper separately, so
         // this must not be folded into the generic parenthesized-term path.
         if self.starts_parenthesized_query() {
-            self.bump();
+            self.advance();
             let query = if self.is_kw("WITH") {
                 self.parse_with_select()?
             } else {
@@ -294,7 +294,7 @@ impl Parser {
     /// parenthesized terms need different tail-parsing timing).
     fn parse_one_term(&mut self) -> PResult<(bool, SetOprTermBody)> {
         if self.starts_parenthesized_query() {
-            self.bump();
+            self.advance();
             // A leading WITH may itself own a parenthesized outer query:
             // `(WITH cte AS (...) (SELECT ...)) UNION ...`. In that shape
             // the parentheses after WITH belong to the SelectStmt, while the
@@ -390,46 +390,46 @@ impl Parser {
         let mut straight_join = false;
         loop {
             if self.is_kw("DISTINCT") || self.is_kw("DISTINCTROW") {
-                self.bump();
+                self.advance();
                 if all {
                     return Err(self.err_here("wrong usage of ALL and DISTINCT"));
                 }
                 distinct = true;
             } else if self.is_kw("ALL") {
-                self.bump();
+                self.advance();
                 if distinct {
                     return Err(self.err_here("wrong usage of ALL and DISTINCT"));
                 }
                 all = true;
             } else if self.is_kw("HIGH_PRIORITY") {
-                self.bump();
+                self.advance();
                 priority = tidb_ast::StatementPriority::High;
             } else if self.is_kw("LOW_PRIORITY") {
-                self.bump();
+                self.advance();
                 priority = tidb_ast::StatementPriority::Low;
             } else if self.is_kw("DELAYED") {
-                self.bump();
+                self.advance();
                 priority = tidb_ast::StatementPriority::Delayed;
             } else if self.is_kw("STRAIGHT_JOIN") {
-                self.bump();
+                self.advance();
                 straight_join = true;
             } else if self.is_kw("SQL_CALC_FOUND_ROWS") {
-                self.bump();
+                self.advance();
                 calc_found_rows = true;
             } else if self.is_kw("SQL_CACHE") {
-                self.bump();
+                self.advance();
                 sql_no_cache = false;
             } else if self.is_kw("SQL_NO_CACHE") {
-                self.bump();
+                self.advance();
                 sql_no_cache = true;
             } else if self.is_kw("SQL_SMALL_RESULT") {
-                self.bump();
+                self.advance();
                 sql_small_result = true;
             } else if self.is_kw("SQL_BIG_RESULT") {
-                self.bump();
+                self.advance();
                 sql_big_result = true;
             } else if self.is_kw("SQL_BUFFER_RESULT") {
-                self.bump();
+                self.advance();
                 sql_buffer_result = true;
             } else {
                 break;
@@ -437,11 +437,11 @@ impl Parser {
         }
         let fields = self.parse_select_list()?;
         let from = if self.is_kw("FROM") {
-            self.bump();
+            self.advance();
             // `FROM DUAL` alone is a no-op placeholder table and is dropped,
             // matching the Go AST.
             if self.is_kw("DUAL") {
-                self.bump();
+                self.advance();
                 None
             } else {
                 Some(self.parse_from()?)
@@ -450,13 +450,13 @@ impl Parser {
             None
         };
         let where_clause = if self.is_kw("WHERE") {
-            self.bump();
+            self.advance();
             Some(self.parse_expr(prec::NONE)?)
         } else {
             None
         };
         let group_by = if self.is_kw("GROUP") {
-            self.bump();
+            self.advance();
             self.expect_kw("BY")?;
             self.parse_group_by_list()?
         } else {
@@ -470,11 +470,11 @@ impl Parser {
         // `parse_group_by_list` above).
         let rollup = !group_by.is_empty() && self.is_kw("WITH") && self.is_kw_at(1, "ROLLUP");
         if rollup {
-            self.bump(); // WITH
-            self.bump(); // ROLLUP
+            self.advance(); // WITH
+            self.advance(); // ROLLUP
         }
         let having = if self.is_kw("HAVING") {
-            self.bump();
+            self.advance();
             Some(self.parse_expr(prec::NONE)?)
         } else {
             None
@@ -596,7 +596,7 @@ impl Parser {
             if !self.is_op(")") {
                 row.push(self.parse_expr_or_default()?);
                 while self.is_op(",") {
-                    self.bump();
+                    self.advance();
                     row.push(self.parse_expr_or_default()?);
                 }
             }
@@ -605,7 +605,7 @@ impl Parser {
             if !self.is_op(",") {
                 break;
             }
-            self.bump();
+            self.advance();
         }
         Ok(SelectStmt {
             kind: SelectStatementKind::Values,
@@ -676,7 +676,7 @@ impl Parser {
             let def = self.parse_window_def_body()?;
             windows.push((name, def));
             if self.is_op(",") {
-                self.bump();
+                self.advance();
             } else {
                 break;
             }
@@ -722,16 +722,16 @@ impl Parser {
         let mut lock = None;
         loop {
             if self.is_kw("ORDER") {
-                self.bump();
+                self.advance();
                 self.expect_kw("BY")?;
                 order_by = self.parse_order_list()?;
             } else if self.is_kw("LIMIT") {
-                self.bump();
+                self.advance();
                 limit = Some(self.parse_limit()?);
             } else if self.is_kw("FETCH") {
-                self.bump();
+                self.advance();
                 if self.is_kw("FIRST") || self.is_kw("NEXT") {
-                    self.bump();
+                    self.advance();
                 } else {
                     return Err(self.err_here("expected FIRST or NEXT after FETCH"));
                 }
@@ -741,7 +741,7 @@ impl Parser {
                     self.parse_expr(prec::NONE)?
                 };
                 if self.is_kw("ROW") || self.is_kw("ROWS") {
-                    self.bump();
+                    self.advance();
                 } else {
                     return Err(self.err_here("expected ROW or ROWS in FETCH clause"));
                 }
@@ -770,20 +770,20 @@ impl Parser {
         if !self.is_kw("INTO") {
             return Ok(None);
         }
-        self.bump();
+        self.advance();
         self.expect_kw("OUTFILE")?;
         if self.peek().kind != TokenKind::Str {
             return Err(self.err_here("expected a string literal after INTO OUTFILE"));
         }
         let file_name = self.bumped_string();
         let fields = if self.is_kw("FIELDS") || self.is_kw("COLUMNS") {
-            self.bump();
+            self.advance();
             self.parse_fields_clause(false)?
         } else {
             tidb_ast::LoadDataFields::default()
         };
         let lines = if self.is_kw("LINES") {
-            self.bump();
+            self.advance();
             self.parse_lines_clause()?
         } else {
             tidb_ast::LoadDataLines::default()
@@ -803,7 +803,7 @@ impl Parser {
     /// from the `FOR`/`LOCK` keyword itself (the caller only peeks it).
     fn parse_select_lock(&mut self) -> PResult<tidb_ast::SelectLock> {
         if self.is_kw("LOCK") {
-            self.bump();
+            self.advance();
             self.expect_kw("IN")?;
             self.expect_kw("SHARE")?;
             self.expect_kw("MODE")?;
@@ -815,32 +815,32 @@ impl Parser {
         }
         self.expect_kw("FOR")?;
         let kind = if self.is_kw("UPDATE") {
-            self.bump();
+            self.advance();
             tidb_ast::LockKind::Update
         } else if self.is_kw("SHARE") {
-            self.bump();
+            self.advance();
             tidb_ast::LockKind::Share
         } else {
             return Err(self.err_here("expected UPDATE or SHARE after FOR"));
         };
         let mut of = Vec::new();
         if self.is_kw("OF") {
-            self.bump();
+            self.advance();
             of.push(self.parse_name_path()?);
             while self.is_op(",") {
-                self.bump();
+                self.advance();
                 of.push(self.parse_name_path()?);
             }
         }
         let wait = if self.is_kw("NOWAIT") {
-            self.bump();
+            self.advance();
             tidb_ast::LockWait::NoWait
         } else if self.is_kw("SKIP") {
-            self.bump();
+            self.advance();
             self.expect_kw("LOCKED")?;
             tidb_ast::LockWait::SkipLocked
         } else if kind == tidb_ast::LockKind::Update && self.is_kw("WAIT") {
-            self.bump();
+            self.advance();
             if !matches!(self.peek().kind, TokenKind::IntLit | TokenKind::DecLit) {
                 return Err(self.err_here("expected an unsigned integer after WAIT"));
             }
@@ -872,13 +872,13 @@ impl Parser {
         } else {
             return Err(self.err_here("expected a set operator"));
         };
-        self.bump();
+        self.advance();
         let all = if self.is_kw("ALL") {
-            self.bump();
+            self.advance();
             true
         } else {
             if self.is_kw("DISTINCT") || self.is_kw("DISTINCTROW") {
-                self.bump(); // DISTINCT is the default
+                self.advance(); // DISTINCT is the default
             }
             false
         };
@@ -975,7 +975,7 @@ impl Parser {
     pub(crate) fn parse_expr_list(&mut self) -> PResult<Vec<Expr>> {
         let mut list = vec![self.parse_expr(prec::NONE)?];
         while self.is_op(",") {
-            self.bump();
+            self.advance();
             list.push(self.parse_expr(prec::NONE)?);
         }
         Ok(list)
@@ -994,17 +994,17 @@ impl Parser {
         loop {
             let expr = self.parse_expr(prec::NONE)?;
             let desc = if self.is_kw("ASC") {
-                self.bump();
+                self.advance();
                 Some(false)
             } else if self.is_kw("DESC") {
-                self.bump();
+                self.advance();
                 Some(true)
             } else {
                 None
             };
             items.push(tidb_ast::GroupByItem { expr, desc });
             if self.is_op(",") {
-                self.bump();
+                self.advance();
             } else {
                 break;
             }
@@ -1017,17 +1017,17 @@ impl Parser {
         loop {
             let expr = self.parse_expr(prec::NONE)?;
             let desc = if self.is_kw("ASC") {
-                self.bump();
+                self.advance();
                 false
             } else if self.is_kw("DESC") {
-                self.bump();
+                self.advance();
                 true
             } else {
                 false
             };
             items.push(OrderItem { expr, desc });
             if self.is_op(",") {
-                self.bump();
+                self.advance();
             } else {
                 break;
             }
@@ -1039,14 +1039,14 @@ impl Parser {
         // `LIMIT count`, `LIMIT offset, count`, or `LIMIT count OFFSET offset`.
         let first = self.parse_limit_option()?;
         if self.is_op(",") {
-            self.bump();
+            self.advance();
             let count = self.parse_limit_option()?;
             Ok(Limit {
                 offset: Some(first),
                 count,
             })
         } else if self.is_kw("OFFSET") {
-            self.bump();
+            self.advance();
             let offset = self.parse_limit_option()?;
             Ok(Limit {
                 offset: Some(offset),
@@ -1106,7 +1106,7 @@ impl Parser {
         let (field, text, projection_offset) = self.parse_select_field()?;
         fields.push_with_text_and_projection_offset(field, encoding, text, projection_offset);
         while self.is_op(",") {
-            self.bump();
+            self.advance();
             let (field, text, projection_offset) = self.parse_select_field()?;
             fields.push_with_text_and_projection_offset(field, encoding, text, projection_offset);
         }
@@ -1117,7 +1117,7 @@ impl Parser {
         let start = self.peek().offset;
         let mut projection_offset = None;
         let field = if self.is_op("*") {
-            self.bump();
+            self.advance();
             SelectField::Wildcard(Vec::new())
         // A qualified wildcard (`t.*`, `db.t.*`) looks like a name path up
         // until its final segment, which is `*` instead of another name —
@@ -1172,9 +1172,9 @@ impl Parser {
         let mut path = Vec::new();
         loop {
             path.push(self.bump().text);
-            self.bump(); // '.'
+            self.advance(); // '.'
             if self.is_op("*") {
-                self.bump();
+                self.advance();
                 break;
             }
         }
@@ -1209,7 +1209,7 @@ impl Parser {
             return Err(self.err_here("expected identifier after AS"));
         }
         if self.is_kw("AS") {
-            self.bump();
+            self.advance();
             return Ok(Some(self.parse_explicit_alias_name()?));
         }
         // Go `parseSelectField`: RETURNING is never an implicit field alias,
@@ -1235,7 +1235,7 @@ impl Parser {
         disallow_returning_alias: bool,
     ) -> PResult<Option<String>> {
         if self.is_kw("AS") {
-            self.bump();
+            self.advance();
             if self.peek().kind == TokenKind::Str {
                 return Err(self.err_here("table alias must be an identifier"));
             }
