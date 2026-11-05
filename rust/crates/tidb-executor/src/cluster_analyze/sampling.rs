@@ -393,12 +393,12 @@ impl SamplingCancellation {
         let (done, finished) = crossbeam_channel::bounded(1);
         let worker = std::thread::Builder::new()
             .name("analyze-cancel".to_owned())
-            .spawn(move || {
+            .spawn(tidb_cpuprofile::labels::inherit(move || {
                 crossbeam_channel::select! {
                     recv(killed) -> _ => cancellation.cancel(),
                     recv(finished) -> _ => {},
                 }
-            })
+            }))
             .map_err(|e| AnalyzeError::unsupported(e.to_string()))?;
         Ok(Self {
             done,

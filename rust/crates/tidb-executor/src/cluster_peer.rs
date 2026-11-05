@@ -283,7 +283,7 @@ impl ClusterPeerClient {
                         .iter()
                         .map(|address| {
                             let dag = &dag;
-                            scope.spawn(move || self.send(address, dag, cancel))
+                            scope.spawn(tidb_cpuprofile::labels::inherit(move || self.send(address, dag, cancel)))
                         })
                         .collect();
                     handles
@@ -402,12 +402,12 @@ impl ClusterPeerClient {
         let (done_tx, done_rx) = crossbeam_channel::bounded::<()>(0);
         std::thread::scope(|scope| {
             let cancel = &cancel;
-            scope.spawn(move || {
+            scope.spawn(tidb_cpuprofile::labels::inherit(move || {
                 crossbeam_channel::select! {
                     recv(killed) -> _ => cancel.cancel(),
                     recv(done_rx) -> _ => {},
                 }
-            });
+            }));
             if killer.get_kill_signal() != tidb_sqlkiller::KillSignal::UnspecifiedKillSignal {
                 cancel.cancel();
             }

@@ -247,7 +247,7 @@ pub fn merge_global_stats_top_n_by_concurrency<TZ: TimeZone + Sync>(
             let next_partition = &next_partition;
             let counts = &counts;
             let histograms = &histograms;
-            workers.push(scope.spawn(move || {
+            workers.push(scope.spawn(tidb_cpuprofile::labels::inherit(move || {
                 let response = (|| -> Result<(), GlobalStatsMergeError> {
                     let mut datum_cache = DatumMapCache::new();
                     loop {
@@ -321,7 +321,7 @@ pub fn merge_global_stats_top_n_by_concurrency<TZ: TimeZone + Sync>(
                     }
                 })();
                 let _ = response_sender.send(response);
-            }));
+            })));
         }
         drop(response_sender);
         let errors = response_receiver

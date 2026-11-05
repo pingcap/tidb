@@ -11,6 +11,7 @@ description = "TiDB pkg/statistics/handle/globalstats (Rust)."
 workspace = true
 
 [dependencies]
+tidb-cpuprofile = { path = "../tidb-cpuprofile" }
 tidb-stats = { path = "../tidb-stats" }
 tidb-charset = { path = "../tidb-charset" }
 tidb-mysql = { path = "../tidb-mysql" }

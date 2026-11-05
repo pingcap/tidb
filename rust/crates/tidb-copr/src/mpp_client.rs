@@ -244,7 +244,7 @@ impl<S: tikv_client::PdClient> MPPClient<S> {
                 for address in stores {
                     let store = self.store.clone();
                     let memory = memory.clone();
-                    probes.spawn(async move {
+                    probes.spawn(tidb_cpuprofile::labels::inherit_future(async move {
                         let prober = crate::mpp_probe::global_mpp_failed_store_prober();
                         // Go deprecated tidb_mpp_store_fail_ttl is always zero.
                         if !prober.is_recovery(&address, std::time::Duration::ZERO) {
@@ -267,7 +267,7 @@ impl<S: tikv_client::PdClient> MPPClient<S> {
                                 None
                             }
                         }
-                    });
+                    }));
                 }
                 let mut alive = Vec::new();
                 while let Some(result) = probes.join_next().await {
@@ -585,7 +585,7 @@ pub(crate) async fn filter_alive_stores<S: tikv_client::PdClient>(
         let address = candidate.address.clone();
         let store = store.clone();
         let memory = memory.clone();
-        probes.spawn(async move {
+        probes.spawn(tidb_cpuprofile::labels::inherit_future(async move {
             let prober = crate::mpp_probe::global_mpp_failed_store_prober();
             // Go deprecated tidb_mpp_store_fail_ttl is always zero.
             if !prober.is_recovery(&address, std::time::Duration::ZERO) {
@@ -601,7 +601,7 @@ pub(crate) async fn filter_alive_stores<S: tikv_client::PdClient>(
                     None
                 }
             }
-        });
+        }));
     }
     let mut alive = Vec::new();
     while let Some(result) = probes.join_next().await {

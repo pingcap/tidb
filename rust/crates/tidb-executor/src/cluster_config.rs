@@ -51,7 +51,8 @@ impl ClusterConfigClient {
                     ));
                     continue;
                 }
-                workers.push(scope.spawn(move || self.fetch_node(server)));
+                // Go's fetch goroutines inherit the statement's labels.
+                workers.push(scope.spawn(tidb_cpuprofile::labels::inherit(move || self.fetch_node(server))));
             }
             let mut rows = Vec::new();
             for worker in workers {

@@ -1828,7 +1828,7 @@ where
         let requested_topn = statement.options.num_topn as u32;
         let expected_buckets = statement.options.num_buckets as usize;
         let merge_concurrency = statement.partition_merge_concurrency;
-        let cpu_worker = scope.spawn(
+        let cpu_worker = scope.spawn(tidb_cpuprofile::labels::inherit(
             move || -> Result<Vec<Option<GlobalStatsItem>>, ClusterAnalyzeError> {
                 let mut fm_sketches: Vec<Option<FmSketch>> = vec![None; worker_items.len()];
                 while let Ok((index, source)) = fm_receiver.recv() {
@@ -1889,7 +1889,7 @@ where
                 }
                 Ok(merged)
             },
-        );
+        ));
 
         let mut fm_sender = Some(fm_sender);
         let mut cms_sender = Some(cms_sender);

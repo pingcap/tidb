@@ -7629,6 +7629,7 @@ dependencies = [
  "chrono",
  "tidb-charset",
  "tidb-codec",
+ "tidb-cpuprofile",
  "tidb-datatype",
  "tidb-model",
  "tidb-mysql",

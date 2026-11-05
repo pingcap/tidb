@@ -901,7 +901,8 @@ impl Parser<'_> {
                 let workers: Vec<_> = batches
                     .iter()
                     .map(|log| {
-                        scope.spawn(move || {
+                        // Go's parse goroutines inherit the statement's labels.
+                        scope.spawn(tidb_cpuprofile::labels::inherit(move || {
                             // Go `parseLog`: the log size is held while parsing.
                             let started = std::time::Instant::now();
                             let log_size = calculate_log_size(log);
@@ -910,7 +911,7 @@ impl Parser<'_> {
                             let rows = parser.parse_log(log, mem_consume, &mut warnings);
                             mem_consume(-log_size);
                             (rows, warnings, started.elapsed())
-                        })
+                        }))
                     })
                     .collect();
                 workers
@@ -1688,6 +1689,23 @@ mod tests {
         assert_eq!(rows, serial_rows);
         assert_eq!(warnings, serial_warnings);
         assert_eq!(concurrent, 4);
+
+        // Go's parse goroutines inherit the reading statement's labels, so
+        // the workers' CPU is the statement's.
+        let label = format!("slow-parse-{}", std::process::id());
+        tidb_cpuprofile::labels::set_goroutine_labels(Some(tidb_cpuprofile::labels::with_labels(
+            None,
+            &[("sql_digest", label.clone())],
+        )));
+        read(4);
+        tidb_cpuprofile::labels::set_goroutine_labels(None);
+        let caller = tidb_cpuprofile::labels::current_thread_id();
+        assert!(
+            tidb_cpuprofile::labels::threads_labelled("sql_digest", &label)
+                .iter()
+                .any(|thread| *thread != caller),
+            "a parse worker carried the statement's labels"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -233,7 +233,7 @@ fn analyze_table_inner(
         let job_id = job.id;
         let db = db_name.to_owned();
         let table = tbl_name.clone();
-        std::thread::spawn(move || {
+        std::thread::spawn(tidb_cpuprofile::labels::inherit(move || {
             let Some(pool) = pool else {
                 return;
             };
@@ -260,7 +260,7 @@ fn analyze_table_inner(
                 // We can continue to finish the job even if analyze table failed.
                 let _ = done_tx.send(Some(error.message));
             }
-        });
+        }));
         with_job_ctx(job.id, |ctx| ctx.analyze_done = Some(done_rx));
     }
     let done_ch = with_job_ctx(job.id, |ctx| ctx.analyze_done.take())

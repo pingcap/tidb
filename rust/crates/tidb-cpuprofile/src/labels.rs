@@ -108,6 +108,22 @@ pub fn inherit_future<F: std::future::Future>(future: F) -> impl std::future::Fu
     })
 }
 
+/// The threads whose labels carried `key = value` at some point of their
+/// kept timeline: whose CPU a profile attributes to that label.
+#[must_use]
+pub fn threads_labelled(key: &str, value: &str) -> Vec<u64> {
+    let timelines = TIMELINES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    timelines
+        .iter()
+        .filter(|(_, timeline)| {
+            timeline
+                .iter()
+                .any(|(_, labels)| labels.as_ref().and_then(|labels| labels.get(key)).is_some_and(|v| v == value))
+        })
+        .map(|(thread_id, _)| *thread_id)
+        .collect()
+}
+
 /// The labels thread `thread_id` held at `at`.
 #[must_use]
 pub fn labels_at(thread_id: u64, at: SystemTime) -> Option<LabelSet> {
