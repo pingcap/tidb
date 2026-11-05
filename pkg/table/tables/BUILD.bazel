@@ -77,7 +77,11 @@ go_test(
     ],
     embed = [":tables"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 41,
+=======
+    shard_count = 46,
+>>>>>>> adee1920e10 (ddl: fix global multi-valued index cleanup during TRUNCATE PARTITION (#71299))
     deps = [
         "//pkg/ddl",
         "//pkg/domain",
