@@ -6801,6 +6801,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "axum",
+ "backtrace",
  "base64 0.22.1",
  "chrono",
  "crossbeam-channel",

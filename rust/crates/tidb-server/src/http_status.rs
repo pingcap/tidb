@@ -304,6 +304,9 @@ async fn http_response(
         }
     };
     let path = parts.uri.path_and_query().map_or("/", |p| p.as_str());
+    if parts.uri.path() == "/debug/traceevent" {
+        return traceevent_response(body);
+    }
     let mut request = format!("{} {} HTTP/1.1\r\n", parts.method, path);
     for (name, value) in &parts.headers {
         if name != "transfer-encoding" && name != "content-length" {
@@ -327,6 +330,185 @@ async fn http_response(
         )
             .into_response(),
     }
+}
+
+/// Go `traceeventCounter`: one `/debug/traceevent` stream at a time.
+static TRACEEVENT_STREAMING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Go `http.Error`: the text, a newline, `text/plain` and `nosniff`.
+fn http_error(code: u16, text: &str) -> axum::response::Response {
+    axum::http::Response::builder()
+        .status(code)
+        .header("content-type", "text/plain; charset=utf-8")
+        .header("x-content-type-options", "nosniff")
+        .body(axum::body::Body::from(format!("{text}\n")))
+        .expect("status response headers")
+}
+
+/// Go `json.Unmarshal` into an initialized value: the request's fields
+/// replace the defaults they name, objects merging field by field.
+fn overlay_json(base: &mut serde_json::Value, overlay: serde_json::Value) {
+    match (base, overlay) {
+        (serde_json::Value::Object(base), serde_json::Value::Object(overlay)) => {
+            for (key, value) in overlay {
+                match base.get_mut(&key) {
+                    Some(slot) => overlay_json(slot, value),
+                    None => {
+                        base.insert(key, value);
+                    }
+                }
+            }
+        }
+        (base, overlay) => *base = overlay,
+    }
+}
+
+/// Go `traceeventHandler` (`/debug/traceevent`): a server-sent event stream
+/// of the flight recorder's events, one request at a time, configured by
+/// the request's JSON body over `FlightRecorderConfig.Initialize`.
+fn traceevent_response(body: &str) -> axum::response::Response {
+    use std::sync::atomic::Ordering;
+    if TRACEEVENT_STREAMING.swap(true, Ordering::SeqCst) {
+        return http_error(429, "http api /debug/traceevent only allow one request at a time");
+    }
+    struct Release;
+    impl Drop for Release {
+        fn drop(&mut self) {
+            TRACEEVENT_STREAMING.store(false, Ordering::SeqCst);
+        }
+    }
+    let release = Release;
+    let mut config = tidb_traceevent::FlightRecorderConfig::default();
+    config.initialize();
+    if !body.is_empty() {
+        let overlay = match serde_json::from_str::<serde_json::Value>(body) {
+            Ok(overlay) => overlay,
+            Err(error) => return http_error(400, &format!("decode json failed: {error}")),
+        };
+        let mut merged = serde_json::to_value(&config).expect("the config serializes");
+        overlay_json(&mut merged, overlay);
+        config = match serde_json::from_value(merged) {
+            Ok(config) => config,
+            Err(error) => return http_error(400, &format!("decode json failed: {error}")),
+        };
+    }
+    tidb_logutil::bg_logger().info(
+        "http api /debug/traceevent called",
+        &[tidb_log::Field::new(
+            "config",
+            tidb_log::Value::Str(serde_json::to_string(&config).unwrap_or_default()),
+        )],
+    );
+    let (events_tx, events_rx) = crossbeam_channel::bounded(256);
+    let recorder = match tidb_traceevent::start_http_flight_recorder(events_tx, config) {
+        Ok(recorder) => recorder,
+        Err(error) => return http_error(400, &format!("validate config failed: {error}")),
+    };
+    let (chunks_tx, chunks_rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(16);
+    std::thread::spawn(move || {
+        let _release = release;
+        loop {
+            match events_rx.recv_timeout(std::time::Duration::from_millis(200)) {
+                Ok(events) => {
+                    let rendered = tidb_traceevent::convert_events_for_rendering(&events);
+                    // Go `json.NewEncoder(w).Encode`: HTML-escaped, newline-ended.
+                    let json = tidb_stringutil::go_json_html_escape(
+                        &serde_json::to_string(&rendered).unwrap_or_else(|_| "null".to_owned()),
+                    );
+                    if chunks_tx.blocking_send(Ok(format!("data: {json}\n\n\n").into_bytes())).is_err() {
+                        break;
+                    }
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) if !chunks_tx.is_closed() => {}
+                Err(_) => break,
+            }
+        }
+        tidb_logutil::bg_logger().info("http api /debug/traceevent client disconnected", &[]);
+        recorder.close();
+    });
+    let stream = futures::stream::unfold(chunks_rx, |mut rx| async move { rx.recv().await.map(|chunk| (chunk, rx)) });
+    axum::http::Response::builder()
+        .status(200)
+        .header("content-type", "text/event-stream")
+        .header("cache-control", "no-cache")
+        .header("connection", "keep-alive")
+        .body(axum::body::Body::from_stream(stream))
+        .expect("status response headers")
+}
+
+/// Go `withProfilingRequestLog(pprof.Cmdline)`: the process's arguments,
+/// NUL-separated.
+fn debug_pprof_cmdline_response(request: &str) -> axum::response::Response {
+    let method = request.split(' ').next().unwrap_or_default();
+    tidb_logutil::bg_logger().info(
+        "profiling request received",
+        &[
+            tidb_log::Field::new("method", tidb_log::Value::Str(method.to_owned())),
+            tidb_log::Field::new("path", tidb_log::Value::Str("/debug/pprof/cmdline".to_owned())),
+        ],
+    );
+    axum::http::Response::builder()
+        .status(200)
+        .header("x-content-type-options", "nosniff")
+        .header("content-type", "text/plain; charset=utf-8")
+        .body(axum::body::Body::from(std::env::args().collect::<Vec<_>>().join("\0")))
+        .expect("status response headers")
+}
+
+/// Go `withProfilingRequestLog(pprof.Symbol)`: each `+`-separated program
+/// counter of the POST body (or, for a GET, the raw query) that names a
+/// function, as `%#x name`, then `num_symbols: 1` (pprof reads only whether
+/// symbols exist).
+fn debug_pprof_symbol_response(path: &str, request: &str) -> axum::response::Response {
+    let method = request.split(' ').next().unwrap_or_default();
+    tidb_logutil::bg_logger().info(
+        "profiling request received",
+        &[
+            tidb_log::Field::new("method", tidb_log::Value::Str(method.to_owned())),
+            tidb_log::Field::new("path", tidb_log::Value::Str("/debug/pprof/symbol".to_owned())),
+        ],
+    );
+    let input = if method == "POST" {
+        request.split_once("\r\n\r\n").map_or("", |(_, body)| body)
+    } else {
+        path.split_once('?').map_or("", |(_, query)| query)
+    };
+    let mut out = String::new();
+    for word in input.split('+') {
+        // Go `strconv.ParseUint(word, 0, 64)`: a 0x / 0o / 0b prefix picks the base.
+        let parsed = if let Some(hex) = word.strip_prefix("0x").or_else(|| word.strip_prefix("0X")) {
+            u64::from_str_radix(hex, 16)
+        } else if let Some(octal) = word.strip_prefix("0o").or_else(|| word.strip_prefix("0O")) {
+            u64::from_str_radix(octal, 8)
+        } else if let Some(binary) = word.strip_prefix("0b").or_else(|| word.strip_prefix("0B")) {
+            u64::from_str_radix(binary, 2)
+        } else if word.len() > 1 && word.starts_with('0') {
+            u64::from_str_radix(&word[1..], 8)
+        } else {
+            word.parse::<u64>()
+        };
+        let pc = parsed.unwrap_or(0);
+        if pc == 0 {
+            continue;
+        }
+        // Go `runtime.FuncForPC(pc).Name()`.
+        let mut name = None;
+        backtrace::resolve(pc as usize as *mut std::ffi::c_void, |symbol| {
+            if name.is_none() {
+                name = symbol.name().map(|name| name.to_string());
+            }
+        });
+        if let Some(name) = name {
+            out.push_str(&format!("{pc:#x} {name}\n"));
+        }
+    }
+    out.push_str("num_symbols: 1\n");
+    axum::http::Response::builder()
+        .status(200)
+        .header("x-content-type-options", "nosniff")
+        .header("content-type", "text/plain; charset=utf-8")
+        .body(axum::body::Body::from(out))
+        .expect("status response headers")
 }
 
 /// Go `withProfilingRequestLog(cpuprofile.ProfileHTTPHandler)` on
@@ -634,6 +816,12 @@ fn route_response(
     if let Some(response) = debug_pprof_profile_response(path, request) {
         return response;
     }
+    if path.split_once('?').map_or(path, |(route, _)| route) == "/debug/pprof/cmdline" {
+        return debug_pprof_cmdline_response(request);
+    }
+    if path.split_once('?').map_or(path, |(route, _)| route) == "/debug/pprof/symbol" {
+        return debug_pprof_symbol_response(path, request);
+    }
     let route = path.split_once('?').map_or(path, |(route, _)| route);
     let (code, content_type, body) = if route == "/status" {
         let percentage = tidb_stats_handle_initstats::INIT_STATS_PERCENTAGE.load();
@@ -762,6 +950,79 @@ fn route_response(
 
 #[cfg(test)]
 mod tests {
+    /// Go `pprof.Symbol`: a program counter the binary maps to a function
+    /// answers its name, and every answer ends with `num_symbols: 1`.
+    #[test]
+    fn debug_pprof_symbol_names_program_counters() {
+        let pc = debug_pprof_symbol_response as fn(&str, &str) -> axum::response::Response as usize as u64;
+        let read = |response: axum::response::Response| {
+            let body = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap()
+                .block_on(axum::body::to_bytes(response.into_body(), usize::MAX))
+                .unwrap();
+            String::from_utf8(body.to_vec()).unwrap()
+        };
+        let path = format!("/debug/pprof/symbol?{pc:#x}+0");
+        let body = read(debug_pprof_symbol_response(&path, &format!("GET {path} HTTP/1.1\r\n\r\n")));
+        let mut lines = body.lines();
+        let first = lines.next().unwrap();
+        assert!(first.starts_with(&format!("{pc:#x} ")), "{body}");
+        // Without debug info the name is the symbol table's nearest entry.
+        assert!(first.contains("tidb_server"), "{body}");
+        assert_eq!(lines.next(), Some("num_symbols: 1"));
+        let posted = read(debug_pprof_symbol_response(
+            "/debug/pprof/symbol",
+            &format!("POST /debug/pprof/symbol HTTP/1.1\r\n\r\n{pc:#x}"),
+        ));
+        assert!(posted.starts_with(&format!("{pc:#x} ")), "{posted}");
+        assert_eq!(read(debug_pprof_symbol_response("/debug/pprof/symbol", "GET / HTTP/1.1\r\n\r\n")), "num_symbols: 1\n");
+    }
+
+    /// Go `pprof.Cmdline`: the arguments joined by NUL.
+    #[test]
+    fn debug_pprof_cmdline_answers_the_process_arguments() {
+        let path = "/debug/pprof/cmdline";
+        let response = route_response(
+            path,
+            &format!("GET {path} HTTP/1.1\r\n\r\n"),
+            &ConnectionTracker::default(),
+            "v",
+            "h",
+            &StatusRoutes::default(),
+        );
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.headers()["content-type"], "text/plain; charset=utf-8");
+        let body = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(axum::body::to_bytes(response.into_body(), usize::MAX))
+            .unwrap();
+        assert_eq!(body.to_vec(), std::env::args().collect::<Vec<_>>().join("\0").into_bytes());
+    }
+
+    /// Go `traceeventHandler`: a server-sent event stream, one request at
+    /// a time (`traceeventCounter`), configured by a JSON body that must
+    /// decode.
+    #[test]
+    fn traceevent_streams_one_request_at_a_time() {
+        let first = traceevent_response("");
+        assert_eq!(first.status(), 200);
+        assert_eq!(first.headers()["content-type"], "text/event-stream");
+        assert_eq!(first.headers()["cache-control"], "no-cache");
+        let busy = traceevent_response("");
+        assert_eq!(busy.status(), 429);
+        drop(first);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while TRACEEVENT_STREAMING.load(std::sync::atomic::Ordering::SeqCst) {
+            assert!(std::time::Instant::now() < deadline, "the stream released its slot");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let bad = traceevent_response("{not json");
+        assert_eq!(bad.status(), 400);
+        assert!(!TRACEEVENT_STREAMING.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
     use super::*;
 
     /// Go's `/debug/gogc`: GET reads the value, POST sets it, a bad value

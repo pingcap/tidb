@@ -111,6 +111,7 @@ rand = "0.10"
 base64.workspace = true
 chrono.workspace = true
 crossbeam-channel = "0.5"
+backtrace = "0.3"
 prometheus = { version = "0.14", default-features = false }
 tikv-jemallocator = { version = "0.7", optional = true }
 tikv-jemalloc-sys = { version = "0.7", optional = true }
