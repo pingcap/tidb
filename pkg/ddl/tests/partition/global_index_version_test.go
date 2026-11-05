@@ -16,19 +16,11 @@ package partition
 
 import (
 	"context"
-<<<<<<< HEAD
-	"testing"
-
-	"github.com/pingcap/failpoint"
-=======
-	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
->>>>>>> adee1920e10 (ddl: fix global multi-valued index cleanup during TRUNCATE PARTITION (#71299))
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
