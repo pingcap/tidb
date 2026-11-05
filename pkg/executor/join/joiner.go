@@ -193,7 +193,8 @@ func NewJoiner(ctx sessionctx.Context, joinType logicalop.JoinType,
 		return &antiLeftOuterSemiJoiner{base}
 	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin:
 		if len(base.conditions) > 0 {
-			base.chk = chunk.NewChunkWithCapacity(shallowRowType, ctx.GetSessionVars().MaxChunkSize)
+			vars := ctx.GetSessionVars()
+			base.chk = chunk.New(shallowRowType, vars.InitChunkSize, vars.MaxChunkSize)
 		}
 		switch joinType {
 		case logicalop.LeftOuterJoin:

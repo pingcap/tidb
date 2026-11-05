@@ -106,6 +106,44 @@ func TestParquetParser(t *testing.T) {
 	require.ErrorIs(t, reader.ReadRow(), io.EOF)
 }
 
+type closeTrackingExternalStorage struct {
+	storage.ExternalStorage
+	reader storage.ExternalFileReader
+}
+
+// Open returns the reader tracked by the test.
+func (s *closeTrackingExternalStorage) Open(context.Context, string, *storage.ReaderOption) (storage.ExternalFileReader, error) {
+	return s.reader, nil
+}
+
+type closeTrackingExternalFileReader struct {
+	storage.ExternalFileReader
+	closed bool
+}
+
+// Close records the call and closes the underlying reader.
+func (r *closeTrackingExternalFileReader) Close() error {
+	r.closed = true
+	return r.ExternalFileReader.Close()
+}
+
+// TestReadParquetFileRowCountClosesReader verifies row count reads release their object reader.
+func TestReadParquetFileRowCountClosesReader(t *testing.T) {
+	ctx := context.Background()
+	localStore, err := storage.NewLocalStorage(".")
+	require.NoError(t, err)
+	defer localStore.Close()
+	reader, err := localStore.Open(ctx, "examples/test.parquet", nil)
+	require.NoError(t, err)
+	trackedReader := &closeTrackingExternalFileReader{ExternalFileReader: reader}
+	store := &closeTrackingExternalStorage{ExternalStorage: localStore, reader: trackedReader}
+
+	rows, err := ReadParquetFileRowCountByFile(ctx, store, SourceFileMeta{Path: "examples/test.parquet"})
+	require.NoError(t, err)
+	require.Greater(t, rows, int64(0))
+	assert.True(t, trackedReader.closed)
+}
+
 func TestParquetVariousTypes(t *testing.T) {
 	pc := []ParquetColumn{
 		{
@@ -337,6 +375,86 @@ func TestParquetVariousTypes(t *testing.T) {
 	assert.NoError(t, reader.ReadRow())
 	assert.Equal(t, types.KindUint64, reader.lastRow.Row[0].Kind())
 	assert.Equal(t, uint64(1), reader.lastRow.Row[0].GetValue())
+
+	// Enough repeated rows that the writer keeps the dictionary page instead of
+	// falling back to PLAIN, so every row decodes to the same shared buffer.
+	const dictRows = 256
+	repeatedByteArray := func(val []byte) func(int) (any, []int16) {
+		return func(numRows int) (any, []int16) {
+			values := make([]parquet.ByteArray, numRows)
+			levels := make([]int16, numRows)
+			for i := range numRows {
+				values[i] = val
+				levels[i] = 1
+			}
+			return values, levels
+		}
+	}
+	repeatedFixedLenByteArray := func(val []byte) func(int) (any, []int16) {
+		return func(numRows int) (any, []int16) {
+			values := make([]parquet.FixedLenByteArray, numRows)
+			levels := make([]int16, numRows)
+			for i := range numRows {
+				values[i] = val
+				levels[i] = 1
+			}
+			return values, levels
+		}
+	}
+
+	pc = []ParquetColumn{
+		{
+			Name:      "positive",
+			Type:      parquet.Types.ByteArray,
+			Converted: schema.ConvertedTypes.Decimal,
+			Precision: 9,
+			Scale:     2,
+			Gen:       repeatedByteArray([]byte{0x30, 0x39}), // 12345
+		},
+		{
+			// binaryToDecimalStr only rewrites its input for negative values,
+			// so this is the column that catches the shared-buffer aliasing.
+			Name:      "negative",
+			Type:      parquet.Types.ByteArray,
+			Converted: schema.ConvertedTypes.Decimal,
+			Precision: 9,
+			Scale:     2,
+			Gen:       repeatedByteArray([]byte{0xcf, 0xc7}), // -12345
+		},
+		{
+			Name:      "fixed_len_negative",
+			Type:      parquet.Types.FixedLenByteArray,
+			Converted: schema.ConvertedTypes.Decimal,
+			TypeLen:   4,
+			Precision: 9,
+			Scale:     2,
+			Gen:       repeatedFixedLenByteArray([]byte{0xff, 0xff, 0xcf, 0xc7}), // -12345
+		},
+	}
+
+	fileName = "test.decimal.dictionary.parquet"
+	require.NoError(t, WriteParquetFile(dir, fileName, pc, dictRows))
+
+	r, err = store.Open(context.TODO(), fileName, nil)
+	require.NoError(t, err)
+	reader, err = NewParquetParser(context.TODO(), store, r, fileName, ParquetFileMeta{})
+	require.NoError(t, err)
+	defer reader.Close()
+
+	for i := range pc {
+		cc, err := reader.readers[0].MetaData().RowGroup(0).ColumnChunk(i)
+		require.NoError(t, err)
+		require.True(t, cc.HasDictionaryPage(), "column %s is not dictionary encoded", pc[i].Name)
+	}
+
+	expectedValues := []string{"123.45", "-123.45", "-123.45"}
+	for range dictRows {
+		require.NoError(t, reader.ReadRow())
+		require.Len(t, reader.lastRow.Row, len(expectedValues))
+		for i, expectValue := range expectedValues {
+			require.Equal(t, expectValue, reader.lastRow.Row[i].GetString())
+		}
+	}
 }
 
 func TestParquetAurora(t *testing.T) {
@@ -496,5 +614,102 @@ func TestBasicReadFile(t *testing.T) {
 	for i := range rowCnt {
 		require.NoError(t, reader.ReadRow())
 		require.Equal(t, string(generated[i]), reader.lastRow.Row[0].GetString())
+	}
+}
+
+// rowCountTrackingStorage tracks readers retained by metadata-only reads.
+type rowCountTrackingStorage struct {
+	storage.ExternalStorage
+	readers  []*rowCountTrackingReader
+	closeErr error
+}
+
+func (s *rowCountTrackingStorage) Open(ctx context.Context, path string, opts *storage.ReaderOption) (storage.ExternalFileReader, error) {
+	r, err := s.ExternalStorage.Open(ctx, path, opts)
+	if err != nil {
+		return nil, err
+	}
+	reader := &rowCountTrackingReader{ExternalFileReader: r, closeErr: s.closeErr}
+	s.readers = append(s.readers, reader)
+	return reader, nil
+}
+
+type rowCountTrackingReader struct {
+	storage.ExternalFileReader
+	closed     bool
+	closeErr   error
+	closeCalls int
+}
+
+func (r *rowCountTrackingReader) Close() error {
+	r.closeCalls++
+	if r.closeErr != nil {
+		return r.closeErr
+	}
+	if err := r.ExternalFileReader.Close(); err != nil {
+		return err
+	}
+	r.closed = true
+	return nil
+}
+
+func TestReadParquetFileRowCountReaderLifecycle(t *testing.T) {
+	ctx := context.Background()
+	base, err := storage.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	data, err := storage.NewLocalStorage("examples")
+	require.NoError(t, err)
+	valid, err := data.ReadFile(ctx, "test.parquet")
+	require.NoError(t, err)
+	require.NoError(t, base.WriteFile(ctx, "valid.parquet", valid))
+	require.NoError(t, base.WriteFile(ctx, "invalid.parquet", []byte("invalid parquet")))
+
+	for _, name := range []string{"valid.parquet", "invalid.parquet", "missing.parquet"} {
+		t.Run(name, func(t *testing.T) {
+			store := &rowCountTrackingStorage{ExternalStorage: base}
+			t.Cleanup(func() {
+				for _, reader := range store.readers {
+					if !reader.closed {
+						_ = reader.Close()
+					}
+				}
+			})
+			rows, err := ReadParquetFileRowCountByFile(ctx, store, SourceFileMeta{Path: name})
+			if name == "valid.parquet" {
+				require.NoError(t, err)
+				require.Positive(t, rows)
+			} else {
+				require.Error(t, err)
+			}
+			if name == "missing.parquet" {
+				require.Empty(t, store.readers)
+			} else {
+				require.Len(t, store.readers, 1)
+				require.True(t, store.readers[0].closed, "metadata reads must release the storage reader")
+			}
+		})
+	}
+	for _, name := range []string{"valid.parquet", "invalid.parquet"} {
+		t.Run(name+"/close-error", func(t *testing.T) {
+			store := &rowCountTrackingStorage{ExternalStorage: base, closeErr: io.ErrClosedPipe}
+			t.Cleanup(func() {
+				for _, reader := range store.readers {
+					_ = reader.ExternalFileReader.Close()
+				}
+			})
+			_, err := ReadParquetFileRowCountByFile(ctx, store, SourceFileMeta{Path: name})
+			require.Error(t, err)
+			require.Len(t, store.readers, 1)
+			require.Equal(t, 1, store.readers[0].closeCalls)
+			require.False(t, store.readers[0].closed)
+			if name == "valid.parquet" {
+				require.ErrorIs(t, err, io.ErrClosedPipe)
+				require.ErrorContains(t, err, "close parquet row-count reader")
+			} else {
+				_, metadataErr := ReadParquetFileRowCountByFile(ctx, base, SourceFileMeta{Path: name})
+				require.EqualError(t, err, metadataErr.Error())
+				require.NotErrorIs(t, err, io.ErrClosedPipe)
+			}
+		})
 	}
 }

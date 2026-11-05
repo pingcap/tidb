@@ -2952,6 +2952,21 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, job *model.Job) (v
 	pt.Partition.DDLState = model.StateNone
 	pt.Partition.DDLAction = model.ActionNone
 
+	// Column and index IDs are encoded in row and index keys. Dropped column
+	// values stay in the row, and dropped index keys are removed asynchronously
+	// under the physical table ID, which exchange moves between the tables.
+	// NT receives PT's old partition, so it inherits PT's original counters.
+	// PT keeps its other partitions and receives NT's physical table ID, so
+	// its counters must cover both tables' historical IDs.
+	// Foreign key and check constraint IDs are not part of the KV encoding.
+	// Their metadata stays with each logical table, so leave their counters unchanged.
+	// See https://github.com/pingcap/tidb/issues/72478.
+	exchangeMaxID := func(ptMaxID, ntMaxID *int64) {
+		*ptMaxID, *ntMaxID = max(*ptMaxID, *ntMaxID), *ptMaxID
+	}
+	exchangeMaxID(&pt.MaxColumnID, &nt.MaxColumnID)
+	exchangeMaxID(&pt.MaxIndexID, &nt.MaxIndexID)
+
 	err = metaMut.UpdateTable(ptSchemaID, pt)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -4190,7 +4205,8 @@ func (w *worker) reorgPartitionDataAndIndex(
 			return errors.Trace(err)
 		}
 	}
-	if _, err = findNextNonTouchedPartitionID(reorgInfo.PhysicalTableID, pi); err == nil {
+	if reorgInfo.PhysicalTableID != 0 {
+		// There are non-touched partitions to add to the new global indexes.
 		err = w.addTableIndex(jobCtx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
@@ -4285,7 +4301,7 @@ func checkExchangePartitionRecordValidation(
 			if i != 0 {
 				buf.WriteString(" and ")
 			}
-			buf.WriteString(fmt.Sprintf("(%s)", cons.ExprString))
+			fmt.Fprintf(&buf, "(%s)", cons.ExprString)
 		}
 		buf.WriteString(")")
 		return buf.String()
@@ -4551,7 +4567,7 @@ func buildCheckSQLConditionForListPartition(pi *model.PartitionInfo, index int) 
 				buf.WriteString(" AND ")
 			}
 			// null-safe compare '<=>'
-			buf.WriteString(fmt.Sprintf("(%s) <=> %s", pi.Expr, val))
+			fmt.Fprintf(&buf, "(%s) <=> %s", pi.Expr, val)
 		}
 	}
 	buf.WriteString(")")
@@ -4586,7 +4602,7 @@ func buildCheckSQLConditionForListColumnsPartition(pi *model.PartitionInfo, inde
 				buf.WriteString(" AND ")
 			}
 			// null-safe compare '<=>'
-			buf.WriteString(fmt.Sprintf("%s <=> %s", colNames[j], val))
+			fmt.Fprintf(&buf, "%s <=> %s", colNames[j], val)
 		}
 	}
 	buf.WriteString(")")

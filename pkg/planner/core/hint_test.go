@@ -86,7 +86,7 @@ func TestSetVarHintsWithExplain(t *testing.T) {
 }
 
 func TestSetVarPartialOrderedIndexForTopN(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+	testkit.RunTestWithDefaultPlanner(t, func(t *testing.T, testKit *testkit.TestKit) {
 		testKit.MustExec(`use test`)
 
 		// Test default value
@@ -136,7 +136,7 @@ func TestSetVarPartialOrderedIndexForTopN(t *testing.T) {
 }
 
 func TestWriteSlowLogHint(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+	testkit.RunTestWithDefaultPlanner(t, func(t *testing.T, testKit *testkit.TestKit) {
 		testKit.MustExec(`use test`)
 		testKit.MustExec(`create table t(a int);`)
 		testKit.MustExec(`select * from t where a = 1;`)

@@ -1084,7 +1084,13 @@ func (d *ddl) DisableDDL() error {
 			logutil.DDLLogger().Error("error when GetAllServerInfo", zap.Error(err))
 			return err
 		}
-		if len(serverInfo) <= 1 {
+		servingNodes := 0
+		for _, info := range serverInfo {
+			if !info.DisableRPC {
+				servingNodes++
+			}
+		}
+		if servingNodes <= 1 {
 			return dbterror.ErrDDLSetting.GenWithStackByArgs("disabling", "can not disable ddl owner when it is the only one tidb instance")
 		}
 		// FIXME: if possible, when this node is the only node with DDL, ths setting of DisableDDL should fail.

@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
@@ -232,8 +233,23 @@ type TableImporter struct {
 	rowCh chan QueryRow
 }
 
+type storeHelper struct {
+	kvStore tidbkv.Storage
+}
+
+func (*storeHelper) GetTS(_ context.Context) (physical, logical int64, err error) {
+	return 0, 0, nil
+}
+
+func (s *storeHelper) GetTiKVCodec() tikv.Codec {
+	return s.kvStore.GetCodec()
+}
+
+var _ local.StoreHelper = (*storeHelper)(nil)
+
 // NewTableImporterForTest creates a new table importer for test.
-func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id string, helper local.StoreHelper) (*TableImporter, error) {
+func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id string, kvStore tidbkv.Storage) (*TableImporter, error) {
+	helper := &storeHelper{kvStore: kvStore}
 	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
@@ -509,6 +525,7 @@ func (ti *TableImporter) OpenDataEngine(ctx context.Context, engineID int32) (*b
 func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) (int64, error) {
 	var kvCount int64
 	importErr := closedEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys)
+	failpoint.InjectCall("mockDataEngineImportErr", &importErr)
 	if common.ErrFoundDuplicateKeys.Equal(importErr) {
 		importErr = local.ConvertToErrFoundConflictRecords(importErr, ti.encTable)
 	}

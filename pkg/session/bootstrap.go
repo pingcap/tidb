@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	storepkg "github.com/pingcap/tidb/pkg/store"
@@ -733,6 +734,9 @@ const (
 		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
 		filter_strings TEXT NOT NULL,
 		filter_hash VARCHAR(64) NOT NULL,
+		source_filter_strings MEDIUMTEXT NOT NULL DEFAULT '',
+		route_strings MEDIUMTEXT NOT NULL DEFAULT '',
+		route_hash VARCHAR(64) NOT NULL DEFAULT '',
 		start_ts BIGINT UNSIGNED NOT NULL,
 		restored_ts BIGINT UNSIGNED NOT NULL,
 		upstream_cluster_id BIGINT UNSIGNED,
@@ -741,8 +745,9 @@ const (
 		cmd TEXT,
 		task_start_time TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
 		last_heartbeat_time TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
-		UNIQUE KEY unique_registration_params (
+		UNIQUE KEY unique_registration_params_v2 (
 			filter_hash,
+			route_hash,
 			start_ts,
 			restored_ts,
 			upstream_cluster_id,
@@ -1294,16 +1299,42 @@ const (
 	// Add Max_user_connections to mysql.user.
 	version231 = 231
 
+	// version 232
+	// Repair upgrades from the v8.5.5 hotfix family back to upstream
+	// `release-8.5`. Those branches reused version224/225 for other DDLs, so
+	// clusters reach >= 224 without the upstream version224/225 schema and
+	// bootstrap then skips it as "already applied":
+	//   - release-8.5-20260323-v8.5.5 (stops at 225): in this branch version224
+	//     adds runaway watch indexes and version225 adds `Max_user_connections`,
+	//     so upstream `max_node_count` (version224) and `i_user` indexes
+	//     (version225) are both missing.
+	//   - release-8.5-20260527-v8.5.5 (stops at 224, no version225): in this
+	//     branch version224 adds `i_user` indexes, so `max_node_count` is
+	//     missing; `i_user` already exists.
+	// version232 re-applies the version224/225 DDLs; `doReentrantDDL`
+	// ignores `ErrColumnExists`/`ErrDupKeyName`, so already-present schema is a
+	// no-op (e.g. `i_user` on release-8.5-20260527-v8.5.5).
+	version232 = 232
+
+	// version 233
+	// Add restore name routing identity to mysql.tidb_restore_registry:
+	// `source_filter_strings`, `route_strings`, `route_hash` and the
+	// `unique_registration_params_v2` unique index that replaces
+	// `unique_registration_params` (whose key does not include `route_hash`, so
+	// two independent restores sharing a source filter but routing to different
+	// targets would collide).
+	version233 = 233
+
 	// ...
 	// [version231, version238] is the version range reserved for patches of 8.5.x
 	// ...
-	// next version should start with 239
+	// Versions starting at 239 belong to master; 8.5.x patches use the reserved range.
 
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version231
+var currentBootstrapVersion int64 = version233
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1490,6 +1521,8 @@ var (
 		upgradeToVer229,
 		upgradeToVer230,
 		upgradeToVer231,
+		upgradeToVer232,
+		upgradeToVer233,
 	}
 )
 
@@ -3366,19 +3399,18 @@ func upgradeToVer223(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer224(s sessiontypes.Session, ver int64) {
-	if ver >= version224 {
-		return
-	}
+// addMaxNodeCountColumns adds the `max_node_count` column to both global task
+// tables. Shared by upgradeToVer224 and upgradeToVer232 (the latter re-applies it
+// for clusters that skipped upstream version224).
+func addMaxNodeCountColumns(s sessiontypes.Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer225(s sessiontypes.Session, ver int64) {
-	if ver >= version225 {
-		return
-	}
-
+// addIUserIndexes adds the `i_user` index to the seven privilege tables. Shared
+// by upgradeToVer225 and upgradeToVer232 (the latter re-applies it for clusters
+// that skipped upstream version225).
+func addIUserIndexes(s sessiontypes.Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.global_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.db ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
@@ -3386,6 +3418,20 @@ func upgradeToVer225(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.global_grants ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.default_roles ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer224(s sessiontypes.Session, ver int64) {
+	if ver >= version224 {
+		return
+	}
+	addMaxNodeCountColumns(s)
+}
+
+func upgradeToVer225(s sessiontypes.Session, ver int64) {
+	if ver >= version225 {
+		return
+	}
+	addIUserIndexes(s)
 }
 
 // writeClusterID writes cluster id into mysql.tidb
@@ -3487,6 +3533,43 @@ func upgradeToVer231(s sessiontypes.Session, ver int64) {
 	}
 
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Max_user_connections` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `Password_lifetime`")
+}
+
+func upgradeToVer232(s sessiontypes.Session, ver int64) {
+	if ver >= version232 {
+		return
+	}
+
+	// Re-apply the upstream version224/225 DDLs that the v8.5.5 hotfix branches
+	// skipped. We call the shared helpers directly rather than upgradeToVer224/
+	// upgradeToVer225: those guard on `ver >= version224/225`, but `ver` here is
+	// the pre-upgrade version (e.g. 225 for release-8.5-20260323-v8.5.5, 224 for
+	// release-8.5-20260527-v8.5.5), so the guards would short-circuit and skip
+	// the repair — the exact bug this version fixes. The helpers have no such
+	// guard; doReentrantDDL ignores ErrColumnExists/ErrDupKeyName, so
+	// already-present schema (e.g. i_user on release-8.5-20260527-v8.5.5) is a
+	// no-op.
+	addMaxNodeCountColumns(s)
+	addIUserIndexes(s)
+}
+
+// upgradeToVer233 adds the restore name routing identity to
+// mysql.tidb_restore_registry. The DDLs are reentrant so a cluster that already
+// ran a partially completed migration converges on the same schema, and a fresh
+// cluster created from CreateRestoreRegistryTable skips them via
+// ErrColumnExists / ErrDupKeyName / ErrCantDropFieldOrKey.
+func upgradeToVer233(s sessiontypes.Session, ver int64) {
+	if ver >= version233 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry ADD COLUMN source_filter_strings MEDIUMTEXT NOT NULL DEFAULT '' AFTER filter_hash", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry ADD COLUMN route_strings MEDIUMTEXT NOT NULL DEFAULT '' AFTER source_filter_strings", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry ADD COLUMN route_hash VARCHAR(64) NOT NULL DEFAULT '' AFTER route_strings", infoschema.ErrColumnExists)
+	doReentrantDDL(s, `ALTER TABLE mysql.tidb_restore_registry
+		ADD UNIQUE INDEX unique_registration_params_v2 (
+			filter_hash, route_hash, start_ts, restored_ts, upstream_cluster_id, with_sys_table, cmd(256))`, dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry DROP INDEX unique_registration_params", dbterror.ErrCantDropFieldOrKey)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
@@ -3641,6 +3724,10 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateIndexAdvisorTable)
 	// create mysql.tidb_kernel_options
 	mustExecute(s, CreateKernelOptionsTable)
+	// Only mark stats requests as background here; the effective background CPU cap is controlled
+	// by bg-cpu-throttle-threshold and fg-cpu-throttle-threshold.
+	mustExecute(s, "ALTER RESOURCE GROUP %n BACKGROUND=(TASK_TYPES=%?)",
+		resourcegroup.DefaultResourceGroupName, kv.InternalTxnStats)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
