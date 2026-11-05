@@ -148,7 +148,6 @@ func TestBackfillWorkerSendsInFlightResultAfterClose(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 type backfillWorkerTestOwner struct{ owner.Manager }
