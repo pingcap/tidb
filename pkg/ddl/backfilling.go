@@ -316,8 +316,8 @@ type backfillWorker struct {
 	taskCh   chan *reorgBackfillTask
 	resultCh chan *backfillResult
 	workCtx  context.Context
-	// resultCtx stays active when this worker is retired during a downscale, so
-	// the collector still receives the result of any task already in flight.
+	// resultCtx covers execution and delivery of in-flight tasks. Worker retirement
+	// stops taking new tasks without interrupting a partially completed range.
 	resultCtx context.Context
 	cancel    func()
 	wg        *sync.WaitGroup
@@ -340,7 +340,7 @@ func (w *backfillWorker) String() string {
 }
 
 // Close retires this worker by canceling only workCtx. During downscaling, the
-// executor keeps resultCtx active so in-flight results can reach the collector.
+// executor keeps resultCtx active so in-flight tasks finish and report their results.
 // Forced executor shutdown cancels resultCtx before Close to unblock result sends.
 func (w *backfillWorker) Close() {
 	if w.cancel != nil {
@@ -384,7 +384,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			return result
 		}
 
-		taskCtx, err := bf.BackfillData(w.workCtx, handleRange)
+		taskCtx, err := bf.BackfillData(w.resultCtx, handleRange)
 		if err != nil {
 			result.err = err
 			return result
@@ -453,6 +453,10 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		w.sendResult(&backfillResult{taskID: curTaskID, err: dbterror.ErrReorgPanic})
 	}, false)
 	for {
+		// Prefer retirement over queued work after the current task finishes.
+		if w.workCtx.Err() != nil {
+			return
+		}
 		select {
 		case <-w.workCtx.Done():
 			logger.Info("backfill worker exit on context done")

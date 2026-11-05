@@ -21,6 +21,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/owner"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/stretchr/testify/require"
 )
 
@@ -73,7 +75,102 @@ func TestBackfillWorkerSendsInFlightResultAfterClose(t *testing.T) {
 			t.Fatal("backfill worker blocked while discarding a result during executor shutdown")
 		}
 	})
+
+	duplicateErr := errors.New("duplicate key found during backfill")
+	for _, tc := range []struct {
+		name           string
+		retire         bool
+		cancelExecutor bool
+		backfillErr    error
+		wantErr        error
+	}{
+		{name: "in-flight range completes without downscale"},
+		{name: "retirement finishes the complete in-flight range", retire: true},
+		{name: "retirement preserves a genuine task error", retire: true, backfillErr: duplicateErr, wantErr: duplicateErr},
+		{name: "executor cancellation interrupts in-flight work", cancelExecutor: true, wantErr: context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			d := &ddlCtx{ctx: context.Background(), ownerManager: backfillWorkerTestOwner{}}
+			d.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
+			d.newReorgCtx(1, 0)
+			started := make(chan struct{})
+			release := make(chan struct{})
+			calls := 0
+			bf := &backfillWorkerTestBackfiller{backfill: func(ctx context.Context, task reorgBackfillTask) (backfillTaskContext, error) {
+				calls++
+				if calls == 1 {
+					close(started)
+					<-release
+				}
+				if err := ctx.Err(); err != nil {
+					return backfillTaskContext{}, err
+				}
+				if tc.backfillErr != nil {
+					return backfillTaskContext{}, tc.backfillErr
+				}
+				if calls == 1 {
+					return backfillTaskContext{nextKey: []byte("b"), addedCount: 1, scanCount: 1}, nil
+				}
+				return backfillTaskContext{nextKey: task.endKey, addedCount: 1, scanCount: 1, done: true}, nil
+			}}
+			worker := newBackfillWorker(ctx, ctx, bf)
+			t.Cleanup(worker.Close)
+			done := make(chan *backfillResult, 1)
+			go func() {
+				done <- worker.handleBackfillTask(d, &reorgBackfillTask{
+					physicalTable: backfillWorkerTestTable{}, jobID: 1, startKey: []byte("a"), endKey: []byte("c"),
+				}, bf)
+			}()
+			<-started
+			if tc.retire {
+				worker.Close()
+			}
+			if tc.cancelExecutor {
+				cancel()
+			}
+			close(release)
+			select {
+			case result := <-done:
+				if tc.wantErr != nil {
+					require.ErrorIs(t, result.err, tc.wantErr)
+					require.Equal(t, 1, calls)
+				} else {
+					require.NoError(t, result.err)
+					require.Equal(t, 2, calls)
+					require.Equal(t, "c", string(result.nextKey))
+					require.Equal(t, 2, result.addedCount)
+					require.Equal(t, int64(2), d.getReorgCtx(1).getRowCount())
+				}
+			case <-time.After(time.Second):
+				t.Fatal("in-flight task did not finish after releasing its batch")
+			}
+		})
+	}
+
 }
+
+type backfillWorkerTestOwner struct{ owner.Manager }
+
+func (backfillWorkerTestOwner) IsOwner() bool { return true }
+
+type backfillWorkerTestTable struct{ table.PhysicalTable }
+
+func (backfillWorkerTestTable) GetPhysicalID() int64 { return 1 }
+
+type backfillWorkerTestBackfiller struct {
+	backfiller
+	backfill func(context.Context, reorgBackfillTask) (backfillTaskContext, error)
+}
+
+func (b *backfillWorkerTestBackfiller) BackfillData(ctx context.Context, task reorgBackfillTask) (backfillTaskContext, error) {
+	return b.backfill(ctx, task)
+}
+
+func (*backfillWorkerTestBackfiller) AddMetricInfo(float64) {}
+func (*backfillWorkerTestBackfiller) GetCtx() *backfillCtx  { return &backfillCtx{} }
+func (*backfillWorkerTestBackfiller) String() string        { return "test" }
 
 func TestTxnBackfillExecutorDownscalePreservesInFlightError(t *testing.T) {
 	resultCtx, cancelResult := context.WithCancel(context.Background())
