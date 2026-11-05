@@ -45,6 +45,12 @@ import (
 )
 
 func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessionapi.Session, parser *parser.Parser, sql string) (*logicalop.LogicalMemTable, bool) {
+	memTable, ok, _ := getLogicalMemTableWithRemained(t, dom, se, parser, sql)
+	return memTable, ok
+}
+
+func getLogicalMemTableWithRemained(t *testing.T, dom *domain.Domain, se sessionapi.Session, parser *parser.Parser, sql string) (*logicalop.LogicalMemTable, bool, []expression.Expression) {
+	se.GetSessionVars().PlanColumnID.Store(0)
 	stmt, err := parser.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 
@@ -59,14 +65,18 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessionapi.Session,
 
 	// Obtain the leaf plan
 	leafPlan := logicalPlan
+	var remained []expression.Expression
 	for len(leafPlan.Children()) > 0 {
+		if selection, ok := leafPlan.(*logicalop.LogicalSelection); ok {
+			remained = append(remained, selection.Conditions...)
+		}
 		leafPlan = leafPlan.Children()[0]
 	}
 	switch lg := leafPlan.(type) {
 	case *logicalop.LogicalMemTable:
-		return lg, true
+		return lg, true, remained
 	case *logicalop.LogicalTableDual:
-		return nil, false
+		return nil, false, remained
 	}
 	panic("unreachable")
 }
@@ -300,6 +310,174 @@ func TestStatementsSummaryExtractorOpenEndedTimeRange(t *testing.T) {
 	tk.MustQuery("explain select * from information_schema.statements_summary where summary_end_time >= '2020-01-01 00:00:00'").MultiCheckContain([]string{
 		"end_time: 9999-12-31 23:59:59.999999",
 	})
+}
+
+func TestStatementsSummaryExtractorPreparedTimeRange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("set tidb_enable_prepared_plan_cache = 1")
+	tk.MustExec("prepare stmt from 'select digest, sum(exec_count) from information_schema.statements_summary_history where summary_begin_time <= from_unixtime(?) and summary_end_time >= from_unixtime(?) group by digest'")
+	tk.MustExec("set @end = 1577923200, @begin = 1577836800")
+	tk.MustQuery("execute stmt using @end, @begin")
+	preparedPlan := tk.Session().ShowProcess().Plan
+	if execute, ok := preparedPlan.(*plannercore.Execute); ok {
+		preparedPlan = execute.Plan
+	}
+	plan, ok := preparedPlan.(base.PhysicalPlan)
+	require.True(t, ok, "%T", preparedPlan)
+	for len(plan.Children()) > 0 {
+		plan = plan.Children()[0]
+	}
+	memTable, ok := plan.(*physicalop.PhysicalMemTable)
+	require.True(t, ok)
+	extractor := memTable.Extractor.(*plannercore.StatementsSummaryExtractor)
+	require.NotNil(t, extractor.CoarseTimeRange)
+	require.Equal(t, time.Unix(1577836800, 0).UTC(), extractor.CoarseTimeRange.StartTime.UTC())
+	require.Equal(t, time.Unix(1577923200, 0).UTC(), extractor.CoarseTimeRange.EndTime.UTC())
+}
+
+func TestStatementsSummaryExtractorPreparedTimeRangeDST(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	for _, ca := range []struct {
+		name      string
+		timezone  string
+		bound     string
+		skipRange bool
+	}{
+		{"NewYorkFold", "America/New_York", "2024-11-03 01:30:00", true},
+		{"NewYorkGap", "America/New_York", "2024-03-10 02:30:00", true},
+		{"LordHoweFold", "Australia/Lord_Howe", "2024-04-07 01:45:00", true},
+		{"LordHoweGap", "Australia/Lord_Howe", "2024-10-06 02:15:00", true},
+		{"NewYorkAfterFold", "America/New_York", "2024-11-03 03:30:00", false},
+		{"UTC", "+00:00", "2024-11-03 01:30:00", false},
+	} {
+		t.Run(ca.name, func(t *testing.T) {
+			tk.MustExec("set time_zone = '" + ca.timezone + "'")
+			tk.MustExec("prepare dst_stmt from 'select digest from information_schema.statements_summary_history where summary_begin_time <= cast(? as datetime) and summary_end_time >= cast(? as datetime)'")
+			tk.MustExec("set @bound = '" + ca.bound + "'")
+			tk.MustQuery("execute dst_stmt using @bound, @bound")
+			plan := tk.Session().ShowProcess().Plan
+			if execute, ok := plan.(*plannercore.Execute); ok {
+				plan = execute.Plan
+			}
+			physical, ok := plan.(base.PhysicalPlan)
+			require.True(t, ok, "%T", plan)
+			for len(physical.Children()) > 0 {
+				physical = physical.Children()[0]
+			}
+			memTable, ok := physical.(*physicalop.PhysicalMemTable)
+			require.True(t, ok, "%T", physical)
+			extractor := memTable.Extractor.(*plannercore.StatementsSummaryExtractor)
+			require.False(t, extractor.SkipRequest)
+			if ca.skipRange {
+				require.Nil(t, extractor.CoarseTimeRange)
+				return
+			}
+			require.NotNil(t, extractor.CoarseTimeRange)
+		})
+	}
+}
+
+func TestStatementsSummaryExtractorConservativeTimeRange(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	se.GetSessionVars().TimeZone = time.UTC
+	se.GetSessionVars().StmtCtx.SetTimeZone(time.UTC)
+	p := parser.New()
+	for _, ca := range []struct {
+		name      string
+		predicate string
+		start     string
+		end       string
+	}{
+		{
+			name:      "ConstantLeftBeginLowerBound",
+			predicate: "'2022-12-27 02:00:00' <= summary_begin_time",
+		},
+		{
+			name:      "ConstantLeftEndUpperBound",
+			predicate: "'2022-12-27 03:00:00' >= summary_end_time",
+		},
+		{
+			name:      "ConstantLeftRange",
+			predicate: "'2022-12-27 03:00:00' >= summary_begin_time and '2022-12-27 02:00:00' <= summary_end_time",
+			start:     "2022-12-27T02:00:00Z",
+			end:       "2022-12-27T03:00:00Z",
+		},
+		{
+			name:      "CrossedEndpoints",
+			predicate: "summary_begin_time <= '2022-12-27 02:01:00' and summary_end_time >= '2022-12-27 02:02:00'",
+		},
+		{
+			name:      "StrictPoint",
+			predicate: "summary_begin_time < '2022-12-27 02:05:00' and summary_end_time > '2022-12-27 02:05:00'",
+			start:     "2022-12-27T02:05:00Z",
+			end:       "2022-12-27T02:05:00Z",
+		},
+		{
+			name:      "FractionalPoint",
+			predicate: "summary_begin_time < '2022-12-27 02:00:00.000500' and summary_end_time >= '2022-12-27 02:00:00'",
+			start:     "2022-12-27T02:00:00Z",
+			end:       "2022-12-27T02:00:00.000500Z",
+		},
+		{
+			name:      "FutureOverflow",
+			predicate: "summary_begin_time <= '3001-01-18 23:59:59'",
+		},
+		{
+			name:      "PastOverflow",
+			predicate: "summary_end_time >= '1000-01-01 00:00:00'",
+		},
+		{
+			name:      "SafeBoundSurvives",
+			predicate: "summary_begin_time <= '3001-01-18 23:59:59' and summary_end_time >= '2022-12-27 02:00:00'",
+			start:     "2022-12-27T02:00:00Z",
+			end:       "9999-12-31T23:59:59.999999Z",
+		},
+		{
+			name:      "StrictUnixNanoMaximum",
+			predicate: "summary_end_time > '2262-04-11 23:47:16.854775'",
+			start:     "2262-04-11T23:47:16.854775Z",
+			end:       "9999-12-31T23:59:59.999999Z",
+		},
+		{
+			name:      "AboveUnixNanoMaximum",
+			predicate: "summary_begin_time <= '2262-04-11 23:47:16.854776'",
+		},
+		{
+			name:      "StrictUnixNanoMinimum",
+			predicate: "summary_begin_time < '1677-09-21 00:12:43.145225'",
+			start:     "0001-01-01T00:00:00Z",
+			end:       "1677-09-21T00:12:43.145225Z",
+		},
+		{
+			name:      "BelowUnixNanoMinimum",
+			predicate: "summary_end_time >= '1677-09-21 00:12:43.145224'",
+		},
+	} {
+		t.Run(ca.name, func(t *testing.T) {
+			memTable, ok, remained := getLogicalMemTableWithRemained(t, dom, se, p,
+				"select digest from information_schema.statements_summary_history where "+ca.predicate)
+			require.True(t, ok)
+			extractor := memTable.Extractor.(*plannercore.StatementsSummaryExtractor)
+			require.False(t, extractor.SkipRequest)
+			require.NotEmpty(t, remained)
+			if ca.start == "" {
+				require.Nil(t, extractor.CoarseTimeRange)
+				return
+			}
+			require.NotNil(t, extractor.CoarseTimeRange)
+			start, err := time.Parse(time.RFC3339Nano, ca.start)
+			require.NoError(t, err)
+			end, err := time.Parse(time.RFC3339Nano, ca.end)
+			require.NoError(t, err)
+			require.True(t, start.Equal(extractor.CoarseTimeRange.StartTime))
+			require.True(t, end.Equal(extractor.CoarseTimeRange.EndTime))
+		})
+	}
 }
 
 func TestClusterLogTableExtractor(t *testing.T) {
@@ -604,6 +782,112 @@ func TestClusterLogTableExtractor(t *testing.T) {
 		} else {
 			require.True(t, ca.skipRequest, ca.sql)
 		}
+	}
+}
+
+func TestMemTableTimeRangeExtractorConstantLeft(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	t.Cleanup(se.Close)
+	se.GetSessionVars().TimeZone = time.Local
+	se.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
+	parser := parser.New()
+
+	start := timestamp(t, "2019-10-10 10:10:10")
+	end := timestamp(t, "2019-10-11 10:10:10")
+	tables := []struct {
+		name, column string
+	}{
+		{"information_schema.cluster_log", "time"},
+		{"information_schema.tidb_hot_regions_history", "update_time"},
+		{"metrics_schema.tidb_query_duration", "time"},
+		{"information_schema.slow_query", "time"},
+	}
+	cases := []struct {
+		name, constantLeft, columnLeft string
+		start, end                     int64
+		skipRequest                    bool
+	}{
+		{
+			name:         "Strict",
+			constantLeft: "'2019-10-10 10:10:10' < %[1]s and '2019-10-11 10:10:10' > %[1]s",
+			columnLeft:   "%[1]s > '2019-10-10 10:10:10' and %[1]s < '2019-10-11 10:10:10'",
+			start:        start + 1,
+			end:          end - 1,
+		},
+		{
+			name:         "Inclusive",
+			constantLeft: "'2019-10-10 10:10:10' <= %[1]s and '2019-10-11 10:10:10' >= %[1]s",
+			columnLeft:   "%[1]s >= '2019-10-10 10:10:10' and %[1]s <= '2019-10-11 10:10:10'",
+			start:        start,
+			end:          end,
+		},
+		{
+			name:         "Equality",
+			constantLeft: "'2019-10-10 10:10:10' = %[1]s",
+			columnLeft:   "%[1]s = '2019-10-10 10:10:10'",
+			start:        start,
+			end:          start,
+		},
+		{
+			name:         "Mixed",
+			constantLeft: "'2019-10-10 10:10:10' < %[1]s and %[1]s <= '2019-10-11 10:10:10'",
+			columnLeft:   "%[1]s > '2019-10-10 10:10:10' and %[1]s <= '2019-10-11 10:10:10'",
+			start:        start + 1,
+			end:          end,
+		},
+		{
+			name:         "Empty",
+			constantLeft: "'2019-10-11 10:10:10' <= %[1]s and '2019-10-10 10:10:10' >= %[1]s",
+			columnLeft:   "%[1]s >= '2019-10-11 10:10:10' and %[1]s <= '2019-10-10 10:10:10'",
+			start:        end,
+			end:          start,
+			skipRequest:  true,
+		},
+	}
+	for _, table := range tables {
+		t.Run(table.name, func(t *testing.T) {
+			for _, ca := range cases {
+				t.Run(ca.name, func(t *testing.T) {
+					for _, form := range []struct{ name, predicate string }{
+						{"ConstantLeft", ca.constantLeft},
+						{"ColumnLeft", ca.columnLeft},
+					} {
+						t.Run(form.name, func(t *testing.T) {
+							sql := "select * from " + table.name + " where " + fmt.Sprintf(form.predicate, table.column)
+							memTable, ok := getLogicalMemTable(t, dom, se, parser, sql)
+							if !ok {
+								require.True(t, ca.skipRequest, sql)
+								return
+							}
+							var gotStart, gotEnd int64
+							var skipRequest bool
+							switch extractor := memTable.Extractor.(type) {
+							case *plannercore.ClusterLogTableExtractor:
+								gotStart, gotEnd, skipRequest = extractor.StartTime, extractor.EndTime, extractor.SkipRequest
+							case *plannercore.HotRegionsHistoryTableExtractor:
+								gotStart, gotEnd, skipRequest = extractor.StartTime, extractor.EndTime, extractor.SkipRequest
+							case *plannercore.MetricTableExtractor:
+								gotStart, gotEnd, skipRequest = extractor.StartTime.UnixMilli(), extractor.EndTime.UnixMilli(), extractor.SkipRequest
+							case *plannercore.SlowQueryExtractor:
+								require.True(t, extractor.Enable)
+								require.Len(t, extractor.TimeRanges, 1)
+								gotStart, gotEnd = extractor.TimeRanges[0].StartTime.UnixMilli(), extractor.TimeRanges[0].EndTime.UnixMilli()
+								skipRequest = extractor.SkipRequest
+							default:
+								t.Fatalf("unexpected extractor %T", memTable.Extractor)
+							}
+							// Check concrete bounds independently for both equivalent forms;
+							// comparing the forms alone could miss a shared extraction error.
+							require.Equal(t, ca.start, gotStart, sql)
+							require.Equal(t, ca.end, gotEnd, sql)
+							require.Equal(t, ca.skipRequest, skipRequest, sql)
+						})
+					}
+				})
+			}
+		})
 	}
 }
 

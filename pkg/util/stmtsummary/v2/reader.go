@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.uber.org/zap"
 )
 
@@ -397,6 +398,7 @@ func (r *HistoryReader) scheduleTasks(
 				}
 				select {
 				case filesCh <- file:
+					failpoint.InjectCall("stmtSummaryHistoryScanFile", file.path)
 				case <-ctx.Done():
 					file.closeAndLogError()
 					return
@@ -729,25 +731,10 @@ func parseEndTs(file *os.File) (int64, error) {
 		if err != nil {
 			return 0, err
 		}
-		if end.Format(logFileTimeFormat) != timeStr {
-			return 0, nil
-		}
 		// Rotation names contain local wall time without an offset. A repeated
 		// time can denote a later instant, so it is not a safe pruning bound.
-		_, offset := end.Zone()
-		zoneStart, zoneEnd := end.ZoneBounds()
-		for i, boundary := range []time.Time{zoneStart, zoneEnd} {
-			if boundary.IsZero() {
-				continue
-			}
-			if i == 0 {
-				boundary = boundary.Add(-time.Nanosecond)
-			}
-			_, adjacentOffset := boundary.Zone()
-			if adjacentOffset != offset &&
-				end.Add(time.Duration(offset-adjacentOffset)*time.Second).Format(logFileTimeFormat) == timeStr {
-				return 0, nil
-			}
+		if end.Format(logFileTimeFormat) != timeStr || !timeutil.IsUniqueLocalTime(end) {
+			return 0, nil
 		}
 		return end.Unix(), nil
 	}
@@ -1034,6 +1021,7 @@ func (w *stmtParseWorker) handleLines(
 				continue
 			}
 		}
+		failpoint.InjectCall("stmtSummaryHistoryParseRecord")
 		record, skipped, err := w.parse(line)
 		if err != nil {
 			// ignore invalid lines
