@@ -3319,6 +3319,7 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 
 		n := len(w.indexes)
+<<<<<<< HEAD
 		for i, idxRecord := range idxRecords {
 			taskCtx.scanCount++
 			// we fetch records row by row, so records will belong to
@@ -3327,8 +3328,70 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 			err := w.indexes[i%n].Delete(w.tblCtx, txn, idxRecord.vals, idxRecord.handle)
 			if err != nil {
 				return errors.Trace(err)
+=======
+		globalIndexKeys := make([]kv.Key, 0, len(idxRecords))
+		// Keep the fetched records intact: i%n identifies the index even when an
+		// array expands to zero or multiple entries, and progress is per record.
+		recordValues := make([][][]types.Datum, len(idxRecords))
+		recordKeys := make([][]kv.Key, len(idxRecords))
+		for i, idxRecord := range idxRecords {
+			index := w.indexes[i%n]
+			iter := index.GenIndexKVIter(ec, loc, idxRecord.vals, idxRecord.handle, idxRecord.rsData)
+			for iter.Valid() {
+				values := iter.PeekIndexedValues()
+				key, _, distinct, err := iter.Next(nil, nil)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				recordValues[i] = append(recordValues[i], values)
+				if distinct {
+					globalIndexKeys = append(globalIndexKeys, key)
+				}
+				recordKeys[i] = append(recordKeys[i], key)
 			}
-			taskCtx.addedCount++
+		}
+
+		var found map[string][]byte
+		found, err = kv.BatchGetValue(ctx, txn, globalIndexKeys)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		for i, idxRecord := range idxRecords {
+			taskCtx.scanCount++
+			// Count records with empty arrays as processed even though they have no index keys to delete.
+			cleaned := len(recordKeys[i]) == 0
+			for j, key := range recordKeys[i] {
+				if val, ok := found[string(key)]; ok {
+					// Only delete if it is from the partition it was read from.
+					handle, errPart := tablecodec.DecodeHandleInIndexValue(val)
+					if errPart != nil {
+						return errors.Trace(errPart)
+					}
+					if partHandle, ok := handle.(kv.PartitionHandle); ok {
+						if partHandle.PartitionID != handleRange.physicalTable.GetPhysicalID() {
+							continue
+						}
+					}
+					// Mark the entry for transactional conflict checking. A concurrent
+					// takeover causes the optimistic transaction to conflict and retry.
+					err = txn.LockKeys(ctx, lockCtx, key)
+					if err != nil {
+						return errors.Trace(err)
+					}
+				}
+				// Delete only the checked element, not the original array: another
+				// element of the same row may now belong to a surviving partition.
+				err = w.indexes[i%n].Delete(w.tblCtx, txn, recordValues[i][j], idxRecord.handle)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				cleaned = true
+			}
+			if cleaned {
+				taskCtx.addedCount++
+>>>>>>> adee1920e10 (ddl: fix global multi-valued index cleanup during TRUNCATE PARTITION (#71299))
+			}
 		}
 		return nil
 	})
