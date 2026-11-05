@@ -31,27 +31,24 @@ func CloneConf(conf *Config) (*Config, error) {
 	if err := json.Unmarshal(content, &clonedConf); err != nil {
 		return nil, err
 	}
+	clonedConf.ConfigFile = conf.ConfigFile
 	return &clonedConf, nil
 }
 
 var (
-	// dynamicConfigItems contains all config items that can be changed during runtime.
+	// dynamicConfigItems is the allowlist for configuration file reloads. Entries
+	// must be read from GetGlobalConfig at use time or have a runtime reload hook.
+	// Deprecated options and settings cached at startup must not be added here.
 	dynamicConfigItems = map[string]struct{}{
 		"Performance.MaxProcs":            {},
-		"Performance.MaxMemory":           {},
 		"Performance.CrossJoin":           {},
 		"Performance.PseudoEstimateRatio": {},
 		"Performance.StmtCountLimit":      {},
-		"Performance.TCPKeepAlive":        {},
 		"TiKVClient.StoreLimit":           {},
 		"Log.Level":                       {},
-		"Log.ExpensiveThreshold":          {},
 		"Instance.SlowThreshold":          {},
 		"Instance.CheckMb4ValueInUTF8":    {},
-		"TxnLocalLatches.Capacity":        {},
 		"CompatibleKillQuery":             {},
-		"TreatOldVersionUTF8AsUTF8MB4":    {},
-		"OpenTracing.Enable":              {},
 	}
 )
 

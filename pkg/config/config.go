@@ -213,6 +213,8 @@ var (
 
 // Config contains configuration options.
 type Config struct {
+	// ConfigFile is the absolute startup configuration path, never a TOML option.
+	ConfigFile       string    `toml:"-" json:"-"`
 	Host             string    `toml:"host" json:"host"`
 	AdvertiseAddress string    `toml:"advertise-address" json:"advertise-address"`
 	Port             uint      `toml:"port" json:"port"`
@@ -1454,6 +1456,8 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCm
 	cfg := GetGlobalConfig()
 	var err error
 	if confPath != "" {
+		confPath, err = filepath.Abs(confPath)
+		terror.MustNil(err)
 		if err = cfg.Load(confPath); err != nil {
 			// Unused config item error turns to warnings.
 			if tmp, ok := err.(*ErrConfigValidationFailed); ok {
@@ -1488,6 +1492,7 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCm
 			os.Exit(1)
 		}
 	}
+	cfg.ConfigFile = confPath
 	enforceCmdArgs(cfg, fset)
 
 	if err := cfg.Valid(); err != nil {

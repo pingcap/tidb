@@ -25,6 +25,49 @@ Cluster TLS and certificate verification settings also apply to this listener;
 TLS advertises HTTP/1.1 only. Disabling `status.report-status` disables the
 listener entirely. Normal-mode HTTP API availability is unchanged.
 
+## Reload the local configuration file
+
+`PUT /config/reload` reloads the TOML file passed to this TiDB process at startup
+with `--config`. It takes no parameters or request body. Use it after a
+configuration management platform replaces that file, including a read-only
+mounted file. The path is resolved at startup; replacing a symlink at that path
+is supported. TiDB never writes the file during reload.
+
+```shell
+curl -i -X PUT http://127.0.0.1:10080/config/reload
+# HTTP/1.1 200 OK, with an empty response body
+```
+
+Only these options can be reloaded:
+
+| TOML option | Effect |
+| --- | --- |
+| `log.level` | Changes the running logger level. |
+| `performance.max-procs` | Changes GOMAXPROCS; switching from a positive value to 0 restores Go's automatic CPU limit, ignoring the GOMAXPROCS environment variable. |
+| `performance.cross-join` | Changes whether Cartesian products are allowed. |
+| `performance.pseudo-estimate-ratio` | Changes the statistics modification ratio threshold; must be finite and nonnegative. |
+| `performance.stmt-count-limit` | Changes the transaction statement count limit. |
+| `tikv-client.store-limit` | Changes the local TiKV store request limit; must be nonnegative. |
+| `instance.tidb_slow_log_threshold` | Changes the slow log threshold. |
+| `instance.tidb_check_mb4_value_in_utf8` | Changes UTF8MB4 checking for UTF8 values. |
+| `compatible-kill-query` | Changes compatibility of KILL QUERY handling. |
+
+Omitted reloadable options return to their built-in defaults. Reload also reapplies
+runtime values changed independently through SQL or other runtime setters. Unknown options,
+deprecated options, and options outside this table are ignored after TOML
+parsing. In particular, addresses, ports, TLS, tracing, TCP keepalive, and other
+startup-only options keep their current values, including command-line
+overrides. Apply those changes by restarting TiDB. No cluster-wide system
+variables are persisted or updated by this endpoint.
+
+A missing startup path, unreadable file, malformed TOML, or invalid reloadable
+value returns HTTP 500 with a plain-text explanation. Failed reloads leave the
+active configuration and runtime settings unchanged. Unsupported HTTP methods
+return HTTP 405. Requests affect only the TiDB instance receiving them; use
+`GET /config` to inspect its active configuration. This endpoint is unavailable
+in diagnostic mode (HTTP 404) and uses the status listener's existing TLS and
+access controls.
+
 ## HTTP endpoints
 
 1. Get the current status of TiDB, including the connections, version, and `git_hash`.

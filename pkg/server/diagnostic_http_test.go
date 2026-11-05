@@ -91,6 +91,7 @@ func TestDiagnosticHTTP(t *testing.T) {
 				{http.MethodGet, "/debug/pprof/cmdline", http.StatusOK},
 				{http.MethodGet, "/info", http.StatusNotFound},
 				{http.MethodGet, "/settings", http.StatusNotFound},
+				{http.MethodPut, "/config/reload", http.StatusNotFound},
 				{http.MethodPost, "/status", http.StatusMethodNotAllowed},
 				{http.MethodPost, "/debug/pprof/symbol", http.StatusMethodNotAllowed},
 			} {

@@ -344,6 +344,7 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/config", fn.Wrap(func() (*config.Config, error) {
 		return config.GetGlobalConfig(), nil
 	}))
+	router.HandleFunc("/config/reload", handleConfigReload).Methods(http.MethodPut).Name("ConfigReload")
 	router.Handle("/labels", tikvhandler.LabelHandler{}).Name("Labels")
 
 	// HTTP path for get server info.

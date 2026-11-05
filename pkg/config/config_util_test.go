@@ -25,8 +25,11 @@ import (
 )
 
 func TestCloneConf(t *testing.T) {
-	c1, err := CloneConf(&defaultConf)
+	cfg := defaultConf
+	cfg.ConfigFile = "/tmp/tidb.toml"
+	c1, err := CloneConf(&cfg)
 	require.NoError(t, err)
+	require.Equal(t, cfg.ConfigFile, c1.ConfigFile)
 	c2, err := CloneConf(c1)
 	require.NoError(t, err)
 	require.True(t, reflect.DeepEqual(c1, c2))
@@ -48,20 +51,23 @@ func TestMergeConfigItems(t *testing.T) {
 
 	// allowed
 	newConf.Performance.MaxProcs = 123
-	newConf.Performance.MaxMemory = 123
 	newConf.Performance.CrossJoin = false
 	newConf.Performance.PseudoEstimateRatio = 123
 	newConf.TiKVClient.StoreLimit = 123
 
-	// rejected
+	// rejected: these options are deprecated or cached by startup consumers.
+	newConf.Performance.MaxMemory = 123
+	newConf.Performance.TCPKeepAlive = !oldConf.Performance.TCPKeepAlive
+	newConf.OpenTracing.Enable = !oldConf.OpenTracing.Enable
+	newConf.TreatOldVersionUTF8AsUTF8MB4 = !oldConf.TreatOldVersionUTF8AsUTF8MB4
 	newConf.Store = "tiflash"
 	newConf.Port = 2333
 	newConf.AdvertiseAddress = "1.2.3.4"
 	newConf.Instance.SlowThreshold = 2345
 
 	as, rs := MergeConfigItems(oldConf, newConf)
-	require.Equal(t, 6, len(as))
-	require.Equal(t, 3, len(rs))
+	require.Len(t, as, 5)
+	require.Len(t, rs, 7)
 	for _, a := range as {
 		_, ok := dynamicConfigItems[a]
 		require.True(t, ok)
@@ -72,7 +78,7 @@ func TestMergeConfigItems(t *testing.T) {
 	}
 
 	require.Equal(t, newConf.Performance.MaxProcs, oldConf.Performance.MaxProcs)
-	require.Equal(t, newConf.Performance.MaxMemory, oldConf.Performance.MaxMemory)
+	require.Equal(t, oriConf.Performance.MaxMemory, oldConf.Performance.MaxMemory)
 	require.Equal(t, newConf.Performance.CrossJoin, oldConf.Performance.CrossJoin)
 	require.Equal(t, newConf.Performance.PseudoEstimateRatio, oldConf.Performance.PseudoEstimateRatio)
 	require.Equal(t, newConf.TiKVClient.StoreLimit, oldConf.TiKVClient.StoreLimit)
