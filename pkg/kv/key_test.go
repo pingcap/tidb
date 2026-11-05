@@ -335,6 +335,33 @@ func TestMemAwareHandleMapWithPartialHandle(t *testing.T) {
 	assert.Equal(t, 4, v)
 }
 
+func TestMemAwareHandleMapPartitionMemory(t *testing.T) {
+	encoded, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(1))
+	require.NoError(t, err)
+	common, err := NewCommonHandle(encoded)
+	require.NoError(t, err)
+
+	for _, test := range []struct {
+		name   string
+		handle Handle
+	}{
+		{name: "int", handle: IntHandle(1)},
+		{name: "common", handle: common},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			m := NewMemAwareHandleMap[int]()
+			first := NewPartitionHandle(1, test.handle)
+			initialBytes := m.Set(first, 1)
+			require.Positive(t, initialBytes)
+			require.Zero(t, m.Set(first, 2), "updating a partition must not charge its initial allocation again")
+
+			second := NewPartitionHandle(2, test.handle)
+			require.Equal(t, initialBytes, m.Set(second, 3), "each new partition must charge its initial allocation")
+			require.Zero(t, m.Set(second, 4))
+		})
+	}
+}
+
 func TestKeyRangeDefinition(t *testing.T) {
 	// The struct layout for kv.KeyRange and coprocessor.KeyRange should be exactly the same.
 	// This allow us to use unsafe pointer to convert them and reduce allocation.

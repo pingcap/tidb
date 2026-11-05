@@ -307,9 +307,9 @@ func (p *parallelHashAggSpillHelper) processRow(context *processRowContext) (tot
 	} else {
 		totalMemDelta += int64(len(key))
 		results := make([]aggfuncs.PartialResult, context.aggFuncNum)
-		delta := context.restoreadData.Set(key, results)
-		if delta > 0 {
-			p.memTracker.Consume(delta)
+		expandMem = context.restoreadData.Set(key, results)
+		if expandMem > 0 {
+			p.memTracker.Consume(expandMem)
 		}
 		for aggPos := range context.aggFuncNum {
 			results[aggPos] = context.partialResultsRestored[aggPos][context.rowPos]

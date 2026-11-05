@@ -44,11 +44,14 @@ go_library(
 go_test(
     name = "aggregate_test",
     timeout = "short",
-    srcs = ["agg_spill_test.go"],
+    srcs = [
+        "agg_spill_internal_test.go",
+        "agg_spill_test.go",
+    ],
+    embed = [":aggregate"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 4,
     deps = [
-        ":aggregate",
         "//pkg/executor/aggfuncs",
         "//pkg/executor/internal/exec",
         "//pkg/executor/internal/testutil",

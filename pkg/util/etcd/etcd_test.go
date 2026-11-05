@@ -402,7 +402,7 @@ func testSetupOriginal(t *testing.T) (context.Context, *clientv3.Client, *integr
 // TestEtcdOpenTelemetryCompatibility ensures embedded etcd still builds and
 // serves RPCs after upgrading OpenTelemetry dependencies.
 func TestEtcdOpenTelemetryCompatibility(t *testing.T) {
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 	ctx, cli, cluster := testSetupOriginal(t)
 	t.Cleanup(func() { cluster.Terminate(t) })
 

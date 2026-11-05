@@ -647,7 +647,7 @@ func (m *MemAwareHandleMap[V]) Get(h Handle) (v V, found bool) {
 }
 
 // Set sets a value with a Handle.
-func (m *MemAwareHandleMap[V]) Set(h Handle, val V) int64 {
+func (m *MemAwareHandleMap[V]) Set(h Handle, val V) (deltaBytes int64) {
 	ints, strs := &m.ints, &m.strs
 	if ph, ok := h.(PartitionHandle); ok {
 		idx := ph.PartitionID
@@ -655,6 +655,7 @@ func (m *MemAwareHandleMap[V]) Set(h Handle, val V) int64 {
 			p := m.partitionInts[idx]
 			if p == nil {
 				p = newMemAwareMap[int64, V]()
+				deltaBytes += int64(p.Bytes)
 				m.partitionInts[idx] = p
 			}
 			ints = p
@@ -662,15 +663,16 @@ func (m *MemAwareHandleMap[V]) Set(h Handle, val V) int64 {
 			p := m.partitionStrs[idx]
 			if p == nil {
 				p = newMemAwareMap[string, strHandleValue[V]]()
+				deltaBytes += int64(p.Bytes)
 				m.partitionStrs[idx] = p
 			}
 			strs = p
 		}
 	}
 	if h.IsInt() {
-		return ints.Set(h.IntValue(), val)
+		return deltaBytes + ints.Set(h.IntValue(), val)
 	}
-	return strs.Set(string(h.Encoded()), strHandleValue[V]{
+	return deltaBytes + strs.Set(string(h.Encoded()), strHandleValue[V]{
 		h:   h,
 		val: val,
 	})
