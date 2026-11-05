@@ -57,7 +57,8 @@ impl tidb_gcutil::Context for RestrictedGcContext<'_> {
         }
         Ok(self
             .0
-            .exec_restricted_sql(&statement)?
+            // Go `gcutil`'s `kv.WithInternalSourceType(ctx, kv.InternalTxnGC)`.
+            .exec_restricted_sql(tidb_txnkv::INTERNAL_TXN_GC, &statement)?
             .into_iter()
             .map(|row| {
                 row.iter()

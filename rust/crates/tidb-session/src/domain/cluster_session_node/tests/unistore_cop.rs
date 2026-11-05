@@ -28672,4 +28672,54 @@ fn a_statements_requests_carry_its_label_as_their_source() {
     );
     let submitted = submitted.lock().unwrap().clone();
     assert!(!submitted.is_empty() && submitted.iter().all(|source| source == "internal_ddl"), "{submitted:?}");
+
+    // Go `advisoryLock`: GET_LOCK's own session runs under
+    // `kv.InternalTxnOthers`.
+    let sent: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let recorded = Arc::clone(&sent);
+    stack.rpc.set_send_hook(Some(Arc::new(move |request| {
+        let any = request.as_any();
+        let context = if let Some(request) = any.downcast_ref::<kvrpcpb::PessimisticLockRequest>() {
+            request.context.as_ref()
+        } else if let Some(request) = any.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+            request.context.as_ref()
+        } else {
+            return;
+        };
+        recorded
+            .lock()
+            .unwrap()
+            .push(context.map(|context| context.request_source.clone()).unwrap_or_default());
+    })));
+    rows(&mut session, "SELECT GET_LOCK('request_source_lock', 1)");
+    rows(&mut session, "SELECT RELEASE_LOCK('request_source_lock')");
+    stack.rpc.set_send_hook(None);
+    let sent = sent.lock().unwrap().clone();
+    assert!(sent.contains(&"internal_others".to_owned()), "{sent:?}");
+
+    // Go `LoadExprPushdownBlacklist`: the reload reads its table through
+    // restricted SQL under `kv.InternalTxnSysVar`.
+    let sent: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let recorded = Arc::clone(&sent);
+    stack.rpc.set_send_hook(Some(Arc::new(move |request| {
+        let any = request.as_any();
+        let context = if let Some(request) = any.downcast_ref::<coprocessor::Request>() {
+            request.context.as_ref()
+        } else if let Some(request) = any.downcast_ref::<kvrpcpb::GetRequest>() {
+            request.context.as_ref()
+        } else if let Some(request) = any.downcast_ref::<kvrpcpb::BatchGetRequest>() {
+            request.context.as_ref()
+        } else {
+            return;
+        };
+        recorded
+            .lock()
+            .unwrap()
+            .push(context.map(|context| context.request_source.clone()).unwrap_or_default());
+    })));
+    rows(&mut session, "ADMIN RELOAD EXPR_PUSHDOWN_BLACKLIST");
+    stack.rpc.set_send_hook(None);
+    let sent = sent.lock().unwrap().clone();
+    assert!(sent.contains(&"internal_others".to_owned()), "{sent:?}");
+    assert!(!sent.iter().any(|source| source == "unknown"), "{sent:?}");
 }

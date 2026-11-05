@@ -2581,9 +2581,11 @@ impl crate::stored_state_service::AccountService for ClusterAccountService {
         let factory = self.factory.upgrade().ok_or_else(|| {
             tidb_driver_error::DriverError::unsupported("cluster session factory is stopped")
         })?;
-        let session = factory
+        let mut session = factory
             .open_system_session()
             .map_err(sql_query_error_to_driver)?;
+        // Go's privilege SQL runs under `kv.InternalTxnPrivilege`.
+        session.set_internal_request_source(tidb_txnkv::INTERNAL_TXN_PRIVILEGE);
         Ok(Box::new(AccountSystemSession(session)))
     }
 
@@ -2607,14 +2609,16 @@ struct NodeRestrictedSql {
 impl tidb_executor::memtable_reader::RestrictedSqlExecutor for NodeRestrictedSql {
     fn exec_restricted_sql(
         &self,
+        source: &str,
         sql: &str,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_driver_error::DriverError> {
         let factory = self.factory.upgrade().ok_or_else(|| {
             tidb_driver_error::DriverError::unsupported("cluster session factory is stopped")
         })?;
-        let session = factory
+        let mut session = factory
             .open_system_session()
             .map_err(sql_query_error_to_driver)?;
+        session.set_internal_request_source(source);
         crate::user_table::AccountSqlSession::execute(&mut AccountSystemSession(session), sql)
     }
 }
@@ -2708,7 +2712,10 @@ impl crate::ddl_service::DdlService for ClusterDdlService {
         let domain = self.domain.upgrade().ok_or_else(|| {
             tidb_driver_error::DriverError::unsupported("the node's domain is closed")
         })?;
-        let session = domain.open_system_session().map_err(sql_query_error_to_driver)?;
+        let mut session = domain.open_system_session().map_err(sql_query_error_to_driver)?;
+        // Go `CommandDDLJobsExec`'s system session runs under
+        // `kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)`.
+        session.set_internal_request_source(tidb_txnkv::INTERNAL_TXN_DDL);
         let mut sess = crate::ddl_session_pool::NodeSqlSession::new(session);
         let process: job_control::JobCommand = match kind {
             tidb_ast::AdminDdlJobControlKind::Cancel => job_control::cancel_running_job,

@@ -860,7 +860,9 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
                 for physical_id in
                     std::iter::once(table.table_id()).chain(partition_ids.iter().copied())
                 {
-                    let rows = self.exec_restricted_sql(&format!(
+                    // Go `getSavedAnalyzeOpts`'s
+                    // `kv.InternalTxnStatsForegroundPriority`.
+                    let rows = self.exec_restricted_sql(tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY, &format!(
                         "select sample_num,sample_rate,buckets,topn,column_choice,column_ids \
                          from mysql.analyze_options where table_id = {physical_id}"
                     ))?;
@@ -1201,7 +1203,8 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
         let analyzed = result?;
         // Go `saveAnalyzeOptions`, by restricted SQL after the analysis.
         if let (false, Some(table)) = (to_save.is_empty(), saved_table) {
-            self.exec_restricted_sql(&save_analyze_options_sql(&to_save, &table))?;
+            // Go `saveV2AnalyzeOpts`'s `kv.InternalTxnDDL`.
+            self.exec_restricted_sql(tidb_txnkv::INTERNAL_TXN_DDL, &save_analyze_options_sql(&to_save, &table))?;
         }
         Ok(analyzed)
     }

@@ -1399,7 +1399,11 @@ pub fn start_plan_replayer_handle(domain: &Arc<Domain>) {
     let sessions = Arc::downgrade(domain);
     domain.start_plan_replayer_handle(Arc::new(crate::plan_replayer::PlanReplayerWorkerDumper::new(move || {
         let domain = sessions.upgrade().ok_or_else(|| "the domain is closed".to_owned())?;
-        domain.open_system_session().map_err(|error| error.error_string())
+        let mut session = domain.open_system_session().map_err(|error| error.error_string())?;
+        // Go's `kv.WithInternalSourceType(ctx,
+        // kv.InternalTxnStatsForegroundPriority)` around the dump.
+        session.set_internal_request_source(tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY);
+        Ok(session)
     })));
 }
 
@@ -1409,7 +1413,11 @@ pub fn setup_extract_handle(domain: &Arc<Domain>) {
     let sessions = Arc::downgrade(domain);
     domain.setup_extract_handle(Box::new(crate::plan_replayer::ExtractWorkerSession::new(move || {
         let domain = sessions.upgrade().ok_or_else(|| "the domain is closed".to_owned())?;
-        domain.open_system_session().map_err(|error| error.error_string())
+        let mut session = domain.open_system_session().map_err(|error| error.error_string())?;
+        // Go's `kv.WithInternalSourceType(ctx,
+        // kv.InternalTxnStatsForegroundPriority)` around the dump.
+        session.set_internal_request_source(tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY);
+        Ok(session)
     })));
 }
 

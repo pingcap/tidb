@@ -94,9 +94,12 @@ impl SessionAdvisoryLockService {
             .domain
             .upgrade()
             .ok_or_else(|| AdvisoryLockError::Internal("the node's domain is closed".to_owned()))?;
-        let session = domain
+        let mut session = domain
             .open_system_session()
             .map_err(|error| AdvisoryLockError::Internal(error.message))?;
+        // Go `advisoryLock`'s `kv.WithInternalSourceType(a.ctx,
+        // kv.InternalTxnOthers)`.
+        session.set_internal_request_source(tidb_txnkv::INTERNAL_TXN_OTHERS);
         Ok(AdvisoryLock { session })
     }
 }

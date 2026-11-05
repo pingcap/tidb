@@ -121,7 +121,8 @@ impl Session {
         if let Some(system) = self.account_sql.as_mut() {
             return system.execute(sql);
         }
-        self.exec_restricted_sql(sql)
+        // Go's privilege SQL: `kv.InternalTxnPrivilege`.
+        self.exec_restricted_sql(tidb_txnkv::INTERNAL_TXN_PRIVILEGE, sql)
     }
 }
 
@@ -173,8 +174,8 @@ impl tidb_executor::simple::account_tables::AccountSession for Session {
         Session::target_has_dynamic_privilege(self, user, host, name)
     }
 
-    fn exec_restricted_sql(&mut self, sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
-        Session::exec_restricted_sql(self, sql)
+    fn exec_restricted_sql(&mut self, source: &str, sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
+        Session::exec_restricted_sql(self, source, sql)
     }
 
     fn lock_catalog(&self) -> Result<std::sync::MutexGuard<'_, tidb_infoschema::SessionExtendedInfoSchema>, DriverError> {

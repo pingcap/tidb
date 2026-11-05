@@ -742,7 +742,7 @@ impl Session {
                     quote(&instance)
                 )
             };
-            if let Err(error) = self.exec_restricted_sql(&sql) {
+            if let Err(error) = self.exec_restricted_sql(tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY, &sql) {
                 tidb_logutil::bg_logger().warn(
                     "insert mysql.plan_replayer_status record failed",
                     &[tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string()))],
@@ -764,13 +764,13 @@ impl Session {
 
     /// Go `PlanReplayerExec.registerCaptureTask`.
     fn register_capture_task(&mut self, sql_digest: &str, plan_digest: &str) -> Result<(), DriverError> {
-        let exists = self.exec_restricted_sql(&replayer::check_plan_replayer_task_exists_sql(sql_digest, plan_digest))?;
+        let exists = self.exec_restricted_sql(tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY, &replayer::check_plan_replayer_task_exists_sql(sql_digest, plan_digest))?;
         if !exists.is_empty() {
             return Err(DriverError::Mysql(tidb_terror::MysqlError::unknown(
                 "plan replayer capture task already exists",
             )));
         }
-        self.exec_restricted_sql(&format!(
+        self.exec_restricted_sql(tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY, &format!(
             "insert into mysql.plan_replayer_task (sql_digest, plan_digest) values ('{sql_digest}','{plan_digest}')"
         ))?;
         self.collect_plan_replayer_task()
@@ -790,7 +790,7 @@ impl Session {
 
     /// Go `PlanReplayerExec.removeCaptureTask`.
     fn remove_capture_task(&mut self, sql_digest: &str, plan_digest: &str) -> Result<(), DriverError> {
-        self.exec_restricted_sql(&format!(
+        self.exec_restricted_sql(tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY, &format!(
             "delete from mysql.plan_replayer_task where sql_digest = '{sql_digest}' and plan_digest = '{plan_digest}'"
         ))?;
         self.collect_plan_replayer_task()

@@ -412,9 +412,13 @@ impl MemTableRetriever for InstanceStateRetriever {
             );
         }
         // Go's retrievers query the metrics tables through the restricted SQL
-        // executor.
+        // executor, under `kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)`.
         let query_metrics = |sql: &str| {
-            exec_restricted_sql_over(self.viewer.restricted_sql.as_deref(), sql)
+            exec_restricted_sql_over(
+                self.viewer.restricted_sql.as_deref(),
+                tidb_txnkv::INTERNAL_TXN_META,
+                sql,
+            )
         };
         if table.go_lower_eq("INSPECTION_SUMMARY") {
             let Some(Extractor::InspectionSummaryTable(extractor)) = &read.extractor else {
@@ -485,8 +489,10 @@ impl MemTableRetriever for InstanceStateRetriever {
 /// Go `RestrictedSQLExecutor.ExecRestrictedSQL` with no options: one
 /// schema-qualified statement on an internal session, answering its rows.
 pub trait RestrictedSqlExecutor: Send + Sync {
-    /// Runs `sql` in an internal session's own transaction.
-    fn exec_restricted_sql(&self, sql: &str) -> Result<Vec<Vec<Datum>>, DriverError>;
+    /// Runs `sql` in an internal session's own transaction, under the
+    /// request source of the caller's context (Go
+    /// `kv.WithInternalSourceType(ctx, source)`).
+    fn exec_restricted_sql(&self, source: &str, sql: &str) -> Result<Vec<Vec<Datum>>, DriverError>;
 }
 
 /// The shared handle a session and its retriever snapshots carry.
@@ -496,13 +502,14 @@ pub type RestrictedSql = Option<Arc<dyn RestrictedSqlExecutor>>;
 /// that opened the session installs.
 pub fn exec_restricted_sql_over(
     executor: Option<&dyn RestrictedSqlExecutor>,
+    source: &str,
     sql: &str,
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
     executor
         .ok_or_else(|| {
             DriverError::unsupported("restricted SQL runs on the session's node".to_owned())
         })?
-        .exec_restricted_sql(sql)
+        .exec_restricted_sql(source, sql)
 }
 
 

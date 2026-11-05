@@ -1029,12 +1029,15 @@ pub(crate) fn metrics_profile_session(factory: &Arc<Domain>) -> crate::tikv_hand
     use tidb_session::domain::cluster_session_node::DomainSessions as _;
     let factory = Arc::clone(factory);
     Arc::new(move |body| {
-        let session = factory.open_system_session().map_err(|error| error.message)?;
+        let mut session = factory.open_system_session().map_err(|error| error.message)?;
+        // Go `ProfileBuilder`'s `kv.WithInternalSourceType(...,
+        // kv.InternalTxnOthers)`.
+        session.set_internal_request_source(tidb_txnkv::INTERNAL_TXN_OTHERS);
         let session = std::cell::RefCell::new(session);
         body(&|sql| {
             session
                 .borrow_mut()
-                .exec_restricted_sql_rows(sql)
+                .exec_restricted_sql_rows(tidb_txnkv::INTERNAL_TXN_OTHERS, sql)
                 .map_err(|error| error.to_mysql_error().message)
         })
     })

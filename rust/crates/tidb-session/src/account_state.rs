@@ -186,6 +186,7 @@ impl AccountState {
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         let rows = tidb_executor::memtable_reader::exec_restricted_sql_over(
             self.restricted_sql.as_deref(),
+            tidb_txnkv::INTERNAL_TXN_PRIVILEGE,
             "SELECT User, Host, JSON_UNQUOTE(JSON_EXTRACT(User_attributes, '$.metadata')) \
              FROM mysql.user",
         )?;

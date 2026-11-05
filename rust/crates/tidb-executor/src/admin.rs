@@ -1243,7 +1243,8 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
     /// EXPR_PUSHDOWN_BLACKLIST` that calls it.
     fn reload_expr_pushdown_blacklist(&mut self) -> Result<(), DriverError> {
         let rows =
-            self.exec_restricted_sql("SELECT name, store_type FROM mysql.expr_pushdown_blacklist")?;
+            // Go `LoadExprPushdownBlacklist`'s `kv.InternalTxnSysVar`.
+            self.exec_restricted_sql(tidb_txnkv::INTERNAL_TXN_SYS_VAR, "SELECT name, store_type FROM mysql.expr_pushdown_blacklist")?;
         let mut loaded = crate::ExprPushDownBlacklist::new();
         for row in rows {
             let Some(name) = row
@@ -1270,7 +1271,8 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
     /// NOT case-folded, which is Go's behaviour: `row.GetString(0)` goes into
     /// the set as written.
     fn reload_opt_rule_blacklist(&mut self) -> Result<(), DriverError> {
-        let rows = self.exec_restricted_sql("SELECT name FROM mysql.opt_rule_blacklist")?;
+        // Go `LoadOptRuleBlacklist`'s `kv.InternalTxnPrivilege`.
+        let rows = self.exec_restricted_sql(tidb_txnkv::INTERNAL_TXN_PRIVILEGE, "SELECT name FROM mysql.opt_rule_blacklist")?;
         let mut loaded = std::collections::HashSet::new();
         for row in rows {
             if let Some(name) = row

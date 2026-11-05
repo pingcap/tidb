@@ -558,6 +558,12 @@ impl Session {
             });
     }
 
+    /// Go `kv.WithInternalSourceType(ctx, source)` around an internal
+    /// session's work: the source `setRequestSource` gives its statements.
+    pub fn set_internal_request_source(&mut self, source: &str) {
+        source.clone_into(&mut self.vars.request_source_type);
+    }
+
     /// Go `session.setRequestSource`: a user statement's requests carry its
     /// label (the prepared statement's, for an EXECUTE), on the session and
     /// on its open transaction; an internal session keeps the source its

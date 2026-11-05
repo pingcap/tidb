@@ -686,7 +686,8 @@ pub trait AccountPasswordExec: super::account::AccountExec {
             super::account_tables::sql_str(user),
             super::account_tables::sql_str(&host.go_to_lower()),
         );
-        let rows = self.exec_restricted_sql(&sql)?;
+        // Go `fetchShowCreateUser`'s `kv.InternalTxnPrivilege`.
+        let rows = self.exec_restricted_sql(tidb_txnkv::INTERNAL_TXN_PRIVILEGE, &sql)?;
         let Some(row) = rows.into_iter().next() else {
             return Ok(None);
         };
