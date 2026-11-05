@@ -117,5 +117,9 @@ INSERT INTO t1(c0, c1) VALUES (true, 2);
 SELECT v0.c0 FROM v0;
 SELECT (v0.c0)NOT LIKE(BINARY v0.c0) FROM v0;
 SELECT v0.c0 FROM v0 WHERE (v0.c0)NOT LIKE(BINARY v0.c0);
+<<<<<<< HEAD
 desc format='brief' SELECT v0.c0 FROM v0 WHERE (v0.c0)NOT LIKE(BINARY v0.c0);
 
+=======
+explain format='plan_tree' SELECT v0.c0 FROM v0 WHERE (v0.c0)NOT LIKE(BINARY v0.c0);
+>>>>>>> 47dc1214658 (session, lightning: enable log redaction by default (#72666))

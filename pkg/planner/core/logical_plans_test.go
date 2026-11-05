@@ -3426,7 +3426,13 @@ func (s *plannerSuiteWithOptimizeVars) optimize(ctx context.Context, sql string)
 		return nil, nil, err
 	}
 
+<<<<<<< HEAD
 	sctx := MockContext()
+=======
+	sctx := coretestsdk.MockContext()
+	// Plan assertions inspect literal frame bounds.
+	sctx.GetSessionVars().EnableRedactLog = vardef.Off
+>>>>>>> 47dc1214658 (session, lightning: enable log redaction by default (#72666))
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()

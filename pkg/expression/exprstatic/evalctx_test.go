@@ -512,6 +512,9 @@ func TestMakeEvalContextStatic(t *testing.T) {
 }
 
 func TestEvalCtxLoadSystemVars(t *testing.T) {
+	originalRedactLog := errors.RedactLogEnabled.Load()
+	t.Cleanup(func() { errors.RedactLogEnabled.Store(originalRedactLog) })
+
 	vars := []struct {
 		name   string
 		val    string
@@ -558,10 +561,14 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 		},
 		{
 			name:  strings.ToUpper("tidb_redact_log"), // test for settings an upper case variable
+<<<<<<< HEAD
 			val:   "on",
+=======
+			val:   "MARKER",
+>>>>>>> 47dc1214658 (session, lightning: enable log redaction by default (#72666))
 			field: "$.enableRedactLog",
 			assert: func(ctx *EvalContext, vars *variable.SessionVars) {
-				require.Equal(t, "ON", ctx.GetTiDBRedactLog())
+				require.Equal(t, "MARKER", ctx.GetTiDBRedactLog())
 				require.Equal(t, vars.EnableRedactLog, ctx.GetTiDBRedactLog())
 			},
 		},

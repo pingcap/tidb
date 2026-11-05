@@ -58,6 +58,14 @@ function help_message()
                     This option will be ignored if \"-r <test-name>\" is provided.
                     Run all tests if this option is not provided.
 
+<<<<<<< HEAD
+=======
+    -P <port>: Use tidb-server running on <port> for testing.
+               Before running, execute SET GLOBAL tidb_redact_log = OFF; on that server.
+               This persists the global setting; -P does not apply init.sql.
+               See README.md for external-server and reused-store setup.
+
+>>>>>>> 47dc1214658 (session, lightning: enable log redaction by default (#72666))
 "
 }
 
@@ -219,6 +227,28 @@ function start_tidb_server()
     if [[ $enabled_new_collation = 0 ]]; then
         config_file="disable_new_collation.toml"
     fi
+<<<<<<< HEAD
+=======
+
+    # Golden results inspect literal values in errors and EXPLAIN output.
+    start_options="-P $port -status $status -config $config_file -initialize-sql-file init.sql"
+    if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
+        start_options="$start_options -store tikv -path ${TIKV_PATH}"
+    elif [[ $diagnostic_mode = 1 ]]; then
+        start_options="$start_options -store unistore -path $diagnostic_store_path"
+    else
+        start_options="$start_options -store unistore -path ''"
+    fi
+
+    if [[ $start_in_diagnostic_mode = 1 ]]; then
+        start_options="$start_options --diagnostic-mode"
+    fi
+
+    if [ -n "$NEXT_GEN" ] && [ "$NEXT_GEN" != "0" ] && [ "$NEXT_GEN" != "false" ]; then
+        start_options="$start_options -keyspace-name SYSTEM --tidb-service-scope dxf_service"
+    fi
+
+>>>>>>> 47dc1214658 (session, lightning: enable log redaction by default (#72666))
     echo "start tidb-server, log file: $mysql_tester_log"
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
         $tidb_server -P "$port" -status "$status" -config $config_file -store tikv -path "${TIKV_PATH}" > $mysql_tester_log 2>&1 &
