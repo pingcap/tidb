@@ -28551,6 +28551,19 @@ fn ttl_job_manager_runs_scheduled_and_triggered_jobs_like_go() {
     rows(&mut session, "insert into t values(3, now() - interval 25 hour)");
     rows(&mut session, "insert into t values(4, now())");
 
+    // Go `ttl/session.ExecuteSQL`: the job's statements run under
+    // `kv.InternalTxnTTL`.
+    let sources: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let recorded = Arc::clone(&sources);
+    stack.rpc.set_send_hook(Some(Arc::new(move |request| {
+        use tikv_client::proto::kvrpcpb;
+        if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::PrewriteRequest>() {
+            recorded
+                .lock()
+                .unwrap()
+                .push(request.context.as_ref().map(|context| context.request_source.clone()).unwrap_or_default());
+        }
+    })));
     let cli = stack.factory.ttl_job_manager().expect("started").get_command_cli();
     let res = tidb_ttl_client::command::trigger_new_ttl_job(
         &tidb_ttl_client::Context::background(),
@@ -28570,6 +28583,9 @@ fn ttl_job_manager_runs_scheduled_and_triggered_jobs_like_go() {
     assert_eq!(table_result.partition_name, "");
 
     wait_ttl_job_finished(&mut session, table_id);
+    stack.rpc.set_send_hook(None);
+    let sources = sources.lock().unwrap().clone();
+    assert!(sources.contains(&"internal_TTL".to_owned()), "{sources:?}");
     assert_eq!(displayed(rows(&mut session, "select id from t order by id asc")), [["2"], ["4"]]);
     // The finished job's history row carries Go's summary of the two deletions.
     assert_eq!(

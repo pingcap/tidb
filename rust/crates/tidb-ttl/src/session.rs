@@ -164,7 +164,7 @@ pub trait SessionContext {
     /// `sqlexec.DrainRecordSet(ctx, rs, 8)` and `rs.Close()`.
     ///
     /// `None` is Go's `rs == nil`, which `ExecuteSQL` turns into no rows.
-    fn execute_internal(&self, sql: &str, args: &[Datum]) -> Result<Option<Vec<Self::Row>>>;
+    fn execute_internal(&self, source: &str, sql: &str, args: &[Datum]) -> Result<Option<Vec<Self::Row>>>;
 
     /// Go `SessionVars.GetGlobalSystemVar`.
     fn get_global_system_var(&self, name: &str) -> Result<String>;
@@ -298,9 +298,8 @@ impl<C: SessionContext> Session for TtlSession<C> {
     }
 
     fn execute_sql(&self, sql: &str, args: &[Datum]) -> Result<Vec<Self::Row>> {
-        // Go wraps the context with `kv.InternalTxnTTL` here; with no context
-        // parameter the source type is the executor's own concern.
-        Ok(self.sctx.execute_internal(sql, args)?.unwrap_or_default())
+        // Go `kv.WithInternalSourceType(ctx, kv.InternalTxnTTL)`.
+        Ok(self.sctx.execute_internal(tidb_txnkv::INTERNAL_TXN_TTL, sql, args)?.unwrap_or_default())
     }
 
     fn run_in_txn(

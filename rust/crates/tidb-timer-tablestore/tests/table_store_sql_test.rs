@@ -29,7 +29,7 @@ use tidb_timer_tablestore::sql::{
     build_update_criteria, build_update_timer_sql, SqlArg, TimerExt,
 };
 use tidb_timer_tablestore::store::{
-    execute_sql, run_in_txn, Datum, Row, SessionContext, SqlContext, SysSession,
+    execute_sql, run_in_txn, Datum, Row, SessionContext, SysSession,
     TableTimerStoreCore,
 };
 use tidb_timer::timer::{
@@ -751,9 +751,11 @@ impl SqlExecutor for MockSession {
         // Go's `matchCtx`.
         let ctx = context
             .as_any()
-            .downcast_ref::<SqlContext>()
+            .downcast_ref::<tikv_client::trace::TraceContext>()
             .expect("timer SQL context");
-        assert_eq!(ctx.internal_source.as_deref(), Some("Timer"));
+        let source = tikv_client::util::request_source_value(ctx).expect("a tagged context");
+        assert!(source.internal);
+        assert_eq!(source.source_type, "Timer");
         let args = arguments
             .iter()
             .map(|argument| match argument {

@@ -8335,6 +8335,7 @@ dependencies = [
  "tidb-syssession",
  "tidb-timer",
  "tidb-timeutil",
+ "tikv-client",
 ]
 
 [[package]]

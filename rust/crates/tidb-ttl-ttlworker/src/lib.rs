@@ -239,8 +239,8 @@ impl tidb_ttl::session::SessionContext for SctxRef {
         self.0.get_session_vars()
     }
 
-    fn execute_internal(&self, sql: &str, args: &[Datum]) -> tidb_ttl::session::Result<Option<Vec<Row>>> {
-        self.0.execute_internal(sql, args)
+    fn execute_internal(&self, source: &str, sql: &str, args: &[Datum]) -> tidb_ttl::session::Result<Option<Vec<Row>>> {
+        self.0.execute_internal(source, sql, args)
     }
 
     fn get_global_system_var(&self, name: &str) -> tidb_ttl::session::Result<String> {

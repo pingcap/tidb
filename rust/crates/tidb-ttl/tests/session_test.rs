@@ -133,9 +133,12 @@ impl SessionContext for MockContext {
 
     fn execute_internal(
         &self,
+        source: &str,
         sql: &str,
         _args: &[Datum],
     ) -> Result<Option<Vec<NoRow>>, SessionError> {
+        // Go `ExecuteSQL`'s `kv.WithInternalSourceType(ctx, kv.InternalTxnTTL)`.
+        assert_eq!(source, "TTL");
         self.executed.lock().unwrap().push(sql.to_owned());
         if let Some((failing, message)) = self.fail_on.as_ref() {
             if failing == sql {

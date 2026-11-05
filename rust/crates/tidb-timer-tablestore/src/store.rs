@@ -20,9 +20,7 @@
 //! owner: `tidb-sqlexec` for SQL execution, [`Row`]/[`Datum`] for the values
 //! this package reads from `pkg/util/chunk.Row`,
 //! [`SysSession`]/[`SessionPool`] for `pkg/session/syssession`,
-//! [`SessionContext`] for `pkg/sessionctx.Context`'s session variables, and
-//! [`SqlContext`] for the `client-go` internal-source tag that the upstream
-//! test's context matcher inspects.
+//! and [`SessionContext`] for `pkg/sessionctx.Context`'s session variables.
 
 use std::sync::Arc;
 
@@ -55,25 +53,6 @@ pub const INTERNAL_TIMER: &str = "Timer";
 
 /// Go `vardef.TimeZone`.
 pub const VARDEF_TIME_ZONE: &str = "time_zone";
-
-/// `boundary:` the `context.Context` that `store.go` threads into every
-/// `ExecuteInternal`, after `clitutil.WithInternalSourceType(ctx,
-/// kv.InternalTimer)` has tagged it. The upstream test's `matchCtx` asserts
-/// exactly that tag, so it is the only capability carried across.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SqlContext {
-    /// The internal request source, as set by `WithInternalSourceType`.
-    pub internal_source: Option<String>,
-}
-
-impl SqlContext {
-    /// The tagged context `executeSQL` builds.
-    pub fn internal_timer() -> Self {
-        Self {
-            internal_source: Some(INTERNAL_TIMER.to_string()),
-        }
-    }
-}
 
 /// `boundary:` one column of `pkg/util/chunk.Row`, restricted to the types
 /// `listWithSctx` reads.
@@ -201,7 +180,11 @@ pub fn execute_sql(
     sql: &str,
     args: &[SqlArg],
 ) -> Result<Vec<Row>> {
-    let ctx = SqlContext::internal_timer();
+    // Go `clitutil.WithInternalSourceType(ctx, kv.InternalTimer)`.
+    let ctx = tikv_client::util::with_internal_source_type(
+        &tikv_client::trace::TraceContext::new(),
+        INTERNAL_TIMER,
+    );
     let arguments = args.iter().map(sql_argument).collect::<Vec<_>>();
     tidb_sqlexec::execute_sql(&ctx, exec, sql, &arguments)
         .map_err(|error| TimerError::message(error.to_string()))?

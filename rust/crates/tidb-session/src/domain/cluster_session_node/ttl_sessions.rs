@@ -234,7 +234,10 @@ impl tidb_ttl::session::SessionContext for TtlClusterSessionContext {
         self
     }
 
-    fn execute_internal(&self, sql: &str, args: &[Datum]) -> tidb_ttl::session::Result<Option<Vec<Row>>> {
+    fn execute_internal(&self, source: &str, sql: &str, args: &[Datum]) -> tidb_ttl::session::Result<Option<Vec<Row>>> {
+        // Go `setRequestSource`: the internal session takes the source its
+        // caller's context carries.
+        self.state.adopt_request_source_type(source);
         let args = sql_args(args).map_err(tidb_ttl::session::SessionError)?;
         let sql = tidb_sqlescape::escape_sql_text(sql, &args)
             .map_err(|error| tidb_ttl::session::SessionError(format!("{error:?}")))?;

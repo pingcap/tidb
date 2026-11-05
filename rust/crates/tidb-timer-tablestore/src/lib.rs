@@ -34,8 +34,6 @@
 //!   `pkg/session/syssession`.
 //! - [`store::SessionContext`] for `pkg/sessionctx.Context`'s session
 //!   variables, and [`store::VARDEF_TIME_ZONE`] for `sessionctx/vardef`.
-//! - [`store::SqlContext`] for the `client-go`
-//!   `WithInternalSourceType(ctx, kv.InternalTimer)` tag.
 //! - `terror.Log` becomes a private logger call in [`store`].
 //! - [`sql::SqlArg`] for Go's `[]any` argument lists.
 //!

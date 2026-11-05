@@ -1716,6 +1716,7 @@ impl tidb_ttl::session::SessionContext for GlobalTimeZoneContext {
 
     fn execute_internal(
         &self,
+        _source: &str,
         _sql: &str,
         _args: &[Datum],
     ) -> Result<Option<Vec<NoRow>>, tidb_ttl::session::SessionError> {
