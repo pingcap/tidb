@@ -280,7 +280,25 @@ impl<S: PdClient> TikvTxn<S> {
                     )));
             }
         }
+        // Go `txn.SetOption(kv.RequestSourceType, ...)` per statement
+        // (`setRequestSource`, `prepareTxn`).
+        if let Some(source_type) = &context.request_source_type {
+            if self.applied_kv_context.request_source_type.as_ref() != Some(source_type) {
+                self.engine
+                    .transaction_mut()
+                    .inner_mut()
+                    .set_request_source_type(source_type.clone());
+            }
+        }
         self.applied_kv_context = context;
+    }
+    /// Go `KVTxn.SetRequestSourceInternal` / `SetRequestSourceType` /
+    /// `SetExplicitRequestSourceType`.
+    pub fn set_request_source(&mut self, source: &tidb_txnkv::RequestSource) {
+        let transaction = self.engine.transaction_mut().inner_mut();
+        transaction.set_request_source_internal(source.internal);
+        transaction.set_request_source_type(source.source_type.clone());
+        transaction.set_explicit_request_source_type(source.explicit_source_type.clone());
     }
     /// Sets the protocols the client may choose for this transaction.
     pub fn set_commit_protocol(&mut self, protocol: CommitProtocol) {

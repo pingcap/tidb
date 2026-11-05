@@ -547,7 +547,23 @@ impl Session {
                     tagger.encode_tag_with_key(key)
                 })),
                 commit_details: Some(Arc::clone(&self.statement_commit_details)),
+                request_source_type: Some(self.vars.request_source_type.clone())
+                    .filter(|source_type| !source_type.is_empty()),
             });
+    }
+
+    /// Go `session.setRequestSource`: a user statement's requests carry its
+    /// label (the prepared statement's, for an EXECUTE), on the session and
+    /// on its open transaction; an internal session keeps the source its
+    /// caller gave it.
+    fn set_request_source(&mut self, stmt: &Stmt) {
+        if self.vars.restricted_sql {
+            return;
+        }
+        stmt.label().clone_into(&mut self.vars.request_source_type);
+        let mut context = self.statement_kv_context.get();
+        context.request_source_type = Some(self.vars.request_source_type.clone());
+        self.statement_kv_context.publish(context);
     }
 
     /// Go `execdetails.ContextWithInitializedExecDetails` at the server's
@@ -628,6 +644,7 @@ impl Session {
     }
 
     pub(crate) fn observe_statement_node(&mut self, stmt: &Stmt, prepared: bool) {
+        self.set_request_source(stmt);
         if self.routed_statement_observation_depth != 0
             && self
                 .statement_observation

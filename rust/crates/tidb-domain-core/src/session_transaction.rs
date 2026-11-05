@@ -92,6 +92,15 @@ pub fn set_options_on_txn_active(vars: &tidb_variable::SessionVars) -> SessionTr
         tidb_vardef::tidb_vars::TIDB_BACK_OFF_WEIGHT,
         tikv_client::kv::DEF_BACKOFF_WEIGHT,
     );
+    // Go `SetTxnOption`: `kv.RequestSourceInternal` for restricted SQL, the
+    // session's `RequestSourceType`, and `kv.ExplicitRequestSourceType`.
+    options.request_source = Some(tidb_txnkv::RequestSource {
+        internal: vars.restricted_sql,
+        source_type: vars.request_source_type.clone(),
+        explicit_source_type: get(tidb_vardef::tidb_vars::TIDB_EXPLICIT_REQUEST_SOURCE_TYPE)
+            .as_ref()
+            .to_owned(),
+    });
     // Go `LazyTxn`'s activation: "overwrite entry size limit by sys var".
     options.entry_size_limit = get(tidb_vardef::tidb_vars::TIDB_TXN_ENTRY_SIZE_LIMIT)
         .as_ref()
@@ -121,6 +130,7 @@ pub fn options_from_values(
         backoff_lock_fast: tikv_client::kv::DEF_BACKOFF_LOCK_FAST,
         backoff_weight: tikv_client::kv::DEF_BACKOFF_WEIGHT,
         commit_ts_upper_bound_check: None,
+        request_source: None,
     }
 }
 

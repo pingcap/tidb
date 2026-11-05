@@ -678,6 +678,7 @@ pub fn build_resp(
         paging_min_size: request.paging_min_size,
         time_zone: request.statement.time_zone.clone(),
         resource_group_name: request.statement.resource_group_name.clone(),
+        request_source: request.statement.request_source.clone(),
         replica_read: request.statement.replica_read,
         read_replica_scope: request.statement.read_replica_scope.clone(),
         is_staleness: request.statement.is_staleness,
@@ -754,6 +755,8 @@ struct RemoteScanPlan {
     time_zone: tidb_datatype::SessionTimeZone,
     /// Go `StmtCtx.ResourceGroupName` for this request.
     resource_group_name: String,
+    /// Go `DistSQLContext`'s request source for this request.
+    request_source: tidb_txnkv::RequestSource,
     /// Go `SessionVars.GetReplicaRead()` for this request.
     replica_read: tidb_txnkv::ReplicaReadType,
     read_replica_scope: String,
@@ -861,6 +864,9 @@ fn open_scan(
     context.request.dist_sql_concurrency = plan.dist_sql_scan_concurrency;
     context.request.store_batch_size = plan.store_batch_size;
     context.request.resource_group_name = plan.resource_group_name;
+    context.request.in_restricted_sql = plan.request_source.internal;
+    context.request.request_source_type = plan.request_source.source_type;
+    context.request.explicit_request_source_type = plan.request_source.explicit_source_type;
     context.request.replica_read = plan.replica_read;
     context.request.load_based_replica_read_threshold_ns = plan.read_policy.busy_threshold_ns;
     context.request.tikv_client_read_timeout_ms = plan.read_policy.read_timeout_ms;

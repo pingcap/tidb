@@ -22,6 +22,7 @@ use std::sync::{mpsc, LazyLock, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use tidb_cpuprofile::labels::LabelSet;
+use tidb_model::ActionType;
 use tidb_parser::Digest;
 
 /// Go `ReorgContext`.
@@ -35,6 +36,8 @@ pub(crate) struct ReorgContext {
     cache_normalized_sql: String,
     /// Go `cacheDigest`.
     cache_digest: Option<Digest>,
+    /// Go `tp`: the job's request source (`setDDLLabelForDiagnosis`).
+    tp: String,
     /// Go `analyzeDone`: the running ANALYZE's report, an error or none.
     pub(crate) analyze_done: Option<mpsc::Receiver<Option<String>>>,
     /// Go `analyzeStartTime`.
@@ -73,7 +76,34 @@ impl ReorgContext {
     }
 }
 
+/// Go `DDLBackfillers`: the jobs whose requests carry a backfill source.
+fn ddl_backfiller(job_type: ActionType) -> Option<&'static str> {
+    match job_type {
+        ActionType::ACTION_ADD_INDEX => Some("add_index"),
+        ActionType::ACTION_MODIFY_COLUMN => Some("modify_column"),
+        ActionType::ACTION_DROP_INDEX => Some("drop_index"),
+        ActionType::ACTION_REORGANIZE_PARTITION => Some("reorganize_partition"),
+        _ => None,
+    }
+}
+
+/// Go `getDDLRequestSource`.
+fn get_ddl_request_source(job_type: ActionType) -> String {
+    match ddl_backfiller(job_type) {
+        Some(tp) => format!("{}{tp}", tidb_txnkv::INTERNAL_TXN_BACKFILL_DDL_PREFIX),
+        None => tidb_txnkv::INTERNAL_TXN_DDL.to_owned(),
+    }
+}
+
 impl ReorgContext {
+    /// Go `ReorgContext.setDDLLabelForDiagnosis`: the job's request source,
+    /// fixed by its first step.
+    fn set_ddl_label_for_diagnosis(&mut self, job_type: ActionType) {
+        if self.tp.is_empty() {
+            self.tp = get_ddl_request_source(job_type);
+        }
+    }
+
     /// Go `ReorgContext.getResourceGroupTaggerForTopSQL`: the tag the job's
     /// requests carry, its SQL digest, while Top SQL is on.
     fn get_resource_group_tagger_for_top_sql(&self) -> Option<tidb_txnkv::StatementResourceGroupTagger> {
@@ -106,6 +136,15 @@ pub(crate) fn attach_top_profiling_info(job_id: i64, job_query: &str) {
     with_job_ctx(job_id, |ctx| ctx.attach_top_profiling_info(job_query));
 }
 
+/// Go `ddlCtx.setDDLSourceForDiagnosis`, returning Go `ddlJobSourceType`:
+/// the request source the job's step transaction carries.
+pub(crate) fn set_ddl_source_for_diagnosis(job_id: i64, job_type: ActionType) -> String {
+    with_job_ctx(job_id, |ctx| {
+        ctx.set_ddl_label_for_diagnosis(job_type);
+        ctx.tp.clone()
+    })
+}
+
 /// Go `ddlCtx.getResourceGroupTaggerForTopSQL`: none for a job with no
 /// context.
 pub(crate) fn get_resource_group_tagger_for_top_sql(
@@ -129,6 +168,23 @@ pub(crate) fn remove_job_ctx(job_id: i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Go `getDDLRequestSource` / `setDDLLabelForDiagnosis`: a backfilling
+    /// job's requests carry `ddl_<backfiller>`, any other `ddl`, and the
+    /// first step fixes it.
+    #[test]
+    fn a_jobs_request_source_names_its_backfill() {
+        assert_eq!(set_ddl_source_for_diagnosis(9_100, ActionType::ACTION_ADD_INDEX), "ddl_add_index");
+        assert_eq!(set_ddl_source_for_diagnosis(9_100, ActionType::ACTION_CREATE_TABLE), "ddl_add_index");
+        assert_eq!(
+            set_ddl_source_for_diagnosis(9_101, ActionType::ACTION_REORGANIZE_PARTITION),
+            "ddl_reorganize_partition"
+        );
+        assert_eq!(set_ddl_source_for_diagnosis(9_102, ActionType::ACTION_CREATE_TABLE), "ddl");
+        for job_id in [9_100, 9_101, 9_102] {
+            remove_job_ctx(job_id);
+        }
+    }
 
     fn labelled_digest() -> Option<String> {
         tidb_cpuprofile::labels::goroutine_labels()

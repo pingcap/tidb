@@ -56,6 +56,11 @@ pub struct SessionTransactionOptions {
     /// Go `kv.CommitTSUpperBoundCheck`, set by `SetOptionsBeforeCommit`: the
     /// write leases of the cached tables the transaction wrote.
     pub commit_ts_upper_bound_check: Option<CommitTsUpperBoundCheck>,
+    /// Go `kv.RequestSourceInternal` / `kv.RequestSourceType` /
+    /// `kv.ExplicitRequestSourceType` at activation (`SetTxnOption`,
+    /// `prepareTxn`): the source every request of the transaction carries.
+    /// `None` leaves the client's.
+    pub request_source: Option<tidb_txnkv::RequestSource>,
 }
 
 /// Go `kv.CommitTSUpperBoundCheck`'s `func(commitTS uint64) bool`: a commit
@@ -118,9 +123,19 @@ impl SessionTransactionOptions {
         if let Some(check) = self.commit_ts_upper_bound_check {
             transaction.set_commit_ts_upper_bound_check(check);
         }
+        if let Some(source) = &self.request_source {
+            transaction.set_request_source(source);
+        }
         if let Some(context) = self.kv_context {
             transaction.set_statement_kv_context(context);
         }
+    }
+
+    /// The source every request of the transaction carries.
+    #[must_use]
+    pub fn with_request_source(mut self, source: tidb_txnkv::RequestSource) -> Self {
+        self.request_source = Some(source);
+        self
     }
 
     /// Binds the session's statement ctx values to the transaction.
@@ -232,6 +247,7 @@ impl From<CommitProtocol> for SessionTransactionOptions {
             backoff_lock_fast: tikv_client::kv::DEF_BACKOFF_LOCK_FAST,
             backoff_weight: tikv_client::kv::DEF_BACKOFF_WEIGHT,
             commit_ts_upper_bound_check: None,
+            request_source: None,
         }
     }
 }

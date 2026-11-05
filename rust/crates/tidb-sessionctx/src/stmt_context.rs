@@ -834,6 +834,9 @@ pub struct StmtContextData {
     /// Go `StmtCtx.ResourceGroupName`: the statement hint's group when one
     /// is present, otherwise the connection's selected resource group.
     resource_group_name: String,
+    /// Go `DistSQLContext`'s `InRestrictedSQL` / `RequestSourceType` /
+    /// `ExplicitRequestSourceType`, from the session vars.
+    request_source: tidb_txnkv::RequestSource,
     /// Go `SessionVars.GetReplicaRead()` for this statement.
     replica_read: ReplicaReadType,
     read_replica_scope: Option<String>,
@@ -2262,6 +2265,14 @@ context_configuration! {
         self
     }
 
+    /// Attaches the session's request source to the statement's DistSQL
+    /// requests (Go `SetFromSessionVars`).
+    #[must_use]
+    pub fn with_request_source(mut self, source: tidb_txnkv::RequestSource) -> Self {
+        self.request_source = source;
+        self
+    }
+
     /// Shares the statement's plan-cache-unqualified reason cell.
     #[must_use]
     pub fn with_plan_cache_unqualified(mut self, cell: Option<Arc<Mutex<String>>>) -> Self {
@@ -2887,6 +2898,7 @@ impl StmtContext {
             sysdate_is_now: false,
             time_zone: None,
             resource_group_name: session.resource_group_name,
+            request_source: tidb_txnkv::RequestSource::default(),
             replica_read: ReplicaReadType::Leader,
             read_replica_scope: None,
             is_staleness: false,
@@ -5068,6 +5080,12 @@ impl StmtContext {
     pub fn with_time_zone(mut self, time_zone: tidb_datatype::SessionTimeZone) -> Self {
         self.time_zone = Some(time_zone);
         self
+    }
+
+    /// The source the statement's DistSQL requests carry.
+    #[must_use]
+    pub fn request_source(&self) -> &tidb_txnkv::RequestSource {
+        &self.request_source
     }
 
     /// Attaches Go `StmtCtx.ResourceGroupName` to every storage request this

@@ -2047,7 +2047,14 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
         tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions::from(
             tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
         )
-        .with_statement_kv_context(step_kv_context.clone()),
+        .with_statement_kv_context(step_kv_context.clone())
+        // Go's scheduler context: `kv.WithInternalSourceType(ctx,
+        // kv.InternalTxnDDL)` (`ddl.Start`).
+        .with_request_source(tidb_txnkv::RequestSource {
+            internal: true,
+            source_type: tidb_txnkv::INTERNAL_TXN_DDL.to_owned(),
+            explicit_source_type: String::new(),
+        }),
     )?;
     let start_ts = transaction.start_ts();
     let row_ids = backfiller.system_row_ids();

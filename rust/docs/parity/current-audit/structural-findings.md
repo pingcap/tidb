@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**24 unresolved: 7 open, 17 partial.**
+**24 unresolved: 6 open, 18 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -66,7 +66,7 @@ unresolved until it is restated against its Go owner or closed.
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| K04 | open | No transaction or snapshot carries Go's request source or a per-job resource group: client-rust's `set_request_source_internal` / `set_request_source_type` / `set_explicit_request_source_type` have no caller, where Go sets them on every session transaction and snapshot (`sessiontxn/internal` `SetTxnOption` from `RequestSourceType` / `ExplicitRequestSourceType`, internal for restricted SQL), on the DDL step transaction (`prepareTxn`'s `RequestSourceType` from `setDDLSourceForDiagnosis`, `ddl_<backfiller>` for reorganizing jobs, and its `ResourceGroupName` from the job's reorg meta) and on the backfill snapshots (`ExplicitTypeDDL`) | `pkg/sessiontxn/internal/txn.go`, `pkg/ddl/job_worker.go` (`prepareTxn`), `pkg/ddl/backfilling.go` |
+| K04 | partial | A user session's transactions, snapshots and DistSQL requests carry Go's request source (the statement's label from `setRequestSource`, `tidb_request_source_type`, internal for restricted SQL: `set_options_on_txn_active`, the statement kv context, `StmtContext::request_source`), and the DDL step transaction `internal_ddl` / `internal_ddl_<backfiller>` (`job_ctx.rs` `setDDLSourceForDiagnosis`). Unported: a restricted session's source from its caller's context (Go `kv.RequestSourceKey`: `ddl`, `stats`, ... per internal caller; here an internal session carries only what was set on it), the backfill reorganization's transactions and snapshots (`ddl_<backfiller>` with `ExplicitTypeDDL`), and the DDL step transaction's `ResourceGroupName` from the job's reorg meta | `pkg/sessiontxn/internal/txn.go`, `pkg/ddl/job_worker.go` (`prepareTxn`), `pkg/ddl/backfilling.go` |
 | P03 | partial | PD's `serviceDiscovery` (`servicediscovery/service_discovery.go`) is not one owner here: member updates and the leader connection live in `pd/cluster.rs` / `pd/retry.rs`, with no per-member `serviceClient`, no `apiCandidateNodes` / `GetServiceClientByKind` (how Go picks a follower for a follower-handled region API) and no `checkServiceModeChanged` | PD client `servicediscovery` |
 | M01 | open | The MPP coordinator lowers a hand-built single-fragment scan DAG and refuses every pushed Selection, TopN and aggregation, where Go builds the fragment/task graph from the physical plan (including disaggregated compute placement) | `pkg/planner/core` (MPP fragments), `pkg/executor/mpp_gather.go`, `pkg/store/copr/mpp.go` |
 | M04 | partial | `pkg/executor/mppcoordmanager` (`MPPCoordinatorManager`: coordinator registration, `detectAndDelete` expiry, the server address) and the RPC server's `ReportMPPTaskStatus` have no port, so TiFlash's task-status reports reach no coordinator; Go's coordinator only asks TiFlash for reports when its plan has a Limit above the table reader (`needReportExecutionSummary`), which the single-fragment scan never builds (M01) | `pkg/executor/internal/mpp` |

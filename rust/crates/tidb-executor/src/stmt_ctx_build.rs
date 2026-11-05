@@ -1666,6 +1666,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_phase_durations(self.phase_durations_ref().clone())
                     .with_sql_cpu_usages(Some(Arc::clone(&self.sql_cpu_usages_ref())))
                     .with_plan_cache_unqualified(Some(Arc::clone(self.plan_cache_unqualified_ref())))
+                    .with_request_source(session_request_source(self.session_vars()))
                     .with_kv_exec_counter(self.statement_kv_exec_counter())
                     .with_statement_kv_context(Some(self.statement_kv_context_cell()))
                     .with_cop_response_sink(cop_response_sink.clone())
@@ -1832,6 +1833,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_phase_durations(self.phase_durations_ref().clone())
                 .with_sql_cpu_usages(Some(Arc::clone(&self.sql_cpu_usages_ref())))
                 .with_plan_cache_unqualified(Some(Arc::clone(self.plan_cache_unqualified_ref())))
+                .with_request_source(session_request_source(self.session_vars()))
                 .with_kv_exec_counter(self.statement_kv_exec_counter())
                 .with_statement_kv_context(Some(self.statement_kv_context_cell()))
                 .with_cop_response_sink(cop_response_sink.clone())
@@ -2637,4 +2639,17 @@ pub(crate) fn col_stats_usage_updater(
     Some(Arc::new(move |items| {
         usage.update_col_stats_usage(items, std::time::SystemTime::now());
     }))
+}
+
+/// Go `SetFromSessionVars`'s `RequestSource`: internal for restricted SQL,
+/// the session's `RequestSourceType` and `ExplicitRequestSourceType`.
+fn session_request_source(vars: &tidb_variable::SessionVars) -> tidb_txnkv::RequestSource {
+    tidb_txnkv::RequestSource {
+        internal: vars.restricted_sql,
+        source_type: vars.request_source_type.clone(),
+        explicit_source_type: vars
+            .system_value(tidb_vardef::tidb_vars::TIDB_EXPLICIT_REQUEST_SOURCE_TYPE)
+            .map(|value| value.as_ref().to_owned())
+            .unwrap_or_default(),
+    }
 }

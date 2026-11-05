@@ -441,6 +441,9 @@ pub struct PushdownStatementContext {
     pub eval_context: Option<StatementEval>,
     /// Go `StmtCtx.ResourceGroupName`, copied to every DistSQL request.
     pub resource_group_name: String,
+    /// Go `SetFromSessionVars`'s `RequestSource` (`dctx.InRestrictedSQL`,
+    /// `RequestSourceType`, `ExplicitRequestSourceType`).
+    pub request_source: tidb_txnkv::RequestSource,
     /// Go `SessionVars.GetReplicaRead()` copied to every DistSQL request.
     pub replica_read: tidb_txnkv::ReplicaReadType,
     /// Scope and stale mode selected by the transaction provider.
@@ -516,6 +519,7 @@ impl Default for PushdownStatementContext {
             time_zone: SessionTimeZone::default(),
             eval_context: None,
             resource_group_name: "default".to_owned(),
+            request_source: tidb_txnkv::RequestSource::default(),
             replica_read: tidb_txnkv::ReplicaReadType::Leader,
             read_replica_scope: "global".into(),
             is_staleness: false,

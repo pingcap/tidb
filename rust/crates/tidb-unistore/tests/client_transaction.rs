@@ -1183,3 +1183,55 @@ fn a_detected_deadlock_aborts_the_statement_that_closes_the_cycle() {
         .unwrap();
     first.rollback(&call).unwrap();
 }
+
+/// Go `SetTxnOption` / `prepareTxn`: a transaction's requests carry the
+/// request source set at activation (`kv.RequestSourceInternal`,
+/// `kv.RequestSourceType`), and a statement's own source type replaces the
+/// type (`txn.SetOption(kv.RequestSourceType, ...)`).
+#[test]
+fn store_facade_requests_carry_the_transactions_request_source() {
+    use tidb_store_driver_txn::session_commit_protocol::{bootstrap_commit_protocol, SessionTransactionOptions};
+    use tidb_txnkv::transaction::BufferMutation;
+    use tikv_client::proto::kvrpcpb::PrewriteRequest;
+    let store = Store::new();
+    let call = UnaryCallContext::with_timeout(Duration::from_secs(2));
+    let prewrite_source = |statement_type: Option<&str>, key: &[u8]| {
+        let sources = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed = sources.clone();
+        let mut writer = store.facade();
+        writer.add_rpc_interceptor(tikv_client::new_rpc_interceptor("request-source", move |_, request, next| {
+            if let Some(prewrite) = request.as_any().downcast_ref::<PrewriteRequest>() {
+                observed
+                    .lock()
+                    .unwrap()
+                    .push(prewrite.context.as_ref().map(|context| context.request_source.clone()));
+            }
+            Box::pin(async move { next().await })
+        }));
+        let kv_context = tidb_txnkv::StatementKvContextCell::default();
+        SessionTransactionOptions::from(bootstrap_commit_protocol())
+            .with_request_source(tidb_txnkv::RequestSource {
+                internal: true,
+                source_type: tidb_txnkv::INTERNAL_TXN_DDL.to_owned(),
+                explicit_source_type: String::new(),
+            })
+            .with_statement_kv_context(kv_context.clone())
+            .apply(&mut writer);
+        if let Some(statement_type) = statement_type {
+            kv_context.publish(tidb_txnkv::StatementKvContext {
+                request_source_type: Some(statement_type.to_owned()),
+                ..tidb_txnkv::StatementKvContext::default()
+            });
+        }
+        writer
+            .commit(vec![BufferMutation::set(key.to_vec(), b"v".to_vec()).unwrap()], &call)
+            .unwrap();
+        let sources = sources.lock().unwrap().clone();
+        assert!(!sources.is_empty(), "the commit prewrote");
+        sources
+    };
+    assert!(prewrite_source(None, b"a").iter().all(|source| source.as_deref() == Some("internal_ddl")));
+    assert!(prewrite_source(Some("ddl_add_index"), b"b")
+        .iter()
+        .all(|source| source.as_deref() == Some("internal_ddl_add_index")));
+}

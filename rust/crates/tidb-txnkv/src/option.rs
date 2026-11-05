@@ -311,6 +311,9 @@ pub struct StatementKvContext {
     /// Go `ctx.Value(util.CommitDetailCtxKey)`, which `doCommit` sets and
     /// merges into the statement's exec details after the commit.
     pub commit_details: Option<tikv_client::util::SharedCommitDetails>,
+    /// Go `txn.SetOption(kv.RequestSourceType, ...)` for the statement that
+    /// runs (`session.setRequestSource`, the DDL worker's `prepareTxn`).
+    pub request_source_type: Option<String>,
 }
 
 impl std::fmt::Debug for StatementKvContext {
@@ -329,6 +332,7 @@ impl std::fmt::Debug for StatementKvContext {
                 &self.pessimistic_lock_resource_group_tagger.is_some(),
             )
             .field("commit_details", &self.commit_details.is_some())
+            .field("request_source_type", &self.request_source_type)
             .finish()
     }
 }

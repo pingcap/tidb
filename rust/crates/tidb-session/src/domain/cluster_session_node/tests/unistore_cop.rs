@@ -28583,3 +28583,46 @@ fn ttl_job_manager_runs_scheduled_and_triggered_jobs_like_go() {
         [["finished", "2", "2", "0"]]
     );
 }
+
+/// Go `session.setRequestSource` with `SetTxnOption` and the DistSQL
+/// builder's `SetFromSessionVars`: a user statement's requests carry its
+/// label as their source (`external_<label>`), its coprocessor reads and
+/// its transaction's prewrites alike.
+#[test]
+fn a_statements_requests_carry_its_label_as_their_source() {
+    use tikv_client::proto::{coprocessor, kvrpcpb};
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(79))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "CREATE TABLE request_source (a INT PRIMARY KEY, b INT)");
+    let sent: Arc<std::sync::Mutex<Vec<(&'static str, String)>>> = Arc::default();
+    let recorded = Arc::clone(&sent);
+    stack.rpc.set_send_hook(Some(Arc::new(move |request| {
+        let any = request.as_any();
+        let source = if let Some(request) = any.downcast_ref::<coprocessor::Request>() {
+            ("cop", request.context.as_ref().map(|context| context.request_source.clone()))
+        } else if let Some(request) = any.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+            ("prewrite", request.context.as_ref().map(|context| context.request_source.clone()))
+        } else if let Some(request) = any.downcast_ref::<kvrpcpb::GetRequest>() {
+            ("get", request.context.as_ref().map(|context| context.request_source.clone()))
+        } else if let Some(request) = any.downcast_ref::<kvrpcpb::BatchGetRequest>() {
+            ("get", request.context.as_ref().map(|context| context.request_source.clone()))
+        } else {
+            return;
+        };
+        recorded.lock().unwrap().push((source.0, source.1.unwrap_or_default()));
+    })));
+    rows(&mut session, "INSERT INTO request_source VALUES (1, 1), (2, 2)");
+    rows(&mut session, "SELECT b FROM request_source WHERE b > 0");
+    rows(&mut session, "SELECT b FROM request_source WHERE a = 1");
+    stack.rpc.set_send_hook(None);
+    let sent = sent.lock().unwrap().clone();
+    assert!(sent.contains(&("prewrite", "external_Insert".to_owned())), "{sent:?}");
+    assert!(sent.contains(&("cop", "external_Select".to_owned())), "{sent:?}");
+    // Go `GetSnapshotWithTS`: the point read's snapshot carries it as well.
+    assert!(sent.contains(&("get", "external_Select".to_owned())), "{sent:?}");
+}

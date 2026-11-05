@@ -44,6 +44,7 @@ pub fn pushdown_statement_context(ctx: &crate::StmtContext) -> PushdownStatement
         time_zone: ctx.session_zone(),
         eval_context: Some(StatementEval(Arc::new(ctx.clone()))),
         resource_group_name: ctx.resource_group_name().to_owned(),
+        request_source: ctx.request_source().clone(),
         replica_read: ctx.replica_read(),
         read_replica_scope: ctx.read_replica_scope(),
         is_staleness: ctx.is_staleness(),

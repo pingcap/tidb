@@ -1118,3 +1118,48 @@ fn kv_vars_backoff_knobs_reach_the_transaction_options() {
     assert_eq!(options(&session).backoff_lock_fast, 50);
     assert_eq!(options(&session).backoff_weight, 6);
 }
+
+/// Go `session.setRequestSource` and `SetTxnOption`: a user statement's
+/// label is the session's request source, which the transaction activates
+/// with beside `tidb_request_source_type`; restricted SQL is internal and
+/// keeps the source its caller set.
+#[test]
+fn the_statement_label_is_the_transactions_request_source() {
+    let mut session = Session::new();
+    let source = |session: &Session| {
+        tidb_domain_core::session_transaction::set_options_on_txn_active(session.vars())
+            .request_source
+            .expect("the transaction activates with a request source")
+    };
+    session.run("SET tidb_request_source_type = 'lightning'").unwrap();
+    assert_eq!(
+        source(&session),
+        tidb_txnkv::RequestSource {
+            internal: false,
+            source_type: "Set".to_owned(),
+            explicit_source_type: "lightning".to_owned(),
+        }
+    );
+    session.run("SELECT 1").unwrap();
+    assert_eq!(source(&session).source_type, "Select");
+    // Go `SetFromSessionVars`: the statement's DistSQL requests carry it too.
+    assert_eq!(
+        session.statement_context(false).request_source(),
+        &tidb_txnkv::RequestSource {
+            internal: false,
+            source_type: "Select".to_owned(),
+            explicit_source_type: "lightning".to_owned(),
+        }
+    );
+    assert_eq!(
+        session.statement_kv_context_cell().get().request_source_type.as_deref(),
+        Some("Select")
+    );
+
+    session.set_restricted_sql(true);
+    session.vars.request_source_type = "stats".to_owned();
+    session.run("SELECT 2").unwrap();
+    let internal = source(&session);
+    assert!(internal.internal);
+    assert_eq!(internal.source_type, "stats");
+}
