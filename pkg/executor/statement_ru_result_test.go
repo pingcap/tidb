@@ -37,6 +37,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 const (
@@ -358,6 +359,38 @@ func TestStatementRUPublisherIsolation(t *testing.T) {
 }
 
 func TestStatementRUUsesConfig(t *testing.T) {
+	t.Run("mixed read and write statement log", func(t *testing.T) {
+		t.Cleanup(config.RestoreFunc())
+		config.UpdateGlobal(func(cfg *config.Config) {
+			cfg.RUV2.StmtWeights = ruv2.DefaultWeights()
+			cfg.RUV2.StmtWeights.CPUWork = 2
+			cfg.RUV2.StmtWeights.NetByte = 3
+		})
+		fixture := newStatementRUSimpleSelectFixture(t)
+		stmt := fixture.stmt
+		ctx := stmt.Ctx.(*mock.Context)
+		ctx.BindDomainAndSchValidator(newMockDomainWithRUVersion(t, rmclient.RUVersionV2), nil)
+		insert := physicalop.Insert{SelectPlan: stmt.Plan.(base.PhysicalPlan)}.Init(ctx)
+		stmt.Plan = insert
+		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(insert.ID(), &execdetails.WriteRuntimeStats{CPUWork: 5})
+		ctx.GetSessionVars().StmtCtx.SetFlatPlan(plannercore.FlattenPhysicalPlan(insert, false))
+		stmt.RecordStatementRUFinalOutcome(true)
+		total := stmt.finishStatementRU(nil)
+		require.Positive(t, total)
+		details := stmt.ruDetailsForStatementLog(nil, []float64{total})
+		weights := currentStatementRUWeights()
+		// The write operator and DML base charge are WRU; the SELECT subtree,
+		// including scan and response transport, remains RRU.
+		expectedWrite := weights.WriteStatement + weights.OperatorNum + 5*weights.CPUWork
+		require.InDelta(t, expectedWrite, details.WRU(), 1e-9)
+		require.InDelta(t, total-expectedWrite, details.RRU(), 1e-9)
+		require.GreaterOrEqual(t, details.RRU(), 10*weights.ScanByte+20*weights.NetByte)
+		// A repeated terminal call reports zero and cannot reuse the prior WRU.
+		repeated := stmt.ruDetailsForStatementLog(nil, []float64{stmt.finishStatementRU(nil)})
+		require.Zero(t, repeated.RRU())
+		require.Zero(t, repeated.WRU())
+	})
+
 	t.Cleanup(config.RestoreFunc())
 	config.UpdateGlobal(func(cfg *config.Config) {
 		cfg.RUV2.StmtWeights.CPUWork = 2
@@ -405,6 +438,7 @@ func TestStatementRUUsesConfig(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, statementRUEngineResult{TiDB: 329, TiKV: 2574}, finalized.engineRU)
 		require.Equal(t, float64(2903), finalized.result.TotalRU)
+		require.Equal(t, float64(17+23*31+29*37), finalized.writeRU)
 		if full {
 			requireStatementRUReportConservation(t, finalized)
 		}
@@ -484,6 +518,8 @@ func TestStatementRUResultValueContracts(t *testing.T) {
 			require.True(t, ok)
 			require.Equal(t, float64(3), result.units.WriteKeys)
 			require.Equal(t, float64(150), result.units.WriteBytes)
+			weights := currentStatementRUWeights()
+			require.Equal(t, weights.WriteStatement+weights.OperatorNum+3*weights.WriteKey+150*weights.WriteByte, result.writeRU)
 		}
 		writeBefore := testutil.ToFloat64(metrics.RUV2BySQLType.WithLabelValues("commit"))
 		tikvBefore := testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues(metrics.LblEngineTiKV))
@@ -637,7 +673,7 @@ func TestStatementRUResultValueContracts(t *testing.T) {
 	t.Run("publication contracts contain only approved scalar fields", func(t *testing.T) {
 		calculatorType := reflect.TypeOf(statementRUCalculator{})
 		require.Equal(t, []string{
-			"units", "compute", "report",
+			"units", "writeOperatorUnits", "compute", "report",
 		}, statementRUFieldNames(calculatorType))
 		unitsType := reflect.TypeOf(ruv2.StmtUnits{})
 		require.Equal(t, []string{

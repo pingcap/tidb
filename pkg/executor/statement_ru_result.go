@@ -88,6 +88,7 @@ type statementRUCalculationSetup struct {
 type statementRUFinalizedSnapshot struct {
 	units            ruv2.StmtUnits
 	result           ruv2.StmtResult
+	writeRU          float64
 	calibrationState statementRUCalibrationState
 	sqlType          string
 	engineRU         statementRUEngineResult
@@ -241,9 +242,10 @@ func trimStatementRUExplainPrefix(normalizedSQL string) string {
 // statementRUCalculator is terminal-local. It accumulates only typed scalar
 // units; no plan or execution-detail pointer survives calculateStatementRU.
 type statementRUCalculator struct {
-	units   ruv2.StmtUnits
-	compute [statementRUEngineCount]statementRUComputeUnits
-	report  *statementRUFullReport
+	units              ruv2.StmtUnits
+	writeOperatorUnits ruv2.StmtUnits
+	compute            [statementRUEngineCount]statementRUComputeUnits
+	report             *statementRUFullReport
 }
 
 func newStatementRUCalculator(setup statementRUCalculationSetup) statementRUCalculator {
@@ -308,6 +310,17 @@ func (calculator statementRUCalculator) finalize() (statementRUFinalizedSnapshot
 	if !ok {
 		return statementRUFailed(statementRUOperatorInvalid), false
 	}
+	// Write operators own their local work; SELECT subtrees and their transport
+	// remain reads even when the statement is a DML. Committed payload includes
+	// the modeled write-side byte cost and belongs to COMMIT in explicit txns.
+	writeUnits := calculator.writeOperatorUnits
+	writeUnits.WriteStatement = calculator.units.WriteStatement
+	writeUnits.WriteKeys = calculator.units.WriteKeys
+	writeUnits.WriteBytes = calculator.units.WriteBytes
+	writeResult, ok := ruv2.Calculate(writeUnits, weights)
+	if !ok {
+		return statementRUFailed(statementRUOperatorInvalid), false
+	}
 	engineRU := calculator.engineResult(weights)
 	// TotalRU already includes the original TiFlash RU, so add only the extra
 	// (multiplier - 1) copies: total - original TiFlash RU + scaled TiFlash RU.
@@ -328,6 +341,7 @@ func (calculator statementRUCalculator) finalize() (statementRUFinalizedSnapshot
 	return statementRUFinalizedSnapshot{
 		units:            calculator.units,
 		result:           result,
+		writeRU:          writeResult.TotalRU,
 		engineRU:         engineRU,
 		report:           calculator.report,
 		calibrationState: statementRUCalibrationIncomplete,
