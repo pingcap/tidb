@@ -788,6 +788,35 @@ fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
     execute(&mut store, &mut job, "0", 3);
 }
 
+/// Go `transitOneJobStep` -> `prepareTxn`: a job's step runs with the
+/// worker's thread attached to the job's SQL (`attachTopProfilingInfo`), so
+/// Top SQL charges it to the DDL statement.
+#[test]
+fn a_worker_step_runs_under_the_jobs_sql_digest() {
+    let mut store = bootstrapped();
+    let catalog = load_info_schema(&mut store).unwrap();
+    let queue = DdlJobTable::locate(&catalog).unwrap();
+    let mut job = Job::default();
+    job.id = 950;
+    job.schema_id = 112;
+    job.type_ = ActionType::ACTION_CREATE_SCHEMA;
+    job.state = JobState::CANCELLING;
+    job.version = JobVersion::V2;
+    job.query = "CREATE DATABASE attach_step".into();
+    job.fill_v2_arg(serde_json::from_str("123").unwrap());
+    let mut mutations = Vec::new();
+    queue
+        .append_insert(&mut job, false, "112", "0", true, &mut mutations)
+        .unwrap();
+    apply_mutations(&mut store, &mutations);
+    tidb_topsql_state::enable_top_sql();
+    plan_worker_step(&mut store, job.id, 10_000).unwrap();
+    tidb_topsql_state::disable_top_sql();
+    let (_, digest) = tidb_parser::normalize_digest("CREATE DATABASE attach_step");
+    let labels = tidb_cpuprofile::labels::goroutine_labels().expect("the step attached labels");
+    assert!(labels.values().any(|value| value == digest.as_str()), "{labels:?}");
+}
+
 #[test]
 fn persisted_cancellation_precedes_forward_action() {
     let mut store = bootstrapped();

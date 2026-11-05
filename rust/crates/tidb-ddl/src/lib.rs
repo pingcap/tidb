@@ -43,6 +43,7 @@ pub mod ddl_history;
 pub mod cluster_ddl;
 pub mod ddl_running_jobs;
 pub mod job_control;
+mod job_ctx;
 pub mod job_txn;
 mod job_submitter;
 pub mod ddl_affinity;

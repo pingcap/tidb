@@ -5615,6 +5615,9 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         }
         None
     };
+    // Go `transitOneJobStep` -> `prepareTxn`'s `attachTopProfilingInfo`:
+    // every step, finishing ones included, runs under the job's SQL.
+    crate::job_ctx::attach_top_profiling_info(active.job.id, &active.job.query.to_utf8_lossy_go());
     if matches!(
         active.job.state,
         JobState::DONE | JobState::ROLLBACK_DONE | JobState::CANCELLED

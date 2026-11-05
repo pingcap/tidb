@@ -70,6 +70,10 @@ pub(super) enum TableRecordOutcome {
 
 /// What [`write_physical_table_record`] runs its tasks with.
 pub(super) struct BackfillExecutor<'a> {
+    /// Go `job.ID`.
+    pub job_id: i64,
+    /// Go `job.Query`.
+    pub job_query: &'a str,
     /// Go `jobCtx.store`'s region cache; `None` is Go's non-TiKV storage.
     pub region_store: Option<&'a dyn RegionStore>,
     /// The physical table.
@@ -383,6 +387,7 @@ pub(super) fn write_physical_table_record(
                     let Ok(task) = task_rx.recv() else {
                         return;
                     };
+                    crate::job_ctx::attach_top_profiling_info(exec.job_id, exec.job_query);
                     // A stopped step drains the tasks it will not run:
                     // `handle_backfill_task` returns them unstarted.
                     let result = handle_backfill_task(exec, task, batch_cnt.load(Ordering::SeqCst), stop);
@@ -625,9 +630,18 @@ mod tests {
         }
         let ran = Mutex::new(Vec::new());
         let threads = Mutex::new(std::collections::HashSet::new());
+        // Go `backfillWorker.run` attaches the job's SQL per task
+        // (`attachTopProfilingInfo`), so Top SQL charges the workers' CPU
+        // to the DDL statement.
+        tidb_topsql_state::enable_top_sql();
+        let labelled = Mutex::new(Vec::new());
         let backfill = |start: &[u8], end: &[u8], _batch: usize| {
             ran.lock().unwrap().push((start.to_vec(), end.to_vec()));
             threads.lock().unwrap().insert(std::thread::current().id());
+            labelled.lock().unwrap().push(
+                tidb_cpuprofile::labels::goroutine_labels()
+                    .and_then(|labels| labels.values().find(|value| value.len() == 64).cloned()),
+            );
             std::thread::sleep(Duration::from_millis(20));
             if start == b"f" && end == b"j" {
                 return Ok(BatchStep::Failed(LockSqlError::from(tidb_terror::MysqlError::unknown("dup"))));
@@ -639,6 +653,8 @@ mod tests {
         let updates = Mutex::new(Vec::new());
         let update = |key: &[u8]| updates.lock().unwrap().push(key.to_vec());
         let exec = BackfillExecutor {
+            job_id: 7,
+            job_query: "ALTER TABLE t ADD INDEX i (a)",
             region_store: Some(&Regions),
             physical_id: 1,
             concurrency: 4,
@@ -668,6 +684,13 @@ mod tests {
         );
         assert!(threads.lock().unwrap().len() > 1, "the tasks ran on several workers");
         assert_eq!(updates.lock().unwrap().last().unwrap(), b"z");
+        let (_, digest) = tidb_parser::normalize_digest("ALTER TABLE t ADD INDEX i (a)");
+        assert_eq!(
+            *labelled.lock().unwrap(),
+            vec![Some(digest.as_str().to_owned()); 4],
+            "every task ran under the job's SQL digest"
+        );
+        tidb_topsql_state::disable_top_sql();
 
         let failing = BackfillExecutor { shrink_end_key: true, concurrency: 1, ..exec };
         ran.lock().unwrap().clear();
@@ -729,6 +752,8 @@ mod tests {
         let range_end = |_: &[u8], end: &[u8]| Ok(end.to_vec());
         let update = |_: &[u8]| {};
         let exec = BackfillExecutor {
+            job_id: 7,
+            job_query: "",
             region_store: Some(&Regions),
             physical_id: 1,
             concurrency: 1,
@@ -766,6 +791,8 @@ mod tests {
         let updates = Mutex::new(Vec::new());
         let update = |key: &[u8]| updates.lock().unwrap().push(key.to_vec());
         let exec = BackfillExecutor {
+            job_id: 7,
+            job_query: "",
             region_store: None,
             physical_id: 1,
             concurrency: 2,

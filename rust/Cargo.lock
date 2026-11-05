@@ -4109,6 +4109,8 @@ dependencies = [
  "tidb-tblctx",
  "tidb-terror",
  "tidb-timeutil",
+ "tidb-topsql",
+ "tidb-topsql-state",
  "tidb-txnkv",
  "tidb-unistore",
  "tidb-unistore-tikv",

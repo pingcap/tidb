@@ -43,6 +43,8 @@ pub const TEMP_INDEX_PREFIX: i64 = 0x7fff_0000_0000_0000;
 pub struct AddIndexReorg {
     /// The job.
     pub job_id: i64,
+    /// Go `job.Query`, which the reorganization's workers attach to Top SQL.
+    pub query: tidb_goruntime::GoString,
     /// What to do.
     pub stage: ReorgStageRequest,
     /// The table as the job sees it, the indexes being added among its own.
@@ -1219,6 +1221,7 @@ pub(super) fn do_reorg_work_for_create_index(
     let request =
         |active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob, stage: ReorgStageRequest| AddIndexReorg {
             job_id: active.job.id,
+            query: active.job.query.clone(),
             stage,
             table: Box::new(info.clone_like_go()),
             index_ids: indexes.iter().map(|index| index.read().id).collect(),

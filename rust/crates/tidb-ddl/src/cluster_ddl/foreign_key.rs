@@ -429,6 +429,7 @@ fn check_request(
         run_error: None,
         reorg: Some(AddIndexReorg {
             job_id: active.job.id,
+            query: active.job.query.clone(),
             stage: ReorgStageRequest::CheckForeignKey(Box::new(check)),
             table: Box::new(info.clone_like_go()),
             index_ids: Vec::new(),

@@ -418,6 +418,7 @@ pub(super) fn on_exchange_table_partition(
                     run_error: None,
                     reorg: Some(AddIndexReorg {
                         job_id: active.job.id,
+                        query: active.job.query.clone(),
                         stage: ReorgStageRequest::CheckExchangePartition(Box::new(check)),
                         table: Box::new(standalone.clone_like_go()),
                         index_ids: Vec::new(),

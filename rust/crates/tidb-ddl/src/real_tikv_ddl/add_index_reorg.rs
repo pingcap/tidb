@@ -633,7 +633,10 @@ where
                 update_reorg_meta(opener, timeout, sess_pool, reorg, tables, &next);
             };
             let region_store = backfiller.region_store();
+            let job_query = reorg.query.to_utf8_lossy_go();
             let exec = BackfillExecutor {
+                job_id: reorg.job_id,
+                job_query: &job_query,
                 region_store: region_store.as_deref(),
                 physical_id: current.physical_id,
                 concurrency: reorg.concurrency,

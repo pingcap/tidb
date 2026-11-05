@@ -18,9 +18,8 @@
 //! `queryAnalyzeStatusSince` and `analyzeStatusDecision`, and the analyze
 //! fields of `ddl.go`'s job context.
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, LazyLock, Mutex, PoisonError};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use tidb_ddl_build::session_pool::{DdlSessionPool, RestrictedSqlOptions};
@@ -45,24 +44,7 @@ fn default_analyze_check_interval() -> Duration {
     Duration::from_millis(DEFAULT_ANALYZE_CHECK_INTERVAL_MILLIS.load(Ordering::Acquire))
 }
 
-/// The analyze fields of Go's per-job `ReorgContext` (`jobCtxMap`).
-#[derive(Default)]
-struct JobAnalyzeCtx {
-    /// Go `analyzeDone`: the running ANALYZE's report, an error or none.
-    analyze_done: Option<mpsc::Receiver<Option<String>>>,
-    /// Go `analyzeStartTime`.
-    analyze_start_time: Option<Instant>,
-    /// Go `analyzeCumulativeTimeout`.
-    analyze_cumulative_timeout: Option<Duration>,
-}
-
-/// Go `ddlCtx.jobCtx.jobCtxMap`'s analyze half.
-static JOB_CTX_MAP: LazyLock<Mutex<HashMap<i64, JobAnalyzeCtx>>> = LazyLock::new(Mutex::default);
-
-fn with_job_ctx<T>(job_id: i64, f: impl FnOnce(&mut JobAnalyzeCtx) -> T) -> T {
-    let mut map = JOB_CTX_MAP.lock().unwrap_or_else(PoisonError::into_inner);
-    f(map.entry(job_id).or_default())
-}
+use crate::job_ctx::with_job_ctx;
 
 fn get_analyze_start_time(job_id: i64) -> Option<Instant> {
     with_job_ctx(job_id, |ctx| ctx.analyze_start_time)
@@ -80,13 +62,6 @@ fn clear_analyze_cumulative_timeout(job_id: i64) {
     with_job_ctx(job_id, |ctx| ctx.analyze_cumulative_timeout = None);
 }
 
-/// Go `removeJobCtx`, for the analyze fields: the job is done with its context.
-pub(crate) fn remove_job_ctx(job_id: i64) {
-    JOB_CTX_MAP
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .remove(&job_id);
-}
 
 /// Go `checkNeedAnalyze` check if the job need analyze.
 pub(crate) fn check_need_analyze(job: &Job, tbl_info: &TableInfo) -> bool {

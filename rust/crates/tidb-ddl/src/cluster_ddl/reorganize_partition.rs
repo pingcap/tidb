@@ -1070,6 +1070,7 @@ fn do_partition_reorg_work<S: MetaSnapshot>(
         let (physical_ids, index_ids) = phase_scope(info, phase);
         AddIndexReorg {
             job_id: active.job.id,
+            query: active.job.query.clone(),
             stage,
             table: Box::new(info.clone_like_go()),
             index_ids,

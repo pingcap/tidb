@@ -1319,6 +1319,7 @@ fn check_request(
         &active.job,
         AddIndexReorg {
             job_id: active.job.id,
+            query: active.job.query.clone(),
             stage: ReorgStageRequest::Check(ColumnDataCheck {
                 schema: target.schema.clone(),
                 table: Box::new(target.info.clone_like_go()),
@@ -3226,6 +3227,7 @@ fn do_reorg_work_for_modify_column<S: MetaSnapshot>(
     let request =
         |active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob, stage: ReorgStageRequest| AddIndexReorg {
             job_id: active.job.id,
+            query: active.job.query.clone(),
             stage,
             table: Box::new(target.info.clone_like_go()),
             index_ids: Vec::new(),

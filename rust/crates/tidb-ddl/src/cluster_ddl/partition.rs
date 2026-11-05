@@ -526,6 +526,7 @@ fn clean_global_index_entries_from_dropped_partitions<S: MetaSnapshot>(
     let request =
         |active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob, stage: ReorgStageRequest| AddIndexReorg {
             job_id: active.job.id,
+            query: active.job.query.clone(),
             stage,
             table: Box::new(old_info.clone_like_go()),
             index_ids: index_ids.clone(),
