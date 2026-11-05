@@ -582,8 +582,8 @@ func tryAutoAnalyzeTable(
 	// Whether the table needs to analyze or not, we need to check the indices of the table.
 	for _, idx := range tblInfo.Indices {
 		if idxStats := statsTbl.GetIdx(idx.ID); idxStats == nil && !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
-			// Columnar index doesn't need stats yet.
-			if idx.IsColumnarIndex() {
+			// Columnar and fulltext indexes don't need stats yet.
+			if idx.IsColumnarIndex() || idx.IsTiKVFullTextIndex() {
 				continue
 			}
 			sqlWithIdx := sql + " index %n"
@@ -720,8 +720,8 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 		if idx.State != model.StatePublic || statsutil.IsSpecialGlobalIndex(idx, tblInfo) {
 			continue
 		}
-		// Columnar index doesn't need stats yet.
-		if idx.IsColumnarIndex() {
+		// Columnar and fulltext indexes don't need stats yet.
+		if idx.IsColumnarIndex() || idx.IsTiKVFullTextIndex() {
 			continue
 		}
 		// Collect all the partition names that need to analyze.

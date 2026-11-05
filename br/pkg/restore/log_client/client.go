@@ -1972,6 +1972,7 @@ func colsToStr(cols []ast.CIStr) string {
 const (
 	alterTableDropIndexSQL         = "ALTER TABLE %n.%n DROP INDEX %n"
 	alterTableAddIndexFormat       = "ALTER TABLE %%n.%%n ADD INDEX %%n(%s)"
+	alterTableAddFullTextFormat    = "ALTER TABLE %%n.%%n ADD FULLTEXT INDEX %%n(%s)"
 	alterTableAddUniqueIndexFormat = "ALTER TABLE %%n.%%n ADD UNIQUE KEY %%n(%s)"
 	alterTableAddPrimaryFormat     = "ALTER TABLE %%n.%%n ADD PRIMARY KEY (%s) NONCLUSTERED"
 	alterTableAddForeignKeyFormat  = "ALTER TABLE %%n.%%n ADD CONSTRAINT %%n FOREIGN KEY (%s) REFERENCES %%n.%%n (%s)"
@@ -2051,6 +2052,10 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			fmt.Fprintf(&addSQL, alterTableAddUniqueIndexFormat, info.ColumnList)
 			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
+		} else if info.IndexInfo.TiKVFullText != nil {
+			fmt.Fprintf(&addSQL, alterTableAddFullTextFormat, info.ColumnList)
+			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
+			addArgs = append(addArgs, info.ColumnArgs...)
 		} else {
 			fmt.Fprintf(&addSQL, alterTableAddIndexFormat, info.ColumnList)
 			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
@@ -2061,9 +2066,10 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			addSQL.WriteString(" WHERE ")
 			addSQL.WriteString(info.IndexInfo.ConditionExprString)
 		}
-		// USING BTREE/HASH/RTREE
+		// USING BTREE/HASH/RTREE. A FULLTEXT index names its kind in the
+		// statement itself and rejects a USING clause.
 		indexTypeStr := info.IndexInfo.Tp.String()
-		if len(indexTypeStr) > 0 {
+		if len(indexTypeStr) > 0 && info.IndexInfo.TiKVFullText == nil {
 			addSQL.WriteString(" USING ")
 			addSQL.WriteString(indexTypeStr)
 		}
@@ -2071,6 +2077,10 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 		if info.IndexInfo.FullTextInfo != nil {
 			addSQL.WriteString(" WITH PARSER ")
 			addSQL.WriteString(info.IndexInfo.FullTextInfo.ParserType.SQLName())
+		}
+		if info.IndexInfo.TiKVFullText != nil {
+			addSQL.WriteString(" WITH PARSER ")
+			addSQL.WriteString(info.IndexInfo.TiKVFullText.ParserType.SQLName())
 		}
 		// COMMENT [...]
 		if len(info.IndexInfo.Comment) > 0 {
