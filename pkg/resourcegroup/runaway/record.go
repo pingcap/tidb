@@ -229,8 +229,13 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 	}
 	batchSize := runawayRecordGCSelectBatchSize
 	deleteSize := runawayRecordGCBatchSize
-	failpoint.Inject("FastRunawayGC", func() {
-		expiredDuration = time.Millisecond * 1
+	failpoint.Inject("FastRunawayGC", func(val failpoint.Value) {
+		// Boolean callers keep the original retention; integer values let tests
+		// preserve records until persistence assertions have finished.
+		expiredDuration = time.Millisecond
+		if milliseconds, ok := val.(int); ok && milliseconds > 0 {
+			expiredDuration = time.Duration(milliseconds) * time.Millisecond
+		}
 		deleteSize = 2
 		batchSize = 5 * deleteSize
 	})
