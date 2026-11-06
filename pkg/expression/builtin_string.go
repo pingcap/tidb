@@ -45,6 +45,7 @@ import (
 var (
 	_ functionClass = &lengthFunctionClass{}
 	_ functionClass = &asciiFunctionClass{}
+	_ functionClass = &soundexFunctionClass{}
 	_ functionClass = &concatFunctionClass{}
 	_ functionClass = &concatWSFunctionClass{}
 	_ functionClass = &leftFunctionClass{}
@@ -90,6 +91,7 @@ var (
 var (
 	_ builtinFunc = &builtinLengthSig{}
 	_ builtinFunc = &builtinASCIISig{}
+	_ builtinFunc = &builtinSoundexSig{}
 	_ builtinFunc = &builtinConcatSig{}
 	_ builtinFunc = &builtinConcatWSSig{}
 	_ builtinFunc = &builtinLeftSig{}
@@ -843,6 +845,167 @@ func (b *builtinReverseUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (stri
 	}
 	reversed := reverseRunes([]rune(str))
 	return string(reversed), false, nil
+}
+
+type soundexFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *soundexFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	argTp := args[0].GetType(ctx.GetEvalCtx())
+	// The result has at least four characters.
+	if flen := argTp.GetFlen(); flen != types.UnspecifiedLength {
+		bf.tp.SetFlen(max(flen, soundexMinLen))
+	}
+	SetBinFlagOrBinStr(argTp, bf.tp)
+	return &builtinSoundexSig{baseBuiltinFunc: bf, mode: soundexModeOf(argTp)}, nil
+}
+
+// soundexMinLen is the minimum length of the result of SOUNDEX, shorter codes are padded with '0'.
+const soundexMinLen = 4
+
+// soundexCodes maps 'A'..'Z' to their SOUNDEX code. MySQL gives H and W the code '0' of the vowels.
+const soundexCodes = "01230120022455012623010202"
+
+type builtinSoundexSig struct {
+	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+
+	// mode tells how the bytes of the argument are read.
+	mode soundexMode
+}
+
+// soundexMode is how SOUNDEX reads its argument.
+type soundexMode int
+
+const (
+	// soundexModeRunes reads UTF-8 characters; a byte that is not valid UTF-8 is a single-byte character.
+	soundexModeRunes soundexMode = iota
+	// soundexModeLatin1 reads every byte as a Latin-1 character.
+	soundexModeLatin1
+	// soundexModeBinary reads every byte, and only ASCII letters are letters.
+	soundexModeBinary
+)
+
+func soundexModeOf(tp *types.FieldType) soundexMode {
+	switch {
+	case types.IsBinaryStr(tp):
+		return soundexModeBinary
+	case tp.GetCharset() == charset.CharsetLatin1:
+		return soundexModeLatin1
+	}
+	return soundexModeRunes
+}
+
+func (b *builtinSoundexSig) Clone() builtinFunc {
+	newSig := &builtinSoundexSig{mode: b.mode}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a SOUNDEX(str).
+// See https://dev.mysql.com/doc/refman/8.0/en/string-functions.html#function_soundex
+func (b *builtinSoundexSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", true, err
+	}
+	return soundex(str, b.mode), false, nil
+}
+
+// soundex returns the MySQL SOUNDEX string of str. Characters that are not letters are ignored. The first
+// letter is kept (upper cased if it is an ASCII letter) and every later letter adds its code, unless the
+// code is '0' or the same as the last added one; a vowel does not separate two equal codes. The result is
+// padded with '0' to at least four characters, and is empty when str has no letter.
+func soundex(str string, mode soundexMode) string {
+	var (
+		buf  strings.Builder
+		n    int
+		last byte
+	)
+	// add takes one character: r is its code point and b the byte that stands for it when it is a single
+	// byte of the input (-1 for a multibyte UTF-8 character).
+	add := func(r rune, b int) {
+		if !isSoundexLetter(r, mode) {
+			return
+		}
+		code := soundexCode(r)
+		if n == 0 {
+			switch {
+			case b >= 0:
+				if b >= 'a' && b <= 'z' {
+					b -= 'a' - 'A'
+				}
+				buf.WriteByte(byte(b))
+			default:
+				buf.WriteRune(r)
+			}
+			n++
+			last = code
+		} else if code != '0' && code != last {
+			buf.WriteByte(code)
+			n++
+			last = code
+		}
+	}
+	if mode == soundexModeRunes {
+		for i := 0; i < len(str); {
+			r, size := utf8.DecodeRuneInString(str[i:])
+			if r == utf8.RuneError && size == 1 {
+				// Not valid UTF-8: the byte is a character of its own and is kept as it is.
+				add(rune(str[i]), int(str[i]))
+			} else if size == 1 {
+				add(r, int(str[i]))
+			} else {
+				add(r, -1)
+			}
+			i += size
+		}
+	} else {
+		for i := range len(str) {
+			add(rune(str[i]), int(str[i]))
+		}
+	}
+	if n == 0 {
+		return ""
+	}
+	if n < soundexMinLen {
+		buf.WriteString(strings.Repeat("0", soundexMinLen-n))
+	}
+	return buf.String()
+}
+
+// isSoundexLetter reports whether r is a letter for SOUNDEX. MySQL 8.0 takes every non-ASCII character from
+// U+00C0 up as a letter (including U+00D7 and U+00F7) and none below it; a byte of a binary string is a
+// letter only when it is an ASCII letter.
+func isSoundexLetter(r rune, mode soundexMode) bool {
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+		return true
+	case mode == soundexModeBinary:
+		return false
+	}
+	return r >= 0xC0
+}
+
+func soundexCode(r rune) byte {
+	switch {
+	case r >= 'a' && r <= 'z':
+		return soundexCodes[r-'a']
+	case r >= 'A' && r <= 'Z':
+		return soundexCodes[r-'A']
+	}
+	return '0'
 }
 
 type spaceFunctionClass struct {
