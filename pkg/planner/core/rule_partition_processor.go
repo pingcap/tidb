@@ -1678,6 +1678,8 @@ func opposite(op string) string {
 	switch op {
 	case ast.EQ:
 		return ast.EQ
+	case ast.NullEQ:
+		return ast.NullEQ
 	case ast.LT:
 		return ast.GT
 	case ast.GT:
