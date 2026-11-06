@@ -765,14 +765,19 @@ impl Session {
         }
     }
 
-    /// Go `SessionVars.RUV2Metrics` as `FormatRUV2Metrics` prints it (zero
-    /// weights): the running statement's, else the last one's.
-    pub fn ruv2_metrics_summary(&self) -> Option<String> {
-        let metrics = self
-            .statement_observation
+    /// Go `SessionVars.RUV2Metrics`: the running statement's, else the last
+    /// one's.
+    pub(crate) fn session_ruv2_metrics(&self) -> Option<&Arc<tidb_execdetails::ruv2_metrics::RUV2Metrics>> {
+        self.statement_observation
             .as_ref()
             .map(|observation| &observation.ruv2_metrics)
-            .or(self.last_ruv2_metrics.as_ref())?;
+            .or(self.last_ruv2_metrics.as_ref())
+    }
+
+    /// Go `SessionVars.RUV2Metrics` as `FormatRUV2Metrics` prints it (zero
+    /// weights).
+    pub fn ruv2_metrics_summary(&self) -> Option<String> {
+        let metrics = self.session_ruv2_metrics()?;
         Some(tidb_execdetails::ruv2_metrics::format_ruv_2_metrics(
             Some(metrics.as_ref()),
             tidb_execdetails::ruv2_metrics::RUV2Weights::default(),
@@ -889,6 +894,12 @@ impl Session {
             .take()
         {
             observation.cop_stats.merge_commit_details(&commit_details);
+            // Go `finalizeStatementRUV2Metrics`: the commit's write keys and
+            // size.
+            tidb_execdetails::ruv2_metrics::update_ruv_2_metrics_from_commit_details(
+                Some(&observation.ruv2_metrics),
+                Some(&commit_details),
+            );
         }
         // Go observes compiled statements, not a parser failure without an AST.
         if observation.label.is_empty() {

@@ -3405,22 +3405,31 @@ impl tidb_planner::plan_hint::HintCatalog for CatalogHints<'_> {
 /// the target plan as `RURuntimeStats`, under the RU version of Go's
 /// `domain.GetRUVersion` -- `rmclient.DefaultRUVersion` here, Go's answer
 /// when no domain resource-group controller is reachable from the session.
-/// This node keeps no statement-level RU v2 metrics (Go
-/// `SyncRUV2MetricsFromContext`), so `Metrics` is nil.
+/// The statement's RU v2 metrics go with it once its RPCs' TiKV counters
+/// are synced in (Go `SyncRUV2MetricsFromContext`), under the configured
+/// weights (`SessionVars.RUV2Weights`).
 fn register_ru_runtime_stats(
     statement_context: &crate::StmtContext,
     physical: &PhysicalPlan,
     runtime: &crate::driver::physical_builder::PhysicalRuntimeStats,
 ) -> crate::driver::physical_builder::PhysicalRuntimeStats {
     let mut runtime = runtime.clone();
-    if let Some(ru_details) = statement_context.ru_details() {
+    let ru_details = statement_context.ru_details();
+    let metrics = statement_context.ruv2_metrics();
+    if let Some(metrics) = metrics {
+        tidb_execdetails::ruv2_metrics::sync_ruv_2_metrics_from_ru_details(
+            Some(metrics.as_ref()),
+            ru_details.as_deref(),
+        );
+    }
+    if ru_details.is_some() || metrics.is_some() {
         runtime
             .entry(crate::driver::physical_builder::runtime_plan_key(physical))
             .or_insert_with(|| tidb_executor_internal_exec::RowCount::default().into())
             .register_ru_runtime_stats(tidb_execdetails::ruv2_metrics::RuRuntimeStats {
-                ru_details: Some(ru_details.cloned()),
-                metrics: None,
-                weights: tidb_execdetails::ruv2_metrics::RUV2Weights::default(),
+                ru_details: ru_details.as_ref().map(|details| details.cloned()),
+                metrics: metrics.map(|metrics| (**metrics).clone()),
+                weights: tidb_variable::slow_log::ruv2_weights(),
                 // Go `do.GetRUVersion()`.
                 ru_version: tidb_topsql_stmtstats::bound_ru_version(),
             });

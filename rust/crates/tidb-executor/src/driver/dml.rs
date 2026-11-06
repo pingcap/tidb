@@ -1146,6 +1146,8 @@ fn run_insert_rows(
     let mem_tracker = insert_mem_tracker(dml, ctx);
     // Go `e.rowCount`: the rows of the batches already executed.
     let mut row_base = 0usize;
+    // Go `InsertValues.ruv2RecordedRowsColMultiply`.
+    let mut ruv2_recorded_rows_col_multiply = 0i64;
     let mut records = 0u64;
     let mut inserted = 0;
     // Go `StmtCtx.CopiedRows`/`UpdatedRows`/`TouchedRows`, which the
@@ -2065,6 +2067,21 @@ fn run_insert_rows(
         }));
         records += row_count as u64;
         row_base += new_rows.len();
+        // Go `recordRowsColMultiply2RUV2Metrics` after each `base.exec`: an
+        // INSERT or REPLACE (not LOAD DATA) adds the new rows times its
+        // insert columns.
+        if load_restrictive.is_none() {
+            let current = i64::try_from(row_base)
+                .unwrap_or(i64::MAX)
+                .saturating_mul(target_offsets.len() as i64);
+            let delta = current - ruv2_recorded_rows_col_multiply;
+            if delta > 0 {
+                if let Some(metrics) = ctx.ruv2_metrics() {
+                    metrics.add_executor_l_5_insert_rows(delta);
+                }
+                ruv2_recorded_rows_col_multiply = current;
+            }
+        }
         if source.is_none() {
             break;
         }

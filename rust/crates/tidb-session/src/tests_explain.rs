@@ -7427,8 +7427,9 @@ fn a_parallel_hash_aggregate_spills_and_restores_like_go() {
 /// Go `exec.Next`'s RU v2 executor metrics (`ruv2ExecutorMetricByType`):
 /// every recorded executor adds its input plus output rows (or cells), its
 /// input being what its children -- on worker threads too -- returned during
-/// its `Next`. The `executor_l*` parts of `FormatRUV2Metrics`, from a Go
-/// testkit run of the same statements.
+/// its `Next`; the statement's autocommit transaction counts once
+/// (`AddTxnCnt`). The `executor_l*` and `txn_cnt` parts of
+/// `FormatRUV2Metrics`, from a Go testkit run of the same statements.
 #[test]
 fn a_statement_records_go_executor_ruv2_metrics() {
     let mut session = Session::new();
@@ -7443,33 +7444,55 @@ fn a_statement_records_go_executor_ruv2_metrics() {
     let executor_parts = |summary: &str| -> Vec<String> {
         summary
             .split(", ")
-            .filter(|part| part.starts_with("executor_l"))
+            .filter(|part| part.starts_with("executor_l") || part.starts_with("txn_cnt"))
             .map(str::to_owned)
             .collect()
     };
     for (sql, expected) in [
-        ("SELECT * FROM t", vec!["executor_l2:{TableReaderExecutor:6}"]),
-        ("SELECT a FROM t WHERE b > 2", vec!["executor_l2:{IndexReaderExecutor:4}"]),
+        ("SELECT * FROM t", vec!["executor_l2:{TableReaderExecutor:6}", "txn_cnt:1"]),
+        ("SELECT a FROM t WHERE b > 2", vec!["executor_l2:{IndexReaderExecutor:4}", "txn_cnt:1"]),
         (
             "SELECT b, count(*) FROM t GROUP BY b",
-            vec!["executor_l2:{HashAggExec:12,IndexReaderExecutor:6,ProjectionExec:24}"],
+            vec!["executor_l2:{HashAggExec:12,IndexReaderExecutor:6,ProjectionExec:24}", "txn_cnt:1"],
         ),
-        ("SELECT * FROM t ORDER BY c LIMIT 3", vec!["executor_l2:{TableReaderExecutor:3,TopNExec:18}"]),
+        ("SELECT * FROM t ORDER BY c LIMIT 3", vec!["executor_l2:{TableReaderExecutor:3,TopNExec:18}", "txn_cnt:1"]),
         (
             "SELECT /*+ inl_join(s) */ * FROM t JOIN s ON t.a=s.a",
-            vec!["executor_l2:{IndexLookUpJoin:39,TableReaderExecutor:9}"],
+            vec!["executor_l2:{IndexLookUpJoin:39,TableReaderExecutor:9}", "txn_cnt:1"],
         ),
         (
             "SELECT /*+ hash_join(s) */ * FROM t JOIN s ON t.a=s.d",
-            vec!["executor_l2:{HashJoinV2Exec:10,IndexReaderExecutor:4,TableReaderExecutor:6}"],
+            vec!["executor_l2:{HashJoinV2Exec:10,IndexReaderExecutor:4,TableReaderExecutor:6}", "txn_cnt:1"],
         ),
+        // Go also counts `txn_cnt:1`: its point get activates the
+        // transaction, where this port's reads without a statement read
+        // timestamp (E16).
         ("SELECT * FROM t WHERE a = 3", vec!["executor_l1:{PointGetExecutor:3}"]),
         // Go also counts `TableReaderExecutor:1` here: the per-task table
         // reader its `IndexLookUpExecutor` builds, which this port lacks (E11).
-        ("SELECT * FROM t WHERE b = 3", vec!["executor_l2:{IndexLookUpExecutor:1}"]),
+        ("SELECT * FROM t WHERE b = 3", vec!["executor_l2:{IndexLookUpExecutor:1}", "txn_cnt:1"]),
     ] {
         row_text(session.run(sql));
         let summary = session.ruv2_metrics_summary().expect("a recorded statement");
         assert_eq!(executor_parts(&summary), expected, "{sql}: {summary}");
+    }
+    // Go `recordOnTransactionExecution`: the statement that ends a valid
+    // transaction counts it (`AddTxnCnt`), and the commit's details give its
+    // write keys (`finalizeStatementRUV2Metrics`).
+    session.run("BEGIN").unwrap();
+    session.run("INSERT INTO s VALUES (8, 80)").unwrap();
+    session.run("COMMIT").unwrap();
+    let summary = session.ruv2_metrics_summary().expect("a recorded statement");
+    assert!(summary.contains(", txn_cnt:1"), "{summary}");
+    assert!(summary.contains(", write_keys:"), "{summary}");
+    // Go testkit: `INSERT INTO ai (b) VALUES (1),(2)` records
+    // `executor_l5_insert_rows:2, ..., txn_cnt:1, write_keys:2, write_size:58`
+    // (two rows times one insert column; its autocommit transaction's
+    // commit).
+    session.run("CREATE TABLE ai (a INT AUTO_INCREMENT PRIMARY KEY, b INT)").unwrap();
+    session.run("INSERT INTO ai (b) VALUES (1),(2)").unwrap();
+    let summary = session.ruv2_metrics_summary().expect("a recorded statement");
+    for part in ["executor_l5_insert_rows:2", "txn_cnt:1", "write_keys:2", "write_size:58"] {
+        assert!(summary.split(", ").any(|field| field == part), "{part}: {summary}");
     }
 }

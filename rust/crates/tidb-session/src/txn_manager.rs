@@ -454,6 +454,13 @@ impl TxnManager {
         }
         // Go's autocommit `CommitTxn`, which a failed commit has run too.
         session.set_txn_isolation_level_one_shot_state_for_next_txn();
+        // Go `doCommitWithRetry` -> `recordOnTransactionExecution`: a
+        // transaction the statement activated counts once, committed or not.
+        if read_ts.is_some() || write_transaction.is_some() {
+            if let Some(metrics) = session.session_ruv2_metrics() {
+                metrics.add_txn_cnt(1);
+            }
+        }
         let write_details = self.buffer_write_details();
         self.autocommit_txn_bytes = self.buffer.staged_bytes();
         if let Some(write_transaction) = write_transaction {
@@ -586,6 +593,10 @@ impl TxnManager {
             tidb_metrics::session::STATEMENT_PER_TRANSACTION
                 .with_label_values(&[txn_mode, num_label, "general"])
                 .observe(txn_statement_count);
+            // Go `recordOnTransactionExecution` / `recordAbortTxnDuration`.
+            if let Some(metrics) = session.session_ruv2_metrics() {
+                metrics.add_txn_cnt(1);
+            }
         }
         match commit_result {
             Ok(committed) => {
@@ -640,6 +651,10 @@ impl TxnManager {
                     tidb_metrics::session::STATEMENT_PER_TRANSACTION
                         .with_label_values(&[txn_mode, "error", "general"])
                         .observe(txn_statement_count);
+                    // Go `recordOnTransactionExecution` / `recordAbortTxnDuration`.
+                    if let Some(metrics) = session.session_ruv2_metrics() {
+                        metrics.add_txn_cnt(1);
+                    }
                 }
                 result.map_err(SqlQueryError::unknown)
             }
