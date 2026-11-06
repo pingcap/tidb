@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
@@ -156,4 +157,53 @@ func TestClonePartitionDefinitions(t *testing.T) {
 		cloned[0].InValues[1] = []string{"replaced"}
 		require.Equal(t, []model.PartitionDefinition{{ID: 1, InValues: [][]string{{"1", "2"}, {"3", "4"}}}}, definitions)
 	})
+}
+
+func TestRemovePartitionIndexes(t *testing.T) {
+	columns := []*model.ColumnInfo{
+		{ID: 1, Name: ast.NewCIStr("a"), Offset: 0},
+		{ID: 2, Name: ast.NewCIStr("b"), Offset: 1},
+		{ID: 3, Name: ast.NewCIStr("_shared"), Offset: 2, Hidden: true},
+		{ID: 4, Name: ast.NewCIStr("_private"), Offset: 3, Hidden: true},
+		{ID: 5, Name: ast.NewCIStr("tail"), Offset: 4},
+	}
+	index := func(id int64, name string, column *model.ColumnInfo, global, unique bool) *model.IndexInfo {
+		return &model.IndexInfo{
+			ID: id, Name: ast.NewCIStr(name), State: model.StatePublic,
+			Global: global, Unique: unique,
+			Columns: []*model.IndexColumn{{Name: column.Name, Offset: column.Offset}},
+		}
+	}
+	oldGlobal := index(1, "idx_a", columns[0], true, false)
+	newGlobal := index(2, "idx_a", columns[0], true, false)
+	localUnique := index(3, "idx_b", columns[1], false, true)
+	privateExpression := index(4, "idx_private", columns[3], false, false)
+	oldExpression := index(5, "idx_shared", columns[2], true, false)
+	newExpression := index(6, "idx_shared", columns[2], true, false)
+	unrelated := index(7, "idx_tail", columns[4], false, false)
+	unrelated.State = model.StateDeleteOnly
+	tblInfo := &model.TableInfo{
+		ID: 100, Columns: append([]*model.ColumnInfo(nil), columns...),
+		Indices: []*model.IndexInfo{oldGlobal, newGlobal, localUnique, privateExpression, oldExpression, newExpression, unrelated},
+	}
+	for _, idx := range tblInfo.Indices {
+		AddIndexColumnFlag(tblInfo, idx)
+	}
+
+	cleanup := removePartitionIndexes(tblInfo, []*model.IndexInfo{oldGlobal, localUnique, privateExpression, oldExpression})
+	// A partitioning change may replace the table ID after collecting cleanup IDs.
+	tblInfo.ID = 200
+
+	require.Equal(t, []model.TableIDIndexID{{TableID: 100, IndexID: 1}, {TableID: 100, IndexID: 5}}, cleanup)
+	require.Equal(t, []*model.IndexInfo{newGlobal, newExpression, unrelated}, tblInfo.Indices)
+	require.Equal(t, model.StateDeleteOnly, unrelated.State)
+	require.Equal(t, []*model.ColumnInfo{columns[0], columns[1], columns[2], columns[4]}, tblInfo.Columns)
+	require.True(t, mysql.HasMultipleKeyFlag(columns[0].GetFlag()))
+	require.False(t, mysql.HasUniKeyFlag(columns[1].GetFlag()))
+	require.True(t, mysql.HasMultipleKeyFlag(columns[2].GetFlag()))
+	require.Equal(t, 3, columns[4].Offset)
+	require.Equal(t, 3, unrelated.Columns[0].Offset)
+	for offset, col := range tblInfo.Columns {
+		require.Equal(t, offset, col.Offset)
+	}
 }
