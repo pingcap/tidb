@@ -78,6 +78,22 @@ func runPredicatePushdownTestDataWithResult(t *testing.T, tk *testkit.TestKit, c
 }
 
 func TestPredicatePushdownSuite(t *testing.T) {
+	t.Run("preserve join comparison collation", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+		tk.MustExec("use test")
+		tk.MustExec("create table tb0(id int unique auto_increment not null, c0 year default 2000, c1 datetime, c2 longtext, c3 varbinary(182)) charset=utf8mb4")
+		tk.MustExec("create table tb1(id int unique auto_increment not null, c0 char(162), primary key(id)) charset=latin1")
+		tk.MustExec("create table tb2(id int unique auto_increment not null, c0 binary(8), c1 time default '12:00:00', c2 decimal(33,25) default 0, c3 varchar(135) default 'test')")
+		tk.MustExec("create view v1 as select id,c0,c1,c2,c3,case when id is null then 'NO_DATA' else 'HAS_DATA' end as data_status from tb2 order by id desc limit 100")
+		query := "select count(t2.c0),count(*) from v1 t0 inner join tb1 t1 on t0.data_status=t1.c0 inner join tb0 t2 on t1.id=t2.c2 right join (select c0 as col_0 from tb1) t3 on t2.c1=t3.col_0 where t2.c2 group by t0.id,t0.c0,t0.c2,t0.data_status having count(*)<87"
+		tk.MustQuery(query).Check(testkit.Rows())
+		tk.MustExec("insert into tb2(id) values(1)")
+		tk.MustExec("insert into tb1(id,c0) values(1,'HAS_DATA'),(2,'2024-01-01 00:00:00')")
+		tk.MustExec("insert into tb0(c1,c2) values('2024-01-01 00:00:00','1')")
+		tk.MustQuery(query).Check(testkit.Rows("1 1"))
+		tk.MustQuery(strings.ReplaceAll(query, "t0.data_status=t1.c0", "t1.c0=t0.data_status")).Check(testkit.Rows("1 1"))
+		tk.MustQuery(strings.ReplaceAll(query, "t0.data_status=t1.c0", "t1.c0<=>t0.data_status")).Check(testkit.Rows("1 1"))
+	})
 	t.Run("TestConstantPropagateWithCollation", testConstantPropagateWithCollation)
 	t.Run("TestPredicatePushDown", testPredicatePushDown)
 }

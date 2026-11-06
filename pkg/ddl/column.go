@@ -940,6 +940,7 @@ func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBa
 		// Collect the warnings.
 		taskCtx.warnings, taskCtx.warningsCount = warningsMap, warningsCountMap
 
+		taskCtx.writtenBytes = txn.Size()
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)
@@ -1100,7 +1101,11 @@ func applyNewAutoRandomBits(jobCtx *jobContext, dbInfo *model.DBInfo,
 		errMsg := fmt.Sprintf(autoid.AutoRandomAllocatorNotFound, dbInfo.Name.O, tblInfo.Name.O)
 		return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 	}
-	idAcc := jobCtx.metaMut.GetAutoIDAccessors(dbInfo.ID, tblInfo.ID).RowID()
+	idAccessors := jobCtx.metaMut.GetAutoIDAccessors(dbInfo.ID, tblInfo.ID)
+	idAcc := idAccessors.RowID()
+	if tblInfo.SepAutoInc() {
+		idAcc = idAccessors.IncrementID(model.TableInfoVersion5)
+	}
 	nextAutoIncID, err := idAcc.Get()
 	if err != nil {
 		return errors.Trace(err)

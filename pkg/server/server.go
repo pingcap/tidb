@@ -32,6 +32,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"maps"
@@ -40,7 +41,6 @@ import (
 	_ "net/http/pprof" // #nosec G108 for pprof
 	"os"
 	"os/user"
-	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,6 +54,7 @@ import (
 	autoid "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
@@ -212,7 +213,7 @@ func (s *Server) BitwiseOrAssignCapability(capability uint32) {
 
 // GetStatusServerAddr gets statusServer address for MppCoordinatorManager usage
 func (s *Server) GetStatusServerAddr() (on bool, addr string) {
-	if !s.cfg.Status.ReportStatus {
+	if !s.fullStatusServerEnabled() {
 		return false, ""
 	}
 	if strings.Contains(s.statusAddr, config.DefStatusHost) {
@@ -372,8 +373,12 @@ func (s *Server) InitTiDBListener() error {
 }
 
 func (s *Server) initTiDBListener() (err error) {
-	needTCPListener := s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest)
+	socketOnly := diagnosticmode.Enabled() && s.cfg.Security.SkipGrantTable
+	needTCPListener := s.cfg.Host != "" && (s.cfg.Port != 0 || (RunInGoTest && !socketOnly))
 	needUnixSocket := s.cfg.Socket != ""
+	if socketOnly && (needTCPListener || s.listener != nil || !needUnixSocket) {
+		return errors.New("diagnostic mode with skip-grant-table requires a Unix socket and no MySQL TCP listener")
+	}
 	if (!needTCPListener || s.listener != nil) && (!needUnixSocket || s.socket != nil) &&
 		(s.listener != nil || s.socket != nil) {
 		return nil
@@ -526,7 +531,8 @@ func (s *Server) Run(dom *domain.Domain) error {
 	terror.RegisterFinish()
 	go s.startNetworkListener(s.listener, false, errChan)
 	go s.startNetworkListener(s.socket, true, errChan)
-	if s.cfg.Status.ReportStatus {
+	// The diagnostic HTTP allowlist does not expose /info for this identity check.
+	if s.fullStatusServerEnabled() {
 		endpointCheckCtx, cancelEndpointCheck := context.WithCancel(context.Background())
 		defer cancelEndpointCheck()
 		advertisedstatus.Start(endpointCheckCtx, advertisedstatus.Options{
@@ -592,19 +598,16 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 
 		clientConn := s.newConn(conn)
 		if isUnixSocket {
-			var (
-				uc *net.UnixConn
-				ok bool
-			)
-			if clientConn.ppEnabled {
-				// Using reflect to get Raw Conn object from proxy protocol wrapper connection object
-				ppv := reflect.ValueOf(conn)
-				vconn := ppv.Elem().FieldByName("Conn")
-				rconn := vconn.Interface()
-				uc, ok = rconn.(*net.UnixConn)
-			} else {
-				uc, ok = conn.(*net.UnixConn)
+			// When PROXY protocol is enabled the accepted conn may be wrapped by
+			// the PROXY-protocol conn, which exposes NetConn() since
+			// go-proxyprotocol v1.0.8. Unwrap it to reach the underlying
+			// *net.UnixConn; a raw conn (for example when the client address is
+			// not in the allowed networks) is left as-is.
+			sockConn := conn
+			if underlay, ok := sockConn.(proxyprotocol.UnderlayConn); ok {
+				sockConn = underlay.NetConn()
 			}
+			uc, ok := sockConn.(*net.UnixConn)
 			if !ok {
 				logutil.BgLogger().Error("Expected UNIX socket, but got something else")
 				return
@@ -693,6 +696,11 @@ func (s *Server) closeListener() {
 		err := s.socket.Close()
 		terror.Log(errors.Trace(err))
 		s.socket = nil
+	}
+	if s.statusListener != nil {
+		if err := s.statusListener.Close(); err != nil && !stderrors.Is(err, net.ErrClosed) {
+			terror.Log(errors.Trace(err))
+		}
 	}
 	if statusServer := s.statusServer.Load(); statusServer != nil {
 		err := statusServer.Close()
@@ -837,13 +845,14 @@ func (s *Server) onConn(conn *clientConn) {
 		logutil.Logger(ctx).Debug("connection closed")
 	}()
 
-	if err := conn.increaseUserConnectionsCount(); err != nil {
+	releaseUserConnection, err := conn.increaseUserConnectionsCount()
+	if err != nil {
 		logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
 			Warn("failed to increase the count of connections", zap.Error(err),
 				zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
 		return
 	}
-	defer conn.decreaseUserConnectionCount()
+	defer releaseUserConnection()
 
 	if !s.registerConn(conn) {
 		return

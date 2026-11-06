@@ -56,7 +56,7 @@ func TestSchedulerCleaner(t *testing.T) {
 			task, err := mgr.GetTaskByID(ctx, taskID)
 			require.NoError(t, err)
 			require.NoError(t, mgr.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil))
-			require.NoError(t, mgr.SucceedTask(ctx, taskID))
+			require.NoError(t, mgr.SucceedTask(ctx, task))
 		}
 
 		sch.DoClean()

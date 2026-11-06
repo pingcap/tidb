@@ -27,6 +27,8 @@ Hard requirements remain in the repository root `AGENTS.md`.
 - Typical changes: runtime operator semantics, builtin behavior, evaluation edge cases.
 - First tests to inspect:
   - package unit tests under the same path
+  - `pkg/executor/test/materializedview/` for materialized view refresh
+  - `pkg/executor/test/materializedviewlog/` for materialized view log purge and related checks
   - SQL integration tests for user-visible behavior
 
 ### Session, variables, protocol
@@ -58,6 +60,13 @@ Hard requirements remain in the repository root `AGENTS.md`.
 ### Parser and AST
 - `pkg/parser/`
 - Typical changes: SQL grammar, AST nodes, parser behavior.
+
+### Dumpling export
+- `dumpling/export/`: export orchestration, source adapters, filtering, and writers.
+- `dumpling/dumpservice/`: HTTP/2 client and Unix-socket protocol contract.
+- `dumpling/internal/kvsource/`: TiDB metadata access, row decoding, and SQL-compatible conversion.
+- `dumpling/internal/dumpservicetest/`: shared dump-service fixtures for source and export tests.
+- First tests: metadata consumer tests in `kvsource` and dump-service lifecycle/parity tests in `export`.
 
 ## Test Surfaces
 - Unit tests: package-local tests under `pkg/**`.
