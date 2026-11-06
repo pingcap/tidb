@@ -595,12 +595,31 @@ func TestFlashbackSchema(t *testing.T) {
 	require.NoError(t, gcutil.EnableGC(tk.Session()))
 
 	tk.MustExec("insert into t_flashback values (1),(2),(3)")
+	tk.MustExec("create sequence seq start with 1 increment by 1 cache 100")
+	tk.MustExec("create table seq_ids(id bigint primary key default next value for seq)")
+	tk.MustExec("insert into seq_ids values(default),(default)")
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("3"))
+	tk.MustExec("create sequence seq_cycle start with 3 increment by 3 minvalue 1 maxvalue 10 nocache cycle")
+	for _, value := range []string{"3", "6", "9", "1"} {
+		tk.MustQuery("select nextval(seq_cycle)").Check(testkit.Rows(value))
+	}
+	tk.MustExec("create sequence seq_negative start with -1 increment by -1 cache 10")
+	tk.MustQuery("select nextval(seq_negative)").Check(testkit.Rows("-1"))
+	tk.MustExec("create sequence seq_unused start with 10")
 	tk.MustExec("drop database test_flashback")
 
 	// even PD is down, the job can not be canceled for now.
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr", `4*return()`)
 	tk.MustExec("flashback database test_flashback")
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr")
+	tk.MustExec("use test_flashback")
+	tk.MustQuery("select id from seq_ids order by id").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("101"))
+	tk.MustQuery("select nextval(seq_cycle)").Check(testkit.Rows("4"))
+	tk.MustQuery("select nextval(seq_negative)").Check(testkit.Rows("-11"))
+	tk.MustQuery("select nextval(seq_unused)").Check(testkit.Rows("10"))
+	tk.MustExec("insert into seq_ids values(default)")
+	tk.MustQuery("select id from seq_ids order by id").Check(testkit.Rows("1", "2", "102"))
 
 	// Test flashback database with db_not_exists name.
 	tk.MustGetErrMsg("flashback database db_not_exists", "Can't find dropped database: db_not_exists in DDL history jobs")
