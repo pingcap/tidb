@@ -3145,6 +3145,17 @@ func TestColumnPrivilege4Views(t *testing.T) {
 	noPrivTk.MustQuery(`SELECT y.a FROM test.vswap AS y ORDER BY y.a`).Check(testkit.Rows("42"))
 	noPrivTk.MustGetErrCode(`SELECT secret FROM test.vswap`, errno.ErrColumnaccessDenied)
 	noPrivTk.MustQuery(`SELECT x FROM test.vcalc`).Check(testkit.Rows("43"))
+
+	// 8. The definer of a view created through an anonymous account is that
+	// account (''@'%'), not the connection host.
+	tk.MustExec(`CREATE USER ''@'%'`)
+	tk.MustExec(`GRANT CREATE VIEW ON test.* TO ''@'%'`)
+	tk.MustExec(`GRANT SELECT(a) ON test.s TO ''@'%'`)
+	anonTk := testkit.NewTestKit(t, store)
+	require.NoError(t, anonTk.Session().Auth(&auth.UserIdentity{Username: "", Hostname: "10.0.0.1"}, nil, nil, nil))
+	anonTk.MustExec(`CREATE SQL SECURITY DEFINER VIEW test.vanon AS SELECT a FROM test.s`)
+	tk.MustExec(`GRANT SELECT ON test.vanon TO 'nopriv'@'localhost'`)
+	noPrivTk.MustQuery(`SELECT a FROM test.vanon`).Check(testkit.Rows("1"))
 }
 
 func TestColumnPrivilege4TraceAndExplain(t *testing.T) {

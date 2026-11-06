@@ -233,7 +233,7 @@ func (p *UserPrivileges) RequestVerificationWithUser(ctx context.Context, db, ta
 
 	// Privileges are granted to the account the user matched at login, e.g. the
 	// definer of a view created by 'u' connected from localhost is 'u'@'%'.
-	userName, hostName := auth.GetUserAndHostName(user)
+	userName, hostName := grantAccountOf(user)
 	terror.Log(p.Handle.ensureActiveUser(ctx, userName))
 	mysqlPriv := p.Handle.Get()
 	roles := mysqlPriv.getDefaultRoles(userName, hostName)
