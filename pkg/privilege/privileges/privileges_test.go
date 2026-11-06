@@ -2503,6 +2503,27 @@ func TestSQLVariableAccelerateUserCreationUpdate(t *testing.T) {
 	priv = handle.Get()
 	require.True(t, priv.RequestVerification(nil, "bbb", "%", "test", "", "", mysql.SelectPriv))
 
+	// The privilege views list the grants of all accounts, including those
+	// that have never logged in to this node and so are not cached.
+	tk.MustExec("create user ccc")
+	tk.MustExec("create table test.acc (a int)")
+	tk.MustExec("grant select(a) on test.acc to ccc")
+	tk.MustExec("grant insert on test.acc to ccc")
+	tk.MustExec("grant update on test.* to ccc")
+	require.False(t, handle.Get().RequestVerification(nil, "ccc", "%", "test", "acc", "a", mysql.SelectPriv))
+	rootTk := testkit.NewTestKit(t, store)
+	require.NoError(t, rootTk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	for _, viewer := range []*testkit.TestKit{tk, rootTk} {
+		viewer.MustQuery(`select table_name, column_name, privilege_type from information_schema.column_privileges where grantee = "'ccc'@'%'"`).
+			Check(testkit.Rows("acc a SELECT"))
+		viewer.MustQuery(`select table_name, privilege_type from information_schema.table_privileges where grantee = "'ccc'@'%'"`).
+			Check(testkit.Rows("acc INSERT"))
+		viewer.MustQuery(`select table_schema, privilege_type from information_schema.schema_privileges where grantee = "'ccc'@'%'"`).
+			Check(testkit.Rows("test UPDATE"))
+	}
+	// Listing them does not load the other accounts into the cache.
+	handle.CheckFullData(t, false)
+
 	// 3. change the variable and check again
 	tk.MustExec("set @@global.tidb_accelerate_user_creation_update = off")
 	tk.MustQuery("select @@global.tidb_accelerate_user_creation_update").Check(testkit.Rows("0"))

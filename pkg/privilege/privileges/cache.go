@@ -2360,6 +2360,28 @@ func (h *Handle) UpdateAll() error {
 	return nil
 }
 
+// GetFull returns the privilege info of all users. When only the active users
+// are cached (tidb_accelerate_user_creation_update), it loads a complete
+// snapshot from kv storage without changing the cache, so that callers which
+// enumerate all accounts do not miss users that have not logged in to this
+// node.
+func (h *Handle) GetFull() (*MySQLPrivilege, error) {
+	if h.fullData.Load() {
+		return h.Get(), nil
+	}
+	priv := newMySQLPrivilege()
+	priv.globalVars = h.globalVars
+	res, err := h.sctx.Get()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer h.sctx.Put(res)
+	if err = priv.LoadAll(res.(sqlexec.SQLExecutor)); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return priv, nil
+}
+
 // UpdateAllActive loads all the active users' privilege info from kv storage.
 func (h *Handle) UpdateAllActive() error {
 	h.fullData.Store(false)

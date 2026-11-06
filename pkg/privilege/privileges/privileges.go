@@ -952,12 +952,17 @@ func (p *UserPrivileges) FetchColumnPrivileges(sctx sessionctx.Context, user *au
 	}
 
 	mysqlPrivilege := p.Handle.Get()
+	var err error
 	users := make([]string, 0, 1)
 	hosts := make([]string, 0, 1)
 
 	u, h := grantAccountOf(user)
 	if user == nil || p.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "columns_priv", "", mysql.SelectPriv) &&
 		p.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "tables_priv", "", mysql.SelectPriv) {
+		// Enumerating all accounts needs the grants of users that are not cached.
+		if mysqlPrivilege, err = p.Handle.GetFull(); err != nil {
+			return nil, err
+		}
 		mysqlPrivilege.user.Ascend(func(item itemUser) bool {
 			for _, u := range item.data {
 				users = append(users, u.User)
@@ -980,11 +985,16 @@ func (p *UserPrivileges) FetchTablePrivileges(sctx sessionctx.Context, user *aut
 	}
 
 	mysqlPrivilege := p.Handle.Get()
+	var err error
 	users := make([]string, 0, 1)
 	hosts := make([]string, 0, 1)
 
 	u, h := grantAccountOf(user)
 	if user == nil || p.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "tables_priv", "", mysql.SelectPriv) {
+		// Enumerating all accounts needs the grants of users that are not cached.
+		if mysqlPrivilege, err = p.Handle.GetFull(); err != nil {
+			return nil, err
+		}
 		mysqlPrivilege.user.Ascend(func(item itemUser) bool {
 			for _, u := range item.data {
 				users = append(users, u.User)
@@ -1007,11 +1017,16 @@ func (p *UserPrivileges) FetchSchemaPrivileges(sctx sessionctx.Context, user *au
 	}
 
 	mysqlPrivilege := p.Handle.Get()
+	var err error
 	users := make([]string, 0, 1)
 	hosts := make([]string, 0, 1)
 
 	u, h := grantAccountOf(user)
 	if user == nil || p.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "db", "", mysql.SelectPriv) {
+		// Enumerating all accounts needs the grants of users that are not cached.
+		if mysqlPrivilege, err = p.Handle.GetFull(); err != nil {
+			return nil, err
+		}
 		mysqlPrivilege.user.Ascend(func(item itemUser) bool {
 			for _, u := range item.data {
 				users = append(users, u.User)
