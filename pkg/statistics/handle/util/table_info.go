@@ -16,7 +16,6 @@ package util
 
 import (
 	"context"
-	"sync"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
@@ -29,39 +28,14 @@ type TableInfoGetter interface {
 	// TableInfoByID returns the table info specified by the physicalID.
 	// If the physicalID is corresponding to a partition, return its parent table.
 	TableInfoByID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool)
-	// TableInfoByIDForInitStats returns the table info specified by the physicalID for initializing stats.
-	// If the physicalID corresponds to a partition, it returns its parent table.
-	// This method is optimized for InfoSchema V1 by caching partition-to-table mappings.
-	TableInfoByIDForInitStats(is infoschema.InfoSchema, physicalID int64) (table.Table, bool)
-	// TableItemByIDForInitStats returns lightweight table meta for initializing stats.
-	// If the physicalID corresponds to a partition, it returns its parent table item.
-	// This method exists because InfoSchema V1 partition item lookup scans all tables;
-	// use the cached partition-to-table mapping here instead.
-	TableItemByIDForInitStats(is infoschema.InfoSchema, physicalID int64) (infoschema.TableItem, bool)
 }
 
 // tableInfoGetterImpl is used to get table meta info.
-type tableInfoGetterImpl struct {
-	forInitStatsAndInfoSchemaV1Only struct {
-		// pid2tid is the map from partition ID to table ID.
-		pid2tid map[int64]int64
-		// schemaVersion is the version of information schema when `pid2tid` is built.
-		schemaVersion int64
-		mu            sync.RWMutex
-	}
-}
+type tableInfoGetterImpl struct{}
 
 // NewTableInfoGetter creates a TableInfoGetter.
 func NewTableInfoGetter() TableInfoGetter {
-	return &tableInfoGetterImpl{
-		forInitStatsAndInfoSchemaV1Only: struct {
-			pid2tid       map[int64]int64
-			schemaVersion int64
-			mu            sync.RWMutex
-		}{
-			pid2tid: make(map[int64]int64),
-		},
-	}
+	return &tableInfoGetterImpl{}
 }
 
 // TableInfoByID returns the table info specified by the physicalID.
@@ -73,63 +47,6 @@ func (*tableInfoGetterImpl) TableInfoByID(is infoschema.InfoSchema, physicalID i
 	}
 	tbl, _, _ = is.FindTableByPartitionID(physicalID)
 	return tbl, tbl != nil
-}
-
-// TableInfoByIDForInitStats returns the table info specified by the physicalID for initializing stats.
-func (c *tableInfoGetterImpl) TableInfoByIDForInitStats(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
-	// NOTE: For InfoSchema V2, partition lookups are efficient,
-	// We can directly search for partitioned tables without maintaining a separate cache, making TableByID sufficient for both
-	// regular tables and partitions.
-	isV2, _ := infoschema.IsV2(is)
-	if isV2 {
-		return c.TableInfoByID(is, physicalID)
-	}
-
-	tbl, ok := is.TableByID(context.Background(), physicalID)
-	if ok {
-		return tbl, true
-	}
-
-	if id, ok := c.partitionID2TableIDForInitStats(is, physicalID); ok {
-		return is.TableByID(context.Background(), id)
-	}
-	return nil, false
-}
-
-// TableItemByIDForInitStats returns lightweight table meta for initializing stats.
-func (c *tableInfoGetterImpl) TableItemByIDForInitStats(is infoschema.InfoSchema, physicalID int64) (infoschema.TableItem, bool) {
-	// NOTE: For InfoSchema V2, table item lookups for both regular tables and
-	// partitions are indexed in memory, so the generic lightweight helper is safe.
-	isV2, _ := infoschema.IsV2(is)
-	if isV2 {
-		return c.TableItemByID(is, physicalID)
-	}
-
-	tableItem, ok := is.TableItemByID(physicalID)
-	if ok {
-		return tableItem, true
-	}
-	// InfoSchema V1 TableItemByPartitionID scans all tables. Reuse the init-stats
-	// partition cache and then resolve the parent table item by table ID.
-	if id, ok := c.partitionID2TableIDForInitStats(is, physicalID); ok {
-		return is.TableItemByID(id)
-	}
-	return infoschema.TableItem{}, false
-}
-
-func (c *tableInfoGetterImpl) partitionID2TableIDForInitStats(is infoschema.InfoSchema, partitionID int64) (int64, bool) {
-	// For InfoSchema V1, partition lookups require a full scan of all tables, which is
-	// expensive. We maintain a cached pid2tid map to optimize these lookups during stats
-	// initialization. Locking is needed because this method may be called in parallel.
-	// See FindTableByPartitionID implementation for more details on V1's search cost.
-	c.forInitStatsAndInfoSchemaV1Only.mu.Lock()
-	defer c.forInitStatsAndInfoSchemaV1Only.mu.Unlock()
-	if is.SchemaMetaVersion() != c.forInitStatsAndInfoSchemaV1Only.schemaVersion {
-		c.forInitStatsAndInfoSchemaV1Only.schemaVersion = is.SchemaMetaVersion()
-		c.forInitStatsAndInfoSchemaV1Only.pid2tid = buildPartitionID2TableID(is)
-	}
-	id, ok := c.forInitStatsAndInfoSchemaV1Only.pid2tid[partitionID]
-	return id, ok
 }
 
 // buildPartitionID2TableID builds the map from partition ID to table ID.
@@ -146,15 +63,6 @@ func buildPartitionID2TableID(is infoschema.InfoSchema) map[int64]int64 {
 		}
 	}
 	return mapper
-}
-
-// TableItemByID returns the lightweight table meta specified by the physicalID.
-func (*tableInfoGetterImpl) TableItemByID(is infoschema.InfoSchema, id int64) (infoschema.TableItem, bool) {
-	tableItem, ok := is.TableItemByID(id)
-	if ok {
-		return tableItem, true
-	}
-	return is.TableItemByPartitionID(id)
 }
 
 // SnapshotTableInfoGetter gets the table of a physical ID in one InfoSchema snapshot.

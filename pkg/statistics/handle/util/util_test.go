@@ -257,7 +257,7 @@ func TestCallWithSCtxSyncsStmtCtxTimeZone(t *testing.T) {
 	require.Equal(t, varsTZ, stmtTZ)
 }
 
-func TestTableItemByIDForInitStatsAvoidsV1PartitionScan(t *testing.T) {
+func TestSnapshotTableInfoGetterAvoidsV1PartitionScan(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -276,19 +276,6 @@ func TestTableItemByIDForInitStatsAvoidsV1PartitionScan(t *testing.T) {
 		InfoSchema: infoschema.MockInfoSchemaWithSchemaVer([]*model.TableInfo{normalInfo, partitionedInfo}, 1),
 		t:          t,
 	}
-	getter := util.NewTableInfoGetter()
-
-	item, ok := getter.TableItemByIDForInitStats(is, normalInfo.ID)
-	require.True(t, ok)
-	require.Equal(t, "normal", item.TableName.L)
-
-	item, ok = getter.TableItemByIDForInitStats(is, partitionID)
-	require.True(t, ok)
-	require.Equal(t, "partitioned", item.TableName.L)
-
-	_, ok = getter.TableItemByIDForInitStats(is, 1<<60)
-	require.False(t, ok)
-
 	snapshotGetter := util.NewSnapshotTableInfoGetter(is)
 	tbl, ok := snapshotGetter.TableInfoByID(normalInfo.ID)
 	require.True(t, ok)
@@ -298,7 +285,7 @@ func TestTableItemByIDForInitStatsAvoidsV1PartitionScan(t *testing.T) {
 	require.Equal(t, partitionedInfo.ID, tbl.Meta().ID)
 	_, ok = snapshotGetter.TableInfoByID(1 << 60)
 	require.False(t, ok)
-	item, ok = snapshotGetter.TableItemByID(normalInfo.ID)
+	item, ok := snapshotGetter.TableItemByID(normalInfo.ID)
 	require.True(t, ok)
 	require.Equal(t, "normal", item.TableName.L)
 	item, ok = snapshotGetter.TableItemByID(partitionID)
