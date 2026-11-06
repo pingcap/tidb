@@ -5509,6 +5509,13 @@ func (b *builtinConvertTzSig) convertTz(dt types.Time, fromTzStr, toTzStr string
 		}
 	}
 
+	// MySQL leaves the input unchanged if conversion to UTC falls outside
+	// 1970-01-01 00:00:01 through 3001-01-18 23:59:59.999999.
+	unixSeconds := t.Unix()
+	if unixSeconds <= 0 || unixSeconds > 32536771199 {
+		return types.NewTime(dt.CoreTime(), mysql.TypeDatetime, b.tp.GetDecimal()), false, nil
+	}
+
 	return types.NewTime(types.FromGoTime(t.In(toTz)), mysql.TypeDatetime, b.tp.GetDecimal()), false, nil
 }
 
