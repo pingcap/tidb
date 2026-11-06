@@ -129,6 +129,272 @@ PARTITION BY RANGE ( a ) (
 	})
 }
 
+// TestAnalyzeRefreshesOnlyPersistedStats verifies that partition ANALYZE only
+// refreshes persisted statistics, including global histograms missing from cache.
+// Each case caches a pseudo global entry behind a higher cache-wide version,
+// analyzes one partition, and checks whether the histogram was written or reused
+// along with the logical-table row count.
+func TestAnalyzeRefreshesOnlyPersistedStats(t *testing.T) {
+	testCases := []struct {
+		name                       string
+		partitionPruneMode         string
+		makeGlobalStatsMergeFail   bool
+		expectGlobalHistogramWrite bool
+	}{
+		{
+			name:               "static partition analyze",
+			partitionPruneMode: "static",
+		},
+		{
+			name:                       "successful dynamic global stats merge",
+			partitionPruneMode:         "dynamic",
+			expectGlobalHistogramWrite: true,
+		},
+		{
+			name:                     "failed dynamic global stats merge",
+			partitionPruneMode:       "dynamic",
+			makeGlobalStatsMergeFail: true,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			// Set up partition stats and a persisted global row, then arrange
+			// either no global merge, a successful merge, or a pre-write failure.
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set @@session.tidb_analyze_version = 2")
+			tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
+			tk.MustExec("set @@session.tidb_enable_async_merge_global_stats = ON")
+			tk.MustExec(`create table t(a int) partition by range(a) (
+				partition p0 values less than (10),
+				partition p1 values less than (20)
+			)`)
+			tk.MustExec("insert into t values (1), (11)")
+			analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a")
+			tk.MustExec("analyze table t")
+			if testCase.makeGlobalStatsMergeFail {
+				// p1 has no stats for the newly added predicate column, so
+				// merging p0 with missing-partition skipping disabled fails
+				// before any global row is written.
+				tk.MustExec("alter table t add column b int")
+				analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
+				tk.MustExec("set @@session.tidb_skip_missing_partition_stats = 0")
+				tk.MustExec("insert into t values (2, 2), (3, 3)")
+			} else {
+				tk.MustExec("insert into t values (2), (3)")
+			}
+			// Upstream flushes pending deltas before building ANALYZE tasks.
+			// Flush first, then lower the global row version so that pre-flush
+			// cannot accidentally remove the intended stale-row setup.
+			tk.MustExec("flush stats_delta *.*")
+
+			table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+			require.NoError(t, err)
+			tableInfo := table.Meta()
+			partitionInfo := tableInfo.GetPartitionInfo()
+			require.NotNil(t, partitionInfo)
+			p0ID := partitionInfo.Definitions[0].ID
+
+			const (
+				staleGlobalVersion  uint64 = 100
+				cacheWideMaxVersion uint64 = 200
+			)
+			tk.MustExec("update mysql.stats_meta set version = ? where table_id = ?", staleGlobalVersion, tableInfo.ID)
+			handle := dom.StatsHandle()
+			lastHistVersion, err := strconv.ParseUint(tk.MustQuery(
+				"select last_stats_histograms_version from mysql.stats_meta where table_id = ?", tableInfo.ID,
+			).Rows()[0][0].(string), 10, 64)
+			require.NoError(t, err)
+			require.Positive(t, lastHistVersion)
+			handle.Clear()
+			globalStats := statistics.PseudoTable(tableInfo, false, true)
+			// Even with a current schema, this pseudo entry has not observed
+			// the persisted global histogram and must initialize it.
+			globalStats.TblInfoUpdateTS = tableInfo.UpdateTS
+			handle.Put(tableInfo.ID, globalStats)
+			handle.Put(tableInfo.ID+1000, &statistics.Table{
+				HistColl:              statistics.HistColl{PhysicalID: tableInfo.ID + 1000},
+				Version:               cacheWideMaxVersion,
+				ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMapWithoutSize(),
+			})
+			handle.WaitForAsyncUpdates()
+			require.Equal(t, cacheWideMaxVersion, handle.MaxTableStatsVersion())
+
+			tk.MustExec("set @@session.tidb_partition_prune_mode = ?", testCase.partitionPruneMode)
+			tk.MustExec("analyze table t partition p0")
+			if testCase.makeGlobalStatsMergeFail {
+				// Global merge errors are warnings rather than fatal ANALYZE
+				// errors; assert the failure path ran before checking the cache.
+				warnings := fmt.Sprint(tk.MustQuery("show warnings").Rows())
+				require.Contains(t, warnings, "Build global-level stats failed")
+			}
+
+			partitionStats := handle.GetPhysicalTableStats(p0ID, tableInfo)
+			require.False(t, partitionStats.Pseudo)
+			globalStats = handle.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+			require.False(t, globalStats.Pseudo)
+			if testCase.expectGlobalHistogramWrite {
+				require.Greater(t, globalStats.LastStatsHistVersion, lastHistVersion)
+				require.Equal(t, int64(4), globalStats.GetCol(tableInfo.Columns[0].ID).NDV)
+			} else {
+				require.Equal(t, lastHistVersion, globalStats.LastStatsHistVersion)
+				require.Equal(t, int64(2), globalStats.GetCol(tableInfo.Columns[0].ID).NDV)
+			}
+			require.Equal(t, int64(4), globalStats.RealtimeCount)
+			require.Equal(t, cacheWideMaxVersion, handle.MaxTableStatsVersion())
+		})
+	}
+}
+
+// A metadata-only refresh must load a histogram persisted by another TiDB
+// before advancing the table's metadata version.
+func TestAnalyzeRefreshesUnseenGlobalStats(t *testing.T) {
+	testAnalyzeRefreshesUnseenGlobalStats(t, "")
+}
+
+func TestAnalyzeRefreshesUnseenGlobalStatsWithUnknownWatermark(t *testing.T) {
+	for _, watermark := range []string{"NULL", "0"} {
+		t.Run(watermark, func(t *testing.T) {
+			testAnalyzeRefreshesUnseenGlobalStats(t, watermark)
+		})
+	}
+}
+
+func testAnalyzeRefreshesUnseenGlobalStats(t *testing.T, unknownWatermark string) {
+	t.Helper()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("create table t(a int, b int) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec("insert into t values (1, 1), (11, 1)")
+	tk.MustExec("analyze table t all columns")
+	is := dom.InfoSchema()
+	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	info := table.Meta()
+	colID := info.Columns[1].ID
+	handle := dom.StatsHandle()
+	if unknownWatermark != "" {
+		// Upgraded rows and legacy writers can leave the watermark unknown.
+		// Load that actual row so the old cache has a current schema and NDV 1.
+		tk.MustExec("update mysql.stats_meta set last_stats_histograms_version = "+unknownWatermark+" where table_id = ?", info.ID)
+		handle.Clear()
+		require.NoError(t, handle.Update(context.Background(), is, info.ID))
+	}
+	handle.WaitForAsyncUpdates()
+	old, ok := handle.Get(info.ID)
+	require.True(t, ok)
+	require.NotNil(t, old.GetCol(colID))
+	require.Equal(t, int64(1), old.GetCol(colID).NDV)
+	if unknownWatermark != "" {
+		require.Zero(t, old.LastStatsHistVersion)
+		require.Equal(t, info.UpdateTS, old.TblInfoUpdateTS)
+	}
+
+	// Restore the original cache after persisting a new distribution, modeling
+	// this TiDB's cache before it observes another TiDB's ANALYZE.
+	tk.MustExec("update t set b = 2 where a = 11")
+	tk.MustExec("analyze table t all columns")
+	handle.WaitForAsyncUpdates()
+	fresh, ok := handle.Get(info.ID)
+	require.True(t, ok)
+	require.Equal(t, int64(2), fresh.GetCol(colID).NDV)
+	require.Greater(t, fresh.LastStatsHistVersion, old.LastStatsHistVersion)
+	expectedWatermark := fresh.LastStatsHistVersion
+	if unknownWatermark != "" {
+		// Model a legacy writer which persists the new histogram without
+		// populating the table-level histogram watermark.
+		tk.MustExec("update mysql.stats_meta set last_stats_histograms_version = "+unknownWatermark+" where table_id = ?", info.ID)
+		expectedWatermark = 0
+	}
+	handle.Put(info.ID, old)
+	handle.WaitForAsyncUpdates()
+
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
+	tk.MustExec("analyze table t partition p0 all columns")
+	handle.WaitForAsyncUpdates()
+	refreshed, ok := handle.Get(info.ID)
+	require.True(t, ok)
+	require.Equal(t, int64(2), refreshed.GetCol(colID).NDV)
+	require.Equal(t, expectedWatermark, refreshed.LastStatsHistVersion)
+	require.NoError(t, handle.Update(context.Background(), is))
+	handle.WaitForAsyncUpdates()
+	refreshed, ok = handle.Get(info.ID)
+	require.True(t, ok)
+	require.Equal(t, int64(2), refreshed.GetCol(colID).NDV)
+
+	// A previously advanced metadata version must not hide an older histogram
+	// from the ordinary refresh's per-table version shortcut either.
+	stale := old.CopyAs(statistics.MetaOnly)
+	stale.Version = refreshed.Version
+	handle.Put(info.ID, stale)
+	handle.WaitForAsyncUpdates()
+	require.NoError(t, handle.Update(context.Background(), is, info.ID))
+	handle.WaitForAsyncUpdates()
+	refreshed, ok = handle.Get(info.ID)
+	require.True(t, ok)
+	require.Equal(t, int64(2), refreshed.GetCol(colID).NDV)
+	require.Equal(t, expectedWatermark, refreshed.LastStatsHistVersion)
+}
+
+// The histogram transaction can commit before slow-save bookkeeping fails.
+// ANALYZE must still refresh the committed histogram.
+func TestAnalyzeRefreshesGlobalStatsAfterPostCommitError(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("create table t(a int) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec("insert into t values (1), (11)")
+	tk.MustExec("analyze table t all columns")
+	is := dom.InfoSchema()
+	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	info := table.Meta()
+	colID := info.Columns[0].ID
+	handle := dom.StatsHandle()
+	handle.WaitForAsyncUpdates()
+	old, ok := handle.Get(info.ID)
+	require.True(t, ok)
+	require.Equal(t, int64(2), old.GetCol(colID).NDV)
+
+	tk.MustExec("insert into t values (2)")
+	postCommitCalls := 0
+	const fp = "github.com/pingcap/tidb/pkg/statistics/handle/storage/"
+	testfailpoint.EnableCall(t, fp+"afterSaveColOrIdxStatsToStorage", func(tableID int64, _ int) {
+		if tableID != info.ID {
+			return
+		}
+		postCommitCalls++
+		if postCommitCalls == 1 {
+			testfailpoint.Enable(t, fp+"slowStatsSaving", "return(true)")
+			testfailpoint.Enable(t, fp+"failToSaveStats", "return(true)")
+		}
+	})
+	tk.MustExec("analyze table t partition p0 all columns")
+	require.Equal(t, 1, postCommitCalls)
+	handle.WaitForAsyncUpdates()
+
+	persisted, err := handle.TableStatsFromStorage(info, info.ID, true, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), persisted.GetCol(colID).NDV)
+	require.Greater(t, persisted.GetCol(colID).LastUpdateVersion, old.GetCol(colID).LastUpdateVersion)
+	refreshed, ok := handle.Get(info.ID)
+	require.True(t, ok)
+	require.Equal(t, int64(3), refreshed.GetCol(colID).NDV)
+	require.Equal(t, persisted.GetCol(colID).LastUpdateVersion, refreshed.GetCol(colID).LastUpdateVersion)
+	require.NoError(t, handle.Update(context.Background(), is))
+	handle.WaitForAsyncUpdates()
+	refreshed, ok = handle.Get(info.ID)
+	require.True(t, ok)
+	require.Equal(t, int64(3), refreshed.GetCol(colID).NDV)
+}
+
 func TestAnalyzeReplicaReadFollower(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
