@@ -49,6 +49,14 @@ use window::{agg_canonical, window_func_canonical};
 
 impl Parser {
     pub(crate) fn parse_expr(&mut self, min_prec: u8) -> PResult<Expr> {
+        // Go's recursive parser runs on a growing goroutine stack. Keep the
+        // same nesting limits on Rust's fixed-size caller stack.
+        stacker::maybe_grow(256 * 1024, 4 * 1024 * 1024, || {
+            self.parse_expr_inner(min_prec)
+        })
+    }
+
+    fn parse_expr_inner(&mut self, min_prec: u8) -> PResult<Expr> {
         let mut left = self.parse_prefix(min_prec)?;
         // Go `parseInfixExpr`'s two latches (`expr_parser.go:39`/`:45`):
         // `no_more_is` blocks IS after IS [NOT] TRUE/FALSE/UNKNOWN

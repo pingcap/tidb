@@ -205,6 +205,13 @@ impl Parser {
     /// Parses a `SELECT` and any trailing set operations (`UNION`/`EXCEPT`/
     /// `INTERSECT`), returning either a `Select` or a `SetOpr` statement.
     pub(crate) fn parse_select_or_setopr(&mut self) -> PResult<QueryStmt> {
+        // Parenthesized queries recurse here without passing through parse_expr.
+        stacker::maybe_grow(256 * 1024, 4 * 1024 * 1024, || {
+            self.parse_select_or_setopr_inner()
+        })
+    }
+
+    fn parse_select_or_setopr_inner(&mut self) -> PResult<QueryStmt> {
         let (first_braces, mut first) = self.parse_one_term()?;
         if !first_braces {
             // A bare (non-parenthesized) first term is always `Select` —

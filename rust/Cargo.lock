@@ -5914,6 +5914,7 @@ dependencies = [
  "getrandom 0.3.4",
  "sha1",
  "sha2",
+ "stacker",
  "subtle",
  "tidb-ast",
  "tidb-charset",
