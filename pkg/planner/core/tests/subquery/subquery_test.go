@@ -46,3 +46,24 @@ func TestCollateSubQuery(t *testing.T) {
 	tk.MustQuery(`explain format="plan_tree" select * from t use index(ix) where col in (select cast(id as char) from t1);`).
 		Check(samePlan)
 }
+
+func TestQuantifiedSubqueryCrossCharsetLiteral(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE q_t_l(id INT, s VARCHAR(50)) CHARSET=latin1")
+	tk.MustExec("CREATE TABLE q_t_u(id INT, s VARCHAR(50)) CHARSET=utf8mb4")
+	tk.MustExec("INSERT INTO q_t_l VALUES(1,'AAA'),(2,'BBB')")
+	tk.MustExec("INSERT INTO q_t_u VALUES(1,'AAA'),(2,'BBB')")
+	// `a.s > ALL (SELECT 'AAA' ...)` is equivalent to the direct comparison
+	// and must return 1, like MySQL does. Before the fix it panicked with
+	// error 1105 (nil pointer dereference in the quantifier rewrite).
+	tk.MustQuery("SELECT count(*) FROM q_t_l a WHERE a.s > ALL (SELECT 'AAA' FROM q_t_u)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT count(*) FROM q_t_l a WHERE a.s >= ALL (SELECT 'AAA' FROM q_t_u)").Check(testkit.Rows("2"))
+	tk.MustQuery("SELECT count(*) FROM q_t_l a WHERE a.s < ANY (SELECT 'AAA' FROM q_t_u)").Check(testkit.Rows("0"))
+	// Controls: direct comparison, same-charset literal and an inner column
+	// reference already behave like MySQL.
+	tk.MustQuery("SELECT count(*) FROM q_t_l a WHERE a.s > 'AAA'").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT count(*) FROM q_t_l a WHERE a.s > ALL (SELECT _latin1'AAA' FROM q_t_u)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT count(*) FROM q_t_l a WHERE a.s > ALL (SELECT s FROM q_t_u)").Check(testkit.Rows("0"))
+}
