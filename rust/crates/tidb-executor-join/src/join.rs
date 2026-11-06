@@ -162,6 +162,8 @@ use crate::hash_join::{
 use tidb_executor_internal_exec::fast_bytes_map::FastBytesMap;
 use tidb_variable::mem_quota::StatementMemory;
 mod index_hash;
+mod index_lookup_join;
+pub use index_lookup_join::{IndexLookUpJoin, IndexLookUpJoinBuild};
 mod output;
 use index_hash::{
     send_index_task, IndexHashChunk, IndexHashOutput, IndexHashState, IndexResultSender,
@@ -845,6 +847,71 @@ impl OuterBatch {
         self.kv_ranges_charged = false;
         self.outer_match.clear();
     }
+}
+
+/// Go `outerWorker.buildTask`: the batch grows (`increaseBatchSize`), then
+/// the outer child fills chunks of a doubling capacity until the batch's
+/// rows are read or a chunk comes back empty; the outer filter then marks
+/// each chunk's `outerMatch`. An outer join reads its parent's required rows
+/// instead of the batch size once that is known.
+#[allow(clippy::too_many_arguments)]
+fn build_outer_task<C: Columns>(
+    outer_child: &mut dyn Executor,
+    outer_types: &[FieldType],
+    outer_filter: &[Expression],
+    outer_not_null: &[usize],
+    ctx: &C,
+    vectorized: bool,
+    batch_size: &mut usize,
+    max_batch_size: usize,
+    parent_required_rows: usize,
+) -> Result<OuterBatch, ExecError> {
+    let (init_cap, max_chunk_size) = (outer_child.init_cap(), outer_child.max_chunk_size());
+    let mut outer = OuterBatch::new(outer_types, init_cap, max_chunk_size);
+    if *batch_size < max_batch_size {
+        *batch_size *= 2;
+    }
+    *batch_size = (*batch_size).min(max_batch_size);
+    let required_rows = if parent_required_rows != 0 {
+        parent_required_rows
+    } else {
+        *batch_size
+    };
+    let mut next_chunk_cap = if init_cap == 0 {
+        tidb_chunk::chunk::INITIAL_CAPACITY
+    } else {
+        init_cap
+    };
+    while outer.rows.len() < required_rows {
+        let fetch_required_rows = (required_rows - outer.rows.len()).min(max_chunk_size);
+        let chk_cap = next_chunk_cap.min(fetch_required_rows);
+        let mut chk = Chunk::new(outer_types, chk_cap, max_chunk_size);
+        chk.set_required_rows(
+            isize::try_from(fetch_required_rows).unwrap_or(isize::MAX),
+            max_chunk_size,
+        );
+        outer_child.next(&mut chk)?;
+        let rows = chk.num_rows();
+        if rows == 0 {
+            break;
+        }
+        outer.add_chunk(chk, outer_not_null)?;
+        if rows >= chk_cap && next_chunk_cap < max_chunk_size {
+            next_chunk_cap = (next_chunk_cap * 2).max(rows).min(max_chunk_size);
+        }
+    }
+    if !outer_filter.is_empty() {
+        outer.outer_match = (0..outer.rows.num_chunks())
+            .map(|chk_idx| {
+                let chunk = outer.rows.get_chunk(chk_idx);
+                let selected = Vec::with_capacity(chunk.num_rows());
+                tidb_expr::evaluator::vectorized_filter(ctx, vectorized, outer_filter, chunk, selected)
+                    .map_err(ExecError::Eval)
+            })
+            .collect::<Result<_, _>>()?;
+    }
+    outer.settle_bytes();
+    Ok(outer)
 }
 
 struct IndexLookupState {
@@ -2861,10 +2928,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         Ok(())
     }
 
-    /// Go `outerWorker.buildTask`: the batch grows (`increaseBatchSize`),
-    /// then the outer child fills chunks of a doubling capacity until the
-    /// batch's rows are read or a chunk comes back empty. A task that reads
-    /// no rows ends the outer side.
+    /// Go `outerWorker.buildTask` over the strategy's state; a task that
+    /// reads no rows ends the outer side.
     fn read_index_outer_task(
         outer_child: &mut dyn Executor,
         outer_types: &[FieldType],
@@ -2873,55 +2938,21 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         vectorized: bool,
         state: &mut IndexLookupState,
     ) -> Result<(OuterBatch, i64), ExecError> {
-        let outer_not_null = plan.outer_not_null.as_slice();
-        let (init_cap, max_chunk_size) = (outer_child.init_cap(), outer_child.max_chunk_size());
-        let mut outer = OuterBatch::new(outer_types, init_cap, max_chunk_size);
-        if state.batch_size < state.max_batch_size {
-            state.batch_size *= 2;
-        }
-        state.batch_size = state.batch_size.min(state.max_batch_size);
-        let required_rows = if state.parent_required_rows != 0 {
-            state.parent_required_rows
-        } else {
-            state.batch_size
-        };
-        let mut next_chunk_cap = if init_cap == 0 {
-            tidb_chunk::chunk::INITIAL_CAPACITY
-        } else {
-            init_cap
-        };
-        while outer.rows.len() < required_rows {
-            let fetch_required_rows = (required_rows - outer.rows.len()).min(max_chunk_size);
-            let chk_cap = next_chunk_cap.min(fetch_required_rows);
-            let mut chk = Chunk::new(outer_types, chk_cap, max_chunk_size);
-            chk.set_required_rows(
-                isize::try_from(fetch_required_rows).unwrap_or(isize::MAX),
-                max_chunk_size,
-            );
-            outer_child.next(&mut chk)?;
-            let rows = chk.num_rows();
-            if rows == 0 {
-                break;
-            }
-            outer.add_chunk(chk, outer_not_null)?;
-            if rows >= chk_cap && next_chunk_cap < max_chunk_size {
-                next_chunk_cap = (next_chunk_cap * 2).max(rows).min(max_chunk_size);
-            }
-        }
+        let outer = build_outer_task(
+            outer_child,
+            outer_types,
+            &plan.outer_filter,
+            &plan.outer_not_null,
+            ctx,
+            vectorized,
+            &mut state.batch_size,
+            state.max_batch_size,
+            state.parent_required_rows,
+        )?;
         if outer.rows.len() == 0 {
             state.outer_done = true;
         }
-        if !plan.outer_filter.is_empty() {
-            outer.outer_match = (0..outer.rows.num_chunks())
-                .map(|chk_idx| {
-                    let chunk = outer.rows.get_chunk(chk_idx);
-                    let selected = Vec::with_capacity(chunk.num_rows());
-                    tidb_expr::evaluator::vectorized_filter(ctx, vectorized, &plan.outer_filter, chunk, selected)
-                        .map_err(ExecError::Eval)
-                })
-                .collect::<Result<_, _>>()?;
-        }
-        let bytes = outer.settle_bytes();
+        let bytes = outer.bytes;
         Ok((outer, bytes))
     }
 

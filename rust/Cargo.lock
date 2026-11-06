@@ -5015,6 +5015,7 @@ dependencies = [
  "tidb-spill-storage",
  "tidb-sqlkiller",
  "tidb-tablecodec",
+ "tidb-tracing",
  "tidb-vardef",
  "tidb-variable",
  "tracing",

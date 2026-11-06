@@ -31,6 +31,7 @@ use tidb_expr::schema::Schema;
 
 use crate::access_path::{IndexJoinLookupExec, LookupObject, LookupProbePart};
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
+use tidb_chunk::chunk::Chunk;
 use tidb_executor_join::join::{IndexLookupPlan, JoinExec, JoinKind};
 use tidb_table::tables::TableCommon;
 use tidb_table::tables::Index;
@@ -332,6 +333,186 @@ fn index_join_inner_workers_charge_their_ranges_to_the_statement() {
         high_exclude: false,
     }]);
     assert_eq!(drain(&mut looked_up, &types).len(), 4);
+    assert_eq!(memory.stmt_tracker().bytes_consumed(), 3 * 144);
+}
+
+/// Go's `IndexLookUpJoin` over the `Joiner` (`build_index_look_up_join`):
+/// a lookup through `Index(1)` on the inner table's second column.
+fn look_up_join(
+    join_type: tidb_executor_join::joiner::JoinType,
+    outer_rows: &[Vec<Datum>],
+    table: &TableCommon,
+    store: &tidb_kv::storage::MemTableStorage,
+    memory: tidb_variable::mem_quota::StatementMemory,
+    concurrency: usize,
+) -> tidb_executor_join::join::IndexLookUpJoin<crate::StmtContext> {
+    use tidb_executor_join::joiner::JoinType;
+    let outer_width = outer_rows[0].len();
+    let width = match join_type {
+        JoinType::SemiJoin | JoinType::AntiSemiJoin => outer_width,
+        JoinType::LeftOuterSemiJoin | JoinType::AntiLeftOuterSemiJoin => outer_width + 1,
+        _ => outer_width + 2,
+    };
+    let joiner = tidb_executor_join::joiner::new_joiner(
+        crate::StmtContext::for_query(),
+        join_type,
+        false,
+        &[Datum::Null, Datum::Null],
+        Vec::new(),
+        &[long(), long()],
+        &[long(), long()],
+        None,
+        false,
+        tidb_executor_join::joiner::JoinerChunkSizes {
+            vectorized: true,
+            init_chunk_size: INIT_CAP,
+            max_chunk_size: CHUNK,
+        },
+    );
+    tidb_executor_join::join::IndexLookUpJoin::new(tidb_executor_join::join::IndexLookUpJoinBuild {
+        meta: ExecutorMeta::new(schema_of(width), 0, INIT_CAP, CHUNK),
+        outer: Box::new(RequiredRowsSource {
+            meta: ExecutorMeta::new(schema_of(outer_width), 0, INIT_CAP, CHUNK),
+            rows: outer_rows.to_vec(),
+            at: 0,
+        }),
+        plan: IndexLookupPlan {
+            lookup_is_left: false,
+            probe_keys: vec![0],
+            probe_key_domains: Vec::new(),
+            source: tidb_executor_join::join::IndexLookupSource::Leaf(Box::new(lookup_source(
+                table,
+                store,
+                LookupObject::Index(1),
+                2,
+            ))),
+            outer_filter: Vec::new(),
+            outer_not_null: Vec::new(),
+            inner_not_null: Vec::new(),
+            probe_bounds: Vec::new(),
+        },
+        equalities: vec![equality(1, 1, 2)],
+        left_width: 2,
+        joiner,
+        is_outer_join: matches!(
+            join_type,
+            JoinType::LeftOuter | JoinType::LeftOuterSemiJoin | JoinType::AntiLeftOuterSemiJoin
+        ),
+        ctx: crate::StmtContext::for_query(),
+        memory,
+        vectorized: true,
+        concurrency,
+        max_batch_size: 4,
+        index_ranges: vec![tidb_ranger::types::Range {
+            low_val: vec![Datum::Null],
+            high_val: vec![Datum::Null],
+            collators: vec![tidb_charset::Collation::Binary],
+            low_exclude: false,
+            high_exclude: false,
+        }],
+        runtime_stats: None,
+    })
+    .unwrap()
+}
+
+/// An outer child that returns at most the rows each `Next` requires, as
+/// Go's readers do, so the join's batch size decides its tasks.
+struct RequiredRowsSource {
+    meta: ExecutorMeta,
+    rows: Vec<Vec<Datum>>,
+    at: usize,
+}
+
+impl Executor for RequiredRowsSource {
+    fn open(&mut self) -> Result<(), crate::ExecError> {
+        self.at = 0;
+        Ok(())
+    }
+
+    fn next(&mut self, req: &mut Chunk) -> Result<(), crate::ExecError> {
+        req.reset();
+        let end = (self.at + req.required_rows()).min(self.rows.len());
+        for row in &self.rows[self.at..end] {
+            for (column, value) in row.iter().enumerate() {
+                req.append_datum(column, value);
+            }
+        }
+        self.at = end;
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), crate::ExecError> {
+        Ok(())
+    }
+
+    fn schema(&self) -> &Schema {
+        self.meta.schema()
+    }
+
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.meta.ret_field_types()
+    }
+
+    fn init_cap(&self) -> usize {
+        self.meta.init_cap()
+    }
+
+    fn max_chunk_size(&self) -> usize {
+        self.meta.max_chunk_size()
+    }
+
+    fn new_chunk(&self) -> Chunk {
+        self.meta.new_chunk()
+    }
+}
+
+/// Go `IndexLookUpJoin` answers every join type as the hash join does,
+/// across tasks of at most four outer rows whose inner workers may finish
+/// out of order.
+#[test]
+fn the_go_index_lookup_join_agrees_with_the_hash_join() {
+    use tidb_executor_join::joiner::JoinType;
+    let (table, store) = inner_table(&[(10, 1), (11, 2), (12, 2), (13, 2), (14, 3), (15, 4)]);
+    let outer = cycling_outer(40, &[1, 2, 3, 4, 5]);
+    // The inner side carries keys 1..=4, so key 5 is the only miss.
+    let semi: Vec<Vec<Datum>> = outer.iter().filter(|row| row[1] != Datum::Int(5)).cloned().collect();
+    let anti: Vec<Vec<Datum>> = outer.iter().filter(|row| row[1] == Datum::Int(5)).cloned().collect();
+    for (join_type, kind) in [
+        (JoinType::Inner, Some(JoinKind::Inner)),
+        (JoinType::LeftOuter, Some(JoinKind::Left)),
+        (JoinType::SemiJoin, None),
+        (JoinType::AntiSemiJoin, None),
+    ] {
+        let hash_rows = match kind {
+            Some(kind) => both_ways(kind, &outer, &table, &store, LookupObject::Index(1), 1, 1, vec![0]).0,
+            None if join_type == JoinType::SemiJoin => semi.clone(),
+            None => anti.clone(),
+        };
+        let memory = crate::StmtContext::for_query().statement_memory();
+        let mut joined = look_up_join(join_type, &outer, &table, &store, memory, 3);
+        let width = hash_rows.first().map_or(2, Vec::len);
+        let types: Vec<FieldType> = std::iter::repeat_n(long(), width).collect();
+        assert_eq!(drain(&mut joined, &types), hash_rows, "{join_type:?}");
+    }
+}
+
+/// Go `newInnerWorker`'s statement charge, on the Go executor: three
+/// workers, 144 bytes each, held after the join closes.
+#[test]
+fn the_go_index_lookup_join_charges_each_worker_its_ranges() {
+    let (table, store) = inner_table(&[(10, 1), (11, 2)]);
+    let outer = cycling_outer(4, &[1, 2]);
+    let memory = crate::StmtContext::for_query().statement_memory();
+    let mut joined = look_up_join(
+        tidb_executor_join::joiner::JoinType::Inner,
+        &outer,
+        &table,
+        &store,
+        memory.clone(),
+        3,
+    );
+    let types: Vec<FieldType> = std::iter::repeat_n(long(), 4).collect();
+    assert_eq!(drain(&mut joined, &types).len(), 4);
     assert_eq!(memory.stmt_tracker().bytes_consumed(), 3 * 144);
 }
 

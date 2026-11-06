@@ -27,6 +27,7 @@ tidb-serialization = { path = "../tidb-serialization" }
 tidb-spill-storage = { path = "../tidb-spill-storage" }
 tidb-sqlkiller = { path = "../tidb-sqlkiller" }
 tidb-goruntime = { path = "../tidb-goruntime" }
+tidb-tracing = { path = "../tidb-tracing" }
 tidb-driver-error = { path = "../tidb-driver-error" }
 crossbeam-channel = "0.5"
 tidb-chunk = { path = "../tidb-chunk" }

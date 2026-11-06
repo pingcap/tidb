@@ -322,6 +322,17 @@ impl<'a> Iterator4RowPtr<'a> {
             cursor: 0,
         }
     }
+
+    /// An iterator kept across calls by its rows and cursor, which a caller
+    /// that cannot hold the borrow of `li` stores between them.
+    pub fn resume(li: &'a List, ptrs: Vec<RowPtr>, cursor: usize) -> Self {
+        Iterator4RowPtr { li, ptrs, cursor }
+    }
+
+    /// The rows and cursor to [`Self::resume`] from.
+    pub fn into_parts(self) -> (Vec<RowPtr>, usize) {
+        (self.ptrs, self.cursor)
+    }
 }
 
 impl<'a> ChunkIterator<'a> for Iterator4RowPtr<'a> {

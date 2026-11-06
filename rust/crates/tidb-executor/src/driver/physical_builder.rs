@@ -4480,10 +4480,9 @@ fn build_index_join(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    conditions.extend(resolve_expressions(
-        &join.other_conditions,
-        &condition_schema,
-    )?);
+    let equalities = conditions.clone();
+    let other_conditions = resolve_expressions(&join.other_conditions, &condition_schema)?;
+    conditions.extend(other_conditions.iter().cloned());
     let (probe_keys, probe_parts) = index_join_probe_shape(join)?;
     let probe_key_domains = index_join_probe_key_domains(join, &probe_parts, catalog, ctx)?;
     let probe_bounds = join
@@ -4515,31 +4514,47 @@ fn build_index_join(
         inner_not_null: Vec::new(),
         probe_bounds,
     };
+    let schema_types = |schema: &Schema| -> Vec<FieldType> {
+        schema
+            .columns
+            .iter()
+            .map(|column| {
+                column
+                    .ret_type
+                    .clone()
+                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong))
+            })
+            .collect()
+    };
+    let (left_types, right_types) = (schema_types(&left_schema), schema_types(&right_schema));
+    let output_offsets =
+        physical_join_output_offsets(plan, join.join_type, &left_schema, &right_schema)?;
+    if join.kind == tidb_planner_core_operator_physicalop::IndexJoinKind::IndexJoin {
+        if let Some(children_used) =
+            index_join_children_used(join.join_type, &output_offsets, left_types.len())
+        {
+            return build_index_look_up_join(
+                plan,
+                join,
+                outer,
+                lookup,
+                equalities,
+                other_conditions,
+                left_types,
+                right_types,
+                children_used,
+                ctx,
+                state,
+            );
+        }
+    }
     let mut executor = JoinExec::build_index_look_up_join(
         meta(ctx, plan, plan_schema(plan)?),
         join_kind(join.join_type)?,
         conditions,
         outer,
-        left_schema
-            .columns
-            .iter()
-            .map(|column| {
-                column
-                    .ret_type
-                    .clone()
-                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong))
-            })
-            .collect(),
-        right_schema
-            .columns
-            .iter()
-            .map(|column| {
-                column
-                    .ret_type
-                    .clone()
-                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong))
-            })
-            .collect(),
+        left_types,
+        right_types,
         ctx.clone(),
         ctx.statement_memory(),
         lookup,
@@ -4564,16 +4579,108 @@ fn build_index_join(
         tidb_planner_core_operator_physicalop::IndexJoinKind::IndexJoin => {}
     }
     executor
-        .set_output_offsets(physical_join_output_offsets(
-            plan,
-            join.join_type,
-            &left_schema,
-            &right_schema,
-        )?)
+        .set_output_offsets(output_offsets)
         .map_err(DriverError::Exec)?;
     executor
         .set_default_values(join.default_values.clone())
         .map_err(DriverError::Exec)?;
+    Ok(Box::new(executor))
+}
+
+/// Go `markChildrenUsedCols` over a physical join's output offsets into its
+/// left-then-right row (a semi join's marker dropped): each child's used
+/// columns in output order. `None` when an output interleaves the children,
+/// which Go's joiner, appending the left columns before the right, cannot
+/// produce.
+fn index_join_children_used(
+    join_type: LogicalJoinType,
+    output_offsets: &[usize],
+    left_width: usize,
+) -> Option<(Vec<usize>, Vec<usize>)> {
+    let offsets = match join_type {
+        LogicalJoinType::LeftOuterSemi | LogicalJoinType::AntiLeftOuterSemi => {
+            &output_offsets[..output_offsets.len().saturating_sub(1)]
+        }
+        _ => output_offsets,
+    };
+    let split = offsets.iter().position(|offset| *offset >= left_width).unwrap_or(offsets.len());
+    let (left, right) = offsets.split_at(split);
+    right.iter().all(|offset| *offset >= left_width).then(|| {
+        (left.to_vec(), right.iter().map(|offset| offset - left_width).collect())
+    })
+}
+
+/// Go `executorBuilder.buildIndexLookUpJoin`: `IndexLookUpJoin` over Go's
+/// `Joiner` (`NewJoiner(..., v.OtherConditions, ..., childrenUsedSchema)`).
+#[allow(clippy::too_many_arguments)]
+fn build_index_look_up_join(
+    plan: &PhysicalPlan,
+    join: &tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
+    outer: Box<dyn Executor>,
+    lookup: IndexLookupPlan,
+    equalities: Vec<Expression>,
+    other_conditions: Vec<Expression>,
+    left_types: Vec<FieldType>,
+    right_types: Vec<FieldType>,
+    children_used: (Vec<usize>, Vec<usize>),
+    ctx: &crate::StmtContext,
+    state: &mut BuildState,
+) -> Result<Box<dyn Executor>, DriverError> {
+    let inner_width = if join.inner_child_idx == 0 {
+        left_types.len()
+    } else {
+        right_types.len()
+    };
+    let default_values = if join.default_values.is_empty() {
+        vec![tidb_datatype::Datum::Null; inner_width]
+    } else {
+        join.default_values.clone()
+    };
+    let joiner = new_joiner(
+        ctx.clone(),
+        joiner_type(join.join_type),
+        join.inner_child_idx == 0,
+        &default_values,
+        other_conditions,
+        &left_types,
+        &right_types,
+        Some(children_used),
+        false,
+        JoinerChunkSizes {
+            vectorized: ctx.enable_vectorized_expression(),
+            init_chunk_size: ctx.executor_chunk_sizes().0,
+            max_chunk_size: ctx.executor_chunk_sizes().1,
+        },
+    );
+    let executor = tidb_executor_join::join::IndexLookUpJoin::new(
+        tidb_executor_join::join::IndexLookUpJoinBuild {
+            meta: meta(ctx, plan, plan_schema(plan)?),
+            outer,
+            plan: lookup,
+            equalities,
+            left_width: left_types.len(),
+            joiner,
+            is_outer_join: matches!(
+                join.join_type,
+                LogicalJoinType::LeftOuter
+                    | LogicalJoinType::RightOuter
+                    | LogicalJoinType::LeftOuterSemi
+                    | LogicalJoinType::AntiLeftOuterSemi
+            ),
+            ctx: ctx.clone(),
+            memory: ctx.statement_memory(),
+            vectorized: ctx.enable_vectorized_expression(),
+            concurrency: ctx.index_lookup_join_concurrency(),
+            max_batch_size: ctx.index_join_batch_size(),
+            index_ranges: join.ranges.clone(),
+            runtime_stats: ctx
+                .executor_runtime_stats_source()
+                .filter(|_| !state.untraced)
+                .cloned()
+                .map(|source| (source, i64::from(plan.id()))),
+        },
+    )
+    .map_err(DriverError::Exec)?;
     Ok(Box::new(executor))
 }
 
