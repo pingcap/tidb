@@ -2340,3 +2340,28 @@ select
   collation(group_concat(' ', first_name, ' ', last_name, ' ', marker)) as group_concat_collation
 from t_gc;
 drop table if exists t_gc;
+
+# IFNULL should reserve enough string length for DECIMAL result metadata.
+drop view if exists v_ifnull_decimal;
+drop table if exists t_ifnull_decimal;
+create table t_ifnull_decimal (
+  c_decimal_d decimal not null,
+  c_decimal decimal(21,3) not null,
+  c_udecimal decimal(21,3) unsigned not null,
+  c_decimal_f decimal(3,3) not null,
+  c_udecimal_f decimal(3,3) unsigned not null
+);
+create view v_ifnull_decimal as
+select
+  ifnull(c_decimal_d, '') as c_decimal_d,
+  ifnull(c_decimal, '') as c_decimal,
+  ifnull(c_udecimal, '') as c_udecimal,
+  ifnull(c_decimal_f, '') as c_decimal_f,
+  ifnull(c_udecimal_f, '') as c_udecimal_f
+from t_ifnull_decimal;
+select column_name, column_type, character_maximum_length
+from information_schema.columns
+where table_schema = database() and table_name = 'v_ifnull_decimal'
+order by ordinal_position;
+drop view if exists v_ifnull_decimal;
+drop table if exists t_ifnull_decimal;

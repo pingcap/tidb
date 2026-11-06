@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -149,4 +150,43 @@ func TestIfNull(t *testing.T) {
 
 	_, err = funcs[ast.Ifnull].getFunction(ctx, []Expression{NewZero()})
 	require.Error(t, err)
+}
+
+func TestControlFuncsDecimalConstantStringFlen(t *testing.T) {
+	ctx := createContext(t)
+
+	decimalConstant := func(lit string, flen int) Expression {
+		ft := types.NewFieldTypeBuilder().
+			SetType(mysql.TypeNewDecimal).
+			SetFlen(flen).
+			SetDecimal(2).
+			SetFlag(mysql.NotNullFlag).
+			BuildP()
+		types.SetBinChsClnFlag(ft)
+		return &Constant{
+			Value:   types.NewDecimalDatum(types.NewDecFromStringForTest(lit)),
+			RetType: ft,
+		}
+	}
+	paramConstant := func(lit string) Expression {
+		order := len(ctx.GetSessionVars().PlanCacheParams.AllParamValues())
+		ctx.GetSessionVars().PlanCacheParams.Append(types.NewDecimalDatum(types.NewDecFromStringForTest(lit)))
+		return &Constant{ParamMarker: &ParamMarker{order: order}, RetType: types.NewFieldType(mysql.TypeUnspecified)}
+	}
+	strConstant := func() Expression {
+		return primitiveValsToConstants(ctx, []any{""})[0]
+	}
+	checkFlen := func(funcName string, dec Expression, expected int) {
+		ft, err := InferType4ControlFuncs(ctx, funcName, dec, strConstant())
+		require.NoError(t, err)
+		require.Equal(t, types.ETString, ft.EvalType())
+		require.Equal(t, expected, ft.GetFlen())
+	}
+
+	for _, funcName := range []string{ast.Ifnull, ast.If, ast.Case, ast.Coalesce} {
+		checkFlen(funcName, decimalConstant("1.23", 5), 5)
+		checkFlen(funcName, decimalConstant("-1.23", 6), 6)
+		checkFlen(funcName, paramConstant("1.23"), 5)
+		checkFlen(funcName, paramConstant("-1.23"), 6)
+	}
 }
