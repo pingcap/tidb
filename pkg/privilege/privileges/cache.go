@@ -1943,14 +1943,18 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 
 func (p *MySQLPrivilege) fetchColumnPrivileges(users, hosts []string) (rows [][]types.Datum) {
 	rows = make([][]types.Datum, 0, len(users))
-	// We use a 2-level map to record if a `username`@`hostname` is grantable on table/column level
-	// grantableUser records: username -> hostname -> grantable
-	grantableUser := make(map[string]map[string]struct{}, 4)
-	isGrantable := func(username, hostname string) string {
-		if hostNames, exists := grantableUser[username]; exists {
-			if _, exists = hostNames[hostname]; exists {
-				return "YES"
-			}
+	// GRANT OPTION of column privileges is recorded in mysql.tables_priv of
+	// the same table, so a column privilege is grantable only if its account
+	// has GRANT OPTION on that table.
+	type grantableTable struct {
+		user, host, db, table string
+	}
+	grantableTables := make(map[grantableTable]struct{}, 4)
+	loadedUsers := make(map[string]struct{}, 4)
+	isGrantable := func(user, host, db, table string) string {
+		key := grantableTable{user, host, strings.ToLower(db), strings.ToLower(table)}
+		if _, exists := grantableTables[key]; exists {
+			return "YES"
 		}
 		return "NO"
 	}
@@ -1963,13 +1967,13 @@ func (p *MySQLPrivilege) fetchColumnPrivileges(users, hosts []string) (rows [][]
 		}
 		columnsPrivRecords := columnsPrivItem.data
 
-		// need to get "grantable" information from mysql.tables_priv
-		if _, exists := grantableUser[userName]; !exists {
-			grantableUser[userName] = make(map[string]struct{}, 1)
+		if _, exists := loadedUsers[userName]; !exists {
+			loadedUsers[userName] = struct{}{}
 			if tablesPrivItem, exists := p.tablesPriv.Get(itemTablesPriv{username: userName}); exists {
 				for _, tablesPrivRecord := range tablesPrivItem.data {
 					if tablesPrivRecord.TablePriv&mysql.GrantPriv > 0 {
-						grantableUser[tablesPrivRecord.User][tablesPrivRecord.Host] = struct{}{}
+						key := grantableTable{tablesPrivRecord.User, tablesPrivRecord.Host, strings.ToLower(tablesPrivRecord.DB), strings.ToLower(tablesPrivRecord.TableName)}
+						grantableTables[key] = struct{}{}
 					}
 				}
 			}
@@ -1989,7 +1993,7 @@ func (p *MySQLPrivilege) fetchColumnPrivileges(users, hosts []string) (rows [][]
 						columnsPrivRecord.TableName,
 						columnsPrivRecord.ColumnName,
 						strings.ToUpper(columnPriv.String()),
-						isGrantable(userName, hostName),
+						isGrantable(userName, hostName, columnsPrivRecord.DB, columnsPrivRecord.TableName),
 					))
 				}
 			}

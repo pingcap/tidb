@@ -1786,6 +1786,16 @@ func TestInfoSchemaUserPrivileges(t *testing.T) {
 	anonTk.MustQuery(`SELECT grantee FROM information_schema.column_privileges`).Check(testkit.Rows("''@'localhost'"))
 	anonTk.MustQuery(`SELECT grantee FROM information_schema.table_privileges`).Check(testkit.Rows())
 	anonTk.MustQuery(`SELECT grantee FROM information_schema.schema_privileges`).Check(testkit.Rows())
+
+
+	// IS_GRANTABLE of a column privilege reflects GRANT OPTION on its own table.
+	rootTk.MustExec(`CREATE TABLE test.isgrant1 (a INT)`)
+	rootTk.MustExec(`CREATE TABLE test.isgrant2 (a INT)`)
+	rootTk.MustExec(`CREATE USER 'isgrantee'@'%'`)
+	rootTk.MustExec(`GRANT SELECT(a) ON test.isgrant1 TO 'isgrantee'@'%' WITH GRANT OPTION`)
+	rootTk.MustExec(`GRANT SELECT(a) ON test.isgrant2 TO 'isgrantee'@'%'`)
+	rootTk.MustQuery(`SELECT table_name, is_grantable FROM information_schema.column_privileges WHERE grantee = "'isgrantee'@'%'" ORDER BY table_name`).
+		Check(testkit.Rows("isgrant1 YES", "isgrant2 NO"))
 }
 
 // Issues https://github.com/pingcap/tidb/issues/25972 and https://github.com/pingcap/tidb/issues/26451
