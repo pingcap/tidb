@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/stretchr/testify/require"
+	tikvcfg "github.com/tikv/client-go/v2/config"
 	"go.uber.org/zap"
 )
 
@@ -65,7 +66,12 @@ tidb_check_mb4_value_in_utf8 = false
 		}
 		require.Equal(t, uint(2), next.Performance.MaxProcs)
 	}
-	require.NoError(t, ReloadGlobalConfig(path, reload))
+	result, err := ReloadGlobalConfigWithResult(path, reload)
+	require.NoError(t, err)
+	require.Contains(t, result.Applied, "performance.stmt-count-limit")
+	require.Contains(t, result.RestartRequired, "port")
+	require.NotContains(t, result.RestartRequired, "host")
+	require.Contains(t, result.Unknown, "unknown-option")
 	current := GetGlobalConfig()
 	require.Equal(t, 1, calls)
 	require.Equal(t, uint(4333), current.Port)
@@ -117,6 +123,12 @@ func TestReloadGlobalConfigErrors(t *testing.T) {
 		{"nan ratio", "[performance]\npseudo-estimate-ratio = nan"},
 		{"infinite ratio", "[performance]\npseudo-estimate-ratio = inf"},
 		{"negative ratio", "[performance]\npseudo-estimate-ratio = -1"},
+		{"worker credentials", "tikv-worker-url = 'https://user:" + secret + "@host:19000'"},
+		{"worker query", "tikv-worker-url = 'https://host:19000?token=" + secret + "'"},
+		{"worker scheme", "tikv-worker-url = 'ftp://host:19000'"},
+		{"worker port", "tikv-worker-url = 'host:99999'"},
+		{"txn worker scheme", "[tikv-client]\ntxn-chunk-writer-addr = 'http://host:19000'"},
+		{"txn worker credentials", "[tikv-client]\ntxn-chunk-writer-addr = 'user:" + secret + "@host:19000'"},
 		{"negative store limit", "[log]\nlevel = 'warn'\n[tikv-client]\nstore-limit = -1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -172,4 +184,47 @@ func TestInitializeConfigReloadPath(t *testing.T) {
 	require.Equal(t, path, GetGlobalConfig().ConfigFile)
 	require.NoError(t, ReloadGlobalConfig(GetGlobalConfig().ConfigFile, nil))
 	require.Equal(t, uint(4333), GetGlobalConfig().Port)
+}
+
+func TestReloadGlobalConfigOverridesAndEndpoints(t *testing.T) {
+	t.Cleanup(RestoreFunc())
+	oldLevel := log.GetLevel()
+	t.Cleanup(func() { log.SetLevel(oldLevel) })
+	path := filepath.Join(t.TempDir(), "tidb.toml")
+	require.NoError(t, os.WriteFile(path, []byte("tikv-worker-url = 'new-worker:19000'\n[tikv-client]\ntxn-chunk-writer-addr = 'txn-worker:19000'\n"), 0600))
+	StoreGlobalConfig(NewConfig())
+	flags := flag.NewFlagSet("reload", flag.ContinueOnError)
+	flags.String("L", "info", "log level")
+	require.NoError(t, flags.Parse([]string{"-L", "debug"}))
+	InitializeConfig(path, false, false, func(c *Config, f *flag.FlagSet) { c.Log.Level = f.Lookup("L").Value.String() }, flags)
+	require.NoError(t, os.WriteFile(path, []byte("tikv-worker-url = 'replacement:19000'\n[tikv-client]\ntxn-chunk-writer-addr = 'replacement-txn:19000'\n"), 0600))
+	before := GetGlobalConfig()
+	clientBefore := tikvcfg.GetGlobalConfig()
+	result, err := ReloadGlobalConfigWithResult(path, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"log.level"}, result.OverriddenByCommandLine)
+	require.ElementsMatch(t, []string{"tikv-worker-url", "tikv-client.txn-chunk-writer-addr"}, result.AppliedForNewClients)
+	require.Equal(t, "new-worker:19000", before.TiKVWorkerURL)
+	require.Equal(t, "txn-worker:19000", clientBefore.TiKVClient.TxnChunkWriterAddr)
+	require.Equal(t, "replacement-txn:19000", tikvcfg.GetGlobalConfig().TiKVClient.TxnChunkWriterAddr)
+	require.Equal(t, "debug", GetGlobalConfig().Log.Level)
+	require.Equal(t, "replacement:19000", GetGlobalConfig().TiKVWorkerURL)
+	require.Equal(t, "replacement-txn:19000", GetGlobalConfig().TiKVClient.TxnChunkWriterAddr)
+}
+
+func TestReloadGlobalConfigMatchingLogOverride(t *testing.T) {
+	t.Cleanup(RestoreFunc())
+	oldLevel := log.GetLevel()
+	t.Cleanup(func() { log.SetLevel(oldLevel) })
+	StoreGlobalConfig(NewConfig())
+	path := filepath.Join(t.TempDir(), "tidb.toml")
+	require.NoError(t, os.WriteFile(path, []byte("[log]\nlevel = 'debug'"), 0600))
+	flags := flag.NewFlagSet("reload", flag.ContinueOnError)
+	level := flags.String("L", "info", "log level")
+	require.NoError(t, flags.Parse([]string{"-L", "debug"}))
+	InitializeConfig(path, false, false, func(c *Config, _ *flag.FlagSet) { c.Log.Level = *level }, flags)
+	require.NoError(t, os.WriteFile(path, []byte("[log]\nlevel = 'warn'"), 0600))
+	require.NoError(t, ReloadGlobalConfig(path, nil))
+	require.Equal(t, "debug", GetGlobalConfig().Log.Level)
+	require.Equal(t, zap.DebugLevel, log.GetLevel())
 }

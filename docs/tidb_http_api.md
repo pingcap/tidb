@@ -27,46 +27,73 @@ listener entirely. Normal-mode HTTP API availability is unchanged.
 
 ## Reload the local configuration file
 
-`PUT /config/reload` reloads the TOML file passed to this TiDB process at startup
-with `--config`. It takes no parameters or request body. Use it after a
-configuration management platform replaces that file, including a read-only
-mounted file. The path is resolved at startup; replacing a symlink at that path
-is supported. TiDB never writes the file during reload.
+`PUT /config/reload` reads the TOML file passed at startup with `--config` and
+updates the receiving TiDB process without writing the file. It takes no request
+body or parameters. A configuration platform can replace a read-only mounted file
+or its symlink, then explicitly call this endpoint on each TiDB instance. TiDB
+does not watch the file automatically. The startup path is stored as an absolute
+path, without resolving symlinks.
 
 ```shell
-curl -i -X PUT http://127.0.0.1:10080/config/reload
-# HTTP/1.1 200 OK, with an empty response body
+curl -fsS -X PUT http://127.0.0.1:10080/config/reload
 ```
 
-Only these options can be reloaded:
+HTTP 200 returns JSON containing option names, never their values:
+
+- `applied`: runtime options reapplied, including omitted options reset to defaults.
+- `applied_for_new_clients`: addresses applied to newly constructed clients.
+- `restart_required`: explicitly supplied, recognized options that differ from the
+  active config and cannot be reloaded. Their active values are preserved.
+- `unknown`: TOML keys not recognized by the decoder, including obsolete keys.
+- `overridden_by_command_line`: options whose explicit startup flag takes precedence.
+
+For example, an input containing `port = 4999` and `unknown-option = true` reports
+`"restart_required": ["port"]` (if the active port differs) and
+`"unknown": ["unknown-option"]`. HTTP 200 means reload completed; it does **not**
+mean every option in the file took effect. Inspect all lists and use `GET /config`
+to check the resulting configuration.
 
 | TOML option | Effect |
 | --- | --- |
-| `log.level` | Changes the running logger level. |
-| `performance.max-procs` | Changes GOMAXPROCS; switching from a positive value to 0 restores Go's automatic CPU limit, ignoring the GOMAXPROCS environment variable. |
+| `log.level` | Changes the logger level, unless an explicit startup `-L` flag overrides it. |
+| `performance.max-procs` | Changes GOMAXPROCS. Zero restores Go's automatic CPU limit, even if the active configuration already contains zero, ignoring the GOMAXPROCS environment variable. |
 | `performance.cross-join` | Changes whether Cartesian products are allowed. |
 | `performance.pseudo-estimate-ratio` | Changes the statistics modification ratio threshold; must be finite and nonnegative. |
 | `performance.stmt-count-limit` | Changes the transaction statement count limit. |
 | `tikv-client.store-limit` | Changes the local TiKV store request limit; must be nonnegative. |
-| `instance.tidb_slow_log_threshold` | Changes the slow log threshold. |
+| `instance.tidb_slow_log_threshold` | Changes the slow log threshold, including for existing SQL connections. |
 | `instance.tidb_check_mb4_value_in_utf8` | Changes UTF8MB4 checking for UTF8 values. |
 | `compatible-kill-query` | Changes compatibility of KILL QUERY handling. |
+| `tikv-worker-url` | Changes the `/write_sst` upload address used by newly constructed IMPORT INTO / add-index ingest backends. Existing backends and clients retain their address. Accepts a host with optional port or an HTTP(S) URL without credentials, query, or fragment. |
+| `tikv-client.txn-chunk-writer-addr` | Changes the `/txn_chunk` upload address used by new transaction chunk writers. Existing writers retain their address. Accepts a host with optional port, without a URL scheme; the existing cluster TLS settings determine HTTP versus HTTPS. |
 
-Omitted reloadable options return to their built-in defaults. Reload also reapplies
-runtime values changed independently through SQL or other runtime setters. Unknown options,
-deprecated options, and options outside this table are ignored after TOML
-parsing. In particular, addresses, ports, TLS, tracing, TCP keepalive, and other
-startup-only options keep their current values, including command-line
-overrides. Apply those changes by restarting TiDB. No cluster-wide system
-variables are persisted or updated by this endpoint.
+The two worker addresses are independent. A deployment can set both to the same
+service, but changing one never changes the other. Updating the transaction writer
+address does not enable file transactions for sessions: `tidb_enable_txn_file`
+retains its normal SQL semantics. Chunk sizes, concurrency, TLS and other options
+outside this table are not changed by reload. They appear in `restart_required`
+when explicitly supplied with a different value. The active TiKV client settings
+must remain valid when enabling a transaction writer address.
+
+Treat the managed file as a complete declaration of the reloadable options:
+omitted options return to their built-in defaults, including empty worker
+addresses. Explicit `-L` overrides remain effective even when equal to the original
+file value. Other startup-only settings and command-line overrides are preserved.
+All file reloads and runtime configuration writers serialize their updates; reads
+continue to use configuration snapshots without acquiring the writer lock.
+
+A successful reload makes this process's store limit locally managed: background
+system-variable cache refreshes will no longer replace it with the persisted
+`tidb_store_limit`. Explicit SQL changes can still change the runtime limit until
+the next reload, which reapplies the managed file. No cluster-wide system-variable
+values are persisted or changed on other instances by this endpoint. SQL changes
+to unrelated configuration fields are preserved.
 
 A missing startup path, unreadable file, malformed TOML, or invalid reloadable
-value returns HTTP 500 with a plain-text explanation. Failed reloads leave the
-active configuration and runtime settings unchanged. Unsupported HTTP methods
-return HTTP 405. Requests affect only the TiDB instance receiving them; use
-`GET /config` to inspect its active configuration. This endpoint is unavailable
-in diagnostic mode (HTTP 404) and uses the status listener's existing TLS and
-access controls.
+value returns HTTP 500 with a plain-text explanation and leaves the active state
+unchanged. Unsupported methods return HTTP 405. The endpoint is unavailable in
+diagnostic mode (HTTP 404) and uses the status listener's existing TLS and access
+controls.
 
 ## HTTP endpoints
 

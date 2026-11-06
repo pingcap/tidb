@@ -20,24 +20,26 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/statistics"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 )
 
 func handleConfigReload(w http.ResponseWriter, _ *http.Request) {
-	if err := config.ReloadGlobalConfig(config.GetGlobalConfig().ConfigFile, applyConfigReload); err != nil {
+	result, err := config.ReloadGlobalConfigWithResult(config.GetGlobalConfig().ConfigFile, applyConfigReload)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	handler.WriteData(w, result)
 }
 
-func applyConfigReload(old, next *config.Config) {
+func applyConfigReload(_, next *config.Config) {
 	if next.Performance.MaxProcs > 0 {
 		if runtime.GOMAXPROCS(0) != int(next.Performance.MaxProcs) {
 			runtime.GOMAXPROCS(int(next.Performance.MaxProcs))
 		}
-	} else if old.Performance.MaxProcs != 0 {
+	} else {
 		runtime.SetDefaultGOMAXPROCS()
 	}
 	plannercore.AllowCartesianProduct.Store(next.Performance.CrossJoin)

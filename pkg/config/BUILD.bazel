@@ -51,7 +51,7 @@ go_test(
     data = glob(["**"]),
     embed = [":config"],
     flaky = True,
-    shard_count = 44,
+    shard_count = 46,
     deps = [
         "//pkg/config/deploymode",
         "//pkg/config/diagnosticmode",
@@ -66,6 +66,7 @@ go_test(
         "@com_github_pingcap_log//:log",
         "@com_github_pingcap_metering_sdk//config",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//config",
         "@com_github_uber_jaeger_client_go//config",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",

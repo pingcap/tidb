@@ -32,6 +32,8 @@ func CloneConf(conf *Config) (*Config, error) {
 		return nil, err
 	}
 	clonedConf.ConfigFile = conf.ConfigFile
+	clonedConf.LogLevelOverride = conf.LogLevelOverride
+	clonedConf.StoreLimitReloaded = conf.StoreLimitReloaded
 	return &clonedConf, nil
 }
 
@@ -45,6 +47,8 @@ var (
 		"Performance.PseudoEstimateRatio": {},
 		"Performance.StmtCountLimit":      {},
 		"TiKVClient.StoreLimit":           {},
+		"TiKVClient.TxnChunkWriterAddr":   {},
+		"TiKVWorkerURL":                   {},
 		"Log.Level":                       {},
 		"Instance.SlowThreshold":          {},
 		"Instance.CheckMb4ValueInUTF8":    {},

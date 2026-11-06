@@ -914,11 +914,19 @@ func TestConfigReload(t *testing.T) {
 		require.Equal(t, status, resp.StatusCode, string(data))
 		return string(data)
 	}
+	reloadOK := func() config.ReloadResult {
+		body := reload(http.MethodPut, http.StatusOK)
+		var result config.ReloadResult
+		require.NoError(t, json.Unmarshal([]byte(body), &result))
+		return result
+	}
 	reload(http.MethodGet, http.StatusMethodNotAllowed)
 	reload(http.MethodPost, http.StatusMethodNotAllowed)
 	reload(http.MethodPut, http.StatusInternalServerError) // Missing startup file.
 	const contents = `# File owned by the configuration platform.
 port = 4999
+tikv-worker-url = "worker-new:19000"
+unknown-option = "ignored"
 [log]
 level = "warn"
 [performance]
@@ -928,9 +936,16 @@ pseudo-estimate-ratio = 0.5
 stmt-count-limit = 123
 [tikv-client]
 store-limit = 100
+txn-chunk-writer-addr = "txn-new:19000"
+[instance]
+tidb_slow_log_threshold = 123
 `
 	require.NoError(t, os.WriteFile(cfg.ConfigFile, []byte(contents), 0400))
-	require.Empty(t, reload(http.MethodPut, http.StatusOK))
+	report := reloadOK()
+	require.Contains(t, report.RestartRequired, "port")
+	require.Equal(t, []string{"unknown-option"}, report.Unknown)
+	require.Contains(t, report.AppliedForNewClients, "tikv-worker-url")
+	require.Contains(t, report.AppliedForNewClients, "tikv-client.txn-chunk-writer-addr")
 	require.Equal(t, 2, runtime.GOMAXPROCS(0))
 	require.Equal(t, zap.WarnLevel, log.GetLevel())
 	require.False(t, plannercore.AllowCartesianProduct.Load())
@@ -947,14 +962,28 @@ store-limit = 100
 	data, err := os.ReadFile(cfg.ConfigFile)
 	require.NoError(t, err)
 	require.Equal(t, contents, string(data))
-	// Runtime setters (for example SET GLOBAL tidb_store_limit) may leave the
-	// configuration snapshot unchanged. The managed file must still take effect.
+	// Verify the SQL-visible value on the same connection across reloads.
+	db, err := sql.Open("mysql", ts.GetDSN())
+	require.NoError(t, err)
+	defer db.Close()
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+	defer conn.Close()
+	var threshold int
+	require.NoError(t, conn.QueryRowContext(context.Background(), "SELECT @@GLOBAL.tidb_slow_log_threshold").Scan(&threshold))
+	require.Equal(t, 123, threshold)
+	_, err = conn.ExecContext(context.Background(), "SET GLOBAL tidb_slow_log_threshold = 456")
+	require.NoError(t, err)
+	reloadOK()
+	require.NoError(t, conn.QueryRowContext(context.Background(), "SELECT @@GLOBAL.tidb_slow_log_threshold").Scan(&threshold))
+	require.Equal(t, 123, threshold)
+	// Independent runtime changes must be restored from the managed file.
 	tikvstore.StoreLimit.Store(200)
 	statistics.RatioOfPseudoEstimate.Store(0.9)
 	plannercore.AllowCartesianProduct.Store(true)
 	runtime.GOMAXPROCS(3)
 	log.SetLevel(zap.ErrorLevel)
-	require.Empty(t, reload(http.MethodPut, http.StatusOK))
+	reloadOK()
 	require.Equal(t, int64(100), tikvstore.StoreLimit.Load())
 	require.Equal(t, 0.5, statistics.RatioOfPseudoEstimate.Load())
 	require.False(t, plannercore.AllowCartesianProduct.Load())
@@ -970,12 +999,16 @@ store-limit = 100
 	replacement := filepath.Join(filepath.Dir(cfg.ConfigFile), "replacement.toml")
 	require.NoError(t, os.WriteFile(replacement, []byte("port = 4999"), 0400))
 	require.NoError(t, os.Rename(replacement, cfg.ConfigFile))
-	require.Empty(t, reload(http.MethodPut, http.StatusOK))
+	reloadOK()
 	require.Equal(t, zap.InfoLevel, log.GetLevel())
 	require.Equal(t, config.NewConfig().Performance.CrossJoin, plannercore.AllowCartesianProduct.Load())
 	require.Equal(t, config.NewConfig().Performance.PseudoEstimateRatio, statistics.RatioOfPseudoEstimate.Load())
 	require.Equal(t, config.NewConfig().TiKVClient.StoreLimit, tikvstore.StoreLimit.Load())
 	require.Zero(t, config.GetGlobalConfig().Performance.MaxProcs)
+	defaultProcs := runtime.GOMAXPROCS(0)
+	runtime.GOMAXPROCS(defaultProcs + 1)
+	reloadOK() // Snapshot and file both contain zero; restore the runtime policy too.
+	require.Equal(t, defaultProcs, runtime.GOMAXPROCS(0))
 	config.UpdateGlobal(func(c *config.Config) { c.ConfigFile = "" })
 	require.Contains(t, reload(http.MethodPut, http.StatusInternalServerError), "--config")
 }

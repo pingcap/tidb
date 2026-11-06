@@ -27,9 +27,13 @@ import (
 func TestCloneConf(t *testing.T) {
 	cfg := defaultConf
 	cfg.ConfigFile = "/tmp/tidb.toml"
+	cfg.LogLevelOverride = "debug"
+	cfg.StoreLimitReloaded = true
 	c1, err := CloneConf(&cfg)
 	require.NoError(t, err)
 	require.Equal(t, cfg.ConfigFile, c1.ConfigFile)
+	require.Equal(t, cfg.LogLevelOverride, c1.LogLevelOverride)
+	require.True(t, c1.StoreLimitReloaded)
 	c2, err := CloneConf(c1)
 	require.NoError(t, err)
 	require.True(t, reflect.DeepEqual(c1, c2))
