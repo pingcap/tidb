@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/stretchr/testify/require"
 )
@@ -38,4 +39,32 @@ func TestUploadDefaultValueWithoutCgroup(t *testing.T) {
 	vmem, err := mem.VirtualMemory()
 	require.NoError(t, err)
 	require.Equal(t, vmem.Total, lastMemoryLimit)
+}
+
+func TestMaxProcsConfigCapsCPUQuota(t *testing.T) {
+	defer config.RestoreFunc()()
+	lastCPU = 0
+	getCgroupCPUPeriodAndQuota = func() (period int64, quota int64, err error) {
+		return 100000, 800000, nil
+	}
+	numCPU := runtime.NumCPU()
+	cgroupQuota := min(8, numCPU)
+
+	// max-procs is not set, the cgroup quota is used.
+	require.NoError(t, refreshCgroupCPU())
+	require.Equal(t, cgroupQuota, lastCPU)
+
+	// max-procs is lower than the cgroup quota, it takes effect.
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.MaxProcs = 1
+	})
+	require.NoError(t, refreshCgroupCPU())
+	require.Equal(t, 1, lastCPU)
+
+	// max-procs is higher than the cgroup quota, the cgroup quota is still used.
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.MaxProcs = uint(cgroupQuota + 1)
+	})
+	require.NoError(t, refreshCgroupCPU())
+	require.Equal(t, cgroupQuota, lastCPU)
 }
