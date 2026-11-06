@@ -615,6 +615,7 @@ var binaryJSONTextParserPool = sync.Pool{New: func() any { return new(binaryJSON
 
 // parseBinaryJSONFromBytes parses JSON text into compact metadata, then writes the
 // final BinaryJSON once into an exactly sized buffer.
+// requireEOF rejects trailing input; UnmarshalJSON only consumes the first value.
 func parseBinaryJSONFromBytes(data []byte, requireEOF bool) (BinaryJSON, error) {
 	parser := binaryJSONTextParserPool.Get().(*binaryJSONTextParser)
 	defer func() {
@@ -641,6 +642,7 @@ func parseBinaryJSONFromBytes(data []byte, requireEOF bool) (BinaryJSON, error) 
 			return BinaryJSON{}, err
 		}
 	}
+	// Like CreateBinaryJSONWithCheck, exclude the root from the one-based depth.
 	if parser.nodes[root].depth-1 > maxJSONDepth {
 		return BinaryJSON{}, ErrJSONDocumentTooDeep
 	}

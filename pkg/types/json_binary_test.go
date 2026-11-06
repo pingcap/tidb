@@ -601,6 +601,7 @@ func TestParseBinaryFromString(t *testing.T) {
 
 	validInputs := []string{
 		jsonBenchStr,
+		"[" + strings.TrimSuffix(strings.Repeat(`{"key":[null,true,123,"text"]},`, 10000), ",") + "]",
 		`null`,
 		`true`,
 		`false`,
@@ -703,6 +704,7 @@ func TestParseBinaryFromString(t *testing.T) {
 	require.NoError(t, directBJ.UnmarshalJSON([]byte("1 2")))
 	require.Equal(t, legacyBJ, directBJ)
 	require.Error(t, directBJ.UnmarshalJSON([]byte(`"\b`+string([]byte{0x18})+`"`)))
+	// Like the legacy decoder, UnmarshalJSON ignores even malformed trailing input.
 	require.NoError(t, directBJ.UnmarshalJSON([]byte("1 \\"+string([]byte{0x18}))))
 	require.Equal(t, CreateBinaryJSON(int64(1)), directBJ)
 
@@ -710,6 +712,32 @@ func TestParseBinaryFromString(t *testing.T) {
 	originalBJ := directBJ.Copy()
 	require.Error(t, directBJ.UnmarshalJSON([]byte(`{"a":}`)))
 	require.Equal(t, originalBJ, directBJ)
+
+	t.Run("parser reuse after error", func(t *testing.T) {
+		var parser binaryJSONTextParser
+		for _, input := range []string{
+			`{"` + strings.Repeat("k", math.MaxUint16+1) + `":1e400,"broken":[}`,
+			`{"a":[1,true,null],"b":"fresh"}`,
+			`[1,{"unfinished":`,
+			`["next",false,2]`,
+		} {
+			expected, expectedErr := parseBinaryJSONFromStringLegacy(input)
+			parser.reset([]byte(input))
+			root, err := parser.decodeValue()
+			if expectedErr != nil {
+				require.Error(t, err)
+				continue
+			}
+			require.NoError(t, err)
+			require.False(t, parser.keyTooLong)
+			require.False(t, parser.badNumber)
+			actual := BinaryJSON{
+				TypeCode: parser.nodes[root].typeCode,
+				Value:    parser.encodeValue(nil, root),
+			}
+			require.Equal(t, expected, actual)
+		}
+	})
 }
 
 func TestCreateBinary(t *testing.T) {
