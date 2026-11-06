@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -56,6 +58,25 @@ func TestCaseWhen(t *testing.T) {
 	require.NoError(t, err)
 	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.Error(t, err)
+
+	textCol := &Column{
+		RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetCharset(charset.CharsetUTF8MB4).SetCollate(charset.CollationUTF8MB4).BuildP(),
+	}
+	binaryCol := &Column{
+		RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeBlob).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
+	}
+	caseExpr, err := newFunctionForTest(ctx, ast.Case, NewOne(), textCol, binaryCol)
+	require.NoError(t, err)
+	args := caseExpr.(*ScalarFunction).GetArgs()
+	require.Equal(t, charset.CharsetUTF8MB4, textCol.GetType(ctx.GetEvalCtx()).GetCharset())
+	require.Equal(t, charset.CollationUTF8MB4, textCol.GetType(ctx.GetEvalCtx()).GetCollate())
+	require.NotSame(t, textCol, args[1])
+	textResultCast, ok := args[1].(*ScalarFunction)
+	require.True(t, ok)
+	require.Equal(t, ast.Cast, textResultCast.FuncName.L)
+	require.Same(t, textCol, textResultCast.GetArgs()[0])
+	require.Equal(t, charset.CharsetBin, textResultCast.GetType(ctx.GetEvalCtx()).GetCharset())
+	require.Equal(t, charset.CollationBin, textResultCast.GetType(ctx.GetEvalCtx()).GetCollate())
 }
 
 func TestIf(t *testing.T) {
