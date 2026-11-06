@@ -40,6 +40,40 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestInstancePlanCachePointGetLiteralHandle(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	original := tk1.MustQuery("select @@global.tidb_enable_instance_plan_cache").Rows()[0][0]
+	t.Cleanup(func() {
+		tk1.MustExec(fmt.Sprintf("set global tidb_enable_instance_plan_cache=%v", original))
+	})
+	tk1.MustExec("set global tidb_enable_instance_plan_cache=1")
+	tk1.MustExec("use test")
+	tk1.MustExec("create table t_point_get_literal (a int primary key)")
+	tk1.MustExec("insert into t_point_get_literal values (1), (2)")
+
+	for i, tk := range []*testkit.TestKit{tk1, tk2} {
+		tk.MustExec("use test")
+		tk.MustExec("prepare literal_stmt from 'select * from t_point_get_literal where a=1'")
+		tk.MustExec("prepare param_stmt from 'select * from t_point_get_literal where a=?'")
+		tk.MustQuery("execute literal_stmt").Check(testkit.Rows("1"))
+		// The second session should reuse the first session's instance cache entry.
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(fmt.Sprint(i)))
+		tk.MustExec("set @a=1")
+		tk.MustQuery("execute param_stmt using @a").Check(testkit.Rows("1"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(fmt.Sprint(i)))
+
+		for _, value := range []int{2, 1, 2} {
+			tk.MustExec(fmt.Sprintf("set @a=%d", value))
+			tk.MustQuery("execute param_stmt using @a").Check(testkit.Rows(fmt.Sprint(value)))
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+			tk.MustQuery("execute literal_stmt").Check(testkit.Rows("1"))
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		}
+	}
+}
+
 func TestPlanCacheClone(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
