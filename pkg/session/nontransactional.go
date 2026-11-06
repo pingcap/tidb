@@ -207,6 +207,11 @@ func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se sessionapi.Session) e
 	if sessVars.SnapshotTS != 0 {
 		return errors.New("can't do non-transactional DML when tidb_snapshot is set")
 	}
+	if sessVars.TxnReadTS.PeakTxnReadTS() != 0 {
+		// The shard-range SELECT must not consume a read-only snapshot and
+		// then use its stale boundaries for writes against current data.
+		return errors.New("can't do non-transactional DML when tx_read_ts is set")
+	}
 
 	switch s := stmt.DMLStmt.(type) {
 	case *ast.DeleteStmt:
