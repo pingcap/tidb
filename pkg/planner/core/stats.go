@@ -226,6 +226,28 @@ func adjustCountAfterAccess(ds *logicalop.DataSource, path *util.AccessPath) {
 	}
 }
 
+// scaleCorColCountAfterAccess scales the min/max row estimates by the same factor that
+// the correlated equalities applied to CountAfterAccess. Those equalities cannot be
+// turned into ranges at plan time, so CountAfterAccess is re-derived by dividing by the
+// NDV of each correlated column instead of being estimated from ranges, while the min/max
+// still describe the pre-split ranges. Leaving them means a path that started from a full
+// range keeps a table-sized max next to a one-row estimate, and the risk comparison in
+// skyline pruning drops it for phantom risk before cost is considered.
+//
+// Scaling rather than collapsing onto CountAfterAccess keeps whatever spread the
+// remaining (non-correlated) predicates contributed, so a path whose other predicates
+// carry genuine estimation risk is still reported as risky.
+func scaleCorColCountAfterAccess(path *util.AccessPath, countBeforeSplit float64) {
+	if countBeforeSplit <= 0 {
+		path.MinCountAfterAccess = path.CountAfterAccess
+		path.MaxCountAfterAccess = path.CountAfterAccess
+		return
+	}
+	scale := path.CountAfterAccess / countBeforeSplit
+	path.MinCountAfterAccess *= scale
+	path.MaxCountAfterAccess *= scale
+}
+
 // deriveIndexPathStats will fulfill the information that the AccessPath need.
 // isIm indicates whether this function is called to generate the partial path for IndexMerge.
 func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []expression.Expression, isIm bool) {
@@ -237,6 +259,7 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.SCtx(), path.EqOrInCondCount)
 		path.AccessConds = append(path.AccessConds, accesses...)
 		path.TableFilters = remained
+		countBeforeSplit := path.CountAfterAccess
 		if len(accesses) > 0 && ds.StatisticTable.Pseudo {
 			path.CountAfterAccess = cardinality.PseudoAvgCountPerValue(ds.StatisticTable)
 		} else {
@@ -250,6 +273,9 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 				}
 				path.CountAfterAccess = path.CountAfterAccess / ndv
 			}
+		}
+		if len(accesses) > 0 {
+			scaleCorColCountAfterAccess(path, countBeforeSplit)
 		}
 	}
 	var indexFilters []expression.Expression
@@ -377,6 +403,7 @@ func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.Acces
 		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.SCtx(), path.EqOrInCondCount)
 		path.AccessConds = append(path.AccessConds, accesses...)
 		path.TableFilters = remained
+		countBeforeSplit := path.CountAfterAccess
 		if len(accesses) > 0 && ds.StatisticTable.Pseudo {
 			path.CountAfterAccess = cardinality.PseudoAvgCountPerValue(ds.StatisticTable)
 		} else {
@@ -390,6 +417,9 @@ func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.Acces
 				}
 				path.CountAfterAccess = path.CountAfterAccess / ndv
 			}
+		}
+		if len(accesses) > 0 {
+			scaleCorColCountAfterAccess(path, countBeforeSplit)
 		}
 	}
 	if !isIm {
