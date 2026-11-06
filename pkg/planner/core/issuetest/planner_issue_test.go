@@ -17,6 +17,7 @@ package issuetest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/errno"
@@ -990,4 +991,66 @@ func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
 		testKit.MustQuery("select a,min(a) from t where a=-1;").Check(testkit.Rows("<nil> <nil>"))
 		testKit.MustQuery("select a,min(a) from t where -1=a;").Check(testkit.Rows("<nil> <nil>"))
 	})
+}
+
+// TestDuplicateExpressionIndexOrdering covers the case where several expression indexes on one
+// table repeat the same expression. DDL creates one hidden generated column per index, and the
+// ORDER BY expression is substituted with only one of them, so the chosen plan used to depend on
+// Go map iteration order and flipped between plan builds of the same statement.
+func TestDuplicateExpressionIndexOrdering(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_dup_expr_idx")
+	tk.MustExec(`create table t_dup_expr_idx (
+		ns varchar(64) not null,
+		s  varchar(64),
+		st int not null,
+		k  int not null,
+		primary key (ns, st))`)
+	tk.MustExec("create index idx_default on t_dup_expr_idx (ns, (lower(s)), st)")
+	tk.MustExec("create index idx_k on t_dup_expr_idx (ns, k, (lower(s)), st)")
+	tk.MustExec("create index idx_s on t_dup_expr_idx (ns, s, (lower(s)), st)")
+	tk.MustExec("create index idx_st on t_dup_expr_idx (ns, st, (lower(s)))")
+	for i := range 200 {
+		tk.MustExec(fmt.Sprintf("insert into t_dup_expr_idx values ('ns%d', 'S%d', %d, %d)", i%4, i, i, i%5))
+	}
+	tk.MustExec("analyze table t_dup_expr_idx")
+
+	// Reports the index that supplies the ordering, or "sorted" when the plan had to sort
+	// instead. Naming the index alone is not enough: a plan that scans the right index with
+	// keep order:false and sorts on top still reads the whole range.
+	orderingIndex := func(sql string) string {
+		name := "no-index"
+		for _, row := range tk.MustQuery("explain format='brief' " + sql).Rows() {
+			op := fmt.Sprintf("%v", row[0])
+			if strings.Contains(op, "TopN") || strings.Contains(op, "Sort") {
+				return "sorted"
+			}
+			if !strings.Contains(op, "IndexRangeScan") {
+				continue
+			}
+			if !strings.Contains(fmt.Sprintf("%v", row[4]), "keep order:true") {
+				continue
+			}
+			obj := fmt.Sprintf("%v", row[3])
+			name = obj[strings.Index(obj, "index:")+len("index:"):]
+			name = name[:strings.Index(name, "(")]
+		}
+		return name
+	}
+
+	for _, c := range []struct{ sql, index string }{
+		// Only ns is bound, so the index that orders by the expression right after ns wins.
+		{"select ns, st from t_dup_expr_idx where ns = 'ns0' order by lower(s), st limit 5", "idx_default"},
+		// k is bound too, so the expression is the next ordering column of idx_k.
+		{"select ns, st from t_dup_expr_idx where ns = 'ns0' and k = 1 order by lower(s), st limit 5", "idx_k"},
+	} {
+		// Repeat: the bug reproduced only intermittently, in proportion to the number of
+		// duplicate-expression indexes.
+		for range 20 {
+			require.Equal(t, c.index, orderingIndex(c.sql), "sql: %s", c.sql)
+		}
+		require.Equal(t, c.index, orderingIndex("/* issue:70708 */ "+c.sql))
+	}
 }
