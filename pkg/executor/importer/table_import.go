@@ -78,17 +78,6 @@ var (
 	// CheckDiskQuotaInterval is the default time interval to check disk quota.
 	// TODO: make it dynamically adjusting according to the speed of import and the disk size.
 	CheckDiskQuotaInterval = 10 * time.Second
-
-	// defaultMaxEngineSize is the default max engine size in bytes.
-	// we make it 5 times larger than lightning default engine size to reduce range overlap, especially for index,
-	// since we have an index engine per distributed subtask.
-	// for 1TiB data, we can divide it into 2 engines that runs on 2 TiDB. it can have a good balance between
-	// range overlap and sort speed in one of our test of:
-	// 	- 10 columns, PK + 6 secondary index 2 of which is mv index
-	//	- 1.05 KiB per row, 527 MiB per file, 1024000000 rows, 1 TiB total
-	//
-	// it might not be the optimal value for other cases.
-	defaultMaxEngineSize = int64(5 * config.DefaultBatchSize)
 )
 
 func newEncodingTable(e *LoadDataController) (table.Table, error) {
