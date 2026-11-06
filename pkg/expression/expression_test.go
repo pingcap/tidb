@@ -134,6 +134,23 @@ func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {
 
 func TestConstant(t *testing.T) {
 	ctx := createContext(t)
+	t.Run("preserve explicit decimal cast", func(t *testing.T) {
+		col := &Column{Index: 0, RetType: types.NewFieldType(mysql.TypeVarString)}
+		tp := types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlen(10).SetDecimal(0).BuildP()
+		inner := BuildCastFunction(ctx, col, tp)
+		outer := BuildCastFunction(ctx, inner, types.NewFieldType(mysql.TypeDouble))
+		require.Equal(t, 10, inner.GetType(ctx).GetFlen())
+		require.Equal(t, 0, inner.GetType(ctx).GetDecimal())
+		for _, tc := range []struct {
+			input string
+			want  float64
+		}{{"1.9", 2}, {"0.12", 0}} {
+			value, isNull, err := outer.EvalReal(ctx, chunk.MutRowFromDatums(types.MakeDatums(tc.input)).ToRow())
+			require.NoError(t, err)
+			require.False(t, isNull)
+			require.Equal(t, tc.want, value)
+		}
+	})
 	require.False(t, NewZero().IsCorrelated())
 	require.Equal(t, ConstStrict, NewZero().ConstLevel())
 	require.True(t, NewZero().Decorrelate(nil).Equal(ctx, NewZero()))
