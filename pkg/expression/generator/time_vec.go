@@ -442,9 +442,13 @@ func (b *{{.SigName}}) vecEvalDuration(ctx EvalContext, input *chunk.Chunk, resu
 			{{ if $BIsDuration }} lhsDur, _, lhsIsDuration,
 			{{- else if $BIsTime }} _, lhsTime, lhsIsDuration,
 			{{- else if $BIsString }} lhsDur, lhsTime, lhsIsDuration,
-			{{- end }}  err := convertStringToDuration(tc, buf0.GetString(i), b.tp.GetDecimal())
+			{{- end }} lhsIsNull, err := convertStringToDuration(tc, buf0.GetString(i), b.tp.GetDecimal())
 			if err != nil  {
 				return err
+			}
+			if lhsIsNull {
+				result.SetNull(i, true)
+				continue
 			}
 			{{- if $BIsDuration }}
 			if !lhsIsDuration {
@@ -468,9 +472,13 @@ func (b *{{.SigName}}) vecEvalDuration(ctx EvalContext, input *chunk.Chunk, resu
 			{{ if $AIsDuration }} rhsDur, _, rhsIsDuration,
 			{{- else if $AIsTime }}_, rhsTime, rhsIsDuration,
 			{{- else if $AIsString }} rhsDur, rhsTime, rhsIsDuration,
-			{{- end}}  err := convertStringToDuration(tc, buf1.GetString(i), b.tp.GetDecimal())
+			{{- end}} rhsIsNull, err := convertStringToDuration(tc, buf1.GetString(i), b.tp.GetDecimal())
 			if err != nil  {
 				return err
+			}
+			if rhsIsNull {
+				result.SetNull(i, true)
+				continue
 			}
 			{{- if $AIsDuration }}
 			if !rhsIsDuration {

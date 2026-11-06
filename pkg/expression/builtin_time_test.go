@@ -2002,6 +2002,10 @@ func TestTimeDiff(t *testing.T) {
 		{[]any{"2016-12-00 12:00:00", "10:9:0"}, "", true, 0, 10, false},
 		{[]any{"2016-12-00 12:00:00", ""}, "", true, 0, 10, true},
 		{[]any{"00:00:00.000000", "00:00:00.000001"}, "-00:00:00.000001", false, 6, 17, false},
+		{[]any{0, "str25"}, "", true, 0, 10, true},
+		{[]any{"str25", 0}, "", true, 0, 10, true},
+		{[]any{"00:00:00", "str25"}, "", true, 0, 10, true},
+		{[]any{"str25", "00:00:00"}, "", true, 0, 10, true},
 	}
 
 	for _, c := range tests {
@@ -2020,12 +2024,12 @@ func TestTimeDiff(t *testing.T) {
 			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
 		} else {
 			require.NoError(t, err)
-			if c.isNil {
-				require.Equal(t, types.KindNull, d.Kind())
-			} else {
-				require.Equal(t, c.expectStr, d.GetMysqlDuration().String())
-				require.Equal(t, c.fsp, d.GetMysqlDuration().Fsp)
-			}
+		}
+		if c.isNil {
+			require.Equal(t, types.KindNull, d.Kind())
+		} else {
+			require.Equal(t, c.expectStr, d.GetMysqlDuration().String())
+			require.Equal(t, c.fsp, d.GetMysqlDuration().Fsp)
 		}
 	}
 	_, err := funcs[ast.TimeDiff].getFunction(ctx, []Expression{NewZero(), NewZero()})
@@ -2542,9 +2546,10 @@ func TestDateArithFuncs(t *testing.T) {
 		},
 	}
 	for _, tt := range testDurations {
-		dur, _, ok, err := types.StrToDuration(types.DefaultStmtNoWarningContext, tt.dur, tt.fsp)
+		dur, _, ok, isNull, err := types.StrToDuration(types.DefaultStmtNoWarningContext, tt.dur, tt.fsp)
 		require.NoError(t, err)
 		require.True(t, ok)
+		require.False(t, isNull)
 		args = types.MakeDatums(dur, tt.format, tt.unit)
 		f, err = tt.fc.getFunction(ctx, datumsToConstants(args))
 		require.NoError(t, err)
