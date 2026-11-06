@@ -5,10 +5,10 @@ import (
 	"os"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/spf13/cobra"
-	"go.uber.org/zap"
 )
 
 func main() {
@@ -41,7 +41,9 @@ func main() {
 
 	rootCmd.SetArgs(os.Args[1:])
 	if err := rootCmd.Execute(); err != nil {
-		log.Error("br failed", zap.Error(err))
+		fields := summary.FailureFields(err, redactDiagnosticErrorText)
+		summary.Log("br failure summary", fields...)
+		log.Error("br failed", fields...)
 		os.Exit(1) // nolint:gocritic
 	}
 }
