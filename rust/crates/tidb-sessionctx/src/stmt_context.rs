@@ -1354,6 +1354,9 @@ pub struct StmtContextData {
     /// session's map with every write applied, which the session takes back
     /// whether or not the statement then fails.
     hypo_index_writes: Arc<std::sync::Mutex<Option<tidb_variable::hypo_index::HypoIndexes>>>,
+    /// Go `ctx.Value(autoid.AllocatorRuntimeStatsCtxKey)`, which a write
+    /// executor whose runtime stats are collected sets around its writes.
+    allocator_runtime_stats: Arc<std::sync::Mutex<Option<Arc<tidb_autoid::AllocatorRuntimeStats>>>>,
     /// Go `SessionVars.CDCWriteSource`, persisted in every user DDL job.
     ddl_cdc_write_source: u64,
     /// Go `SessionVars.DDLReorgPriority`, used by ADD CHECK validation reads.
@@ -3081,6 +3084,7 @@ impl StmtContext {
             ddl_query_rewrite: Arc::default(),
             hypo_tiflash_replica_writes: Arc::default(),
             hypo_index_writes: Arc::default(),
+            allocator_runtime_stats: Arc::default(),
             ddl_cdc_write_source: 0,
             // Go initializes `DDLReorgPriority` to `kv.PriorityLow`.
             ddl_reorg_priority: 1,
@@ -3571,6 +3575,15 @@ impl StmtContext {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
         )
+    }
+
+    /// Go `context.WithValue(ctx, autoid.AllocatorRuntimeStatsCtxKey, stats)`
+    /// for the writes that follow; `None` ends it.
+    pub fn set_allocator_runtime_stats(&self, stats: Option<Arc<tidb_autoid::AllocatorRuntimeStats>>) {
+        *self
+            .allocator_runtime_stats
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = stats;
     }
 
     /// The query rewrite this statement's DDL recorded, if any.
@@ -6171,6 +6184,13 @@ pub fn stmt_context_of(ctx: &dyn tidb_tblctx::MutateContext) -> &StmtContext {
 impl tidb_tblctx::MutateContext for StmtContext {
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+
+    fn allocator_runtime_stats(&self) -> Option<Arc<tidb_autoid::AllocatorRuntimeStats>> {
+        self.allocator_runtime_stats
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     fn query_default_conversion_flags(&self) -> tidb_datatype::ConversionFlags {

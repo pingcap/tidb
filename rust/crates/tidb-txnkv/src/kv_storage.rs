@@ -43,6 +43,14 @@ pub trait Transaction: Send {
     /// kv.ExplicitRequestSourceType, ...)`.
     fn set_request_source(&mut self, source: &crate::RequestSource);
 
+    /// Go `SetOption(kv.CollectRuntimeStats, stats)`: the snapshot's reads
+    /// also collect their RPCs into `stats`.
+    fn set_snapshot_runtime_stats(&mut self, stats: crate::SnapshotRuntimeStatsHandle);
+
+    /// Go `ctx.Value(util.CommitDetailCtxKey)` for `Commit`: the commit
+    /// publishes its details into `slot`.
+    fn set_commit_details(&mut self, slot: tikv_client::util::SharedCommitDetails);
+
     /// Go `Get` at the transaction's start timestamp.
     fn get(
         &mut self,

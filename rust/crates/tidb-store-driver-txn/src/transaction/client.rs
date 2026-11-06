@@ -373,6 +373,11 @@ impl<S: PdClient> TikvTxn<S> {
     pub fn set_statement_assertion_level(&mut self, level: tidb_proto::KvrpcAssertionLevel) {
         self.check_existence = level != tidb_proto::KvrpcAssertionLevel::Off;
     }
+    /// Go `ctx.Value(util.CommitDetailCtxKey)` for this transaction's
+    /// commit: the details it publishes land in `slot`.
+    pub fn set_commit_details(&mut self, slot: tikv_client::util::SharedCommitDetails) {
+        self.engine.set_commit_details(Some(slot));
+    }
     /// Go `KVSnapshot.SetRuntimeStats` (`kv.CollectRuntimeStats`): a point
     /// reader's own statistics collect the snapshot's RPCs; `None` returns
     /// collection to the transaction's own statistics.

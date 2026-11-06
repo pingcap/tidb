@@ -3336,6 +3336,7 @@ impl tidb_autoid::AutoIdStore for DdlTransactionAutoIdStore {
         &self,
         required: u64,
         unsigned: bool,
+        _stats: Option<&tidb_autoid::AllocatorRuntimeStats>,
     ) -> Result<(), tidb_autoid::AutoIdStoreError> {
         if tidb_autoid::exceeds(required, self.last()?, unsigned) {
             self.store(required)?;

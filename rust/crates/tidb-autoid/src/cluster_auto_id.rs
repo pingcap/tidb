@@ -61,7 +61,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::AutoIdCall as UnaryCallContext;
-use crate::{advance, calc_needed_batch_size, AutoIdStore, AutoIdStoreError};
+use crate::{advance, calc_needed_batch_size, AllocatorRuntimeStats, AutoIdStore, AutoIdStoreError};
 use tidb_meta::{key, value};
 use tidb_model::table_info::TableInfo;
 use tidb_txnkv::transaction::{BufferMutation, OptimisticCommitOutcome};
@@ -612,7 +612,7 @@ impl ClusterAutoIdStore {
     /// nothing, which is Go's "required base satisfied, we don't need to
     /// update KV".
     fn transact<T>(&self, decide: impl Fn(u64) -> (Option<u64>, T)) -> Result<T, AutoIdStoreError> {
-        self.transact_in(None, decide)
+        self.transact_in(None, None, decide)
     }
 
     /// [`Self::transact`] with Go's region inside `kv.RunInNewTxn`'s
@@ -620,9 +620,33 @@ impl ClusterAutoIdStore {
     /// the transaction begins and reads the counter without the caller's
     /// span (`store.Begin()`, the meta structure's `context.TODO()`), and
     /// commits with it.
+    ///
+    /// `stats` are Go's `AllocatorRuntimeStats` from the allocation's
+    /// context: each attempt's snapshot collects into them
+    /// (`txn.SetOption(kv.CollectRuntimeStats, ...)`), and the last commit's
+    /// details merge into them once `RunInNewTxn` returns.
     fn transact_in<T>(
         &self,
         region: Option<&'static str>,
+        stats: Option<&AllocatorRuntimeStats>,
+        decide: impl Fn(u64) -> (Option<u64>, T),
+    ) -> Result<T, AutoIdStoreError> {
+        // Go `getAllocatorStatsFromCtx`'s `context.WithValue(ctx,
+        // tikvutil.CommitDetailCtxKey, &commitDetail)`.
+        let commit_details = stats.map(|_| tikv_client::util::SharedCommitDetails::default());
+        let result = self.transact_attempts(region, stats, commit_details.as_ref(), decide);
+        if let (Some(stats), Some(slot)) = (stats, commit_details) {
+            let detail = slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+            stats.merge_commit_detail(detail.as_ref());
+        }
+        result
+    }
+
+    fn transact_attempts<T>(
+        &self,
+        region: Option<&'static str>,
+        stats: Option<&AllocatorRuntimeStats>,
+        commit_details: Option<&tikv_client::util::SharedCommitDetails>,
         decide: impl Fn(u64) -> (Option<u64>, T),
     ) -> Result<T, AutoIdStoreError> {
         let mut conflicts = 0usize;
@@ -640,6 +664,12 @@ impl ClusterAutoIdStore {
                 source_type: tidb_txnkv::INTERNAL_TXN_META.to_owned(),
                 explicit_source_type: String::new(),
             });
+            if let Some(stats) = stats {
+                transaction.set_snapshot_runtime_stats(stats.snapshot_handle());
+            }
+            if let Some(slot) = commit_details {
+                transaction.set_commit_details(std::sync::Arc::clone(slot));
+            }
             let region = region.map(tidb_tracing::start_thread_region);
             let stored = {
                 let _untraced = tidb_tracing::with_thread_span(None);
@@ -696,7 +726,7 @@ impl ClusterAutoIdStore {
 
 impl AutoIdStore for ClusterAutoIdStore {
     fn reserve(&self, step: u64, unsigned: bool) -> Result<(u64, u64), AutoIdStoreError> {
-        self.transact_in(Some(alloc_region(unsigned)), |current| {
+        self.transact_in(Some(alloc_region(unsigned)), None, |current| {
             let end = advance(current, step, unsigned);
             // No room left: say so by handing back an empty range instead of
             // writing the key, which is Go returning from inside the
@@ -720,14 +750,20 @@ impl AutoIdStore for ClusterAutoIdStore {
         increment: u64,
         offset: u64,
         unsigned: bool,
+        stats: Option<&AllocatorRuntimeStats>,
     ) -> Result<(u64, u64), AutoIdStoreError> {
-        self.transact_in(Some(alloc_region(unsigned)), |current| {
+        self.transact_in(Some(alloc_region(unsigned)), stats, |current| {
             batch_reservation(current, minimum_step, n, increment, offset, unsigned)
         })
     }
 
-    fn rebase(&self, required: u64, unsigned: bool) -> Result<(), AutoIdStoreError> {
-        self.transact(|current| {
+    fn rebase(
+        &self,
+        required: u64,
+        unsigned: bool,
+        stats: Option<&AllocatorRuntimeStats>,
+    ) -> Result<(), AutoIdStoreError> {
+        self.transact_in(None, stats, |current| {
             if crate::exceeds(required, current, unsigned) {
                 (Some(required), ())
             } else {
@@ -746,8 +782,11 @@ impl AutoIdStore for ClusterAutoIdStore {
         required: u64,
         step: u64,
         unsigned: bool,
+        stats: Option<&AllocatorRuntimeStats>,
     ) -> Result<(u64, u64), AutoIdStoreError> {
-        self.transact(|current| rebase_reservation(current, required, step, unsigned))
+        self.transact_in(None, stats, |current| {
+            rebase_reservation(current, required, step, unsigned)
+        })
     }
 
     fn force_rebase(&self, required: u64, _unsigned: bool) -> Result<(), AutoIdStoreError> {

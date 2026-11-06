@@ -178,12 +178,9 @@ impl SharedBytes {
                 return;
             }
         }
-        // `append(s[:cap(s)], make([]byte, n)...)` over the shared slice.
-        let mut grown = Vec::with_capacity(capacity);
-        grown.resize(capacity, 0);
-        crate::go_append::go_grow(&mut grown, additional);
-        let capacity = grown.capacity();
-        self.detach_with_capacity(capacity);
+        // The same growth over the shared slice: a length of `len + n` grown
+        // from its capacity.
+        self.detach_with_capacity(self.appended_capacity(additional));
     }
 
     /// Go `data = append(data, source...)` ([`Self::extend_from_slice`]).

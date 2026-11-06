@@ -171,6 +171,7 @@ pub(crate) fn run_multi_update(
             "a multi-table UPDATE plan carries no table layout",
         ));
     }
+    let collect_stats = super::dml::CollectUpdateStats::install(ctx, dml.update_stats());
     let plan = physical_plan
         .ok_or_else(|| DriverError::unsupported("a multi-table write has no read plan"))?;
     let mut updated = Vec::with_capacity(tables.len());
@@ -441,6 +442,7 @@ pub(crate) fn run_multi_update(
                 matched_rows += 1;
             }
             on_update_now[slot].apply(old, new, ctx, chunk.get_row(0))?;
+            collect_stats.before_write();
             let outcome = records.write(
                 catalog,
                 database,

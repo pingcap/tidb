@@ -376,6 +376,14 @@ where
         TikvTxn::set_request_source(self, source);
     }
 
+    fn set_snapshot_runtime_stats(&mut self, stats: tidb_txnkv::SnapshotRuntimeStatsHandle) {
+        TikvTxn::set_snapshot_runtime_stats(self, Some(stats.0));
+    }
+
+    fn set_commit_details(&mut self, slot: tikv_client::util::SharedCommitDetails) {
+        TikvTxn::set_commit_details(self, slot);
+    }
+
     fn get(
         &mut self,
         key: &[u8],

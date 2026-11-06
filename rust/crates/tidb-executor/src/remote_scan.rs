@@ -238,7 +238,6 @@ mod tests {
     use tidb_table::tables::TableHandle;
     use tidb_table::tables::TableCommon;
     use tidb_table::tables::Index;
-    use crate::mem_table::MemTableSourceExec;
     use crate::run_prepared_select_for_test;
     use tidb_kv::storage::capture_storage_ops;
 
@@ -1350,8 +1349,11 @@ mod tests {
     /// Go's IndexHashJoin hands every outer task to an inner worker that
     /// builds and reads the task's own inner executor; the tasks overlap
     /// because the workers run concurrently, not because one is opened
-    /// before another is read. Two outer batches therefore open two inner
-    /// readers, and the join's answer is complete whichever finishes first.
+    /// before another is read. The outer worker doubles its batch before
+    /// each task (`increaseBatchSize`), so the first task reads 2048 rows: an
+    /// outer side returning 1024-row chunks makes two tasks of 2049 rows,
+    /// which open two inner readers, and the join's answer is complete
+    /// whichever finishes first.
     #[test]
     fn an_index_join_opens_one_inner_reader_per_outer_task() {
         let mut fixture = common_handle_fixture();
@@ -1376,13 +1378,14 @@ mod tests {
                     .collect(),
             )
         };
-        let outer_rows = (0..1025)
+        let outer_rows = (0..2049)
             .map(|row| vec![Datum::Int(row % 2 + 1)])
             .collect::<Vec<_>>();
-        let outer: Box<dyn Executor> = Box::new(MemTableSourceExec::new(
-            ExecutorMeta::new(schema(1), 0, 32, 1024),
-            outer_rows,
-        ));
+        let outer: Box<dyn Executor> = Box::new(ChunkedRowsExec {
+            meta: ExecutorMeta::new(schema(1), 0, 32, 1024),
+            rows: outer_rows,
+            at: 0,
+        });
         let mut left = Column::new(1, field.clone());
         left.index = 0;
         let mut right = Column::new(2, field.clone());
@@ -1432,8 +1435,59 @@ mod tests {
             rows += chunk.num_rows();
         }
         join.close().unwrap();
-        assert_eq!(rows, 1025);
+        assert_eq!(rows, 2049);
         assert_eq!(fixture.region.opened(), 2);
+    }
+
+    /// Rows returned a full chunk (`max_chunk_size`) at a time, as a reader
+    /// returns them.
+    struct ChunkedRowsExec {
+        meta: ExecutorMeta,
+        rows: Vec<Vec<Datum>>,
+        at: usize,
+    }
+
+    impl Executor for ChunkedRowsExec {
+        fn open(&mut self) -> Result<(), crate::ExecError> {
+            self.at = 0;
+            Ok(())
+        }
+
+        fn next(&mut self, req: &mut tidb_chunk::chunk::Chunk) -> Result<(), crate::ExecError> {
+            req.reset();
+            let end = (self.at + self.meta.max_chunk_size()).min(self.rows.len());
+            for row in &self.rows[self.at..end] {
+                for (column, value) in row.iter().enumerate() {
+                    req.append_datum(column, value);
+                }
+            }
+            self.at = end;
+            Ok(())
+        }
+
+        fn close(&mut self) -> Result<(), crate::ExecError> {
+            Ok(())
+        }
+
+        fn schema(&self) -> &Schema {
+            self.meta.schema()
+        }
+
+        fn ret_field_types(&self) -> &[FieldType] {
+            self.meta.ret_field_types()
+        }
+
+        fn init_cap(&self) -> usize {
+            self.meta.init_cap()
+        }
+
+        fn max_chunk_size(&self) -> usize {
+            self.meta.max_chunk_size()
+        }
+
+        fn new_chunk(&self) -> tidb_chunk::chunk::Chunk {
+            self.meta.new_chunk()
+        }
     }
 
     fn catalog_of(table: TableCommon) -> SessionExtendedInfoSchema {

@@ -217,6 +217,9 @@ pub(crate) struct PhysicalRuntimeCounter {
     /// `handleNoDelayExecutor`, which closes it before `executeAnalyzeExec`
     /// registers the RU stats, so this group prints before them.
     insert: Option<Arc<Mutex<super::dml::InsertRuntimeStat>>>,
+    /// Go `updateRuntimeStats`, which `UpdateExec` registers from its
+    /// `Close`, printing where the insert group does.
+    update: Option<Arc<super::dml::UpdateRuntimeStats>>,
 }
 
 impl From<tidb_executor_internal_exec::RowCount> for PhysicalRuntimeCounter {
@@ -228,6 +231,7 @@ impl From<tidb_executor_internal_exec::RowCount> for PhysicalRuntimeCounter {
             ru: None,
             snapshot: None,
             insert: None,
+            update: None,
         }
     }
 }
@@ -267,6 +271,11 @@ impl PhysicalRuntimeCounter {
             let insert = insert.lock().unwrap().string(basic_time);
             if !insert.is_empty() {
                 details.push(insert);
+            }
+        }
+        if let Some(update) = self.update.as_ref().map(|update| update.string()) {
+            if !update.is_empty() {
+                details.push(update);
             }
         }
         if let Some(ru) = self.ru.as_ref().map(|ru| ru.string()) {
@@ -328,6 +337,8 @@ pub(crate) struct DmlExec {
     /// Go `InsertValues.stats` of an `InsertExec` / `ReplaceExec` whose
     /// runtime stats are collected (`collectRuntimeStatsEnabled`).
     insert: Option<Arc<Mutex<super::dml::InsertRuntimeStat>>>,
+    /// Go `UpdateExec.stats`, likewise.
+    update: Option<Arc<super::dml::UpdateRuntimeStats>>,
 }
 
 impl DmlExec {
@@ -360,6 +371,7 @@ impl DmlExec {
             max_chunk_size: ctx.executor_chunk_sizes().1,
             calls,
             insert: None,
+            update: None,
         }
     }
 
@@ -380,6 +392,30 @@ impl DmlExec {
             dml.insert = Some(stats);
         }
         dml
+    }
+
+    /// [`Self::new`] for an `UpdateExec`, whose collected stats also carry
+    /// Go's `updateRuntimeStats`.
+    pub(crate) fn new_update(
+        plan: &PhysicalPlan,
+        ctx: &crate::StmtContext,
+        mut runtime: Option<&mut PhysicalRuntimeStats>,
+    ) -> Self {
+        let mut dml = Self::new(plan, ctx, runtime.as_deref_mut());
+        if let Some(runtime) = runtime {
+            let stats = Arc::new(super::dml::UpdateRuntimeStats::default());
+            runtime
+                .get_mut(&runtime_plan_key(plan))
+                .expect("Self::new registered the plan")
+                .update = Some(Arc::clone(&stats));
+            dml.update = Some(stats);
+        }
+        dml
+    }
+
+    /// The `updateRuntimeStats` this executor's runtime stats carry.
+    pub(crate) fn update_stats(&self) -> Option<&Arc<super::dml::UpdateRuntimeStats>> {
+        self.update.as_ref()
     }
 
     /// The `InsertRuntimeStat` this executor's runtime stats carry.
@@ -609,6 +645,7 @@ impl BuildState {
                     ru: None,
                     snapshot: None,
                     insert: None,
+                    update: None,
                 });
         let counter = stats.rows.clone();
         let calls = Arc::clone(
@@ -9239,15 +9276,6 @@ use super::*;
         let executor = build(&plan, &tidb_infoschema_perfschema::mock_catalog(), &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())))
             .expect("build recursive physical CTE");
         assert_eq!(drain_row_count(executor).expect("run recursive CTE"), 3);
-    }
-
-    #[test]
-    fn physical_union_distinct_cte_stops_when_its_delta_is_empty() {
-        let store = crate::test_store::store();
-        let plan = cte(3, 42, dual(1, 1), Some(cte_table(2, 42)), true, None);
-        let executor = build(&plan, &tidb_infoschema_perfschema::mock_catalog(), &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())))
-            .expect("build distinct recursive physical CTE");
-        assert_eq!(drain_row_count(executor).expect("run distinct CTE"), 1);
     }
 
     #[test]

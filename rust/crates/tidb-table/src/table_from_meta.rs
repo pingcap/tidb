@@ -250,6 +250,7 @@ impl tidb_autoid::AutoIdStore for UnavailableAutoIdStore {
         &self,
         _required: u64,
         _unsigned: bool,
+        _stats: Option<&tidb_autoid::AllocatorRuntimeStats>,
     ) -> Result<(), tidb_autoid::AutoIdStoreError> {
         Err(unavailable_counter())
     }

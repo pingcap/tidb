@@ -46,12 +46,13 @@ pub(crate) fn go_grow<T>(vec: &mut Vec<T>, additional: usize) {
 }
 
 /// Go `slices.Grow(s, n)`: room for `n` more elements, grown -- when there
-/// is not -- as `append(s[:cap(s)], make([]T, n)...)` grows it.
+/// is not -- as `append(s[:cap(s)], make([]T, n-(cap(s)-len(s)))...)` grows
+/// it, to a length of `len(s)+n` from the capacity.
 pub(crate) fn go_slices_grow<T>(vec: &mut Vec<T>, n: usize) {
     if vec.capacity() - vec.len() >= n {
         return;
     }
-    let capacity = next_capacity::<T>(vec.capacity(), vec.capacity(), n);
+    let capacity = next_capacity::<T>(vec.len(), vec.capacity(), n);
     vec.reserve_exact(capacity - vec.len());
 }
 
@@ -122,7 +123,8 @@ mod tests {
     }
 
     /// Go `slices.Grow` (same program): 8 more in an 8-of-16 slice stays 16, 9
-    /// more grows it to 32.
+    /// more grows it to 32, and 800 more in an empty 256-capacity one 896 --
+    /// a length of 800 grown from the capacity, not 1056.
     #[test]
     fn slices_grow_grows_from_the_capacity() {
         let mut bytes: Vec<u8> = Vec::with_capacity(16);
@@ -131,5 +133,9 @@ mod tests {
         assert_eq!(bytes.capacity(), 16);
         go_slices_grow(&mut bytes, 9);
         assert_eq!(bytes.capacity(), 32);
+
+        let mut bytes: Vec<u8> = Vec::with_capacity(256);
+        go_slices_grow(&mut bytes, 800);
+        assert_eq!(bytes.capacity(), 896);
     }
 }

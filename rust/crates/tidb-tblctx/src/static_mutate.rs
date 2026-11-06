@@ -275,6 +275,10 @@ impl MutateContext for StaticMutateContext {
         self
     }
 
+    fn allocator_runtime_stats(&self) -> Option<std::sync::Arc<tidb_autoid::AllocatorRuntimeStats>> {
+        None
+    }
+
     /// Go `util.GetTypeFlagsForInsert`.
     fn write_conversion_flags(&self) -> ConversionFlags {
         tidb_util::misc::get_type_flags_for_insert(

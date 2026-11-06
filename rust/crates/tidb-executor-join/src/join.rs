@@ -759,6 +759,22 @@ impl OuterBatch {
         self.ptrs.push(ptr);
     }
 
+    /// Go `task.outerResult.Add(chk)`: the chunk joins the batch whole; the
+    /// rows a non-null join key can match are the ones the join visits.
+    fn add_chunk(&mut self, chunk: Chunk, not_null: &[usize]) -> Result<(), ExecError> {
+        let chk_idx = self.rows.num_chunks();
+        for row_idx in 0..chunk.num_rows() {
+            if chunk_row_non_null_at(chunk.get_row(row_idx), not_null)? {
+                self.ptrs.push(RowPtr {
+                    chk_idx: chk_idx as u32,
+                    row_idx: row_idx as u32,
+                });
+            }
+        }
+        self.rows.add(chunk);
+        Ok(())
+    }
+
     /// Settles the memory charge once the batch is complete.
     fn settle_bytes(&mut self) -> i64 {
         self.bytes = (0..self.rows.num_chunks())
@@ -794,10 +810,11 @@ struct IndexLookupState {
     inner_bytes: i64,
     /// Every equality key's encoding to the `inner` positions carrying it.
     matched: FastBytesMap<Vec<RowPtr>>,
-    /// The chunk the outer child streams into, and how far it is consumed.
-    outer_chunk: Chunk,
-    outer_row: usize,
-    /// Whether the outer child has returned its final (empty) chunk.
+    /// Go `IndexLookUpJoin.requiredRows`: an outer join's parent's
+    /// required rows, 0 until its first `Next`.
+    parent_required_rows: usize,
+    /// Whether a task read no outer rows: Go's outer worker returns on a nil
+    /// task.
     outer_done: bool,
     /// The next batch's size, doubling to the configured batch cap as Go's
     /// `increaseBatchSize` does.
@@ -2216,11 +2233,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     /// `false` once the outer child is exhausted.
     fn fill_index_batch(&mut self, required_rows: usize) -> Result<bool, ExecError> {
         if self.index_state.is_none() {
-            let outer_chunk = if self.outer_is_left() {
-                self.left_exec().new_chunk()
-            } else {
-                self.right_exec().new_chunk()
-            };
             let inner_types = self
                 .index_lookup
                 .as_ref()
@@ -2255,8 +2267,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 ),
                 inner_bytes: 0,
                 matched: FastBytesMap::default(),
-                outer_chunk,
-                outer_row: 0,
+                parent_required_rows: 0,
                 outer_done: false,
                 // Go's `startWorkers(ctx, req.RequiredRows())`: the first
                 // batch is what the caller asked for, capped by the maximum.
@@ -2316,6 +2327,16 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 }
             }
         }
+        // Go `IndexLookUpJoin.Next`: an outer join pushes its parent's
+        // required rows down to the outer worker.
+        if matches!(
+            self.kind,
+            JoinKind::Left | JoinKind::Right | JoinKind::LeftOuterSemi | JoinKind::AntiLeftOuterSemi
+        ) {
+            if let Some(state) = self.index_state.as_mut() {
+                state.parent_required_rows = required_rows;
+            }
+        }
         loop {
             let state = self.index_state.as_ref().expect("just installed above");
             if state.hash_results.is_some()
@@ -2330,7 +2351,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     .as_ref()
                     .is_none_or(|tasks| tasks.active == 0)
                 && state.outer_done
-                && state.outer_row >= state.outer_chunk.num_rows()
             {
                 return Ok(false);
             }
@@ -2576,7 +2596,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 &outer_types,
                 &plan.outer_not_null,
                 state,
-                shared.max_chunk_size,
             )?;
             if outer.is_empty() {
                 if state.outer_done {
@@ -2638,38 +2657,53 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         Ok(())
     }
 
+    /// Go `outerWorker.buildTask`: the batch grows (`increaseBatchSize`),
+    /// then the outer child fills chunks of a doubling capacity until the
+    /// batch's rows are read or a chunk comes back empty. A task that reads
+    /// no rows ends the outer side.
     fn read_index_outer_task(
         outer_child: &mut dyn Executor,
         outer_types: &[FieldType],
         outer_not_null: &[usize],
         state: &mut IndexLookupState,
-        max_chunk_size: usize,
     ) -> Result<(OuterBatch, i64), ExecError> {
-        let mut outer = OuterBatch::new(
-            outer_types,
-            state.batch_size.clamp(1, max_chunk_size.max(1)),
-            max_chunk_size.max(1),
-        );
-        while outer.len() < state.batch_size {
-            if state.outer_row >= state.outer_chunk.num_rows() {
-                if state.outer_done {
-                    break;
-                }
-                outer_child.next(&mut state.outer_chunk)?;
-                state.outer_row = 0;
-                if state.outer_chunk.num_rows() == 0 {
-                    state.outer_done = true;
-                    break;
-                }
-            }
-            let row = state.outer_chunk.get_row(state.outer_row);
-            state.outer_row += 1;
-            if !chunk_row_non_null_at(row, outer_not_null)? {
-                continue;
-            }
-            outer.push(row);
+        let (init_cap, max_chunk_size) = (outer_child.init_cap(), outer_child.max_chunk_size());
+        let mut outer = OuterBatch::new(outer_types, init_cap, max_chunk_size);
+        if state.batch_size < state.max_batch_size {
+            state.batch_size *= 2;
         }
-        state.batch_size = state.batch_size.saturating_mul(2).min(state.max_batch_size);
+        state.batch_size = state.batch_size.min(state.max_batch_size);
+        let required_rows = if state.parent_required_rows != 0 {
+            state.parent_required_rows
+        } else {
+            state.batch_size
+        };
+        let mut next_chunk_cap = if init_cap == 0 {
+            tidb_chunk::chunk::INITIAL_CAPACITY
+        } else {
+            init_cap
+        };
+        while outer.rows.len() < required_rows {
+            let fetch_required_rows = (required_rows - outer.rows.len()).min(max_chunk_size);
+            let chk_cap = next_chunk_cap.min(fetch_required_rows);
+            let mut chk = Chunk::new(outer_types, chk_cap, max_chunk_size);
+            chk.set_required_rows(
+                isize::try_from(fetch_required_rows).unwrap_or(isize::MAX),
+                max_chunk_size,
+            );
+            outer_child.next(&mut chk)?;
+            let rows = chk.num_rows();
+            if rows == 0 {
+                break;
+            }
+            outer.add_chunk(chk, outer_not_null)?;
+            if rows >= chk_cap && next_chunk_cap < max_chunk_size {
+                next_chunk_cap = (next_chunk_cap * 2).max(rows).min(max_chunk_size);
+            }
+        }
+        if outer.rows.len() == 0 {
+            state.outer_done = true;
+        }
         let bytes = outer.settle_bytes();
         Ok((outer, bytes))
     }

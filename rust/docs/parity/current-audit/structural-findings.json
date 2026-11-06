@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 28,
-    "open": 9,
-    "partial": 19
+    "open": 11,
+    "partial": 17
   },
   "findings": [
     {
@@ -52,13 +52,6 @@
       "go_owner": "`pkg/executor/foreign_key.go`"
     },
     {
-      "id": "E03",
-      "status": "partial",
-      "group": "DML and executor handoff",
-      "finding": "INSERT, UPDATE and DELETE run as Go's write executors (`DmlExec`: plan-ID `memTracker`, basic stats, Go's chunk accounting, `updatedRowKeys` / `mergedRowData` / `tblRowMap` charges, `insertRows` / `insertRowsFromSelect` streaming and `InsertRuntimeStat`), but the insert stats lack Go's `AllocatorRuntimeStats` (`auto_id_allocator: {alloc_cnt, Get, commit_txn ...}` in `prepare`), which this tier's auto-ID allocator does not record",
-      "go_owner": "`pkg/executor/insert_common.go`, `pkg/meta/autoid`"
-    },
-    {
       "id": "E10",
       "status": "open",
       "group": "DML and executor handoff",
@@ -76,22 +69,29 @@
       "id": "E12",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "An index join's inner reader reports its tasks as Go's per-task readers do, but the join's own memory is not Go's (`IndexJoin` 32.7 KB where Go's `IndexLookUpJoin` charges 3.09 KB: its outer task chunks and lookup map), and its outer reader is read with one `Next` fewer (`loops:2` where Go's outer worker makes 3)",
-      "go_owner": "`pkg/executor/join/index_lookup_join.go`"
-    },
-    {
-      "id": "E13",
-      "status": "partial",
-      "group": "DML and executor handoff",
-      "finding": "A CTE's producer reports its runtime and memory on the CTE's plan as Go's does, but a `UNION DISTINCT` recursion's deduplication builds a compact chunk of the admitted rows where Go's `deduplicate` keeps the chunk and marks them with a selection (`chk.SetSel`), so its tables charge less: 1.13 KB where Go's charge 1.41 KB for a five-step distinct recursion",
-      "go_owner": "`pkg/executor/cte.go` (`deduplicate`)"
+      "finding": "An index join reads and charges its outer tasks as Go's outer worker does (`buildTask`), but the rest of a task is not Go's: Go encodes each outer row's hash key with `codec.EncodeKey` into the task's `encodedLookUpKeys` chunks and keys its `mvmap` lookup map the same way, where this port matches through `hash_join::row_key`'s own length-framed encoding and charges neither; and Go's inner worker charges its lookup datums and, through the inner reader builder, the inner ranges (`buildKvRangesForIndexJoin`, `IndexRangesToKVRanges`) to `iw.memTracker`: `IndexJoin` holds 1.36 KB where Go's `IndexLookUpJoin` holds 3161 B = 1396 outer + 265 encoded keys + 432 datums + 732 + 336 ranges (`t JOIN s ON t.a=s.d`, six outer rows, no matches)",
+      "go_owner": "`pkg/executor/join/index_lookup_join.go`, `pkg/executor/builder.go` (`buildExecutorForIndexJoin`, `buildKvRangesForIndexJoin`), `pkg/distsql/request_builder.go`"
     },
     {
       "id": "E14",
       "status": "open",
       "group": "DML and executor handoff",
-      "finding": "The embedded store's coprocessor reports its executors' summaries unlike Go's unistore `cophandler`: a pushed TopN prints `actRows` 2 and no `tikv_task` (Go: its input, 6, with the scan's detail, the scan only `tikv_task`), and an index scan under a pushed Limit prints 3 rows read where Go's reads 5",
-      "go_owner": "`pkg/store/mockstore/unistore/cophandler`"
+      "finding": "The embedded store's coprocessor lowers a DAG to a closure-shaped scan (`tidb-unistore-cophandler`, after Go's `closure_exec.go`) where Go's unistore runs every DAG through `buildAndRunMPPExecutor`'s `mppExec` chain: there a scan returns a whole chunk before the `limitExec` above it truncates it (an index scan under a pushed `Limit 3` reads 6 keys, this port 3), and `topNExec` counts the rows it consumes (6 for a TopN of 2)",
+      "go_owner": "`pkg/store/mockstore/unistore/cophandler` (`mpp.go`, `mpp_exec.go`, `cop_handler.go` `handleCopDAGRequest`)"
+    },
+    {
+      "id": "E15",
+      "status": "open",
+      "group": "DML and executor handoff",
+      "finding": "A TiKV reader builds its DAG from its access path's scan request (`cop_reader.rs`; `cop_plan_ids_for` matches executors to the pushed nodes by kind) where Go's `constructDAGReq` lowers the reader's pushed plan one node per executor (`ToPB`): a TopN the planner pushes never reaches the coprocessor (`accept_remote_topn` has no caller), so `TopN_16 cop[tikv]` reports no runtime and the reader returns every scanned row to the root TopN (`select * from t order by c limit 2`: `TableReader` 401 Bytes, `TopN` 1.64 KB where Go's hold 306 Bytes and 1.38 KB)",
+      "go_owner": "`pkg/executor/builder.go` (`constructDAGReq`), `pkg/planner/core/plan_to_pb.go`"
+    },
+    {
+      "id": "E16",
+      "status": "open",
+      "group": "DML and executor handoff",
+      "finding": "A write statement's `RU` leaves out its transaction's writes: under Go's testkit (`CreateMockStore`) `EXPLAIN ANALYZE INSERT INTO ai (b) VALUES (1),(2)` prints `RU:3.51`, a one-row UPDATE 4.45 and a REPLACE 3.94, where this port prints 0.00, 0.95 and 0.47 (a SELECT agrees at 0.47; `./gorun` prints 0.00 for every statement, so it is no oracle for RU)",
+      "go_owner": "`pkg/executor/explain.go` (`RURuntimeStats`), client-go `util.RUDetails` (the write RU of prewrite and commit)"
     },
     {
       "id": "C01",

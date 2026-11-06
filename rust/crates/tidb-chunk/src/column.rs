@@ -443,17 +443,10 @@ impl Column {
         I: Iterator<Item = (bool, &'a [u8])> + Clone,
     {
         let fixed = self.is_fixed();
-        // Build-row reconstruction already knows the complete batch.  Sum
-        // the borrowed cell widths once and reserve the destination vector
-        // before copying, so an owned column never grows (and moves) between
-        // rows.  Keep the reserve inside `append_owned`: shallow/frozen views
-        // must retain their copy-on-write fallback semantics.
-        let (cell_count, data_len) = cells
-            .clone()
-            .fold((0usize, 0usize), |(count, bytes), (_, cell)| {
-                (count + 1, bytes.saturating_add(cell.len()))
-            });
-        if cell_count == 0 {
+        // Each cell is one Go append, so the buffers grow as Go's do. Keep
+        // the appends inside `append_owned`: shallow/frozen views must
+        // retain their copy-on-write fallback semantics.
+        if cells.clone().next().is_none() {
             return;
         }
         let Self {
@@ -1190,9 +1183,9 @@ impl Column {
         }
     }
 
+    /// Go `CopyConstruct(nil)`: each buffer appended to a nil slice, so a
+    /// copy's capacity is what one append from empty leaves.
     pub fn copy_construct(&self) -> Column {
-        // Go appends each buffer to a nil slice, so a copy's capacity is
-        // what one append from empty leaves.
         Column {
             length: self.length,
             null_bitmap: crate::go_append::go_appended(&self.null_bitmap),
@@ -1565,10 +1558,9 @@ impl Column {
     /// Append arbitrary source rows in one column-wide pass.
     ///
     /// Go's `CopyRows` and `CopyExpectedRowsWithRowIDFunc` append one row at a
-    /// time.  Keep their row order and null semantics, but borrow the source
-    /// byte buffer and grow the destination once for the whole batch.  This
-    /// removes a lock/read and a capacity check from every selected row while
-    /// preserving the copy-on-write fallback for shallow columns.
+    /// time, and so does this, growing as Go's appends do; it borrows the
+    /// source byte buffer once for the whole batch, keeping the copy-on-write
+    /// fallback for shallow columns.
     fn copy_row_ids_from(&mut self, src: &Column, row_ids: &[usize]) {
         if row_ids.is_empty() {
             return;
@@ -1583,21 +1575,6 @@ impl Column {
         let fixed = src.is_fixed();
         debug_assert_eq!(self.is_fixed(), fixed);
         let width = src.elem_buffer_len();
-        let data_len = if fixed {
-            width
-                .checked_mul(row_ids.len())
-                .expect("fixed column data length overflow")
-        } else {
-            row_ids.iter().fold(0usize, |data_len, &row| {
-                let cell_len = (src.offsets[row + 1] - src.offsets[row]) as usize;
-                data_len.saturating_add(cell_len)
-            })
-        };
-        let destination_end = self
-            .length
-            .checked_add(row_ids.len())
-            .expect("column row count overflow");
-
         let source_data = src.data.read();
         let Self {
             data,
@@ -1645,28 +1622,10 @@ impl Column {
         let fixed = src.is_fixed();
         debug_assert_eq!(self.is_fixed(), fixed);
         let width = src.elem_buffer_len();
-        let (rows, data_len) = selected.iter().enumerate().fold(
-            (0usize, 0usize),
-            |(rows, data_len), (row, &is_selected)| {
-                if !is_selected {
-                    return (rows, data_len);
-                }
-                let cell_len = if fixed {
-                    width
-                } else {
-                    (src.offsets[row + 1] - src.offsets[row]) as usize
-                };
-                (rows + 1, data_len.saturating_add(cell_len))
-            },
-        );
-        if rows == 0 {
+        if !selected.contains(&true) {
             return;
         }
 
-        let destination_end = self
-            .length
-            .checked_add(rows)
-            .expect("column row count overflow");
         let source_data = src.data.read();
         let Self {
             data,

@@ -1057,7 +1057,11 @@ impl Chunk {
     pub fn copy_construct(&self) -> Chunk {
         Chunk {
             sel: self.sel.clone(),
-            columns: self.columns.iter().map(ColumnSlot::deep_copy).collect(),
+            columns: self
+                .columns
+                .iter()
+                .map(|column| ColumnSlot::new(column.read().copy_construct()))
+                .collect(),
             // Go assigns make([]*Column, len(c.columns)); even a nil source
             // becomes a non-nil zero-length slice in the copy.
             columns_initialized: true,
@@ -1220,6 +1224,16 @@ mod tests {
             .copy_reconstruct(None, Some(Column::new_fixed_len_column(8, 32)));
         assert_eq!(copied.memory_usage(), 1032);
         assert_eq!(chk.column(0).copy_construct().memory_usage(), 1032);
+
+        // A VARCHAR chunk at capacity 32 holds 636 bytes, 952 once 33 strings
+        // are appended: its 33 offsets grow by one append to 72.
+        let varchar = vec![FieldType::new(FieldTypeCode::VarString)];
+        let mut chk = Chunk::new(&varchar, 32, 1024);
+        assert_eq!(chk.memory_usage(), 636);
+        for _ in 0..33 {
+            chk.append_string(0, "a");
+        }
+        assert_eq!(chk.memory_usage(), 952);
     }
 
     /// Go `Renew`/`reCalcCapacity`, measured against the real

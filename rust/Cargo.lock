@@ -3617,6 +3617,7 @@ version = "0.0.0"
 dependencies = [
  "tidb-dbterror",
  "tidb-errno",
+ "tidb-execdetails",
  "tidb-meta",
  "tidb-model",
  "tidb-pd-client",
@@ -7215,6 +7216,7 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "tidb-ast",
+ "tidb-autoid",
  "tidb-chunk",
  "tidb-config",
  "tidb-context",

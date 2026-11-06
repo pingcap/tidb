@@ -1731,9 +1731,11 @@ pub(crate) mod tests {
         let _guard = CONFIG_TEST_LOCK.lock().unwrap();
         // Go creates the file in the package directory under the DEFAULT
         // relative config filename: `parseEndTs` only matches a base name
-        // against the config prefix.
+        // against the config prefix. Each test here runs in its own process,
+        // so the two tests sharing that name each take a directory.
         use_default_config_filename();
-        let path = Path::new("tidb-statements-2022-12-27T16-21-20.245.log");
+        let dir = tempfile::tempdir().unwrap();
+        let path = &dir.path().join("tidb-statements-2022-12-27T16-21-20.245.log");
         std::fs::write(path, "{\"begin\":1,\"end\":2}\n{\"begin\":3,\"end\":4}\n").unwrap();
 
         let mut f = open_stmt_file(path).unwrap();
@@ -1745,7 +1747,6 @@ pub(crate) mod tests {
         let first_line = read_line(&mut reader).unwrap();
         assert_eq!(br#"{"begin":1,"end":2}"#, first_line.as_slice());
         f.close().unwrap();
-        let _ = std::fs::remove_file(path);
     }
 
     /// Go `TestStmtFileInvalidLine`.
@@ -1753,7 +1754,8 @@ pub(crate) mod tests {
     fn test_stmt_file_invalid_line() {
         let _guard = CONFIG_TEST_LOCK.lock().unwrap();
         use_default_config_filename();
-        let path = Path::new("tidb-statements-2022-12-27T16-21-20.245.log");
+        let dir = tempfile::tempdir().unwrap();
+        let path = &dir.path().join("tidb-statements-2022-12-27T16-21-20.245.log");
         std::fs::write(
             path,
             "invalid line\n{\"begin\":1,\"end\":2}\n{\"begin\":3,\"end\":4}\n",
@@ -1764,7 +1766,6 @@ pub(crate) mod tests {
         assert_eq!(1, f.begin);
         assert_eq!(local_unix(2022, 12, 27, 16, 21, 20, 245), f.end);
         f.close().unwrap();
-        let _ = std::fs::remove_file(path);
     }
 
     /// Go `TestStmtFiles` (enumeration part).

@@ -120,19 +120,20 @@ fn test_spill_to_disk() {
         })
         .unwrap(),
     );
-    let input = int_chunk(10);
+    // Go adds the same chunk twice (`storage.Add(inChk)`).
+    let mut input = int_chunk(10);
     let memory = StatementMemory::new(input.memory_usage() + 1, OomAction::Cancel, 11)
         .with_tmp_storage_on_oom(true)
         .with_spill_storage(Arc::clone(&spill));
     let mut storage = CteStorage::new(vec![int_type()], 10, memory);
     storage.open_and_ref().unwrap();
 
-    storage.add_chunk(input.copy_construct_sel()).unwrap();
+    storage.add_chunk(input.alias()).unwrap();
     assert!(!storage.already_spilled());
     assert!(storage.mem_bytes() > 0);
     assert_eq!(storage.disk_bytes(), 0);
 
-    storage.add_chunk(input.copy_construct_sel()).unwrap();
+    storage.add_chunk(input.alias()).unwrap();
     assert!(storage.already_spilled());
     assert_eq!(storage.mem_bytes(), 0);
     assert!(storage.disk_bytes() > 0);

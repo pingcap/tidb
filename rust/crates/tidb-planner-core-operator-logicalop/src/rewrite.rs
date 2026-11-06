@@ -2442,12 +2442,15 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                         .ok_or_else(|| {
                             PlanError::internal("LogicalCTE.DeriveStats: seed schema is nil")
                         })?;
+                    // Go reads `RecursivePartLogicalPlan.StatsInfo()`: the
+                    // logical root, whose projection the physical plan may
+                    // have eliminated.
                     let recursive = match (
                         class.recursive_part_physical_plan.as_deref(),
                         class.recursive_part_logical_plan.as_deref(),
                     ) {
-                        (Some(plan), Some(logical)) => Some((
-                            plan.stats_info().cloned().ok_or_else(|| {
+                        (Some(_), Some(logical)) => Some((
+                            logical.stats_info().cloned().ok_or_else(|| {
                                 PlanError::internal(
                                     "LogicalCTE.DeriveStats: recursive stats are nil",
                                 )

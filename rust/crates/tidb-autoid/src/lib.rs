@@ -107,6 +107,7 @@ pub trait AutoIdStore: fmt::Debug + Send + Sync {
         increment: u64,
         _offset: u64,
         unsigned: bool,
+        _stats: Option<&AllocatorRuntimeStats>,
     ) -> Result<(u64, u64), AutoIdStoreError> {
         self.reserve(minimum_step.max(n.saturating_mul(increment)), unsigned)
     }
@@ -117,7 +118,15 @@ pub trait AutoIdStore: fmt::Debug + Send + Sync {
     ///
     /// Never lowers, which is what makes an explicit id below the counter a
     /// no-op on every tier.
-    fn rebase(&self, required: u64, unsigned: bool) -> Result<(), AutoIdStoreError>;
+    ///
+    /// `stats` are Go's `AllocatorRuntimeStats` from the allocation's
+    /// context, which the store's transaction reports into.
+    fn rebase(
+        &self,
+        required: u64,
+        unsigned: bool,
+        stats: Option<&AllocatorRuntimeStats>,
+    ) -> Result<(), AutoIdStoreError>;
 
     /// Go `rebase4Signed`/`rebase4Unsigned` with `allocIDs == true`
     /// (`pkg/meta/autoid/autoid.go:348`, `:408`): raise the stored value past
@@ -141,8 +150,9 @@ pub trait AutoIdStore: fmt::Debug + Send + Sync {
         required: u64,
         step: u64,
         unsigned: bool,
+        stats: Option<&AllocatorRuntimeStats>,
     ) -> Result<(u64, u64), AutoIdStoreError> {
-        self.rebase(required, unsigned)?;
+        self.rebase(required, unsigned, stats)?;
         self.reserve(step, unsigned)
     }
 
@@ -242,6 +252,7 @@ impl AutoIdStore for LocalAutoIdStore {
         increment: u64,
         offset: u64,
         unsigned: bool,
+        _stats: Option<&AllocatorRuntimeStats>,
     ) -> Result<(u64, u64), AutoIdStoreError> {
         let mut base = self.last.load(Ordering::SeqCst);
         loop {
@@ -257,7 +268,12 @@ impl AutoIdStore for LocalAutoIdStore {
         }
     }
 
-    fn rebase(&self, required: u64, unsigned: bool) -> Result<(), AutoIdStoreError> {
+    fn rebase(
+        &self,
+        required: u64,
+        unsigned: bool,
+        _stats: Option<&AllocatorRuntimeStats>,
+    ) -> Result<(), AutoIdStoreError> {
         let mut last = self.last.load(Ordering::SeqCst);
         while exceeds(required, last, unsigned) {
             match self.last.compare_exchange_weak(
@@ -281,6 +297,7 @@ impl AutoIdStore for LocalAutoIdStore {
         required: u64,
         step: u64,
         unsigned: bool,
+        _stats: Option<&AllocatorRuntimeStats>,
     ) -> Result<(u64, u64), AutoIdStoreError> {
         let mut last = self.last.load(Ordering::SeqCst);
         loop {
@@ -460,6 +477,8 @@ pub struct CachedAutoIdAllocator {
 pub struct AutoIdCall {
     rpc: tidb_txnkv::rpc::UnaryCallContext,
     killer: Option<Arc<tidb_sqlkiller::SqlKiller>>,
+    /// Go `ctx.Value(AllocatorRuntimeStatsCtxKey)`.
+    allocator_stats: Option<Arc<AllocatorRuntimeStats>>,
 }
 impl AutoIdCall {
     /// Go context.Background for service reads without a caller deadline.
@@ -470,6 +489,7 @@ impl AutoIdCall {
                 tidb_txnkv::rpc::UnaryCancellation::new(),
             ),
             killer: None,
+            allocator_stats: None,
         }
     }
     /// Bounded internal operation (Go singlePointWriteOperationTimeout).
@@ -477,6 +497,7 @@ impl AutoIdCall {
         Self {
             rpc: tidb_txnkv::rpc::UnaryCallContext::with_timeout(timeout),
             killer: None,
+            allocator_stats: None,
         }
     }
     /// Explicit cancellation used by callers that already own a transport scope.
@@ -484,6 +505,7 @@ impl AutoIdCall {
         Self {
             rpc: tidb_txnkv::rpc::UnaryCallContext::new(timeout, cancel),
             killer: None,
+            allocator_stats: None,
         }
     }
     /// SQL allocation follows the statement killer; DML has no SELECT deadline.
@@ -494,7 +516,22 @@ impl AutoIdCall {
                 tidb_txnkv::rpc::UnaryCancellation::new(),
             ),
             killer: Some(memory.sql_killer().clone()),
+            allocator_stats: None,
         }
+    }
+
+    /// Go `context.WithValue(ctx, AllocatorRuntimeStatsCtxKey, stats)`: the
+    /// allocator's own transactions report into `stats`.
+    #[must_use]
+    pub fn with_allocator_stats(mut self, stats: Arc<AllocatorRuntimeStats>) -> Self {
+        self.allocator_stats = Some(stats);
+        self
+    }
+
+    /// Go `getAllocatorStatsFromCtx`'s stats.
+    #[must_use]
+    pub fn allocator_stats(&self) -> Option<&AllocatorRuntimeStats> {
+        self.allocator_stats.as_deref()
     }
     /// Poll the shared SQL kill signal before transport admission and retry waits.
     pub fn cancellation(&self) -> &tidb_txnkv::rpc::UnaryCancellation {
@@ -510,6 +547,84 @@ impl std::ops::Deref for AutoIdCall {
     type Target = tidb_txnkv::rpc::UnaryCallContext;
     fn deref(&self) -> &Self::Target {
         &self.rpc
+    }
+}
+
+/// Go `AllocatorRuntimeStats`: what one statement's auto-ID allocations did
+/// in the allocator's own transactions -- the reservations and rebases that
+/// reached the store, their snapshot reads and their commits.
+#[derive(Default)]
+pub struct AllocatorRuntimeStats {
+    /// Go `*txnsnapshot.SnapshotRuntimeStats`.
+    snapshot: Arc<tikv_client::SnapshotRuntimeStats>,
+    /// Go `*execdetails.RuntimeStatsWithCommit`, created by the first commit.
+    commit: std::sync::Mutex<Option<tidb_execdetails::runtime_stats::RuntimeStatsWithCommit>>,
+    alloc_count: std::sync::atomic::AtomicUsize,
+    rebase_count: std::sync::atomic::AtomicUsize,
+}
+
+impl AllocatorRuntimeStats {
+    /// Go `allocatorStats.allocCount++`.
+    pub(crate) fn record_alloc(&self) {
+        self.alloc_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Go `allocatorStats.rebaseCount++`.
+    pub(crate) fn record_rebase(&self) {
+        self.rebase_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// The stats a transaction's snapshot collects into
+    /// (`txn.SetOption(kv.CollectRuntimeStats, allocatorStats.SnapshotRuntimeStats)`).
+    pub(crate) fn snapshot_handle(&self) -> tidb_txnkv::SnapshotRuntimeStatsHandle {
+        tidb_txnkv::SnapshotRuntimeStatsHandle(Arc::clone(&self.snapshot))
+    }
+
+    /// Go `mergeCommitDetail`.
+    pub(crate) fn merge_commit_detail(&self, detail: Option<&tikv_client::util::CommitDetails>) {
+        let Some(detail) = detail else {
+            return;
+        };
+        self.commit
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_or_insert_with(Default::default)
+            .merge_commit_details(Some(detail));
+    }
+}
+
+/// Go `AllocatorRuntimeStats.String`.
+impl fmt::Display for AllocatorRuntimeStats {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use tidb_execdetails::runtime_stats::RuntimeStats as _;
+        let alloc_count = self.alloc_count.load(Ordering::Relaxed);
+        let rebase_count = self.rebase_count.load(Ordering::Relaxed);
+        if alloc_count == 0 && rebase_count == 0 {
+            return Ok(());
+        }
+        let mut parts = Vec::new();
+        if alloc_count > 0 {
+            parts.push(format!("alloc_cnt: {alloc_count}"));
+        }
+        if rebase_count > 0 {
+            parts.push(format!("rebase_cnt: {rebase_count}"));
+        }
+        let snapshot = self.snapshot.to_string();
+        if !snapshot.is_empty() {
+            parts.push(snapshot);
+        }
+        if let Some(commit) = self
+            .commit
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+        {
+            let commit = commit.string();
+            if !commit.is_empty() {
+                parts.push(commit);
+            }
+        }
+        write!(formatter, "auto_id_allocator: {{{}}}", parts.join(", "))
     }
 }
 
@@ -687,7 +802,7 @@ impl AutoIdAllocator {
         offset: u64,
     ) -> Result<(u64, u64), AutoIdError> {
         match &self.backend {
-            AllocatorBackend::Cached(c) => c.alloc_batch(n, increment, offset),
+            AllocatorBackend::Cached(c) => c.alloc_batch(call.allocator_stats(), n, increment, offset),
             AllocatorBackend::Service(s) => s
                 .alloc(call, n, increment, offset)
                 .map_err(AutoIdError::Store),
@@ -749,7 +864,7 @@ impl AutoIdAllocator {
         value: u64,
     ) -> Result<(), AutoIdStoreError> {
         match &self.backend {
-            AllocatorBackend::Cached(c) => c.rebase_allocating(value),
+            AllocatorBackend::Cached(c) => c.rebase_allocating(call.allocator_stats(), value),
             AllocatorBackend::Service(s) => s.rebase(call, value, false),
             AllocatorBackend::InMemory(m) => {
                 m.rebase(value, self.unsigned);
@@ -1006,13 +1121,20 @@ impl CachedAutoIdAllocator {
     /// [`get_increment_and_offset`]); the default `1, 1` reduces the seek to
     /// `base + 1`, so the stepped and the ordinary case are the same code.
     pub fn alloc(&self, increment: u64, offset: u64) -> Result<u64, AutoIdError> {
-        self.alloc_batch(1, increment, offset)
+        self.alloc_batch(None, 1, increment, offset)
             .map(|(_, maximum)| maximum)
     }
 
     /// Go `Allocator.Alloc`: reserve `n` ids and return the half-open batch
     /// description `(base, maximum]` used by the caller to enumerate them.
-    fn alloc_batch(&self, n: u64, increment: u64, offset: u64) -> Result<(u64, u64), AutoIdError> {
+    /// `stats` are the allocation context's `AllocatorRuntimeStats`.
+    fn alloc_batch(
+        &self,
+        stats: Option<&AllocatorRuntimeStats>,
+        n: u64,
+        increment: u64,
+        offset: u64,
+    ) -> Result<(u64, u64), AutoIdError> {
         if n == 0 {
             return Ok((0, 0));
         }
@@ -1027,9 +1149,12 @@ impl CachedAutoIdAllocator {
             if exceeds(offset_base, cache.end, self.unsigned) {
                 // Go `alloc4Signed`'s offset arm rebases with allocIDs=true,
                 // reserving a window in the same transaction.
+                if let Some(stats) = stats {
+                    stats.record_rebase();
+                }
                 let (_, end) = self
                     .store
-                    .rebase_alloc(offset_base, cache.step, self.unsigned)
+                    .rebase_alloc(offset_base, cache.step, self.unsigned, stats)
                     .map_err(AutoIdError::Store)?;
                 cache.end = end;
             }
@@ -1051,9 +1176,12 @@ impl CachedAutoIdAllocator {
             if self.dynamic_step && cache.end != 0 {
                 next_reservation = next_step(cache.step, cache.last_reserve_at.elapsed());
             }
+            if let Some(stats) = stats {
+                stats.record_alloc();
+            }
             let (base, end) = self
                 .store
-                .reserve_batch(next_reservation, n, increment, offset, self.unsigned)
+                .reserve_batch(next_reservation, n, increment, offset, self.unsigned, stats)
                 .map_err(AutoIdError::Store)?;
             // The shared store may have advanced since this allocator last
             // observed it. Go recomputes the batch from that new base rather
@@ -1156,7 +1284,11 @@ impl CachedAutoIdAllocator {
     ///
     /// A value inside the reserved range is settled in the cache alone, and a
     /// value the counter is already past is ignored, both as before.
-    pub fn rebase_allocating(&self, value: u64) -> Result<(), AutoIdStoreError> {
+    pub fn rebase_allocating(
+        &self,
+        stats: Option<&AllocatorRuntimeStats>,
+        value: u64,
+    ) -> Result<(), AutoIdStoreError> {
         let mut cache = self.cache.lock().expect("auto id cache poisoned");
         if !exceeds(value, cache.base, self.unsigned) {
             return Ok(());
@@ -1167,7 +1299,10 @@ impl CachedAutoIdAllocator {
             // base from the STORED read (not `value`) is load-bearing -- if a
             // peer's reservation moved the counter past `value` meanwhile, the
             // ids up to that mark are already somebody else's.
-            let (base, end) = self.store.rebase_alloc(value, cache.step, self.unsigned)?;
+            if let Some(stats) = stats {
+                stats.record_rebase();
+            }
+            let (base, end) = self.store.rebase_alloc(value, cache.step, self.unsigned, stats)?;
             cache.end = end;
             cache.base = base;
         } else {
@@ -1194,7 +1329,7 @@ impl CachedAutoIdAllocator {
             return Ok(());
         }
         if exceeds(value, cache.end, self.unsigned) {
-            self.store.rebase(value, self.unsigned)?;
+            self.store.rebase(value, self.unsigned, None)?;
             cache.end = value;
         }
         cache.base = value;
@@ -1375,28 +1510,28 @@ mod tests {
 
         let (batch_store, batch) = allocator(false);
         assert_eq!(global_next(&batch_store), 1);
-        assert_eq!(batch.alloc_batch(1, 1, 1), Ok((0, 1)));
-        assert_eq!(batch.alloc_batch(2, 1, 1), Ok((1, 3)));
-        assert_eq!(batch.alloc_batch(100, 1, 1), Ok((3, 103)));
+        assert_eq!(batch.alloc_batch(None, 1, 1, 1), Ok((0, 1)));
+        assert_eq!(batch.alloc_batch(None, 2, 1, 1), Ok((1, 3)));
+        assert_eq!(batch.alloc_batch(None, 100, 1, 1), Ok((3, 103)));
         batch.rebase(1000).unwrap();
-        assert_eq!(batch.alloc_batch(3, 1, 1), Ok((1000, 1003)));
+        assert_eq!(batch.alloc_batch(None, 3, 1, 1), Ok((1000, 1003)));
         let last_reserved_end = cache_end(&batch);
         batch.rebase(last_reserved_end - 2).unwrap();
-        let (minimum, maximum) = batch.alloc_batch(5, 1, 1).unwrap();
+        let (minimum, maximum) = batch.alloc_batch(None, 5, 1, 1).unwrap();
         assert_eq!(maximum - minimum, 5);
         assert!(minimum + 1 > last_reserved_end);
 
         let (_, stepped) = allocator(false);
-        assert_eq!(stepped.alloc_batch(1, 2, 100), Ok((99, 100)));
-        assert_eq!(stepped.alloc_batch(2, 2, 100), Ok((100, 104)));
+        assert_eq!(stepped.alloc_batch(None, 1, 2, 100), Ok((99, 100)));
+        assert_eq!(stepped.alloc_batch(None, 2, 2, 100), Ok((100, 104)));
         assert_eq!(calc_needed_batch_size(100, 2, 2, 100, false), 4);
-        assert_eq!(stepped.alloc_batch(3, 5, 100), Ok((104, 115)));
+        assert_eq!(stepped.alloc_batch(None, 3, 5, 100), Ok((104, 115)));
         assert_eq!(calc_needed_batch_size(104, 3, 5, 100, false), 11);
         assert_eq!(seek_to_first(104, 5, 100, false), 105);
-        assert_eq!(stepped.alloc_batch(2, 15, 100), Ok((115, 145)));
+        assert_eq!(stepped.alloc_batch(None, 2, 15, 100), Ok((115, 145)));
         assert_eq!(calc_needed_batch_size(115, 2, 15, 100, false), 30);
         assert_eq!(seek_to_first(115, 15, 100, false), 130);
-        assert_eq!(stepped.alloc_batch(2, 15, 200), Ok((199, 215)));
+        assert_eq!(stepped.alloc_batch(None, 2, 15, 200), Ok((199, 215)));
         assert_eq!(calc_needed_batch_size(199, 2, 15, 200, false), 16);
         assert_eq!(seek_to_first(199, 15, 200, false), 200);
     }
@@ -1440,19 +1575,19 @@ mod tests {
 
         let (batch_store, batch) = allocator(true);
         assert_eq!(global_next(&batch_store), 1);
-        assert_eq!(batch.alloc_batch(2, 1, 1), Ok((0, 2)));
+        assert_eq!(batch.alloc_batch(None, 2, 1, 1), Ok((0, 2)));
         batch.rebase(500).unwrap();
-        assert_eq!(batch.alloc_batch(2, 1, 1), Ok((500, 502)));
+        assert_eq!(batch.alloc_batch(None, 2, 1, 1), Ok((500, 502)));
         let last_reserved_end = cache_end(&batch);
         batch.rebase(last_reserved_end - 2).unwrap();
-        let (minimum, maximum) = batch.alloc_batch(5, 1, 1).unwrap();
+        let (minimum, maximum) = batch.alloc_batch(None, 5, 1, 1).unwrap();
         assert_eq!(maximum - minimum, 5);
         assert!(minimum + 1 > last_reserved_end);
 
         let (_, stepped) = allocator(true);
         let offset = u64::MAX - 100;
         assert_eq!(
-            stepped.alloc_batch(2, 2, offset),
+            stepped.alloc_batch(None, 2, 2, offset),
             Ok((u64::MAX - 101, u64::MAX - 98))
         );
         assert_eq!(
@@ -1484,7 +1619,7 @@ mod tests {
                     // permutation keeps every batch size in play without
                     // making a parity test probabilistic.
                     let n = (worker * 37 + iteration * 17) % 100;
-                    let (minimum, maximum) = allocator.alloc_batch(n, 1, 1).unwrap();
+                    let (minimum, maximum) = allocator.alloc_batch(None, n, 1, 1).unwrap();
                     let mut seen = seen.lock().unwrap();
                     for id in minimum + 1..=maximum {
                         assert!(seen.insert(id), "duplicate id {id}");
@@ -1518,10 +1653,15 @@ mod tests {
             self.inner.next_global()
         }
 
-        fn rebase(&self, required: u64, unsigned: bool) -> Result<(), AutoIdStoreError> {
+        fn rebase(
+            &self,
+            required: u64,
+            unsigned: bool,
+            stats: Option<&AllocatorRuntimeStats>,
+        ) -> Result<(), AutoIdStoreError> {
             self.crossings
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            self.inner.rebase(required, unsigned)
+            self.inner.rebase(required, unsigned, stats)
         }
 
         fn rebase_alloc(
@@ -1529,10 +1669,11 @@ mod tests {
             required: u64,
             step: u64,
             unsigned: bool,
+            stats: Option<&AllocatorRuntimeStats>,
         ) -> Result<(u64, u64), AutoIdStoreError> {
             self.crossings
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            self.inner.rebase_alloc(required, step, unsigned)
+            self.inner.rebase_alloc(required, step, unsigned, stats)
         }
 
         fn force_rebase(&self, required: u64, unsigned: bool) -> Result<(), AutoIdStoreError> {
@@ -1558,7 +1699,7 @@ mod tests {
         let mut allocator = CachedAutoIdAllocator::over(store.clone(), 10);
         allocator.set_unsigned(false);
         for id in 1..=35_u64 {
-            allocator.rebase_allocating(id).unwrap();
+            allocator.rebase_allocating(None, id).unwrap();
         }
         // Windows crossed at 1..=10, 11..=20, 21..=30, 31..=40.
         assert_eq!(store.crossings.load(std::sync::atomic::Ordering::SeqCst), 4);
@@ -1573,16 +1714,16 @@ mod tests {
         let store = Arc::new(CountingStore::default());
         let mut allocator = CachedAutoIdAllocator::over(store.clone(), 10);
         allocator.set_unsigned(false);
-        allocator.rebase_allocating(100).unwrap();
+        allocator.rebase_allocating(None, 100).unwrap();
         // Window = (100, 110]; the next allocation is 101, still local.
         assert_eq!(allocator.alloc(1, 1), Ok(101));
         assert_eq!(store.crossings.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(allocator.next_global(), Ok(111));
         // Values INSIDE the window settle in the cache alone.
-        allocator.rebase_allocating(105).unwrap();
+        allocator.rebase_allocating(None, 105).unwrap();
         assert_eq!(store.crossings.load(std::sync::atomic::Ordering::SeqCst), 1);
         // A value PAST the end owns the next window, from one more crossing.
-        allocator.rebase_allocating(118).unwrap();
+        allocator.rebase_allocating(None, 118).unwrap();
         assert_eq!(store.crossings.load(std::sync::atomic::Ordering::SeqCst), 2);
         assert_eq!(allocator.next_global(), Ok(129));
     }
@@ -1609,7 +1750,12 @@ mod tests {
             Err(AutoIdStoreError("injected".to_owned()))
         }
 
-        fn rebase(&self, _required: u64, _unsigned: bool) -> Result<(), AutoIdStoreError> {
+        fn rebase(
+            &self,
+            _required: u64,
+            _unsigned: bool,
+            _stats: Option<&AllocatorRuntimeStats>,
+        ) -> Result<(), AutoIdStoreError> {
             Err(AutoIdStoreError("injected".to_owned()))
         }
 
@@ -1756,7 +1902,7 @@ mod tests {
             offset: u64,
         ) -> Result<u64, AutoIdError> {
             allocator
-                .alloc_batch(count, increment, offset)
+                .alloc_batch(None, count, increment, offset)
                 .map(|(_, maximum)| maximum)
         }
 

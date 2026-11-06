@@ -4333,7 +4333,7 @@ impl TableCommon {
             // Same arm Go's insert arms use: the rebase reserves a window on
             // its one store crossing, matching `Rebase(..., true)`.
             self.auto_id_allocator_in(Some(ctx))
-                .rebase_allocating_in(&AutoIdCall::statement(&ctx.statement_memory()), assigned)
+                .rebase_allocating_in(&ctx.auto_id_call(), assigned)
                 .map_err(|error| {
                     if let Err(stop) = ctx.statement_memory().check() {
                         return KvTableError::from(tidb_kv::storage::StorageError::Sql(

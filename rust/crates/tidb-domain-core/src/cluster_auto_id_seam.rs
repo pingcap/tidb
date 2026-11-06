@@ -83,11 +83,15 @@ where
     S: StoreClient,
 {
     /// Allocators reserving through `opener`, giving each meta-key
-    /// transaction `timeout` to finish.
+    /// transaction `timeout` to finish. Each is Go's `kv.RunInNewTxn` over
+    /// `store.Begin()`, a two-phase commit: a session's async commit and 1PC
+    /// are its own transactions' options.
     #[must_use]
     pub fn new(opener: RealOptimisticTransactionOpener<S>, timeout: Duration) -> Self {
         ClusterTableAutoIds {
-            opener,
+            opener: opener.with_commit_protocol(
+                tidb_store_driver_txn::transaction::CommitProtocol::two_phase_only(),
+            ),
             timeout,
             service: None,
             allocators: Mutex::new(HashMap::new()),

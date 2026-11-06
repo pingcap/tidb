@@ -7021,3 +7021,141 @@ fn evict_all(statistics: &tidb_stats::Table) {
         index.write().unwrap().stats_loaded_status = tidb_stats::StatsLoadedStatus::all_evicted();
     }
 }
+
+/// Go `cteProducer.deduplicate`: a `UNION DISTINCT` recursion keeps each
+/// chunk and selects its admitted rows (`SetSel`), and the result and
+/// iteration tables hold that one chunk, each charging its full capacity;
+/// an iteration's chunks are `CopyConstruct`ed first. `./gorun` on this
+/// branch, with `t` holding 1, 1, 2, 3, 3, 3:
+///
+/// ```text
+/// select 1 union select n+1 from cte where n < 5        CTE_0 | 5 rows | 1.41 KB
+/// select a from t union select n+1 from cte where n < 5  CTE_0 | 5 rows | 1.26 KB  (1..5)
+/// select a from t union select (n+1) % 3 from cte ...    CTE_0 | 4 rows | 1.26 KB  (0..3)
+/// select 1 union select n from cte                       CTE_0 | 1 row  | 1.11 KB
+/// ```
+#[test]
+fn a_distinct_recursion_selects_its_admitted_rows_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT)").unwrap();
+    session.run("INSERT INTO t VALUES (1),(1),(2),(3),(3),(3)").unwrap();
+    for (cte, rows, memory) in [
+        ("SELECT 1 UNION SELECT n+1 FROM cte WHERE n < 5", "1,2,3,4,5", "1.41 KB"),
+        ("SELECT a FROM t UNION SELECT n+1 FROM cte WHERE n < 5", "1,2,3,4,5", "1.26 KB"),
+        ("SELECT a FROM t UNION SELECT (n+1) % 3 FROM cte WHERE n < 5", "0,1,2,3", "1.26 KB"),
+        ("SELECT 1 UNION SELECT n FROM cte", "1", "1.11 KB"),
+    ] {
+        let sql = format!("WITH RECURSIVE cte(n) AS ({cte}) SELECT * FROM cte");
+        let result: Vec<String> = row_text(session.run(&format!("{sql} ORDER BY n")))
+            .into_iter()
+            .map(|row| row[0].clone())
+            .collect();
+        assert_eq!(result.join(","), rows, "{cte}");
+        let explain = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        let row = explain
+            .iter()
+            .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()) == "CTE_0")
+            .unwrap_or_else(|| panic!("{cte}: no CTE_0 in {explain:?}"));
+        assert_eq!(row[7], memory, "{cte}");
+    }
+}
+
+/// Go `LogicalCTE.DeriveStats` adds the NDVs of `RecursivePartLogicalPlan`:
+/// the logical root, which keeps the recursive part's projection
+/// (`ProjectionEliminator` never removes a root) even where the physical
+/// plan eliminates it and scans the CTE table bare. `./gorun` on this branch,
+/// `t (a int, b int)` empty:
+///
+/// ```text
+/// select 1 union select n from cte                     CTE_0 | 2.00
+/// select a from t union select n from cte              CTE_0 | 8001.00
+/// select 1, 2 union select n, m from cte               CTE_0 | 2.00
+/// select 1 union all select n from cte where n < 3     CTE_0 | 1.80
+/// ```
+#[test]
+fn a_recursive_ctes_estimate_reads_its_logical_recursive_part_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT, b INT)").unwrap();
+    for (sql, estimate) in [
+        ("WITH RECURSIVE cte(n) AS (SELECT 1 UNION SELECT n FROM cte) SELECT * FROM cte", "2.00"),
+        ("WITH RECURSIVE cte(n) AS (SELECT a FROM t UNION SELECT n FROM cte) SELECT * FROM cte", "8001.00"),
+        (
+            "WITH RECURSIVE cte(n, m) AS (SELECT 1, 2 UNION SELECT n, m FROM cte) SELECT * FROM cte",
+            "2.00",
+        ),
+        (
+            "WITH RECURSIVE cte(n) AS (SELECT 1 UNION ALL SELECT n FROM cte WHERE n < 3) SELECT * FROM cte",
+            "1.80",
+        ),
+    ] {
+        let rows = row_text(session.run(&format!("EXPLAIN {sql}")));
+        let row = rows
+            .iter()
+            .find(|row| row[0] == "CTE_0")
+            .unwrap_or_else(|| panic!("{sql}: no CTE_0 in {rows:?}"));
+        assert_eq!(row[1], estimate, "{sql}");
+    }
+}
+
+/// Go `AllocatorRuntimeStats` (`pkg/meta/autoid`): the auto-ID allocator's
+/// own `RunInNewTxn` -- a two-phase commit of the counter key -- reports its
+/// reservations, rebases, snapshot read and commit into the writing
+/// executor's stats: `InsertRuntimeStat` prints them inside `prepare`, and
+/// `updateRuntimeStats` after the update's own snapshot RPCs. A batch the
+/// allocator already holds touches no counter. `./gorun` on this branch,
+/// durations masked:
+///
+/// ```text
+/// insert into ai (b) values (1),(2)  prepare: {total: D, auto_id_allocator: {alloc_cnt: 1, Get:{...}, commit_txn: {...}}}
+/// insert into ai (b) values (3)      prepare: D, insert:D
+/// update ai set a = 50000 where b=1  Get:{...}, auto_id_allocator: {rebase_cnt: 1, ...}
+/// insert into ai values (90000, 1)   prepare: {total: D, auto_id_allocator: {rebase_cnt: 1, ...}}
+/// ```
+#[test]
+fn a_write_reports_its_auto_id_allocations_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE ai (a INT PRIMARY KEY AUTO_INCREMENT, b INT)").unwrap();
+    let commit = |bytes: u32| {
+        format!(
+            "commit_txn: {{prewrite:D, get_commit_ts:D, commit:D, slowest_prewrite_rpc: {{total: D, \
+             region_id: 2, store: store1, }}, commit_primary_rpc: {{total: D, region_id: 2, store: store1, }}, \
+             region_num:1, write_keys:1, write_byte:{bytes}}}"
+        )
+    };
+    for (sql, expected) in [
+        (
+            "INSERT INTO ai (b) VALUES (1),(2)",
+            format!(
+                "time:D, open:D, close:D, loops:1, prepare: {{total: D, auto_id_allocator: {{alloc_cnt: 1, \
+                 Get:{{num_rpc:1, total_time:D}}, {}}}}}, insert:D, RU:",
+                commit(32)
+            ),
+        ),
+        (
+            "INSERT INTO ai (b) VALUES (3)",
+            "time:D, open:D, close:D, loops:1, prepare: D, insert:D, RU:".to_owned(),
+        ),
+        (
+            "UPDATE ai SET a = 50000 WHERE b = 1",
+            format!(
+                "time:D, open:D, close:D, loops:1, Get:{{num_rpc:1, total_time:D}}, auto_id_allocator: \
+                 {{rebase_cnt: 1, Get:{{num_rpc:1, total_time:D}}, {}}}, RU:",
+                commit(32)
+            ),
+        ),
+        (
+            "INSERT INTO ai VALUES (90000, 1)",
+            format!(
+                "time:D, open:D, close:D, loops:1, prepare: {{total: D, auto_id_allocator: {{rebase_cnt: 1, \
+                 Get:{{num_rpc:1, total_time:D}}, {}}}}}, insert:D, RU:",
+                commit(33)
+            ),
+        ),
+    ] {
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        let info = mask_durations(&rows[0][5]);
+        // A write's RU is not Go's (the register's E16).
+        let info = &info[..info.rfind("RU:").map_or(info.len(), |at| at + 3)];
+        assert_eq!(info, expected, "{sql}");
+    }
+}

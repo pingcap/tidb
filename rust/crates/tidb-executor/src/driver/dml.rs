@@ -1160,6 +1160,15 @@ fn run_insert_rows(
     let insert_stats = dml.and_then(|dml| dml.insert_stats());
     let _collect_snapshot_stats =
         insert_stats.map(|stats| CollectInsertSnapshotStats::install(ctx, &stats.lock().unwrap()));
+    // Go `InsertExec.Next`'s `context.WithValue(ctx,
+    // autoid.AllocatorRuntimeStatsCtxKey, e.stats.AllocatorRuntimeStats)`.
+    let auto_id_call = {
+        let call = tidb_autoid::AutoIdCall::statement(&ctx.statement_memory());
+        match insert_stats {
+            Some(stats) => call.with_allocator_stats(Arc::clone(&stats.lock().unwrap().allocator)),
+            None => call,
+        }
+    };
     // Go `InsertExec.exec`'s `CheckInsertTime`: the time each batch took
     // (REPLACE times only its prefetch).
     let mut batch_started: Option<std::time::Instant> = None;
@@ -1578,7 +1587,7 @@ fn run_insert_rows(
                         &mut new_rows[*index],
                         ctx.auto_increment_step(),
                         || ctx.reuse_auto_increment_id(),
-                        &tidb_autoid::AutoIdCall::statement(&ctx.statement_memory()),
+                        &auto_id_call,
                         Some(ctx as &dyn tidb_tblctx::MutateContext),
                     ) {
                         Ok(outcome) => outcome,
@@ -2118,12 +2127,12 @@ fn insert_mem_tracker(
 }
 
 /// Go `InsertRuntimeStat` (`pkg/executor/insert_common.go`): the write
-/// phases an `InsertExec` / `ReplaceExec` times, and the RPCs its snapshot
-/// sent while it wrote. Go's `AllocatorRuntimeStats` part is not kept: this
-/// tier's auto-ID allocator records no runtime stats (the register's E03).
+/// phases an `InsertExec` / `ReplaceExec` times, the RPCs its snapshot sent
+/// while it wrote, and what its auto-ID allocations did.
 #[derive(Default)]
 pub(crate) struct InsertRuntimeStat {
     snapshot: Arc<tikv_client::SnapshotRuntimeStats>,
+    allocator: Arc<tidb_autoid::AllocatorRuntimeStats>,
     check_insert_time: std::time::Duration,
     prefetch: std::time::Duration,
     fk_check_time: std::time::Duration,
@@ -2139,17 +2148,24 @@ impl InsertRuntimeStat {
             )
         };
         let rpc = self.snapshot.to_string();
+        let allocator = self.allocator.to_string();
         if self.check_insert_time.is_zero() {
             // For replace statement.
-            if self.prefetch.is_zero() {
-                return String::new();
+            let mut text = allocator;
+            if !self.prefetch.is_zero() {
+                if !text.is_empty() {
+                    text.push_str(", ");
+                }
+                text.push_str(&format!("prefetch: {}, rpc: {{{rpc}}}", format(self.prefetch)));
             }
-            return format!("prefetch: {}, rpc: {{{rpc}}}", format(self.prefetch));
+            return text;
         }
-        let mut text = format!(
-            "prepare: {}, ",
-            format(basic_time.saturating_sub(self.check_insert_time))
-        );
+        let prepare = format(basic_time.saturating_sub(self.check_insert_time));
+        let mut text = if allocator.is_empty() {
+            format!("prepare: {prepare}, ")
+        } else {
+            format!("prepare: {{total: {prepare}, {allocator}}}, ")
+        };
         if !self.prefetch.is_zero() {
             text.push_str(&format!(
                 "check_insert: {{total_time: {}, mem_insert_time: {}, prefetch: {}",
@@ -2195,6 +2211,65 @@ impl<'a> CollectInsertSnapshotStats<'a> {
 impl Drop for CollectInsertSnapshotStats<'_> {
     fn drop(&mut self) {
         crate::statement_store(self.ctx).set_snapshot_read_options(self.ctx.snapshot_read_options(0.0));
+    }
+}
+
+/// Go `updateRuntimeStats` (`pkg/executor/update.go`): the RPCs an
+/// `UpdateExec`'s snapshot sent while it wrote, and what its auto-ID
+/// rebases did.
+#[derive(Default)]
+pub(crate) struct UpdateRuntimeStats {
+    snapshot: Arc<tikv_client::SnapshotRuntimeStats>,
+    allocator: Arc<tidb_autoid::AllocatorRuntimeStats>,
+}
+
+impl UpdateRuntimeStats {
+    /// Go `updateRuntimeStats.String`.
+    pub(crate) fn string(&self) -> String {
+        [self.snapshot.to_string(), self.allocator.to_string()]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+/// Go `UpdateExec.Next`'s `context.WithValue(ctx,
+/// autoid.AllocatorRuntimeStatsCtxKey, e.stats.AllocatorRuntimeStats)` for
+/// the whole update, its `snap.SetOption(kv.CollectRuntimeStats,
+/// e.stats.SnapshotRuntimeStats)` once each source chunk is read
+/// ([`Self::before_write`]), and `Close`'s reset of both.
+pub(crate) struct CollectUpdateStats<'a> {
+    ctx: &'a crate::StmtContext,
+    stats: Option<&'a Arc<UpdateRuntimeStats>>,
+}
+
+impl<'a> CollectUpdateStats<'a> {
+    pub(crate) fn install(ctx: &'a crate::StmtContext, stats: Option<&'a Arc<UpdateRuntimeStats>>) -> Self {
+        if let Some(stats) = stats {
+            ctx.set_allocator_runtime_stats(Some(Arc::clone(&stats.allocator)));
+        }
+        Self { ctx, stats }
+    }
+
+    /// The source rows are read: the writes that follow collect their
+    /// snapshot RPCs into the update's stats.
+    pub(crate) fn before_write(&self) {
+        if let Some(stats) = self.stats {
+            crate::statement_store(self.ctx).set_snapshot_read_options(tidb_txnkv::SnapshotReadOptions {
+                runtime_stats: Some(tidb_txnkv::SnapshotRuntimeStatsHandle(Arc::clone(&stats.snapshot))),
+                ..self.ctx.snapshot_read_options(0.0)
+            });
+        }
+    }
+}
+
+impl Drop for CollectUpdateStats<'_> {
+    fn drop(&mut self) {
+        if self.stats.is_some() {
+            self.ctx.set_allocator_runtime_stats(None);
+            crate::statement_store(self.ctx).set_snapshot_read_options(self.ctx.snapshot_read_options(0.0));
+        }
     }
 }
 
@@ -2597,7 +2672,7 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
         return Err(DriverError::unsupported("UPDATE execution has no physical plan"));
     };
     let mut runtime = runtime;
-    let dml = super::physical_builder::DmlExec::new(plan, ctx, runtime.as_deref_mut());
+    let dml = super::physical_builder::DmlExec::new_update(plan, ctx, runtime.as_deref_mut());
     let tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(root) = plan else {
         return Err(DriverError::unsupported(
             "UPDATE execution received a non-DML physical root",
@@ -3457,6 +3532,7 @@ fn run_update_with_physical(
             );
         }
     };
+    let collect_stats = CollectUpdateStats::install(ctx, dml.update_stats());
     let (database, name) = single_table_name(table_ref, current_db)?;
     let table = catalog.get_in(&database, &name).ok_or_else(|| {
         DriverError::from(
@@ -3687,6 +3763,7 @@ fn run_update_with_physical(
                     Some((&row.output, physical_field_types)),
                     &mut matched,
                 )?;
+                collect_stats.before_write();
                 let outcome = records.write(
                     catalog,
                     &database,
@@ -3755,6 +3832,7 @@ fn run_update_with_physical(
         rewrites.clear();
     }
     for (row_index, (id, old_row, mut new_row)) in rewrites.into_iter().enumerate() {
+        collect_stats.before_write();
         let outcome = records.write(
             catalog,
             &database,

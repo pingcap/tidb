@@ -50,6 +50,21 @@ pub trait MutateContext: tidb_exprctx::Columns + Send + Sync {
     /// The implementation, for the layer that built it to read back.
     fn as_any(&self) -> &dyn std::any::Any;
 
+    /// Go `ctx.Value(autoid.AllocatorRuntimeStatsCtxKey)`: the write
+    /// executor's allocator stats, which a row's auto-ID allocation and
+    /// rebase report into.
+    fn allocator_runtime_stats(&self) -> Option<std::sync::Arc<tidb_autoid::AllocatorRuntimeStats>>;
+
+    /// The auto-ID call a row write makes under this context: the
+    /// statement's kill scope (Go `ctx`) and its allocator stats.
+    fn auto_id_call(&self) -> tidb_autoid::AutoIdCall {
+        let call = tidb_autoid::AutoIdCall::statement(&self.statement_memory());
+        match self.allocator_runtime_stats() {
+            Some(stats) => call.with_allocator_stats(stats),
+            None => call,
+        }
+    }
+
     /// Go `TypeCtx().Flags()` for a statement that writes rows.
     fn write_conversion_flags(&self) -> ConversionFlags;
     /// Go `MutateContext.EnableMutationChecker`

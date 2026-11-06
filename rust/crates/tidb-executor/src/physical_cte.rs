@@ -315,29 +315,28 @@ impl CteProducer {
         Ok(key)
     }
 
-    fn deduplicate(&mut self, chunk: &Chunk) -> Result<Chunk, ExecError> {
-        if !self.is_distinct {
-            return Ok(chunk.copy_construct_sel());
+    /// Go `deduplicate`: the chunk itself, selecting (`SetSel`) the rows that
+    /// neither an earlier row of it nor the storage already holds.
+    fn deduplicate(&mut self, mut chunk: Chunk) -> Result<Chunk, ExecError> {
+        let num_rows = chunk.num_rows();
+        if num_rows == 0 {
+            return Ok(chunk);
         }
-        let mut result = Chunk::new_chunk_with_capacity(&self.output_types, chunk.num_rows());
-        for row_index in 0..chunk.num_rows() {
+        let mut sel = Vec::with_capacity(num_rows);
+        for row_index in 0..num_rows {
             let values = chunk.get_row(row_index).get_datum_row(&self.output_types);
             if self.seen.insert(self.row_key(&values)?) {
-                if self.output_types.is_empty() {
-                    result.set_num_virtual_rows(result.num_rows() + 1);
-                } else {
-                    for (column, value) in values.iter().enumerate() {
-                        result.append_datum(column, value);
-                    }
-                }
+                sel.push(chunk.sel().map_or(row_index, |sel| sel[row_index]));
             }
         }
-        Ok(result)
+        chunk.set_sel(Some(sel));
+        Ok(chunk)
     }
 
     fn compute_seed(&mut self) -> Result<(), ExecError> {
         self.current_iteration = 0;
         self.iter_in.lock().unwrap().set_iter(0);
+        let mut chunks = Vec::new();
         loop {
             if self.limit_done(&self.iter_in.lock().unwrap()) {
                 break;
@@ -347,15 +346,18 @@ impl CteProducer {
             if chunk.num_rows() == 0 {
                 break;
             }
-            // Go `tryDedupAndAdd` then `resTbl.Add`: without DISTINCT both
-            // tables hold the chunk the seed returned.
-            let mut admitted = if self.is_distinct || chunk.sel().is_some() {
-                self.deduplicate(&chunk)?
-            } else {
-                chunk
-            };
-            self.iter_in.lock().unwrap().add_chunk(admitted.alias())?;
-            self.result.lock().unwrap().add_chunk(admitted)?;
+            // Go `tryDedupAndAdd`: both tables hold the chunk the seed
+            // returned.
+            if self.is_distinct {
+                chunk = self.deduplicate(chunk)?;
+            }
+            self.iter_in.lock().unwrap().add_chunk(chunk.alias())?;
+            chunks.push(chunk);
+        }
+        // Go: the result table starts empty, so the seed's chunks are added
+        // as they are.
+        for chunk in chunks {
+            self.result.lock().unwrap().add_chunk(chunk)?;
         }
         self.current_iteration += 1;
         self.iter_in
@@ -379,16 +381,15 @@ impl CteProducer {
                     .as_ref()
                     .ok_or_else(|| ExecError::internal("recursive CTE output storage is absent"))?;
                 (0..num_chunks)
-                    .map(|index| Ok(output.get_chunk(index)?.copy_construct_sel()))
+                    .map(|index| Ok(output.alias_chunk(index)?.copy_construct()))
                     .collect::<Result<Vec<_>, ExecError>>()?
             };
+            // Go `tryDedupAndAdd`: the result and the next iteration's input
+            // hold the same deduplicated chunk.
             let mut admitted = Vec::with_capacity(chunks.len());
             for chunk in chunks {
-                let chunk = self.deduplicate(&chunk)?;
-                self.result
-                    .lock()
-                    .unwrap()
-                    .add_chunk(chunk.copy_construct_sel())?;
+                let mut chunk = self.deduplicate(chunk)?;
+                self.result.lock().unwrap().add_chunk(chunk.alias())?;
                 admitted.push(chunk);
             }
             self.iter_in.lock().unwrap().reopen()?;

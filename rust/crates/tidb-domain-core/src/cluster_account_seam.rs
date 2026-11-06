@@ -92,13 +92,17 @@ fn reserve_account_ids<S>(
 where
     S: StoreClient,
 {
-    let store = ClusterAutoIdStore::new(std::sync::Arc::new(opener.clone()), db, table, timeout);
+    // Go `kv.RunInNewTxn` over `store.Begin()`: a two-phase commit.
+    let opener = opener
+        .clone()
+        .with_commit_protocol(tidb_store_driver_txn::transaction::CommitProtocol::two_phase_only());
+    let store = ClusterAutoIdStore::new(std::sync::Arc::new(opener), db, table, timeout);
     let failure = |error: tidb_autoid::AutoIdStoreError| {
         AccountWriteError::Unsupported(format!("account row-ID reservation: {error}"))
     };
     // Preserve bootstrap rows that predate a persisted allocator watermark.
     store
-        .rebase(minimum.max(0) as u64, false)
+        .rebase(minimum.max(0) as u64, false, None)
         .map_err(failure)?;
     let (base, end) = store.reserve(count as u64, false).map_err(failure)?;
     if end - base != count as u64 || end > i64::MAX as u64 {

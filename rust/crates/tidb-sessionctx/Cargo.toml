@@ -12,6 +12,7 @@ tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-infoschema-context = { path = "../tidb-infoschema-context" }
 tidb-metabuild = { path = "../tidb-metabuild" }
 tidb-tblctx = { path = "../tidb-tblctx" }
+tidb-autoid = { path = "../tidb-autoid" }
 tidb-errctx = { path = "../tidb-errctx" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-tiflash = { path = "../tidb-tiflash" }

@@ -23,6 +23,7 @@ tikv-client.workspace = true
 tonic.workspace = true
 tokio = { workspace = true }
 tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-execdetails = { path = "../tidb-execdetails" }
 
 [lints]
 workspace = true
