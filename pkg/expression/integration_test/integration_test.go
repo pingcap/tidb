@@ -4789,3 +4789,27 @@ func enableNonStarterDeployModeForEmbeddingTest(t *testing.T) {
 		require.NoError(t, deploymode.Set(originalMode))
 	})
 }
+
+func TestCastFloatOverflow(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table float_overflow (d double)")
+	checkOverflow := func(sql string) {
+		err := tk.QueryToErr(sql)
+		require.True(t, types.ErrOverflow.Equal(err), "%s: %v", sql, err)
+	}
+	for _, vectorized := range []int{0, 1} {
+		tk.MustExec(fmt.Sprintf("set tidb_enable_vectorized_expression=%d", vectorized))
+		for _, value := range []string{"1e39", "1e308", "-1e308", "3.4028235677973362e38", "400000000000000000000000000000000000000", "cast('1e308' as json)"} {
+			checkOverflow("select cast(" + value + " as float)")
+			checkOverflow("select concat('', cast(" + value + " as float))")
+			tk.MustExec("delete from float_overflow")
+			tk.MustExec("insert into float_overflow values (null), (" + value + ")")
+			checkOverflow("select cast(d as float) from float_overflow")
+			checkOverflow("select d from float_overflow where cast(d as float) > 0")
+		}
+		tk.MustQuery("select cast(null as float), cast(1 as float), cast(-1 as float)").Check(testkit.Rows("<nil> 1 -1"))
+		tk.MustQuery("select cast(1e308 as double) = 1e308").Check(testkit.Rows("1"))
+	}
+}
