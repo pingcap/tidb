@@ -26,6 +26,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -3012,6 +3013,29 @@ func TestColumnPrivilege4PreparePlanCache(t *testing.T) {
 	userTk.MustQuery(`SELECT @@last_plan_from_cache;`).Check(testkit.Rows("1"))
 	tk.MustExec("REVOKE SELECT(c) ON test.t FROM 'testuser'@'localhost';")
 	userTk.MustGetErrCode(`EXECUTE stmt2`, mysql.ErrTableaccessDenied)
+
+	// Collecting the privileges again after a schema change does not execute
+	// the statement's subqueries: each EXECUTE advances the sequence once.
+	tk.MustExec("CREATE SEQUENCE test.seq")
+	tk.MustExec("CREATE TABLE test.sq (a INT)")
+	tk.MustExec("GRANT SELECT ON test.sq TO 'testuser'@'localhost'")
+	tk.MustExec("GRANT SELECT, INSERT ON test.seq TO 'testuser'@'localhost'")
+	userTk.MustExec("SET @@tidb_enable_prepared_plan_cache = 0")
+	userTk.MustExec("PREPARE stmt3 FROM 'SELECT a FROM test.sq WHERE a < (SELECT NEXTVAL(test.seq))'")
+	userTk.MustQuery("EXECUTE stmt3")
+	before := userTk.MustQuery("SELECT LASTVAL(test.seq)").Rows()[0][0].(string)
+	userTk.MustQuery("EXECUTE stmt3")
+	afterOne := userTk.MustQuery("SELECT LASTVAL(test.seq)").Rows()[0][0].(string)
+	tk.MustExec("ALTER TABLE test.sq ADD COLUMN b INT")
+	userTk.MustQuery("EXECUTE stmt3")
+	afterDDL := userTk.MustQuery("SELECT LASTVAL(test.seq)").Rows()[0][0].(string)
+	step, err := strconv.Atoi(afterOne)
+	require.NoError(t, err)
+	base, err := strconv.Atoi(before)
+	require.NoError(t, err)
+	last, err := strconv.Atoi(afterDDL)
+	require.NoError(t, err)
+	require.Equal(t, step-base, last-step, "an EXECUTE after a schema change must advance the sequence as much as any other EXECUTE")
 }
 
 func TestColumnPrivilege4Views(t *testing.T) {

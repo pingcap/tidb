@@ -379,12 +379,13 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 // collectVisitInfos builds the logical plan of a statement only to collect
 // the privileges it requires. Warnings raised while building are discarded,
+// and no executor runs (e.g. uncorrelated subqueries are not evaluated),
 // since the statement is built again to generate its plan.
 func collectVisitInfos(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, nodeW *resolve.NodeW) ([]visitInfo, error) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	warnings := stmtCtx.GetWarnings()
 	defer stmtCtx.SetWarnings(warnings)
-	builder, savedBlockNames := NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	builder, savedBlockNames := NewPlanBuilder(PlanBuilderOptNoExecution{}).Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
 	defer sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&savedBlockNames)
 	if _, err := builder.Build(ctx, nodeW); err != nil {
 		return nil, err
