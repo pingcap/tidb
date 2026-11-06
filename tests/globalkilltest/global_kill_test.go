@@ -459,7 +459,7 @@ func sleepRoutine(ctx context.Context, sleepTime int, conn *sql.Conn, connID uin
 }
 
 // NOTICE: db1 & db2 can be the same object, for getting conn1 & conn2 from the same TiDB instance.
-func (s *GlobalKillSuite) killByKillStatement(t *testing.T, db1 *sql.DB, db2 *sql.DB, sleepTime int) time.Duration {
+func (s *GlobalKillSuite) killByKillStatement(t *testing.T, db1 *sql.DB, db2 *sql.DB, sleepTime int, variableTarget bool) time.Duration {
 	ctx := context.TODO()
 
 	conn1, err := db1.Conn(ctx)
@@ -488,8 +488,21 @@ func (s *GlobalKillSuite) killByKillStatement(t *testing.T, db1 *sql.DB, db2 *sq
 		zap.String("connID1", "0x"+strconv.FormatUint(connID1, 16)),
 		zap.String("connID2", "0x"+strconv.FormatUint(connID2, 16)),
 	)
-	_, err = conn2.ExecContext(ctx, fmt.Sprintf("KILL QUERY %v", connID1))
+	killSQL := fmt.Sprintf("KILL QUERY %v", connID1)
+	if variableTarget {
+		_, err = conn2.ExecContext(ctx, "SET @kill_id = ?", connID1)
+		require.NoError(t, err)
+		killSQL = "KILL QUERY @kill_id"
+	}
+	_, err = conn2.ExecContext(ctx, killSQL)
 	require.NoError(t, err)
+	if variableTarget {
+		warnings, err := conn2.QueryContext(ctx, "SHOW WARNINGS")
+		require.NoError(t, err)
+		require.False(t, warnings.Next())
+		require.NoError(t, warnings.Err())
+		require.NoError(t, warnings.Close())
+	}
 
 	r := <-ch
 	require.NoError(t, err)
@@ -525,7 +538,7 @@ func doTestWithoutPD(t *testing.T, enable32Bits bool) {
 	s.testKillByCtrlC(t, port, 2)
 
 	// Test KILL statement
-	elapsed := s.killByKillStatement(t, db, db, 2)
+	elapsed := s.killByKillStatement(t, db, db, 2, false)
 	require.Less(t, elapsed, 2*time.Second)
 }
 
@@ -560,7 +573,7 @@ func doTestOneTiDB(t *testing.T, enable32Bits bool) {
 	s.testKillByCtrlC(t, port, sleepTime)
 
 	// Test KILL statement
-	elapsed := s.killByKillStatement(t, db, db, sleepTime)
+	elapsed := s.killByKillStatement(t, db, db, sleepTime, false)
 	require.Less(t, elapsed, sleepTime*time.Second)
 }
 
@@ -610,11 +623,11 @@ func doTestMultipleTiDB(t *testing.T, enable32Bits bool) {
 	s.testKillByCtrlC(t, port1, sleepTime)
 
 	// kill local by KILL
-	elapsed = s.killByKillStatement(t, db1a, db1b, sleepTime)
+	elapsed = s.killByKillStatement(t, db1a, db1b, sleepTime, false)
 	require.Less(t, elapsed, sleepTime*time.Second)
 
 	// kill remotely
-	elapsed = s.killByKillStatement(t, db1a, db2, sleepTime)
+	elapsed = s.killByKillStatement(t, db1a, db2, sleepTime, true)
 	require.Less(t, elapsed, sleepTime*time.Second)
 }
 
@@ -721,10 +734,10 @@ func doTestLostConnection(t *testing.T, enable32Bits bool) {
 		}()
 
 		// [Test Scenario 7] Connections can be killed after PD lost connection for long time and then recovered.
-		elapsed := s.killByKillStatement(t, db1, db1, 2)
+		elapsed := s.killByKillStatement(t, db1, db1, 2, false)
 		require.Less(t, elapsed, 2*time.Second)
 
-		elapsed = s.killByKillStatement(t, db1, db2, 2)
+		elapsed = s.killByKillStatement(t, db1, db2, 2, false)
 		require.Less(t, elapsed, 2*time.Second)
 	}
 }

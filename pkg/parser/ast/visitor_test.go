@@ -685,7 +685,7 @@ func (n *fixtureNode) AcceptInPlace(v InPlaceVisitor) bool {
 			}
 			return leafAcceptMethods[i].line < leafAcceptMethods[j].line
 		})
-		require.Len(t, leafAcceptMethods, 73)
+		require.Len(t, leafAcceptMethods, 72)
 
 		var fastPaths []string
 		for _, method := range leafAcceptMethods {
@@ -704,7 +704,7 @@ func (n *fixtureNode) AcceptInPlace(v InPlaceVisitor) bool {
 	require.Equal(t, 226, acceptInPlaceCount)
 	require.Equal(t, 6, legacyHelperCount)
 	require.Equal(t, 232, acceptCount+legacyHelperCount)
-	require.Equal(t, 152, functionsWithWritebacks)
+	require.Equal(t, 153, functionsWithWritebacks)
 	require.Empty(t, cacheIssues, "replacement-mode cache issues: %s", formatCacheIssues(cacheIssues))
 	require.Empty(t, forbiddenSymbols, "removed in-place replacement symbols remain: %s", strings.Join(forbiddenSymbols, ", "))
 	require.Empty(t, acceptInPlaceContractViolations,
@@ -714,7 +714,7 @@ func (n *fixtureNode) AcceptInPlace(v InPlaceVisitor) bool {
 	require.Empty(t, inPlaceStopContractViolations,
 		"in-place child traversal results must stop the current traversal when false: %s",
 		strings.Join(inPlaceStopContractViolations, ", "))
-	require.Len(t, candidates, 297, "writeback candidates: %s", formatWritebackCandidates(candidates))
+	require.Len(t, candidates, 298, "writeback candidates: %s", formatWritebackCandidates(candidates))
 
 	var guarded []writebackCandidate
 	for _, candidate := range candidates {
@@ -723,7 +723,7 @@ func (n *fixtureNode) AcceptInPlace(v InPlaceVisitor) bool {
 		}
 	}
 	require.Empty(t, guarded, "guarded writebacks: %s", formatWritebackCandidates(guarded))
-	require.Equal(t, 297, len(candidates)-len(guarded), "unguarded writebacks: %s", formatWritebackCandidates(candidates))
+	require.Equal(t, 298, len(candidates)-len(guarded), "unguarded writebacks: %s", formatWritebackCandidates(candidates))
 }
 
 func unpropagatedInPlaceTraversalCalls(function *goast.FuncDecl) (int, []*goast.CallExpr) {
