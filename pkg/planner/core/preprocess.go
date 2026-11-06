@@ -240,6 +240,9 @@ type preprocessor struct {
 	flag   preprocessorFlag
 	stmtTp byte
 	showTp ast.ShowStmtType
+	// commitTSStmtStack is the DML statement nesting for _tidb_commit_ts checks.
+	// It is independent of stmtTp, which inner statements overwrite and do not restore.
+	commitTSStmtStack []byte
 
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
@@ -267,14 +270,58 @@ type preprocessor struct {
 	useInfoSchemaAsIs bool
 }
 
+func (p *preprocessor) pushCommitTSStmt(tp byte) {
+	p.commitTSStmtStack = append(p.commitTSStmtStack, tp)
+}
+
+func (p *preprocessor) popCommitTSStmt() {
+	if len(p.commitTSStmtStack) == 0 {
+		return
+	}
+	p.commitTSStmtStack = p.commitTSStmtStack[:len(p.commitTSStmtStack)-1]
+}
+
+// extraCommitTSColumnDenied reports whether this _tidb_commit_ts reference is rejected.
+// Materialized view maintenance reads the column and deletes rows by it. Updates do not.
+func (p *preprocessor) extraCommitTSColumnDenied() bool {
+	hasUpdate := false
+	hasInsert := false
+	for _, tp := range p.commitTSStmtStack {
+		switch tp {
+		case TypeUpdate:
+			hasUpdate = true
+		case TypeInsert:
+			hasInsert = true
+		}
+	}
+	if hasUpdate {
+		return true
+	}
+	if len(p.commitTSStmtStack) == 0 {
+		return false
+	}
+	switch p.commitTSStmtStack[len(p.commitTSStmtStack)-1] {
+	case TypeSelect, TypeSetOpr, TypeDelete:
+		// INSERT ... SELECT is not used by materialized view maintenance.
+		if hasInsert {
+			return true
+		}
+		return !p.sctx.GetSessionVars().EnableMView
+	default:
+		return false
+	}
+}
+
 func (p *preprocessor) Enter(in ast.Node) bool {
 	switch node := in.(type) {
 	case *ast.AdminStmt:
 		p.checkAdminCheckTableGrammar(node)
 	case *ast.DeleteStmt:
 		p.stmtTp = TypeDelete
+		p.pushCommitTSStmt(TypeDelete)
 	case *ast.SelectStmt:
 		p.stmtTp = TypeSelect
+		p.pushCommitTSStmt(TypeSelect)
 		if node.With != nil {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
 		}
@@ -283,13 +330,16 @@ func (p *preprocessor) Enter(in ast.Node) bool {
 		// table refs during traversal and later bind LockInfo targets without re-walking the FROM tree.
 		p.pushLockSelectCtx(node)
 	case *ast.SetOprStmt:
+		p.pushCommitTSStmt(TypeSetOpr)
 		if node.With != nil {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
 		}
 	case *ast.UpdateStmt:
 		p.stmtTp = TypeUpdate
+		p.pushCommitTSStmt(TypeUpdate)
 	case *ast.InsertStmt:
 		p.stmtTp = TypeInsert
+		p.pushCommitTSStmt(TypeInsert)
 		// handle the insert table name imminently
 		// insert into t with t ..., the insert can not see t here. We should hand it before the CTE statement
 		p.handleTableName(node.Table.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName))
@@ -510,9 +560,10 @@ func (p *preprocessor) Enter(in ast.Node) bool {
 		// Used in ALTER TABLE or CREATE TABLE
 		p.checkConstraintGrammar(node)
 	case *ast.ColumnName:
-		if node.Name.L == model.ExtraCommitTSName.L &&
-			(p.stmtTp == TypeSelect || p.stmtTp == TypeSetOpr || p.stmtTp == TypeUpdate || p.stmtTp == TypeDelete) &&
-			!p.sctx.GetSessionVars().EnableMView {
+		// Reads and deletes are enabled only for materialized view maintenance, which
+		// sets tidb_mview_enable. UPDATE always stays rejected, including references
+		// that appear after a nested SELECT has overwritten stmtTp.
+		if node.Name.L == model.ExtraCommitTSName.L && p.extraCommitTSColumnDenied() {
 			p.err = plannererrors.ErrInternal.GenWithStack("Usage of column name '%s' is not supported for now",
 				model.ExtraCommitTSName.O)
 		}
@@ -780,6 +831,7 @@ func (p *preprocessor) Leave(in ast.Node) bool {
 			with.cteCanUsed = append(with.cteCanUsed, cteNode.Name.L)
 		}
 	case *ast.SelectStmt:
+		p.popCommitTSStmt()
 		if x.With != nil {
 			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
 		}
@@ -787,7 +839,10 @@ func (p *preprocessor) Leave(in ast.Node) bool {
 			p.checkLockClauseTables(x, lockCtx)
 			p.popLockSelectCtx()
 		}
+	case *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
+		p.popCommitTSStmt()
 	case *ast.SetOprStmt:
+		p.popCommitTSStmt()
 		if x.With != nil {
 			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
 		}
