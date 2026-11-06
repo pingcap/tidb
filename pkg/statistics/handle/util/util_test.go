@@ -44,6 +44,11 @@ func (is partitionItemLookupForbiddenInfoSchema) TableItemByPartitionID(partitio
 	return infoschema.TableItem{}, false
 }
 
+func (is partitionItemLookupForbiddenInfoSchema) TableIDByPartitionID(partitionID int64) (int64, bool) {
+	is.t.Fatalf("TableIDByPartitionID should not be called for partition ID %d", partitionID)
+	return 0, false
+}
+
 func TestIsSpecialGlobalIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -252,7 +257,7 @@ func TestCallWithSCtxSyncsStmtCtxTimeZone(t *testing.T) {
 	require.Equal(t, varsTZ, stmtTZ)
 }
 
-func TestTableItemByIDForInitStatsAvoidsV1PartitionScan(t *testing.T) {
+func TestSnapshotTableInfoGetterAvoidsV1PartitionScan(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -271,17 +276,29 @@ func TestTableItemByIDForInitStatsAvoidsV1PartitionScan(t *testing.T) {
 		InfoSchema: infoschema.MockInfoSchemaWithSchemaVer([]*model.TableInfo{normalInfo, partitionedInfo}, 1),
 		t:          t,
 	}
-	getter := util.NewTableInfoGetter()
-
-	item, ok := getter.TableItemByIDForInitStats(is, normalInfo.ID)
+	snapshotGetter := util.NewSnapshotTableInfoGetter(is)
+	tbl, ok := snapshotGetter.TableInfoByID(normalInfo.ID)
+	require.True(t, ok)
+	require.Equal(t, normalInfo.ID, tbl.Meta().ID)
+	tbl, ok = snapshotGetter.TableInfoByID(partitionID)
+	require.True(t, ok)
+	require.Equal(t, partitionedInfo.ID, tbl.Meta().ID)
+	_, ok = snapshotGetter.TableInfoByID(1 << 60)
+	require.False(t, ok)
+	item, ok := snapshotGetter.TableItemByID(normalInfo.ID)
 	require.True(t, ok)
 	require.Equal(t, "normal", item.TableName.L)
-
-	item, ok = getter.TableItemByIDForInitStats(is, partitionID)
+	item, ok = snapshotGetter.TableItemByID(partitionID)
 	require.True(t, ok)
 	require.Equal(t, "partitioned", item.TableName.L)
-
-	_, ok = getter.TableItemByIDForInitStats(is, 1<<60)
+	_, ok = snapshotGetter.TableItemByID(1 << 60)
+	require.False(t, ok)
+	_, ok = snapshotGetter.ParentTableID(normalInfo.ID)
+	require.False(t, ok)
+	tableID, ok := snapshotGetter.ParentTableID(partitionID)
+	require.True(t, ok)
+	require.Equal(t, partitionedInfo.ID, tableID)
+	_, ok = snapshotGetter.ParentTableID(1 << 60)
 	require.False(t, ok)
 }
 
