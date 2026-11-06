@@ -83,7 +83,7 @@ func (g *TTLTimersSyncer) SetDelayDeleteInterval(interval time.Duration) {
 func (g *TTLTimersSyncer) ManualTriggerTTLTimer(ctx context.Context, tbl *cache.PhysicalTable) (func() (string, bool, error), error) {
 	var timerID string
 	var reqID string
-	err := withSession(g.pool, func(se session.Session) error {
+	err := withSession(ctx, g.pool, func(se session.Session) error {
 		timer, err := g.syncOneTimer(ctx, se, tbl.Schema, tbl.TableInfo, tbl.PartitionDef, true)
 		if err != nil {
 			return err
@@ -129,7 +129,7 @@ func (g *TTLTimersSyncer) ManualTriggerTTLTimer(ctx context.Context, tbl *cache.
 
 		jobID := timer.ManualEventID
 		found := false
-		err = withSession(g.pool, func(se session.Session) error {
+		err = withSession(ctx, g.pool, func(se session.Session) error {
 			rows, err := se.ExecuteSQL(ctx, "select 1 from mysql.tidb_ttl_job_history where job_id=%?", jobID)
 			if err != nil {
 				return err
@@ -193,7 +193,7 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 	}
 
 	currentTimerKeys := make(map[string]struct{})
-	err := withSession(g.pool, func(se session.Session) error {
+	err := withSession(ctx, g.pool, func(se session.Session) error {
 		ch := is.ListTablesWithSpecialAttribute(infoschemacontext.TTLAttribute)
 		for _, v := range ch {
 			for _, tblInfo := range v.TableInfos {
