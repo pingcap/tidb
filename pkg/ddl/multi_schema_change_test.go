@@ -906,6 +906,14 @@ func TestMultiSchemaChangePreservesCloudStorageMode(t *testing.T) {
 
 	tk.MustExec("create table t (a int)")
 
+	afterWaitSchemaSyncedHookAvailable := false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(*model.Job) {
+		afterWaitSchemaSyncedHookAvailable = true
+	})
+	tk.MustExec("create table failpoint_probe (a int)")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
+	tk.MustExec("drop table failpoint_probe")
+
 	type cloudModeObservation struct {
 		seen      bool
 		parent    bool
@@ -965,6 +973,30 @@ func TestMultiSchemaChangePreservesCloudStorageMode(t *testing.T) {
 	})
 
 	tk.MustExec("alter table t add column b int, add index idx_a(a)")
+
+	if !afterWaitSchemaSyncedHookAvailable {
+		rows := tk.MustQuery("admin show ddl jobs 1").Rows()
+		require.Equal(t, "alter table multi-schema change", rows[0][3])
+		jobID, err := strconv.Atoi(rows[0][0].(string))
+		require.NoError(t, err)
+		historyJob, err := ddl.GetHistoryJobByID(tk.Session(), int64(jobID))
+		require.NoError(t, err)
+		require.NotNil(t, historyJob.ReorgMeta)
+		require.True(t, historyJob.ReorgMeta.UseCloudStorage)
+		require.NotNil(t, historyJob.MultiSchemaInfo)
+		foundAddIndex := false
+		for i, subJob := range historyJob.MultiSchemaInfo.SubJobs {
+			if subJob.Type != model.ActionAddIndex {
+				continue
+			}
+			foundAddIndex = true
+			nextProxy := subJob.ToProxyJob(historyJob, i)
+			require.NotNil(t, nextProxy.ReorgMeta)
+			require.True(t, nextProxy.ReorgMeta.UseCloudStorage)
+		}
+		require.True(t, foundAddIndex)
+		return
+	}
 
 	want := cloudModeObservation{
 		seen:      true,
