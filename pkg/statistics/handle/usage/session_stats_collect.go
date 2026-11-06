@@ -161,6 +161,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) e
 
 			// Process all updates in the batch with a single transaction.
 			// Note: batchUpdates may be modified in dumpStatsDeltaToKV. (e.g. sorting, updating IsLocked)
+			failpoint.InjectCall("beforeDumpStatsDeltaToKV")
 			startTs, updated, err := s.dumpStatsDeltaToKV(is, sctx, batchUpdates)
 			if err != nil {
 				return errors.Trace(err)
