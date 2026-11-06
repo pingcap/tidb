@@ -980,6 +980,67 @@ ORDER BY t1.a, t2.a, t3.a, var`
 		tk.MustQuery("SELECT /* issue:66706 */ ref0 FROM (SELECT v0.c0 AS ref0, SIGN(v0.c0) AS ref1 FROM v0) AS s WHERE ref1").Check(testkit.Rows("0.99"))
 		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
 	})
+
+	// issue-70695-order-by-derived-table-joined-back-to-its-base-table
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec(`CREATE TABLE ti (
+			id CHAR(32) PRIMARY KEY CLUSTERED,
+			task_id VARCHAR(250) NOT NULL,
+			dag_id VARCHAR(250) NOT NULL,
+			run_id VARCHAR(250) NOT NULL,
+			map_index INT NOT NULL DEFAULT -1,
+			state VARCHAR(20),
+			priority_weight INT,
+			KEY ti_state (state))`)
+		tk.MustExec(`CREATE TABLE dr (
+			id INT PRIMARY KEY,
+			dag_id VARCHAR(250) NOT NULL,
+			run_id VARCHAR(250) NOT NULL,
+			logical_date DATETIME(6),
+			state VARCHAR(20),
+			UNIQUE KEY (dag_id, run_id))`)
+		tk.MustExec(`CREATE TABLE dm (
+			dag_id VARCHAR(250) PRIMARY KEY CLUSTERED,
+			max_active_tasks INT NOT NULL,
+			is_paused BOOL NOT NULL)`)
+		tk.MustExec("INSERT INTO ti VALUES ('00000000000000000000000000000001', 'task', 'dag', 'run', -1, 'scheduled', 1)")
+		tk.MustExec("INSERT INTO dr VALUES (1, 'dag', 'run', '2026-01-01 00:00:00', 'running')")
+		tk.MustExec("INSERT INTO dm VALUES ('dag', 16, false)")
+
+		// The derived table computes -priority_weight as a sort key, so the TopN gets a
+		// projection injected below it. The outer ORDER BY reads the derived table's
+		// columns, and the projection above the TopN must keep addressing the TopN's
+		// own output rather than the injected projection's wider one.
+		tk.MustQuery(`SELECT /* issue:70695 */ ti.id
+			FROM (
+				SELECT ti.id AS id, ti.task_id AS task_id, ti.dag_id AS dag_id,
+					ti.run_id AS run_id, ti.map_index AS map_index,
+					ti.priority_weight AS priority_weight,
+					ROW_NUMBER() OVER (
+						PARTITION BY ti.dag_id, ti.run_id
+						ORDER BY -ti.priority_weight, dr.logical_date, ti.map_index
+					) AS row_num,
+					dm.max_active_tasks AS dr_max_active_tasks,
+					ti.priority_weight AS priority_weight_for_ordering,
+					dr.logical_date AS logical_date_for_ordering,
+					ti.map_index AS map_index_for_ordering
+				FROM ti
+				JOIN dr ON dr.dag_id = ti.dag_id AND dr.run_id = ti.run_id
+				JOIN dm ON dm.dag_id = ti.dag_id
+				WHERE dr.state = 'running' AND dm.is_paused = false AND ti.state = 'scheduled'
+				ORDER BY -ti.priority_weight, dr.logical_date, ti.map_index
+			) candidates
+			JOIN ti ON ti.dag_id = candidates.dag_id
+				AND ti.task_id = candidates.task_id
+				AND ti.run_id = candidates.run_id
+				AND ti.map_index = candidates.map_index
+			WHERE candidates.dr_max_active_tasks >= candidates.row_num
+			ORDER BY -candidates.priority_weight_for_ordering,
+				candidates.logical_date_for_ordering,
+				candidates.map_index_for_ordering
+			LIMIT 16`).Check(testkit.Rows("00000000000000000000000000000001"))
+	})
 }
 
 func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
