@@ -259,6 +259,13 @@ func startTiDBServer(t *testing.T) (*tidbserver.Server, *config.Config) {
 			require.Fail(t, "timed out waiting for TiDB server to stop")
 		}
 	})
+	// Listener readiness does not imply that diagnostic statistics initialization
+	// has released its SQL workers. Wait for that boundary before profiling.
+	select {
+	case <-dom.StatsHandle().InitStatsDone:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "timed out waiting for diagnostic statistics initialization")
+	}
 	return server, cfg
 }
 
