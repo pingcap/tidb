@@ -4300,7 +4300,7 @@ func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *physic
 	return affectedValuesCols, nil
 }
 
-func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *physicalop.Insert, mockTablePlan *logicalop.LogicalTableDual, col *table.Column, expr ast.ExprNode, checkRefColumn func(n ast.Node) ast.Node) (outExpr expression.Expression, err error) {
+func (b *PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *physicalop.Insert, mockTablePlan *logicalop.LogicalTableDual, col *table.Column, expr ast.ExprNode, checkRefColumn func(n ast.Node) ast.Node) (outExpr expression.Expression, err error) {
 	if col.Hidden {
 		return nil, plannererrors.ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
 	}
@@ -4342,7 +4342,11 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *physicalo
 		var np base.LogicalPlan
 		outExpr, np, err = b.rewriteWithPreprocess(ctx, expr, usingPlan, nil, nil, true, checkRefColumn)
 		b.checkColPriv = originColPriv
-		if np != nil {
+		// Without subquery preprocessing (e.g. when only collecting the
+		// privileges of a prepared statement), an uncorrelated subquery is
+		// kept as a LogicalApply instead of being evaluated. The plan is not
+		// executed in that case, so the subquery does not need to be supported.
+		if np != nil && !b.disableSubQueryPreprocessing {
 			if _, ok := np.(*logicalop.LogicalTableDual); !ok {
 				// See issue#30626 and the related tests in function TestInsertValuesWithSubQuery for more details.
 				// This is a TODO and we will support it later.
@@ -4600,7 +4604,9 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	// LOAD DATA statement requires `INSERT` column-level privilege.
 	// If a column list is given following the table, these columns' privilge is required.
 	// Otherwise, the privilege of all visiable columns in the table is required.
-	if len(ld.Columns) == 0 {
+	// An input list of only user variables without SET assignments writes no
+	// listed column, so it is treated like an omitted list.
+	if len(ld.ColumnsAndUserVars) == 0 || (len(ld.Columns) == 0 && len(ld.ColumnAssignments) == 0) {
 		insertErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("INSERT", userName, hostName, p.Table.Name.O)
 		b.visitInfo = appendMultiColumns2VisitInfo(b.visitInfo, mysql.InsertPriv, p.Table.Schema.L,
 			p.Table.Name.L, tableInPlan.VisibleCols(), insertErr)

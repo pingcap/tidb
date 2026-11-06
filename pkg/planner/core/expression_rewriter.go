@@ -105,7 +105,7 @@ func rewriteAstExprWithPlanCtx(sctx base.PlanContext, expr ast.ExprNode, schema 
 		return nil, nil, err
 	}
 	sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&savedBlockNames)
-	return newExpr, b.visitInfo, nil
+	return newExpr, b.GetVisitInfo(), nil
 }
 
 func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...expression.BuildOption) (expression.Expression, error) {

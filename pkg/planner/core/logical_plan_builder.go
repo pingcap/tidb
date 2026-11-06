@@ -1056,7 +1056,10 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 	// Handle ON conditions if present
 	if joinNode.On != nil {
 		b.curClause = onClause
+		originColPriv := b.checkColPriv
+		b.checkColPriv = reportColumnErrOption
 		onExpr, newPlan, err := b.rewrite(ctx, joinNode.On.Expr, ap, nil, false)
+		b.checkColPriv = originColPriv
 		if err != nil {
 			return nil, err
 		}
@@ -6185,12 +6188,20 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 
 	// Identify updated aliases and add a projection to prune read-only columns,
 	// keeping covering indexes available on read-only join inputs.
+	type dbTable struct{ db, table string }
 	updatedAliases := make(map[string]struct{})
+	updatedTables := make(map[dbTable]struct{})
 	for _, assign := range orderedList {
 		if idx := p.Schema().ColumnIndex(assign.Col); idx >= 0 {
-			updatedAliases[p.OutputNames()[idx].TblName.L] = struct{}{}
+			name := p.OutputNames()[idx]
+			updatedAliases[name.TblName.L] = struct{}{}
+			updatedTables[dbTable{name.DBName.L, name.TblName.L}] = struct{}{}
 		}
 	}
+	b.appendAnyColumnSelectForReadOnlySources(update.TableRefs.TableRefs, func(_ *ast.TableName, tnW *resolve.TableNameW, alias string) bool {
+		_, ok := updatedTables[dbTable{tnW.DBInfo.Name.L, alias}]
+		return ok
+	})
 
 	finalTblID2Handle := make(map[int64][]util.HandleCols)
 	for tid, handleCols := range rawTblID2Handle {
@@ -6324,6 +6335,46 @@ func CheckUpdateList(assignFlags []int, updt *physicalop.Update, newTblID2Table 
 		}
 	}
 	return nil
+}
+
+// appendAnyColumnSelectForReadOnlySources requires SELECT on any column of
+// each base table or view joined in the table references of an UPDATE or
+// DELETE that is not written: reading it reveals whether it has rows, even
+// when none of its columns is referenced. isTarget reports whether a table
+// source, identified by its name, resolved name and alias, is written.
+// Derived tables are built as SELECT statements, which collect their own
+// requirements.
+func (b *PlanBuilder) appendAnyColumnSelectForReadOnlySources(node ast.ResultSetNode, isTarget func(tn *ast.TableName, tnW *resolve.TableNameW, alias string) bool) {
+	switch x := node.(type) {
+	case *ast.Join:
+		if x.Left != nil {
+			b.appendAnyColumnSelectForReadOnlySources(x.Left, isTarget)
+		}
+		if x.Right != nil {
+			b.appendAnyColumnSelectForReadOnlySources(x.Right, isTarget)
+		}
+	case *ast.TableSource:
+		tn, ok := x.Source.(*ast.TableName)
+		if !ok {
+			return
+		}
+		tnW := b.resolveCtx.GetTableName(tn)
+		if isCTE(tnW) || tnW.DBInfo == nil || tnW.TableInfo == nil {
+			return
+		}
+		alias := x.AsName.L
+		if alias == "" {
+			alias = tnW.TableInfo.Name.L
+		}
+		if isTarget(tn, tnW, alias) {
+			return
+		}
+		var authErr error
+		if user := b.ctx.GetSessionVars().User; user != nil {
+			authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", user.AuthUsername, user.AuthHostname, tnW.TableInfo.Name.L)
+		}
+		b.anyColumnSelectVisitInfo = appendVisitInfo(b.anyColumnSelectVisitInfo, mysql.SelectPriv, tnW.DBInfo.Name.L, tnW.TableInfo.Name.L, privilege.AnyColumn, authErr)
+	}
 }
 
 // If tl is CTE, its HintedTable will be nil.
@@ -6600,6 +6651,8 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	}.Init(b.ctx)
 
 	localResolveCtx := resolve.NewContext()
+	// deletedTables holds the tables of TableRefs that rows are deleted from.
+	deletedTables := make(map[*ast.TableName]struct{})
 	// Collect visitInfo.
 	if ds.Tables != nil {
 		// Delete a, b from a, b, c, d... add a and b.
@@ -6630,6 +6683,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 				return nil, plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tn.Name.O, "DELETE")
 			}
 			tb := tbInfoList[name]
+			deletedTables[tb] = struct{}{}
 			tnW := b.resolveCtx.GetTableName(tb)
 			localResolveCtx.AddTableName(&resolve.TableNameW{
 				TableName: tn,
@@ -6671,6 +6725,12 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 			authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", userName, hostName, v.Name.L)
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.L, "", authErr)
 		}
+	}
+	if ds.Tables != nil {
+		b.appendAnyColumnSelectForReadOnlySources(ds.TableRefs.TableRefs, func(tn *ast.TableName, _ *resolve.TableNameW, _ string) bool {
+			_, ok := deletedTables[tn]
+			return ok
+		})
 	}
 	handleColsMap := b.handleHelper.tailMap()
 	tblID2Handle, err := resolveIndicesForTblID2Handle(handleColsMap, p.Schema())

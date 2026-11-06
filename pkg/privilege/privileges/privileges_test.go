@@ -1213,6 +1213,11 @@ func TestLoadDataColumnPrivilege(t *testing.T) {
 	tk.MustExec(`GRANT INSERT(b) on test.t_load to 'test_load'@'localhost'`)
 	tk1.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t_load(a, @var) set b = @var + 1", path))
 
+	// An input list of only user variables requires INSERT on the assigned
+	// columns, or on all columns if nothing is assigned.
+	tk1.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t_load(@v) SET a = @v", path))
+	tk1.MustGetErrCode(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t_load(@v)", path), mysql.ErrTableaccessDenied)
+
 	tk1.MustGetErrCode(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t_load", path), mysql.ErrTableaccessDenied)
 	tk.MustExec(`GRANT INSERT(c) on test.t_load to 'test_load'@'localhost'`)
 	tk1.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t_load", path))
@@ -2818,6 +2823,14 @@ func TestSelectColumnPrivilegeInSubqueryAndCTE(t *testing.T) {
 	tk.MustExec("GRANT DELETE ON test.t1 TO 'testuser'@'localhost'")
 	userTk.MustGetErrCode("DELETE t1 FROM t1 JOIN t2 ON t1.a = t2.b", errno.ErrColumnaccessDenied)
 	userTk.MustExec("DELETE FROM t1 WHERE a = 0")
+	// Joined tables that are only read require SELECT even when none of
+	// their columns is referenced.
+	userTk.MustGetErrCode("DELETE t1 FROM t1 JOIN t2 ON TRUE WHERE t1.a = 0", errno.ErrTableaccessDenied)
+	userTk.MustGetErrCode("DELETE FROM t1 USING t1 JOIN t2 WHERE t1.a = 0", errno.ErrTableaccessDenied)
+	userTk.MustExec("DELETE x FROM t1 AS x JOIN t1 AS y ON TRUE WHERE x.a = 0")
+	// The ON condition of a LATERAL join is checked like that of other joins.
+	userTk.MustGetErrCode("SELECT t1.a FROM t1 JOIN LATERAL (SELECT t1.a) AS d ON t1.b = 2", errno.ErrColumnaccessDenied)
+	userTk.MustQuery("SELECT t1.a FROM t1 JOIN LATERAL (SELECT t1.a AS c) AS d ON d.c = 1").Check(testkit.Rows("1"))
 
 	/* CTE */
 	userTk.MustGetErrCode(`WITH CTE AS (SELECT b from t1) SELECT * FROM cte t;`, errno.ErrColumnaccessDenied)
@@ -2874,6 +2887,10 @@ func TestInsertColumnPrivilege(t *testing.T) {
 
 	userTk.MustExec(`INSERT INTO test.t1(a) SELECT a FROM test.t2;`)
 	userTk.MustGetErrCode(`INSERT INTO test.t1(a) SELECT b FROM test.t2;`, errno.ErrColumnaccessDenied)
+	// Scalar subqueries in VALUES and SET are checked as well.
+	userTk.MustExec(`INSERT INTO test.t1(a) VALUES ((SELECT a FROM test.t2 LIMIT 1));`)
+	userTk.MustGetErrCode(`INSERT INTO test.t1(a) VALUES ((SELECT b FROM test.t2 LIMIT 1));`, errno.ErrColumnaccessDenied)
+	userTk.MustGetErrCode(`INSERT INTO test.t1 SET a = (SELECT b FROM test.t2 LIMIT 1);`, errno.ErrColumnaccessDenied)
 
 	// A generated column's generation expression is evaluated internally from the
 	// incoming row; INSERT must not require SELECT on the columns it references.
@@ -2936,6 +2953,23 @@ func TestUpdateColumnPrivilege(t *testing.T) {
 	tk.MustExec(`GRANT SELECT(c,d) ON test.t2 TO 'testuser'@'localhost';`)
 	userTk.MustExec(`UPDATE test.t1, test.t2 SET a = c WHERE b = d`)
 	userTk.MustExec(`UPDATE test.t1, (SELECT c FROM test.t2 WHERE d = 2) AS tt SET a = tt.c	`)
+
+	// Tables that are joined or read in a subquery but not updated require
+	// SELECT even when none of their columns is referenced, also for
+	// single-row updates by primary key.
+	tk.MustExec(`CREATE TABLE test.dst (id int PRIMARY KEY, a int)`)
+	tk.MustExec(`CREATE TABLE test.private (x int)`)
+	tk.MustExec(`INSERT INTO test.dst VALUES (1, 0)`)
+	tk.MustExec(`INSERT INTO test.private VALUES (7)`)
+	tk.MustExec(`GRANT UPDATE(a), SELECT(id) ON test.dst TO 'testuser'@'localhost'`)
+	userTk.MustGetErrCode(`UPDATE test.dst JOIN test.private ON TRUE SET test.dst.a = 1`, errno.ErrTableaccessDenied)
+	userTk.MustGetErrCode(`UPDATE test.dst SET a = (SELECT 1 FROM test.private LIMIT 1) WHERE id = 1`, errno.ErrTableaccessDenied)
+	userTk.MustGetErrCode(`UPDATE test.dst SET a = (SELECT 1 FROM test.private LIMIT 1)`, errno.ErrTableaccessDenied)
+	tk.MustQuery(`SELECT a FROM test.dst`).Check(testkit.Rows("0"))
+	tk.MustExec(`GRANT SELECT(x) ON test.private TO 'testuser'@'localhost'`)
+	userTk.MustExec(`UPDATE test.dst JOIN test.private ON TRUE SET test.dst.a = 1`)
+	userTk.MustExec(`UPDATE test.dst SET a = (SELECT 2 FROM test.private LIMIT 1) WHERE id = 1`)
+	tk.MustQuery(`SELECT a FROM test.dst`).Check(testkit.Rows("2"))
 
 	// Computing generated columns does not require SELECT on their inputs.
 	tk.MustExec(`CREATE TABLE test.g (a int, b int AS (a + 1), c int AS (a * 2) STORED)`)
@@ -3071,6 +3105,18 @@ func TestColumnPrivilege4PreparePlanCache(t *testing.T) {
 	last, err := strconv.Atoi(afterDDL)
 	require.NoError(t, err)
 	require.Equal(t, step-base, last-step, "an EXECUTE after a schema change must advance the sequence as much as any other EXECUTE")
+
+	// Collecting the privileges again does not reject scalar subqueries in
+	// VALUES, which are not evaluated in that case.
+	tk.MustExec("CREATE TABLE test.ins (a INT)")
+	tk.MustExec("GRANT INSERT ON test.ins TO 'testuser'@'localhost'")
+	userTk.MustExec("PREPARE stmt4 FROM 'INSERT INTO test.ins(a) VALUES ((SELECT a FROM test.sq LIMIT 1))'")
+	userTk.MustExec("EXECUTE stmt4")
+	tk.MustExec("ALTER TABLE test.ins ADD COLUMN b INT")
+	userTk.MustExec("EXECUTE stmt4")
+	tk.MustExec("REVOKE SELECT ON test.sq FROM 'testuser'@'localhost'")
+	tk.MustExec("ALTER TABLE test.ins ADD COLUMN c INT")
+	userTk.MustGetErrCode("EXECUTE stmt4", mysql.ErrColumnaccessDenied)
 }
 
 func TestColumnPrivilege4Views(t *testing.T) {
