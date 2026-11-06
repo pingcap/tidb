@@ -395,6 +395,41 @@ func TestTableDDLWithTimeType(t *testing.T) {
 	tk.MustExec("drop table t")
 }
 
+func TestGeometryColumnNotSupported(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	for _, tp := range []string{"geometry", "point", "linestring", "polygon", "multipoint", "multilinestring", "multipolygon", "geometrycollection", "geomcollection"} {
+		tk.MustGetErrCode(fmt.Sprintf("create table t (a int, g %s)", tp), errno.ErrNotSupportedYet)
+	}
+	tk.MustGetErrMsg("create table t (g point not null srid 4326)", "[ddl:1235]This version of TiDB doesn't yet support 'geometry columns'")
+	tk.MustGetErrCode("create table t (g geometry as (null) stored srid 0)", errno.ErrNotSupportedYet)
+	for _, def := range []string{"1", "'abc'", "x'00'", "(1)"} {
+		tk.MustGetErrCode("create table t (g point default "+def+")", errno.ErrNotSupportedYet)
+	}
+	tk.MustGetErrMsg("create table t (a int srid 4326)", "[ddl:1221]Incorrect usage of SRID and non-geometry column")
+	tk.MustGetErrCode("create table t (a varchar(10) not null srid 0)", errno.ErrWrongUsage)
+	tk.MustGetErrMsg("create table t (g point not null srid 4326, spatial key sk (g))", "[ddl:8200]SPATIAL index is not supported")
+
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustGetErrCode("alter table t add column g point", errno.ErrNotSupportedYet)
+	tk.MustGetErrCode("alter table t add column g geometry srid 4326", errno.ErrNotSupportedYet)
+	tk.MustGetErrCode("alter table t add column c int srid 0", errno.ErrWrongUsage)
+	tk.MustGetErrCode("alter table t modify column a point", errno.ErrNotSupportedYet)
+	tk.MustGetErrCode("alter table t change column a g geomcollection srid 0", errno.ErrNotSupportedYet)
+	tk.MustGetErrCode("alter table t modify column a int srid 4326", errno.ErrWrongUsage)
+	tk.MustGetErrCode("alter table t change column a c bigint srid 0", errno.ErrWrongUsage)
+	tk.MustGetErrCode("alter table t add column c int, modify column b int srid 0", errno.ErrWrongUsage)
+	tk.MustGetErrMsg("alter table t add spatial index sk (a)", "[ddl:8200]SPATIAL index is not supported")
+	tk.MustGetErrMsg("create spatial index sk on t (a)", "[ddl:8200]SPATIAL index is not supported")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("drop table t")
+}
+
 func TestUpdateMultipleTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

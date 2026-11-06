@@ -61,6 +61,8 @@ var (
 	ErrWrongUsage = terror.ClassParser.NewStd(mysql.ErrWrongUsage)
 	// ErrWrongDBName returns for incorrect DB name.
 	ErrWrongDBName = terror.ClassParser.NewStd(mysql.ErrWrongDBName)
+	// ErrDataOutOfRange returns for a value out of range.
+	ErrDataOutOfRange = terror.ClassParser.NewStd(mysql.ErrDataOutOfRange)
 	// SpecFieldPattern special result field pattern
 	SpecFieldPattern = regexp.MustCompile(`(\/\*!(M?[0-9]{5,6})?|\*\/)`)
 	specCodeStart    = regexp.MustCompile(`^\/\*!(M?[0-9]{5,6})?[ \t]*`)
@@ -403,6 +405,23 @@ func toBit(l yyLexer, lval *yySymType, str string) int {
 	}
 	lval.item = b
 	return bitLit
+}
+
+// getUint64FromBinaryLiteral returns the big-endian value of a hexadecimal literal,
+// ignoring leading zero bytes. ok is false when the value needs more than 64 bits.
+func getUint64FromBinaryLiteral(lit ast.BinaryLiteral) (val uint64, ok bool) {
+	b := lit.ToString()
+	i := 0
+	for i < len(b) && b[i] == 0 {
+		i++
+	}
+	if len(b)-i > 8 {
+		return 0, false
+	}
+	for ; i < len(b); i++ {
+		val = val<<8 | uint64(b[i])
+	}
+	return val, true
 }
 
 func getUint64FromNUM(num interface{}) uint64 {

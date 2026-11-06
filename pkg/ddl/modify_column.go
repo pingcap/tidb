@@ -2811,6 +2811,11 @@ func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, optio
 			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't modify with full text"))
 		case ast.ColumnOptionCheck:
 			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't modify with check"))
+		case ast.ColumnOptionSRID:
+			// A geometry column is rejected by checkColumnAttributes.
+			if col.GetType() != mysql.TypeGeometry {
+				return errors.Trace(dbterror.ErrWrongUsage.GenWithStackByArgs("SRID", "non-geometry column"))
+			}
 		// Ignore ColumnOptionAutoRandom. It will be handled later.
 		case ast.ColumnOptionAutoRandom:
 		default:

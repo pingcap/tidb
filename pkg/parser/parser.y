@@ -480,6 +480,9 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	full                       "FULL"
 	function                   "FUNCTION"
 	general                    "GENERAL"
+	geomCollection             "GEOMCOLLECTION"
+	geometry                   "GEOMETRY"
+	geometryCollection         "GEOMETRYCOLLECTION"
 	global                     "GLOBAL"
 	grants                     "GRANTS"
 	handler                    "HANDLER"
@@ -516,6 +519,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	lastBackup                 "LAST_BACKUP"
 	less                       "LESS"
 	level                      "LEVEL"
+	lineString                 "LINESTRING"
 	list                       "LIST"
 	loadStats                  "LOAD_STATS"
 	local                      "LOCAL"
@@ -544,6 +548,9 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	modify                     "MODIFY"
 	monitor                    "MONITOR"
 	month                      "MONTH"
+	multiLineString            "MULTILINESTRING"
+	multiPoint                 "MULTIPOINT"
+	multiPolygon               "MULTIPOLYGON"
 	names                      "NAMES"
 	national                   "NATIONAL"
 	ncharType                  "NCHAR"
@@ -594,6 +601,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	plugins                    "PLUGINS"
 	point                      "POINT"
 	policy                     "POLICY"
+	polygon                    "POLYGON"
 	preceding                  "PRECEDING"
 	prepare                    "PREPARE"
 	preserve                   "PRESERVE"
@@ -684,6 +692,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	sqlTsiSecond               "SQL_TSI_SECOND"
 	sqlTsiWeek                 "SQL_TSI_WEEK"
 	sqlTsiYear                 "SQL_TSI_YEAR"
+	srid                       "SRID"
 	start                      "START"
 	statsAutoRecalc            "STATS_AUTO_RECALC"
 	statsColChoice             "STATS_COL_CHOICE"
@@ -1602,6 +1611,8 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	FloatingPointType                      "Approximate value types"
 	BitValueType                           "bit value types"
 	StringType                             "String types"
+	GeometryTypeName                       "Geometry type names"
+	GeometrySubtypeName                    "Geometry subtype names"
 	BlobType                               "Blob types"
 	TextType                               "Text types"
 	DateAndTimeType                        "Date and Time types"
@@ -4194,6 +4205,24 @@ ColumnOption:
 		}
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionMariaDBRowEnd}
 	}
+|	"SRID" NUM
+	{
+		srid := getUint64FromNUM($2)
+		if srid > 0xffffffff { // math.MaxUint32
+			yylex.AppendError(ErrDataOutOfRange.GenWithStackByArgs("SRID", "SRID"))
+			return 1
+		}
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionSRID, SRID: uint32(srid)}
+	}
+|	"SRID" hexLit
+	{
+		srid, ok := getUint64FromBinaryLiteral($2.(ast.BinaryLiteral))
+		if !ok || srid > 0xffffffff { // math.MaxUint32
+			yylex.AppendError(ErrDataOutOfRange.GenWithStackByArgs("SRID", "SRID"))
+			return 1
+		}
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionSRID, SRID: uint32(srid)}
+	}
 
 AutoRandomOpt:
 	{
@@ -4309,6 +4338,21 @@ ConstraintElem:
 	{
 		c := &ast.Constraint{
 			Tp:           ast.ConstraintFulltext,
+			Keys:         $5.([]*ast.IndexPartSpecification),
+			Name:         $3.(*ast.NullString).String,
+			IsEmptyIndex: $3.(*ast.NullString).Empty,
+		}
+		if $7 != nil {
+			c.Option = $7.(*ast.IndexOption)
+		} else {
+			c.Option = &ast.IndexOption{}
+		}
+		$$ = c
+	}
+|	"SPATIAL" KeyOrIndexOpt IndexName '(' IndexPartSpecificationList ')' IndexOptionList
+	{
+		c := &ast.Constraint{
+			Tp:           ast.ConstraintSpatial,
 			Keys:         $5.([]*ast.IndexPartSpecification),
 			Name:         $3.(*ast.NullString).String,
 			IsEmptyIndex: $3.(*ast.NullString).Empty,
@@ -8242,6 +8286,15 @@ UnReservedKeyword:
 |	"PAGE_COMPRESSION_LEVEL"
 |	"TRANSACTIONAL"
 |	"IETF_QUOTES"
+|	"GEOMCOLLECTION"
+|	"GEOMETRY"
+|	"GEOMETRYCOLLECTION"
+|	"LINESTRING"
+|	"MULTILINESTRING"
+|	"MULTIPOINT"
+|	"MULTIPOLYGON"
+|	"POLYGON"
+|	"SRID"
 
 TiDBKeyword:
 	"ADMIN"
@@ -9282,16 +9335,23 @@ FunctionNameConflict:
 |	"DATE"
 |	"DATABASE"
 |	"DAY"
+|	"GEOMCOLLECTION"
+|	"GEOMETRYCOLLECTION"
 |	"HOUR"
 |	"IF"
 |	"LOG"
 |	"FORMAT"
 |	"LEFT"
+|	"LINESTRING"
 |	"MICROSECOND"
 |	"MINUTE"
 |	"MONTH"
+|	"MULTILINESTRING"
+|	"MULTIPOINT"
+|	"MULTIPOLYGON"
 |	builtinNow
 |	"POINT"
+|	"POLYGON"
 |	"QUARTER"
 |	"REPEAT"
 |	"REPLACE"
@@ -10261,6 +10321,15 @@ CastType:
 		tp := types.NewFieldType(mysql.TypeTiDBVectorFloat32)
 		tp.SetFlen($3.(int))
 		tp.SetDecimal(0)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		$$ = tp
+	}
+|	GeometrySubtypeName
+	{
+		tp := types.NewFieldType(mysql.TypeGeometry)
+		tp.SetGeometryType($1.(types.GeometryType))
+		tp.AddFlag(mysql.BinaryFlag)
 		tp.SetCharset(charset.CharsetBin)
 		tp.SetCollate(charset.CollationBin)
 		$$ = tp
@@ -14796,6 +14865,56 @@ StringType:
 		tp.SetCharset(charset.CharsetBin)
 		tp.SetCollate(charset.CollationBin)
 		$$ = tp
+	}
+|	GeometryTypeName
+	{
+		tp := types.NewFieldType(mysql.TypeGeometry)
+		tp.SetGeometryType($1.(types.GeometryType))
+		tp.AddFlag(mysql.BinaryFlag)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		$$ = tp
+	}
+
+GeometryTypeName:
+	"GEOMETRY"
+	{
+		$$ = types.GeomGeometry
+	}
+|	GeometrySubtypeName
+
+GeometrySubtypeName:
+	"POINT"
+	{
+		$$ = types.GeomPoint
+	}
+|	"LINESTRING"
+	{
+		$$ = types.GeomLineString
+	}
+|	"POLYGON"
+	{
+		$$ = types.GeomPolygon
+	}
+|	"MULTIPOINT"
+	{
+		$$ = types.GeomMultiPoint
+	}
+|	"MULTILINESTRING"
+	{
+		$$ = types.GeomMultiLineString
+	}
+|	"MULTIPOLYGON"
+	{
+		$$ = types.GeomMultiPolygon
+	}
+|	"GEOMETRYCOLLECTION"
+	{
+		$$ = types.GeomGeometryCollection
+	}
+|	"GEOMCOLLECTION"
+	{
+		$$ = types.GeomGeometryCollection
 	}
 
 Char:
