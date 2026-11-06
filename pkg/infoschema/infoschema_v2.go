@@ -1735,7 +1735,8 @@ func (b *Builder) applyModifySchemaCharsetAndCollateV2(m meta.Reader, diff *mode
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	newDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	oldDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	newDBInfo := oldDBInfo.Clone()
 	newDBInfo.Charset = di.Charset
 	newDBInfo.Collate = di.Collate
 	b.infoschemaV2.deleteDB(di, diff.Version)
@@ -1754,7 +1755,8 @@ func (b *Builder) applyModifySchemaDefaultPlacementV2(m meta.Reader, diff *model
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	newDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	oldDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	newDBInfo := oldDBInfo.Clone()
 	newDBInfo.PlacementPolicyRef = di.PlacementPolicyRef
 	b.infoschemaV2.deleteDB(di, diff.Version)
 	b.infoschemaV2.addDB(diff.Version, newDBInfo)
