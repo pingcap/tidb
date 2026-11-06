@@ -208,6 +208,7 @@ fn a_scan_has_at_most_one_retriever() {
         extractor: None,
         query_time_range: Default::default(),
         is_cluster_scan: false,
+        cop_request: None,
     };
     let retrievers: Vec<Box<dyn MemTableRetriever>> = vec![
         Box::new(

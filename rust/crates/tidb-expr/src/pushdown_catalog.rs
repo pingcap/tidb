@@ -3870,8 +3870,9 @@ pub fn to_pb_field_type(field_type: &FieldType) -> Option<tidb_proto::tipb::Fiel
     let mut result = pb_field_type(
         i32::from(field_type.code().mysql_type()),
         field_type.flags(),
-        i32::try_from(field_type.flen()).ok()?,
-        i32::try_from(field_type.decimal()).ok()?,
+        // Go `ToPBFieldType`: `int32(ft.GetFlen())` and `int32(ft.GetDecimal())`.
+        field_type.flen() as i32,
+        field_type.decimal() as i32,
         field_type.charset_name(),
         field_type.collation_name(),
     );

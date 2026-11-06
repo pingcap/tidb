@@ -1063,7 +1063,9 @@ impl DataSource {
                 .collect(),
         );
 
-        // Go `originColumns := ds.Columns`.
+        // Go `originSchemaColumns := ds.Schema().Columns` and
+        // `originColumns := ds.Columns`.
+        let origin_schema_columns = schema.columns.clone();
         let origin_columns = self.columns.clone();
         for i in (0..used.len()).rev() {
             if used[i] || expr_used[i] {
@@ -1079,7 +1081,28 @@ impl DataSource {
         }
 
         let emptied = schema.columns.is_empty();
-        if emptied {
+        if emptied && self.is_cluster_table {
+            // Go `preferKeyColumnFromTable`: "For cluster tables, ExtraHandleID
+            // is not valid as they are memory tables. Use the first column
+            // from originColumns if available, otherwise fall back to the
+            // first column from table metadata."
+            let forced = match (origin_schema_columns.first(), origin_columns.first()) {
+                (Some(column), Some(info)) => Some((column.clone(), info.clone())),
+                _ => self.table_info.as_ref().and_then(|table| {
+                    let info = table.read().columns.get(0)?;
+                    let column = self
+                        .table_columns
+                        .iter()
+                        .find(|column| column.id == info.read().id)?
+                        .clone();
+                    Some((column, info))
+                }),
+            };
+            if let Some((column, info)) = forced {
+                self.columns.push(info);
+                schema.columns.push(column);
+            }
+        } else if emptied {
             // Go `preferKeyColumnFromTable`: an ordinary table first reuses
             // its live handle, then the immutable PK handle on a later prune
             // pass, and finally the implicit row id. `table_columns` is this

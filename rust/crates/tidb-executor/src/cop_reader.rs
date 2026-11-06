@@ -1192,8 +1192,8 @@ pub fn column_to_proto(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
     // `GEOMETRY`) at `-1`, and very wide lengths such as JSON's max width also
     // narrow to `-1` in the protobuf field.  Preserve that metadata instead
     // of treating it as an unsupported column.
-    let column_len = i32::try_from(column.field_type.flen()).unwrap_or(-1);
-    let decimal = i32::try_from(column.field_type.decimal()).unwrap_or(-1);
+    let column_len = column.field_type.flen() as i32;
+    let decimal = column.field_type.decimal() as i32;
     let mut flag = i32::try_from(column.field_type.flags()).ok()?;
     if column.is_handle {
         flag |= NOT_NULL_FLAG | PRI_KEY_FLAG;

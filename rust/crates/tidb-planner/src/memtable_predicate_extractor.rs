@@ -1480,7 +1480,7 @@ impl SlowQueryExtractor {
 
     /// Go `SlowQueryExtractor.setTimeRange`: an open side reaches
     /// `MinDatetime` / `MaxDatetime` in UTC.
-    fn set_time_range(&mut self, start: i64, end: i64) {
+    pub fn set_time_range(&mut self, start: i64, end: i64) {
         if start == 0 && end == 0 {
             return;
         }

@@ -80,69 +80,13 @@ impl PeerService {
         }
     }
 
+    /// Go `CoprocessorDAGHandler.HandleRequest` (`buildDAGExecutor`, then
+    /// the plan's executors and `buildUnaryResponse`).
     fn execute(&self, request: coprocessor::Request) -> Result<coprocessor::Response, String> {
-        if request.tp != 103 {
+        if request.tp != tidb_executor::coprocessor::REQ_TYPE_DAG {
             return Err(format!("unsupported request type {}", request.tp));
         }
         let dag = tipb::DagRequest::decode(request.data.as_slice()).map_err(|e| e.to_string())?;
-        let (executor, tail) = dag
-            .executors
-            .split_first()
-            .ok_or("TiDB peer requires a local executor")?;
-        // Go `PBPlanBuilder.Build`: every executor must be one it supports.
-        for item in &dag.executors {
-            use tipb::ExecType::*;
-            match item.tp.and_then(|tp| tipb::ExecType::try_from(tp).ok()) {
-                Some(
-                    TypeTableScan | TypeSelection | TypeProjection | TypeTopN | TypeLimit
-                    | TypeAggregation | TypeStreamAgg | TypeKill | TypeBroadcastQuery,
-                ) => {}
-                other => {
-                    return Err(format!(
-                        "this exec type {} doesn't support yet",
-                        other.map_or_else(
-                            || item.tp.unwrap_or_default().to_string(),
-                            |tp| tp.as_str_name().to_owned()
-                        )
-                    ))
-                }
-            }
-        }
-        if executor.tp != Some(tipb::ExecType::TypeTableScan as i32) && !tail.is_empty() {
-            return Err("unsupported TiDB peer executor chain".into());
-        }
-        // Go `predicatePushDown`: the selections directly above the scan
-        // reach the reader; the rest of the chain runs over its rows.
-        let leading = tail
-            .iter()
-            .take_while(|item| item.tp == Some(tipb::ExecType::TypeSelection as i32))
-            .count();
-        let (selections, rest) = tail.split_at(leading);
-        let mut conditions = Vec::new();
-        for selection in selections {
-            conditions.extend(
-                selection
-                    .selection
-                    .as_ref()
-                    .ok_or("missing peer selection")?
-                    .conditions
-                    .iter()
-                    .cloned(),
-            );
-        }
-        // Go ConstructTimeZone prefers the name to the offset, including System.
-        let zone = match tidb_timeutil::construct_time_zone(
-            dag.time_zone_name.as_deref().unwrap_or(""),
-            dag.time_zone_offset.unwrap_or(0) as i32,
-        )
-        .map_err(|e| e.to_string())?
-        {
-            tidb_timeutil::TimeZone::Local => SessionTimeZone::Local,
-            tidb_timeutil::TimeZone::Named(zone) => SessionTimeZone::Named(zone),
-            tidb_timeutil::TimeZone::Fixed { name, offset_secs } => {
-                SessionTimeZone::Fixed { name, offset_secs }
-            }
-        };
         // Go `rpcServer.handleCopRequest` serves every request on a fresh
         // session over the node's store (`createSession`).
         let mut session = (self.session_factory)()?;
@@ -162,558 +106,54 @@ impl PeerService {
         if let Some(info) = &self.server_info {
             session.set_server_info_syncer(info.clone());
         }
-        let mut result = tipb::SelectResponse {
-            encode_type: Some(dag.encode_type.unwrap_or(0)),
-            ..Default::default()
+        // Go ConstructTimeZone prefers the name to the offset, including System.
+        let zone = match tidb_timeutil::construct_time_zone(
+            dag.time_zone_name.as_deref().unwrap_or(""),
+            dag.time_zone_offset.unwrap_or(0) as i32,
+        )
+        .map_err(|e| e.to_string())?
+        {
+            tidb_timeutil::TimeZone::Local => SessionTimeZone::Local,
+            tidb_timeutil::TimeZone::Named(zone) => SessionTimeZone::Named(zone),
+            tidb_timeutil::TimeZone::Fixed { name, offset_secs } => {
+                SessionTimeZone::Fixed { name, offset_secs }
+            }
         };
-        match executor.tp.and_then(|tp| tipb::ExecType::try_from(tp).ok()) {
-            Some(tipb::ExecType::TypeKill) => {
-                let kill = executor.kill.as_ref().ok_or("missing KILL executor")?;
+        // Go `core.NewPBPlanBuilder(sctx, is, req.Ranges).Build(executors)`.
+        let ctx = tidb_sessionctx::StmtContext::for_query().with_time_zone(zone.clone());
+        let plan = tidb_executor::coprocessor::PBPlanBuilder::new(&ctx, &request.ranges)
+            .build(&dag.executors)?;
+        let result = match &plan.node {
+            tidb_executor::coprocessor::PbPlanNode::Kill(kill) => {
                 let config = tidb_config::config_tree::config::get_global_config();
                 if config.enable_global_kill || config.compatible_kill_query {
                     self.processes
                         .kill(kill.conn_id.unwrap_or(0), kill.query.unwrap_or(false));
                 }
+                tidb_executor::coprocessor::build_unary_response(&dag, &[], &[], &zone)?
             }
-            Some(tipb::ExecType::TypeTableScan) => {
-                let scan = executor.tbl_scan.as_ref().ok_or("missing table scan")?;
-                let table = tidb_infoschema::infoschema_meta::CLUSTER_TABLES
-                    .iter()
-                    .map(|(name, _)| *name)
-                    .find(|name| scan.table_id == tidb_infoschema::infoschema_meta::memory_table_id(name))
-                    .ok_or("unsupported TiDB cluster table")?;
-                let columns = tidb_infoschema::infoschema_meta::table_schema(table)
-                    .ok_or("missing cluster table schema")?;
-                let selected = scan
-                    .columns
-                    .iter()
-                    .map(|col| {
-                        let index = col
-                            .column_id
-                            .unwrap_or(0)
-                            .checked_sub(1)
-                            .and_then(|id| usize::try_from(id).ok())
-                            .ok_or("invalid cluster table column ID")?;
-                        columns
-                            .get(index)
-                            .ok_or("invalid cluster table column ID")?;
-                        Ok(index)
-                    })
-                    .collect::<Result<Vec<_>, &str>>()?;
-                let required = selected
-                    .iter()
-                    .map(|index| columns[*index].0.clone())
-                    .collect();
-                let digest_filter = summary_digest_filter(&conditions, &selected, &columns)?;
-                // The handler reads outside any statement, over a committed
-                // snapshot of its own.
-                let rows = session
-                    .with_committed_snapshot(|session| {
-                        session.local_cluster_table_rows_for(
-                            table,
-                            Some(&self.processes),
-                            &zone,
-                            Some(&required),
-                            digest_filter.as_ref(),
-                        )
-                    })
-                    .and_then(|rows| rows)
-                    .map_err(|error| error.to_string())?;
-                let scan_types: Vec<_> = selected
-                    .iter()
-                    .map(|index| columns[*index].1.clone())
-                    .collect();
-                let rows = rows
-                    .into_iter()
-                    .map(|row| selected.iter().map(|index| row[*index].clone()).collect())
-                    .collect();
-                let rows =
-                    select_peer_rows(rows, &scan_types, &conditions, &zone, &mut result.warnings)?;
-                let (rows, output_types) =
-                    apply_peer_executors(rows, scan_types, rest, &zone, &mut result.warnings)?;
-                // Go `encodeChunk`/`encodeDefault`: the offsets index the
-                // last executor's output.
-                let projection: Vec<_> = dag
-                    .output_offsets
-                    .iter()
-                    .map(|offset| *offset as usize)
-                    .collect();
-                let fields = projection
-                    .iter()
-                    .map(|index| {
-                        output_types
-                            .get(*index)
-                            .cloned()
-                            .ok_or("invalid cluster table output offset")
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                let encoding = tipb::EncodeType::try_from(dag.encode_type.unwrap_or(0))
-                    .map_err(|_| "unsupported result encoding")?;
-                let batch_size = if encoding == tipb::EncodeType::TypeDefault {
-                    64
-                } else {
-                    1024
-                };
-                for rows in rows.chunks(batch_size) {
-                    let data = match encoding {
-                        tipb::EncodeType::TypeDefault => {
-                            let mut data = Vec::new();
-                            for row in rows {
-                                let values: Vec<_> =
-                                    projection.iter().map(|i| row[*i].clone()).collect();
-                                data.extend(
-                                    tidb_codec::encode_value_in_timezone(&zone, &values)
-                                        .map_err(|e| e.to_string())?,
-                                );
-                            }
-                            data
-                        }
-                        tipb::EncodeType::TypeChunk => {
-                            let mut chunk =
-                                tidb_chunk::chunk::Chunk::new(&fields, rows.len(), 1024);
-                            for row in rows {
-                                for (col, index) in projection.iter().enumerate() {
-                                    chunk.append_datum(col, &row[*index]);
-                                }
-                            }
-                            tidb_chunk::codec::Codec::new(fields.clone()).encode(&chunk)
-                        }
-                        _ => return Err("unsupported result encoding".into()),
-                    };
-                    result.chunks.push(tipb::Chunk {
-                        rows_data: Some(data.into()),
-                        ..Default::default()
-                    });
-                }
-            }
-            Some(tipb::ExecType::TypeBroadcastQuery) => {
-                let query = executor
-                    .broadcast_query
-                    .as_ref()
-                    .and_then(|broadcast| broadcast.query.as_deref())
-                    .unwrap_or("");
+            tidb_executor::coprocessor::PbPlanNode::BroadcastQuery(query) => {
                 check_broadcast_query(query)?;
                 let runner = self
                     .broadcast_query
                     .as_ref()
                     .ok_or("broadcast query execution is not installed")?;
                 runner(query)?;
+                tidb_executor::coprocessor::build_unary_response(&dag, &[], &[], &zone)?
             }
-            _ => return Err("unsupported TiDB peer executor".into()),
-        }
-        if dag.collect_execution_summaries.unwrap_or(false) {
-            result.execution_summaries =
-                vec![tipb::ExecutorExecutionSummary::default(); dag.executors.len()];
-        }
+            // The handler reads outside any statement, over a committed
+            // snapshot of its own.
+            _ => session
+                .with_committed_snapshot(|session| {
+                    session.handle_cop_plan(&dag, &plan, Some(&self.processes), &zone)
+                })
+                .map_err(|error| error.to_string())??,
+        };
         Ok(coprocessor::Response {
             data: result.encode_to_vec().into(),
             ..Default::default()
         })
     }
-}
-
-/// Extract only the exact binary string-IN shape used by restricted digest lookup.
-/// Every condition still executes through SelectionExec after reader filtering.
-fn summary_digest_filter(
-    conditions: &[tipb::Expr],
-    selected: &[usize],
-    columns: &[(String, tidb_datatype::FieldType)],
-) -> Result<Option<std::collections::HashSet<String>>, String> {
-    let mut result: Option<std::collections::HashSet<String>> = None;
-    for condition in conditions {
-        if condition.tp != Some(tipb::ExprType::ScalarFunc as i32)
-            || condition.sig != Some(tipb::ScalarFuncSig::InString as i32)
-            || condition
-                .field_type
-                .as_ref()
-                .is_none_or(|field| !matches!(field.collate(), 46 | -46))
-        {
-            continue;
-        }
-        let Some((column, values)) = condition.children.split_first() else {
-            continue;
-        };
-        if column.tp != Some(tipb::ExprType::ColumnRef as i32) {
-            continue;
-        }
-        let (_, offset) =
-            tidb_codec::decode_int(column.val()).map_err(|error| error.to_string())?;
-        let Some(index) = usize::try_from(offset)
-            .ok()
-            .and_then(|offset| selected.get(offset))
-        else {
-            return Err("digest column offset out of range".into());
-        };
-        if !columns[*index].0.eq_ignore_ascii_case("DIGEST") {
-            continue;
-        }
-        let values: Option<std::collections::HashSet<String>> = values
-            .iter()
-            .map(|value| {
-                (value.tp == Some(tipb::ExprType::String as i32))
-                    .then(|| String::from_utf8(value.val().to_vec()).ok())
-                    .flatten()
-            })
-            .collect();
-        if let Some(values) = values {
-            // Stored digests are canonical hex. Other literals (including PAD
-            // SPACE variants) must retain the expression collator's semantics.
-            if values.iter().any(|value| {
-                value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_hexdigit())
-            }) {
-                continue;
-            }
-            result = Some(match result {
-                Some(previous) => previous.intersection(&values).cloned().collect(),
-                None => values,
-            });
-        }
-    }
-    Ok(result)
-}
-
-/// Rejects column references past the input row, which the expression
-/// decoder would otherwise index unchecked.
-fn validate_peer_expr(expr: &tipb::Expr, width: usize) -> Result<(), String> {
-    if expr.tp == Some(tipb::ExprType::ColumnRef as i32) {
-        let (remaining, offset) =
-            tidb_codec::decode_int(expr.val()).map_err(|error| error.to_string())?;
-        if !remaining.is_empty()
-            || usize::try_from(offset)
-                .ok()
-                .is_none_or(|offset| offset >= width)
-        {
-            return Err("peer predicate column offset out of range".into());
-        }
-    }
-    for child in &expr.children {
-        validate_peer_expr(child, width)?;
-    }
-    Ok(())
-}
-
-/// Go `FieldTypeFromPB` of an expression's declared result type.
-fn pb_field_type(expr: &tipb::Expr) -> tidb_datatype::FieldType {
-    tidb_expr::distsql_builtin::pb_type_to_field_type(&expr.field_type.clone().unwrap_or_default())
-}
-
-/// Decodes `exprs` over a row of `fields`.
-fn peer_exprs(
-    exprs: &[tipb::Expr],
-    fields: &[tidb_datatype::FieldType],
-    zone: &SessionTimeZone,
-) -> Result<Vec<tidb_expr::expression::Expression>, String> {
-    exprs
-        .iter()
-        .map(|expr| {
-            validate_peer_expr(expr, fields.len())?;
-            tidb_expr::distsql_builtin::pb_to_expr_in(expr, fields, zone)
-        })
-        .collect()
-}
-
-/// The executor schema of a row of `fields`, columns numbered by offset.
-fn peer_meta(fields: &[tidb_datatype::FieldType]) -> tidb_executor_internal_exec::ExecutorMeta {
-    let schema = tidb_expr::schema::Schema::new(
-        fields
-            .iter()
-            .enumerate()
-            .map(|(index, field)| tidb_expr::column::Column::new(index as i64, field.clone()))
-            .collect(),
-    );
-    tidb_executor_internal_exec::ExecutorMeta::new(schema, 0, 32, 1024)
-}
-
-fn peer_context(zone: &SessionTimeZone) -> tidb_sessionctx::StmtContext {
-    tidb_sessionctx::StmtContext::for_query().with_time_zone(zone.clone())
-}
-
-/// Opens, drains and closes `executor`, whose rows have `fields`; its
-/// statement warnings become response warnings.
-fn drain_peer_executor(
-    mut executor: Box<dyn tidb_executor_internal_exec::Executor>,
-    fields: &[tidb_datatype::FieldType],
-    ctx: &tidb_sessionctx::StmtContext,
-    warnings: &mut Vec<tipb::Error>,
-) -> Result<Vec<Vec<tidb_datatype::Datum>>, String> {
-    executor
-        .open()
-        .map_err(|error| tidb_driver_error::DriverError::from(error).to_string())?;
-    let result = (|| {
-        let mut output = Vec::new();
-        let mut chunk = tidb_chunk::chunk::Chunk::new(fields, 32, 1024);
-        loop {
-            executor
-                .next(&mut chunk)
-                .map_err(|error| tidb_driver_error::DriverError::from(error).to_string())?;
-            if chunk.num_rows() == 0 {
-                break;
-            }
-            for index in 0..chunk.num_rows() {
-                output.push(chunk.get_row(index).get_datum_row(fields));
-            }
-        }
-        Ok(output)
-    })();
-    let close = executor
-        .close()
-        .map_err(|error| tidb_driver_error::DriverError::from(error).to_string());
-    warnings.extend(
-        ctx.take_warnings()
-            .into_iter()
-            .map(|warning| tipb::Error {
-                code: Some(i32::from(warning.code())),
-                msg: Some(warning.message().to_owned()),
-                ..Default::default()
-            }),
-    );
-    match result {
-        Err(error) => Err(error),
-        Ok(rows) => {
-            close?;
-            Ok(rows)
-        }
-    }
-}
-
-/// Reuse the ordinary typed expression and selection owners for received DAGs.
-fn select_peer_rows(
-    rows: Vec<Vec<tidb_datatype::Datum>>,
-    fields: &[tidb_datatype::FieldType],
-    conditions: &[tipb::Expr],
-    zone: &SessionTimeZone,
-    warnings: &mut Vec<tipb::Error>,
-) -> Result<Vec<Vec<tidb_datatype::Datum>>, String> {
-    if conditions.is_empty() {
-        return Ok(rows);
-    }
-    let filters = peer_exprs(conditions, fields, zone)?;
-    let meta = peer_meta(fields);
-    let ctx = peer_context(zone);
-    let memory = ctx.statement_memory().clone();
-    let source = tidb_executor::mem_table::MemTableSourceExec::new(meta.clone(), rows);
-    let selection = tidb_executor::selection::SelectionExec::new(
-        meta,
-        filters,
-        Box::new(source),
-        ctx.clone(),
-        memory,
-    );
-    drain_peer_executor(Box::new(selection), fields, &ctx, warnings)
-}
-
-/// Go `PBPlanBuilder` plus the executor builder for the executors above the
-/// scan's selections: each runs over the previous one's rows with the
-/// ordinary executor owners. Returns the rows and the last output's types.
-fn apply_peer_executors(
-    mut rows: Vec<Vec<tidb_datatype::Datum>>,
-    mut fields: Vec<tidb_datatype::FieldType>,
-    executors: &[tipb::Executor],
-    zone: &SessionTimeZone,
-    warnings: &mut Vec<tipb::Error>,
-) -> Result<
-    (
-        Vec<Vec<tidb_datatype::Datum>>,
-        Vec<tidb_datatype::FieldType>,
-    ),
-    String,
-> {
-    for executor in executors {
-        let tp = executor.tp.and_then(|tp| tipb::ExecType::try_from(tp).ok());
-        match tp {
-            Some(tipb::ExecType::TypeSelection) => {
-                let selection = executor
-                    .selection
-                    .as_ref()
-                    .ok_or("missing peer selection")?;
-                rows = select_peer_rows(rows, &fields, &selection.conditions, zone, warnings)?;
-            }
-            Some(tipb::ExecType::TypeProjection) => {
-                let projection = executor
-                    .projection
-                    .as_ref()
-                    .ok_or("missing peer projection")?;
-                let exprs = peer_exprs(&projection.exprs, &fields, zone)?;
-                let output: Vec<_> = exprs
-                    .iter()
-                    .zip(&projection.exprs)
-                    .map(|(expr, pb)| {
-                        expr.static_type()
-                            .cloned()
-                            .unwrap_or_else(|| pb_field_type(pb))
-                    })
-                    .collect();
-                let ctx = peer_context(zone);
-                let source =
-                    tidb_executor::mem_table::MemTableSourceExec::new(peer_meta(&fields), rows);
-                let exec = tidb_executor::projection::ProjectionExec::new(
-                    peer_meta(&output),
-                    exprs,
-                    Box::new(source),
-                    ctx.clone(),
-                );
-                rows = drain_peer_executor(Box::new(exec), &output, &ctx, warnings)?;
-                fields = output;
-            }
-            Some(tipb::ExecType::TypeTopN) => {
-                let top_n = executor.top_n.as_ref().ok_or("missing peer TopN")?;
-                let by_items = top_n
-                    .order_by
-                    .iter()
-                    .map(|item| {
-                        let expr = item.expr.as_ref().ok_or("missing TopN order item")?;
-                        validate_peer_expr(expr, fields.len())?;
-                        Ok(tidb_executor_sortexec::SortByItem {
-                            expr: tidb_expr::distsql_builtin::pb_to_expr_in(expr, &fields, zone)?,
-                            desc: item.desc.unwrap_or(false),
-                        })
-                    })
-                    .collect::<Result<Vec<_>, String>>()?;
-                let ctx = peer_context(zone);
-                let memory = ctx.statement_memory().clone();
-                let meta = peer_meta(&fields);
-                let source = tidb_executor::mem_table::MemTableSourceExec::new(meta.clone(), rows);
-                let exec = tidb_executor_sortexec::topn::TopNExec::new(
-                    meta,
-                    by_items,
-                    Box::new(source),
-                    ctx.clone(),
-                    0,
-                    top_n.limit.unwrap_or(0),
-                    memory,
-                );
-                rows = drain_peer_executor(Box::new(exec), &fields, &ctx, warnings)?;
-            }
-            Some(tipb::ExecType::TypeLimit) => {
-                let limit = executor.limit.as_ref().ok_or("missing peer limit")?;
-                let ctx = peer_context(zone);
-                let meta = peer_meta(&fields);
-                let source = tidb_executor::mem_table::MemTableSourceExec::new(meta.clone(), rows);
-                let exec = tidb_executor::limit::LimitExec::new(
-                    meta,
-                    0,
-                    limit.limit.unwrap_or(0),
-                    Box::new(source),
-                );
-                rows = drain_peer_executor(Box::new(exec), &fields, &ctx, warnings)?;
-            }
-            Some(tipb::ExecType::TypeAggregation | tipb::ExecType::TypeStreamAgg) => {
-                let aggregation = executor
-                    .aggregation
-                    .as_ref()
-                    .ok_or("missing peer aggregation")?;
-                let streamed = tp == Some(tipb::ExecType::TypeStreamAgg);
-                (rows, fields) = peer_aggregate(rows, &fields, aggregation, streamed, zone)?;
-            }
-            _ => return Err("unsupported TiDB peer executor chain".into()),
-        }
-    }
-    Ok((rows, fields))
-}
-
-/// Go's TiDB-side partial aggregation (`PBPlanBuilder.pbToAgg`, built as a
-/// hash or stream aggregate): groups by the decoded group-by expressions
-/// with Go's `HashGroupKey` and emits only the aggregate functions' partial
-/// results -- the TiDB executor does not output group-by values, which is
-/// why the planner adds `firstrow` for them. Without GROUP BY an empty input
-/// still answers one row of initial partial results.
-#[allow(clippy::type_complexity)]
-fn peer_aggregate(
-    rows: Vec<Vec<tidb_datatype::Datum>>,
-    fields: &[tidb_datatype::FieldType],
-    aggregation: &tipb::Aggregation,
-    streamed: bool,
-    zone: &SessionTimeZone,
-) -> Result<
-    (
-        Vec<Vec<tidb_datatype::Datum>>,
-        Vec<tidb_datatype::FieldType>,
-    ),
-    String,
-> {
-    let group_by = peer_exprs(&aggregation.group_by, fields, zone)?;
-    let group_types: Vec<_> = group_by
-        .iter()
-        .zip(&aggregation.group_by)
-        .map(|(expr, pb)| {
-            expr.static_type()
-                .cloned()
-                .unwrap_or_else(|| pb_field_type(pb))
-        })
-        .collect();
-    let mut functions = Vec::with_capacity(aggregation.agg_func.len());
-    let mut output = Vec::new();
-    for func in &aggregation.agg_func {
-        validate_peer_expr(func, fields.len())?;
-        functions.push(tidb_expression_aggregation::DistAggregate::from_pb(
-            func, fields, zone,
-        )?);
-        let ret = pb_field_type(func);
-        if func.tp == Some(tipb::ExprType::Avg as i32) {
-            // A partial AVG is its count, then its sum.
-            output.push(tidb_datatype::FieldType::new(
-                tidb_datatype::FieldTypeCode::LongLong,
-            ));
-        }
-        output.push(ret);
-    }
-    let ctx = peer_context(zone);
-    let mut row = tidb_chunk::mutrow::MutRow::mut_row_from_types(fields);
-    let mut index: std::collections::HashMap<Vec<u8>, usize> = std::collections::HashMap::new();
-    let mut groups: Vec<(Vec<u8>, Vec<tidb_expression_aggregation::DistAggregateState>)> = Vec::new();
-    let new_states = || -> Vec<_> { functions.iter().map(|f| f.create_state()).collect() };
-    for values in &rows {
-        if values.len() != fields.len() {
-            return Err("aggregate row does not match input schema".into());
-        }
-        row.set_datums(values);
-        let mut key = Vec::new();
-        for (expr, ft) in group_by.iter().zip(&group_types) {
-            let value = expr.eval(&ctx, row.to_row()).map_err(|error| {
-                tidb_driver_error::DriverError::from(tidb_driver_error::ExecError::Eval(error)).to_string()
-            })?;
-            tidb_codec::append_hash_group_key_in_timezone(&chrono::Utc, &value, ft, &mut key)
-                .map_err(|error| format!("{error:?}"))?;
-        }
-        let at = if streamed {
-            // Go `StreamAggExec`: a new group starts when the key changes.
-            match groups.last() {
-                Some((last, _)) if *last == key => groups.len() - 1,
-                _ => {
-                    groups.push((key, new_states()));
-                    groups.len() - 1
-                }
-            }
-        } else {
-            match index.get(&key) {
-                Some(at) => *at,
-                None => {
-                    index.insert(key.clone(), groups.len());
-                    groups.push((key, new_states()));
-                    groups.len() - 1
-                }
-            }
-        };
-        for (function, state) in functions.iter().zip(groups[at].1.iter_mut()) {
-            function
-                .update(state, &ctx, row.to_row())
-                .map_err(|error| error.to_string())?;
-        }
-    }
-    if groups.is_empty() && group_by.is_empty() {
-        groups.push((Vec::new(), new_states()));
-    }
-    let rows = groups
-        .into_iter()
-        .map(|(_, states)| {
-            functions
-                .iter()
-                .zip(states)
-                .flat_map(|(function, state)| function.partial_result(state))
-                .collect()
-        })
-        .collect();
-    Ok((rows, output))
 }
 
 /// Go `PBPlanBuilder.pbToBroadcastQuery`: only `ADMIN RELOAD BINDINGS`,
@@ -1660,6 +1100,10 @@ mod tests {
             .unwrap();
     }
 
+    /// Go `deadlocksTableRetriever.retrieve` refuses on the node the
+    /// request reaches; its coprocessor handler answers the denial as the
+    /// response's `OtherError`, which copr reports as `other error: ...`
+    /// (`handleCopResponse`), an unknown (1105) error on the requester.
     #[test]
     fn cluster_diagnostics_batch_deadlock_admission() {
         let mut session = Session::new();
@@ -1668,9 +1112,10 @@ mod tests {
             .run("SELECT * FROM information_schema.CLUSTER_DEADLOCKS")
             .unwrap_err();
         let error = error.to_mysql_error();
-        assert_eq!(error.code, 1227, "{}", error.message);
+        assert_eq!(error.code, 1105, "{}", error.message);
         assert!(
-            error.message.contains("the PROCESS privilege(s)"),
+            error.message.starts_with("other error: ")
+                && error.message.contains("the PROCESS privilege(s)"),
             "{}",
             error.message
         );
@@ -2308,11 +1753,19 @@ mod tests {
             rows,
             tidb_session::StmtResult::Rows(vec![vec![Datum::Int(1)]])
         );
+        // Go's `stmtSummaryRetriever` refuses on the node the request reaches,
+        // so the requester sees copr's `other error: ...` (1105).
         let error = session
             .run("SELECT * FROM information_schema.CLUSTER_TIDB_STATEMENTS_STATS")
             .unwrap_err();
         let error = error.to_mysql_error();
-        assert_eq!(error.code, 1235, "{}", error.message);
+        assert_eq!(error.code, 1105, "{}", error.message);
+        assert!(
+            error.message.starts_with("other error: ")
+                && error.message.contains("cumulative statement summary"),
+            "{}",
+            error.message
+        );
         session
             .run("SELECT DIGEST_TEXT FROM information_schema.CLUSTER_STATEMENTS_SUMMARY")
             .unwrap();
@@ -2765,6 +2218,314 @@ mod tests {
             run(vec![sender], vec![0]),
             Err("this exec type TypeExchangeSender doesn't support yet".to_owned())
         );
+    }
+
+    /// Go's `TableReaderExecutor` on the `kv.TiDB` store for
+    /// CLUSTER_SLOW_QUERY: the requester sends the DAG Go's planner pushes
+    /// (key ranges from the `time` handle, the scan's `Desc`, the pushed
+    /// Selection, Limit, TopN and partial aggregation) and the peer's
+    /// `PBPlanBuilder` reads its slow log by the ranges' time window, in the
+    /// scan's order.
+    ///
+    /// Captured from Go: a throwaway `pkg/testkit` probe (`zzprobe_i07`)
+    /// wrote the same five-entry slow log, set `time_zone='+00:00'`,
+    /// hijacked the mock store's client to record every `kv.TiDB`
+    /// coprocessor request and answered it with
+    /// `executor.NewCoprocessorDAGHandler(sctx).HandleRequest`; the key
+    /// ranges, scan columns/`Desc`, executor chains and result rows below are
+    /// what it printed.
+    #[test]
+    fn cluster_slow_query_reads_follow_go_tidb_store_pushdown() {
+        use tidb_proto::tikvpb::tikv_server::{Tikv, TikvServer};
+        let dir = std::env::temp_dir().join(format!(
+            "cluster-slow-query-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        struct RemoveDir(std::path::PathBuf);
+        impl Drop for RemoveDir {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _dir = RemoveDir(dir.clone());
+        let log_path = dir.join("tidb-slow.log");
+        let mut log = String::new();
+        for (time, query, query_time) in [
+            ("2020-01-01T10:00:00.000000Z", "select 1;", "0.5"),
+            ("2020-01-01T12:00:00.000000Z", "select 2;", "2"),
+            ("2020-01-02T10:00:00.000000Z", "select 3;", "3"),
+            ("2020-01-03T10:00:00.000000Z", "select 4;", "1.5"),
+            ("2021-06-01T10:00:00.000000Z", "select 5;", "0.2"),
+        ] {
+            log.push_str(&format!(
+                "# Time: {time}\n# User@Host: root[root] @ localhost [127.0.0.1]\n# Query_time: {query_time}\n{query}\n"
+            ));
+        }
+        std::fs::write(&log_path, log).unwrap();
+
+        // The peer: the node's real coprocessor service, whose sessions read
+        // the slow log, behind a recorder of the requests it receives.
+        let store = Session::new();
+        let catalog = store.shared_catalog();
+        let set_log = format!("SET @@tidb_slow_query_file='{}'", log_path.display());
+        let inner = PeerService::new(
+            Arc::new(move || {
+                let mut session = Session::with_catalog(catalog.clone());
+                session.run(&set_log).map_err(|error| error.to_string())?;
+                Ok(session)
+            }),
+            ProcessRegistry::default(),
+            PrivilegeRegistry::default(),
+            None,
+        );
+        let captured = Arc::new(std::sync::Mutex::new(Vec::<coprocessor::Request>::new()));
+        struct Recorder(PeerService, Arc<std::sync::Mutex<Vec<coprocessor::Request>>>);
+        #[tonic::async_trait]
+        impl Tikv for Recorder {
+            async fn coprocessor(
+                &self,
+                request: tonic::Request<coprocessor::Request>,
+            ) -> Result<tonic::Response<coprocessor::Response>, tonic::Status> {
+                let request = request.into_inner();
+                self.1.lock().unwrap().push(request.clone());
+                Ok(tonic::Response::new(self.0.handle(request)))
+            }
+        }
+        let service = Recorder(inner, captured.clone());
+        let (ready, receive) = std::sync::mpsc::channel();
+        let (stop, done) = tokio::sync::oneshot::channel();
+        let worker = std::thread::spawn(move || {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async move {
+                    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                    ready.send(listener.local_addr().unwrap()).unwrap();
+                    let incoming = futures::stream::unfold(listener, |listener| async move {
+                        let stream = listener.accept().await.map(|(stream, _)| stream);
+                        Some((stream, listener))
+                    });
+                    tonic::transport::Server::builder()
+                        .add_service(TikvServer::new(service))
+                        .serve_with_incoming_shutdown(incoming, async {
+                            let _ = done.await;
+                        })
+                        .await
+                        .unwrap();
+                });
+        });
+        struct StopPeer(
+            Option<tokio::sync::oneshot::Sender<()>>,
+            Option<std::thread::JoinHandle<()>>,
+        );
+        impl Drop for StopPeer {
+            fn drop(&mut self) {
+                let _ = self.0.take().unwrap().send(());
+                self.1.take().unwrap().join().unwrap();
+            }
+        }
+        let _peer = StopPeer(Some(stop), Some(worker));
+        let addr = receive.recv().unwrap();
+
+        // The requester: discovery lists only the peer.
+        let mut remote = tidb_domain_serverinfo::serverinfo::ServerInfo::default();
+        remote.static_info.id = "slow-remote".into();
+        remote.static_info.ip = addr.ip().to_string();
+        remote.static_info.status_port = addr.port() as usize;
+        let discovery = Arc::new(Discovery(vec![(
+            tidb_domain_serverinfo::serverinfo_syncer::server_info_key_path("slow-remote"),
+            remote.marshal().unwrap(),
+        )]));
+        let mut local = tidb_domain_serverinfo::serverinfo::ServerInfo::default();
+        local.static_info.id = "slow-local".into();
+        local.static_info.ip = "127.0.0.1".into();
+        let mut session = Session::with_catalog(store.shared_catalog());
+        session.set_user("root@%".into(), "root@localhost".into());
+        session.set_server_info_syncer(Arc::new(
+            tidb_domain_serverinfo::serverinfo_syncer::Syncer::new(local, Some(discovery)),
+        ));
+        session.set_cluster_peer_client(Arc::new(peer_client()));
+        session.run("SET @@time_zone='+00:00'").unwrap();
+
+        fn hex(bytes: &[u8]) -> String {
+            bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+        }
+        const PREFIX: &str = "74c00000000000002f5f72";
+        // (query, key ranges after the record prefix, scan column ids, Desc,
+        // the executors above the scan, rows).
+        type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a [i64], bool, &'a [&'a str], &'a [&'a [&'a str]]);
+        let cases: &[Case] = &[
+            (
+                "select time, query from information_schema.cluster_slow_query where time >= '2020-01-01 11:00:00' and time <= '2020-01-02 10:00:00'",
+                &[("0419a542b000000000", "0419a544a000000001")],
+                &[2, 99],
+                false,
+                &[],
+                &[
+                    &["2020-01-01 12:00:00.000000", "select 2;"],
+                    &["2020-01-02 10:00:00.000000", "select 3;"],
+                ],
+            ),
+            (
+                "select time, query from information_schema.cluster_slow_query order by time desc limit 3",
+                &[("01", "fb")],
+                &[2, 99],
+                true,
+                &["Limit 3"],
+                &[
+                    &["2021-06-01 10:00:00.000000", "select 5;"],
+                    &["2020-01-03 10:00:00.000000", "select 4;"],
+                    &["2020-01-02 10:00:00.000000", "select 3;"],
+                ],
+            ),
+            (
+                "select time, query from information_schema.cluster_slow_query where time between '2020-01-01 00:00:00' and '2020-01-04 00:00:00' order by time desc limit 2",
+                &[("0419a5420000000000", "0419a5480000000001")],
+                &[2, 99],
+                true,
+                &["Limit 2"],
+                &[
+                    &["2020-01-03 10:00:00.000000", "select 4;"],
+                    &["2020-01-02 10:00:00.000000", "select 3;"],
+                ],
+            ),
+            (
+                "select time from information_schema.cluster_slow_query where time in ('2020-01-01 10:00:00', '2020-01-03 10:00:00') or time > '2021-01-01'",
+                &[
+                    ("0419a542a000000000", "0419a542a000000001"),
+                    ("0419a546a000000000", "0419a546a000000001"),
+                    ("0419a8820000000001", "fb"),
+                ],
+                &[2],
+                false,
+                &[],
+                &[
+                    &["2020-01-01 10:00:00.000000"],
+                    &["2020-01-03 10:00:00.000000"],
+                    &["2021-06-01 10:00:00.000000"],
+                ],
+            ),
+            (
+                "select time from information_schema.cluster_slow_query where time > '2020-01-01' and query_time > 1 order by time desc limit 1",
+                &[("0419a5420000000001", "fb")],
+                &[2, 10],
+                true,
+                &["Selection", "Limit 1"],
+                &[&["2020-01-03 10:00:00.000000"]],
+            ),
+            (
+                "select query from information_schema.cluster_slow_query where query_time > 1 limit 5",
+                &[("01", "fb")],
+                &[10, 99],
+                false,
+                &["Selection", "Limit 5"],
+                &[&["select 2;"], &["select 3;"], &["select 4;"]],
+            ),
+            (
+                "select query from information_schema.cluster_slow_query order by query_time desc limit 2",
+                &[("01", "fb")],
+                &[10, 99],
+                false,
+                &["TopN 2"],
+                &[&["select 3;"], &["select 2;"]],
+            ),
+            (
+                "select count(*) from information_schema.cluster_slow_query",
+                &[("01", "fb")],
+                &[1],
+                false,
+                &["Aggregation"],
+                &[&["5"]],
+            ),
+            (
+                "select avg(query_time), max(query), min(time) from information_schema.cluster_slow_query",
+                &[("01", "fb")],
+                &[2, 10, 99],
+                false,
+                &["Aggregation"],
+                &[&["1.44", "select 5;", "2020-01-01 10:00:00.000000"]],
+            ),
+            (
+                "select query from information_schema.cluster_slow_query limit 1, 2",
+                &[("01", "fb")],
+                &[99],
+                false,
+                &["Limit 3"],
+                &[&["select 2;"], &["select 3;"]],
+            ),
+        ];
+        for (sql, ranges, columns, desc, tail, rows) in cases {
+            captured.lock().unwrap().clear();
+            let tidb_session::StmtResult::Rows(got) = session.run(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}")) else {
+                panic!("{sql}: expected rows")
+            };
+            let got: Vec<Vec<String>> = got
+                .iter()
+                .map(|row| row.iter().map(|datum| datum.sql_string().unwrap()).collect())
+                .collect();
+            let want: Vec<Vec<String>> = rows
+                .iter()
+                .map(|row| row.iter().map(|cell| (*cell).to_owned()).collect())
+                .collect();
+            assert_eq!(got, want, "{sql}");
+            let requests = captured.lock().unwrap().clone();
+            assert_eq!(requests.len(), 1, "{sql}");
+            let request = &requests[0];
+            let got_ranges: Vec<(String, String)> = request
+                .ranges
+                .iter()
+                .map(|range| (hex(&range.start), hex(&range.end)))
+                .collect();
+            let want_ranges: Vec<(String, String)> = ranges
+                .iter()
+                .map(|(start, end)| (format!("{PREFIX}{start}"), format!("{PREFIX}{end}")))
+                .collect();
+            assert_eq!(got_ranges, want_ranges, "{sql}");
+            let dag = tipb::DagRequest::decode(request.data.as_slice()).unwrap();
+            assert_eq!(
+                (dag.time_zone_name.as_deref(), dag.time_zone_offset),
+                (Some(""), Some(0)),
+                "{sql}"
+            );
+            let scan = dag.executors[0].tbl_scan.as_ref().unwrap();
+            assert_eq!(
+                scan.table_id,
+                tidb_infoschema::infoschema_meta::memory_table_id("CLUSTER_SLOW_QUERY"),
+                "{sql}"
+            );
+            assert_eq!(
+                scan.columns
+                    .iter()
+                    .map(|column| column.column_id.unwrap())
+                    .collect::<Vec<_>>(),
+                *columns,
+                "{sql}"
+            );
+            assert_eq!(scan.desc, Some(*desc), "{sql}");
+            assert_eq!(scan.primary_column_ids, vec![2], "{sql}");
+            let got_tail: Vec<String> = dag.executors[1..]
+                .iter()
+                .map(|executor| match tipb::ExecType::try_from(executor.tp.unwrap()).unwrap() {
+                    tipb::ExecType::TypeLimit => {
+                        format!("Limit {}", executor.limit.as_ref().unwrap().limit.unwrap())
+                    }
+                    tipb::ExecType::TypeTopN => {
+                        format!("TopN {}", executor.top_n.as_ref().unwrap().limit.unwrap())
+                    }
+                    tipb::ExecType::TypeSelection => "Selection".to_owned(),
+                    tipb::ExecType::TypeAggregation => "Aggregation".to_owned(),
+                    other => format!("{other:?}"),
+                })
+                .collect();
+            assert_eq!(got_tail, *tail, "{sql}");
+        }
     }
 
     /// Go `pbToBroadcastQuery`: three statements run on this instance, and

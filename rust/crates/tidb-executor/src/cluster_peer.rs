@@ -147,7 +147,7 @@ impl ClusterPeerClient {
         // (including unavailable peers) are not interpreted by killRemoteConn.
         self.with_cancellation(ctx, |cancel| {
             for address in peer_addresses(servers, Some(id.server_id)) {
-                let _ = self.send(&address, &dag, cancel)?;
+                let _ = self.send(&address, &dag, &[], cancel)?;
             }
             Ok(())
         })
@@ -275,6 +275,24 @@ impl ClusterPeerClient {
             });
         }
         let types: Vec<_> = selected.iter().map(|(_, field)| (*field).clone()).collect();
+        self.select(servers, &dag, &[], &types, ctx, zone, concurrency)
+    }
+
+    /// Go `distsql.Select` for a request on the `kv.TiDB` store: copr's
+    /// `buildTiDBMemCopTasks` sends `dag` with its key `ranges` to every
+    /// listed TiDB (this node included), and the responses' rows, decoded as
+    /// `types`, follow in task order.
+    #[allow(clippy::too_many_arguments)]
+    pub fn select(
+        &self,
+        servers: &[ServerInfo],
+        dag: &tipb::DagRequest,
+        ranges: &[coprocessor::KeyRange],
+        types: &[FieldType],
+        ctx: &StmtContext,
+        zone: &SessionTimeZone,
+        concurrency: usize,
+    ) -> Result<PeerRows, DriverError> {
         self.with_cancellation(ctx, |cancel| {
             let mut result = PeerRows::default();
             for batch in peer_addresses(servers, None).chunks(concurrency.max(1)) {
@@ -282,8 +300,9 @@ impl ClusterPeerClient {
                     let handles: Vec<_> = batch
                         .iter()
                         .map(|address| {
-                            let dag = &dag;
-                            scope.spawn(tidb_cpuprofile::labels::inherit(move || self.send(address, dag, cancel)))
+                            scope.spawn(tidb_cpuprofile::labels::inherit(move || {
+                                self.send(address, dag, ranges, cancel)
+                            }))
                         })
                         .collect();
                     handles
@@ -312,15 +331,9 @@ impl ClusterPeerClient {
                             warning.msg.clone().unwrap_or_default(),
                         ));
                     }
-                    for chunk in tidb_distsql::decode_response_chunks(&response)
-                        .map_err(|error| DriverError::unsupported(error.to_string()))?
-                    {
-                        result.rows.extend(
-                            chunk
-                                .decode_default_datums_in_timezone(&types, zone)
-                                .map_err(|error| DriverError::unsupported(error.to_string()))?,
-                        );
-                    }
+                    result
+                        .rows
+                        .extend(decode_select_response_rows(&response, types, zone)?);
                 }
             }
             Ok(result)
@@ -331,12 +344,14 @@ impl ClusterPeerClient {
         &self,
         address: &str,
         dag: &tipb::DagRequest,
+        ranges: &[coprocessor::KeyRange],
         cancel: &UnaryCancellation,
     ) -> Result<coprocessor::Response, String> {
         let request = coprocessor::Request {
             tp: 103,
             start_ts: u64::MAX,
             data: dag.encode_to_vec(),
+            ranges: ranges.to_vec(),
             ..Default::default()
         };
         let timeout = tidb_config::config_tree::config::get_global_config()
@@ -379,8 +394,9 @@ impl ClusterPeerClient {
                 });
             }
         };
+        // Go copr `handleCopResponse`: `errors.Errorf("other error: %s", otherErr)`.
         if !response.other_error.is_empty() {
-            return Err(response.other_error);
+            return Err(format!("other error: {}", response.other_error));
         }
         if let Some(error) = response.region_error {
             return Err(format!("{error:?}"));
@@ -416,6 +432,45 @@ impl ClusterPeerClient {
             result
         })
     }
+}
+
+/// Go `selectResult`'s rows of one response: `readRowsData` for the default
+/// encoding (in the statement's location), `readFromChunk` for chunk RPC.
+///
+/// # Errors
+/// A malformed chunk.
+pub fn decode_select_response_rows(
+    response: &tipb::SelectResponse,
+    types: &[FieldType],
+    zone: &SessionTimeZone,
+) -> Result<Vec<Vec<Datum>>, DriverError> {
+    let mut rows = Vec::new();
+    if response.encode_type == Some(tipb::EncodeType::TypeChunk as i32) {
+        let codec = tidb_chunk::codec::Codec::new(types.to_vec());
+        for chunk in &response.chunks {
+            let mut data = chunk.rows_data.as_deref().unwrap_or_default();
+            while !data.is_empty() {
+                let mut decoded = tidb_chunk::chunk::Chunk::new(types, 0, 1024);
+                data = codec
+                    .try_decode_to_chunk(data, &mut decoded)
+                    .map_err(|error| DriverError::unsupported(error.to_string()))?;
+                for index in 0..decoded.num_rows() {
+                    rows.push(decoded.get_row(index).get_datum_row(types));
+                }
+            }
+        }
+        return Ok(rows);
+    }
+    for chunk in tidb_distsql::decode_response_chunks(response)
+        .map_err(|error| DriverError::unsupported(error.to_string()))?
+    {
+        rows.extend(
+            chunk
+                .decode_default_datums_in_timezone(types, zone)
+                .map_err(|error| DriverError::unsupported(error.to_string()))?,
+        );
+    }
+    Ok(rows)
 }
 
 fn dag_context(ctx: &StmtContext, zone: &SessionTimeZone) -> tipb::DagRequest {

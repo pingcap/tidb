@@ -30,7 +30,6 @@ use crate::memtable_reader::ViewerState;
 use std::sync::Arc;
 use crate::infoschema_reader::datetime_datum;
 use crate::memtable_reader::go_uptime_string;
-use crate::memtable_reader::peer_cluster_table_rows;
 
 impl ViewerState {
     /// Go `SQLDigestTextRetriever` over this node and, with `global`, its
@@ -346,8 +345,13 @@ impl ViewerState {
     }
 
 
-    /// Receiving scan requirements use original column names, including predicates.
-    /// None retains full-row callers; a present empty set needs no expensive fields.
+    /// Go `MemTableReaderExec` on the node a cluster table's coprocessor
+    /// request reaches: this node's rows of the table, with its instance
+    /// address first. Receiving scan requirements use original column names,
+    /// including predicates; None retains full-row callers, a present empty
+    /// set needs no expensive fields. `extractor` is the one Go's
+    /// `PBPlanBuilder.pbToTableScan` gives the table.
+    #[allow(clippy::too_many_arguments)]
     pub fn local_cluster_table_rows_for(
         &self,
         ctx: &crate::StmtContext,
@@ -356,8 +360,9 @@ impl ViewerState {
         registry: Option<&tidb_sessmgr::ProcessRegistry>,
         zone: &tidb_datatype::SessionTimeZone,
         required: Option<&std::collections::HashSet<String>>,
-        digests: Option<&std::collections::HashSet<String>>,
+        extractor: Option<&tidb_planner::memtable_predicate_extractor::MemTableExtractor>,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
+        use tidb_planner::memtable_predicate_extractor::MemTableExtractor;
         let source = tidb_infoschema::infoschema_meta::cluster_table_source(table_name)
             .ok_or_else(|| DriverError::unsupported("unsupported TiDB cluster table"))?;
         let mut rows = match source {
@@ -372,10 +377,32 @@ impl ViewerState {
                 }
             }
             "TRX_SUMMARY" => self.set_data_for_trx_summary(registry),
+            // Go `stmtSummaryRetriever` over its extractor: a skipped request
+            // reads nothing, and an empty digest set is no filter.
+            "STATEMENTS_SUMMARY"
+            | "STATEMENTS_SUMMARY_HISTORY"
+            | "STATEMENTS_SUMMARY_EVICTED"
+            | "TIDB_STATEMENTS_STATS"
+                if matches!(
+                    extractor,
+                    Some(MemTableExtractor::StatementsSummary(summary)) if summary.skip_request
+                ) =>
+            {
+                Vec::new()
+            }
             "STATEMENTS_SUMMARY"
             | "STATEMENTS_SUMMARY_HISTORY"
             | "STATEMENTS_SUMMARY_EVICTED"
             | "TIDB_STATEMENTS_STATS" => {
+                let digests: Option<std::collections::HashSet<String>> = match extractor {
+                    Some(MemTableExtractor::StatementsSummary(summary)) => summary
+                        .digests
+                        .as_ref()
+                        .filter(|digests| !digests.is_empty())
+                        .map(|digests| digests.iter().cloned().collect()),
+                    _ => None,
+                };
+                let digests = digests.as_ref();
                 let columns = tidb_infoschema::infoschema_meta::table_schema(source).expect("registered summary source");
                 let offsets: Vec<_> = columns
                     .iter()
@@ -397,6 +424,26 @@ impl ViewerState {
                         full
                     })
                     .collect()
+            }
+            // Go `slowQueryRetriever` with `PBPlanBuilder`'s extractor (its
+            // time ranges, `Desc` and row-limit hint) and the reader's own
+            // memory tracker under the statement's.
+            "SLOW_QUERY" => {
+                let extractors: Vec<_> = match extractor {
+                    Some(MemTableExtractor::SlowQuery(extractor)) => vec![extractor],
+                    _ => Vec::new(),
+                };
+                let mem_tracker = ctx.statement_memory().persistent_operator_tracker(0);
+                let (rows, warnings, _) = self.slow_query_rows(
+                    &extractors,
+                    zone,
+                    Some(&mem_tracker),
+                    usize::try_from(ctx.dist_sql_scan_concurrency()).unwrap_or(usize::MAX),
+                )?;
+                for warning in warnings {
+                    ctx.append_warning_parts(1105, &warning);
+                }
+                rows
             }
             _ => self.diagnostic_rows(ctx, catalog, source, registry, required)?,
         };
@@ -441,15 +488,6 @@ impl ViewerState {
                 &self.visibility,
                 self.index_usage.as_ref(),
             ),
-            // A cluster scan carries no slow-query extractor here: Go's
-            // receiving reader then reads every file with no time filter.
-            "SLOW_QUERY" => {
-                let (rows, warnings, _) = self.slow_query_rows(&[], &ctx.session_zone(), None, usize::try_from(ctx.dist_sql_scan_concurrency()).unwrap_or(usize::MAX))?;
-                for warning in warnings {
-                    ctx.append_warning_parts(1105, &warning);
-                }
-                rows
-            }
             // Go `setDataFromPlanCache` lists the instance plan cache, which
             // is off by default (`tidb_enable_instance_plan_cache`) and not
             // modelled here.
@@ -691,96 +729,113 @@ use tidb_charset::Collation;
     }
 
 
-    /// Each discovered peer consumes the same projected local table owner.
-    /// The ordinary SQL executor retains residual predicates after fanout.
-    pub fn cluster_table_rows(
+    /// Go `TableReaderExecutor` over the `kv.TiDB` store for a cluster
+    /// table: `request` (with the login user Go's `buildTableReader` puts
+    /// on it) goes to every TiDB discovery lists (Go `buildTiDBMemCopTasks`),
+    /// and the reader's rows are the responses' rows. This node's own task
+    /// is answered by its own coprocessor handler -- the one its status port
+    /// serves the peers with -- and comes first; a session with no discovery
+    /// is the only TiDB.
+    pub fn cluster_table_cop_rows(
         &self,
         ctx: &crate::StmtContext,
         catalog: &SessionExtendedInfoSchema,
-        table_name: &str,
-        columns: &[(String, FieldType)],
-        required: Option<&std::collections::HashSet<String>>,
+        request: &crate::builder_utils::TiDBCopRequest,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
-        let rows = self.local_cluster_table_rows_for(ctx, catalog, 
-            table_name,
-            None,
-            &ctx.session_zone(),
-            required,
-            None,
-        )?;
-        // The statement's requirements are upper-cased column names; a
-        // mixed-case table (CLUSTER_SLOW_QUERY's `Query`) matches them
-        // case-insensitively, as Go's column names do.
-        let mut offsets: Vec<_> = columns
-            .iter()
-            .enumerate()
-            .filter(|(_, (name, _))| {
-                required.is_none_or(|set| {
-                    set.contains(name) || set.contains(&name.to_ascii_uppercase())
-                })
-            })
-            .map(|(index, _)| index)
-            .collect();
-        // A transport column preserves row cardinality for COUNT(*) scans.
-        if offsets.is_empty() && !columns.is_empty() {
-            offsets.push(0);
-        }
-        let projected = rows
-            .into_iter()
-            .map(|row| offsets.iter().map(|index| row[*index].clone()).collect())
-            .collect();
-        self.cluster_table_rows_with_rows(ctx, table_name, columns, &offsets, projected, false, None)
-            .map(|rows| {
-                rows.into_iter()
-                    .map(|row| {
-                        let mut full = vec![Datum::Null; columns.len()];
-                        for (index, value) in offsets.iter().zip(row) {
-                            full[*index] = value;
-                        }
-                        full
-                    })
-                    .collect()
-            })
-    }
-
-
-    /// Shared discovery, cancellation and warnings for ordinary and restricted readers.
-    pub fn cluster_table_rows_with_rows(
-        &self,
-        ctx: &crate::StmtContext,
-        table_name: &str,
-        columns: &[(String, FieldType)],
-        offsets: &[usize],
-        rows: Vec<Vec<Datum>>,
-        internal: bool,
-        digests: Option<&std::collections::HashSet<String>>,
-    ) -> Result<Vec<Vec<Datum>>, DriverError> {
+        let mut dag = request.dag.clone();
         // Go carries Username/Hostname (the presented login), not AuthHostname.
-        let user = if internal {
-            None
-        } else {
-            self.login_user
-                .as_deref()
-                .and_then(|identity| identity.split_once('@'))
+        dag.user = self
+            .login_user
+            .as_deref()
+            .and_then(|identity| identity.split_once('@'))
+            .map(|(name, host)| tidb_proto::tipb::UserIdentity {
+                user_name: Some(name.to_owned()),
+                user_host: Some(host.to_owned()),
+            });
+        let zone = ctx.session_zone();
+        let Some(syncer) = self.server_info_syncer.as_deref() else {
+            return self.handle_cop_request_locally(catalog, &dag, request, &zone);
         };
-        let (rows, warnings) = peer_cluster_table_rows(
-            self.server_info_syncer.as_deref(),
-            self.cluster_peer.as_deref(),
+        let local_id = syncer.get_local_server_info().static_info.id;
+        let discovered = syncer.get_all_server_info().map_err(DriverError::unsupported)?;
+        // Go skips the unavailable IPs (`config.UnavailableIP`).
+        let (local, servers): (Vec<_>, Vec<_>) = discovered
+            .into_values()
+            .filter(|server| server.static_info.ip != "<nil>")
+            .partition(|server| server.static_info.id == local_id);
+        let mut rows = if local.is_empty() {
+            Vec::new()
+        } else {
+            self.handle_cop_request_locally(catalog, &dag, request, &zone)?
+        };
+        if servers.is_empty() {
+            return Ok(rows);
+        }
+        let client = self
+            .cluster_peer
+            .as_deref()
+            .ok_or_else(|| DriverError::unsupported("TiDB peer RPC client is not installed"))?;
+        let result = client.select(
+            &servers,
+            &dag,
+            &request.ranges,
+            &request.field_types,
             ctx,
-            user,
-            &ctx.session_zone(),
-            table_name,
-            columns,
-            offsets,
-            rows,
-            digests,
+            &zone,
+            usize::try_from(ctx.dist_sql_scan_concurrency()).unwrap_or(usize::MAX),
         )?;
-        for (code, message) in warnings {
+        for (code, message) in result.warnings {
             ctx.append_warning_parts(code, &message);
         }
+        rows.extend(result.rows);
         Ok(rows)
     }
 
+    /// This node's coprocessor handler (Go `CoprocessorDAGHandler`) for the
+    /// task it sends itself: `PBPlanBuilder` over the request, run on a
+    /// statement context of the request's zone, whose warnings stay with the
+    /// handler as a peer's do; the encoded response is decoded as a peer's.
+    fn handle_cop_request_locally(
+        &self,
+        catalog: &SessionExtendedInfoSchema,
+        dag: &tidb_proto::tipb::DagRequest,
+        request: &crate::builder_utils::TiDBCopRequest,
+        zone: &tidb_datatype::SessionTimeZone,
+    ) -> Result<Vec<Vec<Datum>>, DriverError> {
+        let ctx = tidb_sessionctx::StmtContext::for_query().with_time_zone(zone.clone());
+        let mut builder = crate::coprocessor::PBPlanBuilder::new(&ctx, &request.ranges);
+        // Go `buildErrorResponse`'s `OtherError`, which copr reports as
+        // `other error: ...` (`handleCopResponse`).
+        let response = builder
+            .build(&dag.executors)
+            .and_then(|plan| self.handle_cop_plan(&ctx, catalog, None, dag, &plan))
+            .map_err(|error| DriverError::unsupported(format!("other error: {error}")))?;
+        crate::cluster_peer::decode_select_response_rows(&response, &request.field_types, zone)
+    }
+
+    /// Go `CoprocessorDAGHandler.HandleRequest` for a memory-table plan
+    /// `PBPlanBuilder` built: run it over this node's tables and encode the
+    /// unary response.
+    ///
+    /// # Errors
+    /// The plan or its table reader fails.
+    pub fn handle_cop_plan(
+        &self,
+        ctx: &crate::StmtContext,
+        catalog: &SessionExtendedInfoSchema,
+        registry: Option<&tidb_sessmgr::ProcessRegistry>,
+        dag: &tidb_proto::tipb::DagRequest,
+        plan: &crate::coprocessor::PbPlan,
+    ) -> Result<tidb_proto::tipb::SelectResponse, String> {
+        let source = ViewerMemTableSource {
+            viewer: self,
+            ctx,
+            catalog,
+            registry,
+        };
+        let tps = crate::coprocessor::pb_plan_tps(plan);
+        crate::coprocessor::handle_pb_plan(dag, plan, &source, ctx, &tps)
+    }
 
     /// Executor-owned rows of `INFORMATION_SCHEMA.DEADLOCKS`.
     fn deadlock_history_rows(
@@ -952,6 +1007,39 @@ fn required_columns(
     required
 }
 
+/// This node's memory tables as a coprocessor plan reads them.
+struct ViewerMemTableSource<'a> {
+    viewer: &'a ViewerState,
+    ctx: &'a crate::StmtContext,
+    catalog: &'a SessionExtendedInfoSchema,
+    registry: Option<&'a tidb_sessmgr::ProcessRegistry>,
+}
+
+impl crate::coprocessor::PbMemTableSource for ViewerMemTableSource<'_> {
+    fn mem_table_rows(
+        &self,
+        table: &crate::coprocessor::PbMemTable,
+    ) -> Result<Vec<Vec<Datum>>, String> {
+        let required = crate::coprocessor::required_columns(table);
+        let rows = self
+            .viewer
+            .local_cluster_table_rows_for(
+                self.ctx,
+                self.catalog,
+                table.table_name,
+                self.registry,
+                &self.ctx.session_zone(),
+                Some(&required),
+                table.extractor.as_ref(),
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|row| table.columns.iter().map(|offset| row[*offset].clone()).collect())
+            .collect())
+    }
+}
+
 /// The retriever for the diagnostic and cluster tables.
 pub struct ClusterTablesRetriever {
     viewer: ViewerState,
@@ -1007,16 +1095,10 @@ impl crate::mem_table_retrieval::MemTableRetriever for ClusterTablesRetriever {
             .as_deref()
             .map(|columns| required_columns(read, columns));
         if tidb_infoschema::infoschema_meta::cluster_table_source(table).is_some() {
-            let columns = columns.ok_or_else(|| {
-                DriverError::unsupported("a cluster table has no declared schema")
+            let request = read.cop_request.as_deref().ok_or_else(|| {
+                DriverError::unsupported("a cluster table read carries no coprocessor request")
             })?;
-            return self.viewer.cluster_table_rows(
-                ctx,
-                catalog,
-                table,
-                &columns,
-                required.as_ref(),
-            );
+            return self.viewer.cluster_table_cop_rows(ctx, catalog, request);
         }
         if table.go_lower_eq("TIDB_TRX") || table.go_lower_eq("DEADLOCKS") {
             return self.viewer.diagnostic_rows(

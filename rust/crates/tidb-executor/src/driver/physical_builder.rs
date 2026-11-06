@@ -1255,7 +1255,7 @@ fn resolve_by_identity_or_bound_position(
     }
 }
 
-fn resolve_expressions(
+pub(crate) fn resolve_expressions(
     expressions: &[Expression],
     schema: &Schema,
 ) -> Result<Vec<Expression>, DriverError> {
@@ -1755,7 +1755,7 @@ fn owned_mem_table_retriever(
     crate::mem_table_retrieval::MemTableRead,
     std::sync::Arc<dyn crate::mem_table_retrieval::MemTableRetriever>,
 )> {
-    let read = mem_table_read_of(plan)?;
+    let read = mem_table_read_of(plan, ctx)?;
     if !matches!(
         catalog.table_in(&read.db_name, &read.table_name),
         Some(super::TableEntry::Kv(_))
@@ -1821,7 +1821,7 @@ fn memory_table_rows(
                     source: MemoryTableRowSource::Owned(read, retriever),
                 });
             }
-            let rows = match mem_table_read_of(plan).and_then(|read| ctx.mem_table_retrieval().rows(&read)) {
+            let rows = match mem_table_read_of(plan, ctx).and_then(|read| ctx.mem_table_retrieval().rows(&read)) {
                 Some(rows) => rows,
                 // A plain EXPLAIN builds the reader and never reads it.
                 None if ctx.in_explain_stmt() && !ctx.in_explain_analyze_stmt() => {
@@ -6949,7 +6949,13 @@ fn record_tiflash_contained(plan: &PhysicalPlan, ctx: &crate::StmtContext) {
 /// What the memory-table scan `plan` hands its retriever (Go's
 /// `PhysicalMemTable` fields; for a cluster table's TiDB-store scan, its
 /// columns), or `None` for any other node.
-fn mem_table_read_of(plan: &PhysicalPlan) -> Option<crate::mem_table_retrieval::MemTableRead> {
+fn mem_table_read_of(
+    plan: &PhysicalPlan,
+    ctx: &crate::StmtContext,
+) -> Option<crate::mem_table_retrieval::MemTableRead> {
+    if let PhysicalPlan::TableReader(reader) = plan {
+        return cluster_table_reader_read(plan, reader, ctx).ok().flatten();
+    }
     let (db_name, table_name, columns, column_ids, extractor, query_time_range, is_cluster_scan) =
         match plan {
             PhysicalPlan::MemTable(scan) => (
@@ -6964,8 +6970,12 @@ fn mem_table_read_of(plan: &PhysicalPlan) -> Option<crate::mem_table_retrieval::
                 scan.query_time_range.clone(),
                 false,
             ),
+            // A CLUSTER_* table's scan is read by its reader's coprocessor
+            // request (`cluster_table_reader_read`).
             PhysicalPlan::TableScan(scan)
-                if scan.store_type == tidb_kv::store_type::StoreType::TiDb =>
+                if scan.store_type == tidb_kv::store_type::StoreType::TiDb
+                    && tidb_infoschema::infoschema_meta::cluster_table_source(&scan.table_name)
+                        .is_none() =>
             {
                 (
                     &scan.db_name,
@@ -6990,7 +7000,76 @@ fn mem_table_read_of(plan: &PhysicalPlan) -> Option<crate::mem_table_retrieval::
         extractor,
         query_time_range,
         is_cluster_scan,
+        cop_request: None,
     })
+}
+
+/// The read of a CLUSTER_* table's reader on the `kv.TiDB` store: Go's
+/// `buildTableReader` builds its DAG (`ConstructDAGReq` over the plans the
+/// planner pushed) and key ranges, and every TiDB answers them. `None` for
+/// any other reader.
+fn cluster_table_reader_read(
+    plan: &PhysicalPlan,
+    reader: &tidb_planner_core_operator_physicalop::PhysicalTableReader,
+    ctx: &crate::StmtContext,
+) -> Result<Option<crate::mem_table_retrieval::MemTableRead>, DriverError> {
+    if reader.store_type != tidb_kv::store_type::StoreType::TiDb {
+        return Ok(None);
+    }
+    let Some(scan) = reader.table_scans().into_iter().next() else {
+        return Ok(None);
+    };
+    if tidb_infoschema::infoschema_meta::cluster_table_source(&scan.table_name).is_none() {
+        return Ok(None);
+    }
+    let table_plan = reader
+        .table_plan
+        .as_deref()
+        .ok_or_else(|| DriverError::unsupported("a TiDB-store reader has no pushed plan"))?;
+    let request = crate::builder_utils::build_tidb_cop_request(
+        ctx,
+        plan,
+        table_plan,
+        scan,
+        reader.is_common_handle(),
+    )?;
+    Ok(Some(crate::mem_table_retrieval::MemTableRead {
+        plan_id: plan.id(),
+        db_name: scan.db_name.clone(),
+        table_name: scan.table_name.clone(),
+        columns: Vec::new(),
+        column_ids: Vec::new(),
+        extractor: None,
+        query_time_range: tidb_planner_core_operator_logicalop::mem_table::QueryTimeRange::default(),
+        is_cluster_scan: true,
+        cop_request: Some(std::sync::Arc::new(request)),
+    }))
+}
+
+/// Go `TableReaderExecutor` for a CLUSTER_* table on the `kv.TiDB` store:
+/// its rows are what the TiDBs answer its coprocessor request with, already
+/// shaped by the plans pushed into it.
+fn build_cluster_table_reader(
+    plan: &PhysicalPlan,
+    read: crate::mem_table_retrieval::MemTableRead,
+    catalog: &SessionExtendedInfoSchema,
+    ctx: &crate::StmtContext,
+) -> Result<Box<dyn Executor>, DriverError> {
+    let meta = meta(ctx, plan, plan_schema(plan)?);
+    if let Some(retriever) = ctx.mem_table_retrieval().retriever_for(&read) {
+        let (snapshot, ctx) = (catalog.clone(), ctx.clone());
+        return Ok(Box::new(MemTableSourceExec::lazy(
+            meta,
+            Box::new(move || retriever.retrieve(&read, &snapshot, &ctx).map_err(retrieval_error)),
+        )));
+    }
+    let rows = match ctx.mem_table_retrieval().rows(&read) {
+        Some(rows) => rows.as_ref().clone(),
+        // A plain EXPLAIN builds the reader and never reads it.
+        None if ctx.in_explain_stmt() && !ctx.in_explain_analyze_stmt() => Vec::new(),
+        None => return Err(DriverError::MemTableRetrievalNeeded),
+    };
+    Ok(Box::new(MemTableSourceExec::new(meta, rows)))
 }
 
 /// Records the retrieval a virtual-table scan at `plan` needs: the rows of an
@@ -6998,7 +7077,7 @@ fn mem_table_read_of(plan: &PhysicalPlan) -> Option<crate::mem_table_retrieval::
 /// session produces them per scan. A table the catalog stores as materialized
 /// rows (a fixture, `SHOW ... WHERE`'s selection) already holds its own.
 fn request_memory_table_rows(plan: &PhysicalPlan, catalog: &SessionExtendedInfoSchema, ctx: &crate::StmtContext) {
-    let Some(read) = mem_table_read_of(plan) else {
+    let Some(read) = mem_table_read_of(plan, ctx) else {
         return;
     };
     // Go's metric tables query metric storage, which the node does not have;
@@ -7708,8 +7787,20 @@ fn build_with_state(
         {
             build_cluster_table_scan(plan, scan, catalog, ctx)
         }
-        // A reader on the TiDB store has no coprocessor to push to: its pushed
-        // operators are the executors themselves.
+        // A CLUSTER_* table's reader sends its pushed plan to every TiDB.
+        PhysicalPlan::TableReader(reader)
+            if reader.store_type == tidb_kv::store_type::StoreType::TiDb
+                && reader.table_scans().first().is_some_and(|scan| {
+                    tidb_infoschema::infoschema_meta::cluster_table_source(&scan.table_name)
+                        .is_some()
+                }) =>
+        {
+            let read = cluster_table_reader_read(plan, reader, ctx)?
+                .ok_or_else(|| DriverError::unsupported("a cluster table reader has no read"))?;
+            build_cluster_table_reader(plan, read, catalog, ctx)
+        }
+        // `TIFLASH_REPLICA`'s reader (Go's DDL-owner destination) runs its
+        // pushed operators here as the executors themselves.
         PhysicalPlan::TableReader(reader)
             if reader.store_type == tidb_kv::store_type::StoreType::TiDb =>
         {

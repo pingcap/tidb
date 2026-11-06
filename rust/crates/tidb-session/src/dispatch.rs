@@ -549,17 +549,40 @@ impl Session {
         registry: Option<&tidb_sessmgr::ProcessRegistry>,
         zone: &tidb_datatype::SessionTimeZone,
         required: Option<&std::collections::HashSet<String>>,
-        digests: Option<&std::collections::HashSet<String>>,
+        extractor: Option<&tidb_planner::memtable_predicate_extractor::MemTableExtractor>,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         let ctx = self.statement_context(false);
         let viewer = self.viewer_state();
         let rows = self.with_catalog_mut(|catalog| {
             viewer.local_cluster_table_rows_for(
-                &ctx, catalog, table_name, registry, zone, required, digests,
+                &ctx, catalog, table_name, registry, zone, required, extractor,
             )
         });
         self.drain_eval_warnings(&ctx);
         rows
+    }
+
+    /// Go `CoprocessorDAGHandler.HandleRequest` on this session for a
+    /// cluster memory-table `plan` (`PBPlanBuilder.Build` of `dag`): the
+    /// request's zone is the statement's (Go `InitFromPBFlagAndTz`), and its
+    /// rows come from this node's tables.
+    ///
+    /// # Errors
+    /// The plan or its table reader fails.
+    pub fn handle_cop_plan(
+        &mut self,
+        dag: &tidb_proto::tipb::DagRequest,
+        plan: &tidb_executor::coprocessor::PbPlan,
+        registry: Option<&tidb_sessmgr::ProcessRegistry>,
+        zone: &tidb_datatype::SessionTimeZone,
+    ) -> Result<tidb_proto::tipb::SelectResponse, String> {
+        let ctx = self.statement_context(false).with_time_zone(zone.clone());
+        let viewer = self.viewer_state();
+        let response = self.with_catalog_mut(|catalog| {
+            Ok(viewer.handle_cop_plan(&ctx, catalog, registry, dag, plan))
+        });
+        self.drain_eval_warnings(&ctx);
+        response.map_err(|error: DriverError| error.to_string())?
     }
 
     /// `@@tidb_distsql_scan_concurrency`, the statement-summary history
