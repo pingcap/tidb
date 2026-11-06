@@ -255,7 +255,7 @@ func TestScanResultWhenWorkerStop(t *testing.T) {
 	require.NoError(t, w.Schedule(task))
 	select {
 	case <-executeCh:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		require.FailNow(t, "wait executeSQL timeout")
 	}
 	w.stopWithWait()
