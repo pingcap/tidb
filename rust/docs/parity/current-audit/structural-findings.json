@@ -2,8 +2,8 @@
   "date": "2026-11-06",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 28,
-    "open": 7,
+    "unresolved": 29,
+    "open": 8,
     "partial": 21
   },
   "findings": [
@@ -99,6 +99,13 @@
       "group": "DML and executor handoff",
       "finding": "The session's reusable chunk allocator is Go's (`Session::chunk_alloc`, Go `clientConn.chunkAlloc`: installed per statement as `NewSyncAllocator(alloc)` under `tidb_enable_reuse_chunk`, never for an internal `InRestrictedSQL` statement, reset between statements and recreated after a failed one, each statement's validity its own), executors take it as `ExecutorMeta::alloc_pool` (Go `AllocPool`) for `NewChunk` / `TryNewCacheChunk` / `NewChunkWithCapacity`, and Go's `NewFirstChunk` sites (`Executor::new_first_chunk`: projection workers, hash-join probe and result chunks, index-hash-join results, shuffle holders, the drained record set) allocate outside it, so memory charges match Go's in sequence (`a_projection_sizes_its_result_columns_as_go_vec_eval_does`, `explain_analyze_dml_roots_report_their_executor_stats_and_memory_like_go`). Remaining: executors built outside the physical builder's `meta` (`ExecutorMeta::new` in other crates) allocate fresh; parallel apply's chunks, whose executor shape differs from Go's, are unmapped; the reuse hook's `StmtCtx.SetUseChunkAlloc` (`@@last_sql_use_alloc`) is not driven by allocation",
       "go_owner": "`pkg/util/chunk` (`alloc.go`: `NewAllocator`, `NewReuseHookAllocator`, `NewSyncAllocator`), `pkg/sessionctx/variable/session.go` (`SetAlloc`, `GetChunkAllocator`), `pkg/executor/internal/exec/executor.go` (`AllocPool`, `NewChunkWithCapacity`)"
+    },
+    {
+      "id": "C03",
+      "status": "open",
+      "group": "DML and executor handoff",
+      "finding": "The session tracker carries no MemDB footprint: Go's `session.SetMemoryFootprintChangeHook` installs `txn.SetMemoryFootprintChangeHook`, whose hook keeps a `LabelForMemDB` tracker attached to `SessionVars.MemTracker` at the transaction buffer's size (`ReplaceBytesUsed`), and `tidb_mem_quota_query` limits that session tracker (`adapter.go` `MemTracker.SetBytesLimit`), so a statement's quota covers its executors plus the buffer it has written. This port never installs the client's `Transaction::set_memory_footprint_change_hook`, so the buffer is unaccounted: in `executor/foreign_key` `TestForeignKeyAndMemoryTracker` every operator matches Go's (`Update_3` 22.7 KB, `Update_9` 15.9 KB, `IndexLookUp_14` 33.6 KB, statement peak 50755) but the self-referencing cascade's 255-row buffer never brings the session past 81920, which blocks E02",
+      "go_owner": "`pkg/session/session.go` (`SetMemoryFootprintChangeHook`), `pkg/session/txn.go`, `pkg/executor/adapter.go` (`MemTracker.SetBytesLimit`)"
     },
     {
       "id": "E04",
@@ -208,7 +215,7 @@
       "go_owner": "`pkg/ddl` (`systable`, job scheduler), `pkg/session` bootstrap, `pkg/privilege/privileges` (`ensureActiveUser`)"
     }
   ],
-  "unresolved": 28,
-  "open": 7,
+  "unresolved": 29,
+  "open": 8,
   "partial": 21
 }
