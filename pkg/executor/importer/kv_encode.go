@@ -16,6 +16,7 @@ package importer
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -25,11 +26,13 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql" //nolint: goimports
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
 // TableKVEncoder encodes a row of data into a KV pair.
@@ -39,6 +42,10 @@ type TableKVEncoder struct {
 	columnAssignments []expression.Expression
 	fieldMappings     []*FieldMapping
 	insertColumns     []*table.Column
+	// fileColumnsTable is set when the statement gives no column list, so the
+	// column list of an INSERT statement in a SQL file decides the mapping.
+	fileColumnsTable table.Table
+	fileColumns      []string
 	// Following cache use to avoid `runtime.makeslice`.
 	insertColumnRowCache []types.Datum
 	rowCache             []types.Datum
@@ -55,7 +62,43 @@ func NewTableKVEncoder(
 	config *encode.EncodingConfig,
 	ctrl *LoadDataController,
 ) (*TableKVEncoder, error) {
-	return newTableKVEncoderInner(config, ctrl, ctrl.FieldMappings, ctrl.InsertColumns)
+	en, err := newTableKVEncoderInner(config, ctrl, ctrl.FieldMappings, ctrl.InsertColumns)
+	if err != nil {
+		return nil, err
+	}
+	if len(ctrl.ColumnsAndUserVars) == 0 && len(ctrl.ColumnAssignments) == 0 {
+		en.fileColumnsTable = ctrl.Table
+	}
+	return en, nil
+}
+
+// UseFileColumns maps the values of the rows that follow to the named columns,
+// as the column list of an INSERT statement in a SQL file does. An empty list
+// maps them to the visible columns of the table. It does nothing when the
+// IMPORT INTO statement has its own column list.
+func (en *TableKVEncoder) UseFileColumns(names []string) error {
+	if en.fileColumnsTable == nil || slices.Equal(names, en.fileColumns) {
+		return nil
+	}
+	tableCols := en.fileColumnsTable.VisibleCols()
+	columnsAndUserVars := make([]*ast.ColumnNameOrUserVar, 0, len(names))
+	for _, name := range names {
+		if table.FindCol(tableCols, name) == nil {
+			return dbterror.ErrBadField.GenWithStackByArgs(name, "field list")
+		}
+		columnsAndUserVars = append(columnsAndUserVars, &ast.ColumnNameOrUserVar{
+			ColumnName: &ast.ColumnName{Name: ast.NewCIStr(name)},
+		})
+	}
+	fieldMappings, columnNames := buildFieldMappings(en.fileColumnsTable, columnsAndUserVars)
+	insertColumns, err := buildInsertColumns(en.fileColumnsTable, columnNames, nil)
+	if err != nil {
+		return err
+	}
+	en.fieldMappings = fieldMappings
+	en.insertColumns = insertColumns
+	en.fileColumns = slices.Clone(names)
+	return nil
 }
 
 // NewTableKVEncoderForDupResolve creates a new TableKVEncoder for duplicate resolution.
