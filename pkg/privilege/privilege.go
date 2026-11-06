@@ -28,10 +28,10 @@ import (
 )
 
 // AnyColumn is passed as the column to check SELECT on the table or on any
-// of its columns, e.g. for `SELECT COUNT(*) FROM t`. It is longer than
-// mysql.MaxColumnNameLength, so it never collides with the name of a real
-// column, such as a column named `*`.
-const AnyColumn = "<any column, a name longer than the maximum column name length>"
+// of its columns, e.g. for `SELECT COUNT(*) FROM t`. It must be longer than
+// mysql.MaxColumnNameLength (64), so it never collides with the name of a
+// real column, such as a column named `*`. This is enforced by tests.
+const AnyColumn = "<any column: this marker is longer than the 64-character limit of column names>"
 
 type keyType int
 

@@ -30,6 +30,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -2686,6 +2687,10 @@ func TestSelectColumnPrivilege(t *testing.T) {
 	userTk.MustGetErrCode("UPDATE test.star SET `*` = 0", errno.ErrColumnaccessDenied)
 	tk.MustExec("GRANT SELECT(`*`) ON test.star TO 'testuser'@'localhost'")
 	userTk.MustQuery("SELECT `*` FROM test.star").Check(testkit.Rows("42"))
+	// The marker for "any column" can never be the name of a real column.
+	require.Greater(t, utf8.RuneCountInString(privilege.AnyColumn), mysql.MaxColumnNameLength)
+	tk.MustGetErrCode(fmt.Sprintf("CREATE TABLE test.marker (`%s` int)", privilege.AnyColumn), errno.ErrTooLongIdent)
+	tk.MustGetErrCode(fmt.Sprintf("ALTER TABLE test.star ADD COLUMN `%s` int", privilege.AnyColumn), errno.ErrTooLongIdent)
 }
 
 func TestSelectColumnPrivilegeInSubqueryAndCTE(t *testing.T) {
