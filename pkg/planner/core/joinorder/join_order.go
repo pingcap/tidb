@@ -278,6 +278,9 @@ func optimizeRecursive(p base.LogicalPlan) (base.LogicalPlan, error) {
 	}
 	if len(vertexMap) > 0 {
 		joinGroup.root = replaceJoinGroupVertexes(joinGroup.root, vertexMap)
+		if len(joinGroup.vertexHints) > 0 {
+			joinGroup.vertexHints = RebindJoinMethodHints(joinGroup.vertexHints, vertexMap)
+		}
 	}
 	if p, err = optimizeForJoinGroup(p.SCtx(), joinGroup); err != nil {
 		return nil, err
