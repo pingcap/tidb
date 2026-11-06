@@ -35,7 +35,7 @@ use crate::find_best_task::dispatch::{find_best_task, DispatchContext};
 use tidb_fixcontrol::OptimizerFixControl;
 use crate::rule::logical_optimize;
 use tidb_planner_core_rule::flags;
-use tidb_planner_core_operator_logicalop::plan_context::{CteOptimizer, DisabledLogicalRules, HintWarningSink, RuleContext, UsedStatsRecorder};
+use tidb_planner_core_operator_logicalop::plan_context::{CteOptimizer, DeriveStatsSink, DisabledLogicalRules, HintWarningSink, RuleContext, UsedStatsRecorder};
 use tidb_planner_core_operator_logicalop::plan_context::StatisticsLoadRequester;
 use tidb_planner_core_operator_logicalop::plan_context::PartitionPruning;
 use tidb_planner_core_operator_logicalop::{prepare_possible_properties, LogicalPlan};
@@ -45,7 +45,9 @@ use tidb_planner_core_base::{PlanError, PlanIdAllocator};
 
 /// Go `base.PlanContext` as the optimizer reads it: the statement's session
 /// settings (`SessionVars`), its warnings and phase clocks (`StmtCtx`).
-pub trait OptimizeContext: tidb_exprctx::Columns + PlanCacheMarker + HintWarningSink + MppWarningSink {
+pub trait OptimizeContext:
+    tidb_exprctx::Columns + PlanCacheMarker + HintWarningSink + MppWarningSink + DeriveStatsSink
+{
     /// Go `SessionVars.Location()` as the expression resolver reads it.
     fn session_zone(&self) -> tidb_datatype::SessionTimeZone;
     /// Go `SessionVars.RUV2Metrics` of the statement being planned.
@@ -284,6 +286,8 @@ pub fn optimize_logical<C: OptimizeContext>(
         hint_warning_sink: Some(ctx),
         used_stats_recorder: Some(services.used_stats_recorder),
         ruv2_metrics: ctx.ruv2_metrics(),
+        derive_stats_sink: Some(ctx),
+        mpp_enforced: optimizer_cost_env.session.mpp_enforced,
         cte_optimizer: Some(services.cte_optimizer),
         data_source_stats: &crate::stats::CoreDataSourceStats,
         predicate_simplifier: &tidb_planner_core_rule::rule_predicate_simplification::RulePredicateSimplifier,

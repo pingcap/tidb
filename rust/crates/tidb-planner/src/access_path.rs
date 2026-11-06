@@ -97,58 +97,26 @@ impl AccessPathDerivationContext<'_> {
     }
 }
 
-pub(crate) fn derive_access_paths(
+/// Go `generateIndexMergePath` over `source.possible_access_paths`, the
+/// regular paths `derivePathStatsAndTryHeuristics` kept: the index-merge
+/// paths join that list (a hinted merge prunes the regular paths), and the
+/// answer is Go's `maxRowCount` cap on the DataSource's rows (the largest
+/// merge `CountAfterAccess`, when the merges saw more conditions than the
+/// statistics did) with the warning a hinted table reports.
+pub(crate) fn generate_index_merge_path(
     source: &mut tidb_planner_core_operator_logicalop::DataSource,
     context: &AccessPathDerivationContext<'_>,
     index_merge_enabled: bool,
     no_index_merge_hint: bool,
-    prefix_single_scan: bool,
     use_plan_cache: bool,
     index_merge_skip_range_scan_check: bool,
-) -> Result<(Vec<PossibleAccessPath>, Option<f64>, Option<String>), tidb_planner_core_base::PlanError> {
-    // Go `deriveTablePathStats` over the TiKV table path.
-    if let Some(position) = source.all_possible_access_paths.iter().position(|path| path.is_tikv_table_path()) {
-        let mut path = source.all_possible_access_paths[position].clone();
-        ordinary::fill_table_path(source, &mut path, context)?;
-        source.all_possible_access_paths[position] = path;
-    }
-    let table_path = source.tikv_table_path().cloned();
-    ordinary::fill_ordinary_index_paths(source, context, prefix_single_scan)?;
-    // Go's `PossibleAccessPaths` holds the same path pointers as
-    // `AllPossibleAccessPaths` until the index-merge paths join it.
-    let mut paths = (0..source.all_possible_access_paths.len())
-        .map(PossibleAccessPath::Shared)
-        .collect::<Vec<_>>();
-    let mut min_selectivity = source
-        .table_stats
-        .as_ref()
-        .filter(|stats| stats.row_count() > 0.0)
-        .and_then(|stats| {
-            source
-                .all_possible_access_paths
-                .iter()
-                .filter_map(|path| {
-                    if path.is_tiflash_path() {
-                        // The TiFlash path is the table path under another
-                        // store; only a common handle's PRIMARY estimate
-                        // reaches it.
-                        return table_path
-                            .as_ref()
-                            .filter(|_| source.is_common_handle() && !source.pushed_down_conds.is_empty())
-                            .and_then(AccessPath::count_after_access);
-                    }
-                    if path.is_table_path() {
-                        return table_path.as_ref().and_then(AccessPath::count_after_access);
-                    }
-                    path.count_after_index.or_else(|| path.count_after_access())
-                })
-                .map(|rows| rows / stats.row_count())
-                .reduce(f64::min)
-        })
-        .unwrap_or(source.access_path_min_selectivity)
-        .min(1.0);
-    // Go `generateIndexMergePath`'s warning, reported only for a hinted table
-    // (which then loses its hints).
+) -> Result<(Option<f64>, Option<String>), tidb_planner_core_base::PlanError> {
+    let mut paths = source.possible_access_paths.clone().unwrap_or_else(|| {
+        (0..source.all_possible_access_paths.len())
+            .map(PossibleAccessPath::Shared)
+            .collect()
+    });
+    let regular_path_count = paths.len();
     let mut index_merge_warning = None;
     let mut index_merge_max_count = None;
     // Go `generateIndexMergePath`: `(EnableIndexMerge || len(IndexMergeHints)
@@ -161,68 +129,63 @@ pub(crate) fn derive_access_paths(
         index_merge_warning =
             Some("IndexMerge is inapplicable or disabled. Cannot use IndexMerge on temporary table.");
     } else {
+        let mut merges = Vec::new();
         // Go `generateOtherIndexMerge`'s `isPossibleIdxMerge`, over
-        // `indexMergeConds` (= `AllConds`).
-        if source.all_conds.is_empty() || source.all_possible_access_paths.len() <= 1 {
+        // `indexMergeConds` (= `AllConds`) and the regular paths.
+        if source.all_conds.is_empty() || regular_path_count <= 1 {
             index_merge_warning = Some(
                 "IndexMerge is inapplicable or disabled. No available filter or available index.",
             );
-        }
-        let mut merges = Vec::new();
-        merges.extend(index_merge::prepare_union_index_merge_paths(source, context, use_plan_cache)?);
-        merges.extend(index_merge::generate_and_index_merge_4_normal_index(
-            source,
-            context,
-            use_plan_cache,
-        )?);
-        // Go `generateOtherIndexMerge`'s `needConsiderIndexMerge`: without
-        // index-merge hints, the merges just built are kept only when every
-        // condition can be pushed down and, with fix control 52869 OFF, no
-        // other path has access conditions.
-        if source.index_merge_hints.is_empty() {
-            let mut need_consider_index_merge = true;
-            if !index_merge_skip_range_scan_check {
-                need_consider_index_merge =
-                    !source
-                        .all_possible_access_paths
-                        .iter()
+        } else {
+            merges.extend(index_merge::prepare_union_index_merge_paths(source, context, use_plan_cache)?);
+            merges.extend(index_merge::generate_and_index_merge_4_normal_index(
+                source,
+                context,
+                use_plan_cache,
+            )?);
+            // Go `generateOtherIndexMerge`'s `needConsiderIndexMerge`: without
+            // index-merge hints, the merges just built are kept only when every
+            // condition can be pushed down and, with fix control 52869 OFF, no
+            // regular path after the first has access conditions.
+            if source.index_merge_hints.is_empty() {
+                let mut need_consider_index_merge = true;
+                if !index_merge_skip_range_scan_check {
+                    need_consider_index_merge = !source
+                        .possible_paths_or_all()
+                        .into_iter()
                         .skip(1)
-                        .any(|path| match path.index_info() {
-                            None => table_path
-                                .as_ref()
-                                .is_some_and(|path| !path.access_conds.is_empty()),
-                            Some(_) => !path.access_conds.is_empty(),
-                        });
-            }
-            if need_consider_index_merge
-                && !tidb_expr::infer_pushdown::can_exprs_push_down(
-                    &source.all_conds,
-                    tidb_kv::store_type::StoreType::Unspecified,
-                    context.expr_pushdown_blacklist,
-                )
-            {
-                need_consider_index_merge = false;
-            }
-            if !need_consider_index_merge {
-                // Go deletes a merge in place and still advances its index,
-                // so the merge after each deleted one is never examined and
-                // survives; `containMVPath` is never reset, so every merge
-                // after the first one over an MV index survives too.
-                let mut contain_mv_path = false;
-                let mut i = 0;
-                while i < merges.len() {
-                    contain_mv_path |= merges[i]
-                        .partial_alternative_index_paths
-                        .iter()
-                        .flatten()
-                        .any(|alternative| index_merge::is_mv_alternative(alternative));
-                    if !contain_mv_path {
-                        merges.remove(i);
-                    }
-                    i += 1;
+                        .any(|path| !path.access_conds.is_empty());
                 }
-                if merges.is_empty() && index_merge_warning.is_none() {
-                    index_merge_warning = Some("IndexMerge is inapplicable or disabled. ");
+                if need_consider_index_merge
+                    && !tidb_expr::infer_pushdown::can_exprs_push_down(
+                        &source.all_conds,
+                        tidb_kv::store_type::StoreType::Unspecified,
+                        context.expr_pushdown_blacklist,
+                    )
+                {
+                    need_consider_index_merge = false;
+                }
+                if !need_consider_index_merge {
+                    // Go deletes a merge in place and still advances its index,
+                    // so the merge after each deleted one is never examined and
+                    // survives; `containMVPath` is never reset, so every merge
+                    // after the first one over an MV index survives too.
+                    let mut contain_mv_path = false;
+                    let mut i = 0;
+                    while i < merges.len() {
+                        contain_mv_path |= merges[i]
+                            .partial_alternative_index_paths
+                            .iter()
+                            .flatten()
+                            .any(|alternative| index_merge::is_mv_alternative(alternative));
+                        if !contain_mv_path {
+                            merges.remove(i);
+                        }
+                        i += 1;
+                    }
+                    if merges.is_empty() {
+                        index_merge_warning = Some("IndexMerge is inapplicable or disabled. ");
+                    }
                 }
             }
         }
@@ -242,6 +205,7 @@ pub(crate) fn derive_access_paths(
             context,
             &source.all_conds,
             use_plan_cache,
+            regular_path_count + merges.len(),
         )?;
         if source.all_conds.len() > source.pushed_down_conds.len() {
             index_merge_max_count = merges
@@ -252,34 +216,15 @@ pub(crate) fn derive_access_paths(
         }
         if !source.index_merge_hints.is_empty() {
             // A hinted composed path prunes every other path, merges
-            // included; otherwise the merges prune the ordinary paths.
+            // included; otherwise the merges prune the regular paths.
             if composed.is_some() {
                 merges.clear();
             }
             if composed.is_some() || !merges.is_empty() {
                 paths.clear();
-                min_selectivity = 1.0;
             }
         }
         merges.extend(composed);
-        if let Some(stats) = source
-            .table_stats
-            .as_ref()
-            .filter(|stats| stats.row_count() > 0.0)
-        {
-            for path in &merges {
-                // Go's unfinished PartialAlternativeIndexPaths reads
-                // CountAfterIndex (still zero) in getGeneralAttributesFromPaths.
-                // Convergence later creates concrete PartialIndexPaths whose
-                // CountAfterAccess is used for physical conversion.
-                let rows = if path.partial_alternative_index_paths.is_empty() {
-                    path.count_after_access().unwrap_or(0.0)
-                } else {
-                    0.0
-                };
-                min_selectivity = min_selectivity.min(rows / stats.row_count());
-            }
-        }
         if merges.is_empty() && index_merge_warning.is_none() {
             index_merge_warning = Some("IndexMerge is inapplicable");
         }
@@ -293,15 +238,8 @@ pub(crate) fn derive_access_paths(
             source.index_merge_hints.clear();
             message.to_owned()
         });
-    // Go `getGeneralAttributesFromPaths`' `AccessPathMinSelectivity`, which
-    // includes merge estimates before ordered-index expected-count
-    // adjustment.
-    source.access_path_min_selectivity = min_selectivity;
-    // Go `generateIndexMergePath`'s `maxRowCount` (the largest index-merge
-    // `CountAfterAccess`, when merges saw more conditions than the
-    // statistics did) goes back with the paths for the caller to cap the
-    // DataSource's rows.
-    Ok((paths, index_merge_max_count, index_merge_warning))
+    source.possible_access_paths = Some(paths);
+    Ok((index_merge_max_count, index_merge_warning))
 }
 
 /// Go `getPossibleAccessPaths` (`planbuilder.go:1320-1441`) without hints —

@@ -777,8 +777,11 @@ pub(crate) fn generate_and_index_merge_4_composed_index(
     ctx: &AccessPathDerivationContext<'_>,
     filters: &[Expression],
     use_plan_cache: bool,
+    possible_path_count: usize,
 ) -> Result<Option<AccessPath>, PlanError> {
-    if filters.is_empty() || ds.all_possible_access_paths.len() <= 1 {
+    // Go `len(ds.PossibleAccessPaths) > 1`, the index merges generated so far
+    // included.
+    if filters.is_empty() || possible_path_count <= 1 {
         return Ok(None);
     }
     // At least one hinted MV index path.
@@ -838,9 +841,15 @@ pub(crate) fn clean_access_path_for_mv_index_hint(
     ds: &DataSource,
     paths: &mut Vec<tidb_planner_core_operator_logicalop::data_source::PossibleAccessPath>,
 ) {
-    let forced: std::collections::BTreeSet<i64> = ds
-        .all_possible_access_paths
+    use tidb_planner_core_operator_logicalop::data_source::PossibleAccessPath;
+    // Go reads `ds.PossibleAccessPaths`: the paths the heuristics kept and
+    // the index merges just added.
+    let forced: std::collections::BTreeSet<i64> = paths
         .iter()
+        .map(|path| match path {
+            PossibleAccessPath::Shared(position) => &ds.all_possible_access_paths[*position],
+            PossibleAccessPath::IndexMerge(path) => path,
+        })
         .filter(|path| path.forced)
         .filter_map(tidb_planner_util::path::AccessPath::index_info)
         .filter(|index| index.read().mv_index)

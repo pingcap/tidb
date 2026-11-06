@@ -13,55 +13,6 @@
 
 use tidb_planner_util::column_length::{compare_col2_len, Col2Len};
 
-/// Facts used by Go `derivePathStatsAndTryHeuristics`, before cost comparison.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct HeuristicPath {
-    pub range_count: usize,
-    pub only_points: bool,
-    pub unique: bool,
-    pub single_scan: bool,
-    pub table_filter_count: usize,
-    pub access_columns: Col2Len,
-}
-
-/// Select the unique point path, unless a covering range strictly refines it
-/// and needs fewer than twice as many ranges (Go `stats.go:663`), with Go's
-/// `isRefinedPath`: whether the selected path is that covering range.
-pub(crate) fn choose_heuristic_path(paths: &[HeuristicPath]) -> Option<(usize, bool)> {
-    let mut unique = Vec::new();
-    let mut single = Vec::new();
-    for (index, path) in paths.iter().enumerate() {
-        if path.range_count == 0 || (path.only_points && path.unique && path.single_scan) {
-            return Some((index, false));
-        }
-        if path.only_points {
-            if path.unique {
-                unique.push(index);
-            }
-        } else if path.single_scan {
-            single.push(index);
-        }
-    }
-    let best = unique
-        .iter()
-        .copied()
-        .min_by_key(|&index| (paths[index].range_count, paths[index].table_filter_count))?;
-    let refined = single
-        .into_iter()
-        .filter(|&index| {
-            unique.iter().any(|&unique| {
-                compare_col2_len(&paths[index].access_columns, &paths[unique].access_columns)
-                    == (1, true)
-            })
-        })
-        .min_by_key(|&index| paths[index].range_count);
-    Some(
-        refined
-            .filter(|&index| paths[index].range_count < 2 * paths[best].range_count)
-            .map_or((best, false), |index| (index, true)),
-    )
-}
-
 /// Go candidatePath and AccessPath fields read by skyline comparison.
 #[derive(Clone, Debug, Default)]
 pub struct CandidateMetrics {
@@ -126,6 +77,56 @@ pub(super) fn equality_facts(
     (eq_or_in_count, equal_dnf)
 }
 
+/// Go `ExtractCol2Len` over index columns: each index column the conditions
+/// read, with its index prefix length.
+fn extract<'a>(
+    conditions: impl Iterator<Item = &'a tidb_expr::expression::Expression>,
+    columns: impl Iterator<Item = &'a (tidb_expr::column::Column, i64)> + Clone,
+) -> Col2Len {
+    use tidb_expr::expression::Expression;
+    fn visit<'a>(
+        expression: &Expression,
+        columns: impl Iterator<Item = &'a (tidb_expr::column::Column, i64)> + Clone,
+        result: &mut std::collections::BTreeMap<i64, i64>,
+    ) {
+        match expression {
+            Expression::Column(column) => {
+                // Go `extractCol2LenFromExpr`: `EqualByExprAndID`.
+                if let Some((_, length)) = columns
+                    .clone()
+                    .find(|(key, _)| column.equal_by_expr_and_id_column(key))
+                {
+                    result.insert(column.unique_id, *length);
+                }
+            }
+            Expression::ScalarFunction(function) => {
+                for arg in &function.args {
+                    visit(arg, columns.clone(), result);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut result = std::collections::BTreeMap::new();
+    for condition in conditions {
+        visit(condition, columns.clone(), &mut result);
+    }
+    Col2Len::from_pairs(result)
+}
+
+/// Go `AccessPath.GetCol2LenFromAccessConds`: a table path's access columns
+/// at full length, an index path's at their index prefix lengths.
+pub(crate) fn get_col2_len_from_access_conds(path: &tidb_planner_util::path::AccessPath) -> Col2Len {
+    if path.is_table_path() {
+        return Col2Len::from_pairs(path.access_conds.iter().flat_map(|condition| {
+            tidb_expr::simple_expr::extract_columns(condition)
+                .into_iter()
+                .map(|column| (column.unique_id, -1))
+        }));
+    }
+    extract(path.access_conds.iter(), path.idx_cols.iter())
+}
+
 /// Go `getIndexCandidate`: read both coverage maps and estimate stages from
 /// the logically filled path. Missing facts must not eliminate a competitor.
 pub(crate) fn get_index_candidate(
@@ -135,42 +136,8 @@ pub(crate) fn get_index_candidate(
     single_scan: bool,
     matches_property: bool,
 ) -> Option<CandidateMetrics> {
-    use tidb_expr::expression::Expression;
     let estimate = path.row_estimate?;
     let count_after_index = path.count_after_index?;
-    fn extract<'a>(
-        conditions: impl Iterator<Item = &'a Expression>,
-        columns: impl Iterator<Item = &'a (tidb_expr::column::Column, i64)> + Clone,
-    ) -> Col2Len {
-        fn visit<'a>(
-            expression: &Expression,
-            columns: impl Iterator<Item = &'a (tidb_expr::column::Column, i64)> + Clone,
-            result: &mut std::collections::BTreeMap<i64, i64>,
-        ) {
-            match expression {
-                Expression::Column(column) => {
-                    // Go `extractCol2LenFromExpr`: `EqualByExprAndID`.
-                    if let Some((_, length)) = columns
-                        .clone()
-                        .find(|(key, _)| column.equal_by_expr_and_id_column(key))
-                    {
-                        result.insert(column.unique_id, *length);
-                    }
-                }
-                Expression::ScalarFunction(function) => {
-                    for arg in &function.args {
-                        visit(arg, columns.clone(), result);
-                    }
-                }
-                _ => {}
-            }
-        }
-        let mut result = std::collections::BTreeMap::new();
-        for condition in conditions {
-            visit(condition, columns.clone(), &mut result);
-        }
-        Col2Len::from_pairs(result)
-    }
     let access_columns = extract(path.access_conds.iter(), path.idx_cols.iter());
     let index_columns = extract(
         path.access_conds.iter().chain(&path.index_filters),
@@ -409,43 +376,6 @@ pub fn insert_skyline_candidate<T>(
 #[cfg(test)]
 mod skyline_tests {
     use super::*;
-
-    #[test]
-    fn point_heuristics_refine_unique_reads_only_below_double_range_count() {
-        let full = HeuristicPath {
-            range_count: 1,
-            single_scan: true,
-            ..Default::default()
-        };
-        let unique = HeuristicPath {
-            range_count: 2,
-            only_points: true,
-            unique: true,
-            table_filter_count: 1,
-            access_columns: Col2Len::from_pairs([(1, -1)]),
-            ..Default::default()
-        };
-        // Go chooses unique points before costing, even for a tiny table.
-        assert_eq!(
-            choose_heuristic_path(&[full.clone(), unique.clone()]).map(|(index, _)| index),
-            Some(1)
-        );
-        let mut refined = HeuristicPath {
-            range_count: 3,
-            single_scan: true,
-            access_columns: Col2Len::from_pairs([(1, -1), (2, -1)]),
-            ..Default::default()
-        };
-        assert_eq!(
-            choose_heuristic_path(&[full.clone(), unique.clone(), refined.clone()]),
-            Some((2, true))
-        );
-        refined.range_count = 4;
-        assert_eq!(
-            choose_heuristic_path(&[full, unique, refined]),
-            Some((1, false))
-        );
-    }
 
     #[test]
     fn index_facts_keep_full_key_filters_and_dnf_equality_counts() {

@@ -20303,6 +20303,125 @@ fn verbose_explain_records_path_pruning_and_heuristic_notes_like_go() {
     assert_eq!(point_get_ids, ["Selection_6", "Point_Get_5"]);
 }
 
+/// Go `derivePathStatsAndTryHeuristics` selects a path while deriving the
+/// DataSource's statistics, notes it once (`AppendNote` under `EXPLAIN
+/// FORMAT='verbose'`, an extra note `SHOW WARNINGS` never shows otherwise)
+/// and leaves only that path in `PossibleAccessPaths`, which index-join
+/// planning then reads. Expected notes and warnings: Go on this branch, a
+/// throwaway testkit probe running these statements (`EXPLAIN` then `SHOW
+/// WARNINGS`) in the same order after the same DDL and ANALYZE.
+#[test]
+fn derived_statistics_select_heuristic_access_paths_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1132)).unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
+    // Go's run loaded every requested statistic within the default 100ms;
+    // a loaded test machine must not time out into a sync-load warning.
+    session
+        .node_conn()
+        .execute_write("SET tidb_stats_load_sync_wait = 60000")
+        .unwrap();
+    for ddl in [
+        "CREATE TABLE note_t (a INT PRIMARY KEY, b INT, c INT, d INT, UNIQUE KEY ub (b), KEY ic (c))",
+        "CREATE TABLE note_r (a INT, b INT, c INT, UNIQUE INDEX idx_b(b), INDEX idx_b_c(b, c))",
+        "CREATE TABLE note_w (a INT, b INT, c INT, d INT, UNIQUE INDEX idx_a(a), UNIQUE INDEX idx_b_c(b, c), UNIQUE INDEX idx_b_c_a_d(b, c, a, d))",
+        "CREATE TABLE note_s (a INT, b INT, c INT, KEY ic (c))",
+        "INSERT INTO note_t VALUES (1,1,1,1),(2,2,2,2),(3,3,3,3),(4,4,4,4),(5,5,5,5)",
+        "INSERT INTO note_r VALUES (1,1,1),(2,2,2),(3,3,3)",
+        "INSERT INTO note_w VALUES (1,1,1,1),(2,2,2,2),(3,3,3,3)",
+        "INSERT INTO note_s VALUES (1,1,1),(2,2,2),(3,3,3)",
+        "ANALYZE TABLE note_t, note_r, note_w, note_s",
+    ] {
+        session.node_conn().execute_write(ddl).unwrap();
+    }
+    let warnings = |session: &mut Session, format: &str, sql: &str| -> Vec<String> {
+        rows(session, &format!("EXPLAIN {format}{sql}"));
+        displayed(rows(session, "SHOW WARNINGS"))
+            .into_iter()
+            .map(|row| format!("{} {} {}", row[0], row[1], row[2]))
+            .collect()
+    };
+    for (sql, verbose) in [
+        (
+            "SELECT * FROM note_t WHERE a = 1 AND c > 0",
+            vec!["Note 1105 handle of note_t is selected since the path only has point ranges"],
+        ),
+        (
+            "SELECT * FROM note_t WHERE b = 2 AND c > 0",
+            vec!["Note 1105 unique index ub of note_t is selected since the path only has point ranges with double scan"],
+        ),
+        (
+            "SELECT b, c FROM note_r WHERE b = 5 AND c > 10",
+            vec!["Note 1105 index idx_b_c of note_r is selected since the path only fetches limited number of rows with single scan"],
+        ),
+        // The refining single scan needs five ranges, not fewer than twice
+        // the unique path's one.
+        (
+            "SELECT a, b, c FROM note_w WHERE a = 1 AND b = 2 AND c IN (1, 2, 3, 4, 5)",
+            vec!["Note 1105 unique index idx_a of note_w is selected since the path only has point ranges with double scan"],
+        ),
+        (
+            "SELECT a, b, c FROM note_w WHERE a = 1 AND b = 2 AND c IN (1)",
+            vec!["Note 1105 unique index idx_b_c_a_d of note_w is selected since the path only fetches limited number of rows with single scan"],
+        ),
+        // An empty range is selected outright, however its index is named.
+        (
+            "SELECT * FROM note_t WHERE b > 5 AND b < 3",
+            vec!["Note 1105 unique index ub of note_t is selected since the path only has point ranges with double scan"],
+        ),
+        (
+            "SELECT * FROM note_t t1 JOIN note_t t2 ON t1.c = t2.c WHERE t1.a = 1",
+            vec!["Note 1105 handle of t1 is selected since the path only has point ranges"],
+        ),
+        (
+            "SELECT * FROM note_t WHERE a = 1 ORDER BY c",
+            vec!["Note 1105 handle of note_t is selected since the path only has point ranges"],
+        ),
+        (
+            "SELECT * FROM note_t WHERE b IN (1, 2) AND (a = 1 OR c = 3)",
+            vec!["Note 1105 unique index ub of note_t is selected since the path only has point ranges with double scan"],
+        ),
+        // Only the unique point path remains for the index join's probe,
+        // and it cannot look up `c`.
+        (
+            "SELECT /*+ INL_JOIN(note_t) */ * FROM note_s JOIN note_t ON note_s.c = note_t.c WHERE note_t.b = 1",
+            vec![
+                "Note 1105 unique index ub of note_t is selected since the path only has point ranges with double scan",
+                "Warning 1815 Optimizer Hint /*+ INL_JOIN(note_t) */ or /*+ TIDB_INLJ(note_t) */ is inapplicable",
+            ],
+        ),
+    ] {
+        let plain: Vec<_> = verbose
+            .iter()
+            .filter(|warning| !warning.starts_with("Note"))
+            .copied()
+            .collect();
+        assert_eq!(warnings(&mut session, "", sql), plain, "EXPLAIN {sql}");
+        assert_eq!(warnings(&mut session, "FORMAT = 'verbose' ", sql), verbose, "verbose {sql}");
+    }
+    // Go's plan for the inapplicable hint: a hash join over the unique point
+    // get.
+    let plan = displayed(rows(
+        &mut session,
+        "EXPLAIN SELECT /*+ INL_JOIN(note_t) */ * FROM note_s JOIN note_t ON note_s.c = note_t.c WHERE note_t.b = 1",
+    ))
+    .into_iter()
+    .map(|row| row[0].trim_start_matches([' ', '│', '└', '├', '─']).to_string())
+    .collect::<Vec<_>>();
+    assert_eq!(
+        plan,
+        [
+            "Projection_11",
+            "HashJoin_13",
+            "Selection_28(Build)",
+            "Point_Get_27",
+            "TableReader_35(Probe)",
+            "Selection_34",
+            "TableFullScan_33",
+        ]
+    );
+}
+
 /// `EXPLAIN FORMAT='hint'` generates the hints that reproduce the plan
 /// (`GenHintsFromFlatPlan`) followed by the statement's own. Expected rows: Go
 /// 1.27 on this branch (`TestZZ` probes `HT1` and `HT2`).

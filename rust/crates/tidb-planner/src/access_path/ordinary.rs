@@ -180,99 +180,95 @@ pub(crate) fn correlated_access_count_after_access(
     count
 }
 
-pub(crate) fn fill_ordinary_index_paths(
+/// Go `fillIndexPath` and `deriveIndexPathStats` over the index path at
+/// `position` of `AllPossibleAccessPaths`, filling it in place.
+pub(crate) fn derive_index_path_stats(
     source: &mut DataSource,
+    position: usize,
     context: &AccessPathDerivationContext<'_>,
     prefix_single_scan: bool,
 ) -> Result<(), PlanError> {
-    for position in 0..source.all_possible_access_paths.len() {
-        let Some(index) = source.all_possible_access_paths[position].index_info().cloned() else {
-            continue;
-        };
-        let index = &index;
-        // Go `deriveStats4DataSource` fills every non-table path, a
-        // multi-valued index's included; a columnar index is a TiFlash table
-        // path in Go and never reaches here.
-        if index.read().is_columnar_index() {
-            continue;
-        }
-        let mut path = source.all_possible_access_paths[position].clone();
-        fill_index_path(
-            source, &mut path, &source.pushed_down_conds, context, prefix_single_scan, true,
-        )?;
-        let idx_cols = &path.idx_cols;
-        // Go `detachCondAndBuildRangeForPath`: the path's `CountAfterAccess`
-        // and its bounds come from the index's statistics over the ranges
-        // just built; a path with no usable key column keeps the realtime
-        // row count `fillIndexPath` started from.
-        let derived = if idx_cols.is_empty() {
-            let realtime = source
-                .table_stats
-                .as_ref()
-                .and_then(|stats| stats.hist_coll())
-                .map_or(0.0, |hist| hist.realtime_count() as f64);
-            tidb_stats::RowEstimate::new(realtime, 0.0, 0.0)
-        } else {
-            super::index_merge::estimate_index_ranges(
-                source,
-                index,
-                &path.ranges,
-                idx_cols,
-                context,
-            )?
-        };
-        let index_filters = &path.index_filters;
-        // Go adjusts access rows before computing CountAfterIndex, preserving
-        // the old count as the lower risk bound. Both ordinary and cloned
-        // intersection paths must see the same adjusted estimate.
-        let correlated_columns = idx_cols
-            [path.eq_or_in_cond_count..path.eq_or_in_cond_count + path.correlated_access_count]
-            .iter()
-            .map(|(column, _)| column.clone())
-            .collect::<Vec<_>>();
-        let estimate = Some(derived)
-            .map(|mut estimate| {
-                if !correlated_columns.is_empty() {
-                    estimate.est = correlated_access_count_after_access(
-                        source,
-                        estimate.est,
-                        &correlated_columns,
-                    );
-                }
-                if let (Some(filtered), Some(table)) =
-                    (source.base.base.stats_info(), source.table_stats.as_ref())
-                {
-                    if estimate.est + tidb_planner_core_cost::TOLERANCE_FACTOR < filtered.row_count() {
-                        estimate.min_est = if estimate.min_est > 0.0 {
-                            estimate.min_est.min(estimate.est)
-                        } else {
-                            estimate.est
-                        };
-                        estimate.est = (filtered.row_count()
-                            / tidb_planner_core_cost::SELECTION_FACTOR)
-                            .min(table.row_count());
-                        estimate.max_est = estimate.max_est.max(estimate.est);
-                    }
-                }
-                estimate
-            });
-        let count_after_index = estimate.map(|estimate| {
-            if index_filters.is_empty() {
-                estimate.est
-            } else {
-                (estimate.est * filter_selectivity(source, index_filters, context)).max(
-                    source
-                        .base
-                        .base
-                        .stats_info()
-                        .map_or(0.0, |stats| stats.row_count()),
-                )
+    let index = source.all_possible_access_paths[position]
+        .index_info()
+        .cloned()
+        .expect("an index path reads its index");
+    let index = &index;
+    let mut path = source.all_possible_access_paths[position].clone();
+    fill_index_path(
+        source, &mut path, &source.pushed_down_conds, context, prefix_single_scan, true,
+    )?;
+    let idx_cols = &path.idx_cols;
+    // Go `detachCondAndBuildRangeForPath`: the path's `CountAfterAccess`
+    // and its bounds come from the index's statistics over the ranges
+    // just built; a path with no usable key column keeps the realtime
+    // row count `fillIndexPath` started from.
+    let derived = if idx_cols.is_empty() {
+        let realtime = source
+            .table_stats
+            .as_ref()
+            .and_then(|stats| stats.hist_coll())
+            .map_or(0.0, |hist| hist.realtime_count() as f64);
+        tidb_stats::RowEstimate::new(realtime, 0.0, 0.0)
+    } else {
+        super::index_merge::estimate_index_ranges(
+            source,
+            index,
+            &path.ranges,
+            idx_cols,
+            context,
+        )?
+    };
+    let index_filters = &path.index_filters;
+    // Go adjusts access rows before computing CountAfterIndex, preserving
+    // the old count as the lower risk bound. Both ordinary and cloned
+    // intersection paths must see the same adjusted estimate.
+    let correlated_columns = idx_cols
+        [path.eq_or_in_cond_count..path.eq_or_in_cond_count + path.correlated_access_count]
+        .iter()
+        .map(|(column, _)| column.clone())
+        .collect::<Vec<_>>();
+    let estimate = Some(derived)
+        .map(|mut estimate| {
+            if !correlated_columns.is_empty() {
+                estimate.est = correlated_access_count_after_access(
+                    source,
+                    estimate.est,
+                    &correlated_columns,
+                );
             }
+            if let (Some(filtered), Some(table)) =
+                (source.base.base.stats_info(), source.table_stats.as_ref())
+            {
+                if estimate.est + tidb_planner_core_cost::TOLERANCE_FACTOR < filtered.row_count() {
+                    estimate.min_est = if estimate.min_est > 0.0 {
+                        estimate.min_est.min(estimate.est)
+                    } else {
+                        estimate.est
+                    };
+                    estimate.est = (filtered.row_count()
+                        / tidb_planner_core_cost::SELECTION_FACTOR)
+                        .min(table.row_count());
+                    estimate.max_est = estimate.max_est.max(estimate.est);
+                }
+            }
+            estimate
         });
-        path.row_estimate = estimate;
-        path.count_after_index = count_after_index;
-        source.all_possible_access_paths[position] = path;
-    }
+    let count_after_index = estimate.map(|estimate| {
+        if index_filters.is_empty() {
+            estimate.est
+        } else {
+            (estimate.est * filter_selectivity(source, index_filters, context)).max(
+                source
+                    .base
+                    .base
+                    .stats_info()
+                    .map_or(0.0, |stats| stats.row_count()),
+            )
+        }
+    });
+    path.row_estimate = estimate;
+    path.count_after_index = count_after_index;
+    source.all_possible_access_paths[position] = path;
     Ok(())
 }
 

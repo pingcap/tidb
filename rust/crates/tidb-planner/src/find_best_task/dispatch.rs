@@ -197,9 +197,6 @@ pub struct DispatchContext<'a> {
     pub opt_prefix_index_single_scan: bool,
     /// Statement-context sink for Go's enforced-MPP refusal warnings.
     pub mpp_warning_sink: Option<&'a dyn tidb_planner_core_operator_physicalop::enforce::MppWarningSink>,
-    /// DataSources whose heuristic-selection note was already raised: Go
-    /// derives a DataSource's statistics, and so selects, only once.
-    pub heuristic_noted: std::collections::HashSet<usize>,
     /// Go `StmtCtx.SetSkipPlanCache` for decisions physical optimization
     /// makes; `None` drops them.
     pub plan_cache_marker: Option<&'a dyn tidb_planner_core_base::PlanCacheMarker>,
@@ -290,7 +287,6 @@ impl<'a> DispatchContext<'a> {
             partial_ordered_index_for_topn: false,
             opt_prefix_index_single_scan: true,
             mpp_warning_sink: None,
-            heuristic_noted: std::collections::HashSet::new(),
             plan_cache_marker: None,
             use_plan_cache: false,
             fix_44830: false,
@@ -3205,30 +3201,8 @@ fn find_best_task_4_logical_data_source_paths(
     let preparation = preparation.ordinary;
     let derived = ds.possible_paths();
     if let (Some(prepared_paths), Some(derived)) = (&preparation, &derived) {
-        if prepared_paths.heuristic_selected {
-            if let (Some(path), Some(sink)) = (prepared_paths.paths.first(), ctx.mpp_warning_sink)
-            {
-                // Go `derivePathStatsAndTryHeuristics` returns before the note
-                // when a TiFlash preference keeps the TiFlash path next to the
-                // selected TiKV one.
-                let tiflash_kept = ds.prefer_store_type
-                    & tidb_planner_core_operator_logicalop::data_source::PREFER_TIFLASH
-                    != 0
-                    && !path.is_tiflash_path()
-                    && ds
-                        .all_possible_access_paths
-                        .iter()
-                        .any(|path| path.is_tiflash_path());
-                if !tiflash_kept && ctx.heuristic_noted.insert(std::ptr::from_ref(ds).addr()) {
-                    sink.append_planner_note(&heuristic_selection_note(
-                        ds,
-                        path,
-                        prepared_paths.heuristic_refined,
-                        prepared_paths.heuristic_single_scan,
-                    ));
-                }
-            }
-        } else {
+        // Go `getPruningInfo` says nothing for a TableDual's empty range.
+        if !prepared_paths.empty_range {
             *pruning_info = pruning_info_message(
                 ds,
                 derived,
@@ -3239,10 +3213,10 @@ fn find_best_task_4_logical_data_source_paths(
             );
         }
     }
-    let mut heuristic_selected = false;
+    let mut empty_range = false;
     if let Some(preparation) = preparation {
         ordinary_paths = preparation.paths;
-        heuristic_selected = preparation.heuristic_selected;
+        empty_range = preparation.empty_range;
     }
     let access_path_min_selectivity = ds.access_path_min_selectivity;
     let ordered = !prop.is_sort_item_empty();
@@ -5059,14 +5033,14 @@ fn find_best_task_4_logical_data_source_paths(
             best = cur;
         }
     }
-    // The survivors of `skylinePruning`, its preferRange filter and the
-    // heuristic selection were fixed by `prepare_access_paths`.
+    // The survivors of `skylinePruning` and its preferRange filter were
+    // fixed by `prepare_access_paths`.
     for cur in ordinary_candidates {
         if best.invalid() || compare_task_cost(ctx.coster, &cur, &best)? {
             best = cur;
         }
     }
-    if heuristic_selected {
+    if empty_range {
         return Ok(best);
     }
     // All alternative choices were fixed before ordinary physical construction.
@@ -5097,35 +5071,6 @@ fn note_table_name(ds: &tidb_planner_core_operator_logicalop::DataSource) -> Str
         .clone()
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| ds.table_name())
-}
-
-/// The note Go raises when `derivePathStatsAndTryHeuristics` keeps one path
-/// (`stats.go`, "is selected since the path ...").
-fn heuristic_selection_note(
-    ds: &tidb_planner_core_operator_logicalop::DataSource,
-    path: &tidb_planner_util::path::AccessPath,
-    refined: bool,
-    single_scan: bool,
-) -> String {
-    let table = note_table_name(ds);
-    let Some(index) = path.index_info() else {
-        return format!("handle of {table} is selected since the path only has point ranges");
-    };
-    format!(
-        "{}index {} of {table} is selected since the path {}{}",
-        if index.read().unique { "unique " } else { "" },
-        index.read().name,
-        if refined {
-            "only fetches limited number of rows"
-        } else {
-            "only has point ranges"
-        },
-        if single_scan {
-            " with single scan"
-        } else {
-            " with double scan"
-        },
-    )
 }
 
 /// Go `getPruningInfo`: the paths that survive `skylinePruning`, in the

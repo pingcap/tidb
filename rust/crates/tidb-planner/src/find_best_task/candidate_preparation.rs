@@ -11,7 +11,7 @@
 
 //! Ordinary candidate admission and skyline comparison before physical allocation.
 
-use super::candidate::{CandidateMetrics, HeuristicPath};
+use super::candidate::CandidateMetrics;
 use super::dispatch::{
     index_path_matches_order, match_partial_order_property, table_path_matches_order,
     DispatchContext,
@@ -26,15 +26,13 @@ pub(super) struct PreparedOrdinaryPaths<'a> {
     /// `(is a preferred range scan, is kept regardless)`.
     pub range_flags: Vec<(bool, bool)>,
     pub idx_missing_stats: bool,
-    pub heuristic_selected: bool,
-    /// Go `isRefinedPath` and the selected path's `IsSingleScan`, which the
-    /// heuristic selection note reports.
-    pub heuristic_refined: bool,
-    pub heuristic_single_scan: bool,
+    /// Go `skylinePruning`'s early answer: a path whose ranges are empty is
+    /// the only candidate, whatever came before it.
+    pub empty_range: bool,
 }
 
-/// Go `skylinePruning` and `derivePathStatsAndTryHeuristics` over the logically
-/// derived paths. `None` means this request does not enumerate ordinary paths:
+/// Go `skylinePruning` over the logically derived paths, which
+/// `derivePathStatsAndTryHeuristics` has already pruned. `None` means this request does not enumerate ordinary paths:
 /// an index-join probe prices only the path its rules choose, and a source that
 /// logical derivation never reached (a hand-built planner unit-test source)
 /// keeps every path unpruned.
@@ -51,6 +49,9 @@ pub(super) fn prepare_ordinary_paths<'a>(
     ds.possible_access_paths.as_ref()?;
     let mut candidates = Vec::new();
     for &path in paths {
+        if path.store_type != tidb_kv::store_type::StoreType::TiFlash && prop.is_flash_prop() {
+            continue;
+        }
         if (ds.prefer_store_type & tidb_planner_core_operator_logicalop::data_source::PREFER_TIFLASH != 0
             && !path.is_tiflash_path())
             || (ds.prefer_store_type & tidb_planner_core_operator_logicalop::data_source::PREFER_TIKV != 0
@@ -58,9 +59,18 @@ pub(super) fn prepare_ordinary_paths<'a>(
         {
             continue;
         }
-        let (metrics, heuristic) = match path.index_info() {
+        // Go: "if we already know the range of the scan is empty, just
+        // return a TableDual".
+        if path.ranges.is_empty() {
+            return Some(PreparedOrdinaryPaths {
+                paths: vec![path],
+                range_flags: vec![(false, false)],
+                idx_missing_stats: false,
+                empty_range: true,
+            });
+        }
+        let metrics = match path.index_info() {
             None if !path.is_tiflash_path() => {
-                let primary_index = &path.index;
                 if prop.partial_order_info.is_some() {
                     continue;
                 }
@@ -72,8 +82,8 @@ pub(super) fn prepare_ordinary_paths<'a>(
                             .map(|column| (column.unique_id, -1))
                     }),
                 );
-                let metrics = table.row_estimate.map(|estimate| CandidateMetrics {
-                    access_columns: columns.clone(),
+                table.row_estimate.map(|estimate| CandidateMetrics {
+                    access_columns: columns,
                     index_columns: Default::default(),
                     table_path: true,
                     single_scan: true,
@@ -92,25 +102,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
                     min_count_after_access: estimate.min_est,
                     max_count_after_access: estimate.max_est,
                     ..Default::default()
-                });
-                let primary = primary_index.as_ref();
-                let heuristic = HeuristicPath {
-                    range_count: table.ranges.len(),
-                    only_points: table.ranges.iter().all(|range| {
-                        primary.map_or_else(
-                            || range.is_point_nullable(),
-                            |index| {
-                                range.is_point_non_nullable()
-                                    && range.low_val.len() == index.read().columns.len()
-                            },
-                        )
-                    }),
-                    unique: true,
-                    single_scan: true,
-                    table_filter_count: table.table_filters.len(),
-                    access_columns: columns,
-                };
-                (metrics, Some(heuristic))
+                })
             }
             Some(index) => {
                 // Go `convertToIndexScan`: a multi-valued index is read only
@@ -138,12 +130,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
                 let single_scan = state.is_single_scan.unwrap_or_else(|| {
                     index_path_is_single_scan(ds, index, ctx.opt_prefix_index_single_scan)
                 });
-                // Go `derivePathStatsAndTryHeuristics` selects a path whose
-                // ranges came out empty before any skyline pruning: the
-                // statement reads nothing, whatever conditions remain.
-                let empty_ranges = state.ranges.is_empty();
                 if state.access_conds.is_empty()
-                    && !empty_ranges
                     && prop.is_sort_item_empty()
                     && !path.forced
                     && !single_scan
@@ -151,54 +138,18 @@ pub(super) fn prepare_ordinary_paths<'a>(
                 {
                     continue;
                 }
-                let metrics = super::candidate::get_index_candidate(
+                super::candidate::get_index_candidate(
                     ds,
                     index,
                     state,
                     single_scan,
                     index_path_matches_order(ds, index, prop, Some(&state.ranges)).matched(),
-                );
-                let heuristic = if empty_ranges {
-                    Some(HeuristicPath::default())
-                } else {
-                    metrics.as_ref().map(|metrics| HeuristicPath {
-                        range_count: state.ranges.len(),
-                        only_points: state.ranges.iter().all(|range| {
-                            range.is_point_non_nullable()
-                                && range.low_val.len() == index.read().columns.len()
-                        }),
-                        unique: index.read().unique,
-                        single_scan,
-                        table_filter_count: state.table_filters.len(),
-                        access_columns: metrics.access_columns.clone(),
-                    })
-                };
-                (metrics, heuristic)
+                )
             }
-            None => (None, None),
+            None => None,
         };
         let flags = range_scan_flags(ds, path, prop, ctx, metrics.as_ref());
-        candidates.push((path, metrics, heuristic, flags));
-    }
-    // Go `derivePathStatsAndTryHeuristics` prunes `PossibleAccessPaths` in
-    // `DataSource.DeriveStats`, before any physical property exists, so the
-    // heuristic path serves an ordered or coprocessor request too.
-    if let Some(heuristics) = candidates
-        .iter()
-        .map(|candidate| candidate.2.clone())
-        .collect::<Option<Vec<_>>>()
-    {
-        if let Some((selected, refined)) = super::candidate::choose_heuristic_path(&heuristics)
-        {
-            return Some(PreparedOrdinaryPaths {
-                paths: vec![candidates[selected].0],
-                range_flags: vec![candidates[selected].3],
-                idx_missing_stats: false,
-                heuristic_selected: true,
-                heuristic_refined: refined,
-                heuristic_single_scan: heuristics[selected].single_scan,
-            });
-        }
+        candidates.push((path, metrics, flags));
     }
     let mut skyline = Vec::new();
     let mut idx_missing_stats = false;
@@ -215,12 +166,10 @@ pub(super) fn prepare_ordinary_paths<'a>(
         idx_missing_stats |= missing;
     }
     Some(PreparedOrdinaryPaths {
-        range_flags: skyline.iter().map(|candidate| candidate.3).collect(),
+        range_flags: skyline.iter().map(|candidate| candidate.2).collect(),
         paths: skyline.into_iter().map(|candidate| candidate.0).collect(),
         idx_missing_stats,
-        heuristic_selected: false,
-        heuristic_refined: false,
-        heuristic_single_scan: false,
+        empty_range: false,
     })
 }
 
@@ -315,7 +264,7 @@ pub(super) fn prepare_access_paths<'a>(
         && prop.index_join_prop.is_none()
         && !ordinary
             .as_ref()
-            .is_some_and(|paths| paths.heuristic_selected)
+            .is_some_and(|paths| paths.empty_range)
     {
         if let Some(paths) = ds.possible_paths() {
             for (position, path) in paths.into_iter().enumerate() {
@@ -363,7 +312,7 @@ pub(super) fn prepare_access_paths<'a>(
         if prefer_range
             && prepared.paths.len() + merges.len() > 1
             && has_range_scan_path
-            && !prepared.heuristic_selected
+            && !prepared.empty_range
         {
             let mut keep = prepared.range_flags.iter().map(|(preferred, kept)| *preferred || *kept);
             prepared.paths.retain(|_| keep.next().unwrap_or(true));

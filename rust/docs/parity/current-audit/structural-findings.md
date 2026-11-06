@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**29 unresolved: 8 open, 21 partial.**
+**28 unresolved: 7 open, 21 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -47,7 +47,6 @@ unresolved until it is restated against its Go owner or closed.
 | E07 | open | BRIE statements are classified but never executed | `pkg/executor/brie.go` |
 | X01 | partial | SQL/PB signature construction and typed vector execution. The planner's `BuiltinFunctionUsageInc` (`expressionRewriter.newFunction`) is not called: it needs the function's `PbCode`, which a planner-built Rust function only gets at pushdown resolution. | `pkg/expression` |
 | Q01 | open | No Cascades memo exploration/implementation in the production optimizer | `pkg/planner/cascades` |
-| Q02 | open | Go's `derivePathStatsAndTryHeuristics` prunes a DataSource's access paths during `deriveStats4DataSource` (a unique point path or its refining single scan becomes `ds.PossibleAccessPaths`), where this port keeps every derived path and makes that choice later, per physical property, in `find_best_task` (`candidate_preparation.rs` `prepare_ordinary_paths` -> `candidate.rs` `choose_heuristic_path`); so what Go reads from the pruned paths at derivation (RU v2 `plan_derive_stats_paths`, `getGeneralAttributesFromPaths`) counts them unpruned: `INSERT INTO h SELECT a, b FROM t WHERE a = 3` on `t (a INT PRIMARY KEY, b INT, c VARCHAR(20), KEY(b))` counts 2 paths where Go counts 1 | `pkg/planner/core/stats.go` (`deriveStats4DataSource`, `derivePathStatsAndTryHeuristics`) |
 
 ### Privileges, wire and administration
 

@@ -2,8 +2,8 @@
   "date": "2026-11-06",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 29,
-    "open": 8,
+    "unresolved": 28,
+    "open": 7,
     "partial": 21
   },
   "findings": [
@@ -158,13 +158,6 @@
       "go_owner": "`pkg/planner/cascades`"
     },
     {
-      "id": "Q02",
-      "status": "open",
-      "group": "Expanded subsystem ownership review",
-      "finding": "Go's `derivePathStatsAndTryHeuristics` prunes a DataSource's access paths during `deriveStats4DataSource` (a unique point path or its refining single scan becomes `ds.PossibleAccessPaths`), where this port keeps every derived path and makes that choice later, per physical property, in `find_best_task` (`candidate_preparation.rs` `prepare_ordinary_paths` -> `candidate.rs` `choose_heuristic_path`); so what Go reads from the pruned paths at derivation (RU v2 `plan_derive_stats_paths`, `getGeneralAttributesFromPaths`) counts them unpruned: `INSERT INTO h SELECT a, b FROM t WHERE a = 3` on `t (a INT PRIMARY KEY, b INT, c VARCHAR(20), KEY(b))` counts 2 paths where Go counts 1",
-      "go_owner": "`pkg/planner/core/stats.go` (`deriveStats4DataSource`, `derivePathStatsAndTryHeuristics`)"
-    },
-    {
       "id": "X01",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
@@ -215,7 +208,7 @@
       "go_owner": "`pkg/ddl` (`systable`, job scheduler), `pkg/session` bootstrap, `pkg/privilege/privileges` (`ensureActiveUser`)"
     }
   ],
-  "unresolved": 29,
-  "open": 8,
+  "unresolved": 28,
+  "open": 7,
   "partial": 21
 }

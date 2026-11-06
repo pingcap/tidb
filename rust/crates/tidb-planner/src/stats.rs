@@ -279,19 +279,24 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                     .rule_context
                     .and_then(|context| context.used_stats_recorder),
             };
-            match crate::access_path::derive_access_paths(
-                op,
-                &derivation,
-                env.index_merge_enabled,
-                env.rule_context
-                    .is_some_and(|context| context.no_index_merge_hint),
-                env.opt_prefix_index_single_scan,
-                env.use_plan_cache,
-                // Go fix control 52869, true when unset.
-                env.rule_context
-                    .is_none_or(|context| context.index_merge_skip_range_scan_check),
-            ) {
-                Ok((paths, index_merge_max_count, warning)) => {
+            // Go `derivePathStatsAndTryHeuristics`: the heuristic-pruned
+            // paths become `ds.PossibleAccessPaths`.
+            let derived = derive_path_stats_and_try_heuristics(op, &derivation, env).and_then(|()| {
+                // Go `generateIndexMergePath` over the pruned paths.
+                crate::access_path::generate_index_merge_path(
+                    op,
+                    &derivation,
+                    env.index_merge_enabled,
+                    env.rule_context
+                        .is_some_and(|context| context.no_index_merge_hint),
+                    env.use_plan_cache,
+                    // Go fix control 52869, true when unset.
+                    env.rule_context
+                        .is_none_or(|context| context.index_merge_skip_range_scan_check),
+                )
+            });
+            match derived {
+                Ok((index_merge_max_count, warning)) => {
                     if let Some(warning) = warning {
                         env.eval_context.append_warning(1105, &warning);
                     }
@@ -311,20 +316,241 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                             *stats = scaled;
                         }
                     }
+                    let paths = op.possible_paths().unwrap_or_default();
                     // Go `deriveStats4DataSource`: the access paths left
-                    // after the heuristics, counted for RU v2.
+                    // after the heuristics and the index merges, counted for
+                    // RU v2.
                     if let Some(metrics) =
                         env.rule_context.and_then(|context| context.ruv2_metrics.as_ref())
                     {
                         metrics.add_plan_derive_stats_paths(paths.len() as i64);
                     }
-                    op.possible_access_paths = Some(paths);
+                    let (min_selectivity, index_force) = get_general_attributes_from_paths(
+                        &paths,
+                        op.table_stats.as_ref().map_or(0.0, StatsInfo::row_count),
+                    );
+                    op.access_path_min_selectivity = min_selectivity;
+                    if index_force {
+                        if let Some(sink) =
+                            env.rule_context.and_then(|context| context.derive_stats_sink)
+                        {
+                            sink.set_index_force();
+                        }
+                    }
                 }
                 Err(error) => result = Err(error),
             }
         }
         result
     }
+}
+
+/// Go `getGeneralAttributesFromPaths`: the smallest fraction of
+/// `total_row_count` a path reads (a table or finished index-merge path's
+/// `CountAfterAccess`, an index or unfinished OR index-merge path's
+/// `CountAfterIndex`), and whether any path is forced.
+fn get_general_attributes_from_paths(
+    paths: &[&tidb_planner_util::path::AccessPath],
+    total_row_count: f64,
+) -> (f64, bool) {
+    let mut min_selectivity = 1.0_f64;
+    let mut index_force = false;
+    for path in paths {
+        if total_row_count > 0.0 {
+            let rows = if path.is_table_path() {
+                path.count_after_access()
+            } else if !path.partial_index_paths.is_empty() {
+                Some(path.count_after_access().unwrap_or(0.0))
+            } else if !path.partial_alternative_index_paths.is_empty() {
+                // Go's unfinished OR path has no CountAfterIndex yet.
+                Some(0.0)
+            } else {
+                path.count_after_index.or_else(|| path.count_after_access())
+            };
+            if let Some(rows) = rows {
+                min_selectivity = min_selectivity.min(rows / total_row_count);
+            }
+        }
+        index_force |= path.forced;
+    }
+    (min_selectivity, index_force)
+}
+
+/// Go `AccessPath.OnlyPointRange`.
+fn only_point_range(path: &tidb_planner_util::path::AccessPath) -> bool {
+    if path.is_int_handle_path {
+        return path.ranges.iter().all(tidb_ranger::Range::is_point_nullable);
+    }
+    let columns = path.index.as_ref().map_or(0, |index| index.read().columns.len());
+    path.ranges
+        .iter()
+        .all(|range| range.is_point_non_nullable() && range.high_val.len() == columns)
+}
+
+/// Go `derivePathStatsAndTryHeuristics` (`stats.go`): derives each path's
+/// statistics in `AllPossibleAccessPaths` order and stops at the first path
+/// a heuristic selects outright -- one with empty ranges, or a unique point
+/// path that is a single scan. Otherwise the unique point path with the
+/// fewest ranges is selected, unless a single-scan path strictly refining it
+/// needs fewer than twice its ranges. A selection prunes
+/// `ds.PossibleAccessPaths` to that path (and the TiFlash path, which a
+/// TiFlash preference keeps without a note); with none, every path stays.
+fn derive_path_stats_and_try_heuristics(
+    ds: &mut DataSource,
+    context: &crate::access_path::AccessPathDerivationContext<'_>,
+    env: &DeriveStatsEnv<'_>,
+) -> Result<(), PlanError> {
+    use tidb_planner_core_operator_logicalop::data_source::{PossibleAccessPath, PREFER_TIFLASH};
+    use crate::access_path::ordinary::{derive_index_path_stats, fill_table_path};
+    let derive_table_path_stats = |ds: &mut DataSource, position: usize| -> Result<(), PlanError> {
+        let mut path = ds.all_possible_access_paths[position].clone();
+        fill_table_path(ds, &mut path, context)?;
+        ds.all_possible_access_paths[position] = path;
+        Ok(())
+    };
+    let mut unique_idxs_with_double_scan = Vec::new();
+    let mut single_scan_idxs = Vec::new();
+    let mut selected = None;
+    let mut is_refined_path = false;
+    // step1: a TiFlash preference builds the TiFlash path ahead.
+    let mut tiflash_path = None;
+    let is_mpp_enforced = env.rule_context.is_some_and(|context| context.mpp_enforced);
+    let prefer_tiflash = ds.prefer_store_type & PREFER_TIFLASH != 0;
+    if (prefer_tiflash || is_mpp_enforced) && ds.has_tiflash() {
+        if let Some(position) = ds
+            .all_possible_access_paths
+            .iter()
+            .position(tidb_planner_util::path::AccessPath::is_tiflash_path)
+        {
+            derive_table_path_stats(ds, position)?;
+            tiflash_path = Some(position);
+        }
+    }
+    // step2: the kv paths follow the heuristic rules.
+    for position in 0..ds.all_possible_access_paths.len() {
+        let single_scan = if ds.all_possible_access_paths[position].is_table_path() {
+            derive_table_path_stats(ds, position)?;
+            true
+        } else {
+            derive_index_path_stats(ds, position, context, env.opt_prefix_index_single_scan)?;
+            let path = &ds.all_possible_access_paths[position];
+            path.is_single_scan.unwrap_or_else(|| {
+                tidb_planner_core_operator_logicalop::data_source::index_path_is_single_scan(
+                    ds,
+                    path.index.as_ref().expect("an index path reads its index"),
+                    env.opt_prefix_index_single_scan,
+                )
+            })
+        };
+        // step3: the heuristic rules, the TiFlash path's point range
+        // included.
+        let path = &ds.all_possible_access_paths[position];
+        if path.ranges.is_empty() {
+            selected = Some((position, single_scan));
+            break;
+        }
+        if only_point_range(path) {
+            if path.is_table_path() || path.index.as_ref().is_some_and(|index| index.read().unique) {
+                if single_scan {
+                    selected = Some((position, single_scan));
+                    break;
+                }
+                unique_idxs_with_double_scan.push((position, single_scan));
+            }
+        } else if single_scan {
+            single_scan_idxs.push((position, single_scan));
+        }
+    }
+    if selected.is_none() && !unique_idxs_with_double_scan.is_empty() {
+        let paths = &ds.all_possible_access_paths;
+        let mut unique_idx_access_cols = Vec::with_capacity(unique_idxs_with_double_scan.len());
+        // The unique path with the fewest ranges; among equals, the one
+        // with the fewest table filters.
+        let mut unique_best: Option<(usize, bool)> = None;
+        for &(position, single_scan) in &unique_idxs_with_double_scan {
+            let unique_idx = &paths[position];
+            unique_idx_access_cols.push(crate::find_best_task::candidate::get_col2_len_from_access_conds(unique_idx));
+            if unique_best.is_none_or(|(best, _)| {
+                unique_idx.ranges.len() < paths[best].ranges.len()
+                    || (unique_idx.ranges.len() == paths[best].ranges.len()
+                        && unique_idx.table_filters.len() < paths[best].table_filters.len())
+            }) {
+                unique_best = Some((position, single_scan));
+            }
+        }
+        // A single-scan path whose access columns strictly cover a unique
+        // path's is a refined one; the refined path with the fewest ranges.
+        let mut refined_best: Option<(usize, bool)> = None;
+        for &(position, single_scan) in &single_scan_idxs {
+            let col2len = crate::find_best_task::candidate::get_col2_len_from_access_conds(&paths[position]);
+            for unique_idx_col2len in &unique_idx_access_cols {
+                if tidb_planner_util::column_length::compare_col2_len(&col2len, unique_idx_col2len)
+                    == (1, true)
+                    && refined_best
+                        .is_none_or(|(best, _)| paths[position].ranges.len() < paths[best].ranges.len())
+                {
+                    refined_best = Some((position, single_scan));
+                }
+            }
+        }
+        // The refined path wins only below twice the unique path's ranges.
+        match (refined_best, unique_best) {
+            (Some(refined), unique)
+                if unique.is_none_or(|(unique, _)| {
+                    paths[refined.0].ranges.len() < 2 * paths[unique].ranges.len()
+                }) =>
+            {
+                selected = Some(refined);
+                is_refined_path = true;
+            }
+            (_, unique) => selected = unique,
+        }
+    }
+    let Some((selected, single_scan)) = selected else {
+        ds.possible_access_paths = Some(
+            (0..ds.all_possible_access_paths.len())
+                .map(PossibleAccessPath::Shared)
+                .collect(),
+        );
+        return Ok(());
+    };
+    // The heuristic prunes only this DataSource's `PossibleAccessPaths`.
+    let mut possible = vec![PossibleAccessPath::Shared(selected)];
+    // A TiFlash read the user asked for keeps the TiFlash path next to a
+    // selected TiKV one, once it was built.
+    let path = &ds.all_possible_access_paths[selected];
+    let keep = (prefer_tiflash || is_mpp_enforced) && !path.is_tiflash_path();
+    if let (true, Some(tiflash_path)) = (keep, tiflash_path) {
+        possible.push(PossibleAccessPath::Shared(tiflash_path));
+        ds.possible_access_paths = Some(possible);
+        return Ok(());
+    }
+    let table_name = ds
+        .table_as_name
+        .clone()
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| ds.table_name());
+    let note = if path.is_table_path() {
+        format!("handle of {table_name} is selected since the path only has point ranges")
+    } else {
+        let index = path.index.as_ref().expect("an index path reads its index").read();
+        format!(
+            "{}index {} of {table_name} is selected since the path {}{}",
+            if index.unique { "unique " } else { "" },
+            index.name.original(),
+            if is_refined_path {
+                "only fetches limited number of rows"
+            } else {
+                "only has point ranges"
+            },
+            if single_scan { " with single scan" } else { " with double scan" },
+        )
+    };
+    if let Some(sink) = env.rule_context.and_then(|context| context.derive_stats_sink) {
+        sink.append_planner_note(&note);
+    }
+    ds.possible_access_paths = Some(possible);
+    Ok(())
 }
 
 #[cfg(test)]

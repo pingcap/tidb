@@ -57,7 +57,9 @@ pub(crate) fn is_specified_in_index_merge_hints(ds: &DataSource, index_name: &st
 pub(crate) fn enumerated_indexes(
     ds: &DataSource,
 ) -> impl Iterator<Item = &tidb_model::GoShared<tidb_model::IndexInfo>> {
-    ds.all_possible_access_paths.iter().filter_map(tidb_planner_util::path::AccessPath::index_info)
+    ds.possible_paths_or_all()
+        .into_iter()
+        .filter_map(tidb_planner_util::path::AccessPath::index_info)
 }
 
 #[cfg(test)]
@@ -124,8 +126,8 @@ fn prepare_union_index_merge_path_for_or(
         // (`IsIntHandlePath`) or a clustered common handle
         // (`IsCommonHandlePath`, ranged over its PRIMARY index's columns).
         let table_primary = ds
-            .all_possible_access_paths
-            .iter()
+            .possible_paths_or_all()
+            .into_iter()
             .filter(|path| path.is_tikv_table_path())
             .find_map(|path| {
                 if path.is_int_handle_path && ds.handle_is_int && !ds.handle_cols.is_empty() {

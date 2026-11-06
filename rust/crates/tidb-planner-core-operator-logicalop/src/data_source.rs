@@ -139,8 +139,9 @@ pub struct DataSource {
     pub all_conds: Vec<Expression>,
     /// Go `AllPossibleAccessPaths`: `getPossibleAccessPaths`' answer, grown
     /// in place by plan building and statistics derivation. Go's
-    /// `PossibleAccessPaths` equals it until derivation adds the index-merge
-    /// paths ([`Self::possible_access_paths`]).
+    /// `PossibleAccessPaths` equals it until derivation prunes it by the
+    /// heuristics and adds the index-merge paths
+    /// ([`Self::possible_access_paths`]).
     pub all_possible_access_paths: Vec<tidb_planner_util::path::AccessPath>,
     /// The unfiltered public paths from which static partition children rerun
     /// Go `getPossibleAccessPaths` after partition-scoped hint selection.
@@ -191,8 +192,9 @@ pub struct DataSource {
     pub index_merge_hints: Vec<DataSourceIndexMergeHint>,
     /// Go `TableStats`: the table-level profile before any filtering.
     pub table_stats: Option<StatsInfo>,
-    /// Go `PossibleAccessPaths` after statistics derivation: the grown paths
-    /// plus the index-merge paths `generateIndexMergePath` adds, which
+    /// Go `PossibleAccessPaths` after statistics derivation: the paths
+    /// `derivePathStatsAndTryHeuristics` kept plus the index-merge paths
+    /// `generateIndexMergePath` adds, which
     /// physical search consumes; read through
     /// [`Self::possible_paths`]. None until derived.
     pub possible_access_paths: Option<Vec<PossibleAccessPath>>,
@@ -530,6 +532,16 @@ impl DataSource {
                 })
                 .collect(),
         )
+    }
+
+    /// Go `PossibleAccessPaths` at any stage: the derived list once
+    /// statistics derivation has set it, otherwise `AllPossibleAccessPaths`,
+    /// which Go's list equals until `derivePathStatsAndTryHeuristics` prunes
+    /// it.
+    #[must_use]
+    pub fn possible_paths_or_all(&self) -> Vec<&tidb_planner_util::path::AccessPath> {
+        self.possible_paths()
+            .unwrap_or_else(|| self.all_possible_access_paths.iter().collect())
     }
 
     /// Go `ds.TableInfo.Indices`.

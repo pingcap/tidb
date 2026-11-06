@@ -7902,6 +7902,18 @@ fn dml_statements_record_go_ruv2_metrics() {
             "executor_l2:{TableReaderExecutor:1}, executor_l5_insert_rows:2, plan_cnt:2, plan_derive_stats_paths:2, txn_cnt:1, write_keys:1, write_size:33",
         ),
         ("EXPLAIN INSERT INTO h SELECT a, b FROM t", "plan_cnt:3, plan_derive_stats_paths:2, txn_cnt:1"),
+        // Go `derivePathStatsAndTryHeuristics` keeps only the point handle
+        // path of `t` (not `b`'s index), and `AddPlanDeriveStatsPaths`
+        // counts that one path (a Go testkit run of these statements in this
+        // order, `FormatRUV2Metrics` after each).
+        (
+            "INSERT INTO h SELECT a, b FROM t WHERE a = 3",
+            "executor_l1:{PointGetExecutor:2}, executor_l5_insert_rows:2, plan_cnt:2, plan_derive_stats_paths:1, txn_cnt:1, write_keys:1, write_size:33",
+        ),
+        (
+            "SELECT * FROM t WHERE a = 3 AND b = 3",
+            "executor_l1:{PointGetExecutor:3}, executor_l2:{SelectionExec:2}, plan_cnt:1, plan_derive_stats_paths:1, txn_cnt:1",
+        ),
     ] {
         session.run(sql).unwrap();
         let summary = session.ruv2_metrics_summary().expect("a recorded statement");

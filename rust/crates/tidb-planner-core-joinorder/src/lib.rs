@@ -2601,6 +2601,8 @@ mod tests {
             hint_warning_sink: None,
             used_stats_recorder: None,
             ruv2_metrics: None,
+            derive_stats_sink: None,
+            mpp_enforced: false,
             cte_optimizer: None,
             data_source_stats: &NoCore,
             predicate_simplifier: &NoCore,

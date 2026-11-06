@@ -169,6 +169,12 @@ pub struct RuleContext<'a> {
     /// Go `SessionVars.RUV2Metrics`, which the statistics derivation counts
     /// its access paths into (`AddPlanDeriveStatsPaths`).
     pub ruv2_metrics: Option<std::sync::Arc<tidb_execdetails::ruv2_metrics::RUV2Metrics>>,
+    /// Go `StmtCtx`, as `deriveStats4DataSource` writes it: the heuristic
+    /// selection note and `SetIndexForce`.
+    pub derive_stats_sink: Option<&'a dyn DeriveStatsSink>,
+    /// Go `SessionVars.IsMPPEnforced()`, which `derivePathStatsAndTryHeuristics`
+    /// reads to build and keep the TiFlash path.
+    pub mpp_enforced: bool,
     /// Go `utilfuncp.DoOptimize` as `LogicalCTE.DeriveStats` reaches it: the
     /// driver-owned whole-query optimizer a CTE class runs the first time its
     /// statistics are asked for (`logical_cte.go:172`).
@@ -485,6 +491,27 @@ pub trait PartitionPruning {
     /// dynamic-mode access object does not run that code. The default spends
     /// nothing.
     fn spend_partition_expression_plan_id(&self, _source: &super::data_source::DataSource) {}
+}
+
+/// The statement-context writes of Go `deriveStats4DataSource`.
+pub trait DeriveStatsSink {
+    /// `derivePathStatsAndTryHeuristics`' note: Go `StmtCtx.AppendNote` under
+    /// `InVerboseExplain`, `AppendExtraNote` otherwise.
+    fn append_planner_note(&self, message: &str);
+
+    /// Go `StmtCtx.SetIndexForce`, from `getGeneralAttributesFromPaths`.
+    fn set_index_force(&self);
+}
+
+/// The statement context is where Go's `deriveStats4DataSource` writes.
+impl DeriveStatsSink for tidb_sessionctx::StmtContext {
+    fn append_planner_note(&self, message: &str) {
+        tidb_sessionctx::StmtContext::append_planner_note(self, message);
+    }
+
+    fn set_index_force(&self) {
+        tidb_sessionctx::StmtContext::set_index_force(self);
+    }
 }
 
 /// The statement context is where Go's `StmtCtx.SetHintWarning` writes.

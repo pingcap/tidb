@@ -1293,13 +1293,6 @@ impl InitStats<'_> {
             row_count,
             predicate_loaded,
         );
-        // Go `deriveStats`' `StmtCtx.SetIndexForce()` (`stats.go:165`), from
-        // `getGeneralAttributesFromPaths`: any forced possible path. The
-        // flag is statement-wide, so a hint on ANY occurrence records it here
-        // and the pass below stamps every source once the walk completes.
-        if source.all_possible_access_paths.iter().any(|path| path.forced) {
-            self.context.set_index_force();
-        }
         tidb_planner_core_rule::rule_collect_plan_stats::refresh_source_group_ndvs_with_scale_ratio(
             source, self.context.optimizer_cost_env().session.scale_ndv_skew_ratio,
         );
