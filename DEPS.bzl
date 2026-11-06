@@ -4577,8 +4577,8 @@ def go_deps():
         build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        sum = "h1:s4vBlmNzH7HI7ZQWGlRLY+3b0yNCC2KS1SxONDI5Qp0=",
-        version = "v0.0.0-20261026064232-6f57b959b168",
+        sum = "h1:q5NgKsvuOdEHspG/pZEpKhWlPLrIfmO8P/lDFjTEdok=",
+        version = "v0.0.0-20260805103528-afa43111d149",
     )
     go_repository(
         name = "com_github_timakin_bodyclose",
