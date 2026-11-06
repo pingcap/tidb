@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/mview"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -43,6 +44,8 @@ import (
 func mviewRefreshTestContext() *mock.Context {
 	sctx := coretestsdk.MockContext()
 	sctx.GetSessionVars().EnableMView = true
+	// Mock contexts take DefTiDBRedactLog. These tests assert literal plan text.
+	sctx.GetSessionVars().EnableRedactLog = vardef.Off
 	return sctx
 }
 
