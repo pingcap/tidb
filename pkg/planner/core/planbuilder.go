@@ -232,6 +232,7 @@ type PlanBuilder struct {
 	// visitInfo is used for privilege check.
 	visitInfo     []visitInfo
 	checkColPriv  checkSelectColumnPrivOption
+	tableHintInfo []*hint.PlanHints
 	// buildingSelectFrom is true while building the FROM clause of a SELECT
 	// block. Every table read there requires SELECT on the table or on at
 	// least one of its columns, even when no column is referenced, e.g.
@@ -243,7 +244,6 @@ type PlanBuilder struct {
 	// missing privilege on a referenced column is still reported as a column
 	// error; the extra check only matters when every column check passes.
 	anyColumnSelectVisitInfo []visitInfo
-	tableHintInfo []*hint.PlanHints
 	// optFlag indicates the flags of the optimizer rules.
 	optFlag uint64
 	// capFlag indicates the capability flags.
