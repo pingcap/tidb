@@ -159,8 +159,8 @@ func (*tableInfoGetterImpl) TableItemByID(is infoschema.InfoSchema, id int64) (i
 
 // SnapshotTableInfoGetter gets the table of a physical ID in one InfoSchema snapshot.
 // On InfoSchema V1, each partition lookup scans all tables, so it builds a partition map
-// on first use instead. It is not safe for concurrent use. It is not shared between callers
-// like the cache in TableInfoGetter, because callers on different schema versions rebuild a shared map.
+// when it is created. It is safe for concurrent use. Create one for each snapshot instead of
+// sharing a cache, because callers on different schema versions would rebuild a shared map.
 type SnapshotTableInfoGetter struct {
 	is      infoschema.InfoSchema
 	pid2tid map[int64]int64
@@ -176,7 +176,11 @@ func NewSnapshotTableInfoGetter(is infoschema.InfoSchema) *SnapshotTableInfoGett
 		raw = ext.InfoSchema
 	}
 	isV2, _ := infoschema.IsV2(raw)
-	return &SnapshotTableInfoGetter{is: is, isV2: isV2}
+	g := &SnapshotTableInfoGetter{is: is, isV2: isV2}
+	if !isV2 {
+		g.pid2tid = buildPartitionID2TableID(is)
+	}
+	return g
 }
 
 // ParentTableID returns the parent table ID if the physicalID is a partition.
@@ -184,11 +188,20 @@ func (g *SnapshotTableInfoGetter) ParentTableID(physicalID int64) (tableID int64
 	if g.isV2 {
 		return g.is.TableIDByPartitionID(physicalID)
 	}
-	if g.pid2tid == nil {
-		g.pid2tid = buildPartitionID2TableID(g.is)
-	}
 	tableID, isPartition = g.pid2tid[physicalID]
 	return tableID, isPartition
+}
+
+// TableInfoByID returns the table of the physicalID.
+// If the physicalID is a partition, it returns the parent table.
+func (g *SnapshotTableInfoGetter) TableInfoByID(physicalID int64) (table.Table, bool) {
+	if tbl, ok := g.is.TableByID(context.Background(), physicalID); ok {
+		return tbl, true
+	}
+	if tableID, ok := g.ParentTableID(physicalID); ok {
+		return g.is.TableByID(context.Background(), tableID)
+	}
+	return nil, false
 }
 
 // TableItemByID returns the table item of the physicalID.
