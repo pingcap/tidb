@@ -443,6 +443,53 @@ func TestAnalyzeStuck(t *testing.T) {
 	}, time.Minute, 200*time.Millisecond)
 }
 
+func TestAnalyzeTimeoutReleasesSession(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_stats_update_during_ddl = 1")
+	tk.MustExec("create table t_analyze_timeout (a int, b int)")
+	tk.MustExec("insert into t_analyze_timeout values (1, 1)")
+
+	oldInterval := ddl.DefaultAnalyzeCheckInterval
+	ddl.DefaultAnalyzeCheckInterval = 10 * time.Millisecond
+	t.Cleanup(func() {
+		ddl.DefaultAnalyzeCheckInterval = oldInterval
+	})
+
+	analyzeCtx, resumeAnalyze := context.WithCancel(context.Background())
+	defer resumeAnalyze()
+	analyzeStarted := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeAnalyzeTable", func() {
+		close(analyzeStarted)
+		<-analyzeCtx.Done()
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterAnalyzeTable", func(err *error) {
+		*err = errors.New("mock analyze error after DDL timeout")
+	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockAnalyzeTimeout", "return(1)")
+
+	tk.MustExec("alter table t_analyze_timeout add index idx_b(b)")
+	select {
+	case <-analyzeStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("background analyze did not start")
+	}
+	// The DDL has timed out and stopped receiving the background analyze result.
+	// Reporting an error must still release its session so DDL shutdown can finish.
+	resumeAnalyze()
+	stopped := make(chan error, 1)
+	go func() {
+		stopped <- dom.DDL().Stop()
+	}()
+	select {
+	case err := <-stopped:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("DDL shutdown is blocked by background analyze")
+	}
+}
+
 func TestAnalyzeOwnerResignNoReRun(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
 
