@@ -45,6 +45,12 @@ var (
 	MinUploadPartSize int64 = 5 * units.MiB
 )
 
+const (
+	// maxMergeReaderMemoryPerCore allows 32 concurrent 8 MiB range reads per CPU;
+	// AWS S3 benchmarks showed this was sufficient for merge throughput.
+	maxMergeReaderMemoryPerCore = 256 * units.MiB
+)
+
 var _ execute.Collector = &mergeCollector{}
 
 // mergeCollector collects the bytes and row count in merge step.
@@ -78,9 +84,9 @@ func (c *mergeCollector) Processed(bytes, rowCnt int64) {
 }
 
 type mergeMinimalTask struct {
-	files        []string
-	fileGroupNum int
-	writerID     string
+	files            []string
+	activeGroupCount int
+	writerID         string
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
@@ -91,13 +97,21 @@ func (*mergeMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, er
 // MergeOperator is the operator that merges overlapping files.
 type MergeOperator struct {
 	*operator.AsyncOperator[*mergeMinimalTask, workerpool.None]
+	concurrency int
+}
+
+// getMergeReaderMemory returns the concurrent-reader budget for one merge subtask.
+// It gives each CPU up to 256 MiB and uses 20% of the memory per core as a
+// safety limit for memory-constrained workers.
+func getMergeReaderMemory(memoryPerCore int64, concurrency int) int64 {
+	return min(maxMergeReaderMemoryPerCore, memoryPerCore/5) * int64(concurrency)
 }
 
 // NewMergeOperator creates a new MergeOperator instance.
 func NewMergeOperator(
 	ctx *workerpool.Context,
 	store storeapi.Storage,
-	partSize int64,
+	memoryPerCore int64,
 	newFilePrefix string,
 	blockSize int,
 	onWriterClose OnWriterCloseFunc,
@@ -106,34 +120,41 @@ func NewMergeOperator(
 	checkHotspot bool,
 	onDup engineapi.OnDuplicateKey,
 ) *MergeOperator {
+<<<<<<< HEAD:pkg/lightning/backend/external/merge.go
 	// during encode&sort step, the writer-limit is aligned to block size, so we
 	// need align this too. the max additional written size per file is max-block-size.
 	// for max-block-size = 32MiB, adding (max-block-size * MaxMergingFilesPerThread)/10000 ~ 1MiB
 	// to part-size is enough.
 	partSize = max(MinUploadPartSize, partSize+units.MiB)
+=======
+	concurrency = max(concurrency, 1)
+	totalReaderMemorySize := getMergeReaderMemory(memoryPerCore, concurrency)
+>>>>>>> 6884fa5eaba (ddl, globalsort: bound global sort merge memory (#70756)):pkg/ingestor/globalsort/merge.go
 	logutil.Logger(ctx).Info("create merge operator",
-		zap.Int64("part-size", partSize))
+		zap.Int64("memory-per-core", memoryPerCore),
+		zap.Int64("total-reader-memory-size", totalReaderMemorySize))
 	pool := workerpool.NewWorkerPool(
 		"mergeOperator",
 		util.ImportInto,
 		concurrency,
 		func() workerpool.Worker[*mergeMinimalTask, workerpool.None] {
 			return &mergeWorker{
-				ctx:           ctx,
-				store:         store,
-				partSize:      partSize,
-				newFilePrefix: newFilePrefix,
-				blockSize:     blockSize,
-				onWriterClose: onWriterClose,
-				collector:     collector,
-				checkHotspot:  checkHotspot,
-				onDup:         onDup,
+				ctx:                   ctx,
+				store:                 store,
+				totalReaderMemorySize: totalReaderMemorySize,
+				newFilePrefix:         newFilePrefix,
+				blockSize:             blockSize,
+				onWriterClose:         onWriterClose,
+				collector:             collector,
+				checkHotspot:          checkHotspot,
+				onDup:                 onDup,
 			}
 		},
 	)
 
 	return &MergeOperator{
 		AsyncOperator: operator.NewAsyncOperator(ctx, pool),
+		concurrency:   concurrency,
 	}
 }
 
@@ -145,6 +166,7 @@ func (*MergeOperator) String() string {
 type mergeWorker struct {
 	ctx context.Context
 
+<<<<<<< HEAD:pkg/lightning/backend/external/merge.go
 	store         storeapi.Storage
 	partSize      int64
 	newFilePrefix string
@@ -153,14 +175,24 @@ type mergeWorker struct {
 	collector     execute.Collector
 	checkHotspot  bool
 	onDup         engineapi.OnDuplicateKey
+=======
+	store                 storeapi.Storage
+	totalReaderMemorySize int64
+	newFilePrefix         string
+	blockSize             int
+	onWriterClose         simplesst.OnWriterCloseFunc
+	collector             execute.Collector
+	checkHotspot          bool
+	onDup                 engineapi.OnDuplicateKey
+>>>>>>> 6884fa5eaba (ddl, globalsort: bound global sort merge memory (#70756)):pkg/ingestor/globalsort/merge.go
 }
 
 func (w *mergeWorker) HandleTask(task *mergeMinimalTask, _ func(workerpool.None)) error {
+	memorySizePerGroup := w.totalReaderMemorySize / int64(task.activeGroupCount)
 	return mergeOverlappingFilesInternal(
 		w.ctx,
 		task.files,
 		w.store,
-		w.partSize,
 		w.newFilePrefix,
 		task.writerID,
 		w.blockSize,
@@ -168,7 +200,7 @@ func (w *mergeWorker) HandleTask(task *mergeMinimalTask, _ func(workerpool.None)
 		w.collector,
 		w.checkHotspot,
 		w.onDup,
-		task.fileGroupNum,
+		memorySizePerGroup,
 	)
 }
 
@@ -181,9 +213,9 @@ func (*mergeWorker) Close() error {
 func MergeOverlappingFiles(
 	ctx *workerpool.Context,
 	paths []string,
-	concurrency int,
 	op *MergeOperator,
 ) error {
+	concurrency := op.concurrency
 	dataFilesSlice := splitDataFiles(paths, concurrency)
 	logutil.Logger(ctx).Info("start to merge overlapping files",
 		zap.Int("file-count", len(paths)),
@@ -191,11 +223,12 @@ func MergeOverlappingFiles(
 		zap.Int("concurrency", concurrency))
 
 	mergeTasks := make([]*mergeMinimalTask, 0, len(dataFilesSlice))
+	activeGroupCount := min(len(dataFilesSlice), concurrency)
 	for _, files := range dataFilesSlice {
 		mergeTasks = append(mergeTasks, &mergeMinimalTask{
-			files:        files,
-			fileGroupNum: len(dataFilesSlice),
-			writerID:     uuid.New().String(),
+			files:            files,
+			activeGroupCount: activeGroupCount,
+			writerID:         uuid.New().String(),
 		})
 	}
 
@@ -255,18 +288,13 @@ func splitDataFiles(paths []string, concurrency int) [][]string {
 // where X is memory used for each read connection, it's http2 for GCP, X might be
 // 4 or more MiB, http1 for S3, it's smaller.
 //
-// with current default values, on machine with 2G per core, the estimate max memory
-// usage for import into is:
-//
-//	128 + 250 * (4 + 64/1024) + 8 * (25.6 + 5) ~ 1.36 GiB
-//	where 25.6 is max part-size when there is only data kv = 1024*250/10000 = 25.6MiB
-//
-// for add-index, it uses more memory as check-hotspot is enabled.
+// The data part size is calculated from the actual input size below. Concurrent
+// reader memory is bounded separately by memorySizePerGroup when hotspot reads
+// are enabled.
 func mergeOverlappingFilesInternal(
 	ctx context.Context,
 	paths []string,
 	store storeapi.Storage,
-	partSize int64,
 	newFilePrefix string,
 	writerID string,
 	blockSize int,
@@ -274,7 +302,7 @@ func mergeOverlappingFilesInternal(
 	collector execute.Collector,
 	checkHotspot bool,
 	onDup engineapi.OnDuplicateKey,
-	fileGroupNum int,
+	memorySizePerGroup int64,
 ) (err error) {
 	failpoint.Inject("mergeOverlappingFilesInternal", func(val failpoint.Value) {
 		if v, ok := val.(int); ok {
@@ -300,7 +328,19 @@ func mergeOverlappingFilesInternal(
 	}()
 
 	zeroOffsets := make([]uint64, len(paths))
+<<<<<<< HEAD:pkg/lightning/backend/external/merge.go
 	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, DefaultReadBufferSize, checkHotspot, fileGroupNum)
+=======
+	iter, err := simplesst.NewMergeKVIter(
+		ctx,
+		paths,
+		zeroOffsets,
+		store,
+		simplesst.DefaultReadBufferSize,
+		checkHotspot,
+		memorySizePerGroup,
+	)
+>>>>>>> 6884fa5eaba (ddl, globalsort: bound global sort merge memory (#70756)):pkg/ingestor/globalsort/merge.go
 	if err != nil {
 		return err
 	}
@@ -311,8 +351,19 @@ func mergeOverlappingFilesInternal(
 		}
 	}()
 
+<<<<<<< HEAD:pkg/lightning/backend/external/merge.go
 	writer := NewWriterBuilder().
 		SetMemorySizeLimit(defaultOneWriterMemSizeLimit).
+=======
+	partSize := getMergePartSize(iter.InputSize(), len(paths), blockSize)
+	logutil.Logger(ctx).Info("calculated merge writer part size",
+		zap.Int64("input-size", iter.InputSize()),
+		zap.Int64("part-size", partSize),
+		zap.Int("file-count", len(paths)))
+
+	writer := simplesst.NewWriterBuilder().
+		SetMemorySizeLimit(simplesst.DefaultOneWriterMemSizeLimit).
+>>>>>>> 6884fa5eaba (ddl, globalsort: bound global sort merge memory (#70756)):pkg/ingestor/globalsort/merge.go
 		SetBlockSize(blockSize).
 		SetOnCloseFunc(onWriterClose).
 		SetOnDup(onDup).
@@ -345,4 +396,16 @@ func mergeOverlappingFilesInternal(
 		}
 	}
 	return iter.Error()
+}
+
+func getMergePartSize(inputSize int64, fileCount, blockSize int) int64 {
+	// Conservatively allow each input file to contribute up to one additional
+	// block of output due to block alignment.
+	padding := int64(fileCount) * int64(blockSize)
+	maxOutputSize := inputSize + padding
+	partSize := maxOutputSize / simplesst.MaxUploadPartCount
+	if maxOutputSize%simplesst.MaxUploadPartCount != 0 {
+		partSize++
+	}
+	return max(simplesst.MinUploadPartSize, partSize)
 }
