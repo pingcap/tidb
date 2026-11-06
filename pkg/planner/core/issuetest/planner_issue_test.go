@@ -991,3 +991,52 @@ func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
 		testKit.MustQuery("select a,min(a) from t where -1=a;").Check(testkit.Rows("<nil> <nil>"))
 	})
 }
+
+// TestIssue72290 checks that an inlined CTE built from the same AST as its definition does not lose the outer
+// aggregation of a correlated aggregate inside its scalar subqueries.
+func TestIssue72290(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t, t2")
+		tk.MustExec("create table t(a int)")
+		tk.MustExec("create table t2(b int)")
+
+		// The table is empty: the outer aggregation still produces one row.
+		body := "select (select 1 where sum(t.a)) as x from t"
+		tk.MustQuery(body).Check(testkit.Rows("<nil>"))
+		tk.MustQuery("with c as (" + body + ") select * from c").Check(testkit.Rows("<nil>"))
+		tk.MustQuery("with c as (" + body + ") select count(*) from c").Check(testkit.Rows("1"))
+		tk.MustQuery("select count(*) from (" + body + ") d").Check(testkit.Rows("1"))
+
+		body = "select (select sum(t.a) from t2) as x from t"
+		tk.MustQuery(body).Check(testkit.Rows("<nil>"))
+		tk.MustQuery("with c as (" + body + ") select * from c").Check(testkit.Rows("<nil>"))
+		tk.MustQuery("with c as (" + body + ") select * from c union all select * from c").Check(testkit.Rows("<nil>", "<nil>"))
+		tk.MustQuery("with c as (" + body + ") select * from c union select 7").Sort().Check(testkit.Rows("7", "<nil>"))
+		tk.MustQuery("with c as (" + body + ") select count(*) from c, c c2").Check(testkit.Rows("1"))
+		tk.MustQuery("with c as (select /*+ merge() */ (select sum(t.a) from t2) as x from t) select * from c").Check(testkit.Rows("<nil>"))
+		tk.MustQuery("select count(*) from (" + body + ") d").Check(testkit.Rows("1"))
+
+		// Two correlated aggregates of the same outer column are combined into one outer aggregate.
+		body = "select (select sum(t.a) from t2) as x, (select sum(t.a) + 1 from t2) as y from t"
+		tk.MustQuery(body).Check(testkit.Rows("<nil> <nil>"))
+		tk.MustQuery("with c as (" + body + ") select * from c").Check(testkit.Rows("<nil> <nil>"))
+
+		// Prepared statements go through the same plan builder.
+		tk.MustExec("prepare stmt from 'with c as (select (select sum(t.a) from t2) as x from t) select * from c'")
+		tk.MustQuery("execute stmt").Check(testkit.Rows("<nil>"))
+		tk.MustQuery("execute stmt").Check(testkit.Rows("<nil>"))
+
+		// Non-empty tables: the outer aggregation runs over the rows and the result is the same as without the CTE.
+		tk.MustExec("insert into t values (1), (2)")
+		tk.MustExec("insert into t2 values (5)")
+		body = "select (select sum(t.a) from t2) as x from t"
+		tk.MustQuery(body).Check(testkit.Rows("3"))
+		tk.MustQuery("with c as (" + body + ") select * from c").Check(testkit.Rows("3"))
+		body = "select a, (select sum(t.a) from t2) as x from t"
+		// The correlated aggregate makes the outer query an aggregate query, so there is only one row.
+		tk.MustQuery(body).Check(testkit.Rows("1 3"))
+		tk.MustQuery("with c as (" + body + ") select * from c").Check(testkit.Rows("1 3"))
+		tk.MustQuery("execute stmt").Check(testkit.Rows("3"))
+	})
+}
