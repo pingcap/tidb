@@ -29,4 +29,9 @@ go_test(
     srcs = ["main_test.go"],
     embed = [":tidb-lightning-ctl_lib"],
     flaky = True,
+    deps = [
+        "//pkg/lightning/common",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+    ],
 )

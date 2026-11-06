@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
@@ -330,6 +331,25 @@ func TestIgnoreOneErrorCheckpoints(t *testing.T) {
 	require.Equal(t, checkpoints.CheckpointStatusAllWritten/10, cp.Status)
 }
 
+func TestIgnoreOneErrorCheckpointsNotFound(t *testing.T) {
+	ctx := context.Background()
+	cpdb := newFileCheckpointsDB(t, false)
+
+	setInvalidStatus(cpdb)
+
+	err := cpdb.IgnoreErrorCheckpoint(ctx, "db1.t2")
+	require.Error(t, err)
+	require.True(t, errors.IsNotFound(err))
+	require.True(t, common.ErrCheckpointTableNotFound.Equal(err))
+	require.True(t, common.ErrCheckpointTableNotFound.Equal(errors.Annotate(err, "wrapped")))
+	require.Contains(t, err.Error(), "checkpoint for table db1.t2 not found")
+	require.NotContains(t, err.Error(), "--checkpoint-error-ignore")
+	require.NotContains(t, err.Error(), "--checkpoint-error-destroy")
+	require.False(t, common.ErrCheckpointTableNotFound.Equal(errors.NotFoundf(
+		"checkpoint for table `db`.`table` not found",
+	)))
+}
+
 func TestDestroyAllErrorCheckpoints(t *testing.T) {
 	ctx := context.Background()
 	cpdb := newFileCheckpointsDB(t, false)
@@ -386,4 +406,20 @@ func TestDestroyOneErrorCheckpoint(t *testing.T) {
 	cp, err = cpdb.Get(ctx, "`db2`.`t3`")
 	require.NoError(t, err)
 	require.Equal(t, checkpoints.CheckpointStatusAllWritten/10, cp.Status)
+}
+
+func TestDestroyOneErrorCheckpointNotFound(t *testing.T) {
+	ctx := context.Background()
+	cpdb := newFileCheckpointsDB(t, false)
+
+	setInvalidStatus(cpdb)
+
+	dtc, err := cpdb.DestroyErrorCheckpoint(ctx, "db1.t2")
+	require.Error(t, err)
+	require.True(t, errors.IsNotFound(err))
+	require.True(t, common.ErrCheckpointTableNotFound.Equal(err))
+	require.Nil(t, dtc)
+	require.Contains(t, err.Error(), "checkpoint for table db1.t2 not found")
+	require.NotContains(t, err.Error(), "--checkpoint-error-ignore")
+	require.NotContains(t, err.Error(), "--checkpoint-error-destroy")
 }
