@@ -942,19 +942,42 @@ func TestAddIndexTriggerAutoAnalyze(t *testing.T) {
 	testKit.MustExec("insert into t values (1,2),(2,2)")
 	testKit.MustExec("flush stats_delta *.*")
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
-	// Add two indexes.
-	testKit.MustExec("alter table t add index idx1(c1)")
-	testKit.MustExec("alter table t add index idx2(c2)")
+
+	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	defer pq.Close()
+	require.NoError(t, pq.Initialize(context.Background()))
+	isEmpty, err := pq.IsEmptyForTest()
+	require.NoError(t, err)
+	require.True(t, isEmpty)
 
 	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(h)
-	defer pq.Close()
-	require.NoError(t, pq.Initialize(context.Background()))
-	isEmpty, err := pq.IsEmptyForTest()
+	// Add two indexes.
+	testKit.MustExec("alter table t add index idx1(c1)")
+	addIndexEvent1 := statstestutil.FindEvent(h.DDLEventCh(), model.ActionAddIndex)
+	require.NotNil(t, addIndexEvent1)
+	require.NoError(t, statsutil.CallWithSCtx(
+		h.SPool(),
+		func(sctx sessionctx.Context) error {
+			require.NoError(t, pq.HandleDDLEvent(context.Background(), sctx, addIndexEvent1))
+			return nil
+		}, statsutil.FlagWrapTxn),
+	)
+	testKit.MustExec("alter table t add index idx2(c2)")
+	addIndexEvent2 := statstestutil.FindEvent(h.DDLEventCh(), model.ActionAddIndex)
+	require.NotNil(t, addIndexEvent2)
+	require.NoError(t, statsutil.CallWithSCtx(
+		h.SPool(),
+		func(sctx sessionctx.Context) error {
+			require.NoError(t, pq.HandleDDLEvent(context.Background(), sctx, addIndexEvent2))
+			return nil
+		}, statsutil.FlagWrapTxn),
+	)
+
+	isEmpty, err = pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
 	job, err := pq.PeekForTest()
