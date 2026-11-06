@@ -49,7 +49,8 @@ run_dumpling_parquet() {
     fi
 }
 
-verify_parquet_import() {
+verify_parquet_import() (
+    # Keep the TiDB connection settings local so subsequent dumps still use MySQL.
     # clear target db on TiDB to avoid duplicate-key failures when importing repeatedly.
     export DUMPLING_TEST_PORT=4000
     orig_test_db="${DUMPLING_TEST_DATABASE-}"
@@ -93,7 +94,7 @@ user = "root"
 password = ""
 EOF
     check_sync_diff "$parquet_diff_config"
-}
+)
 
 export DUMPLING_TEST_PORT=3306
 run_sql "drop database if exists \`$PARQUET_DB\`;"
@@ -112,6 +113,7 @@ do
         echo "obtain parquet file number: $parquet_file_num, but expect at least: 2" && exit 1
     fi
     verify_parquet_import
+    test "$DUMPLING_TEST_PORT" = 3306
 done
 
 rm -rf "$DUMPLING_OUTPUT_DIR"
