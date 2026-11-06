@@ -268,6 +268,62 @@ func (is *infoSchema) TableByName(ctx stdctx.Context, schema, table ast.CIStr) (
 	return nil, ErrTableNotExists.FastGenByArgs(schema, table)
 }
 
+// TableInfosByNames returns existing table metadata without refilling the shared
+// cache. Result order is unspecified; session table overrides take precedence.
+func TableInfosByNames(ctx stdctx.Context, is InfoSchema, schema ast.CIStr, names []ast.CIStr) ([]*model.TableInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	switch v := is.(type) {
+	case *infoschemaV2:
+		if !IsSpecialDB(schema.L) {
+			return v.tableInfosByNames(ctx, schema, names)
+		}
+	case *SessionExtendedInfoSchema:
+		var tables []*model.TableInfo
+		remaining := make([]ast.CIStr, 0, len(names))
+		for _, name := range names {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if v.LocalTemporaryTables != nil {
+				if tbl, ok := v.LocalTemporaryTables.TableByName(ctx, schema, name); ok {
+					tables = append(tables, tbl.Meta())
+					continue
+				}
+			}
+			if v.MdlTables != nil {
+				if tbl, ok := v.MdlTables.TableByName(ctx, schema, name); ok {
+					tables = append(tables, tbl.Meta())
+					continue
+				}
+			}
+			remaining = append(remaining, name)
+		}
+		loaded, err := TableInfosByNames(ctx, v.InfoSchema, schema, remaining)
+		if err != nil {
+			return nil, err
+		}
+		return append(tables, loaded...), nil
+	}
+	ctx = WithRefillOption(ctx, false)
+	tables := make([]*model.TableInfo, 0, len(names))
+	for _, name := range names {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		tbl, err := is.TableByName(ctx, schema, name)
+		if err != nil {
+			if terror.ErrorEqual(err, ErrTableNotExists) {
+				continue
+			}
+			return nil, errors.Trace(err)
+		}
+		tables = append(tables, tbl.Meta())
+	}
+	return tables, nil
+}
+
 // TableInfoByName implements InfoSchema.TableInfoByName
 func (is *infoSchema) TableInfoByName(schema, table ast.CIStr) (*model.TableInfo, error) {
 	tbl, err := is.TableByName(stdctx.Background(), schema, table)
