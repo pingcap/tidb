@@ -17,19 +17,24 @@ package ingestctrl
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path"
 	"sync"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/stretchr/testify/require"
+	pderr "github.com/tikv/pd/client/errs"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -89,6 +94,104 @@ func TestEngineManager(t *testing.T) {
 
 	require.NoError(t, em.closeEngine(ctx, &backend.EngineConfig{}, engine1ID))
 	require.Equal(t, 0, int(em.getImportedKVCount(engine1ID)))
+	local := &Backend{
+		engineMgr: em,
+		pdCli:     &mockPdClient{tsErrors: []error{context.DeadlineExceeded}},
+	}
+	require.NoError(t, local.SetTSBeforeImportEngine(ctx, engine1ID, 0))
+	require.Equal(t, int64(2), local.pdCli.(*mockPdClient).tsCalls.Load())
+	persistentPDCli := &mockPdClient{tsErrors: make([]error, maxRetryTimes)}
+	for i := range persistentPDCli.tsErrors {
+		persistentPDCli.tsErrors[i] = context.DeadlineExceeded
+	}
+	local.pdCli = persistentPDCli
+	err = local.SetTSBeforeImportEngine(ctx, engine1ID, 0)
+	require.ErrorIs(t, err, errdef.ErrSetTSBeforeImport)
+	require.Equal(t, int64(maxRetryTimes), persistentPDCli.tsCalls.Load())
+	canceledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	local.pdCli = &mockPdClient{tsErrors: []error{context.DeadlineExceeded}}
+	err = local.SetTSBeforeImportEngine(canceledCtx, engine1ID, 0)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotErrorIs(t, err, errdef.ErrSetTSBeforeImport)
+	nonRetryablePDCli := &mockPdClient{tsErrors: []error{errors.New("invalid TSO request")}}
+	local.pdCli = nonRetryablePDCli
+	err = local.SetTSBeforeImportEngine(ctx, engine1ID, 0)
+	require.ErrorIs(t, err, errdef.ErrSetTSBeforeImport)
+	require.ErrorContains(t, err, "after 1 attempts")
+	require.Equal(t, int64(1), nonRetryablePDCli.tsCalls.Load())
+	streamErr := pderr.ErrClientCreateTSOStream.FastGenByArgs(pderr.RetryTimeoutErr)
+	for _, testCase := range []struct {
+		name string
+		err  error
+	}{
+		{name: "internal cancellation", err: context.Canceled},
+		{name: "wrapped internal cancellation", err: fmt.Errorf("TSO stream: %w", context.Canceled)},
+		{name: "stream creation timeout", err: streamErr},
+		{name: "wrapped stream creation timeout", err: fmt.Errorf("TSO stream: %w", streamErr)},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			pdClient := &mockPdClient{tsErrors: []error{testCase.err}}
+			local.pdCli = pdClient
+			require.NoError(t, local.SetTSBeforeImportEngine(ctx, engine1ID, 0))
+			require.Equal(t, int64(2), pdClient.tsCalls.Load())
+		})
+	}
+	for _, testCase := range []struct {
+		name string
+		err  error
+	}{
+		{name: "persistent internal cancellation", err: context.Canceled},
+		{name: "persistent stream creation timeout", err: streamErr},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			pdClient := &mockPdClient{tsErrors: make([]error, maxRetryTimes)}
+			for i := range pdClient.tsErrors {
+				pdClient.tsErrors[i] = testCase.err
+			}
+			local.pdCli = pdClient
+			err := local.SetTSBeforeImportEngine(ctx, engine1ID, 0)
+			require.ErrorIs(t, err, errdef.ErrSetTSBeforeImport)
+			require.NotErrorIs(t, err, context.Canceled)
+			require.Equal(t, int64(maxRetryTimes), pdClient.tsCalls.Load())
+		})
+	}
+	t.Run("expired caller deadline", func(t *testing.T) {
+		deadlineCtx, cancel := context.WithDeadline(ctx, time.Now().Add(-time.Second))
+		defer cancel()
+		pdClient := &mockPdClient{tsErrors: []error{context.DeadlineExceeded}}
+		local.pdCli = pdClient
+		err := local.SetTSBeforeImportEngine(deadlineCtx, engine1ID, 0)
+		require.ErrorIs(t, err, errdef.ErrSetTSBeforeImport)
+		require.Zero(t, pdClient.tsCalls.Load())
+	})
+	t.Run("caller deadline during retry backoff", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			deadlineCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			defer cancel()
+			pdClient := &mockPdClient{tsErrors: []error{context.DeadlineExceeded}}
+			local.pdCli = pdClient
+			err := local.SetTSBeforeImportEngine(deadlineCtx, engine1ID, 0)
+			require.ErrorIs(t, err, errdef.ErrSetTSBeforeImport)
+			require.Equal(t, int64(1), pdClient.tsCalls.Load())
+		})
+	})
+	t.Run("caller cancellation during retry backoff", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			canceledCtx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			go func() {
+				time.Sleep(50 * time.Millisecond)
+				cancel()
+			}()
+			pdClient := &mockPdClient{tsErrors: []error{context.DeadlineExceeded}}
+			local.pdCli = pdClient
+			err := local.SetTSBeforeImportEngine(canceledCtx, engine1ID, 0)
+			require.ErrorIs(t, err, context.Canceled)
+			require.NotErrorIs(t, err, errdef.ErrSetTSBeforeImport)
+			require.Equal(t, int64(1), pdClient.tsCalls.Load())
+		})
+	})
 	// close non-existent engine
 	require.ErrorContains(t, em.closeEngine(ctx, &backend.EngineConfig{}, uuid.New()), "does not exist")
 
