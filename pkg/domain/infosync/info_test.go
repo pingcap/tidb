@@ -30,10 +30,14 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/goleak"
 )
@@ -400,4 +404,74 @@ func TestSetKeyspaceConfigPropagatesPDHTTPError(t *testing.T) {
 		Config: map[string]*string{"k": nil},
 	})
 	require.ErrorIs(t, err, expectedErr)
+}
+
+type reportMinStartTSStore struct {
+	kv.Storage
+	version kv.Version
+}
+
+func (s *reportMinStartTSStore) CurrentVersion(string) (kv.Version, error) {
+	return s.version, nil
+}
+
+type reportMinStartTSSessionManager struct {
+	sessmgr.Manager
+	process *sessmgr.ProcessInfo
+}
+
+func (m *reportMinStartTSSessionManager) ShowProcessList() map[uint64]*sessmgr.ProcessInfo {
+	return map[uint64]*sessmgr.ProcessInfo{1: m.process}
+}
+
+func (*reportMinStartTSSessionManager) GetInternalSessionStartTSList() []uint64 {
+	return nil
+}
+
+func TestReportMinStartTSStatementContextReuse(t *testing.T) {
+	now := time.Now()
+	currentTS := oracle.GoTimeToTS(now)
+	txnTS := oracle.GoTimeToTS(now.Add(-time.Second))
+	store := &reportMinStartTSStore{version: kv.Version{Ver: currentTS}}
+	sc := stmtctx.NewStmtCtx()
+	ref := new(stmtctx.ReferenceCount)
+	process := &sessmgr.ProcessInfo{StmtCtx: sc, RefCountOfStmtCtx: ref, CurTxnStartTS: txnTS}
+	syncer := &InfoSyncer{}
+	syncer.SetSessionManager(&reportMinStartTSSessionManager{process: process})
+
+	sc.IsDDLJobInQueue.Store(true)
+	syncer.ReportMinStartTS(store, nil)
+	require.Equal(t, currentTS, syncer.GetMinStartTS(), "queued DDL should not hold back GC")
+	// A frozen reference means the statement context may be reset. Keep the
+	// snapshot's transaction timestamp rather than reading or discarding it.
+	require.True(t, ref.TryFreeze(), "reporting must release its reference")
+	syncer.ReportMinStartTS(store, nil)
+	ref.UnFreeze()
+	require.Equal(t, txnTS, syncer.GetMinStartTS(), "a resetting session must still protect its transaction")
+	process.RefCountOfStmtCtx = nil
+	syncer.ReportMinStartTS(store, nil)
+	require.Equal(t, txnTS, syncer.GetMinStartTS(), "an unguarded context must still protect its transaction")
+	process.RefCountOfStmtCtx = ref
+
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			if ref.TryFreeze() {
+				sc.Reset()
+				sc.IsDDLJobInQueue.Store(true)
+				ref.UnFreeze()
+			}
+		}
+	}()
+	t.Cleanup(func() { close(done); <-stopped })
+	for range 1000 {
+		syncer.ReportMinStartTS(store, nil)
+	}
 }
