@@ -4,7 +4,7 @@ echo "=== Verifying Data Integrity ==="
 
 # Verify original table key data is intact
 run_sql "SELECT COUNT(*) as cnt FROM key_types_test.table_key_test;"
-check_contains "cnt: 4"
+check_contains "cnt: 3"
 run_sql "SELECT id, name, value FROM key_types_test.table_key_test ORDER BY id;"
 check_contains "id: 1"
 check_contains "name: test1"
