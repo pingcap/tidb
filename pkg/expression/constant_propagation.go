@@ -749,7 +749,7 @@ func PropConstOverSpecialJoin(ctx exprctx.ExprContext, joinConds, filterConds []
 		nullSensitive: nullSensitive,
 	}
 	solver.colMapper = make(map[int64]int)
-	solver.ctx = ctx
+	solver.ctx = exprctx.WithConstantPropagateCheck(ctx)
 	return solver.solve(keepJoinKey, joinConds, filterConds)
 }
 
