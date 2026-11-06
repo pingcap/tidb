@@ -31,6 +31,12 @@ Hard requirements remain in the repository root `AGENTS.md`.
   - `pkg/executor/test/materializedviewlog/` for materialized view log purge and related checks
   - SQL integration tests for user-visible behavior
 
+### Import preparation and execution
+- `pkg/importinto/`: shared plans, resolved options, source snapshots, job/task metadata and chunks.
+- `pkg/executor/importer/`: SQL-plan adapters and import execution.
+- `pkg/dxf/importinto/`: distributed import scheduling and step execution.
+- First tests: core metadata/options tests, importer chunk/job tests and executor import-query tests.
+
 ### Session, variables, protocol
 - `pkg/session/`
 - `pkg/sessionctx/`

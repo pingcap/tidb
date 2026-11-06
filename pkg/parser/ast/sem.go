@@ -671,6 +671,11 @@ func (n *RefreshMaterializedViewStmt) SEMCommand() string {
 	return RefreshMaterializedViewCommand
 }
 
+// SEMCommand returns the user-facing command that owns this internal operation.
+func (*PrepareMViewBuildStmt) SEMCommand() string {
+	return CreateMaterializedViewCommand
+}
+
 // SEMCommand returns the user-facing command because this internal statement
 // is generated while executing REFRESH MATERIALIZED VIEW.
 func (n *RefreshMaterializedViewImplementStmt) SEMCommand() string {

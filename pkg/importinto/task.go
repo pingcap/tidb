@@ -14,15 +14,19 @@
 
 package importinto
 
-import "github.com/pingcap/tidb/pkg/domain/serverinfo"
+import (
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+)
 
-// TaskMeta is the task of IMPORT INTO.
+// TaskMeta carries the shared ingestion plan and progress of IMPORT and MV builds.
 // All the field should be serializable.
 type TaskMeta struct {
-	// IMPORT INTO job id, see mysql.tidb_import_jobs.
+	// JobID is used by IMPORT tasks; see mysql.tidb_import_jobs.
 	JobID int64
-	Plan  Plan
-	Stmt  string
+	// DDLJobID records the owning DDL job of an MViewBuild task.
+	DDLJobID int64 `json:",omitempty"`
+	Plan     Plan
+	Stmt     string
 
 	// Summary is the summary of the whole import task.
 	Summary Summary

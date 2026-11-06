@@ -16,7 +16,11 @@ package executor_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -24,10 +28,12 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	importcore "github.com/pingcap/tidb/pkg/importinto"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -42,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	semv1 "github.com/pingcap/tidb/pkg/util/sem"
 	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	tikvutil "github.com/tikv/client-go/v2/util"
 )
@@ -601,4 +608,100 @@ func TestImportQueryRouting(t *testing.T) {
 	vardef.CloudStorageURI.Store("s3://query-sort")
 	tk.MustExec("insert into query_route_dst values (1)")
 	require.ErrorContains(t, tk.ExecToErr(sql), "target table is not empty")
+}
+
+func TestMViewBuildTaskPreparation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table mv_prepare_src(i int)")
+	tk.MustExec("create table mv_prepare_dst(i int)")
+	tk.MustExec("insert into mv_prepare_src values (1)")
+	tk.MustExec("insert into mv_prepare_dst values (2)")
+	vars := tk.Session().GetSessionVars()
+	vars.InMViewMaintenance = true
+	originalURI := vardef.CloudStorageURI.Load()
+	vardef.CloudStorageURI.Store("s3://mv-prepare-sort")
+	t.Cleanup(func() { vardef.CloudStorageURI.Store(originalURI) })
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+	_, err := tk.Session().ExecuteStmt(ctx, &ast.PrepareMViewBuildStmt{DDLJobID: 42})
+	require.ErrorContains(t, err, "requires an internal maintenance session")
+	prepare := func(sql string) (*proto.Task, error) {
+		originalRestricted := vars.InRestrictedSQL
+		vars.InRestrictedSQL = true
+		defer func() { vars.InRestrictedSQL = originalRestricted }()
+		rows, _, err := tk.Session().GetRestrictedSQLExecutor().ExecRestrictedStmt(ctx,
+			&ast.PrepareMViewBuildStmt{ImportSQL: sql, DDLJobID: 42}, sqlexec.ExecOptionUseCurSession)
+		if err != nil {
+			return nil, err
+		}
+		require.Len(t, rows, 1)
+		var task proto.Task
+		err = json.Unmarshal(rows[0].GetBytes(0), &task)
+		return &task, err
+	}
+	task, err := prepare("import into mv_prepare_dst from select i from mv_prepare_src")
+	require.Nil(t, task)
+	if kerneltype.IsClassic() {
+		require.ErrorContains(t, err, "MV build requires a DXF query plan")
+		return
+	}
+	require.ErrorContains(t, err, "target table is not empty")
+	txn, err := tk.Session().Txn(false)
+	require.NoError(t, err)
+	require.False(t, txn.Valid())
+	tk.MustQuery("select * from mv_prepare_dst").Check(testkit.Rows("2"))
+
+	// Exercise the complete statement/record-set path using only a local S3
+	// permission-probe endpoint; preparation must not submit a task or import data.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("x-amz-bucket-region", "us-east-1")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Query().Get("list-type") != "":
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = io.WriteString(w, "<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>")
+		case r.Method == http.MethodGet:
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, "<Error><Code>NoSuchKey</Code></Error>")
+		default:
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	t.Cleanup(server.Close)
+	params := url.Values{"endpoint": {server.URL}, "region": {"us-east-1"},
+		"access-key": {"test"}, "secret-access-key": {"test"}}
+	vardef.CloudStorageURI.Store("s3://mv-prepare-sort?" + params.Encode())
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/util/IsRaftKv2", "return(false)")
+	tk.MustExec("truncate table mv_prepare_dst")
+	task, err = prepare("import into mv_prepare_dst from select i from mv_prepare_src with disable_precheck")
+	require.NoError(t, err)
+	require.Equal(t, proto.MViewBuild, task.Type)
+	require.Equal(t, 1, task.MaxNodeCount)
+	var meta importcore.TaskMeta
+	require.NoError(t, json.Unmarshal(task.Meta, &meta))
+	require.EqualValues(t, 42, meta.DDLJobID)
+	require.Zero(t, meta.JobID)
+	require.NotZero(t, meta.Plan.QuerySource.ReadTS)
+	txn, err = tk.Session().Txn(false)
+	require.NoError(t, err)
+	require.False(t, txn.Valid())
+	tk.MustQuery("select count(*) from mv_prepare_dst").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from mysql.tidb_import_jobs").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from mysql.tidb_global_task").Check(testkit.Rows("0"))
+}
+
+func TestMViewBuildTaskReadTS(t *testing.T) {
+	meta := &importcore.TaskMeta{DDLJobID: 42, Plan: importer.Plan{QuerySource: &importer.QuerySource{ReadTS: 1234}}}
+	data, err := json.Marshal(meta)
+	require.NoError(t, err)
+	readTS, err := importcore.MViewBuildReadTS(data)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1234), readTS)
+	meta.Plan.QuerySource = nil
+	data, err = json.Marshal(meta)
+	require.NoError(t, err)
+	_, err = importcore.MViewBuildReadTS(data)
+	require.Error(t, err)
 }

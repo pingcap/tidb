@@ -57,3 +57,31 @@ func TestPlanMetadataCompatibility(t *testing.T) {
 	require.NotContains(t, string(data), "QuerySource")
 	require.NotContains(t, string(data), "use_new_collate")
 }
+
+// TestTaskMetadataCompatibility keeps persisted task fields stable across package moves.
+func TestTaskMetadataCompatibility(t *testing.T) {
+	const legacy = `{"JobID":12,"DDLJobID":42,"Plan":{"DBName":"db","QuerySource":{"ReadTS":1234}},"Stmt":"import","Summary":{"encode-summary":{"input-bytes":20,"input-rows":3},"row-count":3},"ChunkMap":{"1":[{"Path":"a.csv","Offset":5,"EndOffset":25,"PrevRowIDMax":0,"RowIDMax":3}]},"prepared_meta_external_path":"s3://bucket/meta"}`
+	var task importinto.TaskMeta
+	require.NoError(t, json.Unmarshal([]byte(legacy), &task))
+	require.EqualValues(t, 1234, task.Plan.QuerySource.ReadTS)
+	require.EqualValues(t, 20, task.Summary.EncodeSummary.Bytes)
+	require.EqualValues(t, 3, task.Summary.ImportedRows)
+	require.Equal(t, "a.csv:5", task.ChunkMap[1][0].GetKey())
+	require.EqualValues(t, 20, task.ChunkMap[1][0].GetSize())
+	require.Equal(t, "a.csv", task.ChunkMap[1][0].ToSourceFileMeta().Path)
+	data, err := json.Marshal(task)
+	require.NoError(t, err)
+	var actual, expected map[string]any
+	require.NoError(t, json.Unmarshal(data, &actual))
+	require.NoError(t, json.Unmarshal([]byte(legacy), &expected))
+	for _, key := range []string{"JobID", "DDLJobID", "Stmt", "prepared_meta_external_path"} {
+		require.Equal(t, expected[key], actual[key], key)
+	}
+	// Empty struct summaries were always emitted even with omitempty.
+	for key, value := range expected["Summary"].(map[string]any) {
+		require.Equal(t, value, actual["Summary"].(map[string]any)[key], key)
+	}
+	var restored importinto.TaskMeta
+	require.NoError(t, json.Unmarshal(data, &restored))
+	require.Equal(t, task, restored)
+}

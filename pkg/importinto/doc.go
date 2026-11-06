@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package importinto owns import plans, resolved preparation, job and task metadata,
-// chunks, and query snapshot restoration shared by SQL execution and DXF.
-// It does not compile SQL or execute statements.
+// Package importinto owns import plans, resolved preparation, job and task
+// metadata, and query snapshot restoration shared by SQL execution and DXF.
+// It does not compile SQL, execute statements or register DXF tasks.
 package importinto

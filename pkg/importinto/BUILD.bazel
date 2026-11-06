@@ -7,6 +7,7 @@ go_library(
         "doc.go",
         "input.go",
         "job.go",
+        "mview.go",
         "plan.go",
         "prepare.go",
         "query_chunk.go",
@@ -59,12 +60,13 @@ go_test(
     name = "importinto_test",
     timeout = "short",
     srcs = [
+        "mview_test.go",
         "plan_test.go",
         "prepare_test.go",
     ],
     embed = [":importinto"],
     flaky = True,
-    shard_count = 10,
+    shard_count = 12,
     deps = [
         "//pkg/config/kerneltype",
         "//pkg/expression",

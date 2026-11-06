@@ -685,7 +685,7 @@ func (n *fixtureNode) AcceptInPlace(v InPlaceVisitor) bool {
 			}
 			return leafAcceptMethods[i].line < leafAcceptMethods[j].line
 		})
-		require.Len(t, leafAcceptMethods, 73)
+		require.Len(t, leafAcceptMethods, 74)
 
 		var fastPaths []string
 		for _, method := range leafAcceptMethods {
@@ -700,10 +700,10 @@ func (n *fixtureNode) AcceptInPlace(v InPlaceVisitor) bool {
 		}, fastPaths)
 	})
 
-	require.Equal(t, 226, acceptCount)
-	require.Equal(t, 226, acceptInPlaceCount)
+	require.Equal(t, 227, acceptCount)
+	require.Equal(t, 227, acceptInPlaceCount)
 	require.Equal(t, 6, legacyHelperCount)
-	require.Equal(t, 232, acceptCount+legacyHelperCount)
+	require.Equal(t, 233, acceptCount+legacyHelperCount)
 	require.Equal(t, 152, functionsWithWritebacks)
 	require.Empty(t, cacheIssues, "replacement-mode cache issues: %s", formatCacheIssues(cacheIssues))
 	require.Empty(t, forbiddenSymbols, "removed in-place replacement symbols remain: %s", strings.Join(forbiddenSymbols, ", "))

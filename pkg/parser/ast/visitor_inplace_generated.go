@@ -2041,6 +2041,13 @@ func (n *PurgeMaterializedViewLogStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	return v.Leave(n)
 }
 
+func (n *PrepareMViewBuildStmt) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	return v.Leave(n)
+}
+
 func (n *RefreshMaterializedViewImplementStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)

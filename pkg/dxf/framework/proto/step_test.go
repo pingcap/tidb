@@ -44,6 +44,10 @@ func TestStep(t *testing.T) {
 	require.Equal(t, "done", Step2Str(ImportInto, StepDone))
 	require.Equal(t, "unknown step 123", Step2Str(ImportInto, 123))
 
+	// MV builds use the same ingestion step names.
+	require.Equal(t, "query", Step2Str(MViewBuild, ImportStepQuery))
+	require.Equal(t, "post-process", Step2Str(MViewBuild, ImportStepPostProcess))
+
 	// example type
 	require.Equal(t, "init", Step2Str(TaskTypeExample, StepInit))
 	require.Equal(t, "one", Step2Str(TaskTypeExample, StepOne))
@@ -62,6 +66,8 @@ func TestIsValidStep(t *testing.T) {
 	require.True(t, IsValidStep(Backfill, StepPrepared))
 	require.True(t, IsValidStep(ImportInto, ImportStepWriteAndIngest))
 	require.False(t, IsValidStep(ImportInto, 456))
+	require.True(t, IsValidStep(MViewBuild, ImportStepQuery))
+	require.False(t, IsValidStep(MViewBuild, 456))
 
 	require.True(t, IsValidBusinessStep(Backfill, BackfillStepReadIndex))
 	require.False(t, IsValidBusinessStep(Backfill, StepInit))

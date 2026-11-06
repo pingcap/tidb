@@ -739,6 +739,32 @@ type RefreshMaterializedViewStmt struct {
 	AsOf          *AsOfClause
 }
 
+// PrepareMViewBuildStmt is an internal-only statement that returns a compiled
+// MV build task without submitting it. It has no SQL parser production.
+type PrepareMViewBuildStmt struct {
+	stmtNode
+
+	ImportSQL string
+	DDLJobID  int64
+}
+
+// Restore implements Node interface.
+func (n *PrepareMViewBuildStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("PREPARE MATERIALIZED VIEW BUILD FOR DDL ")
+	ctx.WritePlain(strconv.FormatInt(n.DDLJobID, 10))
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *PrepareMViewBuildStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*PrepareMViewBuildStmt)
+	return v.Leave(n)
+}
+
 // RefreshMaterializedViewImplementStmt is an internal-only statement used by refresh planning.
 type RefreshMaterializedViewImplementStmt struct {
 	stmtNode

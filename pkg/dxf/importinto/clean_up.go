@@ -259,4 +259,5 @@ func sendMeterOnClean(ctx context.Context, task *proto.Task, logger *zap.Logger)
 
 func init() {
 	scheduler.RegisterCleanerFactory(proto.ImportInto, newImportCleaner)
+	scheduler.RegisterCleanerFactory(proto.MViewBuild, newImportCleaner)
 }

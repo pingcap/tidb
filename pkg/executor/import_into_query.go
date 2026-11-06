@@ -32,9 +32,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
 
-func init() { importer.RunImportQuery = runImportQuery }
-
-func runImportQuery(
+// RunImportQuery executes the captured SELECT using the worker session.
+// The caller owns sctx and output; the receiver owns the chunks sent to output.
+func RunImportQuery(
 	ctx context.Context, sctx sessionctx.Context,
 	q *importer.QuerySource, importSQL string, memQuota int64,
 	output chan<- importer.QueryChunk,

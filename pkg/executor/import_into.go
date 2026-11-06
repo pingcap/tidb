@@ -95,6 +95,25 @@ func inheritMViewMaintenanceFlag(parent, child sessionctx.Context) {
 	)
 }
 
+// initController shares plan and column-assignment validation between foreground
+// imports and DDL-owned builds, before either path initializes or imports data.
+func (e *ImportIntoExec) initController(ctx context.Context) error {
+	plan, err := importer.NewImportPlan(ctx, e.userSctx, e.plan, e.tbl)
+	if err != nil {
+		return err
+	}
+	args := importer.ASTArgsFromImportPlan(e.plan)
+	if err := ValidateImportIntoColAssignmentsWithEncodeCtx(plan, args.ColumnAssignments); err != nil {
+		return err
+	}
+	controller, err := importer.NewLoadDataController(plan, e.tbl, args)
+	if err != nil {
+		return err
+	}
+	e.controller = controller
+	return nil
+}
+
 // Next implements the Executor Next interface.
 func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.GrowAndReset(e.MaxChunkSize())
@@ -103,20 +122,9 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		// need to return an empty req to indicate all results have been written
 		return nil
 	}
-	importPlan, err := importer.NewImportPlan(ctx, e.userSctx, e.plan, e.tbl)
-	if err != nil {
+	if err := e.initController(ctx); err != nil {
 		return err
 	}
-	astArgs := importer.ASTArgsFromImportPlan(e.plan)
-	if err = ValidateImportIntoColAssignmentsWithEncodeCtx(importPlan, astArgs.ColumnAssignments); err != nil {
-		return err
-	}
-
-	controller, err := importer.NewLoadDataController(importPlan, e.tbl, astArgs)
-	if err != nil {
-		return err
-	}
-	e.controller = controller
 
 	if runsQueryOnWorker(e.plan) {
 		if err := e.prepareQuery(ctx); err != nil {

@@ -77,6 +77,10 @@ const (
 	queryMemBudgetRatio = 0.25
 )
 
+// QueryRunner executes the SELECT for a captured import source. The bootstrap
+// supplies the concrete executor when constructing a task executor.
+type QueryRunner func(context.Context, sessionctx.Context, *importer.QuerySource, string, int64, chan<- importer.QueryChunk) error
+
 // importStepExecutor is a executor for import step.
 // StepExecutor is equivalent to a Lightning instance.
 type importStepExecutor struct {
@@ -87,6 +91,7 @@ type importStepExecutor struct {
 	taskMeta      *importcore.TaskMeta
 	tableImporter *importer.TableImporter
 	queryRuntime  sqlsvrapi.Runtime
+	runQuery      QueryRunner
 	store         tidbkv.Storage
 	sharedVars    sync.Map
 	logger        *zap.Logger
@@ -431,6 +436,9 @@ func (s *importStepExecutor) readQuery(
 			err = util.GetRecoverError(r)
 		}
 	}()
+	if s.runQuery == nil {
+		return errors.New("import query runner is not configured")
+	}
 	pool := s.queryRuntime.SysSessionPool()
 	resource, err := pool.Get()
 	if err != nil {
@@ -448,7 +456,7 @@ func (s *importStepExecutor) readQuery(
 		}
 	}()
 
-	return importer.RunImportQuery(
+	return s.runQuery(
 		ctx, se, s.taskMeta.Plan.QuerySource, s.taskMeta.Stmt,
 		int64(float64(s.GetResource().Mem.Capacity())*queryMemBudgetRatio), selected)
 }
@@ -958,6 +966,7 @@ func (p *postProcessStepExecutor) RunSubtask(ctx context.Context, subtask *proto
 type importExecutor struct {
 	*taskexecutor.BaseTaskExecutor
 	indicesGenKV map[int64]importer.GenKVIndex
+	runQuery     QueryRunner
 }
 
 // NewImportExecutor creates a new import task executor.
@@ -965,12 +974,14 @@ func NewImportExecutor(
 	ctx context.Context,
 	task *proto.Task,
 	param taskexecutor.Param,
+	runQuery QueryRunner,
 ) taskexecutor.TaskExecutor {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
 
 	s := &importExecutor{
 		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(subCtx, task, param),
+		runQuery:         runQuery,
 	}
 	s.BaseTaskExecutor.Extension = s
 	return s
@@ -1012,6 +1023,7 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 			store:        store,
 			indicesGenKV: indicesGenKV,
 			queryRuntime: e.TaskRuntime,
+			runQuery:     e.runQuery,
 		}, nil
 	case proto.ImportStepMergeSort:
 		return &mergeSortStepExecutor{

@@ -87,6 +87,7 @@ func TestMiscVisitorCover(t *testing.T) {
 		&ast.CompareMaterializedViewStmt{ViewName: &ast.TableName{}, AsOf: &ast.AsOfClause{TsExpr: valueExpr}, OutputTable: &ast.TableName{}},
 		&ast.RefreshMaterializedViewStmt{ViewName: &ast.TableName{}, AsOf: &ast.AsOfClause{TsExpr: valueExpr}},
 		&ast.RefreshMaterializedViewImplementStmt{RefreshStmt: &ast.RefreshMaterializedViewStmt{ViewName: &ast.TableName{}}},
+		&ast.PrepareMViewBuildStmt{DDLJobID: 42},
 		&ast.ShutdownStmt{},
 	}
 
@@ -678,4 +679,14 @@ func TestCompareMaterializedViewStmtRestore(t *testing.T) {
 	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
 	require.NoError(t, stmt.Restore(rctx))
 	require.Equal(t, "COMPARE MATERIALIZED VIEW `test`.`mv` AS OF TIMESTAMP _UTF8MB4'2026-05-21 10:00:00' OUTPUT INTO TABLE `test`.`mv_diff`", sb.String())
+}
+
+func TestPrepareMViewBuildStmt(t *testing.T) {
+	stmt := &ast.PrepareMViewBuildStmt{ImportSQL: "import into dst from select * from src", DDLJobID: 42}
+	require.Equal(t, ast.CreateMaterializedViewCommand, stmt.SEMCommand())
+	var buf strings.Builder
+	require.NoError(t, stmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)))
+	require.Equal(t, "PREPARE MATERIALIZED VIEW BUILD FOR DDL 42", buf.String())
+	_, err := parser.New().ParseOneStmt(buf.String(), "", "")
+	require.Error(t, err, "the internal statement must not be available as SQL syntax")
 }

@@ -260,7 +260,7 @@ func (s *importIntoSuite) TestGetTaskMgrForAccessingImportJobUsesTaskRuntime() {
 		}, param),
 	}
 
-	got, err := sch.getTaskMgrForAccessingImportJob()
+	got, err := sch.getTaskKeyspaceManager()
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), got)
 	require.Same(s.T(), got, sch.taskKSTaskMgr)
