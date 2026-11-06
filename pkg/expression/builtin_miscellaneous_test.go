@@ -50,6 +50,7 @@ func TestInetAton(t *testing.T) {
 		{"127.2.1", 2130837505},
 		{"123.2.1.", nil},
 		{"127.0.0.1.1", nil},
+		{0.8949238218722565, nil},
 	}
 
 	dtbl := tblToDtbl(tbl)
@@ -58,12 +59,8 @@ func TestInetAton(t *testing.T) {
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
-		if tt["Expected"][0].IsNull() && !tt["Input"][0].IsNull() {
-			require.True(t, terror.ErrorEqual(err, errWrongValueForType))
-		} else {
-			require.NoError(t, err)
-			testutil.DatumEqual(t, tt["Expected"][0], d)
-		}
+		require.NoError(t, err)
+		testutil.DatumEqual(t, tt["Expected"][0], d)
 	}
 }
 
