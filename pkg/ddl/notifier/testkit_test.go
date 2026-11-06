@@ -547,14 +547,16 @@ func TestHandlersSeePessimisticTxnError(t *testing.T) {
 	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: ast.NewCIStr("t1")})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
-	require.Never(t, func() bool {
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
 		changes := make([]*notifier.SchemaChange, 8)
 		result, closeFn := s.List(ctx, se)
 		count, err2 := result.Read(changes)
-		require.NoError(t, err2)
 		closeFn()
-		return count == 0
-	}, time.Second, 50*time.Millisecond)
+		require.NoError(t, err2)
+		require.NotZero(t, count)
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 func TestCommitFailed(t *testing.T) {
