@@ -321,7 +321,7 @@ func TestDumpStatsDeltaMergeKeepsEarliestInitTime(t *testing.T) {
 	//    InitTime triggers flushing.
 	// 5) Before the first dump commits, load a t_other version newer than its start_ts + 5 * lease,
 	//    then verify the stats cache still loads the t_lock row of the first dump.
-	// 6) Verify the statement summary misses the lock wait of the first dump's select ... for update.
+	// 6) Verify the statement summary records the lock wait of the first dump's select ... for update.
 	tk.MustExec("set global tidb_stmt_summary_internal_query = 1")
 	t.Cleanup(func() { tk.MustExec("set global tidb_stmt_summary_internal_query = 0") })
 	tk.MustExec("drop table if exists t")
@@ -452,5 +452,5 @@ func TestDumpStatsDeltaMergeKeepsEarliestInitTime(t *testing.T) {
 	require.Equal(t, lockCount, dom.StatsHandle().GetPhysicalTableStats(lockTableID, lockTbl.Meta()).ModifyCount)
 
 	tk.MustQuery("select count(*) > 0 from information_schema.statements_summary " +
-		"where digest_text like '%stats_meta%for update%' and max_latency >= 500000000").Check(testkit.Rows("0"))
+		"where digest_text like '%stats_meta%for update%' and max_latency >= 500000000").Check(testkit.Rows("1"))
 }
