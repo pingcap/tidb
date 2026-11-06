@@ -186,11 +186,13 @@ impl<C: Columns + Clone + Send + Sync + 'static> IndexNestedLoopHashJoin<C> {
         };
         let unordered_errors = (!self.keep_outer_order).then(|| result_tx.clone());
         let span = tidb_tracing::current_span();
+        let acc = tidb_executor_internal_exec::ruv2::current_next_io_acc();
         self.outer_worker = Some(
             std::thread::Builder::new()
                 .name("IndexHashJoinOuterWorker".to_owned())
                 .spawn(move || {
                     let _span = tidb_tracing::with_thread_span(span);
+                    let _acc = tidb_executor_internal_exec::ruv2::with_next_io_acc(acc);
                     outer.run(child.as_mut(), &inner_tx, &task_tx, unordered_errors.as_ref());
                     child
                 })
@@ -223,11 +225,13 @@ impl<C: Columns + Clone + Send + Sync + 'static> IndexNestedLoopHashJoin<C> {
             };
             let inner_rx = inner_rx.clone();
             let span = tidb_tracing::current_span();
+            let acc = tidb_executor_internal_exec::ruv2::current_next_io_acc();
             self.inner_workers.push(
                 std::thread::Builder::new()
                     .name("IndexHashJoinInnerWorker".to_owned())
                     .spawn(move || {
                         let _span = tidb_tracing::with_thread_span(span);
+                        let _acc = tidb_executor_internal_exec::ruv2::with_next_io_acc(acc);
                         worker.run(&inner_rx);
                     })
                     .map_err(|error| ExecError::internal(format!("index hash join inner worker: {error}")))?,

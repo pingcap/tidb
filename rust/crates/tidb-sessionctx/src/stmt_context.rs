@@ -1431,6 +1431,9 @@ pub struct StmtContextData {
     /// Go `StmtCtx.RuntimeStatsColl`, present only when instance-level
     /// execution-info collection is enabled.
     executor_runtime_stats_source: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
+    /// Go `execdetails.RUV2MetricsFromContext(ctx)`: the statement's RU v2
+    /// metrics (`SessionVars.RUV2Metrics`), which `exec.Next` records into.
+    ruv2_metrics: Option<Arc<tidb_execdetails::ruv2_metrics::RUV2Metrics>>,
     /// Go `SessionVars.TxnCtx.TableDeltaMap` for the open transaction.
     table_delta: Option<Arc<tidb_variable::table_delta::TableDeltaMap>>,
     /// Go `SessionVars.IsPlanReplayerCaptureEnabled()`.
@@ -1826,6 +1829,16 @@ context_configuration! {
         source: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
     ) -> Self {
         self.executor_runtime_stats_source = source;
+        self
+    }
+
+    /// Installs the statement's RU v2 metrics (Go's statement context value).
+    #[must_use]
+    pub fn with_ruv2_metrics(
+        mut self,
+        metrics: Option<Arc<tidb_execdetails::ruv2_metrics::RUV2Metrics>>,
+    ) -> Self {
+        self.ruv2_metrics = metrics;
         self
     }
 
@@ -3118,6 +3131,7 @@ impl StmtContext {
             column_stats_usage: None,
             index_usage_collector: None,
             executor_runtime_stats_source: None,
+            ruv2_metrics: None,
             table_delta: None,
             plan_replayer_capture_enabled: false,
             table_runtime_statistics: Arc::default(),
@@ -3869,6 +3883,13 @@ impl StmtContext {
         &self,
     ) -> Option<&Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>> {
         self.executor_runtime_stats_source.as_ref()
+    }
+
+    /// Go `execdetails.RUV2MetricsFromContext`: the statement's RU v2
+    /// metrics, when the statement records them.
+    #[must_use]
+    pub fn ruv2_metrics(&self) -> Option<&Arc<tidb_execdetails::ruv2_metrics::RUV2Metrics>> {
+        self.ruv2_metrics.as_ref()
     }
 
     /// Go `initStats`' `GetUsedStatsInfo(true).RecordUsedInfo(...)`: the

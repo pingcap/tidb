@@ -437,6 +437,12 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::statement_kv_context_cell(self)
     }
 
+    fn statement_ruv2_metrics(&self) -> Option<std::sync::Arc<tidb_execdetails::ruv2_metrics::RUV2Metrics>> {
+        self.statement_observation
+            .as_ref()
+            .map(|observation| std::sync::Arc::clone(&observation.ruv2_metrics))
+    }
+
     fn statement_cop_response_sink(&self) -> Option<Arc<dyn tidb_distsql::select_response::CopResponseSink>> {
         Session::statement_cop_response_sink(self)
     }

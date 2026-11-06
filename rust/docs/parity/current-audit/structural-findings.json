@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 28,
-    "open": 11,
-    "partial": 17
+    "open": 9,
+    "partial": 19
   },
   "findings": [
     {
@@ -69,8 +69,8 @@
       "id": "E12",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "`IndexJoin` and `IndexHashJoin` are Go's `IndexLookUpJoin` and `IndexNestedLoopHashJoin` (`join/index_lookup_join.rs`, `join/index_lookup_hash_join.rs`: outer and inner workers over `Joiner`), with Go's task memory and matching. Three gaps remain: `IndexLookUpMergeJoin` is a strategy of the fused `JoinExec` (`join.rs`, pairing rows by evaluating the whole `ON`) running as the plain lookup, without Go's merge pairing or its own task charges (`outerOrderIdx`), and an index join whose output interleaves its children falls back to `JoinExec` with its old index-hash strategy; and Go's `IndexJoinExecutorBuilder` builds each task's inner executor afresh, where this port's inner workers re-seed one shared `IndexLookupSource` under a lock unless the lookup forks (a common-handle prefix)",
-      "go_owner": "`pkg/executor/join/index_lookup_merge_join.go`, `pkg/executor/builder.go` (`buildIndexLookUpMergeJoin`, `dataReaderBuilder.BuildExecutorForIndexJoin`)"
+      "finding": "`IndexJoin` and `IndexHashJoin` are Go's `IndexLookUpJoin` and `IndexNestedLoopHashJoin` (`join/index_lookup_join.rs`, `join/index_lookup_hash_join.rs`: outer and inner workers over `Joiner`), with Go's task memory and matching. Two gaps remain: Go's `IndexLookUpMergeJoin` executor (and `PhysicalIndexMergeJoin`'s `KeyOff2KeyOffOrderByIdx`, `CompareFuncs`, `NeedOuterSort`, `Desc`) is unported -- neither planner builds one on this branch, and the kind runs through the fused `JoinExec` lookup strategy (`join.rs`, now reached by nothing else, with its old index-hash code still compiled); and Go's `IndexJoinExecutorBuilder` builds each task's inner executor afresh, where this port's inner workers re-seed one shared `IndexLookupSource` under a lock unless the lookup forks (a common-handle prefix)",
+      "go_owner": "`pkg/executor/join/index_lookup_merge_join.go`, `pkg/planner/core/operator/physicalop/physical_index_merge_join.go`, `pkg/executor/builder.go` (`dataReaderBuilder.BuildExecutorForIndexJoin`)"
     },
     {
       "id": "E14",
@@ -88,10 +88,10 @@
     },
     {
       "id": "E16",
-      "status": "open",
+      "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "A statement's RU v2 is short on both sides of Go's sum. EXPLAIN ANALYZE registers `RURuntimeStats` with no statement metrics (`explain.rs` `register_ru_runtime_stats`, `metrics: None`), where Go passes the statement's `RUV2Metrics`; and those metrics are fed only by the parser and result cells: Go's `exec.Next` records each executor's rows or cells by type (`ruv2ExecutorMetricByType` -> `AddExecutorMetric`), `ExecStmt` the inserted rows times columns (`AddExecutorL5InsertRows`), the plan builder `AddPlanCnt`, the stats derivation `AddPlanDeriveStatsPaths`, the session `AddTxnCnt`, and `finalizeStatementRUV2Metrics` the commit's write keys and size. Go testkit (`CreateMockStore`): `INSERT INTO ai (b) VALUES (1),(2)` = `executor_l5_insert_rows:2, plan_cnt:2, session_parser_total:1, txn_cnt:1, write_keys:2, write_size:58` (tidb_ru 2.41), its EXPLAIN ANALYZE `RU:3.51`; this port records `session_parser_total:1` (0.39) and prints `RU:0.00`. The TiKV part also differs: Go's auto-ID `RunInNewTxn(ctx, ...)` inherits the statement's `RUDetails`, while this port's allocator transaction charges none. (`./gorun` prints 0.00 for every statement, so it is no oracle for RU.)",
-      "go_owner": "`pkg/executor/internal/exec/executor.go` (`ruv2ExecutorMetricByType`), `pkg/executor/adapter.go` (`AddExecutorL5InsertRows`, `finalizeStatementRUV2Metrics`), `pkg/executor/explain.go`, `pkg/planner/core/planbuilder.go`, `pkg/session`"
+      "finding": "Executors record Go's RU v2 executor metrics at `exec.Next` (`tidb-executor-internal-exec` `ruv2.rs`: `ruv2ExecutorMetricByType`, `nextIOAcc` handed to worker threads, recorded by `SqlKillerCheckExec`), but the statement's other producers are missing: the plan builder's `AddPlanCnt`, `deriveStats4DataSource`'s `AddPlanDeriveStatsPaths`, the session's `AddTxnCnt`, `ExecStmt`'s `AddExecutorL5InsertRows` and `finalizeStatementRUV2Metrics` (the commit's write keys and size, the TiKV part); EXPLAIN ANALYZE registers `RURuntimeStats` without the statement metrics (`explain.rs` `register_ru_runtime_stats`, `metrics: None`); and Go's per-task `TableReaderExecutor` under `IndexLookUpExecutor` (E11) records `TableReaderExecutor` rows this port does not. Go testkit: `SELECT * FROM t` = `executor_l2:{TableReaderExecutor:6}, plan_cnt:1, plan_derive_stats_paths:2, session_parser_total:1, txn_cnt:1`, where this port records the executor part and `session_parser_total` only; `INSERT INTO ai (b) VALUES (1),(2)` = `executor_l5_insert_rows:2, plan_cnt:2, session_parser_total:1, txn_cnt:1, write_keys:2, write_size:58`",
+      "go_owner": "`pkg/planner/core/planbuilder.go` (`recordPlanBuilderMetric`), `pkg/planner/core/stats.go`, `pkg/session` (`AddTxnCnt`), `pkg/executor/adapter.go` (`recordDMLRowsColMultiply2Metrics`, `finalizeStatementRUV2Metrics`), `pkg/executor/explain.go`"
     },
     {
       "id": "C01",

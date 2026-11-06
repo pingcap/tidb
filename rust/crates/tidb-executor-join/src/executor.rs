@@ -369,7 +369,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> HashJoinV2Executor<C> {
             // fetcher calls Next BEFORE wait4BuildSide. Keep exactly that one
             // chunk (including EOF), and never probe an unfinished table.
             coordinator
-                .submit(move || {
+                .submit(tidb_executor_internal_exec::ruv2::inherit_goroutine(move || {
                     let build_result = recover_worker_panic(|| {
                         let build_context = BuildContext::new(
                             &layout,
@@ -387,7 +387,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> HashJoinV2Executor<C> {
                             )
                     });
                     let _ = build_result_tx.send((build_state, build_child, build_result));
-                })
+                }))
                 .map_err(|_| ExecError::internal("hash join build coordinator stopped"))?;
             let probe_result = recover_worker_panic(|| probe.next(&mut first_probe));
             let (build_state, build_child, build_result) =

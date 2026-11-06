@@ -597,7 +597,7 @@ impl<C: Columns + Send + 'static> ShuffleExec<C> {
         // directly into that closure would prevent Close from releasing it.
         let (sender, receiver) = bounded(1);
         // Go's worker goroutines inherit the statement's profiler labels.
-        match std::thread::Builder::new().spawn(tidb_cpuprofile::labels::inherit(move || {
+        match std::thread::Builder::new().spawn(tidb_executor_internal_exec::ruv2::inherit_goroutine(move || {
             let mut job = receiver.recv().expect("shuffle startup job");
             run(&mut job);
             job

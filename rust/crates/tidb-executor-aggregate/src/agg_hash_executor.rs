@@ -400,6 +400,7 @@ impl<C: Columns + Send + Sync + 'static> HashAggExec<C> {
             // Go hands the fetcher `ctx`: its child's regions open under
             // this `Next`'s.
             let span = tidb_tracing::current_span();
+            let acc = tidb_executor_internal_exec::ruv2::current_next_io_acc();
             let inflight_chunk_sync = Arc::clone(&inflight_chunk_sync);
             let spill_helper = Arc::clone(&spill_helper);
             let agg_funcs = Arc::clone(&self.partial_agg_funcs);
@@ -436,6 +437,7 @@ impl<C: Columns + Send + Sync + 'static> HashAggExec<C> {
             };
             move || {
                 let _span = tidb_tracing::with_thread_span(span);
+                let _acc = tidb_executor_internal_exec::ruv2::with_next_io_acc(acc);
                 let output = final_output_sender.clone();
                 recover_hash_agg(&output, || loop {
                     let mut input = select! {

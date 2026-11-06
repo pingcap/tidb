@@ -855,6 +855,9 @@ pub struct Session {
     statement_plan_cache_unqualified: Arc<Mutex<String>>,
     /// Go `SessionVars.RUV2PendingSessionParserTotal`.
     ruv2_pending_session_parser_total: i64,
+    /// Go `SessionVars.RUV2Metrics` once its statement ended: the last
+    /// statement's metrics stay readable until the next one starts.
+    last_ruv2_metrics: Option<Arc<tidb_execdetails::ruv2_metrics::RUV2Metrics>>,
     /// Set while a binary-protocol EXECUTE runs. Go keeps the plan detail out
     /// of the process list for that path (`executeStmtImpl`,
     /// `pkg/session/session.go`: `execStmt.Name == ""` clears `currentPlan`),
@@ -1045,6 +1048,7 @@ impl Session {
             sql_cpu_usages: Arc::default(),
             statement_plan_cache_unqualified: Arc::default(),
             ruv2_pending_session_parser_total: 0,
+            last_ruv2_metrics: None,
             binary_prepared_execution: false,
             node: Some(node),
         }

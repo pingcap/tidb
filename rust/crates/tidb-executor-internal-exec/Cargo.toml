@@ -12,6 +12,8 @@ workspace = true
 
 [dependencies]
 tidb-stmtctx = { path = "../tidb-stmtctx" }
+tidb-execdetails = { path = "../tidb-execdetails" }
+tidb-cpuprofile = { path = "../tidb-cpuprofile" }
 tidb-kv = { path = "../tidb-kv" }
 tikv-client.workspace = true
 tidb-ppcpuusage = { path = "../tidb-ppcpuusage" }

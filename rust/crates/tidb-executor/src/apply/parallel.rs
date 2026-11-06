@@ -327,7 +327,7 @@ impl ParallelNestedLoopApplyExec {
             self.pool
                 .as_ref()
                 .unwrap()
-                .submit(move || {
+                .submit(tidb_executor_internal_exec::ruv2::inherit_goroutine(move || {
                     let mut executor = executor
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -358,7 +358,7 @@ impl ParallelNestedLoopApplyExec {
                         Err(error) => Event::Error(error),
                     };
                     let _ = queue.send(event);
-                })
+                }))
                 .map_err(|()| ExecError::internal("parallel Apply worker pool closed"))?;
         }
         Ok(())

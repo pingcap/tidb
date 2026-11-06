@@ -262,11 +262,13 @@ impl<C: Columns + Clone + Send + Sync + 'static> IndexLookUpJoin<C> {
             finished: Arc::clone(&self.finished),
         };
         let span = tidb_tracing::current_span();
+        let acc = tidb_executor_internal_exec::ruv2::current_next_io_acc();
         self.outer_worker = Some(
             std::thread::Builder::new()
                 .name("IndexLookupJoinOuterWorker".to_owned())
                 .spawn(move || {
                     let _span = tidb_tracing::with_thread_span(span);
+                    let _acc = tidb_executor_internal_exec::ruv2::with_next_io_acc(acc);
                     outer.run(child.as_mut(), &inner_tx, &result_tx);
                     child
                 })
@@ -284,11 +286,13 @@ impl<C: Columns + Clone + Send + Sync + 'static> IndexLookUpJoin<C> {
             let source = Arc::clone(&self.source);
             let finished = Arc::clone(&self.finished);
             let span = tidb_tracing::current_span();
+            let acc = tidb_executor_internal_exec::ruv2::current_next_io_acc();
             self.inner_workers.push(
                 std::thread::Builder::new()
                     .name("IndexLookupJoinInnerWorker".to_owned())
                     .spawn(move || {
                         let _span = tidb_tracing::with_thread_span(span);
+                        let _acc = tidb_executor_internal_exec::ruv2::with_next_io_acc(acc);
                         inner_worker_run(&shared, &source, &finished, &inner_rx);
                     })
                     .map_err(|error| ExecError::internal(format!("index lookup join inner worker: {error}")))?,

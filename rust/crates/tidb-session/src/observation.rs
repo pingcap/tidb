@@ -765,6 +765,22 @@ impl Session {
         }
     }
 
+    /// Go `SessionVars.RUV2Metrics` as `FormatRUV2Metrics` prints it (zero
+    /// weights): the running statement's, else the last one's.
+    pub fn ruv2_metrics_summary(&self) -> Option<String> {
+        let metrics = self
+            .statement_observation
+            .as_ref()
+            .map(|observation| &observation.ruv2_metrics)
+            .or(self.last_ruv2_metrics.as_ref())?;
+        Some(tidb_execdetails::ruv2_metrics::format_ruv_2_metrics(
+            Some(metrics.as_ref()),
+            tidb_execdetails::ruv2_metrics::RUV2Weights::default(),
+            0.0,
+            0.0,
+        ))
+    }
+
     pub(crate) fn finish_statement_observation(
         &mut self,
         result: &Result<StatementCompletion, DriverError>,
@@ -863,6 +879,7 @@ impl Session {
         let Some(observation) = self.statement_observation.take() else {
             return;
         };
+        self.last_ruv2_metrics = Some(Arc::clone(&observation.ruv2_metrics));
         // Go `doCommit`: `StmtCtx.MergeExecDetails(nil, commitDetail)` once
         // the commit (with its retries) returned.
         if let Some(commit_details) = self

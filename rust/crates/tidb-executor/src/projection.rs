@@ -360,7 +360,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> ProjectionExec<C> {
         pipeline.in_flight += 1;
         let shared = Arc::clone(&pipeline.shared);
         let result_tx = pipeline.result_tx.clone();
-        pipeline.workers.submit(move || {
+        pipeline.workers.submit(tidb_executor_internal_exec::ruv2::inherit_goroutine(move || {
             let mut input = input;
             let mut output = output;
             let result = tidb_driver_error::panic_recovery::recover_worker_panic(|| {
@@ -375,7 +375,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> ProjectionExec<C> {
                 ran.map(|()| (input, output)).map_err(Self::evaluator_error)
             });
             let _ = result_tx.send((seq, result));
-        });
+        }));
         Ok(())
     }
 

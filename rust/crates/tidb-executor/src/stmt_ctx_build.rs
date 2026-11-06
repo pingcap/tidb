@@ -1743,6 +1743,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_column_stats_usage(col_stats_usage_updater(self.stats_collector_ref()))
                     .with_index_usage_collector(index_usage_collector)
                     .with_executor_runtime_stats_source(runtime_stats_source.clone())
+                    .with_ruv2_metrics(self.statement_ruv2_metrics())
                     .with_table_delta(std::sync::Arc::clone(&self.transaction_table_delta_ref()))
                     .with_opt_index_prune_threshold(opt_index_prune_threshold)
                     .with_range_max_size(range_max_size)
@@ -1911,6 +1912,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_column_stats_usage(col_stats_usage_updater(self.stats_collector_ref()))
                 .with_index_usage_collector(index_usage_collector)
                 .with_executor_runtime_stats_source(runtime_stats_source.clone())
+                    .with_ruv2_metrics(self.statement_ruv2_metrics())
                 .with_table_delta(std::sync::Arc::clone(&self.transaction_table_delta_ref()))
                 .with_opt_index_prune_threshold(opt_index_prune_threshold)
                 .with_range_max_size(range_max_size)
@@ -2503,6 +2505,11 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// The session's statement ctx values, shared with the transactions and
     /// snapshots its statements use; see [`tidb_txnkv::StatementKvContextCell`].
     fn statement_kv_context_cell(&self) -> tidb_txnkv::StatementKvContextCell;
+    /// Go `SessionVars.RUV2Metrics` of the running statement, which its
+    /// executors record into; `None` outside a recorded statement.
+    fn statement_ruv2_metrics(&self) -> Option<Arc<tidb_execdetails::ruv2_metrics::RUV2Metrics>> {
+        None
+    }
     /// Go `tidb_enable_collect_execution_info`: the statement's consumer of
     /// coprocessor response details, `None` while the instance switch is OFF
     /// (Go's `copIteratorWorker.stats` is only created when it is ON).

@@ -266,7 +266,7 @@ impl HashJoinV2Exec {
                     let state = Arc::clone(state);
                     let stats = self.ctx.stats.clone();
                     lane_pool
-                        .submit(move || {
+                        .submit(tidb_executor_internal_exec::ruv2::inherit_goroutine(move || {
                             // Go `splitPartitionAndAppendToRowTable`'s cost,
                             // reported by `updatePartitionData` on exit.
                             let mut cost = std::time::Duration::ZERO;
@@ -318,7 +318,7 @@ impl HashJoinV2Exec {
                                 let _ = errors.send(error.clone());
                             }
                             let _ = worker_results.send(result);
-                        })
+                        }))
                         .map_err(|_| ExecError::internal("hash-join build worker pool stopped"))?;
                 }
                 drop(input_rx);
@@ -494,7 +494,7 @@ impl HashJoinV2Exec {
                     killed.clone(),
                 );
                 let stats = self.ctx.stats.clone();
-                handles.push(scope.spawn(tidb_cpuprofile::labels::inherit(move || {
+                handles.push(scope.spawn(tidb_executor_internal_exec::ruv2::inherit_goroutine(move || {
                     let mut cost = std::time::Duration::ZERO;
                     let result = recover_worker_panic(|| {
                         let mut build_context = BuildContext::new(context.meta, context.partition, context.key_serializer);

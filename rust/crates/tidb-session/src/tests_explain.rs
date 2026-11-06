@@ -7423,3 +7423,53 @@ fn a_parallel_hash_aggregate_spills_and_restores_like_go() {
     assert_eq!(result, vec![vec!["3000".to_owned(), "3000".to_owned(), "v".repeat(50)]]);
     session.run("SET GLOBAL tidb_mem_oom_action = 'CANCEL'").unwrap();
 }
+
+/// Go `exec.Next`'s RU v2 executor metrics (`ruv2ExecutorMetricByType`):
+/// every recorded executor adds its input plus output rows (or cells), its
+/// input being what its children -- on worker threads too -- returned during
+/// its `Next`. The `executor_l*` parts of `FormatRUV2Metrics`, from a Go
+/// testkit run of the same statements.
+#[test]
+fn a_statement_records_go_executor_ruv2_metrics() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE t (a INT PRIMARY KEY, b INT, c VARCHAR(20), KEY(b))",
+        "CREATE TABLE s (a INT PRIMARY KEY, d INT, KEY(d))",
+        "INSERT INTO t VALUES (1,1,'x'),(2,2,'y'),(3,3,'z'),(4,4,'w'),(5,5,'v'),(6,6,'u')",
+        "INSERT INTO s VALUES (1,10),(2,20),(3,30),(7,70)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let executor_parts = |summary: &str| -> Vec<String> {
+        summary
+            .split(", ")
+            .filter(|part| part.starts_with("executor_l"))
+            .map(str::to_owned)
+            .collect()
+    };
+    for (sql, expected) in [
+        ("SELECT * FROM t", vec!["executor_l2:{TableReaderExecutor:6}"]),
+        ("SELECT a FROM t WHERE b > 2", vec!["executor_l2:{IndexReaderExecutor:4}"]),
+        (
+            "SELECT b, count(*) FROM t GROUP BY b",
+            vec!["executor_l2:{HashAggExec:12,IndexReaderExecutor:6,ProjectionExec:24}"],
+        ),
+        ("SELECT * FROM t ORDER BY c LIMIT 3", vec!["executor_l2:{TableReaderExecutor:3,TopNExec:18}"]),
+        (
+            "SELECT /*+ inl_join(s) */ * FROM t JOIN s ON t.a=s.a",
+            vec!["executor_l2:{IndexLookUpJoin:39,TableReaderExecutor:9}"],
+        ),
+        (
+            "SELECT /*+ hash_join(s) */ * FROM t JOIN s ON t.a=s.d",
+            vec!["executor_l2:{HashJoinV2Exec:10,IndexReaderExecutor:4,TableReaderExecutor:6}"],
+        ),
+        ("SELECT * FROM t WHERE a = 3", vec!["executor_l1:{PointGetExecutor:3}"]),
+        // Go also counts `TableReaderExecutor:1` here: the per-task table
+        // reader its `IndexLookUpExecutor` builds, which this port lacks (E11).
+        ("SELECT * FROM t WHERE b = 3", vec!["executor_l2:{IndexLookUpExecutor:1}"]),
+    ] {
+        row_text(session.run(sql));
+        let summary = session.ruv2_metrics_summary().expect("a recorded statement");
+        assert_eq!(executor_parts(&summary), expected, "{sql}: {summary}");
+    }
+}

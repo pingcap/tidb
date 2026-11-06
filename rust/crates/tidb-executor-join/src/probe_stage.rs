@@ -217,7 +217,7 @@ impl ProbeStage {
                 .expect("probe worker pool installed")
                 .clone();
             worker_pool
-                .submit(move || {
+                .submit(tidb_executor_internal_exec::ruv2::inherit_goroutine(move || {
                     let result = tidb_driver_error::panic_recovery::recover_worker_panic(|| {
                         run(id, worker, &memory);
                         Ok(())
@@ -228,7 +228,7 @@ impl ProbeStage {
                             send(errors, ProbeWorkerEvent::Error { worker_id: id, error }) -> _ => {},
                         }
                     }
-                })
+                }))
                 .map_err(|_| ExecError::internal("hash join probe worker pool stopped"))?;
         }
         if skip_probe || restored {

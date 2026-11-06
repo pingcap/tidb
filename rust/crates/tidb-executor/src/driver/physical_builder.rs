@@ -183,6 +183,9 @@ struct BuildState {
     in_reader: bool,
     /// Go `executorStats`' Top SQL registration of the statement being built.
     top_profiling: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Go `execdetails.RUV2MetricsFromContext`: the statement's RU v2
+    /// metrics its executors' `exec.Next` records into.
+    ruv2_metrics: Option<Arc<tidb_execdetails::ruv2_metrics::RUV2Metrics>>,
     /// Whether a `PhysicalProjection` may run Go's projection workers. Go
     /// keeps every projection serial inside INSERT/UPDATE/DELETE (its
     /// `inUpdateStmt`/`inDeleteStmt`/`inInsertStmt` builder flags, because
@@ -582,6 +585,17 @@ impl BuildState {
     ) -> Box<dyn Executor> {
         // A coprocessor plan's nodes run in TiKV for Go: no TiDB executor
         // and no `exec.Next` region; neither has a union scan's mem reader.
+        // Go `exec.Next`'s RU v2 recording, for every executor Go builds.
+        let ruv2 = (!self.in_reader)
+            .then(|| next_region.or_else(|| go_executor_ruv2_type(plan)))
+            .flatten()
+            .and_then(|region| {
+                tidb_executor_internal_exec::ruv2::Ruv2NextCache::new(
+                    region.trim_end_matches(".Next"),
+                    self.ruv2_metrics.as_ref(),
+                )
+            });
+        let child_count = if self.in_reader { 0 } else { plan.children().len() };
         let next_region = next_region.filter(|_| !self.in_reader && !self.untraced);
         let plan_id = i64::from(plan.base().base.id());
         // A pushed node runs in TiKV for Go: it reports cop stats only.
@@ -610,6 +624,8 @@ impl BuildState {
             next_region,
             trace,
             top_profiling: self.top_profiling.clone(),
+            ruv2,
+            child_count,
         });
         let Some(counters) = self.runtime_counters.as_mut() else {
             return executor;
@@ -677,6 +693,11 @@ struct SqlKillerCheckExec {
     trace: Option<Box<GoExecutorTrace>>,
     /// Go `exec.Next`'s `RegisterSQLAndPlanInExecForTopProfiling`.
     top_profiling: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Go `exec.Next`'s RU v2 recording (`ruv2NextCacheState`).
+    ruv2: Option<tidb_executor_internal_exec::ruv2::Ruv2NextCache>,
+    /// Go `len(e.AllChildren())`, deciding whether its children report into
+    /// a local accumulator.
+    child_count: usize,
 }
 
 /// The trace a node's Go executor adds to its own `Open`, `Next` and
@@ -791,6 +812,21 @@ fn go_executor_next_region(plan: &PhysicalPlan) -> Option<&'static str> {
     })
 }
 
+/// The Go executor type of a node [`go_executor_next_region`] leaves out,
+/// for its RU v2 recording.
+fn go_executor_ruv2_type(plan: &PhysicalPlan) -> Option<&'static str> {
+    use tidb_planner_core_operator_physicalop::IndexJoinKind;
+    Some(match plan {
+        PhysicalPlan::IndexJoin(join) => match join.kind {
+            IndexJoinKind::IndexJoin => "*join.IndexLookUpJoin",
+            IndexJoinKind::IndexHashJoin => "*join.IndexNestedLoopHashJoin",
+            IndexJoinKind::IndexMergeJoin => "*join.IndexLookUpMergeJoin",
+        },
+        PhysicalPlan::Window(_) => "*windows.WindowExec",
+        _ => return None,
+    })
+}
+
 fn checked_executor(child: Box<dyn Executor>, memory: crate::StatementMemory) -> Box<dyn Executor> {
     checked_executor_with_stats(child, memory, None)
 }
@@ -808,6 +844,8 @@ fn checked_executor_with_stats(
         next_region: None,
         trace: None,
         top_profiling: None,
+        ruv2: None,
+        child_count: 0,
     })
 }
 
@@ -860,7 +898,12 @@ impl Executor for SqlKillerCheckExec {
         }
         let result = tidb_driver_error::panic_recovery::recover_executor_panic(|| {
             self.memory.check().map_err(crate::ExecError::from)?;
-            self.child.next(req)?;
+            tidb_executor_internal_exec::ruv2::next_with_ruv2(
+                self.ruv2.as_ref(),
+                self.child_count,
+                req,
+                |req| self.child.next(req),
+            )?;
             self.memory.check().map_err(crate::ExecError::from)
         });
         if let (Some(stats), Some(start)) = (&self.runtime_stats, start) {
@@ -4277,21 +4320,36 @@ fn build_index_lookup_source(
         )?;
         // Go `buildExecutorForIndexJoin` builds the inner reader per task
         // under the reader's plan: its rows, `exec.Next` and `exec.Close`
-        // (it is opened directly, so no open time) merge into one stat.
-        let Some(counters) = state.runtime_counters.as_mut().filter(|_| !state.untraced) else {
+        // (it is opened directly, so no open time) merge into one stat, and
+        // its `exec.Next` records RU v2 like any reader's.
+        let ruv2 = go_executor_next_region(inner).and_then(|region| {
+            tidb_executor_internal_exec::ruv2::Ruv2NextCache::new(
+                region.trim_end_matches(".Next"),
+                ctx.ruv2_metrics(),
+            )
+        });
+        let calls = state
+            .runtime_counters
+            .as_mut()
+            .filter(|_| !state.untraced)
+            .map(|counters| {
+                let calls = Arc::new(Mutex::new(PhysicalCallStats::default()));
+                counters.insert(
+                    runtime_plan_key(inner),
+                    PhysicalRuntimeCounter {
+                        calls: Some(Arc::clone(&calls)),
+                        ..leaf.produced_rows().into()
+                    },
+                );
+                calls
+            });
+        if calls.is_none() && ruv2.is_none() {
             return Ok(IndexLookupSource::Leaf(Box::new(leaf)));
-        };
-        let calls = Arc::new(Mutex::new(PhysicalCallStats::default()));
-        counters.insert(
-            runtime_plan_key(inner),
-            PhysicalRuntimeCounter {
-                calls: Some(Arc::clone(&calls)),
-                ..leaf.produced_rows().into()
-            },
-        );
+        }
         return Ok(IndexLookupSource::Leaf(Box::new(MeteredIndexJoinLookup {
             inner: Box::new(leaf),
             calls,
+            ruv2,
         })));
     }
     let probes = std::sync::Arc::new(std::sync::Mutex::new(SharedIndexJoinProbes::default()));
@@ -4305,7 +4363,8 @@ fn build_index_lookup_source(
 /// `Close` into the reader plan's stats.
 struct MeteredIndexJoinLookup {
     inner: Box<dyn tidb_executor_join::index_lookup::IndexJoinLookup>,
-    calls: Arc<Mutex<PhysicalCallStats>>,
+    calls: Option<Arc<Mutex<PhysicalCallStats>>>,
+    ruv2: Option<tidb_executor_internal_exec::ruv2::Ruv2NextCache>,
 }
 
 impl Executor for MeteredIndexJoinLookup {
@@ -4315,17 +4374,23 @@ impl Executor for MeteredIndexJoinLookup {
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), crate::ExecError> {
         let start = Instant::now();
-        let result = self.inner.next(req);
-        let mut calls = self.calls.lock().unwrap();
-        calls.next += start.elapsed();
-        calls.loops += 1;
+        let inner = &mut self.inner;
+        let result =
+            tidb_executor_internal_exec::ruv2::next_with_ruv2(self.ruv2.as_ref(), 0, req, |req| inner.next(req));
+        if let Some(calls) = &self.calls {
+            let mut calls = calls.lock().unwrap();
+            calls.next += start.elapsed();
+            calls.loops += 1;
+        }
         result
     }
 
     fn close(&mut self) -> Result<(), crate::ExecError> {
         let start = Instant::now();
         let result = self.inner.close();
-        self.calls.lock().unwrap().close += start.elapsed();
+        if let Some(calls) = &self.calls {
+            calls.lock().unwrap().close += start.elapsed();
+        }
         result
     }
 
@@ -4362,7 +4427,8 @@ impl tidb_executor_join::index_lookup::IndexJoinLookup for MeteredIndexJoinLooku
         self.inner.fork_template().map(|inner| {
             Box::new(MeteredIndexJoinLookupFork {
                 inner,
-                calls: Arc::clone(&self.calls),
+                calls: self.calls.clone(),
+                ruv2: self.ruv2.clone(),
             }) as Box<dyn tidb_executor_join::index_lookup::IndexJoinLookupFork>
         })
     }
@@ -4376,7 +4442,8 @@ impl tidb_executor_join::index_lookup::IndexJoinLookup for MeteredIndexJoinLooku
 /// stats.
 struct MeteredIndexJoinLookupFork {
     inner: Box<dyn tidb_executor_join::index_lookup::IndexJoinLookupFork>,
-    calls: Arc<Mutex<PhysicalCallStats>>,
+    calls: Option<Arc<Mutex<PhysicalCallStats>>>,
+    ruv2: Option<tidb_executor_internal_exec::ruv2::Ruv2NextCache>,
 }
 
 impl tidb_executor_join::index_lookup::IndexJoinLookupFork for MeteredIndexJoinLookupFork {
@@ -4393,7 +4460,8 @@ impl tidb_executor_join::index_lookup::IndexJoinLookupFork for MeteredIndexJoinL
         Ok(self.inner.open(probes)?.map(|inner| {
             Box::new(MeteredIndexJoinLookup {
                 inner,
-                calls: Arc::clone(&self.calls),
+                calls: self.calls.clone(),
+                ruv2: self.ruv2.clone(),
             }) as Box<dyn tidb_executor_join::index_lookup::IndexJoinLookup>
         }))
     }
@@ -4530,8 +4598,15 @@ fn build_index_join(
     let output_offsets =
         physical_join_output_offsets(plan, join.join_type, &left_schema, &right_schema)?;
     if join.kind != tidb_planner_core_operator_physicalop::IndexJoinKind::IndexMergeJoin {
-        if let Some(children_used) =
+        // Go's joiner appends the left child's columns before the right's;
+        // a physical index join's schema is never interleaved.
+        let Some(children_used) =
             index_join_children_used(join.join_type, &output_offsets, left_types.len())
+        else {
+            return Err(DriverError::unsupported(
+                "an index join's output interleaves its children's columns",
+            ));
+        };
         {
             return build_index_look_up_join(
                 plan,
@@ -7618,6 +7693,9 @@ fn build_with_state(
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
+    if state.ruv2_metrics.is_none() {
+        state.ruv2_metrics = ctx.ruv2_metrics().cloned();
+    }
     if state.top_profiling.is_none() {
         state.top_profiling = ctx.top_profiling_registration();
     }
@@ -9054,6 +9132,8 @@ use super::*;
         let entered = tidb_tracing::with_thread_span(Some(root.clone()));
         for close_for in [Duration::from_millis(3), Duration::ZERO] {
             let mut limit = SqlKillerCheckExec {
+                ruv2: None,
+                child_count: 0,
                 child: Box::new(SlowClose {
                     meta: tidb_executor_internal_exec::ExecutorMeta::new(Schema::new(Vec::new()), 1, 1, 1),
                     close_for,

@@ -16,6 +16,7 @@
 //! shared base state.
 
 pub mod fast_bytes_map;
+pub mod ruv2;
 pub mod table_access;
 pub mod index_usage_reporter;
 pub mod predicate_pushdown;
