@@ -37,7 +37,7 @@ type PhysicalLock struct {
 	Lock *ast.SelectLockInfo `plan-cache-clone:"shallow"`
 
 	TblID2Handle       map[int64][]util.HandleCols
-	TblID2PhysTblIDCol map[int64]*expression.Column
+	TblID2PhysTblIDCol map[int64][]*expression.Column
 }
 
 // ExhaustPhysicalPlans4LogicalLock exhausts PhysicalLock plans from LogicalLock.
@@ -82,8 +82,11 @@ func (p *PhysicalLock) MemoryUsage() (sum int64) {
 			sum += val.MemoryUsage()
 		}
 	}
-	for _, val := range p.TblID2PhysTblIDCol {
-		sum += size.SizeOfInt64 + size.SizeOfPointer + val.MemoryUsage()
+	for _, vals := range p.TblID2PhysTblIDCol {
+		sum += size.SizeOfInt64 + size.SizeOfSlice + int64(cap(vals))*size.SizeOfPointer
+		for _, val := range vals {
+			sum += val.MemoryUsage()
+		}
 	}
 	return
 }
@@ -131,9 +134,9 @@ func (p *PhysicalLock) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bo
 		}
 	}
 	if p.TblID2PhysTblIDCol != nil {
-		cloned.TblID2PhysTblIDCol = make(map[int64]*expression.Column, len(p.TblID2PhysTblIDCol))
+		cloned.TblID2PhysTblIDCol = make(map[int64][]*expression.Column, len(p.TblID2PhysTblIDCol))
 		for k, v := range p.TblID2PhysTblIDCol {
-			cloned.TblID2PhysTblIDCol[k] = v.Clone().(*expression.Column)
+			cloned.TblID2PhysTblIDCol[k] = util.CloneCols(v)
 		}
 	}
 	return cloned, true
