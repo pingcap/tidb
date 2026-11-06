@@ -333,6 +333,9 @@ func (c *jsonExtractFunctionClass) getFunction(ctx BuildContext, args []Expressi
 }
 
 func (b *builtinJSONExtractSig) evalJSON(ctx EvalContext, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
+	if textArg := b.jsonTextArg(ctx); textArg != nil {
+		return b.evalJSONFromText(ctx, row, textArg)
+	}
 	res, isNull, err = b.args[0].EvalJSON(ctx, row)
 	if isNull || err != nil {
 		return
@@ -355,6 +358,44 @@ func (b *builtinJSONExtractSig) evalJSON(ctx EvalContext, row chunk.Row) (res ty
 		return res, true, nil
 	}
 	return res, false, nil
+}
+
+// Keep the implicit cast in the expression tree so pushdown retains its existing behavior.
+func (b *builtinJSONExtractSig) jsonTextArg(ctx EvalContext) Expression {
+	if len(b.args) != 2 {
+		return nil
+	}
+	castExpr, ok := b.args[0].(*ScalarFunction)
+	if !ok {
+		return nil
+	}
+	cast, ok := castExpr.Function.(*builtinCastStringAsJSONSig)
+	if !ok || !mysql.HasParseToJSONFlag(cast.tp.GetFlag()) || types.IsBinaryStr(cast.args[0].GetType(ctx)) {
+		return nil
+	}
+	return cast.args[0]
+}
+
+func (b *builtinJSONExtractSig) evalJSONFromText(ctx EvalContext, row chunk.Row, textArg Expression) (types.BinaryJSON, bool, error) {
+	text, isNull, err := textArg.EvalString(ctx, row)
+	if isNull || err != nil {
+		return types.BinaryJSON{}, isNull, err
+	}
+	pathText, isNull, err := b.args[1].EvalString(ctx, row)
+	if err != nil {
+		return types.BinaryJSON{}, true, err
+	}
+	if isNull {
+		// A NULL path must not suppress errors in the JSON document.
+		_, err = types.ParseBinaryJSONFromString(text)
+		return types.BinaryJSON{}, true, err
+	}
+	path, err := types.ParseJSONPathExpr(pathText)
+	if err != nil {
+		return types.BinaryJSON{}, true, err
+	}
+	result, found, err := types.ExtractBinaryJSONFromText(text, path)
+	return result, !found, err
 }
 
 type jsonUnquoteFunctionClass struct {

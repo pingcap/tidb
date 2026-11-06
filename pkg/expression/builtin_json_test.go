@@ -17,6 +17,7 @@ package expression
 import (
 	"fmt"
 	"hash/crc32"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -1551,4 +1552,72 @@ func TestJSONSchemaValidCache(t *testing.T) {
 	}
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/jsonSchemaValidDisableCacheRefresh"))
+}
+
+func TestJSONExtractText(t *testing.T) {
+	ctx := createContext(t)
+	cases := []struct {
+		doc, path, want                      string
+		docNull, pathNull, wantNull, wantErr bool
+	}{
+		{doc: `{"a":{"value":123},"unused":[1,2]}`, path: "$.a.value", want: "123"},
+		{doc: `{"a":1,"unused":1e400}`, path: "$.a", want: "1"},
+		{doc: `{"a":1,"a":2}`, path: "$.a", want: "2"},
+		{doc: `{"a":{"x":1},"a":{}}`, path: "$.a.x", wantNull: true},
+		{doc: `{"a":null}`, path: "$.a", want: "null"},
+		{doc: `{"a":1}`, path: "$.missing", wantNull: true},
+		{doc: `{"a.b":18446744073709551615}`, path: `$."a.b"`, want: "18446744073709551615"},
+		{doc: `{"a":[1,2]}`, path: "$.a[1]", want: "2"},
+		{doc: `{"a":{"z":0,"a":1}}`, path: "$.a.*", want: "[1, 0]"},
+		{doc: `{"a":1,"unused":}`, path: "$.a", wantErr: true},
+		{doc: `{"a":1,"unused":}`, pathNull: true, wantErr: true},
+		{doc: `{"a":1}`, pathNull: true, wantNull: true},
+		{docNull: true, path: "bad path", wantNull: true},
+		{doc: `{"a":1e400}`, path: "$.a", wantErr: true},
+		{doc: `{"a":1}`, path: "bad path", wantErr: true},
+		{doc: `{"a":1,"unused":` + strings.Repeat("[", 102) + "0" + strings.Repeat("]", 102) + "}", path: "$.a", want: "1"},
+	}
+	for i, tc := range cases {
+		t.Run(fmt.Sprint(i), func(t *testing.T) {
+			ft := types.NewFieldType(mysql.TypeVarString)
+			args := []Expression{&Column{Index: 0, RetType: ft}, &Column{Index: 1, RetType: ft}}
+			fn, err := funcs[ast.JSONExtract].getFunction(ctx, args)
+			require.NoError(t, err)
+			input := chunk.New([]*types.FieldType{ft, ft}, 1, 1)
+			if tc.docNull {
+				input.AppendNull(0)
+			} else {
+				input.AppendString(0, tc.doc)
+			}
+			if tc.pathNull {
+				input.AppendNull(1)
+			} else {
+				input.AppendString(1, tc.path)
+			}
+			for _, sig := range []builtinFunc{fn, fn.Clone()} {
+				got, isNull, err := sig.evalJSON(ctx, input.GetRow(0))
+				if tc.wantErr {
+					require.Error(t, err)
+				} else {
+					require.NoError(t, err)
+					require.Equal(t, tc.wantNull, isNull)
+					if !isNull {
+						require.Equal(t, tc.want, got.String())
+					}
+				}
+				require.True(t, sig.isChildrenVectorized())
+				output := chunk.NewColumn(types.NewFieldType(mysql.TypeJSON), 1)
+				err = sig.vecEvalJSON(ctx, input, output)
+				if tc.wantErr {
+					require.Error(t, err)
+				} else {
+					require.NoError(t, err)
+					require.Equal(t, tc.wantNull, output.IsNull(0))
+					if !tc.wantNull {
+						require.Equal(t, tc.want, output.GetJSON(0).String())
+					}
+				}
+			}
+		})
+	}
 }
