@@ -545,13 +545,18 @@ func (w *encodeWorker) parserData2TableData(
 				continue
 			}
 
-			// If some columns is missing and their type is time and has not null flag, they should be set as current time.
-			if types.IsTypeTime(fieldMappings[i].Column.GetType()) && mysql.HasNotNullFlag(fieldMappings[i].Column.GetFlag()) {
-				row = append(row, types.NewTimeDatum(types.CurrentTime(fieldMappings[i].Column.GetType())))
-				continue
+			// Missing fields use schema defaults; explicit NULL and empty fields do not.
+			col := fieldMappings[i].Column
+			var d types.Datum
+			if !col.IsGenerated() {
+				var err error
+				d, err = w.getColDefaultValue(col.Offset, col)
+				if err != nil {
+					return nil, err
+				}
 			}
 
-			row = append(row, types.NewDatum(nil))
+			row = append(row, d)
 			continue
 		}
 
