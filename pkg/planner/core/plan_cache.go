@@ -158,9 +158,11 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		// The privileges required by the statement depend on the schema, e.g.
 		// `SELECT *` reads the columns added after PREPARE, and cached plans
 		// are checked against stmt.VisitInfos, so collect them again.
+		// A build error, e.g. a column dropped after PREPARE, is returned as is,
+		// the same as when the statement is planned.
 		visitInfos, err := collectVisitInfos(ctx, sctx, is, nodeW)
 		if err != nil {
-			return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
+			return err
 		}
 		stmt.VisitInfos = visitInfos
 		stmt.ResolveCtx = nodeW.GetResolveContext()
