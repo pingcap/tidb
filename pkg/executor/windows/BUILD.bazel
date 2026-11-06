@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "builder.go",
         "pipelined_window.go",
+        "pipelined_window_spill.go",
         "window.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/executor/windows",
@@ -19,9 +20,14 @@ go_library(
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/core/operator/physicalop",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/vardef",
+        "//pkg/types",
         "//pkg/util/chunk",
+        "//pkg/util/disk",
+        "//pkg/util/logutil",
         "//pkg/util/memory",
         "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -33,7 +39,7 @@ go_test(
         "window_sql_test.go",
     ],
     flaky = True,
-    shard_count = 8,
+    shard_count = 9,
     deps = [
         ":windows",
         "//pkg/executor/internal/exec",
