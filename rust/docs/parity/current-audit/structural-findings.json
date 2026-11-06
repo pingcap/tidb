@@ -2,9 +2,9 @@
   "date": "2026-11-06",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 28,
+    "unresolved": 27,
     "open": 7,
-    "partial": 21
+    "partial": 20
   },
   "findings": [
     {
@@ -85,13 +85,6 @@
       "group": "DML and executor handoff",
       "finding": "A TiKV reader builds its DAG from its access path's scan request (`cop_reader.rs`; `cop_plan_ids_for` matches executors to the pushed nodes by kind) where Go's `constructDAGReq` lowers the reader's pushed plan one node per executor (`ToPB`): a TopN the planner pushes never reaches the coprocessor (`accept_remote_topn` has no caller), so `TopN_16 cop[tikv]` reports no runtime and the reader returns every scanned row to the root TopN (`select * from t order by c limit 2`: `TableReader` 401 Bytes, `TopN` 1.64 KB where Go's hold 306 Bytes and 1.38 KB)",
       "go_owner": "`pkg/executor/builder.go` (`constructDAGReq`), `pkg/planner/core/plan_to_pb.go`"
-    },
-    {
-      "id": "E16",
-      "status": "partial",
-      "group": "DML and executor handoff",
-      "finding": "A statement records Go's RU v2 metrics: its executors' (`exec.Next`: `tidb-executor-internal-exec` `ruv2.rs`, `nextIOAcc` handed to worker threads), the plan builder's `AddPlanCnt`, `deriveStats4DataSource`'s `AddPlanDeriveStatsPaths`, the single- and multi-table DML row cells (`recordDMLRowsColMultiply2Metrics`), its transaction (`AddTxnCnt`, activated as Go's `executorBuilder.getSnapshotTS` activates it, an autocommit point get at `MaxUint64`) and its commit's write keys and size, and EXPLAIN ANALYZE's `RURuntimeStats` carries them. Missing: Go's per-task `TableReaderExecutor` under `IndexLookUpExecutor` (E11)",
-      "go_owner": "`pkg/executor/distsql.go` (E11)"
     },
     {
       "id": "C01",
@@ -208,7 +201,7 @@
       "go_owner": "`pkg/ddl` (`systable`, job scheduler), `pkg/session` bootstrap, `pkg/privilege/privileges` (`ensureActiveUser`)"
     }
   ],
-  "unresolved": 28,
+  "unresolved": 27,
   "open": 7,
-  "partial": 21
+  "partial": 20
 }
