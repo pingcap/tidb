@@ -1376,8 +1376,33 @@ func testSecurityEnhancedModeRestrictedTables(t *testing.T, semVer string) {
 	require.NoError(t, cloudAdminTK.Session().Auth(&auth.UserIdentity{Username: "cloudadmin", Hostname: "%"}, nil, nil, nil))
 	urootTk := testkit.NewTestKit(t, store)
 	require.NoError(t, urootTk.Session().Auth(&auth.UserIdentity{Username: "uroot", Hostname: "%"}, nil, nil, nil))
+	// Column privileges granted before SEM is enabled.
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec("CREATE USER colpriv")
+	rootTk.MustExec("CREATE TABLE test.semcol (a int, b int)")
+	rootTk.MustExec("GRANT SELECT(VARIABLE_NAME), UPDATE(VARIABLE_VALUE) ON mysql.tidb TO colpriv")
+	rootTk.MustExec("GRANT SELECT(Host), UPDATE(Host) ON mysql.user TO colpriv")
+	rootTk.MustExec("GRANT SELECT(a), UPDATE(a) ON test.semcol TO colpriv")
+	colPrivTk := testkit.NewTestKit(t, store)
+	require.NoError(t, colPrivTk.Session().Auth(&auth.UserIdentity{Username: "colpriv", Hostname: "%"}, nil, nil, nil))
 
 	defer sem.SwitchToSEMForTest(t, semVer)()
+
+	// SEM restrictions take precedence over column privileges: hidden tables
+	// cannot be read and system tables cannot be written.
+	colPrivTk.MustGetErrCode("SELECT VARIABLE_NAME FROM mysql.tidb", errno.ErrColumnaccessDenied)
+	colPrivTk.MustGetErrCode("SELECT COUNT(*) FROM mysql.tidb", errno.ErrTableaccessDenied)
+	colPrivTk.MustGetErrCode("SELECT 1 FROM mysql.tidb", errno.ErrTableaccessDenied)
+	colPrivTk.MustGetErrCode("UPDATE mysql.tidb SET VARIABLE_VALUE = '' WHERE 0", errno.ErrColumnaccessDenied)
+	require.ErrorContains(t, colPrivTk.QueryToErr("SHOW COLUMNS FROM mysql.tidb"), "SELECT command denied to user 'colpriv'@'%' for table 'tidb'")
+	colPrivTk.MustQuery("SELECT Host FROM mysql.user WHERE 0").Check(testkit.Rows())
+	colPrivTk.MustGetErrCode("UPDATE mysql.user SET Host = Host WHERE 0", errno.ErrColumnaccessDenied)
+	// Column privileges on user tables work as without SEM.
+	colPrivTk.MustExec("SELECT a FROM test.semcol")
+	colPrivTk.MustExec("SELECT COUNT(*) FROM test.semcol")
+	colPrivTk.MustExec("UPDATE test.semcol SET a = a + 1")
+	colPrivTk.MustGetErrCode("SELECT b FROM test.semcol", errno.ErrColumnaccessDenied)
+	colPrivTk.MustGetErrCode("UPDATE test.semcol SET b = 1", errno.ErrColumnaccessDenied)
 
 	err := urootTk.ExecToErr("use metrics_schema")
 	require.EqualError(t, err, "[executor:1044]Access denied for user 'uroot'@'%' to database 'metrics_schema'")
