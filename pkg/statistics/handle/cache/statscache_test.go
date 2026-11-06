@@ -17,8 +17,11 @@ package cache
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal"
+	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/testutil"
 	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	promtestutils "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
@@ -199,4 +202,37 @@ func (*mockStatsCacheInner) TriggerEvict() {
 
 func (*mockStatsCacheInner) WaitForAsyncUpdates() {
 	panic("not implemented")
+}
+
+// TestUpdateOverwritesPendingTable makes sure that a table which is updated right after it was
+// added to the cache is the one returned by Get, even though the LFU admits new keys asynchronously.
+// This is the pattern of sync stats loading: the loaded column is written back to a table that the
+// stats cache Update just added.
+func TestUpdateOverwritesPendingTable(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.EnableStatsCacheMemQuota = true
+	})
+	sc, err := NewStatsCache()
+	require.NoError(t, err)
+	defer sc.Close()
+
+	const tableID = int64(1)
+	added := testutil.NewMockStatisticsTable(1, 1, true, false, false)
+	added.PhysicalID = tableID
+	sc.Update([]*statistics.Table{added}, nil, false)
+	// Simulate sync loading that writes the loaded column back immediately.
+	updated := added.CopyAs(statistics.ColumnMapWritable)
+	updated.SetCol(2, &statistics.Column{
+		Info:              &model.ColumnInfo{ID: 2},
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+	})
+	sc.Update([]*statistics.Table{updated}, nil, false)
+	sc.WaitForAsyncUpdates()
+
+	got, ok := sc.Get(tableID)
+	require.True(t, ok)
+	require.Same(t, updated, got)
+	require.NotNil(t, got.GetCol(2))
 }
