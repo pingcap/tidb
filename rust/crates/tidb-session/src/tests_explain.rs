@@ -3201,6 +3201,100 @@ fn explain_analyze_dml_roots_report_their_executor_stats_and_memory_like_go() {
     root(&mut session, "EXPLAIN ANALYZE DELETE x FROM c x JOIN c y ON x.a = y.a WHERE x.a = 'x'");
 }
 
+/// Go `UpdateExec.updateRows` over a join (`pkg/executor/update.go`): a
+/// multi-table UPDATE streams its child like a single-table one and charges
+/// `updatedRowKeys` per target position, plus -- for a table updated through
+/// two aliases (`multiUpdateOnSameTable`) -- `mergedRowData` on every merge,
+/// and the generated-column merges (`mergeGenerated`, before and after the
+/// write) when the statement appended generated assignments. `./gorun` on
+/// this branch over the same statements:
+///
+/// ```text
+/// update g x join g y on x.a=y.a set x.b=x.b+1, y.b=y.b+10      Update_6 | 8.03 KB
+/// update g x join g y on x.a=y.a set x.b=x.b+1                  Update_6 | 1.48 KB
+/// update t join s on t.a=s.a set t.b=t.b+1 where t.a=1          Update_7 | 760 Bytes
+/// update t join s on t.a=s.a set t.b=t.b+1, s.c='q'             Update_6 | 1.73 KB
+/// update t x join t y on x.a=y.a set x.b=x.b+1, y.b=y.b+10 where x.a<4  Update_7 | 2.33 KB
+/// update t left join s on t.a=s.a set t.b=0                     Update_5 | 760 Bytes
+/// ```
+#[test]
+fn a_multi_table_update_charges_its_row_keys_like_go() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE g (a INT PRIMARY KEY, b INT, c INT AS (b*2) VIRTUAL, d INT AS (b+1) STORED)",
+        "INSERT INTO g(a,b) VALUES (1,1),(2,2),(3,3)",
+        "CREATE TABLE t (a INT PRIMARY KEY, b INT, KEY(b))",
+        "CREATE TABLE s (a INT PRIMARY KEY, c VARCHAR(20))",
+        "INSERT INTO t VALUES (1,1),(2,2),(3,3),(4,4),(5,5)",
+        "INSERT INTO s VALUES (1,'x'),(2,'y'),(3,'z')",
+    ] {
+        session.run(sql).unwrap();
+    }
+    for (sql, root, memory) in [
+        ("UPDATE g x JOIN g y ON x.a=y.a SET x.b=x.b+1, y.b=y.b+10", "Update_6", "8.03 KB"),
+        ("UPDATE g x JOIN g y ON x.a=y.a SET x.b=x.b+1", "Update_6", "1.48 KB"),
+        ("UPDATE t JOIN s ON t.a=s.a SET t.b=t.b+1 WHERE t.a=1", "Update_7", "760 Bytes"),
+        ("UPDATE t JOIN s ON t.a=s.a SET t.b=t.b+1, s.c='q'", "Update_6", "1.73 KB"),
+        ("UPDATE t x JOIN t y ON x.a=y.a SET x.b=x.b+1, y.b=y.b+10 WHERE x.a<4", "Update_7", "2.33 KB"),
+        ("UPDATE t LEFT JOIN s ON t.a=s.a SET t.b=0", "Update_5", "760 Bytes"),
+    ] {
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        assert_eq!((rows[0][0].as_str(), rows[0][7].as_str()), (root, memory), "{sql}");
+    }
+    assert_eq!(
+        row_text(session.run("SELECT * FROM g WHERE a = 1")),
+        vec![vec!["1".to_owned(), "12".to_owned(), "24".to_owned(), "13".to_owned()]]
+    );
+}
+
+/// Go `DeleteExec.deleteMultiTablesByChunk` / `composeTblRowMap`
+/// (`pkg/executor/delete.go`): a multi-table DELETE charges each child chunk
+/// while it reads it, and for a handle newly entered in a target table's
+/// `tblRowMap` the map's growth, the joined row's estimate and the handle's
+/// own size; two aliases of one table share its map. `./gorun` on this
+/// branch over the same statements:
+///
+/// ```text
+/// delete t from t join s on t.a=s.a where t.a=1     Delete_6 | 2.02 KB
+/// delete t from t join s on t.a=s.a where t.a<10    Delete_6 | 2.30 KB
+/// delete t, s from t join s on t.b=s.a  (no row)    Delete_5 | 0 Bytes
+/// delete t from t left join s on t.a=s.a            Delete_4 | 2.30 KB
+/// -- over fresh tables:
+/// delete t, s from t join s on t.a=s.a where t.a<3  Delete_6 | 1.96 KB
+/// delete x, y from t x join t y on x.a=y.a where x.a>=4  Delete_6 | 2.05 KB
+/// ```
+#[test]
+fn a_multi_table_delete_charges_its_row_map_like_go() {
+    let setup = |session: &mut Session| {
+        for sql in [
+            "DROP TABLE IF EXISTS t, s",
+            "CREATE TABLE t (a INT PRIMARY KEY, b INT, KEY(b))",
+            "CREATE TABLE s (a INT PRIMARY KEY, c VARCHAR(20))",
+            "INSERT INTO t VALUES (1,1),(2,2),(3,3),(4,4),(5,5)",
+            "INSERT INTO s VALUES (1,'x'),(2,'y'),(3,'z')",
+        ] {
+            session.run(sql).unwrap();
+        }
+    };
+    let mut session = Session::new();
+    setup(&mut session);
+    let check = |session: &mut Session, sql: &str, root: &str, memory: &str| {
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        assert_eq!((rows[0][0].as_str(), rows[0][7].as_str()), (root, memory), "{sql}");
+    };
+    check(&mut session, "DELETE t FROM t JOIN s ON t.a=s.a WHERE t.a=1", "Delete_6", "2.02 KB");
+    check(&mut session, "DELETE t FROM t JOIN s ON t.a=s.a WHERE t.a<10", "Delete_6", "2.30 KB");
+    check(&mut session, "DELETE t, s FROM t JOIN s ON t.b=s.a", "Delete_5", "0 Bytes");
+    check(&mut session, "DELETE t FROM t LEFT JOIN s ON t.a=s.a", "Delete_4", "2.30 KB");
+    assert!(row_text(session.run("SELECT * FROM t")).is_empty());
+
+    setup(&mut session);
+    check(&mut session, "DELETE t, s FROM t JOIN s ON t.a=s.a WHERE t.a<3", "Delete_6", "1.96 KB");
+    check(&mut session, "DELETE x, y FROM t x JOIN t y ON x.a=y.a WHERE x.a>=4", "Delete_6", "2.05 KB");
+    assert_eq!(row_text(session.run("SELECT a FROM t")), vec![vec!["3".to_owned()]]);
+    assert_eq!(row_text(session.run("SELECT a FROM s")), vec![vec!["3".to_owned()]]);
+}
+
 /// Go `selectResult.Next(ctx, chk)` / `readFromChunk`
 /// (`pkg/distsql/select_result.go`): a reader decodes its rows INTO the
 /// chunk its consumer passed, so that chunk keeps its own capacity -- and the

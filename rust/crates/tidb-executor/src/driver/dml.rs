@@ -968,6 +968,7 @@ fn run_insert_rows(
                 ctx,
                 runtime.is_some(),
                 dml,
+                false,
                 |row| {
                     accountant.account_row(&row).map_err(DriverError::from)?;
                     rows.push(row);
@@ -3787,13 +3788,7 @@ fn record_updated_row_key(
     if !outcome.touched() {
         return Ok(());
     }
-    let handle = match id {
-        TableHandle::Int(value) => tidb_txnkv::Handle::from(tidb_txnkv::IntHandle::new(*value)),
-        TableHandle::Common(encoded) => tidb_txnkv::Handle::from(
-            tidb_txnkv::CommonHandle::new(encoded.clone())
-                .map_err(|error| DriverError::unsupported(format!("bad common handle: {error:?}")))?,
-        ),
-    };
+    let handle = kv_handle(id)?;
     let exist = updated_row_keys.get(&handle).is_some();
     let extra = i64::try_from(handle.extra_mem_size()).unwrap_or(i64::MAX);
     let mut mem_delta = updated_row_keys.set(handle, outcome.changed());
@@ -3801,6 +3796,17 @@ fn record_updated_row_key(
         mem_delta += extra;
     }
     dml.mem_tracker.consume_checked(mem_delta).map_err(DriverError::from)
+}
+
+/// The `kv.Handle` Go builds for a row identity (`HandleCols.BuildHandleByDatums`).
+pub(crate) fn kv_handle(id: &TableHandle) -> Result<tidb_txnkv::Handle, DriverError> {
+    Ok(match id {
+        TableHandle::Int(value) => tidb_txnkv::Handle::from(tidb_txnkv::IntHandle::new(*value)),
+        TableHandle::Common(encoded) => tidb_txnkv::Handle::from(
+            tidb_txnkv::CommonHandle::new(encoded.clone())
+                .map_err(|error| DriverError::unsupported(format!("bad common handle: {error:?}")))?,
+        ),
+    })
 }
 
 struct UpdateRowEvaluator<'a> {

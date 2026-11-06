@@ -99,12 +99,6 @@ use tidb_table::tables::TableHandle;
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 
-/// Go's `updatedRowKeys`: per (target position, row identity), whether the
-/// write that reached it CHANGED the row. A repeat visit is skipped only
-/// when the first one changed something -- a no-op first visit leaves the
-/// row eligible. Go also disables skipping for partitioned heap tables.
-type UpdateOnce = BTreeMap<(usize, TableHandle), bool>;
-
 /// What the executor needs of one updated base table beside the planner's
 /// layout: its columns, default metadata and write policy.
 struct UpdatedTable {
@@ -258,10 +252,6 @@ pub(crate) fn run_multi_update(
             handle: table.handle.clone(),
         })
         .collect();
-    // Go `UpdateExec.Next` reads the child chunk by chunk; this read takes it
-    // all first.
-    let rows = dml.next(|| delete_source_rows(&delete_layout, plan, catalog, ctx, runtime, dml, true))?;
-
     // Go keeps updatedRowKeys per target position, but mergedRowData per
     // base table and handle. Neither map can stand in for the other.
     let targets: Vec<Option<(String, String)>> = tables
@@ -287,74 +277,112 @@ pub(crate) fn run_multi_update(
             })
         })
         .collect();
-    let mut merged: BTreeMap<((String, String), TableHandle), Vec<Datum>> = BTreeMap::new();
-    let accountant = &dml.mem_tracker;
+    // Go `UpdateExec.virtualAssignmentsOffset < len(OrderedList)`: the
+    // statement appended generated-column assignments (`buildUpdateLists`),
+    // so the generated columns merge too (`mergeGenerated`).
+    let has_virtual_assignments = tables.iter().enumerate().any(|(slot, table)| {
+        let assigned: Vec<String> = assigns
+            .iter()
+            .filter(|assign| assign.table == slot)
+            .filter_map(|assign| updated[slot].columns.get(assign.column).map(|(name, _)| name.clone()))
+            .collect();
+        match catalog.get_in(&table.database, &table.table) {
+            Some(TableEntry::Kv(kv)) => {
+                let infos: Vec<_> = kv.columns().iter().map(|column| column.info.clone()).collect();
+                !assigned.is_empty()
+                    && !tidb_planner::plan_builder::generated_assignments::update_list_generated_columns(
+                        &infos, &assigned,
+                    )
+                    .is_empty()
+            }
+            _ => false,
+        }
+    });
+    // Go `UpdateExec.mergedRowData`, per base table.
+    let mut merged: BTreeMap<(String, String), tidb_txnkv::MemAwareHandleMap<Vec<Datum>>> =
+        BTreeMap::new();
+    // Go `UpdateExec.updatedRowKeys`, per target position.
+    let mut updated_row_keys: Vec<tidb_txnkv::MemAwareHandleMap<bool>> =
+        tables.iter().map(|_| tidb_txnkv::MemAwareHandleMap::new()).collect();
     let mut records = UpdateRecords::new(fk_triggers);
-    let mut once: UpdateOnce = BTreeMap::new();
     let mut matched_rows = 0u64;
     let mut touched_rows = 0u64;
     let mut changed_rows = 0u64;
-    // The rest of Go `UpdateExec.Next`: the writes, after the whole read.
-    dml.next(|| -> Result<(), DriverError> {
-        for (row_index, row) in rows.iter().enumerate() {
-            let ids = &row.ids;
-            let chunk = row_chunk(&row.raw, &field_types)?;
-            let evaluated = assigns
-                .iter()
-                .map(|assign| {
-                    let table = &tables[assign.table];
-                    let extra = assign.column == table.stored_width;
-                    if !extra && ids[assign.table].is_none() {
-                        return Ok(None);
-                    }
-                    let expression = expressions
-                        .get(assign.expr)
-                        .and_then(Option::as_ref)
-                        .ok_or_else(|| DriverError::unsupported("an UPDATE assignment was not planned"))?;
-                    let value = expression
-                        .eval(ctx, chunk.get_row(0))
-                        .map_err(|error| DriverError::Exec(ExecError::Eval(error)))?;
-                    if extra {
-                        return Ok(None);
-                    }
-                    let columns = &updated[assign.table].columns;
-                    handle_update_error(
-                        value,
-                        &columns[assign.column].1,
-                        &columns[assign.column].0,
-                        row_index,
-                        ctx,
-                    )
-                    .map(Some)
-                    .map_err(DriverError::from)
-                })
-                .collect::<Result<Vec<_>, DriverError>>()?;
-            let mut prepared = Vec::with_capacity(tables.len());
-            // Compose every target from the same input row before merging aliases.
-            for (slot, table) in updated.iter().enumerate() {
-                let Some(id) = ids[slot].as_ref().filter(|_| targets[slot].is_some()) else {
-                    prepared.push(None);
-                    continue;
-                };
-                if table.skip_repeated_updates && once.get(&(slot, id.clone())) == Some(&true) {
-                    prepared.push(None);
-                    continue;
+    let split = delete_source_splitter(&delete_layout, catalog, ctx, true)?;
+    let mut row_index = 0usize;
+    // Go `UpdateExec.updateRows`: each row is composed and written before the
+    // child is asked for its next chunk.
+    let collected = super::physical_builder::execute_dml_source_writing(
+        plan,
+        catalog,
+        ctx,
+        dml,
+        runtime.is_some(),
+        |catalog, row| {
+            let row = split(row)?;
+        let ids = &row.ids;
+        let chunk = row_chunk(&row.raw, &field_types)?;
+        let evaluated = assigns
+            .iter()
+            .map(|assign| {
+                let table = &tables[assign.table];
+                let extra = assign.column == table.stored_width;
+                if !extra && ids[assign.table].is_none() {
+                    return Ok(None);
                 }
-                let mut old = row.stored[slot].clone();
-                let mut new = old.clone();
-                for (assign, value) in assigns.iter().zip(&evaluated) {
-                    if assign.table == slot {
-                        if let Some(value) = value {
-                            new[assign.column] = value.clone();
-                        }
+                let expression = expressions
+                    .get(assign.expr)
+                    .and_then(Option::as_ref)
+                    .ok_or_else(|| DriverError::unsupported("an UPDATE assignment was not planned"))?;
+                let value = expression
+                    .eval(ctx, chunk.get_row(0))
+                    .map_err(|error| DriverError::Exec(ExecError::Eval(error)))?;
+                if extra {
+                    return Ok(None);
+                }
+                let columns = &updated[assign.table].columns;
+                handle_update_error(
+                    value,
+                    &columns[assign.column].1,
+                    &columns[assign.column].0,
+                    row_index,
+                    ctx,
+                )
+                .map(Some)
+                .map_err(DriverError::from)
+            })
+            .collect::<Result<Vec<_>, DriverError>>()?;
+        let mut prepared = Vec::with_capacity(tables.len());
+        // Compose every target from the same input row before merging aliases.
+        for (slot, table) in updated.iter().enumerate() {
+            let Some(id) = ids[slot].as_ref().filter(|_| targets[slot].is_some()) else {
+                prepared.push(None);
+                continue;
+            };
+            if table.skip_repeated_updates
+                && updated_row_keys[slot].get(&super::dml::kv_handle(id)?) == Some(&true)
+            {
+                prepared.push(None);
+                continue;
+            }
+            let mut old = row.stored[slot].clone();
+            let mut new = old.clone();
+            for (assign, value) in assigns.iter().zip(&evaluated) {
+                if assign.table == slot {
+                    if let Some(value) = value {
+                        new[assign.column] = value.clone();
                     }
                 }
-                if multiple[slot] {
-                    let key = (
-                        targets[slot].clone().expect("an assigned base table"),
-                        id.clone(),
-                    );
-                    if let Some(previous) = merged.get_mut(&key) {
+            }
+            if multiple[slot] {
+                // Go `mergeNonGenerated`.
+                let handle = super::dml::kv_handle(id)?;
+                let rows = merged
+                    .entry(targets[slot].clone().expect("an assigned base table"))
+                    .or_default();
+                let merged_data = match rows.get(&handle) {
+                    Some(previous) => {
+                        let mut previous = previous.clone();
                         for (column, meta) in table.default_meta.iter().enumerate() {
                             if meta.generated {
                                 continue;
@@ -369,66 +397,103 @@ pub(crate) fn run_multi_update(
                                 new[column] = previous[column].clone();
                             }
                         }
-                    } else {
-                        merged.insert(key, new.clone());
+                        previous
                     }
-                    accountant.account_row(&new).map_err(DriverError::from)?;
-                }
-                prepared.push(Some((old, new)));
+                    None => new.clone(),
+                };
+                let mut mem_delta = tidb_datatype::estimated_mem_usage(&merged_data, 1)
+                    + i64::try_from(handle.extra_mem_size()).unwrap_or(i64::MAX);
+                mem_delta += rows.set(handle, merged_data);
+                dml.mem_tracker
+                    .consume_checked(mem_delta)
+                    .map_err(DriverError::from)?;
             }
-            for (slot, prepared) in prepared.iter_mut().enumerate() {
-                let Some((old, new)) = prepared else { continue };
-                let table = &updated[slot];
-                let id = ids[slot].as_ref().expect("prepared target has an identity");
-                let (database, name) = targets[slot]
-                    .as_ref()
-                    .expect("prepared target is a base table");
-                let merge_key = ((database.clone(), name.clone()), id.clone());
-                if multiple[slot] {
-                    let previous = &merged[&merge_key];
-                    for &column in &table.generated_columns {
-                        old[column] = previous[column].clone();
-                        new[column] = previous[column].clone();
-                    }
+            prepared.push(Some((old, new)));
+        }
+        for (slot, prepared) in prepared.iter_mut().enumerate() {
+            let Some((old, new)) = prepared else { continue };
+            let table = &updated[slot];
+            let id = ids[slot].as_ref().expect("prepared target has an identity");
+            let (database, name) = targets[slot]
+                .as_ref()
+                .expect("prepared target is a base table");
+            let handle = super::dml::kv_handle(id)?;
+            let merge_key = (database.clone(), name.clone());
+            // Go `mergeGenerated(..., beforeEval=true)`: it sets the merged
+            // row back unchanged, charging its estimate and the handle's.
+            if multiple[slot] && has_virtual_assignments {
+                let previous = merged[&merge_key]
+                    .get(&handle)
+                    .cloned()
+                    .expect("non-generated merge ran first");
+                for &column in &table.generated_columns {
+                    old[column] = previous[column].clone();
+                    new[column] = previous[column].clone();
                 }
-                if !once.contains_key(&(slot, id.clone())) {
-                    matched_rows += 1;
+                dml.mem_tracker
+                    .consume_checked(
+                        tidb_datatype::estimated_mem_usage(&previous, 1)
+                            + i64::try_from(handle.extra_mem_size()).unwrap_or(i64::MAX),
+                    )
+                    .map_err(DriverError::from)?;
+            }
+            if updated_row_keys[slot].get(&handle).is_none() {
+                matched_rows += 1;
+            }
+            on_update_now[slot].apply(old, new, ctx, chunk.get_row(0))?;
+            let outcome = records.write(
+                catalog,
+                database,
+                name,
+                id,
+                old,
+                new,
+                table.selected_partitions.as_deref(),
+                update.ignore,
+                super::GeneratedWrite::Update { row_index },
+                &assigns
+                    .iter()
+                    .filter(|assign| assign.table == slot)
+                    .map(|assign| assign.column)
+                    .collect::<Vec<_>>(),
+                ctx,
+            )?;
+            // Go `mergeGenerated(..., beforeEval=false)`.
+            if multiple[slot] && has_virtual_assignments {
+                let rows = merged.get_mut(&merge_key).expect("non-generated merge ran first");
+                let mut previous = rows.get(&handle).cloned().expect("non-generated merge ran first");
+                for &column in &table.generated_columns {
+                    previous[column] = new[column].clone();
                 }
-                on_update_now[slot].apply(old, new, ctx, chunk.get_row(0))?;
-                let outcome = records.write(
-                    catalog,
-                    database,
-                    name,
-                    id,
-                    old,
-                    new,
-                    table.selected_partitions.as_deref(),
-                    update.ignore,
-                    super::GeneratedWrite::Update { row_index },
-                    &assigns
-                        .iter()
-                        .filter(|assign| assign.table == slot)
-                        .map(|assign| assign.column)
-                        .collect::<Vec<_>>(),
-                    ctx,
-                )?;
-                if multiple[slot] {
-                    let previous = merged
-                        .get_mut(&merge_key)
-                        .expect("non-generated merge ran first");
-                    for &column in &table.generated_columns {
-                        previous[column] = new[column].clone();
-                    }
+                let mut mem_delta = tidb_datatype::estimated_mem_usage(&previous, 1)
+                    + i64::try_from(handle.extra_mem_size()).unwrap_or(i64::MAX);
+                mem_delta += rows.set(handle.clone(), previous);
+                dml.mem_tracker
+                    .consume_checked(mem_delta)
+                    .map_err(DriverError::from)?;
+            }
+            changed_rows += u64::from(outcome.changed());
+            touched_rows += u64::from(outcome.touched());
+            if !outcome.ignored() {
+                let rows = &mut updated_row_keys[slot];
+                let exist = rows.get(&handle).is_some();
+                let extra = i64::try_from(handle.extra_mem_size()).unwrap_or(i64::MAX);
+                let mut mem_delta = rows.set(handle, outcome.changed());
+                if !exist {
+                    mem_delta += extra;
                 }
-                changed_rows += u64::from(outcome.changed());
-                touched_rows += u64::from(outcome.touched());
-                if !outcome.ignored() {
-                    once.insert((slot, id.clone()), outcome.changed());
-                }
+                dml.mem_tracker
+                    .consume_checked(mem_delta)
+                    .map_err(DriverError::from)?;
             }
         }
-        Ok(())
-    })?;
+            row_index += 1;
+            Ok(())
+        },
+    )?;
+    if let Some(runtime) = runtime {
+        runtime.extend(collected);
+    }
     records.finish(catalog, ctx)?;
     ctx.set_message(format!(
         "Rows matched: {matched_rows}  Changed: {changed_rows}  Warnings: {}",
@@ -532,42 +597,79 @@ pub(crate) fn run_multi_delete(
             "a multi-table DELETE plan carries no table layout",
         ));
     }
-    let rows = {
+    // Go `deleteMultiTablesByChunk`'s `tblRowMap`: each target table's rows
+    // by handle. It is keyed by TABLE, so a row reachable through several
+    // join paths -- or named twice in the target list -- is removed once,
+    // and two aliases of one table are still one table here (unlike UPDATE,
+    // whose key is the target position).
+    let mut tbl_row_map: BTreeMap<(String, String), tidb_txnkv::MemAwareHandleMap<HandleInfoPair>> =
+        BTreeMap::new();
+    {
         let plan = physical_plan
             .ok_or_else(|| DriverError::unsupported("a multi-table write has no read plan"))?;
-        dml.next(|| delete_source_rows(tables, plan, catalog, ctx, runtime, dml, false))?
-    };
-
-    // Go's `tblRowMap` is keyed by TABLE ID, so a row reachable through
-    // several join paths -- or named twice in the target list -- is removed
-    // once, and two aliases of one table are still one table here (unlike
-    // UPDATE, whose key is the target position).
-    let mut doomed: BTreeMap<(String, String, TableHandle), (usize, usize)> = BTreeMap::new();
-    for (row_index, row) in rows.iter().enumerate() {
-        for (position, table) in tables.iter().enumerate() {
-            let Some(id) = &row.ids[position] else {
-                continue;
-            };
-            doomed
-                .entry((table.database.clone(), table.table.clone(), id.clone()))
-                .or_insert((row_index, position));
-        }
+        dml.next(|| {
+            visit_delete_source_rows(tables, plan, catalog, ctx, runtime, dml, |row, joined_row_mem| {
+                // Go `composeTblRowMap`.
+                let mut total_mem_delta = 0;
+                for (table, (id, stored)) in tables.iter().zip(row.ids.into_iter().zip(row.stored)) {
+                    // Go `unmatchedOuterRow`.
+                    let Some(id) = id else {
+                        continue;
+                    };
+                    let handle = super::dml::kv_handle(&id)?;
+                    let rows = tbl_row_map
+                        .entry((table.database.clone(), table.table.clone()))
+                        .or_default();
+                    let exist = rows.get(&handle).is_some();
+                    let extra = i64::try_from(handle.extra_mem_size()).unwrap_or(i64::MAX);
+                    let mut mem_delta = rows.set(handle, HandleInfoPair { id, stored });
+                    if !exist {
+                        mem_delta += joined_row_mem + extra;
+                    }
+                    total_mem_delta += mem_delta;
+                }
+                dml.mem_tracker
+                    .consume_checked(total_mem_delta)
+                    .map_err(DriverError::from)
+            })
+        })?;
     }
 
     let mut records = super::dml::delete_record::DeleteRecords::new(fk_triggers);
     let mut deleted = 0;
-    // The rest of Go `DeleteExec.Next`: the removals, after the whole read.
+    // The rest of Go `DeleteExec.Next`: `removeRowsInTblRowMap`, after the
+    // whole read. Go ranges its maps in no defined order; these go by table,
+    // then handle.
     dml.next(|| -> Result<(), DriverError> {
-        for ((database, name, id), location) in doomed {
-            let old = &rows[location.0].stored[location.1];
-            deleted +=
-                u64::from(records.write(catalog, &database, &name, &id, old, delete.ignore, ctx)?);
+        for ((database, name), rows) in &tbl_row_map {
+            let mut doomed = Vec::new();
+            rows.range(|_, pair| {
+                doomed.push((pair.id.clone(), pair.stored.clone()));
+                true
+            });
+            doomed.sort_by(|left, right| left.0.cmp(&right.0));
+            for (id, old) in doomed {
+                deleted += u64::from(records.write(catalog, database, name, &id, &old, delete.ignore, ctx)?);
+            }
         }
         Ok(())
     })?;
     records.finish(catalog, ctx)?;
 
     Ok(deleted)
+}
+
+/// Go `handleInfoPair`: a `tblRowMap` row -- its table's columns of the
+/// joined row (`handleVal`) -- here with the identity it is removed under.
+struct HandleInfoPair {
+    id: TableHandle,
+    stored: Vec<Datum>,
+}
+
+impl tidb_hack::MapValueLayout for HandleInfoPair {
+    // Go `struct{ handleVal []types.Datum; posInfo *TblColPosInfo }`.
+    const SOURCE_SIZE: usize = 32;
+    const SOURCE_ALIGN: usize = 8;
 }
 
 /// A row of a multi-table DELETE's read, split by Go's `TblColPosInfos`: each
@@ -581,17 +683,16 @@ struct DeleteSourceRow {
     raw: Vec<Datum>,
 }
 
-/// Runs the planned read under a multi-table DELETE and splits each row by
-/// the table layouts the planner decided (`logical_plan_builder.go:6200`).
-fn delete_source_rows(
-    tables: &[tidb_planner_core_operator_physicalop::DeleteTablePos],
-    plan: &mut tidb_planner_core_operator_physicalop::PhysicalPlan,
+/// Splits a multi-table write's read row by the table layouts the planner
+/// decided (`logical_plan_builder.go:6200`): each target's row identity and
+/// stored columns, with the joined row itself when `keep_raw` (an UPDATE
+/// evaluates its assignments over it).
+fn delete_source_splitter<'a>(
+    tables: &'a [tidb_planner_core_operator_physicalop::DeleteTablePos],
     catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
-    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
-    dml: &super::physical_builder::DmlExec,
     keep_raw: bool,
-) -> Result<Vec<DeleteSourceRow>, DriverError> {
+) -> Result<impl Fn(Vec<Datum>) -> Result<DeleteSourceRow, DriverError> + 'a, DriverError> {
     use tidb_planner_core_operator_physicalop::DeleteHandle;
     let kv_tables = tables
         .iter()
@@ -601,69 +702,84 @@ fn delete_source_rows(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let zone = ctx.session_zone();
-    let accountant = &dml.mem_tracker;
     let integer = |datum: &Datum| match datum {
         Datum::Int(value) => Some(TableHandle::Int(*value)),
         Datum::UInt(value) => Some(TableHandle::Int(*value as i64)),
         _ => None,
     };
-    let mut out = Vec::new();
+    Ok(move |row: Vec<Datum>| {
+        let mut ids = Vec::with_capacity(tables.len());
+        let mut stored = Vec::with_capacity(tables.len());
+        for (table, kv) in tables.iter().zip(&kv_tables) {
+            let cell = |position: usize| {
+                row.get(position).ok_or_else(|| {
+                    DriverError::unsupported(format!(
+                        "a multi-table read returned {} columns, expected position {position}",
+                        row.len()
+                    ))
+                })
+            };
+            let id = match &table.handle {
+                DeleteHandle::Int(position) | DeleteHandle::Extra(position) => {
+                    integer(cell(*position)?)
+                }
+                DeleteHandle::Common(positions) => {
+                    let values = positions
+                        .iter()
+                        .map(|position| cell(*position).cloned())
+                        .collect::<Result<Vec<Datum>, _>>()?;
+                    if values.iter().any(|value| matches!(value, Datum::Null)) {
+                        None
+                    } else {
+                        Some(
+                            kv.common_handle_of_values(&values, &zone)
+                                .map_err(kv_write_error)?,
+                        )
+                    }
+                }
+            };
+            ids.push(id);
+            let mut part = vec![Datum::Null; table.stored_width];
+            for (position, offset) in &table.columns {
+                part[*offset] = cell(*position)?.clone();
+            }
+            stored.push(part);
+        }
+        let raw = if keep_raw { row } else { Vec::new() };
+        Ok(DeleteSourceRow { ids, stored, raw })
+    })
+}
+
+/// Go `DeleteExec.deleteMultiTablesByChunk`'s read: hands `visit` each row
+/// of the planned read, split ([`delete_source_splitter`]), with the joined
+/// row's `types.EstimatedMemUsage(joinedRow, 1)`; each chunk is charged to
+/// the executor's tracker while it is read.
+fn visit_delete_source_rows(
+    tables: &[tidb_planner_core_operator_physicalop::DeleteTablePos],
+    plan: &mut tidb_planner_core_operator_physicalop::PhysicalPlan,
+    catalog: &SessionExtendedInfoSchema,
+    ctx: &crate::StmtContext,
+    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
+    dml: &super::physical_builder::DmlExec,
+    mut visit: impl FnMut(DeleteSourceRow, i64) -> Result<(), DriverError>,
+) -> Result<(), DriverError> {
+    let split = delete_source_splitter(tables, catalog, ctx, false)?;
     let collected = super::physical_builder::execute_dml_source(
         plan,
         catalog,
         ctx,
         runtime.is_some(),
         Some(dml),
+        true,
         |row| {
-            let mut ids = Vec::with_capacity(tables.len());
-            let mut stored = Vec::with_capacity(tables.len());
-            for (table, kv) in tables.iter().zip(&kv_tables) {
-                let cell = |position: usize| {
-                    row.get(position).ok_or_else(|| {
-                        DriverError::unsupported(format!(
-                            "a multi-table read returned {} columns, expected position {position}",
-                            row.len()
-                        ))
-                    })
-                };
-                let id = match &table.handle {
-                    DeleteHandle::Int(position) | DeleteHandle::Extra(position) => {
-                        integer(cell(*position)?)
-                    }
-                    DeleteHandle::Common(positions) => {
-                        let values = positions
-                            .iter()
-                            .map(|position| cell(*position).cloned())
-                            .collect::<Result<Vec<Datum>, _>>()?;
-                        if values.iter().any(|value| matches!(value, Datum::Null)) {
-                            None
-                        } else {
-                            Some(
-                                kv.common_handle_of_values(&values, &zone)
-                                    .map_err(kv_write_error)?,
-                            )
-                        }
-                    }
-                };
-                ids.push(id);
-                let mut part = vec![Datum::Null; table.stored_width];
-                for (position, offset) in &table.columns {
-                    part[*offset] = cell(*position)?.clone();
-                }
-                accountant.account_row(&part).map_err(DriverError::from)?;
-                stored.push(part);
-            }
-            // Charge as rows arrive, before retaining them or pulling another chunk.
-            accountant.account_row(&row).map_err(DriverError::from)?;
-            let raw = if keep_raw { row } else { Vec::new() };
-            out.push(DeleteSourceRow { ids, stored, raw });
-            Ok(())
+            let joined_row_mem = tidb_datatype::estimated_mem_usage(&row, 1);
+            visit(split(row)?, joined_row_mem)
         },
     )?;
     if let Some(runtime) = runtime {
         runtime.extend(collected);
     }
-    Ok(out)
+    Ok(())
 }
 
 /// Go `buildUpdate`/`buildDelete`'s read: the `FROM` join with the `WHERE`,

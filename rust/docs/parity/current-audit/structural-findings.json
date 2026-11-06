@@ -55,7 +55,7 @@
       "id": "E03",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "INSERT, UPDATE and DELETE run as Go's write executors (`DmlExec`: plan-ID `memTracker`, basic stats; `newDMLChildChunk` accounting and `updatedRowKeys` for a single-table UPDATE / DELETE, `insertRows`' row charge and `InsertRuntimeStat` for INSERT / REPLACE), but a multi-table UPDATE / DELETE (`multi_dml.rs`) and an `INSERT ... SELECT` materialize their whole source before writing instead of streaming it chunk by chunk, so their memory is not Go's (no per-chunk charge and release, no `mergedRowData` / `tblRowMap` / extra-column deltas; they charge each row they hold); and the insert stats lack Go's `AllocatorRuntimeStats` (`auto_id_allocator: {...}`), which this tier's auto-ID allocator does not record",
+      "finding": "INSERT, UPDATE and DELETE run as Go's write executors (`DmlExec`: plan-ID `memTracker`, basic stats, Go's chunk, `updatedRowKeys` / `mergedRowData` / `tblRowMap` charges, `insertRows`' row charge and `InsertRuntimeStat`), but an `INSERT ... SELECT` materializes its whole source before writing instead of streaming it chunk by chunk (`insertRowsFromSelect`), so its memory is not Go's (it charges each source row it holds, not each chunk with its rows and extra columns); and the insert stats lack Go's `AllocatorRuntimeStats` (`auto_id_allocator: {...}`), which this tier's auto-ID allocator does not record",
       "go_owner": "`pkg/executor/update.go`, `delete.go`, `insert.go`"
     },
     {

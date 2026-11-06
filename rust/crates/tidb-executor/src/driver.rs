@@ -783,7 +783,7 @@ fn visit_executor_rows(
     memory: &crate::StatementMemory,
     visit: impl FnMut(Vec<Datum>) -> Result<(), DriverError>,
 ) -> Result<(), DriverError> {
-    visit_executor_row_chunks(exec, types, memory, None, visit, |_| {})
+    visit_executor_row_chunks(exec, types, memory, None, false, visit, |_| {})
 }
 
 /// [`visit_executor_rows`], telling `chunk_end` each chunk's row count once
@@ -791,15 +791,20 @@ fn visit_executor_rows(
 ///
 /// With `dml`, the reading is that write executor's: its `Open` and `Close`
 /// open and close the source, and the caller times the read as (part of)
-/// its `Next` ([`physical_builder::DmlExec::next`]).
+/// its `Next` ([`physical_builder::DmlExec::next`]). `charge_chunks` is Go
+/// `DeleteExec.deleteMultiTablesByChunk`'s read: each call gets a new child
+/// chunk (`exec.TryNewCacheChunk`), charged to `dml`'s tracker while it is
+/// read.
 fn visit_executor_row_chunks(
     mut exec: Box<dyn Executor>,
     types: &[FieldType],
     memory: &crate::StatementMemory,
     dml: Option<&physical_builder::DmlExec>,
+    charge_chunks: bool,
     mut visit: impl FnMut(Vec<Datum>) -> Result<(), DriverError>,
     mut chunk_end: impl FnMut(usize),
 ) -> Result<(), DriverError> {
+    let tracker = dml.filter(|_| charge_chunks).map(|dml| &dml.mem_tracker);
     let timed = |phase: fn(&physical_builder::DmlExec, &mut dyn FnMut() -> Result<(), DriverError>) -> Result<(), DriverError>,
                  run: &mut dyn FnMut() -> Result<(), DriverError>| match dml {
         Some(dml) => phase(dml, run),
@@ -808,15 +813,26 @@ fn visit_executor_row_chunks(
     let result = (|| {
         timed(|dml, run| dml.open(run), &mut || exec.open().map_err(DriverError::from))?;
         let mut req = exec.new_chunk();
+        let mut mem_usage_of_chk = 0;
         loop {
+            if let Some(tracker) = tracker {
+                tracker.consume_checked(-mem_usage_of_chk)?;
+            }
             next_executor(exec.as_mut(), &mut req, memory)?;
             if req.num_rows() == 0 {
                 break;
+            }
+            if let Some(tracker) = tracker {
+                mem_usage_of_chk = req.memory_usage();
+                tracker.consume_checked(mem_usage_of_chk)?;
             }
             for r in 0..req.num_rows() {
                 visit(req.get_row(r).get_datum_row(types))?;
             }
             chunk_end(req.num_rows());
+            if tracker.is_some() {
+                req = exec.new_chunk();
+            }
         }
         Ok(())
     })();

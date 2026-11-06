@@ -8398,9 +8398,10 @@ pub(crate) fn execute_dml_source(
     ctx: &crate::StmtContext,
     analyze: bool,
     dml: Option<&DmlExec>,
+    charge_chunks: bool,
     visit: impl FnMut(Vec<tidb_datatype::Datum>) -> Result<(), DriverError>,
 ) -> Result<PhysicalRuntimeStats, DriverError> {
-    execute_dml_source_chunks(physical, catalog, ctx, analyze, dml, visit, |_| {})
+    execute_dml_source_chunks(physical, catalog, ctx, analyze, dml, charge_chunks, visit, |_| {})
 }
 
 /// [`execute_dml_source`] for a statement that writes each row as the source
@@ -8443,6 +8444,7 @@ pub(crate) fn execute_dml_source_chunks(
     ctx: &crate::StmtContext,
     analyze: bool,
     dml: Option<&DmlExec>,
+    charge_chunks: bool,
     visit: impl FnMut(Vec<tidb_datatype::Datum>) -> Result<(), DriverError>,
     chunk_end: impl FnMut(usize),
 ) -> Result<PhysicalRuntimeStats, DriverError> {
@@ -8459,6 +8461,7 @@ pub(crate) fn execute_dml_source_chunks(
         &field_types,
         &ctx.statement_memory(),
         dml,
+        charge_chunks,
         visit,
         chunk_end,
     )?;
