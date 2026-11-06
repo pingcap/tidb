@@ -394,9 +394,18 @@ func (is *infoSchema) SchemaTableInfos(ctx stdctx.Context, schema ast.CIStr) ([]
 	if !ok {
 		return nil, nil
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	tables := make([]*model.TableInfo, 0, len(schemaTables.tables))
 	for _, tbl := range schemaTables.tables {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		tables = append(tables, tbl.Meta())
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return tables, nil
 }
