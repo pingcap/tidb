@@ -1138,6 +1138,10 @@ ingest-kv-bytes = 3
 	require.NoError(t, conf.Valid())
 	conf.GracefulCloseConnectionsTimeout = -1
 	require.ErrorContains(t, conf.Valid(), "graceful-close-connections-timeout")
+	conf = NewConfig()
+	require.Equal(t, 0, conf.GracefulCloseConnectionsLingerMs)
+	conf.GracefulCloseConnectionsLingerMs = -1
+	require.ErrorContains(t, conf.Valid(), "graceful-close-connections-linger-ms")
 
 	conf = new(Config)
 	conf.TempStoragePath = tempStorageDirName
