@@ -21,10 +21,12 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -192,13 +194,18 @@ func TestImportQueryPlanExecution(t *testing.T) {
 	t.Run("source tables at read ts", func(t *testing.T) {
 		tk.MustExec("create resource group rg1 ru_per_sec=1000")
 		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
-		sql := "import into unused_target from select /*+ STREAM_AGG() */ count(*) from query_src"
+		sql := "import into unused_target from select /*+ STREAM_AGG() RESOURCE_GROUP(rg1) */ count(*) from query_src"
 		tk.Session().GetSessionVars().StmtCtx.ResourceGroupName = "rg1"
 		q := captureImportQuery(t, tk, sql)
 		require.NotZero(t, q.SchemaVersion)
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportQueryOptimize", func(p base.PhysicalPlan) {
 			assert.Equal(t, q.SchemaVersion, p.SCtx().GetSessionVars().SnapshotInfoschema.(infoschema.InfoSchema).SchemaMetaVersion())
-			assert.Equal(t, "rg1", p.SCtx().GetSessionVars().StmtCtx.ResourceGroupName)
+			expectedGroup := "rg1"
+			if kerneltype.IsNextGen() {
+				expectedGroup = resourcegroup.DefaultResourceGroupName
+			}
+			assert.Equal(t, expectedGroup, p.SCtx().GetSessionVars().StmtCtx.ResourceGroupName)
+			assert.Equal(t, "rg1", q.SessionStates.ResourceGroupName)
 		})
 		tk.Session().RollbackTxn(context.Background())
 		tk.MustExec("insert into query_src values (9,90,9)")
