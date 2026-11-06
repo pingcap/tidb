@@ -77,6 +77,38 @@ func TestCompareFunctionWithRefine(t *testing.T) {
 	}
 }
 
+func TestCompareTimeColumnWithDatetime(t *testing.T) {
+	ctx := createContext(t)
+	tblInfo := newTestTableBuilder("").
+		add("t", mysql.TypeDuration, 0).
+		add("dt", mysql.TypeDatetime, 0).
+		add("d", mysql.TypeDate, 0).
+		build()
+	row := chunk.MutRowFromDatums([]types.Datum{
+		types.NewDurationDatum(types.Duration{Duration: 19*time.Hour + 10*time.Minute + 6*time.Second}),
+		types.NewTimeDatum(types.NewTime(types.FromDate(1000, 1, 1, 19, 10, 6, 0), mysql.TypeDatetime, 0)),
+		types.NewTimeDatum(types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0)),
+	}).ToRow()
+	tests := []struct {
+		exprStr string
+		result  int64
+	}{
+		{"t = cast('1000-01-01 19:10:06' as datetime)", 1},
+		{"cast('2999-12-31 19:10:06' as datetime) = t", 1},
+		{"t > cast('2999-01-01 19:10:05' as datetime)", 1},
+		{"t = dt", 0},
+		{"dt = t", 0},
+		{"d < cast('1000-01-02 00:00:00' as datetime)", 1},
+	}
+	for _, test := range tests {
+		f, err := ParseSimpleExpr(ctx, test.exprStr, WithTableInfo("", tblInfo))
+		require.NoError(t, err)
+		d, err := f.Eval(ctx.GetEvalCtx(), row)
+		require.NoError(t, err)
+		require.Equal(t, test.result, d.GetInt64(), test.exprStr)
+	}
+}
+
 func TestCompare(t *testing.T) {
 	ctx := createContext(t)
 
