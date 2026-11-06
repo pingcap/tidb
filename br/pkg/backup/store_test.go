@@ -83,6 +83,8 @@ func TestTimeoutRecv(t *testing.T) {
 	// Timeout Not At First
 	{
 		count := 0
+		const responseCountBeforeTimeout = 20
+		responseInterval := TimeoutOneResponse / 16
 		timeoutObserved := make(chan bool, 1)
 		err := startBackup(ctx, 0, NewResourceMemoryLimiter(100), backuppb.BackupRequest{}, &MockBackupClient{
 			recvFunc: func(ctx context.Context) (*backuppb.BackupResponse, error) {
@@ -90,17 +92,17 @@ func TestTimeoutRecv(t *testing.T) {
 					timeoutObserved <- true
 					return nil, err
 				}
-				if count == 15 {
+				if count == responseCountBeforeTimeout {
 					time.Sleep(time.Second)
 					return nil, recordTimeoutErr(ctx, timeoutObserved)
 				}
 				count += 1
-				time.Sleep(time.Millisecond * 80)
+				time.Sleep(responseInterval)
 				return &backuppb.BackupResponse{}, nil
 			},
-		}, 1, make(chan *ResponseAndStore, 15))
+		}, 1, make(chan *ResponseAndStore, responseCountBeforeTimeout))
 		require.Error(t, err)
-		require.Equal(t, count, 15)
+		require.Equal(t, responseCountBeforeTimeout, count)
 		require.True(t, <-timeoutObserved)
 	}
 }
