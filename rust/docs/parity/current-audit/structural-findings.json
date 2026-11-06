@@ -2,9 +2,9 @@
   "date": "2026-11-06",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 23,
-    "open": 7,
-    "partial": 16
+    "unresolved": 27,
+    "open": 10,
+    "partial": 17
   },
   "findings": [
     {
@@ -55,8 +55,8 @@
       "id": "E03",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "INSERT, UPDATE and DELETE run as Go's write executors (`DmlExec`: plan-ID `memTracker`, basic stats, Go's chunk, `updatedRowKeys` / `mergedRowData` / `tblRowMap` charges, `insertRows`' row charge and `InsertRuntimeStat`), but an `INSERT ... SELECT` materializes its whole source before writing instead of streaming it chunk by chunk (`insertRowsFromSelect`), so its memory is not Go's (it charges each source row it holds, not each chunk with its rows and extra columns); and the insert stats lack Go's `AllocatorRuntimeStats` (`auto_id_allocator: {...}`), which this tier's auto-ID allocator does not record",
-      "go_owner": "`pkg/executor/update.go`, `delete.go`, `insert.go`"
+      "finding": "INSERT, UPDATE and DELETE run as Go's write executors (`DmlExec`: plan-ID `memTracker`, basic stats, Go's chunk accounting, `updatedRowKeys` / `mergedRowData` / `tblRowMap` charges, `insertRows` / `insertRowsFromSelect` streaming and `InsertRuntimeStat`), but the insert stats lack Go's `AllocatorRuntimeStats` (`auto_id_allocator: {alloc_cnt, Get, commit_txn ...}` in `prepare`), which this tier's auto-ID allocator does not record",
+      "go_owner": "`pkg/executor/insert_common.go`, `pkg/meta/autoid`"
     },
     {
       "id": "E10",
@@ -64,6 +64,34 @@
       "group": "DML and executor handoff",
       "finding": "Parallel HashAgg is not Go's worker model (`tidb-executor-aggregate/src/parallel.rs`): partial workers hand their maps over at a barrier (`TakeMaps`) and final buckets merge as pooled tasks, only for non-empty buckets, where Go's partial workers `shuffleIntermData` one `AggPartialResultMapper` to every final worker and all M final workers merge and send (`final_worker` `task_num` 1 where Go counts 5); memory is charged per Rust group (`PipelineMap`), not Go's mapper bucket growth, empty mappers and worker chunks (`initPartialWorkers` / `initFinalWorkers`): one-group `sum(a)` is 2.79 KB, Go 12.6 KB",
       "go_owner": "`pkg/executor/aggregate` (`agg_hash_executor.go`, `agg_hash_partial_worker.go`, `agg_hash_final_worker.go`)"
+    },
+    {
+      "id": "E11",
+      "status": "open",
+      "group": "DML and executor handoff",
+      "finding": "`StreamAggExec` and `IndexLookUpExecutor` own no `memTracker`: the physical builder charges the chunk each returns, and only under EXPLAIN ANALYZE (`physical_builder.rs` `chunk_memory`), where Go's charge their child result, partial results (`AllocPartialResult`'s sizes, which need E10's aggregate-function port) and the lookup's task chunks on every run: a `count(*)` stream aggregate shows 380 Bytes where Go shows 388, an index lookup 1.36 KB where Go shows 2.50 KB, so their quota behaviour also differs",
+      "go_owner": "`pkg/executor/aggregate/agg_stream_executor.go`, `distsql.go` (`IndexLookUpExecutor`)"
+    },
+    {
+      "id": "E12",
+      "status": "open",
+      "group": "DML and executor handoff",
+      "finding": "An index join's inner reader records no runtime stats (`IndexReader` under `IndexJoin` prints `actRows` N/A and no execution info where Go prints its cop task stats), and the join's memory is not Go's (`IndexJoin` 32.7 KB where Go's `IndexLookUpJoin` charges 3.09 KB: its outer task chunks and lookup map)",
+      "go_owner": "`pkg/executor/join/index_lookup_join.go`"
+    },
+    {
+      "id": "E13",
+      "status": "partial",
+      "group": "DML and executor handoff",
+      "finding": "A CTE's producer reports its runtime and memory on the CTE's plan as Go's does, but a `UNION DISTINCT` recursion's deduplication builds a compact chunk of the admitted rows where Go's `deduplicate` keeps the chunk and marks them with a selection (`chk.SetSel`), so its tables charge less: 1.13 KB where Go's charge 1.41 KB for a five-step distinct recursion",
+      "go_owner": "`pkg/executor/cte.go` (`deduplicate`)"
+    },
+    {
+      "id": "E14",
+      "status": "open",
+      "group": "DML and executor handoff",
+      "finding": "The embedded store's coprocessor reports its executors' summaries unlike Go's unistore `cophandler`: a pushed TopN prints `actRows` 2 and no `tikv_task` (Go: its input, 6, with the scan's detail, the scan only `tikv_task`), and an index scan under a pushed Limit prints 3 rows read where Go's reads 5",
+      "go_owner": "`pkg/store/mockstore/unistore/cophandler`"
     },
     {
       "id": "E04",

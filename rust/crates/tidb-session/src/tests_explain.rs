@@ -3201,6 +3201,70 @@ fn explain_analyze_dml_roots_report_their_executor_stats_and_memory_like_go() {
     root(&mut session, "EXPLAIN ANALYZE DELETE x FROM c x JOIN c y ON x.a = y.a WHERE x.a = 'x'");
 }
 
+/// Go `insertRowsFromSelect` (`pkg/executor/insert_common.go`): an
+/// `INSERT ... SELECT` reads its source chunk by chunk and writes each
+/// chunk's rows before it reads the next, charging the chunk, its rows and
+/// the extra ON DUPLICATE columns while it holds them. `./gorun` on this
+/// branch over the same statements (`tidb_max_chunk_size=32` for the
+/// 40-row source, so it is two chunks):
+///
+/// ```text
+/// insert into t select a+10,b from t                       Insert_1 | 1.16 KB
+/// insert into dst select a, b from src                     Insert_1 | 5.25 KB
+/// insert into dst select a, b from src on duplicate key update b=dst.b+src.b  | 5.25 KB
+/// insert into ai(v) select b from src                      Insert_1 | 4.88 KB
+/// insert into dst select a, a from src on duplicate key update b = src.b + 1  | 7.88 KB
+/// ```
+///
+/// The last one's ON DUPLICATE reads `src.b`, which rides past the selected
+/// values as an extra column (`extraColsInSel`).
+#[test]
+fn an_insert_select_streams_its_source_like_go() {
+    let mut session = Session::new();
+    let values: Vec<String> = (1..=40).map(|i| format!("({i},{i})")).collect();
+    for sql in [
+        "CREATE TABLE t (a INT PRIMARY KEY, b INT, KEY(b))".to_owned(),
+        "INSERT INTO t VALUES (1,1),(2,2),(3,3)".to_owned(),
+        "CREATE TABLE src (a INT PRIMARY KEY, b INT)".to_owned(),
+        format!("INSERT INTO src VALUES {}", values.join(",")),
+        "CREATE TABLE dst (a INT PRIMARY KEY, b INT)".to_owned(),
+        "CREATE TABLE ai (id INT PRIMARY KEY AUTO_INCREMENT, v INT)".to_owned(),
+    ] {
+        session.run(&sql).unwrap();
+    }
+    let memory = |session: &mut Session, sql: &str| {
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        assert_eq!(rows[0][0], "Insert_1", "{sql}");
+        rows[0][7].clone()
+    };
+    assert_eq!(memory(&mut session, "INSERT INTO t SELECT a+10, b FROM t"), "1.16 KB");
+    session.run("SET tidb_max_chunk_size = 32").unwrap();
+    assert_eq!(memory(&mut session, "INSERT INTO dst SELECT a, b FROM src"), "5.25 KB");
+    assert_eq!(
+        memory(
+            &mut session,
+            "INSERT INTO dst SELECT a, b FROM src ON DUPLICATE KEY UPDATE b=dst.b+src.b"
+        ),
+        "5.25 KB"
+    );
+    assert_eq!(memory(&mut session, "INSERT INTO ai(v) SELECT b FROM src"), "4.88 KB");
+    assert_eq!(
+        memory(
+            &mut session,
+            "INSERT INTO dst SELECT a, a FROM src ON DUPLICATE KEY UPDATE b = src.b + 1"
+        ),
+        "7.88 KB"
+    );
+    assert_eq!(
+        row_text(session.run("SELECT count(*), sum(b) FROM dst")),
+        vec![vec!["40".to_owned(), "860".to_owned()]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT count(*), min(id), max(id) FROM ai")),
+        vec![vec!["40".to_owned(), "1".to_owned(), "40".to_owned()]]
+    );
+}
+
 /// Go `UpdateExec.updateRows` over a join (`pkg/executor/update.go`): a
 /// multi-table UPDATE streams its child like a single-table one and charges
 /// `updatedRowKeys` per target position, plus -- for a table updated through
@@ -3216,6 +3280,9 @@ fn explain_analyze_dml_roots_report_their_executor_stats_and_memory_like_go() {
 /// update t join s on t.a=s.a set t.b=t.b+1, s.c='q'             Update_6 | 1.73 KB
 /// update t x join t y on x.a=y.a set x.b=x.b+1, y.b=y.b+10 where x.a<4  Update_7 | 2.33 KB
 /// update t left join s on t.a=s.a set t.b=0                     Update_5 | 760 Bytes
+/// -- 40 joined rows, tidb_max_chunk_size=32 (two chunks):
+/// update t join s on t.a=s.a set t.b=t.b+1                      Update_6 | 1.43 KB
+/// update t join s on t.a=s.a set t.b=t.b+1, s.c=s.c+1           Update_6 | 2.86 KB
 /// ```
 #[test]
 fn a_multi_table_update_charges_its_row_keys_like_go() {
@@ -3245,6 +3312,25 @@ fn a_multi_table_update_charges_its_row_keys_like_go() {
         row_text(session.run("SELECT * FROM g WHERE a = 1")),
         vec![vec!["1".to_owned(), "12".to_owned(), "24".to_owned(), "13".to_owned()]]
     );
+
+    let values: Vec<String> = (1..=40).map(|i| format!("({i},{i})")).collect();
+    for sql in [
+        "DROP TABLE t, s".to_owned(),
+        "CREATE TABLE t (a INT PRIMARY KEY, b INT)".to_owned(),
+        "CREATE TABLE s (a INT PRIMARY KEY, c INT)".to_owned(),
+        format!("INSERT INTO t VALUES {}", values.join(",")),
+        format!("INSERT INTO s VALUES {}", values.join(",")),
+        "SET tidb_max_chunk_size = 32".to_owned(),
+    ] {
+        session.run(&sql).unwrap();
+    }
+    for (sql, memory) in [
+        ("UPDATE t JOIN s ON t.a=s.a SET t.b=t.b+1", "1.43 KB"),
+        ("UPDATE t JOIN s ON t.a=s.a SET t.b=t.b+1, s.c=s.c+1", "2.86 KB"),
+    ] {
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        assert_eq!((rows[0][0].as_str(), rows[0][7].as_str()), ("Update_6", memory), "{sql}");
+    }
 }
 
 /// Go `DeleteExec.deleteMultiTablesByChunk` / `composeTblRowMap`
@@ -3262,6 +3348,8 @@ fn a_multi_table_update_charges_its_row_keys_like_go() {
 /// -- over fresh tables:
 /// delete t, s from t join s on t.a=s.a where t.a<3  Delete_6 | 1.96 KB
 /// delete x, y from t x join t y on x.a=y.a where x.a>=4  Delete_6 | 2.05 KB
+/// -- 40 joined rows, tidb_max_chunk_size=32 (two chunks):
+/// delete t from t join s on t.a=s.a                  Delete_5 | 11.3 KB
 /// ```
 #[test]
 fn a_multi_table_delete_charges_its_row_map_like_go() {
@@ -3293,6 +3381,132 @@ fn a_multi_table_delete_charges_its_row_map_like_go() {
     check(&mut session, "DELETE x, y FROM t x JOIN t y ON x.a=y.a WHERE x.a>=4", "Delete_6", "2.05 KB");
     assert_eq!(row_text(session.run("SELECT a FROM t")), vec![vec!["3".to_owned()]]);
     assert_eq!(row_text(session.run("SELECT a FROM s")), vec![vec!["3".to_owned()]]);
+
+    let values: Vec<String> = (1..=40).map(|i| format!("({i},{i})")).collect();
+    for sql in [
+        "DROP TABLE t, s".to_owned(),
+        "CREATE TABLE t (a INT PRIMARY KEY, b INT)".to_owned(),
+        "CREATE TABLE s (a INT PRIMARY KEY, c INT)".to_owned(),
+        format!("INSERT INTO t VALUES {}", values.join(",")),
+        format!("INSERT INTO s VALUES {}", values.join(",")),
+        "SET tidb_max_chunk_size = 32".to_owned(),
+    ] {
+        session.run(&sql).unwrap();
+    }
+    check(&mut session, "DELETE t FROM t JOIN s ON t.a=s.a", "Delete_5", "11.3 KB");
+    assert!(row_text(session.run("SELECT * FROM t")).is_empty());
+}
+
+/// Go `ProjectionExec` (`pkg/executor/projection.go`): its own tracker
+/// holds the serial path's child result, or -- with workers -- each worker's
+/// input and output chunk from `prepare` on, plus what fetching, evaluating
+/// and handing a chunk to the parent grow them by. `./gorun` on this branch
+/// over the same statements:
+///
+/// ```text
+/// select b, count(*) from t group by b              Projection_4  | 7.42 KB
+/// select a, row_number() over (order by b) from t   Projection_7  | 9.28 KB
+/// select * from t union all select a, d, 'q' from s Projection_13 | 10.5 KB
+/// select (select max(d) from s where s.a = t.a) from t  Projection_11 | 3.71 KB
+/// recursive cte: seed `select 1` / recursive part   Projection_11 | 0 Bytes, Projection_13 | 380 Bytes
+/// ```
+#[test]
+fn a_projection_charges_its_chunks_like_go() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE t (a INT PRIMARY KEY, b INT, c VARCHAR(20), KEY(b))",
+        "CREATE TABLE s (a INT PRIMARY KEY, d INT, KEY(d))",
+        "INSERT INTO t VALUES (1,1,'x'),(2,2,'y'),(3,3,'z'),(4,4,'w'),(5,5,'v'),(6,6,'u')",
+        "INSERT INTO s VALUES (1,10),(2,20),(3,30),(7,70)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    for (sql, expected) in [
+        ("SELECT b, count(*) FROM t GROUP BY b", vec![("Projection_4", "7.42 KB")]),
+        ("SELECT a, row_number() OVER (ORDER BY b) FROM t", vec![("Projection_7", "9.28 KB")]),
+        ("SELECT * FROM t UNION ALL SELECT a, d, 'q' FROM s", vec![("Projection_13", "10.5 KB")]),
+        (
+            "SELECT (SELECT max(d) FROM s WHERE s.a = t.a) FROM t",
+            vec![("Projection_11", "3.71 KB")],
+        ),
+        (
+            "WITH RECURSIVE cte(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM cte WHERE n < 5) SELECT * FROM cte",
+            vec![("Projection_11(Seed Part)", "0 Bytes"), ("Projection_13(Recursive Part)", "380 Bytes")],
+        ),
+    ] {
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        for (operator, memory) in expected {
+            let row = rows
+                .iter()
+                .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()) == operator)
+                .unwrap_or_else(|| panic!("{sql}: no {operator} in {rows:?}"));
+            assert_eq!(row[7], memory, "{sql}: {operator}");
+        }
+    }
+}
+
+/// Go `explainPlanInRowFormatCTE` / `cteProducer`: a CTE's definition row is
+/// the first reader the plan renders (`CTEDefinition(*p)`) and reports that
+/// reader's runtime, and the producer's trackers carry the plan that built
+/// it. `./gorun` on this branch:
+///
+/// ```text
+/// with recursive cte(n) ... n < 5            CTEFullScan_17 / CTE_0 | 5 rows | 2.60 KB | 0 Bytes
+/// with c as (select 1 union all select 2) select * from c a join c b on a.x=b.x
+///   CTEFullScan_48 (build) | 2 | memory N/A    CTE_0 | 2 | memory N/A
+///   CTEFullScan_42 (probe, built the producer) | 2 | 1.48 KB | 0 Bytes
+/// ```
+///
+/// The memory is the producer's tables, which hold the very chunks its seed
+/// and recursive parts return: one chunk in both the result and the
+/// iteration table is charged by each.
+#[test]
+fn a_cte_definition_reports_its_first_readers_runtime_like_go() {
+    let mut session = Session::new();
+    let row = |rows: &[Vec<String>], operator: &str| {
+        rows.iter()
+            .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()) == operator)
+            .unwrap_or_else(|| panic!("no {operator} in {rows:?}"))
+            .clone()
+    };
+    let rows = row_text(session.run(
+        "EXPLAIN ANALYZE WITH RECURSIVE cte(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM cte WHERE n < 5) SELECT * FROM cte",
+    ));
+    let (scan, definition) = (row(&rows, "CTEFullScan_17"), row(&rows, "CTE_0"));
+    assert_eq!(
+        (definition[2].as_str(), definition[7].as_str(), definition[8].as_str()),
+        ("5", "2.60 KB", "0 Bytes")
+    );
+    assert_eq!(definition[5], scan[5]);
+
+    let rows = row_text(session.run(
+        "EXPLAIN ANALYZE WITH c AS (SELECT 1 AS x UNION ALL SELECT 2) SELECT * FROM c a JOIN c b ON a.x=b.x",
+    ));
+    let (build, probe, definition) =
+        (row(&rows, "CTEFullScan_48"), row(&rows, "CTEFullScan_42"), row(&rows, "CTE_0"));
+    assert_eq!(definition[2], "2");
+    assert_eq!(definition[5], build[5]);
+    assert_eq!((definition[7].as_str(), build[7].as_str()), ("N/A", "N/A"));
+    assert_eq!((probe[7].as_str(), probe[8].as_str()), ("1.48 KB", "0 Bytes"));
+}
+
+/// Go `MergeJoinExec` (`pkg/executor/join/merge_join.go`): the join charges
+/// each side's child chunk and the inner group's row container; reading a
+/// stored row back (`NewIterator4RowContainer`) charges nothing. `./gorun`
+/// on this branch: `MergeJoin_11 | 2.73 KB`.
+#[test]
+fn a_merge_join_charges_its_tables_like_go() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE t (a INT PRIMARY KEY, b INT)",
+        "CREATE TABLE s (a INT PRIMARY KEY, c VARCHAR(20))",
+        "INSERT INTO t VALUES (1,1),(2,2),(3,3),(4,4),(5,5)",
+        "INSERT INTO s VALUES (1,'x'),(2,'y'),(3,'z')",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let rows = row_text(session.run("EXPLAIN ANALYZE SELECT * FROM t JOIN s ON t.a=s.a"));
+    assert_eq!((rows[0][0].as_str(), rows[0][7].as_str()), ("MergeJoin_11", "2.73 KB"));
 }
 
 /// Go `selectResult.Next(ctx, chk)` / `readFromChunk`

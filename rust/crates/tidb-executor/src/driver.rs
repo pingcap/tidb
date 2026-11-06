@@ -783,11 +783,10 @@ fn visit_executor_rows(
     memory: &crate::StatementMemory,
     visit: impl FnMut(Vec<Datum>) -> Result<(), DriverError>,
 ) -> Result<(), DriverError> {
-    visit_executor_row_chunks(exec, types, memory, None, false, visit, |_| {})
+    visit_executor_row_chunks(exec, types, memory, None, false, visit)
 }
 
-/// [`visit_executor_rows`], telling `chunk_end` each chunk's row count once
-/// its rows were visited: the batches Go's `insertRowsFromSelect` executes.
+/// [`visit_executor_rows`] for a write executor's source.
 ///
 /// With `dml`, the reading is that write executor's: its `Open` and `Close`
 /// open and close the source, and the caller times the read as (part of)
@@ -802,7 +801,6 @@ fn visit_executor_row_chunks(
     dml: Option<&physical_builder::DmlExec>,
     charge_chunks: bool,
     mut visit: impl FnMut(Vec<Datum>) -> Result<(), DriverError>,
-    mut chunk_end: impl FnMut(usize),
 ) -> Result<(), DriverError> {
     let tracker = dml.filter(|_| charge_chunks).map(|dml| &dml.mem_tracker);
     let timed = |phase: fn(&physical_builder::DmlExec, &mut dyn FnMut() -> Result<(), DriverError>) -> Result<(), DriverError>,
@@ -829,7 +827,6 @@ fn visit_executor_row_chunks(
             for r in 0..req.num_rows() {
                 visit(req.get_row(r).get_datum_row(types))?;
             }
-            chunk_end(req.num_rows());
             if tracker.is_some() {
                 req = exec.new_chunk();
             }
@@ -889,6 +886,77 @@ fn visit_executor_rows_writing<C: ?Sized>(
     // Preserve the primary read/write error if cleanup also fails.
     let close = dml.close(|| exec.close()).map_err(DriverError::from);
     result.and(close)
+}
+
+/// Go `insertRowsFromSelect`'s read of `selectExec`: the source executor,
+/// read one chunk at a time into the one chunk it keeps
+/// (`exec.TryNewCacheChunk(selectExec)`), so the write executor writes each
+/// chunk's rows before it reads the next. Its `Open` and `Close` are timed
+/// as `dml`'s; dropping it closes the source.
+pub(crate) struct DmlSourceCursor<'a> {
+    exec: Box<dyn Executor>,
+    chunk: tidb_chunk::chunk::Chunk,
+    types: Vec<FieldType>,
+    memory: crate::StatementMemory,
+    dml: Option<&'a physical_builder::DmlExec>,
+    closed: bool,
+}
+
+impl<'a> DmlSourceCursor<'a> {
+    /// Opens `exec` (Go `exec.Open(ctx, e.SelectExec)` in the write
+    /// executor's `Open`).
+    pub(crate) fn open(
+        exec: Box<dyn Executor>,
+        memory: crate::StatementMemory,
+        dml: Option<&'a physical_builder::DmlExec>,
+    ) -> Result<Self, DriverError> {
+        let mut cursor = Self {
+            types: exec.ret_field_types().to_vec(),
+            chunk: exec.new_chunk(),
+            exec,
+            memory,
+            dml,
+            closed: false,
+        };
+        let opened = match cursor.dml {
+            Some(dml) => dml.open(|| cursor.exec.open()),
+            None => cursor.exec.open(),
+        };
+        opened?;
+        Ok(cursor)
+    }
+
+    /// The next chunk's rows and the chunk's `MemoryUsage`, or `None` once
+    /// the source is drained.
+    pub(crate) fn next_chunk(&mut self) -> Result<Option<(Vec<Vec<Datum>>, i64)>, DriverError> {
+        next_executor(self.exec.as_mut(), &mut self.chunk, &self.memory)?;
+        if self.chunk.num_rows() == 0 {
+            return Ok(None);
+        }
+        let rows = (0..self.chunk.num_rows())
+            .map(|row| self.chunk.get_row(row).get_datum_row(&self.types))
+            .collect();
+        Ok(Some((rows, self.chunk.memory_usage())))
+    }
+
+    /// Go `exec.Close(e.SelectExec)` in the write executor's `Close`.
+    pub(crate) fn close(&mut self) -> Result<(), DriverError> {
+        if std::mem::replace(&mut self.closed, true) {
+            return Ok(());
+        }
+        let exec = &mut self.exec;
+        match self.dml {
+            Some(dml) => dml.close(|| exec.close()),
+            None => exec.close(),
+        }
+        .map_err(DriverError::from)
+    }
+}
+
+impl Drop for DmlSourceCursor<'_> {
+    fn drop(&mut self) {
+        let _ = self.close();
+    }
 }
 
 /// Go `dmlChildChunkTargetBytes`: the bytes a write executor's child chunk is

@@ -1141,6 +1141,18 @@ impl RowContainer {
         })
     }
 
+    /// Go `GetChunk`'s same `*Chunk`: an in-memory chunk is shared
+    /// ([`Chunk::alias`]), a spilled one read back.
+    pub fn alias_chunk(&self, chk_idx: usize) -> Result<Chunk, DiskError> {
+        {
+            let mut records = write_unpoisoned(&self.shared.records);
+            if records.in_disk.is_none() {
+                return Ok(records.in_memory.get_chunk_mut(chk_idx).alias());
+            }
+        }
+        self.get_chunk(chk_idx).map(RowContainerChunk::into_snapshot)
+    }
+
     pub(crate) fn get_chunk_snapshot(&self, chk_idx: usize) -> Result<Chunk, DiskError> {
         self.get_chunk(chk_idx)
             .map(RowContainerChunk::into_snapshot)

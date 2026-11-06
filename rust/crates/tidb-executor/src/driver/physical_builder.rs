@@ -557,9 +557,9 @@ impl BuildState {
             })
             .flatten();
         let trace = next_region.and_then(|_| GoExecutorTrace::for_plan(plan));
-        // Go `ProjectionExec`, `StreamAggExec` and `IndexLookUpExecutor` own a
-        // memory tracker labelled with their plan; this tier's executors
-        // charge their chunks to the statement directly.
+        // Go `StreamAggExec` and `IndexLookUpExecutor` own a memory tracker
+        // labelled with their plan; this tier's executors charge their chunks
+        // to the statement directly.
         // Only EXPLAIN ANALYZE charges them, so an ordinary statement's
         // quota behaviour is unchanged.
         let chunk_memory = (self.runtime_counters.is_some()
@@ -567,9 +567,7 @@ impl BuildState {
             && !self.untraced
             && matches!(
                 plan,
-                PhysicalPlan::Projection(_)
-                    | PhysicalPlan::StreamAgg(_)
-                    | PhysicalPlan::IndexLookUpReader(_)
+                PhysicalPlan::StreamAgg(_) | PhysicalPlan::IndexLookUpReader(_)
             ))
         .then(|| (memory.operator_tracker(plan_id), 0));
         executor = Box::new(SqlKillerCheckExec {
@@ -6602,18 +6600,26 @@ fn build_cte(
     let mut cor_cols = tidb_planner_core_operator_physicalop::extract_outer_apply_correlated_cols(&cte.seed_plan);
     let seed = build_with_state(&cte.seed_plan, catalog, ctx, state)?;
     let output_types = seed.ret_field_types().to_vec();
+    // Go `cteProducer.openProducer`: `memory.NewTracker(cteExec.ID(), -1)`
+    // and its disk twin, which every storage of the CTE attaches to.
+    let storage_parents = (
+        ctx.statement_memory().operator_tracker(i64::from(plan.id())),
+        ctx.statement_memory().operator_disk_tracker(i64::from(plan.id())),
+    );
     let mut result_storage = tidb_cteutil::CteStorage::new(
         output_types.clone(),
         ctx.executor_chunk_sizes().1,
         ctx.statement_memory(),
-    );
+    )
+    .with_parents(storage_parents.clone());
     result_storage.open_and_ref()?;
     let result = Arc::new(Mutex::new(result_storage));
     let mut iter_in_storage = tidb_cteutil::CteStorage::new(
         output_types.clone(),
         ctx.executor_chunk_sizes().1,
         ctx.statement_memory(),
-    );
+    )
+    .with_parents(storage_parents.clone());
     if let Err(error) = iter_in_storage.open_and_ref() {
         result.lock().unwrap().deref_and_close()?;
         return Err(error.into());
@@ -6659,7 +6665,8 @@ fn build_cte(
         output_types,
         ctx.executor_chunk_sizes().1,
         cor_cols,
-    )));
+    )
+    .with_storage_parents(storage_parents)));
     state
         .cte_slots
         .get_mut(&cte.id_for_storage)
@@ -7260,11 +7267,15 @@ fn build_with_state(
             if !state.in_reader && !state.untraced {
                 register_concurrency_info(ctx, plan, "Concurrency", workers);
             }
-            let executor: Box<dyn Executor> = Box::new(
-                ProjectionExec::new(meta, expressions, child, ctx.clone())
-                    .with_workers(workers)
-                    .in_coprocessor(state.in_reader),
-            );
+            let mut projection = ProjectionExec::new(meta, expressions, child, ctx.clone())
+                .with_workers(workers)
+                .in_coprocessor(state.in_reader);
+            if !state.in_reader && !state.untraced {
+                projection = projection.with_mem_tracker(
+                    ctx.statement_memory().operator_tracker(i64::from(plan.id())),
+                );
+            }
+            let executor: Box<dyn Executor> = Box::new(projection);
             Ok(executor)
         }
         PhysicalPlan::Selection(selection) => {
@@ -8401,7 +8412,23 @@ pub(crate) fn execute_dml_source(
     charge_chunks: bool,
     visit: impl FnMut(Vec<tidb_datatype::Datum>) -> Result<(), DriverError>,
 ) -> Result<PhysicalRuntimeStats, DriverError> {
-    execute_dml_source_chunks(physical, catalog, ctx, analyze, dml, charge_chunks, visit, |_| {})
+    prepare_execution_plan(physical, catalog, ctx)?;
+    let mut state = BuildState {
+        runtime_counters: analyze.then(HashMap::new),
+        ..BuildState::default()
+    };
+    let root = build_with_state(physical, catalog, ctx, &mut state)?;
+    crate::notify_before_executor_first_run(ctx);
+    let field_types = root.ret_field_types().to_vec();
+    super::visit_executor_row_chunks(
+        root,
+        &field_types,
+        &ctx.statement_memory(),
+        dml,
+        charge_chunks,
+        visit,
+    )?;
+    Ok(state.runtime_counters.take().unwrap_or_default())
 }
 
 /// [`execute_dml_source`] for a statement that writes each row as the source
@@ -8436,18 +8463,15 @@ pub(crate) fn execute_dml_source_writing(
     Ok(state.runtime_counters.take().unwrap_or_default())
 }
 
-/// [`execute_dml_source`], telling `chunk_end` the row count of each chunk
-/// the source executor returned.
-pub(crate) fn execute_dml_source_chunks(
+/// Builds a write statement's source executor for its driver to read
+/// chunk by chunk (Go `insertRowsFromSelect`'s `selectExec`), with the
+/// runtime counters its nodes record into.
+pub(crate) fn build_dml_source(
     physical: &mut PhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     analyze: bool,
-    dml: Option<&DmlExec>,
-    charge_chunks: bool,
-    visit: impl FnMut(Vec<tidb_datatype::Datum>) -> Result<(), DriverError>,
-    chunk_end: impl FnMut(usize),
-) -> Result<PhysicalRuntimeStats, DriverError> {
+) -> Result<(Box<dyn Executor>, PhysicalRuntimeStats), DriverError> {
     prepare_execution_plan(physical, catalog, ctx)?;
     let mut state = BuildState {
         runtime_counters: analyze.then(HashMap::new),
@@ -8455,17 +8479,7 @@ pub(crate) fn execute_dml_source_chunks(
     };
     let root = build_with_state(physical, catalog, ctx, &mut state)?;
     crate::notify_before_executor_first_run(ctx);
-    let field_types = root.ret_field_types().to_vec();
-    super::visit_executor_row_chunks(
-        root,
-        &field_types,
-        &ctx.statement_memory(),
-        dml,
-        charge_chunks,
-        visit,
-        chunk_end,
-    )?;
-    Ok(state.runtime_counters.take().unwrap_or_default())
+    Ok((root, state.runtime_counters.take().unwrap_or_default()))
 }
 
 #[cfg(test)]

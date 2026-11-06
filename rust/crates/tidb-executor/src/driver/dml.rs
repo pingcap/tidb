@@ -948,50 +948,28 @@ fn run_insert_rows(
         _ => Vec::new(),
     };
 
-    // Once the target is valid, `INSERT ... SELECT` runs its source over the
-    // pre-insert catalog and materializes those rows before the table is
-    // borrowed mutably. The size of each chunk the source returned is kept:
-    // Go executes the rows chunk by chunk (`insertRowsFromSelect`).
-    let mut source_chunks: Vec<usize> = Vec::new();
-    let source_rows: Option<Vec<Vec<Datum>>> = match &insert.source {
+    // Go `insertRowsFromSelect`: the source is read chunk by chunk, each
+    // chunk's rows written before the next is read. It reads the snapshot the
+    // statement started from (`MemBuffer.SnapshotIter`), so it never sees the
+    // rows this statement writes.
+    let mut source = match &insert.source {
         // LOAD DATA's rows arrive one at a time below.
-        _ if load_rows.is_some() => Some(Vec::new()),
+        _ if load_rows.is_some() => None,
         Some(_) => {
             let physical = physical_source.ok_or_else(|| {
                 DriverError::unsupported("INSERT SELECT has no retained physical child")
             })?;
-            let mut rows = Vec::new();
-            let accountant = insert_mem_tracker(dml, ctx);
-            let collected = super::physical_builder::execute_dml_source_chunks(
-                physical,
-                catalog,
-                ctx,
-                runtime.is_some(),
-                dml,
-                false,
-                |row| {
-                    accountant.account_row(&row).map_err(DriverError::from)?;
-                    rows.push(row);
-                    Ok(())
-                },
-                |size| source_chunks.push(size),
-            )?;
+            let (exec, collected) =
+                super::physical_builder::build_dml_source(physical, catalog, ctx, runtime.is_some())?;
             if let Some(runtime) = runtime {
                 runtime.extend(collected);
             }
-            Some(rows)
+            Some(super::DmlSourceCursor::open(exec, ctx.statement_memory(), dml)?)
         }
         None => None,
     };
-    // The fields Go appended for ON DUPLICATE ride past the row's own values.
-    let mut source_rows = source_rows;
-    let source_extras: Vec<Vec<Datum>> = match (source_rows.as_mut(), actual_col_len) {
-        (Some(rows), Some(actual)) => rows
-            .iter_mut()
-            .map(|row| row.split_off(actual.min(row.len())))
-            .collect(),
-        _ => Vec::new(),
-    };
+    // A VALUES list: no source query and no LOAD DATA rows.
+    let values_insert = insert.source.is_none() && load_rows.is_none();
 
     let InsertTargetLayout {
         database,
@@ -1050,12 +1028,6 @@ fn run_insert_rows(
     let visible_position =
         |stored: usize| visible_offsets.iter().position(|offset| *offset == stored);
     let stored_meta: Vec<ColumnDefaultMeta> = kv.columns().iter().map(kv_column_metadata).collect();
-    // One marker per staged row: after casting, a supplied zero under
-    // NO_AUTO_VALUE_ON_ZERO remains zero while NULL and omitted values still
-    // take an id. Keeping the supplied-ness beside the row distinguishes the
-    // two zero values that the later allocator otherwise cannot tell apart.
-    let mut auto_rows: Vec<(usize, bool)> = Vec::new();
-    let mut auto_random_rows: Vec<(usize, bool)> = Vec::new();
     let mut first_allocated: Option<u64> = None;
 
     // A source query supplies already-evaluated values; a VALUES list
@@ -1063,8 +1035,6 @@ fn run_insert_rows(
     if insert.source.is_none() {
         crate::notify_before_executor_first_run(ctx);
     }
-    let value_rows = source_rows.as_deref().unwrap_or_default();
-    let row_count = source_rows.as_ref().map_or(insert.rows.len(), Vec::len);
     // Go `ResetContextOfStmt`'s `ast.InsertStmt` arm:
     //   ErrGroupBadNull  = error when !IgnoreErr && (strict || len(stmt.Lists) == 1)
     //   ErrGroupNoDefault = error when strict
@@ -1096,32 +1066,10 @@ fn run_insert_rows(
     // DEFAULTs included -- arrive already lowered over the target.
     let prepared_value_rows: &[Vec<Option<Expression>>] = planned_lists;
     let mut previous_width = target_offsets.len();
-    if source_rows.is_none() {
-        if prepared_value_rows.len() != insert.rows.len() {
-            return Err(DriverError::unsupported(
-                "an INSERT's VALUES lists were not planned",
-            ));
-        }
-    } else if load_restrictive.is_none() {
-        // INSERT SELECT still performs the same arity check, but has no AST
-        // values to lower.
-        for (index, values) in value_rows.iter().enumerate() {
-            let width = values.len();
-            let expected = if index == 0 {
-                target_offsets.len()
-            } else {
-                previous_width
-            };
-            if width != expected {
-                // Go's INSERT SELECT check (planbuilder.go:4474) always
-                // reports row 1.
-                return Err(DriverError::from(
-                    tidb_plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
-                        .gen_with_stack_by_args(&[1.into()]),
-                ));
-            }
-            previous_width = width;
-        }
+    if values_insert && prepared_value_rows.len() != insert.rows.len() {
+        return Err(DriverError::unsupported(
+            "an INSERT's VALUES lists were not planned",
+        ));
     }
 
     // Go resolves ON DUPLICATE after the VALUES lists and before execution
@@ -1177,7 +1125,7 @@ fn run_insert_rows(
     // `NeedFillDefaultValue`, and `evalRow` then starts every row from
     // `setValueForRefColumn` and evaluates into that buffer, so `SET a = 1,
     // b = a + 1` reads the `a` just written and `VALUES (a)` the default.
-    let has_ref_cols = source_rows.is_none()
+    let has_ref_cols = values_insert
         && insert
             .rows
             .iter()
@@ -1190,504 +1138,15 @@ fn run_insert_rows(
             .collect();
         tidb_chunk::mutrow::MutRow::mut_row_from_types(&field_types)
     });
-    let mut new_rows: Vec<Vec<Datum>> = Vec::with_capacity(row_count);
     // Go `getColDefaultValue`/`lazilyInitColDefaultValBuf`: with more than one
     // VALUES list a non-expression default is computed (and its 1364
     // warning raised) once, then reused for every later row.
     let cache_defaults = insert.source.is_none() && insert.rows.len() > 1;
     let mut default_cache: Vec<Option<Datum>> = vec![None; column_list.len()];
-    // Go `buildValuesListOfInsert` checks arity in two steps: the FIRST row
-    // against the target columns, and every later row against the one before
-    // it. The first check is skipped when both the column list and the first
-    // value list are empty, which is what makes `INSERT t VALUES ()` -- a row
-    // of nothing but defaults -- legal; chaining the later rows to their
-    // predecessor is then what still rejects `VALUES (), (1)`. An empty row
-    // assigns nothing, so the default, auto-increment and NOT NULL rules
-    // below fill the whole row.
-    let mut index = 0;
-    loop {
-        let load_row = match load_rows.as_mut() {
-            Some(load) => match (load.next_row)()? {
-                Some(row) => Some(row),
-                None => break,
-            },
-            None if index >= row_count => break,
-            None => None,
-        };
-        let width = match source_rows.as_ref() {
-            _ if load_row.is_some() => load_row.as_ref().map_or(0, Vec::len),
-            Some(_) => value_rows.get(index).map_or(0, Vec::len),
-            None => insert.rows[index].len(),
-        };
-        let mut row = vec![Datum::Null; column_list.len()];
-        let mut assigned = vec![false; column_list.len()];
-        if let Some(buffer) = eval_buffer.as_mut() {
-            set_value_for_ref_column(
-                &column_meta,
-                extra_handle_offset,
-                &mut row,
-                &mut assigned,
-                ctx,
-                eval_chunk.get_row(0),
-            )?;
-            buffer.set_datums(&row);
-        }
-        // Go `evalRow` and `getRow` cast each value as it is produced, in the
-        // statement's column order; the cast value is what a later
-        // expression of the row reads.
-        let mut cast_done = vec![false; column_list.len()];
-        for (position, &offset) in target_offsets.iter().enumerate().take(width) {
-            let value = match source_rows.as_ref() {
-                Some(_) if load_row.is_some() => load_row.as_ref().unwrap()[position].clone(),
-                Some(_) => value_rows[index][position].clone(),
-                None => match &prepared_value_rows[index][position] {
-                    None => continue,
-                    Some(expression) => {
-                        let input = match eval_buffer.as_ref() {
-                            Some(buffer) => buffer.to_row(),
-                            None => eval_chunk.get_row(0),
-                        };
-                        expression
-                            .eval(ctx, input)
-                            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?
-                    }
-                },
-            };
-            // Go `evalRow` re-completes a VALUES row's cast warnings;
-            // `getRow` leaves a selected row's as `CastValue` raised them.
-            let cast = if load_restrictive.is_some() {
-                crate::driver::write_cast::cast_load_data_value_for_column
-            } else if source_rows.is_some() {
-                crate::driver::write_cast::cast_selected_value_for_column
-            } else {
-                cast_value_for_column
-            };
-            let value = match cast(
-                value,
-                &column_meta[offset].field_type,
-                column_meta[offset].name.as_str(),
-                load_first_row + new_rows.len(),
-                ctx,
-                lenient,
-            ) {
-                Ok(value) => value,
-                // Go `InsertValues.handleErr` hands a LOAD DATA row's cast
-                // error to the duplicate-key error group
-                // (`HandleErrorWithAlias(kv.ErrKeyExists, ...)`), a warning
-                // unless the load is restrictive; the value stays the
-                // failed conversion's zero datum.
-                Err(error) if lenient && load_restrictive.is_some() => {
-                    let rendered = error.to_mysql_error();
-                    ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
-            tidb_context::WarningLevel::Warning,
-            rendered.code,
-            rendered.message.clone(),
-            rendered.identity,
-        ));
-                    Datum::Null
-                }
-                Err(error) => return Err(error.into()),
-            };
-            if let Some(buffer) = eval_buffer.as_mut() {
-                buffer.set_datum(offset, &value);
-            }
-            row[offset] = value;
-            assigned[offset] = true;
-            cast_done[offset] = true;
-        }
-        // Go fills the auto-increment column before the default and NOT NULL
-        // rules run, so an omitted auto column never looks like a missing
-        // value (`adjustAutoIncrementDatum` runs inside the row build).
-        if let Some(offset) = auto_increment_offset.and_then(visible_position) {
-            // An omitted or explicitly NULL auto column becomes the zero
-            // marker, which allocation replaces; Go does this before the
-            // NOT NULL check, so a NULL here is never a bad-null error.
-            let supplied = assigned[offset] && row[offset] != Datum::Null;
-            if !supplied {
-                row[offset] = Datum::Int(0);
-            }
-            assigned[offset] = true;
-            auto_rows.push((new_rows.len(), supplied));
-        }
-        // AUTO_RANDOM uses the same NULL/omitted/zero value boundary as Go's
-        // `adjustAutoRandomDatum`, but draws from its own allocator below.
-        if let Some(offset) = auto_random_offset.and_then(visible_position) {
-            let supplied = assigned[offset] && row[offset] != Datum::Null;
-            if !supplied {
-                row[offset] = Datum::Int(0);
-            }
-            assigned[offset] = true;
-            auto_random_rows.push((new_rows.len(), supplied));
-        }
-        // A generated column has a value source of its own, so it is neither
-        // defaulted nor NULL-checked here: it counts as supplied, and the
-        // expression fills it below. Without this a `NOT NULL` generated
-        // column would raise ErrNoDefaultForField for a row Go accepts.
-        for (offset, generated) in generated_targets.iter().enumerate() {
-            if *generated {
-                assigned[offset] = true;
-                row[offset] = Datum::Null;
-            }
-        }
-        // Go `fillRow` walks the columns in table order: an omitted column
-        // takes its default (`fillColValue`, which can raise
-        // ErrNoDefaultForField), then `HandleBadNull` checks the column,
-        // before the next column is looked at -- so `INSERT IGNORE INTO t(a)
-        // VALUES (NULL)` over `(a NOT NULL, b NOT NULL)` warns 1048-for-a,
-        // then 1364-for-b. The statement's own values were cast in
-        // `evalRow` before this, which is why their truncation warnings
-        // (1406) precede every constraint warning (oracle-captured order).
-        for offset in 0..row.len() {
-            if offset < column_list.len() && !assigned[offset] {
-                let cacheable = cache_defaults
-                    && !matches!(
-                        &column_meta[offset].default_value,
-                        Some(tidb_table::column_default::ColumnDefault::Computed(computed))
-                            if computed.is_expr()
-                    );
-                row[offset] = match &default_cache[offset] {
-                    Some(value) if cacheable => value.clone(),
-                    _ => {
-                        let value =
-                            column_default(&column_meta, offset, ctx, eval_chunk.get_row(0))?;
-                        if cacheable {
-                            default_cache[offset] = Some(value.clone());
-                        }
-                        value
-                    }
-                };
-                // Go `getColDefaultValueFromNil`'s zero value for a NOT NULL
-                // column without a default is final: `fillColValue` stores
-                // it uncast (only a stored default goes through `CastValue`,
-                // inside `GetColDefaultValue`), so a zero DATETIME raises no
-                // 1292 beside its 1364.
-                if column_meta[offset].default_value.is_none() && column_meta[offset].not_null {
-                    cast_done[offset] = true;
-                }
-            }
-            // Cast what the row filled in (a default or the auto-increment
-            // marker); the statement's own values were cast already. The
-            // row is one wider than the table when the statement wrote
-            // `_tidb_rowid`: Go gives that slot a synthetic column built
-            // from `NewExtraHandleColInfo()`, cast as its `TypeLonglong`.
-            if !cast_done[offset] {
-                let (field_type, name) = (
-                    &column_meta[offset].field_type,
-                    column_meta[offset].name.as_str(),
-                );
-                row[offset] = cast_value_for_column(
-                    std::mem::replace(&mut row[offset], Datum::Null),
-                    field_type,
-                    name,
-                    new_rows.len(),
-                    ctx,
-                    lenient,
-                )?;
-            }
-            // Go `Column.HandleBadNull`: an explicit NULL in a NOT NULL
-            // column is ErrColumnCantNull, a different error from omitting a
-            // column that has no default; `bad_null_level` decides whether
-            // it fails the statement. A generated column's value is not
-            // built yet, so the NULL standing in for it is not the user's.
-            if assigned[offset] && !generated_targets[offset] {
-                if load_restrictive.is_some() {
-                    crate::bad_null::handle_bad_null_in_load_data(
-                        &mut row[offset],
-                        &column_meta[offset].field_type,
-                        &column_list[offset].0,
-                        bad_null_level,
-                        load_first_row + new_rows.len() + 1,
-                        ctx,
-                    )?;
-                } else {
-                    crate::bad_null::handle_bad_null(
-                        &mut row[offset],
-                        &column_meta[offset].field_type,
-                        &column_list[offset].0,
-                        bad_null_level,
-                        ctx,
-                    )?;
-                }
-            }
-        }
-        // Go `getRow`: an exchanged standalone table's row is checked before
-        // its generated columns are filled.
-        if let Some(check) = &exchange_check {
-            check.check_row_for_exchange_partition(&row, ctx)?;
-        }
-        {
-            // The generated columns are computed from the finished row, so
-            // the conflict lookup and the foreign-key check below see the
-            // same values the write will store.
-            // Go appends the extra handle after all writable columns. Keep it
-            // outside generation, then append it after the complete hidden tail.
-            let extra_handle = extra_handle_offset.map(|_| row.pop().expect("extra handle slot"));
-            materialize_generated_for_write(
-                kv,
-                &mut row,
-                ctx,
-                GeneratedWrite::Insert {
-                    row_index: new_rows.len(),
-                    null_level: bad_null_level,
-                },
-                planned_generated,
-            )?;
-            if let Some(handle) = extra_handle {
-                row.push(handle);
-            }
-        }
-        // Go `partitionedTableAddRecord`: a row into the exchanged partition
-        // passes the standalone table's constraints.
-        if let Some(check) = &exchange_check {
-            check.check_constraint_for_exchange_partition(kv, &row, ctx)?;
-        }
-        new_rows.push(row);
-        index += 1;
-    }
-    // A LOAD DATA batch's size is what its source produced.
-    let row_count = if load_restrictive.is_some() {
-        index
-    } else {
-        row_count
-    };
-    let extra_handle_offset = extra_handle_offset.map(|_| kv.columns().len());
-    // Go `InsertValues.insertRows`/`insertRowsFromSelect`, the consume that
-    // sits immediately before `base.exec(ctx, rows)`:
-    // `types.EstimatedMemUsage(rows[0], len(rows))` over the staged rows.
-    // Accounting HERE, before a single row is written, is what makes a
-    // cancelled INSERT leave the table exactly as it found it.
     let mem_tracker = insert_mem_tracker(dml, ctx);
-    mem_tracker.account_rows(&new_rows).map_err(DriverError::from)?;
-    {
-        let kv = std::sync::Arc::make_mut(kv);
-        if let Some(auto_offset) = auto_random_offset {
-            for (index, supplied) in &auto_random_rows {
-                if *supplied
-                    && ctx.auto_increment_zero_is_explicit()
-                    && matches!(
-                        new_rows[*index][auto_offset],
-                        Datum::Int(0) | Datum::UInt(0)
-                    )
-                {
-                    continue;
-                }
-                let outcome = kv
-                    .apply_auto_random(
-                        &mut new_rows[*index],
-                        ctx.auto_increment_step(),
-                        ctx.allow_auto_random_explicit_insert(),
-                        || ctx.reuse_auto_random_id(),
-                        ctx.next_row_id_shard(1),
-                    )
-                    .map_err(|error| match error {
-                        AutoRandomError::ExplicitInsertDisabled => DriverError::from(tidb_dbterror::ERR_INVALID_AUTO_RANDOM.gen_with_stack_by_args(&[("Explicit insertion on auto_random column is disabled. Try to set @@allow_auto_random_explicit_insert = true."
-                                .to_owned()).into()])),
-                        AutoRandomError::AutoId(AutoIdError::Exhausted) => {
-                            DriverError::from(tidb_autoid::autoid_errors::ERR_AUTO_RAND_READ_FAILED.gen_with_stack_by_args(&[]))
-                        }
-                        AutoRandomError::AutoId(AutoIdError::OutOfRange {
-                            value,
-                            type_name,
-                        }) => DriverError::from(tidb_datatype::types_errors::ERR_OVERFLOW.gen_with_stack(format!("constant {} overflows {}", value, type_name))),
-                        AutoRandomError::AutoId(AutoIdError::Store(detail)) => {
-                            DriverError::from(tidb_terror::MysqlError::unknown(detail.0))
-                        }
-                        AutoRandomError::NotApplicable
-                        | AutoRandomError::RebaseOverflow { .. }
-                        | AutoRandomError::InvalidDefinition(_) => {
-                            unreachable!("row allocation does not rebase a table option")
-                        }
-                    })?;
-                if let Some(placed) = outcome.placed() {
-                    ctx.record_auto_random_id(placed);
-                }
-                match outcome {
-                    AutoRandom::Given(given) => ctx.record_given_insert_id(given),
-                    AutoRandom::Allocated(id) if first_allocated.is_none() => {
-                        first_allocated = Some(id);
-                    }
-                    AutoRandom::Absent | AutoRandom::Reused(_) | AutoRandom::Allocated(_) => {}
-                }
-            }
-        }
-        if let Some(auto_offset) = auto_increment_offset {
-            // The allocator lives on the table, so the ids are handed out here
-            // rather than while the rows were being built.
-            for (index, supplied) in &auto_rows {
-                if *supplied
-                    && ctx.auto_increment_zero_is_explicit()
-                    && matches!(
-                        new_rows[*index][auto_offset],
-                        Datum::Int(0) | Datum::UInt(0)
-                    )
-                {
-                    continue;
-                }
-                // A full domain is Go's 1467; a counter whose home could not
-                // be reached is NOT that, and saying 1467 for it would report
-                // a table that has run out of ids when the ids are all still
-                // there.
-                // Go's replay hands the row back the id its losing attempt
-                // gave it (`RetryInfo`); outside a replay there is nothing to
-                // hand back and the counter is drawn from as usual. The cursor
-                // is read lazily so that a row carrying its OWN id does not
-                // consume from it -- see `adjust_auto_increment_datum`.
-                // Go fills a selected row's id as it reads the row
-                // (`adjustAutoIncrementDatum`, `lazyFillAutoID` off):
-                // `table.AllocAutoIncrementValue` per row. A VALUES list
-                // allocates its batch at once, with no such region.
-                let _alloc = (insert.source.is_some() && load_restrictive.is_none()).then(|| {
-                    tidb_tracing::start_thread_region_ex("table.AllocAutoIncrementValue")
-                });
-                let outcome = match kv.apply_auto_increment_in(
-                    &mut new_rows[*index],
-                    ctx.auto_increment_step(),
-                    || ctx.reuse_auto_increment_id(),
-                    &tidb_autoid::AutoIdCall::statement(&ctx.statement_memory()),
-                    Some(ctx as &dyn tidb_tblctx::MutateContext),
-                ) {
-                    Ok(outcome) => outcome,
-                    Err(error) => {
-                        if let Err(killed) = ctx.statement_memory().check().map_err(ExecError::from) {
-                            return Err(DriverError::Exec(killed));
-                        }
-                        match error {
-                            AutoIdError::Exhausted => {
-                                return Err(DriverError::Mysql(kv.auto_id_exhausted_error()))
-                            }
-                            // An id that does not fit the COLUMN is not a full
-                            // domain: Go `setDatumAutoIDAndCast` casts the
-                            // allocated id, and the cast's 1690 names the value
-                            // and type. Under IGNORE or a non-strict mode the
-                            // cast warns and clamps instead; the clamped id may
-                            // duplicate an existing one, which only an ON
-                            // DUPLICATE KEY UPDATE may go on with (issue
-                            // 38950). Otherwise it is 1467, which IGNORE's
-                            // error context makes a warning that ends the
-                            // statement (insert.go `insertRows`'s caller).
-                            AutoIdError::OutOfRange { value, type_name } => {
-                                if ctx.strict() && !insert.ignore {
-                                    return Err(DriverError::from(
-                                        tidb_datatype::types_errors::ERR_OVERFLOW
-                                            .gen_with_stack(format!(
-                                                "constant {} overflows {}",
-                                                value, type_name
-                                            )),
-                                    ));
-                                }
-                                ctx.append_sql_warn(tidb_context::SqlWarn::raised(
-                                    tidb_context::WarningLevel::Warning,
-                                    tidb_datatype::types_errors::ERR_OVERFLOW.gen_with_stack(
-                                        format!("constant {value} overflows {type_name}"),
-                                    ),
-                                ));
-                                if !has_on_duplicate {
-                                    if !insert.ignore {
-                                        return Err(DriverError::from(
-                                            tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED
-                                                .gen_with_stack_by_args(&[]),
-                                        ));
-                                    }
-                                    ctx.append_sql_warn(tidb_context::SqlWarn::raised(
-                                        tidb_context::WarningLevel::Warning,
-                                        tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED
-                                            .gen_with_stack_by_args(&[]),
-                                    ));
-                                    return Ok((0, None));
-                                }
-                                kv.set_datum_auto_id_and_cast(&mut new_rows[*index]);
-                                AutoIncrement::Allocated(value.parse::<i64>().unwrap_or_else(
-                                    |_| value.parse::<u64>().map_or(0, |id| id as i64),
-                                ))
-                            }
-                            AutoIdError::Store(detail) => {
-                                return Err(DriverError::from(
-                                    tidb_terror::MysqlError::unknown(detail.0),
-                                ));
-                            }
-                        }
-                    }
-                };
-                // Recorded whether it was drawn, handed back, or supplied by
-                // the row, so the NEXT attempt replays this attempt's
-                // assignment exactly. Go records in all three arms
-                // (`insert_common.go:902`, `:946`), and an explicit id left
-                // out of the list is what desynchronised the cursor.
-                if let Some(placed) = outcome.placed() {
-                    ctx.record_auto_increment_id(placed);
-                }
-                match outcome {
-                    AutoIncrement::Given(given) => {
-                        // Go records the explicit value as `StmtCtx.InsertID`,
-                        // and the LAST row's wins; the OK packet falls back to
-                        // it when the statement published nothing.
-                        ctx.record_given_insert_id(given);
-                    }
-                    // Go keeps the FIRST id the statement ALLOCATED. A reused
-                    // one is deliberately not it: the replay's consume loop
-                    // returns before `lastInsertID` is ever assigned, so the
-                    // value a client read after the losing attempt is the one
-                    // that survives.
-                    AutoIncrement::Allocated(id) if first_allocated.is_none() => {
-                        first_allocated = Some(id as u64);
-                    }
-                    AutoIncrement::Absent
-                    | AutoIncrement::Reused(_)
-                    | AutoIncrement::Allocated(_) => {}
-                }
-            }
-        }
-    }
-    // The table is re-borrowed per use rather than held across the loop,
-    // because REPLACE's row removal runs the PARENT-side referential
-    // operators, and those write the DEPENDENT tables the statement never
-    // named -- reachable only from the catalog, not from this table.
-    fn target<'a>(
-        catalog: &'a mut SessionExtendedInfoSchema,
-        database: &str,
-        table_name: &str,
-    ) -> &'a mut tidb_table::tables::TableCommon {
-        match catalog.get_rows_mut_in(database, table_name) {
-            Some(TableEntry::Kv(kv)) => std::sync::Arc::make_mut(kv),
-            _ => unreachable!("INSERT through a view is refused above"),
-        }
-    }
-    // Go `optimizeDupKeyCheckForNormalInsert` (`pkg/executor/insert.go`):
-    // only a NORMAL insert -- no REPLACE, no ON DUPLICATE KEY, no IGNORE --
-    // may defer its duplicate key check to the pessimistic lock / prewrite
-    // constraint check. The moment a statement must RESOLVE a conflict rather
-    // than report one, every prior read stays eager, exactly as Go keeps the
-    // in-place mode for those statements.
-    let lazy_dup_check = (!ctx.constraint_check_in_place() || ctx.pessimistic_lazy_dup_check())
-        && !insert.replace
-        && !has_on_duplicate
-        && !insert.ignore;
-    // Go resolves a conflict per row, before the row is written, only when
-    // the statement needs the conflicting handle: REPLACE deletes every row
-    // it collides with, ON DUPLICATE KEY UPDATE applies its assignments to
-    // the first one, and IGNORE skips the row with the duplicate reported as
-    // a warning. A normal INSERT does not consume that handle. Its
-    // authoritative `addRecord`/index writes below perform the same one
-    // existence check and retain the duplicate error, so probing here would
-    // issue a redundant remote read for every row in a batch.
-    let resolves_conflicts = insert.replace || has_on_duplicate || insert.ignore;
-    // A normal INSERT into a clustered table with no secondary indexes can
-    // prove all record keys absent in one BatchGet. Keep the proof narrow: a
-    // heap handle allocation, partition routing, or a unique secondary key
-    // has additional duplicate semantics that must stay on the row path.
-    let skip_primary_duplicate_check =
-        if !resolves_conflicts && !lazy_dup_check && extra_handle_offset.is_none() {
-            match crate::with_statement_store(ctx, target(catalog, &database, &table_name), |table, store| {
-                    table.all_clustered_insert_keys_absent(store, &new_rows, ctx)
-                })
-                .map_err(kv_write_error)?
-            {
-                Some(absent) => absent,
-                None => false,
-            }
-        } else {
-            false
-        };
+    // Go `e.rowCount`: the rows of the batches already executed.
+    let mut row_base = 0usize;
+    let mut records = 0u64;
     let mut inserted = 0;
     // Go `StmtCtx.CopiedRows`/`UpdatedRows`/`TouchedRows`, which the
     // `Records: ...` message reads.
@@ -1695,48 +1154,9 @@ fn run_insert_rows(
     let mut duplicates_updated: u64 = 0;
     let mut duplicates_touched: u64 = 0;
     let mut load_deleted: u64 = 0;
-    // Go's LOAD DATA sets `ErrGroupNoMatchedPartition` to a warning, which
-    // its IGNORE and REPLACE batch check (`getKeysNeedCheck`) honours.
-    let partition_warns = insert.ignore || (load_restrictive.is_some() && insert.replace);
     let mut updates = UpdateRecords::new(fk_triggers);
     let mut removals = DeleteRecords::new(fk_triggers);
-    let mut inserted_rows = Vec::new();
-    // Go `InsertExec.exec` / `ReplaceExec.exec` run once per batch: the whole
-    // VALUES list, or each chunk an INSERT ... SELECT's source returned.
-    let batch_ends: Vec<usize> = {
-        let selected: usize = source_chunks.iter().sum();
-        if insert.source.is_some() && !source_chunks.is_empty() && selected == new_rows.len() {
-            source_chunks
-                .iter()
-                .scan(0, |end, size| {
-                    *end += size;
-                    Some(*end)
-                })
-                .collect()
-        } else {
-            vec![new_rows.len()]
-        }
-    };
-    let mut batches = batch_ends.iter().copied().peekable();
-    let mut batch_start = 0;
-    let mut batch_check: Option<tidb_tracing::ThreadRegion> = None;
-    // Generated columns belong to the writable row; the extra handle is
-    // candidate identity and must not affect row equality or FK callbacks.
-    fn split_candidate<'r>(
-        candidate: &'r [Datum],
-        extra_handle_offset: Option<usize>,
-        ctx: &crate::StmtContext,
-    ) -> (&'r [Datum], Option<i64>) {
-        match extra_handle_offset {
-            Some(offset) => (
-                &candidate[..offset],
-                candidate
-                    .get(offset)
-                    .and_then(|value| written_row_id(value, ctx)),
-            ),
-            None => (candidate, None),
-        }
-    }
+    let mut written_rows: Vec<Vec<Datum>> = Vec::new();
     let insert_stats = dml.and_then(|dml| dml.insert_stats());
     let _collect_snapshot_stats =
         insert_stats.map(|stats| CollectInsertSnapshotStats::install(ctx, &stats.lock().unwrap()));
@@ -1750,316 +1170,906 @@ fn run_insert_rows(
             }
         }
     };
-    for (position, candidate) in new_rows.iter().enumerate() {
-        if load_restrictive.is_none() && position == batch_start {
-            if let Some(end) = batches.next() {
-                drop(batch_check.take());
-                finish_batch(&mut batch_started);
-                batch_started = insert_stats.map(|_| std::time::Instant::now());
-                let rows = new_rows[batch_start..end]
-                    .iter()
-                    .map(|candidate| split_candidate(candidate, extra_handle_offset, ctx))
-                    .collect::<Vec<_>>();
-                batch_start = end;
-                // Go `InsertExec.exec`'s event; REPLACE logs none.
-                if !insert.replace {
-                    tidb_tracing::thread_event(|| {
-                        format!(
-                            "insert {} rows into table `{}`",
-                            rows.len(),
-                            table_name.to_lowercase()
-                        )
-                    });
+    // Go `InsertValues.insertRows` executes the whole VALUES list (or a LOAD
+    // DATA batch) once; `insertRowsFromSelect` executes each source chunk.
+    loop {
+        let (mut source_rows, mem_usage_of_chk) = match source.as_mut() {
+            Some(cursor) => match cursor.next_chunk()? {
+                Some((rows, mem_usage)) => (Some(rows), mem_usage),
+                None => break,
+            },
+            None if load_rows.is_some() => (Some(Vec::new()), 0),
+            None => (None, 0),
+        };
+        mem_tracker.consume_checked(mem_usage_of_chk).map_err(DriverError::from)?;
+        // The fields Go appended for ON DUPLICATE ride past the row's own values.
+        let source_extras: Vec<Vec<Datum>> = match (source_rows.as_mut(), actual_col_len) {
+            (Some(rows), Some(actual)) => rows
+                .iter_mut()
+                .map(|row| row.split_off(actual.min(row.len())))
+                .collect(),
+            _ => Vec::new(),
+        };
+        let value_rows = source_rows.as_deref().unwrap_or_default();
+        let row_count = source_rows.as_ref().map_or(insert.rows.len(), Vec::len);
+        if source.is_some() {
+            // INSERT SELECT still performs the same arity check, but has no
+            // AST values to lower.
+            for (index, values) in value_rows.iter().enumerate() {
+                let width = values.len();
+                let expected = if index == 0 && row_base == 0 {
+                    target_offsets.len()
+                } else {
+                    previous_width
+                };
+                if width != expected {
+                    // Go's INSERT SELECT check (planbuilder.go:4474) always
+                    // reports row 1.
+                    return Err(DriverError::from(
+                        tidb_plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
+                            .gen_with_stack_by_args(&[1.into()]),
+                    ));
                 }
-                if resolves_conflicts && !lazy_dup_check {
-                    let table = target(catalog, &database, &table_name);
-                    let prefetch_start = std::time::Instant::now();
-                    if has_on_duplicate || insert.replace {
-                        // Go `prefetchDataCache` (none for a temporary table).
-                        if !table.is_temporary() {
-                            let _prefetch =
-                                tidb_tracing::start_thread_region("prefetchDataCache");
-                            crate::with_statement_store(ctx, table, |table, store| {
-                                    let values = table.prefetch_unique_indices(store, &rows, ctx)?;
-                                    table.prefetch_conflicted_old_rows(store, &rows, &values, ctx)
-                                })
-                                .map_err(kv_write_error)?;
+                previous_width = width;
+            }
+        }
+        let TableEntry::Kv(kv) = catalog
+            .get_rows_mut_in(&database, &table_name)
+            .ok_or(DriverError::unsupported("table not found in catalog"))?
+        else {
+            unreachable!("the INSERT target was validated before reading its source")
+        };
+        // One marker per staged row: after casting, a supplied zero under
+        // NO_AUTO_VALUE_ON_ZERO remains zero while NULL and omitted values
+        // still take an id. Keeping the supplied-ness beside the row
+        // distinguishes the two zero values that the later allocator
+        // otherwise cannot tell apart.
+        let mut auto_rows: Vec<(usize, bool)> = Vec::new();
+        let mut auto_random_rows: Vec<(usize, bool)> = Vec::new();
+        let mut new_rows: Vec<Vec<Datum>> = Vec::with_capacity(row_count);
+        // Go `buildValuesListOfInsert` checks arity in two steps: the FIRST row
+        // against the target columns, and every later row against the one before
+        // it. The first check is skipped when both the column list and the first
+        // value list are empty, which is what makes `INSERT t VALUES ()` -- a row
+        // of nothing but defaults -- legal; chaining the later rows to their
+        // predecessor is then what still rejects `VALUES (), (1)`. An empty row
+        // assigns nothing, so the default, auto-increment and NOT NULL rules
+        // below fill the whole row.
+        let mut index = 0;
+        loop {
+            let load_row = match load_rows.as_mut() {
+                Some(load) => match (load.next_row)()? {
+                    Some(row) => Some(row),
+                    None => break,
+                },
+                None if index >= row_count => break,
+                None => None,
+            };
+            let width = match source_rows.as_ref() {
+                _ if load_row.is_some() => load_row.as_ref().map_or(0, Vec::len),
+                Some(_) => value_rows.get(index).map_or(0, Vec::len),
+                None => insert.rows[index].len(),
+            };
+            let mut row = vec![Datum::Null; column_list.len()];
+            let mut assigned = vec![false; column_list.len()];
+            if let Some(buffer) = eval_buffer.as_mut() {
+                set_value_for_ref_column(
+                    &column_meta,
+                    extra_handle_offset,
+                    &mut row,
+                    &mut assigned,
+                    ctx,
+                    eval_chunk.get_row(0),
+                )?;
+                buffer.set_datums(&row);
+            }
+            // Go `evalRow` and `getRow` cast each value as it is produced, in the
+            // statement's column order; the cast value is what a later
+            // expression of the row reads.
+            let mut cast_done = vec![false; column_list.len()];
+            for (position, &offset) in target_offsets.iter().enumerate().take(width) {
+                let value = match source_rows.as_ref() {
+                    Some(_) if load_row.is_some() => load_row.as_ref().unwrap()[position].clone(),
+                    Some(_) => value_rows[index][position].clone(),
+                    None => match &prepared_value_rows[index][position] {
+                        None => continue,
+                        Some(expression) => {
+                            let input = match eval_buffer.as_ref() {
+                                Some(buffer) => buffer.to_row(),
+                                None => eval_chunk.get_row(0),
+                            };
+                            expression
+                                .eval(ctx, input)
+                                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?
                         }
-                        if let Some(stats) = insert_stats {
-                            let mut stats = stats.lock().unwrap();
-                            if insert.replace {
-                                stats.prefetch = prefetch_start.elapsed();
-                            } else {
-                                stats.prefetch += prefetch_start.elapsed();
+                    },
+                };
+                // Go `evalRow` re-completes a VALUES row's cast warnings;
+                // `getRow` leaves a selected row's as `CastValue` raised them.
+                let cast = if load_restrictive.is_some() {
+                    crate::driver::write_cast::cast_load_data_value_for_column
+                } else if source_rows.is_some() {
+                    crate::driver::write_cast::cast_selected_value_for_column
+                } else {
+                    cast_value_for_column
+                };
+                let value = match cast(
+                    value,
+                    &column_meta[offset].field_type,
+                    column_meta[offset].name.as_str(),
+                    load_first_row + row_base + new_rows.len(),
+                    ctx,
+                    lenient,
+                ) {
+                    Ok(value) => value,
+                    // Go `InsertValues.handleErr` hands a LOAD DATA row's cast
+                    // error to the duplicate-key error group
+                    // (`HandleErrorWithAlias(kv.ErrKeyExists, ...)`), a warning
+                    // unless the load is restrictive; the value stays the
+                    // failed conversion's zero datum.
+                    Err(error) if lenient && load_restrictive.is_some() => {
+                        let rendered = error.to_mysql_error();
+                        ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
+                tidb_context::WarningLevel::Warning,
+                rendered.code,
+                rendered.message.clone(),
+                rendered.identity,
+            ));
+                        Datum::Null
+                    }
+                    Err(error) => return Err(error.into()),
+                };
+                if let Some(buffer) = eval_buffer.as_mut() {
+                    buffer.set_datum(offset, &value);
+                }
+                row[offset] = value;
+                assigned[offset] = true;
+                cast_done[offset] = true;
+            }
+            // Go fills the auto-increment column before the default and NOT NULL
+            // rules run, so an omitted auto column never looks like a missing
+            // value (`adjustAutoIncrementDatum` runs inside the row build).
+            if let Some(offset) = auto_increment_offset.and_then(visible_position) {
+                // An omitted or explicitly NULL auto column becomes the zero
+                // marker, which allocation replaces; Go does this before the
+                // NOT NULL check, so a NULL here is never a bad-null error.
+                let supplied = assigned[offset] && row[offset] != Datum::Null;
+                if !supplied {
+                    row[offset] = Datum::Int(0);
+                }
+                assigned[offset] = true;
+                auto_rows.push((new_rows.len(), supplied));
+            }
+            // AUTO_RANDOM uses the same NULL/omitted/zero value boundary as Go's
+            // `adjustAutoRandomDatum`, but draws from its own allocator below.
+            if let Some(offset) = auto_random_offset.and_then(visible_position) {
+                let supplied = assigned[offset] && row[offset] != Datum::Null;
+                if !supplied {
+                    row[offset] = Datum::Int(0);
+                }
+                assigned[offset] = true;
+                auto_random_rows.push((new_rows.len(), supplied));
+            }
+            // A generated column has a value source of its own, so it is neither
+            // defaulted nor NULL-checked here: it counts as supplied, and the
+            // expression fills it below. Without this a `NOT NULL` generated
+            // column would raise ErrNoDefaultForField for a row Go accepts.
+            for (offset, generated) in generated_targets.iter().enumerate() {
+                if *generated {
+                    assigned[offset] = true;
+                    row[offset] = Datum::Null;
+                }
+            }
+            // Go `fillRow` walks the columns in table order: an omitted column
+            // takes its default (`fillColValue`, which can raise
+            // ErrNoDefaultForField), then `HandleBadNull` checks the column,
+            // before the next column is looked at -- so `INSERT IGNORE INTO t(a)
+            // VALUES (NULL)` over `(a NOT NULL, b NOT NULL)` warns 1048-for-a,
+            // then 1364-for-b. The statement's own values were cast in
+            // `evalRow` before this, which is why their truncation warnings
+            // (1406) precede every constraint warning (oracle-captured order).
+            for offset in 0..row.len() {
+                if offset < column_list.len() && !assigned[offset] {
+                    let cacheable = cache_defaults
+                        && !matches!(
+                            &column_meta[offset].default_value,
+                            Some(tidb_table::column_default::ColumnDefault::Computed(computed))
+                                if computed.is_expr()
+                        );
+                    row[offset] = match &default_cache[offset] {
+                        Some(value) if cacheable => value.clone(),
+                        _ => {
+                            let value =
+                                column_default(&column_meta, offset, ctx, eval_chunk.get_row(0))?;
+                            if cacheable {
+                                default_cache[offset] = Some(value.clone());
+                            }
+                            value
+                        }
+                    };
+                    // Go `getColDefaultValueFromNil`'s zero value for a NOT NULL
+                    // column without a default is final: `fillColValue` stores
+                    // it uncast (only a stored default goes through `CastValue`,
+                    // inside `GetColDefaultValue`), so a zero DATETIME raises no
+                    // 1292 beside its 1364.
+                    if column_meta[offset].default_value.is_none() && column_meta[offset].not_null {
+                        cast_done[offset] = true;
+                    }
+                }
+                // Cast what the row filled in (a default or the auto-increment
+                // marker); the statement's own values were cast already. The
+                // row is one wider than the table when the statement wrote
+                // `_tidb_rowid`: Go gives that slot a synthetic column built
+                // from `NewExtraHandleColInfo()`, cast as its `TypeLonglong`.
+                if !cast_done[offset] {
+                    let (field_type, name) = (
+                        &column_meta[offset].field_type,
+                        column_meta[offset].name.as_str(),
+                    );
+                    row[offset] = cast_value_for_column(
+                        std::mem::replace(&mut row[offset], Datum::Null),
+                        field_type,
+                        name,
+                        new_rows.len(),
+                        ctx,
+                        lenient,
+                    )?;
+                }
+                // Go `Column.HandleBadNull`: an explicit NULL in a NOT NULL
+                // column is ErrColumnCantNull, a different error from omitting a
+                // column that has no default; `bad_null_level` decides whether
+                // it fails the statement. A generated column's value is not
+                // built yet, so the NULL standing in for it is not the user's.
+                if assigned[offset] && !generated_targets[offset] {
+                    if load_restrictive.is_some() {
+                        crate::bad_null::handle_bad_null_in_load_data(
+                            &mut row[offset],
+                            &column_meta[offset].field_type,
+                            &column_list[offset].0,
+                            bad_null_level,
+                            load_first_row + row_base + new_rows.len() + 1,
+                            ctx,
+                        )?;
+                    } else {
+                        crate::bad_null::handle_bad_null(
+                            &mut row[offset],
+                            &column_meta[offset].field_type,
+                            &column_list[offset].0,
+                            bad_null_level,
+                            ctx,
+                        )?;
+                    }
+                }
+            }
+            // Go `getRow`: an exchanged standalone table's row is checked before
+            // its generated columns are filled.
+            if let Some(check) = &exchange_check {
+                check.check_row_for_exchange_partition(&row, ctx)?;
+            }
+            {
+                // The generated columns are computed from the finished row, so
+                // the conflict lookup and the foreign-key check below see the
+                // same values the write will store.
+                // Go appends the extra handle after all writable columns. Keep it
+                // outside generation, then append it after the complete hidden tail.
+                let extra_handle = extra_handle_offset.map(|_| row.pop().expect("extra handle slot"));
+                materialize_generated_for_write(
+                    kv,
+                    &mut row,
+                    ctx,
+                    GeneratedWrite::Insert {
+                        row_index: new_rows.len(),
+                        null_level: bad_null_level,
+                    },
+                    planned_generated,
+                )?;
+                if let Some(handle) = extra_handle {
+                    row.push(handle);
+                }
+            }
+            // Go `partitionedTableAddRecord`: a row into the exchanged partition
+            // passes the standalone table's constraints.
+            if let Some(check) = &exchange_check {
+                check.check_constraint_for_exchange_partition(kv, &row, ctx)?;
+            }
+            new_rows.push(row);
+            index += 1;
+        }
+        // A LOAD DATA batch's size is what its source produced.
+        let row_count = if load_restrictive.is_some() {
+            index
+        } else {
+            row_count
+        };
+        let extra_handle_offset = extra_handle_offset.map(|_| kv.columns().len());
+        // Go `InsertValues.insertRows`/`insertRowsFromSelect`, the consume that
+        // sits immediately before `base.exec(ctx, rows)`:
+        // `types.EstimatedMemUsage(rows[0], len(rows))` over the staged rows.
+        // Accounting HERE, before a single row is written, is what makes a
+        // cancelled INSERT leave the table exactly as it found it.
+        let estimated = |rows: &[Vec<Datum>]| {
+            rows.first()
+                .map_or(0, |first| tidb_datatype::estimated_mem_usage(first, rows.len()))
+        };
+        let mem_usage_of_rows = estimated(&new_rows) + estimated(&source_extras);
+        mem_tracker.consume_checked(mem_usage_of_rows).map_err(DriverError::from)?;
+        {
+            let kv = std::sync::Arc::make_mut(kv);
+            if let Some(auto_offset) = auto_random_offset {
+                for (index, supplied) in &auto_random_rows {
+                    if *supplied
+                        && ctx.auto_increment_zero_is_explicit()
+                        && matches!(
+                            new_rows[*index][auto_offset],
+                            Datum::Int(0) | Datum::UInt(0)
+                        )
+                    {
+                        continue;
+                    }
+                    let outcome = kv
+                        .apply_auto_random(
+                            &mut new_rows[*index],
+                            ctx.auto_increment_step(),
+                            ctx.allow_auto_random_explicit_insert(),
+                            || ctx.reuse_auto_random_id(),
+                            ctx.next_row_id_shard(1),
+                        )
+                        .map_err(|error| match error {
+                            AutoRandomError::ExplicitInsertDisabled => DriverError::from(tidb_dbterror::ERR_INVALID_AUTO_RANDOM.gen_with_stack_by_args(&[("Explicit insertion on auto_random column is disabled. Try to set @@allow_auto_random_explicit_insert = true."
+                                    .to_owned()).into()])),
+                            AutoRandomError::AutoId(AutoIdError::Exhausted) => {
+                                DriverError::from(tidb_autoid::autoid_errors::ERR_AUTO_RAND_READ_FAILED.gen_with_stack_by_args(&[]))
+                            }
+                            AutoRandomError::AutoId(AutoIdError::OutOfRange {
+                                value,
+                                type_name,
+                            }) => DriverError::from(tidb_datatype::types_errors::ERR_OVERFLOW.gen_with_stack(format!("constant {} overflows {}", value, type_name))),
+                            AutoRandomError::AutoId(AutoIdError::Store(detail)) => {
+                                DriverError::from(tidb_terror::MysqlError::unknown(detail.0))
+                            }
+                            AutoRandomError::NotApplicable
+                            | AutoRandomError::RebaseOverflow { .. }
+                            | AutoRandomError::InvalidDefinition(_) => {
+                                unreachable!("row allocation does not rebase a table option")
+                            }
+                        })?;
+                    if let Some(placed) = outcome.placed() {
+                        ctx.record_auto_random_id(placed);
+                    }
+                    match outcome {
+                        AutoRandom::Given(given) => ctx.record_given_insert_id(given),
+                        AutoRandom::Allocated(id) if first_allocated.is_none() => {
+                            first_allocated = Some(id);
+                        }
+                        AutoRandom::Absent | AutoRandom::Reused(_) | AutoRandom::Allocated(_) => {}
+                    }
+                }
+            }
+            if let Some(auto_offset) = auto_increment_offset {
+                // The allocator lives on the table, so the ids are handed out here
+                // rather than while the rows were being built.
+                for (index, supplied) in &auto_rows {
+                    if *supplied
+                        && ctx.auto_increment_zero_is_explicit()
+                        && matches!(
+                            new_rows[*index][auto_offset],
+                            Datum::Int(0) | Datum::UInt(0)
+                        )
+                    {
+                        continue;
+                    }
+                    // A full domain is Go's 1467; a counter whose home could not
+                    // be reached is NOT that, and saying 1467 for it would report
+                    // a table that has run out of ids when the ids are all still
+                    // there.
+                    // Go's replay hands the row back the id its losing attempt
+                    // gave it (`RetryInfo`); outside a replay there is nothing to
+                    // hand back and the counter is drawn from as usual. The cursor
+                    // is read lazily so that a row carrying its OWN id does not
+                    // consume from it -- see `adjust_auto_increment_datum`.
+                    // Go fills a selected row's id as it reads the row
+                    // (`adjustAutoIncrementDatum`, `lazyFillAutoID` off):
+                    // `table.AllocAutoIncrementValue` per row. A VALUES list
+                    // allocates its batch at once, with no such region.
+                    let _alloc = (insert.source.is_some() && load_restrictive.is_none()).then(|| {
+                        tidb_tracing::start_thread_region_ex("table.AllocAutoIncrementValue")
+                    });
+                    let outcome = match kv.apply_auto_increment_in(
+                        &mut new_rows[*index],
+                        ctx.auto_increment_step(),
+                        || ctx.reuse_auto_increment_id(),
+                        &tidb_autoid::AutoIdCall::statement(&ctx.statement_memory()),
+                        Some(ctx as &dyn tidb_tblctx::MutateContext),
+                    ) {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            if let Err(killed) = ctx.statement_memory().check().map_err(ExecError::from) {
+                                return Err(DriverError::Exec(killed));
+                            }
+                            match error {
+                                AutoIdError::Exhausted => {
+                                    return Err(DriverError::Mysql(kv.auto_id_exhausted_error()))
+                                }
+                                // An id that does not fit the COLUMN is not a full
+                                // domain: Go `setDatumAutoIDAndCast` casts the
+                                // allocated id, and the cast's 1690 names the value
+                                // and type. Under IGNORE or a non-strict mode the
+                                // cast warns and clamps instead; the clamped id may
+                                // duplicate an existing one, which only an ON
+                                // DUPLICATE KEY UPDATE may go on with (issue
+                                // 38950). Otherwise it is 1467, which IGNORE's
+                                // error context makes a warning that ends the
+                                // statement (insert.go `insertRows`'s caller).
+                                AutoIdError::OutOfRange { value, type_name } => {
+                                    if ctx.strict() && !insert.ignore {
+                                        return Err(DriverError::from(
+                                            tidb_datatype::types_errors::ERR_OVERFLOW
+                                                .gen_with_stack(format!(
+                                                    "constant {} overflows {}",
+                                                    value, type_name
+                                                )),
+                                        ));
+                                    }
+                                    ctx.append_sql_warn(tidb_context::SqlWarn::raised(
+                                        tidb_context::WarningLevel::Warning,
+                                        tidb_datatype::types_errors::ERR_OVERFLOW.gen_with_stack(
+                                            format!("constant {value} overflows {type_name}"),
+                                        ),
+                                    ));
+                                    if !has_on_duplicate {
+                                        if !insert.ignore {
+                                            return Err(DriverError::from(
+                                                tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED
+                                                    .gen_with_stack_by_args(&[]),
+                                            ));
+                                        }
+                                        ctx.append_sql_warn(tidb_context::SqlWarn::raised(
+                                            tidb_context::WarningLevel::Warning,
+                                            tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED
+                                                .gen_with_stack_by_args(&[]),
+                                        ));
+                                        return Ok((0, None));
+                                    }
+                                    kv.set_datum_auto_id_and_cast(&mut new_rows[*index]);
+                                    AutoIncrement::Allocated(value.parse::<i64>().unwrap_or_else(
+                                        |_| value.parse::<u64>().map_or(0, |id| id as i64),
+                                    ))
+                                }
+                                AutoIdError::Store(detail) => {
+                                    return Err(DriverError::from(
+                                        tidb_terror::MysqlError::unknown(detail.0),
+                                    ));
+                                }
                             }
                         }
-                    } else {
-                        // Go `batchCheckAndInsert`, which IGNORE runs over
-                        // the batch's rows.
-                        batch_check = Some(tidb_tracing::start_thread_region(
-                            "InsertValues.batchCheckAndInsert",
-                        ));
-                        if !table.is_temporary() {
-                            crate::with_statement_store(ctx, table, |table, store| {
-                                    table.prefetch_unique_indices(store, &rows, ctx)
-                                })
-                                .map_err(kv_write_error)?;
+                    };
+                    // Recorded whether it was drawn, handed back, or supplied by
+                    // the row, so the NEXT attempt replays this attempt's
+                    // assignment exactly. Go records in all three arms
+                    // (`insert_common.go:902`, `:946`), and an explicit id left
+                    // out of the list is what desynchronised the cursor.
+                    if let Some(placed) = outcome.placed() {
+                        ctx.record_auto_increment_id(placed);
+                    }
+                    match outcome {
+                        AutoIncrement::Given(given) => {
+                            // Go records the explicit value as `StmtCtx.InsertID`,
+                            // and the LAST row's wins; the OK packet falls back to
+                            // it when the statement published nothing.
+                            ctx.record_given_insert_id(given);
                         }
-                        if let (Some(stats), Some(start)) = (insert_stats, batch_started) {
-                            let mut stats = stats.lock().unwrap();
-                            stats.fk_check_time += prefetch_start.saturating_duration_since(start);
-                            stats.prefetch += prefetch_start.elapsed();
+                        // Go keeps the FIRST id the statement ALLOCATED. A reused
+                        // one is deliberately not it: the replay's consume loop
+                        // returns before `lastInsertID` is ever assigned, so the
+                        // value a client read after the losing attempt is the one
+                        // that survives.
+                        AutoIncrement::Allocated(id) if first_allocated.is_none() => {
+                            first_allocated = Some(id as u64);
                         }
+                        AutoIncrement::Absent
+                        | AutoIncrement::Reused(_)
+                        | AutoIncrement::Allocated(_) => {}
                     }
                 }
             }
         }
-        let (row, written_row_id): (&[Datum], Option<i64>) =
-            split_candidate(candidate, extra_handle_offset, ctx);
-        // Go's partition-qualified INSERT target is a table wrapper, so the
-        // completed candidate is routed through the selected partition set
-        // before duplicate-key resolution.  This prevents a row for p0 from
-        // finding and updating a conflicting row when the statement names p1.
-        if let Some(partitions) = &insert_partition_ids {
-            if let Err(error) = target(catalog, &database, &table_name)
-                .validate_insert_partitions(row, partitions, ctx)
-            {
-                handle_partition_write_error(kv_write_error(error), partition_warns, ctx)?;
-                continue;
+        // The table is re-borrowed per use rather than held across the loop,
+        // because REPLACE's row removal runs the PARENT-side referential
+        // operators, and those write the DEPENDENT tables the statement never
+        // named -- reachable only from the catalog, not from this table.
+        fn target<'a>(
+            catalog: &'a mut SessionExtendedInfoSchema,
+            database: &str,
+            table_name: &str,
+        ) -> &'a mut tidb_table::tables::TableCommon {
+            match catalog.get_rows_mut_in(database, table_name) {
+                Some(TableEntry::Kv(kv)) => std::sync::Arc::make_mut(kv),
+                _ => unreachable!("INSERT through a view is refused above"),
             }
         }
-        // A lazy normal insert reads nothing here -- Go's addRecord never
-        // resolves conflicts it only reports, and the deferred check needs no
-        // old-row handles.
-        let conflicts = if lazy_dup_check || !resolves_conflicts {
-            Vec::new()
-        } else {
-            match target(catalog, &database, &table_name).with_statement_store(ctx, |table, store| table.row_conflicts_with_row_id(store, row,
-                written_row_id,
-                ctx,
-            )) {
-                Ok(conflicts) => conflicts,
-                Err(error) => {
+        // Go `optimizeDupKeyCheckForNormalInsert` (`pkg/executor/insert.go`):
+        // only a NORMAL insert -- no REPLACE, no ON DUPLICATE KEY, no IGNORE --
+        // may defer its duplicate key check to the pessimistic lock / prewrite
+        // constraint check. The moment a statement must RESOLVE a conflict rather
+        // than report one, every prior read stays eager, exactly as Go keeps the
+        // in-place mode for those statements.
+        let lazy_dup_check = (!ctx.constraint_check_in_place() || ctx.pessimistic_lazy_dup_check())
+            && !insert.replace
+            && !has_on_duplicate
+            && !insert.ignore;
+        // Go resolves a conflict per row, before the row is written, only when
+        // the statement needs the conflicting handle: REPLACE deletes every row
+        // it collides with, ON DUPLICATE KEY UPDATE applies its assignments to
+        // the first one, and IGNORE skips the row with the duplicate reported as
+        // a warning. A normal INSERT does not consume that handle. Its
+        // authoritative `addRecord`/index writes below perform the same one
+        // existence check and retain the duplicate error, so probing here would
+        // issue a redundant remote read for every row in a batch.
+        let resolves_conflicts = insert.replace || has_on_duplicate || insert.ignore;
+        // A normal INSERT into a clustered table with no secondary indexes can
+        // prove all record keys absent in one BatchGet. Keep the proof narrow: a
+        // heap handle allocation, partition routing, or a unique secondary key
+        // has additional duplicate semantics that must stay on the row path.
+        let skip_primary_duplicate_check =
+            if !resolves_conflicts && !lazy_dup_check && extra_handle_offset.is_none() {
+                match crate::with_statement_store(ctx, target(catalog, &database, &table_name), |table, store| {
+                        table.all_clustered_insert_keys_absent(store, &new_rows, ctx)
+                    })
+                    .map_err(kv_write_error)?
+                {
+                    Some(absent) => absent,
+                    None => false,
+                }
+            } else {
+                false
+            };
+        // Go's LOAD DATA sets `ErrGroupNoMatchedPartition` to a warning, which
+        // its IGNORE and REPLACE batch check (`getKeysNeedCheck`) honours.
+        let partition_warns = insert.ignore || (load_restrictive.is_some() && insert.replace);
+        let mut inserted_rows = Vec::new();
+        // Go `InsertExec.exec` / `ReplaceExec.exec` run once per batch.
+        let batch_ends = [new_rows.len()];
+        let mut batches = batch_ends.iter().copied().peekable();
+        let mut batch_start = 0;
+        let mut batch_check: Option<tidb_tracing::ThreadRegion> = None;
+        // Generated columns belong to the writable row; the extra handle is
+        // candidate identity and must not affect row equality or FK callbacks.
+        fn split_candidate<'r>(
+            candidate: &'r [Datum],
+            extra_handle_offset: Option<usize>,
+            ctx: &crate::StmtContext,
+        ) -> (&'r [Datum], Option<i64>) {
+            match extra_handle_offset {
+                Some(offset) => (
+                    &candidate[..offset],
+                    candidate
+                        .get(offset)
+                        .and_then(|value| written_row_id(value, ctx)),
+                ),
+                None => (candidate, None),
+            }
+        }
+        for (position, candidate) in new_rows.iter().enumerate() {
+            if load_restrictive.is_none() && position == batch_start {
+                if let Some(end) = batches.next() {
+                    drop(batch_check.take());
+                    finish_batch(&mut batch_started);
+                    batch_started = insert_stats.map(|_| std::time::Instant::now());
+                    let rows = new_rows[batch_start..end]
+                        .iter()
+                        .map(|candidate| split_candidate(candidate, extra_handle_offset, ctx))
+                        .collect::<Vec<_>>();
+                    batch_start = end;
+                    // Go `InsertExec.exec`'s event; REPLACE logs none.
+                    if !insert.replace {
+                        tidb_tracing::thread_event(|| {
+                            format!(
+                                "insert {} rows into table `{}`",
+                                rows.len(),
+                                table_name.to_lowercase()
+                            )
+                        });
+                    }
+                    if resolves_conflicts && !lazy_dup_check {
+                        let table = target(catalog, &database, &table_name);
+                        let prefetch_start = std::time::Instant::now();
+                        if has_on_duplicate || insert.replace {
+                            // Go `prefetchDataCache` (none for a temporary table).
+                            if !table.is_temporary() {
+                                let _prefetch =
+                                    tidb_tracing::start_thread_region("prefetchDataCache");
+                                crate::with_statement_store(ctx, table, |table, store| {
+                                        let values = table.prefetch_unique_indices(store, &rows, ctx)?;
+                                        table.prefetch_conflicted_old_rows(store, &rows, &values, ctx)
+                                    })
+                                    .map_err(kv_write_error)?;
+                            }
+                            if let Some(stats) = insert_stats {
+                                let mut stats = stats.lock().unwrap();
+                                if insert.replace {
+                                    stats.prefetch = prefetch_start.elapsed();
+                                } else {
+                                    stats.prefetch += prefetch_start.elapsed();
+                                }
+                            }
+                        } else {
+                            // Go `batchCheckAndInsert`, which IGNORE runs over
+                            // the batch's rows.
+                            batch_check = Some(tidb_tracing::start_thread_region(
+                                "InsertValues.batchCheckAndInsert",
+                            ));
+                            if !table.is_temporary() {
+                                crate::with_statement_store(ctx, table, |table, store| {
+                                        table.prefetch_unique_indices(store, &rows, ctx)
+                                    })
+                                    .map_err(kv_write_error)?;
+                            }
+                            if let (Some(stats), Some(start)) = (insert_stats, batch_started) {
+                                let mut stats = stats.lock().unwrap();
+                                stats.fk_check_time += prefetch_start.saturating_duration_since(start);
+                                stats.prefetch += prefetch_start.elapsed();
+                            }
+                        }
+                    }
+                }
+            }
+            let (row, written_row_id): (&[Datum], Option<i64>) =
+                split_candidate(candidate, extra_handle_offset, ctx);
+            // Go's partition-qualified INSERT target is a table wrapper, so the
+            // completed candidate is routed through the selected partition set
+            // before duplicate-key resolution.  This prevents a row for p0 from
+            // finding and updating a conflicting row when the statement names p1.
+            if let Some(partitions) = &insert_partition_ids {
+                if let Err(error) = target(catalog, &database, &table_name)
+                    .validate_insert_partitions(row, partitions, ctx)
+                {
                     handle_partition_write_error(kv_write_error(error), partition_warns, ctx)?;
                     continue;
                 }
             }
-        };
-        if !conflicts.is_empty() {
-            if insert.replace {
-                // Go `InsertValues.removeRow` (`insert_common.go`): a
-                // conflicting row IDENTICAL to the one being written is left
-                // in place -- not deleted and not rewritten -- and counts
-                // ONE, not the two a delete-plus-insert would. This is also
-                // the site `tidb_lock_unchanged_keys` governs, which is why
-                // Go's `TestInsertLockUnchangedKeys` drives it with
-                // `replace into t values (1)` over the same row.
-                let mut unchanged = false;
-                for conflict in &conflicts {
-                    let handle = &conflict.handle;
-                    let table = target(catalog, &database, &table_name);
-                    let existing = table
-                        .get_row_by_handle(&mut *crate::statement_store(ctx), handle, &ctx.session_zone())
-                        .map_err(|e| kv_read_error("row read failed", e))?;
-                    if existing.as_deref() == Some(row) {
-                        // Go `removeRow`: the identical row stays, its keys
-                        // locked as an unchanged row's.
-                        let mut key_set = update_record::LOCK_ROW_KEY;
-                        if ctx.lock_unchanged_keys() {
-                            key_set |= update_record::LOCK_UNIQUE_KEYS;
+            // A lazy normal insert reads nothing here -- Go's addRecord never
+            // resolves conflicts it only reports, and the deferred check needs no
+            // old-row handles.
+            let conflicts = if lazy_dup_check || !resolves_conflicts {
+                Vec::new()
+            } else {
+                match target(catalog, &database, &table_name).with_statement_store(ctx, |table, store| table.row_conflicts_with_row_id(store, row,
+                    written_row_id,
+                    ctx,
+                )) {
+                    Ok(conflicts) => conflicts,
+                    Err(error) => {
+                        handle_partition_write_error(kv_write_error(error), partition_warns, ctx)?;
+                        continue;
+                    }
+                }
+            };
+            if !conflicts.is_empty() {
+                if insert.replace {
+                    // Go `InsertValues.removeRow` (`insert_common.go`): a
+                    // conflicting row IDENTICAL to the one being written is left
+                    // in place -- not deleted and not rewritten -- and counts
+                    // ONE, not the two a delete-plus-insert would. This is also
+                    // the site `tidb_lock_unchanged_keys` governs, which is why
+                    // Go's `TestInsertLockUnchangedKeys` drives it with
+                    // `replace into t values (1)` over the same row.
+                    let mut unchanged = false;
+                    for conflict in &conflicts {
+                        let handle = &conflict.handle;
+                        let table = target(catalog, &database, &table_name);
+                        let existing = table
+                            .get_row_by_handle(&mut *crate::statement_store(ctx), handle, &ctx.session_zone())
+                            .map_err(|e| kv_read_error("row read failed", e))?;
+                        if existing.as_deref() == Some(row) {
+                            // Go `removeRow`: the identical row stays, its keys
+                            // locked as an unchanged row's.
+                            let mut key_set = update_record::LOCK_ROW_KEY;
+                            if ctx.lock_unchanged_keys() {
+                                key_set |= update_record::LOCK_UNIQUE_KEYS;
+                            }
+                            update_record::add_unchanged_keys_for_lock_by_row(
+                                table, handle, row, key_set, ctx,
+                            )?;
+                            // Go `batchCheckAndInsert`: an identical row behind the
+                            // record key counts as copied, one behind a unique key
+                            // (`removeRow(inReplace=true)`) as affected.
+                            if load_restrictive.is_some() && conflict.on_record_key {
+                                copied += 1;
+                            } else {
+                                inserted += 1;
+                            }
+                            unchanged = true;
+                            break;
                         }
-                        update_record::add_unchanged_keys_for_lock_by_row(
-                            table, handle, row, key_set, ctx,
+                        removals.write(
+                            catalog,
+                            &database,
+                            &table_name,
+                            &handle,
+                            existing.as_deref().expect("conflicting row exists"),
+                            insert.ignore,
+                            ctx,
                         )?;
-                        // Go `batchCheckAndInsert`: an identical row behind the
-                        // record key counts as copied, one behind a unique key
-                        // (`removeRow(inReplace=true)`) as affected.
+                        // Go's LOAD DATA removes a record-key duplicate with
+                        // `removeRow(inReplace=false)`, a deleted row.
                         if load_restrictive.is_some() && conflict.on_record_key {
-                            copied += 1;
+                            load_deleted += 1;
                         } else {
                             inserted += 1;
                         }
-                        unchanged = true;
-                        break;
                     }
-                    removals.write(
+                    if unchanged {
+                        continue;
+                    }
+                } else if has_on_duplicate {
+                    // `VALUES(col)` and the assignments read the statement's
+                    // visible columns, then the extra handle it wrote.
+                    let sql_candidate = visible_offsets
+                        .iter()
+                        .map(|offset| &row[*offset])
+                        .chain(extra_handle_offset.map(|offset| &candidate[offset]))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    let candidate_values = sql_candidate.as_slice();
+                    let applied = apply_on_duplicate(
                         catalog,
                         &database,
+                        &conflicts[0].handle,
+                        candidate_values,
+                        source_extras.get(position).map_or(&[][..], Vec::as_slice),
+                        &prepared_on_duplicate,
+                        &column_list,
+                        position,
                         &table_name,
-                        &handle,
-                        existing.as_deref().expect("conflicting row exists"),
                         insert.ignore,
+                        bad_null_level,
+                        &mut updates,
                         ctx,
                     )?;
-                    // Go's LOAD DATA removes a record-key duplicate with
-                    // `removeRow(inReplace=false)`, a deleted row.
-                    if load_restrictive.is_some() && conflict.on_record_key {
-                        load_deleted += 1;
-                    } else {
-                        inserted += 1;
+                    inserted += applied.affected;
+                    duplicates_updated += u64::from(applied.changed);
+                    duplicates_touched += u64::from(applied.touched);
+                    // Go `doDupRowUpdate` (issue #55965): the OK packet's insert
+                    // id is the updated row's AUTO_INCREMENT value when the
+                    // statement has affected rows, and 0 otherwise.
+                    if let Some(id) = applied.auto_increment {
+                        ctx.record_given_insert_id(if inserted > 0 { id } else { 0 });
                     }
-                }
-                if unchanged {
                     continue;
-                }
-            } else if has_on_duplicate {
-                // `VALUES(col)` and the assignments read the statement's
-                // visible columns, then the extra handle it wrote.
-                let sql_candidate = visible_offsets
-                    .iter()
-                    .map(|offset| &row[*offset])
-                    .chain(extra_handle_offset.map(|offset| &candidate[offset]))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                let candidate_values = sql_candidate.as_slice();
-                let applied = apply_on_duplicate(
-                    catalog,
-                    &database,
-                    &conflicts[0].handle,
-                    candidate_values,
-                    source_extras.get(position).map_or(&[][..], Vec::as_slice),
-                    &prepared_on_duplicate,
-                    &column_list,
-                    position,
-                    &table_name,
-                    insert.ignore,
-                    bad_null_level,
-                    &mut updates,
-                    ctx,
-                )?;
-                inserted += applied.affected;
-                duplicates_updated += u64::from(applied.changed);
-                duplicates_touched += u64::from(applied.touched);
-                // Go `doDupRowUpdate` (issue #55965): the OK packet's insert
-                // id is the updated row's AUTO_INCREMENT value when the
-                // statement has affected rows, and 0 otherwise.
-                if let Some(id) = applied.auto_increment {
-                    ctx.record_given_insert_id(if inserted > 0 { id } else { 0 });
-                }
-                continue;
-            } else if insert.ignore {
-                let conflict = conflicts.into_iter().next().expect("a conflict was found");
-                // Go `handleDuplicateKey` / `batchCheckAndInsert`: the key
-                // an IGNOREd row collided on joins the pessimistic locks.
-                if ctx.pessimistic_transaction() && ctx.lock_unchanged_keys() {
-                    if let Some(keys) = ctx.selected_lock_keys() {
-                        keys.insert(conflict.key);
+                } else if insert.ignore {
+                    let conflict = conflicts.into_iter().next().expect("a conflict was found");
+                    // Go `handleDuplicateKey` / `batchCheckAndInsert`: the key
+                    // an IGNOREd row collided on joins the pessimistic locks.
+                    if ctx.pessimistic_transaction() && ctx.lock_unchanged_keys() {
+                        if let Some(keys) = ctx.selected_lock_keys() {
+                            keys.insert(conflict.key);
+                        }
                     }
-                }
-                let warning = kv_write_error(conflict.error).to_mysql_error();
-                ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
-            tidb_context::WarningLevel::Warning,
-            warning.code,
-            warning.message.clone(),
-            warning.identity,
-        ));
-                continue;
-            }
-        }
-        // IGNORE checks this candidate before writing; ordinary INSERT
-        // collects only accepted rows and checks the final statement buffer.
-        // ODKU candidates redirected to UPDATE have already continued above.
-        if insert.ignore {
-            if let Err(error) = crate::foreign_key::require_child_rows(
-                catalog,
-                fk_triggers,
-                &database,
-                &table_name,
-                &[row.to_vec()],
-                ctx,
-            ) {
-                if error.equal(&tidb_plannererrors::ERR_NO_REFERENCED_ROW2) {
-                    let warning = error.to_mysql_error();
+                    let warning = kv_write_error(conflict.error).to_mysql_error();
                     ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
-            tidb_context::WarningLevel::Warning,
-            warning.code,
-            warning.message.clone(),
-            warning.identity,
-        ));
+                tidb_context::WarningLevel::Warning,
+                warning.code,
+                warning.message.clone(),
+                warning.identity,
+            ));
                     continue;
                 }
-                return Err(error);
             }
-        }
-        // Go publishes the statement's first allocated id the moment a row is
-        // ACCEPTED for insertion (`addRecord` -> `SetLastInsertID`), which is
-        // why a hard duplicate publishes -- its deferred unique-key check
-        // fails the statement only afterwards -- while an IGNORE-skipped row
-        // and a row redirected into ON DUPLICATE KEY UPDATE never reach here
-        // and so publish nothing.
-        if let Some(allocated) = first_allocated {
-            ctx.publish_last_insert_id(allocated);
-        }
-        // Go `AllocHandleIDs` asks the SESSION's row-id shard generator for
-        // the shard covering the next `n` ids, and only when the table
-        // declares shard bits -- asking otherwise would advance a generator
-        // whose run length is observable (`tidb_shard_allocate_step`).
-        let shard = if target(catalog, &database, &table_name).shard_row_id_bits() > 0 {
-            ctx.next_row_id_shard(1) as i64
-        } else {
-            0
-        };
-        let insert_result = if skip_primary_duplicate_check {
-            target(catalog, &database, &table_name)
-                .with_statement_store(ctx, |table, store| table.insert_row_with_row_id_checked_without_primary_duplicate_check(store, row,
+            // IGNORE checks this candidate before writing; ordinary INSERT
+            // collects only accepted rows and checks the final statement buffer.
+            // ODKU candidates redirected to UPDATE have already continued above.
+            if insert.ignore {
+                if let Err(error) = crate::foreign_key::require_child_rows(
+                    catalog,
+                    fk_triggers,
+                    &database,
+                    &table_name,
+                    &[row.to_vec()],
+                    ctx,
+                ) {
+                    if error.equal(&tidb_plannererrors::ERR_NO_REFERENCED_ROW2) {
+                        let warning = error.to_mysql_error();
+                        ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
+                tidb_context::WarningLevel::Warning,
+                warning.code,
+                warning.message.clone(),
+                warning.identity,
+            ));
+                        continue;
+                    }
+                    return Err(error);
+                }
+            }
+            // Go publishes the statement's first allocated id the moment a row is
+            // ACCEPTED for insertion (`addRecord` -> `SetLastInsertID`), which is
+            // why a hard duplicate publishes -- its deferred unique-key check
+            // fails the statement only afterwards -- while an IGNORE-skipped row
+            // and a row redirected into ON DUPLICATE KEY UPDATE never reach here
+            // and so publish nothing.
+            if let Some(allocated) = first_allocated {
+                ctx.publish_last_insert_id(allocated);
+            }
+            // Go `AllocHandleIDs` asks the SESSION's row-id shard generator for
+            // the shard covering the next `n` ids, and only when the table
+            // declares shard bits -- asking otherwise would advance a generator
+            // whose run length is observable (`tidb_shard_allocate_step`).
+            let shard = if target(catalog, &database, &table_name).shard_row_id_bits() > 0 {
+                ctx.next_row_id_shard(1) as i64
+            } else {
+                0
+            };
+            let insert_result = if skip_primary_duplicate_check {
+                target(catalog, &database, &table_name)
+                    .with_statement_store(ctx, |table, store| table.insert_row_with_row_id_checked_without_primary_duplicate_check(store, row,
+                        written_row_id,
+                        shard,
+                        ctx,
+                        lazy_dup_check,
+                    ))
+            } else {
+                target(catalog, &database, &table_name).with_statement_store(ctx, |table, store| table.insert_row_with_row_id_checked(store, row,
                     written_row_id,
                     shard,
                     ctx,
                     lazy_dup_check,
                 ))
-        } else {
-            target(catalog, &database, &table_name).with_statement_store(ctx, |table, store| table.insert_row_with_row_id_checked(store, row,
-                written_row_id,
-                shard,
-                ctx,
-                lazy_dup_check,
-            ))
-        };
-        match insert_result {
-            Ok(_) => {
-                inserted += 1;
-                copied += 1;
-                if !insert.ignore
-                    && crate::foreign_key::has_triggers(fk_triggers, &database, &table_name)
-                {
-                    inserted_rows.push(position);
-                }
-            }
-            Err(error) => {
-                let rendered = kv_write_error(error);
-                // Go's `batchCheckAndInsert` counts the row copied before
-                // `addRecord` and, in LOAD DATA, skips a violated CHECK
-                // without a warning.
-                if load_restrictive.is_some()
-                    && insert.ignore
-                    && rendered.equal(&tidb_table::table_errors::ERR_CHECK_CONSTRAINT_VIOLATED)
-                {
+            };
+            match insert_result {
+                Ok(_) => {
+                    inserted += 1;
                     copied += 1;
-                    continue;
+                    if !insert.ignore
+                        && crate::foreign_key::has_triggers(fk_triggers, &database, &table_name)
+                    {
+                        inserted_rows.push(position);
+                    }
                 }
-                // Under IGNORE a skipped row counts in NEITHER the stored
-                // rows nor the affected count -- Go's per-row skip writes
-                // nothing and rewinds nothing; earlier conforming rows of
-                // the same statement survive.
-                handle_partition_write_error(rendered, insert.ignore, ctx)?;
+                Err(error) => {
+                    let rendered = kv_write_error(error);
+                    // Go's `batchCheckAndInsert` counts the row copied before
+                    // `addRecord` and, in LOAD DATA, skips a violated CHECK
+                    // without a warning.
+                    if load_restrictive.is_some()
+                        && insert.ignore
+                        && rendered.equal(&tidb_table::table_errors::ERR_CHECK_CONSTRAINT_VIOLATED)
+                    {
+                        copied += 1;
+                        continue;
+                    }
+                    // Under IGNORE a skipped row counts in NEITHER the stored
+                    // rows nor the affected count -- Go's per-row skip writes
+                    // nothing and rewinds nothing; earlier conforming rows of
+                    // the same statement survive.
+                    handle_partition_write_error(rendered, insert.ignore, ctx)?;
+                }
             }
         }
+        finish_batch(&mut batch_started);
+        // Go releases the batch's rows, and the chunk they came from, once they
+        // were written.
+        mem_tracker
+            .consume_checked(-(mem_usage_of_rows + mem_usage_of_chk))
+            .map_err(DriverError::from)?;
+        written_rows.extend(inserted_rows.into_iter().map(|index| {
+            let row = &new_rows[index];
+            row[..extra_handle_offset.unwrap_or(row.len())].to_vec()
+        }));
+        records += row_count as u64;
+        row_base += new_rows.len();
+        if source.is_none() {
+            break;
+        }
     }
-    finish_batch(&mut batch_started);
-    if !inserted_rows.is_empty() {
-        let written: Vec<_> = inserted_rows
-            .into_iter()
-            .map(|index| {
-                let row = &new_rows[index];
-                row[..extra_handle_offset.unwrap_or(row.len())].to_vec()
-            })
-            .collect();
+    if let Some(mut source) = source.take() {
+        source.close()?;
+    }
+    if !written_rows.is_empty() {
         crate::foreign_key::require_child_rows(
             catalog,
             fk_triggers,
             &database,
             &table_name,
-            &written,
+            &written_rows,
             ctx,
         )?;
     }
@@ -2068,7 +2078,6 @@ fn run_insert_rows(
     // Go `InsertExec.setMessage` / `ReplaceExec.setMessage`: an
     // `INSERT ... SELECT` or a multi-row VALUES list reports
     // `Records: N  Duplicates: D  Warnings: W`.
-    let records = row_count as u64;
     if let Some(counts) = load_counts.as_deref_mut() {
         *counts = LoadDataCounts {
             records,

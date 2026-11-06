@@ -464,6 +464,8 @@ struct MergeInnerGroup {
     rows: RowContainer,
     child_start: usize,
     child_end: usize,
+    /// Where a spilled row is read back: Go's `NewIterator4RowContainer`
+    /// reads into a chunk of its own, which no tracker charges.
     read_back: Chunk,
     /// Whether `rows` has taken a chunk since its last reset. Go hands the
     /// child chunk to its row container only when a group outgrows it, and
@@ -539,8 +541,7 @@ impl MergeInnerGroup {
         Ok(())
     }
 
-    fn close(&mut self, tracker: &Arc<Tracker>) {
-        tracker.consume(-self.read_back.memory_usage());
+    fn close(&mut self) {
         self.read_back = Chunk::default();
         self.rows.close();
     }
@@ -3277,7 +3278,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     .fallback_old_and_set_new_action(Arc::clone(&action));
                 self.registered_action = Some(action);
             }
-            let inner_scratch_bytes = inner_group.read_back.memory_usage();
             let left = MergeSide::new(self.left_exec().new_chunk(), &left_keys, &left_types);
             let right = MergeSide::new(self.right_exec().new_chunk(), &right_keys, &right_types);
             let input_bytes = left.chunk_bytes + right.chunk_bytes;
@@ -3288,7 +3288,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 inner_group: Some(inner_group),
                 pending: None,
             });
-            self.tracker.consume(inner_scratch_bytes + input_bytes);
+            self.tracker.consume(input_bytes);
             self.memory.check().map_err(ExecError::from)?;
         }
         let tracker = Arc::clone(&self.tracker);
@@ -6082,7 +6082,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> Executor for JoinExec<C> {
                 self.spilled_bytes = self
                     .spilled_bytes
                     .max(inner.rows.disk_tracker().bytes_consumed());
-                inner.close(&self.tracker);
+                inner.close();
             }
         }
         if let Some(action) = self.registered_action.take() {

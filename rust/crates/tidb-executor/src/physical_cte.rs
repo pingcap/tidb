@@ -140,6 +140,17 @@ pub(crate) struct CteProducer {
     cor_cols: Vec<tidb_expr::column::CorrelatedColumn>,
     /// Go `corColHashCodes`: those values when the result was last built.
     cor_col_hash_codes: Vec<Vec<u8>>,
+    /// Go `cteProducer.memTracker` / `diskTracker`, labelled with the plan
+    /// that builds the producer: every storage of the CTE attaches to them.
+    storage_parents: Option<tidb_cteutil::CteStorageParents>,
+}
+
+impl CteProducer {
+    /// Go `cteProducer.openProducer`'s trackers, which its storages attach to.
+    pub(crate) fn with_storage_parents(mut self, parents: tidb_cteutil::CteStorageParents) -> Self {
+        self.storage_parents = Some(parents);
+        self
+    }
 }
 
 /// Go `getCorColHashCode`: `codec.HashCode` of the bound value.
@@ -187,6 +198,7 @@ impl CteProducer {
             max_chunk_size,
             cor_cols,
             cor_col_hash_codes,
+            storage_parents: None,
         }
     }
 
@@ -236,6 +248,9 @@ impl CteProducer {
                     self.max_chunk_size,
                     self.context.statement_memory(),
                 );
+                if let Some(parents) = &self.storage_parents {
+                    iter_out = iter_out.with_parents(parents.clone());
+                }
                 iter_out.open_and_ref()?;
                 self.iter_out = Some(iter_out);
             }
@@ -332,11 +347,14 @@ impl CteProducer {
             if chunk.num_rows() == 0 {
                 break;
             }
-            let admitted = self.deduplicate(&chunk)?;
-            self.iter_in
-                .lock()
-                .unwrap()
-                .add_chunk(admitted.copy_construct_sel())?;
+            // Go `tryDedupAndAdd` then `resTbl.Add`: without DISTINCT both
+            // tables hold the chunk the seed returned.
+            let mut admitted = if self.is_distinct || chunk.sel().is_some() {
+                self.deduplicate(&chunk)?
+            } else {
+                chunk
+            };
+            self.iter_in.lock().unwrap().add_chunk(admitted.alias())?;
             self.result.lock().unwrap().add_chunk(admitted)?;
         }
         self.current_iteration += 1;
@@ -348,17 +366,22 @@ impl CteProducer {
     }
 
     fn finish_iteration(&mut self) -> Result<(), ExecError> {
-        let chunks = {
-            let output = self
-                .iter_out
-                .as_ref()
-                .ok_or_else(|| ExecError::internal("recursive CTE output storage is absent"))?;
-            (0..output.num_chunks())
-                .map(|index| Ok(output.get_chunk(index)?.copy_construct_sel()))
-                .collect::<Result<Vec<_>, ExecError>>()?
-        };
-
+        let num_chunks = self
+            .iter_out
+            .as_ref()
+            .ok_or_else(|| ExecError::internal("recursive CTE output storage is absent"))?
+            .num_chunks();
         if self.is_distinct {
+            // Go copies the chunks (`CopyConstruct`) before deduplicating.
+            let chunks = {
+                let output = self
+                    .iter_out
+                    .as_ref()
+                    .ok_or_else(|| ExecError::internal("recursive CTE output storage is absent"))?;
+                (0..num_chunks)
+                    .map(|index| Ok(output.get_chunk(index)?.copy_construct_sel()))
+                    .collect::<Result<Vec<_>, ExecError>>()?
+            };
             let mut admitted = Vec::with_capacity(chunks.len());
             for chunk in chunks {
                 let chunk = self.deduplicate(&chunk)?;
@@ -373,11 +396,15 @@ impl CteProducer {
                 self.iter_in.lock().unwrap().add_chunk(chunk)?;
             }
         } else {
-            for chunk in &chunks {
-                self.result
-                    .lock()
-                    .unwrap()
-                    .add_chunk(chunk.copy_construct_sel())?;
+            // Go `setupTblsForNewIteration`: `resTbl` adds the very chunks
+            // `iterOutTbl` holds.
+            let output = self
+                .iter_out
+                .as_ref()
+                .ok_or_else(|| ExecError::internal("recursive CTE output storage is absent"))?;
+            for index in 0..num_chunks {
+                let chunk = output.alias_chunk(index)?;
+                self.result.lock().unwrap().add_chunk(chunk)?;
             }
             self.iter_in.lock().unwrap().reopen()?;
             self.iter_in.lock().unwrap().swap_data(

@@ -818,19 +818,14 @@ pub mod label {
 ///   (`UpdateExec.updateRows`, `DeleteExec.deleteSingleTableByChunk`,
 ///   `InsertValues.insertRowsFromSelect`).
 ///
-/// A single-table UPDATE or DELETE streams its source and charges exactly
-/// Go's numbers through [`Self::consume_checked`]: each child chunk's
-/// `MemoryUsage` while it is held, and UPDATE's `updatedRowKeys` growth.
+/// Every write executor charges exactly Go's numbers through
+/// [`Self::consume_checked`]: the chunk it holds, the rows it stages and its
+/// row maps.
 ///
-/// [`Self::account_row`] / [`Self::account_rows`] remain for the writes that
-/// still materialize their source -- a multi-table UPDATE / DELETE, `INSERT`
-/// (and its `INSERT ... SELECT` source), a foreign-key cascade -- where the
-/// per-row number is what the process HOLDS: smaller per row than a Go chunk
-/// (which over-allocates to its capacity) and larger in total (every row read
-/// is still held). The quota has to bound what is held, so the byte at which
-/// such a statement crosses a given quota differs from Go's; only quotas far
-/// from the boundary -- what the suite sets, 244 and 81920 against a 1GiB
-/// default -- classify identically. The register's E03 and E02 track them.
+/// [`Self::account_row`] remains for a foreign-key cascade, which this tier
+/// runs without building Go's sub-statement executor (the register's E02):
+/// it charges each child row it holds, so a cascade past the quota stops
+/// before it repoints anything.
 #[derive(Clone)]
 pub struct WriteMemory {
     tracker: Arc<Tracker>,
@@ -846,19 +841,6 @@ impl WriteMemory {
     /// materializing all of it.
     pub fn account_row(&self, row: &[Datum]) -> Result<(), KillStop> {
         self.consume(estimated_mem_usage(row, 1));
-        self.memory.check()
-    }
-
-    /// Go `types.EstimatedMemUsage(rows[0], len(rows))`: the first row's
-    /// usage taken as every row's, which is how Go prices a staged row batch.
-    ///
-    /// An empty `rows` accounts nothing, as Go's `if len(rows) != 0` guard
-    /// does.
-    pub fn account_rows(&self, rows: &[Vec<Datum>]) -> Result<(), KillStop> {
-        let Some(first) = rows.first() else {
-            return Ok(());
-        };
-        self.consume(estimated_mem_usage(first, rows.len()));
         self.memory.check()
     }
 

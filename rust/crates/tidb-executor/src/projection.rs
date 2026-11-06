@@ -119,6 +119,10 @@ pub struct ProjectionExec<C: Columns> {
     /// A projection inside a reader's coprocessor plan, which Go runs in
     /// TiKV: an evaluation failure reaches TiDB as a coprocessor error.
     in_coprocessor: bool,
+    /// Go `memTracker` (`memory.NewTracker(e.ID(), -1)`): the chunks the
+    /// projection holds -- its child result, or its workers' input and
+    /// output chunks.
+    mem_tracker: Option<Arc<tidb_memory::Tracker>>,
 }
 
 impl<C: Columns> ProjectionExec<C> {
@@ -155,7 +159,26 @@ impl<C: Columns> ProjectionExec<C> {
             num_workers: 0,
             parallel: None,
             in_coprocessor: false,
+            mem_tracker: None,
         }
+    }
+
+    /// Go `ProjectionExec.memTracker`, attached to the statement tracker.
+    #[must_use]
+    pub fn with_mem_tracker(mut self, tracker: Arc<tidb_memory::Tracker>) -> Self {
+        self.mem_tracker = Some(tracker);
+        self
+    }
+
+    fn consume(&self, bytes: i64) {
+        if let Some(tracker) = &self.mem_tracker {
+            tracker.consume(bytes);
+        }
+    }
+
+    /// Go `isUnparallelExec`.
+    fn is_unparallel_exec(&self) -> bool {
+        self.num_workers == 0 || self.meta.ret_field_types().is_empty()
     }
 
     /// Marks a projection of a reader's coprocessor plan: its evaluation
@@ -188,6 +211,9 @@ impl<C: Columns> Drop for ProjectionExec<C> {
         // Rust callers can drop without an explicit Close. Retire evaluation
         // before field destruction can release the child or statement state.
         self.parallel.take();
+        if let Some(tracker) = &self.mem_tracker {
+            tracker.replace_bytes_used(0);
+        }
     }
 }
 
@@ -199,6 +225,13 @@ impl<C: Columns + Clone + Send + Sync + 'static> ProjectionExec<C> {
         let max_chunk_size = self.meta.max_chunk_size();
         req.grow_and_reset(max_chunk_size);
         if self.parallel.is_none() {
+            // Go `prepare`: one input and one output chunk per worker.
+            let num_workers = self.num_workers.max(1);
+            let free_inputs: Vec<Chunk> = (0..num_workers).map(|_| self.child.new_chunk()).collect();
+            let free_outputs: Vec<Chunk> = (0..num_workers).map(|_| self.meta.new_chunk()).collect();
+            self.consume(
+                free_inputs.iter().chain(&free_outputs).map(Chunk::memory_usage).sum(),
+            );
             let (result_tx, result_rx) = std::sync::mpsc::channel();
             self.parallel = Some(ParallelProjection {
                 workers: tidb_goruntime::worker_pool::TaskGroup::new(),
@@ -210,10 +243,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> ProjectionExec<C> {
                 result_rx,
                 reorder: BTreeMap::new(),
                 ready: VecDeque::new(),
-                free_inputs: Vec::new(),
-                free_outputs: Vec::new(),
-                inputs_allocated: 0,
-                outputs_allocated: 0,
+                free_inputs,
+                free_outputs,
+                inputs_allocated: num_workers,
+                outputs_allocated: num_workers,
                 next_seq: 0,
                 next_release: 0,
                 in_flight: 0,
@@ -228,9 +261,12 @@ impl<C: Columns + Clone + Send + Sync + 'static> ProjectionExec<C> {
                 .expect("the parallel projection is created above");
             if let Some(mut output) = pipeline.ready.pop_front() {
                 // Go `chk.SwapColumns(output.chk); e.fetcher.outputCh <- output`.
+                let m_size = output.memory_usage();
                 req.swap_columns(&mut output);
+                let delta = output.memory_usage() - m_size;
                 output.reset();
                 pipeline.free_outputs.push(output);
+                self.consume(delta);
                 return Ok(());
             }
             if !pipeline.child_done {
@@ -301,14 +337,21 @@ impl<C: Columns + Clone + Send + Sync + 'static> ProjectionExec<C> {
             isize::try_from(required_rows).unwrap_or(isize::MAX),
             max_chunk_size,
         );
-        self.child.next(&mut input)?;
+        let m_size = input.memory_usage();
+        let fetched = self.child.next(&mut input);
+        self.consume(input.memory_usage() - m_size);
+        if fetched.is_err() || input.num_rows() == 0 {
+            // Go's fetcher ends here, releasing the input it holds.
+            self.consume(-input.memory_usage());
+        }
+        fetched?;
+        let tracker = self.mem_tracker.clone();
         let pipeline = self
             .parallel
             .as_mut()
             .expect("the parallel projection is created before a fetch");
         if input.num_rows() == 0 {
             pipeline.child_done = true;
-            pipeline.free_inputs.push(input);
             pipeline.free_outputs.push(output);
             return Ok(());
         }
@@ -322,10 +365,14 @@ impl<C: Columns + Clone + Send + Sync + 'static> ProjectionExec<C> {
             let mut output = output;
             let result = tidb_driver_error::panic_recovery::recover_worker_panic(|| {
                 let suite = EvaluatorSuite::from_program(Arc::clone(&shared.program));
-                suite
-                    .run(&shared.ctx, &mut input, &mut output)
-                    .map(|()| (input, output))
-                    .map_err(Self::evaluator_error)
+                // Go `projectionWorker.run`'s charge of what the evaluation
+                // grew.
+                let m_size = output.memory_usage() + input.memory_usage();
+                let ran = suite.run(&shared.ctx, &mut input, &mut output);
+                if let Some(tracker) = &tracker {
+                    tracker.consume(output.memory_usage() + input.memory_usage() - m_size);
+                }
+                ran.map(|()| (input, output)).map_err(Self::evaluator_error)
             });
             let _ = result_tx.send((seq, result));
         });
@@ -367,6 +414,10 @@ impl<C: ProjectionContext> Executor for ProjectionExec<C> {
         self.parallel = None;
         self.child.open()?;
         self.child_chunk.reset();
+        // Go `open`: the serial path's child result is charged as it stands.
+        if self.is_unparallel_exec() {
+            self.consume(self.child_chunk.memory_usage());
+        }
         Ok(())
     }
 
@@ -374,7 +425,7 @@ impl<C: ProjectionContext> Executor for ProjectionExec<C> {
         // Go `isUnparallelExec`: `numWorkers <= 0` runs on the caller. A
         // zero-column projection carries only a virtual row count, which the
         // serial path below preserves.
-        if self.num_workers > 0 && !self.meta.ret_field_types().is_empty() {
+        if !self.is_unparallel_exec() {
             if let Some(result) = C::parallel_next_bridge(self, req) {
                 return result;
             }
@@ -387,7 +438,10 @@ impl<C: ProjectionContext> Executor for ProjectionExec<C> {
         let required_rows = isize::try_from(req.required_rows()).unwrap_or(isize::MAX);
         self.child_chunk
             .set_required_rows(required_rows, max_chunk_size);
-        self.child.next(&mut self.child_chunk)?;
+        let m_size = self.child_chunk.memory_usage();
+        let fetched = self.child.next(&mut self.child_chunk);
+        self.consume(self.child_chunk.memory_usage() - m_size);
+        fetched?;
         let child_rows = self.child_chunk.num_rows();
         if child_rows == 0 {
             return Ok(());
@@ -416,7 +470,11 @@ impl<C: ProjectionContext> Executor for ProjectionExec<C> {
     fn close(&mut self) -> Result<(), ExecError> {
         // Go closes finishCh, waits for workers, drains their resources, then
         // closes the child. The task owner enforces that order even on error.
+        // Releasing every chunk still held leaves the tracker at zero.
         self.parallel = None;
+        if let Some(tracker) = &self.mem_tracker {
+            tracker.replace_bytes_used(0);
+        }
         self.child.close()
     }
 

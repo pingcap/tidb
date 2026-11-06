@@ -1994,29 +1994,7 @@ fn physical_explain_operator(
             .collect(),
     };
 
-    let labels = match plan {
-        PhysicalPlan::HashJoin(join) => {
-            let build = if join.use_outer_to_build {
-                1usize.saturating_sub(join.inner_child_idx)
-            } else {
-                join.inner_child_idx
-            };
-            Some(build)
-        }
-        PhysicalPlan::Apply(apply) => Some(1usize.saturating_sub(apply.hash_join.inner_child_idx)),
-        PhysicalPlan::IndexJoin(join) => Some(1usize.saturating_sub(join.inner_child_idx)),
-        PhysicalPlan::MergeJoin(join) => Some(
-            if join.join_type == tidb_planner_core_base::LogicalJoinType::RightOuter {
-                0
-            } else {
-                1
-            },
-        ),
-        // Go `flat_plan.go`: the index subtree builds, the cloned table scan
-        // probes.
-        PhysicalPlan::LocalIndexLookUp(_) => Some(0),
-        _ => None,
-    };
+    let labels = build_child_index(plan);
     let mut build_side_swapped = false;
     if let Some(build) = labels.filter(|_| children.len() == 2) {
         children[build].label = "(Build)".to_owned();
@@ -2119,6 +2097,9 @@ fn physical_explain_operator(
     operator
 }
 
+/// Go `explainPlanInRowFormatCTE`: the CTE definitions, in the order the
+/// plan's CTE readers are met while it is rendered (`e.ctes`), each once,
+/// followed by any CTE its own seed or recursive part reads.
 fn cte_definitions(
     costs: Option<&Ver2Coster>,
     eval_ctx: &dyn tidb_exprctx::Columns,
@@ -2131,184 +2112,152 @@ fn cte_definitions(
     out: &mut Vec<ExplainOperator>,
     ignore_explain_id_suffix: bool,
 ) {
-    if let PhysicalPlan::CTE(cte) = plan {
-        if seen.insert(cte.id_for_storage) {
-            let mut children = vec![physical_explain_operator(
-                costs,
-                eval_ctx,
-                statement_context,
-                brief_binary,
-                &cte.seed_plan,
-                catalog,
-                ExplainTask::Root,
-                "(Seed Part)",
-                runtime,
-                ignore_explain_id_suffix,
-                None,
-                1.0,
-            )];
-            if let Some(recursive) = cte.recursive_plan.as_deref() {
-                children.push(physical_explain_operator(
-                    costs,
-                    eval_ctx,
-                    statement_context,
-                    brief_binary,
-                    recursive,
-                    catalog,
-                    ExplainTask::Root,
-                    "(Recursive Part)",
-                    runtime,
-                    ignore_explain_id_suffix,
-                    None,
-                    1.0,
-                ));
-            }
-            let mut definition = ExplainOperator::new("CTE", cte.id_for_storage)
-                .with_fixed_id(format!("CTE_{}", cte.id_for_storage))
-                .with_operator_info(if cte.recursive_plan.is_some() {
-                    "Recursive CTE"
-                } else {
-                    "Non-Recursive CTE"
-                })
-                .with_children(children);
-            definition.estimated_rows = plan
-                .stats_info()
-                .map(tidb_planner_property::stats_info::StatsInfo::row_count);
-            out.push(definition);
+    let mut ctes = Vec::new();
+    collect_ctes(plan, &mut ctes);
+    let mut next = 0;
+    while let Some(&plan) = ctes.get(next) {
+        next += 1;
+        let PhysicalPlan::CTE(cte) = plan else {
+            continue;
+        };
+        if !seen.insert(cte.id_for_storage) {
+            continue;
         }
-        cte_definitions(
+        let mut children = vec![physical_explain_operator(
             costs,
             eval_ctx,
             statement_context,
             brief_binary,
             &cte.seed_plan,
             catalog,
+            ExplainTask::Root,
+            "(Seed Part)",
             runtime,
-            seen,
-            out,
             ignore_explain_id_suffix,
-        );
+            None,
+            1.0,
+        )];
+        collect_ctes(&cte.seed_plan, &mut ctes);
         if let Some(recursive) = cte.recursive_plan.as_deref() {
-            cte_definitions(
+            children.push(physical_explain_operator(
                 costs,
                 eval_ctx,
                 statement_context,
                 brief_binary,
                 recursive,
                 catalog,
+                ExplainTask::Root,
+                "(Recursive Part)",
                 runtime,
-                seen,
-                out,
                 ignore_explain_id_suffix,
-            );
+                None,
+                1.0,
+            ));
+            collect_ctes(recursive, &mut ctes);
         }
+        let mut definition = ExplainOperator::new("CTE", cte.id_for_storage)
+            .with_fixed_id(format!("CTE_{}", cte.id_for_storage))
+            .with_operator_info(if cte.recursive_plan.is_some() {
+                "Recursive CTE"
+            } else {
+                "Non-Recursive CTE"
+            })
+            .with_children(children);
+        definition.estimated_rows = plan
+            .stats_info()
+            .map(tidb_planner_property::stats_info::StatsInfo::row_count);
+        // Go renders the definition from the first reader met
+        // (`CTEDefinition(*p)`), so it reports that plan's runtime: its
+        // rows, execution info, memory and disk.
+        if runtime.is_some() {
+            let scan = physical_explain_operator(
+                costs,
+                eval_ctx,
+                statement_context,
+                brief_binary,
+                plan,
+                catalog,
+                ExplainTask::Root,
+                "",
+                runtime,
+                ignore_explain_id_suffix,
+                None,
+                1.0,
+            );
+            definition.actual_rows = scan.actual_rows;
+            definition.execution_info = scan.execution_info;
+            definition.memory_info = scan.memory_info;
+            definition.disk_info = scan.disk_info;
+        }
+        out.push(definition);
     }
-    for child in plan.children() {
-        cte_definitions(
-            costs,
-            eval_ctx,
-            statement_context,
-            brief_binary,
-            child,
-            catalog,
-            runtime,
-            seen,
-            out,
-            ignore_explain_id_suffix,
-        );
+}
+
+/// The CTE readers of `plan`, in the order Go's row-format explain renders
+/// them: a join's build side before its probe side, a reader's index plan
+/// before its table plan. A CTE's own parts are not entered.
+fn collect_ctes<'a>(plan: &'a PhysicalPlan, out: &mut Vec<&'a PhysicalPlan>) {
+    if matches!(plan, PhysicalPlan::CTE(_)) {
+        out.push(plan);
+    }
+    let mut children: Vec<&PhysicalPlan> = plan.children().iter().collect();
+    if children.len() == 2 && build_child_index(plan) == Some(1) {
+        children.swap(0, 1);
+    }
+    for child in children {
+        collect_ctes(child, out);
     }
     match plan {
-        PhysicalPlan::ShuffleReceiver(receiver) => cte_definitions(
-            costs,
-            eval_ctx,
-            statement_context,
-            brief_binary,
-            &receiver.data_source,
-            catalog,
-            runtime,
-            seen,
-            out,
-            ignore_explain_id_suffix,
-        ),
+        PhysicalPlan::ShuffleReceiver(receiver) => collect_ctes(&receiver.data_source, out),
         PhysicalPlan::TableReader(reader) => {
             if let Some(child) = reader.table_plan.as_deref() {
-                cte_definitions(
-                    costs,
-                    eval_ctx,
-                    statement_context,
-                    brief_binary,
-                    child,
-                    catalog,
-                    runtime,
-                    seen,
-                    out,
-                    ignore_explain_id_suffix,
-                );
+                collect_ctes(child, out);
             }
         }
         PhysicalPlan::IndexReader(reader) => {
             if let Some(child) = reader.index_plan.as_deref() {
-                cte_definitions(
-                    costs,
-                    eval_ctx,
-                    statement_context,
-                    brief_binary,
-                    child,
-                    catalog,
-                    runtime,
-                    seen,
-                    out,
-                    ignore_explain_id_suffix,
-                );
+                collect_ctes(child, out);
             }
         }
         PhysicalPlan::IndexLookUpReader(reader) => {
             if let Some(child) = reader.index_plan.as_deref() {
-                cte_definitions(
-                    costs,
-                    eval_ctx,
-                    statement_context,
-                    brief_binary,
-                    child,
-                    catalog,
-                    runtime,
-                    seen,
-                    out,
-                    ignore_explain_id_suffix,
-                );
+                collect_ctes(child, out);
             }
             if let Some(child) = reader.table_plan.as_deref() {
-                cte_definitions(
-                    costs,
-                    eval_ctx,
-                    statement_context,
-                    brief_binary,
-                    child,
-                    catalog,
-                    runtime,
-                    seen,
-                    out,
-                    ignore_explain_id_suffix,
-                );
+                collect_ctes(child, out);
             }
         }
         PhysicalPlan::Dml(root) => {
             if let Some(child) = root.select_plan.as_deref() {
-                cte_definitions(
-                    costs,
-                    eval_ctx,
-                    statement_context,
-                    brief_binary,
-                    child,
-                    catalog,
-                    runtime,
-                    seen,
-                    out,
-                    ignore_explain_id_suffix,
-                );
+                collect_ctes(child, out);
             }
         }
         _ => {}
+    }
+}
+
+/// Which child of a two-child operator renders as `(Build)` (Go
+/// `flat_plan.go` / `explainPlanInRowFormat`).
+fn build_child_index(plan: &PhysicalPlan) -> Option<usize> {
+    match plan {
+        PhysicalPlan::HashJoin(join) => Some(if join.use_outer_to_build {
+            1usize.saturating_sub(join.inner_child_idx)
+        } else {
+            join.inner_child_idx
+        }),
+        PhysicalPlan::Apply(apply) => Some(1usize.saturating_sub(apply.hash_join.inner_child_idx)),
+        PhysicalPlan::IndexJoin(join) => Some(1usize.saturating_sub(join.inner_child_idx)),
+        PhysicalPlan::MergeJoin(join) => Some(
+            if join.join_type == tidb_planner_core_base::LogicalJoinType::RightOuter {
+                0
+            } else {
+                1
+            },
+        ),
+        // Go `flat_plan.go`: the index subtree builds, the cloned table scan
+        // probes.
+        PhysicalPlan::LocalIndexLookUp(_) => Some(0),
+        _ => None,
     }
 }
 

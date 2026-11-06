@@ -42,11 +42,10 @@ fn cte_storage_obeys_the_session_spill_policy_and_quota() {
     );
     let mut session = Session::new();
     session.set_spill_storage(Arc::clone(&storage));
-    // Keep the quota below even one stored chunk. Go's own CTE spill test
-    // forces the spill action rather than depending on allocator-size
-    // accidents; a one-byte quota gives this integration boundary the same
-    // deterministic trigger without a failpoint.
-    session.run("SET @@tidb_mem_quota_query = 1").unwrap();
+    // `./gorun` on this branch: at 2000 bytes the CTE spills and answers 128
+    // with temporary storage on, and is 8175 with it off. (At one byte Go
+    // cancels either way: the projections' chunks alone exceed it.)
+    session.run("SET @@tidb_mem_quota_query = 2000").unwrap();
     session
         .run("SET @@global.tidb_enable_tmp_storage_on_oom = 1")
         .unwrap();

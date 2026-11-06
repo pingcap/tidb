@@ -30,20 +30,37 @@ use tidb_memory::{ArcAction, Tracker, LABEL_FOR_CTE_STORAGE};
 use tidb_driver_error::ExecError;
 use tidb_variable::mem_quota::StatementMemory;
 
+/// Go `setupCTEStorageTracker`'s parents: the CTE producer's memory and disk
+/// trackers, labelled with the plan that builds it.
+pub type CteStorageParents = (Arc<Tracker>, Arc<Tracker>);
+
 /// One open row-container and the accounting authority that owns it.
 struct CteData {
     rows: RowContainer,
     memory: StatementMemory,
     mem_parent: Arc<Tracker>,
     disk_parent: Arc<Tracker>,
+    /// Whether the parents are this storage's own (no producer gave any).
+    owns_parents: bool,
     registered_action: Option<ArcAction>,
 }
 
 impl CteData {
-    fn new(field_types: Vec<FieldType>, chunk_size: usize, memory: StatementMemory) -> Self {
+    fn new(
+        field_types: Vec<FieldType>,
+        chunk_size: usize,
+        memory: StatementMemory,
+        parents: Option<&CteStorageParents>,
+    ) -> Self {
         let chunk_size = chunk_size.max(1);
-        let mem_parent = memory.operator_tracker(LABEL_FOR_CTE_STORAGE);
-        let disk_parent = memory.operator_disk_tracker(LABEL_FOR_CTE_STORAGE);
+        let (mem_parent, disk_parent, owns_parents) = match parents {
+            Some((mem, disk)) => (Arc::clone(mem), Arc::clone(disk), false),
+            None => (
+                memory.operator_tracker(LABEL_FOR_CTE_STORAGE),
+                memory.operator_disk_tracker(LABEL_FOR_CTE_STORAGE),
+                true,
+            ),
+        };
         let mut rows = RowContainer::new(&field_types, chunk_size, memory.spill_storage());
         rows.mem_tracker().set_label(LABEL_FOR_CTE_STORAGE);
         rows.mem_tracker().attach_to(&mem_parent);
@@ -65,6 +82,7 @@ impl CteData {
             memory,
             mem_parent,
             disk_parent,
+            owns_parents,
             registered_action,
         }
     }
@@ -76,8 +94,14 @@ impl CteData {
                 .unbind_action_from_hard_limit(&action);
         }
         self.rows.close();
-        self.mem_parent.detach();
-        self.disk_parent.detach();
+        if self.owns_parents {
+            self.mem_parent.detach();
+            self.disk_parent.detach();
+        } else {
+            // The producer's trackers outlive this storage.
+            self.rows.mem_tracker().detach();
+            self.rows.disk_tracker().detach();
+        }
     }
 }
 
@@ -92,6 +116,7 @@ pub struct CteStorage {
     field_types: Vec<FieldType>,
     chunk_size: usize,
     memory: StatementMemory,
+    parents: Option<CteStorageParents>,
     data: Option<CteData>,
     ref_count: isize,
     done: bool,
@@ -125,12 +150,21 @@ impl CteStorage {
             field_types,
             chunk_size,
             memory,
+            parents: None,
             data: None,
             ref_count: 0,
             done: false,
             error: None,
             iter: 0,
         }
+    }
+
+    /// Go `setupCTEStorageTracker(tbl, ctx, p.memTracker, p.diskTracker)`:
+    /// the storage's trackers attach to the producer's.
+    #[must_use]
+    pub fn with_parents(mut self, parents: CteStorageParents) -> Self {
+        self.parents = Some(parents);
+        self
     }
 
     /// Opens the underlying row container on the first reference, then
@@ -141,6 +175,7 @@ impl CteStorage {
                 self.field_types.clone(),
                 self.chunk_size,
                 self.memory.clone(),
+                self.parents.as_ref(),
             ));
             self.ref_count = 1;
             self.iter = 0;
@@ -201,6 +236,7 @@ impl CteStorage {
             self.field_types.clone(),
             self.chunk_size,
             self.memory.clone(),
+            self.parents.as_ref(),
         );
         self.data = Some(replacement);
         self.done = false;
@@ -223,6 +259,14 @@ impl CteStorage {
         self.data()?
             .rows
             .get_chunk(index)
+            .map_err(|error| ExecError::SpillFailed(error.to_string()))
+    }
+
+    /// Go `GetChunk`'s same `*Chunk` ([`RowContainer::alias_chunk`]).
+    pub fn alias_chunk(&self, index: usize) -> Result<Chunk, ExecError> {
+        self.data()?
+            .rows
+            .alias_chunk(index)
             .map_err(|error| ExecError::SpillFailed(error.to_string()))
     }
 

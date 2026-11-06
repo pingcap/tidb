@@ -1019,6 +1019,21 @@ impl Chunk {
         self.num_virtual_rows = num_rows;
     }
 
+    /// A chunk sharing this chunk's columns: Go handing one `*Chunk` to two
+    /// holders (a CTE producer adds the same chunk to its result and
+    /// iteration tables). Each sees the same data and charges its capacity.
+    pub fn alias(&mut self) -> Chunk {
+        Chunk {
+            sel: self.sel.clone(),
+            columns: self.columns.iter_mut().map(ColumnSlot::alias).collect(),
+            columns_initialized: self.columns_initialized,
+            num_virtual_rows: self.num_virtual_rows,
+            capacity: self.capacity,
+            required_rows: self.required_rows,
+            in_complete_chunk: self.in_complete_chunk,
+        }
+    }
+
     /// Go `CopyConstructSel`.
     pub fn copy_construct_sel(&self) -> Chunk {
         let Some(selection) = &self.sel else {
