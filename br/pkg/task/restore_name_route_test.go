@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/restore/nameroute"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -834,6 +835,34 @@ func TestRestoreConfigNameRoutingValidationAndHash(t *testing.T) {
 		require.NoError(t, err)
 		legacyHash := sha256.Sum256(legacyJSON)
 		require.Equal(t, legacyHash[:], actual)
+	})
+
+	t.Run("repo snapshot and canonical routes both affect config hash", func(t *testing.T) {
+		cfg := RestoreConfig{
+			Layout:   repo.LayoutRepo,
+			BackupID: repo.BackupID(1),
+			Rename:   []string{"source_b:target_b", "source_a:target_a"},
+		}
+		originalHash, err := cfg.Hash(FullRestoreCmd)
+		require.NoError(t, err)
+
+		reordered := cfg
+		reordered.Rename = []string{"source_a:target_a", "source_b:target_b"}
+		reorderedHash, err := reordered.Hash(FullRestoreCmd)
+		require.NoError(t, err)
+		require.Equal(t, originalHash, reorderedHash)
+
+		otherSnapshot := cfg
+		otherSnapshot.BackupID = repo.BackupID(2)
+		otherSnapshotHash, err := otherSnapshot.Hash(FullRestoreCmd)
+		require.NoError(t, err)
+		require.NotEqual(t, originalHash, otherSnapshotHash)
+
+		otherRoute := cfg
+		otherRoute.Rename = []string{"source_a:target_a", "source_b:other_target"}
+		otherRouteHash, err := otherRoute.Hash(FullRestoreCmd)
+		require.NoError(t, err)
+		require.NotEqual(t, originalHash, otherRouteHash)
 	})
 
 	t.Run("partial restore covers filter and rename", func(t *testing.T) {
