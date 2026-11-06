@@ -159,3 +159,49 @@ func (*tableInfoGetterImpl) TableItemByID(is infoschema.InfoSchema, id int64) (i
 	}
 	return is.TableItemByPartitionID(id)
 }
+
+// SnapshotTableInfoGetter gets the table of a physical ID in one InfoSchema snapshot.
+// On InfoSchema V1, each partition lookup scans all tables, so it builds a partition map
+// on first use instead. It is not safe for concurrent use. It is not shared between callers
+// like the cache in TableInfoGetter, because callers on different schema versions rebuild a shared map.
+type SnapshotTableInfoGetter struct {
+	is      infoschema.InfoSchema
+	pid2tid map[int64]int64
+	isV2    bool
+}
+
+// NewSnapshotTableInfoGetter creates a SnapshotTableInfoGetter for the InfoSchema snapshot.
+func NewSnapshotTableInfoGetter(is infoschema.InfoSchema) *SnapshotTableInfoGetter {
+	// Session contexts wrap the InfoSchema, and IsV2 does not see through the wrapper.
+	// Without the unwrap, V2 would build the partition map instead of using its own index.
+	raw := is
+	if ext, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
+		raw = ext.InfoSchema
+	}
+	isV2, _ := infoschema.IsV2(raw)
+	return &SnapshotTableInfoGetter{is: is, isV2: isV2}
+}
+
+// ParentTableID returns the parent table ID if the physicalID is a partition.
+func (g *SnapshotTableInfoGetter) ParentTableID(physicalID int64) (tableID int64, isPartition bool) {
+	if g.isV2 {
+		return g.is.TableIDByPartitionID(physicalID)
+	}
+	if g.pid2tid == nil {
+		g.pid2tid = buildPartitionID2TableID(g.is)
+	}
+	tableID, isPartition = g.pid2tid[physicalID]
+	return tableID, isPartition
+}
+
+// TableItemByID returns the table item of the physicalID.
+// If the physicalID is a partition, it returns the item of the parent table.
+func (g *SnapshotTableInfoGetter) TableItemByID(physicalID int64) (infoschema.TableItem, bool) {
+	if item, ok := g.is.TableItemByID(physicalID); ok {
+		return item, true
+	}
+	if tableID, ok := g.ParentTableID(physicalID); ok {
+		return g.is.TableItemByID(tableID)
+	}
+	return infoschema.TableItem{}, false
+}

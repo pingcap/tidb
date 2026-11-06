@@ -65,8 +65,8 @@ type TimeCostRecorderForTest interface {
 // 2. If forceDump is true, then return true.
 // 3. If the stats delta haven't been dumped in the past hour, then return true.
 // 4. If the table stats is pseudo or empty or `Modify Count / Table Count` exceeds the threshold.
-func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, forceDump bool, id int64, item variable.TableDelta, currentTime time.Time) bool {
-	tableItem, ok := s.statsHandle.TableItemByID(is, id)
+func (s *statsUsageImpl) needDumpStatsDelta(snapshotTableInfoGetter *utilstats.SnapshotTableInfoGetter, forceDump bool, id int64, item variable.TableDelta, currentTime time.Time) bool {
+	tableItem, ok := snapshotTableInfoGetter.TableItemByID(id)
 	if !ok {
 		return false
 	}
@@ -134,6 +134,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) e
 		batchStart := time.Now()
 		err := utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 			is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
+			snapshotTableInfoGetter := utilstats.NewSnapshotTableInfoGetter(is)
 			batchUpdates = make([]*storage.DeltaUpdate, 0, len(batchTableIDs))
 			// Collect all updates in the batch.
 			for _, id := range batchTableIDs {
@@ -143,7 +144,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) e
 					item.InitTime = batchStart
 					deltaMap[id] = item
 				}
-				needDump := s.needDumpStatsDelta(is, forceDump, id, item, batchStart)
+				needDump := s.needDumpStatsDelta(snapshotTableInfoGetter, forceDump, id, item, batchStart)
 				if !needDump {
 					continue
 				}
@@ -162,7 +163,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) e
 			// Process all updates in the batch with a single transaction.
 			// Note: batchUpdates may be modified in dumpStatsDeltaToKV. (e.g. sorting, updating IsLocked)
 			failpoint.InjectCall("beforeDumpStatsDeltaToKV")
-			startTs, updated, err := s.dumpStatsDeltaToKV(is, sctx, batchUpdates)
+			startTs, updated, err := s.dumpStatsDeltaToKV(snapshotTableInfoGetter, sctx, batchUpdates)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -255,7 +256,7 @@ func collectPendingStatsDeltaTableIDs(deltaMap map[int64]variable.TableDelta, ta
 // 2. Stashes lock information:
 //   - Records lock information for each table or partition.
 func (s *statsUsageImpl) dumpStatsDeltaToKV(
-	is infoschema.InfoSchema,
+	snapshotTableInfoGetter *utilstats.SnapshotTableInfoGetter,
 	sctx sessionctx.Context,
 	updates []*storage.DeltaUpdate,
 ) (statsVersion uint64, updated []*storage.DeltaUpdate, err error) {
@@ -278,7 +279,7 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 		// Add psychical table ID.
 		allTableIDs = append(allTableIDs, update.TableID)
 		// Add parent table ID if it's a partition table.
-		if tblID, ok := is.TableIDByPartitionID(update.TableID); ok {
+		if tblID, ok := snapshotTableInfoGetter.ParentTableID(update.TableID); ok {
 			allTableIDs = append(allTableIDs, tblID)
 		}
 	}
@@ -296,7 +297,7 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 			continue
 		}
 
-		tableID, ok := is.TableIDByPartitionID(update.TableID)
+		tableID, ok := snapshotTableInfoGetter.ParentTableID(update.TableID)
 		if ok { // It's a partition table.
 			isTableLocked := false
 			isPartitionLocked := false

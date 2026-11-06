@@ -44,6 +44,11 @@ func (is partitionItemLookupForbiddenInfoSchema) TableItemByPartitionID(partitio
 	return infoschema.TableItem{}, false
 }
 
+func (is partitionItemLookupForbiddenInfoSchema) TableIDByPartitionID(partitionID int64) (int64, bool) {
+	is.t.Fatalf("TableIDByPartitionID should not be called for partition ID %d", partitionID)
+	return 0, false
+}
+
 func TestIsSpecialGlobalIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -282,6 +287,23 @@ func TestTableItemByIDForInitStatsAvoidsV1PartitionScan(t *testing.T) {
 	require.Equal(t, "partitioned", item.TableName.L)
 
 	_, ok = getter.TableItemByIDForInitStats(is, 1<<60)
+	require.False(t, ok)
+
+	snapshotGetter := util.NewSnapshotTableInfoGetter(is)
+	item, ok = snapshotGetter.TableItemByID(normalInfo.ID)
+	require.True(t, ok)
+	require.Equal(t, "normal", item.TableName.L)
+	item, ok = snapshotGetter.TableItemByID(partitionID)
+	require.True(t, ok)
+	require.Equal(t, "partitioned", item.TableName.L)
+	_, ok = snapshotGetter.TableItemByID(1 << 60)
+	require.False(t, ok)
+	_, ok = snapshotGetter.ParentTableID(normalInfo.ID)
+	require.False(t, ok)
+	tableID, ok := snapshotGetter.ParentTableID(partitionID)
+	require.True(t, ok)
+	require.Equal(t, partitionedInfo.ID, tableID)
+	_, ok = snapshotGetter.ParentTableID(1 << 60)
 	require.False(t, ok)
 }
 
