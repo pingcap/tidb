@@ -1,0 +1,17 @@
+use test;
+drop table if exists shrink_multibyte;
+create table shrink_multibyte (s varchar(3000) character set utf8mb4);
+insert into shrink_multibyte values (repeat('中',1007));
+alter table shrink_multibyte modify column s varchar(2000) character set utf8mb4;
+select char_length(s),length(s) from shrink_multibyte;
+char_length(s)	length(s)
+1007	3021
+drop table shrink_multibyte;
+create table shrink_multibyte (s varchar(10) character set utf8mb4);
+insert into shrink_multibyte values ('中文甲乙');
+alter table shrink_multibyte modify column s varchar(3) character set utf8mb4;
+Error 1265 (01000): Data truncated for column 's', value is '中文甲乙'
+select s,char_length(s) from shrink_multibyte;
+s	char_length(s)
+中文甲乙	4
+drop table shrink_multibyte;
