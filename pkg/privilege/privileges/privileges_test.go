@@ -2939,6 +2939,18 @@ func TestColumnPrivilege4PreparePlanCache(t *testing.T) {
 	tk.MustExec("GRANT SELECT(a) ON test.t1 TO 'testuser'@'localhost';")
 	userTk.MustQuery(`EXECUTE stmt1`)
 	userTk.MustQuery(`SELECT @@last_plan_from_cache;`).Check(testkit.Rows("1"))
+
+	// The privileges required by a cached plan follow schema changes made
+	// after PREPARE: `*` now also reads the new column c.
+	userTk.MustExec("PREPARE stmt2 FROM 'SELECT * FROM test.t WHERE a > 0'")
+	userTk.MustQuery(`EXECUTE stmt2`)
+	tk.MustExec("ALTER TABLE test.t ADD COLUMN c INT")
+	tk.MustExec("GRANT SELECT(c) ON test.t TO 'testuser'@'localhost';")
+	userTk.MustQuery(`EXECUTE stmt2`)
+	userTk.MustQuery(`EXECUTE stmt2`)
+	userTk.MustQuery(`SELECT @@last_plan_from_cache;`).Check(testkit.Rows("1"))
+	tk.MustExec("REVOKE SELECT(c) ON test.t FROM 'testuser'@'localhost';")
+	userTk.MustGetErrCode(`EXECUTE stmt2`, mysql.ErrTableaccessDenied)
 }
 
 func TestColumnPrivilege4Views(t *testing.T) {

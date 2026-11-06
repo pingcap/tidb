@@ -155,6 +155,14 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		if err != nil {
 			return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
+		// The privileges required by the statement depend on the schema, e.g.
+		// `SELECT *` reads the columns added after PREPARE, and cached plans
+		// are checked against stmt.VisitInfos, so collect them again.
+		visitInfos, err := collectVisitInfos(ctx, sctx, is, nodeW)
+		if err != nil {
+			return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
+		}
+		stmt.VisitInfos = visitInfos
 		stmt.ResolveCtx = nodeW.GetResolveContext()
 		stmt.SchemaVersion = is.SchemaMetaVersion()
 	}
@@ -365,6 +373,21 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err
+}
+
+// collectVisitInfos builds the logical plan of a statement only to collect
+// the privileges it requires. Warnings raised while building are discarded,
+// since the statement is built again to generate its plan.
+func collectVisitInfos(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, nodeW *resolve.NodeW) ([]visitInfo, error) {
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	warnings := stmtCtx.GetWarnings()
+	defer stmtCtx.SetWarnings(warnings)
+	builder, savedBlockNames := NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	defer sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&savedBlockNames)
+	if _, err := builder.Build(ctx, nodeW); err != nil {
+		return nil, err
+	}
+	return builder.GetVisitInfo(), nil
 }
 
 // checkPreparedPriv checks the privilege of the prepared statement
