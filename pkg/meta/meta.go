@@ -891,12 +891,14 @@ func (m *Mutator) getTableVersion(key []byte) (int, error) {
 
 // CreateMySQLDatabaseIfNotExists creates mysql schema and return its DB ID.
 func (m *Mutator) CreateMySQLDatabaseIfNotExists() (int64, error) {
-	if kerneltype.IsNextGen() {
-		return metadef.SystemDatabaseID, m.CreateSysDatabaseByIDIfNotExists(mysql.SystemDB, metadef.SystemDatabaseID)
-	}
+	// A keyspace bootstrapped by Classic retains its mysql database ID after
+	// switching to a NextGen binary.
 	id, err := m.GetSystemDBID()
 	if id != 0 || err != nil {
 		return id, err
+	}
+	if kerneltype.IsNextGen() {
+		return metadef.SystemDatabaseID, m.CreateSysDatabaseByIDIfNotExists(mysql.SystemDB, metadef.SystemDatabaseID)
 	}
 
 	id, err = m.GenGlobalID()
@@ -934,6 +936,29 @@ func (m *Mutator) CreateSysDatabaseByID(name string, id int64) error {
 
 // GetSystemDBID gets the system DB ID. return (0, nil) indicates that the system DB does not exist.
 func (m *Mutator) GetSystemDBID() (int64, error) {
+	if kerneltype.IsNextGen() {
+		db, err := m.GetDatabase(metadef.SystemDatabaseID)
+		if err != nil {
+			return 0, err
+		}
+		if db != nil && db.Name.L == mysql.SystemDB {
+			return db.ID, nil
+		}
+		// Existing Starter tier cluster are bootstrapped with legacy ID.
+		// Since MySQL database is created early, we bound the check to the first
+		// ten database IDs.
+		for id := int64(1); id <= 10; id++ {
+			db, err := m.GetDatabase(id)
+			if err != nil {
+				return 0, err
+			}
+			if db != nil && db.Name.L == mysql.SystemDB {
+				return db.ID, nil
+			}
+		}
+		return 0, nil
+	}
+
 	dbs, err := m.ListDatabases()
 	if err != nil {
 		return 0, err
@@ -2080,6 +2105,20 @@ func (m *Mutator) GetStarterBootstrapVersion() (int64, error) {
 func (m *Mutator) FinishStarterBootstrap(version int64) error {
 	err := m.txn.Set(mStarterBootstrapKey, []byte(strconv.FormatInt(version, 10)))
 	return errors.Trace(err)
+}
+
+// IsLegacyNextGen implements Reader.
+func (m *Mutator) IsLegacyNextGen() (bool, error) {
+	if kerneltype.IsClassic() {
+		return false, nil
+	}
+	// Initial system-schema bootstrap precedes schema loading, so checking for
+	// the reserved mysql database distinguishes native and Classic layouts.
+	db, err := m.GetDatabase(metadef.SystemDatabaseID)
+	if err != nil {
+		return false, err
+	}
+	return db == nil, nil
 }
 
 // ElementKeyType is a key type of the element.

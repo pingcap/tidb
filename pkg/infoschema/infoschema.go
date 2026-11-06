@@ -27,6 +27,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -331,6 +332,25 @@ func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
 		return nil, false
 	}
 	return is.schemaByName(name)
+}
+
+// IsSystemTableInNextGen identifies system tables by reserved ID in native NextGen
+// keyspaces, or by loaded built-in names in Classic-bootstrapped NextGen keyspaces.
+// It does not access storage.
+func IsSystemTableInNextGen(is InfoSchema, isLegacyNextGen bool, id int64) bool {
+	if kerneltype.IsClassic() {
+		return false
+	}
+	if isLegacyNextGen {
+		// Current cross-keyspace DXF, statistics and import tables already exist
+		// in the TiDB 8.5 baseline used by legacy NextGen. Newly created built-ins
+		// may not yet be in this InfoSchema. The cross-keyspace loader resolves
+		// those IDs from snapshot metadata before applying diffs, so they can
+		// participate in MDL once loaded.
+		tbl, ok := is.TableItemByID(id)
+		return ok && metadef.IsBuiltinSystemTable(tbl.DBName.L, tbl.TableName.L)
+	}
+	return metadef.IsReservedID(id)
 }
 
 // SchemaByTable get a table's schema name

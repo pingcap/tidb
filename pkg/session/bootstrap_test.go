@@ -53,16 +53,23 @@ import (
 )
 
 func TestMySQLDBTables(t *testing.T) {
+	require.False(t, metadef.IsBuiltinSystemTable(mysql.SystemDB, "schema_index_usage"))
+	require.False(t, metadef.IsBuiltinSystemTable(mysql.SystemDB, "tidb_mdl_view"))
+	require.False(t, metadef.IsBuiltinSystemTable(mysql.SysDB, "schema_unused_indexes"))
 	require.Len(t, systemTablesOfBaseNextGenVersion, 52, "DO NOT CHANGE IT")
 	for _, verBoot := range versionedBootstrapSchemas {
 		for _, schInfo := range verBoot.databases {
 			testTableBasicInfoSlice(t, schInfo.Tables, "IF NOT EXISTS mysql.%s (")
+			for _, tbl := range schInfo.Tables {
+				require.True(t, metadef.IsBuiltinSystemTable(schInfo.Name, tbl.Name), "missing built-in %s.%s", schInfo.Name, tbl.Name)
+			}
 		}
 	}
 	reservedIDs := make([]int64, 0, len(ddlTableVersionTables)*2)
 	for _, v := range ddlTableVersionTables {
 		for _, tbl := range v.tables {
 			reservedIDs = append(reservedIDs, tbl.ID)
+			require.True(t, metadef.IsBuiltinSystemTable(mysql.SystemDB, tbl.Name), "missing built-in mysql.%s", tbl.Name)
 		}
 	}
 	for _, verBoot := range versionedBootstrapSchemas {
@@ -199,7 +206,7 @@ func TestBootstrapWithError(t *testing.T) {
 
 	// system tables are not created in `doDDLWorks` for next-gen.
 	if kerneltype.IsNextGen() {
-		require.NoError(t, bootstrapSchemas(store))
+		require.NoError(t, bootstrapNextGenSchemas(store))
 	}
 	// bootstrap
 	{
@@ -1939,7 +1946,7 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		return meta.NewMutator(txn).SetNextGenBootTableVersion(meta.StorageClassTransitionNextGenBootTableVersion - 1)
 	}))
-	require.NoError(t, bootstrapSchemas(store))
+	require.NoError(t, bootstrapNextGenSchemas(store))
 	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
 		ver, err := m.GetNextGenBootTableVersion()
