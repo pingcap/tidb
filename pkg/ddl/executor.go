@@ -5333,7 +5333,9 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 			if err = dbutil.CheckTableModeIsNormal(t.Meta().Name, t.Meta().Mode); err != nil {
 				return err
 			}
-			if isSystemTableInNextGen(schemas[0].Name.L, t.Meta().Name.L) {
+			// Classify this pair by its source name. TableByID returns the pre-statement
+			// snapshot, so an earlier pair can pair schemas[0] with a different table name.
+			if isSystemTableInNextGen(schemas[0].Name.L, oldIdents[i].Name.L) {
 				return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Rename system table '%s.%s'", schemas[0].Name.L, oldIdents[i].Name.L))
 			}
 		}
