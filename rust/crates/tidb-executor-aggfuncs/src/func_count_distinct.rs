@@ -417,3 +417,105 @@ count_distinct! {
     partial: CountPartialWithDistinct,
     original: CountOriginalWithDistinct,
 }
+
+/// Go `DefPartialResult4ApproxCountDistinctSize`.
+pub const DEF_PARTIAL_RESULT_4_APPROX_COUNT_DISTINCT_SIZE: i64 = 32;
+
+use crate::approx_count_distinct::PartialResult4ApproxCountDistinct;
+
+/// Go `baseApproxCountDistinct`.
+#[derive(Clone, Debug)]
+pub struct BaseApproxCountDistinct {
+    /// Go's embedded `baseAggFunc`.
+    pub base: BaseAggFunc,
+}
+
+impl BaseApproxCountDistinct {
+    /// Go `approxCountDistinctOriginal.UpdatePartialResult`: each row's
+    /// `evalAndEncode` tuple, hashed into the sketch; a NULL argument skips
+    /// the row.
+    fn update_original(&self, sctx: &AggFuncUpdateContext, rows_in_group: &[Row<'_>], pr: &mut PartialResult) -> Result<i64, ExecError> {
+        let p = partial::<PartialResult4ApproxCountDistinct>(pr);
+        let mut mem_delta = 0;
+        let collators: Vec<_> = self.base.args.iter().map(crate::aggfuncs::expr_collation).collect();
+        let mut encoded_bytes = Vec::new();
+        'rows: for row in rows_in_group {
+            encoded_bytes.clear();
+            for (i, arg) in self.base.args.iter().enumerate() {
+                let value = arg.eval(sctx, *row).map_err(ExecError::Eval)?;
+                if value.is_null() {
+                    continue 'rows;
+                }
+                encoded_bytes.extend(crate::aggfuncs::approx_count_distinct_encode(&value, collators[i])?);
+            }
+            let old_mem_usage = p.mem_usage();
+            p.insert(&encoded_bytes);
+            mem_delta += p.mem_usage() - old_mem_usage;
+        }
+        Ok(mem_delta)
+    }
+
+    /// Go `approxCountDistinctPartial2.UpdatePartialResult`: each row is a
+    /// serialized sketch to merge.
+    fn update_partial2(&self, sctx: &AggFuncUpdateContext, rows_in_group: &[Row<'_>], pr: &mut PartialResult) -> Result<i64, ExecError> {
+        let p = partial::<PartialResult4ApproxCountDistinct>(pr);
+        let mut mem_delta = 0;
+        for row in rows_in_group {
+            let input = match self.base.args[0].eval(sctx, *row).map_err(ExecError::Eval)? {
+                Datum::Null => continue,
+                Datum::String(text) => text.into_bytes(),
+                Datum::Bytes(bytes) => bytes,
+                _ => return Err(ExecError::internal("APPROX_COUNT_DISTINCT read a non-string partial result")),
+            };
+            let old_mem_usage = p.mem_usage();
+            p.read_and_merge(&input).map_err(ExecError::internal)?;
+            mem_delta += p.mem_usage() - old_mem_usage;
+        }
+        Ok(mem_delta)
+    }
+}
+
+/// The Go `approxCountDistinctX` types: which update each runs and whether
+/// its final result is the estimate (`BIGINT`) or the serialized sketch.
+macro_rules! approx_count_distinct {
+    ($name:ident, update: $update:ident, serialized: $serialized:literal) => {
+        #[doc = concat!("Go `", stringify!($name), "`.")]
+        #[derive(Clone, Debug)]
+        pub struct $name(pub BaseApproxCountDistinct);
+
+        impl AggFunc for $name {
+            fn alloc_partial_result(&self) -> (PartialResult, i64) {
+                (Box::new(PartialResult4ApproxCountDistinct::new()), DEF_PARTIAL_RESULT_4_APPROX_COUNT_DISTINCT_SIZE)
+            }
+
+            fn reset_partial_result(&self, pr: &mut PartialResult) {
+                *partial::<PartialResult4ApproxCountDistinct>(pr) = PartialResult4ApproxCountDistinct::new();
+            }
+
+            fn update_partial_result(&self, sctx: &AggFuncUpdateContext, rows_in_group: &[Row<'_>], pr: &mut PartialResult) -> Result<i64, ExecError> {
+                self.0.$update(sctx, rows_in_group, pr)
+            }
+
+            fn merge_partial_result(&self, _sctx: &AggFuncUpdateContext, src: &mut PartialResult, dst: &mut PartialResult) -> Result<i64, ExecError> {
+                let p1 = partial::<PartialResult4ApproxCountDistinct>(src).clone();
+                partial::<PartialResult4ApproxCountDistinct>(dst).merge(&p1);
+                Ok(0)
+            }
+
+            fn append_final_result_2_chunk(&self, _sctx: &AggFuncUpdateContext, pr: &mut PartialResult, chk: &mut Chunk) -> Result<(), ExecError> {
+                let p = partial::<PartialResult4ApproxCountDistinct>(pr);
+                if $serialized {
+                    chk.append_bytes(self.0.base.ordinal, &p.serialize());
+                } else {
+                    chk.append_int64(self.0.base.ordinal, p.fixed_size() as i64);
+                }
+                Ok(())
+            }
+        }
+    };
+}
+
+approx_count_distinct!(ApproxCountDistinctOriginal, update: update_original, serialized: false);
+approx_count_distinct!(ApproxCountDistinctPartial1, update: update_original, serialized: true);
+approx_count_distinct!(ApproxCountDistinctPartial2, update: update_partial2, serialized: true);
+approx_count_distinct!(ApproxCountDistinctFinal, update: update_partial2, serialized: false);

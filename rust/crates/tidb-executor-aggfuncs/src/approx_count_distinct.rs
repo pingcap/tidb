@@ -216,6 +216,12 @@ impl PartialResult4ApproxCountDistinct {
         self.insert_hash(x as u32);
     }
 
+    /// Go `MemUsage`: the hash buffer's `uint32`s.
+    #[must_use]
+    pub fn mem_usage(&self) -> i64 {
+        self.buf.len() as i64 * 4
+    }
+
     /// Hashes `encoded` with the same FarmHash `Hash64` Go uses
     /// (`farm.Hash64(encodedBytes)`) and folds it into the sketch.
     pub fn insert(&mut self, encoded: &[u8]) {

@@ -15,7 +15,7 @@
 //! Go `pkg/executor/aggfuncs/builder.go`: the `AggFunc` an aggregate
 //! descriptor runs as, chosen by its name, mode and argument eval type.
 
-use tidb_datatype::{EvalType, FieldTypeCode};
+use tidb_datatype::{Datum, EvalType, FieldTypeCode};
 use tidb_expr::expression::Expression;
 use tidb_expression_aggregation::AggFuncDesc;
 use tidb_expression_aggregation::AggFunctionMode;
@@ -100,6 +100,8 @@ pub fn build(ctx: &dyn Columns, agg_func_desc: &AggFuncDesc, ordinal: usize) -> 
         "json_arrayagg" | "json_objectagg" if agg_func_desc.mode == AggFunctionMode::Dedup => None,
         "json_arrayagg" => Some(Box::new(crate::func_json_arrayagg::JsonArrayagg { base: base_agg_func(agg_func_desc, ordinal) })),
         "json_objectagg" => Some(Box::new(crate::func_json_objectagg::JsonObjectAgg { base: base_agg_func(agg_func_desc, ordinal) })),
+        "approx_count_distinct" => build_approx_count_distinct(agg_func_desc, ordinal),
+        "approx_percentile" => build_approx_percentile(ctx, agg_func_desc, ordinal),
         "bit_or" => Some(Box::new(BitOrUint64(BaseBitAggFunc { base: base_agg_func(agg_func_desc, ordinal) }))),
         "bit_xor" => Some(Box::new(BitXorUint64(BaseBitAggFunc { base: base_agg_func(agg_func_desc, ordinal) }))),
         "bit_and" => Some(Box::new(BitAndUint64(BaseBitAggFunc { base: base_agg_func(agg_func_desc, ordinal) }))),
@@ -396,4 +398,133 @@ fn build_group_concat(ctx: &dyn Columns, agg_func_desc: &AggFuncDesc, ordinal: u
         return Some(Box::new(GroupConcatOrder(order_base(base))));
     }
     Some(Box::new(GroupConcat(base)))
+}
+
+/// Go `buildApproxCountDistinct`: a union over partitions computes partial
+/// results into partial results, which a `STRING` return type tells.
+fn build_approx_count_distinct(agg_func_desc: &AggFuncDesc, ordinal: usize) -> Option<Box<dyn AggFunc>> {
+    use crate::func_count_distinct::{
+        ApproxCountDistinctFinal, ApproxCountDistinctOriginal, ApproxCountDistinctPartial1,
+        ApproxCountDistinctPartial2, BaseApproxCountDistinct,
+    };
+    let base = BaseApproxCountDistinct { base: base_agg_func(agg_func_desc, ordinal) };
+    match agg_func_desc.base.ret_type.code() {
+        FieldTypeCode::LongLong => match agg_func_desc.mode {
+            AggFunctionMode::Complete => Some(Box::new(ApproxCountDistinctOriginal(base))),
+            AggFunctionMode::Partial1 => Some(Box::new(ApproxCountDistinctPartial1(base))),
+            AggFunctionMode::Partial2 => Some(Box::new(ApproxCountDistinctPartial2(base))),
+            AggFunctionMode::Final => Some(Box::new(ApproxCountDistinctFinal(base))),
+            AggFunctionMode::Dedup => None,
+        },
+        FieldTypeCode::String => match agg_func_desc.mode {
+            AggFunctionMode::Complete | AggFunctionMode::Partial1 => Some(Box::new(ApproxCountDistinctPartial1(base))),
+            AggFunctionMode::Partial2 | AggFunctionMode::Final => Some(Box::new(ApproxCountDistinctPartial2(base))),
+            AggFunctionMode::Dedup => None,
+        },
+        _ => None,
+    }
+}
+
+/// Go `buildApproxPercentile`.
+fn build_approx_percentile(ctx: &dyn Columns, agg_func_desc: &AggFuncDesc, ordinal: usize) -> Option<Box<dyn AggFunc>> {
+    use crate::func_percentile::{
+        BasePercentile, PercentileNull, PercentileOriginal4Decimal, PercentileOriginal4Duration,
+        PercentileOriginal4Int, PercentileOriginal4Real, PercentileOriginal4Time,
+    };
+    if agg_func_desc.mode == AggFunctionMode::Dedup {
+        return None;
+    }
+    // Checked while building the descriptor.
+    let percent = match &agg_func_desc.base.args[1] {
+        Expression::Constant(c) => match c.value {
+            Datum::Int(v) => v,
+            Datum::UInt(v) => v as i64,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let base = BasePercentile { percent, base: base_agg_func(agg_func_desc, ordinal) };
+    // Go `getEvalTypeForApproxPercentile`: an ENUM, SET or BIT argument
+    // (`EnumSetAsIntFlag` may make it look like an integer) orders nothing.
+    let arg_type = crate::agg_func::get_type(&agg_func_desc.base.args[0], ctx).ok()?;
+    let mut eval_type = arg_type.eval_type();
+    if matches!(arg_type.code(), FieldTypeCode::Enum | FieldTypeCode::Set | FieldTypeCode::Bit) {
+        eval_type = EvalType::String;
+    }
+    Some(match eval_type {
+        EvalType::Int => Box::new(PercentileOriginal4Int(base)),
+        EvalType::Real => Box::new(PercentileOriginal4Real(base)),
+        EvalType::Decimal => Box::new(PercentileOriginal4Decimal(base)),
+        EvalType::Datetime | EvalType::Timestamp => Box::new(PercentileOriginal4Time(base)),
+        EvalType::Duration => Box::new(PercentileOriginal4Duration(base)),
+        // Return NULL in any case.
+        _ => Box::new(PercentileNull(base)),
+    })
+}
+
+/// Go `BuildWindowFunctions`: the window function `window_func_desc` runs
+/// as, writing to column `ordinal`; RANK, PERCENT_RANK and CUME_DIST
+/// compare rows on `order_by_cols`.
+#[must_use]
+pub fn build_window_functions(ctx: &dyn Columns, window_func_desc: &AggFuncDesc, ordinal: usize, order_by_cols: &[tidb_expr::column::Column]) -> Option<Box<dyn AggFunc>> {
+    use crate::func_rank::{build_row_comparer, Rank};
+    let base = || base_agg_func(window_func_desc, ordinal);
+    // Go's `baseAggFunc{ordinal: ordinal}` of the ranking functions.
+    let ordinal_only = || BaseAggFunc { args: Vec::new(), ordinal, ret_tp: window_func_desc.base.ret_type.clone() };
+    match window_func_desc.base.name.as_str() {
+        "rank" => Some(Box::new(Rank { base: ordinal_only(), is_dense: false, row_comparer: build_row_comparer(order_by_cols) })),
+        "dense_rank" => Some(Box::new(Rank { base: ordinal_only(), is_dense: true, row_comparer: build_row_comparer(order_by_cols) })),
+        "row_number" => Some(Box::new(crate::row_number::RowNumber { base: base() })),
+        "first_value" => Some(Box::new(crate::func_value::FirstValue { base: base(), tp: window_func_desc.base.ret_type.clone() })),
+        "last_value" => Some(Box::new(crate::func_value::LastValue { base: base(), tp: window_func_desc.base.ret_type.clone() })),
+        "cume_dist" => Some(Box::new(crate::func_cume_dist::CumeDist { base: ordinal_only(), row_comparer: build_row_comparer(order_by_cols) })),
+        "nth_value" => {
+            // Already checked when building the function description.
+            let (nth, _) = tidb_expr::expr_util::get_uint64_from_constant(&window_func_desc.base.args[1], ctx).unwrap_or((0, false));
+            Some(Box::new(crate::func_value::NthValue { base: base(), tp: window_func_desc.base.ret_type.clone(), nth }))
+        }
+        "ntile" => {
+            let (n, _) = tidb_expr::expr_util::get_uint64_from_constant(&window_func_desc.base.args[0], ctx).unwrap_or((0, false));
+            Some(Box::new(crate::func_ntile::Ntile { n, base: base() }))
+        }
+        "percent_rank" => Some(Box::new(crate::func_percent_rank::PercentRank { base: ordinal_only(), row_comparer: build_row_comparer(order_by_cols) })),
+        "lead" => Some(Box::new(crate::func_lead_lag::Lead(build_lead_lag(ctx, window_func_desc, ordinal)))),
+        "lag" => Some(Box::new(crate::func_lead_lag::Lag(build_lead_lag(ctx, window_func_desc, ordinal)))),
+        // The window MAX/MIN slide (Go `buildMaxMinInWindowFunction`).
+        "max" => build_max_min_in_window_function(ctx, window_func_desc, ordinal, true),
+        "min" => build_max_min_in_window_function(ctx, window_func_desc, ordinal, false),
+        _ => build(ctx, window_func_desc, ordinal),
+    }
+}
+
+/// Go `buildLeadLag`: the offset (default 1) and the default value -- a
+/// constant converted to the result type where it converts.
+fn build_lead_lag(ctx: &dyn Columns, agg_func_desc: &AggFuncDesc, ordinal: usize) -> crate::func_lead_lag::BaseLeadLag {
+    let args = &agg_func_desc.base.args;
+    let mut offset = 1;
+    if args.len() >= 2 {
+        offset = tidb_expr::expr_util::get_uint64_from_constant(&args[1], ctx).map_or(0, |(offset, _)| offset);
+    }
+    let ret_tp = agg_func_desc.base.ret_type.clone();
+    let mut default_expr = Expression::Constant(tidb_expr::constant::Constant::new_null());
+    if args.len() == 3 {
+        default_expr = args[2].clone();
+        if let Expression::Constant(et) = &args[2] {
+            let warnings = tidb_expr::constant::ConversionWarnings(ctx);
+            let zone = ctx.time_zone();
+            let context = tidb_datatype::ConversionContext::new(ctx.type_flags(), tidb_datatype::ConversionLocation::from_time_zone(&zone), &warnings);
+            if let Ok(converted) = et.value.convert_to_in_context(&ret_tp, &context, &zone) {
+                if converted.error.is_none() {
+                    default_expr = Expression::Constant(tidb_expr::constant::Constant::new(converted.value, ret_tp.clone()));
+                }
+            }
+        }
+    }
+    crate::func_lead_lag::BaseLeadLag { base: base_agg_func(agg_func_desc, ordinal), ret_tp, default_expr, offset }
+}
+
+/// Go `buildMaxMinInWindowFunction`. The sliding variants are not yet
+/// ported, so the window MAX/MIN is the plain one.
+fn build_max_min_in_window_function(_ctx: &dyn Columns, agg_func_desc: &AggFuncDesc, ordinal: usize, is_max: bool) -> Option<Box<dyn AggFunc>> {
+    build_max_min(agg_func_desc, ordinal, is_max)
 }

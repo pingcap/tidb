@@ -110,6 +110,9 @@ impl AggTest {
         if self.func_name == "group_concat" {
             args.push(separator_constant(" "));
         }
+        if self.func_name == "approx_percentile" {
+            args.push(Expression::Constant(tidb_expr::constant::Constant::new(Datum::Int(50), FieldType::new(FieldTypeCode::Long))));
+        }
         args
     }
 
@@ -1284,4 +1287,397 @@ fn a_repeated_json_objectagg_key_charges_nothing() {
     assert_eq!(deltas, vec![1 + 16 + 8, 0]);
     let expected = Datum::Json(tidb_datatype::BinaryJSON::parse(r#"{"k": 2}"#).expect("an object"));
     assert_datum_eq(&final_datum(func.as_ref(), &mut pr, &desc.base.ret_type), &expected, "last value");
+}
+
+/// Go `genApproxDistinctMergePartialResult`: the serialized sketch of the
+/// little-endian `begin..end`.
+fn gen_approx_distinct_merge_partial_result(begin: u64, end: u64) -> Datum {
+    let mut o = crate::approx_count_distinct::PartialResult4ApproxCountDistinct::new();
+    for i in begin..end {
+        o.insert(&i.to_le_bytes());
+    }
+    Datum::new_string_datum(o.serialize())
+}
+
+/// Go `TestMergePartialResult4Count`'s APPROX_COUNT_DISTINCT case.
+#[test]
+fn test_merge_partial_result_4_approx_count_distinct() {
+    test_merge_partial_result(&AggTest::new(
+        "approx_count_distinct",
+        FieldTypeCode::LongLong,
+        5,
+        vec![gen_approx_distinct_merge_partial_result(0, 5), gen_approx_distinct_merge_partial_result(2, 5), Datum::Int(5)],
+    ));
+}
+
+/// Go `TestCount`'s APPROX_COUNT_DISTINCT cases (one and two arguments):
+/// five distinct tuples estimate 5, no rows 0.
+#[test]
+fn test_approx_count_distinct() {
+    for tp in COUNT_TYPES.into_iter().chain([FieldTypeCode::Float, FieldTypeCode::Date, FieldTypeCode::Json]) {
+        test_agg_func(&AggTest::new("approx_count_distinct", tp, 5, vec![Datum::Int(0), Datum::Int(5)]));
+        let field_type = FieldType::new(tp);
+        let mut chk = Chunk::new_chunk_with_capacity(&[field_type.clone(), field_type.clone()], 6);
+        for i in 0..5 {
+            chk.append_datum(0, &data_gen(&field_type, i));
+            chk.append_datum(1, &data_gen(&field_type, i));
+        }
+        chk.append_datum(0, &Datum::Null);
+        chk.append_datum(1, &Datum::Null);
+        let args: Vec<Expression> = (0..2)
+            .map(|k| {
+                let mut column = Column::new(k + 1, field_type.clone());
+                column.index = k;
+                Expression::Column(column)
+            })
+            .collect();
+        let desc = AggFuncDesc::new(&NoColumns, "approx_count_distinct", args, false).expect("descriptor builds");
+        let func = build(&NoColumns, &desc, 0).expect("approx_count_distinct is implemented");
+        let (mut pr, _) = func.alloc_partial_result();
+        update_each_row(func.as_ref(), &chk, &mut pr);
+        assert_datum_eq(&final_datum(func.as_ref(), &mut pr, &desc.base.ret_type), &Datum::Int(5), "two arguments");
+    }
+}
+
+/// Go `TestMemCount`'s APPROX_COUNT_DISTINCT cases: five values never grow
+/// the sketch's 16-slot buffer.
+#[test]
+fn test_mem_approx_count_distinct() {
+    for tp in [FieldTypeCode::LongLong, FieldTypeCode::String] {
+        let p = AggTest::new("approx_count_distinct", tp, 5, Vec::new());
+        test_agg_mem_func(&p, crate::func_count_distinct::DEF_PARTIAL_RESULT_4_APPROX_COUNT_DISTINCT_SIZE, &default_update_mem_deltas(&p), true);
+    }
+    // Past half of its buffer the sketch doubles: Go charges the new
+    // buffer's `uint32`s.
+    let p = AggTest::new("approx_count_distinct", FieldTypeCode::LongLong, 20, Vec::new());
+    let func = build(&NoColumns, &p.desc(false), 0).expect("implemented");
+    let (mut pr, _) = func.alloc_partial_result();
+    let total: i64 = update_each_row(func.as_ref(), &p.gen_src_chk(), &mut pr).iter().sum();
+    let mut sketch = crate::approx_count_distinct::PartialResult4ApproxCountDistinct::new();
+    let start = sketch.mem_usage();
+    for i in 0..20u64 {
+        sketch.insert(&(i as i64).to_le_bytes());
+    }
+    assert!(sketch.mem_usage() > start, "twenty values grow the sketch");
+    assert_eq!(total, sketch.mem_usage() - start);
+}
+
+/// Go `TestPercentile`: the median of 0..5 is 2.
+#[test]
+fn test_percentile() {
+    for (tp, expected) in [
+        (FieldTypeCode::LongLong, Datum::Int(2)),
+        (FieldTypeCode::Float, Datum::Float32(2.0)),
+        (FieldTypeCode::Double, Datum::Real(2.0)),
+        (FieldTypeCode::NewDecimal, decimal(2)),
+        (FieldTypeCode::Date, Datum::Time(tidb_datatype::time_from_days(367))),
+        (FieldTypeCode::Duration, Datum::Duration(MySqlDuration::from_nanoseconds(2, 0).expect("a duration"))),
+    ] {
+        test_agg_func(&AggTest::new("approx_percentile", tp, 5, vec![Datum::Null, expected]));
+    }
+}
+
+/// Go `TestFix26807`: the 100th percentile of 1..=28 is 28, whatever the
+/// random pivots.
+#[test]
+fn test_fix_26807() {
+    let p = AggTest::new("approx_percentile", FieldTypeCode::LongLong, 0, Vec::new());
+    let mut desc = p.desc(false);
+    desc.base.args[1] = Expression::Constant(tidb_expr::constant::Constant::new(Datum::Int(100), FieldType::new(FieldTypeCode::Long)));
+    let func = build(&NoColumns, &desc, 0).expect("implemented");
+    let long = FieldType::new(FieldTypeCode::LongLong);
+    let mut chk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&long), 28);
+    for i in 1..=28 {
+        chk.append_datum(0, &Datum::Int(i));
+    }
+    for _ in 0..10 {
+        let (mut pr, _) = func.alloc_partial_result();
+        update_each_row(func.as_ref(), &chk, &mut pr);
+        assert_datum_eq(&final_datum(func.as_ref(), &mut pr, &long), &Datum::Int(28), "p100");
+    }
+}
+
+/// Go `TestFix40463`: an ENUM or SET argument answers NULL.
+#[test]
+fn test_fix_40463() {
+    for tp in [FieldTypeCode::Enum, FieldTypeCode::Set] {
+        let p = AggTest::new("approx_percentile", tp, 5, Vec::new());
+        let desc = p.desc(false);
+        let func = build(&NoColumns, &desc, 0).expect("implemented");
+        let (mut pr, alloc) = func.alloc_partial_result();
+        assert_eq!(alloc, 0);
+        update_each_row(func.as_ref(), &p.gen_src_chk(), &mut pr);
+        assert!(final_datum(func.as_ref(), &mut pr, &desc.base.ret_type).is_null());
+    }
+}
+
+/// Go `MemSize` deltas: each kept value adds its element size (a decimal
+/// `MyDecimal`'s 40 bytes, the rest 8); a NULL adds nothing.
+#[test]
+fn test_mem_percentile() {
+    for (tp, elem) in [(FieldTypeCode::LongLong, 8), (FieldTypeCode::Double, 8), (FieldTypeCode::NewDecimal, 40), (FieldTypeCode::Date, 8), (FieldTypeCode::Duration, 8)] {
+        let p = AggTest::new("approx_percentile", tp, 5, Vec::new());
+        let mut deltas = vec![elem; 5];
+        deltas.push(0);
+        test_agg_mem_func(&p, 24, &deltas, false);
+    }
+}
+
+/// Go `windowTest`.
+struct WindowTest {
+    data_type: FieldType,
+    num_rows: usize,
+    func_name: &'static str,
+    args: Vec<Expression>,
+    order_by_cols: Vec<Column>,
+    results: Vec<Datum>,
+}
+
+fn column_0(tp: &FieldType) -> Column {
+    let mut column = Column::new(1, tp.clone());
+    column.index = 0;
+    column
+}
+
+impl WindowTest {
+    /// Go `buildWindowTesterWithArgs`.
+    fn with_args(func_name: &'static str, tp: FieldTypeCode, args: Vec<Expression>, order_by_cols: usize, num_rows: usize, results: Vec<Datum>) -> Self {
+        let data_type = FieldType::new(tp);
+        let mut all_args = Vec::new();
+        if func_name != "ntile" {
+            all_args.push(Expression::Column(column_0(&data_type)));
+        }
+        all_args.extend(args);
+        let order_by_cols = if order_by_cols > 0 { vec![column_0(&data_type)] } else { Vec::new() };
+        Self { data_type, num_rows, func_name, args: all_args, order_by_cols, results }
+    }
+
+    /// Go `buildWindowTester`: a positive constant argument is an unsigned
+    /// constant.
+    fn new(func_name: &'static str, tp: FieldTypeCode, constant_arg: u64, order_by_cols: usize, num_rows: usize, results: Vec<Datum>) -> Self {
+        let args = if constant_arg > 0 { vec![uint_constant(constant_arg)] } else { Vec::new() };
+        Self::with_args(func_name, tp, args, order_by_cols, num_rows, results)
+    }
+
+    /// Go `windowTest.genSrcChk`.
+    fn gen_src_chk(&self) -> Chunk {
+        let mut src_chk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&self.data_type), self.num_rows);
+        for i in 0..self.num_rows {
+            src_chk.append_datum(0, &data_gen(&self.data_type, i));
+        }
+        src_chk
+    }
+
+    fn build(&self) -> (AggFuncDesc, Box<dyn AggFunc>) {
+        let desc = AggFuncDesc::new(&NoColumns, self.func_name, self.args.clone(), false).expect("descriptor builds");
+        let func = crate::agg_builder::build_window_functions(&NoColumns, &desc, 0, &self.order_by_cols).expect("the window function is implemented");
+        (desc, func)
+    }
+}
+
+fn uint_constant(value: u64) -> Expression {
+    Expression::Constant(tidb_expr::constant::Constant::new(Datum::UInt(value), FieldType::new(FieldTypeCode::LongLong).with_unsigned(true)))
+}
+
+fn int_constant(value: i64, tp: FieldTypeCode) -> Expression {
+    Expression::Constant(tidb_expr::constant::Constant::new(Datum::Int(value), FieldType::new(tp)))
+}
+
+/// Go `testWindowFunc`: each row updates the partial result, then each
+/// final result is the next row's.
+fn test_window_func(p: &WindowTest) {
+    let src_chk = p.gen_src_chk();
+    let (desc, func) = p.build();
+    let (mut pr, _) = func.alloc_partial_result();
+    update_each_row(func.as_ref(), &src_chk, &mut pr);
+    assert_eq!(p.results.len(), p.num_rows);
+    for (i, expected) in p.results.iter().enumerate() {
+        let actual = final_datum(func.as_ref(), &mut pr, &desc.base.ret_type);
+        if expected.is_null() {
+            assert!(actual.is_null(), "{} row {i}: {actual:?}", p.func_name);
+        } else {
+            assert_datum_eq(&actual, expected, &format!("{} row {i}", p.func_name));
+        }
+    }
+    func.reset_partial_result(&mut pr);
+}
+
+/// Go `testWindowAggMemFunc`.
+fn test_window_agg_mem_func(p: &WindowTest, alloc_mem_delta: i64, update_mem_deltas: &[i64]) {
+    let (_, func) = p.build();
+    let (mut pr, mem_delta) = func.alloc_partial_result();
+    assert_eq!(mem_delta, alloc_mem_delta, "{} alloc", p.func_name);
+    assert_eq!(update_each_row(func.as_ref(), &p.gen_src_chk(), &mut pr), update_mem_deltas, "{} updates", p.func_name);
+}
+
+/// Go `TestWindowFunctions`.
+#[test]
+fn test_window_functions() {
+    let i = |v: i64| Datum::Int(v);
+    let r = |v: f64| Datum::Real(v);
+    let date = |days| Datum::Time(tidb_datatype::time_from_days(days));
+    let zero_duration = Datum::Duration(MySqlDuration::from_nanoseconds(0, 0).expect("a duration"));
+    use FieldTypeCode as T;
+    for test in [
+        WindowTest::new("cume_dist", T::LongLong, 0, 1, 1, vec![r(1.0)]),
+        WindowTest::new("cume_dist", T::LongLong, 0, 0, 2, vec![r(1.0), r(1.0)]),
+        WindowTest::new("cume_dist", T::LongLong, 0, 1, 4, vec![r(0.25), r(0.5), r(0.75), r(1.0)]),
+        WindowTest::new("dense_rank", T::LongLong, 0, 0, 2, vec![i(1), i(1)]),
+        WindowTest::new("dense_rank", T::LongLong, 0, 1, 4, vec![i(1), i(2), i(3), i(4)]),
+        WindowTest::new("first_value", T::LongLong, 0, 1, 2, vec![i(0), i(0)]),
+        WindowTest::new("first_value", T::Float, 0, 1, 2, vec![Datum::Float32(0.0), Datum::Float32(0.0)]),
+        WindowTest::new("first_value", T::Double, 0, 1, 2, vec![r(0.0), r(0.0)]),
+        WindowTest::new("first_value", T::NewDecimal, 0, 1, 2, vec![decimal(0), decimal(0)]),
+        WindowTest::new("first_value", T::String, 0, 1, 2, vec![Datum::new_string_datum("0"), Datum::new_string_datum("0")]),
+        WindowTest::new("first_value", T::Date, 0, 1, 2, vec![date(365), date(365)]),
+        WindowTest::new("first_value", T::Duration, 0, 1, 2, vec![zero_duration.clone(), zero_duration]),
+        WindowTest::new("first_value", T::Json, 0, 1, 2, vec![json(0), json(0)]),
+        WindowTest::new("last_value", T::LongLong, 1, 0, 2, vec![i(1), i(1)]),
+        WindowTest::new("nth_value", T::LongLong, 2, 0, 3, vec![i(1), i(1), i(1)]),
+        WindowTest::new("nth_value", T::LongLong, 5, 0, 3, vec![Datum::Null, Datum::Null, Datum::Null]),
+        WindowTest::new("ntile", T::LongLong, 3, 0, 4, vec![i(1), i(1), i(2), i(3)]),
+        WindowTest::new("ntile", T::LongLong, 5, 0, 3, vec![i(1), i(2), i(3)]),
+        WindowTest::new("percent_rank", T::LongLong, 0, 1, 1, vec![r(0.0)]),
+        WindowTest::new("percent_rank", T::LongLong, 0, 0, 3, vec![r(0.0), r(0.0), r(0.0)]),
+        WindowTest::new("percent_rank", T::LongLong, 0, 1, 4, vec![r(0.0), r(0.3333333333333333), r(0.6666666666666666), r(1.0)]),
+        WindowTest::new("rank", T::LongLong, 0, 1, 1, vec![i(1)]),
+        WindowTest::new("rank", T::LongLong, 0, 0, 3, vec![i(1), i(1), i(1)]),
+        WindowTest::new("rank", T::LongLong, 0, 1, 4, vec![i(1), i(2), i(3), i(4)]),
+        WindowTest::new("row_number", T::LongLong, 0, 0, 4, vec![i(1), i(2), i(3), i(4)]),
+    ] {
+        test_window_func(&test);
+    }
+}
+
+/// Go `TestLeadLag`.
+#[test]
+fn test_lead_lag() {
+    use FieldTypeCode as T;
+    let zero = || int_constant(0, T::LongLong);
+    let one = || int_constant(1, T::LongLong);
+    let two = || int_constant(2, T::Tiny);
+    let three = || int_constant(3, T::Tiny);
+    let million = || int_constant(1_000_000, T::Long);
+    let default_arg = || Expression::Column(column_0(&FieldType::new(T::LongLong)));
+    let v = |values: [Option<i64>; 3]| values.iter().map(|x| x.map_or(Datum::Null, Datum::Int)).collect::<Vec<_>>();
+    const M: Option<i64> = Some(1_000_000);
+    let cases: Vec<(&'static str, Vec<Expression>, [Option<i64>; 3])> = vec![
+        ("lag", vec![zero()], [Some(0), Some(1), Some(2)]),
+        ("lag", vec![one()], [None, Some(0), Some(1)]),
+        ("lag", vec![two()], [None, None, Some(0)]),
+        ("lag", vec![three()], [None, None, None]),
+        ("lag", vec![million()], [None, None, None]),
+        ("lag", vec![zero(), million()], [Some(0), Some(1), Some(2)]),
+        ("lag", vec![one(), million()], [M, Some(0), Some(1)]),
+        ("lag", vec![two(), million()], [M, M, Some(0)]),
+        ("lag", vec![three(), million()], [M, M, M]),
+        ("lag", vec![million(), million()], [M, M, M]),
+        ("lag", vec![zero(), default_arg()], [Some(0), Some(1), Some(2)]),
+        ("lag", vec![one(), default_arg()], [Some(0), Some(0), Some(1)]),
+        ("lag", vec![two(), default_arg()], [Some(0), Some(1), Some(0)]),
+        ("lag", vec![three(), default_arg()], [Some(0), Some(1), Some(2)]),
+        ("lag", vec![million(), default_arg()], [Some(0), Some(1), Some(2)]),
+        ("lead", vec![zero()], [Some(0), Some(1), Some(2)]),
+        ("lead", vec![one()], [Some(1), Some(2), None]),
+        ("lead", vec![two()], [Some(2), None, None]),
+        ("lead", vec![three()], [None, None, None]),
+        ("lead", vec![million()], [None, None, None]),
+        ("lead", vec![zero(), million()], [Some(0), Some(1), Some(2)]),
+        ("lead", vec![one(), million()], [Some(1), Some(2), M]),
+        ("lead", vec![two(), million()], [Some(2), M, M]),
+        ("lead", vec![three(), million()], [M, M, M]),
+        ("lead", vec![million(), million()], [M, M, M]),
+        ("lead", vec![zero(), default_arg()], [Some(0), Some(1), Some(2)]),
+        ("lead", vec![one(), default_arg()], [Some(1), Some(2), Some(2)]),
+        ("lead", vec![two(), default_arg()], [Some(2), Some(1), Some(2)]),
+        ("lead", vec![three(), default_arg()], [Some(0), Some(1), Some(2)]),
+        ("lead", vec![million(), default_arg()], [Some(0), Some(1), Some(2)]),
+    ];
+    for (name, args, results) in cases {
+        test_window_func(&WindowTest::with_args(name, T::LongLong, args, 0, 3, v(results)));
+    }
+}
+
+/// Go `TestMemRank`, `TestMemCumeDist`, `TestMemPercentRank`,
+/// `TestMemNtile`, `TestMemRowNumber` and `TestMemLeadLag`: a function
+/// that keeps the partition's rows charges `DefRowSize` per row.
+#[test]
+fn test_mem_window_functions() {
+    use crate::func_rank::{DEF_PARTIAL_RESULT_4_RANK_SIZE, DEF_ROW_SIZE};
+    use FieldTypeCode as T;
+    for (name, constant, alloc, row_bytes) in [
+        ("rank", 0, DEF_PARTIAL_RESULT_4_RANK_SIZE, DEF_ROW_SIZE),
+        ("cume_dist", 0, crate::func_cume_dist::DEF_PARTIAL_RESULT_4_CUME_DIST_SIZE, DEF_ROW_SIZE),
+        ("percent_rank", 0, DEF_PARTIAL_RESULT_4_RANK_SIZE, DEF_ROW_SIZE),
+        ("ntile", 1, crate::func_ntile::DEF_PARTIAL_RESULT_4_NTILE, 0),
+    ] {
+        for (num_rows, order_by) in [(1, 1), (3, 0), (4, 1)] {
+            let p = WindowTest::new(name, T::LongLong, constant, order_by, num_rows, Vec::new());
+            test_window_agg_mem_func(&p, alloc, &vec![row_bytes; num_rows]);
+        }
+    }
+    let p = WindowTest::new("row_number", T::LongLong, 0, 4, 0, Vec::new());
+    test_window_agg_mem_func(&p, crate::row_number::DEF_PARTIAL_RESULT_4_ROW_NUMBER_SIZE, &[]);
+    for name in ["lag", "lead"] {
+        for offset in [int_constant(0, T::LongLong), int_constant(1, T::LongLong), int_constant(2, T::Tiny), int_constant(1_000_000, T::Long)] {
+            let p = WindowTest::with_args(name, T::LongLong, vec![offset], 0, 3, Vec::new());
+            test_window_agg_mem_func(&p, crate::func_lead_lag::DEF_PARTIAL_RESULT_4_LEAD_LAG_SIZE, &[DEF_ROW_SIZE; 3]);
+        }
+    }
+}
+
+/// Go `TestMemValue`: the value evaluator charges a string's or a JSON
+/// document's bytes when it evaluates a row.
+#[test]
+fn test_mem_value() {
+    use crate::func_value::*;
+    use FieldTypeCode as T;
+    let value_bytes = |tp: T, row: usize| -> i64 {
+        match tp {
+            T::String => data_gen(&FieldType::new(tp), row).sql_bytes().expect("bytes").len() as i64,
+            T::Json => 8,
+            _ => 0,
+        }
+    };
+    for (tp, size) in [(T::LongLong, 16), (T::Float, 8), (T::Double, 16), (T::NewDecimal, 16), (T::String, 24), (T::Date, 16), (T::Duration, 24), (T::Json, 40)] {
+        let p = WindowTest::new("first_value", tp, 0, 1, 2, Vec::new());
+        test_window_agg_mem_func(&p, DEF_PARTIAL_RESULT_4_FIRST_VALUE_SIZE + size, &[value_bytes(tp, 0), 0]);
+    }
+    for (tp, size) in [(T::LongLong, 16), (T::String, 24), (T::Json, 40)] {
+        let p = WindowTest::new("last_value", tp, 1, 0, 2, Vec::new());
+        test_window_agg_mem_func(&p, DEF_PARTIAL_RESULT_4_LAST_VALUE_SIZE + size, &[value_bytes(tp, 0), value_bytes(tp, 1) - value_bytes(tp, 0)]);
+    }
+    for (tp, size, nth) in [(T::LongLong, 16, 2), (T::LongLong, 16, 5), (T::Json, 40, 2), (T::String, 24, 5)] {
+        let p = WindowTest::new("nth_value", tp, nth, 0, 3, Vec::new());
+        let mut deltas = vec![0; 3];
+        if (nth as usize) < 3 {
+            deltas[nth as usize - 1] = value_bytes(tp, nth as usize - 1);
+        }
+        test_window_agg_mem_func(&p, DEF_PARTIAL_RESULT_4_NTH_VALUE_SIZE + size, &deltas);
+    }
+}
+
+/// Ties: over ordered 1, 1, 2, RANK skips (1, 1, 3), DENSE_RANK does not
+/// (1, 1, 2), PERCENT_RANK is (0, 0, 1) and CUME_DIST (2/3, 2/3, 1).
+#[test]
+fn ranks_treat_peers_like_go() {
+    let long = FieldType::new(FieldTypeCode::LongLong);
+    let mut chk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&long), 3);
+    for v in [1, 1, 2] {
+        chk.append_datum(0, &Datum::Int(v));
+    }
+    for (name, expected) in [
+        ("rank", vec![Datum::Int(1), Datum::Int(1), Datum::Int(3)]),
+        ("dense_rank", vec![Datum::Int(1), Datum::Int(1), Datum::Int(2)]),
+        ("percent_rank", vec![Datum::Real(0.0), Datum::Real(0.0), Datum::Real(1.0)]),
+        ("cume_dist", vec![Datum::Real(2.0 / 3.0), Datum::Real(2.0 / 3.0), Datum::Real(1.0)]),
+    ] {
+        let p = WindowTest::new(name, FieldTypeCode::LongLong, 0, 1, 3, Vec::new());
+        let (desc, func) = p.build();
+        let (mut pr, _) = func.alloc_partial_result();
+        update_each_row(func.as_ref(), &chk, &mut pr);
+        for (i, expected) in expected.iter().enumerate() {
+            assert_datum_eq(&final_datum(func.as_ref(), &mut pr, &desc.base.ret_type), expected, &format!("{name} row {i}"));
+        }
+    }
 }
