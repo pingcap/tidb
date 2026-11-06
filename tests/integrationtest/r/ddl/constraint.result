@@ -883,3 +883,44 @@ t1	CREATE TABLE `t1` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 set @@global.tidb_enable_check_constraint = 1;
 drop table if exists t1;
+set @@global.tidb_enable_check_constraint = 1;
+drop table if exists t, t2, t3, t4, tp;
+create table t(a decimal(10,2), constraint c check (a > 0));
+insert into t values (0.4), (1.2);
+alter table t modify a int;
+Error 3819 (HY000): Check constraint 'c' is violated.
+select a from t order by a;
+a
+0.40
+1.20
+create table t2(a varchar(10), constraint c2 check (a > 0));
+insert into t2 values ('0.4');
+alter table t2 modify a int;
+Error 3819 (HY000): Check constraint 'c2' is violated.
+select a from t2;
+a
+0.4
+create table t3(a decimal(10,2), b int, constraint c3 check (a < b));
+insert into t3 values (1.4, 2), (1.6, 2);
+alter table t3 modify a int;
+Error 3819 (HY000): Check constraint 'c3' is violated.
+select a, b from t3 order by a;
+a	b
+1.40	2
+1.60	2
+create table tp(id int, a double, constraint c4 check (a > 0)) partition by hash(id) partitions 2;
+insert into tp values (1, 1.5), (2, 0.4);
+alter table tp modify a int;
+Error 3819 (HY000): Check constraint 'c4' is violated.
+select id, a from tp order by id;
+id	a
+1	1.5
+2	0.4
+create table t4(a decimal(10,2), constraint c5 check (a > 0));
+insert into t4 values (0.6), (1.2);
+alter table t4 modify a int;
+select a from t4 order by a;
+a
+1
+1
+drop table t, t2, t3, t4, tp;
