@@ -462,8 +462,14 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 		// matchAgainstToBuiltin already rejects them at plan time, but
 		// keeping pushdown self-consistent guards against any future code
 		// path that builds an FTSMysqlMatchAgainst around the planner.
+		//
+		// A call carrying local evaluation metadata is additionally excluded:
+		// only TiDB can evaluate it, and its 0/1 result is not the relevance
+		// score a pushed-down natural-language match would return. Today the
+		// modifier guard below already covers it, since local evaluation is
+		// Boolean-mode only; the explicit check keeps the two independent.
 		sig, ok := function.Function.(*builtinFtsMysqlMatchAgainstSig)
-		return ok && !sig.modifier.IsBooleanMode() && !sig.modifier.WithQueryExpansion()
+		return ok && !sig.hasLocalEvalInfo() && !sig.modifier.IsBooleanMode() && !sig.modifier.WithQueryExpansion()
 	case ast.Grouping: // grouping function for grouping sets identification.
 		return true
 	}
