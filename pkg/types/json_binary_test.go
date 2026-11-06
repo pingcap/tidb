@@ -424,6 +424,9 @@ func BenchmarkParseBinaryJSON(b *testing.B) {
 		{"small", jsonBenchStr},
 		{"objects", "[" + strings.TrimSuffix(strings.Repeat(jsonBenchStr+",", 64), ",") + "]"},
 		{"long_string", `{"text":"` + strings.Repeat("TiDB用户", 400) + `"}`},
+		{"large_string", `{"text":"` + strings.Repeat("x", 65536) + `"}`},
+		{"null_array", "[" + strings.TrimSuffix(strings.Repeat("null,", 100000), ",") + "]"},
+		{"overwritten_arrays", "{" + strings.Repeat("\"a\":["+strings.TrimSuffix(strings.Repeat("null,", 10000), ",")+"],", 100) + "\"a\":0}"},
 	} {
 		b.Run(test.name, func(b *testing.B) {
 			b.ReportAllocs()
@@ -563,8 +566,64 @@ func TestParseBinaryFromString(t *testing.T) {
 	require.True(t, ErrJSONObjectKeyTooLong.Equal(err), "%v", err)
 }
 
+func TestDirectBinaryJSON(t *testing.T) {
+	nulls := "[" + strings.TrimSuffix(strings.Repeat("null,", 100000), ",") + "]"
+	overwritten := "{" + strings.Repeat("\"a\":"+nulls+",\"b\":1,", 20) + "\"a\":0}"
+	deep := strings.Repeat("[", maxJSONDepth+1) + "0" + strings.Repeat("]", maxJSONDepth+1)
+	longKey := "{\"" + strings.Repeat("k", math.MaxUint16+1) + "\":0}"
+	var wide strings.Builder
+	wide.WriteByte('{')
+	for i := range 2000 {
+		if i > 0 {
+			wide.WriteByte(',')
+		}
+		fmt.Fprintf(&wide, "\"k%04d\":{\"n\":[null,%d,\"text\"]}", i, i)
+	}
+	wide.WriteByte('}')
+	deepObject := strings.Repeat("{\"a\":", maxJSONDepth-1) + "{\"text\":\"" + strings.Repeat("x", 4096) + "\"}" + strings.Repeat("}", maxJSONDepth-1)
+	for _, input := range []string{
+		nulls, overwritten, "[" + overwritten + "," + overwritten + "]", wide.String(), deepObject,
+		"{\"a\":" + deep + ",\"a\":0}",
+		"{\"a\":" + longKey + ",\"a\":0}",
+		"[" + deep + ",1e400]",
+		"{\"a\":" + deep + ",\"z\":" + longKey + "}",
+		"{\"a\":1e400,\"z\":" + longKey + "}",
+		strings.Repeat("[", 10000) + "0" + strings.Repeat("]", 10000),
+		strings.Repeat("[", 1<<17) + strings.Repeat("]", 1<<17),
+	} {
+		var expected BinaryJSON
+		expectedErr := expected.UnmarshalJSON([]byte(input))
+		if !json.Valid([]byte(input)) {
+			expectedErr = ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")
+		} else if expectedErr != nil && !ErrJSONObjectKeyTooLong.Equal(expectedErr) && !ErrJSONDocumentTooDeep.Equal(expectedErr) {
+			expectedErr = ErrInvalidJSONText.GenWithStackByArgs(expectedErr)
+		}
+		got, err := ParseBinaryJSONFromString(input)
+		if expectedErr != nil {
+			require.EqualError(t, err, expectedErr.Error())
+		} else {
+			require.NoError(t, err)
+			require.Equal(t, expected, got)
+		}
+	}
+
+	// Returned bytes must survive both pooled reuse and transfer of large buffers.
+	for _, input := range []string{jsonBenchStr, nulls, overwritten} {
+		first := mustParseBinaryFromString(t, input)
+		saved := first.Copy()
+		for range 100 {
+			_, err := ParseBinaryJSONFromString("{\"x\":[null,1,2,3],\"x\":\"replacement\"}")
+			require.NoError(t, err)
+		}
+		require.Equal(t, saved, first)
+	}
+	// A tiny surviving object must not retain its overwritten large array buffer.
+	kept := mustParseBinaryFromString(t, overwritten)
+	require.LessOrEqual(t, cap(kept.Value), 2*len(kept.Value))
+}
+
 func FuzzParseBinaryJSON(f *testing.F) {
-	for _, input := range []string{jsonBenchStr, `null`, `true`, `[]`, `{}`, `9007199254740993`, `18446744073709551615`, `1e309`, `{"a":1,"a":2}`, `"\ud800"`} {
+	for _, input := range []string{jsonBenchStr, `{"a":[1,2,3],"b":4,"a":[5,6],"b":7,"a":0}`, `{"a":1e400,"a":0}`, `null`, `true`, `[]`, `{}`, `9007199254740993`, `18446744073709551615`, `1e309`, `{"a":1,"a":2}`, `"\ud800"`} {
 		f.Add(input)
 	}
 	f.Fuzz(func(t *testing.T, input string) {

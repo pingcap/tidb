@@ -538,11 +538,14 @@ func ParseBinaryJSONFromString(s string) (bj BinaryJSON, err error) {
 		return
 	}
 	data := hack.Slice(s)
-	if !json.Valid(data) {
-		err = ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")
+	bj, err = parseBinaryJSON(data)
+	if err == nil || ErrJSONObjectKeyTooLong.Equal(err) || ErrJSONDocumentTooDeep.Equal(err) {
 		return
 	}
-	if bj, err = parseBinaryJSON(data); err != nil && !ErrJSONObjectKeyTooLong.Equal(err) && !ErrJSONDocumentTooDeep.Equal(err) {
+	// Preserve the old malformed-input error without pre-scanning valid documents.
+	if !json.Valid(data) {
+		err = ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")
+	} else {
 		err = ErrInvalidJSONText.GenWithStackByArgs(err)
 	}
 	return
