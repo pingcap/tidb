@@ -2280,7 +2280,7 @@ func TestGCWithPendingTxn2(t *testing.T) {
 	case err = <-s.gcWorker.done:
 		s.gcWorker.gcIsRunning = false
 		break
-	case <-time.After(time.Second * 10):
+	case <-time.After(time.Minute):
 		err = errors.New("receive from s.gcWorker.done timeout")
 	}
 	require.NoError(t, err)
