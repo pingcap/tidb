@@ -3886,6 +3886,8 @@ pub fn explain_select_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
+    crate::driver::record_plan_builder_metric(ctx);
     render_physical_query(
         &tidb_ast::QueryStmt::Select(Box::new(select.clone())),
         catalog,
@@ -3931,6 +3933,8 @@ pub fn explain_set_opr_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
+    crate::driver::record_plan_builder_metric(ctx);
     render_physical_query(
         &tidb_ast::QueryStmt::SetOpr(Box::new(set_opr.clone())),
         catalog,
@@ -3954,6 +3958,8 @@ pub fn explain_analyze_select_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
+    crate::driver::record_plan_builder_metric(ctx);
     render_physical_query(
         &tidb_ast::QueryStmt::Select(Box::new(select.clone())),
         catalog,
@@ -3972,6 +3978,8 @@ pub fn explain_analyze_set_opr_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
+    crate::driver::record_plan_builder_metric(ctx);
     render_physical_query(
         &tidb_ast::QueryStmt::SetOpr(Box::new(set_opr.clone())),
         catalog,
@@ -3995,6 +4003,8 @@ pub fn explain_insert_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
+    crate::driver::record_plan_builder_metric(ctx);
     // Go `buildInsert` resolves the target columns and checks a VALUES list's
     // width before it builds an INSERT ... SELECT's source.
     crate::driver::validate_insert_for_explain(insert, catalog, current_db, ctx, None)?;
@@ -4033,6 +4043,8 @@ pub fn explain_analyze_insert_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
+    crate::driver::record_plan_builder_metric(ctx);
     let mut physical = crate::driver::physical_insert_plan(insert, catalog, current_db, ctx)?;
     let root_key = crate::driver::physical_builder::runtime_plan_key(&physical);
     let mut runtime = crate::driver::physical_builder::PhysicalRuntimeStats::new();
@@ -4072,6 +4084,8 @@ pub fn explain_update_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
+    crate::driver::record_plan_builder_metric(ctx);
     if let Some(physical) = crate::driver::multi_dml_explain_plan(
         crate::driver::MultiDmlRef::Update(update),
         catalog,
@@ -4105,6 +4119,8 @@ pub fn explain_delete_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
+    crate::driver::record_plan_builder_metric(ctx);
     if let Some(physical) = crate::driver::multi_dml_explain_plan(
         crate::driver::MultiDmlRef::Delete(delete),
         catalog,
@@ -4144,6 +4160,8 @@ pub fn explain_analyze_update_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
+    crate::driver::record_plan_builder_metric(ctx);
     let mut physical = match crate::driver::multi_dml_explain_plan(
         crate::driver::MultiDmlRef::Update(update),
         catalog,
@@ -4201,6 +4219,8 @@ pub fn explain_analyze_delete_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
+    crate::driver::record_plan_builder_metric(ctx);
     let mut physical = match crate::driver::multi_dml_explain_plan(
         crate::driver::MultiDmlRef::Delete(delete),
         catalog,

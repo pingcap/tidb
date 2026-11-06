@@ -133,7 +133,9 @@ pub(super) struct IndexLookUpJoinParts<C: Columns> {
 }
 
 impl<C: Columns + Clone + Send + Sync + 'static> IndexLookUpJoinParts<C> {
-    pub(super) fn new(build: IndexLookUpJoinBuild<C>) -> Result<Self, ExecError> {
+    /// `build_lookup_map`: whether tasks build Go's inner lookup map
+    /// (`IndexLookUpJoin`), not the hash join's outer one.
+    pub(super) fn new(build: IndexLookUpJoinBuild<C>, build_lookup_map: bool) -> Result<Self, ExecError> {
         let IndexLookUpJoinBuild {
             meta,
             outer,
@@ -166,7 +168,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> IndexLookUpJoinParts<C> {
             IndexLookupSource::Composite { .. } => None,
         };
         let shared = Arc::new(IndexTaskShared {
-            hash_output: None,
+            build_lookup_map,
             lookup_charges: true,
             vectorized,
             template,
@@ -212,7 +214,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> IndexLookUpJoinParts<C> {
 impl<C: Columns + Clone + Send + Sync + 'static> IndexLookUpJoin<C> {
     /// Go `executorBuilder.buildIndexLookUpJoin`'s executor.
     pub fn new(build: IndexLookUpJoinBuild<C>) -> Result<Self, ExecError> {
-        let parts = IndexLookUpJoinParts::new(build)?;
+        let parts = IndexLookUpJoinParts::new(build, true)?;
         Ok(Self {
             meta: parts.meta,
             outer_child: Some(parts.outer),

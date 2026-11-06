@@ -7444,25 +7444,29 @@ fn a_statement_records_go_executor_ruv2_metrics() {
     let executor_parts = |summary: &str| -> Vec<String> {
         summary
             .split(", ")
-            .filter(|part| part.starts_with("executor_l") || part.starts_with("txn_cnt"))
+            .filter(|part| {
+                ["executor_l", "plan_cnt", "plan_derive_stats_paths", "txn_cnt"]
+                    .iter()
+                    .any(|prefix| part.starts_with(prefix))
+            })
             .map(str::to_owned)
             .collect()
     };
     for (sql, expected) in [
-        ("SELECT * FROM t", vec!["executor_l2:{TableReaderExecutor:6}", "txn_cnt:1"]),
-        ("SELECT a FROM t WHERE b > 2", vec!["executor_l2:{IndexReaderExecutor:4}", "txn_cnt:1"]),
+        ("SELECT * FROM t", vec!["executor_l2:{TableReaderExecutor:6}", "plan_cnt:1", "plan_derive_stats_paths:2", "txn_cnt:1"]),
+        ("SELECT a FROM t WHERE b > 2", vec!["executor_l2:{IndexReaderExecutor:4}", "plan_cnt:1", "plan_derive_stats_paths:2", "txn_cnt:1"]),
         (
             "SELECT b, count(*) FROM t GROUP BY b",
-            vec!["executor_l2:{HashAggExec:12,IndexReaderExecutor:6,ProjectionExec:24}", "txn_cnt:1"],
+            vec!["executor_l2:{HashAggExec:12,IndexReaderExecutor:6,ProjectionExec:24}", "plan_cnt:1", "plan_derive_stats_paths:2", "txn_cnt:1"],
         ),
-        ("SELECT * FROM t ORDER BY c LIMIT 3", vec!["executor_l2:{TableReaderExecutor:3,TopNExec:18}", "txn_cnt:1"]),
+        ("SELECT * FROM t ORDER BY c LIMIT 3", vec!["executor_l2:{TableReaderExecutor:3,TopNExec:18}", "plan_cnt:1", "plan_derive_stats_paths:2", "txn_cnt:1"]),
         (
             "SELECT /*+ inl_join(s) */ * FROM t JOIN s ON t.a=s.a",
-            vec!["executor_l2:{IndexLookUpJoin:39,TableReaderExecutor:9}", "txn_cnt:1"],
+            vec!["executor_l2:{IndexLookUpJoin:39,TableReaderExecutor:9}", "plan_cnt:1", "plan_derive_stats_paths:4", "txn_cnt:1"],
         ),
         (
             "SELECT /*+ hash_join(s) */ * FROM t JOIN s ON t.a=s.d",
-            vec!["executor_l2:{HashJoinV2Exec:10,IndexReaderExecutor:4,TableReaderExecutor:6}", "txn_cnt:1"],
+            vec!["executor_l2:{HashJoinV2Exec:10,IndexReaderExecutor:4,TableReaderExecutor:6}", "plan_cnt:1", "plan_derive_stats_paths:4", "txn_cnt:1"],
         ),
         // Go also counts `txn_cnt:1`: its point get activates the
         // transaction, where this port's reads without a statement read
@@ -7470,7 +7474,11 @@ fn a_statement_records_go_executor_ruv2_metrics() {
         ("SELECT * FROM t WHERE a = 3", vec!["executor_l1:{PointGetExecutor:3}"]),
         // Go also counts `TableReaderExecutor:1` here: the per-task table
         // reader its `IndexLookUpExecutor` builds, which this port lacks (E11).
-        ("SELECT * FROM t WHERE b = 3", vec!["executor_l2:{IndexLookUpExecutor:1}", "txn_cnt:1"]),
+        ("SELECT * FROM t WHERE b = 3", vec!["executor_l2:{IndexLookUpExecutor:1}", "plan_cnt:1", "plan_derive_stats_paths:2", "txn_cnt:1"]),
+        // Go builds the EXPLAIN and, nested, its statement (`buildExplain`);
+        // it also counts `txn_cnt:1` for the transaction planning activated,
+        // which this port's EXPLAIN does not take a read timestamp for (E16).
+        ("EXPLAIN SELECT * FROM t", vec!["plan_cnt:2", "plan_derive_stats_paths:2"]),
     ] {
         row_text(session.run(sql));
         let summary = session.ruv2_metrics_summary().expect("a recorded statement");
@@ -7494,5 +7502,66 @@ fn a_statement_records_go_executor_ruv2_metrics() {
     let summary = session.ruv2_metrics_summary().expect("a recorded statement");
     for part in ["executor_l5_insert_rows:2", "txn_cnt:1", "write_keys:2", "write_size:58"] {
         assert!(summary.split(", ").any(|field| field == part), "{part}: {summary}");
+    }
+}
+
+/// Go's RU v2 producers of DML statements, from a Go testkit run of the
+/// same statements (the `plan_*` and parser parts left out): the executors,
+/// the row cells each DML executor records (`executor_l5_insert_rows`:
+/// INSERT's rows times insert columns, UPDATE's rows times the table's
+/// columns, DELETE's rows times the child row's cells but `_tidb_rowid` --
+/// none for a heap table whose pruned read keeps only the handle), the
+/// autocommit transaction and its commit's write keys and size.
+#[test]
+fn dml_statements_record_go_ruv2_metrics() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE t (a INT PRIMARY KEY, b INT, c VARCHAR(20), KEY(b))",
+        "INSERT INTO t VALUES (1,1,'x'),(2,2,'y'),(3,3,'z'),(4,4,'w'),(5,5,'v'),(6,6,'u')",
+        "CREATE TABLE h (a INT, b INT)",
+        "INSERT INTO h VALUES (1,1),(2,2),(3,3)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let parts = |summary: &str| -> Vec<String> {
+        summary
+            .split(", ")
+            .filter(|part| {
+                ["executor_l", "plan_cnt", "plan_derive_stats_paths", "txn_cnt", "write_keys", "write_size"]
+                    .iter()
+                    .any(|prefix| part.starts_with(prefix))
+            })
+            .map(str::to_owned)
+            .collect()
+    };
+    for (sql, expected) in [
+        (
+            "INSERT INTO h VALUES (4,4),(5,5)",
+            "executor_l5_insert_rows:4, plan_cnt:1, txn_cnt:1, write_keys:2, write_size:66",
+        ),
+        (
+            "UPDATE t SET c = 'q' WHERE a < 3",
+            "executor_l2:{TableReaderExecutor:2}, executor_l5_insert_rows:6, plan_cnt:1, plan_derive_stats_paths:2, txn_cnt:1, write_keys:2, write_size:66",
+        ),
+        (
+            "UPDATE t SET b = b + 10 WHERE a > 4",
+            "executor_l2:{TableReaderExecutor:2}, executor_l5_insert_rows:6, plan_cnt:1, plan_derive_stats_paths:2, txn_cnt:1, write_keys:6, write_size:216",
+        ),
+        (
+            "DELETE FROM t WHERE a = 6",
+            "executor_l1:{PointGetExecutor:3}, executor_l5_insert_rows:3, txn_cnt:1, write_keys:2, write_size:56",
+        ),
+        (
+            "DELETE FROM h WHERE a < 3",
+            "executor_l2:{TableReaderExecutor:2}, plan_cnt:1, plan_derive_stats_paths:1, txn_cnt:1, write_keys:2, write_size:38",
+        ),
+        (
+            "UPDATE h SET b = 0",
+            "executor_l2:{TableReaderExecutor:3}, executor_l5_insert_rows:6, plan_cnt:1, plan_derive_stats_paths:1, txn_cnt:1, write_keys:3, write_size:99",
+        ),
+    ] {
+        session.run(sql).unwrap();
+        let summary = session.ruv2_metrics_summary().expect("a recorded statement");
+        assert_eq!(parts(&summary).join(", "), expected, "{sql}: {summary}");
     }
 }

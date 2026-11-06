@@ -2600,6 +2600,7 @@ mod tests {
             advanced_join_hint: true,
             hint_warning_sink: None,
             used_stats_recorder: None,
+            ruv2_metrics: None,
             cte_optimizer: None,
             data_source_stats: &NoCore,
             predicate_simplifier: &NoCore,

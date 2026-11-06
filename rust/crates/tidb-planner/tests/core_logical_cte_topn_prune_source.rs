@@ -118,6 +118,7 @@ fn test_context<'a>(allocator: &'a PlanIdAllocator) -> RuleContext<'a> {
         hint_warning_sink: None,
         used_stats_recorder: None,
         cte_optimizer: None,
+        ruv2_metrics: None,
         data_source_stats: &tidb_planner::stats::CoreDataSourceStats,
         predicate_simplifier: &tidb_planner_core_rule::rule_predicate_simplification::RulePredicateSimplifier,
         access_path_resolver: &tidb_planner::access_path::CoreAccessPathResolver,

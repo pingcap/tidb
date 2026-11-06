@@ -216,33 +216,6 @@ impl JoinOutput {
         rows
     }
 
-    /// Go CopySelectedJoinRowsDirect: copy candidate column ranges, with
-    /// the output projection independent of the full condition-row layout.
-    pub fn joined_selected(&self, req: &mut Chunk, input: &Chunk, selected: &[bool]) {
-        let mut start = 0;
-        while start < selected.len() {
-            if !selected[start] {
-                start += 1;
-                continue;
-            }
-            let mut end = start + 1;
-            while end < selected.len() && selected[end] {
-                end += 1;
-            }
-            for (target, source) in self
-                .left
-                .iter()
-                .copied()
-                .chain(self.right.iter().map(|index| self.left_width + index))
-                .enumerate()
-            {
-                req.append_column_range_from(target, input, source, start, end);
-            }
-            Self::finish(req, end - start);
-            start = end;
-        }
-    }
-
     pub fn preserved(&self, req: &mut Chunk, row: Row<'_>) {
         self.chunk_side(req, true, row);
         Self::finish(req, 1);

@@ -48,6 +48,10 @@ use tidb_planner_core_base::{PlanError, PlanIdAllocator};
 pub trait OptimizeContext: tidb_exprctx::Columns + PlanCacheMarker + HintWarningSink + MppWarningSink {
     /// Go `SessionVars.Location()` as the expression resolver reads it.
     fn session_zone(&self) -> tidb_datatype::SessionTimeZone;
+    /// Go `SessionVars.RUV2Metrics` of the statement being planned.
+    fn ruv2_metrics(&self) -> Option<std::sync::Arc<tidb_execdetails::ruv2_metrics::RUV2Metrics>> {
+        None
+    }
     /// Go `!SessionVars.UseDynamicPartitionPrune()`.
     fn static_partition_prune(&self) -> bool;
     /// Go `SessionVars.EnableStableResultMode`.
@@ -279,6 +283,7 @@ pub fn optimize_logical<C: OptimizeContext>(
         advanced_join_hint: ctx.enable_advanced_join_hint(),
         hint_warning_sink: Some(ctx),
         used_stats_recorder: Some(services.used_stats_recorder),
+        ruv2_metrics: ctx.ruv2_metrics(),
         cte_optimizer: Some(services.cte_optimizer),
         data_source_stats: &crate::stats::CoreDataSourceStats,
         predicate_simplifier: &tidb_planner_core_rule::rule_predicate_simplification::RulePredicateSimplifier,

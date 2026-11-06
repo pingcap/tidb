@@ -324,6 +324,14 @@ pub(crate) fn begin_dml_execution(executor: &'static str) -> DmlExecutionRegions
 
 /// Go `planner.optimize`: try the complete fast physical plan first, then
 /// build and optimize the ordinary logical tree exactly once.
+/// Go `PlanBuilder.recordPlanBuilderMetric`: one `PlanBuilder.Build` call,
+/// RU v2's `plan_cnt`.
+pub(crate) fn record_plan_builder_metric(ctx: &crate::StmtContext) {
+    if let Some(metrics) = ctx.ruv2_metrics() {
+        metrics.add_plan_cnt(1);
+    }
+}
+
 pub(crate) fn optimize_query_stmt(
     query: &QueryStmt,
     catalog: &SessionExtendedInfoSchema,
@@ -356,6 +364,9 @@ pub(crate) fn optimize_query_stmt_with_scalar_subqueries(
             return Ok((plan, Vec::new()));
         }
     }
+    // Go `optimize` -> `buildLogicalPlan` -> `PlanBuilder.Build`, past
+    // `TryFastPlan`.
+    record_plan_builder_metric(ctx);
     planner_bridge::physical_query_plan_with_scalar_subqueries(query, catalog, current_db, ctx)
         .map_err(planner_error_to_driver)
 }

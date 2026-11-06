@@ -99,7 +99,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> IndexNestedLoopHashJoin<C> {
     /// Go `executorBuilder.buildIndexNestedLoopHashJoin`'s executor, from the
     /// same parts as [`IndexLookUpJoin::new`].
     pub fn new(build: IndexLookUpJoinBuild<C>, keep_outer_order: bool) -> Result<Self, ExecError> {
-        let parts = IndexLookUpJoinParts::new(build)?;
+        let parts = IndexLookUpJoinParts::new(build, false)?;
         let outer_is_left = parts.shared.outer_is_left;
         let side = |key: &EquiKey, outer: bool| {
             if outer == outer_is_left {

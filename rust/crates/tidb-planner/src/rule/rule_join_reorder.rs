@@ -230,6 +230,7 @@ fn without_projection_inline<'a>(context: &RuleContext<'a>) -> RuleContext<'a> {
         advanced_join_hint: context.advanced_join_hint,
         hint_warning_sink: context.hint_warning_sink,
         used_stats_recorder: context.used_stats_recorder,
+        ruv2_metrics: context.ruv2_metrics.clone(),
         cte_optimizer: context.cte_optimizer,
         data_source_stats: &crate::stats::CoreDataSourceStats,
         predicate_simplifier: &tidb_planner_core_rule::rule_predicate_simplification::RulePredicateSimplifier,

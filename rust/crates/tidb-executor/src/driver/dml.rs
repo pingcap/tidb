@@ -378,6 +378,10 @@ fn physical_dml_plan_with_cache_mode(
         }
     }
 
+    // Go `PlanBuilder.Build` for the INSERT (no fast plan exists for one).
+    if operator.eq_ignore_ascii_case("Insert") {
+        super::record_plan_builder_metric(ctx);
+    }
     // Go `buildInsert`'s mockTablePlan filler, right after the Insert root.
     let mut root_base = if operator.eq_ignore_ascii_case("Insert") {
         let root = BasePhysicalPlan::new(&plan_ids, operator, 0);
@@ -395,6 +399,8 @@ fn physical_dml_plan_with_cache_mode(
         // above, ahead of the source. The output names are what ON DUPLICATE
         // assignments resolve against.
         Some(query) if operator.eq_ignore_ascii_case("Insert") => {
+            // Go `buildSelectPlanOfInsert`'s own `b.Build`.
+            super::record_plan_builder_metric(ctx);
             let (physical, names) =
                 super::planner_bridge::physical_query_plan_and_names_with_allocators(
                     query,
@@ -457,6 +463,8 @@ fn physical_dml_plan_with_cache_mode(
                 }
                 Some(fast)
             } else {
+                // Go `optimize` past `TryFastPlan`: `PlanBuilder.Build`.
+                super::record_plan_builder_metric(ctx);
                 let update_assignment_values: Option<Vec<Option<tidb_ast::Expr>>> =
                     single_assignments.as_ref().map(|assignments| {
                         assignments
@@ -3752,6 +3760,8 @@ fn run_update_with_physical(
     // warning, and the source's `SelectLockExec` locks after the last chunk's
     // writes. Assignments that read the catalog (a correlated subquery)
     // instead see the whole statement snapshot first.
+    // Go `updateRows`' `rowsColMultiply`.
+    let mut rows_col_multiply = 0i64;
     if writes_stored_columns {
         let mut row_index = 0usize;
         stream_physical_write_rows(
@@ -3764,6 +3774,16 @@ fn run_update_with_physical(
             dml,
             None,
             |catalog, row, physical_field_types| {
+                // Go `rowsColMultiplyForPreparedRow`: the table's columns,
+                // unless this statement already changed the row.
+                let already_changed = kv_handle(&row.id)
+                    .ok()
+                    .and_then(|handle| updated_row_keys.get(&handle).copied())
+                    .unwrap_or(false);
+                if !already_changed {
+                    rows_col_multiply =
+                        add_rows_col_multiply(rows_col_multiply, row.stored.len() as i64);
+                }
                 let handle = extra_handle_value(&row.id);
                 let mut new_row = UpdateRowEvaluator {
                     field_types: &field_types,
@@ -3801,6 +3821,7 @@ fn run_update_with_physical(
             },
         )?;
         records.finish(catalog, ctx)?;
+        record_dml_rows_col_multiply(ctx, rows_col_multiply);
         ctx.set_message(format!(
             "Rows matched: {matched}  Changed: {changed}  Warnings: {}",
             ctx.warning_count()
@@ -4239,6 +4260,26 @@ fn run_delete_with_physical(
     // before asking its source for the next chunk.
     let mut records = DeleteRecords::new(fk_triggers);
     let mut deleted = 0;
+    // Go's `columnCount` of each deleted row: the child row's cells but the
+    // partition id (`ExtraPhysTblID`), less the `_tidb_rowid` handle.
+    let row_cells = {
+        let schema = physical
+            .schema()
+            .ok_or_else(|| DriverError::unsupported("DELETE child has no schema"))?;
+        let cells = schema
+            .columns
+            .iter()
+            .filter(|column| column.id != tidb_model::column::EXTRA_PHYS_TBL_ID)
+            .count() as i64;
+        let has_extra_handle = match catalog.get_in(&database, &name) {
+            Some(TableEntry::Kv(table)) => {
+                table.pk_handle_offset().is_none() && table.common_handle_offsets().is_empty()
+            }
+            _ => false,
+        };
+        cells - i64::from(has_extra_handle)
+    };
+    let mut rows_col_multiply = 0i64;
     stream_physical_write_rows(
         physical,
         catalog,
@@ -4258,10 +4299,12 @@ fn run_delete_with_physical(
                 delete.ignore,
                 ctx,
             )?);
+            rows_col_multiply = add_rows_col_multiply(rows_col_multiply, row_cells);
             Ok(())
         },
     )?;
     records.finish(catalog, ctx)?;
+    record_dml_rows_col_multiply(ctx, rows_col_multiply);
     Ok(deleted)
 }
 
@@ -4493,6 +4536,26 @@ fn stream_physical_write_rows(
         runtime.extend(collected);
     }
     Ok(shape.field_types)
+}
+
+/// Go `recordDMLRowsColMultiply2Metrics(sessVars, rowsColMultiply, 1)`: a
+/// DML statement's rows times their columns, RU v2's
+/// `executor_l5_insert_rows`.
+fn record_dml_rows_col_multiply(ctx: &crate::StmtContext, rows_col_multiply: i64) {
+    if rows_col_multiply <= 0 {
+        return;
+    }
+    if let Some(metrics) = ctx.ruv2_metrics() {
+        metrics.add_executor_l_5_insert_rows(rows_col_multiply);
+    }
+}
+
+/// Go `addDeleteRowsColMultiply`.
+fn add_rows_col_multiply(total: i64, delta: i64) -> i64 {
+    if delta <= 0 {
+        return total;
+    }
+    total.saturating_add(delta)
 }
 
 /// A one-row chunk holding `row`, so an expression can be evaluated over it.

@@ -4529,7 +4529,7 @@ fn build_index_join(
     } else {
         right_keys
     };
-    let mut conditions = left_keys
+    let equalities = left_keys
         .iter()
         .zip(right_keys)
         .enumerate()
@@ -4548,9 +4548,7 @@ fn build_index_join(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let equalities = conditions.clone();
     let other_conditions = resolve_expressions(&join.other_conditions, &condition_schema)?;
-    conditions.extend(other_conditions.iter().cloned());
     let (probe_keys, probe_parts) = index_join_probe_shape(join)?;
     let probe_key_domains = index_join_probe_key_domains(join, &probe_parts, catalog, ctx)?;
     let probe_bounds = join
@@ -4597,69 +4595,33 @@ fn build_index_join(
     let (left_types, right_types) = (schema_types(&left_schema), schema_types(&right_schema));
     let output_offsets =
         physical_join_output_offsets(plan, join.join_type, &left_schema, &right_schema)?;
-    if join.kind != tidb_planner_core_operator_physicalop::IndexJoinKind::IndexMergeJoin {
-        // Go's joiner appends the left child's columns before the right's;
-        // a physical index join's schema is never interleaved.
-        let Some(children_used) =
-            index_join_children_used(join.join_type, &output_offsets, left_types.len())
-        else {
-            return Err(DriverError::unsupported(
-                "an index join's output interleaves its children's columns",
-            ));
-        };
-        {
-            return build_index_look_up_join(
-                plan,
-                join,
-                outer,
-                lookup,
-                equalities,
-                other_conditions,
-                left_types,
-                right_types,
-                children_used,
-                ctx,
-                state,
-            );
-        }
+    // Go's `IndexLookUpMergeJoin` (and `PhysicalIndexMergeJoin`'s merge
+    // fields) is not ported; neither planner builds one on this branch.
+    if join.kind == tidb_planner_core_operator_physicalop::IndexJoinKind::IndexMergeJoin {
+        return Err(DriverError::unsupported("IndexLookUpMergeJoin is not supported"));
     }
-    let mut executor = JoinExec::build_index_look_up_join(
-        meta(ctx, plan, plan_schema(plan)?),
-        join_kind(join.join_type)?,
-        conditions,
+    // Go's joiner appends the left child's columns before the right's; a
+    // physical index join's schema is never interleaved.
+    let Some(children_used) =
+        index_join_children_used(join.join_type, &output_offsets, left_types.len())
+    else {
+        return Err(DriverError::unsupported(
+            "an index join's output interleaves its children's columns",
+        ));
+    };
+    build_index_look_up_join(
+        plan,
+        join,
         outer,
+        lookup,
+        equalities,
+        other_conditions,
         left_types,
         right_types,
-        ctx.clone(),
-        ctx.statement_memory(),
-        lookup,
-    );
-    executor.set_index_lookup_concurrency(ctx.index_lookup_join_concurrency());
-    executor.set_index_join_runtime_stats(
-        ctx.executor_runtime_stats_source()
-            .filter(|_| !state.untraced)
-            .cloned(),
-        i64::from(plan.id()),
-    );
-    executor.set_index_join_batch_size(ctx.index_join_batch_size());
-    executor.set_index_ranges(&join.ranges);
-    executor.set_vectorized_expression(ctx.enable_vectorized_expression());
-    match join.kind {
-        tidb_planner_core_operator_physicalop::IndexJoinKind::IndexHashJoin => {
-            executor.set_index_hash_join(join.keep_outer_order);
-        }
-        tidb_planner_core_operator_physicalop::IndexJoinKind::IndexMergeJoin => {
-            executor.set_index_merge_join();
-        }
-        tidb_planner_core_operator_physicalop::IndexJoinKind::IndexJoin => {}
-    }
-    executor
-        .set_output_offsets(output_offsets)
-        .map_err(DriverError::Exec)?;
-    executor
-        .set_default_values(join.default_values.clone())
-        .map_err(DriverError::Exec)?;
-    Ok(Box::new(executor))
+        children_used,
+        ctx,
+        state,
+    )
 }
 
 /// Go `markChildrenUsedCols` over a physical join's output offsets into its

@@ -161,16 +161,11 @@ use crate::hash_join::{
 };
 use tidb_executor_internal_exec::fast_bytes_map::FastBytesMap;
 use tidb_variable::mem_quota::StatementMemory;
-mod index_hash;
 mod index_lookup_hash_join;
 mod index_lookup_join;
 pub use index_lookup_hash_join::IndexNestedLoopHashJoin;
 pub use index_lookup_join::{IndexLookUpJoin, IndexLookUpJoinBuild};
 mod output;
-use index_hash::{
-    send_index_task, IndexHashChunk, IndexHashOutput, IndexHashState, IndexResultSender,
-    IndexUnordered,
-};
 use output::JoinOutput;
 
 use std::cell::Cell;
@@ -609,10 +604,6 @@ impl MergeInnerGroup {
 /// largest number of outer rows one index-join probe batch may hold.
 pub const INDEX_JOIN_BATCH_SIZE: usize = 25000;
 
-/// Go resolves the unset `tidb_index_lookup_join_concurrency` through
-/// `tidb_executor_concurrency`, whose default is five inner workers.
-const INDEX_LOOKUP_JOIN_CONCURRENCY: usize = 5;
-
 /* Index-join inner aggregation is built by `build_index_inner_subtree` from
  * the retained PhysicalHashAgg/PhysicalStreamAgg node, exactly like Go's
  * dataReaderBuilder. There is intentionally no second aggregate descriptor
@@ -800,17 +791,8 @@ impl OuterBatch {
         self.ptrs.len()
     }
 
-    fn is_empty(&self) -> bool {
-        self.ptrs.is_empty()
-    }
-
     fn row(&self, index: usize) -> Row<'_> {
         self.rows.get_row(self.ptrs[index])
-    }
-
-    fn push(&mut self, row: Row<'_>) {
-        let ptr = self.rows.append_row(row);
-        self.ptrs.push(ptr);
     }
 
     /// Go `task.outerResult.Add(chk)`: the chunk joins the batch whole; the
@@ -837,17 +819,6 @@ impl OuterBatch {
             .sum::<i64>()
             + self.outer_match.iter().map(|matched| matched.len() as i64).sum::<i64>();
         self.bytes
-    }
-
-    fn clear(&mut self) {
-        self.rows.clear();
-        self.ptrs.clear();
-        self.bytes = 0;
-        self.encoded_look_up_keys.clear();
-        self.encoded_look_up_keys_charge = None;
-        self.inner_worker_tracker = None;
-        self.kv_ranges_charged = false;
-        self.outer_match.clear();
     }
 }
 
@@ -914,70 +885,6 @@ fn build_outer_task<C: Columns>(
     }
     outer.settle_bytes();
     Ok(outer)
-}
-
-struct IndexLookupState {
-    unordered: Option<IndexUnordered>,
-    hash: Option<IndexHashState>,
-    hash_results: Option<std::sync::mpsc::Receiver<IndexTaskOutcome>>,
-    hash_chunk: Option<IndexHashChunk>,
-    hash_task_bytes: i64,
-    /// The current batch's outer rows in child order. Ordinary lookup and
-    /// ordered hash joins preserve it; unordered hash joins probe inner rows.
-    outer: OuterBatch,
-    /// How far `outer` is consumed.
-    cursor: usize,
-    /// Go's innerIter/hasMatch, retained when one outer row spans requests.
-    probe: Option<IndexRowProbe>,
-    condition_scratch: Option<Chunk>,
-    /// The inner rows the batch's probes read, in read order.
-    inner: List,
-    /// Bytes charged for the current inner list, released at the next batch.
-    inner_bytes: i64,
-    /// Every equality key's encoding to the `inner` positions carrying it.
-    matched: FastBytesMap<Vec<RowPtr>>,
-    /// Go `IndexLookUpJoin.requiredRows`: an outer join's parent's
-    /// required rows, 0 until its first `Next`.
-    parent_required_rows: usize,
-    /// Whether a task read no outer rows: Go's outer worker returns on a nil
-    /// task.
-    outer_done: bool,
-    /// The next batch's size, doubling to the configured batch cap as Go's
-    /// `increaseBatchSize` does.
-    batch_size: usize,
-    /// Inner tasks whose remote readers have already been opened. They remain
-    /// in outer-task order even when a later TiKV request finishes first.
-    pending: std::collections::VecDeque<PendingIndexLookupTask>,
-    /// Once a lookup shape refuses remote prefetch, retain the synchronous
-    /// path for the rest of this executor.
-    prefetch_disabled: bool,
-    /// Go `SessionVars.IndexJoinBatchSize`, copied from the executor's
-    /// statement snapshot so batch growth uses the session cap.
-    max_batch_size: usize,
-}
-
-struct IndexRowProbe {
-    key: Option<Vec<u8>>,
-    next_inner: usize,
-    matched: bool,
-    /// Go `hasNull`, accumulated across this outer row's candidates like
-    /// `matched`; see [`miss_marker`].
-    has_null: bool,
-}
-
-struct PendingIndexLookupTask {
-    outer: OuterBatch,
-    outer_bytes: i64,
-    source: PendingIndexLookupSource,
-}
-
-enum PendingIndexLookupSource {
-    /// Go `innerWorker.handleTask`: a lane thread builds lookup contents,
-    /// fetches inner chunks and builds their map while earlier tasks drain.
-    Draining {
-        results: std::sync::mpsc::Receiver<IndexTaskOutcome>,
-    },
-    Synchronous(Vec<IndexTaskProbe>),
 }
 
 /// The lookup-content shape of one index join, what
@@ -1052,7 +959,10 @@ impl IndexProbePlan {
 /// The lookup-key and inner-reader context shared by bounded task workers.
 /// Hash variants also own ON evaluation/output; ordinary lookup does not.
 struct IndexTaskShared<C: Columns> {
-    hash_output: Option<IndexHashOutput>,
+    /// Whether a task builds the inner rows' lookup map (Go
+    /// `IndexLookUpJoin`'s `buildLookUpMap`); Go's `IndexNestedLoopHashJoin`
+    /// hashes the outer rows instead.
+    build_lookup_map: bool,
     /// Whether tasks charge Go's `IndexLookUpJoin` / `IndexNestedLoopHashJoin`
     /// inner-worker memory (encoded lookup keys, lookup datums, ranges);
     /// Go's `IndexLookUpMergeJoin` charges none of it.
@@ -1075,80 +985,6 @@ struct IndexTaskShared<C: Columns> {
     memory: StatementMemory,
     /// Go `innerWorker.stats`.
     stats: Option<Arc<crate::join_stats::IndexLookUpJoinRuntimeStats>>,
-}
-
-/// What the pool worker of one index task hands back.
-enum IndexTaskOutcome {
-    HashChunk(IndexHashChunk),
-    HashFinished {
-        inner_rows: u64,
-        evaluations: u64,
-    },
-    /// Go's completed lookUpJoinTask, ready for demand-driven probing.
-    Prepared {
-        outer: OuterBatch,
-        inner: PreparedIndexInner,
-        inner_rows: u64,
-    },
-    /// The batch's probes reach no forkable range; the session's own
-    /// reader serves them, as it does without a template.
-    Unforked {
-        outer: OuterBatch,
-        probes: Vec<IndexTaskProbe>,
-    },
-    Failed {
-        outer: OuterBatch,
-        error: Box<ExecError>,
-    },
-}
-
-/// Go innerWorker.handleTask: prepare lookup content, inner rows and map.
-fn run_index_task<C: Columns>(shared: &IndexTaskShared<C>, mut outer: OuterBatch) -> IndexTaskOutcome {
-    let fetched = fetch_index_task(shared, &mut outer);
-    fetched_index_task_outcome(outer, fetched)
-}
-
-enum FetchedIndexTask {
-    Prepared {
-        inner: PreparedIndexInner,
-        inner_rows: u64,
-    },
-    Unforked(Vec<IndexTaskProbe>),
-}
-
-fn fetched_index_task_outcome(
-    outer: OuterBatch,
-    fetched: Result<FetchedIndexTask, ExecError>,
-) -> IndexTaskOutcome {
-    match fetched {
-        Ok(FetchedIndexTask::Prepared { inner, inner_rows }) => IndexTaskOutcome::Prepared {
-            outer,
-            inner,
-            inner_rows,
-        },
-        Ok(FetchedIndexTask::Unforked(probes)) => IndexTaskOutcome::Unforked { outer, probes },
-        Err(error) => IndexTaskOutcome::Failed {
-            outer,
-            error: Box::new(error),
-        },
-    }
-}
-
-fn fetch_index_task<C: Columns>(
-    shared: &IndexTaskShared<C>,
-    outer: &mut OuterBatch,
-) -> Result<FetchedIndexTask, ExecError> {
-    let probes = construct_index_task(shared, outer)?;
-    let mem_tracker = outer.take_kv_range_tracker(shared.template.is_some());
-    let mut task = match open_index_task(shared, probes, mem_tracker)? {
-        Ok(task) => task,
-        Err(probes) => return Ok(FetchedIndexTask::Unforked(probes)),
-    };
-    let fetched = fetch_index_inner(shared, task.as_mut(), None, None);
-    // Go `handleTask`'s defer: the inner worker's charges end with the task.
-    outer.inner_worker_tracker = None;
-    let (inner, inner_rows, _) = fetched?;
-    Ok(FetchedIndexTask::Prepared { inner, inner_rows })
 }
 
 /// Go `innerWorker.constructLookupContent`, timed as its stats record it.
@@ -1429,17 +1265,6 @@ struct PreparedIndexInner {
 }
 
 impl PreparedIndexInner {
-    fn take(
-        state: &mut IndexLookupState,
-        shared: &IndexTaskShared<impl Columns>,
-    ) -> Result<Self, ExecError> {
-        let mut inner = prepare_index_inner(shared, Vec::new())?;
-        std::mem::swap(&mut inner.rows, &mut state.inner);
-        inner.bytes = std::mem::take(&mut state.inner_bytes);
-        inner.matched = std::mem::take(&mut state.matched);
-        Ok(inner)
-    }
-
     fn account(&mut self, memory: &StatementMemory) -> Result<(), ExecError> {
         let bytes = self.rows.mem_tracker().bytes_consumed();
         self.tracker.consume(bytes - self.bytes);
@@ -1459,12 +1284,6 @@ impl PreparedIndexInner {
         self.account(&shared.memory)
     }
 
-    fn install(mut self, state: &mut IndexLookupState) {
-        debug_assert_eq!(state.inner_bytes, 0);
-        std::mem::swap(&mut state.inner, &mut self.rows);
-        state.matched = std::mem::take(&mut self.matched);
-        state.inner_bytes = std::mem::take(&mut self.bytes);
-    }
 }
 
 impl Drop for PreparedIndexInner {
@@ -1487,7 +1306,7 @@ fn prepare_index_inner<C: Columns>(
     for chunk in prefetched {
         prepared.append(shared, chunk)?;
     }
-    if shared.hash_output.is_none() {
+    if shared.build_lookup_map {
         prepared.matched = build_index_lookup_map(
             &prepared.rows,
             &shared.keys,
@@ -1536,7 +1355,7 @@ fn fetch_index_inner<C: Columns>(
         if let Some(stats) = &shared.stats {
             stats.record_fetch(fetch_started.elapsed());
         }
-        if shared.hash_output.is_none() {
+        if shared.build_lookup_map {
             let build_started = std::time::Instant::now();
             inner.matched = build_index_lookup_map(
                 &inner.rows,
@@ -1644,17 +1463,6 @@ pub struct JoinExec<C: Columns> {
     kind: JoinKind,
     native_hash: bool,
     concurrency: usize,
-    /// Go `SessionVars.IndexLookupJoinConcurrency()`, resolved at statement
-    /// construction. Standalone executor tests retain the source default;
-    /// the physical builder replaces it with the session value.
-    index_lookup_concurrency: usize,
-    /// Go `SessionVars.IndexJoinBatchSize`, resolved at statement construction.
-    index_join_batch_size: usize,
-    /// Go `StmtCtx.RuntimeStatsColl` and the plan an index join registers
-    /// its `indexLookUpJoinRuntimeStats` on at Close.
-    index_join_runtime_stats: Option<(Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>, i64)>,
-    /// Go `IndexLookUpJoin.stats`, created with the first task.
-    index_join_stats: Option<Arc<crate::join_stats::IndexLookUpJoinRuntimeStats>>,
     outer_filter: Vec<Expression>,
     filter_is_left: bool,
     /// The complete logical `ON` clause. The nested-loop reference path must
@@ -1716,29 +1524,7 @@ pub struct JoinExec<C: Columns> {
     merge: Option<crate::merge_join_plan::MergeJoinPlan>,
     /// The merge strategy's live state; absent until the first `next()`.
     merge_state: Option<MergeState>,
-    /// The index strategy's plan, set by the planner when one side is a
-    /// single table whose index the join keys can probe. `None` is every
-    /// other join, and -- as with `merge` above -- the opt-in is fail-closed:
-    /// a lookup over the wrong object silently loses rows.
-    index_lookup: Option<IndexLookupPlan>,
-    /// The physical index-hash variant and its outer-order contract.
-    index_hash: Option<bool>,
-    /// Go `IndexLookUpMergeJoin`: see [`Self::set_index_merge_join`].
-    index_merge: bool,
-    /// Go `2 * types.EstimatedMemUsage(IndexRanges[0].LowVal,
-    /// len(IndexRanges))`: what each inner worker charges the statement for
-    /// its copy of the join's ranges ([`Self::set_index_ranges`]).
-    index_worker_ranges_bytes: i64,
     vectorized: bool,
-    /// The index strategy's live state; absent until the first `next()`.
-    index_state: Option<IndexLookupState>,
-    /// What a pool worker needs to join one index task on its own (Go's
-    /// `indexHashJoinInnerWorker`), built with the index state.
-    index_task_shared: Option<Arc<IndexTaskShared<C>>>,
-    /// Reusable blocking lanes for the index-join worker set. The pool is
-    /// owned by the executor so Close can wait for every worker before the
-    /// lookup source or executor is reused.
-    index_task_lanes: Option<Arc<tidb_goruntime::worker_pool::LanePool>>,
     /// How many times the `ON` clause has been evaluated. This is the cost
     /// the hash table exists to remove, so it is the number a scaling test
     /// asserts on directly instead of timing the machine.
@@ -1842,10 +1628,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             // plan's own `na_equal_conditions` count can.
             na_keys: Vec::new(),
             concurrency: 1,
-            index_lookup_concurrency: INDEX_LOOKUP_JOIN_CONCURRENCY,
-            index_join_batch_size: INDEX_JOIN_BATCH_SIZE,
-            index_join_runtime_stats: None,
-            index_join_stats: None,
             outer_filter: Vec::new(),
             filter_is_left: true,
             conditions,
@@ -1865,14 +1647,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             hash_build_is_left: None,
             merge: None,
             merge_state: None,
-            index_lookup: None,
-            index_hash: None,
-            index_merge: false,
-            index_worker_ranges_bytes: 0,
             vectorized: true,
-            index_state: None,
-            index_task_shared: None,
-            index_task_lanes: None,
             condition_evals: Cell::new(0),
             memory,
             tracker,
@@ -1881,68 +1656,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             build_spilled: false,
             spilled_bytes: 0,
         }
-    }
-
-    /// Go `buildIndexLookUpJoin`: only the outer child is built normally.
-    /// The inner physical subtree is represented by `plan.source` and is
-    /// reseeded for every outer lookup task.
-    #[allow(clippy::too_many_arguments)]
-    pub fn build_index_look_up_join(
-        meta: ExecutorMeta,
-        kind: JoinKind,
-        conditions: Vec<Expression>,
-        outer: Box<dyn Executor>,
-        left_types: Vec<FieldType>,
-        right_types: Vec<FieldType>,
-        ctx: C,
-        memory: StatementMemory,
-        plan: IndexLookupPlan,
-    ) -> Self {
-        let (left, right) = if plan.lookup_is_left {
-            (None, Some(outer))
-        } else {
-            (Some(outer), None)
-        };
-        let mut executor = Self::new_with_children(
-            meta,
-            kind,
-            conditions,
-            left,
-            right,
-            left_types,
-            right_types,
-            ctx,
-            memory,
-        );
-        executor.index_lookup = Some(plan);
-        // Go `IndexLookUpJoin` has a memory tracker but no disk tracker.
-        executor.disk_tracker.detach();
-        executor
-    }
-
-    /// Sets Go's per-statement `IndexLookupJoinConcurrency` after the
-    /// executor has been built. The session layer resolves the deprecated
-    /// variable's unset value to `tidb_executor_concurrency` before this
-    /// setter is called.
-    /// Go `e.RuntimeStats() != nil` for an index join: collect and register
-    /// `indexLookUpJoinRuntimeStats` on `plan_id`.
-    pub fn set_index_join_runtime_stats(
-        &mut self,
-        source: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
-        plan_id: i64,
-    ) {
-        self.index_join_runtime_stats = source.map(|source| (source, plan_id));
-    }
-
-    pub fn set_index_lookup_concurrency(&mut self, concurrency: usize) {
-        self.index_lookup_concurrency = concurrency.max(1);
-    }
-
-    /// Sets Go's per-statement `IndexJoinBatchSize` after the executor has
-    /// been built. A zero or negative session value is not valid in Go; the
-    /// clamp keeps standalone callers from constructing an empty batch loop.
-    pub fn set_index_join_batch_size(&mut self, batch_size: usize) {
-        self.index_join_batch_size = batch_size.max(1);
     }
 
     fn left_exec(&self) -> &dyn Executor {
@@ -2132,17 +1845,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             | JoinKind::AntiLeftOuterSemi => return true,
             JoinKind::Inner => {}
         }
-        match &self.index_lookup {
-            // The index strategy DRIVES from the side it does not look up,
-            // whichever side that is -- an inner join whose left child is the
-            // indexed table streams its right child. For an outer join the
-            // two answers coincide, because the decision refuses to look up
-            // the preserved side (see [`IndexLookupPlan::lookup_is_left`]).
-            Some(plan) => !plan.lookup_is_left,
-            None => self
-                .hash_build_is_left
-                .map_or(self.kind != JoinKind::Right, |build_is_left| !build_is_left),
-        }
+        self.hash_build_is_left
+            .map_or(self.kind != JoinKind::Right, |build_is_left| !build_is_left)
     }
 
     fn hash_build_is_left(&self) -> bool {
@@ -2280,101 +1984,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             .datum_pair(req, self.outer_is_left(), outer_row, inner_row);
     }
 
-    /// Resume one outer row's probe, stopping at the caller's chunk boundary.
-    /// The key, match flag and residual scratch survive subsequent Next calls.
-    fn emit_outer_chunk_rows<'a, I>(
-        &self,
-        req: &mut Chunk,
-        outer_row: Row<'_>,
-        candidates: I,
-        probe: &mut IndexRowProbe,
-        mut scratch: Option<&mut Chunk>,
-    ) -> Result<bool, ExecError>
-    where
-        I: Iterator<Item = Row<'a>>,
-    {
-        let outer_is_left = self.outer_is_left();
-        for inner_row in candidates {
-            if req.is_full() {
-                return Ok(false);
-            }
-            if let Some(scratch) = scratch.as_mut() {
-                let (accepted, has_null) =
-                    self.matches_index_pair(scratch, outer_row, inner_row)?;
-                probe.has_null |= has_null;
-                if !accepted {
-                    probe.next_inner += 1;
-                    continue;
-                }
-            }
-            probe.next_inner += 1;
-            probe.matched = true;
-            match self.kind {
-                JoinKind::Inner | JoinKind::Left | JoinKind::Right => {
-                    self.output.chunks(req, outer_is_left, outer_row, inner_row);
-                }
-                JoinKind::Semi => {
-                    self.output.preserved(req, outer_row);
-                    break;
-                }
-                JoinKind::LeftOuterSemi => {
-                    self.output.preserved(req, outer_row);
-                    req.append_datum(self.output.width(), &Datum::Int(1));
-                    break;
-                }
-                JoinKind::AntiLeftOuterSemi => {
-                    self.output.preserved(req, outer_row);
-                    req.append_datum(self.output.width(), &Datum::Int(0));
-                    break;
-                }
-                JoinKind::AntiSemi => break,
-            }
-        }
-        if !probe.matched {
-            match self.kind {
-                JoinKind::Left | JoinKind::Right => {
-                    self.output.unmatched(req, outer_is_left, outer_row, 0);
-                }
-                JoinKind::AntiSemi => self.output.preserved(req, outer_row),
-                JoinKind::LeftOuterSemi | JoinKind::AntiLeftOuterSemi => {
-                    self.output.preserved(req, outer_row);
-                    req.append_datum(self.output.width(), &miss_marker(self.kind, probe.has_null));
-                }
-                JoinKind::Inner | JoinKind::Semi => {}
-            }
-        }
-        Ok(true)
-    }
-
-    /// [`Self::matches`] for one index-strategy pair of chunk rows: the pair
-    /// laid out left-then-right in `scratch` and the complete `ON` clause
-    /// evaluated on it (an index join is neither a hash nor a merge join, so
-    /// `matches` reads `conditions`, not the residual list).
-    fn matches_index_pair(
-        &self,
-        scratch: &mut Chunk,
-        outer_row: Row<'_>,
-        inner_row: Row<'_>,
-    ) -> Result<(bool, bool), ExecError> {
-        if self.conditions.is_empty() {
-            return Ok((true, false));
-        }
-        self.condition_evals.set(self.condition_evals.get() + 1);
-        scratch.reset();
-        let (left, right) = if self.outer_is_left() {
-            (outer_row, inner_row)
-        } else {
-            (inner_row, outer_row)
-        };
-        scratch.append_partial_row(0, left);
-        scratch.append_partial_row(left.len(), right);
-        let row = scratch.get_row(0);
-        Ok(fold_verdict(
-            self.kind,
-            crate::joiner::eval_bool(&self.ctx, &self.conditions, row)?,
-        ))
-    }
-
     /// Emits every output row one outer row produces, given the inner rows
     /// it may match. Shared by both paths so the outer-join padding rule and
     /// the output column order have exactly one implementation.
@@ -2442,728 +2051,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         Ok(())
     }
 
-    /// Whether this join looks its inner side up per outer batch.
-    #[must_use]
-    pub fn is_index_join(&self) -> bool {
-        self.index_lookup.is_some()
-    }
-
-    pub fn set_index_hash_join(&mut self, keep_outer_order: bool) {
-        self.index_hash = Some(keep_outer_order);
-    }
-
-    /// Marks the join as Go's `IndexLookUpMergeJoin`, whose tasks charge no
-    /// inner-worker memory.
-    pub fn set_index_merge_join(&mut self) {
-        self.index_merge = true;
-    }
-
-    /// Go `IndexLookUpJoin.IndexRanges`, of which every inner worker keeps a
-    /// copy and charges it to the statement, never to the join, for as long
-    /// as the worker lives (`newInnerWorker`).
-    pub fn set_index_ranges(&mut self, ranges: &[tidb_ranger::types::Range]) {
-        self.index_worker_ranges_bytes = ranges
-            .first()
-            .map_or(0, |range| 2 * tidb_datatype::estimated_mem_usage(&range.low_val, ranges.len()));
-    }
-
-    fn index_hash_output(&self) -> Option<IndexHashOutput> {
-        self.index_hash.map(|ordered| IndexHashOutput {
-            ordered,
-            vectorized: self.vectorized,
-            kind: self.kind,
-            outer_is_left: self.outer_is_left(),
-            output: self.output.clone(),
-            conditions: if self.keys.is_empty() {
-                self.conditions.clone()
-            } else {
-                self.residual_conditions.clone()
-            },
-            condition_types: self.condition_types.clone(),
-            left_types: self.left_types.clone(),
-            right_types: self.right_types.clone(),
-            output_types: self.meta.ret_field_types().to_vec(),
-        })
-    }
-
     pub fn set_vectorized_expression(&mut self, enabled: bool) {
         self.vectorized = enabled;
-    }
-
-    /// The index strategy: stream the outer side in batches, and read only
-    /// the inner rows each batch's keys can reach.
-    ///
-    /// Go's `IndexLookUpJoin.Next` over the tasks its outer worker builds.
-    /// One call fills the requested output across task boundaries or returns
-    /// the final partial chunk at EOF, like Go IndexLookUpJoin.Next.
-    fn next_index_lookup(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
-        loop {
-            if !self.fill_index_batch(req.required_rows())? {
-                return Ok(());
-            }
-            self.drain_index_batch(req)?;
-            if req.is_full() {
-                return Ok(());
-            }
-        }
-    }
-
-    /// Makes sure a batch with unconsumed outer rows is loaded, returning
-    /// `false` once the outer child is exhausted.
-    fn fill_index_batch(&mut self, required_rows: usize) -> Result<bool, ExecError> {
-        if self.index_state.is_none() {
-            let inner_types = self
-                .index_lookup
-                .as_ref()
-                .expect("this path runs only with a plan")
-                .source
-                .ret_field_types()
-                .to_vec();
-            let outer_types = if self.outer_is_left() {
-                self.left_types.clone()
-            } else {
-                self.right_types.clone()
-            };
-            self.index_state = Some(IndexLookupState {
-                unordered: None,
-                hash: None,
-                hash_results: None,
-                hash_chunk: None,
-                hash_task_bytes: 0,
-                outer: OuterBatch::new(
-                    &outer_types,
-                    self.meta.init_cap().max(1),
-                    self.meta.max_chunk_size().max(1),
-                ),
-                cursor: 0,
-                probe: None,
-                condition_scratch: (self.keys.is_empty() || !self.residual_conditions.is_empty())
-                    .then(|| Chunk::new_chunk_with_capacity(&self.condition_types, 1)),
-                inner: List::new(
-                    &inner_types,
-                    self.meta.init_cap(),
-                    self.meta.max_chunk_size(),
-                ),
-                inner_bytes: 0,
-                matched: FastBytesMap::default(),
-                parent_required_rows: 0,
-                outer_done: false,
-                // Go's `startWorkers(ctx, req.RequiredRows())`: the first
-                // batch is what the caller asked for, capped by the maximum.
-                batch_size: required_rows.min(self.index_join_batch_size),
-                pending: std::collections::VecDeque::new(),
-                prefetch_disabled: false,
-                max_batch_size: self.index_join_batch_size,
-            });
-            let plan = self
-                .index_lookup
-                .as_ref()
-                .expect("this path runs only with a plan");
-            let template = match &plan.source {
-                IndexLookupSource::Leaf(leaf) => leaf.fork_template(),
-                IndexLookupSource::Composite { .. } => None,
-            };
-            let prefetch_disabled = template.is_none();
-            let lane_pool = Arc::new(tidb_goruntime::worker_pool::LanePool::new(
-                "tidb-index-join",
-                self.index_lookup_concurrency,
-            ));
-            // Go `startWorkers` -> `newInnerWorker`, once per worker; Go's
-            // merge join's workers keep no such copy.
-            if !self.index_merge {
-                self.memory
-                    .stmt_tracker()
-                    .consume(self.index_lookup_concurrency as i64 * self.index_worker_ranges_bytes);
-            }
-            self.index_task_lanes = Some(Arc::clone(&lane_pool));
-            self.index_task_shared = Some(Arc::new(IndexTaskShared {
-                hash_output: self.index_hash_output(),
-                lookup_charges: !self.index_merge,
-                vectorized: self.vectorized,
-                template,
-                probe_plan: IndexProbePlan::new(
-                    &self.keys,
-                    plan.probe_keys.clone(),
-                    plan.probe_key_domains.clone(),
-                    plan.probe_bounds.clone(),
-                )?,
-                outer_is_left: self.outer_is_left(),
-                keys: self.keys.clone(),
-                ctx: self.ctx.clone(),
-                outer_types,
-                inner_types: plan.source.ret_field_types().to_vec(),
-                inner_not_null: plan.inner_not_null.clone(),
-                init_cap: self.meta.init_cap(),
-                max_chunk_size: self.meta.max_chunk_size(),
-                tracker: Arc::clone(&self.tracker),
-                memory: self.memory.clone(),
-                stats: self.index_join_runtime_stats.as_ref().map(|_| {
-                    Arc::clone(self.index_join_stats.get_or_insert_with(|| {
-                        Arc::new(crate::join_stats::IndexLookUpJoinRuntimeStats::new(
-                            self.index_lookup_concurrency,
-                        ))
-                    }))
-                }),
-            }));
-            if let Some(state) = self.index_state.as_mut() {
-                state.prefetch_disabled = prefetch_disabled;
-                if !prefetch_disabled && self.index_hash == Some(false) {
-                    state.unordered = Some(IndexUnordered::new(
-                        self.index_lookup_concurrency,
-                        &self.tracker,
-                    ));
-                }
-            }
-        }
-        // Go `IndexLookUpJoin.Next`: an outer join pushes its parent's
-        // required rows down to the outer worker.
-        if matches!(
-            self.kind,
-            JoinKind::Left | JoinKind::Right | JoinKind::LeftOuterSemi | JoinKind::AntiLeftOuterSemi
-        ) {
-            if let Some(state) = self.index_state.as_mut() {
-                state.parent_required_rows = required_rows;
-            }
-        }
-        loop {
-            let state = self.index_state.as_ref().expect("just installed above");
-            if state.hash_results.is_some()
-                || state.hash_chunk.is_some()
-                || state.cursor < state.outer.len()
-            {
-                return Ok(true);
-            }
-            if state.pending.is_empty()
-                && state
-                    .unordered
-                    .as_ref()
-                    .is_none_or(|tasks| tasks.active == 0)
-                && state.outer_done
-            {
-                return Ok(false);
-            }
-            self.load_index_batch()?;
-        }
-    }
-
-    /// Pull the next task after starting a bounded number of later lookups.
-    /// Ordinary lookup tasks return prepared rows/maps; hash tasks return a
-    /// bounded output stream. Both retain the outer-task queue's ownership.
-    fn load_index_batch(&mut self) -> Result<(), ExecError> {
-        let outer_is_left = self.outer_is_left();
-        let JoinExec {
-            left,
-            right,
-            keys,
-            index_lookup_concurrency,
-            tracker,
-            memory,
-            index_lookup,
-            index_state,
-            index_task_shared,
-            index_task_lanes,
-            condition_evals,
-            ..
-        } = self;
-        let shared = index_task_shared
-            .as_ref()
-            .expect("fill_index_batch installed it");
-        let lane_pool = index_task_lanes
-            .as_ref()
-            .expect("fill_index_batch installed index lanes");
-        let outer_child = if outer_is_left {
-            left.as_deref_mut()
-                .expect("an index join keeps its left outer child")
-        } else {
-            right
-                .as_deref_mut()
-                .expect("an index join keeps its right outer child")
-        };
-        let plan = index_lookup
-            .as_mut()
-            .expect("this path runs only with a plan");
-        let state = index_state.as_mut().expect("fill_index_batch installed it");
-
-        // Release the task just drained. Pending outer rows were charged when
-        // their tasks were built, not when they became current.
-        let retained = state.outer.bytes + state.inner_bytes;
-        tracker.consume(-retained);
-        state.outer.clear();
-        state.inner.clear();
-        state.inner_bytes = 0;
-        state.matched.clear();
-        state.cursor = 0;
-        state.probe = None;
-        state.hash = None;
-
-        if state.pending.is_empty() {
-            Self::fill_index_task_queue(
-                outer_child,
-                plan,
-                state,
-                tracker,
-                memory,
-                shared,
-                lane_pool,
-                *index_lookup_concurrency,
-            )?;
-        }
-        let synchronous = |plan: &mut IndexLookupPlan,
-                           state: &mut IndexLookupState,
-                           probes: Vec<IndexTaskProbe>|
-         -> Result<(), ExecError> {
-            let (keys_seeded, bound_values) = probes
-                .into_iter()
-                .map(|probe| (probe.key, probe.bounds))
-                .unzip();
-            plan.source
-                .set_probes(crate::index_lookup::IndexJoinProbes {
-                    keys: keys_seeded,
-                    bound_values,
-                    mem_tracker: state.outer.take_kv_range_tracker(false),
-                })?;
-            let fetched = fetch_index_inner(
-                shared,
-                plan.source.executor(),
-                shared
-                    .hash_output
-                    .as_ref()
-                    .and_then(IndexHashOutput::max_fetch_rows),
-                None,
-            );
-            // Go `handleTask`'s defer: the inner worker's charges end with
-            // the task.
-            state.outer.inner_worker_tracker = None;
-            let (inner, _, done) = fetched?;
-            inner.install(state);
-            if let Some(output) = &shared.hash_output {
-                state.matched.clear();
-                state.hash = Some(IndexHashState::new(
-                    output,
-                    keys,
-                    &state.outer,
-                    &state.inner,
-                    memory,
-                )?);
-                state
-                    .hash
-                    .as_mut()
-                    .expect("hash initialized")
-                    .begin_inner_window(done);
-            }
-            Ok(())
-        };
-        if state
-            .unordered
-            .as_ref()
-            .is_some_and(|tasks| tasks.active > 0)
-        {
-            let tasks = state.unordered.as_mut().expect("unordered hash variant");
-            let outcome = tasks.recv()?;
-            if let IndexTaskOutcome::HashChunk(chunk) = outcome {
-                state.hash_chunk = Some(chunk);
-                return Ok(());
-            }
-            return match outcome {
-                IndexTaskOutcome::HashFinished {
-                    inner_rows,
-                    evaluations,
-                } => {
-                    condition_evals.set(condition_evals.get() + evaluations);
-                    if let IndexLookupSource::Leaf(leaf) = &plan.source {
-                        leaf.add_produced(inner_rows);
-                    }
-                    Ok(())
-                }
-                IndexTaskOutcome::Unforked { outer, probes } => {
-                    state.outer = outer;
-                    state.prefetch_disabled = true;
-                    synchronous(plan, state, probes)
-                }
-                _ => Err(ExecError::internal(
-                    "unexpected unordered index-hash result",
-                )),
-            };
-        }
-        let Some(task) = state.pending.pop_front() else {
-            return Ok(());
-        };
-        debug_assert!(task.outer.is_empty() || task.outer_bytes == task.outer.bytes);
-        state.outer = task.outer;
-        // Ordered tasks retain N-1 later lookups while the current one drains.
-        Self::fill_index_task_queue(
-            outer_child,
-            plan,
-            state,
-            tracker,
-            memory,
-            shared,
-            lane_pool,
-            index_lookup_concurrency.saturating_sub(1),
-        )?;
-        match task.source {
-            PendingIndexLookupSource::Draining { results } => {
-                let outcome = results.recv().map_err(|_| {
-                    // No outcome returned ownership of the outer rows. The
-                    // pending task is already removed, so Close cannot release
-                    // this charge through its pending/current task counters.
-                    tracker.consume(-task.outer_bytes);
-                    ExecError::internal("the index-join inner worker stopped without a result")
-                })?;
-                match outcome {
-                    IndexTaskOutcome::HashChunk(chunk) => {
-                        state.hash_task_bytes = task.outer_bytes;
-                        state.hash_results = Some(results);
-                        state.hash_chunk = Some(chunk);
-                        Ok(())
-                    }
-                    IndexTaskOutcome::HashFinished {
-                        inner_rows,
-                        evaluations,
-                    } => {
-                        tracker.consume(-task.outer_bytes);
-                        condition_evals.set(condition_evals.get() + evaluations);
-                        if let IndexLookupSource::Leaf(leaf) = &plan.source {
-                            leaf.add_produced(inner_rows);
-                        }
-                        Ok(())
-                    }
-                    IndexTaskOutcome::Prepared {
-                        outer,
-                        inner,
-                        inner_rows,
-                    } => {
-                        if let IndexLookupSource::Leaf(leaf) = &plan.source {
-                            leaf.add_produced(inner_rows);
-                        }
-                        state.outer = outer;
-                        inner.install(state);
-                        memory.check().map_err(ExecError::from)
-                    }
-                    IndexTaskOutcome::Unforked { outer, probes } => {
-                        // The session's reader serves this batch, and the
-                        // later ones: the fork's refusal is a property of
-                        // the lookup, not of one batch.
-                        state.outer = outer;
-                        state.prefetch_disabled = true;
-                        synchronous(plan, state, probes)
-                    }
-                    IndexTaskOutcome::Failed { outer, error } => {
-                        state.outer = outer;
-                        Err(*error)
-                    }
-                }
-            }
-            PendingIndexLookupSource::Synchronous(probes) => synchronous(plan, state, probes),
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn fill_index_task_queue(
-        outer_child: &mut dyn Executor,
-        plan: &IndexLookupPlan,
-        state: &mut IndexLookupState,
-        tracker: &Arc<Tracker>,
-        memory: &StatementMemory,
-        shared: &Arc<IndexTaskShared<C>>,
-        lane_pool: &Arc<tidb_goruntime::worker_pool::LanePool>,
-        target: usize,
-    ) -> Result<(), ExecError> {
-        let outer_types = outer_child.ret_field_types().to_vec();
-        while state.pending.len() + state.unordered.as_ref().map_or(0, |tasks| tasks.active)
-            < target
-        {
-            let (mut outer, outer_bytes) = Self::read_index_outer_task(
-                outer_child,
-                &outer_types,
-                plan,
-                &shared.ctx,
-                shared.vectorized,
-                state,
-            )?;
-            if outer.is_empty() {
-                if state.outer_done {
-                    break;
-                }
-                continue;
-            }
-            let source = if state.prefetch_disabled {
-                let probes = construct_index_task(shared, &mut outer)?;
-                Some(PendingIndexLookupSource::Synchronous(probes))
-            } else {
-                // Go's inner worker prepares the lookup and map. Output
-                // remains on the consumer, so LIMIT never materializes a
-                // task's complete join fanout merely to read its first row.
-                let (tx, source) = if let Some(tasks) = state.unordered.as_mut() {
-                    (tasks.admit(outer_bytes), None)
-                } else {
-                    let (tx, results) = std::sync::mpsc::sync_channel(1);
-                    (
-                        IndexResultSender::from(tx),
-                        Some(PendingIndexLookupSource::Draining { results }),
-                    )
-                };
-                let task_outer = std::mem::replace(
-                    &mut outer,
-                    OuterBatch::new(&outer_types, 1, shared.max_chunk_size.max(1)),
-                );
-                let task_shared = Arc::clone(shared);
-                lane_pool
-                    .submit(move || send_index_task(&task_shared, task_outer, tx))
-                    .map_err(|_| ExecError::internal("index-join worker pool stopped"))?;
-                source
-            };
-            let synchronous = matches!(source, Some(PendingIndexLookupSource::Synchronous(_)));
-            if let Some(source) = source {
-                tracker.consume(outer_bytes);
-                state.pending.push_back(PendingIndexLookupTask {
-                    outer,
-                    outer_bytes,
-                    source,
-                });
-            }
-            memory.check().map_err(ExecError::from)?;
-            if synchronous {
-                break;
-            }
-        }
-        Ok(())
-    }
-
-    /// Go `outerWorker.buildTask` over the strategy's state; a task that
-    /// reads no rows ends the outer side.
-    fn read_index_outer_task(
-        outer_child: &mut dyn Executor,
-        outer_types: &[FieldType],
-        plan: &IndexLookupPlan,
-        ctx: &C,
-        vectorized: bool,
-        state: &mut IndexLookupState,
-    ) -> Result<(OuterBatch, i64), ExecError> {
-        let outer = build_outer_task(
-            outer_child,
-            outer_types,
-            &plan.outer_filter,
-            &plan.outer_not_null,
-            ctx,
-            vectorized,
-            &mut state.batch_size,
-            state.max_batch_size,
-            state.parent_required_rows,
-        )?;
-        if outer.rows.len() == 0 {
-            state.outer_done = true;
-        }
-        let bytes = outer.bytes;
-        Ok((outer, bytes))
-    }
-
-    /// Emits the loaded batch's outer rows, in the order the child produced
-    /// them, until `req` is full or the batch runs out.
-    fn drain_index_batch(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
-        // Go `IndexLookUpJoin.Next`'s `probe` time.
-        let probe_started = std::time::Instant::now();
-        let result = self.drain_index_batch_inner(req);
-        if let Some(stats) = &self.index_join_stats {
-            stats.record_probe(probe_started.elapsed());
-        }
-        result
-    }
-
-    fn drain_index_batch_inner(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
-        // Keep mutable cursor ownership separate from the join's immutable
-        // expression/output context, restoring it on both success and error.
-        let mut state = self
-            .index_state
-            .take()
-            .expect("a current index batch exists");
-        let result = if state.hash_results.is_some() || state.hash_chunk.is_some() {
-            self.drain_index_hash_results(req, &mut state)
-        } else if let Some(output) = self.index_hash_output() {
-            if state.hash.is_none() {
-                match IndexHashState::new(
-                    &output,
-                    &self.keys,
-                    &state.outer,
-                    &state.inner,
-                    &self.memory,
-                ) {
-                    Ok(hash) => state.hash = Some(hash),
-                    Err(error) => {
-                        self.index_state = Some(state);
-                        return Err(error);
-                    }
-                }
-                state.matched.clear();
-            }
-            let result = (|| loop {
-                let hash = state.hash.as_mut().expect("hash variant initialized");
-                let before = hash.evaluations;
-                let result = hash.drain(&output, &self.ctx, &state.outer, &state.inner, req);
-                self.condition_evals
-                    .set(self.condition_evals.get() + hash.evaluations - before);
-                result?;
-                if hash.done {
-                    state.cursor = state.outer.len();
-                }
-                if req.is_full() || !hash.needs_inner_window(&state.inner) {
-                    return Ok(());
-                }
-                let shared = self.index_task_shared.as_ref().expect("index task context");
-                let previous = PreparedIndexInner::take(&mut state, shared)?;
-                let (inner, _, done) = fetch_index_inner(
-                    shared,
-                    self.index_lookup
-                        .as_mut()
-                        .expect("index plan")
-                        .source
-                        .executor(),
-                    output.max_fetch_rows(),
-                    Some(previous),
-                )?;
-                inner.install(&mut state);
-                state
-                    .hash
-                    .as_mut()
-                    .expect("retained outer hash")
-                    .begin_inner_window(done);
-            })();
-            if result.is_err() {
-                // A failed inner task is terminal. Its consumed window must
-                // not be probed again or mistaken for an unmatched-row EOF.
-                state.cursor = state.outer.len();
-                state.hash.as_mut().expect("hash variant initialized").done = true;
-                if let Some(plan) = self.index_lookup.as_mut() {
-                    let _ = plan.source.close();
-                }
-            }
-            result
-        } else {
-            self.drain_index_state(req, &mut state)
-        };
-        self.index_state = Some(state);
-        result
-    }
-
-    fn drain_index_hash_results(
-        &mut self,
-        req: &mut Chunk,
-        state: &mut IndexLookupState,
-    ) -> Result<(), ExecError> {
-        while !req.is_full() {
-            if let Some(chunk) = state.hash_chunk.as_mut() {
-                // Go handleResult swaps columns and returns the emptied
-                // result buffer to its worker. Small requests retain a cursor.
-                if req.num_rows() == 0
-                    && chunk.row == 0
-                    && chunk.chunk.num_rows() <= req.required_rows()
-                {
-                    req.swap_columns(&mut chunk.chunk);
-                    state.hash_chunk = None;
-                    return Ok(());
-                }
-                let count =
-                    (req.required_rows() - req.num_rows()).min(chunk.chunk.num_rows() - chunk.row);
-                req.append_range_from(&chunk.chunk, chunk.row, chunk.row + count);
-                chunk.row += count;
-                if chunk.row == chunk.chunk.num_rows() {
-                    state.hash_chunk = None;
-                }
-                if req.is_full() {
-                    return Ok(());
-                }
-            }
-            // Unordered chunks arrive through the shared task queue in
-            // load_index_batch; never wait on the previous chunk's worker.
-            if state.hash_results.is_none() {
-                return Ok(());
-            }
-            let outcome = state
-                .hash_results
-                .as_ref()
-                .expect("active hash worker")
-                .recv()
-                .map_err(|_| {
-                    ExecError::internal("the index-hash worker stopped without completion")
-                })?;
-            match outcome {
-                IndexTaskOutcome::HashChunk(chunk) => state.hash_chunk = Some(chunk),
-                IndexTaskOutcome::HashFinished {
-                    inner_rows,
-                    evaluations,
-                } => {
-                    self.tracker
-                        .consume(-std::mem::take(&mut state.hash_task_bytes));
-                    state.hash_results = None;
-                    self.condition_evals
-                        .set(self.condition_evals.get() + evaluations);
-                    if let Some(IndexLookupPlan {
-                        source: IndexLookupSource::Leaf(leaf),
-                        ..
-                    }) = &self.index_lookup
-                    {
-                        leaf.add_produced(inner_rows);
-                    }
-                    return Ok(());
-                }
-                IndexTaskOutcome::Failed { outer, error } => {
-                    state.hash_task_bytes = 0;
-                    state.outer = outer;
-                    state.hash_results = None;
-                    return Err(*error);
-                }
-                _ => return Err(ExecError::internal("unexpected index-hash worker result")),
-            }
-        }
-        Ok(())
-    }
-
-    fn drain_index_state(
-        &self,
-        req: &mut Chunk,
-        state: &mut IndexLookupState,
-    ) -> Result<(), ExecError> {
-        let cap = req.required_rows();
-        loop {
-            if state.cursor >= state.outer.len() || req.num_rows() >= cap {
-                return Ok(());
-            }
-            let outer_row = state.outer.row(state.cursor);
-            if state.probe.is_none() {
-                let key = state.outer.encoded_look_up_key(state.cursor);
-                state.probe = Some(IndexRowProbe {
-                    key,
-                    next_inner: 0,
-                    matched: false,
-                    has_null: false,
-                });
-            }
-            let probe = state
-                .probe
-                .as_mut()
-                .expect("the outer probe is initialized");
-            let positions = probe
-                .key
-                .as_ref()
-                .and_then(|key| state.matched.get(key))
-                .map(Vec::as_slice)
-                .unwrap_or_default();
-            let candidates = positions[probe.next_inner..]
-                .iter()
-                .map(|ptr| state.inner.get_row(*ptr));
-            let done = self.emit_outer_chunk_rows(
-                req,
-                outer_row,
-                candidates,
-                probe,
-                state.condition_scratch.as_mut(),
-            )?;
-            if !done {
-                return Ok(());
-            }
-            state.cursor += 1;
-            state.probe = None;
-        }
     }
 
     /// Install the order selected by physical planning. Both children must
@@ -6283,35 +5172,20 @@ fn miss_marker(kind: JoinKind, has_null: bool) -> Datum {
 
 impl<C: Columns + Clone + Send + Sync + 'static> Executor for JoinExec<C> {
     fn open(&mut self) -> Result<(), ExecError> {
-        if self.index_lookup.is_some() {
-            if self.outer_is_left() {
-                self.left_exec_mut().open()?;
-            } else {
-                self.right_exec_mut().open()?;
-            }
-        } else {
-            self.left_exec_mut().open()?;
-            self.right_exec_mut().open()?;
-        }
+        self.left_exec_mut().open()?;
+        self.right_exec_mut().open()?;
         self.emitted = false;
         self.hash = None;
         self.parallel_probe = None;
         self.build_spilled = false;
         self.spilled_bytes = 0;
         self.merge_state = None;
-        self.index_state = None;
-        if let Some(plan) = self.index_lookup.as_mut() {
-            plan.source.open()?;
-        }
         self.condition_evals.set(0);
         Ok(())
     }
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
-        if self.index_lookup.is_some() {
-            return self.next_index_lookup(req);
-        }
         if self.merge.is_some() {
             return self.next_merged(req);
         }
@@ -6325,12 +5199,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> Executor for JoinExec<C> {
     /// spill file), then take the spill action back off the session tracker
     /// so the next statement is not left with a dangling one.
     fn close(&mut self) -> Result<(), ExecError> {
-        // Go `IndexLookUpJoin.Close`'s deferred `RegisterStats(e.ID(), e.stats)`.
-        if let (Some((source, plan_id)), Some(stats)) =
-            (&self.index_join_runtime_stats, self.index_join_stats.take())
-        {
-            source.register_stats(*plan_id, Box::new(stats.snapshot()));
-        }
         // Go closes the hash row container here (deletes any spill file and
         // releases its tracker charge). The state itself stays in place: the
         // execution-path receipts it carries (probe-window counts) remain
@@ -6360,34 +5228,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> Executor for JoinExec<C> {
                 .session_tracker()
                 .unbind_action_from_hard_limit(&action);
         }
-        if let Some(state) = self.index_state.take() {
-            let current = state.outer.bytes + state.inner_bytes + state.hash_task_bytes;
-            let pending = state
-                .pending
-                .iter()
-                .map(|task| task.outer_bytes)
-                .sum::<i64>();
-            self.tracker.consume(-(current + pending));
-        }
-        // Go waits for every index worker during Close before releasing its
-        // lookup source. Shut down the reusable lanes first so no in-flight
-        // task can outlive this executor or observe a reopened source.
-        drop(self.index_task_lanes.take());
-        drop(self.index_task_shared.take());
         let result = (|| {
-            if let Some(plan) = self.index_lookup.as_mut() {
-                plan.source.close()?;
-            }
-            if self.index_lookup.is_some() {
-                if self.outer_is_left() {
-                    self.left_exec_mut().close()
-                } else {
-                    self.right_exec_mut().close()
-                }
-            } else {
-                self.left_exec_mut().close()?;
-                self.right_exec_mut().close()
-            }
+            self.left_exec_mut().close()?;
+            self.right_exec_mut().close()
         })();
         result
     }

@@ -1405,26 +1405,51 @@ mod tests {
             crate::RowDecodeContext::for_query(&ctx),
         );
         lookup.set_probe_parts(vec![LookupProbePart::Dynamic(0)]);
-        let mut join = JoinExec::build_index_look_up_join(
-            ExecutorMeta::new(schema(1), 0, 32, 1024),
-            JoinKind::Semi,
-            vec![equality],
-            outer,
-            vec![field.clone()],
-            vec![field.clone(), field],
+        let joiner = tidb_executor_join::joiner::new_joiner(
             ctx.clone(),
-            ctx.statement_memory(),
-            IndexLookupPlan {
-                lookup_is_left: false,
-                probe_keys: vec![0],
-                probe_key_domains: Vec::new(),
-                source: IndexLookupSource::Leaf(Box::new(lookup)),
-                outer_filter: Vec::new(),
-                outer_not_null: Vec::new(),
-                inner_not_null: Vec::new(),
-                probe_bounds: Vec::new(),
+            tidb_executor_join::joiner::JoinType::SemiJoin,
+            false,
+            &[Datum::Null, Datum::Null],
+            Vec::new(),
+            &[field.clone()],
+            &[field.clone(), field.clone()],
+            None,
+            false,
+            tidb_executor_join::joiner::JoinerChunkSizes {
+                vectorized: true,
+                init_chunk_size: 32,
+                max_chunk_size: 1024,
             },
         );
+        let mut join = tidb_executor_join::join::IndexNestedLoopHashJoin::new(
+            tidb_executor_join::join::IndexLookUpJoinBuild {
+                meta: ExecutorMeta::new(schema(1), 0, 32, 1024),
+                outer,
+                plan: IndexLookupPlan {
+                    lookup_is_left: false,
+                    probe_keys: vec![0],
+                    probe_key_domains: Vec::new(),
+                    source: IndexLookupSource::Leaf(Box::new(lookup)),
+                    outer_filter: Vec::new(),
+                    outer_not_null: Vec::new(),
+                    inner_not_null: Vec::new(),
+                    probe_bounds: Vec::new(),
+                },
+                equalities: vec![equality],
+                left_width: 1,
+                joiner,
+                is_outer_join: false,
+                ctx: ctx.clone(),
+                memory: ctx.statement_memory(),
+                vectorized: true,
+                concurrency: 5,
+                max_batch_size: tidb_executor_join::join::INDEX_JOIN_BATCH_SIZE,
+                index_ranges: Vec::new(),
+                runtime_stats: None,
+            },
+            false,
+        )
+        .unwrap();
 
         join.open().unwrap();
         let mut rows = 0;

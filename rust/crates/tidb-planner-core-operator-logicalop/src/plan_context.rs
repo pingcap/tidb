@@ -166,6 +166,9 @@ pub struct RuleContext<'a> {
     /// Go `StmtCtx.GetUsedStatsInfo(true)`'s `RecordUsedItemStatus`, reached
     /// from the statistics derivation (`recordUsedItemStatsStatus`).
     pub used_stats_recorder: Option<&'a dyn UsedStatsRecorder>,
+    /// Go `SessionVars.RUV2Metrics`, which the statistics derivation counts
+    /// its access paths into (`AddPlanDeriveStatsPaths`).
+    pub ruv2_metrics: Option<std::sync::Arc<tidb_execdetails::ruv2_metrics::RUV2Metrics>>,
     /// Go `utilfuncp.DoOptimize` as `LogicalCTE.DeriveStats` reaches it: the
     /// driver-owned whole-query optimizer a CTE class runs the first time its
     /// statistics are asked for (`logical_cte.go:172`).

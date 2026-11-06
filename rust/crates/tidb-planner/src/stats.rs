@@ -311,6 +311,13 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                             *stats = scaled;
                         }
                     }
+                    // Go `deriveStats4DataSource`: the access paths left
+                    // after the heuristics, counted for RU v2.
+                    if let Some(metrics) =
+                        env.rule_context.and_then(|context| context.ruv2_metrics.as_ref())
+                    {
+                        metrics.add_plan_derive_stats_paths(paths.len() as i64);
+                    }
                     op.possible_access_paths = Some(paths);
                 }
                 Err(error) => result = Err(error),

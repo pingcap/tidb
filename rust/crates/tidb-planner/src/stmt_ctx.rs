@@ -157,6 +157,9 @@ impl crate::optimize::OptimizeContext for StmtContext {
     fn session_zone(&self) -> tidb_datatype::SessionTimeZone {
         StmtContext::session_zone(self)
     }
+    fn ruv2_metrics(&self) -> Option<Arc<tidb_execdetails::ruv2_metrics::RUV2Metrics>> {
+        StmtContext::ruv2_metrics(self).cloned()
+    }
     fn static_partition_prune(&self) -> bool {
         StmtContext::static_partition_prune(self)
     }

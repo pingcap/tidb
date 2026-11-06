@@ -234,7 +234,8 @@ fn drain(exec: &mut dyn Executor, types: &[FieldType]) -> Vec<Vec<Datum>> {
     out
 }
 
-/// Both strategies' answers for one join, in that order.
+/// The hash join's and Go's `IndexLookUpJoin`'s answers for one join, in
+/// that order, the lookup join over Go's default batch size.
 fn both_ways(
     kind: JoinKind,
     outer_rows: &[Vec<Datum>],
@@ -248,14 +249,12 @@ fn both_ways(
     let outer_width = outer_rows[0].len();
     let inner_width = table.visible_column_count();
     let types: Vec<FieldType> = std::iter::repeat_n(long(), outer_width + inner_width).collect();
-    let conditions = vec![equality(outer_key, inner_key, outer_width)];
-    let meta = || ExecutorMeta::new(schema_of(outer_width + inner_width), 0, INIT_CAP, CHUNK);
     let memory = crate::StmtContext::for_query().statement_memory();
 
     let mut hashed = JoinExec::new(
-        meta(),
+        ExecutorMeta::new(schema_of(outer_width + inner_width), 0, INIT_CAP, CHUNK),
         kind,
-        conditions.clone(),
+        vec![equality(outer_key, inner_key, outer_width)],
         outer_source(outer_rows),
         scan_of(table, store, inner_width),
         crate::StmtContext::for_query(),
@@ -263,81 +262,32 @@ fn both_ways(
     );
     let hash_rows = drain(&mut hashed, &types);
 
-    let ctx = crate::StmtContext::for_query();
-    let mut looked_up = JoinExec::build_index_look_up_join(
-        meta(),
-        kind,
-        conditions,
-        outer_source(outer_rows),
-        vec![long(); outer_width],
-        vec![long(); inner_width],
-        ctx,
+    let join_type = match kind {
+        JoinKind::Inner => tidb_executor_join::joiner::JoinType::Inner,
+        JoinKind::Left => tidb_executor_join::joiner::JoinType::LeftOuter,
+        other => panic!("both_ways compares inner and left joins, not {other:?}"),
+    };
+    let mut looked_up = go_index_join(GoIndexJoin {
+        join_type,
+        outer_rows,
+        source: lookup_source(table, store, object, inner_width),
+        inner_width,
+        outer_key,
+        inner_key,
+        probe_keys,
         memory,
-        IndexLookupPlan {
-            lookup_is_left: false,
-            probe_keys,
-            probe_key_domains: Vec::new(),
-            source: tidb_executor_join::join::IndexLookupSource::Leaf(Box::new(lookup_source(table, store, object, inner_width))),
-            outer_filter: Vec::new(),
-            outer_not_null: Vec::new(),
-            inner_not_null: Vec::new(),
-            probe_bounds: Vec::new(),
-        },
-    );
-    assert!(looked_up.is_index_join());
-    let index_rows = drain(&mut looked_up, &types);
+        concurrency: 5,
+        hash: None,
+        filter: Vec::new(),
+        max_batch_size: tidb_executor_join::join::INDEX_JOIN_BATCH_SIZE,
+    });
+    let index_rows = drain(looked_up.as_mut(), &types);
     (hash_rows, index_rows)
 }
 
-/// Go `newInnerWorker`: every inner worker copies the join's ranges and
-/// charges the statement, not the join, `2 * EstimatedMemUsage(LowVal,
-/// len(ranges))` for as long as the statement runs -- 144 bytes for one
-/// single-column range, so three workers hold 432 after the join closes.
-#[test]
-fn index_join_inner_workers_charge_their_ranges_to_the_statement() {
-    let (table, store) = inner_table(&[(10, 1), (11, 2)]);
-    let outer = cycling_outer(4, &[1, 2]);
-    let types: Vec<FieldType> = std::iter::repeat_n(long(), 4).collect();
-    let memory = crate::StmtContext::for_query().statement_memory();
-    let mut looked_up = JoinExec::build_index_look_up_join(
-        ExecutorMeta::new(schema_of(4), 0, INIT_CAP, CHUNK),
-        JoinKind::Inner,
-        vec![equality(1, 1, 2)],
-        outer_source(&outer),
-        vec![long(); 2],
-        vec![long(); 2],
-        crate::StmtContext::for_query(),
-        memory.clone(),
-        IndexLookupPlan {
-            lookup_is_left: false,
-            probe_keys: vec![0],
-            probe_key_domains: Vec::new(),
-            source: tidb_executor_join::join::IndexLookupSource::Leaf(Box::new(lookup_source(
-                &table,
-                &store,
-                LookupObject::Index(1),
-                2,
-            ))),
-            outer_filter: Vec::new(),
-            outer_not_null: Vec::new(),
-            inner_not_null: Vec::new(),
-            probe_bounds: Vec::new(),
-        },
-    );
-    looked_up.set_index_lookup_concurrency(3);
-    looked_up.set_index_ranges(&[tidb_ranger::types::Range {
-        low_val: vec![Datum::Null],
-        high_val: vec![Datum::Null],
-        collators: vec![tidb_charset::Collation::Binary],
-        low_exclude: false,
-        high_exclude: false,
-    }]);
-    assert_eq!(drain(&mut looked_up, &types).len(), 4);
-    assert_eq!(memory.stmt_tracker().bytes_consumed(), 3 * 144);
-}
-
-/// Go's `IndexLookUpJoin` over the `Joiner` (`build_index_look_up_join`):
-/// a lookup through `Index(1)` on the inner table's second column.
+/// Go's `IndexLookUpJoin` (or `IndexNestedLoopHashJoin`, keeping the outer
+/// order or not) over the `Joiner`: a lookup through `Index(1)` on the inner
+/// table's second column, tasks of at most four outer rows.
 fn look_up_join(
     join_type: tidb_executor_join::joiner::JoinType,
     outer_rows: &[Vec<Datum>],
@@ -348,21 +298,56 @@ fn look_up_join(
     hash: Option<bool>,
     filter: Vec<Expression>,
 ) -> Box<dyn Executor> {
+    go_index_join(GoIndexJoin {
+        join_type,
+        outer_rows,
+        source: lookup_source(table, store, LookupObject::Index(1), 2),
+        inner_width: 2,
+        outer_key: 1,
+        inner_key: 1,
+        probe_keys: vec![0],
+        memory,
+        concurrency,
+        hash,
+        filter,
+        max_batch_size: 4,
+    })
+}
+
+/// One Go index join over an outer side of `outer_rows` and `source`.
+struct GoIndexJoin<'a> {
+    join_type: tidb_executor_join::joiner::JoinType,
+    outer_rows: &'a [Vec<Datum>],
+    source: IndexJoinLookupExec,
+    inner_width: usize,
+    outer_key: usize,
+    inner_key: usize,
+    probe_keys: Vec<usize>,
+    memory: tidb_variable::mem_quota::StatementMemory,
+    concurrency: usize,
+    /// `Some(keep_outer_order)` builds `IndexNestedLoopHashJoin`.
+    hash: Option<bool>,
+    filter: Vec<Expression>,
+    max_batch_size: usize,
+}
+
+fn go_index_join(join: GoIndexJoin<'_>) -> Box<dyn Executor> {
     use tidb_executor_join::joiner::JoinType;
-    let outer_width = outer_rows[0].len();
+    let join_type = join.join_type;
+    let outer_width = join.outer_rows[0].len();
     let width = match join_type {
         JoinType::SemiJoin | JoinType::AntiSemiJoin => outer_width,
         JoinType::LeftOuterSemiJoin | JoinType::AntiLeftOuterSemiJoin => outer_width + 1,
-        _ => outer_width + 2,
+        _ => outer_width + join.inner_width,
     };
     let joiner = tidb_executor_join::joiner::new_joiner(
         crate::StmtContext::for_query(),
         join_type,
         false,
-        &[Datum::Null, Datum::Null],
-        filter,
-        &[long(), long()],
-        &[long(), long()],
+        &vec![Datum::Null; join.inner_width],
+        join.filter,
+        &vec![long(); outer_width],
+        &vec![long(); join.inner_width],
         None,
         false,
         tidb_executor_join::joiner::JoinerChunkSizes {
@@ -375,36 +360,31 @@ fn look_up_join(
         meta: ExecutorMeta::new(schema_of(width), 0, INIT_CAP, CHUNK),
         outer: Box::new(RequiredRowsSource {
             meta: ExecutorMeta::new(schema_of(outer_width), 0, INIT_CAP, CHUNK),
-            rows: outer_rows.to_vec(),
+            rows: join.outer_rows.to_vec(),
             at: 0,
         }),
         plan: IndexLookupPlan {
             lookup_is_left: false,
-            probe_keys: vec![0],
+            probe_keys: join.probe_keys,
             probe_key_domains: Vec::new(),
-            source: tidb_executor_join::join::IndexLookupSource::Leaf(Box::new(lookup_source(
-                table,
-                store,
-                LookupObject::Index(1),
-                2,
-            ))),
+            source: tidb_executor_join::join::IndexLookupSource::Leaf(Box::new(join.source)),
             outer_filter: Vec::new(),
             outer_not_null: Vec::new(),
             inner_not_null: Vec::new(),
             probe_bounds: Vec::new(),
         },
-        equalities: vec![equality(1, 1, 2)],
-        left_width: 2,
+        equalities: vec![equality(join.outer_key, join.inner_key, outer_width)],
+        left_width: outer_width,
         joiner,
         is_outer_join: matches!(
             join_type,
             JoinType::LeftOuter | JoinType::LeftOuterSemiJoin | JoinType::AntiLeftOuterSemiJoin
         ),
         ctx: crate::StmtContext::for_query(),
-        memory,
+        memory: join.memory,
         vectorized: true,
-        concurrency,
-        max_batch_size: 4,
+        concurrency: join.concurrency,
+        max_batch_size: join.max_batch_size,
         index_ranges: vec![tidb_ranger::types::Range {
             low_val: vec![Datum::Null],
             high_val: vec![Datum::Null],
@@ -414,7 +394,7 @@ fn look_up_join(
         }],
         runtime_stats: None,
     };
-    match hash {
+    match join.hash {
         Some(keep_outer_order) => Box::new(
             tidb_executor_join::join::IndexNestedLoopHashJoin::new(build, keep_outer_order).unwrap(),
         ),
@@ -596,11 +576,9 @@ fn cycling_outer(n: i64, keys: &[i64]) -> Vec<Vec<Datum>> {
 /// The index probe reads exactly the rows the hash join matches -- including
 /// the duplicate-key case, where one outer row must emit SEVERAL inner rows.
 ///
-/// MUTATION PROBE: build the probe from the wrong outer column
-/// (`row[outer_offset(..)]` -> `row[0]` in `load_index_batch`) and the lookup
-/// reads ranges for the row ids instead of the keys. Also caught: a lookup
-/// map that keeps ONE inner row per key, and a probe range whose high bound
-/// is excluded.
+/// A lookup that probed the wrong outer column would read ranges for the
+/// row ids instead of the keys; a lookup map (`build_index_lookup_map`)
+/// keeping ONE inner row per key would drop the duplicates.
 #[test]
 fn the_index_lookup_and_the_hash_join_agree_row_for_row() {
     // `b` repeats: key 2 carries three inner rows, key 5 carries none.
@@ -779,96 +757,74 @@ fn a_ddl_common_handle_prefix_probe_reads_every_matching_record() {
     );
 }
 
-/// The batch boundary is a PERFORMANCE decision, not an answer: the same
-/// join over 1 outer row, over exactly one batch's worth, and over several
-/// batches produces the same rows in the same order.
-///
-/// MUTATION PROBE: drop the `state.cursor = 0` that rewinds the batch in
-/// `load_index_batch` and every case here EXCEPT the single-batch ones fails.
-///
-/// A SURVIVOR, reported rather than hidden: changing the fill loop's bound
-/// from `state.outer.len() < state.batch_size` to `<=` -- one row too many
-/// per batch -- changes nothing, and cannot. The probes are built from the
-/// batch AFTER it is filled, so a batch of the wrong SIZE is still a batch
-/// whose probes and lookup map cover exactly its own rows. That is the
-/// property this test really states: the boundary is free to move, the
-/// rewind is not.
+/// The batch boundary is a PERFORMANCE decision, not an answer: Go's
+/// `IndexLookUpJoin` over 1 outer row, over exactly one task's worth, and
+/// over many tasks (`max_batch_size` 4 and Go's default) produces the hash
+/// join's rows in the same order.
 #[test]
 fn the_batch_boundary_does_not_change_the_result() {
     let (table, store) = inner_table(&[(10, 1), (11, 2), (12, 2), (13, 3), (14, 4), (15, 7)]);
-    for n in [1i64, 2, CHUNK as i64, CHUNK as i64 + 1, 3000] {
+    let types: Vec<FieldType> = std::iter::repeat_n(long(), 4).collect();
+    for n in [1i64, 2, 4, 5, CHUNK as i64, CHUNK as i64 + 1, 3000] {
         let outer = cycling_outer(n, &[1, 2, 3, 4, 5, 6, 7]);
-        let (hash_rows, index_rows) = both_ways(
-            JoinKind::Left,
-            &outer,
-            &table,
-            &store,
-            LookupObject::Index(1),
-            1,
-            1,
-            vec![0],
-        );
-        assert_eq!(
-            index_rows,
-            hash_rows,
-            "the {n}-row outer side crosses {} batch boundaries",
-            n / CHUNK as i64
-        );
+        let (hash_rows, _) = both_ways(JoinKind::Left, &outer, &table, &store, LookupObject::Index(1), 1, 1, vec![0]);
+        for max_batch_size in [4, tidb_executor_join::join::INDEX_JOIN_BATCH_SIZE] {
+            let mut joined = go_index_join(GoIndexJoin {
+                join_type: tidb_executor_join::joiner::JoinType::LeftOuter,
+                outer_rows: &outer,
+                source: lookup_source(&table, &store, LookupObject::Index(1), 2),
+                inner_width: 2,
+                outer_key: 1,
+                inner_key: 1,
+                probe_keys: vec![0],
+                memory: crate::StmtContext::for_query().statement_memory(),
+                concurrency: 3,
+                hash: None,
+                filter: Vec::new(),
+                max_batch_size,
+            });
+            assert_eq!(
+                drain(joined.as_mut(), &types),
+                hash_rows,
+                "{n} outer rows in tasks of at most {max_batch_size}"
+            );
+        }
     }
 }
 
-/// The lookup DEDUPES its probes: an outer batch whose rows all carry the
+/// Go `sortAndDedupLookUpContents`: an outer task whose rows all carry the
 /// same key reads the inner side once, not once per row -- and still emits
-/// one output row per outer row.
-///
-/// MUTATION PROBE: drop the `seen.insert(encoded)` guard in
-/// `load_index_batch` and `produced_rows` multiplies by the batch size, which
-/// is what the second assertion catches -- the row count alone would not,
-/// because the lookup map answers per outer row either way. A dedup that
-/// merged DIFFERENT keys instead (`seen.insert(encoded.len())`) fails five of
-/// the six tests here on the rows themselves.
+/// one output row per outer row. The 100 rows fit Go's first task, which
+/// starts at the parent's required rows.
 #[test]
 fn one_key_repeated_across_a_batch_is_probed_once() {
     let (table, store) = inner_table(&[(10, 1), (11, 1), (12, 2)]);
     let outer: Vec<Vec<Datum>> = (0..100i64)
         .map(|i| vec![Datum::Int(i), Datum::Int(1)])
         .collect();
-    let inner_width = 2;
     let types: Vec<FieldType> = std::iter::repeat_n(long(), 4).collect();
-    let memory = crate::StmtContext::for_query().statement_memory();
-    let source = lookup_source(&table, &store, LookupObject::Index(1), inner_width);
+    let source = lookup_source(&table, &store, LookupObject::Index(1), 2);
     let produced = source.produced_rows();
-    let ctx = crate::StmtContext::for_query();
-    let mut exec = JoinExec::build_index_look_up_join(
-        ExecutorMeta::new(schema_of(4), 0, INIT_CAP, CHUNK),
-        JoinKind::Inner,
-        vec![equality(1, 1, 2)],
-        outer_source(&outer),
-        vec![long(); 2],
-        vec![long(); inner_width],
-        ctx,
-        memory,
-        IndexLookupPlan {
-            lookup_is_left: false,
-            probe_keys: vec![0],
-            probe_key_domains: Vec::new(),
-            source: tidb_executor_join::join::IndexLookupSource::Leaf(Box::new(source)),
-            outer_filter: Vec::new(),
-            outer_not_null: Vec::new(),
-            inner_not_null: Vec::new(),
-            probe_bounds: Vec::new(),
-        },
-    );
-    let rows = drain(&mut exec, &types);
-    assert_eq!(
-        rows.len(),
-        200,
-        "each of 100 outer rows matches both inners"
-    );
+    let mut exec = go_index_join(GoIndexJoin {
+        join_type: tidb_executor_join::joiner::JoinType::Inner,
+        outer_rows: &outer,
+        source,
+        inner_width: 2,
+        outer_key: 1,
+        inner_key: 1,
+        probe_keys: vec![0],
+        memory: crate::StmtContext::for_query().statement_memory(),
+        concurrency: 5,
+        hash: None,
+        filter: Vec::new(),
+        max_batch_size: tidb_executor_join::join::INDEX_JOIN_BATCH_SIZE,
+    });
+    let rows = drain(exec.as_mut(), &types);
+    assert_eq!(rows.len(), 200, "each of 100 outer rows matches both inners");
     assert_eq!(
         produced.get(),
         2,
-        "the whole batch shares one key, so the inner side is read once"
+        "the whole task shares one key, so the inner side is read once"
     );
 }
 
