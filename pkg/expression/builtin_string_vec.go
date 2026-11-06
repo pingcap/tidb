@@ -1022,7 +1022,7 @@ func (b *builtinLpadSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 		strLength := len(str)
 		padStr := padBuf.GetString(i)
 		padLength := len(padStr)
-		if targetLength < 0 || targetLength > b.tp.GetFlen() {
+		if targetLength < 0 {
 			result.AppendNull()
 			continue
 		}
@@ -1080,7 +1080,7 @@ func (b *builtinLpadUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 			continue
 		}
 		targetLength := int(i64s[i])
-		if uint64(targetLength)*uint64(mysql.MaxBytesOfCharacter) > b.maxAllowedPacket {
+		if uint64(targetLength) > b.maxAllowedPacket/uint64(mysql.MaxBytesOfCharacter) {
 			if err := handleAllowedPacketOverflowed(ctx, "lpad", b.maxAllowedPacket); err != nil {
 				return err
 			}
@@ -1097,7 +1097,7 @@ func (b *builtinLpadUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 		runeLength := len([]rune(str))
 		padLength := len([]rune(padStr))
 
-		if targetLength < 0 || targetLength > mysql.MaxBlobWidth || targetLength*4 > b.tp.GetFlen() {
+		if targetLength < 0 {
 			result.AppendNull()
 			continue
 		}
@@ -1509,7 +1509,7 @@ func (b *builtinRpadSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 		strLength := len(str)
 		padStr := padBuf.GetString(i)
 		padLength := len(padStr)
-		if targetLength < 0 || targetLength > b.tp.GetFlen() {
+		if targetLength < 0 {
 			result.AppendNull()
 			continue
 		}
@@ -2637,7 +2637,7 @@ func (b *builtinRpadUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 			continue
 		}
 		targetLength := int(i64s[i])
-		if uint64(targetLength)*uint64(mysql.MaxBytesOfCharacter) > b.maxAllowedPacket {
+		if uint64(targetLength) > b.maxAllowedPacket/uint64(mysql.MaxBytesOfCharacter) {
 			if err := handleAllowedPacketOverflowed(ctx, "rpad", b.maxAllowedPacket); err != nil {
 				return err
 			}
@@ -2654,7 +2654,7 @@ func (b *builtinRpadUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 		runeLength := len([]rune(str))
 		padLength := len([]rune(padStr))
 
-		if targetLength < 0 || targetLength > mysql.MaxBlobWidth || targetLength*4 > b.tp.GetFlen() {
+		if targetLength < 0 {
 			result.AppendNull()
 			continue
 		}
