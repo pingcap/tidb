@@ -5653,7 +5653,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 	if tableInfo.View.Security == ast.SecurityDefiner {
 		if pm != nil {
 			// DEFINER VIEWs always use default roles
-			for _, v := range slices.Concat(b.visitInfo, b.anyColumnSelectVisitInfo) {
+			for _, v := range withAnyColumnSelect(b.visitInfo, b.anyColumnSelectVisitInfo) {
 				if !pm.RequestVerificationWithUser(ctx, v.db, v.table, v.column, v.privilege, tableInfo.View.Definer) {
 					return nil, plannererrors.ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 				}

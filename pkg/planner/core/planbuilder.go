@@ -404,10 +404,33 @@ func (hch *handleColHelper) tailMap() map[int64][]util.HandleCols {
 
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
 func (b *PlanBuilder) GetVisitInfo() []visitInfo {
-	if len(b.anyColumnSelectVisitInfo) == 0 {
-		return b.visitInfo
+	return withAnyColumnSelect(b.visitInfo, b.anyColumnSelectVisitInfo)
+}
+
+// withAnyColumnSelect appends the "SELECT on any column" requirements to vs,
+// skipping tables that already require SELECT on some column or on the table,
+// which implies SELECT on any column.
+func withAnyColumnSelect(vs, anyColumn []visitInfo) []visitInfo {
+	if len(anyColumn) == 0 {
+		return vs
 	}
-	return slices.Concat(b.visitInfo, b.anyColumnSelectVisitInfo)
+	type dbTable struct{ db, table string }
+	selected := make(map[dbTable]struct{}, len(vs))
+	for _, v := range vs {
+		if v.privilege == mysql.SelectPriv && v.table != "" {
+			selected[dbTable{v.db, v.table}] = struct{}{}
+		}
+	}
+	result := slices.Clone(vs)
+	for _, v := range anyColumn {
+		key := dbTable{v.db, v.table}
+		if _, ok := selected[key]; ok {
+			continue
+		}
+		selected[key] = struct{}{}
+		result = append(result, v)
+	}
+	return result
 }
 
 // GetIsForUpdateRead gets if the PlanBuilder use forUpdateRead
