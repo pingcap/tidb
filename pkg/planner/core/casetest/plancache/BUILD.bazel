@@ -17,7 +17,11 @@ go_test(
         "//pkg/planner/core:plan_clone_utils.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 48,
+=======
+    shard_count = 50,
+>>>>>>> f354cc56cad (planner: update plancache Bazel test shard count (#72627))
     deps = [
         "//pkg/expression",
         "//pkg/infoschema",
