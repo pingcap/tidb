@@ -2806,6 +2806,16 @@ func TestSelectColumnPrivilegeInSubqueryAndCTE(t *testing.T) {
 	userTk.MustQuery(`with cte1 as (with cte2 as (select 1) select * from cte2) select * from cte1;`).Check(testkit.Rows(`1`))
 	userTk.MustQuery(`with cte1 as (with cte2 as (SELECT a from t1) select * from cte2) select * from cte1;`).Check(testkit.Rows(`1`))
 	userTk.MustGetErrCode(`with cte1 as (with cte2 as (SELECT b from t1) select * from cte2) select * from cte1;`, errno.ErrColumnaccessDenied)
+	// A CTE over a table in another database is checked against its source.
+	tk.MustExec(`CREATE DATABASE ctedb`)
+	tk.MustExec(`CREATE TABLE ctedb.t (a int, b int)`)
+	tk.MustExec(`INSERT INTO ctedb.t VALUES (5, 6)`)
+	tk.MustExec(`GRANT SELECT(a) ON ctedb.t TO 'testuser'@'localhost'`)
+	userTk.MustQuery(`WITH c AS (SELECT a FROM ctedb.t) SELECT a FROM c`).Check(testkit.Rows(`5`))
+	userTk.MustQuery(`WITH c AS (SELECT a FROM ctedb.t) SELECT x.a FROM c AS x ORDER BY x.a`).Check(testkit.Rows(`5`))
+	userTk.MustQuery(`WITH c AS (SELECT a FROM (SELECT a FROM ctedb.t) d) SELECT COUNT(*) FROM c`).Check(testkit.Rows(`1`))
+	userTk.MustQuery(`WITH c AS (SELECT a FROM ctedb.t) SELECT c1.a FROM c AS c1, c AS c2`).Check(testkit.Rows(`5`))
+	userTk.MustGetErrCode(`WITH c AS (SELECT b FROM ctedb.t) SELECT b FROM c`, errno.ErrColumnaccessDenied)
 
 	userTk.MustGetErrCode(subQueryInHaving, errno.ErrColumnaccessDenied)
 	tk.MustExec("GRANT SELECT(b) ON test.t1 TO 'testuser'@'localhost';")

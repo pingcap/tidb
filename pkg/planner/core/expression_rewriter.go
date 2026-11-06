@@ -3047,9 +3047,12 @@ func (er *expressionRewriter) precollectColNames(fieldName *types.FieldName) {
 // The identity comes from the Orig* fields, never from the alias in TblName,
 // so an alias cannot redirect the check to another table or view. Columns
 // of derived tables have an empty DBName and are checked in the definition
-// of the derived table. Columns of a CTE keep the identity of the column
-// they come from, so they are checked again, which is redundant but safe.
+// of the derived table. Columns of a CTE (FieldName.FromCTE) are checked in
+// the definition of the CTE.
 func columnNameForPrivCheck(fieldName *types.FieldName) *ast.ColumnName {
+	if fieldName.FromCTE {
+		return nil
+	}
 	colName := &ast.ColumnName{
 		Name:   fieldName.OrigColName,
 		Table:  fieldName.OrigTblName,
