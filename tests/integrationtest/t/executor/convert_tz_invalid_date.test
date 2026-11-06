@@ -1,0 +1,18 @@
+set sql_mode='ALLOW_INVALID_DATES';
+create table tz_source(id int, d date);
+insert into tz_source values(1,'2024-00-15'),(2,'2024-01-00'),(3,'2024-01-15');
+create table tz_target(id int primary key, d datetime, marker varchar(10));
+insert into tz_target values(1,'2000-01-01','old'),(2,'2000-01-01','old'),(3,'2000-01-01','old');
+set sql_mode=default;
+set tidb_enable_vectorized_expression=0;
+--error 1292
+replace into tz_target select id,convert_tz(d,'+00:00','+08:00'),'new' from tz_source;
+select * from tz_target order by id;
+set tidb_enable_vectorized_expression=1;
+--error 1292
+replace into tz_target select id,convert_tz(d,'+00:00','+08:00'),'new' from tz_source;
+select * from tz_target order by id;
+replace into tz_target select id,convert_tz(d,'+00:00','+08:00'),'new' from tz_source where id=3;
+select * from tz_target order by id;
+drop table tz_source, tz_target;
+set tidb_enable_vectorized_expression=default;
