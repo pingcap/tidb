@@ -125,6 +125,23 @@ func TestBackfillRetryableErrors(t *testing.T) {
 		}
 		require.False(t, isRetryableModifyColumnReorgJobError(errors.New("deterministic conversion error"), 0))
 	})
+
+	t.Run("modify column does not retry permission errors", func(t *testing.T) {
+		messages := append([]string{"insufficient privilege"}, dbterror.ReorgRetryableErrMsgs...)
+		for _, message := range messages {
+			err := status.Error(codes.PermissionDenied, message)
+			wrappedErrors := []error{
+				err,
+				errors.Annotate(err, "wrapped"),
+				fmt.Errorf("wrapped: %w", err),
+				errors.Annotate(fmt.Errorf("wrapped: %w", err), "outer"),
+			}
+			for _, wrappedErr := range wrappedErrors {
+				require.False(t, isRetryableModifyColumnReorgJobError(wrappedErr, 0),
+					"message=%q type=%T", message, wrappedErr)
+			}
+		}
+	})
 }
 
 func TestBuildIndexConditionCheckerUsesFixedCollation(t *testing.T) {

@@ -56,6 +56,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func hasModifyFlag(col *model.ColumnInfo) bool {
@@ -1727,6 +1729,10 @@ func doReorgWorkForModifyColumn(
 
 func isRetryableModifyColumnReorgJobError(err error, jobErrCnt int64) bool {
 	if jobErrCnt+1 >= vardef.GetDDLErrorCountLimit() {
+		return false
+	}
+	// A permission failure is permanent even if its message mentions a retryable cause.
+	if status.Code(errors.Cause(err)) == codes.PermissionDenied {
 		return false
 	}
 	// Modify column reorg can return deterministic data conversion errors. Retrying unknown errors may
