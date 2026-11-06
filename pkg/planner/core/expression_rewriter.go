@@ -933,7 +933,19 @@ func (er *expressionRewriter) handleOtherComparableSubq(planCtx *exprRewriterPla
 	if useMin {
 		funcName = ast.AggFuncMin
 	}
-	funcMaxOrMin, err := aggregation.NewAggFuncDesc(planCtx.builder.ctx.GetExprCtx(), funcName, []expression.Expression{rexpr}, false)
+	cmpLExpr, aggArg := lexpr, rexpr
+	evalCtx := er.sctx.GetEvalCtx()
+	// MAX/MIN must order values in the comparison domain; casting its result is too late when coercion can change ordering.
+	if expression.GetAccurateCmpType(evalCtx, lexpr, rexpr) != rexpr.GetType(evalCtx).EvalType() {
+		cmpExpr, err := expression.NewFunctionBase(er.sctx, cmpFunc, types.NewFieldType(mysql.TypeTiny), lexpr, rexpr)
+		if err != nil {
+			er.err = err
+			return
+		}
+		cmpArgs := cmpExpr.(*expression.ScalarFunction).GetArgs()
+		cmpLExpr, aggArg = cmpArgs[0], cmpArgs[1]
+	}
+	funcMaxOrMin, err := aggregation.NewAggFuncDesc(planCtx.builder.ctx.GetExprCtx(), funcName, []expression.Expression{aggArg}, false)
 	if err != nil {
 		er.err = err
 		return
@@ -944,14 +956,14 @@ func (er *expressionRewriter) handleOtherComparableSubq(planCtx *exprRewriterPla
 		UniqueID: planCtx.builder.ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  funcMaxOrMin.RetTp,
 	}
-	colMaxOrMin.SetCoercibility(rexpr.Coercibility())
+	colMaxOrMin.SetCoercibility(aggArg.Coercibility())
 	schema := expression.NewSchema(colMaxOrMin)
 
 	plan4Agg.SetOutputNames(append(plan4Agg.OutputNames(), types.EmptyName))
 	plan4Agg.SetSchema(schema)
 	plan4Agg.AggFuncs = []*aggregation.AggFuncDesc{funcMaxOrMin}
 
-	cond := expression.NewFunctionInternal(er.sctx, cmpFunc, types.NewFieldType(mysql.TypeTiny), lexpr, colMaxOrMin)
+	cond := expression.NewFunctionInternal(er.sctx, cmpFunc, types.NewFieldType(mysql.TypeTiny), cmpLExpr, colMaxOrMin)
 	er.buildQuantifierPlan(planCtx, plan4Agg, cond, lexpr, rexpr, all, markNoDecorrelate)
 }
 
