@@ -815,6 +815,12 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	// Only if all the analyze workers exit can we close the saveResultsCh.
 	for panicCnt < buildStatsConcurrency {
 		if err := e.Ctx().GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+			// A worker can still send a result after the kill. Drain resultsCh so
+			// its analyze job does not remain pending or running.
+			for results := range resultsCh {
+				finishJobWithLog(statsHandle, results.Job, err)
+				results.DestroyAndPutToPool()
+			}
 			close(saveResultsCh)
 			return err
 		}
