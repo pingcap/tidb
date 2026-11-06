@@ -1136,6 +1136,7 @@ func (b *builtinCastIntAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (res 
 	if b.tp.GetType() == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
 		res.SetCoreTime(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
+		res.SetType(mysql.TypeDate)
 	}
 	return res, false, nil
 }
