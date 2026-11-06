@@ -1238,7 +1238,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 
 		planCtx.builder.ctx.GetSessionVars().RegisterScalarSubQ(subqueryCtx)
 
-		row, err := EvalSubqueryFirstRow(ctx, physicalPlan, b.is, b.ctx)
+		row, err := planCtx.builder.evalSubqueryFirstRow(ctx, physicalPlan)
 		if err != nil {
 			er.err = err
 			return true
@@ -1608,7 +1608,8 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 	subqueryCtx.outputColIDs = newColIDs
 
 	planCtx.builder.ctx.GetSessionVars().RegisterScalarSubQ(subqueryCtx)
-	row, err := EvalSubqueryFirstRow(ctx, physicalPlan, planCtx.builder.is, planCtx.builder.ctx)
+
+	row, err := planCtx.builder.evalSubqueryFirstRow(ctx, physicalPlan)
 	if err != nil {
 		er.err = err
 		return true
