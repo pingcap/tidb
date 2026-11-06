@@ -16,6 +16,7 @@ package expression
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"testing"
@@ -1029,6 +1030,52 @@ func TestSpaceSig(t *testing.T) {
 	require.Equal(t, 1, len(warnings))
 	lastWarn := warnings[len(warnings)-1]
 	require.True(t, terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err))
+}
+
+func TestRepeatAndSpaceUnsignedCount(t *testing.T) {
+	ctx := createContext(t)
+	strTp := types.NewFieldType(mysql.TypeVarchar)
+	uintTp := types.NewFieldType(mysql.TypeLonglong)
+	uintTp.AddFlag(mysql.UnsignedFlag)
+	strCol := &Column{Index: 0, RetType: strTp}
+	uintCol := &Column{Index: 1, RetType: uintTp}
+
+	repeat, err := newFunctionForTest(ctx, ast.Repeat, strCol, uintCol)
+	require.NoError(t, err)
+	space, err := newFunctionForTest(ctx, ast.Space, uintCol)
+	require.NoError(t, err)
+
+	// counts of 2^63 and above must not be read as negative numbers
+	counts := []uint64{math.MaxInt64, math.MaxInt64 + 1, math.MaxUint64}
+	input := chunk.NewChunkWithCapacity([]*types.FieldType{strTp, uintTp}, len(counts))
+	for _, n := range counts {
+		input.AppendString(0, "ab")
+		input.AppendUint64(1, n)
+	}
+
+	for _, f := range []Expression{repeat, space} {
+		ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+		for i := range counts {
+			res, isNull, err := f.EvalString(ctx, input.GetRow(i))
+			require.NoError(t, err)
+			require.True(t, isNull, "count %d", counts[i])
+			require.Equal(t, "", res)
+		}
+		require.Len(t, ctx.GetSessionVars().StmtCtx.GetWarnings(), len(counts))
+
+		ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+		result := chunk.NewColumn(types.NewFieldType(mysql.TypeVarchar), len(counts))
+		require.True(t, f.Vectorized())
+		require.NoError(t, f.VecEvalString(ctx, input, result))
+		for i := range counts {
+			require.True(t, result.IsNull(i), "count %d", counts[i])
+		}
+		warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+		require.Len(t, warnings, len(counts))
+		for _, w := range warnings {
+			require.True(t, terror.ErrorEqual(errWarnAllowedPacketOverflowed, w.Err))
+		}
+	}
 }
 
 func TestLocate(t *testing.T) {

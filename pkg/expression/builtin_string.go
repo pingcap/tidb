@@ -678,6 +678,10 @@ func (b *builtinRepeatSig) evalString(ctx EvalContext, row chunk.Row) (val strin
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+	// an unsigned count above MaxInt64 wraps to a negative int64, treat it as huge rather than zero.
+	if num < 0 && mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
+		num = math.MaxInt32
+	}
 	if num < 1 {
 		return "", false, nil
 	}
@@ -887,6 +891,10 @@ func (b *builtinSpaceSig) evalString(ctx EvalContext, row chunk.Row) (d string, 
 	x, isNull, err = b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return d, isNull, err
+	}
+	// an unsigned count above MaxInt64 wraps to a negative int64, treat it as huge rather than zero.
+	if x < 0 && mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()) {
+		x = math.MaxInt64
 	}
 	if x < 0 {
 		x = 0
