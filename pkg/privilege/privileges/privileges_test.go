@@ -2699,6 +2699,19 @@ func TestSelectColumnPrivilegeInSubqueryAndCTE(t *testing.T) {
 	userTk.MustGetErrCode(`SELECT (SELECT count(*) FROM test.t2);`, errno.ErrTableaccessDenied)
 	userTk.MustExec("SELECT count(*) FROM test.t1;")
 	userTk.MustExec("SELECT (SELECT count(*) FROM test.t1);")
+	// Reading a table without referencing any of its columns still requires
+	// SELECT on the table or on at least one of its columns.
+	userTk.MustQuery("SELECT 1 FROM t1").Check(testkit.Rows("1"))
+	userTk.MustGetErrCode("SELECT 1 FROM t2", errno.ErrTableaccessDenied)
+	userTk.MustGetErrCode("SELECT 1 FROM t1 JOIN t2", errno.ErrTableaccessDenied)
+	userTk.MustGetErrCode("SELECT t1.a FROM t1, t2", errno.ErrTableaccessDenied)
+	userTk.MustGetErrCode("SELECT a FROM t1 WHERE EXISTS (SELECT 1 FROM t2)", errno.ErrTableaccessDenied)
+	userTk.MustGetErrCode("WITH cte AS (SELECT 1 FROM t2) SELECT * FROM cte", errno.ErrTableaccessDenied)
+	// The target table of DELETE needs no SELECT, but columns read in the
+	// join condition do.
+	tk.MustExec("GRANT DELETE ON test.t1 TO 'testuser'@'localhost'")
+	userTk.MustGetErrCode("DELETE t1 FROM t1 JOIN t2 ON t1.a = t2.b", errno.ErrColumnaccessDenied)
+	userTk.MustExec("DELETE FROM t1 WHERE a = 0")
 
 	/* CTE */
 	userTk.MustGetErrCode(`WITH CTE AS (SELECT b from t1) SELECT * FROM cte t;`, errno.ErrColumnaccessDenied)

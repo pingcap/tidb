@@ -232,6 +232,17 @@ type PlanBuilder struct {
 	// visitInfo is used for privilege check.
 	visitInfo     []visitInfo
 	checkColPriv  checkSelectColumnPrivOption
+	// buildingSelectFrom is true while building the FROM clause of a SELECT
+	// block. Every table read there requires SELECT on the table or on at
+	// least one of its columns, even when no column is referenced, e.g.
+	// `SELECT 1 FROM t`. The target tables of UPDATE/DELETE are built outside
+	// of it and need no SELECT unless their columns are read.
+	buildingSelectFrom bool
+	// anyColumnSelectVisitInfo holds the "SELECT on any column" requirements
+	// collected for buildingSelectFrom. They are checked after visitInfo, so a
+	// missing privilege on a referenced column is still reported as a column
+	// error; the extra check only matters when every column check passes.
+	anyColumnSelectVisitInfo []visitInfo
 	tableHintInfo []*hint.PlanHints
 	// optFlag indicates the flags of the optimizer rules.
 	optFlag uint64
@@ -393,7 +404,10 @@ func (hch *handleColHelper) tailMap() map[int64][]util.HandleCols {
 
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
 func (b *PlanBuilder) GetVisitInfo() []visitInfo {
-	return b.visitInfo
+	if len(b.anyColumnSelectVisitInfo) == 0 {
+		return b.visitInfo
+	}
+	return slices.Concat(b.visitInfo, b.anyColumnSelectVisitInfo)
 }
 
 // GetIsForUpdateRead gets if the PlanBuilder use forUpdateRead

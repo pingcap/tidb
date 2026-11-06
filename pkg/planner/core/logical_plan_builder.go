@@ -4263,13 +4263,6 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 	b.subQueryHintFlags |= subQueryHintFlags
 }
 
-func (b *PlanBuilder) popVisitInfo() {
-	if len(b.visitInfo) == 0 {
-		return
-	}
-	b.visitInfo = b.visitInfo[:len(b.visitInfo)-1]
-}
-
 func (b *PlanBuilder) popTableHints() {
 	hintInfo := b.tableHintInfo[len(b.tableHintInfo)-1]
 	for _, warning := range h.CollectUnmatchedHintWarnings(hintInfo) {
@@ -4374,7 +4367,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		}
 	}
 
+	originBuildingSelectFrom := b.buildingSelectFrom
+	b.buildingSelectFrom = true
 	p, err = b.buildTableRefs(ctx, sel.From)
+	b.buildingSelectFrom = originBuildingSelectFrom
 	if err != nil {
 		return nil, err
 	}
@@ -4990,6 +4986,15 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, plannererrors.ErrViewSelectTemporaryTable.GenWithStackByArgs(tn.Name)
 	}
 
+	if b.buildingSelectFrom {
+		// Column "*" is satisfied by SELECT on the table or on any of its columns.
+		var authErr error
+		if sessionVars.User != nil {
+			authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, tableInfo.Name.L)
+		}
+		b.anyColumnSelectVisitInfo = appendVisitInfo(b.anyColumnSelectVisitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "*", authErr)
+	}
+
 	if tbl.Type().IsVirtualTable() {
 		if tn.TableSample != nil {
 			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in virtual tables")
@@ -5549,6 +5554,8 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 	}
 	originalVisitInfo := b.visitInfo
 	b.visitInfo = make([]visitInfo, 0)
+	originalAnyColumnSelectVisitInfo := b.anyColumnSelectVisitInfo
+	b.anyColumnSelectVisitInfo = nil
 
 	// For the case that views appear in CTE queries,
 	// we need to save the CTEs after the views are established.
@@ -5648,15 +5655,17 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 	if tableInfo.View.Security == ast.SecurityDefiner {
 		if pm != nil {
 			// DEFINER VIEWs always use default roles
-			for _, v := range b.visitInfo {
+			for _, v := range slices.Concat(b.visitInfo, b.anyColumnSelectVisitInfo) {
 				if !pm.RequestVerificationWithUser(ctx, v.db, v.table, v.column, v.privilege, tableInfo.View.Definer) {
 					return nil, plannererrors.ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 				}
 			}
 		}
 		b.visitInfo = b.visitInfo[:0]
+		b.anyColumnSelectVisitInfo = b.anyColumnSelectVisitInfo[:0]
 	}
 	b.visitInfo = append(originalVisitInfo, b.visitInfo...)
+	b.anyColumnSelectVisitInfo = append(originalAnyColumnSelectVisitInfo, b.anyColumnSelectVisitInfo...)
 
 	if stmtCtx.InExplainStmt {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, dbName.L, tableInfo.Name.L, "", plannererrors.ErrViewNoExplain)
@@ -6566,10 +6575,6 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 		}
 	}
 
-	// If the delete is non-qualified it does not require Select Priv
-	if ds.Where == nil && ds.Order == nil {
-		b.popVisitInfo()
-	}
 	var authErr error
 	sessionVars := b.ctx.GetSessionVars()
 
