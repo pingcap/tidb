@@ -228,8 +228,8 @@ const (
 )
 
 func initState(tk *testkit.TestKit, s *state) {
-	tk.MustExec("TRUNCATE mysql.tables_priv")
-	tk.MustExec("TRUNCATE mysql.columns_priv")
+	tk.MustExec("DELETE FROM mysql.tables_priv")
+	tk.MustExec("DELETE FROM mysql.columns_priv")
 	for _, sql := range s.initSQLs {
 		tk.MustExec(sql)
 	}
