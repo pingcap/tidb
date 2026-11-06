@@ -2753,6 +2753,20 @@ func TestInsertColumnPrivilege(t *testing.T) {
 	tk.MustExec(`GRANT INSERT(a) ON test.g TO 'testuser'@'localhost';`)
 	userTk.MustExec(`INSERT INTO test.g(a) VALUES (1);`)
 	userTk.MustExec(`INSERT INTO test.g SET a = 2;`)
+
+	// The right-hand side of ON DUPLICATE KEY UPDATE reads the existing row, so
+	// the columns it references require SELECT. Otherwise a user could copy an
+	// unreadable column into a readable one.
+	tk.MustExec(`DROP TABLE IF EXISTS test.od;`)
+	tk.MustExec(`CREATE TABLE test.od (id int PRIMARY KEY, a int, secret int);`)
+	tk.MustExec(`INSERT INTO test.od VALUES (1, 0, 42);`)
+	tk.MustExec(`GRANT INSERT(id, a), UPDATE(a), SELECT(a) ON test.od TO 'testuser'@'localhost';`)
+	userTk.MustGetErrCode(`INSERT INTO test.od(id, a) VALUES (1, 0) ON DUPLICATE KEY UPDATE a = secret;`, errno.ErrColumnaccessDenied)
+	tk.MustQuery(`SELECT a FROM test.od`).Check(testkit.Rows(`0`))
+	// Reading a column the user can SELECT, or the incoming VALUES(), is allowed.
+	userTk.MustExec(`INSERT INTO test.od(id, a) VALUES (1, 5) ON DUPLICATE KEY UPDATE a = a + 1;`)
+	userTk.MustExec(`INSERT INTO test.od(id, a) VALUES (1, 7) ON DUPLICATE KEY UPDATE a = VALUES(a);`)
+	tk.MustQuery(`SELECT a FROM test.od`).Check(testkit.Rows(`7`))
 }
 
 func TestUpdateColumnPrivilege(t *testing.T) {

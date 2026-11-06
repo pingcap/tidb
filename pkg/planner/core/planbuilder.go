@@ -4208,9 +4208,16 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, fieldName.DBName.L, fieldName.OrigTblName.L, fieldName.OrigColName.L, authErr)
 	}
 
+	// Expressions on the right-hand side of `ON DUPLICATE KEY UPDATE` read the
+	// existing row, so every column they reference requires SELECT, just like
+	// the right-hand side of an UPDATE assignment. `VALUES(col)` refers to the
+	// incoming row and is not collected.
+	originColPriv := b.checkColPriv
+	b.checkColPriv = reportColumnErrOption
 	onDupColSet, err := insertPlan.ResolveOnDuplicate(insert.OnDuplicate, tableInfo, func(node ast.ExprNode) (expression.Expression, error) {
 		return b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan)
 	})
+	b.checkColPriv = originColPriv
 	if err != nil {
 		return nil, err
 	}
