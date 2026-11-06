@@ -107,14 +107,14 @@ func UpdateStatsMeta(
 	// of encountering lock conflicts during the update process.
 	lockedTableIDsStr := strings.Join(lockedTableIDs, ",")
 	if lockedTableIDsStr != "" {
-		if _, err = statsutil.ExecWithCtx(ctx, sctx, fmt.Sprintf("select * from mysql.stats_table_locked where table_id in (%s) for update", lockedTableIDsStr)); err != nil {
+		if err = execAndCloseRecordSet(ctx, sctx, fmt.Sprintf("select * from mysql.stats_table_locked where table_id in (%s) for update", lockedTableIDsStr)); err != nil {
 			return err
 		}
 	}
 
 	unlockedTableIDsStr := strings.Join(unlockedTableIDs, ",")
 	if unlockedTableIDsStr != "" {
-		if _, err = statsutil.ExecWithCtx(ctx, sctx, fmt.Sprintf("select * from mysql.stats_meta where table_id in (%s) for update", unlockedTableIDsStr)); err != nil {
+		if err = execAndCloseRecordSet(ctx, sctx, fmt.Sprintf("select * from mysql.stats_meta where table_id in (%s) for update", unlockedTableIDsStr)); err != nil {
 			return err
 		}
 	}
@@ -148,6 +148,19 @@ func UpdateStatsMeta(
 		}
 	}
 
+	return nil
+}
+
+// execAndCloseRecordSet executes a statement whose rows are not needed, such as a lock read.
+// The statement reaches the slow log and the execution duration metrics only when its RecordSet is closed.
+func execAndCloseRecordSet(ctx context.Context, sctx sessionctx.Context, sql string) error {
+	rs, err := statsutil.ExecWithCtx(ctx, sctx, sql)
+	if err != nil {
+		return err
+	}
+	if rs != nil {
+		return rs.Close()
+	}
 	return nil
 }
 
