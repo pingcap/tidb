@@ -6,6 +6,9 @@ import (
 	"context"
 	goerrors "errors"
 	"fmt"
+	"net"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"testing"
@@ -13,10 +16,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/kvproto/pkg/tikvpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
@@ -26,6 +31,9 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/pd/client/clients/router"
+	"github.com/tikv/pd/client/opt"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -440,6 +448,79 @@ func checkRegionsBoundaries(t *testing.T, regions []*RegionInfo, expected [][]by
 	}
 }
 
+type nilRegionByIDMockPDClient struct {
+	*MockPDClientForSplit
+	regionID uint64
+}
+
+func (c *nilRegionByIDMockPDClient) GetRegionByID(
+	ctx context.Context,
+	regionID uint64,
+	opts ...opt.GetRegionOption,
+) (*router.Region, error) {
+	if regionID == c.regionID {
+		return nil, nil
+	}
+	return c.MockPDClientForSplit.GetRegionByID(ctx, regionID, opts...)
+}
+
+type splitTestTiKVServer struct {
+	tikvpb.UnimplementedTikvServer
+}
+
+func (s *splitTestTiKVServer) SplitRegion(
+	_ context.Context,
+	req *kvrpcpb.SplitRegionRequest,
+) (*kvrpcpb.SplitRegionResponse, error) {
+	return &kvrpcpb.SplitRegionResponse{
+		RegionError: &errorpb.Error{
+			NotLeader: &errorpb.NotLeader{
+				RegionId: req.GetContext().GetRegionId(),
+			},
+		},
+	}, nil
+}
+
+func startSplitTestTiKVServer(t *testing.T) string {
+	dir, err := os.MkdirTemp("/tmp", "tidb-split-test-")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, os.RemoveAll(dir))
+	})
+
+	socketPath := filepath.Join(dir, "tikv.sock")
+	listener, err := net.Listen("unix", socketPath)
+	require.NoError(t, err)
+
+	server := grpc.NewServer()
+	tikvpb.RegisterTikvServer(server, &splitTestTiKVServer{})
+	go func() {
+		_ = server.Serve(listener)
+	}()
+	t.Cleanup(server.Stop)
+
+	return "unix://" + socketPath
+}
+
+func containsKVEpochNotMatch(err error) bool {
+	if berrors.ErrKVEpochNotMatch.Equal(err) {
+		return true
+	}
+	if cause := errors.Cause(err); cause != nil && cause != err && berrors.ErrKVEpochNotMatch.Equal(cause) {
+		return true
+	}
+	errs, ok := err.(interface{ Errors() []error })
+	if !ok {
+		return false
+	}
+	for _, err := range errs.Errors() {
+		if containsKVEpochNotMatch(err) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestPaginateScanRegion(t *testing.T) {
 	ctx := context.Background()
 	mockPDClient := NewMockPDClientForSplit()
@@ -825,6 +906,26 @@ func TestSplitEmptyRegion(t *testing.T) {
 	regionSplitter := NewRegionSplitter(client)
 	err := regionSplitter.ExecuteSortedKeys(context.Background(), nil)
 	require.NoError(t, err)
+}
+
+func TestSplitWaitAndScatterMissingRegionByIDReturnsEpochNotMatch(t *testing.T) {
+	mockPDCli := NewMockPDClientForSplit()
+	regions := mockPDCli.SetRegions([][]byte{[]byte(""), []byte("m"), []byte("")})
+	mockPDCli.SetStores(map[uint64]*metapb.Store{
+		1: {Id: 1, Address: startSplitTestTiKVServer(t)},
+	})
+	splitRegion := &RegionInfo{
+		Region: regions[0],
+		Leader: &metapb.Peer{Id: regions[0].Id, StoreId: 1},
+	}
+	client := NewClient(&nilRegionByIDMockPDClient{
+		MockPDClientForSplit: mockPDCli,
+		regionID:             regions[0].Id,
+	}, nil, nil, 100, 4)
+
+	_, err := client.SplitWaitAndScatter(context.Background(), splitRegion, [][]byte{[]byte("a")})
+	require.Error(t, err)
+	require.True(t, containsKVEpochNotMatch(err), "unexpected error: %+v", err)
 }
 
 // region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
