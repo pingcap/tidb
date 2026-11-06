@@ -2321,6 +2321,11 @@ func GetModifiableColumnJob(
 	if newAutoRandBits, err = checkAutoRandom(t.Meta(), col, specNewColumn); err != nil {
 		return nil, errors.Trace(err)
 	}
+	// The new shard bits and the allocator migration from auto_increment are applied before the other
+	// sub-jobs of a multi-schema change finish, and are not rolled back if one of them fails.
+	if newAutoRandBits > 0 && newAutoRandBits != t.Meta().AutoRandomBits && sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
+		return nil, dbterror.ErrRunMultiSchemaChanges.FastGenByArgs("changing auto_random shard bits")
+	}
 
 	txn, err := sctx.Txn(true)
 	if err != nil {
