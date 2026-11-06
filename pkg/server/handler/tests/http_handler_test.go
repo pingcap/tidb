@@ -399,6 +399,10 @@ func TestGetRegionByIDWithError(t *testing.T) {
 }
 
 func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T, storeOpts ...mockstore.MockTiKVStoreOption) {
+	// A canceled request can leave a transport-owned idle connection before
+	// cmux has classified it. Server.Close cannot close that connection, so
+	// release the client's pool before TestMain checks for goroutine leaks.
+	t.Cleanup(http.DefaultClient.CloseIdleConnections)
 	var err error
 	ts.store, err = teststore.NewMockStoreWithoutBootstrap(storeOpts...)
 	require.NoError(t, err)

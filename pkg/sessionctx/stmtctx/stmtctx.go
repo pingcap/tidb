@@ -479,6 +479,12 @@ type StatementContext struct {
 	UseDynamicPruneMode bool
 	// ColRefFromPlan mark the column ref used by assignment in update statement.
 	ColRefFromUpdatePlan intset.FastIntSet
+	// LateMaterializationMergeJoins is non-nil while the late-materialized
+	// alternative plan is physically optimized. It holds the IDs of the logical
+	// joins that the original plan implemented as merge joins; merge joins are
+	// enumerated only for those, so the alternative cannot win through a merge
+	// join the original plan did not choose.
+	LateMaterializationMergeJoins map[int]struct{}
 	// AlternativeLogicalPlanDecorrelatedApply indicates whether the current logical
 	// optimization round decorrelated at least one Apply into Join.
 	AlternativeLogicalPlanDecorrelatedApply bool
