@@ -1629,6 +1629,11 @@ func (b *Builder) applyTableUpdateV2(m meta.Reader, diff *model.SchemaDiff) ([]i
 			return nil, errors.Trace(err)
 		}
 	}
+	if needRefreshMaskingPoliciesForTableDiff(diff.Type) {
+		if err := refreshMaskingPoliciesForTableIDs(b, oldTableID, newTableID); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	return tblIDs, nil
 }
 
