@@ -84,6 +84,7 @@ import (
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -1791,10 +1792,14 @@ func isRetryableJobError(err error, jobErrCnt int64) bool {
 	if jobErrCnt+1 >= variable.GetDDLErrorCountLimit() {
 		return false
 	}
-	return isRetryableError(err)
+	return isRetryableError(err, true)
 }
 
-func isRetryableError(err error) bool {
+func isRetryableError(err error, retryUnknown bool) bool {
+	var pdTimeout *tikverr.ErrPDServerTimeout
+	if goerrors.As(err, &pdTimeout) {
+		return true
+	}
 	errMsg := err.Error()
 	for _, m := range dbterror.ReorgRetryableErrMsgs {
 		if strings.Contains(errMsg, m) {
@@ -1807,8 +1812,7 @@ func isRetryableError(err error) bool {
 		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
 		return ok
 	}
-	// For the unknown errors, we should retry.
-	return true
+	return retryUnknown
 }
 
 func runReorgJobAndHandleErr(
