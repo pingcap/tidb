@@ -30,6 +30,8 @@ go_library(
         "helper.go",
         "json_binary.go",
         "json_binary_functions.go",
+        "json_binary_jsonv1.go",
+        "json_binary_jsonv2.go",
         "json_constants.go",
         "json_path_expr.go",
         "mydecimal.go",
