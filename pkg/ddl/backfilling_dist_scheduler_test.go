@@ -17,7 +17,11 @@ package ddl_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"runtime/debug"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,10 +29,17 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+<<<<<<< HEAD
+=======
+	disttestutil "github.com/pingcap/tidb/pkg/dxf/framework/testutil"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
+>>>>>>> bc2f3a5f675 (ddl: propagate table range scan error in distributed add index (#71522))
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -174,6 +185,50 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
+}
+
+func TestBackfillingSchedulerTableRangeScanError(t *testing.T) {
+	disttestutil.ReduceCheckInterval(t)
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	if kerneltype.IsClassic() {
+		tk.MustExec("set global tidb_enable_dist_task = on")
+		tk.MustExec("set global tidb_ddl_enable_fast_reorg = on")
+		t.Cleanup(func() {
+			tk.MustExec("set global tidb_enable_dist_task = off")
+		})
+	}
+
+	// A non-empty table is required. An empty table legitimately produces an empty plan.
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id int primary key, v int)")
+	tk.MustExec("insert into t1 values (1, 1), (2, 2)")
+
+	// Fail only the snapshot iteration used by distributed add-index planning.
+	// Earlier scans (empty-table check, reorg handle init) also call
+	// iterateSnapshotKeys and must keep working. The error is transient: planning
+	// retries, then the index is built. If the error were treated as an empty
+	// table, ADD INDEX would publish idx with no entries and admin check would fail.
+	var injected atomic.Bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockSnapshotIterError", func(errP *error) {
+		if errP == nil || *errP != nil || injected.Load() {
+			return
+		}
+		if !strings.Contains(string(debug.Stack()), "generatePlanForPhysicalTable") {
+			return
+		}
+		if injected.CompareAndSwap(false, true) {
+			*errP = errors.New("mock snapshot iter error")
+		}
+	})
+
+	tk.MustExec("alter table t1 add index idx(v)")
+	require.True(t, injected.Load())
+	tk.MustExec("admin check table t1")
+	tk.MustQuery("select id from t1 use index(idx) where v = 1").Check(testkit.Rows("1"))
+	tk.MustQuery("select id from t1 use index(idx) where v = 2").Check(testkit.Rows("2"))
 }
 
 func TestCalculateRegionBatch(t *testing.T) {
