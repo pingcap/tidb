@@ -25,6 +25,29 @@ import (
 )
 
 func TestSemiJoinOrder(t *testing.T) {
+	t.Run("prefix index inner aggregation", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+		tk.MustExec("use test")
+		for _, tc := range []struct{ columnType, indexColumn string }{
+			{"blob(54)", "c0(58)"},
+			{"blob(54)", "c0(11)"},
+			{"varbinary(54)", "c0"},
+		} {
+			tk.MustExec("create table t0(c0 " + tc.columnType + " not null)")
+			tk.MustExec("create table t1(c0 " + tc.columnType + " not null)")
+			tk.MustExec("insert into t0 values (unhex('')),(unhex('')),(unhex('302E36313136373338343339313134343736')),(unhex('2D5E097B69')),(unhex('2D31353234393434393733')),(unhex('3147')),(unhex('')),(unhex('534A4959EC92A54F5075'))")
+			tk.MustExec("insert into t1 values " + strings.Repeat("(''),", 32) + "('-1524944973')")
+			tk.MustExec("create index i0 on t0(" + tc.indexColumn + ")")
+			tk.MustExec("analyze table t0,t1")
+			tk.MustExec("drop stats t0")
+			tk.MustExec("drop stats t1")
+			rows := make([]string, 33)
+			rows[32] = "-1524944973"
+			tk.MustQuery("select t1.c0 from t1 where t1.c0 in (select t0.c0 from t0)").Sort().Check(testkit.Rows(rows...))
+			tk.MustQuery("select ref0 from (select t1.c0 as ref0,t1.c0 in (select t0.c0 from t0) as ref1 from t1) s where ref1").Sort().Check(testkit.Rows(rows...))
+			tk.MustExec("drop table t0,t1")
+		}
+	})
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test;")
 		tk.MustExec("create table t1 (col0 int, col1 int);")
