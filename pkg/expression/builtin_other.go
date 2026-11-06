@@ -78,6 +78,7 @@ var (
 	_ builtinFunc = &builtinValuesDurationSig{}
 	_ builtinFunc = &builtinValuesJSONSig{}
 	_ builtinFunc = &builtinBitCountSig{}
+	_ builtinFunc = &builtinBitCountBinarySig{}
 	_ builtinFunc = &builtinGetParamStringSig{}
 )
 
@@ -1862,9 +1863,27 @@ func (c *bitCountFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt)
+	tp := args[0].GetType(ctx.GetEvalCtx())
+	// Bare literals carry UnsignedFlag; folded user variables keep the datum
+	// kind but have a string return type without that flag.
+	constant, isConstant := args[0].(*Constant)
+	numericLiteral := isConstant && constant.ParamMarker == nil &&
+		constant.DeferredExpr == nil && IsBinaryLiteral(constant) &&
+		mysql.HasUnsignedFlag(tp.GetFlag()) &&
+		tp.GetFlag()&mysql.UnderScoreCharsetFlag == 0
+	binaryEval := !numericLiteral && types.IsBinaryStr(tp)
+	argTp := types.ETInt
+	if binaryEval {
+		argTp = types.ETString
+	}
+	bf, err := newBaseBuiltinFuncWithTp(
+		ctx, c.funcName, args, types.ETInt, argTp)
 	if err != nil {
 		return nil, err
+	}
+	if binaryEval {
+		bf.tp.SetFlen(mysql.MaxIntWidth)
+		return &builtinBitCountBinarySig{bf}, nil
 	}
 	bf.tp.SetFlen(2)
 	sig := &builtinBitCountSig{bf}
@@ -1895,6 +1914,34 @@ func (b *builtinBitCountSig) evalInt(ctx EvalContext, row chunk.Row) (int64, boo
 		return 0, true, err
 	}
 	return bitCount(n), false, nil
+}
+
+// builtinBitCountBinarySig counts all bits without integer conversion.
+type builtinBitCountBinarySig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinBitCountBinarySig) Clone() builtinFunc {
+	newSig := &builtinBitCountBinarySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinBitCountBinarySig) evalInt(
+	ctx EvalContext, row chunk.Row,
+) (int64, bool, error) {
+	value, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	return bitCountBinary(value), false, nil
+}
+
+func bitCountBinary(value string) (count int64) {
+	for i := range len(value) {
+		count += bitCount(int64(value[i]))
+	}
+	return count
 }
 
 // getParamFunctionClass for plan cache of prepared statements
