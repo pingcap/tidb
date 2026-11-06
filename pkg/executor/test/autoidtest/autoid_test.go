@@ -608,8 +608,6 @@ func TestMockAutoIDServiceError(t *testing.T) {
 			metaautoid.MockForTest = originalMockForTest
 		})
 
-		markedStore := testkit.CreateMockStore(t)
-
 		cases := []struct {
 			name string
 			sql  string
@@ -622,7 +620,7 @@ func TestMockAutoIDServiceError(t *testing.T) {
 		}
 		for i, test := range cases {
 			t.Run(test.name, func(t *testing.T) {
-				markedTK := testkit.NewTestKit(t, markedStore)
+				markedTK := testkit.NewTestKit(t, store)
 				markedTK.MustExec("use test")
 				tableName := "t_mock_terminal_" + strconv.Itoa(i)
 				markedTK.MustExec("create table " + tableName + " (id int key auto_increment, v int) auto_id_cache 1")
