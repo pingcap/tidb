@@ -62,6 +62,30 @@ var (
 	}
 )
 
+// upgradedNullableUserColumns are the mysql.user columns that the upgrade from
+// an old TiDB version adds as nullable, while a newly bootstrapped cluster
+// defines them as NOT NULL.
+var upgradedNullableUserColumns = map[string]struct{}{
+	"create_role_priv":       {},
+	"drop_role_priv":         {},
+	"account_locked":         {},
+	"shutdown_priv":          {},
+	"reload_priv":            {},
+	"file_priv":              {},
+	"config_priv":            {},
+	"create_tablespace_priv": {},
+}
+
+func isUpgradedNullableSystemTableColumn(dbNameL, tableNameL, columnNameL string, backupCol, clusterCol *model.ColumnInfo) bool {
+	if dbNameL != mysql.SystemDB || tableNameL != sysUserTableName {
+		return false
+	}
+	if _, ok := upgradedNullableUserColumns[columnNameL]; !ok {
+		return false
+	}
+	return !mysql.HasNotNullFlag(backupCol.GetFlag()) && mysql.HasNotNullFlag(clusterCol.GetFlag())
+}
+
 var planPeplayerTables = map[string]map[string]struct{}{
 	"mysql": {
 		"plan_replayer_status": {},
@@ -768,7 +792,18 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table, co
 					table.Info.Name.O,
 					col.Name, col.FieldType.String())
 			}
-			typeEq, collateEq := utils.IsTypeCompatible(backupCol.FieldType, col.FieldType)
+			backupFieldType := backupCol.FieldType
+			if isUpgradedNullableSystemTableColumn(decodedSysDBName.L, backupTi.Name.L, col.Name.L, backupCol, col) {
+				// The logical restore copies the rows with REPLACE INTO, which still
+				// rejects a NULL value in the backup.
+				log.Warn("nullable column in backup data is NOT NULL in cluster",
+					zap.Stringer("table", table.Info.Name),
+					zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
+				backupFieldType = *backupFieldType.Clone()
+				backupFieldType.AddFlag(mysql.NotNullFlag)
+				canLoadSysTablePhysical = false
+			}
+			typeEq, collateEq := utils.IsTypeCompatible(backupFieldType, col.FieldType)
 			canLoadSysTablePhysical = canLoadSysTablePhysical && collateEq && typeEq
 			collateCompatible := collateEq
 			if typeEq && (!collateEq && collationCheck) {
