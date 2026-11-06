@@ -1857,6 +1857,58 @@ func TestUninitializedStats(t *testing.T) {
 	tk.MustQuery("explain analyze select /*+ use_index(t1, idx_expr) */ * from t1 where (cast(json_unquote(json_extract(`c2`, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin) > '100'  and c2 > 'abc';").CheckNotContain("unInitialized")
 }
 
+// TestEqualEstimateOnZeroRepeatBucketUpper covers equality estimation on a
+// bucket upper that carries no point frequency. Merged global histograms
+// produce such buckets when an upper falls on a merge cut, and the sampled
+// builder produces them when the estimated NDV exceeds the histogram's row
+// count. A bucket upper is a value observed in the data, so a zero Repeat
+// means "not recorded" rather than "no rows", and the estimate must fall
+// back to the uniform average instead of reporting an exact zero.
+func TestEqualEstimateOnZeroRepeatBucketUpper(t *testing.T) {
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	colInfo := &model.ColumnInfo{ID: 1, FieldType: *tp}
+	// 200 rows over an NDV of 100, so the uniform average is 2 per value.
+	hg := statistics.NewHistogram(colInfo.ID, 100, 0, 0, tp, 2, 0)
+	lo1, up1 := types.NewIntDatum(1), types.NewIntDatum(50)
+	lo2, up2 := types.NewIntDatum(51), types.NewIntDatum(100)
+	hg.AppendBucket(&lo1, &up1, 100, 0) // no frequency recorded for 50
+	hg.AppendBucket(&lo2, &up2, 200, 5) // 100 was observed 5 times
+	col := &statistics.Column{
+		Histogram:         *hg,
+		Info:              colInfo,
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	}
+	sctx := mock.NewContext()
+
+	est, err := cardinality.GetColumnRowCount(sctx, col, getRange(50, 50), 200, 0, false)
+	require.NoError(t, err)
+	require.Equal(t, 2.0, est,
+		"a zero Repeat must fall back to the uniform average, not report zero rows")
+
+	est, err = cardinality.GetColumnRowCount(sctx, col, getRange(100, 100), 200, 0, false)
+	require.NoError(t, err)
+	require.Equal(t, 5.0, est, "an observed Repeat must still be used as is")
+
+	// As a range bound, the upper keeps the recorded zero: the bucket's
+	// count already includes the upper's rows, so x <= 50 must equal
+	// x < 51, and x > 50 must equal x >= 51.
+	rangeCount := func(low, high types.Datum, lowExclude, highExclude bool) float64 {
+		est, err := cardinality.GetColumnRowCount(sctx, col, []*ranger.Range{{
+			LowVal: []types.Datum{low}, HighVal: []types.Datum{high},
+			LowExclude: lowExclude, HighExclude: highExclude,
+			Collators: collate.GetBinaryCollatorSlice(1),
+		}}, 200, 0, false)
+		require.NoError(t, err)
+		return est
+	}
+	minNotNull, maxValue := types.MinNotNullDatum(), types.MaxValueDatum()
+	require.Equal(t, 100.0, rangeCount(minNotNull, types.NewIntDatum(50), false, false), "x <= 50")
+	require.Equal(t, 100.0, rangeCount(minNotNull, types.NewIntDatum(51), false, true), "x < 51")
+	require.Equal(t, 100.0, rangeCount(types.NewIntDatum(50), maxValue, true, false), "x > 50")
+	require.Equal(t, 100.0, rangeCount(types.NewIntDatum(51), maxValue, false, false), "x >= 51")
+}
+
 // TestIndexRangeEstimationWithPrefixedCommonHandle covers a clustered handle whose leading
 // column is a prefixed index column. The handle appended to a non-unique secondary index
 // stores that column truncated, so the execution ranges must keep prefix semantics and
