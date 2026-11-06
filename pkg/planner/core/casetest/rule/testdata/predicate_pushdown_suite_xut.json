@@ -263,5 +263,20 @@
         "Warning": null
       }
     ]
+  },
+  {
+    "Name": "TestNestedInnerJoinPredicatePropagation",
+    "Cases": [
+      {"SQL": "", "Plan": null, "Result": null, "Warning": null},
+      {"SQL": "", "Plan": null, "Result": null, "Warning": null},
+      {"SQL": "", "Plan": null, "Result": null, "Warning": null},
+      {"SQL": "", "Plan": null, "Result": null, "Warning": null},
+      {"SQL": "", "Plan": null, "Result": null, "Warning": null},
+      {"SQL": "", "Plan": null, "Result": null, "Warning": null},
+      {"SQL": "", "Plan": null, "Result": null, "Warning": null},
+      {"SQL": "", "Plan": null, "Result": null, "Warning": null},
+      {"SQL": "", "Plan": null, "Result": null, "Warning": null},
+      {"SQL": "", "Plan": null, "Result": null, "Warning": null}
+    ]
   }
 ]
