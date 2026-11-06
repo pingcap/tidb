@@ -442,7 +442,7 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 					continue
 				}
 			}
-			if idx.State != model.StatePublic {
+			if idx.State != model.StatePublic || idx.HasCondition() {
 				continue
 			}
 			for _, idxCol := range idx.Columns {

@@ -10,7 +10,11 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+<<<<<<< HEAD
     shard_count = 14,
+=======
+    shard_count = 16,
+>>>>>>> 3045c5aad75 (planner, ddl: prevent partial indexes from implying global uniqueness (#70267))
     deps = [
         "//pkg/domain",
         "//pkg/domain/infosync",
