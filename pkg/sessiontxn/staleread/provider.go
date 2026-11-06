@@ -148,6 +148,11 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 
 	p.is = is
 	err = p.sctx.GetSessionVars().SetSystemVar(vardef.TiDBSnapshot, "")
+	if err == nil {
+		// BEGIN already activated this transaction. Reuse it on later activation
+		// requests instead of committing it and starting another transaction.
+		p.txn = txn
+	}
 
 	return err
 }
