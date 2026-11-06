@@ -4079,6 +4079,24 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustExec("drop table t2")
 }
 
+func TestIssue56870(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (d date, dt datetime, s varchar(20))")
+	tk.MustExec("insert into t values ('2021-01-01', '2021-01-01 00:00:00', '2021-01-01')")
+
+	for _, vectorized := range []string{"on", "off"} {
+		tk.MustExec("set @@tidb_enable_vectorized_expression=" + vectorized)
+		tk.MustQuery("select d, timestampadd(month, 1, d) from t where timestampadd(month, 1, d) >= '2021-02-01 00:00:00'").
+			Check(testkit.Rows("2021-01-01 2021-02-01"))
+		tk.MustQuery("select dt from t where timestampadd(month, 1, dt) = '2021-02-01'").
+			Check(testkit.Rows("2021-01-01 00:00:00"))
+		tk.MustQuery("select timestampadd(month, 1, s) = '2021-02-01' from t").
+			Check(testkit.Rows("0"))
+	}
+}
+
 func TestSetVariables(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
