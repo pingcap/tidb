@@ -630,12 +630,16 @@ func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sess
 			if ast.ReferOptionType(fk.OnDelete) != 0 {
 				deleteRule = ast.ReferOptionType(fk.OnDelete).String()
 			}
+			refSchema := fk.RefSchema
+			if refSchema.L == "" {
+				refSchema = schema
+			}
 			record := types.MakeDatums(
 				infoschema.CatalogVal, // CONSTRAINT_CATALOG
 				schema.O,              // CONSTRAINT_SCHEMA
 				fk.Name.O,             // CONSTRAINT_NAME
 				infoschema.CatalogVal, // UNIQUE_CONSTRAINT_CATALOG
-				schema.O,              // UNIQUE_CONSTRAINT_SCHEMA
+				refSchema.O,           // UNIQUE_CONSTRAINT_SCHEMA
 				"PRIMARY",             // UNIQUE_CONSTRAINT_NAME
 				"NONE",                // MATCH_OPTION
 				updateRule,            // UPDATE_RULE

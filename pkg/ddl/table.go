@@ -1109,7 +1109,7 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(
 	infoCache *infoschema.InfoCache, t *meta.Mutator, job *model.Job,
 	fkh *foreignKeyHelper, tblInfo *model.TableInfo,
 	oldSchemaName, oldTableName, newTableName ast.CIStr, newSchemaID int64) error {
-	if !vardef.EnableForeignKey.Load() || newTableName.L == oldTableName.L {
+	if !vardef.EnableForeignKey.Load() {
 		return nil
 	}
 	is := infoCache.GetLatest()
@@ -1117,6 +1117,9 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(
 	if !ok {
 		job.State = model.JobStateCancelled
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", newSchemaID))
+	}
+	if newDB.Name.L == oldSchemaName.L && newTableName.L == oldTableName.L {
+		return nil
 	}
 	referredFKs := is.GetTableReferredForeignKeys(oldSchemaName.L, oldTableName.L)
 	if len(referredFKs) == 0 {
