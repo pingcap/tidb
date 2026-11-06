@@ -386,7 +386,11 @@ func TestManager(t *testing.T) {
 		sessMgr, ok := crossKSMgr.Get(userKS)
 		require.True(t, ok)
 		coordinator := sessMgr.Coordinator()
-		require.Zero(t, coordinator.InternalSessionCount())
+		// Background loops such as the info schema syncer briefly borrow sessions
+		// from the same pool, so the count is not always 0 here.
+		require.Eventually(t, func() bool {
+			return coordinator.InternalSessionCount() == 0
+		}, 10*time.Second, 20*time.Millisecond)
 
 		mgr := storage.NewTaskManager(pool)
 		ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
