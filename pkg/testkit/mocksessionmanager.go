@@ -202,10 +202,24 @@ func (msm *MockSessionManager) KillNonFlashbackClusterConn() {
 // CheckOldRunningTxn is to get all startTS of every transactions running in the current internal sessions
 func (msm *MockSessionManager) CheckOldRunningTxn(jobs map[int64]*mdldef.JobMDL) {
 	msm.mu.Lock()
+	sessions := make([]sessionapi.Session, 0, len(msm.Conn))
 	for _, se := range msm.Conn {
-		variable.RemoveLockDDLJobs(se.GetSessionVars(), jobs, false)
+		sessions = append(sessions, se)
+	}
+	internalSessions := make([]any, 0, len(msm.internalSessions))
+	for se := range msm.internalSessions {
+		internalSessions = append(internalSessions, se)
 	}
 	msm.mu.Unlock()
+
+	for _, se := range sessions {
+		variable.RemoveLockDDLJobs(se.GetSessionVars(), jobs, false)
+	}
+	for _, se := range internalSessions {
+		if sv, ok := se.(interface{ GetSessionVars() *variable.SessionVars }); ok {
+			variable.RemoveLockDDLJobs(sv.GetSessionVars(), jobs, false)
+		}
+	}
 }
 
 // GetStatusVars is getting the per-session status variables
