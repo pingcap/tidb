@@ -932,6 +932,16 @@ func (p *UserPrivileges) ShowGrants(ctx context.Context, sctx sessionctx.Context
 	return
 }
 
+// grantAccountOf returns the account whose grants user owns. An anonymous
+// account matched at login has an empty AuthUsername, so the login name in
+// Username must not be used for it.
+func grantAccountOf(user *auth.UserIdentity) (string, string) {
+	if user != nil && user.AuthHostname != "" {
+		return user.AuthUsername, user.AuthHostname
+	}
+	return auth.GetUserAndHostName(user)
+}
+
 // FetchColumnPrivileges implements privilege.Manager interface.
 func (p *UserPrivileges) FetchColumnPrivileges(sctx sessionctx.Context, user *auth.UserIdentity) ([][]types.Datum, error) {
 	if SkipWithGrant {
@@ -942,8 +952,8 @@ func (p *UserPrivileges) FetchColumnPrivileges(sctx sessionctx.Context, user *au
 	users := make([]string, 0, 1)
 	hosts := make([]string, 0, 1)
 
-	u, h := auth.GetUserAndHostName(user)
-	if u == "" || p.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "columns_priv", "", mysql.SelectPriv) &&
+	u, h := grantAccountOf(user)
+	if user == nil || p.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "columns_priv", "", mysql.SelectPriv) &&
 		p.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "tables_priv", "", mysql.SelectPriv) {
 		mysqlPrivilege.user.Ascend(func(item itemUser) bool {
 			for _, u := range item.data {
@@ -970,8 +980,8 @@ func (p *UserPrivileges) FetchTablePrivileges(sctx sessionctx.Context, user *aut
 	users := make([]string, 0, 1)
 	hosts := make([]string, 0, 1)
 
-	u, h := auth.GetUserAndHostName(user)
-	if u == "" || p.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "tables_priv", "", mysql.SelectPriv) {
+	u, h := grantAccountOf(user)
+	if user == nil || p.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "tables_priv", "", mysql.SelectPriv) {
 		mysqlPrivilege.user.Ascend(func(item itemUser) bool {
 			for _, u := range item.data {
 				users = append(users, u.User)
@@ -997,8 +1007,8 @@ func (p *UserPrivileges) FetchSchemaPrivileges(sctx sessionctx.Context, user *au
 	users := make([]string, 0, 1)
 	hosts := make([]string, 0, 1)
 
-	u, h := auth.GetUserAndHostName(user)
-	if u == "" || p.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "db", "", mysql.SelectPriv) {
+	u, h := grantAccountOf(user)
+	if user == nil || p.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "db", "", mysql.SelectPriv) {
 		mysqlPrivilege.user.Ascend(func(item itemUser) bool {
 			for _, u := range item.data {
 				users = append(users, u.User)

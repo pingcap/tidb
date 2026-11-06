@@ -1771,6 +1771,20 @@ func TestInfoSchemaUserPrivileges(t *testing.T) {
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isnobody'@'%'"`).Check(testkit.Rows("'isnobody'@'%' def USAGE NO"))
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isroot'@'%'"`).Check(testkit.Rows("'isroot'@'%' def SUPER NO"))
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysqluser'@'%'"`).Check(testkit.Rows("'isselectonmysqluser'@'%' def USAGE NO"))
+
+	// An anonymous account only sees its own column, table and schema grants.
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec(`CREATE USER ''@'localhost'`)
+	rootTk.MustExec(`CREATE TABLE test.isanon (a INT)`)
+	rootTk.MustExec(`GRANT SELECT(a) ON test.isanon TO 'isnobody'@'%'`)
+	rootTk.MustExec(`GRANT INSERT ON test.isanon TO 'isnobody'@'%'`)
+	rootTk.MustExec(`GRANT UPDATE ON test.* TO 'isnobody'@'%'`)
+	rootTk.MustExec(`GRANT SELECT(a) ON test.isanon TO ''@'localhost'`)
+	anonTk := testkit.NewTestKit(t, store)
+	require.NoError(t, anonTk.Session().Auth(&auth.UserIdentity{Username: "", Hostname: "localhost"}, nil, nil, nil))
+	anonTk.MustQuery(`SELECT grantee FROM information_schema.column_privileges`).Check(testkit.Rows("''@'localhost'"))
+	anonTk.MustQuery(`SELECT grantee FROM information_schema.table_privileges`).Check(testkit.Rows())
+	anonTk.MustQuery(`SELECT grantee FROM information_schema.schema_privileges`).Check(testkit.Rows())
 }
 
 // Issues https://github.com/pingcap/tidb/issues/25972 and https://github.com/pingcap/tidb/issues/26451
