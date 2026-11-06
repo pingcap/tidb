@@ -227,8 +227,13 @@ impl<C: Columns + Clone + Send + Sync + 'static> ProjectionExec<C> {
         if self.parallel.is_none() {
             // Go `prepare`: one input and one output chunk per worker.
             let num_workers = self.num_workers.max(1);
-            let free_inputs: Vec<Chunk> = (0..num_workers).map(|_| self.child.new_chunk()).collect();
-            let free_outputs: Vec<Chunk> = (0..num_workers).map(|_| self.meta.new_chunk()).collect();
+            // Go `exec.NewFirstChunk`, outside the session's allocator.
+            let free_inputs: Vec<Chunk> = (0..num_workers)
+                .map(|_| tidb_executor_internal_exec::new_first_chunk(self.child.as_ref()))
+                .collect();
+            let free_outputs: Vec<Chunk> = (0..num_workers)
+                .map(|_| self.meta.new_first_chunk())
+                .collect();
             self.consume(
                 free_inputs.iter().chain(&free_outputs).map(Chunk::memory_usage).sum(),
             );
@@ -317,8 +322,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> ProjectionExec<C> {
                 return None;
             }
         };
-        let input = input.unwrap_or_else(|| self.child.new_chunk());
-        let output = output.unwrap_or_else(|| self.meta.new_chunk());
+        let input = input.unwrap_or_else(|| tidb_executor_internal_exec::new_first_chunk(self.child.as_ref()));
+        let output = output.unwrap_or_else(|| self.meta.new_first_chunk());
         Some((input, output))
     }
 

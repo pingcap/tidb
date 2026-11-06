@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 28,
-    "open": 8,
-    "partial": 20
+    "open": 7,
+    "partial": 21
   },
   "findings": [
     {
@@ -95,9 +95,9 @@
     },
     {
       "id": "C02",
-      "status": "open",
+      "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "Go's session chunk allocator is not ported: `SessionVars.SetAlloc` installs `chunk.NewReuseHookAllocator(chunk.NewSyncAllocator(alloc))`, every executor takes it as `BaseExecutor.AllocPool`, and its column pools hand a chunk the column buffers earlier statements of the session grew, where this port allocates every chunk fresh (`StmtContext::set_alloc` / `is_alloc_valid` keep only the `tidb_enable_reuse_chunk` gate). A Go chunk therefore charges the capacity of reused buffers: after a 255-row `UPDATE`, the one-row child chunk of `update t1 set id=id+100000 where id=1` holds 2048-, 2048- and 16384-byte column buffers, so Go's `Update_3` charges 22.7 KB (this port 451 Bytes) and `executor/foreign_key` `TestForeignKeyAndMemoryTracker` reaches 8175 under `tidb_mem_quota_query=81920`, which blocks E02; E10's residual grouped-aggregate figures have the same cause",
+      "finding": "The session's reusable chunk allocator is Go's (`Session::chunk_alloc`, Go `clientConn.chunkAlloc`: installed per statement as `NewSyncAllocator(alloc)` under `tidb_enable_reuse_chunk`, never for an internal `InRestrictedSQL` statement, reset between statements and recreated after a failed one, each statement's validity its own), executors take it as `ExecutorMeta::alloc_pool` (Go `AllocPool`) for `NewChunk` / `TryNewCacheChunk` / `NewChunkWithCapacity`, and Go's `NewFirstChunk` sites (`Executor::new_first_chunk`: projection workers, hash-join probe and result chunks, index-hash-join results, shuffle holders, the drained record set) allocate outside it, so memory charges match Go's in sequence (`a_projection_sizes_its_result_columns_as_go_vec_eval_does`, `explain_analyze_dml_roots_report_their_executor_stats_and_memory_like_go`). Remaining: executors built outside the physical builder's `meta` (`ExecutorMeta::new` in other crates) allocate fresh; parallel apply's chunks, whose executor shape differs from Go's, are unmapped; the reuse hook's `StmtCtx.SetUseChunkAlloc` (`@@last_sql_use_alloc`) is not driven by allocation",
       "go_owner": "`pkg/util/chunk` (`alloc.go`: `NewAllocator`, `NewReuseHookAllocator`, `NewSyncAllocator`), `pkg/sessionctx/variable/session.go` (`SetAlloc`, `GetChunkAllocator`), `pkg/executor/internal/exec/executor.go` (`AllocPool`, `NewChunkWithCapacity`)"
     },
     {
@@ -209,6 +209,6 @@
     }
   ],
   "unresolved": 28,
-  "open": 8,
-  "partial": 20
+  "open": 7,
+  "partial": 21
 }

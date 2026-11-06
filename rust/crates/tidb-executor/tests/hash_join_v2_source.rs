@@ -201,6 +201,13 @@ impl Executor for BuildSource {
         }
         self.meta.new_chunk()
     }
+    fn new_first_chunk(&self) -> Chunk {
+        self.allocations.set(self.allocations.get() + 1);
+        if let Some(observations) = &self.observations {
+            observations.lock().unwrap().allocations += 1;
+        }
+        self.meta.new_chunk()
+    }
 }
 
 // Go fetchAndBuildHashTableImpl / createTasks / buildHashTable: duplicate keys,

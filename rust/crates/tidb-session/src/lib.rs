@@ -366,6 +366,13 @@ impl DomainMap {
 use tidb_domain_core::schema_sync::MdlRelatedTableSink;
 
 pub struct Session {
+    /// Go `clientConn.chunkAlloc`: the reusable chunk allocator the session's
+    /// statements draw from under `tidb_enable_reuse_chunk`, reset after
+    /// each statement (`chunkAlloc.Reset()`).
+    chunk_alloc: tidb_chunk::alloc::ChunkAllocator,
+    /// Whether the last statement failed, so its allocator is recreated
+    /// (Go `ClearAlloc(&alloc, hasErr)`).
+    chunk_alloc_failed: bool,
     global_config_syncer: Option<Arc<tidb_domain_globalconfigsync::GlobalConfigSyncer>>,
     catalog: SharedCatalog,
     /// The system session an account statement's executor runs its
@@ -891,6 +898,8 @@ impl Session {
         let plan_cache_invalidation = catalog.plan_cache_invalidation();
         let stats_handle = catalog.stats_handle();
         Session {
+            chunk_alloc: tidb_chunk::alloc::ChunkAllocator::new(),
+            chunk_alloc_failed: false,
             catalog,
             account_sql: None,
             account_statement_privilege_cache: None,
@@ -2761,6 +2770,14 @@ impl Session {
         self.vars.prev_found_in_plan_cache = std::mem::take(&mut self.vars.found_in_plan_cache);
         // Go `ExchangeChunkStatus`, at the same `ResetContextOfStmt` boundary.
         self.vars.pre_use_chunk_alloc = std::mem::take(&mut self.vars.use_chunk_alloc);
+        // Go `clientConn.dispatch`'s tail for the previous statement:
+        // `ClearAlloc(&cc.chunkAlloc, err != nil)` (a failed statement's
+        // allocator is replaced) then `cc.chunkAlloc.Reset()`, which hands
+        // the columns its chunks held back to the pool for this statement.
+        if std::mem::take(&mut self.chunk_alloc_failed) {
+            self.chunk_alloc = tidb_chunk::alloc::ChunkAllocator::new();
+        }
+        tidb_chunk::alloc::Allocator::reset(&self.chunk_alloc);
         // Go promotes `FoundInBinding` at the same boundary, which is why
         // `select @@last_plan_from_binding` reports the statement BEFORE it
         // rather than itself (that SELECT matches no binding of its own).
@@ -2777,6 +2794,7 @@ impl Session {
             .map(StatementCompletion::from)
             .map_err(Clone::clone);
         self.finish_statement_state(&completion);
+        self.chunk_alloc_failed = result.is_err();
         result
     }
 

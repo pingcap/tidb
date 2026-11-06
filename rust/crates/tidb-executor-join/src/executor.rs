@@ -345,7 +345,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> HashJoinV2Executor<C> {
             let probe = self.children[1 - build_index]
                 .as_deref_mut()
                 .expect("probe child missing before prepare");
-            let mut first_probe = probe.new_chunk();
+            // Go `hash_join_base.go` probe fetcher: `exec.NewFirstChunk`.
+            let mut first_probe = tidb_executor_internal_exec::new_first_chunk(&*probe);
             if ProbeStage::should_limit_fetch_size(plan.join_type, plan.right_as_build_side) {
                 first_probe.set_required_rows(required_rows as isize, probe.max_chunk_size());
             }

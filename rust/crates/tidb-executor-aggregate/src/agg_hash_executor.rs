@@ -151,8 +151,11 @@ impl<C: Columns + Send + Sync + 'static> HashAggExec<C> {
     pub fn new(meta: ExecutorMeta, child: Box<dyn Executor>, ctx: C, memory: StatementMemory, build: HashAggExecBuild) -> Self {
         let child_schema = child.schema().clone();
         let child_field_types = child.ret_field_types().to_vec();
-        let child_result = child.new_chunk();
-        let tmp_chk_for_spill = child.new_chunk();
+        // Go leaves `childResult` and `tmpChkForSpill` nil until
+        // `initForUnparallelExec` takes them from the pool; a parallel
+        // aggregate never does.
+        let child_result = Chunk::new(&child_field_types, 0, 0);
+        let tmp_chk_for_spill = Chunk::new(&child_field_types, 0, 0);
         let mem_tracker = memory.operator_tracker(meta.id());
         let disk_tracker = memory.operator_disk_tracker(meta.id());
         Self {
@@ -309,7 +312,9 @@ impl<C: Columns + Send + Sync + 'static> HashAggExec<C> {
             }
             let mut base = BaseHashAggWorker::new(finish_rx.clone(), Arc::clone(&self.partial_agg_funcs), max_chunk_size, Arc::clone(&self.mem_tracker));
             base.stats = self.stats.as_ref().map(|stats| stats.partial_worker());
-            let chk = Chunk::new(&self.child_field_types, 0, max_chunk_size);
+            // Go `e.NewChunkWithCapacity(e.Children(0).RetFieldTypes(), 0,
+            // e.MaxChunkSize())`: the executor's `AllocPool`.
+            let chk = self.meta.new_chunk_with_capacity(&self.child_field_types, 0, max_chunk_size);
             mem_usage += chk.memory_usage();
             let state = Arc::new(Mutex::new(PartialWorkerSpillState::new(partial_results_map)));
             partial_states.push(Arc::clone(&state));

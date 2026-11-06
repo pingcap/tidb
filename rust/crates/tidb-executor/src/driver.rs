@@ -913,7 +913,8 @@ fn visit_executor_rows_writing<C: ?Sized>(
         dml.open(|| exec.open())?;
         dml.next(|| {
             let max_chunk_size = dml.max_chunk_size;
-            let mut req = new_dml_child_chunk(types, max_chunk_size, exec.init_cap());
+            let mut req =
+                new_dml_child_chunk(dml.alloc_pool.as_ref(), types, max_chunk_size, exec.init_cap());
             let mut mem_usage_of_chk = 0;
             loop {
                 dml.mem_tracker.consume_checked(-mem_usage_of_chk)?;
@@ -1015,12 +1016,14 @@ const DML_CHILD_CHUNK_TARGET_BYTES: i64 = 256 * 1024;
 /// executor reads its child into, starting no larger than the child's
 /// `InitCap` nor than [`DML_CHILD_CHUNK_TARGET_BYTES`] of estimated rows.
 fn new_dml_child_chunk(
+    alloc_pool: Option<&std::sync::Arc<dyn tidb_chunk::alloc::Allocator>>,
     fields: &[FieldType],
     max_chunk_size: usize,
     max_init_cap: usize,
 ) -> tidb_chunk::chunk::Chunk {
     let init_cap = estimate_dml_child_chunk_init_cap(fields, max_chunk_size, max_init_cap);
-    tidb_chunk::chunk::Chunk::new(fields, init_cap, max_chunk_size)
+    // Go `dmlExec.NewChunkWithCapacity`: the DML executor's `AllocPool`.
+    tidb_executor_internal_exec::new_chunk_with_alloc_pool(alloc_pool, fields, init_cap, max_chunk_size)
 }
 
 /// Go `estimateDMLChildChunkInitCap`.

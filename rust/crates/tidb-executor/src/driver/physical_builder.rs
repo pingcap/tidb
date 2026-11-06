@@ -336,6 +336,9 @@ pub(crate) struct DmlExec {
     pub(crate) mem_tracker: tidb_variable::mem_quota::WriteMemory,
     /// Go `e.MaxChunkSize()`.
     pub(crate) max_chunk_size: usize,
+    /// Go `e.AllocPool`, which `newDMLChildChunk` allocates the child chunk
+    /// from.
+    pub(crate) alloc_pool: Option<Arc<dyn tidb_chunk::alloc::Allocator>>,
     calls: Option<Arc<Mutex<PhysicalCallStats>>>,
     /// Go `InsertValues.stats` of an `InsertExec` / `ReplaceExec` whose
     /// runtime stats are collected (`collectRuntimeStatsEnabled`).
@@ -372,6 +375,7 @@ impl DmlExec {
         Self {
             mem_tracker,
             max_chunk_size: ctx.executor_chunk_sizes().1,
+            alloc_pool: ctx.chunk_allocator(),
             calls,
             insert: None,
             update: None,
@@ -1182,6 +1186,7 @@ fn meta(ctx: &crate::StmtContext, plan: &PhysicalPlan, schema: Schema) -> Execut
         init_cap,
         max_chunk_size,
     )
+    .with_alloc_pool(ctx.chunk_allocator())
 }
 
 fn only_child(plan: &PhysicalPlan) -> Result<&PhysicalPlan, DriverError> {
@@ -2228,7 +2233,8 @@ fn build_hash_agg_from_child_exec(
     }
     let executor_meta = meta(ctx, plan, output_schema);
     let default_val = (group_by.is_empty() && !tidb_expression_aggregation::is_all_first_row(descriptors)).then(|| {
-        let mut default_val = Chunk::new_chunk_with_capacity(executor_meta.ret_field_types(), 1);
+        // Go `e.DefaultVal = e.AllocPool.Alloc(exec.RetTypes(e), 1, 1)`.
+        let mut default_val = executor_meta.new_chunk_with_capacity(executor_meta.ret_field_types(), 1, 1);
         for (i, descriptor) in descriptors.iter().enumerate() {
             default_val.append_datum(i, &descriptor.base.get_default_value());
         }
@@ -2302,7 +2308,8 @@ fn build_stream_agg_from_child_exec(
     // Go: only a final global aggregate that is not all FIRSTROW answers
     // a default row over no input (issues #35295, #30923).
     let default_val = (group_by.is_empty() && !tidb_expression_aggregation::is_all_first_row(descriptors)).then(|| {
-        let mut default_val = Chunk::new_chunk_with_capacity(executor_meta.ret_field_types(), 1);
+        // Go `e.DefaultVal = e.AllocPool.Alloc(exec.RetTypes(e), 1, 1)`.
+        let mut default_val = executor_meta.new_chunk_with_capacity(executor_meta.ret_field_types(), 1, 1);
         for (i, descriptor) in descriptors.iter().enumerate() {
             default_val.append_datum(i, &descriptor.base.get_default_value());
         }
@@ -6092,7 +6099,8 @@ fn build_point_get(
         configure_point_snapshot_read(ctx, plan.point_avg_row_size(true), snapshot_stats);
     let schema = plan_schema(plan)?;
     let output_columns = table_output_columns(&schema, &table)?;
-    let executor_meta = ExecutorMeta::new(schema, i64::from(plan.base().base.id()), 1, 1);
+    let executor_meta = ExecutorMeta::new(schema, i64::from(plan.base().base.id()), 1, 1)
+        .with_alloc_pool(ctx.chunk_allocator());
     if let Some(index_id) = point.index_id {
         let index_values =
             unique_index_point_values(&table, index_id, &point.ranges, ctx, false, false, false)?;
@@ -6175,7 +6183,8 @@ fn build_batch_point_get(
     // Go buildBatchPointGet sizes both capacities to the retained access keys.
     let capacity = batch.ranges.len();
     let executor_meta =
-        ExecutorMeta::new(schema, i64::from(plan.base().base.id()), capacity, capacity);
+        ExecutorMeta::new(schema, i64::from(plan.base().base.id()), capacity, capacity)
+            .with_alloc_pool(ctx.chunk_allocator());
     if let Some(index_id) = batch.index_id {
         let index_values = unique_index_point_values(
             &table,

@@ -68,6 +68,12 @@ pub trait Executor: Send {
     /// Go `NewChunk`: allocate a result chunk sized for this operator's output.
     fn new_chunk(&self) -> Chunk;
 
+    /// Go `exec.NewFirstChunk(e)`: `chunk.New(e.RetFieldTypes(), e.InitCap(),
+    /// e.MaxChunkSize())`, never from the executor's `AllocPool`.
+    fn new_first_chunk(&self) -> Chunk {
+        Chunk::new(self.ret_field_types(), self.init_cap(), self.max_chunk_size())
+    }
+
     /// This operator as a negotiable base-table source, when it is one.
     ///
     /// The default `None` is the fail-closed shape the whole negotiation is
@@ -117,16 +123,34 @@ impl RowCount {
 /// Go `exec.executorMeta`: the schema/id/children/result-type base state shared
 /// by every operator (Go embeds it via `BaseExecutorV2`).
 ///
-/// The chunk-sizing fields (`init_cap`, `max_chunk_size`) come from Go's
-/// `executorChunkAllocator`; runtime stats attach at the physical-builder
-/// boundary, while killer and RU-tracking helpers remain deferred.
-#[derive(Clone, Debug)]
+/// The chunk-sizing fields (`init_cap`, `max_chunk_size`) and the
+/// `AllocPool` come from Go's `executorChunkAllocator`; runtime stats attach
+/// at the physical-builder boundary, while killer and RU-tracking helpers
+/// remain deferred.
+#[derive(Clone)]
 pub struct ExecutorMeta {
     schema: Schema,
     ret_field_types: Vec<FieldType>,
     id: i64,
     init_cap: usize,
     max_chunk_size: usize,
+    /// Go `executorChunkAllocator.AllocPool`: the session's reusable chunk
+    /// allocator when the executor was built, else plain `chunk.New` (Go's
+    /// `NewEmptyAllocator`).
+    alloc_pool: Option<Arc<dyn tidb_chunk::alloc::Allocator>>,
+}
+
+impl std::fmt::Debug for ExecutorMeta {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExecutorMeta")
+            .field("schema", &self.schema)
+            .field("ret_field_types", &self.ret_field_types)
+            .field("id", &self.id)
+            .field("init_cap", &self.init_cap)
+            .field("max_chunk_size", &self.max_chunk_size)
+            .field("alloc_pool", &self.alloc_pool.is_some())
+            .finish()
+    }
 }
 
 impl ExecutorMeta {
@@ -153,7 +177,22 @@ impl ExecutorMeta {
             id,
             init_cap,
             max_chunk_size,
+            alloc_pool: None,
         }
+    }
+
+    /// Go `newExecutorChunkAllocator`'s `AllocPool: vars.GetChunkAllocator()`.
+    #[must_use]
+    pub fn with_alloc_pool(mut self, alloc_pool: Option<Arc<dyn tidb_chunk::alloc::Allocator>>) -> Self {
+        self.alloc_pool = alloc_pool;
+        self
+    }
+
+    /// Go `AllocPool`, for a writer that sizes its own child chunk
+    /// (`newDMLChildChunk`).
+    #[must_use]
+    pub fn alloc_pool(&self) -> Option<&Arc<dyn tidb_chunk::alloc::Allocator>> {
+        self.alloc_pool.as_ref()
     }
 
     /// Go `Schema`.
@@ -189,6 +228,43 @@ impl ExecutorMeta {
     /// Go `NewChunk`: a result chunk for this operator's output types.
     #[must_use]
     pub fn new_chunk(&self) -> Chunk {
+        self.new_chunk_with_capacity(&self.ret_field_types, self.init_cap, self.max_chunk_size)
+    }
+
+    /// Go `exec.NewFirstChunk` over this executor: `chunk.New` with its own
+    /// types and sizes, never from the `AllocPool`.
+    #[must_use]
+    pub fn new_first_chunk(&self) -> Chunk {
         Chunk::new(&self.ret_field_types, self.init_cap, self.max_chunk_size)
+    }
+
+    /// Go `NewChunkWithCapacity`: `AllocPool.Alloc(fields, capacity,
+    /// maxChunkSize)`.
+    #[must_use]
+    pub fn new_chunk_with_capacity(&self, fields: &[FieldType], capacity: usize, max_chunk_size: usize) -> Chunk {
+        new_chunk_with_alloc_pool(self.alloc_pool.as_ref(), fields, capacity, max_chunk_size)
+    }
+}
+
+/// Go `exec.NewFirstChunk(e)`: `chunk.New(e.RetFieldTypes(), e.InitCap(),
+/// e.MaxChunkSize())`, never from the executor's `AllocPool` (unlike
+/// `NewChunk` / `TryNewCacheChunk`).
+#[must_use]
+pub fn new_first_chunk(e: &dyn Executor) -> Chunk {
+    e.new_first_chunk()
+}
+
+/// Go `AllocPool.Alloc(fields, capacity, maxChunkSize)`, an absent pool being
+/// Go's `emptyAllocator` (`chunk.New`).
+#[must_use]
+pub fn new_chunk_with_alloc_pool(
+    alloc_pool: Option<&Arc<dyn tidb_chunk::alloc::Allocator>>,
+    fields: &[FieldType],
+    capacity: usize,
+    max_chunk_size: usize,
+) -> Chunk {
+    match alloc_pool {
+        Some(pool) => pool.alloc(fields, capacity, max_chunk_size).into_pooled_chunk(),
+        None => Chunk::new(fields, capacity, max_chunk_size),
     }
 }

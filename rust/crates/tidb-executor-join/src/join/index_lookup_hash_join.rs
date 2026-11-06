@@ -208,7 +208,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> IndexNestedLoopHashJoin<C> {
             // Go `joinChkResourceCh[i]`.
             let (resource_tx, resource_rx) = sync_channel(held);
             for _ in 0..held {
-                let _ = resource_tx.send(self.meta.new_chunk());
+                // Go `exec.NewFirstChunk(e)`.
+                let _ = resource_tx.send(self.meta.new_first_chunk());
             }
             let worker = HashJoinInnerWorker {
                 shared: Arc::clone(&self.shared),

@@ -1506,6 +1506,10 @@ pub struct StmtContextData {
     /// `tidb_enable_reuse_chunk`) and the planner has not cleared it
     /// (`disableReuseChunkIfNeeded`).
     chunk_alloc_valid: Arc<AtomicBool>,
+    /// Go `SessionVars.GetChunkAllocator()`: the session's reusable chunk
+    /// allocator installed for this statement (`SetAlloc`), which executors
+    /// take as their `AllocPool` while [`Self::is_alloc_valid`].
+    chunk_allocator: Option<Arc<dyn tidb_chunk::alloc::Allocator>>,
     /// The warnings TiKV reported for THIS statement's coprocessor requests.
     ///
     /// It is an `Arc` sink rather than the `Rc` buffer beside it because a
@@ -3163,6 +3167,7 @@ impl StmtContext {
             ignore_inlist_plan_digest: tidb_vardef::defaults::DEF_TIDB_IGNORE_INLIST_PLAN_DIGEST,
             has_physical_table_reader: Arc::default(),
             chunk_alloc_valid: Arc::default(),
+            chunk_allocator: None,
             cop_warnings: WarningCollector::new(),
             cop_lite_worker: Arc::default(),
         }))
@@ -3330,6 +3335,32 @@ impl StmtContext {
     #[must_use]
     pub fn is_alloc_valid(&self) -> bool {
         self.chunk_alloc_valid.load(Ordering::Relaxed)
+    }
+
+    /// Go `SessionVars.SetAlloc(alloc)` at the start of a statement: this
+    /// statement's own allocator state, valid when `tidb_enable_reuse_chunk`
+    /// is on, so a clear by another statement's planning (an internal
+    /// statement runs in a session of its own in Go) never reaches it.
+    #[must_use]
+    pub fn with_statement_chunk_alloc(
+        mut self,
+        valid: bool,
+        allocator: Option<Arc<dyn tidb_chunk::alloc::Allocator>>,
+    ) -> Self {
+        let data = Arc::make_mut(&mut self.0);
+        data.chunk_alloc_valid = Arc::new(AtomicBool::new(valid));
+        data.chunk_allocator = allocator.filter(|_| valid);
+        self
+    }
+
+    /// Go `SessionVars.GetChunkAllocator()` as an executor reads it when it
+    /// is built: the installed allocator while valid, else none (Go's
+    /// `NewEmptyAllocator`, plain `chunk.New`).
+    #[must_use]
+    pub fn chunk_allocator(&self) -> Option<Arc<dyn tidb_chunk::alloc::Allocator>> {
+        self.chunk_allocator
+            .clone()
+            .filter(|_| self.is_alloc_valid())
     }
 
     /// Records the same physical-reader fact Go records by appending to

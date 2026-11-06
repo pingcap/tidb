@@ -109,13 +109,11 @@ impl PoolColumnAllocator {
     }
 
     fn put_if_eligible(&mut self, expected_type_size: i64, mut column: Column) {
+        // Go `Reset` takes back a column `Alloc` registered (`push`, which
+        // checked `cap(col.data) < MaxCachedLen` when it handed the column
+        // out) under `checkColumnType` alone: a fixed-length column grown
+        // past `MaxCachedLen` since is reused, a variable-length one is not.
         if !check_column_type(expected_type_size, &column) {
-            return;
-        }
-        if column.get_data_cap() >= MAX_CACHED_LEN.load(Ordering::Relaxed) {
-            // `poolColumnAllocator.put` uses `< MaxCachedLen`; `Reset` also
-            // rejects variable columns with `> MaxCachedLen`. The stricter
-            // insertion boundary wins at equality in the source.
             return;
         }
         column.reset();
@@ -157,7 +155,9 @@ fn can_register_allocated_column(expected_type_size: i64, column: &Column) -> bo
 #[derive(Debug)]
 struct AllocatorState {
     pending_chunks: Vec<Chunk>,
-    pending_columns: HashMap<i64, Vec<Column>>,
+    /// Recycled columns by type, each with its index in Go's per-type
+    /// `allocColumns` (the order `Alloc` registered them).
+    pending_columns: HashMap<i64, Vec<(usize, Column)>>,
     free_chunks: Vec<Chunk>,
     columns: PoolColumnAllocator,
     free_chunk_limit: usize,
@@ -171,6 +171,9 @@ struct AllocatorState {
 /// once when that owner finally dies.
 pub(crate) struct ColumnRecycleRegistration {
     expected_type_size: i64,
+    /// Go's `allocColumns` index: this column's registration order in its
+    /// type's list, which `Reset` walks to rebuild the free list.
+    sequence: usize,
     generation: u64,
     recycler: Weak<Mutex<AllocatorState>>,
 }
@@ -178,11 +181,13 @@ pub(crate) struct ColumnRecycleRegistration {
 impl ColumnRecycleRegistration {
     fn new(
         expected_type_size: i64,
+        sequence: usize,
         generation: u64,
         recycler: Weak<Mutex<AllocatorState>>,
     ) -> Self {
         Self {
             expected_type_size,
+            sequence,
             generation,
             recycler,
         }
@@ -198,7 +203,7 @@ impl ColumnRecycleRegistration {
                 .pending_columns
                 .entry(self.expected_type_size)
                 .or_default()
-                .push(column);
+                .push((self.sequence, column));
         }
     }
 }
@@ -219,7 +224,7 @@ impl AllocatorState {
         fields: &[FieldType],
         capacity: usize,
         max_chunk_size: usize,
-    ) -> (Chunk, bool, Vec<(i64, bool)>, u64) {
+    ) -> (Chunk, bool, Vec<(i64, Option<usize>)>, u64) {
         let capacity = capacity.min(max_chunk_size);
         let cache_chunk = self.registered_chunks < self.free_chunk_limit;
         if cache_chunk {
@@ -237,10 +242,11 @@ impl AllocatorState {
             // registry slots that a later small column can use.
             let cache_column =
                 *registered < column_limit && can_register_allocated_column(type_size, &column);
+            let sequence = cache_column.then_some(*registered);
             if cache_column {
                 *registered += 1;
             }
-            registrations.push((type_size, cache_column));
+            registrations.push((type_size, sequence));
             columns.push(column);
         }
         let chunk = if let Some(mut chunk) = self.free_chunks.pop() {
@@ -253,8 +259,12 @@ impl AllocatorState {
     }
 
     fn reset(&mut self) {
-        for (expected_type_size, columns) in std::mem::take(&mut self.pending_columns) {
-            for column in columns {
+        // Go `Reset` walks each type's `allocColumns` in registration order,
+        // so the column registered last is the first a later `Alloc` pops,
+        // whatever order the chunks holding them dropped in.
+        for (expected_type_size, mut columns) in std::mem::take(&mut self.pending_columns) {
+            columns.sort_by_key(|(sequence, _)| *sequence);
+            for (_, column) in columns {
                 self.columns.put_if_eligible(expected_type_size, column);
             }
         }
@@ -286,16 +296,17 @@ impl AllocatedChunk {
     fn pooled(
         mut chunk: Chunk,
         cache_chunk: bool,
-        column_registrations: Vec<(i64, bool)>,
+        column_registrations: Vec<(i64, Option<usize>)>,
         generation: u64,
         recycler: Arc<Mutex<AllocatorState>>,
     ) -> Self {
         let weak_recycler = Arc::downgrade(&recycler);
         chunk.attach_allocator_registrations(column_registrations.into_iter().map(
-            |(expected_type_size, cache)| {
-                cache.then(|| {
+            |(expected_type_size, sequence)| {
+                sequence.map(|sequence| {
                     ColumnRecycleRegistration::new(
                         expected_type_size,
+                        sequence,
                         generation,
                         Weak::clone(&weak_recycler),
                     )
@@ -317,6 +328,16 @@ impl AllocatedChunk {
             generation: 0,
             recycler: None,
         }
+    }
+
+    /// Go `AllocPool.Alloc`'s chunk as an executor holds it: an ordinary
+    /// chunk whose columns stay the allocator's, recycled (until the next
+    /// [`Allocator::reset`]) when the chunk drops, as Go's `Reset` reclaims
+    /// every column it handed out. The chunk shell itself is not cached.
+    #[must_use]
+    pub fn into_pooled_chunk(mut self) -> Chunk {
+        self.recycler = None;
+        self.chunk.take().expect("allocated chunk is present")
     }
 
     /// Consume the lease without recycling it.
@@ -604,6 +625,31 @@ pub const fn new_empty_allocator() -> EmptyAllocator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Go `allocator.Reset` rebuilds a type's free list in `allocColumns`
+    /// order, so the column registered last is the first a later `Alloc`
+    /// takes, whatever order its chunks were dropped in. Go probe
+    /// (`chunk.NewAllocator`, one BIGINT column): A at capacity 1, B at 2, 100
+    /// rows into A, `Reset`, three allocations at capacity 0 -- 137, 1032 and
+    /// 120 bytes (B's column, A's, then a fresh one).
+    #[test]
+    fn reset_reuses_columns_in_go_registration_order() {
+        let alloc = new_allocator();
+        let fields = [FieldType::new(FieldTypeCode::LongLong)];
+        let mut a = alloc.alloc(&fields, 1, 1024).into_pooled_chunk();
+        let b = alloc.alloc(&fields, 2, 1024).into_pooled_chunk();
+        for i in 0..100 {
+            a.append_int64(0, i);
+        }
+        assert_eq!((a.memory_usage(), b.memory_usage()), (1032, 137));
+        drop(b);
+        drop(a);
+        alloc.reset();
+        let c = alloc.alloc(&fields, 0, 1024).into_pooled_chunk();
+        let d = alloc.alloc(&fields, 0, 1024).into_pooled_chunk();
+        let e = alloc.alloc(&fields, 0, 1024).into_pooled_chunk();
+        assert_eq!((c.memory_usage(), d.memory_usage(), e.memory_usage()), (137, 1032, 120));
+    }
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc;
     use std::time::Duration;

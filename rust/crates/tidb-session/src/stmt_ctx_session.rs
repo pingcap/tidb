@@ -25,6 +25,10 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         std::sync::Arc::clone(&self.stats_handle)
     }
 
+    fn chunk_allocator(&self) -> Option<tidb_chunk::alloc::ChunkAllocator> {
+        Some(self.chunk_alloc.clone())
+    }
+
 
     fn active_resource_group(&self) -> &str {
         &self.active_resource_group

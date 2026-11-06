@@ -3189,16 +3189,28 @@ fn explain_analyze_dml_roots_report_their_executor_stats_and_memory_like_go() {
         .run("CREATE TABLE c (a VARCHAR(10) PRIMARY KEY CLUSTERED, b INT)")
         .unwrap();
     session.run("INSERT INTO c VALUES ('x',1),('y',2)").unwrap();
+    // Go's one-row child chunk takes an integer column the session's chunk
+    // allocator kept from the 32-row statements above (`poolColumnAllocator.
+    // NewSizeColumn`): a Go testkit run of this whole sequence reports 535
+    // Bytes (284 Bytes only in a session without those statements), and 569
+    // Bytes for the next.
     assert_eq!(
         root(&mut session, "EXPLAIN ANALYZE UPDATE c SET b=b+1 WHERE a='x'").1,
-        "284 Bytes"
+        "535 Bytes"
     );
     assert_eq!(
         root(&mut session, "EXPLAIN ANALYZE UPDATE c SET b=b+1 WHERE a IN ('x','y')").1,
-        "326 Bytes"
+        "569 Bytes"
     );
-    root(&mut session, "EXPLAIN ANALYZE UPDATE c x JOIN c y ON x.a = y.a SET x.b = x.b + 1");
-    root(&mut session, "EXPLAIN ANALYZE DELETE x FROM c x JOIN c y ON x.a = y.a WHERE x.a = 'x'");
+    // The same Go run: `Update_6` 1.03 KB, `Delete_6` 1.84 KB.
+    assert_eq!(
+        root(&mut session, "EXPLAIN ANALYZE UPDATE c x JOIN c y ON x.a = y.a SET x.b = x.b + 1").1,
+        "1.03 KB"
+    );
+    assert_eq!(
+        root(&mut session, "EXPLAIN ANALYZE DELETE x FROM c x JOIN c y ON x.a = y.a WHERE x.a = 'x'").1,
+        "1.84 KB"
+    );
 }
 
 /// Go `insertRowsFromSelect` (`pkg/executor/insert_common.go`): an

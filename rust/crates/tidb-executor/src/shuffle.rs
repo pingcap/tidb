@@ -674,7 +674,8 @@ impl<C: Columns + Send + 'static> ShuffleExec<C> {
         let mut workers = std::mem::take(&mut self.workers).into_iter();
         while let Some(worker) = workers.next() {
             let output = output.clone();
-            let first = self.meta.new_chunk();
+            // Go `w.outputHolderCh <- exec.NewFirstChunk(e)`.
+            let first = self.meta.new_first_chunk();
             #[cfg(test)]
             let panic_worker = self.panic_workers;
             let spawned = self.spawn_job(worker, move |worker| {
@@ -787,7 +788,8 @@ impl<C: Columns + Send + 'static> Executor for ShuffleExec<C> {
             }
             worker.child_exec.open()?;
             for (inbox, source) in worker.inboxes.iter().zip(&self.data_sources) {
-                inbox.recycle(source.new_chunk());
+                // Go `r.inputHolderCh <- exec.NewFirstChunk(e.dataSources[i])`.
+                inbox.recycle(tidb_executor_internal_exec::new_first_chunk(source.as_ref()));
             }
         }
         Ok(())

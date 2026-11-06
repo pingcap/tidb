@@ -184,9 +184,10 @@ impl ProbeStage {
         };
         let run = Arc::new(run);
         for id in 0..concurrency {
+            // Go `hash_join_base.go` `joinChkResourceCh`: `exec.NewFirstChunk`.
             let (worker, ports) = ProbeWorkerV2::new(
                 id,
-                output.new_chunk(),
+                output.new_first_chunk(),
                 events_tx.clone(),
                 close.clone(),
                 scan.clone(),
@@ -198,10 +199,13 @@ impl ProbeStage {
                 stage.resources.push_back((
                     id,
                     first_chunk.take().unwrap_or_else(|| {
-                        source
-                            .as_ref()
-                            .expect("probe source missing while allocating resources")
-                            .new_chunk()
+                        // Go probe fetcher: `exec.NewFirstChunk(ProbeSideExec)`.
+                        tidb_executor_internal_exec::new_first_chunk(
+                            source
+                                .as_ref()
+                                .expect("probe source missing while allocating resources")
+                                .as_ref(),
+                        )
                     }),
                 ));
             }

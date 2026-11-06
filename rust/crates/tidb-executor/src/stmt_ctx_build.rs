@@ -912,14 +912,6 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         if self.session_vars().sql_mode().has_strict_mode() && !stmt.is_read_only(true) {
             ctx = ctx.with_tiflash_engine_removed_due_to_strict_sql_mode();
         }
-        // Go installs the session's reusable chunk allocator for every
-        // statement (`SetAlloc` in `conn.handleQuery`), which
-        // `tidb_enable_reuse_chunk` gates; the planner may clear it.
-        ctx.set_alloc(
-            self.session_vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_REUSECHUNK)
-                .is_ok_and(|value| value.eq_ignore_ascii_case("ON") || value == "1"),
-        );
         ctx
     }
 
@@ -1358,11 +1350,30 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         // A transaction's reads that skip its own writes (`TABLESAMPLE`, Go
         // `GetSnapshot(TxnCtx.StartTS)`) go to the store snapshot under the
         // session's tables (`ClusterTableStorage::snapshot_first`).
-        self.session_statement_context(is_dml, ignore_err, read_only)
+        let mut ctx = self
+            .session_statement_context(is_dml, ignore_err, read_only)
             .with_hypo_state(
                 self.hypo_indexes(),
                 Arc::clone(&self.hypo_tiflash_replicas_ref()),
-            )
+            );
+        // Go installs the session's reusable chunk allocator for every
+        // statement (`SetAlloc` in `conn.handleQuery`): `chunkPool =
+        // NewReuseHookAllocator(NewSyncAllocator(alloc), ...)` when
+        // `tidb_enable_reuse_chunk` is on, else nil; the planner may clear it.
+        let reuse_chunk = self
+            .session_vars()
+            .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_REUSECHUNK)
+            .is_ok_and(|value| value.eq_ignore_ascii_case("ON") || value == "1");
+        // An internal statement (`InRestrictedSQL`) runs in Go in a session
+        // of its own that no connection installs an allocator into.
+        let allocator = (!self.session_vars().restricted_sql)
+            .then(|| self.chunk_allocator())
+            .flatten()
+            .map(|allocator| {
+            Arc::new(tidb_chunk::alloc::new_sync_allocator(allocator)) as Arc<dyn tidb_chunk::alloc::Allocator>
+        });
+        ctx = ctx.with_statement_chunk_alloc(reuse_chunk, allocator);
+        ctx
     }
 
     fn session_statement_context(
@@ -2279,6 +2290,11 @@ impl ResultMaterializationAuthority {
 pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// Go `domain.GetDomain(ctx).StatsHandle()`.
     fn stats_handle(&self) -> std::sync::Arc<tidb_stats_handle::StatsHandle>;
+    /// Go `clientConn.chunkAlloc` as `SetAlloc` installs it: the session's
+    /// reusable chunk allocator, or none for a session without one.
+    fn chunk_allocator(&self) -> Option<tidb_chunk::alloc::ChunkAllocator> {
+        None
+    }
     /// Go `SessionVars.ResourceGroupName`.
     fn active_resource_group(&self) -> &str;
     /// Go `domain.GetDomain(ctx).InfoSchema()`: the domain's latest image.

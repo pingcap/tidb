@@ -94,7 +94,8 @@ impl StaticRecordSet {
     #[must_use]
     pub fn new_chunk(&self) -> Chunk {
         if let Some(executor) = &self.executor {
-            return executor.new_chunk();
+            // Go `staticRecordSet.NewChunk`: `exec.NewFirstChunk(s.executor)`.
+            return tidb_executor_internal_exec::new_first_chunk(executor.as_ref());
         }
         let types: Vec<_> = self.columns.iter().map(|(_, ty)| ty.clone()).collect();
         Chunk::new(&types, self.init_cap, self.max_chunk_size)
