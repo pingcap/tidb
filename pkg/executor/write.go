@@ -240,9 +240,16 @@ func updateRecord(
 	if err != nil {
 		return false, false, err
 	}
+	// IGNORE may convert NOT NULL values to zero; validate the row that will be written.
+	for i, col := range t.Cols() {
+		var err error
+		if err = col.HandleBadNull(sc.ErrCtx(), &newData[i], 0); err != nil {
+			return false, false, err
+		}
+	}
 	if ignoreErr {
 		for _, fkc := range fkChecks {
-			ignored, err := fkc.checkIgnoreForUpdate(ctx, sc, txn, oldData, newData)
+			ignored, err := fkc.checkIgnoreForUpdate(ctx, sc, txn, h, oldData, newData)
 			if err != nil {
 				return false, false, err
 			}
@@ -251,13 +258,6 @@ func updateRecord(
 			if ignored {
 				return false, true, nil
 			}
-		}
-	}
-
-	for i, col := range t.Cols() {
-		var err error
-		if err = col.HandleBadNull(sc.ErrCtx(), &newData[i], 0); err != nil {
-			return false, false, err
 		}
 	}
 

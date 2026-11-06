@@ -21,6 +21,7 @@ go_test(
         "//pkg/parser/format",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
+        "//pkg/table",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//pkg/types",

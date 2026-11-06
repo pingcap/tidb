@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
@@ -871,6 +872,244 @@ func TestForeignKeyOnUpdateParentTableCheck(t *testing.T) {
 	tk.MustGetDBError("update t1 set id = id+10 where id = 1 or b = 24", plannererrors.ErrRowIsReferenced2)
 	tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "4 14 24", "102 12 22", "103 13 23"))
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("11 1 21 a"))
+	for _, ca := range []struct {
+		name         string
+		definition   string
+		prepareSQLs  []string
+		sql          string
+		affectedRows uint64
+		warnings     []error
+		rows         []string
+		otherParent  bool
+		inTxn        bool
+	}{
+		{
+			name:         "normal self update",
+			prepareSQLs:  []string{"insert into t_self_update values (1, 1)"},
+			sql:          "update t_self_update set id=2, pid=2 where id=1",
+			affectedRows: 1,
+			rows:         []string{"2 2"},
+		},
+		{
+			name:         "ignore self update",
+			prepareSQLs:  []string{"insert into t_self_update values (1, 1)"},
+			sql:          "update ignore t_self_update set id=2, pid=2 where id=1",
+			affectedRows: 1,
+			rows:         []string{"2 2"},
+		},
+		{
+			name:         "ignore previously null self reference",
+			prepareSQLs:  []string{"insert into t_self_update values (1, null)"},
+			sql:          "update ignore t_self_update set id=2, pid=2 where id=1",
+			affectedRows: 1,
+			rows:         []string{"2 2"},
+		},
+		{
+			name:         "ignore duplicate update self reference",
+			prepareSQLs:  []string{"insert into t_self_update values (1, 1)"},
+			sql:          "insert ignore into t_self_update values (1, 1) on duplicate key update id=2, pid=2",
+			affectedRows: 2,
+			rows:         []string{"2 2"},
+		},
+		{
+			name:         "ignore nullable self reference removed",
+			prepareSQLs:  []string{"insert into t_self_update values (1, 1)"},
+			sql:          "update ignore t_self_update set id=2, pid=null where id=1",
+			affectedRows: 1,
+			rows:         []string{"2 <nil>"},
+		},
+		{
+			name:        "ignore retains another child",
+			prepareSQLs: []string{"insert into t_self_update values (1, 1), (3, 1)"},
+			sql:         "update ignore t_self_update set id=2, pid=2 where id=1",
+			warnings:    []error{plannererrors.ErrRowIsReferenced2},
+			rows:        []string{"1 1", "3 1"},
+		},
+		{
+			name:        "ignore retains new memory child",
+			prepareSQLs: []string{"insert into t_self_update values (1, 1)", "begin", "insert into t_self_update values (3, 1)"},
+			sql:         "update ignore t_self_update set id=2, pid=2 where id=1",
+			warnings:    []error{plannererrors.ErrRowIsReferenced2},
+			rows:        []string{"1 1", "3 1"},
+			inTxn:       true,
+		},
+		{
+			name:        "ignore retains new reference to removed parent",
+			prepareSQLs: []string{"insert into t_self_update values (1, 1)"},
+			sql:         "update ignore t_self_update set id=2 where id=1",
+			warnings:    []error{plannererrors.ErrRowIsReferenced2},
+			rows:        []string{"1 1"},
+		},
+		{
+			name:        "ignore missing other parent without parent update",
+			prepareSQLs: []string{"insert into t_self_update values (1, 1)"},
+			sql:         "update ignore t_self_update set pid=99 where id=1",
+			warnings:    []error{plannererrors.ErrNoReferencedRow2},
+			rows:        []string{"1 1"},
+		},
+		{
+			name:         "ignore unique child index",
+			definition:   "(id int primary key clustered, pid int, unique index(pid), foreign key(pid) references t_self_update(id))",
+			prepareSQLs:  []string{"insert into t_self_update values (1, 1)"},
+			sql:          "update ignore t_self_update set id=2, pid=2 where id=1",
+			affectedRows: 1,
+			rows:         []string{"2 2"},
+		},
+		{
+			name:         "ignore primary child record key",
+			definition:   "(id int primary key clustered, pid int, unique index(pid), foreign key(id) references t_self_update(pid))",
+			prepareSQLs:  []string{"insert into t_self_update values (1, 1)"},
+			sql:          "update ignore t_self_update set id=2, pid=2 where id=1",
+			affectedRows: 1,
+			rows:         []string{"2 2"},
+		},
+		{
+			name:         "ignore hidden old handle",
+			definition:   "(id int, pid int, unique index(id), index(pid), foreign key(pid) references t_self_update(id))",
+			prepareSQLs:  []string{"insert into t_self_update values (40, 40)"},
+			sql:          "update ignore t_self_update set id=41, pid=41 where id=40",
+			affectedRows: 1,
+			rows:         []string{"41 41"},
+		},
+		{
+			name:         "ignore composite nonprimary self reference",
+			definition:   "(id int primary key clustered, a varchar(20) collate utf8mb4_general_ci, b int, pb int, pa varchar(20) collate utf8mb4_general_ci, unique index(b,a), index(pb,pa), foreign key(pb,pa) references t_self_update(b,a))",
+			prepareSQLs:  []string{"insert into t_self_update values (11, 'Parent', 7, 7, 'parent')"},
+			sql:          "update ignore t_self_update set a='Other', b=8, pb=8, pa='other' where id=11",
+			affectedRows: 1,
+			rows:         []string{"11 Other 8 8 other"},
+		},
+		{
+			name:         "ignore common old handle",
+			definition:   "(id varchar(20), seq int, pid varchar(20), pseq int, primary key(id,seq) clustered, index(pid,pseq), foreign key(pid,pseq) references t_self_update(id,seq))",
+			prepareSQLs:  []string{"insert into t_self_update values ('a', 40, 'a', 40)"},
+			sql:          "update ignore t_self_update set id='b', seq=41, pid='b', pseq=41 where id='a'",
+			affectedRows: 1,
+			rows:         []string{"b 41 b 41"},
+		},
+		{
+			name:         "ignore memory own key shadows old snapshot child",
+			definition:   "(id int primary key clustered, pid int, aux int, unique index(pid,aux), foreign key(pid) references t_self_update(id))",
+			prepareSQLs:  []string{"insert into t_self_update values (1, 1, 10), (3, 1, 20)", "begin", "delete from t_self_update where id=3", "update t_self_update set aux=20 where id=1"},
+			sql:          "update ignore t_self_update set id=2, pid=2 where id=1",
+			affectedRows: 1,
+			rows:         []string{"2 2 20"},
+			inTxn:        true,
+		},
+		{
+			name:        "ignore normalized null needs real parent",
+			definition:  "(id int primary key clustered, pid int not null, index(pid), foreign key(pid) references t_self_update(id))",
+			prepareSQLs: []string{"insert into t_self_update values (1, 1)"},
+			sql:         "update ignore t_self_update set id=2, pid=null where id=1",
+			warnings:    []error{table.ErrColumnCantNull, plannererrors.ErrNoReferencedRow2},
+			rows:        []string{"1 1"},
+		},
+		{
+			name:         "ignore normalized null with real parent",
+			definition:   "(id int primary key clustered, pid int not null, index(pid), foreign key(pid) references t_self_update(id))",
+			prepareSQLs:  []string{"insert into t_self_update values (0, 0), (1, 1)"},
+			sql:          "update ignore t_self_update set id=2, pid=null where id=1",
+			affectedRows: 1,
+			warnings:     []error{table.ErrColumnCantNull},
+			rows:         []string{"0 0", "2 0"},
+		},
+		{
+			name:        "ignore nonself normalized null needs real parent",
+			definition:  "(id int primary key clustered, pid int not null, foreign key(pid) references t_self_update_guard(id))",
+			otherParent: true,
+			prepareSQLs: []string{"insert into t_self_update_guard values (1)", "insert into t_self_update values (1, 1)"},
+			sql:         "update ignore t_self_update set pid=null where id=1",
+			warnings:    []error{table.ErrColumnCantNull, plannererrors.ErrNoReferencedRow2},
+			rows:        []string{"1 1"},
+		},
+		{
+			name:         "ignore rejected update does not publish parent",
+			definition:   "(id int primary key clustered, pid int, guard_id int, index(pid), foreign key(pid) references t_self_update(id), foreign key(guard_id) references t_self_update_guard(id))",
+			otherParent:  true,
+			prepareSQLs:  []string{"insert into t_self_update_guard values (1)", "insert into t_self_update values (1, 1, 1), (3, null, null), (5, null, null)"},
+			sql:          "update ignore t_self_update set pid=case id when 1 then 2 when 3 then 2 else 6 end, guard_id=case id when 1 then 99 else guard_id end, id=case id when 1 then 2 when 5 then 6 else id end order by id",
+			affectedRows: 1,
+			warnings:     []error{plannererrors.ErrNoReferencedRow2, plannererrors.ErrNoReferencedRow2},
+			rows:         []string{"1 1 1", "3 <nil> <nil>", "6 6 <nil>"},
+		},
+		{
+			name:         "ignore existing cascade order",
+			definition:   "(id int primary key clustered, pid int, index(pid), foreign key(pid) references t_self_update(id) on update cascade)",
+			prepareSQLs:  []string{"insert into t_self_update values (1, 1), (3, 1)"},
+			sql:          "update ignore t_self_update set id=2 where id=1",
+			affectedRows: 1,
+			rows:         []string{"2 2", "3 2"},
+		},
+		{
+			name:         "ignore existing set null order",
+			definition:   "(id int primary key clustered, pid int, index(pid), foreign key(pid) references t_self_update(id) on update set null)",
+			prepareSQLs:  []string{"insert into t_self_update values (1, 1), (3, 1)"},
+			sql:          "update ignore t_self_update set id=2 where id=1",
+			affectedRows: 1,
+			rows:         []string{"2 <nil>", "3 <nil>"},
+		},
+		{
+			name:         "ignore changed child retains cascade fallback",
+			definition:   "(id int primary key clustered, pid int, index(pid), foreign key(pid) references t_self_update(id) on update cascade)",
+			prepareSQLs:  []string{"insert into t_self_update values (1, null), (3, 1)"},
+			sql:          "update ignore t_self_update set id=2, pid=1 where id=1",
+			affectedRows: 1,
+			rows:         []string{"2 2", "3 2"},
+		},
+		{
+			name:         "ignore changed child retains set null fallback",
+			definition:   "(id int primary key clustered, pid int, index(pid), foreign key(pid) references t_self_update(id) on update set null)",
+			prepareSQLs:  []string{"insert into t_self_update values (1, null), (3, 1)"},
+			sql:          "update ignore t_self_update set id=2, pid=1 where id=1",
+			affectedRows: 1,
+			rows:         []string{"2 <nil>", "3 <nil>"},
+		},
+	} {
+		t.Run(ca.name, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set @@foreign_key_checks=1")
+			t.Cleanup(func() {
+				tk.MustExec("rollback")
+				tk.MustExec("set @@foreign_key_checks=0")
+				tk.MustExec("drop table if exists t_self_update, t_self_update_guard")
+			})
+			if ca.otherParent {
+				tk.MustExec("create table t_self_update_guard (id int primary key)")
+			}
+			definition := ca.definition
+			if definition == "" {
+				definition = "(id int primary key clustered, pid int, index(pid), foreign key(pid) references t_self_update(id))"
+			}
+			tk.MustExec("create table t_self_update " + definition)
+			for _, sql := range ca.prepareSQLs {
+				tk.MustExec(sql)
+			}
+			tk.MustExec(ca.sql)
+			sc := tk.Session().GetSessionVars().StmtCtx
+			require.Equal(t, ca.affectedRows, sc.AffectedRows())
+			warnings := sc.GetWarnings()
+			require.Len(t, warnings, len(ca.warnings))
+			for i, warning := range warnings {
+				require.Equal(t, "Warning", warning.Level)
+				switch ca.warnings[i] {
+				case table.ErrColumnCantNull:
+					require.True(t, table.ErrColumnCantNull.Equal(warning.Err), "%v", warning.Err)
+				case plannererrors.ErrNoReferencedRow2:
+					require.True(t, plannererrors.ErrNoReferencedRow2.Equal(warning.Err), "%v", warning.Err)
+				case plannererrors.ErrRowIsReferenced2:
+					require.True(t, plannererrors.ErrRowIsReferenced2.Equal(warning.Err), "%v", warning.Err)
+				default:
+					t.Fatalf("unexpected warning oracle: %v", ca.warnings[i])
+				}
+			}
+			if ca.inTxn {
+				tk.MustExec("commit")
+			}
+			tk.MustQuery("select * from t_self_update order by id").Check(testkit.Rows(ca.rows...))
+			tk.MustExec("admin check table t_self_update")
+		})
+	}
 }
 
 func TestForeignKeyOnDeleteParentTableCheck(t *testing.T) {
