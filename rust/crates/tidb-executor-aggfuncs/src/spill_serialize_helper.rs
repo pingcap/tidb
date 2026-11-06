@@ -105,4 +105,37 @@ impl SerializeHelper {
         util::serialize_u64(value, &mut self.buf);
         &self.buf
     }
+
+    /// Go `serializePartialResult4GroupConcat`
+    /// (`serializeBasePartialResult4GroupConcat`): whether a buffer exists,
+    /// then its bytes.
+    pub(crate) fn serialize_partial_result_4_group_concat(&mut self, buffer: Option<&[u8]>) -> &[u8] {
+        self.buf.clear();
+        util::serialize_bool(buffer.is_some(), &mut self.buf);
+        if let Some(buffer) = buffer {
+            util::serialize_bytes_buffer(buffer, &mut self.buf);
+        }
+        &self.buf
+    }
+
+    /// Go `serializePartialResult4JsonArrayagg`: each entry's interface
+    /// encoding.
+    pub(crate) fn serialize_partial_result_4_json_arrayagg(&mut self, value: &crate::func_json_arrayagg::PartialResult4JsonArrayagg) -> &[u8] {
+        self.buf.clear();
+        for value in &value.entries {
+            crate::func_json_objectagg::serialize_interface(value, &mut self.buf);
+        }
+        &self.buf
+    }
+
+    /// Go `serializePartialResult4JsonObjectAgg`: each key, then its value's
+    /// interface encoding.
+    pub(crate) fn serialize_partial_result_4_json_object_agg(&mut self, value: &crate::func_json_objectagg::PartialResult4JsonObjectAgg) -> &[u8] {
+        self.buf.clear();
+        for (key, value) in value.entries.iter() {
+            util::serialize_string(key, &mut self.buf);
+            crate::func_json_objectagg::serialize_interface(value, &mut self.buf);
+        }
+        &self.buf
+    }
 }

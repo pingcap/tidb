@@ -101,4 +101,38 @@ impl<'a> DeserializeHelper<'a> {
     pub(crate) fn deserialize_partial_result_4_bit_func(&mut self) -> Option<u64> {
         self.next_row(|pab| pab.read_u64())
     }
+
+    /// Go `deserializePartialResult4GroupConcat`: the buffer's bytes, `None`
+    /// for Go's nil buffer.
+    pub(crate) fn deserialize_partial_result_4_group_concat(&mut self) -> Option<Option<Vec<u8>>> {
+        self.next_row(|pab| pab.read_bool().then(|| pab.read_bytes_buffer()))
+    }
+
+    /// Go `deserializePartialResult4JsonArrayagg`: interface values to the
+    /// end of the cell.
+    pub(crate) fn deserialize_partial_result_4_json_arrayagg(&mut self, dst: &mut crate::func_json_arrayagg::PartialResult4JsonArrayagg) -> Option<()> {
+        self.next_row(|pab| {
+            while pab.position() < pab.len() {
+                dst.entries.push(crate::func_json_objectagg::RealJSONValue(Some(pab.read_interface())));
+            }
+        })
+    }
+
+    /// Go `deserializePartialResult4JsonObjectAgg`: key and value pairs to
+    /// the end of the cell, charged as the update charges them.
+    pub(crate) fn deserialize_partial_result_4_json_object_agg(&mut self, dst: &mut crate::func_json_objectagg::PartialResult4JsonObjectAgg) -> Option<i64> {
+        self.next_row(|pab| {
+            let mut mem_delta = 0;
+            while pab.position() < pab.len() {
+                let key = pab.read_string();
+                let real_val = crate::func_json_objectagg::RealJSONValue(Some(pab.read_interface()));
+                let (key_len, val_delta) = (key.len() as i64, crate::func_json_objectagg::get_val_mem_delta(&real_val));
+                let (delta, insert) = dst.entries.set_ext(key, real_val);
+                if insert {
+                    mem_delta += key_len + val_delta + delta;
+                }
+            }
+            mem_delta
+        })
+    }
 }

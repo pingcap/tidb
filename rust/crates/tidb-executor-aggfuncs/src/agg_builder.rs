@@ -25,6 +25,10 @@ use tidb_exprctx::Columns;
 use crate::agg_func::{AggFunc, BaseAggFunc};
 use crate::func_bitfuncs::{BaseBitAggFunc, BitAndUint64, BitOrUint64, BitXorUint64};
 use crate::func_first_row::{FirstRow, FirstRowKind};
+use crate::func_group_concat::{
+    BaseGroupConcat4String, GroupConcat, GroupConcatDistinctOrder, GroupConcatOrder,
+    GroupConcatOrderBase, GroupOriginalConcatDistinct, GroupPartialConcatDistinct,
+};
 use crate::func_stddevpop::{StdDevPop4Float64, StdDevPopOriginal4DistinctFloat64, StdDevPopPartial4DistinctFloat64};
 use crate::func_stddevsamp::{StddevSamp4Float64, StddevSampOriginal4DistinctFloat64, StddevSampPartial4DistinctFloat64};
 use crate::func_varpop::{BaseVarPopAggFunc, VarPop4Float64, VarPopOriginal4DistinctFloat64, VarPopPartial4DistinctFloat64};
@@ -91,6 +95,11 @@ pub fn build(ctx: &dyn Columns, agg_func_desc: &AggFuncDesc, ordinal: usize) -> 
         "firstrow" => build_first_row(agg_func_desc, ordinal),
         "max" => build_max_min(agg_func_desc, ordinal, true),
         "min" => build_max_min(agg_func_desc, ordinal, false),
+        "group_concat" => build_group_concat(ctx, agg_func_desc, ordinal),
+        // Go `buildJSONArrayagg` and `buildJSONObjectAgg`.
+        "json_arrayagg" | "json_objectagg" if agg_func_desc.mode == AggFunctionMode::Dedup => None,
+        "json_arrayagg" => Some(Box::new(crate::func_json_arrayagg::JsonArrayagg { base: base_agg_func(agg_func_desc, ordinal) })),
+        "json_objectagg" => Some(Box::new(crate::func_json_objectagg::JsonObjectAgg { base: base_agg_func(agg_func_desc, ordinal) })),
         "bit_or" => Some(Box::new(BitOrUint64(BaseBitAggFunc { base: base_agg_func(agg_func_desc, ordinal) }))),
         "bit_xor" => Some(Box::new(BitXorUint64(BaseBitAggFunc { base: base_agg_func(agg_func_desc, ordinal) }))),
         "bit_and" => Some(Box::new(BitAndUint64(BaseBitAggFunc { base: base_agg_func(agg_func_desc, ordinal) }))),
@@ -344,4 +353,47 @@ fn build_max_min(agg_func_desc: &AggFuncDesc, ordinal: usize, is_max: bool) -> O
         tidb_charset::Collation::from_name(field_type.collation_name()).unwrap_or(tidb_charset::Collation::DEFAULT)
     };
     Some(Box::new(MaxMin { base, is_max, kind, collation }))
+}
+
+/// Go `buildGroupConcat`.
+fn build_group_concat(ctx: &dyn Columns, agg_func_desc: &AggFuncDesc, ordinal: usize) -> Option<Box<dyn AggFunc>> {
+    if agg_func_desc.mode == AggFunctionMode::Dedup {
+        return None;
+    }
+    let args = &agg_func_desc.base.args;
+    // The last argument is promised to be a not-null string constant.
+    let Some(Expression::Constant(c)) = args.last() else {
+        panic!("Error happened when buildGroupConcat: the separator is not a constant");
+    };
+    let sep = c.value.sql_bytes().expect("Error happened when buildGroupConcat");
+    let base = BaseGroupConcat4String {
+        base: BaseAggFunc {
+            args: args[..args.len() - 1].to_vec(),
+            ordinal,
+            ret_tp: agg_func_desc.base.ret_type.clone(),
+        },
+        by_items: agg_func_desc.order_by_items.clone(),
+        sep,
+        max_len: crate::aggfuncs::group_concat_max_len(ctx),
+        truncated: std::sync::Arc::new(std::sync::atomic::AtomicI32::new(0)),
+    };
+    let order_base = |base: BaseGroupConcat4String| GroupConcatOrderBase {
+        desc: base.by_items.iter().map(|by_item| by_item.desc).collect(),
+        ctors: base.by_items.iter().map(|by_item| crate::aggfuncs::expr_collation(&by_item.expr)).collect(),
+        base,
+    };
+    if agg_func_desc.has_distinct {
+        if !agg_func_desc.order_by_items.is_empty() {
+            return Some(Box::new(GroupConcatDistinctOrder(order_base(base))));
+        }
+        return match agg_func_desc.mode {
+            AggFunctionMode::Complete | AggFunctionMode::Partial1 => Some(Box::new(GroupOriginalConcatDistinct(base))),
+            AggFunctionMode::Final | AggFunctionMode::Partial2 => Some(Box::new(GroupPartialConcatDistinct(base))),
+            AggFunctionMode::Dedup => None,
+        };
+    }
+    if !agg_func_desc.order_by_items.is_empty() {
+        return Some(Box::new(GroupConcatOrder(order_base(base))));
+    }
+    Some(Box::new(GroupConcat(base)))
 }

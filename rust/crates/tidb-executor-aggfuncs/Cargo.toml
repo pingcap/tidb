@@ -27,3 +27,6 @@ tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-charset = { path = "../tidb-charset" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-expr = { path = "../tidb-expr" }
+
+[dev-dependencies]
+tidb-ast = { path = "../tidb-ast" }

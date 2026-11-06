@@ -1379,7 +1379,7 @@ pub fn group_key_part(collation: &tidb_charset::Collation, datum: &Datum) -> Vec
 }
 
 /// Go `SessionVars.GroupConcatMaxLen` as this statement sees it.
-pub fn group_concat_max_len<C: Columns>(ctx: &C) -> u64 {
+pub fn group_concat_max_len<C: Columns + ?Sized>(ctx: &C) -> u64 {
     match ctx.sysvar(None, "group_concat_max_len") {
         Some(Datum::UInt(value)) => value,
         Some(Datum::Int(value)) if value >= 0 => value as u64,

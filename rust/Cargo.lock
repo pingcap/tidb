@@ -4884,6 +4884,7 @@ name = "tidb-executor-aggfuncs"
 version = "0.0.0"
 dependencies = [
  "smallvec",
+ "tidb-ast",
  "tidb-charset",
  "tidb-chunk",
  "tidb-codec",

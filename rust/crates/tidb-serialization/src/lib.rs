@@ -75,6 +75,7 @@ pub const TIME_DURATION_LEN: usize = size_of::<i64>();
 pub const UNSAFE_POINTER_LEN: usize = size_of::<*const ()>();
 
 /// Source-supported values of Go's aggregate-spill `any` boundary.
+#[derive(Clone, Debug, PartialEq)]
 pub enum InterfaceValue {
     /// Boolean value.
     Bool(bool),
@@ -259,6 +260,12 @@ impl<'a> Cursor<'a> {
     /// Returns the current byte position.
     pub const fn position(&self) -> usize {
         self.position
+    }
+
+    /// Go `len(posAndBuf.Buf)`.
+    #[allow(clippy::len_without_is_empty)]
+    pub const fn len(&self) -> usize {
+        self.bytes.len()
     }
 
     fn read_array<const N: usize>(&mut self) -> [u8; N] {

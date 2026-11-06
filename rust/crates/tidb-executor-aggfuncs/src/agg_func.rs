@@ -171,3 +171,11 @@ pub(crate) fn deserialize_partial_result_common(
     }
     (partial_results, total_mem_delta)
 }
+
+/// Go `expr.GetType(ctx)` of an aggregate argument.
+pub(crate) fn get_type(expr: &tidb_expr::expression::Expression, ctx: &AggFuncUpdateContext) -> Result<tidb_datatype::FieldType, ExecError> {
+    match expr {
+        tidb_expr::expression::Expression::Constant(c) => c.get_type(ctx).map(std::borrow::Cow::into_owned).map_err(ExecError::Eval),
+        other => other.static_type().cloned().ok_or_else(|| ExecError::internal("an aggregate argument has no type")),
+    }
+}
