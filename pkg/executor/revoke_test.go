@@ -263,4 +263,12 @@ func TestRevokeColumnPriv(t *testing.T) {
 	tk.MustExec("REVOKE SELECT(c2) ON test.t1 FROM u1")
 	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv WHERE user='u1'").Check(testkit.Rows())
 	tk.MustQuery("SELECT table_priv, column_priv FROM mysql.tables_priv WHERE user='u1'").Check(testkit.Rows())
+
+	// A table-level REVOKE also removes the column grants of dropped columns.
+	tk.MustExec("CREATE TABLE test.t3 (a int, b int)")
+	tk.MustExec("GRANT SELECT(a, b) ON test.t3 TO u1")
+	tk.MustExec("ALTER TABLE test.t3 DROP COLUMN b")
+	tk.MustExec("REVOKE SELECT ON test.t3 FROM u1")
+	tk.MustQuery("SELECT column_name FROM mysql.columns_priv WHERE user='u1' AND table_name='t3'").Check(testkit.Rows())
+	tk.MustQuery("SELECT table_priv, column_priv FROM mysql.tables_priv WHERE user='u1' AND table_name='t3'").Check(testkit.Rows())
 }

@@ -403,30 +403,23 @@ func (e *RevokeExec) revokeColumnPriv(ctx context.Context, internalSession sessi
 		return err
 	}
 	cols := priv.Cols
-	if len(cols) == 0 && tbl != nil {
-		// It is used by e.revokeTablePriv(), to revoke all columns after revoke the corresponding table privilege.
-		for _, col := range tbl.VisibleCols() {
-			cols = append(cols, &ast.ColumnName{Name: col.Name})
+	if len(cols) == 0 {
+		// Revoked together with the table privilege (see e.revokeTablePriv): remove
+		// it from every column in one statement, including columns that have been
+		// dropped since they were granted.
+		err = removePrivFromColumnPriv(ctx, internalSession.GetSQLExecutor(), priv.Priv, host, user, dbName, e.Level.TableName, "")
+		if err != nil {
+			return err
 		}
 	}
-	if len(cols) > 0 {
-		for _, c := range cols {
-			if tbl != nil {
-				if table.FindCol(tbl.Cols(), c.Name.L) == nil {
-					return infoschema.ErrColumnNotExists.GenWithStackByArgs(c.Name.L, tbl.Meta().Name.L)
-				}
+	for _, c := range cols {
+		if tbl != nil {
+			if table.FindCol(tbl.Cols(), c.Name.L) == nil {
+				return infoschema.ErrColumnNotExists.GenWithStackByArgs(c.Name.L, tbl.Meta().Name.L)
 			}
-
-			err = removePrivFromColumnPriv(ctx, internalSession.GetSQLExecutor(), priv.Priv, host, user, dbName, e.Level.TableName, c.Name.O)
-			if err != nil {
-				return err
-			}
-
-			//TODO Optimized for batch, one-shot.
 		}
-	} else {
-		// FIXME(cbc): should not reach here?
-		err = removePrivFromColumnPriv(ctx, internalSession.GetSQLExecutor(), priv.Priv, host, user, dbName, e.Level.TableName, "")
+
+		err = removePrivFromColumnPriv(ctx, internalSession.GetSQLExecutor(), priv.Priv, host, user, dbName, e.Level.TableName, c.Name.O)
 		if err != nil {
 			return err
 		}
