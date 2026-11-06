@@ -164,6 +164,17 @@ impl StatementRecordSet {
         self.query.record_set.new_chunk()
     }
 
+    /// Go `recordSet.TryDetach` on the statement's record set: the executor
+    /// tree leaves this owner, which keeps only metadata and finishes and
+    /// closes the statement as before. A replayed (retained) or already
+    /// finished execution is not detached.
+    pub fn try_detach(&mut self) -> Option<crate::staticrecordset::StaticRecordSet> {
+        if self.finished || self.closed || self.retained.is_some() {
+            return None;
+        }
+        self.query.record_set.try_detach()
+    }
+
     /// Retains a failure from an outer transaction's Finish for CloseRecordSet.
     pub fn record_error(&mut self, error: DriverError) {
         self.last_error.get_or_insert(error);

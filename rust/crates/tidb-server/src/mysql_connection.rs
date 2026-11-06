@@ -51,7 +51,8 @@ use crate::connection_writers::{
     write_query_error_at, write_unknown_statement, ConnectionPacketOutput, TcpResultSetSink,
     WireFraming,
 };
-use crate::cursor_state::{CursorFetchError, CursorState};
+use crate::cursor_state::{CursorFetchError, CursorResultSet, CursorState, LazyCursorState};
+use tidb_session::domain::resultset_source::TryDetach;
 use crate::handshake::{
     negotiate_capabilities, parse_response, parse_response_header,
     InitialHandshake, CLIENT_COMPRESS, CLIENT_CONNECT_ATTRS, CLIENT_CONNECT_WITH_DB,
@@ -95,7 +96,7 @@ fn open_prepared_cursor<O: ConnectionPacketOutput + ?Sized>(
     output: &mut O,
     framing: WireFraming,
     result_encoder: ResultEncoder,
-) -> Result<CursorState, PreparedCursorOpenError> {
+) -> Result<CursorResultSet, PreparedCursorOpenError> {
     let cursor = CursorState::materialize_result(result).map_err(PreparedCursorOpenError::Query)?;
     let warnings = result.warning_count();
     let status = result.wire_status();
@@ -110,8 +111,45 @@ fn open_prepared_cursor<O: ConnectionPacketOutput + ?Sized>(
         info,
         result_encoder,
     );
+    write_execute_result_with_cursor(cursor.columns(), options, output, framing)?;
+    Ok(CursorResultSet::Eager(cursor))
+}
+
+/// Go `executeWithLazyCursor` once `rs.TryDetach()` succeeded: wraps the
+/// detached record set in the lazy cursor and answers the execute with its
+/// column info, leaving every row to FETCH. `status` and `warnings` are
+/// `cc.ctx.Status()` and `cc.ctx.WarningCount()` read after the detach
+/// finished the statement.
+fn open_lazy_cursor<O: ConnectionPacketOutput + ?Sized>(
+    source: Box<dyn tidb_session::domain::resultset_source::ResultSetSource>,
+    (capacity, max_chunk_size): (usize, usize),
+    status: WireStatus,
+    warnings: u16,
+    output: &mut O,
+    framing: WireFraming,
+    result_encoder: ResultEncoder,
+) -> Result<CursorResultSet, PreparedCursorOpenError> {
+    let cursor = LazyCursorState::wrap_with_lazy_cursor(source, capacity, max_chunk_size)
+        .map_err(PreparedCursorOpenError::Query)?;
+    let options = framing.result_set(
+        status.with(SERVER_STATUS_CURSOR_EXISTS),
+        warnings,
+        result_encoder,
+    );
+    write_execute_result_with_cursor(cursor.columns(), options, output, framing)?;
+    Ok(CursorResultSet::Lazy(cursor))
+}
+
+/// Go `writeExecuteResultWithCursor`, shared by the lazy and the eager
+/// cursor: the column info and an EOF advertising the open cursor.
+fn write_execute_result_with_cursor<O: ConnectionPacketOutput + ?Sized>(
+    columns: &[tidb_server_internal_column::ColumnInfo],
+    options: crate::resultset::ResultSetOptions,
+    output: &mut O,
+    framing: WireFraming,
+) -> Result<(), PreparedCursorOpenError> {
     let mut stream =
-        crate::prepared_statement::BinaryResultSetStream::new(cursor.columns().to_vec(), options.clone())
+        crate::prepared_statement::BinaryResultSetStream::new(columns.to_vec(), options.clone())
             .map_err(|error| {
                 PreparedCursorOpenError::Query(SqlQueryError::unknown(error.to_string()))
             })?;
@@ -130,7 +168,7 @@ fn open_prepared_cursor<O: ConnectionPacketOutput + ?Sized>(
     if framing.deprecate_eof {
         write_eof_or_ok(output, sequence, options).map_err(PreparedCursorOpenError::Transport)?;
     }
-    Ok(cursor)
+    Ok(())
 }
 
 
@@ -216,7 +254,7 @@ struct ConnectionPreparedStatement {
     /// execute stored for later `COM_STMT_FETCH` commands, with the columns
     /// it advertises and the next unread row. Go holds the same thing on the
     /// statement as a row container.
-    cursor: Option<CursorState>,
+    cursor: Option<CursorResultSet>,
     /// The `COM_STMT_SEND_LONG_DATA` buffer for each parameter, indexed by
     /// parameter ID: Go's `TiDBStatement.boundParams`, allocated
     /// `make([][]byte, paramCount)` at prepare time
@@ -452,7 +490,7 @@ impl PreparedStatementRegistry {
         &mut self,
         statement_id: u32,
         session: &mut S,
-    ) -> Result<Option<CursorState>, ()> {
+    ) -> Result<Option<CursorResultSet>, ()> {
         match self.statements.get_mut(&statement_id) {
             Some(statement) => {
                 statement.clear_bound_params(session);
@@ -583,13 +621,13 @@ impl PreparedStatementRegistry {
         None
     }
 
-    fn open_cursor(&mut self, statement_id: u32, state: CursorState) -> Option<CursorState> {
+    fn open_cursor(&mut self, statement_id: u32, state: CursorResultSet) -> Option<CursorResultSet> {
         self.statements
             .get_mut(&statement_id)
             .and_then(|statement| statement.cursor.replace(state))
     }
 
-    fn take_cursor(&mut self, statement_id: u32) -> Option<CursorState> {
+    fn take_cursor(&mut self, statement_id: u32) -> Option<CursorResultSet> {
         self.statements
             .get_mut(&statement_id)
             .and_then(|statement| statement.cursor.take())
@@ -2870,27 +2908,64 @@ fn run_connection_commands<S: QuerySession>(
                     // later through COM_STMT_FETCH.
                     if execute.cursor_flags & crate::prepared_statement::CURSOR_TYPE_READ_ONLY != 0 {
                         let mut write_outcome = None;
+                        // Go `executeWithCursor`: under
+                        // `vars.EnableLazyCursorFetch` the result set is
+                        // first offered to `executeWithLazyCursor`.
+                        let enable_lazy_cursor_fetch = engine.enable_lazy_cursor_fetch();
+                        let mut detached = None;
                         match engine.execute_general(general, &values) {
                             Ok(GeneralExecuteOutcome::Rows(mut result)) => {
-                                match open_prepared_cursor(
-                                    &mut result,
-                                    output,
-                                    framing,
-                                    result_encoder,
-                                ) {
-                                    Ok(cursor) => {
+                                let attempt = if enable_lazy_cursor_fetch {
+                                    result.try_detach()
+                                } else {
+                                    TryDetach::NotDetached
+                                };
+                                match attempt {
+                                    // Go `WrapWithLazyCursor(drs,
+                                    // vars.InitChunkSize, vars.MaxChunkSize)`;
+                                    // the column info is written once the
+                                    // session borrow has ended, below.
+                                    TryDetach::Detached(source) => {
+                                        let sizes = result.take_cursor_materialization().map_or(
+                                            (
+                                                tidb_vardef::defaults::DEF_INIT_CHUNK_SIZE as usize,
+                                                tidb_vardef::defaults::DEF_MAX_CHUNK_SIZE as usize,
+                                            ),
+                                            |authority| {
+                                                (authority.init_chunk_size, authority.max_chunk_size)
+                                            },
+                                        );
                                         drop(result);
-                                        drop(prepared.open_cursor(statement_id, cursor));
-                                        queries += 1;
-                                        commands.stmt_execute_successes += 1;
+                                        detached = Some(Ok((source, sizes)));
                                     }
-                                    Err(PreparedCursorOpenError::Query(error)) => {
+                                    // Go `(true, err)`: the result set is
+                                    // dirty, and the error is the answer.
+                                    TryDetach::Failed(error) => {
                                         drop(result);
-                                        write_query_error(output, &error, protocol_41)?;
+                                        detached = Some(Err(SqlQueryError::from(error)));
                                     }
-                                    Err(PreparedCursorOpenError::Transport(error)) => {
-                                        return Err(error);
-                                    }
+                                    // Go `(false, nil)`: the same result set
+                                    // takes the eager cursor.
+                                    TryDetach::NotDetached => match open_prepared_cursor(
+                                        &mut result,
+                                        output,
+                                        framing,
+                                        result_encoder,
+                                    ) {
+                                        Ok(cursor) => {
+                                            drop(result);
+                                            drop(prepared.open_cursor(statement_id, cursor));
+                                            queries += 1;
+                                            commands.stmt_execute_successes += 1;
+                                        }
+                                        Err(PreparedCursorOpenError::Query(error)) => {
+                                            drop(result);
+                                            write_query_error(output, &error, protocol_41)?;
+                                        }
+                                        Err(PreparedCursorOpenError::Transport(error)) => {
+                                            return Err(error);
+                                        }
+                                    },
                                 }
                             }
                             // Go clears the cursor bit when the statement
@@ -2903,6 +2978,31 @@ fn run_connection_commands<S: QuerySession>(
                                 write_outcome = Some(outcome);
                             }
                             Err(error) => unanswered = Some((error, true)),
+                        }
+                        match detached {
+                            Some(Ok((source, sizes))) => match open_lazy_cursor(
+                                source,
+                                sizes,
+                                engine.wire_status(),
+                                engine.warning_count(),
+                                output,
+                                framing,
+                                result_encoder,
+                            ) {
+                                Ok(cursor) => {
+                                    drop(prepared.open_cursor(statement_id, cursor));
+                                    queries += 1;
+                                    commands.stmt_execute_successes += 1;
+                                }
+                                Err(PreparedCursorOpenError::Query(error)) => {
+                                    write_query_error(output, &error, protocol_41)?;
+                                }
+                                Err(PreparedCursorOpenError::Transport(error)) => {
+                                    return Err(error);
+                                }
+                            },
+                            Some(Err(error)) => write_query_error(output, &error, protocol_41)?,
+                            None => {}
                         }
                         if let Some(outcome) = write_outcome {
                             let info = engine.statement_info();
@@ -3158,27 +3258,40 @@ fn run_connection_commands<S: QuerySession>(
                     // Go sends up to fetch_size binary rows and an EOF; when the
                     // iterator is exhausted the EOF drops the cursor bit, sets
                     // ServerStatusLastRowSend, and the statement resets.
-                    let (row_count, exhausted) = cursor.fetch_plan(fetch_size);
-                    let status = if exhausted {
-                        engine
-                            .wire_status()
-                            .with(SERVER_STATUS_LAST_ROW_SEND)
-                            .without(SERVER_STATUS_CURSOR_EXISTS)
-                    } else {
-                        engine.wire_status().with(SERVER_STATUS_CURSOR_EXISTS)
-                    };
+                    let status = engine.wire_status();
                     match cursor.write_fetch(
                         output,
-                        row_count,
+                        fetch_size,
                         // Go clears the statement warning buffer before FETCH,
                         // then writes the live transaction status.
-                        framing.result_set(status, 0, result_encoder),
+                        framing.result_set(
+                            status.with(SERVER_STATUS_CURSOR_EXISTS),
+                            0,
+                            result_encoder,
+                        ),
+                        framing.result_set(
+                            status
+                                .with(SERVER_STATUS_LAST_ROW_SEND)
+                                .without(SERVER_STATUS_CURSOR_EXISTS),
+                            0,
+                            result_encoder,
+                        ),
                     ) {
-                        Ok(()) => {
+                        Ok(exhausted) => {
                             if !exhausted {
                                 drop(prepared.open_cursor(statement_id, cursor));
                             }
                             commands.stmt_fetch_successes += 1;
+                        }
+                        Err(CursorFetchError::Execution { error, sequence }) => {
+                            write_error(
+                                output,
+                                sequence,
+                                error.code,
+                                error.state,
+                                error.message,
+                                protocol_41,
+                            )?;
                         }
                         Err(CursorFetchError::Protocol { message, sequence }) => {
                             write_error(

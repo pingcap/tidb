@@ -22,3 +22,4 @@ tidb-sqlkiller = { path = "../tidb-sqlkiller" }
 chrono = { workspace = true }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-parser = { path = "../tidb-parser" }
+tidb-session-cursor = { path = "../tidb-session-cursor" }

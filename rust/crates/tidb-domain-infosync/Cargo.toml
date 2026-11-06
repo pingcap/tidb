@@ -20,6 +20,7 @@ tidb-errno = { path = "../tidb-errno" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-domain-affinity = { path = "../tidb-domain-affinity" }
 tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-sessmgr = { path = "../tidb-sessmgr" }
 tikv-client.workspace = true
 tidb-model = { path = "../tidb-model" }
 tidb-proto = { path = "../tidb-proto" }
@@ -30,3 +31,6 @@ tidb-placement = { path = "../tidb-placement" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-config = { path = "../tidb-config" }
+
+[dev-dependencies]
+tidb-session-cursor = { path = "../tidb-session-cursor" }

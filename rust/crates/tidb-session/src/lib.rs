@@ -714,6 +714,10 @@ pub struct Session {
     /// Go `StmtCtx.WeakConsistency`, decided at statement start
     /// (`ResetContextOfStmt`'s `isWeakConsistencyRead`).
     stmt_weak_consistency: bool,
+    /// Go `StmtCtx.IsReadOnly` (`plannercore.IsReadOnly(stmtNode, vars)`,
+    /// set as the statement starts), which `execStmtResult.TryDetach` reads
+    /// through `ExecStmt.IsReadOnly`.
+    stmt_is_read_only: bool,
     /// Go `SessionVars.RowIDShardGenerator`: retains one random shard for
     /// `@@tidb_shard_allocate_step` generated IDs across statement contexts.
     row_id_shards: Arc<std::sync::Mutex<tidb_sessionctx::RowIdShardGenerator>>,
@@ -850,6 +854,10 @@ pub struct Session {
     /// Go `SessionVars.SQLCPUUsages`: the running statement's TiDB and TiKV
     /// CPU time.
     sql_cpu_usages: Arc<tidb_ppcpuusage::SqlCpuUsages>,
+    /// Go `session.cursorTracker` (`cursor.NewTracker()` in `createSession`):
+    /// the cursors whose record sets `execStmtResult.TryDetach` detached from
+    /// this session, published on its process info for `ReportMinStartTS`.
+    cursor_tracker: tidb_session_cursor::CursorTracker,
     /// Go `StmtCtx.PlanCacheUnqualified()`: why the running statement's
     /// plan cache was refused, the first reason recorded.
     statement_plan_cache_unqualified: Arc<Mutex<String>>,
@@ -1007,6 +1015,7 @@ impl Session {
             retrying: false,
             stmt_rc_check_ts: false,
             stmt_weak_consistency: false,
+            stmt_is_read_only: false,
             row_id_shards: Arc::default(),
             non_prepared_plan_cache: non_prepared_plan_cache::NonPreparedPlanCache::default(),
             physical_plan_cache: tidb_executor::SessionPlanCache::default(),
@@ -1046,6 +1055,7 @@ impl Session {
             process_plan_info: Arc::default(),
             phase_durations: Default::default(),
             sql_cpu_usages: Arc::default(),
+            cursor_tracker: tidb_session_cursor::CursorTracker::new(),
             statement_plan_cache_unqualified: Arc::default(),
             ruv2_pending_session_parser_total: 0,
             last_ruv2_metrics: None,

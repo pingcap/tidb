@@ -23,6 +23,7 @@ use tidb_chunk::chunk_util::ColumnSwapHelper;
 use tidb_datatype::Datum;
 
 use tidb_exprctx::context::{Columns, EvalError};
+use tidb_exprctx::optional::{OptionalEvalPropKey, OptionalEvalPropKeySet};
 use crate::expression::Expression;
 
 /// Go `HasGetSetVarFunc`: whether an expression contains a user-variable read
@@ -363,6 +364,86 @@ impl EvaluatorProgram {
     }
 }
 
+impl EvaluatorProgram {
+    /// Go `defaultEvaluator.RequiredOptionalEvalProps`: every optional
+    /// evaluation property the calculated (non-column) expressions require.
+    #[must_use]
+    pub fn required_optional_eval_props(&self) -> OptionalEvalPropKeySet {
+        self.calculated
+            .iter()
+            .fold(OptionalEvalPropKeySet::default(), |props, expr| {
+                OptionalEvalPropKeySet(props.0 | get_optional_eval_props_for_expr(expr).0)
+            })
+    }
+}
+
+/// Go `GetOptionalEvalPropsForExpr`: the optional evaluation properties an
+/// expression requires, its scalar function's own set joined with every
+/// argument's. Columns and constants require none.
+#[must_use]
+pub fn get_optional_eval_props_for_expr(expr: &Expression) -> OptionalEvalPropKeySet {
+    match expr {
+        Expression::ScalarFunction(function) => function.get_args().iter().fold(
+            builtin_required_optional_eval_props(&function.func_name.lowercase()),
+            |props, arg| OptionalEvalPropKeySet(props.0 | get_optional_eval_props_for_expr(arg).0),
+        ),
+        _ => OptionalEvalPropKeySet::default(),
+    }
+}
+
+/// Go `builtinFunc.RequiredOptionalEvalProps`, keyed by the function name
+/// that selects the signature: the `RequiredOptionalEvalProps` override of
+/// each Go signature that reads an optional property through a
+/// `*PropReader` (`builtin_info.go`, `builtin_miscellaneous.go`,
+/// `builtin_other.go`, `builtin_time.go`, `builtin_encryption.go`). Every
+/// other signature inherits `baseBuiltinFunc`'s empty set.
+fn builtin_required_optional_eval_props(name: &str) -> OptionalEvalPropKeySet {
+    use OptionalEvalPropKey::{
+        AdvisoryLock, CurrentUser, DdlOwnerInfo, InfoSchema, KvStore, PrivilegeChecker,
+        SequenceOperator, SessionVars, SqlExecutor,
+    };
+    let set = OptionalEvalPropKeySet::default();
+    match name {
+        // builtinCurrentUserSig, builtinCurrentRoleSig, builtinUserSig
+        // (`user`, `session_user`, `system_user`).
+        "current_user" | "current_role" | "user" | "session_user" | "system_user" => {
+            set.add(CurrentUser)
+        }
+        // builtinFoundRowsSig, builtinCurrentResourceGroupSig,
+        // builtinConnectionIDSig, builtinLastInsertID(WithID)Sig,
+        // builtinRowCountSig, builtinSleepSig, builtinSet*VarSig,
+        // builtinValues*Sig, builtinTiDBCurrentTsoSig.
+        "found_rows" | "current_resource_group" | "connection_id" | "last_insert_id"
+        | "row_count" | "sleep" | "setvar" | "values" | "tidb_current_tso" => set.add(SessionVars),
+        // builtinTiDBIsDDLOwnerSig.
+        "tidb_is_ddl_owner" => set.add(DdlOwnerInfo),
+        // builtinTiDBMVCCInfoSig.
+        "tidb_mvcc_info" => set.add(KvStore).add(PrivilegeChecker),
+        // builtinTiDBEncodeRecordKeySig, builtinTiDBEncodeIndexKeySig.
+        "tidb_encode_record_key" | "tidb_encode_index_key" => {
+            set.add(InfoSchema).add(SessionVars).add(PrivilegeChecker)
+        }
+        // builtinTiDBDecodeKeySig.
+        "tidb_decode_key" => set.add(InfoSchema),
+        // builtinTiDBDecodeSQLDigestsSig.
+        "tidb_decode_sql_digests" => set.add(SessionVars).add(SqlExecutor).add(PrivilegeChecker),
+        // builtinNextValSig, builtinLastValSig, builtinSetValSig.
+        "nextval" | "lastval" | "setval" => {
+            set.add(SequenceOperator).add(SessionVars).add(PrivilegeChecker)
+        }
+        // builtinLockSig, builtinReleaseLockSig, builtinFreeLockSig,
+        // builtinUsedLockSig, builtinReleaseAllLocksSig.
+        "get_lock" | "release_lock" | "is_free_lock" | "is_used_lock" | "release_all_locks" => {
+            set.add(AdvisoryLock)
+        }
+        // builtinTiDBBoundedStalenessSig.
+        "tidb_bounded_staleness" => set.add(SessionVars).add(KvStore),
+        // builtinValidatePasswordStrengthSig.
+        "validate_password_strength" => set.add(SessionVars).add(CurrentUser),
+        _ => set,
+    }
+}
+
 /// Go `EvaluatorSuite`: executes a projection program with an execution-local
 /// column ownership cache. Calculated expressions finish before owner moves,
 /// so an evaluation error cannot leave the input chunk half-consumed.
@@ -397,6 +478,12 @@ impl EvaluatorSuite {
     #[must_use]
     pub fn vectorizable(&self) -> bool {
         self.program.vectorizable
+    }
+
+    /// Go `EvaluatorSuite.RequiredOptionalEvalProps`.
+    #[must_use]
+    pub fn required_optional_eval_props(&self) -> OptionalEvalPropKeySet {
+        self.program.required_optional_eval_props()
     }
 
     /// Go `EvaluatorSuite.Run`.

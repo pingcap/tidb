@@ -14,7 +14,7 @@
 
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use super::*;
-use crate::domain::resultset_source::{ResultSetSource, StatementStatus};
+use crate::domain::resultset_source::{ResultSetSource, StatementStatus, TryDetach};
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::FieldType;
 use crate::{OpenedStatement, StatementRecordSet};
@@ -257,6 +257,111 @@ impl ResultSetSource for ClusterRecordSet<'_> {
     }
     fn add_result_chunk_cells(&mut self, cells: i64) {
         self.owner.session.add_result_chunk_cells(cells);
+    }
+
+    /// Go `execStmtResult.TryDetach` over `recordSet.TryDetach`.
+    ///
+    /// Only a read-only statement of an autocommit transaction detaches, and
+    /// only when its executor tree does (`executor.Detach`). The session then
+    /// tracks a cursor at the statement's `TxnCtx.StartTS`, wraps the
+    /// detached record set with it (`staticrecordset.WrapRecordSetWithCursor`)
+    /// and finishes the statement, committing its transaction; when that
+    /// fails the cursor and the detached record set are closed again.
+    ///
+    /// Go never closes the abandoned `recordSet`, so its `CloseRecordSet`
+    /// does not run; this owner still publishes the statement's completion
+    /// through its own close, which also releases the statement's session
+    /// state for the next statement.
+    fn try_detach(&mut self) -> TryDetach {
+        let session = &*self.owner.session;
+        if !session.stmt_is_read_only() {
+            return TryDetach::NotDetached;
+        }
+        // Go `plannercore.IsAutoCommitTxn`.
+        if !(session.is_autocommit() && !session.in_transaction()) {
+            return TryDetach::NotDetached;
+        }
+        let Some(detached) = self.state.try_detach() else {
+            return TryDetach::NotDetached;
+        };
+        let start_ts = self
+            .snapshot
+            .as_ref()
+            .map_or(0, crate::statement_lifecycle::ReadStatement::start_ts);
+        let cursor_handle = session
+            .get_cursor_tracker()
+            .new_cursor(tidb_session_cursor::State { start_ts });
+        let fields = crate::domain::pipeline_session::result_set_fields(
+            detached.columns(),
+            detached.output_names(),
+        );
+        let field_types = self.field_types.clone();
+        let mut crs = tidb_executor::staticrecordset::wrap_record_set_with_cursor(
+            cursor_handle.clone(),
+            detached,
+        );
+        // Now, a transaction is not needed for the detached record set, so
+        // the statement finishes and its transaction commits.
+        if let Err(error) = self.close() {
+            cursor_handle.close();
+            if let Err(close_error) = crs.close() {
+                tidb_logutil::bg_logger().error(
+                    "close detached record set failed",
+                    &[tidb_logutil::zap_error(&close_error)],
+                );
+            }
+            return TryDetach::Failed(error);
+        }
+        TryDetach::Detached(Box::new(DetachedRecordSet {
+            record_set: crs,
+            field_types,
+            fields,
+        }))
+    }
+}
+
+/// Go `tidbResultSet` over the `cursorRecordSet` a detach returned: reads
+/// the detached executor tree with no session behind it.
+struct DetachedRecordSet {
+    record_set: tidb_executor::staticrecordset::CursorRecordSet,
+    field_types: Vec<FieldType>,
+    fields: Vec<tidb_executor::adapter::ResultFieldMetadata>,
+}
+
+impl ResultSetSource for DetachedRecordSet {
+    fn new_chunk(&self) -> Option<Chunk> {
+        Some(self.record_set.new_chunk())
+    }
+    fn field_types(&self) -> &[FieldType] {
+        &self.field_types
+    }
+    fn next_chunk(&mut self, chunk: &mut Chunk) -> Result<(), tidb_terror::MysqlError> {
+        self.record_set
+            .next(chunk)
+            .map_err(|error| error.to_mysql_error())
+    }
+    fn next_batch(
+        &mut self,
+        max_rows: usize,
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
+        let mut chunk = self.record_set.new_chunk();
+        chunk.set_required_rows(max_rows as isize, max_rows);
+        self.next_chunk(&mut chunk)?;
+        Ok((0..chunk.num_rows())
+            .map(|index| chunk.get_row(index).get_datum_row(&self.field_types))
+            .collect())
+    }
+    fn fields(&mut self) -> Result<Vec<tidb_executor::adapter::ResultFieldMetadata>, tidb_terror::MysqlError> {
+        Ok(self.fields.clone())
+    }
+    // Go `tidbResultSet.Finish`: a `cursorRecordSet` has no `Finish`.
+    fn finish(&mut self) -> Result<(), tidb_terror::MysqlError> {
+        Ok(())
+    }
+    fn close(&mut self) -> Result<(), tidb_terror::MysqlError> {
+        self.record_set
+            .close()
+            .map_err(|error| error.to_mysql_error())
     }
 }
 

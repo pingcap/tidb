@@ -515,6 +515,11 @@ impl<'a> QueryResult<'a> {
             .map_or(&self.info, |state| state.info)
     }
 
+    /// Go `ResultSet.TryDetach`: see [`ResultSetSource::try_detach`].
+    pub fn try_detach(&mut self) -> crate::domain::resultset_source::TryDetach {
+        self.source.try_detach()
+    }
+
     /// Returns the sole mutable result-set owner.
     pub fn source(&mut self) -> &mut BoxedResultSetSource<'a> {
         &mut self.source
@@ -604,6 +609,16 @@ impl ResultSetSource for ProcessTrackedResultSet<'_> {
     fn add_result_chunk_cells(&mut self, cells: i64) {
         self.inner.add_result_chunk_cells(cells);
     }
+
+    fn try_detach(&mut self) -> crate::domain::resultset_source::TryDetach {
+        let detached = self.inner.try_detach();
+        // A detached statement is finished: Go's command ends with no
+        // statement left running on the session.
+        if !matches!(detached, crate::domain::resultset_source::TryDetach::NotDetached) {
+            self.statement.take();
+        }
+        detached
+    }
 }
 
 /// Sized adapter for a boxed worker-local result source.
@@ -653,6 +668,10 @@ impl ResultSetSource for BoxedResultSetSource<'_> {
 
     fn add_result_chunk_cells(&mut self, cells: i64) {
         self.inner.add_result_chunk_cells(cells);
+    }
+
+    fn try_detach(&mut self) -> crate::domain::resultset_source::TryDetach {
+        self.inner.try_detach()
     }
 }
 

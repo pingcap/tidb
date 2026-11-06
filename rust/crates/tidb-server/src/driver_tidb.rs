@@ -74,6 +74,10 @@ impl QuerySession for Session {
         Session::retry_after_query_error(self, code)
     }
 
+    fn enable_lazy_cursor_fetch(&self) -> bool {
+        self.vars().enable_lazy_cursor_fetch()
+    }
+
     fn set_retrying(&mut self, retrying: bool) {
         Session::set_retrying(self, retrying);
     }

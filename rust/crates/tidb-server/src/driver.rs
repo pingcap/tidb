@@ -261,6 +261,12 @@ pub trait QuerySession {
         ))
     }
 
+    /// Go `SessionVars.EnableLazyCursorFetch`, which `executeWithCursor`
+    /// reads to try `executeWithLazyCursor` first. Default: off.
+    fn enable_lazy_cursor_fetch(&self) -> bool {
+        false
+    }
+
     /// Binds and runs one general prepared statement.
     fn execute_general<'a>(
         &'a mut self,

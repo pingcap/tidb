@@ -1002,6 +1002,12 @@ impl Session {
         self.has_process_priv = granted;
     }
 
+    /// Go `session.GetCursorTracker`.
+    #[must_use]
+    pub fn get_cursor_tracker(&self) -> &tidb_session_cursor::CursorTracker {
+        &self.cursor_tracker
+    }
+
     /// Go `SessionVars.SQLCPUUsages`.
     #[must_use]
     pub fn sql_cpu_usages(&self) -> &std::sync::Arc<tidb_ppcpuusage::SqlCpuUsages> {
@@ -1021,6 +1027,7 @@ impl Session {
         );
         guard.set_process_plan_info(std::sync::Arc::clone(&self.process_plan_info));
         guard.set_sql_cpu_usage(std::sync::Arc::clone(&self.sql_cpu_usages));
+        guard.set_cursor_tracker(self.cursor_tracker.clone());
         self.process = Some(guard);
     }
 

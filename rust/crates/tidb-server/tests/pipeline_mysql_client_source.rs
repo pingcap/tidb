@@ -2993,3 +2993,204 @@ fn client_charset_bytes_reach_storage_and_results_like_go() {
         .iter()
         .all(|report| report.exit == ConnectionExit::Quit));
 }
+
+/// The cursors the node's sessions track, as Go `ReportMinStartTS` walks
+/// them through `ProcessInfo.CursorTracker`.
+fn tracked_cursor_start_ts(processes: &tidb_sessmgr::ProcessRegistry) -> Vec<u64> {
+    let mut start_ts = Vec::new();
+    for process in tidb_sessmgr::processinfo::SessionManager::show_process_list(processes) {
+        if let Some(tracker) = &process.cursor_tracker {
+            tracker.range_cursor(|cursor| {
+                start_ts.push(cursor.state().start_ts);
+                true
+            });
+        }
+    }
+    start_ts
+}
+
+/// [`tracked_cursor_start_ts`] once the previous command has finished: this
+/// server writes every packet straight to the socket, so the client can read
+/// a FETCH's last EOF before the command drops the exhausted cursor (Go
+/// buffers the EOF and flushes after `stmt.Reset()`). A round trip orders the
+/// read after it.
+fn settled_cursor_start_ts(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    processes: &tidb_sessmgr::ProcessRegistry,
+) -> Vec<u64> {
+    run_query(client, reader, "SELECT 1");
+    tracked_cursor_start_ts(processes)
+}
+
+fn strings(values: &[&str]) -> Vec<String> {
+    values.iter().map(|value| (*value).to_owned()).collect()
+}
+
+/// Go `tidb_enable_lazy_cursor_fetch`: a cursor-mode execute of a detachable
+/// read-only autocommit query detaches its record set (`executeWithLazyCursor`
+/// -> `execStmtResult.TryDetach`), the session tracks a cursor at the
+/// statement's start TS until FETCH drains it, and the rows come from the
+/// statement's snapshot even after another statement ran on the session.
+///
+/// The wire values are Go's, captured with a raw-protocol client over
+/// `servertestkit` (zzprobe_o09 `TestLazyCursorWire`, lazy ON): execute
+/// status `0x0042`; `select id from t1` FETCH 2 -> `[1,2]` `0x0042`, FETCH
+/// 10 -> `[3,4,5]` `0x0082`; an `INSERT` of `(6,60)` between the execute and
+/// the FETCH still reads `[1,2,3,4,5]`; `limit 3` -> `[1,2,3]`; inside
+/// `BEGIN` the execute status is `0x0043` and the FETCH `0x0083`. The cursor
+/// bookkeeping is Go's `TestCursorWillBeClosed` / `TestDetachError`
+/// (`pkg/executor/staticrecordset/integration_test.go`).
+#[test]
+fn lazy_cursor_fetch_detaches_and_tracks_the_cursor_like_go() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let store = users();
+    let node = node_over(&store);
+    let processes = node.factory().processes();
+    let worker_node = Arc::clone(&node);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            worker_node.factory().as_ref(),
+            &store,
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate(&mut client, &mut reader);
+
+    run_write(&mut client, &mut reader, "CREATE TABLE t1 (id BIGINT PRIMARY KEY, v BIGINT)");
+    run_write(
+        &mut client,
+        &mut reader,
+        "INSERT INTO t1 VALUES (1,10),(2,20),(3,30),(4,40),(5,50)",
+    );
+    let types = [0x08u8];
+    let ids = |rows: Vec<Vec<String>>| rows.into_iter().map(|row| row[0].clone()).collect::<Vec<_>>();
+
+    // Lazy cursor fetch OFF (Go's default): the eager cursor tracks nothing.
+    let (statement, _, _) = prepare_statement(&mut client, &mut reader, "SELECT id FROM t1");
+    let (_, status) = execute_with_cursor(&mut client, &mut reader, statement, &[]);
+    assert_eq!(status, 0x0042);
+    assert_eq!(tracked_cursor_start_ts(&processes), Vec::<u64>::new());
+    let (rows, status) = fetch_rows(&mut client, &mut reader, statement, 10, &types);
+    assert_eq!((ids(rows), status), (strings(&["1", "2", "3", "4", "5"]), 0x0082));
+
+    run_write(&mut client, &mut reader, "SET tidb_enable_lazy_cursor_fetch = ON");
+
+    // A detached table reader: one cursor at the statement's start TS.
+    let (_, status) = execute_with_cursor(&mut client, &mut reader, statement, &[]);
+    assert_eq!(status, 0x0042);
+    let cursors = tracked_cursor_start_ts(&processes);
+    assert_eq!(cursors.len(), 1, "{cursors:?}");
+    assert_ne!(cursors[0], 0);
+    // The cursor holds back the reported minimum start TS.
+    let pl = tidb_sessmgr::processinfo::SessionManager::show_process_list(&processes);
+    assert!(tidb_domain_infosync::min_start_ts::process_list_min_start_ts_candidates(&pl)
+        .contains(&cursors[0]));
+    let (rows, status) = fetch_rows(&mut client, &mut reader, statement, 2, &types);
+    assert_eq!((ids(rows), status), (strings(&["1", "2"]), 0x0042));
+    // The session runs another statement; the cursor still reads its own
+    // snapshot.
+    assert_eq!(run_write(&mut client, &mut reader, "INSERT INTO t1 VALUES (6,60)"), 1);
+    assert_eq!(tracked_cursor_start_ts(&processes), cursors);
+    let (rows, status) = fetch_rows(&mut client, &mut reader, statement, 10, &types);
+    assert_eq!((ids(rows), status), (strings(&["3", "4", "5"]), 0x0082));
+    // Reaching the end resets the statement, which closes the cursor.
+    assert_eq!(settled_cursor_start_ts(&mut client, &mut reader, &processes), Vec::<u64>::new());
+    run_write(&mut client, &mut reader, "DELETE FROM t1 WHERE id = 6");
+
+    // Go `TestStaticRecordSetWithTxn`: a statement between the execute and
+    // the first FETCH does not reach the detached reader's snapshot.
+    let (_, status) = execute_with_cursor(&mut client, &mut reader, statement, &[]);
+    assert_eq!(status, 0x0042);
+    assert_eq!(run_write(&mut client, &mut reader, "INSERT INTO t1 VALUES (6,60)"), 1);
+    let (rows, status) = fetch_rows(&mut client, &mut reader, statement, 10, &types);
+    assert_eq!((ids(rows), status), (strings(&["1", "2", "3", "4", "5"]), 0x0082));
+    run_write(&mut client, &mut reader, "DELETE FROM t1 WHERE id = 6");
+
+    // Rows spanning several chunks keep coming from the snapshot while
+    // other statements change the table between FETCHes.
+    run_write(&mut client, &mut reader, "CREATE TABLE big (id BIGINT PRIMARY KEY)");
+    let values = (1..=3000).map(|id| format!("({id})")).collect::<Vec<_>>().join(",");
+    // (`run_transaction_control` only checks for the OK packet: these counts
+    // do not fit `run_write`'s one-byte decoding.)
+    run_transaction_control(&mut client, &mut reader, &format!("INSERT INTO big VALUES {values}"));
+    let (big, _, _) = prepare_statement(&mut client, &mut reader, "SELECT id FROM big");
+    execute_with_cursor(&mut client, &mut reader, big, &[]);
+    assert_eq!(tracked_cursor_start_ts(&processes).len(), 1);
+    let (rows, _) = fetch_rows(&mut client, &mut reader, big, 10, &types);
+    assert_eq!(ids(rows), (1..=10).map(|id| id.to_string()).collect::<Vec<_>>());
+    run_transaction_control(&mut client, &mut reader, "DELETE FROM big WHERE id > 5");
+    assert_eq!(run_write(&mut client, &mut reader, "INSERT INTO big VALUES (5000)"), 1);
+    // Go caps one FETCH at 1024 rows (`parse.StmtFetchCmd`'s `maxFetchSize`).
+    let mut rest = Vec::new();
+    let mut statuses = Vec::new();
+    while statuses.last().is_none_or(|status| status & 0x0080 == 0) {
+        let (rows, status) = fetch_rows(&mut client, &mut reader, big, 5000, &types);
+        rest.extend(ids(rows));
+        statuses.push(status);
+    }
+    assert_eq!(statuses, [0x0042, 0x0042, 0x0082]);
+    assert_eq!(rest, (11..=3000).map(|id| id.to_string()).collect::<Vec<_>>());
+    assert_eq!(settled_cursor_start_ts(&mut client, &mut reader, &processes), Vec::<u64>::new());
+
+    // A projection and a parameterized selection detach too.
+    let (projection, _, _) = prepare_statement(&mut client, &mut reader, "SELECT id + v FROM t1");
+    execute_with_cursor(&mut client, &mut reader, projection, &[]);
+    assert_eq!(tracked_cursor_start_ts(&processes).len(), 1);
+    let (rows, status) = fetch_rows(&mut client, &mut reader, projection, 10, &types);
+    assert_eq!((ids(rows), status), (strings(&["11", "22", "33", "44", "55"]), 0x0082));
+    let (selection, _, _) =
+        prepare_statement(&mut client, &mut reader, "SELECT id FROM t1 WHERE v >= ?");
+    execute_with_cursor(&mut client, &mut reader, selection, &[30]);
+    assert_eq!(tracked_cursor_start_ts(&processes).len(), 1);
+    let (rows, status) = fetch_rows(&mut client, &mut reader, selection, 10, &types);
+    assert_eq!((ids(rows), status), (strings(&["3", "4", "5"]), 0x0082));
+    assert_eq!(settled_cursor_start_ts(&mut client, &mut reader, &processes), Vec::<u64>::new());
+
+    // A root Limit does not detach (Go `BaseExecutorV2.Detach`), and neither
+    // does a projection reading an optional property (`connection_id()`):
+    // both take the eager cursor.
+    for sql in ["SELECT id FROM t1 LIMIT 3", "SELECT connection_id() + id FROM t1"] {
+        let (eager, _, _) = prepare_statement(&mut client, &mut reader, sql);
+        let (_, status) = execute_with_cursor(&mut client, &mut reader, eager, &[]);
+        assert_eq!(status, 0x0042, "{sql}");
+        assert_eq!(tracked_cursor_start_ts(&processes), Vec::<u64>::new(), "{sql}");
+        fetch_rows(&mut client, &mut reader, eager, 10, &types);
+    }
+
+    // Inside an explicit transaction nothing detaches (Go
+    // `IsAutoCommitTxn`).
+    run_write(&mut client, &mut reader, "BEGIN");
+    let (_, status) = execute_with_cursor(&mut client, &mut reader, statement, &[]);
+    assert_eq!(status, 0x0043);
+    assert_eq!(tracked_cursor_start_ts(&processes), Vec::<u64>::new());
+    let (rows, status) = fetch_rows(&mut client, &mut reader, statement, 10, &types);
+    assert_eq!((ids(rows).len(), status), (5, 0x0083));
+    run_write(&mut client, &mut reader, "COMMIT");
+
+    // An open lazy cursor closes with its statement.
+    execute_with_cursor(&mut client, &mut reader, statement, &[]);
+    assert_eq!(tracked_cursor_start_ts(&processes).len(), 1);
+    let mut close = vec![COM_STMT_CLOSE];
+    close.extend_from_slice(&statement.to_le_bytes());
+    write_packet(&mut client, 0, &close);
+    run_query(&mut client, &mut reader, "SELECT 1");
+    assert_eq!(tracked_cursor_start_ts(&processes), Vec::<u64>::new());
+
+    write_packet(&mut client, 0, &[0x01]);
+    drop(client);
+    assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
+}

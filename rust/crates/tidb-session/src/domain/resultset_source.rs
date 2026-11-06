@@ -31,6 +31,19 @@ pub struct StatementStatus<'a> {
     pub info: &'a [u8],
 }
 
+/// Go `ResultSet.TryDetach`'s `(ResultSet, bool, error)` (`pkg/server/
+/// internal/resultset`, through `sqlexec.DetachableRecordSet`).
+pub enum TryDetach {
+    /// `(_, false, nil)`: not suitable for detaching; the original source is
+    /// still usable.
+    NotDetached,
+    /// `(rs, true, nil)`: a source that no longer depends on the session.
+    Detached(Box<dyn ResultSetSource>),
+    /// An error while detaching: the original source and the session are
+    /// left dirty and must not be used.
+    Failed(tidb_terror::MysqlError),
+}
+
 /// Lazy source consumed by the connection result-set writer.
 pub trait ResultSetSource {
     /// Live statement state when execution belongs to this source.
@@ -78,6 +91,12 @@ pub trait ResultSetSource {
     /// Go `writeChunks`' deferred `RUV2Metrics.AddResultChunkCells`: hands
     /// the statement the rows times columns written for it.
     fn add_result_chunk_cells(&mut self, _cells: i64) {}
+
+    /// Go `tidbResultSet.TryDetach`: a source whose record set is not a
+    /// `sqlexec.DetachableRecordSet` answers `(nil, false, nil)`.
+    fn try_detach(&mut self) -> TryDetach {
+        TryDetach::NotDetached
+    }
 }
 
 /// Times the pulls a result-set writer makes on `inner`, so the writer's

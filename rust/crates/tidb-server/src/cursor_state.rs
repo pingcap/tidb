@@ -48,7 +48,173 @@ pub(crate) struct CursorState {
 
 pub(crate) enum CursorFetchError {
     Protocol { message: String, sequence: u8 },
+    /// Go `iter.Error()`: the detached executor failed while a lazy cursor
+    /// fetched, answered with the error's own code.
+    Execution {
+        error: tidb_terror::MysqlError,
+        sequence: u8,
+    },
     Transport(MysqlConnectionError),
+}
+
+/// Go `resultset.CursorResultSet` as a statement stores it
+/// (`stmt.StoreResultSet`): the eager row-container cursor
+/// (`WrapWithRowContainerCursor`) or the lazy one over a detached record set
+/// (`WrapWithLazyCursor`).
+pub(crate) enum CursorResultSet {
+    Eager(CursorState),
+    Lazy(LazyCursorState),
+}
+
+impl CursorResultSet {
+    /// Go `writeChunksWithFetchSize`: sends up to `fetch_size` rows and the
+    /// terminating EOF, whose status is `exhausted` once the row iterator
+    /// reached its end (`serverStatus &^= CursorExists; |= LastRowSend`) and
+    /// `open` otherwise. Returns whether the iterator reached its end.
+    pub(crate) fn write_fetch<O: ConnectionPacketOutput + ?Sized>(
+        &mut self,
+        output: &mut O,
+        fetch_size: u32,
+        open: crate::resultset::ResultSetOptions,
+        exhausted: crate::resultset::ResultSetOptions,
+    ) -> Result<bool, CursorFetchError> {
+        match self {
+            Self::Eager(cursor) => {
+                let (row_count, end) = cursor.fetch_plan(fetch_size);
+                cursor.write_fetch(output, row_count, if end { exhausted } else { open })?;
+                Ok(end)
+            }
+            Self::Lazy(cursor) => cursor.write_fetch(output, fetch_size, open, exhausted),
+        }
+    }
+}
+
+/// Go `tidbLazyCursorResultSet` and its `lazyRowIterator`: rows come from
+/// the detached record set one chunk at a time, as FETCH asks for them.
+pub(crate) struct LazyCursorState {
+    source: Box<dyn ResultSetSource>,
+    columns: Vec<tidb_server_internal_column::ColumnInfo>,
+    field_types: Vec<tidb_datatype::FieldType>,
+    /// Go `lazyRowIterator.chk`.
+    chk: Chunk,
+    /// Go `lazyRowIterator.idxInChk`.
+    idx_in_chk: usize,
+    /// Go `lazyRowIterator.started`.
+    started: bool,
+    /// Go `lazyRowIterator.err`.
+    err: Option<tidb_terror::MysqlError>,
+}
+
+impl LazyCursorState {
+    /// Go `WrapWithLazyCursor(rs, capacity, maxChunkSize)`, over the
+    /// columns the detached record set reports.
+    pub(crate) fn wrap_with_lazy_cursor(
+        mut source: Box<dyn ResultSetSource>,
+        capacity: usize,
+        max_chunk_size: usize,
+    ) -> Result<Self, SqlQueryError> {
+        let columns = source
+            .fields()
+            .map(|fields| crate::column_convert::convert_column_infos(&fields))
+            .map_err(SqlQueryError::from)?;
+        let field_types = source.field_types().to_vec();
+        let max_chunk_size = max_chunk_size.max(1);
+        let chk = Chunk::new(&field_types, capacity.max(1).min(max_chunk_size), max_chunk_size);
+        Ok(Self {
+            source,
+            columns,
+            field_types,
+            chk,
+            idx_in_chk: 0,
+            started: false,
+            err: None,
+        })
+    }
+
+    pub(crate) fn columns(&self) -> &[tidb_server_internal_column::ColumnInfo] {
+        &self.columns
+    }
+
+    /// Go `lazyRowIterator.Next`: advances, pulling the next chunk once the
+    /// current one is used up. `false` is Go's `chunk.Row{}` (the end).
+    fn next(&mut self) -> bool {
+        self.started = true;
+        self.idx_in_chk += 1;
+        if self.idx_in_chk >= self.chk.num_rows() {
+            // Reached the end, update the chunk.
+            if let Err(error) = self.source.next_chunk(&mut self.chk) {
+                self.err = Some(error);
+                return false;
+            }
+            if self.chk.num_rows() == 0 {
+                // Reached the end.
+                return false;
+            }
+            self.idx_in_chk = 0;
+        }
+        true
+    }
+
+    /// Go `lazyRowIterator.Current` compared with `End()`: whether a row is
+    /// current.
+    fn current(&mut self) -> bool {
+        if !self.started {
+            return self.next();
+        }
+        self.idx_in_chk < self.chk.num_rows()
+    }
+
+    fn write_fetch<O: ConnectionPacketOutput + ?Sized>(
+        &mut self,
+        output: &mut O,
+        fetch_size: u32,
+        open: crate::resultset::ResultSetOptions,
+        exhausted: crate::resultset::ResultSetOptions,
+    ) -> Result<bool, CursorFetchError> {
+        let protocol = |message: String, sequence: u8| CursorFetchError::Protocol { message, sequence };
+        let mut stream =
+            crate::prepared_statement::BinaryResultSetStream::new(self.columns.clone(), open.clone())
+                .map_err(|error| protocol(error.to_string(), 1))?;
+        let _ = stream
+            .metadata_packets()
+            .map_err(|error| protocol(error.to_string(), 1))?;
+        stream
+            .validate_chunk_types(&self.field_types)
+            .map_err(|error| protocol(error.to_string(), 1))?;
+        let mut sequence = 1_u8;
+        let mut packet = Vec::with_capacity(1024);
+        // Send the rows to the client according to fetchSize.
+        let mut written = 0_u32;
+        while written < fetch_size && self.current() {
+            stream
+                .row_packet_chunk_into(self.chk.get_row(self.idx_in_chk), &mut packet)
+                .map_err(|error| protocol(error.to_string(), sequence))?;
+            write_packet_to(output, sequence, &packet).map_err(CursorFetchError::Transport)?;
+            sequence = sequence.wrapping_add(1);
+            written += 1;
+            self.next();
+        }
+        if let Some(error) = &self.err {
+            return Err(CursorFetchError::Execution {
+                error: error.clone(),
+                sequence,
+            });
+        }
+        // Tell the client COM_STMT_FETCH has finished by setting the proper
+        // status once the iterator reached its end.
+        let end = !self.current();
+        write_eof_or_ok(output, sequence, if end { exhausted } else { open })
+            .map_err(CursorFetchError::Transport)?;
+        Ok(end)
+    }
+}
+
+impl Drop for LazyCursorState {
+    /// Go `tidbResultSet.Close` on the detached record set, which closes the
+    /// session's cursor and the detached executor tree.
+    fn drop(&mut self) {
+        let _ = self.source.close();
+    }
 }
 
 impl CursorState {

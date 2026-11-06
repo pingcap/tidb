@@ -71,6 +71,7 @@ tidb-tiflash = { path = "../tidb-tiflash" }
 tidb-cteutil = { path = "../tidb-cteutil" }
 tidb-lock = { path = "../tidb-lock" }
 tidb-sessmgr = { path = "../tidb-sessmgr" }
+tidb-session-cursor = { path = "../tidb-session-cursor" }
 tidb-txninfo = { path = "../tidb-txninfo" }
 tidb-planner-costusage = { path = "../tidb-planner-costusage" }
 tidb-planner-indexadvisor = { path = "../tidb-planner-indexadvisor" }

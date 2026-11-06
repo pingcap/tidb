@@ -58,6 +58,8 @@ pub mod admin;
 pub mod ddl_exec;
 pub mod stats_exec;
 pub mod record_set;
+pub mod detach;
+pub mod staticrecordset;
 pub mod stmt_ctx_build;
 pub mod statement_cop_stats;
 pub mod table_privilege;

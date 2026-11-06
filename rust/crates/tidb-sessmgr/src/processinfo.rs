@@ -114,6 +114,9 @@ pub struct ProcessInfo {
     // boundary: Go reads this through `StmtCtx.InRestrictedSQL`.
     /// Whether the statement is internal (restricted) SQL.
     pub in_restricted_sql: bool,
+    /// Go `CursorTracker`: the session's open detached cursors, whose start
+    /// timestamps `ReportMinStartTS` also holds back GC for.
+    pub cursor_tracker: Option<tidb_session_cursor::CursorTracker>,
     // boundary: Go `RunawayChecker`, narrowed to `CheckRuleKillAction`.
     /// The statement's runaway watch rule: a kill cause when it must end.
     pub runaway_rule_kill_action: Option<Arc<dyn Fn() -> Option<String> + Send + Sync>>,
@@ -149,6 +152,7 @@ impl Default for ProcessInfo {
             max_execution_time: 0,
             cur_txn_create_time: None,
             in_restricted_sql: false,
+            cursor_tracker: None,
             runaway_rule_kill_action: None,
         }
     }

@@ -1274,6 +1274,16 @@ impl SessionVars {
             .unwrap_or(tidb_vardef::defaults::DEF_BATCH_INSERT)
     }
 
+    /// Go `SessionVars.EnableLazyCursorFetch`, set by
+    /// `tidb_enable_lazy_cursor_fetch` (`TiDBOptOn`). Read from the table
+    /// rather than cached: only a cursor-mode `COM_STMT_EXECUTE` asks.
+    #[must_use]
+    pub fn enable_lazy_cursor_fetch(&self) -> bool {
+        self.get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_LAZY_CURSOR_FETCH)
+            .map(|value| value.eq_ignore_ascii_case("ON") || value == "1")
+            .unwrap_or(tidb_vardef::defaults::DEF_TIDB_ENABLE_LAZY_CURSOR_FETCH)
+    }
+
     /// Go `SessionVars.PessimisticTransactionFairLocking`, set by
     /// `tidb_pessimistic_txn_fair_locking`.
     #[must_use]

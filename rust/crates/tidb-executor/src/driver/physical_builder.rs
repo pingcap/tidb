@@ -8867,8 +8867,12 @@ pub(super) fn open_query(
         .collect();
     let current_db = ctx.current_database_name().unwrap_or_default();
     crate::notify_before_executor_first_run(ctx);
-    super::RecordSet::open(root, columns, ctx.statement_memory())
-        .map(|record_set| record_set.with_output_names(output_names, current_db))
+    let detachable = crate::detach::detach(physical);
+    super::RecordSet::open(root, columns, ctx.statement_memory()).map(|record_set| {
+        record_set
+            .with_output_names(output_names, current_db)
+            .with_detachable(detachable)
+    })
 }
 
 /// Go `runStmt` -> `ExecStmt.Exec` for a planned SHOW: the executor built

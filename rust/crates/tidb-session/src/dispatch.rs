@@ -2334,6 +2334,12 @@ impl Session {
     pub(crate) fn on_stmt_start(&mut self, stmt: &Stmt) {
         self.stmt_rc_check_ts = self.need_set_rc_check_ts_flag(stmt);
         self.stmt_weak_consistency = self.is_weak_consistency_read(stmt);
+        self.stmt_is_read_only = stmt.is_read_only(true);
+    }
+
+    /// Go `ExecStmt.IsReadOnly(vars)`: `vars.StmtCtx.IsReadOnly`.
+    pub(crate) const fn stmt_is_read_only(&self) -> bool {
+        self.stmt_is_read_only
     }
 
     /// Go `isWeakConsistencyRead`: a user connection's read-only statement

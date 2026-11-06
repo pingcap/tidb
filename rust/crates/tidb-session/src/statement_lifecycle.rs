@@ -154,6 +154,15 @@ pub struct ReadStatement {
     resource_group: String,
 }
 
+impl ReadStatement {
+    /// Go `TxnCtx.StartTS` of the statement's transaction: the timestamp its
+    /// reads activated, `0` before any read did.
+    #[must_use]
+    pub fn start_ts(&self) -> u64 {
+        self.read_ts.get().unwrap_or_default()
+    }
+}
+
 /// One statement's borrowed context; see the module documentation.
 pub struct StatementLifecycle<'a> {
     /// The session the statement runs in.

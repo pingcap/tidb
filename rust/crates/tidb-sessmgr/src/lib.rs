@@ -203,6 +203,8 @@ struct ProcessEntry {
     process_plan_info: Option<Arc<Mutex<tidb_stmtctx::ProcessPlanInfo>>>,
     /// Go `ProcessInfo.SQLCPUUsage`: the session's `SessionVars.SQLCPUUsages`.
     sql_cpu_usage: Option<Arc<tidb_ppcpuusage::SqlCpuUsages>>,
+    /// Go `ProcessInfo.CursorTracker`: the session's `cursorTracker`.
+    cursor_tracker: Option<tidb_session_cursor::CursorTracker>,
     /// An internal session's entry: its statements are restricted SQL (Go
     /// `StmtCtx.InRestrictedSQL`).
     restricted: bool,
@@ -537,6 +539,7 @@ impl ProcessRegistry {
             transaction_history: Arc::clone(&self.transaction_history),
             process_plan_info: None,
             sql_cpu_usage: None,
+            cursor_tracker: None,
             restricted: false,
             statement_holds: 0,
         }));
@@ -878,6 +881,12 @@ impl ProcessRegistry {
         });
     }
 
+    fn set_cursor_tracker(&self, id: u64, tracker: tidb_session_cursor::CursorTracker) {
+        self.with_entry(id, |entry| {
+            entry.cursor_tracker = Some(tracker);
+        });
+    }
+
     /// Go `Server.UpdateProcessCPUTime`: adds the profiler's TiDB CPU time to
     /// the connection's statement `sql_id`, if that is still the one running.
     pub fn update_process_cpu_time(&self, conn_id: u64, sql_id: u64, cpu_time: std::time::Duration) {
@@ -943,6 +952,7 @@ impl ProcessRegistry {
                 state: entry.state.clone(),
                 cur_txn_create_time: entry.transaction.as_ref().map(|txn| txn.created),
                 in_restricted_sql: entry.restricted,
+                cursor_tracker: entry.cursor_tracker.clone(),
                 runaway_rule_kill_action: plan_info
                     .runaway_rule_kill_action
                     .filter(|_| running)
@@ -1117,6 +1127,12 @@ impl ProcessGuard {
     /// Go `ProcessInfo.SQLCPUUsage = &vars.SQLCPUUsages`.
     pub fn set_sql_cpu_usage(&self, usage: Arc<tidb_ppcpuusage::SqlCpuUsages>) {
         self.registry.set_sql_cpu_usage(self.id, usage);
+    }
+
+    /// Go `ProcessInfo.CursorTracker = s.cursorTracker` (`session.ShowProcess`
+    /// publishes the session's tracker on every process-info snapshot).
+    pub fn set_cursor_tracker(&self, tracker: tidb_session_cursor::CursorTracker) {
+        self.registry.set_cursor_tracker(self.id, tracker);
     }
 
     /// Publishes one running statement for the lifetime of the returned guard.
