@@ -41,7 +41,7 @@ func (unicode0900Impl) Pattern() WildcardPattern {
 }
 
 func convertRuneUnicodeCI0900(r rune) (first, second uint64) {
-	if int(r) > len(ucadata.DUCET0900Table.MapTable4) {
+	if int(r) >= len(ucadata.DUCET0900Table.MapTable4) {
 		return uint64(r>>15) + 0xFBC0 + (uint64((r&0x7FFF)|0x8000) << 16), 0
 	}
 

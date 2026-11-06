@@ -64,9 +64,10 @@ func TestScan(t *testing.T) {
 		stats, err := scanOrphanData(ctx, store, nil)
 		require.NoError(t, err)
 		require.Equal(t, scanStats{
-			sizeBytes:     8,
-			objectCount:   3,
-			sampleObjects: []string{"123/meta.json", "p00000001/456/data", "unknown/file"},
+			sizeBytes:          8,
+			objectCount:        3,
+			sampleObjects:      []string{"123/meta.json", "p00000001/456/data", "unknown/file"},
+			deletionCandidates: []string{"123/meta.json", "p00000001/456/data", "unknown/file"},
 		}, stats)
 	})
 
@@ -79,8 +80,9 @@ func TestScan(t *testing.T) {
 		stats, err := scanOrphanData(context.Background(), store, nil)
 		require.NoError(t, err)
 		require.Equal(t, scanStats{
-			objectCount:   1,
-			sampleObjects: []string{"unknown/file"},
+			objectCount:        1,
+			sampleObjects:      []string{"unknown/file"},
+			deletionCandidates: []string{"unknown/file"},
 		}, stats)
 		require.Equal(t, 1, store.walkCount)
 	})
@@ -94,15 +96,16 @@ func TestScan(t *testing.T) {
 		stats, err := scanOrphanData(ctx, store, []string{conflictpath.StoragePrefix})
 		require.NoError(t, err)
 		require.Equal(t, scanStats{
-			sizeBytes:     3,
-			objectCount:   1,
-			sampleObjects: []string{"123/meta.json"},
+			sizeBytes:          3,
+			objectCount:        1,
+			sampleObjects:      []string{"123/meta.json"},
+			deletionCandidates: []string{"123/meta.json"},
 		}, stats)
 	})
 
-	t.Run("sample is bounded", func(t *testing.T) {
-		entries := make([]walkEntry, 0, sampleObjectLimit+1)
-		for i := 0; i <= sampleObjectLimit; i++ {
+	t.Run("sampling and cleanup candidates are independently bounded", func(t *testing.T) {
+		entries := make([]walkEntry, 0, cleanupObjectLimit+1)
+		for i := 0; i <= cleanupObjectLimit; i++ {
 			entries = append(entries, walkEntry{path: fmt.Sprintf("object-%02d/file", i), size: 1})
 		}
 		store := &walkStorage{
@@ -114,6 +117,9 @@ func TestScan(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, int64(len(entries)), stats.objectCount)
 		require.Len(t, stats.sampleObjects, sampleObjectLimit)
+		require.Len(t, stats.deletionCandidates, cleanupObjectLimit)
+		require.Equal(t, entries[0].path, stats.deletionCandidates[0])
+		require.Equal(t, entries[cleanupObjectLimit-1].path, stats.deletionCandidates[cleanupObjectLimit-1])
 		require.True(t, stats.truncated)
 		require.Equal(t, entries[0].path, stats.sampleObjects[0])
 	})

@@ -61,8 +61,6 @@ type blockParser struct {
 	// so it's ok, see readQuotedField.
 	pos int64
 
-	// cache
-	remainBuf *bytes.Buffer
 	// holds the cached parsable data after last readBlock. all data inside is
 	// unparsed at the moment of the return of last readBlock, for current unparsed
 	// data, use buf.
@@ -96,7 +94,6 @@ func makeBlockParser(
 	return blockParser{
 		reader:     MakePooledReader(reader, ioWorkers),
 		blockBuf:   make([]byte, blockBufSize*config.BufferSizeScale),
-		remainBuf:  &bytes.Buffer{},
 		appendBuf:  &bytes.Buffer{},
 		Logger:     logger,
 		rowPool:    &pool,
@@ -336,12 +333,13 @@ func (parser *blockParser) readBlock() error {
 		parser.isLastChunk = true
 		fallthrough
 	case nil:
-		// `parser.buf` reference to `appendBuf.Bytes`, so should use remainBuf to
-		// hold the `parser.buf` rest data to prevent slice overlap
-		parser.remainBuf.Reset()
-		parser.remainBuf.Write(parser.buf)
+		// `parser.buf` references `appendBuf`'s backing array, so compact the
+		// unparsed remainder to the front of `appendBuf` and then append the newly
+		// read block, reusing the same buffer. `bytes.Buffer.Write` copies with
+		// `copy`, which handles the overlapping source and destination correctly,
+		// and this keeps only one buffer sized to the longest row.
 		parser.appendBuf.Reset()
-		parser.appendBuf.Write(parser.remainBuf.Bytes())
+		parser.appendBuf.Write(parser.buf)
 		blockData := parser.blockBuf[:n]
 		if parser.pos == 0 {
 			bomCleanedData := bom.Clean(blockData)

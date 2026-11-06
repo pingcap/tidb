@@ -18,11 +18,13 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"net"
 	"net/http"
 	"path/filepath"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -36,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/stretchr/testify/require"
 	uatomic "go.uber.org/atomic"
@@ -218,10 +221,12 @@ func TestInitTiDBListenerIsIdempotent(t *testing.T) {
 		RunInGoTest = originalRunInGoTest
 	})
 
+	socketDir := t.TempDir()
+
 	cfg := util.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.ReportStatus = false
-	cfg.Socket = filepath.Join(t.TempDir(), "tidb.sock")
+	cfg.Socket = filepath.Join(socketDir, "normal.sock")
 	svr := NewTestServer(cfg)
 	t.Cleanup(svr.Close)
 
@@ -233,6 +238,54 @@ func TestInitTiDBListenerIsIdempotent(t *testing.T) {
 	require.NoError(t, svr.initTiDBListener())
 	require.Equal(t, listenAddr, svr.Listener().Addr().String())
 	require.NotNil(t, svr.Socket())
+
+	t.Run("diagnostic skip grant", func(t *testing.T) {
+		if !intest.InTest {
+			t.Skip("diagnosticmode.SetForTest requires the intest build tag")
+		}
+		t.Cleanup(diagnosticmode.SetForTest(true))
+
+		t.Run("socket only", func(t *testing.T) {
+			cfg := util.NewTestConfig()
+			cfg.Security.SkipGrantTable = true
+			cfg.Port = 0
+			cfg.Socket = filepath.Join(socketDir, "diagnostic.sock")
+			svr := NewTestServer(cfg)
+			t.Cleanup(svr.Close)
+
+			require.NoError(t, svr.initTiDBListener())
+			require.Nil(t, svr.Listener())
+			require.NotNil(t, svr.Socket())
+			socket := svr.Socket()
+			require.NoError(t, svr.initTiDBListener())
+			require.Nil(t, svr.Listener())
+			require.Same(t, socket, svr.Socket())
+			require.Zero(t, cfg.Port)
+		})
+
+		for _, name := range []string{"configured TCP", "existing TCP listener", "missing socket"} {
+			t.Run(name, func(t *testing.T) {
+				cfg := util.NewTestConfig()
+				cfg.Security.SkipGrantTable = true
+				cfg.Port = 0
+				cfg.Socket = filepath.Join(socketDir, "diagnostic.sock")
+				svr := NewTestServer(cfg)
+				t.Cleanup(svr.Close)
+				switch name {
+				case "configured TCP":
+					cfg.Port = 4000
+				case "existing TCP listener":
+					var err error
+					svr.listener, err = net.Listen("tcp", "127.0.0.1:0")
+					require.NoError(t, err)
+				case "missing socket":
+					cfg.Socket = ""
+				}
+				require.ErrorContains(t, svr.initTiDBListener(), "requires a Unix socket and no MySQL TCP listener")
+				require.Nil(t, svr.Socket())
+			})
+		}
+	})
 }
 
 func TestServerShutdownFlags(t *testing.T) {

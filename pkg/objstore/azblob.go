@@ -502,6 +502,10 @@ func newAzureBlobStorage(ctx context.Context, options *backuppb.AzureBlobStorage
 }
 
 func newAzureBlobStorageWithClientBuilder(ctx context.Context, options *backuppb.AzureBlobStorage, clientBuilder ClientBuilder) (*AzureBlobStorage, error) {
+	if _, err := url.Parse(clientBuilder.GetServiceURL()); err != nil {
+		// Neither the parser error nor the SDK error is safe: both contain the URL.
+		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "invalid Azure endpoint URL")
+	}
 	serviceClient, err := clientBuilder.GetServiceClient()
 	if err != nil {
 		return nil, errors.Annotate(err, "Failed to create azure service client")

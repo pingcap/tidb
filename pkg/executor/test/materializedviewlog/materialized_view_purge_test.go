@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -40,6 +41,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func newMViewTestKit(t testing.TB, store kv.Storage) *testkit.TestKit {
@@ -1583,4 +1586,48 @@ func TestMViewEnableControlsMLogCommitTSAccessAndPurge(t *testing.T) {
 	tk.MustExec("set tidb_mview_enable = on")
 	tk.MustExec("purge materialized view log on t_mlog_commit_ts_gate")
 	tk.MustQuery("select count(*) from `$mlog$t_mlog_commit_ts_gate`").Check(testkit.Rows("0"))
+}
+
+func TestPurgeMaterializedViewLogNextNullLog(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		expr     string
+		wantNull string
+		wantLog  bool
+	}{
+		{name: "no NEXT", wantNull: "1"},
+		{name: "valid NEXT", expr: "DATE_ADD(NOW(), INTERVAL 1 HOUR)", wantNull: "0"},
+		{name: "NULL NEXT", expr: "CAST(NULLIF('purge-next-secret', 'purge-next-secret') AS DATETIME)", wantNull: "1", wantLog: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := newMViewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table src_null_next (g int not null, v int not null)")
+			tk.MustExec("create materialized view log on src_null_next (g,v) purge next date_add(now(), interval 1 hour)")
+			mlog, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("$mlog$src_null_next"))
+			require.NoError(t, err)
+			mlog.Meta().MaterializedViewLog.PurgeNext = tc.expr
+			core, recorded := observer.New(zap.ErrorLevel)
+			restoreLog := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{Level: zap.NewAtomicLevelAt(zap.ErrorLevel)})
+			defer restoreLog()
+			message := "purge materialized view log: automatic purge schedule disabled because NEXT expression evaluated to NULL, updating NEXT_PURGE_UNIX_SECONDS to NULL"
+			tk.MustExec("purge materialized view log on src_null_next")
+			require.Zero(t, recorded.FilterMessage(message).Len())
+			tk.MustQuery("select next_purge_unix_seconds is not null from mysql.tidb_mlog_purge_info").Check(testkit.Rows("1"))
+			mustExecMViewPurgeInternal(t, tk, "purge materialized view log on src_null_next")
+			tk.MustQuery("select next_purge_unix_seconds is null from mysql.tidb_mlog_purge_info").Check(testkit.Rows(tc.wantNull))
+			entries := recorded.FilterMessage(message).All()
+			if tc.wantLog {
+				require.NotEmpty(t, entries)
+				for _, entry := range entries {
+					require.Equal(t, "test", entry.ContextMap()["schemaName"])
+					require.Equal(t, "$mlog$src_null_next", entry.ContextMap()["tableName"])
+					require.NotContains(t, fmt.Sprint(entry.ContextMap()), "purge-next-secret")
+				}
+			} else {
+				require.Empty(t, entries)
+			}
+		})
+	}
 }

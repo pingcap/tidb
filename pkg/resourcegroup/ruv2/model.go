@@ -49,8 +49,10 @@ type StmtUnits struct {
 	// contributions retain their producer's size definition: distinct keys,
 	// build rows, or aggregation map entries, summed without normalization.
 	HashStateRows float64
-	// JoinOutputRows counts rows produced by supported Join occurrences after
-	// their join conditions and join-type semantics are applied.
+	// JoinOutputRows counts candidate pairs processed by root and MPP joins before
+	// other conditions, excluding null-extension rows and pairs skipped by short
+	// circuit. Root joins use executor runtime stats; MPP joins use TiFlash's
+	// joined_rows counter. Missing evidence contributes zero.
 	JoinOutputRows float64
 }
 

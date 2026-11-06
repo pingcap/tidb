@@ -58,6 +58,23 @@ func (*mockCursorTrackerRecordSet) Close() error { return nil }
 
 var _ sqlexec.RecordSet = &mockCursorTrackerRecordSet{}
 
+type detachableCursorRecordSet struct {
+	mockCursorTrackerRecordSet
+	detached      sqlexec.RecordSet
+	detachErr     error
+	detachOnError bool
+	closeCount    int
+}
+
+func (rs *detachableCursorRecordSet) TryDetach() (sqlexec.RecordSet, bool, error) {
+	return rs.detached, rs.detached != nil || rs.detachOnError, rs.detachErr
+}
+
+func (rs *detachableCursorRecordSet) Close() error {
+	rs.closeCount++
+	return nil
+}
+
 type executeStmtRecordSetSession struct {
 	sessionapi.Session
 	recordSet sqlexec.RecordSet
@@ -556,6 +573,16 @@ func TestCursorFetchExecuteWithOpenCursor(t *testing.T) {
 	require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 1)))
 	require.NoError(t, c.flush(context.Background()))
 	require.Equal(t, expected, out.Bytes())
+
+	// Re-executing without a cursor must release the previous cursor too.
+	require.NoError(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		0x0, 0x1, 0x0, 0x0, 0x0,
+	)))
+	require.False(t, stmt.GetCursorActive())
+	require.Nil(t, stmt.GetResultSet())
+	require.Nil(t, stmt.GetRowContainer())
+	require.Error(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 1)))
 }
 
 func TestCursorFetchReset(t *testing.T) {
@@ -598,6 +625,90 @@ func TestCursorFetchReset(t *testing.T) {
 	)))
 	// the following fetch will fail
 	require.Error(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 1)))
+
+	t.Run("lazy metadata failures release the detached cursor", func(t *testing.T) {
+		c.ctx.GetSessionVars().EnableLazyCursorFetch = true
+		for _, tc := range []struct {
+			name       string
+			bufferSize int
+		}{
+			{name: "column count", bufferSize: 1},
+			{name: "EOF", bufferSize: 5},
+			{name: "flush", bufferSize: 4096},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				writer := &failedWriteResponseWriter{failOnWrite: 1}
+				c.pkt.SetBufWriter(bufio.NewWriterSize(writer, tc.bufferSize))
+				detached := &detachableCursorRecordSet{}
+				source := resultset.New(&detachableCursorRecordSet{detached: detached}, nil)
+				defer source.Close()
+				cursorStmt := &TiDBStatement{}
+				_, err := c.executeWithCursor(ctx, cursorStmt, source)
+				require.Error(t, err)
+				require.Equal(t, 1, detached.closeCount)
+				require.Nil(t, cursorStmt.GetResultSet())
+				require.False(t, cursorStmt.GetCursorActive())
+				require.NoError(t, cursorStmt.Reset())
+				require.Equal(t, 1, detached.closeCount)
+			})
+		}
+	})
+
+	t.Run("detach errors do not fall back to eager execution", func(t *testing.T) {
+		c.ctx.GetSessionVars().EnableLazyCursorFetch = true
+		c.pkt.ResetBufWriter(new(bytes.Buffer))
+		for _, detached := range []bool{false, true} {
+			detachErr := errors.New("cannot detach cursor")
+			source := resultset.New(&detachableCursorRecordSet{detachErr: detachErr, detachOnError: detached}, nil)
+			defer source.Close()
+			cursorStmt := &TiDBStatement{}
+			gotDetached, err := c.executeWithCursor(ctx, cursorStmt, source)
+			require.ErrorIs(t, err, detachErr)
+			require.Equal(t, detached, gotDetached)
+			require.Nil(t, cursorStmt.GetRowContainer())
+			require.Nil(t, cursorStmt.GetResultSet())
+			require.False(t, cursorStmt.GetCursorActive())
+		}
+	})
+
+	t.Run("successful lazy cursor stays open until release", func(t *testing.T) {
+		c.ctx.GetSessionVars().EnableLazyCursorFetch = true
+		c.pkt.ResetBufWriter(new(bytes.Buffer))
+		detached := &detachableCursorRecordSet{}
+		source := resultset.New(&detachableCursorRecordSet{detached: detached}, nil)
+		defer source.Close()
+		cursorStmt := &TiDBStatement{boundParams: [][]byte{[]byte("long data")}}
+		gotDetached, err := c.executeWithCursor(ctx, cursorStmt, source)
+		require.NoError(t, err)
+		require.True(t, gotDetached)
+		require.True(t, cursorStmt.GetCursorActive())
+		require.Zero(t, detached.closeCount)
+		require.NoError(t, cursorStmt.CloseCursor())
+		require.Equal(t, [][]byte{[]byte("long data")}, cursorStmt.BoundParams())
+		require.NoError(t, cursorStmt.CloseCursor())
+		require.NoError(t, cursorStmt.Reset())
+		require.Nil(t, cursorStmt.BoundParams()[0])
+		require.Equal(t, 1, detached.closeCount)
+		require.Nil(t, cursorStmt.GetResultSet())
+		require.False(t, cursorStmt.GetCursorActive())
+	})
+
+	t.Run("eager metadata failures release the row container", func(t *testing.T) {
+		c.ctx.GetSessionVars().EnableLazyCursorFetch = false
+		for _, bufferSize := range []int{1, 5, 4096} {
+			writer := &failedWriteResponseWriter{failOnWrite: 1}
+			c.pkt.SetBufWriter(bufio.NewWriterSize(writer, bufferSize))
+			source := resultset.New(&mockCursorTrackerRecordSet{}, nil)
+			defer source.Close()
+			cursorStmt := &TiDBStatement{}
+			_, err := c.executeWithCursor(ctx, cursorStmt, source)
+			require.Error(t, err)
+			require.Nil(t, cursorStmt.GetRowContainer())
+			require.Nil(t, cursorStmt.GetResultSet())
+			require.False(t, cursorStmt.GetCursorActive())
+			require.NoError(t, cursorStmt.CloseCursor())
+		}
+	})
 }
 
 func dispatchSendLongData(c *mockConn, stmtID int, paramIndex uint16, parameter []byte) error {

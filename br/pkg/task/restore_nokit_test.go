@@ -16,12 +16,15 @@ package task
 
 import (
 	"context"
+	"encoding/json"
+	"net/url"
 	"testing"
 
 	"github.com/gogo/protobuf/proto"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -30,6 +33,8 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestPhysicalRestoreSysTables(t *testing.T) {
@@ -131,29 +136,59 @@ func TestRewriteKeyRangesUsesStorageCodec(t *testing.T) {
 	require.Nil(t, rewriteKeyRanges(v2Codec, [2]int64{}))
 }
 
-func TestCheckSnapshotRestoreModeRejectsRawBackup(t *testing.T) {
-	ctx := context.Background()
-	store, err := objstore.NewLocalStorage(t.TempDir())
-	require.NoError(t, err)
+func TestCheckSnapshotRestoreMode(t *testing.T) {
+	testCheck := func(t *testing.T, meta *backuppb.BackupMeta, rename []string) error {
+		ctx := context.Background()
+		store, err := objstore.NewLocalStorage(t.TempDir())
+		require.NoError(t, err)
 
-	meta := &backuppb.BackupMeta{
-		IsRawKv:             true,
-		BackupSchemaVersion: backuppb.BackupSchemaVersion,
-	}
-	data, err := proto.Marshal(meta)
-	require.NoError(t, err)
-	require.NoError(t, store.WriteFile(ctx, metautil.MetaFile, data))
+		meta.BackupSchemaVersion = backuppb.BackupSchemaVersion
+		data, err := proto.Marshal(meta)
+		require.NoError(t, err)
+		require.NoError(t, store.WriteFile(ctx, metautil.MetaFile, data))
 
-	cfg := &RestoreConfig{
-		Config: Config{
-			Storage: "local://" + store.URI(),
-			CipherInfo: backuppb.CipherInfo{
-				CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+		cfg := &RestoreConfig{
+			Config: Config{
+				Storage: "local://" + store.URI(),
+				CipherInfo: backuppb.CipherInfo{
+					CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+				},
 			},
-		},
+			Rename: rename,
+		}
+		return checkSnapshotRestoreMode(ctx, cfg)
 	}
 
-	err = checkSnapshotRestoreMode(ctx, cfg)
-	require.Error(t, err)
-	require.ErrorContains(t, err, "restore mode mismatch")
+	t.Run("reject raw backup", func(t *testing.T) {
+		err := testCheck(t, &backuppb.BackupMeta{IsRawKv: true}, nil)
+		require.ErrorContains(t, err, "restore mode mismatch")
+	})
+
+	t.Run("allow full snapshot rename", func(t *testing.T) {
+		err := testCheck(t, &backuppb.BackupMeta{StartVersion: 0, EndVersion: 2}, []string{"source:target"})
+		require.NoError(t, err)
+	})
+
+	t.Run("reject incremental snapshot rename", func(t *testing.T) {
+		err := testCheck(t, &backuppb.BackupMeta{StartVersion: 1, EndVersion: 2}, []string{"source:target"})
+		require.ErrorContains(t, err, "--rename is not supported for incremental snapshot restore")
+	})
+}
+
+func TestCheckpointStorageLogRedaction(t *testing.T) {
+	core, logs := observer.New(zap.InfoLevel)
+	restoreLogger := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{})
+	defer restoreLogger()
+	contextJSON := `{"tenant":"context-value"}`
+	cfg := &RestoreConfig{
+		// A missing bucket stops the test before any storage request.
+		CheckpointStorage: "s3:///?sse-kms-context=" + url.QueryEscape(contextJSON),
+	}
+	require.Error(t, cfg.newStorageCheckpointMetaManagerPITR(context.Background(), 1, 2))
+	entries := logs.FilterMessage("creating storage checkpoint meta managers for PiTR").All()
+	require.Len(t, entries, 1)
+	logged, err := json.Marshal(entries[0].ContextMap())
+	require.NoError(t, err)
+	require.NotContains(t, string(logged), "context-value")
+	require.Contains(t, cfg.CheckpointStorage, "context-value")
 }

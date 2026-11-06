@@ -16,6 +16,7 @@ go_library(
     deps = [
         "//pkg/config/configtypes",
         "//pkg/config/deploymode",
+        "//pkg/config/diagnosticmode",
         "//pkg/config/kerneltype",
         "//pkg/parser/terror",
         "//pkg/resourcegroup/ruv2",
@@ -48,12 +49,14 @@ go_test(
     data = glob(["**"]),
     embed = [":config"],
     flaky = True,
-    shard_count = 39,
+    shard_count = 40,
     deps = [
         "//pkg/config/deploymode",
+        "//pkg/config/diagnosticmode",
         "//pkg/config/kerneltype",
         "//pkg/resourcegroup/ruv2",
         "//pkg/testkit/testsetup",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "@com_github_burntsushi_toml//:toml",
         "@com_github_docker_go_units//:go-units",
