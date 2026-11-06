@@ -5101,6 +5101,8 @@ impl LookupForkTemplate {
             Ok(Err(IndexJoinProbes {
                 keys: std::mem::take(&mut task.probes),
                 bound_values: std::mem::take(&mut task.probe_bound_values),
+                // The fork already charged these probes' ranges.
+                mem_tracker: None,
             }))
         }
     }
@@ -5333,7 +5335,73 @@ impl IndexJoinLookupExec {
         self.lookup_handles.clear();
         self.lookup_physical_ids.clear();
         self.lookup_row_at = 0;
+        if let Some(mem_tracker) = &probes.mem_tracker {
+            self.consume_kv_ranges_for_index_join(mem_tracker)?;
+        }
         self.open_remote_index_handles()
+    }
+
+    /// Go `buildKvRangesForIndexJoin`'s charges to the inner worker's
+    /// tracker, which Go makes whichever reader the ranges then feed. Each
+    /// lookup content's ranges go through `IndexRangesToKVRanges` with the
+    /// tracker (a common handle's through `CommonHandleRangesToKVRanges`,
+    /// which charges nothing), and the task's kv ranges then cost twice their
+    /// first start key each. Under `CompareFilters` the task's datum ranges
+    /// cost twice their first range's datums each, and only their union is
+    /// encoded. An integer-handle reader builds its ranges from handles and
+    /// charges nothing.
+    fn consume_kv_ranges_for_index_join(&mut self, mem_tracker: &Arc<tidb_memory::Tracker>) -> Result<(), ExecError> {
+        let index_id = match self.object {
+            LookupObject::Index(index_id) => Some(index_id),
+            LookupObject::CommonHandle => None,
+            LookupObject::Handle => return Ok(()),
+        };
+        let table_id = self.table.record_physical_ids().first().copied().unwrap_or_default();
+        let encode_err = |error| ExecError::internal(format!("index-join range encoding: {error:?}"));
+        // One entry per lookup content: its ranges over every template.
+        let resume = std::mem::replace(&mut self.next_probe, 0);
+        let mut contents: Vec<Vec<Range>> = Vec::new();
+        while let Some((probe, bounds, template)) = self.next_probe_with_bounds() {
+            let ranges = self.probe_index_ranges(&probe, &bounds, self.probe_tails.get(template))?;
+            match contents.last_mut() {
+                Some(content) if template != 0 => content.extend(ranges),
+                _ => contents.push(ranges),
+            }
+        }
+        self.next_probe = resume;
+        let zone = Some(self.decode_context.zone());
+        if self.probe_bound_ops.is_empty() {
+            let mut kv_ranges = 0;
+            let mut first_start_key = None;
+            for ranges in contents.iter().filter(|ranges| !ranges.is_empty()) {
+                let key_ranges = match index_id {
+                    Some(index_id) => tidb_distsql::index_ranges_to_kv_ranges_with_mem_tracker(
+                        zone, table_id, index_id, ranges, mem_tracker,
+                    ),
+                    None => tidb_distsql::common_handle_ranges_to_kv_ranges(zone, table_id, ranges),
+                }
+                .map_err(encode_err)?;
+                first_start_key.get_or_insert_with(|| key_ranges[0].start_key.len());
+                kv_ranges += key_ranges.len();
+            }
+            if let Some(start_key) = first_start_key {
+                // A seek or row key is made at exactly its length.
+                mem_tracker.consume(2 * (start_key * kv_ranges) as i64);
+            }
+            return Ok(());
+        }
+        let datum_ranges: Vec<Range> = contents.into_iter().flatten().collect();
+        let Some(first) = datum_ranges.first() else {
+            return Ok(());
+        };
+        mem_tracker.consume(2 * tidb_datatype::estimated_mem_usage(&first.low_val, datum_ranges.len()));
+        if let Some(index_id) = index_id {
+            let ranges = tidb_ranger::ranger::union_ranges(datum_ranges, true)
+                .map_err(|error| ExecError::internal(format!("index-join range union: {error}")))?;
+            tidb_distsql::index_ranges_to_kv_ranges_with_mem_tracker(zone, table_id, index_id, &ranges, mem_tracker)
+                .map_err(encode_err)?;
+        }
+        Ok(())
     }
 
     /// Streams one secondary-index batch's handles through the coprocessor,
@@ -7533,6 +7601,7 @@ use std::collections::HashMap;
                     vec![Datum::Int(8)],
                 ],
                 bound_values: Vec::new(),
+                mem_tracker: None,
             })
             .unwrap();
 
@@ -7591,6 +7660,7 @@ use std::collections::HashMap;
             .set_probes(IndexJoinProbes {
                 keys: vec![vec![Datum::Int(7)]],
                 bound_values: Vec::new(),
+                mem_tracker: None,
             })
             .unwrap();
         source.next(&mut chunk).unwrap();
@@ -7720,6 +7790,7 @@ use std::collections::HashMap;
                             let probes = IndexJoinProbes {
                                 keys: vec![vec![Datum::Int(key)]],
                                 bound_values: Vec::new(),
+                                mem_tracker: None,
                             };
                             match mode {
                                 "shared" => {
@@ -7801,6 +7872,7 @@ use std::collections::HashMap;
                     .map(|value| vec![Datum::Int(*value)])
                     .collect(),
                 bound_values: Vec::new(),
+                mem_tracker: None,
             };
             for _ in 0..2 {
                 source.open().unwrap();

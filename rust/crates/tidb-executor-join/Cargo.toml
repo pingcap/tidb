@@ -15,6 +15,7 @@ tidb-cpuprofile = { path = "../tidb-cpuprofile" }
 tidb-variable = { path = "../tidb-variable" }
 tidb-executor-internal-vecgroupchecker = { path = "../tidb-executor-internal-vecgroupchecker" }
 tidb-planner = { path = "../tidb-planner" }
+tidb-ranger = { path = "../tidb-ranger" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-executor-internal-exec = { path = "../tidb-executor-internal-exec" }
 tidb-exprctx = { path = "../tidb-exprctx" }

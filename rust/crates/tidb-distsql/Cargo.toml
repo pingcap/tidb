@@ -23,6 +23,7 @@ tidb-trxevents = { path = "../tidb-trxevents" }
 tidb-execdetails = { path = "../tidb-execdetails" }
 tidb-context = { path = "../tidb-context" }
 tidb-memory = { path = "../tidb-memory" }
+tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-paging = { path = "../tidb-paging" }
 tidb-tracing = { path = "../tidb-tracing" }
 tidb-expr = { path = "../tidb-expr" }

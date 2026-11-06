@@ -4437,24 +4437,11 @@ fn build_index_join(
             "a physical index join retained a condition on its inner side",
         ));
     }
-    // Go `IndexLookUpJoin`'s outer filter only marks `outerMatch`: an outer
-    // row that fails it still reaches the joiner's miss path. A join that
-    // preserves its outer side therefore keeps the row, and only an inner
-    // or semi join may drop it before the lookup.
-    let outer_preserved = match join.join_type {
-        LogicalJoinType::LeftOuter
-        | LogicalJoinType::LeftOuterSemi
-        | LogicalJoinType::AntiSemi
-        | LogicalJoinType::AntiLeftOuterSemi => join.inner_child_idx == 1,
-        LogicalJoinType::RightOuter => join.inner_child_idx == 0,
-        _ => false,
-    };
-    let outer = filtered_join_child(
-        plan,
-        build_with_state(outer_plan, catalog, ctx, state)?,
-        if outer_preserved { &[] } else { outer_conditions },
-        ctx,
-    )?;
+    // Go `OuterCtx.Filter`: the outer filter only marks `outerMatch`, so an
+    // outer row that fails it looks nothing up and reaches the joiner's miss
+    // path.
+    let outer = build_with_state(outer_plan, catalog, ctx, state)?;
+    let outer_filter = resolve_expressions(outer_conditions, outer.schema())?;
     let left_schema = plan_schema(left_plan)?;
     let right_schema = plan_schema(right_plan)?;
     let condition_schema = tidb_expr::schema::merge_schema(Some(&left_schema), Some(&right_schema))
@@ -4497,9 +4484,6 @@ fn build_index_join(
         &join.other_conditions,
         &condition_schema,
     )?);
-    if outer_preserved {
-        conditions.extend(resolve_expressions(outer_conditions, &condition_schema)?);
-    }
     let (probe_keys, probe_parts) = index_join_probe_shape(join)?;
     let probe_key_domains = index_join_probe_key_domains(join, &probe_parts, catalog, ctx)?;
     let probe_bounds = join
@@ -4526,6 +4510,7 @@ fn build_index_join(
         probe_keys,
         probe_key_domains,
         source,
+        outer_filter,
         outer_not_null: Vec::new(),
         inner_not_null: Vec::new(),
         probe_bounds,
@@ -4567,9 +4552,16 @@ fn build_index_join(
         i64::from(plan.id()),
     );
     executor.set_index_join_batch_size(ctx.index_join_batch_size());
+    executor.set_index_ranges(&join.ranges);
     executor.set_vectorized_expression(ctx.enable_vectorized_expression());
-    if join.kind == tidb_planner_core_operator_physicalop::IndexJoinKind::IndexHashJoin {
-        executor.set_index_hash_join(join.keep_outer_order);
+    match join.kind {
+        tidb_planner_core_operator_physicalop::IndexJoinKind::IndexHashJoin => {
+            executor.set_index_hash_join(join.keep_outer_order);
+        }
+        tidb_planner_core_operator_physicalop::IndexJoinKind::IndexMergeJoin => {
+            executor.set_index_merge_join();
+        }
+        tidb_planner_core_operator_physicalop::IndexJoinKind::IndexJoin => {}
     }
     executor
         .set_output_offsets(physical_join_output_offsets(

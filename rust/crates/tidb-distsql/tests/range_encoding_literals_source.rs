@@ -144,6 +144,56 @@ fn index_ranges_to_kv_ranges_matches_master_byte_literals() {
     }
 }
 
+/// Go `IndexRangesToKVRangesWithInterruptSignal`'s charge to its
+/// `memTracker`, captured by calling it on these ranges: a `kv.KeyRange`
+/// per range, then the first range's four encoded keys' capacities per
+/// range -- `EncodeKey`'s `preRealloc` estimate, a string's `EncodeBytes`
+/// reallocation when its collation key outgrows it, a decimal's appends, and
+/// `PrefixNext`'s exact copy.
+#[test]
+fn index_ranges_to_kv_ranges_charges_go_key_capacities() {
+    use std::sync::Arc;
+    use tidb_datatype::Datum;
+    let charge = |ranges: &[Range]| {
+        let tracker: Arc<tidb_memory::Tracker> = tidb_memory::Tracker::new(-1, -1);
+        tidb_distsql::index_ranges_to_kv_ranges_with_mem_tracker(None, 12, 15, ranges, &tracker)
+            .expect("index ranges");
+        tracker.bytes_consumed()
+    };
+    assert_eq!(charge(&source_ranges()), 610);
+    let text = Datum::new_collation_string_datum("abcdefghij", tidb_charset::Collation::Utf8Mb4GeneralCi);
+    let strings = [
+        Range {
+            collators: vec![tidb_charset::Collation::Utf8Mb4GeneralCi, tidb_charset::Collation::Binary],
+            low_val: vec![text.clone(), datum(7)],
+            high_val: vec![text.clone(), datum(7)],
+            low_exclude: false,
+            high_exclude: false,
+        },
+        Range {
+            collators: vec![tidb_charset::Collation::Utf8Mb4GeneralCi, tidb_charset::Collation::Binary],
+            low_val: vec![text.clone(), datum(8)],
+            high_val: vec![text, datum(9)],
+            low_exclude: false,
+            high_exclude: false,
+        },
+    ];
+    assert_eq!(charge(&strings), 522);
+    // A lone string's collation key outgrows the estimate: `EncodeBytes`
+    // reallocates to exactly its groups.
+    let text = Datum::new_collation_string_datum("abcdefghij", tidb_charset::Collation::Utf8Mb4GeneralCi);
+    let lone = Range {
+        collators: vec![tidb_charset::Collation::Utf8Mb4GeneralCi],
+        low_val: vec![text.clone()],
+        high_val: vec![text],
+        low_exclude: false,
+        high_exclude: true,
+    };
+    assert_eq!(charge(&[lone]), 198);
+    let decimal = Datum::Decimal(tidb_datatype::Decimal::parse_mysql("12.345").0);
+    assert_eq!(charge(&[range(vec![decimal.clone()], vec![decimal], false, false)]), 145);
+}
+
 /// Source: request-builder default fields across
 /// `TestRequestBuilder1..8` (`pkg/distsql/request_builder_test.go:249-798`).
 ///

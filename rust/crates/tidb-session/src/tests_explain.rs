@@ -7197,6 +7197,96 @@ fn an_index_join_reads_its_outer_side_like_go() {
     }
 }
 
+/// Go's `IndexLookUpJoin` charges each task's outer chunks, its encoded
+/// lookup keys (`encodedLookUpKeys`, one blob row per outer row) and its
+/// inner rows to the task, and its lookup datums and inner ranges
+/// (`buildKvRangesForIndexJoin`) to the inner worker until the task's map is
+/// built. Captured from a Go testkit run (whose figures also vary with worker
+/// timing; these are runs the deterministic port reproduces):
+///
+/// ```text
+/// t JOIN s ON t.a=s.d                 IndexJoin_21     3161 = 1396 outer + 265 keys + 432 datums + 732 + 336 ranges
+/// t JOIN s ON t.a=s.a                 IndexJoin_12     2853 = 1396 + 265 + 432 + 760 inner rows (handles: no ranges)
+/// t LEFT JOIN s ON t.a=s.a            IndexJoin_11     2853
+/// t JOIN s ON t.a=s.d AND t.b=s.a     IndexJoin_11     2949 (two hash keys)
+/// t JOIN s ON t.b=s.d WHERE t.a > 2   IndexJoin_14     2613 (four outer rows)
+/// t JOIN s ON t.a=s.d AND s.a > t.b   IndexJoin_13     4.56 KB (CompareFilters: datum ranges, then their union)
+/// inl_hash_join t JOIN s ON t.a=s.d   IndexHashJoin_25 3161
+/// t LEFT JOIN s ON t.a=s.a AND t.b>2  IndexJoin_11     2379 = 1396 + 6 outerMatch + 217 + 760
+/// ```
+#[test]
+fn an_index_join_charges_its_tasks_like_go() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE t (a INT PRIMARY KEY, b INT, c VARCHAR(20), KEY(b))",
+        "CREATE TABLE s (a INT PRIMARY KEY, d INT, KEY(d))",
+        "INSERT INTO t VALUES (1,1,'x'),(2,2,'y'),(3,3,'z'),(4,4,'w'),(5,5,'v'),(6,6,'u')",
+        "INSERT INTO s VALUES (1,10),(2,20),(3,30),(7,70)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    for (sql, operator, memory) in [
+        ("SELECT /*+ inl_join(s) */ * FROM t JOIN s ON t.a=s.d", "IndexJoin_21", "3.09 KB"),
+        ("SELECT /*+ inl_join(s) */ * FROM t JOIN s ON t.a=s.a", "IndexJoin_12", "2.79 KB"),
+        ("SELECT /*+ inl_join(s) */ * FROM t LEFT JOIN s ON t.a=s.a", "IndexJoin_11", "2.79 KB"),
+        ("SELECT /*+ inl_join(s) */ * FROM t JOIN s ON t.a=s.d AND t.b=s.a", "IndexJoin_11", "2.88 KB"),
+        ("SELECT /*+ inl_join(s) */ * FROM t JOIN s ON t.b=s.d WHERE t.a > 2", "IndexJoin_14", "2.55 KB"),
+        ("SELECT /*+ inl_join(s) */ * FROM t JOIN s ON t.a=s.d AND s.a > t.b", "IndexJoin_13", "4.56 KB"),
+        ("SELECT /*+ inl_hash_join(s) */ * FROM t JOIN s ON t.a=s.d", "IndexHashJoin_25", "3.09 KB"),
+        // The outer filter's `outerMatch` (6 bytes); the filtered first row
+        // charges no lookup datums.
+        ("SELECT /*+ inl_join(s) */ * FROM t LEFT JOIN s ON t.a=s.a AND t.b > 2", "IndexJoin_11", "2.32 KB"),
+    ] {
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        let row = rows
+            .iter()
+            .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()) == operator)
+            .unwrap_or_else(|| panic!("{sql}: no {operator} in {rows:?}"));
+        assert_eq!(row[7], memory, "{sql}: {rows:?}");
+    }
+    // Go `OuterCtx.Filter`: an outer row failing the join's outer condition
+    // looks nothing up and is padded.
+    for hint in ["inl_join", "inl_hash_join"] {
+        assert_eq!(
+            row_text(session.run(&format!(
+                "SELECT /*+ {hint}(s) */ t.a, s.d FROM t LEFT JOIN s ON t.a=s.a AND t.b > 2 ORDER BY t.a"
+            ))),
+            [("1", "NULL"), ("2", "NULL"), ("3", "30"), ("4", "NULL"), ("5", "NULL"), ("6", "NULL")]
+                .iter()
+                .map(|(a, d)| vec![a.to_string(), d.to_string()])
+                .collect::<Vec<_>>(),
+            "{hint}"
+        );
+    }
+    // A filtered outer row sharing a key with a looked-up one still misses,
+    // in the hash variant too (`buildHashTableForOuterResult` skips it).
+    session.run("CREATE TABLE o (a INT, b INT)").unwrap();
+    session.run("INSERT INTO o VALUES (1,1),(1,5)").unwrap();
+    for hint in ["inl_join", "inl_hash_join"] {
+        assert_eq!(
+            row_text(session.run(&format!(
+                "SELECT /*+ {hint}(s) */ o.b, s.d FROM o LEFT JOIN s ON o.a=s.a AND o.b > 2 ORDER BY o.b"
+            ))),
+            vec![vec!["1".to_owned(), "NULL".to_owned()], vec!["5".to_owned(), "10".to_owned()]],
+            "{hint}"
+        );
+    }
+    // The lookup map is keyed by the inner type's encoding: an outer value
+    // converted into the inner column matches across integer signedness.
+    for sql in [
+        "CREATE TABLE ou (a BIGINT UNSIGNED, KEY(a))",
+        "INSERT INTO ou VALUES (1),(3),(18446744073709551615)",
+        "CREATE TABLE oi (a BIGINT, KEY(a))",
+        "INSERT INTO oi VALUES (1),(-1),(3)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    assert_eq!(
+        row_text(session.run("SELECT /*+ inl_join(ou) */ oi.a, ou.a FROM oi JOIN ou ON oi.a=ou.a ORDER BY oi.a")),
+        vec![vec!["1".to_owned(), "1".to_owned()], vec!["3".to_owned(), "3".to_owned()]]
+    );
+}
+
 /// Go's `StreamAggExec` charges its child result and its functions'
 /// partial results (`AllocPartialResult` plus each update's delta) to its
 /// own tracker, so a root StreamAgg's EXPLAIN ANALYZE memory is Go's

@@ -592,6 +592,114 @@ pub fn index_ranges_to_kv_ranges(
         .collect())
 }
 
+/// Go `IndexRangesToKVRangesWithInterruptSignal` for one physical table and
+/// its `memTracker` (`indexRangesToKVWithoutSplit`): before encoding, one
+/// `kv.KeyRange` per range is charged, and the first range's four encoded
+/// keys' capacities are charged once per range.
+pub fn index_ranges_to_kv_ranges_with_mem_tracker(
+    location: Option<&tidb_datatype::SessionTimeZone>,
+    table_id: i64,
+    index_id: i64,
+    ranges: &[Range],
+    mem_tracker: &Arc<tidb_memory::Tracker>,
+) -> Result<Vec<KeyRange>, KvRequestBuildError> {
+    // Go `unsafe.Sizeof(kv.KeyRange{})`: two byte slices.
+    const KEY_RANGE_SIZE: i64 = 48;
+    mem_tracker.consume(KEY_RANGE_SIZE * ranges.len() as i64);
+    let mut key_ranges = Vec::with_capacity(ranges.len());
+    for (i, range) in ranges.iter().enumerate() {
+        let (low, high) = encode_index_key(location, range)?;
+        let start_key = encode_index_seek_key(table_id, index_id, &low);
+        let end_key = encode_index_seek_key(table_id, index_id, &high);
+        if i == 0 {
+            // `EncodeIndexSeekKey` makes its key at exactly its length.
+            let (low_cap, high_cap) = encoded_index_key_capacities(location, range)?;
+            let estimated = (low_cap + high_cap + start_key.len() + end_key.len()) as i64;
+            mem_tracker.consume(estimated * ranges.len() as i64);
+        }
+        key_ranges.push(KeyRange {
+            start_key: start_key.into(),
+            end_key: end_key.into(),
+        });
+    }
+    Ok(key_ranges)
+}
+
+/// The capacities Go's `EncodeIndexKey` leaves on a range's two bounds:
+/// `PrefixNext` copies a key into a buffer of exactly its length (appending
+/// a byte when every byte carries), otherwise the bound keeps the capacity
+/// `codec.EncodeKey` left ([`go_encode_key_capacity`]).
+fn encoded_index_key_capacities(
+    location: Option<&tidb_datatype::SessionTimeZone>,
+    range: &Range,
+) -> Result<(usize, usize), KvRequestBuildError> {
+    let capacity = |values: &[Datum], prefix_next: bool| -> Result<usize, KvRequestBuildError> {
+        if !prefix_next {
+            return go_encode_key_capacity(location, values);
+        }
+        let encoded = encode_key_at(location, values)?;
+        Ok(if encoded.iter().all(|byte| *byte == u8::MAX) {
+            go_byte_append_capacity(encoded.len(), encoded.len() + 1)
+        } else {
+            encoded.len()
+        })
+    };
+    Ok((
+        capacity(&range.low_val, range.low_exclude)?,
+        capacity(&range.high_val, !range.high_exclude)?,
+    ))
+}
+
+fn encode_key_at(
+    location: Option<&tidb_datatype::SessionTimeZone>,
+    values: &[Datum],
+) -> Result<Vec<u8>, KvRequestBuildError> {
+    match location {
+        Some(zone) => tidb_codec::encode_key_in_timezone(zone, values),
+        None => encode_key(values),
+    }
+    .map_err(|_| KvRequestBuildError::RangeEncoding)
+}
+
+/// The capacity Go's `codec.EncodeKey(loc, nil, values...)` leaves on its
+/// key: `preRealloc` makes the estimated buffer, every datum appends its flag
+/// byte, a string's `EncodeBytes` then reallocates to exactly the groups it
+/// writes when they do not fit (`reallocBytes`), and any other datum appends
+/// the rest of its encoding.
+fn go_encode_key_capacity(
+    location: Option<&tidb_datatype::SessionTimeZone>,
+    values: &[Datum],
+) -> Result<usize, KvRequestBuildError> {
+    let mut capacity = tidb_codec::pre_realloc_size(values, true).unwrap_or(0);
+    let mut len = 0;
+    for value in values {
+        let encoded = encode_key_at(location, std::slice::from_ref(value))?.len();
+        capacity = go_byte_append_capacity(capacity, len + 1);
+        len += 1;
+        let rest = encoded - 1;
+        capacity = if matches!(value, Datum::String(_) | Datum::Bytes(_)) {
+            capacity.max(len + rest)
+        } else {
+            go_byte_append_capacity(capacity, len + rest)
+        };
+        len += rest;
+    }
+    Ok(capacity)
+}
+
+/// Go `append` on a byte slice of capacity `capacity` growing to `new_len`.
+fn go_byte_append_capacity(capacity: usize, new_len: usize) -> usize {
+    if new_len <= capacity {
+        return capacity;
+    }
+    tidb_goruntime::go_runtime::go_64_next_slice_capacity_for_element(
+        new_len,
+        capacity,
+        1,
+        tidb_goruntime::go_runtime::GoSliceElementLayout::NoPointers,
+    )
+}
+
 /// Go `EncodeIndexKey(dctx, ran)`: the mem-comparable bounds of one range,
 /// with the exclusion adjustments applied, encoded in the DistSQL context's
 /// location (`dctx.Location`; UTC for a nil `dctx`, which `location: None`

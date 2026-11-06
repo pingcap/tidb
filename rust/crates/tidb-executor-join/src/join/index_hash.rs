@@ -144,14 +144,6 @@ pub struct IndexHashState {
     pub evaluations: u64,
     pub done: bool,
     inner_done: bool,
-    tracker: Arc<Tracker>,
-    bytes: i64,
-}
-
-impl Drop for IndexHashState {
-    fn drop(&mut self) {
-        self.tracker.consume(-self.bytes);
-    }
 }
 
 impl IndexHashOutput {
@@ -268,10 +260,9 @@ impl IndexHashState {
         keys: &[EquiKey],
         outer: &OuterBatch,
         inner: &List,
-        tracker: &Arc<Tracker>,
         memory: &StatementMemory,
     ) -> Result<Self, ExecError> {
-        let mut state = Self::build(output, keys, outer, tracker, memory)?;
+        let mut state = Self::build(output, keys, outer, memory)?;
         state.prepare_ordered(output, outer, inner, memory)?;
         Ok(state)
     }
@@ -280,11 +271,15 @@ impl IndexHashState {
         output: &IndexHashOutput,
         keys: &[EquiKey],
         outer: &OuterBatch,
-        tracker: &Arc<Tracker>,
         memory: &StatementMemory,
     ) -> Result<Self, ExecError> {
         let mut buckets = OuterHash::with_capacity(outer.len());
         for index in 0..outer.len() {
+            // Go `buildHashTableForOuterResult` skips a row failing the
+            // outer filter (`outerMatch`).
+            if !outer.outer_matched(index) {
+                continue;
+            }
             if let Some(hash) =
                 row_hash_chunk(keys, outer.row(index), output.outer_types(), |key| {
                     if output.outer_is_left {
@@ -318,8 +313,6 @@ impl IndexHashState {
             evaluations: 0,
             done: false,
             inner_done: true,
-            tracker: Arc::clone(tracker),
-            bytes: 0,
         };
         state.account(memory)?;
         Ok(state)
@@ -363,22 +356,10 @@ impl IndexHashState {
         Ok(())
     }
 
+    /// Go's `IndexNestedLoopHashJoin` charges nothing for a task's outer
+    /// hash table or its join chunks (`buildHashTableForOuterResult`,
+    /// `joinChkResourceCh`); only the statement's quota is checked.
     fn account(&mut self, memory: &StatementMemory) -> Result<(), ExecError> {
-        let bytes = self.buckets.memory_usage()
-            + self.ordered.as_ref().map_or(0, |v| {
-                v.capacity() * size_of::<Vec<RowPtr>>()
-                    + v.iter()
-                        .map(|v| v.capacity() * size_of::<RowPtr>())
-                        .sum::<usize>()
-            })
-            + self.matched.capacity()
-            + self.keys.capacity() * size_of::<EquiKey>()
-            + self.candidate_outer.capacity() * size_of::<usize>()
-            + self.selected.capacity()
-            + self.nulls.capacity();
-        let bytes = bytes as i64 + self.scratch.memory_usage();
-        self.tracker.consume(bytes - self.bytes);
-        self.bytes = bytes;
         memory.check().map_err(ExecError::from)
     }
 
@@ -595,20 +576,15 @@ impl IndexHashState {
 pub struct IndexHashChunk {
     pub chunk: Chunk,
     pub row: usize,
-    bytes: i64,
-    tracker: Arc<Tracker>,
     recycle: Option<std::sync::mpsc::SyncSender<Chunk>>,
 }
 
 impl IndexHashChunk {
-    pub fn new(chunk: Chunk, tracker: &Arc<Tracker>) -> Self {
-        let bytes = chunk.memory_usage();
-        tracker.consume(bytes);
+    /// Go's join chunks (`joinChkResourceCh`) are not tracked.
+    pub fn new(chunk: Chunk) -> Self {
         Self {
             chunk,
             row: 0,
-            bytes,
-            tracker: Arc::clone(tracker),
             recycle: None,
         }
     }
@@ -616,7 +592,6 @@ impl IndexHashChunk {
 
 impl Drop for IndexHashChunk {
     fn drop(&mut self) {
-        self.tracker.consume(-self.bytes);
         if let Some(sender) = self.recycle.take() {
             let mut chunk = std::mem::replace(&mut self.chunk, Chunk::new_chunk_with_capacity(&[], 0));
             chunk.reset();
@@ -636,6 +611,15 @@ pub fn send_index_task<C: Columns + Send + Sync + 'static>(
         send_prepared_index_task(shared, run_index_task(shared, outer), sender);
         return;
     }
+    let mut outer = outer;
+    let probes = match construct_index_task(shared, &mut outer) {
+        Ok(probes) => probes,
+        Err(error) => {
+            send_prepared_index_task(shared, fetched_index_task_outcome(outer, Err(error)), sender);
+            return;
+        }
+    };
+    let mem_tracker = outer.take_kv_range_tracker(true);
     // Go handleTask overlaps outer hash construction with fetching inner
     // results. CPU work uses the existing pool, never a blocking I/O lane.
     let outer = Arc::new(outer);
@@ -646,7 +630,6 @@ pub fn send_index_task<C: Columns + Send + Sync + 'static>(
             build_shared.hash_output.as_ref().expect("hash variant"),
             &build_shared.keys,
             &build_outer,
-            &build_shared.tracker,
             &build_shared.memory,
         );
         drop(build_outer);
@@ -654,7 +637,7 @@ pub fn send_index_task<C: Columns + Send + Sync + 'static>(
     });
     let mut reader = None;
     let fetched = (|| {
-        let task = match open_index_task(shared, &outer)? {
+        let task = match open_index_task(shared, probes, mem_tracker)? {
             Ok(task) => task,
             Err(probes) => return Ok(FetchedIndexTask::Unforked(probes)),
         };
@@ -679,7 +662,9 @@ pub fn send_index_task<C: Columns + Send + Sync + 'static>(
             "index-hash build worker stopped without a result",
         ))
     });
-    let outer = Arc::into_inner(outer).expect("build completion releases its outer rows");
+    let mut outer = Arc::into_inner(outer).expect("build completion releases its outer rows");
+    // Go `handleTask`'s defer: the inner worker's charges end with the task.
+    outer.inner_worker_tracker = None;
     let outcome = fetched_index_task_outcome(outer, fetched);
     send_prepared_with_hash(
         shared,
@@ -728,7 +713,6 @@ pub fn send_prepared_with_hash<C: Columns>(
                 output,
                 &shared.keys,
                 &outer,
-                &shared.tracker,
                 &shared.memory,
             )?,
         };
@@ -743,7 +727,7 @@ pub fn send_prepared_with_hash<C: Columns>(
         while !hash.done {
             hash.drain(output, &shared.ctx, &outer, &inner.rows, &mut buffer)?;
             if buffer.is_full() || hash.done && buffer.num_rows() > 0 {
-                let mut chunk = IndexHashChunk::new(buffer, &shared.tracker);
+                let mut chunk = IndexHashChunk::new(buffer);
                 chunk.recycle = Some(recycle.clone());
                 shared.memory.check().map_err(ExecError::from)?;
                 if sender.send(IndexTaskOutcome::HashChunk(chunk)).is_err() {
@@ -833,7 +817,6 @@ mod tests {
             let mut inner = List::new(&[ty], 4, 4);
             inner.add(chunk);
             let memory = StatementMemory::default();
-            let tracker = memory.operator_tracker(1);
             let keys = [EquiKey {
                 left: 0,
                 right: 0,
@@ -841,7 +824,7 @@ mod tests {
                 null_safe: false,
             }];
             let mut state =
-                IndexHashState::new(&output, &keys, &outer, &inner, &tracker, &memory).unwrap();
+                IndexHashState::new(&output, &keys, &outer, &inner, &memory).unwrap();
             let ctx = Parameters(Cell::new(0));
             let mut result = Chunk::new(&output.output_types, 4, 4);
             result.set_required_rows(3, 4);
@@ -981,7 +964,7 @@ mod tests {
                 }
                 inner.add(chunk);
                 let mut state =
-                    IndexHashState::build(&output, &keys, &outer, &tracker, &memory).unwrap();
+                    IndexHashState::build(&output, &keys, &outer, &memory).unwrap();
                 let hash = row_hash_chunk(&keys, outer.row(1), &types, |k| k.left)
                     .unwrap()
                     .unwrap();

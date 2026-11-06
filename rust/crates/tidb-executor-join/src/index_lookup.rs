@@ -18,18 +18,36 @@
 //! seeds with each outer batch's probes ([`IndexJoinLookup`]) and the
 //! template a lane thread opens a task from ([`IndexJoinLookupFork`]).
 
+use std::sync::Arc;
+
 use tidb_datatype::Datum;
 use tidb_driver_error::ExecError;
 use tidb_executor_internal_exec::Executor;
 use tidb_expr::expression::Expression;
+use tidb_memory::Tracker;
 
 /// One outer batch's deduped probes plus the per-probe bound values the join
 /// evaluated alongside them. `bound_values` is empty when the decision carries
 /// no bounds; otherwise it aligns 1:1 with `keys`.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct IndexJoinProbes {
     pub keys: Vec<Vec<Datum>>,
     pub bound_values: Vec<Vec<Datum>>,
+    /// Go `BuildExecutorForIndexJoin`'s `memTracker`: the inner worker's
+    /// tracker, which the reader charges with the ranges it builds for these
+    /// probes (`buildKvRangesForIndexJoin`). `None` charges nothing, as Go's
+    /// nil tracker does.
+    pub mem_tracker: Option<Arc<Tracker>>,
+}
+
+impl std::fmt::Debug for IndexJoinProbes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IndexJoinProbes")
+            .field("keys", &self.keys)
+            .field("bound_values", &self.bound_values)
+            .field("mem_tracker", &self.mem_tracker.is_some())
+            .finish()
+    }
 }
 
 /// One outer-derived comparison against the object-key column just past the

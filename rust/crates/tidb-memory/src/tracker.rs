@@ -97,6 +97,9 @@ pub const LABEL_FOR_ROW_CONTAINER: i64 = -10;
 pub const LABEL_FOR_GLOBAL_STORAGE: i64 = -11;
 /// `LabelForChunkDataInDiskByChunks`: the chunk-addressed spill file.
 pub const LABEL_FOR_CHUNK_DATA_IN_DISK_BY_CHUNKS: i64 = -30;
+/// `LabelForIndexJoinInnerWorker`: an index join's inner worker, charged
+/// with each task's lookup keys and inner ranges.
+pub const LABEL_FOR_INDEX_JOIN_INNER_WORKER: i64 = -20;
 
 const SOFT_SCALE: f64 = 0.8;
 

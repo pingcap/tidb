@@ -1303,6 +1303,7 @@ mod tests {
             .set_probes(tidb_executor_join::index_lookup::IndexJoinProbes {
                 keys: (1..=4097).map(|probe| vec![Datum::Int(probe)]).collect(),
                 bound_values: Vec::new(),
+                mem_tracker: None,
             })
             .unwrap();
 
@@ -1418,6 +1419,7 @@ mod tests {
                 probe_keys: vec![0],
                 probe_key_domains: Vec::new(),
                 source: IndexLookupSource::Leaf(Box::new(lookup)),
+                outer_filter: Vec::new(),
                 outer_not_null: Vec::new(),
                 inner_not_null: Vec::new(),
                 probe_bounds: Vec::new(),

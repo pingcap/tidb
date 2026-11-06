@@ -69,8 +69,8 @@
       "id": "E12",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "An index join reads and charges its outer tasks as Go's outer worker does (`buildTask`), but the rest of a task is not Go's: Go encodes each outer row's hash key with `codec.EncodeKey` into the task's `encodedLookUpKeys` chunks and keys its `mvmap` lookup map the same way, where this port matches through `hash_join::row_key`'s own length-framed encoding and charges neither; and Go's inner worker charges its lookup datums and, through the inner reader builder, the inner ranges (`buildKvRangesForIndexJoin`, `IndexRangesToKVRanges`) to `iw.memTracker`: `IndexJoin` holds 1.36 KB where Go's `IndexLookUpJoin` holds 3161 B = 1396 outer + 265 encoded keys + 432 datums + 732 + 336 ranges (`t JOIN s ON t.a=s.d`, six outer rows, no matches)",
-      "go_owner": "`pkg/executor/join/index_lookup_join.go`, `pkg/executor/builder.go` (`buildExecutorForIndexJoin`, `buildKvRangesForIndexJoin`), `pkg/distsql/request_builder.go`"
+      "finding": "An index join's tasks are Go's in memory and matching (`IndexLookUpJoin`, `IndexNestedLoopHashJoin`): outer chunks and the outer filter's `outerMatch`, `codec.EncodeKey` lookup keys (`encodedLookUpKeys`) keying the inner map, lookup datums and the inner reader's `IndexRangesToKVRanges` charges on the inner worker's tracker, and each worker's range copy on the statement. The executor is not: the index join is a strategy of the fused `JoinExec` (`join.rs`), which pairs rows by evaluating the whole `ON` where Go runs three executors over `Joiner` (`TryToMatchInners` on the other conditions only), and Go's `IndexLookUpMergeJoin` (its own task charges, `outerOrderIdx`, merge pairing) runs here as the plain lookup",
+      "go_owner": "`pkg/executor/join/index_lookup_join.go`, `index_lookup_hash_join.go`, `index_lookup_merge_join.go`, `joiner.go`"
     },
     {
       "id": "E14",

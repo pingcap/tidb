@@ -706,6 +706,10 @@ pub struct IndexLookupPlan {
     pub probe_key_domains: Vec<IndexProbeKeyDomain>,
     /// The re-seedable inner source.
     pub source: IndexLookupSource,
+    /// Go `OuterCtx.Filter`: the join's conditions on the outer side alone,
+    /// over the outer child's row. A row failing them looks nothing up
+    /// (`outerMatch`), so the join treats it as unmatched.
+    pub outer_filter: Vec<Expression>,
     /// Outer-child columns a null-rejecting join predicate proves non-NULL.
     pub outer_not_null: Vec<usize>,
     /// Lookup-result columns the same predicate proves non-NULL, evaluated
@@ -731,6 +735,21 @@ struct OuterBatch {
     ptrs: Vec<RowPtr>,
     /// Bytes charged to the tracker for `rows`.
     bytes: i64,
+    /// Go `lookUpJoinTask.encodedLookUpKeys`: per outer chunk, each row's
+    /// `codec.EncodeKey` of its converted hash key, NULL for a row that
+    /// looks nothing up ([`index_task_probes`]).
+    encoded_look_up_keys: Vec<Chunk>,
+    /// The task's charge for `encoded_look_up_keys`.
+    encoded_look_up_keys_charge: Option<TrackerCharge>,
+    /// The inner-worker tracker of the task in flight, dropped (reset) once
+    /// the task's inner rows and lookup map are built.
+    inner_worker_tracker: Option<InnerWorkerTracker>,
+    /// Whether a forked reader already charged this task's ranges, so the
+    /// session's own reader serving it does not charge them again.
+    kv_ranges_charged: bool,
+    /// Go `lookUpJoinTask.outerMatch`: per outer chunk, whether each row
+    /// passes the join's outer filter; empty without one.
+    outer_match: Vec<Vec<bool>>,
 }
 
 impl OuterBatch {
@@ -739,7 +758,38 @@ impl OuterBatch {
             rows: List::new(types, init_cap, max_chunk_size),
             ptrs: Vec::new(),
             bytes: 0,
+            encoded_look_up_keys: Vec::new(),
+            encoded_look_up_keys_charge: None,
+            inner_worker_tracker: None,
+            kv_ranges_charged: false,
+            outer_match: Vec::new(),
         }
+    }
+
+    /// Whether the `index`-th visited row passes the outer filter.
+    fn outer_matched(&self, index: usize) -> bool {
+        let ptr = self.ptrs[index];
+        self.outer_match
+            .get(ptr.chk_idx as usize)
+            .is_none_or(|matched| matched[ptr.row_idx as usize])
+    }
+
+    /// Go `lookUpMatchedInners`' outer key: the encoded hash key of the
+    /// `index`-th visited row, `None` for a row that looks nothing up.
+    fn encoded_look_up_key(&self, index: usize) -> Option<Vec<u8>> {
+        let ptr = self.ptrs[index];
+        let row = self.encoded_look_up_keys.get(ptr.chk_idx as usize)?.get_row(ptr.row_idx as usize);
+        (!row.is_null(0)).then(|| row.get_bytes(0).to_vec())
+    }
+
+    /// The tracker the inner reader charges this task's ranges to, unless a
+    /// fork already did; `forked` records that the next reader is a fork.
+    fn take_kv_range_tracker(&mut self, forked: bool) -> Option<Arc<Tracker>> {
+        let tracker = (!self.kv_ranges_charged)
+            .then(|| self.inner_worker_tracker.as_ref().map(|tracker| Arc::clone(&tracker.0)))
+            .flatten();
+        self.kv_ranges_charged |= forked;
+        tracker
     }
 
     fn len(&self) -> usize {
@@ -777,9 +827,11 @@ impl OuterBatch {
 
     /// Settles the memory charge once the batch is complete.
     fn settle_bytes(&mut self) -> i64 {
+        // Go charges each `outerMatch` slice's capacity, one row per byte.
         self.bytes = (0..self.rows.num_chunks())
             .map(|index| self.rows.get_chunk(index).memory_usage())
-            .sum();
+            .sum::<i64>()
+            + self.outer_match.iter().map(|matched| matched.len() as i64).sum::<i64>();
         self.bytes
     }
 
@@ -787,6 +839,11 @@ impl OuterBatch {
         self.rows.clear();
         self.ptrs.clear();
         self.bytes = 0;
+        self.encoded_look_up_keys.clear();
+        self.encoded_look_up_keys_charge = None;
+        self.inner_worker_tracker = None;
+        self.kv_ranges_charged = false;
+        self.outer_match.clear();
     }
 }
 
@@ -927,6 +984,12 @@ impl IndexProbePlan {
 /// Hash variants also own ON evaluation/output; ordinary lookup does not.
 struct IndexTaskShared<C: Columns> {
     hash_output: Option<IndexHashOutput>,
+    /// Whether tasks charge Go's `IndexLookUpJoin` / `IndexNestedLoopHashJoin`
+    /// inner-worker memory (encoded lookup keys, lookup datums, ranges);
+    /// Go's `IndexLookUpMergeJoin` charges none of it.
+    lookup_charges: bool,
+    /// Go `SessionVars.EnableVectorizedExpression`, for the outer filter.
+    vectorized: bool,
     /// The forkable lookup, when the inner side is a common-handle prefix
     /// leaf; `None` keeps every task on the session's own reader.
     template: Option<Box<dyn crate::index_lookup::IndexJoinLookupFork>>,
@@ -971,8 +1034,8 @@ enum IndexTaskOutcome {
 }
 
 /// Go innerWorker.handleTask: prepare lookup content, inner rows and map.
-fn run_index_task<C: Columns>(shared: &IndexTaskShared<C>, outer: OuterBatch) -> IndexTaskOutcome {
-    let fetched = fetch_index_task(shared, &outer);
+fn run_index_task<C: Columns>(shared: &IndexTaskShared<C>, mut outer: OuterBatch) -> IndexTaskOutcome {
+    let fetched = fetch_index_task(shared, &mut outer);
     fetched_index_task_outcome(outer, fetched)
 }
 
@@ -1004,21 +1067,26 @@ fn fetched_index_task_outcome(
 
 fn fetch_index_task<C: Columns>(
     shared: &IndexTaskShared<C>,
-    outer: &OuterBatch,
+    outer: &mut OuterBatch,
 ) -> Result<FetchedIndexTask, ExecError> {
-    let mut task = match open_index_task(shared, outer)? {
+    let probes = construct_index_task(shared, outer)?;
+    let mem_tracker = outer.take_kv_range_tracker(shared.template.is_some());
+    let mut task = match open_index_task(shared, probes, mem_tracker)? {
         Ok(task) => task,
         Err(probes) => return Ok(FetchedIndexTask::Unforked(probes)),
     };
     let fetched = fetch_index_inner(shared, task.as_mut(), None, None);
+    // Go `handleTask`'s defer: the inner worker's charges end with the task.
+    outer.inner_worker_tracker = None;
     let (inner, inner_rows, _) = fetched?;
     Ok(FetchedIndexTask::Prepared { inner, inner_rows })
 }
 
-fn open_index_task<C: Columns>(
+/// Go `innerWorker.constructLookupContent`, timed as its stats record it.
+fn construct_index_task<C: Columns>(
     shared: &IndexTaskShared<C>,
-    outer: &OuterBatch,
-) -> Result<Result<Box<dyn crate::index_lookup::IndexJoinLookup>, Vec<IndexTaskProbe>>, ExecError> {
+    outer: &mut OuterBatch,
+) -> Result<Vec<IndexTaskProbe>, ExecError> {
     let construct_started = std::time::Instant::now();
     let probes = index_task_probes(
         &shared.ctx,
@@ -1026,11 +1094,24 @@ fn open_index_task<C: Columns>(
         &shared.probe_plan,
         outer,
         &shared.outer_types,
+        &shared.inner_types,
         shared.outer_is_left,
+        shared.lookup_charges.then_some(&shared.tracker),
     )?;
     if let Some(stats) = &shared.stats {
         stats.record_construct(construct_started.elapsed());
     }
+    Ok(probes)
+}
+
+/// Opens a forked reader for one task's lookup contents, charging its
+/// ranges to `mem_tracker`; without a fork, or when the fork reaches no
+/// range, the contents come back for the session's own reader.
+fn open_index_task<C: Columns>(
+    shared: &IndexTaskShared<C>,
+    probes: Vec<IndexTaskProbe>,
+    mem_tracker: Option<Arc<Tracker>>,
+) -> Result<Result<Box<dyn crate::index_lookup::IndexJoinLookup>, Vec<IndexTaskProbe>>, ExecError> {
     let Some(template) = shared.template.as_ref() else {
         return Ok(Err(probes));
     };
@@ -1038,7 +1119,11 @@ fn open_index_task<C: Columns>(
         .into_iter()
         .map(|probe| (probe.key, probe.bounds))
         .unzip();
-    let task = match template.open(crate::index_lookup::IndexJoinProbes { keys, bound_values }) {
+    let task = match template.open(crate::index_lookup::IndexJoinProbes {
+        keys,
+        bound_values,
+        mem_tracker,
+    }) {
         Ok(Ok(task)) => task,
         Ok(Err(probes)) => {
             let probes = probes
@@ -1056,116 +1141,213 @@ fn open_index_task<C: Columns>(
 
 /// Go `constructLookupContent` and `sortAndDedupLookUpContents` for one
 /// outer batch: the deduped lookup contents, on whichever thread runs the
-/// task.
+/// task. Like Go, it also stores each outer row's encoded hash key in the
+/// batch's `encoded_look_up_keys` (NULL for a row that looks nothing up) and,
+/// given the join's tracker, charges the encoded keys to the task and the
+/// lookup datums to the task's inner-worker tracker.
+#[allow(clippy::too_many_arguments)]
 fn index_task_probes<C: Columns>(
     ctx: &C,
     keys: &[EquiKey],
     plan: &IndexProbePlan,
-    outer: &OuterBatch,
+    outer: &mut OuterBatch,
     outer_types: &[FieldType],
+    inner_types: &[FieldType],
     outer_is_left: bool,
+    tracker: Option<&Arc<Tracker>>,
 ) -> Result<Vec<IndexTaskProbe>, ExecError> {
+    if !plan.probe_key_domains.is_empty() && plan.probe_key_domains.len() != plan.probe_keys.len() {
+        return Err(ExecError::unsupported(
+            "an index-join lookup key has incomplete inner-column domains",
+        ));
+    }
     let outer_offset = |key: &EquiKey| if outer_is_left { key.left } else { key.right };
+    let inner_offset = |key: &EquiKey| if outer_is_left { key.right } else { key.left };
+    let inner_worker = tracker.map(InnerWorkerTracker::new);
+    let blob = [FieldType::new(tidb_datatype::FieldTypeCode::Blob)];
+    let mut encoded_look_up_keys = Vec::with_capacity(outer.rows.num_chunks());
     // Go constructLookupContent appends the whole batch, then
     // sortAndDedupLookUpContents sorts once and removes adjacent equal keys.
     // A tree insertion for every row allocates a node and performs a log-N
     // walk; keeping the encoded key beside its probe lets the native slice
     // sort do the same work with contiguous storage and no per-row tree node.
     let mut probes_by_key = Vec::with_capacity(outer.len());
-    for index in 0..outer.len() {
-        let row = outer.row(index);
-        let probe: Option<Vec<Datum>> = plan
-            .probe_keys
-            .iter()
-            .map(|at| {
-                let key = &keys[*at];
-                let offset = outer_offset(key);
-                let value = row.get_datum(offset, &outer_types[offset]);
-                (!matches!(value, Datum::Null) || key.null_safe).then_some(value)
-            })
-            .collect();
-        let Some(mut probe) = probe else {
-            continue;
-        };
-        if !plan.probe_key_domains.is_empty() {
-            if plan.probe_key_domains.len() != probe.len() {
-                return Err(ExecError::unsupported(
-                    "an index-join lookup key has incomplete inner-column domains",
-                ));
-            }
-            let mut valid = true;
-            for ((value, domain), key_offset) in probe
-                .iter_mut()
-                .zip(&plan.probe_key_domains)
-                .zip(&plan.probe_keys)
-            {
-                if value.is_null() {
-                    if !keys[*key_offset].null_safe {
-                        valid = false;
-                        break;
-                    }
-                    continue;
-                }
-                let Some(converted) =
-                    tidb_planner::point_get_value::point_get_value(&domain.field_type, value)
-                else {
-                    valid = false;
-                    break;
-                };
-                *value = converted;
-                tidb_tablecodec::cut_datum_by_prefix_len(
-                    value,
-                    domain.prefix_length,
-                    &domain.field_type,
-                );
-            }
-            if !valid {
+    let mut visited = outer.ptrs.iter().peekable();
+    for chk_idx in 0..outer.rows.num_chunks() {
+        let num_rows = outer.rows.num_rows_of_chunk(chk_idx);
+        let mut encoded = Chunk::new(&blob, num_rows, num_rows);
+        for row_idx in 0..num_rows {
+            let ptr = RowPtr::new(chk_idx as u32, row_idx as u32);
+            // A row the join never visits looks nothing up.
+            if visited.next_if_eq(&&ptr).is_none() {
+                encoded.append_null(0);
                 continue;
             }
-        }
-        // Evaluate this row's bounds. A NULL result is Go's empty range:
-        // the content reads nothing and contributes no probe.
-        let bounds = if plan.probe_bounds.is_empty() {
-            Vec::new()
-        } else {
-            let mut evaluated = Vec::with_capacity(plan.probe_bounds.len());
-            for bound in &plan.probe_bounds {
-                match bound.arg.eval(ctx, row).map_err(ExecError::Eval)? {
-                    Datum::Null => {
-                        evaluated.clear();
-                        break;
-                    }
-                    value => evaluated.push(value),
-                }
-            }
-            if evaluated.is_empty() && !plan.probe_bounds.is_empty() {
+            // Go `constructDatumLookupKey`: an outer row failing the filter
+            // looks nothing up.
+            if outer.outer_match.get(chk_idx).is_some_and(|matched| !matched[row_idx]) {
+                encoded.append_null(0);
                 continue;
             }
-            evaluated
-        };
-        let encoded =
-            row_key(&plan.probe_encoding, &probe, |key| key.left).map_err(|_: KeyError| {
+            let row = outer.rows.get_row(ptr);
+            let Some(hash_key) =
+                construct_datum_hash_key(keys, plan, row, outer_types, inner_types, &outer_offset, &inner_offset)
+            else {
+                encoded.append_null(0);
+                continue;
+            };
+            let mut probe: Vec<Datum> = plan.probe_keys.iter().map(|at| hash_key[*at].clone()).collect();
+            if row_idx == 0 {
+                if let Some(inner_worker) = &inner_worker {
+                    inner_worker.0.consume(tidb_datatype::estimated_mem_usage(&probe, num_rows));
+                }
+            }
+            let key = tidb_codec::encode_key(&hash_key).map_err(|_| {
                 ExecError::unsupported("a join key column has no comparable encoding")
             })?;
-        let mut encoded = match encoded {
-            Some(encoded) => encoded,
-            None => continue,
-        };
-        if !plan.bound_encoding.is_empty() {
-            let bound_bytes = row_key_by(&plan.bound_encoding, |key| bounds[key.left].clone())
-                .map_err(|_: KeyError| {
-                    ExecError::unsupported("a lookup probe bound is not encodable")
-                })?;
-            match bound_bytes {
-                Some(bytes) => encoded.extend_from_slice(&bytes),
-                None => continue,
+            // Store the encoded lookup key, so the matched inners are looked
+            // up by it directly.
+            encoded.append_bytes(0, &key);
+            for (value, domain) in probe.iter_mut().zip(&plan.probe_key_domains) {
+                if !value.is_null() {
+                    tidb_tablecodec::cut_datum_by_prefix_len(value, domain.prefix_length, &domain.field_type);
+                }
             }
+            // Evaluate this row's bounds. A NULL result is Go's empty range:
+            // the content reads nothing and contributes no probe.
+            let bounds = if plan.probe_bounds.is_empty() {
+                Vec::new()
+            } else {
+                let mut evaluated = Vec::with_capacity(plan.probe_bounds.len());
+                for bound in &plan.probe_bounds {
+                    match bound.arg.eval(ctx, row).map_err(ExecError::Eval)? {
+                        Datum::Null => {
+                            evaluated.clear();
+                            break;
+                        }
+                        value => evaluated.push(value),
+                    }
+                }
+                if evaluated.is_empty() {
+                    continue;
+                }
+                evaluated
+            };
+            let encoded_probe =
+                row_key(&plan.probe_encoding, &probe, |key| key.left).map_err(|_: KeyError| {
+                    ExecError::unsupported("a join key column has no comparable encoding")
+                })?;
+            let mut encoded_probe = match encoded_probe {
+                Some(encoded_probe) => encoded_probe,
+                None => continue,
+            };
+            if !plan.bound_encoding.is_empty() {
+                let bound_bytes = row_key_by(&plan.bound_encoding, |key| bounds[key.left].clone())
+                    .map_err(|_: KeyError| {
+                        ExecError::unsupported("a lookup probe bound is not encodable")
+                    })?;
+                match bound_bytes {
+                    Some(bytes) => encoded_probe.extend_from_slice(&bytes),
+                    None => continue,
+                }
+            }
+            probes_by_key.push((encoded_probe, IndexTaskProbe { key: probe, bounds }));
         }
-        probes_by_key.push((encoded, IndexTaskProbe { key: probe, bounds }));
+        encoded_look_up_keys.push(encoded);
     }
+    outer.encoded_look_up_keys_charge = tracker.map(|tracker| {
+        TrackerCharge::new(
+            tracker,
+            encoded_look_up_keys.iter().map(Chunk::memory_usage).sum(),
+        )
+    });
+    outer.encoded_look_up_keys = encoded_look_up_keys;
+    outer.inner_worker_tracker = inner_worker;
     probes_by_key.sort_unstable_by(|left, right| left.0.cmp(&right.0));
     probes_by_key.dedup_by(|left, right| left.0 == right.0);
     Ok(probes_by_key.into_iter().map(|(_, probe)| probe).collect())
+}
+
+/// Go `constructDatumLookupKey`'s hash key: every equality key's outer value
+/// converted into its inner column's type, or `None` when the row can match
+/// nothing -- an outer NULL under `=`, or a value the inner type cannot hold
+/// unchanged. The probe keys convert into their lookup object's columns.
+fn construct_datum_hash_key(
+    keys: &[EquiKey],
+    plan: &IndexProbePlan,
+    row: Row<'_>,
+    outer_types: &[FieldType],
+    inner_types: &[FieldType],
+    outer_offset: &dyn Fn(&EquiKey) -> usize,
+    inner_offset: &dyn Fn(&EquiKey) -> usize,
+) -> Option<Vec<Datum>> {
+    let mut hash_key = Vec::with_capacity(keys.len());
+    for (at, key) in keys.iter().enumerate() {
+        let offset = outer_offset(key);
+        let value = row.get_datum(offset, &outer_types[offset]);
+        if value.is_null() {
+            if !key.null_safe {
+                return None;
+            }
+            hash_key.push(value);
+            continue;
+        }
+        // A plan without inner key domains (a hand-built executor) matches
+        // the outer values as they are.
+        if plan.probe_key_domains.is_empty() {
+            hash_key.push(value);
+            continue;
+        }
+        let field_type = match plan.probe_keys.iter().position(|probe| *probe == at) {
+            Some(probe) => &plan.probe_key_domains[probe].field_type,
+            None => inner_types.get(inner_offset(key))?,
+        };
+        hash_key.push(tidb_planner::point_get_value::point_get_value(field_type, &value)?);
+    }
+    Some(hash_key)
+}
+
+/// A charge to a tracker, released when dropped.
+struct TrackerCharge {
+    tracker: Arc<Tracker>,
+    bytes: i64,
+}
+
+impl TrackerCharge {
+    fn new(tracker: &Arc<Tracker>, bytes: i64) -> Self {
+        tracker.consume(bytes);
+        Self {
+            tracker: Arc::clone(tracker),
+            bytes,
+        }
+    }
+}
+
+impl Drop for TrackerCharge {
+    fn drop(&mut self) {
+        self.tracker.consume(-self.bytes);
+    }
+}
+
+/// Go `innerWorker.memTracker` (`LabelForIndexJoinInnerWorker`, attached to
+/// the join's tracker) for the task in flight: charged with the task's lookup
+/// datums and, through the inner reader, its ranges, and reset once the
+/// task's inner rows and lookup map are built (`handleTask`'s defer).
+struct InnerWorkerTracker(Arc<Tracker>);
+
+impl InnerWorkerTracker {
+    fn new(parent: &Arc<Tracker>) -> Self {
+        let tracker = Tracker::new(tidb_memory::LABEL_FOR_INDEX_JOIN_INNER_WORKER, -1);
+        tracker.attach_to(parent);
+        Self(tracker)
+    }
+}
+
+impl Drop for InnerWorkerTracker {
+    fn drop(&mut self) {
+        self.0.consume(-self.0.bytes_consumed());
+        self.0.detach();
+    }
 }
 
 /// A prepared task owns its memory charge until installed in the consumer.
@@ -1306,7 +1488,10 @@ fn fetch_index_inner<C: Columns>(
     fetched
 }
 
-/// Both worker and synchronous readers index retained chunk rows identically.
+/// Go `buildLookUpMap`: every inner row without a NULL in a `=` key, keyed
+/// by `codec.EncodeKey` of its hash-key datums, the encoding the outer rows'
+/// `encoded_look_up_keys` carry. Both worker and synchronous readers index
+/// retained chunk rows identically.
 fn build_index_lookup_map(
     inner: &List,
     keys: &[EquiKey],
@@ -1314,20 +1499,22 @@ fn build_index_lookup_map(
     outer_is_left: bool,
 ) -> Result<FastBytesMap<Vec<RowPtr>>, ExecError> {
     let mut matched: FastBytesMap<Vec<RowPtr>> = FastBytesMap::default();
+    let mut key_datums = Vec::with_capacity(keys.len());
     for chk_idx in 0..inner.num_chunks() {
         for row_idx in 0..inner.num_rows_of_chunk(chk_idx) {
             let ptr = RowPtr::new(chk_idx as u32, row_idx as u32);
             let row = inner.get_row(ptr);
-            let key = row_key_by(keys, |key| {
-                let offset = if outer_is_left { key.right } else { key.left };
-                row.get_datum(offset, &inner_types[offset])
-            })
-            .map_err(|_: KeyError| {
+            let offset = |key: &EquiKey| if outer_is_left { key.right } else { key.left };
+            // Go `hasNullInJoinKey`.
+            if keys.iter().any(|key| !key.null_safe && row.is_null(offset(key))) {
+                continue;
+            }
+            key_datums.clear();
+            key_datums.extend(keys.iter().map(|key| row.get_datum(offset(key), &inner_types[offset(key)])));
+            let key = tidb_codec::encode_key(&key_datums).map_err(|_| {
                 ExecError::unsupported("a join key column has no comparable encoding")
             })?;
-            if let Some(key) = key {
-                matched.entry(key).or_default().push(ptr);
-            }
+            matched.entry(key).or_default().push(ptr);
         }
     }
     Ok(matched)
@@ -1467,6 +1654,12 @@ pub struct JoinExec<C: Columns> {
     index_lookup: Option<IndexLookupPlan>,
     /// The physical index-hash variant and its outer-order contract.
     index_hash: Option<bool>,
+    /// Go `IndexLookUpMergeJoin`: see [`Self::set_index_merge_join`].
+    index_merge: bool,
+    /// Go `2 * types.EstimatedMemUsage(IndexRanges[0].LowVal,
+    /// len(IndexRanges))`: what each inner worker charges the statement for
+    /// its copy of the join's ranges ([`Self::set_index_ranges`]).
+    index_worker_ranges_bytes: i64,
     vectorized: bool,
     /// The index strategy's live state; absent until the first `next()`.
     index_state: Option<IndexLookupState>,
@@ -1605,6 +1798,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             merge_state: None,
             index_lookup: None,
             index_hash: None,
+            index_merge: false,
+            index_worker_ranges_bytes: 0,
             vectorized: true,
             index_state: None,
             index_task_shared: None,
@@ -2188,6 +2383,21 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         self.index_hash = Some(keep_outer_order);
     }
 
+    /// Marks the join as Go's `IndexLookUpMergeJoin`, whose tasks charge no
+    /// inner-worker memory.
+    pub fn set_index_merge_join(&mut self) {
+        self.index_merge = true;
+    }
+
+    /// Go `IndexLookUpJoin.IndexRanges`, of which every inner worker keeps a
+    /// copy and charges it to the statement, never to the join, for as long
+    /// as the worker lives (`newInnerWorker`).
+    pub fn set_index_ranges(&mut self, ranges: &[tidb_ranger::types::Range]) {
+        self.index_worker_ranges_bytes = ranges
+            .first()
+            .map_or(0, |range| 2 * tidb_datatype::estimated_mem_usage(&range.low_val, ranges.len()));
+    }
+
     fn index_hash_output(&self) -> Option<IndexHashOutput> {
         self.index_hash.map(|ordered| IndexHashOutput {
             ordered,
@@ -2289,9 +2499,18 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 "tidb-index-join",
                 self.index_lookup_concurrency,
             ));
+            // Go `startWorkers` -> `newInnerWorker`, once per worker; Go's
+            // merge join's workers keep no such copy.
+            if !self.index_merge {
+                self.memory
+                    .stmt_tracker()
+                    .consume(self.index_lookup_concurrency as i64 * self.index_worker_ranges_bytes);
+            }
             self.index_task_lanes = Some(Arc::clone(&lane_pool));
             self.index_task_shared = Some(Arc::new(IndexTaskShared {
                 hash_output: self.index_hash_output(),
+                lookup_charges: !self.index_merge,
+                vectorized: self.vectorized,
                 template,
                 probe_plan: IndexProbePlan::new(
                     &self.keys,
@@ -2375,7 +2594,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             index_task_shared,
             index_task_lanes,
             condition_evals,
-            ctx,
             ..
         } = self;
         let shared = index_task_shared
@@ -2411,12 +2629,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
 
         if state.pending.is_empty() {
             Self::fill_index_task_queue(
-                ctx,
                 outer_child,
-                keys,
                 plan,
                 state,
-                outer_is_left,
                 tracker,
                 memory,
                 shared,
@@ -2436,8 +2651,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 .set_probes(crate::index_lookup::IndexJoinProbes {
                     keys: keys_seeded,
                     bound_values,
+                    mem_tracker: state.outer.take_kv_range_tracker(false),
                 })?;
-            let (inner, _, done) = fetch_index_inner(
+            let fetched = fetch_index_inner(
                 shared,
                 plan.source.executor(),
                 shared
@@ -2445,7 +2661,11 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     .as_ref()
                     .and_then(IndexHashOutput::max_fetch_rows),
                 None,
-            )?;
+            );
+            // Go `handleTask`'s defer: the inner worker's charges end with
+            // the task.
+            state.outer.inner_worker_tracker = None;
+            let (inner, _, done) = fetched?;
             inner.install(state);
             if let Some(output) = &shared.hash_output {
                 state.matched.clear();
@@ -2454,7 +2674,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     keys,
                     &state.outer,
                     &state.inner,
-                    tracker,
                     memory,
                 )?);
                 state
@@ -2504,12 +2723,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         state.outer = task.outer;
         // Ordered tasks retain N-1 later lookups while the current one drains.
         Self::fill_index_task_queue(
-            ctx,
             outer_child,
-            keys,
             plan,
             state,
-            outer_is_left,
             tracker,
             memory,
             shared,
@@ -2575,12 +2791,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
 
     #[allow(clippy::too_many_arguments)]
     fn fill_index_task_queue(
-        ctx: &C,
         outer_child: &mut dyn Executor,
-        keys: &[EquiKey],
         plan: &IndexLookupPlan,
         state: &mut IndexLookupState,
-        outer_is_left: bool,
         tracker: &Arc<Tracker>,
         memory: &StatementMemory,
         shared: &Arc<IndexTaskShared<C>>,
@@ -2594,7 +2807,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             let (mut outer, outer_bytes) = Self::read_index_outer_task(
                 outer_child,
                 &outer_types,
-                &plan.outer_not_null,
+                plan,
+                &shared.ctx,
+                shared.vectorized,
                 state,
             )?;
             if outer.is_empty() {
@@ -2604,18 +2819,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 continue;
             }
             let source = if state.prefetch_disabled {
-                let construct_started = std::time::Instant::now();
-                let probes = index_task_probes(
-                    ctx,
-                    keys,
-                    &shared.probe_plan,
-                    &outer,
-                    outer_types.as_slice(),
-                    outer_is_left,
-                )?;
-                if let Some(stats) = &shared.stats {
-                    stats.record_construct(construct_started.elapsed());
-                }
+                let probes = construct_index_task(shared, &mut outer)?;
                 Some(PendingIndexLookupSource::Synchronous(probes))
             } else {
                 // Go's inner worker prepares the lookup and map. Output
@@ -2664,9 +2868,12 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     fn read_index_outer_task(
         outer_child: &mut dyn Executor,
         outer_types: &[FieldType],
-        outer_not_null: &[usize],
+        plan: &IndexLookupPlan,
+        ctx: &C,
+        vectorized: bool,
         state: &mut IndexLookupState,
     ) -> Result<(OuterBatch, i64), ExecError> {
+        let outer_not_null = plan.outer_not_null.as_slice();
         let (init_cap, max_chunk_size) = (outer_child.init_cap(), outer_child.max_chunk_size());
         let mut outer = OuterBatch::new(outer_types, init_cap, max_chunk_size);
         if state.batch_size < state.max_batch_size {
@@ -2704,6 +2911,16 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         if outer.rows.len() == 0 {
             state.outer_done = true;
         }
+        if !plan.outer_filter.is_empty() {
+            outer.outer_match = (0..outer.rows.num_chunks())
+                .map(|chk_idx| {
+                    let chunk = outer.rows.get_chunk(chk_idx);
+                    let selected = Vec::with_capacity(chunk.num_rows());
+                    tidb_expr::evaluator::vectorized_filter(ctx, vectorized, &plan.outer_filter, chunk, selected)
+                        .map_err(ExecError::Eval)
+                })
+                .collect::<Result<_, _>>()?;
+        }
         let bytes = outer.settle_bytes();
         Ok((outer, bytes))
     }
@@ -2736,7 +2953,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     &self.keys,
                     &state.outer,
                     &state.inner,
-                    &self.tracker,
                     &self.memory,
                 ) {
                     Ok(hash) => state.hash = Some(hash),
@@ -2874,27 +3090,14 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         req: &mut Chunk,
         state: &mut IndexLookupState,
     ) -> Result<(), ExecError> {
-        let outer_is_left = self.outer_is_left();
-        let outer_offset = |key: &EquiKey| if outer_is_left { key.left } else { key.right };
         let cap = req.required_rows();
         loop {
             if state.cursor >= state.outer.len() || req.num_rows() >= cap {
                 return Ok(());
             }
-            let outer_types = if outer_is_left {
-                &self.left_types
-            } else {
-                &self.right_types
-            };
             let outer_row = state.outer.row(state.cursor);
             if state.probe.is_none() {
-                let key = row_key_by(&self.keys, |key| {
-                    let offset = outer_offset(key);
-                    outer_row.get_datum(offset, &outer_types[offset])
-                })
-                .map_err(|_: KeyError| {
-                    ExecError::unsupported("a join key column has no comparable encoding")
-                })?;
+                let key = state.outer.encoded_look_up_key(state.cursor);
                 state.probe = Some(IndexRowProbe {
                     key,
                     next_inner: 0,

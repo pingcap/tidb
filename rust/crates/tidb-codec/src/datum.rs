@@ -225,10 +225,10 @@ pub fn encode_key(values: &[Datum]) -> Result<Vec<u8>, CodecError> {
 }
 
 /// Go `preRealloc`: the buffer growth one `encode` needs, reserved up front
-/// so a key is not grown once per datum. Kinds Go sizes by inspecting the
-/// value's internal representation (JSON, decimal, vector) answer `None`
-/// here, which like Go's `default` arm leaves the buffer as it is.
-fn pre_realloc_size(values: &[Datum], comparable: bool) -> Option<usize> {
+/// so a key is not grown once per datum. A vector, which Go sizes by its
+/// serialized length, answers `None` here, as do the kinds Go's `default`
+/// arm leaves the buffer as it is for.
+pub fn pre_realloc_size(values: &[Datum], comparable: bool) -> Option<usize> {
     const ENC_GROUP_SIZE: usize = 8;
     const MAX_VARINT_LEN64: usize = 10;
     let size_int = if comparable { 9 } else { 1 + MAX_VARINT_LEN64 };
@@ -252,6 +252,9 @@ fn pre_realloc_size(values: &[Datum], comparable: bool) -> Option<usize> {
             Datum::Bytes(value) | Datum::Raw(value) => size_bytes(value.len()),
             Datum::Time(_) | Datum::Duration(_) | Datum::Float32(_) | Datum::Real(_) => 9,
             Datum::Null | Datum::MinNotNull | Datum::MaxValue => 1,
+            Datum::Json(value) => 2 + value.value().len(),
+            // Go `1 + types.MyDecimalStructSize`.
+            Datum::Decimal(_) => 1 + 40,
             _ => return None,
         };
     }

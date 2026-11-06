@@ -277,6 +277,7 @@ fn both_ways(
             probe_keys,
             probe_key_domains: Vec::new(),
             source: tidb_executor_join::join::IndexLookupSource::Leaf(Box::new(lookup_source(table, store, object, inner_width))),
+            outer_filter: Vec::new(),
             outer_not_null: Vec::new(),
             inner_not_null: Vec::new(),
             probe_bounds: Vec::new(),
@@ -285,6 +286,53 @@ fn both_ways(
     assert!(looked_up.is_index_join());
     let index_rows = drain(&mut looked_up, &types);
     (hash_rows, index_rows)
+}
+
+/// Go `newInnerWorker`: every inner worker copies the join's ranges and
+/// charges the statement, not the join, `2 * EstimatedMemUsage(LowVal,
+/// len(ranges))` for as long as the statement runs -- 144 bytes for one
+/// single-column range, so three workers hold 432 after the join closes.
+#[test]
+fn index_join_inner_workers_charge_their_ranges_to_the_statement() {
+    let (table, store) = inner_table(&[(10, 1), (11, 2)]);
+    let outer = cycling_outer(4, &[1, 2]);
+    let types: Vec<FieldType> = std::iter::repeat_n(long(), 4).collect();
+    let memory = crate::StmtContext::for_query().statement_memory();
+    let mut looked_up = JoinExec::build_index_look_up_join(
+        ExecutorMeta::new(schema_of(4), 0, INIT_CAP, CHUNK),
+        JoinKind::Inner,
+        vec![equality(1, 1, 2)],
+        outer_source(&outer),
+        vec![long(); 2],
+        vec![long(); 2],
+        crate::StmtContext::for_query(),
+        memory.clone(),
+        IndexLookupPlan {
+            lookup_is_left: false,
+            probe_keys: vec![0],
+            probe_key_domains: Vec::new(),
+            source: tidb_executor_join::join::IndexLookupSource::Leaf(Box::new(lookup_source(
+                &table,
+                &store,
+                LookupObject::Index(1),
+                2,
+            ))),
+            outer_filter: Vec::new(),
+            outer_not_null: Vec::new(),
+            inner_not_null: Vec::new(),
+            probe_bounds: Vec::new(),
+        },
+    );
+    looked_up.set_index_lookup_concurrency(3);
+    looked_up.set_index_ranges(&[tidb_ranger::types::Range {
+        low_val: vec![Datum::Null],
+        high_val: vec![Datum::Null],
+        collators: vec![tidb_charset::Collation::Binary],
+        low_exclude: false,
+        high_exclude: false,
+    }]);
+    assert_eq!(drain(&mut looked_up, &types).len(), 4);
+    assert_eq!(memory.stmt_tracker().bytes_consumed(), 3 * 144);
 }
 
 /// `n` outer rows whose key cycles over `keys`, so the same key recurs in
@@ -421,6 +469,7 @@ fn a_complete_common_handle_probe_reads_one_record() {
         .set_probes(tidb_executor_join::index_lookup::IndexJoinProbes {
             keys: vec![vec![Datum::Int(1), Datum::Int(2)]],
             bound_values: Vec::new(),
+            mem_tracker: None,
         })
         .unwrap();
 
@@ -442,6 +491,7 @@ fn a_common_handle_prefix_probe_reads_every_matching_record() {
         .set_probes(tidb_executor_join::index_lookup::IndexJoinProbes {
             keys: vec![vec![Datum::Int(1)]],
             bound_values: Vec::new(),
+            mem_tracker: None,
         })
         .unwrap();
 
@@ -466,6 +516,7 @@ fn a_ddl_common_handle_prefix_probe_reads_every_matching_record() {
         .set_probes(tidb_executor_join::index_lookup::IndexJoinProbes {
             keys: vec![vec![Datum::Int(1)]],
             bound_values: Vec::new(),
+            mem_tracker: None,
         })
         .unwrap();
 
@@ -553,6 +604,7 @@ fn one_key_repeated_across_a_batch_is_probed_once() {
             probe_keys: vec![0],
             probe_key_domains: Vec::new(),
             source: tidb_executor_join::join::IndexLookupSource::Leaf(Box::new(source)),
+            outer_filter: Vec::new(),
             outer_not_null: Vec::new(),
             inner_not_null: Vec::new(),
             probe_bounds: Vec::new(),
@@ -597,6 +649,7 @@ fn index_join_static_templates_preserve_tuple_identity() {
         .set_probes(tidb_executor_join::index_lookup::IndexJoinProbes {
             keys: vec![vec![Datum::Int(9)]],
             bound_values: vec![],
+            mem_tracker: None,
         })
         .unwrap();
     assert_eq!(

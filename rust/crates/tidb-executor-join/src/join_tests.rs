@@ -136,17 +136,11 @@ fn index_join_resumes_one_outer_rows_matches_across_requested_chunks() {
             prepare_index_inner(&index_task_shared_for_test(&join), vec![input.clone()]).unwrap()
         });
         inner.add(input);
-        let mut matched: FastBytesMap<Vec<RowPtr>> = FastBytesMap::default();
-        for index in 0..inner.len() {
-            let ptr = RowPtr::new(0, index as u32);
-            let row = inner.get_row(ptr);
-            let key = row_key_by(&join.keys, |key| {
-                row.get_datum(key.right, &types[key.right])
-            })
-            .unwrap()
+        let matched = build_index_lookup_map(&inner, &join.keys, &types, join.outer_is_left()).unwrap();
+        // Go `constructLookupContent` stores each outer row's encoded key.
+        let plan = IndexProbePlan::new(&join.keys, vec![0], Vec::new(), Vec::new()).unwrap();
+        index_task_probes(&NoColumns, &join.keys, &plan, &mut outer, &types, &types, join.outer_is_left(), None)
             .unwrap();
-            matched.entry(key).or_default().push(ptr);
-        }
         let matched_count = residual_limit.unwrap_or(9);
         let mut expected = Vec::new();
         for (key, payload) in [(1, 77), (2, 88)] {
@@ -323,7 +317,8 @@ fn index_lookup_probe_collection_batches_sort_and_dedup() {
         null_safe: false,
     }];
     let plan = IndexProbePlan::new(&keys, vec![0], Vec::new(), Vec::new()).unwrap();
-    let probes = index_task_probes(&NoColumns, &keys, &plan, &outer, &types, true).unwrap();
+    let probes =
+        index_task_probes(&NoColumns, &keys, &plan, &mut outer, &types, &types, true, None).unwrap();
     assert_eq!(
         probes
             .iter()
@@ -380,6 +375,7 @@ fn index_hash_fetches_inner_windows_before_final_unmatched_rows() {
                     exec: Box::new(source),
                     probes: Arc::new(std::sync::Mutex::new(Default::default())),
                 },
+                outer_filter: Vec::new(),
                 outer_not_null: vec![],
                 inner_not_null: vec![],
                 probe_bounds: vec![],
@@ -728,6 +724,9 @@ fn index_worker_preparation_does_not_evaluate_join_residuals() {
     input.append_int64(1, 1);
     outer.push(input.get_row(0));
     let shared = index_task_shared_for_test(&join);
+    // Go `constructLookupContent` stores the outer row's encoded key.
+    index_task_probes(&NoColumns, &join.keys, &shared.probe_plan, &mut outer, &types, &types, true, None)
+        .unwrap();
     let mut input = Chunk::new_chunk_with_capacity(&types, 2);
     for value in [1, i64::MIN] {
         input.append_int64(0, 1);
@@ -819,6 +818,8 @@ fn index_worker_preparation_does_not_evaluate_join_residuals() {
 
 fn index_task_shared_for_test(join: &JoinExec<NoColumns>) -> IndexTaskShared<NoColumns> {
     IndexTaskShared {
+        lookup_charges: true,
+        vectorized: true,
         hash_output: join.index_hash_output(),
         template: None,
         probe_plan: IndexProbePlan::new(&join.keys, vec![], vec![], vec![]).unwrap(),
@@ -1893,6 +1894,7 @@ fn index_join_marker_kinds_mark_null_for_an_unknown_in_equality() {
                     exec: Box::new(inner),
                     probes: Arc::new(std::sync::Mutex::new(Default::default())),
                 },
+                outer_filter: Vec::new(),
                 outer_not_null: vec![],
                 inner_not_null: vec![],
                 probe_bounds: vec![],
@@ -1944,4 +1946,21 @@ fn empty_build_side_skips_reading_the_probe_child_where_go_does() {
             read.load(Ordering::SeqCst)
         );
     }
+}
+
+/// Go `buildTask` charges each outer chunk's `outerMatch` slice, one byte
+/// per row (`task.memTracker.Consume(int64(cap(outerMatch)))`).
+#[test]
+fn an_outer_task_charges_its_outer_match() {
+    let types = [long()];
+    let mut chunk = Chunk::new_chunk_with_capacity(&types, 3);
+    for key in [1, 2, 3] {
+        chunk.append_int64(0, key);
+    }
+    let chunk_bytes = chunk.memory_usage();
+    let mut outer = OuterBatch::new(&types, 3, CHUNK);
+    outer.add_chunk(chunk, &[]).unwrap();
+    outer.outer_match = vec![vec![true, false, true]];
+    assert_eq!(outer.settle_bytes(), chunk_bytes + 3);
+    assert!(!outer.outer_matched(1));
 }
