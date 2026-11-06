@@ -19,7 +19,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -2655,4 +2658,77 @@ func TestTiDBMLogAutoAnalyzeRatio(t *testing.T) {
 	val, err = mock.GetGlobalSysVar(vardef.TiDBMLogAutoAnalyzeRatio)
 	require.NoError(t, err)
 	require.Equal(t, "20", val)
+}
+
+func TestConfigReloadConcurrentSetters(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	oldScope := vardef.ServiceScope.Load()
+	t.Cleanup(func() { vardef.ServiceScope.Store(oldScope) })
+	config.StoreGlobalConfig(config.NewConfig())
+	path := filepath.Join(t.TempDir(), "tidb.toml")
+	require.NoError(t, os.WriteFile(path, []byte("[performance]\nstmt-count-limit = 123\n"), 0600))
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	reloaded := make(chan error, 1)
+	go func() {
+		reloaded <- config.ReloadGlobalConfig(path, func(_, _ *config.Config) { close(entered); <-release })
+	}()
+	<-entered
+	updated := make(chan error, 1)
+	go func() { updated <- GetSysVar(vardef.TiDBServiceScope).SetGlobal(context.Background(), nil, "new") }()
+	var early bool
+	select {
+	case err := <-updated:
+		require.NoError(t, err)
+		early = true
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	require.NoError(t, <-reloaded)
+	if !early {
+		require.NoError(t, <-updated)
+	}
+	require.False(t, early, "SQL setter must serialize with reload's snapshot publication")
+	require.Equal(t, "new", config.GetGlobalConfig().Instance.TiDBServiceScope)
+	require.Equal(t, "new", vardef.ServiceScope.Load())
+
+	// A published snapshot must not change while a reader or reload copies it.
+	before := config.GetGlobalConfig()
+	oldThreshold := before.Instance.SlowThreshold
+	require.NoError(t, GetSysVar(vardef.TiDBSlowLogThreshold).SetGlobal(context.Background(), nil, "123"))
+	require.Equal(t, oldThreshold, before.Instance.SlowThreshold)
+	require.Equal(t, uint64(123), config.GetGlobalConfig().Instance.SlowThreshold)
+}
+
+func TestConfigReloadWriterRace(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	config.StoreGlobalConfig(config.NewConfig())
+	path := filepath.Join(t.TempDir(), "tidb.toml")
+	require.NoError(t, os.WriteFile(path, []byte("[instance]\ntidb_slow_log_threshold = 123\n"), 0600))
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	wg.Go(func() {
+		for range 100 {
+			if err := config.ReloadGlobalConfig(path, nil); err != nil {
+				errs <- err
+				return
+			}
+		}
+		errs <- nil
+	})
+	wg.Go(func() {
+		for range 100 {
+			for name, val := range map[string]string{vardef.TiDBSlowLogThreshold: "456", vardef.TiDBEnableSlowLog: "OFF", vardef.TiDBCheckMb4ValueInUTF8: "OFF", vardef.MaxConnections: "100"} {
+				if err := GetSysVar(name).SetGlobal(context.Background(), nil, val); err != nil {
+					errs <- err
+					return
+				}
+			}
+		}
+		errs <- nil
+	})
+	wg.Wait()
+	require.NoError(t, <-errs)
+	require.NoError(t, <-errs)
+	require.Equal(t, uint32(100), config.GetGlobalConfig().Instance.MaxConnections)
 }

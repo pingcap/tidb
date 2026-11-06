@@ -62,7 +62,6 @@ import (
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
-	tikvcfg "github.com/tikv/client-go/v2/config"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle/oracles"
 	tikvcliutil "github.com/tikv/client-go/v2/util"
@@ -533,15 +532,14 @@ var defaultSysVars = []*SysVar{
 		if err != nil {
 			return err
 		}
-		vardef.GlobalLogMaxDays.Store(int32(maxAge))
-		cfg := config.GetGlobalConfig().Log.ToLogConfig()
-		cfg.Config.File.MaxDays = int(maxAge)
-
-		err = logutil.ReplaceLogger(cfg, keyspace.WrapZapcoreWithKeyspace())
-		if err != nil {
-			return err
-		}
-		return nil
+		return config.UpdateGlobalWithError(func(c *config.Config) error {
+			c.Log.File.MaxDays = int(maxAge)
+			if err := logutil.ReplaceLogger(c.Log.ToLogConfig(), keyspace.WrapZapcoreWithKeyspace()); err != nil {
+				return err
+			}
+			vardef.GlobalLogMaxDays.Store(int32(maxAge))
+			return nil
+		})
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return strconv.FormatInt(int64(vardef.GlobalLogMaxDays.Load()), 10), nil
 	}},
@@ -598,26 +596,30 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: vardef.ScopeInstance, Name: vardef.TiDBSlowLogThreshold, Value: strconv.Itoa(logutil.DefaultSlowThreshold), Type: vardef.TypeInt, MinValue: -1, MaxValue: math.MaxInt64,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			atomic.StoreUint64(&config.GetGlobalConfig().Instance.SlowThreshold, uint64(TidbOptInt64(val, logutil.DefaultSlowThreshold)))
+			config.UpdateGlobal(func(c *config.Config) {
+				c.Instance.SlowThreshold = uint64(TidbOptInt64(val, logutil.DefaultSlowThreshold))
+			})
 			return nil
 		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Instance.SlowThreshold), 10), nil
 		}},
 	{Scope: vardef.ScopeInstance, Name: vardef.TiDBRecordPlanInSlowLog, Value: int32ToBoolStr(logutil.DefaultRecordPlanInSlowLog), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		atomic.StoreUint32(&config.GetGlobalConfig().Instance.RecordPlanInSlowLog, uint32(TidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
+		config.UpdateGlobal(func(c *config.Config) {
+			c.Instance.RecordPlanInSlowLog = uint32(TidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog))
+		})
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		enabled := atomic.LoadUint32(&config.GetGlobalConfig().Instance.RecordPlanInSlowLog) == 1
 		return BoolToOnOff(enabled), nil
 	}},
 	{Scope: vardef.ScopeInstance, Name: vardef.TiDBEnableSlowLog, Value: BoolToOnOff(logutil.DefaultTiDBEnableSlowLog), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		config.GetGlobalConfig().Instance.EnableSlowLog.Store(TiDBOptOn(val))
+		config.UpdateGlobal(func(c *config.Config) { c.Instance.EnableSlowLog.Store(TiDBOptOn(val)) })
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(config.GetGlobalConfig().Instance.EnableSlowLog.Load()), nil
 	}},
 	{Scope: vardef.ScopeInstance, Name: vardef.TiDBCheckMb4ValueInUTF8, Value: BoolToOnOff(config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Load()), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Store(TiDBOptOn(val))
+		config.UpdateGlobal(func(c *config.Config) { c.Instance.CheckMb4ValueInUTF8.Store(TiDBOptOn(val)) })
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Load()), nil
@@ -657,13 +659,7 @@ var defaultSysVars = []*SysVar{
 		return strconv.FormatUint(atomic.LoadUint64(&vardef.ExpensiveTxnTimeThreshold), 10), nil
 	}},
 	{Scope: vardef.ScopeInstance, Name: vardef.TiDBEnableCollectExecutionInfo, Value: BoolToOnOff(vardef.DefTiDBEnableCollectExecutionInfo), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		oldConfig := config.GetGlobalConfig()
-		newValue := TiDBOptOn(val)
-		if oldConfig.Instance.EnableCollectExecutionInfo.Load() != newValue {
-			newConfig := *oldConfig
-			newConfig.Instance.EnableCollectExecutionInfo.Store(newValue)
-			config.StoreGlobalConfig(&newConfig)
-		}
+		config.UpdateGlobal(func(c *config.Config) { c.Instance.EnableCollectExecutionInfo.Store(TiDBOptOn(val)) })
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()), nil
@@ -681,7 +677,7 @@ var defaultSysVars = []*SysVar{
 		return strconv.Itoa(config.GetGlobalConfig().Instance.PluginAuditLogFlushInterval), nil
 	}},
 	{Scope: vardef.ScopeInstance, Name: vardef.MaxConnections, Value: strconv.FormatUint(uint64(config.GetGlobalConfig().Instance.MaxConnections), 10), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: 100000, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		config.GetGlobalConfig().Instance.MaxConnections = uint32(TidbOptInt64(val, 0))
+		config.UpdateGlobal(func(c *config.Config) { c.Instance.MaxConnections = uint32(TidbOptInt64(val, 0)) })
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return strconv.FormatUint(uint64(config.GetGlobalConfig().Instance.MaxConnections), 10), nil
@@ -694,7 +690,7 @@ var defaultSysVars = []*SysVar{
 				if err != nil {
 					return err
 				}
-				config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(newVal)
+				config.UpdateGlobal(func(c *config.Config) { c.Instance.TiDBEnableDDL.Store(newVal) })
 			}
 			return nil
 		},
@@ -710,7 +706,7 @@ var defaultSysVars = []*SysVar{
 				if err != nil {
 					return err
 				}
-				config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Store(newVal)
+				config.UpdateGlobal(func(c *config.Config) { c.Instance.TiDBEnableStatsOwner.Store(newVal) })
 			}
 			return nil
 		},
@@ -1036,8 +1032,17 @@ var defaultSysVars = []*SysVar{
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEvolvePlanTaskEndTime, Value: vardef.DefTiDBEvolvePlanTaskEndTime, Type: vardef.TypeTime},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBStoreLimit, Value: strconv.FormatInt(atomic.LoadInt64(&config.GetGlobalConfig().TiKVClient.StoreLimit), 10), Type: vardef.TypeInt, MinValue: 0, MaxValue: math.MaxInt64, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return strconv.FormatInt(tikvstore.StoreLimit.Load(), 10), nil
-	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		tikvstore.StoreLimit.Store(TidbOptInt64(val, vardef.DefTiDBStoreLimit))
+	}, SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
+		config.UpdateGlobal(func(c *config.Config) {
+			// Check ownership under the writer lock: a cache refresh may have read its
+			// persisted value before a concurrent reload took ownership of this limit.
+			if ctx.Value(sysVarCacheUpdateKey{}) == true && c.StoreLimitReloaded {
+				return
+			}
+			limit := TidbOptInt64(val, vardef.DefTiDBStoreLimit)
+			c.TiKVClient.StoreLimit = limit
+			tikvstore.StoreLimit.Store(limit)
+		})
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBTxnCommitBatchSize, Value: strconv.FormatUint(tikvstore.DefTxnCommitBatchSize, 10), Type: vardef.TypeUnsigned, MinValue: 1, MaxValue: 1 << 30,
@@ -1635,9 +1640,9 @@ var defaultSysVars = []*SysVar{
 		return fmt.Sprint(vardef.QueryLogMaxLen.Load()), nil
 	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBCommitterConcurrency, Value: strconv.Itoa(vardef.DefTiDBCommitterConcurrency), Type: vardef.TypeInt, MinValue: 1, MaxValue: 10000, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		tikvutil.CommitterConcurrency.Store(int32(TidbOptInt64(val, vardef.DefTiDBCommitterConcurrency)))
-		cfg := config.GetGlobalConfig().GetTiKVConfig()
-		tikvcfg.StoreGlobalConfig(cfg)
+		config.UpdateGlobal(func(_ *config.Config) {
+			tikvutil.CommitterConcurrency.Store(int32(TidbOptInt64(val, vardef.DefTiDBCommitterConcurrency)))
+		})
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return fmt.Sprint(tikvutil.CommitterConcurrency.Load()), nil
@@ -4155,13 +4160,10 @@ var defaultSysVars = []*SysVar{
 		},
 		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 			newValue := strings.ToLower(s)
-			vardef.ServiceScope.Store(newValue)
-			oldConfig := config.GetGlobalConfig()
-			if oldConfig.Instance.TiDBServiceScope != newValue {
-				newConfig := *oldConfig
-				newConfig.Instance.TiDBServiceScope = newValue
-				config.StoreGlobalConfig(&newConfig)
-			}
+			config.UpdateGlobal(func(c *config.Config) {
+				c.Instance.TiDBServiceScope = newValue
+				vardef.ServiceScope.Store(newValue)
+			})
 			return nil
 		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 			return vardef.ServiceScope.Load(), nil

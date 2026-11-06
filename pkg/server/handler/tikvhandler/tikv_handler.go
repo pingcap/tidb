@@ -443,13 +443,18 @@ func (h SettingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		if levelStr := req.Form.Get("log_level"); levelStr != "" {
-			err1 := logutil.SetLevel(levelStr)
+			err1 := config.UpdateGlobalWithError(func(c *config.Config) error {
+				if err := logutil.SetLevel(levelStr); err != nil {
+					return err
+				}
+				c.Log.Level = levelStr
+				return nil
+			})
 			if err1 != nil {
 				handler.WriteError(w, err1)
 				return
 			}
 
-			config.GetGlobalConfig().Log.Level = levelStr
 		}
 		if generalLog := req.Form.Get("tidb_general_log"); generalLog != "" {
 			switch generalLog {
@@ -519,9 +524,9 @@ func (h SettingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if checkMb4ValueInUtf8 := req.Form.Get("check_mb4_value_in_utf8"); checkMb4ValueInUtf8 != "" {
 			switch checkMb4ValueInUtf8 {
 			case "0":
-				config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Store(false)
+				config.UpdateGlobal(func(c *config.Config) { c.Instance.CheckMb4ValueInUTF8.Store(false) })
 			case "1":
-				config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Store(true)
+				config.UpdateGlobal(func(c *config.Config) { c.Instance.CheckMb4ValueInUTF8.Store(true) })
 			default:
 				handler.WriteError(w, errors.New("illegal argument"))
 				return
@@ -536,9 +541,7 @@ func (h SettingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				handler.WriteError(w, errors.New("deadlock_history_capacity out of range, should be in 0 to 10000"))
 				return
 			}
-			cfg := config.GetGlobalConfig()
-			cfg.PessimisticTxn.DeadlockHistoryCapacity = uint(capacity)
-			config.StoreGlobalConfig(cfg)
+			config.UpdateGlobal(func(c *config.Config) { c.PessimisticTxn.DeadlockHistoryCapacity = uint(capacity) })
 			deadlockhistory.GlobalDeadlockHistory.Resize(uint(capacity))
 		}
 		if deadlockCollectRetryable := req.Form.Get("deadlock_history_collect_retryable"); deadlockCollectRetryable != "" {
@@ -547,9 +550,7 @@ func (h SettingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				handler.WriteError(w, errors.New("illegal argument"))
 				return
 			}
-			cfg := config.GetGlobalConfig()
-			cfg.PessimisticTxn.DeadlockHistoryCollectRetryable = collectRetryable
-			config.StoreGlobalConfig(cfg)
+			config.UpdateGlobal(func(c *config.Config) { c.PessimisticTxn.DeadlockHistoryCollectRetryable = collectRetryable })
 		}
 		if mutationChecker := req.Form.Get("tidb_enable_mutation_checker"); mutationChecker != "" {
 			s, err := session.CreateSession(h.Store)
@@ -582,9 +583,7 @@ func (h SettingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				handler.WriteError(w, errors.New("transaction_summary_capacity out of range, should be in 0 to 5000"))
 				return
 			}
-			cfg := config.GetGlobalConfig()
-			cfg.TrxSummary.TransactionSummaryCapacity = uint(capacity)
-			config.StoreGlobalConfig(cfg)
+			config.UpdateGlobal(func(c *config.Config) { c.TrxSummary.TransactionSummaryCapacity = uint(capacity) })
 			txninfo.Recorder.ResizeSummaries(uint(capacity))
 		}
 		if transactionIDDigestMinDuration := req.Form.Get("transaction_id_digest_min_duration"); transactionIDDigestMinDuration != "" {
@@ -596,9 +595,7 @@ func (h SettingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				handler.WriteError(w, errors.New("transaction_id_digest_min_duration out of range, should be in 0 to 2147483647"))
 				return
 			}
-			cfg := config.GetGlobalConfig()
-			cfg.TrxSummary.TransactionIDDigestMinDuration = uint(duration)
-			config.StoreGlobalConfig(cfg)
+			config.UpdateGlobal(func(c *config.Config) { c.TrxSummary.TransactionIDDigestMinDuration = uint(duration) })
 			txninfo.Recorder.SetMinDuration(time.Duration(duration) * time.Millisecond)
 		}
 	} else {
@@ -2221,23 +2218,21 @@ func (LabelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if len(labels) > 0 {
-		cfg := *config.GetGlobalConfig()
-		// Be careful of data race. The key & value of cfg.Labels must not be changed.
-		if cfg.Labels != nil {
+		config.UpdateGlobal(func(cfg *config.Config) {
+			// labels belongs to this request; never mutate the published map.
 			for k, v := range cfg.Labels {
 				if _, found := labels[k]; !found {
 					labels[k] = v
 				}
 			}
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), requestDefaultTimeout)
-		if err := infosync.UpdateServerLabel(ctx, labels); err != nil {
-			logutil.BgLogger().Error("update etcd labels failed", zap.Any("labels", cfg.Labels), zap.Error(err))
-		}
-		cancel()
-		cfg.Labels = labels
-		config.StoreGlobalConfig(&cfg)
-		logutil.BgLogger().Info("update server labels", zap.Any("labels", cfg.Labels))
+			ctx, cancel := context.WithTimeout(context.Background(), requestDefaultTimeout)
+			defer cancel()
+			if err := infosync.UpdateServerLabel(ctx, labels); err != nil {
+				logutil.BgLogger().Error("update etcd labels failed", zap.Any("labels", cfg.Labels), zap.Error(err))
+			}
+			cfg.Labels = labels
+		})
+		logutil.BgLogger().Info("update server labels", zap.Any("labels", labels))
 	}
 
 	handler.WriteData(w, config.GetGlobalConfig().Labels)

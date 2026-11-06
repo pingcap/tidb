@@ -442,6 +442,17 @@ func (sv *SysVar) SetSessionFromHook(s *SessionVars, val string) error {
 	return nil
 }
 
+type sysVarCacheUpdateKey struct{}
+
+// SetGlobalFromCache reapplies a persisted global value. Hooks can distinguish
+// background refreshes from explicit SQL updates to retain local file overrides.
+func (sv *SysVar) SetGlobalFromCache(ctx context.Context, s *SessionVars, val string) error {
+	if sv.SetGlobal == nil {
+		return nil
+	}
+	return sv.SetGlobal(context.WithValue(ctx, sysVarCacheUpdateKey{}, true), s, val)
+}
+
 // SetGlobalFromHook calls the SetGlobal func if it exists.
 func (sv *SysVar) SetGlobalFromHook(ctx context.Context, s *SessionVars, val string, skipAliases bool) error {
 	if sv.SetGlobal != nil {

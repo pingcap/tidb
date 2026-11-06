@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "server",
     srcs = [
+        "config_reload.go",
         "conn.go",
         "conn_stmt.go",
         "conn_stmt_params.go",
@@ -84,6 +85,7 @@ go_library(
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
+        "//pkg/statistics",
         "//pkg/statistics/handle",
         "//pkg/statistics/handle/initstats",
         "//pkg/statistics/handle/util",
@@ -139,6 +141,7 @@ go_library(
         "@com_github_soheilhy_cmux//:cmux",
         "@com_github_stretchr_testify//require",
         "@com_github_tiancaiamao_appdash//traceapp",
+        "@com_github_tikv_client_go_v2//kv",
         "@com_github_tikv_client_go_v2//util",
         "@com_sourcegraph_sourcegraph_appdash_data//:appdash-data",
         "@org_golang_google_grpc//:grpc",
