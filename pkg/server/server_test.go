@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/packetio"
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -352,4 +353,45 @@ func TestStartShutdownMarksUnhealthyBeforeStarterCallback(t *testing.T) {
 	default:
 		require.Fail(t, "starter shutdown callback was not called")
 	}
+}
+
+// TestKillNonFlashbackClusterConnWithIdleConn guards the case of a connection
+// that is registered but has not dispatched any statement yet. Its
+// ShowProcess() returns nil, which used to make KillNonFlashbackClusterConn
+// panic and kill the whole TiDB process. Such a connection cannot be running
+// a FLASHBACK statement, so it must be killed like any other connection.
+func TestKillNonFlashbackClusterConnWithIdleConn(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	// The same raw session the server creates for a new connection (see
+	// rpcServer.createSession): no statement has been dispatched yet, so
+	// ShowProcess() is still nil. A testkit session cannot be used here because
+	// NewTestKit dispatches a `select 3` probe during init, which sets the
+	// process info.
+	se, err := session.CreateSession(store)
+	require.NoError(t, err)
+	require.Nil(t, se.ShowProcess())
+
+	connID := uint64(1)
+	tc := &TiDBContext{
+		Session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	cc := &clientConn{
+		connectionID: connID,
+		server: &Server{
+			capability: defaultCapability,
+		},
+	}
+	cc.SetCtx(tc)
+	srv := &Server{
+		clients: map[uint64]*clientConn{
+			connID: cc,
+		},
+		dom: dom,
+	}
+
+	// Must not panic, and the idle connection must be selected for killing.
+	srv.KillNonFlashbackClusterConn()
+	require.EqualValues(t, connStatusWaitShutdown, cc.getStatus())
 }
