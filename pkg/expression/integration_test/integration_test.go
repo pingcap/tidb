@@ -141,6 +141,38 @@ func skipIfNotStarterForFTS(t *testing.T) {
 	}
 }
 
+func TestCorrelatedBitPushDown(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table bit_push (a bit(16), b varchar(20), " +
+		"unique key(a) invisible)")
+	tk.MustExec("insert into bit_push(a) values (0x0000)")
+	query := "select cast(t1.a as unsigned) from bit_push t1 where " +
+		"(select count(*) from bit_push t2 " +
+		"where t2.a in (t1.a, 30327)) > 1 order by t1.a"
+	t.Run("single zero value", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustQuery(query).Check(testkit.Rows())
+	})
+	tk.MustExec("insert into bit_push(a) values (1), (30327), (NULL)")
+	t.Run("nonzero and null values", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustQuery(query).Check(testkit.Rows("0", "1"))
+		plan := tk.MustQuery("explain format='brief' " + query).Rows()
+		found := false
+		for _, row := range plan {
+			if strings.Contains(fmt.Sprint(row[4]), "in(") {
+				require.Equal(t, "root", row[2])
+				found = true
+			}
+		}
+		require.True(t, found, "missing correlated IN filter: %v", plan)
+	})
+}
+
 func TestFTSParser(t *testing.T) {
 	skipIfNotStarterForFTS(t)
 
