@@ -21,22 +21,24 @@ import (
 
 // Stats metrics.
 var (
-	AutoAnalyzeHistogram      prometheus.Histogram
-	AutoAnalyzeCounter        *prometheus.CounterVec
-	ManualAnalyzeCounter      *prometheus.CounterVec
-	StatsInaccuracyRate       prometheus.Histogram
-	PseudoEstimation          *prometheus.CounterVec
-	SyncLoadCounter           prometheus.Counter
-	SyncLoadTimeoutCounter    prometheus.Counter
-	SyncLoadDedupCounter      prometheus.Counter
-	SyncLoadHistogram         prometheus.Histogram
-	ReadStatsHistogram        prometheus.Histogram
-	StatsCacheCounter         *prometheus.CounterVec
-	StatsCacheGauge           *prometheus.GaugeVec
-	StatsHealthyGauge         *prometheus.GaugeVec
-	StatsDeltaLoadHistogram   prometheus.Histogram
-	StatsDeltaUpdateHistogram prometheus.Histogram
-	StatsUsageUpdateHistogram prometheus.Histogram
+	AutoAnalyzeHistogram               prometheus.Histogram
+	AutoAnalyzeCounter                 *prometheus.CounterVec
+	ManualAnalyzeCounter               *prometheus.CounterVec
+	AutoAnalyzeTableFailures           prometheus.Gauge
+	AutoAnalyzeTableFailuresUpdateTime prometheus.Gauge
+	StatsInaccuracyRate                prometheus.Histogram
+	PseudoEstimation                   *prometheus.CounterVec
+	SyncLoadCounter                    prometheus.Counter
+	SyncLoadTimeoutCounter             prometheus.Counter
+	SyncLoadDedupCounter               prometheus.Counter
+	SyncLoadHistogram                  prometheus.Histogram
+	ReadStatsHistogram                 prometheus.Histogram
+	StatsCacheCounter                  *prometheus.CounterVec
+	StatsCacheGauge                    *prometheus.GaugeVec
+	StatsHealthyGauge                  *prometheus.GaugeVec
+	StatsDeltaLoadHistogram            prometheus.Histogram
+	StatsDeltaUpdateHistogram          prometheus.Histogram
+	StatsUsageUpdateHistogram          prometheus.Histogram
 
 	HistoricalStatsCounter        *prometheus.CounterVec
 	PlanReplayerTaskCounter       *prometheus.CounterVec
@@ -69,6 +71,22 @@ func InitStatsMetrics() {
 			Name:      "manual_analyze_total",
 			Help:      "Counter of manual analyze.",
 		}, []string{LblType})
+
+	AutoAnalyzeTableFailures = metricscommon.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "auto_analyze_max_table_failures",
+			Help:      "Largest number of failed auto analyze jobs of a single table in the last 24 hours. Only reported by the stats owner.",
+		})
+
+	AutoAnalyzeTableFailuresUpdateTime = metricscommon.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "auto_analyze_max_table_failures_update_timestamp_seconds",
+			Help:      "Unix time of the last successful update of auto_analyze_max_table_failures. Only reported by the stats owner.",
+		})
 
 	StatsInaccuracyRate = metricscommon.NewHistogram(
 		prometheus.HistogramOpts{
