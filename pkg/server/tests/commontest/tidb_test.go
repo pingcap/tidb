@@ -1616,7 +1616,7 @@ func waitCollected(ch chan struct{}) {
 }
 
 func TestTopSQLStatementStats(t *testing.T) {
-	ts, total, tagChecker, collectedNotifyCh := setupForTestTopSQLStatementStats(t)
+	ts, total, tagChecker, collectedNotifyCh, _ := setupForTestTopSQLStatementStats(t)
 
 	const ExecCountPerSQL = 2
 	// Test for CRUD.
@@ -1898,7 +1898,7 @@ func (c *resourceTagChecker) checkReqExist(t *testing.T, digest stmtstats.Binary
 	}
 }
 
-func setupForTestTopSQLStatementStats(t *testing.T) (*servertestkit.TidbTestSuite, stmtstats.StatementStatsMap, *resourceTagChecker, chan struct{}) {
+func setupForTestTopSQLStatementStats(t *testing.T) (*servertestkit.TidbTestSuite, stmtstats.StatementStatsMap, *resourceTagChecker, chan struct{}, func(func(stmtstats.StatementStatsMap))) {
 	// Prepare stmt stats.
 	stmtstats.SetupAggregator()
 
@@ -1916,6 +1916,11 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*servertestkit.TidbTestSuit
 		}
 	})
 	stmtstats.RegisterCollector(mockCollector)
+	withTotal := func(f func(stmtstats.StatementStatsMap)) {
+		mu.Lock()
+		defer mu.Unlock()
+		f(total)
+	}
 
 	ts := servertestkit.CreateTidbTestSuite(t)
 
@@ -1976,11 +1981,11 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*servertestkit.TidbTestSuit
 		view.Stop()
 	})
 
-	return ts, total, tagChecker, collectedNotifyCh
+	return ts, total, tagChecker, collectedNotifyCh, withTotal
 }
 
 func TestTopSQLStatementStats2(t *testing.T) {
-	ts, total, tagChecker, collectedNotifyCh := setupForTestTopSQLStatementStats(t)
+	ts, total, tagChecker, collectedNotifyCh, _ := setupForTestTopSQLStatementStats(t)
 
 	const ExecCountPerSQL = 3
 	sqlDigests := map[stmtstats.BinaryDigest]string{}
@@ -2098,7 +2103,7 @@ func TestTopSQLStatementStats2(t *testing.T) {
 }
 
 func TestTopSQLStatementStats3(t *testing.T) {
-	ts, total, tagChecker, collectedNotifyCh := setupForTestTopSQLStatementStats(t)
+	ts, _, tagChecker, collectedNotifyCh, withTotal := setupForTestTopSQLStatementStats(t)
 
 	err := failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockSleepInTableReaderNext", "return(2000)")
 	require.NoError(t, err)
@@ -2137,35 +2142,53 @@ func TestTopSQLStatementStats3(t *testing.T) {
 	waitCollected(collectedNotifyCh)
 
 	foundMap := map[stmtstats.BinaryDigest]string{}
-	for digest, item := range total {
-		if sqlStr, ok := sqlDigests[digest.SQLDigest]; ok {
-			// since the SQL doesn't execute finish, the ExecCount should be recorded,
-			// but the DurationCount and SumDurationNs should be 0.
-			require.Equal(t, uint64(1), item.ExecCount, sqlStr)
-			require.Equal(t, uint64(0), item.DurationCount, sqlStr)
-			require.Equal(t, uint64(0), item.SumDurationNs, sqlStr)
-			foundMap[digest.SQLDigest] = sqlStr
+	withTotal(func(total stmtstats.StatementStatsMap) {
+		for digest, item := range total {
+			if sqlStr, ok := sqlDigests[digest.SQLDigest]; ok {
+				// since the SQL doesn't execute finish, the ExecCount should be recorded,
+				// but the DurationCount and SumDurationNs should be 0.
+				require.Equal(t, uint64(1), item.ExecCount, sqlStr)
+				require.Equal(t, uint64(0), item.DurationCount, sqlStr)
+				require.Equal(t, uint64(0), item.SumDurationNs, sqlStr)
+				foundMap[digest.SQLDigest] = sqlStr
+			}
 		}
-	}
+	})
 
 	// wait sql execute finish.
 	wg.Wait()
-	// Wait for collect.
-	waitCollected(collectedNotifyCh)
+	// Wait until every completed statement has been collected.
+	require.Eventually(t, func() bool {
+		found := map[stmtstats.BinaryDigest]struct{}{}
+		complete := true
+		withTotal(func(total stmtstats.StatementStatsMap) {
+			for digest, item := range total {
+				if _, ok := sqlDigests[digest.SQLDigest]; ok {
+					found[digest.SQLDigest] = struct{}{}
+					if item.DurationCount == 0 || item.SumDurationNs == 0 {
+						complete = false
+					}
+				}
+			}
+		})
+		return complete && len(found) == len(sqlDigests)
+	}, 10*time.Second, 10*time.Millisecond)
 
-	for digest, item := range total {
-		if sqlStr, ok := sqlDigests[digest.SQLDigest]; ok {
-			require.Equal(t, uint64(1), item.ExecCount, sqlStr)
-			require.Equal(t, uint64(1), item.DurationCount, sqlStr)
-			require.Less(t, uint64(0), item.SumDurationNs, sqlStr)
-			foundMap[digest.SQLDigest] = sqlStr
-			tagChecker.checkExist(t, digest.SQLDigest, sqlStr)
+	withTotal(func(total stmtstats.StatementStatsMap) {
+		for digest, item := range total {
+			if sqlStr, ok := sqlDigests[digest.SQLDigest]; ok {
+				require.Equal(t, uint64(1), item.ExecCount, sqlStr)
+				require.Equal(t, uint64(1), item.DurationCount, sqlStr)
+				require.Less(t, uint64(0), item.SumDurationNs, sqlStr)
+				foundMap[digest.SQLDigest] = sqlStr
+				tagChecker.checkExist(t, digest.SQLDigest, sqlStr)
+			}
 		}
-	}
+	})
 }
 
 func TestTopSQLStatementStats4(t *testing.T) {
-	ts, total, tagChecker, collectedNotifyCh := setupForTestTopSQLStatementStats(t)
+	ts, total, tagChecker, collectedNotifyCh, _ := setupForTestTopSQLStatementStats(t)
 
 	err := failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockSleepInTableReaderNext", "return(2000)")
 	require.NoError(t, err)
@@ -2246,7 +2269,7 @@ func TestTopSQLResourceTag(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.PessimisticTxn.PessimisticAutoCommit.Store(false)
 	})
-	ts, _, tagChecker, _ := setupForTestTopSQLStatementStats(t)
+	ts, _, tagChecker, _, _ := setupForTestTopSQLStatementStats(t)
 	defer func() {
 		topsqlstate.DisableTopSQL()
 	}()
