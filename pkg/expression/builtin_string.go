@@ -572,6 +572,20 @@ type builtinRightSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
+// normalizeRightLength treats a negative unsigned ETInt payload as a value above MaxInt64.
+func normalizeRightLength(strLength int, right int64, unsigned bool) int {
+	if right < 0 {
+		if unsigned {
+			return strLength
+		}
+		return 0
+	}
+	if right > int64(strLength) {
+		return strLength
+	}
+	return int(right)
+}
+
 func (b *builtinRightSig) Clone() builtinFunc {
 	newSig := &builtinRightSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
@@ -589,12 +603,8 @@ func (b *builtinRightSig) evalString(ctx EvalContext, row chunk.Row) (string, bo
 	if isNull || err != nil {
 		return "", true, err
 	}
-	strLength, rightLength := len(str), int(right)
-	if rightLength > strLength {
-		rightLength = strLength
-	} else if rightLength < 0 {
-		rightLength = 0
-	}
+	strLength := len(str)
+	rightLength := normalizeRightLength(strLength, right, mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()))
 	return str[strLength-rightLength:], false, nil
 }
 
@@ -624,12 +634,8 @@ func (b *builtinRightUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (string
 		return "", true, err
 	}
 	runes := []rune(str)
-	strLength, rightLength := len(runes), int(right)
-	if rightLength > strLength {
-		rightLength = strLength
-	} else if rightLength < 0 {
-		rightLength = 0
-	}
+	strLength := len(runes)
+	rightLength := normalizeRightLength(strLength, right, mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()))
 	return string(runes[strLength-rightLength:]), false, nil
 }
 
