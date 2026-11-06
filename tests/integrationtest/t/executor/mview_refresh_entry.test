@@ -1,0 +1,62 @@
+# Refresh SQL dispatch, diagnostics, transaction validation, and cancellation requests.
+use test;
+set tidb_mview_enable = on;
+create table t_refresh_entry (id int primary key, g int not null, v int not null);
+insert into t_refresh_entry values (1,1,10);
+create materialized view log on t_refresh_entry (id,g,v);
+create materialized view mv_refresh_entry (g,s,cnt) refresh fast as select g,sum(v),count(*) from t_refresh_entry group by g;
+insert into t_refresh_entry values (2,1,20);
+set @entry_watermark = (select last_success_read_tso from mysql.tidb_mview_refresh_info where mview_id = (select tidb_table_id from information_schema.tables where table_schema='test' and table_name='mv_refresh_entry'));
+
+# DRY RUN returns plans without changing data or the successful watermark.
+--disable_result_log
+refresh materialized view mv_refresh_entry fast dry run;
+refresh materialized view mv_refresh_entry complete in place dry run;
+refresh materialized view mv_refresh_entry complete delta apply dry run;
+refresh materialized view mv_refresh_entry complete out of place dry run;
+--enable_result_log
+select * from mv_refresh_entry order by g;
+select last_success_read_tso = @entry_watermark from mysql.tidb_mview_refresh_info where mview_id = (select tidb_table_id from information_schema.tables where table_schema='test' and table_name='mv_refresh_entry');
+
+# PROFILE executes the actual refresh; its elapsed times are checked by unit tests.
+--disable_result_log
+refresh materialized view mv_refresh_entry fast with profile;
+--enable_result_log
+select * from mv_refresh_entry order by g;
+insert into t_refresh_entry values (3,2,40);
+refresh materialized view mv_refresh_entry complete in place;
+select * from mv_refresh_entry order by g;
+update t_refresh_entry set v=50 where id=3;
+refresh materialized view mv_refresh_entry complete delta apply;
+select * from mv_refresh_entry order by g;
+insert into t_refresh_entry values (4,3,60);
+refresh materialized view mv_refresh_entry complete out of place;
+select * from mv_refresh_entry order by g;
+select count(*) from information_schema.tables where table_schema='test' and table_name like '__mv_shadow_%';
+
+# Both direct and prepared statements reject explicit transactions.
+begin;
+--error 1105
+refresh materialized view mv_refresh_entry complete in place;
+rollback;
+prepare entry_stmt from 'refresh materialized view mv_refresh_entry complete delta apply';
+begin;
+--error 1105
+execute entry_stmt;
+rollback;
+deallocate prepare entry_stmt;
+
+# A cancellation request is applied only once and only to a running refresh.
+set @entry_mview_id = (select tidb_table_id from information_schema.tables where table_schema='test' and table_name='mv_refresh_entry');
+insert into mysql.tidb_mview_refresh_hist (refresh_job_id,mview_id,refresh_method,refresh_status) values (9000000000000000001,@entry_mview_id,'fast manual','running');
+cancel materialized view refresh job 9000000000000000001;
+select cancel_request_time is not null from mysql.tidb_mview_refresh_hist where refresh_job_id=9000000000000000001;
+--error 1105
+cancel materialized view refresh job 9000000000000000001;
+--error 1105
+cancel materialized view refresh job 9000000000000000002;
+delete from mysql.tidb_mview_refresh_hist where refresh_job_id=9000000000000000001;
+drop materialized view mv_refresh_entry;
+drop materialized view log on t_refresh_entry;
+drop table t_refresh_entry;
+set tidb_mview_enable = off;

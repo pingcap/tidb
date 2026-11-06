@@ -2440,6 +2440,7 @@ func TestGCPlacementRulesForCreateMaterializedViewRollback(t *testing.T) {
 	}{
 		{name: "drop materialized view", failpoint: "drop-mview:20", tableID: 20},
 		{name: "drop materialized view log", failpoint: "drop-mlog:30", tableID: 30},
+		{name: "out of place materialized view cutover", failpoint: "mview-cutover:40:41", tableID: 40},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC", `return("`+test.failpoint+`")`))

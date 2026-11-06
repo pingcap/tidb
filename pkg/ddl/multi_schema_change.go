@@ -41,6 +41,7 @@ import (
 // This cannot reconstruct a selection made by an older binary before the field
 // was copied to the parent, because neither the parent nor SubJob persists it.
 func updateParentJobFromProxy(parentJob, proxyJob *model.Job) {
+	parentJob.RU = proxyJob.RU
 	if parentJob.ReorgMeta != nil && proxyJob.ReorgMeta != nil && proxyJob.ReorgMeta.UseCloudStorage {
 		parentJob.ReorgMeta.UseCloudStorage = true
 	}

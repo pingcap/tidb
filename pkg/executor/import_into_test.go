@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -148,6 +150,11 @@ func TestNextGenS3ExternalID(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("only for nextgen")
 	}
+	originalMode := deploymode.Get()
+	require.NoError(t, deploymode.Set(deploymode.Premium))
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
 	store := testkit.CreateMockStore(t)
 	outerTK := testkit.NewTestKit(t, store)
 	outerTK.MustExec("create table test.t (id int);")
@@ -234,6 +241,80 @@ func TestNextGenS3ExternalID(t *testing.T) {
 			panic("FAIL IT, AS WE CANNOT RUN IT HERE")
 		})
 		err := tk.QueryToErr("IMPORT INTO test.t FROM 's3://bucket?external-id=allowed'")
+		require.ErrorContains(t, err, "FAIL IT, AS WE CANNOT RUN IT HERE")
+	})
+
+	t.Run("Starter SEM enabled, require and preserve explicit external ID", func(t *testing.T) {
+		require.NoError(t, deploymode.Set(deploymode.Starter))
+		bak := config.GetGlobalKeyspaceName()
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = "aaa"
+		})
+		t.Cleanup(func() {
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.KeyspaceName = bak
+			})
+			require.NoError(t, deploymode.Set(deploymode.Premium))
+		})
+		for i, fns := range semTestPatternFns {
+			t.Run(fmt.Sprint(i), func(t *testing.T) {
+				tk := testkit.NewTestKit(t, store)
+				fns[0](t, tk)
+				t.Cleanup(func() {
+					fns[1](t, tk)
+				})
+				for _, schema := range []string{"s3", "oss"} {
+					for _, query := range []string{
+						"access-key=ak&secret-access-key=sk",
+						"EXTERNAL_ID=&access-key=ak&secret-access-key=sk",
+						"external-id=allowed&EXTERNAL_ID=&access-key=ak&secret-access-key=sk",
+					} {
+						tk.MustMatchErrMsg(
+							fmt.Sprintf("IMPORT INTO test.t FROM '%s://bucket?%s'", schema, query),
+							`(?i).*The URI of data source is invalid.*external ID is required for Starter deployments.*`)
+					}
+					tk.MustMatchErrMsg(
+						fmt.Sprintf("IMPORT INTO test.t FROM '%s://bucket?external-id=allowed'", schema),
+						`(?i).*Feature 'IMPORT INTO .*without access key/secret access key or role ARN' is not supported when security enhanced mode is enabled`)
+				}
+				for _, tc := range []struct {
+					name  string
+					param string
+					value string
+				}{
+					{name: "canonical", param: "external-id", value: "allowed"},
+					{name: "alias", param: "EXTERNAL_ID", value: "caller-provided"},
+				} {
+					t.Run(tc.name, func(t *testing.T) {
+						testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
+							u, err := url.Parse(plan.Path)
+							require.NoError(t, err)
+							require.Equal(t, []string{tc.value}, u.Query()[tc.param])
+							panic("FAIL IT, AS WE CANNOT RUN IT HERE")
+						})
+						for _, schema := range []string{"s3", "oss"} {
+							err := tk.QueryToErr(fmt.Sprintf("IMPORT INTO test.t FROM '%s://bucket?%s=%s&access-key=ak&secret-access-key=sk'", schema, tc.param, tc.value))
+							require.ErrorContains(t, err, "FAIL IT, AS WE CANNOT RUN IT HERE")
+						}
+					})
+				}
+			})
+		}
+	})
+
+	t.Run("Starter SEM disabled, external ID remains optional", func(t *testing.T) {
+		require.NoError(t, deploymode.Set(deploymode.Starter))
+		t.Cleanup(func() {
+			require.NoError(t, deploymode.Set(deploymode.Premium))
+		})
+		tk := testkit.NewTestKit(t, store)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
+			u, err := url.Parse(plan.Path)
+			require.NoError(t, err)
+			require.NotContains(t, u.Query(), s3like.S3ExternalID)
+			panic("FAIL IT, AS WE CANNOT RUN IT HERE")
+		})
+		err := tk.QueryToErr("IMPORT INTO test.t FROM 's3://bucket'")
 		require.ErrorContains(t, err, "FAIL IT, AS WE CANNOT RUN IT HERE")
 	})
 }
@@ -325,12 +406,12 @@ func TestCancelImportJobWithoutDXFTask(t *testing.T) {
 }
 
 func testNextGenUnsupportedLocalSortAndOptions(t *testing.T, store kv.Storage, initFn func(t *testing.T, tk *testkit.TestKit)) {
-	t.Run("import from select", func(t *testing.T) {
+	t.Run("import from select requires global sort", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 		initFn(t, tk)
 		err := tk.ExecToErr("IMPORT INTO test.t FROM select 1")
 		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
-		require.ErrorContains(t, err, "IMPORT INTO from select")
+		require.ErrorContains(t, err, "IMPORT INTO with local sort")
 	})
 
 	t.Run("local sort", func(t *testing.T) {
@@ -446,6 +527,15 @@ func TestImportIntoChildSessionInheritsMaintenanceFlag(t *testing.T) {
 	tk.MustExec("create table src (a int)")
 	tk.MustExec("insert into src values (1), (2)")
 	tk.MustExec("create table dst (a int)")
+	previousURI := vardef.CloudStorageURI.Load()
+	t.Cleanup(func() { vardef.CloudStorageURI.Store(previousURI) })
+	vardef.CloudStorageURI.Store("")
+	expectedError := "mock import from select setup error"
+	if kerneltype.IsNextGen() {
+		vardef.CloudStorageURI.Store("s3://maintenance-flag-test")
+		tk.MustExec("insert into dst values (0)")
+		expectedError = "target table is not empty"
+	}
 
 	sessionVars := tk.Session().GetSessionVars()
 	origRestricted := sessionVars.InRestrictedSQL
@@ -465,7 +555,7 @@ func TestImportIntoChildSessionInheritsMaintenanceFlag(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockImportFromSelectSetupErr", `return(true)`)
 
 	err := tk.ExecToErr("import into dst from select * from src with disable_precheck")
-	require.ErrorContains(t, err, "mock import from select setup error")
+	require.ErrorContains(t, err, expectedError)
 	require.True(t, invoked)
 	require.True(t, childMaintenance)
 }
@@ -481,4 +571,34 @@ func TestImportIntoRejectsMaterializedViewLogBaseTable(t *testing.T) {
 
 	err := tk.ExecToErr("import into dst from select * from src with disable_precheck")
 	require.ErrorContains(t, err, "IMPORT INTO on tables with materialized view log")
+}
+
+func TestImportQueryRouting(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table query_route_src(id int)")
+	tk.MustExec("create table query_route_dst(id int)")
+	previousURI := vardef.CloudStorageURI.Load()
+	t.Cleanup(func() { vardef.CloudStorageURI.Store(previousURI) })
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockImportFromSelectSetupErr", `return(true)`)
+	sql := "import into query_route_dst from select id from query_route_src with disable_precheck"
+	vars := tk.Session().GetSessionVars()
+	if kerneltype.IsNextGen() {
+		vardef.CloudStorageURI.Store("s3://query-sort")
+		require.ErrorContains(t, tk.ExecToErr(sql), "IMPORT INTO FROM SELECT outside materialized view maintenance")
+	}
+	vars.InMViewMaintenance = true
+	t.Cleanup(func() { vars.InMViewMaintenance = false })
+	if kerneltype.IsClassic() {
+		// Classic FROM SELECT runs locally.
+		require.ErrorContains(t, tk.ExecToErr(sql), "mock import from select setup error")
+		return
+	}
+	vardef.CloudStorageURI.Store("")
+	require.ErrorContains(t, tk.ExecToErr(sql), "IMPORT INTO FROM SELECT without global sort storage")
+	// With a sort store, the query is captured and the import reaches the prechecks.
+	vardef.CloudStorageURI.Store("s3://query-sort")
+	tk.MustExec("insert into query_route_dst values (1)")
+	require.ErrorContains(t, tk.ExecToErr(sql), "target table is not empty")
 }

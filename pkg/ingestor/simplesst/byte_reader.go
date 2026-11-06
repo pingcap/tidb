@@ -37,8 +37,7 @@ var (
 	// ConcurrentReaderBufferSizePerConc is the buffer size for concurrent reader per
 	// concurrency.
 	ConcurrentReaderBufferSizePerConc = int(8 * size.MB)
-	// concurrentReaderTotalConcurrency is the maximum concurrent-read budget used by
-	// external readers within one task.
+	// concurrentReaderTotalConcurrency limits the range-read fan-out for one file.
 	concurrentReaderTotalConcurrency = 256
 )
 

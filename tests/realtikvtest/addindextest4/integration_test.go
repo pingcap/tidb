@@ -45,6 +45,9 @@ func init() {
 }
 
 func TestMultiSchemaChangeTwoIndexes(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("this test relies on the beforeAddIndexScan failpoint, which is only used by the local-ingest backfill path")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -210,6 +213,7 @@ func TestFixAdminAlterDDLJobs(t *testing.T) {
 func TestAddIndexShowAnalyzeProgress(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk1 := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk1)
 	tk1.MustExec("use test")
 	tk1.MustExec("create table t (a int, b int, key idx_b(b));")
 	tk1.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
@@ -261,6 +265,7 @@ func TestAddIndexShowAnalyzeProgress(t *testing.T) {
 func TestAnalyzeTimeout(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk1 := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk1)
 	tk1.MustExec("use test")
 	tk1.MustExec("drop table if exists t_timeout;")
 	tk1.MustExec("create table t_timeout (a int, b varchar(16), key idx_b(b));")
@@ -346,6 +351,7 @@ func TestAnalyzeTimeout(t *testing.T) {
 func TestMultiSchemaChangeAnalyzeOnlyOnce(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk1 := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk1)
 	tk1.MustExec("use test")
 	tk1.MustExec("set @@tidb_stats_update_during_ddl = true;")
 	dbCnt := 0
@@ -392,6 +398,7 @@ func TestMultiSchemaChangeAnalyzeOnlyOnce(t *testing.T) {
 func TestCancelAfterReorgTimeout(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("use test;")
 
 	tk.MustExec("create view all_global_tasks as select * from mysql.tidb_global_task union all select * from mysql.tidb_global_task_history;")
@@ -458,6 +465,9 @@ func setupAddIndexClassicVars(tk *testkit.TestKit, distTaskOn bool) {
 }
 
 func TestAddIndexResumesFromCheckpointAfterPartialImport(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("this test exercises the local-ingest checkpoint path which is not used on NextGen")
+	}
 	runCase := func(t *testing.T, distTaskOn bool) {
 		store := realtikvtest.CreateMockStoreAndSetup(t)
 
@@ -498,6 +508,9 @@ func TestAddIndexResumesFromCheckpointAfterPartialImport(t *testing.T) {
 }
 
 func TestAddIndexResumesFromCheckpointAfterPartialScan(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("this test exercises the local-ingest partial scan path which is not used on NextGen")
+	}
 	runCase := func(t *testing.T, distTaskOn bool) {
 		store := realtikvtest.CreateMockStoreAndSetup(t)
 
