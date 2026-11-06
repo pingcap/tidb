@@ -231,10 +231,23 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 	}
 
 	if !ok {
+		// Try to look up UDF from mysql.tidb_udf table
 		db := ctx.GetEvalCtx().CurrentDB()
 		if db == "" {
 			return nil, errors.Trace(plannererrors.ErrNoDB)
 		}
+		udfFC, err := LookupUDF(ctx, db, funcName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if udfFC != nil {
+			fc = udfFC
+			ok = true
+		}
+	}
+
+	if !ok {
+		db := ctx.GetEvalCtx().CurrentDB()
 		return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", db+"."+funcName)
 	}
 	noopFuncsMode := ctx.GetNoopFuncsMode()
@@ -431,8 +444,9 @@ func (sf *ScalarFunction) ConstLevel() ConstLevel {
 		return ConstNone
 	}
 
-	if _, ok := sf.Function.(*extensionFuncSig); ok {
-		// we should return `ConstNone` for extension functions for safety, because it may have a side effect.
+	switch sf.Function.(type) {
+	case *extensionFuncSig, *udfFuncSig:
+		// User functions may read or modify session state.
 		return ConstNone
 	}
 

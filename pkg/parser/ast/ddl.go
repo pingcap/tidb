@@ -55,8 +55,11 @@ var (
 	_ DDLNode = &RenameTableStmt{}
 	_ DDLNode = &TruncateTableStmt{}
 	_ DDLNode = &RepairTableStmt{}
+	_ DDLNode = &CreateFunctionStmt{}
+	_ DDLNode = &DropFunctionStmt{}
 
 	_ Node = &AlterTableSpec{}
+	_ Node = &FunctionParam{}
 	_ Node = &ColumnDef{}
 	_ Node = &ColumnOption{}
 	_ Node = &ColumnPosition{}
@@ -6044,4 +6047,183 @@ func tableOptionsWithRestoreTTLFlag(flags format.RestoreFlags, options []*TableO
 		}
 	}
 	return newOptions
+}
+
+// FunctionParam represents a parameter of a user-defined function.
+type FunctionParam struct {
+	node
+	Name string
+	Type *types.FieldType
+}
+
+// Restore implements Node interface.
+func (n *FunctionParam) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteName(n.Name)
+	ctx.WritePlain(" ")
+	ctx.WriteKeyWord(n.Type.CompactStr())
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *FunctionParam) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*FunctionParam)
+	return v.Leave(n)
+}
+
+// CreateFunctionStmt represents a CREATE FUNCTION statement for user-defined functions.
+// Supports MySQL native SQL functions with BEGIN...END blocks.
+type CreateFunctionStmt struct {
+	ddlNode
+
+	OrReplace       bool
+	IfNotExists     bool
+	Definer         *auth.UserIdentity // MySQL DEFINER = 'user'@'host' clause
+	FuncName        *TableName
+	Parameters      []*FunctionParam
+	ReturnType      *types.FieldType
+	IsDeterministic bool
+
+	// MySQL SQL body: the BEGIN...END block
+	SQLBody StmtNode
+
+	// MySQL function characteristics
+	Comment     string
+	DataAccess  string // "CONTAINS SQL", "NO SQL", "READS SQL DATA", "MODIFIES SQL DATA"
+	SQLSecurity string // "DEFINER" or "INVOKER"
+}
+
+// Restore implements Node interface.
+func (n *CreateFunctionStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CREATE ")
+	if n.OrReplace {
+		ctx.WriteKeyWord("OR REPLACE ")
+	}
+	// DEFINER clause comes before FUNCTION keyword (MySQL syntax)
+	if n.Definer != nil {
+		ctx.WriteKeyWord("DEFINER")
+		ctx.WritePlain("=")
+		ctx.WriteName(n.Definer.Username)
+		if n.Definer.Hostname != "" {
+			ctx.WritePlain("@")
+			ctx.WriteName(n.Definer.Hostname)
+		}
+		ctx.WritePlain(" ")
+	}
+	ctx.WriteKeyWord("FUNCTION ")
+	if n.IfNotExists {
+		ctx.WriteKeyWord("IF NOT EXISTS ")
+	}
+	if err := n.FuncName.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CreateFunctionStmt.FuncName")
+	}
+	ctx.WritePlain("(")
+	for i, param := range n.Parameters {
+		if i != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := param.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore CreateFunctionStmt.Parameters[%d]", i)
+		}
+	}
+	ctx.WritePlain(")")
+	ctx.WriteKeyWord(" RETURNS ")
+	ctx.WriteKeyWord(n.ReturnType.CompactStr())
+
+	// MySQL function characteristics
+	if n.Comment != "" {
+		ctx.WriteKeyWord(" COMMENT ")
+		ctx.WriteString(n.Comment)
+	}
+	if n.IsDeterministic {
+		ctx.WriteKeyWord(" DETERMINISTIC")
+	}
+	if n.DataAccess != "" {
+		ctx.WritePlain(" ")
+		ctx.WriteKeyWord(n.DataAccess)
+	}
+	if n.SQLSecurity != "" {
+		ctx.WriteKeyWord(" SQL SECURITY ")
+		ctx.WriteKeyWord(n.SQLSecurity)
+	}
+
+	// MySQL SQL body (BEGIN...END)
+	if n.SQLBody != nil {
+		ctx.WritePlain(" ")
+		if err := n.SQLBody.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore CreateFunctionStmt.SQLBody")
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CreateFunctionStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CreateFunctionStmt)
+	if n.FuncName != nil {
+		node, ok := n.FuncName.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.FuncName = node.(*TableName)
+	}
+	for i, param := range n.Parameters {
+		node, ok := param.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Parameters[i] = node.(*FunctionParam)
+	}
+	if n.SQLBody != nil {
+		node, ok := n.SQLBody.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.SQLBody = node.(StmtNode)
+	}
+	return v.Leave(n)
+}
+
+// DropFunctionStmt represents a DROP FUNCTION statement.
+type DropFunctionStmt struct {
+	ddlNode
+
+	IfExists bool
+	FuncName *TableName
+}
+
+// Restore implements Node interface.
+func (n *DropFunctionStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("DROP FUNCTION ")
+	if n.IfExists {
+		ctx.WriteKeyWord("IF EXISTS ")
+	}
+	if err := n.FuncName.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore DropFunctionStmt.FuncName")
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *DropFunctionStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DropFunctionStmt)
+	if n.FuncName != nil {
+		node, ok := n.FuncName.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.FuncName = node.(*TableName)
+	}
+	return v.Leave(n)
 }
