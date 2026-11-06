@@ -17,10 +17,16 @@
 //! MIN/MAX ordering (`func_max_min.go`) shared by the root aggregation and
 //! the partial stage a scan computes over its staged rows.
 
+pub mod agg_builder;
+pub mod agg_func;
 pub mod aggfuncs;
 pub mod approx_count_distinct;
 pub mod farmhash;
 pub mod frame_rows;
+pub mod func_count;
+pub mod func_count_distinct;
+pub mod spill_deserialize_helper;
+pub mod spill_serialize_helper;
 
 use tidb_datatype::CollationCollator;
 use tidb_datatype::Datum;
@@ -88,3 +94,6 @@ pub fn extreme_replaces(
         }
     })
 }
+
+#[cfg(test)]
+mod agg_func_tests;

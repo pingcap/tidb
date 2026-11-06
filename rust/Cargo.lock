@@ -4893,8 +4893,10 @@ dependencies = [
  "tidb-exprctx",
  "tidb-expression-aggregation",
  "tidb-goruntime",
+ "tidb-hack",
  "tidb-parser-types",
  "tidb-selection",
+ "tidb-serialization",
  "tidb-set",
  "tidb-terror",
 ]

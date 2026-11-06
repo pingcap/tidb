@@ -123,6 +123,14 @@ where
     let (slot, elem_offset) = key
         .extend(value)
         .expect("key/value layout must fit address space");
+    // Go's struct layout pads a trailing zero-size field by one byte, so a
+    // pointer to it never points past the slot: a set's
+    // `struct{key K; elem struct{}}` slot is a byte longer, then aligned.
+    let slot = if V::SOURCE_SIZE == 0 && K::SOURCE_SIZE != 0 {
+        Layout::from_size_align(slot.size() + 1, slot.align()).expect("padded slot layout")
+    } else {
+        slot
+    };
     let slot = slot.pad_to_align();
     let controls = Layout::new::<u64>();
     let slots = Layout::from_size_align(

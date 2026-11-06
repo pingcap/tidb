@@ -11,6 +11,7 @@ description = "TiDB pkg/executor/aggfuncs (Rust)."
 workspace = true
 
 [dependencies]
+tidb-hack = { path = "../tidb-hack" }
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-driver-error = { path = "../tidb-driver-error" }
@@ -20,6 +21,7 @@ tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-parser-types = { path = "../tidb-parser-types" }
 tidb-selection = { path = "../tidb-selection" }
 tidb-set = { path = "../tidb-set" }
+tidb-serialization = { path = "../tidb-serialization" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-charset = { path = "../tidb-charset" }

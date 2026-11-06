@@ -795,6 +795,27 @@ mod tests {
     #[derive(Clone, Debug, Eq, PartialEq)]
     struct Item(&'static str);
 
+    /// Go 1.26's `set.New{Int64,Float64,String}SetWithMemoryUsage` (printed
+    /// from `pkg/util/set`): an empty set holds one group -- 184, 184 and
+    /// 248 bytes, its `struct{}` element padded by a byte -- and only the
+    /// sixteenth insert grows it, by 259, 259 and 404.
+    #[test]
+    fn memory_usage_sets_charge_gos_map_sizes() {
+        let (mut ints, int_bytes) = Int64SetWithMemoryUsage::new(std::iter::empty());
+        let (mut reals, real_bytes) = Float64SetWithMemoryUsage::new(std::iter::empty());
+        let (mut strings, string_bytes) = StringSetWithMemoryUsage::new(std::iter::empty());
+        assert_eq!((int_bytes, real_bytes, string_bytes), (184, 184, 248));
+        for i in 0..20 {
+            let deltas = (
+                ints.insert(i),
+                reals.insert(i as f64),
+                strings.insert(GoString::from(i.to_string())),
+            );
+            let expected = if i == 15 { (259, 259, 404) } else { (0, 0, 0) };
+            assert_eq!(deltas, expected, "insert {i}");
+        }
+    }
+
     impl SetKey for Item {
         fn set_key(&self) -> GoString {
             self.0.into()
