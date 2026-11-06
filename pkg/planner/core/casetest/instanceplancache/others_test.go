@@ -683,3 +683,17 @@ func TestInstancePlanCacheWithDualTable(t *testing.T) {
 	// Clean up
 	tk.MustExec(`set global tidb_enable_instance_plan_cache = 0`)
 }
+
+func TestInstancePlanCachePointGetWithLiteral(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	defer tk.MustExec(`set global tidb_enable_instance_plan_cache=0`)
+	tk.MustExec(`create table t (a int primary key)`)
+	tk.MustExec(`insert into t values (1)`)
+	tk.MustExec(`prepare st from 'select * from t where a = 1'`)
+	tk.MustQuery(`execute st`).Check(testkit.Rows("1"))
+	tk.MustQuery(`execute st`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
