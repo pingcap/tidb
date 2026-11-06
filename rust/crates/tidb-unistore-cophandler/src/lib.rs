@@ -13,14 +13,11 @@
 // limitations under the License.
 
 //! Go `pkg/store/mockstore/unistore/cophandler/cop_handler.go` — the
-//! coprocessor's front door: request dispatch, DAG decode, and the
-//! flat-list-to-tree executor conversion.
-//!
-//! SEED of `cophandler` (~5k lines): request parsing plus the ordinary table
-//! and index scan DAG composition land here, with the pushed-down bounded
-//! sort (TopN: leaf order-by keys, per-key direction, heap size). Analyze
-//! and the remaining closure-executor expressions refuse by name until they
-//! land; checksum answers Go's fixed placeholder stub.
+//! coprocessor's front door: request dispatch, DAG decode, the
+//! flat-list-to-tree executor conversion, and `handleCopDAGRequest`, which
+//! runs every DAG through `buildAndRunMPPExecutor`'s `mppExec` chain
+//! (`mpp.rs`, `mpp_exec.rs`) and answers `genRespWithMPPExec`'s response.
+//! Checksum answers Go's fixed placeholder stub.
 //!
 //! # Narrowings, by name
 //!
@@ -32,13 +29,21 @@
 
 mod analyze;
 mod eval_context;
+mod mpp;
+mod mpp_exec;
 
 #[cfg(test)]
 #[path = "region_group_tests.rs"]
 mod region_group_tests;
 
+#[cfg(test)]
+#[path = "mpp_exec_tests.rs"]
+mod mpp_exec_tests;
+
 use tidb_datatype::CollationCollator;
 use eval_context::{RequestEvalContext, SharedExpression};
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use prost::Message;
@@ -172,11 +177,6 @@ impl CopExecError {
         }
     }
 
-    fn message(&self) -> &str {
-        match self {
-            CopExecError::Sql { message, .. } | CopExecError::Other(message) => message,
-        }
-    }
 }
 
 impl From<tidb_exprctx::EvalError> for CopExecError {
@@ -203,632 +203,373 @@ impl From<CopExecError> for String {
     }
 }
 
-/// Go `genRespWithMPPExec` for a failed executor: no chunks, the error in
-/// `SelectResponse.error` (`toPBError`) beside the warnings so far.
-fn executor_error_response(
-    error: &CopExecError,
-    warnings: Vec<tipb::Error>,
-) -> coprocessor::Response {
-    let warning_count = warnings.len() as i64;
-    let select = tipb::SelectResponse {
-        error: Some(error.to_pb_error()),
-        warnings,
-        warning_count: Some(warning_count),
-        encode_type: Some(tipb::EncodeType::TypeDefault as i32),
-        ..tipb::SelectResponse::default()
-    };
-    coprocessor::Response {
-        data: select.encode_to_vec().into(),
-        ..coprocessor::Response::default()
-    }
-}
-
-/// Go's `%v` rendering of a `[]byte`: space-separated decimals in brackets.
-fn go_byte_slice(bytes: &[u8]) -> String {
-    let rendered = bytes
-        .iter()
-        .map(u8::to_string)
-        .collect::<Vec<_>>()
-        .join(" ");
-    format!("[{rendered}]")
-}
-
-/// Go `handleCopDAGRequest`'s parse half: `buildDAG`'s guards and decode,
-/// with execution refusing by name.
+/// Go `handleCopDAGRequest`: the DAG decoded (`buildDAG`), built into its
+/// `mppExec` chain and run (`buildAndRunMPPExecutor`), and the response
+/// assembled from the chain (`genRespWithMPPExec`).
 fn handle_cop_dag_request(
-    _store: &dyn tidb_unistore_dbreader::DbReader,
+    store: &dyn tidb_unistore_dbreader::DbReader,
     req: &coprocessor::Request,
 ) -> coprocessor::Response {
+    let start_time = std::time::Instant::now();
     let context = match build_dag(req) {
         Ok(context) => context,
         Err(message) => return other_error(&message),
     };
-    let mut response = exec_dag(_store, &context);
+    // A chain that fails to build answers its error as `OtherError` (Go's
+    // `ErrExecutorNotSupportedMsg` arm; this port's narrowings likewise).
+    let run = match build_and_run_mpp_executor(store, &context) {
+        Ok(run) => run,
+        Err(message) => return other_error(&message),
+    };
     let warnings = context.expression_context.take_warnings();
-    if !warnings.is_empty() && response.other_error.is_empty() && response.locked.is_none() {
-        let mut select = match tipb::SelectResponse::decode(response.data.as_ref()) {
-            Ok(select) => select,
-            Err(error) => {
-                return other_error(&format!("decode coprocessor warnings response: {error}"));
-            }
-        };
-        select.warning_count = Some(select.warning_count.unwrap_or(0) + warnings.len() as i64);
-        select
-            .warnings
-            .extend(warnings.into_iter().map(|(code, message)| tipb::Error {
-                code: Some(i32::from(code)),
-                msg: Some(message),
-            }));
-        response.data = select.encode_to_vec().into();
-    }
-    response
+    gen_resp_with_mpp_exec(run, &context, warnings, start_time.elapsed())
 }
 
-/// The execution slice of Go `buildClosureExecutor` + `handleCopDAGRequest`
-/// (`closure_exec.go`): a TABLE-SCAN-ONLY DAG runs; anything above the scan
-/// refuses by name until its course lands.
-fn exec_dag(store: &dyn tidb_unistore_dbreader::DbReader, context: &DagContext) -> coprocessor::Response {
-    let started = std::time::Instant::now();
-    executor_lists_to_tree(&context.dag_req.executors);
-    // Go validates every request range while clipping it against the region
-    // (`extractKVRanges`, `cop_handler.go:675`); the whole-keyspace engine
-    // has no region bounds to clip to, but the malformed-range rejection is
-    // wire-visible and kept verbatim, Go's `%v` byte-slice rendering
-    // included.
-    for range in &context.key_ranges {
-        if range.start >= range.end {
-            return other_error(&format!(
-                "invalid range, start should be smaller than end: {} {}",
-                go_byte_slice(&range.start),
-                go_byte_slice(&range.end)
-            ));
-        }
-    }
-    // Go's composition contract (`closure_exec.go:166`):
-    // `tableScan|indexScan [selection] [topN | limit | agg]`. This slice
-    // runs the scan and a LIMIT above it — Go's limit is nothing but a
-    // break-at-count during the scan (`ce.limit`, `closure_exec.go:144`,
-    // checked at `:597`).
-    let mut limit = usize::MAX;
-    let mut conditions: Vec<SimpleExpr> = Vec::new();
-    let mut aggregation: Option<&tipb::Aggregation> = None;
-    let mut topn: Option<TopNSpec> = None;
-    for above in &context.dag_req.executors[1..] {
-        if above.tp() == tipb::ExecType::TypeLimit {
-            let Some(body) = above.limit.as_ref() else {
-                return other_error("executor missing limit body");
-            };
-            limit = usize::try_from(body.limit()).unwrap_or(usize::MAX);
-        } else if above.tp() == tipb::ExecType::TypeSelection {
-            let Some(body) = above.selection.as_ref() else {
-                return other_error("executor missing selection body");
-            };
-            for condition in &body.conditions {
-                match convert_expr_with_context(condition, &context.expression_context) {
-                    Ok(expr) => conditions.push(expr),
-                    Err(message) => return other_error(&message),
-                }
-            }
-        } else if above.tp() == tipb::ExecType::TypeTopN {
-            let Some(body) = above.top_n.as_ref() else {
-                return other_error("executor missing topN body");
-            };
-            topn = Some(match TopNSpec::build(body, &context.expression_context) {
-                Ok(spec) => spec,
-                Err(message) => return other_error(&message),
-            });
-        } else if above.tp() == tipb::ExecType::TypeAggregation
-            || above.tp() == tipb::ExecType::TypeStreamAgg
-        {
-            let Some(body) = above.aggregation.as_ref() else {
-                return other_error("executor missing aggregation body");
-            };
-            aggregation = Some(body);
-        } else {
-            return other_error("this closure-executor shape is a later course of this port");
-        }
-    }
-    if aggregation.is_some() && (limit != usize::MAX || topn.is_some()) {
-        // Go's closure executor composes them; this port's one lowering
-        // never builds the pair, so the combination refuses by name rather
-        // than guessing which of Go's two cap positions was meant.
-        return other_error("aggregation over a row cap is a later course of this port");
-    }
-    let scan = &context.dag_req.executors[0];
-    if scan.tp() == tipb::ExecType::TypeIndexScan {
-        let Some(idx_scan) = scan.idx_scan.as_ref() else {
-            return other_error("executor missing idx_scan body");
-        };
-        let mut produced = ExecutorRows::default();
-        let response = exec_index_scan(
-            store,
-            context,
-            idx_scan,
-            &conditions,
-            limit,
-            aggregation,
-            topn.as_ref(),
-            &mut produced,
-        );
-        return finish_dag_response(response, context, &produced, started.elapsed());
-    }
-    if scan.tp() != tipb::ExecType::TypeTableScan {
-        return other_error("index scans (closure_exec.go) are a later course of this port");
-    }
-    let Some(tbl_scan) = scan.tbl_scan.as_ref() else {
-        return other_error("executor missing tbl_scan body");
-    };
-    let mut produced = ExecutorRows::default();
-    let response = exec_table_scan(
-        store,
-        context,
-        tbl_scan,
-        &conditions,
-        limit,
-        aggregation,
-        topn.as_ref(),
-        &mut produced,
-    );
-    finish_dag_response(response, context, &produced, started.elapsed())
+/// What `buildAndRunMPPExecutor` hands back: the executor chain, the chunks
+/// its root produced, the paging range, the per-range counts and the error
+/// that stopped it.
+struct MppRun<'a> {
+    exec: Box<dyn mpp_exec::MppExec<'a> + 'a>,
+    chunks: Vec<mpp_exec::Chunk>,
+    last_range: Option<coprocessor::KeyRange>,
+    counts: Vec<i64>,
+    ndvs: Vec<i64>,
+    err: Option<mpp_exec::MppExecError>,
 }
 
-/// The rows each executor of the closure shape produced, Go's
-/// `execDetail.numProducedRows` per `mppExec`: the scan's every row, the
-/// selection's survivors, and what the limit, topN or aggregation above
-/// them emitted.
-#[derive(Default)]
-struct ExecutorRows {
-    scanned: u64,
-    selected: u64,
-    output: u64,
-}
-
-/// Go `genRespWithMPPExec`'s tail: the scan detail, and -- when the request
-/// collects them -- one execution summary per executor, each charged the
-/// whole request's duration ("for simplicity, we assume all executors to be
-/// spending the same amount of time as the request") with no iterations.
-fn finish_dag_response(
-    response: coprocessor::Response,
+/// Go `buildAndRunMPPExecutor`.
+fn build_and_run_mpp_executor<'a>(
+    store: &'a dyn tidb_unistore_dbreader::DbReader,
     context: &DagContext,
-    produced: &ExecutorRows,
-    elapsed: std::time::Duration,
-) -> coprocessor::Response {
-    let mut response = with_scan_detail(response, produced.scanned, elapsed);
-    if !context.dag_req.collect_execution_summaries()
-        || !response.other_error.is_empty()
-        || response.locked.is_some()
-    {
-        return response;
-    }
-    let mut select = match tipb::SelectResponse::decode(response.data.as_ref()) {
-        Ok(select) => select,
-        Err(error) => return other_error(&format!("decode coprocessor response: {error}")),
+) -> Result<MppRun<'a>, String> {
+    let dag_req = &context.dag_req;
+    let root_exec = match &dag_req.root_executor {
+        Some(root) => root.clone(),
+        None => executor_lists_to_tree(&dag_req.executors)?,
     };
-    let time_processed_ns = u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX);
-    select.execution_summaries = context
-        .dag_req
-        .executors
-        .iter()
-        .map(|executor| {
-            let rows = match executor.tp() {
-                tipb::ExecType::TypeTableScan | tipb::ExecType::TypeIndexScan => produced.scanned,
-                tipb::ExecType::TypeSelection => produced.selected,
-                _ => produced.output,
-            };
-            tipb::ExecutorExecutionSummary {
-                time_processed_ns: Some(time_processed_ns),
-                num_produced_rows: Some(rows),
-                num_iterations: Some(0),
-                ..tipb::ExecutorExecutionSummary::default()
-            }
-        })
-        .collect();
-    response.data = select.encode_to_vec().into();
-    response
+    if !dag_req.intermediate_output_channels.is_empty() {
+        // Only `indexLookUpExec` produces intermediate results.
+        return Err("intermediate output channels are a later course of this port".to_owned());
+    }
+    let counts = dag_req.collect_range_counts().then(|| {
+        Rc::new(RefCell::new(mpp_exec::RangeCounts {
+            counts: vec![0; context.key_ranges.len()],
+            ndvs: vec![0; context.key_ranges.len()],
+        }))
+    });
+    let paging = (context.paging_size > 0)
+        .then(|| Rc::new(RefCell::new(coprocessor::KeyRange::default())));
+    let mut builder = mpp::MppExecBuilder {
+        sctx: Arc::clone(&context.expression_context),
+        db_reader: store,
+        key_ranges: context.key_ranges.clone(),
+        start_ts: context.start_ts,
+        counts: counts.clone(),
+        paging: paging.clone(),
+        paging_size: context.paging_size,
+    };
+    let mut exec = builder.build_mpp_executor(&root_exec)?;
+    let (chunks, err) = mpp_execute(exec.as_mut(), dag_req, context.paging_size);
+    // An empty paging range means the scan never reported one.
+    let last_range = paging
+        .map(|paging| paging.take())
+        .filter(|range| !(range.start.is_empty() && range.end.is_empty()));
+    let (counts, ndvs) = counts.map_or_else(Default::default, |counts| {
+        let counts = counts.borrow();
+        (counts.counts.clone(), counts.ndvs.clone())
+    });
+    Ok(MppRun {
+        exec,
+        chunks,
+        last_range,
+        counts,
+        ndvs,
+        err,
+    })
 }
 
-/// Go `buildResp`: every DAG response carries `ExecDetailsV2` whose
-/// `ScanDetailV2.ProcessedVersions` is the rows the table and index scan
-/// executors produced -- what TiDB's `copIterator` adds up against
-/// `tidb_max_keys_read` and into `tidb_keys_examined`.
-fn with_scan_detail(
-    mut response: coprocessor::Response,
-    scanned_rows: u64,
-    elapsed: std::time::Duration,
-) -> coprocessor::Response {
-    // Go's `genRespWithMPPExec` reports the request's wall time at
-    // millisecond resolution in both the legacy and the V2 detail.
-    let time_detail = tidb_proto::kvrpcpb::TimeDetail {
-        process_wall_time_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
-        ..tidb_proto::kvrpcpb::TimeDetail::default()
-    };
-    response.exec_details = Some(tidb_proto::kvrpcpb::ExecDetails {
-        time_detail: Some(time_detail),
-        ..tidb_proto::kvrpcpb::ExecDetails::default()
-    });
-    response.exec_details_v2 = Some(tidb_proto::kvrpcpb::ExecDetailsV2 {
-        time_detail: Some(time_detail),
-        scan_detail_v2: Some(tidb_proto::kvrpcpb::ScanDetailV2 {
-            processed_versions: scanned_rows,
-            ..tidb_proto::kvrpcpb::ScanDetailV2::default()
-        }),
-        ..tidb_proto::kvrpcpb::ExecDetailsV2::default()
-    });
-    response
-}
-
-/// Go `indexScanProcessor` and `indexScanProcessCore`: decode every index
-/// entry into the executor schema, then apply the same optional Selection,
-/// Limit, and partial Aggregation processors as a table scan. Handles are
-/// recovered from the key suffix for non-unique indexes and from the value
-/// for unique indexes by `DecodeIndexKV`, including common handles and
-/// restored collation data.
-fn exec_index_scan(
-    store: &dyn tidb_unistore_dbreader::DbReader,
-    context: &DagContext,
-    idx_scan: &tipb::IndexScan,
-    conditions: &[SimpleExpr],
-    limit: usize,
-    aggregation: Option<&tipb::Aggregation>,
-    topn: Option<&TopNSpec>,
-    produced: &mut ExecutorRows,
-) -> coprocessor::Response {
-    use tidb_datatype::Datum;
-    const EXTRA_HANDLE_ID: i64 = -1;
-    const EXTRA_PHYSICAL_TABLE_ID: i64 = -3;
-
-    let timezone = match context.time_zone.resolve() {
-        Ok(timezone) => timezone,
-        Err(error) => return other_error(&error),
-    };
-    let field_types = idx_scan
-        .columns
-        .iter()
-        .map(field_type_from_pb_column)
-        .collect::<Vec<_>>();
-    let column_infos = idx_scan
-        .columns
-        .iter()
-        .zip(&field_types)
-        .filter(|(column, _)| column.column_id() != EXTRA_HANDLE_ID)
-        .map(|(column, field_type)| tidb_rowcodec::ColumnInfo {
-            id: column.column_id(),
-            is_pk_handle: column.pk_handle(),
-            virtual_generated: false,
-            field_type: field_type.clone(),
-        })
-        .collect::<Vec<_>>();
-
-    // Go `initIdxScanCtx`: `columnLen` counts only index-key columns. The
-    // trailing handle columns are materialized separately by DecodeIndexKV.
-    let has_physical_id = idx_scan
-        .columns
-        .last()
-        .is_some_and(|column| column.column_id() == EXTRA_PHYSICAL_TABLE_ID);
-    let mut schema_len = idx_scan.columns.len() - usize::from(has_physical_id);
-    let handle_status = if !idx_scan.primary_column_ids.is_empty() {
-        schema_len = schema_len.saturating_sub(idx_scan.primary_column_ids.len());
-        tidb_tablecodec::HandleStatus::Default
-    } else if let Some(handle) = schema_len
-        .checked_sub(1)
-        .and_then(|offset| idx_scan.columns.get(offset))
-        .filter(|column| column.pk_handle() || column.column_id() == EXTRA_HANDLE_ID)
-    {
-        schema_len -= 1;
-        if field_type_from_pb_column(handle).is_unsigned() {
-            tidb_tablecodec::HandleStatus::Unsigned
-        } else {
-            tidb_tablecodec::HandleStatus::Default
-        }
-    } else {
-        tidb_tablecodec::HandleStatus::NotNeeded
-    };
-
-    let mut aggregator = match aggregation {
-        Some(aggregation) => {
-            match RegionAggregator::build(aggregation, &context.expression_context) {
-                Ok(aggregator) => Some(aggregator),
-                Err(message) => return other_error(&message),
-            }
-        }
-        None => None,
-    };
-    let mut rows = Vec::new();
-    let mut eval_warnings = Vec::new();
-    let mut emitted = 0_usize;
-    // Go keeps the kept rows in a bounded heap; this lowering buffers every
-    // surviving row and sorts once -- the same N rows in the same key order,
-    // without the intermediate evictions.
-    let mut topn_rows: Vec<(Vec<Datum>, Vec<Datum>)> = Vec::new();
-    let output_types = dag_output_field_types(context, &field_types, aggregation);
-    if aggregation.is_none() && limit == 0 {
-        return encode_select_rows(
-            rows,
-            output_types.as_deref(),
-            context,
-            &timezone,
-            std::mem::take(&mut eval_warnings),
-        );
-    }
-    let descending = idx_scan.desc();
-    let mut paging = PagingCut::new(context, descending, aggregator.is_some() || topn.is_some());
-    let mut page_end: Option<coprocessor::KeyRange> = None;
-    let mut ranges = context.key_ranges.iter().collect::<Vec<_>>();
-    if descending {
-        ranges.reverse();
-    }
-
-    'ranges: for range in ranges {
-        let (start_key, end_key) = if descending {
-            (range.end.clone(), range.start.clone())
-        } else {
-            (range.start.clone(), range.end.clone())
-        };
-        let pairs = store.scan(&tidb_unistore_dbreader::ScanReq {
-            start_key,
-            end_key,
-            limit: u32::MAX,
-            version: context.start_ts,
-            sample_step: 0,
-            reverse: descending,
-        });
-        for pair in pairs {
-            if let Some(page) = paging.as_mut() {
-                if let Some(range) = page.before_key() {
-                    page_end = Some(range);
-                    break 'ranges;
-                }
-                page.scanned(&pair.key);
-            }
-            if let Some(err) = pair.error {
-                if let tidb_unistore_kverrors::KvError::Locked(lock) = *err {
-                    return coprocessor::Response {
-                        locked: Some(*lock),
-                        ..coprocessor::Response::default()
-                    };
-                }
-                return other_error(&err.to_string());
-            }
-            let encoded = match tidb_tablecodec::decode_index_kv(
-                true,
-                &pair.key,
-                &pair.value,
-                schema_len,
-                handle_status,
-                &column_infos,
-            ) {
-                Ok(values) => values,
-                Err(error) => return other_error(&format!("invalid index entry: {error:?}")),
-            };
-            let mut row = Vec::with_capacity(idx_scan.columns.len());
-            for (offset, value) in encoded.iter().enumerate() {
-                let Some(field_type) = field_types.get(offset) else {
-                    return other_error("decoded index entry exceeds its executor schema");
-                };
-                match tidb_tablecodec::decode_column_value(value, field_type, Some(&timezone)) {
-                    Ok(value) => row.push(value),
-                    Err(error) => {
-                        return other_error(&format!("invalid index column: {error:?}"));
-                    }
-                }
-            }
-            if has_physical_id && row.len() < idx_scan.columns.len() {
-                row.push(Datum::Int(tidb_tablecodec::table_key::decode_table_id(&pair.key)));
-            }
-            if row.len() != idx_scan.columns.len() {
-                return other_error("decoded index entry does not match its executor schema");
-            }
-            // Go `indexScanExec.rowCnt`: every entry the scan produced.
-            produced.scanned += 1;
-            match conditions_hold(conditions, &row) {
-                Ok(true) => produced.selected += 1,
-                Ok(false) => continue,
+/// Go `mppExecute`: open the root, pull chunks until one comes back empty
+/// (or a chunk-encoded page passes the paging size), stop the chain.
+fn mpp_execute<'a>(
+    exec: &mut (dyn mpp_exec::MppExec<'a> + 'a),
+    dag_req: &tipb::DagRequest,
+    paging_size: u64,
+) -> (Vec<mpp_exec::Chunk>, Option<mpp_exec::MppExecError>) {
+    let mut chunks = Vec::new();
+    let mut err = exec.open().err();
+    if err.is_none() {
+        let mut total_rows = 0_u64;
+        loop {
+            let chk = match exec.next() {
+                Ok(chk) => chk,
                 Err(error) => {
-                    if context.flags & 2 != 0 {
-                        eval_warnings.push(tipb::Error {
-                            code: Some(1265),
-                            msg: Some(error.message().to_owned()),
-                        });
-                        continue;
-                    }
-                    return executor_error_response(&error, eval_warnings);
+                    err = Some(error);
+                    break;
                 }
-            }
-            if let Some(aggregator) = aggregator.as_mut() {
-                if let Err(message) = aggregator.update(&row) {
-                    return other_error(&message);
-                }
-                continue;
-            }
-            // Go `topNProcessor`: the surviving row's sort keys are evaluated
-            // NOW and the row rides the heap; the replay emits the kept rows
-            // in key order. Buffering the whole set and sorting is that same
-            // answer without the heap.
-            if let Some(spec) = topn {
-                let keys = match spec.evaluate(&row) {
-                    Ok(keys) => keys,
-                    Err(message) => return other_error(&message),
-                };
-                let projected = if context.dag_req.output_offsets.is_empty() {
-                    row
-                } else {
-                    let mut projected = Vec::with_capacity(context.dag_req.output_offsets.len());
-                    for offset in &context.dag_req.output_offsets {
-                        let Some(value) = row.get(*offset as usize) else {
-                            return other_error(&format!(
-                                "output offset {offset} is outside the scanned columns"
-                            ));
-                        };
-                        projected.push(value.clone());
-                    }
-                    projected
-                };
-                topn_rows.push((projected, keys));
-                continue;
-            }
-            let projected = if context.dag_req.output_offsets.is_empty() {
-                row
-            } else {
-                let mut projected = Vec::with_capacity(context.dag_req.output_offsets.len());
-                for offset in &context.dag_req.output_offsets {
-                    let Some(value) = row.get(*offset as usize) else {
-                        return other_error(&format!(
-                            "output offset {offset} is outside the scanned columns"
-                        ));
-                    };
-                    projected.push(value.clone());
-                }
-                projected
             };
-            rows.push(projected);
-            emitted += 1;
-            if let Some(page) = paging.as_mut() {
-                page.produced_row();
+            let cur_row_cnt = chk.as_ref().map_or(0, Vec::len);
+            if cur_row_cnt == 0 {
+                break;
             }
-            if emitted == limit {
-                break 'ranges;
-            }
-        }
-    }
-    if let Some(spec) = topn {
-        let topn_rows = go_topn_heap_finish(&spec.keys, topn_rows, spec.limit);
-        for (projected, _) in topn_rows {
-            rows.push(projected);
-            emitted += 1;
-            if emitted == limit {
+            chunks.extend(chk);
+            total_rows += cur_row_cnt as u64;
+            if dag_req.encode_type() == tipb::EncodeType::TypeChunk
+                && paging_size > 0
+                && total_rows > paging_size
+            {
                 break;
             }
         }
     }
-    if let Some(aggregator) = aggregator {
-        for row in aggregator.finish() {
-            if context.dag_req.output_offsets.is_empty() {
-                rows.push(row);
-                continue;
-            }
-            let mut projected = Vec::with_capacity(context.dag_req.output_offsets.len());
-            for offset in &context.dag_req.output_offsets {
-                let Some(value) = row.get(*offset as usize) else {
-                    return other_error(&format!(
-                        "output offset {offset} is outside the aggregate schema"
-                    ));
-                };
-                projected.push(value.clone());
-            }
-            rows.push(projected);
-        }
-    }
-    produced.output = rows.len() as u64;
-    let mut response = encode_select_rows(
-        rows,
-        output_types.as_deref(),
-        context,
-        &timezone,
-        eval_warnings,
-    );
-    if let Some(page) = paging {
-        response.range = Some(page_end.unwrap_or_else(|| page.finish(&context.key_ranges)));
-    }
-    response
+    // Go's deferred `exec.stop()`, which panics on an error.
+    exec.stop().expect("stopping the executors succeeds");
+    (chunks, err)
 }
 
-/// Go `closureExecutor`'s output field types (`closure_exec.go:112`): the
-/// scan's columns, or with an aggregation its results then its group keys,
-/// picked by `output_offsets`. `None` when the request leaves a type out,
-/// which only the default row encoding can answer without.
-fn dag_output_field_types(
-    context: &DagContext,
-    scan_types: &[tidb_datatype::FieldType],
-    aggregation: Option<&tipb::Aggregation>,
-) -> Option<Vec<tidb_datatype::FieldType>> {
-    let original: Vec<tidb_datatype::FieldType> = match aggregation {
-        Some(aggregation) => aggregation
-            .agg_func
-            .iter()
-            .chain(&aggregation.group_by)
-            .map(|expr| {
-                expr.field_type
-                    .as_ref()
-                    .map(tidb_expr::distsql_builtin::pb_type_to_field_type)
-            })
-            .collect::<Option<_>>()?,
-        None => scan_types.to_vec(),
-    };
-    if context.dag_req.output_offsets.is_empty() {
-        return Some(original);
+/// Go `flattenMppExec`: the chain in post order, children first.
+fn flatten_mpp_exec<'e, 'a>(
+    exec: &'e (dyn mpp_exec::MppExec<'a> + 'a),
+    execs: &mut Vec<&'e (dyn mpp_exec::MppExec<'a> + 'a)>,
+) {
+    for child in exec.get_children() {
+        flatten_mpp_exec(child, execs);
     }
-    context
-        .dag_req
-        .output_offsets
-        .iter()
-        .map(|offset| original.get(*offset as usize).cloned())
-        .collect()
+    execs.push(exec);
 }
 
-/// Go `encodeChunk`: the rows in the request's encode type. `TypeChunk`
-/// (`useChunkEncoding`) carries each value as decoded -- a DECIMAL keeps its
-/// stored words, which the default row encoding would round to the field
-/// type's fraction on the TiDB side (`DecodeOneToChunk`).
-fn encode_select_rows(
-    rows: Vec<Vec<tidb_datatype::Datum>>,
-    field_types: Option<&[tidb_datatype::FieldType]>,
+/// Go `ErrLocked.Error`.
+fn locked_error_message(lock: &tidb_proto::kvrpcpb::LockInfo) -> String {
+    format!(
+        "key is locked, key: {}, Type: {}, primary: {}, startTS: {}",
+        tidb_mysql::errors::go_quote_bytes(&lock.key),
+        lock.lock_type,
+        tidb_mysql::errors::go_quote_bytes(&lock.primary_lock),
+        lock.lock_version
+    )
+}
+
+/// Go `genRespWithMPPExec`: the chunks (none after an error) and the error,
+/// one execution summary per request executor -- each charged the whole
+/// request's duration, "for simplicity" -- the warnings, a lock, and the
+/// scan detail whose processed versions are the scans' `rowCnt`.
+fn gen_resp_with_mpp_exec(
+    run: MppRun<'_>,
     context: &DagContext,
-    timezone: &tidb_datatype::SessionTimeZone,
-    warnings: Vec<tipb::Error>,
+    warnings: Vec<(u16, String)>,
+    dur: std::time::Duration,
 ) -> coprocessor::Response {
-    let field_types = match field_types {
-        Some(types)
-            if context.dag_req.encode_type() == tipb::EncodeType::TypeChunk
-                && rows.iter().all(|row| {
-                    row.len() == types.len()
-                        && row
-                            .iter()
-                            .zip(types)
-                            .all(|(value, field_type)| datum_fits_chunk_column(value, field_type))
-                }) =>
-        {
-            types
+    let dag_req = &context.dag_req;
+    if let Some(mpp_exec::MppExecError::Other(message)) = &run.err {
+        return other_error(message);
+    }
+    let (chunks, counts, ndvs) = if run.err.is_some() {
+        let chunks = EncodedChunks {
+            chunks: Vec::new(),
+            encode_type: dag_req.encode_type(),
+        };
+        (chunks, Vec::new(), Vec::new())
+    } else {
+        match encode_chunks(&run.chunks, run.exec.get_field_types(), context) {
+            Ok(chunks) => (chunks, run.counts, run.ndvs),
+            Err(message) => return other_error(&message),
         }
-        // Go's decoder fills the chunk with typed values. A value this tier
-        // decoded untyped (a stored default read back as its raw form) fits
-        // no column layout, so the response keeps the row encoding, which
-        // the TiDB side types on decode.
-        _ => return encode_default_rows(rows, timezone, warnings),
     };
-    let codec = tidb_chunk::codec::Codec::new(field_types.to_vec());
-    // Go's executors fill chunks of `DefaultBatchSize` rows
-    // (`mpp_exec.go:60`, `NewChunkWithCapacity(fieldTypes, DefaultBatchSize)`
-    // is full at that many) and `mppExecute` encodes each as its own
-    // `tipb.Chunk`, which is the unit the TiDB side's `readFromChunk` either
-    // takes whole or splices.
-    let chunks = rows
-        .chunks(GO_MPP_DEFAULT_BATCH_SIZE)
-        .map(|batch| {
-            let mut chunk = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(field_types, batch.len());
-            for row in batch {
-                for (column, value) in row.iter().enumerate() {
-                    chunk.append_datum(column, value);
-                }
-            }
-            tipb::Chunk {
-                rows_data: Some(codec.encode(&chunk).into()),
-                ..tipb::Chunk::default()
-            }
-        })
-        .collect();
-    let warning_count = warnings.len() as i64;
-    let select = tipb::SelectResponse {
-        warnings,
-        warning_count: Some(warning_count),
-        chunks,
-        encode_type: Some(tipb::EncodeType::TypeChunk as i32),
+    let error = run.err.as_ref().map(|err| match err {
+        mpp_exec::MppExecError::Exec(error) => error.to_pb_error(),
+        mpp_exec::MppExecError::Locked(lock) => tipb::Error {
+            code: Some(1),
+            msg: Some(locked_error_message(lock)),
+        },
+        mpp_exec::MppExecError::Other(message) => tipb::Error {
+            code: Some(1),
+            msg: Some(message.clone()),
+        },
+    });
+    let mut sel_resp = tipb::SelectResponse {
+        error,
+        chunks: chunks.chunks,
+        output_counts: counts,
+        ndvs,
+        encode_type: Some(chunks.encode_type as i32),
         ..tipb::SelectResponse::default()
     };
-    coprocessor::Response {
-        data: select.encode_to_vec().into(),
+    let mut mpp_execs = Vec::with_capacity(dag_req.executors.len());
+    flatten_mpp_exec(run.exec.as_ref(), &mut mpp_execs);
+    if dag_req.collect_execution_summaries() {
+        let time_processed = u64::try_from(dur.as_nanos()).unwrap_or(u64::MAX);
+        sel_resp.execution_summaries = (0..dag_req.executors.len())
+            .map(|i| {
+                let mut summary = mpp_execs[i].build_summary();
+                summary.time_processed_ns = Some(time_processed);
+                summary
+            })
+            .collect();
+    }
+    sel_resp.warnings = warnings
+        .into_iter()
+        .map(|(code, message)| tipb::Error {
+            code: Some(i32::from(code)),
+            msg: Some(message),
+        })
+        .collect();
+    let mut resp = coprocessor::Response {
+        range: run.last_range,
         ..coprocessor::Response::default()
+    };
+    if let Some(mpp_exec::MppExecError::Locked(lock)) = &run.err {
+        resp.locked = Some(tidb_proto::kvrpcpb::LockInfo {
+            key: lock.key.clone(),
+            primary_lock: lock.primary_lock.clone(),
+            lock_version: lock.lock_version,
+            lock_ttl: lock.lock_ttl,
+            ..tidb_proto::kvrpcpb::LockInfo::default()
+        });
+    }
+    let time_detail = tidb_proto::kvrpcpb::TimeDetail {
+        process_wall_time_ms: u64::try_from(dur.as_millis()).unwrap_or(u64::MAX),
+        ..tidb_proto::kvrpcpb::TimeDetail::default()
+    };
+    resp.exec_details = Some(tidb_proto::kvrpcpb::ExecDetails {
+        time_detail: Some(time_detail),
+        ..tidb_proto::kvrpcpb::ExecDetails::default()
+    });
+    let processed_versions = mpp_execs
+        .iter()
+        .filter_map(|exec| exec.scan_row_cnt())
+        .map(|row_cnt| row_cnt as u64)
+        .sum();
+    resp.exec_details_v2 = Some(tidb_proto::kvrpcpb::ExecDetailsV2 {
+        time_detail: Some(time_detail),
+        scan_detail_v2: Some(tidb_proto::kvrpcpb::ScanDetailV2 {
+            processed_versions,
+            ..tidb_proto::kvrpcpb::ScanDetailV2::default()
+        }),
+        ..tidb_proto::kvrpcpb::ExecDetailsV2::default()
+    });
+    resp.data = sel_resp.encode_to_vec().into();
+    resp
+}
+
+/// The encoded chunks of a response and the encoding they carry.
+struct EncodedChunks {
+    chunks: Vec<tipb::Chunk>,
+    encode_type: tipb::EncodeType,
+}
+
+/// Go `encodeChunk` over every chunk the root produced, each picked by
+/// `output_offsets`. `TypeChunk` (`useChunkEncoding`) carries each value as
+/// decoded -- a DECIMAL keeps its stored words, which the default row
+/// encoding would round to the field type's fraction on the TiDB side
+/// (`DecodeOneToChunk`).
+///
+/// Go's decoder fills the chunk with typed values. A value this tier decoded
+/// untyped (a stored default read back as its raw form) fits no column
+/// layout, so such a response keeps the row encoding, which the TiDB side
+/// types on decode.
+fn encode_chunks(
+    chunks: &[mpp_exec::Chunk],
+    fields: &[tidb_datatype::FieldType],
+    context: &DagContext,
+) -> Result<EncodedChunks, String> {
+    let output_offsets = &context.dag_req.output_offsets;
+    let project = |row: &mpp_exec::Row| -> Result<mpp_exec::Row, String> {
+        if output_offsets.is_empty() {
+            return Ok(row.clone());
+        }
+        output_offsets
+            .iter()
+            .map(|offset| {
+                row.get(*offset as usize).cloned().ok_or_else(|| {
+                    format!("output offset {offset} is outside the executor schema")
+                })
+            })
+            .collect()
+    };
+    let chunks = chunks
+        .iter()
+        .map(|chk| chk.iter().map(project).collect::<Result<Vec<_>, _>>())
+        .collect::<Result<Vec<_>, _>>()?;
+    let output_fields: Option<Vec<tidb_datatype::FieldType>> = if output_offsets.is_empty() {
+        Some(fields.to_vec())
+    } else {
+        output_offsets
+            .iter()
+            .map(|offset| fields.get(*offset as usize).cloned())
+            .collect()
+    };
+    if context.dag_req.encode_type() == tipb::EncodeType::TypeChunk {
+        if let Some(fields) = output_fields.filter(|fields| {
+            chunks.iter().flatten().all(|row| {
+                row.len() == fields.len()
+                    && row
+                        .iter()
+                        .zip(fields)
+                        .all(|(value, field_type)| datum_fits_chunk_column(value, field_type))
+            })
+        }) {
+            return Ok(EncodedChunks {
+                chunks: chunks
+                    .iter()
+                    .map(|chk| use_chunk_encoding(chk, &fields))
+                    .collect(),
+                encode_type: tipb::EncodeType::TypeChunk,
+            });
+        }
+    }
+    let mut encoded = Vec::new();
+    for chk in &chunks {
+        use_default_encoding(chk, &context.expression_context.zone, &mut encoded)?;
+    }
+    Ok(EncodedChunks {
+        chunks: encoded,
+        encode_type: tipb::EncodeType::TypeDefault,
+    })
+}
+
+/// Go `useDefaultEncoding`: each row datum-encoded in the request zone, a
+/// new `tipb.Chunk` every `rowsPerChunk` rows of the executor chunk
+/// (`appendRow`).
+///
+/// A table/index decoder has already converted TIMESTAMP from UTC into the
+/// request location, so the encoder must flatten it back to UTC before the
+/// TiDB-side default-row decoder applies that same location.
+fn use_default_encoding(
+    chk: &[mpp_exec::Row],
+    timezone: &tidb_datatype::SessionTimeZone,
+    chunks: &mut Vec<tipb::Chunk>,
+) -> Result<(), String> {
+    for rows in chk.chunks(ROWS_PER_CHUNK) {
+        let mut rows_data = Vec::new();
+        for row in rows {
+            let buf = tidb_codec::encode_value_in_timezone(timezone, row)
+                .map_err(|error| format!("encode row failed: {error:?}"))?;
+            rows_data.extend_from_slice(&buf);
+        }
+        chunks.push(tipb::Chunk {
+            rows_data: Some(rows_data.into()),
+            ..tipb::Chunk::default()
+        });
+    }
+    Ok(())
+}
+
+/// Go `useChunkEncoding`: the executor chunk in TiDB's chunk codec.
+fn use_chunk_encoding(chk: &[mpp_exec::Row], fields: &[tidb_datatype::FieldType]) -> tipb::Chunk {
+    let codec = tidb_chunk::codec::Codec::new(fields.to_vec());
+    let mut chunk = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(fields, chk.len());
+    for row in chk {
+        for (column, value) in row.iter().enumerate() {
+            chunk.append_datum(column, value);
+        }
+    }
+    tipb::Chunk {
+        rows_data: Some(codec.encode(&chunk).into()),
+        ..tipb::Chunk::default()
     }
 }
+
+/// Go `rowsPerChunk`.
+const ROWS_PER_CHUNK: usize = 64;
 
 /// Whether `value` is the kind a chunk column of `field_type` stores.
 fn datum_fits_chunk_column(
@@ -865,467 +606,6 @@ fn datum_fits_chunk_column(
         Datum::VectorFloat32(_) => code == Code::VectorFloat32,
         _ => false,
     }
-}
-
-fn encode_default_rows(
-    rows: Vec<Vec<tidb_datatype::Datum>>,
-    timezone: &tidb_datatype::SessionTimeZone,
-    warnings: Vec<tipb::Error>,
-) -> coprocessor::Response {
-    let mut chunks = Vec::new();
-    let mut current = Vec::new();
-    let mut current_rows = 0_usize;
-    for row in rows {
-        // Go `chunkToOldChunk` calls `codec.EncodeValue(sc.TimeZone(), ...)`.
-        // A table/index decoder has already converted TIMESTAMP from UTC into
-        // the request location, so the response encoder must flatten it back
-        // to UTC before the TiDB-side default-row decoder applies that same
-        // location. Encoding without the request zone converts through UTC as
-        // if the localized wall clock were UTC and shifts every pushed scan a
-        // second time.
-        let encoded = match tidb_codec::encode_value_in_timezone(timezone, &row) {
-            Ok(encoded) => encoded,
-            Err(error) => return other_error(&format!("encode row failed: {error:?}")),
-        };
-        current.extend_from_slice(&encoded);
-        current_rows += 1;
-        if current_rows == CHUNK_MAX_ROWS {
-            chunks.push(tipb::Chunk {
-                rows_data: Some((std::mem::take(&mut current)).into()),
-                ..tipb::Chunk::default()
-            });
-            current_rows = 0;
-        }
-    }
-    if !current.is_empty() {
-        chunks.push(tipb::Chunk {
-            rows_data: Some((current).into()),
-            ..tipb::Chunk::default()
-        });
-    }
-    let warning_count = warnings.len() as i64;
-    let select = tipb::SelectResponse {
-        warnings,
-        warning_count: Some(warning_count),
-        chunks,
-        encode_type: Some(tipb::EncodeType::TypeDefault as i32),
-        ..tipb::SelectResponse::default()
-    };
-    let mut data = Vec::new();
-    select.encode(&mut data).expect("a select response encodes");
-    coprocessor::Response {
-        data: data.into(),
-        ..coprocessor::Response::default()
-    }
-}
-
-/// Go's chunk cut: `closure_exec.go` grows the output chunk to 1024 rows
-/// before starting the next.
-const CHUNK_MAX_ROWS: usize = 1024;
-
-/// Go `cophandler.DefaultBatchSize`: the rows of one executor chunk, and so
-/// of one chunk-encoded `tipb.Chunk` in a response.
-const GO_MPP_DEFAULT_BATCH_SIZE: usize = 32;
-
-/// Go's coprocessor paging over one scan (`tableScanExec.next` +
-/// `mppExecute`): the scan hands up chunks of `DefaultBatchSize` scanned
-/// keys; after each chunk the rows it produced are counted, and once they
-/// pass the page size the response stops there and answers the range it
-/// scanned, so the client resumes after it.
-struct PagingCut {
-    size: u64,
-    descending: bool,
-    scanned_in_chunk: usize,
-    produced_in_chunk: u64,
-    produced: u64,
-    last_key: Option<Vec<u8>>,
-}
-
-impl PagingCut {
-    /// Paging applies to a chunk-encoded scan whose rows leave as scanned:
-    /// Go counts the encoded output rows, which an aggregation or TopN only
-    /// produces after the whole scan.
-    fn new(context: &DagContext, descending: bool, buffers_rows: bool) -> Option<Self> {
-        (context.paging_size > 0
-            && !buffers_rows
-            && context.dag_req.encode_type() == tipb::EncodeType::TypeChunk)
-            .then_some(Self {
-                size: context.paging_size,
-                descending,
-                scanned_in_chunk: 0,
-                produced_in_chunk: 0,
-                produced: 0,
-                last_key: None,
-            })
-    }
-
-    /// Before the next key: if the previous chunk is complete, count it, and
-    /// answer the page's range when the page is full.
-    fn before_key(&mut self) -> Option<coprocessor::KeyRange> {
-        if self.scanned_in_chunk < GO_MPP_DEFAULT_BATCH_SIZE {
-            return None;
-        }
-        self.produced += self.produced_in_chunk;
-        self.scanned_in_chunk = 0;
-        self.produced_in_chunk = 0;
-        (self.produced > self.size).then(|| self.scanned_range())
-    }
-
-    fn scanned(&mut self, key: &[u8]) {
-        self.scanned_in_chunk += 1;
-        self.last_key = Some(key.to_vec());
-    }
-
-    fn produced_row(&mut self) {
-        self.produced_in_chunk += 1;
-    }
-
-    /// Go `tableScanExec.next`'s range after the chunk holding `last_key`:
-    /// everything up to it ascending (its `Next()`), down to it descending.
-    fn scanned_range(&self) -> coprocessor::KeyRange {
-        let key = self.last_key.clone().unwrap_or_default();
-        if self.descending {
-            coprocessor::KeyRange {
-                start: key,
-                ..coprocessor::KeyRange::default()
-            }
-        } else {
-            let mut end = key;
-            end.push(0);
-            coprocessor::KeyRange {
-                end,
-                ..coprocessor::KeyRange::default()
-            }
-        }
-    }
-
-    /// The range of a scan that ran out: a final full chunk past the page
-    /// size answers its own range, as Go's chunk-full event does; otherwise
-    /// the whole request range (`e.kvRanges[len-1]`), which leaves nothing.
-    fn finish(mut self, ranges: &[coprocessor::KeyRange]) -> coprocessor::KeyRange {
-        if let Some(range) = self.before_key() {
-            return range;
-        }
-        if self.descending {
-            coprocessor::KeyRange {
-                start: ranges
-                    .first()
-                    .map(|range| range.start.clone())
-                    .unwrap_or_default(),
-                ..coprocessor::KeyRange::default()
-            }
-        } else {
-            coprocessor::KeyRange {
-                end: ranges
-                    .last()
-                    .map(|range| range.end.clone())
-                    .unwrap_or_default(),
-                ..coprocessor::KeyRange::default()
-            }
-        }
-    }
-}
-
-/// The table-scan executor over the MVCC store: each range scanned at the
-/// request's start ts, each surviving row decoded into the REQUESTED columns
-/// in request order, datum-encoded into default-format chunks — the shape a
-/// distsql client decodes.
-///
-/// A CLUSTERED table's primary key lives in the row KEY, not the value, so
-/// Go's `newRowDecoder` (`cop_handler.go:500`) falls back to the request's
-/// `PrimaryColumnIds` when no column carries `PkHandle`, and the decoder
-/// fills those columns from the key. This does the same: the handle's
-/// datums are decoded in key order and matched positionally to
-/// `primary_column_ids`.
-///
-/// Narrowings, by name: partitioned reads follow their course
-/// (`RecordHandle::Partition` rows refuse); a requested column absent from
-/// the row answers its `default_val` when carried, else NULL — Go's
-/// `getDefaultValue` behavior for the null-capable slice.
-fn exec_table_scan(
-    store: &dyn tidb_unistore_dbreader::DbReader,
-    context: &DagContext,
-    tbl_scan: &tipb::TableScan,
-    conditions: &[SimpleExpr],
-    limit: usize,
-    aggregation: Option<&tipb::Aggregation>,
-    topn: Option<&TopNSpec>,
-    produced: &mut ExecutorRows,
-) -> coprocessor::Response {
-    let timezone = match context.time_zone.resolve() {
-        Ok(timezone) => timezone,
-        Err(error) => return other_error(&error),
-    };
-    let mut aggregator = match aggregation {
-        Some(aggregation) => {
-            match RegionAggregator::build(aggregation, &context.expression_context) {
-                Ok(aggregator) => Some(aggregator),
-                Err(message) => return other_error(&message),
-            }
-        }
-        None => None,
-    };
-    use tidb_datatype::Datum;
-    const EXTRA_PHYSICAL_TABLE_ID: i64 = -3;
-    let mut column_types = std::collections::BTreeMap::new();
-    for column in &tbl_scan.columns {
-        column_types.insert(column.column_id(), field_type_from_pb_column(column));
-    }
-    let scan_types: Vec<_> = tbl_scan
-        .columns
-        .iter()
-        .map(field_type_from_pb_column)
-        .collect();
-    let output_types = dag_output_field_types(context, &scan_types, aggregation);
-    // Go `tableScanProcessor.Process`: "Add ExtraPhysTblID if requested.
-    // Assumes it is always last!" -- the row's physical table ID comes from
-    // its key, which is what SelectLock builds a partitioned row's lock key
-    // from.
-    let physical_id_offset = tbl_scan
-        .columns
-        .last()
-        .filter(|column| column.column_id() == EXTRA_PHYSICAL_TABLE_ID)
-        .map(|_| tbl_scan.columns.len() - 1);
-    let mut rows: Vec<Vec<Datum>> = Vec::new();
-    let mut emitted = 0_usize;
-    // Go keeps the kept rows in a bounded heap; this lowering buffers every
-    // surviving row and sorts once -- the same N rows in the same key order,
-    // without the intermediate evictions.
-    let mut topn_rows: Vec<(Vec<Datum>, Vec<Datum>)> = Vec::new();
-    // Go's `desc` scan: the ranges (ascending on the wire) are walked
-    // last-to-first, each one reversed, so rows leave in descending record
-    // order and a Limit above stops after the LARGEST keys.
-    let descending = tbl_scan.desc();
-    let mut paging = PagingCut::new(context, descending, aggregator.is_some() || topn.is_some());
-    let mut page_end: Option<coprocessor::KeyRange> = None;
-    let mut ordered_ranges: Vec<_> = context.key_ranges.iter().collect();
-    if descending {
-        ordered_ranges.reverse();
-    }
-    'ranges: for range in ordered_ranges {
-        // Go's reverse `Scan` contract: the CALLER hands the bounds
-        // swapped -- `start_key` is the upper bound, `end_key` the lower
-        // -- and the store swaps them back (`mvcc.go`'s `Reverse` arm).
-        let (start_key, end_key) = if descending {
-            (range.end.clone(), range.start.clone())
-        } else {
-            (range.start.clone(), range.end.clone())
-        };
-        let pairs = store.scan(&tidb_unistore_dbreader::ScanReq {
-            start_key,
-            end_key,
-            limit: u32::MAX,
-            version: context.start_ts,
-            sample_step: 0,
-            reverse: descending,
-        });
-        for pair in pairs {
-            if let Some(page) = paging.as_mut() {
-                if let Some(range) = page.before_key() {
-                    page_end = Some(range);
-                    break 'ranges;
-                }
-                page.scanned(&pair.key);
-            }
-            if let Some(err) = pair.error {
-                // Go: the FIRST lock met answers the whole response.
-                if let tidb_unistore_kverrors::KvError::Locked(lock) = *err {
-                    return coprocessor::Response {
-                        locked: Some(*lock),
-                        ..coprocessor::Response::default()
-                    };
-                }
-                return other_error(&err.to_string());
-            }
-            // Go `tablecodec.DecodeRowKey`: an int handle answers directly,
-            // a common handle carries the clustered primary key's datums.
-            let (handle, common_handle) = match tidb_tablecodec::table_key::decode_row_key(&pair.key) {
-                Ok(RecordHandle::Int(handle)) => (handle, None),
-                Ok(RecordHandle::Common(encoded)) => {
-                    let count = tbl_scan.primary_column_ids.len();
-                    match tidb_codec::decode(&encoded, count) {
-                        Ok(datums) => (0, Some(datums)),
-                        Err(err) => return other_error(&format!("invalid common handle: {err:?}")),
-                    }
-                }
-                Ok(RecordHandle::Partition { .. }) => {
-                    return other_error("partitioned scans are a later course of this port")
-                }
-                Err(err) => return other_error(&format!("invalid record key: {err:?}")),
-            };
-            let decoded = match tidb_tablecodec::decode_table_row_to_map(
-                &pair.value,
-                &column_types,
-                Some(&timezone),
-            ) {
-                Ok(map) => map,
-                Err(err) => return other_error(&format!("decode row failed: {err:?}")),
-            };
-            let mut row_datums = Vec::with_capacity(tbl_scan.columns.len());
-            for (offset, column) in tbl_scan.columns.iter().enumerate() {
-                // Go `ChunkDecoder.DecodeToChunk`: a non-NULL value in the row
-                // wins; the handle is consulted "only when there is no
-                // corresponding column in the value", because the handle may
-                // hold a prefix or a collation sort key rather than the data.
-                let stored = decoded.get(&column.column_id());
-                if physical_id_offset == Some(offset) {
-                    row_datums.push(Datum::Int(tidb_tablecodec::table_key::decode_table_id(&pair.key)));
-                } else if let Some(datum) = stored.filter(|datum| !matches!(datum, Datum::Null)) {
-                    row_datums.push(datum.clone());
-                } else if column.pk_handle() {
-                    row_datums.push(Datum::Int(handle));
-                } else if let Some(datum) = common_handle.as_ref().and_then(|datums| {
-                    // Go `tryAppendHandleColumn` matches `PrimaryColumnIds`
-                    // positionally against the handle's datums (encoded in key
-                    // order), and refuses a column whose key bytes are not its
-                    // value (`NeedRestoredData`).
-                    let position = tbl_scan
-                        .primary_column_ids
-                        .iter()
-                        .position(|id| *id == column.column_id())?;
-                    if column_types[&column.column_id()].need_restored_data() {
-                        return None;
-                    }
-                    datums.get(position)
-                }) {
-                    // ... and decodes it with the column's type
-                    // (`DecodeOne(..., col.Ft)`): a DATETIME key part is a
-                    // packed integer until it is restored to its time.
-                    match tidb_tablecodec::unflatten_datum(
-                        datum.clone(),
-                        &column_types[&column.column_id()],
-                        Some(&timezone),
-                    ) {
-                        Ok(datum) => row_datums.push(datum),
-                        Err(err) => {
-                            return other_error(&format!("decode common handle failed: {err:?}"))
-                        }
-                    }
-                } else if stored.is_some() {
-                    row_datums.push(Datum::Null);
-                } else if !column.default_val().is_empty() {
-                    // Go `getDefaultValue`: a row written before the column
-                    // existed answers the encoded origin default.
-                    match tidb_codec::decode(column.default_val(), 1) {
-                        Ok(mut datums) if !datums.is_empty() => {
-                            row_datums.push(datums.remove(0));
-                        }
-                        _ => {
-                            return other_error(&format!(
-                                "invalid default value bytes for column {}",
-                                column.column_id()
-                            ))
-                        }
-                    }
-                } else {
-                    row_datums.push(Datum::Null);
-                }
-            }
-            // Go `tableScanExec.rowCnt`: every row the scan produced.
-            produced.scanned += 1;
-            // Go `selectionProcessor`: a row survives only when EVERY
-            // condition evaluates non-null and non-zero.
-            match conditions_hold(conditions, &row_datums) {
-                Ok(true) => produced.selected += 1,
-                Ok(false) => continue,
-                Err(error) => return executor_error_response(&error, Vec::new()),
-            }
-            // A partial aggregation consumes the surviving row instead of
-            // emitting it; the grouped rows leave after the scan.
-            if let Some(aggregator) = aggregator.as_mut() {
-                if let Err(message) = aggregator.update(&row_datums) {
-                    return other_error(&message);
-                }
-                continue;
-            }
-            // Go's closure executor emits exactly `DAGRequest.output_offsets`
-            // when the request names them: the request's own projection, in
-            // its order. An empty list is the whole scanned column set.
-            let projected: Vec<Datum> = if context.dag_req.output_offsets.is_empty() {
-                row_datums.clone()
-            } else {
-                let mut projected = Vec::with_capacity(context.dag_req.output_offsets.len());
-                for offset in &context.dag_req.output_offsets {
-                    match row_datums.get(*offset as usize) {
-                        Some(datum) => projected.push(datum.clone()),
-                        None => {
-                            return other_error(&format!(
-                                "output offset {offset} is outside the scanned columns"
-                            ))
-                        }
-                    }
-                }
-                projected
-            };
-            // Go `topNProcessor`: the surviving row's sort keys are evaluated
-            // NOW and the row rides the heap; the replay emits the kept rows
-            // in key order. Buffering the whole set and sorting is that same
-            // answer without the heap.
-            if let Some(spec) = topn {
-                let keys = match spec.evaluate(&row_datums) {
-                    Ok(keys) => keys,
-                    Err(message) => return other_error(&message),
-                };
-                topn_rows.push((projected, keys));
-                continue;
-            }
-            rows.push(projected);
-            emitted += 1;
-            if let Some(page) = paging.as_mut() {
-                page.produced_row();
-            }
-            // Go `e.rowCount == e.limit` (`closure_exec.go:597`).
-            if emitted == limit {
-                break 'ranges;
-            }
-        }
-    }
-    if let Some(spec) = topn {
-        let topn_rows = go_topn_heap_finish(&spec.keys, topn_rows, spec.limit);
-        for (projected, _) in topn_rows {
-            rows.push(projected);
-            emitted += 1;
-            if emitted == limit {
-                break;
-            }
-        }
-    }
-    if let Some(aggregator) = aggregator {
-        // TiKV's aggregation schema: aggregate results first, group keys
-        // last, one row per group. `output_offsets` addresses THAT row.
-        for row in aggregator.finish() {
-            let projected: Vec<Datum> = if context.dag_req.output_offsets.is_empty() {
-                row
-            } else {
-                let mut projected = Vec::with_capacity(context.dag_req.output_offsets.len());
-                for offset in &context.dag_req.output_offsets {
-                    match row.get(*offset as usize) {
-                        Some(datum) => projected.push(datum.clone()),
-                        None => {
-                            return other_error(&format!(
-                                "output offset {offset} is outside the aggregate schema"
-                            ))
-                        }
-                    }
-                }
-                projected
-            };
-            rows.push(projected);
-            emitted += 1;
-        }
-    }
-    produced.output = emitted as u64;
-    let mut response = encode_select_rows(
-        rows,
-        output_types.as_deref(),
-        context,
-        &timezone,
-        Vec::new(),
-    );
-    if let Some(page) = paging {
-        response.range = Some(page_end.unwrap_or_else(|| page.finish(&context.key_ranges)));
-    }
-    response
 }
 
 /// Go's live `aggExec` shares typed group evaluation and first-seen group
@@ -1482,15 +762,16 @@ fn eval_datum(
     }
 }
 
-/// Go `topNCtx` (`closure_exec.go:545`): the pushed-down bounded sort --
-/// order-by keys with their directions and the heap size.
+/// Go `buildTopN`'s `topNHeap` and order-by `conds` (`mpp.go`): the
+/// pushed-down bounded sort -- order-by keys with their directions and the
+/// heap size.
 struct TopNSpec {
     keys: Vec<(SimpleExpr, bool, tidb_charset::Collation)>,
     limit: usize,
 }
 
 impl TopNSpec {
-    /// Go `buildTopNProcessor` (`closure_exec.go:384`).
+    /// Go `buildTopN`'s `convertToExprs` over the order-by items (`mpp.go`).
     fn build(top_n: &tipb::TopN, context: &Arc<RequestEvalContext>) -> Result<Self, String> {
         let mut keys = Vec::with_capacity(top_n.order_by.len());
         for item in &top_n.order_by {
@@ -1512,7 +793,7 @@ impl TopNSpec {
         })
     }
 
-    /// Go `topNProcessor.Process`'s key evaluation (`closure_exec.go:1033`):
+    /// Go `topNExec.open`'s key evaluation (`mpp_exec.go`):
     /// every key datum of one surviving row. Computed keys and kinds beyond
     /// [`compare_sort_keys`] are a later course, matching the aggregation
     /// lowering's leaf contract; surfacing the refusal here keeps the sort
@@ -1550,7 +831,7 @@ impl TopNSpec {
 /// Go's cop TopN is NOT sort-then-truncate: `topNHeap.tryToAddRow`
 /// (`cophandler/topn.go`) admits a row iff it sorts STRICTLY before the heap
 /// root -- a tie never evicts, so among equal keys the EARLIEST scanned rows
-/// survive -- and `topNProcessor.Finish` (`closure_exec.go:1058`) replays the
+/// survive -- and `topNExec.open` (`mpp_exec.go`) replays the
 /// survivors through `sort.Sort` (insertion sort for n <= 12, stable in
 /// effect). Buffer-then-truncate reshuffles ties and can drop the wrong tied
 /// rows (oracle g-group: `ORDER BY g LIMIT 100`).
@@ -1751,36 +1032,67 @@ pub fn build_dag(req: &coprocessor::Request) -> Result<DagContext, String> {
     })
 }
 
-/// Go `ExecutorListsToTree` (`cop_handler.go`) — NAMED BOUNDARY. The
-/// legacy tree form it builds hangs children on per-type child fields
-/// (`Selection.Child`, `Limit.Child`, ...) which the trimmed `tipb` build
-/// does not carry: it kept only the MODERN flat-list DAG, where order and
-/// `parent_idx` are the structure. The execution course therefore consumes
-/// the list directly, and this validation enforces the same invariants the
-/// tree conversion would have panicked on.
+/// Go `ExecutorListsToTree` (`cop_handler.go`): the flat executor list
+/// hung into a tree, each executor the child of the one its `parent_idx`
+/// names (the next one when unset); the last executor is the root.
 ///
-/// Panics carry Go's exact `invalid parentIdx` message; the leaf check
-/// mirrors what `buildClosureExecutor` requires — the first executor is the
-/// scan and the only scan.
-pub fn executor_lists_to_tree(executors: &[tipb::Executor]) {
-    let len = executors.len();
-    for (i, executor) in executors.iter().enumerate() {
-        let tp = executor.tp();
-        let is_scan = tp == tipb::ExecType::TypeTableScan || tp == tipb::ExecType::TypeIndexScan;
-        assert!(
-            (i == 0) == is_scan,
-            "executor {i} has type {tp:?}: the first executor is the scan, and the only scan"
-        );
-        if i + 1 < len {
-            let parent_idx = executor
-                .parent_idx
-                .map_or(i + 1, |idx| usize::try_from(idx).unwrap_or(usize::MAX));
-            assert!(
-                parent_idx > i && parent_idx < len,
-                "invalid parentIdx: {parent_idx}, for index: {i}"
-            );
+/// Panics carry Go's exact `invalid parentIdx` and `unsupported dag parent
+/// executor type` messages. An empty list, which Go indexes out of range,
+/// answers an error.
+pub fn executor_lists_to_tree(exec: &[tipb::Executor]) -> Result<tipb::Executor, String> {
+    fn append_child(parent: &mut tipb::Executor, child: tipb::Executor) {
+        let tp = parent.tp();
+        let missing = || -> ! { panic!("dag parent executor {tp:?} has no body") };
+        let child = Some(Box::new(child));
+        match tp {
+            tipb::ExecType::TypeAggregation | tipb::ExecType::TypeStreamAgg => {
+                parent.aggregation.as_mut().unwrap_or_else(|| missing()).child = child;
+            }
+            tipb::ExecType::TypeProjection => {
+                parent.projection.as_mut().unwrap_or_else(|| missing()).child = child;
+            }
+            tipb::ExecType::TypeTopN => {
+                parent.top_n.as_mut().unwrap_or_else(|| missing()).child = child;
+            }
+            tipb::ExecType::TypeLimit => {
+                parent.limit.as_mut().unwrap_or_else(|| missing()).child = child;
+            }
+            tipb::ExecType::TypeSelection => {
+                parent.selection.as_mut().unwrap_or_else(|| missing()).child = child;
+            }
+            tipb::ExecType::TypeIndexLookUp => {
+                let child = *child.expect("the child");
+                parent
+                    .index_lookup
+                    .as_mut()
+                    .unwrap_or_else(|| missing())
+                    .children
+                    .push(child);
+            }
+            _ => panic!("unsupported dag parent executor type: {tp:?}"),
         }
     }
+
+    if exec.is_empty() {
+        return Err("the DAG request has no executor".to_owned());
+    }
+    let mut nodes: Vec<Option<tipb::Executor>> = exec.iter().cloned().map(Some).collect();
+    for i in 0..exec.len() - 1 {
+        let parent_idx = exec[i]
+            .parent_idx
+            .map_or(i + 1, |idx| usize::try_from(idx).unwrap_or(usize::MAX));
+        assert!(
+            parent_idx > i && parent_idx < exec.len(),
+            "invalid parentIdx: {parent_idx}, for index: {i}"
+        );
+        // Every child of `i` has a smaller index, so it is already attached.
+        let child = nodes[i].take().expect("each executor is attached once");
+        append_child(
+            nodes[parent_idx].as_mut().expect("a parent is attached after its children"),
+            child,
+        );
+    }
+    Ok(nodes.pop().flatten().expect("the root executor"))
 }
 
 /// Coprocessor expression storage. Production scalar functions use `Shared`
@@ -1983,7 +1295,7 @@ fn collation_of(expr: &tipb::Expr) -> i32 {
     tidb_datatype::restore_collation_id_if_needed(protocol)
 }
 
-/// Go `closureExecutor.processSelection`: the conditions run in order and the
+/// Go `selExec`'s filter, row by row: the conditions run in order and the
 /// first one that is NULL or zero rejects the row WITHOUT evaluating the rest,
 /// so `b <> '(' AND regexp_like(a, b)` never compiles the pattern of a row the
 /// first condition already dropped.
@@ -2117,9 +1429,17 @@ mod tests {
     #[test]
     fn a_malformed_range_answers_gos_validation_error() {
         // Go's `extractKVRanges` (`cop_handler.go:678`): start >= end is a
-        // wire-visible rejection, with Go's `%v` byte-slice rendering.
+        // wire-visible rejection, with Go's `%v` byte-slice rendering. The
+        // scan's builder (`buildMPPTableScan`) extracts the ranges.
         let mut store = MvccStore::new();
-        let dag = tipb::DagRequest::default();
+        let dag = tipb::DagRequest {
+            executors: vec![tipb::Executor {
+                tp: Some(tipb::ExecType::TypeTableScan as i32),
+                tbl_scan: Some(tipb::TableScan::default()),
+                ..tipb::Executor::default()
+            }],
+            ..tipb::DagRequest::default()
+        };
         let mut data = Vec::new();
         dag.encode(&mut data).expect("encodes");
         let resp = handle_cop_request(
@@ -2223,25 +1543,34 @@ mod tests {
             .is_err());
     }
 
+    /// Go `ExecutorListsToTree`: each executor becomes its parent's child,
+    /// the last one the root.
     #[test]
-    fn a_leaf_first_list_validates() {
+    fn a_leaf_first_list_hangs_into_a_tree() {
         let scan = tipb::Executor {
             tp: Some(tipb::ExecType::TypeTableScan as i32),
             ..tipb::Executor::default()
         };
         let selection = tipb::Executor {
             tp: Some(tipb::ExecType::TypeSelection as i32),
+            selection: Some(Box::default()),
             ..tipb::Executor::default()
         };
         let limit = tipb::Executor {
             tp: Some(tipb::ExecType::TypeLimit as i32),
+            limit: Some(Box::default()),
             ..tipb::Executor::default()
         };
-        executor_lists_to_tree(&[scan, selection, limit]);
+        let root = executor_lists_to_tree(&[scan, selection, limit]).expect("a tree");
+        assert_eq!(root.tp(), tipb::ExecType::TypeLimit);
+        let selection = root.limit.unwrap().child.expect("the limit's child");
+        assert_eq!(selection.tp(), tipb::ExecType::TypeSelection);
+        let scan = selection.selection.unwrap().child.expect("the selection's child");
+        assert_eq!(scan.tp(), tipb::ExecType::TypeTableScan);
     }
 
     #[test]
-    #[should_panic(expected = "invalid parentIdx")]
+    #[should_panic(expected = "invalid parentIdx: 0, for index: 1")]
     fn a_backward_parent_index_panics_with_gos_message() {
         let scan = tipb::Executor {
             tp: Some(tipb::ExecType::TypeTableScan as i32),
@@ -2249,28 +1578,32 @@ mod tests {
         };
         let mut selection = tipb::Executor {
             tp: Some(tipb::ExecType::TypeSelection as i32),
+            selection: Some(Box::default()),
             ..tipb::Executor::default()
         };
         selection.parent_idx = Some(0);
         let limit = tipb::Executor {
             tp: Some(tipb::ExecType::TypeLimit as i32),
+            limit: Some(Box::default()),
             ..tipb::Executor::default()
         };
-        executor_lists_to_tree(&[scan, selection, limit]);
+        let _ = executor_lists_to_tree(&[scan, selection, limit]);
     }
 
+    /// Go `appendChild`'s default arm: a scan never parents an executor.
     #[test]
-    #[should_panic(expected = "the first executor is the scan")]
-    fn a_scan_in_the_middle_is_refused() {
+    #[should_panic(expected = "unsupported dag parent executor type: TypeTableScan")]
+    fn a_scan_parent_panics_with_gos_message() {
         let selection = tipb::Executor {
             tp: Some(tipb::ExecType::TypeSelection as i32),
+            selection: Some(Box::default()),
             ..tipb::Executor::default()
         };
         let scan = tipb::Executor {
             tp: Some(tipb::ExecType::TypeTableScan as i32),
             ..tipb::Executor::default()
         };
-        executor_lists_to_tree(&[selection, scan]);
+        let _ = executor_lists_to_tree(&[selection, scan]);
     }
 
     #[test]
@@ -3305,31 +2638,22 @@ mod tests {
             other => panic!("unexpected leaf: {other:?}"),
         }
     }
+    /// Go `useDefaultEncoding` + `appendRow`: a new `tipb.Chunk` every
+    /// `rowsPerChunk` (64) rows of one executor chunk.
     #[test]
-    fn encode_default_rows_carries_warnings_into_the_response() {
-        let rows = vec![vec![tidb_datatype::Datum::Int(42)]];
-        let warnings = vec![
-            tipb::Error {
-                code: Some(1265),
-                msg: Some("Data truncated".to_owned()),
-            },
-            tipb::Error {
-                code: Some(1690),
-                msg: Some("BIGINT value is out of range".to_owned()),
-            },
-        ];
-        let resp = encode_default_rows(rows, &zone(), warnings);
-        assert!(resp.other_error.is_empty());
-        let select = tipb::SelectResponse::decode(resp.data.as_ref()).expect("a select response");
-        assert_eq!(select.warning_count, Some(2));
-        assert_eq!(select.warnings.len(), 2);
-        assert_eq!(select.warnings[0].code, Some(1265));
-        assert_eq!(
-            select.warnings[1].msg,
-            Some("BIGINT value is out of range".to_owned())
-        );
-        // The data row still encodes correctly alongside the warnings.
-        assert!(!select.chunks.is_empty(), "the data row should be present");
+    fn use_default_encoding_cuts_a_chunk_every_64_rows() {
+        let rows = (0..65)
+            .map(|value| vec![tidb_datatype::Datum::Int(value)])
+            .collect::<Vec<_>>();
+        let mut chunks = Vec::new();
+        use_default_encoding(&rows, &zone(), &mut chunks).expect("encodes");
+        assert_eq!(chunks.len(), 2);
+        let first = tidb_codec::decode(chunks[0].rows_data.as_deref().expect("rows"), 64)
+            .expect("64 datums");
+        assert_eq!(first.last(), Some(&tidb_datatype::Datum::Int(63)));
+        let second = tidb_codec::decode(chunks[1].rows_data.as_deref().expect("rows"), 1)
+            .expect("one datum");
+        assert_eq!(second, vec![tidb_datatype::Datum::Int(64)]);
     }
 
     /// Every signature the pushdown catalog admits decodes here: the

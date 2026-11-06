@@ -28,6 +28,7 @@ tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-stats = { path = "../tidb-stats" }
 tidb-model = { path = "../tidb-model" }
+tidb-mysql = { path = "../tidb-mysql" }
 
 [dev-dependencies]
 tidb-unistore-tikv = { path = "../tidb-unistore-tikv" }

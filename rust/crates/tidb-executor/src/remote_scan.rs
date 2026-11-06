@@ -2264,10 +2264,14 @@ mod tests {
         let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
         let rows = run_select_on("SELECT a FROM t LIMIT 4", &catalog, &ctx).unwrap();
         assert_eq!(rows.len(), 4);
+        // Go's unistore `limitExec` truncates what the table scan hands up a
+        // chunk (`DefaultBatchSize`, 32 rows) at a time, and pulls a second
+        // chunk before it sees the limit spent: Go's `EXPLAIN ANALYZE SELECT a
+        // FROM h LIMIT 4` over these 100 rows reports `TableFullScan` 64.
         assert_eq!(
             fixture.scanned.load(Ordering::Relaxed),
-            4,
-            "the cap reached the coprocessor, which stopped there"
+            64,
+            "the cap reached the coprocessor, which stopped after two chunks"
         );
     }
 

@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 29,
-    "open": 10,
-    "partial": 19
+    "open": 9,
+    "partial": 20
   },
   "findings": [
     {
@@ -74,10 +74,10 @@
     },
     {
       "id": "E14",
-      "status": "open",
+      "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "The embedded store's coprocessor lowers a DAG to a closure-shaped scan (`tidb-unistore-cophandler`, after Go's `closure_exec.go`) where Go's unistore runs every DAG through `buildAndRunMPPExecutor`'s `mppExec` chain: there a scan returns a whole chunk before the `limitExec` above it truncates it (an index scan under a pushed `Limit 3` reads 6 keys, this port 3), and `topNExec` counts the rows it consumes (6 for a TopN of 2)",
-      "go_owner": "`pkg/store/mockstore/unistore/cophandler` (`mpp.go`, `mpp_exec.go`, `cop_handler.go` `handleCopDAGRequest`)"
+      "finding": "The embedded store's coprocessor runs every DAG through Go's `mppExec` chain (`tidb-unistore-cophandler` `mpp.rs`, `mpp_exec.rs`), but `selExec` filters row by row where Go's `expression.VectorizedFilter` evaluates each condition over the whole chunk, the index-lookup push-down (`buildIndexLookUp` and its intermediate outputs) refuses, and a store or row-decode error answers `OtherError` where `genRespWithMPPExec` carries it in `SelectResponse.error`",
+      "go_owner": "`pkg/store/mockstore/unistore/cophandler` (`mpp.go`, `mpp_exec.go`)"
     },
     {
       "id": "E15",
@@ -216,6 +216,6 @@
     }
   ],
   "unresolved": 29,
-  "open": 10,
-  "partial": 19
+  "open": 9,
+  "partial": 20
 }

@@ -26,7 +26,9 @@ pub(super) struct RequestEvalContext {
     pub(super) division_precision: u32,
     pub(super) flags: u64,
     pub(super) column_types: Vec<tidb_datatype::FieldType>,
-    warnings: Mutex<Vec<(u16, String)>>,
+    /// Go `sc.GetWarnings()`: one statement context per request, shared by
+    /// every executor's expressions whatever input schema they decode over.
+    warnings: Arc<Mutex<Vec<(u16, String)>>>,
 }
 
 impl RequestEvalContext {
@@ -36,8 +38,22 @@ impl RequestEvalContext {
             division_precision,
             flags,
             column_types: Vec::new(),
-            warnings: Mutex::new(Vec::new()),
+            warnings: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    /// The request's session context over another input schema: Go's
+    /// `mppExecBuilder` converts each executor's expressions against
+    /// `child.getFieldTypes()` (`convertToExprs(b.sctx, fieldTps, ...)`)
+    /// while every executor shares the one `sctx`, its warnings included.
+    pub(super) fn with_column_types(&self, column_types: Vec<tidb_datatype::FieldType>) -> Arc<Self> {
+        Arc::new(Self {
+            zone: self.zone.clone(),
+            division_precision: self.division_precision,
+            flags: self.flags,
+            column_types,
+            warnings: Arc::clone(&self.warnings),
+        })
     }
 
     pub(super) fn condition_value(&self, value: &Datum) -> Result<i128, super::CopExecError> {

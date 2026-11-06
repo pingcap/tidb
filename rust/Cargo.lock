@@ -8665,6 +8665,7 @@ dependencies = [
  "tidb-expression-aggregation",
  "tidb-goruntime",
  "tidb-model",
+ "tidb-mysql",
  "tidb-proto",
  "tidb-rowcodec",
  "tidb-stats",
