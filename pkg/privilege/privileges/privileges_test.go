@@ -2820,6 +2820,14 @@ func TestUpdateColumnPrivilege(t *testing.T) {
 	tk.MustExec(`GRANT SELECT(c,d) ON test.t2 TO 'testuser'@'localhost';`)
 	userTk.MustExec(`UPDATE test.t1, test.t2 SET a = c WHERE b = d`)
 	userTk.MustExec(`UPDATE test.t1, (SELECT c FROM test.t2 WHERE d = 2) AS tt SET a = tt.c	`)
+
+	// Computing generated columns does not require SELECT on their inputs.
+	tk.MustExec(`CREATE TABLE test.g (a int, b int AS (a + 1), c int AS (a * 2) STORED)`)
+	tk.MustExec(`INSERT INTO test.g(a) VALUES (1)`)
+	tk.MustExec(`GRANT UPDATE(a) ON test.g TO 'testuser'@'localhost'`)
+	userTk.MustExec(`UPDATE test.g SET a = 2`)
+	tk.MustQuery(`SELECT a, b, c FROM test.g`).Check(testkit.Rows("2 3 4"))
+	userTk.MustGetErrCode(`UPDATE test.g SET a = 3 WHERE b = 3`, errno.ErrColumnaccessDenied)
 }
 
 func TestColumnPrivilege4NonPreparePlanCache(t *testing.T) {

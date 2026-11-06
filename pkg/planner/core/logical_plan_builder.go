@@ -6468,7 +6468,11 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 
 			o := b.allowBuildCastArray
 			b.allowBuildCastArray = true
+			// Generation expressions are evaluated internally and require no
+			// SELECT privilege on the columns they reference.
+			b.checkColPriv = noCheckOption
 			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, true, rewritePreprocess(assign))
+			b.checkColPriv = reportColumnErrOption
 			b.allowBuildCastArray = o
 			if err != nil {
 				return nil, nil, false, err
