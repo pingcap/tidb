@@ -268,7 +268,7 @@ func splitIndexRegionAndWait(
 	if err != nil {
 		logutil.DDLLogger().Error("split table index region failed",
 			zap.String("table", tblInfo.Name.L),
-			zap.String("index", tblInfo.Name.L),
+			zap.String("index", idxInfo.Name.L),
 			zap.Error(err))
 		return err
 	}
@@ -308,6 +308,20 @@ func evalSplitDatumFromArgs(
 			indexValues = append(indexValues, values)
 		}
 		return &splitArgs{byRows: indexValues}, nil
+	}
+
+	if len(opt.Lower) == 0 && len(opt.Upper) == 0 && opt.Num > 0 {
+		lowerVals := make([]types.Datum, 0, len(idxInfo.Columns))
+		upperVals := make([]types.Datum, 0, len(idxInfo.Columns))
+		for range idxInfo.Columns {
+			lowerVals = append(lowerVals, types.MinNotNullDatum())
+			upperVals = append(upperVals, types.MaxValueDatum())
+		}
+		return &splitArgs{
+			betweenLower: lowerVals,
+			betweenUpper: upperVals,
+			regionsCnt:   int(opt.Num),
+		}, nil
 	}
 
 	// Split index regions by lower, upper value.

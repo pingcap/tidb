@@ -6200,8 +6200,14 @@ logAnd:
 	"&&"
 |	"AND"
 
+// At "INTERVAL" '(' Expression ',', goyacc can shift ',' to continue the
+// scalar INTERVAL(Expression, Expression) production or reduce Expression to
+// ExpressionList for the anonymous row expression (Expression, Expression).
+// %prec lowerThanComma makes that reduction lose to the lookahead comma and
+// resolves the conflict explicitly. Other expression lists still reduce
+// normally when no shift action competes.
 ExpressionList:
-	Expression
+	Expression %prec lowerThanComma
 	{
 		$$ = []ast.ExprNode{$1}
 	}
@@ -6696,17 +6702,17 @@ IndexOption:
 			Global: false,
 		}
 	}
-|   "PRE_SPLIT_REGIONS" EqOpt '(' SplitOption ')'
-    {
+|	"PRE_SPLIT_REGIONS" EqOpt '(' SplitOption ')'
+	{
 		$$ = &ast.IndexOption{
 			SplitOpt: $4.(*ast.SplitOption),
 		}
 	}
-|   "PRE_SPLIT_REGIONS" EqOpt Int64Num
+|	"PRE_SPLIT_REGIONS" EqOpt Int64Num
 	{
 		$$ = &ast.IndexOption{
-			SplitOpt:  &ast.SplitOption{
-				Num:   $3.(int64),
+			SplitOpt: &ast.SplitOption{
+				Num: $3.(int64),
 			},
 		}
 	}
@@ -8142,7 +8148,6 @@ FunctionNameConflict:
 |	"DAY"
 |	"HOUR"
 |	"IF"
-|	"INTERVAL"
 |	"LOG"
 |	"FORMAT"
 |	"LEFT"
@@ -8189,6 +8194,14 @@ FunctionCallKeyword:
 	FunctionNameConflict '(' ExpressionListOpt ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
+|	"INTERVAL" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.Interval), Args: []ast.ExprNode{$3, $5}}
+	}
+|	"INTERVAL" '(' Expression ',' Expression ',' ExpressionList ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.Interval), Args: append([]ast.ExprNode{$3, $5}, $7.([]ast.ExprNode)...)}
 	}
 |	builtinUser '(' ExpressionListOpt ')'
 	{
@@ -13872,7 +13885,7 @@ ConnectionOptions:
 		for _, option := range $2.([]*ast.ResourceOption) {
 			switch option.Type {
 			case ast.MaxUserConnections:
-				// do nothing.
+			// do nothing.
 			default:
 				needWarning = true
 			}
