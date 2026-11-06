@@ -712,8 +712,21 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction) {
 		// Cast is a special case. The RetType should also be considered as an argument.
 		// Please see `newFunctionImpl()` for detail.
 		if sf.FuncName.L == ast.Cast {
-			evalTp := sf.RetType.EvalType()
-			sf.canonicalhashcode = append(sf.canonicalhashcode, byte(evalTp))
+			// The canonical key is used as semantic equality by ROLLUP. EvalType
+			// alone loses distinctions such as collation, precision and signedness.
+			tp := sf.RetType
+			sf.canonicalhashcode = append(sf.canonicalhashcode, tp.ArrayType().GetType())
+			sf.canonicalhashcode = codec.EncodeUint(sf.canonicalhashcode, uint64(tp.GetFlag()))
+			sf.canonicalhashcode = codec.EncodeInt(sf.canonicalhashcode, int64(tp.GetFlen()))
+			sf.canonicalhashcode = codec.EncodeInt(sf.canonicalhashcode, int64(tp.GetDecimal()))
+			sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(tp.GetCharset()))
+			sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(tp.GetCollate()))
+			sf.canonicalhashcode = codec.EncodeInt(sf.canonicalhashcode, int64(len(tp.GetElems())))
+			for i, elem := range tp.GetElems() {
+				sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(elem))
+				sf.canonicalhashcode = append(sf.canonicalhashcode, byte(boolToInt64(tp.GetElemIsBinaryLit(i))))
+			}
+			sf.canonicalhashcode = append(sf.canonicalhashcode, byte(boolToInt64(tp.IsArray())))
 		}
 	}
 }
