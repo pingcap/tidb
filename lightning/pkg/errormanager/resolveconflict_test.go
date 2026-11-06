@@ -172,15 +172,28 @@ func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
 	mockDB.ExpectExec("CREATE OR REPLACE VIEW `lightning_task_info`\\.conflict_view.*").
 		WillReturnResult(sqlmock.NewResult(3, 1))
 	mockDB.ExpectQuery("\\QSELECT id, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v4 WHERE table_name = ? AND kv_type = 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
+		WithArgs("a", 0, sqlmock.AnyArg(), 1000).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "index_name", "raw_value", "raw_handle"}).
 			AddRow(1, data2RowKey, "PRIMARY", data2RowValue, data1RowKey).
-			AddRow(2, data2RowKey, "PRIMARY", data3NonclusteredValue, data2NonclusteredKey).
-			AddRow(3, data6RowKey, "PRIMARY", data6RowValue, data5RowKey).
-			AddRow(4, data6RowKey, "PRIMARY", data7NonclusteredValue, data6NonclusteredKey))
+			AddRow(2, data2RowKey, "PRIMARY", data3NonclusteredValue, data2NonclusteredKey))
 	mockDB.ExpectBegin()
 	mockDB.ExpectExec("INSERT INTO `lightning_task_info`\\.conflict_error_v4.*").
-		WithArgs(0, "a", nil, nil, data2NonclusteredKey, data2NonclusteredValue, 2,
-			0, "a", nil, nil, data6NonclusteredKey, data6NonclusteredValue, 2).
+		WithArgs(0, "a", nil, nil, data2NonclusteredKey, data2NonclusteredValue, 2).
+		WillReturnResult(driver.ResultNoRows)
+	mockDB.ExpectCommit()
+	// This nonempty page has no deletions, but must advance to the next page.
+	mockDB.ExpectQuery("\\QSELECT id, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v4 WHERE table_name = ? AND kv_type = 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
+		WithArgs("a", 3, sqlmock.AnyArg(), 1000).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "index_name", "raw_value", "raw_handle"}).
+			AddRow(3, data2RowKey, "PRIMARY", data2RowValue, data1RowKey))
+	mockDB.ExpectQuery("\\QSELECT id, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v4 WHERE table_name = ? AND kv_type = 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
+		WithArgs("a", 4, sqlmock.AnyArg(), 1000).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "index_name", "raw_value", "raw_handle"}).
+			AddRow(4, data6RowKey, "PRIMARY", data6RowValue, data5RowKey).
+			AddRow(5, data6RowKey, "PRIMARY", data7NonclusteredValue, data6NonclusteredKey))
+	mockDB.ExpectBegin()
+	mockDB.ExpectExec("INSERT INTO `lightning_task_info`\\.conflict_error_v4.*").
+		WithArgs(0, "a", nil, nil, data6NonclusteredKey, data6NonclusteredValue, 2).
 		WillReturnResult(driver.ResultNoRows)
 	mockDB.ExpectCommit()
 	for range 2 {
@@ -214,7 +227,8 @@ func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
 
 	fnGetLatestCount := atomic.NewInt32(0)
 	fnDeleteKeyCount := atomic.NewInt32(0)
-	pool := util.NewWorkerPool(16, "resolve duplicate rows by replace")
+	// Keep all three index pages on one worker to detect stale insert rows.
+	pool := util.NewWorkerPool(1, "resolve duplicate rows by replace")
 	err = em.ReplaceConflictKeys(
 		ctx, tbl, "a", pool,
 		func(ctx context.Context, key []byte) ([]byte, error) {
@@ -230,7 +244,7 @@ func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
 			case bytes.Equal(key, data6RowKey):
 				return data6RowValue, nil
 			case bytes.Equal(key, data6NonclusteredKey):
-				if fnGetLatestCount.String() == "6" {
+				if fnGetLatestCount.String() == "7" {
 					return data6NonclusteredValue, nil
 				}
 				return nil, tikverr.ErrNotExist
@@ -257,7 +271,7 @@ func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
-	require.Equal(t, int32(16), fnGetLatestCount.Load())
+	require.Equal(t, int32(17), fnGetLatestCount.Load())
 	require.Equal(t, int32(6), fnDeleteKeyCount.Load())
 	err = mockDB.ExpectationsWereMet()
 	require.NoError(t, err)
