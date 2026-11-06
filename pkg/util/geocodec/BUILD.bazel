@@ -1,0 +1,27 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "geocodec",
+    srcs = ["geocodec.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/geocodec",
+    visibility = ["//visibility:public"],
+    deps = ["@com_github_peterstace_simplefeatures//geom"],
+)
+
+go_test(
+    name = "geocodec_test",
+    timeout = "short",
+    srcs = [
+        "geocodec_test.go",
+        "ingest_test.go",
+        "main_test.go",
+    ],
+    embed = [":geocodec"],
+    flaky = True,
+    deps = [
+        "//pkg/testkit/testsetup",
+        "@com_github_peterstace_simplefeatures//geom",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
