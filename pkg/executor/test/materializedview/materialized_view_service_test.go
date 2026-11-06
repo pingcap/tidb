@@ -23,6 +23,9 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/mvservice"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/statistics"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
@@ -31,6 +34,11 @@ import (
 )
 
 func TestMaterializedViewServiceAutomaticMaintenance(t *testing.T) {
+	t.Run("refresh_and_purge", testMaterializedViewServiceAutomaticRefreshAndPurge)
+	t.Run("mlog_analyze", testMaterializedViewServiceMLogAnalyze)
+}
+
+func testMaterializedViewServiceAutomaticRefreshAndPurge(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
@@ -166,4 +174,33 @@ func TestMaterializedViewServiceMiscMaintenance(t *testing.T) {
 			assert.Equal(c, float64(1), testutil.ToFloat64(metrics.MVServiceMVLogAccumulationGauge))
 		}, 20*time.Second, 100*time.Millisecond)
 	})
+}
+
+func testMaterializedViewServiceMLogAnalyze(t *testing.T) {
+	originalMinCnt := statistics.AutoAnalyzeMinCnt
+	originalAutoAnalyze := vardef.RunAutoAnalyze.Load()
+	statistics.AutoAnalyzeMinCnt = 0
+	t.Cleanup(func() {
+		statistics.AutoAnalyzeMinCnt = originalMinCnt
+		vardef.RunAutoAnalyze.Store(originalAutoAnalyze)
+	})
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := newMViewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_auto_analyze=ON")
+	handle := dom.StatsHandle()
+	tk.MustExec("create table t_mvs_analyze (a int)")
+	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(handle))
+	tk.MustExec("create materialized view log on t_mvs_analyze (a)")
+	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(handle))
+	tk.MustExec("insert into t_mvs_analyze values (1), (2)")
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, dom.GetMVService().SetTaskBackpressureConfig(mvservice.TaskBackpressureConfig{}))
+	require.NoError(t, dom.StartMVService())
+
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		rows := tk.MustQuery("select count(*) > 0 from mysql.analyze_jobs where table_schema='test' and table_name='$mlog$t_mvs_analyze' and state='finished'").Rows()
+		assert.Equal(c, [][]any{{"1"}}, rows)
+	}, 20*time.Second, 100*time.Millisecond)
 }

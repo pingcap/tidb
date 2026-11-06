@@ -850,6 +850,98 @@ func TestRejectMinMaxForStage1(t *testing.T) {
 	require.ErrorContains(t, err, "requires MinMaxRecompute metadata")
 }
 
+func TestMinMaxBitMerge(t *testing.T) {
+	for _, field := range []struct {
+		name      string
+		flen      int
+		low, high uint64
+	}{
+		{name: "bit1", flen: 1, low: 0, high: 1},
+		{name: "bit8", flen: 8, low: 127, high: 128},
+		{name: "bit16", flen: 16, low: 255, high: 256},
+		{name: "bit64", flen: 64, low: math.MaxInt64, high: 1 << 63},
+	} {
+		t.Run(field.name, func(t *testing.T) {
+			for _, aggName := range []string{ast.AggFuncMin, ast.AggFuncMax} {
+				t.Run(aggName, func(t *testing.T) {
+					sctx := mock.NewContext()
+					ftBit := types.NewFieldType(mysql.TypeBit)
+					ftBit.SetFlen(field.flen)
+					ftBit.SetCollate("binary")
+					ftBit.AddFlag(mysql.UnsignedFlag)
+					ftInt := types.NewFieldType(mysql.TypeLonglong)
+					fts := []*types.FieldType{ftBit, ftInt, ftBit, ftInt, ftBit, ftInt}
+					byteSize := (field.flen + 7) / 8
+					low := types.NewBinaryLiteralFromUint(field.low, byteSize)
+					high := types.NewBinaryLiteralFromUint(field.high, byteSize)
+					maxValue := types.NewBinaryLiteralFromUint(math.MaxUint64>>(64-field.flen), byteSize)
+					rows := []struct {
+						old, added, removed []byte
+						count               int64
+					}{
+						{old: low, added: high, count: 2},
+						{old: high, added: low, count: 2},
+						{added: high, count: 1},
+						{old: high, removed: high, count: 1}, // Recompute the removed extremum.
+						{count: 1},                           // An all-NULL group.
+						{old: low},                           // A deleted group.
+						{old: low, count: 2},
+						{old: high, added: maxValue, count: 2},
+					}
+					input := chunk.NewChunkWithCapacity(fts, len(rows))
+					for _, row := range rows {
+						for i, value := range [][]byte{row.added, row.removed, row.old} {
+							if value == nil {
+								input.AppendNull(2 * i)
+								if i < 2 {
+									input.AppendInt64(2*i+1, 0)
+								}
+							} else {
+								input.AppendBytes(2*i, value)
+								if i < 2 {
+									input.AppendInt64(2*i+1, 1)
+								}
+							}
+						}
+						input.AppendInt64(5, row.count)
+					}
+					desc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), aggName,
+						[]expression.Expression{&expression.Column{Index: 0, RetType: ftBit}}, false)
+					require.NoError(t, err)
+					e := &Exec{
+						BaseExecutor:     exec.NewBaseExecutor(sctx, nil, 0),
+						AggMappings:      []Mapping{{ColID: []int{5}}},
+						DeltaAggColCount: 4,
+					}
+					merger, err := e.buildMinMaxMerger(0, Mapping{
+						AggFunc: desc, ColID: []int{4}, DependencyColID: []int{0, 1, 2, 3},
+					}, map[int]int{5: 0}, fts)
+					require.NoError(t, err)
+					workerData := &mergeWorkerData{minMaxMappingIdxToRows: make([][]int, 1)}
+					output := make([]*chunk.Column, 1)
+					require.NotPanics(t, func() {
+						require.NoError(t, merger.mergeChunk(input, []*chunk.Column{input.Column(5)}, output, workerData))
+					})
+					require.Equal(t, []int{3}, workerData.minMaxMappingIdxToRows[0])
+					want := [][]byte{low, low, high, nil, nil, nil, low, high}
+					if aggName == ast.AggFuncMax {
+						want[0], want[1], want[7] = high, high, maxValue
+					}
+					for rowIdx, value := range want {
+						var datum types.Datum
+						chunkRowColDatum(output[0], rowIdx, ftBit, &datum)
+						if value == nil {
+							require.True(t, datum.IsNull(), "row %d", rowIdx)
+						} else {
+							require.Equal(t, value, datum.GetBytes(), "row %d", rowIdx)
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestMaxFastPathAndSingleRowRecompute(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().ExecutorConcurrency = 1

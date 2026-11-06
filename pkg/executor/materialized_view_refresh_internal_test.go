@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -96,6 +98,35 @@ func TestBuildMVRefreshOutOfPlaceShadowTableInfoSetsSource(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, shadow.MaterializedViewShadow)
 	require.Equal(t, int64(42), shadow.MaterializedViewShadow.SourceMViewID)
+}
+
+func TestPrepareMVRefreshObserveInternalSessionRedaction(t *testing.T) {
+	for _, mode := range []string{vardef.Off, vardef.On, vardef.Marker} {
+		t.Run(mode, func(t *testing.T) {
+			caller := mock.NewContext()
+			caller.GetSessionVars().EnableRedactLog = mode
+			internal := mock.NewContext()
+			originalMode := vardef.On
+			if mode == vardef.On {
+				originalMode = vardef.Off
+			}
+			internal.GetSessionVars().EnableRedactLog = originalMode
+			e := &RefreshMaterializedViewDryRunExec{
+				BaseExecutor: exec.NewBaseExecutor(caller, nil, 0),
+			}
+
+			func() {
+				restore, err := e.prepareMVRefreshObserveInternalSession(internal)
+				require.NoError(t, err)
+				defer restore()
+				require.Equal(t, mode, internal.GetSessionVars().EnableRedactLog)
+				require.Equal(t, mode, internal.GetPlanCtx().GetSessionVars().EnableRedactLog)
+			}()
+			require.Equal(t, originalMode, internal.GetSessionVars().EnableRedactLog)
+			require.Equal(t, originalMode, internal.GetPlanCtx().GetSessionVars().EnableRedactLog)
+			require.Equal(t, mode, caller.GetSessionVars().EnableRedactLog)
+		})
+	}
 }
 
 func TestBuildMVRefreshOutOfPlaceBuildSQLImportOptions(t *testing.T) {

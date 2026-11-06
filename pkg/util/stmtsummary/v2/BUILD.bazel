@@ -29,6 +29,7 @@ go_library(
         "//pkg/util/redact",
         "//pkg/util/set",
         "//pkg/util/stmtsummary",
+        "//pkg/util/timeutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_log//:log",
@@ -54,7 +55,7 @@ go_test(
     ],
     embed = [":stmtsummary"],
     flaky = True,
-    shard_count = 31,
+    shard_count = 33,
     deps = [
         "//pkg/config",
         "//pkg/meta/model",

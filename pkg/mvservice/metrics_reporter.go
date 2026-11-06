@@ -50,6 +50,7 @@ func (h *serviceHelper) reportMetrics(s *MVService) {
 	// Executor metrics
 	h.reportTaskExecutorMetrics(mvTaskDurationTypeRefresh, snapshotTaskExecutorMetrics(s.refreshExecutor), &h.reportCache.refresh)
 	h.reportTaskExecutorMetrics(mvTaskDurationTypePurge, snapshotTaskExecutorMetrics(s.purgeExecutor), &h.reportCache.purge)
+	h.reportTaskExecutorMetrics(mvTaskDurationTypeMLogAnalyze, snapshotTaskExecutorMetrics(s.mlogAnalyzeExecutor), &h.reportCache.mlogAnalyze)
 
 	// MVService metrics
 	tidbmetrics.MVServiceMVRefreshTotalGauge.Set(float64(s.metrics.mvCount.Load()))

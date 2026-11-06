@@ -32,8 +32,14 @@ import (
 	meta "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics"
+	statsautoanalyzeexec "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
+	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	basic "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -41,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
@@ -58,10 +65,14 @@ const (
 type serviceHelper struct {
 	durationObserverCache durationObserverCache
 	runEventCounterCache  runEventCounterCache
+	statsHandleGetter     func() statstypes.StatsHandle
+	sysProcTracker        sysproctrack.Tracker
+	isAutoAnalyzeStopped  func() bool
 
 	reportCache struct {
-		refresh taskExecutorReportCache
-		purge   taskExecutorReportCache
+		refresh     taskExecutorReportCache
+		purge       taskExecutorReportCache
+		mlogAnalyze taskExecutorReportCache
 	}
 }
 
@@ -113,10 +124,12 @@ type mviewMetricComponentTypeKey struct {
 }
 
 // newServiceHelper builds a default helper used by MVService.
-func newServiceHelper() *serviceHelper {
+func newServiceHelper(statsHandleGetter func() statstypes.StatsHandle, sysProcTracker sysproctrack.Tracker) *serviceHelper {
 	return &serviceHelper{
 		durationObserverCache: newDurationObserverCache(8),
 		runEventCounterCache:  newRunEventCounterCache(16),
+		statsHandleGetter:     statsHandleGetter,
+		sysProcTracker:        sysProcTracker,
 	}
 }
 
@@ -402,6 +415,22 @@ func resolveMVLogAccumulationAlertByID(
 		return "", "", 0, false, false, nil
 	}
 	return schemaName, mlogName, alertRows, true, true, nil
+}
+
+func resolveMVLogIdentityByID(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	mlogID int64,
+) (schemaName, mlogName string, found bool, err error) {
+	infoSchema, mLogMeta, _, found, err := resolveMVLogMetaByID(ctx, sctx, mlogID)
+	if err != nil || !found {
+		return "", "", false, err
+	}
+	schemaName, mlogName, found = resolveMVLogIdentityFromMeta(infoSchema, mLogMeta)
+	if !found {
+		return "", "", false, nil
+	}
+	return schemaName, mlogName, true, nil
 }
 
 // RefreshMV executes one incremental refresh round for a materialized view.
@@ -1534,6 +1563,214 @@ func (*serviceHelper) LoadTiDBMVLogAccumulationRowCounts(
 	return rowCounts, nil
 }
 
+func (h *serviceHelper) getStatsHandle() (statstypes.StatsHandle, error) {
+	if h == nil || h.statsHandleGetter == nil {
+		return nil, errors.New("mv service stats handle getter is nil")
+	}
+	statsHandle := h.statsHandleGetter()
+	if statsHandle == nil {
+		return nil, errors.New("mv service stats handle is nil")
+	}
+	return statsHandle, nil
+}
+
+func (*serviceHelper) readMLogAutoAnalyzeRatio(ctx context.Context, sctx sessionctx.Context) float64 {
+	ratioText, ok := getGlobalSystemVarBestEffort(ctx, sctx.GetSessionVars(), vardef.TiDBMLogAutoAnalyzeRatio)
+	if !ok {
+		ratioText = strconv.FormatFloat(vardef.DefMLogAutoAnalyzeRatio, 'f', -1, 64)
+	}
+	ratio, err := strconv.ParseFloat(ratioText, 64)
+	if err != nil {
+		logutil.BgLogger().Warn(
+			"mv service: failed to parse mlog auto analyze ratio, fallback to default",
+			zap.String("var", vardef.TiDBMLogAutoAnalyzeRatio),
+			zap.String("value", ratioText),
+			zap.Error(err),
+		)
+		return vardef.DefMLogAutoAnalyzeRatio
+	}
+	return max(ratio, 0)
+}
+
+func needAnalyzeMLog(statsTbl *statistics.Table, ratio float64) (bool, string) {
+	if statsTbl == nil || statsTbl.Pseudo || statsTbl.RealtimeCount < statistics.AutoAnalyzeMinCnt {
+		return false, ""
+	}
+	if !statsTbl.IsAnalyzed() {
+		return true, "mlog unanalyzed"
+	}
+	if ratio == 0 {
+		return false, ""
+	}
+	tblCnt := float64(statsTbl.RealtimeCount)
+	if histCnt := statsTbl.GetAnalyzeRowCount(); histCnt > 0 {
+		tblCnt = histCnt
+	}
+	if tblCnt <= 0 {
+		return false, ""
+	}
+	if float64(statsTbl.ModifyCount)/tblCnt <= ratio {
+		return false, ""
+	}
+	return true, fmt.Sprintf("too many mlog modifications(%v/%v>%v)", statsTbl.ModifyCount, tblCnt, ratio)
+}
+
+func (h *serviceHelper) mlogAnalyzeStopped(ctx context.Context) bool {
+	return ctx.Err() != nil || !vardef.RunAutoAnalyze.Load() ||
+		(h.isAutoAnalyzeStopped != nil && h.isAutoAnalyzeStopped())
+}
+
+func (h *serviceHelper) canAnalyzeMLog(ctx context.Context, sctx sessionctx.Context) bool {
+	if h.mlogAnalyzeStopped(ctx) {
+		return false
+	}
+	parameters := statsautoanalyzeexec.GetAutoAnalyzeParameters(sctx)
+	start, end, err := statsautoanalyzeexec.ParseAutoAnalysisWindow(
+		parameters[vardef.TiDBAutoAnalyzeStartTime],
+		parameters[vardef.TiDBAutoAnalyzeEndTime],
+	)
+	if err != nil {
+		logutil.BgLogger().Warn("mv service: failed to parse mlog auto analyze window", zap.Error(err))
+		return false
+	}
+	return timeutil.WithinDayTimePeriod(start, end, mvsNow()) && !h.mlogAnalyzeStopped(ctx)
+}
+
+// LoadAllTiDBMVLogAnalyzeTasks loads MV logs that currently need analyze.
+func (h *serviceHelper) LoadAllTiDBMVLogAnalyzeTasks(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mlogAnalyzeTask, error) {
+	const fetchSQL = `SELECT MLOG_ID FROM mysql.tidb_mlog_purge_info`
+	if h.mlogAnalyzeStopped(ctx) {
+		return nil, nil
+	}
+	statsHandle, err := h.getStatsHandle()
+	if err != nil {
+		return nil, err
+	}
+	se, err := sysSessionPool.Get()
+	if err != nil {
+		return nil, err
+	}
+	defer sysSessionPool.Put(se)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMViewMaintenance)
+	sctx := se.(sessionctx.Context)
+
+	if !h.canAnalyzeMLog(ctx, sctx) {
+		return nil, nil
+	}
+	lockedTables, err := lockstats.QueryLockedTables(ctx, sctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := execRCRestrictedSQLWithSession(ctx, sctx, fetchSQL, nil)
+	if err != nil {
+		return nil, err
+	}
+	ratio := h.readMLogAutoAnalyzeRatio(ctx, sctx)
+	tasks := make(map[int64]*mlogAnalyzeTask)
+	for _, row := range rows {
+		if row.IsNull(0) {
+			continue
+		}
+		mlogID := row.GetInt64(0)
+		if mlogID <= 0 {
+			continue
+		}
+		if _, locked := lockedTables[mlogID]; locked {
+			continue
+		}
+		schemaName, mlogName, found, err := resolveMVLogIdentityByID(ctx, sctx, mlogID)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			continue
+		}
+		statsTbl, found := statsHandle.GetNonPseudoPhysicalTableStats(mlogID)
+		if !found {
+			continue
+		}
+		needAnalyze, reason := needAnalyzeMLog(statsTbl, ratio)
+		if !needAnalyze {
+			continue
+		}
+		tasks[mlogID] = &mlogAnalyzeTask{
+			schemaName: schemaName,
+			mlogName:   mlogName,
+			reason:     reason,
+			ratio:      ratio,
+		}
+	}
+	return tasks, nil
+}
+
+// AnalyzeMVLog runs analyze for the specified MV log table once.
+func (h *serviceHelper) AnalyzeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mlogID int64) error {
+	const analyzeMLogSQL = `ANALYZE TABLE %n.%n`
+	if h.mlogAnalyzeStopped(ctx) {
+		return nil
+	}
+	statsHandle, err := h.getStatsHandle()
+	if err != nil {
+		return err
+	}
+	if h.sysProcTracker == nil {
+		return errors.New("mv service sys process tracker is nil")
+	}
+	se, err := sysSessionPool.Get()
+	if err != nil {
+		return err
+	}
+	defer sysSessionPool.Put(se)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMViewMaintenance)
+	sctx := se.(sessionctx.Context)
+	restoreStatsVars, err := statsutil.UpdateSCtxVarsForStats(sctx)
+	if err != nil {
+		return err
+	}
+	defer restoreStatsVars()
+
+	schemaName, mlogName, found, err := resolveMVLogIdentityByID(ctx, sctx, mlogID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil
+	}
+	lockedTables, err := lockstats.QueryLockedTables(ctx, sctx)
+	if err != nil {
+		return err
+	}
+	if _, locked := lockedTables[mlogID]; locked {
+		return nil
+	}
+	// A task may have waited in the executor queue or for a pooled session.
+	// Recheck current eligibility and controls before starting another ANALYZE.
+	ratio := h.readMLogAutoAnalyzeRatio(ctx, sctx)
+	statsTbl, found := statsHandle.GetNonPseudoPhysicalTableStats(mlogID)
+	if !found {
+		return nil
+	}
+	if needAnalyze, _ := needAnalyzeMLog(statsTbl, ratio); !needAnalyze {
+		return nil
+	}
+	if !h.canAnalyzeMLog(ctx, sctx) {
+		return nil
+	}
+	tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
+	needVersionRewriteWarn := !statistics.AnalyzeVersionMatchesForTableStats(statsTbl, tableStatsVer)
+	_, _, err = statsautoanalyzeexec.RunAnalyzeStmt(
+		sctx,
+		statsHandle,
+		h.sysProcTracker,
+		tableStatsVer,
+		needVersionRewriteWarn,
+		analyzeMLogSQL,
+		schemaName,
+		mlogName,
+	)
+	return err
+}
+
 // LoadAllTiDBMVRefresh loads all scheduled MV refresh tasks from metadata.
 func (*serviceHelper) LoadAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mviewTask, error) {
 	const sql = `SELECT NEXT_REFRESH_UNIX_SECONDS, MVIEW_ID, LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE NEXT_REFRESH_UNIX_SECONDS IS NOT NULL`
@@ -1634,10 +1871,14 @@ func execRestrictedSQLWithSession(ctx context.Context, sctx sessionctx.Context, 
 // MV-related create/drop events.
 // onDDLHandled is invoked on the DDL owner when such an event is observed, and
 // callers may use it to fan out the metadata change to other TiDB nodes.
+// isAutoAnalyzeStopped prevents queued analysis from starting during domain shutdown.
 func RegisterMVService(
 	ctx context.Context,
 	registerHandler func(notifier.HandlerID, notifier.SchemaChangeHandler),
 	se basic.SessionPool,
+	statsHandleGetter func() statstypes.StatsHandle,
+	sysProcTracker sysproctrack.Tracker,
+	isAutoAnalyzeStopped func() bool,
 	onDDLHandled func(),
 ) *MVService {
 	if registerHandler == nil || se == nil || onDDLHandled == nil {
@@ -1650,7 +1891,9 @@ func RegisterMVService(
 		MemThreshold: defaultBackpressureMemThreshold,
 		Delay:        defaultTaskBackpressureDelay,
 	}
-	mvService := NewMVService(ctx, se, newServiceHelper(), cfg)
+	helper := newServiceHelper(statsHandleGetter, sysProcTracker)
+	helper.isAutoAnalyzeStopped = isAutoAnalyzeStopped
+	mvService := NewMVService(ctx, se, helper, cfg)
 	mvService.NotifyDDLChange() // Trigger one startup refresh so in-memory state catches up with metadata.
 
 	// The notifier callback runs on the DDL owner only.
