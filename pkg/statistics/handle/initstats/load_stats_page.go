@@ -19,6 +19,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	atomicutil "go.uber.org/atomic"
@@ -97,7 +99,7 @@ func (ls *RangeWorker) LoadStats() {
 
 func (ls *RangeWorker) loadStats() {
 	for task := range ls.taskChan {
-		if err := ls.processTask(task); err != nil {
+		if err := ls.processTaskWithRecover(task); err != nil {
 			logutil.BgLogger().Error("load stats failed", zap.Error(err))
 		}
 		if ls.progressLogger != nil {
@@ -107,6 +109,15 @@ func (ls *RangeWorker) loadStats() {
 			ls.progressLogger.Info(fmt.Sprintf("load %s [%d/%d]", ls.taskName, completeTaskCnt, ls.taskCnt))
 		}
 	}
+}
+
+// processTaskWithRecover returns a panic in a task as an error. The worker goroutines
+// have no other recover, so a panic would crash the process.
+func (ls *RangeWorker) processTaskWithRecover(task Task) (err error) {
+	defer util.Recover(metrics.LabelStats, "RangeWorker.processTask", func() {
+		err = errors.Errorf("panic in loading %s for table IDs [%d, %d)", ls.taskName, task.StartTid, task.EndTid)
+	}, false)
+	return ls.processTask(task)
 }
 
 // SendTask sends a task to the load stats worker.
