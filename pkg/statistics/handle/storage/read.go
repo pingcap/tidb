@@ -1048,6 +1048,9 @@ func StatsMetaByTableIDFromStorage(sctx sessionctx.Context, tableID int64, snaps
 // convertBoundFromBlob reads the bound from blob. The `blob` is read from the `mysql.stats_buckets` table.
 // The `convertBoundFromBlob(convertBoundToBlob(a))` should be equal to `a`.
 // TODO: add a test to make sure that this assumption is correct.
+//
+// Callers must pass a UTC ctx: a TIMESTAMP bound is stored as a bare datetime string in UTC, so
+// parsing it anywhere else would shift the bound. See issue #52429.
 func convertBoundFromBlob(ctx types.Context, blob types.Datum, tp *types.FieldType) (types.Datum, error) {
 	// For `BIT` type, when converting to `BLOB`, it's formated as an integer (when it's possible). Therefore, we should try to
 	// parse it as an integer first.
