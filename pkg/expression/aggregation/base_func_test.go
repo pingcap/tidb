@@ -213,6 +213,53 @@ func TestTypeInfer4AvgSum(t *testing.T) {
 	}
 }
 
+func TestBaseFunc_InferSumAvgRetTypeForBit(t *testing.T) {
+	ctx := mock.NewContext()
+	divPrecIncre := ctx.GetEvalCtx().GetDivPrecisionIncrement()
+
+	bitType := func(flen int) *types.FieldType {
+		tp := types.NewFieldType(mysql.TypeBit)
+		tp.SetFlen(flen)
+		tp.AddFlag(mysql.UnsignedFlag)
+		return tp
+	}
+
+	// SUM/AVG over a BIT column must return an exact DECIMAL (MySQL treats
+	// BIT as an unsigned integer type), not a DOUBLE which silently rounds
+	// values above 2^53. See https://github.com/pingcap/tidb/issues/72740.
+	tests := []struct {
+		name    string
+		flen    int
+		sumFlen int
+		avgFlen int
+	}{
+		// The flen of a BIT(M) column is M; SUM adds 21 and AVG adds the
+		// div precision increment, both capped at the max decimal width.
+		{name: "BIT(64)", flen: 64, sumFlen: mysql.MaxDecimalWidth, avgFlen: mysql.MaxDecimalWidth},
+		{name: "BIT(1)", flen: 1, sumFlen: 22, avgFlen: 1 + divPrecIncre},
+		{name: "BIT unspecified flen", flen: types.UnspecifiedLength, sumFlen: mysql.MaxDecimalWidth, avgFlen: mysql.MaxDecimalWidth},
+	}
+	for _, tt := range tests {
+		col := &expression.Column{
+			UniqueID: 0,
+			RetType:  bitType(tt.flen),
+		}
+		sumDesc, err := newBaseFuncDesc(ctx, ast.AggFuncSum, []expression.Expression{col})
+		require.NoError(t, err)
+		require.NoError(t, sumDesc.TypeInfer(ctx))
+		require.Equal(t, byte(mysql.TypeNewDecimal), sumDesc.RetTp.GetType(), tt.name)
+		require.Equal(t, tt.sumFlen, sumDesc.RetTp.GetFlen(), tt.name)
+		require.Equal(t, 0, sumDesc.RetTp.GetDecimal(), tt.name)
+
+		avgDesc, err := newBaseFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{col})
+		require.NoError(t, err)
+		require.NoError(t, avgDesc.TypeInfer(ctx))
+		require.Equal(t, byte(mysql.TypeNewDecimal), avgDesc.RetTp.GetType(), tt.name)
+		require.Equal(t, tt.avgFlen, avgDesc.RetTp.GetFlen(), tt.name)
+		require.Equal(t, divPrecIncre, avgDesc.RetTp.GetDecimal(), tt.name)
+	}
+}
+
 func TestBaseFunc_InferMaxMinCountRetType(t *testing.T) {
 	ctx := mock.NewContext()
 	retType := types.NewFieldType(mysql.TypeLonglong)
