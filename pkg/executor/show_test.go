@@ -143,6 +143,40 @@ func TestFillOneImportJobInfo(t *testing.T) {
 	jobInfo.SourceFileSize = 3
 	executor.FillOneImportJobInfo(c, jobInfo, nil)
 	require.Equal(t, "3B", c.GetRow(10).GetString(sourceFileSizeIdx))
+
+	for _, tt := range []struct {
+		name    string
+		runInfo *importinto.RuntimeInfo
+	}{
+		{name: "missing summary"},
+		{name: "missing summary with runtime info", runInfo: &importinto.RuntimeInfo{ImportRows: 17}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			result := chunk.New(fieldTypes, 1, 1)
+			info := &importer.JobInfo{
+				ID:         42,
+				Status:     importer.JobStatusFinished,
+				CreateTime: t2024,
+				StartTime:  t2024,
+				EndTime:    t2025,
+			}
+			require.NotPanics(t, func() {
+				executor.FillOneImportJobInfo(result, info, tt.runInfo)
+			})
+			row := result.GetRow(0)
+			require.Equal(t, int64(42), row.GetInt64(fmap["JobID"]))
+			require.Equal(t, importer.JobStatusFinished, row.GetString(fmap["Status"]))
+			if tt.runInfo == nil {
+				require.True(t, row.IsNull(rowCntIdx))
+			} else {
+				require.False(t, row.IsNull(rowCntIdx))
+				require.Equal(t, uint64(17), row.GetUint64(rowCntIdx))
+			}
+			require.Empty(t, row.GetString(fmap["ResultMessage"]))
+			require.Equal(t, t2024, row.GetTime(startIdx))
+			require.Equal(t, t2025, row.GetTime(endIdx))
+		})
+	}
 }
 
 func TestShow(t *testing.T) {
