@@ -2,9 +2,9 @@
   "date": "2026-11-06",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 24,
+    "unresolved": 23,
     "open": 7,
-    "partial": 17
+    "partial": 16
   },
   "findings": [
     {
@@ -57,13 +57,6 @@
       "group": "DML and executor handoff",
       "finding": "INSERT, UPDATE and DELETE run as Go's write executors (`DmlExec`: plan-ID `memTracker`, basic stats; `newDMLChildChunk` accounting and `updatedRowKeys` for a single-table UPDATE / DELETE, `insertRows`' row charge and `InsertRuntimeStat` for INSERT / REPLACE), but a multi-table UPDATE / DELETE (`multi_dml.rs`) and an `INSERT ... SELECT` materialize their whole source before writing instead of streaming it chunk by chunk, so their memory is not Go's (no per-chunk charge and release, no `mergedRowData` / `tblRowMap` / extra-column deltas; they charge each row they hold); and the insert stats lack Go's `AllocatorRuntimeStats` (`auto_id_allocator: {...}`), which this tier's auto-ID allocator does not record",
       "go_owner": "`pkg/executor/update.go`, `delete.go`, `insert.go`"
-    },
-    {
-      "id": "E09",
-      "status": "partial",
-      "group": "DML and executor handoff",
-      "finding": "The coprocessor row cursor (`RemoteRowCursor::append_clean_chunk`) decodes into its caller's chunk as Go's `selectResult.Next(chk)` / `readFromChunk` does (`SelectResponseIter::fill_chunk_with_required_rows`), but the partial-aggregate remote stream (`table_scan.rs` `append_partial_remote_chunk`) still moves the decoder's own chunk over its caller's, which loses that chunk's capacity",
-      "go_owner": "`pkg/distsql/select_result.go` (`readFromChunk`), `pkg/util/chunk` (`Decoder`)"
     },
     {
       "id": "E10",

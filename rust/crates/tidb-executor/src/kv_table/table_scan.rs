@@ -5982,6 +5982,26 @@ fn append_partial_remote_chunk(
     cap: usize,
 ) -> Result<Option<usize>, ExecError> {
     let before = req.num_rows();
+    if pending.is_none() && before == 0 {
+        // Go `selectResult.Next(ctx, chk)`: the rows are decoded into `req`
+        // itself, which keeps its columns unless a whole response chunk is
+        // swapped in (`ReuseIntermChk`).
+        let required_rows = req.required_rows();
+        if !remote.next_chunk_into(cap, req).map_err(ExecError::from)? {
+            return Ok(None);
+        }
+        let rows = req.num_rows();
+        if rows <= cap {
+            return Ok(Some(rows));
+        }
+        // A swapped-in response chunk past the executor's cap: the rest
+        // waits for the next call.
+        let batch = std::mem::take(req);
+        *req = batch.renew_with_capacity(cap, required_rows);
+        req.append_range_from(&batch, 0, cap);
+        *pending = Some((batch, cap));
+        return Ok(Some(cap));
+    }
     loop {
         let (batch, start) = if let Some((batch, start)) = pending.take() {
             (batch, start)
@@ -8008,6 +8028,89 @@ mod remote_cursor_tests {
         }
 
         fn close(&mut self) {}
+    }
+
+    /// A stream that decodes INTO the chunk it is given, as Go's
+    /// `chunk.Decoder.Decode` appends into `selectResult.Next`'s `chk`.
+    struct DecodingChunkStream {
+        chunks: std::collections::VecDeque<Chunk>,
+        returned: u64,
+    }
+
+    impl PushdownRowStream for DecodingChunkStream {
+        fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
+            panic!("the partial stream must use the columnar handoff")
+        }
+
+        fn supports_chunks(&self) -> bool {
+            true
+        }
+
+        fn next_chunk(&mut self, _required_rows: usize) -> Result<Option<Chunk>, StorageError> {
+            let chunk = self.chunks.pop_front();
+            self.returned += chunk.as_ref().map_or(0, |chunk| chunk.num_rows() as u64);
+            Ok(chunk)
+        }
+
+        fn next_chunk_into(&mut self, _required_rows: usize, chk: &mut Chunk) -> Result<bool, StorageError> {
+            chk.reset();
+            let Some(batch) = self.chunks.pop_front() else {
+                return Ok(false);
+            };
+            chk.append_range_from(&batch, 0, batch.num_rows());
+            self.returned += batch.num_rows() as u64;
+            Ok(true)
+        }
+
+        fn rows_returned(&self) -> u64 {
+            self.returned
+        }
+
+        fn close(&mut self) {}
+    }
+
+    /// Go `selectResult.Next(ctx, chk)`: a partial-aggregate stream decodes
+    /// into the scan's own chunk, which keeps its columns (and so the
+    /// capacity its consumer's tracker charges); rows past the scan's cap
+    /// wait for the next call.
+    #[test]
+    fn partial_remote_chunk_decodes_into_the_callers_chunk() {
+        let types = vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)];
+        let mut decoded = Chunk::new_chunk_with_capacity(&types, 3);
+        for value in 7..10 {
+            decoded.append_int64(0, value);
+        }
+        let mut stream = DecodingChunkStream {
+            chunks: std::collections::VecDeque::from([decoded.clone(), decoded]),
+            returned: 0,
+        };
+        let mut pending = None;
+        let mut output = Chunk::new(&types, 32, 1024);
+        assert_eq!(
+            append_partial_remote_chunk(&mut stream, &mut pending, &mut output, 1024).unwrap(),
+            Some(3)
+        );
+        assert_eq!(output.capacity(), 32);
+        assert_eq!(
+            (0..output.num_rows()).map(|row| output.get_row(row).get_int64(0)).collect::<Vec<_>>(),
+            vec![7, 8, 9]
+        );
+        output.reset();
+        assert_eq!(
+            append_partial_remote_chunk(&mut stream, &mut pending, &mut output, 2).unwrap(),
+            Some(2)
+        );
+        output.reset();
+        assert_eq!(
+            append_partial_remote_chunk(&mut stream, &mut pending, &mut output, 2).unwrap(),
+            Some(1)
+        );
+        assert_eq!(output.get_row(0).get_int64(0), 9);
+        output.reset();
+        assert_eq!(
+            append_partial_remote_chunk(&mut stream, &mut pending, &mut output, 2).unwrap(),
+            None
+        );
     }
 
     struct RequiredRowsChunkStream {
