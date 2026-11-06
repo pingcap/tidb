@@ -1116,7 +1116,11 @@ func (b *builtinSetDecimalVarSig) evalDecimal(ctx EvalContext, row chunk.Row) (*
 	}
 	res := datum.GetMysqlDecimal()
 	varName = strings.ToLower(varName)
-	sessionVars.SetUserVarVal(varName, datum)
+	// Store a copy, as builtinSetStringVarSig does: the decimal can point into
+	// a chunk that the session reuses for later statements.
+	var stored types.Datum
+	datum.Copy(&stored)
+	sessionVars.SetUserVarVal(varName, stored)
 	return res, false, nil
 }
 
