@@ -2188,7 +2188,7 @@ func TestMaterializedViewRefreshFallbackReportsAlertBeforeInsertHistFailure(t *t
 }
 
 func TestMaterializedViewRefreshFastAsOfTimestampDryRunUsesRefreshInfoWindow(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set time_zone = '+00:00'")
@@ -2217,6 +2217,24 @@ func TestMaterializedViewRefreshFastAsOfTimestampDryRunUsesRefreshInfoWindow(t *
 	}
 	targetTSO := oracle.GoTimeToTS(targetTime)
 	mustSetMockGCSafePoint(t, tk, targetTime.Add(-time.Hour))
+
+	// Newly created pooled sessions have no statement-level MDL table map until
+	// their statement context is reset. Dry-run planning must initialize it too.
+	pool := dom.SysSessionPool()
+	func() {
+		var releases []func()
+		defer func() {
+			for _, release := range releases {
+				release()
+			}
+		}()
+		for range 16 {
+			resource, err := pool.Get()
+			require.NoError(t, err)
+			releases = append(releases, func() { pool.Put(resource) })
+			resource.(sessionctx.Context).GetSessionVars().StmtCtx.MDLRelatedTableIDs = nil
+		}
+	}()
 
 	rows := tk.MustQuery(fmt.Sprintf(
 		"refresh materialized view mv_refresh_asof_dry_run fast as of timestamp '%s' dry run",
