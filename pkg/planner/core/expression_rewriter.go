@@ -1521,10 +1521,12 @@ func isNoDecorrelate(planCtx *exprRewriterPlanCtx, corCols []*expression.Correla
 
 func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx *exprRewriterPlanCtx, v *ast.SubqueryExpr) bool {
 	intest.AssertNotNil(planCtx)
-	resultField := planCtx.builder.curClause == fieldList
+	resultField := planCtx.curClause == fieldList
 	ci := planCtx.builder.prepareCTECheckForSubQuery()
 	defer resetCTECheckForSubQuery(ci)
+	savedClause := planCtx.builder.curClause
 	np, hintFlags, err := er.buildSubquery(ctx, planCtx, v, handlingScalarSubquery)
+	planCtx.builder.curClause = savedClause
 	if err != nil {
 		er.err = err
 		return true

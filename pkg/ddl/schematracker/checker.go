@@ -167,7 +167,7 @@ func (d *Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName ast.C
 	// Remove masking policy annotations: the real executor adds them via InfoSchema
 	// but the SchemaTracker does not have masking policy info, so strip them before comparing.
 	removeMaskingPolicyComment := func(s string) string {
-		re := regexp.MustCompile(` /\* MASKING POLICY .+? \*/`)
+		re := regexp.MustCompile(`(?s) /\* MASKING POLICY .+? \*/`)
 		return re.ReplaceAllString(s, "")
 	}
 

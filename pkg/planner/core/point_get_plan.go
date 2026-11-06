@@ -1569,10 +1569,10 @@ func buildMaskingExprsForPointGet(
 		}
 		masked := expression.ColumnSubstitute(sctx.GetExprCtx(), expr, expression.NewSchema(placeholder), []expression.Expression{col})
 		maskedType := masked.GetType(sctx.GetExprCtx().GetEvalCtx())
-		// Fast executors append datums to the original column representation.
+		// Fast executors retain both the original chunk layout and result metadata,
+		// including integer width, string length/charset and temporal precision.
 		// Scalar real expressions produce float64 datums even for FLOAT columns.
-		if maskedType.EvalType() != col.RetType.EvalType() || col.RetType.GetType() == mysql.TypeFloat ||
-			mysql.HasUnsignedFlag(maskedType.GetFlag()) != mysql.HasUnsignedFlag(col.RetType.GetFlag()) {
+		if !maskedType.Equal(col.RetType) || col.RetType.GetType() == mysql.TypeFloat {
 			return nil, errors.New("masking result requires a different column representation")
 		}
 		replaceExprs[i] = masked

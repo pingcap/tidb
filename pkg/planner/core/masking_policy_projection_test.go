@@ -17,6 +17,7 @@ package core_test
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -99,7 +100,7 @@ func TestMaskingPolicyBatchPointGet(t *testing.T) {
 
 	// Test BatchPointGet with unique index IN clause
 	tk.MustExec("create unique index idx_c on t_batch_pointget(c)")
-	tk.MustQuery("select c from t_batch_pointget where c in ('secret', 'hidden')").Check(testkit.Rows("***secret", "***hidden"))
+	tk.MustQuery("select c from t_batch_pointget where c in ('secret', 'hidden')").Sort().Check(testkit.Rows("***hidden", "***secret"))
 
 	// Predicate should still use original value
 	rows := tk.MustQuery("select c from t_batch_pointget where c in ('***secret')").Rows()
@@ -206,4 +207,108 @@ func TestMaskingPolicyUnsupportedResults(t *testing.T) {
 	require.ErrorContains(t, tk.ExecToErr("select concat(c, rand()) from t_unsupported order by 1"), "masking policy cannot be preserved through mutable expression")
 	// Predicate subqueries still compare original values.
 	tk.MustQuery("select id from t_unsupported where c = (select c from t_unsupported where id = 1)").Check(testkit.Rows("1"))
+}
+
+func TestMaskingPolicyWindowResults(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_window(id int primary key, c varchar(10))")
+	tk.MustExec("insert into t_window values (1, 'secret'), (2, 'hidden')")
+	tk.MustExec("create masking policy p_window on t_window(c) as mask_full(c) enable")
+	for _, expr := range []string{
+		"max(c) over ()",
+		"min(c) over ()",
+		"lag(c) over (order by id)",
+		"lead(c) over (order by id)",
+		"first_value(c) over (order by id)",
+		"last_value(c) over (order by id)",
+		"nth_value(c, 1) over (order by id)",
+		"max(concat(c, '-')) over ()",
+	} {
+		sql := "select " + expr + " from t_window"
+		require.ErrorContains(t, tk.ExecToErr(sql), "masking policy cannot be preserved through window function", sql)
+	}
+	for _, sql := range []string{
+		"select concat(c, '-'), max(c) over () from t_window",
+		"select concat(c, '-'), row_number() over (order by id), max(c) over () from t_window",
+	} {
+		require.ErrorContains(t, tk.ExecToErr(sql), "masking policy cannot be preserved through window function", sql)
+	}
+	// Unprotected window arguments and inherited protected columns remain usable.
+	tk.MustQuery("select c, max(id) over () from t_window order by id").Check(testkit.Rows("XXXXXX 2", "XXXXXX 2"))
+	tk.MustQuery("select concat(c, '-'), row_number() over (order by id) from t_window order by id").Check(testkit.Rows("XXXXXX- 1", "XXXXXX- 2"))
+	tk.MustExec("alter table t_window disable masking policy p_window")
+	tk.MustQuery("select max(c) over () from t_window").Check(testkit.Rows("secret", "secret"))
+}
+
+func TestMaskingPolicyScalarSubqueryClauses(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_scalar(id int primary key, c varchar(10))")
+	tk.MustExec("insert into t_scalar values (1, 'secret'), (2, 'hidden')")
+	tk.MustExec("create masking policy p_scalar on t_scalar(c) as mask_full(c) enable")
+	for _, sql := range []string{
+		"select (select id from t_scalar order by id limit 1), (select c from t_scalar where id = 1)",
+		"select concat((select id from t_scalar order by id limit 1), (select c from t_scalar where id = 1))",
+		"select (select max(id) from t_scalar having max(id) > 0), (select c from t_scalar where id = 1)",
+	} {
+		require.ErrorContains(t, tk.ExecToErr(sql), "masking policy cannot be preserved through scalar subquery", sql)
+	}
+	// Nested clauses must not turn a predicate subquery into a result-field check.
+	tk.MustQuery("select id from t_scalar where id = (select id from t_scalar order by id limit 1) and c = (select c from t_scalar where id = 1)").Check(testkit.Rows("1"))
+	tk.MustQuery("select (select id from t_scalar order by id limit 1), (select max(id) from t_scalar)").Check(testkit.Rows("1 2"))
+}
+
+func TestMaskingPolicyFastPathRepresentations(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	for _, tc := range []struct {
+		name   string
+		tp     string
+		expr   string
+		values []string
+	}{
+		{name: "bit", tp: "bit(8)", expr: "c + 1", values: []string{"2", "3"}},
+		{name: "tinyint", tp: "tinyint", expr: "c + 1000", values: []string{"1001", "1002"}},
+		{name: "smallint", tp: "smallint", expr: "c + 100000", values: []string{"100001", "100002"}},
+		{name: "int", tp: "int", expr: "c + 3000000000", values: []string{"3000000001", "3000000002"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			table := "t_repr_" + tc.name
+			tk.MustExec("create table " + table + "(id int primary key, c " + tc.tp + ")")
+			tk.MustExec("insert into " + table + " values (1, 1), (2, 2)")
+			tk.MustExec("create masking policy p_" + tc.name + " on " + table + "(c) as " + tc.expr + " enable")
+			for _, suffix := range []string{" order by id", " where id = 1", " where id in (1, 2)"} {
+				sql := "select c from " + table + suffix
+				rs, err := tk.Exec(sql)
+				require.NoError(t, err, sql)
+				require.Equal(t, mysql.TypeLonglong, rs.Fields()[0].Column.GetType(), sql)
+				require.NoError(t, rs.Close())
+				rows := tc.values
+				if suffix == " where id = 1" {
+					rows = rows[:1]
+				}
+				tk.MustQuery(sql).Check(testkit.Rows(rows...))
+			}
+		})
+	}
+	// Type-preserving masks must retain both fast paths.
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_compatible(id int primary key, c bigint, s varchar(10))")
+	tk.MustExec("insert into t_compatible values (1, 1, 'aa'), (2, 2, 'bb')")
+	tk.MustExec("create masking policy p_compatible on t_compatible(c) as c + 1 enable")
+	tk.MustExec("create masking policy p_string on t_compatible(s) as mask_full(s) enable")
+	for _, suffix := range []string{" where id = 1", " where id in (1, 2)"} {
+		sql := "select c, s from t_compatible" + suffix
+		require.Contains(t, tk.MustQuery("explain format = 'brief' " + sql).Rows()[0][0], "Point_Get")
+		rows := testkit.Rows("2 XX", "3 XX")
+		if suffix == " where id = 1" {
+			rows = rows[:1]
+		}
+		tk.MustQuery(sql).Check(rows)
+	}
 }

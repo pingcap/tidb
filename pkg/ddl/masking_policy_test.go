@@ -52,6 +52,22 @@ func TestMaskingPolicyDDLBasic(t *testing.T) {
 		Check(testkit.Rows("0"))
 }
 
+func TestMaskingPolicyMultilineName(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_multiline(c varchar(10), d varchar(10))")
+	tk.MustExec("create masking policy p_single on t_multiline(c) as mask_full(c) enable")
+	// The checker compares SHOW CREATE after stripping only policy annotations.
+	tk.MustExec("create masking policy `p_multi\nline` on t_multiline(d) as mask_full(d) enable")
+	ddl := tk.MustQuery("show create table t_multiline").Rows()[0][1]
+	require.Contains(t, ddl, "/* MASKING POLICY `p_single` ENABLED */")
+	require.Contains(t, ddl, "/* MASKING POLICY `p_multi\nline` ENABLED */")
+	tk.MustExec("alter table t_multiline disable masking policy `p_multi\nline`")
+	tk.MustExec("alter table t_multiline add column e int")
+	tk.MustExec("alter table t_multiline drop masking policy `p_multi\nline`")
+}
+
 func TestMaskingPolicyCaseExpression(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

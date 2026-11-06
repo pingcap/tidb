@@ -136,6 +136,34 @@ func (m *maskingResultBuilder) buildColumn(p base.LogicalPlan, col *expression.C
 		}
 		expr = expression.ColumnSubstitute(m.b.ctx.GetExprCtx(), expr, expression.NewSchema(placeholder), []expression.Expression{col})
 		return maskingResult{expr: expr, masked: true, policyID: policy.ID}, nil
+	case *logicalop.LogicalWindow:
+		child := x.Children()[0]
+		if idx < child.Schema().Len() {
+			windowColumns := x.GetWindowResultColumns()
+			windowNames := x.OutputNames()[child.Schema().Len():]
+			result, err := m.column(child, col)
+			if err != nil || !result.masked {
+				return plain, err
+			}
+			// Raw dependencies added to the child must precede window outputs;
+			// window column pruning identifies its results at the schema's end.
+			x.SetSchema(child.Schema().Clone())
+			x.Schema().Append(windowColumns...)
+			x.SetOutputNames(append(child.OutputNames().Shallow(), windowNames...))
+			return result, nil
+		}
+		// Window outputs have no source-column identity. Keep their arguments
+		// raw for relational processing, but reject protected result values.
+		for _, arg := range x.WindowFuncDescs[idx-child.Schema().Len()].Args {
+			result, err := m.expr(child, arg)
+			if err != nil {
+				return plain, err
+			}
+			if result.masked {
+				return plain, errors.New("masking policy cannot be preserved through window function")
+			}
+		}
+		return plain, nil
 	default:
 		for _, child := range p.Children() {
 			if !child.Schema().Contains(col) {
