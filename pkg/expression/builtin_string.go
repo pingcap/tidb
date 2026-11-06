@@ -3403,7 +3403,9 @@ func (c *exportSetFunctionClass) getFunction(ctx BuildContext, args []Expression
 func exportSet(bits int64, on, off, separator string, numberOfBits int64) string {
 	result := ""
 	for i := range numberOfBits {
-		if (bits & (1 << i)) > 0 {
+		// NB: compare against zero, not greater than zero: at i == 63 the
+		// mask 1<<i is math.MinInt64, so a set bit 63 would fail a > 0 test.
+		if (bits & (1 << i)) != 0 {
 			result += on
 		} else {
 			result += off
