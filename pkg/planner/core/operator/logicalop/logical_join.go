@@ -113,6 +113,13 @@ type LogicalJoin struct {
 	// first logical round. It is only used to decide whether an equivalent same-order
 	// PhysicalIndexJoin candidate has already been generated.
 	FromDecorrelatedApply bool
+
+	// FromSetOperator marks a SemiJoin/AntiSemiJoin built by
+	// buildSemiJoinForSetOperator for INTERSECT/EXCEPT. It restricts
+	// EliminateSemiJoinEmptyChild to set-operator joins, so an ordinary
+	// IN/EXISTS semi-join elsewhere in the same statement is never rewritten
+	// by that rule even when it happens to also be statically empty.
+	FromSetOperator bool
 }
 
 // Init initializes LogicalJoin.

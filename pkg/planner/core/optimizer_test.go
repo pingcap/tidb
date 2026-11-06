@@ -668,7 +668,7 @@ func TestOptRuleListFlagAlignment(t *testing.T) {
 		seenFlags[flag] = struct{}{}
 	}
 
-	numFlags := bits.Len64(rule.FlagFullTextIndexResolveReject)
+	numFlags := bits.Len64(rule.FlagEliminateSemiJoinEmptyChild)
 	require.Equalf(t, numFlags, len(seenFlags),
 		"unique optRuleFlags count (%d) does not match Flag* count (%d); "+
 			"did you add a flag without mapping it to a rule or vice versa?",
