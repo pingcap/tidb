@@ -101,8 +101,8 @@ func TestPlannerIssueRegressions(t *testing.T) {
 		tk.MustQuery("explain format='plan_tree' select distinct cast(c as decimal), cast(c as signed) from t7").
 			Check(testkit.Rows(
 				"HashAgg root  group by:Column, Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column",
-				"└─Projection root  cast(test.t7.c, decimal(10,0) BINARY)->Column, cast(test.t7.c, bigint(22) BINARY)->Column",
-				"  └─TableReader root  data:TableFullScan",
+				"└─TableReader root  data:HashAgg",
+				"  └─HashAgg cop[tikv]  group by:cast(test.t7.c, bigint(22) BINARY), cast(test.t7.c, decimal(10,0) BINARY), ",
 				"    └─TableFullScan cop[tikv] table:t7 keep order:false"))
 	}
 
