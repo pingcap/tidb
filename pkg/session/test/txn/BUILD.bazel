@@ -9,7 +9,11 @@ go_test(
     ],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 10,
+=======
+    shard_count = 12,
+>>>>>>> 95af22e17d1 (session, memory: prevent cancellation from interrupting statement cleanup (#71967))
     deps = [
         "//pkg/config",
         "//pkg/kv",
