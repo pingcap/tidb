@@ -7196,3 +7196,57 @@ fn an_index_join_reads_its_outer_side_like_go() {
         assert!(row[5].contains(", loops:3, "), "{sql}: {}", row[5]);
     }
 }
+
+/// Go's `StreamAggExec` charges its child result and its functions'
+/// partial results (`AllocPartialResult` plus each update's delta) to its
+/// own tracker, so a root StreamAgg's EXPLAIN ANALYZE memory is Go's
+/// (captured from a Go testkit run):
+///
+/// ```text
+/// select /*+ stream_agg() */ count(b), sum(a) from t           StreamAgg_14 | 1.83 KB
+/// select /*+ stream_agg() */ a, count(b) ... group by a        StreamAgg_9  | 1.02 KB
+/// select /*+ stream_agg() */ group_concat(b) from t            StreamAgg_8  | 692 Bytes
+/// select /*+ stream_agg() */ count(*) from t where a > 10      StreamAgg_15 | 388 Bytes
+/// t2's group_concat by a (one short, three 600-byte values)     StreamAgg_9  | 6.29 KB
+/// u's a, count(b) by a over 100 rows                           StreamAgg_9  | 2.04 KB
+/// u2's group_concat(b), one group of 100 100-byte values       StreamAgg_9  | 30.5 KB
+/// ```
+#[test]
+fn a_stream_aggregate_charges_its_partial_results_like_go() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE t (a INT, b VARCHAR(20), KEY(a))",
+        "INSERT INTO t VALUES (1,'x'),(2,'yy'),(2,'zzz'),(3,'w')",
+        "CREATE TABLE t2 (a INT, b VARCHAR(1000), KEY(a))",
+        "CREATE TABLE u (a INT, b INT, KEY(a))",
+        "CREATE TABLE u2 (a INT, b VARCHAR(200), KEY(a))",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let long = |c: char| c.to_string().repeat(600);
+    session.run(&format!("INSERT INTO t2 VALUES (1,'x'),(2,'{}'),(2,'{}'),(2,'{}')", long('y'), long('z'), long('w'))).unwrap();
+    let values: Vec<String> = (0..100).map(|i| format!("({i},{i})")).collect();
+    session.run(&format!("INSERT INTO u VALUES {}", values.join(","))).unwrap();
+    let values: Vec<String> = (0..100).map(|_| format!("(1,'{}')", "q".repeat(100))).collect();
+    session.run(&format!("INSERT INTO u2 VALUES {}", values.join(","))).unwrap();
+    for (sql, operator, memory) in [
+        ("SELECT /*+ stream_agg() */ count(b), sum(a) FROM t", "StreamAgg_14", "1.83 KB"),
+        ("SELECT /*+ stream_agg() */ a, count(b) FROM t USE INDEX(a) GROUP BY a", "StreamAgg_9", "1.02 KB"),
+        ("SELECT /*+ stream_agg() */ group_concat(b) FROM t", "StreamAgg_8", "692 Bytes"),
+        ("SELECT /*+ stream_agg() */ count(*) FROM t WHERE a > 10", "StreamAgg_15", "388 Bytes"),
+        // A later group's growth peaks above the reset baseline.
+        ("SELECT /*+ stream_agg() */ a, group_concat(b) FROM t2 USE INDEX(a) GROUP BY a", "StreamAgg_9", "6.29 KB"),
+        // A 100-row child chunk grows past its first fetch.
+        ("SELECT /*+ stream_agg() */ a, count(b) FROM u USE INDEX(a) GROUP BY a", "StreamAgg_9", "2.04 KB"),
+        // One group over a 100-row child chunk: the chunk's growth is held
+        // while the group's flushed deltas peak.
+        ("SELECT /*+ stream_agg() */ a, group_concat(b) FROM u2 USE INDEX(a) GROUP BY a", "StreamAgg_9", "30.5 KB"),
+    ] {
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        let row = rows
+            .iter()
+            .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()) == operator)
+            .unwrap_or_else(|| panic!("{sql}: no {operator} in {rows:?}"));
+        assert_eq!(row[7], memory, "{sql}: {rows:?}");
+    }
+}

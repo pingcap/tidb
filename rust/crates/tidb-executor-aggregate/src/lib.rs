@@ -70,6 +70,7 @@
 
 
 pub mod agg_spill;
+pub mod agg_stream_executor;
 use tidb_datatype::CollationCollator;
 use crate::agg_spill::{AggSpillDiskAction, ParallelAggSpillDiskAction};
 

@@ -593,18 +593,14 @@ impl BuildState {
             })
             .flatten();
         let trace = next_region.and_then(|_| GoExecutorTrace::for_plan(plan));
-        // Go `StreamAggExec` and `IndexLookUpExecutor` own a memory tracker
-        // labelled with their plan; this tier's executors charge their chunks
-        // to the statement directly.
-        // Only EXPLAIN ANALYZE charges them, so an ordinary statement's
-        // quota behaviour is unchanged.
+        // Go `IndexLookUpExecutor` owns a memory tracker labelled with its
+        // plan; this tier's executor charges its chunks to the statement
+        // directly. Only EXPLAIN ANALYZE charges them, so an ordinary
+        // statement's quota behaviour is unchanged.
         let chunk_memory = (self.runtime_counters.is_some()
             && !self.in_reader
             && !self.untraced
-            && matches!(
-                plan,
-                PhysicalPlan::StreamAgg(_) | PhysicalPlan::IndexLookUpReader(_)
-            ))
+            && matches!(plan, PhysicalPlan::IndexLookUpReader(_)))
         .then(|| (memory.operator_tracker(plan_id), 0));
         executor = Box::new(SqlKillerCheckExec {
             child: executor,
@@ -2037,7 +2033,104 @@ fn build_aggregation(
 ) -> Result<Box<dyn Executor>, DriverError> {
     let child = build_with_state(only_child(plan)?, catalog, ctx, state)?;
     let register = !state.in_reader && !state.untraced;
+    if stream && !state.in_reader {
+        if let Some(executor) = build_stream_agg_from_child_exec(plan, descriptors, group_by, &child, ctx)? {
+            return Ok(executor(child));
+        }
+    }
     build_aggregation_over_child(plan, descriptors, group_by, stream, child, ctx, register)
+}
+
+/// Go `aggfuncs.Build` of each descriptor over `child_schema`, or `None`
+/// where a function has no Go implementation (Go's nil).
+fn go_agg_funcs(
+    descriptors: &[AggFuncDesc],
+    child_schema: &Schema,
+    ctx: &crate::StmtContext,
+) -> Result<Option<Vec<Box<dyn tidb_executor_aggfuncs::agg_func::AggFunc>>>, DriverError> {
+    let mut agg_funcs = Vec::with_capacity(descriptors.len());
+    for (ordinal, descriptor) in descriptors.iter().enumerate() {
+        let mut resolved = descriptor.clone();
+        // The planner's COUNT(*) under an index reader is an id-less
+        // synthetic column, not a child column: Go's COUNT(1).
+        let count_star_synthetic = descriptor.base.name.eq_ignore_ascii_case("count")
+            && descriptor.base.args.len() == 1
+            && child_schema.is_empty()
+            && matches!(
+                &descriptor.base.args[0],
+                Expression::Column(column) if column.id == 0 && column.orig_name.is_empty()
+            );
+        resolved.base.args = if count_star_synthetic {
+            vec![Expression::Constant(tidb_expr::constant::Constant::new_one())]
+        } else {
+            resolve_expressions(&descriptor.base.args, child_schema)?
+        };
+        for item in &mut resolved.order_by_items {
+            item.expr = resolve_expression(item.expr.clone(), child_schema)?;
+        }
+        let Some(agg_func) = tidb_executor_aggfuncs::agg_builder::build(ctx, &resolved, ordinal) else {
+            return Ok(None);
+        };
+        agg_funcs.push(agg_func);
+    }
+    Ok(Some(agg_funcs))
+}
+
+/// Go `buildStreamAggFromChildExec`: the StreamAgg Go's TiDB tier runs --
+/// every function in `Complete` or `Final` mode, its output exactly the
+/// functions' results. The executor takes `child` once the caller has it.
+fn build_stream_agg_from_child_exec(
+    plan: &PhysicalPlan,
+    descriptors: &[AggFuncDesc],
+    group_by: &[Expression],
+    child: &Box<dyn Executor>,
+    ctx: &crate::StmtContext,
+) -> Result<Option<Box<dyn FnOnce(Box<dyn Executor>) -> Box<dyn Executor>>>, DriverError> {
+    let output_schema = plan_schema(plan)?;
+    if output_schema.len() != descriptors.len()
+        || !descriptors
+            .iter()
+            .all(|descriptor| matches!(descriptor.mode, AggFunctionMode::Complete | AggFunctionMode::Final))
+    {
+        return Ok(None);
+    }
+    let child_schema = child.schema().clone();
+    let group_by = resolve_expressions(group_by, &child_schema)?;
+    let Some(agg_funcs) = go_agg_funcs(descriptors, &child_schema, ctx)? else {
+        return Ok(None);
+    };
+    let executor_meta = meta(ctx, plan, output_schema);
+    // Go: only a final global aggregate that is not all FIRSTROW answers
+    // a default row over no input (issues #35295, #30923).
+    let default_val = (group_by.is_empty() && !tidb_expression_aggregation::is_all_first_row(descriptors)).then(|| {
+        let mut default_val = Chunk::new_chunk_with_capacity(executor_meta.ret_field_types(), 1);
+        for (i, descriptor) in descriptors.iter().enumerate() {
+            default_val.append_datum(i, &descriptor.base.get_default_value());
+        }
+        default_val
+    });
+    let plan_id = i64::from(plan.id());
+    // Go attaches the executor's tracker to the statement's when
+    // `tidb_track_aggregate_memory_usage` is on.
+    let track = tidb_exprctx::Columns::sysvar(ctx, None, "tidb_track_aggregate_memory_usage")
+        .map_or(tidb_vardef::defaults::DEF_TIDB_TRACK_AGGREGATE_MEMORY_USAGE, |value| !matches!(value, tidb_datatype::Datum::Int(0) | tidb_datatype::Datum::UInt(0)));
+    let memory = ctx.statement_memory();
+    let mem_tracker = memory.operator_tracker(plan_id);
+    let stmt_mem_tracker = track.then(|| std::sync::Arc::clone(memory.stmt_tracker()));
+    let group_checker = tidb_executor_internal_vecgroupchecker::VecGroupChecker::new(group_by);
+    let ctx = ctx.clone();
+    Ok(Some(Box::new(move |child| {
+        Box::new(tidb_executor_aggregate::agg_stream_executor::StreamAggExec::new(
+            executor_meta,
+            child,
+            ctx,
+            group_checker,
+            agg_funcs,
+            default_val,
+            mem_tracker,
+            stmt_mem_tracker,
+        ))
+    })))
 }
 
 fn build_aggregation_over_child(

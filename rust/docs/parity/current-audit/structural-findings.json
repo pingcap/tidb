@@ -62,8 +62,8 @@
       "id": "E11",
       "status": "open",
       "group": "DML and executor handoff",
-      "finding": "`StreamAggExec` and `IndexLookUpExecutor` own no `memTracker`: the physical builder charges the chunk each returns, and only under EXPLAIN ANALYZE (`physical_builder.rs` `chunk_memory`), where Go's charge their child result, partial results (`AllocPartialResult`'s sizes, which need E10's aggregate-function port) and the lookup's task chunks on every run: a `count(*)` stream aggregate shows 380 Bytes where Go shows 388, an index lookup 1.36 KB where Go shows 2.50 KB, so their quota behaviour also differs",
-      "go_owner": "`pkg/executor/aggregate/agg_stream_executor.go`, `distsql.go` (`IndexLookUpExecutor`)"
+      "finding": "`IndexLookUpExecutor` owns no `memTracker`: the physical builder charges the chunk it returns, and only under EXPLAIN ANALYZE (`physical_builder.rs` `chunk_memory`), where Go's charges its task chunks on every run: an index lookup shows 1.36 KB where Go shows 2.50 KB, so its quota behaviour also differs",
+      "go_owner": "`pkg/executor/distsql.go` (`IndexLookUpExecutor`)"
     },
     {
       "id": "E12",
