@@ -100,44 +100,6 @@ func newEncodingTable(e *LoadDataController) (table.Table, error) {
 	return tbl, nil
 }
 
-// Chunk records the chunk information.
-type Chunk struct {
-	Path         string
-	FileSize     int64
-	Offset       int64
-	EndOffset    int64
-	PrevRowIDMax int64
-	RowIDMax     int64
-	Type         mydump.SourceType
-	Compression  mydump.Compression
-	Timestamp    int64
-	ParquetMeta  parquetfile.FileMeta
-}
-
-// GetKey returns the chunk key used in logs and encode errors.
-func (c *Chunk) GetKey() string {
-	return c.Path + ":" + strconv.FormatInt(c.Offset, 10)
-}
-
-// GetSize get the original file size of this chunk.
-func (c *Chunk) GetSize() int64 {
-	if c.Type == mydump.SourceTypeParquet {
-		// for parquet, Offset/EndOffset means rows
-		return c.FileSize
-	}
-	return c.EndOffset - c.Offset
-}
-
-func (c *Chunk) toSourceFileMeta() mydump.SourceFileMeta {
-	return mydump.SourceFileMeta{
-		Path:        c.Path,
-		Type:        c.Type,
-		Compression: c.Compression,
-		FileSize:    c.FileSize,
-		ParquetMeta: c.ParquetMeta,
-	}
-}
-
 // prepareSortDir creates a new directory for import, remove previous sort directory if exists.
 func prepareSortDir(e *LoadDataController, id string, tidbCfg *tidb.Config) (string, error) {
 	importDir := GetImportRootDir(tidbCfg)
@@ -359,7 +321,7 @@ func (ti *TableImporter) EstimateParquetReaderMemory(ctx context.Context, path s
 }
 
 func (e *LoadDataController) getParser(ctx context.Context, chunk *Chunk) (mydump.Parser, error) {
-	fileMeta := chunk.toSourceFileMeta()
+	fileMeta := chunk.ToSourceFileMeta()
 	info := LoadDataReaderInfo{
 		Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
 			reader, err := mydump.OpenReader(ctx, &fileMeta, e.dataStore, compressedio.DecompressConfig{

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	importcore "github.com/pingcap/tidb/pkg/importinto"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
@@ -83,7 +84,7 @@ type importStepExecutor struct {
 	execute.NoopCollector
 
 	taskID        int64
-	taskMeta      *TaskMeta
+	taskMeta      *importcore.TaskMeta
 	tableImporter *importer.TableImporter
 	queryRuntime  sqlsvrapi.Runtime
 	store         tidbkv.Storage
@@ -110,7 +111,7 @@ type importStepExecutor struct {
 func getTableImporter(
 	ctx context.Context,
 	taskID int64,
-	taskMeta *TaskMeta,
+	taskMeta *importcore.TaskMeta,
 	store tidbkv.Storage,
 	logger *zap.Logger,
 ) (*importer.TableImporter, error) {
@@ -538,7 +539,7 @@ func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
 type mergeSortStepExecutor struct {
 	taskexecutor.BaseStepExecutor
 	task     *proto.TaskBase
-	taskMeta *TaskMeta
+	taskMeta *importcore.TaskMeta
 	logger   *zap.Logger
 	// subtask of a task is run in serial now, so we don't need lock here.
 	// change to SyncMap when we support parallel subtask in the future.
@@ -747,7 +748,7 @@ type writeAndIngestStepExecutor struct {
 	taskexecutor.BaseStepExecutor
 
 	taskID        int64
-	taskMeta      *TaskMeta
+	taskMeta      *importcore.TaskMeta
 	logger        *zap.Logger
 	tableImporter *importer.TableImporter
 	store         tidbkv.Storage
@@ -911,7 +912,7 @@ type postProcessStepExecutor struct {
 	taskID       int64
 	store        tidbkv.Storage
 	taskTbl      taskexecutor.TaskTable
-	taskMeta     *TaskMeta
+	taskMeta     *importcore.TaskMeta
 	taskKeyspace string
 	logger       *zap.Logger
 }
@@ -924,7 +925,7 @@ func NewPostProcessStepExecutor(
 	taskID int64,
 	store tidbkv.Storage,
 	taskTbl taskexecutor.TaskTable,
-	taskMeta *TaskMeta,
+	taskMeta *importcore.TaskMeta,
 	taskKeyspace string,
 	logger *zap.Logger,
 ) execute.StepExecutor {
@@ -989,7 +990,7 @@ func (*importExecutor) IsRetryableError(err error) bool {
 }
 
 func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {
-	taskMeta := TaskMeta{}
+	taskMeta := importcore.TaskMeta{}
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
 	}

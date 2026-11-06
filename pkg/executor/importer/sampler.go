@@ -224,7 +224,7 @@ func (s *kvSizeSampler) getParser(
 	ctx context.Context,
 	chunk *Chunk,
 ) (mydump.Parser, error) {
-	fileMeta := chunk.toSourceFileMeta()
+	fileMeta := chunk.ToSourceFileMeta()
 	info := LoadDataReaderInfo{
 		Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
 			reader, err := mydump.OpenReader(ctx, &fileMeta, s.dataStore, compressedio.DecompressConfig{

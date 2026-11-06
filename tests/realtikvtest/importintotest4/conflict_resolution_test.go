@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	importcore "github.com/pingcap/tidb/pkg/importinto"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -831,7 +832,7 @@ func (s *mockGCSSuite) checkMergeStepConflictInfo(jobID int64, sortStorageURI st
 	task := s.getTaskByJob(jobID)
 	subtasks := s.getSubtasksOfStep(task.ID, proto.ImportStepMergeSort)
 
-	taskMeta := importinto.TaskMeta{}
+	taskMeta := importcore.TaskMeta{}
 	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
 	kvGroupCanConflict := make(map[string]bool, len(taskMeta.Plan.TableInfo.Indices)+1)
 	kvGroupCanConflict["data"] = taskMeta.Plan.TableInfo.HasClusteredIndex()

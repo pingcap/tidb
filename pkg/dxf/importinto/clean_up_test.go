@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	importcore "github.com/pingcap/tidb/pkg/importinto"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -86,7 +87,7 @@ func TestImportCleanerBatchCleanUsesUnredactedStorageCredentials(t *testing.T) {
 
 	tasks := make([]*proto.Task, 0, len(taskIDs))
 	for i, taskID := range taskIDs {
-		taskMeta, err := json.Marshal(TaskMeta{Plan: importer.Plan{CloudStorageURI: cloudStorageURIs[i]}})
+		taskMeta, err := json.Marshal(importcore.TaskMeta{Plan: importer.Plan{CloudStorageURI: cloudStorageURIs[i]}})
 		require.NoError(t, err)
 		tasks = append(tasks, &proto.Task{
 			TaskBase: proto.TaskBase{ID: taskID, State: proto.TaskStateFailed},

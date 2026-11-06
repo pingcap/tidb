@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	importcore "github.com/pingcap/tidb/pkg/importinto"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -221,7 +222,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	taskKey := importinto.TaskKey(int64(jobID))
 	task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	s.NoError(err2)
-	taskMeta := importinto.TaskMeta{}
+	taskMeta := importcore.TaskMeta{}
 	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
 	urlEqual(s.T(), redactedSortStorageURI, taskMeta.Plan.CloudStorageURI)
 	require.True(s.T(), taskMeta.Plan.DisableTiKVImportMode)
@@ -320,7 +321,7 @@ func (s *mockGCSSuite) TestGlobalSortRecordedStepSummary() {
 		s.NoError(err)
 		return task.State == proto.TaskStateSucceed
 	}, 30*time.Second, 300*time.Millisecond)
-	var taskMeta importinto.TaskMeta
+	var taskMeta importcore.TaskMeta
 	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
 
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))

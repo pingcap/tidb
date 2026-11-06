@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	importcore "github.com/pingcap/tidb/pkg/importinto"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/objstore"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -182,7 +183,7 @@ func TestImportIntoOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 			if task == nil || task.Type != proto.ImportInto || !strings.HasPrefix(task.Key, userKeyspace+"/ImportInto/") {
 				return
 			}
-			var taskMeta importinto.TaskMeta
+			var taskMeta importcore.TaskMeta
 			require.NoError(t, json.Unmarshal(task.Meta, &taskMeta))
 			require.NotNil(t, taskMeta.Plan.UseNewCollate)
 			require.False(t, *taskMeta.Plan.UseNewCollate)

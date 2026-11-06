@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictrows"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	importcore "github.com/pingcap/tidb/pkg/importinto"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -92,7 +93,7 @@ func (*ImportCleaner) BatchClean(ctx context.Context, tasks []*proto.Task) error
 	meterTasks := make([]*proto.Task, 0, len(tasks))
 	fileGroups := make(map[string]*cleanFileGroup, len(tasks))
 	for _, task := range tasks {
-		taskMeta := &TaskMeta{}
+		taskMeta := &importcore.TaskMeta{}
 		err := json.Unmarshal(task.Meta, taskMeta)
 		if err != nil {
 			return err
@@ -173,7 +174,7 @@ func sendMeterOnCleanInParallel(ctx context.Context, tasks []*proto.Task, sendFn
 	return eg.Wait()
 }
 
-func cleanTableMode(ctx context.Context, taskMeta *TaskMeta) error {
+func cleanTableMode(ctx context.Context, taskMeta *importcore.TaskMeta) error {
 	if !kerneltype.IsClassic() {
 		return nil
 	}

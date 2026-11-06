@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	importcore "github.com/pingcap/tidb/pkg/importinto"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	litkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -503,7 +504,7 @@ func (e *ImportIntoExec) fillQueryInfo(ctx context.Context, jobID, taskID int64)
 	if finished.State != proto.TaskStateSucceed {
 		return errors.Errorf("import task %d stopped in state %s", taskID, finished.State)
 	}
-	var meta importinto.TaskMeta
+	var meta importcore.TaskMeta
 	if err := json.Unmarshal(finished.Meta, &meta); err != nil {
 		return err
 	}

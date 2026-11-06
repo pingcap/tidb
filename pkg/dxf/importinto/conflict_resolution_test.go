@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	importcore "github.com/pingcap/tidb/pkg/importinto"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
@@ -117,7 +118,7 @@ type conflictedKVHandleContext struct {
 	store            tidbkv.Storage
 	logger           *zap.Logger
 	tbl              table.Table
-	taskMeta         *importinto.TaskMeta
+	taskMeta         *importcore.TaskMeta
 	tk               *testkit.TestKit
 	conflictedKVInfo importinto.KVGroupConflictInfos
 }
@@ -142,7 +143,7 @@ func prepareConflictedKVHandleContext(t *testing.T) *conflictedKVHandleContext {
 	// need them to generate conflict KV files for testing.
 	conflictedKVInfo := generateConflictKVFiles(t, tempDir, tbl, store.GetCodec())
 
-	taskMeta := &importinto.TaskMeta{
+	taskMeta := &importcore.TaskMeta{
 		Plan: importer.Plan{
 			CloudStorageURI: tempDir,
 			TableInfo:       tbl.Meta(),

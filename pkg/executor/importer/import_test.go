@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/dumpformat/testutils"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/importinto"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
@@ -44,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -72,7 +74,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	plan := &Plan{
 		DataSourceType: DataSourceTypeQuery,
 	}
-	plan.initDefaultOptions(context.Background(), 10, nil)
+	initDefaultImportOptions(context.Background(), plan, 10, nil)
 	require.Equal(t, 2, plan.ThreadCnt)
 
 	plan = &Plan{
@@ -82,7 +84,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	t.Cleanup(func() {
 		vardef.CloudStorageURI.Store("")
 	})
-	plan.initDefaultOptions(context.Background(), 1, nil)
+	initDefaultImportOptions(context.Background(), plan, 1, nil)
 	require.Equal(t, config.ByteSize(0), plan.DiskQuota)
 	require.Equal(t, config.OpLevelRequired, plan.Checksum)
 	require.Equal(t, 1, plan.ThreadCnt)
@@ -101,7 +103,7 @@ func TestInitDefaultOptions(t *testing.T) {
 
 	require.Equal(t, "s3://bucket/dxf/", plan.CloudStorageURI)
 
-	plan.initDefaultOptions(context.Background(), 10, nil)
+	initDefaultImportOptions(context.Background(), plan, 10, nil)
 	require.Equal(t, 5, plan.ThreadCnt)
 }
 
@@ -130,7 +132,7 @@ func TestPlanUseNewCollate(t *testing.T) {
 	require.True(t, plan.GetUseNewCollateOrDefault(true))
 	require.False(t, plan.GetUseNewCollateOrDefault(false))
 
-	plan.setUseNewCollate(false)
+	setPlanUseNewCollate(plan, false)
 	require.False(t, plan.GetUseNewCollateOrDefault(true))
 
 	data, err := json.Marshal(plan)
@@ -141,7 +143,7 @@ func TestPlanUseNewCollate(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &decoded))
 	require.False(t, decoded.GetUseNewCollateOrDefault(true))
 
-	decoded.setUseNewCollate(true)
+	setPlanUseNewCollate(&decoded, true)
 	require.True(t, decoded.GetUseNewCollateOrDefault(false))
 }
 
@@ -151,7 +153,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	defer sctx.Close()
 	ctx := tikvutil.WithInternalSourceType(context.Background(), tidbkv.InternalImportInto)
 
-	convertOptions := func(inOptions []*ast.LoadDataOpt) []*plannercore.LoadDataOpt {
+	convertOptions := func(inOptions []*ast.LoadDataOpt) []*importinto.Option {
 		options := []*plannercore.LoadDataOpt{}
 		var err error
 		for _, opt := range inOptions {
@@ -162,7 +164,9 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 			}
 			options = append(options, &loadDataOpt)
 		}
-		return options
+		resolved, err := resolveImportOptions(options)
+		require.NoError(t, err)
+		return resolved
 	}
 
 	sqlTemplate := "import into t from '/file.csv' with %s"
@@ -188,7 +192,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err, sql)
 	plan := &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	err = initImportOptions(ctx, plan, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql)
 	require.Equal(t, "utf8", *plan.Charset, sql)
 	require.Equal(t, "aaa", plan.FieldsTerminatedBy, sql)
@@ -219,7 +223,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	stmt, err = p.ParseOneStmt(sqlCapture, "", "")
 	require.NoError(t, err, sqlCapture)
 	plan = &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	err = initImportOptions(ctx, plan, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sqlCapture)
 	require.Equal(t, "s3://bucket/path/dxf/", plan.CloudStorageURI, sqlCapture)
 	require.Equal(t, OnDupKeyModeCapture, plan.OnDupKey, sqlCapture)
@@ -229,7 +233,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	stmt, err = p.ParseOneStmt(sql2, "", "")
 	require.NoError(t, err, sql2)
 	plan = &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	err = initImportOptions(ctx, plan, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql2)
 	require.Equal(t, "s3://bucket/path2", plan.CloudStorageURI, sql2)
 	// override with gs
@@ -237,7 +241,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	stmt, err = p.ParseOneStmt(sql3, "", "")
 	require.NoError(t, err, sql3)
 	plan = &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	err = initImportOptions(ctx, plan, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql3)
 	require.Equal(t, "gs://bucket/path2", plan.CloudStorageURI, sql3)
 	// override with azure
@@ -245,14 +249,14 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	stmt, err = p.ParseOneStmt(sql3a, "", "")
 	require.NoError(t, err, sql3a)
 	plan = &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	err = initImportOptions(ctx, plan, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql3a)
 	require.Equal(t, "azure://container/path2", plan.CloudStorageURI, sql3a)
 	sql3b := sql + ", " + cloudStorageURIOption + "='azblob://container/path3'"
 	stmt, err = p.ParseOneStmt(sql3b, "", "")
 	require.NoError(t, err, sql3b)
 	plan = &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	err = initImportOptions(ctx, plan, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql3b)
 	require.Equal(t, "azblob://container/path3", plan.CloudStorageURI, sql3b)
 	// override with empty string, force use local sort
@@ -260,7 +264,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	stmt, err = p.ParseOneStmt(sql4, "", "")
 	require.NoError(t, err, sql4)
 	plan = &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	err = initImportOptions(ctx, plan, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql4)
 	require.Equal(t, "", plan.CloudStorageURI, sql4)
 }
@@ -270,7 +274,7 @@ func TestInitOptionsDisallowOnDuplicateKeyWithLocalSort(t *testing.T) {
 	defer sctx.Close()
 	ctx := tikvutil.WithInternalSourceType(context.Background(), tidbkv.InternalImportInto)
 
-	convertOptions := func(inOptions []*ast.LoadDataOpt) []*plannercore.LoadDataOpt {
+	convertOptions := func(inOptions []*ast.LoadDataOpt) []*importinto.Option {
 		options := []*plannercore.LoadDataOpt{}
 		var err error
 		for _, opt := range inOptions {
@@ -281,7 +285,9 @@ func TestInitOptionsDisallowOnDuplicateKeyWithLocalSort(t *testing.T) {
 			}
 			options = append(options, &loadDataOpt)
 		}
-		return options
+		resolved, err := resolveImportOptions(options)
+		require.NoError(t, err)
+		return resolved
 	}
 
 	sql := "import into t from '/file.csv' with on_duplicate_key='capture'"
@@ -290,7 +296,7 @@ func TestInitOptionsDisallowOnDuplicateKeyWithLocalSort(t *testing.T) {
 
 	vardef.CloudStorageURI.Store("")
 	plan := &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	err = initImportOptions(ctx, plan, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataUnsupportedOption)
 	require.ErrorContains(t, err, onDupKeyOption)
 	require.ErrorContains(t, err, "local sort")
@@ -301,7 +307,7 @@ func TestInitOptionsFromQueryPositiveCase(t *testing.T) {
 	defer sctx.Close()
 	ctx := tikvutil.WithInternalSourceType(context.Background(), tidbkv.InternalImportInto)
 
-	convertOptions := func(inOptions []*ast.LoadDataOpt) []*plannercore.LoadDataOpt {
+	convertOptions := func(inOptions []*ast.LoadDataOpt) []*importinto.Option {
 		options := []*plannercore.LoadDataOpt{}
 		var err error
 		for _, opt := range inOptions {
@@ -312,7 +318,9 @@ func TestInitOptionsFromQueryPositiveCase(t *testing.T) {
 			}
 			options = append(options, &loadDataOpt)
 		}
-		return options
+		resolved, err := resolveImportOptions(options)
+		require.NoError(t, err)
+		return resolved
 	}
 
 	p := parser.New()
@@ -325,7 +333,7 @@ func TestInitOptionsFromQueryPositiveCase(t *testing.T) {
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err, sql)
 	plan := &Plan{DataSourceType: DataSourceTypeQuery}
-	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	err = initImportOptions(ctx, plan, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql)
 	require.Equal(t, 4, plan.ThreadCnt, sql)
 	require.True(t, plan.DisablePrecheck, sql)
@@ -336,7 +344,7 @@ func TestInitOptionsFromQueryPositiveCase(t *testing.T) {
 	stmt, err = p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err, sql)
 	plan = &Plan{DataSourceType: DataSourceTypeQuery}
-	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	err = initImportOptions(ctx, plan, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql)
 	require.Equal(t, config.ByteSize(50<<30), plan.DiskQuota, sql)
 }
@@ -346,7 +354,7 @@ func TestInitOptionsFromQueryNegativeCase(t *testing.T) {
 	defer sctx.Close()
 	ctx := tikvutil.WithInternalSourceType(context.Background(), tidbkv.InternalImportInto)
 
-	convertOptions := func(inOptions []*ast.LoadDataOpt) []*plannercore.LoadDataOpt {
+	convertOptions := func(inOptions []*ast.LoadDataOpt) []*importinto.Option {
 		options := []*plannercore.LoadDataOpt{}
 		var err error
 		for _, opt := range inOptions {
@@ -357,7 +365,9 @@ func TestInitOptionsFromQueryNegativeCase(t *testing.T) {
 			}
 			options = append(options, &loadDataOpt)
 		}
-		return options
+		resolved, err := resolveImportOptions(options)
+		require.NoError(t, err)
+		return resolved
 	}
 
 	p := parser.New()
@@ -385,7 +395,7 @@ func TestInitOptionsFromQueryNegativeCase(t *testing.T) {
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err, sql)
 		plan := &Plan{DataSourceType: DataSourceTypeQuery}
-		err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+		err = initImportOptions(ctx, plan, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 		require.ErrorIs(t, err, exeerrors.ErrLoadDataUnsupportedOption, sql)
 	}
 
@@ -401,7 +411,7 @@ func TestInitOptionsFromQueryNegativeCase(t *testing.T) {
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err, sql)
 		plan := &Plan{DataSourceType: DataSourceTypeQuery}
-		err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+		err = initImportOptions(ctx, plan, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 		require.Error(t, err, sql)
 	}
 
@@ -410,7 +420,7 @@ func TestInitOptionsFromQueryNegativeCase(t *testing.T) {
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err, sql)
 	plan := &Plan{DataSourceType: DataSourceTypeQuery}
-	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	err = initImportOptions(ctx, plan, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.ErrorIs(t, err, exeerrors.ErrDuplicateOption, sql)
 }
 
@@ -421,19 +431,19 @@ func TestAdjustOptions(t *testing.T) {
 		MaxWriteSpeed:  10,
 		DataSourceType: DataSourceTypeFile,
 	}
-	plan.adjustOptions(16)
+	adjustImportOptions(plan, 16)
 	require.Equal(t, 16, plan.ThreadCnt)
 	require.Equal(t, config.ByteSize(10), plan.MaxWriteSpeed) // not adjusted
 	require.False(t, plan.DisableTiKVImportMode)
 
 	plan.ThreadCnt = 100000000
 	plan.DataSourceType = DataSourceTypeQuery
-	plan.adjustOptions(16)
+	adjustImportOptions(plan, 16)
 	require.Equal(t, 32, plan.ThreadCnt)
 	require.False(t, plan.DisableTiKVImportMode)
 
 	plan.CloudStorageURI = "s3://bucket/path"
-	plan.adjustOptions(16)
+	adjustImportOptions(plan, 16)
 	require.True(t, plan.DisableTiKVImportMode)
 }
 
@@ -490,8 +500,8 @@ func TestInitParameters(t *testing.T) {
 		Format: DataFormatCSV,
 		Path:   "azure://bucket/path?account-name=test-account&sas-token=111111",
 	}
-	require.NoError(t, p.initParameters(&plannercore.ImportInto{
-		Options: []*plannercore.LoadDataOpt{
+	require.NoError(t, initImportParameters(p, &importinto.Input{
+		Options: []*importinto.Option{
 			{
 				Name: cloudStorageURIOption,
 				Value: &expression.Constant{
@@ -506,8 +516,8 @@ func TestInitParameters(t *testing.T) {
 		p.Parameters.Options[cloudStorageURIOption].(string))
 
 	// test other options
-	require.NoError(t, p.initParameters(&plannercore.ImportInto{
-		Options: []*plannercore.LoadDataOpt{
+	require.NoError(t, initImportParameters(p, &importinto.Input{
+		Options: []*importinto.Option{
 			{
 				Name: detachedOption,
 			},
@@ -1006,4 +1016,63 @@ func TestGetDefMaxEngineSize(t *testing.T) {
 	} else {
 		require.Equal(t, config.ByteSize(100*units.GiB), getDefMaxEngineSize())
 	}
+}
+
+func TestImportPlanFromInput(t *testing.T) {
+	ctx := context.Background()
+	sctx := mock.NewContext()
+	defer sctx.Close()
+	sctx.Store = keyspaceOnlyStore{}
+	node, err := parser.New().ParseOneStmt("create table t(a int)", "", "")
+	require.NoError(t, err)
+	tblInfo, err := ddl.MockTableInfo(sctx, node.(*ast.CreateTableStmt), 42)
+	require.NoError(t, err)
+	tblInfo.State = model.StatePublic
+	tbl := tables.MockTableFromMeta(tblInfo)
+	format := DataFormatCSV
+	for _, sourceType := range []DataSourceType{DataSourceTypeFile, DataSourceTypeQuery} {
+		t.Run(sourceType.String(), func(t *testing.T) {
+			value := &expression.Constant{Value: types.NewIntDatum(2), RetType: types.NewFieldType(mysql.TypeLonglong)}
+			path := filepath.Join(t.TempDir(), "data.csv")
+			input := &importinto.Input{
+				DBName: "test", DBID: 7, TableInfo: tblInfo,
+				Path: path, Format: &format, DataSourceType: sourceType,
+				Options: []*importinto.Option{{Name: threadOption, Value: value}},
+			}
+			physical := &plannercore.ImportInto{
+				Table: &resolve.TableNameW{
+					TableName: &ast.TableName{Schema: ast.NewCIStr("test"), Name: ast.NewCIStr("t")},
+					DBInfo:    &model.DBInfo{ID: 7, Name: ast.NewCIStr("test")},
+				},
+				Path: path, Format: &format,
+				Options: []*plannercore.LoadDataOpt{{Name: threadOption, Value: value}},
+			}
+			if sourceType == DataSourceTypeQuery {
+				physical.SelectPlan = &physicalop.PhysicalSelection{}
+			}
+			fromSQL, err := NewImportPlan(ctx, sctx, physical, tbl)
+			require.NoError(t, err)
+			direct, err := NewImportPlanFromInput(ctx, sctx, input)
+			require.NoError(t, err)
+			require.Equal(t, fromSQL, direct)
+			require.Same(t, tblInfo, direct.TableInfo)
+			require.JSONEq(t, fromSQL.Parameters.String(), direct.Parameters.String())
+			encoded, err := json.Marshal(fromSQL)
+			require.NoError(t, err)
+			directEncoded, err := json.Marshal(direct)
+			require.NoError(t, err)
+			require.JSONEq(t, string(encoded), string(directEncoded))
+
+			// Both entrypoints must reject the same invalid numeric option.
+			bad := &expression.Constant{Value: types.NewStringDatum("bad"), RetType: types.NewFieldType(mysql.TypeVarString)}
+			input.Options[0].Value = bad
+			physical.Options[0].Value = bad
+			_, sqlErr := NewImportPlan(ctx, sctx, physical, tbl)
+			_, directErr := NewImportPlanFromInput(ctx, sctx, input)
+			require.Error(t, sqlErr)
+			require.EqualError(t, directErr, sqlErr.Error())
+		})
+	}
+	_, err = NewImportPlanFromInput(ctx, sctx, nil)
+	require.ErrorContains(t, err, "target table metadata")
 }

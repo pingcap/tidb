@@ -165,6 +165,7 @@ go_library(
         "//pkg/expression/sessionexpr",
         "//pkg/extension",
         "//pkg/extworkload",
+        "//pkg/importinto",
         "//pkg/infoschema",
         "//pkg/infoschema/context",
         "//pkg/keyspace",

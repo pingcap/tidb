@@ -1,0 +1,51 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "importinto",
+    srcs = [
+        "chunk.go",
+        "doc.go",
+        "input.go",
+        "job.go",
+        "plan.go",
+        "query_chunk.go",
+        "query_source.go",
+        "summary.go",
+        "task.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/importinto",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/domain/serverinfo",
+        "//pkg/dumpformat/parquetfile",
+        "//pkg/expression",
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/lightning/config",
+        "//pkg/lightning/importdef",
+        "//pkg/lightning/mydump",
+        "//pkg/meta",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/sessionstates",
+        "//pkg/sessionctx/vardef",
+        "//pkg/sessionctx/variable",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/dbterror/exeerrors",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "importinto_test",
+    timeout = "short",
+    srcs = ["plan_test.go"],
+    flaky = True,
+    deps = [
+        ":importinto",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -41,13 +41,13 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/importinto"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	litlog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -83,17 +83,6 @@ import (
 )
 
 const (
-	// DataFormatCSV represents the data source file of IMPORT INTO is csv.
-	DataFormatCSV = "csv"
-	// DataFormatDelimitedData delimited data.
-	DataFormatDelimitedData = "delimited data"
-	// DataFormatSQL represents the data source file of IMPORT INTO is mydumper-format DML file.
-	DataFormatSQL = "sql"
-	// DataFormatParquet represents the data source file of IMPORT INTO is parquet.
-	DataFormatParquet = "parquet"
-	// DataFormatAuto represents format is not set in IMPORT INTO, we will determine format automatically.
-	DataFormatAuto = "auto"
-
 	// DefaultDiskQuota is the default disk quota for IMPORT INTO
 	DefaultDiskQuota = config.ByteSize(50 << 30) // 50GiB
 
@@ -163,17 +152,6 @@ var (
 		disablePrecheckOption:       false,
 	}
 
-	csvOnlyOptions = map[string]struct{}{
-		characterSetOption:        {},
-		fieldsTerminatedByOption:  {},
-		fieldsEnclosedByOption:    {},
-		fieldsEscapedByOption:     {},
-		fieldsDefinedNullByOption: {},
-		linesTerminatedByOption:   {},
-		skipRowsOption:            {},
-		splitFileOption:           {},
-	}
-
 	// we only support global sort on nextgen cluster when SEM enabled, and doesn't
 	// allow set separate cloud storage URI.
 	disallowedOptionsOfNextGen = map[string]struct{}{
@@ -213,32 +191,6 @@ var (
 	defaultFieldNullDef = []string{`\N`}
 )
 
-// OnDupKeyMode controls the behavior when IMPORT INTO finds conflicted rows.
-type OnDupKeyMode string
-
-const (
-	// OnDupKeyModeCapture keeps current behavior, i.e. remove conflicted
-	// rows and capture them for later inspection.
-	OnDupKeyModeCapture OnDupKeyMode = "capture"
-	// OnDupKeyModeError means fail on first conflict.
-	OnDupKeyModeError OnDupKeyMode = "error"
-)
-
-// DataSourceType indicates the data source type of IMPORT INTO.
-type DataSourceType string
-
-const (
-	// DataSourceTypeFile represents the data source of IMPORT INTO is file.
-	// exported for test.
-	DataSourceTypeFile DataSourceType = "file"
-	// DataSourceTypeQuery represents the data source of IMPORT INTO is query.
-	DataSourceTypeQuery DataSourceType = "query"
-)
-
-func (t DataSourceType) String() string {
-	return string(t)
-}
-
 var (
 	// NewClientWithAPIContext returns a kv.Client.
 	NewClientWithAPIContext = pd.NewClientWithAPIContext
@@ -259,117 +211,31 @@ type LoadDataReaderInfo struct {
 	Remote *mydump.SourceFileMeta
 }
 
-// Plan describes the plan of LOAD DATA and IMPORT INTO.
-type Plan struct {
-	QuerySource *QuerySource `json:",omitempty"`
-	DBName      string
-	DBID        int64
-	// TableInfo is the table info we used during import, we might change it
-	// if add index by SQL is enabled(it's disabled now).
-	TableInfo *model.TableInfo
-	// DesiredTableInfo is the table info before import, and the desired table info
-	// after import.
-	DesiredTableInfo *model.TableInfo
+// Plan is the shared persisted import description.
+type Plan = importinto.Plan
 
-	Path string
-	// only effective when data source is file.
-	Format string
-	// Data interpretation is restrictive if the SQL mode is restrictive and neither
-	// the IGNORE nor the LOCAL modifier is specified. Errors terminate the load
-	// operation.
-	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
-	Restrictive bool
+// OnDupKeyMode controls conflict handling.
+type OnDupKeyMode = importinto.OnDupKeyMode
 
-	// LocationID is used to convert time type for parquet, see
-	// https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp
-	LocationID string
+// DataSourceType identifies the import source.
+type DataSourceType = importinto.DataSourceType
 
-	SQLMode mysql.SQLMode
-	// Charset is the charset of the data file when file is CSV or TSV.
-	// it might be nil when using LOAD DATA and no charset is specified.
-	// for IMPORT INTO, it is always non-nil and default to be defaultCharacterSet.
-	Charset          *string
-	ImportantSysVars map[string]string
+// Compatibility names for shared import metadata.
+const (
+	DataFormatCSV           = importinto.DataFormatCSV
+	DataFormatDelimitedData = importinto.DataFormatDelimitedData
+	DataFormatSQL           = importinto.DataFormatSQL
+	DataFormatParquet       = importinto.DataFormatParquet
+	DataFormatAuto          = importinto.DataFormatAuto
+	OnDupKeyModeCapture     = importinto.OnDupKeyModeCapture
+	OnDupKeyModeError       = importinto.OnDupKeyModeError
+	DataSourceTypeFile      = importinto.DataSourceTypeFile
+	DataSourceTypeQuery     = importinto.DataSourceTypeQuery
+)
 
-	// used for LOAD DATA and CSV format of IMPORT INTO
-	FieldNullDef []string
-	// this is not used in IMPORT INTO
-	NullValueOptEnclosed bool
-	// LinesStartingBy is not used in IMPORT INTO
-	// FieldsOptEnclosed is not used in either IMPORT INTO or LOAD DATA
-	plannercore.LineFieldsInfo
-	IgnoreLines uint64
-
-	DiskQuota             config.ByteSize
-	Checksum              config.PostOpLevel
-	ThreadCnt             int
-	MaxNodeCnt            int
-	MaxWriteSpeed         config.ByteSize
-	SplitFile             bool
-	MaxRecordedErrors     int64
-	OnDupKey              OnDupKeyMode
-	Detached              bool
-	DisableTiKVImportMode bool
-	MaxEngineSize         config.ByteSize
-	CloudStorageURI       string
-	DisablePrecheck       bool
-	GroupKey              string
-
-	// used for checksum in physical mode
-	DistSQLScanConcurrency int
-
-	// todo: remove it when load data code is reverted.
-	InImportInto   bool
-	DataSourceType DataSourceType
-	// only initialized for IMPORT INTO, used when creating job.
-	Parameters *ImportParameters `json:"-"`
-	// only initialized for IMPORT INTO, used when format is detected automatically
-	SpecifiedOptionNames map[string]struct{} `json:",omitempty"`
-	// the user who executes the statement, in the form of user@host
-	// only initialized for IMPORT INTO
-	User string `json:"-"`
-
-	IsRaftKV2 bool
-	// total data file size in bytes.
-	TotalFileSize int64
-	// used in tests to force enable merge-step when using global sort.
-	ForceMergeStep bool
-	// see ManualRecovery in proto.ExtraParams
-	ManualRecovery bool
-	// the keyspace name when submitting this job, only for import-into
-	Keyspace string
-	// UseNewCollate captures whether the new collation implementation was enabled
-	// in the submitting keyspace. Import execution may happen in another keyspace,
-	// so key and expression encoding must use this captured value instead of the
-	// executor process default. Nil means old metadata and should fall back to the
-	// caller-provided default.
-	UseNewCollate *bool `json:"use_new_collate,omitempty"`
-}
-
-// GetOnDupKeyMode returns the conflict handling mode.
-// For task metadata generated before this option was introduced, the value is
-// empty.
-// Note: currently it's not possible to have other unknown values, so we don't
-// handle that case here.
-func (p *Plan) GetOnDupKeyMode() OnDupKeyMode {
-	if p.OnDupKey == "" {
-		return OnDupKeyModeError
-	}
-	return p.OnDupKey
-}
-
-// GetUseNewCollateOrDefault returns the captured new-collation mode, or
-// defaultVal for import metadata generated before the field existed.
-func (p *Plan) GetUseNewCollateOrDefault(defaultVal bool) bool {
-	if p.UseNewCollate == nil {
-		return defaultVal
-	}
-	return *p.UseNewCollate
-}
-
-// setUseNewCollate stores the new-collation mode captured from the submitting
+// setPlanUseNewCollate stores the new-collation mode captured from the submitting
 // keyspace.
-func (p *Plan) setUseNewCollate(useNewCollate bool) {
+func setPlanUseNewCollate(p *Plan, useNewCollate bool) {
 	p.UseNewCollate = &useNewCollate
 }
 
@@ -382,43 +248,6 @@ type ASTArgs struct {
 	OnDuplicate        ast.OnDuplicateKeyHandlingType
 	FieldsInfo         *ast.FieldsClause
 	LinesInfo          *ast.LinesClause
-}
-
-// StepSummary records the number of data involved in each step.
-// The data stored might be inaccurate, such as the number of rows in encode step.
-type StepSummary struct {
-	Bytes  int64 `json:"input-bytes,omitempty"`
-	RowCnt int64 `json:"input-rows,omitempty"`
-}
-
-// Summary records the amount of data to be processed in each import job step.
-// This information will be saved into tidb_import_jobs table after the job is finished.
-type Summary struct {
-	// EncodeSummary stores source bytes and row counts for the encode step.
-	EncodeSummary StepSummary `json:"encode-summary,omitempty"`
-
-	// MergeSummary stores merged bytes and row counts for the merge step.
-	MergeSummary StepSummary `json:"merge-summary,omitempty"`
-
-	// IngestSummary stores bytes and row counts for the ingest step.
-	IngestSummary StepSummary `json:"ingest-summary,omitempty"`
-
-	// CollectConflictsSummary stores conflict KV pair counts for the
-	// collect-conflicts step. RowCnt is used as the counter.
-	CollectConflictsSummary StepSummary `json:"collect-conflicts-summary,omitempty"`
-
-	// ResolveConflictsSummary stores conflict KV pair counts for the
-	// resolve-conflicts step. RowCnt is used as the counter.
-	ResolveConflictsSummary StepSummary `json:"resolve-conflicts-summary,omitempty"`
-
-	// ImportedRows is the number of rows imported into TiKV.
-	// conflicted rows are excluded from this count if using global-sort.
-	ImportedRows   int64  `json:"row-count,omitempty"`
-	ConflictRowCnt uint64 `json:"conflict-row-count,omitempty"`
-	// TooManyConflicts indicates there are too many conflicted rows that we
-	// cannot deduplicate during collecting its checksum, so we will skip later
-	// checksum step.
-	TooManyConflicts bool `json:"too-many-conflicts,omitempty"`
 }
 
 // LoadDataController load data controller.
@@ -540,12 +369,51 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 	}, nil
 }
 
-// NewImportPlan creates a new import into plan.
+// NewImportPlan adapts a SQL plan to the shared preparation input.
 func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (*Plan, error) {
 	failpoint.InjectCall("NewImportPlan", plan)
+	options, err := resolveImportOptions(plan.Options)
+	if err != nil {
+		return nil, err
+	}
+	return NewImportPlanFromInput(ctx, userSctx, &importinto.Input{
+		DBName:             plan.Table.Schema.L,
+		DBID:               plan.Table.DBInfo.ID,
+		TableInfo:          tbl.Meta(),
+		Path:               plan.Path,
+		Format:             plan.Format,
+		DataSourceType:     getDataSourceType(plan),
+		ColumnsAndUserVars: plan.ColumnsAndUserVars,
+		ColumnAssignments:  plan.ColumnAssignments,
+		Options:            options,
+	})
+}
+
+func resolveImportOptions(options []*plannercore.LoadDataOpt) ([]*importinto.Option, error) {
+	result := make([]*importinto.Option, len(options))
+	for i, option := range options {
+		item := &importinto.Option{Name: option.Name}
+		if option.Value != nil {
+			value, ok := option.Value.(*expression.Constant)
+			if !ok {
+				return nil, exeerrors.ErrInvalidOptionVal.GenWithStackByArgs(option.Name)
+			}
+			item.Value = value
+		}
+		result[i] = item
+	}
+	return result, nil
+}
+
+// NewImportPlanFromInput prepares the import description from resolved input.
+// It does not perform SQL name resolution, privilege checks or SELECT planning.
+func NewImportPlanFromInput(ctx context.Context, userSctx sessionctx.Context, input *importinto.Input) (*Plan, error) {
+	if input == nil || input.TableInfo == nil {
+		return nil, errors.New("import preparation requires target table metadata")
+	}
 	var format string
-	if plan.Format != nil {
-		format = strings.ToLower(*plan.Format)
+	if input.Format != nil {
+		format = strings.ToLower(*input.Format)
 	} else {
 		format = DataFormatAuto
 	}
@@ -556,12 +424,12 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 	// like +08:00.
 	location := userSctx.GetSessionVars().Location()
 	p := &Plan{
-		TableInfo:        tbl.Meta(),
-		DesiredTableInfo: tbl.Meta(),
-		DBName:           plan.Table.Schema.L,
-		DBID:             plan.Table.DBInfo.ID,
+		TableInfo:        input.TableInfo,
+		DesiredTableInfo: input.TableInfo,
+		DBName:           input.DBName,
+		DBID:             input.DBID,
 
-		Path:           plan.Path,
+		Path:           input.Path,
 		Format:         format,
 		Restrictive:    restrictive,
 		FieldNullDef:   defaultFieldNullDef,
@@ -573,15 +441,15 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 
 		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
 		InImportInto:           true,
-		DataSourceType:         getDataSourceType(plan),
+		DataSourceType:         input.DataSourceType,
 		User:                   userSctx.GetSessionVars().User.String(),
 		Keyspace:               userSctx.GetStore().GetKeyspace(),
 	}
-	p.setUseNewCollate(collate.NewCollationEnabled())
-	if err := p.initOptions(ctx, userSctx, plan.Options); err != nil {
+	setPlanUseNewCollate(p, collate.NewCollationEnabled())
+	if err := initImportOptions(ctx, p, userSctx, input.Options); err != nil {
 		return nil, err
 	}
-	if err := p.initParameters(plan); err != nil {
+	if err := initImportParameters(p, input); err != nil {
 		return nil, err
 	}
 	return p, nil
@@ -739,7 +607,7 @@ func (e *LoadDataController) checkFieldParams() error {
 	return nil
 }
 
-func (p *Plan) initDefaultOptions(ctx context.Context, targetNodeCPUCnt int, store tidbkv.Storage) {
+func initDefaultImportOptions(ctx context.Context, p *Plan, targetNodeCPUCnt int, store tidbkv.Storage) {
 	var threadCnt int
 	threadCnt = int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
 	if p.DataSourceType == DataSourceTypeQuery {
@@ -767,14 +635,14 @@ func getDefMaxEngineSize() config.ByteSize {
 	return config.ByteSize(defaultMaxEngineSize)
 }
 
-func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
+func initImportOptions(ctx context.Context, p *Plan, seCtx sessionctx.Context, options []*importinto.Option) error {
 	targetNodeCPUCnt, err := GetTargetNodeCPUCnt(ctx, p.DataSourceType, p.Path)
 	if err != nil {
 		return err
 	}
-	p.initDefaultOptions(ctx, targetNodeCPUCnt, seCtx.GetStore())
+	initDefaultImportOptions(ctx, p, targetNodeCPUCnt, seCtx.GetStore())
 
-	specifiedOptions := map[string]*plannercore.LoadDataOpt{}
+	specifiedOptions := map[string]*importinto.Option{}
 	for _, opt := range options {
 		hasValue, ok := supportedOptions[opt.Name]
 		if !ok {
@@ -817,8 +685,8 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	// DataFormatAuto means format is unspecified from stmt,
 	// will validate below CSV options when init data files.
 	if p.Format != DataFormatCSV && p.Format != DataFormatAuto {
-		for k := range csvOnlyOptions {
-			if _, ok := specifiedOptions[k]; ok {
+		for k := range specifiedOptions {
+			if importinto.IsCSVOnlyOption(k) {
 				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "non-CSV format")
 			}
 		}
@@ -831,7 +699,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		}
 	}
 
-	optAsString := func(opt *plannercore.LoadDataOpt) (string, error) {
+	optAsString := func(opt *importinto.Option) (string, error) {
 		if opt.Value.GetType(seCtx.GetExprCtx().GetEvalCtx()).GetType() != mysql.TypeVarString {
 			return "", exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
@@ -841,7 +709,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		}
 		return val, nil
 	}
-	optAsInt64 := func(opt *plannercore.LoadDataOpt) (int64, error) {
+	optAsInt64 := func(opt *importinto.Option) (int64, error) {
 		// current parser takes integer and bool as mysql.TypeLonglong
 		if opt.Value.GetType(seCtx.GetExprCtx().GetEvalCtx()).GetType() != mysql.TypeLonglong || mysql.HasIsBooleanFlag(opt.Value.GetType(seCtx.GetExprCtx().GetEvalCtx()).GetFlag()) {
 			return 0, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
@@ -1039,11 +907,11 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		return exeerrors.ErrInvalidOptionVal.FastGenByArgs("lines_terminated_by, should not be empty when use split_file")
 	}
 
-	p.adjustOptions(targetNodeCPUCnt)
+	adjustImportOptions(p, targetNodeCPUCnt)
 	return nil
 }
 
-func (p *Plan) adjustOptions(targetNodeCPUCnt int) {
+func adjustImportOptions(p *Plan, targetNodeCPUCnt int) {
 	limit := targetNodeCPUCnt
 	if p.DataSourceType == DataSourceTypeQuery {
 		// for query, row is produced using 1 thread, the max cpu used is much
@@ -1066,14 +934,14 @@ func isSupportedCloudStorageBackend(backend *backuppb.StorageBackend) bool {
 	return backend != nil && (backend.GetS3() != nil || backend.GetGcs() != nil || backend.GetAzureBlobStorage() != nil)
 }
 
-func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
+func initImportParameters(p *Plan, input *importinto.Input) error {
 	redactURL := ast.RedactURL(p.Path)
 	var columnsAndVars, setClause string
 	var sb strings.Builder
 	formatCtx := pformat.NewRestoreCtx(pformat.DefaultRestoreFlags, &sb)
-	if len(plan.ColumnsAndUserVars) > 0 {
+	if len(input.ColumnsAndUserVars) > 0 {
 		sb.WriteString("(")
-		for i, col := range plan.ColumnsAndUserVars {
+		for i, col := range input.ColumnsAndUserVars {
 			if i > 0 {
 				sb.WriteString(", ")
 			}
@@ -1082,9 +950,9 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 		sb.WriteString(")")
 		columnsAndVars = sb.String()
 	}
-	if len(plan.ColumnAssignments) > 0 {
+	if len(input.ColumnAssignments) > 0 {
 		sb.Reset()
-		for i, assign := range plan.ColumnAssignments {
+		for i, assign := range input.ColumnAssignments {
 			if i > 0 {
 				sb.WriteString(", ")
 			}
@@ -1092,14 +960,14 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 		}
 		setClause = sb.String()
 	}
-	optionMap := make(map[string]any, len(plan.Options))
-	for _, opt := range plan.Options {
+	optionMap := make(map[string]any, len(input.Options))
+	for _, opt := range input.Options {
 		if opt.Value != nil {
 			// The option attached to the import statement here are all
 			// parameters entered by the user. TiDB will process the
 			// parameters entered by the user as constant. so we can
 			// directly convert it to constant.
-			cons := opt.Value.(*expression.Constant)
+			cons := opt.Value
 			val := fmt.Sprintf("%v", cons.Value.GetValue())
 			if opt.Name == cloudStorageURIOption {
 				val = ast.RedactURL(val)
@@ -1977,27 +1845,6 @@ func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
 		})
 	}
 	return res
-}
-
-// IsLocalSort returns true if we sort data on local disk.
-func (p *Plan) IsLocalSort() bool {
-	return p.CloudStorageURI == ""
-}
-
-// IsGlobalSort returns true if we sort data on global storage.
-func (p *Plan) IsGlobalSort() bool {
-	return !p.IsLocalSort()
-}
-
-// CheckNonCSVFormatOptions non CSV format should not specify CSV only options,
-// we check it again if the format is detected automatically.
-func (p *Plan) CheckNonCSVFormatOptions() error {
-	for k := range csvOnlyOptions {
-		if _, ok := p.SpecifiedOptionNames[k]; ok {
-			return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "non-CSV format")
-		}
-	}
-	return nil
 }
 
 // CreateColAssignExprs creates the column assignment expressions using session context.

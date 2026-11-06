@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -569,13 +568,6 @@ func (p *dataDeliver) summaryFields() []zap.Field {
 	return []zap.Field{
 		zap.Duration("deliverDur", p.deliverTotalDur),
 	}
-}
-
-// QueryChunk is a chunk from query result.
-type QueryChunk struct {
-	Fields      []*types.FieldType
-	Chk         *chunk.Chunk
-	RowIDOffset int64
 }
 
 // RunImportQuery runs the SELECT of the IMPORT INTO statement importSQL at q.ReadTS.

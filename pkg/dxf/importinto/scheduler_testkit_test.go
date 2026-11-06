@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	importcore "github.com/pingcap/tidb/pkg/importinto"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -773,7 +774,7 @@ func testSchedulerExtGlobalSort(t *testing.T, sourceStep proto.Step) {
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.ImportStepPostProcess, task.Step)
-	var completedMeta importinto.TaskMeta
+	var completedMeta importcore.TaskMeta
 	require.NoError(t, json.Unmarshal(task.Meta, &completedMeta))
 	require.EqualValues(t, 3*sourceSubtasks, completedMeta.Summary.ImportedRows)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)

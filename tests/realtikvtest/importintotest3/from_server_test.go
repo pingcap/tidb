@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	importcore "github.com/pingcap/tidb/pkg/importinto"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -70,7 +71,7 @@ func (s *mockGCSSuite) TestImportFromServer() {
 	ctx := util.WithInternalSourceType(context.Background(), "taskManager")
 	task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	s.NoError(err2)
-	var taskMeta importinto.TaskMeta
+	var taskMeta importcore.TaskMeta
 	require.NoError(s.T(), json.Unmarshal(task.Meta, &taskMeta))
 	require.Len(s.T(), taskMeta.ChunkMap, 2)
 	require.False(s.T(), taskMeta.Plan.DisableTiKVImportMode)
