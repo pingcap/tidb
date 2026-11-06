@@ -246,6 +246,7 @@ type Config struct {
 	Performance                Performance             `toml:"performance" json:"performance"`
 	PreparedPlanCache          PreparedPlanCache       `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
 	OpenTracing                OpenTracing             `toml:"opentracing" json:"opentracing"`
+	OpenTelemetry              OpenTelemetry           `toml:"opentelemetry" json:"opentelemetry"`
 	ProxyProtocol              ProxyProtocol           `toml:"proxy-protocol" json:"proxy-protocol"`
 	PDClient                   tikvcfg.PDClient        `toml:"pd-client" json:"pd-client"`
 	TiKVClient                 tikvcfg.TiKVClient      `toml:"tikv-client" json:"tikv-client"`
@@ -479,7 +480,7 @@ func (c *Config) GetTiKVConfig() *tikvcfg.Config {
 		PessimisticTxn:        tikvcfg.PessimisticTxn{MaxRetryCount: c.PessimisticTxn.MaxRetryCount},
 		TxnLocalLatches:       c.TxnLocalLatches,
 		StoresRefreshInterval: c.StoresRefreshInterval,
-		OpenTracingEnable:     c.OpenTracing.Enable,
+		OpenTracingEnable:     c.TracingEnabled(),
 		Path:                  c.Path,
 		EnableForwarding:      c.EnableForwarding,
 		TxnScope:              c.Labels["zone"],
@@ -952,6 +953,21 @@ type OpenTracing struct {
 	Reporter   OpenTracingReporter `toml:"reporter" json:"reporter"`
 }
 
+// OpenTelemetry is the opentelemetry section of the config.
+// When enabled, TiDB's tracing spans are exported over OTLP/gRPC through the
+// OpenTelemetry SDK instead of the Jaeger client configured by [opentracing].
+type OpenTelemetry struct {
+	Enable bool `toml:"enable" json:"enable"`
+	// Endpoint is the OTLP/gRPC endpoint, either "host:port" or a URL such as
+	// "http://otel-collector:4317". If empty, the standard OTEL_EXPORTER_OTLP_*
+	// environment variables are used, falling back to "localhost:4317".
+	Endpoint string `toml:"endpoint" json:"endpoint"`
+	// Insecure disables TLS when connecting to the endpoint.
+	Insecure bool `toml:"insecure" json:"insecure"`
+	// SampleRatio is the fraction of traces to sample, in [0, 1].
+	SampleRatio float64 `toml:"sample-ratio" json:"sample-ratio"`
+}
+
 // OpenTracingSampler is the config for opentracing sampler.
 // See https://godoc.org/github.com/uber/jaeger-client-go/config#SamplerConfig
 type OpenTracingSampler struct {
@@ -1284,6 +1300,10 @@ var defaultConf = Config{
 			Param: 1.0,
 		},
 		Reporter: OpenTracingReporter{},
+	},
+	OpenTelemetry: OpenTelemetry{
+		Enable:      false,
+		SampleRatio: 1.0,
 	},
 	PDClient:   defTiKVCfg.PDClient,
 	TiKVClient: defTiKVCfg.TiKVClient,
@@ -1758,6 +1778,12 @@ func (c *Config) Valid() error {
 	if _, err := prepareErrorMessageExtensions(c.ErrorMessageExtensions, false); err != nil {
 		return err
 	}
+	if c.OpenTracing.Enable && c.OpenTelemetry.Enable {
+		return fmt.Errorf("opentracing.enable and opentelemetry.enable can't both be true, choose one tracing exporter")
+	}
+	if c.OpenTelemetry.SampleRatio < 0 || c.OpenTelemetry.SampleRatio > 1 {
+		return fmt.Errorf("opentelemetry.sample-ratio should be between 0 and 1, but got %v", c.OpenTelemetry.SampleRatio)
+	}
 	if !c.Store.Valid() {
 		return fmt.Errorf("invalid store=%s, valid storages=%v", c.Store, StoreTypeList())
 	}
@@ -1949,6 +1975,13 @@ func (l *Log) ToLogConfig() *logutil.LogConfig {
 		func(config *zaplog.Config) { config.Timeout = l.Timeout },
 		func(config *zaplog.Config) { config.TimeoutAction = l.TimeoutAction },
 	)
+}
+
+// TracingEnabled reports whether TiDB creates tracing spans, which are
+// exported either by the Jaeger client ([opentracing]) or over OTLP
+// ([opentelemetry]).
+func (c *Config) TracingEnabled() bool {
+	return c.OpenTracing.Enable || c.OpenTelemetry.Enable
 }
 
 // ToTracingConfig converts *OpenTracing to *tracing.Configuration.

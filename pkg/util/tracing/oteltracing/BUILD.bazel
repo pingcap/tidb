@@ -1,0 +1,41 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "oteltracing",
+    srcs = ["oteltracing.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/tracing/oteltracing",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_opentracing_opentracing_go//:opentracing-go",
+        "@com_github_pingcap_errors//:errors",
+        "@io_opentelemetry_go_otel//attribute",
+        "@io_opentelemetry_go_otel//propagation",
+        "@io_opentelemetry_go_otel_bridge_opentracing//:opentracing",
+        "@io_opentelemetry_go_otel_exporters_otlp_otlptrace_otlptracegrpc//:otlptracegrpc",
+        "@io_opentelemetry_go_otel_sdk//resource",
+        "@io_opentelemetry_go_otel_sdk//trace",
+    ],
+)
+
+go_test(
+    name = "oteltracing_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "oteltracing_test.go",
+    ],
+    embed = [":oteltracing"],
+    flaky = True,
+    deps = [
+        "//pkg/testkit/testsetup",
+        "//pkg/util/tracing",
+        "@com_github_opentracing_opentracing_go//:opentracing-go",
+        "@com_github_stretchr_testify//require",
+        "@io_opentelemetry_go_otel//attribute",
+        "@io_opentelemetry_go_otel_sdk//trace",
+        "@io_opentelemetry_go_otel_sdk//trace/tracetest",
+        "@io_opentelemetry_go_proto_otlp//collector/trace/v1:trace",
+        "@org_golang_google_grpc//:grpc",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
