@@ -7649,6 +7649,17 @@ fn build_cluster_table_scan(
     })
 }
 
+/// Go `executorBuilder.getSnapshotTS` / `getSnapshot`: building a reader
+/// takes the statement's read timestamp, which activates its transaction
+/// (`GetStmtReadTS` -> `ActivateTxn`) -- under a plain EXPLAIN too, whose
+/// executors are built and never read. A timestamp that fails to arrive is
+/// `0` here; the reader's first read reports the error.
+fn get_snapshot_ts(ctx: &crate::StmtContext) {
+    if let Some(store) = ctx.txn_store() {
+        store.start_ts();
+    }
+}
+
 fn build_with_state(
     plan: &PhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
@@ -7702,6 +7713,7 @@ fn build_with_state(
         PhysicalPlan::TableReader(reader)
             if reader.store_type == tidb_kv::store_type::StoreType::TiDb =>
         {
+            get_snapshot_ts(ctx);
             let child = reader.table_plan.as_deref().ok_or_else(|| {
                 DriverError::unsupported("a TiDB-store reader has no pushed plan")
             })?;
@@ -7717,7 +7729,10 @@ fn build_with_state(
             &state.reader_storage,
             state.cop_chain.as_ref(),
         ),
-        PhysicalPlan::TableSample(sample) => build_table_sample(plan, sample, catalog, ctx),
+        PhysicalPlan::TableSample(sample) => {
+            get_snapshot_ts(ctx);
+            build_table_sample(plan, sample, catalog, ctx)
+        }
         PhysicalPlan::IndexScan(scan) => build_index_reader(
             plan,
             plan,
@@ -7736,11 +7751,13 @@ fn build_with_state(
             state.cop_chain.as_ref(),
         ),
         PhysicalPlan::TableReader(_) | PhysicalPlan::IndexReader(_) => {
+            get_snapshot_ts(ctx);
             build_range_grouped_reader(plan, catalog, ctx, state)
         }
         PhysicalPlan::IndexLookUpReader(_) => {
             // Go `buildIndexLookUpReader`: `b.Ti.UseTableLookUp.Store(true)`.
             ctx.telemetry_info().use_table_lookup = true;
+            get_snapshot_ts(ctx);
             build_range_grouped_reader(plan, catalog, ctx, state)
         }
         PhysicalPlan::IndexMergeReader(reader) => {
@@ -7750,11 +7767,14 @@ fn build_with_state(
                 ti.use_index_merge = true;
                 ti.use_table_lookup = true;
             }
+            get_snapshot_ts(ctx);
             let executor = build_index_merge_reader(plan, reader, catalog, ctx, state)?;
             ctx.mark_physical_table_reader();
             Ok(executor)
         }
         PhysicalPlan::PointGet(point) => {
+            // Go `buildPointGet`'s `b.getSnapshot()`.
+            get_snapshot_ts(ctx);
             let snapshot_stats = state.point_snapshot_runtime_stats(plan);
             with_select_lock(
                 plan,
@@ -7766,6 +7786,8 @@ fn build_with_state(
             )
         }
         PhysicalPlan::BatchPointGet(batch) => {
+            // Go `buildBatchPointGet`'s `b.getSnapshot()`.
+            get_snapshot_ts(ctx);
             let snapshot_stats = state.point_snapshot_runtime_stats(plan);
             with_select_lock(
                 plan,
@@ -8112,7 +8134,12 @@ fn build_with_state(
                 .map_err(DriverError::Exec)?;
             Ok(Box::new(executor) as Box<dyn Executor>)
         }
-        PhysicalPlan::IndexJoin(join) => build_index_join(plan, join, catalog, ctx, state),
+        PhysicalPlan::IndexJoin(join) => {
+            // Go `buildIndexLookUpJoin` -> `newDataReaderBuilder`'s
+            // `getSnapshotTS`, for the inner reader it builds per task.
+            get_snapshot_ts(ctx);
+            build_index_join(plan, join, catalog, ctx, state)
+        }
         PhysicalPlan::Apply(apply) => build_apply(plan, apply, catalog, ctx, state),
         PhysicalPlan::TableDual(dual) => Ok(Box::new(TableDualExec::new(
             ExecutorMeta::new(

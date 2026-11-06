@@ -4541,7 +4541,7 @@ fn stream_physical_write_rows(
 /// Go `recordDMLRowsColMultiply2Metrics(sessVars, rowsColMultiply, 1)`: a
 /// DML statement's rows times their columns, RU v2's
 /// `executor_l5_insert_rows`.
-fn record_dml_rows_col_multiply(ctx: &crate::StmtContext, rows_col_multiply: i64) {
+pub(super) fn record_dml_rows_col_multiply(ctx: &crate::StmtContext, rows_col_multiply: i64) {
     if rows_col_multiply <= 0 {
         return;
     }
@@ -4551,7 +4551,7 @@ fn record_dml_rows_col_multiply(ctx: &crate::StmtContext, rows_col_multiply: i64
 }
 
 /// Go `addDeleteRowsColMultiply`.
-fn add_rows_col_multiply(total: i64, delta: i64) -> i64 {
+pub(super) fn add_rows_col_multiply(total: i64, delta: i64) -> i64 {
     if delta <= 0 {
         return total;
     }

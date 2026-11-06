@@ -309,6 +309,8 @@ pub(crate) fn run_multi_update(
     let mut matched_rows = 0u64;
     let mut touched_rows = 0u64;
     let mut changed_rows = 0u64;
+    // Go `updateRows`' `rowsColMultiply`.
+    let mut rows_col_multiply = 0i64;
     let split = delete_source_splitter(&delete_layout, catalog, ctx, true)?;
     let mut row_index = 0usize;
     // Go `UpdateExec.updateRows`: each row is composed and written before the
@@ -366,6 +368,10 @@ pub(crate) fn run_multi_update(
                 prepared.push(None);
                 continue;
             }
+            // Go `rowsColMultiplyForPreparedRow`: an updatable target this
+            // statement has not changed yet counts its columns.
+            rows_col_multiply =
+                super::dml::add_rows_col_multiply(rows_col_multiply, row.stored[slot].len() as i64);
             let mut old = row.stored[slot].clone();
             let mut new = old.clone();
             for (assign, value) in assigns.iter().zip(&evaluated) {
@@ -497,6 +503,7 @@ pub(crate) fn run_multi_update(
         runtime.extend(collected);
     }
     records.finish(catalog, ctx)?;
+    super::dml::record_dml_rows_col_multiply(ctx, rows_col_multiply);
     ctx.set_message(format!(
         "Rows matched: {matched_rows}  Changed: {changed_rows}  Warnings: {}",
         ctx.warning_count()
@@ -624,7 +631,10 @@ pub(crate) fn run_multi_delete(
                         .or_default();
                     let exist = rows.get(&handle).is_some();
                     let extra = i64::try_from(handle.extra_mem_size()).unwrap_or(i64::MAX);
-                    let mut mem_delta = rows.set(handle, HandleInfoPair { id, stored });
+                    let mut mem_delta = rows.set(
+                        handle,
+                        HandleInfoPair { id, stored, handle_val_len: table.columns.len() },
+                    );
                     if !exist {
                         mem_delta += joined_row_mem + extra;
                     }
@@ -639,6 +649,8 @@ pub(crate) fn run_multi_delete(
 
     let mut records = super::dml::delete_record::DeleteRecords::new(fk_triggers);
     let mut deleted = 0;
+    // Go `removeRowsInTblRowMap`'s `rowsColMultiply`.
+    let mut rows_col_multiply = 0i64;
     // The rest of Go `DeleteExec.Next`: `removeRowsInTblRowMap`, after the
     // whole read. Go ranges its maps in no defined order; these go by table,
     // then handle.
@@ -646,16 +658,22 @@ pub(crate) fn run_multi_delete(
         for ((database, name), rows) in &tbl_row_map {
             let mut doomed = Vec::new();
             rows.range(|_, pair| {
-                doomed.push((pair.id.clone(), pair.stored.clone()));
+                doomed.push((pair.id.clone(), pair.stored.clone(), pair.handle_val_len));
                 true
             });
             doomed.sort_by(|left, right| left.0.cmp(&right.0));
-            for (id, old) in doomed {
-                deleted += u64::from(records.write(catalog, database, name, &id, &old, delete.ignore, ctx)?);
+            for (id, old, handle_val_len) in doomed {
+                let removed = records.write(catalog, database, name, &id, &old, delete.ignore, ctx)?;
+                deleted += u64::from(removed);
+                if removed {
+                    rows_col_multiply =
+                        super::dml::add_rows_col_multiply(rows_col_multiply, handle_val_len as i64);
+                }
             }
         }
         Ok(())
     })?;
+    super::dml::record_dml_rows_col_multiply(ctx, rows_col_multiply);
     records.finish(catalog, ctx)?;
 
     Ok(deleted)
@@ -666,6 +684,9 @@ pub(crate) fn run_multi_delete(
 struct HandleInfoPair {
     id: TableHandle,
     stored: Vec<Datum>,
+    /// `len(handleVal)`: the columns the read kept of the table
+    /// (`posInfo`'s `End - Start`).
+    handle_val_len: usize,
 }
 
 impl tidb_hack::MapValueLayout for HandleInfoPair {

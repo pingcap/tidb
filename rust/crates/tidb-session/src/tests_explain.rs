@@ -7424,6 +7424,41 @@ fn a_parallel_hash_aggregate_spills_and_restores_like_go() {
     session.run("SET GLOBAL tidb_mem_oom_action = 'CANCEL'").unwrap();
 }
 
+/// Go `executorBuilder.getSnapshotTS`: building a statement's readers
+/// activates its transaction, so `setLastTxnInfoBeforeTxnEnd` reports it --
+/// an autocommit point get's at `forcePrepareConstStartTS(math.MaxUint64)`,
+/// a plain EXPLAIN's at a fetched timestamp, since `buildExplain` builds the
+/// target's executors; `DESC t` builds no reader and leaves the last one.
+/// Go testkit, `SELECT @@tidb_last_txn_info` after each statement.
+#[test]
+fn building_a_reader_activates_the_statement_transaction() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE t (a INT PRIMARY KEY, b INT, KEY(b))",
+        "INSERT INTO t VALUES (1,1),(3,3)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let start_ts = |session: &mut Session, sql: &str| -> String {
+        row_text(session.run(sql));
+        row_text(session.run("SELECT json_extract(@@tidb_last_txn_info, '$.start_ts')"))[0][0].clone()
+    };
+    assert_eq!(start_ts(&mut session, "SELECT * FROM t WHERE a = 3"), "18446744073709551615");
+    assert_eq!(start_ts(&mut session, "SELECT * FROM t WHERE a = 7"), "18446744073709551615");
+    let mut previous = start_ts(&mut session, "SELECT * FROM t WHERE a IN (1,3)");
+    for sql in [
+        "EXPLAIN SELECT * FROM t",
+        "EXPLAIN SELECT * FROM t WHERE a = 3",
+        "EXPLAIN SELECT * FROM t WHERE b = 3",
+    ] {
+        let ts = start_ts(&mut session, sql);
+        assert_ne!(ts, "18446744073709551615", "{sql}");
+        assert!(ts.parse::<u64>().unwrap() > previous.parse::<u64>().unwrap(), "{sql}: {ts} after {previous}");
+        previous = ts;
+    }
+    assert_eq!(start_ts(&mut session, "DESC t"), previous);
+}
+
 /// Go `exec.Next`'s RU v2 executor metrics (`ruv2ExecutorMetricByType`):
 /// every recorded executor adds its input plus output rows (or cells), its
 /// input being what its children -- on worker threads too -- returned during
@@ -7468,17 +7503,21 @@ fn a_statement_records_go_executor_ruv2_metrics() {
             "SELECT /*+ hash_join(s) */ * FROM t JOIN s ON t.a=s.d",
             vec!["executor_l2:{HashJoinV2Exec:10,IndexReaderExecutor:4,TableReaderExecutor:6}", "plan_cnt:1", "plan_derive_stats_paths:4", "txn_cnt:1"],
         ),
-        // Go also counts `txn_cnt:1`: its point get activates the
-        // transaction, where this port's reads without a statement read
-        // timestamp (E16).
-        ("SELECT * FROM t WHERE a = 3", vec!["executor_l1:{PointGetExecutor:3}"]),
+        // Go's point get activates its transaction at `MaxUint64`
+        // (`forcePrepareConstStartTS`), which the commit counts.
+        ("SELECT * FROM t WHERE a = 3", vec!["executor_l1:{PointGetExecutor:3}", "txn_cnt:1"]),
+        ("SELECT * FROM t WHERE a IN (1,3)", vec!["executor_l1:{BatchPointGetExec:6}", "txn_cnt:1"]),
         // Go also counts `TableReaderExecutor:1` here: the per-task table
         // reader its `IndexLookUpExecutor` builds, which this port lacks (E11).
         ("SELECT * FROM t WHERE b = 3", vec!["executor_l2:{IndexLookUpExecutor:1}", "plan_cnt:1", "plan_derive_stats_paths:2", "txn_cnt:1"]),
-        // Go builds the EXPLAIN and, nested, its statement (`buildExplain`);
-        // it also counts `txn_cnt:1` for the transaction planning activated,
-        // which this port's EXPLAIN does not take a read timestamp for (E16).
-        ("EXPLAIN SELECT * FROM t", vec!["plan_cnt:2", "plan_derive_stats_paths:2"]),
+        // Go builds the EXPLAIN and, nested, its statement (`buildExplain`),
+        // whose point get is a fast plan; `buildExplain`'s executor build
+        // takes the read timestamp (`getSnapshotTS`), activating the
+        // transaction the commit counts.
+        ("EXPLAIN SELECT * FROM t", vec!["plan_cnt:2", "plan_derive_stats_paths:2", "txn_cnt:1"]),
+        ("EXPLAIN SELECT * FROM t WHERE a = 3", vec!["plan_cnt:1", "txn_cnt:1"]),
+        ("EXPLAIN SELECT * FROM t WHERE a IN (1,3)", vec!["plan_cnt:1", "txn_cnt:1"]),
+        ("SELECT 1", vec!["executor_l2:{ProjectionExec:1,TableDualExec:1}", "plan_cnt:1"]),
     ] {
         row_text(session.run(sql));
         let summary = session.ruv2_metrics_summary().expect("a recorded statement");
@@ -7559,9 +7598,51 @@ fn dml_statements_record_go_ruv2_metrics() {
             "UPDATE h SET b = 0",
             "executor_l2:{TableReaderExecutor:3}, executor_l5_insert_rows:6, plan_cnt:1, plan_derive_stats_paths:1, txn_cnt:1, write_keys:3, write_size:99",
         ),
+        // Go builds the INSERT and, in `buildSelectPlanOfInsert`, its SELECT:
+        // two `PlanBuilder.Build`s, a point get's SELECT included.
+        (
+            "INSERT INTO h SELECT a, b FROM t WHERE a < 3",
+            "executor_l2:{TableReaderExecutor:2}, executor_l5_insert_rows:4, plan_cnt:2, plan_derive_stats_paths:2, txn_cnt:1, write_keys:2, write_size:66",
+        ),
+        (
+            "REPLACE INTO h SELECT a, b FROM t WHERE a > 4",
+            "executor_l2:{TableReaderExecutor:1}, executor_l5_insert_rows:2, plan_cnt:2, plan_derive_stats_paths:2, txn_cnt:1, write_keys:1, write_size:33",
+        ),
+        ("EXPLAIN INSERT INTO h SELECT a, b FROM t", "plan_cnt:3, plan_derive_stats_paths:2, txn_cnt:1"),
     ] {
         session.run(sql).unwrap();
         let summary = session.ruv2_metrics_summary().expect("a recorded statement");
         assert_eq!(parts(&summary).join(", "), expected, "{sql}: {summary}");
+    }
+    // Go `updateRows`' `rowsColMultiplyForPreparedRow`: a row matched once
+    // per joined row counts its cells until the statement has changed it
+    // (`updatedRowKeys`), so a no-op assignment counts every match.
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE t (a INT PRIMARY KEY, b INT, c VARCHAR(20), KEY(b))",
+        "INSERT INTO t VALUES (1,1,'x'),(2,2,'y'),(3,3,'z'),(4,4,'w'),(5,5,'v'),(6,6,'u')",
+        "CREATE TABLE h (a INT, b INT)",
+        "INSERT INTO h VALUES (1,1),(2,2),(3,3)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    for (sql, expected) in [
+        ("UPDATE t, h SET t.c = 'n' WHERE t.a = 1", "executor_l5_insert_rows:3"),
+        ("UPDATE t, h SET t.c = 'p', h.b = 9 WHERE t.a = 2", "executor_l5_insert_rows:9"),
+        ("UPDATE t, h SET t.c = 'p' WHERE t.a = 2", "executor_l5_insert_rows:9"),
+        // An unmatched outer row's table is not updatable.
+        ("INSERT INTO h VALUES (3,4)", "executor_l5_insert_rows:2"),
+        ("UPDATE t LEFT JOIN h ON t.a = h.a SET h.b = 5, t.c = 'k' WHERE t.a > 2", "executor_l5_insert_rows:16"),
+        // Go `removeRowsInTblRowMap`: a removed row's pruned columns
+        // (`pruneAndBuildColPositionInfoForDelete`): `t`'s handle and
+        // indexed `b`, none of `h`'s.
+        ("DELETE h FROM t JOIN h ON t.a = h.a WHERE t.a = 3", ""),
+        ("DELETE t, h FROM t JOIN h ON t.a = h.a WHERE t.a = 1", "executor_l5_insert_rows:2"),
+        ("DELETE t FROM t LEFT JOIN h ON t.a = h.a WHERE t.a > 4", "executor_l5_insert_rows:4"),
+    ] {
+        session.run(sql).unwrap();
+        let summary = session.ruv2_metrics_summary().expect("a recorded statement");
+        let cells: Vec<_> = summary.split(", ").filter(|part| part.starts_with("executor_l5")).collect();
+        assert_eq!(cells.join(", "), expected, "{sql}: {summary}");
     }
 }

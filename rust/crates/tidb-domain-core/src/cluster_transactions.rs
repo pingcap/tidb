@@ -690,6 +690,13 @@ impl StatementReadTs {
         }
     }
 
+    /// Go `ActivateTxn` over `forcePrepareConstStartTS(ts)`: the statement's
+    /// transaction is valid at the constant start timestamp `ts` without
+    /// waiting for one (an autocommit point get's `math.MaxUint64`).
+    pub fn activate_const_start_ts(&self, ts: u64) {
+        self.record(ts);
+    }
+
     /// The timestamp the statement read at, or `None` if it never read.
     pub fn get(&self) -> Option<u64> {
         *self

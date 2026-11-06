@@ -1026,11 +1026,17 @@ impl StatementLifecycle<'_> {
             return snapshot;
         }
         if shape == StatementReadShape::AutocommitPointGet {
-            return self
+            let snapshot = self
                 .txn
                 .transactions()
                 .open_max_ts_snapshot(resource_group)
-                .map_err(SqlQueryError::unknown);
+                .map_err(SqlQueryError::unknown)?;
+            // Go `AdviseOptimizeWithPlan` -> `forcePrepareConstStartTS(
+            // math.MaxUint64)`: the point get's `getSnapshot` activates the
+            // transaction at that constant, which its commit counts and
+            // `tidb_last_txn_info` reports.
+            read_ts.activate_const_start_ts(u64::MAX);
+            return Ok(snapshot);
         }
         Ok(transactions::deferred_snapshot(
             Arc::clone(self.txn.transactions()),

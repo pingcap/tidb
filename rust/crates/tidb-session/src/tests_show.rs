@@ -2042,10 +2042,18 @@ fn every_information_schema_cell_matches_its_declared_column_type() {
                     // Go fills the MEMORY_USAGE time cells with
                     // `types.NewTimeDatum(NewTime(FromGoTime(...), Datetime, 0))`
                     // (`infoschema_reader.go:3042-3049`) — GC_LAST is ALWAYS a
-                    // Time datum, zero-valued before the first GC. A Time cell
-                    // is faithful wherever the column declares Datetime.
+                    // Time datum, zero-valued before the first GC; TIDB_TRX's
+                    // START_TIME, declared `TypeTimestamp`, holds a Timestamp
+                    // one (`txninfo.go` `NewTime(..., TypeTimestamp, MaxFsp)`).
+                    // A Time cell is faithful wherever the column declares a
+                    // date or time type.
                     Datum::Time(_) => assert!(
-                        field_type.code() == tidb_datatype::FieldTypeCode::Datetime,
+                        matches!(
+                            field_type.code(),
+                            tidb_datatype::FieldTypeCode::Datetime
+                                | tidb_datatype::FieldTypeCode::Timestamp
+                                | tidb_datatype::FieldTypeCode::Date
+                        ),
                         "{name}.{column_name} is declared {:?} but a row holds a Time",
                         field_type.code()
                     ),
@@ -2053,6 +2061,13 @@ fn every_information_schema_cell_matches_its_declared_column_type() {
                     Datum::Json(_) => assert!(
                         field_type.code() == tidb_datatype::FieldTypeCode::Json,
                         "{name}.{column_name} is declared {:?} but a row holds JSON",
+                        field_type.code()
+                    ),
+                    // Go `types.NewMysqlEnumDatum`, as TIDB_TRX's STATE
+                    // (`txninfo.go`, a `TypeEnum` column).
+                    Datum::Enum(..) => assert!(
+                        field_type.code() == tidb_datatype::FieldTypeCode::Enum,
+                        "{name}.{column_name} is declared {:?} but a row holds an enum",
                         field_type.code()
                     ),
                     other => panic!("{name}.{column_name} holds an unexpected {other:?}"),
