@@ -207,6 +207,25 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) e
 				unlockedTableIDs = append(unlockedTableIDs, update.TableID)
 			}
 		}
+		// The batch wrote its start_ts as the version. If it committed too late, the stats cache on other
+		// TiDB nodes may have moved past that version, so write a newer one, as handleSlowStatsSaving does.
+		if batchDur := time.Since(batchStart); len(unlockedTableIDs) > 0 &&
+			storage.IsStatsMetaWriteTooSlow(s.statsHandle.Lease(), batchDur) {
+			newVersion, err := s.updateStatsMetaVerForSlowDump(unlockedTableIDs)
+			if err != nil {
+				statslogutil.StatsLogger().Warn("Failed to update stats meta version for slow stats delta dump, "+
+					"the stats cache on other TiDB nodes may miss the delta",
+					zap.Int("tableCount", len(unlockedTableIDs)),
+					zap.Duration("duration", batchDur),
+					zap.Error(err))
+			} else {
+				statsVersion = newVersion
+				statslogutil.StatsSampleLogger().Info("Updated stats meta version for slow stats delta dump",
+					zap.Int("tableCount", len(unlockedTableIDs)),
+					zap.Duration("duration", batchDur),
+					zap.Uint64("statsVersion", statsVersion))
+			}
+		}
 		s.statsHandle.RecordHistoricalStatsMeta(statsVersion, "flush stats", false, unlockedTableIDs...)
 		// Log a warning if recording historical stats meta takes too long, as it can be slow for large table counts
 		if time.Since(startRecordHistoricalStatsMeta) > time.Minute*15 {
@@ -217,6 +236,15 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) e
 	}
 
 	return nil
+}
+
+// updateStatsMetaVerForSlowDump updates the version of the dumped tables to a newer TS.
+func (s *statsUsageImpl) updateStatsMetaVerForSlowDump(tableIDs []int64) (statsVersion uint64, err error) {
+	err = utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		statsVersion, err = storage.UpdateStatsMetaVer(utilstats.StatsCtx, sctx, tableIDs...)
+		return err
+	}, utilstats.FlagWrapTxn)
+	return statsVersion, errors.Trace(err)
 }
 
 func collectPendingStatsDeltaTableIDs(deltaMap map[int64]variable.TableDelta, targetTableIDs []int64) []int64 {
