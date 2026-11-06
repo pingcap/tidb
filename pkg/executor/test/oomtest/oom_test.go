@@ -48,7 +48,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestMemTracker4UpdateExec(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, _ := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
