@@ -1787,7 +1787,6 @@ func TestInfoSchemaUserPrivileges(t *testing.T) {
 	anonTk.MustQuery(`SELECT grantee FROM information_schema.table_privileges`).Check(testkit.Rows())
 	anonTk.MustQuery(`SELECT grantee FROM information_schema.schema_privileges`).Check(testkit.Rows())
 
-
 	// IS_GRANTABLE of a column privilege reflects GRANT OPTION on its own table.
 	rootTk.MustExec(`CREATE TABLE test.isgrant1 (a INT)`)
 	rootTk.MustExec(`CREATE TABLE test.isgrant2 (a INT)`)
@@ -3083,7 +3082,6 @@ func TestColumnPrivilege4Views(t *testing.T) {
 	tk.MustExec(`GRANT SELECT(a) ON test.vs TO 'nopriv'@'localhost'`)
 	noPrivTk.MustQuery(`SELECT 1 FROM test.vs`).Check(testkit.Rows("1"))
 	noPrivTk.MustQuery(`SELECT EXISTS (SELECT 1 FROM test.vs)`).Check(testkit.Rows("1"))
-
 
 	// 7. A view column is identified by its own name, even when the view
 	// renames the columns of its SELECT.
