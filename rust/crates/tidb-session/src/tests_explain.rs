@@ -7250,3 +7250,85 @@ fn a_stream_aggregate_charges_its_partial_results_like_go() {
         assert_eq!(row[7], memory, "{sql}: {rows:?}");
     }
 }
+
+/// Go's `HashAggExec` charges its maps, its workers' chunks and the
+/// functions' partial results to its own tracker (captured from a Go
+/// testkit run). In parallel each of the five partial workers holds a
+/// mapper per final worker and two empty chunks, so even a global
+/// aggregate over no rows holds 12.5 KB; serially (both concurrencies 1)
+/// only the map, the child chunk and the results; an aggregate-local ORDER
+/// BY always runs serially.
+///
+/// Go's parallel runs with input hold 12.6 KB (`sum(a)`) and 13.5 KB (`b,
+/// count(a) ... group by b`); here the reader swaps a 32-row chunk into the
+/// fetcher's empty one (register E17).
+#[test]
+fn a_hash_aggregate_charges_its_workers_like_go() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE t (a INT, b VARCHAR(20), KEY(a))",
+        "INSERT INTO t VALUES (1,'x'),(2,'yy'),(2,'zzz'),(3,'w')",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let parallel = [
+        ("SELECT /*+ hash_agg() */ group_concat(b ORDER BY a) FROM t", "2.27 KB"),
+        ("SELECT /*+ hash_agg() */ sum(a) FROM t WHERE a > 10", "12.5 KB"),
+    ];
+    let serial = [
+        ("SELECT /*+ hash_agg() */ sum(a) FROM t", "2.06 KB"),
+        ("SELECT /*+ hash_agg() */ b, count(a) FROM t GROUP BY b", "1.75 KB"),
+        ("SELECT /*+ hash_agg() */ count(distinct b) FROM t", "1.52 KB"),
+        ("SELECT /*+ hash_agg() */ group_concat(b ORDER BY a) FROM t", "2.27 KB"),
+        ("SELECT /*+ hash_agg() */ sum(a) FROM t WHERE a > 10", "2.06 KB"),
+    ];
+    let memory = |session: &mut Session, sql: &str| -> String {
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        let row = rows
+            .iter()
+            .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()).starts_with("HashAgg") && row[3] == "root")
+            .unwrap_or_else(|| panic!("{sql}: no root HashAgg in {rows:?}"));
+        row[7].clone()
+    };
+    for (sql, expected) in parallel {
+        assert_eq!(memory(&mut session, sql), expected, "parallel {sql}");
+    }
+    session.run("SET tidb_hashagg_partial_concurrency = 1, tidb_hashagg_final_concurrency = 1").unwrap();
+    for (sql, expected) in serial {
+        assert_eq!(memory(&mut session, sql), expected, "serial {sql}");
+    }
+}
+
+/// Go's parallel HashAgg spills its partial workers' maps to 256 disk
+/// partitions once the statement's quota trips its `ParallelAggSpillDiskAction`,
+/// and its final workers restore and merge them partition by partition
+/// (`parallelHashAggSpillHelper`). Over 3000 groups under a 400000-byte
+/// quota Go (captured from a testkit run) cancels the statement (8175) when
+/// `tidb_mem_oom_action` is CANCEL -- the one 3000-row input chunk outgrows
+/// the quota before the fetcher can spill -- and with LOG spills (disk
+/// 378.0 KB) and answers every group.
+#[test]
+fn a_parallel_hash_aggregate_spills_and_restores_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE s (a INT, b VARCHAR(100))").unwrap();
+    let values: Vec<String> = (0..3000).map(|i| format!("({i},'{}')", "v".repeat(50))).collect();
+    session.run(&format!("INSERT INTO s VALUES {}", values.join(","))).unwrap();
+    session.run("SET tidb_mem_quota_query = 400000").unwrap();
+    let query = "SELECT /*+ hash_agg() */ a, count(b), max(b) FROM s GROUP BY a";
+    let error = session.run(query).expect_err("CANCEL cancels the statement");
+    assert!(format!("{error:?}").contains("8175"), "{error:?}");
+
+    session.run("SET GLOBAL tidb_mem_oom_action = 'LOG'").unwrap();
+    let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {query}")));
+    let agg = rows
+        .iter()
+        .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()).starts_with("HashAgg") && row[3] == "root")
+        .unwrap_or_else(|| panic!("no root HashAgg in {rows:?}"));
+    assert_eq!(agg[2], "3000", "{agg:?}");
+    assert_ne!(agg[8], "N/A", "the aggregation spills: {agg:?}");
+    let result = row_text(session.run(
+        "SELECT /*+ hash_agg() */ count(*), sum(c), max(m) FROM (SELECT a, count(b) c, max(b) m FROM s GROUP BY a) x",
+    ));
+    assert_eq!(result, vec![vec!["3000".to_owned(), "3000".to_owned(), "v".repeat(50)]]);
+    session.run("SET GLOBAL tidb_mem_oom_action = 'CANCEL'").unwrap();
+}

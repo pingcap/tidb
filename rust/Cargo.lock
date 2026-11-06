@@ -4906,6 +4906,7 @@ dependencies = [
 name = "tidb-executor-aggregate"
 version = "0.0.0"
 dependencies = [
+ "crossbeam-channel",
  "hashbrown 0.15.5",
  "smallvec",
  "tidb-ast",
@@ -4932,6 +4933,7 @@ dependencies = [
  "tidb-set",
  "tidb-spill-storage",
  "tidb-sqlkiller",
+ "tidb-tracing",
  "tidb-vardef",
  "tidb-variable",
  "tracing",

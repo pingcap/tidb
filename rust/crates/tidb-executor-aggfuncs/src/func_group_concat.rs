@@ -204,6 +204,14 @@ pub struct PartialResult4GroupConcat {
 pub struct GroupConcat(pub BaseGroupConcat4String);
 
 impl AggFunc for GroupConcat {
+    fn get_truncated(&self) -> Option<Arc<AtomicI32>> {
+        Some(self.0.get_truncated())
+    }
+
+    fn set_truncated(&mut self, t: Arc<AtomicI32>) {
+        self.0.set_truncated(t);
+    }
+
     fn alloc_partial_result(&self) -> (PartialResult, i64) {
         (Box::new(PartialResult4GroupConcat::default()), DEF_PARTIAL_RESULT_4_GROUP_CONCAT_SIZE + DEF_BYTES_BUFFER_SIZE)
     }
@@ -386,6 +394,14 @@ macro_rules! group_concat_distinct {
         pub struct $name(pub BaseGroupConcat4String);
 
         impl AggFunc for $name {
+            fn get_truncated(&self) -> Option<Arc<AtomicI32>> {
+                Some(self.0.get_truncated())
+            }
+
+            fn set_truncated(&mut self, t: Arc<AtomicI32>) {
+                self.0.set_truncated(t);
+            }
+
             fn alloc_partial_result(&self) -> (PartialResult, i64) {
                 alloc_distinct()
             }
@@ -611,6 +627,14 @@ pub struct PartialResult4GroupConcatOrder {
 pub struct GroupConcatOrder(pub GroupConcatOrderBase);
 
 impl AggFunc for GroupConcatOrder {
+    fn get_truncated(&self) -> Option<Arc<AtomicI32>> {
+        Some(self.0.base.get_truncated())
+    }
+
+    fn set_truncated(&mut self, t: Arc<AtomicI32>) {
+        self.0.base.set_truncated(t);
+    }
+
     fn alloc_partial_result(&self) -> (PartialResult, i64) {
         (Box::new(PartialResult4GroupConcatOrder { top_n: self.0.top_n() }), DEF_PARTIAL_RESULT_4_GROUP_CONCAT_ORDER_SIZE + DEF_TOP_N_ROWS_SIZE)
     }
@@ -665,6 +689,14 @@ pub struct PartialResult4GroupConcatOrderDistinct {
 pub struct GroupConcatDistinctOrder(pub GroupConcatOrderBase);
 
 impl AggFunc for GroupConcatDistinctOrder {
+    fn get_truncated(&self) -> Option<Arc<AtomicI32>> {
+        Some(self.0.base.get_truncated())
+    }
+
+    fn set_truncated(&mut self, t: Arc<AtomicI32>) {
+        self.0.base.set_truncated(t);
+    }
+
     fn alloc_partial_result(&self) -> (PartialResult, i64) {
         let (val_set, set_size) = StringSetWithMemoryUsage::new(std::iter::empty::<GoString>());
         let p = PartialResult4GroupConcatOrderDistinct {

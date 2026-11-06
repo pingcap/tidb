@@ -462,6 +462,16 @@ where
         self.map.is_empty()
     }
 
+    /// Go `m.M[key]` for an in-place update of the value.
+    pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
+        self.map.get_mut(key)
+    }
+
+    /// Go `for k, v := range m.M` over a map that is dropped afterwards.
+    pub fn into_iter(self) -> impl Iterator<Item = (K, V)> {
+        self.map.into_iter()
+    }
+
     /// Returns whether `key` exists.
     pub fn contains_key(&self, key: &K) -> bool {
         self.map.contains_key(key)

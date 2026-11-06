@@ -70,7 +70,12 @@
 
 
 pub mod agg_spill;
+pub(crate) mod agg_hash_base_worker;
+pub mod agg_hash_executor;
+pub(crate) mod agg_hash_final_worker;
+pub(crate) mod agg_hash_partial_worker;
 pub mod agg_stream_executor;
+pub(crate) mod agg_util;
 use tidb_datatype::CollationCollator;
 use crate::agg_spill::{AggSpillDiskAction, ParallelAggSpillDiskAction};
 

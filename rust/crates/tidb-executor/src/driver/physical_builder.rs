@@ -2038,6 +2038,11 @@ fn build_aggregation(
             return Ok(executor(child));
         }
     }
+    if !stream && !state.in_reader {
+        if let Some(executor) = build_hash_agg_from_child_exec(plan, descriptors, group_by, &child, ctx, register)? {
+            return Ok(executor(child));
+        }
+    }
     build_aggregation_over_child(plan, descriptors, group_by, stream, child, ctx, register)
 }
 
@@ -2048,8 +2053,24 @@ fn go_agg_funcs(
     child_schema: &Schema,
     ctx: &crate::StmtContext,
 ) -> Result<Option<Vec<Box<dyn tidb_executor_aggfuncs::agg_func::AggFunc>>>, DriverError> {
-    let mut agg_funcs = Vec::with_capacity(descriptors.len());
-    for (ordinal, descriptor) in descriptors.iter().enumerate() {
+    let Some(resolved) = resolved_descriptors(descriptors, child_schema)? else {
+        return Ok(None);
+    };
+    let mut agg_funcs = Vec::with_capacity(resolved.len());
+    for (ordinal, descriptor) in resolved.iter().enumerate() {
+        let Some(agg_func) = tidb_executor_aggfuncs::agg_builder::build(ctx, descriptor, ordinal) else {
+            return Ok(None);
+        };
+        agg_funcs.push(agg_func);
+    }
+    Ok(Some(agg_funcs))
+}
+
+/// The descriptors with their arguments and ORDER BY items bound to
+/// `child_schema`.
+fn resolved_descriptors(descriptors: &[AggFuncDesc], child_schema: &Schema) -> Result<Option<Vec<AggFuncDesc>>, DriverError> {
+    let mut resolved_all = Vec::with_capacity(descriptors.len());
+    for descriptor in descriptors {
         let mut resolved = descriptor.clone();
         // The planner's COUNT(*) under an index reader is an id-less
         // synthetic column, not a child column: Go's COUNT(1).
@@ -2068,12 +2089,123 @@ fn go_agg_funcs(
         for item in &mut resolved.order_by_items {
             item.expr = resolve_expression(item.expr.clone(), child_schema)?;
         }
-        let Some(agg_func) = tidb_executor_aggfuncs::agg_builder::build(ctx, &resolved, ordinal) else {
+        resolved_all.push(resolved);
+    }
+    Ok(Some(resolved_all))
+}
+
+/// Go `buildHashAggFromChildExec`: the HashAgg Go's TiDB tier runs, under
+/// the same conditions as [`build_stream_agg_from_child_exec`]. A parallel
+/// one splits each function into its partial and final halves (an AVG's
+/// partial outputs two columns), sharing a GROUP_CONCAT's truncation flag.
+fn build_hash_agg_from_child_exec(
+    plan: &PhysicalPlan,
+    descriptors: &[AggFuncDesc],
+    group_by: &[Expression],
+    child: &Box<dyn Executor>,
+    ctx: &crate::StmtContext,
+    register_runtime_stats: bool,
+) -> Result<Option<Box<dyn FnOnce(Box<dyn Executor>) -> Box<dyn Executor>>>, DriverError> {
+    let output_schema = plan_schema(plan)?;
+    if output_schema.len() != descriptors.len()
+        || !descriptors
+            .iter()
+            .all(|descriptor| matches!(descriptor.mode, AggFunctionMode::Complete | AggFunctionMode::Final))
+    {
+        return Ok(None);
+    }
+    let child_schema = child.schema().clone();
+    let group_by = resolve_expressions(group_by, &child_schema)?;
+    let mut is_unparallel_exec = descriptors.iter().any(|descriptor| !descriptor.order_by_items.is_empty());
+    let has_distinct = descriptors.iter().any(|descriptor| descriptor.has_distinct);
+    let (partial_concurrency, final_concurrency) = ctx.hashagg_concurrency();
+    // Both concurrencies at 1 (or non-positive): no parallel execution.
+    if final_concurrency == 0 || partial_concurrency == 0 || (final_concurrency == 1 && partial_concurrency == 1) {
+        is_unparallel_exec = true;
+    }
+    let Some(resolved) = resolved_descriptors(descriptors, &child_schema)? else {
+        return Ok(None);
+    };
+    let mut partial_agg_funcs = Vec::with_capacity(resolved.len());
+    let mut final_agg_funcs = Vec::new();
+    let mut partial_ordinal = 0;
+    for (i, descriptor) in resolved.iter().enumerate() {
+        if is_unparallel_exec {
+            let Some(agg_func) = tidb_executor_aggfuncs::agg_builder::build(ctx, descriptor, i) else {
+                return Ok(None);
+            };
+            partial_agg_funcs.push(agg_func);
+            continue;
+        }
+        let mut ordinal = vec![partial_ordinal];
+        partial_ordinal += 1;
+        if descriptor.base.name == "avg" {
+            ordinal.push(partial_ordinal + 1);
+            partial_ordinal += 1;
+        }
+        let (partial_desc, final_desc) = descriptor.split(&ordinal);
+        let (Some(partial_agg_func), Some(mut final_agg_func)) = (
+            tidb_executor_aggfuncs::agg_builder::build(ctx, &partial_desc, i),
+            tidb_executor_aggfuncs::agg_builder::build(ctx, &final_desc, i),
+        ) else {
             return Ok(None);
         };
-        agg_funcs.push(agg_func);
+        if partial_desc.base.name == "group_concat" {
+            // The two halves share one truncation sentinel.
+            if let Some(truncated) = partial_agg_func.get_truncated() {
+                final_agg_func.set_truncated(truncated);
+            }
+        }
+        partial_agg_funcs.push(partial_agg_func);
+        final_agg_funcs.push(final_agg_func);
     }
-    Ok(Some(agg_funcs))
+    let executor_meta = meta(ctx, plan, output_schema);
+    let default_val = (group_by.is_empty() && !tidb_expression_aggregation::is_all_first_row(descriptors)).then(|| {
+        let mut default_val = Chunk::new_chunk_with_capacity(executor_meta.ret_field_types(), 1);
+        for (i, descriptor) in descriptors.iter().enumerate() {
+            default_val.append_datum(i, &descriptor.base.get_default_value());
+        }
+        default_val
+    });
+    let track_aggregate_memory_usage = track_aggregate_memory_usage(ctx);
+    let enable_parallel_hashagg_spill = tidb_exprctx::Columns::sysvar(ctx, None, "tidb_enable_parallel_hashagg_spill")
+        .map_or(tidb_vardef::defaults::DEF_TIDB_ENABLE_PARALLEL_HASHAGG_SPILL, |value| {
+            !matches!(value, tidb_datatype::Datum::Int(0) | tidb_datatype::Datum::UInt(0))
+        });
+    let plan_id = i64::from(plan.id());
+    let memory = ctx.statement_memory();
+    let runtime_stats = ctx.executor_runtime_stats_source().filter(|_| register_runtime_stats).cloned();
+    let ctx = ctx.clone();
+    Ok(Some(Box::new(move |child| {
+        let mut executor = tidb_executor_aggregate::agg_hash_executor::HashAggExec::new(
+            executor_meta,
+            child,
+            ctx,
+            memory,
+            tidb_executor_aggregate::agg_hash_executor::HashAggExecBuild {
+                partial_agg_funcs,
+                final_agg_funcs,
+                group_by_items: group_by,
+                default_val,
+                is_unparallel_exec,
+                has_distinct,
+                partial_concurrency,
+                final_concurrency,
+                track_aggregate_memory_usage,
+                enable_parallel_hashagg_spill,
+            },
+        );
+        executor.set_runtime_stats(runtime_stats, plan_id);
+        Box::new(executor)
+    })))
+}
+
+/// Go `TrackAggregateMemoryUsage`.
+fn track_aggregate_memory_usage(ctx: &crate::StmtContext) -> bool {
+    tidb_exprctx::Columns::sysvar(ctx, None, "tidb_track_aggregate_memory_usage")
+        .map_or(tidb_vardef::defaults::DEF_TIDB_TRACK_AGGREGATE_MEMORY_USAGE, |value| {
+            !matches!(value, tidb_datatype::Datum::Int(0) | tidb_datatype::Datum::UInt(0))
+        })
 }
 
 /// Go `buildStreamAggFromChildExec`: the StreamAgg Go's TiDB tier runs --
@@ -2112,8 +2244,7 @@ fn build_stream_agg_from_child_exec(
     let plan_id = i64::from(plan.id());
     // Go attaches the executor's tracker to the statement's when
     // `tidb_track_aggregate_memory_usage` is on.
-    let track = tidb_exprctx::Columns::sysvar(ctx, None, "tidb_track_aggregate_memory_usage")
-        .map_or(tidb_vardef::defaults::DEF_TIDB_TRACK_AGGREGATE_MEMORY_USAGE, |value| !matches!(value, tidb_datatype::Datum::Int(0) | tidb_datatype::Datum::UInt(0)));
+    let track = track_aggregate_memory_usage(ctx);
     let memory = ctx.statement_memory();
     let mem_tracker = memory.operator_tracker(plan_id);
     let stmt_mem_tracker = track.then(|| std::sync::Arc::clone(memory.stmt_tracker()));

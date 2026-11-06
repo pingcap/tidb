@@ -127,6 +127,24 @@ pub trait AggFunc: Send + Sync {
     fn as_max_min_sliding_window(&self) -> Option<&dyn MaxMinSlidingWindowAggFunc> {
         None
     }
+
+    /// Go's duck-typed `GetTruncated` of a `GROUP_CONCAT`, whose partial
+    /// and final functions share one truncation sentinel.
+    fn get_truncated(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicI32>> {
+        None
+    }
+
+    /// Go's duck-typed `SetTruncated` of a `GROUP_CONCAT`.
+    fn set_truncated(&mut self, _t: std::sync::Arc<std::sync::atomic::AtomicI32>) {}
+}
+
+/// Go `AggPartialResultMapper`: each group key's partial results.
+pub type AggPartialResultMapper = tidb_hack::MemAwareMap<tidb_goruntime::GoString, Vec<PartialResult>>;
+
+/// Go `NewAggPartialResultMapper`.
+#[must_use]
+pub fn new_agg_partial_result_mapper() -> AggPartialResultMapper {
+    tidb_hack::MemAwareMap::new(0)
 }
 
 /// Go `MaxMinSlidingWindowAggFunc`: a sliding MAX/MIN, which keys its

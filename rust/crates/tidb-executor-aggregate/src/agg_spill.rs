@@ -89,6 +89,8 @@ pub struct AggSpillDiskAction {
 /// chunks, partitions the partial states, and then resumes with empty maps.
 pub struct ParallelAggSpillDiskAction {
     base: BaseOomAction,
+    /// Go `spillHelper`, for the Go-shaped executor.
+    spill_helper: Option<Arc<ParallelHashAggSpillHelper>>,
     need_spill: Arc<AtomicBool>,
     spill_times: AtomicU32,
     agg_tracker: Arc<Tracker>,
@@ -101,6 +103,7 @@ impl ParallelAggSpillDiskAction {
         let need_spill = Arc::new(AtomicBool::new(false));
         let action = Arc::new(ParallelAggSpillDiskAction {
             base: BaseOomAction::default(),
+            spill_helper: None,
             need_spill: Arc::clone(&need_spill),
             spill_times: AtomicU32::new(0),
             agg_tracker: Arc::clone(agg_tracker),
@@ -116,8 +119,32 @@ impl ParallelAggSpillDiskAction {
     }
 }
 
+impl ParallelAggSpillDiskAction {
+    /// Go `actionSpillForParallel`: the action over `spill_helper`.
+    pub(crate) fn new_for_helper(agg_tracker: &Arc<Tracker>, spill_helper: Arc<ParallelHashAggSpillHelper>) -> Arc<ParallelAggSpillDiskAction> {
+        Arc::new(ParallelAggSpillDiskAction {
+            base: BaseOomAction::default(),
+            spill_helper: Some(spill_helper),
+            need_spill: Arc::new(AtomicBool::new(false)),
+            spill_times: AtomicU32::new(0),
+            agg_tracker: Arc::clone(agg_tracker),
+        })
+    }
+}
+
 impl ActionOnExceed for ParallelAggSpillDiskAction {
     fn action(&self, triggered: &Arc<Tracker>) {
+        if let Some(spill_helper) = &self.spill_helper {
+            // Go `actionImpl`.
+            spill_helper.wait_for_the_end_of_spill();
+            if spill_helper.set_need_spill(&self.agg_tracker, triggered) {
+                return;
+            }
+            if let Some(fallback) = self.get_fallback() {
+                fallback.action(triggered);
+            }
+            return;
+        }
         if self.need_spill.load(SeqCst) {
             // Go waits for the active spill to finish before trying to set a
             // new request. The Rust pipeline drains synchronously at the next
@@ -318,5 +345,260 @@ mod tests {
         action.action(&root);
         assert!(!flag.load(SeqCst), "10 bytes is not worth a spill file");
         assert_eq!(counting.hits.load(SeqCst), 1);
+    }
+}
+
+use tidb_chunk::chunk::Chunk;
+use tidb_driver_error::ExecError;
+use tidb_goruntime::GoString;
+
+/// Go `spillStatus`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SpillStatus {
+    NoSpill,
+    NeedSpill,
+    InSpilling,
+    SpillTriggered,
+}
+
+/// Go `spilledPartitionNum`.
+pub(crate) const SPILLED_PARTITION_NUM: usize = 256;
+
+/// Go `parallelHashAggSpillHelper.lock`'s fields.
+struct SpillHelperLock {
+    next_partition_idx: isize,
+    spilled_chunks_io: Vec<Vec<tidb_chunk::chunk_in_disk::DataInDiskByChunks>>,
+    status: SpillStatus,
+    memory_consumption: i64,
+    memory_quota: i64,
+}
+
+/// Go `parallelHashAggSpillHelper`: the parallel HashAgg's spill state the
+/// action, the fetcher and the workers share.
+pub(crate) struct ParallelHashAggSpillHelper {
+    lock: std::sync::Mutex<SpillHelperLock>,
+    wait_if_in_spilling: std::sync::Condvar,
+    pub(crate) mem_tracker: Arc<Tracker>,
+    pub(crate) disk_tracker: std::sync::Mutex<Option<Arc<tidb_disk::Tracker>>>,
+    has_error: AtomicBool,
+    /// The partial functions, used only to restore what partial workers
+    /// spilled.
+    agg_funcs_for_restoring: Arc<Vec<Box<dyn tidb_executor_aggfuncs::agg_func::AggFunc>>>,
+    final_worker_agg_funcs: Arc<Vec<Box<dyn tidb_executor_aggfuncs::agg_func::AggFunc>>>,
+    pub(crate) spill_chunk_field_types: Vec<tidb_datatype::FieldType>,
+    init_cap: usize,
+    max_chunk_size: usize,
+    pub(crate) storage: Arc<tidb_spill_storage::SpillStorage>,
+}
+
+impl ParallelHashAggSpillHelper {
+    /// Go `newSpillHelper`.
+    pub(crate) fn new(
+        tracker: &Arc<Tracker>,
+        agg_funcs_for_restoring: Arc<Vec<Box<dyn tidb_executor_aggfuncs::agg_func::AggFunc>>>,
+        final_worker_agg_funcs: Arc<Vec<Box<dyn tidb_executor_aggfuncs::agg_func::AggFunc>>>,
+        spill_chunk_field_types: Vec<tidb_datatype::FieldType>,
+        init_cap: usize,
+        max_chunk_size: usize,
+        storage: Arc<tidb_spill_storage::SpillStorage>,
+    ) -> Result<Self, ExecError> {
+        if agg_funcs_for_restoring.len() != final_worker_agg_funcs.len() {
+            return Err(ExecError::internal("len(aggFuncsForRestoring) != len(finalWorkerAggFuncs)"));
+        }
+        Ok(Self {
+            lock: std::sync::Mutex::new(SpillHelperLock {
+                next_partition_idx: SPILLED_PARTITION_NUM as isize - 1,
+                spilled_chunks_io: (0..SPILLED_PARTITION_NUM).map(|_| Vec::new()).collect(),
+                status: SpillStatus::NoSpill,
+                memory_consumption: 0,
+                memory_quota: 0,
+            }),
+            wait_if_in_spilling: std::sync::Condvar::new(),
+            mem_tracker: Arc::clone(tracker),
+            disk_tracker: std::sync::Mutex::new(None),
+            has_error: AtomicBool::new(false),
+            agg_funcs_for_restoring,
+            final_worker_agg_funcs,
+            spill_chunk_field_types,
+            init_cap,
+            max_chunk_size,
+            storage,
+        })
+    }
+
+    fn locked(&self) -> std::sync::MutexGuard<'_, SpillHelperLock> {
+        self.lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Go `getNewSpillChunkFunc`.
+    pub(crate) fn get_new_spill_chunk(&self) -> Chunk {
+        Chunk::new(&self.spill_chunk_field_types, self.init_cap, self.max_chunk_size)
+    }
+
+    /// Go `close`.
+    pub(crate) fn close(&self) {
+        for ios in &mut self.locked().spilled_chunks_io {
+            for io in ios {
+                io.close();
+            }
+        }
+    }
+
+    /// Go `isSpilledChunksIOEmpty`.
+    pub(crate) fn is_spilled_chunks_io_empty(&self) -> bool {
+        self.locked().spilled_chunks_io.iter().all(Vec::is_empty)
+    }
+
+    /// Go `getNextPartition`.
+    fn get_next_partition(&self) -> Option<usize> {
+        let mut lock = self.locked();
+        let partition_idx = lock.next_partition_idx;
+        if partition_idx < 0 {
+            return None;
+        }
+        lock.next_partition_idx -= 1;
+        Some(partition_idx as usize)
+    }
+
+    /// Go `addListInDisks`.
+    pub(crate) fn add_list_in_disks(&self, data_in_disk: Vec<tidb_chunk::chunk_in_disk::DataInDiskByChunks>) {
+        let mut lock = self.locked();
+        for (i, data) in data_in_disk.into_iter().enumerate() {
+            lock.spilled_chunks_io[i].push(data);
+        }
+    }
+
+    /// Go `setInSpilling`.
+    pub(crate) fn set_in_spilling(&self) {
+        let mut lock = self.locked();
+        lock.status = SpillStatus::InSpilling;
+        tracing::info!(consumed = lock.memory_consumption, quota = lock.memory_quota, "memory exceeds quota, set aggregate mode to spill-mode");
+    }
+
+    /// Go `isNoSpill`.
+    pub(crate) fn is_no_spill(&self) -> bool {
+        self.locked().status == SpillStatus::NoSpill
+    }
+
+    /// Go `setSpillTriggered`.
+    pub(crate) fn set_spill_triggered(&self) {
+        self.locked().status = SpillStatus::SpillTriggered;
+        self.wait_if_in_spilling.notify_all();
+    }
+
+    /// Go `checkNeedSpill`.
+    pub(crate) fn check_need_spill(&self) -> bool {
+        self.locked().status == SpillStatus::NeedSpill
+    }
+
+    /// Go `setNeedSpill`: whether the flag was set.
+    pub(crate) fn set_need_spill(&self, executor_tracker: &Tracker, triggered_tracker: &Tracker) -> bool {
+        let mut lock = self.locked();
+        if has_enough_data_to_spill(executor_tracker, triggered_tracker) {
+            lock.status = SpillStatus::NeedSpill;
+            lock.memory_consumption = triggered_tracker.bytes_consumed();
+            lock.memory_quota = triggered_tracker.get_bytes_limit();
+            return true;
+        }
+        false
+    }
+
+    /// Go `waitForTheEndOfSpill`.
+    pub(crate) fn wait_for_the_end_of_spill(&self) {
+        let mut lock = self.locked();
+        while lock.status == SpillStatus::InSpilling {
+            lock = self.wait_if_in_spilling.wait(lock).unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+    }
+
+    /// Go `checkError`.
+    pub(crate) fn check_error(&self) -> bool {
+        self.has_error.load(SeqCst)
+    }
+
+    /// Go `setError`.
+    pub(crate) fn set_error(&self) {
+        self.has_error.store(true, SeqCst);
+    }
+
+    /// Go `restoreOnePartition`: the next partition's results, merged, or
+    /// `None` once every partition is restored.
+    pub(crate) fn restore_one_partition(&self, ctx: &tidb_executor_aggfuncs::agg_func::AggFuncUpdateContext) -> Result<(Option<tidb_executor_aggfuncs::agg_func::AggPartialResultMapper>, i64), ExecError> {
+        let mut restored_data = tidb_executor_aggfuncs::agg_func::new_agg_partial_result_mapper();
+        let mut restored_mem = 0;
+        let Some(restored_partition_idx) = self.get_next_partition() else {
+            return Ok((None, restored_mem));
+        };
+        let mut spilled_files_io = std::mem::take(&mut self.locked().spilled_chunks_io[restored_partition_idx]);
+        let result = (|| {
+            for spilled_file in &mut spilled_files_io {
+                let (mem_delta, expand_mem) = self.restore_from_one_spill_file(ctx, &mut restored_data, spilled_file)?;
+                self.mem_tracker.consume(mem_delta);
+                restored_mem += mem_delta + expand_mem;
+            }
+            Ok::<_, ExecError>(())
+        })();
+        // The files stay the helper's until `close` removes them.
+        self.locked().spilled_chunks_io[restored_partition_idx] = spilled_files_io;
+        result?;
+        Ok((Some(restored_data), restored_mem))
+    }
+
+    /// Go `restoreFromOneSpillFile`.
+    fn restore_from_one_spill_file(
+        &self,
+        ctx: &tidb_executor_aggfuncs::agg_func::AggFuncUpdateContext,
+        restored_data: &mut tidb_executor_aggfuncs::agg_func::AggPartialResultMapper,
+        disk_io: &mut tidb_chunk::chunk_in_disk::DataInDiskByChunks,
+    ) -> Result<(i64, i64), ExecError> {
+        let mut total_mem_delta = 0;
+        let total_expand_mem = 0;
+        let agg_func_num = self.agg_funcs_for_restoring.len();
+        for i in 0..disk_io.num_chunks() {
+            let chunk = disk_io.get_chunk(i).map_err(|error| ExecError::internal(error.to_string()))?;
+            // Deserialize each function's partial results.
+            let mut partial_results_restored = Vec::with_capacity(agg_func_num);
+            for agg_func in self.agg_funcs_for_restoring.iter() {
+                let (partial_result, mem_delta) = agg_func.deserialize_partial_result(&chunk);
+                partial_results_restored.push(partial_result.into_iter().map(Some).collect::<Vec<_>>());
+                total_mem_delta += mem_delta;
+            }
+            // Merge or create the results.
+            for row_pos in 0..chunk.num_rows() {
+                total_mem_delta += self.process_row(ctx, &chunk, row_pos, agg_func_num, restored_data, &mut partial_results_restored)?;
+            }
+        }
+        Ok((total_mem_delta, total_expand_mem))
+    }
+
+    /// Go `processRow`.
+    fn process_row(
+        &self,
+        ctx: &tidb_executor_aggfuncs::agg_func::AggFuncUpdateContext,
+        chunk: &Chunk,
+        row_pos: usize,
+        agg_func_num: usize,
+        restored_data: &mut tidb_executor_aggfuncs::agg_func::AggPartialResultMapper,
+        partial_results_restored: &mut [Vec<Option<tidb_executor_aggfuncs::agg_func::PartialResult>>],
+    ) -> Result<i64, ExecError> {
+        let key = GoString::from(chunk.get_row(row_pos).get_bytes(agg_func_num).to_vec());
+        let mut total_mem_delta = 0;
+        if let Some(prs) = restored_data.get_mut(&key) {
+            // The key has appeared before: merge.
+            for agg_pos in 0..agg_func_num {
+                let mut src = partial_results_restored[agg_pos][row_pos].take().expect("each restored result is merged once");
+                total_mem_delta += self.final_worker_agg_funcs[agg_pos].merge_partial_result(ctx, &mut src, &mut prs[agg_pos])?;
+            }
+        } else {
+            total_mem_delta += key.len() as i64;
+            let results = (0..agg_func_num)
+                .map(|agg_pos| partial_results_restored[agg_pos][row_pos].take().expect("each restored result is used once"))
+                .collect();
+            let delta = restored_data.set(key, results);
+            if delta > 0 {
+                self.mem_tracker.consume(delta);
+            }
+        }
+        Ok(total_mem_delta)
     }
 }

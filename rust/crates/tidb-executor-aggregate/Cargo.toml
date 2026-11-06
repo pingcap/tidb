@@ -11,6 +11,7 @@ description = "TiDB pkg/executor/aggregate (Rust)."
 workspace = true
 
 [dependencies]
+crossbeam-channel = "0.5"
 tidb-variable = { path = "../tidb-variable" }
 hashbrown = { workspace = true }
 smallvec = { workspace = true }
@@ -39,6 +40,7 @@ tidb-set = { path = "../tidb-set" }
 tidb-spill-storage = { path = "../tidb-spill-storage" }
 tidb-sqlkiller = { path = "../tidb-sqlkiller" }
 tidb-vardef = { path = "../tidb-vardef" }
+tidb-tracing = { path = "../tidb-tracing" }
 
 [dev-dependencies]
 tidb-planner = { path = "../tidb-planner" }

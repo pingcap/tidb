@@ -208,7 +208,7 @@ impl GroupKeyBuffer {
 /// invalid value 0 has the name '' a user-defined member may share), and a
 /// DECIMAL by its own precision (`SetFlen(0)`, so `EncodeDecimal` never
 /// fails on a value wider than the declared type).
-fn group_key_type(
+pub(super) fn group_key_type(
     field_type: &tidb_datatype::FieldType,
 ) -> std::borrow::Cow<'_, tidb_datatype::FieldType> {
     match field_type.code() {

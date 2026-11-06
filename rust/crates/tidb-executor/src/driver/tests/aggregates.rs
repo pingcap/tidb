@@ -2140,10 +2140,12 @@ fn aggregates_read_the_arguments_collation() {
             .unwrap()
             .remove(0)
     };
-    assert_eq!(
-        datum_text_for_test(&row("SELECT GROUP_CONCAT(DISTINCT s) FROM g")[0]),
-        "b,A"
-    );
+    // Go keeps each collation key's first value ('b', 'A') and joins its
+    // map in iteration order, which is random: compare them as a set.
+    let joined = datum_text_for_test(&row("SELECT GROUP_CONCAT(DISTINCT s) FROM g")[0]);
+    let mut values: Vec<&str> = joined.split(',').collect();
+    values.sort_unstable();
+    assert_eq!(values, vec!["A", "b"]);
 }
 
 /// A DISTINCT argument that is a COMPUTED expression forces the cop partial
