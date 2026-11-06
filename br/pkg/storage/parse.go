@@ -167,7 +167,7 @@ func ExtractQueryParameters(u *url.URL, options any) {
 			continue
 		}
 		param := params[0]
-		normalizedKey := strings.ToLower(strings.ReplaceAll(key, "_", "-"))
+		normalizedKey := NormalizeQueryParameterKey(key)
 		if f, ok := tagToField[normalizedKey]; ok {
 			field := o.Field(f.index)
 			switch f.kind {
@@ -185,6 +185,12 @@ func ExtractQueryParameters(u *url.URL, options any) {
 
 	// Clean up the URL finally.
 	u.RawQuery = ""
+}
+
+// NormalizeQueryParameterKey normalizes object storage URL query parameter keys
+// to match backend option tags.
+func NormalizeQueryParameterKey(key string) string {
+	return strings.ToLower(strings.ReplaceAll(key, "_", "-"))
 }
 
 // FormatBackendURL obtains the raw URL which can be used the reconstruct the
@@ -231,4 +237,9 @@ func IsLocal(u *url.URL) bool {
 // IsS3 returns true if the URL is an S3 URL.
 func IsS3(u *url.URL) bool {
 	return u.Scheme == "s3"
+}
+
+// IsS3Like returns true if the URL is an S3-like storage URL.
+func IsS3Like(u *url.URL) bool {
+	return u.Scheme == "s3" || u.Scheme == "oss"
 }

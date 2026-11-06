@@ -46,6 +46,12 @@ import (
 var hardcodedS3ChunkSize = 5 * 1024 * 1024
 
 const (
+	// S3AccessKey is the key for the access key used in S3 operations.
+	S3AccessKey = "access-key"
+	// S3SecretAccessKey is the key for the secret access key used in S3 operations.
+	S3SecretAccessKey = "secret-access-key"
+	// S3RoleARN is the key for the role ARN used in S3 operations.
+	S3RoleARN = "role-arn"
 	// S3ExternalID is the key for the external ID used in S3 operations.
 	S3ExternalID = "external-id"
 
@@ -56,7 +62,7 @@ const (
 	s3SseKmsKeyIDOption  = "s3.sse-kms-key-id"
 	s3ACLOption          = "s3.acl"
 	s3ProviderOption     = "s3.provider"
-	s3RoleARNOption      = "s3.role-arn"
+	s3RoleARNOption      = "s3." + S3RoleARN
 	s3ExternalIDOption   = "s3." + S3ExternalID
 	s3ProfileOption      = "s3.profile"
 	notFound             = "NotFound"
