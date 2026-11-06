@@ -152,7 +152,8 @@ func (a *AggFuncDesc) Clone() *AggFuncDesc {
 // final phase individually.
 // This function is only used when executing aggregate function parallelly.
 // ordinal indicates the column ordinal of the intermediate result.
-func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFuncDesc) {
+// Argument types may depend on the prepared parameter values in ctx.
+func (a *AggFuncDesc) Split(ctx expression.EvalContext, ordinal []int) (partialAggDesc, finalAggDesc *AggFuncDesc) {
 	partialAggDesc = a.Clone()
 	switch a.Mode {
 	case CompleteMode:
@@ -211,7 +212,7 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 			// This is not the row-based two-phase shape of max_count/min_count.
 			// A row-based final/partial2 max_count/min_count must consume
 			// [count, extrema value], which is currently rejected by the executor.
-			argRetTp = a.Args[0].GetType(nil).Clone()
+			argRetTp = a.Args[0].GetType(ctx).Clone()
 		}
 		args = append(args, &expression.Column{
 			Index:   ordinal[0],
