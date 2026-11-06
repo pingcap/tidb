@@ -28,6 +28,7 @@ go_test(
         "//pkg/sessionctx/vardef",
         "//pkg/statistics",
         "//pkg/store/mockstore",
+        "//pkg/structure",
         "//pkg/testkit",  #keep
         "//pkg/testkit/testenv",
         "//pkg/testkit/testfailpoint",
