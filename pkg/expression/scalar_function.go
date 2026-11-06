@@ -854,22 +854,28 @@ func (sf *ScalarFunction) RemapColumn(m map[int64]*Column) (Expression, error) {
 // - ast.Plus
 // - ast.Minus
 // - ast.UnaryMinus
+//
+// The constant operand of ast.Plus and ast.Minus must not be NULL, since
+// `col + NULL` / `NULL - col` is NULL for every row and doesn't follow col's order.
 func (sf *ScalarFunction) GetSingleColumn(reverse bool) (*Column, bool) {
 	switch sf.FuncName.String() {
 	case ast.Plus:
 		args := sf.GetArgs()
 		switch tp := args[0].(type) {
 		case *Column:
-			if _, ok := args[1].(*Constant); !ok {
+			if !isNonNullConstant(args[1]) {
 				return nil, false
 			}
 			return tp, reverse
 		case *ScalarFunction:
-			if _, ok := args[1].(*Constant); !ok {
+			if !isNonNullConstant(args[1]) {
 				return nil, false
 			}
 			return tp.GetSingleColumn(reverse)
 		case *Constant:
+			if !isNonNullConstant(tp) {
+				return nil, false
+			}
 			switch rtp := args[1].(type) {
 			case *Column:
 				return rtp, reverse
@@ -882,16 +888,19 @@ func (sf *ScalarFunction) GetSingleColumn(reverse bool) (*Column, bool) {
 		args := sf.GetArgs()
 		switch tp := args[0].(type) {
 		case *Column:
-			if _, ok := args[1].(*Constant); !ok {
+			if !isNonNullConstant(args[1]) {
 				return nil, false
 			}
 			return tp, reverse
 		case *ScalarFunction:
-			if _, ok := args[1].(*Constant); !ok {
+			if !isNonNullConstant(args[1]) {
 				return nil, false
 			}
 			return tp.GetSingleColumn(reverse)
 		case *Constant:
+			if !isNonNullConstant(tp) {
+				return nil, false
+			}
 			switch rtp := args[1].(type) {
 			case *Column:
 				return rtp, !reverse
@@ -911,6 +920,19 @@ func (sf *ScalarFunction) GetSingleColumn(reverse bool) (*Column, bool) {
 		return nil, false
 	}
 	return nil, false
+}
+
+// isNonNullConstant returns true if expr is a constant whose value is known to be non-NULL.
+func isNonNullConstant(expr Expression) bool {
+	c, ok := expr.(*Constant)
+	if !ok {
+		return false
+	}
+	if c.DeferredExpr != nil || c.ParamMarker != nil {
+		// The value may change across executions, keep the previous behavior.
+		return true
+	}
+	return !c.Value.IsNull()
 }
 
 // Coercibility returns the coercibility value which is used to check collations.
