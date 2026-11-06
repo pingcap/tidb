@@ -323,6 +323,14 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 					return nil, nil, err
 				}
 				p = np
+				// Projecting the expression below the aggregation would hide it from
+				// findJoinFullSchema and rollup handling, so it is not supported here.
+				if b.nullsOrderNeedsSingleEval(byItem, newByItem) {
+					return nil, nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("NULLS FIRST/LAST on a non-deterministic expression in the ORDER BY of GROUP_CONCAT")
+				}
+				if isNull := b.nullsOrderIsNullExpr(byItem, newByItem); isNull != nil {
+					newFunc.OrderByItems = append(newFunc.OrderByItems, &util.ByItems{Expr: isNull, Desc: byItem.Desc})
+				}
 				newFunc.OrderByItems = append(newFunc.OrderByItems, &util.ByItems{Expr: newByItem, Desc: byItem.Desc})
 			}
 		}
@@ -2530,12 +2538,58 @@ func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p base.LogicalPlan
 			}
 		}
 
-		p = np
+		p, it = b.projectNullsOrderExpr(np, item, it)
+		if isNull := b.nullsOrderIsNullExpr(item, it); isNull != nil {
+			exprs = append(exprs, &util.ByItems{Expr: isNull, Desc: item.Desc})
+		}
 		exprs = append(exprs, &util.ByItems{Expr: it, Desc: item.Desc})
 	}
 	sort.ByItems = exprs
 	sort.SetChildren(p)
 	return sort, nil
+}
+
+// nullsOrderIsNullExpr returns ISNULL(expr) when the by item asks for NULLs to
+// sort high (ASC NULLS LAST or DESC NULLS FIRST) and expr can be NULL. NULL is
+// the smallest value otherwise, so ordering by ISNULL(expr) in the item's
+// direction ahead of expr gives the requested order. It returns nil when no
+// extra key is needed, which silently ignores the clause for NOT NULL exprs.
+func (b *PlanBuilder) nullsOrderIsNullExpr(item *ast.ByItem, expr expression.Expression) expression.Expression {
+	if !item.NullsHigh() || expression.ExprNotNull(b.ctx.GetExprCtx().GetEvalCtx(), expr) {
+		return nil
+	}
+	return expression.NewFunctionInternal(b.ctx.GetExprCtx(), ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
+}
+
+// nullsOrderNeedsSingleEval reports whether ordering by ISNULL(expr), expr
+// would be wrong because it evaluates expr twice per row. An expression such
+// as NEXTVAL(s) or RAND() can return a different value each time, so the NULL
+// flag would not describe the value being sorted, and side effects would run
+// twice.
+func (b *PlanBuilder) nullsOrderNeedsSingleEval(item *ast.ByItem, expr expression.Expression) bool {
+	return b.nullsOrderIsNullExpr(item, expr) != nil && !expression.IsImmutableFunc(expr)
+}
+
+// projectNullsOrderExpr evaluates expr once in a projection on top of p when
+// nullsOrderNeedsSingleEval, and returns that projection with the column to
+// order by in place of expr. The projection keeps all columns of p, so the
+// caller must trim the extra column from its output.
+func (b *PlanBuilder) projectNullsOrderExpr(p base.LogicalPlan, item *ast.ByItem, expr expression.Expression) (base.LogicalPlan, expression.Expression) {
+	if !b.nullsOrderNeedsSingleEval(item, expr) {
+		return p, expr
+	}
+	evalCtx := b.ctx.GetExprCtx().GetEvalCtx()
+	col := &expression.Column{
+		UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  expr.GetType(evalCtx).Clone(),
+	}
+	proj := logicalop.LogicalProjection{Exprs: append(expression.Column2Exprs(p.Schema().Columns), expr)}.Init(b.ctx, b.getSelectOffset())
+	schema := p.Schema().Clone()
+	schema.Append(col)
+	proj.SetSchema(schema)
+	proj.SetOutputNames(append(slices.Clone(p.OutputNames()), types.EmptyName))
+	proj.SetChildren(p)
+	return proj, col
 }
 
 // checkOrderByInDistinct checks whether ORDER BY has conflicts with DISTINCT, see #12442
@@ -6976,26 +7030,37 @@ func (b *PlanBuilder) buildByItemsForWindow(
 		if it.GetType(b.ctx.GetExprCtx().GetEvalCtx()).GetType() == mysql.TypeNull {
 			continue
 		}
-		if col, ok := it.(*expression.Column); ok {
-			retItems = append(retItems, property.SortItem{Col: col, Desc: item.Desc})
-			// We need to attempt to add this column because a subquery may be created during the expression rewrite process.
-			// Therefore, we need to ensure that the column from the newly created query plan is added.
-			// If the column is already in the schema, we don't need to add it again.
-			if !proj.Schema().Contains(col) {
-				proj.Exprs = append(proj.Exprs, col)
-				proj.SetOutputNames(append(proj.OutputNames(), types.EmptyName))
-				proj.Schema().Append(col)
+		// Projecting ISNULL(it) next to it would evaluate it twice, and a projection
+		// below proj would be merged into proj. So when it must be evaluated once,
+		// project only it and let the sort below the window compute ISNULL from
+		// that column (see property.SortItem.NullsHigh).
+		nullsHigh := b.nullsOrderNeedsSingleEval(item, it)
+		exprs := []expression.Expression{it}
+		if isNull := b.nullsOrderIsNullExpr(item, it); isNull != nil && !nullsHigh {
+			exprs = []expression.Expression{isNull, it}
+		}
+		for _, it := range exprs {
+			if col, ok := it.(*expression.Column); ok {
+				retItems = append(retItems, property.SortItem{Col: col, Desc: item.Desc})
+				// We need to attempt to add this column because a subquery may be created during the expression rewrite process.
+				// Therefore, we need to ensure that the column from the newly created query plan is added.
+				// If the column is already in the schema, we don't need to add it again.
+				if !proj.Schema().Contains(col) {
+					proj.Exprs = append(proj.Exprs, col)
+					proj.SetOutputNames(append(proj.OutputNames(), types.EmptyName))
+					proj.Schema().Append(col)
+				}
+				continue
 			}
-			continue
+			proj.Exprs = append(proj.Exprs, it)
+			proj.SetOutputNames(append(proj.OutputNames(), types.EmptyName))
+			col := &expression.Column{
+				UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+				RetType:  it.GetType(b.ctx.GetExprCtx().GetEvalCtx()),
+			}
+			proj.Schema().Append(col)
+			retItems = append(retItems, property.SortItem{Col: col, Desc: item.Desc, NullsHigh: nullsHigh})
 		}
-		proj.Exprs = append(proj.Exprs, it)
-		proj.SetOutputNames(append(proj.OutputNames(), types.EmptyName))
-		col := &expression.Column{
-			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-			RetType:  it.GetType(b.ctx.GetExprCtx().GetEvalCtx()),
-		}
-		proj.Schema().Append(col)
-		retItems = append(retItems, property.SortItem{Col: col, Desc: item.Desc})
 	}
 	return p, retItems, nil
 }
@@ -7165,6 +7230,10 @@ func compareItems(lItems []*ast.ByItem, rItems []*ast.ByItem) bool {
 			return res < 0
 		}
 		res = compareBool(lItems[i].Desc, rItems[i].Desc)
+		if res != 0 {
+			return res < 0
+		}
+		res = compareBool(lItems[i].NullsHigh(), rItems[i].NullsHigh())
 		if res != 0 {
 			return res < 0
 		}
@@ -7343,6 +7412,9 @@ func (b *PlanBuilder) checkOriginWindowFrameBound(bound *ast.FrameBound, spec *a
 		return nil
 	}
 
+	if len(orderByItems) == 2 && spec.OrderBy != nil && len(spec.OrderBy.Items) == 1 && spec.OrderBy.Items[0].NullsHigh() {
+		return plannererrors.ErrNotSupportedYet.GenWithStackByArgs("NULLS FIRST/LAST in the ORDER BY of a RANGE frame with an offset")
+	}
 	if len(orderByItems) != 1 {
 		return plannererrors.ErrWindowRangeFrameOrderType.GenWithStackByArgs(getWindowName(spec.Name.O))
 	}

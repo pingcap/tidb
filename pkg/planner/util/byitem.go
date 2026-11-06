@@ -15,7 +15,6 @@
 package util
 
 import (
-	"fmt"
 	"strings"
 
 	perrors "github.com/pingcap/errors"
@@ -28,12 +27,17 @@ import (
 type ByItems struct {
 	Expr expression.Expression
 	Desc bool
+	// NullsHigh means NULLs sort as if they were greater than any other value.
+	// It is only set on the merge-sort items of a keep-order scan; Sort and
+	// TopN express NULLS FIRST/LAST with an extra ISNULL(expr) item instead.
+	NullsHigh bool
 }
 
 // Hash64 implements the base.Hasher interface.
 func (by *ByItems) Hash64(h base.Hasher) {
 	by.Expr.Hash64(h)
 	h.HashBool(by.Desc)
+	h.HashBool(by.NullsHigh)
 }
 
 // Equals implements the base.Equaler interface.
@@ -45,25 +49,29 @@ func (by *ByItems) Equals(other any) bool {
 	if !ok {
 		return false
 	}
-	return by.Desc == otherBy.Desc && by.Expr.Equals(otherBy.Expr)
+	return by.Desc == otherBy.Desc && by.NullsHigh == otherBy.NullsHigh && by.Expr.Equals(otherBy.Expr)
 }
 
 // StringWithCtx implements expression.StringerWithCtx interface.
 func (by *ByItems) StringWithCtx(ctx expression.ParamValues, redact string) string {
+	str := by.Expr.StringWithCtx(ctx, redact)
 	if by.Desc {
-		return fmt.Sprintf("%s true", by.Expr.StringWithCtx(ctx, redact))
+		str += " true"
 	}
-	return by.Expr.StringWithCtx(ctx, redact)
+	if by.NullsHigh {
+		str += " nulls high"
+	}
+	return str
 }
 
 // Clone makes a copy of ByItems.
 func (by *ByItems) Clone() *ByItems {
-	return &ByItems{Expr: by.Expr.Clone(), Desc: by.Desc}
+	return &ByItems{Expr: by.Expr.Clone(), Desc: by.Desc, NullsHigh: by.NullsHigh}
 }
 
 // Equal checks whether two ByItems are equal.
 func (by *ByItems) Equal(ctx expression.EvalContext, other *ByItems) bool {
-	return by.Expr.Equal(ctx, other.Expr) && by.Desc == other.Desc
+	return by.Expr.Equal(ctx, other.Expr) && by.Desc == other.Desc && by.NullsHigh == other.NullsHigh
 }
 
 // MemoryUsage return the memory usage of ByItems.
