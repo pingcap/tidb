@@ -25,12 +25,14 @@ import (
 )
 
 func BenchmarkEncodeRowKeyWithHandle(b *testing.B) {
+	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		EncodeRowKeyWithHandle(100, kv.IntHandle(100))
 	}
 }
 
 func BenchmarkEncodeEndKey(b *testing.B) {
+	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		EncodeRowKeyWithHandle(100, kv.IntHandle(100))
 		EncodeRowKeyWithHandle(100, kv.IntHandle(101))
@@ -42,6 +44,7 @@ func BenchmarkEncodeEndKey(b *testing.B) {
 // BenchmarkEncodeEndKey-4		20000000	        97.2 ns/op
 // BenchmarkEncodeRowKeyWithPrefixNex-4	10000000	       121 ns/op
 func BenchmarkEncodeRowKeyWithPrefixNex(b *testing.B) {
+	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		sk := EncodeRowKeyWithHandle(100, kv.IntHandle(100))
 		sk.PrefixNext()
@@ -50,6 +53,7 @@ func BenchmarkEncodeRowKeyWithPrefixNex(b *testing.B) {
 
 func BenchmarkDecodeRowKey(b *testing.B) {
 	rowKey := EncodeRowKeyWithHandle(100, kv.IntHandle(100))
+	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_, err := DecodeRowKey(rowKey)
 		if err != nil {
@@ -63,6 +67,7 @@ func BenchmarkDecodeIndexKeyIntHandle(b *testing.B) {
 	// When handle values greater than 255, it will have a memory alloc.
 	idxVal = append(idxVal, EncodeHandleInUniqueIndexValue(kv.IntHandle(256), false)...)
 
+	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		DecodeHandleInIndexValue(idxVal)
 	}
@@ -80,6 +85,7 @@ func BenchmarkDecodeIndexKeyCommonHandle(b *testing.B) {
 	h, _ := kv.NewCommonHandle(encoded)
 	idxVal = encodeCommonHandle(idxVal, h)
 
+	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		DecodeHandleInIndexValue(idxVal)
 	}
