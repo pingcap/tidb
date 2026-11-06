@@ -4789,3 +4789,29 @@ func enableNonStarterDeployModeForEmbeddingTest(t *testing.T) {
 		require.NoError(t, deploymode.Set(originalMode))
 	})
 }
+
+func TestCastJSONIntegerWhitespace(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table json_integer_whitespace (id int primary key, j json)")
+	for i, input := range []string{" -1", "\t-1", "\n-1", "\r\n -1 ", "\u00a0-1"} {
+		tk.MustExec("insert into json_integer_whitespace values (?, json_quote(?))", i+1, input)
+	}
+	tk.MustExec("insert into json_integer_whitespace values (6, json_quote(' +2 ')), (7, NULL)")
+	for _, vectorized := range []int{0, 1} {
+		tk.MustExec(fmt.Sprintf("set tidb_enable_vectorized_expression = %d", vectorized))
+		tk.MustQuery("select cast(cast(json_quote(' -1') as json) as signed), cast(cast(json_quote(' -1') as json) as unsigned)").Check(testkit.Rows("-1 18446744073709551615"))
+		tk.MustQuery("select id, cast(j as signed), cast(j as unsigned), ~j from json_integer_whitespace order by id").Check(testkit.Rows(
+			"1 -1 18446744073709551615 0",
+			"2 -1 18446744073709551615 0",
+			"3 -1 18446744073709551615 0",
+			"4 -1 18446744073709551615 0",
+			"5 -1 18446744073709551615 0",
+			"6 2 2 18446744073709551613",
+			"7 <nil> <nil> <nil>",
+		))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery("select id from json_integer_whitespace where ~j = 0 order by id").Check(testkit.Rows("1", "2", "3", "4", "5"))
+	}
+}
