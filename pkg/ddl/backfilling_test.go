@@ -126,6 +126,37 @@ func TestBackfillRetryableErrors(t *testing.T) {
 		require.False(t, isRetryableModifyColumnReorgJobError(errors.New("deterministic conversion error"), 0))
 	})
 
+	t.Run("modify column does not retry unrecognized grpc unknown errors", func(t *testing.T) {
+		err := status.Error(codes.Unknown, "deterministic conversion error")
+		wrappedErrors := []error{
+			err,
+			errors.Annotate(err, "wrapped"),
+			fmt.Errorf("wrapped: %w", err),
+			errors.Annotate(fmt.Errorf("wrapped: %w", err), "outer"),
+		}
+		for _, wrappedErr := range wrappedErrors {
+			require.False(t, isRetryableModifyColumnReorgJobError(wrappedErr, 0), "type=%T", wrappedErr)
+		}
+	})
+
+	t.Run("modify column retains legacy retries for grpc unknown errors", func(t *testing.T) {
+		for _, message := range dbterror.ReorgRetryableErrMsgs {
+			err := status.Error(codes.Unknown, message)
+			wrappedErrors := []error{
+				err,
+				errors.Annotate(err, "wrapped"),
+				fmt.Errorf("wrapped: %w", err),
+				errors.Annotate(fmt.Errorf("wrapped: %w", err), "outer"),
+			}
+			for _, wrappedErr := range wrappedErrors {
+				require.True(t, isRetryableModifyColumnReorgJobError(wrappedErr, 0),
+					"message=%q type=%T", message, wrappedErr)
+				require.False(t, isRetryableModifyColumnReorgJobError(wrappedErr, vardef.GetDDLErrorCountLimit()-1),
+					"message=%q type=%T", message, wrappedErr)
+			}
+		}
+	})
+
 	t.Run("modify column does not retry permission errors", func(t *testing.T) {
 		messages := append([]string{"insufficient privilege"}, dbterror.ReorgRetryableErrMsgs...)
 		for _, message := range messages {

@@ -1737,6 +1737,9 @@ func isRetryableModifyColumnReorgJobError(err error, jobErrCnt int64) bool {
 	}
 	// Modify column reorg can return deterministic data conversion errors. Retrying unknown errors may
 	// cause long retry loops and block the job from rolling back.
+	if rpcStatus, ok := status.FromError(errors.Cause(err)); ok && rpcStatus.Code() == codes.Unknown {
+		return isRetryableError(err, false)
+	}
 	return lightningcommon.IsRetryableError(err) || isRetryableError(err, false)
 }
 
