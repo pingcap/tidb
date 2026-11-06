@@ -1851,9 +1851,16 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	columnPrivTable := make(map[string]privOnColumns)
 	p.columnsPriv.Ascend(func(itm itemColumnsPriv) bool {
 		for _, record := range itm.data {
-			if !collectColumnGrant(&record, user, host, columnPrivTable, sqlMode) {
-				for _, r := range allRoles {
-					collectColumnGrant(&record, r.Username, r.Hostname, columnPrivTable, sqlMode)
+			// Like table scope grants, only the grants of exactly this account
+			// are shown; matching by host pattern would also show the grants
+			// of e.g. 'u'@'%' for 'u'@'127.0.0.1'.
+			if record.User == user && record.Host == host {
+				collectColumnGrant(&record, columnPrivTable, sqlMode)
+				continue
+			}
+			for _, r := range allRoles {
+				if record.baseRecord.match(r.Username, r.Hostname) {
+					collectColumnGrant(&record, columnPrivTable, sqlMode)
 				}
 			}
 		}
@@ -2125,27 +2132,23 @@ func privOnColumnsToString(p privOnColumns, sqlMode mysql.SQLMode) string {
 	return buf.String()
 }
 
-func collectColumnGrant(record *columnsPrivRecord, user, host string, columnPrivTable map[string]privOnColumns, sqlMode mysql.SQLMode) bool {
-	if record.baseRecord.match(user, host) {
-		recordKey := stringutil.Escape(record.DB, sqlMode) + "." + stringutil.Escape(record.TableName, sqlMode)
+func collectColumnGrant(record *columnsPrivRecord, columnPrivTable map[string]privOnColumns, sqlMode mysql.SQLMode) {
+	recordKey := stringutil.Escape(record.DB, sqlMode) + "." + stringutil.Escape(record.TableName, sqlMode)
 
-		privColumns, ok := columnPrivTable[recordKey]
-		if !ok {
-			privColumns = make(map[mysql.PrivilegeType]columnStrs)
-		}
-
-		for _, priv := range mysql.AllColumnPrivs {
-			if priv&record.ColumnPriv > 0 {
-				if privColumns[priv] == nil {
-					privColumns[priv] = make(map[columnStr]struct{})
-				}
-				privColumns[priv][record.ColumnName] = struct{}{}
-				columnPrivTable[recordKey] = privColumns
-			}
-		}
-		return true
+	privColumns, ok := columnPrivTable[recordKey]
+	if !ok {
+		privColumns = make(map[mysql.PrivilegeType]columnStrs)
 	}
-	return false
+
+	for _, priv := range mysql.AllColumnPrivs {
+		if priv&record.ColumnPriv > 0 {
+			if privColumns[priv] == nil {
+				privColumns[priv] = make(map[columnStr]struct{})
+			}
+			privColumns[priv][record.ColumnName] = struct{}{}
+			columnPrivTable[recordKey] = privColumns
+		}
+	}
 }
 
 func userPrivToString(privs mysql.PrivilegeType) string {
