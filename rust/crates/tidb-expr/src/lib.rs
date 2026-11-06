@@ -330,6 +330,7 @@ mod build;
 pub mod builtin_arithmetic;
 #[cfg(test)]
 mod builtin_cast_semantics;
+mod chunk_executor;
 pub mod builtin_compare;
 mod builtin_ext;
 pub mod builtin_op;

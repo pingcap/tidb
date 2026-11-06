@@ -501,18 +501,25 @@ impl EvaluatorSuite {
         let rows = input.num_rows();
         let program = &self.program;
         if program.vectorizable {
+            let vec_enabled = ctx.enable_vectorized_expression();
             for (output_index, expression) in program
                 .calculated_output_indexes
                 .iter()
                 .zip(&program.calculated)
             {
+                // Go `defaultEvaluator.run`: `vecEnabled && expr.Vectorized()`
+                // is `evalOneVec`, whose builtins size the result column
+                // themselves; the values below then fill it.
+                if vec_enabled && crate::chunk_executor::vectorized(expression) {
+                    crate::chunk_executor::eval_one_vec(expression, input, output, *output_index);
+                }
                 if let Expression::ScalarFunction(function) = expression {
                     // Go's typed `VecEvalDecimal` for decimal arithmetic.
                     if function.vec_eval_decimal_arithmetic(input, output, *output_index)? {
                         continue;
                     }
                 }
-                if ctx.enable_vectorized_expression() {
+                if vec_enabled {
                     if let Some(values) =
                         crate::scalar_function::try_eval_numeric_batch(expression, ctx, input)?
                     {

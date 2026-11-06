@@ -3474,6 +3474,196 @@ fn a_projection_charges_its_chunks_like_go() {
     }
 }
 
+/// Go `defaultEvaluator.run` / `evalOneVec`: a vectorized expression writes
+/// its result column the way its builtin's `vecEval*` sizes it -- a constant
+/// or most builtins `Resize*` it exactly, a column reference copy-constructs
+/// the input column into it, arithmetic evaluates one argument into it, a
+/// string builtin `ReserveString`s it and appends -- so a parallel
+/// projection's evaluation charge follows each expression's shape. A Go
+/// testkit probe over the same 100 rows (estimated 10000, so Concurrency:5),
+/// the projection tracker's `MaxConsumed`:
+///
+/// ```text
+/// select a+1, b*2 from p                             9349
+/// select b*2, b*3 from p                             7276
+/// select a-1, b+a from p                             9349
+/// select a*b, 2*b from p                             9349
+/// select a/2, b/3 from p                            24162
+/// select a div 2, a mod 3 from p                     7078
+/// select a=b, a<5 from p                             9250
+/// select concat(c, 'x'), upper(c) from p            12254
+/// select cast(a as char), cast(c as signed) from p  12602
+/// select d+1, d*2 from p                            29356
+/// select e+1, e*2 from p                             7276
+/// select a+1.5, e-a from p                          16805
+/// select if(a>5, a, b), ifnull(b, 0) from p          9448
+/// select length(c), lower(c) from p                 10430
+/// select -a, not a, a is null from p                 9729
+/// select a in (1,2,3), coalesce(b, a) from p         9250
+/// select abs(a-50), round(e) from p                  9349
+/// select a+b+1, (a+1)*(b-1) from p                   9250
+/// select case when a>50 then 1 else 0 end, a from p  6525
+/// select g+1, g*2 from p                             7177
+/// select c, concat_ws(',', c, c) from p             11157
+/// select d-a, d/a from p                            31528
+/// select f, a+0 from p                               8904
+/// select substring(c, 2), replace(c, 's', 't') from p 12254
+/// select a and b, a or b from p                      9448
+/// select e/2, e=a from p                             9349
+/// select cast(a as decimal(10,2)), cast(e as signed) from p 16706
+/// select c='s1', c<'s5' from p                       8606
+/// select greatest(a, b), least(a, 3) from p          9448
+/// select a+1, b*2 from p where a > 0                 9349
+/// select 1, 'abc' from p                             8902
+/// select year(f), month(f) from p                    7078
+/// select floor(e), sqrt(a) from p                    9349
+/// select hour(f), date_format(f, '%Y') from p        8902
+/// select repeat(c, 2), reverse(c) from p            12057
+/// select floor(d), ceil(e) from p                   17128
+/// select pow(e, 2), sign(a) from p                   9250
+/// select date(f), datediff(f, '2024-01-01') from p   7177
+/// select date_add(f, interval 1 day), lpad(c, 5, 'x') from p 12602
+/// select ascii(c), strcmp(c, 's5') from p            8606
+/// select truncate(d, 1), ln(e) from p               24072
+/// select a div b, if(a>5, a, 1) from p               9448
+/// select if(a>5, 1, a), a div 3 from p               7078
+/// ```
+///
+/// and over `q (a INT PRIMARY KEY, h FLOAT, i ENUM, j BIT(8), k JSON,
+/// l VARBINARY(20), m TIME)`, where a FLOAT column read as a real widens
+/// into `ResizeFloat64`, a FLOAT result is a new `ResizeFloat32` column, a
+/// hybrid (enum, bit) is re-appended, and a binary string's `upper`/`lower`
+/// evaluate the column into the result:
+///
+/// ```text
+/// select h*2, h+a from q                             8466
+/// select cast(a as float), h from q                  6668
+/// select i, i+0 from q                              10312
+/// select j+0, cast(j as signed) from q               8449
+/// select upper(l), lower(l) from q                  11860
+/// select k is null, l is null from q                16056
+/// select m, m+1 from q                               6525
+/// select coalesce(l, 'z'), case when a>1 then l else 'q' end from q 14426
+/// select concat(a, h), if(a>1, l, 'w') from q       15814
+/// select ifnull(l, 'v'), a+1 from q                 12602
+/// select a+1, i from q                              12864
+/// ```
+///
+/// With `tidb_enable_vectorized_expression = 0` Go's `evalOneColumn` appends
+/// row by row: `select a+1, b*2 from p` 9448, `select a+1, upper(c) from p`
+/// 12760.
+#[test]
+fn a_projection_sizes_its_result_columns_as_go_vec_eval_does() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE p (a INT PRIMARY KEY, b INT, c VARCHAR(20), d DECIMAL(10,2), e DOUBLE, f DATETIME, g BIGINT UNSIGNED)")
+        .unwrap();
+    let values: Vec<String> = (1..=100)
+        .map(|i| {
+            let b = if i % 10 == 0 { "NULL".to_owned() } else { i.to_string() };
+            format!("({i},{b},'s{i}',{i}.25,{i}.5,'2024-01-{:02} 10:00:00',{})", i % 28 + 1, i * 3)
+        })
+        .collect();
+    session.run(&format!("INSERT INTO p VALUES {}", values.join(","))).unwrap();
+    session
+        .run("CREATE TABLE q (a INT PRIMARY KEY, h FLOAT, i ENUM('x','y','z'), j BIT(8), k JSON, l VARBINARY(20), m TIME)")
+        .unwrap();
+    let values: Vec<String> = (1..=100)
+        .map(|i| {
+            let e = ["x", "y", "z"][i % 3];
+            format!(r#"({i},{i}.5,'{e}',{i},'{{"n":{i}}}','b{i}','10:{:02}:00')"#, i % 60)
+        })
+        .collect();
+    session.run(&format!("INSERT INTO q VALUES {}", values.join(","))).unwrap();
+    let mut mismatches = Vec::new();
+    for (sql, expected) in [
+        ("SELECT a+1, b*2 FROM p", "9.13 KB"),
+        ("SELECT b*2, b*3 FROM p", "7.11 KB"),
+        ("SELECT a-1, b+a FROM p", "9.13 KB"),
+        ("SELECT a*b, 2*b FROM p", "9.13 KB"),
+        ("SELECT a/2, b/3 FROM p", "23.6 KB"),
+        ("SELECT a DIV 2, a MOD 3 FROM p", "6.91 KB"),
+        ("SELECT a=b, a<5 FROM p", "9.03 KB"),
+        ("SELECT concat(c, 'x'), upper(c) FROM p", "12.0 KB"),
+        ("SELECT cast(a AS CHAR), cast(c AS SIGNED) FROM p", "12.3 KB"),
+        ("SELECT d+1, d*2 FROM p", "28.7 KB"),
+        ("SELECT e+1, e*2 FROM p", "7.11 KB"),
+        ("SELECT a+1.5, e-a FROM p", "16.4 KB"),
+        ("SELECT if(a>5, a, b), ifnull(b, 0) FROM p", "9.23 KB"),
+        ("SELECT length(c), lower(c) FROM p", "10.2 KB"),
+        ("SELECT -a, NOT a, a IS NULL FROM p", "9.50 KB"),
+        ("SELECT a IN (1,2,3), coalesce(b, a) FROM p", "9.03 KB"),
+        ("SELECT abs(a-50), round(e) FROM p", "9.13 KB"),
+        ("SELECT a+b+1, (a+1)*(b-1) FROM p", "9.03 KB"),
+        ("SELECT CASE WHEN a>50 THEN 1 ELSE 0 END, a FROM p", "6.37 KB"),
+        ("SELECT g+1, g*2 FROM p", "7.01 KB"),
+        ("SELECT c, concat_ws(',', c, c) FROM p", "10.9 KB"),
+        ("SELECT d-a, d/a FROM p", "30.8 KB"),
+        ("SELECT f, a+0 FROM p", "8.70 KB"),
+        ("SELECT substring(c, 2), replace(c, 's', 't') FROM p", "12.0 KB"),
+        ("SELECT a AND b, a OR b FROM p", "9.23 KB"),
+        ("SELECT e/2, e=a FROM p", "9.13 KB"),
+        ("SELECT cast(a AS DECIMAL(10,2)), cast(e AS SIGNED) FROM p", "16.3 KB"),
+        ("SELECT c='s1', c<'s5' FROM p", "8.40 KB"),
+        ("SELECT greatest(a, b), least(a, 3) FROM p", "9.23 KB"),
+        ("SELECT a+1, b*2 FROM p WHERE a > 0", "9.13 KB"),
+        ("SELECT 1, 'abc' FROM p", "8.69 KB"),
+        ("SELECT year(f), month(f) FROM p", "6.91 KB"),
+        ("SELECT floor(e), sqrt(a) FROM p", "9.13 KB"),
+        ("SELECT hour(f), date_format(f, '%Y') FROM p", "8.69 KB"),
+        ("SELECT repeat(c, 2), reverse(c) FROM p", "11.8 KB"),
+        ("SELECT floor(d), ceil(e) FROM p", "16.7 KB"),
+        ("SELECT pow(e, 2), sign(a) FROM p", "9.03 KB"),
+        ("SELECT date(f), datediff(f, '2024-01-01') FROM p", "7.01 KB"),
+        ("SELECT date_add(f, INTERVAL 1 DAY), lpad(c, 5, 'x') FROM p", "12.3 KB"),
+        ("SELECT ascii(c), strcmp(c, 's5') FROM p", "8.40 KB"),
+        ("SELECT truncate(d, 1), ln(e) FROM p", "23.5 KB"),
+        ("SELECT a DIV b, if(a>5, a, 1) FROM p", "9.23 KB"),
+        ("SELECT if(a>5, 1, a), a DIV 3 FROM p", "6.91 KB"),
+        ("SELECT h*2, h+a FROM q", "8.27 KB"),
+        ("SELECT cast(a AS FLOAT), h FROM q", "6.51 KB"),
+        ("SELECT i, i+0 FROM q", "10.1 KB"),
+        ("SELECT j+0, cast(j AS SIGNED) FROM q", "8.25 KB"),
+        ("SELECT upper(l), lower(l) FROM q", "11.6 KB"),
+        ("SELECT k IS NULL, l IS NULL FROM q", "15.7 KB"),
+        ("SELECT m, m+1 FROM q", "6.37 KB"),
+        ("SELECT coalesce(l, 'z'), CASE WHEN a>1 THEN l ELSE 'q' END FROM q", "14.1 KB"),
+        ("SELECT concat(a, h), if(a>1, l, 'w') FROM q", "15.4 KB"),
+        ("SELECT ifnull(l, 'v'), a+1 FROM q", "12.3 KB"),
+        ("SELECT a+1, i FROM q", "12.6 KB"),
+        ("SET @@tidb_enable_vectorized_expression = 0", ""),
+        ("SELECT a+1, b*2 FROM p", "9.23 KB"),
+        ("SELECT a+1, upper(c) FROM p", "12.5 KB"),
+        ("SET @@tidb_enable_vectorized_expression = 1", ""),
+    ] {
+        if sql.starts_with("SET ") {
+            session.run(sql).unwrap();
+            continue;
+        }
+        // The fetcher's release of its empty second input races the
+        // worker's charge, in Go as here (see
+        // `a_projection_charges_its_chunks_like_go`); the probe's peak is
+        // the fetcher releasing first, which a few runs reach.
+        let mut seen = Vec::new();
+        for _ in 0..12 {
+            let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+            let row = rows
+                .iter()
+                .find(|row| row[0].starts_with("Projection_"))
+                .unwrap_or_else(|| panic!("{sql}: no projection in {rows:?}"));
+            assert!(row[5].contains("Concurrency:5"), "{sql}: {}", row[5]);
+            seen.push(row[7].clone());
+            if row[7] == expected {
+                break;
+            }
+        }
+        if !seen.iter().any(|memory| memory == expected) {
+            mismatches.push(format!("{sql}: {seen:?} (Go {expected})"));
+        }
+    }
+    assert!(mismatches.is_empty(), "{mismatches:#?}");
+}
+
 /// Go `explainPlanInRowFormatCTE` / `cteProducer`: a CTE's definition row is
 /// the first reader the plan renders (`CTEDefinition(*p)`) and reports that
 /// reader's runtime, and the producer's trackers carry the plan that built
