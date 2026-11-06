@@ -595,7 +595,9 @@ impl BuildState {
                     self.ruv2_metrics.as_ref(),
                 )
             });
-        let child_count = if self.in_reader { 0 } else { plan.children().len() };
+        // A coprocessor plan node is no executor of Go's: its `Next` takes no
+        // part in `exec.Next`'s accounting.
+        let child_count = (!self.in_reader).then(|| plan.children().len());
         let next_region = next_region.filter(|_| !self.in_reader && !self.untraced);
         let plan_id = i64::from(plan.base().base.id());
         // A pushed node runs in TiKV for Go: it reports cop stats only.
@@ -607,20 +609,10 @@ impl BuildState {
             })
             .flatten();
         let trace = next_region.and_then(|_| GoExecutorTrace::for_plan(plan));
-        // Go `IndexLookUpExecutor` owns a memory tracker labelled with its
-        // plan; this tier's executor charges its chunks to the statement
-        // directly. Only EXPLAIN ANALYZE charges them, so an ordinary
-        // statement's quota behaviour is unchanged.
-        let chunk_memory = (self.runtime_counters.is_some()
-            && !self.in_reader
-            && !self.untraced
-            && matches!(plan, PhysicalPlan::IndexLookUpReader(_)))
-        .then(|| (memory.operator_tracker(plan_id), 0));
         executor = Box::new(SqlKillerCheckExec {
             child: executor,
             memory,
             runtime_stats,
-            chunk_memory,
             next_region,
             trace,
             top_profiling: self.top_profiling.clone(),
@@ -681,11 +673,6 @@ struct SqlKillerCheckExec {
     child: Box<dyn Executor>,
     memory: crate::StatementMemory,
     runtime_stats: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStats>>,
-    /// Go's `memTracker` (`NewTracker(e.ID(), -1)`) of an executor whose
-    /// tracked memory is the chunk it holds (a projection's or stream
-    /// aggregation's `childResult`, an index lookup's result chunk): the
-    /// tracker and the bytes charged for the last chunk returned.
-    chunk_memory: Option<(Arc<tidb_memory::Tracker>, i64)>,
     /// Go `exec.Next`'s `tracing.StartRegionEx(ctx, <type>.Next)` for the
     /// executor Go builds for the node.
     next_region: Option<&'static str>,
@@ -696,8 +683,9 @@ struct SqlKillerCheckExec {
     /// Go `exec.Next`'s RU v2 recording (`ruv2NextCacheState`).
     ruv2: Option<tidb_executor_internal_exec::ruv2::Ruv2NextCache>,
     /// Go `len(e.AllChildren())`, deciding whether its children report into
-    /// a local accumulator.
-    child_count: usize,
+    /// a local accumulator; `None` for a node Go builds no executor for,
+    /// whose `Next` the accounting passes through.
+    child_count: Option<usize>,
 }
 
 /// The trace a node's Go executor adds to its own `Open`, `Next` and
@@ -840,12 +828,11 @@ fn checked_executor_with_stats(
         child,
         memory,
         runtime_stats,
-        chunk_memory: None,
         next_region: None,
         trace: None,
         top_profiling: None,
         ruv2: None,
-        child_count: 0,
+        child_count: None,
     })
 }
 
@@ -898,21 +885,19 @@ impl Executor for SqlKillerCheckExec {
         }
         let result = tidb_driver_error::panic_recovery::recover_executor_panic(|| {
             self.memory.check().map_err(crate::ExecError::from)?;
-            tidb_executor_internal_exec::ruv2::next_with_ruv2(
-                self.ruv2.as_ref(),
-                self.child_count,
-                req,
-                |req| self.child.next(req),
-            )?;
+            match self.child_count {
+                Some(child_count) => tidb_executor_internal_exec::ruv2::next_with_ruv2(
+                    self.ruv2.as_ref(),
+                    child_count,
+                    req,
+                    |req| self.child.next(req),
+                )?,
+                None => self.child.next(req)?,
+            }
             self.memory.check().map_err(crate::ExecError::from)
         });
         if let (Some(stats), Some(start)) = (&self.runtime_stats, start) {
             stats.record_next(start.elapsed(), req.num_rows() as i64);
-        }
-        if let Some((tracker, charged)) = self.chunk_memory.as_mut() {
-            let bytes = req.memory_usage();
-            tracker.consume(bytes - *charged);
-            *charged = bytes;
         }
         result
     }
@@ -923,10 +908,6 @@ impl Executor for SqlKillerCheckExec {
         let result = tidb_driver_error::panic_recovery::recover_executor_panic(|| self.child.close());
         if let (Some(stats), Some(start)) = (&self.runtime_stats, start) {
             stats.record_close(start.elapsed());
-        }
-        if let Some((tracker, charged)) = self.chunk_memory.as_mut() {
-            tracker.consume(-*charged);
-            *charged = 0;
         }
         // Go `LimitExec.Close`: a close over a millisecond gets its own span
         // under the span its `Open` ran in, started when the close began.
@@ -3291,6 +3272,20 @@ fn build_index_reader(
     source.read_table_columns(keep);
     source.set_lookup_concurrency(ctx.index_lookup_concurrency());
     source.set_lookup_size(ctx.index_lookup_size());
+    // Go `IndexLookUpExecutor.memTracker`, attached to the statement's on
+    // every run, and `exec.Next`'s RU v2 recording of the
+    // `TableReaderExecutor` each of its table tasks builds.
+    if table_plan.is_some() && !covering {
+        let memory = ctx.statement_memory();
+        source.set_lookup_memory(
+            memory.operator_tracker(i64::from(plan.id())),
+            Arc::clone(memory.stmt_tracker()),
+        );
+        source.set_table_reader_ruv2(tidb_executor_internal_exec::ruv2::Ruv2NextCache::new(
+            "*executor.TableReaderExecutor",
+            ctx.ruv2_metrics(),
+        ));
+    }
     // Go `IndexLookUpExecutor.initRuntimeStats` and `indexScanBasicStats`.
     if let (Some(table_plan), Some(runtime_source), false) =
         (table_plan, ctx.executor_runtime_stats_source(), covering)
@@ -9217,14 +9212,13 @@ use super::*;
         for close_for in [Duration::from_millis(3), Duration::ZERO] {
             let mut limit = SqlKillerCheckExec {
                 ruv2: None,
-                child_count: 0,
+                child_count: None,
                 child: Box::new(SlowClose {
                     meta: tidb_executor_internal_exec::ExecutorMeta::new(Schema::new(Vec::new()), 1, 1, 1),
                     close_for,
                 }),
                 memory: crate::StatementMemory::default(),
                 runtime_stats: None,
-                chunk_memory: None,
                 next_region: Some("*executor.LimitExec.Next"),
                 top_profiling: None,
                 trace: Some(Box::new(GoExecutorTrace {

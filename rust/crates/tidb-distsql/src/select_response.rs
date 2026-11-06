@@ -663,6 +663,7 @@ impl SelectResponseIter {
                 }
                 Some(ResponseChannelEvent::Closed) => {
                     self.report_select_result_close();
+                    self.release_response_memory();
                     self.closed = true;
                     return Ok(None);
                 }
@@ -812,6 +813,7 @@ impl SelectResponseIter {
                 }
                 Some(ResponseChannelEvent::Closed) => {
                     self.report_select_result_close();
+                    self.release_response_memory();
                     self.closed = true;
                     return Ok(output);
                 }
@@ -835,11 +837,18 @@ impl SelectResponseIter {
         self.source.close();
         self.report_select_result_close();
         // Go `closeImpl`: `memConsume(-respSize)`.
+        self.release_response_memory();
+        self.closed = true;
+    }
+
+    /// Go `memConsume(-respSize)`: the response this select result held is
+    /// released, by `closeImpl` or by the `fetchResp` that finds the stream
+    /// ended.
+    fn release_response_memory(&mut self) {
         if let Some((tracker, charged)) = self.memory_tracker.as_mut() {
             tracker.consume(-*charged);
             *charged = 0;
         }
-        self.closed = true;
     }
 
     /// Go `selectResult.closeImpl`'s registration, once per select result:

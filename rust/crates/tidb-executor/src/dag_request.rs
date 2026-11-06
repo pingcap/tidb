@@ -159,6 +159,20 @@ pub fn construct_dag_req(
     )
 }
 
+/// Go's `&tipb.Executor{Tp: tp, ...}`: the executor fields Go's TiPB
+/// declares non-nullable (`gogoproto.nullable = false`) are encoded on every
+/// executor, as zero unless set -- `tp` and the two TiFlash fine-grained
+/// shuffle settings.
+#[must_use]
+pub(crate) fn go_executor(tp: ExecType) -> Executor {
+    Executor {
+        tp: Some(tp as i32),
+        fine_grained_shuffle_stream_count: Some(0),
+        fine_grained_shuffle_batch_size: Some(0),
+        ..Default::default()
+    }
+}
+
 /// Go's `PhysicalLimit.ToPB` in the TiKV list form: the coprocessor stops
 /// after `limit` rows, so the rows past the cap never leave the region.
 ///
@@ -168,7 +182,6 @@ pub fn construct_dag_req(
 #[must_use]
 pub fn limit_to_pb(limit: u64) -> Executor {
     Executor {
-        tp: Some(ExecType::TypeLimit as i32),
         tbl_scan: None,
         idx_scan: None,
         selection: None,
@@ -181,7 +194,7 @@ pub fn limit_to_pb(limit: u64) -> Executor {
         executor_id: Some(String::new()),
         parent_idx: None,
         exchange_sender: None,
-        ..Default::default()
+        ..go_executor(ExecType::TypeLimit)
     }
 }
 
@@ -278,11 +291,6 @@ pub fn construct_grouped_aggregate_read_only_dag_req_with_conditions(
 fn aggregation_to_executor(aggregation: Aggregation) -> Executor {
     let streamed = aggregation.streamed == Some(true);
     Executor {
-        tp: Some(if streamed {
-            ExecType::TypeStreamAgg
-        } else {
-            ExecType::TypeAggregation
-        } as i32),
         tbl_scan: None,
         idx_scan: None,
         selection: None,
@@ -292,7 +300,11 @@ fn aggregation_to_executor(aggregation: Aggregation) -> Executor {
         executor_id: Some(String::new()),
         parent_idx: None,
         exchange_sender: None,
-        ..Default::default()
+        ..go_executor(if streamed {
+            ExecType::TypeStreamAgg
+        } else {
+            ExecType::TypeAggregation
+        })
     }
 }
 
@@ -441,7 +453,6 @@ fn selection_executor(conditions: Vec<Expr>) -> Result<Executor, DagRequestBuild
         return Err(DagRequestBuildError::EmptySelection);
     }
     Ok(Executor {
-        tp: Some(ExecType::TypeSelection as i32),
         tbl_scan: None,
         idx_scan: None,
         selection: Some(Box::new(Selection {
@@ -456,7 +467,7 @@ fn selection_executor(conditions: Vec<Expr>) -> Result<Executor, DagRequestBuild
         executor_id: Some(String::new()),
         parent_idx: None,
         exchange_sender: None,
-        ..Default::default()
+        ..go_executor(ExecType::TypeSelection)
     })
 }
 
@@ -469,11 +480,6 @@ fn aggregation_to_pb(
         return Err(DagRequestBuildError::EmptyAggregation);
     }
     Ok(Executor {
-        tp: Some(if streamed {
-            ExecType::TypeStreamAgg
-        } else {
-            ExecType::TypeAggregation
-        } as i32),
         tbl_scan: None,
         idx_scan: None,
         selection: None,
@@ -491,7 +497,11 @@ fn aggregation_to_pb(
         executor_id: Some(String::new()),
         parent_idx: None,
         exchange_sender: None,
-        ..Default::default()
+        ..go_executor(if streamed {
+            ExecType::TypeStreamAgg
+        } else {
+            ExecType::TypeAggregation
+        })
     })
 }
 
@@ -505,7 +515,6 @@ fn table_scan_to_pb(spec: &TiKvTableScanSpec) -> Result<Executor, DagRequestBuil
         ));
     }
     Ok(Executor {
-        tp: Some(ExecType::TypeTableScan as i32),
         tbl_scan: Some(TableScan {
             table_id: Some(spec.table_id),
             columns: spec.columns.iter().map(column_to_pb).collect(),
@@ -528,7 +537,7 @@ fn table_scan_to_pb(spec: &TiKvTableScanSpec) -> Result<Executor, DagRequestBuil
         executor_id: Some(String::new()),
         parent_idx: None,
         exchange_sender: None,
-        ..Default::default()
+        ..go_executor(ExecType::TypeTableScan)
     })
 }
 
@@ -545,7 +554,6 @@ fn index_scan_to_pb(plan: &PhysicalIndexScan) -> Result<Executor, DagRequestBuil
         ));
     }
     Ok(Executor {
-        tp: Some(ExecType::TypeIndexScan as i32),
         tbl_scan: None,
         idx_scan: Some(index_payload_to_pb(spec, plan)),
         selection: None,
@@ -555,7 +563,7 @@ fn index_scan_to_pb(plan: &PhysicalIndexScan) -> Result<Executor, DagRequestBuil
         executor_id: None,
         parent_idx: None,
         exchange_sender: None,
-        ..Default::default()
+        ..go_executor(ExecType::TypeIndexScan)
     })
 }
 

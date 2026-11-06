@@ -1533,6 +1533,199 @@ struct LookupBatchJob {
     receiver: Option<std::sync::mpsc::Receiver<Result<LookupFetch, ExecError>>>,
     /// Windows that complete at collect time carry their payload directly.
     ready: Option<Result<LookupFetch, ExecError>>,
+    /// Go `task.memTracker`: the tracker the table worker charged this
+    /// task's memory to.
+    task_tracker: Option<Arc<tidb_memory::Tracker>>,
+}
+
+/// Go `execTableTask` for one window: the table worker builds the task's
+/// `TableReaderExecutor` from its handles (`buildTableReaderFromHandles`),
+/// reads it, and charges the task (`tableWorker.executeTask`). A store that
+/// refuses the remote shape hands the handles back for the local byte seam.
+#[allow(clippy::too_many_arguments)]
+fn exec_table_task(
+    table: &mut TableCommon,
+    store: &mut dyn tidb_kv::storage::TableStorage,
+    handles: Vec<TableHandle>,
+    physical_ids: &[i64],
+    keep: &[usize],
+    pushed: &[Expression],
+    decode_context: &tidb_table::tables::RowDecodeContext,
+    statement: &PushdownStatementContext,
+    required_rows: usize,
+    allow_chunks: bool,
+    accounting: &LookupTaskAccounting,
+) -> Result<LookupFetch, ExecError> {
+    let staged = table
+        .build_table_reader_from_routed_handles(
+            store,
+            &handles,
+            (!physical_ids.is_empty()).then_some(physical_ids),
+            keep,
+            pushed,
+            decode_context,
+            statement,
+            required_rows,
+        )
+        .map_err(ExecError::from)?;
+    let Some(staged) = staged else {
+        return Ok(LookupFetch::LocalFallback(handles));
+    };
+    let fetch = match tidb_table::tables::TableCommon::finish_lookup_by_handles(
+        &handles,
+        staged,
+        allow_chunks,
+    )
+    .map_err(ExecError::from)?
+    {
+        Some(crate::kv_table::FinishedLookup::Rows(rows, applied, wire_rows, indices, reader)) => {
+            LookupFetch::Remote(rows, applied, wire_rows, indices, reader)
+        }
+        Some(crate::kv_table::FinishedLookup::Chunk(chunk)) => LookupFetch::RemoteChunk(chunk),
+        None => return Ok(LookupFetch::LocalFallback(handles)),
+    };
+    accounting.account(&handles, physical_ids, &fetch);
+    Ok(fetch)
+}
+
+/// Go `IndexLookUpExecutor.memTracker` and the trackers under it: the index
+/// worker's (`LabelForIndexWorker`), charged with the index-side responses
+/// it holds, and one per table task (labelled with the task's id), charged
+/// by the table worker.
+struct IndexLookUpMemory {
+    /// Go `e.memTracker`: `memory.NewTracker(e.ID(), -1)`.
+    tracker: Arc<tidb_memory::Tracker>,
+    /// Go `StmtCtx.MemTracker`, which `Open` attaches `tracker` to.
+    stmt: Arc<tidb_memory::Tracker>,
+    /// Go `indexWorker`'s `taskID`: the label of the next task's tracker.
+    next_task_id: i64,
+    /// Go `e.resultCurr.memTracker`: the task whose rows are being
+    /// returned, released when `getResultTask` takes the next one.
+    result_curr: Option<Arc<tidb_memory::Tracker>>,
+}
+
+/// What Go's `execTableTask` takes from its executor to account one task:
+/// the task's tracker and how Go shaped the task (`cap(task.handles)`, a
+/// keep-order `indexOrder`, partition handles), and the RU v2 recording of
+/// the task's `TableReaderExecutor` (`exec.Next`).
+struct LookupTaskAccounting {
+    tracker: Option<Arc<tidb_memory::Tracker>>,
+    /// Go `cap(task.handles)`.
+    handles_capacity: usize,
+    keep_order: bool,
+    /// Go `needPartitionHandle(getHandleFromIndex)`: the index worker reads
+    /// `kv.PartitionHandle`s.
+    partition_handles: bool,
+    table_reader_ruv2: Option<tidb_executor_internal_exec::ruv2::Ruv2NextCache>,
+    /// The reader's output width (`len(tableReader.Schema().Columns)`).
+    output_cols: usize,
+}
+
+impl LookupTaskAccounting {
+    /// Go `tableWorker.executeTask`'s charges for a task its table reader
+    /// answered, in Go's order: the task's handles, reader and `indexOrder`,
+    /// every chunk the reader filled, `task.rows` and, for a keep-order
+    /// read, `task.rowIdx`. The reader's `exec.Next` records its rows for RU
+    /// v2. A task the store answered without a table reader charges
+    /// nothing.
+    fn account(&self, handles: &[TableHandle], physical_ids: &[i64], fetch: &LookupFetch) {
+        let (rows, reader) = match fetch {
+            LookupFetch::Remote(rows, _, _, _, reader) => (rows.len(), *reader),
+            LookupFetch::RemoteChunk(chunk) => (chunk.row_positions.len(), chunk.reader_memory),
+            LookupFetch::LocalFallback(_) => return,
+        };
+        tidb_executor_internal_exec::ruv2::record_leaf_next(
+            self.table_reader_ruv2.as_ref(),
+            rows,
+            self.output_cols,
+        );
+        let Some(tracker) = &self.tracker else {
+            return;
+        };
+        // Go `size.SizeOfInterface` (a `kv.Handle`) and
+        // `unsafe.Sizeof(chunk.Row{})`.
+        const SIZEOF_INTERFACE: i64 = 16;
+        const SIZEOF_CHUNK_ROW: i64 = 16;
+        const SIZEOF_INT: i64 = 8;
+        let go_handles = handles
+            .iter()
+            .enumerate()
+            .map(|(position, handle)| {
+                go_task_handle(
+                    handle,
+                    self.partition_handles
+                        .then(|| physical_ids.get(position).copied())
+                        .flatten(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut base = self.handles_capacity as i64 * SIZEOF_INTERFACE + reader.reader;
+        base += go_handles
+            .iter()
+            .map(|handle| i64::try_from(handle.mem_usage()).unwrap_or(i64::MAX))
+            .sum::<i64>();
+        if self.keep_order {
+            let mut index_order = tidb_txnkv::HandleMap::new();
+            for (position, handle) in go_handles.into_iter().enumerate() {
+                index_order.set(handle, position);
+            }
+            base += index_order.mem_usage();
+        }
+        tracker.consume(base);
+        tracker.consume(reader.chunks);
+        tracker.consume(handles.len() as i64 * SIZEOF_CHUNK_ROW);
+        if self.keep_order {
+            tracker.consume(rows as i64 * SIZEOF_INT);
+        }
+    }
+}
+
+/// Go's `kv.Handle` of a task handle: a `kv.PartitionHandle` of
+/// `partition_id` when the index worker reads partition handles.
+fn go_task_handle(handle: &TableHandle, partition_id: Option<i64>) -> tidb_txnkv::Handle {
+    let handle = match handle {
+        TableHandle::Int(value) => tidb_txnkv::Handle::from(tidb_txnkv::IntHandle::new(*value)),
+        TableHandle::Common(encoded) => tidb_txnkv::CommonHandle::new(encoded.clone()).map_or_else(
+            |_| tidb_txnkv::Handle::from(tidb_txnkv::IntHandle::new(0)),
+            tidb_txnkv::Handle::from,
+        ),
+    };
+    match partition_id {
+        Some(id) => tidb_txnkv::Handle::Partition(tidb_txnkv::PartitionHandle::new(id, Some(handle))),
+        None => handle,
+    }
+}
+
+/// Go `cap(task.handles)`: `extractTaskHandles` makes the slice at its
+/// first index chunk's row count and appends every handle after it one at a
+/// time, each chunk holding at most `max_chunk_size` of the `scanned`
+/// entries it read, the leading `skipped` of them dropped by a pushed
+/// limit's offset.
+fn go_task_handles_capacity(scanned: usize, skipped: usize, max_chunk_size: usize) -> usize {
+    // Go `size.SizeOfInterface`.
+    const SIZEOF_INTERFACE: usize = 16;
+    let max_chunk_size = max_chunk_size.max(1);
+    let (mut left, mut skip) = (scanned, skipped);
+    let (mut len, mut capacity) = (0_usize, 0_usize);
+    while left > 0 {
+        let rows = left.min(max_chunk_size);
+        left -= rows;
+        let skipped_here = skip.min(rows);
+        skip -= skipped_here;
+        if capacity == 0 {
+            capacity = rows;
+        }
+        len += rows - skipped_here;
+        while len > capacity {
+            capacity = tidb_goruntime::go_runtime::go_64_next_slice_capacity_for_element(
+                capacity + 1,
+                capacity,
+                SIZEOF_INTERFACE,
+                tidb_goruntime::go_runtime::GoSliceElementLayout::PointerBearing,
+            );
+        }
+    }
+    capacity
 }
 
 struct LookupBatchResult {
@@ -1549,7 +1742,13 @@ enum LookupFetch {
     /// whether TiKV evaluated every pushed conjunct, and how many rows the
     /// region streamed (for the executor thread's storage probe -- a worker
     /// thread has no probe of its own).
-    Remote(Vec<(TableHandle, Vec<Datum>)>, bool, u64, Vec<usize>),
+    Remote(
+        Vec<(TableHandle, Vec<Datum>)>,
+        bool,
+        u64,
+        Vec<usize>,
+        crate::kv_table::LookupReaderMemory,
+    ),
     /// The Go-shaped chunk handoff for clean remote table lookups. The
     /// executor consumes this directly into its output chunk when no local
     /// residual needs row materialization.
@@ -1801,6 +2000,12 @@ pub struct IndexRangeSourceExec {
     /// an UNORDERED double read whose table the open transaction has
     /// written. See [`Self::enable_dirty_union_scan_merge`].
     dirty_merge: bool,
+    /// Go `IndexLookUpExecutor.memTracker` and its workers' trackers, for
+    /// a double read that tracks its memory.
+    lookup_memory: Option<IndexLookUpMemory>,
+    /// Go `exec.Next`'s RU v2 recording of each task's
+    /// `TableReaderExecutor`.
+    table_reader_ruv2: Option<tidb_executor_internal_exec::ruv2::Ruv2NextCache>,
     /// Go `compareExec.usedIndex`: the index's own columns' offsets in the
     /// emitted row, in index order. `compare` walks them before the handle.
     dirty_used_index: Vec<usize>,
@@ -2104,6 +2309,8 @@ impl IndexRangeSourceExec {
             lookup_lanes: None,
             chunk_demand: 0,
             dirty_merge: false,
+            lookup_memory: None,
+            table_reader_ruv2: None,
             dirty_used_index: Vec::new(),
             dirty_collations: Vec::new(),
             dirty_added_queue: std::collections::VecDeque::new(),
@@ -2176,6 +2383,90 @@ impl IndexRangeSourceExec {
         handle: Option<crate::index_lookup_stats::IndexLookUpStatsHandle>,
     ) {
         self.lookup_stats = handle;
+    }
+
+    /// Go `IndexLookUpExecutor.memTracker`: `tracker` (labelled with the
+    /// reader's plan ID), which every open attaches to `stmt`.
+    pub(crate) fn set_lookup_memory(
+        &mut self,
+        tracker: Arc<tidb_memory::Tracker>,
+        stmt: Arc<tidb_memory::Tracker>,
+    ) {
+        self.lookup_memory = Some(IndexLookUpMemory {
+            tracker,
+            stmt,
+            next_task_id: 0,
+            result_curr: None,
+        });
+    }
+
+    /// Go `exec.Next`'s RU v2 recording for the `TableReaderExecutor` each
+    /// table task builds.
+    pub(crate) fn set_table_reader_ruv2(
+        &mut self,
+        cache: Option<tidb_executor_internal_exec::ruv2::Ruv2NextCache>,
+    ) {
+        self.table_reader_ruv2 = cache;
+    }
+
+    /// Go `IndexLookUpExecutor.Open`/`open` for its memory tracker: reset
+    /// and attached to the statement's, charged with the index ranges' KV
+    /// ranges (`buildTableKeyRanges`), then reset and attached again; and
+    /// the index worker's tracker under it (`startIndexWorker`), which the
+    /// index-side request charges its responses to.
+    fn open_lookup_memory(&mut self) -> Result<Option<Arc<tidb_memory::Tracker>>, ExecError> {
+        let Some(memory) = self.lookup_memory.as_mut() else {
+            return Ok(None);
+        };
+        memory.tracker.reset();
+        memory.tracker.attach_to(&memory.stmt);
+        for physical_id in &self.record_physical_ids {
+            tidb_distsql::index_ranges_to_kv_ranges_with_mem_tracker(
+                Some(self.decode_context.zone()),
+                *physical_id,
+                self.index_id,
+                &self.ranges,
+                &memory.tracker,
+            )
+            .map_err(|error| ExecError::unsupported(format!("index range encoding failed: {error:?}")))?;
+        }
+        memory.tracker.reset();
+        memory.tracker.attach_to(&memory.stmt);
+        memory.next_task_id = 0;
+        memory.result_curr = None;
+        let index_worker = tidb_memory::Tracker::new(tidb_memory::LABEL_FOR_INDEX_WORKER, -1);
+        index_worker.attach_to(&memory.tracker);
+        Ok(Some(index_worker))
+    }
+
+    /// Go `execTableTask`'s `memory.NewTracker(task.id, -1)` under
+    /// `e.memTracker`, with what the table worker needs to charge the task.
+    fn lookup_task_accounting(&mut self, scanned: usize, skipped: usize) -> LookupTaskAccounting {
+        let tracker = self
+            .lookup_memory
+            .as_mut()
+            // Go's `LocalIndexLookUp` hands completed rows over in tasks
+            // that carry no memory.
+            .filter(|_| !self.lookup_pushdown)
+            .map(|memory| {
+                let tracker = tidb_memory::Tracker::new(memory.next_task_id, -1);
+                memory.next_task_id += 1;
+                tracker.attach_to(&memory.tracker);
+                tracker
+            });
+        let global = self
+            .table
+            .indexes()
+            .iter()
+            .any(|index| index.read().id == self.index_id && index.read().global);
+        LookupTaskAccounting {
+            tracker,
+            handles_capacity: go_task_handles_capacity(scanned, skipped, self.meta.max_chunk_size()),
+            keep_order: self.keep_order,
+            partition_handles: global || (self.table.partition().is_some() && self.keep_order),
+            table_reader_ruv2: self.table_reader_ruv2.clone(),
+            output_cols: self.meta.schema().columns.len(),
+        }
     }
 
     pub(crate) fn set_lookup_concurrency(&mut self, width: usize) {
@@ -2792,6 +3083,7 @@ impl IndexRangeSourceExec {
                     break;
                 }
                 let collect_started = std::time::Instant::now();
+                let skipped_before = self.skipped_handles;
                 let mut ended_inside = false;
                 let mut handles = Vec::with_capacity(target);
                 let partitioned = self.table.partition().is_some();
@@ -2842,7 +3134,9 @@ impl IndexRangeSourceExec {
                 let build_started = std::time::Instant::now();
                 // A short window means the index stream ended inside it; with
                 // no earlier window in flight there is nothing to overlap.
-                let mut job = self.build_lookup_job(handles, physical_ids)?;
+                let skipped = usize::try_from(self.skipped_handles - skipped_before).unwrap_or(usize::MAX);
+                let scanned = handle_count.saturating_add(skipped);
+                let mut job = self.build_lookup_job(handles, physical_ids, scanned, skipped)?;
                 // The table task starts with its build: a small window runs
                 // it inline.
                 job.started = build_started;
@@ -2926,8 +3220,17 @@ impl IndexRangeSourceExec {
             // Go's tableWorker hands its error to the reader unchanged, so a
             // SQL error (8274 from `tidb_max_keys_read`, say) keeps its code.
             let payload = payload?;
+            // Go `getResultTask`: "Release the memory usage of last task
+            // before we handle a new task."
+            if let Some(memory) = self.lookup_memory.as_mut() {
+                if let Some(previous) =
+                    std::mem::replace(&mut memory.result_curr, job.task_tracker.clone())
+                {
+                    previous.consume(-previous.bytes_consumed());
+                }
+            }
             match payload {
-                LookupFetch::Remote(rows, predicates_applied, wire_rows, indices) => {
+                LookupFetch::Remote(rows, predicates_applied, wire_rows, indices, _) => {
                     let physical_ids = indices.iter().filter_map(|index| job.physical_ids.get(*index).copied()).collect::<Vec<_>>();
                     if wire_rows > 0 {
                         tidb_kv::storage::note_storage_op(|ops| ops.cop_rows += wire_rows);
@@ -3006,10 +3309,15 @@ impl IndexRangeSourceExec {
     /// and consumes the lazy response on a persistent lookup lane, matching
     /// Go's `IndexLookUpExecutor` table-worker pool. A response iterator never
     /// crosses an OS-thread boundary.
+    ///
+    /// `scanned` index entries made the window, the leading `skipped` of
+    /// them dropped by a pushed limit's offset (Go `cap(task.handles)`).
     fn build_lookup_job(
         &mut self,
         handles: Vec<TableHandle>,
         physical_ids: Vec<i64>,
+        scanned: usize,
+        skipped: usize,
     ) -> Result<LookupBatchJob, ExecError> {
         let handle_count = handles.len();
         let allow_lookup_chunks = self
@@ -3025,8 +3333,11 @@ impl IndexRangeSourceExec {
                 handle_count,
                 receiver: None,
                 ready: Some(Ok(LookupFetch::LocalFallback(handles))),
+                task_tracker: None,
             });
         }
+        let accounting = self.lookup_task_accounting(scanned, skipped);
+        let task_tracker = accounting.tracker.clone();
         // A tiny handle list (a point select lands one or two) is fetched
         // right here on the calling worker: spawning a native thread for it
         // costs more -- jemalloc tcache init plus first stack touch -- than
@@ -3046,51 +3357,26 @@ impl IndexRangeSourceExec {
                 self.retain_remote_index_stats();
                 self.remote_index = None;
             }
-            let staged = self
-                .table
-                .build_table_reader_from_routed_handles(
-                    &mut *self.store,
-                    &handles,
-                    (!physical_ids.is_empty()).then_some(physical_ids.as_slice()),
-                    &self.keep,
-                    &self.pushed,
-                    &self.decode_context,
-                    &self.statement,
-                    self.meta.max_chunk_size(),
-                )
-                .map_err(ExecError::from)?;
-            let Some(staged) = staged else {
-                return Ok(LookupBatchJob {
-                    started: std::time::Instant::now(),
-                    physical_ids,
-                    handle_count,
-                    receiver: None,
-                    ready: Some(Ok(LookupFetch::LocalFallback(handles))),
-                });
-            };
-            let outcome = match tidb_table::tables::TableCommon::finish_lookup_by_handles(
-                &handles,
-                staged,
+            let outcome = exec_table_task(
+                &mut self.table,
+                &mut *self.store,
+                handles,
+                &physical_ids,
+                &self.keep,
+                &self.pushed,
+                &self.decode_context,
+                &self.statement,
+                self.meta.max_chunk_size(),
                 allow_lookup_chunks,
-            ) {
-                Ok(Some(crate::kv_table::FinishedLookup::Rows(
-                    rows,
-                    applied,
-                    wire_rows,
-                    indices,
-                ))) => Ok(LookupFetch::Remote(rows, applied, wire_rows, indices)),
-                Ok(Some(crate::kv_table::FinishedLookup::Chunk(chunk))) => {
-                    Ok(LookupFetch::RemoteChunk(chunk))
-                }
-                Ok(None) => Ok(LookupFetch::LocalFallback(handles)),
-                Err(error) => Err(ExecError::from(error)),
-            };
+                &accounting,
+            );
             return Ok(LookupBatchJob {
                 started: std::time::Instant::now(),
                 physical_ids,
                 handle_count,
                 receiver: None,
                 ready: Some(outcome),
+                task_tracker,
             });
         }
         // Go's table worker takes ownership of the extracted handle slice.
@@ -3107,39 +3393,19 @@ impl IndexRangeSourceExec {
         let worker_required_rows = self.meta.max_chunk_size();
         let worker_allow_chunks = allow_lookup_chunks;
         let worker = move || {
-            let staged = match worker_table.build_table_reader_from_routed_handles(
+            exec_table_task(
+                &mut worker_table,
                 &mut *worker_store,
-                &worker_handles,
-                (!worker_physical_ids.is_empty()).then_some(worker_physical_ids.as_slice()),
+                worker_handles,
+                &worker_physical_ids,
                 &worker_keep,
                 &worker_pushed,
                 &worker_decode_context,
                 &worker_statement,
                 worker_required_rows,
-            ) {
-                Ok(staged) => staged,
-                Err(error) => return Err(ExecError::from(error)),
-            };
-            let Some(staged) = staged else {
-                return Ok(LookupFetch::LocalFallback(worker_handles));
-            };
-            match tidb_table::tables::TableCommon::finish_lookup_by_handles(
-                &worker_handles,
-                staged,
                 worker_allow_chunks,
-            ) {
-                Ok(Some(crate::kv_table::FinishedLookup::Rows(
-                    rows,
-                    applied,
-                    wire_rows,
-                    indices,
-                ))) => Ok(LookupFetch::Remote(rows, applied, wire_rows, indices)),
-                Ok(Some(crate::kv_table::FinishedLookup::Chunk(chunk))) => {
-                    Ok(LookupFetch::RemoteChunk(chunk))
-                }
-                Ok(None) => Ok(LookupFetch::LocalFallback(worker_handles)),
-                Err(error) => Err(ExecError::from(error)),
-            }
+                &accounting,
+            )
         };
         // Go's table worker is persistent across lookup tasks. Submit the
         // whole window to the source-owned lane set instead of creating one
@@ -3158,10 +3424,12 @@ impl IndexRangeSourceExec {
             ))
         });
         let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
+        // Go's table worker runs under the `Next` context its index worker
+        // started from, whose RU v2 accumulator its reader reports into.
         lanes
-            .submit(move || {
+            .submit(tidb_executor_internal_exec::ruv2::inherit_goroutine(move || {
                 let _ = result_tx.send(worker());
-            })
+            }))
             .map_err(|_| ExecError::internal("index lookup worker pool stopped"))?;
         Ok(LookupBatchJob {
             started: std::time::Instant::now(),
@@ -3169,6 +3437,7 @@ impl IndexRangeSourceExec {
             handle_count,
             receiver: Some(result_rx),
             ready: None,
+            task_tracker,
         })
     }
 
@@ -4053,6 +4322,13 @@ impl Executor for IndexRangeSourceExec {
         // the local walk, which is exactly the shape that cannot afford it;
         // a servable request is refused into the local cursor only by the
         // semantic guards above.
+        // Go `RequestBuilder.SetMemTracker(tracker)`: the index worker's
+        // tracker takes the index-side responses.
+        let index_statement = self.open_lookup_memory()?.map(|tracker| {
+            let mut statement = self.statement.clone();
+            statement.select_mem_tracker = Some(tracker);
+            statement
+        });
         let index_predicates = self
             .index_probe
             .as_ref()
@@ -4145,7 +4421,7 @@ impl Executor for IndexRangeSourceExec {
                     &lowered,
                     self.top_n.as_ref(),
                     self.decode_context.zone(),
-                    &self.statement,
+                    index_statement.as_ref().unwrap_or(&self.statement),
                     self.descending,
                     // Go buildIndexLookUpReader plants the sunk PushedLimit
                     // as a Limit offset+count executor under the index DAG,
@@ -7266,6 +7542,7 @@ use std::collections::HashMap;
                             appended_handle: true,
                             predicates_applied: true,
                             wire_rows: 2,
+                            reader_memory: Default::default(),
                         });
                         source.lookup_chunk_row = 0;
                         chunk.reset();
@@ -8220,7 +8497,7 @@ use std::collections::HashMap;
         );
         source.open().unwrap();
         let handles = (1..=10).map(TableHandle::Int).collect();
-        let job = source.build_lookup_job(handles, Vec::new()).unwrap();
+        let job = source.build_lookup_job(handles, Vec::new(), 0, 0).unwrap();
         assert!(
             job.receiver.is_none(),
             "select_random_points must keep its ten handles on the calling worker"

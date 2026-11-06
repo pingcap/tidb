@@ -74,6 +74,9 @@ pub const DEF_MEM_QUOTA_QUERY: i64 = 1_073_741_824;
 
 /// `LabelForSQLText`.
 pub const LABEL_FOR_SQL_TEXT: i64 = -1;
+/// `LabelForIndexWorker`: an index lookup's index worker, charged with the
+/// index-side responses it holds.
+pub const LABEL_FOR_INDEX_WORKER: i64 = -2;
 /// `LabelForSession`: the root tracker of one session, which is the tracker
 /// `tidb_mem_quota_query` is the limit OF.
 pub const LABEL_FOR_SESSION: i64 = -27;
@@ -461,6 +464,15 @@ pub struct Tracker {
     arbitration: Mutex<Option<Arc<TrackerArbitration>>>,
     /// Go `t.MemArbitrator.AwaitAlloc` of the last `InitMemArbitrator`.
     await_alloc: Mutex<Option<Arc<AwaitAlloc>>>,
+}
+
+impl std::fmt::Debug for Tracker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Tracker")
+            .field("label", &self.label())
+            .field("bytes_consumed", &self.bytes_consumed())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Tracker {

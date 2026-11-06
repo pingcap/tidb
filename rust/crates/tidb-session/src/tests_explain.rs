@@ -7477,6 +7477,91 @@ fn an_index_join_charges_its_tasks_like_go() {
     );
 }
 
+/// Go's `IndexLookUpExecutor` owns a tracker labelled with its plan, which
+/// every run attaches to the statement's: its table worker charges each
+/// task's handles, `TableReaderExecutor` (`unsafe.Sizeof` 768, its KV ranges
+/// and `dagPB.Size()`), the chunks the reader fills, `task.rows` and, for a
+/// keep-order read, `indexOrder` and `task.rowIdx`; the next task releases
+/// the last. A Go testkit run (`tidb_enable_reuse_chunk` off, a delve trace
+/// of `tableWorker.executeTask` for the breakdown):
+///
+/// ```text
+/// t WHERE b = 3                       IndexLookUp_7  2.38 KB = 1028 + 1396 + 16
+/// t USE INDEX(b) WHERE b > 1          IndexLookUp_7  2.54 KB = 1124 + 1396 + 80
+/// ... ORDER BY b (and DESC)           IndexLookUp_14 2.73 KB = 1276 + 1396 + 80 + 40
+/// ... AND c != 'z'                    IndexLookUp_8  2.70 KB (a 314-byte DAG)
+/// ... AND b != 4                      IndexLookUp_7  2.58 KB (two handle ranges)
+/// ... ORDER BY b LIMIT 2              IndexLookUp_30 2.52 KB
+/// ... LIMIT 2                         IndexLookUp_14 2.42 KB
+/// u (no primary key) ... ORDER BY b   IndexLookUp_14 3.14 KB
+/// ch (clustered VARCHAR key) ...      IndexLookUp_7  3.18 KB, ORDER BY b 3.54 KB
+/// ci (clustered (a, b) key) ...       IndexLookUp_7  3.46 KB, ORDER BY c 3.85 KB
+/// p (HASH(a) PARTITIONS 2) ... b = 3  IndexLookUp_7  2.38 KB
+/// ```
+///
+/// An ordinary statement charges the same bytes, so `tidb_mem_quota_query`
+/// cancels it where Go's does (the same Go run: 2440 cancels both lookups,
+/// 2500 only the 2,600-byte one, 2601 neither).
+#[test]
+fn an_index_lookup_charges_its_tasks_like_go() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE t (a INT PRIMARY KEY, b INT, c VARCHAR(20), KEY(b))",
+        "INSERT INTO t VALUES (1,1,'x'),(2,2,'y'),(3,3,'z'),(4,4,'w'),(5,5,'v'),(6,6,'u')",
+        "CREATE TABLE u (a INT, b INT, c VARCHAR(20), KEY(b))",
+        "INSERT INTO u VALUES (1,1,'x'),(2,2,'y'),(3,3,'z'),(4,4,'w'),(5,5,'v'),(6,6,'u')",
+        "CREATE TABLE ch (a VARCHAR(10) PRIMARY KEY CLUSTERED, b INT, c INT, KEY(b))",
+        "INSERT INTO ch VALUES ('x',1,1),('y',2,2),('z',3,3),('w',4,4),('v',5,5),('u',6,6)",
+        "CREATE TABLE ci (a INT, b INT, c INT, d INT, PRIMARY KEY(a, b) CLUSTERED, KEY(c))",
+        "INSERT INTO ci VALUES (1,1,1,1),(2,2,2,2),(3,3,3,3),(4,4,4,4),(5,5,5,5),(6,6,6,6)",
+        "CREATE TABLE p (a INT PRIMARY KEY, b INT, c VARCHAR(20), KEY(b)) PARTITION BY HASH(a) PARTITIONS 2",
+        "INSERT INTO p VALUES (1,1,'x'),(2,2,'y'),(3,3,'z'),(4,4,'w'),(5,5,'v'),(6,6,'u')",
+    ] {
+        session.run(sql).unwrap();
+    }
+    for (sql, operator, memory) in [
+        ("SELECT * FROM t WHERE b = 3", "IndexLookUp_7", "2.38 KB"),
+        ("SELECT * FROM p USE INDEX(b) WHERE b = 3", "IndexLookUp_7", "2.38 KB"),
+        ("SELECT * FROM t USE INDEX(b) WHERE b > 1", "IndexLookUp_7", "2.54 KB"),
+        ("SELECT * FROM t USE INDEX(b) WHERE b > 1 ORDER BY b", "IndexLookUp_14", "2.73 KB"),
+        ("SELECT * FROM t USE INDEX(b) WHERE b > 1 ORDER BY b DESC", "IndexLookUp_14", "2.73 KB"),
+        ("SELECT * FROM t USE INDEX(b) WHERE b > 1 AND c != 'z'", "IndexLookUp_8", "2.70 KB"),
+        ("SELECT * FROM t USE INDEX(b) WHERE b > 1 AND b != 4", "IndexLookUp_7", "2.58 KB"),
+        ("SELECT * FROM t USE INDEX(b) WHERE b > 1 ORDER BY b LIMIT 2", "IndexLookUp_30", "2.52 KB"),
+        ("SELECT * FROM t USE INDEX(b) WHERE b > 1 LIMIT 2", "IndexLookUp_14", "2.42 KB"),
+        ("SELECT * FROM u USE INDEX(b) WHERE b > 1 ORDER BY b", "IndexLookUp_14", "3.14 KB"),
+        ("SELECT * FROM ch USE INDEX(b) WHERE b > 1", "IndexLookUp_7", "3.18 KB"),
+        ("SELECT * FROM ch USE INDEX(b) WHERE b > 1 ORDER BY b", "IndexLookUp_14", "3.54 KB"),
+        ("SELECT * FROM ci USE INDEX(c) WHERE c > 1", "IndexLookUp_7", "3.46 KB"),
+        ("SELECT * FROM ci USE INDEX(c) WHERE c > 1 ORDER BY c", "IndexLookUp_14", "3.85 KB"),
+    ] {
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        let row = rows
+            .iter()
+            .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()) == operator)
+            .unwrap_or_else(|| panic!("{sql}: no {operator} in {rows:?}"));
+        assert_eq!(row[7], memory, "{sql}: {rows:?}");
+    }
+    session.run("SET GLOBAL tidb_mem_oom_action = 'CANCEL'").unwrap();
+    for (quota, point_cancelled, range_cancelled) in
+        [("2440", true, true), ("2500", false, true), ("2599", false, true), ("2601", false, false)]
+    {
+        session.run(&format!("SET tidb_mem_quota_query = {quota}")).unwrap();
+        for (sql, cancelled) in [
+            ("SELECT * FROM t WHERE b = 3", point_cancelled),
+            ("SELECT * FROM t USE INDEX(b) WHERE b > 1", range_cancelled),
+        ] {
+            let result = session.run(sql);
+            assert_eq!(
+                result.as_ref().err().map(|error| error.clone().to_mysql_error().code),
+                cancelled.then_some(8175),
+                "quota {quota}: {sql}: {:?}",
+                result.err()
+            );
+        }
+    }
+}
+
 /// Go's `StreamAggExec` charges its child result and its functions'
 /// partial results (`AllocPartialResult` plus each update's delta) to its
 /// own tracker, so a root StreamAgg's EXPLAIN ANALYZE memory is Go's
@@ -7697,9 +7782,27 @@ fn a_statement_records_go_executor_ruv2_metrics() {
         // (`forcePrepareConstStartTS`), which the commit counts.
         ("SELECT * FROM t WHERE a = 3", vec!["executor_l1:{PointGetExecutor:3}", "txn_cnt:1"]),
         ("SELECT * FROM t WHERE a IN (1,3)", vec!["executor_l1:{BatchPointGetExec:6}", "txn_cnt:1"]),
-        // Go also counts `TableReaderExecutor:1` here: the per-task table
-        // reader its `IndexLookUpExecutor` builds, which this port lacks (E11).
-        ("SELECT * FROM t WHERE b = 3", vec!["executor_l2:{IndexLookUpExecutor:1}", "plan_cnt:1", "plan_derive_stats_paths:2", "txn_cnt:1"]),
+        // The per-task table reader of an `IndexLookUpExecutor` records its
+        // rows, and reports them into the parent's accumulator through the
+        // worker's context: a projection above it counts them as input.
+        (
+            "SELECT * FROM t WHERE b = 3",
+            vec![
+                "executor_l2:{IndexLookUpExecutor:1,TableReaderExecutor:1}",
+                "plan_cnt:1",
+                "plan_derive_stats_paths:2",
+                "txn_cnt:1",
+            ],
+        ),
+        (
+            "SELECT c FROM t USE INDEX(b) WHERE b > 1",
+            vec![
+                "executor_l2:{IndexLookUpExecutor:5,ProjectionExec:25,TableReaderExecutor:5}",
+                "plan_cnt:1",
+                "plan_derive_stats_paths:1",
+                "txn_cnt:1",
+            ],
+        ),
         // Go builds the EXPLAIN and, nested, its statement (`buildExplain`),
         // whose point get is a fast plan; `buildExplain`'s executor build
         // takes the read timestamp (`getSnapshotTS`), activating the

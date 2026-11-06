@@ -497,6 +497,13 @@ pub struct PushdownStatementContext {
     /// response's `CopRuntimeStats` goes; `None` when the statement does not
     /// collect execution info.
     pub cop_response_sink: Option<Arc<dyn crate::select_response::CopResponseSink>>,
+    /// Go `RequestBuilder.SetMemTracker`: the tracker this request's select
+    /// result charges each response it holds to, when the reader names one
+    /// (an index lookup's index worker, `LabelForIndexWorker`).
+    pub select_mem_tracker: Option<Arc<tidb_memory::Tracker>>,
+    /// Go `SessionVars.InitChunkSize`: the capacity a reader's chunk starts
+    /// with (`exec.TryNewCacheChunk`).
+    pub init_chunk_size: usize,
 }
 
 impl Default for PushdownStatementContext {
@@ -543,6 +550,8 @@ impl Default for PushdownStatementContext {
             staged_writes: Arc::default(),
             keys_read: tidb_kv::keys_read::KeysReadBudget::default(),
             cop_response_sink: None,
+            select_mem_tracker: None,
+            init_chunk_size: tidb_vardef::defaults::DEF_INIT_CHUNK_SIZE as usize,
         }
     }
 }
@@ -570,6 +579,9 @@ impl PushdownStatementContext {
     #[must_use]
     pub fn for_lookup_batch(&self, count: usize) -> Self {
         let mut statement = self.clone();
+        // Go `buildTableReaderBase` sets no memory tracker on a lookup
+        // task's request.
+        statement.select_mem_tracker = None;
         if let Some(avg) = self.lookup_avg_row_bytes {
             statement.estimated_net_bytes = avg * count as f64;
         }
@@ -683,6 +695,12 @@ pub trait PushdownRowStream: Send {
     /// Releases the request, which an abandoned stream (an early-stopping
     /// `LIMIT`) must still do.
     fn close(&mut self);
+
+    /// Go `dagPB.Size()`: the encoded size of the DAG request this stream
+    /// reads, `0` for a stream that sent none.
+    fn dag_size(&self) -> usize {
+        0
+    }
 }
 
 /// Two (or more) remote scans serving ONE ordered read whose unsigned-handle

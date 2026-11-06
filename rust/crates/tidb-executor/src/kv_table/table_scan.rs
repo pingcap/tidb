@@ -358,10 +358,12 @@ pub trait KvTableReader {
         staged: StagedHandlesLookup,
     ) -> Result<Option<(Vec<(TableHandle, Vec<Datum>)>, bool, u64, Vec<usize>)>, KvTableError>;
 
+    /// The rows of one physical part, with Go's `chk.MemoryUsage()` of every
+    /// chunk its reader filled.
     fn finish_physical_rows(
         handles: &[TableHandle],
         staged: StagedPhysicalLookup,
-    ) -> Result<Option<(Vec<(TableHandle, Vec<Datum>)>, bool, u64, Vec<usize>)>, KvTableError>;
+    ) -> Result<Option<(Vec<(TableHandle, Vec<Datum>)>, bool, u64, Vec<usize>, i64)>, KvTableError>;
 
     /// Finishes one staged table lookup using the same chunk-backed handoff as
     /// Go's `tableWorker.executeTask`, falling back to the row contract for
@@ -1676,6 +1678,9 @@ impl KvTableReader for TableCommon {
                     .map(|ranges| (id, handles, positions, ranges))
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let kv_ranges_mem_usage = handle_kv_ranges_mem_usage(
+            groups.iter().map(|(_, _, _, (key_ranges, _))| key_ranges.as_slice()),
+        );
         let statement = statement.for_lookup_batch(handles.len());
         let mut parts = Vec::with_capacity(groups.len());
         for (id, handles, positions, (key_ranges, range_hints)) in groups {
@@ -1708,7 +1713,10 @@ impl KvTableReader for TableCommon {
             };
             parts.push((handles, positions, reader));
         }
-        Ok(Some(StagedHandlesLookup { parts }))
+        Ok(Some(StagedHandlesLookup {
+            parts,
+            kv_ranges_mem_usage,
+        }))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1769,6 +1777,7 @@ impl KvTableReader for TableCommon {
             output_width: scan_keep.len(),
             materialization,
             required_rows: required_rows.max(1),
+            init_cap: statement.init_chunk_size,
         }))
     }
 
@@ -1812,32 +1821,14 @@ impl KvTableReader for TableCommon {
         handles: &[TableHandle],
         staged: StagedHandlesLookup,
     ) -> Result<Option<(Vec<(TableHandle, Vec<Datum>)>, bool, u64, Vec<usize>)>, KvTableError> {
-        let mut ordered = Vec::with_capacity(handles.len());
-        let mut applied = true;
-        let mut wire_rows = 0;
-        for (part_handles, positions, reader) in staged.parts {
-            let Some((rows, part_applied, count, indices)) =
-                Self::finish_physical_rows(&part_handles, reader)?
-            else {
-                return Ok(None);
-            };
-            applied &= part_applied;
-            wire_rows += count;
-            ordered.extend(
-                rows.into_iter()
-                    .zip(indices)
-                    .map(|(row, index)| (positions[index], row)),
-            );
-        }
-        ordered.sort_by_key(|(index, _)| *index);
-        let (indices, rows) = ordered.into_iter().unzip();
-        Ok(Some((rows, applied, wire_rows, indices)))
+        Ok(finish_routed_rows(handles, staged)?
+            .map(|(rows, applied, wire_rows, indices, _)| (rows, applied, wire_rows, indices)))
     }
 
     fn finish_physical_rows(
         handles: &[TableHandle],
         mut staged: StagedPhysicalLookup,
-    ) -> Result<Option<(Vec<(TableHandle, Vec<Datum>)>, bool, u64, Vec<usize>)>, KvTableError> {
+    ) -> Result<Option<(Vec<(TableHandle, Vec<Datum>)>, bool, u64, Vec<usize>, i64)>, KvTableError> {
         let wire_rows = staged.cursor.rows_returned();
         let predicates_applied =
             staged.materialization.is_none() && staged.cursor.predicates_applied();
@@ -1864,19 +1855,27 @@ impl KvTableReader for TableCommon {
         // A real coprocessor stream transfers decoded chunks. Drain each
         // chunk once so the stream's row counter and channel are touched once
         // per batch; fakes and row-only backends keep the original contract.
-        if let Some(batch) = staged.cursor.next_chunk_with_handle(staged.required_rows)? {
-            for row in batch {
-                append_row(row)?;
-            }
+        let mut chunk_memory = 0;
+        if staged.cursor.supports_lookup_chunks() {
             loop {
-                let Some(batch) = staged.cursor.next_chunk_with_handle(staged.required_rows)?
+                let Some(batch) = staged
+                    .cursor
+                    .next_raw_chunk_with_handle(staged.init_cap, staged.required_rows)?
                 else {
                     break;
                 };
-                if batch.is_empty() {
+                if batch.num_rows() == 0 {
                     break;
                 }
-                for row in batch {
+                chunk_memory += batch.memory_usage();
+                // Go's tableWorker iterates the decoded chunk and calls
+                // GetDatum on each cell; the response decoder has already
+                // validated the wire schema.
+                let field_types = staged.cursor.field_types();
+                let rows = (0..batch.num_rows())
+                    .map(|row| batch.get_row(row).get_datum_row(field_types))
+                    .collect::<Vec<_>>();
+                for row in rows {
                     append_row(row)?;
                 }
             }
@@ -1905,7 +1904,7 @@ impl KvTableReader for TableCommon {
             .collect::<Result<Vec<_>, _>>()?;
         ordered.sort_by_key(|(position, _)| *position);
         let (indices, rows) = ordered.into_iter().unzip();
-        Ok(Some((rows, predicates_applied, wire_rows, indices)))
+        Ok(Some((rows, predicates_applied, wire_rows, indices, chunk_memory)))
     }
 
     fn finish_lookup_by_handles(
@@ -1913,6 +1912,14 @@ impl KvTableReader for TableCommon {
         staged: StagedHandlesLookup,
         allow_chunks: bool,
     ) -> Result<Option<FinishedLookup>, KvTableError> {
+        // Go `tableReader.memUsage()`. A task's parts share one DAG, so the
+        // first part's request size is the reader's `dagPB.Size()`.
+        let reader = SIZEOF_TABLE_READER_EXECUTOR
+            + staged.kv_ranges_mem_usage
+            + staged
+                .parts
+                .first()
+                .map_or(0, |(_, _, part)| part.cursor.stream.dag_size() as i64);
         if !allow_chunks
             || staged.parts.iter().any(|(_, _, reader)| {
                 reader.materialization.is_some()
@@ -1920,9 +1927,15 @@ impl KvTableReader for TableCommon {
                     || !reader.cursor.predicates_applied()
             })
         {
-            return Self::finish_routed_rows_by_handles(handles, staged).map(|answer| {
-                answer.map(|(rows, applied, wire_rows, indices)| {
-                    FinishedLookup::Rows(rows, applied, wire_rows, indices)
+            return finish_routed_rows(handles, staged).map(|answer| {
+                answer.map(|(rows, applied, wire_rows, indices, chunks)| {
+                    FinishedLookup::Rows(
+                        rows,
+                        applied,
+                        wire_rows,
+                        indices,
+                        LookupReaderMemory { reader, chunks },
+                    )
                 })
             });
         }
@@ -1945,11 +1958,13 @@ impl KvTableReader for TableCommon {
                 result.request_indices.extend(part.request_indices);
                 result.batches.extend(part.batches);
                 result.wire_rows += part.wire_rows;
+                result.reader_memory.chunks += part.reader_memory.chunks;
             } else {
                 result = Some(part);
             }
         }
         if let Some(result) = result.as_mut() {
+            result.reader_memory.reader = reader;
             let mut ordered = std::mem::take(&mut result.request_indices)
                 .into_iter()
                 .zip(std::mem::take(&mut result.row_positions))
@@ -1968,16 +1983,18 @@ impl KvTableReader for TableCommon {
         let predicates_applied = staged.cursor.predicates_applied();
         let mut batches = Vec::new();
         let mut rows = Vec::with_capacity(handles.len());
+        let mut chunks = 0;
         loop {
             let Some(batch) = staged
                 .cursor
-                .next_raw_chunk_with_handle(staged.required_rows)?
+                .next_raw_chunk_with_handle(staged.init_cap, staged.required_rows)?
             else {
                 break;
             };
             if batch.num_rows() == 0 {
                 break;
             }
+            chunks += batch.memory_usage();
             let batch_index = batches.len();
             for row_index in 0..batch.num_rows() {
                 let row = batch.get_row(row_index);
@@ -2024,6 +2041,7 @@ impl KvTableReader for TableCommon {
                 .is_some_and(|position| position >= staged.output_width),
             predicates_applied,
             wire_rows,
+            reader_memory: LookupReaderMemory { reader: 0, chunks },
         }))
     }
 
@@ -3528,6 +3546,9 @@ type StagedRow = (Vec<u8>, Option<Vec<Datum>>);
 /// Dropping an unfinished task closes every cursor.
 pub struct StagedHandlesLookup {
     parts: Vec<(Vec<TableHandle>, Vec<usize>, StagedPhysicalLookup)>,
+    /// Go `kv.KeyRangeSliceMemUsage(tableReader.kvRanges)`: every part's
+    /// handle ranges appended into one slice (`KeyRanges.AppendSelfTo`).
+    kv_ranges_mem_usage: i64,
 }
 
 struct StagedPhysicalLookup {
@@ -3535,6 +3556,84 @@ struct StagedPhysicalLookup {
     output_width: usize,
     materialization: Option<RemoteRowMaterialization>,
     required_rows: usize,
+    /// Go `TableReaderExecutor.InitCap()`: the capacity each chunk the
+    /// task's reader fills starts with.
+    init_cap: usize,
+}
+
+/// [`TableCommon::finish_routed_rows_by_handles`] with Go's
+/// `chk.MemoryUsage()` of every chunk the parts' readers filled.
+#[allow(clippy::type_complexity)]
+fn finish_routed_rows(
+    handles: &[TableHandle],
+    staged: StagedHandlesLookup,
+) -> Result<Option<(Vec<(TableHandle, Vec<Datum>)>, bool, u64, Vec<usize>, i64)>, KvTableError> {
+    let mut ordered = Vec::with_capacity(handles.len());
+    let mut applied = true;
+    let mut wire_rows = 0;
+    let mut chunk_memory = 0;
+    for (part_handles, positions, reader) in staged.parts {
+        let Some((rows, part_applied, count, indices, chunks)) =
+            TableCommon::finish_physical_rows(&part_handles, reader)?
+        else {
+            return Ok(None);
+        };
+        applied &= part_applied;
+        wire_rows += count;
+        chunk_memory += chunks;
+        ordered.extend(
+            rows.into_iter()
+                .zip(indices)
+                .map(|(row, index)| (positions[index], row)),
+        );
+    }
+    ordered.sort_by_key(|(index, _)| *index);
+    let (indices, rows) = ordered.into_iter().unzip();
+    Ok(Some((rows, applied, wire_rows, indices, chunk_memory)))
+}
+
+/// Go `unsafe.Sizeof(TableReaderExecutor{})` (a Go probe on darwin/arm64,
+/// the 64-bit layout every supported target shares).
+const SIZEOF_TABLE_READER_EXECUTOR: i64 = 768;
+
+/// Go `tableWorker.executeTask`'s charges for the `TableReaderExecutor` of
+/// one lookup task: `tableReader.memUsage()` and `chk.MemoryUsage()` of every
+/// chunk its `exec.Next` filled.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LookupReaderMemory {
+    /// Go `TableReaderExecutor.memUsage()`: the executor, its (empty)
+    /// `ranges`, its `kvRanges` and `dagPB.Size()`.
+    pub(crate) reader: i64,
+    /// The chunks the reader filled.
+    pub(crate) chunks: i64,
+}
+
+/// Go `kv.KeyRangeSliceMemUsage` of the slice `KeyRanges.AppendSelfTo(nil)`
+/// builds from `groups` -- one `append` per group, growing as Go's `append`
+/// does. Go allocates each handle key exactly (`tablecodec.EncodeRowKey`),
+/// so a key's capacity is its length.
+fn handle_kv_ranges_mem_usage<'a>(groups: impl IntoIterator<Item = &'a [(Key, Key)]>) -> i64 {
+    // Go `unsafe.Sizeof(kv.KeyRange{})`: two slice headers.
+    const SIZEOF_KEY_RANGE: usize = 48;
+    let mut len = 0_usize;
+    let mut capacity = 0_usize;
+    let mut key_bytes = 0_usize;
+    for ranges in groups {
+        if len + ranges.len() > capacity {
+            capacity = tidb_goruntime::go_runtime::go_64_next_slice_capacity_for_element(
+                len + ranges.len(),
+                capacity,
+                SIZEOF_KEY_RANGE,
+                tidb_goruntime::go_runtime::GoSliceElementLayout::PointerBearing,
+            );
+        }
+        len += ranges.len();
+        key_bytes += ranges
+            .iter()
+            .map(|(start, end)| start.as_bytes().len() + end.as_bytes().len())
+            .sum::<usize>();
+    }
+    i64::try_from(SIZEOF_KEY_RANGE * capacity + key_bytes).unwrap_or(i64::MAX)
 }
 
 /// The logical row above a physical table scan, shared by table readers and
@@ -3647,6 +3746,8 @@ pub(crate) struct FinishedLookupChunk {
     pub(crate) predicates_applied: bool,
     /// Number of rows that crossed the remote response boundary.
     pub(crate) wire_rows: u64,
+    /// What Go's table worker charges for the task's reader.
+    pub(crate) reader_memory: LookupReaderMemory,
 }
 
 /// One completed table lookup, preserving Go's chunk-backed worker result
@@ -3656,7 +3757,7 @@ pub(crate) enum FinishedLookup {
     /// A chunk-backed response from a real coprocessor stream.
     Chunk(FinishedLookupChunk),
     /// The compatibility path for row-only streams.
-    Rows(Vec<(TableHandle, Vec<Datum>)>, bool, u64, Vec<usize>),
+    Rows(Vec<(TableHandle, Vec<Datum>)>, bool, u64, Vec<usize>, LookupReaderMemory),
 }
 
 #[derive(Clone)]
@@ -4188,54 +4289,38 @@ impl RemoteRowCursor {
         Ok(next)
     }
 
-    /// Drains one decoded response batch for an integer-handle lookup. The
-    /// coprocessor already owns a columnar `Chunk`; consuming that batch at
-    /// once avoids a `next_row`/wire-counter call for every row while keeping
-    /// the public lookup result's owned datum vectors and handle association.
-    /// `None` means the stream is row-only (or a hand-built cursor lacks wire
-    /// type metadata), so callers must use [`Self::next_row_with_handle`].
-    fn next_chunk_with_handle(
-        &mut self,
-        required_rows: usize,
-    ) -> Result<Option<Vec<Vec<Datum>>>, KvTableError> {
-        let Some(batch) = self.next_raw_chunk_with_handle(required_rows)? else {
-            return Ok(None);
-        };
-        // Go's tableWorker iterates the decoded chunk and calls GetDatum on
-        // each cell; the response decoder has already validated the wire
-        // schema. Use the infallible, buffer-oriented equivalent here instead
-        // of constructing a Result for every cell in every lookup row.
-        let rows = (0..batch.num_rows())
-            .map(|row| batch.get_row(row).get_datum_row(&self.field_types))
-            .collect();
-        Ok(Some(rows))
-    }
-
     /// Pulls one decoded response chunk without materializing its rows.
     ///
     /// The response decoder already validated the wire schema. This is the
     /// chunk.Row equivalent of Go's `exec.Next` result handed to
     /// `tableWorker.executeTask`; the caller decides whether to retain the
     /// chunk or use the compatibility row conversion above.
+    ///
+    /// Go `tableWorker.executeTask`'s loop: each call is one
+    /// `chk := exec.TryNewCacheChunk(tableReader)` -- a chunk starting at
+    /// `init_cap` -- filled by `exec.Next(ctx, tableReader, chk)`, so the
+    /// chunk's `MemoryUsage` is the one Go's worker charges.
     fn next_raw_chunk_with_handle(
         &mut self,
+        init_cap: usize,
         required_rows: usize,
     ) -> Result<Option<Chunk>, KvTableError> {
         if !self.supports_lookup_chunks() {
             return Ok(None);
         }
-        let Some(batch) = self
+        let required_rows = required_rows.max(1);
+        let mut batch = Chunk::new(&self.field_types, init_cap.min(required_rows), required_rows);
+        let filled = self
             .stream
-            .next_chunk(required_rows.max(1))
-            .map_err(KvTableError::from)?
-        else {
-            self.note_wire_rows();
+            .next_chunk_into(required_rows, &mut batch)
+            .map_err(KvTableError::from)?;
+        self.note_wire_rows();
+        if !filled {
             return Ok(Some(Chunk::new_chunk_with_capacity(
                 &self.field_types[..self.width.min(self.field_types.len())],
                 0,
             )));
-        };
-        self.note_wire_rows();
+        }
         if batch.num_cols() > self.field_types.len() {
             return Err(KvTableError::Decode(format!(
                 "a coprocessor row carried {} columns but only {} field types were requested",
@@ -8735,18 +8820,22 @@ mod remote_cursor_tests {
                                 output_width: 1,
                                 materialization: None,
                                 required_rows: 2,
+                                init_cap: 2,
                             },
                         ));
                     }
                     let answer = TableCommon::finish_lookup_by_handles(
                         &handles,
-                        StagedHandlesLookup { parts },
+                        StagedHandlesLookup {
+                            parts,
+                            kv_ranges_mem_usage: 0,
+                        },
                         allow_chunks,
                     )
                     .unwrap()
                     .unwrap();
                     let (values, indices, count) = match answer {
-                        FinishedLookup::Rows(rows, applied, count, indices) => {
+                        FinishedLookup::Rows(rows, applied, count, indices, _) => {
                             assert!(applied);
                             (
                                 rows.into_iter()
@@ -8844,8 +8933,10 @@ mod remote_cursor_tests {
                             output_width: 1,
                             materialization: None,
                             required_rows: 1024,
+                            init_cap: 32,
                         },
                     )],
+                    kv_ranges_mem_usage: 0,
                 };
                 let Some(FinishedLookup::Chunk(finished)) =
                     TableCommon::finish_lookup_by_handles(&handles, staged, true).unwrap()

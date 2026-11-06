@@ -203,7 +203,9 @@ pub fn next_with_ruv2<E>(
     // Go `needNextIOAcc`.
     let local = ((cache.is_some() || parent.is_some()) && child_count > 0)
         .then(|| Arc::new(NextIoAcc::default()));
-    let guard = with_next_io_acc(local.clone());
+    // Without a local accumulator Go's `ctx` keeps the parent's, which the
+    // executor's own workers (an index lookup's table readers) report into.
+    let guard = with_next_io_acc(local.clone().or_else(|| parent.clone()));
     let result = next(req);
     drop(guard);
     result?;
@@ -224,6 +226,27 @@ pub fn next_with_ruv2<E>(
         );
     }
     Ok(())
+}
+
+/// Go `exec.Next`'s bookkeeping after an executor with no children, run
+/// outside the executor tree (an index lookup's per-task
+/// `TableReaderExecutor`), returned `rows` rows of `cols` columns: the rows
+/// go to the calling `Next`'s accumulator and the executor records them.
+pub fn record_leaf_next(cache: Option<&Ruv2NextCache>, rows: usize, cols: usize) {
+    if let Some(parent) = current_next_io_acc() {
+        parent.add_input(rows, cols);
+    }
+    if let Some(cache) = cache {
+        add_ruv2_executor_metric_cached(
+            &cache.metrics,
+            cache.info,
+            &cache.recorder,
+            0,
+            rows as i64,
+            0,
+            calc_cell_count(rows, cols),
+        );
+    }
 }
 
 /// A closure run on another thread on behalf of the calling `Next`, as Go's

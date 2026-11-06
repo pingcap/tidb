@@ -66,6 +66,8 @@ pub fn pushdown_statement_context(ctx: &crate::StmtContext) -> PushdownStatement
         staged_writes: ctx.staged_writes_handle(),
         keys_read: ctx.keys_read().clone(),
         cop_response_sink: ctx.cop_response_sink(),
+        select_mem_tracker: None,
+        init_chunk_size: ctx.executor_chunk_sizes().0,
     }
 }
 

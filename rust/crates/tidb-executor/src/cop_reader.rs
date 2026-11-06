@@ -149,8 +149,6 @@ pub mod scan_receipt {
 const NOT_NULL_FLAG: i32 = 1;
 /// Go `mysql.PriKeyFlag`.
 const PRI_KEY_FLAG: i32 = 2;
-/// Go `charset.CollationBin`, the coprocessor collation of a numeric column.
-const BINARY_COLLATION_ID: i32 = 63;
 
 #[derive(Clone)]
 struct SelectionCache {
@@ -575,7 +573,6 @@ pub fn build_resp(
             })
             .collect::<Result<Vec<_>, PushdownScannerError>>()?;
         dag.executors.push(PbExecutor {
-            tp: Some(ExecType::TypeTopN as i32),
             tbl_scan: None,
             idx_scan: None,
             selection: None,
@@ -589,7 +586,7 @@ pub fn build_resp(
             executor_id: Some(String::new()),
             parent_idx: None,
             exchange_sender: None,
-            ..Default::default()
+            ..crate::dag_request::go_executor(ExecType::TypeTopN)
         });
     }
 
@@ -648,15 +645,21 @@ pub fn build_resp(
     // select result charges its responses to. An index lookup's sides
     // and an index merge's partials report under a pushed root, which
     // Go gives no tracker.
-    let memory_tracker = (root_plan_id > 0
-        && !request.statement.cop_plan_chain.is_empty()
-        && !cop_plan_ids.contains(&root_plan_id))
-    .then(|| {
-        request
-            .statement
-            .memory
-            .operator_tracker(root_plan_id as i64)
+    //
+    // A reader that names the tracker itself (`SetMemTracker`, an index
+    // lookup's index worker) charges that one.
+    let memory_tracker = request.statement.select_mem_tracker.clone().or_else(|| {
+        (root_plan_id > 0
+            && !request.statement.cop_plan_chain.is_empty()
+            && !cop_plan_ids.contains(&root_plan_id))
+        .then(|| {
+            request
+                .statement
+                .memory
+                .operator_tracker(root_plan_id as i64)
+        })
     });
+    let dag_size = prost::Message::encoded_len(&dag);
     let plan = RemoteScanPlan {
         cancellation: request.statement.memory.coprocessor_request_cancellation(),
         rpc_interceptor: request.statement.rpc_interceptor.clone(),
@@ -714,6 +717,7 @@ pub fn build_resp(
         predicates_applied,
         plan_id: request.statement.plan_id,
         exhausted: false,
+        dag_size,
     }))
 }
 
@@ -1006,6 +1010,8 @@ struct CopRowStream {
     predicates_applied: bool,
     plan_id: isize,
     exhausted: bool,
+    /// Go `dagPB.Size()` of the request this stream reads.
+    dag_size: usize,
 }
 
 fn select_response_error(error: tidb_copr::response_channel::ResponseChannelError) -> StorageError {
@@ -1158,6 +1164,10 @@ impl PushdownRowStream for CopRowStream {
         self.predicates_applied
     }
 
+    fn dag_size(&self) -> usize {
+        self.dag_size
+    }
+
     fn close(&mut self) {
         if let Some(iter) = self.iter.as_mut() {
             iter.close();
@@ -1200,9 +1210,10 @@ pub fn column_to_proto(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
     }
     // Go `util.ColumnToProto`:
     // `collate.RewriteNewCollationIDIfNeeded(mysql.CollationNames[c.GetCollate()])`.
-    // An integer column's collation is `binary`, which resolves to the same
-    // constant this used to hard-code; a string column's is its own, and it is
-    // what tells TiKV which collator to compare and case-fold with. The
+    // An integer column's collation is `binary`, rewritten like any other
+    // (`-63` under the new collation framework); a string column's is its
+    // own, and it is what tells TiKV which collator to compare and case-fold
+    // with. The
     // predicate lowering reads this very field back
     // (`tidb_executor::wide_scan_selection`), so the leaf and the scan descriptor
     // cannot disagree about the collator by construction.
@@ -1220,7 +1231,7 @@ pub fn column_to_proto(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
     ) {
         tidb_datatype::collation_to_proto(column.field_type.collation_name())
     } else {
-        BINARY_COLLATION_ID
+        tidb_datatype::collation_to_proto("binary")
     };
     // Go `util.ColumnToProto` encodes the origin default into
     // `ColumnInfo.default_val`; the region fills it in for a row written
@@ -1443,6 +1454,7 @@ mod tests {
                 predicates_applied: false,
                 plan_id: 0,
                 exhausted: false,
+                dag_size: 0,
             };
             let error = if chunk {
                 stream.next_chunk(1).unwrap_err()
