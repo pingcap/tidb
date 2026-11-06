@@ -4010,7 +4010,20 @@ pub fn explain_insert_stmt(
     crate::driver::validate_insert_for_explain(insert, catalog, current_db, ctx, None)?;
     let fk_spec = crate::driver::fk_spec_for_insert(insert, catalog, current_db, ctx)?;
     let _ = fk_spec;
-    let physical = crate::driver::physical_insert_plan(insert, catalog, current_db, ctx)?;
+    let mut source_visits = Vec::new();
+    let physical =
+        crate::driver::physical_insert_plan(insert, catalog, current_db, ctx, &mut source_visits)?;
+    // Go `planner.optimize`'s `CheckPrivilege` once `buildInsert` returned.
+    // This plain EXPLAIN plans no VALUES or ON DUPLICATE expressions (Go's
+    // `buildInsert` does), so their visit infos come from the visit-only pass.
+    let _ = source_visits;
+    let visits = crate::driver::dml_visit_info(
+        &tidb_ast::DmlStmt::Insert(Box::new(insert.clone())),
+        catalog,
+        current_db,
+        ctx,
+    )?;
+    crate::table_privilege::check_plan_privilege(ctx, catalog, &visits)?;
     // The source's own width: Go appends ON DUPLICATE fields past it.
     let select_width = match &physical {
         PhysicalPlan::Dml(root) => root.select_plan.as_deref().and_then(|select| {
@@ -4045,7 +4058,9 @@ pub fn explain_analyze_insert_stmt(
 ) -> Result<SelectMeta, DriverError> {
     // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
     crate::driver::record_plan_builder_metric(ctx);
-    let mut physical = crate::driver::physical_insert_plan(insert, catalog, current_db, ctx)?;
+    let mut source_visits = Vec::new();
+    let mut physical =
+        crate::driver::physical_insert_plan(insert, catalog, current_db, ctx, &mut source_visits)?;
     let root_key = crate::driver::physical_builder::runtime_plan_key(&physical);
     let mut runtime = crate::driver::physical_builder::PhysicalRuntimeStats::new();
     let (affected, _) = run_insert_stmt_with_physical_and_stats(
@@ -4054,6 +4069,7 @@ pub fn explain_analyze_insert_stmt(
         current_db,
         ctx,
         Some(&mut physical),
+        Some(source_visits),
         Some(&mut runtime),
     )?;
     ctx.add_affected_rows(affected);
@@ -4101,7 +4117,7 @@ pub fn explain_update_stmt(
     let physical = crate::driver::physical_dml_plan(
         "Update",
         Some(&source),
-        Some(update),
+        crate::driver::MultiDmlRef::Update(update),
         catalog,
         current_db,
         ctx,
@@ -4136,7 +4152,7 @@ pub fn explain_delete_stmt(
     let physical = crate::driver::physical_dml_plan(
         "Delete",
         Some(&source),
-        None,
+        crate::driver::MultiDmlRef::Delete(delete),
         catalog,
         current_db,
         ctx,
@@ -4176,7 +4192,7 @@ pub fn explain_analyze_update_stmt(
             crate::driver::physical_dml_plan(
                 "Update",
                 Some(&source),
-                Some(update),
+                crate::driver::MultiDmlRef::Update(update),
                 catalog,
                 current_db,
                 ctx,
@@ -4235,7 +4251,7 @@ pub fn explain_analyze_delete_stmt(
             crate::driver::physical_dml_plan(
                 "Delete",
                 Some(&source),
-                None,
+                crate::driver::MultiDmlRef::Delete(delete),
                 catalog,
                 current_db,
                 ctx,

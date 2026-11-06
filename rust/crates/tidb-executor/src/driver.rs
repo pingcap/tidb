@@ -359,16 +359,49 @@ pub(crate) fn optimize_query_stmt_with_scalar_subqueries(
     DriverError,
 > {
     if let QueryStmt::Select(select) = query {
-        if let Some(plan) = point_get_plan::try_fast_plan(select, catalog, current_db, ctx)?
-        {
+        // Go `TryFastPlan`'s `checkFastPlanPrivilege(..., mysql.SelectPriv)`.
+        let fast_plan_privilege = |database: &str, table: &str| {
+            crate::table_privilege::check_fast_plan_privilege(
+                ctx,
+                catalog,
+                database,
+                table,
+                &[tidb_mysql::SelectPriv],
+            )
+        };
+        if let Some(plan) = point_get_plan::try_fast_plan_checked(
+            select,
+            catalog,
+            current_db,
+            ctx,
+            &fast_plan_privilege,
+        )? {
             return Ok((plan, Vec::new()));
         }
     }
     // Go `optimize` -> `buildLogicalPlan` -> `PlanBuilder.Build`, past
-    // `TryFastPlan`.
+    // `TryFastPlan`: the statement's one build, whose visit infos
+    // `CheckPrivilege` reads before the optimizer runs.
     record_plan_builder_metric(ctx);
-    planner_bridge::physical_query_plan_with_scalar_subqueries(query, catalog, current_db, ctx)
-        .map_err(planner_error_to_driver)
+    let planned = planner_bridge::physical_query_plan_with_scalar_subqueries(
+        query,
+        catalog,
+        current_db,
+        ctx,
+        planner_bridge::BuildVisits::Check,
+    )
+    .map_err(planner_error_to_driver)?;
+    // Go `buildSelectInto` optimizes the target query (whose own
+    // `CheckPrivilege` ran above) and only then appends FILE, which the
+    // statement's `CheckPrivilege` checks.
+    if matches!(query, QueryStmt::Select(select) if select.into_outfile.is_some()) {
+        crate::table_privilege::check_plan_privilege_requests(
+            ctx,
+            catalog,
+            &[crate::table_privilege::select_into_file_request()],
+        )?;
+    }
+    Ok(planned)
 }
 
 pub(super) fn run_physical_set_opr_stmt(
@@ -662,15 +695,21 @@ pub fn plan_query_meta_stmt_with_subqueries(
     DriverError,
 > {
     validate_query_sequence_names(query, ctx)?;
-    planner_bridge::physical_query_plan_with_scalar_subqueries(query, catalog, current_db, ctx)
-        .map(|(physical, registered)| {
-            let subqueries = registered
-                .into_iter()
-                .map(|subquery| subquery.physical.clone())
-                .collect();
-            (physical, subqueries)
-        })
-        .map_err(planner_error_to_driver)
+    planner_bridge::physical_query_plan_with_scalar_subqueries(
+        query,
+        catalog,
+        current_db,
+        ctx,
+        planner_bridge::BuildVisits::Discard,
+    )
+    .map(|(physical, registered)| {
+        let subqueries = registered
+            .into_iter()
+            .map(|subquery| subquery.physical.clone())
+            .collect();
+        (physical, subqueries)
+    })
+    .map_err(planner_error_to_driver)
 }
 
 /// Resolves every column named by one `MATCH` expression against the SELECT's

@@ -119,15 +119,28 @@ pub fn run_insert_stmt_with_physical(
     ctx: &crate::StmtContext,
     physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
 ) -> Result<(u64, Option<u64>), DriverError> {
-    run_insert_stmt_with_physical_and_stats(insert, catalog, current_db, ctx, physical_plan, None)
+    run_insert_stmt_with_physical_and_stats(
+        insert,
+        catalog,
+        current_db,
+        ctx,
+        physical_plan,
+        None,
+        None,
+    )
 }
 
+/// [`run_insert_stmt_with_physical`] with the executors' runtime stats.
+/// `source_visits` are the visit infos of an INSERT the caller built itself
+/// ([`physical_insert_plan`]); `None` with a `physical_plan` is a cached plan,
+/// whose statement checked the visit infos PREPARE kept.
 pub(crate) fn run_insert_stmt_with_physical_and_stats(
     insert: &tidb_ast::InsertStmt,
     catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
+    source_visits: Option<Vec<tidb_planner::plan_builder::visit_info::VisitInfo>>,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<(u64, Option<u64>), DriverError> {
     // go resolves the INSERT's target table before planning the source
@@ -137,10 +150,13 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
     resolve_insert_target(insert, catalog, current_db, ctx)?;
     // Go `planner.Optimize`.
     let optimize = super::start_optimize_region();
-    let mut fresh = physical_plan
-        .is_none()
-        .then(|| physical_insert_plan(insert, catalog, current_db, ctx))
-        .transpose()?;
+    let mut source_visits = source_visits;
+    let mut fresh = None;
+    if physical_plan.is_none() {
+        let mut visits = Vec::new();
+        fresh = Some(physical_insert_plan(insert, catalog, current_db, ctx, &mut visits)?);
+        source_visits = Some(visits);
+    }
     let mut physical_plan = physical_plan.or(fresh.as_mut());
     // Go `buildInsert` evaluates the values' uncorrelated subqueries while
     // it plans: the VALUES lists, then (after an INSERT ... SELECT's source
@@ -156,6 +172,15 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
         };
         plan_insert(insert, select, catalog, current_db, ctx)?
     };
+    // Go `planner.optimize`'s `CheckPrivilege` / `CheckTableLock` once
+    // `buildInsert` returned: its target's visit infos, the source's, then
+    // the ON DUPLICATE assignments'.
+    if let Some(source_visits) = source_visits {
+        let mut visits = planned.target_visits.clone();
+        visits.extend(source_visits);
+        visits.extend(planned.visits.iter().cloned());
+        crate::table_privilege::check_plan_privilege(ctx, catalog, &visits)?;
+    }
     optimize.end();
     if let Some(plan) = physical_plan.as_deref_mut() {
         super::physical_builder::prepare_execution_plan(plan, catalog, ctx)?;
@@ -196,12 +221,15 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
 
 /// Builds the physical plan of an INSERT: its source (Go's ON DUPLICATE
 /// extension of it for an `INSERT ... SELECT`), the foreign key triggers, and
-/// what the planner decided about the source's outputs.
+/// what the planner decided about the source's outputs. `source_visits`
+/// receives the source's visit infos, which the statement checks with the
+/// rest of `buildInsert`'s once its values are planned.
 pub(crate) fn physical_insert_plan(
     insert: &tidb_ast::InsertStmt,
     catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
+    source_visits: &mut Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
 ) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
     let extended = super::planner_bridge::insert_extended_source(insert, catalog, current_db, ctx);
     let (source, actual_col_len) = match &extended {
@@ -219,6 +247,7 @@ pub(crate) fn physical_insert_plan(
         std::slice::from_ref(&fk_spec_for_insert(insert, catalog, current_db, ctx)?),
         DmlKeep::Auto,
         actual_col_len,
+        super::planner_bridge::BuildVisits::Collect(source_visits),
     )
 }
 
@@ -252,12 +281,13 @@ fn dml_execution_parts<'a>(
     ))
 }
 
-/// Builds and prepares the same DML plan for execution and EXPLAIN.
+/// Builds and prepares the same UPDATE or DELETE plan for execution and
+/// EXPLAIN, checking the statement's privileges once it is built.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn physical_dml_plan(
     operator: &str,
     source: Option<&tidb_ast::QueryStmt>,
-    update: Option<&tidb_ast::UpdateStmt>,
+    write: super::multi_dml::MultiDmlRef<'_>,
     catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
@@ -266,7 +296,7 @@ pub(crate) fn physical_dml_plan(
     physical_dml_plan_with_cache_mode(
         operator,
         source,
-        update,
+        Some(write),
         catalog,
         current_db,
         ctx,
@@ -274,15 +304,17 @@ pub(crate) fn physical_dml_plan(
         std::slice::from_ref(fk_spec),
         DmlKeep::Auto,
         None,
+        super::planner_bridge::BuildVisits::Check,
     )
 }
 
 /// Multi-table callers carry all resolved table policies into the same DML
 /// allocator and source builder used by single-table writes.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn physical_multi_dml_plan(
     operator: &str,
     source: &tidb_ast::QueryStmt,
-    update: Option<&tidb_ast::UpdateStmt>,
+    write: super::multi_dml::MultiDmlRef<'_>,
     catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
@@ -292,7 +324,7 @@ pub(crate) fn physical_multi_dml_plan(
     physical_dml_plan_with_cache_mode(
         operator,
         Some(source),
-        update,
+        Some(write),
         catalog,
         current_db,
         ctx,
@@ -300,6 +332,7 @@ pub(crate) fn physical_multi_dml_plan(
         fk_specs,
         keep,
         None,
+        super::planner_bridge::BuildVisits::Check,
     )
 }
 
@@ -319,10 +352,20 @@ pub(crate) fn physical_multi_dml_plan(
 /// * `BuildOn{Insert,Update,Delete}FKTriggers` runs last, allocating the
 ///   `Foreign_Key_Check` / `Foreign_Key_Cascade` leaves.
 #[allow(clippy::too_many_arguments)]
+///
+/// `write` is the UPDATE or DELETE being planned (`None` for an INSERT).
+/// `visits` is what becomes of the visit infos Go's one `PlanBuilder` would
+/// hold once `buildInsert` / `buildUpdate` / `buildDelete` returns: `Check`ed
+/// here (Go `planner.optimize`'s `CheckPrivilege` after the build, which for a
+/// DML includes the read's `DoOptimize`), `Collect`ed for an INSERT whose
+/// values are planned after this, or `Discard`ed for a cached plan's rebuild.
+/// A fast point plan is checked as Go's `checkFastPlanPrivilege` checks it,
+/// and a denied one leaves the statement to the ordinary build.
+#[allow(clippy::too_many_arguments)]
 fn physical_dml_plan_with_cache_mode(
     operator: &str,
     source: Option<&tidb_ast::QueryStmt>,
-    update: Option<&tidb_ast::UpdateStmt>,
+    write: Option<super::multi_dml::MultiDmlRef<'_>>,
     catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
@@ -330,9 +373,19 @@ fn physical_dml_plan_with_cache_mode(
     fk_specs: &[fk_trigger_plan::FkPlanSpec],
     keep: DmlKeep,
     insert_actual_col_len: Option<usize>,
+    visits: super::planner_bridge::BuildVisits<'_>,
 ) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
+    use super::planner_bridge::BuildVisits;
     use tidb_planner_core_operator_physicalop::{BasePhysicalPlan, PhysicalDmlRoot, PhysicalPlan};
 
+    let update = match write {
+        Some(super::multi_dml::MultiDmlRef::Update(update)) => Some(update),
+        _ => None,
+    };
+    let checking = matches!(visits, BuildVisits::Check);
+    let collecting = !matches!(visits, BuildVisits::Discard);
+    let mut statement_visits = Vec::new();
+    let mut fast_plan_checked = false;
 
     let plan_ids = tidb_planner_core_base::PlanIdAllocator::new();
     let column_ids = tidb_planner_core_base::ColumnIdAllocator::new();
@@ -410,6 +463,11 @@ fn physical_dml_plan_with_cache_mode(
                     use_plan_cache,
                     &plan_ids,
                     &column_ids,
+                    if collecting {
+                        BuildVisits::Collect(&mut statement_visits)
+                    } else {
+                        BuildVisits::Discard
+                    },
                 )
                 .map_err(super::planner_error_to_driver)?;
             insert_select = Some(tidb_planner_core_operator_physicalop::InsertSelectOutput {
@@ -423,15 +481,41 @@ fn physical_dml_plan_with_cache_mode(
                 .filter(|update| matches!(update.kind, tidb_ast::UpdateKind::Multi { .. }));
             let allow_fast_plan = multi_update.is_none()
                 && update.is_none_or(|update| try_update_point_plan(update));
+            // Go `tryUpdatePointPlan` / `tryDeletePointPlan`'s
+            // `checkFastPlanPrivilege(..., SelectPriv, UpdatePriv /
+            // DeletePriv)`.
+            let write_privilege = if operator.eq_ignore_ascii_case("Update") {
+                tidb_mysql::UpdatePriv
+            } else {
+                tidb_mysql::DeletePriv
+            };
+            let fast_plan_privilege = |database: &str, table: &str| {
+                !checking
+                    || crate::table_privilege::check_fast_plan_privilege(
+                        ctx,
+                        catalog,
+                        database,
+                        table,
+                        &[tidb_mysql::SelectPriv, write_privilege],
+                    )
+            };
             let fast = (!use_plan_cache && allow_fast_plan)
                 .then(|| {
                     super::point_get_plan::try_fast_dml_point_physical_plan_with_allocator(
-                        select, catalog, current_db, ctx, &plan_ids,
+                        select,
+                        catalog,
+                        current_db,
+                        ctx,
+                        &plan_ids,
+                        &fast_plan_privilege,
                     )
                 })
                 .transpose()?
                 .flatten();
             if let Some(mut fast) = fast {
+                // Go's `Optimize` returns the fast plan without `optimize`'s
+                // `CheckPrivilege`: `checkFastPlanPrivilege` was its check.
+                fast_plan_checked = true;
                 // Go's point plans carry `Lock` for UPDATE and DELETE, the
                 // batch one as well (`tryUpdatePointPlan`/`tryDeletePointPlan`).
                 match &mut fast {
@@ -499,8 +583,10 @@ fn physical_dml_plan_with_cache_mode(
                         operator,
                         delete_prune_has_fk,
                         delete_multi,
+                        write.filter(|_| collecting),
                     )
                     .map_err(super::planner_error_to_driver)?;
+                statement_visits.extend(built.visit_info);
                 update_expressions = built.update_expressions;
                 delete_col_pos = built.delete_col_pos;
                 delete_tables = built.delete_tables;
@@ -521,6 +607,11 @@ fn physical_dml_plan_with_cache_mode(
                 use_plan_cache,
                 &plan_ids,
                 &column_ids,
+                if collecting {
+                    BuildVisits::Collect(&mut statement_visits)
+                } else {
+                    BuildVisits::Discard
+                },
             )
             .map_err(super::planner_error_to_driver)?,
         ),
@@ -536,6 +627,15 @@ fn physical_dml_plan_with_cache_mode(
     }
     // Go flattens all checks before all cascades, preserving table order.
     fk_triggers.sort_by_key(|node| node.operator == "Foreign_Key_Cascade");
+    // Go `planner.optimize`'s `CheckPrivilege` / `CheckTableLock` once
+    // `buildUpdate` / `buildDelete` returned.
+    match visits {
+        BuildVisits::Check if !fast_plan_checked => {
+            crate::table_privilege::check_plan_privilege(ctx, catalog, &statement_visits)?;
+        }
+        BuildVisits::Collect(collected) => collected.extend(statement_visits),
+        BuildVisits::Check | BuildVisits::Discard => {}
+    }
     let mut plan = PhysicalPlan::Dml(PhysicalDmlRoot {
         base,
         go_operator: operator.to_owned(),
@@ -804,6 +904,10 @@ pub(crate) struct PlannedInsert {
     /// Go `Insert.GenCols`: each generated column's expression over the
     /// table's complete stored row, per table column.
     generated: Vec<Option<Expression>>,
+    /// `buildInsert`'s visit infos on the target, ahead of the source's.
+    target_visits: Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
+    /// The visit infos planning the values appended, after the source's.
+    visits: Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
 }
 
 /// Go `buildInsert`: the VALUES lists, then (for an `INSERT ... SELECT`) the
@@ -824,14 +928,16 @@ fn plan_insert(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<PlannedInsert, DriverError> {
-    let (values, on_duplicate, generated) =
+    let planned =
         super::planner_bridge::plan_insert_expressions(insert, select, catalog, current_db, ctx)
             .map_err(super::planner_error_to_driver)?;
     Ok(PlannedInsert {
-        lists: values.lists,
-        on_duplicate,
+        lists: planned.values.lists,
+        on_duplicate: planned.on_duplicate,
         actual_col_len: select.and_then(|(_, output)| output.actual_col_len),
-        generated,
+        generated: planned.generated,
+        target_visits: planned.target_visits,
+        visits: planned.visits,
     })
 }
 
@@ -2669,7 +2775,7 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
             tidb_ast::UpdateKind::Single(_) => physical_dml_plan(
                 "Update",
                 source.as_ref(),
-                Some(update),
+                super::multi_dml::MultiDmlRef::Update(update),
                 catalog,
                 current_db,
                 ctx,
@@ -2763,12 +2869,25 @@ pub fn prefetch_point_plan_keys(
     // The statement plans again when it runs, and reports the fast plan's
     // conversion warnings then.
     let warning_bookmark = ctx.warning_count();
+    let write_privilege = match stmt {
+        tidb_ast::DmlStmt::Update(_) => tidb_mysql::UpdatePriv,
+        _ => tidb_mysql::DeletePriv,
+    };
     let fast = super::point_get_plan::try_fast_dml_point_physical_plan_with_allocator(
         &select,
         catalog,
         current_db,
         ctx,
         &tidb_planner_core_base::PlanIdAllocator::new(),
+        &|database, table| {
+            crate::table_privilege::check_fast_plan_privilege(
+                ctx,
+                catalog,
+                database,
+                table,
+                &[tidb_mysql::SelectPriv, write_privilege],
+            )
+        },
     );
     ctx.truncate_warnings(warning_bookmark);
     // Go `TryFastPlan` answers no plan rather than an error.
@@ -3312,7 +3431,7 @@ fn cached_dml_physical_plan(
     let Stmt::Dml(dml) = statement else {
         return None;
     };
-    let (operator, source, update, insert_actual_col_len) = match dml.as_ref() {
+    let (operator, source, write, insert_actual_col_len) = match dml.as_ref() {
         tidb_ast::DmlStmt::Insert(insert) => {
             let extended =
                 super::planner_bridge::insert_extended_source(insert, catalog, current_database, ctx);
@@ -3325,12 +3444,15 @@ fn cached_dml_physical_plan(
         tidb_ast::DmlStmt::Update(update) => (
             "Update",
             Some(update_source_query(update)?),
-            Some(update.as_ref()),
+            Some(super::multi_dml::MultiDmlRef::Update(update.as_ref())),
             None,
         ),
-        tidb_ast::DmlStmt::Delete(delete) => {
-            ("Delete", Some(delete_source_query(delete)?), None, None)
-        }
+        tidb_ast::DmlStmt::Delete(delete) => (
+            "Delete",
+            Some(delete_source_query(delete)?),
+            Some(super::multi_dml::MultiDmlRef::Delete(delete.as_ref())),
+            None,
+        ),
         _ => return None,
     };
     let fk_spec = match dml.as_ref() {
@@ -3346,7 +3468,7 @@ fn cached_dml_physical_plan(
     let mut root = physical_dml_plan_with_cache_mode(
         operator,
         source.as_ref(),
-        update,
+        write,
         catalog,
         current_database,
         ctx,
@@ -3354,6 +3476,7 @@ fn cached_dml_physical_plan(
         std::slice::from_ref(&fk_spec),
         DmlKeep::Auto,
         insert_actual_col_len,
+        super::planner_bridge::BuildVisits::Discard,
     )
     .ok()?;
     // Keep a cached single-row UPDATE/DELETE source as a point access path.
@@ -3672,12 +3795,14 @@ fn run_update_with_physical(
         // pair the planning refused is refused again -- but must not report
         // it a second time.
         let warning_bookmark = ctx.warning_count();
+        // Its privileges were checked when it was planned.
         let fast = super::point_get_plan::try_fast_dml_point_physical_plan_with_allocator(
             select,
             catalog,
             current_db,
             ctx,
             &tidb_planner_core_base::PlanIdAllocator::new(),
+            &|_, _| true,
         );
         ctx.truncate_warnings(warning_bookmark);
         fast.ok().flatten().map(|mut fast| {
@@ -4126,7 +4251,7 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
             tidb_ast::DeleteKind::Single(_) => physical_dml_plan(
                 "Delete",
                 source.as_ref(),
-                None,
+                super::multi_dml::MultiDmlRef::Delete(delete),
                 catalog,
                 current_db,
                 ctx,

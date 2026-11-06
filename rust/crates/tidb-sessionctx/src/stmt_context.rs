@@ -885,6 +885,14 @@ pub struct StmtContextData {
     view_definer_privilege: Option<ViewDefinerPrivilegeCheck>,
     /// See [`StmtContextSessionState::session_privilege`].
     session_privilege: Option<SessionPrivilegeCheck>,
+    /// Go `privilege.GetPrivilegeManager(sctx)` as `planner.optimize`'s
+    /// `CheckPrivilege` reaches it after `PlanBuilder.Build`: the executor's
+    /// `table_privilege::PlanPrivilegeCheck`, behind `Any` because its
+    /// requests are the executor's type. The session installs it on a user
+    /// statement's context ([`Self::with_plan_privilege_check_any`]); `None`
+    /// is a statement whose plan checks nothing (internal SQL, a cached
+    /// plan's statement, which checks what PREPARE kept).
+    plan_privilege_check: Option<Arc<dyn std::any::Any + Send + Sync>>,
     /// See [`StmtContextSessionState::mdl_related_table`].
     mdl_related_table: Option<MdlRelatedTableRecorder>,
     /// See [`StmtContextSessionState::process_privilege`].
@@ -2948,6 +2956,7 @@ impl StmtContext {
             sequence_privilege: session.sequence_privilege,
             view_definer_privilege: session.view_definer_privilege,
             session_privilege: session.session_privilege,
+            plan_privilege_check: None,
             mdl_related_table: session.mdl_related_table,
             process_privilege: session.process_privilege,
             sql_digest_text_retriever: session.sql_digest_text_retriever,
@@ -4163,6 +4172,21 @@ impl StmtContext {
     /// The privilege answer the planner asks for the session's own account.
     pub fn session_privilege(&self) -> Option<&SessionPrivilegeCheck> {
         self.session_privilege.as_ref()
+    }
+
+    /// The statement's plan privilege check (see the field).
+    pub fn plan_privilege_check_any(&self) -> Option<&Arc<dyn std::any::Any + Send + Sync>> {
+        self.plan_privilege_check.as_ref()
+    }
+
+    /// Installs the statement's plan privilege check (see the field).
+    #[must_use]
+    pub fn with_plan_privilege_check_any(
+        mut self,
+        check: Option<Arc<dyn std::any::Any + Send + Sync>>,
+    ) -> Self {
+        self.plan_privilege_check = check;
+        self
     }
 
     /// Where the planner records the tables this statement locks.

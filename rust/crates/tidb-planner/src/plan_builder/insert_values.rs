@@ -293,14 +293,15 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let mut list = Vec::with_capacity(width);
             for (position, value) in row.iter().enumerate() {
                 let offset = target.offsets[position];
-                list.push(self.get_insert_col_expr(
-                    target,
-                    &table,
-                    offset,
-                    value,
-                    &schema,
-                    &names,
-                )?);
+                // Go's `getInsertColExpr` has a value receiver (`func (b
+                // PlanBuilder)`): what rewriting the value appends to
+                // `b.visitInfo` (a subquery's tables) stays on the copy, so
+                // `CheckPrivilege` never sees it.
+                let visits = self.visit_info.len();
+                let expression =
+                    self.get_insert_col_expr(target, &table, offset, value, &schema, &names);
+                self.visit_info.truncate(visits);
+                list.push(expression?);
             }
             values.lists.push(list);
         }

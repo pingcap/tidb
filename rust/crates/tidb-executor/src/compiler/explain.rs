@@ -165,6 +165,9 @@ pub trait ExplainCompile: super::CompilerSession {
         // before the kind switch, so the statement inside decides
         // `InInsertStmt`/`InUpdateStmt`/`InDeleteStmt` -- which
         // `checkStableResultMode` reads to keep `ResultReorder` off a DML.
+        // Go's `buildExplain` optimizes the target (`OptimizeAstNode`), whose
+        // `CheckPrivilege` reads the target's `PlanBuilder` visit infos.
+        let ctx = self.with_plan_privilege_check(ctx);
         let ctx = match target {
             Stmt::Dml(dml) => ctx.with_statement_class(match &**dml {
                 tidb_ast::DmlStmt::Insert(_) => crate::StatementClass::Insert,
@@ -378,7 +381,8 @@ pub trait ExplainCompile: super::CompilerSession {
             &parameterized.statement,
             None,
             true,
-        ) else {
+        )?
+        else {
             return Ok(None);
         };
         for warning in execution.take_planning_warnings() {

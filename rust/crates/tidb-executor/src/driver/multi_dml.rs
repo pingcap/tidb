@@ -859,7 +859,6 @@ pub(crate) fn multi_dml_physical_plan(
         }
     };
     let mut delete_multi = None;
-    let mut multi_update = None;
     let (operator, select) = match dml {
         MultiDmlRef::Update(update) => {
             let tidb_ast::UpdateKind::Multi { from, .. } = &update.kind else {
@@ -883,7 +882,6 @@ pub(crate) fn multi_dml_physical_plan(
             {
                 add_target(database, table, Some(column));
             }
-            multi_update = Some(update);
             ("Update", select)
         }
         MultiDmlRef::Delete(delete) => {
@@ -918,7 +916,7 @@ pub(crate) fn multi_dml_physical_plan(
     super::dml::physical_multi_dml_plan(
         operator,
         &select,
-        multi_update,
+        dml,
         catalog,
         current_db,
         ctx,

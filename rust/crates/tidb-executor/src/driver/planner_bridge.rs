@@ -1363,6 +1363,22 @@ fn planner_physical_select(
     Ok((logical, physical))
 }
 
+/// What one query build does with its `PlanBuilder`'s visit infos (Go
+/// `builder.GetVisitInfo()`).
+pub(crate) enum BuildVisits<'a> {
+    /// The statement's own build: Go `planner.optimize` checks them
+    /// (`CheckPrivilege`, `CheckTableLock`) between `buildLogicalPlan` and
+    /// `DoOptimize`.
+    Check,
+    /// The read of a DML, which Go builds inside the same `PlanBuilder` as
+    /// the write: its visits join the DML's, checked once the DML is built.
+    Collect(&'a mut Vec<tidb_planner::plan_builder::visit_info::VisitInfo>),
+    /// A build that is no statement's: a cached plan's (whose statement
+    /// checks the visit infos PREPARE kept, Go `checkPreparedPriv`) or an
+    /// inspection's.
+    Discard,
+}
+
 fn planner_physical_query(
     query: &tidb_ast::QueryStmt,
     catalog: &SessionExtendedInfoSchema,
@@ -1380,9 +1396,11 @@ fn planner_physical_query(
         use_plan_cache,
         &plan_ids,
         &column_ids,
+        BuildVisits::Discard,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn planner_physical_query_with_allocators(
     query: &tidb_ast::QueryStmt,
     catalog: &SessionExtendedInfoSchema,
@@ -1391,6 +1409,7 @@ fn planner_physical_query_with_allocators(
     use_plan_cache: bool,
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
+    visits: BuildVisits<'_>,
 ) -> Result<(LogicalPlan, PhysicalPlan), tidb_planner_core_base::PlanError> {
     planner_physical_query_with_registry(
         query,
@@ -1400,6 +1419,7 @@ fn planner_physical_query_with_allocators(
         use_plan_cache,
         plan_ids,
         column_ids,
+        visits,
     )
     .map(|(logical, physical, _)| (logical, physical))
 }
@@ -1407,6 +1427,7 @@ fn planner_physical_query_with_allocators(
 /// [`planner_physical_query_with_allocators`], additionally handing back the
 /// uncorrelated subqueries the build evaluated so EXPLAIN can append their
 /// registered roots.
+#[allow(clippy::too_many_arguments)]
 fn planner_physical_query_with_registry(
     query: &tidb_ast::QueryStmt,
     catalog: &SessionExtendedInfoSchema,
@@ -1415,6 +1436,7 @@ fn planner_physical_query_with_registry(
     use_plan_cache: bool,
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
+    visits: BuildVisits<'_>,
 ) -> Result<
     (LogicalPlan, PhysicalPlan, Vec<std::sync::Arc<RegisteredScalarSubquery>>),
     tidb_planner_core_base::PlanError,
@@ -1429,6 +1451,7 @@ fn planner_physical_query_with_registry(
         plan_ids,
         column_ids,
         &registry,
+        visits,
     )?;
     let physical = physical_plan_for_logical(&logical, plan_ids, column_ids, ctx)?;
     let registered = Rc::try_unwrap(registry)
@@ -1662,6 +1685,7 @@ pub(crate) fn physical_query_plan_with_scalar_subqueries(
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
+    visits: BuildVisits<'_>,
 ) -> Result<(PhysicalPlan, Vec<std::sync::Arc<RegisteredScalarSubquery>>), tidb_planner_core_base::PlanError> {
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
@@ -1673,6 +1697,7 @@ pub(crate) fn physical_query_plan_with_scalar_subqueries(
         false,
         &plan_ids,
         &column_ids,
+        visits,
     )
     .map(|(_, physical, registered)| (physical, registered))
 }
@@ -1681,6 +1706,7 @@ pub(crate) fn physical_query_plan_with_scalar_subqueries(
 /// plan and column allocators. Go's DML builders allocate the write root and
 /// its `SelectPlan` from the same session counters; keeping those counters
 /// shared preserves both tree ownership and explain identities.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn physical_query_plan_with_allocators(
     query: &tidb_ast::QueryStmt,
     catalog: &SessionExtendedInfoSchema,
@@ -1689,6 +1715,7 @@ pub(crate) fn physical_query_plan_with_allocators(
     use_plan_cache: bool,
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
+    visits: BuildVisits<'_>,
 ) -> Result<PhysicalPlan, tidb_planner_core_base::PlanError> {
     planner_physical_query_with_allocators(
         query,
@@ -1698,6 +1725,7 @@ pub(crate) fn physical_query_plan_with_allocators(
         use_plan_cache,
         plan_ids,
         column_ids,
+        visits,
     )
     .map(|(_, physical)| physical)
 }
@@ -2049,6 +2077,7 @@ fn planner_optimized_query(
         &plan_ids,
         &column_ids,
         &registry,
+        BuildVisits::Discard,
     )?;
     Ok((logical, plan_ids, column_ids))
 }
@@ -2063,12 +2092,13 @@ fn planner_optimized_query_with_allocators(
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
     registry: &ScalarSubqueryRegistry,
+    visits: BuildVisits<'_>,
 ) -> Result<LogicalPlan, tidb_planner_core_base::PlanError> {
     // Go `buildLogicalPlan`: `RewritePhaseInfo.Reset()`, then
     // `DurationRewrite` is the time `builder.Build` took.
     ctx.phase_durations().reset_rewrite_phase_info();
     let begin_rewrite = std::time::Instant::now();
-    let (plan, opt_flag) = planner_built_query_with_allocators(
+    let (plan, opt_flag, built_visits) = planner_built_query_with_allocators(
         query,
         catalog,
         current_database,
@@ -2081,6 +2111,18 @@ fn planner_optimized_query_with_allocators(
     )?;
     ctx.phase_durations()
         .set_duration_rewrite(begin_rewrite.elapsed());
+    // Go `buildAndOptimizeLogicalPlanRound`: `CheckPrivilege` and
+    // `CheckTableLock` over `builder.GetVisitInfo()`, after the build (whose
+    // errors, and whose evaluated subqueries', come first) and before
+    // `DoOptimize` (whose errors come after).
+    match visits {
+        BuildVisits::Check => {
+            crate::table_privilege::check_plan_privilege(ctx, catalog, &built_visits)
+                .map_err(driver_error_to_plan)?;
+        }
+        BuildVisits::Collect(collected) => collected.extend(built_visits),
+        BuildVisits::Discard => {}
+    }
     // Go `buildAndOptimizeLogicalPlanRound`: the optimization clock starts
     // before the first `DoOptimize` of a logical plan.
     ctx.phase_durations().begin_optimize();
@@ -2253,9 +2295,11 @@ pub(crate) fn physical_admin_show_ddl_jobs_plan(
 }
 
 /// Go `PlanBuilder.Build` for a query: the logical plan before any
-/// optimization, with the optimizer flags the build collected.
+/// optimization, with the optimizer flags and the visit infos the build
+/// collected (`GetOptFlag`, `GetVisitInfo`).
 /// `building_view` names the view whose stored body this is, which Go builds
 /// from `BuildDataSourceFromView` with the view on its building stack.
+#[allow(clippy::too_many_arguments)]
 fn planner_built_query_with_allocators(
     query: &tidb_ast::QueryStmt,
     catalog: &SessionExtendedInfoSchema,
@@ -2266,7 +2310,10 @@ fn planner_built_query_with_allocators(
     column_ids: &ColumnIdAllocator,
     registry: &ScalarSubqueryRegistry,
     building_view: Option<(&str, &str)>,
-) -> Result<(LogicalPlan, u64), tidb_planner_core_base::PlanError> {
+) -> Result<
+    (LogicalPlan, u64, Vec<tidb_planner::plan_builder::visit_info::VisitInfo>),
+    tidb_planner_core_base::PlanError,
+> {
     let parts = QueryBuilderParts {
         catalog,
         current_database,
@@ -2281,7 +2328,7 @@ fn planner_built_query_with_allocators(
         let node = tidb_resolve::NodeW::new(query.clone());
         let plan = builder.build_query_node(&node, false)?;
         ctx.set_block_as_names(builder.statement_block_as_names());
-        Ok((plan, builder.get_opt_flag()))
+        Ok((plan, builder.get_opt_flag(), std::mem::take(&mut builder.visit_info)))
     })
 }
 
@@ -2552,6 +2599,19 @@ fn query_visit_info_inner(
     Ok(std::mem::take(&mut builder.visit_info))
 }
 
+/// What [`plan_insert_expressions`] plans.
+pub(crate) struct InsertExpressions {
+    pub values: tidb_planner::plan_builder::insert_values::InsertValues,
+    pub on_duplicate: Vec<tidb_planner::plan_builder::insert_on_duplicate::OnDuplicateAssign>,
+    pub generated: Vec<Option<Expression>>,
+    /// Go `buildInsert`'s first visit infos, on the target, which precede
+    /// those of an `INSERT ... SELECT`'s source.
+    pub target_visits: Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
+    /// The visit infos the ON DUPLICATE assignments' build appended (a VALUES
+    /// list's appends none: Go's `getInsertColExpr` drops them).
+    pub visits: Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
+}
+
 /// Go `buildInsert`'s expressions: the VALUES lists over the target's schema,
 /// the `INSERT ... SELECT` checks, and the ON DUPLICATE assignments, with every
 /// uncorrelated scalar subquery evaluated now (`handleScalarSubquery`'s
@@ -2565,14 +2625,7 @@ pub(crate) fn plan_insert_expressions(
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
-) -> Result<
-    (
-        tidb_planner::plan_builder::insert_values::InsertValues,
-        Vec<tidb_planner::plan_builder::insert_on_duplicate::OnDuplicateAssign>,
-        Vec<Option<Expression>>,
-    ),
-    tidb_planner_core_base::PlanError,
-> {
+) -> Result<InsertExpressions, tidb_planner_core_base::PlanError> {
     let source = catalog
         .planner_catalog(current_database, ctx.latest_index_schema())
         .with_statement_hypo_state(ctx)
@@ -2607,6 +2660,8 @@ pub(crate) fn plan_insert_expressions(
     // statement's build starts from; `DoOptimize` of each subquery reads it.
     builder.add_opt_flag(tidb_planner_core_rule::flags::PRUNE_COLUMNS);
     let target = builder.resolve_insert_target(insert)?;
+    builder.append_insert_target_visits(insert, &target.database, &target.table);
+    let target_visits = std::mem::take(&mut builder.visit_info);
     let values = if insert.source.is_none() {
         builder.build_values_list_of_insert(insert, &target)?
     } else {
@@ -2619,7 +2674,13 @@ pub(crate) fn plan_insert_expressions(
     let on_duplicate = builder.resolve_on_duplicate(insert, &target, select)?;
     // Go `resolveGeneratedColumns`, after the assignments.
     let generated = builder.resolve_generated_columns(&target)?;
-    Ok((values, on_duplicate, generated))
+    Ok(InsertExpressions {
+        values,
+        on_duplicate,
+        generated,
+        target_visits,
+        visits: std::mem::take(&mut builder.visit_info),
+    })
 }
 
 /// Go `buildSelectPlanOfInsert`'s extension of the source for the ON
@@ -2645,6 +2706,7 @@ pub(crate) fn insert_extended_source(
 /// [`physical_query_plan_with_allocators`] for an `INSERT ... SELECT`'s source,
 /// also answering the names of the source's outputs (Go
 /// `selectPlan.OutputNames()`).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn physical_query_plan_and_names_with_allocators(
     query: &tidb_ast::QueryStmt,
     catalog: &SessionExtendedInfoSchema,
@@ -2653,6 +2715,7 @@ pub(crate) fn physical_query_plan_and_names_with_allocators(
     use_plan_cache: bool,
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
+    visits: BuildVisits<'_>,
 ) -> Result<(PhysicalPlan, Vec<tidb_datatype::FieldName>), tidb_planner_core_base::PlanError> {
     planner_physical_query_with_allocators(
         query,
@@ -2662,6 +2725,7 @@ pub(crate) fn physical_query_plan_and_names_with_allocators(
         use_plan_cache,
         plan_ids,
         column_ids,
+        visits,
     )
     .map(|(logical, physical)| (physical_names(&logical), physical))
     .map(|(names, physical)| (physical, names))
@@ -2739,6 +2803,13 @@ pub(crate) fn insert_target(
 /// mode), the `Update`/`Delete` root allocates, and only then `DoOptimize`
 /// lowers the tree. Returns the physical source, the UPDATE assignment
 /// expressions, and the allocated DML root base for `PhysicalDmlRoot`.
+///
+/// `write` is the statement whose `visitInfo` the build collects, Go's
+/// `buildUpdate` / `buildDelete` over one `PlanBuilder`: the read's (a
+/// non-qualified DELETE pops its last, `popVisitInfo`), then the write's
+/// (`UpdatePriv` per assigned table, `DeletePriv` per target); `None` for a
+/// cached plan's rebuild, whose statement checks the visit infos PREPARE
+/// kept.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn physical_dml_source_plan_with_allocators(
     select: &tidb_ast::SelectStmt,
@@ -2753,6 +2824,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     operator: &str,
     delete_prune_has_fk: Option<bool>,
     delete_multi: Option<tidb_planner::plan_builder::delete_pruning::DeleteMultiInput>,
+    write: Option<super::multi_dml::MultiDmlRef<'_>>,
 ) -> Result<DmlSourcePlan, tidb_planner_core_base::PlanError> {
     // Go builds an UPDATE/DELETE inside `builder.Build` (`buildUpdate` /
     // `buildDelete` run the read plan's `DoOptimize` themselves), so its
@@ -2829,6 +2901,34 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
         }
     };
     ctx.set_block_as_names(builder.statement_block_as_names());
+    // Go `buildUpdate` / `buildDelete`: the write's visit infos follow the
+    // read's, before the read is optimized. The write targets resolve on
+    // their own allocators: resolving a joined UPDATE's columns walks its
+    // table refs again, which must not shift this build's plan ids.
+    let mut visit_info = std::mem::take(&mut builder.visit_info);
+    if let Some(write) = write {
+        let (target_plan_ids, target_column_ids) = (PlanIdAllocator::new(), ColumnIdAllocator::new());
+        let mut targets = PlanBuilder::new(
+            &source,
+            ctx,
+            &target_plan_ids,
+            &target_column_ids,
+            session_zone.clone(),
+        );
+        match write {
+            super::multi_dml::MultiDmlRef::Update(update) => {
+                visit_info.extend(targets.update_write_visits(update)?);
+            }
+            super::multi_dml::MultiDmlRef::Delete(delete) => {
+                // "If the delete is non-qualified it does not require Select
+                // Priv".
+                if delete.where_clause.is_none() && delete.order_by.is_empty() {
+                    visit_info.pop();
+                }
+                visit_info.extend(targets.delete_write_visits(delete)?);
+            }
+        }
+    }
     // Go `buildUpdate`: "We cannot apply projection elimination when building
     // the subplan, because columns in orderedList cannot be resolved" -- the
     // assignments live outside the plan, so a rewrite that substitutes a
@@ -2921,6 +3021,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
         delete_tables: std::mem::take(&mut builder.delete_tables),
         update_tables: std::mem::take(&mut builder.update_tables),
         update_assigns: std::mem::take(&mut builder.update_assigns),
+        visit_info,
     })
 }
 
@@ -2928,6 +3029,9 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
 pub(crate) struct DmlSourcePlan {
     /// The optimized physical read.
     pub plan: PhysicalPlan,
+    /// The statement's visit infos (Go `builder.GetVisitInfo()`): the read's,
+    /// then the write's.
+    pub visit_info: Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
     /// The UPDATE assignments' expressions, resolved against the read.
     pub update_expressions: Vec<Option<tidb_expr::expression::Expression>>,
     /// The allocated root base.

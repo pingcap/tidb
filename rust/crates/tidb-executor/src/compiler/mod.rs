@@ -166,6 +166,10 @@ pub trait CompilerSession: crate::admin::AdminExec {
     /// `BuildDataSourceFromView` expands then needs SHOW VIEW, and a view
     /// expanded after the first SELECT, both refused with `ErrViewNoExplain`.
     fn require_explain_statement_privileges(&self, stmt: &tidb_ast::Stmt) -> Result<(), DriverError>;
+    /// `ctx` carrying the session's plan privilege check
+    /// ([`crate::table_privilege::check_plan_privilege`]), for a statement
+    /// whose plan the executor builds.
+    fn with_plan_privilege_check(&self, ctx: crate::StmtContext) -> crate::StmtContext;
     /// Session primitive.
     fn bind_statement_hints(&mut self, stmt: &Stmt) -> Option<Stmt>;
     /// Applies Go `optimize.go`'s `StmtHints.SetVars` after the canonical

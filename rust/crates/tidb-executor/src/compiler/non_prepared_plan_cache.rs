@@ -85,11 +85,19 @@ pub struct ParameterizedSelect {
 /// Go SessionVars.nonPreparedPlanCacheStmts: syntax metadata only, with one
 /// definition LRU shared by SELECT and DML. Physical entries live in the
 /// session owner independently of metadata eviction.
+///
+/// Each entry keeps the privilege requests of its statement, Go's
+/// `PlanCacheStmt.VisitInfos` (`GeneratePlanCacheStmtWithAST`), which every
+/// use checks (`checkPreparedPriv`) before it binds a plan.
 #[derive(Clone)]
 pub enum NonPreparedPlan {
-    Select(std::sync::Arc<PreparedSelectPlan>),
-    Dml(std::sync::Arc<PreparedDmlPlan>),
+    Select(std::sync::Arc<PreparedSelectPlan>, NonPreparedPrivileges),
+    Dml(std::sync::Arc<PreparedDmlPlan>, NonPreparedPrivileges),
 }
+
+/// Go `PlanCacheStmt.VisitInfos` of a non-prepared plan-cache entry.
+pub type NonPreparedPrivileges =
+    std::sync::Arc<[crate::table_privilege::TablePrivilegeRequest]>;
 
 #[derive(Default)]
 pub struct NonPreparedPlanCache {
@@ -1068,33 +1076,57 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
         .ok()
     }
 
+    /// Go `GeneratePlanCacheStmtWithAST`'s `VisitInfos` for a new
+    /// non-prepared entry over its parameterized statement; `None` when they
+    /// cannot be collected, which leaves the statement to the ordinary path
+    /// (whose build reports why).
+    fn non_prepared_privilege_requests(&self, statement: &Stmt) -> Option<NonPreparedPrivileges> {
+        self.collect_table_privileges(statement, true)
+            .ok()
+            .map(std::sync::Arc::from)
+    }
+
     /// Generates or recursively rebuilds the retained DML root for one
     /// parameterized non-prepared statement, through the same plan object
-    /// SQL and binary PREPARE use.
+    /// SQL and binary PREPARE use. Answers the entry's privilege requests,
+    /// already checked (Go `GetPlanFromPlanCache`'s `checkPreparedPriv`),
+    /// with the execution.
     fn bind_non_prepared_dml(
         &mut self,
         parameterized: &ParameterizedSelect,
         effective_statement: &Stmt,
         binding_sql: Option<&str>,
-    ) -> Option<crate::PreparedDmlExecution> {
+    ) -> Result<Option<(crate::PreparedDmlExecution, NonPreparedPrivileges)>, DriverError> {
         if !self.non_prepared_plan_cache_allowed(effective_statement) {
-            return None;
+            return Ok(None);
         }
-        let environment = self.prepared_plan_cache_environment_for_binding(binding_sql)?;
+        let Some(environment) = self.prepared_plan_cache_environment_for_binding(binding_sql)
+        else {
+            return Ok(None);
+        };
         let lookup_start = std::time::Instant::now();
-        let plan = match self.non_prepared_plan_cache_mut().get(&parameterized.key) {
-            Some(NonPreparedPlan::Dml(plan)) => plan,
-            Some(_) => return None,
+        let (plan, requests) = match self.non_prepared_plan_cache_mut().get(&parameterized.key) {
+            Some(NonPreparedPlan::Dml(plan, requests)) => (plan, requests),
+            Some(_) => return Ok(None),
             None => {
                 let plan = {
-                    let catalog = self.lock_catalog().ok()?;
-                    crate::build_prepared_dml_plan(
+                    let Ok(catalog) = self.lock_catalog() else {
+                        return Ok(None);
+                    };
+                    let Ok(Some(plan)) = crate::build_prepared_dml_plan(
                         &parameterized.statement,
                         parameterized.values.len(),
                         &catalog,
                         self.session_vars().current_db.as_str(),
-                    )
-                    .ok()??
+                    ) else {
+                        return Ok(None);
+                    };
+                    plan
+                };
+                let Some(requests) =
+                    self.non_prepared_privilege_requests(&parameterized.statement)
+                else {
+                    return Ok(None);
                 };
                 let plan = std::sync::Arc::new(
                     plan.with_sql(&parameterized.key)
@@ -1103,12 +1135,27 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
                 let capacity = self.session_plan_cache_capacity();
                 self.non_prepared_plan_cache_mut().put(
                     parameterized.key.clone(),
-                    NonPreparedPlan::Dml(std::sync::Arc::clone(&plan)),
+                    NonPreparedPlan::Dml(std::sync::Arc::clone(&plan), std::sync::Arc::clone(&requests)),
                     capacity,
                 );
-                plan
+                (plan, requests)
             }
         };
+        self.check_table_privilege_requests(&requests)?;
+        Ok(self
+            .bind_non_prepared_dml_plan(&plan, parameterized, effective_statement, &environment, lookup_start)
+            .map(|execution| (execution, requests)))
+    }
+
+    /// [`Self::bind_non_prepared_dml`]'s lookup or replan of the entry.
+    fn bind_non_prepared_dml_plan(
+        &mut self,
+        plan: &std::sync::Arc<PreparedDmlPlan>,
+        parameterized: &ParameterizedSelect,
+        effective_statement: &Stmt,
+        environment: &crate::PreparedPlanCacheEnvironment,
+        lookup_start: std::time::Instant,
+    ) -> Option<crate::PreparedDmlExecution> {
         self.configure_session_plan_cache();
         {
             let catalog = self.lock_catalog().ok()?;
@@ -1156,38 +1203,53 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
         parameterized: &ParameterizedSelect,
         effective_statement: &Stmt,
         binding_sql: Option<&str>,
-    ) -> Option<crate::PreparedSelectExecution> {
+    ) -> Result<Option<crate::PreparedSelectExecution>, DriverError> {
         self.bind_non_prepared_select_warning(parameterized, effective_statement, binding_sql, false)
     }
 
     /// [`Self::bind_non_prepared_select`]; `always_warn` is Go's
     /// `SetAlwaysWarnSkipCache`, which EXPLAIN FORMAT = 'plan_cache' sets.
+    /// The entry's privilege requests are checked first (Go
+    /// `GetPlanFromPlanCache`'s `checkPreparedPriv`).
     fn bind_non_prepared_select_warning(
         &mut self,
         parameterized: &ParameterizedSelect,
         effective_statement: &Stmt,
         binding_sql: Option<&str>,
         always_warn: bool,
-    ) -> Option<crate::PreparedSelectExecution> {
+    ) -> Result<Option<crate::PreparedSelectExecution>, DriverError> {
         if !self.non_prepared_plan_cache_allowed(effective_statement) {
-            return None;
+            return Ok(None);
         }
         let lookup_start = std::time::Instant::now();
-        let environment = self.prepared_plan_cache_environment_for_binding(binding_sql)?;
-        let plan = match self.non_prepared_plan_cache_mut().get(&parameterized.key) {
-            Some(NonPreparedPlan::Select(plan)) => plan,
-            Some(_) => return None,
+        let Some(environment) = self.prepared_plan_cache_environment_for_binding(binding_sql)
+        else {
+            return Ok(None);
+        };
+        let (plan, requests) = match self.non_prepared_plan_cache_mut().get(&parameterized.key) {
+            Some(NonPreparedPlan::Select(plan, requests)) => (plan, requests),
+            Some(_) => return Ok(None),
             None => {
                 let ctx = self.statement_context(false);
                 let plan = {
-                    let catalog = self.lock_catalog().ok()?;
-                    crate::build_prepared_select_plan(
+                    let Ok(catalog) = self.lock_catalog() else {
+                        return Ok(None);
+                    };
+                    let Some(plan) = crate::build_prepared_select_plan(
                         &parameterized.statement,
                         parameterized.values.len(),
                         &catalog,
                         self.session_vars().current_db.as_str(),
                         &ctx,
-                    )?
+                    ) else {
+                        return Ok(None);
+                    };
+                    plan
+                };
+                let Some(requests) =
+                    self.non_prepared_privilege_requests(&parameterized.statement)
+                else {
+                    return Ok(None);
                 };
                 let plan = std::sync::Arc::new(
                     plan.with_sql(&parameterized.key)
@@ -1196,12 +1258,34 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
                 let capacity = self.session_plan_cache_capacity();
                 self.non_prepared_plan_cache_mut().put(
                     parameterized.key.clone(),
-                    NonPreparedPlan::Select(std::sync::Arc::clone(&plan)),
+                    NonPreparedPlan::Select(std::sync::Arc::clone(&plan), std::sync::Arc::clone(&requests)),
                     capacity,
                 );
-                plan
+                (plan, requests)
             }
         };
+        self.check_table_privilege_requests(&requests)?;
+        Ok(self.bind_non_prepared_select_plan(
+            &plan,
+            parameterized,
+            effective_statement,
+            &environment,
+            lookup_start,
+            always_warn,
+        ))
+    }
+
+    /// [`Self::bind_non_prepared_select_warning`]'s lookup or replan of the
+    /// entry.
+    fn bind_non_prepared_select_plan(
+        &mut self,
+        plan: &std::sync::Arc<PreparedSelectPlan>,
+        parameterized: &ParameterizedSelect,
+        effective_statement: &Stmt,
+        environment: &crate::PreparedPlanCacheEnvironment,
+        lookup_start: std::time::Instant,
+        always_warn: bool,
+    ) -> Option<crate::PreparedSelectExecution> {
         self.configure_session_plan_cache();
         let observe = |start: std::time::Instant| {
             tidb_planner_core_metrics::get_plan_cache_lookup_duration(

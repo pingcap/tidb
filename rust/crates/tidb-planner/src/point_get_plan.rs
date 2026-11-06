@@ -115,12 +115,29 @@ pub fn try_fast_plan(
     current_db: &str,
     ctx: &tidb_sessionctx::StmtContext,
 ) -> Result<Option<tidb_planner_core_operator_physicalop::PhysicalPlan>, DriverError> {
-    let plan = try_fast_point_physical_plan_with_allocator(
+    try_fast_plan_checked(select, catalog, current_db, ctx, &|_, _| true)
+}
+
+/// [`try_fast_plan`] with Go's `checkFastPlanPrivilege(ctx, fp.DBName,
+/// fp.TblInfo.Name.L, mysql.SelectPriv)`: `check` is asked about the point
+/// plan's lowercase `(database, table)`, and a denial leaves no fast plan
+/// (and no `sql_select_limit` warning), so the ordinary planner builds the
+/// statement and its `CheckPrivilege` reports the denial.
+pub fn try_fast_plan_checked(
+    select: &tidb_ast::SelectStmt,
+    catalog: &SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &tidb_sessionctx::StmtContext,
+    check: &dyn Fn(&str, &str) -> bool,
+) -> Result<Option<tidb_planner_core_operator_physicalop::PhysicalPlan>, DriverError> {
+    let plan = try_fast_point_physical_plan_with_allocator_mode(
         select,
         catalog,
         current_db,
         ctx,
         &tidb_planner_core_base::PlanIdAllocator::new(),
+        false,
+        check,
     )?;
     // Go `TryFastPlan`'s deferred check on a SELECT: a session
     // `sql_select_limit` discards the fast plan so the ordinary planner can
@@ -147,22 +164,25 @@ pub fn try_fast_point_physical_plan_with_allocator(
     plan_ids: &tidb_planner_core_base::PlanIdAllocator,
 ) -> Result<Option<tidb_planner_core_operator_physicalop::PhysicalPlan>, DriverError> {
     try_fast_point_physical_plan_with_allocator_mode(
-        select, catalog, current_db, ctx, plan_ids, false,
+        select, catalog, current_db, ctx, plan_ids, false, &|_, _| true,
     )
 }
 
 /// Go's `tryUpdatePointPlan` / `tryDeletePointPlan` retain the complete table
 /// row and its handle on the PointGet child instead of applying a SELECT-list
-/// projection.
+/// projection. `check` is their `checkFastPlanPrivilege(ctx, dbName,
+/// tbl.Name.L, mysql.SelectPriv, mysql.UpdatePriv / DeletePriv)` over the
+/// point plan's lowercase `(database, table)`; a denial leaves no fast plan.
 pub fn try_fast_dml_point_physical_plan_with_allocator(
     select: &tidb_ast::SelectStmt,
     catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &tidb_sessionctx::StmtContext,
     plan_ids: &tidb_planner_core_base::PlanIdAllocator,
+    check: &dyn Fn(&str, &str) -> bool,
 ) -> Result<Option<tidb_planner_core_operator_physicalop::PhysicalPlan>, DriverError> {
     try_fast_point_physical_plan_with_allocator_mode(
-        select, catalog, current_db, ctx, plan_ids, true,
+        select, catalog, current_db, ctx, plan_ids, true, check,
     )
 }
 
@@ -215,12 +235,22 @@ fn try_fast_point_physical_plan_with_allocator_mode(
     ctx: &tidb_sessionctx::StmtContext,
     plan_ids: &tidb_planner_core_base::PlanIdAllocator,
     dml_source: bool,
+    check: &dyn Fn(&str, &str) -> bool,
 ) -> Result<Option<tidb_planner_core_operator_physicalop::PhysicalPlan>, DriverError> {
     let Some(of_warnings) = fast_point_lock_of_warnings(select, current_db) else {
         return Ok(None);
     };
     let plan =
         build_fast_point_physical_plan(select, catalog, current_db, ctx, plan_ids, dml_source)?;
+    // Go `checkFastPlanPrivilege` right after the point plan is built; a
+    // point plan always reads the statement's one table.
+    let plan = plan.filter(|_| {
+        sole_table_ref(&select.from)
+            .and_then(|table_ref| split_table_path(&table_ref.name, current_db).ok())
+            .is_some_and(|(database, table)| {
+                check(&tidb_hack::go_to_lower(database), &tidb_hack::go_to_lower(table))
+            })
+    });
     if plan.is_some() {
         for warning in &of_warnings {
             ctx.append_warning_parts(1105, warning);

@@ -996,3 +996,141 @@ fn an_insert_select_over_an_invalid_definer_view_is_1356() {
         1356
     );
 }
+
+/// `scoped()` plus Go testkit probe A01's tables: bob reads `t` and `t2`,
+/// inserts into `t3`, inserts into and updates `t4`, and holds nothing on
+/// `secret`, which has two rows.
+fn plan_order_scoped() -> (Session, Session) {
+    let (_, mut boot, bob) = scoped();
+    for sql in [
+        "CREATE TABLE t2 (a INT PRIMARY KEY, b INT)",
+        "CREATE TABLE t3 (a INT PRIMARY KEY, b INT)",
+        "CREATE TABLE t4 (a INT PRIMARY KEY, b INT)",
+        "CREATE TABLE secret (a INT PRIMARY KEY, b INT)",
+        "INSERT INTO t2 VALUES (1, 1), (2, 2)",
+        "INSERT INTO secret VALUES (1, 1), (2, 2)",
+        "GRANT SELECT ON test.t TO 'bob'@'%'",
+        "GRANT SELECT ON test.t2 TO 'bob'@'%'",
+        "GRANT INSERT ON test.t3 TO 'bob'@'%'",
+        "GRANT INSERT, UPDATE ON test.t4 TO 'bob'@'%'",
+    ] {
+        boot.run(sql).unwrap();
+    }
+    (boot, bob)
+}
+
+fn unknown_column(clause: &str) -> (u16, String) {
+    (1054, format!("Unknown column 'nosuch' in '{clause}'"))
+}
+
+fn subquery_more_than_one_row() -> (u16, String) {
+    (1242, "Subquery returns more than 1 row".to_owned())
+}
+
+/// Go `planner.optimize` checks the `visitInfo` of the `PlanBuilder` that
+/// built the statement once `buildLogicalPlan` returned: a statement whose
+/// build fails reports the build's error, an uncorrelated scalar subquery the
+/// build evaluated reports its own (`EvalSubqueryFirstRow`), and only a
+/// statement that builds is refused for its privileges. Captured from a Go
+/// testkit probe (user without any privilege on `secret`).
+#[test]
+fn a_statement_that_cannot_be_built_reports_the_build_error_before_its_privileges() {
+    let (_boot, mut bob) = plan_order_scoped();
+    for (sql, expected) in [
+        ("SELECT nosuch FROM secret", unknown_column("field list")),
+        ("SELECT (SELECT a FROM secret) FROM t", subquery_more_than_one_row()),
+        ("SELECT * FROM t WHERE a = (SELECT a FROM secret)", subquery_more_than_one_row()),
+        ("EXPLAIN SELECT nosuch FROM secret", unknown_column("field list")),
+        ("EXPLAIN SELECT (SELECT a FROM secret) FROM t", subquery_more_than_one_row()),
+        ("UPDATE t2 SET b = nosuch", unknown_column("field list")),
+        ("UPDATE t2 SET b = 1 WHERE nosuch = 1", unknown_column("where clause")),
+        ("UPDATE t2 SET b = (SELECT a FROM secret)", subquery_more_than_one_row()),
+        ("UPDATE secret SET b = nosuch WHERE a = 1", unknown_column("field list")),
+        ("UPDATE t2, t SET t2.b = nosuch WHERE t2.a = t.a", unknown_column("field list")),
+        ("EXPLAIN UPDATE t2 SET b = nosuch", unknown_column("field list")),
+        ("DELETE FROM t2 WHERE nosuch = 1", unknown_column("where clause")),
+        ("DELETE FROM t2 WHERE a = (SELECT a FROM secret)", subquery_more_than_one_row()),
+        ("DELETE FROM secret WHERE nosuch = 1", unknown_column("where clause")),
+        (
+            "DELETE t2 FROM t2, t WHERE t2.a = t.a AND nosuch = 1",
+            unknown_column("where clause"),
+        ),
+        ("EXPLAIN DELETE FROM t2 WHERE nosuch = 1", unknown_column("where clause")),
+        ("INSERT INTO t3 VALUES ((SELECT a FROM secret), 1)", subquery_more_than_one_row()),
+        ("INSERT INTO t2 VALUES (nosuch, 1)", unknown_column("field list")),
+        ("INSERT INTO t3 SELECT nosuch FROM secret", unknown_column("field list")),
+        (
+            "INSERT INTO t3 VALUES (1, 1) ON DUPLICATE KEY UPDATE b = nosuch",
+            unknown_column("field list"),
+        ),
+    ] {
+        assert_eq!(denied(&mut bob, sql), expected, "{sql}");
+    }
+}
+
+/// The privileges that statement's build visits are what is checked:
+/// a point plan the account may not read is declined
+/// (`checkFastPlanPrivilege`) and the ordinary build's `CheckPrivilege`
+/// reports it; an ON DUPLICATE subquery's tables are checked; and a
+/// `SELECT ... INTO OUTFILE` checks its query before FILE. Go testkit probe.
+#[test]
+fn a_built_statement_is_refused_for_the_privileges_its_build_visited() {
+    let (_boot, mut bob) = plan_order_scoped();
+    for (sql, expected) in [
+        ("SELECT * FROM secret WHERE a = 1", table_denied("SELECT", "secret")),
+        ("SELECT * FROM secret WHERE a IN (1, 2)", table_denied("SELECT", "secret")),
+        ("SELECT (SELECT a FROM secret WHERE a = 1) FROM t", table_denied("SELECT", "secret")),
+        ("DELETE FROM t2 WHERE a = 1", table_denied("DELETE", "t2")),
+        ("DELETE FROM secret", table_denied("DELETE", "secret")),
+        (
+            "SELECT * FROM t WHERE b = 1 FOR UPDATE",
+            table_denied("SELECT with locking clause", "t"),
+        ),
+        (
+            "EXPLAIN INSERT INTO t4 VALUES (1, 1) ON DUPLICATE KEY UPDATE b = (SELECT a FROM secret WHERE a = 1)",
+            table_denied("SELECT", "secret"),
+        ),
+        ("UPDATE t2 SET b = 1 WHERE a = 1", (8121, "privilege check for 'Update' fail".to_owned())),
+        (
+            "INSERT INTO t4 VALUES (1, 1) ON DUPLICATE KEY UPDATE b = (SELECT a FROM secret WHERE a = 1)",
+            table_denied("SELECT", "secret"),
+        ),
+        (
+            "SELECT * FROM secret INTO OUTFILE '/nonexistent-a01-dir/out'",
+            table_denied("SELECT", "secret"),
+        ),
+        (
+            "SELECT * FROM t INTO OUTFILE '/nonexistent-a01-dir/out'",
+            (
+                1227,
+                "Access denied; you need (at least one of) the FILE privilege(s) for this operation"
+                    .to_owned(),
+            ),
+        ),
+    ] {
+        assert_eq!(denied(&mut bob, sql), expected, "{sql}");
+    }
+    // A point plan checks only `SelectPriv` (`checkFastPlanPrivilege`), so a
+    // locking point read needs no locking privilege, in a transaction or not.
+    bob.run("SELECT * FROM t WHERE a = 1 FOR UPDATE").unwrap();
+    bob.run("BEGIN").unwrap();
+    bob.run("SELECT * FROM t WHERE a = 1 FOR UPDATE").unwrap();
+    bob.run("ROLLBACK").unwrap();
+}
+
+/// Go's `getInsertColExpr` has a value receiver, so what rewriting a VALUES
+/// (or SET) item appends to `visitInfo` -- a subquery's tables -- never
+/// reaches `CheckPrivilege`: an INSERT whose value reads a table the account
+/// cannot read is accepted. Go testkit probe.
+#[test]
+fn an_insert_value_subquery_is_not_checked_for_privileges() {
+    let (mut boot, mut bob) = plan_order_scoped();
+    bob.run("INSERT INTO t3 VALUES ((SELECT a FROM secret WHERE a = 2), 1)")
+        .unwrap();
+    bob.run("INSERT INTO t3 SET a = (SELECT a FROM secret WHERE a = 1) + 10, b = 1")
+        .unwrap();
+    assert_eq!(
+        query_text(&mut boot, "SELECT a, b FROM t3 ORDER BY a").1,
+        vec![vec!["2", "1"], vec!["11", "1"]]
+    );
+}

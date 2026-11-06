@@ -409,6 +409,13 @@ impl Session {
         in_explain: bool,
     ) -> Result<(), DriverError> {
         self.validate_ddl_preprocess(stmt)?;
+        if Self::checks_privileges_while_planned(stmt) {
+            // Go's preprocessor only: `CheckPrivilege` reads the visit infos
+            // of the `PlanBuilder` that builds the statement, which the
+            // executor's build checks
+            // (`tidb_executor::table_privilege::check_plan_privilege`).
+            return self.deny_missing_tables_without_privileges(stmt);
+        }
         if self.privilege_context().is_none()
             && self.statement_observation.is_none()
             && !self.table_lock_check_pending()?
@@ -419,6 +426,26 @@ impl Session {
         self.check_table_privilege_requests(&requests)
     }
 
+    /// Whether the executor plans `stmt` through one `PlanBuilder` whose visit
+    /// infos it checks as Go's `planner.optimize` does: a query, INSERT,
+    /// UPDATE or DELETE.
+    fn checks_privileges_while_planned(stmt: &tidb_ast::Stmt) -> bool {
+        match stmt {
+            tidb_ast::Stmt::Query(_) => true,
+            tidb_ast::Stmt::Dml(dml) => matches!(
+                dml.as_ref(),
+                tidb_ast::DmlStmt::Insert(_)
+                    | tidb_ast::DmlStmt::Update(_)
+                    | tidb_ast::DmlStmt::Delete(_)
+            ),
+            _ => false,
+        }
+    }
+
+    /// Go `GeneratePlanCacheStmtWithAST`'s `VisitInfos`: the visit infos of
+    /// a logical-only `PlanBuilder.Build` of `stmt`, which a PREPARE (or a
+    /// non-prepared plan-cache entry) keeps for each execution's
+    /// `checkPreparedPriv`.
     pub(crate) fn collect_table_privileges(
         &self,
         stmt: &tidb_ast::Stmt,
@@ -866,6 +893,103 @@ impl Session {
         let Some((_, user, host)) = self.privilege_context() else {
             return Ok(());
         };
+        check_privilege_requests(
+            requests,
+            user,
+            host,
+            |name, with_grant| self.has_dynamic_privilege(name, with_grant),
+            |database, table, privilege| self.has_scoped_privilege(database, table, privilege),
+            |database, table| self.is_local_temporary_table(database, table),
+        )
+    }
+
+    /// Go `privilege.GetPrivilegeManager(sctx)` as the planner's
+    /// `CheckPrivilege` reaches it from the statement's context: an owned
+    /// snapshot of this session's identity, active roles and local temporary
+    /// tables, answering [`Self::check_privilege`]'s questions for the
+    /// statement's `PlanBuilder` visit infos
+    /// ([`tidb_executor::table_privilege::check_plan_privilege`]), and filing
+    /// the tables it checked with the statement's observation.
+    fn plan_privilege_check(&self) -> tidb_executor::table_privilege::PlanPrivilegeCheck {
+        let account = self.privilege_context().map(|(registry, user, host)| {
+            (
+                registry.clone(),
+                user.to_owned(),
+                host.to_owned(),
+                self.active_roles().to_vec(),
+            )
+        });
+        let phases = self
+            .statement_observation
+            .as_ref()
+            .map(|observation| Arc::clone(&observation.phases));
+        let local_temporary_tables: Vec<(String, String)> = self
+            .local_temporary_tables
+            .iter()
+            .map(|(database, table, _)| (database.clone(), table.clone()))
+            .collect();
+        Arc::new(
+            move |requests: &[tidb_executor::table_privilege::TablePrivilegeRequest]| {
+                if let Some(phases) = &phases {
+                    crate::observation::observe_statement_tables_in(
+                        phases,
+                        requests
+                            .iter()
+                            .map(|request| (request.database.as_str(), request.table.as_str())),
+                    );
+                }
+                let Some((registry, user, host, roles)) = &account else {
+                    return Ok(());
+                };
+                check_privilege_requests(
+                    requests,
+                    user,
+                    host,
+                    |name, with_grant| {
+                        registry.has_dynamic_priv_with_roles(user, host, roles, name, with_grant)
+                    },
+                    |database, table, privilege| {
+                        scoped_privilege(registry, user, host, roles, database, table, privilege)
+                    },
+                    |database, table| {
+                        let (database, table) = (go_to_lower(database), go_to_lower(table));
+                        local_temporary_tables
+                            .iter()
+                            .any(|(db, name)| *db == database && *name == table)
+                    },
+                )
+            },
+        )
+    }
+
+    /// `ctx` for a user statement whose plan the executor builds: it carries
+    /// [`Self::plan_privilege_check`], which the build's `CheckPrivilege`
+    /// and `CheckTableLock` run on.
+    pub(crate) fn with_plan_privilege_check(
+        &self,
+        ctx: tidb_sessionctx::StmtContext,
+    ) -> tidb_sessionctx::StmtContext {
+        ctx.with_plan_privilege_check_any(Some(
+            tidb_executor::table_privilege::plan_privilege_check_any(self.plan_privilege_check()),
+        ))
+    }
+}
+
+/// Go `CheckPrivilege(activeRoles, pm, visitInfo)`: the first of `requests`
+/// the account `user@host` is not granted, reported with the error the
+/// planner attached to it. The grants are asked through `has_dynamic`
+/// (`RequestDynamicVerification`) and `has_scoped`
+/// (`RequestVerification`); `is_local_temporary` answers Go's
+/// `VisitInfo4PrivCheck` exemption.
+fn check_privilege_requests(
+    requests: &[tidb_executor::table_privilege::TablePrivilegeRequest],
+    user: &str,
+    host: &str,
+    has_dynamic: impl Fn(&str, bool) -> bool,
+    has_scoped: impl Fn(&str, &str, tidb_mysql::PrivilegeType) -> bool,
+    is_local_temporary: impl Fn(&str, &str) -> bool,
+) -> Result<(), DriverError> {
+    {
         let (user, host) = (user.to_owned(), host.to_owned());
         for request in requests {
             // Go answers a virtual schema from fixed rules before it reads a
@@ -876,28 +1000,25 @@ impl Session {
                 request
                     .dynamic_privileges
                     .iter()
-                    .any(|name| self.has_dynamic_privilege(name, request.dynamic_with_grant))
+                    .any(|name| has_dynamic(name, request.dynamic_with_grant))
             } else {
                 match request.temporary_privilege {
                     TemporaryPrivilege::Skip => true,
                     TemporaryPrivilege::SkipLocal
-                        if self.is_local_temporary_table(&request.database, &request.table) =>
+                        if is_local_temporary(&request.database, &request.table) =>
                     {
                         true
                     }
-                    TemporaryPrivilege::CreateLocal => self.has_scoped_privilege(
+                    TemporaryPrivilege::CreateLocal => has_scoped(
                         &request.database,
                         "",
                         tidb_mysql::CreateTMPTablePriv,
                     ),
                     _ => {
-                        self.has_scoped_privilege(
-                            &request.database,
-                            &request.table,
-                            request.privilege,
-                        ) || request.also_granted_by.iter().any(|privilege| {
-                            self.has_scoped_privilege(&request.database, &request.table, *privilege)
-                        })
+                        has_scoped(&request.database, &request.table, request.privilege)
+                            || request.also_granted_by.iter().any(|privilege| {
+                                has_scoped(&request.database, &request.table, *privilege)
+                            })
                     }
                 }
             };
@@ -973,9 +1094,11 @@ impl Session {
                 )
             });
         }
-        Ok(())
     }
+    Ok(())
+}
 
+impl Session {
     /// The `user@host` this session authenticated as, as Go's
     /// `AuthUsername`/`AuthHostname` pair. `None` for a session with no front
     /// end.

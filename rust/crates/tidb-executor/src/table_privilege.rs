@@ -342,3 +342,120 @@ pub fn request_of_visit(
     }
     request
 }
+
+/// Go `CheckPrivilege(activeRoles, pm, visitInfo)` as the session answers it
+/// (`privilege.GetPrivilegeManager(sctx)` with the session's active roles):
+/// the first denial among `requests`, in the order the builder appended them.
+/// The session installs it on a user statement's context
+/// (`StmtContext::with_plan_privilege_check_any`, through
+/// [`plan_privilege_check_any`]).
+pub type PlanPrivilegeCheck = std::sync::Arc<
+    dyn Fn(&[TablePrivilegeRequest]) -> Result<(), crate::DriverError> + Send + Sync,
+>;
+
+/// [`PlanPrivilegeCheck`] as the statement context stores it.
+#[must_use]
+pub fn plan_privilege_check_any(
+    check: PlanPrivilegeCheck,
+) -> std::sync::Arc<dyn std::any::Any + Send + Sync> {
+    std::sync::Arc::new(check)
+}
+
+/// Go `planner.optimize`'s checks after `buildLogicalPlan`, over the visit
+/// infos of the `PlanBuilder` that built the statement: `CheckPrivilege` on
+/// `VisitInfo4PrivCheck(...)` (for a query or a DML, a local temporary table
+/// needs no grant), then `CheckTableLock`.
+///
+/// A query's build reaches it before `DoOptimize`; a DML's after its
+/// `buildInsert` / `buildUpdate` / `buildDelete`, which optimize the read
+/// themselves.
+pub fn check_plan_privilege(
+    ctx: &crate::StmtContext,
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+    visits: &[tidb_planner::plan_builder::visit_info::VisitInfo],
+) -> Result<(), crate::DriverError> {
+    let requests: Vec<_> = visits.iter().map(statement_request_of_visit).collect();
+    check_plan_privilege_requests(ctx, catalog, &requests)
+}
+
+/// [`request_of_visit`] under a query's or a DML's `VisitInfo4PrivCheck`:
+/// a local temporary table's visit is kept for the statement's tables but
+/// needs no grant.
+pub(crate) fn statement_request_of_visit(
+    visit: &tidb_planner::plan_builder::visit_info::VisitInfo,
+) -> TablePrivilegeRequest {
+    TablePrivilegeRequest {
+        temporary_privilege: TemporaryPrivilege::SkipLocal,
+        ..request_of_visit(visit)
+    }
+}
+
+/// [`check_plan_privilege`] over requests already derived from visit infos.
+pub(crate) fn check_plan_privilege_requests(
+    ctx: &crate::StmtContext,
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+    requests: &[TablePrivilegeRequest],
+) -> Result<(), crate::DriverError> {
+    // Only a user statement's context carries the check; internal SQL and a
+    // cached plan's statement are checked elsewhere or not at all.
+    let Some(check) = ctx
+        .plan_privilege_check_any()
+        .and_then(|check| check.downcast_ref::<PlanPrivilegeCheck>())
+    else {
+        return Ok(());
+    };
+    check(requests)?;
+    check_table_lock(ctx, catalog, requests)
+}
+
+/// Go `core.CheckTableLock(sctx, is, visitInfo)`: with table locks enabled
+/// (`ctx.locked_tables()`), every visit must be allowed by the locks this
+/// session and the others hold.
+fn check_table_lock(
+    ctx: &crate::StmtContext,
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+    requests: &[TablePrivilegeRequest],
+) -> Result<(), crate::DriverError> {
+    let Some(locked_tables) = ctx.locked_tables() else {
+        return Ok(());
+    };
+    if locked_tables.is_empty() && !catalog.has_table_locks() {
+        return Ok(());
+    }
+    let visits: Vec<(&str, &str, PrivilegeType)> = requests
+        .iter()
+        .filter(|request| request.dynamic_privileges.is_empty())
+        .map(|request| (request.database.as_str(), request.table.as_str(), request.privilege))
+        .collect();
+    tidb_lock::check_visits(&tidb_lock::Checker::new(locked_tables, catalog), &visits)
+}
+
+/// Go `checkFastPlanPrivilege(ctx, dbName, tableName, checkTypes...)`:
+/// `RequestVerification` of each privilege, then `CheckTableLock` over the
+/// same visits; any failure means the fast plan is not taken. Go's
+/// `newPointGetPlan` records the table as the statement's
+/// (`StmtCtx.Tables`), which the session's check does too.
+#[must_use]
+pub fn check_fast_plan_privilege(
+    ctx: &crate::StmtContext,
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+    database: &str,
+    table: &str,
+    privileges: &[PrivilegeType],
+) -> bool {
+    let requests: Vec<_> = privileges
+        .iter()
+        .map(|privilege| TablePrivilegeRequest {
+            table_named_in_error: false,
+            ..TablePrivilegeRequest::new(database, table, *privilege)
+        })
+        .collect();
+    check_plan_privilege_requests(ctx, catalog, &requests).is_ok()
+}
+
+/// Go `buildSelectInto`'s `appendVisitInfo(mysql.FilePriv, "", "", "",
+/// ErrSpecificAccessDenied("FILE"))`, which the statement's `CheckPrivilege`
+/// checks once the target query has been built, checked and optimized.
+pub(crate) fn select_into_file_request() -> TablePrivilegeRequest {
+    TablePrivilegeRequest::specific(tidb_mysql::FilePriv, "FILE")
+}

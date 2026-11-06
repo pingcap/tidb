@@ -64,6 +64,32 @@ fn statement_text_in(sql: &str, client: tidb_charset::Encoding) -> std::borrow::
     std::borrow::Cow::Owned(tidb_hack::raw_bytes::bytes_to_str(text.text()).into_owned())
 }
 
+/// Go `StmtCtx.Tables = GetDBTableInfo(visitInfo)`: the distinct `db`.`table`
+/// pairs of a statement's visit infos (a global visit names none), into the
+/// statement's observed phases.
+pub(crate) fn observe_statement_tables_in<'a>(
+    phases: &std::sync::Mutex<StatementPhases>,
+    names: impl IntoIterator<Item = (&'a str, &'a str)>,
+) {
+    let mut tables = Vec::new();
+    for (db, table) in names {
+        if db.is_empty() && table.is_empty() {
+            continue;
+        }
+        let entry = tidb_stmtsummary::statement_summary::TableEntry {
+            db: db.to_owned(),
+            table: table.to_owned(),
+        };
+        if !tables.contains(&entry) {
+            tables.push(entry);
+        }
+    }
+    phases
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .tables = tables;
+}
+
 impl Session {
     /// Go `stmtNode.Text()` for SQL text this session runs. Go publishes it
     /// wherever a statement's text leaves the session: the process list
@@ -192,24 +218,7 @@ impl Session {
         let Some(observation) = &self.statement_observation else {
             return;
         };
-        let mut tables = Vec::new();
-        for (db, table) in names {
-            if db.is_empty() && table.is_empty() {
-                continue;
-            }
-            let entry = tidb_stmtsummary::statement_summary::TableEntry {
-                db: db.to_owned(),
-                table: table.to_owned(),
-            };
-            if !tables.contains(&entry) {
-                tables.push(entry);
-            }
-        }
-        observation
-            .phases
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .tables = tables;
+        observe_statement_tables_in(&observation.phases, names);
     }
 
     pub(crate) fn statement_kv_exec_counter(

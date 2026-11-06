@@ -1867,19 +1867,22 @@ impl Session {
             self.check_noop_functions(query)?;
         }
         // Go's `CheckPrivilege` runs on the `visitInfo` the planner
-        // collected, so it too refuses before any table is touched. This is
-        // the single seam for it, because every statement whose privileges
-        // are table-scoped reaches here: the account statements
-        // `apply_schema_stmt` answers earlier demand their own, statement-
-        // specific privileges instead. A prepared EXECUTE checks the
-        // requests derived once for its text (Go `checkPreparedPriv` on the
-        // stored `VisitInfos`).
+        // collected, so it too refuses before any table is touched. Every
+        // statement whose privileges are table-scoped reaches here: the
+        // account statements `apply_schema_stmt` answers earlier demand their
+        // own, statement-specific privileges instead. A query or a DML is
+        // checked by the executor's build of it, over the visit infos of
+        // that one build (its context carries the check, see
+        // `Session::with_plan_privilege_check`); here it only meets Go's
+        // preprocessor. A prepared EXECUTE checks the requests derived once
+        // for its text (Go `checkPreparedPriv` on the stored `VisitInfos`).
         if matches!(&stmt, Stmt::Dml(dml) if matches!(dml.as_ref(),
             DmlStmt::Update(update) if matches!(&update.kind, tidb_ast::UpdateKind::Multi { .. })))
         {
-            // Joined DML is rebuilt on every execution, including PREPARE.
-            // Resolve its visits against that same current schema: DDL can
-            // move an unqualified column to another table after PREPARE.
+            // Joined DML is rebuilt on every execution, including PREPARE,
+            // and that build checks its visits against the current schema:
+            // DDL can move an unqualified column to another table after
+            // PREPARE.
             self.require_statement_table_privileges(&stmt)?;
         } else if compiled.is_some() {
             // `compile_stmt` already ran Go's `CheckPrivilege` for it.
@@ -1896,21 +1899,26 @@ impl Session {
         let output = match &stmt {
             Stmt::Query(query) => {
                 let current_db = self.vars.current_db.clone();
-                let ctx = self.statement_context_for_stmt(&stmt, false);
-                // go `SelectIntoOutfile` opens the destination with O_EXCL:
-                // an existing file is refused with the raw open error (the
-                // oracle answers `open <path>: file exists`). This tier does
-                // not write data files, so the refusal is the only observable
-                // part of the clause that can be honored faithfully.
-                if let tidb_ast::QueryStmt::Select(select) = query.as_ref() {
-                    if let Some(outfile) = &select.into_outfile {
-                        if std::path::Path::new(&outfile.file_name).exists() {
-                            return Err(DriverError::Unsupported(
+                let ctx =
+                    self.with_plan_privilege_check(self.statement_context_for_stmt(&stmt, false));
+                // go `SelectIntoOutfile` opens the destination with O_EXCL
+                // when the executor opens, after the statement was planned
+                // and its privileges checked: an existing file is refused
+                // with the raw open error (the oracle answers `open <path>:
+                // file exists`). This tier does not write data files, so the
+                // refusal is the only observable part of the clause that can
+                // be honored faithfully.
+                let outfile_exists = |record_set| match query.as_ref() {
+                    tidb_ast::QueryStmt::Select(select) => match &select.into_outfile {
+                        Some(outfile) if std::path::Path::new(&outfile.file_name).exists() => {
+                            Err(DriverError::Unsupported(
                                 format!("open {}: file exists", outfile.file_name).into(),
-                            ));
+                            ))
                         }
-                    }
-                }
+                        _ => Ok(record_set),
+                    },
+                    tidb_ast::QueryStmt::SetOpr(_) => Ok(record_set),
+                };
                 let tidb_ast::QueryStmt::Select(_) = &**query else {
                     let record_set = self.with_catalog_retrieving(&ctx, |catalog| {
                         let physical = select_plan.as_mut().and_then(|retained| {
@@ -1939,7 +1947,7 @@ impl Session {
                         parameterized,
                         &effective_parameterized,
                         binding_sql.as_deref(),
-                    ) {
+                    )? {
                         let cache_hit = execution.cache_hit();
                         let schema_version = execution.schema_version();
                         let result = execution.with_plan(|statement, physical| {
@@ -1965,7 +1973,10 @@ impl Session {
                         });
                         if let Some(Some(record_set)) = result.transpose()? {
                             self.vars.found_in_plan_cache = cache_hit;
-                            return Ok(PendingExecution::Query(PendingQuery::new(record_set, ctx)));
+                            return Ok(PendingExecution::Query(PendingQuery::new(
+                                outfile_exists(record_set)?,
+                                ctx,
+                            )));
                         }
                     }
                 }
@@ -1984,7 +1995,10 @@ impl Session {
                         &ctx,
                     )
                 })?;
-                return Ok(PendingExecution::Query(PendingQuery::new(record_set, ctx)));
+                return Ok(PendingExecution::Query(PendingQuery::new(
+                    outfile_exists(record_set)?,
+                    ctx,
+                )));
             }
             Stmt::Dml(dml) => {
                 // Go parameterizes a non-prepared DML statement too (the
@@ -2001,16 +2015,14 @@ impl Session {
                         let binding_hints = tidb_bindinfo::binding::collect_hints(&stmt);
                         tidb_bindinfo::binding::bind_hints(&mut effective_parameterized, &binding_hints);
                     }
-                    if let Some(execution) = self.bind_non_prepared_dml(
+                    if let Some((execution, requests)) = self.bind_non_prepared_dml(
                         &parameterized,
                         &effective_parameterized,
                         binding_sql.as_deref(),
-                    ) {
-                        // A non-prepared statement's plan-cache hit carries
-                        // the requests its own walk derived, as Go's
-                        // non-prepared cache path hands `checkPreparedPriv`
-                        // the statement's `VisitInfos`.
-                        let requests = self.collect_table_privileges(&stmt, false)?;
+                    )? {
+                        // The cache entry's requests, Go's
+                        // `PlanCacheStmt.VisitInfos`, which
+                        // `checkPreparedPriv` reads on every use.
                         return self
                             .execute_cached_prepared_dml(&execution, sql, &requests)
                             .map(PendingExecution::Complete);
@@ -2044,6 +2056,7 @@ impl Session {
                                 insert.rows.len() == 1,
                                 enable_strict_not_null_check,
                             );
+                        let ctx = self.with_plan_privilege_check(ctx);
                         if insert.source.is_some() {
                             self.write_sli.set_invalid();
                         }
@@ -2104,6 +2117,7 @@ impl Session {
                             // `sc.Priority = stmt.Priority`.
                             .with_statement_priority(statement_priority_of(&stmt))
                             .with_statement_class(tidb_sessionctx::StatementClass::Update);
+                        let ctx = self.with_plan_privilege_check(ctx);
                         let output = match &update.kind {
                             tidb_ast::UpdateKind::Single(_) => self
                                 .retrieving_memory_tables(&ctx, |session| {
@@ -2156,6 +2170,7 @@ impl Session {
                             // `sc.Priority = stmt.Priority`.
                             .with_statement_priority(statement_priority_of(&stmt))
                             .with_statement_class(tidb_sessionctx::StatementClass::Delete);
+                        let ctx = self.with_plan_privilege_check(ctx);
                         let output = match &delete.kind {
                             tidb_ast::DeleteKind::Single(_) => self
                                 .retrieving_memory_tables(&ctx, |session| {

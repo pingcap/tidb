@@ -48,28 +48,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             Ok(target) => (target.database.clone(), target.table.clone()),
             Err(_) => (database, table),
         };
-        let (database, table) = (
-            tidb_mysql::to_lowercase(&database),
-            tidb_mysql::to_lowercase(&table),
-        );
-        let named = |privilege, command: &'static str| VisitInfo {
-            privilege,
-            database: database.clone(),
-            table: table.clone(),
-            column: String::new(),
-            error: VisitAuthError::TableAccessDenied {
-                command,
-                table: table.clone(),
-            },
-            dynamic_privs: Vec::new(),
-            dynamic_with_grant: false,
-        };
-        self.visit_info.push(named(tidb_mysql::InsertPriv, "INSERT"));
-        if insert.replace {
-            self.visit_info.push(named(tidb_mysql::DeletePriv, "DELETE"));
-        } else if !insert.on_duplicate.is_empty() {
-            self.visit_info.push(named(tidb_mysql::UpdatePriv, "UPDATE"));
-        }
+        self.append_insert_target_visits(insert, &database, &table);
         if let Ok(target) = target {
             match insert.source.as_deref() {
                 None => {
@@ -95,6 +74,35 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
         }
         std::mem::take(&mut self.visit_info)
+    }
+
+    /// Go `buildInsert`'s first appends to `b.visitInfo`, before it builds
+    /// any value or source: `InsertPriv` on the target (with the
+    /// `ErrTableaccessDenied` authErr), then `DeletePriv` for `REPLACE` or
+    /// `UpdatePriv` for `ON DUPLICATE KEY UPDATE`.
+    pub fn append_insert_target_visits(&mut self, insert: &InsertStmt, database: &str, table: &str) {
+        let (database, table) = (
+            tidb_mysql::to_lowercase(database),
+            tidb_mysql::to_lowercase(table),
+        );
+        let named = |privilege, command: &'static str| VisitInfo {
+            privilege,
+            database: database.clone(),
+            table: table.clone(),
+            column: String::new(),
+            error: VisitAuthError::TableAccessDenied {
+                command,
+                table: table.clone(),
+            },
+            dynamic_privs: Vec::new(),
+            dynamic_with_grant: false,
+        };
+        self.visit_info.push(named(tidb_mysql::InsertPriv, "INSERT"));
+        if insert.replace {
+            self.visit_info.push(named(tidb_mysql::DeletePriv, "DELETE"));
+        } else if !insert.on_duplicate.is_empty() {
+            self.visit_info.push(named(tidb_mysql::UpdatePriv, "UPDATE"));
+        }
     }
 
     /// Everything Go's `buildUpdate` appends to `b.visitInfo`: what building
