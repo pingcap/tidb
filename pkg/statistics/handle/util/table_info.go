@@ -38,9 +38,6 @@ type TableInfoGetter interface {
 	// This method exists because InfoSchema V1 partition item lookup scans all tables;
 	// use the cached partition-to-table mapping here instead.
 	TableItemByIDForInitStats(is infoschema.InfoSchema, physicalID int64) (infoschema.TableItem, bool)
-	// TableItemByID returns the schema name and table name specified by the physicalID.
-	// This is pure memory operation.
-	TableItemByID(is infoschema.InfoSchema, id int64) (infoschema.TableItem, bool)
 }
 
 // tableInfoGetterImpl is used to get table meta info.
