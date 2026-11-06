@@ -2012,7 +2012,11 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1",
+<<<<<<< HEAD
 			result: "PRIMARY_KEY,c_d_e,b_c_global",
+=======
+			result: "PRIMARY_KEY,c_d_e,b_c_global", // will prune `b_c`
+>>>>>>> 1ffa70a701e (planner: fix some wrong index selection issues caused by the skyline pruning being too aggressive (#65054))
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1 and d > 1",
