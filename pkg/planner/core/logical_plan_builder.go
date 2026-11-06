@@ -4096,6 +4096,12 @@ func (b *PlanBuilder) resolveGbyExprs(p base.LogicalPlan, gby *ast.GroupByClause
 func (b *PlanBuilder) rewriteGbyExprs(ctx context.Context, p base.LogicalPlan, gby *ast.GroupByClause, items []ast.ExprNode) (base.LogicalPlan, []expression.Expression, bool, error) {
 	exprs := make([]expression.Expression, 0, len(gby.Items))
 
+	// Grouping by a column reveals its values, so it requires SELECT on it.
+	originColPriv := b.checkColPriv
+	b.checkColPriv = reportColumnErrOption
+	defer func() {
+		b.checkColPriv = originColPriv
+	}()
 	for _, item := range items {
 		expr, np, err := b.rewrite(ctx, item, p, nil, true)
 		if err != nil {

@@ -2687,6 +2687,10 @@ func TestSelectColumnPrivilege(t *testing.T) {
 	/* column accessed in function */
 	userTk.MustQuery(`SELECT count(test.t1.a) FROM test.t1`).Check(testkit.Rows(`1`))
 	userTk.MustGetErrCode(`SELECT count(test.t1.b) FROM test.t1`, errno.ErrColumnaccessDenied)
+	/* column accessed in GROUP BY */
+	userTk.MustGetErrCode(`SELECT COUNT(*) FROM test.t1 GROUP BY b`, errno.ErrColumnaccessDenied)
+	userTk.MustGetErrCode(`SELECT a FROM test.t1 GROUP BY a, b`, errno.ErrColumnaccessDenied)
+	userTk.MustQuery(`SELECT COUNT(*) FROM test.t1 GROUP BY a`).Check(testkit.Rows(`1`))
 	// The query below compatible with MySQL. Select all fields using wildcard (*) in TiDB requires SELECT privilege in table-level,
 	// OR, SELECT privilege in column-level for all columns.
 	userTk.MustQuery(`SELECT * FROM test.t3`).Check(testkit.Rows(`1 4`))
