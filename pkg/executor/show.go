@@ -816,11 +816,13 @@ func (e *ShowExec) fetchShowIndex() error {
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 	if checker != nil && e.Ctx().GetSessionVars().User != nil {
-		passCheck := false
-		for _, col := range tb.VisibleCols() {
-			if checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, col.Name.O, mysql.AllPrivMask) {
-				passCheck = true
-				break
+		passCheck := checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask)
+		if !passCheck {
+			for _, col := range tb.VisibleCols() {
+				if checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, col.Name.O, mysql.AllPrivMask) {
+					passCheck = true
+					break
+				}
 			}
 		}
 		if !passCheck {
