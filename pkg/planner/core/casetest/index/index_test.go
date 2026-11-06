@@ -393,6 +393,29 @@ func TestPartialIndexWithPlanCache(t *testing.T) {
 		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckContain("idx2")
 		tk.MustExec("execute stmt using @a")
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+		// Explicit and join-derived IS NOT NULL filters must remain cacheable.
+		tk.MustExec("insert into t values (1, 10), (2, 20), (NULL, 30)")
+		tk.MustExec("create table partial_cache_outer(a int, b int)")
+		tk.MustExec("insert into partial_cache_outer values (1, 10), (2, 20), (NULL, 30)")
+		for _, query := range []string{
+			"select a, b from t use index(idx1) where a is not null and b = ?",
+			"select t.a, t.b from partial_cache_outer l join t use index(idx1) on l.a = t.a where l.b = ?",
+		} {
+			tk.MustExec("prepare stmt from '" + query + "'")
+			tk.MustExec("set @a = 10")
+			tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1 10"))
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+			tk.MustExec("set @a = 20")
+			tk.MustQuery("execute stmt using @a").Check(testkit.Rows("2 20"))
+			tkProcess = tk.Session().ShowProcess()
+			ps[0] = tkProcess
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+			tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckContain("idx1")
+			tk.MustExec("set @a = 30")
+			tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		}
 	})
 }
 
