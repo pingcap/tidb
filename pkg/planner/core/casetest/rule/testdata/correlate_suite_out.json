@@ -264,7 +264,7 @@
           "└─StreamAgg(Probe) 9.99 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
           "  └─IndexReader 9.99 root  index:Selection",
           "    └─Selection 9.99 cop[tikv]  not(isnull(test.t2.a))",
-          "      └─IndexRangeScan 10.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:true, stats:pseudo"
+          "      └─IndexRangeScan 9.99 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:true, stats:pseudo"
         ],
         "Result": [
           "1 1"
@@ -397,7 +397,7 @@
           "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─IndexLookUp(Probe) 12475.01 root  ",
           "  ├─Selection(Build) 12487.50 cop[tikv]  not(isnull(test.t2.a))",
-          "  │ └─IndexRangeScan 12500.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+          "  │ └─IndexRangeScan 12487.50 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
           "  └─Selection(Probe) 12475.01 cop[tikv]  not(isnull(test.t2.b))",
           "    └─TableRowIDScan 12487.50 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
@@ -418,7 +418,7 @@
           "  └─StreamAgg(Probe) 10.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
           "    └─IndexReader 10.00 root  index:Selection",
           "      └─Selection 10.00 cop[tikv]  not(isnull(test.t2.a))",
-          "        └─IndexRangeScan 10.01 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:true, stats:pseudo"
+          "        └─IndexRangeScan 10.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:true, stats:pseudo"
         ],
         "Result": [
           "1 1",
