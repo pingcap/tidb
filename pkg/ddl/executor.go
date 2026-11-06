@@ -669,6 +669,9 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 			fail++
 		} else {
 			succ++
+			if tiflashReplica.Count == 0 {
+				appendTiFlashReplicaZeroVectorIndexWarning(sctx, dbInfo.Name, tbl)
+			}
 		}
 	}
 	failStmt := ""
@@ -4245,6 +4248,21 @@ func shouldModifyTiFlashReplica(tbReplicaInfo *model.TiFlashReplicaInfo, replica
 	return true
 }
 
+func appendTiFlashReplicaZeroVectorIndexWarning(sctx sessionctx.Context, schemaName ast.CIStr, tblInfo *model.TableInfo) {
+	if tblInfo.TiFlashReplica == nil || tblInfo.TiFlashReplica.Count == 0 {
+		return
+	}
+	for _, index := range tblInfo.Indices {
+		if index.VectorInfo != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf(
+				"vector index on table '%s.%s' will be unavailable after setting TiFlash replica to 0",
+				schemaName.O, tblInfo.Name.O,
+			))
+			return
+		}
+	}
+}
+
 // addHypoTiFlashReplicaIntoCtx adds this hypothetical tiflash replica into this ctx.
 func (*executor) setHypoTiFlashReplica(ctx sessionctx.Context, schemaName, tableName ast.CIStr, replicaInfo *ast.TiFlashReplicaSpec) error {
 	sctx := ctx.GetSessionVars()
@@ -4310,6 +4328,9 @@ func (e *executor) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast
 	}
 	args := &model.SetTiFlashReplicaArgs{TiflashReplica: *replicaInfo}
 	err = e.doDDLJob2(ctx, job, args)
+	if err == nil && replicaInfo.Count == 0 {
+		appendTiFlashReplicaZeroVectorIndexWarning(ctx, schema.Name, tb.Meta())
+	}
 	return errors.Trace(err)
 }
 
