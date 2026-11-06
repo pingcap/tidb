@@ -101,7 +101,7 @@
 - `pkg/planner/core/plan_replayer_capture_test.go` - planner/core: Tests plan replayer capture table stats.
 - `pkg/planner/core/plan_test.go` - planner/core: Tests plan encode/decode, normalization/digest, explain hints, cop paging, agg final mode build, and IMPORT INTO planning.
 - `pkg/planner/core/plan_to_pb_test.go` - planner/core: Tests ColumnToProto collation, flags, and elems.
-- `pkg/planner/core/planbuilder_test.go` - planner/core: Tests plan builder utilities (SHOW schema, access paths, rewriter pool, clone, analyze options, privileges, admin/traffic).
+- `pkg/planner/core/planbuilder_test.go` - planner/core: Tests plan builder utilities (SHOW schema, access paths, rewriter pool, clone, analyze options, privileges, admin/traffic, and NextGen restricted SQL).
 - `pkg/planner/core/preprocess_test.go` - planner/core: Validates SQL/DDL preprocessing errors and constraints.
 - `pkg/planner/core/rule_generate_column_substitute_test.go` - planner/core: Benchmarks generated column expression substitution.
 - `pkg/planner/core/rule_join_reorder_dp_test.go` - planner/core: Tests DP reorder TPCH Q5.
