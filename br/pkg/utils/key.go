@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -66,8 +67,12 @@ func unescapedKey(text string) ([]byte, error) {
 
 		switch n[0] {
 		case 'x':
-			fmt.Sscanf(string(r.Next(2)), "%02x", &c)
-			buf = append(buf, c)
+			n = r.Next(2)
+			v, err := strconv.ParseUint(string(n), 16, 8)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			buf = append(buf, byte(v))
 		default:
 			n = append(n, r.Next(2)...)
 			_, err := fmt.Sscanf(string(n), "%03o", &c)
