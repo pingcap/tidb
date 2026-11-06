@@ -63,22 +63,23 @@ func (e *DeleteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return e.deleteSingleTableByChunk(ctx)
 }
 
-func (e *DeleteExec) deleteOneRow(tbl table.Table, colInfo *plannercore.TblColPosInfo, isExtraHandle bool, row []types.Datum) error {
+// deleteOneRow reuses the record handle already encoded for the IGNORE checks;
+// hidden handles are removed only from the stored row image, not the handle.
+func (e *DeleteExec) deleteOneRow(tbl table.Table, colInfo *plannercore.TblColPosInfo, handle kv.Handle, isExtraHandle bool, row []types.Datum) error {
 	end := len(row)
 	if isExtraHandle {
 		end--
 	}
-	handle, err := colInfo.HandleCols.BuildHandleByDatums(e.Ctx().GetSessionVars().StmtCtx, row)
-	if err != nil {
-		return err
-	}
-	err = e.removeRow(e.Ctx(), tbl, handle, row[:end], colInfo)
+	err := e.removeRow(e.Ctx(), tbl, handle, row[:end], colInfo)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
+// deleteSingleTableByChunk shares the child's actual record handle between the
+// pre-write IGNORE checks and the deletion, including hidden/common handles.
+// IGNORE skips FK-rejected rows; other errors still abort execution.
 func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	colPosInfo := &e.tblColPosInfos[0]
 	tbl := e.tblID2Table[colPosInfo.TblID]
@@ -131,6 +132,10 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 				datumRow = append(datumRow, datum)
 			}
 
+			handle, err := colPosInfo.HandleCols.BuildHandleByDatums(e.Ctx().GetSessionVars().StmtCtx, datumRow)
+			if err != nil {
+				return err
+			}
 			if e.ignoreErr {
 				txn, err := e.Ctx().Txn(true)
 				if err != nil {
@@ -139,7 +144,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 				sc := e.Ctx().GetSessionVars().StmtCtx
 				ignored := false
 				for _, fkc := range e.fkChecks[tbl.Meta().ID] {
-					ignored, err = fkc.checkIgnoreForDelete(ctx, sc, txn, datumRow)
+					ignored, err = fkc.checkIgnoreForDelete(ctx, sc, txn, handle, datumRow)
 					if err != nil {
 						return err
 					}
@@ -154,7 +159,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 					continue
 				}
 			}
-			err = e.deleteOneRow(tbl, colPosInfo, isExtraHandle, datumRow)
+			err = e.deleteOneRow(tbl, colPosInfo, handle, isExtraHandle, datumRow)
 			if err != nil {
 				return err
 			}
@@ -252,6 +257,9 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 	return e.removeRowsInTblRowMap(ctx, tblRowMap)
 }
 
+// removeRowsInTblRowMap uses each deduplicated row-map handle for both the
+// IGNORE self-reference filter and the actual deletion, independent of aliases.
+// An IGNORE FK rejection skips that row; other errors stop the walk.
 func (e *DeleteExec) removeRowsInTblRowMap(ctx context.Context, tblRowMap tableRowMapType) error {
 	for id, rowMap := range tblRowMap {
 		txn, err := e.Ctx().Txn(true)
@@ -264,7 +272,7 @@ func (e *DeleteExec) removeRowsInTblRowMap(ctx context.Context, tblRowMap tableR
 			if e.ignoreErr {
 				var ignored bool
 				for _, fkc := range e.fkChecks[id] {
-					ignored, rowErr = fkc.checkIgnoreForDelete(ctx, sc, txn, val.handleVal)
+					ignored, rowErr = fkc.checkIgnoreForDelete(ctx, sc, txn, h, val.handleVal)
 					if rowErr != nil {
 						return false
 					}
