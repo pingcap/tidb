@@ -52,6 +52,22 @@ func TestMaskingPolicyDDLBasic(t *testing.T) {
 		Check(testkit.Rows("0"))
 }
 
+func TestMaskingPolicyMultilineName(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_multiline(c varchar(10), d varchar(10))")
+	tk.MustExec("create masking policy p_single on t_multiline(c) as mask_full(c) enable")
+	// The checker compares SHOW CREATE after stripping only policy annotations.
+	tk.MustExec("create masking policy `p_multi\nline` on t_multiline(d) as mask_full(d) enable")
+	ddl := tk.MustQuery("show create table t_multiline").Rows()[0][1]
+	require.Contains(t, ddl, "/* MASKING POLICY `p_single` ENABLED */")
+	require.Contains(t, ddl, "/* MASKING POLICY `p_multi\nline` ENABLED */")
+	tk.MustExec("alter table t_multiline disable masking policy `p_multi\nline`")
+	tk.MustExec("alter table t_multiline add column e int")
+	tk.MustExec("alter table t_multiline drop masking policy `p_multi\nline`")
+}
+
 func TestMaskingPolicyCaseExpression(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -298,4 +314,53 @@ func TestMaskingPolicyDropDatabaseCleanup(t *testing.T) {
 	// Verify all policies for this database are cleaned up
 	tk.MustQuery("select count(*) from mysql.tidb_masking_policy where db_name = 'db_mask_cleanup'").
 		Check(testkit.Rows("0"))
+}
+
+func TestMaskingPolicyInvalidNameCharacters(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c char(120))")
+
+	// Test CREATE MASKING POLICY with invalid characters
+	_, err := tk.Exec("create masking policy `p*` on t(c) as c")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Cannot use character * or / in masking policy name")
+
+	_, err = tk.Exec("create masking policy `p/x` on t(c) as c")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Cannot use character * or / in masking policy name")
+
+	_, err = tk.Exec("create masking policy `p*/x` on t(c) as c")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Cannot use character * or / in masking policy name")
+
+	_, err = tk.Exec("create masking policy `p*x/` on t(c) as c")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Cannot use character * or / in masking policy name")
+
+	// Test ALTER TABLE ... ADD MASKING POLICY with invalid characters
+	_, err = tk.Exec("alter table t add masking policy `p*` on (c) as c")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Cannot use character * or / in masking policy name")
+
+	_, err = tk.Exec("alter table t add masking policy `p/x` on (c) as c")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Cannot use character * or / in masking policy name")
+
+	_, err = tk.Exec("alter table t add masking policy `p*/x` on (c) as c")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Cannot use character * or / in masking policy name")
+
+	_, err = tk.Exec("alter table t add masking policy `p*x/` on (c) as c")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Cannot use character * or / in masking policy name")
+
+	// Test that valid names still work
+	tk.MustExec("create masking policy valid_name on t(c) as c")
+	tk.MustExec("alter table t drop masking policy valid_name")
+
+	tk.MustExec("alter table t add masking policy another_valid_name on (c) as c")
+	tk.MustExec("alter table t drop masking policy another_valid_name")
 }

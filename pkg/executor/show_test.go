@@ -236,6 +236,27 @@ func TestAdminShowSlowIARemoteReadStats(t *testing.T) {
 	tk.MustQuery("admin show slow top all 1").CheckAt([]int{14, 15, 16}, testkit.Rows("4 4096 0.015"))
 }
 
+func TestShowMaskingPolicies(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, c char(120))")
+	tk.MustExec("create masking policy p on t(c) as c")
+
+	// Initial state: expression is bare column reference, so CUSTOM type, no restrict
+	tk.MustQuery("show masking policies for t").
+		Check(testkit.Rows("p c `c` ENABLED CUSTOM NONE"))
+	tk.MustQuery("show masking policies for t where column_name = 'c'").
+		Check(testkit.Rows("p c `c` ENABLED CUSTOM NONE"))
+	tk.MustQuery("show masking policies for t where column_name = 'missing'").Check(testkit.Rows())
+
+	rows := tk.MustQuery("show create table t").Rows()
+	require.Len(t, rows, 1)
+	require.Contains(t, rows[0][1], "/* MASKING POLICY `p` ENABLED */")
+}
+
 func TestShowIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
