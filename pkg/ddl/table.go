@@ -340,6 +340,7 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		createRecoveredTablesAffinityGroups(jobCtx, job, args.RecoverTableInfos())
 		tableInfo := tblInfo.Clone()
 		tableInfo.State = model.StatePublic
 		tableInfo.UpdateTS = metaMut.StartTS
