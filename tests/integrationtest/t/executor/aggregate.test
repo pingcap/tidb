@@ -1108,6 +1108,15 @@ WHERE `f` >= 1753632000
   AND `g` = 0
 GROUP BY `a`, left(FROM_UNIXTIME(e), 10);
 
+# FLOAT expression group keys must retain their 32-bit layout in unistore.
+create table float_group_key (a float);
+insert into float_group_key values (1), (2), (-2), (0), (0.1236711), (null), (1);
+select min(a), max(a), count(*) from float_group_key group by coalesce(a) order by min(a);
+select distinct coalesce(a) from float_group_key order by 1;
+select coalesce(a) from float_group_key where coalesce(a) group by coalesce(a) order by 1;
+select ref0 from (select coalesce(a) as ref0, coalesce(a) as ref1 from float_group_key group by coalesce(a)) s where ref1 order by 1;
+drop table float_group_key;
+
 SELECT
   MAX(id) AS id,
   LEFT(FROM_UNIXTIME(e), 10) AS settle_time,

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
@@ -637,6 +638,36 @@ func (*mockExchSenderChildExec) takeIntermediateResults() []*chunk.Chunk       {
 func (*mockExchSenderChildExec) getFieldTypes() []*types.FieldType             { return nil }
 func (*mockExchSenderChildExec) buildSummary() *tipb.ExecutorExecutionSummary  { return nil }
 func (*mockExchSenderChildExec) scanDetail() *kvrpcpb.ScanDetailV2             { return &kvrpcpb.ScanDetailV2{} }
+
+func TestAggFloatGroupKey(t *testing.T) {
+	sctx := flagsAndTzToSessionContext(0, time.UTC)
+	for _, tp := range []byte{mysql.TypeFloat, mysql.TypeDouble} {
+		ft := types.NewFieldType(tp)
+		col := &expression.Column{Index: 0, RetType: ft}
+		coalesce := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.Coalesce, ft, col)
+		for _, expr := range []expression.Expression{col, coalesce} {
+			exec := &aggExec{
+				baseMPPExec:  baseMPPExec{sctx: sctx},
+				groupByExprs: []expression.Expression{expr},
+				groupByTypes: []*types.FieldType{ft},
+			}
+			for _, value := range []any{float64(1), float64(2), float64(-2), float64(0.1236711), float64(0), nil} {
+				d := types.NewDatum(value)
+				if value != nil && tp == mysql.TypeFloat {
+					d.SetFloat32(float32(value.(float64)))
+				}
+				input := chunk.MutRowFromDatums([]types.Datum{d})
+				row, key, err := exec.getGroupKey(input.ToRow())
+				require.NoError(t, err)
+				actual := row.ToRow().GetDatum(0, ft)
+				require.Equal(t, d, actual, "type %d, expression %T, value %v", tp, expr, value)
+				expectedKey, err := codec.EncodeValue(time.UTC, nil, d)
+				require.NoError(t, err)
+				require.Equal(t, expectedKey, key)
+			}
+		}
+	}
+}
 
 func TestExchSenderExecNextReturnsWhenCtxCanceledBeforeTunnelConnected(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
