@@ -947,6 +947,7 @@ func (*worker) processJobPausingRequest(jobCtx *jobContext, job *model.Job) (isR
 	if job.IsPausing() {
 		jobCtx.logger.Debug("pausing DDL job ", zap.String("job", job.String()))
 		job.State = model.JobStatePaused
+		job.UpdatePauseTime(model.JobStatePausing, jobCtx.metaMut.StartTS)
 		return false, dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
 	}
 	return true, nil

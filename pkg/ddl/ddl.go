@@ -1578,12 +1578,14 @@ func processJobs(
 			}
 			delete(jobMap, job.ID)
 
+			previousState := job.State
 			err = process(job, byWho)
 			if err != nil {
 				jobErrs[i] = err
 				continue
 			}
 
+			job.UpdatePauseTime(previousState, ns.GetSessionVars().TxnCtx.StartTS)
 			err = updateDDLJob2Table(ctx, ns, job, false)
 			if err != nil {
 				jobErrs[i] = err
@@ -1677,12 +1679,14 @@ func processAllJobs(
 		}
 
 		for _, job := range jobs {
+			previousState := job.State
 			err = process(job, byWho)
 			if err != nil {
 				jobErrs[job.ID] = err
 				continue
 			}
 
+			job.UpdatePauseTime(previousState, ns.GetSessionVars().TxnCtx.StartTS)
 			err = updateDDLJob2Table(ctx, ns, job, false)
 			if err != nil {
 				jobErrs[job.ID] = err

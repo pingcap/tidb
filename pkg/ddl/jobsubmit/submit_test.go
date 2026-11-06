@@ -21,10 +21,12 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/jobsubmit"
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -45,6 +47,7 @@ type submitTestEnv struct {
 
 type fakeServerStateSyncer struct {
 	upgrading bool
+	stateErr  error
 }
 
 func (*fakeServerStateSyncer) Init(context.Context) error { return nil }
@@ -55,6 +58,9 @@ func (s *fakeServerStateSyncer) UpdateGlobalState(_ context.Context, info *serve
 }
 
 func (s *fakeServerStateSyncer) GetGlobalState(context.Context) (*serverstate.StateInfo, error) {
+	if s.stateErr != nil {
+		return nil, s.stateErr
+	}
 	if s.upgrading {
 		return serverstate.NewStateInfo(serverstate.StateUpgrading), nil
 	}
@@ -90,6 +96,9 @@ func newSubmitTestEnv(t *testing.T) submitTestEnv {
 			SysTblMgr:         sysTblMgr,
 			MinJobIDRefresher: systable.NewMinJobIDRefresher(sysTblMgr),
 			ServerStateSyncer: &fakeServerStateSyncer{},
+			GetAllServerInfo: func(context.Context) (map[string]*serverinfo.ServerInfo, error) {
+				return map[string]*serverinfo.ServerInfo{"new": {StaticInfo: serverinfo.StaticInfo{DDLJobElapsedTime: true}}}, nil
+			},
 		},
 	}
 }
@@ -142,6 +151,7 @@ func TestSubmitBatchEnqueuesTableModeJob(t *testing.T) {
 	require.Equal(t, model.JobStateQueueing, spec.Job.State)
 	require.NotZero(t, spec.Job.StartTS)
 	require.Equal(t, string(ast.BDRRoleNone), spec.Job.BDRRole)
+	require.NotNil(t, spec.Job.ElapsedTime)
 
 	jobW, err := env.opts.SysTblMgr.GetJobByID(ctx, spec.Job.ID)
 	require.NoError(t, err)
@@ -150,6 +160,7 @@ func TestSubmitBatchEnqueuesTableModeJob(t *testing.T) {
 	require.EqualValues(t, 100, jobW.SchemaID)
 	require.EqualValues(t, 200, jobW.TableID)
 	require.Equal(t, "skip", jobW.Query)
+	require.NotNil(t, jobW.ElapsedTime)
 	require.Equal(t, []model.InvolvingSchemaInfo{{
 		Database: "testdb",
 		Table:    "t1",
@@ -303,7 +314,44 @@ func TestSubmitBatchChecksAndPauseState(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, model.JobStatePausing, jobW.State)
 		require.Equal(t, model.AdminCommandBySystem, jobW.AdminOperator)
+		require.Nil(t, jobW.ElapsedTime)
 	})
+}
+
+func TestSubmitBatchElapsedTimeEligibility(t *testing.T) {
+	for _, scenario := range []string{"mixed versions", "no servers", "discovery failure", "upgrade state failure", "no getter", "normal cluster"} {
+		t.Run(scenario, func(t *testing.T) {
+			env := newSubmitTestEnv(t)
+			switch scenario {
+			case "mixed versions":
+				env.opts.GetAllServerInfo = func(context.Context) (map[string]*serverinfo.ServerInfo, error) {
+					return map[string]*serverinfo.ServerInfo{
+						"new": {StaticInfo: serverinfo.StaticInfo{DDLJobElapsedTime: true}},
+						"old": {},
+					}, nil
+				}
+			case "no servers":
+				env.opts.GetAllServerInfo = func(context.Context) (map[string]*serverinfo.ServerInfo, error) { return nil, nil }
+			case "discovery failure":
+				env.opts.GetAllServerInfo = func(context.Context) (map[string]*serverinfo.ServerInfo, error) {
+					return nil, errors.New("discovery failed")
+				}
+			case "upgrade state failure":
+				env.opts.ServerStateSyncer.(*fakeServerStateSyncer).stateErr = errors.New("state unavailable")
+			case "no getter":
+				env.opts.GetAllServerInfo = nil
+			}
+			spec := newTableModeSpec(t)
+			require.NoError(t, jobsubmit.SubmitBatch(context.Background(), env.opts, []*jobsubmit.JobSpec{spec}))
+			stored, err := env.opts.SysTblMgr.GetJobByID(context.Background(), spec.Job.ID)
+			require.NoError(t, err)
+			if scenario == "normal cluster" {
+				require.NotNil(t, stored.ElapsedTime)
+			} else {
+				require.Nil(t, stored.ElapsedTime)
+			}
+		})
+	}
 }
 
 func TestSubmitBatchRetryCleanup(t *testing.T) {

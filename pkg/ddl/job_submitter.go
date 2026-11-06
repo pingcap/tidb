@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -255,6 +256,7 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 		SysTblMgr:                   s.sysTblMgr,
 		MinJobIDRefresher:           s.minJobIDRefresher,
 		ServerStateSyncer:           s.serverStateSyncer,
+		GetAllServerInfo:            infosync.GetAllServerInfo,
 		BeforeInsertWithAssignedIDs: s.registerJobDoneChannels,
 	}, jobWrappersToSpecs(jobWs))
 	return errors.Trace(err)

@@ -410,6 +410,9 @@ type Job struct {
 	// StartTS uses timestamp allocated by TSO.
 	// Now it's the TS when we put the job to job table.
 	StartTS uint64 `json:"start_ts"`
+	// ElapsedTime opts new jobs into unfinished-job monitoring. Legacy and
+	// upgrade-time jobs leave it nil because their pause history is unknown.
+	ElapsedTime *JobElapsedTime `json:"elapsed_time,omitempty"`
 	// DependencyID is the largest job ID before current job and current job depends on.
 	DependencyID int64 `json:"dependency_id"`
 	// Query string of the ddl job.
@@ -525,6 +528,28 @@ func (job *Job) FinishDBJob(jobState JobState, schemaState SchemaState, ver int6
 func (job *Job) MarkNonRevertible() {
 	if job.MultiSchemaInfo != nil {
 		job.MultiSchemaInfo.Revertible = false
+	}
+}
+
+// JobElapsedTime persists pause accounting across owner changes. Durations are
+// measured from Job.StartTS, including queueing, using the physical part of TSO.
+type JobElapsedTime struct {
+	PauseStartTS     uint64 `json:"pause_start_ts,omitempty"`
+	PausedDurationMS int64  `json:"paused_duration_ms,omitempty"`
+}
+
+// UpdatePauseTime accounts for a committed state transition. Callers must
+// persist this update in the same transaction as the new job state.
+func (job *Job) UpdatePauseTime(previousState JobState, nowTS uint64) {
+	timing := job.ElapsedTime
+	if timing == nil {
+		return
+	}
+	if job.IsPaused() && previousState != JobStatePaused {
+		timing.PauseStartTS = nowTS
+	} else if previousState == JobStatePaused && !job.IsPaused() && timing.PauseStartTS != 0 {
+		timing.PausedDurationMS += max(TSConvert2Time(nowTS).Sub(TSConvert2Time(timing.PauseStartTS)).Milliseconds(), 0)
+		timing.PauseStartTS = 0
 	}
 }
 

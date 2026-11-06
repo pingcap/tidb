@@ -608,16 +608,17 @@ func getServerInfo(id string, serverIDGetter func() uint64, assumedKS string, di
 	cfg := config.GetGlobalConfig()
 	info := &ServerInfo{
 		StaticInfo: StaticInfo{
-			ID:              id,
-			IP:              cfg.AdvertiseAddress,
-			Port:            cfg.Port,
-			StatusPort:      cfg.Status.StatusPort,
-			Lease:           cfg.Lease,
-			StartTimestamp:  time.Now().Unix(),
-			Keyspace:        config.GetGlobalKeyspaceName(),
-			AssumedKeyspace: assumedKS,
-			ServerIDGetter:  serverIDGetter,
-			DisableRPC:      disableRPC,
+			ID:                id,
+			IP:                cfg.AdvertiseAddress,
+			Port:              cfg.Port,
+			StatusPort:        cfg.Status.StatusPort,
+			Lease:             cfg.Lease,
+			StartTimestamp:    time.Now().Unix(),
+			Keyspace:          config.GetGlobalKeyspaceName(),
+			AssumedKeyspace:   assumedKS,
+			ServerIDGetter:    serverIDGetter,
+			DisableRPC:        disableRPC,
+			DDLJobElapsedTime: true,
 		},
 		DynamicInfo: DynamicInfo{
 			Labels: maps.Clone(cfg.Labels),

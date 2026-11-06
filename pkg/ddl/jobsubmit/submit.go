@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/bdr"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -88,6 +89,7 @@ func SubmitBatch(ctx context.Context, opts SubmitOptions, specs []*JobSpec) erro
 		return errors.Trace(err)
 	}
 
+	trackElapsedTime := canTrackJobElapsedTime(ctx, opts)
 	for _, spec := range specs {
 		job := spec.Job
 		job.NormalizeInvolvingSchemaInfo()
@@ -100,6 +102,10 @@ func SubmitBatch(ctx context.Context, opts SubmitOptions, specs []*JobSpec) erro
 			job.TraceInfo = &tracing.TraceInfo{}
 		}
 		job.StartTS = startTS
+		job.ElapsedTime = nil
+		if trackElapsedTime {
+			job.ElapsedTime = &model.JobElapsedTime{}
+		}
 		job.BDRRole = bdrRole
 
 		// BDR mode only affects the DDL not from CDC.
@@ -132,6 +138,39 @@ func SubmitBatch(ctx context.Context, opts SubmitOptions, specs []*JobSpec) erro
 	}
 
 	return nil
+}
+
+// canTrackJobElapsedTime fails closed for monitoring without making metadata
+// discovery failures prevent DDL submission. Existing jobs never opt in here.
+func canTrackJobElapsedTime(ctx context.Context, opts SubmitOptions) bool {
+	if opts.ServerStateSyncer == nil || opts.GetAllServerInfo == nil {
+		return false
+	}
+	// Monitoring discovery must not hold up DDL on a slow control plane.
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	state, err := opts.ServerStateSyncer.GetGlobalState(ctx)
+	if err != nil {
+		logutil.SampleLogger().Warn("cannot check cluster state for DDL elapsed-time monitoring", zap.Error(err))
+		return false
+	}
+	if state == nil || state.State != serverstate.StateNormalRunning {
+		return false
+	}
+	infos, err := opts.GetAllServerInfo(ctx)
+	if err != nil {
+		logutil.SampleLogger().Warn("cannot check server capabilities for DDL elapsed-time monitoring", zap.Error(err))
+		return false
+	}
+	if len(infos) == 0 {
+		return false
+	}
+	for _, info := range infos {
+		if info == nil || !info.DDLJobElapsedTime {
+			return false
+		}
+	}
+	return true
 }
 
 // GenGIDAndInsertJobsWithRetry generates job-related global IDs and inserts DDL
