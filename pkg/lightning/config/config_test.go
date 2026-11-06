@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -829,6 +830,39 @@ func TestDuplicateResolutionAlgorithm(t *testing.T) {
 }
 
 func TestLoadConfig(t *testing.T) {
+	t.Run("redact info log", func(t *testing.T) {
+		require.True(t, NewGlobalConfig().Security.RedactInfoLog)
+		task := NewConfig()
+		require.NoError(t, task.LoadFromTOML(nil))
+		require.True(t, task.Security.RedactInfoLog)
+		require.NoError(t, task.LoadFromTOML([]byte("[security]\nredact-info-log = false\n")))
+		require.False(t, task.Security.RedactInfoLog)
+		for _, tc := range []struct {
+			name    string
+			config  string
+			args    []string
+			enabled bool
+		}{
+			{name: "default", enabled: true},
+			{name: "CLI disable", args: []string{"--redact-info-log=false"}},
+			{name: "config disable", config: "[security]\nredact-info-log = false\n"},
+			{name: "CLI enable overrides config", config: "[security]\nredact-info-log = false\n", args: []string{"--redact-info-log=true"}, enabled: true},
+			{name: "CLI disable overrides config", config: "[security]\nredact-info-log = true\n", args: []string{"--redact-info-log=false"}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				configPath := filepath.Join(t.TempDir(), "lightning.toml")
+				require.NoError(t, os.WriteFile(configPath, []byte(tc.config), 0o600))
+				args := append([]string{"--config", configPath}, tc.args...)
+				global, err := LoadGlobalConfig(args, nil)
+				require.NoError(t, err)
+				require.Equal(t, tc.enabled, global.Security.RedactInfoLog)
+				task := NewConfig()
+				require.NoError(t, task.LoadFromGlobal(global))
+				require.Equal(t, tc.enabled, task.Security.RedactInfoLog)
+			})
+		}
+	})
+
 	cfg, err := LoadGlobalConfig([]string{"-tidb-port", "sss"}, nil)
 	require.EqualError(t, err, `[Lightning:Common:ErrInvalidArgument]invalid argument: invalid value "sss" for flag -tidb-port: parse error`)
 	require.Nil(t, cfg)
@@ -1439,6 +1473,7 @@ func TestRedactConfig(t *testing.T) {
 	}{
 		{"", ""},
 		{":", ":"},
+		{"s3://bucket:port/file?access-key=AKID", storage.InvalidURLPlaceholder},
 		{"~/file", "~/file"},
 		{"gs://bucket/file", "gs://bucket/file"},
 		{"gs://bucket/file?access-key=123", "gs://bucket/file?access-key=123"},
@@ -1456,5 +1491,30 @@ func TestRedactConfig(t *testing.T) {
 
 		require.Contains(t, cfg.Redact(), tt.redact)
 		require.Contains(t, cfg.String(), tt.origin)
+	}
+}
+
+func TestAdjustFileRouterRedactsSourceDir(t *testing.T) {
+	cfg := NewConfig()
+	cfg.Mydumper.SourceDir = "s3://bucket/data?access-key=AKID&secret-access-key=SKEY"
+	cfg.Mydumper.FileRouters = []*FileRouteRule{{
+		Pattern: `(.*)\.csv`, Path: "/abs/dir/file.csv", Schema: "db", Table: "t", Type: "csv",
+	}}
+	err := cfg.Mydumper.adjust()
+	require.ErrorContains(t, err, "cannot find relative path for file route path /abs/dir/file.csv")
+	require.NotContains(t, err.Error(), "AKID")
+	require.NotContains(t, err.Error(), "SKEY")
+}
+
+func TestAdjustFilePathRedactsSourceDir(t *testing.T) {
+	for _, dir := range []string{
+		"s3://bucket:port/data?access-key=AKID&secret-access-key=SKEY",
+		"unknown://bucket/data?access-key=AKID&secret-access-key=SKEY",
+	} {
+		m := &MydumperRuntime{SourceDir: dir}
+		err := m.adjustFilePath()
+		require.Error(t, err)
+		require.NotContains(t, err.Error(), "AKID")
+		require.NotContains(t, err.Error(), "SKEY")
 	}
 }

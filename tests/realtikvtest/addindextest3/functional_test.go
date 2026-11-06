@@ -164,6 +164,12 @@ func TestAddIndexPresplitIndexRegions(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	origFastReorg := tk.MustQuery("select @@global.tidb_ddl_enable_fast_reorg").Rows()[0][0].(string)
+	origDistTask := tk.MustQuery("select @@global.tidb_enable_dist_task").Rows()[0][0].(string)
+	t.Cleanup(func() {
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_enable_fast_reorg = %s", origFastReorg))
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_dist_task = %s", origDistTask))
+	})
 
 	var splitKeyHex [][]byte
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforePresplitIndex", func(splitKeys [][]byte) {

@@ -1017,6 +1017,25 @@ func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 }
 
 func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
+	t.Run("max keys read", func(t *testing.T) {
+		ctx := mock.NewContext()
+		ctx.GetSessionVars().TxnCtx.Isolation = ast.RepeatableRead
+		tblInfo := &model.TableInfo{}
+		index := &model.IndexInfo{}
+		require.True(t, checkIndexLookUpPushDownSupported(ctx, tblInfo, index, false))
+
+		ctx.GetSessionVars().MaxKeysRead = 5
+		require.False(t, checkIndexLookUpPushDownSupported(ctx, tblInfo, index, true))
+		require.Empty(t, ctx.GetSessionVars().StmtCtx.GetWarnings())
+		require.False(t, checkIndexLookUpPushDownSupported(ctx, tblInfo, index, false))
+		warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+		require.Len(t, warnings, 1)
+		require.Contains(t, warnings[0].Err.Error(), "hint INDEX_LOOKUP_PUSHDOWN is inapplicable, tidb_max_keys_read is set")
+
+		ctx.GetSessionVars().MaxKeysRead = 0
+		require.True(t, checkIndexLookUpPushDownSupported(ctx, tblInfo, index, false))
+	})
+
 	checkPushDownIndexLookUpReaderCommon := func(r *PhysicalIndexLookUpReader) {
 		require.True(t, r.IndexLookUpPushDown)
 		tablePlans := flattenListPushDownPlan(r.tablePlan)

@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -1927,4 +1928,57 @@ func TestPreparedPlanCacheResourceGroup(t *testing.T) {
 	require.True(t, tk.Session().GetSessionVars().StmtCtx.StmtHints.HasResourceGroup)
 	require.Equal(t, "rg2", tk.Session().GetSessionVars().StmtCtx.StmtHints.ResourceGroup)
 	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+}
+
+func TestDropPrepare(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null, b int not null, key(a), key(b))")
+	tk.MustExec(`insert into t values (1, 1), (2, 2), (3, 3)`)
+	tk.MustExec("set @@tidb_enable_prepared_plan_cache=1")
+
+	// 1. Prepare and execute statement A to cache its plan.
+	tk.MustExec(`prepare stmt from 'select * from t where a = ?'`)
+	tk.MustExec(`set @a=1`)
+	tk.MustQuery(`execute stmt using @a`) // First execution to generate a plan.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`set @a=2`)
+	tk.MustQuery(`execute stmt using @a`) // Second execution to cache the plan.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// 2. Get the cached plan for statement A.
+	// Note: `explain for connection` is used to get the real cached plan.
+	tk.MustQuery(`execute stmt using @a`)
+	planA := tk.MustQuery("explain for connection " + strconv.FormatUint(tk.Session().ShowProcess().ID, 10))
+	// 3. Deallocate/drop the prepared statement.
+	tk.MustExec(`deallocate prepare stmt`)
+
+	// 4. Prepare and execute statement B with the same name.
+	// This statement has a different structure and should generate a different plan.
+	tk.MustExec(`prepare stmt from 'select * from t where b = ?'`)
+	tk.MustExec(`set @b=1`)
+	tk.MustExec(`execute stmt using @b`)
+
+	// 5. Check if the cache was hit. It must NOT be hit because of the deallocation.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`set @b=3`)
+	tk.MustExec(`execute stmt using @b`)
+	// 6. Get the new plan for statement B.
+	planB := tk.MustQuery("explain for connection " + strconv.FormatUint(tk.Session().ShowProcess().ID, 10))
+
+	// 7. Core Assertions:
+	//    a. Assert that Plan A and Plan B are different.
+	require.NotEqual(t, planA.Rows(), planB.Rows(), "Plan A and Plan B should be different")
+	//    b. Check the content of the plans to be sure.
+	//       Plan A should use index `a`. Plan B should use index `b`.
+	planA.CheckContain("index:a(a)")
+	planA.CheckContain("range:[2,2]")
+	planB.CheckContain("index:b(b)")
+	planB.CheckContain("range:[3,3]")
+
+	// 8. Execute statement B again and verify it hits the cache now.
+	tk.MustExec(`execute stmt using @b`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
