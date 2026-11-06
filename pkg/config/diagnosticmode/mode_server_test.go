@@ -138,9 +138,10 @@ func assertDiagnosticGoroutineAllowlist(t *testing.T, dump []byte) {
 		require.Equal(t, "@", marker)
 		require.Positive(t, count)
 		checked += count
-		if !hasFrames {
-			// debug=1 suppresses runtime.goexit even when it is the only frame.
-			// Resolve the raw PCs so no other frameless stack escapes the allowlist.
+		if !hasFrames || isRuntimeGoexitGroup(groupHeader) {
+			// A goroutine can be sampled after its user function has returned,
+			// in runtime.goexit or runtime.goexit1. debug=1 hides runtime.goexit.
+			// Resolve every raw PC so only runtime exit stacks bypass the allowlist.
 			require.True(t, isRuntimeGoexitGroup(groupHeader), "goroutine group has no frames: %s", group)
 			continue
 		}
@@ -176,7 +177,7 @@ func isRuntimeGoexitGroup(header []byte) bool {
 		// expanding a stack containing known frames.
 		frames := runtime.CallersFrames([]uintptr{uintptr(pc)})
 		frame, more := frames.Next()
-		if frame.Function != "runtime.goexit" || more {
+		if (frame.Function != "runtime.goexit" && frame.Function != "runtime.goexit1") || more {
 			return false
 		}
 	}
@@ -258,6 +259,13 @@ func startTiDBServer(t *testing.T) (*tidbserver.Server, *config.Config) {
 			require.Fail(t, "timed out waiting for TiDB server to stop")
 		}
 	})
+	// Listener readiness does not imply that diagnostic statistics initialization
+	// has released its SQL workers. Wait for that boundary before profiling.
+	select {
+	case <-dom.StatsHandle().InitStatsDone:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "timed out waiting for diagnostic statistics initialization")
+	}
 	return server, cfg
 }
 
