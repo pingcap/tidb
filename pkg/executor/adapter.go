@@ -183,9 +183,11 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		logutil.Logger(ctx).Warn("execute sql panic", zap.String("sql", a.stmt.GetTextToLog(false)), zap.Stack("stack"))
 	}()
 	if a.stmt != nil {
-		if err := a.stmt.Ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
-			a.stmt.abortStatementRU()
-			return err
+		if explain, ok := a.executor.(*ExplainExec); !ok || !explain.analyzeDMLCommitted() {
+			if err := a.stmt.Ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+				a.stmt.abortStatementRU()
+				return err
+			}
 		}
 	}
 

@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -28,6 +29,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
 
@@ -625,4 +627,32 @@ func TestExplainFormatPlanTree(t *testing.T) {
 	err := testKit.ExecToErr("explain analyze format='plan_tree' select * from t")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "plan_tree")
+}
+
+func TestExplainAnalyzeDMLKillAfterAutocommit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 0)")
+	killer := &tk.Session().GetSessionVars().SQLKiller
+	defer killer.Reset()
+
+	rs, err := tk.Exec("explain analyze update t set v = v + 1 where id = 1")
+	require.NoError(t, err)
+	killer.SendKillSignal(sqlkiller.QueryInterrupted)
+	require.NoError(t, rs.Next(context.Background(), rs.NewChunk(nil)))
+	require.NoError(t, rs.Close())
+	killer.Reset()
+	tk.MustQuery("select v from t where id = 1").Check(testkit.Rows("1"))
+
+	tk.MustExec("begin")
+	rs, err = tk.Exec("explain analyze update t set v = v + 1 where id = 1")
+	require.NoError(t, err)
+	killer.SendKillSignal(sqlkiller.QueryInterrupted)
+	require.ErrorContains(t, rs.Next(context.Background(), rs.NewChunk(nil)), "Query execution was interrupted")
+	require.NoError(t, rs.Close())
+	killer.Reset()
+	tk.MustExec("rollback")
+	tk.MustQuery("select v from t where id = 1").Check(testkit.Rows("1"))
 }
