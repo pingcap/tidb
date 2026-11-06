@@ -22,6 +22,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/stretchr/testify/require"
 )
 
 type randSpaceStrGener struct {
@@ -570,6 +573,74 @@ func TestVectorizedBuiltinStringEvalOneVec(t *testing.T) {
 
 func TestVectorizedBuiltinStringFunc(t *testing.T) {
 	testVectorizedBuiltinFunc(t, vecBuiltinStringCases)
+}
+
+func TestVectorizedLocateCollation(t *testing.T) {
+	old := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(true)
+	t.Cleanup(func() { collate.SetNewCollationEnabledForTest(old) })
+	// A substring key must start at a character boundary, even if an earlier
+	// byte match spans the keys of two adjacent characters.
+	for _, tc := range []struct {
+		str  string
+		want int64
+	}{{"AA", 0}, {"AA䄀", 3}, {"䄀AA", 1}, {"AAAA", 0}} {
+		require.Equal(t, tc.want, locateStringWithCollator(tc.str, "䄀", collate.GetCollator("utf8mb4_general_ci")))
+	}
+	for _, tc := range []struct {
+		substr string
+		str    string
+		want   int64
+	}{
+		{"⁄", "¼\x00⁄", 3},
+		{"⁄", "¼\x00\x00⁄", 4},
+		{"⁄", "\x00⁄", 2},
+		{"B", "A\x00B", 3},
+		{"⁄", "¼\x00", 0},
+		{"\x00⁄", "¼\x00⁄", 2},
+		{"\x00⁄", "\x00⁄", 1},
+		{"", "¼\x00⁄", 1},
+		{"", "", 1},
+	} {
+		require.Equalf(t, tc.want, locateStringWithCollator(tc.str, tc.substr, collate.GetCollator("utf8mb4_0900_ai_ci")), "%q in %q", tc.substr, tc.str)
+	}
+	for _, collation := range []string{"utf8mb4_0900_ai_ci", "utf8mb4_general_ci", "utf8mb4_unicode_ci", "utf8mb4_bin", "utf8mb4_0900_bin"} {
+		for _, withPos := range []bool{false, true} {
+			ctx := createContext(t)
+			strType := types.NewFieldType(mysql.TypeVarString)
+			strType.SetCharset("utf8mb4")
+			strType.SetCollate(collation)
+			intType := types.NewFieldType(mysql.TypeLonglong)
+			args := []Expression{&Column{RetType: strType, Index: 0}, &Column{RetType: strType, Index: 1}}
+			if withPos {
+				args = append(args, &Column{RetType: intType, Index: 2})
+			}
+			f, err := funcs[ast.Locate].getFunction(ctx, args)
+			require.NoError(t, err)
+			require.True(t, f.vectorized() && f.isChildrenVectorized())
+			input := chunk.NewChunkWithCapacity([]*types.FieldType{strType, strType, intType}, 64)
+			for _, pair := range [][2]string{{"e", "é"}, {"e", "CAFÉ"}, {"e", "xéx"}, {"a", "Ａ"}, {"ss", "Straße"}, {"", "abc"}, {"z", "abc"}, {"䄀", "AA"}, {"䄀", "AA䄀"}, {"䄀", "䄀AA"}, {"䄀", "AAAA"}, {"⁄", "¼\x00⁄"}, {"⁄", "¼\x00\x00⁄"}, {"⁄", "\x00⁄"}, {"B", "A\x00B"}, {"\x00⁄", "¼\x00⁄"}} {
+				for _, pos := range []int64{-1, 0, 1, 2, 4, 100} {
+					input.AppendString(0, pair[0])
+					input.AppendString(1, pair[1])
+					input.AppendInt64(2, pos)
+				}
+			}
+			for col := range 3 {
+				input.AppendNull(col)
+			}
+			result := chunk.NewColumn(intType, input.NumRows())
+			require.NoError(t, vecEvalType(ctx, f, types.ETInt, input, result))
+			for i := range input.NumRows() {
+				want, isNull, err := f.evalInt(ctx, input.GetRow(i))
+				require.NoError(t, err)
+				require.Equal(t, isNull, result.IsNull(i))
+				if !isNull {
+					require.Equal(t, want, result.Int64s()[i], "%s withPos=%v row=%d", collation, withPos, i)
+				}
+			}
+		}
+	}
 }
 
 func BenchmarkVectorizedBuiltinStringEvalOneVec(b *testing.B) {
