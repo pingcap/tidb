@@ -116,6 +116,7 @@ go_library(
         "//pkg/util/logutil",
         "//pkg/util/logutil/consistency",
         "//pkg/util/memory",
+        "//pkg/util/metricsutil",
         "//pkg/util/parser",
         "//pkg/util/ranger/context",
         "//pkg/util/redact",
