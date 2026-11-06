@@ -19,8 +19,6 @@ import (
 	"encoding/json"
 	"encoding/json/jsontext"
 	"fmt"
-
-	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
 // parseBinaryJSON decodes a document validated by ParseBinaryJSONFromString.
@@ -82,69 +80,4 @@ func readJSONValue(d *jsontext.Decoder) (any, error) {
 	default:
 		return nil, fmt.Errorf("unexpected JSON token %v", tok.Kind())
 	}
-}
-
-// ExtractBinaryJSONFromText extracts a single path without materializing unrelated objects.
-// Only object-member paths are streamed; other paths use the existing binary extractor.
-// On the streaming path, encoding limits apply only to the selected subtree.
-func ExtractBinaryJSONFromText(s string, path JSONPathExpression) (BinaryJSON, bool, error) {
-	for _, leg := range path.legs {
-		if leg.typ != jsonPathLegKey || leg.dotKey == "*" {
-			bj, err := ParseBinaryJSONFromString(s)
-			if err != nil {
-				return BinaryJSON{}, false, err
-			}
-			result, found := bj.Extract([]JSONPathExpression{path})
-			return result, found, nil
-		}
-	}
-	data := hack.Slice(s)
-	if !json.Valid(data) {
-		return BinaryJSON{}, false, ErrInvalidJSONText.GenWithStackByArgs("Invalid JSON document")
-	}
-	d := jsontext.NewDecoder(bytes.NewBuffer(data), jsontext.AllowDuplicateNames(true), jsontext.AllowInvalidUTF8(true))
-	value, found, err := readJSONPathValue(d, path.legs)
-	if err != nil {
-		return BinaryJSON{}, false, err
-	}
-	if !found {
-		return BinaryJSON{}, false, nil
-	}
-	// The whole document has been validated; only materialize the selected subtree.
-	result, err := CreateBinaryJSONWithCheck(value)
-	if err != nil && !ErrJSONObjectKeyTooLong.Equal(err) && !ErrJSONDocumentTooDeep.Equal(err) {
-		err = ErrInvalidJSONText.GenWithStackByArgs(err)
-	}
-	return result, true, err
-}
-
-func readJSONPathValue(d *jsontext.Decoder, legs []jsonPathLeg) (any, bool, error) {
-	if len(legs) == 0 {
-		value, err := readJSONValue(d)
-		return value, true, err
-	}
-	if d.PeekKind() != '{' {
-		return nil, false, d.SkipValue()
-	}
-	if _, err := d.ReadToken(); err != nil {
-		return nil, false, err
-	}
-	var selected any
-	var found bool
-	for d.PeekKind() != '}' {
-		key, err := d.ReadToken()
-		if err != nil {
-			return nil, false, err
-		}
-		if key.String() == legs[0].dotKey {
-			selected, found, err = readJSONPathValue(d, legs[1:])
-		} else {
-			err = d.SkipValue()
-		}
-		if err != nil {
-			return nil, false, err
-		}
-	}
-	_, err := d.ReadToken()
-	return selected, found, err
 }

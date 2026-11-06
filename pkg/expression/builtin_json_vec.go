@@ -975,9 +975,6 @@ func (b *builtinJSONExtractSig) vectorized() bool {
 }
 
 func (b *builtinJSONExtractSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	if textArg := b.jsonTextArg(ctx); textArg != nil {
-		return b.vecEvalJSONFromText(ctx, input, result, textArg)
-	}
 	var err error
 
 	nr := input.NumRows()
@@ -1037,54 +1034,6 @@ func (b *builtinJSONExtractSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk,
 		result.AppendJSON(jsonItem)
 	}
 
-	return nil
-}
-
-func (b *builtinJSONExtractSig) vecEvalJSONFromText(ctx EvalContext, input *chunk.Chunk, result *chunk.Column, textArg Expression) error {
-	docs, err := b.bufAllocator.get()
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(docs)
-	paths, err := b.bufAllocator.get()
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(paths)
-	if err = textArg.VecEvalString(ctx, input, docs); err != nil {
-		return err
-	}
-	if err = b.args[1].VecEvalString(ctx, input, paths); err != nil {
-		return err
-	}
-	result.ReserveJSON(input.NumRows())
-	for i := range input.NumRows() {
-		if docs.IsNull(i) {
-			result.AppendNull()
-			continue
-		}
-		text := docs.GetString(i)
-		if paths.IsNull(i) {
-			if _, err = types.ParseBinaryJSONFromString(text); err != nil {
-				return err
-			}
-			result.AppendNull()
-			continue
-		}
-		path, err := types.ParseJSONPathExpr(paths.GetString(i))
-		if err != nil {
-			return err
-		}
-		value, found, err := types.ExtractBinaryJSONFromText(text, path)
-		if err != nil {
-			return err
-		}
-		if found {
-			result.AppendJSON(value)
-		} else {
-			result.AppendNull()
-		}
-	}
 	return nil
 }
 
