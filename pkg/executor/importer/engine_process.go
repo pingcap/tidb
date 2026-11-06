@@ -33,7 +33,7 @@ func ProcessChunk(
 	logger *zap.Logger,
 	groupChecksum *verification.KVGroupChecksum,
 	collector execute.Collector,
-) error {
+) (retErr error) {
 	// if the key are ordered, LocalWrite can optimize the writing.
 	// table has auto-incremented _tidb_rowid must satisfy following restrictions:
 	// - clustered index disable and primary key is not number
@@ -53,6 +53,9 @@ func ProcessChunk(
 	defer func() {
 		if _, err2 := dataWriter.Close(ctx); err2 != nil {
 			logger.Warn("close data writer failed", zap.Error(err2))
+			if retErr == nil {
+				retErr = err2
+			}
 		}
 	}()
 	indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
@@ -62,6 +65,9 @@ func ProcessChunk(
 	defer func() {
 		if _, err2 := indexWriter.Close(ctx); err2 != nil {
 			logger.Warn("close index writer failed", zap.Error(err2))
+			if retErr == nil {
+				retErr = err2
+			}
 		}
 	}()
 
