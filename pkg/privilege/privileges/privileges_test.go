@@ -2676,6 +2676,16 @@ func TestSelectColumnPrivilege(t *testing.T) {
 	userTk.MustExec(`SELECT a FROM test.t1 NATURAL JOIN test.t4`)
 	tk.MustExec(`GRANT SELECT(c) ON test.t1 TO 'testuser'@'localhost';`)
 	userTk.MustExec(`SELECT SUM(test.t1.a) FROM test.t1 GROUP BY test.t1.b HAVING count(test.t1.c) > 0`)
+
+	// A column named `*` is an ordinary column, not "any column".
+	tk.MustExec("CREATE TABLE test.star (a int, `*` int)")
+	tk.MustExec("INSERT INTO test.star VALUES (1, 42)")
+	tk.MustExec(`GRANT SELECT(a), UPDATE(a) ON test.star TO 'testuser'@'localhost'`)
+	userTk.MustQuery("SELECT COUNT(*) FROM test.star").Check(testkit.Rows("1"))
+	userTk.MustGetErrCode("SELECT `*` FROM test.star", errno.ErrColumnaccessDenied)
+	userTk.MustGetErrCode("UPDATE test.star SET `*` = 0", errno.ErrColumnaccessDenied)
+	tk.MustExec("GRANT SELECT(`*`) ON test.star TO 'testuser'@'localhost'")
+	userTk.MustQuery("SELECT `*` FROM test.star").Check(testkit.Rows("42"))
 }
 
 func TestSelectColumnPrivilegeInSubqueryAndCTE(t *testing.T) {

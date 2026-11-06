@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -185,7 +186,7 @@ func TestMatchColumns(t *testing.T) {
 	require.NoError(t, p.LoadColumnsPrivTable(se.GetSQLExecutor()))
 	col := p.MatchColumns("user", "%", "db", "table", "c1")
 	require.NotNil(t, col)
-	col = p.MatchColumns("user", "%", "db", "table", "*")
+	col = p.MatchColumns("user", "%", "db", "table", privilege.AnyColumn)
 	require.NotNil(t, col)
 
 	p = privileges.NewMySQLPrivilege()
@@ -198,7 +199,7 @@ func TestMatchColumns(t *testing.T) {
 	require.NotNil(t, col)
 	col = p.MatchColumns("user", "%", "db", "table", "c2")
 	require.NotNil(t, col)
-	col = p.MatchColumns("user", "%", "db", "table", "*")
+	col = p.MatchColumns("user", "%", "db", "table", privilege.AnyColumn)
 	require.Nil(t, col)
 }
 

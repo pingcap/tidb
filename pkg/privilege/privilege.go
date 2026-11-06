@@ -27,6 +27,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
+// AnyColumn is passed as the column to check SELECT on the table or on any
+// of its columns, e.g. for `SELECT COUNT(*) FROM t`. It is longer than
+// mysql.MaxColumnNameLength, so it never collides with the name of a real
+// column, such as a column named `*`.
+const AnyColumn = "<any column, a name longer than the maximum column name length>"
+
 type keyType int
 
 func (k keyType) String() string {

@@ -4978,12 +4978,11 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	if b.buildingSelectFrom {
-		// Column "*" is satisfied by SELECT on the table or on any of its columns.
 		var authErr error
 		if sessionVars.User != nil {
 			authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, tableInfo.Name.L)
 		}
-		b.anyColumnSelectVisitInfo = appendVisitInfo(b.anyColumnSelectVisitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "*", authErr)
+		b.anyColumnSelectVisitInfo = appendVisitInfo(b.anyColumnSelectVisitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, privilege.AnyColumn, authErr)
 	}
 
 	if tbl.Type().IsVirtualTable() {

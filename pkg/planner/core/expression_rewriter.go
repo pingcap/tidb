@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -2642,7 +2643,7 @@ func (er *expressionRewriter) collectPrivsForCount() {
 	user, host := auth.GetUserAndHostName(b.ctx.GetSessionVars().User)
 	for db, tables := range tableNames {
 		for table := range tables {
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, db, table, "*",
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, db, table, privilege.AnyColumn,
 				plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", user, host, table))
 		}
 	}

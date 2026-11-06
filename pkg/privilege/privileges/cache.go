@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -1416,11 +1417,11 @@ func (record *tablesPrivRecord) match(user, host, db, table string) bool {
 
 func (record *columnsPrivRecord) match(user, host, db, table, col string) bool {
 	// `SELECT COUNT(*) ...` requires a column-level SELECT privilege of any column,
-	// so we add a special case "*" here
+	// which is requested with privilege.AnyColumn.
 	return record.baseRecord.match(user, host) &&
 		strings.EqualFold(record.DB, db) &&
 		strings.EqualFold(record.TableName, table) &&
-		(strings.EqualFold(record.ColumnName, col) || col == "*" && (record.ColumnPriv&mysql.SelectPriv > 0))
+		(strings.EqualFold(record.ColumnName, col) || col == privilege.AnyColumn && (record.ColumnPriv&mysql.SelectPriv > 0))
 }
 
 // patternMatch matches "%" the same way as ".*" in regular expression, for example,
@@ -1543,7 +1544,7 @@ func (p *MySQLPrivilege) matchTables(user, host, db, table string) *tablesPrivRe
 }
 
 // MatchColumns returns the first columns_priv record that matches the given user, host, db, table and column.
-// `column == "*"` matches any column that has SELECT privilege (see columnsPrivRecord.match).
+// `column == privilege.AnyColumn` matches any column that has SELECT privilege (see columnsPrivRecord.match).
 func (p *MySQLPrivilege) MatchColumns(user, host, db, table, column string) *columnsPrivRecord {
 	item, exists := p.columnsPriv.Get(itemColumnsPriv{username: user})
 	if exists {
@@ -1608,7 +1609,7 @@ func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIden
 }
 
 // RequestVerification checks whether the user have sufficient privileges to do the operation.
-// `column == "*"` means it matches ANY column in the table.
+// `column == privilege.AnyColumn` means it matches ANY column in the table.
 func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, user, host, db, table, column string, priv mysql.PrivilegeType) bool {
 	if priv == mysql.UsagePriv {
 		return true
