@@ -64,7 +64,7 @@ func TestSlowQueryCacheUsesPreallocatedRing(t *testing.T) {
 	cache := newSlowQueryCache()
 	require.Zero(t, len(cache.slowQueries))
 	require.Equal(t, slowQueryCacheCapacity, cap(cache.slowQueries))
-	require.Equal(t, 100, cap(cache.writeCh))
+	require.Equal(t, 10, cap(cache.writeCh))
 	require.Zero(t, cache.writePos)
 	for i := 0; i < slowQueryCacheCapacity; i++ {
 		key := slowQueryKeyOf(uint64(i), 1, strconv.Itoa(i))
