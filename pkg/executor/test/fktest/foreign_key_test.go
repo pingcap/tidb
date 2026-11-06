@@ -274,6 +274,51 @@ func TestForeignKeyOnInsertDuplicateUpdateChildTable(t *testing.T) {
 	tk.MustGetDBError("insert into t2 (id, a) values (1, 5) on duplicate key update a = 1, name = 'e'", plannererrors.ErrNoReferencedRow2)
 	tk.MustExec("commit")
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 5 21 d"))
+
+	for _, ca := range []struct {
+		name         string
+		seed         string
+		values       string
+		affectedRows uint64
+		rows         []string
+	}{
+		{
+			name:         "insert after missing parent becomes available",
+			values:       "(2, 1), (1, null), (3, 1)",
+			affectedRows: 2,
+			rows:         []string{"1 <nil>", "3 1"},
+		},
+		{
+			name:         "update after missing parent becomes available",
+			seed:         "(4, null)",
+			values:       "(2, 1), (1, null), (4, 1)",
+			affectedRows: 3,
+			rows:         []string{"1 <nil>", "4 1"},
+		},
+	} {
+		t.Run(ca.name, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set @@foreign_key_checks=1")
+			tk.MustExec("create table t_self_fk (id int primary key clustered, pid int, index(pid), constraint fk_pid foreign key(pid) references t_self_fk(id))")
+			t.Cleanup(func() {
+				tk.MustExec("drop table t_self_fk")
+			})
+			if ca.seed != "" {
+				tk.MustExec("insert into t_self_fk values " + ca.seed)
+			}
+			tk.MustExec("insert ignore into t_self_fk values " + ca.values + " on duplicate key update pid=values(pid)")
+			sc := tk.Session().GetSessionVars().StmtCtx
+			affectedRows := sc.AffectedRows()
+			warnings := sc.GetWarnings()
+			require.Equal(t, ca.affectedRows, affectedRows)
+			require.Len(t, warnings, 1)
+			require.Equal(t, "Warning", warnings[0].Level)
+			require.True(t, plannererrors.ErrNoReferencedRow2.Equal(warnings[0].Err), "%v", warnings[0].Err)
+			tk.MustQuery("select id, pid from t_self_fk order by id").Check(testkit.Rows(ca.rows...))
+			tk.MustExec("admin check table t_self_fk")
+		})
+	}
 }
 
 func TestForeignKeyCheckAndLock(t *testing.T) {
