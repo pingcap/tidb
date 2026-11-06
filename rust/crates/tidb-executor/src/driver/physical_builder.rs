@@ -3970,7 +3970,7 @@ fn build_index_lookup_source(
 ) -> Result<IndexLookupSource, DriverError> {
     if index_inner_reader_payload(inner).is_some() && index_inner_partial_aggregate(inner).is_none()
     {
-        return build_index_inner_reader(
+        let leaf = build_index_inner_reader(
             inner,
             join,
             probe_parts,
@@ -3979,12 +3979,129 @@ fn build_index_lookup_source(
             ctx,
             None,
             &state.reader_storage,
-        )
-        .map(|leaf| IndexLookupSource::Leaf(Box::new(leaf)));
+        )?;
+        // Go `buildExecutorForIndexJoin` builds the inner reader per task
+        // under the reader's plan: its rows, `exec.Next` and `exec.Close`
+        // (it is opened directly, so no open time) merge into one stat.
+        let Some(counters) = state.runtime_counters.as_mut().filter(|_| !state.untraced) else {
+            return Ok(IndexLookupSource::Leaf(Box::new(leaf)));
+        };
+        let calls = Arc::new(Mutex::new(PhysicalCallStats::default()));
+        counters.insert(
+            runtime_plan_key(inner),
+            PhysicalRuntimeCounter {
+                calls: Some(Arc::clone(&calls)),
+                ..leaf.produced_rows().into()
+            },
+        );
+        return Ok(IndexLookupSource::Leaf(Box::new(MeteredIndexJoinLookup {
+            inner: Box::new(leaf),
+            calls,
+        })));
     }
     let probes = std::sync::Arc::new(std::sync::Mutex::new(SharedIndexJoinProbes::default()));
     let exec = build_index_inner_subtree(inner, join, probe_parts, &probes, catalog, ctx, state)?;
     Ok(IndexLookupSource::Composite { exec, probes })
+}
+
+/// Go's per-task inner reader stats for an index join's leaf
+/// ([`build_index_lookup_source`]): every task -- the session's own reader
+/// and the ones a lane opens from its fork -- records its `Next`s and
+/// `Close` into the reader plan's stats.
+struct MeteredIndexJoinLookup {
+    inner: Box<dyn tidb_executor_join::index_lookup::IndexJoinLookup>,
+    calls: Arc<Mutex<PhysicalCallStats>>,
+}
+
+impl Executor for MeteredIndexJoinLookup {
+    fn open(&mut self) -> Result<(), crate::ExecError> {
+        self.inner.open()
+    }
+
+    fn next(&mut self, req: &mut Chunk) -> Result<(), crate::ExecError> {
+        let start = Instant::now();
+        let result = self.inner.next(req);
+        let mut calls = self.calls.lock().unwrap();
+        calls.next += start.elapsed();
+        calls.loops += 1;
+        result
+    }
+
+    fn close(&mut self) -> Result<(), crate::ExecError> {
+        let start = Instant::now();
+        let result = self.inner.close();
+        self.calls.lock().unwrap().close += start.elapsed();
+        result
+    }
+
+    fn schema(&self) -> &Schema {
+        self.inner.schema()
+    }
+
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.inner.ret_field_types()
+    }
+
+    fn init_cap(&self) -> usize {
+        self.inner.init_cap()
+    }
+
+    fn max_chunk_size(&self) -> usize {
+        self.inner.max_chunk_size()
+    }
+
+    fn new_chunk(&self) -> Chunk {
+        self.inner.new_chunk()
+    }
+}
+
+impl tidb_executor_join::index_lookup::IndexJoinLookup for MeteredIndexJoinLookup {
+    fn set_probes(
+        &mut self,
+        probes: tidb_executor_join::index_lookup::IndexJoinProbes,
+    ) -> Result<(), crate::ExecError> {
+        self.inner.set_probes(probes)
+    }
+
+    fn fork_template(&self) -> Option<Box<dyn tidb_executor_join::index_lookup::IndexJoinLookupFork>> {
+        self.inner.fork_template().map(|inner| {
+            Box::new(MeteredIndexJoinLookupFork {
+                inner,
+                calls: Arc::clone(&self.calls),
+            }) as Box<dyn tidb_executor_join::index_lookup::IndexJoinLookupFork>
+        })
+    }
+
+    fn add_produced(&self, rows: u64) {
+        self.inner.add_produced(rows);
+    }
+}
+
+/// [`MeteredIndexJoinLookup`]'s fork: a lane's task records into the same
+/// stats.
+struct MeteredIndexJoinLookupFork {
+    inner: Box<dyn tidb_executor_join::index_lookup::IndexJoinLookupFork>,
+    calls: Arc<Mutex<PhysicalCallStats>>,
+}
+
+impl tidb_executor_join::index_lookup::IndexJoinLookupFork for MeteredIndexJoinLookupFork {
+    fn open(
+        &self,
+        probes: tidb_executor_join::index_lookup::IndexJoinProbes,
+    ) -> Result<
+        Result<
+            Box<dyn tidb_executor_join::index_lookup::IndexJoinLookup>,
+            tidb_executor_join::index_lookup::IndexJoinProbes,
+        >,
+        crate::ExecError,
+    > {
+        Ok(self.inner.open(probes)?.map(|inner| {
+            Box::new(MeteredIndexJoinLookup {
+                inner,
+                calls: Arc::clone(&self.calls),
+            }) as Box<dyn tidb_executor_join::index_lookup::IndexJoinLookup>
+        }))
+    }
 }
 
 fn build_index_join(

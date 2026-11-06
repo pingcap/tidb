@@ -165,27 +165,56 @@ impl SharedBytes {
         self.len -= count;
     }
 
+    /// Go `slices.Grow(data, additional)`.
     pub(crate) fn reserve(&mut self, additional: usize) {
-        let required = self
-            .len
-            .checked_add(additional)
-            .expect("SharedBytes capacity overflow");
-        if required <= self.capacity() {
+        let capacity = self.capacity();
+        if capacity - self.len >= additional {
             return;
         }
         if self.start == 0 {
             if let Backing::Owned(bytes) = &mut self.backing {
-                bytes.reserve(required - bytes.len());
+                bytes.truncate(self.len);
+                crate::go_append::go_slices_grow(bytes, additional);
                 return;
             }
         }
-        self.detach_with_capacity(required);
+        // `append(s[:cap(s)], make([]byte, n)...)` over the shared slice.
+        let mut grown = Vec::with_capacity(capacity);
+        grown.resize(capacity, 0);
+        crate::go_append::go_grow(&mut grown, additional);
+        let capacity = grown.capacity();
+        self.detach_with_capacity(capacity);
+    }
+
+    /// Go `data = append(data, source...)` ([`Self::extend_from_slice`]).
+    #[inline]
+    pub(crate) fn go_extend_from_slice(&mut self, source: &[u8]) {
+        self.extend_from_slice(source);
+    }
+
+    /// The capacity Go's `append` of `additional` bytes to these leaves.
+    fn appended_capacity(&self, additional: usize) -> usize {
+        let capacity = self.capacity();
+        let needed = self.len.checked_add(additional).expect("SharedBytes length overflow");
+        if needed <= capacity {
+            return capacity;
+        }
+        tidb_goruntime::go_runtime::go_64_next_slice_capacity_for_element(
+            needed,
+            capacity,
+            1,
+            tidb_goruntime::go_runtime::GoSliceElementLayout::NoPointers,
+        )
     }
 
     pub(crate) fn resize_preserving(&mut self, len: usize) {
         if self.start == 0 {
             if let Backing::Owned(bytes) = &mut self.backing {
                 if len > bytes.len() {
+                    // Go `make([]byte, size)` when the capacity is short.
+                    if len > bytes.capacity() {
+                        bytes.reserve_exact(len - bytes.len());
+                    }
                     bytes.resize(len, 0);
                 }
                 self.len = len;
@@ -207,8 +236,13 @@ impl SharedBytes {
         let new_len = old_len
             .checked_add(source.len())
             .expect("SharedBytes length overflow");
+        let capacity = self.appended_capacity(source.len());
         if self.start == 0 {
             if let Backing::Owned(bytes) = &mut self.backing {
+                if capacity > bytes.capacity() {
+                    bytes.truncate(old_len);
+                    bytes.reserve_exact(capacity - old_len);
+                }
                 if bytes.len() == old_len {
                     // The usual growth: nothing beyond the visible bytes, so
                     // the vector's own append writes the source once.
@@ -225,7 +259,7 @@ impl SharedBytes {
             }
         }
         if new_len > self.capacity() {
-            self.detach_with_capacity(new_len);
+            self.detach_with_capacity(capacity);
         }
         self.ensure_initialized(new_len);
         self.len = new_len;
@@ -275,6 +309,7 @@ impl SharedBytes {
         if self.start == 0 {
             if let Backing::Owned(destination) = &mut self.backing {
                 if destination.len() == self.len {
+                    crate::go_append::go_grow(destination, range.len());
                     let start = source.start + range.start;
                     let end = source.start + range.end;
                     match &source.backing {
@@ -312,6 +347,7 @@ impl SharedBytes {
                     return;
                 }
                 if bytes.len() == old_len {
+                    crate::go_append::go_grow(bytes, N);
                     bytes.extend_from_slice(source);
                     self.len = new_len;
                     return;

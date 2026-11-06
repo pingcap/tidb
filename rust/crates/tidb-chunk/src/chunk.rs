@@ -1199,6 +1199,29 @@ mod tests {
         assert!(chk.memory_usage() > empty);
     }
 
+    /// Go's `append` growth, measured with `pkg/util/chunk` on this machine: a
+    /// two-bigint chunk at capacity 32 holds 760 bytes, 2064 once 100 rows are
+    /// appended to each column, and `CopyConstruct` of a 100-row column into a
+    /// fresh capacity-32 column leaves it 1032 (896 data, 16 null bitmap), as
+    /// does a copy with no destination (`append` to nil slices).
+    #[test]
+    fn memory_usage_grows_as_go_appends() {
+        let bigints = vec![FieldType::new(FieldTypeCode::LongLong); 2];
+        let mut chk = Chunk::new(&bigints, 32, 1024);
+        assert_eq!(chk.memory_usage(), 760);
+        for i in 0..100 {
+            chk.append_int64(0, i);
+            chk.append_int64(1, i);
+        }
+        assert_eq!(chk.memory_usage(), 2064);
+
+        let copied = chk
+            .column(0)
+            .copy_reconstruct(None, Some(Column::new_fixed_len_column(8, 32)));
+        assert_eq!(copied.memory_usage(), 1032);
+        assert_eq!(chk.column(0).copy_construct().memory_usage(), 1032);
+    }
+
     /// Go `Renew`/`reCalcCapacity`, measured against the real
     /// `pkg/util/chunk` (`chunk.Renew(chk, maxChunkSize).Capacity()`):
     ///

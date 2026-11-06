@@ -791,9 +791,10 @@ fn visit_executor_rows(
 /// With `dml`, the reading is that write executor's: its `Open` and `Close`
 /// open and close the source, and the caller times the read as (part of)
 /// its `Next` ([`physical_builder::DmlExec::next`]). `charge_chunks` is Go
-/// `DeleteExec.deleteMultiTablesByChunk`'s read: each call gets a new child
-/// chunk (`exec.TryNewCacheChunk`), charged to `dml`'s tracker while it is
-/// read.
+/// `DeleteExec.deleteMultiTablesByChunk`'s read: the child chunk is charged
+/// to `dml`'s tracker while it is read. (Go takes a new chunk per call,
+/// `exec.TryNewCacheChunk`, because its rows alias the chunk; these own
+/// their values.)
 fn visit_executor_row_chunks(
     mut exec: Box<dyn Executor>,
     types: &[FieldType],
@@ -826,9 +827,6 @@ fn visit_executor_row_chunks(
             }
             for r in 0..req.num_rows() {
                 visit(req.get_row(r).get_datum_row(types))?;
-            }
-            if tracker.is_some() {
-                req = exec.new_chunk();
             }
         }
         Ok(())

@@ -3410,6 +3410,14 @@ fn a_multi_table_delete_charges_its_row_map_like_go() {
 /// select (select max(d) from s where s.a = t.a) from t  Projection_11 | 3.71 KB
 /// recursive cte: seed `select 1` / recursive part   Projection_11 | 0 Bytes, Projection_13 | 380 Bytes
 /// ```
+///
+/// Over 100 rows the chunks grow, so the fetch and evaluation charges show:
+/// `select b*2, b*3 from p` holds 7.11 KB in parallel (five 1140-byte chunk
+/// pairs, the input's 652-byte growth, the fetcher's release of its empty
+/// second input, the outputs' 1304), and after `analyze table p` -- 100 rows
+/// estimated, so Go runs it serially -- 1.01 KB, `select a+1, b*2` 2.02 KB.
+/// The fetcher's release and the worker's charge race in Go as here; the
+/// worker charging first holds 7.48 KB.
 #[test]
 fn a_projection_charges_its_chunks_like_go() {
     let mut session = Session::new();
@@ -3442,6 +3450,27 @@ fn a_projection_charges_its_chunks_like_go() {
                 .unwrap_or_else(|| panic!("{sql}: no {operator} in {rows:?}"));
             assert_eq!(row[7], memory, "{sql}: {operator}");
         }
+    }
+
+    session.run("CREATE TABLE p (a INT PRIMARY KEY, b INT)").unwrap();
+    let values: Vec<String> = (1..=100).map(|i| format!("({i},{i})")).collect();
+    session.run(&format!("INSERT INTO p VALUES {}", values.join(","))).unwrap();
+    let projection_memory = |session: &mut Session, sql: &str| {
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        let row = rows
+            .iter()
+            .find(|row| row[0].starts_with("Projection_3"))
+            .unwrap_or_else(|| panic!("{sql}: no projection in {rows:?}"));
+        (row[5].clone(), row[7].clone())
+    };
+    let (info, memory) = projection_memory(&mut session, "SELECT b*2, b*3 FROM p");
+    assert!(info.contains("Concurrency:5"), "{info}");
+    assert!(["7.11 KB", "7.48 KB"].contains(&memory.as_str()), "{memory}");
+    session.run("ANALYZE TABLE p").unwrap();
+    for (sql, expected) in [("SELECT b*2, b*3 FROM p", "1.01 KB"), ("SELECT a+1, b*2 FROM p", "2.02 KB")] {
+        let (info, memory) = projection_memory(&mut session, sql);
+        assert!(info.contains("Concurrency:OFF"), "{sql}: {info}");
+        assert_eq!(memory, expected, "{sql}");
     }
 }
 
@@ -3488,6 +3517,60 @@ fn a_cte_definition_reports_its_first_readers_runtime_like_go() {
     assert_eq!(definition[5], build[5]);
     assert_eq!((definition[7].as_str(), build[7].as_str()), ("N/A", "N/A"));
     assert_eq!((probe[7].as_str(), probe[8].as_str()), ("1.48 KB", "0 Bytes"));
+}
+
+/// Go `IndexLookUpJoin`'s inner worker builds the inner reader per task
+/// (`buildExecutorForIndexJoin`), opening it directly and closing and
+/// reading it through `exec`, so the reader's row reports its rows, loops
+/// and cop tasks with `open:0s`. `./gorun` on this branch, durations masked:
+///
+/// ```text
+/// IndexReader_36(Probe) | 0 | time:D, open:0s, close:D, loops:1, cop_task: {num: 1, max: D, proc_keys: 0, ...}
+/// TableReader_31(Probe) | 3 | time:D, open:0s, close:D, loops:2, cop_task: {num: 1, max: D, proc_keys: 3, ...}
+/// ```
+#[test]
+fn an_index_join_inner_reader_reports_its_tasks_like_go() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE t (a INT PRIMARY KEY, b INT, c VARCHAR(20), KEY(b))",
+        "CREATE TABLE s (a INT PRIMARY KEY, d INT, KEY(d))",
+        "INSERT INTO t VALUES (1,1,'x'),(2,2,'y'),(3,3,'z'),(4,4,'w'),(5,5,'v'),(6,6,'u')",
+        "INSERT INTO s VALUES (1,10),(2,20),(3,30),(7,70)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    for (sql, operator, rows, expected) in [
+        (
+            "SELECT /*+ inl_join(s) */ * FROM t JOIN s ON t.a=s.d",
+            "IndexReader_36(Probe)",
+            "0",
+            "time:D, open:0s, close:D, loops:1, cop_task: {num: 1, max: D, proc_keys: 0, \
+             copr_cache_hit_ratio: 0.00, build_task_duration: D, max_distsql_concurrency: 1}, \
+             fetch_resp_duration: D, rpc_info:{Cop:{num_rpc:1, total_time:D}}",
+        ),
+        (
+            "SELECT /*+ inl_join(s) */ * FROM t JOIN s ON t.a=s.a",
+            "TableReader_31(Probe)",
+            "3",
+            "time:D, open:0s, close:D, loops:2, cop_task: {num: 1, max: D, proc_keys: 3, \
+             copr_cache_hit_ratio: 0.00, build_task_duration: D, max_distsql_concurrency: 1, \
+             max_extra_concurrency: 1}, fetch_resp_duration: D, rpc_info:{Cop:{num_rpc:1, total_time:D}}",
+        ),
+    ] {
+        let found = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        let row = found
+            .iter()
+            .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()) == operator)
+            .unwrap_or_else(|| panic!("{sql}: no {operator} in {found:?}"));
+        assert_eq!(row[2], rows, "{sql}");
+        assert_eq!(
+            mask_durations(&row[5]).replace("open:D", "open:0s"),
+            expected,
+            "{sql}: {}",
+            row[5]
+        );
+        assert!(row[5].contains("open:0s"), "{sql}: {}", row[5]);
+    }
 }
 
 /// Go `MergeJoinExec` (`pkg/executor/join/merge_join.go`): the join charges

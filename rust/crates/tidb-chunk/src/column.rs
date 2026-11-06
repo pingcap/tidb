@@ -49,6 +49,7 @@
 //! storage are implemented below. Go strings remain arbitrary bytes, so the
 //! direct `GetString` surface returns [`GoString`] instead of Rust `str`.
 
+use crate::go_append::GoAppend;
 use tidb_datatype::{deserialize_vector_float32, EvalType, FieldType, FieldTypeCode, MyDecimal, MySqlDuration, MysqlEnum, MysqlSet, Time, VectorFloat32, MYDECIMAL_STRUCT_SIZE};
 use tidb_goruntime::GoString;
 use tidb_goruntime::GoStringSource;
@@ -198,7 +199,7 @@ impl Column {
     #[must_use]
     pub fn new_var_len_column(capacity: usize) -> Self {
         let mut offsets = Vec::with_capacity(capacity + 1);
-        offsets.push(0);
+        offsets.go_push(0);
         let get_data_cap = ESTIMATED_ELEM_LEN
             .checked_mul(capacity)
             .expect("variable-length column capacity overflow");
@@ -271,9 +272,9 @@ impl Column {
     /// Go `Reserve`: preserve current content while reserving additional
     /// bitmap/data/offset capacity.
     pub fn reserve(&mut self, more_null_bitmap: usize, more_data: usize, more_offsets: usize) {
-        self.null_bitmap.reserve(more_null_bitmap);
+        crate::go_append::go_slices_grow(&mut self.null_bitmap, more_null_bitmap);
         self.data.reserve(more_data);
-        self.offsets.reserve(more_offsets);
+        crate::go_append::go_slices_grow(&mut self.offsets, more_offsets);
     }
 
     /// Go `CalculateLenDeltaForAppendCellNTimesForNullBitMap`.
@@ -327,9 +328,8 @@ impl Column {
                     8 => append_fixed_copies::<8>(data, cell, times),
                     40 => append_fixed_copies::<40>(data, cell, times),
                     _ => {
-                        data.reserve(width.checked_mul(times).expect("fixed cell data overflow"));
                         for _ in 0..times {
-                            data.extend_from_slice(cell);
+                            data.go_extend_from_slice(cell);
                         }
                     }
                 }
@@ -369,7 +369,7 @@ impl Column {
             let end = usize::try_from(src.offsets[row + 1]).expect("non-negative offset");
             for _ in 0..times {
                 self.data.extend_from_range(&src.data, start..end);
-                self.offsets.push(self.data.len() as i64);
+                self.offsets.go_push(self.data.len() as i64);
             }
         }
         self.length += times;
@@ -415,7 +415,7 @@ impl Column {
                         40 => append_fixed_copies::<40>(data, cell, times),
                         _ => {
                             for _ in 0..times {
-                                data.extend_from_slice(cell);
+                                data.go_extend_from_slice(cell);
                             }
                         }
                     }
@@ -456,12 +456,6 @@ impl Column {
         if cell_count == 0 {
             return;
         }
-        let null_bytes = (self.length + cell_count + 7) >> 3;
-        self.null_bitmap
-            .reserve(null_bytes.saturating_sub(self.null_bitmap.len()));
-        if !fixed {
-            self.offsets.reserve(cell_count);
-        }
         let Self {
             data,
             null_bitmap,
@@ -470,12 +464,11 @@ impl Column {
             ..
         } = self;
         let appended = data.append_owned(|data| {
-            data.reserve(data_len);
             for (not_null, cell) in cells.clone() {
                 append_null_bit(null_bitmap, *length, not_null);
-                data.extend_from_slice(cell);
+                data.go_extend_from_slice(cell);
                 if !fixed {
-                    offsets.push(data.len() as i64);
+                    offsets.go_push(data.len() as i64);
                 }
                 *length += 1;
             }
@@ -485,9 +478,9 @@ impl Column {
         }
         for (not_null, cell) in cells {
             append_null_bit(null_bitmap, *length, not_null);
-            data.extend_from_slice(cell);
+            data.go_extend_from_slice(cell);
             if !fixed {
-                offsets.push(data.len() as i64);
+                offsets.go_push(data.len() as i64);
             }
             *length += 1;
         }
@@ -501,7 +494,7 @@ impl Column {
         if !self.offsets.is_empty() {
             self.offsets.truncate(1);
         } else if !self.is_fixed() {
-            self.offsets.push(0);
+            self.offsets.go_push(0);
         }
         self.data.reset();
     }
@@ -523,7 +516,7 @@ impl Column {
 
     /// Go `finishAppendFixed`: commit the scratch `elem_buf` as one not-null row.
     fn finish_append_fixed(&mut self) {
-        self.data.extend_from_slice(
+        self.data.go_extend_from_slice(
             self.elem_buf
                 .as_deref()
                 .expect("fixed append requires a fixed column"),
@@ -644,8 +637,8 @@ impl Column {
             !self.is_fixed(),
             "append_name_value on a fixed-length column"
         );
-        self.data.extend_from_slice(&value.to_ne_bytes());
-        self.data.extend_from_slice(name);
+        self.data.go_extend_from_slice(&value.to_ne_bytes());
+        self.data.go_extend_from_slice(name);
         self.finish_append_var();
     }
 
@@ -696,13 +689,13 @@ impl Column {
     pub fn append_null(&mut self) {
         self.append_null_bitmap(false);
         if self.is_fixed() {
-            self.data.extend_from_slice(
+            self.data.go_extend_from_slice(
                 self.elem_buf
                     .as_deref()
                     .expect("fixed column has an element buffer"),
             );
         } else {
-            self.offsets.push(self.offsets[self.length]);
+            self.offsets.go_push(self.offsets[self.length]);
         }
         self.length += 1;
     }
@@ -715,7 +708,7 @@ impl Column {
         self.append_multi_same_null_bitmap(false, n);
         if self.is_fixed() {
             for _ in 0..n {
-                self.data.extend_from_slice(
+                self.data.go_extend_from_slice(
                     self.elem_buf
                         .as_deref()
                         .expect("fixed column has an element buffer"),
@@ -723,7 +716,9 @@ impl Column {
             }
         } else {
             let current = self.offsets[self.length];
-            self.offsets.extend(std::iter::repeat_n(current, n));
+            for _ in 0..n {
+                self.offsets.go_push(current);
+            }
         }
         self.length += n;
     }
@@ -732,21 +727,21 @@ impl Column {
     /// variable-length row (records the new end offset).
     fn finish_append_var(&mut self) {
         self.append_null_bitmap(true);
-        self.offsets.push(self.data.len() as i64);
+        self.offsets.go_push(self.data.len() as i64);
         self.length += 1;
     }
 
     /// Go `AppendString`: append a string's bytes as one row.
     pub fn append_string(&mut self, value: impl GoStringSource) {
         debug_assert!(!self.is_fixed(), "append_string on a fixed-length column");
-        self.data.extend_from_slice(value.as_go_bytes());
+        self.data.go_extend_from_slice(value.as_go_bytes());
         self.finish_append_var();
     }
 
     /// Go `AppendBytes`: append raw bytes as one row.
     pub fn append_bytes(&mut self, bytes: &[u8]) {
         debug_assert!(!self.is_fixed(), "append_bytes on a fixed-length column");
-        self.data.extend_from_slice(bytes);
+        self.data.go_extend_from_slice(bytes);
         self.finish_append_var();
     }
 
@@ -759,7 +754,7 @@ impl Column {
         );
         let mut encoded = Vec::new();
         value.serialize_to(&mut encoded);
-        self.data.extend_from_slice(&encoded);
+        self.data.go_extend_from_slice(&encoded);
         self.finish_append_var();
     }
 
@@ -1022,7 +1017,14 @@ impl Column {
             self.data.fill(0);
         }
 
-        self.null_bitmap.resize((n + 7) >> 3, 0);
+        // Go: `nullBitmap[:sizeNulls]` within its capacity, else
+        // `make([]byte, sizeNulls)`.
+        let size_nulls = (n + 7) >> 3;
+        if size_nulls > self.null_bitmap.capacity() {
+            self.null_bitmap = vec![0; size_nulls];
+        } else {
+            self.null_bitmap.resize(size_nulls, 0);
+        }
         self.null_bitmap.fill(if is_null { 0 } else { 0xff });
         if !is_null && n & 7 != 0 {
             let last = self
@@ -1067,7 +1069,7 @@ impl Column {
             self.offsets = Vec::with_capacity(get_offset_cap);
         }
         if self.offsets.is_empty() {
-            self.offsets.push(0);
+            self.offsets.go_push(0);
         } else {
             // Go uses `offsets[:1]`, preserving the first header word rather
             // than manufacturing a new zero when the backing is reusable.
@@ -1174,13 +1176,29 @@ impl Column {
     }
 
     /// Go `CopyConstruct` (the `dst == nil` branch): a deep copy.
-    pub fn copy_construct(&self) -> Column {
+    /// An exact copy whose buffers are as long as their contents: Rust's
+    /// `Clone` of a column, which stands in for Go sharing one `*Column` and
+    /// is not Go's `CopyConstruct`.
+    pub(crate) fn clone_exact(&self) -> Column {
         Column {
             length: self.length,
             null_bitmap: self.null_bitmap.clone(),
             offsets: self.offsets.clone(),
             data: self.data.deep_copy(),
             elem_buf: self.elem_buf.clone(),
+            avoid_reusing: false,
+        }
+    }
+
+    pub fn copy_construct(&self) -> Column {
+        // Go appends each buffer to a nil slice, so a copy's capacity is
+        // what one append from empty leaves.
+        Column {
+            length: self.length,
+            null_bitmap: crate::go_append::go_appended(&self.null_bitmap),
+            offsets: crate::go_append::go_appended(&self.offsets),
+            data: SharedBytes::from_vec(crate::go_append::go_appended(&self.data.read())),
+            elem_buf: self.elem_buf.as_deref().map(crate::go_append::go_appended),
             // Go intentionally does not propagate `avoidReusing`: the copy
             // owns all buffers even when the source was a zero-copy codec
             // view, so it is safe to return to the allocator.
@@ -1196,12 +1214,12 @@ impl Column {
         // but deliberately leaves `avoidReusing` untouched.
         destination.length = self.length;
         destination.null_bitmap.clear();
-        destination.null_bitmap.extend_from_slice(&self.null_bitmap);
+        destination.null_bitmap.go_extend_from_slice(&self.null_bitmap);
         destination.offsets.clear();
-        destination.offsets.extend_from_slice(&self.offsets);
+        destination.offsets.go_extend_from_slice(&self.offsets);
         let data = self.data.snapshot();
         destination.data.reset();
-        destination.data.extend_from_slice(&data);
+        destination.data.go_extend_from_slice(&data);
         destination.elem_buf = self.elem_buf.clone();
         destination
     }
@@ -1226,7 +1244,7 @@ impl Column {
         } else {
             destination.elem_buf = None;
             if destination.offsets.is_empty() {
-                destination.offsets.push(0);
+                destination.offsets.go_push(0);
             }
         }
         for &row in sel {
@@ -1258,14 +1276,14 @@ impl Column {
                 1 => self
                     .data
                     .extend_from_array::<1>(cell.try_into().expect("a one-byte cell")),
-                _ => self.data.extend_from_slice(cell),
+                _ => self.data.go_extend_from_slice(cell),
             }
         } else {
             let start = src.offsets[row_idx] as usize;
             let end = src.offsets[row_idx + 1] as usize;
             let data = src.data.read();
-            self.data.extend_from_slice(&data[start..end]);
-            self.offsets.push(self.data.len() as i64);
+            self.data.go_extend_from_slice(&data[start..end]);
+            self.offsets.go_push(self.data.len() as i64);
         }
         self.length += 1;
     }
@@ -1285,9 +1303,11 @@ impl Column {
             .checked_add(rows)
             .expect("column row count overflow");
         let null_bitmap_len = (destination_end_row + 7) >> 3;
-        self.null_bitmap
-            .reserve(null_bitmap_len.saturating_sub(self.null_bitmap.len()));
-        self.null_bitmap.resize(null_bitmap_len, 0);
+        // Go appends the bitmap a byte at a time (`appendNullBitmap`).
+        let more = null_bitmap_len.saturating_sub(self.null_bitmap.len());
+        for _ in 0..more {
+            self.null_bitmap.go_push(0);
+        }
         self.append_null_bitmap_range(src, begin, rows, destination_start_row);
         if src.is_fixed() {
             let elem_len = src.elem_buffer_len();
@@ -1297,18 +1317,15 @@ impl Column {
             let finish = end
                 .checked_mul(elem_len)
                 .expect("fixed column offset overflow");
-            self.data.reserve(finish.saturating_sub(start));
-            self.data.extend_from_slice(&src.data.read()[start..finish]);
+            self.data.go_extend_from_slice(&src.data.read()[start..finish]);
         } else {
             let source_start = src.offsets[begin] as usize;
             let source_end = src.offsets[end] as usize;
             let destination_start = self.data.len();
-            self.data.reserve(source_end.saturating_sub(source_start));
-            self.offsets.reserve(rows);
             self.data
                 .extend_from_slice(&src.data.read()[source_start..source_end]);
             for &offset in &src.offsets[begin + 1..=end] {
-                self.offsets.push(
+                self.offsets.go_push(
                     (destination_start + (offset as usize - source_start))
                         .try_into()
                         .expect("column offset overflow"),
@@ -1387,9 +1404,9 @@ impl Column {
         cell: &[u8],
     ) {
         self.append_null_bitmap(not_null);
-        self.data.extend_from_slice(cell);
+        self.data.go_extend_from_slice(cell);
         if !source_is_fixed {
-            self.offsets.push(self.data.len() as i64);
+            self.offsets.go_push(self.data.len() as i64);
         }
         self.length += 1;
     }
@@ -1403,7 +1420,7 @@ impl Column {
     pub(crate) fn append_raw_cell(&mut self, cell: &[u8]) {
         if self.is_fixed() {
             self.append_null_bitmap(true);
-            self.data.extend_from_slice(cell);
+            self.data.go_extend_from_slice(cell);
             self.length += 1;
         } else {
             self.append_bytes(cell);
@@ -1580,12 +1597,6 @@ impl Column {
             .length
             .checked_add(row_ids.len())
             .expect("column row count overflow");
-        let null_bitmap_len = (destination_end + 7) >> 3;
-        self.null_bitmap
-            .reserve(null_bitmap_len.saturating_sub(self.null_bitmap.len()));
-        if !fixed {
-            self.offsets.reserve(row_ids.len());
-        }
 
         let source_data = src.data.read();
         let Self {
@@ -1596,7 +1607,6 @@ impl Column {
             ..
         } = self;
         let appended = data.append_owned(|data| {
-            data.reserve(data_len);
             for &row in row_ids {
                 append_null_bit(null_bitmap, *length, !src.is_null(row));
                 let (start, end) = if fixed {
@@ -1604,9 +1614,9 @@ impl Column {
                 } else {
                     (src.offsets[row] as usize, src.offsets[row + 1] as usize)
                 };
-                data.extend_from_slice(&source_data[start..end]);
+                data.go_extend_from_slice(&source_data[start..end]);
                 if !fixed {
-                    offsets.push(data.len() as i64);
+                    offsets.go_push(data.len() as i64);
                 }
                 *length += 1;
             }
@@ -1657,13 +1667,6 @@ impl Column {
             .length
             .checked_add(rows)
             .expect("column row count overflow");
-        let null_bitmap_len = (destination_end + 7) >> 3;
-        self.null_bitmap
-            .reserve(null_bitmap_len.saturating_sub(self.null_bitmap.len()));
-        if !fixed {
-            self.offsets.reserve(rows);
-        }
-
         let source_data = src.data.read();
         let Self {
             data,
@@ -1673,7 +1676,6 @@ impl Column {
             ..
         } = self;
         let appended = data.append_owned(|data| {
-            data.reserve(data_len);
             for (row, &is_selected) in selected.iter().enumerate() {
                 if !is_selected {
                     continue;
@@ -1684,9 +1686,9 @@ impl Column {
                 } else {
                     (src.offsets[row] as usize, src.offsets[row + 1] as usize)
                 };
-                data.extend_from_slice(&source_data[start..end]);
+                data.go_extend_from_slice(&source_data[start..end]);
                 if !fixed {
-                    offsets.push(data.len() as i64);
+                    offsets.go_push(data.len() as i64);
                 }
                 *length += 1;
             }
@@ -1727,7 +1729,7 @@ impl Column {
             let elem_len = src.offsets[row_idx + 1] - src.offsets[row_idx];
             for _ in 0..num_rows {
                 let last = *self.offsets.last().expect("var-len column keeps offset 0");
-                self.offsets.push(last + elem_len);
+                self.offsets.go_push(last + elem_len);
             }
         }
     }
@@ -1743,46 +1745,25 @@ fn append_fixed_copies<const N: usize>(data: &mut Vec<u8>, cell: &[u8], times: u
         return;
     }
     let cell: &[u8; N] = cell.try_into().expect("fixed cell width");
-    data.reserve(
-        N.checked_mul(times)
-            .expect("fixed repeated cell data length overflow"),
-    );
+    // Go appends each copy (`AppendCellNTimes`).
     for _ in 0..times {
-        data.extend_from_slice(cell);
+        data.go_extend_from_slice(cell);
     }
 }
 
-/// Repeats one variable-width cell while rebasing all destination offsets.
-///
-/// Reserve the complete payload before appending. Each copy is a direct
-/// slice append, avoiding the extra read/write traffic of doubling an
-/// already-written block with an overlapping move. Offset entries still
-/// remain one per logical row, exactly as Go's variable column representation
-/// requires.
+/// Repeats one variable-width cell, as Go's `AppendCellNTimes` appends the
+/// cell and then its end offset for each copy.
 fn append_variable_copies(data: &mut Vec<u8>, offsets: &mut Vec<i64>, cell: &[u8], times: usize) {
-    if times == 0 {
-        return;
-    }
-    let cell_len = cell.len();
-    let start = data.len();
-    let total_len = cell_len
-        .checked_mul(times)
-        .expect("variable repeated cell data length overflow");
-    data.reserve(total_len);
     for _ in 0..times {
-        data.extend_from_slice(cell);
+        data.go_extend_from_slice(cell);
+        offsets.go_push(i64::try_from(data.len()).expect("column offset overflow"));
     }
-    offsets.reserve(times);
-    offsets.extend(
-        (1..=times)
-            .map(|index| i64::try_from(start + index * cell_len).expect("column offset overflow")),
-    );
 }
 
 fn append_null_bit(bitmap: &mut Vec<u8>, length: usize, not_null: bool) {
     let index = length >> 3;
     if index >= bitmap.len() {
-        bitmap.push(0);
+        bitmap.go_push(0);
     }
     if not_null {
         bitmap[index] |= 1 << (length & 7);
@@ -1793,7 +1774,7 @@ fn append_null_run(bitmap: &mut Vec<u8>, length: usize, not_null: bool, num: usi
     let num_new_bytes = ((length + num + 7) >> 3) - bitmap.len();
     let b = if not_null { 0xffu8 } else { 0u8 };
     for _ in 0..num_new_bytes {
-        bitmap.push(b);
+        bitmap.go_push(b);
     }
     if !not_null {
         return;
@@ -1835,7 +1816,7 @@ pub fn append_cell_from_raw_data(
             40 => destination
                 .data
                 .extend_from_array::<40>(cell.try_into().expect("decimal cell")),
-            _ => destination.data.extend_from_slice(cell),
+            _ => destination.data.go_extend_from_slice(cell),
         }
         destination.length += 1;
         return end;
@@ -1855,7 +1836,7 @@ pub fn append_cell_from_raw_data(
     destination
         .data
         .extend_from_slice(&row_data[length_end..end]);
-    destination.offsets.push(destination.data.len() as i64);
+    destination.offsets.go_push(destination.data.len() as i64);
     destination.length += 1;
     end
 }

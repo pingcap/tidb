@@ -211,7 +211,7 @@ impl ColumnSlot {
     }
 
     pub(crate) fn deep_copy(&self) -> Self {
-        Self::new(self.read().copy_construct())
+        Self::new(self.read().clone_exact())
     }
 
     pub(crate) fn get_bytes(&self, row: usize) -> ColumnBytes<'_> {

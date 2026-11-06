@@ -43,6 +43,7 @@ pub mod chunk_util;
 pub mod codec;
 pub mod column;
 mod column_slot;
+mod go_append;
 mod column_view;
 pub mod compare;
 pub mod iterator;

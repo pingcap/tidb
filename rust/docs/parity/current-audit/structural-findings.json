@@ -2,9 +2,9 @@
   "date": "2026-11-06",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 27,
-    "open": 10,
-    "partial": 17
+    "unresolved": 28,
+    "open": 9,
+    "partial": 19
   },
   "findings": [
     {
@@ -74,9 +74,9 @@
     },
     {
       "id": "E12",
-      "status": "open",
+      "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "An index join's inner reader records no runtime stats (`IndexReader` under `IndexJoin` prints `actRows` N/A and no execution info where Go prints its cop task stats), and the join's memory is not Go's (`IndexJoin` 32.7 KB where Go's `IndexLookUpJoin` charges 3.09 KB: its outer task chunks and lookup map)",
+      "finding": "An index join's inner reader reports its tasks as Go's per-task readers do, but the join's own memory is not Go's (`IndexJoin` 32.7 KB where Go's `IndexLookUpJoin` charges 3.09 KB: its outer task chunks and lookup map), and its outer reader is read with one `Next` fewer (`loops:2` where Go's outer worker makes 3)",
       "go_owner": "`pkg/executor/join/index_lookup_join.go`"
     },
     {
@@ -92,6 +92,13 @@
       "group": "DML and executor handoff",
       "finding": "The embedded store's coprocessor reports its executors' summaries unlike Go's unistore `cophandler`: a pushed TopN prints `actRows` 2 and no `tikv_task` (Go: its input, 6, with the scan's detail, the scan only `tikv_task`), and an index scan under a pushed Limit prints 3 rows read where Go's reads 5",
       "go_owner": "`pkg/store/mockstore/unistore/cophandler`"
+    },
+    {
+      "id": "C01",
+      "status": "partial",
+      "group": "DML and executor handoff",
+      "finding": "A column grows as Go's `append` does (`go_append.rs`), but the evaluator writes a projection's results by appending datums row by row where each of Go's vectorized builtins sizes its own result column: `plus` resizes it exactly (its constant's `ResizeInt64`) while `mul` copy-constructs its first argument into it (`CopyReconstruct`), so `SELECT a+1, b*2` over 100 rows charges 1304 bytes for evaluation where Go charges 1205 (Go's peak, measured: 9349 B). Matching it needs the vectorized builtins' `vecEval*` result shapes",
+      "go_owner": "`pkg/expression` (`builtin_*_vec.go`, `Constant.VecEval*`, `Column.VecEval*`), `pkg/util/chunk` (`resize`, `CopyReconstruct`)"
     },
     {
       "id": "E04",
