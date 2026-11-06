@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -37,11 +39,14 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/printer"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 var (
@@ -929,7 +934,11 @@ func (c *tidbMVCCInfoFunctionClass) getFunction(ctx BuildContext, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	argTps := make([]types.EvalType, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		argTps = append(argTps, types.ETString)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -955,6 +964,70 @@ func (b *builtinTiDBMVCCInfoSig) Clone() builtinFunc {
 	return newSig
 }
 
+// recordIterFunc is used for low-level record iteration.
+type recordIterFunc func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (more bool, err error)
+
+func iterateSnapshotKeys(store kv.Storage, priority int, keyPrefix kv.Key, version uint64,
+	startKey kv.Key, endKey kv.Key, fn recordIterFunc) error {
+	isRecord := tablecodec.IsRecordKey(keyPrefix.Next())
+	var firstKey kv.Key
+	if startKey == nil {
+		firstKey = keyPrefix
+	} else {
+		firstKey = startKey
+	}
+
+	var upperBound kv.Key
+	if endKey == nil {
+		upperBound = keyPrefix.PrefixNext()
+	} else {
+		upperBound = endKey.PrefixNext()
+	}
+
+	ver := kv.Version{Ver: version}
+	snap := store.GetSnapshot(ver)
+	snap.SetOption(kv.Priority, priority)
+	snap.SetOption(kv.RequestSourceInternal, true)
+	snap.SetOption(kv.RequestSourceType, "test")
+	snap.SetOption(kv.ExplicitRequestSourceType, "test")
+	snap.SetOption(kv.ResourceGroupName, "")
+
+	it, err := snap.Iter(firstKey, upperBound)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer it.Close()
+
+	for it.Valid() {
+		if !it.Key().HasPrefix(keyPrefix) {
+			break
+		}
+
+		var handle kv.Handle
+		if isRecord {
+			handle, err = tablecodec.DecodeRowKey(it.Key())
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		more, err := fn(handle, it.Key(), it.Value())
+		if !more || err != nil {
+			return errors.Trace(err)
+		}
+
+		err = kv.NextUntil(it, util.RowKeyPrefixFilter(it.Key()))
+		if err != nil {
+			if kv.ErrNotExist.Equal(err) {
+				break
+			}
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
+}
+
 // evalString evals a builtinTiDBMVCCInfoSig.
 func (b *builtinTiDBMVCCInfoSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	privChecker, err := b.GetPrivilegeChecker(ctx)
@@ -964,24 +1037,47 @@ func (b *builtinTiDBMVCCInfoSig) evalString(ctx EvalContext, row chunk.Row) (str
 	if !privChecker.RequestVerification("", "", "", mysql.SuperPriv) {
 		return "", false, plannererrors.ErrSpecificAccessDenied.FastGenByArgs("SUPER")
 	}
-	s, isNull, err := b.args[0].EvalString(ctx, row)
+	s1, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	encodedKey, err := hex.DecodeString(s)
+	key1, err := hex.DecodeString(s1)
 	if err != nil {
 		return "", false, err
 	}
+
 	store, err := b.GetKVStore(ctx)
 	if err != nil {
 		return "", isNull, err
 	}
+
+	var key2 []byte
+	if len(b.args) > 1 {
+		s2, isNull, err := b.args[1].EvalString(ctx, row)
+		if isNull || err != nil {
+			return "", isNull, err
+		}
+		key2, err = hex.DecodeString(s2)
+		if err != nil {
+			return "", false, err
+		}
+		err = iterateSnapshotKeys(store, 2, key1, math.MaxUint64, key1, key2, func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (more bool, err error) {
+			logutil.BgLogger().Info("iterateSnapshotKeys",
+				zap.String("key", hex.EncodeToString(rowKey)),
+				zap.String("val", hex.EncodeToString(rawRecord)))
+			return true, nil
+		})
+		if err != nil {
+			return "", isNull, err
+		}
+	}
+
 	hStore, ok := store.(helper.Storage)
 	if !ok {
 		return "", isNull, errors.New("storage is not a helper.Storage")
 	}
 	h := helper.NewHelper(hStore)
-	resp, err := h.GetMvccByEncodedKey(encodedKey)
+	resp, err := h.GetMvccByEncodedKey(key1)
 	if err != nil {
 		return "", false, err
 	}
@@ -989,11 +1085,11 @@ func (b *builtinTiDBMVCCInfoSig) evalString(ctx EvalContext, row chunk.Row) (str
 		Key  string                        `json:"key"`
 		Resp *kvrpcpb.MvccGetByKeyResponse `json:"mvcc"`
 	}
-	mvccInfo := []*mvccInfoResult{{s, resp}}
-	if tablecodec.IsIndexKey(encodedKey) && !tablecodec.IsTempIndexKey(encodedKey) {
-		tablecodec.IndexKey2TempIndexKey(encodedKey)
-		hexStr := hex.EncodeToString(encodedKey)
-		res, err := h.GetMvccByEncodedKey(encodedKey)
+	mvccInfo := []*mvccInfoResult{{s1, resp}}
+	if tablecodec.IsIndexKey(key1) && !tablecodec.IsTempIndexKey(key1) {
+		tablecodec.IndexKey2TempIndexKey(key1)
+		hexStr := hex.EncodeToString(key1)
+		res, err := h.GetMvccByEncodedKey(key1)
 		if err != nil {
 			return "", false, err
 		}
