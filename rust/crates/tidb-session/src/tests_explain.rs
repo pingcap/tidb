@@ -7259,9 +7259,8 @@ fn a_stream_aggregate_charges_its_partial_results_like_go() {
 /// only the map, the child chunk and the results; an aggregate-local ORDER
 /// BY always runs serially.
 ///
-/// Go's parallel runs with input hold 12.6 KB (`sum(a)`) and 13.5 KB (`b,
-/// count(a) ... group by b`); here the reader swaps a 32-row chunk into the
-/// fetcher's empty one (register E17).
+/// With input, the fetcher's empty chunks grow as the reader decodes into
+/// them: 12.6 KB for `sum(a)`, 13.5 KB for `b, count(a) ... group by b`.
 #[test]
 fn a_hash_aggregate_charges_its_workers_like_go() {
     let mut session = Session::new();
@@ -7272,6 +7271,8 @@ fn a_hash_aggregate_charges_its_workers_like_go() {
         session.run(sql).unwrap();
     }
     let parallel = [
+        ("SELECT /*+ hash_agg() */ sum(a) FROM t", "12.6 KB"),
+        ("SELECT /*+ hash_agg() */ b, count(a) FROM t GROUP BY b", "13.5 KB"),
         ("SELECT /*+ hash_agg() */ group_concat(b ORDER BY a) FROM t", "2.27 KB"),
         ("SELECT /*+ hash_agg() */ sum(a) FROM t WHERE a > 10", "12.5 KB"),
     ];

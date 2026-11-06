@@ -2022,6 +2022,49 @@ fn aggregate_function(
     })
 }
 
+/// The aggregation a reader has taken over: Go runs it inside the reader's
+/// DAG, so the reader decodes the pushed aggregate's rows straight into the
+/// caller's chunk (`selectResult.readFromChunk`). This node only carries the
+/// aggregation's output schema over that reader.
+struct PushedAggregationExec {
+    meta: ExecutorMeta,
+    child: Box<dyn Executor>,
+}
+
+impl Executor for PushedAggregationExec {
+    fn open(&mut self) -> Result<(), tidb_driver_error::ExecError> {
+        self.child.open()
+    }
+
+    fn next(&mut self, req: &mut Chunk) -> Result<(), tidb_driver_error::ExecError> {
+        self.child.next(req)
+    }
+
+    fn close(&mut self) -> Result<(), tidb_driver_error::ExecError> {
+        self.child.close()
+    }
+
+    fn schema(&self) -> &Schema {
+        self.meta.schema()
+    }
+
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.meta.ret_field_types()
+    }
+
+    fn init_cap(&self) -> usize {
+        self.meta.init_cap()
+    }
+
+    fn max_chunk_size(&self) -> usize {
+        self.meta.max_chunk_size()
+    }
+
+    fn new_chunk(&self) -> Chunk {
+        self.meta.new_chunk()
+    }
+}
+
 fn build_aggregation(
     plan: &PhysicalPlan,
     descriptors: &[AggFuncDesc],
@@ -2295,19 +2338,10 @@ fn build_aggregation_over_child(
                 .table_access()
                 .is_some_and(|access| access.accept_partial_aggregate(&partial, ctx))
             {
-                let expressions = child
-                    .schema()
-                    .columns
-                    .iter()
-                    .cloned()
-                    .map(Expression::Column)
-                    .collect();
-                return Ok(Box::new(ProjectionExec::new(
-                    meta(ctx, plan, output_schema),
-                    expressions,
+                return Ok(Box::new(PushedAggregationExec {
+                    meta: meta(ctx, plan, output_schema),
                     child,
-                    ctx.clone(),
-                )));
+                }));
             }
         }
     }
