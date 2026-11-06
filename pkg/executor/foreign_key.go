@@ -58,6 +58,8 @@ type FKCheckExec struct {
 	*plannercore.FKCheck
 	*fkValueHelper
 	ctx sessionctx.Context
+	// selfRefHelper extracts this row's referenced columns for a self FK.
+	selfRefHelper *fkValueHelper
 
 	toBeCheckedKeys       []kv.Key
 	toBeCheckedPrefixKeys []kv.Key
@@ -150,10 +152,19 @@ func buildFKCheckExec(sctx sessionctx.Context, tbl table.Table, fkCheck *planner
 		colsOffsets: colsOffsets,
 		fkValuesSet: set.NewStringSet(),
 	}
+	var selfRefHelper *fkValueHelper
+	if fkCheck.FK != nil && tbl.Meta().ID == fkCheck.Tbl.Meta().ID {
+		refOffsets, err := getFKColumnsOffsets(tbl.Meta(), fkCheck.FK.RefCols)
+		if err != nil {
+			return nil, err
+		}
+		selfRefHelper = &fkValueHelper{colsOffsets: refOffsets}
+	}
 	return &FKCheckExec{
 		ctx:           sctx,
 		FKCheck:       fkCheck,
 		fkValueHelper: helper,
+		selfRefHelper: selfRefHelper,
 	}, nil
 }
 
@@ -225,14 +236,41 @@ func (fkc *FKCheckExec) checkIgnoreByRow(ctx context.Context, sc *stmtctx.Statem
 	return fkToBeCheckedRows[0].ignored, nil
 }
 
+// checkIgnoreForInsert validates a fresh child row, allowing it to satisfy its own self-reference.
 func (fkc *FKCheckExec) checkIgnoreForInsert(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, row []types.Datum) (bool, error) {
 	if fkc.ReferredFK != nil {
 		// Insert into parent table doesn't need to do foreign key check.
 		return false, nil
 	}
+	if fkc.selfRefHelper != nil {
+		vals, err := fkc.fetchFKValues(row)
+		if err != nil {
+			return false, err
+		}
+		refVals, err := fkc.selfRefHelper.fetchFKValues(row)
+		if err != nil {
+			return false, err
+		}
+		if !fkc.hasNullValue(vals) && !fkc.hasNullValue(refVals) {
+			key, _, err := fkc.buildCheckKeyFromFKValue(sc, vals)
+			if err != nil {
+				return false, err
+			}
+			refKey, _, err := fkc.buildCheckKeyFromFKValue(sc, refVals)
+			if err != nil {
+				return false, err
+			}
+			if bytes.Equal(key, refKey) {
+				// Only this candidate satisfies this FK. Do not cache it: another
+				// constraint can still reject the row before it is inserted.
+				return false, nil
+			}
+		}
+	}
 	return fkc.checkIgnoreByRow(ctx, sc, txn, row)
 }
 
+// checkIgnoreForUpdate validates changed child values or removed parent values under IGNORE.
 func (fkc *FKCheckExec) checkIgnoreForUpdate(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, oldRow, newRow []types.Datum) (bool, error) {
 	row, needsCheck, err := fkc.rowNeedCheckForUpdate(sc, oldRow, newRow)
 	if err != nil || !needsCheck {
@@ -241,6 +279,7 @@ func (fkc *FKCheckExec) checkIgnoreForUpdate(ctx context.Context, sc *stmtctx.St
 	return fkc.checkIgnoreByRow(ctx, sc, txn, row)
 }
 
+// checkIgnoreForDelete checks whether removing the parent row would leave referenced children under IGNORE.
 func (fkc *FKCheckExec) checkIgnoreForDelete(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, row []types.Datum) (bool, error) {
 	return fkc.checkIgnoreByRow(ctx, sc, txn, row)
 }

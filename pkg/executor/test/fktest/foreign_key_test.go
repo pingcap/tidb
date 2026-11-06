@@ -319,6 +319,92 @@ func TestForeignKeyOnInsertDuplicateUpdateChildTable(t *testing.T) {
 			tk.MustExec("admin check table t_self_fk")
 		})
 	}
+
+	for _, ca := range []struct {
+		name         string
+		definition   string
+		values       string
+		update       string
+		normalInsert bool
+		otherFK      bool
+		affectedRows uint64
+		warnings     int
+		rows         []string
+	}{
+		{
+			name:         "normal insert self reference",
+			values:       "(1, 1)",
+			normalInsert: true,
+			affectedRows: 1,
+			rows:         []string{"1 1"},
+		},
+		{
+			name:         "ignore insert self reference",
+			values:       "(1, 1)",
+			affectedRows: 1,
+			rows:         []string{"1 1"},
+		},
+		{
+			name:         "ignore insert composite nonprimary self reference",
+			definition:   "(id int primary key clustered, a varchar(20) not null, b int not null, pb int, pa varchar(20), unique key (b, a), foreign key (pb, pa) references t_self_fk(b, a)) charset utf8mb4 collate utf8mb4_general_ci",
+			values:       "(1, 'Parent', 7, 7, 'parent')",
+			update:       "pb=values(pb), pa=values(pa)",
+			affectedRows: 1,
+			rows:         []string{"1 Parent 7 7 parent"},
+		},
+		{
+			name:     "ignore insert missing other parent",
+			values:   "(1, 2)",
+			warnings: 1,
+		},
+		{
+			name:         "rejected self reference does not become a parent",
+			definition:   "(id int primary key clustered, pid int, guard_id int, constraint fk_pid foreign key(pid) references t_self_fk(id), constraint fk_guard foreign key(guard_id) references t_self_fk_guard(id))",
+			values:       "(1, 1, 99), (2, 1, null), (3, 3, null)",
+			otherFK:      true,
+			affectedRows: 1,
+			warnings:     2,
+			rows:         []string{"3 3 <nil>"},
+		},
+	} {
+		t.Run(ca.name, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set @@foreign_key_checks=1")
+			t.Cleanup(func() {
+				tk.MustExec("drop table if exists t_self_fk")
+				tk.MustExec("drop table if exists t_self_fk_guard")
+			})
+			if ca.otherFK {
+				tk.MustExec("create table t_self_fk_guard (id int primary key)")
+			}
+			definition := ca.definition
+			if definition == "" {
+				definition = "(id int primary key clustered, pid int, index(pid), foreign key(pid) references t_self_fk(id))"
+			}
+			tk.MustExec("create table t_self_fk " + definition)
+			if ca.normalInsert {
+				tk.MustExec("insert into t_self_fk values " + ca.values)
+			} else {
+				update := ca.update
+				if update == "" {
+					update = "pid=values(pid)"
+				}
+				tk.MustExec("insert ignore into t_self_fk values " + ca.values + " on duplicate key update " + update)
+			}
+			sc := tk.Session().GetSessionVars().StmtCtx
+			affectedRows := sc.AffectedRows()
+			warnings := sc.GetWarnings()
+			require.Equal(t, ca.affectedRows, affectedRows)
+			require.Len(t, warnings, ca.warnings)
+			for _, warning := range warnings {
+				require.Equal(t, "Warning", warning.Level)
+				require.True(t, plannererrors.ErrNoReferencedRow2.Equal(warning.Err), "%v", warning.Err)
+			}
+			tk.MustQuery("select * from t_self_fk order by id").Check(testkit.Rows(ca.rows...))
+			tk.MustExec("admin check table t_self_fk")
+		})
+	}
 }
 
 func TestForeignKeyCheckAndLock(t *testing.T) {
