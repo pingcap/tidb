@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -487,6 +488,74 @@ func TestBuildExpression(t *testing.T) {
 	val, _, err = expr.EvalInt(evalCtx, chunk.MutRowFromValues("", 1, 2).ToRow())
 	require.NoError(t, err)
 	require.Equal(t, int64(10), val)
+
+	origin := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(origin)
+	collationSensitiveTbl := &model.TableInfo{
+		Name: ast.NewCIStr("tc"),
+		Columns: []*model.ColumnInfo{
+			{
+				Name:      ast.NewCIStr("c0"),
+				Offset:    0,
+				State:     model.StatePublic,
+				FieldType: *types.NewFieldTypeWithCollation(mysql.TypeVarchar, "utf8mb4_general_ci", 16),
+			},
+			{
+				Name:      ast.NewCIStr("c1"),
+				Offset:    1,
+				State:     model.StatePublic,
+				FieldType: *types.NewFieldTypeWithCollation(mysql.TypeVarchar, "utf8mb4_general_ci", 16),
+			},
+		},
+	}
+	collationSensitiveRow := chunk.MutRowFromValues("a", "A").ToRow()
+	oldCollationCtx := ctx.Apply(exprstatic.WithNewCollationEnabled(false))
+	newCollationCtx := ctx.Apply(exprstatic.WithNewCollationEnabled(true))
+	for _, test := range []struct {
+		expr        string
+		oldExpected any
+		newExpected any
+	}{
+		{"c0 = 'A'", int64(0), int64(1)},
+		{"c0 <=> c1", int64(0), int64(1)},
+		{"c0 != c1", int64(1), int64(0)},
+		{"c1 < c0", int64(1), int64(0)},
+		{"c0 <= c1", int64(0), int64(1)},
+		{"c0 > c1", int64(1), int64(0)},
+		{"c1 >= c0", int64(0), int64(1)},
+		{"c0 between c1 and c1", int64(0), int64(1)},
+		{"c0 in (c1)", int64(0), int64(1)},
+		{"c0 like c1", int64(0), int64(1)},
+		{"c0 ilike c1", int64(1), int64(1)},
+		{"c0 regexp c1", int64(1), int64(1)},
+		{"if(c0 = c1, 'same', 'different')", "different", "same"},
+		{"nullif(c0, c1)", "a", nil},
+		{"case when c0 = c1 then 'same' else 'different' end", "different", "same"},
+		{"case c0 when c1 then 'same' else 'different' end", "different", "same"},
+		{"strcmp(c0, c1)", int64(1), int64(0)},
+		{"field(c0, c1)", int64(0), int64(1)},
+		{"find_in_set(c0, c1)", int64(0), int64(1)},
+		{"greatest(c1, c0)", "a", "A"},
+		{"least(c0, c1)", "A", "a"},
+		{"locate(c1, c0)", int64(0), int64(1)},
+		{"position(c1 in c0)", int64(0), int64(1)},
+		{"locate(c1, c0, 1)", int64(1), int64(1)},
+		{"instr(c0, c1)", int64(1), int64(1)},
+		{"weight_string(c0)", "a", "\x00A"},
+	} {
+		expr, err = buildExpr(t, oldCollationCtx, test.expr, expression.WithTableInfo("", collationSensitiveTbl))
+		require.NoError(t, err)
+		result, err := expr.Eval(evalCtx, collationSensitiveRow)
+		require.NoError(t, err)
+		require.Equal(t, test.oldExpected, result.GetValue(), test.expr)
+
+		expr, err = buildExpr(t, newCollationCtx, test.expr, expression.WithTableInfo("", collationSensitiveTbl))
+		require.NoError(t, err)
+		result, err = expr.Eval(evalCtx, collationSensitiveRow)
+		require.NoError(t, err)
+		require.Equal(t, test.newExpected, result.GetValue(), test.expr)
+	}
 
 	// build expression without enough columns
 	_, err = buildExpr(t, ctx, "1+a")
