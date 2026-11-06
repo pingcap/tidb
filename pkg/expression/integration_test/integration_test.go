@@ -762,6 +762,33 @@ func TestVectorIndexExplain(t *testing.T) {
 		`      └─Projection 1.00 mpp[tiflash]  test.t1.vec, vec_cosine_distance(test.t1.vec, [1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...])->Column#6`,
 		`        └─TableFullScan 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...], limit:1)`,
 	))
+
+	// A matching distance upper bound can filter the ANN candidates while
+	// preserving the vector-index path.
+	boundedPlan := fmt.Sprint(tk.MustQuery(fmt.Sprintf(
+		"explain format = 'brief' select * from t1 where vec_cosine_distance(vec, '%s') <= 0.4 order by vec_cosine_distance(vec, '%s') limit 1",
+		vb.String(), vb.String(),
+	)).Rows())
+	require.Contains(t, boundedPlan, "annIndex:COSINE")
+	require.Contains(t, boundedPlan, "Selection")
+	require.Contains(t, boundedPlan, "le(vec_cosine_distance(test.t1.vec")
+	require.Contains(t, boundedPlan, "0.4)")
+	require.Less(t, strings.Index(boundedPlan, "Selection"), strings.Index(boundedPlan, "annIndex:COSINE"), boundedPlan)
+
+	// A bound for a different query vector must retain the regular scan path.
+	otherQueryVector := strings.ReplaceAll(vb.String(), "100", "101")
+	unmatchedBoundPlan := fmt.Sprint(tk.MustQuery(fmt.Sprintf(
+		"explain format = 'brief' select * from t1 where vec_cosine_distance(vec, '%s') <= 0.4 order by vec_cosine_distance(vec, '%s') limit 1",
+		otherQueryVector, vb.String(),
+	)).Rows())
+	require.NotContains(t, unmatchedBoundPlan, "annIndex:COSINE")
+
+	// Unrelated predicates continue to use the regular scan path.
+	unrelatedFilterPlan := fmt.Sprint(tk.MustQuery(fmt.Sprintf(
+		"explain format = 'brief' select * from t1 where vec_dims(vec) = 100 order by vec_cosine_distance(vec, '%s') limit 1",
+		vb.String(),
+	)).Rows())
+	require.NotContains(t, unrelatedFilterPlan, "annIndex:COSINE")
 }
 
 func TestFixedVector(t *testing.T) {

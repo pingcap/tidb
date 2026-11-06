@@ -91,3 +91,49 @@ func InterpretVectorSearchExpr(expr Expression) *VSInfo {
 		Column:         vectorColumn,
 	}
 }
+
+// InterpretVectorDistanceLEExpr interprets a vector distance expression with
+// a constant upper bound, such as vec_cosine_distance(vec, '[1,2,3]') <= 0.4.
+// It deliberately accepts only this narrow shape so callers can keep other
+// predicates on the regular planning path.
+func InterpretVectorDistanceLEExpr(expr Expression) *VSInfo {
+	comparison, ok := expr.(*ScalarFunction)
+	if !ok || comparison.FuncName.L != ast.LE {
+		return nil
+	}
+	args := comparison.GetArgs()
+	if len(args) != 2 {
+		return nil
+	}
+	vs := InterpretVectorSearchExpr(args[0])
+	if vs == nil {
+		return nil
+	}
+	bound, ok := args[1].(*Constant)
+	if !ok || bound.Value.IsNull() {
+		return nil
+	}
+	switch bound.Value.Kind() {
+	case types.KindInt64, types.KindUint64, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
+		return vs
+	default:
+		return nil
+	}
+}
+
+// SameVectorSearchExpr reports whether two expressions describe the same
+// distance function, vector column, and query vector.
+func SameVectorSearchExpr(left, right *VSInfo) bool {
+	if left == nil || right == nil || left.DistanceFnName.L != right.DistanceFnName.L ||
+		left.FnPbCode != right.FnPbCode || left.Column.UniqueID != right.Column.UniqueID ||
+		left.Vec.Len() != right.Vec.Len() {
+		return false
+	}
+	leftElements, rightElements := left.Vec.Elements(), right.Vec.Elements()
+	for i := range leftElements {
+		if leftElements[i] != rightElements[i] {
+			return false
+		}
+	}
+	return true
+}
