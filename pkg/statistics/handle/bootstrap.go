@@ -281,6 +281,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			}
 			hist := statistics.NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, totColSize)
 			hist.Correlation = row.GetFloat64(9)
+			hist.Flag = row.GetInt64(10)
 			col := &statistics.Column{
 				Histogram:  *hist,
 				PhysicalID: table.PhysicalID,
@@ -362,7 +363,7 @@ func genInitStatsHistogramsSQL(options genHistSQLOptions) string {
 	// before stats_histograms moved to a clustered PRIMARY KEY. On fresh clusters
 	// it is inapplicable but harmless: the clustered PK scan is already ordered by
 	// table_id.
-	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl) */ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation from mysql.stats_histograms"
+	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl) */ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag from mysql.stats_histograms"
 	orderSuffix := " order by table_id"
 
 	// Load all records (non-paging with no specific table IDs).

@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"slices"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -439,12 +440,26 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, partitionName, colName string,
 	if numOfCols > 0 {
 		isIndex = 1
 	}
+	vars := e.Ctx().GetSessionVars()
+	// A TIMESTAMP bound known to be in UTC is shown in the session time zone, like the column value
+	// itself. Any other bound is shown as stored. See statistics.HistogramFlagTimestampBoundsInUTC.
+	boundToString := func(bound *types.Datum) (string, error) {
+		if isIndex == 0 && hist.TimestampBoundsInUTC() && bound.Kind() == types.KindMysqlTime {
+			if t := bound.GetMysqlTime(); t.Type() == mysql.TypeTimestamp {
+				if err := t.ConvertTimeZone(time.UTC, vars.Location()); err != nil {
+					return "", err
+				}
+				bound.SetMysqlTime(t)
+			}
+		}
+		return statistics.ValueToString(vars, bound, numOfCols, idxColumnTypes)
+	}
 	for i := range hist.Len() {
-		lowerBoundStr, err := statistics.ValueToString(e.Ctx().GetSessionVars(), hist.GetLower(i), numOfCols, idxColumnTypes)
+		lowerBoundStr, err := boundToString(hist.GetLower(i))
 		if err != nil {
 			return errors.Trace(err)
 		}
-		upperBoundStr, err := statistics.ValueToString(e.Ctx().GetSessionVars(), hist.GetUpper(i), numOfCols, idxColumnTypes)
+		upperBoundStr, err := boundToString(hist.GetUpper(i))
 		if err != nil {
 			return errors.Trace(err)
 		}
