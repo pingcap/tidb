@@ -122,6 +122,18 @@ pub trait AggFunc: Send + Sync {
     fn as_sliding_window(&self) -> Option<&dyn SlidingWindowAggFunc> {
         None
     }
+
+    /// Go's `aggFunc.(MaxMinSlidingWindowAggFunc)` assertion.
+    fn as_max_min_sliding_window(&self) -> Option<&dyn MaxMinSlidingWindowAggFunc> {
+        None
+    }
+}
+
+/// Go `MaxMinSlidingWindowAggFunc`: a sliding MAX/MIN, which keys its
+/// deque by absolute row positions from the window's start.
+pub trait MaxMinSlidingWindowAggFunc {
+    /// Go `SetWindowStart`: the absolute start position of the window.
+    fn set_window_start(&self, start: u64);
 }
 
 /// Go `baseAggFunc`.

@@ -1681,3 +1681,125 @@ fn ranks_treat_peers_like_go() {
         }
     }
 }
+
+/// Go `TestDequeReset`.
+#[test]
+fn test_deque_reset() {
+    let mut deque = crate::func_max_min::MinMaxDeque::new(true);
+    deque.push_back(0, Datum::Int(12));
+    deque.reset();
+    assert!(deque.items.is_empty());
+    assert!(deque.is_max);
+}
+
+/// Go `TestDequePushPop`.
+#[test]
+fn test_deque_push_pop() {
+    let mut deque = crate::func_max_min::MinMaxDeque::new(true);
+    let times = 15;
+    for i in 0..times {
+        if i != 0 {
+            let front = deque.front().expect("a front");
+            assert_datum_eq(&front.item, &Datum::Int(0), "front");
+            assert_eq!(front.idx, 0);
+        }
+        deque.push_back(i as u64, Datum::Int(i));
+        let back = deque.back().expect("a back");
+        assert_datum_eq(&back.item, &Datum::Int(i), "back");
+        assert_eq!(back.idx, i as u64);
+    }
+    for i in 0..times {
+        let pair = deque.back().expect("a back");
+        assert_datum_eq(&pair.item, &Datum::Int(times - i - 1), "back");
+        assert_eq!(pair.idx, (times - i - 1) as u64);
+        assert_eq!(deque.front().expect("a front").idx, 0);
+        assert!(deque.pop_back());
+    }
+    assert!(!deque.pop_back(), "Go's PopBack errors on an empty deque");
+}
+
+/// A window MAX/MIN slides a 3-row frame across the rows, each frame's
+/// answer the brute-force extreme of its rows (NULLs skipped); a string
+/// compares under its collation.
+#[test]
+fn a_sliding_max_min_answers_each_frame() {
+    let values: [Option<i64>; 8] = [Some(5), Some(1), None, Some(4), Some(2), Some(8), Some(3), Some(7)];
+    for (tp, to_datum) in [
+        (FieldType::new(FieldTypeCode::LongLong), (|v: i64| Datum::Int(v)) as fn(i64) -> Datum),
+        (FieldType::new(FieldTypeCode::NewDecimal), |v| decimal(v)),
+        (FieldType::new(FieldTypeCode::String).with_collation(tidb_charset::Collation::from_name("utf8mb4_general_ci").expect("a collation")), |v| Datum::new_string_datum(if v % 2 == 0 { format!("A{v}") } else { format!("a{v}") })),
+    ] {
+        let mut chk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&tp), values.len());
+        for v in values {
+            chk.append_datum(0, &v.map_or(Datum::Null, to_datum));
+        }
+        for name in ["max", "min"] {
+            let p = WindowTest { data_type: tp.clone(), num_rows: 0, func_name: name, args: vec![Expression::Column(column_0(&tp))], order_by_cols: Vec::new(), results: Vec::new() };
+            let (desc, func) = p.build();
+            let sliding = func.as_max_min_sliding_window().expect("a window MAX/MIN slides");
+            let kind_size = match tp.code() {
+                FieldTypeCode::LongLong => crate::func_max_min::DEF_PARTIAL_RESULT_4_MAX_MIN_INT_SIZE,
+                FieldTypeCode::NewDecimal => crate::func_max_min::DEF_PARTIAL_RESULT_4_MAX_MIN_DECIMAL_SIZE,
+                _ => crate::func_max_min::DEF_PARTIAL_RESULT_4_MAX_MIN_STRING_SIZE,
+            };
+            let brute = |start: usize| -> Datum {
+                let collation = crate::aggfuncs::expr_collation(&p.args[0]);
+                let frame: Vec<Datum> = values[start..start + 3].iter().flatten().map(|v| to_datum(*v)).collect();
+                frame.into_iter().reduce(|a, b| {
+                    let ordering = crate::compare_extreme(&b, &a, collation).expect("comparable");
+                    if (name == "max" && ordering.is_gt()) || (name == "min" && ordering.is_lt()) { b } else { a }
+                }).unwrap_or(Datum::Null)
+            };
+            let slider = func.as_sliding_window().expect("slides");
+            // The first frame starts at row 0, then at row 2: the deque keys
+            // rows by absolute position from the window start.
+            for first in [0, 2] {
+                sliding.set_window_start(first as u64);
+                let (mut pr, alloc) = func.alloc_partial_result();
+                assert_eq!(alloc, kind_size + crate::func_max_min::DEF_MAX_MIN_DEQUE_SIZE);
+                let rows: Vec<_> = (first..first + 3).map(|i| chk.get_row(i)).collect();
+                func.update_partial_result(&NoColumns, &rows, &mut pr).expect("update succeeds");
+                for start in first..values.len() - 2 {
+                    if start > first {
+                        let get_row = |i: u64| chk.get_row(i as usize);
+                        slider.slide(&NoColumns, &get_row, start as u64 - 1, start as u64 + 2, 1, 1, &mut pr).expect("slide succeeds");
+                    }
+                    let actual = final_datum(func.as_ref(), &mut pr, &desc.base.ret_type);
+                    let expected = brute(start);
+                    if expected.is_null() {
+                        assert!(actual.is_null());
+                    } else {
+                        assert_datum_eq(&actual, &expected, &format!("{name} {:?} frame {start}", tp.code()));
+                    }
+                }
+                func.reset_partial_result(&mut pr);
+                assert!(final_datum(func.as_ref(), &mut pr, &desc.base.ret_type).is_null());
+            }
+        }
+    }
+}
+
+/// Go `TestSlideSumUintProcessOutWindowFirstToAvoidOverflow` and
+/// `TestSlideSumIntProcessOutWindowFirstToAvoidOverflow`: the slide
+/// removes the outgoing row before adding the incoming one, so
+/// `max-1` then `2` sums to `2` without overflowing.
+#[test]
+fn a_slide_removes_before_it_adds() {
+    for (tp, first, second, expected) in [
+        (unsigned_longlong(), Datum::UInt(u64::MAX - 1), Datum::UInt(2), Datum::UInt(2)),
+        (FieldType::new(FieldTypeCode::LongLong), Datum::Int(i64::MAX - 1), Datum::Int(2), Datum::Int(2)),
+    ] {
+        let mut chk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&tp), 2);
+        chk.append_datum(0, &first);
+        chk.append_datum(0, &second);
+        let desc = AggFuncDesc::new(&NoColumns, "sum_int", vec![Expression::Column(column_0(&tp))], false).expect("descriptor builds");
+        let func = build(&NoColumns, &desc, 0).expect("sum_int is implemented");
+        let sliding = func.as_sliding_window().expect("SUM_INT slides");
+        let (mut pr, _) = func.alloc_partial_result();
+        func.reset_partial_result(&mut pr);
+        func.update_partial_result(&NoColumns, &[chk.get_row(0)], &mut pr).expect("update succeeds");
+        let get_row = |i: u64| chk.get_row(i as usize);
+        sliding.slide(&NoColumns, &get_row, 0, 1, 1, 1, &mut pr).expect("the slide does not overflow");
+        assert_datum_eq(&final_datum(func.as_ref(), &mut pr, &desc.base.ret_type), &expected, "slid sum");
+    }
+}

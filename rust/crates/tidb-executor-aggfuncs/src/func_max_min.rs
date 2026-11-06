@@ -30,7 +30,7 @@ use tidb_driver_error::ExecError;
 use tidb_goruntime::GoString;
 use tidb_serialization as util;
 
-use crate::agg_func::{deserialize_partial_result_common, partial, AggFunc, AggFuncUpdateContext, BaseAggFunc, PartialResult};
+use crate::agg_func::{deserialize_partial_result_common, partial, AggFunc, AggFuncUpdateContext, BaseAggFunc, MaxMinSlidingWindowAggFunc, PartialResult, SlidingWindowAggFunc};
 use crate::spill_serialize_helper::SerializeHelper;
 
 /// Go `DefPartialResult4MaxMinIntSize`.
@@ -61,10 +61,86 @@ pub const DEF_PARTIAL_RESULT_4_MAX_MIN_SET_SIZE: i64 = 32;
 pub const DEF_MAX_MIN_DEQUE_SIZE: i64 = 40;
 
 /// Go `partialResult4MaxMinX`: the extreme so far, `None` while Go's
-/// `isNull` holds.
+/// `isNull` holds, and the sliding variants' deque.
 #[derive(Clone, Debug, Default)]
 pub struct PartialResult4MaxMin {
     pub(crate) val: Option<Datum>,
+    pub(crate) deque: Option<MinMaxDeque>,
+}
+
+/// Go `Pair`: a deque item and its absolute row position.
+#[derive(Clone, Debug)]
+pub struct Pair {
+    /// Go `Item`.
+    pub item: Datum,
+    /// Go `Idx`.
+    pub idx: u64,
+}
+
+/// Go `MinMaxDeque`: the window's candidates for the extreme, the front
+/// the extreme itself -- each newer item drops the older items it beats.
+#[derive(Clone, Debug, Default)]
+pub struct MinMaxDeque {
+    /// Go `Items`.
+    pub items: std::collections::VecDeque<Pair>,
+    /// Go `IsMax`.
+    pub is_max: bool,
+}
+
+impl MinMaxDeque {
+    /// Go `NewDeque`.
+    #[must_use]
+    pub fn new(is_max: bool) -> Self {
+        Self { items: std::collections::VecDeque::new(), is_max }
+    }
+
+    /// Go `Reset`.
+    pub fn reset(&mut self) {
+        self.items.clear();
+    }
+
+    /// Go `PushBack`.
+    pub fn push_back(&mut self, idx: u64, item: Datum) {
+        self.items.push_back(Pair { item, idx });
+    }
+
+    /// Go `PopBack` (`false` for Go's error on an empty deque).
+    pub fn pop_back(&mut self) -> bool {
+        self.items.pop_back().is_some()
+    }
+
+    /// Go `Back`.
+    #[must_use]
+    pub fn back(&self) -> Option<&Pair> {
+        self.items.back()
+    }
+
+    /// Go `Front`.
+    #[must_use]
+    pub fn front(&self) -> Option<&Pair> {
+        self.items.front()
+    }
+
+    /// Go `Dequeue`: pops the front items at or before `boundary`.
+    pub fn dequeue(&mut self, boundary: u64) {
+        while self.items.front().is_some_and(|front| front.idx <= boundary) {
+            self.items.pop_front();
+        }
+    }
+
+    /// Go `Enqueue`: pushes `item`, first popping each item at the back it
+    /// equals or beats (`cmp_func(item, back)`).
+    pub fn enqueue(&mut self, idx: u64, item: Datum, cmp_func: impl Fn(&Datum, &Datum) -> Result<Ordering, ExecError>) -> Result<(), ExecError> {
+        while let Some(pair) = self.items.back() {
+            let cmp = cmp_func(&item, &pair.item)?;
+            if !(cmp.is_ge() && self.is_max || cmp.is_le() && !self.is_max) {
+                break;
+            }
+            self.items.pop_back();
+        }
+        self.items.push_back(Pair { item, idx });
+        Ok(())
+    }
 }
 
 /// The value type each Go `maxMin4X` holds.
@@ -227,6 +303,7 @@ impl MaxMin {
         };
         PartialResult4MaxMin {
             val: (!is_null).then_some(value),
+            deque: None,
         }
     }
 }
@@ -312,5 +389,120 @@ impl AggFunc for MaxMin {
             *partial::<PartialResult4MaxMin>(&mut pr) = helper.read_row(|pab| self.decode(pab))?;
             Some((pr, mem_delta))
         })
+    }
+}
+
+/// Go `maxMin4XSliding` (and `windowInfo`): the window MAX/MIN, whose
+/// partial result keeps a deque of the frame's candidates.
+#[derive(Debug)]
+pub struct MaxMinSliding {
+    /// The `maxMin4X` it embeds.
+    pub inner: MaxMin,
+    /// Go `windowInfo.start`, which the window executor sets.
+    pub start: std::sync::atomic::AtomicU64,
+}
+
+impl MaxMinSliding {
+    /// Go's sliding types exist for these kinds only.
+    #[must_use]
+    pub fn slides(kind: MaxMinKind) -> bool {
+        matches!(
+            kind,
+            MaxMinKind::Int
+                | MaxMinKind::Uint
+                | MaxMinKind::Float32
+                | MaxMinKind::Float64
+                | MaxMinKind::Decimal
+                | MaxMinKind::String
+                | MaxMinKind::Time
+                | MaxMinKind::Duration
+        )
+    }
+
+    fn deque(pr: &mut PartialResult) -> &mut MinMaxDeque {
+        partial::<PartialResult4MaxMin>(pr).deque.as_mut().expect("a sliding MAX/MIN keeps a deque")
+    }
+
+    /// The deque's front, or NULL.
+    fn take_front(pr: &mut PartialResult) {
+        let front = Self::deque(pr).front().map(|pair| pair.item.clone());
+        partial::<PartialResult4MaxMin>(pr).val = front;
+    }
+
+    fn enqueue(&self, sctx: &AggFuncUpdateContext, idx: u64, row: Row<'_>, pr: &mut PartialResult) -> Result<(), ExecError> {
+        let input = self.inner.base.args[0].eval(sctx, row).map_err(ExecError::Eval)?;
+        if input.is_null() {
+            return Ok(());
+        }
+        let input = self.inner.kind.store(input);
+        Self::deque(pr).enqueue(idx, input, |a, b| self.inner.compare(a, b))
+    }
+}
+
+impl AggFunc for MaxMinSliding {
+    fn alloc_partial_result(&self) -> (PartialResult, i64) {
+        let (mut pr, mem_delta) = self.inner.alloc_partial_result();
+        partial::<PartialResult4MaxMin>(&mut pr).deque = Some(MinMaxDeque::new(self.inner.is_max));
+        (pr, mem_delta + DEF_MAX_MIN_DEQUE_SIZE)
+    }
+
+    fn reset_partial_result(&self, pr: &mut PartialResult) {
+        self.inner.reset_partial_result(pr);
+        Self::deque(pr).reset();
+    }
+
+    fn update_partial_result(&self, sctx: &AggFuncUpdateContext, rows_in_group: &[Row<'_>], pr: &mut PartialResult) -> Result<i64, ExecError> {
+        // The deque keys each row by its absolute position: its place in the
+        // group from the window's start.
+        let start = self.start.load(std::sync::atomic::Ordering::SeqCst);
+        for (i, row) in rows_in_group.iter().enumerate() {
+            self.enqueue(sctx, i as u64 + start, *row, pr)?;
+        }
+        Self::take_front(pr);
+        Ok(0)
+    }
+
+    fn merge_partial_result(&self, sctx: &AggFuncUpdateContext, src: &mut PartialResult, dst: &mut PartialResult) -> Result<i64, ExecError> {
+        self.inner.merge_partial_result(sctx, src, dst)
+    }
+
+    fn append_final_result_2_chunk(&self, sctx: &AggFuncUpdateContext, pr: &mut PartialResult, chk: &mut Chunk) -> Result<(), ExecError> {
+        self.inner.append_final_result_2_chunk(sctx, pr, chk)
+    }
+
+    fn serialize_partial_result(&self, partial_result: &mut PartialResult, chk: &mut Chunk, spill_helper: &mut SerializeHelper) {
+        self.inner.serialize_partial_result(partial_result, chk, spill_helper);
+    }
+
+    fn deserialize_partial_result(&self, src: &Chunk) -> (Vec<PartialResult>, i64) {
+        self.inner.deserialize_partial_result(src)
+    }
+
+    fn as_sliding_window(&self) -> Option<&dyn SlidingWindowAggFunc> {
+        Some(self)
+    }
+
+    fn as_max_min_sliding_window(&self) -> Option<&dyn MaxMinSlidingWindowAggFunc> {
+        Some(self)
+    }
+}
+
+impl SlidingWindowAggFunc for MaxMinSliding {
+    fn slide<'a>(&self, sctx: &AggFuncUpdateContext, get_row: &dyn Fn(u64) -> Row<'a>, last_start: u64, last_end: u64, shift_start: u64, shift_end: u64, pr: &mut PartialResult) -> Result<(), ExecError> {
+        for i in 0..shift_end {
+            self.enqueue(sctx, last_end + i, get_row(last_end + i), pr)?;
+        }
+        // Check for unsigned underflow.
+        if last_start + shift_start >= 1 {
+            Self::deque(pr).dequeue(last_start + shift_start - 1);
+        }
+        Self::take_front(pr);
+        Ok(())
+    }
+}
+
+impl MaxMinSlidingWindowAggFunc for MaxMinSliding {
+    fn set_window_start(&self, start: u64) {
+        self.start.store(start, std::sync::atomic::Ordering::SeqCst);
     }
 }

@@ -317,6 +317,10 @@ fn build_first_row(agg_func_desc: &AggFuncDesc, ordinal: usize) -> Option<Box<dy
 
 /// Go `buildMaxMin`.
 fn build_max_min(agg_func_desc: &AggFuncDesc, ordinal: usize, is_max: bool) -> Option<Box<dyn AggFunc>> {
+    build_max_min_func(agg_func_desc, ordinal, is_max).map(|func| Box::new(func) as Box<dyn AggFunc>)
+}
+
+fn build_max_min_func(agg_func_desc: &AggFuncDesc, ordinal: usize, is_max: bool) -> Option<MaxMin> {
     let base = base_agg_func(agg_func_desc, ordinal);
     let field_type = &agg_func_desc.base.ret_type;
     let mut eval_type = field_type.eval_type();
@@ -354,7 +358,7 @@ fn build_max_min(agg_func_desc: &AggFuncDesc, ordinal: usize, is_max: bool) -> O
     } else {
         tidb_charset::Collation::from_name(field_type.collation_name()).unwrap_or(tidb_charset::Collation::DEFAULT)
     };
-    Some(Box::new(MaxMin { base, is_max, kind, collation }))
+    Some(MaxMin { base, is_max, kind, collation })
 }
 
 /// Go `buildGroupConcat`.
@@ -523,8 +527,13 @@ fn build_lead_lag(ctx: &dyn Columns, agg_func_desc: &AggFuncDesc, ordinal: usize
     crate::func_lead_lag::BaseLeadLag { base: base_agg_func(agg_func_desc, ordinal), ret_tp, default_expr, offset }
 }
 
-/// Go `buildMaxMinInWindowFunction`. The sliding variants are not yet
-/// ported, so the window MAX/MIN is the plain one.
+/// Go `buildMaxMinInWindowFunction`: the sliding variant of each kind
+/// that has one (a string's compares under its argument's collation, as
+/// the plain one does).
 fn build_max_min_in_window_function(_ctx: &dyn Columns, agg_func_desc: &AggFuncDesc, ordinal: usize, is_max: bool) -> Option<Box<dyn AggFunc>> {
-    build_max_min(agg_func_desc, ordinal, is_max)
+    let base = build_max_min_func(agg_func_desc, ordinal, is_max)?;
+    if !crate::func_max_min::MaxMinSliding::slides(base.kind) {
+        return Some(Box::new(base));
+    }
+    Some(Box::new(crate::func_max_min::MaxMinSliding { inner: base, start: std::sync::atomic::AtomicU64::new(0) }))
 }
