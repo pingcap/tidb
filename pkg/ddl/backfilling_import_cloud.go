@@ -50,8 +50,7 @@ type cloudImportExecutor struct {
 	indexes       []*model.IndexInfo
 	ptbl          table.PhysicalTable
 	cloudStoreURI string
-	backendCtx    ingest.BackendCtx
-	backend       *ingestctrl.Backend
+	ingestor      *ingestctrl.Ingestor
 	metric        *lightningmetric.Common
 	engine        atomic.Pointer[globalsort.Engine]
 	summary       *execute.SubtaskSummary
@@ -79,17 +78,11 @@ func (e *cloudImportExecutor) Init(ctx context.Context) error {
 	e.metric = metrics.RegisterLightningCommonMetricsForDDL(e.job.ID)
 	ctx = lightningmetric.WithCommonMetric(ctx, e.metric)
 	concurrency := int(e.GetResource().CPU.Capacity())
-	cfg, bd, err := ingest.CreateLocalBackend(ctx, e.store, e.job, hasUniqueIndex(e.indexes), false, concurrency)
+	ingestor, err := ingest.CreateIngestor(ctx, e.store, e.job, concurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	bCtx, err := ingest.NewBackendCtxBuilder(ctx, e.store, e.job).Build(cfg, bd)
-	if err != nil {
-		bd.Close()
-		return err
-	}
-	e.backend = bd
-	e.backendCtx = bCtx
+	e.ingestor = ingestor
 	return nil
 }
 
@@ -111,12 +104,7 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
-	localBackend := e.backendCtx.GetLocalBackend()
-	if localBackend == nil {
-		return errors.Errorf("local backend not found")
-	}
-
-	localBackend.SetCollector(&ingestCollector{
+	e.ingestor.SetCollector(&ingestCollector{
 		meterRec: meterRec,
 	})
 
@@ -165,7 +153,7 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	e.engine.Store(eng)
 	defer e.engine.Store(nil)
 
-	err = localBackend.IngestExternalEngine(ctx, eng, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = e.ingestor.IngestExternalEngine(ctx, eng, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	failpoint.Inject("mockCloudImportRunSubtaskError", func(_ failpoint.Value) {
 		err = context.DeadlineExceeded
 	})
@@ -199,10 +187,9 @@ func hasUniqueIndex(idxs []*model.IndexInfo) bool {
 
 func (e *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
-	if e.backendCtx != nil {
-		e.backendCtx.Close()
+	if e.ingestor != nil {
+		e.ingestor.Close()
 	}
-	e.backend.Close()
 	metrics.UnregisterLightningCommonMetricsForDDL(e.job.ID, e.metric)
 	return nil
 }
@@ -228,8 +215,8 @@ func (e *cloudImportExecutor) TaskMetaModified(ctx context.Context, newMeta []by
 	newMaxWriteSpeed := newTaskMeta.Job.ReorgMeta.GetMaxWriteSpeed()
 	if newMaxWriteSpeed != e.job.ReorgMeta.GetMaxWriteSpeed() {
 		e.job.ReorgMeta.SetMaxWriteSpeed(newMaxWriteSpeed)
-		if e.backend != nil {
-			e.backend.UpdateWriteSpeedLimit(newMaxWriteSpeed)
+		if e.ingestor != nil {
+			e.ingestor.UpdateWriteSpeedLimit(newMaxWriteSpeed)
 		}
 	}
 	return nil
@@ -239,7 +226,7 @@ func (e *cloudImportExecutor) TaskMetaModified(ctx context.Context, newMeta []by
 func (e *cloudImportExecutor) ResourceModified(ctx context.Context, newResource *proto.StepResource) error {
 	logutil.Logger(ctx).Info("cloud import executor update resource")
 	newConcurrency := int(newResource.CPU.Capacity())
-	if newConcurrency == e.backend.GetWorkerConcurrency() {
+	if newConcurrency == e.ingestor.GetWorkerConcurrency() {
 		return nil
 	}
 
@@ -253,7 +240,7 @@ func (e *cloudImportExecutor) ResourceModified(ctx context.Context, newResource 
 		return err
 	}
 
-	e.backend.SetWorkerConcurrency(newConcurrency)
+	e.ingestor.SetWorkerConcurrency(newConcurrency)
 	return nil
 }
 

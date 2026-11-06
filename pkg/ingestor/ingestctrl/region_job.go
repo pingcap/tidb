@@ -328,7 +328,7 @@ func newWriteRequest(meta *sst.SSTMeta, resourceGroupName, taskType string) *sst
 	}
 }
 
-func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWriteResult, err error) {
+func (local *Ingestor) doWrite(ctx context.Context, j *regionJob) (ret *tikvWriteResult, err error) {
 	failpoint.Inject("fakeRegionJobs", func() {
 		front := j.injected[0]
 		j.injected = j.injected[1:]
@@ -342,7 +342,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 	apiVersion := local.tikvCodec.GetAPIVersion()
 	clientFactory := local.importClientFactory
 	kvBatchSize := local.KVWriteBatchSize
-	bufferPool := local.engineMgr.getBufferPool()
+	bufferPool := local.bufferPool
 	writeLimiter := local.writeLimiter
 
 	begin := time.Now()
@@ -621,7 +621,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 // ingest tries to finish the regionJob.
 // if any underlying logic has error, ingest will return an error to let caller
 // handle it.
-func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
+func (local *Ingestor) ingest(ctx context.Context, j *regionJob) (err error) {
 	failpoint.Inject("fakeRegionJobs", func() {
 		front := j.injected[0]
 		j.injected = j.injected[1:]
@@ -667,7 +667,7 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 	return lastRetriedErr
 }
 
-func (local *Backend) checkWriteStall(
+func (local *Ingestor) checkWriteStall(
 	ctx context.Context,
 	region *split.RegionInfo,
 ) (bool, *sst.IngestResponse, error) {
@@ -692,7 +692,7 @@ func (local *Backend) checkWriteStall(
 
 // doIngest send ingest commands to TiKV based on regionJob.writeResult.sstMeta.
 // When meet error, it will remove finished sstMetas before return.
-func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestResponse, error) {
+func (local *Ingestor) doIngest(ctx context.Context, j *regionJob) (*sst.IngestResponse, error) {
 	failpoint.Inject("diskFullOnIngest", func() {
 		failpoint.Return(&sst.IngestResponse{
 			Error: &errorpb.Error{
@@ -815,12 +815,12 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 }
 
 // UpdateWriteSpeedLimit updates the write limiter of the backend.
-func (local *Backend) UpdateWriteSpeedLimit(limit int) {
+func (local *Ingestor) UpdateWriteSpeedLimit(limit int) {
 	local.writeLimiter.UpdateLimit(limit)
 }
 
 // GetWriteSpeedLimit returns the speed of the write limiter.
-func (local *Backend) GetWriteSpeedLimit() int {
+func (local *Ingestor) GetWriteSpeedLimit() int {
 	return local.writeLimiter.Limit()
 }
 

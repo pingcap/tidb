@@ -440,7 +440,7 @@ func TestSplitAndScatterRegionInBatchesTwoLevel(t *testing.T) {
 
 	t.Run("large split keys trigger coarse and fine layers", func(t *testing.T) {
 		splitCli := &testSplitClient{}
-		local := &Backend{splitCli: splitCli}
+		local := &Ingestor{splitCli: splitCli}
 
 		err := local.splitAndScatterRegionInBatches(context.Background(), makeSplitKeys(121), 50, 0)
 		require.NoError(t, err)
@@ -450,7 +450,7 @@ func TestSplitAndScatterRegionInBatchesTwoLevel(t *testing.T) {
 
 	t.Run("small split keys only use fine layer", func(t *testing.T) {
 		splitCli := &testSplitClient{}
-		local := &Backend{splitCli: splitCli}
+		local := &Ingestor{splitCli: splitCli}
 
 		err := local.splitAndScatterRegionInBatches(context.Background(), makeSplitKeys(coarseGrainedSplitKeysThreshold), 50, 0)
 		require.NoError(t, err)
@@ -470,7 +470,7 @@ func TestSplitAndScatterRegionInBatchesTwoLevel(t *testing.T) {
 				}, nil
 			},
 		}
-		local := &Backend{splitCli: splitCli}
+		local := &Ingestor{splitCli: splitCli}
 
 		err := local.splitAndScatterRegionInBatches(context.Background(), makeSplitKeys(121), 50, 0)
 		require.ErrorContains(t, err, "mock split error")
@@ -479,7 +479,7 @@ func TestSplitAndScatterRegionInBatchesTwoLevel(t *testing.T) {
 
 	t.Run("limiter is still enforced after restoring two levels", func(t *testing.T) {
 		splitCli := &testSplitClient{}
-		local := &Backend{splitCli: splitCli}
+		local := &Ingestor{splitCli: splitCli}
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
 

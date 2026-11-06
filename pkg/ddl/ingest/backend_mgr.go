@@ -246,6 +246,33 @@ func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, h
 	return cfg, be, err
 }
 
+// CreateIngestor creates an ingestor for globally sorted index data without
+// preparing local sort directories. The storage retains ownership of its PD client.
+func CreateIngestor(ctx context.Context, store kv.Storage, job *model.Job, adjustedWorkerConcurrency int) (*ingestctrl.Ingestor, error) {
+	ctx = logutil.WithLogger(ctx, logutil.Logger(ctx))
+	intest.Assert(job.Type == model.ActionAddPrimaryKey ||
+		job.Type == model.ActionAddIndex ||
+		job.Type == model.ActionModifyColumn)
+	intest.Assert(job.ReorgMeta != nil)
+	cfg := genConfig(ctx, "", LitMemRoot, false, job.ReorgMeta.ResourceGroupName,
+		store.GetKeyspace(), job.ReorgMeta.GetConcurrency(), job.ReorgMeta.GetMaxWriteSpeed(), true)
+	if adjustedWorkerConcurrency > 0 {
+		cfg.SetWorkerConcurrency(adjustedWorkerConcurrency)
+	}
+	tls, err := NewDDLTLS()
+	if err != nil {
+		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Error(err))
+		return nil, err
+	}
+
+	ddllogutil.DDLIngestLogger().Info("create ingestor for globally sorted index data",
+		zap.String("keyspaceName", cfg.KeyspaceName),
+		zap.Int64("job ID", job.ID))
+	//nolint: forcetypeassert
+	pdCli := store.(kv.StorageWithPD).GetPDClient().(*tikv.CodecPDClient)
+	return ingestctrl.NewIngestor(ctx, tls, *cfg, pdCli)
+}
+
 const checkpointUpdateInterval = 10 * time.Minute
 
 func newBackendContext(
