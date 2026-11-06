@@ -2866,6 +2866,16 @@ func TestUpdateColumnPrivilege(t *testing.T) {
 	userTk.MustExec(`UPDATE test.g SET a = 2`)
 	tk.MustQuery(`SELECT a, b, c FROM test.g`).Check(testkit.Rows("2 3 4"))
 	userTk.MustGetErrCode(`UPDATE test.g SET a = 3 WHERE b = 3`, errno.ErrColumnaccessDenied)
+
+	// Neither do virtual generated columns and expression indexes of a table
+	// read in a subquery.
+	tk.MustExec(`CREATE TABLE test.gs (a int, secret int, v int AS (secret + 1), KEY ((secret * 2)))`)
+	tk.MustExec(`INSERT INTO test.gs(a, secret) VALUES (1, 42)`)
+	tk.MustExec(`GRANT SELECT(a) ON test.gs TO 'testuser'@'localhost'`)
+	userTk.MustQuery(`SELECT a FROM test.gs`).Check(testkit.Rows("1"))
+	userTk.MustQuery(`SELECT a FROM test.gs WHERE a IN (SELECT a FROM test.gs)`).Check(testkit.Rows("1"))
+	userTk.MustQuery(`SELECT (SELECT a FROM test.gs)`).Check(testkit.Rows("1"))
+	userTk.MustGetErrCode(`SELECT (SELECT v FROM test.gs)`, errno.ErrColumnaccessDenied)
 }
 
 func TestColumnPrivilege4NonPreparePlanCache(t *testing.T) {

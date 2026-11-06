@@ -5287,7 +5287,11 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	ds.SampleInfo = tablesampler.NewTableSampleInfo(tn.TableSample, schema, b.partitionedTable)
 	b.isSampling = ds.SampleInfo != nil
 
+	// Virtual generated columns are computed internally from the columns they
+	// reference, which needs no SELECT on them; reading the generated column
+	// itself is checked where it is referenced.
 	originColPriv := b.checkColPriv
+	b.checkColPriv = noCheckOption
 	for i, colExpr := range ds.Schema().Columns {
 		var expr expression.Expression
 		if i < len(columns) {
