@@ -26,3 +26,11 @@ const (
 	// KindBytes is a binary column.
 	KindBytes
 )
+
+// MaxBufferedValueSize bounds how much of a row the SQL and CSV writers hold in
+// their buffers. They encode each quoted value in pieces of about this many
+// input bytes and write the buffer out whenever it reaches this size, so the
+// buffer stays at a few MiB however wide the row is. Without it the buffer
+// grows to the encoded size of the widest row, which is several times the raw
+// size for values of hundreds of MiB.
+const MaxBufferedValueSize = 1 << 20
