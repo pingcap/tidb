@@ -41,7 +41,9 @@ func FastClonePointGetForPlanCache(newCtx base.PlanContext, src, dst *physicalop
 	dst.TblInfo = src.TblInfo
 	dst.IndexInfo = src.IndexInfo
 	dst.PartitionIdx = nil // partition prune will be triggered during execution phase
-	dst.Handle = nil       // handle will be set during rebuild phase
+	// Handle is an immutable IntHandle, or nil for index lookups. Literal fast
+	// plans have no rebuild input; parameterized handles are replaced during rebuild.
+	dst.Handle = src.Handle
 	if src.HandleConstant == nil {
 		dst.HandleConstant = nil
 	} else {
