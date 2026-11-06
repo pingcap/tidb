@@ -1411,12 +1411,19 @@ func (e *BasicRuntimeStats) GetActRows() int64 {
 }
 
 // Clone implements the RuntimeStats interface.
+<<<<<<< HEAD
 func (e *BasicRuntimeStats) Clone() RuntimeStats {
 	result := &BasicRuntimeStats{}
 	result.loop.Store(e.loop.Load())
 	result.consume.Store(e.consume.Load())
 	result.rows.Store(e.rows.Load())
 	return result
+=======
+// BasicRuntimeStats shouldn't implement Clone interface because all executors with the same executor_id
+// should share the same BasicRuntimeStats, duplicated BasicRuntimeStats are easy to cause mistakes.
+func (*BasicRuntimeStats) Clone() RuntimeStats {
+	panic("BasicRuntimeStats should not implement Clone function")
+>>>>>>> e200977337a (util,executor: Fix incorrect execution info issue of pessimistic lock error (#60056))
 }
 
 // Merge implements the RuntimeStats interface.
