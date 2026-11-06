@@ -340,8 +340,8 @@ func TestAlterTableWithMaterializedViewDependencies(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int not null, b int not null)")
-	tk.MustExec("insert into t values (1, 10), (2, -1)")
+	tk.MustExec("create table t (a int not null, b int not null, c varchar(20) not null default 'a', d decimal(10,2) not null default 0)")
+	tk.MustExec("insert into t (a, b) values (1, 10), (2, -1)")
 	tk.MustExec("create materialized view log on t (a, b)")
 	tk.MustExec("create materialized view mv (a, cnt) as select a, count(1) from t group by a")
 	tk.MustExec("create materialized view mv_where (a, cnt) as select a, count(1) from t where b > 0 group by a")
@@ -358,4 +358,11 @@ func TestAlterTableWithMaterializedViewDependencies(t *testing.T) {
 	require.ErrorContains(t, err, "does not support renaming")
 	err = tk.ExecToErr("alter table t modify column b smallint")
 	require.ErrorContains(t, err, "only supports no-reorg compatible type changes")
+
+	// Columns neither tracked by the materialized view log nor referenced by dependent materialized views
+	// are not restricted.
+	tk.MustExec("alter table t modify column c varchar(50) not null default 'b'")
+	tk.MustExec("alter table t change column c c2 varchar(50) not null default 'c' after a")
+	tk.MustExec("alter table t modify column d decimal(20,6) not null default 1.234567")
+	tk.MustQuery("select a, b, c2, d from t order by a").Check(testkit.Rows("1 10 a 0.000000", "2 -1 a 0.000000"))
 }

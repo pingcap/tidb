@@ -1826,7 +1826,7 @@ func isAlterTableOnlyIndexOperations(specs []*ast.AlterTableSpec) bool {
 	return true
 }
 
-func checkAlterTableOnlyNonRenamingModifyOrChangeColumns(specs []*ast.AlterTableSpec, op string) error {
+func checkAlterTableOnlyModifyOrChangeColumns(specs []*ast.AlterTableSpec, op string) error {
 	if len(specs) == 0 {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 			fmt.Sprintf("%s on base table with materialized view dependencies only supports no-reorg compatible type changes", op),
@@ -1834,14 +1834,8 @@ func checkAlterTableOnlyNonRenamingModifyOrChangeColumns(specs []*ast.AlterTable
 	}
 	for _, spec := range specs {
 		switch spec.Tp {
-		case ast.AlterTableModifyColumn:
-		case ast.AlterTableChangeColumn:
-			if len(spec.NewColumns) != 1 || spec.OldColumnName == nil || spec.NewColumns[0] == nil ||
-				spec.NewColumns[0].Name == nil || spec.OldColumnName.Name.L != spec.NewColumns[0].Name.Name.L {
-				return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
-					"CHANGE COLUMN on base table with materialized view dependencies does not support renaming",
-				)
-			}
+		// Renaming is validated per column in validateMaterializedViewBaseModifyColumn.
+		case ast.AlterTableModifyColumn, ast.AlterTableChangeColumn:
 		default:
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 				fmt.Sprintf("%s on base table with materialized view dependencies only supports no-reorg compatible type changes", op),
@@ -1973,7 +1967,7 @@ func checkAlterTableMaterializedViewConstraints(
 		if isAlterTiFlashReplica(specs) || isAlterTableOnlyIndexOperations(specs) || isAlterTableOnlyAddColumnsAtEnd(specs) {
 			return nil
 		}
-		if err := checkAlterTableOnlyNonRenamingModifyOrChangeColumns(specs, op); err != nil {
+		if err := checkAlterTableOnlyModifyOrChangeColumns(specs, op); err != nil {
 			return err
 		}
 	}
