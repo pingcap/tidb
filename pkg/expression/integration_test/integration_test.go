@@ -2212,6 +2212,25 @@ func TestDecodetoChunkReuse(t *testing.T) {
 	rs.Close()
 }
 
+func TestDecimalMulLeadingZeros(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec("use test")
+	tk.MustExec("create table decimal_mul (b decimal(38,6))")
+	tk.MustExec("insert into decimal_mul values ('99999999999999999999999999999999.567891')")
+	for _, vectorized := range []string{"OFF", "ON"} {
+		tk.MustExec("set tidb_enable_vectorized_expression = " + vectorized)
+		tk.MustQuery(`select 99999999999999999999999999999999.000000 *
+			00000000000000000000000000000001.999999`).Check(
+			testkit.Rows("199999899999999999999999999999998.000001000000"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		for _, factor := range []string{"1.123456", "00000000000000000000000000000001.123456"} {
+			tk.MustQuery("select b * " + factor + ", " + factor + " * b from decimal_mul").Check(
+				testkit.Rows("112345599999999999999999999999999.514544551296 112345599999999999999999999999999.514544551296"))
+			tk.MustQuery("show warnings").Check(testkit.Rows())
+		}
+	}
+}
+
 func TestIssue16697(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
