@@ -339,6 +339,15 @@ func getRows(t *testing.T, tk *testkit.TestKit, cnt int, maxSecs int, query stri
 	return rows
 }
 
+func getAtLeastRows(t *testing.T, tk *testkit.TestKit, cnt int, maxSecs int, query string) [][]any {
+	var rows [][]any
+	require.Eventually(t, func() bool {
+		rows = tk.MustQuery(query).Rows()
+		return len(rows) >= cnt
+	}, time.Second*time.Duration(maxSecs*cnt), time.Millisecond*100)
+	return rows
+}
+
 func validateDate(t *testing.T, row []any, idx int, lastRowTs time.Time, maxSecs int) time.Time {
 	loc := lastRowTs.Location()
 	actualTs, err := time.ParseInLocation("2006-01-02 15:04:05", row[idx].(string), loc)
@@ -349,7 +358,7 @@ func validateDate(t *testing.T, row []any, idx int, lastRowTs time.Time, maxSecs
 }
 
 func SamplingTimingWorker(t *testing.T, tk *testkit.TestKit, lastRowTs time.Time, cnt int, maxSecs int) time.Time {
-	rows := getRows(t, tk, cnt, maxSecs, "select instance_id, ts from "+mysql.WorkloadSchema+".hist_memory_usage where ts > '"+lastRowTs.Format("2006-01-02 15:04:05")+"' order by ts asc")
+	rows := getAtLeastRows(t, tk, cnt, maxSecs, "select instance_id, ts from "+mysql.WorkloadSchema+".hist_memory_usage where ts > '"+lastRowTs.Format("2006-01-02 15:04:05")+"' order by ts asc")
 
 	for _, row := range rows {
 		// check that the instance_id is correct
