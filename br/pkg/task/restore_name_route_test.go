@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/restore/nameroute"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -811,6 +812,34 @@ func TestRestoreConfigNameRoutingValidationAndHash(t *testing.T) {
 		// Fixed fingerprint of the immutable config before rename support,
 		// independent of the current logging redactor and hash implementation.
 		require.Equal(t, "8e7fef16c96469adb3d8a2e4de1e22cb6ea902f111b1b599956e5be3b6c92c3d", fmt.Sprintf("%x", actual))
+	})
+
+	t.Run("repo snapshot and canonical routes both affect config hash", func(t *testing.T) {
+		cfg := RestoreConfig{
+			Layout:   repo.LayoutRepo,
+			BackupID: repo.BackupID(1),
+			Rename:   []string{"source_b:target_b", "source_a:target_a"},
+		}
+		originalHash, err := cfg.Hash(FullRestoreCmd)
+		require.NoError(t, err)
+
+		reordered := cfg
+		reordered.Rename = []string{"source_a:target_a", "source_b:target_b"}
+		reorderedHash, err := reordered.Hash(FullRestoreCmd)
+		require.NoError(t, err)
+		require.Equal(t, originalHash, reorderedHash)
+
+		otherSnapshot := cfg
+		otherSnapshot.BackupID = repo.BackupID(2)
+		otherSnapshotHash, err := otherSnapshot.Hash(FullRestoreCmd)
+		require.NoError(t, err)
+		require.NotEqual(t, originalHash, otherSnapshotHash)
+
+		otherRoute := cfg
+		otherRoute.Rename = []string{"source_a:target_a", "source_b:other_target"}
+		otherRouteHash, err := otherRoute.Hash(FullRestoreCmd)
+		require.NoError(t, err)
+		require.NotEqual(t, originalHash, otherRouteHash)
 	})
 
 	t.Run("partial restore covers filter and rename", func(t *testing.T) {

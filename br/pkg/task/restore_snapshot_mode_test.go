@@ -22,6 +22,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -29,7 +30,7 @@ import (
 // TestCheckSnapshotRestoreMode verifies that --rename is only rejected for raw
 // and incremental snapshot restores, and accepted for a full snapshot restore.
 func TestCheckSnapshotRestoreMode(t *testing.T) {
-	testCheck := func(t *testing.T, meta *backuppb.BackupMeta, rename []string) error {
+	testCheck := func(t *testing.T, layout repo.Layout, meta *backuppb.BackupMeta, rename []string) error {
 		ctx := context.Background()
 		store, err := storage.NewLocalStorage(t.TempDir())
 		require.NoError(t, err)
@@ -37,7 +38,15 @@ func TestCheckSnapshotRestoreMode(t *testing.T) {
 		meta.BackupSchemaVersion = backuppb.BackupSchemaVersion
 		data, err := proto.Marshal(meta)
 		require.NoError(t, err)
-		require.NoError(t, store.WriteFile(ctx, metautil.MetaFile, data))
+		metaPath := metautil.MetaFile
+		var backupID repo.BackupID
+		if layout.IsRepo() {
+			_, err := repo.EnsureRepo(ctx, store, "test")
+			require.NoError(t, err)
+			backupID = repo.BackupID(1)
+			metaPath = repo.SnapshotMetadataFile(backupID)
+		}
+		require.NoError(t, store.WriteFile(ctx, metaPath, data))
 
 		cfg := &RestoreConfig{
 			Config: Config{
@@ -46,23 +55,29 @@ func TestCheckSnapshotRestoreMode(t *testing.T) {
 					CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 				},
 			},
-			Rename: rename,
+			Layout:   layout,
+			BackupID: backupID,
+			Rename:   rename,
 		}
 		return checkSnapshotRestoreMode(ctx, cfg)
 	}
 
-	t.Run("reject raw backup", func(t *testing.T) {
-		err := testCheck(t, &backuppb.BackupMeta{IsRawKv: true}, nil)
-		require.ErrorContains(t, err, "restore mode mismatch")
-	})
+	for _, layout := range []repo.Layout{repo.LayoutLegacy, repo.LayoutRepo} {
+		t.Run(layout.String(), func(t *testing.T) {
+			t.Run("reject raw backup", func(t *testing.T) {
+				err := testCheck(t, layout, &backuppb.BackupMeta{IsRawKv: true}, nil)
+				require.ErrorContains(t, err, "restore mode mismatch")
+			})
 
-	t.Run("allow full snapshot rename", func(t *testing.T) {
-		err := testCheck(t, &backuppb.BackupMeta{StartVersion: 0, EndVersion: 2}, []string{"source:target"})
-		require.NoError(t, err)
-	})
+			t.Run("allow full snapshot rename", func(t *testing.T) {
+				err := testCheck(t, layout, &backuppb.BackupMeta{StartVersion: 0, EndVersion: 2}, []string{"source:target"})
+				require.NoError(t, err)
+			})
 
-	t.Run("reject incremental snapshot rename", func(t *testing.T) {
-		err := testCheck(t, &backuppb.BackupMeta{StartVersion: 1, EndVersion: 2}, []string{"source:target"})
-		require.ErrorContains(t, err, "--rename is not supported for incremental snapshot restore")
-	})
+			t.Run("reject incremental snapshot rename", func(t *testing.T) {
+				err := testCheck(t, layout, &backuppb.BackupMeta{StartVersion: 1, EndVersion: 2}, []string{"source:target"})
+				require.ErrorContains(t, err, "--rename is not supported for incremental snapshot restore")
+			})
+		})
+	}
 }

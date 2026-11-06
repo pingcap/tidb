@@ -241,6 +241,9 @@ const (
 type RegistrationInfo struct {
 	// filter patterns
 	FilterStrings []string
+	// FilterHashInput is the exact input hashed into filter_hash when looking up
+	// or creating registrations. It should already include any repo backup scope.
+	FilterHashInput string
 	// RouteStrings contains canonical source-to-target schema/table routes.
 	RouteStrings []string
 	// RouteHash is the stable SHA-256 identity of RouteStrings.
@@ -263,6 +266,9 @@ type RegistrationInfo struct {
 // registrationFilterHashInput returns the value hashed into filter_hash when
 // looking up or creating registrations.
 func registrationFilterHashInput(info RegistrationInfo) string {
+	if info.FilterHashInput != "" {
+		return info.FilterHashInput
+	}
 	return strings.Join(info.FilterStrings, FilterSeparator)
 }
 
@@ -1329,6 +1335,7 @@ func (r *Registry) FindAndDeleteMatchingTask(ctx context.Context,
 
 	log.Info("searching for matching task to delete",
 		zap.String("filter_strings", filterStrings),
+		zap.String("filter_hash_input", filterHashInput),
 		zap.Uint64("start_ts", info.StartTS),
 		zap.Uint64("restored_ts", info.RestoredTS),
 		zap.Uint64("upstream_cluster_id", info.UpstreamClusterID),

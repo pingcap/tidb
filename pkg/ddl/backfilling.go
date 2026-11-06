@@ -1200,6 +1200,9 @@ func iterateSnapshotKeys(ctx *ReorgContext, store kv.Storage, priority int, keyP
 	}
 	snap.SetOption(kv.ResourceGroupName, ctx.resourceGroupName)
 
+	failpoint.Inject("mockIterateSnapshotKeysError", func() {
+		failpoint.Return(errors.New("mock snapshot scan error"))
+	})
 	it, err := snap.Iter(firstKey, upperBound)
 	if err != nil {
 		return errors.Trace(err)

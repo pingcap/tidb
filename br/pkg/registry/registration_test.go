@@ -78,6 +78,30 @@ func TestNormalizeRegistrationRoutes(t *testing.T) {
 	require.Greater(t, len(encoded), 64*1024)
 }
 
+func TestRegistrationIdentityWithSnapshotScopeAndRoutes(t *testing.T) {
+	first := RegistrationInfo{
+		FilterStrings:   []string{"source.*"},
+		FilterHashInput: "repo\x00source.*\x001",
+		RouteStrings:    []string{"source:target"},
+	}
+	otherSnapshot := first
+	otherSnapshot.FilterHashInput = "repo\x00source.*\x002"
+	otherRoute := first
+	otherRoute.RouteStrings = []string{"source:other_target"}
+	legacy := RegistrationInfo{FilterStrings: first.FilterStrings}
+
+	for _, info := range []*RegistrationInfo{&first, &otherSnapshot, &otherRoute, &legacy} {
+		require.NoError(t, normalizeRegistrationRoutes(info))
+	}
+
+	require.Equal(t, first.FilterHashInput, registrationFilterHashInput(first))
+	require.NotEqual(t, registrationFilterHashInput(first), registrationFilterHashInput(otherSnapshot))
+	require.Equal(t, first.RouteHash, otherSnapshot.RouteHash)
+	require.Equal(t, registrationFilterHashInput(first), registrationFilterHashInput(otherRoute))
+	require.NotEqual(t, first.RouteHash, otherRoute.RouteHash)
+	require.Equal(t, "source.*", registrationFilterHashInput(legacy))
+}
+
 func TestRegistrationClaimsRoutedTarget(t *testing.T) {
 	testCases := []struct {
 		name        string

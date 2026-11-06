@@ -628,12 +628,12 @@ func TestTxnWriteThroughputSLI(t *testing.T) {
 	mustExec("insert into t select b, a from t")
 	require.True(t, writeSLI.IsInvalid())
 	require.True(t, writeSLI.IsSmallTxn())
-	require.Equal(t, "invalid: true, affectRow: 2, writeSize: 58, readKeys: 0, writeKeys: 2, writeTime: 1s", tk.Session().GetTxnWriteThroughputSLI().String())
+	require.Equal(t, "invalid: true, affectRow: 2, writeSize: 58, readKeys: 2, writeKeys: 2, writeTime: 1s", tk.Session().GetTxnWriteThroughputSLI().String())
 	tk.Session().GetTxnWriteThroughputSLI().Reset()
 
 	// Test for delete
 	mustExec("delete from t")
-	require.Equal(t, "invalid: false, affectRow: 4, writeSize: 76, readKeys: 0, writeKeys: 4, writeTime: 1s", tk.Session().GetTxnWriteThroughputSLI().String())
+	require.Equal(t, "invalid: false, affectRow: 4, writeSize: 76, readKeys: 4, writeKeys: 4, writeTime: 1s", tk.Session().GetTxnWriteThroughputSLI().String())
 	tk.Session().GetTxnWriteThroughputSLI().Reset()
 
 	// Test insert not in small txn

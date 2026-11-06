@@ -1087,6 +1087,16 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 		} else {
 			// It works for both normal index scan and index merge scan.
 			copTask.finishIndexPlan()
+			if copTask.tablePlan == nil {
+				// Keep TopN at root when the order-by columns cannot be resolved against the
+				// index plan but the reader still has no table-side after finishing the index plan.
+				// This can happen when a virtual generated column is covered by an expression index.
+				rootTask := t.ConvertToRootTask(p.SCtx())
+				if len(p.GetPartitionBy()) > 0 {
+					return t
+				}
+				return attachPlan2Task(p, rootTask)
+			}
 			pushedDownTopN = p.getPushedDownTopN(copTask.tablePlan)
 			copTask.tablePlan = pushedDownTopN
 		}
