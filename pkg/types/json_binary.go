@@ -596,11 +596,10 @@ type binaryJSONTextSpan struct {
 type binaryJSONTextParser struct {
 	// input is a bytes.Buffer, which the decoder parses directly instead of
 	// copying it first.
-	input         bytes.Buffer
-	dec           jsontext.Decoder
-	nodes         []binaryJSONTextNode
-	childOrder    []int32
-	arrayChildren []int32 // Unfinished arrays; negative entries encode -1-literal.
+	input      bytes.Buffer
+	dec        jsontext.Decoder
+	nodes      []binaryJSONTextNode
+	childOrder []int32
 	// text holds the unquoted strings and keys, so that they need no allocation
 	// each.
 	text       []byte
@@ -659,7 +658,6 @@ func (parser *binaryJSONTextParser) reset(data []byte) {
 	parser.dec.Reset(&parser.input, jsontext.AllowDuplicateNames(true), jsontext.AllowInvalidUTF8(true))
 	parser.nodes = parser.nodes[:0]
 	parser.childOrder = parser.childOrder[:0]
-	parser.arrayChildren = parser.arrayChildren[:0]
 	parser.text = parser.text[:0]
 	parser.keyTooLong = false
 	parser.badNumber = false
@@ -761,9 +759,6 @@ func (parser *binaryJSONTextParser) decodeValue() (int, error) {
 // after removing duplicate keys, in the order that appendBinaryObject checks
 // them: the keys of an object before its values.
 func (parser *binaryJSONTextParser) validateReachable(nodeIndex int) error {
-	if nodeIndex < 0 {
-		return nil
-	}
 	node := parser.nodes[nodeIndex]
 	if node.typeCode == binaryJSONInvalidNumberTypeCode {
 		_, _, err := parseBinaryNumber(json.Number(parser.textOf(node.value)))
@@ -791,39 +786,18 @@ func (parser *binaryJSONTextParser) validateReachable(nodeIndex int) error {
 
 func (parser *binaryJSONTextParser) decodeArray() (int, error) {
 	nodeIndex := parser.appendNode(binaryJSONTextNode{typeCode: JSONTypeCodeArray})
-	start := len(parser.arrayChildren)
+	firstChild, lastChild := -1, -1
 	for parser.dec.PeekKind() != ']' {
-		var child int
-		switch parser.dec.PeekKind() {
-		case 'n', 't', 'f':
-			tok, err := parser.dec.ReadToken()
-			if err != nil {
-				return 0, err
-			}
-			literal := JSONLiteralNil
-			switch tok.Kind() {
-			case 't':
-				literal = JSONLiteralTrue
-			case 'f':
-				literal = JSONLiteralFalse
-			}
-			child = -1 - int(literal)
-		default:
-			var err error
-			child, err = parser.decodeValue()
-			if err != nil {
-				return 0, err
-			}
+		child, err := parser.decodeValue()
+		if err != nil {
+			return 0, err
 		}
-		parser.arrayChildren = append(parser.arrayChildren, int32(child))
+		firstChild, lastChild = parser.linkChild(firstChild, lastChild, child)
 	}
 	if _, err := parser.dec.ReadToken(); err != nil {
 		return 0, err
 	}
-	childStart := len(parser.childOrder)
-	parser.childOrder = append(parser.childOrder, parser.arrayChildren[start:]...)
-	parser.arrayChildren = parser.arrayChildren[:start]
-	parser.finishContainer(nodeIndex, childStart, false)
+	parser.finishContainer(nodeIndex, firstChild, false)
 	return nodeIndex, nil
 }
 
@@ -848,11 +822,7 @@ func (parser *binaryJSONTextParser) decodeObject() (int, error) {
 	if _, err := parser.dec.ReadToken(); err != nil {
 		return 0, err
 	}
-	childStart := len(parser.childOrder)
-	for child := firstChild; child != -1; child = int(parser.nodes[child].nextSibling) {
-		parser.childOrder = append(parser.childOrder, int32(child))
-	}
-	parser.finishContainer(nodeIndex, childStart, true)
+	parser.finishContainer(nodeIndex, firstChild, true)
 	return nodeIndex, nil
 }
 
@@ -864,7 +834,11 @@ func (parser *binaryJSONTextParser) linkChild(firstChild, lastChild, child int) 
 	return firstChild, child
 }
 
-func (parser *binaryJSONTextParser) finishContainer(nodeIndex, childStart int, object bool) {
+func (parser *binaryJSONTextParser) finishContainer(nodeIndex, firstChild int, object bool) {
+	childStart := len(parser.childOrder)
+	for child := firstChild; child != -1; child = int(parser.nodes[child].nextSibling) {
+		parser.childOrder = append(parser.childOrder, int32(child))
+	}
 	if object {
 		parser.sortAndDeduplicateObjectChildren(childStart)
 	}
@@ -878,10 +852,6 @@ func (parser *binaryJSONTextParser) finishContainer(nodeIndex, childStart int, o
 		node.valueSize += uint64(int(node.childCount) * keyEntrySize)
 	}
 	for _, childIndex := range parser.childOrder[childStart:] {
-		if childIndex < 0 {
-			node.depth = max(node.depth, 2)
-			continue
-		}
 		child := parser.nodes[int(childIndex)]
 		node.depth = max(node.depth, child.depth+1)
 		if object {
@@ -983,11 +953,6 @@ func (parser *binaryJSONTextParser) encodeChildValue(
 	entryOffset int,
 	childIndex int,
 ) []byte {
-	if childIndex < 0 {
-		buf[entryOffset] = JSONTypeCodeLiteral
-		buf[entryOffset+1] = byte(-1 - childIndex)
-		return buf
-	}
 	child := parser.nodes[childIndex]
 	buf[entryOffset] = child.typeCode
 	if child.typeCode == JSONTypeCodeLiteral {
