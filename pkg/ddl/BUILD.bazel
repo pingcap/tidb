@@ -383,6 +383,7 @@ go_test(
         "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/metrics",
+        "//pkg/owner",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
