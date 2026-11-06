@@ -181,16 +181,41 @@ func UpdateStatsMetaVerAndLastHistUpdateVer(
 	sctx sessionctx.Context,
 	physicalID int64,
 ) (uint64, error) {
+	return updateStatsMetaVersion(ctx, sctx, true, physicalID)
+}
+
+// UpdateStatsMetaVer updates the version to the newest TS for the tables.
+// It keeps last_stats_histograms_version, so the stats cache does not reload the column and index stats.
+func UpdateStatsMetaVer(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	physicalIDs ...int64,
+) (uint64, error) {
+	return updateStatsMetaVersion(ctx, sctx, false, physicalIDs...)
+}
+
+func updateStatsMetaVersion(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	updateHistVersion bool,
+	physicalIDs ...int64,
+) (uint64, error) {
 	startTS, err := statsutil.GetStartTS(sctx)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if _, err = statsutil.ExecWithCtx(
-		ctx,
-		sctx,
-		"update mysql.stats_meta set version=%?, last_stats_histograms_version=%? where table_id =%?",
-		startTS, startTS, physicalID,
-	); err != nil {
+	ids := make([]string, 0, len(physicalIDs))
+	for _, id := range physicalIDs {
+		ids = append(ids, fmt.Sprintf("%d", id))
+	}
+	sql := "update mysql.stats_meta set version = %?"
+	args := []any{startTS}
+	if updateHistVersion {
+		sql += ", last_stats_histograms_version = %?"
+		args = append(args, startTS)
+	}
+	sql += fmt.Sprintf(" where table_id in (%s)", strings.Join(ids, ","))
+	if _, err = statsutil.ExecWithCtx(ctx, sctx, sql, args...); err != nil {
 		return 0, errors.Trace(err)
 	}
 	return startTS, nil
