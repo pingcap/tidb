@@ -88,7 +88,7 @@ type evalCtxOptionsTestState struct {
 }
 
 func getEvalCtxOptionsForTest(t *testing.T) ([]EvalCtxOption, *evalCtxOptionsTestState) {
-	loc, err := time.LoadLocation("US/Eastern")
+	loc, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)
 	s := &evalCtxOptionsTestState{
 		now:         time.Now(),
@@ -171,7 +171,7 @@ func checkOptionsStaticEvalCtx(t *testing.T, ctx *EvalContext, s *evalCtxOptions
 }
 
 func TestStaticEvalCtxCurrentTime(t *testing.T) {
-	loc1, err := time.LoadLocation("US/Eastern")
+	loc1, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)
 
 	tm := time.UnixMicro(123456789).In(loc1)
@@ -514,6 +514,9 @@ func TestMakeEvalContextStatic(t *testing.T) {
 }
 
 func TestEvalCtxLoadSystemVars(t *testing.T) {
+	originalRedactLog := errors.RedactLogEnabled.Load()
+	t.Cleanup(func() { errors.RedactLogEnabled.Store(originalRedactLog) })
+
 	vars := []struct {
 		name   string
 		val    string
@@ -560,10 +563,10 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 		},
 		{
 			name:  strings.ToUpper("tidb_redact_log"), // test for settings an upper case variable
-			val:   "ON",
+			val:   "MARKER",
 			field: "$.enableRedactLog",
 			assert: func(ctx *EvalContext, vars *variable.SessionVars) {
-				require.Equal(t, "ON", ctx.GetTiDBRedactLog())
+				require.Equal(t, "MARKER", ctx.GetTiDBRedactLog())
 				require.Equal(t, vars.EnableRedactLog, ctx.GetTiDBRedactLog())
 			},
 		},

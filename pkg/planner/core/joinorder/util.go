@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -163,6 +164,191 @@ func BuildLeadingTreeFromList[T any](
 	}
 
 	return currentJoin, remainingGroups, true, nil
+}
+
+type exprReplacer func(expr expression.Expression) (newExpr expression.Expression, replaced bool)
+
+// rewriteExprTree rewrites an expression tree in a best-effort, copy-on-write way.
+//
+// The replacer is applied in pre-order (parent before children). If it replaces a node,
+// the returned expression will be rewritten again so callers can implement recursive
+// substitutions (e.g. colExprMap chains) without duplicating traversal logic.
+func rewriteExprTree(expr expression.Expression, replace exprReplacer) expression.Expression {
+	if expr == nil {
+		return nil
+	}
+
+	if replace != nil {
+		if newExpr, replaced := replace(expr); replaced {
+			if newExpr == nil {
+				return nil
+			}
+			if newExpr != expr {
+				return rewriteExprTree(newExpr, replace)
+			}
+		}
+	}
+
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return expr
+	}
+
+	// Copy-on-write: only clone the function node when any argument changes.
+	oldArgs := sf.GetArgs()
+	var newArgs []expression.Expression
+	for i, arg := range oldArgs {
+		rewrittenArg := rewriteExprTree(arg, replace)
+		if newArgs == nil {
+			if rewrittenArg == arg {
+				continue
+			}
+			newArgs = make([]expression.Expression, len(oldArgs))
+			copy(newArgs, oldArgs[:i])
+		}
+		newArgs[i] = rewrittenArg
+	}
+	if newArgs == nil {
+		return sf
+	}
+
+	newSf := sf.Clone().(*expression.ScalarFunction)
+	args := newSf.GetArgs()
+	for i := range args {
+		args[i] = newArgs[i]
+	}
+	// Args changed: clear cached hash so CanonicalHashCode reflects rewritten children.
+	newSf.CleanHashCode()
+	return newSf
+}
+
+// SubstituteColsInEqEdges substitutes derived columns in equality edges using colExprMap.
+func SubstituteColsInEqEdges(edges []*expression.ScalarFunction, colExprMap map[int64]expression.Expression) []*expression.ScalarFunction {
+	result := make([]*expression.ScalarFunction, 0, len(edges))
+	for _, edge := range edges {
+		substituted := SubstituteColsInExpr(edge, colExprMap)
+		if sf, ok := substituted.(*expression.ScalarFunction); ok {
+			result = append(result, sf)
+		} else {
+			result = append(result, edge)
+		}
+	}
+	return result
+}
+
+// SubstituteColsInExprs substitutes derived columns in a list of expressions using colExprMap.
+func SubstituteColsInExprs(exprs []expression.Expression, colExprMap map[int64]expression.Expression) []expression.Expression {
+	result := make([]expression.Expression, 0, len(exprs))
+	for _, expr := range exprs {
+		result = append(result, SubstituteColsInExpr(expr, colExprMap))
+	}
+	return result
+}
+
+// SubstituteColsInExpr recursively substitutes derived columns in an expression using colExprMap.
+// It replaces column references with their defining expressions from colExprMap.
+func SubstituteColsInExpr(expr expression.Expression, colExprMap map[int64]expression.Expression) expression.Expression {
+	if len(colExprMap) == 0 {
+		return expr
+	}
+	return rewriteExprTree(expr, func(e expression.Expression) (expression.Expression, bool) {
+		col, ok := e.(*expression.Column)
+		if !ok {
+			return e, false
+		}
+		if defExpr, ok := colExprMap[col.UniqueID]; ok {
+			// Expressions in colExprMap are treated as immutable in join-reorder flow.
+			// Reuse pointers to avoid extra clones/allocations; if a future pass starts
+			// mutating these expression trees in-place, clone defExpr here before return.
+			return defExpr, true
+		}
+		return e, false
+	})
+}
+
+// OuterJoinSideFiltersTouchMultipleLeaves checks whether the outer-join filters depend on more than one
+// leaf on the outer side. If so, we conservatively disable join reordering for this join node.
+//
+// When projections are inlined under the outer side, join conditions may reference derived columns that
+// are not contained in any leaf schema. We substitute those derived columns via `outerColExprMap` before
+// extracting referenced columns.
+func OuterJoinSideFiltersTouchMultipleLeaves(
+	join *logicalop.LogicalJoin,
+	outerGroup []base.LogicalPlan,
+	outerColExprMap map[int64]expression.Expression,
+	outerIsLeft bool,
+) bool {
+	if join == nil {
+		return false
+	}
+
+	checkOtherConds := join.OtherConditions
+	checkSideConds := join.RightConditions
+	if outerIsLeft {
+		checkSideConds = join.LeftConditions
+	}
+	checkEQConds := expression.ScalarFuncs2Exprs(join.EqualConditions)
+
+	if len(outerColExprMap) > 0 {
+		checkOtherConds = SubstituteColsInExprs(checkOtherConds, outerColExprMap)
+		checkSideConds = SubstituteColsInExprs(checkSideConds, outerColExprMap)
+		checkEQConds = SubstituteColsInExprs(checkEQConds, outerColExprMap)
+	}
+
+	extractedCols := make(map[int64]*expression.Column, len(checkOtherConds)+len(checkSideConds)+len(checkEQConds))
+	expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, checkOtherConds...)
+	expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, checkSideConds...)
+	expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, checkEQConds...)
+
+	affectedGroups := 0
+	for _, outerLeaf := range outerGroup {
+		leafSchema := outerLeaf.Schema()
+		for _, col := range extractedCols {
+			if leafSchema.Contains(col) {
+				affectedGroups++
+				break
+			}
+		}
+		if affectedGroups > 1 {
+			return true
+		}
+	}
+	return false
+}
+
+// GetEqEdgeArgsAndCols returns the two arguments of an equality edge and the columns referenced on each side.
+func GetEqEdgeArgsAndCols(edge *expression.ScalarFunction) (lArg, rArg expression.Expression, lCols, rCols []*expression.Column, ok bool) {
+	if edge == nil {
+		return nil, nil, nil, nil, false
+	}
+	args := edge.GetArgs()
+	if len(args) != 2 {
+		return nil, nil, nil, nil, false
+	}
+	lArg, rArg = args[0], args[1]
+	lCols = expression.ExtractColumns(lArg)
+	rCols = expression.ExtractColumns(rArg)
+	return lArg, rArg, lCols, rCols, true
+}
+
+// AlignJoinEdgeArgs tries to align a join equality edge arguments to (leftSchema, rightSchema).
+//
+// It returns (lExpr, rExpr, swapped, ok):
+//   - ok is true if the edge connects the two schemas in either direction.
+//   - lExpr is guaranteed to be computable from leftSchema and rExpr from rightSchema.
+//   - swapped indicates the original args were in reverse order and had to be swapped.
+func AlignJoinEdgeArgs(
+	lArg, rArg expression.Expression,
+	leftSchema, rightSchema *expression.Schema,
+) (lExpr, rExpr expression.Expression, swapped, ok bool) {
+	if expression.ExprFromSchema(lArg, leftSchema) && expression.ExprFromSchema(rArg, rightSchema) {
+		return lArg, rArg, false, true
+	}
+	if expression.ExprFromSchema(lArg, rightSchema) && expression.ExprFromSchema(rArg, leftSchema) {
+		// Swap to match (leftSchema, rightSchema) order.
+		return rArg, lArg, true, true
+	}
+	return nil, nil, false, false
 }
 
 // FindAndRemovePlanByAstHint find the plan in `plans` that matches `ast.HintTable` and remove that plan, returning the new slice.

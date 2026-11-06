@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -131,9 +132,13 @@ func (t *taskInfo) close(ctx context.Context) {
 		}
 		t.taskRegister = nil
 	}
+	t.closeEtcdClient()
+}
+
+func (t *taskInfo) closeEtcdClient() {
 	if t.etcdClient != nil {
 		if err := t.etcdClient.Close(); err != nil {
-			logger.Warn("close etcd client failed", zap.Error(err))
+			t.logger.Warn("close etcd client failed", zap.Error(err))
 		}
 		t.etcdClient = nil
 	}
@@ -143,6 +148,7 @@ type importScheduler struct {
 	*scheduler.BaseScheduler
 
 	GlobalSort bool
+	sourceStep proto.Step
 	mu         sync.RWMutex
 	// NOTE: there's no need to sync for below 2 fields actually, since we add a restriction that only one
 	// task can be running at a time. but we might support task queuing in the future, leave it for now.
@@ -181,10 +187,11 @@ func NewImportScheduler(
 }
 
 // NewImportSchedulerForTest creates a new import scheduler for test.
-func NewImportSchedulerForTest(globalSort bool, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
+func NewImportSchedulerForTest(sourceStep proto.Step, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 	return &importScheduler{
 		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), task, param),
-		GlobalSort:    globalSort,
+		GlobalSort:    sourceStep != proto.ImportStepImport,
+		sourceStep:    sourceStep,
 		taskKS:        tidb.GetGlobalKeyspaceName(),
 	}
 }
@@ -203,11 +210,19 @@ func (sch *importScheduler) Init() (err error) {
 	}
 
 	sch.GlobalSort = taskMeta.Plan.CloudStorageURI != ""
+	sch.sourceStep = getStepOfEncode(&taskMeta.Plan)
 	sch.BaseScheduler.Extension = sch
 	return sch.BaseScheduler.Init()
 }
 
 func (sch *importScheduler) Close() {
+	// A new owner may have adopted the same registration lease. Release only
+	// local clients here; terminal job paths are responsible for revoking leases.
+	sch.taskInfoMap.Range(func(key, value any) bool {
+		value.(*taskInfo).closeEtcdClient()
+		sch.taskInfoMap.Delete(key)
+		return true
+	})
 	metricsManager.unregister(sch.GetTask().ID)
 	sch.BaseScheduler.Close()
 }
@@ -255,7 +270,7 @@ func (sch *importScheduler) switchTiKVMode(ctx context.Context, task *proto.Task
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
 	}
-	pdHTTPCli := sch.TaskStore.(kv.StorageWithPD).GetPDHTTPClient()
+	pdHTTPCli := sch.TaskRuntime.Store().(kv.StorageWithPD).GetPDHTTPClient()
 	switcher := importer.NewTiKVModeSwitcher(tls, pdHTTPCli, logger)
 
 	switcher.ToImportMode(ctx)
@@ -263,7 +278,7 @@ func (sch *importScheduler) switchTiKVMode(ctx context.Context, task *proto.Task
 }
 
 func (sch *importScheduler) registerTask(ctx context.Context, task *proto.Task) {
-	val, _ := sch.taskInfoMap.LoadOrStore(task.ID, &taskInfo{store: sch.TaskStore, taskID: task.ID, logger: sch.GetLogger()})
+	val, _ := sch.taskInfoMap.LoadOrStore(task.ID, &taskInfo{store: sch.TaskRuntime.Store(), taskID: task.ID, logger: sch.GetLogger()})
 	info := val.(*taskInfo)
 	info.register(ctx)
 }
@@ -277,7 +292,7 @@ func (sch *importScheduler) unregisterTask(ctx context.Context, task *proto.Task
 
 func (sch *importScheduler) checkImportTableEmpty(ctx context.Context, taskMeta *TaskMeta) error {
 	return sch.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(sch.TaskStore, se, taskMeta.Plan.TableInfo)
+		isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(sch.TaskRuntime.Store(), se, taskMeta.Plan.TableInfo)
 		if err2 != nil {
 			return err2
 		}
@@ -286,6 +301,98 @@ func (sch *importScheduler) checkImportTableEmpty(ctx context.Context, taskMeta 
 		}
 		return nil
 	})
+}
+
+func (*importScheduler) writePreparedChunkMap(
+	ctx context.Context,
+	taskID int64,
+	cloudStorageURI string,
+	chunkMap map[int32][]importer.Chunk,
+) (string, error) {
+	store, err := importer.GetSortStore(ctx, cloudStorageURI)
+	if err != nil {
+		return "", err
+	}
+	defer store.Close()
+	preparedMeta := PreparedMeta{
+		BaseExternalMeta: globalsort.BaseExternalMeta{
+			ExternalPath: globalsort.PreparedMetaPath(taskID),
+		},
+		ChunkMap: chunkMap,
+	}
+	if err = preparedMeta.WriteJSONToExternalStorage(ctx, store, preparedMeta); err != nil {
+		return "", err
+	}
+	return preparedMeta.ExternalPath, nil
+}
+
+// OnPrepare implements scheduler.Extension.
+func (sch *importScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle, task *proto.Task) error {
+	taskMeta := &TaskMeta{}
+	if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
+		return errors.Annotate(err, "unmarshal task meta failed")
+	}
+	if err := sch.checkImportJobNotCancelled(ctx, sch.GetLogger(), taskMeta); err != nil {
+		return err
+	}
+	if err := sch.startJob(ctx, sch.GetLogger(), taskMeta, importer.JobStepPreparing); err != nil {
+		return err
+	}
+
+	logicalPlan := &LogicalPlan{
+		Plan:   taskMeta.Plan,
+		Stmt:   taskMeta.Stmt,
+		Logger: sch.GetLogger(),
+	}
+	controller, err := buildControllerForPlan(logicalPlan)
+	if err != nil {
+		return err
+	}
+	defer controller.Close()
+	isAutoDetectingFormat := controller.Format == importer.DataFormatAuto
+	if err = controller.InitDataFiles(ctx); err != nil {
+		return err
+	}
+	if err = controller.CheckImportDataSize(); err != nil {
+		return err
+	}
+	if err = controller.CalResourceParams(ctx, sch.TaskRuntime.Store().GetCodec().GetKeyspace()); err != nil {
+		return err
+	}
+	if err = sch.updatePreparedJobInfo(ctx, sch.GetLogger(), taskMeta.JobID, controller.Plan); err != nil {
+		return err
+	}
+	// following the old behavior, but seems fine to remove this check, those
+	// specified options are not used anyway when the format is auto-detected as
+	// non-CSV. maybe remove them later, as we prepare in async way, if user
+	// use detached mode, user might get an invalid options after job submitted
+	// while from common sense, options should be validated before job submission.
+	if isAutoDetectingFormat && controller.Format != importer.DataFormatCSV {
+		if err = controller.CheckNonCSVFormatOptions(); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	controller.SetExecuteNodeCnt(controller.MaxNodeCnt)
+	chunkMap, err := controller.PopulateChunks(ctx)
+	if err != nil {
+		return err
+	}
+	chunkMapPath, err := sch.writePreparedChunkMap(ctx, task.ID, controller.Plan.CloudStorageURI, chunkMap)
+	if err != nil {
+		return err
+	}
+
+	taskMeta.Plan = *controller.Plan
+	taskMeta.PreparedMetaExternalPath = chunkMapPath
+	metaBytes, err := json.Marshal(taskMeta)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	task.Meta = metaBytes
+	task.RequiredSlots = controller.ThreadCnt
+	task.MaxNodeCount = controller.MaxNodeCnt
+	failpoint.InjectCall("afterPrepare", task)
+	return nil
 }
 
 // OnNextSubtasksBatch generate batch of next stage's plan.
@@ -312,9 +419,15 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		zap.String("curr-step", proto.Step2Str(task.Type, task.Step)),
 		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
 		zap.Int("node-count", nodeCnt),
+		zap.String("db-name", taskMeta.Plan.DBName),
+		zap.String("table-name", taskMeta.Plan.TableInfo.Name.O),
+		zap.Int64("db-id", taskMeta.Plan.DBID),
 		zap.Int64("table-id", taskMeta.Plan.TableInfo.ID),
 	)
 	logger.Info("on next subtasks batch")
+	if err = sch.checkImportJobNotCancelled(ctx, logger, taskMeta); err != nil {
+		return nil, err
+	}
 
 	// Check table emptiness again after the task is started.
 	if kerneltype.IsClassic() && task.Step == proto.StepInit {
@@ -325,7 +438,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 
 	previousSubtaskMetas := make(map[proto.Step][][]byte, 1)
 	switch nextStep {
-	case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
+	case proto.ImportStepImport, proto.ImportStepEncodeAndSort, proto.ImportStepQuery:
 		if metrics, ok := metric.GetCommonMetric(ctx); ok {
 			metrics.BytesCounter.WithLabelValues(metric.StateTotalRestore).Add(float64(taskMeta.Plan.TotalFileSize))
 		}
@@ -333,25 +446,31 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		if sch.GlobalSort {
 			jobStep = importer.JobStepGlobalSorting
 		}
-		if err = sch.startJob(ctx, logger, taskMeta, jobStep); err != nil {
-			return nil, err
+		if task.ExtraParams.PrepareMode == proto.PrepareModeRequired {
+			if err = sch.job2Step(ctx, logger, taskMeta, jobStep); err != nil {
+				return nil, err
+			}
+		} else {
+			if err = sch.startJob(ctx, logger, taskMeta, jobStep); err != nil {
+				return nil, err
+			}
 		}
 		if importer.GetNumOfIndexGenKV(taskMeta.Plan.TableInfo) > warningIndexCount {
 			dxfmetric.ScheduleEventCounter.WithLabelValues(fmt.Sprint(task.ID), dxfmetric.EventTooManyIdx).Inc()
 		}
 	case proto.ImportStepMergeSort:
-		sortAndEncodeMeta, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepEncodeAndSort)
+		sortAndEncodeMeta, err := taskHandle.GetPreviousSubtaskMetas(task.ID, sch.sourceStep)
 		if err != nil {
 			return nil, err
 		}
-		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = sortAndEncodeMeta
+		previousSubtaskMetas[sch.sourceStep] = sortAndEncodeMeta
 	case proto.ImportStepWriteAndIngest:
 		failpoint.Inject("failWhenDispatchWriteIngestSubtask", func() {
 			failpoint.Return(nil, errors.New("injected error"))
 		})
 		// merge sort might be skipped for some kv groups, so we need to get all
-		// subtask metas of ImportStepEncodeAndSort step too.
-		encodeAndSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepEncodeAndSort)
+		// subtask metas of the source (encode or query) step too.
+		encodeAndSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, sch.sourceStep)
 		if err != nil {
 			return nil, err
 		}
@@ -359,13 +478,13 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		if err != nil {
 			return nil, err
 		}
-		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = encodeAndSortMetas
+		previousSubtaskMetas[sch.sourceStep] = encodeAndSortMetas
 		previousSubtaskMetas[proto.ImportStepMergeSort] = mergeSortMetas
 		if err = sch.job2Step(ctx, logger, taskMeta, importer.JobStepImporting); err != nil {
 			return nil, err
 		}
 	case proto.ImportStepCollectConflicts, proto.ImportStepConflictResolution:
-		encodeAndSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepEncodeAndSort)
+		encodeAndSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, sch.sourceStep)
 		if err != nil {
 			return nil, err
 		}
@@ -377,7 +496,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		if err != nil {
 			return nil, err
 		}
-		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = encodeAndSortMetas
+		previousSubtaskMetas[sch.sourceStep] = encodeAndSortMetas
 		previousSubtaskMetas[proto.ImportStepMergeSort] = mergeSortMetas
 		previousSubtaskMetas[proto.ImportStepWriteAndIngest] = ingestMetas
 		if err = sch.job2Step(ctx, logger, taskMeta, importer.JobStepResolvingConflicts); err != nil {
@@ -394,8 +513,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		failpoint.Inject("failWhenDispatchPostProcessSubtask", func() {
 			failpoint.Return(nil, errors.New("injected error after ImportStepImport"))
 		})
-		step := getStepOfEncode(sch.GlobalSort)
-		metas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, step)
+		metas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, sch.sourceStep)
 		if err != nil {
 			return nil, err
 		}
@@ -403,7 +521,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		if err != nil {
 			return nil, err
 		}
-		previousSubtaskMetas[step] = metas
+		previousSubtaskMetas[sch.sourceStep] = metas
 		previousSubtaskMetas[proto.ImportStepCollectConflicts] = conflictResMetas
 		logger.Info("move to post-process step", zap.Any("result", taskMeta.Summary))
 	case proto.StepDone:
@@ -419,7 +537,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		GlobalSort:           sch.GlobalSort,
 		NextTaskStep:         nextStep,
 		ExecuteNodesCnt:      nodeCnt,
-		Store:                sch.TaskStore,
+		Store:                sch.TaskRuntime.Store(),
 		ThreadCnt:            task.GetRuntimeSlots(),
 	}
 	logicalPlan := &LogicalPlan{Logger: logger}
@@ -455,12 +573,12 @@ func (sch *importScheduler) OnDone(ctx context.Context, _ storage.TaskHandle, ta
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Reset table mode earlier than scheduler cleanup. Cleanup routine remains a fallback.
+	// Reset table mode earlier than scheduler cleanup. The cleaner remains a fallback.
 	sch.switchTableMode2NormalMode(ctx, taskMeta, logger)
 	if task.State == proto.TaskStateReverting {
 		errMsg := ""
 		if task.Error != nil {
-			if scheduler.IsCancelledErr(task.Error) {
+			if storage.IsCancelledErr(task.Error) {
 				return sch.cancelJob(ctx, task, taskMeta, logger)
 			}
 			errMsg = task.Error.Error()
@@ -516,12 +634,9 @@ func (*importScheduler) IsRetryableErr(err error) bool {
 // GetNextStep implements scheduler.Extension interface.
 func (sch *importScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 	switch task.Step {
-	case proto.StepInit:
-		if sch.GlobalSort {
-			return proto.ImportStepEncodeAndSort
-		}
-		return proto.ImportStepImport
-	case proto.ImportStepEncodeAndSort:
+	case proto.StepInit, proto.StepPrepared:
+		return sch.sourceStep
+	case proto.ImportStepEncodeAndSort, proto.ImportStepQuery:
 		return proto.ImportStepMergeSort
 	case proto.ImportStepMergeSort:
 		return proto.ImportStepWriteAndIngest
@@ -556,7 +671,7 @@ func (sch *importScheduler) switchTiKV2NormalMode(ctx context.Context, task *pro
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
 	}
-	pdHTTPCli := sch.TaskStore.(kv.StorageWithPD).GetPDHTTPClient()
+	pdHTTPCli := sch.TaskRuntime.Store().(kv.StorageWithPD).GetPDHTTPClient()
 	switcher := importer.NewTiKVModeSwitcher(tls, pdHTTPCli, logger)
 
 	switcher.ToNormalMode(ctx)
@@ -590,8 +705,11 @@ func updateMeta(task *proto.Task, taskMeta *TaskMeta) error {
 	return nil
 }
 
-func getStepOfEncode(globalSort bool) proto.Step {
-	if globalSort {
+func getStepOfEncode(plan *importer.Plan) proto.Step {
+	if plan.QuerySource != nil {
+		return proto.ImportStepQuery
+	}
+	if plan.IsGlobalSort() {
 		return proto.ImportStepEncodeAndSort
 	}
 	return proto.ImportStepImport
@@ -608,14 +726,18 @@ func updateTaskSummary(
 ) error {
 	// Process row count and data size
 	switch nextStep {
-	case proto.ImportStepEncodeAndSort, proto.ImportStepImport:
+	case proto.ImportStepEncodeAndSort, proto.ImportStepImport, proto.ImportStepQuery:
 		taskMeta.Summary.EncodeSummary = p.summary
 	case proto.ImportStepMergeSort:
 		taskMeta.Summary.MergeSummary = p.summary
 	case proto.ImportStepWriteAndIngest:
 		taskMeta.Summary.IngestSummary = p.summary
+	case proto.ImportStepCollectConflicts:
+		taskMeta.Summary.CollectConflictsSummary = p.summary
+	case proto.ImportStepConflictResolution:
+		taskMeta.Summary.ResolveConflictsSummary = p.summary
 	case proto.ImportStepPostProcess:
-		subtaskSummaries, err := handle.GetPreviousSubtaskSummary(task.ID, getStepOfEncode(taskMeta.Plan.IsGlobalSort()))
+		subtaskSummaries, err := handle.GetPreviousSubtaskSummary(task.ID, getStepOfEncode(&taskMeta.Plan))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -688,6 +810,71 @@ func (sch *importScheduler) job2Step(ctx context.Context, logger *zap.Logger, ta
 			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.GetSQLExecutor()
 				return importer.Job2Step(ctx, exec, taskMeta.JobID, step)
+			})
+		},
+	)
+}
+
+func (sch *importScheduler) checkImportJobNotCancelled(
+	ctx context.Context,
+	logger *zap.Logger,
+	taskMeta *TaskMeta,
+) error {
+	if kerneltype.IsClassic() {
+		// Classic creates the import job and DXF task in the same transaction, so
+		// there is no dangling import job to catch here. CANCEL IMPORT JOB moves
+		// the DXF task to cancelling, and the framework cancellation path handles it.
+		return nil
+	}
+	taskManager, err := sch.getTaskMgrForAccessingImportJob()
+	if err != nil {
+		return err
+	}
+	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
+	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
+		func(ctx context.Context) (bool, error) {
+			retryable := true
+			err := taskManager.WithNewSession(func(se sessionctx.Context) error {
+				job, err := importer.GetJob(ctx, se.GetSQLExecutor(), taskMeta.JobID, "", true)
+				if err != nil {
+					// shouldn't happen in normal path unless other clients delete
+					// it from the system table, just sanity check.
+					if goerrors.Is(err, exeerrors.ErrLoadDataJobNotFound) {
+						retryable = false
+					}
+					return err
+				}
+				// in next-gen, the import job might be taken as a dangling job
+				// and canceled directly as DXF task might be submitted in another
+				// transaction.
+				if job.IsCancelled() {
+					retryable = false
+					return errors.Errorf("import job %d cancelled by user", job.ID)
+				}
+				return nil
+			})
+			return retryable, err
+		},
+	)
+}
+
+func (sch *importScheduler) updatePreparedJobInfo(ctx context.Context, logger *zap.Logger, jobID int64, plan *importer.Plan) error {
+	taskManager, err := sch.getTaskMgrForAccessingImportJob()
+	if err != nil {
+		return err
+	}
+	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
+	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
+		func(ctx context.Context) (bool, error) {
+			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
+				exec := se.GetSQLExecutor()
+				return importer.UpdateJobPreparedInfo(
+					ctx,
+					exec,
+					jobID,
+					plan.TotalFileSize,
+					plan.Format,
+				)
 			})
 		},
 	)
@@ -783,17 +970,8 @@ func (sch *importScheduler) getTaskMgrForAccessingImportJob() (scheduler.TaskMan
 		return sch.taskKSTaskMgr, nil
 	}
 
-	if kv.IsUserKS(sch.TaskStore) {
-		var taskKSSessPool util.SessionPool
-		taskKS := sch.GetTask().Keyspace
-		if err := sch.BaseScheduler.WithNewSession(func(se sessionctx.Context) error {
-			var err2 error
-			taskKSSessPool, err2 = se.GetSQLServer().GetKSSessPool(taskKS)
-			return err2
-		}); err != nil {
-			return nil, errors.Annotatef(errGetCrossKSSessionPool, "keyspace %s", taskKS)
-		}
-		sch.taskKSTaskMgr = storage.NewTaskManager(taskKSSessPool)
+	if kv.IsUserKS(sch.TaskRuntime.Store()) {
+		sch.taskKSTaskMgr = storage.NewTaskManager(sch.TaskRuntime.SysSessionPool())
 	} else {
 		sch.taskKSTaskMgr = sch.GetTaskMgr()
 	}

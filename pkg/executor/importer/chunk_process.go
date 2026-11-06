@@ -22,16 +22,16 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -434,7 +434,7 @@ func NewFileChunkProcessor(
 	parser mydump.Parser,
 	encoder *TableKVEncoder,
 	keyspace []byte,
-	chunk *checkpoints.ChunkCheckpoint,
+	chunk *Chunk,
 	logger *zap.Logger,
 	diskQuotaLock *syncutil.RWMutex,
 	dataWriter backend.EngineWriter,
@@ -442,7 +442,10 @@ func NewFileChunkProcessor(
 	groupChecksum *verify.KVGroupChecksum,
 	collector execute.Collector,
 ) ChunkProcessor {
-	chunkLogger := logger.With(zap.String("key", chunk.GetKey()))
+	chunkLogger := logger.With(
+		zap.String("key", chunk.GetKey()),
+		zap.Int64("chunkSize", chunk.GetSize()),
+	)
 	deliver := &dataDeliver{
 		logger:        chunkLogger,
 		diskQuotaLock: diskQuotaLock,
@@ -455,8 +458,8 @@ func NewFileChunkProcessor(
 		deliver:    deliver,
 		enc: newChunkEncoder(
 			chunk.GetKey(),
-			parserEncodeReader(parser, chunk.Chunk.EndOffset, chunk.GetKey()),
-			chunk.Chunk.Offset,
+			parserEncodeReader(parser, chunk.EndOffset, chunk.GetKey()),
+			chunk.Offset,
 			deliver.sendEncodedData,
 			collector,
 			encoder,
@@ -575,6 +578,13 @@ type QueryChunk struct {
 	RowIDOffset int64
 }
 
+// RunImportQuery runs the SELECT of the IMPORT INTO statement importSQL at q.ReadTS.
+// sctx takes the session states of the submitter, so the caller must destroy it.
+// It sends the result chunks to output, which the caller closes, and the
+// receiver owns the chunks it gets.
+// TODO(joechenrh): Registration by executor is to avoid import cycle. We can refactor it later.
+var RunImportQuery func(ctx context.Context, sctx sessionctx.Context, q *QuerySource, importSQL string, memQuota int64, output chan<- QueryChunk) error
+
 func newQueryChunkProcessor(
 	chunkCh chan QueryChunk,
 	encoder *TableKVEncoder,
@@ -613,13 +623,13 @@ func newQueryChunkProcessor(
 }
 
 // WriterFactory is a factory function to create a new index KV writer.
-type WriterFactory func(indexID int64) (*external.Writer, error)
+type WriterFactory func(indexID int64) (*simplesst.Writer, error)
 
 // IndexRouteWriter is a writer for index when using global sort.
 // we route kvs of different index to different writer in order to make
 // merge sort easier, else kv data of all subtasks will all be overlapped.
 type IndexRouteWriter struct {
-	writers       map[int64]*external.Writer
+	writers       map[int64]*simplesst.Writer
 	logger        *zap.Logger
 	writerFactory WriterFactory
 }
@@ -627,7 +637,7 @@ type IndexRouteWriter struct {
 // NewIndexRouteWriter creates a new IndexRouteWriter.
 func NewIndexRouteWriter(logger *zap.Logger, writerFactory WriterFactory) *IndexRouteWriter {
 	return &IndexRouteWriter{
-		writers:       make(map[int64]*external.Writer),
+		writers:       make(map[int64]*simplesst.Writer),
 		logger:        logger,
 		writerFactory: writerFactory,
 	}

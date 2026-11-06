@@ -371,8 +371,140 @@ const (
 	VecFromText             = "vec_from_text"
 	VecAsText               = "vec_as_text"
 
+	// embedding functions (TiDB extension)
+	EmbedText = "embed_text"
+
 	// FTS functions (tidb extension)
-	FTSMatchWord = "fts_match_word"
+	FTSMatchWord         = "fts_match_word"
+	FTSMysqlMatchAgainst = "match_against"
+
+	// geospatial functions, as MySQL names them: constructors
+	GeomPoint              = "point"
+	GeomLineString         = "linestring"
+	GeomPolygon            = "polygon"
+	GeomMultiPoint         = "multipoint"
+	GeomMultiLineString    = "multilinestring"
+	GeomMultiPolygon       = "multipolygon"
+	GeomGeometryCollection = "geometrycollection"
+	GeomGeomCollection     = "geomcollection"
+	// geospatial readers and writers
+	StGeomFromText               = "st_geomfromtext"
+	StGeometryFromText           = "st_geometryfromtext"
+	StPointFromText              = "st_pointfromtext"
+	StLineFromText               = "st_linefromtext"
+	StLineStringFromText         = "st_linestringfromtext"
+	StPolyFromText               = "st_polyfromtext"
+	StPolygonFromText            = "st_polygonfromtext"
+	StMPointFromText             = "st_mpointfromtext"
+	StMultiPointFromText         = "st_multipointfromtext"
+	StMLineFromText              = "st_mlinefromtext"
+	StMultiLineStringFromText    = "st_multilinestringfromtext"
+	StMPolyFromText              = "st_mpolyfromtext"
+	StMultiPolygonFromText       = "st_multipolygonfromtext"
+	StGeomCollFromText           = "st_geomcollfromtext"
+	StGeomCollFromTxt            = "st_geomcollfromtxt"
+	StGeometryCollectionFromText = "st_geometrycollectionfromtext"
+	StGeomFromWKB                = "st_geomfromwkb"
+	StGeometryFromWKB            = "st_geometryfromwkb"
+	StPointFromWKB               = "st_pointfromwkb"
+	StLineFromWKB                = "st_linefromwkb"
+	StLineStringFromWKB          = "st_linestringfromwkb"
+	StPolyFromWKB                = "st_polyfromwkb"
+	StPolygonFromWKB             = "st_polygonfromwkb"
+	StMPointFromWKB              = "st_mpointfromwkb"
+	StMultiPointFromWKB          = "st_multipointfromwkb"
+	StMLineFromWKB               = "st_mlinefromwkb"
+	StMultiLineStringFromWKB     = "st_multilinestringfromwkb"
+	StMPolyFromWKB               = "st_mpolyfromwkb"
+	StMultiPolygonFromWKB        = "st_multipolygonfromwkb"
+	StGeomCollFromWKB            = "st_geomcollfromwkb"
+	StGeometryCollectionFromWKB  = "st_geometrycollectionfromwkb"
+	StGeomFromGeoJSON            = "st_geomfromgeojson"
+	StAsText                     = "st_astext"
+	StAsWKT                      = "st_aswkt"
+	StAsBinary                   = "st_asbinary"
+	StAsWKB                      = "st_aswkb"
+	StAsGeoJSON                  = "st_asgeojson"
+	// geospatial accessors
+	StSRID             = "st_srid"
+	StX                = "st_x"
+	StY                = "st_y"
+	StLatitude         = "st_latitude"
+	StLongitude        = "st_longitude"
+	StGeometryType     = "st_geometrytype"
+	StDimension        = "st_dimension"
+	StEnvelope         = "st_envelope"
+	StIsEmpty          = "st_isempty"
+	StIsValid          = "st_isvalid"
+	StIsSimple         = "st_issimple"
+	StIsClosed         = "st_isclosed"
+	StStartPoint       = "st_startpoint"
+	StEndPoint         = "st_endpoint"
+	StPointN           = "st_pointn"
+	StNumPoints        = "st_numpoints"
+	StExteriorRing     = "st_exteriorring"
+	StInteriorRingN    = "st_interiorringn"
+	StNumInteriorRings = "st_numinteriorrings"
+	StNumInteriorRing  = "st_numinteriorring"
+	StGeometryN        = "st_geometryn"
+	StNumGeometries    = "st_numgeometries"
+	StCentroid         = "st_centroid"
+	// geospatial measurement
+	StArea              = "st_area"
+	StLength            = "st_length"
+	StDistance          = "st_distance"
+	StDistanceSphere    = "st_distance_sphere"
+	StFrechetDistance   = "st_frechetdistance"
+	StHausdorffDistance = "st_hausdorffdistance"
+	// geospatial predicates
+	StContains    = "st_contains"
+	StCrosses     = "st_crosses"
+	StDisjoint    = "st_disjoint"
+	StEquals      = "st_equals"
+	StIntersects  = "st_intersects"
+	StOverlaps    = "st_overlaps"
+	StTouches     = "st_touches"
+	StWithin      = "st_within"
+	MBRContains   = "mbrcontains"
+	MBRCoveredBy  = "mbrcoveredby"
+	MBRCovers     = "mbrcovers"
+	MBRDisjoint   = "mbrdisjoint"
+	MBREquals     = "mbrequals"
+	MBRIntersects = "mbrintersects"
+	MBROverlaps   = "mbroverlaps"
+	MBRTouches    = "mbrtouches"
+	MBRWithin     = "mbrwithin"
+	// geospatial processing
+	StBuffer                = "st_buffer"
+	StBufferStrategy        = "st_buffer_strategy"
+	StCollect               = "st_collect"
+	StConvexHull            = "st_convexhull"
+	StDifference            = "st_difference"
+	StIntersection          = "st_intersection"
+	StLineInterpolatePoint  = "st_lineinterpolatepoint"
+	StLineInterpolatePoints = "st_lineinterpolatepoints"
+	StMakeEnvelope          = "st_makeenvelope"
+	StPointAtDistance       = "st_pointatdistance"
+	StSimplify              = "st_simplify"
+	StSwapXY                = "st_swapxy"
+	StSymDifference         = "st_symdifference"
+	StTransform             = "st_transform"
+	StUnion                 = "st_union"
+	StValidate              = "st_validate"
+	// geospatial geohash
+	StGeoHash          = "st_geohash"
+	StLatFromGeoHash   = "st_latfromgeohash"
+	StLongFromGeoHash  = "st_longfromgeohash"
+	StPointFromGeoHash = "st_pointfromgeohash"
+
+	// geospatial functions (TiDB extension): EWKB in and out
+	StAsEWKB       = "st_asewkb"
+	StGeomFromEWKB = "st_geomfromewkb"
+
+	// geospatial index functions (TiDB internal), behind the hidden columns of a geospatial index
+	TiDBSpatialKey  = "tidb_spatial_key"
+	TiDBSpatialKeys = "tidb_spatial_keys"
+	TiDBSpatialBBox = "tidb_spatial_bbox"
 
 	// TiDB internal function.
 	TiDBDecodeKey       = "tidb_decode_key"
@@ -529,12 +661,12 @@ func (n *FuncCallExpr) customRestore(ctx *format.RestoreCtx) (bool, error) {
 	}
 	if n.FnName.L == JSONMemberOf {
 		if len(n.Args) == 2 {
-			if err := n.Args[0].Restore(ctx); err != nil {
+			if err := restoreExprWithBinaryOpParent(ctx, n.Args[0], restoreOpMemberOf, binaryOpLeftSide); err != nil {
 				return true, errors.Annotatef(err, "An error occurred while restore FuncCallExpr.(MEMBER OF).Args[0]")
 			}
 			ctx.WriteKeyWord(" MEMBER OF ")
 			ctx.WritePlain("(")
-			if err := n.Args[1].Restore(ctx); err != nil {
+			if err := restoreExprWithBinaryOpParent(ctx, n.Args[1], restoreOpMemberOf, binaryOpRightSide); err != nil {
 				return true, errors.Annotatef(err, "An error occurred while restore FuncCallExpr.(MEMBER OF).Args[1]")
 			}
 			ctx.WritePlain(")")
@@ -702,7 +834,7 @@ func (n *FuncCastExpr) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 	case CastBinaryOperator:
 		ctx.WriteKeyWord("BINARY ")
-		if err := n.Expr.Restore(ctx); err != nil {
+		if err := restoreExprWithUnaryOpParent(ctx, n.Expr); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore FuncCastExpr.Expr")
 		}
 	}
@@ -819,6 +951,8 @@ const (
 	AggFuncCount = "count"
 	// AggFuncSum is the name of Sum function.
 	AggFuncSum = "sum"
+	// AggFuncSumInt is the name of SumInt function.
+	AggFuncSumInt = "sum_int"
 	// AggFuncAvg is the name of Avg function.
 	AggFuncAvg = "avg"
 	// AggFuncFirstRow is the name of FirstRowColumn function.
@@ -827,6 +961,10 @@ const (
 	AggFuncMax = "max"
 	// AggFuncMin is the name of min function.
 	AggFuncMin = "min"
+	// AggFuncMaxCount is the name of max_count function.
+	AggFuncMaxCount = "max_count"
+	// AggFuncMinCount is the name of min_count function.
+	AggFuncMinCount = "min_count"
 	// AggFuncGroupConcat is the name of group_concat function.
 	AggFuncGroupConcat = "group_concat"
 	// AggFuncBitOr is the name of bit_or function.
@@ -892,7 +1030,11 @@ func (n *AggregateFuncExpr) Restore(ctx *format.RestoreCtx) error {
 			}
 		}
 		ctx.WriteKeyWord(" SEPARATOR ")
-		if err := n.Args[len(n.Args)-1].Restore(ctx); err != nil {
+		// The parser grammar only accepts `SEPARATOR stringLit` without charset introducer.
+		// Keep the literal text restorable even when separator carries charset/collation metadata.
+		separatorCtx := *ctx
+		separatorCtx.Flags |= format.RestoreStringWithoutCharset
+		if err := n.Args[len(n.Args)-1].Restore(&separatorCtx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore AggregateFuncExpr.Args SEPARATOR")
 		}
 	default:

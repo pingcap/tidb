@@ -100,6 +100,44 @@ func TestForeignKeyRecordManager(t *testing.T) {
 		foreignKeyRecordManager.Merge(parentTableForeignKeyRecordManager)
 		require.Len(t, foreignKeyRecordManager.GetFKRecordMap(), 0)
 	}
+
+	tk.MustExec("create table test.partial_parent (id int, index parent_idx(id))")
+	tk.MustExec("create table test.partial_child (id int, pid int, marker int, index unsafe_pid(pid) where marker is not null, index safe_pid(pid) where pid is not null, foreign key (pid) references test.partial_parent (id))")
+
+	infoSchema = s.Mock.InfoSchema()
+	partialChildTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("partial_child"))
+	require.NoError(t, err)
+	unsafeIdx := partialChildTableInfo.FindIndexByName("unsafe_pid")
+	require.NotNil(t, unsafeIdx)
+	safeIdx := partialChildTableInfo.FindIndexByName("safe_pid")
+	require.NotNil(t, safeIdx)
+
+	partialChildForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, ast.NewCIStr("test"), partialChildTableInfo)
+	require.NoError(t, err)
+	require.Len(t, partialChildForeignKeyRecordManager.GetFKRecordMap(), 1)
+	partialChildForeignKeyRecordManager.RemoveForeignKeys(partialChildTableInfo, unsafeIdx)
+	require.Len(t, partialChildForeignKeyRecordManager.GetFKRecordMap(), 1)
+	partialChildForeignKeyRecordManager.RemoveForeignKeys(partialChildTableInfo, safeIdx)
+	require.Len(t, partialChildForeignKeyRecordManager.GetFKRecordMap(), 0)
+
+	tk.MustExec("create table test.partial_ref_parent (id int, marker int, index unsafe_id(id) where marker is not null, index safe_id(id) where id is not null)")
+	tk.MustExec("create table test.partial_ref_child (id int, pid int, index child_pid(pid), foreign key (pid) references test.partial_ref_parent (id))")
+
+	infoSchema = s.Mock.InfoSchema()
+	partialRefParentInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("partial_ref_parent"))
+	require.NoError(t, err)
+	unsafeRefIdx := partialRefParentInfo.FindIndexByName("unsafe_id")
+	require.NotNil(t, unsafeRefIdx)
+	safeRefIdx := partialRefParentInfo.FindIndexByName("safe_id")
+	require.NotNil(t, safeRefIdx)
+
+	partialRefParentForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, ast.NewCIStr("test"), partialRefParentInfo)
+	require.NoError(t, err)
+	require.Len(t, partialRefParentForeignKeyRecordManager.GetReferredFKRecordMap(), 1)
+	partialRefParentForeignKeyRecordManager.RemoveForeignKeys(partialRefParentInfo, unsafeRefIdx)
+	require.Len(t, partialRefParentForeignKeyRecordManager.GetReferredFKRecordMap(), 1)
+	partialRefParentForeignKeyRecordManager.RemoveForeignKeys(partialRefParentInfo, safeRefIdx)
+	require.Len(t, partialRefParentForeignKeyRecordManager.GetReferredFKRecordMap(), 0)
 }
 
 func TestForeignKeyRecordManagerForPK1(t *testing.T) {

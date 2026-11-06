@@ -80,8 +80,7 @@ func (s *mockGCSSuite) TestGlobalSortSummary() {
 	idSQL := `select id from mysql.tidb_global_task where task_key = ?
 		union select id from mysql.tidb_global_task_history where task_key = ?`
 	rs = s.tk.MustQuery(idSQL, taskKey, taskKey).Rows()
-	id, err := strconv.Atoi(rs[0][0].(string))
-	require.NoError(s.T(), err)
+	id := rs[0][0].(string)
 
 	sql := `
 		SELECT step, summary

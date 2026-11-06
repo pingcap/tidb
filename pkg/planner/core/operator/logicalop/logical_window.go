@@ -441,7 +441,8 @@ func (p *LogicalWindow) ExtractColGroups(colGroups [][]*expression.Column) [][]*
 }
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
+func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, infos ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	p.hasTiFlash = infos[0].HasTiFlash
 	result := make([]*expression.Column, 0, len(p.PartitionBy)+len(p.OrderBy))
 	for i := range p.PartitionBy {
 		result = append(result, p.PartitionBy[i].Col)
@@ -449,7 +450,10 @@ func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, _ ...[][
 	for i := range p.OrderBy {
 		result = append(result, p.OrderBy[i].Col)
 	}
-	return [][]*expression.Column{result}
+	return &base.PossiblePropertiesInfo{
+		Orders:     [][]*expression.Column{result},
+		HasTiFlash: p.hasTiFlash,
+	}
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
@@ -490,8 +494,6 @@ func (p *LogicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 // ExtractFD inherits BaseLogicalPlan.LogicalPlan.<22nd> implementation.
 
 // GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
-
-// ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
 
 // *************************** end implementation of logicalPlan interface ***************************
 

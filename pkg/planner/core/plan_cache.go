@@ -20,9 +20,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -58,6 +60,18 @@ type PlanCacheKeyTestClone struct{}
 
 // PlanCacheKeyEnableInstancePlanCache is only for test.
 type PlanCacheKeyEnableInstancePlanCache struct{}
+
+const planCacheHintOnlyNoHintReason = "plan cache strategy is hint_only and use_plan_cache hint is absent"
+
+func containUsePlanCacheHintInPreparedSQLOrBinding(stmt *PlanCacheStmt, matchedBinding *bindinfo.Binding, bindingMatched bool) bool {
+	if stmt.HasUsePlanCacheHint {
+		return true
+	}
+	return bindingMatched &&
+		matchedBinding != nil &&
+		matchedBinding.Hint != nil &&
+		matchedBinding.Hint.ContainTableHint(hint.HintUsePlanCache)
+}
 
 // SetParameterValuesIntoSCtx sets these parameters into session context.
 func SetParameterValuesIntoSCtx(sctx base.PlanContext, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
@@ -174,7 +188,10 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	for _, tbl := range stmt.tbls {
 		tblInfo := tbl.Meta()
 		if tableHasDirtyContent(sctx.GetPlanCtx(), tblInfo) {
-			sctx.GetSessionVars().StmtCtx.TblInfo2UnionScan[tblInfo] = true
+			if vars.StmtCtx.TblInfo2UnionScan == nil {
+				vars.StmtCtx.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
+			}
+			vars.StmtCtx.TblInfo2UnionScan[tblInfo] = true
 		}
 	}
 
@@ -195,12 +212,27 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	cacheEnabled := false
+	var (
+		matchedBinding *bindinfo.Binding
+		bindingMatched bool
+	)
 	if isNonPrepared {
 		stmtCtx.SetCacheType(contextutil.SessionNonPrepared)
 		cacheEnabled = sessVars.EnableNonPreparedPlanCache // plan-cache might be disabled after prepare.
 	} else {
 		stmtCtx.SetCacheType(contextutil.SessionPrepared)
 		cacheEnabled = sessVars.EnablePreparedPlanCache
+	}
+	if cacheEnabled && stmt.UncacheableReason == "" &&
+		sessVars.PlanCacheStrategy == vardef.TiDBPlanCacheStrategyHintOnly &&
+		!stmt.HasUsePlanCacheHint {
+		if stmt.PreparedAst != nil {
+			matchedBinding, bindingMatched, _ = bindinfo.MatchSQLBindingWithCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
+		}
+		if !containUsePlanCacheHintInPreparedSQLOrBinding(stmt, matchedBinding, bindingMatched) {
+			cacheEnabled = false
+			stmtCtx.WarnSkipPlanCache(planCacheHintOnlyNoHintReason)
+		}
 	}
 	if stmt.StmtCacheable && cacheEnabled {
 		stmtCtx.EnablePlanCache()
@@ -212,7 +244,7 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	var cacheKey, binding, reason string
 	var cacheable bool
 	if stmtCtx.UseCache() {
-		cacheKey, binding, cacheable, reason, err = NewPlanCacheKey(sctx, stmt)
+		cacheKey, binding, cacheable, reason, err = newPlanCacheKeyWithMatchedBinding(sctx, stmt, matchedBinding, bindingMatched)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -223,13 +255,13 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 
 	paramTypes := parseParamTypes(sctx, params)
 	if stmtCtx.UseCache() {
-		plan, outputCols, stmtHints, hit := lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
+		plan, outputCols, stmtHints, lockTableIDs, hit := lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
 		skipPrivCheck := stmt.PointGet.Executor != nil // this case is specially handled
 		if hit && instancePlanCacheEnabled(ctx) {
 			plan, hit = clonePlanForInstancePlanCache(ctx, sctx, stmt, plan)
 		}
 		if hit {
-			if plan, ok, err := adjustCachedPlan(ctx, sctx, plan, stmtHints, isNonPrepared, skipPrivCheck, binding, is, stmt); err != nil || ok {
+			if plan, ok, err := adjustCachedPlan(ctx, sctx, plan, stmtHints, lockTableIDs, isNonPrepared, skipPrivCheck, binding, is, stmt); err != nil || ok {
 				return plan, outputCols, err
 			}
 		}
@@ -274,7 +306,7 @@ func instancePlanCacheEnabled(ctx context.Context) bool {
 }
 
 func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey string,
-	paramTypes []*types.FieldType) (plan base.Plan, outputCols types.NameSlice, stmtHints *hint.StmtHints, hit bool) {
+	paramTypes []*types.FieldType) (plan base.Plan, outputCols types.NameSlice, stmtHints *hint.StmtHints, lockTableIDs map[int64]struct{}, hit bool) {
 	useInstanceCache := instancePlanCacheEnabled(ctx)
 	defer func(begin time.Time) {
 		if hit {
@@ -288,15 +320,15 @@ func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey stri
 		v, hit = sctx.GetSessionPlanCache().Get(cacheKey, paramTypes)
 	}
 	if !hit {
-		return nil, nil, nil, false
+		return nil, nil, nil, nil, false
 	}
 	pcv := v.(*PlanCacheValue)
 	sctx.GetSessionVars().PlanCacheValue = pcv
-	return pcv.Plan, pcv.OutputColumns, pcv.StmtHints, true
+	return pcv.Plan, pcv.OutputColumns, pcv.StmtHints, pcv.lockTableIDs, true
 }
 
 func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
-	plan base.Plan, stmtHints *hint.StmtHints, isNonPrepared, skipPrivCheck bool,
+	plan base.Plan, stmtHints *hint.StmtHints, lockTableIDs map[int64]struct{}, isNonPrepared, skipPrivCheck bool,
 	bindSQL string, is infoschema.InfoSchema, stmt *PlanCacheStmt) (
 	base.Plan, bool, error) {
 	sessVars := sctx.GetSessionVars()
@@ -308,6 +340,14 @@ func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
 	}
 	if !RebuildPlan4CachedPlan(plan) {
 		return nil, false, nil
+	}
+	// Keep cached metadata immutable when the statement context is cleared for the next execution.
+	clear(stmtCtx.LockTableIDs)
+	if len(lockTableIDs) > 0 && stmtCtx.LockTableIDs == nil {
+		stmtCtx.LockTableIDs = make(map[int64]struct{}, len(lockTableIDs))
+	}
+	for tableID := range lockTableIDs {
+		stmtCtx.LockTableIDs[tableID] = struct{}{}
 	}
 	sessVars.FoundInPlanCache = true
 	if len(bindSQL) > 0 { // We're using binding, set this to true.

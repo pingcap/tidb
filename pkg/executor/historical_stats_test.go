@@ -118,7 +118,7 @@ func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
 	insertNums := 5
 	for range insertNums {
 		tk.MustExec("insert into test.t (a,b) values (1,1), (2,2), (3,3)")
-		tk.MustExec("flush stats_delta")
+		tk.MustExec("flush stats_delta *.*")
 	}
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_meta_history where table_id = '%d'", tableInfo.Meta().ID)).Check(testkit.Rows("0"))
 
@@ -128,7 +128,7 @@ func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
 
 	for range insertNums {
 		tk.MustExec("insert into test.t (a,b) values (1,1), (2,2), (3,3)")
-		tk.MustExec("flush stats_delta")
+		tk.MustExec("flush stats_delta *.*")
 	}
 	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta_history where table_id = '%d' order by create_time", tableInfo.Meta().ID)).Sort().Check(
 		testkit.Rows("18 18", "21 21", "24 24", "27 27", "30 30"))
@@ -136,7 +136,7 @@ func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
 
 	// assert delete
 	tk.MustExec("delete from test.t where test.t.a = 1")
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = '%d'", tableInfo.Meta().ID)).Sort().Check(
 		testkit.Rows("40 20"))
 	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta_history where table_id = '%d' order by create_time desc limit 1", tableInfo.Meta().ID)).Sort().Check(
@@ -144,7 +144,7 @@ func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
 
 	// assert update
 	tk.MustExec("update test.t set test.t.b = 4 where test.t.a = 2")
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = '%d'", tableInfo.Meta().ID)).Sort().Check(
 		testkit.Rows("50 20"))
 	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta_history where table_id = '%d' order by create_time desc limit 1", tableInfo.Meta().ID)).Sort().Check(
@@ -421,7 +421,7 @@ func TestDumpHistoricalStatsMetaForMultiTables(t *testing.T) {
 	tk.MustExec("insert into t1 values (4, 'd'), (5, 'e'), (6, 'f')")
 	tk.MustExec("insert into t2 values (4, 'd'), (5, 'e'), (6, 'f')")
 	// Dump stats delta to kv.
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 
 	// Check historical stats meta.
 	tbl1, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))

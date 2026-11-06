@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
@@ -136,6 +137,19 @@ func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 	}, *tb5Info.ForeignKeys[0])
 	require.Equal(t, 1, len(tb5Info.Indices))
 	require.Equal(t, "fk_1", tb5Info.Indices[0].Name.L)
+
+	tk.MustExec("create table partial_parent (id int key)")
+	tk.MustExec("create table partial_child_unsafe (id int key, pid int, marker int, index unsafe_pid(pid) where marker is not null, foreign key fk_pid(pid) references partial_parent(id))")
+	partialUnsafeInfo := getTableInfo(t, dom, "test2", "partial_child_unsafe")
+	require.Equal(t, 2, len(partialUnsafeInfo.Indices))
+	require.Equal(t, "unsafe_pid", partialUnsafeInfo.Indices[0].Name.L)
+	require.Equal(t, "fk_pid", partialUnsafeInfo.Indices[1].Name.L)
+
+	tk.MustExec("create table partial_child_safe (id int key, pid int, index safe_pid(pid) where pid is not null, foreign key fk_pid(pid) references partial_parent(id))")
+	partialSafeInfo := getTableInfo(t, dom, "test2", "partial_child_safe")
+	require.Equal(t, 1, len(partialSafeInfo.Indices))
+	require.Equal(t, "safe_pid", partialSafeInfo.Indices[0].Name.L)
+
 	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test", "t1")))
 	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t2")))
 	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t3")))
@@ -871,6 +885,36 @@ func TestTruncateOrDropTableWithForeignKeyReferred(t *testing.T) {
 			tk.MustExec(sql)
 		}
 	}
+
+	tk.MustExec("drop table if exists c, c_survivor, p")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("create table p (id int primary key)")
+	tk.MustExec("create table c (id int primary key, pid int, foreign key (pid) references p(id))")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	var renameErr error
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDropTableObject", func(tableName string) {
+		if tableName == "p" {
+			renameErr = tk2.ExecToErr("rename table c to c_survivor")
+		}
+	})
+	tk.MustExec("drop table if exists p, c")
+	require.Error(t, renameErr)
+	tk.MustGetErrCode("show create table p", errno.ErrNoSuchTable)
+	tk.MustGetErrCode("show create table c", errno.ErrNoSuchTable)
+	tk.MustGetErrCode("show create table c_survivor", errno.ErrNoSuchTable)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterDropTableObject")
+
+	// A cycle cannot be safely dropped through independent jobs while FK
+	// checks are enabled. Reject it without making either parent disappear.
+	tk.MustExec("create table cycle_a (id int primary key, pid int)")
+	tk.MustExec("create table cycle_b (id int primary key, pid int, foreign key(pid) references cycle_a(id))")
+	tk.MustExec("alter table cycle_a add foreign key(pid) references cycle_b(id)")
+	require.Error(t, tk.ExecToErr("drop table cycle_a, cycle_b"))
+	tk.MustQuery("select count(*) from cycle_a").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from cycle_b").Check(testkit.Rows("0"))
+	tk.MustExec("set @@foreign_key_checks=0")
+	tk.MustExec("drop table cycle_a, cycle_b")
 }
 
 func TestDropIndexNeededInForeignKey(t *testing.T) {
@@ -1168,6 +1212,42 @@ func TestAddForeignKey(t *testing.T) {
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// Test unsafe partial index should not be used as the child foreign key index.
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (id int key, b int, c int, index idx_b(b) where c is not null);")
+	tk.MustExec("alter table t2 add constraint fk_b foreign key (b) references t1(id);")
+	tbl2Info = getTableInfo(t, dom, "test", "t2")
+	require.Equal(t, 2, len(tbl2Info.Indices))
+	require.Equal(t, "idx_b", tbl2Info.Indices[0].Name.L)
+	require.Equal(t, "fk_b", tbl2Info.Indices[1].Name.L)
+	tk.MustExec("insert into t1 values (1);")
+	tk.MustExec("insert into t2 values (1, 1, null);")
+	tk.MustGetDBError("delete from t1 where id = 1", plannererrors.ErrRowIsReferenced2)
+	tk.MustExec("alter table t2 drop index idx_b;")
+	tk.MustGetDBError("alter table t2 drop index fk_b", dbterror.ErrDropIndexNeededInForeignKey)
+
+	// Test IS NOT NULL partial indexes are safe for foreign key checks.
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (id int key, b int, index idx_b(b) where b is not null);")
+	tk.MustExec("alter table t2 add constraint fk_b foreign key (b) references t1(id);")
+	tbl2Info = getTableInfo(t, dom, "test", "t2")
+	require.Equal(t, 1, len(tbl2Info.Indices))
+	require.Equal(t, "idx_b", tbl2Info.Indices[0].Name.L)
+	tk.MustExec("insert into t1 values (1);")
+	tk.MustExec("insert into t2 values (1, 1);")
+	tk.MustGetDBError("delete from t1 where id = 1", plannererrors.ErrRowIsReferenced2)
+
+	// Test IS NOT NULL partial indexes are safe for referenced columns.
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (id int key, a int, index idx_a(a) where a is not null);")
+	tk.MustExec("create table t2 (id int key, b int, index idx_b(b));")
+	tk.MustExec("alter table t2 add constraint fk_b foreign key (b) references t1(a);")
+	tk.MustExec("insert into t1 values (1, 10);")
+	tk.MustExec("insert into t2 values (1, 10);")
+	tk.MustGetDBError("insert into t2 values (2, 20)", plannererrors.ErrNoReferencedRow2)
 }
 
 func TestAlterTableAddForeignKeyError(t *testing.T) {
@@ -1291,6 +1371,30 @@ func TestAlterTableAddForeignKeyError(t *testing.T) {
 				"create table t2 (a int, b varchar(10));",
 			},
 			alter: "alter  table t2 add foreign key fk_b(b) references t1(a)",
+			err:   "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_b' in the referenced table 't1'",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a int, b int, index idx_a(a) where b = 1);",
+				"create table t2 (a int, b int, index(b));",
+			},
+			alter: "alter table t2 add foreign key fk_b(b) references t1(a)",
+			err:   "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_b' in the referenced table 't1'",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a int, index idx_a(a) where a is null);",
+				"create table t2 (a int, b int, index(b));",
+			},
+			alter: "alter table t2 add foreign key fk_b(b) references t1(a)",
+			err:   "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_b' in the referenced table 't1'",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a int, b int, index idx_a(a) where b is not null);",
+				"create table t2 (a int, b int, index(b));",
+			},
+			alter: "alter table t2 add foreign key fk_b(b) references t1(a)",
 			err:   "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_b' in the referenced table 't1'",
 		},
 		{
@@ -1494,6 +1598,38 @@ func TestRenameTablesWithForeignKey(t *testing.T) {
 		"  KEY `b` (`b`),\n" +
 		"  CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `test1`.`tt1` (`id`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table p1 (id int primary key)")
+	tk.MustExec("create table p2 (id int primary key)")
+	tk.MustExec("create table p3 (id int primary key)")
+	tk.MustExec("create table c1 (id int primary key, pid int, index(pid), constraint fk_c1 foreign key(pid) references p1(id))")
+	tk.MustExec("insert into p1 values (1)")
+	tk.MustExec("insert into p3 values (3)")
+	tk.MustExec("insert into c1 values (1, 1)")
+
+	tk.MustExec("rename table p1 to tmp, p2 to p1, tmp to p2, p3 to tmp")
+	tk.MustQuery("select referenced_table_name from information_schema.referential_constraints where constraint_schema = 'test' and constraint_name = 'fk_c1'").Check(testkit.Rows("p2"))
+	tk.MustGetDBError("insert into c1 values (3, 3)", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("delete from p2 where id = 1", plannererrors.ErrRowIsReferenced2)
+	tk.MustQuery("select * from c1").Check(testkit.Rows("1 1"))
+
+	// Move both the parent and its child through reused intermediate names.
+	tk.MustExec("rename table p2 to tmp_parent, c1 to tmp_child, tmp_parent to p2_final, tmp_child to c1_final")
+	child := getTableInfo(t, dom, "test", "c1_final")
+	require.Equal(t, "test", child.ForeignKeys[0].RefSchema.L)
+	require.Equal(t, "p2_final", child.ForeignKeys[0].RefTable.L)
+	tk.MustGetDBError("insert into c1_final values (3, 3)", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("delete from p2_final where id = 1", plannererrors.ErrRowIsReferenced2)
+
+	tk.MustExec("create table self_ref (id int primary key, pid int, foreign key(pid) references self_ref(id))")
+	tk.MustExec("insert into self_ref values (1, null), (2, 1)")
+	tk.MustExec("rename table self_ref to self_tmp, self_tmp to self_final")
+	self := getTableInfo(t, dom, "test", "self_final")
+	require.Equal(t, "test", self.ForeignKeys[0].RefSchema.L)
+	require.Equal(t, "self_final", self.ForeignKeys[0].RefTable.L)
+	tk.MustGetDBError("delete from self_final where id = 1", plannererrors.ErrRowIsReferenced2)
 }
 
 func getLatestSchemaDiff(t *testing.T, tk *testkit.TestKit) *model.SchemaDiff {

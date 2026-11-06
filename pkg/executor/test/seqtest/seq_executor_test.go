@@ -321,7 +321,15 @@ func TestShow(t *testing.T) {
 	require.Len(t, row, 5)
 	require.NotEqual(t, "0", row[1].(string))
 
-	tk.MustQuery("SHOW PRIVILEGES")
+	rows = tk.MustQuery("SHOW PRIVILEGES").Rows()
+	foundOperateView := false
+	for _, r := range rows {
+		if len(r) >= 2 && r[0] == "Operate view" && r[1] == "Tables" {
+			foundOperateView = true
+			break
+		}
+	}
+	require.True(t, foundOperateView)
 
 	// Test show create database
 	testSQL = `create database show_test_DB`
@@ -621,18 +629,18 @@ func TestShowStatsHealthy(t *testing.T) {
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("insert into t values (1), (2)")
 	do, _ := session.GetDomain(store)
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("insert into t values (3), (4), (5), (6), (7), (8), (9), (10)")
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	err := do.StatsHandle().Update(context.Background(), do.InfoSchema())
 	require.NoError(t, err)
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("delete from t")
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	err = do.StatsHandle().Update(context.Background(), do.InfoSchema())
 	require.NoError(t, err)
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
@@ -649,7 +657,7 @@ func TestIndexDoubleReadClose(t *testing.T) {
 	}
 	originSize := atomic.LoadInt32(&executor.LookupTableTaskChannelSize)
 	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, 1)
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKitWithSession(t, store, testkit.NewSession(t, store))
 	tk.MustExec("set @@tidb_index_lookup_size = '10'")
 	tk.MustExec("use test")
 	tk.MustExec("create table dist (id int primary key, c_idx int, c_col int, index (c_idx))")
@@ -667,11 +675,11 @@ func TestIndexDoubleReadClose(t *testing.T) {
 	err = rs.Next(context.Background(), req)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	keyword := "pickAndExecTask"
+	keyword := "execTableTask"
 	require.NoError(t, rs.Close())
 	require.Eventually(t, func() bool {
 		return !checkGoroutineExists(keyword)
-	}, time.Millisecond*100, time.Millisecond*10)
+	}, time.Second, time.Millisecond*10)
 	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
 }
 
@@ -742,6 +750,8 @@ func TestUnparallelHashAggClose(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/aggregate/unparallelHashAggError"))
 	}()
 	ctx := context.Background()
+	_, err := tk.Session().Execute(ctx, "set tidb_executor_concurrency=1;")
+	require.NoError(t, err)
 	rss, err := tk.Session().Execute(ctx, "select sum(distinct a) from (select cast(t.a as signed) as a, b from t) t group by b;")
 	require.NoError(t, err)
 	rs := rss[0]

@@ -1,4 +1,5 @@
 # TestListPartitionPruner
+set @@tidb_default_string_match_selectivity = 0.8;
 drop database if exists test_partition_2;
 create database test_partition_2;
 use test_partition_2;

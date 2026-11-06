@@ -32,14 +32,15 @@ const (
 
 // event names during schedule and execute
 const (
-	EventSubtaskScheduledAway = "subtask-scheduled-away"
-	EventSubtaskRerun         = "subtask-rerun"
-	EventSubtaskSlow          = "subtask-slow"
-	EventRetry                = "retry"
-	EventTooManyIdx           = "too-many-idx"
-	EventMergeSort            = "merge-sort"
-	EventCleanupFailed        = "cleanup-failed"
-	EventMeterWriteFailed     = "meter-write-failed"
+	EventSubtaskScheduledAway     = "subtask-scheduled-away"
+	EventSubtaskRerun             = "subtask-rerun"
+	EventSubtaskSlow              = "subtask-slow"
+	EventRetry                    = "retry"
+	EventTooManyIdx               = "too-many-idx"
+	EventMergeSort                = "merge-sort"
+	EventCleanupFailed            = "cleanup-failed"
+	EventExpiredFileCleanupFailed = "expired-file-cleanup-failed"
+	EventMeterWriteFailed         = "meter-write-failed"
 )
 
 // DXF metrics

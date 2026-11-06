@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
@@ -440,7 +441,7 @@ func generateMVIndexMergePartialPaths4And(ds *logicalop.DataSource, normalPathCn
 		if !ok {
 			continue
 		}
-		accessFilters, _, mvColOffset, mvFilterMutations := CollectFilters4MVIndexMutations(ds.SCtx(), indexMergeConds, idxCols)
+		accessFilters, _, mvColOffset, mvFilterMutations := CollectFilters4MVIndexMutations(ds.SCtx(), indexMergeConds, idxCols, possibleMVIndexPaths[idx].Index)
 		if len(accessFilters) == 0 { // cannot use any filter on this MVIndex
 			continue
 		}
@@ -529,7 +530,7 @@ func generateOtherIndexMerge(ds *logicalop.DataSource, regularPathCount int, ind
 		skipRangeScanCheck := fixcontrol.GetBoolWithDefault(
 			ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(),
 			fixcontrol.Fix52869,
-			false,
+			true,
 		)
 		ds.SCtx().GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix52869)
 		if !skipRangeScanCheck {
@@ -751,7 +752,7 @@ func generateANDIndexMerge4MVIndex(ds *logicalop.DataSource, normalPathCnt int, 
 			continue
 		}
 
-		accessFilters, remainingFilters, _ := collectFilters4MVIndex(ds.SCtx(), filters, idxCols)
+		accessFilters, remainingFilters, _ := collectFilters4MVIndex(ds.SCtx(), filters, idxCols, ds.PossibleAccessPaths[idx].Index)
 		if len(accessFilters) == 0 { // cannot use any filter on this MVIndex
 			continue
 		}
@@ -1034,31 +1035,50 @@ func PrepareIdxColsAndUnwrapArrayType(
 // collectFilters4MVIndex splits these filters into 2 parts where accessFilters can be used to access this index directly.
 // For idx(x, cast(a as array), z), `x=1 and (2 member of a) and z=1 and x+z>0` is split to:
 // accessFilters: `x=1 and (2 member of a) and z=1`, remaining: `x+z>0`.
+// Ranges on a non-array column (`z1>1`, `z1>1 and z1<10`) are only taken as the last access filters, the same way ranger
+// stops building ranges after the first non-point column of a normal index: for idx(x, cast(a as array), z1, z2),
+// `x=1 and (2 member of a) and z1>1 and z2=1` is split to accessFilters: `x=1 and (2 member of a) and z1>1`,
+// remaining: `z2=1`. A range on a column before the array column is never an access filter, since the path could not
+// reach the array column: `x>0 and x in (1,2) and (2 member of a)` still uses `x in (1,2)` and keeps `x>0` remaining.
 func collectFilters4MVIndex(
 	sctx planctx.PlanContext,
 	filters []expression.Expression,
 	idxCols []*expression.Column,
+	idxInfo *model.IndexInfo,
 ) (accessFilters, remainingFilters []expression.Expression, accessTp int) {
 	accessTp = unspecifiedFilterTp
 	usedAsAccess := make([]bool, len(filters))
-	for _, col := range idxCols {
+	mvColIdx := arrayColOffset(sctx, idxCols)
+	for z, col := range idxCols {
 		found := false
+		stop := false
 		for i, f := range filters {
 			if usedAsAccess[i] {
 				continue
 			}
 			if ok, tp := checkAccessFilter4IdxCol(sctx, f, col); ok {
+				if tp == rangeOnNonMVColTp {
+					if z < mvColIdx || isPrefixIdxCol(idxInfo, z, col) {
+						continue
+					}
+					stop = true
+				} else if stop {
+					// a range has been taken on this column, only more ranges on it (`c>1 and c<10`) can join it.
+					continue
+				}
 				accessFilters = append(accessFilters, f)
 				usedAsAccess[i] = true
 				found = true
 				// access filter type on mv col overrides normal col for the return value of this function
-				if accessTp == unspecifiedFilterTp || accessTp == eqOnNonMVColTp {
+				if accessTp == unspecifiedFilterTp || accessTp == eqOrInOnNonMVColTp || accessTp == rangeOnNonMVColTp {
 					accessTp = tp
 				}
-				break
+				if !stop {
+					break
+				}
 			}
 		}
-		if !found {
+		if !found || stop {
 			break
 		}
 	}
@@ -1108,20 +1128,22 @@ func collectFilters4MVIndex(
 //
 // the outer usage will be: accessFilter[mvColOffset] = each element of mvFilterMutations to get the mv access filters mutation combination.
 func CollectFilters4MVIndexMutations(sctx base.PlanContext, filters []expression.Expression,
-	idxCols []*expression.Column) (accessFilters, remainingFilters []expression.Expression, mvColOffset int, mvFilterMutations []expression.Expression) {
+	idxCols []*expression.Column, idxInfo *model.IndexInfo) (accessFilters, remainingFilters []expression.Expression, mvColOffset int, mvFilterMutations []expression.Expression) {
 	usedAsAccess := make([]bool, len(filters))
 	// accessFilters [x, a<json>, z]
 	//                    |
 	//                    +----> it may have several substitutions in mvFilterMutations if it's json col.
 	mvFilterMutations = make([]expression.Expression, 0, 1)
 	mvColOffset = -1
+	mvColIdx := arrayColOffset(sctx, idxCols)
 	for z, col := range idxCols {
 		found := false
+		stop := false
 		for i, f := range filters {
 			if usedAsAccess[i] {
 				continue
 			}
-			if ok, _ := checkAccessFilter4IdxCol(sctx, f, col); ok {
+			if ok, tp := checkAccessFilter4IdxCol(sctx, f, col); ok {
 				if col.VirtualExpr != nil && col.VirtualExpr.GetType(sctx.GetExprCtx().GetEvalCtx()).IsArray() {
 					// assert jsonColOffset should always be the same.
 					// if the filter is from virtual expression, it means it is about the mv json col.
@@ -1136,13 +1158,22 @@ func CollectFilters4MVIndexMutations(sctx base.PlanContext, filters []expression
 					found = true
 					continue
 				}
+				if tp == rangeOnNonMVColTp {
+					if z < mvColIdx || isPrefixIdxCol(idxInfo, z, col) {
+						continue
+					}
+					// ranges can only be the last access filters, see collectFilters4MVIndex.
+					stop = true
+				} else if stop {
+					continue
+				}
 				accessFilters = append(accessFilters, f)
 				usedAsAccess[i] = true
 				found = true
 				// shouldn't break once found here, because we want to collect all the mutation mv filters here.
 			}
 		}
-		if !found {
+		if !found || stop {
 			break
 		}
 	}
@@ -1152,6 +1183,26 @@ func CollectFilters4MVIndexMutations(sctx base.PlanContext, filters []expression
 		}
 	}
 	return accessFilters, remainingFilters, mvColOffset, mvFilterMutations
+}
+
+// arrayColOffset returns the position of the array column in idxCols, or len(idxCols) if there is none.
+func arrayColOffset(sctx planctx.PlanContext, idxCols []*expression.Column) int {
+	for z, col := range idxCols {
+		if col.VirtualExpr != nil && col.VirtualExpr.GetType(sctx.GetExprCtx().GetEvalCtx()).IsArray() {
+			return z
+		}
+	}
+	return len(idxCols)
+}
+
+// isPrefixIdxCol reports whether the i-th column of idxInfo is a prefix index column. A range on a prefix column cannot
+// be fully resolved by the index range, so it is not taken as an access filter for a multi-valued index path.
+func isPrefixIdxCol(idxInfo *model.IndexInfo, i int, col *expression.Column) bool {
+	if idxInfo == nil || i >= len(idxInfo.Columns) {
+		return false
+	}
+	length := idxInfo.Columns[i].Length
+	return length != types.UnspecifiedLength && length != col.RetType.GetFlen()
 }
 
 // cleanAccessPathForMVIndexHint removes all other access path if there is a multi-valued index hint, and this hint
@@ -1178,6 +1229,23 @@ func cleanAccessPathForMVIndexHint(ds *logicalop.DataSource) {
 	if len(validMVIndexPath) > 0 {
 		ds.PossibleAccessPaths = validMVIndexPath
 	}
+}
+
+func cleanAccessPathForFTS(ds *logicalop.DataSource) error {
+	if ds.FtsPushDown == nil {
+		return nil
+	}
+	validPaths := make([]*util.AccessPath, 0, len(ds.PossibleAccessPaths))
+	for _, p := range ds.PossibleAccessPaths {
+		if p.StoreType == kv.TiFlash {
+			validPaths = append(validPaths, p)
+		}
+	}
+	if len(validPaths) == 0 {
+		return plannererrors.ErrInternal.GenWithStack("Full text search can be only executed in a columnar storage (TiFlash), but it is not available. Possible reasons: TiFlash is not deployed; columnar replica is not set on this table; columnar replica is not available due to SQL hint /*+ read_from_storage */ or tidb_isolation_read_engines variable.")
+	}
+	ds.PossibleAccessPaths = validPaths
+	return nil
 }
 
 // indexMergeContainSpecificIndex checks whether the index merge path contains at least one index in the `indexSet`
@@ -1207,10 +1275,13 @@ func indexMergeContainSpecificIndex(path *util.AccessPath, indexSet map[int64]st
 
 const (
 	unspecifiedFilterTp int = iota
-	eqOnNonMVColTp
+	eqOrInOnNonMVColTp
 	multiValuesOROnMVColTp
 	multiValuesANDOnMVColTp
 	singleValueOnMVColTp
+	// rangeOnNonMVColTp is a comparison (>, >=, <, <=) between a non-array index column and a constant. It can only be
+	// the last access filter of a path: every column before it must be a point, and no column after it can be used.
+	rangeOnNonMVColTp
 )
 
 // checkAccessFilter4IdxCol checks whether this filter can be used as an accessFilter to access the column of an index,
@@ -1301,7 +1372,29 @@ func checkAccessFilter4IdxCol(
 	}
 
 	// else: non virtual column
-	if sf.FuncName.L != ast.EQ { // only support EQ now
+	if sf.FuncName.L == ast.In {
+		args := sf.GetArgs()
+		if len(args) < 2 {
+			return false, unspecifiedFilterTp
+		}
+		c, isCol := args[0].(*expression.Column)
+		if !isCol || !c.Equal(sctx.GetExprCtx().GetEvalCtx(), idxCol) {
+			return false, unspecifiedFilterTp
+		}
+		for _, arg := range args[1:] {
+			if _, isCon := arg.(*expression.Constant); !isCon {
+				return false, unspecifiedFilterTp
+			}
+		}
+		return true, eqOrInOnNonMVColTp
+	}
+	var tp int
+	switch sf.FuncName.L {
+	case ast.EQ:
+		tp = eqOrInOnNonMVColTp
+	case ast.GT, ast.GE, ast.LT, ast.LE:
+		tp = rangeOnNonMVColTp
+	default:
 		return false, unspecifiedFilterTp
 	}
 	args := sf.GetArgs()
@@ -1320,7 +1413,7 @@ func checkAccessFilter4IdxCol(
 		return false, unspecifiedFilterTp
 	}
 	if argCol.Equal(sctx.GetExprCtx().GetEvalCtx(), idxCol) {
-		return true, eqOnNonMVColTp
+		return true, tp
 	}
 	return false, unspecifiedFilterTp
 }

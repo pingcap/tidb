@@ -18,11 +18,49 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
+
+func calcExpectedCollectConflictsChecksum(
+	t *testing.T,
+	hdlCtx *conflictedKVHandleContext,
+) *importinto.Checksum {
+	t.Helper()
+	encodeCfg := &encode.EncodingConfig{
+		Table:                hdlCtx.tbl,
+		UseIdentityAutoRowID: true,
+	}
+	controller := &importer.LoadDataController{
+		ASTArgs: &importer.ASTArgs{},
+		Plan:    &importer.Plan{},
+		Table:   hdlCtx.tbl,
+	}
+	localEncoder, err := importer.NewTableKVEncoderForDupResolve(encodeCfg, controller)
+	require.NoError(t, err)
+
+	sum := verification.NewKVChecksumWithKeyspace(hdlCtx.store.GetCodec().GetKeyspace())
+	for i := range 3 {
+		dupID := i + 1
+		row := []types.Datum{types.NewDatum(dupID), types.NewDatum(dupID), types.NewDatum(dupID)}
+		dupPairs, err2 := localEncoder.Encode(row, int64(dupID))
+		require.NoError(t, err2)
+		for range 3 {
+			sum.Update(dupPairs.Pairs)
+		}
+	}
+	return &importinto.Checksum{
+		Sum:  sum.Sum(),
+		KVs:  sum.SumKVS(),
+		Size: sum.SumSize(),
+	}
+}
 
 func TestCollectConflictsStepExecutor(t *testing.T) {
 	hdlCtx := prepareConflictedKVHandleContext(t)
@@ -34,21 +72,33 @@ func TestCollectConflictsStepExecutor(t *testing.T) {
 	runConflictedKVHandleStep(t, st, stepExe)
 	outSTMeta := &importinto.CollectConflictsStepMeta{}
 	require.NoError(t, json.Unmarshal(st.Meta, outSTMeta))
-	expectedSum := &importinto.Checksum{
-		Sum:  6734985763851266693,
-		KVs:  27,
-		Size: 909,
-	}
-	expectedSum.Size += expectedSum.KVs * uint64(len(hdlCtx.store.GetCodec().GetKeyspace()))
-	if kerneltype.IsNextGen() {
-		// table ID in next-gen is different with classic, so we cannot directly
-		// calculate the checksum from the classic one.
-		expectedSum.Sum = 6636364898488969870
-	}
+	expectedSum := calcExpectedCollectConflictsChecksum(t, hdlCtx)
 	require.EqualValues(t, expectedSum, outSTMeta.Checksum)
 	require.EqualValues(t, 9, outSTMeta.ConflictedRowCount)
 	// we are running them concurrently, so the number of filenames may vary.
 	require.GreaterOrEqual(t, len(outSTMeta.ConflictedRowFilenames), 2)
 	require.LessOrEqual(t, len(outSTMeta.ConflictedRowFilenames), 9)
+	require.False(t, outSTMeta.ConflictedRowRecordingCapped)
 	require.False(t, outSTMeta.TooManyConflictsFromIndex)
+}
+
+func TestCollectConflictsStepExecutorFilesTruncated(t *testing.T) {
+	hdlCtx := prepareConflictedKVHandleContext(t)
+	stMeta := importinto.CollectConflictsStepMeta{Infos: hdlCtx.conflictedKVInfo}
+	bytes, err := json.Marshal(stMeta)
+	require.NoError(t, err)
+	st := &proto.Subtask{Meta: bytes}
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/importinto/forceHandleConflictsBySingleThread", "return(true)")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv/mockTotalConflictRowFileSizeLimit", func(limitP *int64) {
+		*limitP = 32
+	})
+
+	stepExe := importinto.NewCollectConflictsStepExecutor(&proto.TaskBase{RequiredSlots: 1}, hdlCtx.store, hdlCtx.taskMeta, hdlCtx.logger)
+	runConflictedKVHandleStep(t, st, stepExe)
+	outSTMeta := &importinto.CollectConflictsStepMeta{}
+	require.NoError(t, json.Unmarshal(st.Meta, outSTMeta))
+	require.True(t, outSTMeta.ConflictedRowRecordingCapped)
+	require.Greater(t, outSTMeta.ConflictedRowCount, int64(0))
+	require.NotEmpty(t, outSTMeta.ConflictedRowFilenames)
 }

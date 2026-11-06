@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/disk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -782,11 +783,29 @@ type SessionVars struct {
 	MemQuota
 	BatchSize
 	PipelinedDMLConfig
+	// QueryCopStoreLimit limits TiKV cop request concurrency for each store within a single query.
+	// A value of 0 disables the limit.
+	QueryCopStoreLimit int
 	// DMLBatchSize indicates the number of rows batch-committed for a statement.
 	// It will be used when using LOAD DATA or BatchInsert or BatchDelete is on.
-	DMLBatchSize        int
-	RetryLimit          int64
-	DisableTxnAutoRetry bool
+	DMLBatchSize int
+	// MViewMaintainIsolationReadEngines controls the isolation read engines used by MV maintenance internal sessions.
+	MViewMaintainIsolationReadEngines string
+	// MViewMaintainImportThreads controls the thread count for MV initial build IMPORT INTO.
+	MViewMaintainImportThreads int
+	// MViewMaintainImportDiskQuota controls the disk quota for MV initial build IMPORT INTO.
+	MViewMaintainImportDiskQuota string
+	// MLogPurgeBatchSize indicates the maximum number of MLog rows deleted by one purge batch.
+	MLogPurgeBatchSize int
+	// MLogPurgeMinRate indicates the minimum target delete rate for adaptive MLog purge throttling.
+	MLogPurgeMinRate int
+	// MLogPurgeRateBudgetRatio indicates the fraction of the scheduling window that purge may spend deleting.
+	MLogPurgeRateBudgetRatio float64
+	// MLogPurgeDeleteTiFlashThreads controls TiFlash threads used by MLog purge DELETE statements.
+	// Zero means that the current tidb_max_tiflash_threads value is inherited.
+	MLogPurgeDeleteTiFlashThreads int64
+	RetryLimit                    int64
+	DisableTxnAutoRetry           bool
 	*UserVars
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
@@ -796,6 +815,10 @@ type SessionVars struct {
 	SysErrorCount uint16
 	// nonPreparedPlanCacheStmts stores PlanCacheStmts for non-prepared plan cache.
 	nonPreparedPlanCacheStmts *kvcache.SimpleLRUCache
+	// prepareStmtDedupCache caches PlanCacheStmt templates keyed by SQL text +
+	// charset + collation + currentDB to skip redundant Parse+Preprocess+Build
+	// on repeated COM_STMT_PREPARE for the same SQL within a session.
+	prepareStmtDedupCache *kvcache.SimpleLRUCache
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]any
 	PreparedStmtNameToID map[string]uint32
@@ -909,6 +932,8 @@ type SessionVars struct {
 
 	// StmtCtx holds variables for current executing statement.
 	StmtCtx *stmtctx.StatementContext
+	// RUV2Metrics stores statement-level RU v2 metrics for current statement.
+	RUV2Metrics *execdetails.RUV2Metrics
 
 	// RefCountOfStmtCtx indicates the reference count of StmtCtx. When the
 	// StmtCtx is accessed by other sessions, e.g. oom-alarm-handler/expensive-query-handler, add one first.
@@ -1103,6 +1128,7 @@ type SessionVars struct {
 	MergeJoinCostFactor        float64
 	HashJoinCostFactor         float64
 	IndexJoinCostFactor        float64
+	IndexJoinMaxScanRowsRatio  float64
 	SelectivityFactor          float64
 
 	// enableForceInlineCTE is used to enable/disable force inline CTE.
@@ -1177,17 +1203,33 @@ type SessionVars struct {
 	// EnableNoDecorrelateInSelect enables the NO_DECORRELATE hint for subqueries in the select list.
 	EnableNoDecorrelateInSelect bool
 
+	// EnableAlternativeLogicalPlans enables building an extra non-decorrelate
+	// logical alternative when decorrelation does not produce an equivalent
+	// same-order index join candidate.
+	EnableAlternativeLogicalPlans bool
+
 	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.
 	EnableSemiJoinRewrite bool
 
+	// EnableCorrelateSubquery is an internal flag (not user-facing) toggled by the
+	// correlate alternative round to enable conversion of non-correlated semi-joins
+	// to correlated Apply during plan building.
+	EnableCorrelateSubquery bool
+
 	// AllowProjectionPushDown enables pushdown projection on TiKV.
 	AllowProjectionPushDown bool
+
+	// EnableStrictNotNullCheck enables strict not-null check for single-row insert in non-strict mode.
+	EnableStrictNotNullCheck bool
 
 	// EnableStrictDoubleTypeCheck enables table field double type check.
 	EnableStrictDoubleTypeCheck bool
 
 	// EnableVectorizedExpression  enables the vectorized expression evaluation.
 	EnableVectorizedExpression bool
+
+	// EnableTiKVShortCircuitExpression enables short-circuit expression evaluation in TiKV.
+	EnableTiKVShortCircuitExpression bool
 
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
@@ -1227,6 +1269,9 @@ type SessionVars struct {
 	// TiDBOptEnableAdvancedJoinReorder controls whether to use the advanced join reorder framework.
 	TiDBOptEnableAdvancedJoinReorder bool
 
+	// TiDBOptJoinReorderThroughProj enables join reorder to look through projections.
+	TiDBOptJoinReorderThroughProj bool
+
 	// TiDBOptJoinReorderThroughSel enables pushing selection conditions down to
 	// reordered join trees when applicable.
 	TiDBOptJoinReorderThroughSel bool
@@ -1252,6 +1297,17 @@ type SessionVars struct {
 	// If the value is 0, timeouts are not enabled.
 	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
 	MaxExecutionTime uint64
+	// DMLMaxExecutionTime is the timeout for transactional DML statements and COMMIT, in milliseconds.
+	// If the value is 0, timeouts are not enabled.
+	DMLMaxExecutionTime uint64
+
+	// MaxKeysRead is the maximum number of storage engine keys that a SELECT statement
+	// may examine. 0 means unlimited. Only applies to SELECT statements.
+	MaxKeysRead uint64
+
+	// KeysExamined is the cumulative number of storage engine keys examined across all
+	// statements (SELECT, UPDATE, DELETE, etc.) in this session. Reset by FLUSH STATUS.
+	KeysExamined uint64
 
 	// LoadBindingTimeout is the timeout for loading the bind info.
 	LoadBindingTimeout uint64
@@ -1326,6 +1382,8 @@ type SessionVars struct {
 
 	// EnableIndexMerge enables the generation of IndexMergePath.
 	enableIndexMerge bool
+	// EnableNoBackslashEscapesInLike controls whether NO_BACKSLASH_ESCAPES affects LIKE default escape.
+	EnableNoBackslashEscapesInLike bool
 
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
 	replicaRead kv.ReplicaReadType
@@ -1417,6 +1475,9 @@ type SessionVars struct {
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
 	EnabledRateLimitAction bool
 
+	// EnableAdaptiveLimitScan enables statement-local adaptive admission for early-stop LIMIT scans.
+	EnableAdaptiveLimitScan bool
+
 	// EnableAsyncCommit indicates whether to enable the async commit feature.
 	EnableAsyncCommit bool
 
@@ -1434,6 +1495,12 @@ type SessionVars struct {
 
 	// UseHashJoinV2 indicates whether to use hash join v2.
 	UseHashJoinV2 bool
+
+	// EnableFullOuterJoin indicates whether to enable full outer join.
+	EnableFullOuterJoin bool
+
+	// EnableMView indicates whether to enable materialized view DDL.
+	EnableMView bool
 
 	// EnableHistoricalStats indicates whether to enable historical statistics.
 	EnableHistoricalStats bool
@@ -1524,6 +1591,8 @@ type SessionVars struct {
 	// NonTransactionalIgnoreError indicates whether to ignore error in non-transactional statements.
 	// When set to false, returns immediately when it meets the first error.
 	NonTransactionalIgnoreError bool
+	// InNonTransactionalDML marks non-transactional DML execution and its internal statements.
+	InNonTransactionalDML bool
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
@@ -1587,12 +1656,20 @@ type SessionVars struct {
 	// EnableNonPreparedPlanCacheForDML indicates whether to enable non-prepared plan cache for DML statements.
 	EnableNonPreparedPlanCacheForDML bool
 
+	// PlanCacheStrategy controls plan cache strategy.
+	PlanCacheStrategy string
+
 	// EnableFuzzyBinding indicates whether to enable fuzzy binding.
 	EnableFuzzyBinding bool
 
 	// PlanCacheInvalidationOnFreshStats controls if plan cache will be invalidated automatically when
 	// related stats are analyzed after the plan cache is generated.
 	PlanCacheInvalidationOnFreshStats bool
+
+	// PlanCacheSkipStatsOnBinding controls if plan cache skips stats-version invalidation when a SQL
+	// binding is matched. Since a binding pins the plan via hints, stats changes cannot alter the
+	// chosen plan, so invalidating the cache entry on stats updates is unnecessary.
+	PlanCacheSkipStatsOnBinding bool
 
 	// NonPreparedPlanCacheSize controls the size of non-prepared plan cache.
 	NonPreparedPlanCacheSize uint64
@@ -1609,6 +1686,8 @@ type SessionVars struct {
 
 	// EnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
 	EnableTiFlashReadForWriteStmt bool
+	// InMViewMaintenance indicates the session is executing internal MV build/refresh statements.
+	InMViewMaintenance bool
 
 	// EnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
 	EnableUnsafeSubstitute bool
@@ -1623,6 +1702,9 @@ type SessionVars struct {
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no
 	// memory limit for ranges.
 	RangeMaxSize int64
+	// RangeMaxCount is the range-count threshold for preferring more equality/IN predicates in skyline pruning.
+	// It does not limit range construction. 0 disables the threshold.
+	RangeMaxCount int64
 
 	// LastPlanReplayerToken indicates the last plan replayer token
 	LastPlanReplayerToken string
@@ -1633,8 +1715,6 @@ type SessionVars struct {
 
 	// AnalyzePartitionConcurrency indicates concurrency for partitions in Analyze
 	AnalyzePartitionConcurrency int
-	// AnalyzePartitionMergeConcurrency indicates concurrency for merging partition stats
-	AnalyzePartitionMergeConcurrency int
 
 	// EnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
 	EnableAsyncMergeGlobalStats bool
@@ -1678,6 +1758,9 @@ type SessionVars struct {
 	// PlanReplayerFinishedTaskKey used to record the finished plan replayer task key in order not to record the
 	// duplicate task in plan replayer continues capture
 	PlanReplayerFinishedTaskKey map[replayer.PlanReplayerTaskKey]struct{}
+
+	// AnalyzeStoreBatchSize is the child-task limit for Analyze store batches. 0 disables Analyze store batching.
+	AnalyzeStoreBatchSize int
 
 	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
 	StoreBatchSize int
@@ -1810,6 +1893,10 @@ type SessionVars struct {
 	// `select for update` statements which do acquire pessimsitic locks.
 	SharedLockPromotion bool
 
+	// EnableSharedLockUpgrade indicates whether shared locks may be upgraded to exclusive locks during
+	// pessimistic locking.
+	EnableSharedLockUpgrade bool
+
 	// ScatterRegion will scatter the regions for DDLs when it is "table" or "global", "" indicates not trigger scatter.
 	ScatterRegion string
 
@@ -1821,6 +1908,9 @@ type SessionVars struct {
 
 	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
 	InternalSQLScanUserTable bool
+	// TTLJobID attributes a user-table scan/delete transaction to a TTL job. Empty means
+	// no scan/delete attribution; TTL sessions restore it after draining the result.
+	TTLJobID string
 
 	// MemArbitrator represents the properties to be controlled by the memory arbitrator.
 	MemArbitrator struct {
@@ -1836,6 +1926,9 @@ type SessionVars struct {
 
 	// IndexLookUpPushDownPolicy indicates the policy of index look up push down.
 	IndexLookUpPushDownPolicy string
+
+	// EnableCachePrepareStmt indicates whether to cache prepare stmt in plan cache.
+	EnableCachePrepareStmt bool
 }
 
 // ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.
@@ -2300,6 +2393,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		CartesianJoinOrderThreshold:      vardef.DefOptCartesianJoinOrderThreshold,
 		EnableOuterJoinReorder:           vardef.DefTiDBEnableOuterJoinReorder,
 		EnableNoDecorrelateInSelect:      vardef.DefOptEnableNoDecorrelateInSelect,
+		EnableAlternativeLogicalPlans:    vardef.DefOptEnableAlternativeLogicalPlans,
 		EnableSemiJoinRewrite:            vardef.DefOptEnableSemiJoinRewrite,
 		RetryLimit:                       vardef.DefTiDBRetryLimit,
 		DisableTxnAutoRetry:              vardef.DefTiDBDisableTxnAutoRetry,
@@ -2339,17 +2433,21 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		MergeJoinCostFactor:              vardef.DefOptMergeJoinCostFactor,
 		HashJoinCostFactor:               vardef.DefOptHashJoinCostFactor,
 		IndexJoinCostFactor:              vardef.DefOptIndexJoinCostFactor,
+		IndexJoinMaxScanRowsRatio:        vardef.DefOptIndexJoinMaxScanRowsRatio,
 		SelectivityFactor:                vardef.DefOptSelectivityFactor,
 		enableForceInlineCTE:             vardef.DefOptForceInlineCTE,
 		EnableVectorizedExpression:       vardef.DefEnableVectorizedExpression,
+		EnableTiKVShortCircuitExpression: vardef.DefTiDBEnableTiKVShortCircuitExpression,
 		CommandValue:                     uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold:      vardef.DefTiDBOptJoinReorderThreshold,
 		TiDBOptEnableAdvancedJoinReorder: vardef.DefTiDBOptEnableAdvancedJoinReorder,
+		TiDBOptJoinReorderThroughProj:    vardef.DefTiDBOptJoinReorderThroughProj,
 		TiDBOptJoinReorderThroughSel:     vardef.DefTiDBOptJoinReorderThroughSel,
 		SlowQueryFile:                    config.GetGlobalConfig().Log.SlowQueryFile,
 		WaitSplitRegionFinish:            vardef.DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:           vardef.DefWaitSplitRegionTimeout,
 		enableIndexMerge:                 vardef.DefTiDBEnableIndexMerge,
+		EnableNoBackslashEscapesInLike:   vardef.DefTiDBEnableNoBackslashEscapesInLike,
 		NoopFuncsMode:                    TiDBOptOnOffWarn(vardef.DefTiDBEnableNoopFuncs),
 		replicaRead:                      kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:               vardef.DefTiDBAllowRemoveAutoInc,
@@ -2364,6 +2462,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		WindowingUseHighPrecision:        true,
 		PrevFoundInPlanCache:             vardef.DefTiDBFoundInPlanCache,
 		FoundInPlanCache:                 vardef.DefTiDBFoundInPlanCache,
+		PlanCacheStrategy:                vardef.DefTiDBPlanCacheStrategy,
 		PrevFoundInBinding:               vardef.DefTiDBFoundInBinding,
 		FoundInBinding:                   vardef.DefTiDBFoundInBinding,
 		SelectLimit:                      math.MaxUint64,
@@ -2375,10 +2474,14 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		PartitionPruneMode:               *atomic2.NewString(vardef.DefTiDBPartitionPruneMode),
 		TxnScope:                         kv.NewDefaultTxnScopeVar(),
 		EnabledRateLimitAction:           vardef.DefTiDBEnableRateLimitAction,
+		EnableAdaptiveLimitScan:          vardef.DefTiDBEnableAdaptiveLimitScan,
 		EnableAsyncCommit:                vardef.DefTiDBEnableAsyncCommit,
 		Enable1PC:                        vardef.DefTiDBEnable1PC,
 		GuaranteeLinearizability:         vardef.DefTiDBGuaranteeLinearizability,
 		AnalyzeVersion:                   vardef.DefTiDBAnalyzeVersion,
+		AnalyzeStoreBatchSize:            vardef.DefTiDBAnalyzeStoreBatchSize,
+		EnableFullOuterJoin:              vardef.DefTiDBEnableFullOuterJoin,
+		EnableMView:                      vardef.DefTiDBMViewEnable,
 		EnableIndexMergeJoin:             vardef.DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:              make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:             vardef.DefCTEMaxRecursionDepth,
@@ -2414,11 +2517,15 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		SkipMissingPartitionStats:        vardef.DefTiDBSkipMissingPartitionStats,
 		IndexLookUpPushDownPolicy:        vardef.DefTiDBIndexLookUpPushDownPolicy,
 		OptPartialOrderedIndexForTopN:    vardef.DefTiDBOptPartialOrderedIndexForTopN,
+		EnableCachePrepareStmt:           vardef.DefEnableCachePrepareStmt,
 	}
+	vars.QueryCopStoreLimit = vardef.DefTiDBQueryCopStoreLimit
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
+	vars.StmtCtx.EnableTiKVShortCircuitExpression = vars.EnableTiKVShortCircuitExpression
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
+	vars.KVVars.KillSignalHandler = &vars.SQLKiller
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:            vardef.DefIndexLookupConcurrency,
 		indexLookupJoinConcurrency:        vardef.DefIndexLookupJoinConcurrency,
@@ -2435,9 +2542,17 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ExecutorConcurrency:               vardef.DefExecutorConcurrency,
 	}
 	vars.MemQuota = MemQuota{
-		MemQuotaQuery:      vardef.DefTiDBMemQuotaQuery,
-		MemQuotaApplyCache: vardef.DefTiDBMemQuotaApplyCache,
+		MemQuotaQuery:         vardef.DefTiDBMemQuotaQuery,
+		MViewMaintainMemQuota: vardef.DefTiDBMViewMaintainMemQuota,
+		MemQuotaApplyCache:    vardef.DefTiDBMemQuotaApplyCache,
 	}
+	vars.MViewMaintainIsolationReadEngines = defaultIsolationReadEnginesValue()
+	vars.MViewMaintainImportThreads = vardef.DefTiDBMViewMaintainImportThreads
+	vars.MViewMaintainImportDiskQuota = vardef.DefTiDBMViewMaintainImportDiskQuota
+	vars.MLogPurgeBatchSize = vardef.DefTiDBMLogPurgeBatchSize
+	vars.MLogPurgeMinRate = vardef.DefTiDBMLogPurgeMinRate
+	vars.MLogPurgeRateBudgetRatio = vardef.DefTiDBMLogPurgeRateBudgetRatio
+	vars.MLogPurgeDeleteTiFlashThreads = vardef.DefTiDBMLogPurgeDeleteTiFlashThreads
 	vars.BatchSize = BatchSize{
 		IndexJoinBatchSize: vardef.DefIndexJoinBatchSize,
 		IndexLookupSize:    vardef.DefIndexLookupSize,
@@ -2843,6 +2958,37 @@ func (s *SessionVars) GetNonPreparedPlanCacheStmt(sql string) any {
 	return stmt
 }
 
+// PrepareDedupCacheKey builds the lookup key for the prepare dedup cache.
+// Including charset, collation, currentDB and sqlMode ensures that the cached
+// PlanCacheStmt is only reused when the session context that affects parsing,
+// name-resolution and cacheability decisions is identical. sqlMode is included
+// because flags like PIPES_AS_CONCAT and ANSI_QUOTES change AST shape, and
+// IsASTCacheable (which computes StmtCacheable) runs on that AST.
+func PrepareDedupCacheKey(sql, charset, collation, currentDB string, sqlMode mysql.SQLMode) string {
+	var modeBuf [8]byte
+	binary.LittleEndian.PutUint64(modeBuf[:], uint64(sqlMode))
+	return sql + "\x00" + charset + "\x00" + collation + "\x00" + currentDB + "\x00" + string(modeBuf[:])
+}
+
+// GetPrepareStmtDedupCache returns the cached PrepareStmtCacheEntry for the given key,
+// or nil when the cache is empty or the key is not found.
+func (s *SessionVars) GetPrepareStmtDedupCache(key string) any {
+	if s.prepareStmtDedupCache == nil {
+		return nil
+	}
+	v, _ := s.prepareStmtDedupCache.Get(planCacheStmtKey(key))
+	return v
+}
+
+// SetPrepareStmtDedupCache stores a PrepareStmtCacheEntry under the given key.
+// The cache is lazily initialized and bounded by SessionPlanCacheSize (LRU eviction).
+func (s *SessionVars) SetPrepareStmtDedupCache(key string, val any) {
+	if s.prepareStmtDedupCache == nil {
+		s.prepareStmtDedupCache = kvcache.NewSimpleLRUCache(uint(s.SessionPlanCacheSize), 0, 0)
+	}
+	s.prepareStmtDedupCache.Put(planCacheStmtKey(key), val)
+}
+
 // AddPreparedStmt adds prepareStmt to current session and count in global.
 func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt any) error {
 	if _, exists := s.PreparedStmts[stmtID]; !exists {
@@ -2932,6 +3078,41 @@ func (s *SessionVars) GetSessionStatesSystemVar(name string) (string, bool, erro
 		return val, true, nil
 	}
 	return "", false, nil
+}
+
+// getSnapshotTSState preserves the effective timestamp, which can differ from
+// the cached string after changing time_zone or setting tx_read_ts.
+func getSnapshotTSState(s *SessionVars) (string, bool, error) {
+	if s.SnapshotTS == 0 {
+		return "", false, nil
+	}
+	// Preserve the client's spelling when it still denotes the effective timestamp.
+	if value, ok := s.systems[vardef.TiDBSnapshot]; ok {
+		if ts, err := parseTSFromNumberOrTime(s, value); err == nil && ts == s.SnapshotTS {
+			return value, true, nil
+		}
+	}
+	return strconv.FormatUint(s.SnapshotTS, 10), true, nil
+}
+
+// getTxnReadTSState must not replay a timestamp that has been consumed or cleared
+// by tidb_snapshot. Keep the existing datetime syntax for session-state compatibility.
+func getTxnReadTSState(s *SessionVars) (string, bool, error) {
+	ts := s.TxnReadTS.PeakTxnReadTS()
+	if ts == 0 {
+		return "", false, nil
+	}
+	value := oracle.GetTimeFromTS(ts).In(s.Location()).Format("2006-01-02 15:04:05.000")
+	// A timezone change can make the local time ambiguous during a DST rollback.
+	// Refuse migration if the datetime cannot represent the exact timestamp.
+	restoredTS, err := parseTSFromNumberOrTime(s, value)
+	if err != nil {
+		return "", false, err
+	}
+	if restoredTS != ts {
+		return "", false, sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("tx_read_ts cannot be represented in the session time zone")
+	}
+	return value, true, nil
 }
 
 // GetGlobalSystemVar gets a global system variable.
@@ -3126,7 +3307,7 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.HypoTiFlashReplicas = sessionStates.HypoTiFlashReplicas
 
 	// Decode StatementContext.
-	s.StmtCtx.SetAffectedRows(uint64(sessionStates.LastAffectedRows))
+	s.StmtCtx.PrevAffectedRows = sessionStates.LastAffectedRows
 	s.StmtCtx.PrevLastInsertID = sessionStates.LastInsertID
 	s.StmtCtx.SetWarnings(sessionStates.Warnings)
 	return
@@ -3384,6 +3565,8 @@ func (c *Concurrency) UnionConcurrency() int {
 type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
+	// MViewMaintainMemQuota defines the memory quota used by MV maintenance internal sessions.
+	MViewMaintainMemQuota int64
 	// MemQuotaApplyCache defines the memory capacity for apply cache.
 	MemQuotaApplyCache int64
 }
@@ -3566,11 +3749,11 @@ func (s *SessionVars) GetStrMatchDefaultSelectivity() float64 {
 // Note:
 //
 //	  0 is a special value, which means the default selectivity is 0.9 and TopN assisted estimation is enabled.
-//	  0.8 (the default value) is also a special value. For backward compatibility, when the variable is set to 0.8, we
+//	  0.8 is also a special value. For backward compatibility, when the variable is set to 0.8, we
 //	keep the default selectivity of like/regexp and not like/regexp all 0.8.
 func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
-	if s.DefaultStrMatchSelectivity == vardef.DefTiDBDefaultStrMatchSelectivity {
-		return vardef.DefTiDBDefaultStrMatchSelectivity
+	if s.DefaultStrMatchSelectivity == vardef.DefOptSelectivityFactor {
+		return vardef.DefOptSelectivityFactor
 	}
 	return 1 - s.GetStrMatchDefaultSelectivity()
 }
@@ -3632,6 +3815,15 @@ func (s *SessionVars) GetMaxExecutionTime() uint64 {
 // GetTiKVClientReadTimeout returns readonly kv request timeout, prefer query hint over session variable
 func (s *SessionVars) GetTiKVClientReadTimeout() uint64 {
 	return s.TiKVClientReadTimeout
+}
+
+// GetMaxKeysRead returns the max keys read limit for SELECT statements.
+// Returns 0 (unlimited) when not in a SELECT statement.
+func (s *SessionVars) GetMaxKeysRead() uint64 {
+	if !s.StmtCtx.InSelectStmt {
+		return 0
+	}
+	return s.MaxKeysRead
 }
 
 // SetDiskFullOpt sets the session variable DiskFullOpt

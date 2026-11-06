@@ -65,7 +65,7 @@ func TestCommonHandleIndexOrdering(t *testing.T) {
 		// satisfy ORDER BY a1, a2 with keep order:true (no TopN).
 		// ---------------------------------------------------------------
 		rows := tk.MustQuery(
-			"explain format = 'brief' select * from t_ch use index(ic) where d = 0 order by a1, a2 limit 100",
+			"explain format = 'plan_tree' select * from t_ch use index(ic) where d = 0 order by a1, a2 limit 100",
 		).Rows()
 		require.True(t, explainHas(rows, "keep order:true"),
 			"case 1: expected keep order:true for basic CommonHandle ordering")
@@ -86,7 +86,7 @@ func TestCommonHandleIndexOrdering(t *testing.T) {
 		// a1, a2 should still use keep order:true.
 		// ---------------------------------------------------------------
 		rows = tk.MustQuery(
-			"explain format = 'brief' select * from t_ch use index(ic_overlap) where d = 0 order by a1, a2 limit 100",
+			"explain format = 'plan_tree' select * from t_ch use index(ic_overlap) where d = 0 order by a1, a2 limit 100",
 		).Rows()
 		require.True(t, explainHas(rows, "keep order:true"),
 			"case 2: expected keep order:true with partial PK overlap index")
@@ -106,7 +106,7 @@ func TestCommonHandleIndexOrdering(t *testing.T) {
 		// access conditions satisfied, ORDER BY PK should use keep order.
 		// ---------------------------------------------------------------
 		rows = tk.MustQuery(
-			"explain format = 'brief' select * from t_ch use index(ic_multi) where b = 10 and d = 0 order by a1, a2 limit 100",
+			"explain format = 'plan_tree' select * from t_ch use index(ic_multi) where b = 10 and d = 0 order by a1, a2 limit 100",
 		).Rows()
 		require.True(t, explainHas(rows, "keep order:true"),
 			"case 3: expected keep order:true for multi-column secondary index")
@@ -125,7 +125,7 @@ func TestCommonHandleIndexOrdering(t *testing.T) {
 		// unique secondary index, so ORDER BY PK cannot use keep order.
 		// ---------------------------------------------------------------
 		rows = tk.MustQuery(
-			"explain format = 'brief' select * from t_ch use index(uic) where c > 0 order by a1, a2 limit 100",
+			"explain format = 'plan_tree' select * from t_ch use index(uic) where c > 0 order by a1, a2 limit 100",
 		).Rows()
 		// For a unique index with a range scan, the optimizer should not
 		// be able to satisfy ORDER BY PK via keep order on the index.
@@ -139,7 +139,7 @@ func TestCommonHandleIndexOrdering(t *testing.T) {
 		// ORDER BY a1 DESC, a2 DESC via a reverse scan.
 		// ---------------------------------------------------------------
 		rows = tk.MustQuery(
-			"explain format = 'brief' select * from t_ch use index(ic) where d = 0 order by a1 desc, a2 desc limit 100",
+			"explain format = 'plan_tree' select * from t_ch use index(ic) where d = 0 order by a1 desc, a2 desc limit 100",
 		).Rows()
 		require.True(t, explainHas(rows, "keep order:true"),
 			"case 5: expected keep order:true for DESC ordering")
@@ -159,7 +159,7 @@ func TestCommonHandleIndexOrdering(t *testing.T) {
 		// satisfied by the index since all PK columns share one direction.
 		// ---------------------------------------------------------------
 		rows = tk.MustQuery(
-			"explain format = 'brief' select * from t_ch use index(ic) where d = 0 order by a1 asc, a2 desc limit 100",
+			"explain format = 'plan_tree' select * from t_ch use index(ic) where d = 0 order by a1 asc, a2 desc limit 100",
 		).Rows()
 		hasKeepOrderTrue = explainHas(rows, "keep order:true")
 		hasSortOp = explainHas(rows, "TopN") || explainHas(rows, "Sort")
@@ -185,7 +185,7 @@ func TestCommonHandleIndexOrdering(t *testing.T) {
 		// Full ORDER BY p1,p2 gives: abc < abz < axy — a different order.
 		tk.MustExec(`insert into t_prefix values ('abz', 1, 0), ('abc', 2, 0), ('axy', 3, 0)`)
 		rows = tk.MustQuery(
-			"explain format = 'brief' select * from t_prefix use index(ic_p) where c = 0 order by p1, p2 limit 100",
+			"explain format = 'plan_tree' select * from t_prefix use index(ic_p) where c = 0 order by p1, p2 limit 100",
 		).Rows()
 		hasKeepOrderTrue = explainHas(rows, "keep order:true")
 		hasSortOp = explainHas(rows, "TopN") || explainHas(rows, "Sort")
@@ -220,7 +220,7 @@ func TestCommonHandleIndexOrdering(t *testing.T) {
 			('cherry', 0, 3),
 			('date', 1, 4)`)
 		rows = tk.MustQuery(
-			"explain format = 'brief' select * from t_varchar_pk use index(ic_vc) where c = 0 order by pk limit 100",
+			"explain format = 'plan_tree' select * from t_varchar_pk use index(ic_vc) where c = 0 order by pk limit 100",
 		).Rows()
 		require.True(t, explainHas(rows, "keep order:true"),
 			"case 8: expected keep order:true for single varchar clustered PK")
@@ -252,7 +252,7 @@ func TestCommonHandleIndexOrdering(t *testing.T) {
 			(x'DD', 0, 3),
 			(x'BB', 1, 4)`)
 		rows = tk.MustQuery(
-			"explain format = 'brief' select * from t_binary_pk use index(ic_bin) where c = 0 order by pk limit 100",
+			"explain format = 'plan_tree' select * from t_binary_pk use index(ic_bin) where c = 0 order by pk limit 100",
 		).Rows()
 		require.True(t, explainHas(rows, "keep order:true"),
 			"case 9: expected keep order:true for single varbinary clustered PK")
@@ -284,7 +284,7 @@ func TestCommonHandleIndexOrdering(t *testing.T) {
 			(2, 'a', 0),
 			(3, 'x', 1)`)
 		rows = tk.MustQuery(
-			"explain format = 'brief' select * from t_int_varchar_pk use index(ic_iv) where c = 0 order by pk1, pk2 limit 100",
+			"explain format = 'plan_tree' select * from t_int_varchar_pk use index(ic_iv) where c = 0 order by pk1, pk2 limit 100",
 		).Rows()
 		require.True(t, explainHas(rows, "keep order:true"),
 			"case 10: expected keep order:true for (int, varchar) clustered PK")

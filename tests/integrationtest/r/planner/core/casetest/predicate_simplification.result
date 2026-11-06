@@ -650,8 +650,7 @@ IndexMerge	root		type: union
 ├─IndexRangeScan(Build)	cop[tikv]	table:t4, index:iab(a, b)	range:[1 12,1 12], keep order:false, stats:pseudo
 ├─IndexRangeScan(Build)	cop[tikv]	table:t4, index:iac(a, c)	range:[1 5,1 5], keep order:false, stats:pseudo
 ├─IndexRangeScan(Build)	cop[tikv]	table:t4, index:iad(a, d)	range:[1 6,1 6], keep order:false, stats:pseudo
-└─Selection(Probe)	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t4.a, 1), or(or(eq(planner__core__casetest__predicate_simplification.t4.b, 2), eq(planner__core__casetest__predicate_simplification.t4.c, 4)), or(eq(planner__core__casetest__predicate_simplification.t4.b, 12), or(eq(planner__core__casetest__predicate_simplification.t4.c, 5), eq(planner__core__casetest__predicate_simplification.t4.d, 6))))
-  └─TableRowIDScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:t4	keep order:false, stats:pseudo
 drop table if exists t5, t6;
 create table t5 (c0 int, c1 int);
 create table t6 (c0 int, c1 int);

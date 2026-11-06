@@ -52,6 +52,19 @@ func row2TaskBasic(r chunk.Row) *proto.TaskBase {
 	return task
 }
 
+func row2TaskError(r chunk.Row, idx int) error {
+	if r.IsNull(idx) {
+		return nil
+	}
+	errBytes := r.GetBytes(idx)
+	stdErr := errors.Normalize("")
+	if err := stdErr.UnmarshalJSON(errBytes); err != nil {
+		logutil.BgLogger().Error("unmarshal task error", zap.Error(err))
+		return errors.New(string(errBytes))
+	}
+	return stdErr
+}
+
 // Row2Task converts a row to a task.
 func Row2Task(r chunk.Row) *proto.Task {
 	taskBase := row2TaskBasic(r)
@@ -67,17 +80,7 @@ func Row2Task(r chunk.Row) *proto.Task {
 	task.StateUpdateTime = updateTime
 	task.Meta = r.GetBytes(14)
 	task.SchedulerID = r.GetString(15)
-	if !r.IsNull(16) {
-		errBytes := r.GetBytes(16)
-		stdErr := errors.Normalize("")
-		err := stdErr.UnmarshalJSON(errBytes)
-		if err != nil {
-			logutil.BgLogger().Error("unmarshal task error", zap.Error(err))
-			task.Error = errors.New(string(errBytes))
-		} else {
-			task.Error = stdErr
-		}
-	}
+	task.Error = row2TaskError(r, 16)
 	if !r.IsNull(17) {
 		str := r.GetJSON(17).String()
 		if err := json.Unmarshal([]byte(str), &task.ModifyParam); err != nil {
@@ -85,6 +88,14 @@ func Row2Task(r chunk.Row) *proto.Task {
 		}
 	}
 	return task
+}
+
+// TaskIDToKey returns the canonical decimal key stored in background-subtask tables.
+// due to history reason, the task_key column inside subtask tables are defined
+// as varchar, but it actually stores the ID of the task which is integer. to
+// make sure TiDB query can correct handle this, we need to convert it to string.
+func TaskIDToKey(taskID int64) string {
+	return strconv.FormatInt(taskID, 10)
 }
 
 // row2BasicSubTask converts a row to a subtask with basic info

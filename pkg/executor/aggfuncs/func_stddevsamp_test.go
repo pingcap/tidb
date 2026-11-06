@@ -23,7 +23,7 @@ import (
 
 func TestMergePartialResult4Stddevsamp(t *testing.T) {
 	tests := []aggTest{
-		buildAggTester(ast.AggFuncStddevSamp, mysql.TypeDouble, 5, 1.5811388300841898, 1, 1.407885953173359),
+		buildAggTester(ast.AggFuncStddevSamp, mysql.TypeDouble, 0, 5, 1.5811388300841898, 1, 1.407885953173359),
 	}
 	for _, test := range tests {
 		testMergePartialResult(t, test)
@@ -32,7 +32,7 @@ func TestMergePartialResult4Stddevsamp(t *testing.T) {
 
 func TestStddevsamp(t *testing.T) {
 	tests := []aggTest{
-		buildAggTester(ast.AggFuncStddevSamp, mysql.TypeDouble, 5, nil, 1.5811388300841898),
+		buildAggTester(ast.AggFuncStddevSamp, mysql.TypeDouble, 0, 5, nil, 1.5811388300841898),
 	}
 	for _, test := range tests {
 		testAggFunc(t, test)

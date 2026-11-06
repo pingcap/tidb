@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/tikv/client-go/v2/util"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	"go.uber.org/atomic"
 )
 
@@ -46,6 +47,7 @@ type ExecBeginInfo struct {
 	Ctx            context.Context
 	User           string
 	InNetworkBytes uint64
+	RUVersion      rmclient.RUVersion
 	TopRUEnabled   bool
 }
 
@@ -53,6 +55,7 @@ type ExecBeginInfo struct {
 type ExecFinishInfo struct {
 	RUDetails       *util.RUDetails
 	User            string
+	TotalRUV2       float64 // Finalized statement RU v2, available only at execution finish.
 	OutNetworkBytes uint64
 	ExecDuration    time.Duration
 	TopRUEnabled    bool
@@ -94,28 +97,29 @@ func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest []byte, info *Ex
 	if info != nil {
 		item.NetworkInBytes += info.InNetworkBytes
 		if info.TopRUEnabled {
-			s.addRUOnBeginLocked(info.Ctx, info.User, sqlDigest, planDigest)
+			s.addRUOnBeginLocked(info, sqlDigest, planDigest)
 		}
 	}
 	// Count more data here.
 }
 
-func (s *StatementStats) addRUOnBeginLocked(ctx context.Context, user string, sqlDigest, planDigest []byte) {
+func (s *StatementStats) addRUOnBeginLocked(info *ExecBeginInfo, sqlDigest, planDigest []byte) {
 	key := RUKey{
-		User:       user,
+		User:       info.User,
 		SQLDigest:  BinaryDigest(sqlDigest),
 		PlanDigest: BinaryDigest(planDigest),
 	}
 	// Cache RUDetails at begin time to avoid per-tick context.Value() lookups.
 	var ruDetails *util.RUDetails
-	if ctx != nil {
-		if raw := ctx.Value(util.RUDetailsCtxKey); raw != nil {
+	if info.Ctx != nil {
+		if raw := info.Ctx.Value(util.RUDetailsCtxKey); raw != nil {
 			ruDetails, _ = raw.(*util.RUDetails)
 		}
 	}
 	// Replace stale execution context defensively.
 	s.execCtx = &ExecutionContext{
 		RUDetails: ruDetails,
+		RUVersion: NormalizeRUVersion(info.RUVersion),
 		Key:       key,
 	}
 	// ExecCount is begin-based, aligned with TopSQL semantics.
@@ -144,20 +148,20 @@ func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, info 
 	item.DurationCount++
 	item.NetworkOutBytes += info.OutNetworkBytes
 	if info.TopRUEnabled {
-		s.addRUOnFinishLocked(info.User, sqlDigest, planDigest, info.RUDetails, info.ExecDuration)
+		s.addRUOnFinishLocked(sqlDigest, planDigest, info)
 	} else {
 		s.clearRUExecCtxLocked()
 	}
 	// Count more data here.
 }
 
-func (s *StatementStats) addRUOnFinishLocked(user string, sqlDigest, planDigest []byte, ru *util.RUDetails, execDuration time.Duration) {
+func (s *StatementStats) addRUOnFinishLocked(sqlDigest, planDigest []byte, info *ExecFinishInfo) {
 	if s.execCtx == nil {
 		// No matching begin was recorded, so delta cannot be computed correctly.
 		return
 	}
 	key := RUKey{
-		User:       user,
+		User:       info.User,
 		SQLDigest:  BinaryDigest(sqlDigest),
 		PlanDigest: BinaryDigest(planDigest),
 	}
@@ -166,11 +170,11 @@ func (s *StatementStats) addRUOnFinishLocked(user string, sqlDigest, planDigest 
 		return
 	}
 	defer s.clearRUExecCtxLocked()
-	if ru == nil {
-		return
-	}
 
-	currentTotalRU := ru.RRU() + ru.WRU()
+	currentTotalRU := currentRUTotal(s.execCtx, info.RUDetails)
+	if s.execCtx.RUVersion == rmclient.RUVersionV2 {
+		currentTotalRU = info.TotalRUV2
+	}
 	if currentTotalRU <= 0 {
 		return
 	}
@@ -185,7 +189,7 @@ func (s *StatementStats) addRUOnFinishLocked(user string, sqlDigest, planDigest 
 	}
 	incr := s.getOrCreateRUIncrementLocked(key)
 	incr.TotalRU += deltaRU
-	incr.ExecDuration += uint64(execDuration.Nanoseconds())
+	incr.ExecDuration += uint64(info.ExecDuration.Nanoseconds())
 }
 
 func (s *StatementStats) getOrCreateRUIncrementLocked(key RUKey) *RUIncrement {
@@ -201,6 +205,20 @@ func (s *StatementStats) clearRUExecCtxLocked() {
 	s.execCtx = nil
 }
 
+// ResetRUStateOnVersionChange resets RU state for RU version handover without
+// touching regular stmt stats.
+func (s *StatementStats) ResetRUStateOnVersionChange(currentRUVersion rmclient.RUVersion) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.finishedRUBuffer = RUIncrementMap{}
+	if s.execCtx == nil {
+		return
+	}
+	if NormalizeRUVersion(s.execCtx.RUVersion) != NormalizeRUVersion(currentRUVersion) {
+		s.execCtx = nil
+	}
+}
+
 // ClearRUExecContext discards the active RU execution context without touching
 // accumulated stmtstats or finished RU increments.
 func (s *StatementStats) ClearRUExecContext() {
@@ -210,11 +228,11 @@ func (s *StatementStats) ClearRUExecContext() {
 }
 
 func (s *StatementStats) sampleActiveRUDeltaLocked(result RUIncrementMap) RUIncrementMap {
-	if s.execCtx == nil || s.execCtx.RUDetails == nil {
+	if s.execCtx == nil {
 		return result
 	}
 
-	currentTotalRU := s.execCtx.RUDetails.RRU() + s.execCtx.RUDetails.WRU()
+	currentTotalRU := currentRUTotal(s.execCtx, s.execCtx.RUDetails)
 	deltaRU := currentTotalRU - s.execCtx.LastRUTotal
 	if deltaRU > 0 {
 		incr, ok := result[s.execCtx.Key]
@@ -227,6 +245,13 @@ func (s *StatementStats) sampleActiveRUDeltaLocked(result RUIncrementMap) RUIncr
 	// Keep LastRUTotal in sync even when delta <= 0 (e.g. counter reset).
 	s.execCtx.LastRUTotal = currentTotalRU
 	return result
+}
+
+func currentRUTotal(execCtx *ExecutionContext, ruDetails *util.RUDetails) float64 {
+	if execCtx == nil || ruDetails == nil || NormalizeRUVersion(execCtx.RUVersion) == rmclient.RUVersionV2 {
+		return 0
+	}
+	return ruDetails.RRU() + ruDetails.WRU()
 }
 
 // GetOrCreateStatementStatsItem creates the corresponding StatementStatsItem

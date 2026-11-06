@@ -49,6 +49,10 @@ compatible-kill-query = false
 # The health check will fail immediately but the server will not start shutting down until the time has elapsed.
 graceful-wait-before-shutdown = 0
 
+# During shutdown, wait up to N seconds for running statements and open transactions to finish before killing
+# the remaining connections. Connections that are idle between statements are closed without waiting.
+graceful-close-connections-timeout = 15
+
 # treat-old-version-utf8-as-utf8mb4 use for upgrade compatibility. Set to true will treat old version table/column UTF8 charset as UTF8MB4.
 treat-old-version-utf8-as-utf8mb4 = true
 
@@ -57,6 +61,11 @@ max-index-length = 3072
 
 # index-limit is used to deal with compatibility issues. It can only be in [64, 64*8].
 index-limit = 64
+
+# Allow storage-class DDL, including STANDARD and IA declarations, and transition status queries.
+# Disabled by default. Existing data and transition policies are unaffected when false.
+# This startup setting must be the same on all TiDB servers in the cluster.
+enable-storage-class = false
 
 # enable-table-lock is used to control table lock feature. Default is false, indicate the table lock feature is disabled.
 enable-table-lock = false
@@ -405,7 +414,7 @@ store-liveness-timeout = "1s"
 ttl-refreshed-txn-size = 33554432
 
 # If the number of keys that one prewrite request of one region involves exceed this threshold, it will use `ResolveLock` instead of `ResolveLockLite`.
-resolve-lock-lite-threshold = 16
+resolve-lock-lite-threshold = 512
 
 [tikv-client.copr-cache]
 # The capacity in MB of the cache. Zero means disable coprocessor cache.
@@ -434,6 +443,12 @@ allow-expression-index = false
 [isolation-read]
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
+
+# Legacy RU v2 TiDB-side weights and statement RU v2 reporting.
+[ru-v2]
+# Statement RU v2 reporting: "result" publishes total, SQL-type and per-engine RU; "full" also publishes
+# raw units by engine/opclass and calculation status for calibration.
+report-mode = "result"
 
 # instance scope variables
 # These options are also available as a system variable for online configuration

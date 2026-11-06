@@ -39,6 +39,24 @@ type DataFileMeta struct {
 	Compression mydump.Compression
 }
 
+// TableDataSizeEstimate contains the size estimation for a table import.
+type TableDataSizeEstimate struct {
+	Database   string
+	Table      string
+	SourceSize int64
+	// TiKVSize is the estimated encoded KV size for a single replica.
+	TiKVSize int64
+}
+
+// ImportDataSizeEstimate contains the aggregated size estimation for an import.
+type ImportDataSizeEstimate struct {
+	Tables []TableDataSizeEstimate
+	// TotalSourceSize is the aggregated source size of all tables.
+	TotalSourceSize int64
+	// TotalTiKVSize is the aggregated encoded KV size for a single replica.
+	TotalTiKVSize int64
+}
+
 // ImportOptions wraps the options for IMPORT INTO statement.
 // It reuses structures from executor/importer where possible.
 type ImportOptions struct {

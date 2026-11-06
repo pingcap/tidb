@@ -20,9 +20,13 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
@@ -30,6 +34,42 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 )
+
+func newLiveSessionManager(dom *domain.Domain, sessions ...sessionapi.Session) *testkit.MockSessionManager {
+	conn := make(map[uint64]sessionapi.Session, len(sessions))
+	for _, se := range sessions {
+		conn[se.GetSessionVars().ConnectionID] = se
+	}
+	return &testkit.MockSessionManager{
+		Dom:  dom,
+		Conn: conn,
+	}
+}
+
+func TestLiveSessionManagerTracksLatestProcessInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	connID := tk.Session().GetSessionVars().ConnectionID
+
+	staleSM := &testkit.MockSessionManager{
+		PS: []*sessmgr.ProcessInfo{tk.Session().ShowProcess()},
+	}
+	liveSM := newLiveSessionManager(nil, tk.Session())
+
+	nextTime := time.Now().Add(time.Second)
+	tk.Session().SetProcessInfo("analyze table t with 1.0 samplerate", nextTime, mysql.ComQuery, 0)
+
+	staleInfo, ok := staleSM.GetProcessInfo(connID)
+	require.True(t, ok)
+	liveInfo, ok := liveSM.GetProcessInfo(connID)
+	require.True(t, ok)
+
+	require.NotSame(t, staleInfo, liveInfo)
+	require.NotEqual(t, staleInfo.Time, liveInfo.Time)
+	require.NotEqual(t, staleInfo.Info, liveInfo.Info)
+	require.Equal(t, nextTime, liveInfo.Time)
+	require.Equal(t, "analyze table t with 1.0 samplerate", liveInfo.Info)
+}
 
 func TestGlobalMemoryControlForAnalyze(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -39,9 +79,7 @@ func TestGlobalMemoryControlForAnalyze(t *testing.T) {
 	tk0.MustExec("set global tidb_server_memory_limit = 512MB")
 	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
 
-	sm := &testkit.MockSessionManager{
-		PS: []*sessmgr.ProcessInfo{tk0.Session().ShowProcess()},
-	}
+	sm := newLiveSessionManager(dom, tk0.Session())
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
 	go dom.ServerMemoryLimitHandle().Run()
 
@@ -71,9 +109,7 @@ func TestGlobalMemoryControlForPrepareAnalyze(t *testing.T) {
 	tk0.MustExec("set global tidb_server_memory_limit = 5GB")
 	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
 
-	sm := &testkit.MockSessionManager{
-		PS: []*sessmgr.ProcessInfo{tk0.Session().ShowProcess()},
-	}
+	sm := newLiveSessionManager(dom, tk0.Session())
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
 	go dom.ServerMemoryLimitHandle().Run()
 
@@ -98,7 +134,7 @@ func TestGlobalMemoryControlForPrepareAnalyze(t *testing.T) {
 	require.NoError(t, err0)
 	_, err1 := tk0.Exec(sqlExecute)
 	// Killed and the WarnMsg is WarnMsgSuffixForInstance instead of WarnMsgSuffixForSingleQuery
-	require.True(t, strings.Contains(err1.Error(), "Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again."))
+	require.True(t, strings.Contains(err1.Error(), "Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again."), err1.Error())
 	runtime.GC()
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/memory/ReadMemStats"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockAnalyzeMergeWorkerSlowConsume"))
@@ -156,15 +192,12 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal5))
 	}()
 
-	sm := &testkit.MockSessionManager{
-		Dom: dom,
-		PS:  []*sessmgr.ProcessInfo{tk.Session().ShowProcess()},
-	}
+	sm := newLiveSessionManager(dom, tk.Session())
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
 	go dom.ServerMemoryLimitHandle().Run()
 
 	tk.MustExec("insert into t values(4),(5),(6)")
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	err := h.Update(context.Background(), dom.InfoSchema())
 	require.NoError(t, err)
 

@@ -1,8 +1,9 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "handler",
     srcs = [
+        "auto_id_owner_handler.go",
         "tikv_handler.go",
         "upgrade_handler.go",
         "util.go",
@@ -36,4 +37,13 @@ go_library(
         "@com_github_tikv_pd_client//opt",
         "@org_uber_go_zap//:zap",
     ],
+)
+
+go_test(
+    name = "handler_test",
+    timeout = "short",
+    srcs = ["auto_id_owner_handler_test.go"],
+    embed = [":handler"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
 )

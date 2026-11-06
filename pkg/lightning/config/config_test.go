@@ -17,6 +17,7 @@ package config
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"math"
@@ -32,6 +33,8 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
 )
 
@@ -233,6 +236,9 @@ func TestCheckAndAdjustFilePath(t *testing.T) {
 		{"local://" + slashPath, slashPath},
 		{"s3://bucket_name", ""},
 		{"s3://bucket_name/path/to/dir", "/path/to/dir"},
+		{"oss://bucketname", ""},
+		{"oss://bucketname/path/to/dir", "/path/to/dir"},
+		{"oss://bucketname/path/to/dir?region=cn-hangzhou&endpoint=https://oss-cn-hangzhou.aliyuncs.com", "/path/to/dir"},
 		{"gcs://bucketname/path/to/dir", "/path/to/dir"},
 		{"gs://bucketname/path/to/dir", "/path/to/dir"},
 		{"noop:///", "/"},
@@ -830,6 +836,39 @@ func TestDuplicateResolutionAlgorithm(t *testing.T) {
 }
 
 func TestLoadConfig(t *testing.T) {
+	t.Run("redact info log", func(t *testing.T) {
+		require.True(t, NewGlobalConfig().Security.RedactInfoLog)
+		task := NewConfig()
+		require.NoError(t, task.LoadFromTOML(nil))
+		require.True(t, task.Security.RedactInfoLog)
+		require.NoError(t, task.LoadFromTOML([]byte("[security]\nredact-info-log = false\n")))
+		require.False(t, task.Security.RedactInfoLog)
+		for _, tc := range []struct {
+			name    string
+			config  string
+			args    []string
+			enabled bool
+		}{
+			{name: "default", enabled: true},
+			{name: "CLI disable", args: []string{"--redact-info-log=false"}},
+			{name: "config disable", config: "[security]\nredact-info-log = false\n"},
+			{name: "CLI enable overrides config", config: "[security]\nredact-info-log = false\n", args: []string{"--redact-info-log=true"}, enabled: true},
+			{name: "CLI disable overrides config", config: "[security]\nredact-info-log = true\n", args: []string{"--redact-info-log=false"}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				configPath := filepath.Join(t.TempDir(), "lightning.toml")
+				require.NoError(t, os.WriteFile(configPath, []byte(tc.config), 0o600))
+				args := append([]string{"--config", configPath}, tc.args...)
+				global, err := LoadGlobalConfig(args, nil)
+				require.NoError(t, err)
+				require.Equal(t, tc.enabled, global.Security.RedactInfoLog)
+				task := NewConfig()
+				require.NoError(t, task.LoadFromGlobal(global))
+				require.Equal(t, tc.enabled, task.Security.RedactInfoLog)
+			})
+		}
+	})
+
 	cfg, err := LoadGlobalConfig([]string{"-tidb-port", "sss"}, nil)
 	require.EqualError(t, err, `[Lightning:Common:ErrInvalidArgument]invalid argument: invalid value "sss" for flag -tidb-port: parse error`)
 	require.Nil(t, cfg)
@@ -911,6 +950,22 @@ func TestDefaultImporterBackendValue(t *testing.T) {
 	require.Equal(t, 2, cfg.App.IndexConcurrency)
 	require.Equal(t, 6, cfg.App.TableConcurrency)
 	require.Equal(t, 4096, cfg.TikvImporter.RegionSplitBatchSize)
+}
+
+func TestRegionConcurrencyUsesUsableCPUCount(t *testing.T) {
+	const usableCPUCount = 2
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(2)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
+	})
+
+	cfg := NewConfig()
+	require.Equal(t, usableCPUCount, cfg.App.RegionConcurrency)
+
+	cfg.App.RegionConcurrency = usableCPUCount + 1
+	cfg.TikvImporter.Backend = BackendLocal
+	cfg.App.adjust(&cfg.TikvImporter)
+	require.Equal(t, usableCPUCount, cfg.App.RegionConcurrency)
 }
 
 func TestDefaultTidbBackendValue(t *testing.T) {
@@ -1440,12 +1495,13 @@ func TestRedactConfig(t *testing.T) {
 	}{
 		{"", ""},
 		{":", ":"},
+		{"s3://bucket:port/file?access-key=AKID", objstore.InvalidURLPlaceholder},
 		{"~/file", "~/file"},
 		{"gs://bucket/file", "gs://bucket/file"},
-		{"gs://bucket/file?access-key=123", "gs://bucket/file?access-key=123"},
-		{"gs://bucket/file?secret-access-key=123", "gs://bucket/file?secret-access-key=123"},
+		{"gs://bucket/file?access-key=123", "gs://bucket/file"},
+		{"gs://bucket/file?secret-access-key=123", "gs://bucket/file"},
 		{"s3://bucket/file", "s3://bucket/file"},
-		{"s3://bucket/file?other-key=123", "s3://bucket/file?other-key=123"},
+		{"s3://bucket/file?other-key=123", "s3://bucket/file"},
 		{"s3://bucket/file?access-key=123", "s3://bucket/file?access-key=xxxxxx"},
 		{"s3://bucket/file?secret-access-key=123", "s3://bucket/file?secret-access-key=xxxxxx"},
 		{"s3://bucket/file?access_key=123", "s3://bucket/file?access_key=xxxxxx"},
@@ -1455,7 +1511,34 @@ func TestRedactConfig(t *testing.T) {
 		cfg := NewConfig()
 		cfg.Mydumper.SourceDir = tt.origin
 
-		require.Contains(t, cfg.Redact(), tt.redact)
-		require.Contains(t, cfg.String(), tt.origin)
+		var redacted Config
+		require.NoError(t, json.Unmarshal([]byte(cfg.Redact()), &redacted))
+		require.Equal(t, tt.redact, redacted.Mydumper.SourceDir)
+		require.Equal(t, tt.origin, cfg.Mydumper.SourceDir)
+	}
+}
+
+func TestAdjustFileRouterRedactsSourceDir(t *testing.T) {
+	cfg := NewConfig()
+	cfg.Mydumper.SourceDir = "s3://bucket/data?access-key=AKID&secret-access-key=SKEY"
+	cfg.Mydumper.FileRouters = []*FileRouteRule{{
+		Pattern: `(.*)\.csv`, Path: "/abs/dir/file.csv", Schema: "db", Table: "t", Type: "csv",
+	}}
+	err := cfg.Mydumper.adjust()
+	require.ErrorContains(t, err, "cannot find relative path for file route path /abs/dir/file.csv")
+	require.NotContains(t, err.Error(), "AKID")
+	require.NotContains(t, err.Error(), "SKEY")
+}
+
+func TestAdjustFilePathRedactsSourceDir(t *testing.T) {
+	for _, dir := range []string{
+		"s3://bucket:port/data?access-key=AKID&secret-access-key=SKEY",
+		"unknown://bucket/data?access-key=AKID&secret-access-key=SKEY",
+	} {
+		m := &MydumperRuntime{SourceDir: dir}
+		err := m.adjustFilePath()
+		require.Error(t, err)
+		require.NotContains(t, err.Error(), "AKID")
+		require.NotContains(t, err.Error(), "SKEY")
 	}
 }

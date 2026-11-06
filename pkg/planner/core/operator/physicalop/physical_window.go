@@ -221,7 +221,7 @@ func FormatWindowFuncDescs(ctx expression.EvalContext, buffer *bytes.Buffer, des
 		if i != 0 {
 			buffer.WriteString(", ")
 		}
-		fmt.Fprintf(buffer, "%v->%v", desc.StringWithCtx(ctx, perrors.RedactLogDisable), schema.Columns[winFuncStartIdx+i])
+		fmt.Fprintf(buffer, "%v->%v", desc.StringWithCtx(ctx, perrors.RedactLogDisable), schema.Columns[winFuncStartIdx+i].ExplainInfo(ctx))
 	}
 	return buffer
 }
@@ -450,7 +450,7 @@ func ExhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.Phys
 	windows := make([]base.PhysicalPlan, 0, 2)
 
 	// we lift the p.CanPushToCop(tiFlash) check here.
-	if lw.SCtx().GetSessionVars().IsMPPAllowed() {
+	if lw.SCtx().GetSessionVars().IsMPPAllowed() && util.ShouldCheckTiFlashPushDown(lw.SCtx(), logicalop.GetHasTiFlash(lw)) {
 		mppWindows := tryToGetMppWindows(lw, prop)
 		windows = append(windows, mppWindows...)
 	}

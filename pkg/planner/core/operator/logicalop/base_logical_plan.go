@@ -56,8 +56,8 @@ type BaseLogicalPlan struct {
 	// including eliminating unnecessary DISTINCT operators, simplifying ORDER BY columns,
 	// removing Max1Row operators, and mapping semi-joins to inner-joins.
 	// for now, it's hard to maintain in individual operator, build it from bottom up when using.
-	fdSet *fd.FDSet
-
+	fdSet      *fd.FDSet
+	hasTiFlash bool
 	// Flag is with that each bit has its meaning to mark this logical plan for special handling.
 	Flag uint64
 }
@@ -254,8 +254,17 @@ func (*BaseLogicalPlan) ExtractColGroups(_ [][]*expression.Column) [][]*expressi
 }
 
 // PreparePossibleProperties implements LogicalPlan.<13th> interface.
-func (*BaseLogicalPlan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	return nil
+func (p *BaseLogicalPlan) PreparePossibleProperties(_ *expression.Schema, info ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	hasTiFlash := len(info) > 0
+	for _, childInfo := range info {
+		if childInfo == nil {
+			hasTiFlash = false
+			continue
+		}
+		hasTiFlash = hasTiFlash && childInfo.HasTiFlash
+	}
+	p.hasTiFlash = hasTiFlash
+	return &base.PossiblePropertiesInfo{HasTiFlash: p.hasTiFlash}
 }
 
 // ExtractCorrelatedCols implements LogicalPlan.<15th> interface.
@@ -338,16 +347,6 @@ func (p *BaseLogicalPlan) ExtractFD() *fd.FDSet {
 // It returns the baseLogicalPlan inside each logical plan.
 func (p *BaseLogicalPlan) GetBaseLogicalPlan() base.LogicalPlan {
 	return p
-}
-
-// ConvertOuterToInnerJoin implements LogicalPlan.<24th> interface.
-func (p *BaseLogicalPlan) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
-	s := p.self
-	for i, child := range s.Children() {
-		newChild := child.ConvertOuterToInnerJoin(predicates)
-		s.SetChild(i, newChild)
-	}
-	return s
 }
 
 // *************************** implementation of self functionality ***************************

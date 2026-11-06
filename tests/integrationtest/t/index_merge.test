@@ -237,3 +237,49 @@ with recursive cte1 as (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 
 explain format = 'plan_tree' with recursive cte1 as (select 1 c1, 1 c2, 1 c3 UNION ALL select /*+ use_index_merge(t_alias) */ c1 + 1, c2 + 1, c3 + 1 from cte1 t_alias where c1 < 10 or c2 < 10 and c3 < 10) select * from cte1 order by 1;
 show warnings;
 with recursive cte1 as (select 1 c1, 1 c2, 1 c3 UNION ALL select /*+ use_index_merge(t_alias) */ c1 + 1, c2 + 1, c3 + 1 from cte1 t_alias where c1 < 10 or c2 < 10 and c3 < 10) select * from cte1 order by 1;
+
+--echo ///// IndexMerge with IN conditions and ORDER BY LIMIT (merge sort for partial paths)
+drop table if exists t_im_in;
+create table t_im_in (
+  id int not null,
+  a int default null,
+  b int default null,
+  c int default null,
+  padding varchar(100) default null,
+  primary key (id) clustered,
+  key idx_a_c (a, c),
+  key idx_b_c (b, c)
+);
+
+insert into t_im_in values
+  (1, 1, 1, 10, 'row1'), (2, 1, 2, 20, 'row2'), (3, 2, 1, 30, 'row3'),
+  (4, 2, 2, 40, 'row4'), (5, 1, 3, 50, 'row5'), (6, 3, 1, 60, 'row6'),
+  (7, 3, 2, 70, 'row7'), (8, 1, 1, 5, 'row8'), (9, 2, 3, 15, 'row9'),
+  (10, 3, 3, 25, 'row10');
+analyze table t_im_in;
+
+--echo # Case 1: a=1 keeps order directly, b IN (1,2) needs merge sort
+explain select /*+ use_index_merge(t_im_in) */ * from t_im_in where a = 1 or b in (1, 2) order by c limit 5;
+select /*+ use_index_merge(t_im_in) */ * from t_im_in where a = 1 or b in (1, 2) order by c limit 5;
+
+--echo # Case 2: Both partial paths need merge sort
+explain select /*+ use_index_merge(t_im_in) */ * from t_im_in where a in (1, 2) or b in (1, 2) order by c limit 5;
+select /*+ use_index_merge(t_im_in) */ * from t_im_in where a in (1, 2) or b in (1, 2) order by c limit 5;
+
+--echo # Case 3: DESC ordering with IN condition
+explain select /*+ use_index_merge(t_im_in) */ * from t_im_in where a = 1 or b in (1, 2) order by c desc limit 5;
+select /*+ use_index_merge(t_im_in) */ * from t_im_in where a = 1 or b in (1, 2) order by c desc limit 5;
+
+--echo # Case 4: UnionScan - verify correctness with uncommitted data
+begin;
+insert into t_im_in values (11, 1, 1, 1, 'uncommitted');
+explain select /*+ use_index_merge(t_im_in) */ * from t_im_in where a = 1 or b in (1, 2) order by c limit 5;
+select /*+ use_index_merge(t_im_in) */ * from t_im_in where a = 1 or b in (1, 2) order by c limit 5;
+rollback;
+
+--echo # Case 5: PREPARE/EXECUTE with different parameter values
+prepare stmt from 'select /*+ use_index_merge(t_im_in) */ * from t_im_in where a = ? or b in (1, 2) order by c limit 5';
+set @a = 1;
+execute stmt using @a;
+set @a = 3;
+execute stmt using @a;

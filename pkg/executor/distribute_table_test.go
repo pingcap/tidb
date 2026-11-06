@@ -25,8 +25,12 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -154,14 +158,13 @@ func TestDistributeTable(t *testing.T) {
 		starts := make([]string, 0)
 		ends := make([]string, 0)
 		slices.Sort(pids)
+		storeCodec := store.GetCodec()
 		for i, pid := range pids {
+			startKey, endKey := storeCodec.EncodeRegionRange(tablecodec.GenTablePrefix(pid), tablecodec.GenTablePrefix(pid+1))
 			if i == 0 || pid != pids[i-1]+1 {
-				startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid))
-				endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
 				starts = append(starts, url.QueryEscape(string(startKey)))
 				ends = append(ends, url.QueryEscape(string(endKey)))
 			} else {
-				endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
 				ends[len(starts)-1] = url.QueryEscape(string(endKey))
 			}
 		}
@@ -177,9 +180,14 @@ func TestDistributeTable(t *testing.T) {
 	}
 	table := "t1"
 	partition := ""
+	// In keyspace mode, the alias is prefixed with the keyspace ID.
+	aliasPrefix := ""
+	if store.GetKeyspace() != "" {
+		aliasPrefix = fmt.Sprintf("%d:", store.GetCodec().GetKeyspaceID())
+	}
 
 	config := map[string]any{
-		"alias":  strings.Join([]string{database, table, partition}, "."),
+		"alias":  aliasPrefix + strings.Join([]string{database, table, partition}, "."),
 		"engine": "tikv",
 		"rule":   "leader-scatter",
 	}
@@ -196,7 +204,7 @@ func TestDistributeTable(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("distribute table %s rule='leader-scatter' engine='tikv'", table)).Check(testkit.Rows("1"))
 	// test for multi partitions
 	partition = "partition(p1,p2)"
-	config["alias"] = strings.Join([]string{database, table, partition}, ".")
+	config["alias"] = aliasPrefix + strings.Join([]string{database, table, partition}, ".")
 	mockCreateSchedulerWithInput(table, config, []string{"p1", "p2"})
 	tk.MustQuery(fmt.Sprintf("distribute table %s partition (p1,p2) rule='leader-scatter' engine='tikv'", table)).Check(testkit.Rows("2"))
 	// test for unordered partitions
@@ -204,13 +212,13 @@ func TestDistributeTable(t *testing.T) {
 
 	// test for timeout
 	partition = "partition(p0)"
-	config["alias"] = strings.Join([]string{database, table, partition}, ".")
+	config["alias"] = aliasPrefix + strings.Join([]string{database, table, partition}, ".")
 	config["timeout"] = "30m"
 	mockCreateSchedulerWithInput(table, config, []string{"p0"})
 	tk.MustQuery(fmt.Sprintf("distribute table %s partition(p0) rule='leader-scatter' engine='tikv' timeout='30m'", table)).Check(testkit.Rows("4"))
 
 	partition = "partition(p0,p2)"
-	config["alias"] = strings.Join([]string{database, table, partition}, ".")
+	config["alias"] = aliasPrefix + strings.Join([]string{database, table, partition}, ".")
 	config["timeout"] = "30m"
 	mockCreateSchedulerWithInput(table, config, []string{"p0", "p2"})
 	tk.MustQuery(fmt.Sprintf("distribute table %s partition(p0,p2) rule='leader-scatter' engine='tikv' timeout='30m'", table)).Check(testkit.Rows("5"))
@@ -222,6 +230,84 @@ func TestDistributeTable(t *testing.T) {
 		"[planner:1210]Incorrect arguments to engine must be tikv or tiflash")
 	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule='witness' engine='tikv'", table),
 		"[planner:1210]Incorrect arguments to rule must be leader-scatter, peer-scatter or learner-scatter")
+}
+
+func TestDistributeTableWithKeyspace(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("keyspace is not supported in classic mode")
+	}
+	keyspaceMeta := &keyspacepb.KeyspaceMeta{
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 2},
+		Name:     keyspace.System,
+	}
+	store := testkit.CreateMockStore(t, mockstore.WithCurrentKeyspaceMeta(keyspaceMeta))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	cli := &MockDistributePDCli{skip: 1}
+	recoverCli := infosync.SetPDHttpCliForTest(cli)
+	defer recoverCli()
+
+	table := "t1"
+	tk.MustExec("create table t1 (c1 int, c2 int)")
+
+	is := tk.Session().GetLatestInfoSchema()
+	tbl, err := is.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr(table))
+	require.NoError(t, err)
+
+	// The key range sent to PD must carry the keyspace prefix ('x' + 3-byte
+	// keyspace ID) before the memcomparable encoding, otherwise it can't match
+	// the region keys on the keyspace cluster. Build the expected keys by hand
+	// instead of via the store codec so the test doesn't trust the code under test.
+	encodeRegionKey := func(key []byte) []byte {
+		return codec.EncodeBytes(nil, append([]byte{'x', 0, 0, 2}, key...))
+	}
+	startKey := encodeRegionKey(tablecodec.GenTablePrefix(tbl.ID))
+	endKey := encodeRegionKey(tablecodec.GenTablePrefix(tbl.ID + 1))
+	config := map[string]any{
+		"alias":     "2:" + strings.Join([]string{"test", table, ""}, "."),
+		"engine":    "tikv",
+		"rule":      "leader-scatter",
+		"start-key": url.QueryEscape(string(startKey)),
+		"end-key":   url.QueryEscape(string(endKey)),
+	}
+	cli.On("GetSchedulerConfig", mock.Anything, schedulerName).Return(nil, nil)
+	cli.On("CreateSchedulerWithInput", mock.Anything, schedulerName, config).Return(nil)
+	// Older TiDB versions parse the alias as exactly three '.'-separated parts.
+	require.Len(t, strings.Split(config["alias"].(string), "."), 3)
+
+	tk.MustQuery("distribute table t1 rule='leader-scatter' engine='tikv'").Check(testkit.Rows("1"))
+
+	// SHOW TABLE DISTRIBUTIONS must query PD with the same keyspace-prefixed range.
+	distributions := &pdhttp.RegionDistributions{
+		RegionDistributions: []*pdhttp.RegionDistribution{{StoreID: 1, EngineType: "tikv", RegionLeaderCount: 1, RegionPeerCount: 3}},
+	}
+	cli.On("GetRegionDistributionByKeyRange", mock.Anything, pdhttp.NewKeyRange(startKey, endKey), "").
+		Return(distributions, nil)
+	tk.MustQuery("show table t1 distributions").Check(testkit.Rows("t1 1 tikv 1 3 0 0 0 0 0 0 0 0 0"))
+
+	// SHOW DISTRIBUTION JOBS only shows the jobs of the current keyspace and the
+	// jobs whose alias has no keyspace ID prefix (written by an older TiDB).
+	newJob := func(id int, alias string) map[string]any {
+		return map[string]any{
+			"job-id":  float64(id),
+			"alias":   alias,
+			"engine":  "tikv",
+			"rule":    "leader-scatter",
+			"status":  "pending",
+			"timeout": 30 * time.Minute,
+		}
+	}
+	cli.jobs = []map[string]any{
+		newJob(1, "2:test.t1."),
+		newJob(2, "3:test.t1."),
+		newJob(3, "test.t2.partition(p0)"),
+	}
+	tk.MustQuery("show distribution jobs").Check(testkit.Rows(
+		"1 test t1 <nil> tikv leader-scatter pending 30m0s <nil> <nil> <nil>",
+		"3 test t2 partition(p0) tikv leader-scatter pending 30m0s <nil> <nil> <nil>",
+	))
+	tk.MustQuery("show distribution job 2").Check(testkit.Rows())
 }
 
 func TestShowTableDistributions(t *testing.T) {
@@ -240,8 +326,7 @@ func TestShowTableDistributions(t *testing.T) {
 		if partition != "" {
 			tblID = tbl.GetPartitionInfo().GetPartitionIDByName(partition)
 		}
-		startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(tblID))
-		endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(tblID+1))
+		startKey, endKey := store.GetCodec().EncodeRegionRange(tablecodec.GenTablePrefix(tblID), tablecodec.GenTablePrefix(tblID+1))
 		keyRange := pdhttp.NewKeyRange(startKey, endKey)
 		return cli.On("GetRegionDistributionByKeyRange", mock.Anything, keyRange, "").
 			Return(distributions, nil)

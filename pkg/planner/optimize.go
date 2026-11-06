@@ -32,7 +32,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/indexadvisor"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -47,9 +49,21 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"go.uber.org/zap"
 )
+
+const nonPreparedPlanCacheHintOnlyNoHintReason = "plan cache strategy is hint_only and use_plan_cache hint is absent"
+
+func containUsePlanCacheHintInSQLOrBinding(sctx sessionctx.Context, stmt ast.StmtNode) bool {
+	if hint.ContainTableHintInStmtNode(stmt, hint.HintUsePlanCache) {
+		return true
+	}
+	binding, matched, _ := bindinfo.MatchSQLBinding(sctx, stmt)
+	return matched && binding != nil && binding.Hint != nil && binding.Hint.ContainTableHint(hint.HintUsePlanCache)
+}
 
 // getPlanFromNonPreparedPlanCache tries to get an available cached plan from the NonPrepared Plan Cache for this stmt.
 func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (p base.Plan, ns types.NameSlice, ok bool, err error) {
@@ -60,8 +74,21 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		!isStmtNode ||
 		stmtCtx.InRestrictedSQL || // is internal SQL
 		isExplain || // explain external
-		!sctx.GetSessionVars().DisableTxnAutoRetry || // txn-auto-retry
-		sctx.GetSessionVars().InMultiStmts { // in multi-stmt
+		!sctx.GetSessionVars().DisableTxnAutoRetry { // txn-auto-retry
+		return nil, nil, false, nil
+	}
+	if sctx.GetSessionVars().InMultiStmts {
+		// Prebuilt plans contain literal values and must not be cached under a
+		// parameterized SQL key. A nil plan leaves normal planning available.
+		if fp, ok := sctx.Value(core.PointPlanKey).(core.PointPlanVal); ok && fp.Plan != nil {
+			return nil, nil, false, nil
+		}
+	}
+	if sctx.GetSessionVars().PlanCacheStrategy == vardef.TiDBPlanCacheStrategyHintOnly &&
+		!containUsePlanCacheHintInSQLOrBinding(sctx, stmt) {
+		if !isExplain && stmtCtx.InExplainStmt && stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
+			stmtCtx.AppendWarning(errors.NewNoStackErrorf("skip non-prepared plan-cache: %s", nonPreparedPlanCacheHintOnlyNoHintReason))
+		}
 		return nil, nil, false, nil
 	}
 
@@ -210,6 +237,15 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 	sessVars := sctx.GetSessionVars()
 
 	tableHints := hint.ExtractTableHintsFromStmtNode(node.Node, sessVars.StmtCtx)
+	// ExtractTableHintsFromStmtNode does not recurse into ExplainStmt, but
+	// MatchSQLBinding unwraps it (see NormalizeStmtForBinding) so the binding
+	// is applied to the inner stmt and rewrites its /*+ ... */ hints. Capture
+	// the inner stmt's hints up-front so the "binding overrides hints" warning
+	// below still fires for `EXPLAIN SELECT /*+ ... */ ...`.
+	var wrappedInnerHints []*ast.TableOptimizerHint
+	if explain, ok := node.Node.(*ast.ExplainStmt); ok && explain.Stmt != nil {
+		wrappedInnerHints = hint.ExtractTableHintsFromStmtNode(explain.Stmt, sessVars.StmtCtx)
+	}
 	originStmtHints, _, warns := hint.ParseStmtHints(tableHints,
 		setVarHintChecker, hypoIndexChecker(ctx, is),
 		sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
@@ -231,7 +267,7 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 	}
 
 	// XXX: this should be handled after any bindings are setup.
-	if sessVars.SQLMode.HasStrictMode() && !core.IsReadOnly(node.Node, sessVars) {
+	if sessVars.SQLMode.HasStrictMode() && !core.IsReadOnly(node.Node, sessVars) && !sessVars.InMViewMaintenance {
 		sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = true
 		_, hasTiFlashAccess := sessVars.IsolationReadEngines[kv.TiFlash]
 		if hasTiFlashAccess {
@@ -319,7 +355,7 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 			} else {
 				sessVars.StmtCtx.AppendExtraNote(errors.NewNoStackErrorf("Using the bindSQL: %v", chosenBinding.BindSQL))
 			}
-			if originStmtHints.QueryHasHints {
+			if originStmtHints.QueryHasHints || len(wrappedInnerHints) > 0 {
 				sessVars.StmtCtx.AppendWarning(errors.NewNoStackErrorf("The system ignores the hints in the current query and uses the hints specified in the bindSQL: %v", chosenBinding.BindSQL))
 			}
 		}
@@ -478,6 +514,7 @@ func buildAndOptimizeLogicalPlanRound(
 	bestNames *types.NameSlice,
 	bestCost *float64,
 	bestLogicalPlanCtx *logicalPlanBuildCtx,
+	optFlagAdjust func(uint64) uint64,
 ) (base.Plan, types.NameSlice, bool, error) {
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
@@ -526,9 +563,38 @@ func buildAndOptimizeLogicalPlanRound(
 		*optimizeStarted = true
 		*beginOpt = time.Now()
 	}
-	finalPlan, cost, err := core.DoOptimize(ctx, sctx, builder.GetOptFlag(), logic)
+	optFlag := builder.GetOptFlag()
+	if sctx.GetSessionVars().EnableAlternativeLogicalPlans &&
+		optFlag&rule.FlagPushDownTopN > 0 &&
+		optFlag&rule.FlagJoinReOrder > 0 {
+		sctx.GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanOrderAwareJoinReorder()
+	}
+	if optFlagAdjust != nil {
+		optFlag = optFlagAdjust(optFlag)
+	}
+	finalPlan, cost, err := core.DoOptimize(ctx, sctx, optFlag, logic)
 	if err != nil {
 		return nil, nil, false, err
+	}
+
+	// Record predicate-context MATCH for cost competition. The fts-like-fallback
+	// alternative round reads this signal to decide whether to build a competing
+	// ILIKE-based plan alongside round 1's native plan, so the cheaper of the
+	// two wins via the normal alt-rounds cost comparison.
+	if builder.HasPredicateMatch() {
+		sctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanHasPredicateContextMatch = true
+	}
+
+	// If this round saw a predicate-context MATCH that cannot be served by the
+	// native FTSMysqlMatchAgainst builtin, the produced plan would fail at
+	// execution. Discard it and arm AlternativeLogicalPlanFTSLikeFallback so
+	// any intervening rounds (correlate, etc.) re-rewrite with ILIKE too. The
+	// fts-like-fallback round below also forces this flag during setup; this
+	// outer assignment covers the non-viable case where the flag must stay
+	// true across all subsequent rounds, not just inside the LIKE round.
+	if builder.HasNonViableFTSMatch() {
+		sctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanFTSLikeFallback = true
+		return p, names, false, nil
 	}
 
 	if *bestPlan == nil || cost < *bestCost {
@@ -544,6 +610,151 @@ func buildAndOptimizeLogicalPlanRound(
 
 // optimizeCnt is a global variable only used for test.
 var optimizeCnt int
+
+func shouldTryNonDecorrelationRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanDecorrelatedApply &&
+		!sessVars.StmtCtx.AlternativeLogicalPlanSameOrderIndexJoin
+}
+
+func shouldTryOrderAwareReorderRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanOrderAwareJoinReorder
+}
+
+func shouldTryCorrelateRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanPreferCorrelate
+}
+
+func shouldTrySemiJoinRewriteRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanSemiJoinRewrite &&
+		!sessVars.EnableSemiJoinRewrite
+}
+
+// shouldTryEngineRestrictedRounds holds the gates shared by the tikv-only and
+// tiflash-only rounds. They fire only when round 1's plan actually mixes TiKV
+// and TiFlash reads (a homogeneous plan was never costed as a whole), never
+// when a READ_FROM_STORAGE hint pins an engine (the cost comparison must not
+// override an explicit user choice), and never under enforced MPP (its cost
+// discount would make the cross-round comparison meaningless).
+func shouldTryEngineRestrictedRounds(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanMixedStorageEngines &&
+		!sessVars.StmtCtx.AlternativeLogicalPlanHasStoreTypeHint &&
+		!sessVars.IsMPPEnforced()
+}
+
+func shouldTryTiKVOnlyRound(sessVars *variable.SessionVars) bool {
+	return shouldTryEngineRestrictedRounds(sessVars)
+}
+
+func shouldTryTiFlashOnlyRound(sessVars *variable.SessionVars) bool {
+	return shouldTryEngineRestrictedRounds(sessVars) &&
+		!sessVars.StmtCtx.AlternativeLogicalPlanMissingTiFlashPath &&
+		sessVars.IsMPPAllowed()
+}
+
+// alternativeRound describes one alternative logical-plan round.
+// adjustFlag adjusts the optimization flags for the round.
+// enabled returns true when the round should be attempted.
+// setup optionally modifies session state before plan building and returns a
+// cleanup that restores exactly what it changed. The saved values live in the
+// returned closure, never in package state: optimize can run concurrently in
+// different sessions, so each invocation must own its own saved state.
+type alternativeRound struct {
+	name       string
+	adjustFlag func(uint64) uint64
+	enabled    func(*variable.SessionVars) bool
+	setup      func(*variable.SessionVars) (cleanup func())
+}
+
+var alternativeRounds = [...]alternativeRound{
+	{
+		name:       "non-decorrelate",
+		adjustFlag: func(flag uint64) uint64 { return flag &^ rule.FlagDecorrelate },
+		enabled:    shouldTryNonDecorrelationRound,
+	},
+	{
+		name:       "order-aware-reorder",
+		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagOrderAwareJoinReorder },
+		enabled:    shouldTryOrderAwareReorderRound,
+	},
+	{
+		name:       "correlate",
+		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagCorrelate },
+		enabled:    shouldTryCorrelateRound,
+		setup: func(sv *variable.SessionVars) func() {
+			saved := sv.EnableCorrelateSubquery
+			sv.EnableCorrelateSubquery = true
+			return func() { sv.EnableCorrelateSubquery = saved }
+		},
+	},
+	{
+		name:    "semi-join-rewrite",
+		enabled: shouldTrySemiJoinRewriteRound,
+		setup: func(sv *variable.SessionVars) func() {
+			sv.EnableSemiJoinRewrite = true
+			// This round is enabled only when the original value is false.
+			return func() { sv.EnableSemiJoinRewrite = false }
+		},
+	},
+	{
+		// fts-like-fallback: rebuild the plan rewriting predicate-context
+		// MATCH...AGAINST to ILIKE so it can compete with round 1's native plan
+		// on cost (and serve as the only valid plan when native is non-viable).
+		// Round 1 always uses the native builtin (same as Alt-disabled). This
+		// round fires whenever round 1 saw a direct-boolean-context MATCH
+		// (HasPredicateContextMatch) — both plans then compete via the strict-`<`
+		// cost comparison in buildAndOptimizeLogicalPlanRound — or whenever
+		// round 1 saw a MATCH whose native form cannot execute
+		// (FTSLikeFallback, set by the round driver after discarding round 1).
+		// In the discard case, round 1's plan is unavailable and this round's
+		// plan wins by default.
+		name: "fts-like-fallback",
+		enabled: func(sv *variable.SessionVars) bool {
+			if !sv.EnableAlternativeLogicalPlans {
+				return false
+			}
+			return sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback ||
+				sv.StmtCtx.AlternativeLogicalPlanHasPredicateContextMatch
+		},
+		setup: func(sv *variable.SessionVars) func() {
+			saved := sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback
+			sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback = true
+			return func() { sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback = saved }
+		},
+	},
+	{
+		// tikv-only: rebuild the plan with TiFlash removed from the isolation
+		// read engines so every table is read from TiKV. Round 1's bottom-up
+		// search picks a storage engine per DataSource through local cost
+		// comparisons, so when it produces a plan mixing TiKV and TiFlash
+		// reads, neither fully homogeneous plan was ever costed as a whole.
+		// This round (and tiflash-only below) builds that missing global
+		// alternative and lets the strict-`<` cost comparison decide.
+		name:    "tikv-only",
+		enabled: shouldTryTiKVOnlyRound,
+		setup: func(sv *variable.SessionVars) func() {
+			saved := sv.IsolationReadEngines
+			sv.IsolationReadEngines = map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiDB: {}}
+			return func() { sv.IsolationReadEngines = saved }
+		},
+	},
+	{
+		// tiflash-only: mirror of tikv-only with only TiFlash readable. Skipped
+		// when any DataSource lacks a TiFlash access path (the round could not
+		// produce a complete plan) or when MPP execution is not allowed.
+		name:    "tiflash-only",
+		enabled: shouldTryTiFlashOnlyRound,
+		setup: func(sv *variable.SessionVars) func() {
+			saved := sv.IsolationReadEngines
+			sv.IsolationReadEngines = map[kv.StoreType]struct{}{kv.TiFlash: {}, kv.TiDB: {}}
+			return func() { sv.IsolationReadEngines = saved }
+		},
+	},
+}
 
 func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, float64, error) {
 	failpoint.Inject("checkOptimizeCountOne", func(val failpoint.Value) {
@@ -573,12 +784,11 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	// Build the logical plan from the raw AST. The hint processor only keeps
 	// AST-derived metadata; per-build state is allocated inside PlanBuilder.
 	hintProcessor := hint.NewQBHintHandler(sctx.GetSessionVars().StmtCtx)
-	node.Node.Accept(hintProcessor)
+	ast.Walk(node.Node, hintProcessor)
 
 	// build multi logical plan from raw AST.
 	var (
-		buildRound                = 1
-		needRestoreLogicalPlanCtx = buildRound > 1
+		needRestoreLogicalPlanCtx = sessVars.EnableAlternativeLogicalPlans
 		bestCost                  = math.MaxFloat64
 		bestPlan                  base.PhysicalPlan
 		bestNames                 types.NameSlice
@@ -588,36 +798,137 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	var initialLogicalPlanCtx logicalPlanBuildCtx
 	if needRestoreLogicalPlanCtx {
 		initialLogicalPlanCtx = saveLogicalPlanBuildCtx(sessVars)
+		sessVars.StmtCtx.ResetAlternativeLogicalPlanSignals()
+		// Round 1 always uses the native FTSMysqlMatchAgainst builtin — same as
+		// the Alt-disabled default. The build records two signals on the
+		// planBuilder when MATCH...AGAINST is seen:
+		//   * HasPredicateMatch: any direct-boolean-context MATCH. The round
+		//     driver propagates this into stmtctx to trigger the
+		//     fts-like-fallback alternative round, which builds a competing
+		//     ILIKE-based plan; the cheaper of the two wins.
+		//   * HasNonViableFTSMatch: a predicate-context MATCH whose native form
+		//     cannot execute (no FTS index / no TiFlash replica / unsupported
+		//     modifier). The round driver discards round 1's plan and forces
+		//     AlternativeLogicalPlanFTSLikeFallback true so all subsequent
+		//     rounds (correlate, etc.) re-rewrite with ILIKE.
 	}
-	for i := range buildRound {
-		if needRestoreLogicalPlanCtx && i > 0 {
-			restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
-		}
 
-		p, names, nonLogical, err := buildAndOptimizeLogicalPlanRound(
-			ctx,
-			sctx,
-			node,
-			is,
-			hintProcessor,
-			&checked,
-			&optimizeStarted,
-			&beginOpt,
-			needRestoreLogicalPlanCtx,
-			&bestPlan,
-			&bestNames,
-			&bestCost,
-			&bestLogicalPlanCtx,
-		)
+	p, names, nonLogical, err := buildAndOptimizeLogicalPlanRound(
+		ctx,
+		sctx,
+		node,
+		is,
+		hintProcessor,
+		&checked,
+		&optimizeStarted,
+		&beginOpt,
+		needRestoreLogicalPlanCtx,
+		&bestPlan,
+		&bestNames,
+		&bestCost,
+		&bestLogicalPlanCtx,
+		nil,
+	)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	if nonLogical {
+		// keep compatible with the old.
+		return p, names, 0, nil
+	}
+
+	// The engine-restricted rounds (tikv-only / tiflash-only) arm on the shape
+	// of round 1's chosen plan rather than on a build-time signal: only a plan
+	// that actually mixes TiKV and TiFlash reads leaves a homogeneous
+	// alternative uncosted.
+	//
+	// A single-scan index join is the exception. Its inner side probes the
+	// handle or a covering index, so it reads only the rows the outer side asks
+	// for, and no engine-restricted rebuild is guaranteed to keep that: TiFlash
+	// has no index join at all, and pinning the outer side to TiKV can re-cost
+	// the join into a full-scan hash join. Trading a bounded probe for a full
+	// scan is the way this feature can turn a good mixed plan into a slow one,
+	// so leave those plans exactly as round 1 built them instead of putting
+	// them up for a cost comparison.
+	if needRestoreLogicalPlanCtx && bestPlan != nil {
+		hasTiKV, hasTiFlash := physicalop.StorageEngineUsage(bestPlan)
+		if hasTiKV && hasTiFlash && !physicalop.HasSingleScanIndexJoin(bestPlan) {
+			sessVars.StmtCtx.MarkAlternativeLogicalPlanMixedStorageEngines()
+		}
+	}
+
+	// Pre-compute which rounds are enabled based on the signals from the first
+	// (default) build. This prevents signal leakage: alternative rounds rebuild
+	// the plan and may set AlternativeLogicalPlan* signals as a side effect,
+	// which are not reset by restoreLogicalPlanBuildCtx. Evaluating enabled()
+	// upfront ensures each round's eligibility is determined solely by the
+	// original build's signals.
+	enabledRounds := make([]alternativeRound, 0, len(alternativeRounds))
+	for _, round := range alternativeRounds {
+		if round.enabled(sessVars) {
+			enabledRounds = append(enabledRounds, round)
+		}
+	}
+	var lastAltRoundErr error
+	for _, round := range enabledRounds {
+		restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
+		failpoint.Inject("failIfAlternativeLogicalPlanRoundTriggered", func(val failpoint.Value) {
+			if testRoundAndSQL, ok := val.(string); ok &&
+				testRoundAndSQL == round.name+":"+node.Node.OriginalText() {
+				failpoint.Return(nil, nil, 0, errors.New("unexpected alternative logical plan round"))
+			}
+		})
+
+		// Use a closure so that defer-based cleanup runs at the end of each
+		// iteration, not at function exit. This ensures session state (e.g.
+		// EnableCorrelateSubquery) is restored even if the round panics.
+		func() {
+			if round.setup != nil {
+				cleanup := round.setup(sessVars)
+				defer cleanup()
+			}
+			p, names, nonLogical, err = buildAndOptimizeLogicalPlanRound(
+				ctx,
+				sctx,
+				node,
+				is,
+				hintProcessor,
+				&checked,
+				&optimizeStarted,
+				&beginOpt,
+				needRestoreLogicalPlanCtx,
+				&bestPlan,
+				&bestNames,
+				&bestCost,
+				&bestLogicalPlanCtx,
+				round.adjustFlag,
+			)
+		}()
 		if err != nil {
-			return nil, nil, 0, err
+			// Alternative rounds are optional optimizations. If one fails,
+			// log and continue — the first round's plan is still valid in
+			// the general case. fts-like-fallback is the exception: the
+			// first round's plan may have been discarded as non-executable,
+			// so we remember the last alt-round error in case bestPlan
+			// remains nil after the loop.
+			logutil.BgLogger().Warn("alternative logical plan round failed",
+				zap.String("round", round.name),
+				zap.Error(err))
+			lastAltRoundErr = err
+			continue
 		}
 		if nonLogical {
-			// keep compatible with the old.
 			return p, names, 0, nil
 		}
 	}
 	if bestPlan == nil {
+		if lastAltRoundErr != nil {
+			// No valid plan from any round. Surface the most recent alt-round
+			// error rather than the generic sentinel — typically this is the
+			// fts-like-fallback round reporting why MATCH...AGAINST cannot be
+			// rewritten (unsupported search string, etc.).
+			return nil, nil, 0, lastAltRoundErr
+		}
 		return nil, nil, 0, errors.New("failed to build logical plan")
 	}
 	if needRestoreLogicalPlanCtx {

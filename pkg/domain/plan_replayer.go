@@ -16,7 +16,6 @@ package domain
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net"
 	"path/filepath"
@@ -132,7 +131,7 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(ctx context.Context, path string, 
 }
 
 func deletePlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, token string) {
-	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
 	exec := sctx.GetRestrictedSQLExecutor()
 	_, _, err := exec.ExecRestrictedSQL(ctx1, nil, "delete from mysql.plan_replayer_status where token = %?", token)
 	if err != nil {
@@ -142,7 +141,7 @@ func deletePlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, toke
 
 // insertPlanReplayerStatus insert mysql.plan_replayer_status record
 func insertPlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, records []PlanReplayerStatusRecord) {
-	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
 	var instance string
 	serverInfo, err := infosync.GetServerInfo()
 	if err != nil {
@@ -519,7 +518,7 @@ func (h *planReplayerTaskDumpHandle) DrainTask() *PlanReplayerDumpTask {
 
 func checkUnHandledReplayerTask(ctx context.Context, sctx sessionctx.Context, task replayer.PlanReplayerTaskKey) (bool, error) {
 	exec := sctx.GetSQLExecutor()
-	rs, err := exec.ExecuteInternal(ctx, fmt.Sprintf("select * from mysql.plan_replayer_status where sql_digest = '%v' and plan_digest = '%v' and fail_reason is null", task.SQLDigest, task.PlanDigest))
+	rs, err := exec.ExecuteInternal(ctx, "select * from mysql.plan_replayer_status where sql_digest = %? and plan_digest = %? and fail_reason is null", task.SQLDigest, task.PlanDigest)
 	if err != nil {
 		return false, err
 	}
@@ -540,8 +539,8 @@ func checkUnHandledReplayerTask(ctx context.Context, sctx sessionctx.Context, ta
 // CheckPlanReplayerTaskExists checks whether plan replayer capture task exists already
 func CheckPlanReplayerTaskExists(ctx context.Context, sctx sessionctx.Context, sqlDigest, planDigest string) (bool, error) {
 	exec := sctx.GetSQLExecutor()
-	rs, err := exec.ExecuteInternal(ctx, fmt.Sprintf("select * from mysql.plan_replayer_task where sql_digest = '%v' and plan_digest = '%v'",
-		sqlDigest, planDigest))
+	rs, err := exec.ExecuteInternal(ctx, "select * from mysql.plan_replayer_task where sql_digest = %? and plan_digest = %?",
+		sqlDigest, planDigest)
 	if err != nil {
 		return false, err
 	}

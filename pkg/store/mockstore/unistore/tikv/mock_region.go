@@ -1229,7 +1229,12 @@ func (c gcStatesClient) DeleteGCBarrier(ctx context.Context, barrierID string) (
 	return c.inner.deleteGCBarrierImpl(ctx, c.keyspaceID, barrierID, startTime)
 }
 
-func (c gcStatesClient) GetGCState(ctx context.Context) (pdgc.GCState, error) {
+func (c gcStatesClient) GetGCState(ctx context.Context, opts ...pdgc.GCStatesAPIOption) (pdgc.GCState, error) {
+	options := pdgc.DefaultGCStatesAPIOptions()
+	for _, o := range opts {
+		o(&options)
+	}
+
 	startTime := time.Now()
 
 	c.inner.mu.Lock()
@@ -1237,19 +1242,15 @@ func (c gcStatesClient) GetGCState(ctx context.Context) (pdgc.GCState, error) {
 
 	internalState := c.inner.getGCState(c.keyspaceID)
 
-	res := pdgc.GCState{
-		KeyspaceID:   c.keyspaceID,
-		TxnSafePoint: internalState.txnSafePoint,
-		GCSafePoint:  internalState.gcSafePoint,
+	if options.ExcludeGCBarriers {
+		return pdgc.NewGCStateWithoutGCBarriers(c.keyspaceID, internalState.txnSafePoint, internalState.gcSafePoint), nil
 	}
 
 	gcBarriers := make([]*pdgc.GCBarrierInfo, 0, len(internalState.gcBarriers))
 	for barrierID, barrierTS := range internalState.gcBarriers {
 		gcBarriers = append(gcBarriers, pdgc.NewGCBarrierInfo(barrierID, barrierTS, pdgc.TTLNeverExpire, startTime))
 	}
-	res.GCBarriers = gcBarriers
-
-	return res, nil
+	return pdgc.NewGCStateWithGCBarriers(c.keyspaceID, internalState.txnSafePoint, internalState.gcSafePoint, gcBarriers), nil
 }
 
 func (c gcStatesClient) SetGlobalGCBarrier(ctx context.Context, barrierID string, barrierTS uint64, ttl time.Duration) (*pdgc.GlobalGCBarrierInfo, error) {
@@ -1260,6 +1261,6 @@ func (c gcStatesClient) DeleteGlobalGCBarrier(ctx context.Context, barrierID str
 	panic("unimplemented")
 }
 
-func (c gcStatesClient) GetAllKeyspacesGCStates(ctx context.Context) (pdgc.ClusterGCStates, error) {
+func (c gcStatesClient) GetAllKeyspacesGCStates(ctx context.Context, opts ...pdgc.GCStatesAPIOption) (pdgc.ClusterGCStates, error) {
 	panic("unimplemented")
 }

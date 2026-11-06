@@ -23,6 +23,7 @@ import (
 	"github.com/jellydator/ttlcache/v3"
 	"github.com/pingcap/failpoint"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -63,6 +64,10 @@ type Manager struct {
 	// action "judging whether there is this record in the current watch list and adding records" have atomicity.
 	queryLock sync.Mutex
 	watchList *ttlcache.Cache[string, *QuarantineRecord]
+	// inNormalMode is false when diagnostic mode is enabled. It records whether
+	// the cache was started during initialization, so Stop never waits on a
+	// cache that was not started.
+	inNormalMode bool
 	// activeGroup is used to manage the active runaway watches of resource group.
 	// It uses sync.Map + atomic.Int64 for lock-free reads on the per-query hot path.
 	activeGroup sync.Map // map[string]*atomic.Int64
@@ -105,10 +110,14 @@ func NewRunawayManager(
 		ttlcache.WithCapacity[string, *QuarantineRecord](maxWatchListCap),
 		ttlcache.WithDisableTouchOnHit[string, *QuarantineRecord](),
 	)
-	go watchList.Start()
+	inNormalMode := !diagnosticmode.Enabled()
+	if inNormalMode {
+		go watchList.Start()
+	}
 	m := &Manager{
 		ResourceGroupCtl:      resourceGroupCtl,
 		watchList:             watchList,
+		inNormalMode:          inNormalMode,
 		serverID:              serverAddr,
 		runawayQueriesChan:    make(chan *Record, maxWatchRecordChannelSize),
 		quarantineChan:        make(chan *QuarantineRecord, maxWatchRecordChannelSize),
@@ -402,7 +411,7 @@ func (rm *Manager) Stop() {
 	if rm == nil {
 		return
 	}
-	if rm.watchList != nil {
+	if rm.watchList != nil && rm.inNormalMode {
 		rm.watchList.Stop()
 	}
 }
@@ -427,9 +436,20 @@ func (rm *Manager) UpdateNewAndDoneWatch() error {
 		return err
 	}
 	s.syncOKCounter.Inc()
-	s.watchCPGauge.Set(float64(s.newWatchReader.CheckPoint))
-	s.doneCPGauge.Set(float64(s.deletionWatchReader.CheckPoint))
+	s.watchCPGauge.Set(checkpointGaugeValue(s.newWatchReader.CheckPoint))
+	s.doneCPGauge.Set(checkpointGaugeValue(s.deletionWatchReader.CheckPoint))
 	return nil
+}
+
+// checkpointGaugeValue reports a syncer CheckPoint in Unix milliseconds. A zero
+// time.Time (no scan has advanced the checkpoint yet) is reported as 0 rather
+// than `time.Time{}.UnixMilli() == -62135596800000`, which would dominate the
+// Grafana panel's y-axis on clusters that have never produced a watch row.
+func checkpointGaugeValue(checkpoint time.Time) float64 {
+	if checkpoint.IsZero() {
+		return 0
+	}
+	return float64(checkpoint.UnixMilli())
 }
 
 // doSync performs the actual sync work for watch and watch_done tables.
@@ -437,32 +457,33 @@ func (rm *Manager) doSync() error {
 	if !rm.runawaySyncer.checkWatchTableExist() {
 		return nil
 	}
-	for {
-		records, err := rm.runawaySyncer.getNewWatchRecords()
-		if err != nil {
-			return err
-		}
-		for _, r := range records {
-			rm.AddWatch(r)
-		}
-		if len(records) < watchSyncBatchLimit {
-			break
-		}
+	records, err := rm.runawaySyncer.getNewWatchRecords()
+	if err != nil {
+		return err
+	}
+	for _, r := range records {
+		rm.AddWatch(r)
+	}
+	// On the first sync (startup), skip the historical watch_done full-table
+	// scan. The in-memory watch list was empty before loading from the watch
+	// table above, and records already moved to watch_done are absent from the
+	// watch table (handleRunawayWatchDone moves them atomically in a single
+	// transaction), so scanning historical watch_done rows would only produce
+	// no-op removeWatch calls. The overlap window covers concurrent moves that
+	// commit between the watch snapshot and the done scan.
+	if rm.runawaySyncer.deletionWatchReader.CheckPoint.Equal(NullTime) {
+		rm.runawaySyncer.deletionWatchReader.CheckPoint =
+			rm.runawaySyncer.newWatchReader.UpperBound.Add(-watchSyncOverlap)
 	}
 	if !rm.runawaySyncer.checkWatchDoneTableExist() {
 		return nil
 	}
-	for {
-		doneRecords, err := rm.runawaySyncer.getNewWatchDoneRecords()
-		if err != nil {
-			return err
-		}
-		for _, r := range doneRecords {
-			rm.removeWatch(r)
-		}
-		if len(doneRecords) < watchSyncBatchLimit {
-			break
-		}
+	doneRecords, err := rm.runawaySyncer.getNewWatchDoneRecords()
+	if err != nil {
+		return err
+	}
+	for _, r := range doneRecords {
+		rm.removeWatch(r)
 	}
 	return nil
 }

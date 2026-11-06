@@ -245,6 +245,10 @@ func (c *Context) GetTableCtx() tblctx.MutateContext {
 func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	vars := c.GetSessionVars()
 	sc := vars.StmtCtx
+	var queryCopStoreLimiter *kv.QueryCopStoreLimiter
+	if vars.QueryCopStoreLimit > 0 {
+		queryCopStoreLimiter = kv.NewQueryCopStoreLimiter(vars.QueryCopStoreLimit)
+	}
 
 	return &distsqlctx.DistSQLContext{
 		WarnHandler:                          sc.WarnHandler,
@@ -269,6 +273,7 @@ func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 		TiFlashMaxQueryMemoryPerNode:         vars.TiFlashMaxQueryMemoryPerNode,
 		TiFlashQuerySpillRatio:               vars.TiFlashQuerySpillRatio,
 		TiFlashHashJoinVersion:               vars.TiFlashHashJoinVersion,
+		QueryCopStoreLimiter:                 queryCopStoreLimiter,
 		ResourceGroupName:                    sc.ResourceGroupName,
 		ExecDetails:                          &sc.SyncExecDetails,
 	}
@@ -607,6 +612,11 @@ func (*Context) ReleaseAdvisoryLock(_ string) bool {
 // ReleaseAllAdvisoryLocks releases all advisory locks
 func (*Context) ReleaseAllAdvisoryLocks() int {
 	return 0
+}
+
+// CheckCanMigrateStates implements the sessionapi.Session interface
+func (*Context) CheckCanMigrateStates() error {
+	return nil
 }
 
 // EncodeStates implements the sessionapi.Session interface

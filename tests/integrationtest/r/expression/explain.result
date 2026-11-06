@@ -138,34 +138,29 @@ HashJoin	root		CARTESIAN left outer join, left side:TableReader
   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'plan_tree' select * from t1 left join t2 on false;
 id	task	access object	operator info
-HashJoin	root		CARTESIAN left outer join, left side:TableReader
-├─TableDual(Build)	root		rows:0
-└─TableReader(Probe)	root		data:TableFullScan
+Projection	root		expression__explain.t1.id, expression__explain.t1.a, expression__explain.t1.b, <nil>->expression__explain.t2.id, <nil>->expression__explain.t2.a, <nil>->expression__explain.t2.b
+└─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select * from t1 right join t2 on false;
 id	task	access object	operator info
-HashJoin	root		CARTESIAN right outer join, left side:TableDual
-├─TableDual(Build)	root		rows:0
-└─TableReader(Probe)	root		data:TableFullScan
+Projection	root		<nil>->expression__explain.t1.id, <nil>->expression__explain.t1.a, <nil>->expression__explain.t1.b, expression__explain.t2.id, expression__explain.t2.a, expression__explain.t2.b
+└─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'plan_tree' select * from t1 left join t2 on t1.a = 1 and t1.a = 2;
 id	task	access object	operator info
-HashJoin	root		CARTESIAN left outer join, left side:TableReader
-├─TableDual(Build)	root		rows:0
-└─TableReader(Probe)	root		data:TableFullScan
+Projection	root		expression__explain.t1.id, expression__explain.t1.a, expression__explain.t1.b, <nil>->expression__explain.t2.id, <nil>->expression__explain.t2.a, <nil>->expression__explain.t2.b
+└─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select * from t1 left join t2 on t1.a =1 where t1.a = 2;
 id	task	access object	operator info
-HashJoin	root		CARTESIAN left outer join, left side:TableReader
-├─TableDual(Build)	root		rows:0
-└─TableReader(Probe)	root		data:Selection
+Projection	root		expression__explain.t1.id, expression__explain.t1.a, expression__explain.t1.b, <nil>->expression__explain.t2.id, <nil>->expression__explain.t2.a, <nil>->expression__explain.t2.b
+└─TableReader	root		data:Selection
   └─Selection	cop[tikv]		eq(expression__explain.t1.a, 2)
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select * from t1 left join t2 on t2.a = 1 and t2.a = 2;
 id	task	access object	operator info
-HashJoin	root		CARTESIAN left outer join, left side:TableReader
-├─TableDual(Build)	root		rows:0
-└─TableReader(Probe)	root		data:TableFullScan
+Projection	root		expression__explain.t1.id, expression__explain.t1.a, expression__explain.t1.b, <nil>->expression__explain.t2.id, <nil>->expression__explain.t2.a, <nil>->expression__explain.t2.b
+└─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select * from t1 left join t2 on t1.a = 1 or (t1.a = 2 and t1.a = 3);
 id	task	access object	operator info

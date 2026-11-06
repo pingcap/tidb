@@ -327,8 +327,8 @@ func encodeTableRecord(prefix kv.Key, rowID uint64) []byte {
 
 func makeEncodeKeyspacedTableRecord(keyspace uint32) func(prefix kv.Key, rowID uint64) []byte {
 	codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
-		Id:   keyspace,
-		Name: "test",
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: keyspace},
+		Name:     "test",
 	})
 	if err != nil {
 		panic(err)

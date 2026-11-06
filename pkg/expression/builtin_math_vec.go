@@ -655,11 +655,20 @@ func (b *builtinRoundWithFracIntSig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 	i64s := result.Int64s()
 	frac := buf.Int64s()
 	result.MergeNulls(buf)
+	if mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
+		// An unsigned frac never selects a digit left of the decimal point.
+		return nil
+	}
+	unsigned := mysql.HasUnsignedFlag(b.tp.GetFlag())
 	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
-		i64s[i] = int64(types.Round(float64(i64s[i]), int(frac[i])))
+		res, err := roundIntWithFrac(i64s[i], frac[i], unsigned)
+		if err != nil {
+			return err
+		}
+		i64s[i] = res
 	}
 	return nil
 }

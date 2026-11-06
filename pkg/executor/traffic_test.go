@@ -405,7 +405,7 @@ func TestTrafficPrivilege(t *testing.T) {
 	defer server.Close()
 	ctx = fillCtxWithTiProxyAddr(ctx, []int{port})
 	mgr := &mockPrivManager{}
-	privilege.BindPrivilegeManager(suite.execBuilder.ctx, mgr)
+	privilege.BindPrivilegeManager(suite.execBuilder.sctx, mgr)
 
 	cancelTests := []struct {
 		privs []bool
@@ -508,7 +508,7 @@ func (suite *trafficTestSuite) build(ctx context.Context, sql string) exec.Execu
 }
 
 func (suite *trafficTestSuite) stmtCtx() *stmtctx.StatementContext {
-	return suite.execBuilder.ctx.GetSessionVars().StmtCtx
+	return suite.execBuilder.sctx.GetSessionVars().StmtCtx
 }
 
 type mockHTTPHandler struct {

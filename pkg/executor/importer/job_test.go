@@ -159,6 +159,43 @@ func TestJobHappyPath(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, endTime, gotJobInfo.EndTime)
 	}
+
+	t.Run("prepare phase transition", func(t *testing.T) {
+		createdParams := &importer.ImportParameters{
+			FileLocation: "s3://bucket/path.csv",
+			Format:       importer.DataFormatAuto,
+			Options: map[string]any{
+				"detached": nil,
+				"thread":   float64(16),
+			},
+		}
+		jobID, err := importer.CreateJob(ctx, conn, "test", "t", 1,
+			"root@%", "", createdParams, 123)
+		require.NoError(t, err)
+
+		require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepPreparing))
+		info, err := importer.GetJob(ctx, conn, jobID, "root@%", true)
+		require.NoError(t, err)
+		require.Equal(t, importer.JobStatusRunning, info.Status)
+		require.Equal(t, importer.JobStepPreparing, info.Step)
+		require.False(t, info.StartTime.IsZero())
+		startTime := info.StartTime
+
+		require.NoError(t, importer.UpdateJobPreparedInfo(ctx, conn, jobID, 456, importer.DataFormatCSV))
+		info, err = importer.GetJob(ctx, conn, jobID, "root@%", true)
+		require.NoError(t, err)
+		require.EqualValues(t, 456, info.SourceFileSize)
+		require.Equal(t, importer.DataFormatCSV, info.Parameters.Format)
+		require.Equal(t, createdParams.FileLocation, info.Parameters.FileLocation)
+		require.Equal(t, createdParams.Options, info.Parameters.Options)
+
+		require.NoError(t, importer.Job2Step(ctx, conn, jobID, importer.JobStepGlobalSorting))
+		info, err = importer.GetJob(ctx, conn, jobID, "root@%", true)
+		require.NoError(t, err)
+		require.Equal(t, importer.JobStatusRunning, info.Status)
+		require.Equal(t, importer.JobStepGlobalSorting, info.Step)
+		require.Equal(t, startTime, info.StartTime)
+	})
 }
 
 func TestGetAndCancelJob(t *testing.T) {
@@ -201,6 +238,7 @@ func TestGetAndCancelJob(t *testing.T) {
 
 	// cancel job
 	require.NoError(t, importer.CancelJob(ctx, conn, jobID1))
+	require.Equal(t, uint64(1), tk.Session().GetSessionVars().StmtCtx.AffectedRows())
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID1, jobInfo.CreatedBy, false)
 	require.NoError(t, err)
 	require.False(t, gotJobInfo.CreateTime.IsZero())
@@ -216,6 +254,7 @@ func TestGetAndCancelJob(t *testing.T) {
 
 	// call cancel twice is ok, caller should check job status before cancel.
 	require.NoError(t, importer.CancelJob(ctx, conn, jobID1))
+	require.Equal(t, uint64(0), tk.Session().GetSessionVars().StmtCtx.AffectedRows())
 
 	jobInfo.Status = "pending"
 	jobInfo.ErrorMessage = ""
@@ -246,6 +285,7 @@ func TestGetAndCancelJob(t *testing.T) {
 
 	// cancel job
 	require.NoError(t, importer.CancelJob(ctx, conn, jobID2))
+	require.Equal(t, uint64(1), tk.Session().GetSessionVars().StmtCtx.AffectedRows())
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID2, jobInfo.CreatedBy, false)
 	require.NoError(t, err)
 	require.False(t, gotJobInfo.CreateTime.IsZero())
@@ -254,6 +294,9 @@ func TestGetAndCancelJob(t *testing.T) {
 	jobInfo.Status = "cancelled"
 	jobInfo.ErrorMessage = "cancelled by user"
 	jobInfoEqual(t, jobInfo, gotJobInfo)
+	cnt, err = importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), cnt)
 
 	_, err = importer.GetJob(ctx, conn, 999999999, jobInfo.CreatedBy, false)
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataJobNotFound)
@@ -273,6 +316,54 @@ func TestGetAndCancelJob(t *testing.T) {
 	require.Len(t, jobs, 2)
 	require.Equal(t, jobID1, jobs[0].ID)
 	require.Equal(t, jobID2, jobs[1].ID)
+}
+
+func TestCancelPendingJob(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ctx := context.Background()
+	conn := tk.Session().GetSQLExecutor()
+	parameters := &importer.ImportParameters{
+		Format: importer.DataFormatCSV,
+	}
+
+	pendingJobID, err := importer.CreateJob(ctx, conn, "test", "t", 1, "root@%", "", parameters, 123)
+	require.NoError(t, err)
+	cnt, err := importer.GetActiveJobCnt(ctx, conn, "test", "t")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), cnt)
+
+	require.NoError(t, importer.CancelPendingJob(ctx, conn, pendingJobID))
+	require.Equal(t, uint64(1), tk.Session().GetSessionVars().StmtCtx.AffectedRows())
+	pendingJob, err := importer.GetJob(ctx, conn, pendingJobID, "root@%", true)
+	require.NoError(t, err)
+	require.Equal(t, "cancelled", pendingJob.Status)
+	require.True(t, pendingJob.IsCancelled())
+	require.Equal(t, "cancelled by user", pendingJob.ErrorMessage)
+	require.True(t, pendingJob.StartTime.IsZero())
+	require.True(t, pendingJob.EndTime.IsZero())
+	cnt, err = importer.GetActiveJobCnt(ctx, conn, "test", "t")
+	require.NoError(t, err)
+	require.Equal(t, int64(0), cnt)
+
+	runningJobID, err := importer.CreateJob(ctx, conn, "test", "t", 1, "root@%", "", parameters, 123)
+	require.NoError(t, err)
+	require.NoError(t, importer.StartJob(ctx, conn, runningJobID, importer.JobStepImporting))
+	cnt, err = importer.GetActiveJobCnt(ctx, conn, "test", "t")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), cnt)
+
+	require.NoError(t, importer.CancelPendingJob(ctx, conn, runningJobID))
+	require.Equal(t, uint64(0), tk.Session().GetSessionVars().StmtCtx.AffectedRows())
+	runningJob, err := importer.GetJob(ctx, conn, runningJobID, "root@%", true)
+	require.NoError(t, err)
+	require.Equal(t, importer.JobStatusRunning, runningJob.Status)
+	require.Equal(t, importer.JobStepImporting, runningJob.Step)
+	require.False(t, runningJob.IsCancelled())
+	require.Equal(t, "", runningJob.ErrorMessage)
+	cnt, err = importer.GetActiveJobCnt(ctx, conn, "test", "t")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), cnt)
 }
 
 func TestFailJobBeforeStart(t *testing.T) {
@@ -314,17 +405,22 @@ func TestFailJobBeforeStart(t *testing.T) {
 func TestJobInfo_CanCancel(t *testing.T) {
 	jobInfo := &importer.JobInfo{}
 	for _, c := range []struct {
-		status    string
-		canCancel bool
+		status      string
+		canCancel   bool
+		isCancelled bool
+		isSuccess   bool
 	}{
-		{"pending", true},
-		{"running", true},
-		{"finished", false},
-		{"failed", false},
-		{"canceled", false},
+		{status: "pending", canCancel: true},
+		{status: "running", canCancel: true},
+		{status: "finished", isSuccess: true},
+		{status: "failed"},
+		{status: "cancelled", isCancelled: true},
+		{status: "canceled"},
 	} {
 		jobInfo.Status = c.status
 		require.Equal(t, c.canCancel, jobInfo.CanCancel(), c.status)
+		require.Equal(t, c.isCancelled, jobInfo.IsCancelled(), c.status)
+		require.Equal(t, c.isSuccess, jobInfo.IsSuccess(), c.status)
 	}
 }
 

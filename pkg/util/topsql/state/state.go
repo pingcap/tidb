@@ -45,7 +45,6 @@ var GlobalState = State{
 	PrecisionSeconds:         atomic.NewInt64(DefTiDBTopSQLPrecisionSeconds),
 	MaxStatementCount:        atomic.NewInt64(DefTiDBTopSQLMaxTimeSeriesCount),
 	MaxCollect:               atomic.NewInt64(DefTiDBTopSQLMaxMetaCount),
-	ReportIntervalSeconds:    atomic.NewInt64(DefTiDBTopSQLReportIntervalSeconds),
 	ruConsumerCount:          atomic.NewInt64(0),
 	TopRUItemIntervalSeconds: atomic.NewInt64(DefTiDBTopRUItemIntervalSeconds),
 }
@@ -63,8 +62,6 @@ type State struct {
 	MaxStatementCount *atomic.Int64
 	// The maximum capacity of the collect map.
 	MaxCollect *atomic.Int64
-	// The report data interval of top-sql.
-	ReportIntervalSeconds *atomic.Int64
 
 	// ruConsumerCount is the number of active TopRU subscribers.
 	// TopRU is enabled when ruConsumerCount > 0.

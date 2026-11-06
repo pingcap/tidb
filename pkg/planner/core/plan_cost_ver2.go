@@ -139,6 +139,15 @@ func getPlanCostVer24PhysicalIndexScan(pp base.PhysicalPlan, taskType property.T
 	scanFactor := getTaskScanFactorVer2(p, kv.TiKV, taskType)
 
 	p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
+
+	// Each range is a separate seek in TiKV; charge it so that many-range scans (typically from
+	// IN-lists) are not costed as if they were one contiguous scan. An IndexJoin inner scan
+	// (RangeInfo set) is skipped: indexJoinSeekingCostVer2 already charges its seeks per build row.
+	if len(p.Ranges) > 1 && p.RangeInfo == "" {
+		seekCost := rangeSeekCostVer2(option, float64(len(p.Ranges)), scanFactor)
+		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, seekCost)
+	}
+
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexScanCostFactor)
@@ -196,6 +205,11 @@ func getPlanCostVer24PhysicalTableScan(pp base.PhysicalPlan, taskType property.T
 		}
 		hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
 		p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
+		// Charge per-range TiKV seeks as for index scans. RowID scans under IndexLookUp and IndexJoin
+		// inner scans (RangeInfo set) are skipped; their seeks are costed by the parent.
+		if p.StoreType == kv.TiKV && len(p.Ranges) > 1 && p.RangeInfo == "" && (len(isChildOfINL) == 0 || !isChildOfINL[0]) {
+			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, rangeSeekCostVer2(option, float64(len(p.Ranges)), scanFactor))
+		}
 		if ((len(isChildOfINL) > 0 && !isChildOfINL[0]) || len(isChildOfINL) <= 0) && hasFullRangeScan {
 			if newRowCount := getTableScanPenalty(p, rows); newRowCount > 0 {
 				p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
@@ -619,8 +633,59 @@ func getPlanCostVer24PhysicalStreamAgg(pp base.PhysicalPlan, taskType property.T
 	return p.PlanCostVer2, nil
 }
 
-// getPlanCostVer24PhysicalHashAgg returns the plan-cost of this sub-plan, which is:
-// plan-cost = child-cost + (agg-cost + group-cost + hash-build-cost + hash-probe-cost) / concurrency
+// childCanProvideOrderForStreamAgg returns true if child preserves ordering
+// through to a base-table access path.
+//
+// This is a conservative approximation: a base-table access path may still
+// need a Sort if no index covers the GROUP BY columns. The planner's
+// possible-property tracking already filters out StreamAgg alternatives that
+// can't be satisfied by an index, so the false-positive rate in practice is
+// low, and we accept the small over-count to avoid threading TableInfo
+// through the cost path.
+func childCanProvideOrderForStreamAgg(child base.PhysicalPlan) bool {
+	for cur := child; cur != nil; {
+		switch cur.(type) {
+		case *physicalop.PhysicalProjection, *physicalop.PhysicalSelection,
+			*physicalop.PhysicalUnionScan:
+			children := cur.Children()
+			if len(children) != 1 {
+				return false
+			}
+			cur = children[0]
+		case *physicalop.PhysicalIndexReader, *physicalop.PhysicalIndexLookUpReader,
+			*physicalop.PhysicalIndexMergeReader, *physicalop.PhysicalTableReader:
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+// getPlanCostVer24PhysicalHashAgg returns the plan-cost of this sub-plan.
+//
+// For TiDB root tasks:
+//
+//	plan-cost = child-cost + hash-mem-cost + (agg-cost + group-cost + hash-build-cpu-cost + hash-probe-cost) / concurrency
+//
+// All CPU work (aggregation, grouping, hash key computation, probing) is parallelized
+// across partial workers that each process a disjoint subset of input rows, so these
+// costs are divided by concurrency. However, the hash table memory cost is placed outside
+// the division: each partial worker maintains its own hash table, so total memory
+// consumption scales with outputRows (NDV) regardless of concurrency. For high-NDV
+// GROUP BY with an available ordered index, this memory penalty makes StreamAgg
+// (which uses ~constant memory) the preferred plan.
+//
+// The memory penalty is only applied when the HashAgg's child can provide ordering on
+// the GROUP BY keys naturally (e.g., from an ordered index scan). When no such ordering
+// is available, the StreamAgg alternative would need an explicit Sort whose own cost
+// already correctly disfavors it, so adding the memory penalty here would double-count
+// and steer the optimizer toward Sort+StreamAgg even when HashAgg is genuinely cheaper.
+//
+// For TiFlash MPP and TiKV cop tasks, data is either partitioned across nodes (MPP) or
+// processed single-threaded on TiKV (cop). All costs use the original formula:
+//
+//	plan-cost = child-cost + (agg-cost + group-cost + hash-build-cost + hash-probe-cost) / concurrency
 func getPlanCostVer24PhysicalHashAgg(pp base.PhysicalPlan, taskType property.TaskType, option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
 	p := pp.(*physicalop.PhysicalHashAgg)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
@@ -647,7 +712,35 @@ func getPlanCostVer24PhysicalHashAgg(pp base.PhysicalPlan, taskType property.Tas
 		return costusage.ZeroCostVer2, err
 	}
 
-	p.PlanCostVer2 = costusage.SumCostVer2(startCost, childCost, costusage.DivCostVer2(costusage.SumCostVer2(aggCost, groupCost, hashBuildCost, hashProbeCost), concurrency))
+	if taskType == property.RootTaskType {
+		var hashMemCost costusage.CostVer2
+		if childCanProvideOrderForStreamAgg(p.Children()[0]) {
+			hashMemCost = costusage.NewCostVer2(option, memFactor,
+				concurrency*outputRows*outputRowSize*memFactor.Value,
+				func() string {
+					return fmt.Sprintf("hashmem(%v*%v*%v*%v)", concurrency, outputRows, outputRowSize, memFactor)
+				})
+		} else {
+			hashMemCost = costusage.ZeroCostVer2
+		}
+		// hashBuildCost includes memory; subtract it out so we don't double-count.
+		// Recompute just the CPU portion of hash build (key computation + build).
+		nKeys := float64(len(p.GroupByItems))
+		hashBuildCPUCost := costusage.NewCostVer2(option, cpuFactor,
+			outputRows*nKeys*cpuFactor.Value+outputRows*cpuFactor.Value,
+			func() string {
+				return fmt.Sprintf("hashkey(%v*%v*%v)+hashbuild(%v*%v)", outputRows, nKeys, cpuFactor, outputRows, cpuFactor)
+			})
+		p.PlanCostVer2 = costusage.SumCostVer2(startCost, childCost, hashMemCost,
+			costusage.DivCostVer2(costusage.SumCostVer2(aggCost, groupCost, hashBuildCPUCost, hashProbeCost), concurrency))
+	} else {
+		// MPP and cop tasks: data is either partitioned (MPP) or processed by a single
+		// TiKV thread (cop), so the TiDB root concurrency factor does not apply.
+		// Use the original formula where all costs are divided by concurrency (for MPP)
+		// or treated as single-threaded work (for cop, where concurrency=1 effectively).
+		p.PlanCostVer2 = costusage.SumCostVer2(startCost, childCost,
+			costusage.DivCostVer2(costusage.SumCostVer2(aggCost, groupCost, hashBuildCost, hashProbeCost), concurrency))
+	}
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().HashAggCostFactor)
@@ -693,7 +786,7 @@ func getPlanCostVer24PhysicalMergeJoin(pp base.PhysicalPlan, taskType property.T
 // getPlanCostVer24PhysicalHashJoin returns the plan-cost of this sub-plan, which is:
 // plan-cost = build-child-cost + probe-child-cost +
 // build-hash-cost + build-filter-cost +
-// (probe-filter-cost + probe-hash-cost) / concurrency
+// (probe-filter-cost + probe-hash-cost + scan-build-unmatched-cost) / concurrency
 func getPlanCostVer24PhysicalHashJoin(pp base.PhysicalPlan, taskType property.TaskType, option *costusage.PlanCostOption) (costusage.CostVer2, error) {
 	p := pp.(*physicalop.PhysicalHashJoin)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
@@ -720,6 +813,13 @@ func getPlanCostVer24PhysicalHashJoin(pp base.PhysicalPlan, taskType property.Ta
 
 	probeFilterCost := filterCostVer2(option, probeRows, probeFilters, cpuFactor)
 	probeHashCost := hashProbeCostVer2(option, probeRows, float64(len(probeKeys)), cpuFactor)
+	scanBuildSideCost := costusage.NewZeroCostVer2(costusage.TraceCost(option))
+	if p.JoinType == base.FullOuterJoin {
+		// Probe tail still needs to scan build-side rows to emit unmatched rows.
+		scanBuildSideCost = costusage.NewCostVer2(option, cpuFactor,
+			buildRows*cpuFactor.Value,
+			func() string { return fmt.Sprintf("scanBuildUnmatched(%v*%v)", buildRows, cpuFactor) })
+	}
 
 	buildChildCost, err := build.GetPlanCostVer2(taskType, option)
 	if err != nil {
@@ -732,13 +832,13 @@ func getPlanCostVer24PhysicalHashJoin(pp base.PhysicalPlan, taskType property.Ta
 
 	if taskType == property.MppTaskType { // BCast or Shuffle Join, use mppConcurrency
 		p.PlanCostVer2 = costusage.SumCostVer2(buildChildCost, probeChildCost,
-			costusage.DivCostVer2(costusage.SumCostVer2(buildHashCost, buildFilterCost, probeHashCost, probeFilterCost), mppConcurrency))
+			costusage.DivCostVer2(costusage.SumCostVer2(buildHashCost, buildFilterCost, probeHashCost, probeFilterCost, scanBuildSideCost), mppConcurrency))
 	} else { // TiDB HashJoin
 		startCost := costusage.NewCostVer2(option, cpuFactor,
 			10*3*cpuFactor.Value, // 10rows * 3func * cpuFactor
 			func() string { return fmt.Sprintf("cpu(10*3*%v)", cpuFactor) })
 		p.PlanCostVer2 = costusage.SumCostVer2(startCost, buildChildCost, probeChildCost, buildHashCost, buildFilterCost,
-			costusage.DivCostVer2(costusage.SumCostVer2(probeFilterCost, probeHashCost), tidbConcurrency))
+			costusage.DivCostVer2(costusage.SumCostVer2(probeFilterCost, probeHashCost, scanBuildSideCost), tidbConcurrency))
 	}
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
@@ -828,7 +928,8 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 	numRanges := getNumberOfRanges(probe)
 	seekingCost := indexJoinSeekingCostVer2(option, buildRows, float64(numRanges), scanFactor)
 
-	p.PlanCostVer2 = costusage.SumCostVer2(startCost, buildChildCost, buildFilterCost, buildTaskCost, seekingCost, costusage.DivCostVer2(costusage.SumCostVer2(doubleReadCost, probeCost, probeFilterCost, hashTableCost), probeConcurrency))
+	p.PlanCostVer2 = costusage.SumCostVer2(startCost, buildChildCost, buildFilterCost, buildTaskCost, seekingCost,
+		costusage.DivCostVer2(costusage.SumCostVer2(doubleReadCost, probeCost, probeFilterCost, hashTableCost), probeConcurrency))
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexJoinCostFactor)
@@ -908,6 +1009,11 @@ func getPlanCostVer24PhysicalUnionAll(pp base.PhysicalPlan, taskType property.Ta
 		childCosts = append(childCosts, childCost)
 	}
 	p.PlanCostVer2 = costusage.DivCostVer2(costusage.SumCostVer2(childCosts...), concurrency)
+	if p.Mpp && p.SCtx().GetSessionVars().IsMPPEnforced() &&
+		!hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) { // show the real cost in explain-statements
+		// Keep enforced MPP UnionAll comparable through cost instead of bypassing the normal plan comparison path.
+		p.PlanCostVer2 = costusage.DivCostVer2(p.PlanCostVer2, 1000000000)
+	}
 	p.PlanCostInit = true
 	return p.PlanCostVer2, nil
 }
@@ -1012,6 +1118,14 @@ func indexJoinSeekingCostVer2(option *costusage.PlanCostOption, buildRows, numRa
 	return costusage.NewCostVer2(option, scanFactor,
 		buildRows*10*math.Log2(8)*numRanges*scanFactor.Value,
 		func() string { return fmt.Sprintf("seeking(%v*%v*10*log2(8)*%v)", buildRows, numRanges, scanFactor) })
+}
+
+func rangeSeekCostVer2(option *costusage.PlanCostOption, numRanges float64, scanFactor costusage.CostVer2Factor) costusage.CostVer2 {
+	// Each seek ≈ scanning 10 rows of 8-byte width (from experiments in #62499).
+	// Same model as indexJoinSeekingCostVer2 but without the buildRows multiplier.
+	return costusage.NewCostVer2(option, scanFactor,
+		numRanges*10*math.Log2(8)*scanFactor.Value,
+		func() string { return fmt.Sprintf("rangeSeek(%v*10*log2(8)*%v)", numRanges, scanFactor) })
 }
 
 func scanCostVer2(option *costusage.PlanCostOption, rows, rowSize float64, scanFactor costusage.CostVer2Factor) costusage.CostVer2 {

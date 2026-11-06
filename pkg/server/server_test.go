@@ -18,22 +18,49 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"net"
+	"net/http"
 	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/extstore"
-	"github.com/pingcap/tidb/pkg/server/internal"
+	"github.com/pingcap/tidb/pkg/server/internal/packetio"
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/stretchr/testify/require"
+	uatomic "go.uber.org/atomic"
 )
+
+type testStandbyController struct{}
+
+func (*testStandbyController) WaitForActivate() {}
+
+func (*testStandbyController) EndStandby(error) {}
+
+func (*testStandbyController) Handler(*Server) (string, *http.ServeMux) {
+	return "/test-standby/", http.NewServeMux()
+}
+
+func (*testStandbyController) OnConnActive() {}
+
+func (*testStandbyController) PrepareForActivation(StandbyReadyServer) error { return nil }
+
+func (*testStandbyController) OnServerCreated(*Server) {}
+
+func (*testStandbyController) OnServerShutdown(StandbyShutdownServer) {}
 
 func TestIssue46197(t *testing.T) {
 	ctx := context.Background()
@@ -67,7 +94,7 @@ func TestIssue46197(t *testing.T) {
 
 	// clientConn setup
 	brc := util.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
-	pkt := internal.NewPacketIO(brc)
+	pkt := packetio.New(brc)
 	pkt.SetBufWriter(bufio.NewWriter(bytes.NewBuffer(nil)))
 	cc := &clientConn{
 		server:     server,
@@ -103,7 +130,7 @@ func TestGetConAttrs(t *testing.T) {
 		server:     server,
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
-		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:        packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		attrs: map[string]string{
 			"_client_name": "tidb_test",
 		},
@@ -129,6 +156,40 @@ func TestGetConAttrs(t *testing.T) {
 	attrs = server.GetConAttrs(userB)
 	_, hasClientName = attrs[1]
 	require.False(t, hasClientName)
+
+	newConn := func(connID uint64, gwConnID string) *clientConn {
+		tk := testkit.NewTestKit(t, store)
+		cc := &clientConn{
+			connectionID: connID,
+			server:       server,
+			alloc:        arena.NewAllocator(1024),
+			chunkAlloc:   chunk.NewAllocator(),
+			pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+			attrs: map[string]string{
+				tidbGatewayAttrsConnKey: gwConnID,
+			},
+		}
+		cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+		require.True(t, server.registerConn(cc))
+		return cc
+	}
+
+	const normalCloseMsg = sessmgr.NormalCloseMsgKillStmt
+	keyspaceName := keyspace.GetKeyspaceNameBySettings()
+	noStandbyConn := newConn(100, "gw-no-standby")
+	server.KillWithNormalCloseMsg(noStandbyConn.connectionID, false, false, false, normalCloseMsg)
+	require.Empty(t, server.GetNormalClosedConn(keyspaceName, "gw-no-standby"))
+
+	server.StandbyController = &testStandbyController{}
+	killConn := newConn(101, "gw-kill-connection")
+	require.Empty(t, server.GetNormalClosedConn(keyspaceName, "gw-kill-connection"))
+	server.KillWithNormalCloseMsg(killConn.connectionID, false, false, false, normalCloseMsg)
+	require.Equal(t, normalCloseMsg, server.GetNormalClosedConn(keyspaceName, "gw-kill-connection"))
+	require.Equal(t, int32(connStatusWaitShutdown), killConn.getStatus())
+
+	queryConn := newConn(102, "gw-kill-query")
+	server.KillWithNormalCloseMsg(queryConn.connectionID, true, false, false, normalCloseMsg)
+	require.Empty(t, server.GetNormalClosedConn(keyspaceName, "gw-kill-query"))
 }
 
 func TestSeverHealth(t *testing.T) {
@@ -151,4 +212,144 @@ func TestSeverHealth(t *testing.T) {
 		// wait for server to be healthy
 	}
 	require.True(t, server.health.Load(), "server should be healthy")
+}
+
+func TestInitTiDBListenerIsIdempotent(t *testing.T) {
+	originalRunInGoTest := RunInGoTest
+	RunInGoTest = true
+	t.Cleanup(func() {
+		RunInGoTest = originalRunInGoTest
+	})
+
+	socketDir := t.TempDir()
+
+	cfg := util.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.ReportStatus = false
+	cfg.Socket = filepath.Join(socketDir, "normal.sock")
+	svr := NewTestServer(cfg)
+	t.Cleanup(svr.Close)
+
+	require.NoError(t, svr.initTiDBListener())
+	require.NotNil(t, svr.Listener())
+	require.NotNil(t, svr.Socket())
+	listenAddr := svr.Listener().Addr().String()
+
+	require.NoError(t, svr.initTiDBListener())
+	require.Equal(t, listenAddr, svr.Listener().Addr().String())
+	require.NotNil(t, svr.Socket())
+
+	t.Run("diagnostic skip grant", func(t *testing.T) {
+		if !intest.InTest {
+			t.Skip("diagnosticmode.SetForTest requires the intest build tag")
+		}
+		t.Cleanup(diagnosticmode.SetForTest(true))
+
+		t.Run("socket only", func(t *testing.T) {
+			cfg := util.NewTestConfig()
+			cfg.Security.SkipGrantTable = true
+			cfg.Port = 0
+			cfg.Socket = filepath.Join(socketDir, "diagnostic.sock")
+			svr := NewTestServer(cfg)
+			t.Cleanup(svr.Close)
+
+			require.NoError(t, svr.initTiDBListener())
+			require.Nil(t, svr.Listener())
+			require.NotNil(t, svr.Socket())
+			socket := svr.Socket()
+			require.NoError(t, svr.initTiDBListener())
+			require.Nil(t, svr.Listener())
+			require.Same(t, socket, svr.Socket())
+			require.Zero(t, cfg.Port)
+		})
+
+		for _, name := range []string{"configured TCP", "existing TCP listener", "missing socket"} {
+			t.Run(name, func(t *testing.T) {
+				cfg := util.NewTestConfig()
+				cfg.Security.SkipGrantTable = true
+				cfg.Port = 0
+				cfg.Socket = filepath.Join(socketDir, "diagnostic.sock")
+				svr := NewTestServer(cfg)
+				t.Cleanup(svr.Close)
+				switch name {
+				case "configured TCP":
+					cfg.Port = 4000
+				case "existing TCP listener":
+					var err error
+					svr.listener, err = net.Listen("tcp", "127.0.0.1:0")
+					require.NoError(t, err)
+				case "missing socket":
+					cfg.Socket = ""
+				}
+				require.ErrorContains(t, svr.initTiDBListener(), "requires a Unix socket and no MySQL TCP listener")
+				require.Nil(t, svr.Socket())
+			})
+		}
+	})
+}
+
+func TestServerShutdownFlags(t *testing.T) {
+	svr := NewTestServer(util.NewTestConfig())
+	require.False(t, svr.GetForceShutdown())
+	require.False(t, svr.GetNeedRequestMgrFree())
+
+	svr.SetForceShutdown()
+	svr.SetNeedRequestMgrFree()
+	require.True(t, svr.GetForceShutdown())
+	require.True(t, svr.GetNeedRequestMgrFree())
+}
+
+type mockStandbyController struct {
+	serverHealth         bool
+	serverInShutdownMode bool
+	called               chan struct{}
+}
+
+func (c *mockStandbyController) WaitForActivate() {}
+
+func (c *mockStandbyController) EndStandby(error) {}
+
+func (c *mockStandbyController) Handler(_ *Server) (string, *http.ServeMux) {
+	return "", nil
+}
+
+func (c *mockStandbyController) OnConnActive() {}
+
+func (c *mockStandbyController) PrepareForActivation(StandbyReadyServer) error { return nil }
+
+func (c *mockStandbyController) OnServerCreated(_ *Server) {}
+
+func (c *mockStandbyController) OnServerShutdown(svr StandbyShutdownServer) {
+	server := svr.(*Server)
+	c.serverHealth = server.Health()
+	c.serverInShutdownMode = server.inShutdownMode.Load()
+	close(c.called)
+}
+
+func TestStartShutdownMarksUnhealthyBeforeStarterCallback(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+
+	originalMode := deploymode.Get()
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+
+	svr := NewTestServer(util.NewTestConfig())
+	svr.health = uatomic.NewBool(true)
+	svr.inShutdownMode = uatomic.NewBool(false)
+	svr.StandbyController = &mockStandbyController{called: make(chan struct{})}
+
+	svr.startShutdown()
+
+	controller := svr.StandbyController.(*mockStandbyController)
+	require.False(t, controller.serverHealth)
+	require.True(t, controller.serverInShutdownMode)
+	select {
+	case <-controller.called:
+	default:
+		require.Fail(t, "starter shutdown callback was not called")
+	}
 }

@@ -18,9 +18,13 @@ import (
 	"math"
 	"testing"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 const eps = 1e-9
@@ -139,6 +143,20 @@ func TestCalcFraction(t *testing.T) {
 			tp:       types.NewFieldType(mysql.TypeTimestamp),
 		},
 		{
+			lower:    types.NewTimeDatum(types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp)),
+			upper:    types.NewTimeDatum(types.NewTime(types.FromDate(1970, 1, 1, 0, 0, 3, 0), mysql.TypeTimestamp, types.DefaultFsp)),
+			value:    types.NewTimeDatum(types.NewTime(types.FromDate(1970, 1, 1, 0, 0, 2, 0), mysql.TypeTimestamp, types.DefaultFsp)),
+			fraction: 0.5,
+			tp:       types.NewFieldType(mysql.TypeTimestamp),
+		},
+		{
+			lower:    types.NewTimeDatum(types.MaxTimestamp),
+			upper:    types.NewTimeDatum(types.NewTime(types.FromDate(9999, 12, 31, 23, 59, 59, 0), mysql.TypeTimestamp, types.DefaultFsp)),
+			value:    types.NewTimeDatum(types.NewTime(types.FromDate(9999, 12, 31, 23, 59, 59, 0), mysql.TypeTimestamp, types.DefaultFsp)),
+			fraction: 1.0,
+			tp:       types.NewFieldType(mysql.TypeTimestamp),
+		},
+		{
 			lower:    types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeDatetime)),
 			upper:    types.NewTimeDatum(getTime(2017, 4, 1, mysql.TypeDatetime)),
 			value:    types.NewTimeDatum(getTime(2017, 2, 1, mysql.TypeDatetime)),
@@ -174,6 +192,52 @@ func TestCalcFraction(t *testing.T) {
 		fraction := hg.calcFraction(0, &test.value)
 		require.InDelta(t, test.fraction, fraction, eps)
 	}
+}
+
+// TestConvertMysqlTimeToScalarTimestampBounds verifies that zero/before-min and
+// above-max TIMESTAMP values are clamped to finite, ordered scalars and that
+// the zero-TIMESTAMP path does not emit tolerated GoTime error logs.
+func TestConvertMysqlTimeToScalarTimestampBounds(t *testing.T) {
+	core, recorded := observer.New(zap.ErrorLevel)
+	restore := log.ReplaceGlobals(
+		zap.New(core),
+		&log.ZapProperties{Core: core, Level: zap.NewAtomicLevelAt(zap.InfoLevel)},
+	)
+	defer restore()
+
+	datum := types.NewTimeDatum(types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp))
+	scalar := convertDatumToScalar(&datum, 0)
+
+	require.Empty(t, recorded.FilterMessage("encountered error").All())
+	require.Equal(t, float64(-1), scalar)
+
+	minTimestamp := types.NewTimeDatum(types.MinTimestamp)
+	require.Equal(t, float64(0), convertDatumToScalar(&minTimestamp, 0))
+
+	maxTimestamp := types.NewTimeDatum(types.MaxTimestamp)
+	maxTimestampScalar := convertDatumToScalar(&maxTimestamp, 0)
+	afterMaxTimestamp := types.NewTimeDatum(types.NewTime(types.FromDate(9999, 12, 31, 23, 59, 59, 0), mysql.TypeTimestamp, types.DefaultFsp))
+	afterMaxTimestampScalar := convertDatumToScalar(&afterMaxTimestamp, 0)
+	require.Greater(t, afterMaxTimestampScalar, maxTimestampScalar)
+}
+
+// TestOutOfRangeRowCountZeroTimestampLowerBound verifies the end-to-end
+// out-of-range estimate when a histogram bucket has a zero TIMESTAMP (clamped
+// to scalar -1) as its lower bound.
+func TestOutOfRangeRowCountZeroTimestampLowerBound(t *testing.T) {
+	datum := types.NewTimeDatum(types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp))
+
+	hg := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeTimestamp), 1, 0)
+	upper := types.NewTimeDatum(types.NewTime(types.FromDate(1970, 1, 1, 0, 0, 3, 0), mysql.TypeTimestamp, types.DefaultFsp))
+	hg.AppendBucket(&datum, &upper, 2, 1)
+
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().RiskRangeSkewRatio = 0.5
+	right := types.NewTimeDatum(types.NewTime(types.FromDate(1970, 1, 1, 0, 0, 4, 0), mysql.TypeTimestamp, types.DefaultFsp))
+	estimate := hg.OutOfRangeRowCount(ctx, &upper, &right, 100, 100, 2)
+	require.InDelta(t, 45.937499984687506, estimate.Est, eps)
+	require.InDelta(t, 18.374999993875, estimate.MinEst, eps)
+	require.InDelta(t, 73.4999999755, estimate.MaxEst, eps)
 }
 
 func TestEnumRangeValues(t *testing.T) {

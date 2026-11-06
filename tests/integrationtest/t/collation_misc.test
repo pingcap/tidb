@@ -107,3 +107,25 @@ select * from t1 join t2 on t1.id_ci = t2.id_ci;
 explain format='plan_tree' select * from t1 join t2 on t1.id_ci = t2.id_ci;
 select * from t1 join t2 on t1.id_ci = t2.id_ci where t1.id_ci in (t2.id_ci, t2.id_bin);
 explain format='plan_tree' select * from t1 join t2 on t1.id_ci = t2.id_ci where t1.id_ci in (t2.id_ci, t2.id_bin);
+
+# CAST AS BINARY should use index range scan instead of index full scan.
+drop table if exists t;
+create table t (uuid varchar(36) charset utf8mb4 collate utf8mb4_general_ci, index idx_uuid(uuid));
+insert into t values ('7dce58ba-ba84-4297-94cf-c23cf3a39ed3');
+insert into t values ('ABC');
+insert into t values ('abc');
+# EQ with CAST AS BINARY: should use IndexRangeScan + Selection, not IndexFullScan.
+explain format='plan_tree' select * from t where uuid = cast('7dce58ba-ba84-4297-94cf-c23cf3a39ed3' as binary);
+# Without CAST: should use IndexRangeScan (point range).
+explain format='plan_tree' select * from t where uuid = '7dce58ba-ba84-4297-94cf-c23cf3a39ed3';
+# Verify correctness: CAST AS BINARY is case-sensitive.
+select * from t where uuid = cast('ABC' as binary);
+select * from t where uuid = cast('abc' as binary);
+# IN with CAST AS BINARY: should use IndexRangeScan + Selection.
+explain format='plan_tree' select * from t where uuid in (cast('ABC' as binary), cast('7dce58ba-ba84-4297-94cf-c23cf3a39ed3' as binary));
+select * from t where uuid in (cast('ABC' as binary), cast('7dce58ba-ba84-4297-94cf-c23cf3a39ed3' as binary));
+# utf8mb4_bin collation: should also use IndexRangeScan.
+drop table t;
+create table t (uuid varchar(36) charset utf8mb4 collate utf8mb4_bin, index idx_uuid(uuid));
+insert into t values ('7dce58ba-ba84-4297-94cf-c23cf3a39ed3');
+explain format='plan_tree' select * from t where uuid = cast('7dce58ba-ba84-4297-94cf-c23cf3a39ed3' as binary);

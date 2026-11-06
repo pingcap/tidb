@@ -194,7 +194,7 @@ func TestStatsCacheProcess(t *testing.T) {
 
 	// Insert more rows
 	testKit.MustExec("insert into t values(2, 3)")
-	testKit.MustExec("flush stats_delta")
+	testKit.MustExec("flush stats_delta *.*")
 	require.NoError(t, do.StatsHandle().Update(context.Background(), is))
 	newVersion = do.StatsHandle().MaxTableStatsVersion()
 	require.NotEqual(t, currentVersion, newVersion, "update with no table should move forward the stats cache version")
@@ -434,7 +434,7 @@ func TestInitStats(t *testing.T) {
 	// Handle DDL event to init the stats meta and histogram meta.
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	require.NoError(t, h.Update(context.Background(), is))
 	tbl1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
@@ -526,7 +526,7 @@ func TestInitStatsForPartitionedTable(t *testing.T) {
 	// Handle DDL event to init the stats meta and histogram meta.
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	require.NoError(t, h.Update(context.Background(), is))
 	tbl1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
@@ -622,7 +622,7 @@ func TestInitStatsWithoutHandlingDDLEvent(t *testing.T) {
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
 	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
@@ -764,7 +764,7 @@ func TestDumpStatsDeltaInBatch(t *testing.T) {
 	testKit.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3)")
 
 	// Dump stats delta in one batch.
-	testKit.MustExec("flush stats_delta")
+	testKit.MustExec("flush stats_delta *.*")
 
 	// Check the mysql.stats_meta table.
 	rows := testKit.MustQuery("select modify_count, count, version from mysql.stats_meta order by table_id").Rows()

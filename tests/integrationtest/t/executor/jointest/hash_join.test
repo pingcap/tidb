@@ -201,3 +201,18 @@ select * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order b
 select * from t1 where not exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;
 select * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0 and t1.col1 > t2.col1) order by t1.col0, t1.col1;
 select * from t1 where not exists (select 1 from t2 where t1.col0 = t2.col0 and t1.col1 > t2.col1) order by t1.col0, t1.col1;
+
+# https://github.com/pingcap/tidb/issues/70672
+set @@tidb_hash_join_version = optimized;
+drop table if exists t0;
+create table t0(c0 BLOB(249));
+insert into t0 values ('');
+select v.c0
+from (select NULL as c0 from t0) v
+where v.c0 NOT IN (
+    select t0.c0
+    from t0
+    where t0.c0 = v.c0
+);
+drop table t0;
+set @@tidb_hash_join_version = default;

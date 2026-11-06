@@ -15,193 +15,11 @@
 package util
 
 import (
-	"strconv"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
-
-func TestAppendFormatFloat(t *testing.T) {
-	infVal, _ := strconv.ParseFloat("+Inf", 64)
-	tests := []struct {
-		fVal    float64
-		out     string
-		prec    int
-		bitSize int
-	}{
-		{
-			99999999999999999999,
-			"1e20",
-			-1,
-			64,
-		},
-		{
-			1e15,
-			"1e15",
-			-1,
-			64,
-		},
-		{
-			9e14,
-			"900000000000000",
-			-1,
-			64,
-		},
-		{
-			-9999999999999999,
-			"-1e16",
-			-1,
-			64,
-		},
-		{
-			999999999999999,
-			"999999999999999",
-			-1,
-			64,
-		},
-		{
-			0.000000000000001,
-			"0.000000000000001",
-			-1,
-			64,
-		},
-		{
-			0.0000000000000009,
-			"9e-16",
-			-1,
-			64,
-		},
-		{
-			-0.0000000000000009,
-			"-9e-16",
-			-1,
-			64,
-		},
-		{
-			0.11111,
-			"0.111",
-			3,
-			64,
-		},
-		{
-			0.11111,
-			"0.111",
-			3,
-			64,
-		},
-		{
-			0.1111111111111111111,
-			"0.11111111",
-			-1,
-			32,
-		},
-		{
-			0.1111111111111111111,
-			"0.1111111111111111",
-			-1,
-			64,
-		},
-		{
-			0.0000000000000009,
-			"9e-16",
-			3,
-			64,
-		},
-		{
-			0,
-			"0",
-			-1,
-			64,
-		},
-		{
-			-340282346638528860000000000000000000000,
-			"-3.40282e38",
-			-1,
-			32,
-		},
-		{
-			-34028236,
-			"-34028236.00",
-			2,
-			32,
-		},
-		{
-			-17976921.34,
-			"-17976921.34",
-			2,
-			64,
-		},
-		{
-			-3.402823466e+38,
-			"-3.40282e38",
-			-1,
-			32,
-		},
-		{
-			-1.7976931348623157e308,
-			"-1.7976931348623157e308",
-			-1,
-			64,
-		},
-		{
-			10.0e20,
-			"1e21",
-			-1,
-			32,
-		},
-		{
-			1e20,
-			"1e20",
-			-1,
-			32,
-		},
-		{
-			10.0,
-			"10",
-			-1,
-			32,
-		},
-		{
-			999999986991104,
-			"1e15",
-			-1,
-			32,
-		},
-		{
-			1e15,
-			"1e15",
-			-1,
-			32,
-		},
-		{
-			infVal,
-			"0",
-			-1,
-			64,
-		},
-		{
-			-infVal,
-			"0",
-			-1,
-			64,
-		},
-		{
-			1e14,
-			"100000000000000",
-			-1,
-			64,
-		},
-		{
-			1e308,
-			"1e308",
-			-1,
-			64,
-		},
-	}
-	for _, tc := range tests {
-		require.Equal(t, tc.out, string(AppendFormatFloat(nil, tc.fVal, tc.prec, tc.bitSize)))
-	}
-}
 
 func TestParseLengthEncodedInt(t *testing.T) {
 	testCases := []struct {
@@ -209,45 +27,82 @@ func TestParseLengthEncodedInt(t *testing.T) {
 		num    uint64
 		isNull bool
 		n      int
+		err    error
 	}{
 		{
 			[]byte{'\xfb'},
 			uint64(0),
 			true,
 			1,
+			nil,
 		},
 		{
 			[]byte{'\x00'},
 			uint64(0),
 			false,
 			1,
+			nil,
 		},
 		{
 			[]byte{'\xfc', '\x01', '\x02'},
 			uint64(513),
 			false,
 			3,
+			nil,
 		},
 		{
 			[]byte{'\xfd', '\x01', '\x02', '\x03'},
 			uint64(197121),
 			false,
 			4,
+			nil,
 		},
 		{
 			[]byte{'\xfe', '\x01', '\x02', '\x03', '\x04', '\x05', '\x06', '\x07', '\x08'},
 			uint64(578437695752307201),
 			false,
 			9,
+			nil,
+		},
+		{
+			[]byte{},
+			uint64(0),
+			false,
+			0,
+			io.EOF,
+		},
+		{
+			[]byte{'\xfc', '\x01'},
+			uint64(0),
+			false,
+			0,
+			io.EOF,
+		},
+		{
+			[]byte{'\xfd', '\x01', '\x02'},
+			uint64(0),
+			false,
+			0,
+			io.EOF,
+		},
+		{
+			[]byte{'\xfe'},
+			uint64(0),
+			false,
+			0,
+			io.EOF,
 		},
 	}
 
 	for _, tc := range testCases {
-		num, isNull, n := ParseLengthEncodedInt(tc.buffer)
+		num, isNull, n, err := ParseLengthEncodedInt(tc.buffer)
 		require.Equal(t, tc.num, num)
 		require.Equal(t, tc.isNull, isNull)
 		require.Equal(t, tc.n, n)
-		require.Equal(t, tc.n, LengthEncodedIntSize(tc.num))
+		require.ErrorIs(t, err, tc.err)
+		if tc.err == nil {
+			require.Equal(t, tc.n, LengthEncodedIntSize(tc.num))
+		}
 	}
 }
 
@@ -272,6 +127,13 @@ func TestParseLengthEncodedBytes(t *testing.T) {
 	require.False(t, isNull)
 	require.Equal(t, 2, n)
 	require.Equal(t, "EOF", err.Error())
+
+	buffer = []byte{'\xfe'}
+	b, isNull, n, err = ParseLengthEncodedBytes(buffer)
+	require.Nil(t, b)
+	require.False(t, isNull)
+	require.Equal(t, 0, n)
+	require.ErrorIs(t, err, io.EOF)
 }
 
 func TestParseNullTermString(t *testing.T) {

@@ -171,6 +171,29 @@ func TestWalkDirSkipSubDir(t *testing.T) {
 	}))
 }
 
+func TestWalkDirStartAfter(t *testing.T) {
+	tempDir := t.TempDir()
+	require.NoError(t, os.MkdirAll(path.Join(tempDir, "meta"), 0o755))
+	require.NoError(t, os.WriteFile(path.Join(tempDir, "meta", "0001.meta"), []byte("1"), 0o644))
+	require.NoError(t, os.WriteFile(path.Join(tempDir, "meta", "0002.meta"), []byte("2"), 0o644))
+	require.NoError(t, os.WriteFile(path.Join(tempDir, "meta", "0003.meta"), []byte("3"), 0o644))
+
+	sb, err := ParseBackend(tempDir, &BackendOptions{})
+	require.NoError(t, err)
+	store, err := Create(context.TODO(), sb, true)
+	require.NoError(t, err)
+
+	var files []string
+	require.NoError(t, store.WalkDir(context.Background(), &storeapi.WalkOption{
+		SubDir:     "meta",
+		StartAfter: "meta/0001.meta",
+	}, func(path string, size int64) error {
+		files = append(files, path)
+		return nil
+	}))
+	require.Equal(t, []string{"meta/0002.meta", "meta/0003.meta"}, files)
+}
+
 func TestLocalURI(t *testing.T) {
 	ctx := context.Background()
 

@@ -137,6 +137,11 @@ func (r *ReservedRowIDAlloc) Reset(base int64, maxv int64) {
 	r.max = maxv
 }
 
+// Current returns the current base and max of reserved rowIDs.
+func (r *ReservedRowIDAlloc) Current() (base int64, maxv int64) {
+	return r.base, r.max
+}
+
 // Consume consumes a reserved rowID.
 // If the second return value is false, it means the reserved rowID is exhausted.
 func (r *ReservedRowIDAlloc) Consume() (int64, bool) {
@@ -453,6 +458,8 @@ type StatementContext struct {
 
 	// SysdateIsNow indicates whether sysdate() is an alias of now() in this statement
 	SysdateIsNow bool
+	// EnableTiKVShortCircuitExpression indicates whether short-circuit expression evaluation is enabled in TiKV.
+	EnableTiKVShortCircuitExpression bool
 
 	// RCCheckTS indicates the current read-consistency read select statement will use `RCCheckTS` path.
 	RCCheckTS bool
@@ -472,11 +479,69 @@ type StatementContext struct {
 	UseDynamicPruneMode bool
 	// ColRefFromPlan mark the column ref used by assignment in update statement.
 	ColRefFromUpdatePlan intset.FastIntSet
+	// AlternativeLogicalPlanDecorrelatedApply indicates whether the current logical
+	// optimization round decorrelated at least one Apply into Join.
+	AlternativeLogicalPlanDecorrelatedApply bool
+	// AlternativeLogicalPlanSameOrderIndexJoin indicates whether the current first
+	// round already produced a same-order index join candidate for a decorrelated Apply.
+	AlternativeLogicalPlanSameOrderIndexJoin bool
+	// AlternativeLogicalPlanOrderAwareJoinReorder indicates whether at least one
+	// logical build round produced an order-aware join reorder candidate that is
+	// worth exploring in a dedicated alternative round.
+	AlternativeLogicalPlanOrderAwareJoinReorder bool
+	// AlternativeLogicalPlanPreferCorrelate indicates whether the current logical
+	// build round encountered a non-correlated IN subquery eligible for the
+	// correlate-to-Apply alternative.
+	AlternativeLogicalPlanPreferCorrelate bool
+	// AlternativeLogicalPlanSemiJoinRewrite indicates whether the current logical
+	// build found a semi join that can try an additional SEMI_JOIN_REWRITE round.
+	AlternativeLogicalPlanSemiJoinRewrite bool
+	// AlternativeLogicalPlanFTSLikeFallback is a mode flag controlling how the
+	// expression rewriter handles MATCH...AGAINST in predicate contexts. When
+	// false (the default, matching Alt-disabled behavior) the rewriter emits
+	// the native FTSMysqlMatchAgainst builtin. When true, the rewriter emits
+	// ILIKE-based predicates instead.
+	//
+	// Round 1 always runs with this flag false. The "fts-like-fallback"
+	// alternative round flips it to true (via its setup/cleanup) while it
+	// builds a competing ILIKE-based plan; the cost-cheapest plan wins via the
+	// normal alt-rounds cost comparison. If round 1's build records a
+	// predicate-context MATCH that cannot be served natively (no FTS index on a
+	// matched column / no TiFlash replica / modifier not pushdown-supported),
+	// optimize.go additionally invalidates round 1's plan and forces this flag
+	// true outside the round so any intervening rounds (correlate, etc.) also
+	// produce executable LIKE-based plans.
+	AlternativeLogicalPlanFTSLikeFallback bool
+	// AlternativeLogicalPlanHasPredicateContextMatch indicates that round 1
+	// encountered a direct-boolean-context MATCH...AGAINST. The round driver
+	// uses this to enable the fts-like-fallback round for cost competition even
+	// when round 1's native plan is executable.
+	AlternativeLogicalPlanHasPredicateContextMatch bool
+	// AlternativeLogicalPlanMixedStorageEngines indicates that round 1's chosen
+	// physical plan reads from both TiKV and TiFlash, and holds no single-scan
+	// index join that an engine-restricted rebuild could trade for a full scan.
+	// The round driver uses this to enable the tikv-only / tiflash-only rounds,
+	// which rebuild the plan with a single storage engine so a fully homogeneous
+	// plan competes on cost.
+	AlternativeLogicalPlanMixedStorageEngines bool
+	// AlternativeLogicalPlanMissingTiFlashPath indicates that some DataSource in
+	// round 1's build ended up without any TiFlash access path (no replica, a
+	// system table, or a FOR UPDATE read). A fully-TiFlash plan is impossible,
+	// so the tiflash-only round is skipped.
+	AlternativeLogicalPlanMissingTiFlashPath bool
+	// AlternativeLogicalPlanHasStoreTypeHint indicates that some DataSource in
+	// round 1's build carries an explicit engine preference from a
+	// READ_FROM_STORAGE hint. The engine-restricted rounds are skipped so the
+	// cost comparison cannot override the user's explicit engine choice.
+	AlternativeLogicalPlanHasStoreTypeHint bool
+	// FTSFunctionIsUsed indicates that FTS_MATCH_WORD() appears in the current
+	// statement, allowing the optimizer to run FTS-specific validation and
+	// rewrite rules only when needed.
+	FTSFunctionIsUsed bool
 
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
 	IsExplainAnalyzeDML bool
-
 	// InHandleForeignKeyTrigger indicates currently are handling foreign key trigger.
 	InHandleForeignKeyTrigger bool
 
@@ -543,7 +608,6 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
 	sc.WarnHandler = contextutil.NewStaticWarnHandler(0)
 	sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
-	sc.RelatedTableIDs = make(map[int64]struct{})
 	return sc
 }
 
@@ -639,6 +703,72 @@ func (sc *StatementContext) RestoreLogicalPlanBuildState(state LogicalPlanBuildS
 	sc.ColRefFromUpdatePlan.CopyFrom(state.colRefFromUpdatePlan)
 	sc.PlanCacheTracker.Restore(state.planCacheUseCache, state.planCacheType, state.planCacheUnqualified, state.planCacheForce, state.planCacheAlwaysWarn)
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
+}
+
+// ResetAlternativeLogicalPlanSignals clears the statement-local signals used by the
+// alternative logical plan feature.
+func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
+	sc.AlternativeLogicalPlanDecorrelatedApply = false
+	sc.AlternativeLogicalPlanSameOrderIndexJoin = false
+	sc.AlternativeLogicalPlanOrderAwareJoinReorder = false
+	sc.AlternativeLogicalPlanFTSLikeFallback = false
+	sc.AlternativeLogicalPlanHasPredicateContextMatch = false
+	sc.AlternativeLogicalPlanPreferCorrelate = false
+	sc.AlternativeLogicalPlanSemiJoinRewrite = false
+	sc.AlternativeLogicalPlanMixedStorageEngines = false
+	sc.AlternativeLogicalPlanMissingTiFlashPath = false
+	sc.AlternativeLogicalPlanHasStoreTypeHint = false
+	sc.FTSFunctionIsUsed = false
+}
+
+// MarkAlternativeLogicalPlanDecorrelatedApply records that at least one Apply has
+// been decorrelated into a Join in the current round.
+func (sc *StatementContext) MarkAlternativeLogicalPlanDecorrelatedApply() {
+	sc.AlternativeLogicalPlanDecorrelatedApply = true
+}
+
+// MarkAlternativeLogicalPlanSameOrderIndexJoin records that the current first round
+// has already produced a same-order index join candidate for a decorrelated Apply.
+func (sc *StatementContext) MarkAlternativeLogicalPlanSameOrderIndexJoin() {
+	sc.AlternativeLogicalPlanSameOrderIndexJoin = true
+}
+
+// MarkAlternativeLogicalPlanOrderAwareJoinReorder records that the current
+// logical build round produced an order-aware join reorder candidate.
+func (sc *StatementContext) MarkAlternativeLogicalPlanOrderAwareJoinReorder() {
+	sc.AlternativeLogicalPlanOrderAwareJoinReorder = true
+}
+
+// MarkAlternativeLogicalPlanPreferCorrelate records that the current logical
+// build round encountered a non-correlated IN subquery that is eligible for
+// the correlate-to-Apply alternative.
+func (sc *StatementContext) MarkAlternativeLogicalPlanPreferCorrelate() {
+	sc.AlternativeLogicalPlanPreferCorrelate = true
+}
+
+// MarkAlternativeLogicalPlanSemiJoinRewrite records that the current first round
+// found a semi join that can try an extra SEMI_JOIN_REWRITE-based logical round.
+func (sc *StatementContext) MarkAlternativeLogicalPlanSemiJoinRewrite() {
+	sc.AlternativeLogicalPlanSemiJoinRewrite = true
+}
+
+// MarkAlternativeLogicalPlanMixedStorageEngines records that round 1's chosen
+// physical plan reads from both TiKV and TiFlash and is eligible for the
+// engine-restricted rounds.
+func (sc *StatementContext) MarkAlternativeLogicalPlanMixedStorageEngines() {
+	sc.AlternativeLogicalPlanMixedStorageEngines = true
+}
+
+// MarkAlternativeLogicalPlanMissingTiFlashPath records that a DataSource in the
+// current build has no TiFlash access path, making a fully-TiFlash plan impossible.
+func (sc *StatementContext) MarkAlternativeLogicalPlanMissingTiFlashPath() {
+	sc.AlternativeLogicalPlanMissingTiFlashPath = true
+}
+
+// MarkAlternativeLogicalPlanHasStoreTypeHint records that a DataSource in the
+// current build carries an explicit READ_FROM_STORAGE engine preference.
+func (sc *StatementContext) MarkAlternativeLogicalPlanHasStoreTypeHint() {
+	sc.AlternativeLogicalPlanHasStoreTypeHint = true
 }
 
 // CtxID returns the context id of the statement
@@ -1168,6 +1298,9 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 func (sc *StatementContext) PushDownFlags() uint64 {
 	ec := sc.ErrCtx()
 	flags := PushDownFlagsWithTypeFlagsAndErrLevels(sc.TypeFlags(), ec.LevelMap())
+	if sc.EnableTiKVShortCircuitExpression {
+		flags |= model.FlagEnableTiKVShortCircuitExpression
+	}
 	if sc.InInsertStmt {
 		flags |= model.FlagInInsertStmt
 	} else if sc.InUpdateStmt || sc.InDeleteStmt {
@@ -1209,6 +1342,7 @@ func (sc *StatementContext) InitFromPBFlagAndTz(flags uint64, tz *time.Location)
 	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
 	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
 	sc.InDeleteStmt = (flags & model.FlagInUpdateOrDeleteStmt) > 0
+	sc.EnableTiKVShortCircuitExpression = (flags & model.FlagEnableTiKVShortCircuitExpression) > 0
 	levels := sc.ErrLevels()
 	levels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(false,
 		(flags&model.FlagDividedByZeroAsWarning) > 0,

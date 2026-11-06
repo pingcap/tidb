@@ -17,6 +17,7 @@ package privileges_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,7 +46,7 @@ func TestLoadUserTable(t *testing.T) {
 	tk.MustExec(`INSERT INTO mysql.user (Host, User, authentication_string, Select_priv) VALUES ("%", "root", "", "Y")`)
 	tk.MustExec(`INSERT INTO mysql.user (Host, User, authentication_string, Insert_priv) VALUES ("%", "root1", "admin", "Y")`)
 	tk.MustExec(`INSERT INTO mysql.user (Host, User, authentication_string, Update_priv, Show_db_priv, References_priv) VALUES ("%", "root11", "", "Y", "Y", "Y")`)
-	tk.MustExec(`INSERT INTO mysql.user (Host, User, authentication_string, Create_user_priv, Index_priv, Execute_priv, Create_view_priv, Show_view_priv, Show_db_priv, Super_priv, Trigger_priv) VALUES ("%", "root111", "", "Y",  "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+	tk.MustExec(`INSERT INTO mysql.user (Host, User, authentication_string, Create_user_priv, Index_priv, Execute_priv, Create_view_priv, Show_view_priv, Operate_view_priv, Show_db_priv, Super_priv, Trigger_priv) VALUES ("%", "root111", "", "Y",  "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 	tk.MustExec(`INSERT INTO mysql.user (Host, User, user_attributes, token_issuer) VALUES ("%", "root1111", "{\"metadata\": {\"email\": \"user@pingcap.com\"}}", "<token-issuer>")`)
 	tk.MustExec(`INSERT INTO mysql.user (Host, User, password_expired, password_last_changed, password_lifetime) VALUES ("%", "root2", "Y", "2022-10-10 12:00:00", 3)`)
 	tk.MustExec(`INSERT INTO mysql.user (Host, User, password_expired, password_last_changed) VALUES ("%", "root3", "N", "2022-10-10 12:00:00")`)
@@ -59,7 +60,7 @@ func TestLoadUserTable(t *testing.T) {
 	require.Equal(t, mysql.SelectPriv, user[0].Privileges)
 	require.Equal(t, mysql.InsertPriv, user[1].Privileges)
 	require.Equal(t, mysql.UpdatePriv|mysql.ShowDBPriv|mysql.ReferencesPriv, user[2].Privileges)
-	require.Equal(t, mysql.CreateUserPriv|mysql.IndexPriv|mysql.ExecutePriv|mysql.CreateViewPriv|mysql.ShowViewPriv|mysql.ShowDBPriv|mysql.SuperPriv|mysql.TriggerPriv, user[3].Privileges)
+	require.Equal(t, mysql.CreateUserPriv|mysql.IndexPriv|mysql.ExecutePriv|mysql.CreateViewPriv|mysql.ShowViewPriv|mysql.OperateViewPriv|mysql.ShowDBPriv|mysql.SuperPriv|mysql.TriggerPriv, user[3].Privileges)
 	require.Equal(t, "user@pingcap.com", user[4].Email)
 	require.Equal(t, "<token-issuer>", user[4].AuthTokenIssuer)
 	require.Equal(t, true, user[5].PasswordExpired)
@@ -112,7 +113,7 @@ func TestLoadDBTable(t *testing.T) {
 	tk.MustExec("delete from db;")
 
 	tk.MustExec(`INSERT INTO mysql.db (Host, DB, User, Select_priv, Insert_priv, Update_priv, Delete_priv, Create_priv) VALUES ("%", "information_schema", "root", "Y", "Y", "Y", "Y", "Y")`)
-	tk.MustExec(`INSERT INTO mysql.db (Host, DB, User, Drop_priv, Grant_priv, Index_priv, Alter_priv, Create_view_priv, Show_view_priv, Execute_priv) VALUES ("%", "mysql", "root1", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+	tk.MustExec(`INSERT INTO mysql.db (Host, DB, User, Drop_priv, Grant_priv, Index_priv, Alter_priv, Create_view_priv, Show_view_priv, Operate_view_priv, Execute_priv) VALUES ("%", "mysql", "root1", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 
 	p := privileges.NewMySQLPrivilege()
 	se := tk.Session()
@@ -120,7 +121,7 @@ func TestLoadDBTable(t *testing.T) {
 	// require.Len(t, p.DB(), len(p.DBMap))
 
 	require.Equal(t, mysql.SelectPriv|mysql.InsertPriv|mysql.UpdatePriv|mysql.DeletePriv|mysql.CreatePriv, p.DB()[0].Privileges)
-	require.Equal(t, mysql.DropPriv|mysql.GrantPriv|mysql.IndexPriv|mysql.AlterPriv|mysql.CreateViewPriv|mysql.ShowViewPriv|mysql.ExecutePriv, p.DB()[1].Privileges)
+	require.Equal(t, mysql.DropPriv|mysql.GrantPriv|mysql.IndexPriv|mysql.AlterPriv|mysql.CreateViewPriv|mysql.ShowViewPriv|mysql.OperateViewPriv|mysql.ExecutePriv, p.DB()[1].Privileges)
 }
 
 func TestLoadTablesPrivTable(t *testing.T) {
@@ -130,7 +131,7 @@ func TestLoadTablesPrivTable(t *testing.T) {
 	tk.MustExec("use mysql;")
 	tk.MustExec("delete from tables_priv")
 
-	tk.MustExec(`INSERT INTO mysql.tables_priv VALUES ("%", "db", "user", "table", "grantor", "2017-01-04 16:33:42.235831", "Grant,Index,Alter", "Insert,Update")`)
+	tk.MustExec(`INSERT INTO mysql.tables_priv VALUES ("%", "db", "user", "table", "grantor", "2017-01-04 16:33:42.235831", "Grant,Index,Alter,Operate View", "Insert,Update")`)
 
 	p := privileges.NewMySQLPrivilege()
 	se := tk.Session()
@@ -142,7 +143,7 @@ func TestLoadTablesPrivTable(t *testing.T) {
 	require.Equal(t, "db", tablesPriv[0].DB)
 	require.Equal(t, "user", tablesPriv[0].User)
 	require.Equal(t, "table", tablesPriv[0].TableName)
-	require.Equal(t, mysql.GrantPriv|mysql.IndexPriv|mysql.AlterPriv, tablesPriv[0].TablePriv)
+	require.Equal(t, mysql.GrantPriv|mysql.IndexPriv|mysql.AlterPriv|mysql.OperateViewPriv, tablesPriv[0].TablePriv)
 	require.Equal(t, mysql.InsertPriv|mysql.UpdatePriv, tablesPriv[0].ColumnPriv)
 }
 
@@ -167,6 +168,37 @@ func TestLoadColumnsPrivTable(t *testing.T) {
 	require.Equal(t, "column", columnsPriv[0].ColumnName)
 	require.Equal(t, mysql.InsertPriv|mysql.UpdatePriv, columnsPriv[0].ColumnPriv)
 	require.Equal(t, mysql.SelectPriv, columnsPriv[1].ColumnPriv)
+}
+
+func TestMatchColumns(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use mysql;")
+	tk.MustExec("delete from columns_priv")
+	tk.MustExec(`INSERT INTO mysql.columns_priv VALUES ("%", "db", "user", "table", "c1", "2017-01-04 16:33:42.235831", "Insert,Update")`)
+	tk.MustExec(`INSERT INTO mysql.columns_priv VALUES ("%", "db", "user", "table", "c2", "2017-01-04 16:33:42.235831", "Select")`)
+
+	p := privileges.NewMySQLPrivilege()
+	se := tk.Session()
+	require.NoError(t, p.LoadColumnsPrivTable(se.GetSQLExecutor()))
+	col := p.MatchColumns("user", "%", "db", "table", "c1")
+	require.NotNil(t, col)
+	col = p.MatchColumns("user", "%", "db", "table", "*")
+	require.NotNil(t, col)
+
+	p = privileges.NewMySQLPrivilege()
+	tk.MustExec("delete from columns_priv")
+	tk.MustExec("flush privileges")
+	tk.MustExec(`INSERT INTO mysql.columns_priv VALUES ("%", "db", "user", "table", "c1", "2017-01-04 16:33:42.235831", "Insert,Update")`)
+	tk.MustExec(`INSERT INTO mysql.columns_priv VALUES ("%", "db", "user", "table", "c2", "2017-01-04 16:33:42.235831", "References")`)
+	require.NoError(t, p.LoadColumnsPrivTable(se.GetSQLExecutor()))
+	col = p.MatchColumns("user", "%", "db", "table", "c1")
+	require.NotNil(t, col)
+	col = p.MatchColumns("user", "%", "db", "table", "c2")
+	require.NotNil(t, col)
+	col = p.MatchColumns("user", "%", "db", "table", "*")
+	require.Nil(t, col)
 }
 
 func TestLoadDefaultRoleTable(t *testing.T) {
@@ -285,7 +317,7 @@ func TestCaseInsensitive(t *testing.T) {
 	tk.MustExec("CREATE DATABASE TCTrain;")
 	tk.MustExec("CREATE TABLE TCTrain.TCTrainOrder (id int);")
 	tk.MustExec("delete from mysql.user")
-	tk.MustExec(`INSERT INTO mysql.db VALUES ("127.0.0.1", "TCTrain", "genius", "Y", "Y", "Y", "Y", "Y", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N")`)
+	tk.MustExec(`INSERT INTO mysql.db (Host, DB, User, Select_priv) VALUES ("127.0.0.1", "TCTrain", "genius", "Y")`)
 	p := privileges.NewMySQLPrivilege()
 	se := tk.Session()
 	require.NoError(t, p.LoadDBTable(se.GetSQLExecutor()))
@@ -395,6 +427,24 @@ func TestFindAllUserEffectiveRoles(t *testing.T) {
 
 func TestSortUserTable(t *testing.T) {
 	p := privileges.NewMySQLPrivilege()
+
+	p.SetUser([]privileges.UserRecord{
+		privileges.NewUserRecord(`%`, "root"),
+		privileges.NewUserRecord(`localhost`, "root"),
+		privileges.NewUserRecord("h1.example.net", "root"),
+		privileges.NewUserRecord("192.168.%", "root"),
+		privileges.NewUserRecord("192.168.199.%", "root"),
+	})
+	p.SortUserTable()
+	result := []privileges.UserRecord{
+		privileges.NewUserRecord("h1.example.net", "root"),
+		privileges.NewUserRecord(`localhost`, "root"),
+		privileges.NewUserRecord("192.168.199.%", "root"),
+		privileges.NewUserRecord("192.168.%", "root"),
+		privileges.NewUserRecord(`%`, "root"),
+	}
+	checkUserRecord(t, p.User(), result)
+
 	p.SetUser([]privileges.UserRecord{
 		privileges.NewUserRecord(`%`, "root"),
 		privileges.NewUserRecord(`%`, "jeffrey"),
@@ -402,7 +452,7 @@ func TestSortUserTable(t *testing.T) {
 		privileges.NewUserRecord("localhost", ""),
 	})
 	p.SortUserTable()
-	result := []privileges.UserRecord{
+	result = []privileges.UserRecord{
 		privileges.NewUserRecord("localhost", ""),
 		privileges.NewUserRecord("localhost", "root"),
 		privileges.NewUserRecord(`%`, "jeffrey"),
@@ -453,10 +503,24 @@ func TestGlobalPrivValueRequireStr(t *testing.T) {
 }
 
 func checkUserRecord(t *testing.T, x, y []privileges.UserRecord) {
-	require.Equal(t, len(x), len(y))
+	var sbX, sbY strings.Builder
+	for _, u := range x {
+		sbX.WriteString(u.User)
+		sbX.WriteString("@")
+		sbX.WriteString(u.Host)
+		sbX.WriteString("\n")
+	}
+	for _, u := range y {
+		sbY.WriteString(u.User)
+		sbY.WriteString("@")
+		sbY.WriteString(u.Host)
+		sbY.WriteString("\n")
+	}
+
+	require.Equal(t, len(x), len(y), "%s\n vs %s\n", sbX.String(), sbY.String())
 	for i := range x {
-		require.Equal(t, x[i].User, y[i].User)
-		require.Equal(t, x[i].Host, y[i].Host)
+		require.Equal(t, x[i].User, y[i].User, "%s\n vs %s\n", sbX.String(), sbY.String())
+		require.Equal(t, x[i].Host, y[i].Host, "%s\n vs %s\n", sbX.String(), sbY.String())
 	}
 }
 
@@ -502,6 +566,12 @@ func TestDBIsVisible(t *testing.T) {
 	tk.MustExec(`INSERT INTO mysql.user (Host, User, Create_view_priv) VALUES ("%", "testvisdb6", "Y")`)
 	require.NoError(t, p.LoadUserTable(se.GetSQLExecutor()))
 	isVisible = p.DBIsVisible("testvisdb6", "%", "visdb")
+	require.True(t, isVisible)
+	tk.MustExec("delete from mysql.user")
+
+	tk.MustExec(`INSERT INTO mysql.user (Host, User, Operate_view_priv) VALUES ("%", "testvisdb_operate", "Y")`)
+	require.NoError(t, p.LoadUserTable(se.GetSQLExecutor()))
+	isVisible = p.DBIsVisible("testvisdb_operate", "%", "visdb")
 	require.True(t, isVisible)
 	tk.MustExec("delete from mysql.user")
 

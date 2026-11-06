@@ -28,13 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/tiancaiamao/gp"
 	"go.uber.org/zap"
-)
-
-const (
-	// MaxPartitionMergeBatchSize indicates the max batch size for a worker to merge partition stats
-	MaxPartitionMergeBatchSize = 256
 )
 
 // statsGlobalImpl implements util.StatsGlobal
@@ -73,7 +67,6 @@ type GlobalStats struct {
 	Hg                    []*statistics.Histogram
 	Cms                   []*statistics.CMSketch
 	TopN                  []*statistics.TopN
-	Fms                   []*statistics.FMSketch
 	MissingPartitionStats []string
 	Num                   int
 	Count                 int64
@@ -87,7 +80,6 @@ func newGlobalStats(histCount int) *GlobalStats {
 	globalStats.Hg = make([]*statistics.Histogram, globalStats.Num)
 	globalStats.Cms = make([]*statistics.CMSketch, globalStats.Num)
 	globalStats.TopN = make([]*statistics.TopN, globalStats.Num)
-	globalStats.Fms = make([]*statistics.FMSketch, globalStats.Num)
 
 	return globalStats
 }
@@ -121,7 +113,7 @@ func MergePartitionStats2GlobalStats(
 		zap.Int64("tableID", globalTableInfo.ID),
 		zap.String("table", globalTableInfo.Name.L),
 	)
-	return blockingMergePartitionStats2GlobalStats(sc, statsHandle.GPool(), opts, is, globalTableInfo, isIndex, histIDs, nil, statsHandle)
+	return blockingMergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, nil, statsHandle)
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
@@ -167,7 +159,6 @@ func MergePartitionStats2GlobalStatsByTableID(
 // It is the old algorithm to merge partition-level stats to global-level stats. It will happen the OOM. because it will load all the partition-level stats into memory.
 func blockingMergePartitionStats2GlobalStats(
 	sc sessionctx.Context,
-	gpool *gp.Pool,
 	opts map[ast.AnalyzeOptionType]uint64,
 	is infoschema.InfoSchema,
 	globalTableInfo *model.TableInfo,
@@ -303,22 +294,24 @@ func blockingMergePartitionStats2GlobalStats(
 			// correctly. It can avoid unexpected behaviors such as nil pointer panic.
 			continue
 		}
-		// FMSketch use many memory, so we first deal with it and then destroy it.
+		// FMSketch use a lot of memory, so we first deal with it and then destroy it.
 		// Merge FMSketch.
 		// NOTE: allFms maybe contain empty.
-		globalStats.Fms[i] = allFms[i][0]
-		for j := 1; j < len(allFms[i]); j++ {
-			if globalStats.Fms[i] == nil {
-				globalStats.Fms[i] = allFms[i][j]
-			} else {
-				globalStats.Fms[i].MergeFMSketch(allFms[i][j])
-				allFms[i][j] = nil // Release for GC.
+		// missedNotNull is the non-NULL rows of the partitions whose TopN and histogram
+		// are empty, because their sample had only NULL values. Their sketches count these rows.
+		var missedNotNull int64
+		var ndvMerger statistics.PartitionNDVMerger
+		for j, fms := range allFms[i] {
+			if topNHistNotNull(allHg[i][j], allTopN[i][j]) == 0 {
+				missedNotNull += fms.NotNullRows()
 			}
+			ndvMerger.Merge(fms)
+			allFms[i][j] = nil // Release for GC.
 		}
 
 		// Update the global NDV.
-		globalStatsNDV := min(globalStats.Fms[i].NDV(), globalStats.Count)
-		globalStats.Fms[i] = nil // Release for GC.
+		globalStatsNDV := min(ndvMerger.NDV(), globalStats.Count)
+		sampled := ndvMerger.Sampled()
 
 		// Merge CMSketch.
 		globalStats.Cms[i] = allCms[i][0]
@@ -328,37 +321,72 @@ func blockingMergePartitionStats2GlobalStats(
 				return
 			}
 		}
+		allCms[i] = nil // Release for GC.
 
-		// Merge topN.
-		// Note: We need to merge TopN before merging the histogram.
-		// Because after merging TopN, some numbers will be left.
-		// These remaining topN numbers will be used as a separate bucket for later histogram merging.
-		// FIXME: Global stats merge semantics here are driven by SessionVars().AnalyzeVersion,
-		// but the stats version persisted for the same global stats can be different.
-		var poppedTopN []statistics.TopNMeta
-		wrapper := NewStatsWrapper(allHg[i], allTopN[i])
-		globalStats.TopN[i], poppedTopN, allHg[i], err = mergeGlobalStatsTopN(gpool, sc, wrapper,
-			sc.GetSessionVars().StmtCtx.TimeZone(), sc.GetSessionVars().AnalyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex)
+		// Combined TopN + histogram merge that extracts
+		// histogram upper-bound Repeat counts into the TopN counter.
+		killer := &sc.GetSessionVars().SQLKiller
+		globalStats.TopN[i], globalStats.Hg[i], err = statistics.MergePartTopNAndHistToGlobal(
+			sc.GetSessionVars().StmtCtx, killer,
+			allTopN[i], allHg[i],
+			uint32(opts[ast.AnalyzeOptNumTopN]),
+			int64(opts[ast.AnalyzeOptNumBuckets]),
+			isIndex,
+		)
+		allTopN[i] = nil // Release for GC.
 		if err != nil {
 			return
 		}
 
-		// Merge histogram.
-		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc.GetSessionVars().StmtCtx, allHg[i], poppedTopN,
-			int64(opts[ast.AnalyzeOptNumBuckets]), isIndex, sc.GetSessionVars().AnalyzeVersion)
-		if err != nil {
-			return
-		}
-
-		// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
+		// MergePartTopNAndHistToGlobal already leaves bucket NDV = 0; here
+		// we just set the table-level NDV.
 		if globalStats.Hg[i] != nil {
-			for j := range globalStats.Hg[i].Buckets {
-				globalStats.Hg[i].Buckets[j].NDV = 0
+			if isLocalUnique(globalTableInfo, isIndex, histIDs[i]) {
+				globalStatsNDV = uniqueGlobalNDV(allHg[i], globalStats.Count)
+			} else if sampled {
+				globalStatsNDV = sampledGlobalNDV(globalStatsNDV, globalStats.Hg[i], globalStats.TopN[i], missedNotNull, globalStats.Count)
 			}
 			globalStats.Hg[i].NDV = globalStatsNDV
 		}
+		allHg[i] = nil // Release for GC.
 	}
 	return
+}
+
+// isLocalUnique returns true for a unique column or index, i.e. a local
+// single-column unique index or its column. It is used for deciding if the
+// global NDV is the sum of the partition NDVs.
+//
+// A local unique index includes the partition columns, so a value always
+// belongs to the same partition. A global unique index does not: a row that
+// moves to another partition leaves its value in the stats of the old
+// partition until that partition is analyzed again.
+func isLocalUnique(tblInfo *model.TableInfo, isIndex bool, id int64) bool {
+	for _, idx := range tblInfo.Indices {
+		if idx.Global || !statistics.IsSingleColNonPrefixUniqueIndex(idx) {
+			continue
+		}
+		if (isIndex && idx.ID == id) || (!isIndex && tblInfo.Columns[idx.Columns[0].Offset].ID == id) {
+			return true
+		}
+	}
+	return false
+}
+
+// uniqueGlobalNDV returns the global NDV of a column or index that
+// isLocalUnique accepts. Its values never repeat across partitions, so the
+// partition NDVs add up exactly, while the merged FMSketch estimates the sum.
+// A partition that is not analyzed again keeps its NDV after deletes, so the
+// current row count bounds the sum, as it bounds the FMSketch estimate.
+func uniqueGlobalNDV(partitionHists []*statistics.Histogram, count int64) int64 {
+	var ndv int64
+	for _, hg := range partitionHists {
+		// An empty partition has no histogram.
+		if hg != nil {
+			ndv += hg.NDV
+		}
+	}
+	return min(ndv, count)
 }
 
 // WriteGlobalStatsToStorage is to write global stats to storage
@@ -378,6 +406,7 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 			hg,
 			cms,
 			topN,
+			nil,
 			info.StatsVersion,
 			true,
 			util.StatsMetaHistorySourceAnalyze,
@@ -388,4 +417,22 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 		}
 	}
 	return err
+}
+
+// sampledGlobalNDV limits a sampled NDV, which GEE can scale too high, to the
+// current row count and to the non-NULL rows that ANALYZE saw. Those are the
+// rows of the merged TopN and histogram, plus missedNotNull for the partitions
+// where both are empty.
+func sampledGlobalNDV(ndv int64, hist *statistics.Histogram, topN *statistics.TopN, missedNotNull, count int64) int64 {
+	notNull := topNHistNotNull(hist, topN) + missedNotNull
+	return min(ndv, notNull, count)
+}
+
+// topNHistNotNull returns the non-NULL rows that a TopN and histogram hold.
+func topNHistNotNull(hist *statistics.Histogram, topN *statistics.TopN) int64 {
+	notNull := int64(topN.TotalCount())
+	if hist != nil {
+		notNull += int64(hist.NotNullCount())
+	}
+	return notNull
 }

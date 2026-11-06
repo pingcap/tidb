@@ -93,6 +93,24 @@ func TestColumn(t *testing.T) {
 	require.Zero(t, timeVal.Compare(tm))
 	require.False(t, isNull)
 	require.NoError(t, err)
+
+	t.Run("resolve virtual expression prefers exact column ID", func(t *testing.T) {
+		strTp := types.NewFieldType(mysql.TypeVarchar)
+		baseCol := &Column{UniqueID: 10, RetType: strTp}
+		virtualExpr := NewFunctionInternal(ctx, ast.Lower, strTp, baseCol)
+		exprOnlyMatchedCol := &Column{UniqueID: 12, RetType: strTp, VirtualExpr: virtualExpr.Clone()}
+		exactMatchedCol := &Column{UniqueID: 11, RetType: strTp, VirtualExpr: virtualExpr.Clone()}
+		targetCol := &Column{UniqueID: exactMatchedCol.UniqueID, RetType: strTp, VirtualExpr: virtualExpr.Clone()}
+
+		resolvedExpr, ok := targetCol.ResolveIndicesByVirtualExpr(ctx.GetEvalCtx(), NewSchema(exprOnlyMatchedCol, exactMatchedCol))
+		require.True(t, ok)
+		require.Equal(t, 1, resolvedExpr.(*Column).Index)
+
+		ambiguousTargetCol := &Column{UniqueID: 13, RetType: strTp, VirtualExpr: virtualExpr.Clone()}
+		resolvedExpr, ok = ambiguousTargetCol.ResolveIndicesByVirtualExpr(ctx.GetEvalCtx(), NewSchema(exprOnlyMatchedCol, exactMatchedCol))
+		require.True(t, ok)
+		require.Equal(t, 0, resolvedExpr.(*Column).Index)
+	})
 }
 
 func TestColumnHashCode(t *testing.T) {
