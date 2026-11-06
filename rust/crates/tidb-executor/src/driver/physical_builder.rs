@@ -4529,7 +4529,7 @@ fn build_index_join(
     let (left_types, right_types) = (schema_types(&left_schema), schema_types(&right_schema));
     let output_offsets =
         physical_join_output_offsets(plan, join.join_type, &left_schema, &right_schema)?;
-    if join.kind == tidb_planner_core_operator_physicalop::IndexJoinKind::IndexJoin {
+    if join.kind != tidb_planner_core_operator_physicalop::IndexJoinKind::IndexMergeJoin {
         if let Some(children_used) =
             index_join_children_used(join.join_type, &output_offsets, left_types.len())
         {
@@ -4610,8 +4610,9 @@ fn index_join_children_used(
     })
 }
 
-/// Go `executorBuilder.buildIndexLookUpJoin`: `IndexLookUpJoin` over Go's
-/// `Joiner` (`NewJoiner(..., v.OtherConditions, ..., childrenUsedSchema)`).
+/// Go `executorBuilder.buildIndexLookUpJoin` (and, for an `IndexHashJoin`,
+/// `buildIndexNestedLoopHashJoin`): the executor over Go's `Joiner`
+/// (`NewJoiner(..., v.OtherConditions, ..., childrenUsedSchema)`).
 #[allow(clippy::too_many_arguments)]
 fn build_index_look_up_join(
     plan: &PhysicalPlan,
@@ -4652,36 +4653,43 @@ fn build_index_look_up_join(
             max_chunk_size: ctx.executor_chunk_sizes().1,
         },
     );
-    let executor = tidb_executor_join::join::IndexLookUpJoin::new(
-        tidb_executor_join::join::IndexLookUpJoinBuild {
-            meta: meta(ctx, plan, plan_schema(plan)?),
-            outer,
-            plan: lookup,
-            equalities,
-            left_width: left_types.len(),
-            joiner,
-            is_outer_join: matches!(
-                join.join_type,
-                LogicalJoinType::LeftOuter
-                    | LogicalJoinType::RightOuter
-                    | LogicalJoinType::LeftOuterSemi
-                    | LogicalJoinType::AntiLeftOuterSemi
-            ),
-            ctx: ctx.clone(),
-            memory: ctx.statement_memory(),
-            vectorized: ctx.enable_vectorized_expression(),
-            concurrency: ctx.index_lookup_join_concurrency(),
-            max_batch_size: ctx.index_join_batch_size(),
-            index_ranges: join.ranges.clone(),
-            runtime_stats: ctx
-                .executor_runtime_stats_source()
-                .filter(|_| !state.untraced)
-                .cloned()
-                .map(|source| (source, i64::from(plan.id()))),
-        },
-    )
-    .map_err(DriverError::Exec)?;
-    Ok(Box::new(executor))
+    let build = tidb_executor_join::join::IndexLookUpJoinBuild {
+        meta: meta(ctx, plan, plan_schema(plan)?),
+        outer,
+        plan: lookup,
+        equalities,
+        left_width: left_types.len(),
+        joiner,
+        is_outer_join: matches!(
+            join.join_type,
+            LogicalJoinType::LeftOuter
+                | LogicalJoinType::RightOuter
+                | LogicalJoinType::LeftOuterSemi
+                | LogicalJoinType::AntiLeftOuterSemi
+        ),
+        ctx: ctx.clone(),
+        memory: ctx.statement_memory(),
+        vectorized: ctx.enable_vectorized_expression(),
+        concurrency: ctx.index_lookup_join_concurrency(),
+        max_batch_size: ctx.index_join_batch_size(),
+        index_ranges: join.ranges.clone(),
+        runtime_stats: ctx
+            .executor_runtime_stats_source()
+            .filter(|_| !state.untraced)
+            .cloned()
+            .map(|source| (source, i64::from(plan.id()))),
+    };
+    // Go `buildIndexNestedLoopHashJoin` wraps the same executor with one
+    // joiner per inner worker.
+    if join.kind == tidb_planner_core_operator_physicalop::IndexJoinKind::IndexHashJoin {
+        return Ok(Box::new(
+            tidb_executor_join::join::IndexNestedLoopHashJoin::new(build, join.keep_outer_order)
+                .map_err(DriverError::Exec)?,
+        ));
+    }
+    Ok(Box::new(
+        tidb_executor_join::join::IndexLookUpJoin::new(build).map_err(DriverError::Exec)?,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]

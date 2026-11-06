@@ -69,8 +69,8 @@
       "id": "E12",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "`IndexJoin` is Go's `IndexLookUpJoin` (`join/index_lookup_join.rs`: outer worker, inner workers, ordered result channel, `Joiner`), and the index joins' tasks are Go's in memory and matching. Two gaps remain: `IndexNestedLoopHashJoin` and `IndexLookUpMergeJoin` are still strategies of the fused `JoinExec` (`join.rs`, which pairs rows by evaluating the whole `ON`), the merge join running as the plain lookup without its own task charges (`outerOrderIdx`); and Go's `IndexJoinExecutorBuilder` builds each task's inner executor afresh, where this port's inner workers re-seed one shared `IndexLookupSource` under a lock unless the lookup forks (a common-handle prefix)",
-      "go_owner": "`pkg/executor/join/index_lookup_hash_join.go`, `index_lookup_merge_join.go`, `pkg/executor/builder.go` (`dataReaderBuilder.BuildExecutorForIndexJoin`)"
+      "finding": "`IndexJoin` and `IndexHashJoin` are Go's `IndexLookUpJoin` and `IndexNestedLoopHashJoin` (`join/index_lookup_join.rs`, `join/index_lookup_hash_join.rs`: outer and inner workers over `Joiner`), with Go's task memory and matching. Three gaps remain: `IndexLookUpMergeJoin` is a strategy of the fused `JoinExec` (`join.rs`, pairing rows by evaluating the whole `ON`) running as the plain lookup, without Go's merge pairing or its own task charges (`outerOrderIdx`), and an index join whose output interleaves its children falls back to `JoinExec` with its old index-hash strategy; and Go's `IndexJoinExecutorBuilder` builds each task's inner executor afresh, where this port's inner workers re-seed one shared `IndexLookupSource` under a lock unless the lookup forks (a common-handle prefix)",
+      "go_owner": "`pkg/executor/join/index_lookup_merge_join.go`, `pkg/executor/builder.go` (`buildIndexLookUpMergeJoin`, `dataReaderBuilder.BuildExecutorForIndexJoin`)"
     },
     {
       "id": "E14",

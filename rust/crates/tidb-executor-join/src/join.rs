@@ -162,7 +162,9 @@ use crate::hash_join::{
 use tidb_executor_internal_exec::fast_bytes_map::FastBytesMap;
 use tidb_variable::mem_quota::StatementMemory;
 mod index_hash;
+mod index_lookup_hash_join;
 mod index_lookup_join;
+pub use index_lookup_hash_join::IndexNestedLoopHashJoin;
 pub use index_lookup_join::{IndexLookUpJoin, IndexLookUpJoinBuild};
 mod output;
 use index_hash::{

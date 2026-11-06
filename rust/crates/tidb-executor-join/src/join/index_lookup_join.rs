@@ -115,9 +115,25 @@ pub struct IndexLookUpJoinBuild<C: Columns> {
     pub runtime_stats: Option<(Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>, i64)>,
 }
 
-impl<C: Columns + Clone + Send + Sync + 'static> IndexLookUpJoin<C> {
-    /// Go `executorBuilder.buildIndexLookUpJoin`'s executor.
-    pub fn new(build: IndexLookUpJoinBuild<C>) -> Result<Self, ExecError> {
+/// The pieces both index lookup joins build from an [`IndexLookUpJoinBuild`].
+pub(super) struct IndexLookUpJoinParts<C: Columns> {
+    pub(super) meta: ExecutorMeta,
+    pub(super) outer: Box<dyn Executor>,
+    pub(super) source: IndexLookupSource,
+    pub(super) shared: Arc<IndexTaskShared<C>>,
+    pub(super) outer_filter: Vec<Expression>,
+    pub(super) outer_not_null: Vec<usize>,
+    pub(super) joiner: Box<dyn Joiner>,
+    pub(super) is_outer_join: bool,
+    pub(super) concurrency: usize,
+    pub(super) max_batch_size: usize,
+    pub(super) worker_ranges_bytes: i64,
+    pub(super) runtime_stats: Option<(Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>, i64)>,
+    pub(super) stats: Option<Arc<IndexLookUpJoinRuntimeStats>>,
+}
+
+impl<C: Columns + Clone + Send + Sync + 'static> IndexLookUpJoinParts<C> {
+    pub(super) fn new(build: IndexLookUpJoinBuild<C>) -> Result<Self, ExecError> {
         let IndexLookUpJoinBuild {
             meta,
             outer,
@@ -177,28 +193,50 @@ impl<C: Columns + Clone + Send + Sync + 'static> IndexLookUpJoin<C> {
             .map_or(0, |range| 2 * tidb_datatype::estimated_mem_usage(&range.low_val, index_ranges.len()));
         Ok(Self {
             meta,
-            outer_child: Some(outer),
-            outer_worker: None,
-            inner_workers: Vec::new(),
-            source: Arc::new(Mutex::new(plan.source)),
+            outer,
+            source: plan.source,
             shared,
             outer_filter: plan.outer_filter,
             outer_not_null: plan.outer_not_null,
+            joiner,
+            is_outer_join,
+            concurrency,
+            max_batch_size: max_batch_size.max(1),
+            worker_ranges_bytes,
+            runtime_stats,
+            stats,
+        })
+    }
+}
+
+impl<C: Columns + Clone + Send + Sync + 'static> IndexLookUpJoin<C> {
+    /// Go `executorBuilder.buildIndexLookUpJoin`'s executor.
+    pub fn new(build: IndexLookUpJoinBuild<C>) -> Result<Self, ExecError> {
+        let parts = IndexLookUpJoinParts::new(build)?;
+        Ok(Self {
+            meta: parts.meta,
+            outer_child: Some(parts.outer),
+            outer_worker: None,
+            inner_workers: Vec::new(),
+            source: Arc::new(Mutex::new(parts.source)),
+            shared: parts.shared,
+            outer_filter: parts.outer_filter,
+            outer_not_null: parts.outer_not_null,
             result_ch: None,
             task: None,
             cursor: 0,
             inner_iter: None,
             has_match: false,
             has_null: false,
-            joiner,
-            is_outer_join,
+            joiner: parts.joiner,
+            is_outer_join: parts.is_outer_join,
             required_rows: Arc::new(AtomicUsize::new(0)),
             finished: Arc::new(AtomicBool::new(false)),
-            concurrency,
-            max_batch_size: max_batch_size.max(1),
-            worker_ranges_bytes,
-            runtime_stats,
-            stats,
+            concurrency: parts.concurrency,
+            max_batch_size: parts.max_batch_size,
+            worker_ranges_bytes: parts.worker_ranges_bytes,
+            runtime_stats: parts.runtime_stats,
+            stats: parts.stats,
             prepared: false,
         })
     }
@@ -393,31 +431,7 @@ fn handle_task<C: Columns>(
     mut outer: OuterBatch,
     charge: TrackerCharge,
 ) -> Result<LookUpJoinTask, ExecError> {
-    let probes = construct_index_task(shared, &mut outer)?;
-    let mem_tracker = outer.take_kv_range_tracker(shared.template.is_some());
-    let inner = match open_index_task(shared, probes, mem_tracker)? {
-        Ok(mut task) => {
-            let (inner, inner_rows, _) = fetch_index_inner(shared, task.as_mut(), None, None)?;
-            if let IndexLookupSource::Leaf(leaf) = &*source.lock().unwrap() {
-                leaf.add_produced(inner_rows);
-            }
-            inner
-        }
-        Err(probes) => {
-            let (keys, bound_values) = probes
-                .into_iter()
-                .map(|probe| (probe.key, probe.bounds))
-                .unzip();
-            let mut source = source.lock().unwrap();
-            source.set_probes(crate::index_lookup::IndexJoinProbes {
-                keys,
-                bound_values,
-                mem_tracker: outer.take_kv_range_tracker(false),
-            })?;
-            fetch_index_inner(shared, source.executor(), None, None)?.0
-        }
-    };
-    outer.inner_worker_tracker = None;
+    let inner = handle_lookup(shared, source, &mut outer, None, |_, _, _| Ok(()))?;
     Ok(LookUpJoinTask {
         outer,
         _outer_charge: charge,
@@ -425,7 +439,60 @@ fn handle_task<C: Columns>(
     })
 }
 
-fn panic_message(panic: &Box<dyn std::any::Any + Send>) -> String {
+/// The lookup half of Go's `handleTask`: `constructLookupContent`, then
+/// `fetchInnerResults` -- in windows of `max_fetch_rows` when set, each
+/// handed to `on_window` with whether the inner side is done -- through a
+/// fork of the inner reader or, holding it, the shared one. The inner
+/// worker's charges are reset when the lookup ends.
+pub(super) fn handle_lookup<C: Columns>(
+    shared: &IndexTaskShared<C>,
+    source: &Mutex<IndexLookupSource>,
+    outer: &mut OuterBatch,
+    max_fetch_rows: Option<usize>,
+    mut on_window: impl FnMut(&OuterBatch, &PreparedIndexInner, bool) -> Result<(), ExecError>,
+) -> Result<PreparedIndexInner, ExecError> {
+    let result = (|| {
+        let probes = construct_index_task(shared, outer)?;
+        let mem_tracker = outer.take_kv_range_tracker(shared.template.is_some());
+        let mut fetch = |reader: &mut dyn Executor, outer: &OuterBatch| {
+            let mut inner = None;
+            loop {
+                let (window, rows, done) = fetch_index_inner(shared, reader, max_fetch_rows, inner.take())?;
+                on_window(outer, &window, done)?;
+                if done {
+                    return Ok::<_, ExecError>((window, rows));
+                }
+                inner = Some(window);
+            }
+        };
+        match open_index_task(shared, probes, mem_tracker)? {
+            Ok(mut task) => {
+                let (inner, inner_rows) = fetch(task.as_mut(), outer)?;
+                if let IndexLookupSource::Leaf(leaf) = &*source.lock().unwrap() {
+                    leaf.add_produced(inner_rows);
+                }
+                Ok(inner)
+            }
+            Err(probes) => {
+                let (keys, bound_values) = probes
+                    .into_iter()
+                    .map(|probe| (probe.key, probe.bounds))
+                    .unzip();
+                let mut source = source.lock().unwrap();
+                source.set_probes(crate::index_lookup::IndexJoinProbes {
+                    keys,
+                    bound_values,
+                    mem_tracker: outer.take_kv_range_tracker(false),
+                })?;
+                Ok(fetch(source.executor(), outer)?.0)
+            }
+        }
+    })();
+    outer.inner_worker_tracker = None;
+    result
+}
+
+pub(super) fn panic_message(panic: &Box<dyn std::any::Any + Send>) -> String {
     panic
         .downcast_ref::<String>()
         .cloned()

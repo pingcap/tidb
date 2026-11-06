@@ -88,6 +88,13 @@ impl IndexLookUpJoinRuntimeStats {
             .fetch_add(nanos(elapsed), Ordering::Relaxed);
     }
 
+    /// Go `IndexNestedLoopHashJoin`'s `join`, the inner workers' join time.
+    pub fn record_join(&self, elapsed: Duration) {
+        self.inner_worker
+            .join
+            .fetch_add(nanos(elapsed), Ordering::Relaxed);
+    }
+
     /// Go `IndexLookUpJoin.Next`'s `probe`.
     pub fn record_probe(&self, elapsed: Duration) {
         self.probe.fetch_add(nanos(elapsed), Ordering::Relaxed);

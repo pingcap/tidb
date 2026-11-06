@@ -345,7 +345,9 @@ fn look_up_join(
     store: &tidb_kv::storage::MemTableStorage,
     memory: tidb_variable::mem_quota::StatementMemory,
     concurrency: usize,
-) -> tidb_executor_join::join::IndexLookUpJoin<crate::StmtContext> {
+    hash: Option<bool>,
+    filter: Vec<Expression>,
+) -> Box<dyn Executor> {
     use tidb_executor_join::joiner::JoinType;
     let outer_width = outer_rows[0].len();
     let width = match join_type {
@@ -358,7 +360,7 @@ fn look_up_join(
         join_type,
         false,
         &[Datum::Null, Datum::Null],
-        Vec::new(),
+        filter,
         &[long(), long()],
         &[long(), long()],
         None,
@@ -369,7 +371,7 @@ fn look_up_join(
             max_chunk_size: CHUNK,
         },
     );
-    tidb_executor_join::join::IndexLookUpJoin::new(tidb_executor_join::join::IndexLookUpJoinBuild {
+    let build = tidb_executor_join::join::IndexLookUpJoinBuild {
         meta: ExecutorMeta::new(schema_of(width), 0, INIT_CAP, CHUNK),
         outer: Box::new(RequiredRowsSource {
             meta: ExecutorMeta::new(schema_of(outer_width), 0, INIT_CAP, CHUNK),
@@ -411,8 +413,13 @@ fn look_up_join(
             high_exclude: false,
         }],
         runtime_stats: None,
-    })
-    .unwrap()
+    };
+    match hash {
+        Some(keep_outer_order) => Box::new(
+            tidb_executor_join::join::IndexNestedLoopHashJoin::new(build, keep_outer_order).unwrap(),
+        ),
+        None => Box::new(tidb_executor_join::join::IndexLookUpJoin::new(build).unwrap()),
+    }
 }
 
 /// An outer child that returns at most the rows each `Next` requires, as
@@ -488,11 +495,70 @@ fn the_go_index_lookup_join_agrees_with_the_hash_join() {
             None if join_type == JoinType::SemiJoin => semi.clone(),
             None => anti.clone(),
         };
-        let memory = crate::StmtContext::for_query().statement_memory();
-        let mut joined = look_up_join(join_type, &outer, &table, &store, memory, 3);
         let width = hash_rows.first().map_or(2, Vec::len);
         let types: Vec<FieldType> = std::iter::repeat_n(long(), width).collect();
-        assert_eq!(drain(&mut joined, &types), hash_rows, "{join_type:?}");
+        // Go `IndexLookUpJoin`, then `IndexNestedLoopHashJoin` keeping the
+        // outer order and not.
+        for hash in [None, Some(true), Some(false)] {
+            let memory = crate::StmtContext::for_query().statement_memory();
+            let mut joined = look_up_join(join_type, &outer, &table, &store, memory, 3, hash, Vec::new());
+            let mut rows = drain(joined.as_mut(), &types);
+            let mut expected = hash_rows.clone();
+            if hash == Some(false) {
+                let key = |row: &Vec<Datum>| format!("{row:?}");
+                rows.sort_by_key(key);
+                expected.sort_by_key(key);
+            }
+            assert_eq!(rows, expected, "{join_type:?} {hash:?}");
+        }
+    }
+}
+
+/// A semi join's NULL verdict -- an `IN`-derived equality evaluating NULL,
+/// the only NULL Go's `EvalBool` reports -- survives the outer row's later
+/// inner rows: Go's unordered hash join keeps `outerRowHasNull` unless a
+/// later row matches (`joinMatchedInnerRow2Chunk`), as the lookup join's
+/// `hasNull` does.
+#[test]
+fn a_go_index_join_keeps_a_null_semi_verdict() {
+    use tidb_executor_join::joiner::JoinType;
+    let (table, store) = inner_table(&[(10, 1), (11, 2), (12, 2), (13, 2)]);
+    let outer = vec![
+        vec![Datum::Null, Datum::Int(1)],
+        vec![Datum::Int(100), Datum::Int(2)],
+        vec![Datum::Int(12), Datum::Int(2)],
+        vec![Datum::Int(5), Datum::Int(5)],
+    ];
+    // `inner.a = outer.a` from `outer.a IN (...)`, over the
+    // outer-then-inner row.
+    let column = |index: i64| {
+        let mut column = Column::new(index + 1, long());
+        column.index = index;
+        column.in_operand = true;
+        Expression::Column(column)
+    };
+    let lt = Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("eq"),
+        long(),
+        vec![column(2), column(0)],
+    ));
+    let types: Vec<FieldType> = std::iter::repeat_n(long(), 3).collect();
+    for hash in [None, Some(true), Some(false)] {
+        let memory = crate::StmtContext::for_query().statement_memory();
+        let mut joined =
+            look_up_join(JoinType::LeftOuterSemiJoin, &outer, &table, &store, memory, 2, hash, vec![lt.clone()]);
+        let mut rows = drain(joined.as_mut(), &types);
+        rows.sort_by_key(|row| format!("{row:?}"));
+        assert_eq!(
+            rows,
+            vec![
+                vec![Datum::Int(100), Datum::Int(2), Datum::Int(0)],
+                vec![Datum::Int(12), Datum::Int(2), Datum::Int(1)],
+                vec![Datum::Int(5), Datum::Int(5), Datum::Int(0)],
+                vec![Datum::Null, Datum::Int(1), Datum::Null],
+            ],
+            "{hash:?}"
+        );
     }
 }
 
@@ -510,9 +576,11 @@ fn the_go_index_lookup_join_charges_each_worker_its_ranges() {
         &store,
         memory.clone(),
         3,
+        None,
+        Vec::new(),
     );
     let types: Vec<FieldType> = std::iter::repeat_n(long(), 4).collect();
-    assert_eq!(drain(&mut joined, &types).len(), 4);
+    assert_eq!(drain(joined.as_mut(), &types).len(), 4);
     assert_eq!(memory.stmt_tracker().bytes_consumed(), 3 * 144);
 }
 
