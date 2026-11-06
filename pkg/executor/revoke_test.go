@@ -271,4 +271,24 @@ func TestRevokeColumnPriv(t *testing.T) {
 	tk.MustExec("REVOKE SELECT ON test.t3 FROM u1")
 	tk.MustQuery("SELECT column_name FROM mysql.columns_priv WHERE user='u1' AND table_name='t3'").Check(testkit.Rows())
 	tk.MustQuery("SELECT table_priv, column_priv FROM mysql.tables_priv WHERE user='u1' AND table_name='t3'").Check(testkit.Rows())
+
+	// Older versions left the column privilege summary in mysql.tables_priv
+	// empty. Revoking one column must not delete the table entry while other
+	// columns are still granted.
+	tk.MustExec("GRANT SELECT(c1, c2) ON test.t1 TO u1")
+	tk.MustExec("UPDATE mysql.tables_priv SET Column_priv = '' WHERE user='u1' AND table_name='t1'")
+	tk.MustExec("FLUSH PRIVILEGES")
+	tk.MustExec("REVOKE ALL(c1) ON test.t1 FROM u1")
+	tk.MustQuery("SELECT column_name, column_priv FROM mysql.columns_priv WHERE user='u1' AND table_name='t1'").
+		Check(testkit.RowsWithSep("|", "c2|Select"))
+	tk.MustQuery("SELECT COUNT(*) FROM mysql.tables_priv WHERE user='u1' AND table_name='t1'").Check(testkit.Rows("1"))
+	tk.MustExec("REVOKE SELECT(c2) ON test.t1 FROM u1")
+	tk.MustQuery("SELECT column_name FROM mysql.columns_priv WHERE user='u1' AND table_name='t1'").Check(testkit.Rows())
+	// A table-level REVOKE also removes old-format column grants.
+	tk.MustExec("GRANT SELECT(c1) ON test.t1 TO u1")
+	tk.MustExec("UPDATE mysql.tables_priv SET Column_priv = '' WHERE user='u1' AND table_name='t1'")
+	tk.MustExec("FLUSH PRIVILEGES")
+	tk.MustExec("REVOKE SELECT ON test.t1 FROM u1")
+	tk.MustQuery("SELECT column_name FROM mysql.columns_priv WHERE user='u1' AND table_name='t1'").Check(testkit.Rows())
+	tk.MustQuery("SELECT COUNT(*) FROM mysql.tables_priv WHERE user='u1' AND table_name='t1'").Check(testkit.Rows("0"))
 }

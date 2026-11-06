@@ -288,26 +288,29 @@ func (e *RevokeExec) revokeTablePriv(ctx context.Context, internalSession sessio
 	}
 
 	// 1. update mysql.tables_priv
-	columnPrivUpdated, err := removePrivFromTablePriv(ctx, internalSession, priv.Priv, host, user, dbName, tblName, checkColumnPrivTbl)
+	err = removePrivFromTablePriv(ctx, internalSession, priv.Priv, host, user, dbName, tblName, checkColumnPrivTbl)
 	if err != nil {
 		return err
 	}
 
-	// 2. update mysql.columns_priv to delete all records related to this privilege
-	if checkColumnPrivTbl && columnPrivUpdated {
+	// 2. update mysql.columns_priv to delete all records related to this privilege.
+	// This does not depend on columnPrivUpdated: older versions left the column
+	// privilege summary in mysql.tables_priv empty even with column grants.
+	if checkColumnPrivTbl {
 		p := &ast.PrivElem{Priv: priv.Priv, Cols: []*ast.ColumnName{}}
 		if err = e.revokeColumnPriv(ctx, internalSession, p, user, host, false); err != nil {
 			return err
 		}
+		// The entry may have been kept in step 1 for the column grants just removed.
+		return deleteEmptyTablePriv(ctx, internalSession, host, user, dbName, tblName)
 	}
 	return err
 }
 
 // Remove priv from Table_priv and Column_priv in mysql.tables_priv
 // It always removes from Column_priv. If removeTableScopePriv is true, it removes from Table_priv.
-// The return value columnPrivUpdated indicates whether some Column_priv have been updated.
 func removePrivFromTablePriv(ctx context.Context, sctx sessionctx.Context,
-	priv mysql.PrivilegeType, host, user, db, table string, removeTableScopePriv bool) (columnPrivUpdated bool, err error) {
+	priv mysql.PrivilegeType, host, user, db, table string, removeTableScopePriv bool) (err error) {
 	sql := new(strings.Builder)
 	if priv == mysql.AllPriv {
 		if removeTableScopePriv {
@@ -338,7 +341,6 @@ func removePrivFromTablePriv(ctx context.Context, sctx sessionctx.Context,
 		if err != nil {
 			return
 		}
-		columnPrivUpdated = sctx.GetSessionVars().StmtCtx.AffectedRows() > 0
 	} else {
 		if removeTableScopePriv {
 			s := strings.Join([]string{"UPDATE %n.%n SET Table_priv = TRIM(BOTH ',' FROM REPLACE(CONCAT(',', Table_priv, ','),',", mysql.Priv2SetStr[priv], ",',',')) WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?"}, "")
@@ -358,14 +360,27 @@ func removePrivFromTablePriv(ctx context.Context, sctx sessionctx.Context,
 		if err != nil {
 			return
 		}
-		columnPrivUpdated = sctx.GetSessionVars().StmtCtx.AffectedRows() > 0
 	}
 
-	sql.Reset()
+	err = deleteEmptyTablePriv(ctx, sctx, host, user, db, table)
+	return
+}
+
+// deleteEmptyTablePriv deletes the mysql.tables_priv entry of the table if it
+// grants nothing. The entry is kept while columns of the table are still
+// granted: older versions left its column privilege summary empty, so an empty
+// summary does not mean that no column privilege is left.
+func deleteEmptyTablePriv(ctx context.Context, sctx sessionctx.Context, host, user, db, table string) error {
+	columnPrivLeft, err := recordExists(sctx, "SELECT * FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?",
+		mysql.SystemDB, mysql.ColumnPrivTable, user, host, db, table)
+	if err != nil || columnPrivLeft {
+		return err
+	}
+	sql := new(strings.Builder)
 	sqlescape.MustFormatSQL(sql, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%? AND Table_priv='' AND Column_priv=''",
 		mysql.SystemDB, mysql.TablePrivTable, user, host, db, table)
 	_, err = sctx.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
-	return
+	return err
 }
 
 // remove priv from Column_priv in mysql.columns_priv
