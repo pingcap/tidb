@@ -2721,6 +2721,23 @@ func TestSelectColumnPrivilege(t *testing.T) {
 	userTk.MustGetErrCode("UPDATE test.star SET `*` = 0", errno.ErrColumnaccessDenied)
 	tk.MustExec("GRANT SELECT(`*`) ON test.star TO 'testuser'@'localhost'")
 	userTk.MustQuery("SELECT `*` FROM test.star").Check(testkit.Rows("42"))
+
+	// Only the column grants of the account matched at login apply.
+	tk.MustExec("CREATE TABLE test.hosts (a int, b int)")
+	tk.MustExec("INSERT INTO test.hosts VALUES (1, 2)")
+	tk.MustExec("CREATE USER 'hostu'@'%', 'hostu'@'127.0.0.1'")
+	tk.MustExec("GRANT SELECT(a) ON test.hosts TO 'hostu'@'%'")
+	tk.MustExec("GRANT SELECT(b) ON test.hosts TO 'hostu'@'127.0.0.1'")
+	localTk := testkit.NewTestKit(t, store)
+	require.NoError(t, localTk.Session().Auth(&auth.UserIdentity{Username: "hostu", Hostname: "127.0.0.1"}, nil, nil, nil))
+	localTk.MustQuery("SELECT CURRENT_USER()").Check(testkit.Rows("hostu@127.0.0.1"))
+	localTk.MustQuery("SELECT b FROM test.hosts").Check(testkit.Rows("2"))
+	localTk.MustGetErrCode("SELECT a FROM test.hosts", errno.ErrColumnaccessDenied)
+	remoteTk := testkit.NewTestKit(t, store)
+	require.NoError(t, remoteTk.Session().Auth(&auth.UserIdentity{Username: "hostu", Hostname: "10.0.0.1"}, nil, nil, nil))
+	remoteTk.MustQuery("SELECT CURRENT_USER()").Check(testkit.Rows("hostu@%"))
+	remoteTk.MustQuery("SELECT a FROM test.hosts").Check(testkit.Rows("1"))
+	remoteTk.MustGetErrCode("SELECT b FROM test.hosts", errno.ErrColumnaccessDenied)
 	// The marker for "any column" can never be the name of a real column.
 	require.Greater(t, utf8.RuneCountInString(privilege.AnyColumn), mysql.MaxColumnNameLength)
 	tk.MustGetErrCode(fmt.Sprintf("CREATE TABLE test.marker (`%s` int)", privilege.AnyColumn), errno.ErrTooLongIdent)

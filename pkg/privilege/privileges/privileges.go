@@ -231,10 +231,13 @@ func (p *UserPrivileges) RequestVerificationWithUser(ctx context.Context, db, ta
 		return true
 	}
 
-	terror.Log(p.Handle.ensureActiveUser(ctx, user.Username))
+	// Privileges are granted to the account the user matched at login, e.g. the
+	// definer of a view created by 'u' connected from localhost is 'u'@'%'.
+	userName, hostName := auth.GetUserAndHostName(user)
+	terror.Log(p.Handle.ensureActiveUser(ctx, userName))
 	mysqlPriv := p.Handle.Get()
-	roles := mysqlPriv.getDefaultRoles(user.Username, user.Hostname)
-	return mysqlPriv.RequestVerification(roles, user.Username, user.Hostname, db, table, column, priv)
+	roles := mysqlPriv.getDefaultRoles(userName, hostName)
+	return mysqlPriv.RequestVerification(roles, userName, hostName, db, table, column, priv)
 }
 
 func (p *UserPrivileges) authenticateWithPlugin(user *auth.UserIdentity, authentication, salt []byte, sessionVars *variable.SessionVars, authConn conn.AuthConn, authPlugin *extension.AuthPlugin, pwd string) error {

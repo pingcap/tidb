@@ -1418,7 +1418,10 @@ func (record *tablesPrivRecord) match(user, host, db, table string) bool {
 func (record *columnsPrivRecord) match(user, host, db, table, col string) bool {
 	// `SELECT COUNT(*) ...` requires a column-level SELECT privilege of any column,
 	// which is requested with privilege.AnyColumn.
-	return record.baseRecord.match(user, host) &&
+	// user and host identify an account (or role), as matched at login, so
+	// only the column grants of exactly that account apply: e.g. 'u'@'127.0.0.1'
+	// does not get the column grants of 'u'@'%', as in MySQL.
+	return record.baseRecord.fullyMatch(user, host) &&
 		strings.EqualFold(record.DB, db) &&
 		strings.EqualFold(record.TableName, table) &&
 		(strings.EqualFold(record.ColumnName, col) || col == privilege.AnyColumn && (record.ColumnPriv&mysql.SelectPriv > 0))
