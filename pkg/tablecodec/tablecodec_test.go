@@ -35,6 +35,10 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 )
 
+func defaultCodecEncoder() codec.Encoder {
+	return codec.NewEncoder(collate.NewCollationEnabled())
+}
+
 // TestTableCodec  tests some functions in package tablecodec
 // TODO: add more tests.
 func TestTableCodec(t *testing.T) {
@@ -101,7 +105,7 @@ func TestRowCodec(t *testing.T) {
 	}
 	rd := rowcodec.Encoder{Enable: true}
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
-	bs, err := EncodeRow(sc.TimeZone(), row, colIDs, nil, nil, nil, &rd)
+	bs, err := EncodeRow(defaultCodecEncoder(), sc.TimeZone(), row, colIDs, nil, nil, nil, &rd)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 
@@ -156,7 +160,7 @@ func TestRowCodec(t *testing.T) {
 	}
 
 	// Make sure empty row return not nil value.
-	bs, err = EncodeOldRow(sc.TimeZone(), []types.Datum{}, []int64{}, nil, nil)
+	bs, err = EncodeOldRow(defaultCodecEncoder(), sc.TimeZone(), []types.Datum{}, []int64{}, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, bs, 1)
 
@@ -170,7 +174,7 @@ func TestDecodeColumnValue(t *testing.T) {
 
 	// test timestamp
 	d := types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, types.DefaultFsp))
-	bs, err := EncodeOldRow(sc.TimeZone(), []types.Datum{d}, []int64{1}, nil, nil)
+	bs, err := EncodeOldRow(defaultCodecEncoder(), sc.TimeZone(), []types.Datum{d}, []int64{1}, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 	_, bs, err = codec.CutOne(bs) // ignore colID
@@ -186,7 +190,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	elems := []string{"a", "b", "c", "d", "e"}
 	e, _ := types.ParseSetValue(elems, uint64(1))
 	d = types.NewMysqlSetDatum(e, "")
-	bs, err = EncodeOldRow(sc.TimeZone(), []types.Datum{d}, []int64{1}, nil, nil)
+	bs, err = EncodeOldRow(defaultCodecEncoder(), sc.TimeZone(), []types.Datum{d}, []int64{1}, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 	_, bs, err = codec.CutOne(bs) // ignore colID
@@ -201,7 +205,7 @@ func TestDecodeColumnValue(t *testing.T) {
 
 	// test bit
 	d = types.NewMysqlBitDatum(types.NewBinaryLiteralFromUint(3223600, 3))
-	bs, err = EncodeOldRow(sc.TimeZone(), []types.Datum{d}, []int64{1}, nil, nil)
+	bs, err = EncodeOldRow(defaultCodecEncoder(), sc.TimeZone(), []types.Datum{d}, []int64{1}, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 	_, bs, err = codec.CutOne(bs) // ignore colID
@@ -216,7 +220,7 @@ func TestDecodeColumnValue(t *testing.T) {
 
 	// test empty enum
 	d = types.NewMysqlEnumDatum(types.Enum{})
-	bs, err = EncodeOldRow(sc.TimeZone(), []types.Datum{d}, []int64{1}, nil, nil)
+	bs, err = EncodeOldRow(defaultCodecEncoder(), sc.TimeZone(), []types.Datum{d}, []int64{1}, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 	_, bs, err = codec.CutOne(bs) // ignore colID
@@ -276,7 +280,7 @@ func TestTimeCodec(t *testing.T) {
 	}
 	rd := rowcodec.Encoder{Enable: true}
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	bs, err := EncodeRow(sc.TimeZone(), row, colIDs, nil, nil, nil, &rd)
+	bs, err := EncodeRow(defaultCodecEncoder(), sc.TimeZone(), row, colIDs, nil, nil, nil, &rd)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 
@@ -324,7 +328,7 @@ func TestCutRow(t *testing.T) {
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
-	bs, err := EncodeOldRow(sc.TimeZone(), row, colIDs, nil, nil)
+	bs, err := EncodeOldRow(defaultCodecEncoder(), sc.TimeZone(), row, colIDs, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 

@@ -113,7 +113,7 @@ func CompatibleCollate(collate1, collate2 string) bool {
 // the protocol definition.
 // When new collations are not enabled, collation id remains the same.
 func RewriteNewCollationIDIfNeeded(id int32) int32 {
-	if atomic.LoadInt32(&newCollationEnabled) == 1 {
+	if NewCollationEnabled() {
 		if id >= 0 {
 			return -id
 		}
@@ -124,7 +124,7 @@ func RewriteNewCollationIDIfNeeded(id int32) int32 {
 
 // RestoreCollationIDIfNeeded restores a collation id if the new collations are enabled.
 func RestoreCollationIDIfNeeded(id int32) int32 {
-	if atomic.LoadInt32(&newCollationEnabled) == 1 {
+	if NewCollationEnabled() {
 		if id <= 0 {
 			return -id
 		}
@@ -133,9 +133,15 @@ func RestoreCollationIDIfNeeded(id int32) int32 {
 	return id
 }
 
-// GetCollator get the collator according to collate, it will return the binary collator if the corresponding collator doesn't exist.
+// GetCollator get the collator according to collate, it will return the binary
+// collator if the corresponding collator doesn't exist.
 func GetCollator(collate string) Collator {
-	if atomic.LoadInt32(&newCollationEnabled) == 1 {
+	return GetCollatorWithCollate(NewCollationEnabled(), collate)
+}
+
+// GetCollatorWithCollate is similar with GetCollator but allow explicit useNewCollate.
+func GetCollatorWithCollate(useNewCollate bool, collate string) Collator {
+	if useNewCollate {
 		ctor, ok := newCollatorMap[collate]
 		if !ok {
 			if collate != "" {
@@ -170,7 +176,7 @@ func GetBinaryCollatorSlice(n int) []Collator {
 
 // GetCollatorByID get the collator according to id, it will return the binary collator if the corresponding collator doesn't exist.
 func GetCollatorByID(id int) Collator {
-	if atomic.LoadInt32(&newCollationEnabled) == 1 {
+	if NewCollationEnabled() {
 		ctor, ok := newCollatorIDMap[id]
 		if !ok {
 			logutil.BgLogger().Warn(
@@ -228,7 +234,7 @@ func GetCollationByName(name string) (coll *charset.Collation, err error) {
 	if coll, err = charset.GetCollationByName(name); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if atomic.LoadInt32(&newCollationEnabled) == 1 {
+	if NewCollationEnabled() {
 		if _, ok := newCollatorIDMap[coll.ID]; !ok {
 			return nil, ErrUnsupportedCollation.GenWithStackByArgs(name)
 		}
@@ -238,7 +244,7 @@ func GetCollationByName(name string) (coll *charset.Collation, err error) {
 
 // GetSupportedCollations gets information for all collations supported so far.
 func GetSupportedCollations() []*charset.Collation {
-	if atomic.LoadInt32(&newCollationEnabled) == 1 {
+	if NewCollationEnabled() {
 		newSupportedCollations := make([]*charset.Collation, 0, len(newCollatorMap))
 		for name := range newCollatorMap {
 			// utf8mb4_zh_pinyin_tidb_as_cs is under developing, should not be shown to user.

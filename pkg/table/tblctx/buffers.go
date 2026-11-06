@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 )
@@ -51,6 +53,7 @@ func (b *EncodeRowBuffer) AddColVal(colID int64, val types.Datum) {
 
 // WriteMemBufferEncoded writes the encoded row to the memBuffer.
 func (b *EncodeRowBuffer) WriteMemBufferEncoded(
+	enc codec.Encoder,
 	cfg RowEncodingConfig, loc *time.Location, ec errctx.Context,
 	memBuffer kv.MemBuffer, key kv.Key, handle kv.Handle, flags ...kv.FlagsOp,
 ) error {
@@ -69,7 +72,7 @@ func (b *EncodeRowBuffer) WriteMemBufferEncoded(
 	stmtBufs.AddRowValues = ensureCapacityAndReset(stmtBufs.AddRowValues, len(b.row)*2)
 
 	encoded, err := tablecodec.EncodeRow(
-		loc, b.row, b.colIDs, stmtBufs.RowValBuf, stmtBufs.AddRowValues, checksum, cfg.RowEncoder,
+		enc, loc, b.row, b.colIDs, stmtBufs.RowValBuf, stmtBufs.AddRowValues, checksum, cfg.RowEncoder,
 	)
 	if err = ec.HandleError(err); err != nil {
 		return err
@@ -85,7 +88,8 @@ func (b *EncodeRowBuffer) WriteMemBufferEncoded(
 // EncodeBinlogRowData encodes the row data for binlog and returns the encoded row value.
 // The returned slice is not referenced in the buffer, so you can cache and modify them freely.
 func (b *EncodeRowBuffer) EncodeBinlogRowData(loc *time.Location, ec errctx.Context) ([]byte, error) {
-	value, err := tablecodec.EncodeOldRow(loc, b.row, b.colIDs, nil, nil)
+	enc := codec.NewEncoder(collate.NewCollationEnabled())
+	value, err := tablecodec.EncodeOldRow(enc, loc, b.row, b.colIDs, nil, nil)
 	err = ec.HandleError(err)
 	if err != nil {
 		return nil, err

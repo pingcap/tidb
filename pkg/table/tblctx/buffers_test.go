@@ -25,6 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -78,6 +80,7 @@ func TestEncodeRow(t *testing.T) {
 	buffer.AddColVal(3, d3)
 	require.Equal(t, []int64{1, 2, 3}, buffer.colIDs)
 	require.Equal(t, []types.Datum{d1, d2, d3}, buffer.row)
+	enc := codec.NewEncoder(collate.NewCollationEnabled())
 
 	for _, c := range []struct {
 		loc              *time.Location
@@ -110,7 +113,7 @@ func TestEncodeRow(t *testing.T) {
 		}
 
 		expectedVal, err := tablecodec.EncodeRow(
-			c.loc, []types.Datum{d1, d2, d3}, []int64{1, 2, 3}, nil, nil, checksum,
+			enc, c.loc, []types.Datum{d1, d2, d3}, []int64{1, 2, 3}, nil, nil, checksum,
 			&rowcodec.Encoder{Enable: !c.oldFormat},
 		)
 		require.NoError(t, err)
@@ -124,7 +127,7 @@ func TestEncodeRow(t *testing.T) {
 				Return(nil).Once()
 		}
 		err = buffer.WriteMemBufferEncoded(
-			cfg, c.loc, errctx.StrictNoWarningContext,
+			enc, cfg, c.loc, errctx.StrictNoWarningContext,
 			memBuffer, kv.Key("key1"), kv.IntHandle(1), c.flags...,
 		)
 		require.NoError(t, err)
@@ -134,7 +137,7 @@ func TestEncodeRow(t *testing.T) {
 
 		// test encode val for binlog
 		expectedVal, err =
-			tablecodec.EncodeOldRow(c.loc, []types.Datum{d1, d2, d3}, []int64{1, 2, 3}, nil, nil)
+			tablecodec.EncodeOldRow(enc, c.loc, []types.Datum{d1, d2, d3}, []int64{1, 2, 3}, nil, nil)
 		require.NoError(t, err)
 		encoded, err := buffer.EncodeBinlogRowData(c.loc, errctx.StrictNoWarningContext)
 		require.NoError(t, err)
@@ -164,7 +167,8 @@ func TestEncodeBufferReserve(t *testing.T) {
 	buffer.AddColVal(2, types.NewIntDatum(2))
 	require.Equal(t, 2, len(buffer.colIDs))
 	require.Equal(t, 2, len(buffer.row))
-	require.NoError(t, buffer.WriteMemBufferEncoded(RowEncodingConfig{
+	enc := codec.NewEncoder(collate.NewCollationEnabled())
+	require.NoError(t, buffer.WriteMemBufferEncoded(enc, RowEncodingConfig{
 		RowEncoder: &rowcodec.Encoder{Enable: true},
 	}, time.UTC, errctx.StrictNoWarningContext, mb, kv.Key("key1"), kv.IntHandle(1)))
 	encodedCap := cap(buffer.writeStmtBufs.RowValBuf)
