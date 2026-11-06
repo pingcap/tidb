@@ -7159,3 +7159,40 @@ fn a_write_reports_its_auto_id_allocations_like_go() {
         assert_eq!(info, expected, "{sql}");
     }
 }
+
+/// Go `outerWorker.buildTask`: each task fills chunks of the outer child's
+/// initial capacity (doubling as they fill) until the batch's rows are read
+/// or a chunk comes back empty, and the outer worker stops only on a task
+/// that reads nothing -- so six outer rows take three `Next` calls. `./gorun`
+/// on this branch:
+///
+/// ```text
+/// t JOIN s ON t.a=s.a       TableReader_29(Build) | 6 | loops:3
+/// t JOIN s ON t.a=s.d       TableReader_38(Build) | 6 | loops:3
+/// t LEFT JOIN s ON t.a=s.a  TableReader_22(Build) | 6 | loops:3
+/// ```
+#[test]
+fn an_index_join_reads_its_outer_side_like_go() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE t (a INT PRIMARY KEY, b INT, c VARCHAR(20), KEY(b))",
+        "CREATE TABLE s (a INT PRIMARY KEY, d INT, KEY(d))",
+        "INSERT INTO t VALUES (1,1,'x'),(2,2,'y'),(3,3,'z'),(4,4,'w'),(5,5,'v'),(6,6,'u')",
+        "INSERT INTO s VALUES (1,10),(2,20),(3,30),(7,70)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    for (sql, outer) in [
+        ("SELECT /*+ inl_join(s) */ * FROM t JOIN s ON t.a=s.a", "TableReader_29(Build)"),
+        ("SELECT /*+ inl_join(s) */ * FROM t JOIN s ON t.a=s.d", "TableReader_38(Build)"),
+        ("SELECT /*+ inl_join(s) */ * FROM t LEFT JOIN s ON t.a=s.a", "TableReader_22(Build)"),
+    ] {
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        let row = rows
+            .iter()
+            .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()) == outer)
+            .unwrap_or_else(|| panic!("{sql}: no {outer} in {rows:?}"));
+        assert_eq!(row[2], "6", "{sql}");
+        assert!(row[5].contains(", loops:3, "), "{sql}: {}", row[5]);
+    }
+}

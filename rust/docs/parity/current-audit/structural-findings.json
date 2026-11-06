@@ -90,8 +90,8 @@
       "id": "E16",
       "status": "open",
       "group": "DML and executor handoff",
-      "finding": "A write statement's `RU` leaves out its transaction's writes: under Go's testkit (`CreateMockStore`) `EXPLAIN ANALYZE INSERT INTO ai (b) VALUES (1),(2)` prints `RU:3.51`, a one-row UPDATE 4.45 and a REPLACE 3.94, where this port prints 0.00, 0.95 and 0.47 (a SELECT agrees at 0.47; `./gorun` prints 0.00 for every statement, so it is no oracle for RU)",
-      "go_owner": "`pkg/executor/explain.go` (`RURuntimeStats`), client-go `util.RUDetails` (the write RU of prewrite and commit)"
+      "finding": "A statement's RU v2 is short on both sides of Go's sum. EXPLAIN ANALYZE registers `RURuntimeStats` with no statement metrics (`explain.rs` `register_ru_runtime_stats`, `metrics: None`), where Go passes the statement's `RUV2Metrics`; and those metrics are fed only by the parser and result cells: Go's `exec.Next` records each executor's rows or cells by type (`ruv2ExecutorMetricByType` -> `AddExecutorMetric`), `ExecStmt` the inserted rows times columns (`AddExecutorL5InsertRows`), the plan builder `AddPlanCnt`, the stats derivation `AddPlanDeriveStatsPaths`, the session `AddTxnCnt`, and `finalizeStatementRUV2Metrics` the commit's write keys and size. Go testkit (`CreateMockStore`): `INSERT INTO ai (b) VALUES (1),(2)` = `executor_l5_insert_rows:2, plan_cnt:2, session_parser_total:1, txn_cnt:1, write_keys:2, write_size:58` (tidb_ru 2.41), its EXPLAIN ANALYZE `RU:3.51`; this port records `session_parser_total:1` (0.39) and prints `RU:0.00`. The TiKV part also differs: Go's auto-ID `RunInNewTxn(ctx, ...)` inherits the statement's `RUDetails`, while this port's allocator transaction charges none. (`./gorun` prints 0.00 for every statement, so it is no oracle for RU.)",
+      "go_owner": "`pkg/executor/internal/exec/executor.go` (`ruv2ExecutorMetricByType`), `pkg/executor/adapter.go` (`AddExecutorL5InsertRows`, `finalizeStatementRUV2Metrics`), `pkg/executor/explain.go`, `pkg/planner/core/planbuilder.go`, `pkg/session`"
     },
     {
       "id": "C01",
