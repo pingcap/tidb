@@ -2995,6 +2995,35 @@ func TestColumnPrivilege4Views(t *testing.T) {
 	userTk.MustQuery(`SELECT * FROM test.v4`)
 	userTk.MustQuery(`SELECT * FROM test.v5`)
 	userTk.MustQuery(`SELECT * FROM test.v6`)
+
+	// 5. The column privilege check follows the table or view a column is read
+	// from, not its alias, and is not skipped by an unrelated CTE name.
+	tk.MustExec(`CREATE TABLE test.s (a INT, secret INT)`)
+	tk.MustExec(`INSERT INTO test.s VALUES (1, 42)`)
+	tk.MustExec(`CREATE SQL SECURITY DEFINER VIEW test.vs AS SELECT a, secret FROM test.s`)
+	tk.MustExec(`GRANT SELECT(a) ON test.s TO 'testuser'@'localhost'`)
+	tk.MustExec(`GRANT SELECT ON test.vs TO 'testuser'@'localhost'`)
+	userTk.MustQuery(`SELECT x.secret FROM test.vs AS x`).Check(testkit.Rows("42"))
+	userTk.MustQuery(`SELECT x.a FROM test.vs AS x ORDER BY x.secret`).Check(testkit.Rows("1"))
+	userTk.MustQuery(`SELECT COUNT(*) FROM test.vs AS x`).Check(testkit.Rows("1"))
+	userTk.MustQuery(`SELECT x.a FROM test.vs AS x JOIN test.vs AS y USING (secret)`).Check(testkit.Rows("1"))
+	userTk.MustQuery(`WITH c AS (SELECT secret FROM test.vs) SELECT c.secret FROM c`).Check(testkit.Rows("42"))
+	userTk.MustGetErrCode(`SELECT vs.secret FROM test.s AS vs`, errno.ErrColumnaccessDenied)
+	userTk.MustGetErrCode(`SELECT vs.a FROM test.s AS vs NATURAL JOIN test.vs AS y`, errno.ErrColumnaccessDenied)
+	userTk.MustGetErrCode(`WITH s AS (SELECT 1 AS x) SELECT secret FROM test.s`, errno.ErrColumnaccessDenied)
+	userTk.MustGetErrCode(`WITH s AS (SELECT 1 AS x) SELECT test.s.secret FROM s, test.s`, errno.ErrColumnaccessDenied)
+
+	// 6. Reading a view without referencing its columns still requires SELECT
+	// on the view.
+	tk.MustExec(`CREATE USER 'nopriv'@'localhost'`)
+	noPrivTk := testkit.NewTestKit(t, store)
+	require.NoError(t, noPrivTk.Session().Auth(&auth.UserIdentity{Username: "nopriv", Hostname: "localhost"}, nil, nil, nil))
+	noPrivTk.MustGetErrCode(`SELECT 1 FROM test.vs`, errno.ErrTableaccessDenied)
+	noPrivTk.MustGetErrCode(`SELECT SUM(1) FROM test.vs`, errno.ErrTableaccessDenied)
+	noPrivTk.MustGetErrCode(`SELECT EXISTS (SELECT 1 FROM test.vs)`, errno.ErrTableaccessDenied)
+	tk.MustExec(`GRANT SELECT(a) ON test.vs TO 'nopriv'@'localhost'`)
+	noPrivTk.MustQuery(`SELECT 1 FROM test.vs`).Check(testkit.Rows("1"))
+	noPrivTk.MustQuery(`SELECT EXISTS (SELECT 1 FROM test.vs)`).Check(testkit.Rows("1"))
 }
 
 func TestColumnPrivilege4TraceAndExplain(t *testing.T) {

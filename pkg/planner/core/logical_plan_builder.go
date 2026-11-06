@@ -523,6 +523,7 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 					DBName:            dbName,
 					OrigTblName:       name.OrigTblName,
 					OrigColName:       name.OrigColName,
+					OrigViewName:      name.OrigViewName,
 					TblName:           x.AsName,
 					ColName:           name.ColName,
 					NotExplicitUsable: name.NotExplicitUsable,
@@ -1271,20 +1272,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 			rNames[commonLen] = name
 
 			for _, fieldName := range []*types.FieldName{lNames[commonLen], rNames[commonLen]} {
-				colName := &ast.ColumnName{
-					Name:   fieldName.OrigColName,
-					Table:  fieldName.OrigTblName,
-					Schema: fieldName.DBName,
-				}
-				if b.is != nil && infoschema.TableIsView(b.is, fieldName.DBName, fieldName.TblName) {
-					colName.Name = fieldName.ColName
-					colName.Table = fieldName.TblName
-				}
-				if len(colName.Name.L) > 0 && len(colName.Table.L) > 0 && len(colName.Schema.L) > 0 {
-					// The column privilege is checked in the definition of CTE.
-					if _, ok := b.nameMapCTE[colName.Table.L]; ok {
-						continue
-					}
+				if colName := columnNameForPrivCheck(fieldName); colName != nil {
 					b.appendColNamesToVisitInfo([]*ast.ColumnName{colName})
 				}
 			}
@@ -1521,13 +1509,13 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(_ context.Context,
 
 func buildExpandFieldName(ctx expression.EvalContext, expr expression.Expression, name *types.FieldName, genName string) *types.FieldName {
 	_, isCol := expr.(*expression.Column)
-	var origTblName, origColName, dbName, colName, tblName ast.CIStr
+	var origTblName, origColName, origViewName, dbName, colName, tblName ast.CIStr
 	if genName != "" {
 		// for case like: gid_, gpos_
 		colName = ast.NewCIStr(expr.StringWithCtx(ctx, errors.RedactLogDisable))
 	} else if isCol {
 		// col ref to original col, while its nullability may be changed.
-		origTblName, origColName, dbName = name.OrigTblName, name.OrigColName, name.DBName
+		origTblName, origColName, origViewName, dbName = name.OrigTblName, name.OrigColName, name.OrigViewName, name.DBName
 		colName = ast.NewCIStr("ex_" + name.ColName.O)
 		tblName = ast.NewCIStr("ex_" + name.TblName.O)
 	} else {
@@ -1535,18 +1523,19 @@ func buildExpandFieldName(ctx expression.EvalContext, expr expression.Expression
 		colName = ast.NewCIStr("ex_" + expr.StringWithCtx(ctx, errors.RedactLogDisable))
 	}
 	newName := &types.FieldName{
-		TblName:     tblName,
-		OrigTblName: origTblName,
-		ColName:     colName,
-		OrigColName: origColName,
-		DBName:      dbName,
+		TblName:      tblName,
+		OrigTblName:  origTblName,
+		ColName:      colName,
+		OrigColName:  origColName,
+		DBName:       dbName,
+		OrigViewName: origViewName,
 	}
 	return newName
 }
 
 // buildProjectionField builds the field object according to SelectField in projection.
 func (b *PlanBuilder) buildProjectionField(ctx context.Context, p base.LogicalPlan, field *ast.SelectField, expr expression.Expression) (*expression.Column, *types.FieldName, error) {
-	var origTblName, tblName, origColName, colName, dbName ast.CIStr
+	var origTblName, tblName, origColName, colName, dbName, origViewName ast.CIStr
 	innerNode := getInnerFromParenthesesAndUnaryPlus(field.Expr)
 	col, isCol := expr.(*expression.Column)
 	// For correlated columns (e.g., from LATERAL joins), use the AST column name
@@ -1564,6 +1553,7 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p base.LogicalPl
 			name = p.OutputNames()[idx]
 		}
 		colName, origColName, tblName, origTblName, dbName = b.buildProjectionFieldNameFromColumns(field, colNameField, name)
+		origViewName = name.OrigViewName
 	} else if colNameField, ok := innerNode.(*ast.ColumnNameExpr); ok && !isCol {
 		if _, isCorCol := expr.(*expression.CorrelatedColumn); isCorCol {
 			// Correlated column reference (e.g., `t.a` in LATERAL subquery).
@@ -1592,11 +1582,12 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p base.LogicalPl
 		}
 	}
 	name := &types.FieldName{
-		TblName:     tblName,
-		OrigTblName: origTblName,
-		ColName:     colName,
-		OrigColName: origColName,
-		DBName:      dbName,
+		TblName:      tblName,
+		OrigTblName:  origTblName,
+		ColName:      colName,
+		OrigColName:  origColName,
+		DBName:       dbName,
+		OrigViewName: origViewName,
 	}
 	if isCol {
 		return col, name, nil
@@ -5708,11 +5699,12 @@ func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName ast.CIStr, tab
 		}
 		projNames = append(projNames, &types.FieldName{
 			// TblName is the of view instead of the name of the underlying table.
-			TblName:     tableInfo.Name,
-			OrigTblName: name.OrigTblName,
-			ColName:     columnInfo[i].Name,
-			OrigColName: origColName,
-			DBName:      dbName,
+			TblName:      tableInfo.Name,
+			OrigTblName:  name.OrigTblName,
+			ColName:      columnInfo[i].Name,
+			OrigColName:  origColName,
+			DBName:       dbName,
+			OrigViewName: tableInfo.Name,
 		})
 		projSchema.Append(&expression.Column{
 			UniqueID: cols[i].UniqueID,
@@ -7976,6 +7968,7 @@ func (b *PlanBuilder) adjustCTEPlanOutputName(p base.LogicalPlan, def *ast.Commo
 			DBName:            name.DBName,
 			OrigTblName:       name.OrigTblName,
 			OrigColName:       name.OrigColName,
+			OrigViewName:      name.OrigViewName,
 			TblName:           def.Name, // Set to CTE name
 			ColName:           name.ColName,
 			NotExplicitUsable: name.NotExplicitUsable,

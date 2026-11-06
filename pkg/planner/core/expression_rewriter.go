@@ -2629,19 +2629,14 @@ func (er *expressionRewriter) collectPrivsForCount() {
 	// dbName -> tableName
 	tableNames := make(map[string]map[string]struct{})
 	for _, fieldName := range er.names {
-		tblName := &ast.TableName{
-			Name:   fieldName.OrigTblName,
-			Schema: fieldName.DBName,
+		colName := columnNameForPrivCheck(fieldName)
+		if colName == nil {
+			continue
 		}
-		if b.is != nil && infoschema.TableIsView(b.is, fieldName.DBName, fieldName.TblName) {
-			tblName.Name = fieldName.TblName
+		if _, ok := tableNames[colName.Schema.L]; !ok {
+			tableNames[colName.Schema.L] = make(map[string]struct{})
 		}
-		if len(tblName.Name.L) > 0 && len(tblName.Schema.L) > 0 {
-			if _, ok := tableNames[tblName.Schema.L]; !ok {
-				tableNames[tblName.Schema.L] = make(map[string]struct{})
-			}
-			tableNames[tblName.Schema.L][tblName.Name.L] = struct{}{}
-		}
+		tableNames[colName.Schema.L][colName.Table.L] = struct{}{}
 	}
 
 	user, host := auth.GetUserAndHostName(b.ctx.GetSessionVars().User)
@@ -3039,24 +3034,31 @@ func (b *PlanBuilder) appendColNamesToVisitInfo(columnVisited []*ast.ColumnName)
 }
 
 func (er *expressionRewriter) precollectColNames(fieldName *types.FieldName) {
+	if colName := columnNameForPrivCheck(fieldName); colName != nil {
+		er.planCtx.colNamesForLazilyPrivilegeCheck = append(er.planCtx.colNamesForLazilyPrivilegeCheck, colName)
+	}
+}
+
+// columnNameForPrivCheck returns the table or view column whose SELECT
+// privilege is required to read fieldName, or nil if reading it needs no
+// column privilege check.
+//
+// The identity comes from the Orig* fields, never from the alias in TblName,
+// so an alias cannot redirect the check to another table or view. Columns
+// of derived tables have an empty DBName and are checked in the definition
+// of the derived table. Columns of a CTE keep the identity of the column
+// they come from, so they are checked again, which is redundant but safe.
+func columnNameForPrivCheck(fieldName *types.FieldName) *ast.ColumnName {
 	colName := &ast.ColumnName{
 		Name:   fieldName.OrigColName,
 		Table:  fieldName.OrigTblName,
 		Schema: fieldName.DBName,
 	}
-	b := er.planCtx.builder
-	if b != nil && b.is != nil && infoschema.TableIsView(b.is, fieldName.DBName, fieldName.TblName) {
-		colName.Name = fieldName.ColName
-		colName.Table = fieldName.TblName
+	if fieldName.OrigViewName.L != "" {
+		colName.Table = fieldName.OrigViewName
 	}
-
-	// When checking a derived table, its colName.Schema.L would be empty, we can just skip it.
-	// Because the column privilege is checked in the definition of derived table.
-	if len(colName.Name.L) > 0 && len(colName.Table.L) > 0 && len(colName.Schema.L) > 0 {
-		// The column privilege is checked in the definition of CTE.
-		if _, ok := b.nameMapCTE[colName.Table.L]; ok {
-			return
-		}
-		er.planCtx.colNamesForLazilyPrivilegeCheck = append(er.planCtx.colNamesForLazilyPrivilegeCheck, colName)
+	if len(colName.Name.L) == 0 || len(colName.Table.L) == 0 || len(colName.Schema.L) == 0 {
+		return nil
 	}
+	return colName
 }
