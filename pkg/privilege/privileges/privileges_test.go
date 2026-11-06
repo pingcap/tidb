@@ -3056,6 +3056,18 @@ func TestColumnPrivilege4Views(t *testing.T) {
 	tk.MustExec(`GRANT SELECT(a) ON test.vs TO 'nopriv'@'localhost'`)
 	noPrivTk.MustQuery(`SELECT 1 FROM test.vs`).Check(testkit.Rows("1"))
 	noPrivTk.MustQuery(`SELECT EXISTS (SELECT 1 FROM test.vs)`).Check(testkit.Rows("1"))
+
+
+	// 7. A view column is identified by its own name, even when the view
+	// renames the columns of its SELECT.
+	tk.MustExec(`CREATE SQL SECURITY DEFINER VIEW test.vswap(a, secret) AS SELECT secret, a FROM test.s`)
+	tk.MustExec(`CREATE SQL SECURITY DEFINER VIEW test.vcalc(x) AS SELECT secret + 1 FROM test.s`)
+	tk.MustExec(`GRANT SELECT(a) ON test.vswap TO 'nopriv'@'localhost'`)
+	tk.MustExec(`GRANT SELECT(x) ON test.vcalc TO 'nopriv'@'localhost'`)
+	noPrivTk.MustQuery(`SELECT a FROM test.vswap`).Check(testkit.Rows("42"))
+	noPrivTk.MustQuery(`SELECT y.a FROM test.vswap AS y ORDER BY y.a`).Check(testkit.Rows("42"))
+	noPrivTk.MustGetErrCode(`SELECT secret FROM test.vswap`, errno.ErrColumnaccessDenied)
+	noPrivTk.MustQuery(`SELECT x FROM test.vcalc`).Check(testkit.Rows("43"))
 }
 
 func TestColumnPrivilege4TraceAndExplain(t *testing.T) {

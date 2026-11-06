@@ -3057,6 +3057,7 @@ func columnNameForPrivCheck(fieldName *types.FieldName) *ast.ColumnName {
 	}
 	if fieldName.OrigViewName.L != "" {
 		colName.Table = fieldName.OrigViewName
+		colName.Name = fieldName.OrigViewColName
 	}
 	if len(colName.Name.L) == 0 || len(colName.Table.L) == 0 || len(colName.Schema.L) == 0 {
 		return nil
