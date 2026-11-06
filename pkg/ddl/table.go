@@ -1993,6 +1993,9 @@ func updateVersionAndTableInfo(jobCtx *jobContext, job *model.Job, tblInfo *mode
 			return 0, errors.Trace(err)
 		}
 	}
+	if jobCtx.multiSchemaDiff != nil {
+		SetSchemaDiffForMultiInfos(jobCtx.multiSchemaDiff, multiInfos...)
+	}
 	return ver, nil
 }
 

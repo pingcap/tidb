@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	ddlsess "github.com/pingcap/tidb/pkg/ddl/session"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -786,6 +788,114 @@ func TestNestedMaterializedViewModifyColumnUnreferencedOutput(t *testing.T) {
 		"$mlog$mv1 k bigint", "$mlog$t a bigint", "mv1 k bigint", "mv2 x bigint", "t a bigint",
 	))
 	require.Equal(t, before, tk.MustQuery(unaffectedSQL).Rows())
+}
+
+func TestNestedMaterializedViewModifyColumnNewDescendants(t *testing.T) {
+	for _, cacheSize := range []int64{0, 1 << 30} {
+		t.Run(fmt.Sprintf("schema_cache_size=%d", cacheSize), func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := testkit.NewTestKit(t, store)
+			originalCacheSize := tk.MustQuery("select @@global.tidb_schema_cache_size").Rows()[0][0]
+			defer tk.MustExec(fmt.Sprintf("set @@global.tidb_schema_cache_size = %v", originalCacheSize))
+			tk.MustExec(fmt.Sprintf("set @@global.tidb_schema_cache_size = %d", cacheSize))
+			tk.MustExec("use test")
+			tk.MustExec("create table t (a int not null, b int not null)")
+			tk.MustExec("insert into t values (1, 10)")
+			tk.MustExec("create materialized view log on t (a, b)")
+			tk.MustExec("create materialized view mv1 (k, l, cnt) as select a, b, count(1) from t group by a, b")
+			tk.MustExec("create materialized view log on mv1 (k, l)")
+			tk.MustExec("create materialized view mv2 (x, y, cnt) as select k, l, count(1) from mv1 group by k, l")
+			tk.MustExec("create materialized view log on mv2 (x, y)")
+
+			const alterSQL = "alter table t modify column a bigint not null, modify column b bigint not null"
+			require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
+			stmt, err := parser.New().ParseOneStmt(alterSQL, "", "")
+			require.NoError(t, err)
+			is := dom.InfoSchema()
+			isV2, _ := infoschema.IsV2(is)
+			require.Equal(t, cacheSize > 0, isV2)
+			schema, ok := is.SchemaByName(pmodel.NewCIStr("test"))
+			require.True(t, ok)
+			base, err := is.TableByName(context.Background(), schema.Name, pmodel.NewCIStr("t"))
+			require.NoError(t, err)
+			var jobW *ddl.JobWrapper
+			var subJobs []*model.SubJob
+			for _, spec := range stmt.(*ast.AlterTableStmt).Specs {
+				columnJob, err := ddl.GetModifiableColumnJob(context.Background(), tk.Session(), is,
+					ast.Ident{Schema: schema.Name, Name: base.Meta().Name}, spec.NewColumns[0].Name.Name, schema, base, spec)
+				require.NoError(t, err)
+				if jobW == nil {
+					jobW = columnJob
+				}
+				subJobs = append(subJobs, &model.SubJob{
+					Type: columnJob.Type, JobArgs: columnJob.JobArgs,
+					Revertible: true, ReorgTp: columnJob.ReorgMeta.ReorgTp,
+					CtxVars: columnJob.CtxVars, InvolvingSchemaInfo: columnJob.InvolvingSchemaInfo,
+				})
+			}
+			jobW.Type = model.ActionMultiSchemaChange
+			jobW.MultiSchemaInfo = &model.MultiSchemaInfo{Revertible: true, SubJobs: subJobs}
+			jobW = ddl.NewJobWrapperWithArgs(jobW.Job, &model.EmptyArgs{}, false)
+
+			// These tables are absent from the already constructed job's involving set.
+			tk.MustExec("create materialized view mv3 (i, j, cnt) as select x, y, count(1) from mv2 group by x, y")
+			tk.MustExec("create materialized view log on mv3 (i, j)")
+			// This branch changes only in the second sub-job, which skips schema version generation.
+			tk.MustExec("create materialized view mv4 (j, cnt) as select y, count(1) from mv2 group by y")
+			tk.MustExec("create materialized view log on mv4 (j)")
+			involving := involvingSchemaInfoSet(jobW.GetInvolvingSchemaInfo())
+			for _, name := range []string{"mv3", "$mlog$mv3", "mv4", "$mlog$mv4"} {
+				require.NotContains(t, involving, "test\x00"+name)
+			}
+			var expectedAffectedIDs []int64
+			for _, name := range []string{"$mlog$t", "mv1", "$mlog$mv1", "mv2", "$mlog$mv2", "mv3", "$mlog$mv3", "mv4", "$mlog$mv4"} {
+				// Prime the table cache so a full metadata fetch cannot hide a missing diff entry.
+				tbl, err := dom.InfoSchema().TableByName(context.Background(), schema.Name, pmodel.NewCIStr(name))
+				require.NoError(t, err)
+				expectedAffectedIDs = append(expectedAffectedIDs, tbl.Meta().ID)
+			}
+			require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
+			tk.Session().SetValue(sessionctx.QueryString, alterSQL)
+			require.NoError(t, dom.DDLExecutor().(ddl.ExecutorForTest).DoDDLJobWrapper(tk.Session(), jobW))
+			jobID, err := strconv.ParseInt(fmt.Sprint(tk.MustQuery("admin show ddl jobs 1").Rows()[0][0]), 10, 64)
+			require.NoError(t, err)
+			historyJob, err := ddl.GetHistoryJobByID(tk.Session(), jobID)
+			require.NoError(t, err)
+			require.Equal(t, model.ActionMultiSchemaChange, historyJob.Type)
+			require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+				m := meta.NewMutator(txn)
+				for _, tableID := range append(expectedAffectedIDs, base.Meta().ID) {
+					tbl, err := m.GetTable(schema.ID, tableID)
+					require.NoError(t, err)
+					for _, col := range tbl.Columns {
+						switch col.Name.L {
+						case "a", "b", "k", "l", "x", "y", "i", "j":
+							require.Equal(t, mysql.TypeLonglong, col.GetType(), "%s.%s", tbl.Name, col.Name)
+						}
+					}
+				}
+				diff, err := m.GetSchemaDiff(historyJob.BinlogInfo.SchemaVersion)
+				require.NoError(t, err)
+				require.NotNil(t, diff)
+				var affectedIDs []int64
+				for _, option := range diff.AffectedOpts {
+					affectedIDs = append(affectedIDs, option.TableID)
+				}
+				require.ElementsMatch(t, expectedAffectedIDs, affectedIDs)
+				return nil
+			}))
+			tk.MustQuery("select table_name, column_name, data_type from information_schema.columns where table_schema = 'test' and column_name in ('a', 'b', 'k', 'l', 'x', 'y', 'i', 'j') order by table_name, ordinal_position").Check(testkit.Rows(
+				"$mlog$mv1 k bigint", "$mlog$mv1 l bigint", "$mlog$mv2 x bigint", "$mlog$mv2 y bigint", "$mlog$mv3 i bigint", "$mlog$mv3 j bigint", "$mlog$mv4 j bigint",
+				"$mlog$t a bigint", "$mlog$t b bigint", "mv1 k bigint", "mv1 l bigint", "mv2 x bigint", "mv2 y bigint", "mv3 i bigint", "mv3 j bigint", "mv4 j bigint", "t a bigint", "t b bigint",
+			))
+			tk.MustExec("insert into t values (2147483648, 2147483649)")
+			for _, name := range []string{"mv1", "mv2", "mv3", "mv4"} {
+				tk.MustExec("refresh materialized view " + name + " fast")
+			}
+			tk.MustQuery("select * from mv3 order by i").Check(testkit.Rows("1 10 1", "2147483648 2147483649 1"))
+			tk.MustQuery("select * from mv4 order by j").Check(testkit.Rows("10 1", "2147483649 1"))
+		})
+	}
 }
 
 func TestNestedMaterializedViewModifyColumnRejectsDownstreamUsage(t *testing.T) {

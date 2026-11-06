@@ -109,6 +109,9 @@ type jobContext struct {
 	// buffer, so any error after that must discard the whole DDL transaction.
 	// Currently, only MView/MLog DDL paths use this mechanism.
 	mustRollbackTxnOnError bool
+	// multiSchemaDiff accumulates related-table updates while sub-jobs cross
+	// the non-revertible boundary in the same transaction.
+	multiSchemaDiff *model.SchemaDiff
 
 	metaMut *meta.Mutator
 	// decoded JobArgs, we store it here to avoid decoding it multiple times and

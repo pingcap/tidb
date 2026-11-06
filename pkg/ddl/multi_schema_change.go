@@ -82,6 +82,16 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 		}
 		var schemaVersionGenerated = false
 		subJobs := make([]model.SubJob, len(job.MultiSchemaInfo.SubJobs))
+		diff := &model.SchemaDiff{
+			Type:     job.Type,
+			TableID:  job.TableID,
+			SchemaID: job.SchemaID,
+		}
+		SetSchemaDiffForMultiInfos(diff, collectAffectedTableInfosFromInvolving(jobCtx, job)...)
+		// Execution can discover related tables absent from the submitted involving set.
+		// Collect updates even from sub-jobs that skip schema version generation.
+		jobCtx.multiSchemaDiff = diff
+		defer func() { jobCtx.multiSchemaDiff = nil }()
 		// Step the sub-jobs to the non-revertible states all at once.
 		// We only generate 1 schema version for these sub-job.
 		actionTypes := make([]model.ActionType, 0, len(job.MultiSchemaInfo.SubJobs))
@@ -119,18 +129,9 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			actionTypes = append(actionTypes, sub.Type)
 		}
 		if len(actionTypes) > 1 {
-			// only single table schema changes can be put into a multi-schema-change
-			// job except AddForeignKey which is handled separately in the first loop.
-			// so this diff is enough, but it wound be better to accumulate all the diffs,
-			// and then merge them into a single diff.
-			diff := &model.SchemaDiff{
-				Version:        ver,
-				Type:           job.Type,
-				TableID:        job.TableID,
-				SchemaID:       job.SchemaID,
-				SubActionTypes: actionTypes,
-			}
-			SetSchemaDiffForMultiInfos(diff, collectAffectedTableInfosFromInvolving(jobCtx, job)...)
+			// Publish all related tables updated by sub-jobs under the shared schema version.
+			diff.Version = ver
+			diff.SubActionTypes = actionTypes
 			if err = metaMut.SetSchemaDiff(diff); err != nil {
 				return ver, err
 			}
