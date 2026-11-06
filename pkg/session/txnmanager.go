@@ -342,10 +342,42 @@ func (m *txnManager) AdviseWarmup() error {
 		return nil
 	}
 
+	if !needTxnWarmup(m.stmtNode) {
+		return nil
+	}
+
 	if m.ctxProvider != nil {
 		return m.ctxProvider.AdviseWarmup()
 	}
 	return nil
+}
+
+// needTxnWarmup is false for statements that never read with a prefetched timestamp.
+func needTxnWarmup(node ast.StmtNode) bool {
+	switch x := node.(type) {
+	case *ast.CommitStmt, *ast.RollbackStmt:
+		return false
+	case *ast.SetStmt:
+		finder := &subqueryFinder{}
+		x.Accept(finder)
+		return finder.found
+	}
+	return true
+}
+
+type subqueryFinder struct {
+	found bool
+}
+
+func (f *subqueryFinder) Enter(n ast.Node) (ast.Node, bool) {
+	if _, ok := n.(*ast.SubqueryExpr); ok {
+		f.found = true
+	}
+	return n, f.found
+}
+
+func (*subqueryFinder) Leave(n ast.Node) (ast.Node, bool) {
+	return n, true
 }
 
 // AdviseOptimizeWithPlan providers optimization according to the plan
