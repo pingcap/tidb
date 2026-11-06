@@ -385,6 +385,46 @@ func TestIntersectionEmpty(t *testing.T) {
 
 // Test intersections where one input is a subset of the other.
 func TestIntersectionSubset(t *testing.T) {
+	t.Run("nullable suffix", func(t *testing.T) {
+		ctx := coretestsdk.MockContext()
+		defer domain.GetDomain(ctx).StatsHandle().Close()
+		point := ranger.Range{
+			LowVal:    []types.Datum{types.NewIntDatum(1), {}},
+			HighVal:   []types.Datum{types.NewIntDatum(1), {}},
+			Collators: collate.GetBinaryCollatorSlice(2),
+		}
+		for _, exclude := range []bool{false, true} {
+			for _, lower := range []bool{false, true} {
+				prefix := ranger.Range{
+					LowVal:    []types.Datum{types.NewIntDatum(0)},
+					HighVal:   []types.Datum{types.NewIntDatum(2)},
+					Collators: collate.GetBinaryCollatorSlice(1),
+				}
+				if lower {
+					prefix.LowVal[0] = types.NewIntDatum(1)
+					prefix.LowExclude = exclude
+				} else {
+					prefix.HighVal[0] = types.NewIntDatum(1)
+					prefix.HighExclude = exclude
+				}
+				for _, reverse := range []bool{false, true} {
+					left, right := &prefix, &point
+					if reverse {
+						left, right = right, left
+					}
+					got, err := left.IntersectRange(ctx.GetRangerCtx().TypeCtx, right)
+					require.NoError(t, err)
+					if exclude {
+						require.Nil(t, got)
+					} else {
+						require.NotNil(t, got)
+						require.Equal(t, point.String(), got.String())
+					}
+				}
+			}
+		}
+	})
+
 	expectedResult := map[string]string{
 		"[1,5] [2,4]":                 "[2,4]",
 		"(1,5] (2,4]":                 "(2,4]",

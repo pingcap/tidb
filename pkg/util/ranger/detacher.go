@@ -391,6 +391,45 @@ func chooseBetweenRangeAndPoint(sctx *rangerctx.RangerContext, r1 *DetachRangeRe
 	}
 }
 
+// intersectAppendedRanges restores constraints on the leading columns that were
+// left as residual filters while building ranges on the suffix columns.
+func (d *rangeDetacher) intersectAppendedRanges(res *DetachRangeResult, best *cnfItemRangeResult) {
+	if !fixcontrol.GetBoolWithDefault(d.sctx.OptimizerFixControl, fixcontrol.Fix54337, false) || best == nil || best.rangeResult == nil {
+		return
+	}
+	intersection := make(Ranges, 0)
+	var memUsage int64
+	for _, left := range res.Ranges {
+		for _, right := range best.rangeResult.Ranges {
+			if !checkCollators(left, right, min(len(left.LowVal), len(right.LowVal))) {
+				return
+			}
+			r, err := left.IntersectRange(d.sctx.TypeCtx, right)
+			if err != nil {
+				return
+			}
+			if r == nil {
+				continue
+			}
+			memUsage += r.MemUsage()
+			if d.rangeMaxSize > 0 && memUsage > d.rangeMaxSize {
+				d.sctx.RecordRangeFallback(d.rangeMaxSize)
+				return
+			}
+			intersection = append(intersection, r)
+		}
+	}
+	intersection, err := UnionRanges(d.sctx, intersection, d.mergeConsecutive)
+	if err != nil {
+		return
+	}
+	res.Ranges = intersection
+	res.AccessConds = AppendConditionsIfNotExist(d.sctx.ExprCtx.GetEvalCtx(), res.AccessConds, best.rangeResult.AccessConds)
+	// Access conditions can describe only an approximation (e.g. prefix indexes).
+	// Neither candidate's residual filters can be removed merely by intersecting.
+	res.RemainedConds = AppendConditionsIfNotExist(d.sctx.ExprCtx.GetEvalCtx(), res.RemainedConds, best.rangeResult.RemainedConds)
+}
+
 // detachCNFCondAndBuildRangeForIndex will detach the index filters from table filters. These conditions are connected with `and`
 // It will first find the point query column and then extract the range query column.
 // considerDNF is true means it will try to extract access conditions from the DNF expressions.
@@ -536,6 +575,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 					}
 					res.EqOrInCount = res.EqOrInCount + tailRes.EqOrInCount
 				}
+				d.intersectAppendedRanges(res, bestCNFItemRes)
 				return res, nil
 			}
 			res.RemainedConds = append(res.RemainedConds, tailRes.RemainedConds...)

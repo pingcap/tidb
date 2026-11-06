@@ -385,43 +385,6 @@ func formatDatum(d types.Datum, isLeftSide bool) string {
 	return fmt.Sprintf("%v", d.GetValue())
 }
 
-// extendBound extends a partial bound slice by appending "infinite" sentinel values.
-// It's used when constructing multi-column index scan ranges.
-//
-// The logic depends on whether the bound is a lower or upper bound,
-// and whether it's open (exclusive) or closed (inclusive):
-//   - Lower Bound (`low == true`):
-//   - Open   -> append +∞ (represented by MaxInt64): exclude current value, start just above
-//   - Closed -> append –∞ (represented by MinInt64): include all lower values
-//   - Upper Bound (`low == false`):
-//   - Open   -> append –∞ (represented by MinInt64): exclude current value, stop just below
-//   - Closed -> append +∞ (represented by MaxInt64): include all higher values
-//
-// This padding is essential in multi-column indexes when only a prefix of the columns
-// is constrained. The remaining columns are filled with ±∞ to form complete range bounds.
-func extendBound(bound []types.Datum, lowIndex int, highIndex int, low bool, open bool) []types.Datum {
-	for i := lowIndex; i < highIndex; i++ {
-		if low {
-			if open {
-				// Open lower bound → +∞ (exclude the current value)
-				bound = append(bound, types.MaxValueDatum())
-			} else {
-				// Closed lower bound → –∞ (include all lower values)
-				bound = append(bound, types.MinNotNullDatum())
-			}
-		} else {
-			if open {
-				// Open upper bound → –∞ (exclude the current value)
-				bound = append(bound, types.MinNotNullDatum())
-			} else {
-				// Closed upper bound → +∞ (include all higher values)
-				bound = append(bound, types.MaxValueDatum())
-			}
-		}
-	}
-	return bound
-}
-
 // compareLexicographically compares two bounds from two ranges and returns 0, 1, -1
 // for equal, greater than or less than respectively. It gets the two bounds,
 // collations and if each bound is open (open1, open2) or closed. In addition,
@@ -431,30 +394,29 @@ func compareLexicographically(tc types.Context, bound1, bound2 []types.Datum, co
 	open1, open2, low1, low2 bool) (int, error) {
 	n1 := len(bound1)
 	n2 := len(bound2)
-	localBound1 := bound1
-	localBound2 := bound2
-
-	if n1 < n2 {
-		// Copy bound1 before extending
-		localBound1 = make([]types.Datum, n1)
-		copy(localBound1, bound1)
-		localBound1 = extendBound(localBound1, n1, n2, low1, open1)
-	} else if n2 < n1 {
-		// Copy bound2 before extending
-		localBound2 = make([]types.Datum, n2)
-		copy(localBound2, bound2)
-		localBound2 = extendBound(localBound2, n2, n1, low2, open2)
-	}
-
-	n := max(n1, n2)
-	for i := range n {
-		cmp, err := localBound1[i].Compare(tc, &localBound2[i], collators[i])
+	for i := range min(n1, n2) {
+		cmp, err := bound1[i].Compare(tc, &bound2[i], collators[i])
 		if err != nil {
 			return 0, err
 		}
 		if cmp != 0 {
 			return cmp, nil
 		}
+	}
+	// A closed lower prefix precedes every suffix, including NULL. An open
+	// upper prefix does too; the other prefix bounds follow every suffix.
+	// No Datum sentinel represents these positions outside all suffix values.
+	if n1 < n2 {
+		if low1 != open1 {
+			return -1, nil
+		}
+		return 1, nil
+	}
+	if n2 < n1 {
+		if low2 != open2 {
+			return 1, nil
+		}
+		return -1, nil
 	}
 
 	switch {
