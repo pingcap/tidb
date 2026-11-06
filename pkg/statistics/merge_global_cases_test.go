@@ -1003,3 +1003,55 @@ func TestMergePartTopNAndHistToGlobalSingletonFilter(t *testing.T) {
 		"numTopN=statistics.DefaultTopNValue with active default 150 should keep statistics.DefaultTopNValue singletons; got %d", len(cTopN.TopN))
 	rowsPreserved(t, constTC, cTopN, cHist)
 }
+
+// TestMergePartTopNAndHistToGlobalOversizedHistogram covers a partition
+// histogram with more buckets than bucketRef's 16-bit bucket index can
+// address, which ANALYZE builds with up to 100000 buckets. The merge
+// must accept it and give the same result as for the same buckets
+// spread over two partitions.
+func TestMergePartTopNAndHistToGlobalOversizedHistogram(t *testing.T) {
+	const numBuckets = 70000
+	big := make([]bucketSpec, numBuckets)
+	for b := range numBuckets {
+		big[b] = bucketSpec{lo: di(int64(b) * 10), up: di(int64(b)*10 + 5), mass: 3, repeat: 1}
+	}
+	// The other partition has a bucket across the split point, and a TopN
+	// value that is a bucket upper past it, so its Repeat must still join
+	// the TopN count.
+	topVal := int64(68000)*10 + 5
+	other := partSpec{
+		topN: []topnSpec{{val: di(topVal), count: 50}},
+		hist: []bucketSpec{{lo: di(655300), up: di(655400), mass: 20, repeat: 2}},
+	}
+	whole := mergeCase{
+		name:       "oversized_histogram",
+		parts:      []partSpec{{hist: big}, other},
+		numTopN:    1,
+		expBuckets: 256,
+		wantTopN:   []topnSpec{{val: di(topVal), count: 51}},
+	}
+	runMergeCase(t, whole)
+
+	split := whole
+	split.parts = []partSpec{{hist: big[:math.MaxUint16]}, {hist: big[math.MaxUint16:]}, other}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+	killer := sqlkiller.SQLKiller{}
+	merge := func(tc mergeCase) (*statistics.TopN, *statistics.Histogram) {
+		topNs, hists := buildInputs(t, sc, tc)
+		gTopN, gHist, err := statistics.MergePartTopNAndHistToGlobal(
+			sc, &killer, topNs, hists, tc.numTopN, tc.expBuckets, tc.isIndex,
+		)
+		require.NoError(t, err)
+		return gTopN, gHist
+	}
+	wantTopN, wantHist := merge(split)
+	gotTopN, gotHist := merge(whole)
+	require.Equal(t, wantTopN.TopN, gotTopN.TopN)
+	require.Equal(t, wantHist.NullCount, gotHist.NullCount)
+	require.Equal(t, wantHist.Len(), gotHist.Len())
+	for i := range wantHist.Len() {
+		require.Equalf(t, wantHist.Buckets[i], gotHist.Buckets[i], "bucket %d", i)
+		require.Equalf(t, wantHist.GetLower(i).GetInt64(), gotHist.GetLower(i).GetInt64(), "bucket %d lower", i)
+		require.Equalf(t, wantHist.GetUpper(i).GetInt64(), gotHist.GetUpper(i).GetInt64(), "bucket %d upper", i)
+	}
+}
