@@ -1569,7 +1569,9 @@ func (b *builtinValuesIntSig) evalInt(ctx EvalContext, _ chunk.Row) (int64, bool
 		if len(val) > 8 {
 			return 0, true, errors.New("Session current insert values is too long")
 		}
-		if len(val) < 8 {
+		// A BIT value is stored as big-endian BinaryLiteral bytes whatever its length, so a BIT(57)..BIT(64)
+		// value of exactly 8 bytes must not be read as a native-endian int64 like a BIGINT is.
+		if len(val) < 8 || b.getRetTp().GetType() == mysql.TypeBit {
 			var binary types.BinaryLiteral = val
 			v, err := binary.ToInt(typeCtx(ctx))
 			if err != nil {
