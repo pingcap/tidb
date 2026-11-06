@@ -60,7 +60,7 @@ type FKCheckExec struct {
 	ctx sessionctx.Context
 	// selfRefHelper extracts the opposite endpoint's values for a self FK.
 	selfRefHelper *fkValueHelper
-	// excludeOldSelfHandle is scoped to one synchronous self-parent update check.
+	// excludeOldSelfHandle is scoped to one synchronous self-parent update/delete check.
 	excludeOldSelfHandle kv.Handle
 
 	toBeCheckedKeys       []kv.Key
@@ -192,6 +192,8 @@ func (fkc *FKCheckExec) insertRowNeedToCheck(sc *stmtctx.StatementContext, row [
 	return fkc.addRowNeedToCheck(sc, row)
 }
 
+// updateRowNeedToCheck queues the changed FK side for deferred validation.
+// It selects the new child or old parent values; addRowNeedToCheck omits NULL keys.
 func (fkc *FKCheckExec) updateRowNeedToCheck(sc *stmtctx.StatementContext, oldRow, newRow []types.Datum) error {
 	row, needsCheck, err := fkc.rowNeedCheckForUpdate(sc, oldRow, newRow)
 	if err != nil || !needsCheck {
@@ -327,8 +329,19 @@ func (fkc *FKCheckExec) checkIgnoreForUpdate(ctx context.Context, sc *stmtctx.St
 	return fkc.checkIgnoreByRow(ctx, sc, txn, row)
 }
 
-// checkIgnoreForDelete checks whether removing the parent row would leave referenced children under IGNORE.
-func (fkc *FKCheckExec) checkIgnoreForDelete(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, row []types.Datum) (bool, error) {
+// checkIgnoreForDelete excludes only the row being deleted from a self-parent
+// check. The actual record handle also identifies hidden/common-handle rows;
+// all other children still prevent the delete. It restores the filter and clears
+// cached checks before returning.
+func (fkc *FKCheckExec) checkIgnoreForDelete(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, oldHandle kv.Handle, row []types.Datum) (bool, error) {
+	if fkc.selfRefHelper != nil && fkc.ReferredFK != nil {
+		previousHandle := fkc.excludeOldSelfHandle
+		fkc.excludeOldSelfHandle = oldHandle
+		defer func() {
+			fkc.excludeOldSelfHandle = previousHandle
+			clear(fkc.checkRowsCache)
+		}()
+	}
 	return fkc.checkIgnoreByRow(ctx, sc, txn, row)
 }
 
@@ -491,7 +504,8 @@ func (fkc *FKCheckExec) checkKeyExist(ctx context.Context, txn kv.Transaction, k
 	return err
 }
 
-// checkKeyNotExist rejects an existing child other than the scoped old self row.
+// checkKeyNotExist ignores only the current update/delete's old own row; other
+// children must still prevent removal of the referenced key.
 func (fkc *FKCheckExec) checkKeyNotExist(ctx context.Context, txn kv.Transaction, k kv.Key) error {
 	value, err := txn.Get(ctx, k)
 	if err == nil {
@@ -510,7 +524,8 @@ func (fkc *FKCheckExec) checkKeyNotExist(ctx context.Context, txn kv.Transaction
 	return err
 }
 
-// isExcludedSelfRow identifies the actual old row through record or index handle encoding.
+// isExcludedSelfRow uses the actual old record handle, never the FK column
+// values, to identify the one own row removed by the candidate update/delete.
 func (fkc *FKCheckExec) isExcludedSelfRow(key kv.Key, value []byte) (bool, error) {
 	if fkc.excludeOldSelfHandle == nil {
 		return false, nil
@@ -578,8 +593,9 @@ func (fkc *FKCheckExec) checkPrefixKeyExist(key kv.Key, value []byte) error {
 	return nil
 }
 
-// getIndexKeyValueInTable merges live entries, excluding the scoped old self row.
-// Every encountered mem key shadows its snapshot version even when the mem entry is excluded.
+// getIndexKeyValueInTable skips the current update/delete's old row while scanning
+// every other child. Every memory key shadows the snapshot, even when its
+// nonempty value belongs to the excluded row, so older owners cannot reappear.
 func (fkc *FKCheckExec) getIndexKeyValueInTable(ctx context.Context, memBuffer kv.MemBuffer, snap kv.Snapshot, key kv.Key) (k []byte, v []byte, _ error) {
 	select {
 	case <-ctx.Done():
@@ -727,6 +743,8 @@ type fkCheckKey struct {
 	isPrefix bool
 }
 
+// checkRows marks FK-rejected rows and appends constraint warnings; other errors are returned.
+// It memoizes results by lookup key; row-wise IGNORE callers reset the cache between candidates.
 func (fkc *FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, rows []toBeCheckedRow) error {
 	if fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		fkc.stats = &FKCheckRuntimeStats{}
