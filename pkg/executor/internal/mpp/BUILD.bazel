@@ -48,8 +48,15 @@ go_test(
     srcs = ["local_mpp_coordinator_test.go"],
     embed = [":mpp"],
     flaky = True,
+<<<<<<< HEAD
     deps = [
         "//pkg/planner/core",
+=======
+    shard_count = 3,
+    deps = [
+        "//pkg/kv",
+        "//pkg/planner/core/operator/physicalop",
+>>>>>>> 3bd6b6d4d63 (executor: fix race between MPP task dispatch and cancellation (#70690))
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",
     ],
