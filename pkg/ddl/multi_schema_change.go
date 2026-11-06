@@ -74,14 +74,22 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			return ver, err
 		}
 
-		// Save table info and sub-jobs for rolling back.
-		var tblInfo *model.TableInfo
-		tblInfo, err = metaMut.GetTable(job.SchemaID, job.TableID)
-		if err != nil {
-			return ver, err
+		// Save every sub-job, including finished no-ops, before running the batch.
+		subJobs := make([]*model.SubJob, len(job.MultiSchemaInfo.SubJobs))
+		for i, sub := range job.MultiSchemaInfo.SubJobs {
+			subJobs[i] = sub.Clone()
 		}
 		var schemaVersionGenerated = false
-		subJobs := make([]model.SubJob, len(job.MultiSchemaInfo.SubJobs))
+		diff := &model.SchemaDiff{
+			Type:     job.Type,
+			TableID:  job.TableID,
+			SchemaID: job.SchemaID,
+		}
+		SetSchemaDiffForMultiInfos(diff, collectAffectedTableInfosFromInvolving(jobCtx, job)...)
+		// Execution can discover related tables absent from the submitted involving set.
+		// Collect updates even from sub-jobs that skip schema version generation.
+		jobCtx.multiSchemaDiff = diff
+		defer func() { jobCtx.multiSchemaDiff = nil }()
 		// Step the sub-jobs to the non-revertible states all at once.
 		// We only generate 1 schema version for these sub-job.
 		actionTypes := make([]model.ActionType, 0, len(job.MultiSchemaInfo.SubJobs))
@@ -89,7 +97,6 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			if sub.IsFinished() {
 				continue
 			}
-			subJobs[i] = *sub
 			proxyJob := sub.ToProxyJob(job, i)
 			if schemaVersionGenerated {
 				proxyJob.MultiSchemaInfo.SkipVersion = true
@@ -101,36 +108,27 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			}
 			sub.FromProxyJob(&proxyJob, proxyJobVer)
 			if err != nil || proxyJob.Error != nil {
-				for j := i - 1; j >= 0; j-- {
-					// TODO if some sub-job is finished, this will empty them
-					// also some sub-job cannot be rollback completely, maybe keep them?
-					job.MultiSchemaInfo.SubJobs[j] = &subJobs[j]
+				for j := 0; j <= i; j++ {
+					job.MultiSchemaInfo.SubJobs[j] = subJobs[j]
 				}
+				// The failed sub-job's state still determines whether to roll back
+				// the parent; its persisted state must match the restored transaction.
 				handleRevertibleException(job, sub, proxyJob.Error)
-				// The TableInfo and sub-jobs should be restored
-				// because some schema changes update the transaction aggressively.
-				// TODO this error handling cannot handle below case:
-				// suppose the job is for "alter table t auto_increment = 100, add column c int".
-				// if we fail on "add column c int", the allocator is rebased to 100
-				// which cannot be rollback, but it's table-info.AutoIncID is rollback by below call.
-				// TODO we should also change schema diff of 'ver' if len(actionTypes) > 1.
-				return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+				// Earlier sub-jobs may have updated related tables. Discard the
+				// entire transaction before persisting the error and restored jobs.
+				// External effects such as allocator rebases cannot be undone here.
+				jobCtx.mustRollbackTxnOnError = true
+				if err == nil {
+					err = proxyJob.Error
+				}
+				return 0, err
 			}
 			actionTypes = append(actionTypes, sub.Type)
 		}
 		if len(actionTypes) > 1 {
-			// only single table schema changes can be put into a multi-schema-change
-			// job except AddForeignKey which is handled separately in the first loop.
-			// so this diff is enough, but it wound be better to accumulate all the diffs,
-			// and then merge them into a single diff.
-			diff := &model.SchemaDiff{
-				Version:        ver,
-				Type:           job.Type,
-				TableID:        job.TableID,
-				SchemaID:       job.SchemaID,
-				SubActionTypes: actionTypes,
-			}
-			SetSchemaDiffForMultiInfos(diff, collectAffectedTableInfosFromInvolving(jobCtx, job)...)
+			// Publish all related tables updated by sub-jobs under the shared schema version.
+			diff.Version = ver
+			diff.SubActionTypes = actionTypes
 			if err = metaMut.SetSchemaDiff(diff); err != nil {
 				return ver, err
 			}

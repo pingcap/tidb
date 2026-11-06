@@ -103,12 +103,13 @@ type jobContext struct {
 	stepCtxCancel        context.CancelCauseFunc
 	reorgTimeoutOccurred bool
 	inInnerRunOneJobStep bool // Only used for multi-schema change DDL job.
-	// mustRollbackTxnOnError is set before a DDL step executes an internal SQL
-	// statement that can modify state in the DDL transaction. StmtCommit or
-	// StmtRollback can move prior metadata mutations out of the current statement
-	// buffer, so any error after that must discard the whole DDL transaction.
-	// Currently, only MView/MLog DDL paths use this mechanism.
+	// mustRollbackTxnOnError requires an errored or cancelled step to discard its
+	// entire transaction before persisting the updated job. Internal SQL can flush
+	// statement buffers, and multi-schema batches can update multiple tables.
 	mustRollbackTxnOnError bool
+	// multiSchemaDiff accumulates related-table updates while sub-jobs cross
+	// the non-revertible boundary in the same transaction.
+	multiSchemaDiff *model.SchemaDiff
 
 	metaMut *meta.Mutator
 	// decoded JobArgs, we store it here to avoid decoding it multiple times and
@@ -649,7 +650,7 @@ func (w *worker) transitOneJobStep(
 
 	failpoint.InjectCall("onJobRunAfter", job)
 
-	// SQL mutations must be discarded before even a terminal cancellation is finalized.
+	// Step mutations must be discarded before even a terminal cancellation is finalized.
 	if job.IsCancelled() && !jobCtx.mustRollbackTxnOnError {
 		defer jobCtx.unlockSchemaVersion(job.ID)
 		w.sess.Reset()
@@ -663,9 +664,8 @@ func (w *worker) transitOneJobStep(
 
 	if runJobErr != nil || job.IsCancelled() {
 		if jobCtx.mustRollbackTxnOnError {
-			// Internal SQL can commit or roll back its own statement buffer.
-			// Discard all mutations from this job step, including ones made while
-			// the job is already rolling back.
+			// Discard all mutations from this job step, including related-table
+			// updates and ones made while the job is already rolling back.
 			w.sess.Rollback()
 			failpoint.InjectCall("afterRollbackTxnForMustRollbackTxnOnError", job)
 			txn, txnErr := w.prepareTxn(job)

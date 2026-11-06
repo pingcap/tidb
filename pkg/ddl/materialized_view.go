@@ -53,6 +53,7 @@ const (
 	mviewAttrAlertWarning                                 = "mview_alert_warning"
 	mviewAttrAlertOverdue                                 = "mview_alert_overdue"
 	mviewAttrAlertRefreshFailed                           = "mview_alert_refresh_failed"
+	maxMaterializedViewNestingDepth                       = 16
 	alterMaterializedScheduleInfoUpdateLockWaitTimeoutSec = int64(10)
 	mviewCutoverPurgeLockWaitTimeoutSec                   = int64(5)
 	mviewCutoverPurgeLockTimeout                          = time.Minute
@@ -306,6 +307,15 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	}
 	baseTableInfo := baseTable.Meta()
 	if err := validateMaterializedViewSourceState(schemaName.O, baseTableInfo); err != nil {
+		return err
+	}
+	if err := validateMaterializedViewNestingDepth(baseTableInfo, func(tableID int64) (*model.TableInfo, error) {
+		tbl, ok := is.TableByID(e.ctx, tableID)
+		if !ok {
+			return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(schemaName.O, fmt.Sprintf("(Table ID %d)", tableID))
+		}
+		return tbl.Meta(), nil
+	}); err != nil {
 		return err
 	}
 	baseTableID := baseTableInfo.ID
@@ -2051,6 +2061,44 @@ func removeMaterializedViewID(ids []int64, mviewID int64) ([]int64, bool) {
 		filtered = append(filtered, id)
 	}
 	return filtered, removed
+}
+
+// validateMaterializedViewNestingDepth checks the longest source chain, counting
+// the new MV as depth 1. The depth budget also bounds traversal of cyclic metadata.
+func validateMaterializedViewNestingDepth(source *model.TableInfo, getTable func(int64) (*model.TableInfo, error)) error {
+	// TODO: Limit the number of visited dependency nodes before supporting MVs
+	// with multiple sources. The depth limit alone does not bound metadata reads
+	// or the depth cache size.
+	depths := make(map[int64]int)
+	var sourceDepth func(*model.TableInfo, int) (int, error)
+	sourceDepth = func(tbl *model.TableInfo, remainingDepth int) (int, error) {
+		if tbl.MaterializedView == nil {
+			return 0, nil
+		}
+		cachedDepth := depths[tbl.ID]
+		if remainingDepth == 0 || cachedDepth > remainingDepth {
+			return 0, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("materialized view nesting depth exceeds maximum of %d", maxMaterializedViewNestingDepth)
+		}
+		if cachedDepth > 0 {
+			return cachedDepth, nil
+		}
+		depth := 1
+		for _, baseTableID := range tbl.MaterializedView.BaseTableIDs {
+			baseTable, err := getTable(baseTableID)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			baseDepth, err := sourceDepth(baseTable, remainingDepth-1)
+			if err != nil {
+				return 0, err
+			}
+			depth = max(depth, baseDepth+1)
+		}
+		depths[tbl.ID] = depth
+		return depth, nil
+	}
+	_, err := sourceDepth(source, maxMaterializedViewNestingDepth-1)
+	return err
 }
 
 // validateMaterializedViewSourceState validates the object that a materialized view definition
