@@ -2450,11 +2450,19 @@ func validateMaterializedViewBaseModifyColumn(
 			return err
 		}
 	}
-	if oldCol.Name.L != newCol.Name.L {
-		if hasDependentMV || tracked {
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("CHANGE COLUMN on base table with materialized view dependencies does not support renaming")
+	referencedByMV := false
+	if hasDependentMV {
+		var err error
+		referencedByMV, err = isColumnReferencedByDependentMaterializedViews(ctx, is, baseInfo, oldCol.Name.L)
+		if err != nil {
+			return err
 		}
+	}
+	if !referencedByMV && !tracked {
 		return nil
+	}
+	if oldCol.Name.L != newCol.Name.L {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("CHANGE COLUMN on base table with materialized view dependencies does not support renaming")
 	}
 	if tracked && isNullToNotNullChange(oldCol, newCol) {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
@@ -2462,17 +2470,14 @@ func validateMaterializedViewBaseModifyColumn(
 		)
 	}
 	if mayNeedChangeColData {
-		if hasDependentMV {
+		if referencedByMV {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 				fmt.Sprintf("%s on base table with materialized view dependencies only supports no-reorg compatible type changes", op),
 			)
 		}
-		if tracked {
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
-				fmt.Sprintf("%s on base table with materialized view log only supports no-reorg compatible type changes for tracked columns", op),
-			)
-		}
-		return nil
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			fmt.Sprintf("%s on base table with materialized view log only supports no-reorg compatible type changes for tracked columns", op),
+		)
 	}
 	if tracked {
 		if _, err := validateMaterializedViewLogColumnTypeForModifyColumn(op, mlogTableInfo, mlogCol, newCol); err != nil {
@@ -2489,6 +2494,38 @@ func validateMaterializedViewBaseModifyColumn(
 		}
 	}
 	return nil
+}
+
+// isColumnReferencedByDependentMaterializedViews reports whether any dependent materialized view definition
+// references the base table column.
+func isColumnReferencedByDependentMaterializedViews(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+	baseInfo *model.MaterializedViewBaseInfo,
+	colNameL string,
+) (bool, error) {
+	for _, mviewID := range baseInfo.MViewIDs {
+		mviewTable, ok := is.TableByID(ctx, mviewID)
+		if !ok {
+			return false, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: dependent materialized view table not found")
+		}
+		mviewInfo := mviewTable.Meta().MaterializedView
+		if mviewInfo == nil || len(mviewInfo.SQLContent) == 0 {
+			return false, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: invalid materialized view metadata")
+		}
+		mviewSelect, err := parseSelectFromSQL(mviewInfo.SQLContent)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		usage, err := analyzeMVColumnUsage(mviewSelect, colNameL)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if usage.unsupportedReason != "" || usage.isGroupKey || len(usage.directOutputOffsets) > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // noReorgDataStrict is a strong check to decide whether we need to change the column data.
