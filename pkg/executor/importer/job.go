@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/importinto"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
@@ -39,46 +40,7 @@ var (
 	TestLastImportJobID atomic.Int64
 )
 
-// constants for job status and step.
 const (
-	// JobStatus
-	// 	┌───────┐     ┌───────┐    ┌────────┐
-	// 	│pending├────►│running├───►│finished│
-	// 	└────┬──┘     └────┬──┘    └────────┘
-	// 	     │             │       ┌──────┐
-	// 	     │             ├──────►│failed│
-	// 	     │             │       └──────┘
-	// 	     │             │       ┌─────────┐
-	// 	     └─────────────┴──────►│cancelled│
-	// 	                           └─────────┘
-	jobStatusPending = "pending"
-	// JobStatusRunning exported since it's used in show import jobs
-	JobStatusRunning   = "running"
-	jogStatusCancelled = "cancelled"
-	jobStatusFailed    = "failed"
-	// JobStatusFinished exported since it's used in show import jobs
-	JobStatusFinished = "finished"
-
-	// when the job is finished, step will be set to none.
-	jobStepNone = ""
-	// JobStepPreparing is used by prepare-enabled jobs before generating
-	// first business-step subtasks.
-	JobStepPreparing = "preparing"
-	// JobStepGlobalSorting is the first step when using global sort,
-	// step goes from none -> global-sorting -> importing -> validating -> none.
-	// for prepare-enabled global sort, step goes from none -> preparing ->
-	// global-sorting -> importing -> validating -> none.
-	JobStepGlobalSorting = "global-sorting"
-	// JobStepImporting is the first step when using local sort,
-	// step goes from none -> importing -> validating -> none.
-	// when used in global sort, it means importing the sorted data.
-	// when used in local sort, it means encode&sort data and then importing the data.
-	JobStepImporting = "importing"
-	// JobStepResolvingConflicts is the step after importing to resolve conflicts,
-	// it's used in global sort.
-	JobStepResolvingConflicts = "resolving-conflicts"
-	JobStepValidating         = "validating"
-
 	baseQuerySQL = `SELECT
 					id, create_time, start_time, update_time, end_time,
 					table_schema, table_name, table_id, created_by, parameters, source_file_size,
@@ -86,81 +48,8 @@ const (
 				FROM mysql.tidb_import_jobs`
 )
 
-// ImportParameters is the parameters for import into statement.
-// it's a minimal meta info to store in tidb_import_jobs for diagnose.
-// for detailed info, see tidb_global_tasks.
-type ImportParameters struct {
-	ColumnsAndVars string `json:"columns-and-vars,omitempty"`
-	SetClause      string `json:"set-clause,omitempty"`
-	// for s3 URL, AK/SK is redacted for security
-	FileLocation string `json:"file-location"`
-	Format       string `json:"format"`
-	// only include what user specified, not include default value.
-	Options map[string]any `json:"options,omitempty"`
-}
-
-var _ fmt.Stringer = &ImportParameters{}
-
-// String implements fmt.Stringer interface.
-func (ip *ImportParameters) String() string {
-	b, _ := json.Marshal(ip)
-	return string(b)
-}
-
-// JobInfo is the information of import into job.
-type JobInfo struct {
-	ID             int64
-	CreateTime     types.Time
-	StartTime      types.Time
-	UpdateTime     types.Time
-	EndTime        types.Time
-	TableSchema    string
-	TableName      string
-	TableID        int64
-	CreatedBy      string
-	Parameters     ImportParameters
-	SourceFileSize int64
-	Status         string
-	// Step corresponds to the `phase` field in `SHOW IMPORT JOB`
-	// Here we just use the same name as in distributed framework.
-	Step string
-	// The summary of the job, it will store info for each step of the import and
-	// will be updated when switching to a new step.
-	// If the ingest step is finished, the number of ingested rows will also stored in it.
-	Summary      *Summary
-	ErrorMessage string
-	GroupKey     string
-}
-
-// CanCancel returns whether the job can be cancelled.
-func (j *JobInfo) CanCancel() bool {
-	return j.Status == jobStatusPending || j.Status == JobStatusRunning
-}
-
-// IsCancelled returns whether the job has been cancelled.
-func (j *JobInfo) IsCancelled() bool {
-	return j.Status == jogStatusCancelled
-}
-
-// IsSuccess returns whether the job is successful.
-func (j *JobInfo) IsSuccess() bool {
-	return j.Status == JobStatusFinished
-}
-
-// IsSourceFileSizeUnknown returns whether source_file_size has not been
-// determined yet for async-prepare jobs.
-func (j *JobInfo) IsSourceFileSizeUnknown() bool {
-	// if the job is not using async prepare, source_file_size is determined
-	// when creating the job, and it will never be 0 since we check total file
-	// size > 0 in precheck.
-	if j.SourceFileSize > 0 {
-		return false
-	}
-	if j.Status == jobStatusPending {
-		return true
-	}
-	return j.Status == JobStatusRunning && j.Step == JobStepPreparing
-}
+// ImportParameters describes the submitted statement for import-job diagnostics.
+type ImportParameters = importinto.ImportParameters
 
 // GetJob returns the job with the given id if the user has privilege.
 // hasSuperPriv: whether the user has super privilege.

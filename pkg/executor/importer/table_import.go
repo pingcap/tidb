@@ -78,17 +78,6 @@ var (
 	// CheckDiskQuotaInterval is the default time interval to check disk quota.
 	// TODO: make it dynamically adjusting according to the speed of import and the disk size.
 	CheckDiskQuotaInterval = 10 * time.Second
-
-	// defaultMaxEngineSize is the default max engine size in bytes.
-	// we make it 5 times larger than lightning default engine size to reduce range overlap, especially for index,
-	// since we have an index engine per distributed subtask.
-	// for 1TiB data, we can divide it into 2 engines that runs on 2 TiDB. it can have a good balance between
-	// range overlap and sort speed in one of our test of:
-	// 	- 10 columns, PK + 6 secondary index 2 of which is mv index
-	//	- 1.05 KiB per row, 527 MiB per file, 1024000000 rows, 1 TiB total
-	//
-	// it might not be the optimal value for other cases.
-	defaultMaxEngineSize = int64(5 * config.DefaultBatchSize)
 )
 
 func newEncodingTable(e *LoadDataController) (table.Table, error) {
@@ -98,44 +87,6 @@ func newEncodingTable(e *LoadDataController) (table.Table, error) {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
 	}
 	return tbl, nil
-}
-
-// Chunk records the chunk information.
-type Chunk struct {
-	Path         string
-	FileSize     int64
-	Offset       int64
-	EndOffset    int64
-	PrevRowIDMax int64
-	RowIDMax     int64
-	Type         mydump.SourceType
-	Compression  mydump.Compression
-	Timestamp    int64
-	ParquetMeta  parquetfile.FileMeta
-}
-
-// GetKey returns the chunk key used in logs and encode errors.
-func (c *Chunk) GetKey() string {
-	return c.Path + ":" + strconv.FormatInt(c.Offset, 10)
-}
-
-// GetSize get the original file size of this chunk.
-func (c *Chunk) GetSize() int64 {
-	if c.Type == mydump.SourceTypeParquet {
-		// for parquet, Offset/EndOffset means rows
-		return c.FileSize
-	}
-	return c.EndOffset - c.Offset
-}
-
-func (c *Chunk) toSourceFileMeta() mydump.SourceFileMeta {
-	return mydump.SourceFileMeta{
-		Path:        c.Path,
-		Type:        c.Type,
-		Compression: c.Compression,
-		FileSize:    c.FileSize,
-		ParquetMeta: c.ParquetMeta,
-	}
 }
 
 // prepareSortDir creates a new directory for import, remove previous sort directory if exists.
@@ -359,7 +310,7 @@ func (ti *TableImporter) EstimateParquetReaderMemory(ctx context.Context, path s
 }
 
 func (e *LoadDataController) getParser(ctx context.Context, chunk *Chunk) (mydump.Parser, error) {
-	fileMeta := chunk.toSourceFileMeta()
+	fileMeta := chunk.ToSourceFileMeta()
 	info := LoadDataReaderInfo{
 		Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
 			reader, err := mydump.OpenReader(ctx, &fileMeta, e.dataStore, compressedio.DecompressConfig{

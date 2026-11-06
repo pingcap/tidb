@@ -16,14 +16,18 @@ package ddl
 
 import (
 	"context"
+	goerrors "errors"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -258,7 +262,19 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 		return ver, nil
 
 	case model.StateWriteReorganization:
-		if w.getReorgCtx(job.ID) == nil {
+		hasTask := false
+		if w.getReorgCtx(job.ID) == nil && kerneltype.IsNextGen() && w.store.Name() == "TiKV" {
+			mgr, err := storage.GetDXFSvcTaskMgr()
+			if err != nil {
+				return ver, err
+			}
+			task, err := mgr.GetTaskByKeyWithHistory(jobCtx.stepCtx, w.mviewBuildTaskKey(job.ID))
+			if err != nil && !goerrors.Is(err, storage.ErrTaskNotFound) {
+				return ver, err
+			}
+			hasTask = task != nil
+		}
+		if w.getReorgCtx(job.ID) == nil && !hasTask {
 			hasRows, checkErr := w.hasCreateMaterializedViewBuildRows(jobCtx.stepCtx, job.SchemaName, mviewTableInfo.Name.O)
 			if checkErr != nil {
 				job.State = model.JobStateRollingback
@@ -284,6 +300,9 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			if isCreateMaterializedViewCancelledErr(jobCtx, err) {
 				job.State = model.JobStateRollingback
 				return ver, nil
+			}
+			if jobCtx.stepCtx.Err() != nil || dbterror.ErrNotOwner.Equal(err) {
+				return ver, errors.Trace(err)
 			}
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
@@ -348,6 +367,11 @@ func isCreateMaterializedViewPausedErr(jobCtx *jobContext, err error) bool {
 }
 
 func (w *worker) rollbackCreateMaterializedView(jobCtx *jobContext, job *model.Job, mviewTableInfo *model.TableInfo) (ver int64, _ error) {
+	if job.SchemaState == model.StateWriteReorganization && kerneltype.IsNextGen() && w.store.Name() == "TiKV" {
+		if err := w.stopMViewDistTask(jobCtx.stepCtx, job.ID); err != nil {
+			return ver, err
+		}
+	}
 	droppingTblInfo := mviewTableInfo
 	actualTblInfo, err := getTableInfo(jobCtx.metaMut, job.TableID, job.SchemaID)
 	if err == nil {
@@ -629,6 +653,26 @@ func (w *worker) setCreateMaterializedViewBuildReadTSInReorgCtx(jobID int64, rea
 }
 
 func (w *worker) buildCreateMaterializedViewDataByImport(ctx context.Context, job *model.Job, mviewTableInfo *model.TableInfo) error {
+	if kerneltype.IsNextGen() {
+		return w.executeMViewDistTask(ctx, job, func() (*proto.Task, error) {
+			sctx, err := w.sessPool.Get()
+			if err != nil {
+				return nil, err
+			}
+			defer w.sessPool.Put(sctx)
+			restore, err := initCreateMaterializedViewBuildSession(sctx, job, mviewTableInfo, job.SchemaName)
+			if err != nil {
+				return nil, err
+			}
+			defer restore()
+			vars := sctx.GetSessionVars()
+			sql, err := buildCreateMaterializedViewImportSQL(job.SchemaName, mviewTableInfo, vars.MViewMaintainImportThreads, vars.MViewMaintainImportDiskQuota)
+			if err != nil {
+				return nil, err
+			}
+			return prepareMViewBuildTask(ctx, sctx, sql, job.ID)
+		})
+	}
 	sessCtx, err := w.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)

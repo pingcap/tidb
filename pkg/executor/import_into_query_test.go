@@ -21,6 +21,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -63,7 +64,7 @@ func runImportQuery(t *testing.T, se sessionctx.Context, q *importer.QuerySource
 	output := make(chan importer.QueryChunk)
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- importer.RunImportQuery(context.Background(), se, q, sql, importQueryMemQuota, output)
+		errCh <- executor.RunImportQuery(context.Background(), se, q, sql, importQueryMemQuota, output)
 		close(output)
 	}()
 	var rows []string

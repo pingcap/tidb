@@ -1103,6 +1103,12 @@ func (b *executorBuilder) buildShow(v *physicalop.PhysicalShow) exec.Executor {
 
 func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 	switch s := v.Statement.(type) {
+	case *ast.PrepareMViewBuildStmt:
+		return &prepareMViewBuildExec{
+			BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
+			stmt:         s,
+		}
+
 	case *ast.GrantStmt:
 		return b.buildGrant(s)
 	case *ast.RevokeStmt:

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -799,15 +800,8 @@ type SelectInto struct {
 	LineFieldsInfo
 }
 
-// LineFieldsInfo used in load-data/select-into/index-advise stmt.
-type LineFieldsInfo struct {
-	FieldsTerminatedBy string
-	FieldsEnclosedBy   string // length always <= 1, see parser.y
-	FieldsEscapedBy    string // length always <= 1, see parser.y
-	FieldsOptEnclosed  bool
-	LinesStartingBy    string
-	LinesTerminatedBy  string
-}
+// LineFieldsInfo describes the shared field and line format.
+type LineFieldsInfo = importdef.LineFieldsInfo
 
 // NewLineFieldsInfo new LineFieldsInfo from FIELDS/LINES info.
 func NewLineFieldsInfo(fieldsInfo *ast.FieldsClause, linesInfo *ast.LinesClause) LineFieldsInfo {

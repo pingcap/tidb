@@ -99,9 +99,9 @@ func (stats *cleanupStats) recordTaskDiagnostics(
 		// Conflict-row files should not outlive their task metadata. This is
 		// rare, so retain bounded file samples to make the cleanup observable.
 		stats.recordMissingTask(taskID, files)
-	case info.Type != proto.ImportInto:
+	case !isIngestionTask(info.Type):
 		// A task ID collision with another task type should also be rare. These
-		// files cannot belong to IMPORT INTO, so record samples before deletion.
+		// files cannot belong to an ingestion task, so record samples before deletion.
 		stats.recordNonImportIntoTask(files)
 	}
 }
@@ -144,8 +144,13 @@ func parseTaskID(name string) (int64, bool) {
 	return taskID, true
 }
 
+// Both task kinds write conflict rows through the shared ingestion workers.
+func isIngestionTask(taskType proto.TaskType) bool {
+	return taskType == proto.ImportInto || taskType == proto.MViewBuild
+}
+
 func shouldDelete(info storage.TaskCleanupInfo, now time.Time) bool {
-	if info.Type != proto.ImportInto {
+	if !isIngestionTask(info.Type) {
 		return false
 	}
 	switch info.State {
@@ -201,7 +206,7 @@ func cleanFiles(
 		for _, taskID := range taskIDs {
 			files := taskFiles[taskID]
 			info := infosByTaskID[taskID]
-			shouldDeleteFiles := info == nil || info.Type != proto.ImportInto || shouldDelete(*info, now)
+			shouldDeleteFiles := info == nil || !isIngestionTask(info.Type) || shouldDelete(*info, now)
 			flushStats.recordTaskDiagnostics(taskID, files, info)
 			if shouldDeleteFiles {
 				filesToDelete = append(filesToDelete, files...)

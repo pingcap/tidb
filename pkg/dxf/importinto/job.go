@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	importcore "github.com/pingcap/tidb/pkg/importinto"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -324,7 +325,7 @@ func GetRuntimeInfoForJob(
 	}
 
 	var (
-		taskMeta TaskMeta
+		taskMeta importcore.TaskMeta
 
 		latestTime time.Time
 		ri         = &RuntimeInfo{

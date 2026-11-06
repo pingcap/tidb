@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	importcore "github.com/pingcap/tidb/pkg/importinto"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -81,7 +82,7 @@ func (s *mockGCSSuite) TestImportFromSelectBasic() {
 		nodeCPU, err := handle.GetCPUCountOfNode(ctx)
 		s.NoError(err)
 		s.Equal(nodeCPU, task.RequiredSlots)
-		var meta importinto.TaskMeta
+		var meta importcore.TaskMeta
 		s.NoError(json.Unmarshal(task.Meta, &meta))
 		s.NotZero(meta.Plan.QuerySource.ReadTS)
 	}

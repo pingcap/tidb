@@ -22,6 +22,7 @@ go_test(
         "//pkg/dxf/framework/testutil",
         "//pkg/dxf/importinto",
         "//pkg/executor/importer",
+        "//pkg/importinto",
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/lightning/common",

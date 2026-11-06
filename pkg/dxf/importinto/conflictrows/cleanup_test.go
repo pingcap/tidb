@@ -169,6 +169,8 @@ func TestShouldDelete(t *testing.T) {
 		{name: "failed", info: info(proto.ImportInto, proto.TaskStateFailed, nil), want: true},
 		{name: "reverted", info: info(proto.ImportInto, proto.TaskStateReverted, nil), want: true},
 		{name: "active", info: info(proto.ImportInto, proto.TaskStateRunning, &old)},
+		{name: "active MV build", info: info(proto.MViewBuild, proto.TaskStateRunning, &old)},
+		{name: "expired MV build", info: info(proto.MViewBuild, proto.TaskStateSucceed, &exactlyExpired), want: true},
 		{name: "wrong type", info: info(proto.TaskTypeExample, proto.TaskStateFailed, &old)},
 	}
 
@@ -247,22 +249,26 @@ func TestCleanFiles(t *testing.T) {
 			"conflicted-rows/bad/data",
 			"conflicted-rows-old/1/data",
 			"other/data",
+			"conflicted-rows/5/e/data",
+			"conflicted-rows/6/f/data",
 		}
 		writeTestFiles(t, store, files...)
 		old := now.Add(-retention)
 		getter := taskInfoGetterFunc(func(_ context.Context, taskIDs []int64) (map[int64]*storage.TaskCleanupInfo, error) {
-			require.ElementsMatch(t, []int64{1, 2, 3, 4}, taskIDs)
+			require.ElementsMatch(t, []int64{1, 2, 3, 4, 5, 6}, taskIDs)
 			return map[int64]*storage.TaskCleanupInfo{
 				1: failedImportInfo(1),
 				2: {ID: 2, Type: proto.ImportInto, State: proto.TaskStateRunning},
 				3: {ID: 3, Type: proto.TaskTypeExample, State: proto.TaskStateFailed},
 				4: {ID: 4, Type: proto.ImportInto, State: proto.TaskStateSucceed, EndTime: &old},
+				5: {ID: 5, Type: proto.MViewBuild, State: proto.TaskStateRunning},
+				6: {ID: 6, Type: proto.MViewBuild, State: proto.TaskStateSucceed, EndTime: &old},
 			}, nil
 		})
 
 		stats, err := cleanFiles(context.Background(), store, getter, now)
 		require.NoError(t, err)
-		require.Equal(t, int64(4), stats.DeletedFiles)
+		require.Equal(t, int64(5), stats.DeletedFiles)
 		require.Zero(t, stats.MissingTasks)
 		require.Equal(t, int64(1), stats.NonImportIntoTaskFiles.Count)
 		require.Equal(t, int64(1), stats.UnparsedTaskIDFiles.Count)
@@ -275,6 +281,8 @@ func TestCleanFiles(t *testing.T) {
 		requireTestFileExists(t, store, files[4], false)
 		requireTestFileExists(t, store, files[5], true)
 		requireTestFileExists(t, store, files[6], true)
+		requireTestFileExists(t, store, files[7], true)
+		requireTestFileExists(t, store, files[8], false)
 	})
 
 	t.Run("task ID bound", func(t *testing.T) {

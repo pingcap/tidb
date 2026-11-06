@@ -28,6 +28,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/importinto"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -137,7 +138,7 @@ func runCaseFn(t *testing.T, i int, c caseTp) {
 	ctrl, err := NewLoadDataController(&Plan{
 		Path:           filepath.Join(dir, "*.csv"),
 		Format:         DataFormatCSV,
-		LineFieldsInfo: newDefaultLineFieldsInfo(),
+		LineFieldsInfo: importinto.DefaultLineFieldsInfo(),
 		InImportInto:   true,
 	}, table, &ASTArgs{})
 	require.NoError(t, err)
