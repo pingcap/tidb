@@ -101,6 +101,17 @@ const (
 	// sampled NDV off.
 	TiDBAnalyzeSampledNDVThreshold = "tidb_analyze_sampled_ndv_threshold"
 
+	// TiDBAnalyzeContiguousBuckets makes ANALYZE start each histogram bucket at
+	// the upper bound of the previous bucket. Without it, values between two
+	// sampled bounds belong to no bucket and are estimated as almost no rows,
+	// which is frequent when the sample comes from a few sampled data blocks.
+	TiDBAnalyzeContiguousBuckets = "tidb_analyze_contiguous_buckets"
+
+	// TiDBAnalyzeMinSampledBlocks raises the NDV rate of a sampled ANALYZE so
+	// that TiKV block sampling reads about this many write CF data blocks of the
+	// table. 0 turns it off.
+	TiDBAnalyzeMinSampledBlocks = "tidb_analyze_min_sampled_blocks"
+
 	// TiDBAutoAnalyzeStartTime will run if current time is within start time and end time.
 	TiDBAutoAnalyzeStartTime = "tidb_auto_analyze_start_time"
 	TiDBAutoAnalyzeEndTime   = "tidb_auto_analyze_end_time"
@@ -1554,6 +1565,8 @@ const (
 	DefIndexLookupJoinConcurrency       = ConcurrencyUnset
 	DefTiDBEnableAdaptiveLimitScan      = false
 	DefTiDBAnalyzeSampledNDVThreshold   = 0
+	DefTiDBAnalyzeContiguousBuckets     = false
+	DefTiDBAnalyzeMinSampledBlocks      = 0
 	DefIndexSerialScanConcurrency       = 1
 	DefIndexJoinBatchSize               = 25000
 	DefIndexLookupSize                  = 20000
@@ -2067,6 +2080,8 @@ var (
 	VarTiDBSuperReadOnly                 = atomic.NewBool(DefTiDBSuperReadOnly)
 	PersistAnalyzeOptions                = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
 	AnalyzeSampledNDVThreshold           = atomic.NewInt64(DefTiDBAnalyzeSampledNDVThreshold)
+	AnalyzeContiguousBuckets             = atomic.NewBool(DefTiDBAnalyzeContiguousBuckets)
+	AnalyzeMinSampledBlocks              = atomic.NewInt64(DefTiDBAnalyzeMinSampledBlocks)
 	TableCacheLease                      = atomic.NewInt64(DefTiDBTableCacheLease)
 	StatsLoadSyncWait                    = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
 	StatsLoadPseudoTimeout               = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
