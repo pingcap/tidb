@@ -43,4 +43,66 @@ impl SerializeHelper {
         util::serialize_i64(value, &mut self.buf);
         &self.buf
     }
+
+    /// Go `serializePartialResult4SumFloat64`.
+    pub(crate) fn serialize_partial_result_4_sum_float64(
+        &mut self,
+        value: &crate::func_sum::PartialResult4SumFloat64,
+    ) -> &[u8] {
+        self.buf.clear();
+        util::serialize_f64(value.val, &mut self.buf);
+        util::serialize_i64(value.not_null_row_count, &mut self.buf);
+        &self.buf
+    }
+
+    /// Go `serializePartialResult4SumDecimal`.
+    pub(crate) fn serialize_partial_result_4_sum_decimal(
+        &mut self,
+        val: &tidb_datatype::MyDecimal,
+        not_null_row_count: i64,
+    ) -> &[u8] {
+        self.buf.clear();
+        util::serialize_my_decimal(val, &mut self.buf);
+        util::serialize_i64(not_null_row_count, &mut self.buf);
+        &self.buf
+    }
+
+    /// Go `serializePartialResult4SumInt64`.
+    pub(crate) fn serialize_partial_result_4_sum_int64(&mut self, val: i64, not_null_row_count: i64) -> &[u8] {
+        self.buf.clear();
+        util::serialize_i64(val, &mut self.buf);
+        util::serialize_i64(not_null_row_count, &mut self.buf);
+        &self.buf
+    }
+
+    /// Go `serializePartialResult4SumUint64`.
+    pub(crate) fn serialize_partial_result_4_sum_uint64(&mut self, val: u64, not_null_row_count: i64) -> &[u8] {
+        self.buf.clear();
+        util::serialize_u64(val, &mut self.buf);
+        util::serialize_i64(not_null_row_count, &mut self.buf);
+        &self.buf
+    }
+
+    /// Go `serializePartialResult4AvgDecimal`.
+    pub(crate) fn serialize_partial_result_4_avg_decimal(&mut self, sum: &tidb_datatype::MyDecimal, count: i64) -> &[u8] {
+        self.buf.clear();
+        util::serialize_my_decimal(sum, &mut self.buf);
+        util::serialize_i64(count, &mut self.buf);
+        &self.buf
+    }
+
+    /// Go `serializePartialResult4AvgFloat64`.
+    pub(crate) fn serialize_partial_result_4_avg_float64(&mut self, sum: f64, count: i64) -> &[u8] {
+        self.buf.clear();
+        util::serialize_f64(sum, &mut self.buf);
+        util::serialize_i64(count, &mut self.buf);
+        &self.buf
+    }
+
+    /// Go `serializePartialResult4BitFunc`.
+    pub(crate) fn serialize_partial_result_4_bit_func(&mut self, value: u64) -> &[u8] {
+        self.buf.clear();
+        util::serialize_u64(value, &mut self.buf);
+        &self.buf
+    }
 }

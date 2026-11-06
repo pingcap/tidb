@@ -23,8 +23,18 @@ pub mod aggfuncs;
 pub mod approx_count_distinct;
 pub mod farmhash;
 pub mod frame_rows;
+pub mod func_avg;
+pub mod func_bitfuncs;
 pub mod func_count;
 pub mod func_count_distinct;
+pub mod func_first_row;
+pub mod func_max_min;
+pub mod func_stddevpop;
+pub mod func_stddevsamp;
+pub mod func_sum;
+pub mod func_sum_int;
+pub mod func_varpop;
+pub mod func_varsamp;
 pub mod spill_deserialize_helper;
 pub mod spill_serialize_helper;
 
