@@ -325,8 +325,9 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 
 	if tblInfo.MaterializedViewBase != nil && job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible &&
 		(args.ModifyColumnType == ModifyTypeNoReorg || args.ModifyColumnType == ModifyTypeNoReorgWithCheck) {
-		// Check descendants before any sub-job can persist metadata changes at the
-		// non-revertible boundary. A later column must not leave earlier MV updates behind.
+		// Reject unsupported descendant changes before this sub-job's last reversible
+		// point. Applying the change rechecks dependencies, which can grow outside
+		// the submitted involving set between job steps.
 		if _, err := buildMaterializedViewRelatedTableInfoForModifyColumn(
 			jobCtx.infoCache.GetLatest(), jobCtx.metaMut, "MODIFY COLUMN", tblInfo, oldCol, args.Column,
 		); err != nil {

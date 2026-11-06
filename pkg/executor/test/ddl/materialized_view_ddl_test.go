@@ -898,6 +898,138 @@ func TestNestedMaterializedViewModifyColumnNewDescendants(t *testing.T) {
 	}
 }
 
+func TestNestedMaterializedViewModifyColumnDependencyChangesAfterPrecheck(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10)")
+	tk.MustExec("create materialized view log on t (a, b)")
+	tk.MustExec("create materialized view mv1 (k, l, cnt) as select a, b, count(1) from t group by a, b")
+	tk.MustExec("create materialized view log on mv1 (k, l)")
+	tk.MustExec("create materialized view mv2 (x, y, cnt) as select k, l, count(1) from mv1 group by k, l")
+	tk.MustExec("create materialized view log on mv2 (x, y)")
+
+	const alterSQL = "alter table t modify column a bigint not null, modify column b bigint not null"
+	tkAlter := testkit.NewTestKit(t, store)
+	tkAlter.MustExec("use test")
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), tkAlter.Session()))
+	stmt, err := parser.New().ParseOneStmt(alterSQL, "", "")
+	require.NoError(t, err)
+	is := dom.InfoSchema()
+	schema, ok := is.SchemaByName(pmodel.NewCIStr("test"))
+	require.True(t, ok)
+	base, err := is.TableByName(context.Background(), schema.Name, pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	var jobW *ddl.JobWrapper
+	subJobs := make([]*model.SubJob, 0, len(stmt.(*ast.AlterTableStmt).Specs))
+	for _, spec := range stmt.(*ast.AlterTableStmt).Specs {
+		columnJob, err := ddl.GetModifiableColumnJob(context.Background(), tkAlter.Session(), is,
+			ast.Ident{Schema: schema.Name, Name: base.Meta().Name}, spec.NewColumns[0].Name.Name, schema, base, spec)
+		require.NoError(t, err)
+		if jobW == nil {
+			jobW = columnJob
+		}
+		subJobs = append(subJobs, &model.SubJob{
+			Type: columnJob.Type, JobArgs: columnJob.JobArgs,
+			Revertible: true, ReorgTp: columnJob.ReorgMeta.ReorgTp,
+			CtxVars: columnJob.CtxVars, InvolvingSchemaInfo: columnJob.InvolvingSchemaInfo,
+		})
+	}
+	jobW.Type = model.ActionMultiSchemaChange
+	jobW.MultiSchemaInfo = &model.MultiSchemaInfo{Revertible: true, SubJobs: subJobs}
+	jobW = ddl.NewJobWrapperWithArgs(jobW.Job, &model.EmptyArgs{}, false)
+
+	tk.MustExec("create materialized view mv3 (i, j, cnt) as select x, y, count(1) from mv2 group by x, y")
+	tk.MustExec("create materialized view log on mv3 (i, j)")
+	involving := involvingSchemaInfoSet(jobW.GetInvolvingSchemaInfo())
+	for _, name := range []string{"mv3", "$mlog$mv3", "blocker"} {
+		require.NotContains(t, involving, "test\x00"+name)
+	}
+
+	atBoundary := make(chan struct{})
+	resume := make(chan struct{})
+	var pauseOnce, resumeOnce sync.Once
+	release := func() { resumeOnce.Do(func() { close(resume) }) }
+	defer release()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeTransitOneJobStep", func(job *model.JobW) {
+		if job.Type != model.ActionMultiSchemaChange || !job.MultiSchemaInfo.Revertible || job.IsRollingback() {
+			return
+		}
+		for _, sub := range job.MultiSchemaInfo.SubJobs {
+			if sub.Revertible || sub.IsFinished() {
+				return
+			}
+		}
+		pauseOnce.Do(func() {
+			close(atBoundary)
+			<-resume
+		})
+	})
+	alterErrCh := make(chan error, 1)
+	go func() {
+		err := sessiontxn.NewTxn(context.Background(), tkAlter.Session())
+		if err == nil {
+			tkAlter.Session().SetValue(sessionctx.QueryString, alterSQL)
+			err = dom.DDLExecutor().(ddl.ExecutorForTest).DoDDLJobWrapper(tkAlter.Session(), jobW)
+		}
+		alterErrCh <- err
+	}()
+	select {
+	case <-atBoundary:
+	case <-time.After(15 * time.Second):
+		t.Fatal("ALTER did not reach the batch boundary before starting its transaction")
+	}
+
+	createErrCh := make(chan error, 1)
+	go func() {
+		createErrCh <- tk.ExecToErr("create materialized view blocker (z, total, cnt) as select i, sum(j), count(1) from mv3 group by i")
+	}()
+	select {
+	case err := <-createErrCh:
+		require.NoError(t, err)
+		t.Log("blocker CREATE completed while ALTER was paused before its boundary transaction")
+	case <-time.After(15 * time.Second):
+		t.Fatal("blocker CREATE was blocked by the paused ALTER")
+	}
+
+	names := []string{"t", "$mlog$t", "mv1", "$mlog$mv1", "mv2", "$mlog$mv2", "mv3", "$mlog$mv3", "blocker"}
+	tableIDs := make([]int64, 0, len(names))
+	for _, name := range names {
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), schema.Name, pmodel.NewCIStr(name))
+		require.NoError(t, err)
+		tableIDs = append(tableIDs, tbl.Meta().ID)
+	}
+	release()
+	select {
+	case err := <-alterErrCh:
+		require.ErrorContains(t, err, "non-direct SELECT expressions")
+		t.Logf("ALTER failed as expected: %v", err)
+	case <-time.After(20 * time.Second):
+		t.Fatal("ALTER did not finish after releasing its boundary")
+	}
+
+	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		var changed []string
+		for i, tableID := range tableIDs {
+			info, err := m.GetTable(schema.ID, tableID)
+			require.NoError(t, err)
+			for _, col := range info.Columns {
+				switch col.Name.L {
+				case "a", "b", "k", "l", "x", "y", "i", "j", "z":
+					t.Logf("persisted metadata after rejected ALTER: %s.%s type=%d", names[i], col.Name.L, col.GetType())
+					if col.GetType() != mysql.TypeLong {
+						changed = append(changed, fmt.Sprintf("%s.%s type=%d", names[i], col.Name.L, col.GetType()))
+					}
+				}
+			}
+		}
+		require.Empty(t, changed, "persisted metadata changed despite rejected ALTER")
+		return nil
+	}))
+}
+
 func TestNestedMaterializedViewModifyColumnRejectsDownstreamUsage(t *testing.T) {
 	for _, mode := range []string{"preflight", "worker", "multi_worker"} {
 		for _, tc := range []struct {
