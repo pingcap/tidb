@@ -139,7 +139,7 @@ go_test(
     ],
     embed = [":physicalop"],
     flaky = True,
-    shard_count = 8,
+    shard_count = 9,
     deps = [
         "//pkg/expression",
         "//pkg/expression/aggregation",
@@ -150,6 +150,7 @@ go_test(
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/property",
+        "//pkg/planner/util",
         "//pkg/types",
         "//pkg/util/mock",
         "@com_github_pingcap_tipb//go-tipb",
