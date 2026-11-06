@@ -161,7 +161,7 @@ func updateRecord(
 	// Step 2: check whether there are some columns changed.
 	// Step 3: on-update-now columns if non-generated columns are changed.
 	// Step 4: generated columns if non-generated columns are changed.
-	// Step 5: handle foreign key errors, bad null errors and exchange partition errors.
+	// Step 5: handle bad null errors, foreign key errors and exchange partition errors.
 	// After these are done, we can finally update the record.
 
 	// Step 2: compare already evaluated columns and update changed, handleChanged and handleChanged flags.
@@ -246,14 +246,20 @@ func updateRecord(
 		}
 	}
 
-	// Step 5: handle foreign key errors, bad null errors and exchange partition errors.
+	// Step 5: handle bad null errors, foreign key errors and exchange partition errors.
 	txn, err := sctx.Txn(true)
 	if err != nil {
 		return false, false, err
 	}
+	for i, col := range t.Cols() {
+		var err error
+		if err = col.HandleBadNull(sc.ErrCtx(), &newData[i], 0); err != nil {
+			return false, false, err
+		}
+	}
 	if ignoreErr {
 		for _, fkc := range fkChecks {
-			ignored, err := fkc.checkIgnoreForUpdate(ctx, sc, txn, oldData, newData)
+			ignored, err := fkc.checkIgnoreForUpdate(ctx, sc, txn, h, oldData, newData)
 			if err != nil {
 				return false, false, err
 			}
@@ -262,13 +268,6 @@ func updateRecord(
 			if ignored {
 				return false, true, nil
 			}
-		}
-	}
-
-	for i, col := range t.Cols() {
-		var err error
-		if err = col.HandleBadNull(sc.ErrCtx(), &newData[i], 0); err != nil {
-			return false, false, err
 		}
 	}
 
