@@ -398,27 +398,38 @@ select * from information_schema.key_column_usage where table_schema = 'executor
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	ORDINAL_POSITION	POSITION_IN_UNIQUE_CONSTRAINT	REFERENCED_TABLE_SCHEMA	REFERENCED_TABLE_NAME	REFERENCED_COLUMN_NAME
 select * from information_schema.key_column_usage where table_schema = 'executor__infoschema_reader' and column_name = 'non_exist';
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	ORDINAL_POSITION	POSITION_IN_UNIQUE_CONSTRAINT	REFERENCED_TABLE_SCHEMA	REFERENCED_TABLE_NAME	REFERENCED_COLUMN_NAME
+set global tidb_enable_check_constraint = ON;
 CREATE TABLE tc(a INT CHECK(a > 10) NOT ENFORCED, b INT, c INT, CONSTRAINT c1 CHECK (b > c));
 select * from information_schema.table_constraints where table_name = 'tc';
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_SCHEMA	TABLE_NAME	CONSTRAINT_TYPE
+def	executor__infoschema_reader	c1	executor__infoschema_reader	tc	CHECK
+def	executor__infoschema_reader	tc_chk_1	executor__infoschema_reader	tc	CHECK
 select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader';
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_SCHEMA	TABLE_NAME	CONSTRAINT_TYPE
 def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t	PRIMARY KEY
 def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t_common	PRIMARY KEY
 def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t_implicit	PRIMARY KEY
 def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t_int	PRIMARY KEY
+def	executor__infoschema_reader	c1	executor__infoschema_reader	tc	CHECK
+def	executor__infoschema_reader	tc_chk_1	executor__infoschema_reader	tc	CHECK
 select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' and table_name = 'tc';
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_SCHEMA	TABLE_NAME	CONSTRAINT_TYPE
+def	executor__infoschema_reader	c1	executor__infoschema_reader	tc	CHECK
+def	executor__infoschema_reader	tc_chk_1	executor__infoschema_reader	tc	CHECK
 select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' or table_name = 'tc';
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_SCHEMA	TABLE_NAME	CONSTRAINT_TYPE
 def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t	PRIMARY KEY
 def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t_common	PRIMARY KEY
 def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t_implicit	PRIMARY KEY
 def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t_int	PRIMARY KEY
+def	executor__infoschema_reader	c1	executor__infoschema_reader	tc	CHECK
+def	executor__infoschema_reader	tc_chk_1	executor__infoschema_reader	tc	CHECK
 select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' and table_name = 'non_exist';
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_SCHEMA	TABLE_NAME	CONSTRAINT_TYPE
 select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' and CONSTRAINT_NAME = 'c1';
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_SCHEMA	TABLE_NAME	CONSTRAINT_TYPE
+def	executor__infoschema_reader	c1	executor__infoschema_reader	tc	CHECK
+set global tidb_enable_check_constraint = default;
 select TABLE_CATALOG,TABLE_SCHEMA,TABLE_NAME,TABLE_TYPE,ENGINE,VERSION from information_schema.tables where table_name = 't';
 TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	TABLE_TYPE	ENGINE	VERSION
 def	executor__infoschema_reader	t	BASE TABLE	InnoDB	10
