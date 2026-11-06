@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
@@ -59,8 +58,6 @@ type Session interface {
 	ExecuteSQL(ctx context.Context, sql string, args ...any) ([]chunk.Row, error)
 	// RunInTxn executes the specified function in a txn
 	RunInTxn(ctx context.Context, fn func() error, mode TxnMode) (err error)
-	// ResetWithGlobalTimeZone resets the session time zone to global time zone
-	ResetWithGlobalTimeZone(ctx context.Context) error
 	// GlobalTimeZone returns the global timezone. It is used to compute expire time for TTL
 	GlobalTimeZone(ctx context.Context) (*time.Location, error)
 	// KillStmt kills the current statement execution
@@ -176,29 +173,6 @@ func (s *session) RunInTxn(ctx context.Context, fn func() error, txnMode TxnMode
 	tracer.EnterPhase(metrics.PhaseOther)
 
 	success = true
-	return err
-}
-
-// ResetWithGlobalTimeZone resets the session time zone to global time zone
-func (s *session) ResetWithGlobalTimeZone(ctx context.Context) error {
-	sessVar := s.sctx.GetSessionVars()
-	if sessVar.TimeZone != nil {
-		globalTZ, err := sessVar.GetGlobalSystemVar(ctx, vardef.TimeZone)
-		if err != nil {
-			return err
-		}
-
-		tz, err := sessVar.GetSessionOrGlobalSystemVar(ctx, vardef.TimeZone)
-		if err != nil {
-			return err
-		}
-
-		if globalTZ == tz {
-			return nil
-		}
-	}
-
-	_, err := s.ExecuteSQL(ctx, "SET @@time_zone=@@global.time_zone")
 	return err
 }
 
