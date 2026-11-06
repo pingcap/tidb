@@ -192,22 +192,29 @@ func TestLookup(t *testing.T) {
 	// single thread build
 	subTable.build(0, len(rowTable.segments), tagHelper)
 
+	// Walk each lookup chain once per hash; random tiny keys create many duplicates.
+	rowsByHash := make(map[uint64]map[unsafe.Pointer]struct{})
 	for _, seg := range rowTable.segments {
 		for index := range seg.rowStartOffset {
 			hashValue := seg.hashValues[index]
-			candidate := subTable.lookup(hashValue, tagHelper)
 			loc := seg.getRowPointer(index)
-			found := false
-			for candidate != 0 {
-				candidatePtr := tagHelper.toUnsafePointer(candidate)
-				if candidatePtr == loc {
-					found = true
-					break
-				}
-				candidate = getNextRowAddress(candidatePtr, tagHelper, hashValue)
+			rows, ok := rowsByHash[hashValue]
+			if !ok {
+				rows = make(map[unsafe.Pointer]struct{})
+				rowsByHash[hashValue] = rows
 			}
-			require.True(t, found)
+			rows[loc] = struct{}{}
 		}
+	}
+
+	for hashValue, rows := range rowsByHash {
+		candidate := subTable.lookup(hashValue, tagHelper)
+		for candidate != 0 && len(rows) > 0 {
+			candidatePtr := tagHelper.toUnsafePointer(candidate)
+			delete(rows, candidatePtr)
+			candidate = getNextRowAddress(candidatePtr, tagHelper, hashValue)
+		}
+		require.Empty(t, rows)
 	}
 }
 
