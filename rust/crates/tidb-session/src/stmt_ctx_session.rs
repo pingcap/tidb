@@ -69,6 +69,10 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &mut self.binary_prepared_execution
     }
 
+    fn in_execute_ref(&self) -> &bool {
+        &self.in_execute
+    }
+
     fn cost_env_cache_ref(&self) -> &std::cell::RefCell<Option<(u64, Arc<tidb_planner::find_best_task::coster::CostEnv>)>> {
         &self.cost_env_cache
     }

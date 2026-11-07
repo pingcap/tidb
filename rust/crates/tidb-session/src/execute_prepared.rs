@@ -112,6 +112,9 @@ impl Session {
                 }
             }
         }
+        // Go's process plan for a text EXECUTE is the `Execute` plan
+        // (`runStmt`'s `currentPlan = stmt.Plan`), not the prepared one.
+        self.in_execute = true;
         // Go summarizes an EXECUTE under the digest of the statement text as
         // PREPAREd, not under the marker-aliased text the port runs.
         self.retarget_prepared_statement_observation(&prepared.original_sql);

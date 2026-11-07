@@ -29119,8 +29119,8 @@ fn a_prepared_point_write_caches_its_fast_point_plan_like_go() {
 /// (durations masked):
 ///
 /// ```text
-/// Update_3      actRows 0  time:D, open:D, close:D, loops:1
-/// └─Point_Get_1 actRows 1  time:D, open:D, close:D, loops:2, Get:{num_rpc:1, total_time:D}
+/// Update_3      estRows 0.00  actRows 0  time:D, open:D, close:D, loops:1
+/// └─Point_Get_1 estRows 1.00  actRows 1  time:D, open:D, close:D, loops:2, Get:{num_rpc:1, total_time:D}
 /// TableReader_7     actRows 1  ..., cop_task: {num: 1, ...}  272 Bytes
 /// └─Selection_6     actRows 1  cop[tikv]
 ///   └─TableFullScan_5 actRows 3  cop[tikv]
@@ -29150,9 +29150,12 @@ fn explain_for_connection_renders_the_targets_runtime_stats_like_go() {
     rows(&mut session, "execute s1 using @b, @i");
     let plan = explain_target(&mut target);
     assert_eq!(plan.len(), 2, "{plan:?}");
+    // An `EXECUTE`'s plan is Go's `Execute` plan, whose brief binary plan
+    // `EXPLAIN FOR CONNECTION` decodes (`shouldDecodeBriefBinaryPlan`): the
+    // write root's estRows is the encoded `0.00`, not the live `N/A`.
     assert_eq!(
-        [&plan[0][0], &plan[0][2], &plan[0][5]],
-        ["Update_3", "0", "time:D, open:D, close:D, loops:1"]
+        [&plan[0][0], &plan[0][1], &plan[0][2], &plan[0][5]],
+        ["Update_3", "0.00", "0", "time:D, open:D, close:D, loops:1"]
     );
     assert_eq!(
         [&plan[1][0], &plan[1][2], &plan[1][5]],
@@ -29162,6 +29165,11 @@ fn explain_for_connection_renders_the_targets_runtime_stats_like_go() {
             "time:D, open:D, close:D, loops:2, Get:{num_rpc:1, total_time:D}"
         ]
     );
+    // The connection explaining itself renders its previous statement's
+    // plan, the same decoded `Execute` plan.
+    let own = explain_target(&mut session);
+    assert_eq!([&own[0][0], &own[0][1]], ["Update_3", "0.00"], "{own:?}");
+    rows(&mut session, "execute s1 using @b, @i");
     rows(&mut session, "select * from t where b > 0");
     let plan = explain_target(&mut target);
     let shape: Vec<(&str, &str, &str)> = plan

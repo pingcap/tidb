@@ -237,6 +237,7 @@ impl Session {
             previous.statement_memory().finish_statement();
         }
         self.prepared_params = None;
+        self.in_execute = false;
         self.statement_boundary_open = true;
         self.parse_warnings = None;
         self.reset_plan_cache_tracker();

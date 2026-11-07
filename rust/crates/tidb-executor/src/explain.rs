@@ -3485,6 +3485,7 @@ pub fn process_plan_info_with_brief(
             .map(|source| crate::StoredPlan::new(std::sync::Arc::new(std::sync::Arc::clone(source)))),
         statement_memory: Some(crate::StoredPlan::new(std::sync::Arc::new(statement_context.statement_memory()))),
         plan_source: Some(plan_source),
+        in_execute: statement_context.in_execute(),
         ..crate::ProcessPlanInfo::default()
     };
     collect_executor_process_fields(
@@ -3931,6 +3932,45 @@ pub fn explain_connection_plan(
     // `RuntimeStatsColl`, when it has one (`ctx` carries it).
     let runtime = ctx.executor_runtime_stats_source().is_some();
     render_physical_plan(ctx, ctx, &physical, catalog, format, runtime, runtime, &[])
+}
+
+/// Go `Explain.RenderResult` for a target whose brief binary plan it decodes
+/// (`shouldDecodeBriefBinaryPlan`): `prepareSchema`'s columns for the format
+/// and whether the target has a collector, and `DecodeBinaryPlan4Connection`'s
+/// rows.
+///
+/// # Errors
+/// A brief plan that does not decode.
+pub fn explain_connection_brief_plan(
+    brief_binary_plan: &str,
+    format: ExplainFormat,
+    runtime: bool,
+) -> Result<SelectMeta, DriverError> {
+    let mut explain = PlannerExplain::new(
+        planner_explain_format(format),
+        false,
+        ExplainOperator::new(String::new(), 0),
+    );
+    explain.runtime_stats = runtime;
+    let schema = explain
+        .prepare_schema(&mut PlannerExplainContext::default())
+        .map_err(|error| DriverError::unsupported(error.to_string()))?;
+    let field_type = FieldType::new(FieldTypeCode::VarString);
+    let columns = schema
+        .field_names
+        .into_iter()
+        .map(|name| (name.to_owned(), field_type.clone()))
+        .collect();
+    let rows = tidb_plancodec::decode_binary_plan_for_connection(
+        brief_binary_plan,
+        planner_explain_format(format).as_str(),
+        false,
+    )
+    .map_err(|error| DriverError::unsupported(error.to_string()))?
+    .iter()
+    .map(|row| row.iter().map(|value| text(value)).collect())
+    .collect();
+    Ok((columns, rows))
 }
 
 /// Go `buildExplain`: an analyzed statement renders from the statement's

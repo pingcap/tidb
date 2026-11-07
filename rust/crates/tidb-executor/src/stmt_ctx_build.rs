@@ -1690,6 +1690,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_enable_stable_result_mode(snapshot.stable_result_mode)
                     .with_ignore_inlist_plan_digest(snapshot.ignore_inlist_plan_digest)
                     .with_brief_binary_plan(!self.binary_prepared_execution_ref())
+                    .with_in_execute(*self.in_execute_ref())
                     .with_allow_write_row_id(allow_write_row_id)
                     .with_static_partition_prune(static_partition_prune)
                     .with_skip_missing_partition_stats(skip_missing_partition_stats)
@@ -1859,6 +1860,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_enable_stable_result_mode(snapshot.stable_result_mode)
                 .with_ignore_inlist_plan_digest(snapshot.ignore_inlist_plan_digest)
                 .with_brief_binary_plan(!self.binary_prepared_execution_ref())
+                .with_in_execute(*self.in_execute_ref())
                 .with_allow_write_row_id(allow_write_row_id)
                 .with_new_only_full_group_by_check(new_only_full_group_by_check)
                 .with_auto_increment_in_generated(snapshot.auto_increment_in_generated)
@@ -2317,6 +2319,9 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     fn binary_prepared_execution_ref(&self) -> &bool;
     /// Go `SessionVars` / `StmtCtx` state `binary_prepared_execution`, mutably.
     fn binary_prepared_execution_mut(&mut self) -> &mut bool;
+    /// The running statement is a text `EXECUTE` (Go's process plan is the
+    /// `Execute` plan).
+    fn in_execute_ref(&self) -> &bool;
     /// Go `SessionVars` / `StmtCtx` state `cost_env_cache`, read.
     fn cost_env_cache_ref(&self) -> &std::cell::RefCell<Option<(u64, Arc<tidb_planner::find_best_task::coster::CostEnv>)>>;
     /// Go `SessionVars` / `StmtCtx` state `cost_env_cache`, mutably.

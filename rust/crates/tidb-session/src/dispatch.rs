@@ -1058,20 +1058,31 @@ impl Session {
         Ok(output)
     }
 
-    /// Executes a bound prepared DML statement through the ordinary statement
-    /// funnel, then publishes whether Go's complete cache key was reused.
-    /// Cache hits and misses therefore share privilege checks, metadata locks,
-    /// resource-group selection, statement context, and the DML executor.
     /// Runs a cached prepared DML for the definition PREPARE retained (see
-    /// [`Self::execute_prepared_select_for`]).
+    /// [`Self::execute_prepared_select_for`]): a binary EXECUTE, whose
+    /// statement lifecycle opens here (Go `ExecutePreparedStmt` reaching
+    /// `ExecuteStmt`'s `ResetContextOfStmt`).
     pub fn execute_cached_prepared_dml_for(
         &mut self,
         execution: &tidb_executor::PreparedDmlExecution,
         prepared: &crate::PreparedAst,
     ) -> Result<StmtOutput, DriverError> {
-        self.execute_cached_prepared_dml(execution, prepared.sql(), prepared.privilege_requests())
+        self.run_with_columns_using(prepared.sql(), false, |session| {
+            session.execute_cached_prepared_dml(
+                execution,
+                prepared.sql(),
+                prepared.privilege_requests(),
+            )
+        })
+        .map(|(output, _)| output)
     }
 
+    /// Executes a bound prepared DML statement through the ordinary statement
+    /// funnel, then publishes whether Go's complete cache key was reused.
+    /// Cache hits and misses therefore share privilege checks, metadata locks,
+    /// resource-group selection, statement context, and the DML executor.
+    /// It runs inside the current statement's lifecycle: Go plans and runs
+    /// an EXECUTE's prepared statement under the EXECUTE's one `StmtCtx`.
     pub(crate) fn execute_cached_prepared_dml(
         &mut self,
         execution: &tidb_executor::PreparedDmlExecution,
@@ -1084,37 +1095,33 @@ impl Session {
         let mut stats_update: Option<(String, String, i64)> = None;
         let output = execution
             .with_plan(|statement, physical| {
-                self.run_with_columns_using(sql, false, |session| {
-                    session
-                        .begin_prepared_statement_boundary(statement, Some(execution.parameters()));
-                    for warning in execution.take_planning_warnings() {
-                        session.append_sql_warning(warning);
-                    }
-                    let output = session.execute_parsed_statement_with_dml_plan(
-                        sql,
-                        statement.clone(),
-                        Some(privilege_requests),
-                        physical,
-                    )?;
-                    if let (StmtOutput::Affected(count), tidb_ast::Stmt::Dml(dml)) =
-                        (&output, statement)
-                    {
-                        if let tidb_ast::DmlStmt::Insert(insert) = dml.as_ref() {
-                            let name = insert.table.last().cloned();
-                            let database = insert
-                                .table
-                                .len()
-                                .ge(&2)
-                                .then(|| insert.table[0].clone())
-                                .unwrap_or_else(|| current_db.clone());
-                            if let Some(name) = name {
-                                stats_update = Some((database, name, *count as i64));
-                            }
+                self.begin_prepared_statement_boundary(statement, Some(execution.parameters()));
+                for warning in execution.take_planning_warnings() {
+                    self.append_sql_warning(warning);
+                }
+                let output = self.execute_parsed_statement_with_dml_plan(
+                    sql,
+                    statement.clone(),
+                    Some(privilege_requests),
+                    physical,
+                )?;
+                if let (StmtOutput::Affected(count), tidb_ast::Stmt::Dml(dml)) =
+                    (&output, statement)
+                {
+                    if let tidb_ast::DmlStmt::Insert(insert) = dml.as_ref() {
+                        let name = insert.table.last().cloned();
+                        let database = insert
+                            .table
+                            .len()
+                            .ge(&2)
+                            .then(|| insert.table[0].clone())
+                            .unwrap_or_else(|| current_db.clone());
+                        if let Some(name) = name {
+                            stats_update = Some((database, name, *count as i64));
                         }
                     }
-                    Ok(output)
-                })
-                .map(|(output, _)| output)
+                }
+                Ok::<_, DriverError>(output)
             })
             .ok_or_else(|| {
                 DriverError::unsupported(

@@ -1176,7 +1176,13 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
                 ))));
             }
         };
-        let tidb_sessmgr::PublishedPlan { plan, runtime_stats_coll, statement_memory } = match plan {
+        let tidb_sessmgr::PublishedPlan {
+            plan,
+            runtime_stats_coll,
+            statement_memory,
+            brief_binary_plan,
+            in_execute,
+        } = match plan {
             tidb_sessmgr::ProcessPlan::Plan(published) => published,
             // An `Explain` plan renders nothing, under the analyze
             // header of the format.
@@ -1213,6 +1219,17 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
                 }));
             }
         };
+        // Go `shouldDecodeBriefBinaryPlan`: a target without a collector, or
+        // an `Execute` plan, whose parameters belong to its own execution,
+        // renders from the brief binary plan its process info recorded.
+        if !brief_binary_plan.is_empty() && (runtime_stats_coll.is_none() || in_execute) {
+            return crate::explain_connection_brief_plan(
+                &brief_binary_plan,
+                explain_format,
+                runtime_stats_coll.is_some(),
+            )
+            .map(|(columns, rows)| Some(StmtOutput::Rows { columns, rows }));
+        }
         // Go `buildExplainFor`: the target's `RuntimeStatsColl`, or none.
         let ctx = self.statement_context(false).with_executor_runtime_stats_source(
             runtime_stats_coll

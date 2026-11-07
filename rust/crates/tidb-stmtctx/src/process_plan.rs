@@ -104,6 +104,13 @@ pub struct ProcessPlanInfo {
     pub brief_binary_plan: String,
     /// Re-encodes [`Self::brief_binary_plan`] when the statement ends.
     pub brief_plan_source: Option<BriefPlanSource>,
+    /// [`Self::brief_binary_plan`] of the previous statement.
+    pub previous_brief_binary_plan: String,
+    /// Go's `ProcessInfo.Plan` is an `Execute` plan: the statement is a text
+    /// `EXECUTE`.
+    pub in_execute: bool,
+    /// [`Self::in_execute`] of the previous statement.
+    pub previous_in_execute: bool,
 
     /// Go `StmtCtx.GetPlanDigest` normalized text: the select plan with
     /// constants and statistics removed (empty without a physical select plan).

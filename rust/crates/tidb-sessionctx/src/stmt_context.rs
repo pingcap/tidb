@@ -1263,6 +1263,7 @@ pub struct StmtContextData {
     /// plan detail in `show process` to gain performance benefits") while
     /// keeping `TableIDs`/`IndexNames`/stats.
     publish_brief_binary_plan: bool,
+    in_execute: bool,
     /// Go `PlanCacheStmt.NormalizedPlan` / `PlanDigest`: a cached plan's
     /// normalized form and digest, computed once for the cache entry and
     /// copied onto each hit (`stmtCtx.SetPlanDigest`).
@@ -2252,6 +2253,14 @@ context_configuration! {
         self
     }
 
+    /// The statement is a text `EXECUTE`, whose process plan Go publishes as
+    /// the `Execute` plan (`session.runStmt`'s `currentPlan = stmt.Plan`).
+    #[must_use]
+    pub fn with_in_execute(mut self, in_execute: bool) -> Self {
+        self.in_execute = in_execute;
+        self
+    }
+
     /// Retains the statement counter through every execution context clone.
     #[must_use]
     pub fn with_kv_exec_counter(mut self, counter: tidb_topsql_stmtstats::KvExecCounterHandle) -> Self {
@@ -3109,6 +3118,7 @@ impl StmtContext {
             planned_apply: session.planned_apply,
             process_plan_info: None,
             publish_brief_binary_plan: true,
+            in_execute: false,
             cached_plan_digest: None,
             statement_phase_observer: None,
             phase_durations: Default::default(),
@@ -4833,6 +4843,12 @@ impl StmtContext {
     #[must_use]
     pub fn publishes_brief_binary_plan(&self) -> bool {
         self.publish_brief_binary_plan
+    }
+
+    /// Whether this statement is a text `EXECUTE` (see [`Self::with_in_execute`]).
+    #[must_use]
+    pub fn in_execute(&self) -> bool {
+        self.in_execute
     }
 
     /// The second half: stamps the rendered `plan` with the statement's own

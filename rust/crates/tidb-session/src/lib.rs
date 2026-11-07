@@ -886,6 +886,8 @@ pub struct Session {
     /// `pkg/session/session.go`: `execStmt.Name == ""` clears `currentPlan`),
     /// so its statement contexts skip rendering `BriefBinaryPlan`.
     binary_prepared_execution: bool,
+    /// The running statement is a text `EXECUTE`.
+    in_execute: bool,
     /// The node connection a session built over a booted domain runs its
     /// statements through (Go testkit's session on `CreateMockStore`'s
     /// domain); `None` for a session that IS the node connection's own.
@@ -1080,6 +1082,7 @@ impl Session {
             ruv2_pending_session_parser_total: 0,
             last_ruv2_metrics: None,
             binary_prepared_execution: false,
+            in_execute: false,
             node: Some(node),
         }
     }
@@ -1968,7 +1971,20 @@ impl Session {
     /// `State` text (`in transaction; autocommit` after a `ROLLBACK`) — Go's
     /// `clientConn` writes the live `SessionVars.Status` word on the control
     /// statement's own OK packet.
+    ///
+    /// This is Go's `SetProcessInfo(..., mysql.ComSleep, ...)` once a statement
+    /// is over, which encodes the brief binary plan again with what the
+    /// finished statement measured.
     pub fn refresh_process_status(&self) {
+        {
+            let mut cell = self
+                .process_plan_info
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(source) = cell.brief_plan_source.take() {
+                cell.brief_binary_plan = (source.0)();
+            }
+        }
         if let Some(guard) = &self.process {
             guard
                 .registry()
@@ -2685,6 +2701,7 @@ impl Session {
     // for queries and to execution itself for statements without results.
     fn begin_statement_execution(&mut self, sql: &str) -> Result<(), DriverError> {
         self.mpp_attempt_completed = false;
+        self.in_execute = false;
         self.last_result_output_names.clear();
         if !self.external_executor_breakpoint_scope {
             self.executor_first_run_breakpoint
@@ -2705,8 +2722,12 @@ impl Session {
             let previous_runtime_stats_coll = cell.runtime_stats_coll.take();
             let previous_statement_memory = cell.statement_memory.take();
             let previous_explain = cell.explain_marker;
+            let previous_brief_binary_plan = std::mem::take(&mut cell.brief_binary_plan);
+            let previous_in_execute = cell.in_execute;
             *cell = tidb_stmtctx::ProcessPlanInfo::default();
             cell.previous_plan = previous_plan;
+            cell.previous_brief_binary_plan = previous_brief_binary_plan;
+            cell.previous_in_execute = previous_in_execute;
             cell.previous_runtime_stats_coll = previous_runtime_stats_coll;
             cell.previous_statement_memory = previous_statement_memory;
             cell.previous_explain = previous_explain;
@@ -2976,24 +2997,7 @@ impl Session {
                 .report();
         }
         if self.routed_statement_observation_depth == 0 {
-            // Go `SetProcessInfo(..., ComSleep, ...)` re-encodes the brief binary
-            // plan with what the finished statement measured.
-            {
-                let mut cell = self
-                    .process_plan_info
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                if let Some(source) = cell.brief_plan_source.take() {
-                    cell.brief_binary_plan = (source.0)();
-                }
-            }
-            if let Some(guard) = &self.process {
-                guard.registry().statement_finished(
-                    guard.id(),
-                    &self.vars.current_db,
-                    &self.server_status_2_str(),
-                );
-            }
+            self.refresh_process_status();
         }
         let mut error_row = None;
         if let Err(error) = &result {

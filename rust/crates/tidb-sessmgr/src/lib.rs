@@ -83,6 +83,10 @@ pub struct PublishedPlan {
     pub runtime_stats_coll: Option<tidb_stmtctx::StoredPlan>,
     /// The statement memory whose trackers the plan's operators charged.
     pub statement_memory: Option<tidb_stmtctx::StoredPlan>,
+    /// Go `ProcessInfo.BriefBinaryPlan`.
+    pub brief_binary_plan: String,
+    /// The plan is Go's `Execute` plan (a text `EXECUTE`).
+    pub in_execute: bool,
 }
 
 /// One snapshot shared by SHOW and information_schema.PROCESSLIST.
@@ -875,12 +879,16 @@ impl ProcessRegistry {
                         plan,
                         runtime_stats_coll: cell.runtime_stats_coll.clone(),
                         statement_memory: cell.statement_memory.clone(),
+                        brief_binary_plan: cell.brief_binary_plan.clone(),
+                        in_execute: cell.in_execute,
                     });
                     let previous = || {
                         cell.previous_plan.clone().map(|plan| PublishedPlan {
                             plan,
                             runtime_stats_coll: cell.previous_runtime_stats_coll.clone(),
                             statement_memory: cell.previous_statement_memory.clone(),
+                            brief_binary_plan: cell.previous_brief_binary_plan.clone(),
+                            in_execute: cell.previous_in_execute,
                         })
                     };
                     match current.or_else(previous) {
