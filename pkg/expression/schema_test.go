@@ -173,4 +173,49 @@ func TestGetUsedList(t *testing.T) {
 
 	used := GetUsedList(mock.NewContext(), usedCols, schema)
 	require.Equal(t, []bool{false, true, false, true, false}, used)
+
+	// Cover both the linear-scan path (fewer than usedListMapThreshold used
+	// columns) and the UniqueID-set path (at or above it) on a wide schema, and
+	// check them against Schema.Contains. usedCols includes duplicates, columns
+	// from another schema, and a prefix column sharing a UniqueID with a schema
+	// column, which must still count as used.
+	wide := s.generateSchema(300)
+	foreign := s.generateSchema(10).Columns
+	for _, usedCount := range []int{0, 1, usedListMapThreshold - 1, usedListMapThreshold, 150} {
+		usedCols = usedCols[:0]
+		for i := range usedCount {
+			usedCols = append(usedCols, wide.Columns[(i*7)%len(wide.Columns)])
+		}
+		if usedCount > 0 {
+			usedCols = append(usedCols, usedCols[0], foreign[usedCount%len(foreign)])
+			prefixCol := wide.Columns[299].Clone().(*Column)
+			prefixCol.IsPrefix = true
+			usedCols = append(usedCols, prefixCol)
+		}
+		used = GetUsedList(mock.NewContext(), usedCols, wide)
+		usedSchema := NewSchema(usedCols...)
+		for i, col := range wide.Columns {
+			require.Equal(t, usedSchema.Contains(col), used[i], "usedCount=%d column=%d", usedCount, i)
+		}
+	}
+}
+
+func BenchmarkGetUsedList(b *testing.B) {
+	ctx := mock.NewContext()
+	for _, tc := range []struct{ schemaLen, usedLen int }{
+		{8, 4}, {64, 16}, {64, 64}, {4000, 10}, {4000, 4000},
+	} {
+		s := &schemaGenerator{}
+		schema := s.generateSchema(tc.schemaLen)
+		usedCols := make([]*Column, 0, tc.usedLen)
+		for i := range tc.usedLen {
+			usedCols = append(usedCols, schema.Columns[(i*7)%tc.schemaLen])
+		}
+		b.Run(fmt.Sprintf("schema=%d/used=%d", tc.schemaLen, tc.usedLen), func(b *testing.B) {
+			b.ReportAllocs()
+			for range b.N {
+				GetUsedList(ctx, usedCols, schema)
+			}
+		})
+	}
 }
