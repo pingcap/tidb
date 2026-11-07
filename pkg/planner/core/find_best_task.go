@@ -87,6 +87,17 @@ type enumerateState struct {
 }
 
 func buildPhysPlanPartInfo(ds *logicalop.DataSource) *physicalop.PhysPlanPartInfo {
+	// ColumnNames is only read by partition pruning. Reconstructing it allocates
+	// one FieldName per table column, and this runs for every access path turned
+	// into a task, which is costly for wide tables. Skip it for non-partitioned
+	// tables.
+	if ds.TableInfo.GetPartitionInfo() == nil {
+		return &physicalop.PhysPlanPartInfo{
+			PruningConds:   ds.AllConds,
+			PartitionNames: ds.PartitionNames,
+			Columns:        ds.TblCols,
+		}
+	}
 	columnNames, err := rule.ReconstructTableColNames(ds)
 	if err != nil {
 		// Keep planning resilient. If reconstructing names fails, fall back to output
