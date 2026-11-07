@@ -656,6 +656,10 @@ func WithLogger(logger *zap.Logger) Option {
 func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs, options ...Option) (*LoadDataController, error) {
 	fullTableName := tbl.Meta().Name.String()
 	logger := log.L().With(zap.String("table", fullTableName))
+	// Parquet workers need a concrete timezone identity, not a worker-local fallback.
+	if plan.Format == DataFormatParquet && strings.EqualFold(plan.LocationID, "SYSTEM") {
+		return nil, errors.New("cannot import parquet with an unresolved SYSTEM time zone")
+	}
 	loc := time.UTC
 	// historically, we store *time.Location in Plan, but *time.Location cannot
 	// be marshaled into JSON. New task metadata stores a timezone specifier
@@ -1635,7 +1639,9 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		if err3 != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err3), "failed to read file size by seek")
 		}
-		e.detectAndUpdateFormat(fileNameKey)
+		if err := e.detectAndUpdateFormat(fileNameKey); err != nil {
+			return err
+		}
 		sourceType = e.getSourceType()
 		formatExpansionRatio, err := estimateFormatSizeExpansionRatio(ctx, fileNameKey, size, sourceType, s)
 		if err != nil {
@@ -1676,6 +1682,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		var err error
 		var processedFiles []*mydump.SourceFileMeta
 		var once sync.Once
+		// Every callback observes the same format rejection after once.Do returns.
+		var formatErr error
 
 		ce := newCompressionRecorder()
 
@@ -1691,10 +1699,16 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				// pick arbitrary one file to detect the format.
 				var err2 error
 				once.Do(func() {
-					e.detectAndUpdateFormat(path)
+					formatErr = e.detectAndUpdateFormat(path)
+					if formatErr != nil {
+						return
+					}
 					sourceType = e.getSourceType()
 					formatExpansionRatio, err2 = estimateFormatSizeExpansionRatio(ctx, path, size, sourceType, s)
 				})
+				if formatErr != nil {
+					return nil, formatErr
+				}
 				if err2 != nil {
 					return nil, err2
 				}
@@ -1790,8 +1804,8 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 	return nil
 }
 
-// update format of the validated file by its extension.
-func (e *LoadDataController) detectAndUpdateFormat(path string) {
+// detectAndUpdateFormat resolves auto format and validates Parquet's captured location.
+func (e *LoadDataController) detectAndUpdateFormat(path string) error {
 	if e.Format == DataFormatAuto {
 		e.Format = parseFileType(path)
 		e.logger.Info("detect and update import plan format based on file extension",
@@ -1801,6 +1815,10 @@ func (e *LoadDataController) detectAndUpdateFormat(path string) {
 			e.Parameters.Format = e.Format
 		}
 	}
+	if e.Format == DataFormatParquet && strings.EqualFold(e.LocationID, "SYSTEM") {
+		return errors.New("cannot import parquet with an unresolved SYSTEM time zone")
+	}
+	return nil
 }
 
 func parseFileType(path string) string {

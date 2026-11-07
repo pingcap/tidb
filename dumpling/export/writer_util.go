@@ -513,6 +513,9 @@ func WriteInsertInParquet(
 	if !fileRowIter.HasNext() {
 		return 0, fileRowIter.Error()
 	}
+	if meta.SelectedField() == "" {
+		return 0, errors.New("cannot export populated table to parquet without selected fields")
+	}
 
 	// parquet need to get more information from tableMeta
 	opts := []parquetfile.WriterOption{
@@ -557,9 +560,6 @@ func WriteInsertInParquet(
 	// Add rows to parquet writer; it flushes when accounted in-memory bytes reach
 	// the configured row-group memory limit.
 	for fileRowIter.HasNext() {
-		// When all table columns are generated, selectedFields is empty.
-		// Dumpling still iterates source rows via SELECT '' and writes no parquet
-		// rows in this branch.
 		if selectedFields != "" {
 			if err = fileRowIter.Decode(row); err != nil {
 				return counter, errors.Trace(err)
