@@ -81,19 +81,22 @@ fn reads_writes_and_tombstones_match_the_fake_backend_contract() {
         TikvMemBufferError::CannotSetNilValue
     );
 
-    // RemoveFromBuffer erases the record entirely instead of writing a
-    // tombstone.
-    backend.remove_from_buffer(&k("a"));
-    assert_eq!(backend.len(), 1);
+    // RemoveFromBuffer is unsupported by client-go's default ART MemDB:
+    // `ART.RemoveFromBuffer` panics "unimplemented" and keeps the record.
+    let removed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        backend.remove_from_buffer(&k("a"));
+    }));
     assert_eq!(
-        backend.get(&k("a"), GetOptions::default()).unwrap_err(),
-        TikvMemBufferError::NotFound
+        removed.unwrap_err().downcast_ref::<&str>().copied(),
+        Some("unimplemented")
     );
+    assert_eq!(backend.len(), 2);
 
     // GetLocal reads buffer bytes without a transaction snapshot.
     assert_eq!(backend.get_local(&k("b")).unwrap(), Vec::<u8>::new());
+    assert_eq!(backend.get_local(&k("a")).unwrap(), b"1".to_vec());
     assert_eq!(
-        backend.get_local(&k("a")).unwrap_err(),
+        backend.get_local(&k("c")).unwrap_err(),
         TikvMemBufferError::NotFound
     );
 }

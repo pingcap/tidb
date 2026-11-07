@@ -914,6 +914,12 @@ impl Buffer {
 
     /// Unlock the given key if locked.
     pub fn unlock(&mut self, key: &Key) {
+        // A key the MemDB holds no lock for is left untouched: an ART flags
+        // write would add a leaf (and count it in `Len`) that Go never writes
+        // (its aggressive locking sets no flag before `DoneAggressiveLocking`).
+        if !self.memdb_flags(key).has_locked() {
+            return;
+        }
         let logical_key = self.logical_key(key);
         let preserve_constraint = self
             .memdb
@@ -927,15 +933,10 @@ impl Buffer {
         if preserve_constraint {
             operations.push(FlagsOp::SetNeedConstraintCheckInPrewrite);
         }
+        // The key stays in the ART, which cannot remove one; a flags-only key
+        // left without a lock is skipped when mutations are built (Go
+        // `initKeysAndMutations`).
         self.memdb.update_flags(&logical_key, &operations);
-        let remove_flags_only = self
-            .memdb
-            .get_flags_readonly(&logical_key)
-            .is_ok_and(|flags| flags.bits() == 0)
-            && self.memdb.get_readonly(&logical_key).is_err();
-        if remove_flags_only {
-            self.memdb.remove_from_buffer(&logical_key);
-        }
     }
 
     /// Put a value into the buffer (does not write through).
@@ -1598,9 +1599,9 @@ mod tests {
 
         assert_eq!(buffer.len(), 3);
         assert_eq!(buffer.get_write_size(), 4 + 5 + 3 + 5);
-        // MemDB retains the overwritten insert value in its value-log
-        // history, so memory can exceed the current logical write size.
-        assert_eq!(buffer.memory_footprint(), 4 + 5 + 3 + 5 + 5);
+        // MemDB memory is client-go ART's arena capacity: one 4 KiB node
+        // block and one 4 KiB value-log block.
+        assert_eq!(buffer.memory_footprint(), 8192);
     }
 
     fn assert_snapshot_cache_mutation_preserves_entries_and_cached_misses() {

@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use crate::error::{KeyExistsError, StaticError};
 use crate::kv::{FlagsOp, GetOption, KeyFlags, ValueEntry};
 
+use super::arena::MemdbCheckpoint;
 use super::art::{Art, ArtIterator, ArtSnapshot, SnapshotIterator};
 use super::rbt::{Rbt, RbtIterator, RbtSnapshot, RbtSnapshotIterator};
 
@@ -418,7 +419,7 @@ impl MemDb {
     }
 
     pub fn get_readonly(&self, key: &[u8]) -> Result<Vec<u8>, StaticError> {
-        match self.art.get_readonly(key) {
+        match self.art.get(key) {
             Ok(value) => Ok(value),
             Err(StaticError::NotExist) => self
                 .managed_pipelined
@@ -512,7 +513,7 @@ impl MemDb {
     }
 
     pub fn get_flags_readonly(&self, key: &[u8]) -> Result<KeyFlags, StaticError> {
-        match self.art.flags_readonly(key) {
+        match self.art.flags(key) {
             Ok(flags) => Ok(flags),
             Err(StaticError::NotExist) => self
                 .managed_pipelined
@@ -608,7 +609,7 @@ impl MemDb {
         self.art.staging()
     }
 
-    pub fn stages(&self) -> Vec<usize> {
+    pub fn stages(&self) -> Vec<MemdbCheckpoint> {
         self.art.stages()
     }
 
@@ -765,7 +766,7 @@ impl MemDb {
         self.art.entry_size_limit()
     }
 
-    pub fn checkpoint(&self) -> usize {
+    pub fn checkpoint(&self) -> MemdbCheckpoint {
         assert!(
             self.managed_pipelined.is_none(),
             "Checkpoint is not supported for PipelinedMemDB"
@@ -773,7 +774,7 @@ impl MemDb {
         self.art.checkpoint()
     }
 
-    pub fn revert_to_checkpoint(&mut self, checkpoint: usize) {
+    pub fn revert_to_checkpoint(&mut self, checkpoint: &MemdbCheckpoint) {
         assert!(
             self.managed_pipelined.is_none(),
             "RevertToCheckpoint is not supported for PipelinedMemDB"
@@ -790,7 +791,7 @@ impl MemDb {
         self.art.inspect_stage(handle, function);
     }
 
-    /// Removes a record completely from the test buffer.
+    /// Go `MemDB.RemoveFromBuffer`, which the ART MemDB refuses.
     pub fn remove_from_buffer(&mut self, key: &[u8]) {
         assert!(
             self.managed_pipelined.is_none(),
@@ -2056,7 +2057,7 @@ impl PipelinedMemDb {
         panic!("Checkpoint is not supported for PipelinedMemDB")
     }
 
-    pub fn revert_to_checkpoint(&mut self, _: usize) -> ! {
+    pub fn revert_to_checkpoint(&mut self, _: &MemdbCheckpoint) -> ! {
         panic!("RevertToCheckpoint is not supported for PipelinedMemDB")
     }
 
@@ -2724,9 +2725,13 @@ mod tests {
                 (b"tombstone".to_vec(), Vec::new()),
             ]
         );
-        db.remove_from_buffer(b"present");
-        assert_eq!(db.get(b"present"), Err(StaticError::NotExist));
-        assert_eq!(db.len(), 1);
+        // client-go's ART does not support RemoveFromBuffer.
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            db.remove_from_buffer(b"present");
+        }))
+        .is_err());
+        assert_eq!(db.get(b"present").unwrap(), b"value");
+        assert_eq!(db.len(), 2);
 
         let stage = db.staging();
         let checkpoint = db.checkpoint();
@@ -2740,7 +2745,7 @@ mod tests {
         assert_eq!(staged.len(), 1);
         assert_eq!(staged[0].0, b"staged");
         assert!(staged[0].1.has_presume_key_not_exists());
-        db.revert_to_checkpoint(checkpoint);
+        db.revert_to_checkpoint(&checkpoint);
         assert_eq!(db.get(b"staged"), Err(StaticError::NotExist));
         db.cleanup(stage);
         assert!(db.stages().is_empty());
@@ -3128,7 +3133,7 @@ mod tests {
         }))
         .is_err());
         assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            db.revert_to_checkpoint(0);
+            db.revert_to_checkpoint(&MemdbCheckpoint::default());
         }))
         .is_err());
         assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -3161,7 +3166,8 @@ mod tests {
             Ok(())
         });
         let mut db = PipelinedMemDb::new(remote, flush);
-        db.set_flush_thresholds(1, 1, 1_024);
+        // Go's ForceFlushMemSizeThreshold, above the ART's arena capacity.
+        db.set_flush_thresholds(1, 1, 128 * 1024 * 1024);
         db.set(b"first", b"value").unwrap();
         assert!(db.flush(false).unwrap());
         started_receiver.recv().unwrap();

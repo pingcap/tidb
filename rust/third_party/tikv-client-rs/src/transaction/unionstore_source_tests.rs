@@ -74,8 +74,9 @@ trait SourceBuffer {
     fn staging_handle(&mut self) -> usize;
     fn cleanup_handle(&mut self, handle: usize);
     fn release_handle(&mut self, handle: usize);
-    fn checkpoint_value(&self) -> usize;
-    fn revert_checkpoint(&mut self, checkpoint: usize);
+    type Checkpoint: Copy;
+    fn checkpoint_value(&self) -> Self::Checkpoint;
+    fn revert_checkpoint(&mut self, checkpoint: Self::Checkpoint);
     fn inspect_stage_values(
         &self,
         handle: usize,
@@ -156,11 +157,12 @@ impl SourceBuffer for MemDb {
     fn release_handle(&mut self, handle: usize) {
         self.release(handle);
     }
-    fn checkpoint_value(&self) -> usize {
+    type Checkpoint = crate::transaction::arena::MemdbCheckpoint;
+    fn checkpoint_value(&self) -> Self::Checkpoint {
         self.checkpoint()
     }
-    fn revert_checkpoint(&mut self, checkpoint: usize) {
-        self.revert_to_checkpoint(checkpoint);
+    fn revert_checkpoint(&mut self, checkpoint: Self::Checkpoint) {
+        self.revert_to_checkpoint(&checkpoint);
     }
     fn inspect_stage_values(
         &self,
@@ -270,6 +272,7 @@ impl SourceBuffer for RbtMemDb {
     fn release_handle(&mut self, handle: usize) {
         self.release(handle);
     }
+    type Checkpoint = usize;
     fn checkpoint_value(&self) -> usize {
         self.checkpoint()
     }
@@ -1494,52 +1497,63 @@ fn blocking_flush() -> (
 
 #[test]
 fn source_go_internal_unionstore_pipelined_memdb_test_TestPipelinedFlushTrigger() {
-    const MIN_KEYS: usize = 4;
-    const MIN_MEMORY: u64 = 40;
-    const FORCE_MEMORY: u64 = 200;
+    // because memdb's memory usage is hard to control, Go uses a
+    // cargo-culted value here.
+    let mut avg_key_size = (MIN_FLUSH_MEMORY as usize / MIN_FLUSH_KEYS) / 3;
 
+    // Will not flush when keys number >= MinFlushKeys and size <
+    // MinFlushMemSize.
     let (flush, started, release) = blocking_flush();
     let mut db = PipelinedMemDb::new(empty_remote_batch_getter(), flush);
-    db.set_flush_thresholds(MIN_KEYS, MIN_MEMORY, FORCE_MEMORY);
-    for number in 0..MIN_KEYS {
-        db.set(number.to_string().as_bytes(), b"v").unwrap();
+    for i in 0..MIN_FLUSH_KEYS {
+        let key = i.to_string().into_bytes();
+        // (key + value) * MinFlushKeys < MinFlushMemSize
+        let value = vec![0; avg_key_size - key.len() - 1];
+        db.set(&key, &value).unwrap();
         assert!(!db.flush(false).unwrap());
         assert!(!db.on_flushing());
     }
-    assert_eq!(db.mem.len(), MIN_KEYS);
-    assert!(db.mem.memory_footprint() < MIN_MEMORY);
+    assert_eq!(db.mem.len(), MIN_FLUSH_KEYS);
+    assert!(db.mem.memory_footprint() < MIN_FLUSH_MEMORY);
     assert!(started.try_recv().is_err());
     drop(release);
 
+    // Will not flush when keys number < MinFlushKeys and size >=
+    // MinFlushMemSize.
+    avg_key_size = (MIN_FLUSH_MEMORY as usize / MIN_FLUSH_KEYS) / 2;
     let (flush, started, release) = blocking_flush();
     let mut db = PipelinedMemDb::new(empty_remote_batch_getter(), flush);
-    db.set_flush_thresholds(MIN_KEYS, MIN_MEMORY, FORCE_MEMORY);
-    for number in 0..MIN_KEYS - 1 {
-        db.set(number.to_string().as_bytes(), &[number as u8; 20])
-            .unwrap();
+    for i in 0..MIN_FLUSH_KEYS - 1 {
+        let key = i.to_string().into_bytes();
+        // (key + value) * (MinFlushKeys - 1) > MinFlushMemSize
+        let value = vec![0; avg_key_size * 2 - key.len() + 1];
+        db.set(&key, &value).unwrap();
         assert!(!db.flush(false).unwrap());
         assert!(!db.on_flushing());
     }
-    assert!(db.mem.len() < MIN_KEYS);
-    assert!(db.mem.memory_footprint() >= MIN_MEMORY);
-    assert!(db.mem.memory_footprint() < FORCE_MEMORY);
+    assert!(db.mem.len() < MIN_FLUSH_KEYS);
+    assert!(db.mem.memory_footprint() > MIN_FLUSH_MEMORY);
+    assert!(db.mem.memory_footprint() < FORCE_FLUSH_MEMORY);
     assert!(started.try_recv().is_err());
     drop(release);
 
+    // Flush when keys number >= MinFlushKeys and mem size >=
+    // MinFlushMemSize.
     let (flush, started, release) = blocking_flush();
     let mut db = PipelinedMemDb::new(empty_remote_batch_getter(), flush);
-    db.set_flush_thresholds(MIN_KEYS, MIN_MEMORY, FORCE_MEMORY);
-    for number in 0..MIN_KEYS {
-        db.set(number.to_string().as_bytes(), &[number as u8; 20])
-            .unwrap();
+    for i in 0..MIN_FLUSH_KEYS {
+        let key = i.to_string().into_bytes();
+        let value = vec![0; avg_key_size * 2 - key.len() + 1];
+        db.set(&key, &value).unwrap();
         let flushed = db.flush(false).unwrap();
-        assert_eq!(flushed, number == MIN_KEYS - 1);
-        assert_eq!(db.on_flushing(), number == MIN_KEYS - 1);
+        assert_eq!(flushed, i == MIN_FLUSH_KEYS - 1);
+        assert_eq!(db.on_flushing(), i == MIN_FLUSH_KEYS - 1);
     }
     assert_eq!(started.recv_timeout(Duration::from_secs(5)).unwrap(), 1);
     assert_eq!(db.mem.len(), 0);
     assert_eq!(db.mem.size(), 0);
-    assert_eq!(db.len(), MIN_KEYS);
+    // the flushing MemDB's length and size are added to the totals.
+    assert_eq!(db.len(), MIN_FLUSH_KEYS);
     assert_eq!(db.size(), db.flushing.as_ref().unwrap().size());
     release.send(()).unwrap();
     db.flush_wait().unwrap();
@@ -1549,7 +1563,9 @@ fn source_go_internal_unionstore_pipelined_memdb_test_TestPipelinedFlushTrigger(
 fn source_go_internal_unionstore_pipelined_memdb_test_TestPipelinedFlushSkip() {
     let (flush, started, release) = blocking_flush();
     let mut db = PipelinedMemDb::new(empty_remote_batch_getter(), flush);
-    db.set_flush_thresholds(2, 1, 1_000);
+    // Go's ForceFlushMemSizeThreshold: the ART's arena capacity stays below
+    // it, so the second Flush is skipped for the ongoing one.
+    db.set_flush_thresholds(2, 1, 128 * 1024 * 1024);
     for key in [b"a", b"b"] {
         db.set(key, b"value").unwrap();
     }
@@ -2126,7 +2142,8 @@ fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedAndFlush() {
         })
     };
     let mut db = PipelinedMemDb::new(remote_get, flush);
-    db.set_flush_thresholds(MIN_KEYS, 40, 1_000);
+    // Go's ForceFlushMemSizeThreshold, above the ART's arena capacity.
+    db.set_flush_thresholds(MIN_KEYS, 40, FORCE_FLUSH_MEMORY);
     for index in 0..MIN_KEYS {
         let key = index.to_string().into_bytes();
         let value = vec![index as u8; 20];

@@ -1,10 +1,10 @@
 {
-  "date": "2026-11-07",
+  "date": "2026-11-08",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 31,
-    "open": 9,
-    "partial": 22
+    "unresolved": 29,
+    "open": 6,
+    "partial": 23
   },
   "findings": [
     {
@@ -99,13 +99,6 @@
       "group": "DML and executor handoff",
       "finding": "The session's reusable chunk allocator is Go's (`Session::chunk_alloc`, Go `clientConn.chunkAlloc`: installed per statement as `NewSyncAllocator(alloc)` under `tidb_enable_reuse_chunk`, never for an internal `InRestrictedSQL` statement, reset between statements and recreated after a failed one, each statement's validity its own), executors take it as `ExecutorMeta::alloc_pool` (Go `AllocPool`) for `NewChunk` / `TryNewCacheChunk` / `NewChunkWithCapacity`, and Go's `NewFirstChunk` sites (`Executor::new_first_chunk`: projection workers, hash-join probe and result chunks, index-hash-join results, shuffle holders, the drained record set) allocate outside it, so memory charges match Go's in sequence (`a_projection_sizes_its_result_columns_as_go_vec_eval_does`, `explain_analyze_dml_roots_report_their_executor_stats_and_memory_like_go`). Remaining: executors built outside the physical builder's `meta` (`ExecutorMeta::new` in other crates) allocate fresh; parallel apply's chunks, whose executor shape differs from Go's, are unmapped; the reuse hook's `StmtCtx.SetUseChunkAlloc` (`@@last_sql_use_alloc`) is not driven by allocation",
       "go_owner": "`pkg/util/chunk` (`alloc.go`: `NewAllocator`, `NewReuseHookAllocator`, `NewSyncAllocator`), `pkg/sessionctx/variable/session.go` (`SetAlloc`, `GetChunkAllocator`), `pkg/executor/internal/exec/executor.go` (`AllocPool`, `NewChunkWithCapacity`)"
-    },
-    {
-      "id": "C03",
-      "status": "partial",
-      "group": "DML and executor handoff",
-      "finding": "The session tracker's `LabelForMemDB` child follows the transaction buffer's PAYLOAD (key, value and value-history bytes, kept incrementally in the client's `Art` / `Rbt`) and its hook fires on every write, where client-go's `MemDB.Mem()` is its arenas' CAPACITY (`arena.go` blocks doubling from 4 KB to 128 MB) and its hook fires only when an arena enlarges (`onMemChange`); the session-side hook, its detach in `ActivateTxn` and the non-default `TxnTotalSizeLimit` skip are Go's",
-      "go_owner": "client-go `internal/unionstore/arena/arena.go` (`enlarge`, `Capacity`, `onMemChange`), `internal/unionstore/art/art.go` (`Mem`)"
     },
     {
       "id": "E05",
@@ -222,7 +215,7 @@
       "go_owner": "`pkg/server/conn.go` (`prefetchPointPlanKeys`), `pkg/planner/optimize.go`, `pkg/planner/core` (`RebuildPlan4CachedPlan`)"
     }
   ],
-  "unresolved": 30,
+  "unresolved": 29,
   "open": 6,
-  "partial": 24
+  "partial": 23
 }

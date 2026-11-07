@@ -172,7 +172,7 @@ impl NativeMemBuffer {
     ) -> Box<dyn tikv_client::transaction::unionstore::KvIterator> {
         self.read(|b| b.iter_with_flags(start, end))
     }
-    fn stages(&self) -> Vec<usize> {
+    fn stages(&self) -> Vec<tikv_client::transaction::arena::MemdbCheckpoint> {
         self.read(|b| b.stages())
     }
     fn len(&self) -> usize {
@@ -724,14 +724,15 @@ impl MutationBuffer {
         self.state().memdb.read(|buffer| buffer.memory_hook_is_set())
     }
     /// Clears the completed transaction buffer and SQL metadata.
+    ///
+    /// Go drops an ended transaction's MemDB, and the next transaction makes
+    /// its own (`NewMemDB` in `NewTiKVTxn`); it never `Reset`s one, so the
+    /// footprint hook does not fire at the end. The bound MemDB stays with its
+    /// native owner (only this boundary may detach it, as the cleanup also
+    /// runs after that owner is consumed), and the local one is replaced.
     pub fn reset(&self) {
         let mut state = self.state();
-        // Transaction-end cleanup also runs after the native owner has been
-        // consumed. Only this boundary may detach an inaccessible MemDB.
-        if let Some((_, access)) = state.memdb.bound.take() {
-            access(&mut |buffer| buffer.reset());
-        }
-        state.memdb.local.reset();
+        state.memdb = NativeMemBuffer::default();
         state.changes.clear();
         state.hints.clear();
     }

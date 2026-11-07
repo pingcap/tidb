@@ -658,7 +658,7 @@ impl RbtIterator {
         if reverse && upper.is_some_and(<[u8]>::is_empty) {
             upper = None;
         }
-        let mut items: Vec<_> = super::art::key_range(entries, lower, upper)
+        let mut items: Vec<_> = key_range(entries, lower, upper)
             .filter(|(_, entry)| include_flags || entry.value.is_some())
             .map(|(key, entry)| (key.clone(), entry.value.clone(), entry.flags, entry.handle))
             .collect();
@@ -768,7 +768,7 @@ impl RbtSnapshotIterator {
         if reverse && upper.is_some_and(<[u8]>::is_empty) {
             upper = None;
         }
-        let mut keys: Vec<_> = super::art::key_range(
+        let mut keys: Vec<_> = key_range(
             &entries.read().expect("snapshot entries lock poisoned"),
             lower,
             upper,
@@ -1255,4 +1255,22 @@ mod tests {
             ]
         );
     }
+}
+
+/// The entries with `lower <= key < upper` (`None` is unbounded), found by
+/// seeking to `lower` rather than testing every buffered key; an empty or
+/// inverted window has no entries.
+pub(crate) fn key_range<'a, V>(
+    entries: &'a BTreeMap<Vec<u8>, V>,
+    lower: Option<&[u8]>,
+    upper: Option<&[u8]>,
+) -> std::collections::btree_map::Range<'a, Vec<u8>, V> {
+    use std::ops::Bound;
+    let start = lower.map_or(Bound::Unbounded, Bound::Included);
+    let end = match (lower, upper) {
+        // `BTreeMap::range` panics on an inverted window; `[l, l)` is empty.
+        (Some(lower), Some(upper)) if upper < lower => Bound::Excluded(lower),
+        (_, upper) => upper.map_or(Bound::Unbounded, Bound::Excluded),
+    };
+    entries.range::<[u8], _>((start, end))
 }

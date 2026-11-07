@@ -179,6 +179,11 @@ impl MemdbArena {
         &self.blocks[address.block_index as usize].buffer[address.block_offset as usize..]
     }
 
+    /// Go `GetData` for a caller that writes through the returned slice.
+    pub fn data_mut(&mut self, address: ArenaAddress) -> &mut [u8] {
+        &mut self.blocks[address.block_index as usize].buffer[address.block_offset as usize..]
+    }
+
     pub fn reset(&mut self) {
         self.blocks.clear();
         self.block_size = 0;
@@ -311,6 +316,17 @@ impl MemdbValueLog {
             return TOMBSTONE;
         }
         &block[header_offset - value_length..header_offset]
+    }
+
+    /// Go `GetValue` for a caller that writes through the returned slice
+    /// (ART's in-place value swap).
+    pub fn value_mut(&mut self, address: ArenaAddress) -> &mut [u8] {
+        let header_offset = address.block_offset as usize - VALUE_LOG_HEADER_SIZE;
+        let block = &mut self.arena.blocks[address.block_index as usize].buffer;
+        let value_length =
+            u32::from_le_bytes(block[header_offset..header_offset + 4].try_into().unwrap())
+                as usize;
+        &mut block[header_offset - value_length..header_offset]
     }
 
     pub fn snapshot_value(

@@ -677,3 +677,45 @@ fn mpp_failure_batch_fallback_policy_is_statement_owned() {
     assert!(request.allow_tiflash_fallback);
     assert!(!session.statement_context(false).allow_tiflash_fallback());
 }
+
+/// The session tracker's `LabelForMemDB` child holds the transaction
+/// MemDB's `Mem()`, the capacity of client-go's ART arenas (4 KiB blocks,
+/// doubling), set by the footprint hook only when an arena grows or the
+/// value log is dropped. Captured from a Go testkit session
+/// (`SearchTrackerWithoutLock(memory.LabelForMemDB).BytesConsumed()`): 8192
+/// after the first INSERT and the second, 40960 after 200 rows, unchanged by
+/// ROLLBACK, and 4096 after an autocommit INSERT, whose commit discards the
+/// value log before the commit RPCs.
+#[test]
+fn the_mem_db_tracker_holds_the_art_arena_capacity_like_go() {
+    let mut session = Session::new();
+    session.run("use test").unwrap();
+    session
+        .run("create table t (a int primary key, b varchar(100))")
+        .unwrap();
+    let mem_db = |session: &Session| {
+        session
+            .session_memory
+            .session_tracker()
+            .search_tracker_without_lock(tidb_memory::LABEL_FOR_MEM_DB)
+            .map(|tracker| tracker.bytes_consumed())
+    };
+    session.run("begin").unwrap();
+    assert_eq!(mem_db(&session), None);
+    session.run("insert into t values (1, 'one')").unwrap();
+    assert_eq!(mem_db(&session), Some(8192));
+    session
+        .run("insert into t select 2, repeat('x', 100)")
+        .unwrap();
+    assert_eq!(mem_db(&session), Some(8192));
+    for i in 3..200 {
+        session
+            .run(&format!("insert into t values ({i}, repeat('y', {}))", i % 100))
+            .unwrap();
+    }
+    assert_eq!(mem_db(&session), Some(40960));
+    session.run("rollback").unwrap();
+    assert_eq!(mem_db(&session), Some(40960));
+    session.run("insert into t values (1000, 'auto')").unwrap();
+    assert_eq!(mem_db(&session), Some(4096));
+}

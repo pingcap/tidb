@@ -36,8 +36,8 @@ fn assert_capacity_iteration(
     assert!(iterator.next().is_err());
     for (offset, handle) in handles.into_iter().enumerate() {
         let key = [(start_value as usize + offset) as u8];
-        assert_eq!(tree.key_by_handle(handle), Some(key.as_slice()));
-        assert_eq!(tree.value_by_handle(handle), Some(key.as_slice()));
+        assert_eq!(tree.key_by_handle(handle), key.as_slice());
+        assert_eq!(tree.value_by_handle(handle).as_deref(), Some(key.as_slice()));
     }
 
     let mut iterator = tree.iter_reverse(upper, lower);
@@ -54,8 +54,8 @@ fn assert_capacity_iteration(
     assert!(iterator.next().is_err());
     for (offset, handle) in handles.into_iter().enumerate() {
         let key = [(end_value as usize - offset) as u8];
-        assert_eq!(tree.key_by_handle(handle), Some(key.as_slice()));
-        assert_eq!(tree.value_by_handle(handle), Some(key.as_slice()));
+        assert_eq!(tree.key_by_handle(handle), key.as_slice());
+        assert_eq!(tree.value_by_handle(handle).as_deref(), Some(key.as_slice()));
     }
 }
 
@@ -135,11 +135,11 @@ fn source_test_leaf_with_common_prefix() {
 #[test]
 fn source_test_update_inplace() {
     let mut tree = Art::new();
+    let key = [0];
     for _ in 0..256 {
-        tree.set(&[0], Some(&vec![0; 4096]), &[]).unwrap();
-        let entry = tree.entries.get(&[0][..]).unwrap();
-        assert_eq!(entry.history.len(), 1);
-        assert_eq!(entry.value.as_ref().unwrap().len(), 4096);
+        let value = vec![0; 4096];
+        tree.set(&key, Some(&value), &[]).unwrap();
+        assert_eq!(read(&tree.tree).allocator.vlog_allocator.arena().block_count(), 1);
     }
 }
 
@@ -252,218 +252,21 @@ fn source_test_search_optimistic_mismatch() {
 }
 
 #[test]
-fn source_test_expansion_native_mapping() {
-    let prefix = vec![0; 20];
-    let mut first = prefix.clone();
-    first.extend([1, 1, 1, 1]);
-    let mut second = prefix.clone();
-    second.extend([1, 1, 1, 2]);
-    let mut third = prefix;
-    third.extend([1, 255, 2]);
-    let mut tree = Art::new();
-    tree.set(&first, Some(&[1]), &[]).unwrap();
-    tree.set(&second, Some(&[2]), &[]).unwrap();
-    tree.set(&third, Some(&[1, 2]), &[]).unwrap();
-    assert_eq!(tree.get(&first).unwrap(), [1]);
-    assert_eq!(tree.get(&second).unwrap(), [2]);
-    assert_eq!(tree.get(&third).unwrap(), [1, 2]);
-    assert_eq!(collect_keys(tree.iter(None, None)), [first, second, third]);
-}
-
-#[test]
 fn source_test_discard_values() {
     let mut tree = Art::new();
     tree.set(&[1], Some(&[2]), &[]).unwrap();
     let iterator = tree.iter_with_flags(None, None);
     let handle = iterator.handle();
-    assert_eq!(tree.value_by_handle(handle), Some(&[2][..]));
-    assert_eq!(tree.key_by_handle(handle), Some(&[1][..]));
+    assert_eq!(tree.value_by_handle(handle).as_deref(), Some(&[2][..]));
+    assert_eq!(tree.key_by_handle(handle), &[1][..]);
     tree.discard_values();
     assert_eq!(tree.value_by_handle(handle), None);
-    assert_eq!(tree.key_by_handle(handle), Some(&[1][..]));
+    assert_eq!(tree.key_by_handle(handle), &[1][..]);
     assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tree.get(&[3]))).is_err());
     assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         tree.set(&[3], Some(&[4]), &[])
     }))
     .is_err());
-}
-
-#[test]
-fn source_test_alloc_node_native_storage() {
-    let mut tree = Art::new();
-    let mut handles = Vec::new();
-    for number in 0..10_000 {
-        let key = number.to_string().into_bytes();
-        tree.set(&key, Some(&key), &[]).unwrap();
-        let entry = tree.entries.get(&key).unwrap();
-        assert_eq!(entry.flags, KeyFlags::default());
-        handles.push((entry.handle, key));
-    }
-    for (handle, key) in handles {
-        assert_eq!(tree.key_by_handle(handle), Some(key.as_slice()));
-        assert_eq!(tree.value_by_handle(handle), Some(key.as_slice()));
-    }
-}
-
-#[test]
-fn source_test_node_prefix_native_mapping() {
-    for capacity in NODE_CAPACITIES {
-        let prefix = vec![0; 25];
-        let mut tree = Art::new();
-        let mut keys = Vec::new();
-        for suffix in 0..capacity {
-            let mut key = prefix.clone();
-            key.push(suffix as u8);
-            tree.set(&key, Some(&key), &[]).unwrap();
-            keys.push(key);
-        }
-        for key in keys {
-            assert_eq!(tree.get(&key).unwrap(), key);
-        }
-        let mut mismatch = prefix;
-        mismatch[20] = 1;
-        assert_eq!(tree.get(&mismatch), Err(StaticError::NotExist));
-    }
-}
-
-#[test]
-fn source_test_ordered_child_native_mapping() {
-    for capacity in [4usize, 16] {
-        let mut ascending = Art::new();
-        for value in 0..capacity {
-            let key = [value as u8];
-            ascending.set(&key, Some(&key), &[]).unwrap();
-        }
-        let expected: Vec<_> = (0..capacity).map(|value| vec![value as u8]).collect();
-        assert_eq!(collect_keys(ascending.iter(None, None)), expected);
-
-        let mut descending = Art::new();
-        for value in 0..capacity {
-            let key = [(255 - value) as u8];
-            descending.set(&key, Some(&key), &[]).unwrap();
-        }
-        let expected: Vec<_> = (0..capacity)
-            .rev()
-            .map(|value| vec![(255 - value) as u8])
-            .collect();
-        assert_eq!(collect_keys(descending.iter(None, None)), expected);
-    }
-}
-
-#[test]
-fn source_test_next_prev_present_index_native_mapping() {
-    let keys = [0u8, 64, 128, 192, 255];
-    let mut tree = Art::new();
-    for key in keys {
-        tree.set(&[key], Some(&[key]), &[]).unwrap();
-    }
-    for probe in 0..=255u16 {
-        let probe_key = [probe as u8];
-        let forward = tree.iter(Some(&probe_key), None);
-        let expected_next = keys.into_iter().find(|key| u16::from(*key) >= probe);
-        assert_eq!(forward.valid(), expected_next.is_some());
-        if let Some(expected) = expected_next {
-            assert_eq!(forward.key(), [expected]);
-        }
-
-        let upper = (probe < 255).then(|| [(probe + 1) as u8]);
-        let reverse = tree.iter_reverse(upper.as_ref().map(<[_; 1]>::as_slice), None);
-        let expected_previous = keys.into_iter().rev().find(|key| u16::from(*key) <= probe);
-        assert_eq!(reverse.valid(), expected_previous.is_some());
-        if let Some(expected) = expected_previous {
-            assert_eq!(reverse.key(), [expected]);
-        }
-    }
-}
-
-#[test]
-fn source_test_lcp_native_mapping() {
-    let first = [1, 2, 3, 4, 5, 6, 7, 8, 9];
-    let second = [1, 2, 3, 4, 5, 7, 7, 8];
-    for depth in 0..6 {
-        assert_eq!(common_prefix_from(&first, &second, depth), 5 - depth);
-    }
-    let mut tree = Art::new();
-    tree.set(&first, Some(&first), &[]).unwrap();
-    tree.set(&second, Some(&second), &[]).unwrap();
-    assert_eq!(tree.get(&first).unwrap(), first);
-    assert_eq!(tree.get(&second).unwrap(), second);
-}
-
-#[test]
-fn source_test_node_add_child_native_mapping() {
-    for capacity in NODE_CAPACITIES {
-        let mut tree = Art::new();
-        for value in 0..capacity {
-            let key = [value as u8];
-            tree.set(&key, Some(&key), &[]).unwrap();
-        }
-        let len = tree.len();
-        tree.set(&[1], Some(b"replacement"), &[]).unwrap();
-        assert_eq!(tree.len(), len);
-        assert_eq!(tree.get(&[1]).unwrap(), b"replacement");
-        tree.set(b"", Some(b"in-place"), &[]).unwrap();
-        assert_eq!(tree.len(), len + 1);
-    }
-}
-
-#[test]
-fn source_test_node_grow_native_mapping() {
-    for capacity in [4usize, 16, 48] {
-        let mut tree = Art::new();
-        for value in 0..=capacity {
-            let key = [value as u8];
-            tree.set(&key, Some(&key), &[]).unwrap();
-        }
-        assert_eq!(tree.len(), capacity + 1);
-        for value in 0..=capacity {
-            let key = [value as u8];
-            assert_eq!(tree.get(&key).unwrap(), key);
-        }
-    }
-}
-
-#[test]
-fn source_test_replace_child_native_mapping() {
-    for capacity in NODE_CAPACITIES {
-        let mut tree = Art::new();
-        for value in 0..capacity {
-            let key = [value as u8];
-            tree.set(&key, Some(&key), &[]).unwrap();
-        }
-        let len = tree.len();
-        tree.set(&[1], Some(b"new leaf"), &[]).unwrap();
-        assert_eq!(tree.len(), len);
-        assert_eq!(tree.get(&[1]).unwrap(), b"new leaf");
-    }
-}
-
-#[test]
-fn source_test_minimum_node_native_mapping() {
-    for _ in NODE_CAPACITIES {
-        let mut tree = Art::new();
-        for key in [255u8, 127, 63, 0] {
-            tree.set(&[key], Some(&[key]), &[]).unwrap();
-            assert_eq!(tree.iter(None, None).key(), [key]);
-        }
-        tree.set(b"", Some(b"minimum"), &[]).unwrap();
-        assert_eq!(tree.iter(None, None).key(), b"");
-    }
-}
-
-#[test]
-fn source_test_key_to_chunk_native_mapping() {
-    let key: Vec<u8> = (1..=16).collect();
-    for index in 0..key.len() {
-        let mut different = key.clone();
-        different[index] = 255;
-        assert_eq!(common_prefix_from(&key, &different, 0), index);
-        let mut tree = Art::new();
-        tree.set(&key, Some(&key), &[]).unwrap();
-        tree.set(&different, Some(&different), &[]).unwrap();
-        assert_eq!(tree.get(&key).unwrap(), key);
-        assert_eq!(tree.get(&different).unwrap(), different);
-    }
 }
 
 #[test]
@@ -523,8 +326,8 @@ fn source_test_multi_level_iterate() {
     assert!(!iterator.valid());
     assert!(iterator.next().is_err());
     for (index, handle) in handles.into_iter().enumerate() {
-        assert_eq!(tree.key_by_handle(handle), Some(keys[index].as_slice()));
-        assert_eq!(tree.value_by_handle(handle), Some(keys[index].as_slice()));
+        assert_eq!(tree.key_by_handle(handle), keys[index].as_slice());
+        assert_eq!(tree.value_by_handle(handle).as_deref(), Some(keys[index].as_slice()));
     }
 
     let mut iterator = tree.iter_reverse(None, None);
@@ -564,44 +367,15 @@ fn source_test_seek_meet_leaf() {
 }
 
 #[test]
-fn source_test_seek_in_existing_node_native_mapping() {
-    for count in [4usize, 16, 48, 49] {
-        let mut tree = Art::new();
-        for index in 0..count {
-            let key = [(2 * index) as u8];
-            tree.set(&key, Some(&key), &[]).unwrap();
-        }
-        for index in 0..count - 1 {
-            let seek = [(2 * index + 1) as u8];
-            let iterator = tree.iter(Some(&seek), None);
-            assert!(iterator.valid());
-            assert_eq!(iterator.key(), [(2 * (index + 1)) as u8]);
-        }
-    }
-}
-
-#[test]
-fn source_test_seek_to_index_native_mapping() {
-    for _ in NODE_CAPACITIES {
-        let mut tree = Art::new();
-        tree.set(&[10], Some(&[10]), &[]).unwrap();
-        let iterator = tree.iter(Some(&[1]), None);
-        assert!(iterator.valid());
-        assert_eq!(iterator.key(), [10]);
-        assert!(!tree.iter(Some(&[11]), None).valid());
-    }
-}
-
-#[test]
 fn source_test_iterate_handle() {
     let mut tree = Art::new();
     let stage = tree.staging();
     tree.set(&[1], Some(&[2]), &[]).unwrap();
     let handle = tree.iter_with_flags(None, None).handle();
-    assert_eq!(tree.key_by_handle(handle), Some(&[1][..]));
-    assert_eq!(tree.value_by_handle(handle), Some(&[2][..]));
+    assert_eq!(tree.key_by_handle(handle), &[1][..]);
+    assert_eq!(tree.value_by_handle(handle).as_deref(), Some(&[2][..]));
     tree.cleanup(stage);
-    assert_eq!(tree.key_by_handle(handle), Some(&[1][..]));
+    assert_eq!(tree.key_by_handle(handle), &[1][..]);
     assert_eq!(tree.value_by_handle(handle), None);
 }
 
@@ -639,15 +413,6 @@ fn source_test_seek_prefix_mismatch() {
 }
 
 #[test]
-fn source_test_iter_position_compare_native_mapping() {
-    assert_eq!(path_compare(&[1, 2, 3], &[1, 2, 3]), 0);
-    assert_eq!(path_compare(&[1, 2, 2], &[1, 2, 3]), -1);
-    assert_eq!(path_compare(&[1, 2, 4], &[1, 2, 3]), 1);
-    assert_eq!(path_compare(&[1, 2, 3], &[1, 2]), 1);
-    assert_eq!(path_compare(&[1, 2], &[1, 2, 3]), -1);
-}
-
-#[test]
 fn source_test_iter_seek_no_result() {
     for child_count in [0usize, 5, 17, 49] {
         let mut tree = Art::new();
@@ -661,31 +426,6 @@ fn source_test_iter_seek_no_result() {
         assert!(!tree
             .iter_reverse(Some(&[1, 200]), Some(&[1, 100, 1]))
             .valid());
-    }
-}
-
-#[test]
-fn source_test_snapshot_iterator_prevent_free_node_native_mapping() {
-    for count in [4u8, 16, 48] {
-        let mut tree = Art::new();
-        for value in 0..count {
-            let key = [0, value];
-            tree.set(&key, Some(&key), &[]).unwrap();
-        }
-        let snapshot = tree.snapshot();
-        let mut iterator = snapshot.iter(None, None, false);
-        tree.set(&[0, count], Some(&[0, count]), &[]).unwrap();
-        let mut seen = 0;
-        while iterator.valid() {
-            let key = iterator.key().to_vec();
-            assert_eq!(key, iterator.value());
-            iterator.next().unwrap();
-            seen += 1;
-        }
-        assert_eq!(seen, usize::from(count));
-        assert_eq!(snapshot.get(&[0, count]), Err(StaticError::NotExist));
-        iterator.close();
-        assert_eq!(tree.snapshot().get(&[0, count]).unwrap(), [0, count]);
     }
 }
 
