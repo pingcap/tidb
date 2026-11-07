@@ -625,7 +625,6 @@ pub fn run_load_data(
         totals.records += counts.records;
         totals.deleted += counts.deleted;
         totals.copied += counts.copied;
-        totals.affected += counts.affected;
         first_allocated = first_allocated.or(allocated);
         if counts.records == 0 {
             break;
@@ -642,7 +641,8 @@ pub fn run_load_data(
         warnings
     ));
     let _ = prepared.local;
-    Ok((totals.affected, first_allocated))
+    // Go: the statement's `AffectedRows`, every batch's writes.
+    Ok((ctx.affected_rows(), first_allocated))
 }
 
 /// Go `buildLoadData`'s privilege check and `LoadDataExec`'s preparation,

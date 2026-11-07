@@ -302,10 +302,10 @@ pub(crate) struct FkTriggerSite<'a> {
     pub(crate) plan_id: i32,
 }
 
-/// Go `UpdateExec`'s result: the rows it reports, the rows it matched (its
-/// `setMessage` input) and its foreign-key checks and cascades.
+/// Go `UpdateExec`'s result: the rows it matched (its `setMessage` input)
+/// and its foreign-key checks and cascades; its affected rows are the
+/// statement's (`StmtCtx.AffectedRows`).
 pub(crate) struct UpdateWritten {
-    pub(crate) affected: u64,
     pub(crate) matched: u64,
     pub(crate) fk: crate::foreign_key::WithForeignKeyTrigger,
 }
@@ -1181,8 +1181,6 @@ pub struct LoadDataCounts {
     pub deleted: u64,
     /// `StmtCtx.CopiedRows`.
     pub copied: u64,
-    /// `StmtCtx.AffectedRows`.
-    pub affected: u64,
 }
 
 /// Go `commitWorker.checkAndInsertOneBatch`: writes `LOAD DATA`'s rows
@@ -1477,7 +1475,6 @@ fn run_insert_rows(
     // Go `InsertValues.ruv2RecordedRowsColMultiply`.
     let mut ruv2_recorded_rows_col_multiply = 0i64;
     let mut records = 0u64;
-    let mut inserted = 0;
     // Go `StmtCtx.CopiedRows`/`UpdatedRows`/`TouchedRows`, which the
     // `Records: ...` message reads.
     let mut copied: u64 = 0;
@@ -2244,7 +2241,7 @@ fn run_insert_rows(
                             if load_restrictive.is_some() && conflict.on_record_key {
                                 copied += 1;
                             } else {
-                                inserted += 1;
+                                ctx.add_affected_rows(1);
                             }
                             unchanged = true;
                             break;
@@ -2263,7 +2260,7 @@ fn run_insert_rows(
                         if load_restrictive.is_some() && conflict.on_record_key {
                             load_deleted += 1;
                         } else {
-                            inserted += 1;
+                            ctx.add_affected_rows(1);
                         }
                     }
                     if unchanged {
@@ -2294,13 +2291,13 @@ fn run_insert_rows(
                         &mut updates,
                         ctx,
                     )?;
-                    inserted += applied.affected;
+                    // `updateRecord` added the row's affected count.
                     duplicates_touched += u64::from(applied.touched);
                     // Go `doDupRowUpdate` (issue #55965): the OK packet's insert
                     // id is the updated row's AUTO_INCREMENT value when the
                     // statement has affected rows, and 0 otherwise.
                     if let Some(id) = applied.auto_increment {
-                        ctx.record_given_insert_id(if inserted > 0 { id } else { 0 });
+                        ctx.record_given_insert_id(if ctx.affected_rows() > 0 { id } else { 0 });
                     }
                     continue;
                 } else if insert.ignore {
@@ -2358,7 +2355,8 @@ fn run_insert_rows(
             };
             match insert_result {
                 Ok(_) => {
-                    inserted += 1;
+                    // Go `addRecord`.
+                    ctx.add_affected_rows(1);
                     copied += 1;
                     // Go `addRecordWithAutoIDHint`'s `insertRowNeedToCheck`,
                     // unless `batchCheckAndInsert` checked the row.
@@ -2439,13 +2437,12 @@ fn run_insert_rows(
             records,
             deleted: load_deleted,
             copied,
-            affected: inserted,
         };
-        return Ok((inserted, first_allocated));
+        return Ok((ctx.affected_rows(), first_allocated));
     }
     if insert.source.is_some() || records > 1 {
         let duplicates = if insert.replace {
-            inserted.saturating_sub(records)
+            ctx.affected_rows().saturating_sub(records)
         } else if insert.ignore {
             records.saturating_sub(copied)
         } else if ctx.client_found_rows() {
@@ -2459,7 +2456,7 @@ fn run_insert_rows(
             ctx.warning_count()
         ));
     }
-    Ok((inserted, first_allocated))
+    Ok((ctx.affected_rows(), first_allocated))
 }
 
 /// Go `InsertValues.memTracker`: the `InsertExec` / `ReplaceExec`'s own
@@ -2851,11 +2848,6 @@ fn apply_on_duplicate(
         ctx,
     )?;
     Ok(OnDuplicateApplied {
-        affected: if outcome.changed() {
-            2
-        } else {
-            u64::from(outcome.unchanged() && ctx.client_found_rows())
-        },
         touched: outcome.touched(),
         // Go `doDupRowUpdate` returns before its insert-id step when
         // `updateRecord` ignored the row.
@@ -2872,8 +2864,6 @@ fn apply_on_duplicate(
 /// What one ON DUPLICATE KEY UPDATE row did.
 #[derive(Default)]
 struct OnDuplicateApplied {
-    /// Its contribution to the affected-row count.
-    affected: u64,
     /// Go `TouchedRows`: the row was found (changed or not).
     touched: bool,
     /// The updated row's AUTO_INCREMENT value, when the table has one.
@@ -3051,7 +3041,9 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
         runtime,
     )?;
     set_update_message(ctx, written.matched);
-    Ok(written.affected)
+    // Go reads `StmtCtx.AffectedRows` once the statement, its foreign-key
+    // cascades included, has run.
+    Ok(ctx.affected_rows())
 }
 
 ///
@@ -4091,8 +4083,6 @@ fn run_update_with_physical(
         .as_deref_mut()
         .ok_or_else(|| DriverError::unsupported("UPDATE has no retained physical child"))?;
     let mut matched = 0u64;
-    let mut touched = 0u64;
-    let mut changed = 0u64;
     let mut rewrites = Vec::new();
     let fk = std::cell::RefCell::new(crate::foreign_key::WithForeignKeyTrigger::build(
         fk_triggers,
@@ -4170,19 +4160,12 @@ fn run_update_with_physical(
                     ctx,
                 )?;
                 row_index += 1;
-                touched += u64::from(outcome.touched());
-                changed += u64::from(outcome.changed());
                 record_updated_row_key(&mut updated_row_keys, &row.id, outcome, dml)
             },
         )?;
         drop(records);
         record_dml_rows_col_multiply(ctx, rows_col_multiply);
         return Ok(UpdateWritten {
-            affected: if ctx.client_found_rows() {
-                touched
-            } else {
-                changed
-            },
             matched,
             fk: fk.into_inner(),
         });
@@ -4239,17 +4222,10 @@ fn run_update_with_physical(
             &assigned_offsets,
             ctx,
         )?;
-        touched += u64::from(outcome.touched());
-        changed += u64::from(outcome.changed());
         record_updated_row_key(&mut updated_row_keys, &id, outcome, dml)?;
     }
     drop(records);
     Ok(UpdateWritten {
-        affected: if ctx.client_found_rows() {
-            touched
-        } else {
-            changed
-        },
         matched,
         fk: fk.into_inner(),
     })
@@ -4511,7 +4487,7 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
         .map(|plan| super::physical_builder::DmlExec::new(plan, ctx, runtime.as_deref_mut()));
     let (physical_source, fk_site, delete_col_pos, delete_tables) =
         dml_execution_parts(physical_plan, "Delete")?;
-    let (deleted, fk) = run_delete_with_physical(
+    let (_, fk) = run_delete_with_physical(
         delete,
         catalog,
         current_db,
@@ -4531,7 +4507,9 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
         ctx,
         runtime,
     )?;
-    Ok(deleted)
+    // Go reads `StmtCtx.AffectedRows` once the statement, its foreign-key
+    // cascades included, has run.
+    Ok(ctx.affected_rows())
 }
 
 /// How a DML read decides the columns it keeps (see [`DeletePruning`]).
@@ -4628,7 +4606,6 @@ fn run_delete_with_physical(
     )?);
     fk.borrow().prepare_fk_cascade_context(ctx);
     let mut records = DeleteRecords::new(&fk);
-    let mut deleted = 0;
     // Go's `columnCount` of each deleted row: the child row's cells but the
     // partition id (`ExtraPhysTblID`), less the `_tidb_rowid` handle.
     let row_cells = {
@@ -4659,7 +4636,8 @@ fn run_delete_with_physical(
         dml,
         delete_col_pos,
         |catalog, row, _| {
-            deleted += u64::from(records.write(
+            // Go `DeleteExec.removeRow`'s `AddAffectedRows(1)`.
+            if records.write(
                 catalog,
                 &database,
                 &name,
@@ -4667,14 +4645,16 @@ fn run_delete_with_physical(
                 &row.stored,
                 delete.ignore,
                 ctx,
-            )?);
+            )? {
+                ctx.add_affected_rows(1);
+            }
             rows_col_multiply = add_rows_col_multiply(rows_col_multiply, row_cells);
             Ok(())
         },
     )?;
     drop(records);
     record_dml_rows_col_multiply(ctx, rows_col_multiply);
-    Ok((deleted, fk.into_inner()))
+    Ok((ctx.affected_rows(), fk.into_inner()))
 }
 
 /// Fetches the records a single-table write will filter, through the read

@@ -21,11 +21,11 @@ fn insert_set_operation_source_uses_the_common_query_plan() {
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE insert_union_src (v BIGINT)", &mut catalog).unwrap();
     crate::run_create_table_on("CREATE TABLE insert_union_dst (v BIGINT)", &mut catalog).unwrap();
-    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
+    let ctx = || crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO insert_union_src VALUES (2), (1)",
         &mut catalog,
-        &ctx,
+        &ctx(),
     )
     .unwrap();
 
@@ -33,13 +33,13 @@ fn insert_set_operation_source_uses_the_common_query_plan() {
         run_insert_on(
             "INSERT INTO insert_union_dst SELECT v FROM insert_union_src UNION ALL SELECT 3",
             &mut catalog,
-            &ctx,
+            &ctx(),
         )
         .unwrap(),
         3,
     );
     assert_eq!(
-        run_select_on("SELECT v FROM insert_union_dst ORDER BY v", &catalog, &ctx,).unwrap(),
+        run_select_on("SELECT v FROM insert_union_dst ORDER BY v", &catalog, &ctx(),).unwrap(),
         vec![
             vec![Datum::Int(1)],
             vec![Datum::Int(2)],
@@ -119,11 +119,11 @@ fn batch_point_delete_reads_records_with_one_batch_get() {
         batch_gets: Arc::clone(&batch_gets),
         ..Default::default()
     };
-    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
+    let ctx = || crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO batch_delete VALUES (1, 10), (2, 20), (3, 30)",
         &mut catalog,
-        &ctx,
+        &ctx(),
     )
     .unwrap();
     gets.store(0, Ordering::Relaxed);
@@ -133,7 +133,7 @@ fn batch_point_delete_reads_records_with_one_batch_get() {
         run_delete_on(
             "DELETE FROM batch_delete WHERE id IN (1, 3, 9)",
             &mut catalog,
-            &ctx,
+            &ctx(),
         )
         .unwrap(),
         2,
@@ -155,19 +155,20 @@ fn ignore_uses_the_original_unique_conflict_without_reading_it_again() {
         gets: gets.clone(),
         ..Default::default()
     };
-    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
+    let ctx = || crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO conflict_identity VALUES (1, 10), (2, 20)",
         &mut catalog,
-        &ctx,
+        &ctx(),
     )
     .unwrap();
     gets.store(0, Ordering::Relaxed);
+    let insert_ctx = ctx();
     assert_eq!(
         run_insert_on(
             "INSERT IGNORE INTO conflict_identity VALUES (3, 20)",
             &mut catalog,
-            &ctx
+            &insert_ctx
         )
         .unwrap(),
         0
@@ -177,7 +178,7 @@ fn ignore_uses_the_original_unique_conflict_without_reading_it_again() {
         2,
         "one primary read and one unique-index read"
     );
-    let warnings = ctx.take_warnings();
+    let warnings = insert_ctx.take_warnings();
     assert_eq!(warnings.len(), 1);
     assert_eq!(warnings[0].code(), 1062);
     assert_eq!(
@@ -185,13 +186,14 @@ fn ignore_uses_the_original_unique_conflict_without_reading_it_again() {
         "Duplicate entry '20' for key 'conflict_identity.unique_v'"
     );
 
+    let update_ctx = ctx();
     run_update_on(
         "UPDATE IGNORE conflict_identity SET v = 20 WHERE id = 1",
         &mut catalog,
-        &ctx,
+        &update_ctx,
     )
     .unwrap();
-    let warnings = ctx.take_warnings();
+    let warnings = update_ctx.take_warnings();
     assert_eq!(warnings.len(), 1);
     assert_eq!(
         warnings[0].message(),
@@ -201,7 +203,7 @@ fn ignore_uses_the_original_unique_conflict_without_reading_it_again() {
         run_select_on(
             "SELECT id, v FROM conflict_identity ORDER BY id",
             &catalog,
-            &ctx
+            &ctx()
         )
         .unwrap(),
         vec![
@@ -367,11 +369,11 @@ fn a_delete_on_a_secondary_index_reads_through_it() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
+    let ctx = || crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO t1 VALUES (1, 10, 100), (2, 20, 200), (3, 10, 300)",
         &mut catalog,
-        &ctx,
+        &ctx(),
     )
     .unwrap();
 
@@ -384,7 +386,7 @@ fn a_delete_on_a_secondary_index_reads_through_it() {
         panic!("not a DELETE");
     };
     let (_, rows) =
-        explain_delete_stmt(delete, &mut catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+        explain_delete_stmt(delete, &mut catalog, "test", &ctx(), ExplainFormat::Row).unwrap();
     let cell = |datum: &Datum| match datum {
         Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
         other => format!("{other:?}"),
@@ -406,11 +408,11 @@ fn a_delete_on_a_secondary_index_reads_through_it() {
     // Executing it removes exactly the two c2 = 10 rows, index entries and all,
     // proving the index-range read fetched the right records.
     assert_eq!(
-        run_delete_on("DELETE FROM t1 WHERE c2 = 10", &mut catalog, &ctx).unwrap(),
+        run_delete_on("DELETE FROM t1 WHERE c2 = 10", &mut catalog, &ctx()).unwrap(),
         2
     );
     assert_eq!(
-        run_select_on("SELECT c1 FROM t1 ORDER BY c1", &catalog, &ctx).unwrap(),
+        run_select_on("SELECT c1 FROM t1 ORDER BY c1", &catalog, &ctx()).unwrap(),
         vec![vec![Datum::Int(2)]]
     );
 }
@@ -505,15 +507,15 @@ fn limit_zero_dml_still_validates_the_statement() {
     let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE lz (a BIGINT, b BIGINT)", &mut catalog).unwrap();
-    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
-    run_insert_on("INSERT INTO lz VALUES (1, 10), (2, 20)", &mut catalog, &ctx).unwrap();
+    let ctx = || crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
+    run_insert_on("INSERT INTO lz VALUES (1, 10), (2, 20)", &mut catalog, &ctx()).unwrap();
 
     assert_eq!(
-        run_update_on("UPDATE lz SET b = 1 LIMIT 0", &mut catalog, &ctx).unwrap(),
+        run_update_on("UPDATE lz SET b = 1 LIMIT 0", &mut catalog, &ctx()).unwrap(),
         0
     );
     assert_eq!(
-        run_delete_on("DELETE FROM lz LIMIT 0", &mut catalog, &ctx).unwrap(),
+        run_delete_on("DELETE FROM lz LIMIT 0", &mut catalog, &ctx()).unwrap(),
         0
     );
 
@@ -521,13 +523,13 @@ fn limit_zero_dml_still_validates_the_statement() {
         run_update_on(
             "UPDATE lz SET b = 1 ORDER BY nope LIMIT 0",
             &mut catalog,
-            &ctx
+            &ctx()
         )
         .is_err(),
         "an unresolvable ORDER BY column must error under LIMIT 0"
     );
     assert!(
-        run_delete_on("DELETE FROM lz ORDER BY nope LIMIT 0", &mut catalog, &ctx).is_err(),
+        run_delete_on("DELETE FROM lz ORDER BY nope LIMIT 0", &mut catalog, &ctx()).is_err(),
         "an unresolvable ORDER BY column must error under LIMIT 0"
     );
 
@@ -535,19 +537,19 @@ fn limit_zero_dml_still_validates_the_statement() {
         run_update_on(
             "UPDATE lz PARTITION (p0) SET b = 1 LIMIT 0",
             &mut catalog,
-            &ctx
+            &ctx()
         )
         .is_err(),
         "a partition selection on an unpartitioned table must error under LIMIT 0"
     );
     assert!(
-        run_delete_on("DELETE FROM lz PARTITION (p0) LIMIT 0", &mut catalog, &ctx).is_err(),
+        run_delete_on("DELETE FROM lz PARTITION (p0) LIMIT 0", &mut catalog, &ctx()).is_err(),
         "a partition selection on an unpartitioned table must error under LIMIT 0"
     );
 
     // Nothing above modified anything.
     assert_eq!(
-        run_select_on("SELECT a, b FROM lz", &catalog, &ctx).unwrap(),
+        run_select_on("SELECT a, b FROM lz", &catalog, &ctx()).unwrap(),
         vec![
             vec![Datum::Int(1), Datum::Int(10)],
             vec![Datum::Int(2), Datum::Int(20)],

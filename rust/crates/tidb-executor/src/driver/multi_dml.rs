@@ -312,8 +312,6 @@ pub(crate) fn run_multi_update(
     fk.borrow().prepare_fk_cascade_context(ctx);
     let mut records = UpdateRecords::new(&fk);
     let mut matched_rows = 0u64;
-    let mut touched_rows = 0u64;
-    let mut changed_rows = 0u64;
     // Go `updateRows`' `rowsColMultiply`.
     let mut rows_col_multiply = 0i64;
     let split = delete_source_splitter(&delete_layout, catalog, ctx, true)?;
@@ -485,8 +483,6 @@ pub(crate) fn run_multi_update(
                     .consume_checked(mem_delta)
                     .map_err(DriverError::from)?;
             }
-            changed_rows += u64::from(outcome.changed());
-            touched_rows += u64::from(outcome.touched());
             if !outcome.ignored() {
                 let rows = &mut updated_row_keys[slot];
                 let exist = rows.get(&handle).is_some();
@@ -510,11 +506,6 @@ pub(crate) fn run_multi_update(
     super::dml::record_dml_rows_col_multiply(ctx, rows_col_multiply);
     drop(records);
     Ok(super::dml::UpdateWritten {
-        affected: if ctx.client_found_rows() {
-            touched_rows
-        } else {
-            changed_rows
-        },
         matched: matched_rows,
         fk: fk.into_inner(),
     })
@@ -658,7 +649,6 @@ pub(crate) fn run_multi_delete(
     )?);
     fk.borrow().prepare_fk_cascade_context(ctx);
     let mut records = super::dml::delete_record::DeleteRecords::new(&fk);
-    let mut deleted = 0;
     // Go `removeRowsInTblRowMap`'s `rowsColMultiply`.
     let mut rows_col_multiply = 0i64;
     // The rest of Go `DeleteExec.Next`: `removeRowsInTblRowMap`, after the
@@ -674,8 +664,9 @@ pub(crate) fn run_multi_delete(
             doomed.sort_by(|left, right| left.0.cmp(&right.0));
             for (id, old, handle_val_len) in doomed {
                 let removed = records.write(catalog, database, name, &id, &old, delete.ignore, ctx)?;
-                deleted += u64::from(removed);
                 if removed {
+                    // Go `DeleteExec.removeRow`'s `AddAffectedRows(1)`.
+                    ctx.add_affected_rows(1);
                     rows_col_multiply =
                         super::dml::add_rows_col_multiply(rows_col_multiply, handle_val_len as i64);
                 }
@@ -685,7 +676,7 @@ pub(crate) fn run_multi_delete(
     })?;
     super::dml::record_dml_rows_col_multiply(ctx, rows_col_multiply);
     drop(records);
-    Ok((deleted, fk.into_inner()))
+    Ok((ctx.affected_rows(), fk.into_inner()))
 }
 
 /// Go `handleInfoPair`: a `tblRowMap` row -- its table's columns of the

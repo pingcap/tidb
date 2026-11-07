@@ -617,17 +617,17 @@ fn multi_update_defaults_resolve_across_sources() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_dml(false, true, false).with_txn_store(Box::new(store.clone()));
+    let ctx = || crate::StmtContext::for_dml(false, true, false).with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO default_left VALUES (1, 100)",
         &mut catalog,
-        &ctx,
+        &ctx(),
     )
     .unwrap();
     run_insert_on(
         "INSERT INTO default_right VALUES (1, 200)",
         &mut catalog,
-        &ctx,
+        &ctx(),
     )
     .unwrap();
     assert_eq!(
@@ -635,7 +635,7 @@ fn multi_update_defaults_resolve_across_sources() {
             "UPDATE default_left l JOIN default_right r ON l.id = r.id \
              SET l.v = DEFAULT(r.v), r.v = DEFAULT(l.v)",
             &mut catalog,
-            &ctx,
+            &ctx(),
         )
         .unwrap(),
         2

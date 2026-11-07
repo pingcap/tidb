@@ -2,9 +2,9 @@
   "date": "2026-11-06",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 30,
+    "unresolved": 29,
     "open": 7,
-    "partial": 23
+    "partial": 22
   },
   "findings": [
     {
@@ -50,13 +50,6 @@
       "group": "DDL: migrate responsibility before deleting implementations",
       "finding": "A persisted DDL job step's action handlers take their objects from a catalog rebuilt from the whole step snapshot (`plan_persisted_ddl_job_with` -> `load_info_schema`, a `TableInfo` JSON parse per table, system tables included), where Go's handlers read the job's own objects through `jobCtx.metaMut` (`checkSchemaExistAndCancelNotExistJob`, `GetTableInfoAndCancelFaultJob`) and take only the schema-version context from `jobCtx.infoCache`. The rebuilt catalog is raw meta, not an `InfoSchema`: a DROP DATABASE's later steps still find the write-only database there, while Go's infoschema drops it at the first diff (`applyDropSchema`), so the cached schema cannot stand in until the handlers read meta. In the `executor/foreign_key` and `ddl/db_integration` replays about half of every DDL's latency is that rebuild",
       "go_owner": "`pkg/ddl/job_worker.go` (`transitOneJobStep`, `runOneJobStep`), `pkg/ddl/schema.go`, `pkg/ddl/table.go`"
-    },
-    {
-      "id": "E02",
-      "status": "partial",
-      "group": "DML and executor handoff",
-      "finding": "A statement's affected rows are each DML executor's returned count (`written.affected` in `driver/dml.rs`), where Go's write paths add to `StmtCtx.AffectedRows` (`updateRecord`, `addRecord`, `removeRow` -> `AddAffectedRows`) and `AddAffectedRows` drops a foreign-key trigger's rows while `InHandleForeignKeyTrigger` is set; the port sets that flag around the cascade loop (`foreign_key.rs`) but nothing reads it for affected rows, so the cascade rows are excluded by the loop discarding its counts instead of by Go's gate",
-      "go_owner": "`pkg/executor/foreign_key.go`"
     },
     {
       "id": "E10",
@@ -222,7 +215,7 @@
       "go_owner": "`pkg/ddl` (`systable`, job scheduler), `pkg/session` bootstrap, `pkg/privilege/privileges` (`ensureActiveUser`)"
     }
   ],
-  "unresolved": 30,
+  "unresolved": 29,
   "open": 7,
-  "partial": 23
+  "partial": 22
 }

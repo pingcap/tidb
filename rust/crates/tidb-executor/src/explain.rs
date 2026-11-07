@@ -4101,7 +4101,8 @@ pub fn explain_analyze_insert_stmt(
         crate::driver::physical_insert_plan(insert, catalog, current_db, ctx, &mut source_visits)?;
     let root_key = crate::driver::physical_builder::runtime_plan_key(&physical);
     let mut runtime = crate::driver::physical_builder::PhysicalRuntimeStats::new();
-    let (affected, _) = run_insert_stmt_with_physical_and_stats(
+    // The writes add their affected rows to the statement (Go `AddAffectedRows`).
+    run_insert_stmt_with_physical_and_stats(
         insert,
         catalog,
         current_db,
@@ -4110,7 +4111,6 @@ pub fn explain_analyze_insert_stmt(
         Some(source_visits),
         Some(&mut runtime),
     )?;
-    ctx.add_affected_rows(affected);
     runtime
         .entry(root_key)
         .or_insert_with(|| tidb_executor_internal_exec::RowCount::default().into());
@@ -4240,7 +4240,8 @@ pub fn explain_analyze_update_stmt(
     };
     let root_key = crate::driver::physical_builder::runtime_plan_key(&physical);
     let mut runtime = crate::driver::physical_builder::PhysicalRuntimeStats::new();
-    let affected = run_update_stmt_with_physical_and_stats(
+    // The writes add their affected rows to the statement (Go `AddAffectedRows`).
+    run_update_stmt_with_physical_and_stats(
         update,
         catalog,
         current_db,
@@ -4248,7 +4249,6 @@ pub fn explain_analyze_update_stmt(
         Some(&mut physical),
         Some(&mut runtime),
     )?;
-    ctx.add_affected_rows(affected);
     runtime
         .entry(root_key)
         .or_insert_with(|| tidb_executor_internal_exec::RowCount::default().into());
@@ -4299,7 +4299,8 @@ pub fn explain_analyze_delete_stmt(
     };
     let root_key = crate::driver::physical_builder::runtime_plan_key(&physical);
     let mut runtime = crate::driver::physical_builder::PhysicalRuntimeStats::new();
-    let affected = run_delete_stmt_with_physical_and_stats(
+    // The writes add their affected rows to the statement (Go `AddAffectedRows`).
+    run_delete_stmt_with_physical_and_stats(
         delete,
         catalog,
         current_db,
@@ -4307,7 +4308,6 @@ pub fn explain_analyze_delete_stmt(
         Some(&mut physical),
         Some(&mut runtime),
     )?;
-    ctx.add_affected_rows(affected);
     runtime
         .entry(root_key)
         .or_insert_with(|| tidb_executor_internal_exec::RowCount::default().into());

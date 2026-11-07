@@ -103,7 +103,7 @@ fn auto_random_allocates_positive_ids_for_null_zero_and_omitted() {
 #[test]
 fn multi_auto_random_allocates_consecutive_ids_within_one_statement() {
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    let ctx = dml_ctx();
+    let ctx = || dml_ctx();
     run_create_table_on(
         "create table ar (id bigint key clustered auto_random, name char(10))",
         &mut catalog,
@@ -116,7 +116,7 @@ fn multi_auto_random_allocates_consecutive_ids_within_one_statement() {
         "insert into ar(name) values ('a'),('a'),('a')",
     ] {
         let (affected, insert_id) =
-            run_insert_reporting(statement, &mut catalog, "test", &ctx).unwrap();
+            run_insert_reporting(statement, &mut catalog, "test", &ctx()).unwrap();
         assert_eq!(affected, 3, "{statement}");
         let mut ids = select_ints(&catalog, "select id from ar order by id");
         assert_eq!(ids.len(), 3, "{statement}");
@@ -129,7 +129,7 @@ fn multi_auto_random_allocates_consecutive_ids_within_one_statement() {
             Some(ids[0] as u64),
             "{statement}: first id reported"
         );
-        crate::run_delete_on("delete from ar", &mut catalog, &ctx).unwrap();
+        crate::run_delete_on("delete from ar", &mut catalog, &ctx()).unwrap();
     }
 }
 

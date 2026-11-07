@@ -6093,8 +6093,15 @@ impl StmtContext {
         self.updated_rows.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Go `StmtCtx.AddAffectedRows`.
+    /// Go `StmtCtx.AddAffectedRows`: the rows a foreign-key trigger writes
+    /// (`InHandleForeignKeyTrigger`) do not count, for MySQL compatibility.
     pub fn add_affected_rows(&self, rows: u64) {
+        if self
+            .in_handle_foreign_key_trigger
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return;
+        }
         self.affected_rows
             .fetch_add(rows, std::sync::atomic::Ordering::Relaxed);
     }

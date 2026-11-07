@@ -38,9 +38,6 @@ impl UpdateOutcome {
     pub(crate) fn changed(self) -> bool {
         matches!(self, Self::Changed)
     }
-    pub(crate) fn unchanged(self) -> bool {
-        matches!(self, Self::Unchanged)
-    }
     /// Go counts a row as touched (`CLIENT_FOUND_ROWS`) only when
     /// `updateRecord` did not report it ignored: a duplicate skipped under
     /// IGNORE is not a found row.
@@ -75,6 +72,7 @@ impl<'a> UpdateRecords<'a> {
         ctx: &crate::StmtContext,
     ) -> Result<UpdateOutcome, DriverError> {
         let _region = tidb_tracing::start_thread_region_ex("executor.updateRecord");
+        let on_dup = matches!(generation, GeneratedWrite::OnDuplicate { .. });
         let entry = catalog.get_in(database, name).ok_or_else(|| {
             DriverError::from(
                 tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
@@ -88,6 +86,11 @@ impl<'a> UpdateRecords<'a> {
                     key_set |= LOCK_UNIQUE_KEYS;
                 }
                 add_unchanged_keys_for_lock_by_row(kv, id, old, key_set, ctx)?;
+            }
+            // Go `updateRecord`: an unchanged row is affected only under
+            // `CLIENT_FOUND_ROWS`.
+            if ctx.client_found_rows() {
+                ctx.add_affected_rows(1);
             }
             return Ok(UpdateOutcome::Unchanged);
         }
@@ -205,6 +208,7 @@ impl<'a> UpdateRecords<'a> {
                 .borrow_mut()
                 .on_update_row(catalog, database, name, old, new, ignore, ctx)?;
         }
+        ctx.add_affected_rows(if on_dup { 2 } else { 1 });
         ctx.add_updated_rows(1);
         Ok(UpdateOutcome::Changed)
     }

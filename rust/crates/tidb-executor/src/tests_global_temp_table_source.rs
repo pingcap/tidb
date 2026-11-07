@@ -22,6 +22,10 @@ use crate::{run_create_table_on, run_insert_reporting, run_select_on, SessionExt
 fn global_temporary_table_auto_increment_allocates_one_two_three() {
     let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
+    // One context stands for the session: the temporary table's ID
+    // allocator is session state (Go `SessionVars` temporary table data),
+    // and `for_dml` would start a new session. A statement's affected rows
+    // are therefore its own share of the context's `AffectedRows`.
     let ctx = StmtContext::for_dml(false, true, false).with_txn_store(Box::new(store.clone()));
 
     run_create_table_on(
@@ -35,7 +39,7 @@ fn global_temporary_table_auto_increment_allocates_one_two_three() {
     assert_eq!(affected, 1);
     let (affected, rest) =
         run_insert_reporting("insert temp_test value(0), (0)", &mut catalog, "test", &ctx).unwrap();
-    assert_eq!(affected, 2);
+    assert_eq!(affected - 1, 2);
 
     let max = run_select_on("select max(id) from temp_test", &catalog, &ctx).unwrap();
     assert_eq!(max.len(), 1);

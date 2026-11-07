@@ -66,9 +66,9 @@ fn datum_text(datum: &Datum) -> String {
 #[test]
 fn on_duplicate_key_values_form_and_constant_assignments_match_mysql_affected_rows() {
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    let ctx = dml_ctx();
+    let ctx = || dml_ctx();
     let insert =
-        |sql: &str, catalog: &mut SessionExtendedInfoSchema| run_insert_reporting(sql, catalog, "test", &ctx);
+        |sql: &str, catalog: &mut SessionExtendedInfoSchema| run_insert_reporting(sql, catalog, "test", &ctx());
 
     run_create_table_on(
         "create table t1(a1 bigint primary key, b1 bigint)",

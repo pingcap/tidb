@@ -7729,7 +7729,6 @@ use std::collections::HashMap;
 
     #[test]
     fn batch_writes_fetch_records_in_one_storage_request() {
-        let ctx = crate::StmtContext::for_query();
         for (ddl, insert, predicate, expected) in [
             (
                 "CREATE TABLE t (a BIGINT PRIMARY KEY, v BIGINT)",
@@ -7757,14 +7756,14 @@ use std::collections::HashMap;
             let store = CountingStorage::default();
             let gets = Arc::clone(&store.gets);
             let entries = Arc::clone(&store.entries);
-            let ctx = ctx.clone().with_txn_store(Box::new(store.clone()));
-            crate::run_insert_on(insert, &mut catalog, &ctx).unwrap();
+            let ctx = || crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
+            crate::run_insert_on(insert, &mut catalog, &ctx()).unwrap();
             gets.store(0, Ordering::Relaxed);
             entries.store(0, Ordering::Relaxed);
             let changed = crate::run_update_on(
                 &format!("UPDATE t SET v=v+1 WHERE {predicate}"),
                 &mut catalog,
-                &ctx,
+                &ctx(),
             )
             .unwrap();
             assert_eq!(
@@ -7778,7 +7777,7 @@ use std::collections::HashMap;
             );
             assert_eq!(entries.load(Ordering::Relaxed), 0, "no fallback scan");
             assert_eq!(
-                run_select_on("SELECT * FROM t ORDER BY a", &catalog, &ctx).unwrap(),
+                run_select_on("SELECT * FROM t ORDER BY a", &catalog, &ctx()).unwrap(),
                 expected
             );
             gets.store(0, Ordering::Relaxed);
@@ -7787,7 +7786,7 @@ use std::collections::HashMap;
                 crate::run_delete_on(
                     &format!("DELETE FROM t WHERE {predicate}"),
                     &mut catalog,
-                    &ctx,
+                    &ctx(),
                 )
                 .unwrap(),
                 2
@@ -7799,7 +7798,7 @@ use std::collections::HashMap;
             );
             assert_eq!(entries.load(Ordering::Relaxed), 0, "no fallback scan");
             assert_eq!(
-                run_select_on("SELECT * FROM t ORDER BY a", &catalog, &ctx).unwrap(),
+                run_select_on("SELECT * FROM t ORDER BY a", &catalog, &ctx()).unwrap(),
                 vec![expected[1].clone()]
             );
         }

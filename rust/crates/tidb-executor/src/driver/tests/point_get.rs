@@ -334,7 +334,7 @@ fn cached_composite_handle_range_rebuilds_every_tuple_bound() {
 fn composite_unique_prefix_is_not_a_point_get() {
     let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
+    let ctx = || crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     crate::run_create_table_on(
         "CREATE TABLE point_prefix (\
             a BIGINT NOT NULL, b BIGINT NOT NULL, flag BIGINT UNSIGNED NOT NULL, \
@@ -345,7 +345,7 @@ fn composite_unique_prefix_is_not_a_point_get() {
     run_insert_on(
         "INSERT INTO point_prefix VALUES (1,-1,0)",
         &mut catalog,
-        &ctx,
+        &ctx(),
     )
     .unwrap();
 
@@ -354,7 +354,7 @@ fn composite_unique_prefix_is_not_a_point_get() {
             "UPDATE point_prefix SET flag = 1 \
              WHERE a = 1 AND b = -1 AND flag = 0",
             &mut catalog,
-            &ctx,
+            &ctx(),
         )
         .unwrap(),
         1
@@ -363,7 +363,7 @@ fn composite_unique_prefix_is_not_a_point_get() {
         run_select_on(
             "SELECT flag FROM point_prefix WHERE a = 1 AND b = -1",
             &catalog,
-            &ctx,
+            &ctx(),
         )
         .unwrap(),
         [[Datum::UInt(1)]]
@@ -2258,11 +2258,11 @@ fn fast_point_writes_remove_only_the_consumed_selection_like_go() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store()));
+    let ctx = || crate::StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store()));
     run_insert_on(
         "INSERT INTO fast_write VALUES (1, 'one')",
         &mut catalog,
-        &ctx,
+        &ctx(),
     )
     .unwrap();
 
@@ -2270,7 +2270,7 @@ fn fast_point_writes_remove_only_the_consumed_selection_like_go() {
         explain_write(
             "UPDATE fast_write SET c = 'two' WHERE id = 1",
             &mut catalog,
-            &ctx,
+            &ctx(),
         ),
         vec![
             "Update\tN/A\troot\t\tN/A",
@@ -2280,14 +2280,14 @@ fn fast_point_writes_remove_only_the_consumed_selection_like_go() {
     let guarded = explain_write(
         "UPDATE fast_write SET c = 'bad' WHERE id = 1 AND c = 'missing'",
         &mut catalog,
-        &ctx,
+        &ctx(),
     );
     assert!(guarded.iter().any(|row| row.contains("Selection")));
     assert_eq!(
         run_update_on(
             "UPDATE fast_write SET c = 'bad' WHERE id = 1 AND c = 'missing'",
             &mut catalog,
-            &ctx,
+            &ctx(),
         )
         .unwrap(),
         0
@@ -2296,29 +2296,29 @@ fn fast_point_writes_remove_only_the_consumed_selection_like_go() {
         run_update_on(
             "UPDATE fast_write SET c = 'two' WHERE id = 1",
             &mut catalog,
-            &ctx,
+            &ctx(),
         )
         .unwrap(),
         1
     );
     assert_eq!(
-        run_select_on("SELECT c FROM fast_write WHERE id = 1", &catalog, &ctx).unwrap(),
+        run_select_on("SELECT c FROM fast_write WHERE id = 1", &catalog, &ctx()).unwrap(),
         vec![vec![Datum::new_string_datum("two")]]
     );
 
     assert_eq!(
-        explain_write("DELETE FROM fast_write WHERE id = 1", &mut catalog, &ctx,),
+        explain_write("DELETE FROM fast_write WHERE id = 1", &mut catalog, &ctx(),),
         vec![
             "Delete\tN/A\troot\t\tN/A",
             "└─Point_Get\t1.00\troot\ttable:fast_write\thandle:1",
         ]
     );
     assert_eq!(
-        run_delete_on("DELETE FROM fast_write WHERE id = 1", &mut catalog, &ctx,).unwrap(),
+        run_delete_on("DELETE FROM fast_write WHERE id = 1", &mut catalog, &ctx(),).unwrap(),
         1
     );
     assert!(
-        run_select_on("SELECT c FROM fast_write WHERE id = 1", &catalog, &ctx)
+        run_select_on("SELECT c FROM fast_write WHERE id = 1", &catalog, &ctx())
             .unwrap()
             .is_empty()
     );
@@ -2356,11 +2356,11 @@ fn a_handle_point_with_an_extra_conjunct_wins_over_the_unique_index_like_go() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
+    let ctx = || crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO heuristic_pin VALUES (1, 1)",
         &mut catalog,
-        &ctx,
+        &ctx(),
     )
     .unwrap();
 
@@ -2372,7 +2372,7 @@ fn a_handle_point_with_an_extra_conjunct_wins_over_the_unique_index_like_go() {
         panic!("not an UPDATE");
     };
     let (_, rows) =
-        explain_update_stmt(update, &mut catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+        explain_update_stmt(update, &mut catalog, "test", &ctx(), ExplainFormat::Brief).unwrap();
     let cell = |datum: &Datum| match datum {
         Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
         other => format!("{other:?}"),
@@ -2408,7 +2408,7 @@ fn a_handle_point_with_an_extra_conjunct_wins_over_the_unique_index_like_go() {
         run_update_on(
             "UPDATE heuristic_pin SET j = -j WHERE i = 1 AND j = 2",
             &mut catalog,
-            &ctx,
+            &ctx(),
         )
         .unwrap(),
         0
@@ -2417,13 +2417,13 @@ fn a_handle_point_with_an_extra_conjunct_wins_over_the_unique_index_like_go() {
         run_update_on(
             "UPDATE heuristic_pin SET j = -j WHERE i = 1 AND j = 1",
             &mut catalog,
-            &ctx,
+            &ctx(),
         )
         .unwrap(),
         1
     );
     assert_eq!(
-        run_select_on("SELECT j FROM heuristic_pin WHERE i = 1", &catalog, &ctx).unwrap(),
+        run_select_on("SELECT j FROM heuristic_pin WHERE i = 1", &catalog, &ctx()).unwrap(),
         vec![vec![Datum::Int(-1)]]
     );
 }

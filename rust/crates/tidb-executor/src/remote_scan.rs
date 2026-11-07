@@ -578,12 +578,12 @@ mod tests {
         }
         commit(&fixture.buffer, &fixture.snapshot);
         let mut catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91]).with_txn_store(Box::new(fixture.store.clone()));
+        let ctx = || crate::StmtContext::for_query_in_dirty_transaction(&[91]).with_txn_store(Box::new(fixture.store.clone()));
         let (rows, ops) = capture_storage_ops(|| {
             run_select_on(
                 "SELECT _tidb_rowid FROM t ORDER BY _tidb_rowid",
                 &catalog,
-                &ctx,
+                &ctx(),
             )
             .unwrap()
         });
@@ -596,18 +596,18 @@ mod tests {
         );
         assert_eq!(ops.cop_scans, 1);
         assert_eq!(
-            crate::run_update_on("UPDATE t SET a=a+1 WHERE a=100", &mut catalog, &ctx).unwrap(),
+            crate::run_update_on("UPDATE t SET a=a+1 WHERE a=100", &mut catalog, &ctx()).unwrap(),
             1
         );
         assert_eq!(
-            crate::run_delete_on("DELETE FROM t WHERE a=200", &mut catalog, &ctx).unwrap(),
+            crate::run_delete_on("DELETE FROM t WHERE a=200", &mut catalog, &ctx()).unwrap(),
             1
         );
         let (rows, ops) = capture_storage_ops(|| {
             run_select_on(
                 "SELECT _tidb_rowid,a FROM t ORDER BY _tidb_rowid",
                 &catalog,
-                &ctx,
+                &ctx(),
             )
             .unwrap()
         });
@@ -632,12 +632,12 @@ mod tests {
             }
             commit(&fixture.buffer, &fixture.snapshot);
             let mut catalog = catalog_of(fixture.table);
-            let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91]).with_txn_store(Box::new(fixture.store.clone()));
+            let ctx = || crate::StmtContext::for_query_in_dirty_transaction(&[91]).with_txn_store(Box::new(fixture.store.clone()));
             let (changed, ops) = capture_storage_ops(|| {
                 crate::run_update_on(
                     "UPDATE t SET b=b+100 WHERE a>=1 AND a<=3 AND a<>2",
                     &mut catalog,
-                    &ctx,
+                    &ctx(),
                 )
                 .unwrap()
             });
@@ -650,13 +650,13 @@ mod tests {
                 crate::run_delete_on(
                     "DELETE FROM t WHERE a>=2 AND a<=4 AND a<>3",
                     &mut catalog,
-                    &ctx,
+                    &ctx(),
                 )
                 .unwrap(),
                 2
             );
             assert_eq!(
-                run_select_on("SELECT * FROM t ORDER BY a", &catalog, &ctx).unwrap(),
+                run_select_on("SELECT * FROM t ORDER BY a", &catalog, &ctx()).unwrap(),
                 vec![
                     vec![Datum::Int(1), Datum::Int(110)],
                     vec![Datum::Int(3), Datum::Int(130)]
@@ -689,11 +689,11 @@ mod tests {
         }
         commit(&fixture.buffer, &fixture.snapshot);
         let mut catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
+        let ctx = || crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
         let (rows, reads) = capture_storage_ops(|| {
             run_select_on(
             "SELECT v FROM t WHERE (a,b) IN ((1,1),(1,3)) AND c=2 AND v>0 ORDER BY b DESC LIMIT 1",
-            &catalog, &ctx,
+            &catalog, &ctx(),
         ).unwrap()
         });
         assert_eq!(rows, vec![vec![Datum::Int(10)]]);
@@ -709,7 +709,7 @@ mod tests {
             crate::run_update_on(
                 "UPDATE t SET v=999 WHERE (a,b) IN ((1,1),(1,3)) AND c=2 AND v=999",
                 &mut catalog,
-                &ctx,
+                &ctx(),
             )
             .unwrap(),
             0,
@@ -719,7 +719,7 @@ mod tests {
             crate::run_delete_on(
                 "DELETE FROM t WHERE (a,b) IN ((1,1),(1,3)) AND c=2 AND v=999",
                 &mut catalog,
-                &ctx,
+                &ctx(),
             )
             .unwrap(),
             0,
@@ -729,7 +729,7 @@ mod tests {
             crate::run_update_on(
                 "UPDATE t SET v=v+1 WHERE (a,b) IN ((1,1),(1,3)) AND c=2",
                 &mut catalog,
-                &ctx,
+                &ctx(),
             )
             .unwrap()
         });
@@ -743,7 +743,7 @@ mod tests {
             run_select_on(
                 "SELECT v FROM t WHERE (a,b) IN ((1,1),(1,3)) AND c=2 ORDER BY b",
                 &catalog,
-                &ctx,
+                &ctx(),
             )
             .unwrap(),
             vec![vec![Datum::Int(11)], vec![Datum::Int(11)]]
@@ -752,7 +752,7 @@ mod tests {
             crate::run_delete_on(
                 "DELETE FROM t WHERE (a,b) IN ((1,1),(1,3)) AND c=2",
                 &mut catalog,
-                &ctx,
+                &ctx(),
             )
             .unwrap()
         });
@@ -784,12 +784,12 @@ mod tests {
         }
         commit(&fixture.buffer, &fixture.snapshot);
         let mut catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91]).with_txn_store(Box::new(fixture.store.clone()));
+        let ctx = || crate::StmtContext::for_query_in_dirty_transaction(&[91]).with_txn_store(Box::new(fixture.store.clone()));
         assert_eq!(
             crate::run_update_on(
                 "UPDATE t SET b=b+100 WHERE a>=1 AND a<=18446744073709551615 AND b<>20",
                 &mut catalog,
-                &ctx,
+                &ctx(),
             )
             .unwrap(),
             2
@@ -798,13 +798,13 @@ mod tests {
             crate::run_delete_on(
                 "DELETE FROM t WHERE a>=9223372036854775808 AND b<140",
                 &mut catalog,
-                &ctx,
+                &ctx(),
             )
             .unwrap(),
             1
         );
         let (rows, ops) = capture_storage_ops(|| {
-            run_select_on("SELECT * FROM t ORDER BY a", &catalog, &ctx).unwrap()
+            run_select_on("SELECT * FROM t ORDER BY a", &catalog, &ctx()).unwrap()
         });
         assert_eq!(
             rows,
@@ -821,23 +821,23 @@ mod tests {
         let mut descending = rows.clone();
         descending.reverse();
         assert_eq!(
-            run_select_on("SELECT * FROM t ORDER BY a DESC", &catalog, &ctx).unwrap(),
+            run_select_on("SELECT * FROM t ORDER BY a DESC", &catalog, &ctx()).unwrap(),
             descending
         );
         assert_eq!(
-            run_select_on("SELECT * FROM t ORDER BY a LIMIT 2", &catalog, &ctx).unwrap(),
+            run_select_on("SELECT * FROM t ORDER BY a LIMIT 2", &catalog, &ctx()).unwrap(),
             rows[..2]
         );
         assert_eq!(
-            run_select_on("SELECT * FROM t ORDER BY a DESC LIMIT 2", &catalog, &ctx).unwrap(),
+            run_select_on("SELECT * FROM t ORDER BY a DESC LIMIT 2", &catalog, &ctx()).unwrap(),
             descending[..2]
         );
         assert_eq!(
-            run_select_on("SELECT b FROM t WHERE a>=1 ORDER BY a", &catalog, &ctx).unwrap(),
+            run_select_on("SELECT b FROM t WHERE a>=1 ORDER BY a", &catalog, &ctx()).unwrap(),
             vec![vec![Datum::Int(20)], vec![Datum::Int(140)]],
             "pruning the output handle must preserve unsigned range order"
         );
-        let mut unordered = run_select_on("SELECT * FROM t", &catalog, &ctx).unwrap();
+        let mut unordered = run_select_on("SELECT * FROM t", &catalog, &ctx()).unwrap();
         unordered.sort_by_key(|row| match row[0] {
             Datum::UInt(value) => value,
             _ => unreachable!(),
