@@ -518,6 +518,10 @@ func ASTArgsFromStmt(stmt string) (*ASTArgs, error) {
 func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*LoadDataController, error) {
 	fullTableName := tbl.Meta().Name.String()
 	logger := log.L().With(zap.String("table", fullTableName))
+	// Parquet workers need a concrete timezone identity, not a worker-local fallback.
+	if plan.Format == DataFormatParquet && strings.EqualFold(plan.LocationID, "SYSTEM") {
+		return nil, errors.New("cannot import parquet with an unresolved SYSTEM time zone")
+	}
 	loc := time.UTC
 	// historically, we store *time.Location in Plan, but *time.Location cannot
 	// be marshaled into JSON. New task metadata stores a timezone specifier
@@ -1209,7 +1213,9 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		e.detectAndUpdateFormat(fileNameKey)
+		if err := e.detectAndUpdateFormat(fileNameKey); err != nil {
+			return err
+		}
 		sourceType = e.getSourceType()
 		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
 		fileMeta := mydump.SourceFileMeta{
@@ -1245,7 +1251,9 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					return nil
 				}
 				// pick arbitrary one file to detect the format.
-				e.detectAndUpdateFormat(remotePath)
+				if err := e.detectAndUpdateFormat(remotePath); err != nil {
+					return err
+				}
 				sourceType = e.getSourceType()
 				allFiles = append(allFiles, mydump.RawFile{Path: remotePath, Size: size})
 				totalSize += size
@@ -1294,14 +1302,18 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	return nil
 }
 
-// update format of the validated file by its extension.
-func (e *LoadDataController) detectAndUpdateFormat(path string) {
+// detectAndUpdateFormat resolves auto format and validates Parquet's captured location.
+func (e *LoadDataController) detectAndUpdateFormat(path string) error {
 	if e.Format == DataFormatAuto {
 		e.Format = parseFileType(path)
 		e.logger.Info("detect and update import plan format based on file extension",
 			zap.String("file", path), zap.String("detected format", e.Format))
 		e.Parameters.Format = e.Format
 	}
+	if e.Format == DataFormatParquet && strings.EqualFold(e.LocationID, "SYSTEM") {
+		return errors.New("cannot import parquet with an unresolved SYSTEM time zone")
+	}
+	return nil
 }
 
 func parseFileType(path string) string {
