@@ -183,6 +183,8 @@ func checkTableForeignKeysValid(sctx sessionctx.Context, is infoschema.InfoSchem
 	return nil
 }
 
+// checkRecoverTableForeignKeys rejects managed external FK dependencies that
+// cannot be recovered atomically with this table, while allowing self references.
 func checkRecoverTableForeignKeys(is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo) error {
 	// A standalone recovery cannot prove that an external FK endpoint still
 	// identifies the same table or that rows on both sides still match.

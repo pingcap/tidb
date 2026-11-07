@@ -190,6 +190,8 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, errors.Trace(err)
 	}
 
+	// FK relationships can change after frontend validation. Recheck the latest
+	// InfoSchema in the owner before continuing recovery.
 	if err = checkRecoverTableForeignKeys(jobCtx.infoCache.GetLatest(), job.SchemaName, tblInfo); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)

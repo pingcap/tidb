@@ -572,6 +572,8 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		return err
 	}
 	if len(s.NewName) != 0 {
+		// Preserve the historical snapshot and retarget only the original managed
+		// self references when restoring the table under a new name.
 		oldTableName := tblInfo.Name
 		tblInfo = tblInfo.Clone()
 		tblInfo.Name = pmodel.NewCIStr(s.NewName)
