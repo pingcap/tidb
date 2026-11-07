@@ -197,6 +197,10 @@ impl QuerySession for Session {
         self.node_conn().prefetch_point_plan_keys(statements, sql)
     }
 
+    fn set_point_plan_value(&mut self, index: Option<usize>) {
+        Session::set_point_plan_value(self, index);
+    }
+
     fn flush_multi_statement_warning(&mut self) {
         Session::flush_multi_statement_warning(self);
     }

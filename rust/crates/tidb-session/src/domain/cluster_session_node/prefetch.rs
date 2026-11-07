@@ -28,6 +28,7 @@ impl ClusterServerSession<'_> {
     /// A read of the prefetched keys failed, or the lock wait was
     /// interrupted; any other lock failure is only logged, as Go's.
     pub fn prefetch_point_plan_keys(&mut self, statements: &[String], sqls: &str) -> Result<(), SqlQueryError> {
+        self.session.prefetched_point_plans.clear();
         let Some(transaction) = self.node.txn.explicit.as_ref() else {
             return Ok(());
         };
@@ -50,6 +51,7 @@ impl ClusterServerSession<'_> {
         }
         let mut idx_keys = Vec::new();
         let mut row_keys = Vec::new();
+        let mut point_plans: Vec<std::sync::Arc<dyn std::any::Any + Send + Sync>> = Vec::with_capacity(statements.len());
         for sql in statements {
             let Ok(stmt) = self.session.parse(sql) else {
                 return Ok(());
@@ -60,22 +62,23 @@ impl ClusterServerSession<'_> {
             {
                 return Ok(());
             }
-            let tidb_ast::Stmt::Dml(dml) = &stmt else {
-                continue;
-            };
             let ctx = self.session.statement_context_for_stmt(&stmt, true);
             let current_db = self.session.vars.current_db.clone();
-            let keys = self
+            let (point_plan, keys) = self
                 .session
                 .with_planning_catalog(|catalog| {
-                    tidb_executor::driver::prefetch_point_plan_keys(dml, catalog, &current_db, &ctx)
+                    tidb_executor::driver::prefetch_point_plan_keys(&stmt, catalog, &current_db, &ctx)
                 })
                 .map_err(sql_query_error)?;
+            point_plans.push(std::sync::Arc::new(point_plan));
             if let Some((idx, row)) = keys {
                 idx_keys.extend(idx);
                 row_keys.extend(row);
             }
         }
+        // Go hands each statement its point plan (`PointPlanKey`) whenever
+        // the loop above completed.
+        self.session.prefetched_point_plans = point_plans;
         if idx_keys.is_empty() && row_keys.is_empty() {
             return Ok(());
         }
@@ -143,4 +146,24 @@ fn set_resource_group_tagger_for_multi_stmt_prefetch(snapshot: &mut dyn ClusterS
         ..tidb_txnkv::StatementKvContext::default()
     });
     snapshot.set_statement_kv_context(&context);
+}
+
+impl crate::Session {
+    /// Go `cc.ctx.SetValue(plannercore.PointPlanKey, PointPlanVal{Plan:
+    /// pointPlans[index]})` before statement `index` of a multi-statement
+    /// query runs (nothing when the prefetch built no point plans), and
+    /// `ClearValue` (`None`) once the query is done.
+    pub fn set_point_plan_value(&mut self, index: Option<usize>) {
+        match index {
+            Some(index) => {
+                if let Some(point_plan) = self.prefetched_point_plans.get(index) {
+                    self.point_plan_val = Some(std::sync::Arc::clone(point_plan));
+                }
+            }
+            None => {
+                self.point_plan_val = None;
+                self.prefetched_point_plans.clear();
+            }
+        }
+    }
 }

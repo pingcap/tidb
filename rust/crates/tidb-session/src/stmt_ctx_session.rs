@@ -511,6 +511,10 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::statement_locked_tables(self)
     }
 
+    fn point_plan_val(&self) -> Option<std::sync::Arc<dyn std::any::Any + Send + Sync>> {
+        self.point_plan_val.clone()
+    }
+
     fn current_resource_group(&self) -> &str {
         Session::current_resource_group(self)
     }

@@ -708,19 +708,31 @@ fn physical_dml_plan_with_cache_mode(
                         &[tidb_mysql::SelectPriv, write_privilege],
                     )
             };
-            let fast = (!use_plan_cache && allow_fast_plan)
-                .then(|| {
-                    super::point_get_plan::try_fast_dml_point_physical_plan_with_allocator(
-                        select,
-                        catalog,
-                        current_db,
-                        ctx,
-                        plan_ids,
-                        &fast_plan_privilege,
-                    )
-                })
-                .transpose()?
-                .flatten();
+            let fast = match handed_point_plan(ctx, PointPlanKind::Dml)
+                .filter(|_| !use_plan_cache && allow_fast_plan)
+            {
+                // Go `Optimize`: the point plan a multi-statement query's
+                // prefetch already tried (`PointPlanKey`), not `TryFastPlan`
+                // again; its plan ids come first.
+                Some(handed) => handed.plan.clone().inspect(|_| {
+                    for _ in 0..handed.plan_ids {
+                        plan_ids.alloc();
+                    }
+                }),
+                None => (!use_plan_cache && allow_fast_plan)
+                    .then(|| {
+                        super::point_get_plan::try_fast_dml_point_physical_plan_with_allocator(
+                            select,
+                            catalog,
+                            current_db,
+                            ctx,
+                            plan_ids,
+                            &fast_plan_privilege,
+                        )
+                    })
+                    .transpose()?
+                    .flatten(),
+            };
             if let Some(mut fast) = fast {
                 // Go's `Optimize` returns the fast plan without `optimize`'s
                 // `CheckPrivilege`: `checkFastPlanPrivilege` was its check.
@@ -3064,53 +3076,110 @@ pub(crate) fn update_source_query(update: &tidb_ast::UpdateStmt) -> Option<tidb_
     }
 }
 
+/// Go `plannercore.PointPlanVal`: the point plan a multi-statement query's
+/// prefetch built for one statement (`None`: it has none), which that
+/// statement's planning takes instead of trying `TryFastPlan` again.
+pub struct PointPlanVal {
+    /// The statement the plan was tried for.
+    pub kind: PointPlanKind,
+    /// Go's `TryFastPlan` result.
+    pub plan: Option<tidb_planner_core_operator_physicalop::PhysicalPlan>,
+    /// The plan ids the plan took; a DML statement allocates its root after
+    /// them.
+    pub plan_ids: i32,
+}
+
+/// Which planning step a [`PointPlanVal`] answers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PointPlanKind {
+    /// A SELECT: the query's `TryFastPlan`.
+    Select,
+    /// A single-table UPDATE or DELETE: its point read.
+    Dml,
+    /// A statement `TryFastPlan` answers nothing for.
+    Other,
+}
+
+/// The [`PointPlanVal`] the statement context carries for `kind`, if any.
+pub(crate) fn handed_point_plan(ctx: &crate::StmtContext, kind: PointPlanKind) -> Option<&PointPlanVal> {
+    ctx.point_plan_val()
+        .and_then(|value| value.downcast_ref::<PointPlanVal>())
+        .filter(|value| value.kind == kind)
+}
+
 /// Go `prefetchPointPlanKeys` over one statement of a multi-statement query:
-/// `TryFastPlan`'s point plan for a point UPDATE or DELETE (Go prefetches no
-/// other statement), and the unique-index and row keys it reads. `None` when
-/// the statement has no fast point plan.
+/// `TryFastPlan`'s point plan for it, which the statement is handed when it
+/// runs (`PointPlanKey`), and, for a point UPDATE or DELETE (Go prefetches
+/// no other statement's keys), the unique-index and row keys it reads.
 pub fn prefetch_point_plan_keys(
-    stmt: &tidb_ast::DmlStmt,
+    stmt: &tidb_ast::Stmt,
     catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)>, DriverError> {
-    let source = match stmt {
-        tidb_ast::DmlStmt::Update(update) if try_update_point_plan(update) => update_source_query(update),
-        tidb_ast::DmlStmt::Delete(delete) => delete_source_query(delete),
-        _ => None,
-    };
-    let Some(tidb_ast::QueryStmt::Select(select)) = source else {
-        return Ok(None);
-    };
-    // The statement plans again when it runs, and reports the fast plan's
-    // conversion warnings then.
+) -> Result<(PointPlanVal, Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)>), DriverError> {
+    // The prefetch's `TryFastPlan` reports its conversion warnings into the
+    // context the statement's `ResetContextOfStmt` then replaces.
     let warning_bookmark = ctx.warning_count();
-    let write_privilege = match stmt {
-        tidb_ast::DmlStmt::Update(_) => tidb_mysql::UpdatePriv,
-        _ => tidb_mysql::DeletePriv,
-    };
-    let fast = super::point_get_plan::try_fast_dml_point_physical_plan_with_allocator(
-        &select,
-        catalog,
-        current_db,
-        ctx,
-        &tidb_planner_core_base::PlanIdAllocator::new(),
-        &|database, table| {
-            crate::table_privilege::check_fast_plan_privilege(
-                ctx,
-                catalog,
-                database,
-                table,
-                &[tidb_mysql::SelectPriv, write_privilege],
-            )
+    let plan_ids = tidb_planner_core_base::PlanIdAllocator::new();
+    let (kind, fast) = match stmt {
+        tidb_ast::Stmt::Query(query) => match query.as_ref() {
+            tidb_ast::QueryStmt::Select(select) => (
+                PointPlanKind::Select,
+                super::point_get_plan::try_fast_plan_checked(select, catalog, current_db, ctx, &|database, table| {
+                    crate::table_privilege::check_fast_plan_privilege(
+                        ctx,
+                        catalog,
+                        database,
+                        table,
+                        &[tidb_mysql::SelectPriv],
+                    )
+                }),
+            ),
+            tidb_ast::QueryStmt::SetOpr(_) => (PointPlanKind::Other, Ok(None)),
         },
-    );
+        tidb_ast::Stmt::Dml(dml) => {
+            let (source, write_privilege) = match dml.as_ref() {
+                tidb_ast::DmlStmt::Update(update) if try_update_point_plan(update) => {
+                    (update_source_query(update), tidb_mysql::UpdatePriv)
+                }
+                tidb_ast::DmlStmt::Delete(delete) => (delete_source_query(delete), tidb_mysql::DeletePriv),
+                _ => (None, tidb_mysql::UpdatePriv),
+            };
+            match source {
+                Some(tidb_ast::QueryStmt::Select(select)) => (
+                    PointPlanKind::Dml,
+                    super::point_get_plan::try_fast_dml_point_physical_plan_with_allocator(
+                        &select,
+                        catalog,
+                        current_db,
+                        ctx,
+                        &plan_ids,
+                        &|database, table| {
+                            crate::table_privilege::check_fast_plan_privilege(
+                                ctx,
+                                catalog,
+                                database,
+                                table,
+                                &[tidb_mysql::SelectPriv, write_privilege],
+                            )
+                        },
+                    ),
+                ),
+                _ => (PointPlanKind::Other, Ok(None)),
+            }
+        }
+        _ => (PointPlanKind::Other, Ok(None)),
+    };
     ctx.truncate_warnings(warning_bookmark);
     // Go `TryFastPlan` answers no plan rather than an error.
-    let Ok(Some(plan)) = fast else {
-        return Ok(None);
+    let plan = fast.ok().flatten();
+    let keys = match (&plan, kind) {
+        (Some(plan), PointPlanKind::Dml) => {
+            Some(super::physical_builder::point_plan_prefetch_keys(plan, catalog, ctx)?)
+        }
+        _ => None,
     };
-    super::physical_builder::point_plan_prefetch_keys(&plan, catalog, ctx).map(Some)
+    Ok((PointPlanVal { kind, plan, plan_ids: plan_ids.current() }, keys))
 }
 
 /// Go `tryUpdatePointPlan` declines the complete fast DML plan when any SET

@@ -542,6 +542,10 @@ pub struct StmtContextSessionState {
     pub isolation_read_engines: String,
     /// Go `SessionVars.SelectLimit`, used to suppress the fast point-plan path.
     pub select_limit: u64,
+    /// Go `sctx.Value(plannercore.PointPlanKey)`: the point plan a
+    /// multi-statement query's prefetch built for this statement, which the
+    /// planner's `TryFastPlan` step takes instead of trying again.
+    pub point_plan_val: Option<Arc<dyn std::any::Any + Send + Sync>>,
     /// Captured connection character set.
     pub connection_charset: String,
     /// Captured connection collation.
@@ -613,6 +617,7 @@ impl Default for StmtContextSessionState {
             resource_group_name: "default".to_owned(),
             isolation_read_engines: "tikv,tiflash,tidb".to_owned(),
             select_limit: u64::MAX,
+            point_plan_val: None,
             connection_charset: "utf8mb4".to_owned(),
             connection_collation: "utf8mb4_bin".to_owned(),
             default_collation_for_utf8mb4: "utf8mb4_bin".to_owned(),
@@ -872,6 +877,8 @@ pub struct StmtContextData {
     tiflash_engine_removed_due_to_strict_sql_mode: bool,
     /// Go `SessionVars.SelectLimit`; `u64::MAX` is the unlimited sentinel.
     select_limit: u64,
+    /// See [`StmtContextSessionState::point_plan_val`].
+    point_plan_val: Option<Arc<dyn std::any::Any + Send + Sync>>,
     /// Go `BuildContext.GetCharsetInfo`: the statement snapshot of
     /// `@@character_set_connection` and `@@collation_connection`.
     connection_charset: String,
@@ -2963,6 +2970,7 @@ impl StmtContext {
             isolation_read_engines: session.isolation_read_engines,
             tiflash_engine_removed_due_to_strict_sql_mode: false,
             select_limit: session.select_limit,
+            point_plan_val: session.point_plan_val,
             connection_charset: session.connection_charset,
             connection_collation: session.connection_collation,
             default_collation_for_utf8mb4: session.default_collation_for_utf8mb4,
@@ -4897,6 +4905,13 @@ impl StmtContext {
     #[must_use]
     pub fn select_limit(&self) -> u64 {
         self.select_limit
+    }
+
+    /// Go `sctx.Value(plannercore.PointPlanKey)`; see
+    /// [`StmtContextSessionState::point_plan_val`].
+    #[must_use]
+    pub fn point_plan_val(&self) -> Option<&(dyn std::any::Any + Send + Sync)> {
+        self.point_plan_val.as_deref()
     }
 
     /// Whether `ONLY_FULL_GROUP_BY` is in effect for this statement.

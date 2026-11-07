@@ -2410,6 +2410,9 @@ fn run_connection_commands<S: QuerySession>(
                         queries += 1;
                         return Ok(None);
                     }
+                    // Go `conn.go:1918`'s deferred `ClearValue(PointPlanKey)`:
+                    // no point plan outlives the query that built it.
+                    engine.set_point_plan_value(None);
                     // Go `conn.go:1908`: only pre-build point plans for a
                     // multi-statement query.
                     if statements.len() > 1 {
@@ -2428,6 +2431,9 @@ fn run_connection_commands<S: QuerySession>(
                     let mut sequence: u8 = 1;
                     let mut aborted = false;
                     'statements: for (statement_index, sql) in statements.iter().enumerate() {
+                        // Go `conn.go:1936`: the statement's prefetched point
+                        // plan, so it is not built again.
+                        engine.set_point_plan_value(Some(statement_index));
                         let sql = sql.as_str();
                         let more_results = statement_index < last_index;
                         let stamp = |status: WireStatus| {
@@ -2661,6 +2667,7 @@ fn run_connection_commands<S: QuerySession>(
                         engine.set_tiflash_fallback(false);
                         record_client_warnings(&*output, &*engine);
                     }
+                    engine.set_point_plan_value(None);
                     if !aborted {
                         engine.flush_multi_statement_warning();
                     }

@@ -369,13 +369,20 @@ pub(crate) fn optimize_query_stmt_with_scalar_subqueries(
                 &[tidb_mysql::SelectPriv],
             )
         };
-        if let Some(plan) = point_get_plan::try_fast_plan_checked(
-            select,
-            catalog,
-            current_db,
-            ctx,
-            &fast_plan_privilege,
-        )? {
+        let fast = match dml::handed_point_plan(ctx, dml::PointPlanKind::Select) {
+            // Go `Optimize`: the point plan a multi-statement query's
+            // prefetch already tried (`PointPlanKey`), not `TryFastPlan`
+            // again.
+            Some(handed) => handed.plan.clone(),
+            None => point_get_plan::try_fast_plan_checked(
+                select,
+                catalog,
+                current_db,
+                ctx,
+                &fast_plan_privilege,
+            )?,
+        };
+        if let Some(plan) = fast {
             return Ok((plan, Vec::new()));
         }
     }

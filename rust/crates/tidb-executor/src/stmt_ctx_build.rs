@@ -1617,6 +1617,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             sql_digest_text_retriever: Some(self.sql_digest_text_retrieval()),
             min_safe_ts_provider: self.min_safe_ts_provider(),
             locked_tables: self.locked_tables(),
+            point_plan_val: self.point_plan_val(),
             ddl_sql_mode: sql_mode.0,
             regions: self.region_store(),
         };
@@ -2650,6 +2651,12 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// Go `TableLockReadContext`: the table locks this session holds
     /// (`StmtContext::locked_tables`); `None` with table locks disabled.
     fn locked_tables(&self) -> Option<crate::LockedTables>;
+    /// Go `sctx.Value(plannercore.PointPlanKey)`: the
+    /// [`crate::driver::PointPlanVal`] a multi-statement query's prefetch
+    /// handed the running statement, if any.
+    fn point_plan_val(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
+        None
+    }
     /// The connection's persistent resource group. A statement hint does not
     /// modify this value.
     fn current_resource_group(&self) -> &str;

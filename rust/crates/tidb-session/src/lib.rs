@@ -652,6 +652,11 @@ pub struct Session {
     /// Go `GetRestrictedSQLExecutor`: internal sessions of the node, absent
     /// on the in-process tier; see [`restricted_sql`].
     restricted_sql_executor: tidb_executor::memtable_reader::RestrictedSql,
+    /// Go `pointPlans`: the point plan a multi-statement query's prefetch
+    /// built for each of its statements, empty when it built none.
+    pub(crate) prefetched_point_plans: Vec<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
+    /// Go `cc.ctx.Value(plannercore.PointPlanKey)` for the running statement.
+    pub(crate) point_plan_val: Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
     /// The statistics handle's persisted predicate-column usage reader.
     column_stats_usage: Option<std::sync::Arc<dyn ColumnStatsUsageProvider>>,
     /// The persisted analyze-job reader shared by SHOW and ANALYZE_STATUS.
@@ -1003,6 +1008,8 @@ impl Session {
             snapshot_schema: None,
             statement_snapshot: None,
             restricted_sql_executor: None,
+            prefetched_point_plans: Vec::new(),
+            point_plan_val: None,
             column_stats_usage: None,
             analyze_status: None,
             approximate_table_counts: std::sync::Arc::new(

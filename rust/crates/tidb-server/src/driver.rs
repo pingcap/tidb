@@ -173,6 +173,12 @@ pub trait QuerySession {
         Ok(())
     }
 
+    /// Go `cc.ctx.SetValue(plannercore.PointPlanKey, PointPlanVal{Plan:
+    /// pointPlans[index]})` before a statement of the chain runs, and
+    /// `ClearValue` (`None`) once the chain is done; nothing when the
+    /// prefetch built no point plans.
+    fn set_point_plan_value(&mut self, _index: Option<usize>) {}
+
     /// Called once after a multi-statement chain's LAST statement completes;
     /// Go appends the admission's parser warnings there (`conn.go:2262`).
     /// An aborted chain is never flushed, as Go's error return drops them.

@@ -50,13 +50,64 @@ fn point_reads(stack: &crate::domain::unistore_node::UnistoreClusterStack, run: 
 }
 
 /// Go `handleQuery`: the query splits, the prefetch reads, then each
-/// statement runs.
+/// statement runs with its prefetched point plan (`PointPlanKey`), cleared
+/// when the query is done.
 fn handle_query(session: &mut crate::Session, query: &str) {
     let statements = session.split_statements(query, true).unwrap();
     session.node_conn().prefetch_point_plan_keys(&statements, query).unwrap();
-    for statement in &statements {
+    for (index, statement) in statements.iter().enumerate() {
+        session.set_point_plan_value(Some(index));
         rows(session, statement);
     }
+    session.set_point_plan_value(None);
+}
+
+/// Go `handleQuery` hands each statement of a multi-statement query the
+/// point plan its prefetch built (`PointPlanKey`), and `Optimize` takes it
+/// instead of `TryFastPlan`: the conversion warning the prefetch's
+/// `TryFastPlan` raised went to the context the statement's
+/// `ResetContextOfStmt` replaced, so a prefetched point UPDATE or DELETE
+/// reports none. Outside a transaction nothing is prefetched and the
+/// statement plans (and warns) itself. Captured from a Go tidb-server over
+/// the wire (`sql_mode=''`): `[]`, `[]`, then two 1292 warnings; a point
+/// SELECT answers the same.
+#[test]
+fn a_prefetched_point_write_takes_its_prefetched_plan_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(91)).expect("session opens");
+    rows(&mut session, "use test");
+    rows(&mut session, "create table t(id int primary key, v int, u varchar(10), unique key(u))");
+    rows(&mut session, "insert into t values (1,1,'a'),(2,2,'b')");
+    rows(&mut session, "set sql_mode=''");
+    let warnings = |session: &mut crate::Session| text(session, "show warnings");
+
+    rows(&mut session, "begin pessimistic");
+    handle_query(&mut session, "update t set v=v+1 where id=2; update t set v=v+1 where id='1x'");
+    assert!(warnings(&mut session).is_empty());
+    rows(&mut session, "commit");
+
+    rows(&mut session, "begin optimistic");
+    handle_query(&mut session, "update t set v=v+1 where id=2; delete from t where id='2x'");
+    assert!(warnings(&mut session).is_empty());
+    rows(&mut session, "rollback");
+
+    handle_query(&mut session, "update t set v=v+1 where id=2; update t set v=v+1 where id='1x'");
+    assert_eq!(
+        warnings(&mut session),
+        ["Warning 1292 Truncated incorrect DOUBLE value: '1x'"; 2]
+    );
+    assert_eq!(text(&mut session, "select * from t order by id"), ["1 3 a", "2 4 b"]);
+
+    // A point SELECT takes its prefetched plan too (captured likewise).
+    rows(&mut session, "begin pessimistic");
+    handle_query(&mut session, "select v from t where id=2; select v from t where id='1x'");
+    assert!(warnings(&mut session).is_empty());
+    rows(&mut session, "commit");
+    handle_query(&mut session, "select v from t where id=2; select v from t where id='1x'");
+    assert_eq!(
+        warnings(&mut session),
+        ["Warning 1292 Truncated incorrect DOUBLE value: '1x'"; 2]
+    );
 }
 
 fn text(session: &mut crate::Session, sql: &str) -> Vec<String> {
