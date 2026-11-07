@@ -752,13 +752,19 @@ pub(crate) fn sysdate(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalE
             converted.value as u32
         }
     };
-    // Only the ZONE comes from the statement clock; the instant does not.
-    let (_, _, tz_offset) = cols.now().ok_or(EvalError::Unsupported(
-        "SYSDATE needs the session clock, which is not wired here",
-    ))?;
+    // Go `time.Now().In(ctx.Location())`: the instant is the host's, the
+    // zone the evaluation context's -- the session's in TiDB, the DAG
+    // request's in the coprocessor.
     let elapsed = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| EvalError::Unsupported("the host clock is before the Unix epoch"))?;
+    let instant = chrono::DateTime::from_timestamp(elapsed.as_secs() as i64, elapsed.subsec_nanos())
+        .ok_or(EvalError::Unsupported("the host clock is out of range"))?
+        .naive_utc();
+    let tz_offset = {
+        use chrono::{Offset, TimeZone};
+        cols.time_zone().offset_from_utc_datetime(&instant).fix().local_minus_utc()
+    };
     let secs = elapsed.as_secs() as i64 + i64::from(tz_offset);
     Ok(Datum::new_string_datum(super::format_datetime(
         secs,
@@ -780,6 +786,10 @@ mod sysdate_source_tests {
             None
         }
 
+        fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+            tidb_datatype::SessionTimeZone::utc()
+        }
+
         fn now(&self) -> Option<(i64, u32, i32)> {
             Some((self.0, 0, 0))
         }
@@ -790,6 +800,10 @@ mod sysdate_source_tests {
     impl Columns for AliasedStatementClock {
         fn get(&self, _: &[String]) -> Option<Datum> {
             None
+        }
+
+        fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+            tidb_datatype::SessionTimeZone::utc()
         }
 
         fn now(&self) -> Option<(i64, u32, i32)> {
