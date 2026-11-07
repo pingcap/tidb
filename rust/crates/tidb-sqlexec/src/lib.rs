@@ -154,6 +154,19 @@ pub fn exec_option(options: &[OptionFuncAlias]) -> ExecOption {
     result
 }
 
+/// Go `session.ParseWithParams`'s statement text: `sqlescape.EscapeSQL(sql,
+/// args...)` only when there are arguments (`if len(args) > 0`), the SQL as
+/// written otherwise, so a no-argument statement's `%` is text.
+pub fn sql_with_params<'a>(
+    sql: &'a str,
+    arguments: &[SqlArg<'_>],
+) -> std::result::Result<std::borrow::Cow<'a, str>, tidb_sqlescape::EscapeError> {
+    if arguments.is_empty() {
+        return Ok(std::borrow::Cow::Borrowed(sql));
+    }
+    tidb_sqlescape::escape_sql_text(sql, arguments).map(std::borrow::Cow::Owned)
+}
+
 /// Go `RestrictedSQLExecutor`.
 pub trait RestrictedSqlExecutor: Send + Sync {
     /// Go `ParseWithParams`: the parameterized version of parse, trying to

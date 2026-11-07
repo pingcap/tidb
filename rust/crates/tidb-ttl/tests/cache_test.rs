@@ -1701,26 +1701,16 @@ impl tidb_ttl::session::SessionContext for GlobalTimeZoneContext {
     type Row = NoRow;
     type Store = ();
     type InfoSchema = ();
-    type SqlExecutor = ();
     type SessionVars = ();
 
     fn get_store(&self) {}
     fn get_latest_info_schema(&self) {}
     fn get_txn_info_schema(&self) {}
-    fn get_sql_executor(&self) -> &Self::SqlExecutor {
-        &()
+    fn get_sql_executor(&self) -> &dyn tidb_sqlexec::SqlExecutor {
+        self
     }
     fn get_session_vars(&self) -> &Self::SessionVars {
         &()
-    }
-
-    fn execute_internal(
-        &self,
-        _source: &str,
-        _sql: &str,
-        _args: &[Datum],
-    ) -> Result<Option<Vec<NoRow>>, tidb_ttl::session::SessionError> {
-        Ok(None)
     }
 
     fn get_global_system_var(
@@ -1750,8 +1740,43 @@ impl tidb_ttl::session::SessionContext for GlobalTimeZoneContext {
     }
 }
 
+/// The fixture's `GetSQLExecutor()`: every statement answers Go's `nil`
+/// record set.
+impl tidb_sqlexec::SqlExecutor for GlobalTimeZoneContext {
+    fn execute(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        _sql: &str,
+    ) -> tidb_sqlexec::Result<Vec<Box<dyn tidb_sqlexec::RecordSet>>> {
+        Ok(Vec::new())
+    }
+
+    fn execute_internal(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        _sql: &str,
+        _arguments: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
+        Ok(None)
+    }
+
+    fn execute_stmt(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        _statement: &tidb_ast::Stmt,
+    ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
+        Ok(None)
+    }
+}
+
 /// A `chunk.Row` this fixture never reads.
 struct NoRow;
+
+impl From<Vec<Datum>> for NoRow {
+    fn from(_datums: Vec<Datum>) -> Self {
+        NoRow
+    }
+}
 
 impl ResultRow for NoRow {
     fn is_null(&self, _col_idx: usize) -> bool {

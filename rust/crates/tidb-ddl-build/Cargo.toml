@@ -8,6 +8,9 @@ repository.workspace = true
 description = "The metadata-building half of Go pkg/ddl for the TiDB Rust rewrite."
 
 [dependencies]
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-store-driver-error = { path = "../tidb-store-driver-error" }
+tikv-client.workspace = true
 tidb-go-strconv = { path = "../tidb-go-strconv" }
 tidb-ddl-jobsubmit = { path = "../tidb-ddl-jobsubmit" }
 tidb-ddl-session = { path = "../tidb-ddl-session" }

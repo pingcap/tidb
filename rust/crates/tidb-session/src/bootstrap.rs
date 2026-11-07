@@ -179,10 +179,7 @@ pub(crate) fn execute_internal(
     sql: &str,
     args: &[SqlArg<'_>],
 ) -> Result<Vec<Vec<Datum>>, SqlQueryError> {
-    if args.is_empty() {
-        return s.execute_internal(sql);
-    }
-    let sql = tidb_sqlescape::escape_sql_text(sql, args)
+    let sql = tidb_sqlexec::sql_with_params(sql, args)
         .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
     s.execute_internal(&sql)
 }

@@ -16,7 +16,7 @@ use crate::domain::configured_user_store::{
     AuthenticationFailure, ConfiguredUserStore, LoginPolicyStorage,
 };
 use tidb_privilege::{LoginPolicyAction, PasswordLocking};
-use tidb_sqlescape::{escape_sql_text, SqlArg};
+use tidb_sqlescape::SqlArg;
 
 struct LoginStorage(Weak<Domain>);
 
@@ -151,5 +151,7 @@ fn apply_login_policy_in_session(
 }
 
 fn escaped(sql: &str, arguments: &[SqlArg<'_>]) -> Result<String, SqlQueryError> {
-    escape_sql_text(sql, arguments).map_err(|e| SqlQueryError::unknown(e.to_string()))
+    tidb_sqlexec::sql_with_params(sql, arguments)
+        .map(std::borrow::Cow::into_owned)
+        .map_err(|e| SqlQueryError::unknown(e.to_string()))
 }

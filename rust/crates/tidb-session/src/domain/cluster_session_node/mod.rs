@@ -2619,8 +2619,14 @@ struct AccountSystemSession(Session);
 /// Go `withRestrictedSQLExecutor` without `ExecOptionUseCurSession`: each
 /// statement takes an internal session of this node (`getInternalSession`)
 /// and runs in that session's own autocommit transaction.
-struct NodeRestrictedSql {
+pub(crate) struct NodeRestrictedSql {
     factory: Weak<Domain>,
+}
+
+impl NodeRestrictedSql {
+    pub(crate) fn new(factory: Weak<Domain>) -> Self {
+        Self { factory }
+    }
 }
 
 impl NodeRestrictedSql {
@@ -2764,16 +2770,12 @@ fn execute_internal_under(
     Ok((rows, sessions::stats_result_fields(fields)))
 }
 
-/// Go `ParseWithParams`'s text: escaped with its arguments, and as written
-/// when there are none (`if len(args) > 0`).
+/// [`tidb_sqlexec::sql_with_params`] as a SQL executor's result.
 pub(crate) fn sql_with_params<'a>(
     sql: &'a str,
     arguments: &[tidb_sqlescape::SqlArg<'_>],
 ) -> Result<std::borrow::Cow<'a, str>, tidb_sqlexec::SqlExecError> {
-    if arguments.is_empty() {
-        return Ok(std::borrow::Cow::Borrowed(sql));
-    }
-    Ok(std::borrow::Cow::Owned(tidb_sqlescape::escape_sql_text(sql, arguments)?))
+    Ok(tidb_sqlexec::sql_with_params(sql, arguments)?)
 }
 
 /// A statement's failure as a SQL executor's error, which

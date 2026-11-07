@@ -44,35 +44,15 @@ impl tidb_gcutil::Context for RestrictedGcContext<'_> {
         )))
     }
 
-    fn exec_restricted_sql(
-        &mut self,
-        sql: &str,
-        arguments: &[&str],
-        internal_source_type: &str,
-    ) -> Result<Vec<Vec<String>>, Self::Error> {
-        let arguments = arguments
-            .iter()
-            .map(|argument| tidb_sqlescape::SqlArg::from(*argument))
-            .collect::<Vec<_>>();
-        Ok(tidb_executor::memtable_reader::exec_restricted_sql_over(
-            Some(self.0),
-            internal_source_type,
-            sql,
-            &arguments,
-        )?
-        .into_iter()
-        .map(|row| {
-            row.iter()
-                .map(|value| crate::datum_text(value).unwrap_or_default())
-                .collect()
-        })
-        .collect())
+    fn get_restricted_sql_executor(&self) -> &dyn RestrictedSqlExecutor {
+        self.0
     }
 }
 
 pub(crate) fn driver_error(error: tidb_gcutil::Error<DriverError>) -> DriverError {
     match error {
         tidb_gcutil::Error::Context(error) => error,
+        tidb_gcutil::Error::Sql(error) => tidb_executor::memtable_reader::sql_exec_driver_error(error),
         tidb_gcutil::Error::SnapshotTooOld { safe_point_time } => DriverError::from(
             tidb_variable::variable_errors::ERR_SNAPSHOT_TOO_OLD
                 .gen_with_stack_by_args(&[safe_point_time.into()]),

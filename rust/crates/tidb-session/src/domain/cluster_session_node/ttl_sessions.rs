@@ -15,14 +15,14 @@
 //! The domain's pooled internal session as Go's `pkg/timer/tablestore` and
 //! `pkg/ttl` reach it through `sessionctx.Context`.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use tidb_datatype::{Datum, SessionTimeZone};
 use tidb_timeutil::TimeZone;
 use tidb_ttl_ttlworker::{InfoSchemaRef, Row, SessionVars, Store, TtlSessionContext};
 
-use super::sessions::{ClusterStatsSessionContext, ClusterStatsSessionState};
+use super::sessions::{ClusterStatsSessionContext, ClusterStatsSessionState, ClusterStatsSqlExecutor};
 use super::Domain;
 
 fn time_zone_of(zone: SessionTimeZone) -> TimeZone {
@@ -94,7 +94,7 @@ impl tidb_ttl_ttlworker::SysSessionContext for ClusterStatsSessionContext {
             state: Arc::clone(&self.state),
             killer,
             domain,
-            affected_rows: AtomicU64::new(0),
+            sql_executor: ClusterStatsSqlExecutor::new(Arc::clone(&self.state)),
             internal_sql_scan_user_table: AtomicBool::new(false),
         })
     }
@@ -106,8 +106,8 @@ struct TtlClusterSessionContext {
     /// The session's killer, reachable while a statement holds the session.
     killer: Arc<tidb_sqlkiller::SqlKiller>,
     domain: Arc<Domain>,
-    /// Go `StmtCtx.AffectedRows()` of the last statement.
-    affected_rows: AtomicU64,
+    /// Go `sctx.GetSQLExecutor()`.
+    sql_executor: ClusterStatsSqlExecutor,
     /// Go `SessionVars.InternalSQLScanUserTable`.
     ///
     /// `// boundary:` Go's only consumers gate the predicate-column and
@@ -165,39 +165,10 @@ impl tidb_ttl_ttlworker::InfoSchema for CatalogInfoSchema {
 }
 
 /// Go `%?` arguments as `ExecuteInternal` binds them.
-fn sql_args(args: &[Datum]) -> Result<Vec<tidb_sqlescape::SqlArg<'_>>, String> {
-    args.iter()
-        .map(|arg| match arg {
-            Datum::Null => Ok(tidb_sqlescape::SqlArg::Null),
-            Datum::Int(value) => Ok(tidb_sqlescape::SqlArg::Signed(*value)),
-            Datum::UInt(value) => Ok(tidb_sqlescape::SqlArg::Unsigned(*value)),
-            Datum::Real(value) => Ok(tidb_sqlescape::SqlArg::Float64(*value)),
-            Datum::String(value) => Ok(tidb_sqlescape::SqlArg::String(value.bytes())),
-            Datum::Bytes(value) => Ok(tidb_sqlescape::SqlArg::Bytes(Some(value))),
-            Datum::Time(value) => {
-                let core = value.core_time();
-                Ok(tidb_sqlescape::SqlArg::Time(
-                    chrono::NaiveDate::from_ymd_opt(core.year(), u32::from(core.month()), u32::from(core.day()))
-                        .and_then(|date| {
-                            date.and_hms_micro_opt(
-                                u32::from(core.hour()),
-                                u32::from(core.minute()),
-                                u32::from(core.second()),
-                                core.microsecond(),
-                            )
-                        }),
-                ))
-            }
-            other => Err(format!("unsupported internal SQL argument: {:?}", other.kind())),
-        })
-        .collect()
-}
-
 impl tidb_ttl::session::SessionContext for TtlClusterSessionContext {
     type Row = Row;
     type Store = Store;
     type InfoSchema = InfoSchemaRef;
-    type SqlExecutor = ();
     type SessionVars = dyn SessionVars;
 
     fn get_store(&self) -> Store {
@@ -226,32 +197,12 @@ impl tidb_ttl::session::SessionContext for TtlClusterSessionContext {
         InfoSchemaRef(Arc::new(CatalogInfoSchema(catalog)))
     }
 
-    fn get_sql_executor(&self) -> &() {
-        &()
+    fn get_sql_executor(&self) -> &dyn tidb_sqlexec::SqlExecutor {
+        &self.sql_executor
     }
 
     fn get_session_vars(&self) -> &(dyn SessionVars + 'static) {
         self
-    }
-
-    fn execute_internal(&self, source: &str, sql: &str, args: &[Datum]) -> tidb_ttl::session::Result<Option<Vec<Row>>> {
-        // Go `setRequestSource`: the internal session takes the source its
-        // caller's context carries.
-        self.state.adopt_request_source_type(source);
-        let args = sql_args(args).map_err(tidb_ttl::session::SessionError)?;
-        let sql = tidb_sqlescape::escape_sql_text(sql, &args)
-            .map_err(|error| tidb_ttl::session::SessionError(format!("{error:?}")))?;
-        let (rows, affected_rows) = self
-            .state
-            .with_session(|session| {
-                let rows = session
-                    .execute_internal(&sql)
-                    .map_err(|error| tidb_domain_core::sys_session::stats_session_error(error.message))?;
-                Ok((rows, session.node.ok_packet.affected_rows))
-            })
-            .map_err(|error| tidb_ttl::session::SessionError(error.to_string()))?;
-        self.affected_rows.store(affected_rows, Ordering::SeqCst);
-        Ok(Some(rows.into_iter().map(Row).collect()))
     }
 
     fn get_global_system_var(&self, name: &str) -> tidb_ttl::session::Result<String> {
@@ -276,8 +227,11 @@ impl tidb_ttl::session::SessionContext for TtlClusterSessionContext {
 }
 
 impl SessionVars for TtlClusterSessionContext {
+    /// Go `StmtCtx.AffectedRows()` of the session's last statement.
     fn affected_rows(&self) -> u64 {
-        self.affected_rows.load(Ordering::SeqCst)
+        self.state
+            .with_session(|session| Ok(session.node.ok_packet.affected_rows))
+            .unwrap_or_default()
     }
 
     fn location(&self) -> TimeZone {

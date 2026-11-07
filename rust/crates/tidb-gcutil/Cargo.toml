@@ -12,3 +12,11 @@ tidb-go-time-layout = { path = "../tidb-go-time-layout" }
 chrono = "0.4"
 tikv-client.workspace = true
 tidb-vardef = { path = "../tidb-vardef" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-datatype = { path = "../tidb-datatype" }
+
+[dev-dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-resolve = { path = "../tidb-resolve" }

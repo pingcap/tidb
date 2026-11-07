@@ -117,26 +117,13 @@ impl DdlSessionPool for NodeDdlSessionPool {
         Box::new(StmtContext::for_query())
     }
 
-    /// One statement on a fresh system session of the node, in its own
+    /// Each statement on a fresh system session of the node, in its own
     /// autocommit transaction (Go `withRestrictedSQLExecutor` without
     /// `ExecOptionUseCurSession`).
-    fn exec_restricted_sql(
-        &self,
-        sql: &str,
-    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, MysqlError> {
-        let domain = self
-            .domain
-            .get()
-            .and_then(Weak::upgrade)
-            .ok_or_else(|| MysqlError::unknown("the DDL session pool has no running node"))?;
-        let to_mysql = |error: tidb_store_driver_error::sql_query_error::SqlQueryError| {
-            MysqlError::from_parts(error.code, error.state, error.message)
-                .with_identity_opt(error.identity)
-        };
-        let mut session = domain.open_system_session().map_err(to_mysql)?;
-        set_ddl_request_source(&mut session);
-        let rows = session.node_conn().execute_internal(sql).map_err(to_mysql);
-        rows
+    fn restricted_sql_executor(&self) -> Arc<dyn tidb_sqlexec::RestrictedSqlExecutor> {
+        Arc::new(crate::domain::cluster_session_node::NodeRestrictedSql::new(
+            self.domain.get().cloned().unwrap_or_default(),
+        ))
     }
 
     fn exec_restricted_sql_opts(
@@ -154,7 +141,7 @@ impl DdlSessionPool for NodeDdlSessionPool {
             MysqlError::from_parts(error.code, error.state, error.message)
                 .with_identity_opt(error.identity)
         };
-        let sql = tidb_sqlescape::escape_sql_text(sql, args)
+        let sql = tidb_sqlexec::sql_with_params(sql, args)
             .map_err(|error| MysqlError::unknown(error.to_string()))?;
         let mut session = domain.open_system_session().map_err(to_mysql)?;
         set_ddl_request_source(&mut session);
@@ -255,7 +242,7 @@ impl tidb_ddl_build::session_pool::StepSqlSession for NodeSqlSession {
         sql: &str,
         args: &[tidb_sqlescape::SqlArg<'_>],
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, MysqlError> {
-        let escaped = tidb_sqlescape::escape_sql_text(sql, args)
+        let escaped = tidb_sqlexec::sql_with_params(sql, args)
             .map_err(|error| MysqlError::unknown(error.to_string()))?;
         self.session.node_conn().execute_internal(&escaped)
             .map_err(sql_to_mysql)
@@ -295,7 +282,7 @@ impl tidb_ddl_build::session_pool::StepSqlSession for NodeStepSession {
         sql: &str,
         args: &[tidb_sqlescape::SqlArg<'_>],
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, MysqlError> {
-        let escaped = tidb_sqlescape::escape_sql_text(sql, args)
+        let escaped = tidb_sqlexec::sql_with_params(sql, args)
             .map_err(|error| MysqlError::unknown(error.to_string()))?;
         self.session.node_conn().execute_internal(&escaped)
             .map_err(sql_to_mysql)

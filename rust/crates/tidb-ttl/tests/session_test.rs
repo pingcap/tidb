@@ -56,6 +56,12 @@ use tidb_ttl_metrics::{new_phase_tracer, PhaseTracer, PhaseTracerExt};
 #[derive(Debug, Clone)]
 struct NoRow;
 
+impl From<Vec<Datum>> for NoRow {
+    fn from(_datums: Vec<Datum>) -> Self {
+        NoRow
+    }
+}
+
 impl ResultRow for NoRow {
     fn is_null(&self, _col_idx: usize) -> bool {
         true
@@ -83,7 +89,6 @@ struct MockContext {
     global_time_zone_var: String,
     session_time_zone_var: String,
     killer: SqlKiller,
-    sql_executor: SessionHandle,
     session_vars: SessionHandle,
 }
 
@@ -99,7 +104,6 @@ impl MockContext {
             global_time_zone_var: "UTC".to_owned(),
             session_time_zone_var: "Asia/Shanghai".to_owned(),
             killer: SqlKiller::default(),
-            sql_executor: SessionHandle,
             session_vars: SessionHandle,
         }
     }
@@ -118,34 +122,16 @@ impl SessionContext for MockContext {
     type Row = NoRow;
     type Store = ();
     type InfoSchema = ();
-    type SqlExecutor = SessionHandle;
     type SessionVars = SessionHandle;
 
     fn get_store(&self) {}
     fn get_latest_info_schema(&self) {}
     fn get_txn_info_schema(&self) {}
-    fn get_sql_executor(&self) -> &Self::SqlExecutor {
-        &self.sql_executor
+    fn get_sql_executor(&self) -> &dyn tidb_sqlexec::SqlExecutor {
+        self
     }
     fn get_session_vars(&self) -> &Self::SessionVars {
         &self.session_vars
-    }
-
-    fn execute_internal(
-        &self,
-        source: &str,
-        sql: &str,
-        _args: &[Datum],
-    ) -> Result<Option<Vec<NoRow>>, SessionError> {
-        // Go `ExecuteSQL`'s `kv.WithInternalSourceType(ctx, kv.InternalTxnTTL)`.
-        assert_eq!(source, "TTL");
-        self.executed.lock().unwrap().push(sql.to_owned());
-        if let Some((failing, message)) = self.fail_on.as_ref() {
-            if failing == sql {
-                return Err(SessionError(message.clone()));
-            }
-        }
-        Ok(None)
     }
 
     fn get_global_system_var(&self, _name: &str) -> Result<String, SessionError> {
@@ -169,6 +155,48 @@ impl SessionContext for MockContext {
 
     fn sql_killer(&self) -> &SqlKiller {
         &self.killer
+    }
+}
+
+/// The context's `GetSQLExecutor()`: records each statement and answers Go's
+/// `nil` record set.
+impl tidb_sqlexec::SqlExecutor for MockContext {
+    fn execute(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        _sql: &str,
+    ) -> tidb_sqlexec::Result<Vec<Box<dyn tidb_sqlexec::RecordSet>>> {
+        unreachable!("ExecuteSQL runs ExecuteInternal")
+    }
+
+    fn execute_internal(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+        _arguments: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
+        // Go `ExecuteSQL`'s `kv.WithInternalSourceType(ctx, kv.InternalTxnTTL)`.
+        let source = context
+            .as_any()
+            .downcast_ref::<tikv_client::trace::TraceContext>()
+            .and_then(tikv_client::util::request_source_value)
+            .expect("ExecuteSQL names its source");
+        assert_eq!(source.source_type, "TTL");
+        self.executed.lock().unwrap().push(sql.to_owned());
+        if let Some((failing, message)) = self.fail_on.as_ref() {
+            if failing == sql {
+                return Err(message.clone().into());
+            }
+        }
+        Ok(None)
+    }
+
+    fn execute_stmt(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        _statement: &tidb_ast::Stmt,
+    ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
+        unreachable!("ExecuteSQL runs ExecuteInternal")
     }
 }
 
@@ -416,7 +444,7 @@ fn test_session_forwards_session_handles() {
         se.get_session_vars(),
         se.context().get_session_vars()
     ));
-    assert!(std::ptr::eq(
+    assert!(std::ptr::addr_eq(
         se.get_sql_executor(),
         se.context().get_sql_executor()
     ));

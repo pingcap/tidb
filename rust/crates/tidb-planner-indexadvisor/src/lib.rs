@@ -91,7 +91,8 @@ fn escape(sql: &str, args: &[&str]) -> Result<String> {
         .iter()
         .map(|arg| tidb_sqlescape::SqlArg::String(arg.as_bytes()))
         .collect();
-    tidb_sqlescape::escape_sql_text(sql, &args)
+    tidb_sqlexec::sql_with_params(sql, &args)
+        .map(std::borrow::Cow::into_owned)
         .map_err(|error| advisor_error(error.to_string()))
 }
 

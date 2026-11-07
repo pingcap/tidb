@@ -27,11 +27,9 @@
 //!   `pkg/sessiontxn.GetTxnManager(...).GetTxnInfoSchema()`. Neither package is
 //!   transcreated, so the context operations are represented by narrow traits
 //!   and opaque handles, including Go's session-vars and SQL-executor accessors.
-//! - [`SessionContext::execute_internal`] `// boundary:`
-//!   `pkg/util/sqlexec.{SQLExecutor,RecordSet}` and `sqlexec.DrainRecordSet`.
-//!   `pkg/util/sqlexec` is unported; `ExecuteSQL`'s open/drain-8/close triple
-//!   collapses into one trait call that yields the drained rows, and the `nil`
-//!   record set that a non-query statement returns becomes `None`.
+//! - [`SessionContext::get_sql_executor`] is `tidb_sqlexec`'s
+//!   [`SqlExecutor`]: `ExecuteSQL` opens, drains (8) and closes its record set
+//!   as Go does, the `nil` record set of a non-query statement being no rows.
 //! - [`ResultRow`] `// boundary:` `pkg/util/chunk.Row`, which `tidb-chunk`
 //!   holds but this crate may not add a dependency edge to (see the crate
 //!   header). Only the accessors TTL uses are declared.
@@ -64,6 +62,10 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tidb_datatype::Datum;
+use tidb_sqlescape::SqlArg;
+use tidb_sqlexec::SqlExecutor;
+use tikv_client::trace::TraceContext;
+use tikv_client::util::with_internal_source_type;
 use tidb_ttl_metrics::{PhaseTracer, PhaseTracerExt, PHASE_BEGIN_TXN, PHASE_COMMIT_TXN, PHASE_OTHER};
 use tidb_sqlkiller::{KillSignal, SqlKiller};
 use tidb_timeutil::{parse_time_zone, TimeZone};
@@ -134,14 +136,13 @@ pub trait ResultRow {
 /// SQL executor, two system-variable reads, the session time zone, the session
 /// location, and the SQL killer — so exactly those are declared.
 pub trait SessionContext {
-    /// The result row type, standing in for `chunk.Row`.
-    type Row: ResultRow;
+    /// The result row type, standing in for `chunk.Row`: a drained row's
+    /// datums.
+    type Row: ResultRow + From<Vec<Datum>>;
     /// `// boundary:` `kv.Storage`. `session.go` only passes it through.
     type Store: Clone;
     /// `// boundary:` `pkg/infoschema/context.MetaOnlyInfoSchema`. Passed through.
     type InfoSchema: Clone;
-    /// `// boundary:` `sqlexec.SQLExecutor`, retained as an opaque handle.
-    type SqlExecutor: ?Sized;
     /// `// boundary:` `variable.SessionVars`, retained as an opaque handle.
     type SessionVars: ?Sized;
 
@@ -155,16 +156,10 @@ pub trait SessionContext {
     fn get_txn_info_schema(&self) -> Self::InfoSchema;
 
     /// Go `sessionctx.Context.GetSQLExecutor`.
-    fn get_sql_executor(&self) -> &Self::SqlExecutor;
+    fn get_sql_executor(&self) -> &dyn SqlExecutor;
 
     /// Go `variable.SessionVarsProvider.GetSessionVars`.
     fn get_session_vars(&self) -> &Self::SessionVars;
-
-    /// Go `sqlexec.SQLExecutor.ExecuteInternal` followed by
-    /// `sqlexec.DrainRecordSet(ctx, rs, 8)` and `rs.Close()`.
-    ///
-    /// `None` is Go's `rs == nil`, which `ExecuteSQL` turns into no rows.
-    fn execute_internal(&self, source: &str, sql: &str, args: &[Datum]) -> Result<Option<Vec<Self::Row>>>;
 
     /// Go `SessionVars.GetGlobalSystemVar`.
     fn get_global_system_var(&self, name: &str) -> Result<String>;
@@ -206,8 +201,6 @@ pub trait Session {
     type Store: Clone;
     /// `// boundary:` `pkg/infoschema/context.MetaOnlyInfoSchema`.
     type InfoSchema: Clone;
-    /// `// boundary:` `sqlexec.SQLExecutor`, retained as an opaque handle.
-    type SqlExecutor: ?Sized;
     /// `// boundary:` `variable.SessionVars`, retained as an opaque handle.
     type SessionVars: ?Sized;
 
@@ -220,7 +213,7 @@ pub trait Session {
     /// Go `Session.SessionInfoSchema`.
     fn session_info_schema(&self) -> Self::InfoSchema;
     /// Go `Session.GetSQLExecutor`.
-    fn get_sql_executor(&self) -> &Self::SqlExecutor;
+    fn get_sql_executor(&self) -> &dyn SqlExecutor;
     /// Go `Session.ExecuteSQL`.
     fn execute_sql(&self, sql: &str, args: &[Datum]) -> Result<Vec<Self::Row>>;
     /// Go `Session.RunInTxn`.
@@ -242,6 +235,39 @@ pub trait Session {
     fn avoid_reuse(&self);
     /// Go's embedded `variable.SessionVarsProvider.GetSessionVars().Location()`.
     fn location(&self) -> TimeZone;
+}
+
+fn sql_exec_error(error: tidb_sqlexec::SqlExecError) -> SessionError {
+    SessionError(error.to_string())
+}
+
+/// Go `ExecuteSQL`'s `args ...any` as the executor binds them.
+fn sql_args(args: &[Datum]) -> Result<Vec<SqlArg<'_>>> {
+    args.iter()
+        .map(|arg| match arg {
+            Datum::Null => Ok(SqlArg::Null),
+            Datum::Int(value) => Ok(SqlArg::Signed(*value)),
+            Datum::UInt(value) => Ok(SqlArg::Unsigned(*value)),
+            Datum::Real(value) => Ok(SqlArg::Float64(*value)),
+            Datum::String(value) => Ok(SqlArg::String(value.bytes())),
+            Datum::Bytes(value) => Ok(SqlArg::Bytes(Some(value))),
+            Datum::Time(value) => {
+                let core = value.core_time();
+                Ok(SqlArg::Time(
+                    chrono::NaiveDate::from_ymd_opt(core.year(), u32::from(core.month()), u32::from(core.day()))
+                        .and_then(|date| {
+                            date.and_hms_micro_opt(
+                                u32::from(core.hour()),
+                                u32::from(core.minute()),
+                                u32::from(core.second()),
+                                core.microsecond(),
+                            )
+                        }),
+                ))
+            }
+            other => Err(SessionError(format!("unsupported internal SQL argument: {:?}", other.kind()))),
+        })
+        .collect()
 }
 
 /// Go's unexported `session` struct.
@@ -274,7 +300,6 @@ impl<C: SessionContext> Session for TtlSession<C> {
     type Row = C::Row;
     type Store = C::Store;
     type InfoSchema = C::InfoSchema;
-    type SqlExecutor = C::SqlExecutor;
     type SessionVars = C::SessionVars;
 
     fn get_store(&self) -> Self::Store {
@@ -293,13 +318,22 @@ impl<C: SessionContext> Session for TtlSession<C> {
         self.sctx.get_txn_info_schema()
     }
 
-    fn get_sql_executor(&self) -> &Self::SqlExecutor {
+    fn get_sql_executor(&self) -> &dyn SqlExecutor {
         self.sctx.get_sql_executor()
     }
 
     fn execute_sql(&self, sql: &str, args: &[Datum]) -> Result<Vec<Self::Row>> {
         // Go `kv.WithInternalSourceType(ctx, kv.InternalTxnTTL)`.
-        Ok(self.sctx.execute_internal(tidb_txnkv::INTERNAL_TXN_TTL, sql, args)?.unwrap_or_default())
+        let ctx = with_internal_source_type(&TraceContext::new(), tidb_txnkv::INTERNAL_TXN_TTL);
+        let args = sql_args(args)?;
+        let rs = self.get_sql_executor().execute_internal(&ctx, sql, &args).map_err(sql_exec_error)?;
+        let Some(mut rs) = rs else {
+            return Ok(Vec::new());
+        };
+        let rows = tidb_sqlexec::drain_record_set(&ctx, rs.as_mut(), 8);
+        // Go `defer terror.Log(rs.Close())`.
+        let _ = rs.close();
+        Ok(rows.map_err(sql_exec_error)?.into_iter().map(C::Row::from).collect())
     }
 
     fn run_in_txn(

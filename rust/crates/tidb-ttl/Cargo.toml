@@ -18,6 +18,8 @@ tidb-charset = { path = "../tidb-charset" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-parser-format = { path = "../tidb-parser-format" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tikv-client.workspace = true
 tidb-sqlkiller = { path = "../tidb-sqlkiller" }
 tidb-timeutil = { path = "../tidb-timeutil" }
 chrono = { workspace = true }

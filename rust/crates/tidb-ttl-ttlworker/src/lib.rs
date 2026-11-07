@@ -73,6 +73,12 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Row(pub Vec<Datum>);
 
+impl From<Vec<Datum>> for Row {
+    fn from(datums: Vec<Datum>) -> Self {
+        Self(datums)
+    }
+}
+
 impl ResultRow for Row {
     fn is_null(&self, col_idx: usize) -> bool {
         matches!(self.0.get(col_idx), None | Some(Datum::Null))
@@ -189,7 +195,6 @@ pub trait TtlSessionContext:
         Row = Row,
         Store = Store,
         InfoSchema = InfoSchemaRef,
-        SqlExecutor = (),
         SessionVars = dyn SessionVars,
     > + Send
     + Sync
@@ -201,8 +206,7 @@ impl<T> TtlSessionContext for T where
             Row = Row,
             Store = Store,
             InfoSchema = InfoSchemaRef,
-            SqlExecutor = (),
-            SessionVars = dyn SessionVars,
+                SessionVars = dyn SessionVars,
         > + Send
         + Sync
 {
@@ -216,7 +220,6 @@ impl tidb_ttl::session::SessionContext for SctxRef {
     type Row = Row;
     type Store = Store;
     type InfoSchema = InfoSchemaRef;
-    type SqlExecutor = ();
     type SessionVars = dyn SessionVars;
 
     fn get_store(&self) -> Store {
@@ -231,16 +234,12 @@ impl tidb_ttl::session::SessionContext for SctxRef {
         self.0.get_txn_info_schema()
     }
 
-    fn get_sql_executor(&self) -> &() {
+    fn get_sql_executor(&self) -> &dyn tidb_sqlexec::SqlExecutor {
         self.0.get_sql_executor()
     }
 
     fn get_session_vars(&self) -> &(dyn SessionVars + 'static) {
         self.0.get_session_vars()
-    }
-
-    fn execute_internal(&self, source: &str, sql: &str, args: &[Datum]) -> tidb_ttl::session::Result<Option<Vec<Row>>> {
-        self.0.execute_internal(source, sql, args)
     }
 
     fn get_global_system_var(&self, name: &str) -> tidb_ttl::session::Result<String> {
@@ -269,7 +268,6 @@ pub type Session = dyn tidb_ttl::session::Session<
         Row = Row,
         Store = Store,
         InfoSchema = InfoSchemaRef,
-        SqlExecutor = (),
         SessionVars = dyn SessionVars,
     > + Send
     + Sync;

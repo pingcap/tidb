@@ -114,9 +114,13 @@ pub trait DdlSessionPool: Send + Sync {
     fn system_session(&self) -> Box<dyn crate::session_context::DdlSessionContext>;
 
     /// Go `w.sessPool.Get()` and that session's
-    /// `GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, sql)`: one
-    /// statement on an internal session, in that session's own transaction,
-    /// so it reads committed data rather than the job's.
+    /// `GetRestrictedSQLExecutor()`: each statement runs on an internal
+    /// session in that session's own transaction, so it reads committed data
+    /// rather than the job's.
+    fn restricted_sql_executor(&self) -> std::sync::Arc<dyn tidb_sqlexec::RestrictedSqlExecutor>;
+
+    /// `ExecRestrictedSQL(kv.WithInternalSourceType(ctx, kv.InternalTxnDDL),
+    /// nil, sql)` on [`Self::restricted_sql_executor`].
     ///
     /// # Errors
     ///
@@ -124,7 +128,9 @@ pub trait DdlSessionPool: Send + Sync {
     fn exec_restricted_sql(
         &self,
         sql: &str,
-    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError>;
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
+        self.exec_restricted_sql_with(sql, &[])
+    }
 
     /// [`Self::exec_restricted_sql`] over Go's `%n` / `%?` template and its
     /// arguments: `ExecRestrictedSQL(ctx, nil, sql, params...)`, which escapes
@@ -138,9 +144,14 @@ pub trait DdlSessionPool: Send + Sync {
         sql: &str,
         args: &[tidb_sqlescape::SqlArg<'_>],
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
-        let escaped = tidb_sqlescape::escape_sql_text(sql, args)
-            .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?;
-        self.exec_restricted_sql(&escaped)
+        let ctx = tikv_client::util::with_internal_source_type(
+            &tikv_client::trace::TraceContext::new(),
+            tidb_txnkv::INTERNAL_TXN_DDL,
+        );
+        self.restricted_sql_executor()
+            .exec_restricted_sql(&ctx, &[], sql, args)
+            .map(|(rows, _)| rows)
+            .map_err(tidb_store_driver_error::sql_query_error::mysql_error_of)
     }
 
     /// Go `w.sessPool.Get()`, the caller's settings on that session's

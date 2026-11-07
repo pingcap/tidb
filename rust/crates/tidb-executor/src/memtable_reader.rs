@@ -518,10 +518,7 @@ pub fn exec_restricted_sql_over(
 /// A SQL executor's failure as the statement error it carries, or Go's
 /// unknown error naming any other.
 pub fn sql_exec_driver_error(error: tidb_sqlexec::SqlExecError) -> DriverError {
-    match error.downcast::<tidb_store_driver_error::sql_query_error::SqlQueryError>() {
-        Ok(error) => DriverError::Mysql((*error).into()),
-        Err(error) => DriverError::unsupported(error.to_string()),
-    }
+    DriverError::Mysql(tidb_store_driver_error::sql_query_error::mysql_error_of(error))
 }
 
 pub fn memory_usage_table_rows() -> Vec<Vec<tidb_datatype::Datum>> {

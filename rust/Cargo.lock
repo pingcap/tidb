@@ -4102,6 +4102,7 @@ dependencies = [
  "tidb-session",
  "tidb-sessionctx",
  "tidb-sqlescape",
+ "tidb-sqlexec",
  "tidb-store-driver-error",
  "tidb-store-driver-txn",
  "tidb-structure",
@@ -4173,7 +4174,9 @@ dependencies = [
  "tidb-plannererrors",
  "tidb-sessionctx",
  "tidb-sqlescape",
+ "tidb-sqlexec",
  "tidb-sqlkiller",
+ "tidb-store-driver-error",
  "tidb-store-driver-txn",
  "tidb-syssession",
  "tidb-table",
@@ -4186,6 +4189,7 @@ dependencies = [
  "tidb-util",
  "tidb-vardef",
  "tidb-variable",
+ "tikv-client",
 ]
 
 [[package]]
@@ -5305,8 +5309,14 @@ name = "tidb-gcutil"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "tidb-ast",
+ "tidb-datatype",
  "tidb-go-time-layout",
  "tidb-model",
+ "tidb-resolve",
+ "tidb-sqlescape",
+ "tidb-sqlexec",
+ "tidb-txnkv",
  "tidb-vardef",
  "tikv-client",
 ]
@@ -5342,6 +5352,7 @@ dependencies = [
  "tidb-sem",
  "tidb-session",
  "tidb-sqlescape",
+ "tidb-sqlexec",
  "tidb-store-driver-error",
  "tidb-store-driver-txn",
  "tidb-tablecodec",
@@ -6378,6 +6389,7 @@ dependencies = [
  "tidb-parser",
  "tidb-set",
  "tidb-sqlescape",
+ "tidb-sqlexec",
  "tidb-terror",
  "tidb-util",
 ]
@@ -8507,11 +8519,13 @@ dependencies = [
  "tidb-mysql",
  "tidb-parser-format",
  "tidb-sqlescape",
+ "tidb-sqlexec",
  "tidb-sqlkiller",
  "tidb-tablecodec",
  "tidb-timeutil",
  "tidb-ttl-metrics",
  "tidb-txnkv",
+ "tikv-client",
 ]
 
 [[package]]

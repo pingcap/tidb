@@ -49,8 +49,18 @@ impl std::fmt::Debug for DdlStepWorker {
     }
 }
 
-/// Go `gcutil` over one of the worker's sessions.
-struct WorkerGcContext<'a>(&'a dyn tidb_ddl_build::session_pool::DdlSessionPool);
+/// Go `gcutil` over one of the worker's sessions, and that session's
+/// `GetRestrictedSQLExecutor()`.
+struct WorkerGcContext<'a>(
+    &'a dyn tidb_ddl_build::session_pool::DdlSessionPool,
+    Arc<dyn tidb_sqlexec::RestrictedSqlExecutor>,
+);
+
+impl<'a> WorkerGcContext<'a> {
+    fn new(pool: &'a dyn tidb_ddl_build::session_pool::DdlSessionPool) -> Self {
+        Self(pool, pool.restricted_sql_executor())
+    }
+}
 
 fn datum_text(datum: &tidb_datatype::Datum) -> String {
     match datum {
@@ -83,28 +93,17 @@ impl tidb_gcutil::Context for WorkerGcContext<'_> {
             .map(drop)
     }
 
-    fn exec_restricted_sql(
-        &mut self,
-        sql: &str,
-        arguments: &[&str],
-        _internal_source_type: &str,
-    ) -> Result<Vec<Vec<String>>, Self::Error> {
-        let arguments = arguments
-            .iter()
-            .map(|argument| tidb_sqlescape::SqlArg::String(argument.as_bytes()))
-            .collect::<Vec<_>>();
-        Ok(self
-            .0
-            .exec_restricted_sql_with(sql, &arguments)?
-            .iter()
-            .map(|row| row.iter().map(datum_text).collect())
-            .collect())
+    fn get_restricted_sql_executor(&self) -> &dyn tidb_sqlexec::RestrictedSqlExecutor {
+        self.1.as_ref()
     }
 }
 
 fn gc_error(error: tidb_gcutil::Error<tidb_terror::MysqlError>) -> DdlPlanError {
     match error {
         tidb_gcutil::Error::Context(error) => DdlPlanError::from_mysql_error(error),
+        tidb_gcutil::Error::Sql(error) => DdlPlanError::from_mysql_error(
+            tidb_store_driver_error::sql_query_error::mysql_error_of(error),
+        ),
         tidb_gcutil::Error::SnapshotTooOld { safe_point_time } => DdlPlanError::from(
             tidb_variable::variable_errors::ERR_SNAPSHOT_TOO_OLD
                 .gen_with_stack_by_args(&[safe_point_time.into()]),
@@ -161,7 +160,7 @@ pub(super) fn on_recover_table(
 
     // Check GC and the safe point.
     let sessions = worker_sessions(sessions)?;
-    let gc_enable = tidb_gcutil::check_gc_enable(&mut WorkerGcContext(sessions.sess_pool.as_ref()))
+    let gc_enable = tidb_gcutil::check_gc_enable(&mut WorkerGcContext::new(sessions.sess_pool.as_ref()))
         .map_err(|error| cancel_ddl_job(active, gc_error(error)))?;
 
     // Go `checkTableNotExists` against the info cache, then
@@ -227,7 +226,7 @@ pub(super) fn on_recover_table(
         SchemaState::WRITE_ONLY => {
             // write only -> public
             if gc_enable {
-                tidb_gcutil::disable_gc(&mut WorkerGcContext(sessions.sess_pool.as_ref())).map_err(|error| {
+                tidb_gcutil::disable_gc(&mut WorkerGcContext::new(sessions.sess_pool.as_ref())).map_err(|error| {
                     cancel_ddl_job(
                         active,
                         DdlPlanError::from_mysql_error(tidb_terror::MysqlError::unknown(format!(
@@ -237,7 +236,7 @@ pub(super) fn on_recover_table(
                     )
                 })?;
             }
-            tidb_gcutil::validate_snapshot(&mut WorkerGcContext(sessions.sess_pool.as_ref()), snapshot_ts)
+            tidb_gcutil::validate_snapshot(&mut WorkerGcContext::new(sessions.sess_pool.as_ref()), snapshot_ts)
                 .map_err(|error| cancel_ddl_job(active, gc_error(error)))?;
             let mut placement_bundles = Vec::new();
             let mut label_rules = LabelRuleSteps::new();
@@ -331,7 +330,7 @@ pub(super) fn on_recover_schema(
         .ok_or_else(|| DdlPlanError::Encode("RECOVER SCHEMA job has nil DBInfo".to_owned()))?;
     // Check GC and the safe point.
     let sessions = worker_sessions(sessions)?;
-    let gc_enable = tidb_gcutil::check_gc_enable(&mut WorkerGcContext(sessions.sess_pool.as_ref()))
+    let gc_enable = tidb_gcutil::check_gc_enable(&mut WorkerGcContext::new(sessions.sess_pool.as_ref()))
         .map_err(|error| cancel_ddl_job(active, gc_error(error)))?;
     let state = schema_info.read().state;
     match state {
@@ -354,7 +353,7 @@ pub(super) fn on_recover_schema(
         SchemaState::WRITE_ONLY => {
             // write only -> public: recover the schema and its tables.
             if gc_enable {
-                tidb_gcutil::disable_gc(&mut WorkerGcContext(sessions.sess_pool.as_ref())).map_err(|error| {
+                tidb_gcutil::disable_gc(&mut WorkerGcContext::new(sessions.sess_pool.as_ref())).map_err(|error| {
                     cancel_ddl_job(
                         active,
                         DdlPlanError::from_mysql_error(tidb_terror::MysqlError::unknown(format!(
@@ -408,7 +407,7 @@ pub(super) fn on_recover_schema(
             meta.create_database(&db_info)
                 .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
             // Check the GC safe point.
-            tidb_gcutil::validate_snapshot(&mut WorkerGcContext(sessions.sess_pool.as_ref()), snapshot_ts)
+            tidb_gcutil::validate_snapshot(&mut WorkerGcContext::new(sessions.sess_pool.as_ref()), snapshot_ts)
                 .map_err(|error| cancel_ddl_job(active, gc_error(error)))?;
 
             let mut placement_bundles = Vec::new();
@@ -581,7 +580,7 @@ pub(super) fn finish_recover(
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?
         .map_or(0, |args| args.read().check_flag);
     if check_flag == RECOVER_CHECK_FLAG_ENABLE_GC {
-        tidb_gcutil::enable_gc(&mut WorkerGcContext(worker_sessions(sessions)?.sess_pool.as_ref())).map_err(gc_error)?;
+        tidb_gcutil::enable_gc(&mut WorkerGcContext::new(worker_sessions(sessions)?.sess_pool.as_ref())).map_err(gc_error)?;
     }
     Ok(())
 }
@@ -593,7 +592,7 @@ pub(crate) fn gc_safe_point(sessions: &DdlStepWorker) -> Result<u64, DdlPlanErro
 
 /// Go `gcutil.GetGCSafePoint(sctx)` over one of the pool's sessions.
 pub fn get_gc_safe_point(sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool) -> Result<u64, DdlPlanError> {
-    tidb_gcutil::get_gc_safe_point(&mut WorkerGcContext(sess_pool)).map_err(gc_error)
+    tidb_gcutil::get_gc_safe_point(&mut WorkerGcContext::new(sess_pool)).map_err(gc_error)
 }
 
 /// Meta reads at a past timestamp (Go `dom.GetSnapshotMeta(ts)` /

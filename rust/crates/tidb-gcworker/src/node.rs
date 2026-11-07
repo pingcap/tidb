@@ -31,7 +31,7 @@ use crate::seams::{GcError, GcResult, GcRuleClient, GcSession, GcSessionFactory}
 use tidb_ddl::ddl_delete_range::DelRangeTask;
 use crate::tikv_store::TikvStoreClient;
 use crate::{GcWorker, GcWorkerDeps, GcWorkerHandle};
-use tidb_sqlescape::{escape_sql_text, SqlArg};
+use tidb_sqlescape::SqlArg;
 
 use tidb_session::domain::cluster_session_node::ClusterServerSession;
 use tidb_domain_core::domain::Domain;
@@ -163,7 +163,9 @@ fn sql_error(error: SqlQueryError) -> GcError {
 }
 
 fn escaped(sql: &str, arguments: &[SqlArg<'_>]) -> GcResult<String> {
-    escape_sql_text(sql, arguments).map_err(gc_error)
+    tidb_sqlexec::sql_with_params(sql, arguments)
+        .map(std::borrow::Cow::into_owned)
+        .map_err(gc_error)
 }
 
 fn datum_string(value: &tidb_datatype::Datum) -> GcResult<String> {

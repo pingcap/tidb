@@ -31,13 +31,8 @@ pub trait Context {
     /// Go `GlobalVarsAccessor.SetGlobalSysVar`.
     fn set_global_sys_var(&mut self, name: &str, value: &str) -> Result<(), Self::Error>;
 
-    /// Go `RestrictedSQLExecutor.ExecRestrictedSQL` with its positional arguments.
-    fn exec_restricted_sql(
-        &mut self,
-        sql: &str,
-        arguments: &[&str],
-        internal_source_type: &str,
-    ) -> Result<Vec<Vec<String>>, Self::Error>;
+    /// Go `sessionctx.Context.GetRestrictedSQLExecutor`.
+    fn get_restricted_sql_executor(&self) -> &dyn tidb_sqlexec::RestrictedSqlExecutor;
 }
 
 /// A failure returned by the GC utility package.
@@ -45,6 +40,8 @@ pub trait Context {
 pub enum Error<E = Infallible> {
     /// The session context returned an error unchanged.
     Context(E),
+    /// The restricted SQL executor's error, returned unchanged.
+    Sql(tidb_sqlexec::SqlExecError),
     /// The restricted query did not return exactly one row.
     MissingSafePoint,
     /// client-go `CompatibleParseGCTime` rejected the stored value.
@@ -63,6 +60,7 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Context(error) => error.fmt(formatter),
+            Self::Sql(error) => error.fmt(formatter),
             Self::MissingSafePoint => formatter.write_str("can not get 'tikv_gc_safe_point'"),
             Self::InvalidGcTime { value } => write!(
                 formatter,
@@ -106,7 +104,7 @@ pub fn validate_snapshot<C: Context>(ctx: &mut C, snapshot_ts: u64) -> Result<()
     validate_snapshot_with_gc_safe_point(snapshot_ts, safe_point_ts).map_err(|error| match error {
         Error::SnapshotTooOld { safe_point_time } => Error::SnapshotTooOld { safe_point_time },
         Error::Context(never) => match never {},
-        Error::MissingSafePoint | Error::InvalidGcTime { .. } => unreachable!(),
+        Error::MissingSafePoint | Error::InvalidGcTime { .. } | Error::Sql(_) => unreachable!(),
     })
 }
 
@@ -125,13 +123,24 @@ pub fn validate_snapshot_with_gc_safe_point(
 
 /// Go `GetGCSafePoint`.
 pub fn get_gc_safe_point<C: Context>(ctx: &mut C) -> Result<u64, Error<C::Error>> {
-    let rows = ctx
-        .exec_restricted_sql(SELECT_VARIABLE_VALUE_SQL, &[GC_SAFE_POINT_VARIABLE], "gc")
-        .map_err(Error::Context)?;
+    let exec_ctx = tikv_client::util::with_internal_source_type(
+        &tikv_client::trace::TraceContext::new(),
+        tidb_txnkv::INTERNAL_TXN_GC,
+    );
+    let (rows, _) = ctx
+        .get_restricted_sql_executor()
+        .exec_restricted_sql(
+            &exec_ctx,
+            &[],
+            SELECT_VARIABLE_VALUE_SQL,
+            &[tidb_sqlescape::SqlArg::from(GC_SAFE_POINT_VARIABLE)],
+        )
+        .map_err(Error::Sql)?;
     if rows.len() != 1 {
         return Err(Error::MissingSafePoint);
     }
-    let value = rows[0].first().cloned().unwrap_or_default();
+    // Go `rows[0].GetString(0)`.
+    let value = rows[0].first().and_then(|datum| datum.sql_string().ok()).unwrap_or_default();
     // client-go `util.CompatibleParseGCTime`.
     tikv_client::util::compatible_parse_gc_time(&value)
         .map(go_time_to_ts)
@@ -184,20 +193,48 @@ mod snapshot_validation_tests {
             Ok(())
         }
 
-        fn exec_restricted_sql(
-            &mut self,
+        fn get_restricted_sql_executor(&self) -> &dyn tidb_sqlexec::RestrictedSqlExecutor {
+            self
+        }
+    }
+
+    impl tidb_sqlexec::RestrictedSqlExecutor for MockContext {
+        fn parse_with_params(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
             _sql: &str,
-            arguments: &[&str],
-            _internal_source_type: &str,
-        ) -> Result<Vec<Vec<String>>, Self::Error> {
+            _arguments: &[tidb_sqlescape::SqlArg<'_>],
+        ) -> tidb_sqlexec::Result<tidb_ast::Stmt> {
+            unreachable!("gcutil runs ExecRestrictedSQL")
+        }
+
+        fn exec_restricted_stmt(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
+            _statement: &tidb_ast::Stmt,
+            _options: &[tidb_sqlexec::OptionFuncAlias],
+        ) -> tidb_sqlexec::Result<(Vec<Vec<tidb_datatype::Datum>>, Vec<tidb_resolve::ResultFieldRef>)> {
+            unreachable!("gcutil runs ExecRestrictedSQL")
+        }
+
+        fn exec_restricted_sql(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
+            _options: &[tidb_sqlexec::OptionFuncAlias],
+            _sql: &str,
+            arguments: &[tidb_sqlescape::SqlArg<'_>],
+        ) -> tidb_sqlexec::Result<(Vec<Vec<tidb_datatype::Datum>>, Vec<tidb_resolve::ResultFieldRef>)> {
             if self.fail_reads {
-                return Err("read refused".to_owned());
+                return Err("read refused".into());
             }
-            let key = arguments[0];
-            match self.tidb_table.get(key) {
-                Some(value) => Ok(vec![vec![value.clone()]]),
-                None => Ok(Vec::new()),
-            }
+            let tidb_sqlescape::SqlArg::String(key) = arguments[0] else {
+                panic!("the safe point lookup binds the variable name");
+            };
+            let rows = match self.tidb_table.get(std::str::from_utf8(key).unwrap()) {
+                Some(value) => vec![vec![tidb_datatype::Datum::new_string_datum(value.as_str())]],
+                None => Vec::new(),
+            };
+            Ok((rows, Vec::new()))
         }
     }
 

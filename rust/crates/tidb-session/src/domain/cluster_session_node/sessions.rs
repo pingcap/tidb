@@ -678,6 +678,10 @@ pub(crate) struct ClusterStatsSqlExecutor {
 }
 
 impl ClusterStatsSqlExecutor {
+    pub(super) fn new(state: Arc<ClusterStatsSessionState>) -> Self {
+        Self { state }
+    }
+
     fn materialized_record_set(
         &self,
         sql: &str,

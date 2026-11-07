@@ -28643,6 +28643,89 @@ fn wait_ttl_job_finished(session: &mut Session, table_id: i64) {
     panic!("timeout: {state:#?}");
 }
 
+/// Go `ttl/session.ExecuteSQL` then `GetSessionVars().StmtCtx.AffectedRows()`,
+/// which the task and job managers read after each status write: the rows
+/// the session's last statement changed.
+#[test]
+fn a_ttl_session_reports_its_last_statements_affected_rows() {
+    use tidb_ttl::session::Session as _;
+    use tidb_ttl_ttlworker::SessionVars as _;
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
+    let mut session = stack.factory.open_session(session_context(81)).expect("session opens");
+    rows(&mut session, "create table test.t(a int primary key)");
+    let affected = stack
+        .factory
+        .advanced_sys_session_pool()
+        .with_session(|pooled| {
+            pooled.with_session_context(|context| {
+                let se = tidb_ttl::session::TtlSession::new(
+                    tidb_ttl_ttlworker::SctxRef(tidb_ttl_ttlworker::SysSessionContext::ttl_session_context(context)),
+                    Box::new(|| {}),
+                );
+                let run = |sql: &str| {
+                    se.execute_sql(sql, &[])
+                        .map(|_| se.get_session_vars().affected_rows())
+                        .map_err(|error| tidb_syssession::SysSessionError::new(error.0))
+                };
+                Ok::<_, tidb_syssession::SysSessionError>([
+                    run("insert into test.t values (1), (2)")?,
+                    run("update test.t set a = a + 10 where a = 1")?,
+                    run("delete from test.t where a > 100")?,
+                ])
+            })
+        })
+        .unwrap();
+    assert_eq!(affected, [2, 1, 0]);
+}
+
+/// Go `ttlworker`'s scan and delete statements carry the expired rows' keys
+/// as literals (`sqlbuilder.BuildDeleteSQL`) and run through
+/// `ExecuteSQLWithCheck(ctx, sql)` with no arguments, which Go's
+/// `ParseWithParams` leaves unescaped: a key holding `%%` or `%n` deletes
+/// exactly its own row.
+#[test]
+fn a_ttl_job_deletes_string_keys_holding_percent_signs_as_written() {
+    boost_ttl_job_schedule_for_test();
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
+    let _ttl_job_manager = stack.factory.start_ttl_job_manager().expect("the TTL job manager starts");
+    let mut session = stack.factory.open_session(session_context(81)).expect("session opens");
+    rows(&mut session, "use test");
+    rows(&mut session, "create table t(id varchar(10) primary key, t timestamp) TTL=`t` + INTERVAL 1 DAY");
+    let table_id: i64 = displayed(rows(
+        &mut session,
+        "select TIDB_TABLE_ID from information_schema.tables where table_schema='test' and table_name='t'",
+    ))[0][0]
+        .parse()
+        .unwrap();
+    wait_ttl_job_finished(&mut session, table_id);
+
+    rows(&mut session, "insert into t values('a%%b', now() - interval 25 hour)");
+    rows(&mut session, "insert into t values('a%b', now())");
+    rows(&mut session, "insert into t values('x%n', now() - interval 25 hour)");
+    let cli = stack.factory.ttl_job_manager().expect("started").get_command_cli();
+    let res = tidb_ttl_client::command::trigger_new_ttl_job(
+        &tidb_ttl_client::Context::background(),
+        cli.as_ref(),
+        "test",
+        "t",
+    )
+    .unwrap();
+    let job_id = res.table_result.unwrap()[0].job_id.clone();
+    wait_ttl_job_finished(&mut session, table_id);
+    assert_eq!(displayed(rows(&mut session, "select id from t order by id")), [["a%b"]]);
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "select status, expired_rows, deleted_rows, error_delete_rows from mysql.tidb_ttl_job_history where job_id='{job_id}'"
+            ),
+        )),
+        [["finished", "2", "2", "0"]]
+    );
+}
+
 /// Go `TestTriggerTTLJob`: the table's first scheduled job runs, then a
 /// manually triggered job deletes the expired rows and leaves the others.
 #[test]

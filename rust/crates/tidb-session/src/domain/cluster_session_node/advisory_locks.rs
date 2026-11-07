@@ -49,7 +49,7 @@ impl AdvisoryLock {
         sql: &str,
         args: &[tidb_sqlescape::SqlArg<'_>],
     ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError> {
-        let escaped = tidb_sqlescape::escape_sql_text(sql, args).map_err(|error| {
+        let escaped = tidb_sqlexec::sql_with_params(sql, args).map_err(|error| {
             tidb_store_driver_error::sql_query_error::SqlQueryError::unknown(error.to_string())
         })?;
         self.session.node_conn().execute_internal(&escaped).map(|_| ())

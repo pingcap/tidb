@@ -95,6 +95,15 @@ impl std::fmt::Display for SqlQueryError {
 /// `*terror.Error` itself), which a caller downcasts back.
 impl std::error::Error for SqlQueryError {}
 
+/// A SQL executor's error as the statement error it carries, or Go's
+/// unknown error naming any other.
+pub fn mysql_error_of(error: Box<dyn std::error::Error + Send + Sync>) -> tidb_terror::MysqlError {
+    match error.downcast::<SqlQueryError>() {
+        Ok(error) => (*error).into(),
+        Err(error) => tidb_terror::MysqlError::unknown(error.to_string()),
+    }
+}
+
 /// A Go error that reached the wire layer as its SQL triple and identity.
 impl From<tidb_mysql::errors::SqlError> for SqlQueryError {
     fn from(error: tidb_mysql::errors::SqlError) -> Self {
