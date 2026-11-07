@@ -414,7 +414,22 @@ impl ViewerState {
                     .iter()
                     .map(|index| columns[*index].clone())
                     .collect();
-                self.statement_summary_rows(source, &selected, zone, false, digests)?
+                // Go `buildTimeRanges(extractor.CoarseTimeRange)`, which the
+                // persistent (v2) retriever reads.
+                let time_ranges = match extractor {
+                    Some(MemTableExtractor::StatementsSummary(summary)) => summary
+                        .coarse_time_range
+                        .as_ref()
+                        .map(|range| {
+                            vec![tidb_stmtsummary::v2::reader::StmtTimeRange {
+                                begin: range.start_time.timestamp(),
+                                end: range.end_time.timestamp(),
+                            }]
+                        })
+                        .unwrap_or_default(),
+                    _ => Vec::new(),
+                };
+                self.statement_summary_rows(source, &selected, zone, false, digests, time_ranges)?
                     .into_iter()
                     .map(|row| {
                         let mut full = vec![tidb_datatype::Datum::Null; columns.len()];

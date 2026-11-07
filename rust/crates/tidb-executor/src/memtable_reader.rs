@@ -227,6 +227,7 @@ impl ViewerState {
         zone: &tidb_datatype::SessionTimeZone,
         internal: bool,
         digests: Option<&std::collections::HashSet<String>>,
+        time_ranges: Vec<tidb_stmtsummary::v2::reader::StmtTimeRange>,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         use tidb_parser::auth::UserIdentity;
         let has_process = internal || self.has_process;
@@ -256,6 +257,7 @@ impl ViewerState {
             user,
             has_process,
             digests,
+            time_ranges,
             self.scan_concurrency,
         )
     }
@@ -482,7 +484,7 @@ impl MemTableRetriever for InstanceStateRetriever {
             DriverError::unsupported("a statement summary table has no declared schema")
         })?;
         self.viewer
-            .statement_summary_rows(table, &columns, &ctx.session_zone(), false, None)
+            .statement_summary_rows(table, &columns, &ctx.session_zone(), false, None, Vec::new())
     }
 }
 
@@ -573,6 +575,7 @@ pub fn statement_summary_rows(
     user: Option<tidb_parser::auth::UserIdentity>,
     has_process: bool,
     digests: Option<&std::collections::HashSet<String>>,
+    time_ranges: Vec<tidb_stmtsummary::v2::reader::StmtTimeRange>,
     scan_concurrency: usize,
 ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
     use tidb_ast::CiString;
@@ -648,7 +651,7 @@ pub fn statement_summary_rows(
             user.clone(),
             has_process,
             digests.cloned(),
-            Vec::new(),
+            time_ranges.clone(),
         )
         .rows();
         if history {
@@ -660,7 +663,7 @@ pub fn statement_summary_rows(
                 user,
                 has_process,
                 digests.cloned(),
-                Vec::new(),
+                time_ranges,
                 scan_concurrency,
             )
             .map_err(|error| DriverError::Unsupported(error.into()))?;
@@ -847,6 +850,7 @@ impl SqlDigestTextRetriever {
                     None,
                     true,
                     filter,
+                    Vec::new(),
                     self.scan_concurrency,
                 )?,
             );
@@ -885,6 +889,7 @@ impl SqlDigestTextRetriever {
                 None,
                 true,
                 filter,
+                Vec::new(),
                 self.scan_concurrency,
             )?;
             // Go reads the peers through `ExecRestrictedSQL`, whose warnings
