@@ -2911,6 +2911,17 @@ fn embedded_index_limit(plan: &PhysicalPlan) -> Option<(u64, u64)> {
     }
 }
 
+/// The index-side TopN of a `PhysicalIndexLookUpReader`'s `IndexPlans`
+/// (`TopN(Build)`), which Go lowers into the index request's DAG.
+fn embedded_index_topn(
+    plan: &PhysicalPlan,
+) -> Option<&tidb_planner_core_operator_physicalop::PhysicalTopN> {
+    match plan {
+        PhysicalPlan::TopN(topn) => Some(topn),
+        _ => plan.children().iter().find_map(embedded_index_topn),
+    }
+}
+
 fn embedded_index_prefix_limit(
     plan: &PhysicalPlan,
 ) -> Option<&tidb_planner_core_operator_physicalop::PhysicalLimit> {
@@ -3385,6 +3396,28 @@ fn build_index_reader(
     // only to show the TiDB-side zero-row branch, so do not lower them again.
     if let Some(table_plan) = table_plan.filter(|_| !lookup_pushdown) {
         lower_index_lookup_selections(table_plan, &mut source, ctx)?;
+    }
+    // Go `buildIndexLookUpReader`: an index-side TopN is an executor of the
+    // index request, so only its handles reach the table lookup. Its keys
+    // must be columns of the lookup's row; the root TopN still orders the
+    // rows, so a refused offer changes only how many handles are read.
+    if let Some(topn) = embedded_index_topn(index_plan).filter(|_| !covering) {
+        let order_by = topn
+            .by_items
+            .iter()
+            .map(|item| match &item.expr {
+                Expression::Column(column) => source
+                    .schema()
+                    .columns
+                    .iter()
+                    .position(|output| output.unique_id == column.unique_id)
+                    .map(|offset| (offset, item.desc)),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>();
+        if let (Some(order_by), Some(limit)) = (order_by, topn.offset.checked_add(topn.count)) {
+            let _ = source.accept_index_top_n(&order_by, limit);
+        }
     }
     // The table side's cop partial aggregate runs in the source when it
     // accepts it, and over the source's rows otherwise; the root's final

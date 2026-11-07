@@ -3015,6 +3015,47 @@ fn a_reader_topn_runs_in_the_coprocessor_as_go() {
     }
 }
 
+/// Go `buildIndexLookUpReader`: an index-side TopN (`TopN_18(Build)`) is an
+/// executor of the index request's DAG, so the lookup reads only the TopN's
+/// handles. Go testkit, 8 rows over `k(b, c)`: `IndexLookUp_19` and the
+/// `TableRowIDScan_17(Probe)` read 2 rows for `LIMIT 2` (3 for `DESC LIMIT
+/// 3`), where reading every matching handle would make them 8.
+#[test]
+fn an_index_lookup_topn_runs_on_the_index_side_as_go() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT, b INT, c INT, d INT, KEY k (b, c))")
+        .unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,1,5,0),(2,2,3,0),(3,1,9,0),(4,2,1,0),(5,1,7,0),(6,2,2,0),(7,1,8,0),(8,2,4,0)")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT * FROM t USE INDEX (k) WHERE b > 0 ORDER BY c LIMIT 2")),
+        vec![
+            vec!["4".to_owned(), "2".to_owned(), "1".to_owned(), "0".to_owned()],
+            vec!["6".to_owned(), "2".to_owned(), "2".to_owned(), "0".to_owned()],
+        ]
+    );
+    for (query, rows) in [
+        ("SELECT * FROM t USE INDEX (k) WHERE b > 0 ORDER BY c LIMIT 2", "2"),
+        ("SELECT * FROM t USE INDEX (k) WHERE b > 0 ORDER BY c DESC LIMIT 3", "3"),
+    ] {
+        let explained = row_text(session.run(&format!("EXPLAIN ANALYZE {query}")));
+        let row = |prefix: &str| {
+            explained
+                .iter()
+                .find(|row| row[0].trim_start_matches(['└', '├', '─', '│', ' ']).starts_with(prefix))
+                .unwrap_or_else(|| panic!("no {prefix} row in {explained:?}"))
+                .clone()
+        };
+        assert_eq!(row("IndexLookUp_")[2], rows, "{query}: {explained:?}");
+        assert_eq!(row("TableRowIDScan_")[2], rows, "{query}: {explained:?}");
+        let topn = row("TopN_18(Build)");
+        assert_eq!(topn[3], "cop[tikv]", "{query}: {topn:?}");
+        assert!(topn[5].contains("cop_task"), "{query}: {topn:?}");
+    }
+}
+
 /// Go `buildApply` / `buildCTE`: an Apply whose inner side holds a CTE that
 /// `SafeClone` accepts runs on its workers, which share the statement's CTE
 /// producer (`CTEStorageMap`); a recursive CTE's `PhysicalCTETable` refuses

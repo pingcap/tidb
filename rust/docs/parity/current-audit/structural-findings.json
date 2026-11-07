@@ -83,7 +83,7 @@
       "id": "E15",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "A TiKV reader builds its DAG from its access path's scan request (`cop_reader.rs`; `cop_plan_ids_for` matches executors to the pushed nodes by kind) where Go's `constructDAGReq` lowers the reader's pushed plan one node per executor (`ToPB`). A reader's TopN reaches the coprocessor only through the scan's `accept_remote_topn` offer, so a TopN over an expression stays local (`PushdownTopNOrder` carries a column offset, where `PhysicalTopN.ToPB` lowers any `ByItem`), and an IndexLookUp's index-side TopN (`TopN_19(Build)`) is never offered (`accept_index_top_n` has no caller): its lookup reads every matching handle where Go's reads only the TopN's",
+      "finding": "A TiKV reader builds its DAG from its access path's scan request (`cop_reader.rs`; `cop_plan_ids_for` matches executors to the pushed nodes by kind) where Go's `constructDAGReq` lowers the reader's pushed plan one node per executor (`ToPB`). A pushed TopN (a reader's, or an IndexLookUp's index side) reaches the coprocessor through the scan's offer, whose `PushdownTopNOrder` carries a column offset: a TopN over an expression stays local, where `PhysicalTopN.ToPB` lowers any `ByItem`",
       "go_owner": "`pkg/executor/builder.go` (`constructDAGReq`), `pkg/planner/core/plan_to_pb.go`"
     },
     {
