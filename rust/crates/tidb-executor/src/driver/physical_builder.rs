@@ -35,9 +35,6 @@ use tidb_executor_internal_exec::index_usage_reporter::{CopIndexUsageExec, Point
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_executor_aggfuncs::aggfuncs::AggFunc;
 use tidb_executor_aggfuncs::aggfuncs::AggKind;
-use tidb_executor_aggregate::GroupedStreamAggExec;
-use tidb_executor_aggregate::HashAggExec;
-use tidb_executor_aggregate::StreamAggExec;
 use tidb_executor_join::executor::{HashJoinV2Executor, HashJoinV2Plan};
 use crate::index_merge_reader::{
     ExecutorPartialHandleSource, HandleRef, IndexMergeReaderExecutor, MergeByItem, PartialHandleBatch,
@@ -2188,17 +2185,32 @@ fn build_aggregation(
 ) -> Result<Box<dyn Executor>, DriverError> {
     let child = build_with_state(only_child(plan)?, catalog, ctx, state)?;
     let register = !state.in_reader && !state.untraced;
-    if stream && !state.in_reader {
-        if let Some(executor) = build_stream_agg_from_child_exec(plan, descriptors, group_by, &child, ctx)? {
-            return Ok(executor(child));
-        }
+    if state.in_reader {
+        return build_aggregation_over_child(plan, descriptors, group_by, stream, child, ctx, register);
     }
-    if !stream && !state.in_reader {
-        if let Some(executor) = build_hash_agg_from_child_exec(plan, descriptors, group_by, &child, ctx, register)? {
-            return Ok(executor(child));
-        }
+    build_agg_from_child_exec(plan, descriptors, group_by, stream, child, ctx, register)
+}
+
+/// Go `buildStreamAggFromChildExec` / `buildHashAggFromChildExec`: a
+/// TiDB-tier aggregate over an already built child.
+fn build_agg_from_child_exec(
+    plan: &PhysicalPlan,
+    descriptors: &[AggFuncDesc],
+    group_by: &[Expression],
+    stream: bool,
+    child: Box<dyn Executor>,
+    ctx: &crate::StmtContext,
+    register: bool,
+) -> Result<Box<dyn Executor>, DriverError> {
+    let executor = if stream {
+        build_stream_agg_from_child_exec(plan, descriptors, group_by, &child, ctx)?
+    } else {
+        build_hash_agg_from_child_exec(plan, descriptors, group_by, &child, ctx, register)?
+    };
+    match executor {
+        Some(executor) => Ok(executor(child)),
+        None => build_aggregation_over_child(plan, descriptors, group_by, stream, child, ctx, register),
     }
-    build_aggregation_over_child(plan, descriptors, group_by, stream, child, ctx, register)
 }
 
 /// Go `aggfuncs.Build` of each descriptor over `child_schema`, or `None`
@@ -2262,11 +2274,7 @@ fn build_hash_agg_from_child_exec(
     register_runtime_stats: bool,
 ) -> Result<Option<Box<dyn FnOnce(Box<dyn Executor>) -> Box<dyn Executor>>>, DriverError> {
     let output_schema = plan_schema(plan)?;
-    if output_schema.len() != descriptors.len()
-        || !descriptors
-            .iter()
-            .all(|descriptor| matches!(descriptor.mode, AggFunctionMode::Complete | AggFunctionMode::Final))
-    {
+    if output_schema.len() != descriptors.len() {
         return Ok(None);
     }
     let child_schema = child.schema().clone();
@@ -2315,7 +2323,10 @@ fn build_hash_agg_from_child_exec(
         final_agg_funcs.push(final_agg_func);
     }
     let executor_meta = meta(ctx, plan, output_schema);
-    let default_val = (group_by.is_empty() && !tidb_expression_aggregation::is_all_first_row(descriptors)).then(|| {
+    let default_val = (group_by.is_empty()
+        && !tidb_expression_aggregation::is_all_first_row(descriptors)
+        && is_final_agg(descriptors))
+    .then(|| {
         // Go `e.DefaultVal = e.AllocPool.Alloc(exec.RetTypes(e), 1, 1)`.
         let mut default_val = executor_meta.new_chunk_with_capacity(executor_meta.ret_field_types(), 1, 1);
         for (i, descriptor) in descriptors.iter().enumerate() {
@@ -2356,6 +2367,14 @@ fn build_hash_agg_from_child_exec(
     })))
 }
 
+/// Go `basePhysicalAgg.IsFinalAgg`: the first function's mode is Final or
+/// Complete.
+fn is_final_agg(descriptors: &[AggFuncDesc]) -> bool {
+    descriptors
+        .first()
+        .is_some_and(|descriptor| matches!(descriptor.mode, AggFunctionMode::Final | AggFunctionMode::Complete))
+}
+
 /// Go `TrackAggregateMemoryUsage`.
 fn track_aggregate_memory_usage(ctx: &crate::StmtContext) -> bool {
     tidb_exprctx::Columns::sysvar(ctx, None, "tidb_track_aggregate_memory_usage")
@@ -2375,11 +2394,7 @@ fn build_stream_agg_from_child_exec(
     ctx: &crate::StmtContext,
 ) -> Result<Option<Box<dyn FnOnce(Box<dyn Executor>) -> Box<dyn Executor>>>, DriverError> {
     let output_schema = plan_schema(plan)?;
-    if output_schema.len() != descriptors.len()
-        || !descriptors
-            .iter()
-            .all(|descriptor| matches!(descriptor.mode, AggFunctionMode::Complete | AggFunctionMode::Final))
-    {
+    if output_schema.len() != descriptors.len() {
         return Ok(None);
     }
     let child_schema = child.schema().clone();
@@ -2390,7 +2405,10 @@ fn build_stream_agg_from_child_exec(
     let executor_meta = meta(ctx, plan, output_schema);
     // Go: only a final global aggregate that is not all FIRSTROW answers
     // a default row over no input (issues #35295, #30923).
-    let default_val = (group_by.is_empty() && !tidb_expression_aggregation::is_all_first_row(descriptors)).then(|| {
+    let default_val = (group_by.is_empty()
+        && !tidb_expression_aggregation::is_all_first_row(descriptors)
+        && is_final_agg(descriptors))
+    .then(|| {
         // Go `e.DefaultVal = e.AllocPool.Alloc(exec.RetTypes(e), 1, 1)`.
         let mut default_val = executor_meta.new_chunk_with_capacity(executor_meta.ret_field_types(), 1, 1);
         for (i, descriptor) in descriptors.iter().enumerate() {
@@ -2424,14 +2442,14 @@ fn build_stream_agg_from_child_exec(
 fn build_aggregation_over_child(
     plan: &PhysicalPlan,
     descriptors: &[AggFuncDesc],
-    group_by: &[Expression],
+    group_by_items: &[Expression],
     stream: bool,
     mut child: Box<dyn Executor>,
     ctx: &crate::StmtContext,
     register_runtime_stats: bool,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let child_schema = child.schema().clone();
-    let group_by = resolve_expressions(group_by, &child_schema)?;
+    let group_by = resolve_expressions(group_by_items, &child_schema)?;
     let functions = descriptors
         .iter()
         .map(|descriptor| aggregate_function(descriptor, &child_schema, ctx))
@@ -2466,43 +2484,17 @@ fn build_aggregation_over_child(
             }));
         }
     }
-    let executor_meta = meta(ctx, plan, output_schema);
-    if stream {
-        if group_by.is_empty() {
-            Ok(Box::new(StreamAggExec::new(
-                executor_meta,
-                functions,
-                child,
-                ctx.clone(),
-            )))
-        } else {
-            let output_positions = (0..functions.len()).collect();
-            Ok(Box::new(GroupedStreamAggExec::new(
-                executor_meta,
-                group_by,
-                functions,
-                output_positions,
-                child,
-                ctx.clone(),
-            )))
-        }
+    // A cop-side aggregate with no pushed form, or one the coprocessor of
+    // this tier stands in for (a TiFlash fragment's), runs as Go's
+    // TiDB-tier executor does.
+    let executor = if stream {
+        build_stream_agg_from_child_exec(plan, descriptors, group_by_items, &child, ctx)?
     } else {
-        let mut executor = HashAggExec::new(
-            executor_meta,
-            group_by,
-            functions,
-            child,
-            ctx.clone(),
-            ctx.statement_memory(),
-        );
-        executor.set_runtime_stats(
-            ctx.executor_runtime_stats_source()
-                .filter(|_| register_runtime_stats)
-                .cloned(),
-            i64::from(plan.id()),
-        );
-        Ok(Box::new(executor))
-    }
+        build_hash_agg_from_child_exec(plan, descriptors, group_by_items, &child, ctx, register_runtime_stats)?
+    };
+    executor.map(|executor| executor(child)).ok_or_else(|| {
+        DriverError::unsupported("an aggregate function has no Go aggfuncs implementation")
+    })
 }
 
 /// Go `windows.Builder.Build` (`pkg/executor/windows/builder.go:47`): the
@@ -4348,7 +4340,7 @@ fn build_index_inner_subtree(
                 ctx,
                 state,
             )?;
-            build_aggregation_over_child(
+            build_agg_from_child_exec(
                 plan,
                 &aggregation.agg_funcs,
                 &aggregation.group_by_items,
@@ -4368,7 +4360,7 @@ fn build_index_inner_subtree(
                 ctx,
                 state,
             )?;
-            build_aggregation_over_child(
+            build_agg_from_child_exec(
                 plan,
                 &aggregation.agg_funcs,
                 &aggregation.group_by_items,

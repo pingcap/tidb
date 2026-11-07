@@ -578,7 +578,7 @@ fn registered_storage_error_survives_row_and_chunk_decoding() {
         };
         assert_eq!(
             error,
-            tidb_copr::response_channel::ResponseChannelError::SelectResponse {
+            tidb_copr::response_channel::ResponseChannelError::Sql {
                 code: 9004,
                 message: "[tikv:9004]Resolve lock timeout".to_owned(),
             }

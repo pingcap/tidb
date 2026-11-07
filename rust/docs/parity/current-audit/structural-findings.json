@@ -1,9 +1,9 @@
 {
-  "date": "2026-11-06",
+  "date": "2026-11-07",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 28,
-    "open": 6,
+    "unresolved": 29,
+    "open": 7,
     "partial": 22
   },
   "findings": [
@@ -55,7 +55,7 @@
       "id": "E10",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "Root HashAgg is Go's `HashAggExec` (`tidb-executor-aggregate/src/agg_hash_executor.rs`: fetcher, partial workers shuffling one mapper per final worker, final workers, `parallelHashAggSpillHelper` spill), and its serial and parallel memory are Go's to the byte for global and pushed-down aggregates (`sum(a)` 12.6 KB, `b, count(a) ... group by b` 13.5 KB, `count(distinct b)` 12.4 KB) except a grouped scan-fed one (`a, group_concat(b) ... group by a` 14.0 KB where a fresh Go session's holds 14.8 KB) and an index-fed `count(distinct a)` (12.3 KB / 12.6 KB), for a reason not yet found (Go's `groupKeyPool` / `partialResultsBufferPool` recycle buffers across statements, so a later statement in one Go session charges more); a cop-side partial aggregation with no pushed form (`pushed_partial_aggregation` refuses its function kind or an argument the pushdown catalog cannot lower) runs in this tier on the old `AggState` engine (`lib.rs` `HashAggExec` / `GroupedStreamAggExec`, `parallel.rs`), where Go always runs it in the coprocessor. ADMIN CHECK's checksum `bit_xor(crc32(md5(concat_ws(...))))` lowers as Go's does, and a covering index carries the integer handle its aggregate names (Go `PhysicalIndexScan.initSchema`). A shape with a pushed form the source refuses runs the coprocessor's own aggregation (`LocalPartialAggregationExec`, `DistAggregator`, Go's unistore `aggExec`), as a scan's local answer does; `FIRSTROW`, `BIT_AND`/`BIT_OR`/`BIT_XOR` and expression group keys push down as Go's do",
+      "finding": "Root HashAgg is Go's `HashAggExec` (`tidb-executor-aggregate/src/agg_hash_executor.rs`: fetcher, partial workers shuffling one mapper per final worker, final workers, `parallelHashAggSpillHelper` spill), and its serial and parallel memory are Go's to the byte for global and pushed-down aggregates (`sum(a)` 12.6 KB, `b, count(a) ... group by b` 13.5 KB, `count(distinct b)` 12.4 KB) except a grouped scan-fed one (`a, group_concat(b) ... group by a` 14.0 KB where a fresh Go session's holds 14.8 KB) and an index-fed `count(distinct a)` (12.3 KB / 12.6 KB), for a reason not yet found (Go's `groupKeyPool` / `partialResultsBufferPool` recycle buffers across statements, so a later statement in one Go session charges more); a cop-side aggregation with no pushed form (`pushed_partial_aggregation` refuses its function kind, or an argument the pushdown catalog cannot lower: X01) runs in this tier on Go's TiDB-tier `HashAggExec` / `StreamAggExec`, where Go always runs it in the coprocessor; in the suites and the corpus only a TiFlash fragment's aggregates (M01) reach it",
       "go_owner": "`pkg/executor/aggregate` (`agg_hash_executor.go`, `agg_hash_partial_worker.go`, `agg_hash_final_worker.go`)"
     },
     {
@@ -85,6 +85,13 @@
       "group": "DML and executor handoff",
       "finding": "A TiKV reader builds its DAG from its access path's scan request (`cop_reader.rs`; `cop_plan_ids_for` matches executors to the pushed nodes by kind) where Go's `constructDAGReq` lowers the reader's pushed plan one node per executor (`ToPB`). A pushed TopN (a reader's, or an IndexLookUp's index side) reaches the coprocessor through the scan's offer, whose `PushdownTopNOrder` carries a column offset: a TopN over an expression stays local, where `PhysicalTopN.ToPB` lowers any `ByItem`",
       "go_owner": "`pkg/executor/builder.go` (`constructDAGReq`), `pkg/planner/core/plan_to_pb.go`"
+    },
+    {
+      "id": "E19",
+      "status": "open",
+      "group": "DML and executor handoff",
+      "finding": "Window functions run on this port's own evaluator (`tidb-executor-windows`: a `WindowFunction` enum of row-position kinds plus aggregates folded by `WindowAggState` over the per-kind `AggState`, `window_numeric` / `window_extremum` sliding states), where Go's `WindowExec` (`aggWindowProcessor`, `rowFrameWindowProcessor`, `rangeFrameWindowProcessor`) and `PipelinedWindowExec` drive the `AggFunc`s `aggfuncs.BuildWindowFunctions` builds (their `SlidingWindowAggFunc.Slide`, `MaxMinSlidingWindowAggFunc.SetWindowStart`); this port's `agg_builder::build_window_functions` builds those functions but only its tests call it",
+      "go_owner": "`pkg/executor/windows` (`window.go`, `pipelined_window.go`, `builder.go`), `pkg/executor/aggfuncs` (`BuildWindowFunctions`)"
     },
     {
       "id": "C01",
@@ -161,7 +168,7 @@
       "id": "X01",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "SQL/PB signature construction and typed vector execution. The planner's `BuiltinFunctionUsageInc` (`expressionRewriter.newFunction`) is not called: it needs the function's `PbCode`, which a planner-built Rust function only gets at pushdown resolution.",
+      "finding": "SQL/PB signature construction and typed vector execution. The planner's `BuiltinFunctionUsageInc` (`expressionRewriter.newFunction`) is not called: it needs the function's `PbCode`, which a planner-built Rust function only gets at pushdown resolution. Go's `PbConverter` sends each builtin's own `PbCode`; this port resolves a signature again from the function's name and argument types (`pushdown_catalog.rs` `resolve`), and that catalog lacks 72 of the 149 functions Go's `scalarExprSupportedByTiKV` admits (among them `like`, `floor`/`ceil`, `unaryminus`, `nulleq`, the bit and shift operators, `replace`, `hex`, `sha1`/`sha2`, eleven JSON functions, the vector functions and twelve date functions), so a filter or aggregate over one stays in this tier where Go pushes it.",
       "go_owner": "`pkg/expression`"
     },
     {
@@ -208,7 +215,7 @@
       "go_owner": "`pkg/ddl` (`systable`, job scheduler), `pkg/session` bootstrap, `pkg/privilege/privileges` (`ensureActiveUser`)"
     }
   ],
-  "unresolved": 28,
-  "open": 6,
+  "unresolved": 29,
+  "open": 7,
   "partial": 22
 }

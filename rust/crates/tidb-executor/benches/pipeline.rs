@@ -65,8 +65,6 @@ use tidb_driver_error::ExecError;
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_executor_aggfuncs::aggfuncs::AggFunc;
 use tidb_executor_aggfuncs::aggfuncs::AggKind;
-use tidb_executor_aggregate::parallel::HashAggContext;
-use tidb_executor_aggregate::HashAggExec;
 use tidb_variable::mem_quota::StatementMemory;
 use tidb_vardef::OomAction;
 use tidb_expr::column::Column;
@@ -403,94 +401,6 @@ fn drain(exec: &mut dyn Executor) -> usize {
     rows
 }
 
-/// An evaluation context that pins the aggregate to one lane.
-///
-/// With the production context the aggregate resolves its worker counts from
-/// `tidb_hashagg_partial_concurrency` / `..._final_concurrency` and runs the
-/// parallel pipeline. On a four-core box that is also running TiKV, PD and a
-/// second SQL node, what those lanes cost depends on how much of the machine
-/// they actually got, and that is not measurement noise -- it is a real
-/// quantity that moves 20% run to run, and no in-block reference cancels it,
-/// because the reference is one thread.
-///
-/// The fold and the group map are what a change to this executor touches, and
-/// one lane measures them exactly. How well the lanes overlap is a separate
-/// question, and a contended four-core box is the wrong instrument for it:
-/// that one belongs to the cluster harness.
-struct SerialAgg;
-
-impl Columns for SerialAgg {
-    fn get(&self, _path: &[String]) -> Option<Datum> {
-        None
-    }
-}
-
-impl HashAggContext for SerialAgg {
-    // Never consulted: `hashagg_concurrency` keeps this aggregate serial, and
-    // the default `run_parallel_pipeline_bridge` refuses the pipeline anyway.
-    const PARALLEL_WORKERS_MAY_EVAL: bool = false;
-
-    fn hashagg_concurrency(&self) -> Option<(usize, usize)> {
-        Some((1, 1))
-    }
-}
-
-/// The aggregate's own cost: the same source drained bare, then under a
-/// `GROUP BY` with a sum, so the difference is the fold and the map.
-///
-/// Both sides are entries of one block, so they are sliced in among each other
-/// and the subtraction is a paired difference. Differencing two independently
-/// minimised numbers instead adds their errors -- each already the tail of its
-/// own distribution -- which is how the fold line came to spread 21-47% while
-/// the total beside it held 5%.
-fn bench_aggregate() {
-    let types = wide_types();
-    let out_types = vec![types[0].clone(), types[1].clone()];
-    for (label, groups) in [
-        ("agg_groups_10", 10_i64),
-        ("agg_groups_1k", 1_000),
-        ("agg_groups_60k", 60_000),
-    ] {
-        let mut source_pass = || {
-            let mut source = replay(&types, ROWS, groups);
-            black_box(drain(&mut source));
-        };
-        let mut total_pass = || {
-            let mut agg = HashAggExec::new(
-                ExecutorMeta::new(schema_of(&out_types), 1, CHUNK, CHUNK),
-                vec![column(0, &types[0])],
-                vec![
-                    AggFunc::new(AggKind::FirstRow, Some(column(0, &types[0]))),
-                    AggFunc::new(AggKind::Sum, Some(column(1, &types[1]))),
-                ],
-                Box::new(replay(&types, ROWS, groups)),
-                SerialAgg,
-                StatementMemory::new(1 << 30, OomAction::Cancel, 1).with_tmp_storage_on_oom(false),
-            );
-            black_box(drain(&mut agg));
-        };
-        let results =
-            best_of_blocks(&mut [("source", &mut source_pass), ("total", &mut total_pass)]);
-
-        let rows = ROWS as f64;
-        let (source_time, source_ratio) = results[0];
-        let (total_time, total_ratio) = results[1];
-        println!(
-            "{label} total_ns_per_row {:.1}",
-            total_time.as_secs_f64() * 1e9 / rows
-        );
-        println!(
-            "{label} fold_ns_per_row {:.1}",
-            (total_time.as_secs_f64() - source_time.as_secs_f64()) * 1e9 / rows
-        );
-        println!("{label} total_cal_per_row {:.4}", total_ratio / rows);
-        println!(
-            "{label} fold_cal_per_row {:.4}",
-            (total_ratio - source_ratio) / rows
-        );
-    }
-}
-
 /// Arithmetic projection through the production evaluator, including nested
 /// operand batches. Keep decimal kernels in the comparison to catch regressions.
 fn bench_numeric_projection() {
@@ -547,7 +457,7 @@ use tidb_exprctx::NoColumns;
             } else if code == FieldTypeCode::Double {
                 Datum::Real(number as f64)
             } else if code == FieldTypeCode::VarString {
-                Datum::new_string(number.to_string())
+                Datum::new_string_datum(number.to_string())
             } else {
                 Datum::Int(number)
             }
@@ -747,7 +657,7 @@ use tidb_exprctx::NoColumns;
         let string = FieldType::new(FieldTypeCode::VarString);
         let mut input = Chunk::new_chunk_with_capacity(std::slice::from_ref(&string), CHUNK);
         for row in 0..CHUNK {
-            input.append_datum(0, &Datum::new_string((row % 100).to_string()));
+            input.append_datum(0, &Datum::new_string_datum((row % 100).to_string()));
         }
         let mut json = FieldType::new(FieldTypeCode::Json);
         json.set_flen(4_194_304);
@@ -783,77 +693,6 @@ use tidb_exprctx::NoColumns;
             result.0.as_secs_f64() * 1e9 / CHUNK as f64
         );
         println!("{label} cal_per_row {:.4}", result.1 / CHUNK as f64);
-    }
-}
-
-/// Sorted string groups through the production checker and stream aggregate.
-/// One chunk per pass keeps the replay globally sorted, including CI ties.
-fn bench_stream_grouping() {
-    use tidb_charset::Collation;
-    use tidb_executor_aggregate::GroupedStreamAggExec;
-    use tidb_expr::constant::Constant;
-    for (label, collation, constant_key) in [
-        ("stream_group_bin", Collation::Utf8Mb4Bin, false),
-        ("stream_group_ci", Collation::Utf8Mb4GeneralCi, false),
-        ("stream_group_bin_constant", Collation::Utf8Mb4Bin, true),
-        (
-            "stream_group_ci_constant",
-            Collation::Utf8Mb4GeneralCi,
-            true,
-        ),
-    ] {
-        let types = vec![FieldType::new(FieldTypeCode::VarString).with_collation(collation)];
-        let mut template = Chunk::new_chunk_with_capacity(&types, CHUNK);
-        for row in 0..CHUNK {
-            let prefix = if collation == Collation::Utf8Mb4GeneralCi && row % 2 == 0 {
-                'G'
-            } else {
-                'g'
-            };
-            template.append_string(0, &format!("{prefix}{:05}", row / 32));
-        }
-        let source = || Replay {
-            meta: ExecutorMeta::new(schema_of(&types), 0, CHUNK, CHUNK),
-            template: template.clone(),
-            remaining: CHUNK,
-        };
-        let mut source_pass = || {
-            black_box(drain(&mut source()));
-        };
-        let mut total_pass = || {
-            let mut keys = vec![column(0, &types[0])];
-            if constant_key {
-                keys.insert(
-                    0,
-                    Expression::Constant(Constant::new(
-                        Datum::Int(12),
-                        FieldType::new(FieldTypeCode::LongLong),
-                    )),
-                );
-            }
-            let out = [FieldType::new(FieldTypeCode::LongLong)];
-            let mut aggregate = GroupedStreamAggExec::new(
-                ExecutorMeta::new(schema_of(&out), 1, CHUNK, CHUNK),
-                keys,
-                vec![AggFunc::new(AggKind::Count, None)],
-                vec![0],
-                Box::new(source()),
-                SerialAgg,
-            );
-            assert_eq!(black_box(drain(&mut aggregate)), CHUNK / 32);
-        };
-        let results =
-            best_of_blocks(&mut [("source", &mut source_pass), ("total", &mut total_pass)]);
-        let rows = CHUNK as f64;
-        println!(
-            "{label} total_ns_per_row {:.1}",
-            results[1].0.as_secs_f64() * 1e9 / rows
-        );
-        println!("{label} total_cal_per_row {:.4}", results[1].1 / rows);
-        println!(
-            "{label} fold_cal_per_row {:.4}",
-            (results[1].1 - results[0].1) / rows
-        );
     }
 }
 
@@ -896,12 +735,6 @@ fn main() {
     }
     if wanted("unsigned_comparison") {
         bench_unsigned_comparison_projection();
-    }
-    if wanted("stream_group") {
-        bench_stream_grouping();
-    }
-    if wanted("agg") {
-        bench_aggregate();
     }
     if wanted("append") {
         bench_cell_append();
@@ -1062,7 +895,7 @@ impl Executor for Sequence {
     }
 }
 
-/// `JoinCtx` is [`SerialAgg`] with the `Clone` the join's context bound asks for.
+/// A context with the `Clone` the join's context bound asks for.
 #[derive(Clone, Copy)]
 struct JoinCtx;
 impl Columns for JoinCtx {

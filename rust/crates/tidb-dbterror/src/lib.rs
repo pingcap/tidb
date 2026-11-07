@@ -164,15 +164,13 @@ impl ErrClass {
         wire.with_identity(identity)
     }
 
-    /// An error a coprocessor answered in a `SelectResponse`: a code
-    /// `ClassTiKV` registers is that class's error (`[tikv:<code>]`); any
-    /// other keeps its own number and has no class here. Go would answer the
-    /// latter as `ClassTiKV.Synthesize` (1105) only for errors a real TiKV
-    /// raised -- this tier's coprocessor also reports errors Go raises on the
-    /// TiDB side (`tidb_max_keys_read`, ...) in the same slot, whose wire code
-    /// must survive.
+    /// An error the coprocessor response iterator raised on the TiDB side
+    /// (Go `resp.Next`'s error), flattened to its code and message: a code
+    /// `ClassTiKV` registers (a lock-resolve timeout's 9004, ...) is that
+    /// class's error (`[tikv:<code>]`); any other (`tidb_max_keys_read`'s
+    /// 8274, a runaway kill's 8253, ...) keeps its own number.
     #[must_use]
-    pub fn tikv_select_response_error(code: u16, message: impl Into<String>) -> tidb_terror::MysqlError {
+    pub fn response_iterator_error(code: u16, message: impl Into<String>) -> tidb_terror::MysqlError {
         if CLASS_TIKV_CODES.contains(&code) {
             tidb_terror::MysqlError::sql_error(code, message).with_identity(
                 tidb_terror::TerrorIdentity::new(TerrorClass::TiKv, TerrorCode::new(code as isize)),

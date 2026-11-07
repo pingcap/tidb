@@ -588,7 +588,10 @@ impl MppRowStream {
                 .next_chunk_with_required_rows(required_rows.max(1))
                 .map_err(|error| match error {
                     ResponseChannelError::SelectResponse { code, message } => StorageError::Sql(
-                        tidb_dbterror::ErrClass::tikv_select_response_error(code as u16, message),
+                        tidb_dbterror::ErrClass::synthesize_tikv(code as u16, message),
+                    ),
+                    ResponseChannelError::Sql { code, message } => StorageError::Sql(
+                        tidb_dbterror::ErrClass::response_iterator_error(code, message),
                     ),
                     other => StorageError::Backend(format!("tiflash mpp stream: {other}")),
                 })?;

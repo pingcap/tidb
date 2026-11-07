@@ -8132,6 +8132,78 @@ fn a_checksum_over_the_handle_runs_in_the_index_coprocessor_as_go() {
     }
 }
 
+/// Go's `buildHashAggFromChildExec` builds an aggregate of any mode and
+/// gives it a default row only when it is final (`IsFinalAgg`): a static
+/// partition union's middle (Partial2) aggregate over an empty partition
+/// answers no row, so gorun's PartitionUnion reads 2 rows, its p2 HashAgg 0,
+/// and the statement answers `3|6`.
+#[test]
+fn a_partial_aggregate_over_an_empty_partition_answers_no_row_as_go() {
+    let mut session = Session::new();
+    session.run("set @@tidb_partition_prune_mode = 'static'").unwrap();
+    session
+        .run(
+            "create table tp (a int, b int) partition by range (a) (partition p0 values less \
+             than (10), partition p1 values less than (20), partition p2 values less than (30))",
+        )
+        .unwrap();
+    session.run("insert into tp values (1, 1), (2, 2), (11, 3)").unwrap();
+    assert_eq!(row_text(session.run("select count(*), sum(b) from tp")), [["3", "6"]]);
+    let explained = row_text(session.run("explain analyze select count(*), sum(b) from tp"));
+    let union = explained
+        .iter()
+        .find(|row| row[0].contains("PartitionUnion_"))
+        .unwrap_or_else(|| panic!("no PartitionUnion in {explained:?}"));
+    assert_eq!(union[2], "2", "{explained:?}");
+    let empty_root_aggs = explained
+        .iter()
+        .filter(|row| row[0].contains("HashAgg_") && row[3] == "root" && row[2] == "0")
+        .count();
+    assert_eq!(empty_root_aggs, 1, "{explained:?}");
+}
+
+/// Go's CONCAT pushes down (`scalarExprSupportedByTiKV`, `Concat`), so a
+/// group key over it is computed in the coprocessor: gorun pushes `group
+/// by:concat(test.gt.dept, "_s")` to TiKV and answers `a_s|2`, `b_s|1`.
+#[test]
+fn a_concat_group_key_runs_in_the_coprocessor_as_go() {
+    let mut session = Session::new();
+    session.run("create table gt (dept varchar(10), v int)").unwrap();
+    session.run("insert into gt values ('a',1),('a',2),('b',3)").unwrap();
+    let sql = "SELECT concat(dept, '_s') AS x, count(*) FROM gt GROUP BY x";
+    assert_eq!(
+        row_text(session.run(&format!("{sql} ORDER BY x"))),
+        [["a_s", "2"], ["b_s", "1"]]
+    );
+    let explained = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+    let cop_agg = explained
+        .iter()
+        .find(|row| row[3] == "cop[tikv]" && row[0].contains("HashAgg_"))
+        .unwrap_or_else(|| panic!("no cop HashAgg in {explained:?}"));
+    assert!(cop_agg[5].starts_with("tikv_task:{"), "{cop_agg:?}");
+}
+
+/// Go's JSON_EXTRACT pushes down (`scalarExprSupportedByTiKV`,
+/// `JsonExtractSig`), so `sum(json_extract(...))` runs in the coprocessor --
+/// Go's TiDB-tier `sum4Float` could not read its JSON argument: gorun pushes
+/// `funcs:sum(json_extract(test.bs.summary, "$.row_count"))` and answers 7.
+#[test]
+fn a_sum_over_json_extract_runs_in_the_coprocessor_as_go() {
+    let mut session = Session::new();
+    session.run("create table bs (summary json)").unwrap();
+    session
+        .run(r#"insert into bs values ('{"row_count": 3}'), ('{"row_count": 4}')"#)
+        .unwrap();
+    let sql = "select sum(json_extract(summary, '$.row_count')) from bs";
+    assert_eq!(row_text(session.run(sql)), [["7"]]);
+    let explained = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+    let cop_agg = explained
+        .iter()
+        .find(|row| row[3] == "cop[tikv]" && row[0].contains("HashAgg_"))
+        .unwrap_or_else(|| panic!("no cop HashAgg in {explained:?}"));
+    assert!(cop_agg[5].starts_with("tikv_task:{"), "{cop_agg:?}");
+}
+
 /// Go `Aggregation.GroupBy` carries any key the coprocessor evaluates: gorun
 /// pushes `group by:plus(test.t.a, 1), funcs:count(1),
 /// funcs:firstrow(test.t.a)` to TiKV and answers `2|2`, `3|1`, `4|1`.

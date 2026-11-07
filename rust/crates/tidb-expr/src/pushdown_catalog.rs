@@ -269,7 +269,9 @@ impl BuiltinSignature {
             "if" if arity == 3 => Some(self.ret),
             "ifnull" if arity == 2 => Some(self.ret),
             "coalesce" => Some(self.ret),
-            "concat_ws" => Some(EvalType::String),
+            "concat" | "concat_ws" => Some(EvalType::String),
+            "json_extract" if index == 0 => Some(EvalType::Json),
+            "json_extract" => Some(EvalType::String),
             _ => None,
         }
     }
@@ -3487,6 +3489,12 @@ pub fn resolve(name: &str, args: &[PbScalar]) -> Option<&'static BuiltinSignatur
     if name == "in" {
         return resolve_in(args);
     }
+    if name == "concat" {
+        return resolve_concat(args);
+    }
+    if name == "json_extract" {
+        return resolve_json_extract(args);
+    }
     if name == "concat_ws" {
         return resolve_concat_ws(args);
     }
@@ -3499,6 +3507,34 @@ pub fn resolve(name: &str, args: &[PbScalar]) -> Option<&'static BuiltinSignatur
                 .zip(args)
                 .all(|(pattern, argument)| pattern.matches(argument))
     })
+}
+
+/// Go `concatFunctionClass.getFunction`: every argument `ETString`, one
+/// signature (`Concat`) whatever the arity.
+fn resolve_concat(args: &[PbScalar]) -> Option<&'static BuiltinSignature> {
+    static CONCAT: BuiltinSignature = string_signature(
+        "concat",
+        &[],
+        &[],
+        ScalarFuncSig::Concat,
+        RetCollation::FirstArgString,
+    );
+    (!args.is_empty() && args.iter().all(|arg| arg.eval_type() == EvalType::String))
+        .then_some(&CONCAT)
+}
+
+/// Go `jsonExtractFunctionClass.getFunction`: an `ETJson` document and one
+/// or more `ETString` paths, one signature (`JsonExtractSig`).
+fn resolve_json_extract(args: &[PbScalar]) -> Option<&'static BuiltinSignature> {
+    static JSON_EXTRACT: BuiltinSignature = signature(
+        "json_extract",
+        &[],
+        &[],
+        EvalType::Json,
+        ScalarFuncSig::JsonExtractSig,
+        false,
+    );
+    (args.len() >= 2).then_some(&JSON_EXTRACT)
 }
 
 /// Go `concatWSFunctionClass.getFunction`: every argument `ETString`, the

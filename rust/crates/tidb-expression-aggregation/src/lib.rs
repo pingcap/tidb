@@ -228,7 +228,7 @@ mod window_func;
 #[cfg(test)]
 mod tests;
 
-pub use base_func::{AggDescError, BaseFuncDesc};
+pub use base_func::{approx_percentile_percent, AggDescError, BaseFuncDesc};
 pub use descriptor::{AggFuncDesc, ByItems};
 pub use dist::{DistAggregate, DistAggregateError, DistAggregateState, DistAggregator};
 pub use explain::explain_agg_func_normalized;

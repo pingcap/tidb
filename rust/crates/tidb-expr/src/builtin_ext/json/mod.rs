@@ -432,6 +432,7 @@ pub(crate) fn eval_pb(
                 json_modify(vals, arg_types, JsonModifyMode::Replace)
             }
         }
+        ScalarFuncSig::JsonExtractSig => json_extract(vals, arg_types),
         ScalarFuncSig::JsonArrayAppendSig => json_array_append(vals, arg_types),
         ScalarFuncSig::JsonMergePatchSig => json_merge_patch(vals, arg_types),
         _ => Err(EvalError::Unsupported("unknown JSON protobuf signature")),

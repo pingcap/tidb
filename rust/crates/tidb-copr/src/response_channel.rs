@@ -107,11 +107,20 @@ pub enum ResponseChannelError {
     Unsupported(ResponseChannelUnsupported),
     /// Raw bytes were not a valid checked-in `tipb.SelectResponse`.
     Decode(String),
-    /// The response carried a TiKV or registered storage/SQL error.
+    /// The `tipb.SelectResponse` carried an error (Go `selectResp.Error`).
     SelectResponse {
         /// TiKV error code.
         code: i32,
         /// TiKV error message.
+        message: String,
+    },
+    /// The response iterator failed on the TiDB side with a SQL error (Go
+    /// `resp.Next`'s error: `tidb_max_keys_read`, a runaway kill, a resolved
+    /// lock's conflict, ...), which keeps its own code.
+    Sql {
+        /// MySQL error code.
+        code: u16,
+        /// Error message.
         message: String,
     },
     /// The caller's intermediate schemas do not match the response layout.
@@ -144,6 +153,7 @@ impl fmt::Display for ResponseChannelError {
             Self::SelectResponse { code, message } => {
                 write!(f, "TiKV select response error {code}: {message}")
             }
+            Self::Sql { code, message } => write!(f, "response iterator error {code}: {message}"),
             Self::IntermediateOutputCount { expected, actual } => write!(
                 f,
                 "the length of intermediate output types {expected} mismatches the length of got intermediate outputs {actual}"

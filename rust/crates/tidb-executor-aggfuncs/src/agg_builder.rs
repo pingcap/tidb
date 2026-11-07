@@ -15,7 +15,7 @@
 //! Go `pkg/executor/aggfuncs/builder.go`: the `AggFunc` an aggregate
 //! descriptor runs as, chosen by its name, mode and argument eval type.
 
-use tidb_datatype::{Datum, EvalType, FieldTypeCode};
+use tidb_datatype::{EvalType, FieldTypeCode};
 use tidb_expr::expression::Expression;
 use tidb_expression_aggregation::AggFuncDesc;
 use tidb_expression_aggregation::AggFunctionMode;
@@ -439,14 +439,20 @@ fn build_approx_percentile(ctx: &dyn Columns, agg_func_desc: &AggFuncDesc, ordin
         return None;
     }
     // Checked while building the descriptor.
-    let percent = match &agg_func_desc.base.args[1] {
-        Expression::Constant(c) => match c.value {
-            Datum::Int(v) => v,
-            Datum::UInt(v) => v as i64,
-            _ => return None,
-        },
-        _ => return None,
+    let Ok((percent, _)) =
+        tidb_expression_aggregation::approx_percentile_percent(&agg_func_desc.base.args[1], ctx)
+    else {
+        // Should not reach here.
+        return None;
     };
+    // Go builds the original-value forms for Complete, Partial1 and Final
+    // only; a Partial2 percentile has no implementation (nil).
+    if !matches!(
+        agg_func_desc.mode,
+        AggFunctionMode::Complete | AggFunctionMode::Partial1 | AggFunctionMode::Final
+    ) {
+        return None;
+    }
     let base = BasePercentile { percent, base: base_agg_func(agg_func_desc, ordinal) };
     // Go `getEvalTypeForApproxPercentile`: an ENUM, SET or BIT argument
     // (`EnumSetAsIntFlag` may make it look like an integer) orders nothing.

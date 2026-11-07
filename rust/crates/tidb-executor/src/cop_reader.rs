@@ -1016,8 +1016,13 @@ struct CopRowStream {
 
 fn select_response_error(error: tidb_copr::response_channel::ResponseChannelError) -> StorageError {
     match error {
+        // Go `selectResult.fetchResp`: a `SelectResponse` error is
+        // `ClassTiKV.Synthesize`d; the iterator's own error is returned as is.
         tidb_copr::response_channel::ResponseChannelError::SelectResponse { code, message } => {
-            StorageError::Sql(tidb_dbterror::ErrClass::tikv_select_response_error(code as u16, message))
+            StorageError::Sql(tidb_dbterror::ErrClass::synthesize_tikv(code as u16, message))
+        }
+        tidb_copr::response_channel::ResponseChannelError::Sql { code, message } => {
+            StorageError::Sql(tidb_dbterror::ErrClass::response_iterator_error(code, message))
         }
         other => StorageError::Backend(other.to_string()),
     }

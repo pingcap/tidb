@@ -124,10 +124,7 @@ impl SelectResponseSource {
                     Err(ResponseChannelError::Source(message))
                 }
                 Err(QueryResponseError::Sql { code, message }) => {
-                    Err(ResponseChannelError::SelectResponse {
-                        code: i32::from(code),
-                        message,
-                    })
+                    Err(ResponseChannelError::Sql { code, message })
                 }
                 Err(QueryResponseError::Cancelled) => Err(ResponseChannelError::Cancelled),
             },

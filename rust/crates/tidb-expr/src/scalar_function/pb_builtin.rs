@@ -320,6 +320,7 @@ impl PbBuiltin {
             // the root tier's evaluators over the argument values.
             Md5 => Kernel::Values(md5_values),
             Crc32 => Kernel::Values(crc32_values),
+            Concat => Kernel::Values(crate::string_fn::concat_with_context),
             ConcatWs => Kernel::Values(crate::string_fn::concat_ws_with_context),
             Acos => Kernel::Values(crate::math_fn::acos),
             Asin => Kernel::Values(crate::math_fn::asin),
@@ -365,7 +366,8 @@ impl PbBuiltin {
             RegexpSubstrSig => Kernel::RegexpFamily("REGEXP_SUBSTR"),
             RegexpInStrSig => Kernel::RegexpFamily("REGEXP_INSTR"),
             RegexpReplaceSig => Kernel::RegexpFamily("REGEXP_REPLACE"),
-            JsonMemberOfSig | JsonReplaceSig | JsonArrayAppendSig | JsonMergePatchSig => {
+            JsonMemberOfSig | JsonReplaceSig | JsonArrayAppendSig | JsonMergePatchSig
+            | JsonExtractSig => {
                 Kernel::Json
             }
             AddDateDatetimeDecimal

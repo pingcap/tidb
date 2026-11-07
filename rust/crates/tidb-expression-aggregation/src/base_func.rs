@@ -253,24 +253,7 @@ impl BaseFuncDesc {
         if self.args[1].const_level() == ConstLevel::NONE {
             return Err(AggDescError::ApproxPercentileNotConstant);
         }
-        let percentage = tidb_expr::eval_expression_once(&self.args[1], ctx)
-            .map_err(|_| AggDescError::ApproxPercentileInvalidArgument)?;
-        let (percent, is_null) = match &percentage {
-            Datum::Null => (0, true),
-            Datum::Int(v) => (*v, false),
-            Datum::UInt(v) => (*v as i64, false),
-            Datum::Real(v) | Datum::Float32(v) => (v.to_bits() as i64, false),
-            Datum::Decimal(_) => (0, false),
-            Datum::String(_) | Datum::Bytes(_) => {
-                tidb_expr::cast::report_int_truncation(&percentage, ctx)
-                    .map_err(|_| AggDescError::ApproxPercentileInvalidArgument)?;
-                let converted = percentage
-                    .to_i64_in(&ctx.time_zone())
-                    .map_err(|_| AggDescError::ApproxPercentileInvalidArgument)?;
-                (converted.value, false)
-            }
-            _ => return Err(AggDescError::ApproxPercentileInvalidArgument),
-        };
+        let (percent, is_null) = approx_percentile_percent(&self.args[1], ctx)?;
         if percent <= 0 || percent > 100 || is_null {
             if is_null {
                 return Err(AggDescError::ApproxPercentileNullPercentage);
@@ -784,4 +767,33 @@ fn default_collation_for_charset(charset: &str) -> Option<String> {
         "gbk" => Some("gbk_chinese_ci".to_owned()),
         _ => None,
     }
+}
+
+/// Go `aggFuncDesc.Args[1].EvalInt(ctx, chunk.Row{})` of APPROX_PERCENTILE's
+/// constant percentage, read by `typeInfer4ApproxPercentile` and
+/// `aggfuncs.buildApproxPercentile` alike: `Constant.EvalInt` converts
+/// strings but reads the stored integer field for numeric literals,
+/// including the bit representation of REAL. The flag is SQL NULL.
+pub fn approx_percentile_percent(
+    arg: &Expression,
+    ctx: &dyn Columns,
+) -> Result<(i64, bool), AggDescError> {
+    let percentage = tidb_expr::eval_expression_once(arg, ctx)
+        .map_err(|_| AggDescError::ApproxPercentileInvalidArgument)?;
+    Ok(match &percentage {
+        Datum::Null => (0, true),
+        Datum::Int(v) => (*v, false),
+        Datum::UInt(v) => (*v as i64, false),
+        Datum::Real(v) | Datum::Float32(v) => (v.to_bits() as i64, false),
+        Datum::Decimal(_) => (0, false),
+        Datum::String(_) | Datum::Bytes(_) => {
+            tidb_expr::cast::report_int_truncation(&percentage, ctx)
+                .map_err(|_| AggDescError::ApproxPercentileInvalidArgument)?;
+            let converted = percentage
+                .to_i64_in(&ctx.time_zone())
+                .map_err(|_| AggDescError::ApproxPercentileInvalidArgument)?;
+            (converted.value, false)
+        }
+        _ => return Err(AggDescError::ApproxPercentileInvalidArgument),
+    })
 }
