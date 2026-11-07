@@ -3091,11 +3091,21 @@ func shouldRemapRedundantBaseColumn(planCtx *exprRewriterPlanCtx, clause clauseC
 	return name.Redundant && name.OrigTblName.L != ""
 }
 
+// fieldNameLookupHookForTest, when set in tests, is told for each column
+// reference resolved by findFieldName whether the projection name index served it.
+var fieldNameLookupHookForTest func(v *ast.ColumnName, indexed bool)
+
 func (er *expressionRewriter) findFieldName(v *ast.ColumnName) (int, error) {
 	if planCtx := er.planCtx; planCtx != nil && planCtx.builder != nil {
 		if nameIdx := planCtx.builder.projNameIndex; nameIdx.Covers(er.names) {
+			if intest.InTest && fieldNameLookupHookForTest != nil {
+				fieldNameLookupHookForTest(v, true)
+			}
 			return nameIdx.FindFieldName(v)
 		}
+	}
+	if intest.InTest && fieldNameLookupHookForTest != nil {
+		fieldNameLookupHookForTest(v, false)
 	}
 	return expression.FindFieldName(er.names, v)
 }
