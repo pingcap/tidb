@@ -247,6 +247,31 @@ fn compile_trigger(
     if let Some((_, index_name)) = &lookup_index {
         access.push_str(&format!(", index:{index_name}"));
     }
+    // Go `buildFKCheck`: an integer handle is the exclusive record key; an
+    // index is exclusive when the constraint covers all its columns, and the
+    // record key when it is a clustered primary key.
+    let (idx_is_primary_key, idx_is_exclusive) = match lookup_id {
+        None => (true, true),
+        Some(id) => catalog
+            .table(table_schema, table_name)
+            .and_then(|table| {
+                let table = table.read();
+                let common_handle = table.is_common_handle;
+                let found = table
+                    .indices
+                    .iter_deref()
+                    .find(|index| index.read().id == id)
+                    .map(|index| {
+                        let index = index.read();
+                        (
+                            index.primary && common_handle,
+                            columns.len() == index.columns.iter_deref().count(),
+                        )
+                    });
+                found
+            })
+            .unwrap_or((false, false)),
+    };
     let (operator, info) = match kind {
         FkTriggerKind::ChildCheck => (
             "Foreign_Key_Check",
@@ -284,6 +309,9 @@ fn compile_trigger(
         parent_offsets,
         lookup_index: lookup_id,
         fk_string,
+        idx_is_primary_key,
+        idx_is_exclusive,
+        cascade_plans: Vec::new(),
     }))
 }
 

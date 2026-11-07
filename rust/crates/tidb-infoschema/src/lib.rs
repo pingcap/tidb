@@ -1266,16 +1266,6 @@ impl SessionExtendedInfoSchema {
             })
     }
 
-    /// A mutable handle for the referential-integrity paths, which reach
-    /// tables the statement did not name.
-    pub fn get_mut_for_foreign_key(
-        &mut self,
-        database: &str,
-        name: &str,
-    ) -> Option<&mut TableEntry> {
-        self.get_rows_mut_in(database, name)
-    }
-
     /// A mutable handle on a table of `database`, for the write paths.
     ///
     /// Taking it bumps [`SessionExtendedInfoSchema::version`], which is what a transaction's

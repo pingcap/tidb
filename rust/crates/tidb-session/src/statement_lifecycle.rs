@@ -192,6 +192,18 @@ impl StatementLifecycle<'_> {
         if autocommit {
             self.session.current_tso().clear();
         }
+        // Go `ActivateTxn` for a transaction outside `BEGIN`: the last
+        // transaction's footprint tracker goes.
+        if self.txn.explicit.is_none() {
+            self.session.detach_mem_db_footprint();
+        }
+        // Go `session.Txn(true)` -> `SetMemoryFootprintChangeHook`, once per
+        // transaction buffer (`MemHookSet`).
+        if !self.txn.buffer().memory_hook_is_set() {
+            if let Some(hook) = self.session.mem_db_footprint_hook() {
+                self.txn.buffer().set_memory_footprint_change_hook(hook);
+            }
+        }
         let read_ts = transactions::StatementReadTs::new(self.session.current_tso())
             .with_observer(self.session.transaction_observer())
             .with_phase_durations(self.session.phase_durations());

@@ -14,26 +14,16 @@
 
 //! Shared UPDATE/ODKU record policy (`executor.updateRecord`). The statement
 //! adapter owns rollback; this owner never tries to undo rows by writing SQL
-//! preimages back into the table. FK checks precede cascades after all records
+//! preimages back into the table. Each written row hands the statement's
+//! foreign-key checks and cascades its change; they run once all records
 //! have been written, as in `ExecStmt.handleForeignKeyTrigger`.
 
 use super::*;
+use crate::foreign_key::WithForeignKeyTrigger;
+use std::cell::RefCell;
 
 pub(crate) struct UpdateRecords<'a> {
-    triggers: &'a [tidb_planner_core_operator_physicalop::FkTriggerNode],
-    tables: Vec<UpdateTable>,
-}
-
-struct UpdateTable {
-    database: String,
-    name: String,
-    updates: Vec<ForeignKeyUpdate>,
-}
-
-struct ForeignKeyUpdate {
-    old: Vec<Datum>,
-    new: Vec<Datum>,
-    ignore: bool,
+    fk: &'a RefCell<WithForeignKeyTrigger>,
 }
 
 #[derive(Clone, Copy)]
@@ -63,11 +53,8 @@ impl UpdateOutcome {
 }
 
 impl<'a> UpdateRecords<'a> {
-    pub(crate) fn new(triggers: &'a [tidb_planner_core_operator_physicalop::FkTriggerNode]) -> Self {
-        Self {
-            triggers,
-            tables: Vec::new(),
-        }
+    pub(crate) fn new(fk: &'a RefCell<WithForeignKeyTrigger>) -> Self {
+        Self { fk }
     }
 
     /// Assignments and on-update timestamps have been evaluated by the caller.
@@ -88,14 +75,6 @@ impl<'a> UpdateRecords<'a> {
         ctx: &crate::StmtContext,
     ) -> Result<UpdateOutcome, DriverError> {
         let _region = tidb_tracing::start_thread_region_ex("executor.updateRecord");
-        if self.triggers.iter().any(|trigger| {
-            matches!(
-                trigger.kind,
-                tidb_planner_core_operator_physicalop::FkTriggerKind::Cascade { .. }
-            )
-        }) {
-            ctx.mark_fk_cascades();
-        }
         let entry = catalog.get_in(database, name).ok_or_else(|| {
             DriverError::from(
                 tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
@@ -129,62 +108,18 @@ impl<'a> UpdateRecords<'a> {
                 Some(&listed),
             )?;
         }
-        let fk_target = if crate::foreign_key::has_triggers(self.triggers, database, name) {
-            let index = self
-                .tables
-                .iter()
-                .position(|table| table.database == database && table.name == name)
-                .unwrap_or_else(|| {
-                    self.tables.push(UpdateTable {
-                        database: database.to_owned(),
-                        name: name.to_owned(),
-                        updates: Vec::new(),
-                    });
-                    self.tables.len() - 1
-                });
-            Some(index)
-        } else {
-            None
-        };
-        if fk_target.is_some() && ignore {
-            let check = crate::foreign_key::require_child_rows(
-                catalog,
-                self.triggers,
-                database,
-                name,
-                std::slice::from_ref(new),
-                ctx,
-            )
-            .and_then(|()| {
-                // Go `updateRecord` under IGNORE hands every FK check the NEW
-                // row (`checkFKIgnoreErr(ctx, sctx, fkChecks, newData)`) and
-                // skips `updateRowNeedToCheck`, so a referred-side check asks
-                // whether a child references the new key, as a deletion of
-                // that key would.
-                crate::foreign_key::check_parent_changes(
-                    catalog,
-                    self.triggers,
-                    database,
-                    name,
-                    &[crate::foreign_key::ParentChange::Delete(new)],
-                    ctx,
-                )
-            });
-            if let Err(error) = check {
-                if error.equal(&tidb_plannererrors::ERR_NO_REFERENCED_ROW2)
-                    || error.equal(&tidb_plannererrors::ERR_ROW_IS_REFERENCED2)
-                {
-                    let warning = error.to_mysql_error();
-                    ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
-            tidb_context::WarningLevel::Warning,
-            warning.code,
-            warning.message.clone(),
-            warning.identity,
-        ));
-                    return Ok(UpdateOutcome::ForeignKeySkipped);
-                }
-                return Err(error);
-            }
+        let fk_target = self.fk.borrow().has_triggers(database, name);
+        // Go `updateRecord` step 5 under IGNORE: every FK check is handed the
+        // NEW row (`checkFKIgnoreErr(ctx, sctx, fkChecks, newData)`), so a
+        // referred-side check asks whether a child references the new key.
+        if fk_target
+            && ignore
+            && self
+                .fk
+                .borrow_mut()
+                .check_fk_ignore_err(catalog, database, name, new, ctx)?
+        {
+            return Ok(UpdateOutcome::ForeignKeySkipped);
         }
         let exchange_check =
             super::exchange_partition::exchange_partition_check(catalog, database, name)?;
@@ -262,74 +197,16 @@ impl<'a> UpdateRecords<'a> {
                 }
             }
         }
-        // Go's `FKCheckExec` keeps the rows' keys without a memory tracker.
-        if let Some(index) = fk_target {
-            self.tables[index].updates.push(ForeignKeyUpdate {
-                old: old.to_vec(),
-                new: new.clone(),
-                ignore,
-            });
+        // Go `updateRecord`'s tail: `updateRowNeedToCheck` unless IGNORE
+        // checked the row already, and every cascade's `onUpdateRow`. The
+        // checks and cascades keep keys and values without a memory tracker.
+        if fk_target {
+            self.fk
+                .borrow_mut()
+                .on_update_row(catalog, database, name, old, new, ignore, ctx)?;
         }
+        ctx.add_updated_rows(1);
         Ok(UpdateOutcome::Changed)
-    }
-
-    pub(crate) fn finish(
-        self,
-        catalog: &mut SessionExtendedInfoSchema,
-        ctx: &crate::StmtContext,
-    ) -> Result<(), DriverError> {
-        // All checks see the final statement buffer, including writes to a
-        // parent through a later joined target. A failure is returned to the
-        // statement adapter so it also rolls back dependent-table writes.
-        for table in self.tables.iter().filter(|table| !table.updates.is_empty()) {
-            let (database, name, updates) = (&table.database, &table.name, &table.updates);
-            let checked: Vec<_> = updates.iter().filter(|update| !update.ignore).collect();
-            let old: Vec<_> = checked.iter().map(|update| update.old.clone()).collect();
-            let new: Vec<_> = checked.iter().map(|update| update.new.clone()).collect();
-            crate::foreign_key::require_updated_child_rows(
-                catalog,
-                self.triggers,
-                database,
-                name,
-                &old,
-                &new,
-                ctx,
-            )?;
-            let changes: Vec<_> = checked
-                .iter()
-                .map(|update| crate::foreign_key::ParentChange::Update {
-                    old: &update.old,
-                    new: &update.new,
-                })
-                .collect();
-            crate::foreign_key::check_parent_changes(
-                catalog,
-                self.triggers,
-                database,
-                name,
-                &changes,
-                ctx,
-            )?;
-        }
-        for table in self.tables.iter().filter(|table| !table.updates.is_empty()) {
-            let (database, name, updates) = (&table.database, &table.name, &table.updates);
-            let changes: Vec<_> = updates
-                .iter()
-                .map(|update| crate::foreign_key::ParentChange::Update {
-                    old: &update.old,
-                    new: &update.new,
-                })
-                .collect();
-            crate::foreign_key::cascade_parent_changes(
-                catalog,
-                self.triggers,
-                database,
-                name,
-                &changes,
-                ctx,
-            )?;
-        }
-        Ok(())
     }
 }
 

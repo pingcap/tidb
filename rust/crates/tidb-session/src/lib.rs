@@ -373,6 +373,9 @@ pub struct Session {
     /// Whether the last statement failed, so its allocator is recreated
     /// (Go `ClearAlloc(&alloc, hasErr)`).
     chunk_alloc_failed: bool,
+    /// Go `SessionVars.MemDBFootprint`: the transaction buffer's size,
+    /// counted under the session tracker that `tidb_mem_quota_query` limits.
+    mem_db_footprint: Arc<std::sync::Mutex<Option<Arc<tidb_memory::Tracker>>>>,
     global_config_syncer: Option<Arc<tidb_domain_globalconfigsync::GlobalConfigSyncer>>,
     catalog: SharedCatalog,
     /// The system session an account statement's executor runs its
@@ -900,6 +903,7 @@ impl Session {
         Session {
             chunk_alloc: tidb_chunk::alloc::ChunkAllocator::new(),
             chunk_alloc_failed: false,
+            mem_db_footprint: Arc::default(),
             catalog,
             account_sql: None,
             account_statement_privilege_cache: None,
@@ -2783,6 +2787,40 @@ impl Session {
         // rather than itself (that SELECT matches no binding of its own).
         self.vars.prev_found_in_binding = std::mem::take(&mut self.vars.found_in_binding);
         Ok(())
+    }
+
+    /// Go `baseTxnContextProvider.ActivateTxn`'s `MemDBFootprint.Detach()`:
+    /// a new transaction no longer counts the last one's buffer.
+    pub(crate) fn detach_mem_db_footprint(&self) {
+        if let Some(tracker) = self
+            .mem_db_footprint
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
+            tracker.detach();
+        }
+    }
+
+    /// Go `session.SetMemoryFootprintChangeHook`'s hook: the footprint
+    /// tracker (made on first use, attached to the session tracker) holds the
+    /// buffer's size; `None` when `TxnTotalSizeLimit` is not the default, as
+    /// Go leaves the old size-limit mechanism alone then.
+    pub(crate) fn mem_db_footprint_hook(&self) -> Option<Arc<dyn Fn(u64) + Send + Sync>> {
+        if tidb_txnkv::txn_total_size_limit() != tidb_txnkv::DEFAULT_TXN_TOTAL_SIZE_LIMIT {
+            return None;
+        }
+        let footprint = Arc::clone(&self.mem_db_footprint);
+        let session = Arc::clone(self.session_memory.session_tracker());
+        Some(Arc::new(move |memory: u64| {
+            let mut footprint = footprint.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let tracker = footprint.get_or_insert_with(|| {
+                let tracker = tidb_memory::Tracker::new(tidb_memory::LABEL_FOR_MEM_DB, -1);
+                tracker.attach_to(&session);
+                tracker
+            });
+            tracker.replace_bytes_used(i64::try_from(memory).unwrap_or(i64::MAX));
+        }))
     }
 
     fn finish_statement_execution(

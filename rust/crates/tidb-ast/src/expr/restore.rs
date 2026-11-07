@@ -57,6 +57,7 @@ impl Expr {
                 panic!("Format is not implemented for charset binary literals")
             }
             Self::Null => out.push_str("NULL"),
+            Self::Value(value) => out.push_str(&value.restored),
             Self::Bool(true) => out.push_str("TRUE"),
             Self::Bool(false) => out.push_str("FALSE"),
             Self::Default(None) => out.push_str("DEFAULT"),
@@ -452,6 +453,7 @@ impl Expr {
                 value.restore_into_with_context(out, context);
             }
             Expr::Null => out.push_str("NULL"),
+            Expr::Value(value) => out.push_str(&value.restored),
             Expr::Bool(true) => out.push_str("TRUE"),
             Expr::Bool(false) => out.push_str("FALSE"),
             Expr::Default(column) => {

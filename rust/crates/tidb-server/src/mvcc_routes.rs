@@ -328,7 +328,7 @@ fn handle_delete_key(
         };
         let idx_row = form_value2_datum_row(values, &idx_cols)?;
         kv_table
-            .gen_index_key(idx, idx_row, &handle, physical_id, &tidb_datatype::SessionTimeZone::utc())
+            .gen_index_key(idx, idx_row, Some(&handle), physical_id, &tidb_datatype::SessionTimeZone::utc())
             .map_err(|error| format!("{error:?}"))?
             .0
     };
@@ -642,7 +642,7 @@ fn get_mvcc_by_idx_value(
 ) -> Result<String, String> {
     let idx_row = form_value2_datum_row(values, idx_cols)?;
     let (mut encoded_key, _) = kv_table
-        .gen_index_key(idx, idx_row, handle, physical_id, &tidb_datatype::SessionTimeZone::utc())
+        .gen_index_key(idx, idx_row, Some(handle), physical_id, &tidb_datatype::SessionTimeZone::utc())
         .map_err(|error| format!("{error:?}"))?;
     let data = store.mvcc_get_by_key(&encoded_key)?;
     let region_id = store.region_id_by_key(&encoded_key)?;

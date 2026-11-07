@@ -215,6 +215,16 @@ impl std::fmt::Debug for ParamValue {
     }
 }
 
+/// See [`Expr::Value`]: the datum (as a [`ParamValue`], which the AST does
+/// not interpret) and its restored SQL text, Go `ValueExpr.Restore`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ValueExpr {
+    /// The datum and its type, read back by the expression rewriter.
+    pub value: ParamValue,
+    /// Go `ValueExpr.Restore`'s text of the datum.
+    pub restored: String,
+}
+
 /// A scalar expression.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
@@ -299,6 +309,13 @@ pub enum Expr {
     },
     /// The `NULL` literal.
     Null,
+    /// Go `driver.ValueExpr` built around a datum rather than parsed from SQL
+    /// text (`&driver.ValueExpr{Datum: d}` with its `Type` set to a column's):
+    /// the values Go's foreign-key cascade writes into the statements it
+    /// generates (`GenCascadeDeleteAST`, `GenCascadeUpdateAST`), so no datum
+    /// goes through a text round trip. The AST does not know the datum's
+    /// type; the expression rewriter reads it back.
+    Value(ValueExpr),
     /// A boolean literal (`TRUE` / `FALSE`).
     Bool(bool),
     /// `DEFAULT` or `DEFAULT(column)`. `None` is the bare value placeholder
@@ -1100,6 +1117,7 @@ impl Expr {
             | Self::CharsetString { .. }
             | Self::CharsetBinary { .. }
             | Self::Null
+            | Self::Value(_)
             | Self::Bool(_) => FLAG_CONSTANT,
         }
     }
@@ -1293,6 +1311,9 @@ impl crate::Visitable for Expr {
                 let _ = (offset, order, in_execute, value, projection_offset);
             }
             Self::Int(field_0) => {
+                let _ = field_0;
+            }
+            Self::Value(field_0) => {
                 let _ = field_0;
             }
             Self::Decimal(field_0) => {

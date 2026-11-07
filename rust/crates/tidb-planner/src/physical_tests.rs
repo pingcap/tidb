@@ -419,6 +419,7 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
         go_operator: "Update".to_owned(),
         select_plan: Some(Box::new(index_merge)),
         update_expressions: Vec::new(),
+        plan_id: 14,
     });
 
     let rebuilt = template

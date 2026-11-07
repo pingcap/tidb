@@ -797,10 +797,6 @@ impl StatementMemory {
 pub mod label {
     /// Go `InsertValues.memTracker`, shared by `INSERT` and `REPLACE`.
     pub const INSERT: i64 = 3;
-    /// The `UpdateExec`/`DeleteExec` a foreign-key cascade builds for its
-    /// child table (Go `FKCascadeExec.buildExecutor`). The cascade itself
-    /// accounts nothing in Go -- the sub-statement's own executor does.
-    pub const FK_CASCADE: i64 = 4;
 }
 
 /// The write path's memory accounting: one operator tracker plus the check

@@ -1911,8 +1911,46 @@ fn physical_explain_operator(
                 })
                 .unwrap_or_default();
             // Go `flat_plan.go`: the FK checks and cascades flatten as the
-            // DML root's remaining children, after the select source.
+            // DML root's remaining children, after the select source, and a
+            // cascade's `CascadePlans` as its own children.
             for trigger in &root.fk_triggers {
+                // Go `getRuntimeInfoStr`: a trigger's root stats hold only the
+                // group stats it registered (`FKCheckRuntimeStats` /
+                // `FKCascadeRuntimeStats`), whose actRows is 0.
+                let (actual_rows, execution_info) = match runtime {
+                    Some(_) => (
+                        Some(0),
+                        Some(
+                            statement_context
+                                .executor_runtime_stats_source()
+                                .and_then(|source| {
+                                    source.root_group_runtime_info(i64::from(trigger.id))
+                                })
+                                .unwrap_or_default(),
+                        ),
+                    ),
+                    None => (None, None),
+                };
+                let cascade_plans = trigger
+                    .cascade_plans
+                    .iter()
+                    .map(|plan| {
+                        physical_explain_operator(
+                            costs,
+                            eval_ctx,
+                            statement_context,
+                            brief_binary,
+                            plan,
+                            catalog,
+                            ExplainTask::Root,
+                            "",
+                            runtime,
+                            ignore_explain_id_suffix,
+                            index_join_context,
+                            probe_count,
+                        )
+                    })
+                    .collect();
                 children.push(ExplainOperator {
                     operator: trigger.operator.to_owned(),
                     id: trigger.id,
@@ -1920,8 +1958,8 @@ fn physical_explain_operator(
                     estimated_rows: Some(0.0),
                     estimated_cost: None,
             cost_formula: None,
-                    actual_rows: None,
-                    execution_info: None,
+                    actual_rows,
+                    execution_info,
                     memory_info: None,
                     disk_info: None,
                     task: ExplainTask::Root,
@@ -1929,7 +1967,7 @@ fn physical_explain_operator(
                         trigger.access.clone(),
                     ))),
                     operator_info: trigger.info.clone(),
-                    children: Vec::new(),
+                    children: cascade_plans,
                     fixed_id: None,
                     build_side_swapped: false,
                 });

@@ -60,18 +60,6 @@ use tidb_txnkv::Key;
 /// or a cursor over the stored bytes.
 /// Go's reader executors over a table (`TableReader`, `IndexReader`, `IndexLookUp`, `PointGet`): the executor's reads of a [`TableCommon`].
 pub trait KvTableReader {
-    /// Go FKCheckExec's exact/prefix access, shared with cascade selection.
-    /// Existence checks request one handle and never decode unrelated rows.
-    /// The storage owner merges the transaction's current writes/tombstones.
-    fn foreign_key_handles(
-        &mut self,
-        store: &mut dyn TableStorage,
-        index_id: Option<i64>,
-        values: &[Datum],
-        zone: &SessionTimeZone,
-        limit: usize,
-    ) -> Result<Vec<TableHandle>, KvTableError>;
-
     /// Legacy zone-only point read retained for unmigrated DML/FK callers.
     /// Origin defaults use the exact former `DEFAULT_STATEMENT_FLAGS` behavior.
     fn get_row_by_handle(
@@ -641,95 +629,6 @@ pub trait KvTableReader {
 }
 
 impl KvTableReader for TableCommon {
-    fn foreign_key_handles(
-        &mut self,
-        store: &mut dyn TableStorage,
-        index_id: Option<i64>,
-        values: &[Datum],
-        zone: &SessionTimeZone,
-        limit: usize,
-    ) -> Result<Vec<TableHandle>, KvTableError> {
-        if self.partition().is_some() {
-            return Err(KvTableError::Decode(
-                "foreign keys do not support partitioned tables".into(),
-            ));
-        }
-        let Some(index_id) = index_id else {
-            let handle = match values {
-                [Datum::Int(value)] => TableHandle::Int(*value),
-                [Datum::UInt(value)] => TableHandle::Int(*value as i64),
-                _ => {
-                    return Err(KvTableError::Encode(
-                        "foreign key integer handle is invalid".into(),
-                    ))
-                }
-            };
-            return Ok(self
-                .stored_record(store, &handle)?
-                .map(|_| handle)
-                .into_iter()
-                .collect());
-        };
-        let index = self
-            .indexes()
-            .iter()
-            .find(|index| index.read().id == index_id)
-            .ok_or_else(|| KvTableError::Decode("foreign key index is missing".into()))?;
-        if index.clustered_primary {
-            let encoded = tidb_codec::Encoder::new(self.use_new_collation())
-                .encode_key_in_timezone(zone, values)
-                .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
-            let handle = tidb_txnkv::CommonHandle::new(encoded)
-                .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
-            let handle = TableHandle::Common(handle.encoded().to_vec());
-            if values.len() == index.column_offsets.len() {
-                return Ok(self
-                    .stored_record(store, &handle)?
-                    .map(|_| handle)
-                    .into_iter()
-                    .collect());
-            }
-            let low = Key::from_bytes(encode_row_key_with_handle(
-                self.table_id(),
-                &handle.record_handle(),
-            ));
-            let high = low.prefix_next();
-            let mut iter = store.iter(Some(&low), Some(&high))?;
-            let mut handles = Vec::new();
-            while iter.valid() && handles.len() < limit {
-                handles.push(TableHandle::Common(
-                    tidb_tablecodec::table_key::cut_row_key_prefix(iter.key().as_bytes()).to_vec(),
-                ));
-                if handles.len() < limit {
-                    iter.next()?;
-                }
-            }
-            return Ok(handles);
-        }
-        if index.read().unique && values.len() == index.column_offsets.len() && !index.has_prefix() {
-            return Ok(self
-                .lookup_unique(store, index_id, values, zone)?
-                .into_iter()
-                .collect());
-        }
-        let range = Range {
-            low_val: values.to_vec(),
-            high_val: values.to_vec(),
-            collators: crate::access_path::key_collators(values, values),
-            low_exclude: false,
-            high_exclude: false,
-        };
-        let mut cursor = self.index_range_cursor(store, index_id, &range, zone)?;
-        let mut handles = Vec::new();
-        while handles.len() < limit {
-            let Some(handle) = cursor.next_handle()? else {
-                break;
-            };
-            handles.push(handle);
-        }
-        Ok(handles)
-    }
-
     fn get_row_by_handle(
         &mut self,
         store: &mut dyn TableStorage,

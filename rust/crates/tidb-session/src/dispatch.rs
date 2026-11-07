@@ -2205,6 +2205,10 @@ impl Session {
                                 }),
                         };
                         self.drain_eval_warnings(&ctx);
+                        // Go's info is the statement context's message, which
+                        // a DELETE's foreign-key cascade `UPDATE` sets
+                        // (`UpdateExec.setMessage` from its `Close`).
+                        self.statement_message = ctx.message();
                         output
                     }
                     DmlStmt::ImportInto(import) => {

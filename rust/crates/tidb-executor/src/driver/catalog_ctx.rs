@@ -169,8 +169,12 @@ pub(crate) trait PlannerCatalogContext: Sized {
 }
 
 impl PlannerCatalogContext for PlannerCatalog {
+    /// Go `tableHasDirtyContent` -> `session.HasDirtyContent`: a table the
+    /// transaction wrote. An autocommit statement's own writes are dirty
+    /// content only to the foreign-key cascade statements it plans after
+    /// them, which read those tables through a `UnionScan`.
     fn with_statement_dirty_tables(self, ctx: &StmtContext) -> Self {
-        if ctx.pessimistic_transaction() || ctx.optimistic_transaction() {
+        if ctx.pessimistic_transaction() || ctx.optimistic_transaction() || ctx.plans_fk_cascade() {
             self.with_dirty_tables(ctx.staged_writes().dirty_table_ids())
         } else {
             self

@@ -341,6 +341,8 @@ mod coerce;
 pub mod collation_derive;
 pub mod column;
 pub mod constant;
+pub mod value_expr;
+pub use value_expr::ValueExprDatum;
 pub mod constant_fold;
 pub mod constant_propagation;
 mod go_flate;
@@ -830,6 +832,9 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
         // the chunk rewriter below retains the type annotation separately.
         Expr::CharsetBinary { value, .. } => eval_in(value, cols),
         Expr::Null => Ok(Datum::Null),
+        Expr::Value(value) => crate::ValueExprDatum::of(value)
+            .map(|value| value.datum.clone())
+            .ok_or(EvalError::Unsupported("value expression holds no datum")),
         Expr::Column(path) => cols
             .get(path)
             .ok_or(EvalError::Unsupported("unknown column")),

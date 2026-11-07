@@ -458,26 +458,31 @@ impl TableCommon {
 
     /// Go `table.Index.GenIndexKey(ec, loc, indexedValues, h, nil)` for
     /// the index `index_id` of this table on `physical_id` (the table or one
-    /// of its partitions): the key and whether its values are distinct.
+    /// of its partitions): the key and whether its values are distinct. A
+    /// `None` handle is Go's `nil`, the key of the values alone (a foreign
+    /// key check's lookup prefix).
     pub fn gen_index_key(
         &self,
         index_id: i64,
         values: Vec<Datum>,
-        handle: &TableHandle,
+        handle: Option<&TableHandle>,
         physical_id: i64,
         zone: &SessionTimeZone,
     ) -> Result<(Vec<u8>, bool), KvTableError> {
         let Some(index) = self.indexes.iter().find(|index| index.read().id == index_id) else {
             return Err(KvTableError::Decode("no such index".to_owned()));
         };
-        self.index_key_of_values(index, values, handle, physical_id, zone)
+        match handle {
+            Some(handle) => self.index_key_of_values(index, values, handle, physical_id, zone),
+            None => self.index_key_of_values_with_handle(index, values, None, physical_id, zone),
+        }
     }
 
     /// Go `GenIndexKey` over one value tuple.
     fn index_key_of_values(
         &self,
         index: &Index,
-        mut values: Vec<Datum>,
+        values: Vec<Datum>,
         handle: &TableHandle,
         physical_id: i64,
         zone: &SessionTimeZone,
@@ -493,6 +498,18 @@ impl TableCommon {
         } else {
             handle
         };
+        self.index_key_of_values_with_handle(index, values, Some(&handle), physical_id, zone)
+    }
+
+    /// Go `GenIndexKey` over one value tuple and an optional handle.
+    fn index_key_of_values_with_handle(
+        &self,
+        index: &Index,
+        mut values: Vec<Datum>,
+        handle: Option<&tidb_txnkv::Handle>,
+        physical_id: i64,
+        zone: &SessionTimeZone,
+    ) -> Result<(Vec<u8>, bool), KvTableError> {
         generate_index_key(
             Encoder::new(self.use_new_collation),
             Some(zone),
@@ -504,7 +521,7 @@ impl TableCommon {
                 physical_id
             },
             &mut values,
-            Some(&handle),
+            handle,
         )
         .map_err(|error| KvTableError::Encode(format!("{error:?}")))
     }

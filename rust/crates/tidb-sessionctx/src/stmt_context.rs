@@ -1083,9 +1083,18 @@ pub struct StmtContextData {
     /// Go `SessionVars.InTxn()`: an explicit or `autocommit = 0` transaction,
     /// as opposed to an autocommit statement's implicit one.
     in_transaction: bool,
-    /// Go `StmtCtx.ForeignKeyTriggerCtx.HasFKCascades` /
-    /// `InHandleForeignKeyTrigger`: the statement cascades foreign keys.
+    /// Go `StmtCtx.ForeignKeyTriggerCtx.HasFKCascades`: the statement's root
+    /// executor cascades foreign keys.
     fk_cascades: Arc<std::sync::atomic::AtomicBool>,
+    /// Go `StmtCtx.InHandleForeignKeyTrigger`: a foreign-key cascade
+    /// statement is running.
+    in_handle_foreign_key_trigger: Arc<std::sync::atomic::AtomicBool>,
+    /// Go `StmtCtx.UpdatedRows`: the rows the statement's updates changed,
+    /// the foreign-key cascade statements it ran included.
+    updated_rows: Arc<std::sync::atomic::AtomicU64>,
+    /// Whether a foreign-key cascade statement is being planned, after the
+    /// statement's own writes (see [`Self::plans_fk_cascade`]).
+    plans_fk_cascade: Arc<std::sync::atomic::AtomicBool>,
     /// Go `StmtCtx.AddAffectedRows` for a write whose statement answers rows
     /// (`EXPLAIN ANALYZE` of an INSERT/UPDATE/DELETE), which the result
     /// set's terminal OK packet reports.
@@ -3017,6 +3026,9 @@ impl StmtContext {
             pessimistic_transaction: false,
             in_transaction: false,
             fk_cascades: Arc::default(),
+            in_handle_foreign_key_trigger: Arc::default(),
+            updated_rows: Arc::default(),
+            plans_fk_cascade: Arc::default(),
             affected_rows: Arc::default(),
             optimistic_transaction: false,
             pessimistic_check_in_prewrite: false,
@@ -5032,13 +5044,24 @@ impl StmtContext {
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
+    /// Go `StmtCtx.InHandleForeignKeyTrigger`, set while
+    /// `handleForeignKeyCascade` runs the cascade statements.
+    pub fn set_in_handle_foreign_key_trigger(&self, handling: bool) {
+        self.in_handle_foreign_key_trigger
+            .store(handling, std::sync::atomic::Ordering::Relaxed);
+    }
+
     /// Go `updateRecord`'s choice against `table.SkipWriteUntouchedIndices`:
     /// an UPDATE rewrites untouched index entries inside a transaction or
     /// when foreign-key cascades follow ("the later foreign cascade executor
     /// may see data-index inconsistency in txn-mem-buffer").
     #[must_use]
     pub fn writes_untouched_indices(&self) -> bool {
-        self.in_transaction || self.fk_cascades.load(std::sync::atomic::Ordering::Relaxed)
+        self.in_transaction
+            || self
+                .in_handle_foreign_key_trigger
+                .load(std::sync::atomic::Ordering::Relaxed)
+            || self.fk_cascades.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Whether this statement is part of an optimistic transaction.
@@ -6040,6 +6063,34 @@ impl StmtContext {
             .message
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = message.into();
+    }
+
+    /// Marks the planning of a foreign-key cascade statement (Go
+    /// `FKCascadeExec.buildFKCascadePlan`), which runs after the statement's
+    /// `StmtCommit` put its writes in the transaction's membuffer.
+    pub fn set_plans_fk_cascade(&self, planning: bool) {
+        self.plans_fk_cascade
+            .store(planning, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether a foreign-key cascade statement is being planned: Go's
+    /// `HasDirtyContent` then sees the tables the statement wrote, an
+    /// autocommit statement's included.
+    #[must_use]
+    pub fn plans_fk_cascade(&self) -> bool {
+        self.plans_fk_cascade.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Go `StmtCtx.AddUpdatedRows`.
+    pub fn add_updated_rows(&self, rows: u64) {
+        self.updated_rows
+            .fetch_add(rows, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Go `StmtCtx.UpdatedRows`.
+    #[must_use]
+    pub fn updated_rows(&self) -> u64 {
+        self.updated_rows.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Go `StmtCtx.AddAffectedRows`.

@@ -2817,6 +2817,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     operator: &str,
     delete_prune_has_fk: Option<bool>,
     delete_multi: Option<tidb_planner::plan_builder::delete_pruning::DeleteMultiInput>,
+    on_delete_root: Option<&dyn Fn()>,
     write: Option<super::multi_dml::MultiDmlRef<'_>>,
 ) -> Result<DmlSourcePlan, tidb_planner_core_base::PlanError> {
     // Go builds an UPDATE/DELETE inside `builder.Build` (`buildUpdate` /
@@ -2875,6 +2876,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     builder.delete_prune_has_fk = delete_prune_has_fk;
     builder.delete_multi = delete_multi;
     builder.allocate_delete_root = operator.eq_ignore_ascii_case("Delete");
+    builder.on_delete_root = on_delete_root;
     // Go `buildUpdate`/`buildDelete` lock the read only for a single-table
     // source (`TableRefs.Right == nil` / `!IsMultiTable`); a multi-table
     // write locks the rows it writes instead.

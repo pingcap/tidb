@@ -2906,6 +2906,10 @@ pub struct PhysicalDmlRoot {
     /// What the planner decided about an `INSERT ... SELECT`'s source: the
     /// names of its outputs and how many of them fill the insert.
     pub insert_select: Option<InsertSelectOutput>,
+    /// Go `SessionVars.PlanID` once the statement's plan was built: where a
+    /// foreign-key cascade's plan, built while the statement runs, continues
+    /// the statement's plan ids.
+    pub plan_id: i32,
 }
 
 /// The operation selected by Go's BuildOn{Insert,Update,Delete}FKTriggers.
@@ -2954,6 +2958,15 @@ pub struct FkTriggerNode {
     /// Go `fk.String(db, table)`, the argument of the check's `FailedErr`
     /// (`ErrNoReferencedRow2` / `ErrRowIsReferenced2`).
     pub fk_string: String,
+    /// Go `FKCheck.IdxIsPrimaryKey`: the checked key is the record key, an
+    /// integer handle (`lookup_index` `None`) or a clustered primary key.
+    pub idx_is_primary_key: bool,
+    /// Go `FKCheck.IdxIsExclusive`: the constraint covers every column of
+    /// the key, so a value names one key rather than a key prefix.
+    pub idx_is_exclusive: bool,
+    /// Go `FKCascade.CascadePlans`: the cascade statements' plans, filled
+    /// while the statement runs, so only `EXPLAIN ANALYZE` shows them.
+    pub cascade_plans: Vec<Box<PhysicalPlan>>,
 }
 
 /// Go `physicalop.PushedDownLimit`.
@@ -5140,6 +5153,7 @@ impl PhysicalPlan {
                 update_tables: op.update_tables.clone(),
                 update_assigns: op.update_assigns.clone(),
                 insert_select: op.insert_select.clone(),
+                plan_id: op.plan_id,
             }),
             Self::TopN(op) => Self::TopN(PhysicalTopN {
                 base: base_of(&op.base),

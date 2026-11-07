@@ -712,6 +712,17 @@ impl MutationBuffer {
     pub fn memory_footprint(&self) -> u64 {
         self.state().memdb.memory_footprint()
     }
+    /// Go `txn.SetMemoryFootprintChangeHook`: `hook` hears the
+    /// authoritative MemDB's footprint each time it changes.
+    pub fn set_memory_footprint_change_hook(&self, hook: Arc<dyn Fn(u64) + Send + Sync>) {
+        self.state()
+            .memdb
+            .write(|buffer| buffer.set_memory_footprint_change_hook(hook));
+    }
+    /// Go `txn.MemHookSet`.
+    pub fn memory_hook_is_set(&self) -> bool {
+        self.state().memdb.read(|buffer| buffer.memory_hook_is_set())
+    }
     /// Clears the completed transaction buffer and SQL metadata.
     pub fn reset(&self) {
         let mut state = self.state();

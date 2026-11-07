@@ -13,28 +13,25 @@
 // limitations under the License.
 
 //! Go DeleteExec.removeRow / InsertValues.removeRow share record removal and
-//! onRemoveRowForFK. Ordinary checks see all statement writes; IGNORE checks
-//! one candidate before writing it. Statement staging owns rollback.
+//! onRemoveRowForFK. Under IGNORE a row's checks run before it is removed
+//! (`checkFKIgnoreErr`); otherwise its keys join the statement's checks,
+//! which run once every row is written. Statement staging owns rollback.
 
 use crate::WithStatementStore as _;
 use super::{kv_read_error, TableHandle};
 use crate::driver::{SessionExtendedInfoSchema, DriverError, TableEntry};
-use crate::foreign_key::{self, ParentChange};
+use crate::foreign_key::WithForeignKeyTrigger;
 use crate::StmtContext;
+use std::cell::RefCell;
 use tidb_datatype::Datum;
-use tidb_planner_core_operator_physicalop::FkTriggerNode;
 
 pub(crate) struct DeleteRecords<'a> {
-    triggers: &'a [FkTriggerNode],
-    tables: Vec<(String, String, Vec<(Vec<Datum>, bool)>)>,
+    fk: &'a RefCell<WithForeignKeyTrigger>,
 }
 
 impl<'a> DeleteRecords<'a> {
-    pub(crate) fn new(triggers: &'a [FkTriggerNode]) -> Self {
-        Self {
-            triggers,
-            tables: Vec::new(),
-        }
+    pub(crate) fn new(fk: &'a RefCell<WithForeignKeyTrigger>) -> Self {
+        Self { fk }
     }
 
     pub(crate) fn write(
@@ -47,28 +44,16 @@ impl<'a> DeleteRecords<'a> {
         ignore: bool,
         ctx: &StmtContext,
     ) -> Result<bool, DriverError> {
-        let has_triggers = foreign_key::has_triggers(self.triggers, database, name);
-        if has_triggers && ignore {
-            if let Err(error) = foreign_key::check_parent_changes(
-                catalog,
-                self.triggers,
-                database,
-                name,
-                &[ParentChange::Delete(old)],
-                ctx,
-            ) {
-                if error.equal(&tidb_plannererrors::ERR_ROW_IS_REFERENCED2) {
-                    let warning = error.to_mysql_error();
-                    ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
-            tidb_context::WarningLevel::Warning,
-            warning.code,
-            warning.message.clone(),
-            warning.identity,
-        ));
-                    return Ok(false);
-                }
-                return Err(error);
-            }
+        let has_triggers = self.fk.borrow().has_triggers(database, name);
+        // Go `DeleteExec`: under IGNORE, a row a check rejects is skipped.
+        if has_triggers
+            && ignore
+            && self
+                .fk
+                .borrow_mut()
+                .check_fk_ignore_err(catalog, database, name, old, ctx)?
+        {
+            return Ok(false);
         }
         match catalog.get_rows_mut_in(database, name) {
             Some(TableEntry::Kv(kv)) => {
@@ -83,56 +68,13 @@ impl<'a> DeleteRecords<'a> {
                 ))
             }
         }
-        // Go's `FKCheckExec` keeps the rows' keys without a memory tracker.
+        // Go `onRemoveRowForFK`: the row's keys and values are all the
+        // checks and cascades keep, without a memory tracker.
         if has_triggers {
-            let slot = self
-                .tables
-                .iter()
-                .position(|(db, table, _)| db == database && table == name)
-                .unwrap_or_else(|| {
-                    self.tables
-                        .push((database.to_owned(), name.to_owned(), Vec::new()));
-                    self.tables.len() - 1
-                });
-            self.tables[slot].2.push((old.to_vec(), ignore));
+            self.fk
+                .borrow_mut()
+                .on_remove_row_for_fk(catalog, database, name, old, ignore, ctx)?;
         }
         Ok(true)
-    }
-
-    pub(crate) fn finish(
-        self,
-        catalog: &mut SessionExtendedInfoSchema,
-        ctx: &StmtContext,
-    ) -> Result<(), DriverError> {
-        for (database, table, rows) in &self.tables {
-            let changes: Vec<_> = rows
-                .iter()
-                .filter(|(_, ignore)| !ignore)
-                .map(|(row, _)| ParentChange::Delete(row))
-                .collect();
-            foreign_key::check_parent_changes(
-                catalog,
-                self.triggers,
-                database,
-                table,
-                &changes,
-                ctx,
-            )?;
-        }
-        for (database, table, rows) in &self.tables {
-            let changes: Vec<_> = rows
-                .iter()
-                .map(|(row, _)| ParentChange::Delete(row))
-                .collect();
-            foreign_key::cascade_parent_changes(
-                catalog,
-                self.triggers,
-                database,
-                table,
-                &changes,
-                ctx,
-            )?;
-        }
-        Ok(())
     }
 }

@@ -74,6 +74,16 @@ impl PlanIdAllocator {
         }
     }
 
+    /// Go `SessionVars.PlanID` as a statement left it: an allocator whose
+    /// first [`Self::alloc`] returns `current + 1`, for a plan the statement
+    /// builds later (a foreign-key cascade's `OptimizeForForeignKeyCascade`).
+    #[must_use]
+    pub const fn continuing_from(current: i32) -> Self {
+        Self {
+            next: AtomicI32::new(current),
+        }
+    }
+
     /// Go `PlanID.Add(1)`: the next plan id.
     pub fn alloc(&self) -> i32 {
         let id = self.next.fetch_add(1, Ordering::Relaxed) + 1;

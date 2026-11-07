@@ -1978,6 +1978,7 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
         | Expr::Float(_)
         | Expr::Bool(_)
         | Expr::Null
+        | Expr::Value(_)
         | Expr::ParamMarker { .. }
         | Expr::String(_)
         | Expr::RawString(_)
@@ -2075,6 +2076,26 @@ fn rewrite_leaf_literal(
             Datum::Null,
             result_type::null_literal_type(),
         ))),
+        // Go `expressionRewriter.Leave`'s `*driver.ValueExpr` arm: the value's
+        // own type, NotNull by its kind, and the datum re-collated by that
+        // type (`v.Datum.SetValue(v.Datum.GetValue(), retType)`).
+        Expr::Value(value) => {
+            let value = crate::ValueExprDatum::of(value)
+                .ok_or(EvalError::Unsupported("value expression holds no datum"))?;
+            let mut field_type = value.field_type.clone();
+            if value.datum.is_null() {
+                field_type.del_flag(tidb_datatype::FieldTypeFlags::NOT_NULL);
+            } else {
+                field_type.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+            }
+            let datum = match &value.datum {
+                Datum::String(text) => {
+                    Datum::new_collation_string_datum(text.bytes().to_vec(), field_type.collation())
+                }
+                other => other.clone(),
+            };
+            Ok(Expression::Constant(Constant::new(datum, field_type)))
+        }
         // Go `ast.NewValueExpr(value, "", "")`, a value the parser built
         // rather than a SQL literal (`SET NAMES`' charset): no introducer
         // and no connection charset.

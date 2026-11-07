@@ -164,7 +164,7 @@ pub(crate) fn run_multi_update(
     fk_triggers: &[tidb_planner_core_operator_physicalop::FkTriggerNode],
     dml: &super::physical_builder::DmlExec,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
-) -> Result<u64, DriverError> {
+) -> Result<super::dml::UpdateWritten, DriverError> {
     let (tables, assigns) = layout;
     if tables.is_empty() {
         return Err(DriverError::unsupported(
@@ -305,7 +305,12 @@ pub(crate) fn run_multi_update(
     // Go `UpdateExec.updatedRowKeys`, per target position.
     let mut updated_row_keys: Vec<tidb_txnkv::MemAwareHandleMap<bool>> =
         tables.iter().map(|_| tidb_txnkv::MemAwareHandleMap::new()).collect();
-    let mut records = UpdateRecords::new(fk_triggers);
+    let fk = std::cell::RefCell::new(crate::foreign_key::WithForeignKeyTrigger::build(
+        fk_triggers,
+        catalog,
+    )?);
+    fk.borrow().prepare_fk_cascade_context(ctx);
+    let mut records = UpdateRecords::new(&fk);
     let mut matched_rows = 0u64;
     let mut touched_rows = 0u64;
     let mut changed_rows = 0u64;
@@ -502,16 +507,16 @@ pub(crate) fn run_multi_update(
     if let Some(runtime) = runtime {
         runtime.extend(collected);
     }
-    records.finish(catalog, ctx)?;
     super::dml::record_dml_rows_col_multiply(ctx, rows_col_multiply);
-    ctx.set_message(format!(
-        "Rows matched: {matched_rows}  Changed: {changed_rows}  Warnings: {}",
-        ctx.warning_count()
-    ));
-    Ok(if ctx.client_found_rows() {
-        touched_rows
-    } else {
-        changed_rows
+    drop(records);
+    Ok(super::dml::UpdateWritten {
+        affected: if ctx.client_found_rows() {
+            touched_rows
+        } else {
+            changed_rows
+        },
+        matched: matched_rows,
+        fk: fk.into_inner(),
     })
 }
 
@@ -600,7 +605,7 @@ pub(crate) fn run_multi_delete(
     fk_triggers: &[tidb_planner_core_operator_physicalop::FkTriggerNode],
     dml: &super::physical_builder::DmlExec,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
-) -> Result<u64, DriverError> {
+) -> Result<(u64, crate::foreign_key::WithForeignKeyTrigger), DriverError> {
     if tables.is_empty() {
         return Err(DriverError::unsupported(
             "a multi-table DELETE plan carries no table layout",
@@ -647,7 +652,12 @@ pub(crate) fn run_multi_delete(
         })?;
     }
 
-    let mut records = super::dml::delete_record::DeleteRecords::new(fk_triggers);
+    let fk = std::cell::RefCell::new(crate::foreign_key::WithForeignKeyTrigger::build(
+        fk_triggers,
+        catalog,
+    )?);
+    fk.borrow().prepare_fk_cascade_context(ctx);
+    let mut records = super::dml::delete_record::DeleteRecords::new(&fk);
     let mut deleted = 0;
     // Go `removeRowsInTblRowMap`'s `rowsColMultiply`.
     let mut rows_col_multiply = 0i64;
@@ -674,9 +684,8 @@ pub(crate) fn run_multi_delete(
         Ok(())
     })?;
     super::dml::record_dml_rows_col_multiply(ctx, rows_col_multiply);
-    records.finish(catalog, ctx)?;
-
-    Ok(deleted)
+    drop(records);
+    Ok((deleted, fk.into_inner()))
 }
 
 /// Go `handleInfoPair`: a `tblRowMap` row -- its table's columns of the

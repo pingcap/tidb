@@ -287,19 +287,72 @@ fn the_suite_s_oom_insert_is_8175_at_200_and_inserts_at_10000() {
     );
 }
 
-/// `executor/foreign_key.test`: `update t1 set id=id+100000 where id=1` under
-/// `tidb_mem_quota_query = 81920` is 8175 in TiDB **with the cascade
-/// unapplied** -- captured against a mock-store session: afterwards `select
-/// id,pid from t1 where id=1` is still `1 NULL`, 255 rows still hold `pid=1`,
-/// none holds `pid=100001`, and `sum(id)` is still 32896. Under the default
-/// quota the same statement repoints all 255 (`sum(id)` 132896).
+/// `executor/foreign_key.test` (`TestForeignKeyAndMemoryTracker`): under
+/// `tidb_mem_quota_query = 81920`, `update t1 set id=id+100000 where id=1`
+/// over a self-referencing table whose 255 other rows hold `pid=1` is 8175:
+/// the cascade `UPDATE` reads the table the statement just wrote through a
+/// `UnionScan` over its membuffer. The statement leaves `1 NULL`; with the
+/// checks off the same update goes through (recorded result).
 ///
-/// The suite builds its self-referencing constraint with `ALTER TABLE ... ADD
-/// FOREIGN KEY`, which this tier still refuses, so the parent and child are
-/// two tables here. Everything the quota decides is the same: 256 child rows
-/// of the same width, one parent row updated, the same 81920.
+/// The quota is reached only after the test's own preceding statements: the
+/// parent `Update_3`'s one-row child chunk takes the columns the session's
+/// chunk allocator kept from them (22.7 KB). A Go testkit run of exactly this
+/// sequence is 8175; without the `select count(*)` and `select sum(id)` it is
+/// not (statement peak 50755).
 #[test]
-fn a_cascade_past_the_quota_repoints_nothing_and_finishes_under_the_default() {
+fn a_self_referencing_cascade_past_the_quota_is_8175_as_go() {
+    let mut session = Session::new();
+    session.run("set @@foreign_key_checks=1").unwrap();
+    session
+        .run("create table t1 (id int auto_increment key, pid int, name varchar(200), index(pid))")
+        .unwrap();
+    session
+        .run("insert into t1 (name) values ('abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz')")
+        .unwrap();
+    for _ in 0..8 {
+        session.run("insert into t1 (name) select name from t1").unwrap();
+    }
+    session.run("select count(*) from t1").unwrap();
+    session.run("update t1 set pid=1 where id>1").unwrap();
+    session
+        .run("alter table t1 add foreign key (pid) references t1 (id) on update cascade")
+        .unwrap();
+    assert_eq!(
+        crate::tests_support::row_text(session.run("select sum(id) from t1")),
+        vec![vec!["32896".to_owned()]]
+    );
+    session.run("SET GLOBAL tidb_mem_oom_action='CANCEL'").unwrap();
+    session.run("set @@tidb_mem_quota_query=81920").unwrap();
+    let error = session
+        .run("update t1 set id=id+100000 where id=1")
+        .expect_err("the cascade must be stopped by the quota");
+    assert_eq!(error.to_mysql_error().code, 8175);
+    assert_eq!(
+        crate::tests_support::row_text(session.run("select id, ifnull(pid, 'NULL') from t1 where id = 1")),
+        vec![vec!["1".to_owned(), "NULL".to_owned()]]
+    );
+    session.run("set @@foreign_key_checks=0").unwrap();
+    session.run("update t1 set id=id+100000 where id=1").unwrap();
+    assert_eq!(
+        crate::tests_support::row_text(
+            session.run("select id, ifnull(pid, 'NULL') from t1 where id<3 or pid is null order by id")
+        ),
+        vec![
+            vec!["2".to_owned(), "1".to_owned()],
+            vec!["100001".to_owned(), "NULL".to_owned()],
+        ]
+    );
+}
+
+/// The same 256 child rows in a table of their own. The quota counts the
+/// session tracker, which holds the transaction buffer's footprint (Go
+/// `SetMemoryFootprintChangeHook`, here 122880 bytes), so the cascade goes
+/// past 81920: under `tidb_mem_oom_action = LOG` (a Go testkit session's
+/// default) the statement is only logged and repoints all 256 rows (`Rows
+/// matched: 1  Changed: 257`); under `CANCEL` the same update is 8175. A Go
+/// testkit run of exactly this sequence.
+#[test]
+fn a_cascade_into_another_table_exceeds_the_quota_only_under_cancel_as_go() {
     let mut session = Session::new();
     session.run("CREATE TABLE p (id INT PRIMARY KEY)").unwrap();
     session
@@ -317,31 +370,20 @@ fn a_cascade_past_the_quota_repoints_nothing_and_finishes_under_the_default() {
     session
         .run(&format!("INSERT INTO c VALUES {}", values.join(",")))
         .unwrap();
-
+    session.run("SET GLOBAL tidb_mem_oom_action = 'LOG'").unwrap();
     session.run("SET @@tidb_mem_quota_query = 81920").unwrap();
-    let error = session
-        .run("UPDATE p SET id = id + 100000")
-        .expect_err("the cascade must be stopped by the quota");
-    assert_eq!(error.to_mysql_error().code, 8175);
-    assert_eq!(
-        crate::tests_support::row_text(session.run("SELECT id FROM p")),
-        vec![vec!["1".to_owned()]],
-        "the parent row is unchanged"
-    );
-    assert_eq!(
-        crate::tests_support::row_text(session.run("SELECT count(*) FROM c WHERE pid = 1")),
-        vec![vec!["256".to_owned()]],
-        "and NOT ONE child row was repointed -- a half-applied cascade would be a \
-         silent wrong answer wearing a correct errno"
-    );
-
-    session.run("SET @@tidb_mem_quota_query = DEFAULT").unwrap();
     session.run("UPDATE p SET id = id + 100000").unwrap();
+    assert_eq!(session.statement_message(), "Rows matched: 1  Changed: 257  Warnings: 0");
     assert_eq!(
         crate::tests_support::row_text(session.run("SELECT count(*) FROM c WHERE pid = 100001")),
-        vec![vec!["256".to_owned()]],
-        "accept-control: with room the cascade repoints every child row"
+        vec![vec!["256".to_owned()]]
     );
+    session.run("UPDATE p SET id = 1").unwrap();
+    session.run("SET GLOBAL tidb_mem_oom_action = 'CANCEL'").unwrap();
+    let error = session
+        .run("UPDATE p SET id = id + 100000")
+        .expect_err("the cascade's buffer passes the quota");
+    assert_eq!(error.to_mysql_error().code, 8175);
 }
 
 /// The hash join's build-side spill (Go v1's `chunk.RowContainer` +

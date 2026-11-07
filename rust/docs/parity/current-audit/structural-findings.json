@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 29,
-    "open": 8,
-    "partial": 21
+    "open": 7,
+    "partial": 22
   },
   "findings": [
     {
@@ -48,7 +48,7 @@
       "id": "E02",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "`foreign_key.rs` enforces a foreign key by reading the referencing rows (`lookup_handles` / `cascade_at_depth`), where Go's `FKCheckExec` checks the referenced keys against the transaction (`checkKeys` / `checkIndexKeys`, with prefetch and locks) and `FKCascadeExec` builds a DELETE/UPDATE sub-statement (`GenCascadeDeleteAST`, `buildFKCascadePlan`) and runs it as an executor; and neither reports `FKCheckRuntimeStats` / `FKCascadeRuntimeStats`",
+      "finding": "A statement's affected rows are each DML executor's returned count (`written.affected` in `driver/dml.rs`), where Go's write paths add to `StmtCtx.AffectedRows` (`updateRecord`, `addRecord`, `removeRow` -> `AddAffectedRows`) and `AddAffectedRows` drops a foreign-key trigger's rows while `InHandleForeignKeyTrigger` is set; the port sets that flag around the cascade loop (`foreign_key.rs`) but nothing reads it for affected rows, so the cascade rows are excluded by the loop discarding its counts instead of by Go's gate",
       "go_owner": "`pkg/executor/foreign_key.go`"
     },
     {
@@ -102,10 +102,10 @@
     },
     {
       "id": "C03",
-      "status": "open",
+      "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "The session tracker carries no MemDB footprint: Go's `session.SetMemoryFootprintChangeHook` installs `txn.SetMemoryFootprintChangeHook`, whose hook keeps a `LabelForMemDB` tracker attached to `SessionVars.MemTracker` at the transaction buffer's size (`ReplaceBytesUsed`), and `tidb_mem_quota_query` limits that session tracker (`adapter.go` `MemTracker.SetBytesLimit`), so a statement's quota covers its executors plus the buffer it has written. This port never installs the client's `Transaction::set_memory_footprint_change_hook`, so the buffer is unaccounted: in `executor/foreign_key` `TestForeignKeyAndMemoryTracker` every operator matches Go's (`Update_3` 22.7 KB, `Update_9` 15.9 KB, `IndexLookUp_14` 33.6 KB, statement peak 50755) but the self-referencing cascade's 255-row buffer never brings the session past 81920, which blocks E02",
-      "go_owner": "`pkg/session/session.go` (`SetMemoryFootprintChangeHook`), `pkg/session/txn.go`, `pkg/executor/adapter.go` (`MemTracker.SetBytesLimit`)"
+      "finding": "The session tracker's `LabelForMemDB` child follows the transaction buffer's PAYLOAD (key, value and value-history bytes, kept incrementally in the client's `Art` / `Rbt`) and its hook fires on every write, where client-go's `MemDB.Mem()` is its arenas' CAPACITY (`arena.go` blocks doubling from 4 KB to 128 MB) and its hook fires only when an arena enlarges (`onMemChange`); the session-side hook, its detach in `ActivateTxn` and the non-default `TxnTotalSizeLimit` skip are Go's",
+      "go_owner": "client-go `internal/unionstore/arena/arena.go` (`enlarge`, `Capacity`, `onMemChange`), `internal/unionstore/art/art.go` (`Mem`)"
     },
     {
       "id": "E04",
@@ -216,6 +216,6 @@
     }
   ],
   "unresolved": 29,
-  "open": 8,
-  "partial": 21
+  "open": 7,
+  "partial": 22
 }

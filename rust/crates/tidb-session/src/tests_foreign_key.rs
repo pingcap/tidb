@@ -2953,3 +2953,465 @@ fn foreign_key_names_and_covering_indexes_follow_go() {
         .to_mysql_error();
     assert_eq!(error.code, 1553, "{}", error.message);
 }
+
+/// `EXPLAIN ANALYZE` rows as Go's `TestExplainAnalyzeDMLWithFKInfo` checks
+/// them: a foreign-key row whole, its non-zero durations as `D`; any other root row
+/// by its id and actRows, a cop row by its id.
+fn analyzed(session: &mut Session, sql: &str) -> Vec<String> {
+    let duration = |text: &str| {
+        let mut out = String::new();
+        let mut rest = text;
+        while let Some(start) = rest.find(|c: char| c.is_ascii_digit()) {
+            let tail = &rest[start..];
+            let digits = tail
+                .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+                .unwrap_or(tail.len());
+            let unit = ["ns", "µs", "ms", "s"]
+                .into_iter()
+                .find(|unit| tail[digits..].starts_with(unit));
+            out.push_str(&rest[..start]);
+            // A zero duration (`0s`) is kept: Go prints it for a check or
+            // cascade that had nothing to do.
+            match unit {
+                Some(unit) if rest[..start].ends_with(':') && &tail[..digits] != "0" => {
+                    out.push('D');
+                    rest = &tail[digits + unit.len()..];
+                }
+                _ => {
+                    out.push_str(&tail[..digits]);
+                    rest = &tail[digits..];
+                }
+            }
+        }
+        out.push_str(rest);
+        out
+    };
+    rows(session, sql)
+        .into_iter()
+        .map(|row| {
+            if row[0].contains("Foreign_Key_") {
+                format!(
+                    "{} {} {} {} {} {} {} {} {}",
+                    row[0],
+                    row[1],
+                    row[2],
+                    row[3],
+                    row[4],
+                    duration(&row[5]),
+                    row[6],
+                    row[7],
+                    row[8]
+                )
+            } else if row[3].starts_with("cop") {
+                row[0].clone()
+            } else {
+                format!("{} {}", row[0], row[2])
+            }
+        })
+        .collect()
+}
+
+/// Go `FKCheckExec.doCheck` / `checkRows` and `handleForeignKeyCascade`
+/// register `FKCheckRuntimeStats` / `FKCascadeRuntimeStats` on their plans,
+/// and each cascade's `CascadePlans` -- the `DELETE` / `UPDATE` it built and
+/// ran, its plan ids continuing the statement's -- shows under it. Pinned to
+/// Go's `TestExplainAnalyzeDMLWithFKInfo` statements, captured from Go.
+#[test]
+fn explain_analyze_reports_foreign_key_checks_and_cascades_as_go() {
+    let mut session = Session::new();
+    for sql in [
+        "create table t1 (id int key)",
+        "create table t2 (id int key, foreign key fk(id) references t1(id) ON UPDATE CASCADE ON DELETE CASCADE)",
+        "create table t3 (id int, unique index idx(id))",
+        "create table t4 (id int, index idx_id(id),foreign key fk(id) references t3(id))",
+        "create table t5 (id int key, id2 int, id3 int, unique index idx2(id2), index idx3(id3))",
+        "create table t6 (id int, id2 int, id3 int, index idx_id(id), index idx_id2(id2), \
+         foreign key fk_1 (id) references t5(id) ON UPDATE CASCADE ON DELETE SET NULL, \
+         foreign key fk_2 (id2) references t5(id2) ON UPDATE CASCADE, \
+         foreign key fk_3 (id3) references t5(id3) ON DELETE CASCADE)",
+        "insert into t1 values (1),(2),(3),(4),(5)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    assert_eq!(
+        analyzed(&mut session, "explain analyze insert into t2 values (1),(2),(3)"),
+        [
+            "Insert_1 0",
+            "└─Foreign_Key_Check_3 0.00 0 root table:t1 total:D, check:D, lock:D, foreign_keys:3 foreign_key:fk, check_exist N/A N/A",
+        ]
+    );
+    // `checkRows` counts the keys, `doCheck` has none left: no time.
+    assert_eq!(
+        analyzed(&mut session, "explain analyze insert ignore into t2 values (10),(11),(12)"),
+        [
+            "Insert_1 0",
+            "└─Foreign_Key_Check_3 0.00 0 root table:t1 total:0s, foreign_keys:3 foreign_key:fk, check_exist N/A N/A",
+        ]
+    );
+    assert_eq!(
+        analyzed(&mut session, "explain analyze update t2 set id=id+2 where id >1"),
+        [
+            "Update_4 0",
+            "├─TableReader_7 2",
+            "│ └─TableRangeScan_6",
+            "└─Foreign_Key_Check_8 0.00 0 root table:t1 total:D, check:D, lock:D, foreign_keys:2 foreign_key:fk, check_exist N/A N/A",
+        ]
+    );
+    assert_eq!(
+        analyzed(&mut session, "explain analyze delete from t1 where id>1"),
+        [
+            "Delete_3 0",
+            "├─TableReader_8 4",
+            "│ └─TableRangeScan_7",
+            "└─Foreign_Key_Cascade_4 0.00 0 root table:t2 total:D, foreign_keys:4 foreign_key:fk, on_delete:CASCADE N/A N/A",
+            "  └─Delete_11 0",
+            "    └─Batch_Point_Get_14 2",
+        ]
+    );
+    assert_eq!(
+        analyzed(&mut session, "explain analyze update t1 set id=id+1 where id = 1"),
+        [
+            "Update_3 0",
+            "├─Point_Get_1 1",
+            "└─Foreign_Key_Cascade_4 0.00 0 root table:t2 total:D, foreign_keys:1 foreign_key:fk, on_update:CASCADE N/A N/A",
+            "  └─Update_8 0",
+            "    ├─Point_Get_10 1",
+            "    └─Foreign_Key_Check_11 0.00 0 root table:t1 total:D, check:D, lock:D, foreign_keys:1 foreign_key:fk, check_exist N/A N/A",
+        ]
+    );
+    assert_eq!(
+        analyzed(&mut session, "explain analyze insert into t1 values (1) on duplicate key update id = 100"),
+        [
+            "Insert_1 0",
+            "└─Foreign_Key_Cascade_3 0.00 0 root table:t2 total:0s foreign_key:fk, on_update:CASCADE N/A N/A",
+        ]
+    );
+    assert_eq!(
+        analyzed(&mut session, "explain analyze insert into t1 values (2) on duplicate key update id = 100"),
+        [
+            "Insert_1 0",
+            "└─Foreign_Key_Cascade_3 0.00 0 root table:t2 total:D, foreign_keys:1 foreign_key:fk, on_update:CASCADE N/A N/A",
+            "  └─Update_7 0",
+            "    ├─Point_Get_9 1",
+            "    └─Foreign_Key_Check_10 0.00 0 root table:t1 total:D, check:D, lock:D, foreign_keys:1 foreign_key:fk, check_exist N/A N/A",
+        ]
+    );
+    assert_eq!(
+        rows(&mut session, "select id from t2"),
+        vec![vec!["100"]]
+    );
+    session.run("insert into t3 values (1),(2),(3),(4),(5)").unwrap();
+    assert_eq!(
+        analyzed(&mut session, "explain analyze insert into t4 values (1),(2),(3)"),
+        [
+            "Insert_1 0",
+            "└─Foreign_Key_Check_3 0.00 0 root table:t3, index:idx total:D, check:D, lock:D, foreign_keys:3 foreign_key:fk, check_exist N/A N/A",
+        ]
+    );
+    assert_eq!(
+        analyzed(&mut session, "explain analyze update t4 set id=id+2 where id >1"),
+        [
+            "Update_4 0",
+            "├─IndexReader_7 2",
+            "│ └─IndexRangeScan_6",
+            "└─Foreign_Key_Check_8 0.00 0 root table:t3, index:idx total:D, check:D, lock:D, foreign_keys:2 foreign_key:fk, check_exist N/A N/A",
+        ]
+    );
+    assert_eq!(
+        analyzed(&mut session, "explain analyze delete from t3 where id in (2,3)"),
+        [
+            "Delete_2 0",
+            "├─Batch_Point_Get_1 2",
+            "└─Foreign_Key_Check_3 0.00 0 root table:t4, index:idx_id total:D, check:D, foreign_keys:2 foreign_key:fk, check_not_exist N/A N/A",
+        ]
+    );
+    session.run("insert into t5 values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)").unwrap();
+    assert_eq!(
+        analyzed(&mut session, "explain analyze insert into t6 values (1,1,1)"),
+        [
+            "Insert_1 0",
+            "├─Foreign_Key_Check_3 0.00 0 root table:t5 total:D, check:D, lock:D, foreign_keys:1 foreign_key:fk_1, check_exist N/A N/A",
+            "├─Foreign_Key_Check_4 0.00 0 root table:t5, index:idx2 total:D, check:D, lock:D, foreign_keys:1 foreign_key:fk_2, check_exist N/A N/A",
+            "└─Foreign_Key_Check_5 0.00 0 root table:t5, index:idx3 total:D, check:D, lock:D, foreign_keys:1 foreign_key:fk_3, check_exist N/A N/A",
+        ]
+    );
+    // The rejected row's last check took no time and locked nothing.
+    let ignored = analyzed(&mut session, "explain analyze insert ignore into t6 values (1,1,10)");
+    assert_eq!(
+        ignored[3],
+        "└─Foreign_Key_Check_5 0.00 0 root table:t5, index:idx3 total:0s, foreign_keys:1 foreign_key:fk_3, check_exist N/A N/A"
+    );
+    assert_eq!(
+        analyzed(&mut session, "explain analyze update t6 set id=id+1, id3=id2+1 where id = 1"),
+        [
+            "Update_4 0",
+            "├─IndexLookUp_8 1",
+            "│ ├─IndexRangeScan_6(Build)",
+            "│ └─TableRowIDScan_7(Probe)",
+            "├─Foreign_Key_Check_9 0.00 0 root table:t5 total:D, check:D, lock:D, foreign_keys:1 foreign_key:fk_1, check_exist N/A N/A",
+            "└─Foreign_Key_Check_10 0.00 0 root table:t5, index:idx3 total:D, check:D, lock:D, foreign_keys:1 foreign_key:fk_3, check_exist N/A N/A",
+        ]
+    );
+    assert_eq!(
+        analyzed(&mut session, "explain analyze delete from t5 where id in (4,5)"),
+        [
+            "Delete_2 0",
+            "├─Batch_Point_Get_1 2",
+            "├─Foreign_Key_Check_4 0.00 0 root table:t6, index:idx_id2 total:D, check:D, foreign_keys:2 foreign_key:fk_2, check_not_exist N/A N/A",
+            "├─Foreign_Key_Cascade_3 0.00 0 root table:t6, index:idx_id total:D, foreign_keys:2 foreign_key:fk_1, on_delete:SET NULL N/A N/A",
+            "│ └─Update_9 0",
+            "│   ├─IndexLookUp_13 0",
+            "│   │ ├─IndexRangeScan_11(Build)",
+            "│   │ └─TableRowIDScan_12(Probe)",
+            "│   └─Foreign_Key_Check_14 0.00 0 root table:t5 total:0s foreign_key:fk_1, check_exist N/A N/A",
+            "└─Foreign_Key_Cascade_5 0.00 0 root table:t6, index:fk_3 total:D, foreign_keys:2 foreign_key:fk_3, on_delete:CASCADE N/A N/A",
+            "  └─Delete_17 0",
+            "    └─IndexLookUp_22 0",
+            "      ├─IndexRangeScan_20(Build)",
+            "      └─TableRowIDScan_21(Probe)",
+        ]
+    );
+    // Go's point UPDATE inits one `LogicalTableDual` per assignment
+    // (`buildOrderedList`), so two assignments put the root at 4.
+    assert_eq!(
+        analyzed(&mut session, "explain analyze update t5 set id=id+1, id2=id2+1 where id = 3"),
+        [
+            "Update_4 0",
+            "├─Point_Get_1 1",
+            "├─Foreign_Key_Cascade_5 0.00 0 root table:t6, index:idx_id total:D, foreign_keys:1 foreign_key:fk_1, on_update:CASCADE N/A N/A",
+            "│ └─Update_10 0",
+            "│   ├─IndexLookUp_14 0",
+            "│   │ ├─IndexRangeScan_12(Build)",
+            "│   │ └─TableRowIDScan_13(Probe)",
+            "│   └─Foreign_Key_Check_15 0.00 0 root table:t5 total:0s foreign_key:fk_1, check_exist N/A N/A",
+            "└─Foreign_Key_Cascade_6 0.00 0 root table:t6, index:idx_id2 total:D, foreign_keys:1 foreign_key:fk_2, on_update:CASCADE N/A N/A",
+            "  └─Update_19 0",
+            "    ├─IndexLookUp_23 0",
+            "    │ ├─IndexRangeScan_21(Build)",
+            "    │ └─TableRowIDScan_22(Probe)",
+            "    └─Foreign_Key_Check_24 0.00 0 root table:t5, index:idx2 total:0s foreign_key:fk_2, check_exist N/A N/A",
+        ]
+    );
+    assert_eq!(
+        rows(&mut session, "select * from t5 order by id"),
+        vec![vec!["1", "1", "1"], vec!["2", "2", "2"], vec!["4", "4", "3"]]
+    );
+    assert_eq!(rows(&mut session, "select * from t6"), vec![vec!["2", "1", "2"]]);
+}
+
+/// Go `fetchOnDeleteOrUpdateFKValues` hands one cascade statement at most
+/// `maxHandleFKValueInOneCascade` (1024) values, so 1030 deleted parents take
+/// two `DELETE`s, the second over the child the first made dirty (a
+/// `UnionScan`); and a self-referencing cascade reads the rows its own
+/// statement already deleted through one too (Go `HasDirtyContent`, an
+/// autocommit statement included). Captured from Go.
+#[test]
+fn cascade_statements_batch_1024_values_and_read_their_own_writes_as_go() {
+    let mut session = Session::new();
+    session.run("create table bp (id int primary key)").unwrap();
+    session
+        .run("create table bc (id int primary key, pid int, index(pid), foreign key (pid) references bp(id) on delete cascade)")
+        .unwrap();
+    let parents: Vec<String> = (0..1030).map(|i| format!("({i})")).collect();
+    let children: Vec<String> = (0..1030).map(|i| format!("({i}, {i})")).collect();
+    session.run(&format!("insert into bp values {}", parents.join(","))).unwrap();
+    session.run(&format!("insert into bc values {}", children.join(","))).unwrap();
+    assert_eq!(
+        analyzed(&mut session, "explain analyze delete from bp where id >= 0"),
+        [
+            "Delete_3 0",
+            "├─TableReader_8 1030",
+            "│ └─TableRangeScan_7",
+            "└─Foreign_Key_Cascade_4 0.00 0 root table:bc, index:pid total:D, foreign_keys:1030 foreign_key:fk_1, on_delete:CASCADE N/A N/A",
+            "  ├─Delete_11 0",
+            "  │ └─IndexReader_15 1024",
+            "  │   └─IndexRangeScan_14",
+            "  └─Delete_19 0",
+            "    └─UnionScan_22 6",
+            "      └─IndexReader_24 6",
+            "        └─IndexRangeScan_23",
+        ]
+    );
+    assert_eq!(rows(&mut session, "select count(*) from bc"), vec![vec!["0"]]);
+
+    session
+        .run("create table t7(id int primary key, pid int, index(pid), foreign key(pid) references t7(id) on delete cascade)")
+        .unwrap();
+    session.run("insert into t7 values(0,0),(1,0),(2,1)").unwrap();
+    assert_eq!(
+        analyzed(&mut session, "explain analyze delete from t7 where id = 0"),
+        [
+            "Delete_2 0",
+            "├─Point_Get_1 1",
+            "└─Foreign_Key_Cascade_3 0.00 0 root table:t7, index:pid total:D, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE N/A N/A",
+            "  └─Delete_7 0",
+            "    ├─UnionScan_11 1",
+            "    │ └─IndexReader_13 2",
+            "    │   └─IndexRangeScan_12",
+            "    └─Foreign_Key_Cascade_8 0.00 0 root table:t7, index:pid total:D, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE N/A N/A",
+            "      └─Delete_17 0",
+            "        ├─UnionScan_21 1",
+            "        │ └─IndexReader_23 1",
+            "        │   └─IndexRangeScan_22",
+            "        └─Foreign_Key_Cascade_18 0.00 0 root table:t7, index:pid total:D, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE N/A N/A",
+            "          └─Delete_27 0",
+            "            ├─UnionScan_31 0",
+            "            │ └─IndexReader_33 0",
+            "            │   └─IndexRangeScan_32",
+            "            └─Foreign_Key_Cascade_28 0.00 0 root table:t7, index:pid total:0s foreign_key:fk_1, on_delete:CASCADE N/A N/A",
+        ]
+    );
+    assert!(rows(&mut session, "select * from t7").is_empty());
+    session.run("insert into t7 values(0,0),(1,0),(2,1)").unwrap();
+    session.run("delete from t7 where id = 0").unwrap();
+    assert!(rows(&mut session, "select * from t7").is_empty());
+    // Go `maxForeignKeyCascadeDepth`: seventeen levels exceed it and the
+    // statement leaves every row; fifteen do not.
+    let chain: Vec<String> = std::iter::once("(0,0)".to_owned())
+        .chain((1..17).map(|id| format!("({id},{})", id - 1)))
+        .collect();
+    session.run(&format!("insert into t7 values {}", chain.join(","))).unwrap();
+    assert_eq!(
+        message(&mut session, "delete from t7 where id = 0").as_deref(),
+        Some("Foreign key cascade delete/update exceeds max depth of 15.")
+    );
+    assert_eq!(rows(&mut session, "select count(*) from t7"), vec![vec!["17"]]);
+    session.run("delete from t7 where id = 2").unwrap();
+    assert_eq!(rows(&mut session, "select count(*) from t7"), vec![vec!["2"]]);
+}
+
+/// A cascade statement is an executor of the statement's own context: its
+/// `UpdateExec.setMessage` (from its `Close`) sets the statement's info, and
+/// an UPDATE's `Changed` counts its cascades' updated rows
+/// (`StmtCtx.UpdatedRows`), while the affected rows do not
+/// (`InHandleForeignKeyTrigger`). Captured from Go.
+#[test]
+fn cascade_statements_share_the_statement_counters_as_go() {
+    let mut session = Session::new();
+    for sql in [
+        "create table p (id int primary key)",
+        "create table c1 (id int primary key, pid int, foreign key (pid) references p(id) on delete cascade on update cascade)",
+        "create table c2 (id int primary key, pid int, foreign key (pid) references p(id) on delete set null on update set null)",
+        "insert into p values (1),(2),(3)",
+        "insert into c1 values (1,1),(2,1),(3,2)",
+        "insert into c2 values (1,1),(2,2),(3,2)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let affected = |session: &mut Session, sql: &str| match session.run(sql).unwrap() {
+        StmtResult::Affected(affected) => (affected, session.statement_message().to_owned()),
+        other => panic!("{sql}: {other:?}"),
+    };
+    assert_eq!(
+        affected(&mut session, "delete from p where id = 1"),
+        (1, "Rows matched: 1  Changed: 1  Warnings: 0".to_owned())
+    );
+    assert_eq!(
+        affected(&mut session, "update p set id = 20 where id = 2"),
+        (1, "Rows matched: 1  Changed: 4  Warnings: 0".to_owned())
+    );
+    assert_eq!(rows(&mut session, "select * from c1 order by id"), vec![vec!["3", "20"]]);
+    assert_eq!(
+        rows(&mut session, "select id, ifnull(pid, 'null') from c2 order by id"),
+        vec![vec!["1", "null"], vec!["2", "null"], vec!["3", "null"]]
+    );
+    assert_eq!(
+        affected(&mut session, "insert into p values (3) on duplicate key update id = 30"),
+        (2, "Rows matched: 0  Changed: 1  Warnings: 0".to_owned())
+    );
+}
+
+/// Go `InsertExec.exec` runs `batchCheckAndInsert` -- whose `checkRows`
+/// turns a violation into a warning -- only for an IGNORE insert without ON
+/// DUPLICATE KEY UPDATE; `batchUpdateDupRows` hands a new row to
+/// `insertRowNeedToCheck`, so its violation fails the statement, while the
+/// duplicate's update goes through `updateRecord`'s `checkFKIgnoreErr`.
+/// Captured from Go.
+#[test]
+fn insert_ignore_on_duplicate_checks_new_rows_at_the_statement_end_as_go() {
+    let mut session = Session::new();
+    for sql in [
+        "create table p (id int primary key)",
+        "create table c (id int primary key, pid int, foreign key fk_c (pid) references p(id))",
+        "insert into p values (1)",
+        "insert into c values (1, 1)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    assert_eq!(
+        message(&mut session, "insert ignore into c values (9, 99) on duplicate key update pid = 1").as_deref(),
+        Some(
+            "Cannot add or update a child row: a foreign key constraint fails (`test`.`c`, CONSTRAINT `fk_c` FOREIGN KEY (`pid`) REFERENCES `p` (`id`))"
+        )
+    );
+    session
+        .run("insert ignore into c values (1, 99) on duplicate key update pid = 99")
+        .unwrap();
+    assert_eq!(
+        crate::tests_support::warnings_of(&session),
+        vec![(
+            1452,
+            "Cannot add or update a child row: a foreign key constraint fails (`test`.`c`, CONSTRAINT `fk_c` FOREIGN KEY (`pid`) REFERENCES `p` (`id`))".to_owned()
+        )]
+    );
+    assert_eq!(rows(&mut session, "select * from c"), vec![vec!["1", "1"]]);
+}
+
+/// Go `updateRowNeedToCheck`: a written row whose constraint values compare
+/// equal to the old ones hands its check nothing, on either side, even when
+/// the statement assigns them. Captured from Go.
+#[test]
+fn an_update_that_rewrites_the_same_key_checks_nothing_as_go() {
+    let mut session = Session::new();
+    for sql in [
+        "create table p (id int primary key, name varchar(10))",
+        "create table c (id int primary key, pid int, foreign key fk_c (pid) references p(id))",
+        "insert into p values (1, 'a')",
+        "insert into c values (1, 1)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    assert_eq!(code(&mut session, "update p set id = 1, name = 'z' where id = 1"), None);
+    assert_eq!(rows(&mut session, "select * from p"), vec![vec!["1", "z"]]);
+    assert_eq!(code(&mut session, "update c set pid = 1, id = 2 where id = 1"), None);
+    assert_eq!(rows(&mut session, "select * from c"), vec![vec!["2", "1"]]);
+}
+
+/// `executor/foreign_key.test` `TestForeignKeyIssue39419`: a parent row two
+/// foreign keys reference, one `SET NULL` and one `CASCADE`. The `SET NULL`
+/// cascade's update writes the row's untouched `fk_2(b)` index entry as well
+/// (Go `updateRecord` keeps untouched indices while the statement has
+/// foreign-key cascades), so the `CASCADE` delete that follows finds the row
+/// through `fk_2` and removes it. Recorded TiDB result (`foreign_key.result`).
+#[test]
+fn a_set_null_cascade_leaves_the_next_cascade_its_index_entry_as_go() {
+    let mut session = Session::new();
+    for sql in [
+        "set @@global.tidb_enable_foreign_key=1",
+        "set @@foreign_key_checks=1",
+        "create table t1 (id int key)",
+        "create table t2 (id int key, a int, b int, foreign key fk_1 (a) references t1(id) ON DELETE SET NULL ON UPDATE SET NULL, foreign key fk_2 (b) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE)",
+        "insert into t1 values (1), (2), (3)",
+        "insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3)",
+        "update t1 set id=id+10 where id in (1, 3)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let rows = |session: &mut Session| row_text(session.run("select id, ifnull(a, 'NULL'), b from t2 order by id"));
+    assert_eq!(
+        rows(&mut session),
+        vec![
+            vec!["1".to_owned(), "NULL".to_owned(), "11".to_owned()],
+            vec!["2".to_owned(), "2".to_owned(), "2".to_owned()],
+            vec!["3".to_owned(), "NULL".to_owned(), "13".to_owned()],
+        ]
+    );
+    session.run("delete from t1 where id = 2").unwrap();
+    assert_eq!(
+        rows(&mut session),
+        vec![
+            vec!["1".to_owned(), "NULL".to_owned(), "11".to_owned()],
+            vec!["3".to_owned(), "NULL".to_owned(), "13".to_owned()],
+        ]
+    );
+}

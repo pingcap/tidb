@@ -933,6 +933,9 @@ fn value_expr_is_null(expr: &tidb_ast::Expr) -> Option<bool> {
     use tidb_ast::Expr;
     match expr {
         Expr::Null => Some(true),
+        Expr::Value(value) => {
+            tidb_expr::ValueExprDatum::of(value).map(|value| value.datum.is_null())
+        }
         Expr::Int(_)
         | Expr::Decimal(_)
         | Expr::Float(_)

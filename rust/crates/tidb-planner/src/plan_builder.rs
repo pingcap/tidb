@@ -769,6 +769,10 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     pub allocate_delete_root: bool,
     /// The root [`Self::allocate_delete_root`] drew.
     pub dml_root: Option<tidb_planner_core_operator_physicalop::BasePhysicalPlan>,
+    /// Go `buildDelete`'s `BuildOnDeleteFKTriggers`, which runs right after
+    /// the `Delete` root is initialized and before the pruning projection
+    /// and `DoOptimize`: called once that root drew its plan id.
+    pub on_delete_root: Option<&'a dyn Fn()>,
     /// Asks a single-table DELETE's build to prune its read as Go's
     /// `pruneAndBuildColPositionInfoForDelete` does; the value is whether any
     /// foreign key trigger exists (Go `hasFK`), which declines the pruning.
@@ -1617,6 +1621,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             dml_keep: None,
             allocate_delete_root: false,
             dml_root: None,
+            on_delete_root: None,
             delete_prune_has_fk: None,
             delete_col_pos: None,
             delete_multi: None,
@@ -5262,6 +5267,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 
         if self.allocate_delete_root {
             self.dml_root = Some(tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(self.plan_ids, "Delete", 0));
+            if let Some(on_delete_root) = self.on_delete_root {
+                on_delete_root();
+            }
         }
         // Go's UPDATE projection explicitly removes ExtraCommitTS. DELETE's
         // column-position projection reaches the same retained single-table

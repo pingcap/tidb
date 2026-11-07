@@ -201,7 +201,7 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
     let dml = physical_plan
         .as_deref()
         .map(|plan| super::physical_builder::DmlExec::new_insert(plan, ctx, runtime.as_deref_mut()));
-    let (physical_source, fk_triggers, _, _) = dml_execution_parts(physical_plan, "Insert")?;
+    let (physical_source, fk_site, _, _) = dml_execution_parts(physical_plan, "Insert")?;
     let dml = dml.as_ref().expect("dml_execution_parts found the root");
     dml.next(|| {
         run_insert_rows(
@@ -211,7 +211,7 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
             current_db,
             ctx,
             physical_source,
-            fk_triggers,
+            Some(fk_site),
             runtime,
             None,
             Some(dml),
@@ -248,6 +248,7 @@ pub(crate) fn physical_insert_plan(
         DmlKeep::Auto,
         actual_col_len,
         super::planner_bridge::BuildVisits::Collect(source_visits),
+        None,
     )
 }
 
@@ -257,7 +258,7 @@ fn dml_execution_parts<'a>(
 ) -> Result<
     (
         Option<&'a mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
-        &'a [FkTriggerNode],
+        FkTriggerSite<'a>,
         Option<&'a tidb_planner_core_operator_physicalop::DeleteColPos>,
         &'a [tidb_planner_core_operator_physicalop::DeleteTablePos],
     ),
@@ -273,12 +274,190 @@ fn dml_execution_parts<'a>(
             "DML execution received the wrong physical root",
         ));
     }
+    let tidb_planner_core_operator_physicalop::PhysicalDmlRoot {
+        select_plan,
+        fk_triggers,
+        delete_col_pos,
+        delete_tables,
+        plan_id,
+        ..
+    } = root;
     Ok((
-        root.select_plan.as_deref_mut(),
-        root.fk_triggers.as_slice(),
-        root.delete_col_pos.as_ref(),
-        root.delete_tables.as_slice(),
+        select_plan.as_deref_mut(),
+        FkTriggerSite {
+            triggers: fk_triggers,
+            plan_id: *plan_id,
+        },
+        delete_col_pos.as_ref(),
+        delete_tables.as_slice(),
     ))
+}
+
+/// The foreign-key checks and cascades a DML plan selected, which its
+/// statement runs once it wrote its rows (Go `handleStmtForeignKeyTrigger`),
+/// and Go's `SessionVars.PlanID` after the plan, which the cascade plans the
+/// statement builds continue.
+pub(crate) struct FkTriggerSite<'a> {
+    pub(crate) triggers: &'a mut Vec<FkTriggerNode>,
+    pub(crate) plan_id: i32,
+}
+
+/// Go `UpdateExec`'s result: the rows it reports, the rows it matched (its
+/// `setMessage` input) and its foreign-key checks and cascades.
+pub(crate) struct UpdateWritten {
+    pub(crate) affected: u64,
+    pub(crate) matched: u64,
+    pub(crate) fk: crate::foreign_key::WithForeignKeyTrigger,
+}
+
+/// Go `UpdateExec.setMessage`, from its `Close`: `Changed` is the
+/// statement's updated rows, its foreign-key cascades' included.
+pub(crate) fn set_update_message(ctx: &crate::StmtContext, matched: u64) {
+    ctx.set_message(format!(
+        "Rows matched: {matched}  Changed: {}  Warnings: {}",
+        ctx.updated_rows(),
+        ctx.warning_count()
+    ));
+}
+
+/// Go `FKCascadeExec.buildFKCascadePlan`'s planning half: `Preprocess` and
+/// `OptimizeForForeignKeyCascade` of the cascade statement, which build the
+/// plan with the statement's plan-id counter and without the fast point
+/// plans `planner.Optimize` alone tries.
+pub(crate) fn physical_fk_cascade_plan(
+    stmt: &crate::foreign_key::FKCascadeStmt,
+    catalog: &SessionExtendedInfoSchema,
+    ctx: &crate::StmtContext,
+    plan_ids: &tidb_planner_core_base::PlanIdAllocator,
+) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
+    match stmt {
+        crate::foreign_key::FKCascadeStmt::Delete(delete) => {
+            let current_db = cascade_database(&delete.kind_table())?;
+            let source = delete_source_query(delete);
+            physical_dml_plan_with_cache_mode(
+                "Delete",
+                source.as_ref(),
+                Some(super::multi_dml::MultiDmlRef::Delete(delete)),
+                catalog,
+                &current_db,
+                ctx,
+                false,
+                &[fk_spec_for_delete(delete, &current_db)?],
+                DmlKeep::Auto,
+                None,
+                // Go's `buildFKCascadePlan` checks no privileges.
+                super::planner_bridge::BuildVisits::Discard,
+                Some(plan_ids),
+            )
+        }
+        crate::foreign_key::FKCascadeStmt::Update(update) => {
+            let current_db = cascade_database(&update.kind_table())?;
+            let source = update_source_query(update);
+            physical_dml_plan_with_cache_mode(
+                "Update",
+                source.as_ref(),
+                Some(super::multi_dml::MultiDmlRef::Update(update)),
+                catalog,
+                &current_db,
+                ctx,
+                false,
+                &[build_tbl_2_update_columns(update, &current_db)?],
+                DmlKeep::Auto,
+                None,
+                super::planner_bridge::BuildVisits::Discard,
+                Some(plan_ids),
+            )
+        }
+    }
+}
+
+/// The child schema a cascade statement names (`genTableRefsAST`).
+fn cascade_database(table: &Option<&tidb_ast::TableRef>) -> Result<String, DriverError> {
+    table
+        .and_then(|table| (table.name.len() == 2).then(|| table.name[0].clone()))
+        .ok_or_else(|| DriverError::unsupported("a cascade statement names no child table"))
+}
+
+trait CascadeTarget {
+    fn kind_table(&self) -> Option<&tidb_ast::TableRef>;
+}
+
+impl CascadeTarget for tidb_ast::DeleteStmt {
+    fn kind_table(&self) -> Option<&tidb_ast::TableRef> {
+        match &self.kind {
+            tidb_ast::DeleteKind::Single(table) => Some(table),
+            tidb_ast::DeleteKind::Multi { .. } => None,
+        }
+    }
+}
+
+impl CascadeTarget for tidb_ast::UpdateStmt {
+    fn kind_table(&self) -> Option<&tidb_ast::TableRef> {
+        match &self.kind {
+            tidb_ast::UpdateKind::Single(table) => Some(table),
+            tidb_ast::UpdateKind::Multi { .. } => None,
+        }
+    }
+}
+
+/// Go `handleForeignKeyCascade`'s `exec.Open` / `exec.Next` / `exec.Close`
+/// of the cascade executor `fkc.b.build(p)` built: the statement runs, and
+/// its own checks and cascades are returned for the next depth.
+pub(crate) fn run_fk_cascade(
+    stmt: &crate::foreign_key::FKCascadeStmt,
+    plan: &mut tidb_planner_core_operator_physicalop::PhysicalPlan,
+    catalog: &mut SessionExtendedInfoSchema,
+    ctx: &crate::StmtContext,
+    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
+) -> Result<crate::foreign_key::WithForeignKeyTrigger, DriverError> {
+    let mut runtime = runtime;
+    mark_dml_point_source_lock(plan, ctx.pessimistic_transaction());
+    super::physical_builder::prepare_execution_plan(plan, catalog, ctx)?;
+    match stmt {
+        crate::foreign_key::FKCascadeStmt::Delete(delete) => {
+            let current_db = cascade_database(&delete.kind_table())?;
+            let dml = super::physical_builder::DmlExec::new(plan, ctx, runtime.as_deref_mut());
+            let (physical_source, fk_site, delete_col_pos, delete_tables) =
+                dml_execution_parts(Some(plan), "Delete")?;
+            let (_, fk) = run_delete_with_physical(
+                delete,
+                catalog,
+                &current_db,
+                ctx,
+                physical_source,
+                fk_site.triggers,
+                delete_col_pos,
+                delete_tables,
+                &dml,
+                runtime,
+            )?;
+            Ok(fk)
+        }
+        crate::foreign_key::FKCascadeStmt::Update(update) => {
+            let current_db = cascade_database(&update.kind_table())?;
+            let dml = super::physical_builder::DmlExec::new_update(plan, ctx, runtime.as_deref_mut());
+            let tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(root) = plan else {
+                return Err(DriverError::unsupported(
+                    "UPDATE execution received a non-DML physical root",
+                ));
+            };
+            let written = run_update_with_physical(
+                update,
+                catalog,
+                &current_db,
+                ctx,
+                root.select_plan.as_deref_mut(),
+                Some(root.update_expressions.as_slice()),
+                root.fast_update_list,
+                root.fk_triggers.as_slice(),
+                (root.update_tables.as_slice(), root.update_assigns.as_slice()),
+                &dml,
+                runtime,
+            )?;
+            set_update_message(ctx, written.matched);
+            Ok(written.fk)
+        }
+    }
 }
 
 /// Builds and prepares the same UPDATE or DELETE plan for execution and
@@ -305,6 +484,7 @@ pub(crate) fn physical_dml_plan(
         DmlKeep::Auto,
         None,
         super::planner_bridge::BuildVisits::Check,
+        None,
     )
 }
 
@@ -333,6 +513,7 @@ pub(crate) fn physical_multi_dml_plan(
         keep,
         None,
         super::planner_bridge::BuildVisits::Check,
+        None,
     )
 }
 
@@ -374,10 +555,21 @@ fn physical_dml_plan_with_cache_mode(
     keep: DmlKeep,
     insert_actual_col_len: Option<usize>,
     visits: super::planner_bridge::BuildVisits<'_>,
+    cascade_plan_ids: Option<&tidb_planner_core_base::PlanIdAllocator>,
 ) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
     use super::planner_bridge::BuildVisits;
     use tidb_planner_core_operator_physicalop::{BasePhysicalPlan, PhysicalDmlRoot, PhysicalPlan};
 
+    // A foreign-key cascade's statement continues the plan ids of the
+    // statement that runs it (Go's one `SessionVars.PlanID`).
+    let own_plan_ids;
+    let plan_ids = match cascade_plan_ids {
+        Some(plan_ids) => plan_ids,
+        None => {
+            own_plan_ids = tidb_planner_core_base::PlanIdAllocator::new();
+            &own_plan_ids
+        }
+    };
     let update = match write {
         Some(super::multi_dml::MultiDmlRef::Update(update)) => Some(update),
         _ => None,
@@ -387,7 +579,6 @@ fn physical_dml_plan_with_cache_mode(
     let mut statement_visits = Vec::new();
     let mut fast_plan_checked = false;
 
-    let plan_ids = tidb_planner_core_base::PlanIdAllocator::new();
     let column_ids = tidb_planner_core_base::ColumnIdAllocator::new();
     let mut update_expressions = Vec::new();
     let mut delete_col_pos = None;
@@ -416,6 +607,21 @@ fn physical_dml_plan_with_cache_mode(
             .collect();
     }
     let mut fast_update_list = false;
+    let build_fk_triggers = || -> Result<Vec<FkTriggerNode>, DriverError> {
+        let mut fk_triggers = Vec::new();
+        for spec in fk_specs {
+            fk_triggers.extend(fk_trigger_plan::build_fk_triggers(
+                catalog, ctx, operator, spec, plan_ids,
+            )?);
+        }
+        Ok(fk_triggers)
+    };
+    // Go `buildDelete` builds its triggers once the `Delete` root is
+    // initialized, before the pruning projection and `DoOptimize`.
+    let delete_fk_triggers = std::cell::RefCell::new(None);
+    let build_delete_fk_triggers = || {
+        *delete_fk_triggers.borrow_mut() = Some(build_fk_triggers());
+    };
 
     // Go `buildInsert` builds the target's schema first
     // (`TableInfo2SchemaAndNames`), which draws a plan column id for every
@@ -437,7 +643,7 @@ fn physical_dml_plan_with_cache_mode(
     }
     // Go `buildInsert`'s mockTablePlan filler, right after the Insert root.
     let mut root_base = if operator.eq_ignore_ascii_case("Insert") {
-        let root = BasePhysicalPlan::new(&plan_ids, operator, 0);
+        let root = BasePhysicalPlan::new(plan_ids, operator, 0);
         let _mock_table_plan = plan_ids.alloc();
         Some(root)
     } else {
@@ -461,7 +667,7 @@ fn physical_dml_plan_with_cache_mode(
                     current_db,
                     ctx,
                     use_plan_cache,
-                    &plan_ids,
+                    plan_ids,
                     &column_ids,
                     if collecting {
                         BuildVisits::Collect(&mut statement_visits)
@@ -479,7 +685,10 @@ fn physical_dml_plan_with_cache_mode(
         Some(tidb_ast::QueryStmt::Select(select)) => {
             let multi_update = update
                 .filter(|update| matches!(update.kind, tidb_ast::UpdateKind::Multi { .. }));
+            // Go's `TryFastPlan` belongs to `planner.Optimize`, which a
+            // cascade's `OptimizeForForeignKeyCascade` does not run.
             let allow_fast_plan = multi_update.is_none()
+                && cascade_plan_ids.is_none()
                 && update.is_none_or(|update| try_update_point_plan(update));
             // Go `tryUpdatePointPlan` / `tryDeletePointPlan`'s
             // `checkFastPlanPrivilege(..., SelectPriv, UpdatePriv /
@@ -506,7 +715,7 @@ fn physical_dml_plan_with_cache_mode(
                         catalog,
                         current_db,
                         ctx,
-                        &plan_ids,
+                        plan_ids,
                         &fast_plan_privilege,
                     )
                 })
@@ -528,10 +737,14 @@ fn physical_dml_plan_with_cache_mode(
                 // Go's point-UPDATE builder allocates one extra plan between
                 // the PointGet and the Update root; the DELETE builder does
                 // not.
-                if operator.eq_ignore_ascii_case("Update") {
-                    let _point_update_filler = plan_ids.alloc();
+                // Go `buildOrderedList`'s `rewriteAstExprWithPlanCtx` inits a
+                // `LogicalTableDual` for each assignment.
+                if let Some(update) = update.filter(|_| operator.eq_ignore_ascii_case("Update")) {
+                    for _ in &update.assignments {
+                        let _point_update_filler = plan_ids.alloc();
+                    }
                 }
-                root_base = Some(BasePhysicalPlan::new(&plan_ids, operator, 0));
+                root_base = Some(BasePhysicalPlan::new(plan_ids, operator, 0));
                 if let Some(update) = update {
                     update_expressions = fast_update_ordered_list(
                         update,
@@ -583,6 +796,7 @@ fn physical_dml_plan_with_cache_mode(
                         operator,
                         delete_prune_has_fk,
                         delete_multi,
+                        Some(&build_delete_fk_triggers),
                         write.filter(|_| collecting),
                     )
                     .map_err(super::planner_error_to_driver)?;
@@ -618,13 +832,12 @@ fn physical_dml_plan_with_cache_mode(
     };
 
     let base = root_base.ok_or_else(|| DriverError::unsupported("DML build produced no root"))?;
-    // Go `BuildOn{Insert,Update,Delete}FKTriggers`, last in the builders.
-    let mut fk_triggers = Vec::new();
-    for spec in fk_specs {
-        fk_triggers.extend(fk_trigger_plan::build_fk_triggers(
-            catalog, ctx, operator, spec, &plan_ids,
-        )?);
-    }
+    // Go `BuildOn{Insert,Update,Delete}FKTriggers`, last in the builders but
+    // `buildDelete`, which runs them before optimizing its source.
+    let mut fk_triggers = match delete_fk_triggers.take() {
+        Some(built) => built?,
+        None => build_fk_triggers()?,
+    };
     // Go flattens all checks before all cascades, preserving table order.
     fk_triggers.sort_by_key(|node| node.operator == "Foreign_Key_Cascade");
     // Go `planner.optimize`'s `CheckPrivilege` / `CheckTableLock` once
@@ -648,6 +861,7 @@ fn physical_dml_plan_with_cache_mode(
         update_tables,
         update_assigns,
         insert_select,
+        plan_id: plan_ids.current(),
     });
     super::physical_builder::prepare_plan_for_explain(&mut plan, catalog, ctx)?;
     Ok(plan)
@@ -992,7 +1206,7 @@ pub fn check_and_insert_one_batch(
         current_db,
         ctx,
         None,
-        &[],
+        None,
         None,
         Some((rows, &mut counts)),
         None,
@@ -1008,8 +1222,8 @@ fn run_insert_rows(
     current_db: &str,
     ctx: &crate::StmtContext,
     physical_source: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
-    fk_triggers: &[FkTriggerNode],
-    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
+    fk_site: Option<FkTriggerSite<'_>>,
+    mut runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
     load: Option<(LoadDataRows<'_>, &mut LoadDataCounts)>,
     dml: Option<&super::physical_builder::DmlExec>,
 ) -> Result<(u64, Option<u64>), DriverError> {
@@ -1075,7 +1289,7 @@ fn run_insert_rows(
             })?;
             let (exec, collected) =
                 super::physical_builder::build_dml_source(physical, catalog, ctx, runtime.is_some())?;
-            if let Some(runtime) = runtime {
+            if let Some(runtime) = runtime.as_deref_mut() {
                 runtime.extend(collected);
             }
             Some(super::DmlSourceCursor::open(exec, ctx.statement_memory(), dml)?)
@@ -1267,12 +1481,20 @@ fn run_insert_rows(
     // Go `StmtCtx.CopiedRows`/`UpdatedRows`/`TouchedRows`, which the
     // `Records: ...` message reads.
     let mut copied: u64 = 0;
-    let mut duplicates_updated: u64 = 0;
     let mut duplicates_touched: u64 = 0;
     let mut load_deleted: u64 = 0;
-    let mut updates = UpdateRecords::new(fk_triggers);
-    let mut removals = DeleteRecords::new(fk_triggers);
-    let mut written_rows: Vec<Vec<Datum>> = Vec::new();
+    // Go `InsertValues.fkChecks` / `fkCascades`; LOAD DATA builds none.
+    let fk = std::cell::RefCell::new(match &fk_site {
+        Some(site) => crate::foreign_key::WithForeignKeyTrigger::build(site.triggers, catalog)?,
+        None => crate::foreign_key::WithForeignKeyTrigger::empty(),
+    });
+    fk.borrow().prepare_fk_cascade_context(ctx);
+    // Go `batchCheckAndInsert` (INSERT IGNORE) checks a batch's rows before
+    // it writes them, and adds them with `DupKeyCheckSkip`, which hands them
+    // to no check; every other insert hands each added row to the checks.
+    let fk_checks_batch = insert.ignore && !has_on_duplicate && !insert.replace;
+    let mut updates = UpdateRecords::new(&fk);
+    let mut removals = DeleteRecords::new(&fk);
     let insert_stats = dml.and_then(|dml| dml.insert_stats());
     let _collect_snapshot_stats =
         insert_stats.map(|stats| CollectInsertSnapshotStats::install(ctx, &stats.lock().unwrap()));
@@ -1851,7 +2073,8 @@ fn run_insert_rows(
         // Go's LOAD DATA sets `ErrGroupNoMatchedPartition` to a warning, which
         // its IGNORE and REPLACE batch check (`getKeysNeedCheck`) honours.
         let partition_warns = insert.ignore || (load_restrictive.is_some() && insert.replace);
-        let mut inserted_rows = Vec::new();
+        // Go `checkRows`' `ignored` marks of the batch's rows.
+        let mut fk_ignored = vec![false; new_rows.len()];
         // Go `InsertExec.exec` / `ReplaceExec.exec` run once per batch.
         let batch_ends = [new_rows.len()];
         let mut batches = batch_ends.iter().copied().peekable();
@@ -1884,6 +2107,22 @@ fn run_insert_rows(
                         .iter()
                         .map(|candidate| split_candidate(candidate, extra_handle_offset, ctx))
                         .collect::<Vec<_>>();
+                    // Go `batchCheckAndInsert`: `fkc.checkRows` over the
+                    // batch, before its duplicate checks.
+                    if fk_checks_batch && fk.borrow().has_triggers(&database, &table_name) {
+                        let mut checked: Vec<_> = rows
+                            .iter()
+                            .map(|(row, _)| crate::foreign_key::ToBeCheckedRow {
+                                row: row.to_vec(),
+                                ignored: false,
+                            })
+                            .collect();
+                        fk.borrow_mut()
+                            .check_rows(catalog, &database, &table_name, &mut checked, ctx)?;
+                        for (offset, row) in checked.into_iter().enumerate() {
+                            fk_ignored[batch_start + offset] = row.ignored;
+                        }
+                    }
                     batch_start = end;
                     // Go `InsertExec.exec`'s event; REPLACE logs none.
                     if !insert.replace {
@@ -1937,6 +2176,10 @@ fn run_insert_rows(
                         }
                     }
                 }
+            }
+            // Go `batchCheckAndInsert`: a row a check rejected is skipped.
+            if fk_ignored[position] {
+                continue;
             }
             let (row, written_row_id): (&[Datum], Option<i64>) =
                 split_candidate(candidate, extra_handle_offset, ctx);
@@ -2052,7 +2295,6 @@ fn run_insert_rows(
                         ctx,
                     )?;
                     inserted += applied.affected;
-                    duplicates_updated += u64::from(applied.changed);
                     duplicates_touched += u64::from(applied.touched);
                     // Go `doDupRowUpdate` (issue #55965): the OK packet's insert
                     // id is the updated row's AUTO_INCREMENT value when the
@@ -2078,31 +2320,6 @@ fn run_insert_rows(
                 warning.identity,
             ));
                     continue;
-                }
-            }
-            // IGNORE checks this candidate before writing; ordinary INSERT
-            // collects only accepted rows and checks the final statement buffer.
-            // ODKU candidates redirected to UPDATE have already continued above.
-            if insert.ignore {
-                if let Err(error) = crate::foreign_key::require_child_rows(
-                    catalog,
-                    fk_triggers,
-                    &database,
-                    &table_name,
-                    &[row.to_vec()],
-                    ctx,
-                ) {
-                    if error.equal(&tidb_plannererrors::ERR_NO_REFERENCED_ROW2) {
-                        let warning = error.to_mysql_error();
-                        ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
-                tidb_context::WarningLevel::Warning,
-                warning.code,
-                warning.message.clone(),
-                warning.identity,
-            ));
-                        continue;
-                    }
-                    return Err(error);
                 }
             }
             // Go publishes the statement's first allocated id the moment a row is
@@ -2143,10 +2360,11 @@ fn run_insert_rows(
                 Ok(_) => {
                     inserted += 1;
                     copied += 1;
-                    if !insert.ignore
-                        && crate::foreign_key::has_triggers(fk_triggers, &database, &table_name)
-                    {
-                        inserted_rows.push(position);
+                    // Go `addRecordWithAutoIDHint`'s `insertRowNeedToCheck`,
+                    // unless `batchCheckAndInsert` checked the row.
+                    if !fk_checks_batch {
+                        fk.borrow_mut()
+                            .insert_row_need_to_check(catalog, &database, &table_name, row, ctx)?;
                     }
                 }
                 Err(error) => {
@@ -2175,10 +2393,6 @@ fn run_insert_rows(
         mem_tracker
             .consume_checked(-(mem_usage_of_rows + mem_usage_of_chk))
             .map_err(DriverError::from)?;
-        written_rows.extend(inserted_rows.into_iter().map(|index| {
-            let row = &new_rows[index];
-            row[..extra_handle_offset.unwrap_or(row.len())].to_vec()
-        }));
         records += row_count as u64;
         row_base += new_rows.len();
         // Go `recordRowsColMultiply2RUV2Metrics` after each `base.exec`: an
@@ -2203,18 +2417,20 @@ fn run_insert_rows(
     if let Some(mut source) = source.take() {
         source.close()?;
     }
-    if !written_rows.is_empty() {
-        crate::foreign_key::require_child_rows(
+    drop((updates, removals));
+    // Go `InsertExec.exec` collects its snapshot's runtime stats only while
+    // it writes a batch; the statement's foreign-key checks run after it.
+    drop(_collect_snapshot_stats);
+    if let Some(site) = fk_site {
+        crate::foreign_key::handle_stmt_foreign_key_trigger(
+            fk.into_inner(),
+            site.triggers,
+            site.plan_id,
             catalog,
-            fk_triggers,
-            &database,
-            &table_name,
-            &written_rows,
             ctx,
+            runtime.as_deref_mut(),
         )?;
     }
-    updates.finish(catalog, ctx)?;
-    removals.finish(catalog, ctx)?;
     // Go `InsertExec.setMessage` / `ReplaceExec.setMessage`: an
     // `INSERT ... SELECT` or a multi-row VALUES list reports
     // `Records: N  Duplicates: D  Warnings: W`.
@@ -2235,7 +2451,8 @@ fn run_insert_rows(
         } else if ctx.client_found_rows() {
             duplicates_touched
         } else {
-            duplicates_updated
+            // Go `stmtCtx.UpdatedRows()`, its cascades' updates included.
+            ctx.updated_rows()
         };
         ctx.set_message(format!(
             "Records: {records}  Duplicates: {duplicates}  Warnings: {}",
@@ -2639,7 +2856,6 @@ fn apply_on_duplicate(
         } else {
             u64::from(outcome.unchanged() && ctx.client_found_rows())
         },
-        changed: outcome.changed(),
         touched: outcome.touched(),
         // Go `doDupRowUpdate` returns before its insert-id step when
         // `updateRecord` ignored the row.
@@ -2658,8 +2874,6 @@ fn apply_on_duplicate(
 struct OnDuplicateApplied {
     /// Its contribution to the affected-row count.
     affected: u64,
-    /// Go `UpdatedRows`: the update changed the row.
-    changed: bool,
     /// Go `TouchedRows`: the row was found (changed or not).
     touched: bool,
     /// The updated row's AUTO_INCREMENT value, when the table has one.
@@ -2815,7 +3029,7 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
             root.go_operator
         )));
     }
-    run_update_with_physical(
+    let written = run_update_with_physical(
         update,
         catalog,
         current_db,
@@ -2826,8 +3040,18 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
         root.fk_triggers.as_slice(),
         (root.update_tables.as_slice(), root.update_assigns.as_slice()),
         &dml,
+        runtime.as_deref_mut(),
+    )?;
+    crate::foreign_key::handle_stmt_foreign_key_trigger(
+        written.fk,
+        &mut root.fk_triggers,
+        root.plan_id,
+        catalog,
+        ctx,
         runtime,
-    )
+    )?;
+    set_update_message(ctx, written.matched);
+    Ok(written.affected)
 }
 
 ///
@@ -3477,6 +3701,7 @@ fn cached_dml_physical_plan(
         DmlKeep::Auto,
         insert_actual_col_len,
         super::planner_bridge::BuildVisits::Discard,
+        None,
     )
     .ok()?;
     // Keep a cached single-row UPDATE/DELETE source as a point access path.
@@ -3656,7 +3881,7 @@ fn run_update_with_physical(
     ),
     dml: &super::physical_builder::DmlExec,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
-) -> Result<u64, DriverError> {
+) -> Result<UpdateWritten, DriverError> {
     // A `RETURNING` clause is parsed and silently ignored, matching Go: the
     // planner and executor never read `UpdateStmt.Returning`. `StmtContext`
     // already carries `IgnoreErr`, so casts, bad NULLs, and other value-level
@@ -3869,7 +4094,12 @@ fn run_update_with_physical(
     let mut touched = 0u64;
     let mut changed = 0u64;
     let mut rewrites = Vec::new();
-    let mut records = UpdateRecords::new(fk_triggers);
+    let fk = std::cell::RefCell::new(crate::foreign_key::WithForeignKeyTrigger::build(
+        fk_triggers,
+        catalog,
+    )?);
+    fk.borrow().prepare_fk_cascade_context(ctx);
+    let mut records = UpdateRecords::new(&fk);
     let writes_stored_columns = set_exprs
         .iter()
         .any(|(offset, _)| Some(*offset) != stored_handle_slot);
@@ -3945,16 +4175,16 @@ fn run_update_with_physical(
                 record_updated_row_key(&mut updated_row_keys, &row.id, outcome, dml)
             },
         )?;
-        records.finish(catalog, ctx)?;
+        drop(records);
         record_dml_rows_col_multiply(ctx, rows_col_multiply);
-        ctx.set_message(format!(
-            "Rows matched: {matched}  Changed: {changed}  Warnings: {}",
-            ctx.warning_count()
-        ));
-        return Ok(if ctx.client_found_rows() {
-            touched
-        } else {
-            changed
+        return Ok(UpdateWritten {
+            affected: if ctx.client_found_rows() {
+                touched
+            } else {
+                changed
+            },
+            matched,
+            fk: fk.into_inner(),
         });
     }
     let PhysicalWriteRows {
@@ -4013,15 +4243,15 @@ fn run_update_with_physical(
         changed += u64::from(outcome.changed());
         record_updated_row_key(&mut updated_row_keys, &id, outcome, dml)?;
     }
-    records.finish(catalog, ctx)?;
-    ctx.set_message(format!(
-        "Rows matched: {matched}  Changed: {changed}  Warnings: {}",
-        ctx.warning_count()
-    ));
-    Ok(if ctx.client_found_rows() {
-        touched
-    } else {
-        changed
+    drop(records);
+    Ok(UpdateWritten {
+        affected: if ctx.client_found_rows() {
+            touched
+        } else {
+            changed
+        },
+        matched,
+        fk: fk.into_inner(),
     })
 }
 
@@ -4279,20 +4509,29 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
     let dml = physical_plan
         .as_deref()
         .map(|plan| super::physical_builder::DmlExec::new(plan, ctx, runtime.as_deref_mut()));
-    let (physical_source, fk_triggers, delete_col_pos, delete_tables) =
+    let (physical_source, fk_site, delete_col_pos, delete_tables) =
         dml_execution_parts(physical_plan, "Delete")?;
-    run_delete_with_physical(
+    let (deleted, fk) = run_delete_with_physical(
         delete,
         catalog,
         current_db,
         ctx,
         physical_source,
-        fk_triggers,
+        fk_site.triggers,
         delete_col_pos,
         delete_tables,
         dml.as_ref().expect("dml_execution_parts found the root"),
+        runtime.as_deref_mut(),
+    )?;
+    crate::foreign_key::handle_stmt_foreign_key_trigger(
+        fk,
+        fk_site.triggers,
+        fk_site.plan_id,
+        catalog,
+        ctx,
         runtime,
-    )
+    )?;
+    Ok(deleted)
 }
 
 /// How a DML read decides the columns it keeps (see [`DeletePruning`]).
@@ -4347,7 +4586,7 @@ fn run_delete_with_physical(
     delete_tables: &[tidb_planner_core_operator_physicalop::DeleteTablePos],
     dml: &super::physical_builder::DmlExec,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
-) -> Result<u64, DriverError> {
+) -> Result<(u64, crate::foreign_key::WithForeignKeyTrigger), DriverError> {
     // `DELETE IGNORE` differs from a plain `DELETE` only in what it does with
     // a referential violation: Go downgrades it from a statement error to a
     // per-row skip with a warning. `QUICK` is parser-only and needs no branch.
@@ -4383,7 +4622,12 @@ fn run_delete_with_physical(
         .ok_or_else(|| DriverError::unsupported("DELETE has no retained physical child"))?;
     // Go `DeleteExec.deleteSingleTableByChunk` removes each chunk's rows
     // before asking its source for the next chunk.
-    let mut records = DeleteRecords::new(fk_triggers);
+    let fk = std::cell::RefCell::new(crate::foreign_key::WithForeignKeyTrigger::build(
+        fk_triggers,
+        catalog,
+    )?);
+    fk.borrow().prepare_fk_cascade_context(ctx);
+    let mut records = DeleteRecords::new(&fk);
     let mut deleted = 0;
     // Go's `columnCount` of each deleted row: the child row's cells but the
     // partition id (`ExtraPhysTblID`), less the `_tidb_rowid` handle.
@@ -4428,9 +4672,9 @@ fn run_delete_with_physical(
             Ok(())
         },
     )?;
-    records.finish(catalog, ctx)?;
+    drop(records);
     record_dml_rows_col_multiply(ctx, rows_col_multiply);
-    Ok(deleted)
+    Ok((deleted, fk.into_inner()))
 }
 
 /// Fetches the records a single-table write will filter, through the read
