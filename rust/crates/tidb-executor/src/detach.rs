@@ -55,12 +55,13 @@ pub fn detach(plan: &PhysicalPlan) -> bool {
 fn detach_executor(plan: &PhysicalPlan) -> bool {
     match plan {
         // Go `buildTableReader` builds an `MPPGather` instead when the
-        // pushed plan is an exchange (`useMPPExecution`), which does not
-        // detach.
-        PhysicalPlan::TableReader(reader) => !matches!(
-            reader.table_plan.as_deref(),
-            Some(PhysicalPlan::ExchangeSender(_))
-        ),
+        // pushed plan is an exchange (`useMPPExecution`), and a
+        // `TableDualExec` when dynamic partition pruning leaves no partition
+        // (`len(partitions) == 0`); neither detaches.
+        PhysicalPlan::TableReader(reader) => {
+            !matches!(reader.table_plan.as_deref(), Some(PhysicalPlan::ExchangeSender(_)))
+                && !reader.table_plan.as_deref().is_some_and(prunes_to_no_partition)
+        }
         // Go `IndexReaderExecutor.Detach`, `IndexLookUpExecutor.Detach`.
         PhysicalPlan::IndexReader(_) | PhysicalPlan::IndexLookUpReader(_) => true,
         // Go `ProjectionExec.Detach`: "if it requires any optional property,
@@ -76,5 +77,18 @@ fn detach_executor(plan: &PhysicalPlan) -> bool {
             .all(|expr| get_optional_eval_props_for_expr(expr).is_empty()),
         // Go `BaseExecutorV2.Detach`.
         _ => false,
+    }
+}
+
+/// Go `buildTableReader`'s `partitionPruning` over a dynamically pruned
+/// partitioned table answering no partition: the reader's table scan reads a
+/// restricted partition set that is empty.
+fn prunes_to_no_partition(table_plan: &PhysicalPlan) -> bool {
+    match table_plan {
+        PhysicalPlan::TableScan(scan) => scan
+            .dynamic_partition_access
+            .as_ref()
+            .is_some_and(|access| !access.all_partitions && access.partitions.is_empty()),
+        other => other.children().iter().any(prunes_to_no_partition),
     }
 }

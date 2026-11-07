@@ -4982,3 +4982,32 @@ fn placement_mode_ignore_drops_placement_with_go_s_note() {
         "{shown}"
     );
 }
+
+/// Go `buildTableReader`: a dynamically pruned reader whose partition set is
+/// empty (gorun's `TableReader ... partition:dual`) is built as a
+/// `TableDualExec`, which does not detach (`BaseExecutorV2.Detach`); one
+/// pruned to `p0` is a `TableReaderExecutor`, which does.
+#[test]
+fn a_reader_pruned_to_no_partition_does_not_detach_as_go() {
+    let mut session = Session::new();
+    session
+        .run(
+            "create table tp (a int) partition by range (a) \
+             (partition p0 values less than (10), partition p1 values less than (20))",
+        )
+        .unwrap();
+    session.run("insert into tp values (1), (15)").unwrap();
+    for (sql, detaches) in [
+        ("select * from tp where a = 100", false),
+        ("select * from tp where a = 1", true),
+    ] {
+        let statement = session.parse_statement(sql).unwrap();
+        let tidb_executor::record_set::OpenedStatement::Rows(mut result) =
+            session.open_record_set_parsed(statement, sql).unwrap()
+        else {
+            panic!("{sql} must open a record set");
+        };
+        assert_eq!(result.try_detach().is_some(), detaches, "{sql}");
+        result.close(&mut session).unwrap();
+    }
+}

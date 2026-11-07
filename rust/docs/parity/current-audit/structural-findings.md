@@ -18,7 +18,7 @@ unresolved until it is restated against its Go owner or closed.
 | --- | --- | --- | --- |
 | Y01 | partial | The DDL scheduler, systable manager, history and MDL readers scan records instead of running SQL on `DdlSessionPool::sess_pool`; the bootstrap stages raw rows; accounts load eagerly where Go loads per active user | `pkg/ddl` (`systable`, job scheduler), `pkg/session` bootstrap, `pkg/privilege/privileges` (`ensureActiveUser`) |
 | I04 | partial | No lazy InfoSchema V2, schema-cache-size loader/evictor or InfoCache timestamp ranges | `pkg/infoschema` |
-| O09 | partial | `ReportMinStartTS` has no InfoCache recent-schema TS (`GetAndResetRecentInfoSchemaTS`, InfoSchema V2: I04). Lazy cursor fetch answers Go's `executor.Detach` over the physical plan (`tidb_executor::detach`), because the builder's operator tree is not Go's executor tree; `buildTableReader`'s `TableDualExec` for an empty pruned partition set is not modeled there. A detached statement still publishes its completion through its record set's close, where Go never runs the abandoned `recordSet`'s `CloseRecordSet` | `pkg/domain/infosync`, `pkg/executor` (`detach.go`, `adapter.go` `recordSet.TryDetach`) |
+| O09 | partial | `ReportMinStartTS` has no InfoCache recent-schema TS (`GetAndResetRecentInfoSchemaTS`, InfoSchema V2: I04). Lazy cursor fetch answers Go's `executor.Detach` over the physical plan (`tidb_executor::detach`), because the builder's operator tree is not Go's executor tree; A detached statement still publishes its completion through its record set's close, where Go never runs the abandoned `recordSet`'s `CloseRecordSet` | `pkg/domain/infosync`, `pkg/executor` (`detach.go`, `adapter.go` `recordSet.TryDetach`) |
 
 ### DDL
 
