@@ -8599,3 +8599,74 @@ fn prepare_insert_plans_its_values_and_on_duplicate_like_go() {
     session.run("execute s4").unwrap();
     assert_eq!(row_text(session.run("select * from t")), [["1", "2"]]);
 }
+
+/// `EXPLAIN ANALYZE`'s `actRows` come from the statement's
+/// `RuntimeStatsColl` (Go `getRuntimeInfoStr`): a pushed operator's from the
+/// coprocessor's execution summaries, so a limited scan reports the batch the
+/// coprocessor read before its pushed `Limit` stopped it. `./gorun` over 5000
+/// rows:
+///
+/// ```text
+/// Limit_8                 4  root
+/// └─TableReader_14        4  root
+///   └─Limit_13            4  cop[tikv]
+///     └─Selection_12     64  cop[tikv]
+///       └─TableFullScan_11 64 cop[tikv]
+/// ```
+#[test]
+fn a_limited_scan_reports_the_coprocessor_batch_like_go() {
+    let mut session = Session::new();
+    for sql in [
+        "create table d (v int)",
+        "insert into d values (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)",
+        "create table t (a int, b int, c int)",
+        "insert into t select x.v*1000+y.v*100+z.v*10+w.v+1, 0, 0 from d x, d y, d z, d w where x.v < 5",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let rows = row_text(session.run("explain analyze select a from t where a > 0 limit 4"));
+    let shape: Vec<(String, String)> = rows
+        .iter()
+        .map(|row| (row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()).to_owned(), row[2].clone()))
+        .collect();
+    let expected = [
+        ("Limit_8", "4"),
+        ("TableReader_14", "4"),
+        ("Limit_13", "4"),
+        ("Selection_12", "64"),
+        ("TableFullScan_11", "64"),
+    ]
+    .map(|(op, rows)| (op.to_owned(), rows.to_owned()));
+    assert_eq!(shape, expected);
+}
+
+/// A point read's execution info is its plan's `RootRuntimeStats` in Go's
+/// registration order: the basic stats, the RU `executeAnalyzeExec`
+/// registers once the read drained, then the snapshot stats the reader
+/// registers from its `Close`. `./gorun`:
+///
+/// ```text
+/// Point_Get_1        time:9µs, open:625ns, close:1.08µs, loops:2, RU:0.00, Get:{num_rpc:1, total_time:1.83µs}
+/// Batch_Point_Get_1  time:20.3µs, open:1.83µs, close:1µs, loops:2, RU:0.00, BatchGet:{num_rpc:1, total_time:3.83µs}
+/// ```
+#[test]
+fn a_point_read_reports_its_ru_then_its_snapshot_like_go() {
+    let mut session = Session::new();
+    session
+        .run("create table t (a int primary key, b int)")
+        .unwrap();
+    session.run("insert into t values (1,1),(2,2)").unwrap();
+    for (sql, operator, rpc) in [
+        ("explain analyze select * from t where a = 1", "Point_Get_1", "Get"),
+        ("explain analyze select * from t where a in (1,2)", "Batch_Point_Get_1", "BatchGet"),
+    ] {
+        let rows = row_text(session.run(sql));
+        assert_eq!(rows.len(), 1, "{sql}: {rows:?}");
+        assert_eq!(rows[0][0], operator);
+        let info = mask_durations(&rows[0][5]);
+        let (basic, rest) = info.split_once(", RU:").unwrap_or_else(|| panic!("{sql}: {info}"));
+        assert_eq!(basic, "time:D, open:D, close:D, loops:2", "{sql}");
+        let (_, snapshot) = rest.split_once(", ").unwrap_or_else(|| panic!("{sql}: {info}"));
+        assert_eq!(snapshot, format!("{rpc}:{{num_rpc:1, total_time:D}}"), "{sql}");
+    }
+}

@@ -24,7 +24,6 @@
 #[allow(unused_imports)]
 use super::*;
 use crate::compiler::NonPreparedPlanCacheCompile;
-use std::sync::Arc;
 
 use tidb_ast::Stmt;
 
@@ -178,19 +177,10 @@ pub trait ExplainCompile: super::CompilerSession {
             }),
             _ => ctx,
         };
-        // Go `ExplainExec.executeAnalyzeExec` gives the analyzed statement a
-        // fresh `RuntimeStatsColl` whatever `tidb_enable_collect_execution_info`
-        // says: the rows below are rendered from it.
-        let ctx = if explain.analyze && ctx.executor_runtime_stats_source().is_none() {
-            let coll = Arc::new(tidb_execdetails::runtime_stats::RuntimeStatsColl::new(None));
-            let sink: Arc<dyn crate::CopResponseSink> = Arc::new(
-                crate::statement_cop_stats::RuntimeStatsCollSink::new(
-                    Arc::clone(&coll),
-                    ctx.cop_response_sink(),
-                ),
-            );
-            ctx.with_executor_runtime_stats_source(Some(coll))
-                .with_cop_response_sink(Some(sink))
+        // Go `buildExplain`'s fresh `RuntimeStatsColl` for an analyzed
+        // statement that collects none.
+        let ctx = if explain.analyze {
+            crate::explain::explain_analyze_context(&ctx)
         } else {
             ctx
         };

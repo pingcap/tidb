@@ -580,6 +580,44 @@ impl AllocatorRuntimeStats {
         tidb_txnkv::SnapshotRuntimeStatsHandle(Arc::clone(&self.snapshot))
     }
 
+    /// Go `AllocatorRuntimeStats.Clone`.
+    #[must_use]
+    pub fn clone_stats(&self) -> Self {
+        Self {
+            snapshot: Arc::new((*self.snapshot).clone()),
+            commit: std::sync::Mutex::new(
+                self.commit
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone(),
+            ),
+            alloc_count: std::sync::atomic::AtomicUsize::new(self.alloc_count.load(Ordering::Relaxed)),
+            rebase_count: std::sync::atomic::AtomicUsize::new(self.rebase_count.load(Ordering::Relaxed)),
+        }
+    }
+
+    /// Go `AllocatorRuntimeStats.Merge`: the snapshot and commit stats; the
+    /// counts are not merged.
+    pub fn merge(&self, other: &Self) {
+        use tidb_execdetails::runtime_stats::RuntimeStats as _;
+        self.snapshot.merge(&other.snapshot);
+        let theirs = other
+            .commit
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if let Some(theirs) = theirs {
+            let mut mine = self
+                .commit
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match mine.as_mut() {
+                Some(mine) => mine.merge(&theirs),
+                None => *mine = Some(theirs),
+            }
+        }
+    }
+
     /// Go `mergeCommitDetail`.
     pub(crate) fn merge_commit_detail(&self, detail: Option<&tikv_client::util::CommitDetails>) {
         let Some(detail) = detail else {

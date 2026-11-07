@@ -8666,49 +8666,6 @@ let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())
         assert_eq!(entries.load(Ordering::Relaxed), ROWS as usize);
     }
 
-    /// `EXPLAIN ANALYZE`'s `actRows` for the scan reports the truncation: the
-    /// counter the trace reads is the source's own, so it cannot drift from
-    /// what the scan really did.
-    #[test]
-    fn explain_analyze_act_rows_reflect_the_truncation() {
-        let (catalog, _, _, store) = table_of(ROWS, false);
-        let stmt = tidb_parser::parse("SELECT a FROM t WHERE a > 0 LIMIT 4").unwrap();
-        let tidb_ast::Stmt::Query(query) = &stmt else {
-            panic!("the test statement must parse as a query");
-        };
-        let tidb_ast::QueryStmt::Select(select) = &**query else {
-            panic!("the test statement must parse as a SELECT");
-        };
-        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
-        let (_, rows) = crate::explain::explain_analyze_select_stmt(
-            select,
-            &catalog,
-            "test",
-            &ctx,
-            ExplainFormat::Row,
-        )
-        .unwrap();
-        // EXPLAIN cells are the wire's text bytes.
-        let text = |cell: &Datum| match cell {
-            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
-            other => format!("{other:?}"),
-        };
-        let scan = rows
-            .iter()
-            .find(|row| text(&row[0]).contains("TableFullScan"))
-            .unwrap_or_else(|| {
-                panic!(
-                    "the plan has a full scan, got {:?}",
-                    rows.iter().map(|r| text(&r[0])).collect::<Vec<_>>()
-                )
-            });
-        assert_eq!(
-            text(&scan[2]),
-            "4",
-            "the scan reports the four rows it read, not {ROWS}"
-        );
-    }
-
     /// A table whose INDEX order and HANDLE order disagree in both
     /// directions: `t(a, b, c)` under `ibc(b, c)`, with the handle being the
     /// allocated `_tidb_rowid` (= insertion order = `a`).

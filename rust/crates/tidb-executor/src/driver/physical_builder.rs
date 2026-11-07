@@ -337,6 +337,14 @@ pub(crate) struct DmlExec {
     /// from.
     pub(crate) alloc_pool: Option<Arc<dyn tidb_chunk::alloc::Allocator>>,
     calls: Option<Arc<Mutex<PhysicalCallStats>>>,
+    /// Go `exec.Open` / `exec.Next` / `exec.Close`'s `BasicRuntimeStats` of
+    /// the root in the statement's `RuntimeStatsColl`, which receives the
+    /// one `Next` [`Self::calls`] adds up when the executor is dropped.
+    runtime_stats: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStats>>,
+    /// The statement's `RuntimeStatsColl` and the root's plan id, which the
+    /// executor's own stats groups register under.
+    runtime_stats_source: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
+    plan_id: i64,
     /// Go `InsertValues.stats` of an `InsertExec` / `ReplaceExec` whose
     /// runtime stats are collected (`collectRuntimeStatsEnabled`).
     insert: Option<Arc<Mutex<super::dml::InsertRuntimeStat>>>,
@@ -353,16 +361,24 @@ impl DmlExec {
         ctx: &crate::StmtContext,
         runtime: Option<&mut PhysicalRuntimeStats>,
     ) -> Self {
-        let calls = runtime.map(|runtime| {
-            let counter = runtime
-                .entry(runtime_plan_key(plan))
-                .or_insert_with(|| tidb_executor_internal_exec::RowCount::default().into());
-            Arc::clone(
-                counter
-                    .calls
-                    .get_or_insert_with(|| Arc::new(Mutex::new(PhysicalCallStats::default()))),
-            )
-        });
+        let runtime_stats = ctx
+            .executor_runtime_stats_source()
+            .and_then(|source| source.for_executor(i64::from(plan.id())));
+        let calls = match runtime {
+            Some(runtime) => {
+                let counter = runtime
+                    .entry(runtime_plan_key(plan))
+                    .or_insert_with(|| tidb_executor_internal_exec::RowCount::default().into());
+                Some(Arc::clone(
+                    counter
+                        .calls
+                        .get_or_insert_with(|| Arc::new(Mutex::new(PhysicalCallStats::default()))),
+                ))
+            }
+            None => runtime_stats
+                .is_some()
+                .then(|| Arc::new(Mutex::new(PhysicalCallStats::default()))),
+        };
         // Go `Open`'s `memory.NewTracker(e.ID(), -1)` + `AttachTo`.
         let start = Instant::now();
         let mem_tracker = ctx.statement_memory().write_accountant(i64::from(plan.id()));
@@ -374,6 +390,9 @@ impl DmlExec {
             max_chunk_size: ctx.executor_chunk_sizes().1,
             alloc_pool: ctx.chunk_allocator(),
             calls,
+            runtime_stats,
+            runtime_stats_source: ctx.executor_runtime_stats_source().cloned(),
+            plan_id: i64::from(plan.id()),
             insert: None,
             update: None,
         }
@@ -387,12 +406,15 @@ impl DmlExec {
         mut runtime: Option<&mut PhysicalRuntimeStats>,
     ) -> Self {
         let mut dml = Self::new(plan, ctx, runtime.as_deref_mut());
-        if let Some(runtime) = runtime {
+        // Go `collectRuntimeStatsEnabled`: the statement collects runtime stats.
+        if runtime.is_some() || dml.runtime_stats.is_some() {
             let stats = Arc::new(Mutex::new(super::dml::InsertRuntimeStat::default()));
-            runtime
-                .get_mut(&runtime_plan_key(plan))
-                .expect("Self::new registered the plan")
-                .insert = Some(Arc::clone(&stats));
+            if let Some(runtime) = runtime {
+                runtime
+                    .get_mut(&runtime_plan_key(plan))
+                    .expect("Self::new registered the plan")
+                    .insert = Some(Arc::clone(&stats));
+            }
             dml.insert = Some(stats);
         }
         dml
@@ -406,12 +428,15 @@ impl DmlExec {
         mut runtime: Option<&mut PhysicalRuntimeStats>,
     ) -> Self {
         let mut dml = Self::new(plan, ctx, runtime.as_deref_mut());
-        if let Some(runtime) = runtime {
+        // Go `collectRuntimeStatsEnabled`: the statement collects runtime stats.
+        if runtime.is_some() || dml.runtime_stats.is_some() {
             let stats = Arc::new(super::dml::UpdateRuntimeStats::default());
-            runtime
-                .get_mut(&runtime_plan_key(plan))
-                .expect("Self::new registered the plan")
-                .update = Some(Arc::clone(&stats));
+            if let Some(runtime) = runtime {
+                runtime
+                    .get_mut(&runtime_plan_key(plan))
+                    .expect("Self::new registered the plan")
+                    .update = Some(Arc::clone(&stats));
+            }
             dml.update = Some(stats);
         }
         dml
@@ -457,6 +482,36 @@ impl DmlExec {
         self.record(close, |calls, elapsed| calls.close += elapsed)
     }
 
+    /// The root's open, its one `Next` (no rows: a write returns none) and
+    /// its close, into the statement's `RuntimeStatsColl`, when the executor
+    /// is dropped (its close time includes detaching its tracker).
+    fn flush_runtime_stats(&self) {
+        let (Some(stats), Some(calls)) = (&self.runtime_stats, &self.calls) else {
+            return;
+        };
+        let calls = *calls.lock().unwrap();
+        stats.record_open(calls.open);
+        stats.record_next(calls.next, 0);
+        stats.record_close(calls.close);
+        // Go `InsertExec.Close` / `UpdateExec.Close`'s deferred
+        // `RuntimeStatsColl.RegisterStats(e.ID(), e.stats)`.
+        let Some(source) = self.runtime_stats_source.as_ref() else {
+            return;
+        };
+        if let Some(insert) = &self.insert {
+            source.register_stats(
+                self.plan_id,
+                Box::new(super::dml::RegisteredInsertRuntimeStat {
+                    stat: Arc::clone(insert),
+                    basic_time: calls.open + calls.next + calls.close,
+                }),
+            );
+        }
+        if let Some(update) = &self.update {
+            source.register_stats(self.plan_id, Box::new(super::dml::RegisteredUpdateRuntimeStats(Arc::clone(update))));
+        }
+    }
+
     fn record<T>(&self, run: impl FnOnce() -> T, add: impl FnOnce(&mut PhysicalCallStats, Duration)) -> T {
         let Some(calls) = &self.calls else {
             return run();
@@ -475,6 +530,7 @@ impl Drop for DmlExec {
         if let Some(calls) = &self.calls {
             calls.lock().unwrap().close += start.elapsed();
         }
+        self.flush_runtime_stats();
     }
 }
 
@@ -552,9 +608,14 @@ impl BuildState {
         &mut self,
         plan_key: usize,
     ) -> Option<crate::apply::native::ApplyRuntimeSink> {
-        let counter = self
-            .runtime_counters
-            .as_mut()?
+        let Some(counters) = self.runtime_counters.as_mut() else {
+            // Go `e.RuntimeStats() != nil`: the statement collects stats.
+            return self
+                .executor_runtime_stats_source
+                .is_some()
+                .then(|| Arc::new(Mutex::new(None)));
+        };
+        let counter = counters
             .entry(plan_key)
             .or_insert_with(|| tidb_executor_internal_exec::RowCount::default().into());
         Some(Arc::clone(
@@ -4317,12 +4378,16 @@ fn build_index_lookup_source(
                 );
                 calls
             });
-        if calls.is_none() && ruv2.is_none() {
+        let runtime_stats = (!state.untraced)
+            .then(|| ctx.executor_runtime_stats_source().and_then(|source| source.for_executor(i64::from(inner.id()))))
+            .flatten();
+        if calls.is_none() && runtime_stats.is_none() && ruv2.is_none() {
             return Ok(IndexLookupSource::Leaf(Box::new(leaf)));
         }
         return Ok(IndexLookupSource::Leaf(Box::new(MeteredIndexJoinLookup {
             inner: Box::new(leaf),
             calls,
+            runtime_stats,
             ruv2,
         })));
     }
@@ -4338,6 +4403,9 @@ fn build_index_lookup_source(
 struct MeteredIndexJoinLookup {
     inner: Box<dyn tidb_executor_join::index_lookup::IndexJoinLookup>,
     calls: Option<Arc<Mutex<PhysicalCallStats>>>,
+    /// Go `exec.Next` / `exec.Close`'s `BasicRuntimeStats` of the inner
+    /// reader's plan in the statement's `RuntimeStatsColl`.
+    runtime_stats: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStats>>,
     ruv2: Option<tidb_executor_internal_exec::ruv2::Ruv2NextCache>,
 }
 
@@ -4356,6 +4424,9 @@ impl Executor for MeteredIndexJoinLookup {
             calls.next += start.elapsed();
             calls.loops += 1;
         }
+        if let Some(stats) = &self.runtime_stats {
+            stats.record_next(start.elapsed(), i64::try_from(req.num_rows()).unwrap_or(i64::MAX));
+        }
         result
     }
 
@@ -4364,6 +4435,9 @@ impl Executor for MeteredIndexJoinLookup {
         let result = self.inner.close();
         if let Some(calls) = &self.calls {
             calls.lock().unwrap().close += start.elapsed();
+        }
+        if let Some(stats) = &self.runtime_stats {
+            stats.record_close(start.elapsed());
         }
         result
     }
@@ -4402,6 +4476,7 @@ impl tidb_executor_join::index_lookup::IndexJoinLookup for MeteredIndexJoinLooku
             Box::new(MeteredIndexJoinLookupFork {
                 inner,
                 calls: self.calls.clone(),
+                runtime_stats: self.runtime_stats.clone(),
                 ruv2: self.ruv2.clone(),
             }) as Box<dyn tidb_executor_join::index_lookup::IndexJoinLookupFork>
         })
@@ -4417,6 +4492,7 @@ impl tidb_executor_join::index_lookup::IndexJoinLookup for MeteredIndexJoinLooku
 struct MeteredIndexJoinLookupFork {
     inner: Box<dyn tidb_executor_join::index_lookup::IndexJoinLookupFork>,
     calls: Option<Arc<Mutex<PhysicalCallStats>>>,
+    runtime_stats: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStats>>,
     ruv2: Option<tidb_executor_internal_exec::ruv2::Ruv2NextCache>,
 }
 
@@ -4435,6 +4511,7 @@ impl tidb_executor_join::index_lookup::IndexJoinLookupFork for MeteredIndexJoinL
             Box::new(MeteredIndexJoinLookup {
                 inner,
                 calls: self.calls.clone(),
+                runtime_stats: self.runtime_stats.clone(),
                 ruv2: self.ruv2.clone(),
             }) as Box<dyn tidb_executor_join::index_lookup::IndexJoinLookup>
         }))
@@ -5256,7 +5333,8 @@ fn build_apply(
                 });
             }
             if workers.len() == apply.concurrency {
-                return Ok(Box::new(ParallelNestedLoopApplyExec::new(
+                let sink = state.apply_runtime_sink(runtime_plan_key(plan));
+                let executor = Box::new(ParallelNestedLoopApplyExec::new(
                     meta(ctx, plan, plan_schema(plan)?),
                     outer,
                     outer_filter,
@@ -5265,8 +5343,9 @@ fn build_apply(
                     apply.can_use_cache,
                     worker_ctx.clone(),
                     stop,
-                    state.apply_runtime_sink(runtime_plan_key(plan)),
-                )));
+                    sink.clone(),
+                ));
+                return Ok(register_apply_stats_on_close(executor, ctx, plan, sink));
             }
         }
     }
@@ -5281,9 +5360,28 @@ fn build_apply(
         apply.hash_join.join_type != LogicalJoinType::Inner,
         apply.can_use_cache,
         ctx.clone(),
-    )
-    .with_runtime_sink(state.apply_runtime_sink(runtime_plan_key(plan)));
-    Ok(Box::new(executor))
+    );
+    let sink = state.apply_runtime_sink(runtime_plan_key(plan));
+    let executor = Box::new(executor.with_runtime_sink(sink.clone()));
+    Ok(register_apply_stats_on_close(executor, ctx, plan, sink))
+}
+
+/// Go `NestedLoopApplyExec.Close` / `ParallelNestedLoopApplyExec.Close`'s
+/// deferred `RegisterStats(e.ID(), runtimeStats)` of a `joinRuntimeStats`
+/// with the apply's concurrency and cache use.
+fn register_apply_stats_on_close(
+    executor: Box<dyn Executor>,
+    ctx: &crate::StmtContext,
+    plan: &PhysicalPlan,
+    sink: Option<crate::apply::native::ApplyRuntimeSink>,
+) -> Box<dyn Executor> {
+    let Some(sink) = sink else {
+        return executor;
+    };
+    crate::runtime_stats_groups::RegisterStatsOnClose::wrap(executor, ctx, i64::from(plan.id()), move || {
+        let snapshot = (*sink.lock().unwrap_or_else(std::sync::PoisonError::into_inner)).unwrap_or_default();
+        Box::new(crate::runtime_stats_groups::ApplyJoinRuntimeStats { snapshot })
+    })
 }
 
 fn seed_apply_clone_runtime(
@@ -7684,6 +7782,23 @@ fn build_cluster_table_scan(
     })
 }
 
+/// Go `PointGetExecutor.Close` / `BatchPointGetExec.Close`'s
+/// `RuntimeStatsColl.RegisterStats(e.ID(), e.stats)` of the reader's
+/// snapshot stats.
+fn register_snapshot_stats_on_close(
+    executor: Box<dyn Executor>,
+    ctx: &crate::StmtContext,
+    plan: &PhysicalPlan,
+    snapshot_stats: Option<&Arc<tikv_client::SnapshotRuntimeStats>>,
+) -> Box<dyn Executor> {
+    let Some(snapshot_stats) = snapshot_stats.cloned() else {
+        return executor;
+    };
+    crate::runtime_stats_groups::RegisterStatsOnClose::wrap(executor, ctx, i64::from(plan.id()), move || {
+        Box::new(crate::runtime_stats_groups::RuntimeStatsWithSnapshot::new(&snapshot_stats))
+    })
+}
+
 /// Go `executorBuilder.getSnapshotTS` / `getSnapshot`: building a reader
 /// takes the statement's read timestamp, which activates its transaction
 /// (`GetStmtReadTS` -> `ActivateTxn`) -- under a plain EXPLAIN too, whose
@@ -7829,7 +7944,10 @@ fn build_with_state(
                 point.table_id,
                 catalog,
                 ctx,
-                |plan| build_point_get(plan, point, catalog, ctx, snapshot_stats.clone()),
+                |plan| {
+                    let executor = build_point_get(plan, point, catalog, ctx, snapshot_stats.clone())?;
+                    Ok(register_snapshot_stats_on_close(executor, ctx, plan, snapshot_stats.as_ref()))
+                },
             )
         }
         PhysicalPlan::BatchPointGet(batch) => {
@@ -7842,7 +7960,10 @@ fn build_with_state(
                 batch.table_id,
                 catalog,
                 ctx,
-                |plan| build_batch_point_get(plan, batch, catalog, ctx, snapshot_stats.clone()),
+                |plan| {
+                    let executor = build_batch_point_get(plan, batch, catalog, ctx, snapshot_stats.clone())?;
+                    Ok(register_snapshot_stats_on_close(executor, ctx, plan, snapshot_stats.as_ref()))
+                },
             )
         }
         PhysicalPlan::Lock(lock) => {
@@ -7890,11 +8011,6 @@ fn build_with_state(
             } else {
                 0
             };
-            // Go `ProjectionExec.Close` registers its concurrency
-            // (`Concurrency:OFF` for the serial path).
-            if !state.in_reader && !state.untraced {
-                register_concurrency_info(ctx, plan, "Concurrency", workers);
-            }
             let mut projection = ProjectionExec::new(meta, expressions, child, ctx.clone())
                 .with_workers(workers)
                 .in_coprocessor(state.in_reader);
@@ -7904,7 +8020,24 @@ fn build_with_state(
                 );
             }
             let executor: Box<dyn Executor> = Box::new(projection);
-            Ok(executor)
+            if state.in_reader || state.untraced {
+                return Ok(executor);
+            }
+            // Go `ProjectionExec.Close` registers its concurrency
+            // (`Concurrency:OFF` for the serial path).
+            Ok(crate::runtime_stats_groups::RegisterStatsOnClose::wrap(
+                executor,
+                ctx,
+                i64::from(plan.id()),
+                move || {
+                    let stats = tidb_execdetails::RuntimeStatsWithConcurrencyInfo::default();
+                    stats.set_concurrency_info(vec![tidb_execdetails::ConcurrencyInfo::new(
+                        "Concurrency",
+                        i64::try_from(workers).unwrap_or(i64::MAX),
+                    )]);
+                    Box::new(stats)
+                },
+            ))
         }
         PhysicalPlan::Selection(selection) => {
             let mut child = build_with_state(only_child(plan)?, catalog, ctx, state)?;
@@ -9009,6 +9142,8 @@ pub(crate) fn execute_for_explain(
         }
         Ok::<(), DriverError>(())
     })();
+    // Go `executeAnalyzeExec` registers the RU before its deferred `Close`.
+    crate::explain::register_ru_runtime_stats(ctx, i64::from(physical.id()));
     let close_result = root.close().map_err(DriverError::from);
     result?;
     close_result?;

@@ -63,6 +63,7 @@ pub mod detach;
 pub mod staticrecordset;
 pub mod stmt_ctx_build;
 pub mod statement_cop_stats;
+mod runtime_stats_groups;
 pub mod table_privilege;
 pub mod compiler;
 pub mod blacklist;

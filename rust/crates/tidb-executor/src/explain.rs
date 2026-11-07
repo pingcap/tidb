@@ -1723,13 +1723,20 @@ fn physical_operator_own_info(
     }
 }
 
+/// Go `getRuntimeInfoStr`'s `rootStats.GetActRows()`: the rows the plan's
+/// root executors returned, from the statement's `RuntimeStatsColl`.
 fn runtime_rows(
+    statement_context: &crate::StmtContext,
     plan: &PhysicalPlan,
     runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
 ) -> Option<u64> {
-    runtime?
-        .get(&crate::driver::physical_builder::runtime_plan_key(plan))
-        .map(|counter| counter.get())
+    runtime?;
+    // `actRows` is "0" for a plan whose executors recorded nothing.
+    let rows = statement_context
+        .executor_runtime_stats_source()
+        .and_then(|source| source.plan_act_rows(i64::from(plan.id())))
+        .unwrap_or_default();
+    Some(u64::try_from(rows).unwrap_or_default())
 }
 
 fn physical_explain_operator(
@@ -2073,7 +2080,7 @@ fn physical_explain_operator(
     {
         operator = operator.with_estimated_rows(rows * probe_count);
     }
-    if let Some(rows) = runtime_rows(plan, runtime) {
+    if let Some(rows) = runtime_rows(statement_context, plan, runtime) {
         operator = operator.with_actual_rows(rows);
     }
     // Go `getRuntimeInfo`: `StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())`
@@ -2114,21 +2121,12 @@ fn physical_explain_operator(
                 .with_execution_info(info);
         }
     }
-    // Only publish the runtime of the actual root executor at this seam.
-    if matches!(operator.task, ExplainTask::Root) {
-        if let Some(info) = runtime
-            .and_then(|stats| stats.get(&crate::driver::physical_builder::runtime_plan_key(plan)))
-            .and_then(|counter| counter.execution_info())
+    // Go `getRuntimeInfoStr`'s `rootStats.String()` for a root operator.
+    if runtime.is_some() && matches!(operator.task, ExplainTask::Root) {
+        if let Some(info) = statement_context
+            .executor_runtime_stats_source()
+            .and_then(|source| source.root_runtime_info(i64::from(plan.id())))
         {
-            // Go `RootRuntimeStats.String()`: the basic stats, then the
-            // group stats registered on the plan (a reader's select result).
-            let info = match statement_context
-                .executor_runtime_stats_source()
-                .and_then(|source| source.root_group_runtime_info(i64::from(plan.id())))
-            {
-                Some(groups) => format!("{info}, {groups}"),
-                None => info,
-            };
             operator = operator.with_execution_info(info);
         }
     }
@@ -3438,20 +3436,13 @@ impl tidb_planner::plan_hint::HintCatalog for CatalogHints<'_> {
     }
 }
 
-/// Go `ExplainExec.executeAnalyzeExec`'s last step: once the analyzed
-/// statement has run, the statement's `RUDetails` (cloned) are registered on
-/// the target plan as `RURuntimeStats`, under the RU version of Go's
-/// `domain.GetRUVersion` -- `rmclient.DefaultRUVersion` here, Go's answer
-/// when no domain resource-group controller is reachable from the session.
-/// The statement's RU v2 metrics go with it once its RPCs' TiKV counters
-/// are synced in (Go `SyncRUV2MetricsFromContext`), under the configured
-/// weights (`SessionVars.RUV2Weights`).
-fn register_ru_runtime_stats(
-    statement_context: &crate::StmtContext,
-    physical: &PhysicalPlan,
-    runtime: &crate::driver::physical_builder::PhysicalRuntimeStats,
-) -> crate::driver::physical_builder::PhysicalRuntimeStats {
-    let mut runtime = runtime.clone();
+/// Go `ExplainExec.executeAnalyzeExec`'s `RegisterStats(targetPlan.ID(),
+/// ruRuntimeStats)`: the statement's RU, registered on the analyzed plan
+/// once it ran -- before a read's executors close, after a write's.
+pub(crate) fn register_ru_runtime_stats(statement_context: &crate::StmtContext, plan_id: i64) {
+    let Some(source) = statement_context.executor_runtime_stats_source() else {
+        return;
+    };
     let ru_details = statement_context.ru_details();
     let metrics = statement_context.ruv2_metrics();
     if let Some(metrics) = metrics {
@@ -3461,18 +3452,17 @@ fn register_ru_runtime_stats(
         );
     }
     if ru_details.is_some() || metrics.is_some() {
-        runtime
-            .entry(crate::driver::physical_builder::runtime_plan_key(physical))
-            .or_insert_with(|| tidb_executor_internal_exec::RowCount::default().into())
-            .register_ru_runtime_stats(tidb_execdetails::ruv2_metrics::RuRuntimeStats {
+        source.register_stats(
+            plan_id,
+            Box::new(tidb_execdetails::ruv2_metrics::RuRuntimeStats {
                 ru_details: ru_details.as_ref().map(|details| details.cloned()),
                 metrics: metrics.map(|metrics| (**metrics).clone()),
                 weights: tidb_variable::slow_log::ruv2_weights(),
                 // Go `do.GetRUVersion()`.
                 ru_version: tidb_topsql_stmtstats::bound_ru_version(),
-            });
+            }),
+        );
     }
-    runtime
 }
 
 fn render_physical_plan(
@@ -3488,14 +3478,6 @@ fn render_physical_plan(
     if matches!(format, ExplainFormat::Dot) {
         return Ok(explain_dot_rows(physical));
     }
-    let runtime_with_ru;
-    let runtime = match runtime {
-        Some(runtime) if analyze => {
-            runtime_with_ru = register_ru_runtime_stats(statement_context, physical, runtime);
-            Some(&runtime_with_ru)
-        }
-        runtime => runtime,
-    };
     if matches!(format, ExplainFormat::TidbJson | ExplainFormat::Binary) {
         // Go's binary operator carries `getPlanCost` (cost model ver2).
         let coster = matches!(format, ExplainFormat::Binary).then(|| {
@@ -3889,6 +3871,25 @@ pub fn explain_connection_plan(
     render_physical_plan(ctx, ctx, &physical, catalog, format, true, None, &[])
 }
 
+/// Go `buildExplain`: an analyzed statement renders from the statement's
+/// `RuntimeStatsColl`, a fresh one whatever `tidb_enable_collect_execution_info`
+/// says when the statement collects none, fed by its coprocessor responses.
+pub(crate) fn explain_analyze_context(ctx: &crate::StmtContext) -> crate::StmtContext {
+    if ctx.executor_runtime_stats_source().is_some() {
+        return ctx.clone();
+    }
+    let coll = std::sync::Arc::new(tidb_execdetails::runtime_stats::RuntimeStatsColl::new(None));
+    let sink: std::sync::Arc<dyn crate::CopResponseSink> = std::sync::Arc::new(
+        crate::statement_cop_stats::RuntimeStatsCollSink::new(
+            std::sync::Arc::clone(&coll),
+            ctx.cop_response_sink(),
+        ),
+    );
+    ctx.clone()
+        .with_executor_runtime_stats_source(Some(coll))
+        .with_cop_response_sink(Some(sink))
+}
+
 /// `EXPLAIN ANALYZE FORMAT = 'plan_cache'` over the plan the non-prepared
 /// cache gave the statement: that plan RUNS, and each operator reports what
 /// it produced, as [`explain_analyze_select_stmt`] does for a fresh plan.
@@ -3898,6 +3899,8 @@ pub fn explain_analyze_physical_plan(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    let analyzed = explain_analyze_context(ctx);
+    let ctx = &analyzed;
     let mut physical = physical.deep_clone();
     crate::driver::physical_builder::prepare_execution_plan(&mut physical, catalog, ctx)?;
     let runtime =
@@ -3996,6 +3999,8 @@ pub fn explain_analyze_select_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    let analyzed = explain_analyze_context(ctx);
+    let ctx = &analyzed;
     // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
     crate::driver::record_plan_builder_metric(ctx);
     render_physical_query(
@@ -4016,6 +4021,8 @@ pub fn explain_analyze_set_opr_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    let analyzed = explain_analyze_context(ctx);
+    let ctx = &analyzed;
     // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
     crate::driver::record_plan_builder_metric(ctx);
     render_physical_query(
@@ -4088,6 +4095,8 @@ pub fn explain_analyze_insert_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    let analyzed = explain_analyze_context(ctx);
+    let ctx = &analyzed;
     // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
     crate::driver::record_plan_builder_metric(ctx);
     let mut source_visits = Vec::new();
@@ -4108,6 +4117,8 @@ pub fn explain_analyze_insert_stmt(
     runtime
         .entry(root_key)
         .or_insert_with(|| tidb_executor_internal_exec::RowCount::default().into());
+    // The write ran and closed (Go `handleNoDelayExecutor`) before its RU.
+    register_ru_runtime_stats(ctx, i64::from(physical.id()));
     render_physical_plan(
         ctx,
         ctx,
@@ -4208,6 +4219,8 @@ pub fn explain_analyze_update_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    let analyzed = explain_analyze_context(ctx);
+    let ctx = &analyzed;
     // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
     crate::driver::record_plan_builder_metric(ctx);
     let mut physical = match crate::driver::multi_dml_explain_plan(
@@ -4246,6 +4259,8 @@ pub fn explain_analyze_update_stmt(
     runtime
         .entry(root_key)
         .or_insert_with(|| tidb_executor_internal_exec::RowCount::default().into());
+    // The write ran and closed (Go `handleNoDelayExecutor`) before its RU.
+    register_ru_runtime_stats(ctx, i64::from(physical.id()));
     render_physical_plan(
         ctx,
         ctx,
@@ -4267,6 +4282,8 @@ pub fn explain_analyze_delete_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    let analyzed = explain_analyze_context(ctx);
+    let ctx = &analyzed;
     // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
     crate::driver::record_plan_builder_metric(ctx);
     let mut physical = match crate::driver::multi_dml_explain_plan(
@@ -4305,6 +4322,8 @@ pub fn explain_analyze_delete_stmt(
     runtime
         .entry(root_key)
         .or_insert_with(|| tidb_executor_internal_exec::RowCount::default().into());
+    // The write ran and closed (Go `handleNoDelayExecutor`) before its RU.
+    register_ru_runtime_stats(ctx, i64::from(physical.id()));
     render_physical_plan(
         ctx,
         ctx,

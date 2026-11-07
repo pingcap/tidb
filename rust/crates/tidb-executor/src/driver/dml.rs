@@ -2638,6 +2638,95 @@ impl Drop for CollectInsertSnapshotStats<'_> {
     }
 }
 
+/// Go `InsertRuntimeStat` as `InsertExec.Close` registers it on its plan:
+/// its `BasicRuntimeStats` is the executor's, whose time `prepare` reads.
+pub(crate) struct RegisteredInsertRuntimeStat {
+    pub(crate) stat: Arc<std::sync::Mutex<InsertRuntimeStat>>,
+    pub(crate) basic_time: std::time::Duration,
+}
+
+impl tidb_execdetails::RuntimeStats for RegisteredInsertRuntimeStat {
+    fn string(&self) -> String {
+        self.stat.lock().unwrap().string(self.basic_time)
+    }
+
+    /// Go `InsertRuntimeStat.Merge`.
+    fn merge(&mut self, other: &dyn tidb_execdetails::RuntimeStats) {
+        let Some(other) = other.as_any().downcast_ref::<Self>() else {
+            return;
+        };
+        if Arc::ptr_eq(&self.stat, &other.stat) {
+            return;
+        }
+        let theirs = other.stat.lock().unwrap();
+        let mut mine = self.stat.lock().unwrap();
+        mine.snapshot.merge(&theirs.snapshot);
+        mine.allocator.merge(&theirs.allocator);
+        mine.prefetch += theirs.prefetch;
+        mine.fk_check_time += theirs.fk_check_time;
+        mine.check_insert_time += theirs.check_insert_time;
+    }
+
+    /// Go `InsertRuntimeStat.Clone`.
+    fn clone_box(&self) -> Box<dyn tidb_execdetails::RuntimeStats> {
+        let stat = self.stat.lock().unwrap();
+        Box::new(Self {
+            stat: Arc::new(std::sync::Mutex::new(InsertRuntimeStat {
+                snapshot: Arc::new((*stat.snapshot).clone()),
+                allocator: Arc::new(stat.allocator.clone_stats()),
+                check_insert_time: stat.check_insert_time,
+                prefetch: stat.prefetch,
+                fk_check_time: stat.fk_check_time,
+            })),
+            basic_time: self.basic_time,
+        })
+    }
+
+    fn tp(&self) -> i32 {
+        tidb_execdetails::TP_INSERT_RUNTIME_STAT
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// Go `updateRuntimeStats` as `UpdateExec.Close` registers it on its plan.
+pub(crate) struct RegisteredUpdateRuntimeStats(pub(crate) Arc<UpdateRuntimeStats>);
+
+impl tidb_execdetails::RuntimeStats for RegisteredUpdateRuntimeStats {
+    fn string(&self) -> String {
+        self.0.string()
+    }
+
+    /// Go `updateRuntimeStats.Merge`: the snapshot stats; the allocator
+    /// stats are kept, not merged.
+    fn merge(&mut self, other: &dyn tidb_execdetails::RuntimeStats) {
+        let Some(other) = other.as_any().downcast_ref::<Self>() else {
+            return;
+        };
+        if !Arc::ptr_eq(&self.0, &other.0) {
+            self.0.snapshot.merge(&other.0.snapshot);
+        }
+    }
+
+    /// Go `updateRuntimeStats.Clone`.
+    fn clone_box(&self) -> Box<dyn tidb_execdetails::RuntimeStats> {
+        Box::new(Self(Arc::new(UpdateRuntimeStats {
+            snapshot: Arc::new((*self.0.snapshot).clone()),
+            allocator: Arc::new(self.0.allocator.clone_stats()),
+        })))
+    }
+
+    fn tp(&self) -> i32 {
+        tidb_execdetails::TP_UPDATE_RUNTIME_STATS
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
 /// Go `updateRuntimeStats` (`pkg/executor/update.go`): the RPCs an
 /// `UpdateExec`'s snapshot sent while it wrote, and what its auto-ID
 /// rebases did.

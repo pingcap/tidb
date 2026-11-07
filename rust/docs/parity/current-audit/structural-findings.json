@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 29,
-    "open": 7,
-    "partial": 22
+    "open": 6,
+    "partial": 23
   },
   "findings": [
     {
@@ -110,9 +110,9 @@
     },
     {
       "id": "E20",
-      "status": "open",
+      "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "Runtime statistics render from a per-build counter map (`physical_builder::PhysicalRuntimeStats`, filled only by `execute_for_explain` for EXPLAIN ANALYZE) instead of the statement's `RuntimeStatsColl`, which Go's `Explain.RenderResult` reads for both EXPLAIN ANALYZE and `EXPLAIN FOR CONNECTION` (`buildExplainFor` hands it the target process's `RuntimeStatsColl`); so `EXPLAIN FOR CONNECTION` renders the stored plan with `actRows`, `execution info`, `memory` and `disk` as `N/A` where Go shows the last execution's (a cached prepared point UPDATE: `Update_3` actRows 0, `Point_Get_1` actRows 1, captured from a Go tidb-server), and the process registry keeps no runtime-stats collection beside the plan",
+      "finding": "EXPLAIN ANALYZE renders its rows and execution info from the statement's `RuntimeStatsColl` as Go's `getRuntimeInfoStr` does, every executor recording into it (an index join's inner readers, a write's root) and registering its groups at Go's points (a point reader's snapshot stats, an insert's or update's stats and a projection's or apply's concurrency from `Close`, the RU once the statement ran); remaining: `EXPLAIN FOR CONNECTION` renders the stored plan with no runtime statistics (`explain_connection_plan` passes none, and the process registry keeps no `RuntimeStatsColl` beside the plan), so `actRows` and `execution info` read `N/A` where Go's `buildExplainFor` renders the target's last execution (a cached prepared point UPDATE: `Update_3` actRows 0, `Point_Get_1` actRows 1, captured from a Go tidb-server), and the per-build counter map (`physical_builder::PhysicalRuntimeStats`) is still built beside the collector",
       "go_owner": "`pkg/planner/core/planbuilder.go` (`buildExplainFor`), `pkg/util/processinfo.go` (`ProcessInfo.RuntimeStatsColl`), `pkg/planner/core/common_plans.go` (`Explain.RenderResult`)"
     },
     {
@@ -216,6 +216,6 @@
     }
   ],
   "unresolved": 29,
-  "open": 7,
-  "partial": 22
+  "open": 6,
+  "partial": 23
 }

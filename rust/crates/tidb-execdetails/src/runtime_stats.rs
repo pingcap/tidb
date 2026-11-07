@@ -2044,6 +2044,12 @@ pub trait ExecutorRuntimeStatsSource: Send + Sync {
     /// join's, a reader's, ...), merged into the group of the same kind.
     fn register_stats(&self, _plan_id: i64, _stats: Box<dyn crate::RuntimeStats>) {}
 
+    /// Go `RuntimeStatsColl.GetPlanActRows`: the rows the root executors of
+    /// `plan_id` returned, `None` when the source keeps no root stats.
+    fn plan_act_rows(&self, _plan_id: i64) -> Option<i64> {
+        None
+    }
+
     /// Go `RuntimeStatsColl.GetBasicRuntimeStats(planID, true)` for a plan
     /// whose basic stats another executor records (an index lookup's
     /// pushed index plan, `indexScanBasicStats`).
@@ -2070,6 +2076,10 @@ impl ExecutorRuntimeStatsSource for RuntimeStatsColl {
     fn for_executor(&self, plan_id: i64) -> Option<Arc<dyn ExecutorRuntimeStats>> {
         self.get_basic_runtime_stats(plan_id, true)
             .map(|stats| stats as Arc<dyn ExecutorRuntimeStats>)
+    }
+
+    fn plan_act_rows(&self, plan_id: i64) -> Option<i64> {
+        self.exists_root_stats(plan_id).then(|| self.get_plan_act_rows(plan_id))
     }
 
     fn register_stats(
