@@ -7094,6 +7094,10 @@ struct Committer<PdC: PdClient = PdRpcClient> {
     pipelined_state: PipelinedTransactionState,
     #[new(default)]
     undetermined: bool,
+    /// client-go `batched.primaryBatch()` of the commit: the keys the
+    /// primary's commit request carries, which the secondaries skip.
+    #[new(default)]
+    primary_commit_batch: Vec<Key>,
     #[new(default)]
     committed: bool,
     #[new(default)]
@@ -7156,6 +7160,7 @@ impl<PdC: PdClient> Clone for Committer<PdC> {
             lock_resolver_context: self.lock_resolver_context.clone(),
             pipelined_state: self.pipelined_state.clone(),
             undetermined: self.undetermined,
+            primary_commit_batch: self.primary_commit_batch.clone(),
             committed: self.committed,
             binlog_skipped: self.binlog_skipped,
             tried_async_commit: self.tried_async_commit,
@@ -9884,8 +9889,9 @@ impl<PdC: PdClient> Committer<PdC> {
                 request
             }
             None => {
+                self.primary_commit_batch = self.primary_commit_batch(&primary_key).await?;
                 let mut request = new_commit_request(
-                    std::iter::once(primary_key.clone()),
+                    self.primary_commit_batch.iter().cloned(),
                     self.start_version.clone(),
                     commit_version.clone(),
                 );
@@ -9989,6 +9995,38 @@ impl<PdC: PdClient> Committer<PdC> {
         result?;
 
         Ok(commit_version)
+    }
+
+    /// client-go `appendBatchMutationsBySize` over the primary key's region
+    /// group, then `batched.primaryBatch()`: the commit batch holding the
+    /// primary key -- the region's keys in key order, cut once their sizes
+    /// reach `TxnCommitBatchSize`.
+    async fn primary_commit_batch(&self, primary_key: &Key) -> Result<Vec<Key>> {
+        let region = self.rpc.region_for_key(primary_key).await?;
+        let mut keys: Vec<Key> = self
+            .mutations
+            .iter()
+            .map(|mutation| Key::from(mutation.key.clone()))
+            .filter(|key| region.contains(key))
+            .collect();
+        keys.sort();
+        let limit = crate::kv::TXN_COMMIT_BATCH_SIZE.load(atomic::Ordering::Relaxed);
+        let mut batch = Vec::new();
+        let mut size = 0_u64;
+        let mut holds_primary = false;
+        for key in keys {
+            if size >= limit {
+                if holds_primary {
+                    break;
+                }
+                batch.clear();
+                size = 0;
+            }
+            size += <&[u8]>::from(&key).len() as u64;
+            holds_primary |= &key == primary_key;
+            batch.push(key);
+        }
+        Ok(if holds_primary { batch } else { vec![primary_key.clone()] })
     }
 
     /// Prepares and commits the primary key, returning the commit version.
@@ -10190,10 +10228,11 @@ impl<PdC: PdClient> Committer<PdC> {
         .await
     }
 
-    async fn commit_secondary_in_background(self, commit_version: Timestamp) -> Result<()> {
+    async fn commit_secondary_in_background(mut self, commit_version: Timestamp) -> Result<()> {
         let start_version = self.start_version.clone();
         let mutations_len = self.mutations.len();
-        let primary_only = mutations_len == 1;
+        let primary_batch = std::mem::take(&mut self.primary_commit_batch);
+        let primary_only = mutations_len <= primary_batch.len().max(1);
         let primary_key = self.primary_key.clone().ok_or(Error::NoPrimaryKey)?;
         let source_retry_owner = self.source_retry_owner(COMMIT_SECONDARY_MAX_BACKOFF);
         #[cfg(not(feature = "integration-tests"))]
@@ -10229,8 +10268,8 @@ impl<PdC: PdClient> Committer<PdC> {
             return Ok(());
         } else {
             let keys = mutations
-                .map(|m| m.key.into())
-                .filter(|key| &primary_key != key);
+                .map(|m| Key::from(m.key))
+                .filter(|key| &primary_key != key && !primary_batch.contains(key));
             new_commit_request(keys, start_version.clone(), commit_version)
         };
         req.primary_key = primary_key.clone().into();

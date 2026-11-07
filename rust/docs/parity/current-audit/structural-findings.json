@@ -2,9 +2,9 @@
   "date": "2026-11-08",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 32,
+    "unresolved": 31,
     "open": 7,
-    "partial": 25
+    "partial": 24
   },
   "findings": [
     {
@@ -123,13 +123,6 @@
       "go_owner": "`pkg/session/session.go` (`ExecutePreparedStmt`, `ExecuteStmt`), `pkg/executor/compiler.go` (`Compile`)"
     },
     {
-      "id": "E23",
-      "status": "partial",
-      "group": "DML and executor handoff",
-      "finding": "An autocommit `EXPLAIN ANALYZE` write commits before its rows render (Go's `runStmt` `IsExplainAnalyzeDML`; `AnalyzedWrite` renders after `end_read_statement`), so `explain analyze update t set b=b+1 where id=2` reports Go's `RU:3.94` (`unistore_cop.rs` `an_analyzed_autocommit_write_renders_after_its_commit_like_go`). Remaining request-unit differences over the wire: (a) the statement summary records an analyzed write before its commit, so its `AVG_REQUEST_UNIT_WRITE` is 0 where Go's is 3.47 (Go's `FinishExecuteStmt` runs at the record set's close); (b) an analyzed INSERT reports `RU:3.52` and a DELETE `RU:3.98` where Go reports 3.54 and 3.99 every run; (c) a plain INSERT or DELETE occasionally costs about 1.7 RU more than Go's deterministic 3.54 / 3.52 (summary averages 5.78 / 5.22 against Go's 3.60 / 3.52); (d) `explain analyze update t set b=b+1 where b > 0` reads 0.475 RRU where Go reads 0.95.",
-      "go_owner": "`pkg/session/session.go` (`runStmt`), `pkg/executor/adapter.go` (`FinishExecuteStmt`), client-go `internal/resourcecontrol` (`MakeRequestInfo`), PD `client/resource_group/controller` (`KVCalculator`)"
-    },
-    {
       "id": "O09",
       "status": "partial",
       "group": "Domain and process services",
@@ -236,7 +229,7 @@
       "go_owner": "`pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`)"
     }
   ],
-  "unresolved": 32,
+  "unresolved": 31,
   "open": 7,
-  "partial": 25
+  "partial": 24
 }

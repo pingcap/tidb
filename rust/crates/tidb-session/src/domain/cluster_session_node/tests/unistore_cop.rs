@@ -29218,8 +29218,9 @@ fn resource_control_prices_requests_after_an_early_sysvar_load_like_go() {
 /// Go's `runStmt` commits an `IsExplainAnalyzeDML` statement before its
 /// `ExplainExec` record set is read: its RU stats count the prewrite and the
 /// commit. Captured from a Go tidb-server over the wire:
-/// `explain analyze update t set b=b+1 where id=2` reports `RU:3.94`, every
-/// run.
+/// `explain analyze update t set b=b+1 where id=2` reports `RU:3.94`,
+/// `insert into t values (9,90,9)` `RU:3.54` and `delete from t where id=9`
+/// `RU:3.99`, every run.
 #[test]
 fn an_analyzed_autocommit_write_renders_after_its_commit_like_go() {
     let (stack, _users) = cop_backed_stack();
@@ -29237,6 +29238,28 @@ fn an_analyzed_autocommit_write_renders_after_its_commit_like_go() {
         assert!(plan[0][5].ends_with(", RU:3.94"), "{}", plan[0][5]);
     }
     assert_eq!(displayed(rows(&mut session, "select b from t where id=2")), [["2"]]);
+    // The row and unique-index keys share a region, so the primary's commit
+    // request carries both (client-go `batched.primaryBatch()`): one commit
+    // RPC, as Go's `RU:3.54` / `RU:3.99` count.
+    for k in 0..2 {
+        let insert = format!("explain analyze insert into t values ({}, {}, 9)", 9 + k, 90 + k);
+        let plan = displayed(rows(&mut session, &insert));
+        assert!(plan[0][5].ends_with(", RU:3.54"), "{}", plan[0][5]);
+        let plan = displayed(rows(&mut session, &format!("explain analyze delete from t where id={}", 9 + k)));
+        assert!(plan[0][5].ends_with(", RU:3.99"), "{}", plan[0][5]);
+    }
+    // The statement finishes after its commit (Go `FinishExecuteStmt` at the
+    // `ExplainExec` record set's close), so the summary counts the write's
+    // request units: Go records 0.475 read and 3.4693 write.
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "select round(avg_request_unit_read, 4), round(avg_request_unit_write, 4) \
+             from information_schema.statements_summary \
+             where digest_text = 'explain analyze update `t` set `b` = `b` + ? where `id` = ?'"
+        )),
+        [["0.475", "3.4693"]]
+    );
 }
 
 /// A write's root carries its transaction's commit statistics: Go's

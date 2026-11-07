@@ -35,6 +35,12 @@ impl Session {
             Ok(PendingExecution::Query(query)) => {
                 Ok(OpenedStatement::Rows(StatementRecordSet::new(query)))
             }
+            // Go finishes an autocommit `EXPLAIN ANALYZE` write when its
+            // `ExplainExec` record set closes, after `runStmt` committed it:
+            // the statement's owner finishes it once it rendered.
+            Ok(PendingExecution::Complete(output)) if self.pending_explain_analyze.is_some() => {
+                Ok(OpenedStatement::Complete(output))
+            }
             Ok(PendingExecution::Complete(output)) => self
                 .finish_statement_execution(Ok(output))
                 .map(OpenedStatement::Complete),

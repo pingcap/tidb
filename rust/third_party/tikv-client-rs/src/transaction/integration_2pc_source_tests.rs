@@ -2136,8 +2136,9 @@ fn source_go_integration_tests_2pc_test_TestDeleteYourWriteCauseGhostPrimary() {
         let k1 = source_2pc_key("ghost-primary", "a");
         let k2 = source_2pc_key("ghost-primary", "b");
         let k3 = source_2pc_key("ghost-primary", "c");
-        let split = source_2pc_key("ghost-primary", "b");
-        let (cluster, pd) = source_2pc_store_with_splits(&[split]);
+        // client-go `SplitKeys(key("d"), key("a"), 4)`: a, b and c each in a
+        // region of its own, so the primary's commit batch is b alone.
+        let (cluster, pd) = source_2pc_store_with_splits(&[k2.clone(), k3.clone()]);
         let start_ts = crate::pd::PdClient::get_timestamp(pd.clone())
             .await
             .unwrap()
@@ -2183,6 +2184,48 @@ fn source_go_integration_tests_2pc_test_TestDeleteYourWriteCauseGhostPrimary() {
         let mut reader = source_integration_transaction(&pd, false).await;
         assert_eq!(reader.get(k3.clone()).await.unwrap(), Some(vec![2]));
         assert!(cluster.engine().mvcc_get_by_key(&k3).lock.is_none());
+    });
+}
+
+/// client-go `doActionOnGroupMutations`: the primary's commit request is
+/// the whole batch holding the primary key (`batched.primaryBatch()`), so
+/// keys in the primary's region commit with it. A Go tidb-server's two-key
+/// INSERT sends one 47-byte `kv_commit` for its row and index keys.
+#[test]
+#[serial_test::serial]
+fn the_primary_commit_batch_holds_the_primary_regions_keys_like_client_go() {
+    source_2pc_run(|| async move {
+        let k1 = source_2pc_key("primary-batch", "a");
+        let k2 = source_2pc_key("primary-batch", "b");
+        let k3 = source_2pc_key("primary-batch", "c");
+        let (cluster, pd) = source_2pc_store_with_splits(&[k3.clone()]);
+        let start_ts = crate::pd::PdClient::get_timestamp(pd.clone())
+            .await
+            .unwrap()
+            .version();
+        let mutations = [&k1, &k2, &k3]
+            .into_iter()
+            .map(|key| kvrpcpb::Mutation {
+                op: kvrpcpb::Op::Put as i32,
+                key: key.clone(),
+                value: vec![1],
+                ..Default::default()
+            })
+            .collect();
+        let mut committer = source_2pc_committer(
+            pd.clone(),
+            start_ts,
+            Some(Key::from(k2.clone())),
+            mutations,
+            TransactionOptions::new_optimistic()
+                .heartbeat_option(HeartbeatOption::NoHeartbeat),
+        );
+        committer.prewrite().await.unwrap();
+        committer.commit_primary().await.unwrap();
+        // a shares b's region and commits with it; c is a secondary.
+        assert!(cluster.engine().mvcc_get_by_key(&k1).lock.is_none());
+        assert!(cluster.engine().mvcc_get_by_key(&k2).lock.is_none());
+        assert!(cluster.engine().mvcc_get_by_key(&k3).lock.is_some());
     });
 }
 

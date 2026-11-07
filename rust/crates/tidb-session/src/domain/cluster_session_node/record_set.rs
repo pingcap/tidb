@@ -148,15 +148,26 @@ impl<'s> ClusterServerSession<'s> {
                 // Go `runStmt` commits an autocommit `IsExplainAnalyzeDML`
                 // statement before its `ExplainExec` record set renders.
                 let analyzed = self.session.take_pending_explain_analyze();
-                if let Some(snapshot) = snapshot {
-                    self.end_read_statement(snapshot, true)?;
-                }
+                let committed = match snapshot {
+                    Some(snapshot) => self.end_read_statement(snapshot, true),
+                    None => Ok(()),
+                };
                 let output = match analyzed {
-                    Some(write) => write
-                        .render()
-                        .map(|(columns, rows)| StmtOutput::Rows { columns, rows })
-                        .map_err(|error| self.record_statement_failure(sql_query_error(error)))?,
-                    None => output,
+                    // Rendered and finished after the commit (Go `ExplainExec`
+                    // read, then closed into `FinishExecuteStmt`).
+                    Some(write) => {
+                        let rendered = committed
+                            .map_err(sql_query_error_to_driver)
+                            .and_then(|()| write.render())
+                            .map(|(columns, rows)| StmtOutput::Rows { columns, rows });
+                        self.session
+                            .finish_statement_execution(rendered)
+                            .map_err(|error| self.record_statement_failure(sql_query_error(error)))?
+                    }
+                    None => {
+                        committed?;
+                        output
+                    }
                 };
                 let source = match output {
                     StmtOutput::Rows { columns, rows } => MaterializedResultSetSource::new(
