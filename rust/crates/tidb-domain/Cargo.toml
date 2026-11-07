@@ -64,6 +64,7 @@ chrono.workspace = true
 base64.workspace = true
 
 [dev-dependencies]
+tidb-sqlexec-mock = { path = "../tidb-sqlexec-mock" }
 tidb-model = { path = "../tidb-model" }
 tidb-resolve = { path = "../tidb-resolve" }
 tidb-parser = { path = "../tidb-parser" }

@@ -56,13 +56,10 @@
 //!   `*variable.SessionVars` for validation. Both roles are folded into
 //!   [`SysVarCacheDeps`], so the pool checkout/return (Go's
 //!   `Get`/`defer Put`) is the implementor's business, not this module's.
-//! - `// boundary:` Go
-//!   `sessionctx.Context.GetRestrictedSQLExecutor().ExecRestrictedSQL` with
-//!   `kv.WithInternalSourceType(ctx, kv.InternalTxnSysVar)` — narrowed to
-//!   [`RestrictedSqlExecutor::exec_restricted_sysvar_sql`], which returns
-//!   just the two string columns this one query selects. The internal source
-//!   type is a tracing/throttling tag with no effect on the rows returned,
-//!   so it is the implementor's to set; it is named in that method's doc.
+//! - Go `fetchTableValues` is [`fetch_table_values`] over `tidb_sqlexec`'s
+//!   `RestrictedSqlExecutor` under `kv.InternalTxnSysVar`; the rebuild reads
+//!   its result through [`SysVarCacheDeps::table_contents`], the rows the
+//!   domain's sysvar reload last fetched.
 //! - `// boundary:` Go `pkg/sessionctx/variable.GetSysVars()` and
 //!   `variable.SysVar` — the registry is a process-global map in Go. Here
 //!   [`SysVarCacheDeps::sys_vars`] supplies it and [`SysVarSpec`] carries
@@ -181,33 +178,20 @@ pub struct SysVarSpec {
     pub has_set_global: bool,
 }
 
-/// The restricted SQL path `fetchTableValues` uses.
-///
-/// boundary: Go `sessionctx.Context.GetRestrictedSQLExecutor()` plus
-/// `RestrictedSQLExecutor.ExecRestrictedSQL(ctx, nil, sql)`, called under
-/// `kv.WithInternalSourceType(context.Background(), kv.InternalTxnSysVar)`.
-/// The internal source type is a tracing tag that does not change the rows,
-/// so implementors set it; this module does not model it.
-pub trait RestrictedSqlExecutor {
-    /// Run [`SYSVAR_TABLE_QUERY`] and return `(variable_name,
-    /// variable_value)` per row, in row order.
-    ///
-    /// Go reads the columns with `row.GetString(0)` / `row.GetString(1)`;
-    /// the narrowing to two strings is exactly what that call site consumes.
-    ///
-    /// # Errors
-    /// Whatever the executor reports.
-    fn exec_restricted_sysvar_sql(
-        &self,
-        sql: &str,
-    ) -> Result<Vec<(String, String)>, SysVarCacheError>;
-}
-
 /// Everything `sysvar_cache.go` reaches for through its `*Domain` receiver.
 ///
 /// boundary: Go `pkg/domain.Domain` — see the module doc for the per-method
 /// Go symbol each of these stands for.
-pub trait SysVarCacheDeps: RestrictedSqlExecutor {
+pub trait SysVarCacheDeps {
+    /// Go `fetchTableValues(ctx)`'s result as the rebuild consumes it: the
+    /// `mysql.global_variables` rows [`fetch_table_values`] last read for
+    /// the domain (its sysvar reload loop's read, or a storeless table's own
+    /// rows).
+    ///
+    /// # Errors
+    /// The read's error.
+    fn table_contents(&self) -> Result<HashMap<String, String>, SysVarCacheError>;
+
     /// boundary: Go `variable.GetSysVars()`. Go iterates a map, so the
     /// order is unspecified; anything order-dependent here would be a bug in
     /// Go too.
@@ -248,13 +232,26 @@ pub trait SysVarCacheDeps: RestrictedSqlExecutor {
 ///
 /// # Errors
 /// Propagates the executor's error, exactly as Go returns `nil, err`.
-pub fn fetch_table_values<E: RestrictedSqlExecutor + ?Sized>(
-    exec: &E,
+pub fn fetch_table_values(
+    exec: &dyn tidb_sqlexec::RestrictedSqlExecutor,
 ) -> Result<HashMap<String, String>, SysVarCacheError> {
+    let ctx = tikv_client::util::with_internal_source_type(
+        &tikv_client::trace::TraceContext::new(),
+        tidb_txnkv::INTERNAL_TXN_SYS_VAR,
+    );
+    let (rows, _) = exec
+        .exec_restricted_sql(&ctx, &[], SYSVAR_TABLE_QUERY, &[])
+        .map_err(|error| SysVarCacheError::Exec(error.to_string()))?;
+    // Go `row.GetString(0)` / `row.GetString(1)`.
+    let text = |row: &[tidb_datatype::Datum], index: usize| {
+        row.get(index)
+            .and_then(tidb_datatype::Datum::as_raw_bytes)
+            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+            .unwrap_or_default()
+    };
     let mut table_contents = HashMap::new();
-    let rows = exec.exec_restricted_sysvar_sql(SYSVAR_TABLE_QUERY)?;
-    for (name, val) in rows {
-        table_contents.insert(name, val);
+    for row in &rows {
+        table_contents.insert(text(row, 0), text(row, 1));
     }
     Ok(table_contents)
 }
@@ -381,7 +378,7 @@ impl SysVarCache {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
 
-        let mut table_contents = fetch_table_values(deps)?;
+        let mut table_contents = deps.table_contents()?;
 
         if deps.is_starter() {
             override_sys_var_with_config(&mut table_contents, deps.max_allowed_packet());
@@ -492,21 +489,22 @@ mod tests {
         }
     }
 
-    impl RestrictedSqlExecutor for MockDeps {
-        fn exec_restricted_sysvar_sql(
-            &self,
-            sql: &str,
-        ) -> Result<Vec<(String, String)>, SysVarCacheError> {
-            assert_eq!(sql, SYSVAR_TABLE_QUERY);
+    impl MockDeps {
+        fn table_contents_impl(&self) -> Result<HashMap<String, String>, SysVarCacheError> {
             *self.exec_calls.borrow_mut() += 1;
             match &self.exec_err {
                 Some(e) => Err(SysVarCacheError::Exec(e.clone())),
-                None => Ok(self.rows.borrow().clone()),
+                None => Ok(self.rows.borrow().iter().cloned().collect()),
             }
         }
     }
 
+
     impl SysVarCacheDeps for MockDeps {
+        fn table_contents(&self) -> Result<HashMap<String, String>, SysVarCacheError> {
+            self.table_contents_impl()
+        }
+
         fn sys_vars(&self) -> Vec<SysVarSpec> {
             self.vars.clone()
         }
@@ -543,29 +541,47 @@ mod tests {
         }
     }
 
+    /// The mock executor answering `fetchTableValues`' statement with
+    /// `rows`, or failing with `error`.
+    fn fetch_executor(
+        rows: Vec<(&'static str, &'static str)>,
+        error: Option<&'static str>,
+    ) -> tidb_sqlexec_mock::MockRestrictedSqlExecutor {
+        let exec = tidb_sqlexec_mock::MockRestrictedSqlExecutor::new();
+        exec.expect().exec_restricted_sql(move |_context, options, sql, arguments| {
+            assert!(options.is_empty() && arguments.is_empty());
+            assert_eq!(sql, SYSVAR_TABLE_QUERY);
+            if let Some(error) = error {
+                return Err(error.into());
+            }
+            Ok((
+                rows.into_iter()
+                    .map(|(name, value)| {
+                        vec![
+                            tidb_datatype::Datum::new_string_datum(name),
+                            tidb_datatype::Datum::new_string_datum(value),
+                        ]
+                    })
+                    .collect(),
+                Vec::new(),
+            ))
+        });
+        exec
+    }
+
     #[test]
     fn fetch_table_values_keeps_the_last_duplicate_row() {
-        let deps = MockDeps {
-            rows: RefCell::new(vec![
-                ("a".to_owned(), "1".to_owned()),
-                ("a".to_owned(), "2".to_owned()),
-                ("b".to_owned(), "3".to_owned()),
-            ]),
-            ..MockDeps::default()
-        };
-        let got = fetch_table_values(&deps).unwrap();
+        let exec = fetch_executor(vec![("a", "1"), ("a", "2"), ("b", "3")], None);
+        let got = fetch_table_values(&exec).unwrap();
         assert_eq!(got.get("a").map(String::as_str), Some("2"));
         assert_eq!(got.get("b").map(String::as_str), Some("3"));
     }
 
     #[test]
     fn fetch_table_values_propagates_the_executor_error() {
-        let deps = MockDeps {
-            exec_err: Some("nope".to_owned()),
-            ..MockDeps::default()
-        };
+        let exec = fetch_executor(Vec::new(), Some("nope"));
         assert_eq!(
-            fetch_table_values(&deps),
+            fetch_table_values(&exec),
             Err(SysVarCacheError::Exec("nope".to_owned()))
         );
     }

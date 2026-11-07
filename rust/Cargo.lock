@@ -4435,6 +4435,7 @@ dependencies = [
  "tidb-resolve",
  "tidb-sqlescape",
  "tidb-sqlexec",
+ "tidb-sqlexec-mock",
  "tidb-stats-handle-metrics",
  "tidb-stmtsummary",
  "tidb-store-driver-txn",

@@ -2014,11 +2014,10 @@ impl GlobalSysvars {
 /// [`GlobalSysvars`]'s `table`.
 struct SysVarCacheRebuild<'a>(&'a GlobalSysvars);
 
-impl crate::sysvar_cache::RestrictedSqlExecutor for SysVarCacheRebuild<'_> {
-    fn exec_restricted_sysvar_sql(
+impl crate::sysvar_cache::SysVarCacheDeps for SysVarCacheRebuild<'_> {
+    fn table_contents(
         &self,
-        _sql: &str,
-    ) -> Result<Vec<(String, String)>, crate::sysvar_cache::SysVarCacheError> {
+    ) -> Result<std::collections::HashMap<String, String>, crate::sysvar_cache::SysVarCacheError> {
         Ok(self
             .0
             .table
@@ -2028,9 +2027,7 @@ impl crate::sysvar_cache::RestrictedSqlExecutor for SysVarCacheRebuild<'_> {
             .map(|(name, value)| (name.clone(), value.clone()))
             .collect())
     }
-}
 
-impl crate::sysvar_cache::SysVarCacheDeps for SysVarCacheRebuild<'_> {
     fn sys_vars(&self) -> Vec<crate::sysvar_cache::SysVarSpec> {
         tidb_variable::sysvar::SYS_VARS
             .iter()

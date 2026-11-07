@@ -422,18 +422,12 @@ pub fn fetch_table_values(
     let mut table_contents = Vec::new();
     pool.call_with_sctx(
         &mut |sctx| {
-            let (rows, _) = tidb_stats_handle_util::exec_rows(
-                sctx,
-                "SELECT variable_name, variable_value FROM mysql.global_variables",
-                &[],
-            )?;
-            let text = |row: &[tidb_datatype::Datum], index: usize| {
-                row.get(index)
-                    .and_then(tidb_datatype::Datum::as_raw_bytes)
-                    .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-                    .unwrap_or_default()
-            };
-            table_contents = rows.iter().map(|row| (text(row, 0), text(row, 1))).collect();
+            table_contents = tidb_domain::sysvar_cache::fetch_table_values(
+                sctx.restricted_sql_executor().as_ref(),
+            )
+            .map_err(|error| -> tidb_sqlexec::SqlExecError { error.to_string().into() })?
+            .into_iter()
+            .collect();
             Ok(())
         },
         &[],
