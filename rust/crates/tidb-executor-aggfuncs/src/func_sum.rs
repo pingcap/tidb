@@ -223,17 +223,17 @@ impl AggFunc for Sum4Float64 {
 }
 
 impl SlidingWindowAggFunc for Sum4Float64 {
-    fn slide<'a>(&self, sctx: &AggFuncUpdateContext, get_row: &dyn Fn(u64) -> Row<'a>, last_start: u64, last_end: u64, shift_start: u64, shift_end: u64, pr: &mut PartialResult) -> Result<(), ExecError> {
+    fn slide<'a>(&self, sctx: &AggFuncUpdateContext, get_row: &dyn Fn(u64) -> Result<Row<'a>, ExecError>, last_start: u64, last_end: u64, shift_start: u64, shift_end: u64, pr: &mut PartialResult) -> Result<(), ExecError> {
         let p = partial::<PartialResult4SumFloat64>(pr);
         for i in 0..shift_end {
-            let Some(input) = eval_real(&self.0.base, sctx, get_row(last_end + i))? else {
+            let Some(input) = eval_real(&self.0.base, sctx, get_row(last_end.wrapping_add(i))?)? else {
                 continue;
             };
             p.val += input;
             p.not_null_row_count += 1;
         }
         for i in 0..shift_start {
-            let Some(input) = eval_real(&self.0.base, sctx, get_row(last_start + i))? else {
+            let Some(input) = eval_real(&self.0.base, sctx, get_row(last_start.wrapping_add(i))?)? else {
                 continue;
             };
             p.val -= input;
@@ -338,16 +338,16 @@ impl AggFunc for Sum4Decimal {
 }
 
 impl SlidingWindowAggFunc for Sum4Decimal {
-    fn slide<'a>(&self, sctx: &AggFuncUpdateContext, get_row: &dyn Fn(u64) -> Row<'a>, last_start: u64, last_end: u64, shift_start: u64, shift_end: u64, pr: &mut PartialResult) -> Result<(), ExecError> {
+    fn slide<'a>(&self, sctx: &AggFuncUpdateContext, get_row: &dyn Fn(u64) -> Result<Row<'a>, ExecError>, last_start: u64, last_end: u64, shift_start: u64, shift_end: u64, pr: &mut PartialResult) -> Result<(), ExecError> {
         let p = partial::<PartialResult4SumDecimal>(pr);
         for i in 0..shift_end {
-            let Some(input) = eval_decimal(&self.base, sctx, get_row(last_end + i))? else {
+            let Some(input) = eval_decimal(&self.base, sctx, get_row(last_end.wrapping_add(i))?)? else {
                 continue;
             };
             Self::add_input(p, input);
         }
         for i in 0..shift_start {
-            let Some(input) = eval_decimal(&self.base, sctx, get_row(last_start + i))? else {
+            let Some(input) = eval_decimal(&self.base, sctx, get_row(last_start.wrapping_add(i))?)? else {
                 continue;
             };
             p.val = decimal_sub(&p.val, &input);

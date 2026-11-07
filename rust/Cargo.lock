@@ -4887,7 +4887,6 @@ dependencies = [
 name = "tidb-executor-aggfuncs"
 version = "0.0.0"
 dependencies = [
- "smallvec",
  "tidb-ast",
  "tidb-charset",
  "tidb-chunk",
@@ -5073,6 +5072,7 @@ dependencies = [
  "tidb-executor-internal-vecgroupchecker",
  "tidb-expr",
  "tidb-exprctx",
+ "tidb-expression-aggregation",
  "tidb-planner",
  "tidb-planner-core-operator-logicalop",
 ]

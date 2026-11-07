@@ -177,17 +177,17 @@ macro_rules! sum_int {
         }
 
         impl SlidingWindowAggFunc for $name {
-            fn slide<'a>(&self, sctx: &AggFuncUpdateContext, get_row: &dyn Fn(u64) -> Row<'a>, last_start: u64, last_end: u64, shift_start: u64, shift_end: u64, pr: &mut PartialResult) -> Result<(), ExecError> {
+            fn slide<'a>(&self, sctx: &AggFuncUpdateContext, get_row: &dyn Fn(u64) -> Result<Row<'a>, ExecError>, last_start: u64, last_end: u64, shift_start: u64, shift_end: u64, pr: &mut PartialResult) -> Result<(), ExecError> {
                 let p = partial::<$pr>(pr);
                 for i in 0..shift_start {
-                    let Some(value) = self.input(sctx, get_row(last_start + i))? else {
+                    let Some(value) = self.input(sctx, get_row(last_start.wrapping_add(i))?)? else {
                         continue;
                     };
                     p.val = $sub(p.val, value).map_err(overflow)?;
                     p.not_null_row_count -= 1;
                 }
                 for i in 0..shift_end {
-                    let Some(value) = self.input(sctx, get_row(last_end + i))? else {
+                    let Some(value) = self.input(sctx, get_row(last_end.wrapping_add(i))?)? else {
                         continue;
                     };
                     p.val = $add(p.val, value).map_err(overflow)?;

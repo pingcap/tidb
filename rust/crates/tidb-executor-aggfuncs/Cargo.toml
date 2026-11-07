@@ -15,7 +15,6 @@ tidb-hack = { path = "../tidb-hack" }
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-driver-error = { path = "../tidb-driver-error" }
-smallvec = { workspace = true }
 tidb-expression-aggregation = { path = "../tidb-expression-aggregation" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-parser-types = { path = "../tidb-parser-types" }

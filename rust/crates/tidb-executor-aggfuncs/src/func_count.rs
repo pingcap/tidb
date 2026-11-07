@@ -159,7 +159,7 @@ macro_rules! count_original {
             fn slide<'a>(
                 &self,
                 sctx: &AggFuncUpdateContext,
-                get_row: &dyn Fn(u64) -> Row<'a>,
+                get_row: &dyn Fn(u64) -> Result<Row<'a>, ExecError>,
                 last_start: u64,
                 last_end: u64,
                 shift_start: u64,
@@ -168,13 +168,13 @@ macro_rules! count_original {
             ) -> Result<(), ExecError> {
                 let p = partial::<PartialResult4Count>(pr);
                 for i in 0..shift_start {
-                    if self.0.arg_is_null(sctx, get_row(last_start + i))? {
+                    if self.0.arg_is_null(sctx, get_row(last_start.wrapping_add(i))?)? {
                         continue;
                     }
                     *p -= 1;
                 }
                 for i in 0..shift_end {
-                    if self.0.arg_is_null(sctx, get_row(last_end + i))? {
+                    if self.0.arg_is_null(sctx, get_row(last_end.wrapping_add(i))?)? {
                         continue;
                     }
                     *p += 1;

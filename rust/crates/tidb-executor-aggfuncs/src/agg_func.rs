@@ -174,7 +174,7 @@ pub trait SlidingWindowAggFunc {
     fn slide<'a>(
         &self,
         sctx: &AggFuncUpdateContext,
-        get_row: &dyn Fn(u64) -> Row<'a>,
+        get_row: &dyn Fn(u64) -> Result<Row<'a>, ExecError>,
         last_start: u64,
         last_end: u64,
         shift_start: u64,

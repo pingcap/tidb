@@ -2,8 +2,8 @@
   "date": "2026-11-07",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 29,
-    "open": 7,
+    "unresolved": 28,
+    "open": 6,
     "partial": 22
   },
   "findings": [
@@ -85,13 +85,6 @@
       "group": "DML and executor handoff",
       "finding": "A TiKV reader builds its DAG from its access path's scan request (`cop_reader.rs`; `cop_plan_ids_for` matches executors to the pushed nodes by kind) where Go's `constructDAGReq` lowers the reader's pushed plan one node per executor (`ToPB`). A pushed TopN (a reader's, or an IndexLookUp's index side) reaches the coprocessor through the scan's offer, whose `PushdownTopNOrder` carries a column offset: a TopN over an expression stays local, where `PhysicalTopN.ToPB` lowers any `ByItem`",
       "go_owner": "`pkg/executor/builder.go` (`constructDAGReq`), `pkg/planner/core/plan_to_pb.go`"
-    },
-    {
-      "id": "E19",
-      "status": "open",
-      "group": "DML and executor handoff",
-      "finding": "Window functions run on this port's own evaluator (`tidb-executor-windows`: a `WindowFunction` enum of row-position kinds plus aggregates folded by `WindowAggState` over the per-kind `AggState`, `window_numeric` / `window_extremum` sliding states), where Go's `WindowExec` (`aggWindowProcessor`, `rowFrameWindowProcessor`, `rangeFrameWindowProcessor`) and `PipelinedWindowExec` drive the `AggFunc`s `aggfuncs.BuildWindowFunctions` builds (their `SlidingWindowAggFunc.Slide`, `MaxMinSlidingWindowAggFunc.SetWindowStart`); this port's `agg_builder::build_window_functions` builds those functions but only its tests call it",
-      "go_owner": "`pkg/executor/windows` (`window.go`, `pipelined_window.go`, `builder.go`), `pkg/executor/aggfuncs` (`BuildWindowFunctions`)"
     },
     {
       "id": "C01",
@@ -215,7 +208,7 @@
       "go_owner": "`pkg/ddl` (`systable`, job scheduler), `pkg/session` bootstrap, `pkg/privilege/privileges` (`ensureActiveUser`)"
     }
   ],
-  "unresolved": 29,
-  "open": 7,
+  "unresolved": 28,
+  "open": 6,
   "partial": 22
 }

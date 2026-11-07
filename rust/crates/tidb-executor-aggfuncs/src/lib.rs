@@ -22,7 +22,6 @@ pub mod agg_func;
 pub mod aggfuncs;
 pub mod approx_count_distinct;
 pub mod farmhash;
-pub mod frame_rows;
 pub mod func_avg;
 pub mod func_bitfuncs;
 pub mod func_count;

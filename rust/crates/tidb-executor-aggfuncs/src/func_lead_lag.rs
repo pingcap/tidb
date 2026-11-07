@@ -94,8 +94,9 @@ macro_rules! lead_lag {
     };
 }
 
-lead_lag!(Lead, |e, p| if p.cur_idx + e.offset < p.rows.len() as u64 {
-    (&e.base.args[0], &p.rows[(p.cur_idx + e.offset) as usize])
+// Go adds the `uint64` offset to `curIdx`, wrapping.
+lead_lag!(Lead, |e, p| if p.cur_idx.wrapping_add(e.offset) < p.rows.len() as u64 {
+    (&e.base.args[0], &p.rows[p.cur_idx.wrapping_add(e.offset) as usize])
 } else {
     (&e.default_expr, &p.rows[p.cur_idx as usize])
 });

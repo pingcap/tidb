@@ -14,42 +14,115 @@
 
 #![allow(missing_docs)]
 
+//! Go `pkg/executor/windows`: `WindowExec`, `PipelinedWindowExec` and
+//! `OrderedWindowExec` built by `windows.Build` / `BuildOrdered` over the
+//! `AggFunc`s `aggfuncs.BuildWindowFunctions` builds.
+
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
-use tidb_executor_aggfuncs::aggfuncs::AggFunc;
-use tidb_executor_aggfuncs::aggfuncs::AggKind;
-use tidb_executor_aggfuncs::aggfuncs::BitOp;
 use tidb_executor::mem_table::MemTableSourceExec;
-use tidb_executor_windows::{
-    WindowBound, WindowExec, WindowFrameSpec, WindowFuncSpec, WindowFunction,
-};
-use tidb_exprctx::NoColumns;
+use tidb_executor_internal_exec::{Executor, ExecutorMeta};
+use tidb_executor_windows::WindowPlan;
 use tidb_expr::column::Column;
+use tidb_expr::constant::Constant;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
+use tidb_expression_aggregation::WindowFuncDesc;
+use tidb_exprctx::{Columns, NoColumns};
+use tidb_planner_core_operator_logicalop::window::{BoundType, FrameBound, FrameType, WindowFrame};
 
 fn long() -> FieldType {
     FieldType::new(FieldTypeCode::LongLong)
 }
 
 fn schema(width: usize) -> Schema {
-    Schema::new(
-        (0..width)
-            .map(|index| {
-                let mut column = Column::new(index as i64 + 1, long());
-                column.index = index as i64;
-                column
-            })
-            .collect(),
-    )
+    Schema::new((0..width).map(col).collect())
+}
+
+fn col(index: usize) -> Column {
+    let mut column = Column::new(index as i64 + 1, long());
+    column.index = index as i64;
+    column
 }
 
 fn column(index: usize) -> Expression {
-    let mut column = Column::new(index as i64 + 1, long());
-    column.index = index as i64;
-    Expression::Column(column)
+    Expression::Column(col(index))
+}
+
+fn int(value: i64) -> Expression {
+    Expression::Constant(Constant::new(Datum::Int(value), long()))
+}
+
+fn uint(value: u64) -> Expression {
+    let mut ty = long();
+    ty.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+    Expression::Constant(Constant::new(Datum::UInt(value), ty))
+}
+
+/// Go `aggregation.NewWindowFuncDesc` on a prepared plan's path
+/// (`skipCheckArgs`), so a constant argument the planner would refuse
+/// (`ntile(0)`) still reaches the builder.
+fn desc(name: &str, args: Vec<Expression>) -> WindowFuncDesc {
+    WindowFuncDesc::new(&NoColumns, name, args, true)
+        .unwrap()
+        .unwrap_or_else(|| panic!("{name} has no window descriptor"))
+}
+
+fn bound(bound_type: BoundType, num: u64) -> FrameBound {
+    FrameBound { bound_type, num, ..FrameBound::default() }
+}
+
+fn unbounded(bound_type: BoundType) -> FrameBound {
+    FrameBound { bound_type, unbounded: true, ..FrameBound::default() }
+}
+
+fn current_row() -> FrameBound {
+    bound(BoundType::CurrentRow, 0)
+}
+
+/// A ROWS frame bound `offset` rows from the current one.
+fn offset(offset: i64) -> FrameBound {
+    match offset {
+        0 => current_row(),
+        n if n < 0 => bound(BoundType::Preceding, n.unsigned_abs()),
+        n => bound(BoundType::Following, n as u64),
+    }
+}
+
+fn rows_frame(start: FrameBound, end: FrameBound) -> WindowFrame {
+    WindowFrame { frame_type: FrameType::Rows, start: Some(start), end: Some(end) }
+}
+
+fn unbounded_rows_frame() -> WindowFrame {
+    rows_frame(unbounded(BoundType::Preceding), unbounded(BoundType::Following))
+}
+
+/// Go `windows.Build(sctx, v, childExec, forcePipelined)`.
+fn window<C: Columns + Send + 'static>(
+    meta: ExecutorMeta,
+    ctx: C,
+    partition_by: Vec<Expression>,
+    order_by: Vec<usize>,
+    window_func_descs: Vec<WindowFuncDesc>,
+    frame: Option<WindowFrame>,
+    child: Box<dyn Executor>,
+    pipelined: bool,
+) -> Box<dyn Executor> {
+    tidb_executor_windows::build(
+        meta,
+        ctx,
+        WindowPlan {
+            partition_by,
+            order_by: order_by.into_iter().map(|index| (col(index), false)).collect(),
+            window_func_descs,
+            frame,
+        },
+        child,
+        pipelined,
+        false,
+    )
+    .unwrap()
 }
 
 struct ChunkedSource {
@@ -111,6 +184,7 @@ impl Executor for ChunkedSource {
     }
 }
 
+
 #[test]
 fn completed_output_chunk_precedes_later_child_error() {
     // Go WindowExec.Next returns resultChunks[0] only when every row in it
@@ -129,23 +203,15 @@ fn completed_output_chunk_precedes_later_child_error() {
         chunk_size: 1,
         fail_after: Some(2),
     };
-    let mut executor = WindowExec::new(
+    let mut executor = window(
         ExecutorMeta::new(schema(3), 1, 1, 1),
-        vec![WindowFuncSpec {
-            func: WindowFunction::RowNumber,
-            output_type: long(),
-        }],
+        NoColumns,
         vec![column(0)],
         vec![],
-        WindowFrameSpec {
-            start: WindowBound::Unbounded,
-            end: WindowBound::Unbounded,
-            range: None,
-            range_desc: false,
-        },
+        vec![desc("row_number", vec![])],
+        Some(unbounded_rows_frame()),
         Box::new(child),
-        NoColumns,
-        2,
+        false,
     );
     executor.open().unwrap();
     let mut output = executor.new_chunk();
@@ -172,23 +238,15 @@ fn incomplete_output_chunk_does_not_return_a_finished_partition() {
         chunk_size: 2,
         fail_after: Some(1),
     };
-    let mut executor = WindowExec::new(
+    let mut executor = window(
         ExecutorMeta::new(schema(3), 2, 1, 1),
-        vec![WindowFuncSpec {
-            func: WindowFunction::RowNumber,
-            output_type: long(),
-        }],
+        NoColumns,
         vec![column(0)],
         vec![],
-        WindowFrameSpec {
-            start: WindowBound::Unbounded,
-            end: WindowBound::Unbounded,
-            range: None,
-            range_desc: false,
-        },
+        vec![desc("row_number", vec![])],
+        Some(unbounded_rows_frame()),
         Box::new(child),
-        NoColumns,
-        2,
+        false,
     );
     executor.open().unwrap();
     let mut output = executor.new_chunk();
@@ -228,44 +286,21 @@ fn window_chunks_preserve_partitions_peers_projection_and_reopen() {
         for (column, index) in output_schema.columns[..3].iter_mut().zip([1, 0, 1]) {
             column.index = index;
         }
-        let executor = WindowExec::new(
+        let mut executor = window(
             ExecutorMeta::new(output_schema, 2, 1, 1),
-            vec![
-                WindowFuncSpec {
-                    func: WindowFunction::RowNumber,
-                    output_type: long(),
-                },
-                WindowFuncSpec {
-                    func: WindowFunction::Rank { dense: false },
-                    output_type: long(),
-                },
-                WindowFuncSpec {
-                    func: WindowFunction::Relative {
-                        arg: column(1),
-                        offset: 1,
-                        default: None,
-                        lead: false,
-                    },
-                    output_type: long(),
-                },
-            ],
-            vec![column(0)],
-            vec![column(1)],
-            WindowFrameSpec {
-                start: WindowBound::Unbounded,
-                end: WindowBound::Unbounded,
-                range: None,
-                range_desc: false,
-            },
-            Box::new(child),
             NoColumns,
-            3,
+            vec![column(0)],
+            vec![1],
+            vec![
+                desc("row_number", vec![]),
+                desc("rank", vec![]),
+                desc("lag", vec![column(1), int(1)]),
+            ],
+            // Go's planner gives a function that needs no frame none.
+            None,
+            Box::new(child),
+            pipelined,
         );
-        let mut executor: Box<dyn Executor> = if pipelined {
-            Box::new(tidb_executor_windows::PipelinedWindowExec::new(executor))
-        } else {
-            Box::new(executor)
-        };
         for _ in 0..2 {
             executor.open().unwrap();
             let mut output = executor.new_chunk();
@@ -319,27 +354,15 @@ fn moving_count_matches_rows_frame_results() {
         .map(|value| vec![Datum::Int(1), Datum::Int(value)])
         .collect();
     let child = MemTableSourceExec::new(ExecutorMeta::new(schema(2), 7, 7, 7), rows);
-    let frame = WindowFrameSpec {
-        start: WindowBound::Offset {
-            num: 9,
-            preceding: true,
-        },
-        end: WindowBound::CurrentRow,
-        range: None,
-        range_desc: false,
-    };
-    let mut executor = WindowExec::new(
+    let mut executor = window(
         ExecutorMeta::new(schema(3), 8, 8, 8),
-        vec![WindowFuncSpec {
-            func: WindowFunction::Aggregate(AggFunc::new(AggKind::Count, Some(column(1)))),
-            output_type: long(),
-        }],
-        vec![column(0)],
-        vec![column(1)],
-        frame,
-        Box::new(child),
         NoColumns,
-        2,
+        vec![column(0)],
+        vec![1],
+        vec![desc("count", vec![column(1)])],
+        Some(rows_frame(offset(-9), current_row())),
+        Box::new(child),
+        false,
     );
     executor.open().unwrap();
     let types = executor.ret_field_types().to_vec();
@@ -374,56 +397,41 @@ fn moving_count_matches_rows_frame_results() {
     assert!(counts[12..].iter().all(|count| *count == Datum::Int(10)));
 }
 
+/// A parameter marker whose every evaluation is counted.
+fn counted_parameter(order: i64) -> Expression {
+    let mut parameter = Constant::new(Datum::Int(1), long());
+    parameter.param_marker = Some(tidb_expr::constant::ParamMarker { order });
+    Expression::Constant(parameter)
+}
+
+struct CountedParameters(std::sync::Arc<std::sync::Mutex<Vec<usize>>>);
+
+impl Columns for CountedParameters {
+    fn get(&self, _: &[String]) -> Option<Datum> {
+        None
+    }
+    fn param_value(&self, order: usize) -> Result<Datum, tidb_exprctx::EvalError> {
+        self.0.lock().unwrap().push(order);
+        Ok(Datum::Int(1))
+    }
+}
+
 #[test]
 fn moving_count_evaluates_only_entering_and_leaving_rows() {
-    use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    };
-    use tidb_expr::constant::{Constant, ParamMarker};
-    use tidb_exprctx::Columns;
-use tidb_exprctx::EvalError;
-
-    struct Parameters(Arc<AtomicUsize>);
-    impl Columns for Parameters {
-        fn get(&self, _: &[String]) -> Option<Datum> {
-            None
-        }
-        fn param_value(&self, _: usize) -> Result<Datum, EvalError> {
-            self.0.fetch_add(1, Ordering::Relaxed);
-            Ok(Datum::Int(1))
-        }
-    }
-    let evaluations = Arc::new(AtomicUsize::new(0));
-    let mut parameter = Constant::new(Datum::Int(1), long());
-    parameter.param_marker = Some(ParamMarker { order: 0 });
+    let evaluations = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let child = MemTableSourceExec::new(
         ExecutorMeta::new(schema(1), 1, 100, 100),
         (0..100).map(|i| vec![Datum::Int(i)]).collect(),
     );
-    let mut executor = WindowExec::new(
+    let mut executor = window(
         ExecutorMeta::new(schema(2), 2, 100, 100),
-        vec![WindowFuncSpec {
-            func: WindowFunction::Aggregate(AggFunc::new(
-                AggKind::Count,
-                Some(Expression::Constant(parameter)),
-            )),
-            output_type: long(),
-        }],
+        CountedParameters(evaluations.clone()),
         vec![],
         vec![],
-        WindowFrameSpec {
-            start: WindowBound::Offset {
-                num: 9,
-                preceding: true,
-            },
-            end: WindowBound::CurrentRow,
-            range: None,
-            range_desc: false,
-        },
+        vec![desc("count", vec![counted_parameter(0)])],
+        Some(rows_frame(offset(-9), current_row())),
         Box::new(child),
-        Parameters(evaluations.clone()),
-        1,
+        false,
     );
     executor.open().unwrap();
     let mut output = executor.new_chunk();
@@ -437,7 +445,7 @@ use tidb_exprctx::EvalError;
     }
     // Go countOriginal*.Slide removes expired rows before adding new rows.
     // 100 rows enter, 90 leave; rescanning every frame evaluates 955 inputs.
-    assert_eq!(evaluations.load(Ordering::Relaxed), 190);
+    assert_eq!(evaluations.lock().unwrap().len(), 190);
     executor.close().unwrap();
 }
 
@@ -462,16 +470,6 @@ fn moving_aggregates_nulls_empty_frames_chunks_and_partitions() {
             .into_iter()
             .flat_map(|n| [(n, false), (n, true)])
         {
-            let bound = |offset: i64| {
-                if offset == 0 {
-                    WindowBound::CurrentRow
-                } else {
-                    WindowBound::Offset {
-                        num: offset.unsigned_abs(),
-                        preceding: offset < 0,
-                    }
-                }
-            };
             let child = ChunkedSource {
                 inner: MemTableSourceExec::new(
                     ExecutorMeta::new(schema(2), 1, chunk_size, chunk_size),
@@ -491,50 +489,25 @@ fn moving_aggregates_nulls_empty_frames_chunks_and_partitions() {
             let mut unsigned = long();
             unsigned.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
             output_schema.columns[8].ret_type = Some(unsigned.clone());
-            let mut funcs: Vec<_> = vec![Some(column(1)), None]
-                .into_iter()
-                .map(|arg| WindowFuncSpec {
-                    func: WindowFunction::Aggregate(AggFunc::new(AggKind::Count, arg)),
-                    output_type: long(),
-                })
-                .collect();
-            for kind in [AggKind::Sum, AggKind::Avg] {
-                funcs.push(WindowFuncSpec {
-                    func: WindowFunction::Aggregate(AggFunc::new(kind, Some(column(1)))),
-                    output_type: decimal.clone(),
-                });
-            }
-            for kind in [AggKind::Min, AggKind::Max, AggKind::Bit(BitOp::Xor)] {
-                let output_type = if matches!(kind, AggKind::Bit(_)) {
-                    unsigned.clone()
-                } else {
-                    long()
-                };
-                funcs.push(WindowFuncSpec {
-                    func: WindowFunction::Aggregate(AggFunc::new(kind, Some(column(1)))),
-                    output_type,
-                });
-            }
-            let executor = WindowExec::new(
+            let descs = vec![
+                desc("count", vec![column(1)]),
+                desc("count", vec![int(1)]),
+                desc("sum", vec![column(1)]),
+                desc("avg", vec![column(1)]),
+                desc("min", vec![column(1)]),
+                desc("max", vec![column(1)]),
+                desc("bit_xor", vec![column(1)]),
+            ];
+            let mut executor = window(
                 ExecutorMeta::new(output_schema, 2, chunk_size, chunk_size),
-                funcs,
+                NoColumns,
                 vec![column(0)],
                 vec![],
-                WindowFrameSpec {
-                    start: bound(lower),
-                    end: bound(upper),
-                    range: None,
-                    range_desc: false,
-                },
+                descs,
+                Some(rows_frame(offset(lower), offset(upper))),
                 Box::new(child),
-                NoColumns,
-                2,
+                pipelined,
             );
-            let mut executor: Box<dyn Executor> = if pipelined {
-                Box::new(tidb_executor_windows::PipelinedWindowExec::new(executor))
-            } else {
-                Box::new(executor)
-            };
             for _ in 0..2 {
                 executor.open().unwrap();
                 let mut output = executor.new_chunk();
@@ -618,7 +591,7 @@ fn moving_aggregates_nulls_empty_frames_chunks_and_partitions() {
 
 #[test]
 fn pipelined_ready_chunk_precedes_later_same_partition_error() {
-    for (ordered, unbounded) in [(false, false), (true, false), (false, true), (true, true)] {
+    for (ordered, unbounded_start) in [(false, false), (true, false), (false, true), (true, true)] {
         let child = ChunkedSource {
             inner: MemTableSourceExec::new(
                 ExecutorMeta::new(schema(1), 1, 1, 1),
@@ -629,38 +602,25 @@ fn pipelined_ready_chunk_precedes_later_same_partition_error() {
             chunk_size: 1,
             fail_after: Some(3),
         };
-        let base = WindowExec::new(
-            ExecutorMeta::new(schema(2), 2, 1, 1),
-            vec![WindowFuncSpec {
-                func: WindowFunction::RowNumber,
-                output_type: long(),
-            }],
-            vec![],
-            vec![],
-            WindowFrameSpec {
-                start: if unbounded {
-                    WindowBound::Unbounded
-                } else {
-                    WindowBound::CurrentRow
-                },
-                end: WindowBound::CurrentRow,
-                range: None,
-                range_desc: false,
-            },
-            Box::new(child),
-            tidb_sessionctx::StmtContext::for_query().with_pipelined_window_exec(false),
-            1,
-        );
+        let meta = ExecutorMeta::new(schema(2), 2, 1, 1);
+        let ctx = tidb_sessionctx::StmtContext::for_query().with_pipelined_window_exec(false);
+        let start = if unbounded_start { unbounded(BoundType::Preceding) } else { current_row() };
+        let plan = WindowPlan {
+            partition_by: vec![],
+            order_by: vec![],
+            window_func_descs: vec![desc("row_number", vec![])],
+            frame: Some(rows_frame(start, current_row())),
+        };
         let mut executor: Box<dyn Executor> = if ordered {
-            Box::new(tidb_executor_windows::OrderedWindowExec::new(base))
+            Box::new(tidb_executor_windows::build_ordered(meta, ctx, plan, Box::new(child)).unwrap())
         } else {
-            Box::new(tidb_executor_windows::PipelinedWindowExec::new(base))
+            tidb_executor_windows::build(meta, ctx, plan, Box::new(child), true, false).unwrap()
         };
         executor.open().unwrap();
         let mut output = executor.new_chunk();
         // Go requires lookahead AND release of the frame's last reference to the
         // first input chunk, but does not need the rest of this partition.
-        if unbounded {
+        if unbounded_start {
             // Go cannot release any input referenced by an unbounded start,
             // even when the first output chunk's values are already computed.
             assert!(executor.next(&mut output).is_err());
@@ -691,25 +651,18 @@ fn upstream_ordered_window_partitioned_row_number() {
             .map(|row| row.into_iter().map(Datum::Int).collect())
             .collect(),
     );
-    let base = WindowExec::new(
+    let mut executor = tidb_executor_windows::build_ordered(
         ExecutorMeta::new(schema(3), 2, 4, 4),
-        vec![WindowFuncSpec {
-            func: WindowFunction::RowNumber,
-            output_type: long(),
-        }],
-        vec![column(0)],
-        vec![column(1)],
-        WindowFrameSpec {
-            start: WindowBound::CurrentRow,
-            end: WindowBound::CurrentRow,
-            range: None,
-            range_desc: false,
+        tidb_sessionctx::StmtContext::for_query().with_pipelined_window_exec(false),
+        WindowPlan {
+            partition_by: vec![column(0)],
+            order_by: vec![(col(1), false)],
+            window_func_descs: vec![desc("row_number", vec![])],
+            frame: Some(rows_frame(current_row(), current_row())),
         },
         Box::new(child),
-        tidb_sessionctx::StmtContext::for_query().with_pipelined_window_exec(false),
-        2,
-    );
-    let mut executor = tidb_executor_windows::OrderedWindowExec::new(base);
+    )
+    .unwrap();
     executor.open().unwrap();
     let mut output = executor.new_chunk();
     let mut rows = Vec::new();
@@ -734,28 +687,8 @@ fn upstream_ordered_window_partitioned_row_number() {
 /// results across output chunks; an explicit ROWS processor evaluates per row.
 #[test]
 fn partition_aggregates_are_evaluated_once_across_chunks() {
-    use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    };
-    use tidb_expr::constant::{Constant, ParamMarker};
-    use tidb_exprctx::Columns;
-use tidb_exprctx::EvalError;
-    struct Parameters(Arc<AtomicUsize>);
-    impl Columns for Parameters {
-        fn get(&self, _: &[String]) -> Option<Datum> {
-            None
-        }
-        fn param_value(&self, _: usize) -> Result<Datum, EvalError> {
-            self.0.fetch_add(1, Ordering::Relaxed);
-            Ok(Datum::Int(1))
-        }
-    }
     for explicit_frame in [false, true] {
-        let evaluations = Arc::new(AtomicUsize::new(0));
-        let mut parameter = Constant::new(Datum::Int(1), long());
-        parameter.param_marker = Some(ParamMarker { order: 0 });
-        let arg = Expression::Constant(parameter);
+        let evaluations = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let child = ChunkedSource {
             inner: MemTableSourceExec::new(
                 ExecutorMeta::new(schema(1), 1, 12, 12),
@@ -766,36 +699,18 @@ use tidb_exprctx::EvalError;
             chunk_size: 3,
             fail_after: None,
         };
-        let mut executor = WindowExec::new(
+        let mut executor = window(
             ExecutorMeta::new(schema(3), 2, 3, 3),
-            vec![
-                WindowFuncSpec {
-                    func: WindowFunction::Aggregate(AggFunc::new(
-                        AggKind::Bit(BitOp::Or),
-                        Some(arg.clone()),
-                    )),
-                    output_type: long(),
-                },
-                WindowFuncSpec {
-                    func: WindowFunction::Value {
-                        arg,
-                        nth: Some(1),
-                        last: false,
-                    },
-                    output_type: long(),
-                },
-            ],
+            CountedParameters(evaluations.clone()),
             vec![column(0)],
             vec![],
-            explicit_frame.then_some(WindowFrameSpec {
-                start: WindowBound::Unbounded,
-                end: WindowBound::Unbounded,
-                range: None,
-                range_desc: false,
-            }),
+            vec![
+                desc("bit_or", vec![counted_parameter(0)]),
+                desc("first_value", vec![counted_parameter(0)]),
+            ],
+            explicit_frame.then(unbounded_rows_frame),
             Box::new(child),
-            Parameters(evaluations.clone()),
-            1,
+            false,
         );
         for run in 1..=2 {
             executor.open().unwrap();
@@ -819,7 +734,7 @@ use tidb_exprctx::EvalError;
             }
             assert_eq!(count, 12);
             assert_eq!(
-                evaluations.load(Ordering::Relaxed),
+                evaluations.lock().unwrap().len(),
                 run * if explicit_frame { 60 } else { 15 },
                 "explicit_frame={explicit_frame}"
             );
@@ -832,73 +747,26 @@ use tidb_exprctx::EvalError;
 /// pipelined produce instead updates/appends one function at a time.
 #[test]
 fn partition_update_precedes_lead_lag_result_evaluation() {
-    use std::sync::{Arc, Mutex};
-    use tidb_expr::constant::{Constant, ParamMarker};
-    use tidb_exprctx::Columns;
-use tidb_exprctx::EvalError;
-    struct Parameters(Arc<Mutex<Vec<usize>>>);
-    impl Columns for Parameters {
-        fn get(&self, _: &[String]) -> Option<Datum> {
-            None
-        }
-        fn param_value(&self, order: usize) -> Result<Datum, EvalError> {
-            self.0.lock().unwrap().push(order);
-            Ok(Datum::Int(1))
-        }
-    }
-    fn parameter(order: usize) -> Expression {
-        let mut value = Constant::new(Datum::Int(1), long());
-        value.param_marker = Some(ParamMarker {
-            order: order as i64,
-        });
-        Expression::Constant(value)
-    }
     for pipelined in [false, true] {
-        let calls = Arc::new(Mutex::new(Vec::new()));
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let child = MemTableSourceExec::new(
             ExecutorMeta::new(schema(1), 1, 2, 2),
             vec![vec![Datum::Int(1)], vec![Datum::Int(2)]],
         );
-        let base = WindowExec::new(
+        let mut executor = window(
             ExecutorMeta::new(schema(4), 2, 2, 2),
+            CountedParameters(calls.clone()),
+            vec![],
+            vec![],
             vec![
-                WindowFuncSpec {
-                    func: WindowFunction::Relative {
-                        arg: parameter(0),
-                        offset: 0,
-                        default: None,
-                        lead: true,
-                    },
-                    output_type: long(),
-                },
-                WindowFuncSpec {
-                    func: WindowFunction::Value {
-                        arg: parameter(1),
-                        nth: Some(1),
-                        last: false,
-                    },
-                    output_type: long(),
-                },
-                WindowFuncSpec {
-                    func: WindowFunction::Aggregate(AggFunc::new(
-                        AggKind::Bit(BitOp::Or),
-                        Some(parameter(2)),
-                    )),
-                    output_type: long(),
-                },
+                desc("lead", vec![counted_parameter(0), int(0)]),
+                desc("first_value", vec![counted_parameter(1)]),
+                desc("bit_or", vec![counted_parameter(2)]),
             ],
-            vec![],
-            vec![],
             None,
             Box::new(child),
-            Parameters(calls.clone()),
-            1,
+            pipelined,
         );
-        let mut executor: Box<dyn Executor> = if pipelined {
-            Box::new(tidb_executor_windows::PipelinedWindowExec::new(base))
-        } else {
-            Box::new(base)
-        };
         executor.open().unwrap();
         let mut output = executor.new_chunk();
         executor.next(&mut output).unwrap();
@@ -919,9 +787,7 @@ use tidb_exprctx::EvalError;
 #[test]
 fn partition_update_error_precedes_aggregate_finalization_error() {
     use tidb_datatype::Decimal;
-    use tidb_expr::constant::{Constant, ParamMarker};
-    use tidb_exprctx::Columns;
-use tidb_exprctx::EvalError;
+    use tidb_exprctx::EvalError;
     struct FailingParameter;
     impl Columns for FailingParameter {
         fn get(&self, _: &[String]) -> Option<Datum> {
@@ -936,8 +802,6 @@ use tidb_exprctx::EvalError;
     ty.set_flen(65);
     let mut input = Column::new(1, ty.clone());
     input.index = 0;
-    let mut parameter = Constant::new(Datum::Int(1), long());
-    parameter.param_marker = Some(ParamMarker { order: 0 });
     for pipelined in [false, true] {
         // The retained SUM fits nine decimal words; AVG division reports
         // truncation only when AppendFinalResult2Chunk is reached.
@@ -950,38 +814,18 @@ use tidb_exprctx::EvalError;
         );
         let mut output_schema = schema(3);
         output_schema.columns[0].ret_type = Some(ty.clone());
-        output_schema.columns[1].ret_type = Some(ty.clone());
-        let base = WindowExec::new(
+        let avg = desc("avg", vec![Expression::Column(input.clone())]);
+        output_schema.columns[1].ret_type = Some(avg.base.ret_type.clone());
+        let mut executor = window(
             ExecutorMeta::new(output_schema, 2, 1, 1),
-            vec![
-                WindowFuncSpec {
-                    func: WindowFunction::Aggregate(AggFunc::new(
-                        AggKind::Avg,
-                        Some(Expression::Column(input.clone())),
-                    )),
-                    output_type: ty.clone(),
-                },
-                WindowFuncSpec {
-                    func: WindowFunction::Value {
-                        arg: Expression::Constant(parameter.clone()),
-                        nth: Some(1),
-                        last: false,
-                    },
-                    output_type: long(),
-                },
-            ],
+            FailingParameter,
             vec![],
             vec![],
+            vec![avg, desc("first_value", vec![counted_parameter(0)])],
             None,
             Box::new(child),
-            FailingParameter,
-            1,
+            pipelined,
         );
-        let mut executor: Box<dyn Executor> = if pipelined {
-            Box::new(tidb_executor_windows::PipelinedWindowExec::new(base))
-        } else {
-            Box::new(base)
-        };
         executor.open().unwrap();
         let mut output = executor.new_chunk();
         let error = executor.next(&mut output).unwrap_err();
@@ -1001,193 +845,14 @@ use tidb_exprctx::EvalError;
     }
 }
 
-/// Go passes ORDER BY columns to ranking comparers, but COUNT/ROW_NUMBER
-/// do not evaluate them. Ordinary windows must not build an unused peer table.
-#[test]
-fn nonranking_windows_do_not_compare_order_keys() {
-    use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    };
-    use tidb_expr::constant::{Constant, ParamMarker};
-    use tidb_exprctx::Columns;
-use tidb_exprctx::EvalError;
-    struct Parameters(Arc<AtomicUsize>);
-    impl Columns for Parameters {
-        fn get(&self, _: &[String]) -> Option<Datum> {
-            None
-        }
-        fn param_value(&self, _: usize) -> Result<Datum, EvalError> {
-            self.0.fetch_add(1, Ordering::Relaxed);
-            Ok(Datum::Int(1))
-        }
-    }
-    for pipelined in [false, true] {
-        let calls = Arc::new(AtomicUsize::new(0));
-        let mut key = Constant::new(Datum::Int(1), long());
-        key.param_marker = Some(ParamMarker { order: 0 });
-        let child = MemTableSourceExec::new(
-            ExecutorMeta::new(schema(1), 1, 100, 100),
-            (0..100).map(|i| vec![Datum::Int(i / 50)]).collect(),
-        );
-        let base = WindowExec::new(
-            ExecutorMeta::new(schema(3), 2, 100, 100),
-            vec![
-                WindowFuncSpec {
-                    func: WindowFunction::Aggregate(AggFunc::new(AggKind::Count, None)),
-                    output_type: long(),
-                },
-                WindowFuncSpec {
-                    func: WindowFunction::RowNumber,
-                    output_type: long(),
-                },
-            ],
-            vec![column(0)],
-            vec![Expression::Constant(key)],
-            None,
-            Box::new(child),
-            Parameters(calls.clone()),
-            1,
-        );
-        let mut executor: Box<dyn Executor> = if pipelined {
-            Box::new(tidb_executor_windows::PipelinedWindowExec::new(base))
-        } else {
-            Box::new(base)
-        };
-        executor.open().unwrap();
-        let mut output = executor.new_chunk();
-        executor.next(&mut output).unwrap();
-        assert_eq!(output.num_rows(), 100);
-        for i in 0..100 {
-            assert_eq!(output.get_row(i).get_datum(1, &long()), Datum::Int(50));
-            assert_eq!(
-                output.get_row(i).get_datum(2, &long()),
-                Datum::Int((i % 50 + 1) as i64)
-            );
-        }
-        assert_eq!(calls.load(Ordering::Relaxed), 0, "pipelined={pipelined}");
-        executor.close().unwrap();
-    }
-}
-
-#[test]
-fn ranking_comparisons_follow_result_evaluation_order() {
-    use std::sync::{Arc, Mutex};
-    use tidb_expr::constant::{Constant, ParamMarker};
-    use tidb_exprctx::Columns;
-use tidb_exprctx::EvalError;
-    struct Parameters(Arc<Mutex<Vec<usize>>>);
-    impl Columns for Parameters {
-        fn get(&self, _: &[String]) -> Option<Datum> {
-            None
-        }
-        fn param_value(&self, order: usize) -> Result<Datum, EvalError> {
-            self.0.lock().unwrap().push(order);
-            Ok(Datum::Int(1))
-        }
-    }
-    let parameter = |order| {
-        let mut value = Constant::new(Datum::Int(1), long());
-        value.param_marker = Some(ParamMarker { order });
-        Expression::Constant(value)
-    };
-    for pipelined in [false, true] {
-        for function in [
-            WindowFunction::Rank { dense: false },
-            WindowFunction::Rank { dense: true },
-            WindowFunction::PercentRank,
-            WindowFunction::CumeDist,
-        ] {
-            let cume = matches!(function, WindowFunction::CumeDist);
-            let floating = matches!(
-                function,
-                WindowFunction::PercentRank | WindowFunction::CumeDist
-            );
-            let calls = Arc::new(Mutex::new(Vec::new()));
-            let child = MemTableSourceExec::new(
-                ExecutorMeta::new(schema(1), 1, 2, 2),
-                vec![vec![Datum::Int(1)], vec![Datum::Int(1)]],
-            );
-            let base = WindowExec::new(
-                ExecutorMeta::new(schema(3), 2, 2, 2),
-                vec![
-                    WindowFuncSpec {
-                        func: function,
-                        output_type: if floating {
-                            FieldType::new(FieldTypeCode::Double)
-                        } else {
-                            long()
-                        },
-                    },
-                    WindowFuncSpec {
-                        func: WindowFunction::Relative {
-                            arg: parameter(1),
-                            offset: 0,
-                            default: None,
-                            lead: true,
-                        },
-                        output_type: long(),
-                    },
-                ],
-                vec![],
-                vec![parameter(0)],
-                None,
-                Box::new(child),
-                Parameters(calls.clone()),
-                1,
-            );
-            let mut executor: Box<dyn Executor> = if pipelined {
-                Box::new(tidb_executor_windows::PipelinedWindowExec::new(base))
-            } else {
-                Box::new(base)
-            };
-            executor.open().unwrap();
-            let mut output = executor.new_chunk();
-            executor.next(&mut output).unwrap();
-            assert_eq!(output.num_rows(), 2);
-            let expected = if cume {
-                vec![0, 0, 0, 0, 1, 1]
-            } else {
-                vec![1, 0, 0, 1]
-            };
-            assert_eq!(
-                *calls.lock().unwrap(),
-                expected,
-                "pipelined={pipelined} cume={cume}"
-            );
-            executor.close().unwrap();
-            calls.lock().unwrap().clear();
-            executor.open().unwrap();
-            executor.next(&mut output).unwrap();
-            assert_eq!(output.num_rows(), 2);
-            assert_eq!(
-                *calls.lock().unwrap(),
-                expected,
-                "reopen pipelined={pipelined}"
-            );
-            executor.close().unwrap();
-        }
-    }
-}
-
 #[test]
 fn go_window_leaf_vectors_use_the_live_chunk_executor() {
-    // Go aggfuncs TestWindowFunctions/TestLeadLag and func_value.go. Keep
-    // source vectors at the production owner, not in a second state machine.
-    fn check(input: &[Option<i64>], function: impl Fn() -> WindowFunction, expected: &[Datum]) {
+    // Go aggfuncs TestWindowFunctions/TestLeadLag and func_value.go, through
+    // the executor that drives them.
+    fn check(input: &[Option<i64>], function: impl Fn() -> WindowFuncDesc, ordered: bool, expected: &[Datum]) {
         for chunk_size in [1, 2] {
             for pipelined in [false, true] {
                 let function = function();
-                let mut output_type = long();
-                let order = if matches!(function, WindowFunction::CumeDist) {
-                    output_type = FieldType::new(FieldTypeCode::Double);
-                    vec![column(0)]
-                } else {
-                    if matches!(function, WindowFunction::Ntile(_)) {
-                        output_type.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
-                    }
-                    vec![]
-                };
                 let child = ChunkedSource {
                     inner: MemTableSourceExec::new(
                         ExecutorMeta::new(schema(1), 1, chunk_size, chunk_size),
@@ -1202,25 +867,17 @@ fn go_window_leaf_vectors_use_the_live_chunk_executor() {
                     fail_after: None,
                 };
                 let mut output_schema = schema(2);
-                output_schema.columns[1].ret_type = Some(output_type.clone());
-                let base = WindowExec::new(
+                output_schema.columns[1].ret_type = Some(function.base.ret_type.clone());
+                let mut executor = window(
                     ExecutorMeta::new(output_schema, 2, chunk_size, chunk_size),
-                    vec![WindowFuncSpec {
-                        func: function,
-                        output_type,
-                    }],
+                    NoColumns,
                     vec![],
-                    order,
+                    if ordered { vec![0] } else { vec![] },
+                    vec![function],
                     None,
                     Box::new(child),
-                    NoColumns,
-                    1,
+                    pipelined,
                 );
-                let mut executor: Box<dyn Executor> = if pipelined {
-                    Box::new(tidb_executor_windows::PipelinedWindowExec::new(base))
-                } else {
-                    Box::new(base)
-                };
                 for _ in 0..2 {
                     executor.open().unwrap();
                     let mut output = executor.new_chunk();
@@ -1258,7 +915,8 @@ fn go_window_leaf_vectors_use_the_live_chunk_executor() {
     ] {
         check(
             &keys.into_iter().map(Some).collect::<Vec<_>>(),
-            || WindowFunction::CumeDist,
+            || desc("cume_dist", vec![]),
+            true,
             &expected.into_iter().map(Datum::Real).collect::<Vec<_>>(),
         );
     }
@@ -1285,7 +943,8 @@ fn go_window_leaf_vectors_use_the_live_chunk_executor() {
     ] {
         check(
             &vec![Some(1); expected.len()],
-            || WindowFunction::Ntile(Some(buckets)),
+            || desc("ntile", vec![int(buckets)]),
+            false,
             &expected
                 .into_iter()
                 .map(|v| v.map_or(Datum::Null, Datum::UInt))
@@ -1325,12 +984,14 @@ fn go_window_leaf_vectors_use_the_live_chunk_executor() {
                 .collect();
             check(
                 &input.map(Some),
-                || WindowFunction::Relative {
-                    arg: column(0),
-                    offset,
-                    default: current_row_default.then(|| column(0)),
-                    lead,
+                || {
+                    let mut args = vec![column(0), uint(offset)];
+                    if current_row_default {
+                        args.push(column(0));
+                    }
+                    desc(if lead { "lead" } else { "lag" }, args)
                 },
+                false,
                 &expected,
             );
         }
@@ -1348,11 +1009,13 @@ fn go_window_leaf_vectors_use_the_live_chunk_executor() {
     ] {
         check(
             &input,
-            || WindowFunction::Value {
-                arg: column(0),
-                nth,
-                last,
+            || match (nth, last) {
+                (_, true) => desc("last_value", vec![column(0)]),
+                (Some(1), false) => desc("first_value", vec![column(0)]),
+                (Some(n), false) => desc("nth_value", vec![column(0), int(n)]),
+                (None, false) => unreachable!("a value function names its row"),
             },
+            false,
             &vec![expected.map_or(Datum::Null, Datum::Int); input.len()],
         );
     }

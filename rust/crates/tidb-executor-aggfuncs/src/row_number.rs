@@ -62,7 +62,7 @@ impl AggFunc for RowNumber {
 }
 
 impl SlidingWindowAggFunc for RowNumber {
-    fn slide<'a>(&self, _sctx: &AggFuncUpdateContext, _get_row: &dyn Fn(u64) -> Row<'a>, _last_start: u64, _last_end: u64, _shift_start: u64, _shift_end: u64, _pr: &mut PartialResult) -> Result<(), ExecError> {
+    fn slide<'a>(&self, _sctx: &AggFuncUpdateContext, _get_row: &dyn Fn(u64) -> Result<Row<'a>, ExecError>, _last_start: u64, _last_end: u64, _shift_start: u64, _shift_end: u64, _pr: &mut PartialResult) -> Result<(), ExecError> {
         Ok(())
     }
 }

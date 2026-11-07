@@ -2497,8 +2497,9 @@ fn build_aggregation_over_child(
     })
 }
 
-/// Go `windows.Builder.Build` (`pkg/executor/windows/builder.go:47`): the
-/// window executor over the child that delivers `PARTITION BY ++ ORDER BY`.
+/// Go `executorBuilder.buildWindow`: `windows.Build(sctx, v, childExec,
+/// false)` over the window plan, its expressions resolved against the
+/// child's schema (Go `PhysicalWindow.ResolveIndices`).
 fn build_window(
     plan: &PhysicalPlan,
     window: &tidb_planner_core_operator_physicalop::PhysicalWindow,
@@ -2509,212 +2510,50 @@ fn build_window(
     let child = build_with_state(only_child(plan)?, catalog, ctx, state)?;
     let child_schema = child.schema().clone();
     let output_schema = plan_schema(plan)?;
-    let child_width = output_schema
-        .len()
-        .checked_sub(window.window_func_descs.len())
-        .ok_or_else(|| DriverError::unsupported("Window schema is missing function columns"))?;
-    let mut partition_by = Vec::with_capacity(window.partition_by.len());
-    for item in &window.partition_by {
-        partition_by.push(resolve_expression(
-            tidb_expr::expression::Expression::Column(item.col.clone()),
-            &child_schema,
-        )?);
-    }
-    let mut frame = match &window.frame {
-        Some(frame) => {
-            window_frame_spec(frame, window.order_by.first().is_some_and(|item| item.desc))?
+    let resolve_column = |column: &tidb_expr::column::Column| {
+        match resolve_expression(Expression::Column(column.clone()), &child_schema)? {
+            Expression::Column(column) => Ok(column),
+            _ => Err(DriverError::unsupported("a window ORDER BY item is not a column")),
         }
-        // No explicit frame: Go's default covers the whole partition for the
-        // ORDER-BY-less case these tests exercise.
-        None => tidb_executor_windows::WindowFrameSpec {
-            start: tidb_executor_windows::WindowBound::Unbounded,
-            end: tidb_executor_windows::WindowBound::Unbounded,
-            range: None,
-            range_desc: false,
-        },
     };
-    if let Some(range) = &mut frame.range {
-        let order_by = window
-            .order_by
-            .iter()
-            .map(|item| item.col.clone())
-            .collect::<Vec<_>>();
-        for bound in range.start.iter_mut().chain(range.end.iter_mut()) {
-            bound
-                .update_compare_cols(&order_by)
-                .map_err(crate::ExecError::from)?;
-        }
-    }
-    let mut funcs = Vec::with_capacity(window.window_func_descs.len());
-    for (index, descriptor) in window.window_func_descs.iter().enumerate() {
-        use tidb_executor_windows::WindowFunction;
-        let output_type = output_schema
-            .columns
-            .get(child_width + index)
-            .and_then(|column| column.ret_type.clone())
-            .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
-        let func = match descriptor.base.name.to_ascii_lowercase().as_str() {
-            "row_number" => WindowFunction::RowNumber,
-            "rank" => WindowFunction::Rank { dense: false },
-            "dense_rank" => WindowFunction::Rank { dense: true },
-            "percent_rank" => WindowFunction::PercentRank,
-            "cume_dist" => WindowFunction::CumeDist,
-            "first_value" | "last_value" | "nth_value" => {
-                let name = descriptor.base.name.as_str();
-                let arg = descriptor
-                    .base
-                    .args
-                    .first()
-                    .cloned()
-                    .ok_or(DriverError::from(
-                        tidb_plannererrors::ERR_WRONG_ARGUMENTS
-                            .gen_with_stack_by_args(&["window value function".into()]),
-                    ))?;
-                let nth = if name == "nth_value" {
-                    let (value, is_null) = descriptor
-                        .base
-                        .args
-                        .get(1)
-                        .and_then(|arg| tidb_expr::expr_util::get_uint64_from_constant(arg, ctx))
-                        .ok_or(DriverError::from(
-                            tidb_plannererrors::ERR_WRONG_ARGUMENTS
-                                .gen_with_stack_by_args(&["nth_value".into()]),
-                        ))?;
-                    (!is_null).then_some(value)
-                } else {
-                    Some(1)
-                };
-                WindowFunction::Value {
-                    arg: resolve_expression(arg, &child_schema)?,
-                    nth,
-                    last: name == "last_value",
-                }
+    let partition_by = window
+        .partition_by
+        .iter()
+        .map(|item| resolve_expression(Expression::Column(item.col.clone()), &child_schema))
+        .collect::<Result<Vec<_>, _>>()?;
+    let order_by = window
+        .order_by
+        .iter()
+        .map(|item| Ok((resolve_column(&item.col)?, item.desc)))
+        .collect::<Result<Vec<_>, DriverError>>()?;
+    let window_func_descs = window
+        .window_func_descs
+        .iter()
+        .map(|descriptor| {
+            let mut descriptor = descriptor.clone();
+            descriptor.base.args = resolve_expressions(&descriptor.base.args, &child_schema)?;
+            Ok(descriptor)
+        })
+        .collect::<Result<Vec<_>, DriverError>>()?;
+    let frame = window
+        .frame
+        .clone()
+        .map(|mut frame| {
+            for bound in frame.start.iter_mut().chain(frame.end.iter_mut()) {
+                bound.calc_funcs = resolve_expressions(&bound.calc_funcs, &child_schema)?;
             }
-            "lead" | "lag" => {
-                let args = &descriptor.base.args;
-                let offset = match args.get(1) {
-                    Some(arg) => {
-                        tidb_expr::expr_util::get_uint64_from_constant(arg, ctx)
-                            .filter(|(_, is_null)| !is_null)
-                            .ok_or(DriverError::from(
-                                tidb_plannererrors::ERR_WRONG_ARGUMENTS
-                                    .gen_with_stack_by_args(&["lead/lag".into()]),
-                            ))?
-                            .0
-                    }
-                    None => 1,
-                };
-                let arg = args.first().cloned().ok_or(DriverError::from(
-                    tidb_plannererrors::ERR_WRONG_ARGUMENTS
-                        .gen_with_stack_by_args(&["lead/lag".into()]),
-                ))?;
-                let mut default = args.get(2).cloned();
-                // Go buildLeadLag converts a constant default to RetTp with
-                // `evalCtx.TypeCtx()`, keeping it only when that succeeds.
-                if let Some(Expression::Constant(constant)) = &default {
-                    let zone = ctx.session_zone();
-                    let warnings = crate::split_region::StatementWarnings(ctx);
-                    let type_ctx = tidb_datatype::ConversionContext::new(
-                        tidb_exprctx::Columns::type_flags(ctx),
-                        tidb_datatype::ConversionLocation::from_time_zone(&zone),
-                        &warnings,
-                    );
-                    if let Ok(converted) = constant
-                        .value
-                        .convert_to_in_context(&output_type, &type_ctx, &zone)
-                        .map_err(drop)
-                        .and_then(|converted| match converted.error {
-                            None => Ok(converted),
-                            Some(_) => Err(()),
-                        })
-                    {
-                        default = Some(Expression::Constant(tidb_expr::constant::Constant::new(
-                            converted.value,
-                            output_type.clone(),
-                        )));
-                    }
-                }
-                WindowFunction::Relative {
-                    arg: resolve_expression(arg, &child_schema)?,
-                    offset,
-                    default: default
-                        .map(|expr| resolve_expression(expr, &child_schema))
-                        .transpose()?,
-                    lead: descriptor.base.name == "lead",
-                }
-            }
-            "ntile" => {
-                let value = descriptor
-                    .base
-                    .args
-                    .first()
-                    .and_then(|arg| tidb_expr::expr_util::get_uint64_from_constant(arg, ctx))
-                    .ok_or(DriverError::from(
-                        tidb_plannererrors::ERR_WRONG_ARGUMENTS
-                            .gen_with_stack_by_args(&["ntile".into()]),
-                    ))?;
-                WindowFunction::Ntile((!value.1).then_some(value.0))
-            }
-            _ => {
-                let descriptor = AggFuncDesc::new_agg_func_desc_for_window_func(descriptor, false);
-                WindowFunction::Aggregate(aggregate_function(&descriptor, &child_schema, ctx)?)
-            }
-        };
-        funcs.push(tidb_executor_windows::WindowFuncSpec { func, output_type });
-    }
-    let base = tidb_executor_windows::WindowExec::new(
+            Ok::<_, DriverError>(frame)
+        })
+        .transpose()?;
+    tidb_executor_windows::build(
         meta(ctx, plan, output_schema),
-        funcs,
-        partition_by,
-        window
-            .order_by
-            .iter()
-            .map(|item| resolve_expression(Expression::Column(item.col.clone()), &child_schema))
-            .collect::<Result<Vec<_>, _>>()?,
-        window.frame.as_ref().map(|_| frame),
-        child,
         ctx.clone(),
-        child_width,
-    );
-    if ctx.enable_pipelined_window_exec() {
-        Ok(Box::new(tidb_executor_windows::PipelinedWindowExec::new(base)))
-    } else {
-        Ok(Box::new(base))
-    }
-}
-
-/// Retains Go's typed RANGE expressions and positional ROWS bounds.
-fn window_frame_spec(
-    frame: &tidb_planner_core_operator_logicalop::window::WindowFrame,
-    range_desc: bool,
-) -> Result<tidb_executor_windows::WindowFrameSpec, DriverError> {
-    use tidb_planner_core_operator_logicalop::window::{BoundType, FrameType};
-    if frame.frame_type == FrameType::Groups {
-        return Err(DriverError::unsupported(
-            "GROUPS window frames are not supported by TiDB",
-        ));
-    }
-    let bound = |bound: Option<&tidb_planner_core_operator_logicalop::window::FrameBound>| {
-        let Some(bound) = bound else {
-            return tidb_executor_windows::WindowBound::Unbounded;
-        };
-        if bound.bound_type == BoundType::CurrentRow {
-            return tidb_executor_windows::WindowBound::CurrentRow;
-        }
-        if bound.unbounded {
-            return tidb_executor_windows::WindowBound::Unbounded;
-        }
-        tidb_executor_windows::WindowBound::Offset {
-            num: bound.num,
-            preceding: bound.bound_type == BoundType::Preceding,
-        }
-    };
-    Ok(tidb_executor_windows::WindowFrameSpec {
-        start: bound(frame.start.as_ref()),
-        end: bound(frame.end.as_ref()),
-        range: (frame.frame_type == FrameType::Ranges).then(|| frame.clone()),
-        range_desc,
-    })
+        tidb_executor_windows::WindowPlan { partition_by, order_by, window_func_descs, frame },
+        child,
+        false,
+        ctx.enable_pipelined_window_exec(),
+    )
+    .map_err(DriverError::from)
 }
 
 fn pushed_partial_aggregation(

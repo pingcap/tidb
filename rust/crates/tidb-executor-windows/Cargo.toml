@@ -14,6 +14,7 @@ workspace = true
 tidb-planner-core-operator-logicalop = { path = "../tidb-planner-core-operator-logicalop" }
 tidb-executor-internal-exec = { path = "../tidb-executor-internal-exec" }
 tidb-executor-aggfuncs = { path = "../tidb-executor-aggfuncs" }
+tidb-expression-aggregation = { path = "../tidb-expression-aggregation" }
 tidb-executor-internal-vecgroupchecker = { path = "../tidb-executor-internal-vecgroupchecker" }
 tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-driver-error = { path = "../tidb-driver-error" }

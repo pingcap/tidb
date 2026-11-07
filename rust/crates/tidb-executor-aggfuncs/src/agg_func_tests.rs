@@ -1761,7 +1761,7 @@ fn a_sliding_max_min_answers_each_frame() {
                 func.update_partial_result(&NoColumns, &rows, &mut pr).expect("update succeeds");
                 for start in first..values.len() - 2 {
                     if start > first {
-                        let get_row = |i: u64| chk.get_row(i as usize);
+                        let get_row = |i: u64| Ok(chk.get_row(i as usize));
                         slider.slide(&NoColumns, &get_row, start as u64 - 1, start as u64 + 2, 1, 1, &mut pr).expect("slide succeeds");
                     }
                     let actual = final_datum(func.as_ref(), &mut pr, &desc.base.ret_type);
@@ -1798,7 +1798,7 @@ fn a_slide_removes_before_it_adds() {
         let (mut pr, _) = func.alloc_partial_result();
         func.reset_partial_result(&mut pr);
         func.update_partial_result(&NoColumns, &[chk.get_row(0)], &mut pr).expect("update succeeds");
-        let get_row = |i: u64| chk.get_row(i as usize);
+        let get_row = |i: u64| Ok(chk.get_row(i as usize));
         sliding.slide(&NoColumns, &get_row, 0, 1, 1, 1, &mut pr).expect("the slide does not overflow");
         assert_datum_eq(&final_datum(func.as_ref(), &mut pr, &desc.base.ret_type), &expected, "slid sum");
     }

@@ -84,9 +84,16 @@ fn eval_count(base: &BaseAggFunc, sctx: &AggFuncUpdateContext, row: Row<'_>) -> 
 /// Go's final `DecimalDiv(sum, count, result, divPrecisionIncrement)` and
 /// `Round(frac, ModeHalfUp)` to the return type's scale.
 fn append_decimal_average(base: &BaseAggFunc, sctx: &AggFuncUpdateContext, sum: &Decimal, count: i64, chk: &mut Chunk) -> Result<(), ExecError> {
-    let final_result = sum
-        .decimal_div(&Decimal::from_int(count), sctx.div_precision_increment())
+    // Go returns `DecimalDiv`'s error, its `ErrTruncated` included.
+    let (final_result, error) = sum
+        .div_mysql_with_warning(&Decimal::from_int(count), sctx.div_precision_increment())
         .ok_or_else(|| ExecError::internal("AVG divided by a zero count"))?;
+    if let Some(error) = error {
+        return Err(ExecError::Eval(tidb_exprctx::EvalError::Conversion(match error {
+            tidb_datatype::DecimalCodecWarning::Overflow => tidb_datatype::types_errors::ERR_OVERFLOW.clone(),
+            tidb_datatype::DecimalCodecWarning::Truncated => tidb_datatype::types_errors::ERR_TRUNCATED.clone(),
+        })));
+    }
     let mut frac = base.ret_tp.decimal();
     if frac == -1 {
         frac = MAX_DECIMAL_SCALE as i64;
@@ -191,17 +198,17 @@ impl AggFunc for AvgOriginal4Decimal {
 }
 
 impl SlidingWindowAggFunc for AvgOriginal4Decimal {
-    fn slide<'a>(&self, sctx: &AggFuncUpdateContext, get_row: &dyn Fn(u64) -> Row<'a>, last_start: u64, last_end: u64, shift_start: u64, shift_end: u64, pr: &mut PartialResult) -> Result<(), ExecError> {
+    fn slide<'a>(&self, sctx: &AggFuncUpdateContext, get_row: &dyn Fn(u64) -> Result<Row<'a>, ExecError>, last_start: u64, last_end: u64, shift_start: u64, shift_end: u64, pr: &mut PartialResult) -> Result<(), ExecError> {
         let p = partial::<PartialResult4AvgDecimal>(pr);
         for i in 0..shift_end {
-            let Some(input) = eval_decimal(&self.0.base, sctx, get_row(last_end + i))? else {
+            let Some(input) = eval_decimal(&self.0.base, sctx, get_row(last_end.wrapping_add(i))?)? else {
                 continue;
             };
             p.sum = decimal_add(&p.sum, &input);
             p.count += 1;
         }
         for i in 0..shift_start {
-            let Some(input) = eval_decimal(&self.0.base, sctx, get_row(last_start + i))? else {
+            let Some(input) = eval_decimal(&self.0.base, sctx, get_row(last_start.wrapping_add(i))?)? else {
                 continue;
             };
             p.sum = decimal_sub(&p.sum, &input);
@@ -418,17 +425,17 @@ impl AggFunc for AvgOriginal4Float64 {
 }
 
 impl SlidingWindowAggFunc for AvgOriginal4Float64 {
-    fn slide<'a>(&self, sctx: &AggFuncUpdateContext, get_row: &dyn Fn(u64) -> Row<'a>, last_start: u64, last_end: u64, shift_start: u64, shift_end: u64, pr: &mut PartialResult) -> Result<(), ExecError> {
+    fn slide<'a>(&self, sctx: &AggFuncUpdateContext, get_row: &dyn Fn(u64) -> Result<Row<'a>, ExecError>, last_start: u64, last_end: u64, shift_start: u64, shift_end: u64, pr: &mut PartialResult) -> Result<(), ExecError> {
         let p = partial::<PartialResult4AvgFloat64>(pr);
         for i in 0..shift_end {
-            let Some(input) = eval_real(&self.0.base, sctx, get_row(last_end + i))? else {
+            let Some(input) = eval_real(&self.0.base, sctx, get_row(last_end.wrapping_add(i))?)? else {
                 continue;
             };
             p.sum += input;
             p.count += 1;
         }
         for i in 0..shift_start {
-            let Some(input) = eval_real(&self.0.base, sctx, get_row(last_start + i))? else {
+            let Some(input) = eval_real(&self.0.base, sctx, get_row(last_start.wrapping_add(i))?)? else {
                 continue;
             };
             p.sum -= input;

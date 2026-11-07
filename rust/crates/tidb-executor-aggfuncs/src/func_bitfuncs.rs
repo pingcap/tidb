@@ -144,11 +144,11 @@ bit_func!(BitXorUint64, init: 0, op: |a, b| a ^ b);
 bit_func!(BitAndUint64, init: u64::MAX, op: |a, b| a & b);
 
 impl SlidingWindowAggFunc for BitXorUint64 {
-    fn slide<'a>(&self, sctx: &AggFuncUpdateContext, get_row: &dyn Fn(u64) -> Row<'a>, last_start: u64, last_end: u64, shift_start: u64, shift_end: u64, pr: &mut PartialResult) -> Result<(), ExecError> {
-        let rows = (0..shift_start).map(|i| last_start + i).chain((0..shift_end).map(|i| last_end + i));
+    fn slide<'a>(&self, sctx: &AggFuncUpdateContext, get_row: &dyn Fn(u64) -> Result<Row<'a>, ExecError>, last_start: u64, last_end: u64, shift_start: u64, shift_end: u64, pr: &mut PartialResult) -> Result<(), ExecError> {
+        let rows = (0..shift_start).map(|i| last_start.wrapping_add(i)).chain((0..shift_end).map(|i| last_end.wrapping_add(i)));
         let p = partial::<PartialResult4BitFunc>(pr);
         for row in rows {
-            if let Some(input_value) = self.0.eval_int(sctx, get_row(row))? {
+            if let Some(input_value) = self.0.eval_int(sctx, get_row(row)?)? {
                 *p ^= input_value;
             }
         }

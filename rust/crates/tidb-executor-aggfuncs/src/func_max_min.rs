@@ -488,13 +488,13 @@ impl AggFunc for MaxMinSliding {
 }
 
 impl SlidingWindowAggFunc for MaxMinSliding {
-    fn slide<'a>(&self, sctx: &AggFuncUpdateContext, get_row: &dyn Fn(u64) -> Row<'a>, last_start: u64, last_end: u64, shift_start: u64, shift_end: u64, pr: &mut PartialResult) -> Result<(), ExecError> {
+    fn slide<'a>(&self, sctx: &AggFuncUpdateContext, get_row: &dyn Fn(u64) -> Result<Row<'a>, ExecError>, last_start: u64, last_end: u64, shift_start: u64, shift_end: u64, pr: &mut PartialResult) -> Result<(), ExecError> {
         for i in 0..shift_end {
-            self.enqueue(sctx, last_end + i, get_row(last_end + i), pr)?;
+            self.enqueue(sctx, last_end.wrapping_add(i), get_row(last_end.wrapping_add(i))?, pr)?;
         }
         // Check for unsigned underflow.
-        if last_start + shift_start >= 1 {
-            Self::deque(pr).dequeue(last_start + shift_start - 1);
+        if last_start.wrapping_add(shift_start) >= 1 {
+            Self::deque(pr).dequeue(last_start.wrapping_add(shift_start) - 1);
         }
         Self::take_front(pr);
         Ok(())
