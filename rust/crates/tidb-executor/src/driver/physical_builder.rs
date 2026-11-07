@@ -2670,6 +2670,10 @@ fn pushed_partial_aggregation(
             AggKind::Max => &[PushdownAggregateKind::Max],
             AggKind::MinCount => &[PushdownAggregateKind::MinCount],
             AggKind::MaxCount => &[PushdownAggregateKind::MaxCount],
+            AggKind::FirstRow => &[PushdownAggregateKind::FirstRow],
+            AggKind::Bit(tidb_executor_aggfuncs::aggfuncs::BitOp::And) => &[PushdownAggregateKind::BitAnd],
+            AggKind::Bit(tidb_executor_aggfuncs::aggfuncs::BitOp::Or) => &[PushdownAggregateKind::BitOr],
+            AggKind::Bit(tidb_executor_aggfuncs::aggfuncs::BitOp::Xor) => &[PushdownAggregateKind::BitXor],
             AggKind::Avg => &[PushdownAggregateKind::Count, PushdownAggregateKind::Sum],
             _ => return Ok(None),
         };
@@ -2690,37 +2694,35 @@ fn pushed_partial_aggregation(
             output += 1;
         }
     }
-    let mut group_offsets = Vec::with_capacity(group_by.len());
+    // Go `Aggregation.GroupBy`: any key the coprocessor can evaluate over
+    // the scan row, a column or an expression.
+    let mut group_keys = Vec::with_capacity(group_by.len());
     let mut group_types = Vec::with_capacity(group_by.len());
     for expression in group_by {
-        let Expression::Column(column) = expression else {
+        if tidb_expr::pushdown_catalog::from_expression(expression).is_none()
+            || crate::access_path::expression_column_offsets(std::slice::from_ref(expression))
+                .iter()
+                .any(|offset| *offset >= child_schema.len())
+        {
+            return Ok(None);
+        }
+        let Some(field_type) = expression.static_type().cloned() else {
             return Ok(None);
         };
-        let offset = usize::try_from(column.index)
-            .ok()
-            .filter(|offset| *offset < child_schema.len());
-        let Some(offset) = offset else {
-            return Ok(None);
-        };
-        group_offsets.push(offset);
-        group_types.push(
-            child_schema.columns[offset]
-                .ret_type
-                .clone()
-                .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong)),
-        );
+        group_keys.push(expression.clone());
+        group_types.push(field_type);
     }
-    if output + group_offsets.len() != output_schema.len() {
+    if output + group_keys.len() != output_schema.len() {
         return Ok(None);
     }
-    let partial = if group_offsets.is_empty() {
+    let partial = if group_keys.is_empty() {
         PushdownPartialAggregate::Global {
             functions: pushed_functions,
             streamed,
         }
     } else {
         PushdownPartialAggregate::Grouped {
-            group_offsets,
+            group_by: group_keys,
             group_types,
             functions: pushed_functions,
             streamed,

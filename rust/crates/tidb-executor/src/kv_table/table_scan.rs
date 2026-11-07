@@ -42,7 +42,6 @@ use tidb_distsql::remote_scan::PushdownScanColumn;
 use tidb_distsql::remote_scan::PushdownRowStream;
 use tidb_distsql::remote_scan::PushdownPartialAggregate;
 use tidb_distsql::remote_scan::PushdownIndexScan;
-use tidb_distsql::remote_scan::PushdownAggregateKind;
 use tidb_kv::storage::{StorageError, StorageIterator, TableStorage};
 use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
 use tidb_chunk::chunk::Chunk;
@@ -2268,7 +2267,7 @@ impl KvTableReader for TableCommon {
                 }
             }
             PushdownPartialAggregate::Grouped {
-                group_offsets,
+                group_by,
                 functions,
                 ..
             } => {
@@ -2285,8 +2284,8 @@ impl KvTableReader for TableCommon {
                 // (task 75) hit exactly this: a decorrelated aggregate
                 // grouped on a column the planner's chosen access path for
                 // `orders` does not cover.
-                for offset in group_offsets {
-                    if remap(offset).is_none() {
+                for key in group_by {
+                    if tidb_executor_internal_exec::predicate_pushdown::remap_expression(key, &index_keep).is_none() {
                         return Ok(None);
                     }
                 }
@@ -5229,427 +5228,21 @@ impl TableScanExec {
         &mut self,
         aggregate: &PushdownPartialAggregate,
     ) -> Result<Vec<Vec<Datum>>, ExecError> {
-        match aggregate {
-            PushdownPartialAggregate::Global { functions, .. } => {
-                enum PartialValue {
-                    Count(i64),
-                    SumDecimal(Option<Decimal>),
-                    SumReal(Option<f64>),
-                    Extreme {
-                        value: Option<Datum>,
-                        is_max: bool,
-                        collation: tidb_charset::Collation,
-                    },
-                    ExtremeCount {
-                        value: Option<Datum>,
-                        count: i64,
-                        is_max: bool,
-                        collation: tidb_charset::Collation,
-                    },
+        let input_types = self.partial_input_types.clone().ok_or_else(|| {
+            ExecError::unsupported("partial aggregation lost its input schema")
+        })?;
+        let context = self.partial_context.clone().ok_or_else(|| {
+            ExecError::unsupported("partial aggregation lost its statement context")
+        })?;
+        // The scan's accepted filter holds before the aggregate reads a row.
+        crate::local_partial::local_partial_rows(aggregate, &input_types, &context, || {
+            while let Some(row) = self.next_source_row()? {
+                if self.filter.as_mut().map_or(Ok(true), |filter| filter.admits(&row))? {
+                    return Ok(Some(row));
                 }
-
-                let input_types = self.partial_input_types.clone().ok_or_else(|| {
-                    ExecError::unsupported("global partial aggregation lost its input schema")
-                })?;
-                let context = self.partial_context.clone().ok_or_else(|| {
-                    ExecError::unsupported("global partial aggregation lost its statement context")
-                })?;
-                let mut values = functions
-                    .iter()
-                    .map(|function| match function.kind {
-                        PushdownAggregateKind::Count => PartialValue::Count(0),
-                        PushdownAggregateKind::Sum
-                            if function.output_type.eval_type()
-                                == tidb_datatype::EvalType::Real =>
-                        {
-                            PartialValue::SumReal(None)
-                        }
-                        PushdownAggregateKind::Sum => PartialValue::SumDecimal(None),
-                        PushdownAggregateKind::Min => PartialValue::Extreme {
-                            value: None,
-                            is_max: false,
-                            collation: tidb_executor_aggfuncs::extreme_collation(
-                                function.input.as_ref(),
-                            ),
-                        },
-                        PushdownAggregateKind::Max => PartialValue::Extreme {
-                            value: None,
-                            is_max: true,
-                            collation: tidb_executor_aggfuncs::extreme_collation(
-                                function.input.as_ref(),
-                            ),
-                        },
-                        PushdownAggregateKind::MinCount => PartialValue::ExtremeCount {
-                            value: None,
-                            count: 0,
-                            is_max: false,
-                            collation: tidb_executor_aggfuncs::extreme_collation(
-                                function.input.as_ref(),
-                            ),
-                        },
-                        PushdownAggregateKind::MaxCount => PartialValue::ExtremeCount {
-                            value: None,
-                            count: 0,
-                            is_max: true,
-                            collation: tidb_executor_aggfuncs::extreme_collation(
-                                function.input.as_ref(),
-                            ),
-                        },
-                    })
-                    .collect::<Vec<_>>();
-                while let Some(row) = self.next_source_row()? {
-                    self.scanned.set(self.scanned.get() + 1);
-                    if let Some(filter) = self.filter.as_mut() {
-                        if !filter.admits(&row)? {
-                            continue;
-                        }
-                    }
-                    for (function, value) in functions.iter().zip(values.iter_mut()) {
-                        let input = function
-                            .input
-                            .as_ref()
-                            .map(|expression| {
-                                tidb_table::generated_column::eval_over_row(
-                                    expression,
-                                    &input_types,
-                                    &row,
-                                    &context,
-                                )
-                                .map_err(ExecError::Eval)
-                            })
-                            .transpose()?;
-                        match (value, input) {
-                            (PartialValue::Count(count), None) => *count += 1,
-                            (PartialValue::Count(_), Some(Datum::Null)) => {}
-                            (PartialValue::Count(count), Some(_)) => *count += 1,
-                            (PartialValue::SumDecimal(_), None)
-                            | (PartialValue::SumReal(_), None)
-                            | (PartialValue::Extreme { .. }, None)
-                            | (PartialValue::ExtremeCount { .. }, None) => {
-                                return Err(ExecError::unsupported(
-                                    "only COUNT may omit a global partial aggregate input",
-                                ));
-                            }
-                            (PartialValue::SumDecimal(_), Some(Datum::Null))
-                            | (PartialValue::SumReal(_), Some(Datum::Null))
-                            | (PartialValue::Extreme { .. }, Some(Datum::Null))
-                            | (PartialValue::ExtremeCount { .. }, Some(Datum::Null)) => {}
-                            (PartialValue::SumDecimal(sum), Some(input)) => {
-                                let addend = match input {
-                                    Datum::Int(value) => Decimal::from_int(value),
-                                    Datum::UInt(value) => Decimal::from_uint(value),
-                                    Datum::Decimal(value) => value,
-                                    _ => {
-                                        return Err(ExecError::unsupported(
-                                            "global partial SUM requires numeric input",
-                                        ));
-                                    }
-                                };
-                                *sum = Some(match sum.take() {
-                                    Some(current) => current.add(&addend),
-                                    None => addend,
-                                });
-                            }
-                            (PartialValue::SumReal(sum), Some(input)) => {
-                                let addend = input.to_f64().map_err(|_| {
-                                    ExecError::unsupported(
-                                        "global partial SUM requires numeric input",
-                                    )
-                                })?;
-                                *sum = Some(sum.unwrap_or(0.0) + addend.value);
-                            }
-                            (
-                                PartialValue::Extreme {
-                                    value,
-                                    is_max,
-                                    collation,
-                                },
-                                Some(candidate),
-                            ) => {
-                                let replace = value.as_ref().is_none_or(|current| {
-                                    tidb_executor_aggfuncs::extreme_replaces(
-                                        &candidate, current, *is_max, *collation,
-                                    )
-                                });
-                                if replace {
-                                    *value = Some(candidate);
-                                }
-                            }
-                            (
-                                PartialValue::ExtremeCount {
-                                    value,
-                                    count,
-                                    is_max,
-                                    collation,
-                                },
-                                Some(candidate),
-                            ) => match value.as_ref() {
-                                None => {
-                                    *value = Some(candidate);
-                                    *count = 1;
-                                }
-                                Some(current) => {
-                                    let ordering = tidb_expr::compare_datums_with_collation(
-                                        &candidate, current, *collation,
-                                    )?;
-                                    if (*is_max && ordering == std::cmp::Ordering::Greater)
-                                        || (!*is_max && ordering == std::cmp::Ordering::Less)
-                                    {
-                                        *value = Some(candidate);
-                                        *count = 1;
-                                    } else if ordering == std::cmp::Ordering::Equal {
-                                        *count += 1;
-                                    }
-                                }
-                            },
-                        }
-                    }
-                }
-                Ok(vec![values
-                    .into_iter()
-                    .map(|value| match value {
-                        PartialValue::Count(count) => Datum::Int(count),
-                        PartialValue::SumDecimal(sum) => sum.map_or(Datum::Null, Datum::Decimal),
-                        PartialValue::SumReal(sum) => sum.map_or(Datum::Null, Datum::Real),
-                        PartialValue::Extreme { value, .. } => value.unwrap_or(Datum::Null),
-                        PartialValue::ExtremeCount { count, .. } => Datum::Int(count),
-                    })
-                    .collect()])
             }
-            PushdownPartialAggregate::Grouped {
-                group_offsets,
-                group_types,
-                functions,
-                streamed,
-            } => {
-                if group_offsets.len() != group_types.len() || group_offsets.is_empty() {
-                    return Err(ExecError::unsupported(
-                        "partial grouped aggregation requires typed group keys",
-                    ));
-                }
-
-                let input_types = self.partial_input_types.clone().ok_or_else(|| {
-                    ExecError::unsupported("partial aggregation lost its input schema")
-                })?;
-                let context = self.partial_context.clone().ok_or_else(|| {
-                    ExecError::unsupported("partial aggregation lost its statement context")
-                })?;
-
-                enum PartialValue {
-                    Count(i64),
-                    Sum(PartialSum),
-                    Extreme {
-                        value: Option<Datum>,
-                        is_max: bool,
-                        collation: tidb_charset::Collation,
-                    },
-                    ExtremeCount {
-                        value: Option<Datum>,
-                        count: i64,
-                        is_max: bool,
-                        collation: tidb_charset::Collation,
-                    },
-                }
-
-                let new_values = || {
-                    functions
-                        .iter()
-                        .map(|function| match function.kind {
-                            PushdownAggregateKind::Count => PartialValue::Count(0),
-                            PushdownAggregateKind::Sum => PartialValue::Sum(PartialSum::default()),
-                            PushdownAggregateKind::Min => PartialValue::Extreme {
-                                value: None,
-                                is_max: false,
-                                collation: tidb_executor_aggfuncs::extreme_collation(
-                                    function.input.as_ref(),
-                                ),
-                            },
-                            PushdownAggregateKind::Max => PartialValue::Extreme {
-                                value: None,
-                                is_max: true,
-                                collation: tidb_executor_aggfuncs::extreme_collation(
-                                    function.input.as_ref(),
-                                ),
-                            },
-                            PushdownAggregateKind::MinCount => PartialValue::ExtremeCount {
-                                value: None,
-                                count: 0,
-                                is_max: false,
-                                collation: tidb_executor_aggfuncs::extreme_collation(
-                                    function.input.as_ref(),
-                                ),
-                            },
-                            PushdownAggregateKind::MaxCount => PartialValue::ExtremeCount {
-                                value: None,
-                                count: 0,
-                                is_max: true,
-                                collation: tidb_executor_aggfuncs::extreme_collation(
-                                    function.input.as_ref(),
-                                ),
-                            },
-                        })
-                        .collect::<Vec<_>>()
-                };
-                let finish = |groups: Vec<Datum>, values: Vec<PartialValue>| {
-                    values
-                        .into_iter()
-                        .map(|value| match value {
-                            PartialValue::Count(count) => Datum::Int(count),
-                            PartialValue::Sum(sum) => sum.into_datum(),
-                            PartialValue::Extreme { value, .. } => value.unwrap_or(Datum::Null),
-                            PartialValue::ExtremeCount { count, .. } => Datum::Int(count),
-                        })
-                        .chain(groups)
-                        .collect::<Vec<_>>()
-                };
-                let group = |row: &[Datum]| -> Result<(Vec<u8>, Vec<Datum>), ExecError> {
-                    let groups = group_offsets
-                        .iter()
-                        .map(|offset| {
-                            row.get(*offset).cloned().ok_or_else(|| {
-                                ExecError::unsupported(
-                                    "partial GROUP BY input is outside the scan row",
-                                )
-                            })
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let mut key = Vec::new();
-                    for (group, field_type) in groups.iter().zip(group_types) {
-                        key.extend_from_slice(&tidb_executor_aggfuncs::aggfuncs::group_key_part(
-                            &field_type.collation(),
-                            group,
-                        ));
-                        key.push(0xff);
-                    }
-                    Ok((key, groups))
-                };
-                let update =
-                    |values: &mut [PartialValue], row: &[Datum]| -> Result<(), ExecError> {
-                        for (function, value) in functions.iter().zip(values.iter_mut()) {
-                            let input = function
-                                .input
-                                .as_ref()
-                                .map(|expression| {
-                                    tidb_table::generated_column::eval_over_row(
-                                        expression,
-                                        &input_types,
-                                        row,
-                                        &context,
-                                    )
-                                    .map_err(ExecError::Eval)
-                                })
-                                .transpose()?;
-                            match (value, input) {
-                                (PartialValue::Count(count), None) => *count += 1,
-                                (PartialValue::Count(_), Some(Datum::Null)) => {}
-                                (PartialValue::Count(count), Some(_)) => *count += 1,
-                                (PartialValue::Sum(_), None)
-                                | (PartialValue::Extreme { .. }, None)
-                                | (PartialValue::ExtremeCount { .. }, None) => {
-                                    return Err(ExecError::unsupported(
-                                        "only COUNT may omit a partial aggregate input",
-                                    ));
-                                }
-                                (PartialValue::Sum(_), Some(Datum::Null))
-                                | (PartialValue::Extreme { .. }, Some(Datum::Null))
-                                | (PartialValue::ExtremeCount { .. }, Some(Datum::Null)) => {}
-                                (PartialValue::Sum(sum), Some(input)) => sum.accumulate(&input)?,
-                                (
-                                    PartialValue::Extreme {
-                                        value,
-                                        is_max,
-                                        collation,
-                                    },
-                                    Some(candidate),
-                                ) => {
-                                    let replace = value.as_ref().is_none_or(|current| {
-                                        tidb_executor_aggfuncs::extreme_replaces(
-                                            &candidate, current, *is_max, *collation,
-                                        )
-                                    });
-                                    if replace {
-                                        *value = Some(candidate);
-                                    }
-                                }
-                                (
-                                    PartialValue::ExtremeCount {
-                                        value,
-                                        count,
-                                        is_max,
-                                        collation,
-                                    },
-                                    Some(candidate),
-                                ) => match value.as_ref() {
-                                    None => {
-                                        *value = Some(candidate);
-                                        *count = 1;
-                                    }
-                                    Some(current) => {
-                                        let ordering = tidb_expr::compare_datums_with_collation(
-                                            &candidate, current, *collation,
-                                        )?;
-                                        if (*is_max && ordering == std::cmp::Ordering::Greater)
-                                            || (!*is_max && ordering == std::cmp::Ordering::Less)
-                                        {
-                                            *value = Some(candidate);
-                                            *count = 1;
-                                        } else if ordering == std::cmp::Ordering::Equal {
-                                            *count += 1;
-                                        }
-                                    }
-                                },
-                            }
-                        }
-                        Ok(())
-                    };
-
-                if !streamed {
-                    let mut grouped = BTreeMap::<Vec<u8>, (Vec<Datum>, Vec<PartialValue>)>::new();
-                    while let Some(row) = self.next_source_row()? {
-                        self.scanned.set(self.scanned.get() + 1);
-                        if let Some(filter) = self.filter.as_mut() {
-                            if !filter.admits(&row)? {
-                                continue;
-                            }
-                        }
-                        let (key, groups) = group(&row)?;
-                        let (_, values) =
-                            grouped.entry(key).or_insert_with(|| (groups, new_values()));
-                        update(values, &row)?;
-                    }
-                    return Ok(grouped
-                        .into_values()
-                        .map(|(groups, values)| finish(groups, values))
-                        .collect());
-                }
-
-                let mut rows = Vec::new();
-                let mut current: Option<(Vec<u8>, Vec<Datum>, Vec<PartialValue>)> = None;
-                while let Some(row) = self.next_source_row()? {
-                    self.scanned.set(self.scanned.get() + 1);
-                    if let Some(filter) = self.filter.as_mut() {
-                        if !filter.admits(&row)? {
-                            continue;
-                        }
-                    }
-                    let (key, groups) = group(&row)?;
-                    if current
-                        .as_ref()
-                        .is_some_and(|(current_key, _, _)| current_key != &key)
-                    {
-                        let (_, previous_groups, previous_values) =
-                            current.take().expect("current group exists");
-                        rows.push(finish(previous_groups, previous_values));
-                    }
-                    let (_, _, values) = current.get_or_insert_with(|| (key, groups, new_values()));
-                    update(values, &row)?;
-                }
-                if let Some((_, groups, values)) = current {
-                    rows.push(finish(groups, values));
-                }
-                Ok(rows)
-            }
-        }
+            Ok(None)
+        })
     }
 }
 
@@ -7720,7 +7313,14 @@ mod remote_cursor_tests {
         );
 
         let aggregate = tidb_distsql::remote_scan::PushdownPartialAggregate::Grouped {
-            group_offsets: vec![2],
+            group_by: vec![{
+                let mut column = tidb_expr::column::Column::new(
+                    3,
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                );
+                column.index = 2;
+                tidb_expr::expression::Expression::Column(column)
+            }],
             group_types: vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)],
             functions: vec![tidb_distsql::remote_scan::PushdownAggregateFunction {
                 kind: tidb_distsql::remote_scan::PushdownAggregateKind::Count,

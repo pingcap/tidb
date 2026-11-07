@@ -50,7 +50,6 @@ impl DistAggregate {
         columns: &[FieldType],
         zone: &SessionTimeZone,
     ) -> Result<Self, String> {
-        use tipb::ExprType::*;
         let args = expr
             .children
             .iter()
@@ -58,19 +57,6 @@ impl DistAggregate {
             .collect::<Result<Vec<_>, _>>()?;
         let kind = tipb::ExprType::try_from(expr.tp.unwrap_or_default())
             .map_err(|_| "unknown aggregate function type".to_owned())?;
-        let name = match kind {
-            Count => names::COUNT,
-            Sum => names::SUM,
-            SumInt => names::SUM_INT,
-            Avg => names::AVG,
-            Min => names::MIN,
-            Max => names::MAX,
-            First => names::FIRST_ROW,
-            AggBitOr => names::BIT_OR,
-            AggBitXor => names::BIT_XOR,
-            AggBitAnd => names::BIT_AND,
-            _ => return Err(format!("unsupported distributed aggregate {kind:?}")),
-        };
         // PBToAggFuncDesc uses Partial1 for old senders without this field.
         let wire_mode = tipb::AggFunctionMode::try_from(
             expr.agg_func_mode
@@ -83,6 +69,30 @@ impl DistAggregate {
             tipb::AggFunctionMode::Partial1Mode => AggFunctionMode::Partial1,
             tipb::AggFunctionMode::Partial2Mode => AggFunctionMode::Partial2,
             tipb::AggFunctionMode::DedupMode => AggFunctionMode::Dedup,
+        };
+        Self::new(kind, args, mode)
+    }
+
+    /// Go `NewDistAggFunc` over already typed arguments: the function `kind`
+    /// names, in `mode`.
+    pub fn new(
+        kind: tipb::ExprType,
+        args: Vec<tidb_expr::expression::Expression>,
+        mode: AggFunctionMode,
+    ) -> Result<Self, String> {
+        use tipb::ExprType::*;
+        let name = match kind {
+            Count => names::COUNT,
+            Sum => names::SUM,
+            SumInt => names::SUM_INT,
+            Avg => names::AVG,
+            Min => names::MIN,
+            Max => names::MAX,
+            First => names::FIRST_ROW,
+            AggBitOr => names::BIT_OR,
+            AggBitXor => names::BIT_XOR,
+            AggBitAnd => names::BIT_AND,
+            _ => return Err(format!("unsupported distributed aggregate {kind:?}")),
         };
         if kind == Avg && mode == AggFunctionMode::Dedup {
             return Err("DedupMode is not supported for AVG".to_owned());
@@ -258,6 +268,91 @@ impl DistAggregate {
             tipb::ExprType::Avg => vec![Datum::Int(state.count), state.value],
             _ => vec![state.value],
         }
+    }
+}
+
+/// Go `aggExec` (unistore `mpp_exec.go`): the distributed aggregates grouped
+/// by `group_by`, one group per distinct `EncodeValue` key in the order the
+/// keys first appear, each answering its functions' partial results and then
+/// its keys.
+#[derive(Debug)]
+pub struct DistAggregator {
+    group_by: Vec<tidb_expr::expression::Expression>,
+    functions: Vec<DistAggregate>,
+    row: tidb_chunk::mutrow::MutRow,
+    group_indices: std::collections::HashMap<Vec<u8>, usize>,
+    groups: Vec<(Vec<Datum>, Vec<DistAggregateState>)>,
+}
+
+impl DistAggregator {
+    /// An aggregator over rows of `column_types`.
+    #[must_use]
+    pub fn new(
+        group_by: Vec<tidb_expr::expression::Expression>,
+        functions: Vec<DistAggregate>,
+        column_types: &[FieldType],
+    ) -> Self {
+        Self {
+            group_by,
+            functions,
+            row: tidb_chunk::mutrow::MutRow::mut_row_from_types(column_types),
+            group_indices: std::collections::HashMap::new(),
+            groups: Vec::new(),
+        }
+    }
+
+    /// Go `aggExec.processAllRows` for one row: its group's key (Go
+    /// `getGroupKey`: `EncodeValue` of the evaluated keys, raw string bytes
+    /// and the request zone, no collation folding), then every function.
+    pub fn update(
+        &mut self,
+        ctx: &dyn Columns,
+        zone: &SessionTimeZone,
+        row: &[Datum],
+    ) -> Result<(), String> {
+        if row.len() != self.row.len() {
+            return Err("aggregate row does not match input schema".to_owned());
+        }
+        self.row.set_datums(row);
+        let keys = self
+            .group_by
+            .iter()
+            .map(|expr| {
+                expr.eval(ctx, self.row.to_row())
+                    .map_err(|error| DistAggregateError::from(error).to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let key = tidb_codec::encode_value_in_timezone(zone, &keys)
+            .map_err(|error| format!("encode group key failed: {error:?}"))?;
+        let functions = &self.functions;
+        let groups = &mut self.groups;
+        let index = *self.group_indices.entry(key).or_insert_with(|| {
+            groups.push((keys, functions.iter().map(DistAggregate::create_state).collect()));
+            groups.len() - 1
+        });
+        for (function, value) in self.functions.iter().zip(self.groups[index].1.iter_mut()) {
+            function
+                .update(value, ctx, self.row.to_row())
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// Every group's partial results, then its keys.
+    #[must_use]
+    pub fn finish(self) -> Vec<Vec<Datum>> {
+        let functions = self.functions;
+        self.groups
+            .into_iter()
+            .map(|(keys, values)| {
+                functions
+                    .iter()
+                    .zip(values)
+                    .flat_map(|(function, value)| function.partial_result(value))
+                    .chain(keys)
+                    .collect()
+            })
+            .collect()
     }
 }
 

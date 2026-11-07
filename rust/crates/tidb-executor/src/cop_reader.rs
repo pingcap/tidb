@@ -361,7 +361,7 @@ pub fn build_resp(
             })
         }
         Some(PushdownPartialAggregate::Grouped {
-            group_offsets,
+            group_by: group_keys,
             group_types,
             functions,
             streamed,
@@ -380,7 +380,7 @@ pub fn build_resp(
                     .ok_or_else(|| {
                         refuse("a grouped aggregate function cannot be lowered to TiPB")
                     })?;
-            let group_by = lower_group_by(group_offsets, group_types, &columns)
+            let group_by = lower_group_by(group_keys, group_types, &columns, &request.statement.time_zone)
                 .ok_or_else(|| refuse("a grouped aggregate key cannot be lowered to TiPB"))?;
             field_types = functions
                 .iter()
@@ -1326,6 +1326,10 @@ fn lower_aggregate_function(
         PushdownAggregateKind::Max => ExprType::Max,
         PushdownAggregateKind::MinCount => ExprType::MinCount,
         PushdownAggregateKind::MaxCount => ExprType::MaxCount,
+        PushdownAggregateKind::FirstRow => ExprType::First,
+        PushdownAggregateKind::BitAnd => ExprType::AggBitAnd,
+        PushdownAggregateKind::BitOr => ExprType::AggBitOr,
+        PushdownAggregateKind::BitXor => ExprType::AggBitXor,
     };
     Some(Expr {
         tp: Some(tp as i32),
@@ -1340,22 +1344,21 @@ fn lower_aggregate_function(
 }
 
 fn lower_group_by(
-    group_offsets: &[usize],
+    group_by: &[tidb_expr::expression::Expression],
     group_types: &[FieldType],
     columns: &[ScanColumnInfo],
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Option<Vec<Expr>> {
-    if group_offsets.len() != group_types.len() {
+    if group_by.len() != group_types.len() {
         return None;
     }
-    group_offsets
+    group_by
         .iter()
-        .zip(group_types)
-        .map(|(offset, field_type)| {
-            let mut column = tidb_expr::column::Column::new(*offset as i64 + 1, field_type.clone());
-            column.index = *offset as i64;
-            tidb_expr::pushdown_catalog::expression_to_pb(
-                &tidb_expr::expression::Expression::Column(column),
+        .map(|key| {
+            tidb_expr::pushdown_catalog::expression_to_pb_in(
+                key,
                 &|offset| scan_column_descriptor(columns, offset),
+                zone,
             )
         })
         .collect()

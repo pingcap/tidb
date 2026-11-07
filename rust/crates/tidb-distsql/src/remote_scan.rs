@@ -120,6 +120,14 @@ pub enum PushdownAggregateKind {
     MinCount,
     /// `MAX_COUNT(expr)`: count rows tied at the maximum argument.
     MaxCount,
+    /// `FIRSTROW(expr)`: the first row's value (Go's group-column carrier).
+    FirstRow,
+    /// `BIT_AND(expr)`.
+    BitAnd,
+    /// `BIT_OR(expr)`.
+    BitOr,
+    /// `BIT_XOR(expr)`.
+    BitXor,
 }
 
 /// A pushed aggregate function and the scan-row expression it reads.
@@ -142,9 +150,10 @@ pub enum PushdownPartialAggregate {
     /// A grouped partial aggregation. TiKV returns aggregate results first
     /// and group keys last, matching its aggregation-schema contract.
     Grouped {
-        /// Group-key offsets in [`PushdownScanRequest::columns`].
-        group_offsets: Vec<usize>,
-        /// Group-key result types, index-parallel with `group_offsets`.
+        /// Group keys (Go `Aggregation.GroupBy`): expressions over the scan
+        /// row, whose columns index [`PushdownScanRequest::columns`].
+        group_by: Vec<tidb_expr::expression::Expression>,
+        /// Group-key result types, index-parallel with `group_by`.
         group_types: Vec<FieldType>,
         /// Aggregate functions, in physical output order.
         functions: Vec<PushdownAggregateFunction>,

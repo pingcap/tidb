@@ -8073,3 +8073,49 @@ fn dml_statements_record_go_ruv2_metrics() {
         assert_eq!(cells.join(", "), expected, "{sql}: {summary}");
     }
 }
+
+/// Go `aggregation.CheckAggPushDown` admits `BIT_OR` (and `BIT_AND`,
+/// `BIT_XOR`, `FIRSTROW`) for TiKV, so the planner's cop `HashAgg` runs in the
+/// coprocessor (`tikv_task`), where Go's unistore `aggExec` computes it.
+/// gorun: `HashAgg_5 cop[tikv] group by:test.t.b, funcs:bit_or(test.t.a)`,
+/// answering `3|1` and `2|2`.
+#[test]
+fn a_bit_aggregate_runs_in_the_coprocessor_as_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT, b INT)").unwrap();
+    session.run("INSERT INTO t VALUES (1,1),(2,2),(3,1)").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT bit_or(a), b FROM t GROUP BY b ORDER BY b")),
+        vec![vec!["3".to_owned(), "1".to_owned()], vec!["2".to_owned(), "2".to_owned()]]
+    );
+    let explained = row_text(session.run("EXPLAIN ANALYZE SELECT bit_or(a), b FROM t GROUP BY b"));
+    let cop_agg = explained
+        .iter()
+        .find(|row| row[3] == "cop[tikv]" && row[0].contains("HashAgg_"))
+        .unwrap_or_else(|| panic!("no cop HashAgg in {explained:?}"));
+    assert!(cop_agg[5].starts_with("tikv_task:{"), "{cop_agg:?}");
+}
+
+/// Go `Aggregation.GroupBy` carries any key the coprocessor evaluates: gorun
+/// pushes `group by:plus(test.t.a, 1), funcs:count(1),
+/// funcs:firstrow(test.t.a)` to TiKV and answers `2|2`, `3|1`, `4|1`.
+#[test]
+fn an_expression_group_key_runs_in_the_coprocessor_as_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT, b INT)").unwrap();
+    session.run("INSERT INTO t VALUES (1,1),(2,2),(3,1),(1,5)").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT a+1, count(*) FROM t GROUP BY a+1 ORDER BY 1")),
+        vec![
+            vec!["2".to_owned(), "2".to_owned()],
+            vec!["3".to_owned(), "1".to_owned()],
+            vec!["4".to_owned(), "1".to_owned()],
+        ]
+    );
+    let explained = row_text(session.run("EXPLAIN ANALYZE SELECT a+1, count(*) FROM t GROUP BY a+1"));
+    let cop_agg = explained
+        .iter()
+        .find(|row| row[3] == "cop[tikv]" && row[0].contains("HashAgg_"))
+        .unwrap_or_else(|| panic!("no cop HashAgg in {explained:?}"));
+    assert!(cop_agg[5].starts_with("tikv_task:{"), "{cop_agg:?}");
+}

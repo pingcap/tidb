@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 tidb-kv = { path = "../tidb-kv" }
+tidb-codec = { path = "../tidb-codec" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-charset = { path = "../tidb-charset" }

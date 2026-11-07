@@ -621,17 +621,8 @@ fn datum_fits_chunk_column(
 /// order between TypeAggregation and TypeStreamAgg. The deprecated protobuf
 /// `Aggregation.streamed` field does not select another grouping lifecycle.
 struct RegionAggregator {
-    group_by: Vec<tidb_expr::expression::Expression>,
-    functions: Vec<tidb_expression_aggregation::DistAggregate>,
+    inner: tidb_expression_aggregation::DistAggregator,
     context: Arc<RequestEvalContext>,
-    row: tidb_chunk::mutrow::MutRow,
-    group_indices: std::collections::HashMap<Vec<u8>, usize>,
-    groups: Vec<RegionAggregateGroup>,
-}
-
-struct RegionAggregateGroup {
-    keys: Vec<tidb_datatype::Datum>,
-    values: Vec<tidb_expression_aggregation::DistAggregateState>,
 }
 
 impl RegionAggregator {
@@ -665,87 +656,21 @@ impl RegionAggregator {
             return Err("an aggregation names a group key or a function".to_owned());
         }
         Ok(Self {
-            group_by,
-            functions,
-            row: tidb_chunk::mutrow::MutRow::mut_row_from_types(&context.column_types),
+            inner: tidb_expression_aggregation::DistAggregator::new(
+                group_by,
+                functions,
+                &context.column_types,
+            ),
             context: Arc::clone(context),
-            group_indices: std::collections::HashMap::new(),
-            groups: Vec::new(),
         })
     }
 
     fn update(&mut self, row: &[tidb_datatype::Datum]) -> Result<(), String> {
-        if row.len() != self.row.len() {
-            return Err("aggregate row does not match input schema".to_owned());
-        }
-        self.row.set_datums(row);
-        let keys = self
-            .group_by
-            .iter()
-            .map(|expr| {
-                expr.eval(self.context.as_ref(), self.row.to_row())
-                    .map_err(|error| {
-                        tidb_expression_aggregation::DistAggregateError::from(error).to_string()
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        // Go aggExec.getGroupKey uses EncodeValue, including raw string bytes
-        // and the request time zone. Do not fold collation keys or normalize
-        // floats here: either changes the observable intermediate group rows.
-        let key = tidb_codec::encode_value_in_timezone(&self.context.zone, &keys)
-            .map_err(|error| format!("encode group key failed: {error:?}"))?;
-        let index = *self.group_indices.entry(key).or_insert_with(|| {
-            let index = self.groups.len();
-            self.groups.push(RegionAggregateGroup {
-                keys,
-                values: self
-                    .functions
-                    .iter()
-                    .map(|func| func.create_state())
-                    .collect(),
-            });
-            index
-        });
-        Self::accumulate(
-            &self.functions,
-            &mut self.groups[index].values,
-            &self.context,
-            self.row.to_row(),
-        )
-    }
-
-    fn accumulate(
-        functions: &[tidb_expression_aggregation::DistAggregate],
-        values: &mut [tidb_expression_aggregation::DistAggregateState],
-        context: &RequestEvalContext,
-        row: tidb_chunk::row::Row<'_>,
-    ) -> Result<(), String> {
-        for (function, value) in functions.iter().zip(values.iter_mut()) {
-            function
-                .update(value, context, row)
-                .map_err(|error| error.to_string())?;
-        }
-        Ok(())
-    }
-
-    fn finish_group(
-        functions: &[tidb_expression_aggregation::DistAggregate],
-        groups: Vec<tidb_datatype::Datum>,
-        values: Vec<tidb_expression_aggregation::DistAggregateState>,
-    ) -> Vec<tidb_datatype::Datum> {
-        functions
-            .iter()
-            .zip(values)
-            .flat_map(|(function, value)| function.partial_result(value))
-            .chain(groups)
-            .collect()
+        self.inner.update(self.context.as_ref(), &self.context.zone, row)
     }
 
     fn finish(self) -> Vec<Vec<tidb_datatype::Datum>> {
-        self.groups
-            .into_iter()
-            .map(|group| Self::finish_group(&self.functions, group.keys, group.values))
-            .collect()
+        self.inner.finish()
     }
 }
 

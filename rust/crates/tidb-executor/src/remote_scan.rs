@@ -107,15 +107,15 @@ pub fn bind_partial_aggregate(
 /// distinct: its group keys and the columns under its function inputs.
 #[must_use]
 pub fn partial_aggregate_input_offsets(aggregate: &PushdownPartialAggregate) -> Vec<usize> {
-    let (group_offsets, functions) = match aggregate {
+    let (group_by, functions) = match aggregate {
         PushdownPartialAggregate::Grouped {
-            group_offsets,
+            group_by,
             functions,
             ..
-        } => (group_offsets.as_slice(), functions),
+        } => (group_by.as_slice(), functions),
         PushdownPartialAggregate::Global { functions, .. } => (&[][..], functions),
     };
-    let mut offsets = group_offsets.to_vec();
+    let mut offsets = crate::access_path::expression_column_offsets(group_by);
     for input in functions.iter().filter_map(|function| function.input.as_ref()) {
         offsets.extend(crate::access_path::expression_column_offsets(
             std::slice::from_ref(input),

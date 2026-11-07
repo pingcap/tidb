@@ -230,7 +230,7 @@ mod tests;
 
 pub use base_func::{AggDescError, BaseFuncDesc};
 pub use descriptor::{AggFuncDesc, ByItems};
-pub use dist::{DistAggregate, DistAggregateError, DistAggregateState};
+pub use dist::{DistAggregate, DistAggregateError, DistAggregateState, DistAggregator};
 pub use explain::explain_agg_func_normalized;
 pub use window_func::{need_frame, use_default_frame, WindowFrameDefault, WindowFuncDesc};
 
