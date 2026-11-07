@@ -614,6 +614,42 @@ func TestParquetLogicalTypes(t *testing.T) {
 		require.ErrorContains(t, err, "unsupported timestamp time unit")
 		require.Nil(t, parser)
 	})
+	for _, tt := range []struct {
+		name            string
+		isAdjustedToUTC bool
+	}{
+		{name: "unsupported_logical_time_nanos_local"},
+		{name: "unsupported_logical_time_nanos_utc", isAdjustedToUTC: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			pc := []ParquetColumn{
+				{
+					Name:    "time_nanos",
+					Type:    parquet.Types.Int64,
+					Logical: schema.NewTimeLogicalType(tt.isAdjustedToUTC, schema.TimeUnitNanos),
+					Gen: func(_ int) (any, []int16) {
+						return []int64{123456789}, []int16{1}
+					},
+				},
+			}
+
+			dir := t.TempDir()
+			name := "logical-time-nanos.parquet"
+			require.NoError(t, WriteParquetFile(dir, name, pc, 1))
+
+			store, err := storage.NewLocalStorage(dir)
+			require.NoError(t, err)
+			r, err := store.Open(context.Background(), name, nil)
+			require.NoError(t, err)
+			defer r.Close()
+			parser, err := NewParquetParser(context.Background(), store, r, name, ParquetFileMeta{Loc: time.UTC})
+			if parser != nil {
+				defer parser.Close()
+			}
+			require.ErrorContains(t, err, "unsupported time unit")
+			require.Nil(t, parser)
+		})
+	}
 }
 
 func TestParquetAurora(t *testing.T) {

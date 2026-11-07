@@ -604,6 +604,8 @@ func NewParquetParser(
 					colTypes[i].converted = schema.ConvertedTypes.TimeMillis
 				case schema.TimeUnitMicros:
 					colTypes[i].converted = schema.ConvertedTypes.TimeMicros
+				default:
+					return nil, errors.Errorf("unsupported time unit %d", t.TimeUnit())
 				}
 				colTypes[i].IsAdjustedToUTC = t.IsAdjustedToUTC()
 			} else {
