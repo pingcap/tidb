@@ -242,16 +242,29 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 	return expr, resultPlan, err
 }
 
+// rewriterSchemaAndNames returns the schema and names an expression rewriter
+// over p resolves column references against.
+func rewriterSchemaAndNames(p base.LogicalPlan) (*expression.Schema, types.NameSlice) {
+	if join, ok := p.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
+		return join.FullSchema, join.FullNames
+	}
+	return p.Schema(), p.OutputNames()
+}
+
+// rewriterNames returns the names an expression rewriter over p resolves column
+// references against.
+func rewriterNames(p base.LogicalPlan) types.NameSlice {
+	if p == nil {
+		return nil
+	}
+	_, names := rewriterSchemaAndNames(p)
+	return names
+}
+
 func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalPlan) (rewriter *expressionRewriter) {
 	defer func() {
 		if p != nil {
-			if join, ok := p.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
-				rewriter.schema = join.FullSchema
-				rewriter.names = join.FullNames
-			} else {
-				rewriter.schema = p.Schema()
-				rewriter.names = p.OutputNames()
-			}
+			rewriter.schema, rewriter.names = rewriterSchemaAndNames(p)
 		}
 	}()
 
@@ -289,6 +302,12 @@ func rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScal
 	if planCtx != nil && planCtx.plan != nil {
 		curColLen := planCtx.plan.Schema().Len()
 		defer func() {
+			if planCtx.plan.Schema().Len() == curColLen && len(planCtx.plan.OutputNames()) == curColLen {
+				// No column was added, so the names below would be an element-wise copy
+				// of the current ones. Skip the copy: it is O(columns) per rewritten
+				// expression, which is quadratic for SELECT * on a wide table.
+				return
+			}
 			names := planCtx.plan.OutputNames().Shallow()[:curColLen]
 			for i := curColLen; i < planCtx.plan.Schema().Len(); i++ {
 				names = append(names, types.EmptyName)
@@ -3072,9 +3091,18 @@ func shouldRemapRedundantBaseColumn(planCtx *exprRewriterPlanCtx, clause clauseC
 	return name.Redundant && name.OrigTblName.L != ""
 }
 
+func (er *expressionRewriter) findFieldName(v *ast.ColumnName) (int, error) {
+	if planCtx := er.planCtx; planCtx != nil && planCtx.builder != nil {
+		if nameIdx := planCtx.builder.projNameIndex; nameIdx.Covers(er.names) {
+			return nameIdx.FindFieldName(v)
+		}
+	}
+	return expression.FindFieldName(er.names, v)
+}
+
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	planCtx := er.planCtx
-	idx, err := expression.FindFieldName(er.names, v)
+	idx, err := er.findFieldName(v)
 	if err != nil {
 		er.err = plannererrors.ErrAmbiguous.GenWithStackByArgs(v.Name, clauseMsg[fieldList])
 		return
