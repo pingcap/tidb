@@ -814,7 +814,9 @@ impl TopNSpec {
                     | Datum::String(_)
                     | Datum::Bytes(_)
                     | Datum::Time(_)
-                    | Datum::Duration(_) => Ok(datum),
+                    | Datum::Duration(_)
+                    | Datum::Enum(..)
+                    | Datum::Set(..) => Ok(datum),
                     _ => Err("ordering over this datum kind is a later course".to_owned()),
                 }
             })

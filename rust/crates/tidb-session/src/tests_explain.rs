@@ -2969,6 +2969,50 @@ fn a_table_reader_charges_its_queued_coprocessor_responses() {
     assert!((240..=256).contains(&bytes), "{reader:?}");
 }
 
+/// Go `(*PhysicalTopN).ToPB`: the TopN a reader carries is an executor of its
+/// DAG, so the coprocessor reports `TopN_16`'s `tikv_task` and returns only
+/// the TopN's rows to the reader. Go testkit, 8 rows: `TableReader_17` 2 rows
+/// holding 312 Bytes for `LIMIT 2` (341 Bytes for `DESC LIMIT 3`, 270 Bytes
+/// reading `a`). The reader's bytes include the response's varint
+/// execution-detail durations.
+#[test]
+fn a_reader_topn_runs_in_the_coprocessor_as_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT, b VARCHAR(20), c INT)").unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,'aaaa',5),(2,'bbbb',3),(3,'cccc',9),(4,'dddd',1),(5,'eeee',7),(6,'ffff',2),(7,'gggg',8),(8,'hhhh',4)")
+        .unwrap();
+    for (query, rows, reader_bytes) in [
+        ("SELECT * FROM t ORDER BY c LIMIT 2", "2", 312),
+        ("SELECT * FROM t ORDER BY c DESC LIMIT 3", "3", 341),
+        ("SELECT a FROM t ORDER BY c LIMIT 2", "2", 270),
+    ] {
+        let explained = row_text(session.run(&format!("EXPLAIN ANALYZE {query}")));
+        let row = |prefix: &str| {
+            explained
+                .iter()
+                .find(|row| row[0].trim_start_matches(['└', '├', '─', '│', ' ']).starts_with(prefix))
+                .unwrap_or_else(|| panic!("no {prefix} row in {explained:?}"))
+                .clone()
+        };
+        let root = &explained[0];
+        assert_eq!(root[2], rows, "{query}: {root:?}");
+        let reader = row("TableReader_");
+        assert_eq!(reader[2], rows, "{query}: {reader:?}");
+        let bytes: i64 = reader[7]
+            .strip_suffix(" Bytes")
+            .and_then(|bytes| bytes.parse().ok())
+            .unwrap_or_else(|| panic!("{query}: {reader:?}"));
+        assert!((reader_bytes - 6..=reader_bytes + 6).contains(&bytes), "{query}: {reader:?}");
+        let cop_topn = explained
+            .iter()
+            .find(|row| row[3] == "cop[tikv]" && row[0].contains("TopN_"))
+            .unwrap_or_else(|| panic!("{query}: no cop TopN in {explained:?}"));
+        assert_eq!(cop_topn[2], "8", "{query}: {cop_topn:?}");
+        assert!(cop_topn[5].starts_with("tikv_task:{"), "{query}: {cop_topn:?}");
+    }
+}
+
 /// Go `buildApply` / `buildCTE`: an Apply whose inner side holds a CTE that
 /// `SafeClone` accepts runs on its workers, which share the statement's CTE
 /// producer (`CTEStorageMap`); a recursive CTE's `PhysicalCTETable` refuses

@@ -2757,6 +2757,33 @@ fn build_reader(
     result
 }
 
+/// The coprocessor TopN of a reader's pushed `topn` over its child's row:
+/// every by-item must be a column of that row (`PushdownTopNOrder` carries an
+/// offset, not an expression).
+fn remote_topn(
+    topn: &tidb_planner_core_operator_physicalop::PhysicalTopN,
+    child_schema: &Schema,
+) -> Option<tidb_distsql::remote_scan::PushdownTopN> {
+    let order_by = topn
+        .by_items
+        .iter()
+        .map(|item| {
+            let Expression::Column(column) = &item.expr else {
+                return None;
+            };
+            let offset = child_schema.column_index(column);
+            (offset >= 0).then(|| tidb_distsql::remote_scan::PushdownTopNOrder {
+                offset: offset as usize,
+                desc: item.desc,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(tidb_distsql::remote_scan::PushdownTopN {
+        order_by,
+        limit: topn.offset.checked_add(topn.count)?,
+    })
+}
+
 /// Go's coprocessor TopN evaluates its ordering expressions into a separate
 /// key row. Materialize those keys privately when executing a reader locally;
 /// the ordinary TopN still receives only columns and constants.
@@ -8064,7 +8091,18 @@ fn build_with_state(
             )) as Box<dyn Executor>)
         }
         PhysicalPlan::TopN(topn) => {
-            let child = build_with_state(only_child(plan)?, catalog, ctx, state)?;
+            let mut child = build_with_state(only_child(plan)?, catalog, ctx, state)?;
+            // Go `(*PhysicalTopN).ToPB`: a TopN inside a reader is an executor
+            // of the reader's DAG, so the coprocessor returns only its rows.
+            // The local TopN below still runs over them, so a refusal changes
+            // where rows are reduced, never the answer.
+            if state.in_reader {
+                if let Some(remote) = remote_topn(topn, child.schema()) {
+                    let _ = child
+                        .table_access()
+                        .is_some_and(|access| access.accept_remote_topn(&remote));
+                }
+            }
             let mut by_items = topn
                 .by_items
                 .iter()
