@@ -62,7 +62,7 @@ impl Parser {
     /// value's own expression parse (it isn't a recognized infix operator),
     /// so no special precedence handling is needed to separate the two.
     pub(crate) fn parse_interval(&mut self) -> PResult<Expr> {
-        self.bump(); // INTERVAL
+        self.advance(); // INTERVAL
         let value = self.parse_expr(prec::NONE)?;
         if self.peek().kind != TokenKind::Keyword {
             return Err(self.err_here("expected an INTERVAL unit"));
@@ -79,7 +79,7 @@ impl Parser {
     /// (unlike `INTERVAL value unit`'s own order), so it's read directly
     /// off the token stream rather than via `parse_expr`.
     pub(crate) fn parse_extract(&mut self) -> PResult<Expr> {
-        self.bump(); // EXTRACT
+        self.advance(); // EXTRACT
         self.expect_op("(")?;
         if self.peek().kind != TokenKind::Keyword {
             return Err(self.err_here("expected an EXTRACT unit"));
@@ -116,7 +116,7 @@ impl Parser {
             _ => return Err(self.err_here("expected a time unit")),
         }
         .to_owned();
-        self.bump();
+        self.advance();
         Ok(unit)
     }
 
@@ -124,7 +124,7 @@ impl Parser {
     /// `tidb_ast::Expr::TimestampAdd`'s own doc for why `unit` is a
     /// dedicated field, not an ordinary parsed argument expression.
     pub(crate) fn parse_timestamp_add(&mut self) -> PResult<Expr> {
-        self.bump(); // TIMESTAMPADD
+        self.advance(); // TIMESTAMPADD
         self.expect_op("(")?;
         let unit = self.parse_bare_time_unit()?;
         self.expect_op(",")?;
@@ -142,7 +142,7 @@ impl Parser {
     /// `TIMESTAMPDIFF(unit, expr1, expr2)` — see
     /// `tidb_ast::Expr::TimestampDiff`'s own doc.
     pub(crate) fn parse_timestamp_diff(&mut self) -> PResult<Expr> {
-        self.bump(); // TIMESTAMPDIFF
+        self.advance(); // TIMESTAMPDIFF
         self.expect_op("(")?;
         let unit = self.parse_bare_time_unit()?;
         if !matches!(
@@ -187,7 +187,7 @@ impl Parser {
     /// this shape (evaluation itself stays scoped to those two names,
     /// unaffected here).
     pub(crate) fn parse_adddate_or_subdate(&mut self, name: &str) -> PResult<Expr> {
-        self.bump(); // ADDDATE / SUBDATE
+        self.advance(); // ADDDATE / SUBDATE
         self.expect_op("(")?;
         let date = self.parse_expr(prec::NONE)?;
         self.expect_op(",")?;
@@ -211,16 +211,16 @@ impl Parser {
     /// `tidb_ast::Expr::GetFormat`'s own doc for why `TIMESTAMP` collapses
     /// into the SAME selector as `DATETIME`.
     pub(crate) fn parse_get_format(&mut self) -> PResult<Expr> {
-        self.bump(); // GET_FORMAT
+        self.advance(); // GET_FORMAT
         self.expect_op("(")?;
         let selector = if self.is_kw("DATE") {
-            self.bump();
+            self.advance();
             GetFormatSelector::Date
         } else if self.is_kw("TIME") {
-            self.bump();
+            self.advance();
             GetFormatSelector::Time
         } else if self.is_kw("DATETIME") || self.is_kw("TIMESTAMP") {
-            self.bump();
+            self.advance();
             GetFormatSelector::Datetime
         } else {
             return Err(self.err_here("expected DATE, TIME, DATETIME, or TIMESTAMP"));
@@ -240,7 +240,7 @@ impl Parser {
     /// assumed), so this errors the same way rather than accepting an
     /// empty `when_clauses` the evaluator would need to special-case.
     pub(crate) fn parse_case(&mut self) -> PResult<Expr> {
-        self.bump(); // CASE
+        self.advance(); // CASE
         let value = if self.is_kw("WHEN") {
             None
         } else {
@@ -248,7 +248,7 @@ impl Parser {
         };
         let mut when_clauses = Vec::new();
         while self.is_kw("WHEN") {
-            self.bump();
+            self.advance();
             let cond = self.parse_expr(prec::NONE)?;
             self.expect_kw("THEN")?;
             let result = self.parse_expr(prec::NONE)?;
@@ -258,7 +258,7 @@ impl Parser {
             return Err(self.err_here("CASE requires at least one WHEN clause"));
         }
         let else_clause = if self.is_kw("ELSE") {
-            self.bump();
+            self.advance();
             Some(Box::new(self.parse_expr(prec::NONE)?))
         } else {
             None
@@ -280,11 +280,11 @@ impl Parser {
     /// that shape is handled by the primary `"("` case in `parse_prefix`,
     /// not here.
     pub(crate) fn parse_row_constructor(&mut self) -> PResult<Expr> {
-        self.bump(); // ROW
+        self.advance(); // ROW
         self.expect_op("(")?;
         let mut values = vec![self.parse_expr(prec::NONE)?];
         while self.is_op(",") {
-            self.bump();
+            self.advance();
             values.push(self.parse_expr(prec::NONE)?);
         }
         self.expect_op(")")?;
@@ -306,7 +306,7 @@ impl Parser {
     /// dispatched to UNCONDITIONALLY for the `DEFAULT` keyword, not
     /// gated on a lookahead.
     pub(crate) fn parse_default_expr(&mut self) -> PResult<Expr> {
-        self.bump(); // DEFAULT
+        self.advance(); // DEFAULT
         self.expect_op("(")?;
         let path = self.parse_name_path()?;
         self.expect_op(")")?;
@@ -338,10 +338,10 @@ impl Parser {
     /// shape as Go's `parseCharFuncCall`, then validates/canonicalizes it
     /// through the shared charset registry (`GetCharsetInfo` in Go).
     pub(crate) fn parse_char_func(&mut self) -> PResult<Expr> {
-        self.bump(); // CHAR
+        self.advance(); // CHAR
         self.expect_op("(")?;
         if self.is_op(")") {
-            self.bump();
+            self.advance();
             return Ok(Expr::Func {
                 name: "CHAR".to_string(),
                 args: vec![],
@@ -350,11 +350,11 @@ impl Parser {
         }
         let mut args = vec![self.parse_expr(prec::NONE)?];
         while self.is_op(",") {
-            self.bump();
+            self.advance();
             args.push(self.parse_expr(prec::NONE)?);
         }
         if self.is_kw("USING") {
-            self.bump();
+            self.advance();
             let raw = self.parse_using_charset_name()?;
             let charset = known_charset_name(&raw).ok_or_else(|| {
                 self.err_coded(
@@ -384,16 +384,16 @@ impl Parser {
     /// (real TiDB's own grammar only accepts `LengthNum = intLit`, no
     /// general expression here).
     pub(crate) fn parse_weight_string(&mut self) -> PResult<Expr> {
-        self.bump(); // WEIGHT_STRING
+        self.advance(); // WEIGHT_STRING
         self.expect_op("(")?;
         let expr = self.parse_expr(prec::NONE)?;
         let as_type = if self.is_kw("AS") {
-            self.bump();
+            self.advance();
             let ty = if self.is_kw("CHAR") || self.is_kw("CHARACTER") {
-                self.bump();
+                self.advance();
                 WeightStringType::Char
             } else if self.is_kw("BINARY") {
-                self.bump();
+                self.advance();
                 WeightStringType::Binary
             } else {
                 return Err(self.err_here("expected CHAR or BINARY"));
@@ -426,7 +426,7 @@ impl Parser {
     /// predicate operator while parsing `substr` itself — see
     /// `tidb_ast::Expr::Position`'s own doc.
     pub(crate) fn parse_position_func(&mut self) -> PResult<Expr> {
-        self.bump(); // POSITION
+        self.advance(); // POSITION
         self.expect_op("(")?;
         let substr = self.parse_expr(prec::PREDICATE + 1)?;
         self.expect_kw("IN")?;
@@ -462,11 +462,11 @@ impl Parser {
     /// `SUBSTR` stays `SUBSTR`, `SUBSTRING` stays `SUBSTRING` in restore
     /// (confirmed via `godump restore`, NOT normalized to one name).
     pub(crate) fn parse_substring_func(&mut self, name: &str) -> PResult<Expr> {
-        self.bump(); // SUBSTR / SUBSTRING
+        self.advance(); // SUBSTR / SUBSTRING
         self.expect_op("(")?;
         let str = self.parse_expr(prec::NONE)?;
         let uses_for = if self.is_kw("FROM") {
-            self.bump();
+            self.advance();
             true
         } else {
             self.expect_op(",")?;
@@ -480,7 +480,7 @@ impl Parser {
             self.is_op(",")
         };
         if has_len {
-            self.bump();
+            self.advance();
             args.push(self.parse_expr(prec::NONE)?);
         }
         self.expect_op(")")?;
@@ -502,16 +502,16 @@ impl Parser {
     /// as `` TRIM(BOTH _UTF8MB4' ' FROM x) ``), so a plain
     /// [`Expr::String`], not [`Expr::RawString`].
     pub(crate) fn parse_trim(&mut self) -> PResult<Expr> {
-        self.bump(); // TRIM
+        self.advance(); // TRIM
         self.expect_op("(")?;
         let direction = if self.is_kw("BOTH") {
-            self.bump();
+            self.advance();
             Some(TrimDirection::Both)
         } else if self.is_kw("LEADING") {
-            self.bump();
+            self.advance();
             Some(TrimDirection::Leading)
         } else if self.is_kw("TRAILING") {
-            self.bump();
+            self.advance();
             Some(TrimDirection::Trailing)
         } else {
             None
@@ -533,7 +533,7 @@ impl Parser {
         }
         let first = self.parse_expr(prec::NONE)?;
         if self.is_kw("FROM") {
-            self.bump();
+            self.advance();
             let expr = self.parse_expr(prec::NONE)?;
             self.expect_op(")")?;
             return Ok(Expr::Trim {
@@ -560,7 +560,7 @@ impl Parser {
         style: CastStyle,
         cast_type: CastType,
     ) -> PResult<Expr> {
-        self.bump(); // DATE / TIME / TIMESTAMP
+        self.advance(); // DATE / TIME / TIMESTAMP
         let lit = self.bump();
         let text = self.decode_string(&lit.text);
         // go `parsePrefixTimeLiteral`: a TIME/TIMESTAMP literal's fsp comes
@@ -604,7 +604,7 @@ impl Parser {
     /// braces are discarded and the inner expression alone survives —
     /// real TiDB's own `default:` arm.
     pub(crate) fn parse_odbc_escape(&mut self) -> PResult<Expr> {
-        self.bump(); // '{'
+        self.advance(); // '{'
         if !matches!(self.peek().kind, TokenKind::Ident | TokenKind::Keyword) {
             return Err(self.err_here("expected an ODBC escape type identifier"));
         }
@@ -642,11 +642,11 @@ impl Parser {
     /// for this function's own modifier parsing rather than being
     /// swallowed as part of the `AGAINST` expression itself.
     pub(crate) fn parse_match_against(&mut self) -> PResult<Expr> {
-        self.bump(); // MATCH
+        self.advance(); // MATCH
         self.expect_op("(")?;
         let mut columns = vec![self.parse_name_path()?];
         while self.is_op(",") {
-            self.bump();
+            self.advance();
             columns.push(self.parse_name_path()?);
         }
         self.expect_op(")")?;
@@ -654,9 +654,9 @@ impl Parser {
         self.expect_op("(")?;
         let against = self.parse_expr(prec::PREDICATE + 1)?;
         let modifier = if self.is_kw("IN") {
-            self.bump();
+            self.advance();
             if self.is_kw("BOOLEAN") {
-                self.bump();
+                self.advance();
                 self.expect_kw("MODE")?;
                 // Real TiDB rejects this specific combination at parse
                 // time (confirmed by reading `parseMatchAgainstExpr`),
@@ -670,11 +670,11 @@ impl Parser {
                 }
                 MatchModifier::BooleanMode
             } else if self.is_kw("NATURAL") {
-                self.bump();
+                self.advance();
                 self.expect_kw("LANGUAGE")?;
                 self.expect_kw("MODE")?;
                 if self.is_kw("WITH") {
-                    self.bump();
+                    self.advance();
                     self.expect_kw("QUERY")?;
                     self.expect_kw("EXPANSION")?;
                     MatchModifier::QueryExpansion
@@ -685,7 +685,7 @@ impl Parser {
                 return Err(self.err_here("expected BOOLEAN or NATURAL LANGUAGE after IN"));
             }
         } else if self.is_kw("WITH") {
-            self.bump();
+            self.advance();
             self.expect_kw("QUERY")?;
             self.expect_kw("EXPANSION")?;
             MatchModifier::QueryExpansion
@@ -719,14 +719,14 @@ impl Parser {
         {
             let origin_position = self.peek().offset;
             let schema = self.bump().text;
-            self.bump(); // .
+            self.advance(); // .
             let name = self.bump().text;
             self.expect_op("(")?;
             let mut args = Vec::new();
             if !self.is_op(")") {
                 args.push(self.parse_expr(prec::NONE)?);
                 while self.is_op(",") {
-                    self.bump();
+                    self.advance();
                     args.push(self.parse_expr(prec::NONE)?);
                 }
             }
@@ -784,7 +784,7 @@ impl Parser {
             if path.len() == 3 {
                 return Err(self.err_here("name path has too many components"));
             }
-            self.bump(); // '.'
+            self.advance(); // '.'
             path.push(crate::normalize_identifier(self.bump().text));
         }
         Ok(path)
@@ -825,7 +825,7 @@ impl Parser {
                 if matches!(name.to_ascii_uppercase().as_str(), "LASTVAL" | "NEXTVAL") {
                     return Err(self.err_here("sequence function takes one sequence name"));
                 }
-                self.bump();
+                self.advance();
                 // go's DATE_ADD/DATE_SUB production requires the second
                 // operand to START with INTERVAL: yacc fails AT the
                 // offending token (`date_add(1.25, -3.75)` anchors near

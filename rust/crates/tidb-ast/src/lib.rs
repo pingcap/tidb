@@ -307,7 +307,7 @@ impl Stmt {
                     return true;
                 }
                 if let Some(expression) = node.downcast_ref::<Expr>() {
-                    if let Err(error) = expression.try_restore() {
+                    if let Err(error) = expression.validate_restore() {
                         self.error = Some(error);
                         return true;
                     }

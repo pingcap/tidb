@@ -55,6 +55,7 @@ mod user;
 pub mod util_parser;
 
 use std::any::Any;
+use std::cell::{Cell, OnceCell};
 
 use tidb_ast::{
     AdminStmt, DdlStmt, ExplainForStmt, ExplainStmt, ExplainTarget, Expr,
@@ -712,14 +713,16 @@ fn parse_multi_with_parser_grammar(sql: &str, p: &mut Parser) -> PResult<Vec<Stm
         return Err(error.clone());
     }
     let mut statements = Vec::new();
-    let mut source_start = statement_source_start(sql, 0);
+    let mut source_boundary = StatementSourceBoundary::default();
+    let mut source_start = source_boundary.start(sql, 0);
     while p.is_op(";") {
         source_start = p.bump().end_offset;
     }
     if !p.at_eof() {
-        source_start = statement_source_start(sql, source_start);
+        source_start = source_boundary.start(sql, source_start);
     }
     while !p.at_eof() {
+        let token_start = p.pos;
         p.reset_param_marker_positions();
         let mut statement = p.parse_statement()?;
         let had_delimiter = p.is_op(";");
@@ -732,8 +735,14 @@ fn parse_multi_with_parser_grammar(sql: &str, p: &mut Parser) -> PResult<Vec<Stm
             let (encoding, text) = p.source_text(&sql[source_start..end]);
             statement.set_text(encoding, text);
         }
-        let (checked_statement, depth_exceeded) =
-            ast_depth_exceeded(statement, p.toks.len() > LARGE_AST_VISIT_TOKEN_THRESHOLD);
+        // Use this statement's tokens, including an EOF-equivalent token, just
+        // as the single-statement entry point does. A large batch of shallow
+        // statements does not need a new large-stack thread for each one.
+        let statement_tokens = p.pos - token_start + 1;
+        let (checked_statement, depth_exceeded) = ast_depth_exceeded(
+            statement,
+            statement_tokens > LARGE_AST_VISIT_TOKEN_THRESHOLD,
+        );
         if depth_exceeded {
             return Err(ast_depth_error(p));
         }
@@ -748,34 +757,51 @@ fn parse_multi_with_parser_grammar(sql: &str, p: &mut Parser) -> PResult<Vec<Stm
             source_start = p.bump().end_offset;
         }
         if !p.at_eof() {
-            source_start = statement_source_start(sql, source_start);
+            source_start = source_boundary.start(sql, source_start);
         }
     }
     Ok(statements)
 }
 
-fn statement_source_start(sql: &str, base: usize) -> usize {
-    let prefix = &sql.as_bytes()[..base];
-    let last_open = prefix.windows(3).rposition(|window| window == b"/*!");
-    let last_close = prefix.windows(2).rposition(|window| window == b"*/");
-    if last_open.is_some_and(|open| last_close.is_none_or(|close| open > close)) {
-        return base;
+#[derive(Default)]
+struct StatementSourceBoundary {
+    scanned: usize,
+    last_open: Option<usize>,
+    last_close: Option<usize>,
+}
+
+impl StatementSourceBoundary {
+    fn start(&mut self, sql: &str, base: usize) -> usize {
+        debug_assert!(base >= self.scanned);
+        let bytes = sql.as_bytes();
+        // Retain the previous raw-prefix search semantics, including markers
+        // spanning an earlier boundary, but inspect each new byte only once.
+        for end in self.scanned + 1..=base {
+            if end >= 3 && &bytes[end - 3..end] == b"/*!" {
+                self.last_open = Some(end - 3);
+            }
+            if end >= 2 && &bytes[end - 2..end] == b"*/" {
+                self.last_close = Some(end - 2);
+            }
+        }
+        self.scanned = base;
+        if self.last_open.is_some_and(|open| self.last_close.is_none_or(|close| open > close)) {
+            return base;
+        }
+        let mut start = base;
+        while bytes.get(start).is_some_and(|byte| byte.is_ascii_whitespace()) {
+            start += 1;
+        }
+        start
     }
-    let mut start = base;
-    while sql
-        .as_bytes()
-        .get(start)
-        .is_some_and(|byte| byte.is_ascii_whitespace())
-    {
-        start += 1;
-    }
-    start
 }
 
 struct Parser {
     source: String,
     toks: Vec<Token>,
     pos: usize,
+    open_paren_run: Cell<(usize, usize)>,
+    matching_parens: OnceCell<Vec<usize>>,
     enable_mariadb: bool,
     param_marker_position: usize,
     /// Decoded byte length of the first token in the most recently parsed
@@ -1004,6 +1030,8 @@ impl Parser {
             source: sql.to_owned(),
             toks,
             pos: 0,
+            open_paren_run: Cell::new((0, 0)),
+            matching_parens: OnceCell::new(),
             enable_mariadb,
             param_marker_position: 0,
             string_projection_offset: None,
@@ -1302,6 +1330,8 @@ impl Parser {
             source: sql.to_owned(),
             toks,
             pos: 0,
+            open_paren_run: Cell::new((0, 0)),
+            matching_parens: OnceCell::new(),
             enable_mariadb: false,
             param_marker_position: 0,
             string_projection_offset: None,
@@ -1344,10 +1374,58 @@ impl Parser {
 
     fn bump(&mut self) -> Token {
         let t = self.toks[self.pos].clone();
+        self.advance();
+        t
+    }
+
+    /// Consume a token whose owned contents are not needed. Keep the token
+    /// intact for source offsets, lookback and speculative parser rollback.
+    fn advance(&mut self) {
         if self.pos + 1 < self.toks.len() {
             self.pos += 1;
         }
-        t
+    }
+
+    fn open_parens_len(&self) -> usize {
+        if !self.is_op("(") {
+            return 0;
+        }
+        let (start, end) = self.open_paren_run.get();
+        if start <= self.pos && self.pos < end {
+            return end - self.pos;
+        }
+        let mut offset = 1;
+        while self.is_op_at(offset, "(") {
+            offset += 1;
+        }
+        self.open_paren_run.set((self.pos, self.pos + offset));
+        offset
+    }
+
+    /// Lazily index the same token-text parentheses used by derived-join
+    /// lookahead. Ordinary queries do not allocate this auxiliary index.
+    fn matching_paren_offset(&self, offset: usize) -> Option<usize> {
+        let pairs = self.matching_parens.get_or_init(|| {
+            let mut pairs = vec![usize::MAX; self.toks.len()];
+            let mut opens = Vec::new();
+            for (index, token) in self.toks.iter().enumerate() {
+                if token.kind == TokenKind::Eof {
+                    break;
+                }
+                match token.text.as_str() {
+                    "(" => opens.push(index),
+                    ")" => {
+                        if let Some(open) = opens.pop() {
+                            pairs[open] = index;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            pairs
+        });
+        let end = *pairs.get(self.pos + offset)?;
+        (end != usize::MAX).then(|| end - self.pos)
     }
 
     fn at_eof(&self) -> bool {
@@ -1387,7 +1465,7 @@ impl Parser {
 
     fn skip_semicolons(&mut self) {
         while self.is_op(";") {
-            self.bump();
+            self.advance();
         }
     }
 
@@ -1413,7 +1491,7 @@ impl Parser {
     /// `EXISTS` is required after `IF` (matching real MySQL/TiDB grammar).
     fn parse_if_exists(&mut self) -> PResult<bool> {
         if self.is_kw("IF") {
-            self.bump();
+            self.advance();
             self.expect_kw("EXISTS")?;
             Ok(true)
         } else {
@@ -1427,7 +1505,7 @@ impl Parser {
     /// statement's error-suppression contract.
     fn parse_if_not_exists(&mut self) -> PResult<bool> {
         if self.is_kw("IF") {
-            self.bump();
+            self.advance();
             self.expect_kw("NOT")?;
             self.expect_kw("EXISTS")?;
             Ok(true)
@@ -1444,7 +1522,7 @@ impl Parser {
         self.expect_kw("DO")?;
         let mut exprs = vec![self.parse_expr(prec::NONE)?];
         while self.is_op(",") {
-            self.bump();
+            self.advance();
             exprs.push(self.parse_expr(prec::NONE)?);
         }
         Ok(exprs)
@@ -1467,7 +1545,7 @@ impl Parser {
 
     fn expect_op(&mut self, op: &str) -> PResult<()> {
         if self.is_op(op) {
-            self.bump();
+            self.advance();
             Ok(())
         } else {
             let unexpected = self.bump();
@@ -1482,7 +1560,7 @@ impl Parser {
 
     fn expect_kw(&mut self, kw: &str) -> PResult<()> {
         if self.is_kw(kw) {
-            self.bump();
+            self.advance();
             Ok(())
         } else {
             let unexpected = self.bump();
@@ -1507,16 +1585,16 @@ impl Parser {
             partitions: Vec::new(),
         }];
         while self.is_op(",") {
-            self.bump();
+            self.advance();
             tables.push(StatsLockTable {
                 name: self.parse_table_name()?,
                 partitions: Vec::new(),
             });
         }
         if self.is_kw("PARTITION") {
-            self.bump();
+            self.advance();
             let parenthesized = if self.is_op("(") {
-                self.bump();
+                self.advance();
                 true
             } else {
                 false
@@ -1526,7 +1604,7 @@ impl Parser {
                 .expect("LOCK STATS requires its first table before partitions");
             target.partitions.push(self.bumped_table_name());
             while self.is_op(",") {
-                self.bump();
+                self.advance();
                 target.partitions.push(self.bumped_table_name());
             }
             if parenthesized {
@@ -1552,7 +1630,7 @@ impl Parser {
     /// TiDB, and Go restores it as an ordinary `EXPLAIN` wrapper.
     fn parse_explain_tail(&mut self) -> PResult<Stmt> {
         let explore = if self.is_kw("EXPLORE") {
-            self.bump();
+            self.advance();
             if self.peek().kind == TokenKind::Str {
                 let digest = self.bumped_string();
                 return Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::Explain(
@@ -1564,7 +1642,7 @@ impl Parser {
                 ))));
             }
             if self.is_kw("REPLAYER") {
-                self.bump();
+                self.advance();
                 let token = self.bump();
                 if token.kind != TokenKind::Str {
                     return Err(self.err_here("expected EXPLAIN EXPLORE replayer file"));
@@ -1582,7 +1660,7 @@ impl Parser {
             false
         };
         let analyze = if self.is_kw("ANALYZE") {
-            self.bump();
+            self.advance();
             true
         } else {
             false
@@ -1594,21 +1672,21 @@ impl Parser {
         // SELECT token itself, which the rust parser wrongly accepted as an
         // explainable statement).
         if self.is_kw("PARTITIONS") {
-            self.bump();
+            self.advance();
             return Err(self.err_here("legacy EXPLAIN PARTITIONS is not supported"));
         }
         let mut format = "row".to_string();
         if self.is_kw("FORMAT") {
-            self.bump();
+            self.advance();
             self.expect_op("=")?;
             let token = self.peek().clone();
             format = match token.kind {
                 TokenKind::Str => {
-                    self.bump();
+                    self.advance();
                     self.decode_string(&token.text)
                 }
                 TokenKind::Ident | TokenKind::Keyword => {
-                    self.bump();
+                    self.advance();
                     token.text
                 }
                 _ => return Err(self.err_here("expected EXPLAIN format identifier or string")),
@@ -1616,7 +1694,7 @@ impl Parser {
         }
 
         if !explore && !analyze && self.is_kw("FOR") {
-            self.bump();
+            self.advance();
             self.expect_kw("CONNECTION")?;
             let token = self.bump();
             let connection_id = token
@@ -1696,7 +1774,7 @@ impl Parser {
         self.expect_kw("PLAN")?;
         self.expect_kw("REPLAYER")?;
         if self.is_kw("LOAD") {
-            self.bump();
+            self.advance();
             let token = self.bump();
             if token.kind != TokenKind::Str {
                 return Err(self.err_here("expected PLAN REPLAYER file"));
@@ -1708,9 +1786,9 @@ impl Parser {
             )));
         }
         if self.is_kw("CAPTURE") {
-            self.bump();
+            self.advance();
             let remove = if self.is_kw("REMOVE") {
-                self.bump();
+                self.advance();
                 true
             } else {
                 false
@@ -1729,10 +1807,10 @@ impl Parser {
             )));
         }
         if self.is_kw("DUMP") {
-            self.bump();
+            self.advance();
         }
         let historical_stats = if self.is_kw("WITH") {
-            self.bump();
+            self.advance();
             self.expect_kw("STATS")?;
             self.expect_kw("AS OF")?;
             self.expect_kw("TIMESTAMP")?;
@@ -1742,7 +1820,7 @@ impl Parser {
         };
         self.expect_kw("EXPLAIN")?;
         let analyze = if self.is_kw("ANALYZE") {
-            self.bump();
+            self.advance();
             true
         } else {
             false
@@ -1750,7 +1828,7 @@ impl Parser {
         let target = if self.peek().kind == TokenKind::Str {
             PlanReplayerTarget::File(self.bumped_string())
         } else if self.is_op("(") && self.peek_n(1).kind == TokenKind::Str {
-            self.bump();
+            self.advance();
             let mut statements = Vec::new();
             loop {
                 let token = self.bump();
@@ -1761,7 +1839,7 @@ impl Parser {
                 if !self.is_op(",") {
                     break;
                 }
-                self.bump();
+                self.advance();
             }
             self.expect_op(")")?;
             PlanReplayerTarget::Statements(statements)
@@ -1822,20 +1900,20 @@ impl Parser {
         self.expect_kw("SLOW")?;
         self.expect_kw("QUERY")?;
         let where_clause = if self.is_kw("WHERE") {
-            self.bump();
+            self.advance();
             Some(Box::new(self.parse_expr(prec::NONE)?))
         } else {
             None
         };
         let order_by = if self.is_kw("ORDER") {
-            self.bump();
+            self.advance();
             self.expect_kw("BY")?;
             self.parse_order_list()?
         } else {
             Vec::new()
         };
         let limit = if self.is_kw("LIMIT") {
-            self.bump();
+            self.advance();
             Some(Box::new(self.parse_limit()?))
         } else {
             None
@@ -1883,7 +1961,7 @@ impl Parser {
     fn parse_ident_like_name_path(&mut self) -> PResult<Vec<String>> {
         let mut path = vec![self.parse_ident_like_name()?];
         while self.is_op(".") {
-            self.bump();
+            self.advance();
             path.push(self.parse_ident_like_name()?);
         }
         Ok(path)
@@ -1921,7 +1999,7 @@ impl Parser {
         if !self.token_literal_is_at(0, expected) {
             return Err(self.err_here(&format!("expected {expected}")));
         }
-        self.bump();
+        self.advance();
         Ok(())
     }
 
@@ -1939,7 +2017,7 @@ impl Parser {
         if !self.keyword_or_ident_is_at(0, expected) {
             return Err(self.err_here(&format!("expected {expected}")));
         }
-        self.bump();
+        self.advance();
         Ok(())
     }
 
@@ -1956,7 +2034,7 @@ impl Parser {
     fn parse_ident_like_name_list(&mut self) -> PResult<Vec<String>> {
         let mut names = vec![self.parse_ident_like_name()?];
         while self.is_op(",") {
-            self.bump();
+            self.advance();
             names.push(self.parse_ident_like_name()?);
         }
         Ok(names)
@@ -2067,11 +2145,11 @@ impl Parser {
         if !self.is_kw("PARTITION") {
             return Ok(Vec::new());
         }
-        self.bump();
+        self.advance();
         self.expect_op("(")?;
         let mut names = vec![self.parse_name()?];
         while self.is_op(",") {
-            self.bump();
+            self.advance();
             names.push(self.parse_name()?);
         }
         self.expect_op(")")?;
@@ -2091,7 +2169,7 @@ impl Parser {
             if path.len() == 3 {
                 return Err(self.err_here("name path has too many components"));
             }
-            self.bump(); // '.'
+            self.advance(); // '.'
             path.push(self.parse_name_or_keyword()?);
         }
         Ok(path)
@@ -2104,8 +2182,8 @@ impl Parser {
     /// the first slot, and uses the Go parser's broader second-slot boundary.
     pub(crate) fn parse_table_name(&mut self) -> PResult<Vec<String>> {
         if self.is_op("*") && self.is_op_at(1, ".") {
-            self.bump();
-            self.bump();
+            self.advance();
+            self.advance();
             let token = self.bump();
             return Ok(vec!["*".to_owned(), self.table_name_token_text(token)]);
         }
@@ -2116,7 +2194,7 @@ impl Parser {
         }
         let first = self.table_name_token_text(token);
         if self.is_op(".") && !self.is_op_at(1, "*") {
-            self.bump();
+            self.advance();
             let second = self.bump();
             if matches!(
                 second.kind,
@@ -2145,9 +2223,9 @@ impl Parser {
             if path.len() == 3 {
                 return Err(self.err_here("column name has too many components"));
             }
-            self.bump();
+            self.advance();
             if self.is_op("*") {
-                self.bump();
+                self.advance();
                 path.push("*".to_owned());
                 return Ok(path);
             }
