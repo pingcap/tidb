@@ -2,9 +2,9 @@
   "date": "2026-11-08",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 31,
+    "unresolved": 30,
     "open": 7,
-    "partial": 24
+    "partial": 23
   },
   "findings": [
     {
@@ -97,7 +97,7 @@
       "id": "C02",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "The session's reusable chunk allocator is Go's (`Session::chunk_alloc`, Go `clientConn.chunkAlloc`: installed per statement as `NewSyncAllocator(alloc)` under `tidb_enable_reuse_chunk`, never for an internal `InRestrictedSQL` statement, reset between statements and recreated after a failed one, each statement's validity its own), executors take it as `ExecutorMeta::alloc_pool` (Go `AllocPool`) for `NewChunk` / `TryNewCacheChunk` / `NewChunkWithCapacity`, and Go's `NewFirstChunk` sites (`Executor::new_first_chunk`: projection workers, hash-join probe and result chunks, index-hash-join results, shuffle holders, the drained record set) allocate outside it, so memory charges match Go's in sequence (`a_projection_sizes_its_result_columns_as_go_vec_eval_does`, `explain_analyze_dml_roots_report_their_executor_stats_and_memory_like_go`). Remaining: executors built outside the physical builder's `meta` (`ExecutorMeta::new` in other crates) allocate fresh; parallel apply's chunks, whose executor shape differs from Go's, are unmapped; the reuse hook's `StmtCtx.SetUseChunkAlloc` (`@@last_sql_use_alloc`) is not driven by allocation",
+      "finding": "The session's reusable chunk allocator is Go's (`Session::chunk_alloc`, Go `clientConn.chunkAlloc`: installed per statement as `NewSyncAllocator(alloc)` under `tidb_enable_reuse_chunk`, never for an internal `InRestrictedSQL` statement, reset between statements and recreated after a failed one, each statement's validity its own), executors take it as `ExecutorMeta::alloc_pool` (Go `AllocPool`) for `NewChunk` / `TryNewCacheChunk` / `NewChunkWithCapacity`, and Go's `NewFirstChunk` sites (`Executor::new_first_chunk`: projection workers, hash-join probe and result chunks, index-hash-join results, shuffle holders, the drained record set) allocate outside it, so memory charges match Go's in sequence (`a_projection_sizes_its_result_columns_as_go_vec_eval_does`, `explain_analyze_dml_roots_report_their_executor_stats_and_memory_like_go`). Remaining: executors built outside the physical builder's `meta` (`ExecutorMeta::new` in other crates) allocate fresh; parallel apply's chunks, whose executor shape differs from Go's, are unmapped; the reuse hook's `StmtCtx.SetUseChunkAlloc` (`@@last_sql_use_alloc`) is not driven by allocation. A point UPDATE's write loop reuses no pooled chunk where Go's does. Over the wire, `update t set b=b+1 where id=1` after another point UPDATE charges its `Update_3` 387 Bytes here, where Go's allocator-returned chunk charges 638 Bytes, or 889 Bytes after a `select 1`. After a scan UPDATE both servers charge 1.11 KB, plain or under `EXECUTE`.",
       "go_owner": "`pkg/util/chunk` (`alloc.go`: `NewAllocator`, `NewReuseHookAllocator`, `NewSyncAllocator`), `pkg/sessionctx/variable/session.go` (`SetAlloc`, `GetChunkAllocator`), `pkg/executor/internal/exec/executor.go` (`AllocPool`, `NewChunkWithCapacity`)"
     },
     {
@@ -107,13 +107,6 @@
       "finding": "IMPORT INTO refuses (`tidb-session/src/dispatch.rs`)",
       "rust_evidence": "`rust/crates/tidb-session/src/dispatch.rs`",
       "go_owner": "`pkg/executor/importer`, `pkg/disttask/importinto`"
-    },
-    {
-      "id": "E21",
-      "status": "partial",
-      "group": "DML and executor handoff",
-      "finding": "Binary plans carry Go's runtime statistics (`binaryOpFromFlatOp`). The statement summary's and slow log's plan and binary plan are rendered after the statement ran (`getEncodedPlan`, `getBinaryPlan`). The brief binary plan is re-encoded when the process goes to sleep (`SetProcessInfo` at `ComSleep`, for routed statements too). `EXPLAIN FOR CONNECTION` decodes the brief plan of a target with no `RuntimeStatsColl` or with an `Execute` plan (a text `EXECUTE`, `shouldDecodeBriefBinaryPlan`). All of this matches a Go tidb-server over the wire (`unistore_cop.rs` `the_summary_plans_carry_the_statements_runtime_stats_like_go`, `explain_for_connection_renders_the_targets_runtime_stats_like_go`). Remaining: the operators of a cached prepared write charge different memory under a server's `EXECUTE`. Over the wire the root of `update t set b=? where id=?` shows 387 Bytes where Go shows 638 Bytes, and the same statement unprepared shows 1.11 KB on both servers. A Go testkit session, with or without the connection's chunk allocator (`SetAlloc`), charges 387 Bytes to that root in both forms. So the 251 / 750 bytes come from Go's server path, which this port reproduces for the unprepared statement only.",
-      "go_owner": "`pkg/planner/core/common_plans.go` (`binaryOpFromFlatOp`, `Explain.shouldDecodeBriefBinaryPlan`, `RenderResult`), `pkg/session/session.go` (`SetProcessInfo`), `pkg/util/plancodec` (`DecodeBinaryPlan4Connection`)"
     },
     {
       "id": "E22",
@@ -229,7 +222,7 @@
       "go_owner": "`pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`)"
     }
   ],
-  "unresolved": 31,
+  "unresolved": 30,
   "open": 7,
-  "partial": 24
+  "partial": 23
 }
