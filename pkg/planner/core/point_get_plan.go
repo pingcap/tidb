@@ -1396,8 +1396,7 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 			ColName: plan.OutputNames()[idx].ColName,
 		}
 		var implicitDefaults []*ast.DefaultExpr
-		defaultExpr := physicalop.ExtractDefaultExpr(assign.Expr)
-		if defaultExpr != nil {
+		if defaultExpr := implicitDefaultOf(assign.Expr, assign.Column); defaultExpr != nil {
 			defaultExpr.Name = assign.Column
 			implicitDefaults = append(implicitDefaults, defaultExpr)
 		}

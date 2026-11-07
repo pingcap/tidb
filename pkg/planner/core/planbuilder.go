@@ -406,10 +406,20 @@ func (hch *handleColHelper) tailMap() map[int64][]util.HandleCols {
 	return hch.id2HandleMapStack[hch.stackTail-1]
 }
 
+// implicitDefaultOf returns expr if it is a bare DEFAULT keyword assigned to
+// col: its Name is nil, or col itself when it was filled by an earlier build
+// of the same statement (e.g. EXECUTE of a prepared statement).
+func implicitDefaultOf(expr ast.ExprNode, col *ast.ColumnName) *ast.DefaultExpr {
+	if d, ok := expr.(*ast.DefaultExpr); ok && (d.Name == nil || d.Name == col) {
+		return d
+	}
+	return nil
+}
+
 // fillImplicitDefault fills the Name of a bare DEFAULT keyword assigned to
 // col, and remembers that it was not written as DEFAULT(col).
 func (b *PlanBuilder) fillImplicitDefault(expr ast.ExprNode, col *ast.ColumnName) {
-	d := physicalop.ExtractDefaultExpr(expr)
+	d := implicitDefaultOf(expr, col)
 	if d == nil {
 		return
 	}
