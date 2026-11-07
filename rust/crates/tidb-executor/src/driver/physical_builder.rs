@@ -2094,6 +2094,89 @@ impl Executor for PushedAggregationExec {
     }
 }
 
+/// A cop-side partial aggregation its source cannot take, run in this tier
+/// with the coprocessor's own aggregation (Go's unistore `aggExec`): the
+/// child's rows in, the partial rows a coprocessor would answer out.
+struct LocalPartialAggregationExec {
+    meta: ExecutorMeta,
+    child: Box<dyn Executor>,
+    aggregate: PushdownPartialAggregate,
+    ctx: crate::StmtContext,
+    rows: Option<std::vec::IntoIter<Vec<tidb_datatype::Datum>>>,
+}
+
+impl Executor for LocalPartialAggregationExec {
+    fn open(&mut self) -> Result<(), tidb_driver_error::ExecError> {
+        self.rows = None;
+        self.child.open()
+    }
+
+    fn next(&mut self, req: &mut Chunk) -> Result<(), tidb_driver_error::ExecError> {
+        req.reset();
+        if self.rows.is_none() {
+            let input_types = self.child.ret_field_types().to_vec();
+            let mut chunk = self.child.new_chunk();
+            let mut pending: std::collections::VecDeque<Vec<tidb_datatype::Datum>> =
+                std::collections::VecDeque::new();
+            let child = &mut self.child;
+            let rows = crate::local_partial::local_partial_rows(
+                &self.aggregate,
+                &input_types,
+                &self.ctx,
+                || {
+                    while pending.is_empty() {
+                        child.next(&mut chunk)?;
+                        if chunk.num_rows() == 0 {
+                            return Ok(None);
+                        }
+                        pending.extend(
+                            (0..chunk.num_rows())
+                                .map(|row| chunk.get_row(row).get_datum_row(&input_types)),
+                        );
+                    }
+                    Ok(pending.pop_front())
+                },
+            )?;
+            self.rows = Some(rows.into_iter());
+        }
+        let rows = self.rows.as_mut().expect("partial rows computed");
+        while req.num_rows() < self.meta.max_chunk_size() {
+            let Some(row) = rows.next() else {
+                break;
+            };
+            for (column, value) in row.iter().enumerate() {
+                req.append_datum(column, value);
+            }
+        }
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), tidb_driver_error::ExecError> {
+        self.rows = None;
+        self.child.close()
+    }
+
+    fn schema(&self) -> &Schema {
+        self.meta.schema()
+    }
+
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.meta.ret_field_types()
+    }
+
+    fn init_cap(&self) -> usize {
+        self.meta.init_cap()
+    }
+
+    fn max_chunk_size(&self) -> usize {
+        self.meta.max_chunk_size()
+    }
+
+    fn new_chunk(&self) -> Chunk {
+        self.meta.new_chunk()
+    }
+}
+
 fn build_aggregation(
     plan: &PhysicalPlan,
     descriptors: &[AggFuncDesc],
@@ -2374,6 +2457,13 @@ fn build_aggregation_over_child(
                     child,
                 }));
             }
+            return Ok(Box::new(LocalPartialAggregationExec {
+                meta: meta(ctx, plan, output_schema),
+                child,
+                aggregate: partial,
+                ctx: ctx.clone(),
+                rows: None,
+            }));
         }
     }
     let executor_meta = meta(ctx, plan, output_schema);
