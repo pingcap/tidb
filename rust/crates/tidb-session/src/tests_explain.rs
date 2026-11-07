@@ -8569,3 +8569,33 @@ fn explain_insert_plans_its_values_and_on_duplicate_like_go() {
     );
     session.run("explain insert into t values (1, b + 1)").unwrap();
 }
+
+/// Go `GeneratePlanCacheStmtWithAST`'s `destBuilder.Build` runs `buildInsert`
+/// at PREPARE: its VALUES lists and ON DUPLICATE assignments are planned, so
+/// their errors refuse the PREPARE. Go (`gorun`): 1054 `nosuch`, 1054
+/// `nosuch2`, 1146 `test.nosuchtable`; a valid INSERT prepares and executes
+/// once.
+#[test]
+fn prepare_insert_plans_its_values_and_on_duplicate_like_go() {
+    let mut session = Session::new();
+    session.run("create table t(a int primary key, b int)").unwrap();
+    let error = |session: &mut Session, sql: &str| {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        (error.code, error.message)
+    };
+    assert_eq!(
+        error(&mut session, "prepare s1 from 'insert into t values (1, nosuch)'"),
+        (1054, "Unknown column 'nosuch' in 'field list'".to_owned())
+    );
+    assert_eq!(
+        error(&mut session, "prepare s2 from 'insert into t values (1, 2) on duplicate key update b = nosuch2'"),
+        (1054, "Unknown column 'nosuch2' in 'field list'".to_owned())
+    );
+    assert_eq!(
+        error(&mut session, "prepare s3 from 'insert into t values (?, (select 1 from nosuchtable))'"),
+        (1146, "Table 'test.nosuchtable' doesn't exist".to_owned())
+    );
+    session.run("prepare s4 from 'insert into t values (1, 2)'").unwrap();
+    session.run("execute s4").unwrap();
+    assert_eq!(row_text(session.run("select * from t")), [["1", "2"]]);
+}

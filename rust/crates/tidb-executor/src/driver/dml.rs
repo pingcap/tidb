@@ -446,6 +446,68 @@ pub(crate) fn run_fk_cascade(
     }
 }
 
+/// Go `GeneratePlanCacheStmtWithAST`'s `destBuilder.Build` for an INSERT,
+/// UPDATE or DELETE: the statement's plan, built and discarded, so its build
+/// errors surface at PREPARE ahead of `checkPreparedPriv`.
+pub fn prepare_dml_plan(
+    dml: &tidb_ast::DmlStmt,
+    catalog: &SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    use super::multi_dml::{multi_dml_explain_plan, MultiDmlRef};
+    let (operator, write, source, fk_spec) = match dml {
+        tidb_ast::DmlStmt::Update(update) => {
+            if multi_dml_explain_plan(MultiDmlRef::Update(update), catalog, current_db, ctx)?.is_some() {
+                return Ok(());
+            }
+            (
+                "Update",
+                MultiDmlRef::Update(update),
+                update_source_query(update),
+                build_tbl_2_update_columns(update, current_db)?,
+            )
+        }
+        tidb_ast::DmlStmt::Delete(delete) => {
+            if multi_dml_explain_plan(MultiDmlRef::Delete(delete), catalog, current_db, ctx)?.is_some() {
+                return Ok(());
+            }
+            (
+                "Delete",
+                MultiDmlRef::Delete(delete),
+                delete_source_query(delete),
+                fk_spec_for_delete(delete, current_db)?,
+            )
+        }
+        // Go `buildInsert`: the source, then the VALUES lists and the ON
+        // DUPLICATE assignments.
+        tidb_ast::DmlStmt::Insert(insert) => {
+            let mut source_visits = Vec::new();
+            let physical = physical_insert_plan(insert, catalog, current_db, ctx, &mut source_visits)?;
+            return plan_insert_over(insert, Some(&physical), catalog, current_db, ctx).map(drop);
+        }
+        _ => return Ok(()),
+    };
+    let Some(source) = source else {
+        return Ok(());
+    };
+    physical_dml_plan_with_cache_mode(
+        operator,
+        Some(&source),
+        Some(write),
+        catalog,
+        current_db,
+        ctx,
+        false,
+        std::slice::from_ref(&fk_spec),
+        DmlKeep::Auto,
+        None,
+        super::planner_bridge::BuildVisits::Discard,
+        None,
+    )
+    .map(drop)
+}
+
 /// Builds and prepares the same UPDATE or DELETE plan for execution and
 /// EXPLAIN, checking the statement's privileges once it is built.
 #[allow(clippy::too_many_arguments)]

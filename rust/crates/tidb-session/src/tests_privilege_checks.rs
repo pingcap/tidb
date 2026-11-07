@@ -411,3 +411,28 @@ fn a_misplaced_dynamic_privilege_is_named_in_go_upper_case() {
         );
     }
 }
+
+/// Go `GeneratePlanCacheStmtWithAST` builds the prepared statement
+/// (`destBuilder.Build`) before `checkPreparedPriv`, for an UPDATE as for a
+/// query, so an unknown column is reported ahead of the missing privilege.
+/// Go tidb-server over the wire, user `u` with no grants: 1054, 1142, 1054.
+#[test]
+fn prepare_builds_the_statement_before_checking_its_privileges_like_go() {
+    let (registry, mut root) = setup();
+    root.run("create database pp").unwrap();
+    root.run("create table pp.t(a int)").unwrap();
+    root.run("create user u").unwrap();
+    let mut u = session_as(&registry, root.shared_catalog(), "u", "%");
+    assert_eq!(
+        error_of(&mut u, "prepare s1 from 'select nosuch from pp.t'"),
+        (1054, "Unknown column 'nosuch' in 'field list'".to_owned())
+    );
+    assert_eq!(
+        error_of(&mut u, "prepare s2 from 'select a from pp.t'"),
+        (1142, "SELECT command denied to user 'u'@'%' for table 't'".to_owned())
+    );
+    assert_eq!(
+        error_of(&mut u, "prepare s3 from 'update pp.t set nosuch = 1'"),
+        (1054, "Unknown column 'nosuch' in 'field list'".to_owned())
+    );
+}

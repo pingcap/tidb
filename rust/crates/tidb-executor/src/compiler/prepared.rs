@@ -396,7 +396,7 @@ pub trait PrepareExec: super::CompilerSession {
         // which EXECUTE binds afresh. Only the marker-free query validated
         // below needs the bound copy.
         let validated_query = match &statement {
-            tidb_ast::Stmt::Query(_) => {
+            tidb_ast::Stmt::Query(_) | tidb_ast::Stmt::Dml(_) => {
                 let mut bound = statement.clone();
                 self.bind_variables(&mut bound)?;
                 // EXECUTE plans the tree the statement dispatch rewrites:
@@ -435,26 +435,26 @@ pub trait PrepareExec: super::CompilerSession {
                         )
                     })?;
                 }
-                // Go builds this plan with each `?` still a ParamMarkerExpr,
-                // so what the markers will hold is not checked, but a name the
-                // query cannot resolve is refused. A marker stands here as a
+                // Go builds this plan (an INSERT's, UPDATE's or DELETE's too)
+                // with each `?` still a ParamMarkerExpr, so what the markers
+                // will hold is not checked, but a name the statement cannot
+                // resolve is refused. A marker stands here as a
                 // value, and an error raised under BOTH NULL and 1 does not
                 // depend on that value: it is the query's own.
-                Some(bound @ tidb_ast::Stmt::Query(_)) => {
+                Some(bound @ (tidb_ast::Stmt::Query(_) | tidb_ast::Stmt::Dml(_))) => {
                     let stand_in_error = |stand_in: &Datum| -> Option<DriverError> {
                         let values = vec![stand_in.clone(); param_count];
-                        let tidb_ast::Stmt::Query(query) =
-                            crate::bind_statement(bound.clone(), &values).ok()?
-                        else {
-                            return None;
-                        };
-                        crate::plan_query_meta_stmt(
-                            &query,
-                            &catalog,
-                            self.session_vars().current_db.as_str(),
-                            &planner_context.with_isolated_warnings(),
-                        )
-                        .err()
+                        let ctx = planner_context.with_isolated_warnings();
+                        let current_db = self.session_vars().current_db.as_str();
+                        match crate::bind_statement(bound.clone(), &values).ok()? {
+                            tidb_ast::Stmt::Query(query) => {
+                                crate::plan_query_meta_stmt(&query, &catalog, current_db, &ctx).err()
+                            }
+                            tidb_ast::Stmt::Dml(dml) => {
+                                crate::driver::prepare_dml_plan(&dml, &catalog, current_db, &ctx).err()
+                            }
+                            _ => None,
+                        }
                         // A scan of a memory table needs the session to
                         // retrieve its rows, which says nothing of the query.
                         .filter(|error| !matches!(error, DriverError::MemTableRetrievalNeeded))
