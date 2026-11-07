@@ -1703,6 +1703,53 @@ pub const CATALOG: &[BuiltinSignature] = &[
         ScalarFuncSig::LikeSig,
         false,
     ),
+    // The vector function classes (`builtin_vec.go`): `ETVectorFloat32`
+    // arguments; VEC_DIMS answers `ETInt`, VEC_AS_TEXT `ETString`, the
+    // distances and the norm `ETReal`.
+    signature("vec_dims", &[ArgPattern::ANY], &[EvalType::VectorFloat32], EvalType::Int, ScalarFuncSig::VecDimsSig, false),
+    signature("vec_l2_norm", &[ArgPattern::ANY], &[EvalType::VectorFloat32], EvalType::Real, ScalarFuncSig::VecL2NormSig, false),
+    string_signature("vec_as_text", &[ArgPattern::ANY], &[EvalType::VectorFloat32], ScalarFuncSig::VecAsTextSig, RetCollation::ConnectionString),
+    signature(
+        "vec_l1_distance",
+        &[ArgPattern::ANY, ArgPattern::ANY],
+        &[EvalType::VectorFloat32, EvalType::VectorFloat32],
+        EvalType::Real,
+        ScalarFuncSig::VecL1DistanceSig,
+        false,
+    ),
+    signature(
+        "vec_l2_distance",
+        &[ArgPattern::ANY, ArgPattern::ANY],
+        &[EvalType::VectorFloat32, EvalType::VectorFloat32],
+        EvalType::Real,
+        ScalarFuncSig::VecL2DistanceSig,
+        false,
+    ),
+    signature(
+        "vec_negative_inner_product",
+        &[ArgPattern::ANY, ArgPattern::ANY],
+        &[EvalType::VectorFloat32, EvalType::VectorFloat32],
+        EvalType::Real,
+        ScalarFuncSig::VecNegativeInnerProductSig,
+        false,
+    ),
+    signature(
+        "vec_cosine_distance",
+        &[ArgPattern::ANY, ArgPattern::ANY],
+        &[EvalType::VectorFloat32, EvalType::VectorFloat32],
+        EvalType::Real,
+        ScalarFuncSig::VecCosineDistanceSig,
+        false,
+    ),
+    // `uuidFunctionClass`: no argument; `uuidTimestampFunctionClass` /
+    // `uuidVersionFunctionClass`: one `ETString`, an `ETDecimal` / `ETInt`
+    // result. `sysDateFunctionClass`: `SysDateWithoutFsp`, or
+    // `SysDateWithFsp` over an `ETInt` fsp.
+    string_signature("uuid", &[], &[], ScalarFuncSig::Uuid, RetCollation::ConnectionString),
+    signature("uuid_timestamp", &[ArgPattern::ANY], &[EvalType::String], EvalType::Decimal, ScalarFuncSig::UuidTimestamp, false),
+    signature("uuid_version", &[ArgPattern::ANY], &[EvalType::String], EvalType::Int, ScalarFuncSig::UuidVersion, false),
+    signature("sysdate", &[], &[], EvalType::Datetime, ScalarFuncSig::SysDateWithoutFsp, false),
+    signature("sysdate", &[ArgPattern::ANY], &[EvalType::Int], EvalType::Datetime, ScalarFuncSig::SysDateWithFsp, false),
     // `piFunctionClass.getFunction`: no arguments, and `PI()` is a constant on
     // both sides of the wire.
     signature("pi", &[], &[], EvalType::Real, ScalarFuncSig::Pi, false),
@@ -3698,6 +3745,9 @@ pub fn resolve(name: &str, args: &[PbScalar]) -> Option<&'static BuiltinSignatur
     if name == "elt" {
         return resolve_elt(args);
     }
+    if name == "rand" {
+        return resolve_rand(args);
+    }
     if name == "field" {
         return resolve_field(args);
     }
@@ -3787,6 +3837,19 @@ pub(crate) fn resolve_ceil_floor(name: &str, arg: EvalType, ret: EvalType) -> Op
         (EvalType::Int | EvalType::Decimal, _) => return None,
         _ => &family[3],
     })
+}
+
+/// Go `randFunctionClass.getFunction`: only a non-constant seed answers
+/// `RandWithSeedFirstGen`, the one RAND signature
+/// `scalarExprSupportedByTiKV` pushes; `RAND()` and a constant seed are
+/// `Rand`, evaluated in TiDB.
+fn resolve_rand(args: &[PbScalar]) -> Option<&'static BuiltinSignature> {
+    static RAND_WITH_SEED_FIRST_GEN: BuiltinSignature =
+        signature("rand", &[], &[EvalType::Int], EvalType::Real, ScalarFuncSig::RandWithSeedFirstGen, false);
+    match args {
+        [PbScalar::Column { .. } | PbScalar::Call { .. } | PbScalar::Cast { .. }] => Some(&RAND_WITH_SEED_FIRST_GEN),
+        _ => None,
+    }
 }
 
 /// Go `eltFunctionClass.getFunction`: an `ETInt` index, then `ETString`s.

@@ -8439,6 +8439,50 @@ fn hash_and_like_builtins_run_in_the_coprocessor_as_go() {
     assert!(cop_agg[5].starts_with("tikv_task:{"), "{cop_agg:?}");
 }
 
+/// Go's vector functions, UUID / UUID_VERSION / UUID_TIMESTAMP, SYSDATE and
+/// RAND over a non-constant seed (`RandWithSeedFirstGen`, the one RAND
+/// signature Go pushes) reach the coprocessor; gorun pushes them all into the
+/// coprocessor's HashAgg and answers these values.
+#[test]
+fn vector_uuid_and_seeded_builtins_run_in_the_coprocessor_as_go() {
+    let mut session = Session::new();
+    session.run("create table vt (v vector(3), u varchar(40), n int)").unwrap();
+    session
+        .run(
+            "insert into vt values ('[1,2,3]', '6ccd780c-baba-1026-9564-5b8c656024db', 1), \
+             ('[0,0,1]', null, 2)",
+        )
+        .unwrap();
+    let sql = "select sum(vec_dims(v)), sum(vec_l2_norm(v)), max(vec_as_text(v)), \
+               sum(vec_l1_distance(v, '[1,1,1]')), sum(vec_l2_distance(v, '[1,1,1]')), \
+               sum(vec_negative_inner_product(v, '[1,1,1]')), sum(vec_cosine_distance(v, '[1,1,1]')), \
+               sum(uuid_version(u)), max(uuid_timestamp(u)), sum(rand(n) < 2), count(sysdate()), \
+               sum(length(uuid())) from vt";
+    assert_eq!(
+        row_text(session.run(sql)),
+        [[
+            "6",
+            "4.741657386773941",
+            "[1,2,3]",
+            "5",
+            "3.6502815398728847",
+            "-7",
+            "0.49682963103782274",
+            "1",
+            "-11129156903.290674",
+            "2",
+            "2",
+            "72",
+        ]]
+    );
+    let explained = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+    let cop_agg = explained
+        .iter()
+        .find(|row| row[3] == "cop[tikv]" && row[0].contains("HashAgg_"))
+        .unwrap_or_else(|| panic!("no cop HashAgg in {explained:?}"));
+    assert!(cop_agg[5].starts_with("tikv_task:{"), "{cop_agg:?}");
+}
+
 /// Go `Aggregation.GroupBy` carries any key the coprocessor evaluates: gorun
 /// pushes `group by:plus(test.t.a, 1), funcs:count(1),
 /// funcs:firstrow(test.t.a)` to TiKV and answers `2|2`, `3|1`, `4|1`.
