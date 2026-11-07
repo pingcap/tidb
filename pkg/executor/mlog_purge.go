@@ -41,6 +41,7 @@ import (
 	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -246,7 +247,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	// history row. Once a running row exists, finalizeFailure updates that row.
 	defer func() {
 		if r := recover(); r != nil {
-			err = errors.Errorf("purge materialized view log: panic: %v", r)
+			err = util.GetRecoverError(r)
 		}
 		if err == nil || purgeHistRunningInserted || mlogID == 0 {
 			return
@@ -308,15 +309,6 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	defer restoreDeleteVars()
 	failpoint.InjectCall("mvMaintainMemQuotaAppliedOnPurgeDeleteSession", deleteVars.MemQuotaQuery, vars.MViewMaintainMemQuota)
 	failpoint.InjectCall("mvMaintainIsolationReadEnginesAppliedOnPurgeDeleteSession", variable.GetIsolationReadEnginesString(deleteVars), vars.MViewMaintainIsolationReadEngines)
-	restoreTiFlashThreads, err := applyMLogPurgeDeleteTiFlashThreads(
-		deleteVars,
-		vars.MLogPurgeDeleteTiFlashThreads,
-		isInternalSQL,
-	)
-	if err != nil {
-		return err
-	}
-	defer restoreTiFlashThreads()
 	deleteSQLExec := statshandle.AttachStatsCollector(deleteSctx.GetSQLExecutor())
 	defer statshandle.DetachStatsCollector(deleteSQLExec)
 
@@ -473,6 +465,18 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 			schemaName.O, mlogName.O, mlogShardRowIDBits, lockedLastPurgedTSO,
 			lockedLastPurgedTSOReady, safePurgeTSO, lockedNextTime,
 		)
+		// Keep COUNT at the session's original TiFlash concurrency.
+		if deletePlan == nil || deletePlan.pendingRows > 0 {
+			restoreTiFlashThreads, err := applyMLogPurgeDeleteTiFlashThreads(
+				deleteVars,
+				vars.MLogPurgeDeleteTiFlashThreads,
+				isInternalSQL,
+			)
+			if err != nil {
+				return finalizeFailure(err)
+			}
+			defer restoreTiFlashThreads()
+		}
 		if deletePlan == nil || (deletePlan.pendingRows > 0 && len(deletePlan.rowIDRanges) == 0) {
 			effectiveBatchSize = batchSize
 			for {
