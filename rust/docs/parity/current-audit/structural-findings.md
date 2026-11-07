@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**29 unresolved: 6 open, 23 partial.**
+**29 unresolved: 7 open, 22 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -46,7 +46,7 @@ unresolved until it is restated against its Go owner or closed.
 | E07 | open | BRIE statements are classified but never executed | `pkg/executor/brie.go` |
 | X01 | partial | SQL/PB signature construction and typed vector execution. The planner's `BuiltinFunctionUsageInc` (`expressionRewriter.newFunction`) is not called: it needs the function's `PbCode`, which a planner-built Rust function only gets at pushdown resolution. Go's `PbConverter` sends each builtin's own `PbCode`; this port resolves a signature again from the function's name, argument types and planned result type (`pushdown_catalog.rs` `resolve`), a second copy of each function class's signature choice that covers the functions Go's `scalarExprSupportedByTiKV` pushes. The planner decides pushability from `infer_pushdown.rs`'s name list and the executor again from that catalog's resolvability: two authorities where Go reads the builtin's `PbCode` once. | `pkg/expression` |
 | Q01 | open | No Cascades memo exploration/implementation in the production optimizer | `pkg/planner/cascades` |
-| R02 | partial | A multi-statement query's prefetch hands each statement the point plan it built (Go `PointPlanKey`: `PointPlanVal` on the statement context, taken by `optimize_query_stmt`'s and the DML planner's `TryFastPlan` step), but a cached prepared UPDATE still rebuilds its point child (`driver/dml.rs` `fast_point_source`) where Go's plan cache rebuilds the cached point plan's keys (`RebuildPlan4CachedPlan`) | `pkg/server/conn.go` (`prefetchPointPlanKeys`), `pkg/planner/optimize.go`, `pkg/planner/core` (`RebuildPlan4CachedPlan`) |
+| E20 | open | Runtime statistics render from a per-build counter map (`physical_builder::PhysicalRuntimeStats`, filled only by `execute_for_explain` for EXPLAIN ANALYZE) instead of the statement's `RuntimeStatsColl`, which Go's `Explain.RenderResult` reads for both EXPLAIN ANALYZE and `EXPLAIN FOR CONNECTION` (`buildExplainFor` hands it the target process's `RuntimeStatsColl`); so `EXPLAIN FOR CONNECTION` renders the stored plan with `actRows`, `execution info`, `memory` and `disk` as `N/A` where Go shows the last execution's (a cached prepared point UPDATE: `Update_3` actRows 0, `Point_Get_1` actRows 1, captured from a Go tidb-server), and the process registry keeps no runtime-stats collection beside the plan | `pkg/planner/core/planbuilder.go` (`buildExplainFor`), `pkg/util/processinfo.go` (`ProcessInfo.RuntimeStatsColl`), `pkg/planner/core/common_plans.go` (`Explain.RenderResult`) |
 
 ### Privileges, wire and administration
 

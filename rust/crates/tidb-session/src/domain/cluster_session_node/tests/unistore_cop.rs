@@ -29037,3 +29037,76 @@ fn admin_reload_bindings_loads_every_stored_binding() {
     assert_eq!(listed.len(), 1, "{listed:?}");
     assert_eq!(listed[0][3], "enabled");
 }
+
+/// A prepared point UPDATE or DELETE caches Go's fast point plan: Go's
+/// `Optimize` tries `TryFastPlan` when the plan cache builds a plan too, and a
+/// hit rebuilds the cached point plan's key from the EXECUTE parameters
+/// (`RebuildPlan4CachedPlan` -> `buildRangesForPointGet`), over an int handle,
+/// a unique index and a clustered common handle alike. Captured from a Go
+/// tidb-server over the wire: the second EXECUTE is a hit whose plan is the
+/// fast plan's (`Update_3` / `Delete_2` over `Point_Get_1`).
+#[test]
+fn a_prepared_point_write_caches_its_fast_point_plan_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1143)).unwrap();
+    for sql in [
+        "USE test",
+        "create table t (id int primary key, uk int, b int, unique key(uk))",
+        "create table c (a varchar(10), x int, b int, primary key(a, x) clustered)",
+        "insert into t values (1,10,0),(2,20,0)",
+        "insert into c values ('a',1,0),('b',2,0)",
+    ] {
+        session.node_conn().execute_write(sql).unwrap();
+    }
+    rows(&mut session, "set @b=5, @i=1, @u=10, @a='a', @x=1");
+    let id = displayed(rows(&mut session, "select connection_id()"))[0][0].clone();
+    for (name, sql, args, plan) in [
+        ("s1", "update t set b=? where id=?", "@b, @i", [("Update_3", ""), ("└─Point_Get_1", "table:t")]),
+        (
+            "s2",
+            "update t set b=? where uk=?",
+            "@b, @u",
+            [("Update_3", ""), ("└─Point_Get_1", "table:t, index:uk(uk)")],
+        ),
+        (
+            "s3",
+            "update c set b=? where a=? and x=?",
+            "@b, @a, @x",
+            [("Update_3", ""), ("└─Point_Get_1", "table:c, clustered index:PRIMARY(a, x)")],
+        ),
+        (
+            "s4",
+            "delete from t where uk=?",
+            "@u",
+            [("Delete_2", ""), ("└─Point_Get_1", "table:t, index:uk(uk)")],
+        ),
+    ] {
+        rows(&mut session, &format!("prepare {name} from '{sql}'"));
+        rows(&mut session, &format!("execute {name} using {args}"));
+        rows(&mut session, &format!("execute {name} using {args}"));
+        assert_eq!(
+            displayed(rows(&mut session, "select @@last_plan_from_cache")),
+            [["1"]],
+            "{name}"
+        );
+        rows(&mut session, &format!("execute {name} using {args}"));
+        let explained = displayed(rows(&mut session, &format!("explain for connection {id}")));
+        let shape: Vec<(String, String)> = explained
+            .iter()
+            .map(|row| (row[0].clone(), row[4].clone()))
+            .collect();
+        let expected: Vec<(String, String)> = plan
+            .iter()
+            .map(|(op, info)| (op.to_string(), info.to_string()))
+            .collect();
+        assert_eq!(shape, expected, "{name}");
+    }
+    assert_eq!(
+        displayed(rows(&mut session, "select * from t")),
+        [["2", "20", "0"]]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "select * from c")),
+        [["a", "1", "5"], ["b", "2", "0"]]
+    );
+}

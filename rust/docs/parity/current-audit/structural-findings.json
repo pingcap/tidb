@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 29,
-    "open": 6,
-    "partial": 23
+    "open": 7,
+    "partial": 22
   },
   "findings": [
     {
@@ -109,6 +109,13 @@
       "go_owner": "`pkg/executor/importer`, `pkg/disttask/importinto`"
     },
     {
+      "id": "E20",
+      "status": "open",
+      "group": "DML and executor handoff",
+      "finding": "Runtime statistics render from a per-build counter map (`physical_builder::PhysicalRuntimeStats`, filled only by `execute_for_explain` for EXPLAIN ANALYZE) instead of the statement's `RuntimeStatsColl`, which Go's `Explain.RenderResult` reads for both EXPLAIN ANALYZE and `EXPLAIN FOR CONNECTION` (`buildExplainFor` hands it the target process's `RuntimeStatsColl`); so `EXPLAIN FOR CONNECTION` renders the stored plan with `actRows`, `execution info`, `memory` and `disk` as `N/A` where Go shows the last execution's (a cached prepared point UPDATE: `Update_3` actRows 0, `Point_Get_1` actRows 1, captured from a Go tidb-server), and the process registry keeps no runtime-stats collection beside the plan",
+      "go_owner": "`pkg/planner/core/planbuilder.go` (`buildExplainFor`), `pkg/util/processinfo.go` (`ProcessInfo.RuntimeStatsColl`), `pkg/planner/core/common_plans.go` (`Explain.RenderResult`)"
+    },
+    {
       "id": "O09",
       "status": "partial",
       "group": "Domain and process services",
@@ -206,16 +213,9 @@
       "group": "Domain and process services",
       "finding": "Go's `ExecRestrictedSQL` / `ExecuteInternal` are methods of the issuing session (`withRestrictedSQLExecutor`); this port's executors are adapters beside it (`NodeRestrictedSql`, `SystemSqlExecutor`, `ClusterStatsSqlExecutor`, the plan replayer's `SessionSql`). The node's two apply `ExecOption`'s `SnapshotTS`, `AnalyzeVer`, `AnalyzeSnapshot`, `EnableDDLAnalyze` and `PartitionPruneMode` and restore them as Go's `useCurrentSession` / `getInternalSession` do, but with no issuing session they cannot inherit `OptimizerUseInvisibleIndexes` / `SkipMissingPartitionStats` or append the internal session's warnings to the caller's (`IgnoreWarning`), and `ClusterStatsSqlExecutor` honours the options on the auto-analyze path alone. `rebuildSysVarCache` consumes the rows the domain's sysvar reload loop last read (`SysVarCacheDeps::table_contents`) where Go's runs `fetchTableValues` itself",
       "go_owner": "`pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`)"
-    },
-    {
-      "id": "R02",
-      "status": "partial",
-      "group": "DML and executor handoff",
-      "finding": "A multi-statement query's prefetch hands each statement the point plan it built (Go `PointPlanKey`: `PointPlanVal` on the statement context, taken by `optimize_query_stmt`'s and the DML planner's `TryFastPlan` step), but a cached prepared UPDATE still rebuilds its point child (`driver/dml.rs` `fast_point_source`) where Go's plan cache rebuilds the cached point plan's keys (`RebuildPlan4CachedPlan`)",
-      "go_owner": "`pkg/server/conn.go` (`prefetchPointPlanKeys`), `pkg/planner/optimize.go`, `pkg/planner/core` (`RebuildPlan4CachedPlan`)"
     }
   ],
   "unresolved": 29,
-  "open": 6,
-  "partial": 23
+  "open": 7,
+  "partial": 22
 }
