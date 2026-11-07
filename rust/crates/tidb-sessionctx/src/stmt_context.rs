@@ -4770,11 +4770,26 @@ impl StmtContext {
 
     /// Publishes the fields derived from the retained physical tree before
     /// executor construction.
-    pub fn publish_process_plan_info(&self, plan: ProcessPlanInfo) {
+    pub fn publish_process_plan_info(&self, mut plan: ProcessPlanInfo) {
         if let Some(sink) = &self.process_plan_info {
-            *sink
+            let mut cell = sink
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = plan;
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // Go `SetProcessInfo`: a statement without a plan (a binary
+            // protocol EXECUTE's `currentPlan` is nil) keeps the last valid
+            // plan, its brief binary plan and its `RuntimeStatsColl`, so
+            // `EXPLAIN FOR CONNECTION` can still query it.
+            if plan.plan.is_none()
+                && cell.previous_plan.is_some()
+                && !cell.previous_brief_binary_plan.is_empty()
+            {
+                plan.plan = cell.previous_plan.clone();
+                plan.brief_binary_plan = cell.previous_brief_binary_plan.clone();
+                plan.runtime_stats_coll = cell.previous_runtime_stats_coll.clone();
+                plan.in_execute = cell.previous_in_execute;
+                plan.plan_retained = true;
+            }
+            *cell = plan;
         }
     }
 

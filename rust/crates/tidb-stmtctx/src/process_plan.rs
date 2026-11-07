@@ -111,6 +111,9 @@ pub struct ProcessPlanInfo {
     pub in_execute: bool,
     /// [`Self::in_execute`] of the previous statement.
     pub previous_in_execute: bool,
+    /// [`Self::plan`] is the last valid plan a statement without one kept
+    /// (Go `SetProcessInfo` while `currentPlan` is nil).
+    pub plan_retained: bool,
 
     /// Go `StmtCtx.GetPlanDigest` normalized text: the select plan with
     /// constants and statistics removed (empty without a physical select plan).
@@ -156,8 +159,9 @@ pub struct ProcessPlanInfo {
     pub statement_memory: Option<StoredPlan>,
     /// [`Self::statement_memory`] of the previous statement.
     pub previous_statement_memory: Option<StoredPlan>,
-    /// The running statement is an EXPLAIN: Go's process plan is then the
-    /// `Explain` plan, which `EXPLAIN FOR CONNECTION` renders as no rows.
+    /// Go's process plan is one `EXPLAIN FOR CONNECTION` renders as no rows:
+    /// an `Explain` plan, or the plan of a statement this port runs without a
+    /// physical one (SET, USE, DDL, transaction control).
     pub explain_marker: bool,
     /// [`Self::explain_marker`] of the previous statement.
     pub previous_explain: bool,

@@ -29262,6 +29262,76 @@ fn an_analyzed_autocommit_write_renders_after_its_commit_like_go() {
     );
 }
 
+/// Go's process plan follows every compiled statement: a SET, USE, DDL or
+/// transaction-control statement's plan renders no rows under `EXPLAIN FOR
+/// CONNECTION`, while a binary-protocol EXECUTE's plan is nil
+/// (`runStmt`'s `currentPlan = nil` for `execStmt.Name == ""`) and
+/// `SetProcessInfo` keeps the last valid plan. Captured from a Go
+/// tidb-server over the wire.
+#[test]
+fn explain_for_connection_follows_gos_process_plan() {
+    use tidb_param::PreparedValue;
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1151)).unwrap();
+    for sql in [
+        "USE test",
+        "create table t (id int primary key, uk int, b int, unique key(uk))",
+        "insert into t values (1,10,0),(2,20,0),(3,30,0)",
+    ] {
+        session.node_conn().execute_write(sql).unwrap();
+    }
+    let id = displayed(rows(&mut session, "select connection_id()"))[0][0].clone();
+    let mut target = stack.factory.open_session(session_context(1152)).unwrap();
+    let ids = |target: &mut crate::Session| -> Vec<String> {
+        displayed(rows(target, &format!("explain for connection {id}")))
+            .into_iter()
+            .map(|row| row[0].clone())
+            .collect()
+    };
+    for sql in ["set @x=1", "use test", "create table if not exists t2 (a int)", "begin", "commit"] {
+        rows(&mut session, "select * from t where b > 0");
+        rows(&mut session, sql);
+        assert!(ids(&mut target).is_empty(), "{sql}: {:?}", ids(&mut target));
+    }
+    rows(&mut session, "do 1");
+    assert_eq!(ids(&mut target), ["Projection_3", "└─TableDual_4"]);
+    // The binary EXECUTEs keep `do 1`'s plan.
+    let update = session.node_conn().prepare_general("update t set b=? where id=?").unwrap();
+    let point = session.node_conn().prepare_general("select b from t where uk=?").unwrap();
+    for _ in 0..3 {
+        drop(
+            session
+                .node_conn()
+                .execute_general(&update, &[PreparedValue::SignedLongLong(5), PreparedValue::SignedLongLong(1)])
+                .unwrap(),
+        );
+        assert_eq!(ids(&mut target), ["Projection_3", "└─TableDual_4"]);
+        drop(session.node_conn().execute_general(&point, &[PreparedValue::SignedLongLong(10)]).unwrap());
+        assert_eq!(ids(&mut target), ["Projection_3", "└─TableDual_4"]);
+    }
+}
+
+/// Go folds the information functions as `NewFunction` builds them, against
+/// the session: the plan carries their values. Captured from a Go
+/// tidb-server over the wire (`<nil>` before a database is selected).
+#[test]
+fn information_functions_fold_into_the_plan_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1153)).unwrap();
+    let id = displayed(rows(&mut session, "select connection_id()"))[0][0].clone();
+    let info = |session: &mut crate::Session, sql: &str| -> String {
+        displayed(rows(session, sql))[0].last().unwrap().clone()
+    };
+    assert_eq!(info(&mut session, "explain select connection_id()"), format!("{id}->Column#1"));
+    assert_eq!(info(&mut session, "explain select database()"), "<nil>->Column#1");
+    assert_eq!(
+        info(&mut session, "explain select current_role(), current_resource_group()"),
+        "NONE->Column#1, default->Column#2"
+    );
+    rows(&mut session, "use test");
+    assert_eq!(info(&mut session, "explain select database(), schema()"), "test->Column#1, test->Column#2");
+}
+
 /// A write's root carries its transaction's commit statistics: Go's
 /// `FinishExecuteStmt` registers `RuntimeStatsWithCommit` on the plan's root
 /// in the statement's `RuntimeStatsColl`, before the connection goes to sleep

@@ -1581,14 +1581,6 @@ impl Session {
                 return Ok(output);
             }
         }
-        if matches!(&stmt, Stmt::Admin(admin) if matches!(admin.as_ref(),
-            tidb_ast::AdminStmt::Explain(_) | tidb_ast::AdminStmt::ExplainFor(_)))
-        {
-            self.process_plan_info
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .explain_marker = true;
-        }
         // The pessimistic lock step and its retry are the store session's
         // statement loop (Go `handlePessimisticDML`, `StatementLifecycle`).
         let execution =

@@ -888,6 +888,9 @@ pub struct Session {
     binary_prepared_execution: bool,
     /// The running statement is a text `EXECUTE`.
     in_execute: bool,
+    /// Go `currentPlan` is nil for the running statement: a binary-protocol
+    /// EXECUTE, whose process info keeps the last valid plan.
+    current_plan_nil: bool,
     /// An autocommit `EXPLAIN ANALYZE` write waiting for its statement's
     /// commit to render (Go `IsExplainAnalyzeDML`).
     pending_explain_analyze: Option<tidb_executor::AnalyzedWrite>,
@@ -1086,6 +1089,7 @@ impl Session {
             last_ruv2_metrics: None,
             binary_prepared_execution: false,
             in_execute: false,
+            current_plan_nil: false,
             pending_explain_analyze: None,
             node: Some(node),
         }
@@ -1979,6 +1983,55 @@ impl Session {
     /// This is Go's `SetProcessInfo(..., mysql.ComSleep, ...)` once a statement
     /// is over, which encodes the brief binary plan again with what the
     /// finished statement measured.
+    /// Go `SetProcessInfo` as a statement starts: the published plan fields
+    /// reset, the finished statement's plan moving to the previous slot unless
+    /// its plan was nil.
+    pub(crate) fn begin_process_plan_info(&mut self) {
+        self.current_plan_nil = self.binary_prepared_execution;
+        {
+            let mut cell = self
+                .process_plan_info
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // Go `SetProcessInfo` keeps the last valid plan while a
+            // statement's plan is nil (a binary EXECUTE, a statement that
+            // failed before it planned); any other plan replaces it.
+            let mut previous = std::mem::take(&mut *cell);
+            if previous.plan.is_some() || previous.explain_marker {
+                previous.previous_plan = previous.plan.take();
+                previous.previous_runtime_stats_coll = previous.runtime_stats_coll.take();
+                previous.previous_statement_memory = previous.statement_memory.take();
+                previous.previous_explain = previous.explain_marker;
+                previous.previous_brief_binary_plan = std::mem::take(&mut previous.brief_binary_plan);
+                previous.previous_in_execute = previous.in_execute;
+            }
+            cell.previous_plan = previous.previous_plan;
+            cell.previous_brief_binary_plan = previous.previous_brief_binary_plan;
+            cell.previous_in_execute = previous.previous_in_execute;
+            cell.previous_runtime_stats_coll = previous.previous_runtime_stats_coll;
+            cell.previous_statement_memory = previous.previous_statement_memory;
+            cell.previous_explain = previous.previous_explain;
+        }
+    }
+
+    pub(crate) fn mark_planless_statement(&self, succeeded: bool) {
+        // Go `runStmt` publishes every compiled statement's plan: one this
+        // port ran without a physical plan (SET, USE, DDL, transaction
+        // control) has a Go plan that renders no rows, while a binary
+        // EXECUTE's plan is nil and a failed one may never have planned, so
+        // both keep the last valid plan.
+        if !succeeded || self.current_plan_nil {
+            return;
+        }
+        let mut cell = self
+            .process_plan_info
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if cell.plan.is_none() {
+            cell.explain_marker = true;
+        }
+    }
+
     pub fn refresh_process_status(&self) {
         {
             let mut cell = self
@@ -2723,25 +2776,7 @@ impl Session {
             previous.statement_memory().finish_statement();
         }
         self.stmt_hints = tidb_hint::StmtHints::default();
-        {
-            let mut cell = self
-                .process_plan_info
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let previous_plan = cell.plan.take();
-            let previous_runtime_stats_coll = cell.runtime_stats_coll.take();
-            let previous_statement_memory = cell.statement_memory.take();
-            let previous_explain = cell.explain_marker;
-            let previous_brief_binary_plan = std::mem::take(&mut cell.brief_binary_plan);
-            let previous_in_execute = cell.in_execute;
-            *cell = tidb_stmtctx::ProcessPlanInfo::default();
-            cell.previous_plan = previous_plan;
-            cell.previous_brief_binary_plan = previous_brief_binary_plan;
-            cell.previous_in_execute = previous_in_execute;
-            cell.previous_runtime_stats_coll = previous_runtime_stats_coll;
-            cell.previous_statement_memory = previous_statement_memory;
-            cell.previous_explain = previous_explain;
-        }
+        self.begin_process_plan_info();
         self.check_sandbox_mode(sql)?;
         self.begin_statement_observation(sql);
         // A statement is visible to a peer's SHOW PROCESSLIST for exactly as
@@ -3007,6 +3042,7 @@ impl Session {
                 .report();
         }
         if self.routed_statement_observation_depth == 0 {
+            self.mark_planless_statement(result.is_ok());
             self.refresh_process_status();
         }
         let mut error_row = None;

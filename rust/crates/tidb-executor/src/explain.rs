@@ -3478,10 +3478,13 @@ pub fn process_plan_info_with_brief(
             fast_candidate,
             PhysicalPlan::PointGet(_) | PhysicalPlan::TableDual(_)
         ),
-        plan: Some(crate::StoredPlan::new(stored)),
+        // Go `runStmt`: a binary-protocol EXECUTE's `currentPlan` is nil, so
+        // its process info publishes no plan.
+        plan: with_brief.then(|| crate::StoredPlan::new(stored)),
         // Go `SetProcessInfo`'s `RuntimeStatsColl: sc.RuntimeStatsColl`.
         runtime_stats_coll: statement_context
             .executor_runtime_stats_source()
+            .filter(|_| with_brief)
             .map(|source| crate::StoredPlan::new(std::sync::Arc::new(std::sync::Arc::clone(source)))),
         statement_memory: Some(crate::StoredPlan::new(std::sync::Arc::new(statement_context.statement_memory()))),
         plan_source: Some(plan_source),

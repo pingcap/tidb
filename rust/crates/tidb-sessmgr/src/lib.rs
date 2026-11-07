@@ -891,6 +891,9 @@ impl ProcessRegistry {
                             in_execute: cell.previous_in_execute,
                         })
                     };
+                    if current.is_none() && cell.explain_marker {
+                        return ProcessPlan::Explain;
+                    }
                     match current.or_else(previous) {
                         Some(published) => ProcessPlan::Plan(published),
                         None if cell.previous_explain => ProcessPlan::Explain,

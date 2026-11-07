@@ -180,7 +180,7 @@ fn fold_current_value_in(
         Expression::ScalarFunction(func) => func,
         _ => return None,
     };
-    if is_unfoldable_call(func.func_name.lowercase(), func.args.len()) {
+    if is_unfoldable_in(func.func_name.lowercase(), func.args.len(), ctx) {
         return None;
     }
     if let Some(folded) = special_fold(expr, func, ctx) {
@@ -634,6 +634,34 @@ pub fn is_unfoldable(name: &str) -> bool {
             | "setval"
             | "any_value"
     )
+}
+
+/// Go folds the information functions as `NewFunction` builds them, against
+/// the live session (`CurrentDB`, `CurrentUserPropReader`,
+/// `SessionVarsPropReader`): `CONNECTION_ID()` becomes its connection's id
+/// in the plan. A context with no session behind it (the planner's zone-only
+/// fallback, a scope rebuilt without its statement) cannot answer them, so
+/// there they stay calls for the live session to evaluate.
+fn is_unfoldable_in(name: &str, arg_count: usize, ctx: &dyn crate::Columns) -> bool {
+    let reads_session = matches!(
+        name,
+        "database"
+            | "schema"
+            | "current_user"
+            | "current_role"
+            | "current_resource_group"
+            | "user"
+            | "session_user"
+            | "system_user"
+            | "connection_id"
+            | "row_count"
+            | "version"
+            | "tidb_version"
+    );
+    if reads_session {
+        return ctx.connection_id().is_none();
+    }
+    is_unfoldable_call(name, arg_count)
 }
 
 /// Go does not classify `LAST_INSERT_ID` in `unFoldableFunctions`: the

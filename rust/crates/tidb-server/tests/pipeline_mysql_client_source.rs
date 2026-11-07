@@ -3160,10 +3160,18 @@ fn lazy_cursor_fetch_detaches_and_tracks_the_cursor_like_go() {
     assert_eq!((ids(rows), status), (strings(&["3", "4", "5"]), 0x0082));
     assert_eq!(settled_cursor_start_ts(&mut client, &mut reader, &processes), Vec::<u64>::new());
 
+    // `CONNECTION_ID()` folds into the plan as Go's `NewFunction` builds it
+    // (`plus(1, test.t1.id)` in a Go testkit), so its projection detaches.
+    let (folded, _, _) = prepare_statement(&mut client, &mut reader, "SELECT connection_id() + id FROM t1");
+    execute_with_cursor(&mut client, &mut reader, folded, &[]);
+    assert_eq!(tracked_cursor_start_ts(&processes).len(), 1);
+    fetch_rows(&mut client, &mut reader, folded, 10, &types);
+    assert_eq!(settled_cursor_start_ts(&mut client, &mut reader, &processes), Vec::<u64>::new());
+
     // A root Limit does not detach (Go `BaseExecutorV2.Detach`), and neither
-    // does a projection reading an optional property (`connection_id()`):
-    // both take the eager cursor.
-    for sql in ["SELECT id FROM t1 LIMIT 3", "SELECT connection_id() + id FROM t1"] {
+    // does a projection reading an optional property (`FOUND_ROWS()` reads
+    // the session variables): both take the eager cursor.
+    for sql in ["SELECT id FROM t1 LIMIT 3", "SELECT found_rows() + id FROM t1"] {
         let (eager, _, _) = prepare_statement(&mut client, &mut reader, sql);
         let (_, status) = execute_with_cursor(&mut client, &mut reader, eager, &[]);
         assert_eq!(status, 0x0042, "{sql}");

@@ -824,6 +824,7 @@ impl Session {
         // The outer routed execution owns one LazyTxn.onStmtStart, including
         // transaction control and SET. Its inner executor only republishes.
         if self.routed_statement_observation_depth == 0 {
+            self.begin_process_plan_info();
             self.routed_statement_kind = Some(crate::classify::statement_kind_of(stmt));
             if let Some(guard) = &self.process {
                 let digest = self
@@ -879,6 +880,7 @@ impl Session {
             }
             self.finish_routed_statement_warnings(succeeded);
             self.publish_statement_observation(succeeded, affected_rows, 0, error);
+            self.mark_planless_statement(succeeded);
             self.refresh_process_status();
         }
     }
@@ -897,6 +899,11 @@ impl Session {
             .process_plan_info
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // A statement whose own plan is nil (a binary EXECUTE) keeps the last
+        // valid plan, whose collector is not this statement's.
+        if cell.plan_retained {
+            return;
+        }
         let plan = cell
             .plan
             .as_ref()

@@ -5668,15 +5668,19 @@ fn binary_prepared_execution_keeps_plan_detail_out_of_the_process_list() {
     session.run("INSERT INTO src VALUES (1)").unwrap();
 
     // Go `executeStmtImpl`: a binary-protocol EXECUTE (`execStmt.Name == ""`)
-    // clears `currentPlan`, so `SHOW PROCESSLIST` carries no plan detail for
-    // it, while `StmtCtx.TableIDs`/`IndexNames` are still collected.
+    // clears `currentPlan`, so its own plan detail stays out of the process
+    // list -- `SetProcessInfo` keeps the last valid plan's brief binary plan,
+    // the INSERT's -- while `StmtCtx.TableIDs`/`IndexNames` are still
+    // collected.
     session.set_binary_prepared_execution(true);
     session
         .run("SELECT a FROM src USE INDEX (ia) WHERE a > 0")
         .unwrap();
     let info = tidb_sessmgr::processinfo::SessionManager::get_process_info(&registry, 42)
         .expect("registered process");
-    assert_eq!(info.brief_binary_plan, "");
+    let kept = tidb_plancodec::decode_binary_plan_for_connection(info.brief_binary_plan.clone(), "row", false)
+        .unwrap();
+    assert_eq!(kept[0][0], "Insert_1", "{kept:?}");
     assert_eq!(info.index_names, ["src:ia"]);
 
     // The span ends with the EXECUTE; an ordinary statement publishes again.
