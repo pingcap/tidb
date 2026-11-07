@@ -11,7 +11,7 @@
       "id": "A01",
       "status": "partial",
       "group": "Privilege and account policy owners",
-      "finding": "A query, INSERT, UPDATE or DELETE is checked over the visit infos of the build that plans it (`table_privilege::check_plan_privilege`: a query's before it is optimized, a DML's once it is built, a point plan's through `check_fast_plan_privilege`). PREPARE and a new non-prepared plan-cache entry still collect their `VisitInfos` with the visit-only builds `query_visit_info` / `dml_visit_info` (`Session::collect_table_privileges`) and build their plans separately, where Go's `GeneratePlanCacheStmtWithAST` keeps those of its one `PlanBuilder.Build`; plain `EXPLAIN INSERT`, which plans no VALUES or ON DUPLICATE expressions (Go's `buildInsert` does), checks the visit-only pass's; and an INSERT's visit infos come from the separate builders of its target, source and values, where Go's `buildInsert` has one `PlanBuilder`",
+      "finding": "A query, INSERT, UPDATE or DELETE is checked over the visit infos of the build that plans it (`table_privilege::check_plan_privilege`: a query's before it is optimized, a DML's once it is built, a point plan's through `check_fast_plan_privilege`). PREPARE and a new non-prepared plan-cache entry still collect their `VisitInfos` with the visit-only builds `query_visit_info` / `dml_visit_info` (`Session::collect_table_privileges`) and build their plans separately, where Go's `GeneratePlanCacheStmtWithAST` keeps those of its one `PlanBuilder.Build`; and an INSERT's visit infos come from the separate builders of its target, source and values, where Go's `buildInsert` has one `PlanBuilder`",
       "go_owner": "`pkg/planner/core` (`visitInfo`, `CheckPrivilege`, `GeneratePlanCacheStmtWithAST`)"
     },
     {

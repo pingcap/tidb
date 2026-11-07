@@ -161,25 +161,11 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
     // Go `buildInsert` evaluates the values' uncorrelated subqueries while
     // it plans: the VALUES lists, then (after an INSERT ... SELECT's source
     // was optimized) the ON DUPLICATE assignments.
-    let planned = {
-        let select = match physical_plan.as_deref() {
-            Some(tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(root)) => root
-                .select_plan
-                .as_deref()
-                .and_then(|plan| plan.schema())
-                .zip(root.insert_select.as_ref()),
-            _ => None,
-        };
-        plan_insert(insert, select, catalog, current_db, ctx)?
-    };
+    let planned = plan_insert_over(insert, physical_plan.as_deref(), catalog, current_db, ctx)?;
     // Go `planner.optimize`'s `CheckPrivilege` / `CheckTableLock` once
-    // `buildInsert` returned: its target's visit infos, the source's, then
-    // the ON DUPLICATE assignments'.
+    // `buildInsert` returned.
     if let Some(source_visits) = source_visits {
-        let mut visits = planned.target_visits.clone();
-        visits.extend(source_visits);
-        visits.extend(planned.visits.iter().cloned());
-        crate::table_privilege::check_plan_privilege(ctx, catalog, &visits)?;
+        crate::table_privilege::check_plan_privilege(ctx, catalog, &planned.statement_visits(source_visits))?;
     }
     optimize.end();
     if let Some(plan) = physical_plan.as_deref_mut() {
@@ -1125,6 +1111,40 @@ pub(crate) struct PlannedInsert {
 /// "complex subqueries" refusal (issue 30626); an ON DUPLICATE assignment's
 /// `ErrSubqueryMoreThan1Row` stays on the assignment for the row that meets a
 /// duplicate (issue 29260).
+impl PlannedInsert {
+    /// Go `buildInsert`'s visit infos: its target's, the source's, then the
+    /// values' and ON DUPLICATE assignments'.
+    pub(crate) fn statement_visits(
+        &self,
+        source_visits: Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
+    ) -> Vec<tidb_planner::plan_builder::visit_info::VisitInfo> {
+        let mut visits = self.target_visits.clone();
+        visits.extend(source_visits);
+        visits.extend(self.visits.iter().cloned());
+        visits
+    }
+}
+
+/// [`plan_insert`] over the physical plan of the INSERT, whose `INSERT ...
+/// SELECT` source (if any) the expressions are resolved after.
+pub(crate) fn plan_insert_over(
+    insert: &tidb_ast::InsertStmt,
+    physical: Option<&tidb_planner_core_operator_physicalop::PhysicalPlan>,
+    catalog: &SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<PlannedInsert, DriverError> {
+    let select = match physical {
+        Some(tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(root)) => root
+            .select_plan
+            .as_deref()
+            .and_then(|plan| plan.schema())
+            .zip(root.insert_select.as_ref()),
+        _ => None,
+    };
+    plan_insert(insert, select, catalog, current_db, ctx)
+}
+
 fn plan_insert(
     insert: &tidb_ast::InsertStmt,
     select: Option<(

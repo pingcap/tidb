@@ -8542,3 +8542,30 @@ fn an_expression_group_key_runs_in_the_coprocessor_as_go() {
         .unwrap_or_else(|| panic!("no cop HashAgg in {explained:?}"));
     assert!(cop_agg[5].starts_with("tikv_task:{"), "{cop_agg:?}");
 }
+
+/// Go `buildInsert` plans the VALUES lists and the ON DUPLICATE assignments
+/// under a plain EXPLAIN too, so their errors surface without executing.
+/// Go (`gorun`, mockstore): 1054 `nosuch` in 'field list', 1054 `nosuch2` in
+/// 'field list', 1146 `test.nosuchtable`, and a plan for `b + 1`.
+#[test]
+fn explain_insert_plans_its_values_and_on_duplicate_like_go() {
+    let mut session = Session::new();
+    session.run("create table t(a int primary key, b int)").unwrap();
+    let error = |session: &mut Session, sql: &str| {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        (error.code, error.message)
+    };
+    assert_eq!(
+        error(&mut session, "explain insert into t values (1, nosuch)"),
+        (1054, "Unknown column 'nosuch' in 'field list'".to_owned())
+    );
+    assert_eq!(
+        error(&mut session, "explain insert into t values (1, 2) on duplicate key update b = nosuch2"),
+        (1054, "Unknown column 'nosuch2' in 'field list'".to_owned())
+    );
+    assert_eq!(
+        error(&mut session, "explain insert into t values (1, (select 1 from nosuchtable))"),
+        (1146, "Table 'test.nosuchtable' doesn't exist".to_owned())
+    );
+    session.run("explain insert into t values (1, b + 1)").unwrap();
+}

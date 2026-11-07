@@ -4051,17 +4051,11 @@ pub fn explain_insert_stmt(
     let mut source_visits = Vec::new();
     let physical =
         crate::driver::physical_insert_plan(insert, catalog, current_db, ctx, &mut source_visits)?;
-    // Go `planner.optimize`'s `CheckPrivilege` once `buildInsert` returned.
-    // This plain EXPLAIN plans no VALUES or ON DUPLICATE expressions (Go's
-    // `buildInsert` does), so their visit infos come from the visit-only pass.
-    let _ = source_visits;
-    let visits = crate::driver::dml_visit_info(
-        &tidb_ast::DmlStmt::Insert(Box::new(insert.clone())),
-        catalog,
-        current_db,
-        ctx,
-    )?;
-    crate::table_privilege::check_plan_privilege(ctx, catalog, &visits)?;
+    // Go `buildInsert` plans the VALUES lists and the ON DUPLICATE
+    // assignments under EXPLAIN as well, and `planner.optimize`'s
+    // `CheckPrivilege` reads that build's visit infos.
+    let planned = crate::driver::plan_insert_over(insert, Some(&physical), catalog, current_db, ctx)?;
+    crate::table_privilege::check_plan_privilege(ctx, catalog, &planned.statement_visits(source_visits))?;
     // The source's own width: Go appends ON DUPLICATE fields past it.
     let select_width = match &physical {
         PhysicalPlan::Dml(root) => root.select_plan.as_deref().and_then(|select| {
