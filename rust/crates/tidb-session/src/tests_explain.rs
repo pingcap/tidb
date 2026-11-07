@@ -8204,6 +8204,241 @@ fn a_sum_over_json_extract_runs_in_the_coprocessor_as_go() {
     assert!(cop_agg[5].starts_with("tikv_task:{"), "{cop_agg:?}");
 }
 
+/// Go's math builtins push down (`scalarExprSupportedByTiKV`) with the
+/// signature their function class picks: `sqrtFunctionClass` &c over an
+/// `ETReal` argument, `ast.Ln` as `Log1Arg`, `signFunctionClass`'s `ETInt`
+/// result, and CEIL/FLOOR by `getEvalTp4FloorAndCeil` (a narrow DECIMAL
+/// answers `*DecToInt`, a wide one `*DecToDec`). gorun pushes every one into
+/// the coprocessor's HashAgg and answers these sums.
+#[test]
+fn math_builtins_run_in_the_coprocessor_as_go() {
+    let mut session = Session::new();
+    session
+        .run("create table m (a int, d decimal(10,2), r double, w decimal(30,2))")
+        .unwrap();
+    session
+        .run("insert into m values (4, 2.50, 2.25, 123456789012345678901.50), (9, -1.50, 0.5, -2.50)")
+        .unwrap();
+    let sql = "select sum(sqrt(a)), sum(ceil(d)), sum(floor(r)), sum(sign(d)), sum(log(a)), \
+               sum(ln(r)), sum(log2(a)), sum(log10(a)), sum(exp(r)), sum(degrees(r)), \
+               sum(radians(a)), sum(log(2, a)), sum(ceil(w)), sum(floor(w)) from m";
+    assert_eq!(
+        row_text(session.run(sql)),
+        [[
+            "5",
+            "2",
+            "2",
+            "0",
+            "3.58351893845611",
+            "0.11778303565638348",
+            "5.169925001442312",
+            "1.5563025007672873",
+            "11.136457107058654",
+            "157.5633936609764",
+            "0.22689280275926282",
+            "5.169925001442312",
+            "123456789012345678900",
+            "123456789012345678898",
+        ]]
+    );
+    let explained = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+    let cop_agg = explained
+        .iter()
+        .find(|row| row[3] == "cop[tikv]" && row[0].contains("HashAgg_"))
+        .unwrap_or_else(|| panic!("no cop HashAgg in {explained:?}"));
+    assert!(cop_agg[5].starts_with("tikv_task:{"), "{cop_agg:?}");
+    // A pushed group key carries its signature's result type.
+    for (sql, expected) in [
+        ("select ceil(d), count(*) from m group by ceil(d) order by 1", [["-1", "1"], ["3", "1"]]),
+        (
+            "select floor(w), count(*) from m group by floor(w) order by 1",
+            [["-3", "1"], ["123456789012345678901", "1"]],
+        ),
+    ] {
+        assert_eq!(row_text(session.run(sql)), expected, "{sql}");
+    }
+}
+
+/// Go's operators push down (`scalarExprSupportedByTiKV`): the bit and shift
+/// operators' `ETInt` signatures, `bitneg`, `xor` over `IsTrue`-wrapped
+/// arguments, `unaryminus` by its result type, and `<=>` in every comparison
+/// family. gorun pushes all of them into the coprocessor's HashAgg and answers
+/// these sums.
+#[test]
+fn operators_run_in_the_coprocessor_as_go() {
+    let mut session = Session::new();
+    session
+        .run("create table o (a int, b int, d decimal(10,2), r double, s varchar(10), t datetime)")
+        .unwrap();
+    session
+        .run(
+            "insert into o values (6, 3, 2.5, 0.5, 'x', '2020-01-01'), \
+             (5, null, -1.5, null, null, null), (0, 0, null, 2, 'y', '2021-01-01')",
+        )
+        .unwrap();
+    let sql = "select sum(a & b), sum(a | b), sum(a ^ b), sum(a << 2), sum(a >> 1), sum(~a), \
+               sum(-a), sum(-d), sum(-r), sum(a xor b), sum(a <=> b), sum(s <=> 'x'), \
+               sum(d <=> 2.5), sum(r <=> 0.5), sum(t <=> '2020-01-01') from o";
+    assert_eq!(
+        row_text(session.run(sql)),
+        [[
+            "2",
+            "7",
+            "5",
+            "44",
+            "5",
+            "55340232221128654834",
+            "-11",
+            "-1.00",
+            "-2.5",
+            "0",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+        ]]
+    );
+    let explained = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+    let cop_agg = explained
+        .iter()
+        .find(|row| row[3] == "cop[tikv]" && row[0].contains("HashAgg_"))
+        .unwrap_or_else(|| panic!("no cop HashAgg in {explained:?}"));
+    assert!(cop_agg[5].starts_with("tikv_task:{"), "{cop_agg:?}");
+}
+
+/// Go's string builtins push down (`scalarExprSupportedByTiKV`) with their
+/// function classes' signatures -- the byte or UTF-8 REVERSE/RIGHT by the
+/// argument's binary-ness, FIELD by its arguments' common type, HEX by its
+/// argument's type -- and the coprocessor evaluates each with TiDB's own
+/// builtin. gorun pushes all of them into the coprocessor's HashAgg and
+/// answers these values.
+#[test]
+fn string_builtins_run_in_the_coprocessor_as_go() {
+    let mut session = Session::new();
+    session.run("create table st (s varchar(10), p varchar(10), n int)").unwrap();
+    session
+        .run("insert into st values ('abc', '  x  ', 2), ('b', ' y', 1), (null, 'z ', null)")
+        .unwrap();
+    let sql = "select sum(ascii(s)), sum(bit_length(s)), sum(strcmp(s, 'b')), \
+               sum(length(reverse(s))), max(reverse(s)), max(right(s, 2)), \
+               max(replace(s, 'a', 'zz')), max(ltrim(p)), max(rtrim(p)), sum(length(space(n))), \
+               max(elt(n, s, 'q', 'r')), sum(field(s, 'abc', 'b')), sum(field(n, 1, 2)), \
+               sum(field(n, 1.5, 2)), max(hex(s)), max(hex(n)) from st";
+    assert_eq!(
+        row_text(session.run(sql)),
+        [[
+            "195", "32", "-1", "4", "cba", "bc", "zzbc", "z ", "z", "3", "q", "3", "3", "2", "62", "2",
+        ]]
+    );
+    let explained = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+    let cop_agg = explained
+        .iter()
+        .find(|row| row[3] == "cop[tikv]" && row[0].contains("HashAgg_"))
+        .unwrap_or_else(|| panic!("no cop HashAgg in {explained:?}"));
+    assert!(cop_agg[5].starts_with("tikv_task:{"), "{cop_agg:?}");
+}
+
+/// Go's date builtins push down (`scalarExprSupportedByTiKV`) with their
+/// function classes' signatures and the coprocessor evaluates each with
+/// TiDB's own builtin; gorun pushes all of them into the coprocessor's
+/// HashAgg and answers these values (MAKETIME clamps to `838:59:59`).
+#[test]
+fn date_builtins_run_in_the_coprocessor_as_go() {
+    let mut session = Session::new();
+    session.run("create table dt (t datetime, n int, d time)").unwrap();
+    session
+        .run(
+            "insert into dt values ('2020-03-15 10:00:00', 738000, '01:02:03'), \
+             ('2021-12-31 00:00:00', 2, '-00:00:10'), (null, null, null)",
+        )
+        .unwrap();
+    let sql = "select sum(dayofmonth(t)), sum(dayofweek(t)), sum(dayofyear(t)), \
+               sum(weekofyear(t)), sum(year(t)), max(monthname(t)), max(from_days(n)), \
+               max(makedate(2020, n)), max(maketime(n, 30, 1.5)), sum(time_to_sec(d)) from dt";
+    assert_eq!(
+        row_text(session.run(sql)),
+        [["46", "7", "440", "63", "4041", "March", "2020-07-29", "4040-07-28", "838:59:59.0", "3713"]]
+    );
+    let explained = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+    let cop_agg = explained
+        .iter()
+        .find(|row| row[3] == "cop[tikv]" && row[0].contains("HashAgg_"))
+        .unwrap_or_else(|| panic!("no cop HashAgg in {explained:?}"));
+    assert!(cop_agg[5].starts_with("tikv_task:{"), "{cop_agg:?}");
+}
+
+/// Go's JSON builtins push down (`scalarExprSupportedByTiKV`) with their
+/// function classes' signatures (JSON_VALID's by its argument's type) and the
+/// coprocessor evaluates each with TiDB's own builtin; gorun pushes all of
+/// them into the coprocessor's HashAgg and answers these values.
+#[test]
+fn json_builtins_run_in_the_coprocessor_as_go() {
+    let mut session = Session::new();
+    session.run("create table js (j json, s varchar(20), n int)").unwrap();
+    session
+        .run(r#"insert into js values ('{"a": 1}', '"x"', 1), ('[1, 2]', 'bad', null)"#)
+        .unwrap();
+    let sql = "select max(json_type(j)), max(json_unquote(s)), sum(json_length(j)), \
+               sum(json_length(j, '$.a')), max(json_object('k', j)), max(json_array(j, 1)), \
+               max(json_merge(j, '[9]')), max(json_set(j, '$.b', 2)), max(json_insert(j, '$.c', 3)), \
+               max(json_remove(j, '$.a')), sum(json_contains(j, '1', '$.a')), sum(json_valid(s)), \
+               sum(json_valid(j)), sum(json_valid(n)) from js";
+    assert_eq!(
+        row_text(session.run(sql)),
+        [[
+            "OBJECT",
+            "x",
+            "3",
+            "1",
+            r#"{"k": [1, 2]}"#,
+            "[[1, 2], 1]",
+            r#"[{"a": 1}, 9]"#,
+            "[1, 2]",
+            "[1, 2]",
+            "[1, 2]",
+            "1",
+            "1",
+            "2",
+            "0",
+        ]]
+    );
+    let explained = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+    let cop_agg = explained
+        .iter()
+        .find(|row| row[3] == "cop[tikv]" && row[0].contains("HashAgg_"))
+        .unwrap_or_else(|| panic!("no cop HashAgg in {explained:?}"));
+    assert!(cop_agg[5].starts_with("tikv_task:{"), "{cop_agg:?}");
+}
+
+/// Go's SHA1, SHA2, UNCOMPRESSED_LENGTH and LIKE (with its escape) push down
+/// (`scalarExprSupportedByTiKV`); gorun pushes them into the coprocessor's
+/// HashAgg and answers these values.
+#[test]
+fn hash_and_like_builtins_run_in_the_coprocessor_as_go() {
+    let mut session = Session::new();
+    session.run("create table sh (s varchar(20))").unwrap();
+    session.run("insert into sh values ('abc'), ('a%x'), (null)").unwrap();
+    let sql = "select max(sha1(s)), max(sha2(s, 256)), sum(uncompressed_length(s)), \
+               sum(s like 'a%'), sum(s like 'a|%' escape '|') from sh";
+    assert_eq!(
+        row_text(session.run(sql)),
+        [[
+            "ea9fb0f318d16364ccb02915c6903ea6772c4ae7",
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            "0",
+            "2",
+            "0",
+        ]]
+    );
+    let explained = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+    let cop_agg = explained
+        .iter()
+        .find(|row| row[3] == "cop[tikv]" && row[0].contains("HashAgg_"))
+        .unwrap_or_else(|| panic!("no cop HashAgg in {explained:?}"));
+    assert!(cop_agg[5].starts_with("tikv_task:{"), "{cop_agg:?}");
+}
+
 /// Go `Aggregation.GroupBy` carries any key the coprocessor evaluates: gorun
 /// pushes `group by:plus(test.t.a, 1), funcs:count(1),
 /// funcs:firstrow(test.t.a)` to TiKV and answers `2|2`, `3|1`, `4|1`.

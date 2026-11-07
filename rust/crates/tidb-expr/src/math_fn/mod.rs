@@ -405,7 +405,7 @@ pub(crate) fn abs(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError>
 /// every kind outside `ETInt`/`ETDecimal` reaches `builtinSignSig`'s real
 /// form, so the catch-all is the ETReal signature (captured: `SIGN(b'11')`
 /// is 1, `SIGN(<enum>)` is 1).
-fn sign(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn sign(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [v] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
@@ -454,7 +454,7 @@ fn checked_ln(x: f64) -> Datum {
     }
 }
 
-fn sqrt(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn sqrt(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [v] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
@@ -468,7 +468,7 @@ fn sqrt(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     })
 }
 
-fn ln(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn ln(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [v] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
@@ -489,7 +489,7 @@ fn ln(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
 
 /// `LOG(x)` (1 argument, natural log — identical to `LN`) or `LOG(base,
 /// x)` (2 arguments, log base `base` of `x`).
-fn log(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn log(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     match vals {
         [_] => ln(vals, ctx),
         [b, x] => {
@@ -511,7 +511,7 @@ fn log(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     }
 }
 
-fn log2(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn log2(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [v] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
@@ -532,7 +532,7 @@ fn log2(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     })
 }
 
-fn log10(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn log10(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [v] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
@@ -574,7 +574,7 @@ pub(crate) fn pow(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError>
     })
 }
 
-fn exp(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn exp(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [v] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
@@ -657,7 +657,7 @@ pub(crate) fn cot(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError>
 }
 
 /// Go `builtinRadiansSig.evalReal`: `x * (math.Pi / 180)`, with no range check.
-fn radians(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn radians(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [v] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
@@ -670,7 +670,7 @@ fn radians(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
 /// Go `builtinDegreesSig.evalReal`: `val * 180 / math.Pi` (that association,
 /// which differs from `val * (180 / Pi)` in the last place), with no range
 /// check: `DEGREES(1e308)` is `+Inf`.
-fn degrees(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn degrees(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [v] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };

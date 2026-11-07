@@ -764,7 +764,9 @@ impl ScalarFunction {
             ret_type.eval_type(),
         )?;
         let function = Self {
-            func_name: CiString::new(format!("sig_{:?}", builtin.signature())),
+            func_name: CiString::new(
+                builtin.named().map_or_else(|| format!("sig_{:?}", builtin.signature()), str::to_owned),
+            ),
             ret_type: Some(ret_type),
             args,
             pb_builtin: Some(builtin),

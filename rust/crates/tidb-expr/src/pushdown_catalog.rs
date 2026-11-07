@@ -271,6 +271,24 @@ impl BuiltinSignature {
             "coalesce" => Some(self.ret),
             "concat" | "concat_ws" => Some(EvalType::String),
             "json_extract" if index == 0 => Some(EvalType::Json),
+            "json_type" | "json_merge" | "json_array" => Some(EvalType::Json),
+            "json_unquote" => Some(EvalType::String),
+            "json_valid" => Some(own),
+            "json_length" | "json_remove" if index == 0 => Some(EvalType::Json),
+            "json_length" | "json_remove" => Some(EvalType::String),
+            "json_object" if index % 2 == 0 => Some(EvalType::String),
+            "json_object" => Some(EvalType::Json),
+            "json_set" | "json_insert" if index % 2 == 1 => Some(EvalType::String),
+            "json_set" | "json_insert" => Some(EvalType::Json),
+            "json_contains" if index < 2 => Some(EvalType::Json),
+            "json_contains" => Some(EvalType::String),
+            "elt" if index == 0 => Some(EvalType::Int),
+            "elt" => Some(EvalType::String),
+            "field" => Some(match self.sig {
+                ScalarFuncSig::FieldString => EvalType::String,
+                ScalarFuncSig::FieldInt => EvalType::Int,
+                _ => EvalType::Real,
+            }),
             "json_extract" => Some(EvalType::String),
             _ => None,
         }
@@ -1498,6 +1516,191 @@ pub const CATALOG: &[BuiltinSignature] = &[
         &[EvalType::Real],
         EvalType::Real,
         ScalarFuncSig::Sin,
+        false,
+    ),
+    // `sqrtFunctionClass`, `expFunctionClass`, `log2FunctionClass`,
+    // `log10FunctionClass`, `radiansFunctionClass`, `degreesFunctionClass`:
+    // one `ETReal` argument, an `ETReal` result.
+    signature("sqrt", &[ArgPattern::ANY], &[EvalType::Real], EvalType::Real, ScalarFuncSig::Sqrt, false),
+    signature("exp", &[ArgPattern::ANY], &[EvalType::Real], EvalType::Real, ScalarFuncSig::Exp, false),
+    signature("log2", &[ArgPattern::ANY], &[EvalType::Real], EvalType::Real, ScalarFuncSig::Log2, false),
+    signature("log10", &[ArgPattern::ANY], &[EvalType::Real], EvalType::Real, ScalarFuncSig::Log10, false),
+    signature("radians", &[ArgPattern::ANY], &[EvalType::Real], EvalType::Real, ScalarFuncSig::Radians, false),
+    signature("degrees", &[ArgPattern::ANY], &[EvalType::Real], EvalType::Real, ScalarFuncSig::Degrees, false),
+    // `logFunctionClass` (`ast.Ln` too): `Log1Arg` over one `ETReal`,
+    // `Log2Args` over two.
+    signature("ln", &[ArgPattern::ANY], &[EvalType::Real], EvalType::Real, ScalarFuncSig::Log1Arg, false),
+    signature("log", &[ArgPattern::ANY], &[EvalType::Real], EvalType::Real, ScalarFuncSig::Log1Arg, false),
+    signature(
+        "log",
+        &[ArgPattern::ANY, ArgPattern::ANY],
+        &[EvalType::Real, EvalType::Real],
+        EvalType::Real,
+        ScalarFuncSig::Log2Args,
+        false,
+    ),
+    // `signFunctionClass`: an `ETReal` argument, an `ETInt` result.
+    signature("sign", &[ArgPattern::ANY], &[EvalType::Real], EvalType::Int, ScalarFuncSig::Sign, false),
+    // Go `compareFunctionClass` for `ast.NullEQ`: the comparison families'
+    // `NullEQ*` signatures.
+    signature(
+        "nulleq",
+        CMP_INT_PAIR,
+        CMP_INT_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::NullEqInt,
+        false,
+    ),
+    signature(
+        "nulleq",
+        CMP_REAL_PAIR,
+        CMP_REAL_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::NullEqReal,
+        false,
+    ),
+    signature(
+        "nulleq",
+        CMP_DECIMAL_PAIR,
+        CMP_DECIMAL_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::NullEqDecimal,
+        false,
+    ),
+    signature(
+        "nulleq",
+        CMP_STRING_PAIR,
+        CMP_STRING_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::NullEqString,
+        false,
+    ),
+    signature(
+        "nulleq",
+        CMP_DATETIME_PAIR,
+        CMP_DATETIME_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::NullEqTime,
+        false,
+    ),
+    signature(
+        "nulleq",
+        CMP_TIMESTAMP_PAIR,
+        CMP_TIMESTAMP_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::NullEqTime,
+        false,
+    ),
+    signature(
+        "nulleq",
+        CMP_DATETIME_TIMESTAMP_PAIR,
+        CMP_DATETIME_TIMESTAMP_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::NullEqTime,
+        false,
+    ),
+    signature(
+        "nulleq",
+        CMP_TIMESTAMP_DATETIME_PAIR,
+        CMP_TIMESTAMP_DATETIME_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::NullEqTime,
+        false,
+    ),
+    // `bitAndFunctionClass`, `bitOrFunctionClass`, `bitXorFunctionClass`,
+    // `leftShiftFunctionClass`, `rightShiftFunctionClass`: two `ETInt`
+    // arguments, an unsigned `ETInt` result; `bitNegFunctionClass` one.
+    signature("bitand", &[ArgPattern::ANY, ArgPattern::ANY], &[EvalType::Int, EvalType::Int], EvalType::Int, ScalarFuncSig::BitAndSig, false),
+    signature("bitor", &[ArgPattern::ANY, ArgPattern::ANY], &[EvalType::Int, EvalType::Int], EvalType::Int, ScalarFuncSig::BitOrSig, false),
+    signature("bitxor", &[ArgPattern::ANY, ArgPattern::ANY], &[EvalType::Int, EvalType::Int], EvalType::Int, ScalarFuncSig::BitXorSig, false),
+    signature("leftshift", &[ArgPattern::ANY, ArgPattern::ANY], &[EvalType::Int, EvalType::Int], EvalType::Int, ScalarFuncSig::LeftShift, false),
+    signature("rightshift", &[ArgPattern::ANY, ArgPattern::ANY], &[EvalType::Int, EvalType::Int], EvalType::Int, ScalarFuncSig::RightShift, false),
+    signature("bitneg", &[ArgPattern::ANY], &[EvalType::Int], EvalType::Int, ScalarFuncSig::BitNegSig, false),
+    // `logicXorFunctionClass`: both arguments wrapped `IsTrue` (`build_call`),
+    // `LogicalXor` over two `ETInt`.
+    signature("xor", &[ArgPattern::ANY, ArgPattern::ANY], &[EvalType::Int, EvalType::Int], EvalType::Int, ScalarFuncSig::LogicalXor, false),
+    // `asciiFunctionClass`, `bitLengthFunctionClass`: one `ETString`, an
+    // `ETInt` result; `strcmpFunctionClass` two.
+    signature("ascii", &[ArgPattern::ANY], &[EvalType::String], EvalType::Int, ScalarFuncSig::Ascii, false),
+    signature("bit_length", &[ArgPattern::ANY], &[EvalType::String], EvalType::Int, ScalarFuncSig::BitLength, false),
+    signature(
+        "strcmp",
+        &[ArgPattern::ANY, ArgPattern::ANY],
+        &[EvalType::String, EvalType::String],
+        EvalType::Int,
+        ScalarFuncSig::Strcmp,
+        false,
+    ),
+    // `reverseFunctionClass` / `rightFunctionClass`: a binary (or BIT)
+    // argument answers the byte form, any other the UTF-8 one.
+    string_signature("reverse", &[ArgPattern::string(true)], &[EvalType::String], ScalarFuncSig::Reverse, RetCollation::FirstArgString),
+    string_signature("reverse", &[ArgPattern::string(false)], &[EvalType::String], ScalarFuncSig::ReverseUtf8, RetCollation::FirstArgString),
+    string_signature(
+        "right",
+        &[ArgPattern::string(true), ArgPattern::ANY],
+        &[EvalType::String, EvalType::Int],
+        ScalarFuncSig::Right,
+        RetCollation::FirstArgString,
+    ),
+    string_signature(
+        "right",
+        &[ArgPattern::string(false), ArgPattern::ANY],
+        &[EvalType::String, EvalType::Int],
+        ScalarFuncSig::RightUtf8,
+        RetCollation::FirstArgString,
+    ),
+    // `replaceFunctionClass`: three `ETString`s; `trimLeftFunctionClass`,
+    // `trimRightFunctionClass`: one; `spaceFunctionClass`: one `ETInt`.
+    string_signature(
+        "replace",
+        &[ArgPattern::ANY, ArgPattern::ANY, ArgPattern::ANY],
+        &[EvalType::String, EvalType::String, EvalType::String],
+        ScalarFuncSig::Replace,
+        RetCollation::FirstArgString,
+    ),
+    string_signature("ltrim", &[ArgPattern::ANY], &[EvalType::String], ScalarFuncSig::LTrim, RetCollation::FirstArgString),
+    string_signature("rtrim", &[ArgPattern::ANY], &[EvalType::String], ScalarFuncSig::RTrim, RetCollation::FirstArgString),
+    string_signature("space", &[ArgPattern::ANY], &[EvalType::Int], ScalarFuncSig::Space, RetCollation::ConnectionString),
+    // The date builtins' function classes: `dayOfMonthFunctionClass` &c over
+    // one `ETDatetime` (an `ETInt` result; MONTHNAME's an `ETString`),
+    // FROM_DAYS over one `ETInt`, MAKEDATE over two, MAKETIME over
+    // `ETInt, ETInt, ETReal`, TIME_TO_SEC over `ETDuration`. PERIOD_ADD and
+    // PERIOD_DIFF set no PbCode, so Go never pushes them.
+    signature("dayofmonth", &[ArgPattern::ANY], &[EvalType::Datetime], EvalType::Int, ScalarFuncSig::DayOfMonth, false),
+    signature("dayofweek", &[ArgPattern::ANY], &[EvalType::Datetime], EvalType::Int, ScalarFuncSig::DayOfWeek, false),
+    signature("dayofyear", &[ArgPattern::ANY], &[EvalType::Datetime], EvalType::Int, ScalarFuncSig::DayOfYear, false),
+    signature("weekofyear", &[ArgPattern::ANY], &[EvalType::Datetime], EvalType::Int, ScalarFuncSig::WeekOfYear, false),
+    signature("year", &[ArgPattern::ANY], &[EvalType::Datetime], EvalType::Int, ScalarFuncSig::Year, false),
+    string_signature("monthname", &[ArgPattern::ANY], &[EvalType::Datetime], ScalarFuncSig::MonthName, RetCollation::ConnectionString),
+    signature("from_days", &[ArgPattern::ANY], &[EvalType::Int], EvalType::Datetime, ScalarFuncSig::FromDays, false),
+    signature("makedate", &[ArgPattern::ANY, ArgPattern::ANY], &[EvalType::Int, EvalType::Int], EvalType::Datetime, ScalarFuncSig::MakeDate, false),
+    signature(
+        "maketime",
+        &[ArgPattern::ANY, ArgPattern::ANY, ArgPattern::ANY],
+        &[EvalType::Int, EvalType::Int, EvalType::Real],
+        EvalType::Duration,
+        ScalarFuncSig::MakeTime,
+        false,
+    ),
+    signature("time_to_sec", &[ArgPattern::ANY], &[EvalType::Duration], EvalType::Int, ScalarFuncSig::TimeToSec, false),
+    // `sha1FunctionClass`: one `ETString`; `sha2FunctionClass`: `ETString,
+    // ETInt`; `uncompressedLengthFunctionClass`: one `ETString`, an `ETInt`
+    // result; `likeFunctionClass`: `ETString, ETString, ETInt` (the escape).
+    string_signature("sha1", &[ArgPattern::ANY], &[EvalType::String], ScalarFuncSig::Sha1, RetCollation::ConnectionString),
+    string_signature(
+        "sha2",
+        &[ArgPattern::ANY, ArgPattern::ANY],
+        &[EvalType::String, EvalType::Int],
+        ScalarFuncSig::Sha2,
+        RetCollation::ConnectionString,
+    ),
+    signature("uncompressed_length", &[ArgPattern::ANY], &[EvalType::String], EvalType::Int, ScalarFuncSig::UncompressedLength, false),
+    signature(
+        "like",
+        &[ArgPattern::ANY, ArgPattern::ANY, ArgPattern::ANY],
+        &[EvalType::String, EvalType::String, EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::LikeSig,
         false,
     ),
     // `piFunctionClass.getFunction`: no arguments, and `PI()` is a constant on
@@ -3492,8 +3695,41 @@ pub fn resolve(name: &str, args: &[PbScalar]) -> Option<&'static BuiltinSignatur
     if name == "concat" {
         return resolve_concat(args);
     }
+    if name == "elt" {
+        return resolve_elt(args);
+    }
+    if name == "field" {
+        return resolve_field(args);
+    }
+    if name == "hex" {
+        return resolve_hex(args);
+    }
+    if name == "unaryminus" {
+        let [arg] = args else {
+            return None;
+        };
+        // The result an argument's own type gives; `from_expression` reads
+        // the planned result type over it.
+        return resolve_unary_minus(arg.eval_type());
+    }
+    if matches!(name, "ceil" | "ceiling" | "floor") {
+        let [arg] = args else {
+            return None;
+        };
+        let arg = arg.eval_type();
+        // The result an argument's own type gives; `from_expression` reads
+        // the planned result type over it.
+        let ret = match arg {
+            EvalType::Int | EvalType::Decimal => arg,
+            _ => EvalType::Real,
+        };
+        return resolve_ceil_floor(name, arg, ret);
+    }
     if name == "json_extract" {
         return resolve_json_extract(args);
+    }
+    if let Some(signature) = resolve_json(name, args) {
+        return Some(signature);
     }
     if name == "concat_ws" {
         return resolve_concat_ws(args);
@@ -3523,6 +3759,100 @@ fn resolve_concat(args: &[PbScalar]) -> Option<&'static BuiltinSignature> {
         .then_some(&CONCAT)
 }
 
+/// Go `ceilFunctionClass` / `floorFunctionClass.getFunction` over
+/// `getEvalTp4FloorAndCeil`: an `ETInt` argument answers `*IntToInt`, an
+/// `ETDecimal` one `*DecToInt` or `*DecToDec` by the result type, any other
+/// `*Real`.
+pub(crate) fn resolve_ceil_floor(name: &str, arg: EvalType, ret: EvalType) -> Option<&'static BuiltinSignature> {
+    const fn ceil_floor(name: &'static str, arg: &'static [EvalType], ret: EvalType, sig: ScalarFuncSig) -> BuiltinSignature {
+        signature(name, &[], arg, ret, sig, true)
+    }
+    static CEIL: [BuiltinSignature; 4] = [
+        ceil_floor("ceil", &[EvalType::Int], EvalType::Int, ScalarFuncSig::CeilIntToInt),
+        ceil_floor("ceil", &[EvalType::Decimal], EvalType::Int, ScalarFuncSig::CeilDecToInt),
+        ceil_floor("ceil", &[EvalType::Decimal], EvalType::Decimal, ScalarFuncSig::CeilDecToDec),
+        ceil_floor("ceil", &[EvalType::Real], EvalType::Real, ScalarFuncSig::CeilReal),
+    ];
+    static FLOOR: [BuiltinSignature; 4] = [
+        ceil_floor("floor", &[EvalType::Int], EvalType::Int, ScalarFuncSig::FloorIntToInt),
+        ceil_floor("floor", &[EvalType::Decimal], EvalType::Int, ScalarFuncSig::FloorDecToInt),
+        ceil_floor("floor", &[EvalType::Decimal], EvalType::Decimal, ScalarFuncSig::FloorDecToDec),
+        ceil_floor("floor", &[EvalType::Real], EvalType::Real, ScalarFuncSig::FloorReal),
+    ];
+    let family = if name == "floor" { &FLOOR } else { &CEIL };
+    Some(match (arg, ret) {
+        (EvalType::Int, EvalType::Int) => &family[0],
+        (EvalType::Decimal, EvalType::Int) => &family[1],
+        (EvalType::Decimal, EvalType::Decimal) => &family[2],
+        (EvalType::Int | EvalType::Decimal, _) => return None,
+        _ => &family[3],
+    })
+}
+
+/// Go `eltFunctionClass.getFunction`: an `ETInt` index, then `ETString`s.
+fn resolve_elt(args: &[PbScalar]) -> Option<&'static BuiltinSignature> {
+    static ELT: BuiltinSignature =
+        string_signature("elt", &[], &[], ScalarFuncSig::Elt, RetCollation::ControlBranches);
+    (args.len() >= 2).then_some(&ELT)
+}
+
+/// Go `fieldFunctionClass.getFunction`: all `ETString` arguments compare as
+/// strings, all `ETInt` as integers, any other mix as reals.
+fn resolve_field(args: &[PbScalar]) -> Option<&'static BuiltinSignature> {
+    static FIELD: [BuiltinSignature; 3] = [
+        signature("field", &[], &[], EvalType::Int, ScalarFuncSig::FieldString, false),
+        signature("field", &[], &[], EvalType::Int, ScalarFuncSig::FieldInt, false),
+        signature("field", &[], &[], EvalType::Int, ScalarFuncSig::FieldReal, false),
+    ];
+    if args.len() < 2 {
+        return None;
+    }
+    Some(if args.iter().all(|arg| arg.eval_type() == EvalType::String) {
+        &FIELD[0]
+    } else if args.iter().all(|arg| arg.eval_type() == EvalType::Int) {
+        &FIELD[1]
+    } else {
+        &FIELD[2]
+    })
+}
+
+/// Go `hexFunctionClass.getFunction`: a string, temporal or JSON argument
+/// answers `HexStrArg` over `ETString`, a numeric one `HexIntArg` over
+/// `ETInt`.
+fn resolve_hex(args: &[PbScalar]) -> Option<&'static BuiltinSignature> {
+    static HEX: [BuiltinSignature; 2] = [
+        string_signature("hex", &[], &[EvalType::String], ScalarFuncSig::HexStrArg, RetCollation::ConnectionString),
+        string_signature("hex", &[], &[EvalType::Int], ScalarFuncSig::HexIntArg, RetCollation::ConnectionString),
+    ];
+    let [arg] = args else {
+        return None;
+    };
+    match arg.eval_type() {
+        EvalType::String | EvalType::Datetime | EvalType::Timestamp | EvalType::Duration | EvalType::Json => {
+            Some(&HEX[0])
+        }
+        EvalType::Int | EvalType::Real | EvalType::Decimal => Some(&HEX[1]),
+        EvalType::VectorFloat32 => None,
+    }
+}
+
+/// Go `unaryMinusFunctionClass.getFunction`: the signature follows the
+/// result type it picks (an `ETInt` that may overflow, or an unsigned one,
+/// answers `ETDecimal`), one argument of that type.
+pub(crate) fn resolve_unary_minus(ret: EvalType) -> Option<&'static BuiltinSignature> {
+    static UNARY_MINUS: [BuiltinSignature; 3] = [
+        signature("unaryminus", &[], &[EvalType::Int], EvalType::Int, ScalarFuncSig::UnaryMinusInt, false),
+        signature("unaryminus", &[], &[EvalType::Decimal], EvalType::Decimal, ScalarFuncSig::UnaryMinusDecimal, false),
+        signature("unaryminus", &[], &[EvalType::Real], EvalType::Real, ScalarFuncSig::UnaryMinusReal, false),
+    ];
+    Some(match ret {
+        EvalType::Int => &UNARY_MINUS[0],
+        EvalType::Decimal => &UNARY_MINUS[1],
+        EvalType::Real => &UNARY_MINUS[2],
+        _ => return None,
+    })
+}
+
 /// Go `jsonExtractFunctionClass.getFunction`: an `ETJson` document and one
 /// or more `ETString` paths, one signature (`JsonExtractSig`).
 fn resolve_json_extract(args: &[PbScalar]) -> Option<&'static BuiltinSignature> {
@@ -3535,6 +3865,50 @@ fn resolve_json_extract(args: &[PbScalar]) -> Option<&'static BuiltinSignature> 
         false,
     );
     (args.len() >= 2).then_some(&JSON_EXTRACT)
+}
+
+/// The JSON builtins' function classes (`builtin_json.go`): one signature
+/// each over its arity, JSON_VALID's by its argument's type; the argument
+/// types per position are [`BuiltinSignature::arg_type_at`]'s.
+fn resolve_json(name: &str, args: &[PbScalar]) -> Option<&'static BuiltinSignature> {
+    const fn json(name: &'static str, ret: EvalType, sig: ScalarFuncSig) -> BuiltinSignature {
+        signature(name, &[], &[], ret, sig, false)
+    }
+    static JSON: [BuiltinSignature; 12] = [
+        json("json_type", EvalType::String, ScalarFuncSig::JsonTypeSig),
+        json("json_unquote", EvalType::String, ScalarFuncSig::JsonUnquoteSig),
+        json("json_length", EvalType::Int, ScalarFuncSig::JsonLengthSig),
+        json("json_object", EvalType::Json, ScalarFuncSig::JsonObjectSig),
+        json("json_array", EvalType::Json, ScalarFuncSig::JsonArraySig),
+        json("json_merge", EvalType::Json, ScalarFuncSig::JsonMergeSig),
+        json("json_set", EvalType::Json, ScalarFuncSig::JsonSetSig),
+        json("json_insert", EvalType::Json, ScalarFuncSig::JsonInsertSig),
+        json("json_remove", EvalType::Json, ScalarFuncSig::JsonRemoveSig),
+        json("json_contains", EvalType::Int, ScalarFuncSig::JsonContainsSig),
+        json("json_valid", EvalType::Int, ScalarFuncSig::JsonValidJsonSig),
+        json("json_valid", EvalType::Int, ScalarFuncSig::JsonValidStringSig),
+    ];
+    static JSON_VALID_OTHERS: BuiltinSignature = json("json_valid", EvalType::Int, ScalarFuncSig::JsonValidOthersSig);
+    let arity = args.len();
+    let index = match name {
+        "json_type" if arity == 1 => 0,
+        "json_unquote" if arity == 1 => 1,
+        "json_length" if matches!(arity, 1 | 2) => 2,
+        "json_object" if arity % 2 == 0 => 3,
+        "json_array" => 4,
+        "json_merge" if arity >= 2 => 5,
+        "json_set" if arity >= 3 && arity % 2 == 1 => 6,
+        "json_insert" if arity >= 3 && arity % 2 == 1 => 7,
+        "json_remove" if arity >= 2 => 8,
+        "json_contains" if matches!(arity, 2 | 3) => 9,
+        "json_valid" if arity == 1 => match args[0].eval_type() {
+            EvalType::Json => 10,
+            EvalType::String => 11,
+            _ => return Some(&JSON_VALID_OTHERS),
+        },
+        _ => return None,
+    };
+    Some(&JSON[index])
 }
 
 /// Go `concatWSFunctionClass.getFunction`: every argument `ETString`, the
@@ -3584,7 +3958,7 @@ pub fn build_call(name: &str, args: Vec<PbScalar>) -> Option<PbScalar> {
         .map(|(index, argument)| {
             let condition = (name == "if" && arity == 3 && index == 0)
                 || (name == "case" && index % 2 == 0 && index + 1 < arity)
-                || (matches!(name, "and" | "or") && arity == 2);
+                || (matches!(name, "and" | "or" | "xor") && arity == 2);
             if condition && argument.eval_type() != EvalType::Int {
                 // Go wraps non-integer conditions before selecting the control
                 // builtin. Casting directly to Int would lose nonzero fractions.
@@ -3783,6 +4157,26 @@ fn from_expression_with_context(
                     charset: field.charset_name().to_owned(),
                     collation: field.collation_name().to_owned(),
                 };
+            }
+            // Go's CEIL/FLOOR signature follows the planned result type
+            // (`getEvalTp4FloorAndCeil`).
+            if let Some(PbScalar::Call { signature, args, .. }) = &mut described {
+                let name = function.func_name.lowercase();
+                if name == "unaryminus" {
+                    let Some(resolved) = expression.static_type().and_then(|field| resolve_unary_minus(field.eval_type())) else {
+                        return Ok(None);
+                    };
+                    *signature = resolved;
+                }
+                if matches!(&*name, "ceil" | "ceiling" | "floor") {
+                    let (Some(field), [arg]) = (expression.static_type(), args.as_slice()) else {
+                        return Ok(None);
+                    };
+                    let Some(resolved) = resolve_ceil_floor(&name, arg.eval_type(), field.eval_type()) else {
+                        return Ok(None);
+                    };
+                    *signature = resolved;
+                }
             }
             // Go `scalarFuncToPBExpr` sends every function node's own
             // `RetType`, with the function's collation forced into it -- a
@@ -4734,6 +5128,51 @@ mod tests {
                 expression.eval(&crate::NoColumns, row.to_row()).unwrap(),
                 Datum::Int(1)
             );
+        }
+    }
+
+    /// Go `getEvalTp4FloorAndCeil`: an `ETInt` argument answers `*IntToInt`,
+    /// an `ETDecimal` one `*DecToInt` while `flen - decimal <= 18` (the
+    /// planned result is BIGINT) and `*DecToDec` past it, anything else
+    /// `*Real`. A real TiKV selects its evaluator by this code.
+    #[test]
+    fn result_typed_builtins_lower_to_the_signature_go_picks_for_their_result() {
+        let decimal = |flen: i64, frac: i64| {
+            let mut field_type = FieldType::new(FieldTypeCode::NewDecimal);
+            field_type.set_flen(flen);
+            field_type.set_decimal(frac);
+            field_type
+        };
+        let long = FieldType::new(FieldTypeCode::LongLong);
+        let double = FieldType::new(FieldTypeCode::Double);
+        let mut unsigned = long.clone();
+        unsigned.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+        for (name, arg, ret, sig) in [
+            ("ceil", long.clone(), long.clone(), ScalarFuncSig::CeilIntToInt),
+            ("ceil", decimal(10, 2), long.clone(), ScalarFuncSig::CeilDecToInt),
+            ("ceil", decimal(30, 2), decimal(29, 0), ScalarFuncSig::CeilDecToDec),
+            ("ceiling", double.clone(), double.clone(), ScalarFuncSig::CeilReal),
+            ("floor", long.clone(), long.clone(), ScalarFuncSig::FloorIntToInt),
+            ("floor", decimal(10, 2), long.clone(), ScalarFuncSig::FloorDecToInt),
+            ("floor", decimal(30, 2), decimal(29, 0), ScalarFuncSig::FloorDecToDec),
+            ("floor", double.clone(), double.clone(), ScalarFuncSig::FloorReal),
+            // Go `unaryMinusFunctionClass`: the signature follows the result
+            // type it picks; an unsigned BIGINT negates to DECIMAL.
+            ("unaryminus", long.clone(), long.clone(), ScalarFuncSig::UnaryMinusInt),
+            ("unaryminus", unsigned.clone(), decimal(20, 0), ScalarFuncSig::UnaryMinusDecimal),
+            ("unaryminus", double.clone(), double.clone(), ScalarFuncSig::UnaryMinusReal),
+        ] {
+            let mut column = crate::column::Column::new(1, arg);
+            column.index = 0;
+            let expression = Expression::ScalarFunction(crate::scalar_function::ScalarFunction::new(
+                tidb_ast::CiString::new(name),
+                ret,
+                vec![Expression::Column(column)],
+            ));
+            let Some(PbScalar::Call { signature, .. }) = from_expression(&expression) else {
+                panic!("{name} does not lower");
+            };
+            assert_eq!(signature.sig, sig, "{name}");
         }
     }
 

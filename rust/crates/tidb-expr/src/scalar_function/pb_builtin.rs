@@ -25,6 +25,33 @@ use tidb_proto::tipb::ScalarFuncSig;
 
 type ValuesKernel = fn(&[Datum], &dyn Columns) -> Result<Datum, EvalError>;
 
+/// Go `builtinCeil*Sig` / `builtinFloor*Sig`: an `*IntToInt` or `*Real`
+/// signature keeps its argument's domain; a `*DecTo*` one answers the
+/// signature's own result domain.
+fn ceil_values(values: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+    crate::math_fn::ceil_floor_with_result_domain(values, true, None, ctx)
+}
+
+fn floor_values(values: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+    crate::math_fn::ceil_floor_with_result_domain(values, false, None, ctx)
+}
+
+fn ceil_dec_to_int(values: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+    crate::math_fn::ceil_floor_with_result_domain(values, true, Some(false), ctx)
+}
+
+fn ceil_dec_to_dec(values: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+    crate::math_fn::ceil_floor_with_result_domain(values, true, Some(true), ctx)
+}
+
+fn floor_dec_to_int(values: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+    crate::math_fn::ceil_floor_with_result_domain(values, false, Some(false), ctx)
+}
+
+fn floor_dec_to_dec(values: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+    crate::math_fn::ceil_floor_with_result_domain(values, false, Some(true), ctx)
+}
+
 fn md5_values(values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     crate::builtin_ext::crypto::dispatch("MD5", values, ctx)
         .unwrap_or(Err(EvalError::Unsupported("protobuf MD5 arity")))
@@ -46,6 +73,12 @@ enum Kernel {
         subtract: bool,
     },
     Logic(BinaryOp),
+    /// The builtin TiDB itself evaluates under this Go name: unistore runs a
+    /// pushed builtin with the same Go implementation the TiDB tier does.
+    Named(&'static str),
+    /// Go `builtinBitNegSig` / `builtinUnaryMinus*Sig` over their one
+    /// argument.
+    Unary(tidb_ast::UnaryOp),
     IntegerMod {
         unsigned: [bool; 2],
     },
@@ -178,6 +211,19 @@ impl PbBuiltin {
             LikeSig => Kernel::Like,
             LogicalAnd => Kernel::Logic(BinaryOp::LogicAnd),
             LogicalOr => Kernel::Logic(BinaryOp::LogicOr),
+            LogicalXor => Kernel::Logic(BinaryOp::LogicXor),
+            NullEqInt => Kernel::Compare(BinaryOp::NullEq, EvalType::Int),
+            NullEqReal => Kernel::Compare(BinaryOp::NullEq, EvalType::Real),
+            NullEqDecimal => Kernel::Compare(BinaryOp::NullEq, EvalType::Decimal),
+            NullEqString => Kernel::Compare(BinaryOp::NullEq, EvalType::String),
+            NullEqTime => Kernel::Compare(BinaryOp::NullEq, EvalType::Datetime),
+            BitAndSig => Kernel::Binary(BinaryOp::BitAnd, EvalType::Int),
+            BitOrSig => Kernel::Binary(BinaryOp::BitOr, EvalType::Int),
+            BitXorSig => Kernel::Binary(BinaryOp::BitXor, EvalType::Int),
+            LeftShift => Kernel::Binary(BinaryOp::LeftShift, EvalType::Int),
+            RightShift => Kernel::Binary(BinaryOp::RightShift, EvalType::Int),
+            BitNegSig => Kernel::Unary(tidb_ast::UnaryOp::BitNeg),
+            UnaryMinusInt | UnaryMinusDecimal | UnaryMinusReal => Kernel::Unary(tidb_ast::UnaryOp::Minus),
             IntIsNull => Kernel::IsNull(EvalType::Int),
             RealIsNull => Kernel::IsNull(EvalType::Real),
             DecimalIsNull => Kernel::IsNull(EvalType::Decimal),
@@ -318,6 +364,56 @@ impl PbBuiltin {
             AbsInt | AbsUInt | AbsReal | AbsDecimal => Kernel::Values(crate::math_fn::abs),
             // Go `builtinMD5Sig`, `builtinCRC32Sig`, `builtinConcatWSSig`:
             // the root tier's evaluators over the argument values.
+            Sqrt => Kernel::Values(crate::math_fn::sqrt),
+            Exp => Kernel::Values(crate::math_fn::exp),
+            Log1Arg | Log2Args => Kernel::Values(crate::math_fn::log),
+            Log2 => Kernel::Values(crate::math_fn::log2),
+            Log10 => Kernel::Values(crate::math_fn::log10),
+            Radians => Kernel::Values(crate::math_fn::radians),
+            Degrees => Kernel::Values(crate::math_fn::degrees),
+            Sign => Kernel::Values(crate::math_fn::sign),
+            CeilIntToInt | CeilReal => Kernel::Values(ceil_values),
+            FloorIntToInt | FloorReal => Kernel::Values(floor_values),
+            CeilDecToInt => Kernel::Values(ceil_dec_to_int),
+            CeilDecToDec => Kernel::Values(ceil_dec_to_dec),
+            FloorDecToInt => Kernel::Values(floor_dec_to_int),
+            FloorDecToDec => Kernel::Values(floor_dec_to_dec),
+            Sha1 => Kernel::Named("sha1"),
+            Sha2 => Kernel::Named("sha2"),
+            UncompressedLength => Kernel::Named("uncompressed_length"),
+            JsonTypeSig => Kernel::Named("json_type"),
+            JsonUnquoteSig => Kernel::Named("json_unquote"),
+            JsonLengthSig => Kernel::Named("json_length"),
+            JsonObjectSig => Kernel::Named("json_object"),
+            JsonArraySig => Kernel::Named("json_array"),
+            JsonMergeSig => Kernel::Named("json_merge"),
+            JsonSetSig => Kernel::Named("json_set"),
+            JsonInsertSig => Kernel::Named("json_insert"),
+            JsonRemoveSig => Kernel::Named("json_remove"),
+            JsonContainsSig => Kernel::Named("json_contains"),
+            JsonValidJsonSig | JsonValidStringSig | JsonValidOthersSig => Kernel::Named("json_valid"),
+            DayOfMonth => Kernel::Named("dayofmonth"),
+            DayOfWeek => Kernel::Named("dayofweek"),
+            DayOfYear => Kernel::Named("dayofyear"),
+            WeekOfYear => Kernel::Named("weekofyear"),
+            Year => Kernel::Named("year"),
+            MonthName => Kernel::Named("monthname"),
+            FromDays => Kernel::Named("from_days"),
+            MakeDate => Kernel::Named("makedate"),
+            MakeTime => Kernel::Named("maketime"),
+            TimeToSec => Kernel::Named("time_to_sec"),
+            Ascii => Kernel::Named("ascii"),
+            BitLength => Kernel::Named("bit_length"),
+            Reverse | ReverseUtf8 => Kernel::Named("reverse"),
+            Replace => Kernel::Named("replace"),
+            Strcmp => Kernel::Named("strcmp"),
+            Elt => Kernel::Named("elt"),
+            FieldInt | FieldReal | FieldString => Kernel::Named("field"),
+            HexStrArg | HexIntArg => Kernel::Named("hex"),
+            LTrim => Kernel::Named("ltrim"),
+            RTrim => Kernel::Named("rtrim"),
+            Right | RightUtf8 => Kernel::Named("right"),
+            Space => Kernel::Named("space"),
             Md5 => Kernel::Values(md5_values),
             Crc32 => Kernel::Values(crc32_values),
             Concat => Kernel::Values(crate::string_fn::concat_with_context),
@@ -442,6 +538,14 @@ impl PbBuiltin {
         }
     }
 
+    /// The Go name a [`Kernel::Named`] builtin evaluates under.
+    pub(crate) fn named(self) -> Option<&'static str> {
+        match self.kernel {
+            Kernel::Named(name) => Some(name),
+            _ => None,
+        }
+    }
+
     pub(crate) fn is_date_arithmetic(self) -> bool {
         matches!(self.kernel, Kernel::DateArithmetic { .. })
     }
@@ -469,6 +573,7 @@ impl PbBuiltin {
             Ok(crate::arg_eval_type::eval_int(&value)?.map(|value| value != 0))
         };
         match self.kernel {
+            Kernel::Named(_) => function.eval_by_signature(ctx, row),
             Kernel::Case(domain) => {
                 let (pairs, remainder) = args.as_chunks::<2>();
                 for (index, pair) in pairs.iter().enumerate() {
@@ -529,6 +634,8 @@ impl PbBuiltin {
                     (BinaryOp::LogicAnd, _, Some(false)) => Datum::Int(0),
                     (BinaryOp::LogicOr, _, Some(true)) => Datum::Int(1),
                     (_, None, _) | (_, _, None) => Datum::Null,
+                    // Go `builtinLogicXorSig`: true when exactly one is.
+                    (BinaryOp::LogicXor, Some(left), Some(right)) => Datum::Int(i64::from(left != right)),
                     (_, _, Some(value)) => Datum::Int(i64::from(value)),
                 })
             }
@@ -600,6 +707,13 @@ impl PbBuiltin {
                 }
                 let right = eval_numeric_operand_row(&args[1], ctx, row, domain)?;
                 function.eval_binary_values(op, left, right, ctx)
+            }
+            Kernel::Unary(op) => {
+                let [arg] = args.as_slice() else {
+                    return Err(EvalError::Unsupported("protobuf unary builtin arity"));
+                };
+                let value = arg.eval(ctx, row)?;
+                crate::ops::eval_unary(op, value, crate::ops::Operand::Expr(arg), ctx)
             }
             Kernel::Compare(op, domain) => {
                 if args.len() != 2 {

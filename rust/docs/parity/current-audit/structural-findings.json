@@ -161,7 +161,7 @@
       "id": "X01",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "SQL/PB signature construction and typed vector execution. The planner's `BuiltinFunctionUsageInc` (`expressionRewriter.newFunction`) is not called: it needs the function's `PbCode`, which a planner-built Rust function only gets at pushdown resolution. Go's `PbConverter` sends each builtin's own `PbCode`; this port resolves a signature again from the function's name and argument types (`pushdown_catalog.rs` `resolve`), and that catalog lacks 72 of the 149 functions Go's `scalarExprSupportedByTiKV` admits (among them `like`, `floor`/`ceil`, `unaryminus`, `nulleq`, the bit and shift operators, `replace`, `hex`, `sha1`/`sha2`, eleven JSON functions, the vector functions and twelve date functions), so a filter or aggregate over one stays in this tier where Go pushes it.",
+      "finding": "SQL/PB signature construction and typed vector execution. The planner's `BuiltinFunctionUsageInc` (`expressionRewriter.newFunction`) is not called: it needs the function's `PbCode`, which a planner-built Rust function only gets at pushdown resolution. Go's `PbConverter` sends each builtin's own `PbCode`; this port resolves a signature again from the function's name and argument types (`pushdown_catalog.rs` `resolve`), and that catalog lacks 12 of the functions Go's `scalarExprSupportedByTiKV` pushes (`rand`'s seeded form, `sysdate`, `uuid`, `uuid_timestamp`, `uuid_version` and the seven vector functions), so a filter or aggregate over one stays in this tier where Go pushes it.",
       "go_owner": "`pkg/expression`"
     },
     {
