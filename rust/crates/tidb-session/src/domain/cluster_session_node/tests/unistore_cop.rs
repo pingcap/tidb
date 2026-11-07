@@ -29192,6 +29192,69 @@ fn explain_for_connection_renders_the_targets_runtime_stats_like_go() {
     assert_eq!(plan[0][7], "272 Bytes");
 }
 
+/// A write's root carries its transaction's commit statistics: Go's
+/// `FinishExecuteStmt` registers `RuntimeStatsWithCommit` on the plan's root
+/// in the statement's `RuntimeStatsColl`, before the connection goes to sleep
+/// and re-encodes the brief plan an `EXECUTE`'s target decodes. Captured from a
+/// Go tidb-server over the wire (durations and region ids masked):
+///
+/// ```text
+/// update t set b=5 where id=1
+///   Update_3  time:D, open:D, close:D, loops:1, commit_txn: {prewrite:D, get_commit_ts:D, commit:D,
+///             slowest_prewrite_rpc: {total: D, region_id: R, store: store1, },
+///             commit_primary_rpc: {total: D, region_id: R, store: store1, }, region_num:1, write_keys:1, write_byte:33}
+/// execute s4 using @lo  (update t set b=b+1 where b > ?)
+///   Update_4  0.00 estRows, the same commit_txn
+/// ```
+#[test]
+fn a_write_root_carries_its_commit_stats_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1147)).unwrap();
+    for sql in [
+        "USE test",
+        "create table t (id int primary key, uk int, b int, unique key(uk))",
+        "insert into t values (1,10,0),(2,20,0),(3,30,0)",
+    ] {
+        session.node_conn().execute_write(sql).unwrap();
+    }
+    rows(&mut session, "set @lo=0");
+    let id = displayed(rows(&mut session, "select connection_id()"))[0][0].clone();
+    let mut target = stack.factory.open_session(session_context(1148)).unwrap();
+    let root = |target: &mut crate::Session| -> Vec<String> {
+        let plan = displayed(rows(target, &format!("explain for connection {id}")));
+        plan[0]
+            .iter()
+            .map(|cell| {
+                let masked = mask_durations(cell);
+                let mut out = String::new();
+                let mut rest = masked.as_str();
+                while let Some(at) = rest.find("region_id: ") {
+                    out.push_str(&rest[..at + "region_id: ".len()]);
+                    rest = rest[at + "region_id: ".len()..].trim_start_matches(|c: char| c.is_ascii_digit());
+                    out.push('R');
+                }
+                out.push_str(rest);
+                out
+            })
+            .collect()
+    };
+    let commit = "commit_txn: {prewrite:D, get_commit_ts:D, commit:D, \
+                  slowest_prewrite_rpc: {total: D, region_id: R, store: store1, }, \
+                  commit_primary_rpc: {total: D, region_id: R, store: store1, }, \
+                  region_num:1, write_keys:1, write_byte:33}";
+    rows(&mut session, "update t set b=5 where id=1");
+    let plan = root(&mut target);
+    assert_eq!(plan[0], "Update_3");
+    assert_eq!(plan[5], format!("time:D, open:D, close:D, loops:1, {commit}"));
+    rows(&mut session, "prepare s4 from 'update t set b=b+1 where b > ?'");
+    for _ in 0..3 {
+        rows(&mut session, "execute s4 using @lo");
+    }
+    let plan = root(&mut target);
+    assert_eq!([&plan[0], &plan[1]], ["Update_4", "0.00"]);
+    assert_eq!(plan[5], format!("time:D, open:D, close:D, loops:1, {commit}"));
+}
+
 /// The statement summary's plan and binary plan are rendered after the
 /// statement ran (Go `getEncodedPlan`'s `EncodeFlatPlan` and `getBinaryPlan`'s
 /// `BinaryPlanStrFromFlatPlan(flat, false)`), so each operator carries its

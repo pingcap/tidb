@@ -883,6 +883,40 @@ impl Session {
         }
     }
 
+    /// Go `FinishExecuteStmt`: the statement's commit and lock-keys details
+    /// attach to its plan's root operator in its `RuntimeStatsColl`
+    /// (`RuntimeStatsWithCommit`), which `EXPLAIN FOR CONNECTION` renders.
+    fn register_commit_runtime_stats(&self, exec_detail: &tidb_execdetails::exec_details::ExecDetails) {
+        if exec_detail.commit_detail.is_none()
+            && exec_detail.lock_keys_detail.is_none()
+            && exec_detail.shared_lock_keys_detail.is_none()
+        {
+            return;
+        }
+        let cell = self
+            .process_plan_info
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let plan = cell
+            .plan
+            .as_ref()
+            .and_then(|plan| plan.get::<tidb_planner_core_operator_physicalop::PhysicalPlan>());
+        let coll = cell.runtime_stats_coll.as_ref().and_then(|coll| {
+            coll.get::<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>>()
+        });
+        if let (Some(plan), Some(coll)) = (plan, coll) {
+            coll.register_stats(
+                i64::from(plan.id()),
+                Box::new(tidb_execdetails::runtime_stats::RuntimeStatsWithCommit {
+                    commit: exec_detail.commit_detail.clone(),
+                    lock_keys: exec_detail.lock_keys_detail.clone(),
+                    shared_lock_keys: exec_detail.shared_lock_keys_detail.clone(),
+                    txn_cnt: 0,
+                }),
+            );
+        }
+    }
+
     fn publish_statement_observation(
         &mut self,
         succeeded: bool,
@@ -910,6 +944,7 @@ impl Session {
                 Some(&commit_details),
             );
         }
+        self.register_commit_runtime_stats(&observation.cop_stats.exec_details());
         // Go observes compiled statements, not a parser failure without an AST.
         if observation.label.is_empty() {
             return;

@@ -5687,6 +5687,27 @@ fn binary_prepared_execution_keeps_plan_detail_out_of_the_process_list() {
     assert!(!info.brief_binary_plan.is_empty());
 }
 
+/// Go's connection goes to sleep after `FinishExecuteStmt` registered the
+/// commit statistics on the write's root, so the brief binary plan the sleep
+/// re-encodes carries `commit_txn` (see `unistore_cop.rs`
+/// `a_write_root_carries_its_commit_stats_like_go` for the Go capture).
+#[test]
+fn the_brief_plan_carries_the_commit_stats_of_an_autocommit_write() {
+    let registry = process::ProcessRegistry::default();
+    let mut session = Session::new();
+    let guard = registry.register(44, "root".to_owned(), "localhost".to_owned(), "test".to_owned(), None);
+    session.attach_process(44, guard);
+    session.run("CREATE TABLE brief_commit (a INT PRIMARY KEY, b INT)").unwrap();
+    session.run("INSERT INTO brief_commit VALUES (1, 0)").unwrap();
+    session.run("UPDATE brief_commit SET b = 1 WHERE a = 1").unwrap();
+    let info = tidb_sessmgr::processinfo::SessionManager::get_process_info(&registry, 44).unwrap();
+    let rows =
+        tidb_plancodec::decode_binary_plan_for_connection(info.brief_binary_plan.clone(), "row", false)
+            .unwrap();
+    let root = rows.iter().find(|row| row[0].starts_with("Update")).unwrap();
+    assert!(root[5].contains(", commit_txn: {prewrite:"), "{root:?}");
+}
+
 #[test]
 fn prepared_explain_constants_follow_current_parameters() {
     let registry = process::ProcessRegistry::default();
