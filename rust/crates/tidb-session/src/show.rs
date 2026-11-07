@@ -261,7 +261,9 @@ impl tidb_executor::show::exec::ShowExec for Session {
 impl tidb_executor::bind_exec::SqlBindExec for Session {
     fn with_global_binding_storage(
         &mut self,
-        operation: impl FnMut(&mut Self) -> Result<u64, DriverError>,
+        operation: &mut dyn FnMut(
+            &dyn tidb_bindinfo::binding_operator::BindingOperatorSession,
+        ) -> Result<u64, DriverError>,
     ) -> Result<u64, DriverError> {
         Session::with_global_binding_storage(self, operation)
     }

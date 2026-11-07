@@ -54,13 +54,15 @@ pub(crate) fn truncated_sample_text(query: &str) -> bool {
 
 /// Go `SQLBindExec`.
 pub trait SqlBindExec:
-    crate::show::exec::ShowExec + tidb_bindinfo::binding_operator::BindingOperatorSession
+    crate::show::exec::ShowExec
 {
     /// Go `GlobalBindingHandle`'s storage write: one operation in an
     /// independent internal transaction.
     fn with_global_binding_storage(
         &mut self,
-        operation: impl FnMut(&mut Self) -> Result<u64, DriverError>,
+        operation: &mut dyn FnMut(
+            &dyn tidb_bindinfo::binding_operator::BindingOperatorSession,
+        ) -> Result<u64, DriverError>,
     ) -> Result<u64, DriverError>;
     /// Go `bindinfo.CheckBindingStmt` over the hinted statement.
     fn validate_binding_statement(&mut self, hinted: &Stmt) -> Result<(), DriverError>;
@@ -101,7 +103,7 @@ pub trait SqlBindExec:
             tidb_ast::BindingStatus::Enabled => STATUS_ENABLED,
             tidb_ast::BindingStatus::Disabled => binding::STATUS_DISABLED,
         };
-        let changed = self.with_global_binding_storage(|storage| {
+        let changed = self.with_global_binding_storage(&mut |storage| {
             tidb_bindinfo::binding_operator::set_binding_status(storage, new_status, &digest)
                 .map(u64::from)
         })?;
@@ -191,7 +193,7 @@ pub trait SqlBindExec:
             hints: binding::collect_hints(hinted),
         };
         if create.scope == BindingScope::Global {
-            self.with_global_binding_storage(|storage| {
+            self.with_global_binding_storage(&mut |storage| {
                 tidb_bindinfo::binding_operator::create_binding(storage, std::slice::from_ref(&binding))?;
                 Ok(0)
             })?;
@@ -238,7 +240,7 @@ pub trait SqlBindExec:
             }
         }
         if scope == BindingScope::Global {
-            self.with_global_binding_storage(|storage| {
+            self.with_global_binding_storage(&mut |storage| {
                 tidb_bindinfo::binding_operator::create_binding(storage, &bindings)?;
                 Ok(0)
             })?;
@@ -482,7 +484,7 @@ pub trait SqlBindExec:
         if drop.scope == BindingScope::Global {
             // Go `bindingOperator.DropBinding`: a drop is an UPDATE to
             // `deleted`, and the affected count is the answer.
-            let dropped = self.with_global_binding_storage(|storage| {
+            let dropped = self.with_global_binding_storage(&mut |storage| {
                 tidb_bindinfo::binding_operator::drop_binding(storage, &digests)
             })?;
             return Ok(StmtOutput::Affected(dropped));

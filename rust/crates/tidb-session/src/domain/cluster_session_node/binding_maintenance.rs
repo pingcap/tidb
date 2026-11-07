@@ -75,7 +75,7 @@ impl tidb_bindinfo::cluster_binding_seam::BindingSessionPool for BindingSessions
             connection_id: self.next_id.fetch_add(2, Ordering::Relaxed),
         };
         writer
-            .execute(&mut |session| session.gc_global_bindings().map(|()| 0))
+            .execute(&mut |storage| tidb_bindinfo::binding_operator::gc_binding(storage).map(|()| 0))
             .map(|_| ())
             .map_err(|e| e.to_string())
     }
@@ -100,7 +100,13 @@ impl tidb_bindinfo::cluster_binding_seam::BindingSessionPool for BindingSessions
     }
 }
 /// A storage session of the node as Go bindinfo's pooled `sctx`.
-struct BindingRunner(super::SystemSqlExecutor);
+pub(super) struct BindingRunner(pub(super) super::SystemSqlExecutor);
+
+impl tidb_bindinfo::binding_operator::BindingOperatorSession for BindingRunner {
+    fn now_timestamp(&self, offset_micros: i64) -> String {
+        self.0.with_session(|session| session.binding_now_timestamp(offset_micros))
+    }
+}
 
 impl InternalSqlRunner for BindingRunner {
     fn get_sql_executor(&self) -> &dyn tidb_sqlexec::SqlExecutor {

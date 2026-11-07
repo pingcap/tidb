@@ -18,7 +18,9 @@
 //! transaction that already holds `mysql.bind_info`'s lock row (Go
 //! `callWithSCtx` with `lockBindInfoTable`), and reloads the cache after it.
 
-use tidb_datatype::Datum;
+use tidb_sqlescape::SqlArg;
+
+use crate::binding_utils::{exec, exec_rows, InternalSqlRunner};
 use tidb_driver_error::DriverError;
 use tidb_hack::GoToLower;
 
@@ -29,19 +31,10 @@ use crate::binding::{
 /// Go `pkg/bindinfo.Lease`.
 pub const LEASE: std::time::Duration = std::time::Duration::from_secs(3);
 
-/// What the operator does on its session: Go `exec(sctx, sql, args...)`
-/// with the statement's affected rows and warnings (Go reads them through
-/// `StmtCtx.AffectedRows()` and `execRows(sctx, "show warnings")`), and
-/// Go `time.Now()`.
-pub trait BindingOperatorSession {
-    /// One statement with `?` parameters: its affected-row count and the
-    /// messages of the warnings it raised.
-    ///
-    /// # Errors
-    ///
-    /// The statement's error.
-    fn exec(&mut self, sql: &str, params: &[Datum]) -> Result<(u64, Vec<String>), DriverError>;
-
+/// The operator's pooled session (Go `binding_operator.go`'s `sctx`): its
+/// SQL executors and affected rows ([`InternalSqlRunner`]), which Go's
+/// `exec` and `execRows` run on, and Go `time.Now()`.
+pub trait BindingOperatorSession: InternalSqlRunner {
     /// Go `types.NewTime(types.FromGoTime(time.Now().Add(offset)),
     /// mysql.TypeTimestamp, 6).String()`, `offset` in microseconds.
     fn now_timestamp(&self, offset_micros: i64) -> String;
@@ -61,49 +54,56 @@ fn plain_error(message: &str) -> DriverError {
 ///
 /// A statement's error, or the insert's first warning.
 pub fn create_binding<S: BindingOperatorSession + ?Sized>(
-    session: &mut S,
+    session: &S,
     bindings: &[Binding],
 ) -> Result<(), DriverError> {
     for binding in bindings {
         let update_ts = session.now_timestamp(0);
-        session.exec(
-            "UPDATE mysql.bind_info SET status = ?, update_time = ? WHERE original_sql = ? AND update_time < ?",
+        exec(
+            session,
+            "UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?",
             &[
-                Datum::new_string_datum(STATUS_DELETED.to_owned()),
-                Datum::new_string_datum(update_ts.clone()),
-                Datum::new_string_datum(binding.original_sql.clone()),
-                Datum::new_string_datum(update_ts.clone()),
+                SqlArg::from(STATUS_DELETED),
+                SqlArg::from(update_ts.as_str()),
+                SqlArg::from(binding.original_sql.as_str()),
+                SqlArg::from(update_ts.as_str()),
             ],
         )?;
         // Go stores NULL for an empty digest.
-        let digest = |digest: &str| {
+        fn digest(digest: &str) -> SqlArg<'_> {
             if digest.is_empty() {
-                Datum::Null
+                SqlArg::Null
             } else {
-                Datum::new_string_datum(digest.to_owned())
+                SqlArg::from(digest)
             }
-        };
-        let (_, warnings) = session.exec(
+        }
+        let db = binding.db.go_to_lower();
+        exec(
+            session,
             &format!(
                 "INSERT INTO mysql.bind_info({BIND_INFO_COLUMNS}, plan_digest) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                 VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)"
             ),
             &[
-                Datum::new_string_datum(binding.original_sql.clone()),
-                Datum::new_string_datum(binding.bind_sql.clone()),
-                Datum::new_string_datum(binding.db.go_to_lower()),
-                Datum::new_string_datum(binding.status.to_owned()),
-                Datum::new_string_datum(update_ts.clone()),
-                Datum::new_string_datum(update_ts),
-                Datum::new_string_datum(binding.charset.clone()),
-                Datum::new_string_datum(binding.collation.clone()),
-                Datum::new_string_datum(binding.source.to_owned()),
+                SqlArg::from(binding.original_sql.as_str()),
+                SqlArg::from(binding.bind_sql.as_str()),
+                SqlArg::from(db.as_str()),
+                SqlArg::from(binding.status),
+                SqlArg::from(update_ts.as_str()),
+                SqlArg::from(update_ts.as_str()),
+                SqlArg::from(binding.charset.as_str()),
+                SqlArg::from(binding.collation.as_str()),
+                SqlArg::from(binding.source),
                 digest(&binding.sql_digest),
                 digest(&binding.plan_digest),
             ],
         )?;
+        // Go `execRows(sctx, "show warnings")`: a warning the insert raised
+        // fails the operation with its message (`GetString(2)`).
+        let warnings = exec_rows(session, "show warnings", &[])?;
         if let Some(warning) = warnings.first() {
-            return Err(plain_error(warning));
+            let message = warning.get(2).and_then(|datum| datum.sql_string().ok()).unwrap_or_default();
+            return Err(plain_error(&message));
         }
     }
     Ok(())
@@ -117,7 +117,7 @@ pub fn create_binding<S: BindingOperatorSession + ?Sized>(
 ///
 /// `sql digest is empty`, or a statement's error.
 pub fn drop_binding<S: BindingOperatorSession + ?Sized>(
-    session: &mut S,
+    session: &S,
     sql_digests: &[String],
 ) -> Result<u64, DriverError> {
     if sql_digests.is_empty() {
@@ -126,14 +126,15 @@ pub fn drop_binding<S: BindingOperatorSession + ?Sized>(
     let mut deleted_rows = 0;
     for (i, sql_digest) in sql_digests.iter().enumerate() {
         let update_ts = session.now_timestamp(1 + i as i64);
-        let (affected, _) = session.exec(
-            "UPDATE mysql.bind_info SET status = ?, update_time = ? WHERE sql_digest = ? AND update_time < ? AND status != ?",
+        let affected = exec(
+            session,
+            "UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE sql_digest = %? AND update_time < %? AND status != %?",
             &[
-                Datum::new_string_datum(STATUS_DELETED.to_owned()),
-                Datum::new_string_datum(update_ts.clone()),
-                Datum::new_string_datum(sql_digest.clone()),
-                Datum::new_string_datum(update_ts),
-                Datum::new_string_datum(STATUS_DELETED.to_owned()),
+                SqlArg::from(STATUS_DELETED),
+                SqlArg::from(update_ts.as_str()),
+                SqlArg::from(sql_digest.as_str()),
+                SqlArg::from(update_ts.as_str()),
+                SqlArg::from(STATUS_DELETED),
             ],
         )?;
         deleted_rows += affected;
@@ -148,7 +149,7 @@ pub fn drop_binding<S: BindingOperatorSession + ?Sized>(
 ///
 /// The statement's error.
 pub fn set_binding_status<S: BindingOperatorSession + ?Sized>(
-    session: &mut S,
+    session: &S,
     new_status: &str,
     sql_digest: &str,
 ) -> Result<bool, DriverError> {
@@ -160,15 +161,16 @@ pub fn set_binding_status<S: BindingOperatorSession + ?Sized>(
         ("", "")
     };
     let update_ts = session.now_timestamp(0);
-    let (affected, _) = session.exec(
-        "UPDATE mysql.bind_info SET status = ?, update_time = ? WHERE sql_digest = ? AND update_time < ? AND status IN (?, ?)",
+    let affected = exec(
+        session,
+        "UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE sql_digest = %? AND update_time < %? AND status IN (%?, %?)",
         &[
-            Datum::new_string_datum(new_status.to_owned()),
-            Datum::new_string_datum(update_ts.clone()),
-            Datum::new_string_datum(sql_digest.to_owned()),
-            Datum::new_string_datum(update_ts),
-            Datum::new_string_datum(old_status0.to_owned()),
-            Datum::new_string_datum(old_status1.to_owned()),
+            SqlArg::from(new_status),
+            SqlArg::from(update_ts.as_str()),
+            SqlArg::from(sql_digest),
+            SqlArg::from(update_ts.as_str()),
+            SqlArg::from(old_status0),
+            SqlArg::from(old_status1),
         ],
     )?;
     Ok(affected > 0)
@@ -180,12 +182,13 @@ pub fn set_binding_status<S: BindingOperatorSession + ?Sized>(
 /// # Errors
 ///
 /// The statement's error.
-pub fn gc_binding<S: BindingOperatorSession + ?Sized>(session: &mut S) -> Result<(), DriverError> {
+pub fn gc_binding<S: BindingOperatorSession + ?Sized>(session: &S) -> Result<(), DriverError> {
     let ten_leases = i64::try_from((10 * LEASE).as_micros()).unwrap_or(i64::MAX);
     let update_time = session.now_timestamp(-ten_leases);
-    session.exec(
-        "DELETE FROM mysql.bind_info WHERE status = 'deleted' and update_time < ?",
-        &[Datum::new_string_datum(update_time)],
+    exec(
+        session,
+        "DELETE FROM mysql.bind_info WHERE status = 'deleted' and update_time < %?",
+        &[SqlArg::from(update_time.as_str())],
     )?;
     Ok(())
 }

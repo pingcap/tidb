@@ -19,7 +19,6 @@
 
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_ast::Stmt;
-use tidb_datatype::Datum;
 use tidb_driver_error::DriverError;
 
 use tidb_bindinfo::binding::{self, Binding};
@@ -66,14 +65,18 @@ impl Session {
         }
     }
 
+    /// Go `bindingOperator`'s `callWithSCtx(sPool, true, ...)`: the
+    /// operation runs on a session of the node's binding pool.
     pub(crate) fn with_global_binding_storage(
         &mut self,
-        mut operation: impl FnMut(&mut Self) -> Result<u64, DriverError>,
+        operation: &mut dyn FnMut(
+            &dyn tidb_bindinfo::binding_operator::BindingOperatorSession,
+        ) -> Result<u64, DriverError>,
     ) -> Result<u64, DriverError> {
-        match self.global_binding_writer.clone() {
-            Some(writer) => writer.execute(&mut operation),
-            None => operation(self),
-        }
+        let writer = self.global_binding_writer.clone().ok_or_else(|| {
+            DriverError::unsupported("the session's node has no binding handle")
+        })?;
+        writer.execute(operation)
     }
 
     /// Go `planner.optimize`'s binding step: replaces the statement's hints
@@ -310,13 +313,6 @@ impl Session {
             .unwrap_or_else(|_| "utf8mb4_bin".to_owned())
     }
 
-    /// Go `bindingOperator.GCBinding` on this internal session: the Domain
-    /// binding owner invokes it through the shared internal writer and lock
-    /// row.
-    pub fn gc_global_bindings(&mut self) -> Result<(), DriverError> {
-        tidb_bindinfo::binding_operator::gc_binding(self)
-    }
-
     /// Materialize the published bindings for SHOW. Standalone in-memory
     /// sessions without a node cache decode their local catalog instead.
     pub(crate) fn load_global_bindings(&mut self) -> Result<binding::SessionBindings, DriverError> {
@@ -355,7 +351,9 @@ pub trait GlobalBindingWriter: Send + Sync {
     /// Commit the complete operation or discard all its writes on error.
     fn execute(
         &self,
-        operation: &mut dyn FnMut(&mut crate::Session) -> Result<u64, tidb_driver_error::DriverError>,
+        operation: &mut dyn FnMut(
+            &dyn tidb_bindinfo::binding_operator::BindingOperatorSession,
+        ) -> Result<u64, tidb_driver_error::DriverError>,
     ) -> Result<u64, tidb_driver_error::DriverError>;
 
     /// Go `BindingHandle().LoadFromStorageToCache(true, ...)`: the node's
@@ -363,36 +361,11 @@ pub trait GlobalBindingWriter: Send + Sync {
     fn reload(&self) -> Result<(), tidb_driver_error::DriverError>;
 }
 
-/// The binding operator's internal session (Go `binding_operator.go`'s
-/// `sctx`).
-impl tidb_bindinfo::binding_operator::BindingOperatorSession for Session {
-    /// Go `exec(sctx, sql, args...)` against `mysql.bind_info`. The
-    /// parameters go through [`tidb_executor::bind_parameters`] -- the
-    /// prepared-statement binder -- so a bound SQL text (which contains
-    /// quotes freely) can never break out of its literal.
-    fn exec(&mut self, sql: &str, params: &[Datum]) -> Result<(u64, Vec<String>), DriverError> {
-        let text = tidb_executor::bind_parameters(sql, params, self.scanner_sql_mode())?;
-        let ctx = self.statement_context_for_update_read(false);
-        let affected = self.with_staged_catalog(|catalog| match text.trim_start().get(..6) {
-            Some(word) if word.eq_ignore_ascii_case("INSERT") => {
-                tidb_executor::run_insert_in(&text, catalog, "mysql", &ctx)
-            }
-            Some(word) if word.eq_ignore_ascii_case("DELETE") => {
-                tidb_executor::run_delete_in(&text, catalog, "mysql", &ctx)
-            }
-            _ => tidb_executor::run_update_in(&text, catalog, "mysql", &ctx),
-        })?;
-        let warnings = ctx
-            .take_warnings()
-            .iter()
-            .map(|warning| warning.message().to_owned())
-            .collect();
-        Ok((affected, warnings))
-    }
-
+impl Session {
     /// The statement clock in the session's zone, at six fractional digits
-    /// (`bind_info.update_time` is a `TIMESTAMP(6)` column).
-    fn now_timestamp(&self, offset_micros: i64) -> String {
+    /// (`bind_info.update_time` is a `TIMESTAMP(6)` column): the binding
+    /// operator's Go `time.Now()`.
+    pub(crate) fn binding_now_timestamp(&self, offset_micros: i64) -> String {
         let zone = self.session_time_zone();
         let (clock_seconds, nanos, offset) = self.statement_clock(&zone);
         let at = chrono::DateTime::from_timestamp(clock_seconds, nanos)

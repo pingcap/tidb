@@ -1074,9 +1074,15 @@ impl crate::binding_arm::GlobalBindingWriter for InternalBindingWriter {
             .map_err(|error| tidb_driver_error::DriverError::Mysql(tidb_terror::MysqlError::unknown(error)))
     }
 
+    /// Go `bindingOperator`'s `callWithSCtx(sPool, true, ...)`: one pooled
+    /// session, `BEGIN PESSIMISTIC`, `lockBindInfoTable`, the operation's
+    /// statements, then `COMMIT` (`ROLLBACK` on its error), and the cache
+    /// reload Go defers.
     fn execute(
         &self,
-        operation: &mut dyn FnMut(&mut Session) -> Result<u64, tidb_driver_error::DriverError>,
+        operation: &mut dyn FnMut(
+            &dyn tidb_bindinfo::binding_operator::BindingOperatorSession,
+        ) -> Result<u64, tidb_driver_error::DriverError>,
     ) -> Result<u64, tidb_driver_error::DriverError> {
         let to_driver = |error: SqlQueryError| {
             tidb_driver_error::DriverError::Mysql(
@@ -1092,26 +1098,21 @@ impl crate::binding_arm::GlobalBindingWriter for InternalBindingWriter {
             .map_err(to_driver)?;
         // Go bindinfo's `kv.WithInternalSourceType(ctx, kv.InternalTxnBindInfo)`.
         internal_session.set_internal_request_source(tidb_txnkv::INTERNAL_TXN_BIND_INFO);
-        let mut internal = internal_session.node_conn();
-        internal
-            .session
-            .set_global_binding_cache(self.bindings.cache());
-        internal.session.enable_privilege_bypass();
-        internal
-            .execute_internal("BEGIN PESSIMISTIC")
-            .map_err(to_driver)?;
+        internal_session.set_global_binding_cache(self.bindings.cache());
+        internal_session.enable_privilege_bypass();
+        let sctx = super::binding_maintenance::BindingRunner(super::SystemSqlExecutor::new(internal_session));
+        let run = |sql: &str| {
+            sctx.0
+                .with_session(|session| session.node_conn().execute_internal(sql).map(drop))
+                .map_err(to_driver)
+        };
+        run("BEGIN PESSIMISTIC")?;
         let result = (|| {
-            // Use Go's shared record-lock statement so binding writers on
-            // different nodes serialize through the same storage transaction.
-            internal.execute_internal(tidb_bindinfo::binding_utils::LOCK_BIND_INFO_SQL)?;
-            let resource_group = internal.session.current_resource_group().to_owned();
-            let changed = internal.with_prelocked_statement(
-                StatementReadShape::LockingRead,
-                &resource_group,
-                true,
-                |session| operation(session).map_err(map_error),
-            )?;
-            internal.execute_internal("COMMIT")?;
+            // Go `lockBindInfoTable`: binding writers on different nodes
+            // serialize through the same storage row.
+            run(tidb_bindinfo::binding_utils::LOCK_BIND_INFO_SQL)?;
+            let changed = operation(&sctx)?;
+            run("COMMIT")?;
             Ok(changed)
         })();
         match result {
@@ -1123,8 +1124,8 @@ impl crate::binding_arm::GlobalBindingWriter for InternalBindingWriter {
                 Ok(changed)
             }
             Err(error) => {
-                let _ = internal.execute_internal("ROLLBACK");
-                Err(to_driver(error))
+                let _ = run("ROLLBACK");
+                Err(error)
             }
         }
     }
