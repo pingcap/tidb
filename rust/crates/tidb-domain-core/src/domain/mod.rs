@@ -3099,9 +3099,9 @@ impl ClusterPriorityQueueSource {
         tidb_stats_handle_util::call_with_sctx(
             self.session_pool.as_ref(),
             |context| {
-                value = context
-                    .scalar(sql)
-                    .map_err(|error| stats_session_error(error))?;
+                // Go `statsutil.ExecRows(sctx, sql)`'s first row's first column.
+                let (rows, _) = tidb_stats_handle_util::exec_rows(context, sql, &[])?;
+                value = rows.into_iter().next().and_then(|row| row.into_iter().next());
                 Ok(())
             },
             &[],
@@ -3599,15 +3599,27 @@ impl TiDBTableValues {
         } else {
             value
         };
-        let sql = tidb_sqlescape::escape_sql_text(
-            "REPLACE INTO mysql.tidb (variable_name, variable_value, comment) VALUES (%?, %?, %?)",
-            &[
-                tidb_sqlescape::SqlArg::String(name.as_bytes()),
-                tidb_sqlescape::SqlArg::String(value.as_bytes()),
-                tidb_sqlescape::SqlArg::String(comment.as_bytes()),
-            ],
-        )
-        .map_err(|error| error.to_string())?;
-        self.with_session(|session| session.execute_internal_write(&sql).map(drop))
+        // Go `SetTiDBTableValue`: `ExecRestrictedSQL` under
+        // `kv.InternalTxnSysVar`.
+        let ctx = tikv_client::util::with_internal_source_type(
+            &tikv_client::trace::TraceContext::new(),
+            tidb_txnkv::INTERNAL_TXN_SYS_VAR,
+        );
+        self.with_session(|session| {
+            session
+                .restricted_sql_executor()
+                .exec_restricted_sql(
+                    &ctx,
+                    &[],
+                    "REPLACE INTO mysql.tidb (variable_name, variable_value, comment) VALUES (%?, %?, %?)",
+                    &[
+                        tidb_sqlescape::SqlArg::String(name.as_bytes()),
+                        tidb_sqlescape::SqlArg::String(value.as_bytes()),
+                        tidb_sqlescape::SqlArg::String(comment.as_bytes()),
+                    ],
+                )
+                .map(drop)
+                .map_err(|error| error.to_string())
+        })
     }
 }

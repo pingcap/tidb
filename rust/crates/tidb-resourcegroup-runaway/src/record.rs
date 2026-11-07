@@ -397,7 +397,7 @@ impl Manager {
         on_session(self.sys_session_pool.as_ref(), |session| {
             in_transaction(session, |session| {
                 let (sql, params) = record.gen_insertion_stmt();
-                session.execute_internal(&sql, &args(&params))?;
+                execute_internal(session, &sql, &args(&params))?;
                 let mut error = String::new();
                 for retry in 0..MAX_ID_RETRIES {
                     if retry > 0 {
@@ -409,7 +409,7 @@ impl Manager {
                             &[tidb_log::Field::new("error", tidb_log::Value::Str(error.clone()))],
                         );
                     }
-                    match session.execute_internal("SELECT LAST_INSERT_ID();", &[]) {
+                    match execute_internal(session, "SELECT LAST_INSERT_ID();", &[]) {
                         Ok(rows) if rows.len() == 1 => {
                             id = datum_u64(rows[0].first());
                             return Ok(());
@@ -457,16 +457,32 @@ impl Manager {
     }
 }
 
+/// Go `kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)`,
+/// the context every statement here runs under.
+fn others_ctx() -> tikv_client::trace::TraceContext {
+    tikv_client::util::with_internal_source_type(
+        &tikv_client::trace::TraceContext::new(),
+        tidb_txnkv::INTERNAL_TXN_OTHERS,
+    )
+}
+
+/// Go `exec.ExecuteInternal(ctx, sql, params...)` on the session's
+/// `GetSQLExecutor()`, its record set drained and closed.
+fn execute_internal(session: &dyn SqlSession, sql: &str, args: &[SqlArg<'_>]) -> Result<Vec<Vec<Datum>>, String> {
+    tidb_sqlexec::execute_sql(&others_ctx(), session.get_sql_executor().as_ref(), sql, args)
+        .map_err(|error| error.to_string())
+}
+
 /// Go's `BEGIN` ... `COMMIT` / `ROLLBACK` around `body` on one session.
 fn in_transaction(
     session: &dyn SqlSession,
     body: impl FnOnce(&dyn SqlSession) -> Result<(), String>,
 ) -> Result<(), String> {
-    session.execute_internal("BEGIN", &[])?;
+    execute_internal(session, "BEGIN", &[])?;
     match body(session) {
-        Ok(()) => session.execute_internal("COMMIT", &[]).map(drop),
+        Ok(()) => execute_internal(session, "COMMIT", &[]).map(drop),
         Err(error) => {
-            if let Err(rollback) = session.execute_internal("ROLLBACK", &[]) {
+            if let Err(rollback) = execute_internal(session, "ROLLBACK", &[]) {
                 tidb_logutil::bg_logger().error(
                     "encountered error",
                     &[tidb_log::Field::new("error", tidb_log::Value::Str(rollback))],
@@ -486,9 +502,9 @@ pub fn handle_runaway_watch_done(pool: &dyn SessionPool, record: &QuarantineReco
     on_session(pool, |session| {
         in_transaction(session, |session| {
             let (sql, params) = record.gen_insertion_done_stmt();
-            session.execute_internal(&sql, &args(&params))?;
+            execute_internal(session, &sql, &args(&params))?;
             let (sql, params) = record.gen_deletion_stmt();
-            session.execute_internal(&sql, &args(&params)).map(drop)
+            execute_internal(session, &sql, &args(&params)).map(drop)
         })
     })
 }
@@ -516,7 +532,18 @@ pub(crate) fn on_session<T>(
 /// # Errors
 /// Whatever the statement reports.
 pub fn exec_rc_restricted_sql(pool: &dyn SessionPool, sql: &str, params: &[Param]) -> Result<Vec<Vec<Datum>>, String> {
-    on_session(pool, |session| session.exec_restricted_sql(sql, &args(params)))
+    on_session(pool, |session| {
+        session
+            .get_restricted_sql_executor()
+            .exec_restricted_sql(
+                &others_ctx(),
+                &[std::sync::Arc::new(tidb_sqlexec::exec_option_use_cur_session)],
+                sql,
+                &args(params),
+            )
+            .map(|(rows, _)| rows)
+            .map_err(|error| error.to_string())
+    })
 }
 
 /// Go `chunk.Row.GetUint64(0)` of `LAST_INSERT_ID()`.

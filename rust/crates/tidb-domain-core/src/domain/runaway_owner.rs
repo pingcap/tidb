@@ -31,21 +31,12 @@ struct RunawaySessions(Arc<DomainSysSessionPool>);
 struct RunawaySession<'a>(&'a dyn DomainSysSession);
 
 impl runaway::SqlSession for RunawaySession<'_> {
-    fn execute_internal(
-        &self,
-        sql: &str,
-        args: &[tidb_sqlescape::SqlArg<'_>],
-    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, String> {
-        // Go runaway's `kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)`.
-        crate::sys_session::exec_sql(self.0, tidb_txnkv::INTERNAL_TXN_OTHERS, sql, args)
+    fn get_sql_executor(&self) -> Arc<dyn tidb_sqlexec::SqlExecutor> {
+        self.0.sql_executor()
     }
 
-    fn exec_restricted_sql(
-        &self,
-        sql: &str,
-        args: &[tidb_sqlescape::SqlArg<'_>],
-    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, String> {
-        self.execute_internal(sql, args)
+    fn get_restricted_sql_executor(&self) -> Arc<dyn tidb_sqlexec::RestrictedSqlExecutor> {
+        self.0.restricted_sql_executor()
     }
 }
 

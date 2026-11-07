@@ -30,8 +30,6 @@ pub use checker::Checker;
 pub use manager::{ExitSignal, Manager, MANUAL_SOURCE, MAX_WAIT_DURATION};
 pub use record::{null_time, QuarantineRecord, Record};
 
-use tidb_datatype::Datum;
-use tidb_sqlescape::SqlArg;
 
 /// Go `*rmclient.ResourceGroupsController`'s `GetResourceGroup`.
 pub trait ResourceGroupsController: Send + Sync {
@@ -45,21 +43,13 @@ pub trait ResourceGroupsController: Send + Sync {
     ) -> Result<Option<tidb_proto::resource_manager::ResourceGroup>, String>;
 }
 
-/// One pooled internal session, as this package runs SQL on it.
+/// Go `sessionctx.Context` as the runaway records drive a pooled session.
 pub trait SqlSession {
-    /// Go `GetSQLExecutor().ExecuteInternal(ctx, sql, params...)`, drained.
-    ///
-    /// # Errors
-    /// The statement's error.
-    fn execute_internal(&self, sql: &str, args: &[SqlArg<'_>]) -> Result<Vec<Vec<Datum>>, String>;
+    /// Go `GetSQLExecutor()`.
+    fn get_sql_executor(&self) -> std::sync::Arc<dyn tidb_sqlexec::SqlExecutor>;
 
-    /// Go `GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx,
-    /// ExecOptionUseCurSession, sql, params...)` under the
-    /// `InternalTxnOthers` source.
-    ///
-    /// # Errors
-    /// The statement's error.
-    fn exec_restricted_sql(&self, sql: &str, args: &[SqlArg<'_>]) -> Result<Vec<Vec<Datum>>, String>;
+    /// Go `GetRestrictedSQLExecutor()`.
+    fn get_restricted_sql_executor(&self) -> std::sync::Arc<dyn tidb_sqlexec::RestrictedSqlExecutor>;
 }
 
 /// Go `util.SessionPool`: `body` runs on a session got from the pool, which

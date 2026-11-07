@@ -82,16 +82,22 @@ pub struct ForeignKeyCheck {
     pub foreign_key: Box<tidb_model::table::FKInfo>,
 }
 
-/// Go `sqlexec.ExecOption` and the session settings the DDL worker's
-/// restricted SQL makes.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct RestrictedSqlOptions {
-    /// Go `ExecOptionEnableDDLAnalyze`: the session's
-    /// `EnableDDLAnalyzeExecOpt`, which lets an ANALYZE cover the indexes
-    /// still in write-reorganization.
-    pub enable_ddl_analyze: bool,
-    /// Go `sessCtx.GetSessionVars().TimeZone = time.UTC` for the statement.
-    pub utc_time_zone: bool,
+/// Go `sessPool.Get()`'s session as the DDL's analyze checks use it: its
+/// `GetRestrictedSQLExecutor()` (the session itself) and
+/// `GetSessionVars().TimeZone`.
+pub trait DdlSysSession {
+    /// Go `GetRestrictedSQLExecutor()`.
+    fn get_restricted_sql_executor(&self) -> &dyn tidb_sqlexec::RestrictedSqlExecutor;
+
+    /// Go `GetSessionVars().TimeZone`, by name.
+    fn time_zone(&self) -> String;
+
+    /// Go `GetSessionVars().TimeZone = tz`.
+    ///
+    /// # Errors
+    ///
+    /// The zone name is not one the session accepts.
+    fn set_time_zone(&self, name: &str) -> Result<(), tidb_terror::MysqlError>;
 }
 
 /// Go `pkg/ddl/session.Pool` as the DDL package uses it: the sessions the
@@ -154,21 +160,13 @@ pub trait DdlSessionPool: Send + Sync {
             .map_err(tidb_store_driver_error::sql_query_error::mysql_error_of)
     }
 
-    /// Go `w.sessPool.Get()`, the caller's settings on that session's
-    /// `SessionVars` ([`RestrictedSqlOptions::utc_time_zone`]), and
-    /// `ExecRestrictedSQL(ctx, opts, sql, params...)` with
-    /// `ExecOptionUseCurSession` on it.
+    /// Go `w.sessPool.Get()`: one of the pool's sessions, which the caller
+    /// sets up and runs its restricted SQL on.
     ///
     /// # Errors
     ///
-    /// The escaping's error, or the statement's.
-    fn exec_restricted_sql_opts(
-        &self,
-        options: RestrictedSqlOptions,
-        sql: &str,
-        args: &[tidb_sqlescape::SqlArg<'_>],
-    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
-        let _ = (options, sql, args);
+    /// The pool has no session to hand out.
+    fn get(&self) -> Result<Box<dyn DdlSysSession>, tidb_terror::MysqlError> {
         Err(tidb_terror::MysqlError::unknown("not restricted SQL executor"))
     }
 
@@ -255,7 +253,11 @@ pub trait DdlSessionPool: Send + Sync {
 /// Go `w.sess` during one step (see [`DdlSessionPool::open_step_session`]).
 /// Dropping it ends the session and leaves its writes in the step's buffer.
 pub trait StepSqlSession: Send {
-    /// Go `w.sess.Execute(ctx, sql, label)`.
+    /// Go `sess.Context.GetSQLExecutor()`.
+    fn get_sql_executor(&self) -> &dyn tidb_sqlexec::SqlExecutor;
+
+    /// Go `Session.Execute(ctx, sql, label, args...)`: `ExecuteInternal`
+    /// under `kv.InternalTxnDDL`, its record set drained.
     ///
     /// # Errors
     ///
@@ -264,7 +266,14 @@ pub trait StepSqlSession: Send {
         &mut self,
         sql: &str,
         args: &[tidb_sqlescape::SqlArg<'_>],
-    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError>;
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
+        let ctx = tikv_client::util::with_internal_source_type(
+            &tikv_client::trace::TraceContext::new(),
+            tidb_txnkv::INTERNAL_TXN_DDL,
+        );
+        tidb_sqlexec::execute_sql(&ctx, self.get_sql_executor(), sql, args)
+            .map_err(tidb_store_driver_error::sql_query_error::mysql_error_of)
+    }
 
     /// Go `Session.Begin`: `sessiontxn.NewTxn`, an optimistic transaction
     /// entered through the session's API, not a statement.

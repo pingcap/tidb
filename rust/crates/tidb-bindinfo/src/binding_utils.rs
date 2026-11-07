@@ -37,10 +37,9 @@
 //! Everything `utils.go` does against a session is funnelled through one
 //! narrow trait, [`InternalSqlRunner`], which stands in for four Go seams:
 //!
-//! * `// boundary:` `pkg/sessionctx.Context` + `util/sqlexec.SQLExecutor` /
-//!   `RestrictedSQLExecutor` -- Go's `exec` (line 74) and `execRows`
-//!   (line 80) become [`InternalSqlRunner::exec`] and
-//!   [`InternalSqlRunner::exec_rows`].
+//! * `// boundary:` `pkg/sessionctx.Context` -- its `GetSQLExecutor()`,
+//!   `GetRestrictedSQLExecutor()` and `StmtCtx.AffectedRows()`, which Go's
+//!   [`exec`] (line 74) and [`exec_rows`] (line 80) run on.
 //! * `// boundary:` `pkg/planner/core/resolve.ResultField` -- `execRows`
 //!   returns `(rows, fields, err)` and no caller in this file reads `fields`,
 //!   so the field list is dropped.
@@ -81,11 +80,8 @@
 //! * **`time.Since`** becomes an explicit `now` parameter on
 //!   [`should_update_binding`] and [`update_binding_usage_info_to_storage`],
 //!   so the interval rule is testable without a clock.
-//! * **`%?`** is kept verbatim in the generated SQL: it is TiDB's
-//!   internal-SQL placeholder spelling, and keeping it makes the statement
-//!   text byte-comparable with Go. An implementation of
-//!   [`InternalSqlRunner`] bridging to `tidb_executor::bind_parameters` must
-//!   translate it to `?`.
+//! * **`%?`** is kept verbatim in the generated SQL, bound by the executor
+//!   as Go's `ParseWithParams` binds it.
 //! * **`bindingLogger()`** (line 87) and every `zap` call are dropped by name;
 //!   this workspace has no structured logger at this seam. `terror.Log` on the
 //!   rollback error is dropped with it.
@@ -107,6 +103,10 @@ use chrono::{DateTime, Utc};
 use tidb_ast::{DmlStmt, QueryStmt, Stmt};
 use tidb_datatype::Datum;
 use tidb_driver_error::DriverError;
+use tidb_sqlescape::SqlArg;
+use tidb_sqlexec::{RestrictedSqlExecutor, SqlExecutor};
+use tikv_client::trace::TraceContext;
+use tikv_client::util::with_internal_source_type;
 
 use crate::binding::{Binding, STATUS_DISABLED, STATUS_ENABLED, STATUS_USING};
 use tidb_hint::HintsSet;
@@ -133,16 +133,66 @@ pub const MAX_WRITE_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 /// The columns `readBindingsFromStorage` selects (line 146), in order.
 pub const BINDING_STORAGE_COLUMNS: &str = "original_sql, bind_sql, default_db, status, create_time,\n       update_time, charset, collation, source, sql_digest, plan_digest";
 
-/// `// boundary:` one internal SQL statement against the session, standing in
-/// for `sessionctx.Context` + `util/sqlexec`. See the module header.
+/// Go `sessionctx.Context` as `utils.go` reaches it: its two SQL executors
+/// and `GetSessionVars().StmtCtx.AffectedRows()`.
 pub trait InternalSqlRunner {
-    /// Go `exec` (line 74): run a statement, keep only the affected-row count
-    /// (no caller in this file reads the returned `RecordSet`).
-    fn exec(&mut self, sql: &str, args: &[Datum]) -> Result<u64, DriverError>;
+    /// Go `GetSQLExecutor()`.
+    fn get_sql_executor(&self) -> &dyn SqlExecutor;
 
-    /// Go `execRows` (line 80): run a query, keep only the rows (no caller in
-    /// this file reads the `[]*resolve.ResultField`).
-    fn exec_rows(&mut self, sql: &str, args: &[Datum]) -> Result<Vec<Vec<Datum>>, DriverError>;
+    /// Go `GetRestrictedSQLExecutor()`.
+    fn get_restricted_sql_executor(&self) -> &dyn RestrictedSqlExecutor;
+
+    /// Go `GetSessionVars().StmtCtx.AffectedRows()` of the last statement.
+    fn affected_rows(&self) -> u64;
+}
+
+/// Go `kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)`.
+fn bind_info_ctx() -> TraceContext {
+    with_internal_source_type(&TraceContext::new(), tidb_txnkv::INTERNAL_TXN_BIND_INFO)
+}
+
+/// Go `exec` (line 74): `GetSQLExecutor().ExecuteInternal(ctx, sql,
+/// args...)`. Its record set is drained and closed, and the statement's
+/// affected-row count -- what the callers read next -- answered.
+///
+/// # Errors
+///
+/// The statement's error.
+pub fn exec<R: InternalSqlRunner + ?Sized>(
+    sctx: &R,
+    sql: &str,
+    args: &[SqlArg<'_>],
+) -> Result<u64, DriverError> {
+    tidb_sqlexec::execute_sql(&bind_info_ctx(), sctx.get_sql_executor(), sql, args)
+        .map_err(sql_exec_error)?;
+    Ok(sctx.affected_rows())
+}
+
+/// Go `execRows` (line 80): `GetRestrictedSQLExecutor().ExecRestrictedSQL`
+/// with `ExecOptionUseCurSession`; no caller in this package reads the
+/// fields.
+///
+/// # Errors
+///
+/// The statement's error.
+pub fn exec_rows<R: InternalSqlRunner + ?Sized>(
+    sctx: &R,
+    sql: &str,
+    args: &[SqlArg<'_>],
+) -> Result<Vec<Vec<Datum>>, DriverError> {
+    sctx.get_restricted_sql_executor()
+        .exec_restricted_sql(
+            &bind_info_ctx(),
+            &[std::sync::Arc::new(tidb_sqlexec::exec_option_use_cur_session)],
+            sql,
+            args,
+        )
+        .map(|(rows, _)| rows)
+        .map_err(sql_exec_error)
+}
+
+fn sql_exec_error(error: tidb_sqlexec::SqlExecError) -> DriverError {
+    DriverError::Mysql(tidb_store_driver_error::sql_query_error::mysql_error_of(error))
 }
 
 /// Go `callWithSCtx` (lines 41-71), minus the session pool.
@@ -161,14 +211,14 @@ where
     if !wrap_txn {
         return body(runner);
     }
-    runner.exec("BEGIN PESSIMISTIC", &[])?;
+    exec(runner, "BEGIN PESSIMISTIC", &[])?;
     match body(runner) {
         Ok(value) => {
-            runner.exec("COMMIT", &[])?;
+            exec(runner, "COMMIT", &[])?;
             Ok(value)
         }
         Err(err) => {
-            let _ = runner.exec("ROLLBACK", &[]);
+            let _ = exec(runner, "ROLLBACK", &[]);
             Err(err)
         }
     }
@@ -321,14 +371,14 @@ pub fn read_bindings_sql(condition: &str) -> String {
 pub fn read_bindings_from_storage<R>(
     runner: &mut R,
     condition: &str,
-    args: &[Datum],
+    args: &[SqlArg<'_>],
 ) -> Result<Vec<Binding>, DriverError>
 where
     R: InternalSqlRunner + ?Sized,
 {
     let sql = read_bindings_sql(condition);
     call_with_sctx(runner, false, |runner| {
-        let rows = runner.exec_rows(&sql, args)?;
+        let rows = exec_rows(runner, &sql, args)?;
         let mut bindings = Vec::with_capacity(rows.len());
         for row in &rows {
             if row.first().and_then(tidb_datatype::datum_text::sysvar_datum_text).as_deref()
@@ -501,18 +551,17 @@ where
         })
         .collect();
     call_with_sctx(runner, true, |runner| {
-        runner.exec(LOCK_BIND_INFO_SQL, &[])?;
+        exec(runner, LOCK_BIND_INFO_SQL, &[])?;
         // "lockBindInfoTable is to prefetch the rows and lock them, it is good
         // for performance when there are many bindings to update with multi
         // tidb nodes."
-        runner.exec(&add_lock_for_binds_sql(&writes), &[])?;
+        exec(runner, &add_lock_for_binds_sql(&writes), &[])?;
         for write in &writes {
-            runner.exec(
+            let last_used = format_last_used(write.last_used);
+            exec(
+                runner,
                 &save_binding_usage_sql(&write.plan_digest),
-                &[
-                    Datum::new_string_datum(format_last_used(write.last_used)),
-                    Datum::new_string_datum(write.sql_digest.clone()),
-                ],
+                &[SqlArg::from(last_used.as_str()), SqlArg::from(write.sql_digest.as_str())],
             )?;
         }
         Ok(())
@@ -566,60 +615,119 @@ pub fn format_last_used(ts: DateTime<Utc>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
+    use std::sync::Mutex;
 
     use super::*;
 
     /// A recording runner for checking storage statements and transaction order.
     #[derive(Default)]
     struct RecordingRunner {
-        statements: RefCell<Vec<String>>,
+        statements: Mutex<Vec<String>>,
         rows: Vec<Vec<Datum>>,
+        /// The `exec` statements failing from this count on, when set.
+        fail_usage_from: Option<usize>,
+        usage_updates: Mutex<usize>,
+    }
+
+    fn rendered(sql: &str, args: &[SqlArg<'_>]) -> String {
+        let args: Vec<String> = args
+            .iter()
+            .map(|arg| match arg {
+                SqlArg::String(text) => String::from_utf8_lossy(text).into_owned(),
+                other => panic!("bindinfo binds strings, not {other:?}"),
+            })
+            .collect();
+        if args.is_empty() {
+            sql.to_owned()
+        } else {
+            format!("{sql} :: [{}]", args.join(", "))
+        }
     }
 
     impl InternalSqlRunner for RecordingRunner {
-        fn exec(&mut self, sql: &str, args: &[Datum]) -> Result<u64, DriverError> {
-            let rendered: Vec<String> = args
-                .iter()
-                .map(|arg| tidb_datatype::datum_text::sysvar_datum_text(arg).unwrap_or_default())
-                .collect();
-            self.statements.borrow_mut().push(if rendered.is_empty() {
-                sql.to_owned()
-            } else {
-                format!("{sql} :: [{}]", rendered.join(", "))
-            });
-            Ok(1)
+        fn get_sql_executor(&self) -> &dyn SqlExecutor {
+            self
         }
 
-        fn exec_rows(
-            &mut self,
+        fn get_restricted_sql_executor(&self) -> &dyn RestrictedSqlExecutor {
+            self
+        }
+
+        fn affected_rows(&self) -> u64 {
+            1
+        }
+    }
+
+    impl SqlExecutor for RecordingRunner {
+        fn execute(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
+            _sql: &str,
+        ) -> tidb_sqlexec::Result<Vec<Box<dyn tidb_sqlexec::RecordSet>>> {
+            unreachable!("bindinfo runs ExecuteInternal")
+        }
+
+        fn execute_internal(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
             sql: &str,
-            _args: &[Datum],
-        ) -> Result<Vec<Vec<Datum>>, DriverError> {
-            self.statements.borrow_mut().push(sql.to_owned());
-            Ok(self.rows.clone())
+            arguments: &[SqlArg<'_>],
+        ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
+            if sql.starts_with("UPDATE mysql.bind_info USE INDEX(digest_index) SET last_used_date") {
+                let mut updates = self.usage_updates.lock().unwrap();
+                *updates += 1;
+                if self.fail_usage_from.is_some_and(|from| *updates >= from) {
+                    return Err("second batch failed".into());
+                }
+            }
+            self.statements.lock().unwrap().push(rendered(sql, arguments));
+            Ok(None)
+        }
+
+        fn execute_stmt(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
+            _statement: &Stmt,
+        ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
+            unreachable!("bindinfo runs ExecuteInternal")
+        }
+    }
+
+    impl RestrictedSqlExecutor for RecordingRunner {
+        fn parse_with_params(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
+            _sql: &str,
+            _arguments: &[SqlArg<'_>],
+        ) -> tidb_sqlexec::Result<Stmt> {
+            unreachable!("bindinfo runs ExecRestrictedSQL")
+        }
+
+        fn exec_restricted_stmt(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
+            _statement: &Stmt,
+            _options: &[tidb_sqlexec::OptionFuncAlias],
+        ) -> tidb_sqlexec::Result<(Vec<Vec<Datum>>, Vec<tidb_resolve::ResultFieldRef>)> {
+            unreachable!("bindinfo runs ExecRestrictedSQL")
+        }
+
+        fn exec_restricted_sql(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
+            options: &[tidb_sqlexec::OptionFuncAlias],
+            sql: &str,
+            _arguments: &[SqlArg<'_>],
+        ) -> tidb_sqlexec::Result<(Vec<Vec<Datum>>, Vec<tidb_resolve::ResultFieldRef>)> {
+            // Go `execRows`' `ExecOptionUseCurSession`.
+            assert!(tidb_sqlexec::exec_option(options).use_cur_session);
+            self.statements.lock().unwrap().push(sql.to_owned());
+            Ok((self.rows.clone(), Vec::new()))
         }
     }
 
     #[test]
     fn later_usage_batch_failure_keeps_committed_batch_acknowledged() {
-        struct FailSecondBatch(usize);
-        impl InternalSqlRunner for FailSecondBatch {
-            fn exec(&mut self, sql: &str, _: &[Datum]) -> Result<u64, DriverError> {
-                if sql.starts_with(
-                    "UPDATE mysql.bind_info USE INDEX(digest_index) SET last_used_date",
-                ) {
-                    self.0 += 1;
-                    if self.0 == 101 {
-                        return Err(DriverError::unsupported("second batch failed"));
-                    }
-                }
-                Ok(1)
-            }
-            fn exec_rows(&mut self, _: &str, _: &[Datum]) -> Result<Vec<Vec<Datum>>, DriverError> {
-                Ok(Vec::new())
-            }
-        }
         let now = Utc::now();
         let mut usages = (0..101)
             .map(|index| UsageInfo {
@@ -630,7 +738,11 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!(
-            update_binding_usage_info_to_storage(&mut FailSecondBatch(0), &mut usages, now)
+            update_binding_usage_info_to_storage(
+                &mut RecordingRunner { fail_usage_from: Some(101), ..RecordingRunner::default() },
+                &mut usages,
+                now,
+            )
                 .is_err()
         );
         assert!(usages[..100]
@@ -878,11 +990,11 @@ mod tests {
         assert_eq!(bindings.len(), 1);
         assert_eq!(bindings[0].original_sql, "select * from `test` . `t`");
         assert_eq!(
-            runner.statements.borrow().as_slice(),
+            runner.statements.lock().unwrap().as_slice(),
             [read_bindings_sql("ORDER BY update_time, create_time")]
         );
         // No transaction: Go passes wrapTxn=false here.
-        assert!(!runner.statements.borrow()[0].contains("BEGIN"));
+        assert!(!runner.statements.lock().unwrap()[0].contains("BEGIN"));
     }
 
     /// New coverage: `shouldUpdateBinding`'s three branches (lines 216-224).
@@ -954,7 +1066,7 @@ mod tests {
         let last_used = format_last_used(now);
         assert_eq!(last_used, "2026-01-01 00:00:00");
         assert_eq!(
-            runner.statements.borrow().as_slice(),
+            runner.statements.lock().unwrap().as_slice(),
             [
                 "BEGIN PESSIMISTIC".to_owned(),
                 LOCK_BIND_INFO_SQL.to_owned(),
@@ -979,7 +1091,7 @@ mod tests {
             update_binding_usage_info_to_storage(&mut second, &mut usages, now).unwrap(),
             0
         );
-        assert!(second.statements.borrow().is_empty());
+        assert!(second.statements.lock().unwrap().is_empty());
     }
 
     /// New coverage: the batch boundary at
@@ -1000,7 +1112,7 @@ mod tests {
         let mut runner = RecordingRunner::default();
         let count = update_binding_usage_info_to_storage(&mut runner, &mut usages, now).unwrap();
         assert_eq!(count, UPDATE_BINDING_USAGE_INFO_BATCH_SIZE + 1);
-        let statements = runner.statements.borrow();
+        let statements = runner.statements.lock().unwrap();
         // Two transactions: one full batch, then the single leftover.
         assert_eq!(
             statements
@@ -1022,7 +1134,7 @@ mod tests {
         .unwrap_err();
         assert!(format!("{err}").contains("boom"), "{err}");
         assert_eq!(
-            runner.statements.borrow().as_slice(),
+            runner.statements.lock().unwrap().as_slice(),
             ["BEGIN PESSIMISTIC".to_owned(), "ROLLBACK".to_owned()]
         );
     }

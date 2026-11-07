@@ -37,36 +37,137 @@ type PlanReplayerHandle =
 /// Go `planReplayerSessionFinishedTaskKeyLen`.
 const PLAN_REPLAYER_SESSION_FINISHED_TASK_KEY_LEN: usize = 128;
 
-/// The dumping session as Go's `sctx.GetSQLExecutor()`.
-struct SessionSql<'a>(RefCell<&'a mut Session>);
+/// The dumping session as Go's `sctx`: its `GetSQLExecutor()` and session
+/// variables.
+struct SessionSql<'a>(std::sync::Mutex<&'a mut Session>);
 
-impl replayer::PlanReplayerSqlExecutor for SessionSql<'_> {
-    fn execute(&self, sql: &str) -> Result<Vec<Vec<Option<String>>>, replayer::PlanReplayerError> {
-        let error = |error: DriverError| replayer::PlanReplayerError::Other(error.to_mysql_error().message);
-        let stmt = tidb_parser::parse(sql)
-            .map_err(|parse| replayer::PlanReplayerError::Other(parse.compatibility_message(sql)))?;
-        let output = self.0.borrow_mut().execute_statement_owned(stmt, sql).map_err(error)?;
-        let StmtOutput::Rows { rows, .. } = output else {
-            return Ok(Vec::new());
+impl SessionSql<'_> {
+    /// One statement of the session; a query's rows become its record set.
+    fn record_set(
+        &self,
+        sql: &str,
+    ) -> Result<Option<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
+        let stmt = tidb_parser::parse(sql).map_err(|parse| parse.compatibility_message(sql))?;
+        let output = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .execute_statement_owned(stmt, sql)
+            .map_err(|error| error.to_mysql_error().message)?;
+        let StmtOutput::Rows { columns, rows } = output else {
+            return Ok(None);
         };
-        rows.into_iter()
-            .map(|row| {
-                row.into_iter()
-                    .map(|datum| match datum {
-                        Datum::Null => Ok(None),
-                        // Go `Datum.ToString`.
-                        datum => datum
-                            .sql_string()
-                            .map(Some)
-                            .map_err(|error| replayer::PlanReplayerError::Other(error.to_string())),
-                    })
-                    .collect()
+        let fields = columns
+            .into_iter()
+            .map(|(name, field_type)| {
+                tidb_model::GoShared::new(tidb_resolve::ResultField {
+                    column: Some(tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                        name: tidb_ast::CiString::new(name.clone()),
+                        field_type,
+                        ..tidb_model::ColumnInfo::default()
+                    })),
+                    column_as_name: tidb_ast::CiString::new(name),
+                    ..tidb_resolve::ResultField::default()
+                })
             })
-            .collect()
+            .collect();
+        Ok(Some(Box::new(tidb_sqlexec::SimpleRecordSet::new(fields, rows, 1024))))
+    }
+}
+
+impl replayer::PlanReplayerSessionContext for SessionSql<'_> {
+    fn get_sql_executor(&self) -> &dyn tidb_sqlexec::SqlExecutor {
+        self
+    }
+
+    fn get_restricted_sql_executor(&self) -> &dyn tidb_sqlexec::RestrictedSqlExecutor {
+        self
     }
 
     fn set_in_plan_replayer(&self, in_plan_replayer: bool) {
-        self.0.borrow_mut().vars.in_plan_replayer = in_plan_replayer;
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .vars
+            .in_plan_replayer = in_plan_replayer;
+    }
+}
+
+/// Go `sctx.GetRestrictedSQLExecutor()` of the dumping session: on this
+/// session under `ExecOptionUseCurSession`, on a fresh internal session of
+/// its node otherwise (Go `withRestrictedSQLExecutor`).
+impl tidb_sqlexec::RestrictedSqlExecutor for SessionSql<'_> {
+    fn parse_with_params(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+        arguments: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> Result<tidb_ast::Stmt, tidb_sqlexec::SqlExecError> {
+        let sql = tidb_sqlexec::sql_with_params(sql, arguments)?;
+        tidb_parser::parse(&sql).map_err(|parse| parse.compatibility_message(&sql).into())
+    }
+
+    fn exec_restricted_stmt(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        statement: &tidb_ast::Stmt,
+        options: &[tidb_sqlexec::OptionFuncAlias],
+    ) -> Result<(Vec<Vec<Datum>>, Vec<tidb_resolve::ResultFieldRef>), tidb_sqlexec::SqlExecError> {
+        let sql = String::from_utf8(statement.original_text().to_vec())?;
+        self.exec_restricted_sql(context, options, &sql, &[])
+    }
+
+    fn exec_restricted_sql(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        options: &[tidb_sqlexec::OptionFuncAlias],
+        sql: &str,
+        arguments: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> Result<(Vec<Vec<Datum>>, Vec<tidb_resolve::ResultFieldRef>), tidb_sqlexec::SqlExecError> {
+        if !tidb_sqlexec::exec_option(options).use_cur_session {
+            let domain = {
+                let session = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                session.node.as_ref().map(|node| std::sync::Arc::downgrade(node.domain()))
+            };
+            if let Some(domain) = domain {
+                return crate::domain::cluster_session_node::NodeRestrictedSql::new(domain)
+                    .exec_restricted_sql(context, options, sql, arguments);
+            }
+        }
+        let sql = tidb_sqlexec::sql_with_params(sql, arguments)?;
+        let Some(mut record_set) = self.record_set(&sql)? else {
+            return Ok((Vec::new(), Vec::new()));
+        };
+        let rows = tidb_sqlexec::drain_record_set(context, record_set.as_mut(), 1024)?;
+        Ok((rows, record_set.fields().to_vec()))
+    }
+}
+
+/// Go `sctx.GetSQLExecutor()` of the dumping session.
+impl tidb_sqlexec::SqlExecutor for SessionSql<'_> {
+    fn execute(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+    ) -> Result<Vec<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
+        Ok(self.record_set(sql)?.into_iter().collect())
+    }
+
+    fn execute_internal(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+        arguments: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> Result<Option<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
+        self.record_set(&tidb_sqlexec::sql_with_params(sql, arguments)?)
+    }
+
+    fn execute_stmt(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        statement: &tidb_ast::Stmt,
+    ) -> Result<Option<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
+        self.record_set(&String::from_utf8(statement.original_text().to_vec())?)
     }
 }
 
@@ -540,7 +641,7 @@ impl Session {
         let variables = self.plan_replayer_sys_var_registry();
         let mut archive = ArchiveWriter(tidb_replayer::zip::ZipWriter::new(Vec::new()));
         let outcome = {
-            let sql = SessionSql(RefCell::new(&mut *self));
+            let sql = SessionSql(std::sync::Mutex::new(&mut *self));
             let seams = replayer::DumpSeams {
                 sql: &sql,
                 extract_schema: &catalog,
@@ -878,7 +979,7 @@ impl tidb_domain::extract::ExtractSessionContext for ExtractWorkerSession {
         let stats = StatsSource(session.domain_services().map(|services| (services.stats)(&session)));
         let variables = session.plan_replayer_sys_var_registry();
         let session_vars = session.plan_replayer_session_vars();
-        let sql = SessionSql(RefCell::new(&mut session));
+        let sql = SessionSql(std::sync::Mutex::new(&mut session));
         let seams = tidb_domain::extract::ExtractSeams {
             sql: &sql,
             extract_schema: &catalog,

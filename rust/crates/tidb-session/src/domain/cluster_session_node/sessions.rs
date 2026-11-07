@@ -813,17 +813,6 @@ impl ClusterStatsSessionContext {
         .expect("validated global variable must be valid in an internal session");
     }
 
-    pub(crate) fn scalar(&self, sql: &str) -> Result<Option<tidb_datatype::Datum>, String> {
-        let (rows, _) = self
-            .state
-            .materialize(sql)
-            .map_err(|error| error.to_string())?;
-        Ok(rows
-            .into_iter()
-            .next()
-            .and_then(|mut row| (!row.is_empty()).then(|| row.remove(0))))
-    }
-
 }
 
 impl tidb_stats_handle_autoanalyze_exec::AutoAnalyzeSessionContext for ClusterStatsSessionContext {
@@ -1275,20 +1264,6 @@ impl tidb_ddl_session::Transaction for NodeDdlTransaction {
 }
 
 impl tidb_domain_core::sys_session::DomainSysSession for ClusterStatsSessionContext {
-    fn scalar(&self, sql: &str) -> Result<Option<tidb_datatype::Datum>, String> {
-        ClusterStatsSessionContext::scalar(self, sql)
-    }
-
-    fn execute_internal_write(&self, sql: &str) -> Result<u64, String> {
-        self.with_session(|session| {
-            session
-                .execute_internal(sql)
-                .map(|_| session.node.ok_packet.affected_rows)
-                .map_err(|error| stats_session_error(error.message))
-        })
-        .map_err(|error| error.to_string())
-    }
-
     fn new_txn(&self, pessimistic: bool) -> Result<(), String> {
         let mode = if pessimistic {
             tidb_ast::TransactionMode::Pessimistic

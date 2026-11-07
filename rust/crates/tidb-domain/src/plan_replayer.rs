@@ -363,7 +363,7 @@ pub fn exec_restricted_sql<E: RestrictedSqlExecutor + ?Sized>(
         .map_err(sql_exec_error)
 }
 
-fn sql_exec_error(error: tidb_sqlexec::SqlExecError) -> PlanReplayerError {
+pub(crate) fn sql_exec_error(error: tidb_sqlexec::SqlExecError) -> PlanReplayerError {
     PlanReplayerError::Other(error.to_string())
 }
 
@@ -3414,7 +3414,7 @@ mod stats_dump_tests {
 /// through `sessionctx`, `Domain` and the info schema).
 pub struct DumpSeams<'a> {
     /// Go `sctx.GetSQLExecutor()`: the dumping session's own statements.
-    pub sql: &'a dyn PlanReplayerSqlExecutor,
+    pub sql: &'a dyn PlanReplayerSessionContext,
     pub extract_schema: &'a dyn ExtractSchemaSource,
     pub view_parser: &'a dyn ExtractViewParser,
     pub stats: &'a dyn StatsDumpSource,
@@ -3481,31 +3481,64 @@ fn toml_quoted(value: &str) -> String {
     out
 }
 
-/// Go `sctx.GetSQLExecutor().Execute(sql)` on the dumping session: the
-/// first result set's rows, a NULL as `None` and every other value as Go
-/// `Datum.ToString` prints it.
-pub trait PlanReplayerSqlExecutor {
-    /// Runs `sql` in the session.
-    ///
-    /// # Errors
-    /// The statement's error.
-    fn execute(&self, sql: &str) -> Result<Vec<Vec<Option<String>>>, PlanReplayerError>;
+/// Go `sessionctx.Context` as the dump drives the dumping session: its
+/// `GetSQLExecutor()` and `GetSessionVars().InPlanReplayer`.
+pub trait PlanReplayerSessionContext {
+    /// Go `GetSQLExecutor()`.
+    fn get_sql_executor(&self) -> &dyn SqlExecutor;
+
+    /// Go `GetRestrictedSQLExecutor()`, which the extract worker reads
+    /// statement summaries through.
+    fn get_restricted_sql_executor(&self) -> &dyn RestrictedSqlExecutor;
 
     /// Go `SessionVars.InPlanReplayer`, set around `dumpExplain`.
     fn set_in_plan_replayer(&self, in_plan_replayer: bool);
 }
 
-/// Go `resultSetToStringSlice`: NULL is `<nil>`, and so is an empty value
+/// Go `ctx.GetSQLExecutor().Execute(context.Background(), sql)` followed by
+/// `resultSetToStringSlice(ctx, recordSets[0], emptyAsNil)`.
+///
+/// # Errors
+/// The statement's error, or the drain's.
+pub fn execute_to_string_slice(
+    sctx: &dyn PlanReplayerSessionContext,
+    sql: &str,
+    empty_as_nil: bool,
+) -> Result<Vec<Vec<String>>, PlanReplayerError> {
+    let ctx = tidb_sqlexec::BackgroundContext;
+    let mut record_sets = sctx.get_sql_executor().execute(&ctx, sql).map_err(sql_exec_error)?;
+    if record_sets.is_empty() {
+        return Err(PlanReplayerError::Other(
+            "runtime error: index out of range [0] with length 0".to_owned(),
+        ));
+    }
+    result_set_to_string_slice(&ctx, record_sets.swap_remove(0).as_mut(), empty_as_nil)
+}
+
+/// Go `resultSetToStringSlice`: the drained rows (`getRows`) as Go
+/// `Datum.ToString` prints them, NULL as `<nil>`, and so is an empty value
 /// when `empty_as_nil`.
-#[must_use]
-pub fn result_set_to_string_slice(rows: Vec<Vec<Option<String>>>, empty_as_nil: bool) -> Vec<Vec<String>> {
+///
+/// # Errors
+/// The drain's or the close's error, or a value `ToString` refuses.
+pub fn result_set_to_string_slice(
+    ctx: &dyn tidb_sqlexec::ExecutionContext,
+    rs: &mut dyn tidb_sqlexec::RecordSet,
+    empty_as_nil: bool,
+) -> Result<Vec<Vec<String>>, PlanReplayerError> {
+    let rows = tidb_sqlexec::drain_record_set(ctx, rs, 1024).map_err(sql_exec_error)?;
+    rs.close().map_err(sql_exec_error)?;
     rows.into_iter()
         .map(|row| {
             row.into_iter()
-                .map(|value| match value {
-                    None => "<nil>".to_owned(),
-                    Some(value) if value.is_empty() && empty_as_nil => "<nil>".to_owned(),
-                    Some(value) => value,
+                .map(|datum| match datum {
+                    Datum::Null => Ok("<nil>".to_owned()),
+                    datum => {
+                        let text = datum
+                            .sql_string()
+                            .map_err(|error| PlanReplayerError::Other(error.to_string()))?;
+                        Ok(if text.is_empty() && empty_as_nil { "<nil>".to_owned() } else { text })
+                    }
                 })
                 .collect()
         })
@@ -3523,12 +3556,13 @@ fn tab_lines(rows: &[Vec<String>]) -> String {
 fn get_show_create_table(
     pair: &TableNamePair,
     zw: &mut dyn DumpArchiveWriter,
-    sql: &dyn PlanReplayerSqlExecutor,
+    sql: &dyn PlanReplayerSessionContext,
 ) -> Result<(), PlanReplayerError> {
-    let rows = result_set_to_string_slice(
-        sql.execute(&format!("show create table `{}`.`{}`", pair.db_name, pair.table_name))?,
+    let rows = execute_to_string_slice(
+        sql,
+        &format!("show create table `{}`.`{}`", pair.db_name, pair.table_name),
         false,
-    );
+    )?;
     let (file, width, what) = if pair.is_view {
         (format!("view/{}.{}.view.txt", pair.db_name, pair.table_name), 4, "view")
     } else {
@@ -3554,7 +3588,7 @@ fn get_show_create_table(
 pub(crate) fn dump_schemas(
     pairs: &BTreeSet<TableNamePair>,
     zw: &mut dyn DumpArchiveWriter,
-    sql: &dyn PlanReplayerSqlExecutor,
+    sql: &dyn PlanReplayerSessionContext,
 ) -> Result<(), PlanReplayerError> {
     let mut tables = BTreeSet::new();
     for pair in pairs {
@@ -3571,10 +3605,10 @@ pub(crate) fn dump_schemas(
 
 /// Go `dumpGlobalBindings`.
 pub(crate) fn dump_global_bindings(
-    sql: &dyn PlanReplayerSqlExecutor,
+    sql: &dyn PlanReplayerSessionContext,
     zw: &mut dyn DumpArchiveWriter,
 ) -> Result<(), PlanReplayerError> {
-    let global_bindings = result_set_to_string_slice(sql.execute("show global bindings")?, false);
+    let global_bindings = execute_to_string_slice(sql, "show global bindings", false)?;
     zw.create_file(dump_file::PLAN_REPLAYER_GLOBAL_BINDING_FILE, tab_lines(&global_bindings).as_bytes())
 }
 
@@ -3582,7 +3616,7 @@ pub(crate) fn dump_global_bindings(
 /// `explain.txt` (separated by `<--------->`) for one statement, else one
 /// `explain/explain<i>.txt` each. Go never collects a debug trace here.
 fn dump_explain(
-    sql: &dyn PlanReplayerSqlExecutor,
+    sql: &dyn PlanReplayerSessionContext,
     zw: &mut dyn DumpArchiveWriter,
     is_analyze: bool,
     sqls: &[String],
@@ -3598,7 +3632,7 @@ fn dump_explain(
             } else {
                 format!("explain {statement}")
             };
-            let rows = result_set_to_string_slice(sql.execute(&text)?, empty_as_nil);
+            let rows = execute_to_string_slice(sql, &text, empty_as_nil)?;
             if use_separate_files {
                 zw.create_file(&format!("explain/explain{index}.txt"), tab_lines(&rows).as_bytes())?;
             } else {
@@ -3685,7 +3719,7 @@ pub fn dump_plan_replayer_info(
         dump_sqls(exec_stmts, zw)?;
         // Dump session bindings
         let session_bindings = if task.session_bindings.is_empty() {
-            result_set_to_string_slice(seams.sql.execute("show bindings")?, true)
+            execute_to_string_slice(seams.sql, "show bindings", true)?
         } else {
             task.session_bindings.clone()
         };
@@ -3711,10 +3745,11 @@ pub fn dump_plan_replayer_info(
             }
         } else {
             records = generate_status_records(seams.presign, task, exec_stmts);
-            let rows = result_set_to_string_slice(
-                seams.sql.execute(&format!("select tidb_decode_plan('{}')", task.encoded_plan))?,
+            let rows = execute_to_string_slice(
+                seams.sql,
+                &format!("select tidb_decode_plan('{}')", task.encoded_plan),
                 false,
-            );
+            )?;
             zw.create_file("explain/sql.txt", tab_lines(&rows).as_bytes())?;
         }
         // Go `dumpDebugTrace`: no trace still writes one empty file.
@@ -3810,20 +3845,63 @@ mod dump_assembly_tests {
         in_plan_replayer: std::sync::Mutex<Vec<bool>>,
     }
 
-    impl PlanReplayerSqlExecutor for ScriptedSql {
-        fn execute(&self, sql: &str) -> Result<Vec<Vec<Option<String>>>, PlanReplayerError> {
-            self.ran.lock().unwrap().push(sql.to_owned());
-            let text = |value: &str| Some(value.to_owned());
-            Ok(match sql {
-                "show create table `db1`.`t1`" => vec![vec![text("t1"), text("CREATE TABLE `t1` (`a` int)")]],
-                "show bindings" => vec![vec![text("select ?"), text(""), None]],
-                "show global bindings" => Vec::new(),
-                "explain select * from db1.t1" => vec![vec![text("TableReader_5"), text("10000.00")]],
-                other => return Err(PlanReplayerError::Other(format!("unexpected {other}"))),
-            })
+    impl PlanReplayerSessionContext for ScriptedSql {
+        fn get_sql_executor(&self) -> &dyn SqlExecutor {
+            self
+        }
+        fn get_restricted_sql_executor(&self) -> &dyn RestrictedSqlExecutor {
+            unimplemented!("the dump runs no restricted SQL")
         }
         fn set_in_plan_replayer(&self, in_plan_replayer: bool) {
             self.in_plan_replayer.lock().unwrap().push(in_plan_replayer);
+        }
+    }
+
+    impl SqlExecutor for ScriptedSql {
+        fn execute(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
+            sql: &str,
+        ) -> tidb_sqlexec::Result<Vec<Box<dyn tidb_sqlexec::RecordSet>>> {
+            self.ran.lock().unwrap().push(sql.to_owned());
+            let text = |value: &str| Datum::new_string_datum(value);
+            let rows = match sql {
+                "show create table `db1`.`t1`" => vec![vec![text("t1"), text("CREATE TABLE `t1` (`a` int)")]],
+                "show bindings" => vec![vec![text("select ?"), text(""), Datum::Null]],
+                "show global bindings" => Vec::new(),
+                "explain select * from db1.t1" => vec![vec![text("TableReader_5"), text("10000.00")]],
+                other => return Err(format!("unexpected {other}").into()),
+            };
+            let width = rows.first().map_or(1, Vec::len);
+            let field = tidb_model::GoShared::new(tidb_resolve::ResultField {
+                column: Some(tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                    field_type: tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString),
+                    ..tidb_model::ColumnInfo::default()
+                })),
+                ..tidb_resolve::ResultField::default()
+            });
+            Ok(vec![Box::new(tidb_sqlexec::SimpleRecordSet::new(
+                std::iter::repeat_n(field, width).collect(),
+                rows,
+                8,
+            )) as Box<dyn tidb_sqlexec::RecordSet>])
+        }
+
+        fn execute_internal(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
+            _sql: &str,
+            _arguments: &[SqlArg<'_>],
+        ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
+            unreachable!("the dump runs Execute")
+        }
+
+        fn execute_stmt(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
+            _statement: &Stmt,
+        ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
+            unreachable!("the dump runs Execute")
         }
     }
 

@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use tidb_ddl_build::session_pool::{DdlSessionPool, RestrictedSqlOptions};
+use tidb_ddl_build::session_pool::DdlSessionPool;
 use tidb_log::{Field, Value};
 use tidb_model::job::Job;
 use tidb_model::reorg::analyze_state;
@@ -239,14 +239,24 @@ fn analyze_table_inner(
             };
             // Go `statsutil.UpdateSCtxVarsForStats`: the system session
             // loads the statistics variables from the global ones itself.
-            let result = pool.exec_restricted_sql_opts(
-                RestrictedSqlOptions {
-                    enable_ddl_analyze: true,
-                    utc_time_zone: false,
-                },
-                &format!("ANALYZE TABLE {db_table};"),
-                &[],
-            );
+            let result = pool.get().and_then(|sess_ctx| {
+                sess_ctx
+                    .get_restricted_sql_executor()
+                    .exec_restricted_sql(
+                        &tikv_client::util::with_internal_source_type(
+                            &tikv_client::trace::TraceContext::new(),
+                            tidb_txnkv::INTERNAL_TXN_DDL,
+                        ),
+                        &[
+                            std::sync::Arc::new(tidb_sqlexec::exec_option_use_cur_session),
+                            std::sync::Arc::new(tidb_sqlexec::exec_option_enable_ddl_analyze),
+                        ],
+                        &format!("ANALYZE TABLE {db_table};"),
+                        &[tidb_sqlescape::SqlArg::from("ddl analyze table")],
+                    )
+                    .map(drop)
+                    .map_err(tidb_store_driver_error::sql_query_error::mysql_error_of)
+            });
             if let Err(error) = result {
                 tidb_ddl_logutil::ddl_logger().warn(
                     "analyze table failed",
@@ -337,21 +347,29 @@ fn query_analyze_status_since(
         chrono::Utc::now()
     };
     let start_time_str = start_time.format("%Y-%m-%d %H:%M:%S").to_string();
+    let sess_ctx = pool.get().map_err(|error| error.message)?;
+    // Deliberately not the analyze source: checking the analyze job state is
+    // lightweight metadata work, not the heavy scan that background
+    // throttling targets.
+    let kctx = tikv_client::util::with_internal_source_type(
+        &tikv_client::trace::TraceContext::new(),
+        tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY,
+    );
     // set session time zone to UTC to match the time format in `startTimeStr`
-    let rows = pool
-        .exec_restricted_sql_opts(
-            RestrictedSqlOptions {
-                enable_ddl_analyze: false,
-                utc_time_zone: true,
-            },
-            "SELECT state FROM mysql.analyze_jobs WHERE table_schema = %? AND table_name = %? AND start_time >= %?",
-            &[
-                tidb_sqlescape::SqlArg::String(db_name.as_bytes()),
-                tidb_sqlescape::SqlArg::String(tbl_name.as_bytes()),
-                tidb_sqlescape::SqlArg::String(start_time_str.as_bytes()),
-            ],
-        )
-        .map_err(|error| error.message)?;
+    let original_time_zone = sess_ctx.time_zone();
+    sess_ctx.set_time_zone("UTC").map_err(|error| error.message)?;
+    let rows = sess_ctx.get_restricted_sql_executor().exec_restricted_sql(
+        &kctx,
+        &[std::sync::Arc::new(tidb_sqlexec::exec_option_use_cur_session)],
+        "SELECT state FROM mysql.analyze_jobs WHERE table_schema = %? AND table_name = %? AND start_time >= %?",
+        &[
+            tidb_sqlescape::SqlArg::String(db_name.as_bytes()),
+            tidb_sqlescape::SqlArg::String(tbl_name.as_bytes()),
+            tidb_sqlescape::SqlArg::String(start_time_str.as_bytes()),
+        ],
+    );
+    let _ = sess_ctx.set_time_zone(&original_time_zone);
+    let (rows, _) = rows.map_err(|error| error.to_string())?;
     if rows.is_empty() {
         return Ok(AnalyzeStatus::Unknown);
     }

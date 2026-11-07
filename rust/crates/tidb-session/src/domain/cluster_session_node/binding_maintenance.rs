@@ -18,13 +18,11 @@ use super::{Domain, DomainSessions as _, InternalBindingWriter};
 use tidb_bindinfo::binding::Binding;
 use crate::binding_arm::GlobalBindingWriter;
 use tidb_bindinfo::binding_utils::{InternalSqlRunner, BINDING_STORAGE_COLUMNS};
-use crate::Session;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc, Weak,
 };
 use tidb_datatype::Datum;
-use tidb_driver_error::DriverError;
 
 pub(super) struct BindingSessions {
     factory: Weak<Domain>,
@@ -48,20 +46,20 @@ impl BindingSessions {
         session.enable_privilege_bypass();
         // Go bindinfo's `kv.WithInternalSourceType(ctx, kv.InternalTxnBindInfo)`.
         session.set_internal_request_source(tidb_txnkv::INTERNAL_TXN_BIND_INFO);
-        Ok(BindingRunner { session })
+        Ok(BindingRunner(super::SystemSqlExecutor::new(session)))
     }
 }
 impl tidb_bindinfo::cluster_binding_seam::BindingSessionPool for BindingSessions {
     fn load(&self, boundary: Option<&str>) -> Result<Vec<Vec<Datum>>, String> {
-        let mut runner = self.open()?;
+        let runner = self.open()?;
         let (condition, args) = match boundary {
             Some(boundary) => (
                 "USE INDEX (time_index) WHERE update_time > %?",
-                vec![Datum::new_string_datum(boundary.to_owned())],
+                vec![tidb_sqlescape::SqlArg::from(boundary)],
             ),
             None => ("", Vec::new()),
         };
-        runner.exec_rows(&format!("SELECT {BINDING_STORAGE_COLUMNS} FROM mysql.bind_info {condition} ORDER BY update_time, create_time"), &args).map_err(|e| e.to_string())
+        tidb_bindinfo::binding_utils::exec_rows(&runner, &format!("SELECT {BINDING_STORAGE_COLUMNS} FROM mysql.bind_info {condition} ORDER BY update_time, create_time"), &args).map_err(|e| e.to_string())
     }
     fn gc(&self) -> Result<(), String> {
         let factory = self
@@ -101,36 +99,20 @@ impl tidb_bindinfo::cluster_binding_seam::BindingSessionPool for BindingSessions
         result.map(|_| ()).map_err(|e| e.to_string())
     }
 }
-struct BindingRunner {
-    session: Session,
-}
-fn driver_error(error: tidb_store_driver_error::sql_query_error::SqlQueryError) -> DriverError {
-    DriverError::Mysql(
-        tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
-            .with_identity_opt(error.identity),
-    )
-}
-impl BindingRunner {
-    fn render(&self, sql: &str, args: &[Datum]) -> Result<String, DriverError> {
-        tidb_executor::bind_parameters(
-            &sql.replace("%?", "?"),
-            args,
-            tidb_lexer::SqlMode::default(),
-        )
-    }
-    fn rows(&mut self, sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
-        self.session.node_conn().execute_internal(sql).map_err(driver_error)
-    }
-}
+/// A storage session of the node as Go bindinfo's pooled `sctx`.
+struct BindingRunner(super::SystemSqlExecutor);
+
 impl InternalSqlRunner for BindingRunner {
-    fn exec(&mut self, sql: &str, args: &[Datum]) -> Result<u64, DriverError> {
-        let sql = self.render(sql, args)?;
-        self.session.node_conn().execute_internal(&sql).map_err(driver_error)?;
-        Ok(self.session.affected_rows())
+    fn get_sql_executor(&self) -> &dyn tidb_sqlexec::SqlExecutor {
+        &self.0
     }
-    fn exec_rows(&mut self, sql: &str, args: &[Datum]) -> Result<Vec<Vec<Datum>>, DriverError> {
-        let sql = self.render(sql, args)?;
-        self.rows(&sql)
+
+    fn get_restricted_sql_executor(&self) -> &dyn tidb_sqlexec::RestrictedSqlExecutor {
+        &self.0
+    }
+
+    fn affected_rows(&self) -> u64 {
+        self.0.affected_rows()
     }
 }
 

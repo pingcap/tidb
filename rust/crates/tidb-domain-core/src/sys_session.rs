@@ -27,12 +27,6 @@ pub trait DomainSysSession:
     + tidb_stats_handle_autoanalyze_exec::AutoAnalyzeSessionContext
     + tidb_ttl_ttlworker::SysSessionContext
 {
-    /// The first column of the first row of an internal query, if any.
-    fn scalar(&self, sql: &str) -> Result<Option<Datum>, String>;
-
-    /// Go `ExecuteInternal` of a write: the rows it affected.
-    fn execute_internal_write(&self, sql: &str) -> Result<u64, String>;
-
     /// Go `sessiontxn.NewTxn` (`pessimistic`: `EnterNewTxn` pessimistic), as
     /// `pkg/ddl/session.Session.Begin` / `BeginPessimistic` call it: the
     /// session's API, not a statement.

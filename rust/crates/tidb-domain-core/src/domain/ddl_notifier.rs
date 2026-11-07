@@ -57,7 +57,12 @@ impl ClusterNotifierSession {
     }
 
     fn write(&self, sql: &str) -> Result<u64, NotifierError> {
-        self.with_context(|context| context.execute_internal_write(sql))
+        // Go `sess.Execute(ctx, sql, "ddl_notifier")`, then
+        // `GetSessionVars().StmtCtx.AffectedRows()`.
+        self.with_context(|context| {
+            crate::sys_session::exec_sql(context, tidb_txnkv::INTERNAL_DDL_NOTIFIER, sql, &[])
+                .map(|_| tidb_stats_handle_util::StatsSessionContext::affected_rows(context))
+        })
     }
 
     fn query(&self, sql: &str) -> Result<Vec<Vec<Datum>>, NotifierError> {

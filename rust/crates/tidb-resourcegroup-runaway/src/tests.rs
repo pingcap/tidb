@@ -41,17 +41,76 @@ impl ResourceGroupsController for FakeGroups {
     }
 }
 
-/// A session that records the escaped statements it ran.
+/// A session whose executors answer every statement with no rows.
 #[derive(Default)]
-struct RecordingPool(Mutex<Vec<String>>);
+struct RecordingPool(Arc<NoRows>);
 
-impl SqlSession for RecordingPool {
-    fn execute_internal(&self, sql: &str, args: &[SqlArg<'_>]) -> Result<Vec<Vec<Datum>>, String> {
-        self.0.lock().unwrap().push(tidb_sqlescape::escape_sql_text(sql, args).map_err(|e| format!("{e:?}"))?);
+#[derive(Default)]
+struct NoRows;
+
+impl tidb_sqlexec::SqlExecutor for NoRows {
+    fn execute(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        _sql: &str,
+    ) -> tidb_sqlexec::Result<Vec<Box<dyn tidb_sqlexec::RecordSet>>> {
         Ok(Vec::new())
     }
-    fn exec_restricted_sql(&self, sql: &str, args: &[SqlArg<'_>]) -> Result<Vec<Vec<Datum>>, String> {
-        self.execute_internal(sql, args)
+
+    fn execute_internal(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        _sql: &str,
+        _arguments: &[SqlArg<'_>],
+    ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
+        Ok(None)
+    }
+
+    fn execute_stmt(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        _statement: &tidb_ast::Stmt,
+    ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
+        Ok(None)
+    }
+}
+
+impl tidb_sqlexec::RestrictedSqlExecutor for NoRows {
+    fn parse_with_params(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+        _arguments: &[SqlArg<'_>],
+    ) -> tidb_sqlexec::Result<tidb_ast::Stmt> {
+        Err(format!("unparsed {sql}").into())
+    }
+
+    fn exec_restricted_stmt(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        _statement: &tidb_ast::Stmt,
+        _options: &[tidb_sqlexec::OptionFuncAlias],
+    ) -> tidb_sqlexec::Result<(Vec<Vec<Datum>>, Vec<tidb_resolve::ResultFieldRef>)> {
+        Ok((Vec::new(), Vec::new()))
+    }
+
+    fn exec_restricted_sql(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        _options: &[tidb_sqlexec::OptionFuncAlias],
+        _sql: &str,
+        _arguments: &[SqlArg<'_>],
+    ) -> tidb_sqlexec::Result<(Vec<Vec<Datum>>, Vec<tidb_resolve::ResultFieldRef>)> {
+        Ok((Vec::new(), Vec::new()))
+    }
+}
+
+impl SqlSession for RecordingPool {
+    fn get_sql_executor(&self) -> Arc<dyn tidb_sqlexec::SqlExecutor> {
+        Arc::clone(&self.0) as _
+    }
+    fn get_restricted_sql_executor(&self) -> Arc<dyn tidb_sqlexec::RestrictedSqlExecutor> {
+        Arc::clone(&self.0) as _
     }
 }
 

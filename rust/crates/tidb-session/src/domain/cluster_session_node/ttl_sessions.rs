@@ -18,7 +18,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use tidb_datatype::{Datum, SessionTimeZone};
+use tidb_datatype::SessionTimeZone;
 use tidb_timeutil::TimeZone;
 use tidb_ttl_ttlworker::{InfoSchemaRef, Row, SessionVars, Store, TtlSessionContext};
 

@@ -2630,10 +2630,12 @@ impl NodeRestrictedSql {
 }
 
 impl NodeRestrictedSql {
-    /// One statement on a fresh internal session of this node.
+    /// One statement on a fresh internal session of this node (Go
+    /// `getInternalSession`), under the caller's `ExecOption`.
     fn run(
         &self,
         context: &dyn tidb_sqlexec::ExecutionContext,
+        option: &tidb_sqlexec::ExecOption,
         sql: &str,
     ) -> Result<
         (
@@ -2646,7 +2648,9 @@ impl NodeRestrictedSql {
             tidb_domain_core::sys_session::stats_session_error("cluster session factory is stopped")
         })?;
         let mut session = factory.open_system_session().map_err(boxed_sql_query_error)?;
-        execute_internal_under(&mut session, context, sql)
+        with_exec_option(&mut session, option, |session| {
+            execute_internal_under(session, context, sql)
+        })
     }
 }
 
@@ -2666,7 +2670,7 @@ impl tidb_sqlexec::RestrictedSqlExecutor for NodeRestrictedSql {
         &self,
         context: &dyn tidb_sqlexec::ExecutionContext,
         statement: &tidb_ast::Stmt,
-        _options: &[tidb_sqlexec::OptionFuncAlias],
+        options: &[tidb_sqlexec::OptionFuncAlias],
     ) -> Result<
         (
             Vec<Vec<tidb_datatype::Datum>>,
@@ -2675,13 +2679,13 @@ impl tidb_sqlexec::RestrictedSqlExecutor for NodeRestrictedSql {
         tidb_sqlexec::SqlExecError,
     > {
         let sql = String::from_utf8(statement.original_text().to_vec())?;
-        self.run(context, &sql)
+        self.run(context, &tidb_sqlexec::exec_option(options), &sql)
     }
 
     fn exec_restricted_sql(
         &self,
         context: &dyn tidb_sqlexec::ExecutionContext,
-        _options: &[tidb_sqlexec::OptionFuncAlias],
+        options: &[tidb_sqlexec::OptionFuncAlias],
         sql: &str,
         arguments: &[tidb_sqlescape::SqlArg<'_>],
     ) -> Result<
@@ -2691,7 +2695,7 @@ impl tidb_sqlexec::RestrictedSqlExecutor for NodeRestrictedSql {
         ),
         tidb_sqlexec::SqlExecError,
     > {
-        self.run(context, &sql_with_params(sql, arguments)?)
+        self.run(context, &tidb_sqlexec::exec_option(options), &sql_with_params(sql, arguments)?)
     }
 }
 
@@ -2715,6 +2719,115 @@ impl SystemSqlExecutor {
             Box::new(tidb_sqlexec::SimpleRecordSet::new(fields, rows, 1024))
                 as Box<dyn tidb_sqlexec::RecordSet>
         }))
+    }
+}
+
+impl SystemSqlExecutor {
+    /// The session itself, for its non-statement API (transactions).
+    pub(crate) fn with_session<T>(&self, run: impl FnOnce(&mut Session) -> T) -> T {
+        run(&mut self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
+    }
+
+    /// Go `GetSessionVars().StmtCtx.AffectedRows()` of the session's last
+    /// statement.
+    pub(crate) fn affected_rows(&self) -> u64 {
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).affected_rows()
+    }
+
+    /// Go `withRestrictedSQLExecutor`: the statement on this session under
+    /// `ExecOptionUseCurSession`, on a fresh internal session of its node
+    /// otherwise.
+    fn restricted(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        options: &[tidb_sqlexec::OptionFuncAlias],
+        sql: &str,
+    ) -> Result<
+        (
+            Vec<Vec<tidb_datatype::Datum>>,
+            Vec<tidb_resolve::ResultFieldRef>,
+        ),
+        tidb_sqlexec::SqlExecError,
+    > {
+        let option = tidb_sqlexec::exec_option(options);
+        let mut session = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if option.use_cur_session {
+            // Go `useCurrentSession`.
+            return with_exec_option(&mut session, &option, |session| {
+                execute_internal_under(session, context, sql)
+            });
+        }
+        let domain = Arc::downgrade(&session.node().domain);
+        drop(session);
+        NodeRestrictedSql::new(domain).run(context, &option, sql)
+    }
+}
+
+impl tidb_ddl_build::session_pool::DdlSysSession for SystemSqlExecutor {
+    fn get_restricted_sql_executor(&self) -> &dyn tidb_sqlexec::RestrictedSqlExecutor {
+        self
+    }
+
+    fn time_zone(&self) -> String {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .vars
+            .get_system("time_zone")
+            .unwrap_or_default()
+    }
+
+    fn set_time_zone(&self, name: &str) -> Result<(), tidb_terror::MysqlError> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .set_session_sys_var("time_zone", name.to_owned())
+            .map_err(|error| error.to_mysql_error())
+    }
+}
+
+impl tidb_sqlexec::RestrictedSqlExecutor for SystemSqlExecutor {
+    fn parse_with_params(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+        arguments: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> Result<tidb_ast::Stmt, tidb_sqlexec::SqlExecError> {
+        tidb_parser::parse(&sql_with_params(sql, arguments)?).map_err(|error| {
+            tidb_domain_core::sys_session::stats_session_error(format!("{error:?}"))
+        })
+    }
+
+    fn exec_restricted_stmt(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        statement: &tidb_ast::Stmt,
+        options: &[tidb_sqlexec::OptionFuncAlias],
+    ) -> Result<
+        (
+            Vec<Vec<tidb_datatype::Datum>>,
+            Vec<tidb_resolve::ResultFieldRef>,
+        ),
+        tidb_sqlexec::SqlExecError,
+    > {
+        let sql = String::from_utf8(statement.original_text().to_vec())?;
+        self.restricted(context, options, &sql)
+    }
+
+    fn exec_restricted_sql(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        options: &[tidb_sqlexec::OptionFuncAlias],
+        sql: &str,
+        arguments: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> Result<
+        (
+            Vec<Vec<tidb_datatype::Datum>>,
+            Vec<tidb_resolve::ResultFieldRef>,
+        ),
+        tidb_sqlexec::SqlExecError,
+    > {
+        self.restricted(context, options, &sql_with_params(sql, arguments)?)
     }
 }
 
@@ -2744,6 +2857,60 @@ impl tidb_sqlexec::SqlExecutor for SystemSqlExecutor {
         let sql = String::from_utf8(statement.original_text().to_vec())?;
         self.record_set(context, &sql)
     }
+}
+
+/// Go `useCurrentSession` / `getInternalSession`'s `ExecOption` on the
+/// session a restricted statement runs on -- the snapshot, statistics
+/// version, analyze snapshot, DDL analyze and partition prune mode -- and
+/// their `clean`, which restores them (and clears the snapshot) afterwards.
+fn with_exec_option<T>(
+    session: &mut Session,
+    option: &tidb_sqlexec::ExecOption,
+    run: impl FnOnce(&mut Session) -> Result<T, tidb_sqlexec::SqlExecError>,
+) -> Result<T, tidb_sqlexec::SqlExecError> {
+    use tidb_vardef::tidb_vars::{
+        TIDB_ANALYZE_VERSION, TIDB_ENABLE_ANALYZE_SNAPSHOT, TIDB_PARTITION_PRUNE_MODE, TIDB_SNAPSHOT,
+    };
+    let set = |session: &mut Session, name: &str, value: String| {
+        session
+            .set_session_sys_var(name, value)
+            .map_err(|error| -> tidb_sqlexec::SqlExecError { error.to_mysql_error().message.into() })
+    };
+    let previous = |session: &Session, name: &str| session.vars.get_system(name).unwrap_or_default();
+    let prev_stats_ver = previous(session, TIDB_ANALYZE_VERSION);
+    let prev_analyze_snapshot = previous(session, TIDB_ENABLE_ANALYZE_SNAPSHOT);
+    let prev_prune_mode = previous(session, TIDB_PARTITION_PRUNE_MODE);
+    let applied = (|| {
+        if option.snapshot_ts != 0 {
+            set(session, TIDB_SNAPSHOT, option.snapshot_ts.to_string())?;
+        }
+        if option.analyze_ver != 0 {
+            set(session, TIDB_ANALYZE_VERSION, option.analyze_ver.to_string())?;
+        }
+        if let Some(analyze_snapshot) = option.analyze_snapshot {
+            set(session, TIDB_ENABLE_ANALYZE_SNAPSHOT, if analyze_snapshot { "ON" } else { "OFF" }.to_owned())?;
+        }
+        session.vars.enable_ddl_analyze_exec_opt = option.enable_ddl_analyze;
+        if !option.partition_prune_mode.is_empty() {
+            set(session, TIDB_PARTITION_PRUNE_MODE, option.partition_prune_mode.clone())?;
+        }
+        Ok(())
+    })();
+    let result = applied.and_then(|()| run(session));
+    for (name, value) in [
+        (TIDB_ANALYZE_VERSION, prev_stats_ver),
+        (TIDB_ENABLE_ANALYZE_SNAPSHOT, prev_analyze_snapshot),
+        (TIDB_SNAPSHOT, String::new()),
+        (TIDB_PARTITION_PRUNE_MODE, prev_prune_mode),
+    ] {
+        if let Err(error) = set(session, name, value) {
+            tidb_logutil::bg_logger().error(
+                "restore restricted SQL session variable error",
+                &[tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string()))],
+            );
+        }
+    }
+    result
 }
 
 /// Go `ExecuteInternal(ctx, sql)` on an internal session: the session takes

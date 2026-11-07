@@ -3662,7 +3662,10 @@ dependencies = [
  "tidb-parser",
  "tidb-planner",
  "tidb-plannererrors",
+ "tidb-resolve",
  "tidb-ristretto",
+ "tidb-sqlescape",
+ "tidb-sqlexec",
  "tidb-store-driver-error",
  "tidb-store-driver-txn",
  "tidb-syssession",
@@ -3672,6 +3675,7 @@ dependencies = [
  "tidb-vardef",
  "tidb-variable",
  "tidb-worker-stack",
+ "tikv-client",
 ]
 
 [[package]]
@@ -6632,7 +6636,9 @@ dependencies = [
  "tidb-metrics",
  "tidb-model",
  "tidb-proto",
+ "tidb-resolve",
  "tidb-sqlescape",
+ "tidb-sqlexec",
  "tidb-terror",
  "tidb-ttl",
  "tidb-txnkv",

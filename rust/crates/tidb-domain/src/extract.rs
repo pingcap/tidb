@@ -30,7 +30,7 @@ use crate::plan_replayer::{
     build_config_toml, build_meta_txt, build_tiflash_replica_file, build_variables_records,
     dump_file, dump_global_bindings, dump_schemas, dump_stats, flat_toml, DumpArchiveWriter,
     ExtractSchemaSource, ExtractViewParser, PlanReplayerError, PlanReplayerSessionVars,
-    PlanReplayerSqlExecutor, StatsDumpSource, TableNameExtractor, TableNamePair,
+    PlanReplayerSessionContext, StatsDumpSource, TableNameExtractor, TableNamePair,
     TiFlashReplicaSource, VariablesDumpSource,
 };
 
@@ -99,7 +99,7 @@ pub fn new_extract_plan_task(
 /// dump seams.
 pub struct ExtractSeams<'a> {
     /// Go `sctx.GetRestrictedSQLExecutor()` / `GetSQLExecutor()`.
-    pub sql: &'a dyn PlanReplayerSqlExecutor,
+    pub sql: &'a dyn PlanReplayerSessionContext,
     /// Go `GetDomain(sctx).InfoSchema()`.
     pub extract_schema: &'a dyn ExtractSchemaSource,
     /// Go `ParseWithParams` for a view's SELECT.
@@ -245,14 +245,23 @@ fn collect_records(
     } else {
         "STATEMENTS_SUMMARY"
     };
-    let rows = sctx.sql.execute(&format!(
-            "SELECT STMT_TYPE, DIGEST, PLAN_DIGEST,QUERY_SAMPLE_TEXT, BINARY_PLAN, TABLE_NAMES, SAMPLE_USER FROM INFORMATION_SCHEMA.{source_table} WHERE SUMMARY_END_TIME > '{}' AND SUMMARY_BEGIN_TIME < '{}'",
-            task.begin.format(TIME_FORMAT),
-            task.end.format(TIME_FORMAT)
-        ))?;
+    let (rows, _) = sctx
+        .sql
+        .get_restricted_sql_executor()
+        .exec_restricted_sql(
+            &crate::plan_replayer::plan_replayer_ctx(),
+            &[],
+            &format!(
+                "SELECT STMT_TYPE, DIGEST, PLAN_DIGEST,QUERY_SAMPLE_TEXT, BINARY_PLAN, TABLE_NAMES, SAMPLE_USER FROM INFORMATION_SCHEMA.{source_table} WHERE SUMMARY_END_TIME > '{}' AND SUMMARY_BEGIN_TIME < '{}'",
+                task.begin.format(TIME_FORMAT),
+                task.end.format(TIME_FORMAT)
+            ),
+            &[],
+        )
+        .map_err(crate::plan_replayer::sql_exec_error)?;
     let mut collect_map = HashMap::new();
     for row in rows {
-        let get = |i: usize| row.get(i).cloned().flatten().unwrap_or_default();
+        let get = |i: usize| get_string(row.get(i));
         let mut record = StmtSummaryHistoryRecord {
             stmt_type: get(0),
             digest: get(1),
@@ -377,16 +386,26 @@ fn handle_is_view(
     Ok(())
 }
 
+/// Go `row.GetString(i)`: a NULL reads as the empty string.
+fn get_string(datum: Option<&tidb_datatype::Datum>) -> String {
+    match datum {
+        None | Some(tidb_datatype::Datum::Null) => String::new(),
+        Some(datum) => datum.sql_string().unwrap_or_default(),
+    }
+}
+
 fn decode_binary_plan(sctx: &ExtractSeams<'_>, b_plan: &str) -> Result<String, PlanReplayerError> {
-    let rows = sctx
+    let (rows, _) = sctx
         .sql
-        .execute(&format!("SELECT tidb_decode_binary_plan('{b_plan}')"))?;
-    let plan = rows
-        .first()
-        .and_then(|row| row.first())
-        .cloned()
-        .flatten()
-        .unwrap_or_default();
+        .get_restricted_sql_executor()
+        .exec_restricted_sql(
+            &crate::plan_replayer::plan_replayer_ctx(),
+            &[],
+            &format!("SELECT tidb_decode_binary_plan('{b_plan}')"),
+            &[],
+        )
+        .map_err(crate::plan_replayer::sql_exec_error)?;
+    let plan = get_string(rows.first().and_then(|row| row.first()));
     Ok(plan.trim_matches('\n').to_owned())
 }
 

@@ -126,33 +126,16 @@ impl DdlSessionPool for NodeDdlSessionPool {
         ))
     }
 
-    fn exec_restricted_sql_opts(
-        &self,
-        options: tidb_ddl_build::session_pool::RestrictedSqlOptions,
-        sql: &str,
-        args: &[tidb_sqlescape::SqlArg<'_>],
-    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, MysqlError> {
+    /// A fresh system session of the node under the DDL's request source.
+    fn get(&self) -> Result<Box<dyn tidb_ddl_build::session_pool::DdlSysSession>, MysqlError> {
         let domain = self
             .domain
             .get()
             .and_then(Weak::upgrade)
             .ok_or_else(|| MysqlError::unknown("the DDL session pool has no running node"))?;
-        let to_mysql = |error: tidb_store_driver_error::sql_query_error::SqlQueryError| {
-            MysqlError::from_parts(error.code, error.state, error.message)
-                .with_identity_opt(error.identity)
-        };
-        let sql = tidb_sqlexec::sql_with_params(sql, args)
-            .map_err(|error| MysqlError::unknown(error.to_string()))?;
-        let mut session = domain.open_system_session().map_err(to_mysql)?;
+        let mut session = domain.open_system_session().map_err(sql_to_mysql)?;
         set_ddl_request_source(&mut session);
-        if options.utc_time_zone {
-            session
-                .set_session_sys_var("time_zone", "UTC".to_owned())
-                .map_err(|error| MysqlError::unknown(format!("{error:?}")))?;
-        }
-        session.vars.enable_ddl_analyze_exec_opt = options.enable_ddl_analyze;
-        let rows = session.node_conn().execute_internal(&sql).map_err(to_mysql);
-        rows
+        Ok(Box::new(crate::domain::cluster_session_node::SystemSqlExecutor::new(session)))
     }
 
     fn current_version(&self) -> Result<u64, MysqlError> {
@@ -216,7 +199,7 @@ impl DdlSessionPool for NodeDdlSessionPool {
             .node_conn()
             .new_txn(tidb_ast::TransactionMode::Optimistic)
             .map_err(sql_to_mysql)?;
-        Ok(Box::new(NodeStepSession { session }))
+        Ok(Box::new(NodeStepSession(NodeSqlSession::new(session))))
     }
 }
 
@@ -226,88 +209,63 @@ fn sql_to_mysql(error: tidb_store_driver_error::sql_query_error::SqlQueryError) 
 
 /// A node system session the DDL runs SQL on (Go `sess.NewSession(se)`
 /// over a pooled session).
-pub(crate) struct NodeSqlSession {
-    session: crate::Session,
-}
+pub(crate) struct NodeSqlSession(crate::domain::cluster_session_node::SystemSqlExecutor);
 
 impl NodeSqlSession {
     pub(crate) fn new(session: crate::Session) -> Self {
-        Self { session }
+        Self(crate::domain::cluster_session_node::SystemSqlExecutor::new(session))
     }
 }
 
 impl tidb_ddl_build::session_pool::StepSqlSession for NodeSqlSession {
-    fn execute(
-        &mut self,
-        sql: &str,
-        args: &[tidb_sqlescape::SqlArg<'_>],
-    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, MysqlError> {
-        let escaped = tidb_sqlexec::sql_with_params(sql, args)
-            .map_err(|error| MysqlError::unknown(error.to_string()))?;
-        self.session.node_conn().execute_internal(&escaped)
-            .map_err(sql_to_mysql)
+    fn get_sql_executor(&self) -> &dyn tidb_sqlexec::SqlExecutor {
+        &self.0
     }
+
     fn begin(&mut self) -> Result<(), MysqlError> {
-        self.session
-            .node_conn()
-            .new_txn(tidb_ast::TransactionMode::Optimistic)
+        self.0
+            .with_session(|session| session.node_conn().new_txn(tidb_ast::TransactionMode::Optimistic))
             .map_err(sql_to_mysql)
     }
 
     fn begin_pessimistic(&mut self) -> Result<(), MysqlError> {
-        self.session
-            .node_conn()
-            .new_txn(tidb_ast::TransactionMode::Pessimistic)
+        self.0
+            .with_session(|session| session.node_conn().new_txn(tidb_ast::TransactionMode::Pessimistic))
             .map_err(sql_to_mysql)
     }
 
     fn commit(&mut self) -> Result<(), MysqlError> {
-        self.session.node_conn().commit_txn().map_err(sql_to_mysql)
+        self.0.with_session(|session| session.node_conn().commit_txn()).map_err(sql_to_mysql)
     }
 
     fn rollback(&mut self) {
         // Go `RollbackTxn` returns nothing.
-        let _ = self.session.node_conn().rollback_txn();
+        let _ = self.0.with_session(|session| session.node_conn().rollback_txn());
     }
 }
 
 /// A node system session serving as one DDL step's `w.sess`.
-struct NodeStepSession {
-    session: crate::Session,
-}
+struct NodeStepSession(NodeSqlSession);
 
 impl tidb_ddl_build::session_pool::StepSqlSession for NodeStepSession {
-    fn execute(
-        &mut self,
-        sql: &str,
-        args: &[tidb_sqlescape::SqlArg<'_>],
-    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, MysqlError> {
-        let escaped = tidb_sqlexec::sql_with_params(sql, args)
-            .map_err(|error| MysqlError::unknown(error.to_string()))?;
-        self.session.node_conn().execute_internal(&escaped)
-            .map_err(sql_to_mysql)
+    fn get_sql_executor(&self) -> &dyn tidb_sqlexec::SqlExecutor {
+        self.0.get_sql_executor()
     }
+
     fn begin(&mut self) -> Result<(), MysqlError> {
-        self.session
-            .node_conn()
-            .new_txn(tidb_ast::TransactionMode::Optimistic)
-            .map_err(sql_to_mysql)
+        self.0.begin()
     }
 
     fn begin_pessimistic(&mut self) -> Result<(), MysqlError> {
-        self.session
-            .node_conn()
-            .new_txn(tidb_ast::TransactionMode::Pessimistic)
-            .map_err(sql_to_mysql)
+        self.0.begin_pessimistic()
     }
 
     fn commit(&mut self) -> Result<(), MysqlError> {
-        self.session.node_conn().commit_txn().map_err(sql_to_mysql)
+        self.0.commit()
     }
 
     fn rollback(&mut self) {
-        // Go `RollbackTxn` returns nothing.
-        let _ = self.session.node_conn().rollback_txn();
+        self.0.rollback();
     }
 }
 
@@ -316,9 +274,11 @@ impl Drop for NodeStepSession {
     /// commits (the transaction's own commit publishes nothing) -- closing
     /// would otherwise reset the buffer.
     fn drop(&mut self) {
-        let mut conn = self.session.node_conn();
-        let _ = conn.commit_txn();
-        conn.release_step_buffer();
+        self.0 .0.with_session(|session| {
+            let mut conn = session.node_conn();
+            let _ = conn.commit_txn();
+            conn.release_step_buffer();
+        });
     }
 }
 

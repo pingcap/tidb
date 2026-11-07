@@ -25,3 +25,8 @@ tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-ttl = { path = "../tidb-ttl" }
 tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+
+[dev-dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-resolve = { path = "../tidb-resolve" }
