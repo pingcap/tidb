@@ -125,8 +125,11 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	if txn == nil || !txn.Valid() || txn.StartTS() == 0 {
+	if txn == nil || !txn.Valid() {
 		return nil, errors.New("RefreshMaterializedViewImplementStmt: invalid transaction")
+	}
+	if txn.StartTS() == 0 {
+		return nil, errors.New("RefreshMaterializedViewImplementStmt: invalid transaction start tso")
 	}
 	sctx, ok := b.ctx.(sessionctx.Context)
 	if !ok {
@@ -221,8 +224,15 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 			fullSnapshot   *DataReaderSnapshot
 		)
 		if res.FullUpdateLookupTemplateSelect != nil && !mlogEmpty {
-			if res.FullUpdateLookupColumnCount <= 0 || len(res.FullUpdateLookupMVOffsets) != res.FullUpdateLookupColumnCount {
-				return nil, errors.New("mview full-update lookup template: invalid output column metadata")
+			if res.FullUpdateLookupColumnCount <= 0 {
+				return nil, errors.New("mview full-update lookup template: invalid output column count")
+			}
+			if len(res.FullUpdateLookupMVOffsets) != res.FullUpdateLookupColumnCount {
+				return nil, errors.Errorf(
+					"mview full-update lookup template: invalid mv-offset mapping length: got %d, expected %d",
+					len(res.FullUpdateLookupMVOffsets),
+					res.FullUpdateLookupColumnCount,
+				)
 			}
 			lookupIS := b.is
 			if stmt.TargetRefreshReadTSO > 0 {

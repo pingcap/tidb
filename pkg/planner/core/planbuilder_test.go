@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -61,6 +62,58 @@ type visit struct {
 	a1  unsafe.Pointer
 	a2  unsafe.Pointer
 	typ reflect.Type
+}
+
+type refreshMVTestTxn struct {
+	kv.Transaction
+	valid   bool
+	startTS uint64
+}
+
+func (txn *refreshMVTestTxn) Valid() bool { return txn.valid }
+
+func (txn *refreshMVTestTxn) StartTS() uint64 { return txn.startTS }
+
+type refreshMVTestContext struct {
+	*mock.Context
+	txn kv.Transaction
+}
+
+func (ctx *refreshMVTestContext) Txn(bool) (kv.Transaction, error) {
+	return ctx.txn, nil
+}
+
+func TestBuildRefreshMaterializedViewInvalidTransaction(t *testing.T) {
+	mv := &model.TableInfo{
+		ID:               1,
+		Name:             ast.NewCIStr("mv"),
+		State:            model.StatePublic,
+		MaterializedView: &model.MaterializedViewInfo{},
+	}
+	is := infoschema.MockInfoSchema([]*model.TableInfo{mv})
+	stmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName: &ast.TableName{Schema: ast.NewCIStr("test"), Name: mv.Name},
+			Type:     ast.RefreshMaterializedViewTypeFast,
+		},
+	}
+	for _, tc := range []struct {
+		name string
+		txn  kv.Transaction
+		err  string
+	}{
+		{"nil transaction", nil, "RefreshMaterializedViewImplementStmt: invalid transaction"},
+		{"invalid transaction", &refreshMVTestTxn{startTS: 1}, "RefreshMaterializedViewImplementStmt: invalid transaction"},
+		{"zero start tso", &refreshMVTestTxn{valid: true}, "RefreshMaterializedViewImplementStmt: invalid transaction start tso"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := &refreshMVTestContext{Context: mock.NewContext(), txn: tc.txn}
+			builder, _ := NewPlanBuilder().Init(ctx, is, hint.NewQBHintHandler(nil))
+			plan, err := builder.buildRefreshMaterializedViewImplement(context.Background(), stmt)
+			require.EqualError(t, err, tc.err)
+			require.Nil(t, plan)
+		})
+	}
 }
 
 func TestShow(t *testing.T) {
