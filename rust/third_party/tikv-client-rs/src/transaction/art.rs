@@ -743,6 +743,24 @@ struct SnapshotValue {
 
 type SnapshotEntries = Arc<RwLock<BTreeMap<Vec<u8>, SnapshotValue>>>;
 
+/// The entries with `lower <= key < upper` (`None` is unbounded), found by
+/// seeking to `lower` rather than testing every buffered key; an empty or
+/// inverted window has no entries.
+pub(crate) fn key_range<'a, V>(
+    entries: &'a BTreeMap<Vec<u8>, V>,
+    lower: Option<&[u8]>,
+    upper: Option<&[u8]>,
+) -> std::collections::btree_map::Range<'a, Vec<u8>, V> {
+    use std::ops::Bound;
+    let start = lower.map_or(Bound::Unbounded, Bound::Included);
+    let end = match (lower, upper) {
+        // `BTreeMap::range` panics on an inverted window; `[l, l)` is empty.
+        (Some(lower), Some(upper)) if upper < lower => Bound::Excluded(lower),
+        (_, upper) => upper.map_or(Bound::Unbounded, Bound::Excluded),
+    };
+    entries.range::<[u8], _>((start, end))
+}
+
 pub(crate) struct ArtIterator {
     items: Vec<IteratorItem>,
     index: usize,
@@ -763,15 +781,8 @@ impl ArtIterator {
         // unlike RBT which distinguishes a non-nil empty upper bound.
         let lower = lower.filter(|bound| !bound.is_empty());
         let upper = upper.filter(|bound| !bound.is_empty());
-        let mut items: Vec<_> = tree
-            .entries
-            .iter()
-            .filter(|(key, entry)| {
-                !entry.deleted
-                    && lower.is_none_or(|lower| key.as_slice() >= lower)
-                    && upper.is_none_or(|upper| key.as_slice() < upper)
-                    && (include_flags || entry.value.is_some())
-            })
+        let mut items: Vec<_> = key_range(&tree.entries, lower, upper)
+            .filter(|(_, entry)| !entry.deleted && (include_flags || entry.value.is_some()))
             .map(|(key, entry)| (key.clone(), entry.value.clone(), entry.flags, entry.handle))
             .collect();
         if reverse {
@@ -890,16 +901,13 @@ impl SnapshotIterator {
     ) -> Self {
         let lower = lower.filter(|bound| !bound.is_empty());
         let upper = upper.filter(|bound| !bound.is_empty());
-        let mut keys: Vec<_> = entries
-            .read()
-            .expect("snapshot entries lock poisoned")
-            .keys()
-            .filter(|key| {
-                lower.is_none_or(|lower| key.as_slice() >= lower)
-                    && upper.is_none_or(|upper| key.as_slice() < upper)
-            })
-            .cloned()
-            .collect();
+        let mut keys: Vec<_> = key_range(
+            &entries.read().expect("snapshot entries lock poisoned"),
+            lower,
+            upper,
+        )
+        .map(|(key, _)| key.clone())
+        .collect();
         if reverse {
             keys.reverse();
         }
@@ -1191,6 +1199,34 @@ mod tests {
         for join in joins {
             assert_eq!(join.join().unwrap(), 48);
         }
+    }
+
+    /// An iterator seeks its window: keys outside `[lower, upper)` never
+    /// appear, and an inverted window is empty in both directions.
+    #[test]
+    fn an_iterator_window_is_seeked_and_an_inverted_one_is_empty() {
+        let mut tree = Art::new();
+        for key in [b"a".as_slice(), b"b", b"c", b"d"] {
+            tree.set(key, Some(key), &[]).unwrap();
+        }
+        let keys = |mut iterator: ArtIterator| {
+            let mut keys = Vec::new();
+            while iterator.valid() {
+                keys.push(iterator.key().to_vec());
+                iterator.next().unwrap();
+            }
+            keys
+        };
+        assert_eq!(keys(tree.iter(Some(b"b"), Some(b"d"))), [b"b".to_vec(), b"c".to_vec()]);
+        assert_eq!(keys(tree.iter_reverse(Some(b"d"), Some(b"b"))), [b"c".to_vec(), b"b".to_vec()]);
+        assert!(keys(tree.iter(Some(b"d"), Some(b"b"))).is_empty());
+        assert!(keys(tree.iter_reverse(Some(b"b"), Some(b"d"))).is_empty());
+        let snapshot = tree.snapshot();
+        let mut window = snapshot.iter(Some(b"b"), Some(b"c"), false);
+        assert_eq!(window.key(), b"b");
+        window.next().unwrap();
+        assert!(!window.valid());
+        assert!(!snapshot.iter(Some(b"c"), Some(b"a"), true).valid());
     }
 
     /// The kept footprint equals the payload a full walk of the buffer sums,

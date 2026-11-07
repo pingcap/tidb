@@ -43,6 +43,15 @@ macro_rules! impl_inner_shardable {
             self.inner.apply_shard(shard);
         }
 
+        /// Only the inner request differs per shard, and it builds its own
+        /// shard copy without cloning what the shard replaces.
+        fn clone_then_apply_shard(&self, shard: Self::Shard) -> Self
+        where
+            Self: Sized + Clone,
+        {
+            self.clone_with_inner(self.inner.clone_then_apply_shard(shard))
+        }
+
         fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
             self.inner.apply_store(store)
         }

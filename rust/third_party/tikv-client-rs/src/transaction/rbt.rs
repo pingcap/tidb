@@ -658,13 +658,8 @@ impl RbtIterator {
         if reverse && upper.is_some_and(<[u8]>::is_empty) {
             upper = None;
         }
-        let mut items: Vec<_> = entries
-            .iter()
-            .filter(|(key, entry)| {
-                lower.is_none_or(|lower| key.as_slice() >= lower)
-                    && upper.is_none_or(|upper| key.as_slice() < upper)
-                    && (include_flags || entry.value.is_some())
-            })
+        let mut items: Vec<_> = super::art::key_range(entries, lower, upper)
+            .filter(|(_, entry)| include_flags || entry.value.is_some())
             .map(|(key, entry)| (key.clone(), entry.value.clone(), entry.flags, entry.handle))
             .collect();
         if reverse {
@@ -773,16 +768,13 @@ impl RbtSnapshotIterator {
         if reverse && upper.is_some_and(<[u8]>::is_empty) {
             upper = None;
         }
-        let mut keys: Vec<_> = entries
-            .read()
-            .expect("snapshot entries lock poisoned")
-            .keys()
-            .filter(|key| {
-                lower.is_none_or(|lower| key.as_slice() >= lower)
-                    && upper.is_none_or(|upper| key.as_slice() < upper)
-            })
-            .cloned()
-            .collect();
+        let mut keys: Vec<_> = super::art::key_range(
+            &entries.read().expect("snapshot entries lock poisoned"),
+            lower,
+            upper,
+        )
+        .map(|(key, _)| key.clone())
+        .collect();
         if reverse {
             keys.reverse();
         }

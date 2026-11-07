@@ -109,11 +109,27 @@ impl<P: Plan> Plan for RpcCancellable<P> {
 ///
 /// client-go's scanner handles region errors first, then calls
 /// `CheckVisibility`, and only afterwards resolves response-level key locks.
-#[derive(Clone)]
 pub struct ValidateSnapshotVisibility<P> {
     pub inner: P,
     pub validator: Option<Arc<dyn crate::SnapshotVisibilityValidator>>,
     pub read_timestamp: u64,
+}
+
+impl<P: Clone> Clone for ValidateSnapshotVisibility<P> {
+    fn clone(&self) -> Self {
+        self.clone_with_inner(self.inner.clone())
+    }
+}
+
+impl<P> ValidateSnapshotVisibility<P> {
+    /// This plan around `inner` in place of its own inner plan.
+    pub(crate) fn clone_with_inner(&self, inner: P) -> Self {
+        Self {
+            inner,
+            validator: self.validator.clone(),
+            read_timestamp: self.read_timestamp,
+        }
+    }
 }
 
 #[async_trait]
@@ -3028,10 +3044,25 @@ pub trait Process<In>: Sized + Clone + Send + Sync + 'static {
     fn process(&self, input: Result<In>) -> Result<Self::Out>;
 }
 
-#[derive(Clone)]
 pub struct ProcessResponse<P: Plan, Pr: Process<P::Result>> {
     pub inner: P,
     pub processor: Pr,
+}
+
+impl<P: Plan, Pr: Process<P::Result>> Clone for ProcessResponse<P, Pr> {
+    fn clone(&self) -> Self {
+        self.clone_with_inner(self.inner.clone())
+    }
+}
+
+impl<P: Plan, Pr: Process<P::Result>> ProcessResponse<P, Pr> {
+    /// This plan around `inner` in place of its own inner plan.
+    pub(crate) fn clone_with_inner(&self, inner: P) -> Self {
+        Self {
+            inner,
+            processor: self.processor.clone(),
+        }
+    }
 }
 
 /// Increment one lock-resolver action immediately before each physical shard
@@ -3044,8 +3075,15 @@ pub(crate) struct CountLockResolverAction<P: Plan> {
 
 impl<P: Plan> Clone for CountLockResolverAction<P> {
     fn clone(&self) -> Self {
+        self.clone_with_inner(self.inner.clone())
+    }
+}
+
+impl<P: Plan> CountLockResolverAction<P> {
+    /// This plan around `inner` in place of its own inner plan.
+    pub(crate) fn clone_with_inner(&self, inner: P) -> Self {
         Self {
-            inner: self.inner.clone(),
+            inner,
             action: self.action,
         }
     }
@@ -3120,8 +3158,15 @@ impl PrewriteLockConflict {
 
 impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
     fn clone(&self) -> Self {
+        self.clone_with_inner(self.inner.clone())
+    }
+}
+
+impl<P: Plan, PdC: PdClient> ResolveLock<P, PdC> {
+    /// This plan around `inner` in place of its own inner plan.
+    pub(crate) fn clone_with_inner(&self, inner: P) -> Self {
         ResolveLock {
-            inner: self.inner.clone(),
+            inner,
             timestamp: self.timestamp.clone(),
             pd_client: self.pd_client.clone(),
             backoff: self.backoff.clone(),

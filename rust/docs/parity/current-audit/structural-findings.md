@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**29 unresolved: 6 open, 23 partial.**
+**30 unresolved: 7 open, 23 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -28,6 +28,7 @@ unresolved until it is restated against its Go owner or closed.
 | D02 | partial | No ingest (fast-reorg) backfill: it falls back to the transactional merge (`tidb-ddl/src/cluster_ddl/add_index.rs`); with it the status port's `/ingest/*` routes (Go `IngestConcurrencyHandler` over `ingestctrl`'s rate-limit parameters) are absent | `pkg/ddl/backfilling*.go`, `pkg/ddl/ingest` |
 | D05 | partial | Cancellation follows Go's `convertJob2RollbackJob` for every action the worker runs. A columnar (vector, inverted, full-text) index is checked against its table as Go's `createColumnarIndex` does (`add_index.rs` `create_columnar_index`, `checkTableTypeForColumnarIndex`), but on a table with a columnar replica this node builds no `ActionAddColumnarIndex` job: `onCreateColumnarIndex` (TiFlash schema sync, `checkColumnarIndexProcess`) and its `rollingbackAddColumanrIndex` are absent | `pkg/ddl` |
 | D11 | partial | A multi-schema change has no `promoteProxyKVDiskFullPause`, whose only producer (`autoPauseAddIndexJobOnKVDiskFull`, the DXF add-index task) Rust lacks (D02, O10) | `pkg/ddl/multi_schema_change.go` |
+| D12 | open | Every persisted DDL job step rebuilds the whole info schema from the step's meta snapshot (`plan_persisted_ddl_job_with` -> `load_info_schema` -> `fetch_all_schemas_with_tables`, a `TableInfo` JSON parse per table, system tables included) to locate the job table and build the MDL info, where Go's `transitOneJobStep` reads the job's own tables through `jobCtx.metaMut` and takes the schema from `jobCtx.infoCache`: in the `executor/foreign_key` replay about half of every DDL's latency is that reload | `pkg/ddl/job_worker.go` (`transitOneJobStep`, `runOneJobStep`), `pkg/ddl/job_scheduler.go` (`jobContext.infoCache`) |
 
 ### Executor, DML and expressions
 
