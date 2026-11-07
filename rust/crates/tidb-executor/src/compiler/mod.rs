@@ -44,6 +44,11 @@ pub trait CompilerSession: crate::admin::AdminExec {
     /// The session's physical plan cache (Go `GetSessionPlanCache`).
     fn physical_plan_cache(&self) -> &crate::SessionPlanCache;
 
+    /// Holds an autocommit `EXPLAIN ANALYZE` write's rendering until the
+    /// statement committed (Go `runStmt`'s `IsExplainAnalyzeDML` commit
+    /// before the `ExplainExec` record set renders).
+    fn defer_explain_analyze_render(&mut self, write: crate::AnalyzedWrite);
+
     /// The statement's hints, parsed without catalog metadata.
     fn parse_statement_hints_without_catalog(
         &self,

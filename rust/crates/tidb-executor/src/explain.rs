@@ -4169,6 +4169,39 @@ pub fn explain_insert_stmt(
     render_built_plan(ctx, &physical, catalog, format)
 }
 
+/// An `EXPLAIN ANALYZE` write whose analyze child ran (Go `handleNoDelay`
+/// drained the `ExplainExec`'s write): its RU stats register and its rows
+/// render when its record set is read (`ExplainExec.executeAnalyzeExec`,
+/// `RenderResult`), which for an autocommit statement is after `runStmt`
+/// committed it (`IsExplainAnalyzeDML`).
+pub struct AnalyzedWrite {
+    ctx: crate::StmtContext,
+    physical: PhysicalPlan,
+    catalog: SessionExtendedInfoSchema,
+    format: ExplainFormat,
+}
+
+impl AnalyzedWrite {
+    /// Go `executeAnalyzeExec`'s `RURuntimeStats` registration, then
+    /// `RenderResult`.
+    ///
+    /// # Errors
+    /// A plan that does not render.
+    pub fn render(self) -> Result<SelectMeta, DriverError> {
+        register_ru_runtime_stats(&self.ctx, i64::from(self.physical.id()));
+        render_physical_plan(
+            &self.ctx,
+            &self.ctx,
+            &self.physical,
+            &self.catalog,
+            self.format,
+            true,
+            true,
+            &[],
+        )
+    }
+}
+
 /// `EXPLAIN ANALYZE <insert>`: unlike [`explain_insert_stmt`], this really
 /// inserts the row(s) -- real `EXPLAIN ANALYZE INSERT` executes the
 /// statement (captured: the table has the new row afterward). The `Insert_N`
@@ -4186,7 +4219,7 @@ pub fn explain_analyze_insert_stmt(
     current_db: &str,
     ctx: &crate::StmtContext,
     format: ExplainFormat,
-) -> Result<SelectMeta, DriverError> {
+) -> Result<AnalyzedWrite, DriverError> {
     let analyzed = explain_analyze_context(ctx);
     let ctx = &analyzed;
     // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
@@ -4203,18 +4236,13 @@ pub fn explain_analyze_insert_stmt(
         Some(&mut physical),
         Some(source_visits),
     )?;
-    // The write ran and closed (Go `handleNoDelayExecutor`) before its RU.
-    register_ru_runtime_stats(ctx, i64::from(physical.id()));
-    render_physical_plan(
-        ctx,
-        ctx,
-        &physical,
-        catalog,
+    // The write ran and closed (Go `handleNoDelayExecutor`).
+    Ok(AnalyzedWrite {
+        ctx: analyzed.clone(),
+        physical,
+        catalog: catalog.clone(),
         format,
-        true,
-        true,
-        &[],
-    )
+    })
 }
 
 /// Plans an `UPDATE` and reports the plan as EXPLAIN rows, executing nothing.
@@ -4304,7 +4332,7 @@ pub fn explain_analyze_update_stmt(
     current_db: &str,
     ctx: &crate::StmtContext,
     format: ExplainFormat,
-) -> Result<SelectMeta, DriverError> {
+) -> Result<AnalyzedWrite, DriverError> {
     let analyzed = explain_analyze_context(ctx);
     let ctx = &analyzed;
     // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
@@ -4339,18 +4367,13 @@ pub fn explain_analyze_update_stmt(
         ctx,
         Some(&mut physical),
     )?;
-    // The write ran and closed (Go `handleNoDelayExecutor`) before its RU.
-    register_ru_runtime_stats(ctx, i64::from(physical.id()));
-    render_physical_plan(
-        ctx,
-        ctx,
-        &physical,
-        catalog,
+    // The write ran and closed (Go `handleNoDelayExecutor`).
+    Ok(AnalyzedWrite {
+        ctx: analyzed.clone(),
+        physical,
+        catalog: catalog.clone(),
         format,
-        true,
-        true,
-        &[],
-    )
+    })
 }
 
 /// `EXPLAIN ANALYZE <delete>`: see [`explain_analyze_update_stmt`] -- the
@@ -4361,7 +4384,7 @@ pub fn explain_analyze_delete_stmt(
     current_db: &str,
     ctx: &crate::StmtContext,
     format: ExplainFormat,
-) -> Result<SelectMeta, DriverError> {
+) -> Result<AnalyzedWrite, DriverError> {
     let analyzed = explain_analyze_context(ctx);
     let ctx = &analyzed;
     // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
@@ -4396,18 +4419,13 @@ pub fn explain_analyze_delete_stmt(
         ctx,
         Some(&mut physical),
     )?;
-    // The write ran and closed (Go `handleNoDelayExecutor`) before its RU.
-    register_ru_runtime_stats(ctx, i64::from(physical.id()));
-    render_physical_plan(
-        ctx,
-        ctx,
-        &physical,
-        catalog,
+    // The write ran and closed (Go `handleNoDelayExecutor`).
+    Ok(AnalyzedWrite {
+        ctx: analyzed.clone(),
+        physical,
+        catalog: catalog.clone(),
         format,
-        true,
-        true,
-        &[],
-    )
+    })
 }
 
 fn text(value: &str) -> Datum {

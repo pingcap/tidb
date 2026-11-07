@@ -26,6 +26,10 @@ impl tidb_executor::compiler::CompilerSession for Session {
         &self.physical_plan_cache
     }
 
+    fn defer_explain_analyze_render(&mut self, write: tidb_executor::AnalyzedWrite) {
+        self.pending_explain_analyze = Some(write);
+    }
+
     fn parse_statement_hints_without_catalog(
         &self,
         stmt: &tidb_ast::Stmt,

@@ -214,7 +214,8 @@ pub trait ExplainCompile: super::CompilerSession {
                         )
                     }
                 })?,
-                Stmt::Dml(dml) => match &**dml {
+                Stmt::Dml(dml) => {
+                    let analyzed = match &**dml {
                     tidb_ast::DmlStmt::Insert(insert) => self.retrieving_memory_tables(&ctx, |session| {
                         session.with_staged_catalog(|catalog| {
                             crate::explain_analyze_insert_stmt(
@@ -254,7 +255,17 @@ pub trait ExplainCompile: super::CompilerSession {
                             variant_name(other)
                         )));
                     }
-                },
+                    };
+                    // Go `runStmt` commits an autocommit `IsExplainAnalyzeDML`
+                    // statement before its record set renders, so the RU
+                    // stats and the rows wait for the statement's commit.
+                    if self.in_txn() {
+                        analyzed.render()?
+                    } else {
+                        self.defer_explain_analyze_render(analyzed);
+                        (Vec::new(), Vec::new())
+                    }
+                }
                 other => {
                     return Err(DriverError::unsupported(format!(
                         "EXPLAIN ANALYZE of {} is not supported yet",

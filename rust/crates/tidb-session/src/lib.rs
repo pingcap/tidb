@@ -888,6 +888,9 @@ pub struct Session {
     binary_prepared_execution: bool,
     /// The running statement is a text `EXECUTE`.
     in_execute: bool,
+    /// An autocommit `EXPLAIN ANALYZE` write waiting for its statement's
+    /// commit to render (Go `IsExplainAnalyzeDML`).
+    pending_explain_analyze: Option<tidb_executor::AnalyzedWrite>,
     /// The node connection a session built over a booted domain runs its
     /// statements through (Go testkit's session on `CreateMockStore`'s
     /// domain); `None` for a session that IS the node connection's own.
@@ -1083,6 +1086,7 @@ impl Session {
             last_ruv2_metrics: None,
             binary_prepared_execution: false,
             in_execute: false,
+            pending_explain_analyze: None,
             node: Some(node),
         }
     }
@@ -2486,6 +2490,12 @@ impl Session {
 
     /// Parses and executes one SQL statement, reducing the output to rows
     /// or an affected count.
+    /// The autocommit `EXPLAIN ANALYZE` write the statement left to render
+    /// once it committed.
+    pub(crate) fn take_pending_explain_analyze(&mut self) -> Option<tidb_executor::AnalyzedWrite> {
+        self.pending_explain_analyze.take()
+    }
+
     pub fn run(&mut self, sql: &str) -> Result<StmtResult, DriverError> {
         Ok(match self.run_with_columns(sql)? {
             StmtOutput::Rows { rows, .. } => StmtResult::Rows(rows),

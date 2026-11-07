@@ -29214,6 +29214,31 @@ fn resource_control_prices_requests_after_an_early_sysvar_load_like_go() {
     assert!(plan[0][5].contains(", RU:0.47, Get:{"), "{}", plan[0][5]);
 }
 
+/// An autocommit `EXPLAIN ANALYZE` write commits before its rows render, as
+/// Go's `runStmt` commits an `IsExplainAnalyzeDML` statement before its
+/// `ExplainExec` record set is read: its RU stats count the prewrite and the
+/// commit. Captured from a Go tidb-server over the wire:
+/// `explain analyze update t set b=b+1 where id=2` reports `RU:3.94`, every
+/// run.
+#[test]
+fn an_analyzed_autocommit_write_renders_after_its_commit_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1150)).unwrap();
+    for sql in [
+        "USE test",
+        "create table t (id int primary key, uk int, b int, unique key(uk))",
+        "insert into t values (1,10,0),(2,20,0),(3,30,0)",
+    ] {
+        session.node_conn().execute_write(sql).unwrap();
+    }
+    for _ in 0..2 {
+        let plan = displayed(rows(&mut session, "explain analyze update t set b=b+1 where id=2"));
+        assert_eq!(plan[0][0], "Update_3");
+        assert!(plan[0][5].ends_with(", RU:3.94"), "{}", plan[0][5]);
+    }
+    assert_eq!(displayed(rows(&mut session, "select b from t where id=2")), [["2"]]);
+}
+
 /// A write's root carries its transaction's commit statistics: Go's
 /// `FinishExecuteStmt` registers `RuntimeStatsWithCommit` on the plan's root
 /// in the statement's `RuntimeStatsColl`, before the connection goes to sleep

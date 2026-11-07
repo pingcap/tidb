@@ -239,7 +239,7 @@ use tidb_infoschema::{SessionExtendedInfoSchema, TableEntry, ViewDef, DEFAULT_DA
 use tidb_driver_error::DriverError;
 use tidb_terror::MysqlError;
 use tidb_driver_error::ExecError;
-pub use explain::{brief_binary_plan, explain_analyze_delete_stmt, explain_analyze_insert_stmt, explain_connection_brief_plan, explain_connection_plan, query_plan_cost, explain_analyze_physical_plan, explain_analyze_select_stmt, explain_analyze_set_opr_stmt, explain_analyze_update_stmt, explain_delete_stmt, explain_insert_stmt, explain_physical_plan, explain_select_stmt, explain_set_opr_stmt, explain_update_stmt, process_plan_info};
+pub use explain::{brief_binary_plan, AnalyzedWrite, explain_analyze_delete_stmt, explain_analyze_insert_stmt, explain_connection_brief_plan, explain_connection_plan, query_plan_cost, explain_analyze_physical_plan, explain_analyze_select_stmt, explain_analyze_set_opr_stmt, explain_analyze_update_stmt, explain_delete_stmt, explain_insert_stmt, explain_physical_plan, explain_select_stmt, explain_set_opr_stmt, explain_update_stmt, process_plan_info};
 use tidb_sessionctx::explain_format::ExplainFormat;
 use tidb_executor_join::join::{JoinExec, JoinKind};
 pub use kv_table::{KvTableDdl, KvTablePartitionMaintenance, KvTableReader, RowDecodeContextExt, TableScanExec};

@@ -145,9 +145,19 @@ impl<'s> ClusterServerSession<'s> {
                 .with_cursor_materialization(field_types, authority))
             }
             OpenedStatement::Complete(output) => {
+                // Go `runStmt` commits an autocommit `IsExplainAnalyzeDML`
+                // statement before its `ExplainExec` record set renders.
+                let analyzed = self.session.take_pending_explain_analyze();
                 if let Some(snapshot) = snapshot {
                     self.end_read_statement(snapshot, true)?;
                 }
+                let output = match analyzed {
+                    Some(write) => write
+                        .render()
+                        .map(|(columns, rows)| StmtOutput::Rows { columns, rows })
+                        .map_err(|error| self.record_statement_failure(sql_query_error(error)))?,
+                    None => output,
+                };
                 let source = match output {
                     StmtOutput::Rows { columns, rows } => MaterializedResultSetSource::new(
                         crate::domain::pipeline_session::select_fields(&columns),
