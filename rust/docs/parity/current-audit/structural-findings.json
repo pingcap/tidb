@@ -76,7 +76,7 @@
       "id": "E14",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "The embedded store's coprocessor runs every DAG through Go's `mppExec` chain (`tidb-unistore-cophandler` `mpp.rs`, `mpp_exec.rs`), but `selExec` filters row by row where Go's `expression.VectorizedFilter` evaluates each condition over the whole chunk, the index-lookup push-down (`buildIndexLookUp` and its intermediate outputs) refuses, and a store or row-decode error answers `OtherError` where `genRespWithMPPExec` carries it in `SelectResponse.error`",
+      "finding": "The embedded store's coprocessor runs every DAG through Go's `mppExec` chain (`tidb-unistore-cophandler` `mpp.rs`, `mpp_exec.rs`), filters condition by condition as Go's `VectorizedFilter` does, and answers errors as `genRespWithMPPExec` does (`SelectResponse.error`, a conflict's `OtherError`, an unsupported executor's `OtherError`), but the index-lookup push-down (`buildIndexLookUp` and its `IntermediateOutputs`) refuses",
       "go_owner": "`pkg/store/mockstore/unistore/cophandler` (`mpp.go`, `mpp_exec.go`)"
     },
     {

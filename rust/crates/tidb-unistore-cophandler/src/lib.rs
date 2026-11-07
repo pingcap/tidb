@@ -359,8 +359,11 @@ fn gen_resp_with_mpp_exec(
     dur: std::time::Duration,
 ) -> coprocessor::Response {
     let dag_req = &context.dag_req;
+    // Go `handleCopDAGRequest`: an unsupported executor answers `OtherError`.
     if let Some(mpp_exec::MppExecError::Other(message)) = &run.err {
-        return other_error(message);
+        if message.starts_with(mpp::ERR_EXECUTOR_NOT_SUPPORTED_MSG) {
+            return other_error(message);
+        }
     }
     let (chunks, counts, ndvs) = if run.err.is_some() {
         let chunks = EncodedChunks {
@@ -380,10 +383,12 @@ fn gen_resp_with_mpp_exec(
             code: Some(1),
             msg: Some(locked_error_message(lock)),
         },
-        mpp_exec::MppExecError::Other(message) => tipb::Error {
-            code: Some(1),
-            msg: Some(message.clone()),
-        },
+        mpp_exec::MppExecError::Other(message) | mpp_exec::MppExecError::Conflict(message) => {
+            tipb::Error {
+                code: Some(1),
+                msg: Some(message.clone()),
+            }
+        }
     });
     let mut sel_resp = tipb::SelectResponse {
         error,
@@ -416,6 +421,10 @@ fn gen_resp_with_mpp_exec(
         range: run.last_range,
         ..coprocessor::Response::default()
     };
+    // Go `genRespWithMPPExec`'s tail: a conflict is also the `OtherError`.
+    if let Some(mpp_exec::MppExecError::Conflict(message)) = &run.err {
+        resp.other_error = message.clone();
+    }
     if let Some(mpp_exec::MppExecError::Locked(lock)) = &run.err {
         resp.locked = Some(tidb_proto::kvrpcpb::LockInfo {
             key: lock.key.clone(),
@@ -1297,31 +1306,24 @@ fn collation_of(expr: &tipb::Expr) -> i32 {
     tidb_datatype::restore_collation_id_if_needed(protocol)
 }
 
-/// Go `selExec`'s filter, row by row: the conditions run in order and the
-/// first one that is NULL or zero rejects the row WITHOUT evaluating the rest,
-/// so `b <> '(' AND regexp_like(a, b)` never compiles the pattern of a row the
-/// first condition already dropped.
-fn conditions_hold(
-    conditions: &[SimpleExpr],
+/// One condition of Go `selExec`'s filter over one row: NULL or zero
+/// rejects it.
+pub(crate) fn condition_holds(
+    condition: &SimpleExpr,
     row: &[tidb_datatype::Datum],
 ) -> Result<bool, CopExecError> {
-    for condition in conditions {
-        // A builtin condition's evaluation error keeps its terror code for
-        // `SelectResponse.error`.
-        let value = match condition {
-            SimpleExpr::Shared(shared) => match eval_shared(shared, row)? {
-                tidb_datatype::Datum::Int(value) => Some(i128::from(value)),
-                tidb_datatype::Datum::UInt(value) => Some(i128::from(value)),
-                tidb_datatype::Datum::Null => None,
-                other => Some(shared.context.condition_value(&other)?),
-            },
-            other => eval_expr(other, row)?,
-        };
-        if !value.is_some_and(|value| value != 0) {
-            return Ok(false);
-        }
-    }
-    Ok(true)
+    // A builtin condition's evaluation error keeps its terror code for
+    // `SelectResponse.error`.
+    let value = match condition {
+        SimpleExpr::Shared(shared) => match eval_shared(shared, row)? {
+            tidb_datatype::Datum::Int(value) => Some(i128::from(value)),
+            tidb_datatype::Datum::UInt(value) => Some(i128::from(value)),
+            tidb_datatype::Datum::Null => None,
+            other => Some(shared.context.condition_value(&other)?),
+        },
+        other => eval_expr(other, row)?,
+    };
+    Ok(value.is_some_and(|value| value != 0))
 }
 
 /// Evaluates one pushed-down expression against a scanned row: MySQL's
@@ -1998,6 +2000,69 @@ mod tests {
         );
         let locked = resp.locked.expect("the first lock answers the response");
         assert_eq!(locked.lock_version, 5);
+    }
+
+    /// Go `genRespWithMPPExec`: an executor error that is not a lock -- here
+    /// a row the scan cannot decode -- travels in `SelectResponse.error`
+    /// (`toPBError`: code 1 and the error's text), not as the response's
+    /// `OtherError`.
+    #[test]
+    fn a_row_decode_error_travels_in_the_select_response() {
+        use tidb_tablecodec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_proto::{KvrpcMutation, KvrpcOp};
+        let mut store = MvccStore::new();
+        let key = encode_row_key_with_handle(9, &RecordHandle::Int(1));
+        store
+            .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
+                mutations: vec![KvrpcMutation {
+                    op: KvrpcOp::Put as i32,
+                    key: key.clone(),
+                    value: vec![0xff, 0x01, 0x02],
+                    ..KvrpcMutation::default()
+                }],
+                primary_lock: key.clone(),
+                start_version: 10,
+                ..tidb_unistore_tikv::mvcc_store::PrewriteReq::default()
+            })
+            .expect("prewrites");
+        store.commit(&[key], 10, 11).expect("commits");
+        let dag = tipb::DagRequest {
+            executors: vec![tipb::Executor {
+                tp: Some(tipb::ExecType::TypeTableScan as i32),
+                tbl_scan: Some(tipb::TableScan {
+                    table_id: Some(9),
+                    columns: vec![tipb::ColumnInfo {
+                        column_id: Some(2),
+                        tp: Some(8),
+                        ..tipb::ColumnInfo::default()
+                    }],
+                    ..tipb::TableScan::default()
+                }),
+                ..tipb::Executor::default()
+            }],
+            ..tipb::DagRequest::default()
+        };
+        let mut data = Vec::new();
+        dag.encode(&mut data).expect("encodes");
+        let (range_start, range_end) = tidb_tablecodec::table_key::get_table_handle_key_range(9);
+        let resp = handle_cop_request(
+            &mut store,
+            &coprocessor::Request {
+                tp: REQ_TYPE_DAG,
+                data,
+                ranges: vec![coprocessor::KeyRange {
+                    start: range_start,
+                    end: range_end,
+                }],
+                start_ts: 20,
+                ..coprocessor::Request::default()
+            },
+        );
+        assert!(resp.other_error.is_empty(), "{}", resp.other_error);
+        let select = tipb::SelectResponse::decode(resp.data.as_ref()).expect("decodes");
+        let error = select.error.expect("the decode error is the response's");
+        assert_eq!(error.code, Some(1), "{error:?}");
+        assert!(select.chunks.is_empty());
     }
 
     #[test]

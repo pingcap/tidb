@@ -49,7 +49,7 @@ use tidb_tablecodec::table_key::RecordHandle;
 use tidb_unistore_dbreader::{DbReader, KvPair, ScanReq};
 
 use crate::eval_context::RequestEvalContext;
-use crate::{conditions_hold, CopExecError, RegionAggregator, SimpleExpr, TopNSpec};
+use crate::{condition_holds, CopExecError, RegionAggregator, SimpleExpr, TopNSpec};
 
 /// Go `DefaultBatchSize`: the capacity of every chunk an executor allocates.
 pub(crate) const DEFAULT_BATCH_SIZE: usize = 32;
@@ -82,8 +82,13 @@ pub(crate) enum MppExecError {
     /// Go `*ErrLocked` (`checkRangeLockForRange`): `SelectResponse.error`
     /// plus the response's `Locked`.
     Locked(Box<tidb_proto::kvrpcpb::LockInfo>),
-    /// A store or decode failure, and this port's named narrowings: answered
-    /// as the response's `OtherError`.
+    /// Go `*kverrors.ErrConflict` (an RC check-ts read meeting a newer
+    /// write): `SelectResponse.error` plus the response's `OtherError`, whose
+    /// "write conflict" text the client turns into `ErrWriteConflict`.
+    Conflict(String),
+    /// Any other store or decode failure: `SelectResponse.error` (code 1 and
+    /// its text); one carrying `ErrExecutorNotSupportedMsg` answers as the
+    /// response's `OtherError`.
     Other(String),
 }
 
@@ -233,6 +238,9 @@ fn scan_range(
 fn pair_error(pair: &KvPair) -> Option<MppExecError> {
     pair.error.as_deref().map(|error| match error {
         tidb_unistore_kverrors::KvError::Locked(lock) => MppExecError::Locked(lock.clone()),
+        conflict @ tidb_unistore_kverrors::KvError::Conflict { .. } => {
+            MppExecError::Conflict(conflict.to_string())
+        }
         other => MppExecError::Other(other.to_string()),
     })
 }
@@ -1152,8 +1160,20 @@ impl<'a> MppExec<'a> for SelExec<'a> {
                 Some(chk) if !chk.is_empty() => chk,
                 _ => break,
             };
-            for row in chk {
-                if conditions_hold(&self.conditions, &row)? {
+            // Go `expression.VectorizedFilter`: each condition over the
+            // chunk's rows the earlier ones kept, so a later condition never
+            // sees a rejected row and the first error is the earliest
+            // condition's.
+            let mut selected = vec![true; chk.len()];
+            for condition in &self.conditions {
+                for (row, keep) in chk.iter().zip(selected.iter_mut()) {
+                    if *keep {
+                        *keep = condition_holds(condition, row)?;
+                    }
+                }
+            }
+            for (row, keep) in chk.into_iter().zip(selected) {
+                if keep {
                     ret.push(row);
                     self.base.exec_summary.update_only_rows(1);
                 }

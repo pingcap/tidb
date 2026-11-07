@@ -3056,6 +3056,25 @@ fn an_index_lookup_topn_runs_on_the_index_side_as_go() {
     }
 }
 
+/// Go `selExec` filters through `expression.VectorizedFilter`: each pushed
+/// condition runs over the chunk's rows the earlier ones kept, so the first
+/// error is the earliest condition's over the whole chunk, not the first
+/// failing condition of the first row. Go testkit, rows `(0, 2), (1, 1)`:
+/// the plus condition overflows on the second row before the multiply
+/// condition overflows on the first, and the plus error is the answer.
+#[test]
+fn a_pushed_selection_evaluates_condition_by_condition_as_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a BIGINT, b BIGINT)").unwrap();
+    session.run("INSERT INTO t VALUES (0, 2), (1, 1)").unwrap();
+    let error = session
+        .run("SELECT * FROM t WHERE a + 9223372036854775807 > 0 AND b * 9223372036854775807 > 0")
+        .expect_err("both conditions overflow");
+    let error = error.to_mysql_error();
+    assert_eq!(error.code, 1690, "{error:?}");
+    assert!(error.message.contains("+ 9223372036854775807"), "{error:?}");
+}
+
 /// Go `buildApply` / `buildCTE`: an Apply whose inner side holds a CTE that
 /// `SafeClone` accepts runs on its workers, which share the statement's CTE
 /// producer (`CTEStorageMap`); a recursive CTE's `PhysicalCTETable` refuses
