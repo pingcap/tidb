@@ -5247,13 +5247,11 @@ fn build_apply(
             right_plan
         };
         // Go `buildApply`: an inner tree `SafeClone` refuses runs serially.
-        // An inner CTE correlated to this Apply's outer row also does: Go's
-        // workers share the one producer built from the original inner plan
-        // (`CTEStorageMap`), whose correlated cells no worker binds, so Go
-        // answers such a CTE from NULL bindings (gorun: every row NULL).
-        if tidb_planner_core_operator_physicalop::safe_clone(inner_plan).is_ok()
-            && !cte_correlated_to(inner_plan, outer.schema())
-        {
+        // Every other runs on the workers, a CTE correlated to the outer row
+        // included: the workers share the one producer built from the
+        // original inner plan (`CTEStorageMap`), whose correlated cells no
+        // worker binds, so Go answers such a CTE from NULL bindings.
+        if tidb_planner_core_operator_physicalop::safe_clone(inner_plan).is_ok() {
             let worker_ctx = ctx.clone().with_coprocessor_worker_scope();
             let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let mut workers = Vec::with_capacity(apply.concurrency);
@@ -7372,24 +7370,6 @@ fn build_cte(
         .expect("CTE slot inserted before recursive executor build")
         .producer = Some(Arc::clone(&producer));
     cte_reader(plan, cte, producer, ctx)
-}
-
-/// Whether a CTE in `plan` (or in a CTE it holds) reads a column of
-/// `schema` through a correlated column.
-fn cte_correlated_to(plan: &PhysicalPlan, schema: &tidb_expr::schema::Schema) -> bool {
-    if let PhysicalPlan::CTE(cte) = plan {
-        let parts = std::iter::once(&cte.seed_plan).chain(cte.recursive_plan.as_ref());
-        for part in parts {
-            if tidb_planner_core_operator_physicalop::extract_correlated_cols_4_physical_plan(part)
-                .iter()
-                .any(|correlated| schema.column_index(&correlated.column) >= 0)
-                || cte_correlated_to(part, schema)
-            {
-                return true;
-            }
-        }
-    }
-    plan.children().iter().any(|child| cte_correlated_to(child, schema))
 }
 
 fn build_cte_table(

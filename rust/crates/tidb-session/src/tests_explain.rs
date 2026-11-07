@@ -3078,8 +3078,8 @@ fn a_pushed_selection_evaluates_condition_by_condition_as_go() {
 /// Go `buildApply` / `buildCTE`: an Apply whose inner side holds a CTE that
 /// `SafeClone` accepts runs on its workers, which share the statement's CTE
 /// producer (`CTEStorageMap`); a recursive CTE's `PhysicalCTETable` refuses
-/// cloning with a nil `%T`. A CTE correlated to the outer row stays serial
-/// here: Go's workers read the shared producer built from the original plan,
+/// cloning with a nil `%T`. A CTE correlated to the outer row runs on the
+/// workers too: they read the shared producer built from the original plan,
 /// whose correlated cells no worker binds, and answer every row NULL. Rows
 /// and warning from gorun.
 #[test]
@@ -3106,9 +3106,11 @@ fn a_parallel_apply_shares_its_inner_cte_producer() {
         .unwrap_or_else(|| panic!("no Apply in {rows:?}"));
     assert!(apply[5].contains("Concurrency:5"), "{apply:?}");
 
+    // A CTE correlated to the outer row runs on the workers too, over the
+    // shared producer no worker binds: gorun answers NULL on every row.
     let correlated = "SELECT a, (WITH c AS (SELECT t2.a FROM t t2 WHERE t2.a <= t.a) SELECT SUM(x.a) FROM c x JOIN c y ON x.a = y.a) s FROM t ORDER BY a";
     let sums: Vec<String> = row_text(session.run(correlated)).into_iter().map(|row| row[1].clone()).collect();
-    assert_eq!(sums, ["1", "3", "6", "10", "15", "21", "28", "36", "45", "55", "66", "78"]);
+    assert_eq!(sums, vec!["NULL"; 12]);
 
     let recursive = "SELECT a, (WITH RECURSIVE c(n) AS (SELECT t2.a FROM t t2 WHERE t2.a = t.a UNION ALL SELECT n + 1 FROM c WHERE n < t.a + 2) SELECT SUM(n) FROM c) s FROM t ORDER BY a";
     session.run(recursive).unwrap();
@@ -3642,6 +3644,7 @@ fn a_projection_charges_its_chunks_like_go() {
 /// select date(f), datediff(f, '2024-01-01') from p   7177
 /// select date_add(f, interval 1 day), lpad(c, 5, 'x') from p 12602
 /// select ascii(c), strcmp(c, 's5') from p            8606
+/// select locate('s', c), a+1 from p               10778
 /// select truncate(d, 1), ln(e) from p               24072
 /// select a div b, if(a>5, a, 1) from p               9448
 /// select if(a>5, 1, a), a div 3 from p               7078
@@ -3716,6 +3719,7 @@ fn a_projection_sizes_its_result_columns_as_go_vec_eval_does() {
         ("SELECT CASE WHEN a>50 THEN 1 ELSE 0 END, a FROM p", "6.37 KB"),
         ("SELECT g+1, g*2 FROM p", "7.01 KB"),
         ("SELECT c, concat_ws(',', c, c) FROM p", "10.9 KB"),
+        ("SELECT locate('s', c), a+1 FROM p", "10.5 KB"),
         ("SELECT d-a, d/a FROM p", "30.8 KB"),
         ("SELECT f, a+0 FROM p", "8.70 KB"),
         ("SELECT substring(c, 2), replace(c, 's', 't') FROM p", "12.0 KB"),

@@ -190,6 +190,15 @@ fn builtin_vec_result(function: &ScalarFunction) -> Option<VecResult> {
         | "sha2" | "sm3" | "ascii" | "ord" | "strcmp" | "find_in_set" | "field" | "instr"
         | "conv" => Allocate,
         "reverse" | "bit_count" => Arg(0),
+        // `Locate2Args*` resize the result; `Locate3Args*` evaluate the
+        // position argument into it.
+        "locate" | "position" => {
+            if function.args.len() == 3 {
+                Arg(2)
+            } else {
+                Allocate
+            }
+        }
         // builtin_math_vec.go: the real functions evaluate their (first)
         // argument into `result` and `Pow` its exponent; `Floor`, `Ceil` and
         // `Truncate` evaluate the argument into `result` when it has the
