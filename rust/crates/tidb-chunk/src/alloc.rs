@@ -588,6 +588,22 @@ impl Allocator for ReuseHookAllocator {
     }
 }
 
+/// A shared allocator is the allocator it shares (Go's `Allocator` is an
+/// interface value).
+impl<A: Allocator + ?Sized> Allocator for Arc<A> {
+    fn alloc(&self, fields: &[FieldType], capacity: usize, max_chunk_size: usize) -> AllocatedChunk {
+        (**self).alloc(fields, capacity, max_chunk_size)
+    }
+
+    fn check_reuse_alloc_size(&self) -> bool {
+        (**self).check_reuse_alloc_size()
+    }
+
+    fn reset(&self) {
+        (**self).reset();
+    }
+}
+
 /// Go `NewReuseHookAllocator`.
 pub fn new_reuse_hook_allocator(
     allocator: impl Allocator + 'static,

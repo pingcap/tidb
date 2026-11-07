@@ -125,9 +125,19 @@ fn builtin_vec_result(function: &ScalarFunction) -> Option<VecResult> {
         // builtin_compare_vec(_generated).go: every comparison and `In*`
         // resizes an integer result.
         "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "nulleq" | "in" => Allocate,
+        // `Greatest*`/`Least*` over strings evaluate their first argument
+        // into `result`; the `CmpStringAsTime` pair (a string result over a
+        // temporal argument) evaluates every argument into it in turn.
         "greatest" | "least" => match eval_type {
             Int | Real | Decimal => Arg(0),
             Datetime | Timestamp | Duration => Allocate,
+            String
+                if (0..function.args.len()).all(|index| {
+                    !matches!(arg_type(index), Some(Datetime | Timestamp | Duration))
+                }) =>
+            {
+                Arg(0)
+            }
             _ => return None,
         },
         // `Coalesce*` and `CaseWhen*` resize (or reserve and append).
@@ -235,6 +245,53 @@ fn builtin_vec_result(function: &ScalarFunction) -> Option<VecResult> {
         | "from_unixtime" | "date_add" | "date_sub" | "adddate" | "subdate" | "timestamp"
         | "str_to_date" | "timestampadd" => Allocate,
         "date" | "last_day" => Arg(0),
+        // builtin_time_vec.go `ConvertTz` evaluates its time into `result`;
+        // builtin_time_vec_generated.go's `Add*`/`Sub*` signatures over a
+        // DATETIME/TIMESTAMP or TIME first argument evaluate it into
+        // `result`, except over a DATETIME/TIMESTAMP second argument (the
+        // `*Null` signatures), and the DATE and string ones resize.
+        "convert_tz" => Arg(0),
+        "addtime" | "subtime" => {
+            let code = |index: usize| function.args.get(index)?.static_type().map(|field_type| field_type.code());
+            let temporal = |code| matches!(code, Some(FieldTypeCode::Datetime | FieldTypeCode::Timestamp));
+            if (temporal(code(0)) || code(0) == Some(FieldTypeCode::Duration)) && !temporal(code(1)) {
+                Arg(0)
+            } else {
+                Allocate
+            }
+        }
+        // builtin_json_vec.go: every vectorized JSON builtin resizes or
+        // reserves and appends; `JSONValid*` and `JSON_SCHEMA_VALID` keep
+        // `baseBuiltinFunc.vectorized`.
+        "json_array" | "json_array_append" | "json_array_insert" | "json_contains"
+        | "json_contains_path" | "json_depth" | "json_extract" | "json_insert" | "json_keys"
+        | "json_length" | "json_memberof" | "json_merge" | "json_merge_patch"
+        | "json_merge_preserve" | "json_object" | "json_overlaps" | "json_pretty"
+        | "json_quote" | "json_remove" | "json_replace" | "json_search" | "json_set"
+        | "json_storage_free" | "json_storage_size" | "json_type" | "json_unquote" => Allocate,
+        // builtin_miscellaneous_vec.go `*AnyValue` evaluate their argument
+        // into `result`.
+        "any_value" => Arg(0),
+        // builtin_info_vec.go: the info builtins resize or reserve;
+        // `LAST_INSERT_ID(expr)` evaluates its argument into `result`.
+        "database" | "schema" | "user" | "current_user" | "session_user" | "system_user"
+        | "current_role" | "connection_id" | "found_rows" | "row_count" | "version"
+        | "tidb_version" | "current_resource_group" | "tidb_is_ddl_owner" | "tidb_decode_key" => {
+            Allocate
+        }
+        "last_insert_id" => {
+            if function.args.is_empty() {
+                Allocate
+            } else {
+                Arg(0)
+            }
+        }
+        // builtin_other_vec.go `SetVar*` reserve or resize; `SetTimeVar` and
+        // `SetDurationVar` keep `baseBuiltinFunc.vectorized`.
+        "setvar" => match eval_type {
+            Int | Real | Decimal | String => Allocate,
+            _ => return None,
+        },
         name if name.starts_with("cast_") => cast_vec_result(function.args.first()?, eval_type)?,
         _ => return None,
     })

@@ -85,7 +85,7 @@ impl PendingQuery {
             self.execute_opened_at.elapsed().as_secs_f64(),
             false,
         );
-        session.session_vars_mut().use_chunk_alloc = self.context.is_alloc_valid();
+        session.session_vars_mut().use_chunk_alloc = self.context.get_use_chunk_alloc_status();
         let result = self.record_set.finish();
         self.context.drain_fold_warnings();
         session.drain_eval_warnings(&self.context);
@@ -98,9 +98,9 @@ impl PendingQuery {
             self.execute_opened_at.elapsed().as_secs_f64(),
             false,
         );
-        // Go's result writer draws every chunk from the statement's
-        // allocator, which marks `StmtCtx.useChunkAlloc` while it is valid.
-        session.session_vars_mut().use_chunk_alloc = self.context.is_alloc_valid();
+        // Go `ExchangeChunkStatus` reads `StmtCtx.useChunkAlloc`, which the
+        // statement allocator's reuse hook set on its first reusable chunk.
+        session.session_vars_mut().use_chunk_alloc = self.context.get_use_chunk_alloc_status();
         let Self {
             record_set,
             context,
