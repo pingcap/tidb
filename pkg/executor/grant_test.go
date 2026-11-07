@@ -204,4 +204,22 @@ func TestShowColumnsForDifferentHost(t *testing.T) {
 	tk.MustExec(`GRANT SELECT(c2) ON test.t TO u@'127.0.0.1'`)
 	tk.MustQuery(`SHOW GRANTS FOR u@'%'`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'u'@'%'", "GRANT SELECT(`c1`) ON `test`.`t` TO 'u'@'%'"))
 	tk.MustQuery(`SHOW GRANTS FOR u@'127.0.0.1'`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'u'@'127.0.0.1'", "GRANT SELECT(`c2`) ON `test`.`t` TO 'u'@'127.0.0.1'"))
+
+	// Column grants of a role are not inherited by a role with the same name
+	// and another host.
+	tk.MustExec(`CREATE ROLE r@'%', r@'127.0.0.1'`)
+	tk.MustExec(`GRANT SELECT(c1) ON test.t TO r@'%'`)
+	tk.MustExec(`GRANT r@'127.0.0.1' TO u@'127.0.0.1'`)
+	tk.MustQuery(`SHOW GRANTS FOR u@'127.0.0.1' USING r@'127.0.0.1'`).Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'u'@'127.0.0.1'",
+		"GRANT SELECT(`c2`) ON `test`.`t` TO 'u'@'127.0.0.1'",
+		"GRANT 'r'@'127.0.0.1' TO 'u'@'127.0.0.1'"))
+
+	// Neither do column grants of another account make a database visible.
+	tk.MustExec(`CREATE DATABASE colpriv_hidden`)
+	tk.MustExec(`CREATE TABLE colpriv_hidden.t(secret int)`)
+	tk.MustExec(`GRANT SELECT(secret) ON colpriv_hidden.t TO u@'%'`)
+	userTk := testkit.NewTestKit(t, store)
+	require.NoError(t, userTk.Session().Auth(&auth.UserIdentity{Username: "u", Hostname: "127.0.0.1"}, nil, nil, nil))
+	userTk.MustQuery(`SHOW DATABASES LIKE 'colpriv_hidden'`).Check(testkit.Rows())
 }

@@ -4312,6 +4312,16 @@ func (b *PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *physical
 			if refCol == nil {
 				return nil, plannererrors.ErrUnknownColumn.GenWithStackByArgs(x.Name.OrigColName(), clauseMsg[fieldList])
 			}
+			// DEFAULT(col) reads the definition of col, so it requires
+			// SELECT on col like a reference to col does.
+			tblInfo := insertPlan.Table.Meta()
+			db, ok := b.is.SchemaByID(tblInfo.DBID)
+			if !ok {
+				return nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(tblInfo.DBID)
+			}
+			user, host := auth.GetUserAndHostName(b.ctx.GetSessionVars().User)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, db.Name.L, tblInfo.Name.L, refCol.Name.L,
+				plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", user, host, refCol.Name.L, tblInfo.Name.L))
 			// Cannot use DEFAULT(generated column) except for the same column
 			if col != refCol && (col.IsGenerated() || refCol.IsGenerated()) {
 				return nil, plannererrors.ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
@@ -4630,9 +4640,40 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	}
 	mockTablePlan.SetSchema(schema)
 	mockTablePlan.SetOutputNames(names)
+	if err := b.collectLoadDataSetPrivileges(ctx, ld.ColumnAssignments, schema, names); err != nil {
+		return nil, err
+	}
 
 	p.GenCols, err = b.resolveGeneratedColumns(ctx, tableInPlan.Cols(), nil, mockTablePlan)
 	return p, err
+}
+
+// collectLoadDataSetPrivileges collects the privileges required to evaluate
+// the SET expressions of LOAD DATA. Column references in them read the row
+// being loaded and need no privilege, but subqueries in them read other
+// tables. The expressions are compiled again when the statement is executed,
+// so they are built here only to collect privileges, without executing any
+// subquery.
+func (b *PlanBuilder) collectLoadDataSetPrivileges(ctx context.Context, assignments []*ast.Assignment, schema *expression.Schema, names types.NameSlice) error {
+	if len(assignments) == 0 {
+		return nil
+	}
+	stmtCtx := b.ctx.GetSessionVars().StmtCtx
+	defer stmtCtx.SetWarnings(stmtCtx.GetWarnings())
+	builder, savedBlockNames := NewPlanBuilder(PlanBuilderOptNoExecution{}).Init(b.ctx, b.is, hint.NewQBHintHandler(nil))
+	defer b.ctx.GetSessionVars().PlannerSelectBlockAsName.Store(&savedBlockNames)
+	fakePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	fakePlan.SetSchema(schema)
+	fakePlan.SetOutputNames(names)
+	builder.curClause = expressionClause
+	builder.checkColPriv = noCheckOption
+	for _, assign := range assignments {
+		if _, _, err := builder.rewrite(ctx, assign.Expr, fakePlan, nil, true); err != nil {
+			return err
+		}
+	}
+	b.visitInfo = append(b.visitInfo, builder.GetVisitInfo()...)
+	return nil
 }
 
 var (

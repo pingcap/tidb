@@ -2907,6 +2907,9 @@ func (er *expressionRewriter) evalDefaultExprWithPlanCtx(planCtx *exprRewriterPl
 		}
 		name = er.names[idx]
 	}
+	// DEFAULT(col) reads the definition of col, so it requires SELECT on col
+	// like a reference to col does.
+	er.precollectColNames(name)
 
 	dbName := name.DBName
 	if dbName.O == "" {

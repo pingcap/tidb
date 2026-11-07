@@ -1280,9 +1280,10 @@ func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolv
 	userName, hostName := auth.GetUserAndHostName(ctx.GetSessionVars().User)
 	if pointGet := tryPointGetPlan(ctx, selStmt, resolveCtx, true); pointGet != nil {
 		if pointGet.IsTableDual {
-			dual := physicalop.PhysicalTableDual{}.Init(ctx, &property.StatsInfo{}, 0)
-			dual.SetOutputNames(pointGet.OutputNames())
-			return dual
+			// The key cannot match any row (e.g. it overflows the column
+			// type), but the statement still requires its privileges. Leave
+			// it to the normal planner, which checks them.
+			return nil
 		}
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			pointGet.Lock, pointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
@@ -1443,9 +1444,10 @@ func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCt
 	userName, hostName := auth.GetUserAndHostName(ctx.GetSessionVars().User)
 	if pointGet := tryPointGetPlan(ctx, selStmt, resolveCtx, true); pointGet != nil {
 		if pointGet.IsTableDual {
-			dual := physicalop.PhysicalTableDual{}.Init(ctx, &property.StatsInfo{}, 0)
-			dual.SetOutputNames(pointGet.OutputNames())
-			return dual
+			// The key cannot match any row (e.g. it overflows the column
+			// type), but the statement still requires its privileges. Leave
+			// it to the normal planner, which checks them.
+			return nil
 		}
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			pointGet.Lock, pointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})

@@ -1694,7 +1694,9 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 		for _, record := range item.data {
 			if record.baseRecord.match(user, host) &&
 				strings.EqualFold(record.DB, db) {
-				if record.TablePriv != 0 || record.ColumnPriv != 0 {
+				// ColumnPriv summarizes column grants, which apply to the
+				// exact account only.
+				if record.TablePriv != 0 || (record.ColumnPriv != 0 && record.baseRecord.fullyMatch(user, host)) {
 					return true
 				}
 			}
@@ -1703,7 +1705,10 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 
 	if item, exists := p.columnsPriv.Get(itemColumnsPriv{username: user}); exists {
 		for _, record := range item.data {
-			if record.baseRecord.match(user, host) &&
+			// Column grants apply to the exact account only (see
+			// columnsPrivRecord.match), so they must not make the database
+			// visible to other accounts matching the host pattern.
+			if record.baseRecord.fullyMatch(user, host) &&
 				strings.EqualFold(record.DB, db) {
 				if record.ColumnPriv != 0 {
 					return true
@@ -1861,8 +1866,10 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 				collectColumnGrant(&record, columnPrivTable, sqlMode)
 				continue
 			}
+			// Column grants of a role are exact as well, as in
+			// RequestVerification.
 			for _, r := range allRoles {
-				if record.baseRecord.match(r.Username, r.Hostname) {
+				if record.baseRecord.fullyMatch(r.Username, r.Hostname) {
 					collectColumnGrant(&record, columnPrivTable, sqlMode)
 				}
 			}

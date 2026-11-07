@@ -1225,6 +1225,18 @@ func TestLoadDataColumnPrivilege(t *testing.T) {
 	tk1.MustGetErrCode(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' REPLACE INTO TABLE t_load", path), mysql.ErrTableaccessDenied)
 	tk.MustExec(`GRANT DELETE on *.* to 'test_load'@'localhost'`)
 	tk1.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' REPLACE INTO TABLE t_load", path))
+
+	// A subquery in a SET expression reads another table.
+	tk.MustExec(`CREATE USER 'test_load2'@'localhost'`)
+	tk.MustExec(`CREATE TABLE t_private(secret int)`)
+	tk.MustExec(`INSERT INTO t_private VALUES (42)`)
+	tk.MustExec(`GRANT INSERT(a), SELECT(a) ON test.t_load TO 'test_load2'@'localhost'`)
+	tk2 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "test_load2", Hostname: "localhost"}, nil, nil, nil))
+	tk2.MustExec("use test")
+	tk2.Session().(sessionctx.Context).SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
+	tk2.MustGetErrCode(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t_load(@v) SET a = (SELECT secret FROM t_private LIMIT 1)", path), mysql.ErrColumnaccessDenied)
+	tk2.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t_load(@v) SET a = (SELECT a FROM t_load LIMIT 1)", path))
 }
 
 func TestAuthHost(t *testing.T) {
@@ -2828,6 +2840,9 @@ func TestSelectColumnPrivilegeInSubqueryAndCTE(t *testing.T) {
 	userTk.MustGetErrCode("DELETE t1 FROM t1 JOIN t2 ON TRUE WHERE t1.a = 0", errno.ErrTableaccessDenied)
 	userTk.MustGetErrCode("DELETE FROM t1 USING t1 JOIN t2 WHERE t1.a = 0", errno.ErrTableaccessDenied)
 	userTk.MustExec("DELETE x FROM t1 AS x JOIN t1 AS y ON TRUE WHERE x.a = 0")
+	// DEFAULT(col) reads the definition of col.
+	userTk.MustGetErrCode("SELECT a, DEFAULT(b) FROM t1", errno.ErrColumnaccessDenied)
+	userTk.MustQuery("SELECT a, DEFAULT(a) FROM t1").Check(testkit.Rows("1 <nil>"))
 	// The ON condition of a LATERAL join is checked like that of other joins.
 	userTk.MustGetErrCode("SELECT t1.a FROM t1 JOIN LATERAL (SELECT t1.a) AS d ON t1.b = 2", errno.ErrColumnaccessDenied)
 	userTk.MustQuery("SELECT t1.a FROM t1 JOIN LATERAL (SELECT t1.a AS c) AS d ON d.c = 1").Check(testkit.Rows("1"))
@@ -2884,6 +2899,9 @@ func TestInsertColumnPrivilege(t *testing.T) {
 	// userTk.MustGetErrCode(`INSERT INTO test.t1 SET a = 1, b = a * 2;`, errno.ErrColumnaccessDenied)
 	tk.MustExec(`GRANT SELECT(a) ON test.t1 TO 'testuser'@'localhost';`)
 	userTk.MustExec(`INSERT INTO test.t1 SET a = 1, b = a * 2;`)
+	// DEFAULT(col) reads the definition of col.
+	userTk.MustGetErrCode(`INSERT INTO test.t1(a) VALUES (DEFAULT(b));`, errno.ErrColumnaccessDenied)
+	userTk.MustExec(`INSERT INTO test.t1(a) VALUES (DEFAULT(a));`)
 
 	userTk.MustExec(`INSERT INTO test.t1(a) SELECT a FROM test.t2;`)
 	userTk.MustGetErrCode(`INSERT INTO test.t1(a) SELECT b FROM test.t2;`, errno.ErrColumnaccessDenied)
@@ -2988,6 +3006,19 @@ func TestUpdateColumnPrivilege(t *testing.T) {
 	userTk.MustQuery(`SELECT a FROM test.gs WHERE a IN (SELECT a FROM test.gs)`).Check(testkit.Rows("1"))
 	userTk.MustQuery(`SELECT (SELECT a FROM test.gs)`).Check(testkit.Rows("1"))
 	userTk.MustGetErrCode(`SELECT (SELECT v FROM test.gs)`, errno.ErrColumnaccessDenied)
+
+	// DEFAULT(col) reads the definition of col.
+	tk.MustExec(`GRANT UPDATE(a) ON test.gs TO 'testuser'@'localhost'`)
+	userTk.MustGetErrCode(`UPDATE test.gs SET a = DEFAULT(secret)`, errno.ErrColumnaccessDenied)
+	userTk.MustExec(`UPDATE test.gs SET a = DEFAULT(a)`)
+
+	// A point UPDATE or DELETE whose key cannot match any row still requires
+	// the privileges of the statement.
+	tk.MustExec(`CREATE TABLE test.pk (id tinyint PRIMARY KEY, a int)`)
+	userTk.MustGetErrCode(`UPDATE test.pk SET a = 1 WHERE id = 1`, errno.ErrColumnaccessDenied)
+	userTk.MustGetErrCode(`UPDATE test.pk SET a = 1 WHERE id = 1000`, errno.ErrColumnaccessDenied)
+	userTk.MustGetErrCode(`DELETE FROM test.pk WHERE id = 1`, errno.ErrColumnaccessDenied)
+	userTk.MustGetErrCode(`DELETE FROM test.pk WHERE id = 1000`, errno.ErrColumnaccessDenied)
 }
 
 func TestColumnPrivilege4NonPreparePlanCache(t *testing.T) {
