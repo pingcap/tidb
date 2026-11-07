@@ -28,6 +28,16 @@ type FieldName struct {
 	DBName      ast.CIStr
 	TblName     ast.CIStr
 	ColName     ast.CIStr
+	// OrigViewName and OrigViewColName are the view in DBName and the view
+	// column this column is read from, or empty if it is not read from a view.
+	// OrigTblName and OrigColName still describe the underlying SELECT of the
+	// view. Column privileges of a view column are checked on the view column.
+	OrigViewName    ast.CIStr
+	OrigViewColName ast.CIStr
+	// FromCTE marks an output column of a CTE. Its privileges are checked in the
+	// definition of the CTE, and its DBName is set to the current database, so
+	// it must not be checked again by its Orig* fields.
+	FromCTE bool
 
 	Hidden bool
 
@@ -65,7 +75,7 @@ func (name *FieldName) MemoryUsage() (sum int64) {
 	}
 
 	sum = name.OrigTblName.MemoryUsage() + name.OrigColName.MemoryUsage() + name.DBName.MemoryUsage() +
-		name.TblName.MemoryUsage() + name.ColName.MemoryUsage() + size.SizeOfBool*3
+		name.TblName.MemoryUsage() + name.ColName.MemoryUsage() + name.OrigViewName.MemoryUsage() + name.OrigViewColName.MemoryUsage() + size.SizeOfBool*4
 	return
 }
 
