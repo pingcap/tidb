@@ -745,6 +745,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		if x.With != nil {
 			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
 		}
+		p.checkMViewSelectLock(x)
 	case *ast.SetOprStmt:
 		if x.With != nil {
 			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
@@ -1719,6 +1720,54 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		DBInfo:    dbInfo,
 		TableInfo: tableInfo,
 	})
+}
+
+// checkMViewSelectLock checks only the current SELECT's lock targets. Derived queries
+// and CTE bodies are checked independently when they have their own locking clause.
+func (p *preprocessor) checkMViewSelectLock(stmt *ast.SelectStmt) {
+	if p.err != nil || stmt.LockInfo == nil || stmt.LockInfo.LockType == ast.SelectLockNone {
+		return
+	}
+	checkTable := func(target *ast.TableName) bool {
+		tNameW := p.resolveCtx.GetTableName(target)
+		if tNameW == nil {
+			// CTE references have no resolved table metadata.
+			return false
+		}
+		p.err = CheckMViewUpdatable(p.sctx.GetSessionVars(), tNameW.TableInfo, target.Name.O, "SELECT")
+		return true
+	}
+	hasResolvedLockTarget := false
+	for _, target := range stmt.LockInfo.Tables {
+		if checkTable(target) {
+			hasResolvedLockTarget = true
+		}
+		if p.err != nil {
+			return
+		}
+	}
+	if hasResolvedLockTarget || stmt.From == nil {
+		return
+	}
+
+	// With no OF targets, or only CTE targets, the executor locks all direct
+	// FROM tables. Do not descend into derived queries or CTE bodies.
+	var checkFrom func(ast.ResultSetNode)
+	checkFrom = func(node ast.ResultSetNode) {
+		if p.err != nil {
+			return
+		}
+		switch x := node.(type) {
+		case *ast.Join:
+			checkFrom(x.Left)
+			checkFrom(x.Right)
+		case *ast.TableSource:
+			if target, ok := x.Source.(*ast.TableName); ok {
+				checkTable(target)
+			}
+		}
+	}
+	checkFrom(stmt.From.TableRefs)
 }
 
 func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {

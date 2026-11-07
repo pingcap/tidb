@@ -506,6 +506,7 @@ type PlanCacheValue struct {
 	testKey       int64              // test-only
 	paramTypes    []*types.FieldType // read-only, all parameters' types, different parameters may share same plan
 	stmtHints     *hint.StmtHints    // read-only, hints which set session variables
+	lockTableIDs  map[int64]struct{} // read-only, resolved OF targets retained across statement resets
 }
 
 // CloneForInstancePlanCache clones a PlanCacheValue for instance plan cache.
@@ -553,6 +554,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 
 	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutputColumns))*size.SizeOfPointer +
 		size.SizeOfMap + size.SizeOfInt64*2
+	sum += size.SizeOfMap + int64(len(v.lockTableIDs))*size.SizeOfInt64
 	if v.paramTypes != nil {
 		sum += int64(cap(v.paramTypes)) * size.SizeOfPointer
 		for _, ft := range v.paramTypes {

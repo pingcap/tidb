@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -46,6 +47,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 const (
@@ -91,12 +94,19 @@ func (mockSessionPool) Put(pools.Resource)           {}
 func (mockSessionPool) Close()                       {}
 
 type recordingSessionPool struct {
-	se pools.Resource
+	se    pools.Resource
+	onGet func()
 }
 
-func (p recordingSessionPool) Get() (pools.Resource, error) { return p.se, nil }
-func (recordingSessionPool) Put(pools.Resource)             {}
-func (recordingSessionPool) Close()                         {}
+func (p recordingSessionPool) Get() (pools.Resource, error) {
+	if p.onGet != nil {
+		p.onGet()
+	}
+	return p.se, nil
+}
+
+func (recordingSessionPool) Put(pools.Resource) {}
+func (recordingSessionPool) Close()             {}
 
 type recordingStatsHandle struct {
 	statstypes.StatsHandle
@@ -1294,6 +1304,10 @@ func TestNeedAnalyzeMLog(t *testing.T) {
 }
 
 func TestServerHelperAnalyzeMVLogTemporarilyUpdatesStatsSessionVars(t *testing.T) {
+	installMockTimeForTest(t)
+	oldEnabled := variable.RunAutoAnalyze.Load()
+	variable.RunAutoAnalyze.Store(true)
+	t.Cleanup(func() { variable.RunAutoAnalyze.Store(oldEnabled) })
 	se := newRecordingSessionContext()
 	pool := recordingSessionPool{se: se}
 	_, mlogTable := buildMockMVBaseAndMVLogTables(101, 201, 101)
@@ -1319,7 +1333,8 @@ func TestServerHelperAnalyzeMVLogTemporarilyUpdatesStatsSessionVars(t *testing.T
 		stats: map[int64]*statistics.Table{
 			201: {
 				HistColl: statistics.HistColl{
-					StatsVer: statistics.Version2,
+					StatsVer:      statistics.Version2,
+					RealtimeCount: statistics.AutoAnalyzeMinCnt + 1,
 				},
 			},
 		},
@@ -1333,9 +1348,11 @@ func TestServerHelperAnalyzeMVLogTemporarilyUpdatesStatsSessionVars(t *testing.T
 
 	err := helper.AnalyzeMVLog(context.Background(), pool, 201)
 	require.NoError(t, err)
-	require.Equal(t, []string{`ANALYZE TABLE %n.%n`}, se.executedRestrictedSQL)
-	require.Equal(t, []any{"test", "mlog1"}, se.executedRestrictedArg[0])
-	require.Equal(t, []int{3}, se.restrictedAnalyzePartitionConcurrency)
+	require.NotEmpty(t, se.executedRestrictedSQL)
+	analyzeIdx := len(se.executedRestrictedSQL) - 1
+	require.Equal(t, `ANALYZE TABLE %n.%n`, se.executedRestrictedSQL[analyzeIdx])
+	require.Equal(t, []any{"test", "mlog1"}, se.executedRestrictedArg[analyzeIdx])
+	require.Equal(t, 3, se.restrictedAnalyzePartitionConcurrency[analyzeIdx])
 	require.Equal(t, 0, vars.AnalyzePartitionConcurrency)
 	require.Equal(t, statistics.Version1, vars.AnalyzeVersion)
 	require.False(t, vars.EnableAnalyzeSnapshot)
@@ -1765,6 +1782,7 @@ func TestMVServiceExecuteTaskSkipWhenDeleted(t *testing.T) {
 func TestRegisterMVServiceBootstrapAndDDLHandler(t *testing.T) {
 	installMockTimeForTest(t)
 	called := atomic.Int32{}
+	stopped := atomic.Bool{}
 	var (
 		gotHandlerID notifier.HandlerID
 		gotHandler   notifier.SchemaChangeHandler
@@ -1772,10 +1790,12 @@ func TestRegisterMVServiceBootstrapAndDDLHandler(t *testing.T) {
 	svc := RegisterMVService(context.Background(), func(id notifier.HandlerID, handler notifier.SchemaChangeHandler) {
 		gotHandlerID = id
 		gotHandler = handler
-	}, mockSessionPool{}, nil, nil, func() {
+	}, mockSessionPool{}, nil, nil, stopped.Load, func() {
 		called.Add(1)
 	})
 	require.NotNil(t, svc)
+	stopped.Store(true)
+	require.True(t, svc.mh.(*serviceHelper).isAutoAnalyzeStopped())
 	require.True(t, svc.ddlDirty.Load())
 	require.True(t, svc.notifier.isAwake())
 	require.Equal(t, notifier.MVServiceHandlerID, gotHandlerID)
@@ -3235,4 +3255,238 @@ func TestServerHelperTryBackoffPurgeManualCancel(t *testing.T) {
 		require.Equal(t, []string{testSQLLockPurgeNextTime}, se.executedRestrictedSQL)
 		require.Equal(t, []any{int64(201)}, se.executedRestrictedArg[0])
 	})
+}
+
+func newMLogAnalyzeHelperForTest(t *testing.T) (*serviceHelper, *recordingSessionContext) {
+	t.Helper()
+	se := newRecordingSessionContext()
+	se.GetSessionVars().GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
+	_, mlogTable := buildMockMVBaseAndMVLogTables(101, 201, 101)
+	withMockInfoSchema(t, mlogTable)
+	se.restrictedRows[`SELECT MLOG_ID FROM mysql.tidb_mlog_purge_info`] = []chunk.Row{chunk.MutRowFromValues(int64(201)).ToRow()}
+	statsHandle := &recordingStatsHandle{
+		stats: map[int64]*statistics.Table{
+			201: {HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, nil, nil)},
+		},
+	}
+	return newServiceHelper(func() statstypes.StatsHandle { return statsHandle }, &recordingSysProcTracker{}), se
+}
+
+func containsAnalyzeSQL(sqls []string) bool {
+	for _, sql := range sqls {
+		if sql == `ANALYZE TABLE %n.%n` {
+			return true
+		}
+	}
+	return false
+}
+
+func TestServerHelperMLogAnalyzeRechecksEligibility(t *testing.T) {
+	installMockTimeForTest(t)
+	oldEnabled := variable.RunAutoAnalyze.Load()
+	variable.RunAutoAnalyze.Store(true)
+	t.Cleanup(func() { variable.RunAutoAnalyze.Store(oldEnabled) })
+	rowCount := statistics.AutoAnalyzeMinCnt + 1
+	analyzedStats := func(modifyCount int64) *statistics.Table {
+		return &statistics.Table{
+			HistColl:           *statistics.NewHistCollWithColsAndIdxs(0, false, rowCount, modifyCount, nil, nil),
+			LastAnalyzeVersion: oracle.GoTimeToTS(time.Unix(1700000000, 0)),
+		}
+	}
+	for _, tt := range []struct {
+		name        string
+		ratio       string
+		stats       *statistics.Table
+		wantAnalyze bool
+	}{
+		{name: "ratio raised", ratio: "2", stats: analyzedStats(rowCount)},
+		{name: "statistics refreshed", ratio: "0.5", stats: analyzedStats(0)},
+		{name: "still eligible", ratio: "0.5", stats: analyzedStats(rowCount), wantAnalyze: true},
+		{
+			name:        "initial analysis with raised ratio",
+			ratio:       "2",
+			stats:       &statistics.Table{HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, rowCount, 0, nil, nil)},
+			wantAnalyze: true,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			helper, se := newMLogAnalyzeHelperForTest(t)
+			statsHandle, err := helper.getStatsHandle()
+			require.NoError(t, err)
+			handle := statsHandle.(*recordingStatsHandle)
+			if tt.stats.IsAnalyzed() {
+				handle.stats[201] = analyzedStats(rowCount)
+			}
+			ctx := context.Background()
+			accessor := se.GetSessionVars().GlobalVarsAccessor
+			require.NoError(t, accessor.SetGlobalSysVar(ctx, variable.TiDBMLogAutoAnalyzeRatio, "0.5"))
+			pool := recordingSessionPool{se: se}
+			tasks, err := helper.LoadAllTiDBMVLogAnalyzeTasks(ctx, pool)
+			require.NoError(t, err)
+			require.Contains(t, tasks, int64(201))
+
+			// Change the configuration or cached statistics after the task was selected.
+			require.NoError(t, accessor.SetGlobalSysVar(ctx, variable.TiDBMLogAutoAnalyzeRatio, tt.ratio))
+			handle.stats[201] = tt.stats
+			require.NoError(t, helper.AnalyzeMVLog(ctx, pool, 201))
+			require.Equal(t, tt.wantAnalyze, containsAnalyzeSQL(se.executedRestrictedSQL))
+		})
+	}
+}
+
+func TestServerHelperMLogAnalyzeLockedStats(t *testing.T) {
+	installMockTimeForTest(t)
+	oldEnabled := variable.RunAutoAnalyze.Load()
+	variable.RunAutoAnalyze.Store(true)
+	t.Cleanup(func() { variable.RunAutoAnalyze.Store(oldEnabled) })
+	for _, phase := range []string{"scan", "execute"} {
+		t.Run(phase, func(t *testing.T) {
+			t.Run("lock query error", func(t *testing.T) {
+				helper, se := newMLogAnalyzeHelperForTest(t)
+				se.restrictedErrs[`SELECT table_id FROM mysql.stats_table_locked`] = errors.New("lock query failed")
+				pool := recordingSessionPool{se: se}
+				var err error
+				if phase == "scan" {
+					_, err = helper.LoadAllTiDBMVLogAnalyzeTasks(context.Background(), pool)
+				} else {
+					err = helper.AnalyzeMVLog(context.Background(), pool, 201)
+				}
+				require.ErrorContains(t, err, "lock query failed")
+				require.False(t, containsAnalyzeSQL(se.executedRestrictedSQL))
+			})
+			for _, locked := range []bool{false, true} {
+				t.Run(fmt.Sprintf("locked=%t", locked), func(t *testing.T) {
+					helper, se := newMLogAnalyzeHelperForTest(t)
+					if locked {
+						se.restrictedRows[`SELECT table_id FROM mysql.stats_table_locked`] = []chunk.Row{chunk.MutRowFromValues(int64(201)).ToRow()}
+					}
+					pool := recordingSessionPool{se: se}
+					if phase == "scan" {
+						tasks, err := helper.LoadAllTiDBMVLogAnalyzeTasks(context.Background(), pool)
+						require.NoError(t, err)
+						require.Equal(t, !locked, len(tasks) == 1)
+					} else {
+						require.NoError(t, helper.AnalyzeMVLog(context.Background(), pool, 201))
+						require.Equal(t, !locked, containsAnalyzeSQL(se.executedRestrictedSQL))
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestServerHelperMLogAnalyzeStopsQueuedTasks(t *testing.T) {
+	installMockTimeForTest(t)
+	oldEnabled := variable.RunAutoAnalyze.Load()
+	variable.RunAutoAnalyze.Store(true)
+	t.Cleanup(func() { variable.RunAutoAnalyze.Store(oldEnabled) })
+	helper, se := newMLogAnalyzeHelperForTest(t)
+	stopped := atomic.Bool{}
+	helper.isAutoAnalyzeStopped = stopped.Load
+	executor := NewTaskExecutor(1, 0)
+	entered, release := make(chan struct{}), make(chan struct{}, 1)
+	executor.Run()
+	t.Cleanup(func() {
+		close(release)
+		executor.Close()
+	})
+	require.True(t, executor.Submit("running", func() error {
+		close(entered)
+		<-release
+		return nil
+	}))
+	<-entered
+	require.True(t, executor.Submit("queued analyze", func() error {
+		return helper.AnalyzeMVLog(context.Background(), recordingSessionPool{se: se}, 201)
+	}))
+	stopped.Store(true)
+	release <- struct{}{}
+	require.Eventually(t, func() bool {
+		return executor.metrics.counters.finishedCount.Load() == 2
+	}, testEventuallyWait, testEventuallyTick)
+	executor.Close()
+	require.False(t, containsAnalyzeSQL(se.executedRestrictedSQL))
+
+	stopped.Store(false)
+	se.executedRestrictedSQL = nil
+	pool := recordingSessionPool{se: se, onGet: func() { stopped.Store(true) }}
+	require.NoError(t, helper.AnalyzeMVLog(context.Background(), pool, 201))
+	require.False(t, containsAnalyzeSQL(se.executedRestrictedSQL))
+}
+
+func TestMVServiceMLogAnalyzeLogsOwnedCandidates(t *testing.T) {
+	installMockTimeForTest(t)
+	oldEnabled := variable.RunAutoAnalyze.Load()
+	variable.RunAutoAnalyze.Store(true)
+	t.Cleanup(func() { variable.RunAutoAnalyze.Store(oldEnabled) })
+	core, recorded := observer.New(zap.InfoLevel)
+	t.Cleanup(log.ReplaceGlobals(zap.New(core), &log.ZapProperties{Level: zap.NewAtomicLevelAt(zap.InfoLevel)}))
+	helper, se := newMLogAnalyzeHelperForTest(t)
+	_, owned := buildMockMVBaseAndMVLogTables(101, 201)
+	_, unowned := buildMockMVBaseAndMVLogTables(102, 301)
+	unowned.Name = pmodel.NewCIStr("mlog2")
+	withMockInfoSchema(t, owned, unowned)
+	statsHandle, err := helper.getStatsHandle()
+	require.NoError(t, err)
+	handle := statsHandle.(*recordingStatsHandle)
+	handle.stats[301] = handle.stats[201]
+	se.restrictedRows[`SELECT MLOG_ID FROM mysql.tidb_mlog_purge_info`] = []chunk.Row{
+		chunk.MutRowFromValues(int64(201)).ToRow(),
+		chunk.MutRowFromValues(int64(301)).ToRow(),
+	}
+	svc := NewMVService(context.Background(), recordingSessionPool{se: se}, helper, DefaultMVServiceConfig())
+	setTaskOwnersForTest(svc, map[int64]uint32{201: 5, 301: 25})
+	ids, err := svc.fetchMLogAnalyzeTasks()
+	require.NoError(t, err)
+	require.Equal(t, []int64{201}, ids)
+	entries := recorded.FilterMessage("mv service: mlog analyze needed").All()
+	require.Len(t, entries, 1)
+	require.Equal(t, int64(201), entries[0].ContextMap()["mvlog_id"])
+	require.Equal(t, "mlog unanalyzed", entries[0].ContextMap()["reason"])
+}
+
+const testSQLAutoAnalyzeParameters = "select variable_name, variable_value from mysql.global_variables where variable_name in (%?, %?, %?)"
+
+func TestServerHelperMLogAnalyzeControls(t *testing.T) {
+	oldEnabled := variable.RunAutoAnalyze.Load()
+	t.Cleanup(func() { variable.RunAutoAnalyze.Store(oldEnabled) })
+	restoreTime := InstallMockTimeModuleForTest(NewMockTimeModule(time.Date(2026, 2, 10, 12, 0, 0, 0, time.UTC)))
+	t.Cleanup(restoreTime)
+	for _, tt := range []struct {
+		name    string
+		enabled bool
+		start   string
+		end     string
+		allowed bool
+	}{
+		{name: "disabled", start: "00:00 +0000", end: "23:59 +0000"},
+		{name: "outside window", enabled: true, start: "13:00 +0000", end: "14:00 +0000"},
+		{name: "inside window", enabled: true, start: "11:00 +0000", end: "13:00 +0000", allowed: true},
+		{name: "overnight inside", enabled: true, start: "11:00 +0000", end: "01:00 +0000", allowed: true},
+		{name: "overnight outside", enabled: true, start: "23:00 +0000", end: "01:00 +0000"},
+		{name: "offset inside", enabled: true, start: "19:00 +0800", end: "21:00 +0800", allowed: true},
+		{name: "invalid window", enabled: true, start: "invalid", end: "13:00 +0000"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			variable.RunAutoAnalyze.Store(tt.enabled)
+			for _, phase := range []string{"scan", "execute"} {
+				t.Run(phase, func(t *testing.T) {
+					helper, se := newMLogAnalyzeHelperForTest(t)
+					se.restrictedRows[testSQLAutoAnalyzeParameters] = []chunk.Row{
+						chunk.MutRowFromValues(variable.TiDBAutoAnalyzeStartTime, tt.start).ToRow(),
+						chunk.MutRowFromValues(variable.TiDBAutoAnalyzeEndTime, tt.end).ToRow(),
+					}
+					pool := recordingSessionPool{se: se}
+					if phase == "scan" {
+						tasks, err := helper.LoadAllTiDBMVLogAnalyzeTasks(context.Background(), pool)
+						require.NoError(t, err)
+						require.Equal(t, tt.allowed, len(tasks) == 1)
+					} else {
+						require.NoError(t, helper.AnalyzeMVLog(context.Background(), pool, 201))
+						require.Equal(t, tt.allowed, containsAnalyzeSQL(se.executedRestrictedSQL))
+					}
+				})
+			}
+		})
+	}
 }
