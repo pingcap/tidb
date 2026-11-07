@@ -52,13 +52,51 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             ));
         };
         let (database, written) = self.update_table_path(table_ref)?;
+        let visible = table_ref.alias.as_deref().unwrap_or(&written);
+        // Go `buildUpdateLists`: each target is found among the read's output
+        // names first; one of a view's or a sequence's makes that source the
+        // target, which is not updatable.
+        let not_updatable = || {
+            PlanError::from(
+                tidb_plannererrors::ERR_NON_UPDATABLE_TABLE
+                    .gen_with_stack_by_args(&[visible.to_owned().into(), "UPDATE".into()]),
+            )
+        };
+        let unknown_column = |assignment: &tidb_ast::Assignment| {
+            PlanError::from(tidb_plannererrors::ERR_UNKNOWN_COLUMN.gen_with_stack_by_args(&[
+                tidb_hack::go_to_lower(assignment.col.join(".")).into(),
+                "field list".into(),
+            ]))
+        };
+        let source_name = |column: &str| {
+            FieldName::new(FieldNameMetadata {
+                original_table: IdentifierMetadata::new(written.as_str()),
+                original_column: IdentifierMetadata::new(column),
+                database: IdentifierMetadata::new(database.as_str()),
+                table: IdentifierMetadata::new(visible),
+                column: IdentifierMetadata::new(column),
+            })
+        };
+        let non_updatable_columns = match self.source.find_table(&database, &written) {
+            None => self.source.find_view(&database, &written).map(|view| &view.columns),
+            Some(table) if table.table_info.as_ref().is_some_and(|info| info.read().is_sequence()) => {
+                Some(&table.columns)
+            }
+            Some(_) => None,
+        };
+        if let Some(columns) = non_updatable_columns {
+            let names: Vec<FieldName> =
+                columns.iter().map(|column| source_name(column.read().name.original())).collect();
+            let assignment = update.assignments.first().ok_or_else(not_updatable)?;
+            return Err(find_field_name(&names, &assignment.col)
+                .map_or_else(|| unknown_column(assignment), |_| not_updatable()));
+        }
         let table = self.source.find_table(&database, &written).ok_or_else(|| {
             PlanError::from(
                 tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                     .fast_gen_by_args(&[(&database).into(), (&written).into()]),
             )
         })?;
-        let visible = table_ref.alias.as_deref().unwrap_or(&written);
         let field = |column: &str| {
             FieldName::new(FieldNameMetadata {
                 original_table: IdentifierMetadata::new(written.as_str()),
@@ -96,14 +134,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         };
         let mut resolved = Vec::with_capacity(update.assignments.len());
         for assignment in &update.assignments {
-            let column = find_field_name(&names, &assignment.col).ok_or_else(|| {
-                PlanError::from(
-                    tidb_plannererrors::ERR_UNKNOWN_COLUMN.gen_with_stack_by_args(&[
-                        tidb_hack::go_to_lower(assignment.col.join(".")).into(),
-                        "field list".into(),
-                    ]),
-                )
-            })?;
+            let column = find_field_name(&names, &assignment.col).ok_or_else(|| unknown_column(assignment))?;
             if extra_handle && column == columns.len() && !allow_write_row_id {
                 return Err(PlanError::internal(WRITE_ROW_ID_REFUSED));
             }

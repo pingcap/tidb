@@ -1900,3 +1900,40 @@ fn shared_write_rowid_assignment_stays_outside_writable_rows() {
     );
     session.run("ADMIN CHECK TABLE t").unwrap();
 }
+
+/// Go `buildUpdate` builds the read (FROM / WHERE / ORDER BY / LIMIT) before
+/// `buildUpdateLists` resolves the SET targets against it, so a bad WHERE
+/// column is reported ahead of a bad SET target; a point WHERE takes
+/// `tryUpdatePointPlan`, whose `buildOrderedList` reports the target. A view
+/// target is looked up among the view's columns first, then refused. Go
+/// (`gorun`, mockstore), in order: 1054 `nosuch2` in 'where clause', 1054
+/// `nosuch` in 'field list', 1054 `nosuch2` in 'where clause'; over view `v`:
+/// the same two, then 1288 not updatable.
+#[test]
+fn an_update_reports_its_read_before_its_set_list_like_go() {
+    let mut session = Session::new();
+    session.run("create table t(a int primary key, b int)").unwrap();
+    session.run("create view v as select * from t").unwrap();
+    let error = |session: &mut Session, sql: &str| {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        (error.code, error.message)
+    };
+    for target in ["t", "v"] {
+        assert_eq!(
+            error(&mut session, &format!("update {target} set nosuch = 1 where nosuch2 = 1")),
+            (1054, "Unknown column 'nosuch2' in 'where clause'".to_owned())
+        );
+        assert_eq!(
+            error(&mut session, &format!("update {target} set nosuch = 1 where a = 1")),
+            (1054, "Unknown column 'nosuch' in 'field list'".to_owned())
+        );
+    }
+    assert_eq!(
+        error(&mut session, "update t set b = nosuch3 where nosuch2 = 1"),
+        (1054, "Unknown column 'nosuch2' in 'where clause'".to_owned())
+    );
+    assert_eq!(
+        error(&mut session, "update v set b = 1 where a = 1"),
+        (1288, "The target table v of the UPDATE is not updatable".to_owned())
+    );
+}

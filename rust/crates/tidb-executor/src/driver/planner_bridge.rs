@@ -2806,7 +2806,7 @@ pub(crate) fn insert_target(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn physical_dml_source_plan_with_allocators(
     select: &tidb_ast::SelectStmt,
-    update_assignment_values: Option<&[Option<tidb_ast::Expr>]>,
+    single_update: Option<&tidb_ast::UpdateStmt>,
     multi_update: Option<&tidb_ast::UpdateStmt>,
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
@@ -2884,9 +2884,15 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
         from.right.is_none() && matches!(from.left, tidb_ast::JoinNode::Table(_))
     });
     let wrap_lock = ctx.pessimistic_transaction() && single_source;
-    let (plan, mut update_expressions, mut plan_flags) = match (update_assignment_values, multi_update)
+    let mut single_assignments = None;
+    let (plan, mut update_expressions, mut plan_flags) = match (single_update, multi_update)
     {
-        (Some(values), _) => builder.build_update_dml_source(select, values, wrap_lock)?,
+        (Some(update), _) => {
+            let (plan, expressions, assignments, flags) =
+                builder.build_update_dml_source(select, update, ctx.allow_write_row_id(), wrap_lock)?;
+            single_assignments = Some(assignments);
+            (plan, expressions, flags)
+        }
         (None, Some(update)) => {
             builder.build_multi_update_dml_source(select, update, ctx.allow_write_row_id())?
         }
@@ -3011,6 +3017,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     Ok(DmlSourcePlan {
         plan: physical,
         update_expressions,
+        single_assignments,
         root,
         delete_col_pos: builder.delete_col_pos.take(),
         delete_tables: std::mem::take(&mut builder.delete_tables),
@@ -3039,6 +3046,9 @@ pub(crate) struct DmlSourcePlan {
     pub update_tables: Vec<tidb_planner_core_operator_physicalop::UpdateTablePos>,
     /// A multi-table UPDATE's assignments.
     pub update_assigns: Vec<tidb_planner_core_operator_physicalop::UpdateAssign>,
+    /// A single-table UPDATE's SET items, resolved over the read (Go
+    /// `buildUpdateLists`).
+    pub single_assignments: Option<Vec<tidb_planner::plan_builder::single_update::SingleUpdateAssignment>>,
 }
 
 /// Go `buildOrderedList` for the fast point UPDATE (`tryUpdatePointPlan`): the

@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**31 unresolved: 7 open, 24 partial.**
+**30 unresolved: 6 open, 24 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -48,7 +48,6 @@ unresolved until it is restated against its Go owner or closed.
 | X01 | partial | SQL/PB signature construction and typed vector execution. The planner's `BuiltinFunctionUsageInc` (`expressionRewriter.newFunction`) is not called: it needs the function's `PbCode`, which a planner-built Rust function only gets at pushdown resolution. Go's `PbConverter` sends each builtin's own `PbCode`; this port resolves a signature again from the function's name, argument types and planned result type (`pushdown_catalog.rs` `resolve`), a second copy of each function class's signature choice that covers the functions Go's `scalarExprSupportedByTiKV` pushes. The planner decides pushability from `infer_pushdown.rs`'s name list and the executor again from that catalog's resolvability: two authorities where Go reads the builtin's `PbCode` once. | `pkg/expression` |
 | Q01 | open | No Cascades memo exploration/implementation in the production optimizer | `pkg/planner/cascades` |
 | R02 | partial | A multi-statement query's prefetch hands each statement the point plan it built (Go `PointPlanKey`: `PointPlanVal` on the statement context, taken by `optimize_query_stmt`'s and the DML planner's `TryFastPlan` step), but a cached prepared UPDATE still rebuilds its point child (`driver/dml.rs` `fast_point_source`) where Go's plan cache rebuilds the cached point plan's keys (`RebuildPlan4CachedPlan`) | `pkg/server/conn.go` (`prefetchPointPlanKeys`), `pkg/planner/optimize.go`, `pkg/planner/core` (`RebuildPlan4CachedPlan`) |
-| R03 | open | A single-table UPDATE's SET list is resolved on a `PlanBuilder` of its own (`planner_bridge::single_update_assignments`, called by `driver/dml.rs` `update_assignments_for_plan`) against the target table before the read is built, and only the resolved values reach the read's build, where Go's `buildUpdate` builds the read first and resolves the list (`buildUpdateLists`) against that plan's output names on the same builder; the visit-only pass (`PlanBuilder::update_visits`) resolves it once more for PREPARE and a new plan-cache entry (A01) | `pkg/planner/core` (`buildUpdate`, `buildUpdateLists`) |
 
 ### Privileges, wire and administration
 

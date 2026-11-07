@@ -220,16 +220,9 @@
       "group": "DML and executor handoff",
       "finding": "A multi-statement query's prefetch hands each statement the point plan it built (Go `PointPlanKey`: `PointPlanVal` on the statement context, taken by `optimize_query_stmt`'s and the DML planner's `TryFastPlan` step), but a cached prepared UPDATE still rebuilds its point child (`driver/dml.rs` `fast_point_source`) where Go's plan cache rebuilds the cached point plan's keys (`RebuildPlan4CachedPlan`)",
       "go_owner": "`pkg/server/conn.go` (`prefetchPointPlanKeys`), `pkg/planner/optimize.go`, `pkg/planner/core` (`RebuildPlan4CachedPlan`)"
-    },
-    {
-      "id": "R03",
-      "status": "open",
-      "group": "DML and executor handoff",
-      "finding": "A single-table UPDATE's SET list is resolved on a `PlanBuilder` of its own (`planner_bridge::single_update_assignments`, called by `driver/dml.rs` `update_assignments_for_plan`) against the target table before the read is built, and only the resolved values reach the read's build, where Go's `buildUpdate` builds the read first and resolves the list (`buildUpdateLists`) against that plan's output names on the same builder; the visit-only pass (`PlanBuilder::update_visits`) resolves it once more for PREPARE and a new plan-cache entry (A01)",
-      "go_owner": "`pkg/planner/core` (`buildUpdateLists`)"
     }
   ],
-  "unresolved": 31,
-  "open": 7,
+  "unresolved": 30,
+  "open": 6,
   "partial": 24
 }

@@ -586,26 +586,7 @@ fn physical_dml_plan_with_cache_mode(
     let mut update_tables = Vec::new();
     let mut update_assigns = Vec::new();
     let mut insert_select = None;
-    // Go `buildUpdateLists`: a single-table UPDATE's SET items, resolved once
-    // for the fast point list and the ordinary builder alike.
-    let single_assignments = match update {
-        Some(update) if matches!(update.kind, tidb_ast::UpdateKind::Single(_)) => {
-            Some(update_assignments_for_plan(update, catalog, current_db, ctx)?)
-        }
-        _ => None,
-    };
-    if let Some(assignments) = &single_assignments {
-        update_assigns = assignments
-            .iter()
-            .enumerate()
-            .filter(|(_, assignment)| assignment.value.is_some())
-            .map(|(index, assignment)| tidb_planner_core_operator_physicalop::UpdateAssign {
-                table: 0,
-                column: assignment.column,
-                expr: index,
-            })
-            .collect();
-    }
+    let single_update = update.filter(|update| matches!(update.kind, tidb_ast::UpdateKind::Single(_)));
     let mut fast_update_list = false;
     let build_fk_triggers = || -> Result<Vec<FkTriggerNode>, DriverError> {
         let mut fk_triggers = Vec::new();
@@ -758,9 +739,13 @@ fn physical_dml_plan_with_cache_mode(
                 }
                 root_base = Some(BasePhysicalPlan::new(plan_ids, operator, 0));
                 if let Some(update) = update {
+                    // Go `tryUpdatePointPlan`'s `buildOrderedList`, over the
+                    // point plan.
+                    let assignments = update_assignments_for_plan(update, catalog, current_db, ctx)?;
+                    update_assigns = single_update_assigns(&assignments);
                     update_expressions = fast_update_ordered_list(
                         update,
-                        single_assignments.as_deref().unwrap_or_default(),
+                        &assignments,
                         &fast,
                         catalog,
                         current_db,
@@ -774,13 +759,6 @@ fn physical_dml_plan_with_cache_mode(
             } else {
                 // Go `optimize` past `TryFastPlan`: `PlanBuilder.Build`.
                 super::record_plan_builder_metric(ctx);
-                let update_assignment_values: Option<Vec<Option<tidb_ast::Expr>>> =
-                    single_assignments.as_ref().map(|assignments| {
-                        assignments
-                            .iter()
-                            .map(|assignment| assignment.value.clone())
-                            .collect()
-                    });
                 // Go `buildDelete` prunes the read to what removing a record
                 // needs (the planner's `pruneAndBuildColPositionInfoForDelete`);
                 // a point plan above keeps every column. Foreign keys other
@@ -797,7 +775,7 @@ fn physical_dml_plan_with_cache_mode(
                 let built =
                     super::planner_bridge::physical_dml_source_plan_with_allocators(
                         select,
-                        update_assignment_values.as_deref(),
+                        single_update,
                         multi_update,
                         catalog,
                         current_db,
@@ -819,6 +797,9 @@ fn physical_dml_plan_with_cache_mode(
                 update_tables = built.update_tables;
                 if multi_update.is_some() {
                     update_assigns = built.update_assigns;
+                }
+                if let Some(assignments) = &built.single_assignments {
+                    update_assigns = single_update_assigns(assignments);
                 }
                 root_base = Some(built.root);
                 Some(built.plan)
@@ -3229,41 +3210,33 @@ fn fast_update_ordered_list(
     .map_err(super::planner_error_to_driver)
 }
 
-/// Go `buildUpdateLists` for a single-table UPDATE: every SET item resolved to
-/// its column, a bare DEFAULT named, a generated column's own DEFAULT left to
-/// its expression. A view or a sequence is no UPDATE target.
+/// Go `buildOrderedList`'s resolution for a fast point UPDATE: every SET item
+/// resolved to its column (see `PlanBuilder::resolve_single_update_assignments`).
 fn update_assignments_for_plan(
     update: &tidb_ast::UpdateStmt,
     catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<tidb_planner::plan_builder::single_update::SingleUpdateAssignment>, DriverError> {
-    let tidb_ast::UpdateKind::Single(table_ref) = &update.kind else {
-        return Ok(Vec::new());
-    };
-    let (database, name) = single_table_name(table_ref, current_db)?;
-    let table = catalog.get_in(&database, &name).ok_or_else(|| {
-        DriverError::from(
-            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                .gen_with_stack_by_args(&[(&database).into(), (&name).into()]),
-        )
-    })?;
-    match table {
-        TableEntry::View(_) => {
-            return Err(DriverError::from(
-                tidb_plannererrors::ERR_NON_UPDATABLE_TABLE
-                    .gen_with_stack_by_args(&[(name.clone()).into(), "UPDATE".into()]),
-            ))
-        }
-        TableEntry::Sequence(_) => {
-            return Err(DriverError::unsupported(
-                "UPDATE of a sequence is not a statement TiDB accepts",
-            ))
-        }
-        _ => {}
-    }
     super::planner_bridge::single_update_assignments(update, catalog, current_db, ctx)
         .map_err(super::planner_error_to_driver)
+}
+
+/// The Update root's assignments of a single-table UPDATE: each SET item with
+/// a value, by its place in the list.
+fn single_update_assigns(
+    assignments: &[tidb_planner::plan_builder::single_update::SingleUpdateAssignment],
+) -> Vec<tidb_planner_core_operator_physicalop::UpdateAssign> {
+    assignments
+        .iter()
+        .enumerate()
+        .filter(|(_, assignment)| assignment.value.is_some())
+        .map(|(index, assignment)| tidb_planner_core_operator_physicalop::UpdateAssign {
+            table: 0,
+            column: assignment.column,
+            expr: index,
+        })
+        .collect()
 }
 
 /// The retained definition and cache key for a prepared DML statement.

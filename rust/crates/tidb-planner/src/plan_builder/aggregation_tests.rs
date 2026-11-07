@@ -1319,23 +1319,22 @@ fn multi_table_delete_lays_out_each_target_in_the_pruned_read() {
 fn update_lowers_every_assignment_over_the_read_not_only_those_with_subqueries() {
     // Go `buildUpdateLists` rewrites each SET expression against the frozen
     // UPDATE input, so `SET b = c + 1` is a planner expression over the read's
-    // row as every other SET expression is; an entry the caller leaves out
-    // (a generated column's own DEFAULT) has none.
+    // row as every other SET expression is, after the read is built.
     let harness = Harness::new();
-    let value = |sql: &str| {
-        let select = parse_select(&format!("SELECT {sql}"));
-        match select.fields.iter().next() {
-            Some(tidb_ast::SelectField::Expr { expr, .. }) => expr.clone(),
-            other => panic!("unexpected field {other:?}"),
-        }
+    let statement = tidb_parser::parse("UPDATE t SET c = c + 1, b = b * 2 WHERE a = 1").expect("the UPDATE parses");
+    let Stmt::Dml(dml) = statement else {
+        panic!("not a DML statement");
+    };
+    let tidb_ast::DmlStmt::Update(update) = (*dml).clone() else {
+        panic!("not an UPDATE");
     };
     let mut builder = harness.builder();
     let select = parse_select("SELECT * FROM t WHERE a = 1");
-    let values = vec![Some(value("c + 1")), None, Some(value("b * 2"))];
-    let (plan, expressions, _) = builder
-        .build_update_dml_source(&select, &values, false)
+    let (plan, expressions, assignments, _) = builder
+        .build_update_dml_source(&select, &update, false, false)
         .unwrap_or_else(|error| panic!("should build: {}", error.message()));
-    assert_eq!(expressions.len(), 3);
+    assert_eq!(assignments.iter().map(|item| item.column).collect::<Vec<_>>(), vec![2, 1]);
+    assert_eq!(expressions.len(), 2);
     let plain = expressions[0].as_ref().expect("a plain assignment is lowered");
     let columns = tidb_expr::simple_expr::extract_columns(plain);
     assert_eq!(columns.len(), 1, "`c + 1` reads one column");
@@ -1344,8 +1343,7 @@ fn update_lowers_every_assignment_over_the_read_not_only_those_with_subqueries()
         plan.schema().unwrap().columns[2].unique_id,
         "`c + 1` reads the read's `c`"
     );
-    assert!(expressions[1].is_none());
-    assert!(expressions[2].is_some());
+    assert!(expressions[1].is_some());
 }
 
 #[test]

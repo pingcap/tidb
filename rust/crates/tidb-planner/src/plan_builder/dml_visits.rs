@@ -129,17 +129,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             UpdateKind::Multi { .. } => self
                 .build_multi_update_dml_source(&select, update, true)
                 .map(|_| ()),
-            UpdateKind::Single(_) => {
-                self.resolve_single_update_assignments(update, true)
-                    .and_then(|assignments| {
-                        let values: Vec<Option<Expr>> = assignments
-                            .iter()
-                            .map(|assignment| assignment.value.clone())
-                            .collect();
-                        self.build_update_dml_source(&select, &values, false)
-                            .map(|_| ())
-                    })
-            }
+            UpdateKind::Single(_) => self
+                .build_update_dml_source(&select, update, true, false)
+                .map(|_| ()),
         };
         let mut visits = std::mem::take(&mut self.visit_info);
         visits.extend(self.update_write_visits(update)?);

@@ -5350,15 +5350,27 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     pub fn build_update_dml_source(
         &mut self,
         select: &SelectStmt,
-        assignment_values: &[Option<Expr>],
+        update: &tidb_ast::UpdateStmt,
+        allow_write_row_id: bool,
         wrap_lock: bool,
-    ) -> Result<(LogicalPlan, Vec<Option<Expression>>, u64), PlanError> {
+    ) -> Result<
+        (
+            LogicalPlan,
+            Vec<Option<Expression>>,
+            Vec<single_update::SingleUpdateAssignment>,
+            u64,
+        ),
+        PlanError,
+    > {
         self.with_dml_hints(select, |builder| {
             builder.with_dml_ctes(select, |builder| {
+                // Go `buildUpdate`: the read first, then `buildUpdateLists`
+                // over it.
                 let (mut plan, _) = builder.build_dml_source_in_block(select, wrap_lock)?;
                 builder.cur_clause = ClauseCode::FieldList;
-                let mut expressions = Vec::with_capacity(assignment_values.len());
-                for value in assignment_values {
+                let assignments = builder.resolve_single_update_assignments(update, allow_write_row_id)?;
+                let mut expressions = Vec::with_capacity(assignments.len());
+                for value in assignments.iter().map(|assignment| assignment.value.as_ref()) {
                     let Some(value) = value else {
                         expressions.push(None);
                         continue;
@@ -5373,7 +5385,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     check_not_multi_column_row(&rewritten)?;
                     expressions.push(Some(rewritten));
                 }
-                Ok((plan, expressions, builder.get_opt_flag()))
+                Ok((plan, expressions, assignments, builder.get_opt_flag()))
             })
         })
     }
