@@ -2014,6 +2014,17 @@ pub trait ExecutorRuntimeStats: Send + Sync {
     fn record_close(&self, elapsed: std::time::Duration);
 }
 
+/// Go `RootRuntimeStats.MergeStats` and `GetActRows`, as text.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RootRuntimeStatsParts {
+    /// The basic stats' `String()`, when the plan has them.
+    pub basic: Option<String>,
+    /// Each group's non-empty `String()`, in registration order.
+    pub groups: Vec<String>,
+    /// Go `RootRuntimeStats.GetActRows`.
+    pub act_rows: i64,
+}
+
 /// Creates the shared runtime-stat handle for one constructed physical
 /// executor, matching Go `RuntimeStatsColl.GetBasicRuntimeStats(id, true)`.
 pub trait ExecutorRuntimeStatsSource: Send + Sync {
@@ -2050,6 +2061,12 @@ pub trait ExecutorRuntimeStatsSource: Send + Sync {
         None
     }
 
+    /// Go `RootRuntimeStats.MergeStats` and `GetActRows` of `plan_id`, as
+    /// `binaryOpFromFlatOp` encodes them; `None` when no root stats exist.
+    fn root_runtime_stats_parts(&self, _plan_id: i64) -> Option<RootRuntimeStatsParts> {
+        None
+    }
+
     /// Go `RuntimeStatsColl.GetBasicRuntimeStats(planID, true)` for a plan
     /// whose basic stats another executor records (an index lookup's
     /// pushed index plan, `indexScanBasicStats`).
@@ -2080,6 +2097,24 @@ impl ExecutorRuntimeStatsSource for RuntimeStatsColl {
 
     fn plan_act_rows(&self, plan_id: i64) -> Option<i64> {
         self.exists_root_stats(plan_id).then(|| self.get_plan_act_rows(plan_id))
+    }
+
+    fn root_runtime_stats_parts(&self, plan_id: i64) -> Option<RootRuntimeStatsParts> {
+        if !self.exists_root_stats(plan_id) {
+            return None;
+        }
+        let root = self.get_root_stats(plan_id);
+        let root = root.lock().expect("RootRuntimeStats mutex poisoned");
+        let (basic, groups) = root.merge_stats();
+        Some(RootRuntimeStatsParts {
+            basic: basic.map(|basic| basic.string()),
+            groups: groups
+                .iter()
+                .map(|group| group.string())
+                .filter(|text| !text.is_empty())
+                .collect(),
+            act_rows: root.get_act_rows(),
+        })
     }
 
     fn register_stats(

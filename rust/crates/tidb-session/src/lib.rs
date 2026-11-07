@@ -2976,6 +2976,17 @@ impl Session {
                 .report();
         }
         if self.routed_statement_observation_depth == 0 {
+            // Go `SetProcessInfo(..., ComSleep, ...)` re-encodes the brief binary
+            // plan with what the finished statement measured.
+            {
+                let mut cell = self
+                    .process_plan_info
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if let Some(source) = cell.brief_plan_source.take() {
+                    cell.brief_binary_plan = (source.0)();
+                }
+            }
             if let Some(guard) = &self.process {
                 guard.registry().statement_finished(
                     guard.id(),

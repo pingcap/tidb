@@ -2398,7 +2398,11 @@ fn has_brief_operator_info(operator: &str) -> bool {
     )
 }
 
-fn binary_operator(full: ExplainOperator, brief: ExplainOperator) -> PbExplainOperator {
+fn binary_operator(
+    ctx: &crate::StmtContext,
+    full: ExplainOperator,
+    brief: ExplainOperator,
+) -> PbExplainOperator {
     let labels = match full.label.as_str() {
         "(Build)" => vec![OperatorLabel::BuildSide as i32],
         "(Probe)" => vec![OperatorLabel::ProbeSide as i32],
@@ -2422,7 +2426,7 @@ fn binary_operator(full: ExplainOperator, brief: ExplainOperator) -> PbExplainOp
         .children
         .into_iter()
         .zip(brief.children)
-        .map(|(full, brief)| binary_operator(full, brief))
+        .map(|(full, brief)| binary_operator(ctx, full, brief))
         .collect();
     let brief_operator_info = has_brief_operator_info(&full.operator)
         .then_some(brief.operator_info)
@@ -2435,8 +2439,6 @@ fn binary_operator(full: ExplainOperator, brief: ExplainOperator) -> PbExplainOp
         task_type,
         store_type,
         operator_info: full.operator_info,
-        memory_bytes: -1,
-        disk_bytes: -1,
         brief_name: brief.operator,
         brief_operator_info,
         ..Default::default()
@@ -2444,7 +2446,45 @@ fn binary_operator(full: ExplainOperator, brief: ExplainOperator) -> PbExplainOp
     if let Some(access) = full.access_object {
         access.set_into_pb(&mut operator);
     }
+    fill_binary_runtime_info(ctx, i64::from(full.id), &mut operator);
     operator
+}
+
+/// Go `binaryOpFromFlatOp`'s runtime info: `getRuntimeInfo`'s root and cop
+/// stats from the statement's `RuntimeStatsColl`, and the memory and disk the
+/// operator charged to the explained statement's trackers.
+fn fill_binary_runtime_info(ctx: &crate::StmtContext, plan_id: i64, operator: &mut PbExplainOperator) {
+    if let Some(source) = ctx.executor_runtime_stats_source() {
+        if let Some(root) = source.root_runtime_stats_parts(plan_id) {
+            if let Some(basic) = root.basic {
+                operator.root_basic_exec_info = basic;
+            }
+            operator.root_group_exec_info = root.groups;
+            operator.act_rows = u64::try_from(root.act_rows).unwrap_or_default();
+        }
+        if let Some(cop) = source.cop_runtime_info(plan_id) {
+            operator.cop_exec_info = cop.info;
+            operator.act_rows = u64::try_from(cop.act_rows).unwrap_or_default();
+        }
+    }
+    let memory = ctx.explain_statement_memory();
+    operator.memory_bytes = memory
+        .stmt_tracker()
+        .search_tracker_without_lock(plan_id)
+        .map_or(-1, |tracker| tracker.max_consumed());
+    operator.disk_bytes = memory
+        .stmt_disk_tracker()
+        .search_tracker_without_lock(plan_id)
+        .map_or(-1, |tracker| tracker.max_consumed());
+}
+
+/// Go `binaryDataFromFlatPlan`'s `WithRuntimeStats`: any main operator has
+/// root or cop stats.
+fn with_runtime_stats(ctx: &crate::StmtContext, operator: &ExplainOperator) -> bool {
+    ctx.executor_runtime_stats_source().is_some_and(|source| {
+        let id = i64::from(operator.id);
+        source.root_runtime_stats_parts(id).is_some() || source.cop_runtime_info(id).is_some()
+    }) || operator.children.iter().any(|child| with_runtime_stats(ctx, child))
 }
 
 /// Go `GetBriefBinaryPlan`: encodes the retained ordinary physical tree with
@@ -2489,15 +2529,17 @@ fn binary_plan_from_roots(
     if full.is_empty() || brief.is_empty() {
         return String::new();
     }
-    let main = binary_operator(full.remove(0), brief.remove(0));
+    let with_runtime_stats = with_runtime_stats(statement_context, &full[0]);
+    let main = binary_operator(statement_context, full.remove(0), brief.remove(0));
     let ctes = full
         .into_iter()
         .zip(brief)
-        .map(|(full, brief)| binary_operator(full, brief))
+        .map(|(full, brief)| binary_operator(statement_context, full, brief))
         .collect();
     let data = ExplainData {
         main: Some(main),
         ctes,
+        with_runtime_stats,
         ..Default::default()
     };
     tidb_plancodec::compress(&data.encode_to_vec())
@@ -2719,6 +2761,17 @@ fn encode_observed_operator(operator: &ExplainOperator, depth: isize, output: &m
         }
         info.push_str(&operator.operator_info);
     }
+    // Go `getRuntimeInfoStr`: nothing without a `RuntimeStatsColl`, else
+    // the rows, the execution info and `N/A` for an absent tracker.
+    let (act_rows, analyze_info, memory_info, disk_info) = match operator.actual_rows {
+        Some(rows) => (
+            rows.to_string(),
+            operator.execution_info.clone().unwrap_or_default(),
+            operator.memory_info.clone().unwrap_or_else(|| "N/A".to_owned()),
+            operator.disk_info.clone().unwrap_or_else(|| "N/A".to_owned()),
+        ),
+        None => Default::default(),
+    };
     tidb_plancodec::encode_plan_node(
         depth,
         &format!("{}{}", operator.id, operator.label),
@@ -2726,10 +2779,10 @@ fn encode_observed_operator(operator: &ExplainOperator, depth: isize, output: &m
         operator.estimated_rows.unwrap_or_default(),
         &task,
         &info,
-        "",
-        "",
-        "",
-        "",
+        &act_rows,
+        &analyze_info,
+        &memory_info,
+        &disk_info,
         output,
     );
     for child in &operator.children {
@@ -3290,8 +3343,10 @@ pub fn process_plan_info(
     process_plan_info_with_brief(statement_context, physical, catalog, true)
 }
 
-/// The encoded and binary plans of `physical`: the ordinary tree rendered once
-/// for both codecs.
+/// Go `getEncodedPlan`'s `EncodeFlatPlan` and `getBinaryPlan`'s
+/// `BinaryPlanStrFromFlatPlan(flat, false)` of `physical`, each operator with
+/// the runtime information the statement's `RuntimeStatsColl` and trackers
+/// hold for it (`getRuntimeInfoStr`, `binaryOpFromFlatOp`).
 fn plan_encodings(
     statement_context: &crate::StmtContext,
     physical: &PhysicalPlan,
@@ -3304,7 +3359,7 @@ fn plan_encodings(
         false,
         physical,
         catalog,
-        false,
+        statement_context.executor_runtime_stats_source().is_some(),
         false,
         &[],
     );
@@ -3317,10 +3372,24 @@ fn plan_encodings(
     } else {
         tidb_plancodec::compress(encoded.as_bytes())
     };
-    (
-        encoded_plan,
-        binary_plan_from_roots(statement_context, physical, catalog, full),
-    )
+    let coster = Ver2Coster::from_env(statement_context.optimizer_cost_env())
+        .with_scan_penalty_vars(
+            statement_context.allow_prefer_range_scan(),
+            statement_context.get_index_force(),
+        )
+        .with_explain_cache();
+    let costed = physical_explain_roots(
+        Some(&coster),
+        statement_context,
+        statement_context,
+        false,
+        physical,
+        catalog,
+        false,
+        false,
+        &[],
+    );
+    (encoded_plan, explain_binary_plan(statement_context, costed))
 }
 
 /// Derives and publishes the process-info fields for `physical`, rendering
@@ -3360,21 +3429,15 @@ pub fn process_plan_info_with_brief(
     with_brief: bool,
 ) -> crate::ProcessPlanInfo {
     let stored = std::sync::Arc::new(physical.deep_clone());
-    // The process list reads the brief binary plan while the statement runs,
-    // so a statement that publishes one renders its encodings now. Every
-    // other reader is the statement's summary and slow log, which render them
-    // only when they sample or write the plan (Go `LazyInfo`).
-    let (encoded_plan, binary, plan_source) = if with_brief {
-        let (encoded, binary) = plan_encodings(statement_context, physical, catalog);
-        (encoded, binary, None)
-    } else {
+    // The summary and the slow log render the encodings when they sample or
+    // write the plan (Go `LazyInfo`), after the statement ran.
+    let plan_source = {
         let ctx = statement_context.clone().without_process_plan_info();
         let catalog = catalog.clone();
         let plan = std::sync::Arc::clone(&stored);
-        let source = crate::PlanSource(std::sync::Arc::new(move || {
+        crate::PlanSource(std::sync::Arc::new(move || {
             Some(plan_encodings(&ctx, &plan, &catalog))
-        }));
-        (String::new(), String::new(), Some(source))
+        }))
     };
     let (normalized_plan, plan_digest) = match statement_context.cached_plan_digest() {
         Some(cached) => cached
@@ -3389,13 +3452,21 @@ pub fn process_plan_info_with_brief(
         _ => physical,
     };
     let mut info = crate::ProcessPlanInfo {
+        // The process list reads the brief binary plan while the statement
+        // runs (Go `SetProcessInfo` before `ExecStmt.Exec`).
         brief_binary_plan: if with_brief {
-            binary.clone()
+            brief_binary_plan(statement_context, physical, catalog)
         } else {
             String::new()
         },
-        encoded_plan,
-        summary_binary_plan: binary,
+        brief_plan_source: with_brief.then(|| {
+            let ctx = statement_context.clone().without_process_plan_info();
+            let catalog = catalog.clone();
+            let plan = std::sync::Arc::clone(&stored);
+            tidb_stmtctx::BriefPlanSource(std::sync::Arc::new(move || {
+                brief_binary_plan(&ctx, &plan, &catalog)
+            }))
+        }),
         normalized_plan,
         plan_digest,
         plan_hints: tidb_planner::plan_hint::gen_hints_from_physical_plan(
@@ -3413,7 +3484,7 @@ pub fn process_plan_info_with_brief(
             .executor_runtime_stats_source()
             .map(|source| crate::StoredPlan::new(std::sync::Arc::new(std::sync::Arc::clone(source)))),
         statement_memory: Some(crate::StoredPlan::new(std::sync::Arc::new(statement_context.statement_memory()))),
-        plan_source,
+        plan_source: Some(plan_source),
         ..crate::ProcessPlanInfo::default()
     };
     collect_executor_process_fields(
@@ -3515,7 +3586,7 @@ fn render_physical_plan(
         } else {
             (
                 vec![("binary plan".to_owned(), field_type)],
-                vec![vec![text(&explain_binary_plan(roots, analyze))]],
+                vec![vec![text(&explain_binary_plan(statement_context, roots))]],
             )
         });
     }
@@ -3705,56 +3776,38 @@ fn into_plan_order(mut operator: ExplainOperator) -> ExplainOperator {
 }
 
 /// Go `BinaryPlanStrFromFlatPlan(flat, false)`: the main tree and its CTEs
-/// in plan order, each operator with its ver2 cost and no brief fields.
-///
-/// Go builds the target's executors even for a plain EXPLAIN ("to get
-/// partition pruning", `buildExplain`), and each registers an empty basic
-/// runtime record, so every root operator encodes `time:0s, open:0s,
-/// close:0s, loops:0` with zero actual rows and the data says it carries
-/// runtime stats. Under ANALYZE the operators carry what the run measured.
-fn explain_binary_plan(roots: Vec<ExplainOperator>, analyze: bool) -> String {
+/// in plan order, each operator with its ver2 cost and no brief fields, and
+/// the runtime stats the statement's `RuntimeStatsColl` holds for it (a plain
+/// EXPLAIN's executors are built and register empty basic records, Go
+/// `buildExplain`).
+fn explain_binary_plan(ctx: &crate::StmtContext, roots: Vec<ExplainOperator>) -> String {
     let mut roots = roots.into_iter().map(into_plan_order);
     let Some(main) = roots.next() else {
         return String::new();
     };
+    let with_runtime_stats = with_runtime_stats(ctx, &main);
     let encode = |operator: ExplainOperator| {
-        let mut encoded = binary_operator(operator.clone(), operator.clone());
-        fill_binary_operator(&mut encoded, &operator, analyze);
+        let mut encoded = binary_operator(ctx, operator.clone(), operator.clone());
+        fill_binary_operator(&mut encoded, &operator);
         encoded
     };
     let data = ExplainData {
         main: Some(encode(main)),
         ctes: roots.map(encode).collect(),
-        with_runtime_stats: true,
+        with_runtime_stats,
         ..Default::default()
     };
     tidb_plancodec::compress(&data.encode_to_vec())
 }
 
-const EMPTY_ROOT_BASIC_EXEC_INFO: &str = "time:0s, open:0s, close:0s, loops:0";
-
-fn fill_binary_operator(
-    encoded: &mut PbExplainOperator,
-    operator: &ExplainOperator,
-    analyze: bool,
-) {
+/// Go `binaryOpFromFlatOp(..., briefBinaryPlan = false)`: the cost, and no
+/// brief fields.
+fn fill_binary_operator(encoded: &mut PbExplainOperator, operator: &ExplainOperator) {
     encoded.brief_name = String::new();
     encoded.brief_operator_info = String::new();
     encoded.cost = operator.estimated_cost.unwrap_or_default();
-    let root = matches!(operator.task, ExplainTask::Root);
-    if analyze {
-        encoded.act_rows = operator.actual_rows.unwrap_or_default();
-        let info = operator.execution_info.clone().unwrap_or_default();
-        if root {
-            encoded.root_basic_exec_info = info;
-        } else {
-            encoded.cop_exec_info = info;
-        }
-    } else if root {
-        encoded.root_basic_exec_info = EMPTY_ROOT_BASIC_EXEC_INFO.to_owned();
-    }
     for (child, operator) in encoded.children.iter_mut().zip(&operator.children) {
-        fill_binary_operator(child, operator, analyze);
+        fill_binary_operator(child, operator);
     }
 }
 

@@ -806,7 +806,8 @@ impl Session {
             // Go `[]ast.StmtNode{stmtNode}`, an EXECUTE's being the prepared
             // statement: the statement's original text either way.
             exec_stmts: vec![observation.text.clone()],
-            encoded_plan: plan.encoded_plan.clone(),
+            // Go `getEncodedPlan(stmtCtx, false)`.
+            encoded_plan: plan.plan_source.as_ref().map(tidb_stmtctx::PlanSource::render).unwrap_or_default().0,
             analyze: false,
             is_capture: true,
             is_continues_capture,

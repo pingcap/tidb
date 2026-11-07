@@ -29184,6 +29184,111 @@ fn explain_for_connection_renders_the_targets_runtime_stats_like_go() {
     assert_eq!(plan[0][7], "272 Bytes");
 }
 
+/// The statement summary's plan and binary plan are rendered after the
+/// statement ran (Go `getEncodedPlan`'s `EncodeFlatPlan` and `getBinaryPlan`'s
+/// `BinaryPlanStrFromFlatPlan(flat, false)`), so each operator carries its
+/// runtime info and the binary plan its ver2 cost and no brief fields.
+/// Captured from a Go tidb-server over the wire (durations masked):
+///
+/// ```text
+/// | TableReader_7       | 3333.33  | 332760.00  | 1 | root      |         | time:D, ..., cop_task: {num: 1, ... | data:Selection_6               | 256 Bytes | N/A |
+/// | └─Selection_6       | 3333.33  | 4569000.00 | 1 | cop[tikv] |         | tikv_task:{time:D, loops:0}, ...    | gt(test.t.b, 0)                | N/A       | N/A |
+/// |   └─TableFullScan_5 | 10000.00 | 4070000.00 | 3 | cop[tikv] | table:t | tikv_task:{time:D, loops:0}         | keep order:false, stats:pseudo | N/A       | N/A |
+/// ```
+#[test]
+fn the_summary_plans_carry_the_statements_runtime_stats_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1146)).unwrap();
+    for sql in [
+        "USE test",
+        "create table t (id int primary key, b int)",
+        "insert into t values (1,0),(2,5),(3,0)",
+    ] {
+        session.node_conn().execute_write(sql).unwrap();
+    }
+    rows(&mut session, "select /* e21 */ * from t where b > 0");
+    let decoded = |session: &mut crate::Session, column: &str, separator: char| -> Vec<Vec<String>> {
+        let sql = format!(
+            "select {column} from information_schema.statements_summary \
+             where query_sample_text like 'select /* e21 */%'"
+        );
+        let text = displayed(rows(session, &sql))[0][0].clone();
+        text.lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                line.trim()
+                    .trim_matches('|')
+                    .split(separator)
+                    .map(|cell| mask_durations(cell.trim()))
+                    .collect()
+            })
+            .collect()
+    };
+    let binary = decoded(&mut session, "tidb_decode_binary_plan(binary_plan)", '|');
+    assert_eq!(
+        binary[0],
+        ["id", "estRows", "estCost", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"]
+    );
+    let cells = |row: &[String], picks: &[usize]| -> Vec<String> {
+        picks.iter().map(|&i| row[i].clone()).collect()
+    };
+    let columns = [0, 1, 2, 3, 4, 5, 7, 8, 9];
+    assert_eq!(
+        cells(&binary[1], &columns),
+        ["TableReader_7", "3333.33", "332760.00", "1", "root", "", "data:Selection_6", "256 Bytes", "N/A"]
+    );
+    assert!(
+        binary[1][6].starts_with("time:D, open:D, close:D, loops:2, cop_task: {num: 1, "),
+        "{}",
+        binary[1][6]
+    );
+    assert_eq!(
+        cells(&binary[2], &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+        [
+            "└─Selection_6",
+            "3333.33",
+            "4569000.00",
+            "1",
+            "cop[tikv]",
+            "",
+            "tikv_task:{time:D, loops:0}, scan_detail: {total_process_keys: 3, rocksdb: {block: {}}}",
+            "gt(test.t.b, 0)",
+            "N/A",
+            "N/A",
+        ]
+    );
+    assert_eq!(
+        cells(&binary[3], &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+        [
+            "└─TableFullScan_5",
+            "10000.00",
+            "4070000.00",
+            "3",
+            "cop[tikv]",
+            "table:t",
+            "tikv_task:{time:D, loops:0}",
+            "keep order:false, stats:pseudo",
+            "N/A",
+            "N/A",
+        ]
+    );
+    let encoded = decoded(&mut session, "tidb_decode_plan(plan)", '\t');
+    let shape: Vec<Vec<String>> = encoded
+        .iter()
+        .map(|row| cells(row, &[0, 1, 2, 3, 4, 6, 7]))
+        .collect();
+    assert_eq!(
+        shape,
+        [
+            ["id", "task", "estRows", "operator info", "actRows", "memory", "disk"],
+            ["TableReader_7", "root", "3333.33", "data:Selection_6", "1", "256 Bytes", "N/A"],
+            ["└─Selection_6", "cop[tikv]", "3333.33", "gt(test.t.b, 0)", "1", "N/A", "N/A"],
+            ["└─TableFullScan_5", "cop[tikv]", "10000", "table:t, keep order:false, stats:pseudo", "3", "N/A", "N/A"],
+        ]
+    );
+    assert_eq!(encoded[3][5], "tikv_task:{time:D, loops:0}");
+}
+
 fn mask_durations(text: &str) -> String {
     let mut out = String::new();
     let mut rest = text;

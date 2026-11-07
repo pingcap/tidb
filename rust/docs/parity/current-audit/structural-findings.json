@@ -2,9 +2,9 @@
   "date": "2026-11-08",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 29,
+    "unresolved": 30,
     "open": 7,
-    "partial": 22
+    "partial": 23
   },
   "findings": [
     {
@@ -110,10 +110,17 @@
     },
     {
       "id": "E21",
+      "status": "partial",
+      "group": "DML and executor handoff",
+      "finding": "Binary plans carry Go's runtime statistics (`binaryOpFromFlatOp`'s `getRuntimeInfo`: actRows, root and cop execution info, memory and disk from the statement's `RuntimeStatsColl` and trackers), the statement summary's and slow log's plan and binary plan are rendered after the statement ran (`getEncodedPlan`'s `EncodeFlatPlan` with `getRuntimeInfoStr`, `getBinaryPlan`'s `BinaryPlanStrFromFlatPlan(flat, false)` with ver2 cost and no brief fields), and the brief binary plan is re-encoded when the statement ends (`SetProcessInfo` at `ComSleep`), matching a Go tidb-server over the wire (`unistore_cop.rs` `the_summary_plans_carry_the_statements_runtime_stats_like_go`). Remaining: `EXPLAIN FOR CONNECTION` never decodes the brief binary plan, where Go's `shouldDecodeBriefBinaryPlan` decodes it for a target with no `RuntimeStatsColl` or an `Execute` plan (a cached prepared point UPDATE's root: Go `0.00` estRows and `638 Bytes` from the decoded brief plan, this port `N/A` and `387 Bytes` from the live render); it waits on E22, since an EXECUTE's brief plan is encoded against the bind lifecycle's collector, not the one its execution records into",
+      "go_owner": "`pkg/planner/core/common_plans.go` (`binaryOpFromFlatOp`, `Explain.shouldDecodeBriefBinaryPlan`, `RenderResult`), `pkg/session/session.go` (`SetProcessInfo`), `pkg/util/plancodec` (`DecodeBinaryPlan4Connection`)"
+    },
+    {
+      "id": "E22",
       "status": "open",
       "group": "DML and executor handoff",
-      "finding": "Under `EXPLAIN FOR CONNECTION`, the root of a cached prepared point write (`EXECUTE` of `update t set b=? where id=?`, the plan-cache hit) reports `estRows` `N/A` and `387 Bytes` where Go reports `0.00` and `638 Bytes` (captured from a Go tidb-server over the wire); the same statement under a plain `EXPLAIN ANALYZE` matches Go (`N/A`, `387 Bytes`), so the gap is in what Go's EXECUTE of a cached plan sets on the write root (its stats info and the memory the execute path charges to the root's tracker)",
-      "go_owner": "`pkg/planner/core/plan_cache.go` (`GetPlanFromPlanCache`, `RebuildPlan4CachedPlan`), `pkg/executor/update.go` (`UpdateExec.memTracker`), `pkg/executor/prepared.go`"
+      "finding": "An `EXECUTE` of a cached prepared write runs two statement lifecycles: `bind_cached_prepared_dml_for_statement` builds a statement authority, then `execute_cached_prepared_dml` reaches `run_with_columns_using` and `begin_statement_execution`, which finishes it and builds another, so one `EXECUTE` has two `StatementMemory` trackers and two `RuntimeStatsColl`s where Go's `ResetContextOfStmt` gives it one `StmtCtx`",
+      "go_owner": "`pkg/session/session.go` (`ExecutePreparedStmt`, `ResetContextOfStmt`), `pkg/executor/prepared.go` (`ExecuteExec`), `pkg/sessionctx/stmtctx`"
     },
     {
       "id": "O09",
@@ -215,7 +222,7 @@
       "go_owner": "`pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`)"
     }
   ],
-  "unresolved": 29,
+  "unresolved": 30,
   "open": 7,
-  "partial": 22
+  "partial": 23
 }

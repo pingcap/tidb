@@ -78,16 +78,33 @@ impl PartialEq for PlanSource {
     }
 }
 
+/// Go `SetProcessInfo(..., mysql.ComSleep, ...)`'s `GetBriefBinaryPlan(p)`
+/// once the statement ended: re-encodes the published plan's brief binary
+/// plan with the runtime stats and memory its execution left.
+#[derive(Clone)]
+pub struct BriefPlanSource(pub Arc<dyn Fn() -> String + Send + Sync>);
+
+impl std::fmt::Debug for BriefPlanSource {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("BriefPlanSource")
+    }
+}
+
+impl PartialEq for BriefPlanSource {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
 /// The plan facts a statement publishes for its process-list row and its
 /// statement-summary entry.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ProcessPlanInfo {
     /// Go `ProcessInfo.BriefBinaryPlan`.
     pub brief_binary_plan: String,
-    /// Go `StmtCtx.GetEncodedPlan`, independent of process-list visibility.
-    pub encoded_plan: String,
-    /// Binary statement-summary sample, including binary prepared execution.
-    pub summary_binary_plan: String,
+    /// Re-encodes [`Self::brief_binary_plan`] when the statement ends.
+    pub brief_plan_source: Option<BriefPlanSource>,
+
     /// Go `StmtCtx.GetPlanDigest` normalized text: the select plan with
     /// constants and statistics removed (empty without a physical select plan).
     pub normalized_plan: String,
@@ -145,7 +162,9 @@ pub struct ProcessPlanInfo {
     /// Go `StmtCtx.IsTiFlash` as the planner set it (`buildDataSource`);
     /// the executor builder's readers add theirs from the plan.
     pub is_tiflash: bool,
-    /// The encodings of a plan published without them, rendered on demand.
+    /// Go `getEncodedPlan` and `getBinaryPlan`: the statement's encoded and
+    /// binary plans, rendered when the slow log or the statement summary asks,
+    /// after the statement ran, so they carry its runtime statistics.
     pub plan_source: Option<PlanSource>,
     /// Go `ProcessInfo.RunawayChecker`'s `CheckRuleKillAction`, set once the
     /// statement's checker is derived.

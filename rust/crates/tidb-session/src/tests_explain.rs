@@ -5744,8 +5744,13 @@ fn prepared_explain_constants_follow_current_parameters() {
                 } else {
                     number_text
                 };
+                // The brief plan is re-encoded once the statement ran (Go
+                // `SetProcessInfo(..., ComSleep, ...)`): it carries runtime
+                // stats, so a row is `id, estRows, actRows, task, access
+                // object, execution info, operator info, memory, disk`.
+                assert_eq!(projection.len(), 9, "{projection:?}");
                 assert_eq!(
-                    projection[4].split("->").next().unwrap(),
+                    projection[6].split("->").next().unwrap(),
                     expected,
                     "{query}"
                 );
@@ -5761,7 +5766,7 @@ fn prepared_explain_constants_follow_current_parameters() {
                     "or(eq(cast(test.explain_param.b, double BINARY), {number}), eq(test.explain_param.b, \"{word}\"))"
                 ),
             };
-            assert_eq!(selection[4], expected, "{query}");
+            assert_eq!(selection[6], expected, "{query}");
             assert_eq!(
                 row_text(session.run("SELECT @@last_plan_from_cache")),
                 vec![vec![if kind == 1 { "0" } else { cache }]],
@@ -5815,7 +5820,7 @@ fn prepared_explain_index_probe_strings_match_go() {
                 .find(|row| row[0].contains("TableRangeScan"))
                 .unwrap();
             assert_eq!(
-                scan[4],
+                scan[6],
                 format!(
                     "range: decided by [eq(test.exp_inner.a, test.exp_outer.a) eq(test.exp_inner.b, {word})], keep order:false, stats:pseudo"
                 ),
@@ -5826,7 +5831,7 @@ fn prepared_explain_index_probe_strings_match_go() {
                 .find(|row| row[0].contains("Selection"))
                 .unwrap();
             assert_eq!(
-                selection[4],
+                selection[6],
                 format!("eq(test.exp_inner.b, \"{word}\")"),
                 "{hint}"
             );

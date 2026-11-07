@@ -850,7 +850,8 @@ impl Session {
                     &current_database,
                     &ctx,
                 )
-                .map(|info| (info.encoded_plan, info.summary_binary_plan))
+                .and_then(|info| info.plan_source)
+                .map(|source| source.render())
             }))
         };
         // Go `ExecStmt.Exec`'s runaway check over the cached plan's digest.

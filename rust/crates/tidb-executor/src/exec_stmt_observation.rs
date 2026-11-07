@@ -113,10 +113,8 @@ impl StatementPhases {
 
 struct LazyStatement {
     sql: String,
-    binary_plan: String,
-    encoded_plan: String,
-    /// A plan published without its encodings renders them here, once, when
-    /// the summary first asks (Go `LazyInfo.GetEncodedPlan`).
+    /// The plan's encodings, rendered here once, when the summary first asks
+    /// (Go `LazyInfo.GetEncodedPlan` / `GetBinaryPlan`).
     plan_source: Option<crate::PlanSource>,
     rendered_plan: std::sync::OnceLock<(String, String)>,
     /// `tidb_generate_binary_plan` as the statement finished.
@@ -126,29 +124,24 @@ struct LazyStatement {
     binding_sql: String,
     binding_digest: String,
 }
+impl LazyStatement {
+    fn rendered(&self) -> &(String, String) {
+        self.rendered_plan
+            .get_or_init(|| self.plan_source.as_ref().map(crate::PlanSource::render).unwrap_or_default())
+    }
+}
 impl StmtExecLazyInfo for LazyStatement {
     fn original_sql(&self) -> String {
         self.sql.clone()
     }
     fn encoded_plan(&self) -> Result<(String, String), EncodedPlanError> {
-        let encoded = match &self.plan_source {
-            Some(source) if self.encoded_plan.is_empty() => {
-                self.rendered_plan.get_or_init(|| source.render()).0.clone()
-            }
-            _ => self.encoded_plan.clone(),
-        };
-        Ok((encoded, self.plan_hint.clone()))
+        Ok((self.rendered().0.clone(), self.plan_hint.clone()))
     }
     fn binary_plan(&self) -> String {
         if !self.binary_plan_enabled {
             return String::new();
         }
-        match &self.plan_source {
-            Some(source) if self.binary_plan.is_empty() => {
-                self.rendered_plan.get_or_init(|| source.render()).1.clone()
-            }
-            _ => self.binary_plan.clone(),
-        }
+        self.rendered().1.clone()
     }
     fn plan_digest(&self) -> String {
         self.plan_digest.clone()
@@ -340,12 +333,9 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
             .unwrap_or_default();
         let exec_detail = observation.cop_stats.exec_details();
         let cop_tasks = observation.cop_stats.cop_tasks_details();
-        // A plan published without its encodings (the cached point read)
-        // renders them now that a slow statement asks (Go `getEncodedPlan`).
-        let (encoded_plan, summary_binary_plan) = match &plan.plan_source {
-            Some(source) if plan.encoded_plan.is_empty() => source.render(),
-            _ => (plan.encoded_plan.clone(), plan.summary_binary_plan.clone()),
-        };
+        // Go `getEncodedPlan` / `getBinaryPlan` as the slow log writes them.
+        let (encoded_plan, summary_binary_plan) =
+            plan.plan_source.as_ref().map(crate::PlanSource::render).unwrap_or_default();
         let plan_digest = if observation.routed {
             String::new()
         } else {
@@ -808,11 +798,6 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
                 binding_sql: observation.binding_sql.clone(),
                 binding_digest: observation.binding_digest.clone(),
                 sql: summary_sql,
-                encoded_plan: if observation.routed {
-                    String::new()
-                } else {
-                    plan.encoded_plan
-                },
                 plan_digest: if observation.routed {
                     String::new()
                 } else {
@@ -823,7 +808,6 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
                         .session_vars()
                         .get_global("tidb_generate_binary_plan")
                         .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("ON")),
-                binary_plan: plan.summary_binary_plan,
                 plan_source: (!observation.routed).then_some(plan.plan_source).flatten(),
                 rendered_plan: std::sync::OnceLock::new(),
             }),

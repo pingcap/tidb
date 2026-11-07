@@ -18,4 +18,4 @@
 pub mod process_plan;
 pub mod used_stats;
 
-pub use process_plan::{PlanSource, ProcessPlanInfo, RunawayRuleKillAction, StoredPlan};
+pub use process_plan::{BriefPlanSource, PlanSource, ProcessPlanInfo, RunawayRuleKillAction, StoredPlan};
