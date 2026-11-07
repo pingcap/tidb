@@ -8096,6 +8096,42 @@ fn a_bit_aggregate_runs_in_the_coprocessor_as_go() {
     assert!(cop_agg[5].starts_with("tikv_task:{"), "{cop_agg:?}");
 }
 
+/// ADMIN CHECK's checksum `bit_xor(crc32(md5(concat_ws(...))))` lowers to
+/// TiKV (Go's MD5, CRC32 and CONCAT_WS pushdown signatures), and a covering
+/// index carries the integer handle (Go `PhysicalIndexScan.initSchema`), so
+/// the index side aggregates every index entry in the coprocessor: gorun
+/// answers `1621514176|3` and `6|3` through an IndexReader over a cop HashAgg.
+#[test]
+fn a_checksum_over_the_handle_runs_in_the_index_coprocessor_as_go() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT PRIMARY KEY, b VARCHAR(10), INDEX idx_b(b))")
+        .unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,'aa'),(2,'bb'),(3,'cc')")
+        .unwrap();
+    for (sql, expected) in [
+        (
+            "SELECT /*+ AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, a, b)))), count(*) \
+             FROM t USE INDEX(idx_b)",
+            ["1621514176", "3"],
+        ),
+        ("SELECT sum(a), count(*) FROM t USE INDEX(idx_b)", ["6", "3"]),
+    ] {
+        assert_eq!(row_text(session.run(sql)), [expected], "{sql}");
+        let explained = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        let cop_agg = explained
+            .iter()
+            .find(|row| row[3] == "cop[tikv]" && row[0].contains("HashAgg_"))
+            .unwrap_or_else(|| panic!("no cop HashAgg in {explained:?}"));
+        assert!(cop_agg[5].starts_with("tikv_task:{"), "{sql}: {cop_agg:?}");
+        assert!(
+            explained.iter().any(|row| row[0].contains("IndexFullScan_")),
+            "{sql}: {explained:?}"
+        );
+    }
+}
+
 /// Go `Aggregation.GroupBy` carries any key the coprocessor evaluates: gorun
 /// pushes `group by:plus(test.t.a, 1), funcs:count(1),
 /// funcs:firstrow(test.t.a)` to TiKV and answers `2|2`, `3|1`, `4|1`.

@@ -25,6 +25,15 @@ use tidb_proto::tipb::ScalarFuncSig;
 
 type ValuesKernel = fn(&[Datum], &dyn Columns) -> Result<Datum, EvalError>;
 
+fn md5_values(values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    crate::builtin_ext::crypto::dispatch("MD5", values, ctx)
+        .unwrap_or(Err(EvalError::Unsupported("protobuf MD5 arity")))
+}
+
+fn crc32_values(values: &[Datum], _: &dyn Columns) -> Result<Datum, EvalError> {
+    crate::math_fn::crc32(values)
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Kernel {
     Binary(BinaryOp, EvalType),
@@ -307,6 +316,11 @@ impl PbBuiltin {
             // Go `absFunctionClass`: one signature per argument evaluation
             // type; the planner has already cast the argument to it.
             AbsInt | AbsUInt | AbsReal | AbsDecimal => Kernel::Values(crate::math_fn::abs),
+            // Go `builtinMD5Sig`, `builtinCRC32Sig`, `builtinConcatWSSig`:
+            // the root tier's evaluators over the argument values.
+            Md5 => Kernel::Values(md5_values),
+            Crc32 => Kernel::Values(crc32_values),
+            ConcatWs => Kernel::Values(crate::string_fn::concat_ws_with_context),
             Acos => Kernel::Values(crate::math_fn::acos),
             Asin => Kernel::Values(crate::math_fn::asin),
             Atan1Arg => Kernel::Values(crate::math_fn::atan),

@@ -269,6 +269,7 @@ impl BuiltinSignature {
             "if" if arity == 3 => Some(self.ret),
             "ifnull" if arity == 2 => Some(self.ret),
             "coalesce" => Some(self.ret),
+            "concat_ws" => Some(EvalType::String),
             _ => None,
         }
     }
@@ -1811,6 +1812,24 @@ pub const CATALOG: &[BuiltinSignature] = &[
         &[EvalType::Real],
         EvalType::Int,
         ScalarFuncSig::RealIsFalse,
+        false,
+    ),
+    // `md5FunctionClass` / `crc32FunctionClass`: one `ETString` argument.
+    // The wire carries the planned function's own result type (MD5's
+    // connection charset and flen 32; CRC32's unsigned flen 10).
+    string_signature(
+        "md5",
+        &[ArgPattern::any_string()],
+        &[EvalType::String],
+        ScalarFuncSig::Md5,
+        RetCollation::ConnectionString,
+    ),
+    signature(
+        "crc32",
+        &[ArgPattern::any_string()],
+        &[EvalType::String],
+        EvalType::Int,
+        ScalarFuncSig::Crc32,
         false,
     ),
     // `lengthFunctionClass.getFunction`: the byte length of an ETString
@@ -3468,6 +3487,9 @@ pub fn resolve(name: &str, args: &[PbScalar]) -> Option<&'static BuiltinSignatur
     if name == "in" {
         return resolve_in(args);
     }
+    if name == "concat_ws" {
+        return resolve_concat_ws(args);
+    }
     CATALOG.iter().find(|candidate| {
         candidate.name == name
             && candidate.selector.len() == args.len()
@@ -3477,6 +3499,20 @@ pub fn resolve(name: &str, args: &[PbScalar]) -> Option<&'static BuiltinSignatur
                 .zip(args)
                 .all(|(pattern, argument)| pattern.matches(argument))
     })
+}
+
+/// Go `concatWSFunctionClass.getFunction`: every argument `ETString`, the
+/// separator first, one signature (`ConcatWS`) whatever the arity.
+fn resolve_concat_ws(args: &[PbScalar]) -> Option<&'static BuiltinSignature> {
+    static CONCAT_WS: BuiltinSignature = string_signature(
+        "concat_ws",
+        &[],
+        &[],
+        ScalarFuncSig::ConcatWs,
+        RetCollation::FirstArgString,
+    );
+    (args.len() >= 2 && args.iter().all(|arg| arg.eval_type() == EvalType::String))
+        .then_some(&CONCAT_WS)
 }
 
 /// Go `inFunctionClass.getFunction`: the signature is the comparison type

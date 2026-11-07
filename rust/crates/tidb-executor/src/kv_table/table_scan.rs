@@ -2229,7 +2229,7 @@ impl KvTableReader for TableCommon {
         // index-only column absent from the pruned source schema; it preserves
         // the physical position while still letting offset remapping find
         // every aggregate/predicate column that IS present.
-        let index_keep = index
+        let mut index_keep = index
             .column_offsets
             .iter()
             .map(|offset| {
@@ -2239,6 +2239,21 @@ impl KvTableReader for TableCommon {
                     .unwrap_or(usize::MAX)
             })
             .collect::<Vec<_>>();
+        // Go `PhysicalIndexScan.initSchema`: an integer handle the source
+        // schema names rides after the index columns, and TiKV fills it from
+        // the key's handle (`PkHandle`) -- every index covers it.
+        if let Some(offset) = self.pk_handle_offset() {
+            if let Some(slot) = scan_keep.iter().position(|kept| *kept == offset) {
+                let column = &self.columns()[offset];
+                columns.push(PushdownScanColumn {
+                    id: column.read().id,
+                    field_type: column.read().field_type.clone(),
+                    is_handle: true,
+                    origin_default: column.origin_default.clone(),
+                });
+                index_keep.push(slot);
+            }
+        }
         let mut remote_predicates = predicates.to_vec();
         for predicate in &mut remote_predicates {
             if tidb_executor_internal_exec::predicate_pushdown::remap_expression(predicate, &index_keep).is_none() {
@@ -2254,11 +2269,10 @@ impl KvTableReader for TableCommon {
                 for function in functions {
                     if let Some(input) = function.input.as_mut() {
                         // An argument naming a column the index does not
-                        // carry (sysbench's checksum sums the handle under
-                        // `USE INDEX`) is not THIS cursor's shape -- Go
-                        // answers it through a lookup that reads the row --
-                        // so the scan falls back to the local path instead
-                        // of failing a statement Go accepts.
+                        // carry is not THIS cursor's shape -- Go answers it
+                        // through a lookup that reads the row -- so the scan
+                        // falls back to the local path instead of failing a
+                        // statement Go accepts.
                         if tidb_executor_internal_exec::predicate_pushdown::remap_expression(input, &index_keep).is_none()
                         {
                             return Ok(None);
