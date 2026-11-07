@@ -23,12 +23,14 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -267,6 +269,184 @@ func TestFlashbackTable(t *testing.T) {
 	tk.MustExec("flashback table t")
 	tk.MustExec("insert into t values (3)")
 	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2", "3"))
+	// A standalone flashback cannot prove that historical child rows still
+	// match the current parent table. In particular, a newly created table that
+	// reuses the historical parent name is a different object.
+	tk.MustExec("drop database if exists fk_flashback")
+	tk.MustExec("create database fk_flashback")
+	tk.MustExec("use fk_flashback")
+	tk.MustExec("create table p (id int primary key)")
+	tk.MustExec("create table c (id int primary key, pid int, foreign key (pid) references p(id))")
+	tk.MustExec("insert into p values (1)")
+	tk.MustExec("insert into c values (1, 1)")
+	tk.MustExec("drop table c")
+	tk.MustExec("drop table p")
+	tk.MustExec("create table p (id int primary key)")
+	tk.MustGetErrCode("flashback table c", errno.ErrUnsupportedDDLOperation)
+	tk.MustQuery("show tables like 'c'").Check(testkit.Rows())
+
+	// The same guard applies when recovering a parent that is currently
+	// referenced by another table.
+	tk.MustExec("drop table p")
+	tk.MustExec("set foreign_key_checks = 0")
+	tk.MustExec("create table c (id int primary key, pid int, foreign key (pid) references p(id))")
+	tk.MustGetErrCode("recover table p", errno.ErrUnsupportedDDLOperation)
+
+	// Renaming a self-referencing table during flashback must also rename the
+	// recovered foreign-key endpoint.
+	tk.MustExec("drop database if exists fk_self_flashback")
+	tk.MustExec("create database fk_self_flashback")
+	tk.MustExec("use fk_self_flashback")
+	tk.MustExec("set foreign_key_checks = 1")
+	tk.MustExec("create table tree (id int primary key, parent_id int, foreign key (parent_id) references tree(id) on delete cascade)")
+	tk.MustExec("insert into tree values (1, null), (2, 1)")
+	tk.MustExec("drop table tree")
+	tk.MustExec("flashback table tree to restored_tree")
+	tk.MustQuery("select referenced_table_name from information_schema.key_column_usage where table_schema = 'fk_self_flashback' and table_name = 'restored_tree' and referenced_table_name is not null").Check(testkit.Rows("restored_tree"))
+	tk.MustExec("insert into restored_tree values (3, 1)")
+	tk.MustExec("delete from restored_tree where id = 1")
+	tk.MustQuery("select * from restored_tree").Check(testkit.Rows())
+}
+
+func TestFlashbackTableForeignKeyOwnerCheck(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		replaceParent bool
+	}{
+		{name: "unchanged_parent"},
+		{name: "new_child_of_replacement_parent", replaceParent: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+			tk := testkit.NewTestKit(t, store)
+			flashTK := testkit.NewTestKit(t, store)
+			tk.MustExec("create database fk_owner_flashback")
+			tk.MustExec("use fk_owner_flashback")
+			flashTK.MustExec("use fk_owner_flashback")
+			tk.MustExec("set foreign_key_checks = 1")
+			t.Cleanup(func() { tk.MustExec("set foreign_key_checks = 1") })
+			timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+			t.Cleanup(resetGC)
+			tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+			require.NoError(t, gcutil.EnableGC(tk.Session()))
+			tk.MustExec("create table p (id int primary key)")
+			tk.MustExec("insert into p values (1)")
+			oldParent, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("fk_owner_flashback"), pmodel.NewCIStr("p"))
+			require.NoError(t, err)
+			oldID := oldParent.Meta().ID
+			tk.MustExec("drop table p")
+
+			ownerJobIDs := make(chan int64, 1)
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+				if job.Type == model.ActionRecoverTable && job.TableID == oldID {
+					select {
+					case ownerJobIDs <- job.ID:
+					default:
+					}
+				}
+			})
+			beforeQueue := make(chan bool, 1)
+			release := make(chan struct{})
+			var releaseOnce sync.Once
+			resume := func() { releaseOnce.Do(func() { close(release) }) }
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			t.Cleanup(cancel)
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterCheckRecoverTableForeignKeys", func(info *model.RecoverTableInfo) {
+				if info.TableInfo.ID != oldID {
+					return
+				}
+				// Pause the client after the real frontend check, before a recover
+				// job can block the concurrent FK DDLs on p's table dependency.
+				select {
+				case beforeQueue <- flashTK.Session().GetSessionVars().StmtCtx.IsDDLJobInQueue.Load():
+				case <-ctx.Done():
+					return
+				}
+				select {
+				case <-release:
+				case <-ctx.Done():
+				}
+			})
+			result := make(chan error, 1)
+			finished := make(chan struct{})
+			t.Cleanup(func() {
+				resume()
+				cancel()
+				select {
+				case <-finished:
+				case <-time.After(10 * time.Second):
+					t.Error("FLASHBACK did not finish after releasing the frontend barrier")
+				}
+			})
+			go func() {
+				defer close(finished)
+				rs, execErr := flashTK.ExecWithContext(ctx, "flashback table p")
+				if rs != nil {
+					closeErr := rs.Close()
+					if execErr == nil {
+						execErr = closeErr
+					}
+				}
+				result <- execErr
+			}()
+			select {
+			case queued := <-beforeQueue:
+				require.False(t, queued, "the frontend barrier must precede job submission")
+			case execErr := <-result:
+				t.Fatalf("FLASHBACK returned before the frontend barrier: %v", execErr)
+			case <-ctx.Done():
+				t.Fatal("FLASHBACK did not reach the frontend barrier")
+			}
+
+			if tt.replaceParent {
+				// No recovery job is queued yet, so these FK DDLs cannot wait on
+				// its exclusive dependency on p. The child belongs to a new p,
+				// whose rows do not match the historical parent being recovered.
+				tk.MustExecWithContext(ctx, "create table p (id int primary key)")
+				replacement, lookupErr := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr("fk_owner_flashback"), pmodel.NewCIStr("p"))
+				require.NoError(t, lookupErr)
+				require.NotEqual(t, oldID, replacement.Meta().ID)
+				tk.MustExecWithContext(ctx, "insert into p values (2)")
+				tk.MustExecWithContext(ctx, "create table c (id int primary key, pid int, foreign key (pid) references p(id))")
+				tk.MustExecWithContext(ctx, "insert into c values (1, 2)")
+				tk.MustExecWithContext(ctx, "set foreign_key_checks = 0")
+				tk.MustExecWithContext(ctx, "drop table p")
+				tk.MustExecWithContext(ctx, "set foreign_key_checks = 1")
+				require.Len(t, dom.InfoSchema().GetTableReferredForeignKeys("fk_owner_flashback", "p"), 1)
+			}
+			resume()
+			select {
+			case err = <-result:
+			case <-ctx.Done():
+				t.Fatal("FLASHBACK did not finish after the frontend barrier")
+			}
+			var ownerJobID int64
+			select {
+			case ownerJobID = <-ownerJobIDs:
+			default:
+				t.Fatal("FLASHBACK did not reach the owner-side recovery check")
+			}
+			require.Positive(t, ownerJobID)
+			history, historyErr := ddl.GetHistoryJobByID(tk.Session(), ownerJobID)
+			require.NoError(t, historyErr)
+			require.NotNil(t, history)
+			require.Equal(t, oldID, history.TableID)
+			if tt.replaceParent {
+				require.True(t, dbterror.ErrGeneralUnsupportedDDL.Equal(err), "unexpected recovery result: %v", err)
+				require.True(t, history.IsCancelled())
+				require.True(t, dbterror.ErrGeneralUnsupportedDDL.Equal(history.Error))
+				tk.MustQuery("show tables like 'p'").Check(testkit.Rows())
+				_, exists := dom.InfoSchema().TableByID(context.Background(), oldID)
+				require.False(t, exists)
+				tk.MustQuery("select * from c").Check(testkit.Rows("1 2"))
+				require.Len(t, dom.InfoSchema().GetTableReferredForeignKeys("fk_owner_flashback", "p"), 1)
+			} else {
+				require.NoError(t, err)
+				require.True(t, history.IsSynced())
+				tk.MustQuery("select * from p").Check(testkit.Rows("1"))
+			}
+		})
+	}
 }
 
 func TestRecoverTempTable(t *testing.T) {
