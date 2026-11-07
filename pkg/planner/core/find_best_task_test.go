@@ -15,17 +15,23 @@
 package core
 
 import (
+	"math"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
 )
@@ -37,6 +43,69 @@ func TestFindBestTaskSuite(t *testing.T) {
 	t.Run("RangeCountComparison", testRangeCountComparison)
 	t.Run("RangeCountSkyline", testRangeCountSkyline)
 	t.Run("MissingStatsIndexVsFullScan", testMissingStatsIndexVsFullScan)
+	t.Run("MergeJoinLazyFD", testMergeJoinLazyFD)
+}
+
+// fdCountingChild is a join child that counts how often its FDs are extracted.
+type fdCountingChild struct {
+	*logicalop.LogicalTableDual
+	extractFDCalls int
+}
+
+func (ds *fdCountingChild) ExtractFD() *funcdep.FDSet {
+	ds.extractFDCalls++
+	return &funcdep.FDSet{HashCodeToUniqueID: make(map[string]int)}
+}
+
+// testMergeJoinLazyFD checks that GetMergeJoin only extracts the join's FDs
+// (which, for a wide DataSource, walks every column and unique index) when a
+// merge join candidate needs the constant columns to match a required order.
+func testMergeJoinLazyFD(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer domain.GetDomain(ctx).StatsHandle().Close()
+	newCol := func() *expression.Column {
+		return &expression.Column{UniqueID: ctx.GetSessionVars().AllocPlanColumnID(), RetType: types.NewFieldType(mysql.TypeLonglong)}
+	}
+	newChild := func(col *expression.Column) *fdCountingChild {
+		dual := logicalop.LogicalTableDual{RowCount: 1}.Init(ctx.GetPlanCtx(), 0)
+		dual.SetSchema(expression.NewSchema(col))
+		return &fdCountingChild{LogicalTableDual: dual}
+	}
+	stats := &property.StatsInfo{RowCount: 100}
+	for _, tc := range []struct {
+		name           string
+		hasProperties  bool
+		sortByJoinKey  bool
+		wantMergeJoins int
+		wantExtractFD  int
+	}{
+		{"no merge join candidate", false, true, 0, 0},
+		{"candidate without required order", true, false, 1, 0},
+		{"candidate with required order", true, true, 1, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, b := newCol(), newCol()
+			left, right := newChild(a), newChild(b)
+			join := logicalop.LogicalJoin{JoinType: base.InnerJoin}.Init(ctx.GetPlanCtx(), 0)
+			join.SetChildren(left, right)
+			join.SetSchema(expression.MergeSchema(left.Schema(), right.Schema()))
+			eq, err := expression.NewFunction(ctx.GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), a, b)
+			require.NoError(t, err)
+			join.EqualConditions = []*expression.ScalarFunction{eq.(*expression.ScalarFunction)}
+			if tc.hasProperties {
+				join.LeftProperties = [][]*expression.Column{{a}}
+				join.RightProperties = [][]*expression.Column{{b}}
+			}
+			prop := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
+			if tc.sortByJoinKey {
+				prop = property.NewPhysicalProperty(property.RootTaskType, []*expression.Column{a}, false, math.MaxFloat64, false)
+			}
+			joins := physicalop.GetMergeJoin(join, prop, join.Schema(), stats, stats, stats)
+			require.Len(t, joins, tc.wantMergeJoins)
+			require.Equal(t, tc.wantExtractFD, left.extractFDCalls)
+			require.Equal(t, tc.wantExtractFD, right.extractFDCalls)
+		})
+	}
 }
 
 func testRangeCountComparison(t *testing.T) {
