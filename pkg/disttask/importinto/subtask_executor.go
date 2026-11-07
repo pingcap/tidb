@@ -62,9 +62,15 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 	failpoint.InjectCall("syncBeforeSortChunk")
 	sharedVars := e.mTtask.SharedVars
 
+<<<<<<< HEAD:pkg/disttask/importinto/subtask_executor.go
 	chunkCheckpoint := toChunkCheckpoint(e.mTtask.Chunk)
 	chunkCheckpoint.FileMeta.ParquetMeta = mydump.ParquetFileMeta{
 		Loc: sharedVars.TableImporter.Location,
+=======
+	chunk := e.mTtask.Chunk
+	chunk.ParquetMeta = mydump.ParquetFileMeta{
+		Loc: sharedVars.TableImporter.ParquetLocation(),
+>>>>>>> 11c5a09ba04 (importer, mydump: fix parquet timestamp logical type import (#68140)):pkg/dxf/importinto/subtask_executor.go
 	}
 
 	checksum := verify.NewKVGroupChecksumWithKeyspace(sharedVars.TableImporter.GetKeySpace())

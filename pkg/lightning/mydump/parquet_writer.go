@@ -31,6 +31,7 @@ type ParquetColumn struct {
 	Name      string
 	Type      parquet.Type
 	Converted schema.ConvertedType
+	Logical   schema.LogicalType
 	TypeLen   int
 	Precision int
 	Scale     int
@@ -72,7 +73,65 @@ func getStore(path string) (storage.ExternalStorage, error) {
 
 // WriteParquetFile writes a simple Parquet file with the specified columns and number of rows.
 // It's used for test and DON'T use this function to generate large Parquet files.
+<<<<<<< HEAD
 func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, rows int, addOpts ...parquet.WriterProperty) error {
+=======
+func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, rows int, addOpts ...any) error {
+	fields := make([]schema.Node, len(pcolumns))
+	opts := make([]parquet.WriterProperty, 0, len(pcolumns)*2)
+	for i, pc := range pcolumns {
+		typeLen := -1
+		if pc.TypeLen > 0 {
+			typeLen = pc.TypeLen
+		}
+		var field schema.Node
+		var err error
+		if pc.Logical != nil {
+			field, err = schema.NewPrimitiveNodeLogical(
+				pc.Name,
+				parquet.Repetitions.Optional,
+				pc.Logical,
+				pc.Type,
+				typeLen,
+				-1,
+			)
+		} else {
+			field, err = schema.NewPrimitiveNodeConverted(
+				pc.Name,
+				parquet.Repetitions.Optional,
+				pc.Type, pc.Converted,
+				typeLen, pc.Precision, pc.Scale,
+				-1,
+			)
+		}
+		if err != nil {
+			return err
+		}
+		fields[i] = field
+		opts = append(opts, parquet.WithDictionaryFor(pc.Name, true))
+		opts = append(opts, parquet.WithCompressionFor(pc.Name, compress.Codecs.Snappy))
+	}
+
+	var writerOpts []file.WriteOption
+	for _, opt := range addOpts {
+		switch v := opt.(type) {
+		case parquet.WriterProperty:
+			opts = append(opts, v)
+		case file.WriteOption:
+			writerOpts = append(writerOpts, v)
+		default:
+			return fmt.Errorf("unsupported parquet writer option type %T", opt)
+		}
+	}
+	props := parquet.NewWriterProperties(opts...)
+	writerOpts = append(writerOpts, file.WithWriterProps(props))
+
+	node, err := schema.NewGroupNode("schema", parquet.Repetitions.Required, fields, -1)
+	if err != nil {
+		return err
+	}
+
+>>>>>>> 11c5a09ba04 (importer, mydump: fix parquet timestamp logical type import (#68140))
 	s, err := getStore(path)
 	if err != nil {
 		return err
