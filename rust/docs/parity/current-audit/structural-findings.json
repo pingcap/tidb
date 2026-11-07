@@ -2,8 +2,8 @@
   "date": "2026-11-07",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 28,
-    "open": 6,
+    "unresolved": 31,
+    "open": 9,
     "partial": 22
   },
   "findings": [
@@ -161,7 +161,7 @@
       "id": "X01",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "SQL/PB signature construction and typed vector execution. The planner's `BuiltinFunctionUsageInc` (`expressionRewriter.newFunction`) is not called: it needs the function's `PbCode`, which a planner-built Rust function only gets at pushdown resolution. Go's `PbConverter` sends each builtin's own `PbCode`; this port resolves a signature again from the function's name, argument types and planned result type (`pushdown_catalog.rs` `resolve`), a second copy of each function class's signature choice that covers the functions Go's `scalarExprSupportedByTiKV` pushes.",
+      "finding": "SQL/PB signature construction and typed vector execution. The planner's `BuiltinFunctionUsageInc` (`expressionRewriter.newFunction`) is not called: it needs the function's `PbCode`, which a planner-built Rust function only gets at pushdown resolution. Go's `PbConverter` sends each builtin's own `PbCode`; this port resolves a signature again from the function's name, argument types and planned result type (`pushdown_catalog.rs` `resolve`), a second copy of each function class's signature choice that covers the functions Go's `scalarExprSupportedByTiKV` pushes. The planner decides pushability from `infer_pushdown.rs`'s name list and the executor again from that catalog's resolvability: two authorities where Go reads the builtin's `PbCode` once.",
       "go_owner": "`pkg/expression`"
     },
     {
@@ -206,9 +206,30 @@
       "finding": "The DDL scheduler, systable manager, history and MDL readers scan records instead of running SQL on `DdlSessionPool::sess_pool`; the bootstrap stages raw rows; accounts load eagerly where Go loads per active user",
       "rust_evidence": "`rust/crates/tidb-executor/src/real_tikv_analyze.rs`",
       "go_owner": "`pkg/ddl` (`systable`, job scheduler), `pkg/session` bootstrap, `pkg/privilege/privileges` (`ensureActiveUser`)"
+    },
+    {
+      "id": "R01",
+      "status": "open",
+      "group": "Domain and process services",
+      "finding": "Go's one `sqlexec.RestrictedSQLExecutor` / `SQLExecutor` (ported in `tidb-sqlexec`) has parallel per-caller traits beside it: `RestrictedSqlExecutor` in `tidb-domain` `sysvar_cache.rs` and `plan_replayer.rs` (with `InternalSqlExecutor` and `PlanReplayerSqlExecutor`) and in `tidb-executor` `memtable_reader.rs`, `SysSession` in `fast_check_table.rs`, `InternalSqlRunner` in `tidb-bindinfo`, `DomainSysSession` in `tidb-domain-core` and `SysSessionContext` in `tidb-ttl-ttlworker`, each with its own `execute_internal`",
+      "go_owner": "`pkg/util/sqlexec`"
+    },
+    {
+      "id": "R02",
+      "status": "open",
+      "group": "DML and executor handoff",
+      "finding": "A single-table UPDATE or DELETE's fast point plan is built three times (`driver/dml.rs`: planning, `prefetch_point_plan_keys`, the `fast_point_source` rebuild) where Go builds it once, and the multi-statement prefetch hands none to its statements, where Go's `handleQuery` passes each prefetched plan through `PointPlanKey` and `Optimize` skips `TryFastPlan` for it",
+      "go_owner": "`pkg/server/conn.go` (`prefetchPointPlanKeys`), `pkg/planner/optimize.go`"
+    },
+    {
+      "id": "R03",
+      "status": "open",
+      "group": "DML and executor handoff",
+      "finding": "A single-table UPDATE's SET list is resolved twice: the executor's `update_assignments_for_plan` (`driver/dml.rs`) beside the planner's `buildUpdateLists` (`plan_builder.rs`), where Go's one `PlanBuilder.buildUpdate` resolves it",
+      "go_owner": "`pkg/planner/core` (`buildUpdateLists`)"
     }
   ],
-  "unresolved": 28,
-  "open": 6,
+  "unresolved": 31,
+  "open": 9,
   "partial": 22
 }
