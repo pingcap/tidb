@@ -2,9 +2,9 @@
   "date": "2026-11-08",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 31,
+    "unresolved": 32,
     "open": 7,
-    "partial": 24
+    "partial": 25
   },
   "findings": [
     {
@@ -124,10 +124,10 @@
     },
     {
       "id": "E23",
-      "status": "open",
+      "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "Request units are never accounted for a statement's requests. Over the wire, `EXPLAIN ANALYZE` reports `RU:0.00` for every statement, reads and writes alike, where Go reports what its resource-group controller's `KVCalculator` charged: `RU:0.47` for a point read, `RU:3.94` for a point UPDATE, `RU:3.54` for an INSERT. The controller is started and installed as the resource-control interceptor (`init_resource_groups_controller`), so the gap lies in how a statement's requests carry its `RUDetails` to the interceptor (client-go `util.RUDetailsCtxKey`). A write's root now carries Go's `RuntimeStatsWithCommit` (`FinishExecuteStmt`, before the connection goes to sleep: `unistore_cop.rs` `a_write_root_carries_its_commit_stats_like_go`).",
-      "go_owner": "`pkg/executor/explain.go` (`RUDetails` in the runtime stats), client-go `internal/client` resource-control interceptor and `util.RUDetailsCtxKey`, PD `client/resource_group/controller` (`KVCalculator`)"
+      "finding": "An autocommit `EXPLAIN ANALYZE` of a write renders its rows before its transaction commits, so its RU stats lack the prewrite and commit. Go's `runStmt` commits an `IsExplainAnalyzeDML` statement (`StmtCommit`, `CommitTxn`) before the record set renders, and `ExplainExec.executeAnalyzeExec` registers `RURuntimeStats` afterwards. Over the wire, `explain analyze update t set b=b+1 where id=2` reports `RU:0.47` where Go reports `RU:3.94`, and an INSERT reports `RU:0.00` where Go reports `RU:3.54`. Reads are priced as Go prices them (`RU:0.47` for a point read), and a write's root carries Go's `RuntimeStatsWithCommit`.",
+      "go_owner": "`pkg/session/session.go` (`runStmt`'s `IsExplainAnalyzeDML` commit), `pkg/executor/explain.go` (`executeAnalyzeExec`), `pkg/executor/adapter.go` (`handleNoDelay`)"
     },
     {
       "id": "O09",
@@ -142,6 +142,13 @@
       "group": "Domain and process services",
       "finding": "No cross-keyspace runtime (null keyspace only); the next-gen-only surfaces built on it have no port either: the status port's `/dxf/*` and `/ddl/check/*`, and plan replayer's `tidb_cloud_storage_uri` storage (`pkg/planner/extstore` `createGlobalExtStorage`, local files on a classic kernel)",
       "go_owner": "`pkg/keyspace`, `pkg/domain`, `pkg/planner/extstore`"
+    },
+    {
+      "id": "O20",
+      "status": "open",
+      "group": "Domain and process services",
+      "finding": "`GlobalSysvars::set_sys_var` rebuilds the sysvar cache and runs every GLOBAL variable's SetGlobal hook (and `refresh_resolved` reads the cache, rebuilding it), so the server's `set_global_vars` runs those hooks before the domain exists. Go's `SetSysVar` only replaces the registry `Value`, and the hooks first run in the domain's `rebuildSysVarCache`. Resource control no longer depends on this order (`set_global_resource_control` is Go's driver-bound chain, `unistore_cop.rs` `resource_control_prices_requests_after_an_early_sysvar_load_like_go`); any other hook with an effect a later component must observe is exposed to it.",
+      "go_owner": "`pkg/sessionctx/variable/variable.go` (`SetSysVar`), `cmd/tidb-server/main.go` (`setGlobalVars`), `pkg/domain/sysvar_cache.go` (`rebuildSysVarCache`)"
     },
     {
       "id": "M01",
@@ -229,7 +236,7 @@
       "go_owner": "`pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`)"
     }
   ],
-  "unresolved": 31,
+  "unresolved": 32,
   "open": 7,
-  "partial": 24
+  "partial": 25
 }

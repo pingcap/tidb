@@ -125,19 +125,6 @@ pub fn cluster_session_stack(
         },
     )
         as Arc<dyn tidb_domain_infosync::resource_manager_client::ResourceManagerClient>));
-    // Go `initDomainSysVars` registering `setGlobalResourceControl` over the
-    // driver's `EnableGlobalResourceControlFunc = tikv.EnableResourceControl`,
-    // before any global variable loads: the sysvar turns client-rust's
-    // resource-control dispatch on and off.
-    *tidb_variable::vars::SET_GLOBAL_RESOURCE_CONTROL
-        .write()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::new(|enable| {
-        if enable {
-            tikv_client::enable_resource_control();
-        } else {
-            tikv_client::disable_resource_control();
-        }
-    }));
     // Go `domain.NewDomain`'s `etcdClient`: the node's one etcd client, which
     // every owner, syncer, notifier and watch below shares.
     let etcd = tidb_session::domain::real_tikv_node::connect_etcd_client(config);

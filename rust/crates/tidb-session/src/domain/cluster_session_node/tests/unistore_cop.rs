@@ -29192,6 +29192,28 @@ fn explain_for_connection_renders_the_targets_runtime_stats_like_go() {
     assert_eq!(plan[0][7], "272 Bytes");
 }
 
+/// `tidb_enable_resource_control` reaches client-rust's resource-control
+/// switch however early the first global-variable load runs. The server's
+/// `setGlobalVars` writes `port` before the domain exists. Go binds the
+/// switch in `tikv_driver.go`'s `init`, so a point read is still priced by
+/// the resource-group controller. Captured from a Go tidb-server over the
+/// wire: `explain analyze select * from t where id=1` reports `RU:0.47`.
+#[test]
+fn resource_control_prices_requests_after_an_early_sysvar_load_like_go() {
+    tidb_domain::global_sysvars::GlobalSysvars::new().set_sys_var("port", "4000".to_owned());
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1149)).unwrap();
+    for sql in [
+        "USE test",
+        "create table t (id int primary key, uk int, b int, unique key(uk))",
+        "insert into t values (1,10,0),(2,20,0),(3,30,0)",
+    ] {
+        session.node_conn().execute_write(sql).unwrap();
+    }
+    let plan = displayed(rows(&mut session, "explain analyze select * from t where id=1"));
+    assert!(plan[0][5].contains(", RU:0.47, Get:{"), "{}", plan[0][5]);
+}
+
 /// A write's root carries its transaction's commit statistics: Go's
 /// `FinishExecuteStmt` registers `RuntimeStatsWithCommit` on the plan's root
 /// in the statement's `RuntimeStatsColl`, before the connection goes to sleep

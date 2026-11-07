@@ -101,13 +101,20 @@ pub trait PdRegionPolicy: std::fmt::Debug + Send + Sync {
     fn set_enable_router_client(&self, _enabled: bool) {}
 }
 
-/// Go `variable.SetGlobalResourceControl`: registered by the domain
-/// (`domain_sysvars.go` `setGlobalResourceControl`, which calls the driver's
+/// Go `variable.SetGlobalResourceControl`, called when
+/// `tidb_enable_resource_control` changes: the domain's
+/// `setGlobalResourceControl` (`domain_sysvars.go`) over the driver's
 /// `EnableGlobalResourceControlFunc` / `DisableGlobalResourceControlFunc`,
-/// client-go's `tikv.EnableResourceControl` / `DisableResourceControl`), and
-/// called when `tidb_enable_resource_control` changes.
-pub static SET_GLOBAL_RESOURCE_CONTROL: RwLock<Option<Arc<dyn Fn(bool) + Send + Sync>>> =
-    RwLock::new(None);
+/// which `tikv_driver.go`'s `init` binds to client-go's
+/// `tikv.EnableResourceControl` / `DisableResourceControl` for the whole
+/// process.
+pub fn set_global_resource_control(enable: bool) {
+    if enable {
+        tikv_client::enable_resource_control();
+    } else {
+        tikv_client::disable_resource_control();
+    }
+}
 
 /// Storage-oracle authority installed once by the process session factory.
 pub trait ExternalTimestampProvider: std::fmt::Debug + Send + Sync {

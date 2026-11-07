@@ -524,18 +524,6 @@ pub fn unistore_cluster_session_stack_from(
     tidb_domain_infosync::tiflash_manager::init_tiflash_replica_manager(None);
     // Go `initResourceManagerClient(nil)`: the mock resource manager.
     tidb_domain_infosync::resource_manager_client::init_resource_manager_client(None);
-    // Go `initDomainSysVars` registering `setGlobalResourceControl` for every
-    // store, before any global variable loads: `tidb_enable_resource_control`
-    // turns client-rust's resource-control dispatch on and off.
-    *tidb_variable::vars::SET_GLOBAL_RESOURCE_CONTROL
-        .write()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::new(|enable| {
-        if enable {
-            tikv_client::enable_resource_control();
-        } else {
-            tikv_client::disable_resource_control();
-        }
-    }));
     // Go `initResourceGroupsController(ctx, store.GetPDClient(), serverID)`:
     // unistore's PD client embeds that mock, and the controller over it
     // prices every request and response into the statement's RU details.

@@ -37,7 +37,7 @@ use tidb_variable::sysvar::{alias_of, get_sys_var, SysVarDef, SCOPE_GLOBAL, SCOP
 use tidb_fixcontrol::OptimizerFixControl;
 use tidb_variable::vars::{
     global_get_hook, parse_read_timestamp, validation_var_error,
-    ExternalTimestampProvider, PdRegionPolicy, ResolvedGlobals, SET_GLOBAL_RESOURCE_CONTROL,
+    ExternalTimestampProvider, PdRegionPolicy, ResolvedGlobals,
 };
 use tidb_variable::VarError;
 
@@ -1335,13 +1335,7 @@ impl GlobalSysvars {
                 // Go's SetGlobal: only a change reaches the domain's hook.
                 let previous = tidb_vardef::ENABLE_RESOURCE_CONTROL.swap(on, SeqCst);
                 if previous != on {
-                    let hook = SET_GLOBAL_RESOURCE_CONTROL
-                        .read()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .clone();
-                    if let Some(hook) = hook {
-                        hook(on);
-                    }
+                    tidb_variable::vars::set_global_resource_control(on);
                 }
             }
             TIDB_RESOURCE_CONTROL_STRICT_MODE => {
