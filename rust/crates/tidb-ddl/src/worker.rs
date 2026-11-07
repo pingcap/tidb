@@ -2823,6 +2823,10 @@ where
         &self.owner_id
     }
 
+    fn info_cache(&self) -> Option<Arc<InfoCache>> {
+        Some(Arc::clone(&self.catalog))
+    }
+
     fn wait_version_synced(&self, ddl_job_id: i64, version: i64) -> Result<(), String> {
         self.reload_catalog()?;
         let Some(syncer) = self.schema_version_syncer.as_ref() else {

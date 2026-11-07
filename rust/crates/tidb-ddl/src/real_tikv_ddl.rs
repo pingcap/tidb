@@ -634,6 +634,13 @@ pub trait DdlSchemaSync {
 
     /// Removes the per-job acknowledgement keys after the final phase.
     fn clean_job_versions(&self, ddl_job_id: i64) -> Result<(), String>;
+
+    /// Go `jobContext.infoCache`: the owner node's schema cache, which a job
+    /// step reads its schema from. `None` for a run without one (bootstrap,
+    /// tests), whose steps read the whole schema from their snapshot.
+    fn info_cache(&self) -> Option<Arc<tidb_infoschema_issyncer::catalog_watch::InfoCache>> {
+        None
+    }
 }
 
 /// Go's `ddlJobDoneChMap`: the done signal of each job this node's executor
@@ -936,6 +943,7 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
     let mut schema_state = crate::cluster_ddl::DdlJobSchemaState::new(tidb_vardef::is_mdl_enabled(
         tidb_config_kerneltype::is_next_gen(),
     ));
+    schema_state.info_cache = schema_sync.info_cache();
     schema_state.worker = backfiller.session_pool().map(|sess_pool| crate::cluster_ddl::DdlStepWorker {
         sess_pool,
         // Each step's own, set where the step begins.

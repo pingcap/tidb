@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 28,
-    "open": 7,
-    "partial": 21
+    "open": 6,
+    "partial": 22
   },
   "findings": [
     {
@@ -46,9 +46,9 @@
     },
     {
       "id": "D12",
-      "status": "open",
+      "status": "partial",
       "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "A persisted DDL job step's action handlers take their objects from a catalog rebuilt from the whole step snapshot (`plan_persisted_ddl_job_with` -> `load_info_schema`, a `TableInfo` JSON parse per table, system tables included), where Go's handlers read the job's own objects through `jobCtx.metaMut` (`checkSchemaExistAndCancelNotExistJob`, `GetTableInfoAndCancelFaultJob`) and take only the schema-version context from `jobCtx.infoCache`. The rebuilt catalog is raw meta, not an `InfoSchema`: a DROP DATABASE's later steps still find the write-only database there, while Go's infoschema drops it at the first diff (`applyDropSchema`), so the cached schema cannot stand in until the handlers read meta. In the `executor/foreign_key` and `ddl/db_integration` replays about half of every DDL's latency is that rebuild",
+      "finding": "A persisted DDL job step takes its schema from the owner's `InfoCache` at the step's version (Go `jobCtx.infoCache`) with the job's involved schemas reloaded whole from meta (`overlay_job_schemas`: each `DBInfo` and every table in whatever state), and its action handlers look objects up in that catalog, where Go's handlers point-read the job's objects through `jobCtx.metaMut` (`checkSchemaExistAndCancelNotExistJob`, `GetTableInfoAndCancelFaultJob`)",
       "go_owner": "`pkg/ddl/job_worker.go` (`transitOneJobStep`, `runOneJobStep`), `pkg/ddl/schema.go`, `pkg/ddl/table.go`"
     },
     {
@@ -209,6 +209,6 @@
     }
   ],
   "unresolved": 28,
-  "open": 7,
-  "partial": 21
+  "open": 6,
+  "partial": 22
 }

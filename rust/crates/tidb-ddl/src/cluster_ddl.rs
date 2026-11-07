@@ -5129,6 +5129,10 @@ pub struct DdlJobSchemaState {
     /// `prepareTxn` tags with the job's SQL (`kv.ResourceGroupTagger`).
     /// `None` for a run without a transaction of its own.
     pub step_kv_context: Option<tidb_txnkv::StatementKvContextCell>,
+    /// Go `jobContext.infoCache`: the schema a step reads beside its job's
+    /// own schemas, which it reads from meta (`jobCtx.metaMut`). `None` reads
+    /// the whole schema from the snapshot.
+    pub info_cache: Option<std::sync::Arc<tidb_infoschema_issyncer::catalog_watch::InfoCache>>,
 }
 
 impl DdlJobSchemaState {
@@ -5141,6 +5145,7 @@ impl DdlJobSchemaState {
             reorg: Vec::new(),
             worker: None,
             step_kv_context: None,
+            info_cache: None,
         }
     }
 }
@@ -5556,13 +5561,33 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     ) -> Result<PersistedDdlActionStep, DdlPlanError>,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlJobPlan, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
+    // Go `transitOneJobStep`: the schema from `jobCtx.infoCache` at the
+    // step's version, the job's own schemas from meta (`jobCtx.metaMut`).
+    let cached = match &schema_state.info_cache {
+        Some(cache) => Some(cache.load_with_ts(snapshot, cache.capacity())?),
+        None => None,
+    };
+    let mut catalog = match &cached {
+        Some(cached) => cached.metadata_copy(),
+        None => load_info_schema(snapshot)?,
+    };
     let job_table = tidb_ddl_systable::ddl_job_table::DdlJobTable::locate(&catalog)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
     let mut active = job_table
         .load_by_id(snapshot, ddl_job_id)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?
         .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
+    if let Some(cached) = &cached {
+        let mut schema_ids: Vec<i64> = active
+            .schema_ids
+            .split(',')
+            .filter_map(|id| id.trim().parse().ok())
+            .collect();
+        schema_ids.push(active.job.schema_id);
+        schema_ids.sort_unstable();
+        schema_ids.dedup();
+        catalog = tidb_infoschema::cluster_catalog::overlay_job_schemas(snapshot, cached, &schema_ids)?;
+    }
     if !supports_action(active.job.type_) {
         return Err(DdlPlanError::Encode(format!(
             "unsupported persisted DDL action {}",

@@ -306,6 +306,29 @@ fn database_tables<S: MetaSnapshot + ?Sized>(
     Ok(tables)
 }
 
+/// Go `jobCtx.metaMut`'s reads of a DDL job's own schemas: each of
+/// `schema_ids` as stored now -- its `DBInfo` and every table, in whatever
+/// state -- in place of the schema `base` holds, and a schema meta no longer
+/// stores dropped. The rest is `base`, the step's `InfoSchema`
+/// (`jobCtx.infoCache`), which hides objects a job is still removing.
+pub fn overlay_job_schemas<S: MetaSnapshot + ?Sized>(
+    snapshot: &mut S,
+    base: &crate::SessionExtendedInfoSchema,
+    schema_ids: &[i64],
+) -> Result<crate::SessionExtendedInfoSchema, ClusterCatalogError> {
+    let reader = meta_reader(snapshot);
+    let read = |error| reader_error(&reader, error);
+    let mut catalog = base.metadata_copy();
+    for &id in schema_ids {
+        catalog.drop_schema_by_id(id);
+        if let Some(mut info) = reader.database(id).map_err(read)? {
+            info.deprecated_tables = database_tables(&reader, id).map_err(read)?.into();
+            catalog.create_schema_tables_for_db(GoShared::new(info));
+        }
+    }
+    Ok(catalog)
+}
+
 /// Go `Mutator.ListTables`: every stored `TableInfo` under one database, in
 /// stored key order, as a full load normalizes them.
 pub fn list_tables<S: MetaSnapshot + ?Sized>(

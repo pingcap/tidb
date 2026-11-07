@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**28 unresolved: 7 open, 21 partial.**
+**28 unresolved: 6 open, 22 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -28,7 +28,7 @@ unresolved until it is restated against its Go owner or closed.
 | D02 | partial | No ingest (fast-reorg) backfill: it falls back to the transactional merge (`tidb-ddl/src/cluster_ddl/add_index.rs`); with it the status port's `/ingest/*` routes (Go `IngestConcurrencyHandler` over `ingestctrl`'s rate-limit parameters) are absent | `pkg/ddl/backfilling*.go`, `pkg/ddl/ingest` |
 | D05 | partial | Cancellation follows Go's `convertJob2RollbackJob` for every action the worker runs. A columnar (vector, inverted, full-text) index is checked against its table as Go's `createColumnarIndex` does (`add_index.rs` `create_columnar_index`, `checkTableTypeForColumnarIndex`), but on a table with a columnar replica this node builds no `ActionAddColumnarIndex` job: `onCreateColumnarIndex` (TiFlash schema sync, `checkColumnarIndexProcess`) and its `rollingbackAddColumanrIndex` are absent | `pkg/ddl` |
 | D11 | partial | A multi-schema change has no `promoteProxyKVDiskFullPause`, whose only producer (`autoPauseAddIndexJobOnKVDiskFull`, the DXF add-index task) Rust lacks (D02, O10) | `pkg/ddl/multi_schema_change.go` |
-| D12 | open | A persisted DDL job step's action handlers take their objects from a catalog rebuilt from the whole step snapshot (`plan_persisted_ddl_job_with` -> `load_info_schema`, a `TableInfo` JSON parse per table, system tables included), where Go's handlers read the job's own objects through `jobCtx.metaMut` (`checkSchemaExistAndCancelNotExistJob`, `GetTableInfoAndCancelFaultJob`) and take only the schema-version context from `jobCtx.infoCache`. The rebuilt catalog is raw meta, not an `InfoSchema`: a DROP DATABASE's later steps still find the write-only database there, while Go's infoschema drops it at the first diff (`applyDropSchema`), so the cached schema cannot stand in until the handlers read meta. In the `executor/foreign_key` and `ddl/db_integration` replays about half of every DDL's latency is that rebuild | `pkg/ddl/job_worker.go` (`transitOneJobStep`, `runOneJobStep`), `pkg/ddl/schema.go`, `pkg/ddl/table.go` |
+| D12 | partial | A persisted DDL job step takes its schema from the owner's `InfoCache` at the step's version (Go `jobCtx.infoCache`) with the job's involved schemas reloaded whole from meta (`overlay_job_schemas`: each `DBInfo` and every table in whatever state), and its action handlers look objects up in that catalog, where Go's handlers point-read the job's objects through `jobCtx.metaMut` (`checkSchemaExistAndCancelNotExistJob`, `GetTableInfoAndCancelFaultJob`) | `pkg/ddl/job_worker.go` (`transitOneJobStep`, `runOneJobStep`), `pkg/ddl/schema.go`, `pkg/ddl/table.go` |
 
 ### Executor, DML and expressions
 
