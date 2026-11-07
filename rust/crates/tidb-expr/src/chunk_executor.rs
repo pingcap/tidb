@@ -125,19 +125,9 @@ fn builtin_vec_result(function: &ScalarFunction) -> Option<VecResult> {
         // builtin_compare_vec(_generated).go: every comparison and `In*`
         // resizes an integer result.
         "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "nulleq" | "in" => Allocate,
-        // `Greatest*`/`Least*` over strings evaluate their first argument
-        // into `result`; the `CmpStringAsTime` pair (a string result over a
-        // temporal argument) evaluates every argument into it in turn.
         "greatest" | "least" => match eval_type {
             Int | Real | Decimal => Arg(0),
             Datetime | Timestamp | Duration => Allocate,
-            String
-                if (0..function.args.len()).all(|index| {
-                    !matches!(arg_type(index), Some(Datetime | Timestamp | Duration))
-                }) =>
-            {
-                Arg(0)
-            }
             _ => return None,
         },
         // `Coalesce*` and `CaseWhen*` resize (or reserve and append).

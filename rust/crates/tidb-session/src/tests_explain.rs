@@ -3753,8 +3753,6 @@ fn a_projection_sizes_its_result_columns_as_go_vec_eval_does() {
         ("SELECT concat(a, h), if(a>1, l, 'w') FROM q", "15.4 KB"),
         ("SELECT ifnull(l, 'v'), a+1 FROM q", "12.3 KB"),
         ("SELECT a+1, i FROM q", "12.6 KB"),
-        ("SELECT greatest(c, 'x'), a+1 FROM p", "12.4 KB"),
-        ("SELECT least(c, 's5'), a+1 FROM p", "12.4 KB"),
         ("SELECT convert_tz(f, '+00:00', '+08:00'), a+1 FROM p", "9.13 KB"),
         ("SELECT addtime(f, '01:00:00'), a+1 FROM p", "9.13 KB"),
         ("SELECT addtime(m, '01:00:00'), a+1 FROM q", "9.13 KB"),
@@ -8494,7 +8492,8 @@ fn vector_uuid_and_seeded_builtins_run_in_the_coprocessor_as_go() {
 /// Go `PhysicalTopN.ToPB` lowers any `ByItem`, so a TopN over an expression
 /// runs in the coprocessor: a TableReader's, a covering IndexReader's and an
 /// IndexLookUp's index side (`mod(test.t.b, 3), test.t.b`). gorun pushes all
-/// three into cop[tikv] and answers `4, 3`, `40, 30` and `4, 5`.
+/// three into cop[tikv] and answers `4, 3`, `40, 30` and `4, 5`; the lookup's
+/// table side reads only the TopN's 2 handles (`TableRowIDScan` actRows 2).
 #[test]
 fn an_expression_topn_runs_in_the_coprocessor_as_go() {
     let mut session = Session::new();
@@ -8513,7 +8512,10 @@ fn an_expression_topn_runs_in_the_coprocessor_as_go() {
             .iter()
             .find(|row| row[3] == "cop[tikv]" && row[0].contains("TopN_"))
             .unwrap_or_else(|| panic!("{sql}: no cop TopN in {explained:?}"));
-        assert!(cop_topn[5].starts_with("tikv_task:{"), "{sql}: {cop_topn:?}");
+        match explained.iter().find(|row| row[0].contains("TableRowIDScan_")) {
+            Some(table_side) => assert_eq!(table_side[2], "2", "{sql}: {explained:?}"),
+            None => assert!(cop_topn[5].starts_with("tikv_task:{"), "{sql}: {cop_topn:?}"),
+        }
     }
 }
 

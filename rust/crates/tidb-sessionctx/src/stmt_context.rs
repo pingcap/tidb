@@ -1515,9 +1515,6 @@ pub struct StmtContextData {
     /// `tidb_enable_reuse_chunk`) and the planner has not cleared it
     /// (`disableReuseChunkIfNeeded`).
     chunk_alloc_valid: Arc<AtomicBool>,
-    /// Go `StatementContext.useChunkAlloc`, set by the reuse hook of the
-    /// session allocator `SessionVars.SetAlloc` installs.
-    use_chunk_alloc: Arc<AtomicBool>,
     /// Go `SessionVars.GetChunkAllocator()`: the session's reusable chunk
     /// allocator installed for this statement (`SetAlloc`), which executors
     /// take as their `AllocPool` while [`Self::is_alloc_valid`].
@@ -3182,7 +3179,6 @@ impl StmtContext {
             ignore_inlist_plan_digest: tidb_vardef::defaults::DEF_TIDB_IGNORE_INLIST_PLAN_DIGEST,
             has_physical_table_reader: Arc::default(),
             chunk_alloc_valid: Arc::default(),
-            use_chunk_alloc: Arc::default(),
             chunk_allocator: None,
             cop_warnings: WarningCollector::new(),
             cop_lite_worker: Arc::default(),
@@ -3365,27 +3361,8 @@ impl StmtContext {
     ) -> Self {
         let data = Arc::make_mut(&mut self.0);
         data.chunk_alloc_valid = Arc::new(AtomicBool::new(valid));
-        // Go `SetAlloc`: `NewReuseHookAllocator(NewSyncAllocator(alloc),
-        // func() { s.StmtCtx.SetUseChunkAlloc() })`.
-        let use_chunk_alloc = Arc::new(AtomicBool::new(false));
-        data.use_chunk_alloc = Arc::clone(&use_chunk_alloc);
-        data.chunk_allocator = allocator.filter(|_| valid).map(|allocator| {
-            Arc::new(tidb_chunk::alloc::new_reuse_hook_allocator(allocator, move || {
-                use_chunk_alloc.store(true, Ordering::Relaxed);
-            })) as Arc<dyn tidb_chunk::alloc::Allocator>
-        });
+        data.chunk_allocator = allocator.filter(|_| valid);
         self
-    }
-
-    /// Go `StatementContext.SetUseChunkAlloc`.
-    pub fn set_use_chunk_alloc(&self) {
-        self.use_chunk_alloc.store(true, Ordering::Relaxed);
-    }
-
-    /// Go `StatementContext.GetUseChunkAllocStatus`.
-    #[must_use]
-    pub fn get_use_chunk_alloc_status(&self) -> bool {
-        self.use_chunk_alloc.load(Ordering::Relaxed)
     }
 
     /// Go `SessionVars.GetChunkAllocator()` as an executor reads it when it

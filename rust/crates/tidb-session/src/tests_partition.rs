@@ -5002,6 +5002,7 @@ fn a_reader_pruned_to_no_partition_does_not_detach_as_go() {
         ("select * from tp where a = 1", true),
     ] {
         let statement = session.parse_statement(sql).unwrap();
+        session.bind_committed_snapshot().unwrap();
         let tidb_executor::record_set::OpenedStatement::Rows(mut result) =
             session.open_record_set_parsed(statement, sql).unwrap()
         else {
