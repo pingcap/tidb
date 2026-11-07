@@ -1176,8 +1176,8 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
                 ))));
             }
         };
-        let plan = match plan {
-            tidb_sessmgr::ProcessPlan::Plan(plan) => plan,
+        let tidb_sessmgr::PublishedPlan { plan, runtime_stats_coll, statement_memory } = match plan {
+            tidb_sessmgr::ProcessPlan::Plan(published) => published,
             // An `Explain` plan renders nothing, under the analyze
             // header of the format.
             _ => {
@@ -1213,7 +1213,17 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
                 }));
             }
         };
-        let ctx = self.statement_context(false);
+        // Go `buildExplainFor`: the target's `RuntimeStatsColl`, or none.
+        let ctx = self.statement_context(false).with_executor_runtime_stats_source(
+            runtime_stats_coll
+                .and_then(|coll| coll.get::<std::sync::Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>>())
+                .map(|coll| std::sync::Arc::clone(&*coll)),
+        )
+        .with_explain_target_memory(
+            statement_memory
+                .and_then(|memory| memory.get::<crate::StatementMemory>())
+                .map(|memory| (*memory).clone()),
+        );
         let (columns, rows) = self.with_catalog_mut(|catalog| {
             crate::explain_connection_plan(
                 &plan

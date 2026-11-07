@@ -1455,6 +1455,10 @@ pub struct StmtContextData {
     /// Go `StmtCtx.RuntimeStatsColl`, present only when instance-level
     /// execution-info collection is enabled.
     executor_runtime_stats_source: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
+    /// Go `getRuntimeInfo`'s `p.SCtx().GetSessionVars().StmtCtx.MemTracker` /
+    /// `DiskTracker` when the plan explained is another statement's (`EXPLAIN
+    /// FOR CONNECTION`): that statement's memory, not this one's.
+    explain_target_memory: Option<StatementMemory>,
     /// Go `execdetails.RUV2MetricsFromContext(ctx)`: the statement's RU v2
     /// metrics (`SessionVars.RUV2Metrics`), which `exec.Next` records into.
     ruv2_metrics: Option<Arc<tidb_execdetails::ruv2_metrics::RUV2Metrics>>,
@@ -1852,6 +1856,14 @@ context_configuration! {
 
     /// Installs Go `StmtCtx.RuntimeStatsColl`'s executor-stat source.
     #[must_use]
+    /// Renders runtime memory and disk from `memory`, the explained plan's
+    /// own statement (see [`Self::explain_statement_memory`]).
+    #[must_use]
+    pub fn with_explain_target_memory(mut self, memory: Option<StatementMemory>) -> Self {
+        self.explain_target_memory = memory;
+        self
+    }
+
     pub fn with_executor_runtime_stats_source(
         mut self,
         source: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
@@ -3164,6 +3176,7 @@ impl StmtContext {
             column_stats_usage: None,
             index_usage_collector: None,
             executor_runtime_stats_source: None,
+            explain_target_memory: None,
             ruv2_metrics: None,
             table_delta: None,
             plan_replayer_capture_enabled: false,
@@ -3543,6 +3556,16 @@ impl StmtContext {
     #[must_use]
     pub fn statement_memory(&self) -> StatementMemory {
         self.memory.clone()
+    }
+
+    /// The statement whose trackers an EXPLAIN reads operator memory and disk
+    /// from: the explained plan's statement, which is this one unless set by
+    /// [`Self::with_explain_target_memory`].
+    #[must_use]
+    pub fn explain_statement_memory(&self) -> StatementMemory {
+        self.explain_target_memory
+            .clone()
+            .unwrap_or_else(|| self.memory.clone())
     }
 
     /// Attaches the complete session SQL mode that Go persists in DDL jobs.

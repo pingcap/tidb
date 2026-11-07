@@ -29110,3 +29110,99 @@ fn a_prepared_point_write_caches_its_fast_point_plan_like_go() {
         [["a", "1", "5"], ["b", "2", "0"]]
     );
 }
+
+/// `EXPLAIN FOR CONNECTION` renders the target's last plan with the runtime
+/// stats its execution recorded (Go `buildExplainFor` hands the target
+/// process's `RuntimeStatsColl` to `buildExplainPlan`) and the memory its
+/// operators charged to the target statement's trackers (`p.SCtx()`), not
+/// the explaining statement's. Captured from a Go tidb-server over the wire
+/// (durations masked):
+///
+/// ```text
+/// Update_3      actRows 0  time:D, open:D, close:D, loops:1
+/// └─Point_Get_1 actRows 1  time:D, open:D, close:D, loops:2, Get:{num_rpc:1, total_time:D}
+/// TableReader_7     actRows 1  ..., cop_task: {num: 1, ...}  272 Bytes
+/// └─Selection_6     actRows 1  cop[tikv]
+///   └─TableFullScan_5 actRows 3  cop[tikv]
+/// ```
+#[test]
+fn explain_for_connection_renders_the_targets_runtime_stats_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1144)).unwrap();
+    for sql in [
+        "USE test",
+        "create table t (id int primary key, uk int, b int, unique key(uk))",
+        "insert into t values (1,10,0),(2,20,0),(3,30,0)",
+    ] {
+        session.node_conn().execute_write(sql).unwrap();
+    }
+    rows(&mut session, "set @b=5, @i=1");
+    let id = displayed(rows(&mut session, "select connection_id()"))[0][0].clone();
+    let mut target = stack.factory.open_session(session_context(1145)).unwrap();
+    let explain_target = |session: &mut crate::Session| -> Vec<Vec<String>> {
+        displayed(rows(session, &format!("explain for connection {id}")))
+            .into_iter()
+            .map(|row| row.iter().map(|cell| mask_durations(cell)).collect())
+            .collect()
+    };
+    rows(&mut session, "prepare s1 from 'update t set b=? where id=?'");
+    rows(&mut session, "execute s1 using @b, @i");
+    rows(&mut session, "execute s1 using @b, @i");
+    let plan = explain_target(&mut target);
+    assert_eq!(plan.len(), 2, "{plan:?}");
+    assert_eq!(
+        [&plan[0][0], &plan[0][2], &plan[0][5]],
+        ["Update_3", "0", "time:D, open:D, close:D, loops:1"]
+    );
+    assert_eq!(
+        [&plan[1][0], &plan[1][2], &plan[1][5]],
+        [
+            "└─Point_Get_1",
+            "1",
+            "time:D, open:D, close:D, loops:2, Get:{num_rpc:1, total_time:D}"
+        ]
+    );
+    rows(&mut session, "select * from t where b > 0");
+    let plan = explain_target(&mut target);
+    let shape: Vec<(&str, &str, &str)> = plan
+        .iter()
+        .map(|row| (row[0].as_str(), row[2].as_str(), row[3].as_str()))
+        .collect();
+    assert_eq!(
+        shape,
+        [
+            ("TableReader_7", "1", "root"),
+            ("└─Selection_6", "1", "cop[tikv]"),
+            ("  └─TableFullScan_5", "3", "cop[tikv]"),
+        ]
+    );
+    assert!(
+        plan[0][5].starts_with("time:D, open:D, close:D, loops:2, cop_task: {num: 1, "),
+        "{}",
+        plan[0][5]
+    );
+    assert_eq!(plan[0][7], "272 Bytes");
+}
+
+fn mask_durations(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find(|c: char| c.is_ascii_digit()) {
+        out.push_str(&rest[..start]);
+        let number = rest[start..]
+            .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+            .map_or(rest.len(), |end| start + end);
+        match ["ns", "µs", "ms", "s"].into_iter().find(|unit| rest[number..].starts_with(unit)) {
+            Some(unit) => {
+                out.push('D');
+                rest = &rest[number + unit.len()..];
+            }
+            None => {
+                out.push_str(&rest[start..number]);
+                rest = &rest[number..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}

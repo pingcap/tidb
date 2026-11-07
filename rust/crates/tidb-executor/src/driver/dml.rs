@@ -119,29 +119,20 @@ pub fn run_insert_stmt_with_physical(
     ctx: &crate::StmtContext,
     physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
 ) -> Result<(u64, Option<u64>), DriverError> {
-    run_insert_stmt_with_physical_and_stats(
-        insert,
-        catalog,
-        current_db,
-        ctx,
-        physical_plan,
-        None,
-        None,
-    )
+    run_insert_stmt_with_physical_and_visits(insert, catalog, current_db, ctx, physical_plan, None)
 }
 
 /// [`run_insert_stmt_with_physical`] with the executors' runtime stats.
 /// `source_visits` are the visit infos of an INSERT the caller built itself
 /// ([`physical_insert_plan`]); `None` with a `physical_plan` is a cached plan,
 /// whose statement checked the visit infos PREPARE kept.
-pub(crate) fn run_insert_stmt_with_physical_and_stats(
+pub(crate) fn run_insert_stmt_with_physical_and_visits(
     insert: &tidb_ast::InsertStmt,
     catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
     source_visits: Option<Vec<tidb_planner::plan_builder::visit_info::VisitInfo>>,
-    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<(u64, Option<u64>), DriverError> {
     // go resolves the INSERT's target table before planning the source
     // query: `INSERT INTO h1 (a, b) SELECT a, b FROM no_such` over a missing
@@ -183,10 +174,9 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
     } else {
         "*executor.InsertExec.Next"
     });
-    let mut runtime = runtime;
     let dml = physical_plan
         .as_deref()
-        .map(|plan| super::physical_builder::DmlExec::new_insert(plan, ctx, runtime.as_deref_mut()));
+        .map(|plan| super::physical_builder::DmlExec::new_insert(plan, ctx));
     let (physical_source, fk_site, _, _) = dml_execution_parts(physical_plan, "Insert")?;
     let dml = dml.as_ref().expect("dml_execution_parts found the root");
     dml.next(|| {
@@ -198,7 +188,6 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
             ctx,
             physical_source,
             Some(fk_site),
-            runtime,
             None,
             Some(dml),
         )
@@ -394,15 +383,13 @@ pub(crate) fn run_fk_cascade(
     plan: &mut tidb_planner_core_operator_physicalop::PhysicalPlan,
     catalog: &mut SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
-    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<crate::foreign_key::WithForeignKeyTrigger, DriverError> {
-    let mut runtime = runtime;
     mark_dml_point_source_lock(plan, ctx.pessimistic_transaction());
     super::physical_builder::prepare_execution_plan(plan, catalog, ctx)?;
     match stmt {
         crate::foreign_key::FKCascadeStmt::Delete(delete) => {
             let current_db = cascade_database(&delete.kind_table())?;
-            let dml = super::physical_builder::DmlExec::new(plan, ctx, runtime.as_deref_mut());
+            let dml = super::physical_builder::DmlExec::new(plan, ctx);
             let (physical_source, fk_site, delete_col_pos, delete_tables) =
                 dml_execution_parts(Some(plan), "Delete")?;
             let (_, fk) = run_delete_with_physical(
@@ -415,13 +402,12 @@ pub(crate) fn run_fk_cascade(
                 delete_col_pos,
                 delete_tables,
                 &dml,
-                runtime,
             )?;
             Ok(fk)
         }
         crate::foreign_key::FKCascadeStmt::Update(update) => {
             let current_db = cascade_database(&update.kind_table())?;
-            let dml = super::physical_builder::DmlExec::new_update(plan, ctx, runtime.as_deref_mut());
+            let dml = super::physical_builder::DmlExec::new_update(plan, ctx);
             let tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(root) = plan else {
                 return Err(DriverError::unsupported(
                     "UPDATE execution received a non-DML physical root",
@@ -438,7 +424,6 @@ pub(crate) fn run_fk_cascade(
                 root.fk_triggers.as_slice(),
                 (root.update_tables.as_slice(), root.update_assigns.as_slice()),
                 &dml,
-                runtime,
             )?;
             set_update_message(ctx, written.matched);
             Ok(written.fk)
@@ -1284,7 +1269,6 @@ pub fn check_and_insert_one_batch(
         ctx,
         None,
         None,
-        None,
         Some((rows, &mut counts)),
         None,
     )?;
@@ -1300,7 +1284,6 @@ fn run_insert_rows(
     ctx: &crate::StmtContext,
     physical_source: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
     fk_site: Option<FkTriggerSite<'_>>,
-    mut runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
     load: Option<(LoadDataRows<'_>, &mut LoadDataCounts)>,
     dml: Option<&super::physical_builder::DmlExec>,
 ) -> Result<(u64, Option<u64>), DriverError> {
@@ -1364,11 +1347,7 @@ fn run_insert_rows(
             let physical = physical_source.ok_or_else(|| {
                 DriverError::unsupported("INSERT SELECT has no retained physical child")
             })?;
-            let (exec, collected) =
-                super::physical_builder::build_dml_source(physical, catalog, ctx, runtime.is_some())?;
-            if let Some(runtime) = runtime.as_deref_mut() {
-                runtime.extend(collected);
-            }
+            let exec = super::physical_builder::build_dml_source(physical, catalog, ctx)?;
             Some(super::DmlSourceCursor::open(exec, ctx.statement_memory(), dml)?)
         }
         None => None,
@@ -2505,7 +2484,6 @@ fn run_insert_rows(
             site.plan_id,
             catalog,
             ctx,
-            runtime.as_deref_mut(),
         )?;
     }
     // Go `InsertExec.setMessage` / `ReplaceExec.setMessage`: an
@@ -3116,17 +3094,6 @@ pub fn run_update_stmt_with_physical(
     ctx: &crate::StmtContext,
     physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
 ) -> Result<u64, DriverError> {
-    run_update_stmt_with_physical_and_stats(update, catalog, current_db, ctx, physical_plan, None)
-}
-
-pub(crate) fn run_update_stmt_with_physical_and_stats(
-    update: &tidb_ast::UpdateStmt,
-    catalog: &mut SessionExtendedInfoSchema,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-    physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
-    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
-) -> Result<u64, DriverError> {
     // Go `buildUpdateLists` resolves a CTE target's assignment columns and
     // then refuses it (1288); `update_target_columns` takes the same steps.
     if let tidb_ast::UpdateKind::Single(table) = &update.kind {
@@ -3174,8 +3141,7 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
     let Some(plan) = physical_plan else {
         return Err(DriverError::unsupported("UPDATE execution has no physical plan"));
     };
-    let mut runtime = runtime;
-    let dml = super::physical_builder::DmlExec::new_update(plan, ctx, runtime.as_deref_mut());
+    let dml = super::physical_builder::DmlExec::new_update(plan, ctx);
     let tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(root) = plan else {
         return Err(DriverError::unsupported(
             "UPDATE execution received a non-DML physical root",
@@ -3198,7 +3164,6 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
         root.fk_triggers.as_slice(),
         (root.update_tables.as_slice(), root.update_assigns.as_slice()),
         &dml,
-        runtime.as_deref_mut(),
     )?;
     crate::foreign_key::handle_stmt_foreign_key_trigger(
         written.fk,
@@ -3206,7 +3171,6 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
         root.plan_id,
         catalog,
         ctx,
-        runtime,
     )?;
     set_update_message(ctx, written.matched);
     // Go reads `StmtCtx.AffectedRows` once the statement, its foreign-key
@@ -4013,7 +3977,6 @@ fn run_update_with_physical(
         &[tidb_planner_core_operator_physicalop::UpdateAssign],
     ),
     dml: &super::physical_builder::DmlExec,
-    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<UpdateWritten, DriverError> {
     // A `RETURNING` clause is parsed and silently ignored, matching Go: the
     // planner and executor never read `UpdateStmt.Returning`. `StmtContext`
@@ -4034,7 +3997,6 @@ fn run_update_with_physical(
                 planned_update_expressions.unwrap_or_default(),
                 fk_triggers,
                 dml,
-                runtime,
             );
         }
     };
@@ -4208,7 +4170,6 @@ fn run_update_with_physical(
             &database,
             &name,
             ctx,
-            runtime,
             dml,
             None,
             |catalog, row, physical_field_types| {
@@ -4272,7 +4233,6 @@ fn run_update_with_physical(
         &database,
         &name,
         ctx,
-        runtime,
         dml,
         None,
     )?;
@@ -4499,17 +4459,6 @@ pub fn run_delete_stmt_with_physical(
     ctx: &crate::StmtContext,
     physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
 ) -> Result<u64, DriverError> {
-    run_delete_stmt_with_physical_and_stats(delete, catalog, current_db, ctx, physical_plan, None)
-}
-
-pub(crate) fn run_delete_stmt_with_physical_and_stats(
-    delete: &tidb_ast::DeleteStmt,
-    catalog: &mut SessionExtendedInfoSchema,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-    physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
-    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
-) -> Result<u64, DriverError> {
     // Go's `PlanBuilder.buildDelete` resolves the target and refuses a view or
     // sequence before it builds the read child.  A sequence is not a row
     // source, so letting the physical planner inspect it first would turn the
@@ -4574,10 +4523,9 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
     }
     // Go `runStmt` -> `handleNoDelayExecutor` -> the DML executor's `Next`.
     let _execution = super::begin_dml_execution("*executor.DeleteExec.Next");
-    let mut runtime = runtime;
     let dml = physical_plan
         .as_deref()
-        .map(|plan| super::physical_builder::DmlExec::new(plan, ctx, runtime.as_deref_mut()));
+        .map(|plan| super::physical_builder::DmlExec::new(plan, ctx));
     let (physical_source, fk_site, delete_col_pos, delete_tables) =
         dml_execution_parts(physical_plan, "Delete")?;
     let (_, fk) = run_delete_with_physical(
@@ -4590,7 +4538,6 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
         delete_col_pos,
         delete_tables,
         dml.as_ref().expect("dml_execution_parts found the root"),
-        runtime.as_deref_mut(),
     )?;
     crate::foreign_key::handle_stmt_foreign_key_trigger(
         fk,
@@ -4598,7 +4545,6 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
         fk_site.plan_id,
         catalog,
         ctx,
-        runtime,
     )?;
     // Go reads `StmtCtx.AffectedRows` once the statement, its foreign-key
     // cascades included, has run.
@@ -4656,7 +4602,6 @@ fn run_delete_with_physical(
     delete_col_pos: Option<&tidb_planner_core_operator_physicalop::DeleteColPos>,
     delete_tables: &[tidb_planner_core_operator_physicalop::DeleteTablePos],
     dml: &super::physical_builder::DmlExec,
-    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<(u64, crate::foreign_key::WithForeignKeyTrigger), DriverError> {
     // `DELETE IGNORE` differs from a plain `DELETE` only in what it does with
     // a referential violation: Go downgrades it from a statement error to a
@@ -4673,7 +4618,6 @@ fn run_delete_with_physical(
                 delete_tables,
                 fk_triggers,
                 dml,
-                runtime,
             );
         }
     };
@@ -4725,7 +4669,6 @@ fn run_delete_with_physical(
         &database,
         &name,
         ctx,
-        runtime,
         dml,
         delete_col_pos,
         |catalog, row, _| {
@@ -4924,7 +4867,6 @@ fn execute_physical_write_rows(
     database: &str,
     name: &str,
     ctx: &crate::StmtContext,
-    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
     dml: &super::physical_builder::DmlExec,
     pruning: Option<&tidb_planner_core_operator_physicalop::DeleteColPos>,
 ) -> Result<PhysicalWriteRows, DriverError> {
@@ -4935,7 +4877,6 @@ fn execute_physical_write_rows(
         database,
         name,
         ctx,
-        runtime,
         dml,
         pruning,
         |_, row, _| {
@@ -4957,26 +4898,21 @@ fn stream_physical_write_rows(
     database: &str,
     name: &str,
     ctx: &crate::StmtContext,
-    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
     dml: &super::physical_builder::DmlExec,
     pruning: Option<&tidb_planner_core_operator_physicalop::DeleteColPos>,
     mut apply: impl FnMut(&mut SessionExtendedInfoSchema, PhysicalWriteRow, &[FieldType]) -> Result<(), DriverError>,
 ) -> Result<Vec<FieldType>, DriverError> {
     let shape = PhysicalWriteShape::new(physical, catalog, database, name, pruning)?;
-    let collected = super::physical_builder::execute_dml_source_writing(
+    super::physical_builder::execute_dml_source_writing(
         physical,
         catalog,
         ctx,
         dml,
-        runtime.is_some(),
         |catalog, row| {
             let row = shape.row(row, ctx)?;
             apply(catalog, row, &shape.field_types)
         },
     )?;
-    if let Some(runtime) = runtime {
-        runtime.extend(collected);
-    }
     Ok(shape.field_types)
 }
 

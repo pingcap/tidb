@@ -2702,9 +2702,13 @@ impl Session {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let previous_plan = cell.plan.take();
+            let previous_runtime_stats_coll = cell.runtime_stats_coll.take();
+            let previous_statement_memory = cell.statement_memory.take();
             let previous_explain = cell.explain_marker;
             *cell = tidb_stmtctx::ProcessPlanInfo::default();
             cell.previous_plan = previous_plan;
+            cell.previous_runtime_stats_coll = previous_runtime_stats_coll;
+            cell.previous_statement_memory = previous_statement_memory;
             cell.previous_explain = previous_explain;
         }
         self.check_sandbox_mode(sql)?;

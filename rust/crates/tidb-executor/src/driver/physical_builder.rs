@@ -162,7 +162,10 @@ struct BuildState {
     /// Receiver substitutions while building a shuffle worker subtree.
     shuffle_receivers: HashMap<i32, Box<dyn Executor>>,
     cte_slots: HashMap<i32, CteBuildSlot>,
-    runtime_counters: Option<PhysicalRuntimeStats>,
+    /// Each index-merge partial's produced handles, which the builder's tests
+    /// read to pin how far each partial fetched.
+    #[cfg(test)]
+    index_merge_partial_rows: HashMap<i32, tidb_executor_internal_exec::RowCount>,
     executor_runtime_stats_source: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
     /// The coprocessor `Limit offset:o, count:c` a covering `IndexReader`'s
     /// `IndexPlan` carries above its `IndexScan`, as `o + c`. Go pushes it into
@@ -188,7 +191,6 @@ struct BuildState {
     /// `inUpdateStmt`/`inDeleteStmt`/`inInsertStmt` builder flags, because
     /// those statements write the membuffer the workers would race).
     projection_workers_allowed: bool,
-    merge_scan_counters: bool,
     /// The range group a grouped-range reader is being built for (Go
     /// `GroupedRanges`): the one scan carrying `group_by_col_idxs` reads
     /// these ranges instead of its own.
@@ -198,121 +200,8 @@ struct BuildState {
     has_lock: bool,
 }
 
-pub(crate) type PhysicalRuntimeStats = HashMap<usize, PhysicalRuntimeCounter>;
-
-#[derive(Clone)]
-pub(crate) struct PhysicalRuntimeCounter {
-    rows: tidb_executor_internal_exec::RowCount,
-    calls: Option<Arc<Mutex<PhysicalCallStats>>>,
-    apply: Option<crate::apply::native::ApplyRuntimeSink>,
-    /// Go `RURuntimeStats`, which `ExplainExec.executeAnalyzeExec` registers
-    /// on the target plan after the analyzed statement ran and before its
-    /// executors' `Close` register theirs.
-    ru: Option<Arc<tidb_execdetails::ruv2_metrics::RuRuntimeStats>>,
-    /// Go `runtimeStatsWithSnapshot`, which a PointGet/BatchPointGet
-    /// registers from its `Close`: its snapshot's RPC, time and scan details.
-    snapshot: Option<Arc<tikv_client::SnapshotRuntimeStats>>,
-    /// Go `InsertRuntimeStat`, which `InsertExec` / `ReplaceExec` register
-    /// from their `Close`. An EXPLAIN ANALYZE'd write runs through
-    /// `handleNoDelayExecutor`, which closes it before `executeAnalyzeExec`
-    /// registers the RU stats, so this group prints before them.
-    insert: Option<Arc<Mutex<super::dml::InsertRuntimeStat>>>,
-    /// Go `updateRuntimeStats`, which `UpdateExec` registers from its
-    /// `Close`, printing where the insert group does.
-    update: Option<Arc<super::dml::UpdateRuntimeStats>>,
-}
-
-impl From<tidb_executor_internal_exec::RowCount> for PhysicalRuntimeCounter {
-    fn from(rows: tidb_executor_internal_exec::RowCount) -> Self {
-        Self {
-            rows,
-            calls: None,
-            apply: None,
-            ru: None,
-            snapshot: None,
-            insert: None,
-            update: None,
-        }
-    }
-}
-
-impl PhysicalRuntimeCounter {
-    pub(crate) fn get(&self) -> u64 {
-        self.rows.get()
-    }
-
-    /// Go `RuntimeStatsColl.RegisterStats(targetPlanID, &RURuntimeStats{..})`.
-    pub(crate) fn register_ru_runtime_stats(
-        &mut self,
-        stats: tidb_execdetails::ruv2_metrics::RuRuntimeStats,
-    ) {
-        self.ru = Some(Arc::new(stats));
-    }
-
-    pub(crate) fn execution_info(&self) -> Option<String> {
-        let format = |elapsed: Duration| {
-            tidb_model::go_duration::format_explain_duration(
-                i64::try_from(elapsed.as_nanos()).unwrap_or(i64::MAX),
-            )
-        };
-        let mut details = Vec::new();
-        let calls = self.calls.as_ref().map(|calls| *calls.lock().unwrap());
-        if let Some(calls) = calls {
-            details.push(format!(
-                "time:{}, open:{}, close:{}, loops:{}",
-                format(calls.open + calls.next + calls.close),
-                format(calls.open),
-                format(calls.close),
-                calls.loops,
-            ));
-        }
-        if let Some(insert) = &self.insert {
-            let basic_time = calls.map_or(Duration::ZERO, |calls| calls.open + calls.next + calls.close);
-            let insert = insert.lock().unwrap().string(basic_time);
-            if !insert.is_empty() {
-                details.push(insert);
-            }
-        }
-        if let Some(update) = self.update.as_ref().map(|update| update.string()) {
-            if !update.is_empty() {
-                details.push(update);
-            }
-        }
-        if let Some(ru) = self.ru.as_ref().map(|ru| ru.string()) {
-            if !ru.is_empty() {
-                details.push(ru);
-            }
-        }
-        if let Some(snapshot) = self.snapshot.as_ref().map(ToString::to_string) {
-            if !snapshot.is_empty() {
-                details.push(snapshot);
-            }
-        }
-        if let Some(snapshot) = self.apply.as_ref().and_then(|sink| *sink.lock().unwrap()) {
-            let concurrency = if snapshot.concurrency > 1 {
-                format!("Concurrency:{}", snapshot.concurrency)
-            } else {
-                "concurrency:OFF".to_owned()
-            };
-            if snapshot.enabled {
-                let ratio = if snapshot.accesses == 0 {
-                    0.0
-                } else {
-                    snapshot.hits as f64 / snapshot.accesses as f64 * 100.0
-                };
-                details.push(format!(
-                    "{concurrency}, cache:ON, cacheHitRatio:{ratio:.3}%"
-                ));
-            } else {
-                details.push(format!("{concurrency}, cache:OFF"));
-            }
-        }
-        (!details.is_empty()).then(|| details.join(", "))
-    }
-}
-
-/// Go BasicRuntimeStats' lifecycle counters. The existing EXPLAIN builder
-/// owns these records; ordinary execution installs no metering wrapper.
+/// Go BasicRuntimeStats' lifecycle counters, which a write's root adds up
+/// for its one `exec.Next` record.
 #[derive(Clone, Copy, Default)]
 struct PhysicalCallStats {
     open: Duration,
@@ -359,26 +248,13 @@ impl DmlExec {
     pub(crate) fn new(
         plan: &PhysicalPlan,
         ctx: &crate::StmtContext,
-        runtime: Option<&mut PhysicalRuntimeStats>,
     ) -> Self {
         let runtime_stats = ctx
             .executor_runtime_stats_source()
             .and_then(|source| source.for_executor(i64::from(plan.id())));
-        let calls = match runtime {
-            Some(runtime) => {
-                let counter = runtime
-                    .entry(runtime_plan_key(plan))
-                    .or_insert_with(|| tidb_executor_internal_exec::RowCount::default().into());
-                Some(Arc::clone(
-                    counter
-                        .calls
-                        .get_or_insert_with(|| Arc::new(Mutex::new(PhysicalCallStats::default()))),
-                ))
-            }
-            None => runtime_stats
-                .is_some()
-                .then(|| Arc::new(Mutex::new(PhysicalCallStats::default()))),
-        };
+        let calls = runtime_stats
+            .is_some()
+            .then(|| Arc::new(Mutex::new(PhysicalCallStats::default())));
         // Go `Open`'s `memory.NewTracker(e.ID(), -1)` + `AttachTo`.
         let start = Instant::now();
         let mem_tracker = ctx.statement_memory().write_accountant(i64::from(plan.id()));
@@ -403,19 +279,11 @@ impl DmlExec {
     pub(crate) fn new_insert(
         plan: &PhysicalPlan,
         ctx: &crate::StmtContext,
-        mut runtime: Option<&mut PhysicalRuntimeStats>,
     ) -> Self {
-        let mut dml = Self::new(plan, ctx, runtime.as_deref_mut());
+        let mut dml = Self::new(plan, ctx);
         // Go `collectRuntimeStatsEnabled`: the statement collects runtime stats.
-        if runtime.is_some() || dml.runtime_stats.is_some() {
-            let stats = Arc::new(Mutex::new(super::dml::InsertRuntimeStat::default()));
-            if let Some(runtime) = runtime {
-                runtime
-                    .get_mut(&runtime_plan_key(plan))
-                    .expect("Self::new registered the plan")
-                    .insert = Some(Arc::clone(&stats));
-            }
-            dml.insert = Some(stats);
+        if dml.runtime_stats.is_some() {
+            dml.insert = Some(Arc::new(Mutex::new(super::dml::InsertRuntimeStat::default())));
         }
         dml
     }
@@ -425,19 +293,11 @@ impl DmlExec {
     pub(crate) fn new_update(
         plan: &PhysicalPlan,
         ctx: &crate::StmtContext,
-        mut runtime: Option<&mut PhysicalRuntimeStats>,
     ) -> Self {
-        let mut dml = Self::new(plan, ctx, runtime.as_deref_mut());
+        let mut dml = Self::new(plan, ctx);
         // Go `collectRuntimeStatsEnabled`: the statement collects runtime stats.
-        if runtime.is_some() || dml.runtime_stats.is_some() {
-            let stats = Arc::new(super::dml::UpdateRuntimeStats::default());
-            if let Some(runtime) = runtime {
-                runtime
-                    .get_mut(&runtime_plan_key(plan))
-                    .expect("Self::new registered the plan")
-                    .update = Some(Arc::clone(&stats));
-            }
-            dml.update = Some(stats);
+        if dml.runtime_stats.is_some() {
+            dml.update = Some(Arc::new(super::dml::UpdateRuntimeStats::default()));
         }
         dml
     }
@@ -577,52 +437,23 @@ fn register_concurrency_info(ctx: &crate::StmtContext, plan: &PhysicalPlan, name
     source.register_stats(i64::from(plan.id()), Box::new(stats));
 }
 
-pub(crate) fn runtime_plan_key(plan: &PhysicalPlan) -> usize {
-    std::ptr::from_ref(plan).addr()
-}
-
 impl BuildState {
     /// Go `PointGetExecutor.Init` / `buildBatchPointGet`: with
     /// `RuntimeStats() != nil` (EXPLAIN ANALYZE, or execution-info collection),
     /// a point reader owns a `SnapshotRuntimeStats` its snapshot collects
     /// into, registered on the plan's runtime stats.
-    fn point_snapshot_runtime_stats(
-        &mut self,
-        plan: &PhysicalPlan,
-    ) -> Option<Arc<tikv_client::SnapshotRuntimeStats>> {
-        let analyzed = self.runtime_counters.is_some();
-        if !analyzed && self.executor_runtime_stats_source.is_none() {
-            return None;
-        }
-        let stats = Arc::new(tikv_client::SnapshotRuntimeStats::default());
-        if let Some(counters) = self.runtime_counters.as_mut() {
-            counters
-                .entry(runtime_plan_key(plan))
-                .or_insert_with(|| tidb_executor_internal_exec::RowCount::default().into())
-                .snapshot = Some(Arc::clone(&stats));
-        }
-        Some(stats)
+    fn point_snapshot_runtime_stats(&self) -> Option<Arc<tikv_client::SnapshotRuntimeStats>> {
+        self.executor_runtime_stats_source
+            .is_some()
+            .then(|| Arc::new(tikv_client::SnapshotRuntimeStats::default()))
     }
 
-    fn apply_runtime_sink(
-        &mut self,
-        plan_key: usize,
-    ) -> Option<crate::apply::native::ApplyRuntimeSink> {
-        let Some(counters) = self.runtime_counters.as_mut() else {
-            // Go `e.RuntimeStats() != nil`: the statement collects stats.
-            return self
-                .executor_runtime_stats_source
-                .is_some()
-                .then(|| Arc::new(Mutex::new(None)));
-        };
-        let counter = counters
-            .entry(plan_key)
-            .or_insert_with(|| tidb_executor_internal_exec::RowCount::default().into());
-        Some(Arc::clone(
-            counter
-                .apply
-                .get_or_insert_with(|| Arc::new(Mutex::new(None))),
-        ))
+    /// Go `e.RuntimeStats() != nil`: an apply publishes its cache use when the
+    /// statement collects stats.
+    fn apply_runtime_sink(&self) -> Option<crate::apply::native::ApplyRuntimeSink> {
+        self.executor_runtime_stats_source
+            .is_some()
+            .then(|| Arc::new(Mutex::new(None)))
     }
 
     fn meter(
@@ -680,49 +511,6 @@ impl BuildState {
             top_profiling: self.top_profiling.clone(),
             ruv2,
             child_count,
-        });
-        let Some(counters) = self.runtime_counters.as_mut() else {
-            return executor;
-        };
-        if !self.merge_scan_counters
-            && matches!(
-                plan,
-                PhysicalPlan::TableScan(_) | PhysicalPlan::IndexScan(_)
-            )
-        {
-            if let Some(counter) = executor
-                .table_access()
-                .and_then(|access| access.scanned_rows_counter())
-            {
-                counters.insert(runtime_plan_key(plan), counter.into());
-                return executor;
-            }
-        }
-        // Shuffle builds several executors for the same physical node. Go
-        // merges their BasicRuntimeStats by plan ID; share one accumulator
-        // instead of replacing it with the last worker's counters.
-        let stats =
-            counters
-                .entry(runtime_plan_key(plan))
-                .or_insert_with(|| PhysicalRuntimeCounter {
-                    rows: tidb_executor_internal_exec::RowCount::default(),
-                    calls: None,
-                    apply: None,
-                    ru: None,
-                    snapshot: None,
-                    insert: None,
-                    update: None,
-                });
-        let counter = stats.rows.clone();
-        let calls = Arc::clone(
-            stats
-                .calls
-                .get_or_insert_with(|| Arc::new(Mutex::new(PhysicalCallStats::default()))),
-        );
-        executor = Box::new(PhysicalCountExec {
-            child: executor,
-            counter,
-            calls,
         });
         executor
     }
@@ -989,74 +777,6 @@ impl Executor for SqlKillerCheckExec {
                     .finish();
             }
         }
-        result
-    }
-
-    fn schema(&self) -> &Schema {
-        self.child.schema()
-    }
-
-    fn ret_field_types(&self) -> &[FieldType] {
-        self.child.ret_field_types()
-    }
-
-    fn init_cap(&self) -> usize {
-        self.child.init_cap()
-    }
-
-    fn max_chunk_size(&self) -> usize {
-        self.child.max_chunk_size()
-    }
-
-    fn new_chunk(&self) -> Chunk {
-        self.child.new_chunk()
-    }
-
-    fn table_access(&mut self) -> Option<&mut dyn tidb_executor_internal_exec::table_access::TableAccess> {
-        self.child.table_access()
-    }
-
-    fn agg_tree_input_empty(&self) -> bool {
-        self.child.agg_tree_input_empty()
-    }
-}
-
-/// Go's per-physical-operator runtime-stat registration. The wrapper records
-/// rows, Next calls and inclusive Open/Next/Close time for the executor built
-/// for one retained physical node; it never selects or rebuilds a plan.
-struct PhysicalCountExec {
-    child: Box<dyn Executor>,
-    counter: tidb_executor_internal_exec::RowCount,
-    calls: Arc<Mutex<PhysicalCallStats>>,
-}
-
-impl Executor for PhysicalCountExec {
-    fn open(&mut self) -> Result<(), crate::ExecError> {
-        let start = Instant::now();
-        let result = tidb_driver_error::panic_recovery::recover_executor_panic(|| self.child.open());
-        let mut calls = self.calls.lock().unwrap();
-        calls.open += start.elapsed();
-        result
-    }
-
-    fn next(&mut self, req: &mut Chunk) -> Result<(), crate::ExecError> {
-        let start = Instant::now();
-        let result = tidb_driver_error::panic_recovery::recover_executor_panic(|| self.child.next(req));
-        let mut calls = self.calls.lock().unwrap();
-        calls.next += start.elapsed();
-        calls.loops += 1;
-        // The shared calls lock also serializes the read/modify/write of the
-        // row counter across shuffle workers.
-        self.counter
-            .set(self.counter.get().saturating_add(req.num_rows() as u64));
-        result
-    }
-
-    fn close(&mut self) -> Result<(), crate::ExecError> {
-        let start = Instant::now();
-        let result = tidb_driver_error::panic_recovery::recover_executor_panic(|| self.child.close());
-        let mut calls = self.calls.lock().unwrap();
-        calls.close += start.elapsed();
         result
     }
 
@@ -4363,30 +4083,14 @@ fn build_index_lookup_source(
                 ctx.ruv2_metrics(),
             )
         });
-        let calls = state
-            .runtime_counters
-            .as_mut()
-            .filter(|_| !state.untraced)
-            .map(|counters| {
-                let calls = Arc::new(Mutex::new(PhysicalCallStats::default()));
-                counters.insert(
-                    runtime_plan_key(inner),
-                    PhysicalRuntimeCounter {
-                        calls: Some(Arc::clone(&calls)),
-                        ..leaf.produced_rows().into()
-                    },
-                );
-                calls
-            });
         let runtime_stats = (!state.untraced)
             .then(|| ctx.executor_runtime_stats_source().and_then(|source| source.for_executor(i64::from(inner.id()))))
             .flatten();
-        if calls.is_none() && runtime_stats.is_none() && ruv2.is_none() {
+        if runtime_stats.is_none() && ruv2.is_none() {
             return Ok(IndexLookupSource::Leaf(Box::new(leaf)));
         }
         return Ok(IndexLookupSource::Leaf(Box::new(MeteredIndexJoinLookup {
             inner: Box::new(leaf),
-            calls,
             runtime_stats,
             ruv2,
         })));
@@ -4402,7 +4106,6 @@ fn build_index_lookup_source(
 /// `Close` into the reader plan's stats.
 struct MeteredIndexJoinLookup {
     inner: Box<dyn tidb_executor_join::index_lookup::IndexJoinLookup>,
-    calls: Option<Arc<Mutex<PhysicalCallStats>>>,
     /// Go `exec.Next` / `exec.Close`'s `BasicRuntimeStats` of the inner
     /// reader's plan in the statement's `RuntimeStatsColl`.
     runtime_stats: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStats>>,
@@ -4419,11 +4122,6 @@ impl Executor for MeteredIndexJoinLookup {
         let inner = &mut self.inner;
         let result =
             tidb_executor_internal_exec::ruv2::next_with_ruv2(self.ruv2.as_ref(), 0, req, |req| inner.next(req));
-        if let Some(calls) = &self.calls {
-            let mut calls = calls.lock().unwrap();
-            calls.next += start.elapsed();
-            calls.loops += 1;
-        }
         if let Some(stats) = &self.runtime_stats {
             stats.record_next(start.elapsed(), i64::try_from(req.num_rows()).unwrap_or(i64::MAX));
         }
@@ -4433,9 +4131,6 @@ impl Executor for MeteredIndexJoinLookup {
     fn close(&mut self) -> Result<(), crate::ExecError> {
         let start = Instant::now();
         let result = self.inner.close();
-        if let Some(calls) = &self.calls {
-            calls.lock().unwrap().close += start.elapsed();
-        }
         if let Some(stats) = &self.runtime_stats {
             stats.record_close(start.elapsed());
         }
@@ -4475,7 +4170,6 @@ impl tidb_executor_join::index_lookup::IndexJoinLookup for MeteredIndexJoinLooku
         self.inner.fork_template().map(|inner| {
             Box::new(MeteredIndexJoinLookupFork {
                 inner,
-                calls: self.calls.clone(),
                 runtime_stats: self.runtime_stats.clone(),
                 ruv2: self.ruv2.clone(),
             }) as Box<dyn tidb_executor_join::index_lookup::IndexJoinLookupFork>
@@ -4491,7 +4185,6 @@ impl tidb_executor_join::index_lookup::IndexJoinLookup for MeteredIndexJoinLooku
 /// stats.
 struct MeteredIndexJoinLookupFork {
     inner: Box<dyn tidb_executor_join::index_lookup::IndexJoinLookupFork>,
-    calls: Option<Arc<Mutex<PhysicalCallStats>>>,
     runtime_stats: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStats>>,
     ruv2: Option<tidb_executor_internal_exec::ruv2::Ruv2NextCache>,
 }
@@ -4510,7 +4203,6 @@ impl tidb_executor_join::index_lookup::IndexJoinLookupFork for MeteredIndexJoinL
         Ok(self.inner.open(probes)?.map(|inner| {
             Box::new(MeteredIndexJoinLookup {
                 inner,
-                calls: self.calls.clone(),
                 runtime_stats: self.runtime_stats.clone(),
                 ruv2: self.ruv2.clone(),
             }) as Box<dyn tidb_executor_join::index_lookup::IndexJoinLookup>
@@ -5244,13 +4936,6 @@ fn build_apply(
             let worker_ctx = ctx.clone().with_coprocessor_worker_scope();
             let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let mut workers = Vec::with_capacity(apply.concurrency);
-            if let Some(counters) = state.runtime_counters.as_mut() {
-                for counter in counters.values_mut() {
-                    counter
-                        .calls
-                        .get_or_insert_with(|| Arc::new(Mutex::new(PhysicalCallStats::default())));
-                }
-            }
             for _ in 0..apply.concurrency {
                 let mut cloned = tidb_planner_core_operator_physicalop::clone_for_apply_worker(inner_plan);
                 let columns =
@@ -5262,14 +4947,8 @@ fn build_apply(
                     projection_workers_allowed: state.projection_workers_allowed,
                     has_lock: state.has_lock,
                     executor_runtime_stats_source: state.executor_runtime_stats_source.clone(),
-                    merge_scan_counters: true,
                     ..BuildState::default()
                 };
-                if let Some(counters) = &state.runtime_counters {
-                    let mut worker_counters = HashMap::new();
-                    seed_apply_clone_runtime(inner_plan, &cloned, counters, &mut worker_counters);
-                    worker_state.runtime_counters = Some(worker_counters);
-                }
                 // Go's CTE storages are statement-wide (`StmtCtx.CTEStorageMap`):
                 // every worker's CTE reads the producer the first build set up.
                 worker_state.cte_slots = std::mem::take(&mut state.cte_slots);
@@ -5333,7 +5012,7 @@ fn build_apply(
                 });
             }
             if workers.len() == apply.concurrency {
-                let sink = state.apply_runtime_sink(runtime_plan_key(plan));
+                let sink = state.apply_runtime_sink();
                 let executor = Box::new(ParallelNestedLoopApplyExec::new(
                     meta(ctx, plan, plan_schema(plan)?),
                     outer,
@@ -5361,7 +5040,7 @@ fn build_apply(
         apply.can_use_cache,
         ctx.clone(),
     );
-    let sink = state.apply_runtime_sink(runtime_plan_key(plan));
+    let sink = state.apply_runtime_sink();
     let executor = Box::new(executor.with_runtime_sink(sink.clone()));
     Ok(register_apply_stats_on_close(executor, ctx, plan, sink))
 }
@@ -5382,51 +5061,6 @@ fn register_apply_stats_on_close(
         let snapshot = (*sink.lock().unwrap_or_else(std::sync::PoisonError::into_inner)).unwrap_or_default();
         Box::new(crate::runtime_stats_groups::ApplyJoinRuntimeStats { snapshot })
     })
-}
-
-fn seed_apply_clone_runtime(
-    original: &PhysicalPlan,
-    cloned: &PhysicalPlan,
-    source: &PhysicalRuntimeStats,
-    target: &mut PhysicalRuntimeStats,
-) {
-    if let Some(counter) = source.get(&runtime_plan_key(original)) {
-        target.insert(runtime_plan_key(cloned), counter.clone());
-    }
-    for (old, new) in original.children().iter().zip(cloned.children()) {
-        seed_apply_clone_runtime(old, new, source, target);
-    }
-    let pairs: Vec<(&PhysicalPlan, &PhysicalPlan)> = match (original, cloned) {
-        (PhysicalPlan::TableReader(old), PhysicalPlan::TableReader(new)) => old
-            .table_plan
-            .as_deref()
-            .zip(new.table_plan.as_deref())
-            .into_iter()
-            .collect(),
-        (PhysicalPlan::IndexReader(old), PhysicalPlan::IndexReader(new)) => old
-            .index_plan
-            .as_deref()
-            .zip(new.index_plan.as_deref())
-            .into_iter()
-            .collect(),
-        (PhysicalPlan::IndexLookUpReader(old), PhysicalPlan::IndexLookUpReader(new)) => old
-            .index_plan
-            .as_deref()
-            .zip(new.index_plan.as_deref())
-            .into_iter()
-            .chain(old.table_plan.as_deref().zip(new.table_plan.as_deref()))
-            .collect(),
-        (PhysicalPlan::IndexMergeReader(old), PhysicalPlan::IndexMergeReader(new)) => old
-            .partial_plans_raw
-            .iter()
-            .zip(&new.partial_plans_raw)
-            .chain(old.table_plan.as_deref().zip(new.table_plan.as_deref()))
-            .collect(),
-        _ => Vec::new(),
-    };
-    for (old, new) in pairs {
-        seed_apply_clone_runtime(old, new, source, target);
-    }
 }
 
 fn join_key_offsets(
@@ -6640,9 +6274,8 @@ fn build_index_merge_reader(
                 );
                 source.set_lookup_concurrency(ctx.index_lookup_concurrency());
                 source.set_lookup_size(ctx.index_lookup_size());
-                if let Some(counters) = state.runtime_counters.as_mut() {
-                    counters.insert(runtime_plan_key(partial), source.produced_rows().into());
-                }
+                #[cfg(test)]
+                state.index_merge_partial_rows.insert(partial.id(), source.produced_rows());
                 built_ids.push(Some(i64::from(partial.id())));
                 built.push((
                     reader.by_items.is_empty(),
@@ -6756,9 +6389,8 @@ fn build_index_merge_reader(
                 .collect(),
             ctx.executor_chunk_sizes().1,
         );
-        if let Some(counters) = state.runtime_counters.as_mut() {
-            counters.insert(runtime_plan_key(partial), source.produced_rows().into());
-        }
+        #[cfg(test)]
+        state.index_merge_partial_rows.insert(partial.id(), source.produced_rows());
         built_ids.push(None);
         built.push((false, Box::new(source)));
     }
@@ -7937,7 +7569,7 @@ fn build_with_state(
         PhysicalPlan::PointGet(point) => {
             // Go `buildPointGet`'s `b.getSnapshot()`.
             get_snapshot_ts(ctx);
-            let snapshot_stats = state.point_snapshot_runtime_stats(plan);
+            let snapshot_stats = state.point_snapshot_runtime_stats();
             with_select_lock(
                 plan,
                 point.select_lock,
@@ -7953,7 +7585,7 @@ fn build_with_state(
         PhysicalPlan::BatchPointGet(batch) => {
             // Go `buildBatchPointGet`'s `b.getSnapshot()`.
             get_snapshot_ts(ctx);
-            let snapshot_stats = state.point_snapshot_runtime_stats(plan);
+            let snapshot_stats = state.point_snapshot_runtime_stats();
             with_select_lock(
                 plan,
                 batch.select_lock,
@@ -9115,17 +8747,15 @@ pub(super) fn open_show(
 }
 
 /// Builds and drains the target of `EXPLAIN ANALYZE` through the same
-/// physical executor switch used by ordinary and cached execution. The
-/// returned counters are keyed by the retained physical-node addresses, so
-/// rendering cannot accidentally attribute a duplicate plan id to a sibling.
+/// physical executor switch used by ordinary and cached execution; its
+/// executors record into the statement's `RuntimeStatsColl`.
 pub(crate) fn execute_for_explain(
     physical: &mut PhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
-) -> Result<PhysicalRuntimeStats, DriverError> {
+) -> Result<(), DriverError> {
     prepare_execution_plan(physical, catalog, ctx)?;
     let mut state = BuildState {
-        runtime_counters: Some(HashMap::new()),
         projection_workers_allowed: true,
         ..BuildState::default()
     };
@@ -9147,7 +8777,7 @@ pub(crate) fn execute_for_explain(
     let close_result = root.close().map_err(DriverError::from);
     result?;
     close_result?;
-    Ok(state.runtime_counters.take().unwrap_or_default())
+    Ok(())
 }
 
 /// Go `executor.EvalSubqueryFirstRow` (`pkg/executor/select.go:598`): build
@@ -9190,16 +8820,12 @@ pub(crate) fn execute_dml_source(
     physical: &mut PhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
-    analyze: bool,
     dml: Option<&DmlExec>,
     charge_chunks: bool,
     visit: impl FnMut(Vec<tidb_datatype::Datum>) -> Result<(), DriverError>,
-) -> Result<PhysicalRuntimeStats, DriverError> {
+) -> Result<(), DriverError> {
     prepare_execution_plan(physical, catalog, ctx)?;
-    let mut state = BuildState {
-        runtime_counters: analyze.then(HashMap::new),
-        ..BuildState::default()
-    };
+    let mut state = BuildState::default();
     let root = build_with_state(physical, catalog, ctx, &mut state)?;
     crate::notify_before_executor_first_run(ctx);
     let field_types = root.ret_field_types().to_vec();
@@ -9210,8 +8836,7 @@ pub(crate) fn execute_dml_source(
         dml,
         charge_chunks,
         visit,
-    )?;
-    Ok(state.runtime_counters.take().unwrap_or_default())
+    )
 }
 
 /// [`execute_dml_source`] for a statement that writes each row as the source
@@ -9224,14 +8849,10 @@ pub(crate) fn execute_dml_source_writing(
     catalog: &mut SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     dml: &DmlExec,
-    analyze: bool,
     visit: impl FnMut(&mut SessionExtendedInfoSchema, Vec<tidb_datatype::Datum>) -> Result<(), DriverError>,
-) -> Result<PhysicalRuntimeStats, DriverError> {
+) -> Result<(), DriverError> {
     prepare_execution_plan(physical, catalog, ctx)?;
-    let mut state = BuildState {
-        runtime_counters: analyze.then(HashMap::new),
-        ..BuildState::default()
-    };
+    let mut state = BuildState::default();
     let root = build_with_state(physical, catalog, ctx, &mut state)?;
     crate::notify_before_executor_first_run(ctx);
     let field_types = root.ret_field_types().to_vec();
@@ -9242,27 +8863,21 @@ pub(crate) fn execute_dml_source_writing(
         dml,
         catalog,
         visit,
-    )?;
-    Ok(state.runtime_counters.take().unwrap_or_default())
+    )
 }
 
 /// Builds a write statement's source executor for its driver to read
-/// chunk by chunk (Go `insertRowsFromSelect`'s `selectExec`), with the
-/// runtime counters its nodes record into.
+/// chunk by chunk (Go `insertRowsFromSelect`'s `selectExec`).
 pub(crate) fn build_dml_source(
     physical: &mut PhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
-    analyze: bool,
-) -> Result<(Box<dyn Executor>, PhysicalRuntimeStats), DriverError> {
+) -> Result<Box<dyn Executor>, DriverError> {
     prepare_execution_plan(physical, catalog, ctx)?;
-    let mut state = BuildState {
-        runtime_counters: analyze.then(HashMap::new),
-        ..BuildState::default()
-    };
+    let mut state = BuildState::default();
     let root = build_with_state(physical, catalog, ctx, &mut state)?;
     crate::notify_before_executor_first_run(ctx);
-    Ok((root, state.runtime_counters.take().unwrap_or_default()))
+    Ok(root)
 }
 
 #[cfg(test)]
@@ -9357,11 +8972,11 @@ use super::*;
     #[test]
     fn a_write_executor_times_open_next_and_close_apart() {
         let plan = dual(7, 0);
-        let ctx = crate::StmtContext::default();
-        let mut runtime = PhysicalRuntimeStats::new();
+        let coll = Arc::new(tidb_execdetails::runtime_stats::RuntimeStatsColl::new(None));
+        let ctx = crate::StmtContext::default().with_executor_runtime_stats_source(Some(coll.clone()));
         let pause = Duration::from_millis(30);
         let tracker = {
-            let dml = DmlExec::new(&plan, &ctx, Some(&mut runtime));
+            let dml = DmlExec::new(&plan, &ctx);
             dml.next(|| {
                 dml.open(|| std::thread::sleep(pause));
                 dml.close(|| std::thread::sleep(pause));
@@ -9377,10 +8992,53 @@ use super::*;
             tracker
         };
         assert_eq!((tracker.bytes_consumed(), tracker.max_consumed()), (0, 100));
-        let calls = *runtime[&runtime_plan_key(&plan)].calls.as_ref().unwrap().lock().unwrap();
-        assert!(calls.open >= pause && calls.close >= pause, "{:?} {:?}", calls.open, calls.close);
-        assert!(calls.next < pause, "{:?}", calls.next);
-        assert_eq!(calls.loops, 1);
+        // The collector got one `Next` (Go `exec.Next`'s one record).
+        let basic = basic_stats_of(&coll, 7);
+        assert!(basic.open >= pause && basic.close >= pause, "{basic:?}");
+        assert!(basic.time - basic.open - basic.close < pause, "{basic:?}");
+        assert_eq!(basic.loops, 1);
+    }
+
+    /// `BasicRuntimeStats.String`'s fields, which Go exposes no getters for.
+    #[derive(Debug)]
+    struct BasicStatsText {
+        time: Duration,
+        open: Duration,
+        close: Duration,
+        loops: u64,
+    }
+
+    fn basic_stats_of(coll: &tidb_execdetails::runtime_stats::RuntimeStatsColl, plan_id: i64) -> BasicStatsText {
+        use tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource as _;
+        let info = coll.root_runtime_info(plan_id).expect("the plan recorded stats");
+        let field = |name: &str| {
+            info.split(", ")
+                .find_map(|part| part.strip_prefix(&format!("{name}:")))
+                .unwrap_or_else(|| panic!("no {name} in {info}"))
+                .to_owned()
+        };
+        let duration = |text: String| {
+            let (number, unit) = text
+                .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+                .map(|at| text.split_at(at))
+                .unwrap_or((&text, "s"));
+            let value: f64 = number.parse().unwrap();
+            let nanos = match unit {
+                "ns" => value,
+                "µs" => value * 1e3,
+                "ms" => value * 1e6,
+                "s" => value * 1e9,
+                "m" => value * 6e10,
+                other => panic!("unit {other} in {info}"),
+            };
+            Duration::from_nanos(nanos as u64)
+        };
+        BasicStatsText {
+            time: duration(field("time")),
+            open: duration(field("open")),
+            close: duration(field("close")),
+            loops: field("loops").parse().unwrap(),
+        }
     }
 
     /// Go `ExplainExec.executeAnalyzeExec` registers `RURuntimeStats` on the
@@ -9389,35 +9047,36 @@ use super::*;
     /// stats and before the close-registered groups.
     #[test]
     fn ru_runtime_stats_follow_basic_stats_in_execution_info() {
-        let mut counter = PhysicalRuntimeCounter::from(tidb_executor_internal_exec::RowCount::default());
-        counter.calls = Some(Arc::new(Mutex::new(PhysicalCallStats {
-            loops: 2,
-            ..PhysicalCallStats::default()
-        })));
-        counter.apply = Some(Arc::new(Mutex::new(Some(
-            crate::apply::native::ApplyRuntimeSnapshot {
-                concurrency: 1,
-                enabled: false,
-                hits: 0,
-                accesses: 0,
-            },
-        ))));
-        counter.register_ru_runtime_stats(tidb_execdetails::ruv2_metrics::RuRuntimeStats {
-            ru_details: Some(tikv_client::RuDetails::new_with(
-                1.5,
-                1.33,
-                std::time::Duration::ZERO,
-            )),
-            ..Default::default()
-        });
+        use tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource as _;
+        let coll = tidb_execdetails::runtime_stats::RuntimeStatsColl::new(None);
+        let basic = coll.for_executor(1).unwrap();
+        basic.record_next(Duration::ZERO, 0);
+        basic.record_next(Duration::ZERO, 0);
+        coll.register_stats(
+            1,
+            Box::new(tidb_execdetails::ruv2_metrics::RuRuntimeStats {
+                ru_details: Some(tikv_client::RuDetails::new_with(
+                    1.5,
+                    1.33,
+                    std::time::Duration::ZERO,
+                )),
+                ..Default::default()
+            }),
+        );
+        // An apply's group, registered from its `Close`.
+        coll.register_stats(
+            1,
+            Box::new(crate::runtime_stats_groups::ApplyJoinRuntimeStats {
+                snapshot: crate::apply::native::ApplyRuntimeSnapshot::default(),
+            }),
+        );
         assert_eq!(
-            counter.execution_info().unwrap(),
+            coll.root_runtime_info(1).unwrap(),
             "time:0s, open:0s, close:0s, loops:2, RU:2.83, concurrency:OFF, cache:OFF"
         );
         // No RU details registers nothing visible.
-        let mut empty = PhysicalRuntimeCounter::from(tidb_executor_internal_exec::RowCount::default());
-        empty.register_ru_runtime_stats(tidb_execdetails::ruv2_metrics::RuRuntimeStats::default());
-        assert_eq!(empty.execution_info(), None);
+        coll.register_stats(2, Box::new(tidb_execdetails::ruv2_metrics::RuRuntimeStats::default()));
+        assert_eq!(coll.root_runtime_info(2).unwrap_or_default(), "");
     }
 
     #[derive(Default)]
@@ -9527,9 +9186,9 @@ use super::*;
     fn metered_executor_records_sql_killer_precheck_failures() {
         let memory = crate::StatementMemory::default();
         let plan = dual(1, 1);
-        let plan_key = runtime_plan_key(&plan);
+        let coll = Arc::new(tidb_execdetails::runtime_stats::RuntimeStatsColl::new(None));
         let mut state = BuildState {
-            runtime_counters: Some(HashMap::new()),
+            executor_runtime_stats_source: Some(coll.clone()),
             ..BuildState::default()
         };
         let child = PanickingExec {
@@ -9547,9 +9206,9 @@ use super::*;
             Err(crate::ExecError::Killed(_))
         ));
 
-        let counter = &state.runtime_counters.as_ref().unwrap()[&plan_key];
-        let calls = *counter.calls.as_ref().unwrap().lock().unwrap();
-        assert_eq!(calls.loops, 1);
+        // Go `exec.Next` records the call before its killer check fails.
+        executor.close().ok();
+        assert_eq!(basic_stats_of(&coll, 1).loops, 1);
     }
 
     struct KillOnNextExec {
@@ -9709,34 +9368,35 @@ use super::*;
     #[test]
     fn metered_executor_records_lifecycle_time_when_child_panics() {
         let build = |panic_at| {
-            let calls = Arc::new(Mutex::new(PhysicalCallStats::default()));
-            let executor = PhysicalCountExec {
-                child: Box::new(PanickingExec {
-                    meta: ExecutorMeta::new(empty_schema(), 1, 1, 1),
-                    panic_at,
-                }),
-                counter: tidb_executor_internal_exec::RowCount::default(),
-                calls: Arc::clone(&calls),
+            let coll = Arc::new(tidb_execdetails::runtime_stats::RuntimeStatsColl::new(None));
+            let mut state = BuildState {
+                executor_runtime_stats_source: Some(coll.clone()),
+                ..BuildState::default()
             };
-            (executor, calls)
+            let child = PanickingExec {
+                meta: ExecutorMeta::new(empty_schema(), 1, 1, 1),
+                panic_at,
+            };
+            let executor = state.meter(&dual(1, 1), Box::new(child), crate::StatementMemory::default());
+            (executor, coll)
         };
 
-        let (mut open, open_calls) = build(PanicAt::Open);
+        let (mut open, open_coll) = build(PanicAt::Open);
         assert!(open.open().is_err());
-        assert!(open_calls.lock().unwrap().open >= Duration::from_millis(1));
+        assert!(basic_stats_of(&open_coll, 1).open >= Duration::from_millis(1));
 
-        let (mut next, next_calls) = build(PanicAt::Next);
+        let (mut next, next_coll) = build(PanicAt::Next);
         next.open().unwrap();
         let mut req = next.new_chunk();
         assert!(next.next(&mut req).is_err());
-        let next_calls = next_calls.lock().unwrap();
-        assert_eq!(next_calls.loops, 1);
-        assert!(next_calls.next >= Duration::from_millis(1));
+        let basic = basic_stats_of(&next_coll, 1);
+        assert_eq!(basic.loops, 1);
+        assert!(basic.time - basic.open >= Duration::from_millis(1), "{basic:?}");
 
-        let (mut close, close_calls) = build(PanicAt::Close);
+        let (mut close, close_coll) = build(PanicAt::Close);
         close.open().unwrap();
         assert!(close.close().is_err());
-        assert!(close_calls.lock().unwrap().close >= Duration::from_millis(1));
+        assert!(basic_stats_of(&close_coll, 1).close >= Duration::from_millis(1));
     }
 
     fn int_handles(values: &[i64]) -> Vec<TableHandle> {
@@ -10689,10 +10349,7 @@ use super::*;
                 ..Default::default()
             });
             let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_executor_chunk_sizes(6, 6);
-            let mut state = BuildState {
-                runtime_counters: Some(HashMap::new()),
-                ..Default::default()
-            };
+            let mut state = BuildState::default();
             let mut executor = build_with_state(&plan, &catalog, &ctx, &mut state).unwrap();
             executor.open().unwrap();
             let mut ids = Vec::new();
@@ -10716,8 +10373,7 @@ use super::*;
                 unreachable!()
             };
             for (index, partial) in reader.partial_plans_raw.iter().enumerate() {
-                let rows =
-                    state.runtime_counters.as_ref().unwrap()[&runtime_plan_key(partial)].get();
+                let rows = state.index_merge_partial_rows[&partial.id()].get();
                 let expected = if intersection {
                     19
                 } else if ordered || index == 0 {
@@ -10751,7 +10407,7 @@ use super::*;
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("im", table);
         let partials = vec![table_scan(10, 42, 1, 19), table_scan(11, 42, 1, 19)];
-        let keys = partials.iter().map(runtime_plan_key).collect::<Vec<_>>();
+        let keys = partials.iter().map(PhysicalPlan::id).collect::<Vec<_>>();
         let mut base = BasePhysicalPlan::with_id(30, "IndexMerge", 0);
         base.base.set_schema(Some(two_long_schema()));
         let merge = PhysicalPlan::IndexMergeReader(PhysicalIndexMergeReader {
@@ -10769,10 +10425,7 @@ use super::*;
             ..Default::default()
         });
         let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_executor_chunk_sizes(6, 6);
-        let mut state = BuildState {
-            runtime_counters: Some(HashMap::new()),
-            ..Default::default()
-        };
+        let mut state = BuildState::default();
         let mut executor = build_with_state(&plan, &catalog, &ctx, &mut state).unwrap();
         for _ in 0..2 {
             executor.open().unwrap();
@@ -10781,7 +10434,7 @@ use super::*;
             assert_eq!(chunk.num_rows(), 1);
             assert_eq!(chunk.get_row(0).get_int64(0), 3);
             executor.close().unwrap();
-            let counters = state.runtime_counters.as_ref().unwrap();
+            let counters = &state.index_merge_partial_rows;
             // Go Next fills MaxChunkSize even under an outer LIMIT 1.
             // Four survivors from the first six-handle task require another
             // task; adaptive extraction fetches twelve more handles.
@@ -11079,10 +10732,7 @@ use super::*;
                                 }
                             }
                             let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
-                            let mut state = BuildState {
-                                runtime_counters: Some(HashMap::new()),
-                                ..Default::default()
-                            };
+                            let mut state = BuildState::default();
                             let mut executor = build_with_state(&plan, &catalog, &ctx, &mut state)
                                 .expect("build cached index merge");
                             executor.open().expect("open cached index merge");
@@ -11137,9 +10787,7 @@ use super::*;
                             executor.close().unwrap();
                             if let PhysicalPlan::IndexMergeReader(reader) = &plan {
                                 for partial in &reader.partial_plans_raw {
-                                    let count = state.runtime_counters.as_ref().unwrap()
-                                        [&runtime_plan_key(partial)]
-                                        .get();
+                                    let count = state.index_merge_partial_rows[&partial.id()].get();
                                     assert_eq!(count > 0, selection != Some("absent"));
                                 }
                             }

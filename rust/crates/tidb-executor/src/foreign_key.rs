@@ -72,7 +72,6 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-use crate::driver::physical_builder::PhysicalRuntimeStats;
 use crate::driver::DriverError;
 use tidb_datatype::{Datum, FieldType};
 use tidb_hack::GoCaseCompare;
@@ -1234,13 +1233,12 @@ pub(crate) fn handle_stmt_foreign_key_trigger(
     plan_id: i32,
     catalog: &mut SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
-    runtime: Option<&mut PhysicalRuntimeStats>,
 ) -> Result<(), DriverError> {
     if fk.fk_checks.is_empty() && fk.fk_cascades.is_empty() {
         return Ok(());
     }
     let plan_ids = PlanIdAllocator::continuing_from(plan_id);
-    handle_foreign_key_trigger(fk, triggers, &plan_ids, catalog, ctx, runtime, 1)
+    handle_foreign_key_trigger(fk, triggers, &plan_ids, catalog, ctx, 1)
 }
 
 /// Go `ExecStmt.handleForeignKeyTrigger`: every check, then every cascade.
@@ -1250,7 +1248,6 @@ fn handle_foreign_key_trigger(
     plan_ids: &PlanIdAllocator,
     catalog: &mut SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
-    mut runtime: Option<&mut PhysicalRuntimeStats>,
     depth: usize,
 ) -> Result<(), DriverError> {
     for fk_check in &mut fk.fk_checks {
@@ -1258,7 +1255,7 @@ fn handle_foreign_key_trigger(
     }
     for fk_cascade in &mut fk.fk_cascades {
         let handled =
-            handle_foreign_key_cascade(fk_cascade, plan_ids, catalog, ctx, runtime.as_deref_mut(), depth);
+            handle_foreign_key_cascade(fk_cascade, plan_ids, catalog, ctx, depth);
         // Go appends each cascade plan to `FKCascade.CascadePlans` as it
         // builds it.
         if let Some(trigger) = triggers.iter_mut().find(|trigger| trigger.id == fk_cascade.plan.id) {
@@ -1277,7 +1274,6 @@ fn handle_foreign_key_cascade(
     plan_ids: &PlanIdAllocator,
     catalog: &mut SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
-    mut runtime: Option<&mut PhysicalRuntimeStats>,
     depth: usize,
 ) -> Result<(), DriverError> {
     let source = ctx.executor_runtime_stats_source().cloned();
@@ -1310,7 +1306,7 @@ fn handle_foreign_key_cascade(
             let planned = crate::driver::physical_fk_cascade_plan(&stmt, catalog, ctx, plan_ids);
             ctx.set_plans_fk_cascade(false);
             let mut plan = Box::new(planned?);
-            let sub = crate::driver::run_fk_cascade(&stmt, &mut plan, catalog, ctx, runtime.as_deref_mut())?;
+            let sub = crate::driver::run_fk_cascade(&stmt, &mut plan, catalog, ctx)?;
             let PhysicalPlan::Dml(root) = &mut *plan else {
                 unreachable!("a cascade statement plans a DML root");
             };
@@ -1320,12 +1316,11 @@ fn handle_foreign_key_cascade(
                 plan_ids,
                 catalog,
                 ctx,
-                runtime.as_deref_mut(),
                 depth + 1,
             );
-            if runtime.is_some() {
-                fkc.cascade_plans.push(plan);
-            }
+            // Go `FKCascadeExec.buildExecutor`: every cascade plan stays on
+            // the trigger's plan.
+            fkc.cascade_plans.push(plan);
             handled?;
         }
     })();

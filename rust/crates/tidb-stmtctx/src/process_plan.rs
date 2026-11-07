@@ -121,6 +121,17 @@ pub struct ProcessPlanInfo {
     /// The plan the connection's previous statement published; Go keeps it
     /// on the process info until the next statement replaces it.
     pub previous_plan: Option<StoredPlan>,
+    /// Go `ProcessInfo.RuntimeStatsColl`: the statement's runtime stats
+    /// collector, which `EXPLAIN FOR CONNECTION` renders [`Self::plan`] with.
+    pub runtime_stats_coll: Option<StoredPlan>,
+    /// [`Self::runtime_stats_coll`] of the previous statement, kept with
+    /// [`Self::previous_plan`].
+    pub previous_runtime_stats_coll: Option<StoredPlan>,
+    /// The statement's memory, whose trackers Go's plan reads through its
+    /// `SCtx()` (`getRuntimeInfo`'s `StmtCtx.MemTracker` / `DiskTracker`).
+    pub statement_memory: Option<StoredPlan>,
+    /// [`Self::statement_memory`] of the previous statement.
+    pub previous_statement_memory: Option<StoredPlan>,
     /// The running statement is an EXPLAIN: Go's process plan is then the
     /// `Explain` plan, which `EXPLAIN FOR CONNECTION` renders as no rows.
     pub explain_marker: bool,

@@ -65,12 +65,24 @@ pub trait ProcessKillTarget: Send + Sync {
 
 /// What `ProcessInfo.Plan` holds for a connection (`EXPLAIN FOR CONNECTION`).
 pub enum ProcessPlan {
-    /// A statement plan.
-    Plan(tidb_stmtctx::StoredPlan),
+    /// A statement plan, with what its execution left for rendering it.
+    Plan(PublishedPlan),
     /// An `Explain` plan, which renders as no rows.
     Explain,
     /// No plan: the statement had none to publish.
     None,
+}
+
+/// A connection's published plan (`ProcessInfo.Plan`) and what Go renders it
+/// with.
+pub struct PublishedPlan {
+    /// The plan.
+    pub plan: tidb_stmtctx::StoredPlan,
+    /// Go `ProcessInfo.RuntimeStatsColl`: the collector its execution
+    /// recorded into.
+    pub runtime_stats_coll: Option<tidb_stmtctx::StoredPlan>,
+    /// The statement memory whose trackers the plan's operators charged.
+    pub statement_memory: Option<tidb_stmtctx::StoredPlan>,
 }
 
 /// One snapshot shared by SHOW and information_schema.PROCESSLIST.
@@ -859,8 +871,20 @@ impl ProcessRegistry {
                     let cell = plan
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    match cell.plan.clone().or_else(|| cell.previous_plan.clone()) {
-                        Some(plan) => ProcessPlan::Plan(plan),
+                    let current = cell.plan.clone().map(|plan| PublishedPlan {
+                        plan,
+                        runtime_stats_coll: cell.runtime_stats_coll.clone(),
+                        statement_memory: cell.statement_memory.clone(),
+                    });
+                    let previous = || {
+                        cell.previous_plan.clone().map(|plan| PublishedPlan {
+                            plan,
+                            runtime_stats_coll: cell.previous_runtime_stats_coll.clone(),
+                            statement_memory: cell.previous_statement_memory.clone(),
+                        })
+                    };
+                    match current.or_else(previous) {
+                        Some(published) => ProcessPlan::Plan(published),
                         None if cell.previous_explain => ProcessPlan::Explain,
                         None => ProcessPlan::None,
                     }

@@ -163,7 +163,6 @@ pub(crate) fn run_multi_update(
     expressions: &[Option<Expression>],
     fk_triggers: &[tidb_planner_core_operator_physicalop::FkTriggerNode],
     dml: &super::physical_builder::DmlExec,
-    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<super::dml::UpdateWritten, DriverError> {
     let (tables, assigns) = layout;
     if tables.is_empty() {
@@ -318,12 +317,11 @@ pub(crate) fn run_multi_update(
     let mut row_index = 0usize;
     // Go `UpdateExec.updateRows`: each row is composed and written before the
     // child is asked for its next chunk.
-    let collected = super::physical_builder::execute_dml_source_writing(
+    super::physical_builder::execute_dml_source_writing(
         plan,
         catalog,
         ctx,
         dml,
-        runtime.is_some(),
         |catalog, row| {
             let row = split(row)?;
         let ids = &row.ids;
@@ -500,9 +498,6 @@ pub(crate) fn run_multi_update(
             Ok(())
         },
     )?;
-    if let Some(runtime) = runtime {
-        runtime.extend(collected);
-    }
     super::dml::record_dml_rows_col_multiply(ctx, rows_col_multiply);
     drop(records);
     Ok(super::dml::UpdateWritten {
@@ -595,7 +590,6 @@ pub(crate) fn run_multi_delete(
     tables: &[tidb_planner_core_operator_physicalop::DeleteTablePos],
     fk_triggers: &[tidb_planner_core_operator_physicalop::FkTriggerNode],
     dml: &super::physical_builder::DmlExec,
-    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<(u64, crate::foreign_key::WithForeignKeyTrigger), DriverError> {
     if tables.is_empty() {
         return Err(DriverError::unsupported(
@@ -613,7 +607,7 @@ pub(crate) fn run_multi_delete(
         let plan = physical_plan
             .ok_or_else(|| DriverError::unsupported("a multi-table write has no read plan"))?;
         dml.next(|| {
-            visit_delete_source_rows(tables, plan, catalog, ctx, runtime, dml, |row, joined_row_mem| {
+            visit_delete_source_rows(tables, plan, catalog, ctx, dml, |row, joined_row_mem| {
                 // Go `composeTblRowMap`.
                 let mut total_mem_delta = 0;
                 for (table, (id, stored)) in tables.iter().zip(row.ids.into_iter().zip(row.stored)) {
@@ -782,16 +776,14 @@ fn visit_delete_source_rows(
     plan: &mut tidb_planner_core_operator_physicalop::PhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
-    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
     dml: &super::physical_builder::DmlExec,
     mut visit: impl FnMut(DeleteSourceRow, i64) -> Result<(), DriverError>,
 ) -> Result<(), DriverError> {
     let split = delete_source_splitter(tables, catalog, ctx, false)?;
-    let collected = super::physical_builder::execute_dml_source(
+    super::physical_builder::execute_dml_source(
         plan,
         catalog,
         ctx,
-        runtime.is_some(),
         Some(dml),
         true,
         |row| {
@@ -799,9 +791,6 @@ fn visit_delete_source_rows(
             visit(split(row)?, joined_row_mem)
         },
     )?;
-    if let Some(runtime) = runtime {
-        runtime.extend(collected);
-    }
     Ok(())
 }
 

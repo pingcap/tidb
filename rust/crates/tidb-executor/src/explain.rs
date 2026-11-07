@@ -35,7 +35,7 @@ use tidb_proto::tipb::{ExplainData, ExplainOperator as PbExplainOperator, Operat
 
 use tidb_planner::find_best_task::coster::Ver2Coster;
 
-use crate::driver::{run_delete_stmt_with_physical_and_stats, run_insert_stmt_with_physical_and_stats, run_update_stmt_with_physical_and_stats, DriverError, SelectMeta};
+use crate::driver::{run_delete_stmt_with_physical, run_insert_stmt_with_physical_and_visits, run_update_stmt_with_physical, DriverError, SelectMeta};
 use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -1728,9 +1728,11 @@ fn physical_operator_own_info(
 fn runtime_rows(
     statement_context: &crate::StmtContext,
     plan: &PhysicalPlan,
-    runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
+    runtime: bool,
 ) -> Option<u64> {
-    runtime?;
+    if !runtime {
+        return None;
+    }
     // `actRows` is "0" for a plan whose executors recorded nothing.
     let rows = statement_context
         .executor_runtime_stats_source()
@@ -1748,7 +1750,7 @@ fn physical_explain_operator(
     catalog: &SessionExtendedInfoSchema,
     task: ExplainTask,
     label: &str,
-    runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
+    runtime: bool,
     ignore_explain_id_suffix: bool,
     index_join_context: Option<IndexJoinExplainContext<'_>>,
     // Go `GetEstimatedProbeCntFromProbeParents`: the product of the outer
@@ -1925,7 +1927,7 @@ fn physical_explain_operator(
                 // group stats it registered (`FKCheckRuntimeStats` /
                 // `FKCascadeRuntimeStats`), whose actRows is 0.
                 let (actual_rows, execution_info) = match runtime {
-                    Some(_) => (
+                    true => (
                         Some(0),
                         Some(
                             statement_context
@@ -1936,7 +1938,7 @@ fn physical_explain_operator(
                                 .unwrap_or_default(),
                         ),
                     ),
-                    None => (None, None),
+                    false => (None, None),
                 };
                 let cascade_plans = trigger
                     .cascade_plans
@@ -2087,8 +2089,8 @@ fn physical_explain_operator(
     // and the same on the disk tracker, formatted by `FormatBytes`.
     // A pushed operator has no tracker in Go (a local fallback's is not
     // Go's).
-    if runtime.is_some() && matches!(operator.task, ExplainTask::Root) {
-        let memory = statement_context.statement_memory();
+    if runtime && matches!(operator.task, ExplainTask::Root) {
+        let memory = statement_context.explain_statement_memory();
         let label = i64::from(plan.id());
         operator.memory_info = memory
             .stmt_tracker()
@@ -2122,7 +2124,7 @@ fn physical_explain_operator(
         }
     }
     // Go `getRuntimeInfoStr`'s `rootStats.String()` for a root operator.
-    if runtime.is_some() && matches!(operator.task, ExplainTask::Root) {
+    if runtime && matches!(operator.task, ExplainTask::Root) {
         if let Some(info) = statement_context
             .executor_runtime_stats_source()
             .and_then(|source| source.root_runtime_info(i64::from(plan.id())))
@@ -2143,7 +2145,7 @@ fn cte_definitions(
     brief_binary: bool,
     plan: &PhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
-    runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
+    runtime: bool,
     seen: &mut std::collections::BTreeSet<i32>,
     out: &mut Vec<ExplainOperator>,
     ignore_explain_id_suffix: bool,
@@ -2205,7 +2207,7 @@ fn cte_definitions(
         // Go renders the definition from the first reader met
         // (`CTEDefinition(*p)`), so it reports that plan's runtime: its
         // rows, execution info, memory and disk.
-        if runtime.is_some() {
+        if runtime {
             let scan = physical_explain_operator(
                 costs,
                 eval_ctx,
@@ -2304,7 +2306,7 @@ fn physical_explain_roots(
     brief_binary: bool,
     physical: &PhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
-    runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
+    runtime: bool,
     ignore_explain_id_suffix: bool,
     scalar_subqueries: &[std::sync::Arc<crate::driver::planner_bridge::RegisteredScalarSubquery>],
 ) -> Vec<ExplainOperator> {
@@ -2360,7 +2362,7 @@ fn scalar_subquery_root(
     brief_binary: bool,
     subquery: &crate::driver::planner_bridge::RegisteredScalarSubquery,
     catalog: &SessionExtendedInfoSchema,
-    runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
+    runtime: bool,
     ignore_explain_id_suffix: bool,
 ) -> ExplainOperator {
     let output = subquery
@@ -2460,7 +2462,7 @@ pub fn brief_binary_plan(
         false,
         physical,
         catalog,
-        None,
+        false,
         false,
         &[],
     );
@@ -2480,7 +2482,7 @@ fn binary_plan_from_roots(
         true,
         physical,
         catalog,
-        None,
+        false,
         true,
         &[],
     );
@@ -3302,7 +3304,7 @@ fn plan_encodings(
         false,
         physical,
         catalog,
-        None,
+        false,
         false,
         &[],
     );
@@ -3406,6 +3408,11 @@ pub fn process_plan_info_with_brief(
             PhysicalPlan::PointGet(_) | PhysicalPlan::TableDual(_)
         ),
         plan: Some(crate::StoredPlan::new(stored)),
+        // Go `SetProcessInfo`'s `RuntimeStatsColl: sc.RuntimeStatsColl`.
+        runtime_stats_coll: statement_context
+            .executor_runtime_stats_source()
+            .map(|source| crate::StoredPlan::new(std::sync::Arc::new(std::sync::Arc::clone(source)))),
+        statement_memory: Some(crate::StoredPlan::new(std::sync::Arc::new(statement_context.statement_memory()))),
         plan_source,
         ..crate::ProcessPlanInfo::default()
     };
@@ -3472,7 +3479,7 @@ fn render_physical_plan(
     catalog: &SessionExtendedInfoSchema,
     format: ExplainFormat,
     analyze: bool,
-    runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
+    runtime: bool,
     scalar_subqueries: &[std::sync::Arc<crate::driver::planner_bridge::RegisteredScalarSubquery>],
 ) -> Result<SelectMeta, DriverError> {
     if matches!(format, ExplainFormat::Dot) {
@@ -3806,7 +3813,7 @@ fn render_built_plan(
     // is published (and runaway-checked) before the executor is built.
     publish_physical_process_info(ctx, physical, catalog)?;
     crate::driver::physical_builder::build_for_explain(physical, catalog, ctx)?;
-    render_physical_plan(ctx, ctx, physical, catalog, format, false, None, &[])
+    render_physical_plan(ctx, ctx, physical, catalog, format, false, false, &[])
 }
 
 fn render_physical_query(
@@ -3827,9 +3834,9 @@ fn render_physical_query(
         publish_physical_process_info(ctx, &physical, catalog)?;
         crate::driver::physical_builder::build_for_explain(&physical, catalog, ctx)?;
     }
-    let runtime = analyze
-        .then(|| crate::driver::physical_builder::execute_for_explain(&mut physical, catalog, ctx))
-        .transpose()?;
+    if analyze {
+        crate::driver::physical_builder::execute_for_explain(&mut physical, catalog, ctx)?;
+    }
     render_physical_plan(
         ctx,
         ctx,
@@ -3837,7 +3844,7 @@ fn render_physical_query(
         catalog,
         format,
         analyze,
-        runtime.as_ref(),
+        analyze,
         &scalar_subqueries,
     )
 }
@@ -3857,9 +3864,8 @@ pub fn explain_physical_plan(
 }
 
 /// `EXPLAIN [FORMAT = f] FOR CONNECTION`: Go renders the target's retained
-/// plan with the runtime statistics the target collected, so the result has
-/// the analyze columns. This tier keeps no per-operator counters of an
-/// ordinary statement, so those cells report what an unexecuted plan does.
+/// plan with the runtime statistics the target collected (`ctx` carries the
+/// target's `RuntimeStatsColl`), so the result has the analyze columns.
 pub fn explain_connection_plan(
     physical: &PhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
@@ -3868,7 +3874,10 @@ pub fn explain_connection_plan(
 ) -> Result<SelectMeta, DriverError> {
     let mut physical = physical.deep_clone();
     crate::driver::physical_builder::prepare_plan_for_explain(&mut physical, catalog, ctx)?;
-    render_physical_plan(ctx, ctx, &physical, catalog, format, true, None, &[])
+    // Go `Explain.RenderResult`: the analyze rows, from the target's
+    // `RuntimeStatsColl`, when it has one (`ctx` carries it).
+    let runtime = ctx.executor_runtime_stats_source().is_some();
+    render_physical_plan(ctx, ctx, &physical, catalog, format, runtime, runtime, &[])
 }
 
 /// Go `buildExplain`: an analyzed statement renders from the statement's
@@ -3903,18 +3912,8 @@ pub fn explain_analyze_physical_plan(
     let ctx = &analyzed;
     let mut physical = physical.deep_clone();
     crate::driver::physical_builder::prepare_execution_plan(&mut physical, catalog, ctx)?;
-    let runtime =
-        crate::driver::physical_builder::execute_for_explain(&mut physical, catalog, ctx)?;
-    render_physical_plan(
-        ctx,
-        ctx,
-        &physical,
-        catalog,
-        format,
-        true,
-        Some(&runtime),
-        &[],
-    )
+    crate::driver::physical_builder::execute_for_explain(&mut physical, catalog, ctx)?;
+    render_physical_plan(ctx, ctx, &physical, catalog, format, true, true, &[])
 }
 
 /// Plans `select` and reports the plan as EXPLAIN rows, executing nothing:
@@ -4102,21 +4101,15 @@ pub fn explain_analyze_insert_stmt(
     let mut source_visits = Vec::new();
     let mut physical =
         crate::driver::physical_insert_plan(insert, catalog, current_db, ctx, &mut source_visits)?;
-    let root_key = crate::driver::physical_builder::runtime_plan_key(&physical);
-    let mut runtime = crate::driver::physical_builder::PhysicalRuntimeStats::new();
     // The writes add their affected rows to the statement (Go `AddAffectedRows`).
-    run_insert_stmt_with_physical_and_stats(
+    run_insert_stmt_with_physical_and_visits(
         insert,
         catalog,
         current_db,
         ctx,
         Some(&mut physical),
         Some(source_visits),
-        Some(&mut runtime),
     )?;
-    runtime
-        .entry(root_key)
-        .or_insert_with(|| tidb_executor_internal_exec::RowCount::default().into());
     // The write ran and closed (Go `handleNoDelayExecutor`) before its RU.
     register_ru_runtime_stats(ctx, i64::from(physical.id()));
     render_physical_plan(
@@ -4126,7 +4119,7 @@ pub fn explain_analyze_insert_stmt(
         catalog,
         format,
         true,
-        Some(&runtime),
+        true,
         &[],
     )
 }
@@ -4245,20 +4238,14 @@ pub fn explain_analyze_update_stmt(
             )?
         }
     };
-    let root_key = crate::driver::physical_builder::runtime_plan_key(&physical);
-    let mut runtime = crate::driver::physical_builder::PhysicalRuntimeStats::new();
     // The writes add their affected rows to the statement (Go `AddAffectedRows`).
-    run_update_stmt_with_physical_and_stats(
+    run_update_stmt_with_physical(
         update,
         catalog,
         current_db,
         ctx,
         Some(&mut physical),
-        Some(&mut runtime),
     )?;
-    runtime
-        .entry(root_key)
-        .or_insert_with(|| tidb_executor_internal_exec::RowCount::default().into());
     // The write ran and closed (Go `handleNoDelayExecutor`) before its RU.
     register_ru_runtime_stats(ctx, i64::from(physical.id()));
     render_physical_plan(
@@ -4268,7 +4255,7 @@ pub fn explain_analyze_update_stmt(
         catalog,
         format,
         true,
-        Some(&runtime),
+        true,
         &[],
     )
 }
@@ -4308,20 +4295,14 @@ pub fn explain_analyze_delete_stmt(
             )?
         }
     };
-    let root_key = crate::driver::physical_builder::runtime_plan_key(&physical);
-    let mut runtime = crate::driver::physical_builder::PhysicalRuntimeStats::new();
     // The writes add their affected rows to the statement (Go `AddAffectedRows`).
-    run_delete_stmt_with_physical_and_stats(
+    run_delete_stmt_with_physical(
         delete,
         catalog,
         current_db,
         ctx,
         Some(&mut physical),
-        Some(&mut runtime),
     )?;
-    runtime
-        .entry(root_key)
-        .or_insert_with(|| tidb_executor_internal_exec::RowCount::default().into());
     // The write ran and closed (Go `handleNoDelayExecutor`) before its RU.
     register_ru_runtime_stats(ctx, i64::from(physical.id()));
     render_physical_plan(
@@ -4331,7 +4312,7 @@ pub fn explain_analyze_delete_stmt(
         catalog,
         format,
         true,
-        Some(&runtime),
+        true,
         &[],
     )
 }

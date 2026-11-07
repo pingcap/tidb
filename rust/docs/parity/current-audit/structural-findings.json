@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 29,
-    "open": 6,
-    "partial": 23
+    "open": 7,
+    "partial": 22
   },
   "findings": [
     {
@@ -109,11 +109,11 @@
       "go_owner": "`pkg/executor/importer`, `pkg/disttask/importinto`"
     },
     {
-      "id": "E20",
-      "status": "partial",
+      "id": "E21",
+      "status": "open",
       "group": "DML and executor handoff",
-      "finding": "EXPLAIN ANALYZE renders its rows and execution info from the statement's `RuntimeStatsColl` as Go's `getRuntimeInfoStr` does, every executor recording into it (an index join's inner readers, a write's root) and registering its groups at Go's points (a point reader's snapshot stats, an insert's or update's stats and a projection's or apply's concurrency from `Close`, the RU once the statement ran); remaining: `EXPLAIN FOR CONNECTION` renders the stored plan with no runtime statistics (`explain_connection_plan` passes none, and the process registry keeps no `RuntimeStatsColl` beside the plan), so `actRows` and `execution info` read `N/A` where Go's `buildExplainFor` renders the target's last execution (a cached prepared point UPDATE: `Update_3` actRows 0, `Point_Get_1` actRows 1, captured from a Go tidb-server), and the per-build counter map (`physical_builder::PhysicalRuntimeStats`) is still built beside the collector",
-      "go_owner": "`pkg/planner/core/planbuilder.go` (`buildExplainFor`), `pkg/util/processinfo.go` (`ProcessInfo.RuntimeStatsColl`), `pkg/planner/core/common_plans.go` (`Explain.RenderResult`)"
+      "finding": "Under `EXPLAIN FOR CONNECTION`, the root of a cached prepared point write (`EXECUTE` of `update t set b=? where id=?`, the plan-cache hit) reports `estRows` `N/A` and `387 Bytes` where Go reports `0.00` and `638 Bytes` (captured from a Go tidb-server over the wire); the same statement under a plain `EXPLAIN ANALYZE` matches Go (`N/A`, `387 Bytes`), so the gap is in what Go's EXECUTE of a cached plan sets on the write root (its stats info and the memory the execute path charges to the root's tracker)",
+      "go_owner": "`pkg/planner/core/plan_cache.go` (`GetPlanFromPlanCache`, `RebuildPlan4CachedPlan`), `pkg/executor/update.go` (`UpdateExec.memTracker`), `pkg/executor/prepared.go`"
     },
     {
       "id": "O09",
@@ -216,6 +216,6 @@
     }
   ],
   "unresolved": 29,
-  "open": 6,
-  "partial": 23
+  "open": 7,
+  "partial": 22
 }

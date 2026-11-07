@@ -500,6 +500,7 @@ impl PartitionedHandleSource {
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn produced_rows(&self) -> tidb_executor_internal_exec::RowCount {
         self.rows.clone()
     }
