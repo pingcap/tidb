@@ -969,16 +969,27 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 }
 
 // genIndexKeyStrs generates index content strings representation.
-func genIndexKeyStrs(colVals []types.Datum) ([]string, error) {
+// The binary and bit values are escaped in the same way as the duplicate-key error generated when committing, see
+// ExtractKeyExistsErrFromIndex. `idxInfo` is nil if the column types of `colVals` are unknown, then nothing is escaped.
+// The type of an index column is the one the values are stored in, which can be the changing type of the column while
+// the column is being modified, see model.GetIdxChangingFieldType.
+func genIndexKeyStrs(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, colVals []types.Datum) ([]string, error) {
 	// Pass pre-composed error to txn.
 	strVals := make([]string, 0, len(colVals))
-	for _, cv := range colVals {
+	for i, cv := range colVals {
 		cvs := "NULL"
 		var err error
 		if !cv.IsNull() {
 			cvs, err = types.ToString(cv.GetValue())
 			if err != nil {
 				return nil, err
+			}
+			if idxInfo != nil {
+				idxCol := idxInfo.Columns[i]
+				ft := model.GetIdxChangingFieldType(idxCol, tblInfo.Columns[idxCol.Offset])
+				if types.IsBinaryStr(ft) || types.IsTypeBit(ft) {
+					cvs = util.FmtNonASCIIPrintableCharToHex(cvs, len(cvs), true)
+				}
 			}
 		}
 		strVals = append(strVals, cvs)
@@ -1017,20 +1028,20 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 		if err != nil {
 			return nil, err
 		}
-		var dupErr error
-		if !skipCheck && v.Meta().Unique {
-			// Make error message consistent with MySQL.
-			tablecodec.TruncateIndexValues(t.meta, v.Meta(), indexVals)
-			colStrVals, err := genIndexKeyStrs(indexVals)
-			if err != nil {
-				return nil, err
-			}
-			dupErr = kv.GenKeyExistsErr(colStrVals, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String()))
-		}
 		rsData := TryGetHandleRestoredDataWrapper(t, r, nil, v.Meta())
 		if dupHandle, err := asIndex(v).create(sctx, txn, indexVals, recordID, rsData, false, opt); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
-				return dupHandle, dupErr
+				// Only a unique index with the duplicate check enabled turns the conflict into an error.
+				if skipCheck || !v.Meta().Unique {
+					return dupHandle, nil
+				}
+				// Make error message consistent with MySQL.
+				tablecodec.TruncateIndexValues(t.meta, v.Meta(), indexVals)
+				colStrVals, err1 := genIndexKeyStrs(t.meta, v.Meta(), indexVals)
+				if err1 != nil {
+					return nil, err1
+				}
+				return dupHandle, kv.GenKeyExistsErr(colStrVals, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String()))
 			}
 			return nil, err
 		}
@@ -1315,7 +1326,7 @@ func (t *TableCommon) buildIndexForRow(ctx table.MutateContext, h kv.Handle, val
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
 			tablecodec.TruncateIndexValues(t.meta, idx.Meta(), vals)
-			colStrVals, err1 := genIndexKeyStrs(vals)
+			colStrVals, err1 := genIndexKeyStrs(t.meta, idx.Meta(), vals)
 			if err1 != nil {
 				// if genIndexKeyStrs failed, return the original error.
 				return err
@@ -1576,7 +1587,7 @@ func getDuplicateError(tblInfo *model.TableInfo, handle kv.Handle, row []types.D
 		if err != nil {
 			return kv.ErrKeyExists.FastGenByArgs(handle.String(), keyName)
 		}
-		colStrVals, err := genIndexKeyStrs(handleData)
+		colStrVals, err := genIndexKeyStrs(tblInfo, nil, handleData)
 		if err != nil {
 			return kv.ErrKeyExists.FastGenByArgs(handle.String(), keyName)
 		}
@@ -1587,7 +1598,7 @@ func getDuplicateError(tblInfo *model.TableInfo, handle kv.Handle, row []types.D
 		pkDts = append(pkDts, row[idxCol.Offset])
 	}
 	tablecodec.TruncateIndexValues(tblInfo, pkIdx, pkDts)
-	colStrVals, err := genIndexKeyStrs(pkDts)
+	colStrVals, err := genIndexKeyStrs(tblInfo, pkIdx, pkDts)
 	if err != nil {
 		// if genIndexKeyStrs failed, return ErrKeyExists with handle.String().
 		return kv.ErrKeyExists.FastGenByArgs(handle.String(), keyName)
