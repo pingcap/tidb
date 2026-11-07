@@ -57,14 +57,11 @@
 //!   directly instead of a `*TopNExec` to read them off. Go's comment explains
 //!   the values must come from the child (inline projection changes the TopN's
 //!   own schema); the port passes exactly those values.
-//! * Keys are MATERIALIZED. Go's planner guarantees a TopN's by-items are plain
-//!   child columns, so `keyColumnsCompare` re-reads the chunk cell. The
-//!   executor rejects arbitrary by-item expressions like Go's
-//!   `buildKeyColumns`; each supported stored row carries its evaluated column
-//!   keys (constants are positional placeholders) for spill merges.
-//!   `process_chk` therefore takes the row keys alongside
-//!   the chunk -- the executor evaluates them, because only it holds the eval
-//!   context.
+//! * Keys are the chunk cells, as Go's: a TopN's by-items are plain child
+//!   columns (the executor rejects any other expression, like Go's
+//!   `buildKeyColumns`), so `keyColumnsCompare` compares the stored rows'
+//!   cells through `chunk.GetCompareFunc`, and a constant by-item never
+//!   orders.
 //! * `TestKillSignalInTopN` is NOT ported: it is a Go test helper exported from
 //!   the production file so an external test package can reach unexported
 //!   fields, and it drives the parallel spill helper this crate has not ported.
@@ -73,11 +70,13 @@ use tidb_goruntime::go_heap;
 use std::cmp::Ordering;
 
 use tidb_chunk::chunk::Chunk;
+use tidb_chunk::compare::ColumnCompareFunc;
+use tidb_chunk::list::ROW_PTR_SIZE;
 use tidb_chunk::row::Row;
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::FieldType;
 
 use tidb_driver_error::ExecError;
-use crate::{less_row, SortByItem};
+use crate::{compare_rows, compile_compare_funcs, SortByItem};
 
 /// Go `chunk.RowPtr`: `(chunk index, row index)` into the heap's row store.
 pub type RowPtr = (usize, usize);
@@ -88,6 +87,8 @@ pub struct TopNChunkHeap {
     /// Go `compareRow`/`greaterRow`, which this port derives from the by-items
     /// rather than carrying as two closures.
     by_items: Vec<SortByItem>,
+    /// Go `keyCmpFuncs`, one per by-item.
+    compare_funcs: Vec<Option<ColumnCompareFunc>>,
     /// The CHILD's output types -- see the module narrowings for why they are
     /// not the TopN's own.
     field_types: Vec<FieldType>,
@@ -95,14 +96,15 @@ pub struct TopNChunkHeap {
     max_chunk_size: usize,
     /// Go `rowChunks`: the chunk list holding row values.
     row_chunks: Vec<Chunk>,
-    /// The evaluated by-item keys, indexed exactly as `row_chunks` is, so one
-    /// [`RowPtr`] addresses a row and its key.
-    keys: Vec<Vec<Vec<Datum>>>,
     /// Go chunk.List's last chunk is appendable only while not consumed.
     /// Whole chunks accepted by Add may contain aliased output columns.
     appendable_tail: bool,
     /// Go `rowPtrs`.
     row_ptrs: Vec<RowPtr>,
+    /// The pointer bytes Go's heap has charged its tracker: `initPtrs` adds
+    /// `RowPtrSize` per stored row, `doCompaction` the change in count and
+    /// `clear` takes the retained ones back.
+    row_ptr_bytes: i64,
     /// Go `isInitialized`.
     is_initialized: bool,
     /// Go `isRowPtrsInit`.
@@ -129,13 +131,14 @@ impl TopNChunkHeap {
     pub fn new() -> Self {
         TopNChunkHeap {
             by_items: Vec::new(),
+            compare_funcs: Vec::new(),
             field_types: Vec::new(),
             init_cap: 0,
             max_chunk_size: 0,
             row_chunks: Vec::new(),
-            keys: Vec::new(),
             appendable_tail: false,
             row_ptrs: Vec::new(),
+            row_ptr_bytes: 0,
             is_initialized: false,
             is_row_ptrs_init: false,
             total_limit: 0,
@@ -155,6 +158,7 @@ impl TopNChunkHeap {
         total_limit: u64,
         idx: usize,
     ) {
+        self.compare_funcs = compile_compare_funcs(&by_items);
         self.by_items = by_items;
         self.field_types = field_types;
         self.init_cap = init_cap;
@@ -182,10 +186,10 @@ impl TopNChunkHeap {
         self.total_limit
     }
 
-    /// Go `initPtrs`/`initPtrsImpl`: one pointer per stored row, in store
-    /// order. (Go's `initPtrs` also charges the pointers to the tracker; here
-    /// [`TopNChunkHeap::memory_usage`] already counts them.)
+    /// Go `initPtrs`/`initPtrsImpl`: charges `RowPtrSize` per stored row, then
+    /// one pointer per stored row, in store order.
     pub fn init_ptrs(&mut self) {
+        self.row_ptr_bytes += (ROW_PTR_SIZE * self.stored_len()) as i64;
         self.row_ptrs = (0..self.row_chunks.len())
             .flat_map(|c| (0..self.row_chunks[c].num_rows()).map(move |r| (c, r)))
             .collect();
@@ -196,25 +200,22 @@ impl TopNChunkHeap {
     pub fn clear(&mut self) {
         self.row_chunks.clear();
         self.appendable_tail = false;
-        self.keys.clear();
+        self.row_ptr_bytes -= (ROW_PTR_SIZE * self.row_ptrs.len()) as i64;
         self.row_ptrs.clear();
         self.is_row_ptrs_init = false;
         self.is_initialized = false;
         self.idx = 0;
     }
 
-    /// Go `chunk.List.Add`: takes a whole chunk, with its rows' keys, into the
-    /// store.
-    pub fn add_chunk(&mut self, chunk: Chunk, keys: Vec<Vec<Datum>>) {
-        debug_assert_eq!(chunk.num_rows(), keys.len());
+    /// Go `chunk.List.Add`: takes a whole chunk into the store.
+    pub fn add_chunk(&mut self, chunk: Chunk) {
         self.row_chunks.push(chunk);
         self.appendable_tail = false;
-        self.keys.push(keys);
     }
 
     /// Go `chunk.List.AppendRow`: appends into the last chunk while it has
     /// capacity, else allocates one, and returns the row's pointer.
-    pub fn append_row(&mut self, row: Row<'_>, key: Vec<Datum>) -> RowPtr {
+    pub fn append_row(&mut self, row: Row<'_>) -> RowPtr {
         let need_new = match self.row_chunks.last() {
             None => true,
             Some(last) => !self.appendable_tail || last.num_rows() >= last.capacity(),
@@ -225,13 +226,11 @@ impl TopNChunkHeap {
                 self.init_cap,
                 self.max_chunk_size,
             ));
-            self.keys.push(Vec::new());
             self.appendable_tail = true;
         }
         let chk_idx = self.row_chunks.len() - 1;
         let row_idx = self.row_chunks[chk_idx].num_rows();
         self.row_chunks[chk_idx].append_row(row);
-        self.keys[chk_idx].push(key);
         (chk_idx, row_idx)
     }
 
@@ -284,39 +283,43 @@ impl TopNChunkHeap {
         self.idx += 1;
     }
 
-    /// A copy of the key at `ptr`. Copying keeps the borrow checker out of the
-    /// sift routines; a key is one datum per `ORDER BY` item.
-    fn key_at(&self, ptr: RowPtr) -> Vec<Datum> {
-        self.keys[ptr.0][ptr.1].clone()
+    fn stored_row(&self, ptr: RowPtr) -> Row<'_> {
+        self.row_chunks[ptr.0].get_row(ptr.1)
+    }
+
+    /// Go `compareRow`: the by-item order of two rows, from their cells.
+    fn compare(&self, a: Row<'_>, b: Row<'_>) -> Result<Ordering, ExecError> {
+        compare_rows(
+            &self.by_items,
+            &self.compare_funcs,
+            &tidb_exprctx::context::NoColumns,
+            a,
+            b,
+        )
+    }
+
+    /// Captures a comparison error (see [`TopNChunkHeap::take_cmp_err`]) and
+    /// reports it as `Equal`, so the sift routines stay total.
+    fn recorded(&mut self, compared: Result<Ordering, ExecError>) -> Ordering {
+        compared.unwrap_or_else(|err| {
+            if self.cmp_err.is_none() {
+                self.cmp_err = Some(err);
+            }
+            Ordering::Equal
+        })
     }
 
     /// Go `keyColumnsCompare`: the by-item order of two stored rows.
-    ///
-    /// A comparison error is captured (see [`TopNChunkHeap::take_cmp_err`]) and
-    /// reported as `Equal`, so the sift routines stay total.
     pub fn key_columns_compare(&mut self, i: RowPtr, j: RowPtr) -> Ordering {
-        let a = self.key_at(i);
-        let b = self.key_at(j);
-        self.compare_keys(&a, &b)
-    }
-
-    /// Go `compareRow` on two evaluated keys.
-    fn compare_keys(&mut self, a: &[Datum], b: &[Datum]) -> Ordering {
-        match less_row(&self.by_items, a, b) {
-            Ok(cmp) => cmp,
-            Err(err) => {
-                if self.cmp_err.is_none() {
-                    self.cmp_err = Some(err);
-                }
-                Ordering::Equal
-            }
-        }
+        let compared = self.compare(self.stored_row(i), self.stored_row(j));
+        self.recorded(compared)
     }
 
     /// Go `TopNExec.greaterRow`: strictly greater in by-item order. EQUAL is
     /// FALSE, which is what keeps a tie from evicting the incumbent.
-    pub fn greater_row(&mut self, a: &[Datum], b: &[Datum]) -> bool {
-        self.compare_keys(a, b) == Ordering::Greater
+    pub fn greater_row(&mut self, a: Row<'_>, b: Row<'_>) -> bool {
+        let compared = self.compare(a, b);
+        self.recorded(compared) == Ordering::Greater
     }
 
     /// Go `Less`: the heap is a MAX-heap, so "less" means "greater row".
@@ -354,8 +357,8 @@ impl TopNChunkHeap {
 
     /// Go's cop `topNHeap.tryToAddRow` while the heap is not yet full:
     /// `heap.Push`, one row at a time (append, then sift up).
-    pub fn push_row(&mut self, row: Row<'_>, key: Vec<Datum>) {
-        let ptr = self.append_row(row, key);
+    pub fn push_row(&mut self, row: Row<'_>) {
+        let ptr = self.append_row(row);
         self.row_ptrs.push(ptr);
         self.is_row_ptrs_init = true;
         let last = self.row_ptrs.len() - 1;
@@ -402,22 +405,21 @@ impl TopNChunkHeap {
 
     /// Go `update`: a row strictly smaller than the heap's max evicts it, and
     /// the root is sifted back down.
-    pub fn update(&mut self, new_row: Row<'_>, new_key: Vec<Datum>) {
-        let heap_max_key = self.key_at(self.row_ptrs[0]);
-        if self.greater_row(&heap_max_key, &new_key) {
+    pub fn update(&mut self, new_row: Row<'_>) {
+        let compared = self.compare(self.stored_row(self.row_ptrs[0]), new_row);
+        if self.recorded(compared) == Ordering::Greater {
             // Evict heap max, keep the next row.
-            let ptr = self.append_row(new_row, new_key);
+            let ptr = self.append_row(new_row);
             self.row_ptrs[0] = ptr;
             self.heap_fix_root();
         }
     }
 
     /// Go `processChk`: every row of `chk`, one at a time, against the heap's
-    /// max. `keys` holds the evaluated by-item key of each of its rows.
-    pub fn process_chk(&mut self, chk: &Chunk, keys: Vec<Vec<Datum>>) {
-        debug_assert_eq!(chk.num_rows(), keys.len());
-        for (i, key) in keys.into_iter().enumerate() {
-            self.update(chk.get_row(i), key);
+    /// max.
+    pub fn process_chk(&mut self, chk: &Chunk) {
+        for i in 0..chk.num_rows() {
+            self.update(chk.get_row(i));
         }
     }
 
@@ -430,13 +432,13 @@ impl TopNChunkHeap {
     pub fn do_compaction(&mut self) {
         let old_chunks = std::mem::take(&mut self.row_chunks);
         self.appendable_tail = false;
-        let old_keys = std::mem::take(&mut self.keys);
         let old_ptrs = std::mem::take(&mut self.row_ptrs);
         let mut new_ptrs = Vec::with_capacity(old_ptrs.len());
-        for (c, r) in old_ptrs {
-            let ptr = self.append_row(old_chunks[c].get_row(r), old_keys[c][r].clone());
+        for &(c, r) in &old_ptrs {
+            let ptr = self.append_row(old_chunks[c].get_row(r));
             new_ptrs.push(ptr);
         }
+        self.row_ptr_bytes += (ROW_PTR_SIZE as i64) * (new_ptrs.len() as i64 - old_ptrs.len() as i64);
         self.row_ptrs = new_ptrs;
     }
 
@@ -447,15 +449,12 @@ impl TopNChunkHeap {
     pub fn sort_row_ptrs_ascending(&mut self, offset: usize) -> Result<(), ExecError> {
         let ptrs = std::mem::take(&mut self.row_ptrs);
         let mut order: Vec<usize> = (0..ptrs.len()).collect();
-        // `sort_by` cannot borrow `self` mutably, so the keys are lifted out
-        // first and the comparison error is captured as in `SortExec`.
-        let keys: Vec<Vec<Datum>> = ptrs.iter().map(|&ptr| self.key_at(ptr)).collect();
-        let by_items = &self.by_items;
+        // The comparison error is captured as in `SortExec`.
         let mut sort_err: Option<ExecError> = None;
         // Go `slices.SortFunc(rowPtrs, keyColumnsCompare)`: the unstable
         // pdqsort, whose tie layout beyond 12 rows is its own.
         tidb_goruntime::go_pdqsort::go_sort_func_by(&mut order, |&a, &b| {
-            match less_row(by_items, &keys[a], &keys[b]) {
+            match self.compare(self.stored_row(ptrs[a]), self.stored_row(ptrs[b])) {
                 Ok(cmp) => cmp,
                 Err(err) => {
                     if sort_err.is_none() {
@@ -482,22 +481,9 @@ impl TopNChunkHeap {
     /// moves, and cannot drift.
     #[must_use]
     pub fn memory_usage(&self) -> i64 {
-        let mut bytes: i64 = 0;
-        for chunk in &self.row_chunks {
-            bytes += chunk.memory_usage();
-            bytes +=
-                tidb_chunk::row::ROW_SIZE * i64::try_from(chunk.num_rows()).unwrap_or(i64::MAX);
-        }
-        for chunk_keys in &self.keys {
-            for key in chunk_keys {
-                bytes += i64::try_from(size_of::<Vec<Datum>>()).unwrap_or(i64::MAX);
-                for datum in key {
-                    bytes += datum.mem_usage();
-                }
-            }
-        }
-        bytes += i64::try_from(size_of::<RowPtr>() * self.row_ptrs.len()).unwrap_or(i64::MAX);
-        bytes
+        // Go's chunk list tracker (each chunk's `MemoryUsage`) plus the
+        // pointer bytes the heap charged beside it.
+        self.row_chunks.iter().map(Chunk::memory_usage).sum::<i64>() + self.row_ptr_bytes
     }
 
     /// Surfaces the first comparison error a sift or sort captured.
@@ -557,11 +543,11 @@ use tidb_goruntime::GoString;
         input.append_int64(0, 9);
         input.append_int64(0, 8);
         input.make_ref(0, 1);
-        heap.add_chunk(input, vec![vec![Datum::Int(9)], vec![Datum::Int(8)]]);
+        heap.add_chunk(input);
         let mut incoming = Chunk::new(&fields, 8, 8);
         incoming.append_int64(0, 1);
         incoming.append_int64(1, 1);
-        let ptr = heap.append_row(incoming.get_row(0), vec![Datum::Int(1)]);
+        let ptr = heap.append_row(incoming.get_row(0));
         // Go chunk.List's consumedIdx marks an Add chunk as closed to appends.
         assert_eq!(ptr, (1, 0));
         assert_eq!(heap.stored_len(), 3);
@@ -583,24 +569,20 @@ use tidb_goruntime::GoString;
 
         let split = (limit as usize).min(vals.len());
         let mut first = Chunk::new(&fields, 32, 32);
-        let mut first_keys = Vec::new();
         for &v in &vals[..split] {
             first.append_int64(0, v);
-            first_keys.push(vec![Datum::Int(v)]);
         }
-        heap.add_chunk(first, first_keys);
+        heap.add_chunk(first);
         heap.init_ptrs();
         heap.heap_init();
         heap.trim_to_total_limit();
 
         if split < vals.len() {
             let mut rest = Chunk::new(&fields, 1024, 1024);
-            let mut rest_keys = Vec::new();
             for &v in &vals[split..] {
                 rest.append_int64(0, v);
-                rest_keys.push(vec![Datum::Int(v)]);
             }
-            heap.process_chk(&rest, rest_keys);
+            heap.process_chk(&rest);
         }
 
         heap.sort_row_ptrs_ascending(0).expect("no compare error");
@@ -632,24 +614,20 @@ use tidb_goruntime::GoString;
         let fields = vec![long()];
         let mut heap = heap_of(3, fields.clone(), asc(0, long()));
         let mut chk = Chunk::new(&fields, 32, 32);
-        let mut keys = Vec::new();
         for v in [1_i64, 2, 3] {
             chk.append_int64(0, v);
-            keys.push(vec![Datum::Int(v)]);
         }
-        heap.add_chunk(chk, keys);
+        heap.add_chunk(chk);
         heap.init_ptrs();
         heap.heap_init();
         heap.trim_to_total_limit();
         let stored_before = heap.stored_len();
 
         let mut rest = Chunk::new(&fields, 32, 32);
-        let mut rest_keys = Vec::new();
         for v in [4_i64, 5, 6] {
             rest.append_int64(0, v);
-            rest_keys.push(vec![Datum::Int(v)]);
         }
-        heap.process_chk(&rest, rest_keys);
+        heap.process_chk(&rest);
 
         assert_eq!(heap.stored_len(), stored_before);
         assert_eq!(heap.len(), 3);
@@ -664,7 +642,7 @@ use tidb_goruntime::GoString;
         let mut chk = Chunk::new(&fields, 32, 32);
         chk.append_int64(0, 1);
         chk.append_int64(0, 5);
-        heap.add_chunk(chk, vec![vec![Datum::Int(1)], vec![Datum::Int(5)]]);
+        heap.add_chunk(chk);
         heap.init_ptrs();
         heap.heap_init();
         heap.trim_to_total_limit();
@@ -672,13 +650,13 @@ use tidb_goruntime::GoString;
 
         let mut rest = Chunk::new(&fields, 32, 32);
         rest.append_int64(0, 5);
-        heap.process_chk(&rest, vec![vec![Datum::Int(5)]]);
+        heap.process_chk(&rest);
         assert_eq!(heap.stored_len(), stored_before);
 
         // A strictly smaller row does replace it.
         let mut better = Chunk::new(&fields, 32, 32);
         better.append_int64(0, 4);
-        heap.process_chk(&better, vec![vec![Datum::Int(4)]]);
+        heap.process_chk(&better);
         heap.sort_row_ptrs_ascending(0).expect("no compare error");
         let out: Vec<i64> = (0..heap.len())
             .map(|i| heap.row_at(i).get_int64(0))
@@ -705,10 +683,7 @@ use tidb_goruntime::GoString;
             chk.append_null(0);
             chk.append_int64(0, 1);
             chk.append_int64(0, 7);
-            heap.add_chunk(
-                chk,
-                vec![vec![Datum::Null], vec![Datum::Int(1)], vec![Datum::Int(7)]],
-            );
+            heap.add_chunk(chk);
             heap.init_ptrs();
             heap.heap_init();
             heap.trim_to_total_limit();
@@ -737,12 +712,10 @@ use tidb_goruntime::GoString;
         let mut heap = heap_of(2, fields.clone(), by);
         let mut chk = Chunk::new(&fields, 32, 32);
         let vals = ["b", "A", "a"];
-        let mut keys = Vec::new();
         for v in vals {
             chk.append_string(0, GoString::from(v));
-            keys.push(vec![Datum::Bytes(v.as_bytes().to_vec())]);
         }
-        heap.add_chunk(chk, keys);
+        heap.add_chunk(chk);
         heap.init_ptrs();
         heap.heap_init();
         heap.trim_to_total_limit();
@@ -769,18 +742,16 @@ use tidb_goruntime::GoString;
         let mut chk = Chunk::new(&fields, 32, 32);
         chk.append_int64(0, 1);
         chk.append_int64(0, 2);
-        heap.add_chunk(chk, vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]);
+        heap.add_chunk(chk);
         heap.init_ptrs();
         heap.heap_init();
         heap.trim_to_total_limit();
 
         let mut rest = Chunk::new(&fields, 32, 32);
-        let mut rest_keys = Vec::new();
         for v in 3_i64..=20 {
             rest.append_int64(0, v);
-            rest_keys.push(vec![Datum::Int(v)]);
         }
-        heap.process_chk(&rest, rest_keys);
+        heap.process_chk(&rest);
         assert!(heap.stored_len() > heap.len());
 
         heap.do_compaction();
@@ -798,7 +769,7 @@ use tidb_goruntime::GoString;
         let mut heap = heap_of(2, fields.clone(), asc(0, long()));
         let mut chk = Chunk::new(&fields, 32, 32);
         chk.append_int64(0, 1);
-        heap.add_chunk(chk, vec![vec![Datum::Int(1)]]);
+        heap.add_chunk(chk);
         heap.init_ptrs();
         assert!(heap.is_initialized() && heap.is_row_ptrs_init());
         assert!(heap.memory_usage() > 0);

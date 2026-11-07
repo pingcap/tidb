@@ -84,7 +84,7 @@ use tidb_exprctx::Columns;
 use tidb_memory::{ArcAction, Tracker};
 
 use tidb_variable::mem_quota::StatementMemory;
-use crate::{eval_sort_key, less_row, build_key_columns, SortByItem};
+use crate::{less_row, build_key_columns, SortByItem};
 use tidb_driver_error::panic_recovery::recover_worker_panic;
 use crate::topn_chunk_heap::TopNChunkHeap;
 use crate::topn_spill::{SpilledRun, TopNSpillAction, SPILL_CHUNK_SIZE};
@@ -232,12 +232,10 @@ struct RankPrefixColumn {
     field_type: FieldType,
 }
 
-struct ParallelTopNWorker<C> {
+struct ParallelTopNWorker {
     heap: TopNChunkHeap,
-    by_items: Vec<SortByItem>,
     field_types: Vec<FieldType>,
     total_limit: u64,
-    ctx: C,
     tracker: Arc<Tracker>,
     memory: StatementMemory,
     disk_tracker: Arc<tidb_disk::Tracker>,
@@ -247,24 +245,18 @@ struct ParallelTopNWorker<C> {
     runs: Vec<SpilledRun>,
 }
 
-impl<C> ParallelTopNWorker<C>
-where
-    C: Columns + Clone + Send + Sync + 'static,
-{
+impl ParallelTopNWorker {
     fn process_chunk(&mut self, chunk: Chunk) -> Result<(), ExecError> {
         self.memory.check().map_err(ExecError::from)?;
         self.chunks += 1;
-        let keys = (0..chunk.num_rows())
-            .map(|row| eval_sort_key(&self.by_items, &self.ctx, chunk.get_row(row)))
-            .collect::<Result<Vec<_>, _>>()?;
         if (self.heap.stored_len() as u64) < self.total_limit {
-            self.heap.add_chunk(chunk, keys);
+            self.heap.add_chunk(chunk);
         } else {
             if !self.heap.is_row_ptrs_init() {
                 self.heap.init_ptrs();
                 self.heap.heap_init();
             }
-            self.heap.process_chk(&chunk, keys);
+            self.heap.process_chk(&chunk);
             self.heap.take_cmp_err()?;
             if self.heap.stored_len() > self.heap.len() * TOP_N_COMPACTION_FACTOR {
                 self.heap.do_compaction();
@@ -291,18 +283,18 @@ where
     }
 }
 
-impl<C> Drop for ParallelTopNWorker<C> {
+impl Drop for ParallelTopNWorker {
     fn drop(&mut self) {
         self.heap.clear();
         self.tracker.consume(-self.accounted);
     }
 }
 
-type TopNCompletion<C> = (ParallelTopNWorker<C>, Result<(), ExecError>);
+type TopNCompletion = (ParallelTopNWorker, Result<(), ExecError>);
 
-fn receive_topn_worker<C>(
-    completed: &crossbeam_channel::Receiver<TopNCompletion<C>>,
-    idle: &mut Vec<ParallelTopNWorker<C>>,
+fn receive_topn_worker(
+    completed: &crossbeam_channel::Receiver<TopNCompletion>,
+    idle: &mut Vec<ParallelTopNWorker>,
     in_flight: &mut usize,
 ) -> Result<(), ExecError> {
     let (worker, result) = match completed.recv() {
@@ -320,9 +312,9 @@ fn receive_topn_worker<C>(
     result
 }
 
-fn join_topn_workers<C>(
-    completed: &crossbeam_channel::Receiver<TopNCompletion<C>>,
-    idle: &mut Vec<ParallelTopNWorker<C>>,
+fn join_topn_workers(
+    completed: &crossbeam_channel::Receiver<TopNCompletion>,
+    idle: &mut Vec<ParallelTopNWorker>,
     in_flight: &mut usize,
 ) -> Result<(), ExecError> {
     let mut result = Ok(());
@@ -504,22 +496,6 @@ where
         );
     }
 
-    /// Evaluates the by-item keys for one row.
-    fn eval_key(&self, row: tidb_chunk::row::Row<'_>) -> Result<Vec<Datum>, ExecError> {
-        eval_sort_key(&self.by_items, &self.ctx, row)
-    }
-
-    /// The by-item keys of every row of `chunk`.
-    ///
-    /// The heap stores MATERIALIZED keys (see its module docs), and only the
-    /// executor holds the evaluation context, so the keys are evaluated here
-    /// and handed over with the rows.
-    fn eval_keys(&self, chunk: &Chunk) -> Result<Vec<Vec<Datum>>, ExecError> {
-        (0..chunk.num_rows())
-            .map(|r| self.eval_key(chunk.get_row(r)))
-            .collect()
-    }
-
     /// Returns Go's truncated RankTopN prefix keys for one child row.
     fn rank_prefix_key(&self, row: tidb_chunk::row::Row<'_>) -> Vec<Datum> {
         let prefix = self.rank_prefix.as_ref().expect("rank prefix configured");
@@ -568,12 +544,9 @@ where
         Ok(true)
     }
 
-    /// Go `chunk.List.Add`: takes a whole child chunk into the store, with the
-    /// keys for its rows.
-    fn add_chunk(&mut self, chunk: Chunk) -> Result<(), ExecError> {
-        let keys = self.eval_keys(&chunk)?;
-        self.heap.add_chunk(chunk, keys);
-        Ok(())
+    /// Go `chunk.List.Add`: takes a whole child chunk into the store.
+    fn add_chunk(&mut self, chunk: Chunk) {
+        self.heap.add_chunk(chunk);
     }
 
     /// Reports the store's current size to the statement budget and checks the
@@ -609,8 +582,7 @@ where
                         break;
                     }
                 }
-                let key = self.eval_key(row)?;
-                self.heap.append_row(row, key);
+                self.heap.append_row(row);
                 if (self.stored_len() as u64) == self.total_limit {
                     boundary_prefix = Some(prefix);
                 }
@@ -673,10 +645,8 @@ where
             );
             idle.push(ParallelTopNWorker {
                 heap,
-                by_items: self.by_items.clone(),
                 field_types: field_types.clone(),
                 total_limit: self.total_limit,
-                ctx: self.ctx.clone(),
                 tracker: Arc::clone(&self.tracker),
                 memory: self.memory.clone(),
                 disk_tracker: Arc::clone(&self.disk_tracker),
@@ -787,7 +757,7 @@ where
             if chunk.num_rows() == 0 {
                 break;
             }
-            self.add_chunk(chunk)?;
+            self.add_chunk(chunk);
             self.account()?;
             // Go `loadChunksUntilTotalLimit`: the load stops on a needed spill
             // even before the store is full.
@@ -819,8 +789,7 @@ where
                 return Ok(true);
             }
             // Go `processChk`: one row at a time against the heap's max.
-            let keys = self.eval_keys(&child_chunk)?;
-            self.heap.process_chk(&child_chunk, keys);
+            self.heap.process_chk(&child_chunk);
             self.heap.take_cmp_err()?;
             if self.heap.stored_len() > self.heap.len() * TOP_N_COMPACTION_FACTOR {
                 self.heap.do_compaction();
@@ -848,15 +817,14 @@ where
             if chunk.num_rows() == 0 {
                 return Ok(true);
             }
-            let keys = self.eval_keys(&chunk)?;
-            for (index, key) in keys.into_iter().enumerate() {
+            for index in 0..chunk.num_rows() {
                 if self.total_limit == 0 {
                     continue;
                 }
                 if (self.heap.len() as u64) < self.total_limit {
-                    self.heap.push_row(chunk.get_row(index), key);
+                    self.heap.push_row(chunk.get_row(index));
                 } else {
-                    self.heap.update(chunk.get_row(index), key);
+                    self.heap.update(chunk.get_row(index));
                 }
                 self.heap.take_cmp_err()?;
             }
@@ -2410,7 +2378,7 @@ mod spill_tests {
         heap.init(Vec::new(), Vec::new(), 4, 4, 3, 0);
         let mut input = Chunk::new(&[], 4, 4);
         input.set_num_virtual_rows(3);
-        heap.add_chunk(input, vec![Vec::new(); 3]);
+        heap.add_chunk(input);
         let disk_tracker = tidb_disk::new_tracker(0, -1);
         let mut runs = Vec::new();
         spill_parallel_worker_heap(

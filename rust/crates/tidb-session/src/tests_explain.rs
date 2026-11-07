@@ -2972,8 +2972,10 @@ fn a_table_reader_charges_its_queued_coprocessor_responses() {
 /// Go `(*PhysicalTopN).ToPB`: the TopN a reader carries is an executor of its
 /// DAG, so the coprocessor reports `TopN_16`'s `tikv_task` and returns only
 /// the TopN's rows to the reader. Go testkit, 8 rows: `TableReader_17` 2 rows
-/// holding 312 Bytes for `LIMIT 2` (341 Bytes for `DESC LIMIT 3`, 270 Bytes
-/// reading `a`). The reader's bytes include the response's varint
+/// holding 312 Bytes and the root `TopN_7` 1.38 KB for `LIMIT 2` (341 Bytes
+/// and 1.39 KB for `DESC LIMIT 3`; 270 Bytes and 776 Bytes reading `a`): Go's
+/// `topNChunkHeap` holds its child chunks and `RowPtrSize` per row, comparing
+/// their cells in place. The reader's bytes include the response's varint
 /// execution-detail durations.
 #[test]
 fn a_reader_topn_runs_in_the_coprocessor_as_go() {
@@ -2982,10 +2984,10 @@ fn a_reader_topn_runs_in_the_coprocessor_as_go() {
     session
         .run("INSERT INTO t VALUES (1,'aaaa',5),(2,'bbbb',3),(3,'cccc',9),(4,'dddd',1),(5,'eeee',7),(6,'ffff',2),(7,'gggg',8),(8,'hhhh',4)")
         .unwrap();
-    for (query, rows, reader_bytes) in [
-        ("SELECT * FROM t ORDER BY c LIMIT 2", "2", 312),
-        ("SELECT * FROM t ORDER BY c DESC LIMIT 3", "3", 341),
-        ("SELECT a FROM t ORDER BY c LIMIT 2", "2", 270),
+    for (query, rows, reader_bytes, root_memory) in [
+        ("SELECT * FROM t ORDER BY c LIMIT 2", "2", 312, "1.38 KB"),
+        ("SELECT * FROM t ORDER BY c DESC LIMIT 3", "3", 341, "1.39 KB"),
+        ("SELECT a FROM t ORDER BY c LIMIT 2", "2", 270, "776 Bytes"),
     ] {
         let explained = row_text(session.run(&format!("EXPLAIN ANALYZE {query}")));
         let row = |prefix: &str| {
@@ -2996,7 +2998,7 @@ fn a_reader_topn_runs_in_the_coprocessor_as_go() {
                 .clone()
         };
         let root = &explained[0];
-        assert_eq!(root[2], rows, "{query}: {root:?}");
+        assert_eq!((root[2].as_str(), root[7].as_str()), (rows, root_memory), "{query}: {root:?}");
         let reader = row("TableReader_");
         assert_eq!(reader[2], rows, "{query}: {reader:?}");
         let bytes: i64 = reader[7]

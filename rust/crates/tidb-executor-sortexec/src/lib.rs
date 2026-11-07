@@ -148,7 +148,7 @@ pub fn less_row(
 /// Go's physical Sort accepts columns and constants. Constants are handled as
 /// equal keys by `compare_rows`; the common physical-column path is
 /// allocation-free just like Go's.
-fn compile_compare_funcs(by_items: &[SortByItem]) -> Vec<Option<ColumnCompareFunc>> {
+pub(crate) fn compile_compare_funcs(by_items: &[SortByItem]) -> Vec<Option<ColumnCompareFunc>> {
     by_items
         .iter()
         .map(|item| {
