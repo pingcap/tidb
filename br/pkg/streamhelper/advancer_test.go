@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/redact"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -631,9 +630,9 @@ func TestCheckPointLagged(t *testing.T) {
 	require.NoError(t, adv.OnTick(ctx))
 	c.advanceClusterTimeBy(3 * time.Minute)
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
-	// after some times, the isPaused will be set and ticks are skipped
+	// Wait for the pause event before expecting ticks to be skipped.
 	require.Eventually(t, func() bool {
-		return assert.NoError(t, adv.OnTick(ctx))
+		return adv.OnTick(ctx) == nil
 	}, 5*time.Second, 100*time.Millisecond)
 }
 
@@ -659,13 +658,13 @@ func TestCheckPointResume(t *testing.T) {
 	c.advanceClusterTimeBy(2 * time.Minute)
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
 	require.Eventually(t, func() bool {
-		return assert.NoError(t, adv.OnTick(ctx))
+		return adv.OnTick(ctx) == nil
 	}, 5*time.Second, 100*time.Millisecond)
-	//now the checkpoint issue is fixed and resumed
-	c.advanceCheckpointBy(1 * time.Minute)
+	// Wait until the resumed task publishes the advanced checkpoint.
+	checkpoint := c.advanceCheckpointBy(1 * time.Minute)
 	env.ResumeTask(ctx)
 	require.Eventually(t, func() bool {
-		return assert.NoError(t, adv.OnTick(ctx))
+		return adv.OnTick(ctx) == nil && env.getCheckpoint() >= checkpoint
 	}, 5*time.Second, 100*time.Millisecond)
 	//with time passed, the checkpoint will exceed the limit again
 	c.advanceClusterTimeBy(2 * time.Minute)

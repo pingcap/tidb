@@ -2009,6 +2009,27 @@ func (m *Mutator) SetRUStats(stats *RUStats) error {
 	return errors.Trace(err)
 }
 
+// GetSchemaDiffCommitTS returns the commit timestamp of an existing schema diff.
+// The diff key is written in the same transaction as the schema metadata changes.
+func GetSchemaDiffCommitTS(m Reader, store kv.Storage, version int64, startTS uint64) (uint64, error) {
+	tikvStore, ok := store.(helper.Storage)
+	if !ok {
+		return 0, errors.New("cannot get MVCC information from store")
+	}
+	resp, err := helper.NewHelper(tikvStore).GetMvccByEncodedKeyWithTS(m.EncodeSchemaDiffKey(version), startTS)
+	if err != nil {
+		return 0, err
+	}
+	if resp != nil && resp.Info != nil {
+		for _, write := range resp.Info.Writes {
+			if write.Type == kvrpcpb.Op_Put && write.CommitTs <= startTS {
+				return write.CommitTs, nil
+			}
+		}
+	}
+	return 0, errors.Errorf("no committed schema diff found for schema version %d", version)
+}
+
 // GetOldestSchemaVersion gets the oldest schema version at the GC safe point.
 // It works by checking the MVCC information (internal txn API) of the schema version meta key.
 // This function is only used by infoschema v2 currently.
