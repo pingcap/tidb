@@ -8483,6 +8483,32 @@ fn vector_uuid_and_seeded_builtins_run_in_the_coprocessor_as_go() {
     assert!(cop_agg[5].starts_with("tikv_task:{"), "{cop_agg:?}");
 }
 
+/// Go `PhysicalTopN.ToPB` lowers any `ByItem`, so a TopN over an expression
+/// runs in the coprocessor: a TableReader's, a covering IndexReader's and an
+/// IndexLookUp's index side (`mod(test.t.b, 3), test.t.b`). gorun pushes all
+/// three into cop[tikv] and answers `4, 3`, `40, 30` and `4, 5`.
+#[test]
+fn an_expression_topn_runs_in_the_coprocessor_as_go() {
+    let mut session = Session::new();
+    session.run("create table t (a int, b int, c int, index ib(b))").unwrap();
+    session
+        .run("insert into t values (1, 10, 5), (2, 30, 4), (3, 20, 3), (4, 40, 2)")
+        .unwrap();
+    for (sql, expected) in [
+        ("select a from t order by a * -1 limit 2", [["4"], ["3"]]),
+        ("select b from t use index(ib) where b > 0 order by b * -1 limit 2", [["40"], ["30"]]),
+        ("select c from t use index(ib) where b > 0 order by b % 3, b limit 2", [["4"], ["5"]]),
+    ] {
+        assert_eq!(row_text(session.run(sql)), expected, "{sql}");
+        let explained = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        let cop_topn = explained
+            .iter()
+            .find(|row| row[3] == "cop[tikv]" && row[0].contains("TopN_"))
+            .unwrap_or_else(|| panic!("{sql}: no cop TopN in {explained:?}"));
+        assert!(cop_topn[5].starts_with("tikv_task:{"), "{sql}: {cop_topn:?}");
+    }
+}
+
 /// Go `Aggregation.GroupBy` carries any key the coprocessor evaluates: gorun
 /// pushes `group by:plus(test.t.a, 1), funcs:count(1),
 /// funcs:firstrow(test.t.a)` to TiKV and answers `2|2`, `3|1`, `4|1`.

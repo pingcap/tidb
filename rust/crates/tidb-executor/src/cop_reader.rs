@@ -552,16 +552,9 @@ pub fn build_resp(
             .order_by
             .iter()
             .map(|item| {
-                let column = request.columns.get(item.offset).ok_or_else(|| {
-                    refuse("a coprocessor TopN column is outside the scan output")
-                })?;
-                let mut expression = tidb_expr::column::Column::new(
-                    item.offset as i64 + 1,
-                    column.field_type.clone(),
-                );
-                expression.index = item.offset as i64;
+                // Go `PhysicalTopN.ToPB`: each `ByItem` lowers whole.
                 let expression = tidb_expr::pushdown_catalog::expression_to_pb(
-                    &tidb_expr::expression::Expression::Column(expression),
+                    &item.expr,
                     &|offset| scan_column_descriptor(&columns, offset),
                 )
                 .ok_or_else(|| refuse("a coprocessor TopN key cannot be lowered to TiPB"))?;

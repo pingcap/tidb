@@ -207,17 +207,28 @@ pub struct PushdownIndexScan {
     pub desc: bool,
 }
 
-/// One column order in a coprocessor TopN.
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// One order item in a coprocessor TopN (Go `tipb.ByItem`): any expression
+/// over [`PushdownScanRequest::columns`], as `PhysicalTopN.ToPB` lowers it.
+#[derive(Clone, Debug)]
 pub struct PushdownTopNOrder {
-    /// Offset in [`PushdownScanRequest::columns`].
-    pub offset: usize,
+    /// The sort key, its columns indexed into the scan's output.
+    pub expr: Expression,
     /// Whether larger values sort first.
     pub desc: bool,
 }
 
+impl PushdownTopNOrder {
+    /// The scan output's column at `offset` as a sort key.
+    #[must_use]
+    pub fn column(offset: usize, field_type: FieldType, desc: bool) -> Self {
+        let mut column = tidb_expr::column::Column::new(offset as i64 + 1, field_type);
+        column.index = offset as i64;
+        Self { expr: Expression::Column(column), desc }
+    }
+}
+
 /// A bounded sort executed after the scan's complete Selection.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct PushdownTopN {
     /// Ordered comparison keys, in SQL by-item order.
     pub order_by: Vec<PushdownTopNOrder>,

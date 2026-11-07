@@ -418,10 +418,7 @@ fn index_topn_filters_and_orders_input_columns_before_returning_only_handles() {
     scan.primary_prefix_column_ids.clear();
     scan.handle_index = Some(0);
     scan.topn = Some(PushdownTopN {
-        order_by: vec![PushdownTopNOrder {
-            offset: 0,
-            desc: true,
-        }],
+        order_by: vec![PushdownTopNOrder::column(0, scan.columns[0].field_type.clone(), true)],
         limit: 2,
     });
     let mut stream = build_resp(&client(&region), &scan)

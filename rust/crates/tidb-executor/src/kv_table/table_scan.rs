@@ -2635,11 +2635,15 @@ impl KvTableReader for TableCommon {
                 .order_by
                 .iter()
                 .map(|item| {
-                    let column_offset = layout.iter().position(|offset| *offset == item.offset)?;
-                    Some(tidb_distsql::remote_scan::PushdownTopNOrder {
-                        offset: column_offset,
-                        desc: item.desc,
-                    })
+                    // The key's columns name the source's layout, as a pushed
+                    // predicate's do.
+                    let mut expr = item.expr.clone();
+                    tidb_executor_internal_exec::predicate_pushdown::remap_index_expression(
+                        &mut expr,
+                        &layout,
+                        &null_layout,
+                    )?;
+                    Some(tidb_distsql::remote_scan::PushdownTopNOrder { expr, desc: item.desc })
                 })
                 .collect::<Option<Vec<_>>>();
             let Some(order_by) = order_by else {
@@ -5842,10 +5846,11 @@ impl tidb_executor_internal_exec::table_access::TableAccess for TableScanExec {
             || self.table.has_dirty_content(&self.statement.staged_writes)
             || self.has_virtual_projection()
             || topn.limit == 0
-            || topn
-                .order_by
-                .iter()
-                .any(|item| item.offset >= self.keep.len())
+            || topn.order_by.iter().any(|item| {
+                crate::access_path::expression_column_offsets(std::slice::from_ref(&item.expr))
+                    .iter()
+                    .any(|offset| *offset >= self.keep.len())
+            })
             || self.partial_aggregate.is_some()
             || self.post_filter_projection.is_some()
             || self.limit.is_some()
@@ -6508,10 +6513,11 @@ mod remote_cursor_tests {
                     ),
                 ];
                 let topn = PushdownTopN {
-                    order_by: vec![tidb_distsql::remote_scan::PushdownTopNOrder {
-                        offset: a_slot,
-                        desc: true,
-                    }],
+                    order_by: vec![tidb_distsql::remote_scan::PushdownTopNOrder::column(
+                        a_slot,
+                        table.columns()[1].read().field_type.clone(),
+                        true,
+                    )],
                     limit: 2,
                 };
                 let cursor = table
@@ -6792,10 +6798,11 @@ mod remote_cursor_tests {
             "ordinary column pruning does not relax coverage"
         );
         let topn = PushdownTopN {
-            order_by: vec![tidb_distsql::remote_scan::PushdownTopNOrder {
-                offset: 1,
-                desc: false,
-            }],
+            order_by: vec![tidb_distsql::remote_scan::PushdownTopNOrder::column(
+                1,
+                FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                false,
+            )],
             limit: 1,
         };
         assert!(table

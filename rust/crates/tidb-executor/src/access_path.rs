@@ -4668,7 +4668,7 @@ impl tidb_executor_internal_exec::table_access::TableAccess for IndexRangeSource
         true
     }
 
-    fn accept_index_top_n(&mut self, order_by: &[(usize, bool)], limit: u64) -> bool {
+    fn accept_index_top_n(&mut self, order_by: &[(Expression, bool)], limit: u64) -> bool {
         // A covering declaration can use the same coprocessor TopN tier: Go's
         // `PhysicalIndexReader` consumes the ordered index rows directly.
         if self.top_n.is_some()
@@ -4694,8 +4694,8 @@ impl tidb_executor_internal_exec::table_access::TableAccess for IndexRangeSource
         else {
             return false;
         };
-        if order_by.iter().any(|(offset, _)| {
-            self.keep.get(*offset).is_none_or(|physical| {
+        if order_by.iter().flat_map(|(expr, _)| expression_column_offsets(std::slice::from_ref(expr))).any(|offset| {
+            self.keep.get(offset).is_none_or(|physical| {
                 let indexed = index.ordered_column_offsets().contains(physical);
                 // The executor schema appends EVERY clustered-handle column
                 // after the index columns, so TiKV evaluates a sort key from
@@ -4711,8 +4711,8 @@ impl tidb_executor_internal_exec::table_access::TableAccess for IndexRangeSource
         self.top_n = Some(tidb_distsql::remote_scan::PushdownTopN {
             order_by: order_by
                 .iter()
-                .map(|(offset, desc)| tidb_distsql::remote_scan::PushdownTopNOrder {
-                    offset: *offset,
+                .map(|(expr, desc)| tidb_distsql::remote_scan::PushdownTopNOrder {
+                    expr: expr.clone(),
                     desc: *desc,
                 })
                 .collect(),
@@ -4737,7 +4737,7 @@ impl tidb_executor_internal_exec::table_access::TableAccess for IndexRangeSource
         let order_by = topn
             .order_by
             .iter()
-            .map(|item| (item.offset, item.desc))
+            .map(|item| (item.expr.clone(), item.desc))
             .collect::<Vec<_>>();
         let accepted = self.accept_index_top_n(&order_by, topn.limit);
         if !accepted {
@@ -8577,7 +8577,12 @@ let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())
         assert!(!exec.accept_extreme_boundary(0, true));
         // ...but TiKV evaluates it from the appended handle columns, so the
         // coprocessor TopN lowers and the root TopN merges the regions.
-        assert!(exec.accept_index_top_n(&[(0, true)], 1));
+        let first = tidb_distsql::remote_scan::PushdownTopNOrder::column(
+            0,
+            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            true,
+        );
+        assert!(exec.accept_index_top_n(&[(first.expr, true)], 1));
         // The index's own leading column keeps Go's endgame read.
         let mut exec = IndexRangeSourceExec::new_with_statement(
             {

@@ -2681,8 +2681,7 @@ fn build_reader(
 }
 
 /// The coprocessor TopN of a reader's pushed `topn` over its child's row:
-/// every by-item must be a column of that row (`PushdownTopNOrder` carries an
-/// offset, not an expression).
+/// Go `PhysicalTopN.ToPB` lowers each `ByItem`, an expression over that row.
 fn remote_topn(
     topn: &tidb_planner_core_operator_physicalop::PhysicalTopN,
     child_schema: &Schema,
@@ -2691,14 +2690,8 @@ fn remote_topn(
         .by_items
         .iter()
         .map(|item| {
-            let Expression::Column(column) = &item.expr else {
-                return None;
-            };
-            let offset = child_schema.column_index(column);
-            (offset >= 0).then(|| tidb_distsql::remote_scan::PushdownTopNOrder {
-                offset: offset as usize,
-                desc: item.desc,
-            })
+            let expr = resolve_expression(item.expr.clone(), child_schema).ok()?;
+            Some(tidb_distsql::remote_scan::PushdownTopNOrder { expr, desc: item.desc })
         })
         .collect::<Option<Vec<_>>>()?;
     Some(tidb_distsql::remote_scan::PushdownTopN {
@@ -3321,21 +3314,17 @@ fn build_index_reader(
         lower_index_lookup_selections(table_plan, &mut source, ctx)?;
     }
     // Go `buildIndexLookUpReader`: an index-side TopN is an executor of the
-    // index request, so only its handles reach the table lookup. Its keys
-    // must be columns of the lookup's row; the root TopN still orders the
-    // rows, so a refused offer changes only how many handles are read.
+    // index request, so only its handles reach the table lookup. Its keys are
+    // expressions over the lookup's row; the root TopN still orders the rows,
+    // so a refused offer changes only how many handles are read.
     if let Some(topn) = embedded_index_topn(index_plan).filter(|_| !covering) {
         let order_by = topn
             .by_items
             .iter()
-            .map(|item| match &item.expr {
-                Expression::Column(column) => source
-                    .schema()
-                    .columns
-                    .iter()
-                    .position(|output| output.unique_id == column.unique_id)
-                    .map(|offset| (offset, item.desc)),
-                _ => None,
+            .map(|item| {
+                resolve_expression(item.expr.clone(), source.schema())
+                    .ok()
+                    .map(|expr| (expr, item.desc))
             })
             .collect::<Option<Vec<_>>>();
         if let (Some(order_by), Some(limit)) = (order_by, topn.offset.checked_add(topn.count)) {

@@ -234,7 +234,7 @@ pub trait TableAccess {
 
     /// Offers a bounded TopN over an ordered index handle stream, before the
     /// non-covering table lookup is issued.
-    fn accept_index_top_n(&mut self, order_by: &[(usize, bool)], limit: u64) -> bool {
+    fn accept_index_top_n(&mut self, order_by: &[(tidb_expr::expression::Expression, bool)], limit: u64) -> bool {
         let _ = (order_by, limit);
         false
     }

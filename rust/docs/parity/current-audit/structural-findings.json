@@ -76,14 +76,14 @@
       "id": "E14",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "The embedded store's coprocessor runs every DAG through Go's `mppExec` chain (`tidb-unistore-cophandler` `mpp.rs`, `mpp_exec.rs`), filters condition by condition as Go's `VectorizedFilter` does, and answers errors as `genRespWithMPPExec` does (`SelectResponse.error`, a conflict's `OtherError`, an unsupported executor's `OtherError`), but the index-lookup push-down (`buildIndexLookUp` and its `IntermediateOutputs`) refuses",
+      "finding": "The embedded store's coprocessor runs every DAG through Go's `mppExec` chain (`tidb-unistore-cophandler` `mpp.rs`, `mpp_exec.rs`), filters condition by condition as Go's `VectorizedFilter` does, and answers errors as `genRespWithMPPExec` does (`SelectResponse.error`, a conflict's `OtherError`, an unsupported executor's `OtherError`), but the index-lookup push-down is absent end to end: a `LocalIndexLookUp` plan (the `index_lookup_pushdown` hint, `tidb_index_lookup_pushdown_policy`) runs as this tier's own double read (`physical_builder.rs` `lower_index_lookup_selections`) where Go's `IndexLookUpExecutor` sends one `IndexLookUp` DAG and reads its rows and `IntermediateOutputs`, and this tier's coprocessor refuses `buildIndexLookUp`",
       "go_owner": "`pkg/store/mockstore/unistore/cophandler` (`mpp.go`, `mpp_exec.go`)"
     },
     {
       "id": "E15",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "A TiKV reader builds its DAG from its access path's scan request (`cop_reader.rs`; `cop_plan_ids_for` matches executors to the pushed nodes by kind) where Go's `constructDAGReq` lowers the reader's pushed plan one node per executor (`ToPB`). A pushed TopN (a reader's, or an IndexLookUp's index side) reaches the coprocessor through the scan's offer, whose `PushdownTopNOrder` carries a column offset: a TopN over an expression stays local, where `PhysicalTopN.ToPB` lowers any `ByItem`",
+      "finding": "A TiKV reader builds its DAG from its access path's scan request (`cop_reader.rs`; `cop_plan_ids_for` matches executors to the pushed nodes by kind) where Go's `constructDAGReq` lowers the reader's pushed plan one node per executor (`ToPB`). A pushed TopN (a reader's, or an IndexLookUp's index side) reaches the coprocessor through the scan's offer, its `ByItem`s expressions over the scan's output as `PhysicalTopN.ToPB` lowers them",
       "go_owner": "`pkg/executor/builder.go` (`constructDAGReq`), `pkg/planner/core/plan_to_pb.go`"
     },
     {
