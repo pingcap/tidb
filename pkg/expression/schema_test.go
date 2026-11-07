@@ -176,9 +176,11 @@ func TestGetUsedList(t *testing.T) {
 
 	// Cover both the linear-scan path (fewer than usedListMapThreshold used
 	// columns) and the UniqueID-set path (at or above it) on a wide schema, and
-	// check them against Schema.Contains. usedCols includes duplicates, columns
-	// from another schema, and a prefix column sharing a UniqueID with a schema
-	// column, which must still count as used.
+	// check them against Schema.Contains. usedCols has exactly usedCount entries,
+	// so the threshold-1 and threshold cases take different paths. The last three
+	// entries (when there is room) are a duplicate, a column from another schema,
+	// and a prefix column sharing a UniqueID with a schema column, which must
+	// still count as used.
 	wide := s.generateSchema(300)
 	foreign := s.generateSchema(10).Columns
 	for _, usedCount := range []int{0, 1, usedListMapThreshold - 1, usedListMapThreshold, 150} {
@@ -186,12 +188,14 @@ func TestGetUsedList(t *testing.T) {
 		for i := range usedCount {
 			usedCols = append(usedCols, wide.Columns[(i*7)%len(wide.Columns)])
 		}
-		if usedCount > 0 {
-			usedCols = append(usedCols, usedCols[0], foreign[usedCount%len(foreign)])
+		if usedCount >= 4 {
 			prefixCol := wide.Columns[299].Clone().(*Column)
 			prefixCol.IsPrefix = true
-			usedCols = append(usedCols, prefixCol)
+			usedCols[usedCount-3] = usedCols[0]
+			usedCols[usedCount-2] = foreign[usedCount%len(foreign)]
+			usedCols[usedCount-1] = prefixCol
 		}
+		require.Len(t, usedCols, usedCount)
 		used = GetUsedList(mock.NewContext(), usedCols, wide)
 		usedSchema := NewSchema(usedCols...)
 		for i, col := range wide.Columns {
