@@ -2931,6 +2931,13 @@ func TestInsertColumnPrivilege(t *testing.T) {
 	userTk.MustExec(`INSERT INTO test.od(id, a) VALUES (1, 5) ON DUPLICATE KEY UPDATE a = a + 1;`)
 	userTk.MustExec(`INSERT INTO test.od(id, a) VALUES (1, 7) ON DUPLICATE KEY UPDATE a = VALUES(a);`)
 	tk.MustQuery(`SELECT a FROM test.od`).Check(testkit.Rows(`7`))
+	// A bare DEFAULT in ON DUPLICATE KEY UPDATE reads nothing.
+	tk.MustExec(`CREATE TABLE test.od2 (id int PRIMARY KEY, a int DEFAULT 3, secret int);`)
+	tk.MustExec(`INSERT INTO test.od2 VALUES (1, 0, 42);`)
+	tk.MustExec(`GRANT INSERT(id, a), UPDATE(a) ON test.od2 TO 'testuser'@'localhost';`)
+	userTk.MustExec(`INSERT INTO test.od2(id, a) VALUES (1, 5) ON DUPLICATE KEY UPDATE a = DEFAULT;`)
+	tk.MustQuery(`SELECT a FROM test.od2`).Check(testkit.Rows(`3`))
+	userTk.MustGetErrCode(`INSERT INTO test.od2(id, a) VALUES (1, 5) ON DUPLICATE KEY UPDATE a = DEFAULT(secret);`, errno.ErrColumnaccessDenied)
 }
 
 func TestUpdateColumnPrivilege(t *testing.T) {
@@ -3011,6 +3018,18 @@ func TestUpdateColumnPrivilege(t *testing.T) {
 	tk.MustExec(`GRANT UPDATE(a) ON test.gs TO 'testuser'@'localhost'`)
 	userTk.MustGetErrCode(`UPDATE test.gs SET a = DEFAULT(secret)`, errno.ErrColumnaccessDenied)
 	userTk.MustExec(`UPDATE test.gs SET a = DEFAULT(a)`)
+	// A bare DEFAULT writes the default of the assigned column and reads
+	// nothing, so UPDATE on the column is enough.
+	tk.MustExec(`CREATE TABLE test.ud (id int PRIMARY KEY, a int DEFAULT 7, secret int)`)
+	tk.MustExec(`INSERT INTO test.ud VALUES (1, 0, 42)`)
+	tk.MustExec(`GRANT UPDATE(a) ON test.ud TO 'testuser'@'localhost'`)
+	userTk.MustExec(`UPDATE test.ud SET a = DEFAULT`)
+	tk.MustQuery(`SELECT a FROM test.ud`).Check(testkit.Rows("7"))
+	userTk.MustGetErrCode(`UPDATE test.ud SET a = DEFAULT(secret)`, errno.ErrColumnaccessDenied)
+	tk.MustExec(`GRANT SELECT(id) ON test.ud TO 'testuser'@'localhost'`)
+	tk.MustExec(`UPDATE test.ud SET a = 0`)
+	userTk.MustExec(`UPDATE test.ud SET a = DEFAULT WHERE id = 1`)
+	tk.MustQuery(`SELECT a FROM test.ud`).Check(testkit.Rows("7"))
 
 	// A point UPDATE or DELETE whose key cannot match any row still requires
 	// the privileges of the statement.

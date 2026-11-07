@@ -85,7 +85,9 @@ func evalAstExpr(ctx expression.BuildContext, expr ast.ExprNode) (types.Datum, e
 // rewriteAstExprWithPlanCtx rewrites ast expression directly.
 // Different with expression.BuildSimpleExpr, it uses planner context and is more powerful to build some special expressions
 // like subquery, window function, etc.
-func rewriteAstExprWithPlanCtx(sctx base.PlanContext, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice, allowCastArray bool) (expression.Expression, []visitInfo, error) {
+// implicitDefaults are bare DEFAULT keywords in expr whose Name was filled
+// with the assigned column.
+func rewriteAstExprWithPlanCtx(sctx base.PlanContext, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice, allowCastArray bool, implicitDefaults ...*ast.DefaultExpr) (expression.Expression, []visitInfo, error) {
 	var is infoschema.InfoSchema
 	// in tests, it may be null
 	if s, ok := sctx.GetInfoSchema().(infoschema.InfoSchema); ok {
@@ -93,6 +95,12 @@ func rewriteAstExprWithPlanCtx(sctx base.PlanContext, expr ast.ExprNode, schema 
 	}
 	b, savedBlockNames := NewPlanBuilder().Init(sctx, is, hint.NewQBHintHandler(nil))
 	b.allowBuildCastArray = allowCastArray
+	for _, d := range implicitDefaults {
+		if b.implicitDefaultExprs == nil {
+			b.implicitDefaultExprs = make(map[*ast.DefaultExpr]struct{})
+		}
+		b.implicitDefaultExprs[d] = struct{}{}
+	}
 	fakePlan := logicalop.LogicalTableDual{}.Init(sctx, 0)
 	if schema != nil {
 		fakePlan.SetSchema(schema)
@@ -2908,8 +2916,10 @@ func (er *expressionRewriter) evalDefaultExprWithPlanCtx(planCtx *exprRewriterPl
 		name = er.names[idx]
 	}
 	// DEFAULT(col) reads the definition of col, so it requires SELECT on col
-	// like a reference to col does.
-	er.precollectColNames(name)
+	// like a reference to col does. A bare DEFAULT assigned to col does not.
+	if _, implicit := planCtx.builder.implicitDefaultExprs[v]; !implicit {
+		er.precollectColNames(name)
+	}
 
 	dbName := name.DBName
 	if dbName.O == "" {

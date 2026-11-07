@@ -244,6 +244,10 @@ type PlanBuilder struct {
 	// missing privilege on a referenced column is still reported as a column
 	// error; the extra check only matters when every column check passes.
 	anyColumnSelectVisitInfo []visitInfo
+	// implicitDefaultExprs holds the bare DEFAULT keywords whose Name was
+	// filled with the assigned column (SET col = DEFAULT). Unlike DEFAULT(col)
+	// they do not read another column, so they require no SELECT privilege.
+	implicitDefaultExprs map[*ast.DefaultExpr]struct{}
 	// optFlag indicates the flags of the optimizer rules.
 	optFlag uint64
 	// capFlag indicates the capability flags.
@@ -400,6 +404,20 @@ func (hch *handleColHelper) mergeAndPush(m1, m2 map[int64][]util.HandleCols) {
 
 func (hch *handleColHelper) tailMap() map[int64][]util.HandleCols {
 	return hch.id2HandleMapStack[hch.stackTail-1]
+}
+
+// fillImplicitDefault fills the Name of a bare DEFAULT keyword assigned to
+// col, and remembers that it was not written as DEFAULT(col).
+func (b *PlanBuilder) fillImplicitDefault(expr ast.ExprNode, col *ast.ColumnName) {
+	d := physicalop.ExtractDefaultExpr(expr)
+	if d == nil {
+		return
+	}
+	d.Name = col
+	if b.implicitDefaultExprs == nil {
+		b.implicitDefaultExprs = make(map[*ast.DefaultExpr]struct{})
+	}
+	b.implicitDefaultExprs[d] = struct{}{}
 }
 
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
@@ -4249,6 +4267,9 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	// existing row, so every column they reference requires SELECT, just like
 	// the right-hand side of an UPDATE assignment. `VALUES(col)` refers to the
 	// incoming row and is not collected.
+	for _, assign := range insert.OnDuplicate {
+		b.fillImplicitDefault(assign.Expr, assign.Column)
+	}
 	originColPriv := b.checkColPriv
 	b.checkColPriv = reportColumnErrOption
 	onDupColSet, err := insertPlan.ResolveOnDuplicate(insert.OnDuplicate, tableInfo, func(node ast.ExprNode) (expression.Expression, error) {

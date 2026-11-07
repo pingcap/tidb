@@ -6512,9 +6512,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		var np base.LogicalPlan
 		if i < len(list) {
 			// If assign `DEFAULT` to column, fill the `defaultExpr.Name` before rewrite expression
-			if expr := physicalop.ExtractDefaultExpr(assign.Expr); expr != nil {
-				expr.Name = assign.Column
-			}
+			b.fillImplicitDefault(assign.Expr, assign.Column)
 			newExpr, np, err = b.rewrite(ctx, assign.Expr, p, nil, true)
 			if err != nil {
 				return nil, nil, false, err
