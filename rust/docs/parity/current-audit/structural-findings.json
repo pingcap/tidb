@@ -48,8 +48,8 @@
       "id": "D12",
       "status": "open",
       "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "Every persisted DDL job step rebuilds the whole info schema from the step's meta snapshot (`plan_persisted_ddl_job_with` -> `load_info_schema` -> `fetch_all_schemas_with_tables`, a `TableInfo` JSON parse per table, system tables included) to locate the job table and build the MDL info, where Go's `transitOneJobStep` reads the job's own tables through `jobCtx.metaMut` and takes the schema from `jobCtx.infoCache`: in the `executor/foreign_key` replay about half of every DDL's latency is that reload",
-      "go_owner": "`pkg/ddl/job_worker.go` (`transitOneJobStep`, `runOneJobStep`), `pkg/ddl/job_scheduler.go` (`jobContext.infoCache`)"
+      "finding": "A persisted DDL job step's action handlers take their objects from a catalog rebuilt from the whole step snapshot (`plan_persisted_ddl_job_with` -> `load_info_schema`, a `TableInfo` JSON parse per table, system tables included), where Go's handlers read the job's own objects through `jobCtx.metaMut` (`checkSchemaExistAndCancelNotExistJob`, `GetTableInfoAndCancelFaultJob`) and take only the schema-version context from `jobCtx.infoCache`. The rebuilt catalog is raw meta, not an `InfoSchema`: a DROP DATABASE's later steps still find the write-only database there, while Go's infoschema drops it at the first diff (`applyDropSchema`), so the cached schema cannot stand in until the handlers read meta. In the `executor/foreign_key` and `ddl/db_integration` replays about half of every DDL's latency is that rebuild",
+      "go_owner": "`pkg/ddl/job_worker.go` (`transitOneJobStep`, `runOneJobStep`), `pkg/ddl/schema.go`, `pkg/ddl/table.go`"
     },
     {
       "id": "E02",

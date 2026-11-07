@@ -125,6 +125,15 @@ pub struct InfoCache {
     builder: RwLock<Option<SchemaBuilder>>,
 }
 
+impl std::fmt::Debug for InfoCache {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("InfoCache")
+            .field("latest_version", &self.get_latest().schema_meta_version())
+            .finish_non_exhaustive()
+    }
+}
+
 impl InfoCache {
     /// Publishes an initial catalog, normally the node's startup full load.
     #[must_use]
@@ -194,6 +203,12 @@ impl InfoCache {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// How many versions this cache retains (Go `InfoCache`'s capacity).
+    #[must_use]
+    pub fn capacity(&self) -> usize {
+        self.capacity.load(Ordering::Relaxed)
+    }
+
     /// Go `InfoCache.GetLatest`: the `InfoSchema` in force now. A poisoned
     /// lock still yields the value: a panicking publisher cannot leave the
     /// node unable to answer queries.
@@ -233,11 +248,27 @@ impl InfoCache {
             return Ok(found);
         }
         // No shared cache lock spans storage RPCs.
-        let mut loaded = tidb_infoschema::cluster_catalog::load_info_schema(snapshot)?;
-        // The reserved counter may be ahead of the committed schema diff.
-        // Use the same effective version as the live reload owner.
-        loaded.set_schema_meta_version(version);
-        let built = self.build(loaded, Some(&self.get_latest()));
+        let latest = self.get_latest();
+        // Go `tryLoadSchemaDiffs`: a version newer than the latest one, fewer
+        // than `LoadSchemaDiffVersionGapThreshold` diffs ahead, is the latest
+        // advanced by those diffs; otherwise (a first load, an older version,
+        // a diff that cannot apply) the whole schema is read.
+        let loaded = if latest.schema_meta_version() != 0 && version > latest.schema_meta_version() {
+            match crate::catalog_reload::reload_cluster_catalog(snapshot, &latest, None)? {
+                crate::catalog_reload::ReloadedCatalog::Diffs { catalog, .. }
+                | crate::catalog_reload::ReloadedCatalog::Full { catalog, .. } => catalog,
+                crate::catalog_reload::ReloadedCatalog::Unchanged { .. } => {
+                    latest.metadata_copy()
+                }
+            }
+        } else {
+            let mut loaded = tidb_infoschema::cluster_catalog::load_info_schema(snapshot)?;
+            // The reserved counter may be ahead of the committed schema diff.
+            // Use the same effective version as the live reload owner.
+            loaded.set_schema_meta_version(version);
+            loaded
+        };
+        let built = self.build(loaded, Some(&latest));
         let mut versions = self
             .historical
             .lock()
@@ -626,6 +657,51 @@ mod tests {
             7
         );
         assert_eq!(shared.get_latest().schema_meta_version(), 8);
+    }
+
+    /// Go `LoadWithTS`: a version newer than the latest is the latest
+    /// advanced by its schema diffs (`tryLoadSchemaDiffs`), not a full load.
+    #[test]
+    fn a_newer_version_loads_by_applying_its_schema_diffs() {
+        struct Snapshot {
+            version: i64,
+            scans: usize,
+        }
+        impl tidb_infoschema::cluster_catalog::MetaSnapshot for Snapshot {
+            fn get(
+                &mut self,
+                key: &[u8],
+            ) -> Result<Option<Vec<u8>>, tidb_infoschema::cluster_catalog::ClusterCatalogError> {
+                if key == tidb_meta::key::schema_version_kv_key() {
+                    return Ok(Some(self.version.to_string().into_bytes()));
+                }
+                // ActionDropSchema of a database nobody holds: a no-op diff.
+                Ok((11..=self.version)
+                    .find(|version| key == tidb_meta::key::schema_diff_kv_key(*version))
+                    .map(|version| {
+                        format!(r#"{{"version":{version},"type":2,"schema_id":99}}"#).into_bytes()
+                    }))
+            }
+            fn scan_prefix(
+                &mut self,
+                _: &[u8],
+            ) -> Result<
+                tidb_infoschema::cluster_catalog::MetaPairs,
+                tidb_infoschema::cluster_catalog::ClusterCatalogError,
+            > {
+                self.scans += 1;
+                Ok(Vec::new())
+            }
+        }
+        let shared = InfoCache::new(catalog_at(10));
+        let mut snapshot = Snapshot {
+            version: 12,
+            scans: 0,
+        };
+        let loaded = shared.load_with_ts(&mut snapshot, 16).unwrap();
+        assert_eq!(loaded.schema_meta_version(), 12);
+        assert_eq!(snapshot.scans, 0, "the diffs advance the latest schema");
+        assert_eq!(shared.get_latest().schema_meta_version(), 10, "a load never publishes");
     }
 
     #[test]
