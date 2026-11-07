@@ -203,6 +203,25 @@ fn a_table_with_no_index_passes_trivially() {
     assert_check_passes(&mut session, "admin check table t");
 }
 
+/// `FastCheckTableExec` splices a partial index's condition into the SQL it
+/// runs through the system session's `ExecuteInternal(ctx, sql)` with no
+/// arguments, which Go's `ParseWithParams` leaves unescaped
+/// (`if len(args) > 0`): a `%n` inside the condition's literal is text, and
+/// the check passes (Go captured: OK).
+#[test]
+fn a_partial_index_condition_holding_a_percent_sign_checks_clean() {
+    let mut session = Session::new();
+    set_fast_check(&mut session, true);
+    session.run("drop table if exists t").unwrap();
+    session
+        .run("create table t(a int primary key, b varchar(10), index ib(b) where b = 'x%n')")
+        .unwrap();
+    session
+        .run("insert into t values (1, 'x%n'), (2, 'xyz'), (3, 'x%%')")
+        .unwrap();
+    assert_check_passes(&mut session, "admin check table t");
+}
+
 /// An empty table, and a table whose rows were all deleted -- the second is
 /// `executor/admin.test`'s `delete from t1; admin check table t1;`, which
 /// catches a check that never re-reads the index after the deletes.

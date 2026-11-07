@@ -6901,8 +6901,7 @@ fn domain_pool_sessions_keep_gos_zero_sql_mode() {
     let rows = pool
         .with_session(|session| {
             session.with_session_context(|context| {
-                context
-                    .query_internal(tidb_txnkv::INTERNAL_TXN_OTHERS, "select @@sql_mode, cast('0000-00-00' as datetime) is null")
+                tidb_domain_core::sys_session::exec_sql(context, tidb_txnkv::INTERNAL_TXN_OTHERS, "select @@sql_mode, cast('0000-00-00' as datetime) is null", &[])
                     .map_err(tidb_syssession::SysSessionError::new)
             })
         })

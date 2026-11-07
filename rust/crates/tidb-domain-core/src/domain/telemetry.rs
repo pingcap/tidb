@@ -54,7 +54,7 @@ impl tidb_telemetry::Session for TelemetrySession {
     }
 
     fn exec_restricted_sql(&self, sql: &str) -> Result<Vec<Vec<Datum>>, String> {
-        self.with_context(|context| context.query_internal(tidb_txnkv::INTERNAL_TXN_TELEMETRY, sql))
+        self.with_context(|context| crate::sys_session::exec_sql(context, tidb_txnkv::INTERNAL_TXN_TELEMETRY, sql, &[]))
     }
 
     fn refresh_txn_ctx(&mut self) -> Result<(), String> {

@@ -420,6 +420,7 @@ impl MemTableRetriever for InstanceStateRetriever {
                 self.viewer.restricted_sql.as_deref(),
                 tidb_txnkv::INTERNAL_TXN_META,
                 sql,
+                &[],
             )
         };
         if table.go_lower_eq("INSPECTION_SUMMARY") {
@@ -488,33 +489,40 @@ impl MemTableRetriever for InstanceStateRetriever {
     }
 }
 
-/// Go `RestrictedSQLExecutor.ExecRestrictedSQL` with no options: one
-/// schema-qualified statement on an internal session, answering its rows.
-pub trait RestrictedSqlExecutor: Send + Sync {
-    /// Runs `sql` in an internal session's own transaction, under the
-    /// request source of the caller's context (Go
-    /// `kv.WithInternalSourceType(ctx, source)`).
-    fn exec_restricted_sql(&self, source: &str, sql: &str) -> Result<Vec<Vec<Datum>>, DriverError>;
-}
+/// Go `sctx.GetRestrictedSQLExecutor()`: the shared handle a session and its
+/// retriever snapshots carry.
+pub type RestrictedSql = Option<Arc<dyn tidb_sqlexec::RestrictedSqlExecutor>>;
 
-/// The shared handle a session and its retriever snapshots carry.
-pub type RestrictedSql = Option<Arc<dyn RestrictedSqlExecutor>>;
-
-/// Go `ExecRestrictedSQL` through the session's executor, which the node
-/// that opened the session installs.
+/// Go `ExecRestrictedSQL(kv.WithInternalSourceType(ctx, source), nil, sql,
+/// args...)` through the session's executor, which the node that opened the
+/// session installs; the rows, as Go's callers read them.
 pub fn exec_restricted_sql_over(
-    executor: Option<&dyn RestrictedSqlExecutor>,
+    executor: Option<&dyn tidb_sqlexec::RestrictedSqlExecutor>,
     source: &str,
     sql: &str,
+    arguments: &[tidb_sqlescape::SqlArg<'_>],
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
+    let executor = executor.ok_or_else(|| {
+        DriverError::unsupported("restricted SQL runs on the session's node".to_owned())
+    })?;
+    let context = tikv_client::util::with_internal_source_type(
+        &tikv_client::trace::TraceContext::new(),
+        source,
+    );
     executor
-        .ok_or_else(|| {
-            DriverError::unsupported("restricted SQL runs on the session's node".to_owned())
-        })?
-        .exec_restricted_sql(source, sql)
+        .exec_restricted_sql(&context, &[], sql, arguments)
+        .map(|(rows, _)| rows)
+        .map_err(sql_exec_driver_error)
 }
 
-
+/// A SQL executor's failure as the statement error it carries, or Go's
+/// unknown error naming any other.
+pub fn sql_exec_driver_error(error: tidb_sqlexec::SqlExecError) -> DriverError {
+    match error.downcast::<tidb_store_driver_error::sql_query_error::SqlQueryError>() {
+        Ok(error) => DriverError::Mysql((*error).into()),
+        Err(error) => DriverError::unsupported(error.to_string()),
+    }
+}
 
 pub fn memory_usage_table_rows() -> Vec<Vec<tidb_datatype::Datum>> {
     use std::sync::atomic::Ordering;
@@ -1072,5 +1080,98 @@ mod process_row_tests {
         assert_eq!(row[0][11], Datum::Bytes(b"2026-11-05 01:02:03.12".to_vec()));
         assert_eq!(row[0][12], Datum::Int(4096));
         assert_eq!(row[1][10..13], [Datum::Null, Datum::Null, Datum::Null]);
+    }
+}
+
+#[cfg(test)]
+mod restricted_sql_tests {
+    use super::*;
+
+    /// Answers the request source its context carries, or fails with the
+    /// statement error it holds.
+    struct SourceEcho(Option<tidb_store_driver_error::sql_query_error::SqlQueryError>);
+
+    impl tidb_sqlexec::RestrictedSqlExecutor for SourceEcho {
+        fn parse_with_params(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
+            sql: &str,
+            _arguments: &[tidb_sqlescape::SqlArg<'_>],
+        ) -> tidb_sqlexec::Result<tidb_ast::Stmt> {
+            Err(format!("unparsed {sql}").into())
+        }
+
+        fn exec_restricted_stmt(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
+            _statement: &tidb_ast::Stmt,
+            _options: &[tidb_sqlexec::OptionFuncAlias],
+        ) -> tidb_sqlexec::Result<(Vec<Vec<Datum>>, Vec<tidb_resolve::ResultFieldRef>)> {
+            Err("no statement".into())
+        }
+
+        fn exec_restricted_sql(
+            &self,
+            context: &dyn tidb_sqlexec::ExecutionContext,
+            _options: &[tidb_sqlexec::OptionFuncAlias],
+            sql: &str,
+            arguments: &[tidb_sqlescape::SqlArg<'_>],
+        ) -> tidb_sqlexec::Result<(Vec<Vec<Datum>>, Vec<tidb_resolve::ResultFieldRef>)> {
+            if let Some(error) = &self.0 {
+                return Err(Box::new(error.clone()));
+            }
+            let source = context
+                .as_any()
+                .downcast_ref::<tikv_client::trace::TraceContext>()
+                .and_then(tikv_client::util::request_source_value)
+                .expect("the caller's context carries a request source");
+            Ok((
+                vec![vec![
+                    Datum::new_string_datum(source.source_type.as_str()),
+                    Datum::Int(i64::from(source.internal)),
+                    Datum::new_string_datum(tidb_sqlescape::escape_sql_text(sql, arguments)?),
+                ]],
+                Vec::new(),
+            ))
+        }
+    }
+
+    /// Go `ExecRestrictedSQL(kv.WithInternalSourceType(ctx, source), nil, sql,
+    /// args...)`: the executor sees an internal request of the caller's
+    /// source and the escaped arguments, and its statement error reaches the
+    /// caller with its own code (Go returns the error unwrapped).
+    #[test]
+    fn restricted_sql_runs_under_the_callers_internal_source_and_keeps_its_error() {
+        let rows = exec_restricted_sql_over(
+            Some(&SourceEcho(None)),
+            tidb_txnkv::INTERNAL_TXN_GC,
+            "SELECT %?",
+            &["it's".into()],
+        )
+        .unwrap();
+        assert_eq!(
+            rows,
+            vec![vec![
+                Datum::new_string_datum(tidb_txnkv::INTERNAL_TXN_GC),
+                Datum::Int(1),
+                Datum::new_string_datum("SELECT 'it\\'s'"),
+            ]]
+        );
+
+        let missing = tidb_store_driver_error::sql_query_error::SqlQueryError::new(
+            1146,
+            *b"42S02",
+            "Table 'mysql.tidb' doesn't exist",
+        );
+        let error = exec_restricted_sql_over(
+            Some(&SourceEcho(Some(missing))),
+            tidb_txnkv::INTERNAL_TXN_GC,
+            "SELECT 1",
+            &[],
+        )
+        .unwrap_err()
+        .to_mysql_error();
+        assert_eq!(error.code, 1146);
+        assert_eq!(error.message, "Table 'mysql.tidb' doesn't exist");
     }
 }

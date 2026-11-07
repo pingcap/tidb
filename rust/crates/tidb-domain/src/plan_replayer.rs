@@ -64,19 +64,14 @@
 //!   `WalkDir` takes a callback and a `*storeapi.WalkOption{SubDir: path}`;
 //!   the callback here never returns a non-nil error, so listing the names
 //!   first is equivalent. The per-file size the callback receives is unused.
-//! - `// boundary:` Go `sessionctx.Context.GetSQLExecutor().ExecuteInternal`
-//!   plus `sqlexec.DrainRecordSet(ctx, rs, 8)` → [`InternalSqlExecutor`].
-//!   Both call sites branch on `rs == nil` and then on `len(rows) > 0`, and
-//!   `rs == nil` means the *opposite* thing in the two of them — "assume
-//!   unhandled" in `checkUnHandledReplayerTask`, "assume absent" in
-//!   `CheckPlanReplayerTaskExists`. So the trait returns `Option<usize>`:
-//!   `None` is Go's nil record set and `Some(n)` is the row count. An
-//!   implementor cannot report "no record set" as "zero rows" by accident.
-//! - `// boundary:` Go
-//!   `sessionctx.Context.GetRestrictedSQLExecutor().ExecRestrictedSQL` under
-//!   `kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)`
-//!   → [`RestrictedSqlExecutor`]. The source type is a tracing tag; the
-//!   implementor sets it.
+//! - Go `sessionctx.Context.GetSQLExecutor()` and
+//!   `GetRestrictedSQLExecutor()` are `tidb_sqlexec`'s [`SqlExecutor`] and
+//!   [`RestrictedSqlExecutor`], run under [`plan_replayer_ctx`]. Both
+//!   `ExecuteInternal` call sites branch on `rs == nil` and then on
+//!   `len(rows) > 0`, and `rs == nil` means the *opposite* thing in the two
+//!   of them — "assume unhandled" in `checkUnHandledReplayerTask`, "assume
+//!   absent" in `CheckPlanReplayerTaskExists`; [`execute_internal_rows`]
+//!   keeps Go's nil record set as `None`.
 //! - `// boundary:` Go `pkg/domain/infosync.GetServerInfo()` →
 //!   [`ServerInfoSource`], which yields the `IP`/`Port` pair that
 //!   `net.JoinHostPort` turns into the `instance` column. `infosync` is
@@ -165,6 +160,11 @@ use tidb_mysql::to_lowercase as go_simple_lowercase;
 use tidb_stats_handle_metrics::domain_metrics;
 
 use tidb_replayer::PlanReplayerTaskKey;
+use tidb_datatype::Datum;
+use tidb_sqlescape::SqlArg;
+use tidb_sqlexec::{RestrictedSqlExecutor, SqlExecutor};
+use tikv_client::trace::TraceContext;
+use tikv_client::util::with_internal_source_type;
 
 /// Go `"select sql_digest, plan_digest from mysql.plan_replayer_task"`
 /// (`plan_replayer.go:305`).
@@ -315,38 +315,56 @@ pub trait ServerInfoSource {
     fn get_server_info(&self) -> Result<ServerInfo, PlanReplayerError>;
 }
 
-/// boundary: Go `sessionctx.Context.GetSQLExecutor().ExecuteInternal(ctx,
-/// sql)` followed by `sqlexec.DrainRecordSet(ctx, rs, 8)`.
-///
-/// Both methods return `None` for Go's `rs == nil` — a statement that
-/// produced no record set at all, which the two call sites interpret in
-/// opposite directions.
-pub trait InternalSqlExecutor {
-    /// Row count of a `select *` probe.
-    ///
-    /// # Errors
-    /// Whatever the executor or the drain reports.
-    fn query_row_count(&self, sql: &str) -> Result<Option<usize>, PlanReplayerError>;
-
-    /// The `(sql_digest, plan_digest)` pairs of [`COLLECT_ALL_TASKS_SQL`],
-    /// read with `row.GetString(0)` / `row.GetString(1)`.
-    ///
-    /// # Errors
-    /// Whatever the executor or the drain reports.
-    fn query_digest_pairs(
-        &self,
-        sql: &str,
-    ) -> Result<Option<Vec<(String, String)>>, PlanReplayerError>;
+/// Go `SetupPlanReplayerHandle`'s
+/// `kv.WithInternalSourceType(context.Background(),
+/// kv.InternalTxnStatsForegroundPriority)`: the context every statement of
+/// this file runs under.
+#[must_use]
+pub fn plan_replayer_ctx() -> TraceContext {
+    with_internal_source_type(
+        &TraceContext::new(),
+        tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY,
+    )
 }
 
-/// boundary: Go `sessionctx.Context.GetRestrictedSQLExecutor().ExecRestrictedSQL`.
-pub trait RestrictedSqlExecutor {
-    /// Run a statement with its `%?` parameters, discarding the rows.
-    ///
-    /// # Errors
-    /// Whatever the executor reports. Every caller in this file logs and
-    /// continues.
-    fn exec_restricted_sql(&self, sql: &str, params: &[&str]) -> Result<(), PlanReplayerError>;
+/// Go `exec.ExecuteInternal(ctx, sql)` followed by
+/// `sqlexec.DrainRecordSet(ctx, rs, 8)` and the deferred `rs.Close()`;
+/// `None` is Go's nil record set.
+///
+/// # Errors
+/// Whatever the executor or the drain reports.
+pub fn execute_internal_rows<E: SqlExecutor + ?Sized>(
+    exec: &E,
+    sql: &str,
+) -> Result<Option<Vec<Vec<Datum>>>, PlanReplayerError> {
+    let ctx = plan_replayer_ctx();
+    let Some(mut rs) = exec.execute_internal(&ctx, sql, &[]).map_err(sql_exec_error)? else {
+        return Ok(None);
+    };
+    let rows = tidb_sqlexec::drain_record_set(&ctx, rs.as_mut(), 8);
+    let _ = rs.close();
+    rows.map(Some).map_err(sql_exec_error)
+}
+
+/// Go `exec.ExecRestrictedSQL(ctx1, nil, sql, params...)`, the rows
+/// discarded as every caller here does.
+///
+/// # Errors
+/// Whatever the executor reports. Every caller in this file logs and
+/// continues.
+pub fn exec_restricted_sql<E: RestrictedSqlExecutor + ?Sized>(
+    exec: &E,
+    sql: &str,
+    params: &[&str],
+) -> Result<(), PlanReplayerError> {
+    let params = params.iter().map(|param| SqlArg::from(*param)).collect::<Vec<_>>();
+    exec.exec_restricted_sql(&plan_replayer_ctx(), &[], sql, &params)
+        .map(drop)
+        .map_err(sql_exec_error)
+}
+
+fn sql_exec_error(error: tidb_sqlexec::SqlExecError) -> PlanReplayerError {
+    PlanReplayerError::Other(error.to_string())
 }
 
 /// boundary: Go `extstore.GetGlobalExtStorage(ctx)` plus the two
@@ -593,7 +611,7 @@ impl<S: RestrictedSqlExecutor> DumpFileGcChecker<S> {
 /// rather than buried.
 pub fn delete_plan_replayer_status<E: RestrictedSqlExecutor + ?Sized>(exec: &E, token: &str) {
     // boundary: Go logs "delete mysql.plan_replayer_status record failed".
-    let _ = exec.exec_restricted_sql(DELETE_STATUS_BY_TOKEN_SQL, &[token]);
+    let _ = exec_restricted_sql(exec, DELETE_STATUS_BY_TOKEN_SQL, &[token]);
 }
 
 /// Go `insertPlanReplayerStatus` (`plan_replayer.go:144`): route each record
@@ -630,7 +648,8 @@ pub fn insert_plan_replayer_error_status_record<E: RestrictedSqlExecutor + ?Size
     record: &PlanReplayerStatusRecord,
 ) {
     // boundary: Go logs "insert mysql.plan_replayer_status record failed".
-    let _ = exec.exec_restricted_sql(
+    let _ = exec_restricted_sql(
+        exec,
         INSERT_ERROR_STATUS_SQL,
         &[
             &record.sql_digest,
@@ -653,7 +672,8 @@ pub fn insert_plan_replayer_success_status_record<E: RestrictedSqlExecutor + ?Si
     instance: &str,
     record: &PlanReplayerStatusRecord,
 ) {
-    let first = exec.exec_restricted_sql(
+    let first = exec_restricted_sql(
+        exec,
         INSERT_SUCCESS_STATUS_SQL,
         &[
             &record.sql_digest,
@@ -666,7 +686,8 @@ pub fn insert_plan_replayer_success_status_record<E: RestrictedSqlExecutor + ?Si
     if first.is_err() {
         // boundary: Go logs the first failure, then "try insert record
         // without original sql".
-        let _ = exec.exec_restricted_sql(
+        let _ = exec_restricted_sql(
+            exec,
             INSERT_SUCCESS_STATUS_NO_SQL,
             &[
                 &record.sql_digest,
@@ -707,13 +728,13 @@ pub fn check_plan_replayer_task_exists_sql(sql_digest: &str, plan_digest: &str) 
 ///
 /// # Errors
 /// Whatever the executor reports.
-pub fn check_un_handled_replayer_task<E: InternalSqlExecutor + ?Sized>(
+pub fn check_un_handled_replayer_task<E: SqlExecutor + ?Sized>(
     exec: &E,
     task: &PlanReplayerTaskKey,
 ) -> Result<bool, PlanReplayerError> {
-    match exec.query_row_count(&check_unhandled_replayer_task_sql(task))? {
+    match execute_internal_rows(exec, &check_unhandled_replayer_task_sql(task))? {
         None => Ok(true),
-        Some(rows) => Ok(rows == 0),
+        Some(rows) => Ok(rows.is_empty()),
     }
 }
 
@@ -721,22 +742,19 @@ pub fn check_un_handled_replayer_task<E: InternalSqlExecutor + ?Sized>(
 /// already a capture task for this pair of digests?
 ///
 /// Here a nil record set means "no" — the opposite reading of the same
-/// condition, and the reason [`InternalSqlExecutor::query_row_count`] keeps
-/// the two cases apart.
+/// condition, and the reason [`execute_internal_rows`] keeps the two cases
+/// apart.
 ///
 /// # Errors
 /// Whatever the executor reports.
-pub fn check_plan_replayer_task_exists<E: InternalSqlExecutor + ?Sized>(
+pub fn check_plan_replayer_task_exists<E: SqlExecutor + ?Sized>(
     exec: &E,
     sql_digest: &str,
     plan_digest: &str,
 ) -> Result<bool, PlanReplayerError> {
-    match exec.query_row_count(&check_plan_replayer_task_exists_sql(
-        sql_digest,
-        plan_digest,
-    ))? {
+    match execute_internal_rows(exec, &check_plan_replayer_task_exists_sql(sql_digest, plan_digest))? {
         None => Ok(false),
-        Some(rows) => Ok(rows > 0),
+        Some(rows) => Ok(!rows.is_empty()),
     }
 }
 
@@ -833,7 +851,7 @@ pub struct PlanReplayerTaskCollectorHandle<E> {
     pub sctx: E,
 }
 
-impl<E: InternalSqlExecutor> PlanReplayerTaskCollectorHandle<E> {
+impl<E: SqlExecutor> PlanReplayerTaskCollectorHandle<E> {
     /// A collector with an empty task set.
     pub fn new(sctx: E) -> Self {
         Self {
@@ -910,14 +928,16 @@ impl<E: InternalSqlExecutor> PlanReplayerTaskCollectorHandle<E> {
     pub fn collect_all_plan_replayer_task(
         &self,
     ) -> Result<Vec<PlanReplayerTaskKey>, PlanReplayerError> {
-        let Some(rows) = self.sctx.query_digest_pairs(COLLECT_ALL_TASKS_SQL)? else {
+        let Some(rows) = execute_internal_rows(&self.sctx, COLLECT_ALL_TASKS_SQL)? else {
             return Ok(Vec::new());
         };
+        // Go `row.GetString(0)`, `row.GetString(1)`.
+        let text = |datum: Option<&Datum>| datum.and_then(|datum| datum.sql_string().ok()).unwrap_or_default();
         Ok(rows
-            .into_iter()
-            .map(|(sql_digest, plan_digest)| PlanReplayerTaskKey {
-                sql_digest,
-                plan_digest,
+            .iter()
+            .map(|row| PlanReplayerTaskKey {
+                sql_digest: text(row.first()),
+                plan_digest: text(row.get(1)),
             })
             .collect())
     }
@@ -936,7 +956,7 @@ pub struct PlanReplayerTaskDumpWorker<E, D> {
     enable_historical_stats: bool,
 }
 
-impl<E: InternalSqlExecutor, D: PlanReplayerDumper> PlanReplayerTaskDumpWorker<E, D> {
+impl<E: SqlExecutor, D: PlanReplayerDumper> PlanReplayerTaskDumpWorker<E, D> {
     /// A worker over a shared status.
     pub fn new(sctx: E, dumper: D, status: std::sync::Arc<PlanReplayerDumpTaskStatus>) -> Self {
         Self {
@@ -1140,7 +1160,7 @@ pub struct PlanReplayerHandle<E> {
     pub dump_handle: PlanReplayerTaskDumpHandle,
 }
 
-impl<E: InternalSqlExecutor> PlanReplayerHandle<E> {
+impl<E: SqlExecutor> PlanReplayerHandle<E> {
     /// Both halves of the handle.
     pub fn new(collector: PlanReplayerTaskCollectorHandle<E>, capacity: usize) -> Self {
         Self {
@@ -1211,17 +1231,64 @@ mod tests {
         /// A nil record set for the status probe.
         status_nil: bool,
         fail_query: bool,
-        statements: RefCell<Vec<(String, Vec<String>)>>,
+        statements: Mutex<Vec<(String, Vec<String>)>>,
         fail_first_insert: bool,
     }
 
-    impl InternalSqlExecutor for MockExec {
-        fn query_row_count(&self, sql: &str) -> Result<Option<usize>, PlanReplayerError> {
+    impl MockExec {
+        /// Go's record set of `rows` one-column rows.
+        fn record_set(rows: Vec<Vec<Datum>>) -> Box<dyn tidb_sqlexec::RecordSet> {
+            let fields = vec![tidb_model::GoShared::new(tidb_resolve::ResultField {
+                column: Some(tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                    field_type: tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString),
+                    ..tidb_model::ColumnInfo::default()
+                })),
+                ..tidb_resolve::ResultField::default()
+            })];
+            let width = rows.first().map_or(1, Vec::len);
+            Box::new(tidb_sqlexec::SimpleRecordSet::new(
+                fields.into_iter().cycle().take(width).collect(),
+                rows,
+                8,
+            ))
+        }
+    }
+
+    impl SqlExecutor for MockExec {
+        fn execute(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
+            _sql: &str,
+        ) -> tidb_sqlexec::Result<Vec<Box<dyn tidb_sqlexec::RecordSet>>> {
+            unreachable!("plan replayer runs ExecuteInternal")
+        }
+
+        fn execute_internal(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
+            sql: &str,
+            _arguments: &[SqlArg<'_>],
+        ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
             if self.fail_query {
-                return Err(PlanReplayerError::Other("boom".to_owned()));
+                return Err("boom".into());
+            }
+            if sql == COLLECT_ALL_TASKS_SQL {
+                return Ok(self.task_rows.clone().map(|rows| {
+                    Self::record_set(
+                        rows.into_iter()
+                            .map(|(sql_digest, plan_digest)| {
+                                vec![
+                                    Datum::new_string_datum(sql_digest),
+                                    Datum::new_string_datum(plan_digest),
+                                ]
+                            })
+                            .collect(),
+                    )
+                }));
             }
             self.statements
-                .borrow_mut()
+                .lock()
+                .unwrap()
                 .push((sql.to_owned(), Vec::new()));
             if self.status_nil {
                 return Ok(None);
@@ -1232,31 +1299,59 @@ mod tests {
                 .and_then(|rest| rest.split('\'').next())
                 .unwrap_or_default()
                 .to_owned();
-            Ok(Some(self.status_rows.get(&digest).copied().unwrap_or(0)))
+            let count = self.status_rows.get(&digest).copied().unwrap_or(0);
+            Ok(Some(Self::record_set(vec![vec![Datum::new_string_datum(digest)]; count])))
         }
 
-        fn query_digest_pairs(
+        fn execute_stmt(
             &self,
-            sql: &str,
-        ) -> Result<Option<Vec<(String, String)>>, PlanReplayerError> {
-            assert_eq!(sql, COLLECT_ALL_TASKS_SQL);
-            if self.fail_query {
-                return Err(PlanReplayerError::Other("boom".to_owned()));
-            }
-            Ok(self.task_rows.clone())
+            _context: &dyn tidb_sqlexec::ExecutionContext,
+            _statement: &Stmt,
+        ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
+            unreachable!("plan replayer runs ExecuteInternal")
         }
     }
 
     impl RestrictedSqlExecutor for MockExec {
-        fn exec_restricted_sql(&self, sql: &str, params: &[&str]) -> Result<(), PlanReplayerError> {
-            self.statements.borrow_mut().push((
+        fn parse_with_params(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
+            _sql: &str,
+            _arguments: &[SqlArg<'_>],
+        ) -> tidb_sqlexec::Result<Stmt> {
+            unreachable!("plan replayer runs ExecRestrictedSQL")
+        }
+
+        fn exec_restricted_stmt(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
+            _statement: &Stmt,
+            _options: &[tidb_sqlexec::OptionFuncAlias],
+        ) -> tidb_sqlexec::Result<(Vec<Vec<Datum>>, Vec<tidb_resolve::ResultFieldRef>)> {
+            unreachable!("plan replayer runs ExecRestrictedSQL")
+        }
+
+        fn exec_restricted_sql(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
+            _options: &[tidb_sqlexec::OptionFuncAlias],
+            sql: &str,
+            arguments: &[SqlArg<'_>],
+        ) -> tidb_sqlexec::Result<(Vec<Vec<Datum>>, Vec<tidb_resolve::ResultFieldRef>)> {
+            self.statements.lock().unwrap().push((
                 sql.to_owned(),
-                params.iter().map(|p| (*p).to_owned()).collect(),
+                arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        SqlArg::String(text) => String::from_utf8_lossy(text).into_owned(),
+                        other => panic!("plan replayer binds strings, not {other:?}"),
+                    })
+                    .collect(),
             ));
             if self.fail_first_insert && sql == INSERT_SUCCESS_STATUS_SQL {
-                return Err(PlanReplayerError::Other("too long".to_owned()));
+                return Err("too long".into());
             }
-            Ok(())
+            Ok((Vec::new(), Vec::new()))
         }
     }
 
@@ -1472,7 +1567,7 @@ mod tests {
         assert!(storage.files.borrow().is_empty());
         assert_eq!(status.get_finished_task_status_len(), 0);
         let hook = checker.status_hook.as_ref().unwrap();
-        let stmts = hook.sctx.statements.borrow();
+        let stmts = hook.sctx.statements.lock().unwrap();
         assert_eq!(
             stmts.len(),
             1,
@@ -1514,7 +1609,8 @@ mod tests {
             .unwrap()
             .sctx
             .statements
-            .borrow()
+            .lock()
+            .unwrap()
             .is_empty());
     }
 
@@ -1607,7 +1703,7 @@ mod tests {
                 },
             ],
         );
-        let stmts = exec.statements.borrow();
+        let stmts = exec.statements.lock().unwrap();
         assert_eq!(stmts[0].0, INSERT_SUCCESS_STATUS_SQL);
         assert_eq!(
             stmts[0].1,
@@ -1646,7 +1742,7 @@ mod tests {
                 failed_reason: String::new(),
             },
         );
-        let stmts = exec.statements.borrow();
+        let stmts = exec.statements.lock().unwrap();
         assert_eq!(stmts.len(), 2);
         assert_eq!(stmts[1].0, INSERT_SUCCESS_STATUS_NO_SQL);
         assert_eq!(stmts[1].1, vec!["s", "p", "t", "inst"]);
@@ -1667,7 +1763,7 @@ mod tests {
                 ..PlanReplayerStatusRecord::default()
             },
         );
-        assert_eq!(exec.statements.borrow().len(), 1);
+        assert_eq!(exec.statements.lock().unwrap().len(), 1);
     }
 
     /// WRITTEN. An unavailable server info yields the literal "unknown".
@@ -1679,7 +1775,7 @@ mod tests {
             &MockInfo(None),
             &[PlanReplayerStatusRecord::default()],
         );
-        let stmts = exec.statements.borrow();
+        let stmts = exec.statements.lock().unwrap();
         assert_eq!(stmts[0].1.last().unwrap(), UNKNOWN_INSTANCE);
     }
 
@@ -1736,7 +1832,8 @@ mod tests {
         assert!(handle
             .sctx
             .statements
-            .borrow()
+            .lock()
+            .unwrap()
             .iter()
             .any(|(sql, _)| *sql == check_unhandled_replayer_task_sql(&task_key("123", "123"))));
         // A failed status is absent from the successful-row probe.
@@ -1759,6 +1856,20 @@ mod tests {
         });
         empty.collect_plan_replayer_task().unwrap();
         assert!(empty.get_tasks().is_empty());
+    }
+
+    /// WRITTEN. Go `collectAllPlanReplayerTask` reads each row's
+    /// `GetString(0)` as the SQL digest and `GetString(1)` as the plan digest.
+    #[test]
+    fn collected_keys_take_the_sql_then_the_plan_digest_column() {
+        let handle = PlanReplayerTaskCollectorHandle::new(MockExec {
+            task_rows: Some(vec![("sql".to_owned(), "plan".to_owned())]),
+            ..MockExec::default()
+        });
+        assert_eq!(
+            handle.collect_all_plan_replayer_task().unwrap(),
+            vec![task_key("sql", "plan")]
+        );
     }
 
     /// WRITTEN. A nil record set from the task select collects nothing, and a

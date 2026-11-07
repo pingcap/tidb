@@ -189,6 +189,7 @@ impl AccountState {
             tidb_txnkv::INTERNAL_TXN_PRIVILEGE,
             "SELECT User, Host, JSON_UNQUOTE(JSON_EXTRACT(User_attributes, '$.metadata')) \
              FROM mysql.user",
+            &[],
         )?;
 
         let Some((viewer_user, viewer_host)) = self.current_identity() else {

@@ -21,9 +21,9 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use tidb_domain::plan_replayer::{
-    DumpFileGcChecker, DumpFileStorage, GcStatusHook, InternalSqlExecutor, PlanReplayerDumpTask,
-    PlanReplayerDumper, PlanReplayerError, PlanReplayerHandle, PlanReplayerTaskCollectorHandle,
-    PlanReplayerTaskDumpWorker, RestrictedSqlExecutor,
+    DumpFileGcChecker, DumpFileStorage, GcStatusHook, PlanReplayerDumpTask, PlanReplayerDumper,
+    PlanReplayerError, PlanReplayerHandle, PlanReplayerTaskCollectorHandle,
+    PlanReplayerTaskDumpWorker,
 };
 
 use super::{Domain, UsageWorkerStop};
@@ -38,45 +38,78 @@ const PLAN_REPLAYER_HANDLE_LEASE: Duration = Duration::from_secs(10);
 pub struct PooledSql(pub Arc<DomainSysSessionPool>);
 
 impl PooledSql {
-    fn query(&self, sql: &str) -> Result<Vec<Vec<tidb_datatype::Datum>>, PlanReplayerError> {
+    /// One call on a pooled internal session (Go's `sctx`); a failed call
+    /// keeps the session out of the pool, as Go's `WithSession` does.
+    fn with_context<T>(
+        &self,
+        run: impl FnOnce(&dyn crate::sys_session::DomainSysSession) -> tidb_sqlexec::Result<T>,
+    ) -> tidb_sqlexec::Result<T> {
         self.0
             .with_session(|session| {
                 session.with_session_context(|context| {
-                    context.query_internal(tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY, sql).map_err(tidb_syssession::SysSessionError::new)
+                    run(context).map_err(|error| tidb_syssession::SysSessionError::new(error.to_string()))
                 })
             })
-            .map_err(|error| PlanReplayerError::Other(error.to_string()))
+            .map_err(|error| Box::new(error) as tidb_sqlexec::SqlExecError)
     }
 }
 
-impl InternalSqlExecutor for PooledSql {
-    fn query_row_count(&self, sql: &str) -> Result<Option<usize>, PlanReplayerError> {
-        self.query(sql).map(|rows| Some(rows.len()))
+/// Go `sctx.GetSQLExecutor()`.
+impl tidb_sqlexec::SqlExecutor for PooledSql {
+    fn execute(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+    ) -> tidb_sqlexec::Result<Vec<Box<dyn tidb_sqlexec::RecordSet>>> {
+        self.with_context(|sctx| sctx.sql_executor().execute(context, sql))
     }
 
-    fn query_digest_pairs(&self, sql: &str) -> Result<Option<Vec<(String, String)>>, PlanReplayerError> {
-        let text = |datum: Option<&tidb_datatype::Datum>| {
-            datum.and_then(|datum| datum.sql_string().ok()).unwrap_or_default()
-        };
-        self.query(sql)
-            .map(|rows| Some(rows.iter().map(|row| (text(row.first()), text(row.get(1)))).collect()))
+    fn execute_internal(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+        arguments: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
+        self.with_context(|sctx| sctx.sql_executor().execute_internal(context, sql, arguments))
+    }
+
+    fn execute_stmt(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        statement: &tidb_ast::Stmt,
+    ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
+        self.with_context(|sctx| sctx.sql_executor().execute_stmt(context, statement))
     }
 }
 
-impl RestrictedSqlExecutor for PooledSql {
-    fn exec_restricted_sql(&self, sql: &str, params: &[&str]) -> Result<(), PlanReplayerError> {
-        let args: Vec<tidb_sqlescape::SqlArg<'_>> =
-            params.iter().map(|param| tidb_sqlescape::SqlArg::String(param.as_bytes())).collect();
-        let sql = tidb_sqlescape::escape_sql_text(sql, &args)
-            .map_err(|error| PlanReplayerError::Other(format!("{error:?}")))?;
-        self.0
-            .with_session(|session| {
-                session.with_session_context(|context| {
-                    context.execute_internal_write(&sql).map_err(tidb_syssession::SysSessionError::new)
-                })
-            })
-            .map(drop)
-            .map_err(|error| PlanReplayerError::Other(error.to_string()))
+/// Go `sctx.GetRestrictedSQLExecutor()`.
+impl tidb_sqlexec::RestrictedSqlExecutor for PooledSql {
+    fn parse_with_params(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+        arguments: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> tidb_sqlexec::Result<tidb_ast::Stmt> {
+        self.with_context(|sctx| sctx.restricted_sql_executor().parse_with_params(context, sql, arguments))
+    }
+
+    fn exec_restricted_stmt(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        statement: &tidb_ast::Stmt,
+        options: &[tidb_sqlexec::OptionFuncAlias],
+    ) -> tidb_sqlexec::Result<(Vec<Vec<tidb_datatype::Datum>>, Vec<tidb_resolve::ResultFieldRef>)> {
+        self.with_context(|sctx| sctx.restricted_sql_executor().exec_restricted_stmt(context, statement, options))
+    }
+
+    fn exec_restricted_sql(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        options: &[tidb_sqlexec::OptionFuncAlias],
+        sql: &str,
+        arguments: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> tidb_sqlexec::Result<(Vec<Vec<tidb_datatype::Datum>>, Vec<tidb_resolve::ResultFieldRef>)> {
+        self.with_context(|sctx| sctx.restricted_sql_executor().exec_restricted_sql(context, options, sql, arguments))
     }
 }
 

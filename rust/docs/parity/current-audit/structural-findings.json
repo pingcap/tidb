@@ -209,9 +209,9 @@
     },
     {
       "id": "R01",
-      "status": "open",
+      "status": "partial",
       "group": "Domain and process services",
-      "finding": "Go's one `sqlexec.RestrictedSQLExecutor` / `SQLExecutor` (ported in `tidb-sqlexec`) has parallel per-caller traits beside it: `RestrictedSqlExecutor` in `tidb-domain` `sysvar_cache.rs` and `plan_replayer.rs` (with `InternalSqlExecutor` and `PlanReplayerSqlExecutor`) and in `tidb-executor` `memtable_reader.rs`, `SysSession` in `fast_check_table.rs`, `InternalSqlRunner` in `tidb-bindinfo`, `DomainSysSession` in `tidb-domain-core` and `SysSessionContext` in `tidb-ttl-ttlworker`, each with its own `execute_internal`",
+      "finding": "Go's one `sqlexec.RestrictedSQLExecutor` / `SQLExecutor` (ported in `tidb-sqlexec`) still has parallel per-caller seams beside it: `RestrictedSqlExecutor` in `tidb-domain` `sysvar_cache.rs` (its implementor reads `GlobalSysvars`' in-memory table, not `mysql.global_variables`), `PlanReplayerSqlExecutor` in `plan_replayer.rs` (the dumping session's `Execute`, answering strings rather than a record set), `InternalSqlRunner` in `tidb-bindinfo` (Go `exec`/`execRows` over `GetSQLExecutor`/`GetRestrictedSQLExecutor`), `tidb_ttl::session::SessionContext::execute_internal` with `SqlExecutor = ()` (Go `ExecuteSQL` over `GetSQLExecutor`), `runaway::SqlSession` in `tidb-resourcegroup-runaway`, `tidb_gcutil::Context::exec_restricted_sql` (string rows), and `DomainSysSession::execute_internal_write`; the memory-table, fast `ADMIN CHECK`, GC, telemetry, user-attribute and plan-replayer task paths now run on `tidb-sqlexec`'s traits",
       "go_owner": "`pkg/util/sqlexec`"
     },
     {
@@ -230,6 +230,6 @@
     }
   ],
   "unresolved": 31,
-  "open": 9,
-  "partial": 22
+  "open": 8,
+  "partial": 23
 }

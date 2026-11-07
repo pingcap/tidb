@@ -61,7 +61,7 @@ impl ClusterNotifierSession {
     }
 
     fn query(&self, sql: &str) -> Result<Vec<Vec<Datum>>, NotifierError> {
-        self.with_context(|context| context.query_internal(tidb_txnkv::INTERNAL_DDL_NOTIFIER, sql))
+        self.with_context(|context| crate::sys_session::exec_sql(context, tidb_txnkv::INTERNAL_DDL_NOTIFIER, sql, &[]))
     }
 
 }

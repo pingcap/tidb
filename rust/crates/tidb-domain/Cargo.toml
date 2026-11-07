@@ -28,6 +28,8 @@ tidb-tls = { path = "../tidb-tls" }
 tidb-traceevent = { path = "../tidb-traceevent" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
 tikv-client.workspace = true
 reqwest = { workspace = true, features = ["blocking", "json"] }
 tidb-fixcontrol = { path = "../tidb-fixcontrol" }
@@ -62,6 +64,8 @@ chrono.workspace = true
 base64.workspace = true
 
 [dev-dependencies]
+tidb-model = { path = "../tidb-model" }
+tidb-resolve = { path = "../tidb-resolve" }
 tidb-parser = { path = "../tidb-parser" }
 # The upstream ru_stats test pins Asia/Shanghai and Australia/Lord_Howe.
 chrono-tz.workspace = true

@@ -27,9 +27,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use chrono::{DateTime, Utc};
 
-use tidb_domain::plan_replayer::{
-    DumpFileGcChecker, DumpFileStorage, PlanReplayerError, RestrictedSqlExecutor,
-};
+use tidb_domain::plan_replayer::{DumpFileGcChecker, DumpFileStorage, PlanReplayerError};
 use tidb_replayer::get_plan_replayer_dir_name;
 
 /// `extstore.NewExtStorage(ctx, "file://<root>", "")`: real files under a
@@ -97,13 +95,7 @@ impl DumpFileStorage for DirStorage {
 
 /// The GC checker runs with no session attached — the shape Go's own GC test
 /// builds (`paths` only, `sctx == nil`).
-struct NoopExec;
-
-impl RestrictedSqlExecutor for NoopExec {
-    fn exec_restricted_sql(&self, _sql: &str, _params: &[&str]) -> Result<(), PlanReplayerError> {
-        Ok(())
-    }
-}
+type NoopExec = tidb_sqlexec_mock::MockRestrictedSqlExecutor;
 
 fn nanos(at: DateTime<Utc>) -> i64 {
     at.timestamp_nanos_opt().expect("in-range timestamp")

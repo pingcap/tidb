@@ -49,6 +49,7 @@ impl tidb_telemetry::Session for Session {
             self.restricted_sql_executor.as_deref(),
             tidb_txnkv::INTERNAL_TXN_TELEMETRY,
             sql,
+            &[],
         )
             .map_err(|error| error.to_string())
     }

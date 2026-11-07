@@ -28,15 +28,28 @@ use tidb_table::tables::TableHandle;
 
 use crate::admin_check::{inconsistent, AdminCheckError};
 use crate::DriverError;
+use tidb_sqlexec::{ExecutionContext, SqlExecutor};
+use tikv_client::trace::TraceContext;
+use tikv_client::util::with_internal_source_type;
 
 /// Go `CheckTableFastBucketSize`.
 pub static CHECK_TABLE_FAST_BUCKET_SIZE: AtomicI64 = AtomicI64::new(1024);
 
-/// Go `se.GetSQLExecutor().ExecuteInternal` on the system session
-/// `BaseExecutor.GetSysSession` hands the check.
-pub trait SysSession {
-    /// Runs one statement and answers its rows (none for a write).
-    fn execute_internal(&mut self, sql: &str) -> Result<Vec<Vec<Datum>>, DriverError>;
+/// Go `queryToRow`: `se.GetSQLExecutor().ExecuteInternal(ctx, sql)` on the
+/// system session `BaseExecutor.GetSysSession` hands the check, drained and
+/// closed (none for a write).
+fn query_to_row(
+    ctx: &dyn ExecutionContext,
+    se: &dyn SqlExecutor,
+    sql: &str,
+) -> Result<Vec<Vec<Datum>>, DriverError> {
+    tidb_sqlexec::execute_sql(ctx, se, sql, &[])
+        .map_err(crate::memtable_reader::sql_exec_driver_error)
+}
+
+/// Go `kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin)`.
+fn admin_context() -> TraceContext {
+    with_internal_source_type(&TraceContext::new(), tidb_txnkv::INTERNAL_TXN_ADMIN)
 }
 
 /// The user session's values Go `applyFastCheckSysSessionVars` copies onto
@@ -64,29 +77,31 @@ pub const FAST_CHECK_COPIED_VARS: [&str; 5] = [
 /// its own system session. Go hands the indexes to three workers and answers
 /// the first failure; this checks them in order.
 pub fn fast_check_table(
-    get_sys_session: &mut dyn FnMut() -> Result<Box<dyn SysSession>, DriverError>,
+    get_sys_session: &mut dyn FnMut() -> Result<Box<dyn SqlExecutor>, DriverError>,
     vars: &FastCheckSessionVars,
     db_name: &str,
     table: &TableInfo,
     index_infos: &[GoShared<IndexInfo>],
 ) -> Result<(), DriverError> {
     for idx_info in index_infos {
-        let mut se = get_sys_session()?;
-        init_sess_ctx(se.as_mut(), vars)?;
-        handle_task(se.as_mut(), db_name, table, &idx_info.read())?;
+        let se = get_sys_session()?;
+        init_sess_ctx(se.as_ref(), vars)?;
+        handle_task(se.as_ref(), db_name, table, &idx_info.read())?;
     }
     Ok(())
 }
 
 /// Go `checkIndexWorker.initSessCtx`. The system session is not pooled, so
 /// nothing is restored after the check.
-fn init_sess_ctx(se: &mut dyn SysSession, vars: &FastCheckSessionVars) -> Result<(), DriverError> {
-    se.execute_internal(&format!("set @@session.{} = 1", tidb_vardef::tidb_vars::TIDB_OPT_USE_INVISIBLE_INDEXES))?;
+fn init_sess_ctx(se: &dyn SqlExecutor, vars: &FastCheckSessionVars) -> Result<(), DriverError> {
+    // Go `w.e.contextCtx`: the statement's context, no internal source.
+    let ctx = TraceContext::new();
+    query_to_row(&ctx, se, &format!("set @@session.{} = 1", tidb_vardef::tidb_vars::TIDB_OPT_USE_INVISIBLE_INDEXES))?;
     for (name, value) in &vars.copied {
-        se.execute_internal(&format!("set @@session.{name} = {value}"))?;
+        query_to_row(&ctx, se, &format!("set @@session.{name} = {value}"))?;
     }
     if vars.snapshot_ts != 0 {
-        if let Err(error) = se.execute_internal(&format!("set session tidb_snapshot = {}", vars.snapshot_ts)) {
+        if let Err(error) = query_to_row(&ctx, se, &format!("set session tidb_snapshot = {}", vars.snapshot_ts)) {
             tidb_logutil::bg_logger().error(
                 "fail to set tidb_snapshot",
                 &[
@@ -126,9 +141,8 @@ fn row_i64(datum: &Datum) -> i64 {
 }
 
 /// Go `getCheckSum`.
-fn get_check_sum(se: &mut dyn SysSession, sql: &str) -> Result<Vec<GroupByChecksum>, DriverError> {
-    Ok(se
-        .execute_internal(sql)?
+fn get_check_sum(se: &dyn SqlExecutor, sql: &str) -> Result<Vec<GroupByChecksum>, DriverError> {
+    Ok(query_to_row(&admin_context(), se, sql)?
         .iter()
         .map(|row| GroupByChecksum {
             bucket: row_u64(&row[1]),
@@ -139,8 +153,8 @@ fn get_check_sum(se: &mut dyn SysSession, sql: &str) -> Result<Vec<GroupByChecks
 }
 
 /// Go `getGlobalCheckSum`.
-fn get_global_check_sum(se: &mut dyn SysSession, sql: &str) -> Result<(u64, i64), DriverError> {
-    let rows = se.execute_internal(sql)?;
+fn get_global_check_sum(se: &dyn SqlExecutor, sql: &str) -> Result<(u64, i64), DriverError> {
+    let rows = query_to_row(&admin_context(), se, sql)?;
     let Some(row) = rows.first() else {
         return Ok((0, 0));
     };
@@ -181,7 +195,7 @@ struct RecordData {
 
 /// Go `checkIndexWorker.HandleTask`.
 fn handle_task(
-    se: &mut dyn SysSession,
+    se: &dyn SqlExecutor,
     db_name: &str,
     tbl_meta: &TableInfo,
     idx_info: &IndexInfo,
@@ -241,7 +255,8 @@ fn handle_task(
     };
     let idx_name = idx_info.name.original();
 
-    se.execute_internal("begin")?;
+    let ctx = admin_context();
+    query_to_row(&ctx, se, "begin")?;
 
     // Quick pass: avoid bucketed grouping if table/index checksum already
     // matches (Go `quickPassGlobalChecksum`).
@@ -379,8 +394,8 @@ fn handle_task(
     let table_sql = format!(
         "select /*+ read_from_storage(tikv[{tbl_name}]), AGG_TO_COP() */ {handle_columns}, {index_columns}, {md5_handle_and_index_col} from {tbl_name} use index() where {idx_condition}({group_by_key} = 0) order by {handle_columns}"
     );
-    let idx_row = se.execute_internal(&index_sql)?;
-    let tbl_row = se.execute_internal(&table_sql)?;
+    let idx_row = query_to_row(&ctx, se, &index_sql)?;
+    let tbl_row = query_to_row(&ctx, se, &table_sql)?;
 
     let get_handle_from_row = |row: &[Datum]| -> Result<TableHandle, DriverError> {
         if tbl_meta.is_common_handle {

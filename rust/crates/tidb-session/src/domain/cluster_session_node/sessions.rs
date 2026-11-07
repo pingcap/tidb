@@ -574,7 +574,7 @@ impl ClusterStatsSessionState {
     > {
         self.with_session(|session| {
             let mut result = session.reborrow().execute(sql).map_err(|error| {
-                Box::new(tidb_domain_core::sys_session::StatsSessionStatementError(error)) as tidb_sqlexec::SqlExecError
+                super::boxed_sql_query_error(error)
             })?;
             let source = result.source();
             let fields = source.fields()?;
@@ -707,7 +707,7 @@ impl tidb_sqlexec::SqlExecutor for ClusterStatsSqlExecutor {
         arguments: &[tidb_sqlescape::SqlArg<'_>],
     ) -> Result<Option<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
         self.state.adopt_request_source(context);
-        let escaped = tidb_sqlescape::escape_sql_text(sql, arguments)?;
+        let escaped = super::sql_with_params(sql, arguments)?;
         self.materialized_record_set(&escaped)
     }
 
@@ -729,7 +729,7 @@ impl tidb_sqlexec::RestrictedSqlExecutor for ClusterStatsSqlExecutor {
         sql: &str,
         arguments: &[tidb_sqlescape::SqlArg<'_>],
     ) -> Result<tidb_ast::Stmt, tidb_sqlexec::SqlExecError> {
-        let escaped = tidb_sqlescape::escape_sql_text(sql, arguments)?;
+        let escaped = super::sql_with_params(sql, arguments)?;
         tidb_parser::parse(&escaped).map_err(|error| stats_session_error(format!("{error:?}")))
     }
 
@@ -764,7 +764,7 @@ impl tidb_sqlexec::RestrictedSqlExecutor for ClusterStatsSqlExecutor {
         tidb_sqlexec::SqlExecError,
     > {
         self.state.adopt_request_source(context);
-        let escaped = tidb_sqlescape::escape_sql_text(sql, arguments)?;
+        let escaped = super::sql_with_params(sql, arguments)?;
         if is_analyze_table_sql(&escaped) && !options.is_empty() {
             self.state.execute_auto_analyze(&escaped, options)
         } else {
@@ -1213,7 +1213,7 @@ impl tidb_ddl_session::SessionContext for ClusterStatsSessionContext {
         query: &str,
         arguments: &[tidb_sqlescape::SqlArg<'_>],
     ) -> Result<Option<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
-        let escaped = tidb_sqlescape::escape_sql_text(query, arguments)?;
+        let escaped = super::sql_with_params(query, arguments)?;
         let (rows, fields) = self.state.materialize(&escaped)?;
         Ok((!fields.is_empty()).then(|| {
             Box::new(tidb_sqlexec::SimpleRecordSet::new(fields, rows, 1024))
@@ -1283,14 +1283,6 @@ impl tidb_domain_core::sys_session::DomainSysSession for ClusterStatsSessionCont
                 .map_err(|error| stats_session_error(error.message))
         })
         .map_err(|error| error.to_string())
-    }
-
-    fn query_internal(&self, source: &str, sql: &str) -> Result<Vec<Vec<tidb_datatype::Datum>>, String> {
-        self.state.adopt_request_source_type(source);
-        self.state
-            .materialize(sql)
-            .map(|(rows, _)| rows)
-            .map_err(|error| error.to_string())
     }
 
     fn new_txn(&self, pessimistic: bool) -> Result<(), String> {
@@ -1511,7 +1503,7 @@ pub fn get_snapshot_info_schema(
 
 /// Go `ctx.Value(kv.RequestSourceKey)`: the request source a caller's
 /// context carries.
-fn context_request_source(context: &dyn tidb_sqlexec::ExecutionContext) -> Option<&tikv_client::util::RequestSource> {
+pub(super) fn context_request_source(context: &dyn tidb_sqlexec::ExecutionContext) -> Option<&tikv_client::util::RequestSource> {
     context
         .as_any()
         .downcast_ref::<tikv_client::trace::TraceContext>()

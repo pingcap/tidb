@@ -29,9 +29,8 @@ use tidb_driver_error::DriverError;
 
 use crate::Session;
 
-use tidb_executor::memtable_reader::{
-    exec_restricted_sql_over, RestrictedSql, RestrictedSqlExecutor,
-};
+use tidb_executor::memtable_reader::{exec_restricted_sql_over, RestrictedSql};
+use tidb_sqlexec::RestrictedSqlExecutor;
 
 impl Session {
     /// Go `GetRestrictedSQLExecutor`'s backing: what the node installs.
@@ -56,19 +55,7 @@ impl Session {
         source: &str,
         sql: &str,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
-        exec_restricted_sql_over(self.restricted_sql_executor.as_deref(), source, sql)
-    }
-}
-
-/// A system session of the domain (Go `BaseExecutor.GetSysSession`).
-struct SystemSession(Session);
-
-impl tidb_executor::fast_check_table::SysSession for SystemSession {
-    fn execute_internal(&mut self, sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
-        self.0
-            .node_conn()
-            .execute_internal(sql)
-            .map_err(crate::domain::cluster_session_node::sql_query_error_to_driver)
+        exec_restricted_sql_over(self.restricted_sql_executor.as_deref(), source, sql, &[])
     }
 }
 
@@ -77,16 +64,15 @@ impl Session {
     /// `FastCheckTableExec`, whose SQL runs under `kv.InternalTxnAdmin`.
     pub(crate) fn get_sys_session(
         &self,
-    ) -> Result<Box<dyn tidb_executor::fast_check_table::SysSession>, DriverError> {
+    ) -> Result<Box<dyn tidb_sqlexec::SqlExecutor>, DriverError> {
         use crate::domain::cluster_session_node::DomainSessions as _;
         let domain = self
             .domain_services()
             .and_then(|services| services.domain.upgrade())
             .ok_or_else(|| DriverError::unsupported("the session has no domain to take a system session from"))?;
-        let mut session = domain
+        let session = domain
             .open_system_session()
             .map_err(crate::domain::cluster_session_node::sql_query_error_to_driver)?;
-        session.set_internal_request_source(tidb_txnkv::INTERNAL_TXN_ADMIN);
-        Ok(Box::new(SystemSession(session)))
+        Ok(Box::new(crate::domain::cluster_session_node::SystemSqlExecutor::new(session)))
     }
 }

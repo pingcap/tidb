@@ -170,12 +170,12 @@ pub(crate) fn schema_storage(factory: &Arc<Domain>) -> crate::http_status::Schem
         }
         let args: Vec<tidb_sqlescape::SqlArg<'_>> =
             params.iter().map(|param| tidb_sqlescape::SqlArg::String(param.as_bytes())).collect();
-        let sql = tidb_sqlescape::escape_sql_text(&sql, &args).map_err(|error| format!("{error:?}"))?;
         let rows = factory
             .advanced_sys_session_pool()
             .with_session(|session| {
                 session.with_session_context(|context| {
-                    context.query_internal(tidb_txnkv::INTERNAL_TXN_OTHERS, &sql).map_err(tidb_syssession::SysSessionError::new)
+                    tidb_domain_core::sys_session::exec_sql(context, tidb_txnkv::INTERNAL_TXN_OTHERS, &sql, &args)
+                        .map_err(tidb_syssession::SysSessionError::new)
                 })
             })
             .map_err(|error| error.to_string())?;
@@ -240,7 +240,7 @@ mod tests {
             .advanced_sys_session_pool()
             .with_session(|session| {
                 session.with_session_context(|context| {
-                    context.query_internal(tidb_txnkv::INTERNAL_TXN_OTHERS, sql).map_err(tidb_syssession::SysSessionError::new)
+                    tidb_domain_core::sys_session::exec_sql(context, tidb_txnkv::INTERNAL_TXN_OTHERS, sql, &[]).map_err(tidb_syssession::SysSessionError::new)
                 })
             })
             .unwrap();
@@ -350,8 +350,7 @@ mod tests {
                 .advanced_sys_session_pool()
                 .with_session(|session| {
                     session.with_session_context(|context| {
-                        let rows = context
-                            .query_internal(tidb_txnkv::INTERNAL_TXN_OTHERS, "SELECT job_meta FROM mysql.tidb_ddl_job")
+                        let rows = tidb_domain_core::sys_session::exec_sql(context, tidb_txnkv::INTERNAL_TXN_OTHERS, "SELECT job_meta FROM mysql.tidb_ddl_job", &[])
                             .map_err(tidb_syssession::SysSessionError::new)?;
                         state = rows.first().map(|row| {
                             let mut job = tidb_model::Job::default();
@@ -700,9 +699,8 @@ mod tests {
                 .with_session(|session| {
                     session.with_session_context(|context| {
                         let fast = format!("set @@tidb_enable_fast_table_check = {}", u8::from(fast));
-                        context
-                            .query_internal(tidb_txnkv::INTERNAL_TXN_OTHERS, &fast)
-                            .and_then(|_| context.query_internal(tidb_txnkv::INTERNAL_TXN_OTHERS, sql))
+                        tidb_domain_core::sys_session::exec_sql(context, tidb_txnkv::INTERNAL_TXN_OTHERS, &fast, &[])
+                            .and_then(|_| tidb_domain_core::sys_session::exec_sql(context, tidb_txnkv::INTERNAL_TXN_OTHERS, sql, &[]))
                             .map_err(tidb_syssession::SysSessionError::new)
                     })
                 })

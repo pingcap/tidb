@@ -75,6 +75,26 @@ impl From<tidb_terror::MysqlError> for SqlQueryError {
     }
 }
 
+/// The statement's failure as the `*terror.Error` it was raised as.
+impl From<SqlQueryError> for tidb_terror::MysqlError {
+    fn from(error: SqlQueryError) -> Self {
+        tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
+            .with_identity_opt(error.identity)
+    }
+}
+
+/// Go `err.Error()` of a statement error that an internal-SQL caller reads
+/// as text: its message.
+impl std::fmt::Display for SqlQueryError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+/// A statement error boxed as a SQL executor's `error` (Go returns the
+/// `*terror.Error` itself), which a caller downcasts back.
+impl std::error::Error for SqlQueryError {}
+
 /// A Go error that reached the wire layer as its SQL triple and identity.
 impl From<tidb_mysql::errors::SqlError> for SqlQueryError {
     fn from(error: tidb_mysql::errors::SqlError) -> Self {

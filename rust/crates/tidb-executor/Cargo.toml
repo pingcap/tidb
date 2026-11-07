@@ -110,6 +110,7 @@ tidb-stats-handle-history = { path = "../tidb-stats-handle-history" }
 tidb-stats-handle-usage-predicatecolumn = { path = "../tidb-stats-handle-usage-predicatecolumn" }
 tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-stats-handle-types = { path = "../tidb-stats-handle-types" }
 tidb-kvcache = { path = "../tidb-kvcache" }
 tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }

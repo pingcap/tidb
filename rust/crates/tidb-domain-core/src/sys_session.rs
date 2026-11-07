@@ -33,10 +33,6 @@ pub trait DomainSysSession:
     /// Go `ExecuteInternal` of a write: the rows it affected.
     fn execute_internal_write(&self, sql: &str) -> Result<u64, String>;
 
-    /// Go `ExecuteInternal(ctx, sql)` of a query, its rows drained, under
-    /// `ctx`'s request source (`kv.WithInternalSourceType(ctx, source)`).
-    fn query_internal(&self, source: &str, sql: &str) -> Result<Vec<Vec<Datum>>, String>;
-
     /// Go `sessiontxn.NewTxn` (`pessimistic`: `EnterNewTxn` pessimistic), as
     /// `pkg/ddl/session.Session.Begin` / `BeginPessimistic` call it: the
     /// session's API, not a statement.
@@ -66,29 +62,32 @@ pub trait DomainSysSession:
     fn as_any(&self) -> &dyn std::any::Any;
 }
 
-/// Go `Domain.AdvancedSysSessionPool()`.
-pub type DomainSysSessionPool = tidb_syssession::AdvancedSessionPool<dyn DomainSysSession>;
-
-/// A statement error of a statistics session: the statement's own error,
-/// printed as its message (what callers that only read the text see).
-#[derive(Debug)]
-pub struct StatsSessionStatementError(pub tidb_store_driver_error::sql_query_error::SqlQueryError);
-
-impl std::fmt::Display for StatsSessionStatementError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.0.message)
-    }
+/// Go `sqlexec.ExecSQL(kv.WithInternalSourceType(ctx, source),
+/// sctx.GetSQLExecutor(), sql, args...)`: an internal query's rows, drained.
+pub fn exec_sql<S: tidb_syssession::SessionContext + ?Sized>(
+    sctx: &S,
+    source: &str,
+    sql: &str,
+    arguments: &[tidb_sqlescape::SqlArg<'_>],
+) -> Result<Vec<Vec<Datum>>, String> {
+    let context = tikv_client::util::with_internal_source_type(
+        &tikv_client::trace::TraceContext::new(),
+        source,
+    );
+    tidb_sqlexec::execute_sql(&context, sctx.sql_executor().as_ref(), sql, arguments)
+        .map_err(|error| error.to_string())
 }
 
-impl std::error::Error for StatsSessionStatementError {}
+/// Go `Domain.AdvancedSysSessionPool()`.
+pub type DomainSysSessionPool = tidb_syssession::AdvancedSessionPool<dyn DomainSysSession>;
 
 /// A statistics session's failure as its MySQL error: a statement's own, or
 /// an unknown error naming any other failure.
 pub fn stats_session_sql_error(
     error: tidb_sqlexec::SqlExecError,
 ) -> tidb_store_driver_error::sql_query_error::SqlQueryError {
-    match error.downcast::<StatsSessionStatementError>() {
-        Ok(error) => error.0,
+    match error.downcast::<tidb_store_driver_error::sql_query_error::SqlQueryError>() {
+        Ok(error) => *error,
         Err(error) => tidb_store_driver_error::sql_query_error::SqlQueryError::unknown(error.to_string()),
     }
 }

@@ -742,7 +742,7 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
     fn take_snapshot(&self) -> Option<TakeSnapshot>;
     /// Go `BaseExecutor.GetSysSession`: a system session of the domain, whose
     /// SQL `FastCheckTableExec` runs under `kv.InternalTxnAdmin`.
-    fn get_sys_session(&self) -> Result<Box<dyn crate::fast_check_table::SysSession>, DriverError>;
+    fn get_sys_session(&self) -> Result<Box<dyn tidb_sqlexec::SqlExecutor>, DriverError>;
     /// Go `SimpleExec.executeFlush`'s `FlushPrivileges` arm: reload the
     /// privilege cache and notify the domain.
     fn flush_privileges(&mut self) -> Result<(), DriverError>;

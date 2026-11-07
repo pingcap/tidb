@@ -36,9 +36,8 @@ impl runaway::SqlSession for RunawaySession<'_> {
         sql: &str,
         args: &[tidb_sqlescape::SqlArg<'_>],
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, String> {
-        let sql = tidb_sqlescape::escape_sql_text(sql, args).map_err(|error| format!("{error:?}"))?;
         // Go runaway's `kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)`.
-        self.0.query_internal(tidb_txnkv::INTERNAL_TXN_OTHERS, &sql)
+        crate::sys_session::exec_sql(self.0, tidb_txnkv::INTERNAL_TXN_OTHERS, sql, args)
     }
 
     fn exec_restricted_sql(

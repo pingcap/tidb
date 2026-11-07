@@ -14,7 +14,7 @@
 
 use tidb_driver_error::DriverError;
 
-use tidb_executor::memtable_reader::RestrictedSqlExecutor;
+use tidb_sqlexec::RestrictedSqlExecutor;
 
 /// Go `validateSnapshot`: the GC safe point read through restricted SQL, on
 /// an internal session at the current time, independent of the user's
@@ -48,24 +48,25 @@ impl tidb_gcutil::Context for RestrictedGcContext<'_> {
         &mut self,
         sql: &str,
         arguments: &[&str],
-        _internal_source_type: &str,
+        internal_source_type: &str,
     ) -> Result<Vec<Vec<String>>, Self::Error> {
-        let mut statement = sql.to_owned();
-        for argument in arguments {
-            let quoted = format!("'{}'", argument.replace('\\', "\\\\").replace('\'', "''"));
-            statement = statement.replacen("%?", &quoted, 1);
-        }
-        Ok(self
-            .0
-            // Go `gcutil`'s `kv.WithInternalSourceType(ctx, kv.InternalTxnGC)`.
-            .exec_restricted_sql(tidb_txnkv::INTERNAL_TXN_GC, &statement)?
-            .into_iter()
-            .map(|row| {
-                row.iter()
-                    .map(|value| crate::datum_text(value).unwrap_or_default())
-                    .collect()
-            })
-            .collect())
+        let arguments = arguments
+            .iter()
+            .map(|argument| tidb_sqlescape::SqlArg::from(*argument))
+            .collect::<Vec<_>>();
+        Ok(tidb_executor::memtable_reader::exec_restricted_sql_over(
+            Some(self.0),
+            internal_source_type,
+            sql,
+            &arguments,
+        )?
+        .into_iter()
+        .map(|row| {
+            row.iter()
+                .map(|value| crate::datum_text(value).unwrap_or_default())
+                .collect()
+        })
+        .collect())
     }
 }
 

@@ -3570,7 +3570,7 @@ impl TiDBTableValues {
             .map_err(|error| error.to_string())
             .and_then(|sql| {
                 // Go `GetTiDBTableValue`'s `kv.InternalTxnSysVar`.
-                self.with_session(|session| session.query_internal(tidb_txnkv::INTERNAL_TXN_SYS_VAR, &sql))
+                self.with_session(|session| crate::sys_session::exec_sql(session, tidb_txnkv::INTERNAL_TXN_SYS_VAR, &sql, &[]))
             })
             .ok()
             .and_then(|rows| rows.into_iter().next())

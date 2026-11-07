@@ -374,7 +374,7 @@ impl tidb_executor::admin::AdminExec for Session {
         self.take_snapshot.clone()
     }
 
-    fn get_sys_session(&self) -> Result<Box<dyn tidb_executor::fast_check_table::SysSession>, DriverError> {
+    fn get_sys_session(&self) -> Result<Box<dyn tidb_sqlexec::SqlExecutor>, DriverError> {
         Session::get_sys_session(self)
     }
 

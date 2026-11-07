@@ -201,6 +201,7 @@ tidb-syssession = { path = "../tidb-syssession" }
 tidb-resolve = { path = "../tidb-resolve" }
 
 [dev-dependencies]
+tidb-sqlexec-mock = { path = "../tidb-sqlexec-mock" }
 tidb-topsql-collector = { path = "../tidb-topsql-collector" }
 tidb-topsql-reporter = { path = "../tidb-topsql-reporter" }
 tidb-stats-handle-types = { path = "../tidb-stats-handle-types" }

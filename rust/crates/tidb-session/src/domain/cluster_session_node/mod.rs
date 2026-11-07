@@ -2342,15 +2342,31 @@ impl<'s> ClusterServerSession<'s> {
         &mut self,
         sql: &str,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, SqlQueryError> {
+        Ok(self.execute_internal_fields(sql)?.0)
+    }
+
+    /// [`Self::execute_internal`] answering the result fields beside the
+    /// rows, as Go `ExecRestrictedSQL` does.
+    pub(crate) fn execute_internal_fields(
+        &mut self,
+        sql: &str,
+    ) -> Result<
+        (
+            Vec<Vec<tidb_datatype::Datum>>,
+            Vec<tidb_executor::adapter::ResultFieldMetadata>,
+        ),
+        SqlQueryError,
+    > {
         let stmt = self
             .session
             .parse_at_statement_boundary(sql)
             .map_err(map_error)?;
         let Some(mut result) = self.reborrow().execute_stmt(sql, &stmt)? else {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         };
         let to_sql_error = |error: tidb_terror::MysqlError| SqlQueryError::from(error);
         let source = result.source();
+        let fields = source.fields().map_err(to_sql_error)?;
         let mut rows = Vec::new();
         loop {
             let batch = source.next_batch(1024).map_err(to_sql_error)?;
@@ -2361,7 +2377,7 @@ impl<'s> ClusterServerSession<'s> {
         }
         source.finish().map_err(to_sql_error)?;
         source.close().map_err(to_sql_error)?;
-        Ok(rows)
+        Ok((rows, fields))
     }
 
     /// [`Self::run_statement`] for a caller that runs a statement for its
@@ -2607,21 +2623,163 @@ struct NodeRestrictedSql {
     factory: Weak<Domain>,
 }
 
-impl tidb_executor::memtable_reader::RestrictedSqlExecutor for NodeRestrictedSql {
+impl NodeRestrictedSql {
+    /// One statement on a fresh internal session of this node.
+    fn run(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+    ) -> Result<
+        (
+            Vec<Vec<tidb_datatype::Datum>>,
+            Vec<tidb_resolve::ResultFieldRef>,
+        ),
+        tidb_sqlexec::SqlExecError,
+    > {
+        let factory = self.factory.upgrade().ok_or_else(|| {
+            tidb_domain_core::sys_session::stats_session_error("cluster session factory is stopped")
+        })?;
+        let mut session = factory.open_system_session().map_err(boxed_sql_query_error)?;
+        execute_internal_under(&mut session, context, sql)
+    }
+}
+
+impl tidb_sqlexec::RestrictedSqlExecutor for NodeRestrictedSql {
+    fn parse_with_params(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+        arguments: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> Result<tidb_ast::Stmt, tidb_sqlexec::SqlExecError> {
+        tidb_parser::parse(&sql_with_params(sql, arguments)?).map_err(|error| {
+            tidb_domain_core::sys_session::stats_session_error(format!("{error:?}"))
+        })
+    }
+
+    fn exec_restricted_stmt(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        statement: &tidb_ast::Stmt,
+        _options: &[tidb_sqlexec::OptionFuncAlias],
+    ) -> Result<
+        (
+            Vec<Vec<tidb_datatype::Datum>>,
+            Vec<tidb_resolve::ResultFieldRef>,
+        ),
+        tidb_sqlexec::SqlExecError,
+    > {
+        let sql = String::from_utf8(statement.original_text().to_vec())?;
+        self.run(context, &sql)
+    }
+
     fn exec_restricted_sql(
         &self,
-        source: &str,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        _options: &[tidb_sqlexec::OptionFuncAlias],
         sql: &str,
-    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_driver_error::DriverError> {
-        let factory = self.factory.upgrade().ok_or_else(|| {
-            tidb_driver_error::DriverError::unsupported("cluster session factory is stopped")
-        })?;
-        let mut session = factory
-            .open_system_session()
-            .map_err(sql_query_error_to_driver)?;
-        session.set_internal_request_source(source);
-        crate::user_table::AccountSqlSession::execute(&mut AccountSystemSession(session), sql)
+        arguments: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> Result<
+        (
+            Vec<Vec<tidb_datatype::Datum>>,
+            Vec<tidb_resolve::ResultFieldRef>,
+        ),
+        tidb_sqlexec::SqlExecError,
+    > {
+        self.run(context, &sql_with_params(sql, arguments)?)
     }
+}
+
+/// A system session of the domain (Go `BaseExecutor.GetSysSession`) as its
+/// `GetSQLExecutor()`.
+pub(crate) struct SystemSqlExecutor(std::sync::Mutex<Session>);
+
+impl SystemSqlExecutor {
+    pub(crate) fn new(session: Session) -> Self {
+        Self(std::sync::Mutex::new(session))
+    }
+
+    fn record_set(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+    ) -> Result<Option<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
+        let mut session = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (rows, fields) = execute_internal_under(&mut session, context, sql)?;
+        Ok((!fields.is_empty()).then(|| {
+            Box::new(tidb_sqlexec::SimpleRecordSet::new(fields, rows, 1024))
+                as Box<dyn tidb_sqlexec::RecordSet>
+        }))
+    }
+}
+
+impl tidb_sqlexec::SqlExecutor for SystemSqlExecutor {
+    fn execute(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+    ) -> Result<Vec<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
+        Ok(self.record_set(context, sql)?.into_iter().collect())
+    }
+
+    fn execute_internal(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+        arguments: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> Result<Option<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
+        self.record_set(context, &sql_with_params(sql, arguments)?)
+    }
+
+    fn execute_stmt(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        statement: &tidb_ast::Stmt,
+    ) -> Result<Option<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
+        let sql = String::from_utf8(statement.original_text().to_vec())?;
+        self.record_set(context, &sql)
+    }
+}
+
+/// Go `ExecuteInternal(ctx, sql)` on an internal session: the session takes
+/// the request source `ctx` carries, and answers the drained rows with their
+/// result fields.
+fn execute_internal_under(
+    session: &mut Session,
+    context: &dyn tidb_sqlexec::ExecutionContext,
+    sql: &str,
+) -> Result<
+    (
+        Vec<Vec<tidb_datatype::Datum>>,
+        Vec<tidb_resolve::ResultFieldRef>,
+    ),
+    tidb_sqlexec::SqlExecError,
+> {
+    if let Some(source) = sessions::context_request_source(context) {
+        session.set_internal_request_source(&source.source_type);
+    }
+    let (rows, fields) = session
+        .node_conn()
+        .execute_internal_fields(sql)
+        .map_err(boxed_sql_query_error)?;
+    Ok((rows, sessions::stats_result_fields(fields)))
+}
+
+/// Go `ParseWithParams`'s text: escaped with its arguments, and as written
+/// when there are none (`if len(args) > 0`).
+pub(crate) fn sql_with_params<'a>(
+    sql: &'a str,
+    arguments: &[tidb_sqlescape::SqlArg<'_>],
+) -> Result<std::borrow::Cow<'a, str>, tidb_sqlexec::SqlExecError> {
+    if arguments.is_empty() {
+        return Ok(std::borrow::Cow::Borrowed(sql));
+    }
+    Ok(std::borrow::Cow::Owned(tidb_sqlescape::escape_sql_text(sql, arguments)?))
+}
+
+/// A statement's failure as a SQL executor's error, which
+/// [`tidb_executor::memtable_reader::sql_exec_driver_error`] unboxes.
+pub(crate) fn boxed_sql_query_error(error: SqlQueryError) -> tidb_sqlexec::SqlExecError {
+    Box::new(error)
 }
 
 impl crate::user_table::AccountSqlSession for AccountSystemSession {
@@ -2689,10 +2847,7 @@ impl crate::stored_state_service::PendingSysvarChange for ClusterPendingSysvarCh
 }
 
 pub(crate) fn sql_query_error_to_driver(error: SqlQueryError) -> tidb_driver_error::DriverError {
-    tidb_driver_error::DriverError::Mysql(
-        tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
-            .with_identity_opt(error.identity),
-    )
+    tidb_driver_error::DriverError::Mysql(error.into())
 }
 
 struct ClusterDdlService {

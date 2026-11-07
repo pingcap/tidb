@@ -373,8 +373,8 @@ impl PrivilegeTables for SysSessionPrivilegeTables<'_> {
             Ok(result) => result,
             Err(error)
                 if error
-                    .downcast_ref::<crate::sys_session::StatsSessionStatementError>()
-                    .is_some_and(|error| error.0.code == tidb_mysql::errors::errcode::ErrNoSuchTable) =>
+                    .downcast_ref::<tidb_store_driver_error::sql_query_error::SqlQueryError>()
+                    .is_some_and(|error| error.code == tidb_mysql::errors::errcode::ErrNoSuchTable) =>
             {
                 return Ok(None)
             }

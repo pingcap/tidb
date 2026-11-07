@@ -36,6 +36,7 @@ tidb-logutil = { path = "../tidb-logutil" }
 tidb-memory = { path = "../tidb-memory" }
 tidb-spill-storage = { path = "../tidb-spill-storage" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-resolve = { path = "../tidb-resolve" }
 tidb-replayer = { path = "../tidb-replayer" }
 tidb-resourcegroup-runaway = { path = "../tidb-resourcegroup-runaway" }
 tidb-planner-extstore = { path = "../tidb-planner-extstore" }
