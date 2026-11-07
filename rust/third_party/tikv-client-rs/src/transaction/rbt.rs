@@ -59,6 +59,11 @@ pub(crate) struct Rbt {
     logical_size: usize,
     dirty: bool,
     values_discarded: bool,
+    /// Bytes of every buffered key, kept with each insert and removal.
+    key_bytes: u64,
+    /// Bytes of every buffered value and value-log history entry, kept with
+    /// each write, revert and removal, so the footprint is O(1).
+    value_bytes: u64,
     value_epoch: Arc<AtomicU64>,
     last_key: Option<Vec<u8>>,
     cache_hits: u64,
@@ -121,8 +126,10 @@ impl Rbt {
             Some(old_value) => {
                 let old_value_len = old_value.as_ref().map_or(0, Vec::len);
                 if let Some(entry) = self.entries.get_mut(&undo.key) {
+                    let values_before = entry_value_bytes(entry);
                     entry.value = old_value;
                     entry.history.truncate(undo.old_history_len);
+                    self.value_bytes = self.value_bytes + entry_value_bytes(entry) - values_before;
                     entry.value_log_undo_index = undo.old_value_log_undo_index;
                     self.logical_size = self.logical_size + old_value_len - current_value_len;
                 }
@@ -136,9 +143,12 @@ impl Rbt {
                 if persistent.bits() == 0 {
                     if let Some(entry) = self.entries.remove(&undo.key) {
                         self.handles.remove(&entry.handle);
+                        self.key_bytes -= undo.key.len() as u64;
+                        self.value_bytes -= entry_value_bytes(&entry);
                         self.logical_size -= undo.key.len() + current_value_len;
                     }
                 } else if let Some(entry) = self.entries.get_mut(&undo.key) {
+                    self.value_bytes -= entry_value_bytes(entry);
                     entry.value = None;
                     entry.history.clear();
                     entry.value_log_undo_index = None;
@@ -170,6 +180,8 @@ impl Rbt {
         self.stages.clear();
         self.next_handle = 0;
         self.logical_size = 0;
+        self.key_bytes = 0;
+        self.value_bytes = 0;
         self.dirty = false;
         self.values_discarded = false;
         self.last_key = None;
@@ -187,6 +199,7 @@ impl Rbt {
             entry.history = Vec::new();
             entry.value_log_undo_index = None;
         }
+        self.value_bytes = 0;
         self.undo = Vec::new();
         self.clear_snapshot_registry();
         self.notify_memory_change();
@@ -215,18 +228,11 @@ impl Rbt {
     /// Native memory accounting is payload based; Go exposes allocated arena
     /// capacity, which has no safe `BTreeMap` equivalent.
     pub(crate) fn memory_footprint(&self) -> u64 {
-        self.entries
-            .iter()
-            .map(|(key, entry)| {
-                let values = if self.values_discarded {
-                    0
-                } else {
-                    entry.value.as_ref().map_or(0, Vec::len)
-                        + entry.history.iter().flatten().map(Vec::len).sum::<usize>()
-                };
-                (key.len() + values) as u64
-            })
-            .sum()
+        if self.values_discarded {
+            self.key_bytes
+        } else {
+            self.key_bytes + self.value_bytes
+        }
     }
 
     fn notify_memory_change(&self) {
@@ -341,6 +347,7 @@ impl Rbt {
                 },
             );
             self.logical_size += key.len();
+            self.key_bytes += key.len() as u64;
             self.notify_memory_change();
         }
         (self.entries.get_mut(&key).unwrap(), existed)
@@ -420,19 +427,25 @@ impl Rbt {
         }
         flags_ops.extend_from_slice(operations);
         let persistent_flags;
+        let mut added_value_bytes = 0;
         {
             let (entry, _) = self.entry_mut(key);
             entry.flags = apply_flags_ops(entry.flags, &flags_ops);
             persistent_flags = entry.flags.and_persistent().bits() != 0;
             if let Some(value) = value {
                 if !can_modify_value {
-                    entry.history.push(entry.value.clone());
+                    entry.history.push(entry.value.take());
                     entry.value_log_undo_index = appended_value_log_index;
+                    // The replaced value moved into the history, so only the
+                    // new value's bytes join; an in-place write keeps the
+                    // length.
+                    added_value_bytes = value.len() as u64;
                 }
                 entry.value = Some(value.to_vec());
                 self.logical_size = self.logical_size + value.len() - old_value_len;
             }
         }
+        self.value_bytes += added_value_bytes;
         if persistent_flags {
             self.dirty = true;
         }
@@ -495,6 +508,8 @@ impl Rbt {
         if self.entry(key).is_some() {
             let entry = self.entries.remove(key).expect("entry checked above");
             self.handles.remove(&entry.handle);
+            self.key_bytes -= key.len() as u64;
+            self.value_bytes -= entry_value_bytes(&entry);
             self.logical_size -= key.len() + entry.value.as_ref().map_or(0, Vec::len);
         }
     }
@@ -813,9 +828,50 @@ fn assert_values_available(value_epoch: &Option<ValueEpoch>) {
     assert_eq!(epoch.load(Ordering::Acquire), *expected, "vlog is reset");
 }
 
+/// The bytes an entry's current value and value-log history hold.
+fn entry_value_bytes(entry: &Entry) -> u64 {
+    (entry.value.as_ref().map_or(0, Vec::len)
+        + entry.history.iter().flatten().map(Vec::len).sum::<usize>()) as u64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The kept footprint equals the payload a full walk of the buffer sums,
+    /// after every kind of write, revert and removal.
+    #[test]
+    fn the_kept_footprint_equals_the_buffered_payload() {
+        fn walked(db: &Rbt) -> u64 {
+            db.entries
+                .iter()
+                .map(|(key, entry)| key.len() as u64 + entry_value_bytes(entry))
+                .sum()
+        }
+        let mut db = Rbt::new();
+        db.set(b"a", Some(b"one"), &[]).unwrap();
+        db.set(b"bb", Some(b"two"), &[]).unwrap();
+        assert_eq!(db.memory_footprint(), walked(&db));
+        let stage = db.staging();
+        db.set(b"a", Some(b"longer one"), &[]).unwrap();
+        db.set(b"a", Some(b"same size!"), &[]).unwrap();
+        db.set(b"ccc", Some(b"three"), &[]).unwrap();
+        db.set(b"dddd", None, &[FlagsOp::SetKeyLocked]).unwrap();
+        assert_eq!(db.memory_footprint(), walked(&db));
+        db.cleanup(stage);
+        assert_eq!(db.memory_footprint(), walked(&db));
+        let checkpoint = db.checkpoint();
+        db.set(b"a", Some(b"x"), &[]).unwrap();
+        db.set(b"eeeee", Some(b"new"), &[]).unwrap();
+        db.revert_to_checkpoint(checkpoint);
+        assert_eq!(db.memory_footprint(), walked(&db));
+        db.remove_from_buffer(b"a");
+        assert_eq!(db.memory_footprint(), walked(&db));
+        db.discard_values();
+        assert_eq!(db.memory_footprint(), db.entries.keys().map(|key| key.len() as u64).sum::<u64>());
+        db.reset();
+        assert_eq!(db.memory_footprint(), 0);
+    }
 
     #[test]
     fn cleanup_of_a_write_over_flags_alone_keeps_only_persistent_flags() {

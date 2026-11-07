@@ -65,6 +65,11 @@ pub(crate) struct Art {
     logical_size: usize,
     dirty: bool,
     values_discarded: bool,
+    /// Bytes of every buffered key, kept with each insert and removal.
+    key_bytes: u64,
+    /// Bytes of every buffered value and value-log history entry, kept with
+    /// each write, revert and removal, so the footprint is O(1).
+    value_bytes: u64,
     last_key: Option<Vec<u8>>,
     cache_hits: u64,
     cache_misses: u64,
@@ -152,6 +157,7 @@ impl Art {
         };
         let key_len = undo.key.len();
         let before = contribution(key_len, entry.value.as_deref(), entry.deleted);
+        let values_before = entry_value_bytes(entry);
         match undo.old_value {
             Some(old_value) => {
                 if undo.old_deleted && old_value.is_none() {
@@ -190,6 +196,7 @@ impl Art {
         }
         let after = contribution(key_len, entry.value.as_deref(), entry.deleted);
         self.logical_size = self.logical_size + after - before;
+        self.value_bytes = self.value_bytes + entry_value_bytes(entry) - values_before;
     }
 
     pub(crate) fn checkpoint(&self) -> usize {
@@ -227,6 +234,8 @@ impl Art {
         self.next_handle = 0;
         self.dirty = false;
         self.values_discarded = false;
+        self.key_bytes = 0;
+        self.value_bytes = 0;
         self.logical_size = 0;
         self.last_key = None;
         self.snapshot_sequence.fetch_add(1, Ordering::Release);
@@ -245,6 +254,7 @@ impl Art {
             entry.history = Vec::new();
             entry.value_log_undo_index = None;
         }
+        self.value_bytes = 0;
         self.undo = Vec::new();
         self.clear_snapshot_registry();
         self.notify_memory_change();
@@ -288,18 +298,11 @@ impl Art {
 
     /// Native payload accounting; client-go reports arena capacities.
     pub(crate) fn memory_footprint(&self) -> u64 {
-        self.entries
-            .iter()
-            .map(|(key, entry)| {
-                let values = if self.values_discarded {
-                    0
-                } else {
-                    entry.value.as_ref().map_or(0, Vec::len)
-                        + entry.history.iter().flatten().map(Vec::len).sum::<usize>()
-                };
-                (key.len() + values) as u64
-            })
-            .sum()
+        if self.values_discarded {
+            self.key_bytes
+        } else {
+            self.key_bytes + self.value_bytes
+        }
     }
 
     fn notify_memory_change(&self) {
@@ -413,6 +416,7 @@ impl Art {
             let handle = ArtHandle(self.next_handle);
             self.next_handle += 1;
             self.handles.insert(handle, key.clone());
+            self.key_bytes += key.len() as u64;
             self.entries.insert(
                 key.clone(),
                 Entry {
@@ -510,6 +514,7 @@ impl Art {
         };
 
         let persistent;
+        let mut added_value_bytes = 0;
         {
             let (entry, _) = self.entry_mut(key);
             if entry.deleted {
@@ -524,12 +529,17 @@ impl Art {
             persistent = entry.flags.and_persistent().bits() != 0;
             if let Some(value) = value {
                 if !can_modify_value {
-                    entry.history.push(entry.value.clone());
+                    entry.history.push(entry.value.take());
                     entry.value_log_undo_index = appended_value_log_index;
+                    // The replaced value moved into the history, so only the
+                    // new value's bytes join; an in-place write keeps the
+                    // length.
+                    added_value_bytes = value.len() as u64;
                 }
                 entry.value = Some(value.to_vec());
             }
         }
+        self.value_bytes += added_value_bytes;
         let new_value = self
             .entries
             .get(key)
@@ -703,6 +713,8 @@ impl Art {
             return;
         };
         self.handles.remove(&entry.handle);
+        self.key_bytes -= key.len() as u64;
+        self.value_bytes -= entry_value_bytes(&entry);
         self.logical_size = self.logical_size.saturating_sub(contribution(
             key.len(),
             entry.value.as_deref(),
@@ -713,6 +725,12 @@ impl Art {
         }
         self.notify_memory_change();
     }
+}
+
+/// The bytes an entry's current value and value-log history hold.
+fn entry_value_bytes(entry: &Entry) -> u64 {
+    (entry.value.as_ref().map_or(0, Vec::len)
+        + entry.history.iter().flatten().map(Vec::len).sum::<usize>()) as u64
 }
 
 type IteratorItem = (Vec<u8>, Option<Vec<u8>>, KeyFlags, ArtHandle);
@@ -1173,6 +1191,44 @@ mod tests {
         for join in joins {
             assert_eq!(join.join().unwrap(), 48);
         }
+    }
+
+    /// The kept footprint equals the payload a full walk of the buffer sums,
+    /// after every kind of write, revert and removal.
+    #[test]
+    fn the_kept_footprint_equals_the_buffered_payload() {
+        fn walked(tree: &Art) -> u64 {
+            tree.entries
+                .iter()
+                .map(|(key, entry)| key.len() as u64 + entry_value_bytes(entry))
+                .sum()
+        }
+        let mut tree = Art::new();
+        tree.set(b"a", Some(b"one"), &[]).unwrap();
+        tree.set(b"bb", Some(b"two"), &[]).unwrap();
+        assert_eq!(tree.memory_footprint(), walked(&tree));
+        let handle = tree.staging();
+        tree.set(b"a", Some(b"longer one"), &[]).unwrap();
+        tree.set(b"a", Some(b"same size!"), &[]).unwrap();
+        tree.set(b"ccc", Some(b"three"), &[]).unwrap();
+        tree.set(b"bb", None, &[FlagsOp::SetKeyLocked]).unwrap();
+        assert_eq!(tree.memory_footprint(), walked(&tree));
+        tree.cleanup(handle);
+        assert_eq!(tree.memory_footprint(), walked(&tree));
+        let checkpoint = tree.checkpoint();
+        tree.set(b"a", Some(b"x"), &[]).unwrap();
+        tree.set(b"eeeee", Some(b"new"), &[]).unwrap();
+        tree.revert_to_checkpoint(checkpoint);
+        assert_eq!(tree.memory_footprint(), walked(&tree));
+        tree.remove_from_buffer(b"a");
+        assert_eq!(tree.memory_footprint(), walked(&tree));
+        tree.discard_values();
+        assert_eq!(
+            tree.memory_footprint(),
+            tree.entries.keys().map(|key| key.len() as u64).sum::<u64>()
+        );
+        tree.reset();
+        assert_eq!(tree.memory_footprint(), 0);
     }
 
     #[test]
