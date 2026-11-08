@@ -2,8 +2,8 @@
   "date": "2026-11-08",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 29,
-    "open": 6,
+    "unresolved": 30,
+    "open": 7,
     "partial": 23
   },
   "findings": [
@@ -97,7 +97,7 @@
       "id": "C02",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "The session's reusable chunk allocator is Go's (`Session::chunk_alloc`, Go `clientConn.chunkAlloc`: installed per statement as `NewSyncAllocator(alloc)` under `tidb_enable_reuse_chunk`, never for an internal `InRestrictedSQL` statement, reset between statements and recreated after a failed one, each statement's validity its own), executors take it as `ExecutorMeta::alloc_pool` (Go `AllocPool`) for `NewChunk` / `TryNewCacheChunk` / `NewChunkWithCapacity`, and Go's `NewFirstChunk` sites (`Executor::new_first_chunk`: projection workers, hash-join probe and result chunks, index-hash-join results, shuffle holders, the drained record set) allocate outside it, so memory charges match Go's in sequence (`a_projection_sizes_its_result_columns_as_go_vec_eval_does`, `explain_analyze_dml_roots_report_their_executor_stats_and_memory_like_go`). The connection writes a result through a chunk from the statement's allocator (`writeChunks`' `rs.NewChunk(GetChunkAllocator())`, `ResultSetSource::new_write_chunk`), and a covering `IndexReader` returns its `OutputColumns` from the source itself (`dagReq.OutputOffsets`) instead of through a projection's pooled chunk, so a later statement reuses the same columns Go's does: a point UPDATE's root charges Go's 638 / 889 Bytes / 1.11 KB over the wire after a point UPDATE, `select 1` or a scan (`pipeline_mysql_client_source.rs` `explain_for_connection_charges_reused_chunks_like_go`). Remaining: executors built outside the physical builder's `meta` (`ExecutorMeta::new` in other crates) allocate fresh; parallel apply's chunks, whose executor shape differs from Go's, are unmapped; the reuse hook's `StmtCtx.SetUseChunkAlloc` (`@@last_sql_use_alloc`) is not driven by allocation.",
+      "finding": "The session's reusable chunk allocator is Go's (`Session::chunk_alloc`, Go `clientConn.chunkAlloc`: installed per statement as `NewSyncAllocator(alloc)` under `tidb_enable_reuse_chunk`, never for an internal `InRestrictedSQL` statement, reset between statements and recreated after a failed one, each statement's validity its own), executors take it as `ExecutorMeta::alloc_pool` (Go `AllocPool`) for `NewChunk` / `TryNewCacheChunk` / `NewChunkWithCapacity`, and Go's `NewFirstChunk` sites (`Executor::new_first_chunk`: projection workers, hash-join probe and result chunks, index-hash-join results, shuffle holders, the drained record set) allocate outside it, so memory charges match Go's in sequence (`a_projection_sizes_its_result_columns_as_go_vec_eval_does`, `explain_analyze_dml_roots_report_their_executor_stats_and_memory_like_go`). The connection writes a result through a chunk from the statement's allocator (`writeChunks`' `rs.NewChunk(GetChunkAllocator())`, `ResultSetSource::new_write_chunk`), and a covering `IndexReader` returns its `OutputColumns` from the source itself (`dagReq.OutputOffsets`) instead of through a projection's pooled chunk, so a later statement reuses the same columns Go's does: a point UPDATE's root charges Go's 638 / 889 Bytes / 1.11 KB over the wire after a point UPDATE, `select 1` or a scan (`pipeline_mysql_client_source.rs` `explain_for_connection_charges_reused_chunks_like_go`). Remaining: executors built outside the physical builder's `meta` (`ExecutorMeta::new` in other crates) allocate fresh; parallel apply's chunks, whose executor shape differs from Go's, are unmapped; the reuse hook's `StmtCtx.SetUseChunkAlloc` (`@@last_sql_use_alloc`) is not driven by allocation. A statement's pooled chunk does not always come back with the capacity Go's does: on one connection, `SELECT count(*) FROM i` (199 rows, `i(a INT PRIMARY KEY, b INT, KEY(b))`) charges its StreamAgg 388 Bytes in both on a fresh connection, but 2.16 KB in a Go tidb-server after `SELECT * FROM i WHERE b > 10` or `SELECT * FROM o`, and still 388 Bytes here.",
       "go_owner": "`pkg/util/chunk` (`alloc.go`: `NewAllocator`, `NewReuseHookAllocator`, `NewSyncAllocator`), `pkg/sessionctx/variable/session.go` (`SetAlloc`, `GetChunkAllocator`), `pkg/executor/internal/exec/executor.go` (`AllocPool`, `NewChunkWithCapacity`)"
     },
     {
@@ -158,6 +158,13 @@
       "go_owner": "`pkg/planner/cascades`"
     },
     {
+      "id": "Q02",
+      "status": "open",
+      "group": "Expanded subsystem ownership review",
+      "finding": "An UPDATE or DELETE's read ignores `mysql.opt_rule_blacklist`: with `join_reorder` blacklisted a Go tidb-server plans `DELETE dt FROM dt JOIN do2 ON do2.b = dt.b` (two empty tables) as `HashJoin_9`, with `predicate_push_down` under a `Selection_12`, with `column_prune` under a `Projection_9`; here it stays `HashJoin_11` for every rule, while the same read as a SELECT follows the list. With `column_prune` blacklisted, `SELECT dt._tidb_rowid FROM dt JOIN do2 ON do2.b = dt.b` over a few rows (an index join with a covering inner reader) fails here (`an index-join reader output is absent from its retained table`) where Go plans a `Projection_8`. EXPLAIN of an UPDATE or DELETE with an uncorrelated scalar subquery (`EXPLAIN UPDATE dt SET a = (SELECT max(a) FROM do2)`) omits the `ScalarSubQuery_43` subtree Go appends from `MapScalarSubQ`: the read's subquery registry is not returned with its plan (`physical_dml_source_plan_with_allocators`), where the same SELECT's is",
+      "go_owner": "`pkg/planner/core/logical_plan_builder.go` (`buildDelete`, `buildUpdate`), `pkg/planner/core/optimizer.go` (`DoOptimize`, `logicalOptimize`, `isLogicalRuleDisabled`), `pkg/planner/core/common_plans.go` (`Explain.RenderResult`)"
+    },
+    {
       "id": "X01",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
@@ -215,7 +222,7 @@
       "go_owner": "`cmd/tidb-server/main.go` (`overrideConfig`), `pkg/util/misc.go` (`GetLocalIP`)"
     }
   ],
-  "unresolved": 29,
-  "open": 6,
+  "unresolved": 30,
+  "open": 7,
   "partial": 23
 }

@@ -1833,29 +1833,6 @@ pub fn exhaust_physical_plans_4_logical_lock(
     let mut base = BasePhysicalPlan::new(allocator, tidb_planner_core_operator_logicalop::LogicalLock::TYPE, 0);
     base.base.set_stats(stats);
     base.set_children_req_props(vec![Some(child_prop)]);
-    // Go plans the UPDATE/DELETE read as Project(Lock-child): the logical
-    // Projection above the join enumerates its (identity, later-eliminated)
-    // physical candidate between the SelectLock ctor and the join's own
-    // candidates (W52 ledger: 14 lock, 15 projection, 16 hash join). The
-    // port folds that projection away, so burn the candidate id here —
-    // but only when the read actually contains a join, matching the
-    // projection's existence (W51's plain read burns none).
-    let read_has_join = p
-        .base
-        .children()
-        .first()
-        .is_some_and(|child| {
-            fn contains_join(plan: &tidb_planner_core_operator_logicalop::LogicalPlan) -> bool {
-                if matches!(plan, tidb_planner_core_operator_logicalop::LogicalPlan::Join(_)) {
-                    return true;
-                }
-                plan.children().iter().any(contains_join)
-            }
-            contains_join(child)
-        });
-    if read_has_join {
-        let _ = BasePhysicalPlan::new(allocator, tidb_planner_core_operator_logicalop::LogicalProjection::TYPE, 0);
-    }
     vec![PhysicalPlan::Lock(PhysicalLock {
         base,
         lock_type: p.lock_type,

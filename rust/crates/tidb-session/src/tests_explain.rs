@@ -8838,3 +8838,67 @@ fn a_covering_index_reader_returns_only_its_output_columns_like_go() {
         "1.90 KB"
     );
 }
+
+/// Go `buildUpdate` / `buildDelete` then `DoOptimize`: a write's read numbers
+/// its plans as the same read planned for a SELECT does, with no IDs between
+/// the write's root and the read's optimization. Go tidb-server capture over
+/// two empty tables, in autocommit and in a pessimistic transaction (whose
+/// single-table read takes a `SelectLock`).
+#[test]
+fn a_write_with_a_joined_read_numbers_its_plans_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE do2 (a INT, b INT)").unwrap();
+    session.run("CREATE TABLE dt (a INT, b INT, KEY (b))").unwrap();
+    let ids = |session: &mut Session, sql: &str| {
+        row_text(session.run(&format!("EXPLAIN {sql}")))
+            .into_iter()
+            .map(|row| row[0].trim_start_matches(['└', '─', '├', '│', ' ']).to_owned())
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let cases = [
+        (
+            "DELETE dt FROM dt JOIN do2 ON do2.b = dt.b",
+            "Delete_5 HashJoin_11 IndexReader_25(Build) IndexFullScan_24 TableReader_31(Probe) Selection_30 TableFullScan_29",
+            "Delete_5 HashJoin_11 IndexReader_25(Build) IndexFullScan_24 TableReader_31(Probe) Selection_30 TableFullScan_29",
+        ),
+        (
+            "UPDATE dt JOIN do2 ON do2.b = dt.b SET dt.a = 1",
+            "Update_6 HashJoin_10 TableReader_36(Build) Selection_35 TableFullScan_34 TableReader_26(Probe) Selection_25 TableFullScan_24",
+            "Update_6 HashJoin_10 TableReader_36(Build) Selection_35 TableFullScan_34 TableReader_26(Probe) Selection_25 TableFullScan_24",
+        ),
+        (
+            "DELETE /*+ INL_JOIN(dt) */ dt FROM dt JOIN do2 ON do2.b = dt.b",
+            "Delete_5 IndexJoin_19 TableReader_31(Build) Selection_30 TableFullScan_29 IndexReader_28(Probe) Selection_27 IndexRangeScan_26",
+            "Delete_5 IndexJoin_19 TableReader_31(Build) Selection_30 TableFullScan_29 IndexReader_28(Probe) Selection_27 IndexRangeScan_26",
+        ),
+        (
+            "UPDATE dt SET a = 1 WHERE b IN (SELECT b FROM do2)",
+            "Update_8 HashJoin_14 HashAgg_49(Build) TableReader_50 HashAgg_44 Selection_48 TableFullScan_47 TableReader_30(Probe) Selection_29 TableFullScan_28",
+            "Update_9 SelectLock_14 HashJoin_16 HashAgg_51(Build) TableReader_52 HashAgg_46 Selection_50 TableFullScan_49 TableReader_32(Probe) Selection_31 TableFullScan_30",
+        ),
+        (
+            "DELETE FROM dt WHERE b IN (SELECT b FROM do2)",
+            "Delete_7 HashJoin_14 HashAgg_44(Build) TableReader_45 HashAgg_39 Selection_43 TableFullScan_42 IndexReader_29(Probe) IndexFullScan_28",
+            "Delete_8 SelectLock_14 HashJoin_16 HashAgg_46(Build) TableReader_47 HashAgg_41 Selection_45 TableFullScan_44 IndexReader_31(Probe) IndexFullScan_30",
+        ),
+        (
+            "UPDATE dt SET a = 1 WHERE EXISTS (SELECT 1 FROM do2 WHERE do2.a = dt.a)",
+            "Update_8 HashJoin_10 TableReader_23(Build) Selection_22 TableFullScan_21 TableReader_20(Probe) Selection_19 TableFullScan_18",
+            "Update_9 SelectLock_11 HashJoin_12 TableReader_25(Build) Selection_24 TableFullScan_23 TableReader_22(Probe) Selection_21 TableFullScan_20",
+        ),
+        (
+            "DELETE FROM dt WHERE b IN (SELECT b FROM do2) ORDER BY a LIMIT 1",
+            "Delete_9 TopN_18 HashJoin_24 HashAgg_59(Build) TableReader_60 HashAgg_54 Selection_58 TableFullScan_57 TableReader_40(Probe) Selection_39 TableFullScan_38",
+            "Delete_10 SelectLock_17 TopN_20 HashJoin_26 HashAgg_61(Build) TableReader_62 HashAgg_56 Selection_60 TableFullScan_59 TableReader_42(Probe) Selection_41 TableFullScan_40",
+        ),
+    ];
+    for (sql, autocommit, _) in &cases {
+        assert_eq!(ids(&mut session, sql), *autocommit, "{sql}");
+    }
+    session.run("BEGIN PESSIMISTIC").unwrap();
+    for (sql, _, in_txn) in &cases {
+        assert_eq!(ids(&mut session, sql), *in_txn, "{sql}");
+    }
+    session.run("ROLLBACK").unwrap();
+}

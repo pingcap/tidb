@@ -2948,35 +2948,6 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
         .dml_root
         .take()
         .unwrap_or_else(|| tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(plan_ids, operator, 0));
-    // Go burns three logical plan ids AFTER buildUpdate's own ctor and
-    // BEFORE the read plan is optimized: the conflict-detector's two join
-    // rewrites and the join-order projection (`find_best_task` W52 ledger:
-    // ids 10, 11, 12). The port folds those constructions into the
-    // in-subquery rewrite, so mirror the ledger here whenever the DML read
-    // actually contains such a join.
-    fn logical_contains_join(plan: &tidb_planner_core_operator_logicalop::LogicalPlan) -> bool {
-        if matches!(plan, tidb_planner_core_operator_logicalop::LogicalPlan::Join(_)) {
-            return true;
-        }
-        plan.children().iter().any(logical_contains_join)
-    }
-    if logical_contains_join(&plan) {
-        let _ = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
-            plan_ids,
-            tidb_planner_core_operator_logicalop::LogicalJoin::TYPE,
-            0,
-        );
-        let _ = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
-            plan_ids,
-            tidb_planner_core_operator_logicalop::LogicalJoin::TYPE,
-            0,
-        );
-        let _ = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
-            plan_ids,
-            tidb_planner_core_operator_logicalop::LogicalProjection::TYPE,
-            0,
-        );
-    }
     let logical = optimize_built_logical(
         plan,
         plan_flags,
