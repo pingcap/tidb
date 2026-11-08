@@ -613,10 +613,8 @@ func TestVecConvertTzNamedZones(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, f.vectorized() && f.isChildrenVectorized())
 
-	// Named time zones are resolved through the location cache, so every case
-	// is evaluated several times below: the first lookup of a name loads it and
-	// the later ones are served from the cache. Both must give the same result.
-	// An empty expect means NULL.
+	// Each case is evaluated several times, so both the first lookup of a name
+	// (loaded) and later ones (cached) are checked. An empty expect means NULL.
 	tests := []struct {
 		t      types.CoreTime
 		fromTz string
@@ -628,12 +626,11 @@ func TestVecConvertTzNamedZones(t *testing.T) {
 		{types.FromDate(2021, 7, 1, 12, 0, 0, 0), "Europe/Berlin", "Asia/Shanghai", "2021-07-01 18:00:00.000000"},
 		{types.FromDate(2021, 1, 15, 12, 0, 0, 0), "Europe/Berlin", "America/New_York", "2021-01-15 06:00:00.000000"},
 		{types.FromDate(2021, 1, 15, 12, 0, 0, 0), "UTC", "Asia/Kolkata", "2021-01-15 17:30:00.000000"},
-		// Australia/Lord_Howe has a 30 minute DST shift: +11:00 in January, +10:30 in July.
+		// Australia/Lord_Howe has a 30-minute DST shift.
 		{types.FromDate(2021, 1, 15, 12, 0, 0, 0), "Australia/Lord_Howe", "UTC", "2021-01-15 01:00:00.000000"},
 		{types.FromDate(2021, 7, 1, 12, 0, 0, 0), "Australia/Lord_Howe", "UTC", "2021-07-01 01:30:00.000000"},
 		{types.FromDate(2021, 7, 1, 12, 0, 0, 0), "+08:00", "-05:30", "2021-06-30 22:30:00.000000"},
-		// Invalid names are not cached and keep returning NULL, also when the
-		// other argument is a valid, cached name.
+		// Invalid names are not cached and return NULL, also next to a cached name.
 		{types.FromDate(2021, 7, 1, 12, 0, 0, 0), "Mars/Olympus_Mons", "UTC", ""},
 		{types.FromDate(2021, 7, 1, 12, 0, 0, 0), "America/New_York", "Mars/Olympus_Mons", ""},
 		{types.FromDate(2021, 7, 1, 12, 0, 0, 0), "", "America/New_York", ""},

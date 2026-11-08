@@ -265,9 +265,8 @@ func TestConstructTimeZone(t *testing.T) {
 }
 
 func TestLocCacheIsBounded(t *testing.T) {
-	// time.LoadLocation accepts "./" segments and repeated slashes when it reads
-	// the system zoneinfo directory, which gives an unlimited number of valid
-	// spellings of the same zone.
+	// Reading a zoneinfo directory, time.LoadLocation accepts "./" and repeated
+	// "/", so one zone has unlimited spellings.
 	if _, err := time.LoadLocation("America/./New_York"); err != nil {
 		t.Skip("system zoneinfo directory not available")
 	}
@@ -276,7 +275,7 @@ func TestLocCacheIsBounded(t *testing.T) {
 
 	lm := &locCache{locMap: make(map[string]*time.Location)}
 	for i := range maxCachedLocations + 10 {
-		// Keep names short: macOS limits paths to 1024 bytes.
+		// Stay under the 1024-byte path limit on macOS.
 		name := "America/" + strings.Repeat("./", i%40) + strings.Repeat("/", i/40) + "New_York"
 		loc, err := lm.getLoc(name)
 		require.NoError(t, err)
@@ -286,7 +285,7 @@ func TestLocCacheIsBounded(t *testing.T) {
 	}
 	require.Len(t, lm.locMap, maxCachedLocations)
 
-	// Cached names are still served from the cache.
+	// Names cached before the limit still hit.
 	first, err := lm.getLoc("America/New_York")
 	require.NoError(t, err)
 	second, err := lm.getLoc("America/New_York")
@@ -295,8 +294,7 @@ func TestLocCacheIsBounded(t *testing.T) {
 }
 
 func TestLocCacheCopiesName(t *testing.T) {
-	// CONVERT_TZ passes names read with chunk.Column.GetString, which share the
-	// column's memory, and that memory is overwritten by later chunks.
+	// Names from chunk.Column.GetString share memory that later chunks overwrite.
 	lm := &locCache{locMap: make(map[string]*time.Location)}
 	buf := []byte("Europe/Berlin")
 	berlin, err := lm.getLoc(unsafe.String(&buf[0], len(buf)))
