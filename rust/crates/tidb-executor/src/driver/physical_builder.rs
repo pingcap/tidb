@@ -7911,7 +7911,8 @@ fn build_with_state(
                     i64::from(plan.base().base.id()),
                     init_cap,
                     max_chunk_size,
-                ),
+                )
+                .with_alloc_pool(ctx.chunk_allocator()),
                 limit.offset,
                 limit.count,
                 child,
@@ -8918,6 +8919,7 @@ pub(crate) fn execute_for_explain(
     physical: &mut PhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
+    explain_fields: &[tidb_datatype::FieldType],
 ) -> Result<(), DriverError> {
     prepare_execution_plan(physical, catalog, ctx)?;
     let mut state = BuildState {
@@ -8927,7 +8929,10 @@ pub(crate) fn execute_for_explain(
     let mut root = build_with_state(physical, catalog, ctx, &mut state)?;
     crate::notify_before_executor_first_run(ctx);
     let result = (|| {
+        // Go `ExplainExec.Open` opens the analyzed tree; the connection then
+        // takes its write chunk (`rs.NewChunk`) before `Next` runs the tree.
         root.open()?;
+        ctx.new_result_write_chunk(explain_fields);
         let mut req = root.new_chunk();
         loop {
             super::next_executor(root.as_mut(), &mut req, &ctx.statement_memory())?;

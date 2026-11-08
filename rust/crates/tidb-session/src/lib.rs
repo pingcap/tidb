@@ -370,6 +370,13 @@ pub struct Session {
     /// statements draw from under `tidb_enable_reuse_chunk`, reset after
     /// each statement (`chunkAlloc.Reset()`).
     chunk_alloc: tidb_chunk::alloc::ChunkAllocator,
+    /// The chunk an executor took from `chunk_alloc` for the connection to
+    /// write the statement's result through (Go `ExplainExec`'s record set).
+    result_write_chunk: std::sync::Arc<std::sync::Mutex<Option<tidb_chunk::chunk::Chunk>>>,
+    /// Whether a connection writes this session's results (Go `clientConn`'s
+    /// `writeChunks`); an in-process caller reads them unpooled, as Go's
+    /// testkit `rs.NewChunk(nil)` does.
+    pub(crate) connection_writes_results: bool,
     /// Whether the last statement failed, so its allocator is recreated
     /// (Go `ClearAlloc(&alloc, hasErr)`).
     chunk_alloc_failed: bool,
@@ -922,6 +929,8 @@ impl Session {
         let stats_handle = catalog.stats_handle();
         Session {
             chunk_alloc: tidb_chunk::alloc::ChunkAllocator::new(),
+            result_write_chunk: std::sync::Arc::default(),
+            connection_writes_results: false,
             chunk_alloc_failed: false,
             mem_db_footprint: Arc::default(),
             catalog,
@@ -2800,6 +2809,22 @@ impl Session {
             .map(|output| (output, result_authority))
     }
 
+    /// A `clientConn` writes this session's results: an executor that takes
+    /// the writer's chunk itself (Go `ExplainExec`) takes it from the
+    /// allocator.
+    pub fn attach_client_conn_writer(&mut self) {
+        self.connection_writes_results = true;
+    }
+
+    /// The chunk an executor of the current statement took for its result's
+    /// writer, if any.
+    pub(crate) fn take_result_write_chunk(&self) -> Option<tidb_chunk::chunk::Chunk> {
+        self.result_write_chunk
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+    }
+
     // Go resets statement state before executor construction. Keep this
     // boundary separate from completion, which belongs to record-set close
     // for queries and to execution itself for statements without results.
@@ -2896,6 +2921,7 @@ impl Session {
         // `ClearAlloc(&cc.chunkAlloc, err != nil)` (a failed statement's
         // allocator is replaced) then `cc.chunkAlloc.Reset()`, which hands
         // the columns its chunks held back to the pool for this statement.
+        self.take_result_write_chunk();
         if std::mem::take(&mut self.chunk_alloc_failed) {
             self.chunk_alloc = tidb_chunk::alloc::ChunkAllocator::new();
         }

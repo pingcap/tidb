@@ -1373,6 +1373,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             Arc::new(tidb_chunk::alloc::new_sync_allocator(allocator)) as Arc<dyn tidb_chunk::alloc::Allocator>
         });
         ctx = ctx.with_statement_chunk_alloc(reuse_chunk, allocator);
+        ctx = ctx.with_result_write_chunk_slot(self.result_write_chunk_slot());
         ctx
     }
 
@@ -2307,6 +2308,13 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// Go `clientConn.chunkAlloc` as `SetAlloc` installs it: the session's
     /// reusable chunk allocator, or none for a session without one.
     fn chunk_allocator(&self) -> Option<tidb_chunk::alloc::ChunkAllocator> {
+        None
+    }
+    /// The slot the session's writer takes a result's write chunk from when
+    /// an executor took it from the allocator (Go `ExplainExec`).
+    fn result_write_chunk_slot(
+        &self,
+    ) -> Option<std::sync::Arc<std::sync::Mutex<Option<tidb_chunk::chunk::Chunk>>>> {
         None
     }
     /// Go `SessionVars.ResourceGroupName`.

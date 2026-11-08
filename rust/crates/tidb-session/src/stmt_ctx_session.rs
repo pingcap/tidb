@@ -29,6 +29,13 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Some(self.chunk_alloc.clone())
     }
 
+    fn result_write_chunk_slot(
+        &self,
+    ) -> Option<std::sync::Arc<std::sync::Mutex<Option<tidb_chunk::chunk::Chunk>>>> {
+        self.connection_writes_results
+            .then(|| std::sync::Arc::clone(&self.result_write_chunk))
+    }
+
 
     fn active_resource_group(&self) -> &str {
         &self.active_resource_group

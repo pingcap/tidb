@@ -3902,7 +3902,12 @@ fn render_physical_query(
         crate::driver::physical_builder::build_for_explain(&physical, catalog, ctx)?;
     }
     if analyze {
-        crate::driver::physical_builder::execute_for_explain(&mut physical, catalog, ctx)?;
+        crate::driver::physical_builder::execute_for_explain(
+            &mut physical,
+            catalog,
+            ctx,
+            &explain_field_types(format, true)?,
+        )?;
     }
     render_physical_plan(
         ctx,
@@ -3952,6 +3957,20 @@ pub fn explain_connection_plan(
 /// and whether the target has a collector, and `DecodeBinaryPlan4Connection`'s
 /// rows.
 ///
+/// Go `PhysicalExplain` schema's field types: one string per field name of
+/// the format.
+fn explain_field_types(format: ExplainFormat, analyze: bool) -> Result<Vec<FieldType>, DriverError> {
+    let explain = PlannerExplain::new(
+        planner_explain_format(format),
+        analyze,
+        ExplainOperator::new(String::new(), 0),
+    );
+    let schema = explain
+        .prepare_schema(&mut PlannerExplainContext::default())
+        .map_err(|error| DriverError::unsupported(error.to_string()))?;
+    Ok(vec![FieldType::new(FieldTypeCode::VarString); schema.field_names.len()])
+}
+
 /// # Errors
 /// A brief plan that does not decode.
 pub fn explain_connection_brief_plan(
@@ -4018,7 +4037,12 @@ pub fn explain_analyze_physical_plan(
     let ctx = &analyzed;
     let mut physical = physical.deep_clone();
     crate::driver::physical_builder::prepare_execution_plan(&mut physical, catalog, ctx)?;
-    crate::driver::physical_builder::execute_for_explain(&mut physical, catalog, ctx)?;
+    crate::driver::physical_builder::execute_for_explain(
+        &mut physical,
+        catalog,
+        ctx,
+        &explain_field_types(format, true)?,
+    )?;
     render_physical_plan(ctx, ctx, &physical, catalog, format, true, true, &[])
 }
 

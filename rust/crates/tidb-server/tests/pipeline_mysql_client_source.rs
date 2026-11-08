@@ -3391,3 +3391,111 @@ fn a_stream_agg_takes_its_child_chunk_from_the_pool_when_it_opens_like_go() {
         assert_eq!(stream_agg_memory(&mut scanned, &mut scanned_reader, from), "2.16 KB", "{from}");
     }
 }
+
+/// Go's EXPLAIN ANALYZE writes its result through a chunk the connection
+/// takes from its allocator after `ExplainExec.Open` and before `Next` runs
+/// the analyzed plan, and a lookup's index worker, table tasks (a pushed
+/// partial aggregate's included) and a root `LimitExec` take theirs from the
+/// same allocator, so every statement's charges follow the columns earlier
+/// statements on the connection returned to it. Captured from a Go
+/// tidb-server over one connection, and (for this client, which sends no
+/// session setup queries first) a Go testkit statement loop installing an
+/// allocator per statement as `clientConn` does.
+#[test]
+fn a_connections_statements_reuse_each_others_chunks_like_go() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let store = users();
+    let node = node_over(&store);
+    std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        let _ = serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            node.factory().as_ref(),
+            &store,
+            &tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        );
+    });
+    let mut client = TcpStream::connect(address).unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    authenticate(&mut client, &mut reader);
+    run_write(&mut client, &mut reader, "CREATE TABLE ch (a VARCHAR(10) PRIMARY KEY CLUSTERED, b INT, c INT, KEY(b))");
+    run_write(
+        &mut client,
+        &mut reader,
+        "INSERT INTO ch VALUES ('x',1,1),('y',2,2),('z',3,3),('w',4,4),('v',5,5),('u',6,6)",
+    );
+    run_write(&mut client, &mut reader, "CREATE TABLE t (a INT PRIMARY KEY, b INT, c INT, KEY (b))");
+    let values = (1..=100).map(|x| format!("({x}, {x}, {})", x % 5)).collect::<Vec<_>>().join(", ");
+    run_write(&mut client, &mut reader, &format!("INSERT INTO t VALUES {values}"));
+    for (sql, operator, memory) in [
+        ("SELECT * FROM ch USE INDEX(b) WHERE b > 1", "IndexLookUp_7", "3.18 KB"),
+        ("SELECT * FROM ch USE INDEX(b) WHERE b > 1 ORDER BY b", "IndexLookUp_14", "3.54 KB"),
+        ("SELECT count(c) FROM t USE INDEX(b) WHERE b > 1", "HashAgg_13", "13.5 KB"),
+        ("SELECT count(c) FROM t USE INDEX(b) WHERE b > 1", "HashAgg_13", "21.3 KB"),
+        ("SELECT * FROM t WHERE c > 2 LIMIT 3", "Limit_8", "N/A"),
+        ("SELECT b, c FROM t USE INDEX(b) WHERE b > 1", "IndexLookUp_7", "14.1 KB"),
+        ("SELECT * FROM t WHERE c > 2 LIMIT 3", "Limit_8", "N/A"),
+        ("SELECT * FROM ch USE INDEX(b) WHERE b > 1 ORDER BY b", "IndexLookUp_14", "12.0 KB"),
+    ] {
+        let plan = run_query(&mut client, &mut reader, &format!("EXPLAIN ANALYZE {sql}"));
+        let row = plan
+            .iter()
+            .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()) == operator)
+            .unwrap_or_else(|| panic!("{sql}: no {operator} in {plan:?}"));
+        // A reader's charge carries its responses' execution details, whose
+        // timings vary in length; the LIMIT reads matter for what they leave
+        // in the pool.
+        assert_eq!(row[7], memory, "{sql}: {plan:?}");
+    }
+}
+
+/// Go's `ExplainExec.Next` appends its rows into the chunk the connection
+/// took from its allocator, so the string columns that chunk grows return to
+/// the pool and a later statement's string columns take them. Captured from
+/// a Go statement loop that installs an allocator per statement and writes
+/// each result through `rs.NewChunk(alloc)`, as `clientConn` does.
+#[test]
+fn an_explain_result_is_written_through_its_pooled_chunk_like_go() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let store = users();
+    let node = node_over(&store);
+    std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        let _ = serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            node.factory().as_ref(),
+            &store,
+            &tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        );
+    });
+    let mut client = TcpStream::connect(address).unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    authenticate(&mut client, &mut reader);
+    run_write(&mut client, &mut reader, "CREATE TABLE t (a INT, b VARCHAR(20), KEY(a))");
+    run_write(&mut client, &mut reader, "INSERT INTO t VALUES (1,'x'),(2,'yy'),(2,'zzz'),(3,'w')");
+    for (sql, operator, memory) in [
+        ("SELECT * FROM t USE INDEX(a) WHERE a > 0", "IndexLookUp_7", "2.10 KB"),
+        ("SELECT * FROM t USE INDEX(a) WHERE a > 0", "IndexLookUp_7", "9.97 KB"),
+        ("SELECT /*+ hash_agg() */ b, count(a) FROM t GROUP BY b", "HashAgg_9", "32.8 KB"),
+        ("SELECT /*+ hash_agg() */ b, count(a) FROM t GROUP BY b", "HashAgg_9", "33.4 KB"),
+        ("SELECT /*+ hash_agg() */ a, group_concat(b) FROM t GROUP BY a", "HashAgg_5", "33.9 KB"),
+        ("SELECT * FROM t USE INDEX(a) WHERE a > 0", "IndexLookUp_7", "2.72 KB"),
+    ] {
+        let plan = run_query(&mut client, &mut reader, &format!("EXPLAIN ANALYZE {sql}"));
+        let row = plan
+            .iter()
+            .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()) == operator)
+            .unwrap_or_else(|| panic!("{sql}: no {operator} in {plan:?}"));
+        assert_eq!(row[7], memory, "{sql}: {plan:?}");
+    }
+}

@@ -1742,6 +1742,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             })
             .collect(),
     );
+    engine.attach_client_conn_writer();
     // Go's `openSessionAndDoAuth`: the handshake's initial database is applied
     // before the connection is reported ready, and a schema that does not
     // exist ends the connection with its own errno rather than the OK packet.

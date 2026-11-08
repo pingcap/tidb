@@ -243,6 +243,11 @@ impl ResultSetSource for PreparedRecordSet<'_> {
 pub struct MaterializedResultSetSource {
     fields: Vec<ResultFieldMetadata>,
     rows: std::vec::IntoIter<Vec<Datum>>,
+    /// The chunk an executor took from the allocator for this result's
+    /// writer (Go `ExplainExec`'s record set), with its cells' types.
+    write_chunk: std::sync::Mutex<Option<Chunk>>,
+    field_types: Vec<FieldType>,
+    max_chunk_size: usize,
 }
 
 impl MaterializedResultSetSource {
@@ -252,11 +257,48 @@ impl MaterializedResultSetSource {
         Self {
             fields,
             rows: rows.into_iter(),
+            write_chunk: std::sync::Mutex::new(None),
+            field_types: Vec::new(),
+            max_chunk_size: 0,
         }
+    }
+
+    /// Writes the rows through `chunk`, which the statement's executor took
+    /// from the session's allocator.
+    #[must_use]
+    pub fn with_write_chunk(mut self, chunk: Option<Chunk>, field_types: Vec<FieldType>) -> Self {
+        // `Alloc` leaves `requiredRows` at the executor's `MaxChunkSize`.
+        self.max_chunk_size = chunk.as_ref().map_or(0, Chunk::required_rows);
+        self.write_chunk = std::sync::Mutex::new(chunk);
+        self.field_types = field_types;
+        self
     }
 }
 
 impl ResultSetSource for MaterializedResultSetSource {
+    fn new_write_chunk(&self) -> Option<Chunk> {
+        self.write_chunk
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+    }
+
+    /// Go `ExplainExec.Next`: `GrowAndReset(MaxChunkSize)`, then as many
+    /// rows as the chunk's capacity holds.
+    fn next_chunk(&mut self, chunk: &mut Chunk) -> Result<(), tidb_terror::MysqlError> {
+        chunk.grow_and_reset(self.max_chunk_size);
+        for row in self.rows.by_ref().take(chunk.capacity()) {
+            for (column, datum) in row.iter().enumerate() {
+                chunk.append_datum(column, datum);
+            }
+        }
+        Ok(())
+    }
+
+    fn field_types(&self) -> &[FieldType] {
+        &self.field_types
+    }
+
     fn next_batch(
         &mut self,
         max_rows: usize,

@@ -1531,6 +1531,11 @@ pub struct StmtContextData {
     /// allocator installed for this statement (`SetAlloc`), which executors
     /// take as their `AllocPool` while [`Self::is_alloc_valid`].
     chunk_allocator: Option<Arc<dyn tidb_chunk::alloc::Allocator>>,
+    /// The session's slot for the chunk its connection writes this
+    /// statement's result through, when an executor takes it from the
+    /// allocator itself (Go `ExplainExec`: `writeChunks`' `rs.NewChunk`
+    /// runs after `Open` and before `Next` executes the analyzed plan).
+    result_write_chunk: Option<Arc<Mutex<Option<tidb_chunk::chunk::Chunk>>>>,
     /// The warnings TiKV reported for THIS statement's coprocessor requests.
     ///
     /// It is an `Arc` sink rather than the `Rc` buffer beside it because a
@@ -3211,6 +3216,7 @@ impl StmtContext {
             has_physical_table_reader: Arc::default(),
             chunk_alloc_valid: Arc::default(),
             chunk_allocator: None,
+            result_write_chunk: None,
             cop_warnings: WarningCollector::new(),
             cop_lite_worker: Arc::default(),
         }))
@@ -3394,6 +3400,29 @@ impl StmtContext {
         data.chunk_alloc_valid = Arc::new(AtomicBool::new(valid));
         data.chunk_allocator = allocator.filter(|_| valid);
         self
+    }
+
+    /// Installs the session's result write chunk slot.
+    #[must_use]
+    pub fn with_result_write_chunk_slot(
+        mut self,
+        slot: Option<Arc<Mutex<Option<tidb_chunk::chunk::Chunk>>>>,
+    ) -> Self {
+        Arc::make_mut(&mut self.0).result_write_chunk = slot;
+        self
+    }
+
+    /// Go `writeChunks`' `rs.NewChunk(sessVars.GetChunkAllocator())` taken at
+    /// the point Go's record set takes it: a chunk of `fields` from the
+    /// allocator, handed to the session's writer. Nothing happens without an
+    /// installed allocator and slot.
+    pub fn new_result_write_chunk(&self, fields: &[tidb_datatype::FieldType]) {
+        let (Some(allocator), Some(slot)) = (self.chunk_allocator(), &self.result_write_chunk) else {
+            return;
+        };
+        let (init_cap, max_chunk_size) = self.executor_chunk_sizes();
+        let chunk = allocator.alloc(fields, init_cap, max_chunk_size).into_pooled_chunk();
+        *slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(chunk);
     }
 
     /// Go `SessionVars.GetChunkAllocator()` as an executor reads it when it

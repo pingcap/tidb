@@ -148,6 +148,10 @@ impl QuerySession for Session {
         Session::set_connection_attributes(self, attributes);
     }
 
+    fn attach_client_conn_writer(&mut self) {
+        Session::attach_client_conn_writer(self);
+    }
+
     fn query_cancellation(&self) -> Option<Arc<dyn ActiveQueryCancellation>> {
         Some(Arc::new(self.begin_query_cancellation()))
     }

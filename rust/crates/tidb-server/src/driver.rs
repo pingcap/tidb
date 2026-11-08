@@ -144,6 +144,10 @@ pub trait QuerySession {
     ) {
     }
 
+    /// Go `clientConn`: the connection writes the session's results through
+    /// chunks from its allocator (`writeChunks`' `rs.NewChunk(alloc)`).
+    fn attach_client_conn_writer(&mut self) {}
+
     /// The session's `tidb_slow_log_threshold`, which gates the dashboard's
     /// slow-query histograms (`adapter.go:1958` reads it from the instance
     /// config; the session variable mirrors it per session). `None` marks a

@@ -170,10 +170,14 @@ impl<'s> ClusterServerSession<'s> {
                     }
                 };
                 let source = match output {
-                    StmtOutput::Rows { columns, rows } => MaterializedResultSetSource::new(
-                        crate::domain::pipeline_session::select_fields(&columns),
-                        rows,
-                    ),
+                    StmtOutput::Rows { columns, rows } => {
+                        let field_types = columns.iter().map(|(_, field_type)| field_type.clone()).collect();
+                        MaterializedResultSetSource::new(
+                            crate::domain::pipeline_session::select_fields(&columns),
+                            rows,
+                        )
+                        .with_write_chunk(self.session.take_result_write_chunk(), field_types)
+                    }
                     StmtOutput::Affected(count) => {
                         crate::domain::pipeline_session::affected_rows_source(count)
                     }

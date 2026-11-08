@@ -3865,7 +3865,8 @@ impl IndexRangeSourceExec {
             // filled chunk charged with its `MemoryUsage`.
             let required_rows = self.meta.max_chunk_size();
             loop {
-                let mut chunk = Chunk::new(
+                let mut chunk = tidb_executor_internal_exec::new_chunk_with_alloc_pool(
+                    statement.alloc_pool.as_ref().map(|pool| &pool.0),
                     &field_types,
                     statement.init_chunk_size.min(required_rows),
                     required_rows,
@@ -3961,7 +3962,8 @@ impl IndexRangeSourceExec {
                 self.meta.id(),
                 self.meta.init_cap(),
                 self.meta.max_chunk_size(),
-            );
+            )
+                .with_alloc_pool(self.meta.alloc_pool().cloned());
         }
     }
 
@@ -4765,7 +4767,8 @@ impl tidb_executor_internal_exec::table_access::TableAccess for IndexRangeSource
             self.meta.id(),
             self.meta.init_cap(),
             self.meta.max_chunk_size(),
-        );
+        )
+            .with_alloc_pool(self.meta.alloc_pool().cloned());
         self.partial_aggregate = Some(aggregate.clone());
         self.partial_input_types = Some(input_types);
         self.partial_context = Some(ctx.clone());
