@@ -155,7 +155,9 @@ fn aggregate_dag_accepts_global_functions_or_group_only_dedup() {
             let aggregate = executor.aggregation.as_ref().unwrap();
             assert_eq!(aggregate.agg_func, functions);
             assert_eq!(aggregate.group_by, groups);
-            assert_eq!(aggregate.streamed, None);
+            // Go never sets the non-nullable `Aggregation.Streamed`, which
+            // gogoproto encodes as `false` for either executor type.
+            assert_eq!(aggregate.streamed, Some(false));
             assert_eq!(request.output_offsets, offsets);
             assert_eq!(
                 DagRequest::decode(request.encode_to_vec().as_slice()).unwrap(),

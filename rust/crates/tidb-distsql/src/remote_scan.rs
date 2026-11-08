@@ -140,6 +140,9 @@ pub struct PushdownAggregateFunction {
     pub input: Option<Expression>,
     /// The partial result column returned by TiKV.
     pub output_type: FieldType,
+    /// Go `AggFuncDesc.RetTp` of the partial function, the field type its
+    /// request carries (`AggFuncToPBExpr`).
+    pub ret_type: FieldType,
 }
 
 /// One aggregation the base scan may execute inside TiKV before rows cross
@@ -548,6 +551,9 @@ pub struct PushdownStatementContext {
     /// Go `tblPlans`' TopN under an index lookup (`TopN | TableRowIDScan`),
     /// its keys over the lookup's row: each table task's request carries it.
     pub lookup_table_topn: Option<PushdownTopN>,
+    /// Go `SessionVars.TiFlashFineGrainedShuffleBatchSize`, which a pushed
+    /// hash aggregation's executor carries (`PhysicalHashAgg.ToPB`).
+    pub tiflash_fine_grained_shuffle_batch_size: u64,
 }
 
 /// Go `exec.BaseExecutorV2.AllocPool`: `SessionVars.GetChunkAllocator()`.
@@ -612,6 +618,7 @@ impl Default for PushdownStatementContext {
             alloc_pool: None,
             lookup_table_limit: None,
             lookup_table_topn: None,
+            tiflash_fine_grained_shuffle_batch_size: tidb_vardef::defaults::DEF_TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE as u64,
         }
     }
 }

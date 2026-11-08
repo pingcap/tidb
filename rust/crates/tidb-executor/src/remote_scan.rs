@@ -74,6 +74,16 @@ pub fn pushdown_statement_context(ctx: &crate::StmtContext) -> PushdownStatement
         alloc_pool: ctx.chunk_allocator().map(tidb_distsql::remote_scan::AllocPool),
         lookup_table_limit: None,
         lookup_table_topn: None,
+        tiflash_fine_grained_shuffle_batch_size: tiflash_fine_grained_shuffle_batch_size(ctx),
+    }
+}
+
+/// Go `SessionVars.TiFlashFineGrainedShuffleBatchSize`.
+pub(crate) fn tiflash_fine_grained_shuffle_batch_size(ctx: &crate::StmtContext) -> u64 {
+    match tidb_exprctx::Columns::sysvar(ctx, None, tidb_vardef::tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE) {
+        Some(tidb_datatype::Datum::UInt(size)) => size,
+        Some(tidb_datatype::Datum::Int(size)) => u64::try_from(size).unwrap_or_default(),
+        _ => tidb_vardef::defaults::DEF_TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE as u64,
     }
 }
 

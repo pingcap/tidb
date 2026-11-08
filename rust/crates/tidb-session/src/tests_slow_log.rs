@@ -630,3 +630,31 @@ fn a_string_extremum_projection_peaks_like_gos_ping_pong() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// Go `PhysicalHashAgg.ToPB` / `AggFuncToPBExpr` for an index lookup's
+/// table-side partial aggregate: each partial function carries its
+/// descriptor's type (a COUNT's NOT NULL binary longlong, an AVG split into
+/// `TypeInfer`'s COUNT and `TypeInfer4AvgSum`'s SUM), `Aggregation.Streamed`
+/// is encoded as `false`, and the executor carries the session's
+/// `tiflash_fine_grained_shuffle_batch_size`, so each task's `dagPB.Size()`
+/// and the statement's peak are Go's to the byte.
+#[test]
+fn an_index_lookups_partial_aggregate_request_peaks_like_go() {
+    for (query, go_mem_max) in [
+        ("SELECT count(c) FROM t USE INDEX(b) WHERE b > 1", "17916"),
+        ("SELECT c, count(c) FROM t USE INDEX(b) WHERE b > 1 GROUP BY c", "27298"),
+        ("SELECT avg(c) FROM t USE INDEX(b) WHERE b > 1", "21026"),
+    ] {
+        let dir = log_dir("partial-aggregate-mem-max");
+        let (slow, _) = install_loggers(&dir);
+        let mut session = Session::new();
+        session.run("CREATE TABLE t (a INT PRIMARY KEY, b INT, c INT, KEY (b))").unwrap();
+        let values = (1..=100).map(|x| format!("({x}, {x}, {})", x % 5)).collect::<Vec<_>>().join(", ");
+        session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+        session.run("SET GLOBAL tidb_slow_log_threshold = 0").unwrap();
+        session.run(query).unwrap();
+        let log = read(&slow);
+        assert_eq!(field(&entry_for(&log, query), "Mem_max").as_deref(), Some(go_mem_max), "{query}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

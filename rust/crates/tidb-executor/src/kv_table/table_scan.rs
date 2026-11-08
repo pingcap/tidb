@@ -7381,6 +7381,7 @@ mod remote_cursor_tests {
                 kind: tidb_distsql::remote_scan::PushdownAggregateKind::Count,
                 input: None,
                 output_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                ret_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
             }],
         };
         let ranges = [Range {
@@ -7520,6 +7521,7 @@ mod remote_cursor_tests {
                 kind: tidb_distsql::remote_scan::PushdownAggregateKind::Count,
                 input: None,
                 output_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                ret_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
             }],
             streamed: true,
         };

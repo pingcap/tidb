@@ -488,6 +488,7 @@ pub fn build_resp(
     // from the statement's session variable when it differs from the
     // default; the lowering omits the field at the default value.
     context.div_precision_increment = request.statement.div_precision_increment;
+    context.fine_grained_shuffle_batch_size = request.statement.tiflash_fine_grained_shuffle_batch_size;
     // Go `ConstructDAGReq`: `RuntimeStatsColl != nil` asks the store for
     // per-executor execution summaries.
     context.collect_execution_summaries = request.statement.cop_response_sink.is_some();
@@ -1324,7 +1325,7 @@ fn lower_aggregate_functions(
             lower_aggregate_function(
                 function.kind,
                 function.input.as_ref(),
-                &function.output_type,
+                &function.ret_type,
                 columns,
                 zone,
             )

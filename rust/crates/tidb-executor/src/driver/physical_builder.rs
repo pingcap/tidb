@@ -2263,7 +2263,9 @@ fn build_aggregation_over_child(
         .all(|descriptor| descriptor.mode == AggFunctionMode::Partial1)
     {
         if let Some(partial) = pushed_partial_aggregation(
+            descriptors,
             &functions,
+            ctx,
             &group_by,
             stream,
             &child_schema,
@@ -2360,7 +2362,9 @@ fn build_window(
 }
 
 fn pushed_partial_aggregation(
+    descriptors: &[AggFuncDesc],
     functions: &[AggFunc],
+    ctx: &crate::StmtContext,
     group_by: &[Expression],
     streamed: bool,
     child_schema: &Schema,
@@ -2368,7 +2372,7 @@ fn pushed_partial_aggregation(
 ) -> Result<Option<PushdownPartialAggregate>, DriverError> {
     let mut pushed_functions = Vec::new();
     let mut output = 0;
-    for function in functions {
+    for (descriptor, function) in descriptors.iter().zip(functions) {
         if function.distinct || !function.extra_args.is_empty() || !function.order_by.is_empty() {
             return Ok(None);
         }
@@ -2401,7 +2405,22 @@ fn pushed_partial_aggregation(
             AggKind::Avg => &[PushdownAggregateKind::Count, PushdownAggregateKind::Sum],
             _ => return Ok(None),
         };
-        for kind in kinds {
+        // Go `BuildFinalModeAggregation`'s partial functions: each a clone
+        // of the descriptor, an AVG split into a COUNT typed by `TypeInfer`
+        // and a SUM by `TypeInfer4AvgSum(aggFunc.RetTp)`.
+        let ret_types = if matches!(function.kind, AggKind::Avg) {
+            let mut count = descriptor.base.clone();
+            count.name = "count".to_owned();
+            count.type_infer(ctx).map_err(|error| DriverError::unsupported(format!("{error:?}")))?;
+            let mut sum = descriptor.base.clone();
+            sum.name = "sum".to_owned();
+            sum.type_infer_4_avg_sum(&descriptor.base.ret_type)
+                .map_err(|error| DriverError::unsupported(format!("{error:?}")))?;
+            vec![count.ret_type, sum.ret_type]
+        } else {
+            vec![descriptor.base.ret_type.clone()]
+        };
+        for (kind, ret_type) in kinds.iter().zip(ret_types) {
             let Some(column) = output_schema.columns.get(output) else {
                 return Err(DriverError::unsupported(
                     "a physical partial aggregate output schema is incomplete",
@@ -2414,6 +2433,7 @@ fn pushed_partial_aggregation(
                     .ret_type
                     .clone()
                     .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong)),
+                ret_type,
             });
             output += 1;
         }
@@ -2583,7 +2603,9 @@ fn reader_partial_aggregate(
         .collect::<Result<Vec<_>, _>>()?;
     let group_by = resolve_expressions(group_by, child_schema)?;
     pushed_partial_aggregation(
+        descriptors,
         &functions,
+        ctx,
         &group_by,
         stream,
         child_schema,

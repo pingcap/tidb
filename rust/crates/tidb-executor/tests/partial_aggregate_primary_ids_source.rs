@@ -197,6 +197,7 @@ fn count_over_primary() -> PushdownPartialAggregate {
         functions: vec![tidb_distsql::remote_scan::PushdownAggregateFunction {
             kind: tidb_distsql::remote_scan::PushdownAggregateKind::Count,
             input: Some(tidb_expr::expression::Expression::Column(input)),
+            ret_type: output_type.clone(),
             output_type,
         }],
         streamed: false,

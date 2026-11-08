@@ -51,6 +51,9 @@ pub struct DagRequestContext {
     pub div_precision_increment: u32,
     /// Result encoding selected by the existing alignment-gated policy.
     pub encode_type: DistSqlEncodeType,
+    /// Go `SessionVars.TiFlashFineGrainedShuffleBatchSize`
+    /// (`PhysicalHashAgg.ToPB`'s `FineGrainedShuffleBatchSize`).
+    pub fine_grained_shuffle_batch_size: u64,
 }
 
 impl DagRequestContext {
@@ -69,6 +72,7 @@ impl DagRequestContext {
             collect_execution_summaries: false,
             div_precision_increment: DEFAULT_DIV_PRECISION_INCREMENT,
             encode_type,
+            fine_grained_shuffle_batch_size: tidb_vardef::defaults::DEF_TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE as u64,
         }
     }
 }
@@ -288,9 +292,23 @@ pub fn construct_grouped_aggregate_read_only_dag_req_with_conditions(
     )
 }
 
-fn aggregation_to_executor(aggregation: Aggregation) -> Executor {
+/// Go `PhysicalHashAgg.ToPB`'s `FineGrainedShuffleBatchSize: ctx.
+/// TiFlashFineGrainedShuffleBatchSize`, on a hash aggregation's executor for
+/// any store; a stream aggregation's leaves it zero.
+fn hash_agg_shuffle_batch_size(context: &DagRequestContext, mut executor: Executor) -> Executor {
+    if executor.tp == Some(ExecType::TypeAggregation as i32) {
+        executor.fine_grained_shuffle_batch_size = Some(context.fine_grained_shuffle_batch_size);
+    }
+    executor
+}
+
+fn aggregation_to_executor(context: &DagRequestContext, mut aggregation: Aggregation) -> Executor {
     let streamed = aggregation.streamed == Some(true);
-    Executor {
+    // Go's `PhysicalHashAgg` / `PhysicalStreamAgg.ToPB` never set
+    // `Aggregation.Streamed`, a non-nullable field encoded as `false`; the
+    // executor type is the mode discriminator.
+    aggregation.streamed = Some(false);
+    let executor = Executor {
         tbl_scan: None,
         idx_scan: None,
         selection: None,
@@ -305,7 +323,8 @@ fn aggregation_to_executor(aggregation: Aggregation) -> Executor {
         } else {
             ExecType::TypeAggregation
         })
-    }
+    };
+    hash_agg_shuffle_batch_size(context, executor)
 }
 
 fn construct_dag_req_inner(
@@ -395,9 +414,10 @@ fn construct_dag_req_assembled(
         }
     }
     if let Some((aggregation, _)) = aggregation {
-        executors.push(aggregation_to_executor(aggregation));
+        executors.push(aggregation_to_executor(context, aggregation));
     } else if let Some(functions) = aggregate_functions {
         executors.push(aggregation_to_pb(
+            context,
             functions,
             aggregate_group_by.unwrap_or_default(),
             aggregate_streamed,
@@ -472,6 +492,7 @@ fn selection_executor(conditions: Vec<Expr>) -> Result<Executor, DagRequestBuild
 }
 
 fn aggregation_to_pb(
+    context: &DagRequestContext,
     functions: &[Expr],
     group_by: &[Expr],
     streamed: bool,
@@ -479,7 +500,7 @@ fn aggregation_to_pb(
     if functions.is_empty() && group_by.is_empty() {
         return Err(DagRequestBuildError::EmptyAggregation);
     }
-    Ok(Executor {
+    Ok(hash_agg_shuffle_batch_size(context, Executor {
         tbl_scan: None,
         idx_scan: None,
         selection: None,
@@ -487,9 +508,9 @@ fn aggregation_to_pb(
             group_by: group_by.to_vec(),
             agg_func: functions.to_vec(),
             // Go's PhysicalHashAgg/PhysicalStreamAgg list-form protobuf does
-            // not set Aggregation.streamed; the executor type is the mode
-            // discriminator in this list-form request.
-            streamed: None,
+            // not set Aggregation.streamed, a non-nullable field encoded as
+            // `false`; the executor type is the mode discriminator.
+            streamed: Some(false),
             ..Default::default()
         })),
         top_n: None,
@@ -502,7 +523,7 @@ fn aggregation_to_pb(
         } else {
             ExecType::TypeAggregation
         })
-    })
+    }))
 }
 
 fn table_scan_to_pb(spec: &TiKvTableScanSpec) -> Result<Executor, DagRequestBuildError> {
