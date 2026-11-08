@@ -1170,13 +1170,19 @@ mod tests {
             session.set_process_privilege(true)
         });
         session.set_process_privilege(true);
+        // Go `changeToValid` leaves the activated transaction Idle.
         let tidb_session::StmtResult::Rows(rows) = session
-            .run("SELECT COUNT(*) FROM information_schema.CLUSTER_TIDB_TRX")
+            .run("SELECT COUNT(*), MAX(STATE) FROM information_schema.CLUSTER_TIDB_TRX")
             .unwrap()
         else {
             panic!("expected rows")
         };
-        assert_eq!(rows, vec![vec![Datum::Int(1)]]);
+        assert_eq!(rows[0][0], Datum::Int(1));
+        let state = match &rows[0][1] {
+            Datum::Enum(value, _) => String::from_utf8_lossy(value.name().as_bytes()).into_owned(),
+            other => format!("{other:?}"),
+        };
+        assert_eq!(state, "Idle");
         let tidb_session::StmtResult::Rows(rows) = session
             .run("EXPLAIN ANALYZE SELECT ID FROM information_schema.CLUSTER_PROCESSLIST WHERE ID > 0")
             .unwrap()

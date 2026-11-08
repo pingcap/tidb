@@ -2,8 +2,8 @@
   "date": "2026-11-08",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 29,
-    "open": 6,
+    "unresolved": 35,
+    "open": 12,
     "partial": 23
   },
   "findings": [
@@ -213,9 +213,51 @@
       "group": "Domain and process services",
       "finding": "Go's `ExecRestrictedSQL` / `ExecuteInternal` are methods of the issuing session (`withRestrictedSQLExecutor`); this port's executors are adapters beside it (`NodeRestrictedSql`, `SystemSqlExecutor`, `ClusterStatsSqlExecutor`, the plan replayer's `SessionSql`). The node's two apply `ExecOption`'s `SnapshotTS`, `AnalyzeVer`, `AnalyzeSnapshot`, `EnableDDLAnalyze` and `PartitionPruneMode` and restore them as Go's `useCurrentSession` / `getInternalSession` do, but with no issuing session they cannot inherit `OptimizerUseInvisibleIndexes` / `SkipMissingPartitionStats` or append the internal session's warnings to the caller's (`IgnoreWarning`), and `ClusterStatsSqlExecutor` honours the options on the auto-analyze path alone. `rebuildSysVarCache` consumes the rows the domain's sysvar reload loop last read (`SysVarCacheDeps::table_contents`) where Go's runs `fetchTableValues` itself",
       "go_owner": "`pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`)"
+    },
+    {
+      "id": "E24",
+      "status": "open",
+      "group": "DML and executor handoff",
+      "finding": "Process info is published before the executor is built (`explain.rs` `publish_physical_process_info`) and the process row's `State` is the server status at statement start; Go's `ExecStmt.Exec` calls `SetProcessInfo` after `buildExecutor`, so a transaction the build activates is in its `State` (`in transaction` under autocommit=0: Go tidb-server shows it for the first statement of a transaction that reads a CLUSTER_* table, this port shows NULL)",
+      "go_owner": "`pkg/executor/adapter.go` (`ExecStmt.Exec`), `pkg/session/session.go` (`SetProcessInfo`)"
+    },
+    {
+      "id": "E25",
+      "status": "open",
+      "group": "DML and executor handoff",
+      "finding": "A select result registers its runtime stats when its source is exhausted (`select_response.rs` `report_select_result_close` on the `Closed` event); Go's `selectResult.closeImpl` registers them only at `Close`. `ExplainExec` registers RU between the last `Next` and the deferred `Close`, so Go prints a reader's `RU:` before its `cop_task`, and this port after it (any root TableReader, e.g. `EXPLAIN ANALYZE SELECT * FROM t`)",
+      "go_owner": "`pkg/distsql/select_result.go` (`closeImpl`), `pkg/executor/explain.go` (`executeAnalyzeExec`)"
+    },
+    {
+      "id": "E26",
+      "status": "open",
+      "group": "DML and executor handoff",
+      "finding": "An index join's probe-side reader is built and timed even when no lookup task runs: `EXPLAIN ANALYZE` shows `time:..., loops:0` on `IndexReader(Probe)` where Go, which builds the inner executor per task (`buildExecutorForIndexJoin`), shows no execution info (`SELECT /*+ INL_JOIN(e2) */ * FROM e1 JOIN e2 ON e1.b = e2.b` over an empty `e1`)",
+      "go_owner": "`pkg/executor/index_lookup_join.go`, `pkg/executor/builder.go`"
+    },
+    {
+      "id": "O21",
+      "status": "open",
+      "group": "Domain and process services",
+      "finding": "`TIDB_TRX.RELATED_TABLE_IDS` omits the tables a transaction's statements planned before it activated: under autocommit=0, Go's row lists both statements' tables (its `TxnCtx` exists from `PrepareTxnCtx`, before planning), this port's only the activating statement's",
+      "go_owner": "`pkg/session` (`PrepareTxnCtx`, `TxnInfo`), `pkg/sessionctx/variable` (`TransactionContext.RelatedTableIDs`)"
+    },
+    {
+      "id": "O22",
+      "status": "open",
+      "group": "Domain and process services",
+      "finding": "The node's advertised address: the executable defaults `host` to `127.0.0.1` (`NodeConfig::deployment_defaults`) where Go's default is `0.0.0.0`, and an empty `advertise-address` with host `0.0.0.0` stays empty because `util.GetLocalIP` (the first global-unicast interface address) is unported, so `INSTANCE` columns and server info carry the loopback address where Go's carry the host's IP",
+      "go_owner": "`cmd/tidb-server/main.go` (`overrideConfig`), `pkg/util/misc.go` (`GetLocalIP`)"
+    },
+    {
+      "id": "O23",
+      "status": "open",
+      "group": "Domain and process services",
+      "finding": "Sessions have no DDL owner lookup (Go `tableReaderExecutorContext.getDDLOwner`: `OwnerManager.GetOwnerID` then `infosync.GetServerInfoByID`): `ADMIN SHOW DDL` reports this node as `OWNER_ID`/`OWNER_ADDRESS` and no running jobs, and the TIFLASH_REPLICA reader cannot address the owner (I07)",
+      "go_owner": "`pkg/executor/table_reader.go` (`newTableReaderExecutorContext`), `pkg/executor/executor.go` (`DDLExec`/`ShowDDLExec`)"
     }
   ],
-  "unresolved": 29,
-  "open": 6,
+  "unresolved": 35,
+  "open": 12,
   "partial": 23
 }

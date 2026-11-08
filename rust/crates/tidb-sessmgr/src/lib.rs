@@ -305,15 +305,13 @@ impl ProcessEntry {
             return;
         }
         let digest = (!self.digest.is_empty()).then(|| self.digest.clone());
+        // Go `LazyTxn.changeToValid`: `resetTxnInfo(startTS, TxnIdle, ...)`,
+        // keeping the statement it recorded while pending.
         self.transaction = Some(TransactionEntry {
             start_ts,
             created: Instant::now(),
             current_sql_digest: digest.clone(),
-            state: if self.info.is_some() {
-                "Running"
-            } else {
-                "Idle"
-            },
+            state: "Idle",
             waiting_start: None,
             mem_buffer_keys: 0,
             mem_buffer_bytes: 0,
