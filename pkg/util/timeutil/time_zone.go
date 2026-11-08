@@ -42,6 +42,13 @@ func init() {
 // locCa is a simple cache policy to improve the performance of 'time.LoadLocation'.
 var locCa *locCache
 
+// maxCachedLocations bounds the number of entries in locCa. There are about 600
+// IANA time zone names, but time.LoadLocation also accepts other spellings of
+// the same zoneinfo file (for example "America/./New_York"), and names can come
+// from user data (CONVERT_TZ arguments), so the cache must not grow without
+// limit. Names loaded after the cache is full are still returned, just not cached.
+const maxCachedLocations = 1024
+
 // systemTZ is current TiDB's system timezone name.
 var systemTZ atomic.String
 
@@ -168,10 +175,16 @@ func (lm *locCache) getLoc(name string) (*time.Location, error) {
 		return v, nil
 	}
 
-	if loc, err := time.LoadLocation(name); err == nil {
+	// name can share memory that the caller reuses, such as a string read from a
+	// chunk column with GetString (CONVERT_TZ arguments). The map key and the
+	// loaded Location both keep the name, so they must get their own copy.
+	ownName := strings.Clone(name)
+	if loc, err := time.LoadLocation(ownName); err == nil {
 		// assign value back to map
 		lm.mu.Lock()
-		lm.locMap[name] = loc
+		if len(lm.locMap) < maxCachedLocations {
+			lm.locMap[ownName] = loc
+		}
 		lm.mu.Unlock()
 		return loc, nil
 	}
