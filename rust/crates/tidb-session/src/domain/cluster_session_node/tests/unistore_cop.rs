@@ -29214,6 +29214,48 @@ fn resource_control_prices_requests_after_an_early_sysvar_load_like_go() {
     assert!(plan[0][5].contains(", RU:0.47, Get:{"), "{}", plan[0][5]);
 }
 
+/// The server's `setGlobalVars` writes a registry no SetGlobal hook reads
+/// yet (Go runs them only from the domain's `LoadSysVarCacheLoop`); the
+/// domain the stack builds arms them (`initDomainSysVars`), so
+/// `tidb_enable_resource_control`'s ON reaches the client and a point read is
+/// priced at Go's `RU:0.47`.
+#[test]
+fn the_stack_arms_the_set_global_hooks_like_gos_domain() {
+    let config = tidb_domain_core::node_config::NodeConfig::with_defaults(
+        |config| {
+            config.store = tidb_config::store::StoreType("unistore".to_owned());
+            config.port = 0;
+        },
+        tidb_domain_core::node_config::NodeOptions {
+            auth_file: Some("/dev/null".to_owned()),
+            ..tidb_domain_core::node_config::NodeOptions::default()
+        },
+    )
+    .expect("node config");
+    let globals = crate::GlobalSysvars::before_domain();
+    globals.set_sys_var("port", "4000".to_owned());
+    let users = Arc::new(
+        ConfiguredUserStore::parse(&format!("root\t%\tmysql_native_password\t{ABC_HASH}\n"))
+            .expect("configured user store")
+            .with_global_vars(globals),
+    );
+    let stack = unistore_cluster_session_stack(&config, &users, None, None).expect("unistore stack");
+    let mut session = stack.factory.open_session(session_context(1154)).unwrap();
+    for sql in [
+        "USE test",
+        "create table t (id int primary key, uk int, b int, unique key(uk))",
+        "insert into t values (1,10,0),(2,20,0),(3,30,0)",
+    ] {
+        session.node_conn().execute_write(sql).unwrap();
+    }
+    let plan = displayed(rows(&mut session, "explain analyze select * from t where id=1"));
+    assert!(plan[0][5].contains(", RU:0.47, Get:{"), "{}", plan[0][5]);
+    // A later `SET GLOBAL` reaches its hook through the same registry.
+    rows(&mut session, "set global tidb_enable_foreign_key = OFF");
+    assert_eq!(displayed(rows(&mut session, "select @@global.tidb_enable_foreign_key")), [["0"]]);
+    rows(&mut session, "set global tidb_enable_foreign_key = ON");
+}
+
 /// An autocommit `EXPLAIN ANALYZE` write commits before its rows render, as
 /// Go's `runStmt` commits an `IsExplainAnalyzeDML` statement before its
 /// `ExplainExec` record set is read: its RU stats count the prewrite and the

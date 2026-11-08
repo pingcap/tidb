@@ -90,8 +90,13 @@ pub fn set_global_vars(config: &NodeConfig, globals: &GlobalSysvars) {
     }
     let source = &config.global_config;
     let on_off = |enabled: bool| if enabled { "ON" } else { "OFF" }.to_owned();
+    // Go `vardef.ForcePriority = int32(priority)`, then
     // `variable.SetSysVar(vardef.TiDBForcePriority,
     // mysql.Priority2Str[mysql.Str2Priority(cfg.Instance.ForcePriority)])`.
+    tidb_vardef::FORCE_PRIORITY.store(
+        tidb_mysql::priority_from_str(&instance.force_priority).as_enum(),
+        std::sync::atomic::Ordering::SeqCst,
+    );
     globals.set_sys_var(
         tidb_vardef::tidb_vars::TIDB_FORCE_PRIORITY,
         tidb_mysql::priority_from_str(&instance.force_priority)
@@ -164,6 +169,32 @@ mod tests {
         fn drop(&mut self) {
             tidb_vardef::set_memory_usage_alarm_ratio(self.0);
         }
+    }
+
+    /// Go `setGlobalVars` runs before the domain exists, and its
+    /// `variable.SetSysVar` only replaces registry values: no SetGlobal hook
+    /// runs until `initDomainSysVars` and `LoadSysVarCacheLoop`'s first
+    /// `rebuildSysVarCache`, which hands `tidb_enable_resource_control`'s ON
+    /// default to `vardef.EnableResourceControl` (false until then).
+    #[test]
+    fn set_global_vars_runs_no_set_global_hook_before_the_domain() {
+        let config = NodeConfig::with_defaults(
+            |config| {
+                config.store = tidb_config::store::StoreType("unistore".to_owned());
+                config.port = 4158;
+            },
+            NodeOptions {
+                auth_file: Some("/dev/null".to_owned()),
+                ..NodeOptions::default()
+            },
+        )
+        .expect("parses");
+        let globals = GlobalSysvars::before_domain();
+        set_global_vars(&config, &globals);
+        assert_eq!(globals.get("port").expect("readable"), "4158");
+        assert!(!tidb_vardef::ENABLE_RESOURCE_CONTROL.load(std::sync::atomic::Ordering::SeqCst));
+        globals.arm_domain_hooks();
+        assert!(tidb_vardef::ENABLE_RESOURCE_CONTROL.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     /// `TestSetGlobalVars` (`cmd/tidb-server/main_test.go:97`), transcreated

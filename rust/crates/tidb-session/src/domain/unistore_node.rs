@@ -524,6 +524,9 @@ pub fn unistore_cluster_session_stack_from(
     tidb_domain_infosync::tiflash_manager::init_tiflash_replica_manager(None);
     // Go `initResourceManagerClient(nil)`: the mock resource manager.
     tidb_domain_infosync::resource_manager_client::init_resource_manager_client(None);
+    // Go `initDomainSysVars` and `LoadSysVarCacheLoop`: the domain owns the
+    // sysvar cache from here, and the SetGlobal hooks run.
+    users.global_vars().arm_domain_hooks();
     // Go `initResourceGroupsController(ctx, store.GetPDClient(), serverID)`:
     // unistore's PD client embeds that mock, and the controller over it
     // prices every request and response into the statement's RU details.

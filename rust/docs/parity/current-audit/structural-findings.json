@@ -2,8 +2,8 @@
   "date": "2026-11-08",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 30,
-    "open": 7,
+    "unresolved": 29,
+    "open": 6,
     "partial": 23
   },
   "findings": [
@@ -130,13 +130,6 @@
       "go_owner": "`pkg/keyspace`, `pkg/domain`, `pkg/planner/extstore`"
     },
     {
-      "id": "O20",
-      "status": "open",
-      "group": "Domain and process services",
-      "finding": "`GlobalSysvars::set_sys_var` rebuilds the sysvar cache and runs every GLOBAL variable's SetGlobal hook (and `refresh_resolved` reads the cache, rebuilding it), so the server's `set_global_vars` runs those hooks before the domain exists. Go's `SetSysVar` only replaces the registry `Value`, and the hooks first run in the domain's `rebuildSysVarCache`. Resource control no longer depends on this order (`set_global_resource_control` is Go's driver-bound chain, `unistore_cop.rs` `resource_control_prices_requests_after_an_early_sysvar_load_like_go`); any other hook with an effect a later component must observe is exposed to it.",
-      "go_owner": "`pkg/sessionctx/variable/variable.go` (`SetSysVar`), `cmd/tidb-server/main.go` (`setGlobalVars`), `pkg/domain/sysvar_cache.go` (`rebuildSysVarCache`)"
-    },
-    {
       "id": "M01",
       "status": "open",
       "group": "TiFlash and MPP",
@@ -222,7 +215,7 @@
       "go_owner": "`pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`)"
     }
   ],
-  "unresolved": 30,
-  "open": 7,
+  "unresolved": 29,
+  "open": 6,
   "partial": 23
 }

@@ -41,7 +41,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
     memory_arbitrator: Option<Arc<tidb_memory::MemArbitrator>>,
 ) -> Result<(), RunConfiguredNodeError> {
     // Go `setGlobalVars`, before the store and the domain are created.
-    let global_vars = tidb_domain::global_sysvars::GlobalSysvars::new();
+    let global_vars = tidb_domain::global_sysvars::GlobalSysvars::before_domain();
     crate::set_global_vars::set_global_vars(&config, &global_vars);
     let (mut stack, authority) =
         cluster_session_stack(&config, global_vars, spill_storage, memory_arbitrator)?;

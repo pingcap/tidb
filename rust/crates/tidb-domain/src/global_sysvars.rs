@@ -100,6 +100,12 @@ pub struct GlobalSysvars {
     /// publish process-wide runtime settings until [`Self::replace_from`]
     /// makes the committed state live.
     publishes_runtime_settings: bool,
+    /// Go's SetGlobal hooks reach their packages only once the domain owns
+    /// the sysvar cache (`initDomainSysVars`, then `LoadSysVarCacheLoop`'s
+    /// first `rebuildSysVarCache`); the server's `setGlobalVars` runs before
+    /// that and its `SetSysVar` only replaces registry values. Shared by
+    /// every clone; see [`Self::before_domain`].
+    domain_hooks: Arc<std::sync::atomic::AtomicBool>,
     /// The read-mostly image described on [`ResolvedGlobals`]. Writers swap it
     /// wholesale; readers clone the `Arc` under a read lock.
     resolved: Arc<RwLock<Arc<ResolvedGlobals>>>,
@@ -188,6 +194,7 @@ impl Default for GlobalSysvars {
             instances: Arc::default(),
             instance_mutations: None,
             publishes_runtime_settings: true,
+            domain_hooks: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             resolved: Arc::new(RwLock::new(EMPTY_RESOLVED.with(|it| it.clone()))),
             refresh_lock: Arc::default(),
         }
@@ -567,6 +574,40 @@ impl GlobalSysvars {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The registry the server's `setGlobalVars` writes before the domain
+    /// exists: no SetGlobal hook runs until [`Self::arm_domain_hooks`].
+    #[must_use]
+    pub fn before_domain() -> Self {
+        let globals = Self::default();
+        globals
+            .domain_hooks
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        globals
+    }
+
+    /// Go `initDomainSysVars` and `LoadSysVarCacheLoop`'s first
+    /// `rebuildSysVarCache`: the domain takes the sysvar cache over, and every
+    /// variable's SetGlobal hook runs with the value the startup left it.
+    pub fn arm_domain_hooks(&self) {
+        if self
+            .domain_hooks
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            return;
+        }
+        let instances: Vec<(String, String)> = self
+            .instances
+            .lock()
+            .expect("instance sysvar lock poisoned")
+            .iter()
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect();
+        for (name, value) in instances {
+            self.apply_set_global_hook(&name, &value);
+        }
+        self.rebuild_sys_var_cache();
     }
 
     /// Where a variable's node-wide value is written: a variable that has
@@ -1192,7 +1233,9 @@ impl GlobalSysvars {
     /// (a cluster `SET GLOBAL` validated before its commit) publishes
     /// nothing; its committed image does, once it becomes the live table.
     fn apply_set_global_hook(&self, name: &str, value: &str) {
-        if !self.publishes_runtime_settings {
+        if !self.publishes_runtime_settings
+            || !self.domain_hooks.load(std::sync::atomic::Ordering::SeqCst)
+        {
             return;
         }
         use std::sync::atomic::Ordering::SeqCst;

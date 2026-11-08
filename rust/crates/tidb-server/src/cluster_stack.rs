@@ -125,6 +125,9 @@ pub fn cluster_session_stack(
         },
     )
         as Arc<dyn tidb_domain_infosync::resource_manager_client::ResourceManagerClient>));
+    // Go `initDomainSysVars` and `LoadSysVarCacheLoop`: the domain owns the
+    // sysvar cache from here, and the SetGlobal hooks run.
+    global_vars.arm_domain_hooks();
     // Go `domain.NewDomain`'s `etcdClient`: the node's one etcd client, which
     // every owner, syncer, notifier and watch below shares.
     let etcd = tidb_session::domain::real_tikv_node::connect_etcd_client(config);

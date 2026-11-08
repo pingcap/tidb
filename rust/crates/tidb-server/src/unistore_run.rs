@@ -60,7 +60,7 @@ pub fn run_unistore_cluster_session(
         tidb_unistore_tikv::region_manager::STORE_ID,
     );
     // Go `setGlobalVars`, before the store and the domain are created.
-    let global_vars = tidb_domain::global_sysvars::GlobalSysvars::new();
+    let global_vars = tidb_domain::global_sysvars::GlobalSysvars::before_domain();
     crate::set_global_vars::set_global_vars(&config, &global_vars);
     let users = configured_account_store(&config, global_vars)?;
     let users = Arc::new(users);
