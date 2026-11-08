@@ -1550,6 +1550,15 @@ pub struct JoinExec<C: Columns> {
     build_spilled: bool,
     /// What the build side wrote to spill files, latched with the flag above.
     spilled_bytes: i64,
+    /// Go `outerMatchedStatus`' `BytesConsumed`, charged to the join's
+    /// tracker; Go's next `Open` takes a fresh tracker.
+    matched_status_bytes: i64,
+}
+
+/// Go `bitmap.ConcurrentBitmap.BytesConsumed` for `NewConcurrentBitmap(rows)`:
+/// the 32-byte struct and one 4-byte segment per 32 bits.
+fn go_concurrent_bitmap_bytes(rows: usize) -> i64 {
+    32 + 4 * i64::try_from(rows.div_ceil(32)).unwrap_or(i64::MAX)
 }
 
 impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
@@ -1660,6 +1669,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             registered_action: None,
             build_spilled: false,
             spilled_bytes: 0,
+            matched_status_bytes: 0,
         }
     }
 
@@ -3936,11 +3946,31 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         // once: NA keys only ever get built when `EqualConditions` is empty.
         let na_mode = !self.na_keys.is_empty();
         let indexing_keys: &[EquiKey] = if na_mode { &self.na_keys } else { &self.keys };
+        // Go `fetchBuildSideRows`: each chunk is allocated at `nextChunkCap`,
+        // which starts at `InitChunkSize` and grows to the rows a full chunk
+        // returned.
+        let max_chunk_size = self.meta.max_chunk_size();
+        let mut next_chunk_cap = self.meta.init_cap().max(1);
         loop {
-            let mut chunk = build.new_chunk();
+            let chunk_cap = next_chunk_cap.min(max_chunk_size);
+            let mut chunk =
+                self.meta
+                    .new_chunk_with_capacity(build.ret_field_types(), chunk_cap, max_chunk_size);
             build.next(&mut chunk)?;
-            if chunk.num_rows() == 0 {
+            let rows = chunk.num_rows();
+            if rows == 0 {
                 break;
+            }
+            if rows >= chunk_cap && next_chunk_cap < max_chunk_size {
+                next_chunk_cap = (next_chunk_cap * 2).max(rows).min(max_chunk_size);
+            }
+            // Go `buildHashTableForList` with `UseOuterToBuild`: each build
+            // chunk's `bitmap.NewConcurrentBitmap(chk.NumRows())`, its
+            // `BytesConsumed` charged to the join's tracker before the put.
+            if track_matches {
+                let bytes = go_concurrent_bitmap_bytes(chunk.num_rows());
+                self.tracker.consume(bytes);
+                self.matched_status_bytes += bytes;
             }
             // The container's own tracker accounts the chunk as it lands,
             // which is Go's accounting for this side; the spill action fires
@@ -5188,6 +5218,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> Executor for JoinExec<C> {
         self.parallel_probe = None;
         self.build_spilled = false;
         self.spilled_bytes = 0;
+        self.tracker.consume(-std::mem::take(&mut self.matched_status_bytes));
         self.merge_state = None;
         self.condition_evals.set(0);
         Ok(())

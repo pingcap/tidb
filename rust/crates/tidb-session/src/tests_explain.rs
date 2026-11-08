@@ -9632,3 +9632,34 @@ fn an_index_merge_charges_its_partial_workers_like_go() {
         assert!((bytes - partial_bytes).abs() <= 12, "{partial} vs Go {partial_bytes} Bytes: {rows:?}");
     }
 }
+
+/// Go's v1 hash join (`tidb_hash_join_version = 'legacy'`) over 3000
+/// distinct build keys: `concurrentMap` puts each row under its `fnv.New64`
+/// hash of the keys' `HashChunkSelected` bytes in shard `hashKey % 320`, whose
+/// `MemAwareMap.Set` charges each checkpoint the shard reaches; an outer
+/// join building its preserved side charges each chunk's `ConcurrentBitmap`
+/// to the join; and `fetchBuildSideRows` allocates each build chunk at
+/// `nextChunkCap`, grown to a full chunk's rows after the first.
+#[test]
+fn a_v1_hash_join_charges_its_shards_bitmaps_and_build_chunks_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT, b INT)").unwrap();
+    let values = (1..=3000).map(|i| format!("({i},{})", i % 97)).collect::<Vec<_>>().join(",");
+    session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+    session.run("CREATE TABLE u (a INT, b INT)").unwrap();
+    let values = (1..=3000).map(|i| format!("({},{i})", i * 7)).collect::<Vec<_>>().join(",");
+    session.run(&format!("INSERT INTO u VALUES {values}")).unwrap();
+    session.run("SET @@tidb_hash_join_version = 'legacy'").unwrap();
+    for (sql, join, memory) in [
+        ("SELECT /*+ hash_join_build(u) */ * FROM t JOIN u ON t.a = u.a", "HashJoin_9", "191.3 KB"),
+        ("SELECT /*+ hash_join_build(u) */ * FROM t RIGHT JOIN u ON t.a = u.a", "HashJoin_8", "191.8 KB"),
+        ("SELECT * FROM t WHERE a NOT IN (SELECT a FROM u)", "HashJoin_8", "165.3 KB"),
+    ] {
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        let row = rows
+            .iter()
+            .find(|row| row[0] == join)
+            .unwrap_or_else(|| panic!("{sql}: {rows:?}"));
+        assert_eq!(row[7], memory, "{sql}: {rows:?}");
+    }
+}

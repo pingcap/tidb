@@ -1468,8 +1468,9 @@ pub struct BuildTable {
     /// can emit build rows that never satisfied the complete ON condition.
     matched: Option<Mutex<Vec<Vec<u8>>>>,
     bucket_bytes: i64,
-    /// Sum of the capacities of the per-chunk matched bitmaps.
-    matched_bitmap_capacity: usize,
+    /// Go `concurrentMap`'s shards, keyed by each indexed build row's hash
+    /// key, whose `MemAwareMap.Set` checkpoint deltas the table charges.
+    go_shards: GoConcurrentMapShards,
     /// Go `hashNANullBucket.entries`: a null-aware build row goes here
     /// instead of `buckets` when ANY of its NA key columns is NULL, carrying
     /// a bitmap of exactly which ones are (Go `naColNullBitMap`, needed for
@@ -1504,6 +1505,58 @@ pub struct NaNullEntry {
 // Rust map's retained dynamic allocation.
 const GO_V1_HASH_TABLE_FIXED_BYTES: usize = 48 + 320 * (56 + 184) + 32 + 64 * 16;
 
+/// Go `hashRowContainer`'s `hCtx.HashVals[i].Sum64()`: an `fnv.New64`
+/// (FNV-1) hash of each key column's `HashChunkSelected` bytes in key order.
+fn go_hash_key(
+    row: Row<'_>,
+    keys: &[EquiKey],
+    types: &[FieldType],
+    offset: impl Fn(&EquiKey) -> usize,
+) -> Result<u64, BuildError> {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for key in keys {
+        let at = offset(key);
+        let datum = row.get_datum(at, &types[at]);
+        let (flag, bytes) =
+            tidb_codec::encode_hash_datum(&datum, &types[at]).map_err(|_| BuildError::Key)?;
+        for byte in std::iter::once(flag).chain(bytes) {
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            hash ^= u64::from(byte);
+        }
+    }
+    Ok(hash)
+}
+
+/// Go `concurrentMap` (`ShardCount` shards of `MemAwareMap[uint64, *entry]`):
+/// a hash key lands in shard `hashKey % ShardCount`, and each shard's `Set`
+/// returns its checkpoint delta, which `concurrentMapHashTable.Put` charges.
+struct GoConcurrentMapShards {
+    /// Written by the build only; the lock keeps the table shareable.
+    shards: Mutex<Vec<tidb_hack::MemAwareMap<u64, usize>>>,
+    /// The deltas charged so far, beyond the empty maps' fixed bytes.
+    bytes: i64,
+}
+
+impl GoConcurrentMapShards {
+    const SHARD_COUNT: u64 = 320;
+
+    fn new() -> Self {
+        GoConcurrentMapShards {
+            shards: Mutex::new(
+                (0..Self::SHARD_COUNT).map(|_| tidb_hack::MemAwareMap::new(0)).collect(),
+            ),
+            bytes: 0,
+        }
+    }
+
+    /// Go `concurrentMap.Insert`'s `shard.items.Set(key, value)`.
+    fn insert(&mut self, hash_key: u64) {
+        let shards = self.shards.get_mut().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let delta = shards[(hash_key % Self::SHARD_COUNT) as usize].set(hash_key, 0);
+        self.bytes = self.bytes.saturating_add(delta);
+    }
+}
+
 impl BuildTable {
     /// An empty container over the build side's types, chunked at
     /// `chunk_size` -- Go `newHashRowContainer`, which passes
@@ -1522,7 +1575,7 @@ impl BuildTable {
             chains: ChainStore::default(),
             matched: track_matches.then(|| Mutex::new(Vec::<Vec<u8>>::new())),
             bucket_bytes: 0,
-            matched_bitmap_capacity: 0,
+            go_shards: GoConcurrentMapShards::new(),
             na_null_bucket: Vec::new(),
         }
     }
@@ -1579,9 +1632,6 @@ impl BuildTable {
         let chk_idx = u32::try_from(self.rows.num_chunks()).map_err(|_| BuildError::Key)?;
         if let Some(matched) = &self.matched {
             let bitmap = vec![0; chunk.num_rows().div_ceil(8)];
-            self.matched_bitmap_capacity = self
-                .matched_bitmap_capacity
-                .saturating_add(bitmap.capacity());
             matched
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1599,6 +1649,7 @@ impl BuildTable {
         });
         let chains = &mut self.chains;
         let buckets = &mut self.buckets;
+        let go_shards = &mut self.go_shards;
         let mut exact_buckets = self.exact_int_buckets.as_mut();
         for row_idx in 0..chunk.num_rows() {
             if !selected.is_empty() && !selected[row_idx] {
@@ -1621,6 +1672,14 @@ impl BuildTable {
                             exact.head = chains.push(Some(exact.head), pointer)?;
                         }
                         None => {
+                            // Go puts the row under its hash key; a new key
+                            // is the only one that can grow its shard.
+                            go_shards.insert(go_hash_key(
+                                chunk.get_row(pointer.row_idx as usize),
+                                keys,
+                                types,
+                                offset,
+                            )?);
                             let head = chains.push(None, pointer)?;
                             table.push(ExactKey {
                                 key,
@@ -1648,6 +1707,7 @@ impl BuildTable {
                         *entry.get_mut() = chains.push(Some(*entry.get()), pointer)?;
                     }
                     Entry::Vacant(entry) => {
+                        go_shards.insert(go_hash_key(chunk.get_row(row_idx), keys, types, offset)?);
                         entry.insert(chains.push(None, pointer)?);
                     }
                 },
@@ -1906,26 +1966,21 @@ impl BuildTable {
         self.exact_int_buckets = None;
         self.chains = ChainStore::default();
         self.matched = None;
-        self.matched_bitmap_capacity = 0;
         self.rows.close();
     }
 
     fn refresh_bucket_memory(&mut self) {
         // Go `NewConcurrentMapHashTable`'s fixed bytes, which include the
-        // entry store's first slice, and each later slice `GetStore` takes.
-        // The Rust maps beside it (the hash buckets, the exact-integer
-        // table) have no Go counterpart and charge nothing.
-        let retained = GO_V1_HASH_TABLE_FIXED_BYTES
-            .saturating_add(go_entry_store_growth_bytes(self.chains.entries.len()))
-            .saturating_add(self.matched.as_ref().map_or(0, |chunks| {
-                chunks
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<Vec<u8>>())
-                    + self.matched_bitmap_capacity
-            }));
-        let retained = i64::try_from(retained).unwrap_or(i64::MAX);
+        // entry store's first slice, each later slice `GetStore` takes, and
+        // the shards' map growth. The Rust maps beside it (the hash buckets,
+        // the exact-integer table) have no Go counterpart and charge nothing;
+        // the matched-row bitmaps are the join's (Go `outerMatchedStatus`).
+        let retained = i64::try_from(
+            GO_V1_HASH_TABLE_FIXED_BYTES
+                .saturating_add(go_entry_store_growth_bytes(self.chains.entries.len())),
+        )
+        .unwrap_or(i64::MAX)
+        .saturating_add(self.go_shards.bytes);
         self.rows
             .mem_tracker()
             .consume(retained.saturating_sub(self.bucket_bytes));

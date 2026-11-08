@@ -23,6 +23,7 @@ tidb-charset = { path = "../tidb-charset" }
 tidb-disk = { path = "../tidb-disk" }
 tidb-execdetails = { path = "../tidb-execdetails" }
 tidb-memory = { path = "../tidb-memory" }
+tidb-hack = { path = "../tidb-hack" }
 tidb-serialization = { path = "../tidb-serialization" }
 tidb-spill-storage = { path = "../tidb-spill-storage" }
 tidb-sqlkiller = { path = "../tidb-sqlkiller" }
