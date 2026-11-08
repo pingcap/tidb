@@ -9385,3 +9385,30 @@ fn a_hash_aggregate_tracks_disk_only_where_it_may_spill_like_go() {
         vec!["0 Bytes"]
     );
 }
+
+/// Go's index worker extracts its next task as soon as it hands one to the
+/// table workers (`fetchHandles`), so the index response it drained is
+/// released (`selectResult.fetchResp`) before the task's reader charges
+/// anything. Six rows at `tidb_index_lookup_size = 2` are one task of the
+/// whole response chunk; a Go testkit probe (the connection's allocator with
+/// an unpooled result chunk) shows 2.58 KB and one table task.
+#[test]
+fn an_index_lookup_releases_its_drained_index_response_before_the_task_like_go() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT PRIMARY KEY, b INT, c VARCHAR(20), KEY(b))")
+        .unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,1,'x'),(2,2,'y'),(3,3,'z'),(4,4,'w'),(5,5,'v'),(6,6,'u')")
+        .unwrap();
+    session.run("SET tidb_index_lookup_size = 2").unwrap();
+    let rows = row_text(session.run("EXPLAIN ANALYZE SELECT * FROM t USE INDEX(b) WHERE b > 0"));
+    let lookup = rows
+        .iter()
+        .find(|row| row[0] == "IndexLookUp_7")
+        .unwrap_or_else(|| panic!("{rows:?}"));
+    assert_eq!(lookup[7], "2.58 KB", "{rows:?}");
+    // One table task: `table_task: {total_num: 1, ...` without a task time,
+    // `{total_time: ..., num: 1, ...` with one.
+    assert!(lookup[5].contains("num: 1, concurrency: "), "{rows:?}");
+}

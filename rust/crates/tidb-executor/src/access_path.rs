@@ -3140,7 +3140,9 @@ impl IndexRangeSourceExec {
                     self.limit_scanned_keys,
                     table_filter,
                 );
-                if target == 0 {
+                // Handles already extracted (the index worker's read-ahead)
+                // are charged to the limit and still form the next task.
+                if target == 0 && self.batch_at == self.batch.len() {
                     limit_exhausted = true;
                     break;
                 }
@@ -3210,6 +3212,15 @@ impl IndexRangeSourceExec {
                 }
                 let collected = collect_started.elapsed();
                 let handle_count = handles.len();
+                // Go's index worker extracts its next task as soon as it hands
+                // this one to the table workers (`fetchHandles`), so the
+                // response it drained is released, or the next one fetched
+                // (`selectResult.fetchResp`), before the task's reader charges
+                // anything. Only a remote index stream holds a response; a
+                // local walk keeps its demand-bounded reads.
+                if !ended_inside && self.remote_index.is_some() && self.batch_at == self.batch.len() {
+                    self.fill_handle_batch()?;
+                }
                 let build_started = std::time::Instant::now();
                 // A short window means the index stream ended inside it; with
                 // no earlier window in flight there is nothing to overlap.
