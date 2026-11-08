@@ -960,15 +960,19 @@ pub(crate) struct DmlSourceCursor<'a> {
 
 impl<'a> DmlSourceCursor<'a> {
     /// Opens `exec` (Go `exec.Open(ctx, e.SelectExec)` in the write
-    /// executor's `Open`).
+    /// executor's `Open`), then takes the chunk the write executor's `Next`
+    /// reads it into from the statement's allocator
+    /// (`exec.TryNewCacheChunk(selectExec)`).
     pub(crate) fn open(
         exec: Box<dyn Executor>,
         memory: crate::StatementMemory,
         dml: Option<&'a physical_builder::DmlExec>,
+        alloc_pool: Option<std::sync::Arc<dyn tidb_chunk::alloc::Allocator>>,
     ) -> Result<Self, DriverError> {
+        let types = exec.ret_field_types().to_vec();
         let mut cursor = Self {
-            types: exec.ret_field_types().to_vec(),
-            chunk: exec.new_chunk(),
+            chunk: tidb_chunk::chunk::Chunk::new(&types, 0, 0),
+            types,
             exec,
             memory,
             dml,
@@ -979,6 +983,12 @@ impl<'a> DmlSourceCursor<'a> {
             None => cursor.exec.open(),
         };
         opened?;
+        cursor.chunk = tidb_executor_internal_exec::new_chunk_with_alloc_pool(
+            alloc_pool.as_ref(),
+            &cursor.types,
+            cursor.exec.init_cap(),
+            cursor.exec.max_chunk_size(),
+        );
         Ok(cursor)
     }
 

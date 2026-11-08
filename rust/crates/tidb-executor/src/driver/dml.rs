@@ -1430,7 +1430,7 @@ fn run_insert_rows(
                 DriverError::unsupported("INSERT SELECT has no retained physical child")
             })?;
             let exec = super::physical_builder::build_dml_source(physical, catalog, ctx)?;
-            Some(super::DmlSourceCursor::open(exec, ctx.statement_memory(), dml)?)
+            Some(super::DmlSourceCursor::open(exec, ctx.statement_memory(), dml, ctx.chunk_allocator())?)
         }
         None => None,
     };

@@ -9412,3 +9412,36 @@ fn an_index_lookup_releases_its_drained_index_response_before_the_task_like_go()
     // `{total_time: ..., num: 1, ...` with one.
     assert!(lookup[5].contains("num: 1, concurrency: "), "{rows:?}");
 }
+
+/// Go's `insertRowsFromSelect` reads its source into
+/// `exec.TryNewCacheChunk(selectExec)`, a chunk from the statement's
+/// allocator taken once the source is open, so the columns it grew go back to
+/// the connection's pool and the next statement's chunks reuse them. A Go
+/// testkit probe of each statement after the same `INSERT ... SELECT` (the
+/// connection's allocator with an unpooled result chunk) shows these charges.
+#[test]
+fn an_insert_select_returns_its_source_chunk_to_the_allocator_like_go() {
+    for (query, operator, go_memory) in [
+        ("SELECT /*+ stream_agg() */ b, count(*) FROM t GROUP BY b", "StreamAgg_14", "1.27 KB"),
+        ("SELECT b, count(*) FROM t GROUP BY b", "HashAgg_12", "14.6 KB"),
+        ("SELECT max(a), min(c) FROM t", "HashAgg_11", "13.9 KB"),
+    ] {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a INT PRIMARY KEY, b INT, c VARCHAR(20), d DOUBLE, KEY(b))")
+            .unwrap();
+        let values = (1..=200)
+            .map(|i| format!("({i},{},'s{}',{i}.5)", i % 7, i % 13))
+            .collect::<Vec<_>>()
+            .join(",");
+        session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+        session.run("CREATE TABLE u (a INT, b INT, KEY(a))").unwrap();
+        session.run("INSERT INTO u SELECT a, b FROM t WHERE a <= 50").unwrap();
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {query}")));
+        let row = rows
+            .iter()
+            .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()) == operator)
+            .unwrap_or_else(|| panic!("{query}: {rows:?}"));
+        assert_eq!(row[7], go_memory, "{query}: {rows:?}");
+    }
+}
