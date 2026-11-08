@@ -119,6 +119,22 @@ pub fn eliminate_union_scan_and_lock(plan: PhysicalPlan, lock_eligible: bool) ->
 /// pass. It removes only strict identity projections; computed expressions,
 /// reordered columns, `CalculateNoDelay`, and schema-width changes remain.
 #[must_use]
+/// Go `avoidColumnEvaluatorForProjBelowUnion` (`optimizer.go`, run by
+/// `postOptimize` after `eliminateUnionScanAndLock`): a Projection directly
+/// under a UnionAll evaluates its column expressions cell by cell
+/// (`AvoidColumnEvaluator`) instead of swapping its input's columns out.
+pub fn avoid_column_evaluator_for_proj_below_union(plan: &mut PhysicalPlan) {
+    let union_all = matches!(plan, PhysicalPlan::UnionAll(_));
+    for child in plan.base_mut().children_mut() {
+        if union_all {
+            if let PhysicalPlan::Projection(projection) = child {
+                projection.avoid_column_evaluator = true;
+            }
+        }
+        avoid_column_evaluator_for_proj_below_union(child);
+    }
+}
+
 /// Go `mergeContinuousSelections` (`optimizer.go`, run by `postOptimize`
 /// after `InjectExtraProjection`): a Selection whose child is a Selection
 /// absorbs the child's conditions after its own and adopts the grandchild,

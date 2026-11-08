@@ -7840,9 +7840,17 @@ fn build_with_state(
             } else {
                 0
             };
-            let mut projection = ProjectionExec::new(meta, expressions, child, ctx.clone())
-                .with_workers(workers)
-                .in_coprocessor(state.in_reader);
+            // Go `newProjectionExec`: `NewEvaluatorSuite(v.Exprs,
+            // v.AvoidColumnEvaluator)`.
+            let mut projection = ProjectionExec::new_projection_exec(
+                meta,
+                expressions,
+                child,
+                ctx.clone(),
+                projection.avoid_column_evaluator,
+            )
+            .with_workers(workers)
+            .in_coprocessor(state.in_reader);
             if !state.in_reader && !state.untraced {
                 projection = projection.with_mem_tracker(
                     ctx.statement_memory().operator_tracker(i64::from(plan.id())),

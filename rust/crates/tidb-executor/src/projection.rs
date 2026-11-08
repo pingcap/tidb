@@ -359,7 +359,15 @@ impl<C: Columns + Clone + Send + Sync + 'static> ProjectionExec<C> {
             .expect("the parallel projection is created before a fetch");
         if input.num_rows() == 0 {
             pipeline.child_done = true;
-            pipeline.free_outputs.push(output);
+            // Go's fetcher has already queued this output for the parent
+            // (`f.globalOutputCh <- output`) and completes it empty
+            // (`output.done <- err`): the parent swaps it in, charging the
+            // difference, as its last answer.
+            let seq = pipeline.next_seq;
+            pipeline.next_seq += 1;
+            let mut output = output;
+            output.reset();
+            pipeline.reorder.insert(seq, (input, output));
             return Ok(());
         }
         let seq = pipeline.next_seq;

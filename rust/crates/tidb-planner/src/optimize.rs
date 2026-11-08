@@ -572,6 +572,8 @@ pub fn physical_optimize<C: OptimizeContext>(
     // Go postOptimize: eliminateUnionScanAndLock (the UnionScan half).
     let mut physical =
         crate::post_optimize::eliminate_union_scan_and_lock(physical, ctx.in_transaction());
+    // Go postOptimize: avoidColumnEvaluatorForProjBelowUnion.
+    crate::post_optimize::avoid_column_evaluator_for_proj_below_union(&mut physical);
     tidb_planner_core_operator_physicalop::shuffle::install_receivers(&mut physical, plan_ids)?;
     if ctx.enable_parallel_apply() {
         crate::post_optimize::enable_parallel_apply(ctx, &mut physical);
