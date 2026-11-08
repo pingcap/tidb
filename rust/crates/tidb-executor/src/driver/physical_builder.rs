@@ -191,6 +191,9 @@ struct BuildState {
     /// Go `TableReaderExecutor.memTracker` of an index merge's partial table
     /// worker, which its select result charges each response to.
     reader_mem_tracker: Option<Arc<tidb_memory::Tracker>>,
+    /// An index merge partial plan is being built: Go's partial worker reads
+    /// its request's select result directly, its Limit in the DAG only.
+    index_merge_partial: bool,
     reader_net_bytes: Option<f64>,
     /// One task-local replacement for the retained index-merge table scan.
     table_task_source: Option<(i32, Box<dyn Executor>)>,
@@ -2969,6 +2972,7 @@ fn build_index_reader(
     ctx: &crate::StmtContext,
     storage: &ReaderStorage,
     cop_chain: Option<&CopChain>,
+    reader_mem_tracker: Option<Arc<tidb_memory::Tracker>>,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let scan = embedded_index_scan(index_plan)
         .ok_or_else(|| DriverError::unsupported("a physical index reader has no index scan"))?;
@@ -3080,11 +3084,13 @@ fn build_index_reader(
         scan.index_id,
         ranges,
         RowDecodeContext::for_query(ctx),
-        ReaderStorage::statement(
-            separated,
-            cop_reader_statement(index_plan, table_plan, true, net_bytes, ctx, cop_chain)
-                .with_plan_id(i64::from(scan.base.base.id())),
-        ),
+        ReaderStorage::statement(separated, {
+            let mut statement =
+                cop_reader_statement(index_plan, table_plan, true, net_bytes, ctx, cop_chain)
+                    .with_plan_id(i64::from(scan.base.base.id()));
+            statement.select_mem_tracker = reader_mem_tracker;
+            statement
+        }),
     );
     if let Some(slot) = extra_handle {
         source.read_extra_handle(slot);
@@ -6557,12 +6563,16 @@ fn build_index_merge_reader(
             let old_chain = state
                 .cop_chain
                 .replace((cop_plan_chain(partial), i64::from(partial.id())));
-            let old_tracker = if embedded_index_scan(partial).is_none() {
-                state.reader_mem_tracker.replace(Arc::clone(&reader_tracker))
+            // Go's partial index worker sends its requests with the
+            // reader's own tracker (`SetMemTracker(e.memTracker)`).
+            let old_tracker = state.reader_mem_tracker.replace(if embedded_index_scan(partial).is_none() {
+                Arc::clone(&reader_tracker)
             } else {
-                state.reader_mem_tracker.take()
-            };
+                ctx.statement_memory().persistent_operator_tracker(i64::from(plan.id()))
+            });
+            let old_partial = std::mem::replace(&mut state.index_merge_partial, true);
             let executor = build_with_state(&partition_plan, catalog, ctx, state);
+            state.index_merge_partial = old_partial;
             state.cop_chain = old_chain;
             state.reader_mem_tracker = old_tracker;
             let executor = executor?;
@@ -7474,6 +7484,7 @@ fn build_reader_node(
                 ctx,
                 &state.reader_storage,
                 None,
+                None,
             )?;
             ctx.mark_physical_table_reader();
             Ok(executor)
@@ -7819,6 +7830,7 @@ fn build_with_state(
             ctx,
             &state.reader_storage,
             state.cop_chain.as_ref(),
+            state.reader_mem_tracker.clone(),
         ),
         PhysicalPlan::TableReader(_) | PhysicalPlan::IndexReader(_) => {
             get_snapshot_ts(ctx);
@@ -8022,11 +8034,11 @@ fn build_with_state(
             // LimitExec still applies the offset. A refused cap leaves that
             // executor as the sole authority, which is always correct, only
             // slower.
-            if let Some(cap) = limit.offset.checked_add(limit.count) {
-                let _ = child
+            let capped = limit.offset.checked_add(limit.count).is_some_and(|cap| {
+                child
                     .table_access()
-                    .is_some_and(|access| access.accept_scan_limit(cap));
-            }
+                    .is_some_and(|access| access.accept_scan_limit(cap))
+            });
             // Go `dagReq.OutputOffsets` over `Limit | Selection | IndexScan`:
             // the request returns the reader's columns of what the Selection
             // admitted, so the source narrows below this Limit.
@@ -8045,6 +8057,9 @@ fn build_with_state(
                             .is_some_and(|access| access.accept_post_filter_projection(&offsets, &output));
                     }
                 }
+            }
+            if state.index_merge_partial && capped && limit.offset == 0 {
+                return Ok(child);
             }
             // A coprocessor Limit outputs its child's columns; the reader's
             // `OutputColumns` may already have narrowed them at the source.

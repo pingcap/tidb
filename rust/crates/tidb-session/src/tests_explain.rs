@@ -9605,4 +9605,30 @@ fn an_index_merge_charges_its_partial_workers_like_go() {
     assert!((bytes - 289).abs() <= 12, "{partial} vs Go 289 Bytes: {rows:?}");
     assert_eq!(row("IndexRangeScan_6(Build)")[7], "N/A", "{rows:?}");
     assert_eq!(row_text(session.run(sql)).len(), 37);
+
+    // An ordered merge's partial workers run ahead of its process worker:
+    // the index worker's request (charged to the reader's tracker) closes
+    // when its pushed limit is reached, before the process worker charges
+    // that task's rows (the reader's peak). A partial's Limit runs in its
+    // request only, so the select result decodes into the worker's chunk:
+    // under LIMIT 5 it reuses the response's small chunk, under LIMIT 1000
+    // it appends into the 1024-row one.
+    for (limit, merge, partial_bytes) in [(5, "25.4 KB", 267), (1000, "50.6 KB", 299)] {
+        let sql = format!(
+            "SELECT /*+ use_index_merge(t) */ * FROM t WHERE a < 10 OR b = 3 ORDER BY a LIMIT {limit}"
+        );
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        let row = |operator: &str| {
+            rows.iter()
+                .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()) == operator)
+                .unwrap_or_else(|| panic!("{operator}: {rows:?}"))
+        };
+        assert_eq!(row("IndexMerge_35")[7], merge, "{rows:?}");
+        let partial = &row("Limit_33(Build)")[7];
+        let bytes: i64 = partial
+            .strip_suffix(" Bytes")
+            .and_then(|n| n.parse().ok())
+            .unwrap_or_else(|| panic!("{partial}: {rows:?}"));
+        assert!((bytes - partial_bytes).abs() <= 12, "{partial} vs Go {partial_bytes} Bytes: {rows:?}");
+    }
 }

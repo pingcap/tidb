@@ -2,9 +2,9 @@
   "date": "2026-11-08",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 33,
+    "unresolved": 32,
     "open": 7,
-    "partial": 26
+    "partial": 25
   },
   "findings": [
     {
@@ -130,13 +130,6 @@
       "go_owner": "`pkg/executor/join` (`hash_table_v1.go`, `concurrent_map.go`, `hash_join_v1.go`)"
     },
     {
-      "id": "E25",
-      "status": "partial",
-      "group": "DML and executor handoff",
-      "finding": "An unordered union index merge (`index_merge_reader.rs`) charges Go's partial workers: the index worker's request charges its responses to the reader's tracker, each worker's chunk (capacity `maxChunkSize`) stays charged as Go's zero-valued deferred release leaves it, the table worker's reader owns a tracker labelled with its partial plan, and the process worker runs ahead of the table tasks by Go's table workers plus `workCh`'s one slot (`a < 10 OR b = 3`: Go's 32.5 KB, the partial TableRangeScan's 289 Bytes). An ordered index merge's (`ORDER BY` over the partials, `fetchLoopUnionWithOrderBy`) index partial still reads through `ExecutorPartialHandleSource` over the built index reader: its request charges no tracker where Go's `SetMemTracker(e.memTracker)` charges the reader's, and its chunk holds the reader's full output where Go's `getRetTpsForIndexScan` holds the by-items and handles",
-      "go_owner": "`pkg/executor/index_merge_reader.go` (`startPartialIndexWorker`, `startPartialTableWorker`, `extractTaskHandles`, `fetchLoopUnion`)"
-    },
-    {
       "id": "O09",
       "status": "partial",
       "group": "Domain and process services",
@@ -243,7 +236,7 @@
       "go_owner": "`cmd/tidb-server/main.go` (`overrideConfig`), `pkg/util/misc.go` (`GetLocalIP`)"
     }
   ],
-  "unresolved": 33,
+  "unresolved": 32,
   "open": 7,
-  "partial": 26
+  "partial": 25
 }

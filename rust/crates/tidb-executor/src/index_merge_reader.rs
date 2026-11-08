@@ -1292,6 +1292,8 @@ pub struct IndexMergeReaderExecutor {
     partials: Vec<Box<dyn PartialHandleSource>>,
     /// Prefix whose Open was attempted and still needs teardown.
     opened_partials: usize,
+    /// Partials already closed when their worker ran dry.
+    closed_partials: Vec<bool>,
     /// Go `isIntersection`.
     is_intersection: bool,
     /// Go `byItems`. Empty selects `fetchLoopUnion`; non-empty selects
@@ -1354,6 +1356,7 @@ impl IndexMergeReaderExecutor {
             decode_context,
             partials,
             opened_partials: 0,
+            closed_partials: Vec::new(),
             is_intersection,
             by_items: Vec::new(),
             pushed_limit: None,
@@ -1504,7 +1507,11 @@ impl IndexMergeReaderExecutor {
     fn close_partials(&mut self) -> Result<(), ExecError> {
         let mut error = None;
         let opened = std::mem::take(&mut self.opened_partials);
-        for partial in &mut self.partials[..opened] {
+        let closed = std::mem::take(&mut self.closed_partials);
+        for (index, partial) in self.partials[..opened].iter_mut().enumerate() {
+            if closed.get(index).copied().unwrap_or(false) {
+                continue;
+            }
             if let Err(err) = partial.close() {
                 error.get_or_insert(err);
             }
@@ -1616,21 +1623,28 @@ impl IndexMergeReaderExecutor {
             0
         };
         let mut distinct = MergeHandleSet::default();
-        for partial in &mut self.partials {
+        self.closed_partials = vec![false; self.partials.len()];
+        for (index, partial) in self.partials.iter_mut().enumerate() {
             let mut remaining = self.pushed_limit.map_or(usize::MAX, |limit| {
                 limit.offset.saturating_add(limit.count) as usize
             });
+            memory.check().map_err(ExecError::from)?;
+            let mut next = partial.next_batch_with_max_handles(remaining)?;
             'path: loop {
                 memory.check().map_err(ExecError::from)?;
-                let batch = partial.next_batch_with_max_handles(remaining)?;
-                memory.check().map_err(ExecError::from)?;
-                let Some(batch) = batch else {
+                let Some(batch) = next.take().filter(|batch| !batch.handles.is_empty()) else {
                     break;
                 };
-                if batch.handles.is_empty() {
-                    break;
-                }
                 remaining = remaining.saturating_sub(batch.handles.len());
+                // Go's partial worker runs ahead of the process worker: it
+                // fetches its next batch, and closes its results once it runs
+                // dry, while the process worker handles this one.
+                next = partial.next_batch_with_max_handles(remaining)?;
+                memory.check().map_err(ExecError::from)?;
+                if next.as_ref().is_none_or(|batch| batch.handles.is_empty()) {
+                    self.closed_partials[index] = true;
+                    partial.close()?;
+                }
                 if batch.sort_keys.len() != batch.handles.len() {
                     return Err(ExecError::internal(
                         "index merge order-by needs one sort key per handle",
