@@ -5209,7 +5209,8 @@ fn enumerate_physical_plans_4_task(
             // Merge hints have already restricted the datasource candidates.
             // Promoting only root readers here would discard a hinted merge's
             // cop task before its parent can push LIMIT into the partials.
-            let hint_applicable = logical_hint_applies(plan, pp, child_is_cop);
+            let hint_applicable =
+                logical_hint_applies(plan, pp, child_is_cop, child_is_root, child_is_mpp);
             let normally_preferred = normal_preference_applies(
                 plan,
                 pp,
@@ -5400,13 +5401,26 @@ fn task_type_satisfied(required: &PhysicalProperty, task: &Task) -> bool {
     }
 }
 
-fn logical_hint_applies(plan: &LogicalPlan, physical: &PhysicalPlan, child_is_cop: bool) -> bool {
+fn logical_hint_applies(
+    plan: &LogicalPlan,
+    physical: &PhysicalPlan,
+    child_is_cop: bool,
+    child_is_root: bool,
+    child_is_mpp: bool,
+) -> bool {
     if logical_join_hint_applies(plan, physical) {
         return true;
     }
     match plan {
         LogicalPlan::TopN(topn) => topn.prefer_limit_to_cop && child_is_cop,
         LogicalPlan::Limit(limit) => limit.prefer_limit_to_cop && child_is_cop,
+        // Go `applyLogicalAggregationHint`: with `AllowDistinctAggPushDown`
+        // off (this port's only setting), a DISTINCT aggregate prefers the
+        // candidate over a root or MPP child task, "the same behavior as
+        // before like types := {RootTask} only".
+        LogicalPlan::Aggregation(aggregation) if aggregation.has_distinct() => {
+            child_is_root || child_is_mpp
+        }
         LogicalPlan::Aggregation(aggregation) => aggregation.prefer_agg_to_cop && child_is_cop,
         _ => false,
     }

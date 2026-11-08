@@ -9162,3 +9162,65 @@ fn an_index_lookup_takes_its_chunks_from_the_session_allocator_like_go() {
         assert_eq!(memory(&mut session, sql, operator), expected, "{sql}");
     }
 }
+
+/// Go `NewPartialAggregate` splits a DISTINCT aggregate over a cop task too
+/// (the partial groups by the distinct argument), allocating its plan and
+/// column ids, and `applyLogicalAggregationHint` then prefers the candidate
+/// over a root child task, so a distinct aggregate's plan carries Go's ids.
+/// Go tidb-server captures.
+#[test]
+fn a_distinct_aggregate_prefers_its_root_child_candidate_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT, b VARCHAR(20), KEY(a))").unwrap();
+    for (sql, expected) in [
+        (
+            "SELECT count(distinct a) FROM t",
+            vec![
+                ["HashAgg_7", "root", "funcs:count(distinct test.t.a)->Column#5"],
+                ["└─IndexReader_17", "root", "index:IndexFullScan_16"],
+                ["  └─IndexFullScan_16", "cop[tikv]", "keep order:false, stats:pseudo"],
+            ],
+        ),
+        (
+            "SELECT /*+ hash_agg() */ count(distinct a), sum(a) FROM t",
+            vec![
+                ["HashAgg_7", "root", "funcs:count(distinct Column#8)->Column#5, funcs:sum(Column#9)->Column#6"],
+                ["└─Projection_16", "root", "test.t.a->Column#8, cast(test.t.a, decimal(10,0) BINARY)->Column#9"],
+                ["  └─IndexReader_15", "root", "index:IndexFullScan_14"],
+                ["    └─IndexFullScan_14", "cop[tikv]", "keep order:false, stats:pseudo"],
+            ],
+        ),
+        (
+            "SELECT /*+ stream_agg() */ count(distinct a) FROM t",
+            vec![
+                ["StreamAgg_9", "root", "funcs:count(distinct test.t.a)->Column#5"],
+                ["└─IndexReader_19", "root", "index:IndexFullScan_18"],
+                ["  └─IndexFullScan_18", "cop[tikv]", "keep order:false, stats:pseudo"],
+            ],
+        ),
+        (
+            "SELECT a, count(distinct b) FROM t GROUP BY a",
+            vec![
+                ["Projection_4", "root", "test.t.a, Column#5"],
+                [
+                    "└─HashAgg_7",
+                    "root",
+                    "group by:test.t.a, funcs:count(distinct test.t.b)->Column#5, funcs:firstrow(test.t.a)->test.t.a",
+                ],
+                ["  └─TableReader_14", "root", "data:TableFullScan_13"],
+                ["    └─TableFullScan_13", "cop[tikv]", "keep order:false, stats:pseudo"],
+            ],
+        ),
+    ] {
+        let rows = row_text(session.run(&format!("EXPLAIN {sql}")));
+        let actual: Vec<[String; 3]> = rows
+            .iter()
+            .map(|row| [row[0].clone(), row[2].clone(), row[4].clone()])
+            .collect();
+        let expected: Vec<[String; 3]> = expected
+            .iter()
+            .map(|row| row.map(str::to_owned))
+            .collect();
+        assert_eq!(actual, expected, "{sql}");
+    }
+}

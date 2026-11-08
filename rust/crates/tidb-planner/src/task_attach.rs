@@ -1031,9 +1031,8 @@ fn attach_agg_over_cop(
         // impossible (an aggregate TiKV cannot run, DISTINCT with
         // `tidb_opt_distinct_agg_push_down` off), and `attach2Task4PhysicalHashAgg`
         // / `...StreamAgg` still convert the cop task to root and attach the
-        // whole aggregate: the task is valid, so the first candidate (the
-        // cop-single-read one, whose id the plan then shows) wins a cost tie
-        // against the root-task candidate.
+        // whole aggregate: the task is valid (a DISTINCT aggregate's
+        // root-child candidate is still preferred, `applyLogicalAggregationHint`).
         let t = Task::Cop(cop).into_root_task_in(allocator, evaluate)?;
         return Ok(attach_plan_2_task(final_plan, t));
     };

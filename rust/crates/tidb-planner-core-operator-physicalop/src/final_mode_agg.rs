@@ -1710,15 +1710,6 @@ fn new_partial_aggregate_for_store(
     if !can_push {
         return Ok((None, plan));
     }
-    // Go: with `tidb_opt_distinct_agg_push_down` OFF (the default,
-    // `AllowDistinctAggPushDown == false`), `NewPartialAggregate` never
-    // splits a DISTINCT aggregation — `applyLogicalAggregationHint` only
-    // prefers a root-task plan for it. The live master capture for
-    // `count(distinct from_address)` over `idx_from` is a single-phase
-    // root HashAgg over a plain IndexReader: no cop partial stage.
-    if !is_tiflash && !is_mpp && agg_funcs.iter().any(|function| function.has_distinct) {
-        return Ok((None, plan));
-    }
     let original = AggInfo {
         agg_funcs: agg_funcs.clone(),
         group_by_items: group_by_items.clone(),
