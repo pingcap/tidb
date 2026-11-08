@@ -9666,31 +9666,47 @@ fn a_v1_hash_join_charges_its_shards_bitmaps_and_build_chunks_like_go() {
 
 /// Go builds an index join's inner double read as an `IndexLookUpExecutor`
 /// per inner task (`buildIndexLookUpReaderForIndexJoin`): its tracker,
-/// labelled with the plan, attaches to the statement's; its index worker's
-/// request charges the worker's tracker, released before the table worker
-/// charges the task's handles, reader, chunks and rows.
+/// labelled with the plan, attaches to the statement's; its index worker cuts
+/// tasks at response chunks (a large one taken whole), sends its request with
+/// the worker's tracker and cuts the next task before the table worker charges
+/// this one's handles, reader, chunks and rows; and an unordered task's reader
+/// returns only the schema's columns, no `_tidb_rowid` beside them.
 #[test]
 fn an_index_join_charges_its_inner_index_lookup_like_go() {
-    let mut session = Session::new();
-    session
-        .run("CREATE TABLE t (a INT PRIMARY KEY, b INT, c VARCHAR(20), d DOUBLE, KEY(b))")
-        .unwrap();
-    let values = (1..=200)
-        .map(|i| format!("({i},{},'s{}',{i}.5)", i % 7, i % 13))
-        .collect::<Vec<_>>()
-        .join(",");
-    session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
-    session.run("CREATE TABLE u (id INT PRIMARY KEY, a INT, b INT, KEY(a))").unwrap();
-    session.run("INSERT INTO u SELECT a + 1000, a, b FROM t WHERE a <= 50").unwrap();
-    let rows = row_text(session.run(
-        "EXPLAIN ANALYZE SELECT /*+ inl_join(u) */ * FROM t JOIN u ON t.a = u.a",
-    ));
-    let row = |operator: &str| {
-        rows.iter()
-            .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()) == operator)
-            .unwrap_or_else(|| panic!("{operator}: {rows:?}"))
-    };
-    assert_eq!(row("IndexLookUp_42(Probe)")[2], "50", "{rows:?}");
-    assert_eq!(row("IndexLookUp_42(Probe)")[7], "4.81 KB", "{rows:?}");
-    assert_eq!(row("IndexJoin_21")[7], "64.0 KB", "{rows:?}");
+    for (heap, lookup_size, memory) in [
+        (false, None, "4.81 KB"),
+        (false, Some(10), "6.14 KB"),
+        (false, Some(40), "6.90 KB"),
+        (true, None, "4.15 KB"),
+        (true, Some(10), "5.34 KB"),
+    ] {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a INT PRIMARY KEY, b INT, c VARCHAR(20), d DOUBLE, KEY(b))")
+            .unwrap();
+        let values = (1..=200)
+            .map(|i| format!("({i},{},'s{}',{i}.5)", i % 7, i % 13))
+            .collect::<Vec<_>>()
+            .join(",");
+        session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+        if heap {
+            session.run("CREATE TABLE u (a INT, b INT, KEY(a))").unwrap();
+            session.run("INSERT INTO u SELECT a, b FROM t WHERE a <= 50").unwrap();
+        } else {
+            session.run("CREATE TABLE u (id INT PRIMARY KEY, a INT, b INT, KEY(a))").unwrap();
+            session.run("INSERT INTO u SELECT a + 1000, a, b FROM t WHERE a <= 50").unwrap();
+        }
+        if let Some(size) = lookup_size {
+            session.run(&format!("SET @@tidb_index_lookup_size = {size}")).unwrap();
+        }
+        let sql = "SELECT /*+ inl_join(u) */ * FROM t JOIN u ON t.a = u.a";
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        let lookup = rows
+            .iter()
+            .find(|row| row[0].contains("IndexLookUp_") && row[0].ends_with("(Probe)"))
+            .unwrap_or_else(|| panic!("{rows:?}"));
+        assert_eq!(lookup[2], "50", "{rows:?}");
+        assert_eq!(lookup[7], memory, "heap={heap} lookup_size={lookup_size:?}: {rows:?}");
+        assert_eq!(row_text(session.run(sql)).len(), 50);
+    }
 }

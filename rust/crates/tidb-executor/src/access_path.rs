@@ -5438,6 +5438,8 @@ struct InnerIndexLookUp {
     batch: usize,
     memory: Option<IndexLookUpMemory>,
     index_worker: Option<Arc<tidb_memory::Tracker>>,
+    /// The next task the index worker already cut.
+    pending: Option<Vec<TableHandle>>,
 }
 
 /// The inner side of an index join: the rows of one table whose join-key
@@ -5692,6 +5694,7 @@ impl IndexJoinLookupExec {
             });
             inner.index_worker = Some(index_worker);
             inner.batch = inner.initial_batch;
+            inner.pending = None;
         }
         self.open_remote_index_handles()
     }
@@ -5707,7 +5710,26 @@ impl IndexJoinLookupExec {
             batch: initial_batch.clamp(1, max_batch),
             memory: None,
             index_worker: None,
+            pending: None,
         });
+    }
+
+    /// Go `indexWorker.extractTaskHandles` over the remote index stream: one
+    /// task, cut at its response chunks (a large one taken whole through
+    /// `ReuseIntermChk`), after which a filled batch doubles.
+    fn cut_inner_task(&mut self) -> Result<Vec<TableHandle>, ExecError> {
+        let max_chunk_size = self.meta.max_chunk_size();
+        let (Some(inner), Some(remote)) = (self.inner_lookup.as_mut(), self.remote_handles.as_mut()) else {
+            return Ok(Vec::new());
+        };
+        let handles = remote
+            .next_handle_batch(inner.batch, max_chunk_size)
+            .map_err(ExecError::from)?
+            .unwrap_or_default();
+        if handles.len() >= inner.batch {
+            inner.batch = inner.batch.saturating_mul(2).min(inner.max_batch);
+        }
+        Ok(handles)
     }
 
     /// Go `buildKvRangesForIndexJoin`'s charges to the inner worker's
@@ -6722,6 +6744,22 @@ impl IndexJoinLookupExec {
                 table_reader_ruv2: None,
                 output_cols: self.meta.schema().columns.len(),
             };
+            // Go's unordered table worker forwards the rows as its reader
+            // returns them: only a keep-order read, an output handle or
+            // partition, or a global index's task needs each row's handle.
+            let global_index = match self.object {
+                LookupObject::Index(index_id) => self
+                    .table
+                    .indexes()
+                    .iter()
+                    .any(|index| index.read().id == index_id && index.read().global),
+                _ => false,
+            };
+            let mut statement = self.statement.clone();
+            statement.lookup_without_identity = !self.keep_order
+                && !self.emit_extra_handle
+                && !self.emit_physical_table_id
+                && !global_index;
             let fetch = exec_table_task(
                 &mut self.table,
                 &mut *self.store,
@@ -6730,7 +6768,7 @@ impl IndexJoinLookupExec {
                 &keep,
                 &predicates,
                 &self.decode_context,
-                &self.statement,
+                &statement,
                 self.meta.max_chunk_size(),
                 false,
                 &accounting,
@@ -6844,30 +6882,49 @@ impl IndexJoinLookupExec {
                 if self.lookup_row_at == self.lookup_rows.len() {
                     self.lookup_rows.clear();
                     self.lookup_row_at = 0;
-                    let window = self
-                        .inner_lookup
-                        .as_ref()
-                        .map_or(INDEX_LOOKUP_BATCH_SIZE, |inner| inner.batch);
-                    let mut handles = Vec::with_capacity(window);
-                    let mut physical_ids = Vec::with_capacity(window);
-                    while handles.len() < window {
-                        let Some(handle) = self.next_batched_handle()? else {
-                            break;
+                    let mut handles = Vec::new();
+                    let mut physical_ids = Vec::new();
+                    if self.inner_lookup.is_some()
+                        && self.remote_handles.is_some()
+                        && !matches!(self.object, LookupObject::CommonHandle)
+                    {
+                        // Go's index worker cuts the next task as soon as it
+                        // hands this one off, so the response it drains is
+                        // released before the table worker charges this one.
+                        handles = match self.inner_lookup.as_mut().and_then(|inner| inner.pending.take()) {
+                            Some(pending) => pending,
+                            None => self.cut_inner_task()?,
                         };
-                        handles.push(handle);
-                        if let Some(id) = self.last_partition_id {
-                            physical_ids.push(id);
+                        if !handles.is_empty() {
+                            let next = self.cut_inner_task()?;
+                            if let Some(inner) = self.inner_lookup.as_mut() {
+                                inner.pending = Some(next);
+                            }
+                        }
+                    } else {
+                        let window = self
+                            .inner_lookup
+                            .as_ref()
+                            .map_or(INDEX_LOOKUP_BATCH_SIZE, |inner| inner.batch);
+                        while handles.len() < window {
+                            let Some(handle) = self.next_batched_handle()? else {
+                                break;
+                            };
+                            handles.push(handle);
+                            if let Some(id) = self.last_partition_id {
+                                physical_ids.push(id);
+                            }
+                        }
+                        // Go `extractTaskHandles` doubles the batch after one
+                        // it filled.
+                        if let Some(inner) = self.inner_lookup.as_mut() {
+                            if handles.len() >= inner.batch {
+                                inner.batch = inner.batch.saturating_mul(2).min(inner.max_batch);
+                            }
                         }
                     }
                     if handles.is_empty() {
                         return Ok(None);
-                    }
-                    // Go `extractTaskHandles` doubles the batch after one it
-                    // filled.
-                    if let Some(inner) = self.inner_lookup.as_mut() {
-                        if handles.len() >= inner.batch {
-                            inner.batch = inner.batch.saturating_mul(2).min(inner.max_batch);
-                        }
                     }
                     (self.lookup_handles, self.lookup_rows) = self
                         .window_rows(
