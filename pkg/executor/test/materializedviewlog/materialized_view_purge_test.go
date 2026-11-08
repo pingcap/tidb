@@ -990,6 +990,21 @@ func TestPurgeMaterializedViewLogEarlyFailureWritesHist(t *testing.T) {
 	require.NoError(t, err)
 	mlogID := mlogTable.Meta().ID
 
+	t.Run("panic preserves error", func(t *testing.T) {
+		tk := testkit.NewTestKitWithSession(t, store, tk.Session())
+		panicErr := exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/mvMaintainMemQuotaAppliedOnPurgeSession", func(int64, int64) {
+			panic(panicErr)
+		})
+		err := tk.ExecToErr("purge materialized view log on t_purge_early_fail")
+		require.Error(t, err)
+		require.Same(t, errors.Cause(panicErr), errors.Cause(err))
+		require.True(t, exeerrors.ErrQueryInterrupted.Equal(err))
+		tk.MustQuery("select count(*) from `$mlog$t_purge_early_fail`").Check(testkit.Rows("3"))
+		tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_ROWS, PURGE_END_TIME is not null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
+			Check(testkit.Rows("failed 0 1"))
+	})
+
 	histCountBeforeRows := tk.MustQuery(fmt.Sprintf(
 		"select count(*) from mysql.tidb_mlog_purge_hist where MLOG_ID = %d",
 		mlogID,
@@ -1029,28 +1044,6 @@ func TestPurgeMaterializedViewLogEarlyFailureWritesHist(t *testing.T) {
 	)).Rows()
 	require.Len(t, reasonRow, 1)
 	require.Contains(t, fmt.Sprintf("%v", reasonRow[0][0]), "mock early purge failure")
-}
-
-func TestPurgeMaterializedViewLogPanicPreservesError(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := newMViewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t_purge_panic (id int primary key, v int)")
-	tk.MustExec("create materialized view log on t_purge_panic (id, v)")
-	tk.MustExec("insert into t_purge_panic values (1, 10)")
-
-	panicErr := exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/mvMaintainMemQuotaAppliedOnPurgeSession", func(int64, int64) {
-		panic(panicErr)
-	})
-
-	err := tk.ExecToErr("purge materialized view log on t_purge_panic")
-	require.Error(t, err)
-	require.Same(t, errors.Cause(panicErr), errors.Cause(err))
-	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err))
-	tk.MustQuery("select count(*) from `$mlog$t_purge_panic`").Check(testkit.Rows("1"))
-	tk.MustQuery("select PURGE_STATUS, PURGE_ROWS, PURGE_END_TIME is not null from mysql.tidb_mlog_purge_hist where BASE_TABLE_NAME = 't_purge_panic'").
-		Check(testkit.Rows("failed 0 1"))
 }
 
 func TestPurgeMaterializedViewLogFinalizeFailureAfterCommitIsWarning(t *testing.T) {
