@@ -4462,6 +4462,35 @@ impl RemoteIndexHandleCursor {
     /// Returns one covering index row in the source's pruned table-column
     /// order. Go's `PhysicalIndexReader` emits these values directly from the
     /// index stream, so no table row lookup or handle reordering is involved.
+    /// Go `IndexReaderExecutor.Next`'s `e.result.Next(ctx, req)` for a
+    /// covering read whose request returns exactly the reader's columns:
+    /// the response decodes into `chk`, a large response chunk replacing its
+    /// columns (`readFromChunk`'s `ReuseIntermChk`). `None` when the wire
+    /// row is not the output row.
+    pub fn next_covering_chunk_into(
+        &mut self,
+        required_rows: usize,
+        chk: &mut Chunk,
+    ) -> Result<Option<bool>, KvTableError> {
+        let Some(projected) = &self.projected_indices else {
+            return Ok(None);
+        };
+        if self.pending_chunk.is_some()
+            || !self.handle_indices.is_empty()
+            || !self.inner.supports_chunks()
+            || chk.num_cols() == 0
+            || projected.iter().copied().ne(0..chk.num_cols())
+        {
+            return Ok(None);
+        }
+        let filled = self
+            .inner
+            .next_chunk_into(required_rows, chk)
+            .map_err(KvTableError::from)?;
+        self.note_rows();
+        Ok(Some(filled))
+    }
+
     pub fn next_projected_row(&mut self) -> Result<Option<Vec<Datum>>, KvTableError> {
         let Some(row) = self.inner.next_row().map_err(KvTableError::from)? else {
             self.note_rows();

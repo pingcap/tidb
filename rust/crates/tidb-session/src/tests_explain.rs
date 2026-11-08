@@ -9281,3 +9281,20 @@ fn an_index_lookup_takes_one_response_chunk_per_task_like_go() {
         assert_eq!(row[7], memory, "{sql}: {row:?}");
     }
 }
+
+/// Go's covering `IndexReaderExecutor.Next` is `e.result.Next(ctx, req)`:
+/// the response decodes into the parent's chunk, whose columns a large
+/// enough response chunk replaces (`ReuseIntermChk`), so a Limit's pass-through
+/// hands the Projection above it the decoded columns, not the 32-row chunk
+/// the Limit took. Go tidb-server capture: the Projection charges 152 Bytes.
+#[test]
+fn a_covering_reader_decodes_its_response_into_the_parents_chunk_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT PRIMARY KEY, b INT, c INT, KEY bc(b, c))").unwrap();
+    let values = (1..=200).map(|i| format!("({i},{i},{i})")).collect::<Vec<_>>().join(",");
+    session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+    let rows = row_text(session.run("EXPLAIN ANALYZE SELECT a+1 FROM t LIMIT 3"));
+    let projection = rows.iter().find(|row| row[0] == "Projection_6").unwrap_or_else(|| panic!("{rows:?}"));
+    assert_eq!(projection[7], "152 Bytes", "{rows:?}");
+    assert_eq!(row_text(session.run("SELECT a+1 FROM t LIMIT 3")).len(), 3);
+}

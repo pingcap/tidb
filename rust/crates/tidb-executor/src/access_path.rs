@@ -4443,6 +4443,36 @@ impl Executor for IndexRangeSourceExec {
                     .filter
                     .as_ref()
                     .is_none_or(tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe::fully_pushable);
+            if remote_filter_complete
+                && (self.remote_rows_projected || self.post_filter_projection.is_none())
+                && self.limit.is_none_or(|limit| self.produced.get() < limit)
+            {
+                let filled = self
+                    .remote_index
+                    .as_mut()
+                    .expect("covering remote cursor is present")
+                    .next_covering_chunk_into(cap, req)
+                    .map_err(|error| {
+                        ExecError::unsupported(format!("covering index row failed to decode: {error:?}"))
+                    })?;
+                if let Some(filled) = filled {
+                    if !filled {
+                        self.retire_remote_index();
+                        return Ok(());
+                    }
+                    let mut rows = req.num_rows() as u64;
+                    self.scanned.set(self.scanned.get() + rows);
+                    if let Some(limit) = self.limit {
+                        let left = limit - self.produced.get();
+                        if rows > left {
+                            req.truncate_to(usize::try_from(left).unwrap_or(usize::MAX));
+                            rows = left;
+                        }
+                    }
+                    self.produced.set(self.produced.get() + rows);
+                    return Ok(());
+                }
+            }
             while req.num_rows() < cap {
                 if self.limit.is_some_and(|limit| self.produced.get() >= limit) {
                     self.retire_remote_index();
