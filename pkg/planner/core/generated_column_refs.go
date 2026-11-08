@@ -15,6 +15,8 @@
 package core
 
 import (
+	"slices"
+
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/table"
@@ -115,7 +117,10 @@ func (*generatedColumnRefCollector) Leave(n ast.Node) (ast.Node, bool) {
 //     columns still sees every link);
 //   - its dependencies are unknown (empty, or naming a column not in the table);
 //   - it is a dependency of a built virtual generated column, which needs it to
-//     be evaluated.
+//     be evaluated;
+//   - it shares a dependency with a built virtual generated column, so an
+//     index on an expression-equivalent generated column can still be
+//     recognized as covering.
 func (b *PlanBuilder) virtualGeneratedColumnsToSkip(tblInfo *model.TableInfo, columns []*table.Column) []bool {
 	refs := b.gcColumnRefs
 	// Partition expressions and DML read columns that the statement does not name.
@@ -123,14 +128,12 @@ func (b *PlanBuilder) virtualGeneratedColumnsToSkip(tblInfo *model.TableInfo, co
 		return nil
 	}
 	isVirtual := func(c *table.Column) bool { return c.IsGenerated() && !c.GeneratedStored }
+	if !slices.ContainsFunc(columns, isVirtual) {
+		return nil
+	}
 	offsetByName := make(map[string]int, len(columns))
-	hasVirtual := false
 	for i, c := range columns {
 		offsetByName[c.Name.L] = i
-		hasVirtual = hasVirtual || isVirtual(c)
-	}
-	if !hasVirtual {
-		return nil
 	}
 
 	build := make([]bool, len(columns))
@@ -151,22 +154,16 @@ func (b *PlanBuilder) virtualGeneratedColumnsToSkip(tblInfo *model.TableInfo, co
 			}
 		}
 	}
-	// Generated columns that depend on a built generated column.
-	for changed := true; changed; {
-		changed = false
-		for i, c := range columns {
-			if build[i] || !isVirtual(c) {
-				continue
-			}
-			for dep := range c.Dependences {
-				if j := offsetByName[dep]; build[j] && isVirtual(columns[j]) {
-					build[i], changed = true, true
-					break
-				}
-			}
-		}
-	}
-	// Generated columns that a built generated column needs for evaluation.
+	// Close over three relations until nothing changes:
+	//   - upward: a generated column that depends on a built generated column;
+	//   - shared dependencies: a generated column that shares a dependency with a
+	//     built generated column. Index covering (EqualByExprAndID) matches a
+	//     column to an expression-equivalent indexed generated column by
+	//     comparing both VirtualExprs, and equivalent expressions have the same
+	//     dependencies;
+	//   - downward: a generated column that a built generated column needs for
+	//     evaluation.
+	depsOfBuilt := make(map[string]struct{})
 	for changed := true; changed; {
 		changed = false
 		for i, c := range columns {
@@ -174,8 +171,21 @@ func (b *PlanBuilder) virtualGeneratedColumnsToSkip(tblInfo *model.TableInfo, co
 				continue
 			}
 			for dep := range c.Dependences {
+				depsOfBuilt[dep] = struct{}{}
 				if j := offsetByName[dep]; !build[j] && isVirtual(columns[j]) {
 					build[j], changed = true, true
+				}
+			}
+		}
+		for i, c := range columns {
+			if build[i] || !isVirtual(c) {
+				continue
+			}
+			for dep := range c.Dependences {
+				_, shared := depsOfBuilt[dep]
+				if j := offsetByName[dep]; shared || (build[j] && isVirtual(columns[j])) {
+					build[i], changed = true, true
+					break
 				}
 			}
 		}

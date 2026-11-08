@@ -104,8 +104,9 @@ func TestSkipUnreferencedVirtualGeneratedColumns(t *testing.T) {
 		// An expression over b can be substituted with b_l or the expression
 		// index; b_l2 is built from b_l, so it is built too.
 		{"select id from g where lower(b) = 'bb'", []string{exprIdx, "g:b_l", "g:b_l2", "g:k"}},
-		// Selecting b_l2 needs b_l to evaluate it.
-		{"select b_l2 from g where id = 1", []string{"g:b_l", "g:b_l2", "g:k"}},
+		// Selecting b_l2 needs b_l to evaluate it; generated columns that
+		// share b_l's dependency b are built too.
+		{"select b_l2 from g where id = 1", []string{exprIdx, "g:b_l", "g:b_l2", "g:k"}},
 		{"select id from g where 3 member of (j->'$.t')", []string{mvIdx, "g:k"}},
 		// DEFAULT(a) mentions a even though DefaultExpr does not visit it.
 		{"select default(a) from g", []string{"g:a_l", "g:k"}},
@@ -121,7 +122,7 @@ func TestSkipUnreferencedVirtualGeneratedColumns(t *testing.T) {
 		{"select count(*) from (select * from g) t", all},
 		{"select g1.id from g g1 natural join g g2", append(slices.Clone(all), all...)},
 		// View definitions are not in the statement's AST.
-		{"select id from v_named", []string{"g:b_l", "g:b_l2", "g:k"}},
+		{"select id from v_named", []string{exprIdx, "g:b_l", "g:b_l2", "g:k"}},
 		{"select id from v_star", all},
 		// Partitioned tables build everything.
 		{"select id from p", []string{"p:a_l", "p:x"}},
@@ -166,6 +167,17 @@ func TestSkipUnreferencedVirtualGeneratedColumns(t *testing.T) {
 	tk.MustExec("set @x = 'bb'")
 	tk.MustQuery("execute st using @x").Check(testkit.Rows("1"))
 	tk.MustQuery("execute st using @x").Check(testkit.Rows("1"))
+
+	// An index on an expression-equivalent generated column still covers a
+	// named generated column, even though neither the indexed column nor the
+	// base column is named.
+	tk.MustExec("create table e (id int primary key, a varchar(20), c1 varchar(20) as (lower(a)), c2 varchar(20) as (lower(a)), key k2 (c2))")
+	tk.MustExec("insert into e (id, a) values (1, 'Xy'), (2, 'Zw')")
+	require.Equal(t, []string{"e:c1", "e:c2"}, builtVirtualExprs(t, tk, "select c1 from e use index (k2)"))
+	plan := planOf("select c1 from e use index (k2)")
+	require.Contains(t, plan, "index:k2(c2)")
+	require.NotContains(t, plan, "TableRowIDScan")
+	tk.MustQuery("select c1 from e use index (k2) order by c1").Check(testkit.Rows("xy", "zw"))
 
 	// A unique tidb_shard index is still detected for point lookups on its base column.
 	tk.MustExec("create table s (id int primary key, a int, sh int as (tidb_shard(a)), unique key ush (sh, a))")
