@@ -75,7 +75,7 @@ func TestFTSLikeFallbackRebuildsRound1(t *testing.T) {
 	// built with the ILIKE rewrite too, but no fts-like-fallback round.
 	expectRound("fts-like-fallback", join, false)
 	expectRound("order-aware-reorder", join, true)
-	tk.MustQuery(join).Sort().Check(testkit.Rows("2", "4"))
+	tk.MustQuery(join).Check(testkit.Rows("2", "4"))
 }
 
 func planContains(plan []string, s string) bool {
