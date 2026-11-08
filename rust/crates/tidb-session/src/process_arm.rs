@@ -39,6 +39,23 @@ impl Session {
 
     /// An owned [`SqlDigestTextRetriever`] over this session's node, for a
     /// builtin that retrieves while evaluating with the session out of reach.
+    /// Go `newTableReaderExecutorContext`'s `getDDLOwner`: the owner's ID
+    /// (`OwnerManager.GetOwnerID`), then its server info
+    /// (`infosync.GetServerInfoByID`), as the server ID a request on the DDL
+    /// owner names. `None` without a DDL (the in-process tier).
+    fn ddl_owner_server_id(&self) -> Option<std::sync::Arc<dyn Fn() -> Result<u64, String> + Send + Sync>> {
+        let owner = self.ddl_owner_manager.clone()?;
+        let syncer = self.server_info_syncer.clone()?;
+        Some(std::sync::Arc::new(move || {
+            let owner_id = owner.get_owner_id(&tidb_owner::Context::background())?;
+            let info = syncer.get_server_info_by_id(&owner_id)?.static_info;
+            Ok(info
+                .server_id_getter
+                .as_ref()
+                .map_or(info.json_server_id, |get| get()))
+        }))
+    }
+
     pub(crate) fn sql_digest_text_retriever(&self) -> SqlDigestTextRetriever {
         SqlDigestTextRetriever {
             restricted_sql: self.restricted_sql_executor(),
@@ -91,6 +108,7 @@ impl Session {
             server_info_syncer: self.server_info_syncer.clone(),
             config_scoped: self.has_scoped_privilege("", "", tidb_mysql::ConfigPriv),
             hides_cluster_metadata: self.sem_hides_cluster_metadata(),
+            ddl_owner_server_id: self.ddl_owner_server_id(),
         }
     }
 

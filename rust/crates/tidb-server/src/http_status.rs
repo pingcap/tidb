@@ -2474,6 +2474,9 @@ mod schema_route_tests {
             job.id = 7;
             Ok(vec![job])
         }
+        fn get_ddl_info(&self) -> Result<tidb_ddl::ddl_history::DdlInfo, String> {
+            Ok(tidb_ddl::ddl_history::DdlInfo::default())
+        }
     }
 
     /// Go `DDLHistoryJobHandler`: `start_job_id` and `limit` are form values

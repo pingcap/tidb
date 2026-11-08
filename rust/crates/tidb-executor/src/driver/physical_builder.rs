@@ -6777,7 +6777,7 @@ fn cluster_table_reader_read(
     let Some(scan) = reader.table_scans().into_iter().next() else {
         return Ok(None);
     };
-    if tidb_infoschema::infoschema_meta::cluster_table_source(&scan.table_name).is_none() {
+    if !tidb_infoschema::infoschema_meta::is_cluster_table_by_name(&scan.table_name) {
         return Ok(None);
     }
     let table_plan = reader
@@ -7562,27 +7562,14 @@ fn build_with_state(
             build_cluster_table_scan(plan, scan, catalog, ctx)
         }
         // A CLUSTER_* table's reader sends its pushed plan to every TiDB.
+        // A cluster table's reader (Go `IsClusterTable`: the CLUSTER_*
+        // tables and `TIFLASH_REPLICA`) sends its pushed plan to the TiDBs.
         PhysicalPlan::TableReader(reader)
-            if reader.store_type == tidb_kv::store_type::StoreType::TiDb
-                && reader.table_scans().first().is_some_and(|scan| {
-                    tidb_infoschema::infoschema_meta::cluster_table_source(&scan.table_name)
-                        .is_some()
-                }) =>
+            if reader.store_type == tidb_kv::store_type::StoreType::TiDb =>
         {
             let read = cluster_table_reader_read(plan, reader, ctx)?
                 .ok_or_else(|| DriverError::unsupported("a cluster table reader has no read"))?;
             build_cluster_table_reader(plan, read, catalog, ctx)
-        }
-        // `TIFLASH_REPLICA`'s reader (Go's DDL-owner destination) runs its
-        // pushed operators here as the executors themselves.
-        PhysicalPlan::TableReader(reader)
-            if reader.store_type == tidb_kv::store_type::StoreType::TiDb =>
-        {
-            get_snapshot_ts(ctx);
-            let child = reader.table_plan.as_deref().ok_or_else(|| {
-                DriverError::unsupported("a TiDB-store reader has no pushed plan")
-            })?;
-            build_with_state(child, catalog, ctx, state)
         }
         PhysicalPlan::TableScan(scan) => build_table_scan(
             plan,

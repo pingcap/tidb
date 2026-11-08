@@ -119,13 +119,16 @@ fn add_partition_keeps_an_available_tiflash_replica_available_like_go() {
         tidb_domain_infosync::tiflash_manager::get_tiflash_progress_from_cache(pn),
         Some(1.0)
     );
-    assert_eq!(
-        displayed(rows(
-            &mut session,
-            "select available from information_schema.tiflash_replica where table_name = 'ddltiflash'",
-        )),
-        [["1"]]
-    );
+    // `information_schema.tiflash_replica` is read on the DDL owner's status
+    // port, which this in-process node does not serve; the replica info is
+    // what that reader would return.
+    let (_, info) = stack
+        .factory
+        .catalog_snapshot()
+        .table_info_by_name("test", "ddltiflash")
+        .unwrap();
+    let info = info.read();
+    assert!(info.tiflash_replica.as_ref().unwrap().read().available);
 }
 
 /// Go `checkPartitionReplica` refuses a replica count above the TiFlash

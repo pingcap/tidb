@@ -435,7 +435,8 @@ pub fn table_rows(
 /// readable, 0.0 while the learners are being placed): the live fraction
 /// lives in the replica manager's progress cache, which this seam does not
 /// see yet.
-fn tiflash_replica_rows(catalog: &SessionExtendedInfoSchema, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
+/// Go `memtableRetriever.dataForTableTiFlashReplica`.
+pub(crate) fn tiflash_replica_rows(catalog: &SessionExtendedInfoSchema, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
     for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
         let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {

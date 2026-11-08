@@ -91,6 +91,8 @@ pub struct ViewerState {
     pub config_scoped: bool,
     /// Whether SEM hides the cluster metadata from the viewer.
     pub hides_cluster_metadata: bool,
+    /// Go `getDDLOwner`'s server ID, when the session's node has a DDL.
+    pub ddl_owner_server_id: Option<Arc<dyn Fn() -> Result<u64, String> + Send + Sync>>,
 }
 
 impl ViewerState {

@@ -1404,11 +1404,12 @@ fn tiflash_replica_count_is_checked_against_tiflash_servers_like_go() {
 
     let _store_count = enable_failpoint("mockTiFlashStoreCount", "return(true)");
     tk.must_exec("alter database d2 set tiflash replica 2");
-    tk.must_query(
-        "select table_name, replica_count from information_schema.tiflash_replica \
-         where table_schema = 'd2'",
-    )
-    .check(["t 2"]);
+    // `information_schema.tiflash_replica` is read on the DDL owner's status
+    // port, which this kit does not serve (Go's test starts an RPC server);
+    // the replica info is what that reader would return.
+    let (_, info) = tk.info_schema().table_info_by_name("d2", "t").unwrap();
+    let info = info.read();
+    assert_eq!(info.tiflash_replica.as_ref().unwrap().read().count, 2);
 }
 
 // Go `createIndex` / `dropIndex` with a hypothetical index: every check up to

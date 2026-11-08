@@ -363,6 +363,11 @@ impl ViewerState {
         extractor: Option<&tidb_planner::memtable_predicate_extractor::MemTableExtractor>,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         use tidb_planner::memtable_predicate_extractor::MemTableExtractor;
+        // Go's DDL owner reads `TIFLASH_REPLICA` with its memtable retriever
+        // (`dataForTableTiFlashReplica`); it has no INSTANCE column.
+        if table_name.eq_ignore_ascii_case("TIFLASH_REPLICA") {
+            return Ok(crate::infoschema_reader::tiflash_replica_rows(catalog, &self.visibility));
+        }
         let source = tidb_infoschema::infoschema_meta::cluster_table_source(table_name)
             .ok_or_else(|| DriverError::unsupported("unsupported TiDB cluster table"))?;
         let mut rows = match source {
@@ -784,7 +789,11 @@ use tidb_charset::Collation;
                 zone: ctx.session_zone(),
             }),
         };
-        crate::table_reader::TiDbStoreReader { client, user }
+        crate::table_reader::TiDbStoreReader {
+            client,
+            user,
+            ddl_owner_server_id: self.ddl_owner_server_id.clone(),
+        }
     }
 
     /// Go `CoprocessorDAGHandler.HandleRequest` for a memory-table plan
@@ -1137,6 +1146,8 @@ impl crate::mem_table_retrieval::MemTableRetriever for ClusterTablesRetriever {
             return false;
         }
         tidb_infoschema::infoschema_meta::cluster_table_source(&read.table_name).is_some()
+            // Go `TIFLASH_REPLICA`'s reader on the DDL owner.
+            || (read.cop_request.is_some() && read.table_name.go_lower_eq("TIFLASH_REPLICA"))
             || (!read.is_cluster_scan
                 && [
                     "TIDB_TRX",

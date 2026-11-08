@@ -2,9 +2,9 @@
   "date": "2026-11-08",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 32,
-    "open": 8,
-    "partial": 24
+    "unresolved": 30,
+    "open": 7,
+    "partial": 23
   },
   "findings": [
     {
@@ -172,13 +172,6 @@
       "go_owner": "`pkg/infoschema`"
     },
     {
-      "id": "I07",
-      "status": "partial",
-      "group": "Runtime information-schema providers",
-      "finding": "A CLUSTER_* table's reader is Go's `TableReaderExecutor` on the `kv.TiDB` store (`table_reader.rs`): its DAG goes through `distsql.SelectWithRuntimeStats` and copr's TiDB tasks (`cluster_peer.rs` `TiDbMemCopClient`, every TiDB including this one over its status port) and every TiDB rebuilds it with `coprocessor.rs`'s `PBPlanBuilder`; still apart from Go: `TIFLASH_REPLICA`'s TiDB-store reader runs its pushed plan as local executors where Go sends it to the DDL owner (`GetClusterTableCopDestination`, `SetTiDBServerID`)",
-      "go_owner": "`pkg/planner/core/pb_to_plan.go`, `pkg/executor/coprocessor.go`, `pkg/executor/builder.go` (`buildTableReader` for `kv.TiDB`), `pkg/store/copr` (`buildTiDBMemCopTasks`)"
-    },
-    {
       "id": "E07",
       "status": "open",
       "group": "Expanded subsystem ownership review",
@@ -227,16 +220,9 @@
       "group": "Domain and process services",
       "finding": "The executable defaults `host` to `127.0.0.1` (`NodeConfig::deployment_defaults`) where Go's default is `0.0.0.0`, so a node started without `--host` advertises the loopback address (`INSTANCE` columns, server info) where Go's advertises `util.GetLocalIP()`; the loopback default goes with this port's refusal of a non-loopback listener under `--auth-file`, which Go has no counterpart of",
       "go_owner": "`cmd/tidb-server/main.go` (`overrideConfig`), `pkg/util/misc.go` (`GetLocalIP`)"
-    },
-    {
-      "id": "O23",
-      "status": "open",
-      "group": "Domain and process services",
-      "finding": "Sessions have no DDL owner lookup (Go `tableReaderExecutorContext.getDDLOwner`: `OwnerManager.GetOwnerID` then `infosync.GetServerInfoByID`): `ADMIN SHOW DDL` reports this node as `OWNER_ID`/`OWNER_ADDRESS` and no running jobs, and the TIFLASH_REPLICA reader cannot address the owner (I07)",
-      "go_owner": "`pkg/executor/table_reader.go` (`newTableReaderExecutorContext`), `pkg/executor/executor.go` (`DDLExec`/`ShowDDLExec`)"
     }
   ],
-  "unresolved": 32,
-  "open": 8,
-  "partial": 24
+  "unresolved": 30,
+  "open": 7,
+  "partial": 23
 }

@@ -73,6 +73,28 @@ where
         Ok((running, history?))
     }
 
+    fn get_ddl_info(&self) -> Result<tidb_ddl::ddl_history::DdlInfo, String> {
+        // Go `get2JobsFromTable`: `not reorg order by job_id limit 1`, then
+        // `reorg order by job_id limit 1`.
+        let running = tidb_ddl::real_tikv_ddl::load_active_persisted_ddl_jobs(
+            Arc::clone(&self.opener),
+            self.timeout,
+            0,
+        )
+        .map_err(|error| error.to_string())?;
+        let jobs = tidb_ddl::ddl_history::get_2_jobs_from_table(&running);
+        let mut storage = MetaTxnStorage::new(&self.opener, self.timeout);
+        let mut transaction = storage.begin().map_err(|error| error.to_string())?;
+        let schema_ver = Mutator::new(&mut transaction)
+            .get_schema_version_with_non_empty_diff()
+            .map_err(|error| error.to_string());
+        let _ = NewTxnTransaction::rollback(&mut transaction);
+        Ok(tidb_ddl::ddl_history::DdlInfo {
+            schema_ver: schema_ver?,
+            jobs,
+        })
+    }
+
     fn scan_history_ddl_jobs(&self, start_job_id: i64, limit: i32) -> Result<Vec<Job>, String> {
         let mut storage = MetaTxnStorage::new(&self.opener, self.timeout);
         let mut transaction = storage.begin().map_err(|error| error.to_string())?;

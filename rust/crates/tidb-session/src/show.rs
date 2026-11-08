@@ -384,7 +384,7 @@ impl tidb_executor::admin::AdminExec for Session {
         Session::flush_privileges(self)
     }
 
-    fn show_ddl_rows(&self) -> Vec<Vec<Datum>> {
+    fn show_ddl_rows(&self) -> Result<Vec<Vec<Datum>>, DriverError> {
         Session::show_ddl_rows(self)
     }
 

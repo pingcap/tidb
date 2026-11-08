@@ -24482,13 +24482,15 @@ fn tiflash_replica_status_runs_as_a_persisted_job_like_go() {
     update(true).unwrap();
     let (updated, kind) = job(&mut session);
     assert_eq!(kind, "test|r|update tiflash replica status|public|synced");
-    assert_eq!(
-        displayed(rows(
-            &mut session,
-            "select available from information_schema.tiflash_replica where table_name = 'r'"
-        )),
-        [["1"]]
-    );
+    // `information_schema.tiflash_replica` is read on the DDL owner's status
+    // port, which this in-process node does not serve; the replica info is
+    // what that reader would return.
+    let available = || {
+        let (_, info) = stack.factory.catalog_snapshot().table_info_by_name("test", "r").unwrap();
+        let available = info.read().tiflash_replica.as_ref().unwrap().read().available;
+        available
+    };
+    assert!(available());
     update(true).unwrap();
     assert_eq!(
         job(&mut session).0,
@@ -29495,4 +29497,49 @@ fn related_table_ids_include_tables_planned_before_activation_like_go() {
     let mut expected = vec![rt2, trx];
     expected.sort();
     assert_eq!(related(&mut session), expected);
+}
+
+/// Go `ShowDDLExec`: the DDL owner the owner manager names, its server's
+/// `IP:Port`, this node's id, `GetDDLInfoWithNewTxn`'s schema version, and
+/// each running job's `String()` and query, newline-joined.
+#[test]
+fn admin_show_ddl_reports_the_owner_and_running_jobs_like_go() {
+    struct TwoJobs;
+    impl tidb_ddl::ddl_history::DdlJobHistoryStore for TwoJobs {
+        fn all_ddl_jobs(&self) -> Result<(Vec<tidb_model::Job>, Vec<tidb_model::Job>), String> {
+            Ok((Vec::new(), Vec::new()))
+        }
+        fn scan_history_ddl_jobs(&self, _: i64, _: i32) -> Result<Vec<tidb_model::Job>, String> {
+            Ok(Vec::new())
+        }
+        fn get_ddl_info(&self) -> Result<tidb_ddl::ddl_history::DdlInfo, String> {
+            let job = |id, query: &str| {
+                let mut job = tidb_model::Job::default();
+                job.id = id;
+                job.query = query.into();
+                job
+            };
+            Ok(tidb_ddl::ddl_history::DdlInfo {
+                schema_ver: 77,
+                jobs: vec![job(4, "create table t (a int)"), job(3, "alter table u add index i (a)")],
+            })
+        }
+    }
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1192)).unwrap();
+    session.set_ddl_job_history_store(Arc::new(TwoJobs));
+    let info = tidb_ddl::ddl_history::DdlJobHistoryStore::get_ddl_info(&TwoJobs).unwrap();
+    let server = stack.factory.server_info().unwrap().get_local_server_info();
+    let row = displayed(rows(&mut session, "ADMIN SHOW DDL")).remove(0);
+    assert_eq!(
+        row,
+        [
+            "77".to_owned(),
+            server.static_info.id.clone(),
+            format!("{}:{}", server.static_info.ip, server.static_info.port),
+            format!("{}\n{}", info.jobs[0], info.jobs[1]),
+            server.static_info.id.clone(),
+            "create table t (a int)\nalter table u add index i (a)".to_owned(),
+        ]
+    );
 }

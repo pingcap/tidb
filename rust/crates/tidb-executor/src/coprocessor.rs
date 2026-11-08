@@ -189,14 +189,11 @@ impl<'a> PBPlanBuilder<'a> {
             .map(|(_, name)| *name)
             .find(|name| tidb_infoschema::infoschema_meta::memory_table_id(name) == Some(table_id))
             .ok_or_else(|| format!("Table which ID = {table_id} does not exist."))?;
-        // "Currently only support cluster table."
-        let table_name = tidb_infoschema::infoschema_meta::CLUSTER_TABLES
-            .iter()
-            .map(|(cluster, _)| *cluster)
-            .find(|cluster| cluster.eq_ignore_ascii_case(name))
-            .ok_or_else(|| {
-                format!("table {} is not a cluster table", name.to_ascii_lowercase())
-            })?;
+        // "Currently only support cluster table." (Go `IsClusterTable`).
+        if !tidb_infoschema::infoschema_meta::is_cluster_table_by_name(name) {
+            return Err(format!("table {} is not a cluster table", name.to_ascii_lowercase()));
+        }
+        let table_name = name;
         let table_columns = tidb_infoschema::infoschema_meta::table_schema(table_name)
             .ok_or("missing cluster table schema")?;
         let columns = self.convert_column_info(table_name, &table_columns, &tbl_scan.columns)?;

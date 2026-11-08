@@ -27,6 +27,30 @@ pub trait DdlJobHistoryStore: Send + Sync {
     /// newest first -- from `start_job_id` down when it is set -- up to
     /// `limit` jobs.
     fn scan_history_ddl_jobs(&self, start_job_id: i64, limit: i32) -> Result<Vec<tidb_model::Job>, String>;
+
+    /// Go `GetDDLInfoWithNewTxn`: in a new transaction, the first general
+    /// and the first reorganization job of `mysql.tidb_ddl_job`
+    /// (`get2JobsFromTable`) and the schema version with a non-empty diff.
+    fn get_ddl_info(&self) -> Result<DdlInfo, String>;
+}
+
+/// Go `get2JobsFromTable` over `mysql.tidb_ddl_job`'s rows in job order:
+/// the first job that needs no reorganization (`not reorg order by job_id
+/// limit 1`), then the first that may (`reorg order by job_id limit 1`).
+#[must_use]
+pub fn get_2_jobs_from_table(jobs: &[tidb_model::Job]) -> Vec<tidb_model::Job> {
+    let general = jobs.iter().find(|job| !job.may_need_reorg());
+    let reorg = jobs.iter().find(|job| job.may_need_reorg());
+    general.into_iter().chain(reorg).cloned().collect()
+}
+
+/// Go `ddl.Info`, as `ADMIN SHOW DDL` reads it.
+#[derive(Debug, Default)]
+pub struct DdlInfo {
+    /// Go `Info.SchemaVer`.
+    pub schema_ver: i64,
+    /// Go `Info.Jobs`: the general job, then the reorganization job.
+    pub jobs: Vec<tidb_model::Job>,
 }
 
 /// Go `DefNumGetDDLHistoryJobs`.
@@ -60,6 +84,30 @@ pub fn scan_history_ddl_jobs<T: tidb_meta::transaction::MetaTransaction>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Go `get2JobsFromTable`: the first general job and the first job that
+    /// may reorganize, each the lowest job ID of its kind, general first.
+    #[test]
+    fn get_2_jobs_from_table_takes_the_first_of_each_kind() {
+        use tidb_model::ActionType;
+        let job = |id, type_| {
+            let mut job = tidb_model::Job::default();
+            job.id = id;
+            job.type_ = type_;
+            job
+        };
+        let jobs = [
+            job(3, ActionType::ACTION_ADD_INDEX),
+            job(4, ActionType::ACTION_CREATE_TABLE),
+            job(5, ActionType::ACTION_ADD_PRIMARY_KEY),
+            job(6, ActionType::ACTION_DROP_TABLE),
+        ];
+        let ids: Vec<i64> = get_2_jobs_from_table(&jobs).iter().map(|job| job.id).collect();
+        assert_eq!(ids, [4, 3]);
+        let ids: Vec<i64> = get_2_jobs_from_table(&jobs[1..2]).iter().map(|job| job.id).collect();
+        assert_eq!(ids, [4]);
+        assert!(get_2_jobs_from_table(&[]).is_empty());
+    }
 
     /// Go `ScanHistoryDDLJobs`: without a start, the newest `limit` jobs
     /// (2048 by default); from a start, a limit is required and the scan

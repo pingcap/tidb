@@ -1209,6 +1209,125 @@ mod tests {
         }
     }
 
+    /// Go `TableReaderExecutor.buildKVReq` for `TIFLASH_REPLICA`
+    /// (`GetClusterTableCopDestination` is `DDLOwner`): the request names the
+    /// DDL owner's server ID (`SetTiDBServerID`), so `buildTiDBMemCopTasks`
+    /// sends it to the owner alone, while a CLUSTER_* table reaches every
+    /// TiDB.
+    #[test]
+    fn tiflash_replica_is_read_on_the_ddl_owner_like_go() {
+        use tidb_proto::tikvpb::tikv_server::Tikv;
+        struct FixedOwner;
+        impl tidb_owner::Manager for FixedOwner {
+            fn id(&self) -> &str {
+                "owner-node"
+            }
+            fn is_owner(&self) -> bool {
+                true
+            }
+            fn retire_owner(&self) {}
+            fn get_owner_id(&self, _: &tidb_owner::Context) -> Result<String, String> {
+                Ok("owner-node".into())
+            }
+            fn set_owner_op_value(&self, _: &tidb_owner::Context, _: tidb_owner::OpType) -> Result<(), String> {
+                Ok(())
+            }
+            fn campaign_owner(&self, _: &[i64]) -> Result<(), String> {
+                Ok(())
+            }
+            fn campaign_cancel(&self) {}
+            fn break_campaign_loop(&self) {}
+            fn resign_owner(&self, _: &tidb_owner::Context) -> Result<(), String> {
+                Ok(())
+            }
+            fn close(&self) {}
+            fn set_listener(&self, _: Arc<dyn tidb_owner::Listener>) {}
+            fn force_to_be_owner(&self, _: &tidb_owner::Context) -> Result<(), String> {
+                Ok(())
+            }
+        }
+        /// The other TiDB: records the memory table each request reads.
+        struct OtherTiDb(Arc<std::sync::Mutex<Vec<i64>>>);
+        #[tonic::async_trait]
+        impl Tikv for OtherTiDb {
+            async fn coprocessor(
+                &self,
+                request: tonic::Request<coprocessor::Request>,
+            ) -> Result<tonic::Response<coprocessor::Response>, tonic::Status> {
+                let dag = tipb::DagRequest::decode(request.into_inner().data.as_slice()).unwrap();
+                let table = dag.executors[0].tbl_scan.as_ref().and_then(|scan| scan.table_id);
+                self.0.lock().unwrap().push(table.unwrap_or_default());
+                Ok(tonic::Response::new(coprocessor::Response {
+                    data: tipb::SelectResponse::default().encode_to_vec().into(),
+                    ..Default::default()
+                }))
+            }
+        }
+        /// The owner: its coprocessor service, recording the tables read.
+        struct Owner(PeerService, Arc<std::sync::Mutex<Vec<i64>>>);
+        #[tonic::async_trait]
+        impl Tikv for Owner {
+            async fn coprocessor(
+                &self,
+                request: tonic::Request<coprocessor::Request>,
+            ) -> Result<tonic::Response<coprocessor::Response>, tonic::Status> {
+                let request = request.into_inner();
+                let dag = tipb::DagRequest::decode(request.data.as_slice()).unwrap();
+                let table = dag.executors[0].tbl_scan.as_ref().and_then(|scan| scan.table_id);
+                self.1.lock().unwrap().push(table.unwrap_or_default());
+                Ok(tonic::Response::new(self.0.handle(request)))
+            }
+        }
+        let mut session = Session::new();
+        let owner_received = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (owner_addr, _owner) = serve_peer(Owner(
+            PeerService::new(
+                store_sessions(&session),
+                ProcessRegistry::default(),
+                PrivilegeRegistry::default(),
+                None,
+            ),
+            owner_received.clone(),
+        ));
+        let received = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (other_addr, _other) = serve_peer(OtherTiDb(received.clone()));
+        let server = |id: &str, server_id: u64, addr: std::net::SocketAddr| {
+            let mut info = tidb_domain_serverinfo::serverinfo::ServerInfo::default();
+            info.static_info.id = id.into();
+            info.static_info.json_server_id = server_id;
+            info.static_info.ip = addr.ip().to_string();
+            info.static_info.status_port = addr.port() as usize;
+            info
+        };
+        let owner = server("owner-node", 7, owner_addr);
+        let discovery = Arc::new(Discovery(
+            [owner.clone(), server("other-node", 9, other_addr)]
+                .into_iter()
+                .map(|mut info| {
+                    (
+                        tidb_domain_serverinfo::serverinfo_syncer::server_info_key_path(&info.static_info.id),
+                        info.marshal().unwrap(),
+                    )
+                })
+                .collect(),
+        ));
+        session.set_server_info_syncer(Arc::new(
+            tidb_domain_serverinfo::serverinfo_syncer::Syncer::new(owner, Some(discovery)),
+        ));
+        session.set_cluster_peer_client(Arc::new(peer_client()));
+        session.set_ddl_owner_manager(Arc::new(FixedOwner));
+        session.set_process_privilege(true);
+        session.run("SELECT COUNT(*) FROM information_schema.TIFLASH_REPLICA").unwrap();
+        let tiflash_replica = tidb_infoschema::infoschema_meta::memory_table_id("TIFLASH_REPLICA").unwrap();
+        assert_eq!(*owner_received.lock().unwrap(), [tiflash_replica]);
+        assert!(received.lock().unwrap().is_empty(), "{:?}", received.lock().unwrap());
+        session.run("SELECT COUNT(*) FROM information_schema.CLUSTER_MEMORY_USAGE").unwrap();
+        assert_eq!(
+            *received.lock().unwrap(),
+            [tidb_infoschema::infoschema_meta::memory_table_id("CLUSTER_MEMORY_USAGE").unwrap()]
+        );
+    }
+
     #[test]
     fn cluster_diagnostics_batch_memory_sql() {
         let mut session = Session::new();

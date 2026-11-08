@@ -426,6 +426,9 @@ impl DomainSessions for Domain {
         if let Some(store) = self.bdr_role_store.get() {
             session.set_bdr_role_store(Arc::clone(store));
         }
+        if let Some(owner) = self.ddl.owner_manager() {
+            session.set_ddl_owner_manager(owner);
+        }
         if let Some(store) = self.ddl_job_history_store.get() {
             session.set_ddl_job_history_store(Arc::clone(store));
         }

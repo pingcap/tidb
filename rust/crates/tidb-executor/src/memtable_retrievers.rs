@@ -1301,8 +1301,12 @@ impl InformationSchemaRetriever {
 
 impl crate::mem_table_retrieval::MemTableRetriever for InformationSchemaRetriever {
     fn serves(&self, read: &crate::mem_table_retrieval::MemTableRead) -> bool {
+        // A read carrying a TiDB-store request is a cluster table reader's
+        // (`TIFLASH_REPLICA` on the DDL owner), which the cluster retriever
+        // serves.
         read.db_name
             .go_lower_eq(tidb_infoschema::infoschema_meta::INFORMATION_SCHEMA)
+            && read.cop_request.is_none()
             && crate::infoschema_reader::serves_table(&read.table_name)
     }
 

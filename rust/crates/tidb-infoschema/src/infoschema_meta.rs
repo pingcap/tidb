@@ -8581,6 +8581,28 @@ pub const CLUSTER_TABLES: &[(&str, &str)] = &[
     ("CLUSTER_TIDB_STATEMENTS_STATS", "TIDB_STATEMENTS_STATS"),
 ];
 
+/// Go `infoschema.ClusterTableCopDestination`: where a cluster table's
+/// coprocessor requests go.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClusterTableCopDestination {
+    /// Go `AllTiDB`.
+    AllTiDb,
+    /// Go `DDLOwner`.
+    DdlOwner,
+}
+
+/// Go `infoschema.GetClusterTableCopDestination`: `TIFLASH_REPLICA` (Go's
+/// `memTableToDDLOwnerClusterTables`) goes to the DDL owner, every other
+/// cluster table to every TiDB.
+#[must_use]
+pub fn get_cluster_table_cop_destination(table_name: &str) -> ClusterTableCopDestination {
+    if table_name.eq_ignore_ascii_case("TIFLASH_REPLICA") {
+        ClusterTableCopDestination::DdlOwner
+    } else {
+        ClusterTableCopDestination::AllTiDb
+    }
+}
+
 /// Go `infoschema.IsClusterTableByName`: the CLUSTER_* tables plus
 /// `TIFLASH_REPLICA`, whose cop request goes to the DDL owner.
 pub fn is_cluster_table_by_name(name: &str) -> bool {

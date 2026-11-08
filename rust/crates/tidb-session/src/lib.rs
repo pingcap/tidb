@@ -680,6 +680,9 @@ pub struct Session {
     /// Where `ADMIN SHOW DDL JOBS` and `information_schema.DDL_JOBS` read
     /// the cluster's DDL jobs; the catalog's own history without one.
     ddl_job_history_store: Option<std::sync::Arc<dyn DdlJobHistoryStore>>,
+    /// Go `dom.DDL().OwnerManager()`, which `ADMIN SHOW DDL` and a reader
+    /// sent to the DDL owner ask for the owner (`getDDLOwner`).
+    ddl_owner_manager: Option<std::sync::Arc<dyn tidb_owner::Manager>>,
     /// Go's session-local `SessionStatsItem`, swept into the statistics
     /// handle independently of statement execution.
     stats_collector: Option<std::sync::Arc<tidb_stats_handle_usage::SessionStatsItem>>,
@@ -1028,6 +1031,7 @@ impl Session {
             global_ids: None,
             regions: std::sync::Arc::new(tidb_kv::region_map::LocalRegionStore::default()),
             ddl_job_history_store: None,
+            ddl_owner_manager: None,
             stats_collector: None,
             transaction_table_delta: std::sync::Arc::new(
                 tidb_variable::table_delta::TableDeltaMap::new(),
@@ -1779,6 +1783,11 @@ impl Session {
         self.ddl_job_history_store = Some(store);
     }
 
+    /// Installs the node's DDL owner manager.
+    pub fn set_ddl_owner_manager(&mut self, owner: std::sync::Arc<dyn tidb_owner::Manager>) {
+        self.ddl_owner_manager = Some(owner);
+    }
+
     /// Whether the BDR role lives in an installed store.
     #[must_use]
     pub fn has_bdr_role_store(&self) -> bool {
@@ -1802,34 +1811,63 @@ impl Session {
     /// in flight. The owner columns name THIS node: it runs no election
     /// (`pkg/owner` is unported), and every catalog change it accepts, it
     /// performs itself, which is what a single-node deployment reports.
-    pub(crate) fn show_ddl_rows(&self) -> Vec<Vec<tidb_datatype::Datum>> {
+    /// Go `ShowDDLExec` as `buildShowDDL` prepares it: the owner from the
+    /// DDL owner manager (`GetOwnerID`, its address from
+    /// `infosync.GetServerInfoByID`), this node's id, and `GetDDLInfoWithNewTxn`'s
+    /// schema version and running jobs. A session with no DDL (the
+    /// in-process tier) reports itself with no jobs.
+    pub(crate) fn show_ddl_rows(&self) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         use tidb_datatype::Datum;
         let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
-        let schema_version = self
-            .cluster_schema_version
-            .as_ref()
-            .map_or(0, |source| source());
-        let (id, address) = self.server_info_syncer.as_ref().map_or_else(
-            || (String::new(), String::new()),
-            |syncer| {
-                let info = syncer.get_local_server_info();
-                (
-                    info.static_info.id.clone(),
-                    tidb_domain_serverinfo::serverinfo_syncer::join_host_port(
-                        &info.static_info.ip,
-                        info.static_info.port,
-                    ),
-                )
-            },
-        );
-        vec![vec![
-            Datum::Int(schema_version),
-            text(&id),
+        let (Some(owner), Some(syncer), Some(store)) = (
+            self.ddl_owner_manager.as_ref(),
+            self.server_info_syncer.as_ref(),
+            self.ddl_job_history_store.as_ref(),
+        ) else {
+            let schema_version = self
+                .cluster_schema_version
+                .as_ref()
+                .map_or(0, |source| source());
+            let (id, address) = self.server_info_syncer.as_ref().map_or_else(
+                || (String::new(), String::new()),
+                |syncer| {
+                    let info = syncer.get_local_server_info();
+                    (
+                        info.static_info.id.clone(),
+                        tidb_domain_serverinfo::serverinfo_syncer::join_host_port(
+                            &info.static_info.ip,
+                            info.static_info.port,
+                        ),
+                    )
+                },
+            );
+            return Ok(vec![vec![
+                Datum::Int(schema_version),
+                text(&id),
+                text(&address),
+                text(""),
+                text(&id),
+                text(""),
+            ]]);
+        };
+        let owner_id = owner
+            .get_owner_id(&tidb_owner::Context::background())
+            .map_err(DriverError::unsupported)?;
+        let info = store.get_ddl_info().map_err(DriverError::unsupported)?;
+        let server = syncer
+            .get_server_info_by_id(&owner_id)
+            .map_err(DriverError::unsupported)?;
+        let address = format!("{}:{}", server.static_info.ip, server.static_info.port);
+        let jobs: Vec<String> = info.jobs.iter().map(ToString::to_string).collect();
+        let queries: Vec<&[u8]> = info.jobs.iter().map(|job| job.query.as_bytes()).collect();
+        Ok(vec![vec![
+            Datum::Int(info.schema_ver),
+            text(&owner_id),
             text(&address),
-            text(""),
-            text(&id),
-            text(""),
-        ]]
+            text(&jobs.join("\n")),
+            text(owner.id()),
+            Datum::Bytes(queries.join(&b'\n')),
+        ]])
     }
 
     /// Go fetchClusterConfig checks CONFIG before discovery and reports per-node

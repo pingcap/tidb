@@ -746,9 +746,9 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
     /// Go `SimpleExec.executeFlush`'s `FlushPrivileges` arm: reload the
     /// privilege cache and notify the domain.
     fn flush_privileges(&mut self) -> Result<(), DriverError>;
-    /// Go `ShowDDLExec`'s rows: the node identity and the followed schema
-    /// version.
-    fn show_ddl_rows(&self) -> Vec<Vec<Datum>>;
+    /// Go `ShowDDLExec`'s rows: the DDL owner, this node and the running
+    /// jobs.
+    fn show_ddl_rows(&self) -> Result<Vec<Vec<Datum>>, DriverError>;
     /// Go `Compile` + `runStmt` over `buildShow`'s plan.
     fn run_planned_show(&mut self, show: &tidb_ast::ShowStmt) -> Result<StmtOutput, DriverError>;
     /// Go `globalconn`'s server id of this node.
@@ -972,7 +972,7 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
                 return flush_stmt(flush).map(Some);
             }
             tidb_ast::AdminStmt::ShowDdl => {
-                return Ok(Some(show_ddl_output(&self.show_ddl_rows())));
+                return Ok(Some(show_ddl_output(&self.show_ddl_rows()?)));
             }
             // Go `Compile` + `runStmt` over `buildShow`'s plan.
             tidb_ast::AdminStmt::Show(show) if crate::show::is_planned_show(show.tp) => {

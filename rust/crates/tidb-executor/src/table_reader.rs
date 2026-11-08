@@ -42,6 +42,10 @@ pub struct TiDbStoreReader {
     pub client: Arc<dyn tidb_txnkv::Client>,
     /// Go `SessionVars.User`'s `Username` / `Hostname`.
     pub user: Option<tipb::UserIdentity>,
+    /// Go `tableReaderExecutorContext.getDDLOwner`'s server ID
+    /// (`OwnerManager.GetOwnerID`, then `infosync.GetServerInfoByID`), for a
+    /// table read on the DDL owner; `None` in a context without DDL.
+    pub ddl_owner_server_id: Option<Arc<dyn Fn() -> Result<u64, String> + Send + Sync>>,
 }
 
 /// Go `TableReaderExecutor` over the `kv.TiDB` store.
@@ -117,8 +121,16 @@ impl TableReaderExecutor {
                 })
                 .collect(),
         );
-        if self.request.tidb_server_id > 0 {
-            builder.set_tidb_server_id(self.request.tidb_server_id);
+        // Go `buildKVReq`: a table read on the DDL owner names its server.
+        if self.request.cop_destination
+            == tidb_infoschema::infoschema_meta::ClusterTableCopDestination::DdlOwner
+        {
+            let owner = self.reader.ddl_owner_server_id.as_ref().ok_or_else(|| {
+                ExecError::Internal("GetDDLOwner in a context without DDL".into())
+            })?;
+            builder.set_tidb_server_id(
+                owner().map_err(|error| ExecError::Internal(error.into()))?,
+            );
         }
         builder
             .set_start_ts(self.start_ts)

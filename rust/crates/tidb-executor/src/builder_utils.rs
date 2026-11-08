@@ -42,8 +42,9 @@ pub struct TiDBCopRequest {
     /// Go `getPhysicalPlanIDs(TablePlans)`: the pushed plans' IDs in DAG
     /// order, under which the select result records each executor.
     pub cop_plan_ids: Vec<isize>,
-    /// Go `kv.Request.TiDBServerID`: the one TiDB to send to, or 0 for all.
-    pub tidb_server_id: u64,
+    /// Go `GetClusterTableCopDestination` of the scanned table: every TiDB,
+    /// or the DDL owner alone (`SetTiDBServerID`).
+    pub cop_destination: tidb_infoschema::infoschema_meta::ClusterTableCopDestination,
 }
 
 fn unsupported(message: impl Into<String>) -> DriverError {
@@ -536,6 +537,8 @@ pub fn build_tidb_cop_request(
         ranges,
         field_types,
         cop_plan_ids,
-        tidb_server_id: 0,
+        cop_destination: tidb_infoschema::infoschema_meta::get_cluster_table_cop_destination(
+            &scan.table_name,
+        ),
     })
 }

@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**32 unresolved: 8 open, 24 partial.**
+**30 unresolved: 7 open, 23 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -63,13 +63,11 @@ unresolved until it is restated against its Go owner or closed.
 | O15 | open | No cross-keyspace runtime (null keyspace only); the next-gen-only surfaces built on it have no port either: the status port's `/dxf/*` and `/ddl/check/*`, and plan replayer's `tidb_cloud_storage_uri` storage (`pkg/planner/extstore` `createGlobalExtStorage`, local files on a classic kernel) | `pkg/keyspace`, `pkg/domain`, `pkg/planner/extstore` |
 | R01 | partial | Go's `ExecRestrictedSQL` / `ExecuteInternal` are methods of the issuing session (`withRestrictedSQLExecutor`); this port's executors are adapters beside it (`NodeRestrictedSql`, `SystemSqlExecutor`, `ClusterStatsSqlExecutor`, the plan replayer's `SessionSql`). The node's two apply `ExecOption`'s `SnapshotTS`, `AnalyzeVer`, `AnalyzeSnapshot`, `EnableDDLAnalyze` and `PartitionPruneMode` and restore them as Go's `useCurrentSession` / `getInternalSession` do, but with no issuing session they cannot inherit `OptimizerUseInvisibleIndexes` / `SkipMissingPartitionStats` or append the internal session's warnings to the caller's (`IgnoreWarning`), and `ClusterStatsSqlExecutor` honours the options on the auto-analyze path alone. `rebuildSysVarCache` consumes the rows the domain's sysvar reload loop last read (`SysVarCacheDeps::table_contents`) where Go's runs `fetchTableValues` itself | `pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`) |
 | O22 | partial | The executable defaults `host` to `127.0.0.1` (`NodeConfig::deployment_defaults`) where Go's default is `0.0.0.0`, so a node started without `--host` advertises the loopback address (`INSTANCE` columns, server info) where Go's advertises `util.GetLocalIP()`; the loopback default goes with this port's refusal of a non-loopback listener under `--auth-file`, which Go has no counterpart of | `cmd/tidb-server/main.go` (`overrideConfig`), `pkg/util/misc.go` (`GetLocalIP`) |
-| O23 | open | Sessions have no DDL owner lookup (Go `tableReaderExecutorContext.getDDLOwner`: `OwnerManager.GetOwnerID` then `infosync.GetServerInfoByID`): `ADMIN SHOW DDL` reports this node as `OWNER_ID`/`OWNER_ADDRESS` and no running jobs, and the TIFLASH_REPLICA reader cannot address the owner (I07) | `pkg/executor/table_reader.go` (`newTableReaderExecutorContext`), `pkg/executor/executor.go` (`DDLExec`/`ShowDDLExec`) |
 
 ### Information schema
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| I07 | partial | A CLUSTER_* table's reader is Go's `TableReaderExecutor` on the `kv.TiDB` store (`table_reader.rs`): its DAG goes through `distsql.SelectWithRuntimeStats` and copr's TiDB tasks (`cluster_peer.rs` `TiDbMemCopClient`, every TiDB including this one over its status port) and every TiDB rebuilds it with `coprocessor.rs`'s `PBPlanBuilder`; still apart from Go: `TIFLASH_REPLICA`'s TiDB-store reader runs its pushed plan as local executors where Go sends it to the DDL owner (`GetClusterTableCopDestination`, `SetTiDBServerID`) | `pkg/planner/core/pb_to_plan.go`, `pkg/executor/coprocessor.go`, `pkg/executor/builder.go` (`buildTableReader` for `kv.TiDB`), `pkg/store/copr` (`buildTiDBMemCopTasks`) |
 
 ### Transport, PD and MPP
 
