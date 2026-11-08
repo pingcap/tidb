@@ -29584,3 +29584,32 @@ fn server_status_in_trans_follows_gos_activation() {
     session.node_conn().execute_write("ROLLBACK").unwrap();
     assert!(!in_trans(&session));
 }
+
+/// Go's `plannercore.DefaultDisabledLogicalRulesList` is package-level and
+/// `BootstrapSession` loads it from `mysql.opt_rule_blacklist`: an `ADMIN
+/// RELOAD` on one connection changes what another plans, and the list in the
+/// table applies once the server loads it at start. Go tidb-server capture
+/// over two empty tables: the join plans as `HashJoin_9`, and as `HashJoin_7`
+/// with `join_reorder` blacklisted.
+#[test]
+fn the_pushdown_blacklists_are_the_servers_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut writer = stack.factory.open_session(session_context(161)).unwrap();
+    let mut reader = stack.factory.open_session(session_context(162)).unwrap();
+    rows(&mut writer, "USE test");
+    rows(&mut reader, "USE test");
+    rows(&mut writer, "CREATE TABLE s (a INT, b INT)");
+    rows(&mut writer, "CREATE TABLE t (a INT, b INT, KEY (b))");
+    let join = |session: &mut Session| {
+        displayed(rows(session, "EXPLAIN SELECT t._tidb_rowid FROM t JOIN s ON s.b = t.b"))[0][0].clone()
+    };
+    assert_eq!(join(&mut reader), "HashJoin_9");
+    rows(&mut writer, "INSERT INTO mysql.opt_rule_blacklist VALUES ('join_reorder')");
+    rows(&mut writer, "ADMIN RELOAD OPT_RULE_BLACKLIST");
+    assert_eq!(join(&mut reader), "HashJoin_7");
+    // What `BootstrapSession` loads at start.
+    stack.factory.pushdown_blacklists.publish_rules(Default::default());
+    assert_eq!(join(&mut reader), "HashJoin_9");
+    crate::domain::cluster_session_node::load_pushdown_blacklists(&stack.factory).unwrap();
+    assert_eq!(join(&mut reader), "HashJoin_7");
+}

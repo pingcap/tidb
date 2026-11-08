@@ -22,6 +22,7 @@ pub mod explain_format;
 #[cfg(test)]
 mod explain_tests;
 pub mod show_retrieval;
+pub mod pushdown_blacklists;
 pub mod select_lock;
 pub mod telemetry_info;
 mod stmt_context;

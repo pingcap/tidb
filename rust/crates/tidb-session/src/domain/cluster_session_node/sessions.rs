@@ -404,6 +404,7 @@ impl DomainSessions for Domain {
             );
         }
         session.set_stats_collector(self.stats_usage.new_session_stats_item());
+        session.attach_pushdown_blacklists(self.pushdown_blacklists.clone());
         session.set_data_lock_waits_provider(self.data_lock_waits.clone());
         session.set_tiflash_system_table_client(Arc::new(
             tidb_domain_core::domain::ClusterTiFlashSystemTables {
@@ -1413,6 +1414,16 @@ pub fn start_plan_replayer_handle(domain: &Arc<Domain>) {
         session.set_internal_request_source(tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY);
         Ok(session)
     })));
+}
+
+/// Go `BootstrapSession`'s `executor.LoadExprPushdownBlacklist` and
+/// `executor.LoadOptRuleBlacklist`: the server's two blacklists are read from
+/// `mysql.*` at start, before any connection plans.
+pub fn load_pushdown_blacklists(domain: &Arc<Domain>) -> Result<(), String> {
+    use tidb_executor::admin::AdminExec as _;
+    let mut session = domain.open_system_session().map_err(|error| error.error_string())?;
+    session.reload_expr_pushdown_blacklist().map_err(|error| error.to_string())?;
+    session.reload_opt_rule_blacklist().map_err(|error| error.to_string())
 }
 
 /// Go `SetupExtractHandle(sctxs)` in `BootstrapSession`: the extract

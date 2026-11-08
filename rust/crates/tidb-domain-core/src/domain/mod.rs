@@ -672,6 +672,10 @@ pub struct Domain {
     /// Go's one `privilege.Manager` per `Domain`, here loaded from the
     /// cluster's own `mysql.*`.
     pub privileges: PrivilegeRegistry,
+    /// Go's package-level `expression.DefaultExprPushDownBlacklist` and
+    /// `plannercore.DefaultDisabledLogicalRulesList`: one per server, so an
+    /// `ADMIN RELOAD` on one connection changes what every other one plans.
+    pub pushdown_blacklists: tidb_sessionctx::pushdown_blacklists::PushdownBlacklists,
     /// Go's one `sessmgr.Manager` per TiDB instance: what `SHOW PROCESSLIST`
     /// reads and `KILL` reaches into.
     pub processes: ProcessRegistry,
@@ -1044,6 +1048,7 @@ impl Domain {
             sysvars,
             catalog,
             privileges,
+            pushdown_blacklists: Default::default(),
             processes: ProcessRegistry::default(),
             auto_ids,
             mpp_client: None,

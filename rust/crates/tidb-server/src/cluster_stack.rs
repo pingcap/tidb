@@ -724,6 +724,10 @@ pub fn cluster_session_stack(
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     factory.start_auto_analyze_worker(config.stats_lease);
     factory.start_analyze_jobs_cleanup_worker(config.stats_lease);
+    // Go `BootstrapSession`: the expression push-down and optimizer rule
+    // blacklists load before telemetry starts.
+    tidb_session::domain::cluster_session_node::load_pushdown_blacklists(&factory)
+        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     // Go `BootstrapSession`: there is no way to turn telemetry on with the
     // global variable when the configuration disables it.
     if tidb_config::config_tree::config::get_global_config().enable_telemetry {
