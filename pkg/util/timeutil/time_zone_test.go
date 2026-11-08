@@ -24,6 +24,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/stretchr/testify/require"
 )
@@ -261,4 +262,53 @@ func TestConstructTimeZone(t *testing.T) {
 	// test the timezone name is not existed.
 	_, err = ConstructTimeZone("asia/not-exist", 0)
 	require.EqualError(t, err, "invalid name for timezone asia/not-exist")
+}
+
+func TestLocCacheIsBounded(t *testing.T) {
+	// time.LoadLocation accepts "./" segments and repeated slashes when it reads
+	// the system zoneinfo directory, which gives an unlimited number of valid
+	// spellings of the same zone.
+	if _, err := time.LoadLocation("America/./New_York"); err != nil {
+		t.Skip("system zoneinfo directory not available")
+	}
+	expected, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+
+	lm := &locCache{locMap: make(map[string]*time.Location)}
+	for i := range maxCachedLocations + 10 {
+		// Keep names short: macOS limits paths to 1024 bytes.
+		name := "America/" + strings.Repeat("./", i%40) + strings.Repeat("/", i/40) + "New_York"
+		loc, err := lm.getLoc(name)
+		require.NoError(t, err)
+		require.Equal(t, name, loc.String())
+		ts := time.Date(2021, 7, 1, 12, 0, 0, 0, time.UTC)
+		require.Equal(t, ts.In(expected).Format(time.DateTime), ts.In(loc).Format(time.DateTime))
+	}
+	require.Len(t, lm.locMap, maxCachedLocations)
+
+	// Cached names are still served from the cache.
+	first, err := lm.getLoc("America/New_York")
+	require.NoError(t, err)
+	second, err := lm.getLoc("America/New_York")
+	require.NoError(t, err)
+	require.Same(t, first, second)
+}
+
+func TestLocCacheCopiesName(t *testing.T) {
+	// CONVERT_TZ passes names read with chunk.Column.GetString, which share the
+	// column's memory, and that memory is overwritten by later chunks.
+	lm := &locCache{locMap: make(map[string]*time.Location)}
+	buf := []byte("Europe/Berlin")
+	berlin, err := lm.getLoc(unsafe.String(&buf[0], len(buf)))
+	require.NoError(t, err)
+	copy(buf, "Asia/Shanghai")
+
+	require.Equal(t, "Europe/Berlin", berlin.String())
+	loc, err := lm.getLoc("Europe/Berlin")
+	require.NoError(t, err)
+	require.Same(t, berlin, loc)
+	loc, err = lm.getLoc("Asia/Shanghai")
+	require.NoError(t, err)
+	_, offset := time.Date(2021, 1, 15, 12, 0, 0, 0, time.UTC).In(loc).Zone()
+	require.Equal(t, 8*60*60, offset)
 }
