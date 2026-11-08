@@ -9459,10 +9459,13 @@ fn an_insert_select_returns_its_source_chunk_to_the_allocator_like_go() {
 /// last `parallelExecute` still swaps that output in and charges the
 /// difference; and `avoidColumnEvaluatorForProjBelowUnion` makes a Projection
 /// under a UnionAll copy its columns cell by cell (`AvoidColumnEvaluator`).
-/// A Go testkit probe of each statement after the same `INSERT ... SELECT`
-/// (the connection's allocator with an unpooled result chunk): the
-/// group_concat's `Projection_12` 19.0 KB every run, the UNION ALL's
-/// `Projection_13` 13.1 KB or 13.4 KB as its branches race.
+/// One projection worker (`tidb_executor_concurrency = 1`) gives each
+/// fetcher a single input and output, so the fetcher can read the child's end
+/// only after the parent swapped the output in: the charges are
+/// deterministic, in Go as here. A Go testkit probe of each statement after
+/// the same `INSERT ... SELECT` (the connection's allocator with an unpooled
+/// result chunk): the group_concat's `Projection_12` 9.30 KB, the UNION
+/// ALL's `Projection_10` 17.4 KB and `Projection_13` 3.92 KB.
 #[test]
 fn a_parallel_projection_swaps_in_its_last_output_like_go() {
     let fresh = || {
@@ -9477,6 +9480,7 @@ fn a_parallel_projection_swaps_in_its_last_output_like_go() {
         session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
         session.run("CREATE TABLE u (a INT, b INT, KEY(a))").unwrap();
         session.run("INSERT INTO u SELECT a, b FROM t WHERE a <= 50").unwrap();
+        session.run("SET tidb_executor_concurrency = 1").unwrap();
         session
     };
     let memory = |session: &mut Session, sql: &str, operator: &str| {
@@ -9488,8 +9492,9 @@ fn a_parallel_projection_swaps_in_its_last_output_like_go() {
     };
     assert_eq!(
         memory(&mut fresh(), "SELECT c, group_concat(a ORDER BY a) FROM t GROUP BY c", "Projection_12"),
-        "19.0 KB"
+        "9.30 KB"
     );
-    let union = memory(&mut fresh(), "SELECT * FROM t UNION ALL SELECT a, b, 'x', 1.0 FROM u", "Projection_13");
-    assert!(["13.1 KB", "13.4 KB"].contains(&union.as_str()), "{union}");
+    let union = "SELECT * FROM t UNION ALL SELECT a, b, 'x', 1.0 FROM u";
+    assert_eq!(memory(&mut fresh(), union, "Projection_10"), "17.4 KB");
+    assert_eq!(memory(&mut fresh(), union, "Projection_13"), "3.92 KB");
 }

@@ -588,19 +588,20 @@ fn slow_log_keeps_the_transaction_a_statement_ended() {
 /// `builtinGreatestCmpStringAsTimeSig` evaluates every argument into
 /// `result` before appending its values. Its capacity follows those appends,
 /// not one append per row of the call's value. A Go testkit
-/// probe of each statement (100 rows, Concurrency:5, the connection's
-/// allocator with an unpooled result chunk) measured the statement tracker's
-/// `MaxConsumed` (the slow log's `Mem_max`).
+/// probe of each statement (100 rows, one projection worker so the charges
+/// do not depend on the workers' timing, the connection's allocator with an
+/// unpooled result chunk) measured the statement tracker's `MaxConsumed`
+/// (the slow log's `Mem_max`).
 #[test]
 fn a_string_extremum_projection_peaks_like_gos_ping_pong() {
     for (query, go_mem_max) in [
-        ("SELECT greatest(c, concat(c, repeat('x', 30))), a+1 FROM p", "15349"),
-        ("SELECT greatest(c, 'a', concat('t', c, repeat('x', 40)), 'b'), a+1 FROM p", "17269"),
-        ("SELECT least(concat('a', c, repeat('x', 40)), concat('b', c), 'zzz', 'a'), a+1 FROM p", "17178"),
-        ("SELECT least(c, concat('a', c, repeat('x', 40)), 'a'), a+1 FROM p", "12693"),
-        ("SELECT greatest(concat(c, repeat('x', 30)), c), a+1 FROM p", "15898"),
-        ("SELECT least(concat(c, repeat('x', 30)), concat(c, repeat('y', 30))), a+1 FROM p", "15898"),
-        ("SELECT greatest(c, f), a+1 FROM p", "16753"),
+        ("SELECT greatest(c, concat(c, repeat('x', 30))), a+1 FROM p", "8237"),
+        ("SELECT greatest(c, 'a', concat('t', c, repeat('x', 40)), 'b'), a+1 FROM p", "10157"),
+        ("SELECT least(concat('a', c, repeat('x', 40)), concat('b', c), 'zzz', 'a'), a+1 FROM p", "10066"),
+        ("SELECT least(c, concat('a', c, repeat('x', 40)), 'a'), a+1 FROM p", "5581"),
+        ("SELECT greatest(concat(c, repeat('x', 30)), c), a+1 FROM p", "8786"),
+        ("SELECT least(concat(c, repeat('x', 30)), concat(c, repeat('y', 30))), a+1 FROM p", "8786"),
+        ("SELECT greatest(c, f), a+1 FROM p", "8501"),
     ] {
         let dir = log_dir("string-extremum-mem-max");
         let (slow, _) = install_loggers(&dir);
@@ -615,6 +616,7 @@ fn a_string_extremum_projection_peaks_like_gos_ping_pong() {
             })
             .collect();
         session.run(&format!("INSERT INTO p VALUES {}", values.join(","))).unwrap();
+        session.run("SET tidb_executor_concurrency = 1").unwrap();
         session
             .run("SET GLOBAL tidb_slow_log_threshold = 0")
             .unwrap();
