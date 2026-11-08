@@ -152,7 +152,8 @@ impl LimitExec {
         inline_projection: InlineProjection,
     ) -> Self {
         let count = count.min(u64::MAX - offset);
-        let child_result = child.new_chunk();
+        // Go's `childResult` is taken from the pool in `open`.
+        let child_result = Chunk::default();
         LimitExec {
             meta,
             inline_projection,
@@ -226,7 +227,8 @@ impl Executor for LimitExec {
     /// Go `Open`/`open`: opens the child and resets the window cursor.
     fn open(&mut self) -> Result<(), ExecError> {
         self.child.open()?;
-        self.child_result.reset();
+        // Go `open`: `childResult = exec.TryNewCacheChunk(e.Children(0))`.
+        self.child_result = self.child.new_chunk();
         self.cursor = 0;
         self.meet_first_batch = self.begin == 0;
         Ok(())

@@ -3330,3 +3330,65 @@ fn a_detached_cursor_statement_is_not_summarized_like_go() {
     drop(client);
     assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
 }
+
+/// Go `StreamAggExec.OpenSelf` takes its child chunk from the connection's
+/// chunk pool when it opens, after its `DefaultVal`, so it gets the column a
+/// previous statement's result grew. Captured from a Go tidb-server over the
+/// wire (199 rows): the StreamAgg charges 388 Bytes on a fresh connection and
+/// 2.16 KB after a scan returned 189 rows.
+#[test]
+fn a_stream_agg_takes_its_child_chunk_from_the_pool_when_it_opens_like_go() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let store = users();
+    let node = node_over(&store);
+    let worker_node = Arc::clone(&node);
+    std::thread::spawn(move || {
+        for _ in 0..3 {
+            let (stream, peer_addr) = listener.accept().unwrap();
+            let node = Arc::clone(&worker_node);
+            let store = store.clone();
+            let tracker = Arc::clone(&tracker);
+            std::thread::spawn(move || {
+                let _ = serve_mysql_connection(
+                    stream,
+                    peer_addr,
+                    ConnectionCancellation::default(),
+                    node.factory().as_ref(),
+                    &store,
+                    &tracker,
+                    DEFAULT_MAX_ALLOWED_PACKET,
+                );
+            });
+        }
+    });
+    let connect = || {
+        let mut client = TcpStream::connect(address).unwrap();
+        let mut reader = PacketReader::new(client.try_clone().unwrap());
+        authenticate(&mut client, &mut reader);
+        (client, reader)
+    };
+    let stream_agg_memory = |client: &mut TcpStream, reader: &mut PacketReader<TcpStream>, from: &str| {
+        let plan = run_query(client, reader, &format!("EXPLAIN ANALYZE SELECT /*+ stream_agg() */ count(*) FROM {from}"));
+        plan.iter()
+            .find(|row| row[0].starts_with("StreamAgg"))
+            .unwrap_or_else(|| panic!("{plan:?}"))[7]
+            .clone()
+    };
+    let (mut fresh, mut fresh_reader) = connect();
+    run_write(&mut fresh, &mut fresh_reader, "CREATE TABLE i (a INT PRIMARY KEY, b INT, KEY (b))");
+    let values = (1..=199).map(|x| format!("({x}, {x})")).collect::<Vec<_>>().join(", ");
+    run_write(&mut fresh, &mut fresh_reader, &format!("INSERT INTO i VALUES {values}"));
+    // Go `LimitExec.open` takes its child chunk from the pool after its
+    // children opened, so the StreamAgg above it, opened later, gets the
+    // grown column (1.02 KB fresh, 2.16 KB after the scan).
+    let limited = "(SELECT b FROM i WHERE b > 0 LIMIT 100) t";
+    for (from, fresh_memory) in [("i", "388 Bytes"), (limited, "1.02 KB")] {
+        let (mut scanned, mut scanned_reader) = connect();
+        assert_eq!(stream_agg_memory(&mut scanned, &mut scanned_reader, from), fresh_memory, "{from}");
+        assert_eq!(run_query(&mut scanned, &mut scanned_reader, "SELECT * FROM i WHERE b > 10").len(), 189);
+        assert_eq!(stream_agg_memory(&mut scanned, &mut scanned_reader, from), "2.16 KB", "{from}");
+    }
+}
+

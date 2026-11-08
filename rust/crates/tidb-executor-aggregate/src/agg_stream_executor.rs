@@ -78,7 +78,8 @@ impl<C: Columns + 'static> StreamAggExec<C> {
     #[must_use]
     #[allow(clippy::too_many_arguments)]
     pub fn new(meta: ExecutorMeta, child: Box<dyn Executor>, ctx: C, group_checker: VecGroupChecker, agg_funcs: Vec<Box<dyn AggFunc>>, default_val: Option<Chunk>, mem_tracker: Arc<Tracker>, stmt_mem_tracker: Option<Arc<Tracker>>) -> Self {
-        let child_result = child.new_chunk();
+        // Go's `childResult` is nil until `OpenSelf` takes it from the pool.
+        let child_result = Chunk::default();
         Self {
             meta,
             child,
