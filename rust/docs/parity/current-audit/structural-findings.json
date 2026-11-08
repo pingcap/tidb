@@ -2,8 +2,8 @@
   "date": "2026-11-08",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 34,
-    "open": 11,
+    "unresolved": 33,
+    "open": 10,
     "partial": 23
   },
   "findings": [
@@ -229,13 +229,6 @@
       "go_owner": "`pkg/executor/index_lookup_join.go`, `pkg/executor/builder.go`"
     },
     {
-      "id": "O21",
-      "status": "open",
-      "group": "Domain and process services",
-      "finding": "`TIDB_TRX.RELATED_TABLE_IDS` omits the tables a transaction's statements planned before it activated: under autocommit=0, Go's row lists both statements' tables (its `TxnCtx` exists from `PrepareTxnCtx`, before planning), this port's only the activating statement's",
-      "go_owner": "`pkg/session` (`PrepareTxnCtx`, `TxnInfo`), `pkg/sessionctx/variable` (`TransactionContext.RelatedTableIDs`)"
-    },
-    {
       "id": "O22",
       "status": "open",
       "group": "Domain and process services",
@@ -250,7 +243,7 @@
       "go_owner": "`pkg/executor/table_reader.go` (`newTableReaderExecutorContext`), `pkg/executor/executor.go` (`DDLExec`/`ShowDDLExec`)"
     }
   ],
-  "unresolved": 34,
-  "open": 11,
+  "unresolved": 33,
+  "open": 10,
   "partial": 23
 }

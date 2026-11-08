@@ -29445,3 +29445,54 @@ fn mask_durations(text: &str) -> String {
     out.push_str(rest);
     out
 }
+
+/// Go `PrepareTxnCtx` creates the statement's `TxnCtx` before it plans, so
+/// the tables a statement plans before its reader activates the transaction
+/// are the transaction's `RELATED_TABLE_IDS` (Go tidb-server capture under
+/// autocommit=0: both tables read and `TIDB_TRX` itself); a statement that
+/// activates nothing leaves nothing behind.
+#[test]
+fn related_table_ids_include_tables_planned_before_activation_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1191)).unwrap();
+    for sql in [
+        "CREATE TABLE test.rt1 (a INT)",
+        "CREATE TABLE test.rt2 (a INT)",
+    ] {
+        session.node_conn().execute_write(sql).unwrap();
+    }
+    let id = |session: &mut crate::Session, schema: &str, table: &str| {
+        displayed(rows(
+            session,
+            &format!(
+                "SELECT TIDB_TABLE_ID FROM information_schema.TABLES \
+                 WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = '{table}'"
+            ),
+        ))[0][0]
+            .clone()
+    };
+    let (rt1, rt2) = (id(&mut session, "test", "rt1"), id(&mut session, "test", "rt2"));
+    let trx = id(&mut session, "information_schema", "TIDB_TRX");
+    let related = |session: &mut crate::Session| {
+        let row = displayed(rows(
+            session,
+            "SELECT RELATED_TABLE_IDS FROM information_schema.TIDB_TRX WHERE SESSION_ID = 1191",
+        ));
+        let mut ids: Vec<String> = row[0][0].split(',').map(str::to_owned).collect();
+        ids.sort();
+        ids
+    };
+    session.node_conn().execute_write("SET autocommit = 0").unwrap();
+    rows(&mut session, "SELECT * FROM test.rt1");
+    rows(&mut session, "SELECT * FROM test.rt2");
+    let mut expected = vec![rt1, rt2.clone(), trx.clone()];
+    expected.sort();
+    assert_eq!(related(&mut session), expected);
+    session.node_conn().execute_write("ROLLBACK").unwrap();
+    // A memory-table read activates nothing: its context is discarded.
+    rows(&mut session, "SELECT COUNT(*) FROM information_schema.ENGINES");
+    rows(&mut session, "SELECT * FROM test.rt2");
+    let mut expected = vec![rt2, trx];
+    expected.sort();
+    assert_eq!(related(&mut session), expected);
+}

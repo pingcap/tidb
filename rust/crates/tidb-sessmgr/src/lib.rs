@@ -214,6 +214,10 @@ struct ProcessEntry {
     oom_alarm_variables_info: OOMAlarmVariablesInfo,
     kill: Option<Arc<dyn ProcessKillTarget>>,
     transaction: Option<TransactionEntry>,
+    /// Go `TxnCtx`'s related tables recorded before the transaction is
+    /// active: `PrepareTxnCtx` creates the context before the statement
+    /// plans, so the tables it plans join the transaction it activates.
+    pending_related_table_ids: std::collections::HashSet<i64>,
     external_transaction_owner: bool,
     transaction_history: Arc<tidb_txninfo::TransactionHistoryRecorder>,
     process_plan_info: Option<Arc<Mutex<tidb_stmtctx::ProcessPlanInfo>>>,
@@ -293,10 +297,14 @@ impl ProcessEntry {
         self.started_at = Utc::now();
         self.db = db.to_owned();
         self.state = state.to_owned();
-        if let Some(transaction) = &mut self.transaction {
-            transaction.state = "Idle";
-            transaction.current_sql_digest = None;
-            transaction.waiting_start = None;
+        match &mut self.transaction {
+            Some(transaction) => {
+                transaction.state = "Idle";
+                transaction.current_sql_digest = None;
+                transaction.waiting_start = None;
+            }
+            // The next statement's `PrepareTxnCtx` starts a new context.
+            None => self.pending_related_table_ids.clear(),
         }
     }
 
@@ -316,7 +324,7 @@ impl ProcessEntry {
             mem_buffer_keys: 0,
             mem_buffer_bytes: 0,
             all_sql_digests: digest.into_iter().collect(),
-            related_table_ids: std::collections::HashSet::new(),
+            related_table_ids: std::mem::take(&mut self.pending_related_table_ids),
         });
         self.cur_txn_start_ts = start_ts;
     }
@@ -549,6 +557,7 @@ impl ProcessRegistry {
             oom_alarm_variables_info: OOMAlarmVariablesInfo::default(),
             kill,
             transaction: None,
+            pending_related_table_ids: std::collections::HashSet::new(),
             external_transaction_owner: false,
             transaction_history: Arc::clone(&self.transaction_history),
             process_plan_info: None,
@@ -701,9 +710,12 @@ impl ProcessRegistry {
 
     /// Records one physical table used by the live transaction.
     pub fn transaction_related_table(&self, id: u64, table_id: i64) {
-        self.with_entry(id, |entry| {
-            if let Some(transaction) = &mut entry.transaction {
+        self.with_entry(id, |entry| match &mut entry.transaction {
+            Some(transaction) => {
                 transaction.related_table_ids.insert(table_id);
+            }
+            None => {
+                entry.pending_related_table_ids.insert(table_id);
             }
         });
     }
