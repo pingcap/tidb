@@ -531,6 +531,10 @@ pub struct PushdownStatementContext {
     /// scan: Go lowers it as a Projection executor (`PhysicalProjection.ToPB`)
     /// which returns the reader's columns, instead of `OutputOffsets` alone.
     pub cop_projection: bool,
+    /// Whether an index lookup's table tasks read only their columns: Go's
+    /// unordered `IndexLookUpExecutor` table worker forwards the rows as the
+    /// table reader returns them, so no handle travels to associate them.
+    pub lookup_without_identity: bool,
     /// Go `SessionVars.InitChunkSize`: the capacity a reader's chunk starts
     /// with (`exec.TryNewCacheChunk`).
     pub init_chunk_size: usize,
@@ -583,6 +587,7 @@ impl Default for PushdownStatementContext {
             select_mem_tracker: None,
             select_mem_untracked: false,
             cop_projection: false,
+            lookup_without_identity: false,
             init_chunk_size: tidb_vardef::defaults::DEF_INIT_CHUNK_SIZE as usize,
         }
     }

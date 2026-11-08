@@ -1662,7 +1662,9 @@ impl KvTableReader for TableCommon {
             Some(&range_hints),
             false,
             false,
-            true,
+            // A virtual column's projection reads a heap's row id beside the
+            // physical columns, so it keeps the identity.
+            !statement.lookup_without_identity || materialization.is_some(),
             false,
             context,
             &statement,
@@ -1736,12 +1738,20 @@ impl KvTableReader for TableCommon {
         let mut rows = Vec::with_capacity(handles.len());
         let handle_index = staged.cursor.handle_index;
         let common_identity = staged.cursor.common_identity.clone();
+        // Go's unordered table worker keeps the rows in the order the reader
+        // returns them and never reads their handles back.
+        let identity = handle_index.is_some() || common_identity.is_some();
         let wire_width = staged.cursor.width;
         let mut append_row = |mut row: Vec<Datum>| -> Result<(), KvTableError> {
-            let handle =
+            let handle = if identity {
                 remote_record_handle(handle_index, common_identity.as_ref(), |position| {
                     row.get(position).cloned()
-                })?;
+                })?
+            } else {
+                handles.get(rows.len()).cloned().ok_or_else(|| {
+                    KvTableError::Decode("table reader returned more rows than handles".into())
+                })?
+            };
             if let Some(projection) = &staged.materialization {
                 // Virtual-column evaluation reads physical columns. Only a
                 // heap's synthetic rowid belongs beside that projection;
@@ -1786,6 +1796,10 @@ impl KvTableReader for TableCommon {
             }
         }
         let wire_rows = staged.cursor.rows_returned().saturating_sub(wire_rows);
+        if !identity {
+            let indices = (0..rows.len()).collect();
+            return Ok(Some((rows, predicates_applied, wire_rows, indices, chunk_memory)));
+        }
         let positions = handles
             .iter()
             .enumerate()
@@ -1898,6 +1912,11 @@ impl KvTableReader for TableCommon {
             chunks += batch.memory_usage();
             let batch_index = batches.len();
             for row_index in 0..batch.num_rows() {
+                if staged.cursor.handle_index.is_none() && staged.cursor.common_identity.is_none() {
+                    // Go's unordered table worker: the rows as returned.
+                    rows.push((None, batch_index, row_index));
+                    continue;
+                }
                 let row = batch.get_row(row_index);
                 let handle = remote_record_handle(
                     staged.cursor.handle_index,
@@ -1907,7 +1926,7 @@ impl KvTableReader for TableCommon {
                             .then(|| row.get_datum(position, &staged.cursor.field_types[position]))
                     },
                 )?;
-                rows.push((handle, batch_index, row_index));
+                rows.push((Some(handle), batch_index, row_index));
             }
             batches.push(batch);
         }
@@ -1919,10 +1938,10 @@ impl KvTableReader for TableCommon {
             .collect::<HashMap<_, _>>();
         let mut ordered = rows
             .into_iter()
-            .map(|(handle, batch, row)| {
-                positions
-                    .get(&handle)
-                    .copied()
+            .enumerate()
+            .map(|(ordinal, (handle, batch, row))| {
+                handle
+                    .map_or(Some(ordinal), |handle| positions.get(&handle).copied())
                     .map(|position| (position, (batch, row)))
                     .ok_or_else(|| {
                         KvTableError::Decode("table reader returned an unrequested handle".into())

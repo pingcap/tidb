@@ -8996,3 +8996,26 @@ fn a_pushed_projection_runs_in_the_coprocessor_like_go() {
     assert_eq!(answer.len(), 49);
     assert_eq!(answer[0], ["1"]);
 }
+
+/// Go's unordered `IndexLookUpExecutor` table worker forwards the rows its
+/// `TableReaderExecutor` returns and never reads their handles back, so the
+/// table request carries only the reader's columns. Go tidb-server capture
+/// over 100 rows (99 returned): the lookup peaks at 6.83 KB.
+#[test]
+fn an_unordered_index_lookup_reads_only_its_columns_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT PRIMARY KEY, b INT, c INT, KEY (b))").unwrap();
+    let values = (1..=100).map(|x| format!("({x}, {x}, {x})")).collect::<Vec<_>>().join(", ");
+    session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+    let sql = "SELECT c FROM t USE INDEX(b) WHERE b > 1";
+    let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+    let lookup = rows
+        .iter()
+        .find(|row| row[0].contains("IndexLookUp"))
+        .unwrap_or_else(|| panic!("{rows:?}"));
+    assert_eq!((lookup[2].as_str(), lookup[7].as_str()), ("99", "6.83 KB"), "{rows:?}");
+    let mut answer = row_text(session.run(sql));
+    answer.sort_by_key(|row| row[0].parse::<i64>().unwrap());
+    assert_eq!(answer.len(), 99);
+    assert_eq!((answer[0][0].as_str(), answer[98][0].as_str()), ("2", "100"));
+}

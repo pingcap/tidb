@@ -69,6 +69,7 @@ pub fn pushdown_statement_context(ctx: &crate::StmtContext) -> PushdownStatement
         select_mem_tracker: None,
         select_mem_untracked: false,
         cop_projection: false,
+        lookup_without_identity: false,
         init_chunk_size: ctx.executor_chunk_sizes().0,
     }
 }

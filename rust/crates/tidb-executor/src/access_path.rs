@@ -4061,6 +4061,15 @@ impl Executor for IndexRangeSourceExec {
             self.remote_covering_selected =
                 self.covering && self.extra_handle_slot.is_none() && self.remote_index.is_some();
         }
+        // Go's unordered table worker forwards its rows unmatched: only a
+        // keep-order read (`rowIdx`), an output handle, a partition route or
+        // the dirty merge needs each row's handle back.
+        self.statement.lookup_without_identity = !self.covering
+            && self.can_reorder_handles
+            && self.extra_handle_slot.is_none()
+            && self.physical_table_id_slot.is_none()
+            && self.table.partition().is_none()
+            && !self.dirty_merge;
         self.covering_row = None;
         self.native_covering = self.covering
             && self.remote_index.is_none()
