@@ -2985,6 +2985,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     }
     ctx.phase_durations()
         .set_duration_rewrite(begin_rewrite.elapsed());
+    let scalar_subqueries = registry.borrow().clone();
     Ok(DmlSourcePlan {
         plan: physical,
         update_expressions,
@@ -2995,6 +2996,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
         update_tables: std::mem::take(&mut builder.update_tables),
         update_assigns: std::mem::take(&mut builder.update_assigns),
         visit_info,
+        scalar_subqueries,
     })
 }
 
@@ -3020,6 +3022,9 @@ pub(crate) struct DmlSourcePlan {
     /// A single-table UPDATE's SET items, resolved over the read (Go
     /// `buildUpdateLists`).
     pub single_assignments: Option<Vec<tidb_planner::plan_builder::single_update::SingleUpdateAssignment>>,
+    /// The scalar subqueries the read evaluated while it was built (Go
+    /// `SessionVars.MapScalarSubQ`), which EXPLAIN renders after the plan.
+    pub scalar_subqueries: Vec<std::sync::Arc<RegisteredScalarSubquery>>,
 }
 
 /// Go `buildOrderedList` for the fast point UPDATE (`tryUpdatePointPlan`): the

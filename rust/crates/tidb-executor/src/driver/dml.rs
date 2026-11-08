@@ -521,6 +521,40 @@ pub(crate) fn physical_dml_plan(
     )
 }
 
+/// [`physical_dml_plan`] with the scalar subqueries its read evaluated, for
+/// EXPLAIN.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn physical_dml_plan_and_scalar_subqueries(
+    operator: &str,
+    source: Option<&tidb_ast::QueryStmt>,
+    write: super::multi_dml::MultiDmlRef<'_>,
+    catalog: &SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    fk_spec: &fk_trigger_plan::FkPlanSpec,
+) -> Result<
+    (
+        tidb_planner_core_operator_physicalop::PhysicalPlan,
+        Vec<std::sync::Arc<super::planner_bridge::RegisteredScalarSubquery>>,
+    ),
+    DriverError,
+> {
+    physical_dml_plan_and_scalar_subqueries_with_cache_mode(
+        operator,
+        source,
+        Some(write),
+        catalog,
+        current_db,
+        ctx,
+        false,
+        std::slice::from_ref(fk_spec),
+        DmlKeep::Auto,
+        None,
+        super::planner_bridge::BuildVisits::Check,
+        None,
+    )
+}
+
 /// Multi-table callers carry all resolved table policies into the same DML
 /// allocator and source builder used by single-table writes.
 #[allow(clippy::too_many_arguments)]
@@ -533,8 +567,14 @@ pub(crate) fn physical_multi_dml_plan(
     ctx: &crate::StmtContext,
     fk_specs: &[fk_trigger_plan::FkPlanSpec],
     keep: DmlKeep,
-) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
-    physical_dml_plan_with_cache_mode(
+) -> Result<
+    (
+        tidb_planner_core_operator_physicalop::PhysicalPlan,
+        Vec<std::sync::Arc<super::planner_bridge::RegisteredScalarSubquery>>,
+    ),
+    DriverError,
+> {
+    physical_dml_plan_and_scalar_subqueries_with_cache_mode(
         operator,
         Some(source),
         Some(write),
@@ -590,9 +630,50 @@ fn physical_dml_plan_with_cache_mode(
     visits: super::planner_bridge::BuildVisits<'_>,
     cascade_plan_ids: Option<&tidb_planner_core_base::PlanIdAllocator>,
 ) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
+    physical_dml_plan_and_scalar_subqueries_with_cache_mode(
+        operator,
+        source,
+        write,
+        catalog,
+        current_db,
+        ctx,
+        use_plan_cache,
+        fk_specs,
+        keep,
+        insert_actual_col_len,
+        visits,
+        cascade_plan_ids,
+    )
+    .map(|(plan, _)| plan)
+}
+
+/// [`physical_dml_plan_with_cache_mode`] with the scalar subqueries its read
+/// evaluated (Go `SessionVars.MapScalarSubQ`), which EXPLAIN renders.
+#[allow(clippy::too_many_arguments)]
+fn physical_dml_plan_and_scalar_subqueries_with_cache_mode(
+    operator: &str,
+    source: Option<&tidb_ast::QueryStmt>,
+    write: Option<super::multi_dml::MultiDmlRef<'_>>,
+    catalog: &SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    use_plan_cache: bool,
+    fk_specs: &[fk_trigger_plan::FkPlanSpec],
+    keep: DmlKeep,
+    insert_actual_col_len: Option<usize>,
+    visits: super::planner_bridge::BuildVisits<'_>,
+    cascade_plan_ids: Option<&tidb_planner_core_base::PlanIdAllocator>,
+) -> Result<
+    (
+        tidb_planner_core_operator_physicalop::PhysicalPlan,
+        Vec<std::sync::Arc<super::planner_bridge::RegisteredScalarSubquery>>,
+    ),
+    DriverError,
+> {
     use super::planner_bridge::BuildVisits;
     use tidb_planner_core_operator_physicalop::{BasePhysicalPlan, PhysicalDmlRoot, PhysicalPlan};
 
+    let mut scalar_subqueries = Vec::new();
     // A foreign-key cascade's statement continues the plan ids of the
     // statement that runs it (Go's one `SessionVars.PlanID`).
     let own_plan_ids;
@@ -827,6 +908,7 @@ fn physical_dml_plan_with_cache_mode(
                         write.filter(|_| collecting),
                     )
                     .map_err(super::planner_error_to_driver)?;
+                scalar_subqueries = built.scalar_subqueries;
                 statement_visits.extend(built.visit_info);
                 update_expressions = built.update_expressions;
                 delete_col_pos = built.delete_col_pos;
@@ -894,7 +976,7 @@ fn physical_dml_plan_with_cache_mode(
         plan_id: plan_ids.current(),
     });
     super::physical_builder::prepare_plan_for_explain(&mut plan, catalog, ctx)?;
-    Ok(plan)
+    Ok((plan, scalar_subqueries))
 }
 
 /// Go `tnW.DBInfo.Name.L` / `tableInfo.Name` for the INSERT target, plus the
@@ -3125,7 +3207,8 @@ pub fn run_update_stmt_with_physical(
                 catalog,
                 current_db,
                 ctx,
-            ),
+            )
+            .map(|(plan, _)| plan),
         })
         .transpose()?;
     optimize.end();
@@ -4510,7 +4593,8 @@ pub fn run_delete_stmt_with_physical(
                 catalog,
                 current_db,
                 ctx,
-            ),
+            )
+            .map(|(plan, _)| plan),
         })
         .transpose()?;
     optimize.end();

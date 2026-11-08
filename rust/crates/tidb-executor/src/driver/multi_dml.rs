@@ -824,7 +824,13 @@ pub(crate) fn multi_dml_physical_plan(
     catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
+) -> Result<
+    (
+        tidb_planner_core_operator_physicalop::PhysicalPlan,
+        Vec<std::sync::Arc<super::planner_bridge::RegisteredScalarSubquery>>,
+    ),
+    DriverError,
+> {
     use super::fk_trigger_plan::FkPlanSpec;
     let mut specs: BTreeMap<(i64, String, String), FkPlanSpec> = BTreeMap::new();
     let mut add_target = |database: String, table: String, column: Option<String>| {
@@ -942,7 +948,13 @@ pub(crate) fn multi_dml_explain_plan(
     catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<Option<tidb_planner_core_operator_physicalop::PhysicalPlan>, DriverError> {
+) -> Result<
+    Option<(
+        tidb_planner_core_operator_physicalop::PhysicalPlan,
+        Vec<std::sync::Arc<super::planner_bridge::RegisteredScalarSubquery>>,
+    )>,
+    DriverError,
+> {
     match dml {
         MultiDmlRef::Update(update) => {
             let tidb_ast::UpdateKind::Multi { .. } = &update.kind else {

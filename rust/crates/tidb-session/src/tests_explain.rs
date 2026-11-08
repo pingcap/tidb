@@ -8902,3 +8902,46 @@ fn a_write_with_a_joined_read_numbers_its_plans_like_go() {
     }
     session.run("ROLLBACK").unwrap();
 }
+
+/// Go `FlattenPhysicalPlan` renders `SessionVars.MapScalarSubQ` after the
+/// plan, for a write as for a query: EXPLAIN of an UPDATE or DELETE whose
+/// read evaluated an uncorrelated scalar subquery appends its tree. Go
+/// tidb-server capture over two empty tables.
+#[test]
+fn a_write_explains_its_scalar_subqueries_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE do2 (a INT, b INT)").unwrap();
+    session.run("CREATE TABLE dt (a INT, b INT, KEY (b))").unwrap();
+    let ids = |session: &mut Session, sql: &str| {
+        row_text(session.run(&format!("EXPLAIN {sql}")))
+            .into_iter()
+            .map(|row| row[0].trim_start_matches(['└', '─', '├', '│', ' ']).to_owned())
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    assert_eq!(
+        ids(&mut session, "UPDATE dt SET a = (SELECT max(a) FROM do2)"),
+        "Update_44 TableReader_47 TableFullScan_46 ScalarSubQuery_43 MaxOneRow_11 StreamAgg_17 TopN_33 TableReader_42 TopN_41 Selection_27 TableFullScan_26"
+    );
+    assert_eq!(
+        ids(&mut session, "DELETE FROM dt WHERE a > (SELECT min(b) FROM do2)"),
+        "Delete_44 TableDual_48 ScalarSubQuery_43 MaxOneRow_11 StreamAgg_17 TopN_33 TableReader_42 TopN_41 Selection_27 TableFullScan_26"
+    );
+    // Under ANALYZE the subquery's own row shows Go's runtime defaults:
+    // "0" rows, no execution info, no trackers.
+    for sql in [
+        "SELECT * FROM dt WHERE a > (SELECT min(b) FROM do2)",
+        "UPDATE dt SET a = (SELECT max(a) FROM do2)",
+    ] {
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        let scalar = rows
+            .iter()
+            .find(|row| row[0].contains("ScalarSubQuery_43"))
+            .unwrap_or_else(|| panic!("{sql}: {rows:?}"));
+        assert_eq!(
+            (scalar[2].as_str(), scalar[5].as_str(), scalar[7].as_str(), scalar[8].as_str()),
+            ("0", "", "N/A", "N/A"),
+            "{sql}: {rows:?}"
+        );
+    }
+}

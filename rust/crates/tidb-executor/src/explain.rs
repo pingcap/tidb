@@ -2371,8 +2371,18 @@ fn scalar_subquery_root(
         .map(|id| format!("ScalarQueryCol#{id}"))
         .collect::<Vec<_>>()
         .join(", ");
-    ExplainOperator::new("ScalarSubQuery", subquery.plan_id)
-        .with_operator_info(format!("Output: {output}"))
+    let mut operator =
+        ExplainOperator::new("ScalarSubQuery", subquery.plan_id).with_operator_info(format!("Output: {output}"));
+    // Go `getRuntimeInfoStr` under a `RuntimeStatsColl`: "0" rows for a plan
+    // whose executors recorded none.
+    if runtime {
+        let rows = statement_context
+            .executor_runtime_stats_source()
+            .and_then(|source| source.plan_act_rows(i64::from(subquery.plan_id)))
+            .unwrap_or_default();
+        operator = operator.with_actual_rows(u64::try_from(rows).unwrap_or_default());
+    }
+    operator
         .with_children(vec![physical_explain_operator(
             costs,
             eval_ctx,
@@ -3864,12 +3874,13 @@ fn render_built_plan(
     physical: &PhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
     format: ExplainFormat,
+    scalar_subqueries: &[std::sync::Arc<crate::driver::planner_bridge::RegisteredScalarSubquery>],
 ) -> Result<SelectMeta, DriverError> {
     // Go `ExecStmt.Exec` over the `Explain` plan: its target's plan digest
     // is published (and runaway-checked) before the executor is built.
     publish_physical_process_info(ctx, physical, catalog)?;
     crate::driver::physical_builder::build_for_explain(physical, catalog, ctx)?;
-    render_physical_plan(ctx, ctx, physical, catalog, format, false, false, &[])
+    render_physical_plan(ctx, ctx, physical, catalog, format, false, false, scalar_subqueries)
 }
 
 fn render_physical_query(
@@ -3916,7 +3927,7 @@ pub fn explain_physical_plan(
 ) -> Result<SelectMeta, DriverError> {
     let mut physical = physical.deep_clone();
     crate::driver::physical_builder::prepare_plan_for_explain(&mut physical, catalog, ctx)?;
-    render_built_plan(ctx, &physical, catalog, format)
+    render_built_plan(ctx, &physical, catalog, format, &[])
 }
 
 /// `EXPLAIN [FORMAT = f] FOR CONNECTION`: Go renders the target's retained
@@ -4168,7 +4179,7 @@ pub fn explain_insert_stmt(
         _ => None,
     };
     crate::driver::validate_insert_for_explain(insert, catalog, current_db, ctx, select_width)?;
-    render_built_plan(ctx, &physical, catalog, format)
+    render_built_plan(ctx, &physical, catalog, format, &[])
 }
 
 /// An `EXPLAIN ANALYZE` write whose analyze child ran (Go `handleNoDelay`
@@ -4181,6 +4192,8 @@ pub struct AnalyzedWrite {
     physical: PhysicalPlan,
     catalog: SessionExtendedInfoSchema,
     format: ExplainFormat,
+    /// Go `SessionVars.MapScalarSubQ`: what the write's read evaluated.
+    scalar_subqueries: Vec<std::sync::Arc<crate::driver::planner_bridge::RegisteredScalarSubquery>>,
 }
 
 impl AnalyzedWrite {
@@ -4199,7 +4212,7 @@ impl AnalyzedWrite {
             self.format,
             true,
             true,
-            &[],
+            &self.scalar_subqueries,
         )
     }
 }
@@ -4244,6 +4257,7 @@ pub fn explain_analyze_insert_stmt(
         physical,
         catalog: catalog.clone(),
         format,
+        scalar_subqueries: Vec::new(),
     })
 }
 
@@ -4261,19 +4275,19 @@ pub fn explain_update_stmt(
 ) -> Result<SelectMeta, DriverError> {
     // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
     crate::driver::record_plan_builder_metric(ctx);
-    if let Some(physical) = crate::driver::multi_dml_explain_plan(
+    if let Some((physical, scalar_subqueries)) = crate::driver::multi_dml_explain_plan(
         crate::driver::MultiDmlRef::Update(update),
         catalog,
         current_db,
         ctx,
     )? {
-        return render_built_plan(ctx, &physical, catalog, format);
+        return render_built_plan(ctx, &physical, catalog, format, &scalar_subqueries);
     }
     let source = crate::driver::update_source_query(update).ok_or_else(|| {
         DriverError::unsupported("UPDATE has no single-table source")
     })?;
     let fk_spec = crate::driver::build_tbl_2_update_columns(update, current_db)?;
-    let physical = crate::driver::physical_dml_plan(
+    let (physical, scalar_subqueries) = crate::driver::physical_dml_plan_and_scalar_subqueries(
         "Update",
         Some(&source),
         crate::driver::MultiDmlRef::Update(update),
@@ -4282,7 +4296,7 @@ pub fn explain_update_stmt(
         ctx,
         &fk_spec,
     )?;
-    render_built_plan(ctx, &physical, catalog, format)
+    render_built_plan(ctx, &physical, catalog, format, &scalar_subqueries)
 }
 
 /// Plans a `DELETE` and reports the plan as EXPLAIN rows, executing nothing.
@@ -4296,19 +4310,19 @@ pub fn explain_delete_stmt(
 ) -> Result<SelectMeta, DriverError> {
     // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
     crate::driver::record_plan_builder_metric(ctx);
-    if let Some(physical) = crate::driver::multi_dml_explain_plan(
+    if let Some((physical, scalar_subqueries)) = crate::driver::multi_dml_explain_plan(
         crate::driver::MultiDmlRef::Delete(delete),
         catalog,
         current_db,
         ctx,
     )? {
-        return render_built_plan(ctx, &physical, catalog, format);
+        return render_built_plan(ctx, &physical, catalog, format, &scalar_subqueries);
     }
     let source = crate::driver::delete_source_query(delete).ok_or_else(|| {
         DriverError::unsupported("DELETE has no single-table source")
     })?;
     let fk_spec = crate::driver::fk_spec_for_delete(delete, current_db)?;
-    let physical = crate::driver::physical_dml_plan(
+    let (physical, scalar_subqueries) = crate::driver::physical_dml_plan_and_scalar_subqueries(
         "Delete",
         Some(&source),
         crate::driver::MultiDmlRef::Delete(delete),
@@ -4317,7 +4331,7 @@ pub fn explain_delete_stmt(
         ctx,
         &fk_spec,
     )?;
-    render_built_plan(ctx, &physical, catalog, format)
+    render_built_plan(ctx, &physical, catalog, format, &scalar_subqueries)
 }
 
 /// `EXPLAIN ANALYZE <update>`: unlike [`explain_update_stmt`], this really
@@ -4339,18 +4353,18 @@ pub fn explain_analyze_update_stmt(
     let ctx = &analyzed;
     // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
     crate::driver::record_plan_builder_metric(ctx);
-    let mut physical = match crate::driver::multi_dml_explain_plan(
+    let (mut physical, scalar_subqueries) = match crate::driver::multi_dml_explain_plan(
         crate::driver::MultiDmlRef::Update(update),
         catalog,
         current_db,
         ctx,
     )? {
-        Some(physical) => physical,
+        Some(planned) => planned,
         None => {
             let source = crate::driver::update_source_query(update).ok_or_else(|| {
                 DriverError::unsupported("UPDATE has no single-table source")
             })?;
-            crate::driver::physical_dml_plan(
+            crate::driver::physical_dml_plan_and_scalar_subqueries(
                 "Update",
                 Some(&source),
                 crate::driver::MultiDmlRef::Update(update),
@@ -4375,6 +4389,7 @@ pub fn explain_analyze_update_stmt(
         physical,
         catalog: catalog.clone(),
         format,
+        scalar_subqueries,
     })
 }
 
@@ -4391,18 +4406,18 @@ pub fn explain_analyze_delete_stmt(
     let ctx = &analyzed;
     // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
     crate::driver::record_plan_builder_metric(ctx);
-    let mut physical = match crate::driver::multi_dml_explain_plan(
+    let (mut physical, scalar_subqueries) = match crate::driver::multi_dml_explain_plan(
         crate::driver::MultiDmlRef::Delete(delete),
         catalog,
         current_db,
         ctx,
     )? {
-        Some(physical) => physical,
+        Some(planned) => planned,
         None => {
             let source = crate::driver::delete_source_query(delete).ok_or_else(|| {
                 DriverError::unsupported("DELETE has no single-table source")
             })?;
-            crate::driver::physical_dml_plan(
+            crate::driver::physical_dml_plan_and_scalar_subqueries(
                 "Delete",
                 Some(&source),
                 crate::driver::MultiDmlRef::Delete(delete),
@@ -4427,6 +4442,7 @@ pub fn explain_analyze_delete_stmt(
         physical,
         catalog: catalog.clone(),
         format,
+        scalar_subqueries,
     })
 }
 

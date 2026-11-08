@@ -1843,6 +1843,9 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_executor_chunk_sizes(snapshot.init_chunk_size, snapshot.max_chunk_size)
                 .with_string_type_flags(string_type_flags)
                 .with_stats_handle(self.stats_handle())
+                // Go's optimizer checks the rule blacklist for every
+                // statement's plan, a write's read among them.
+                .with_pushdown_blacklists(self.pushdown_blacklists().snapshot())
                 .with_process_plan_info_sink(Arc::clone(&self.process_plan_info_ref()))
                 .with_statement_phase_observer(self.statement_phase_observer())
                 .with_phase_durations(self.phase_durations_ref().clone())

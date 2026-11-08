@@ -415,3 +415,39 @@ fn admin_reload_reads_committed_rows_not_the_open_transaction() {
     );
     assert_eq!(rules, vec!["decorrelate"]);
 }
+
+/// Go `DoOptimize` over a write's read checks `isLogicalRuleDisabled` as a
+/// query's does. Go tidb-server capture over two empty tables: blacklisting
+/// `join_reorder` takes the multi-table DELETE's join from `HashJoin_11` to
+/// `HashJoin_9`, the multi-table UPDATE's from `HashJoin_10` to `HashJoin_8`
+/// and the `IN` DELETE's from `HashJoin_14` to `HashJoin_10`;
+/// `predicate_push_down` leaves the DELETE a `Selection_12` over its join.
+#[test]
+fn a_write_reads_under_the_optimizer_rule_blacklist_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE do2 (a INT, b INT)").unwrap();
+    session.run("CREATE TABLE dt (a INT, b INT, KEY (b))").unwrap();
+    let below_root = |session: &mut Session, sql: &str| {
+        row_text(session.run(&format!("EXPLAIN {sql}")))[1][0]
+            .trim_start_matches(['└', '─', '├', '│', ' '])
+            .to_owned()
+    };
+    let delete = "DELETE dt FROM dt JOIN do2 ON do2.b = dt.b";
+    let update = "UPDATE dt JOIN do2 ON do2.b = dt.b SET dt.a = 1";
+    let delete_in = "DELETE FROM dt WHERE b IN (SELECT b FROM do2)";
+    assert_eq!(below_root(&mut session, delete), "HashJoin_11");
+    assert_eq!(below_root(&mut session, update), "HashJoin_10");
+    assert_eq!(below_root(&mut session, delete_in), "HashJoin_14");
+    for (rule, expected) in [
+        ("join_reorder", ["HashJoin_9", "HashJoin_8", "HashJoin_10"]),
+        ("predicate_push_down", ["Selection_12", "Projection_11", "HashJoin_14"]),
+    ] {
+        session.run("DELETE FROM mysql.opt_rule_blacklist").unwrap();
+        session
+            .run(&format!("INSERT INTO mysql.opt_rule_blacklist VALUES ('{rule}')"))
+            .unwrap();
+        session.run("ADMIN RELOAD OPT_RULE_BLACKLIST").unwrap();
+        let got = [delete, update, delete_in].map(|sql| below_root(&mut session, sql));
+        assert_eq!(got, expected, "{rule}");
+    }
+}
