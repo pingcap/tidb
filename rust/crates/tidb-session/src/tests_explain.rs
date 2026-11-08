@@ -8945,3 +8945,26 @@ fn a_write_explains_its_scalar_subqueries_like_go() {
         );
     }
 }
+
+/// Go `dagReq.OutputOffsets` are a covering IndexReader's `OutputColumns`
+/// whatever its pushed plan: under a coprocessor Limit the request still
+/// returns only them. Go tidb-server capture over 199 rows: counting a
+/// limited subquery reads only the handle (`OutputColumns` `[a]`), so the
+/// reader peaks at 1.05 KB.
+#[test]
+fn a_covering_index_reader_under_a_pushed_limit_returns_its_output_columns_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE i (a INT PRIMARY KEY, b INT, KEY (b))").unwrap();
+    let values = (1..=199).map(|x| format!("({x}, {x})")).collect::<Vec<_>>().join(", ");
+    session.run(&format!("INSERT INTO i VALUES {values}")).unwrap();
+    let sql = "SELECT /*+ stream_agg() */ count(*) FROM (SELECT b FROM i LIMIT 100) t";
+    let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+    let reader = rows
+        .iter()
+        .find(|row| row[0].contains("IndexReader"))
+        .unwrap_or_else(|| panic!("{rows:?}"));
+    assert_eq!((reader[2].as_str(), reader[7].as_str()), ("100", "1.05 KB"), "{rows:?}");
+    assert_eq!(row_text(session.run(sql)), [["100"]]);
+    assert_eq!(row_text(session.run("SELECT b FROM i ORDER BY b LIMIT 2")), [["1"], ["2"]]);
+}
+

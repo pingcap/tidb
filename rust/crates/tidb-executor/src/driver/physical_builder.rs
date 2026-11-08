@@ -2613,6 +2613,16 @@ fn embedded_index_limit(plan: &PhysicalPlan) -> Option<(u64, u64)> {
     }
 }
 
+/// Whether a reader's pushed plan is its IndexScan under zero or more
+/// Limits, which output their child's columns as they are.
+fn limit_chain_over_index_scan(plan: &PhysicalPlan) -> bool {
+    match plan {
+        PhysicalPlan::IndexScan(_) => true,
+        PhysicalPlan::Limit(_) => plan.children().first().is_some_and(limit_chain_over_index_scan),
+        _ => false,
+    }
+}
+
 /// The index-side TopN of a `PhysicalIndexLookUpReader`'s `IndexPlans`
 /// (`TopN(Build)`), which Go lowers into the index request's DAG.
 fn embedded_index_topn(
@@ -7210,7 +7220,14 @@ fn build_reader_node(
                 .as_deref()
                 .and_then(embedded_index_limit)
                 .map(|(offset, count)| offset.saturating_add(count));
-            state.index_output_columns = matches!(reader.index_plan.as_deref(), Some(PhysicalPlan::IndexScan(_)))
+            // Go `dagReq.OutputOffsets`: the request returns the reader's
+            // `OutputColumns` of what its pushed plan outputs. A pushed Limit
+            // passes its child's columns through, so a Limit chain over the
+            // scan narrows like the bare scan.
+            state.index_output_columns = reader
+                .index_plan
+                .as_deref()
+                .is_some_and(limit_chain_over_index_scan)
                 .then(|| reader.output_columns.clone());
             let built = build_reader(plan.id(), reader.index_plan.as_deref(), catalog, ctx, state);
             state.index_scan_limit = None;
@@ -7800,7 +7817,13 @@ fn build_with_state(
                     .table_access()
                     .is_some_and(|access| access.accept_scan_limit(cap));
             }
-            let schema = unary_schema(plan, child.as_ref());
+            // A coprocessor Limit outputs its child's columns; the reader's
+            // `OutputColumns` may already have narrowed them at the source.
+            let schema = if state.in_reader {
+                child.schema().clone()
+            } else {
+                unary_schema(plan, child.as_ref())
+            };
             let max_chunk_size = ctx.executor_chunk_sizes().1;
             let init_cap = limit.count.min(max_chunk_size as u64) as usize;
             let executor = LimitExec::new(
