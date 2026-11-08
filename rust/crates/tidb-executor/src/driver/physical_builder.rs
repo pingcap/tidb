@@ -3168,6 +3168,13 @@ fn build_index_reader(
     // only to show the TiDB-side zero-row branch, so do not lower them again.
     if let Some(table_plan) = table_plan.filter(|_| !lookup_pushdown) {
         lower_index_lookup_selections(table_plan, &mut source, ctx)?;
+        // Go's `tblPlans` TopN (`TopN(Probe)`) is an executor of every table
+        // task's request; its keys are expressions over the lookup's row.
+        if let Some(topn) = embedded_index_topn(table_plan) {
+            if let Some(topn) = remote_topn(topn, source.schema()) {
+                source.set_lookup_table_topn(topn);
+            }
+        }
     }
     // Go `buildIndexLookUpReader`: an index-side TopN is an executor of the
     // index request, so only its handles reach the table lookup. Its keys are

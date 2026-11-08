@@ -545,6 +545,9 @@ pub struct PushdownStatementContext {
     /// Go `tblPlans`' Limit under an index lookup (`Limit | Selection |
     /// TableRowIDScan`): each table task's request carries it.
     pub lookup_table_limit: Option<u64>,
+    /// Go `tblPlans`' TopN under an index lookup (`TopN | TableRowIDScan`),
+    /// its keys over the lookup's row: each table task's request carries it.
+    pub lookup_table_topn: Option<PushdownTopN>,
 }
 
 /// Go `exec.BaseExecutorV2.AllocPool`: `SessionVars.GetChunkAllocator()`.
@@ -608,6 +611,7 @@ impl Default for PushdownStatementContext {
             init_chunk_size: tidb_vardef::defaults::DEF_INIT_CHUNK_SIZE as usize,
             alloc_pool: None,
             lookup_table_limit: None,
+            lookup_table_topn: None,
         }
     }
 }

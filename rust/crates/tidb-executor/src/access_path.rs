@@ -2563,6 +2563,12 @@ impl IndexRangeSourceExec {
     /// Go `PhysicalProjection.ToPB` of a Projection of columns pushed over
     /// this scan: the request returns its output through a coprocessor
     /// Projection executor rather than `OutputOffsets` alone.
+    /// Go `buildTableReader` over `tblPlans`: the table side's TopN rides
+    /// every table task's request.
+    pub(crate) fn set_lookup_table_topn(&mut self, topn: tidb_distsql::remote_scan::PushdownTopN) {
+        self.statement.lookup_table_topn = Some(topn);
+    }
+
     pub(crate) fn lower_output_as_projection(&mut self) {
         self.statement.cop_projection = true;
     }
@@ -3411,6 +3417,7 @@ impl IndexRangeSourceExec {
             .is_some_and(|filter| !filter.fully_pushable())
         {
             self.statement.lookup_table_limit = None;
+            self.statement.lookup_table_topn = None;
         }
         let allow_lookup_chunks = self.post_filter_projection.is_none()
             && self

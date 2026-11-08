@@ -1656,7 +1656,12 @@ impl KvTableReader for TableCommon {
                 .map_or(keep, |projection| projection.offsets.as_slice()),
             physical_predicates.as_deref().unwrap_or(predicates),
             None,
-            None,
+            // A virtual column's materialization keeps the TopN's keys
+            // above the request; the root TopN still orders the rows.
+            statement
+                .lookup_table_topn
+                .as_ref()
+                .filter(|_| materialization.is_none()),
             statement.lookup_table_limit,
             None,
             Some(&range_hints),
@@ -1677,7 +1682,10 @@ impl KvTableReader for TableCommon {
         };
         // The table plan's Limit counts the rows its Selection admits, so a
         // request that could not apply every predicate cannot carry it.
-        if statement.lookup_table_limit.is_some() && !predicates.is_empty() && !cursor.predicates_applied() {
+        if (statement.lookup_table_limit.is_some() || statement.lookup_table_topn.is_some())
+            && !predicates.is_empty()
+            && !cursor.predicates_applied()
+        {
             return Ok(None);
         }
         Ok(Some(StagedPhysicalLookup {

@@ -9534,3 +9534,35 @@ fn a_hash_join_charges_its_row_table_like_go() {
         assert_eq!(row[7], go_memory, "{query}: {rows:?}");
     }
 }
+
+/// Go's `IndexLookUpExecutor.buildTableReader` builds each table task's
+/// request from `tblPlans`, so a TopN pushed to the table side
+/// (`TopN(Probe)`) runs in every task's coprocessor request and the lookup
+/// hands the root TopN only each task's top rows. A Go testkit probe after
+/// the same `INSERT ... SELECT`: the lookup returns 5 rows, charging 6.31 KB
+/// (its task's request carries the TopN), and the root TopN 1.77 KB.
+#[test]
+fn an_index_lookup_pushes_its_table_side_topn_into_each_task_like_go() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT PRIMARY KEY, b INT, c VARCHAR(20), d DOUBLE, KEY(b))")
+        .unwrap();
+    let values = (1..=200)
+        .map(|i| format!("({i},{},'s{}',{i}.5)", i % 7, i % 13))
+        .collect::<Vec<_>>()
+        .join(",");
+    session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+    session.run("CREATE TABLE u (a INT, b INT, KEY(a))").unwrap();
+    session.run("INSERT INTO u SELECT a, b FROM t WHERE a <= 50").unwrap();
+    let sql = "SELECT * FROM t USE INDEX(b) WHERE b = 3 ORDER BY c LIMIT 5";
+    let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+    let row = |operator: &str| {
+        rows.iter()
+            .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()) == operator)
+            .unwrap_or_else(|| panic!("{operator}: {rows:?}"))
+    };
+    assert_eq!(row("TopN_9")[7], "1.77 KB", "{rows:?}");
+    assert_eq!(row("IndexLookUp_19")[2], "5", "{rows:?}");
+    assert_eq!(row("IndexLookUp_19")[7], "6.31 KB", "{rows:?}");
+    assert_eq!(row_text(session.run(sql)).len(), 5);
+}
