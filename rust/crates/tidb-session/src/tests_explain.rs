@@ -9298,3 +9298,31 @@ fn a_covering_reader_decodes_its_response_into_the_parents_chunk_like_go() {
     assert_eq!(projection[7], "152 Bytes", "{rows:?}");
     assert_eq!(row_text(session.run("SELECT a+1 FROM t LIMIT 3")).len(), 3);
 }
+
+/// Go `dagReq.OutputOffsets` over `Limit | Selection | IndexScan`: the
+/// covering request returns the reader's `OutputColumns` of the rows its
+/// pushed Selection admitted and its pushed Limit kept, not the columns the
+/// Selection read. Go tidb-server captures on fresh connections.
+#[test]
+fn a_covering_reader_under_a_limit_over_a_selection_returns_its_output_columns_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT PRIMARY KEY, b INT, c INT, KEY bc(b, c))").unwrap();
+    let values = (1..=200).map(|i| format!("({i},{i},{i})")).collect::<Vec<_>>().join(",");
+    session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+    for (sql, reader, memory, expected) in [
+        ("SELECT a FROM t WHERE c > 2 LIMIT 3", "IndexReader_16", "295 Bytes", vec![["3"], ["4"], ["5"]]),
+        ("SELECT a FROM t WHERE c > 2 LIMIT 2, 3", "IndexReader_16", "328 Bytes", vec![["5"], ["6"], ["7"]]),
+        ("SELECT b FROM t WHERE c > 5 AND b < 100 LIMIT 4", "IndexReader_14", "310 Bytes", vec![["6"], ["7"], ["8"], ["9"]]),
+    ] {
+        let mut fresh = Session::new();
+        fresh.run("CREATE TABLE t (a INT PRIMARY KEY, b INT, c INT, KEY bc(b, c))").unwrap();
+        fresh.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+        let rows = row_text(fresh.run(&format!("EXPLAIN ANALYZE {sql}")));
+        let row = rows
+            .iter()
+            .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()) == reader)
+            .unwrap_or_else(|| panic!("{sql}: {rows:?}"));
+        assert_eq!(row[7], memory, "{sql}: {rows:?}");
+        assert_eq!(row_text(session.run(sql)), expected, "{sql}");
+    }
+}

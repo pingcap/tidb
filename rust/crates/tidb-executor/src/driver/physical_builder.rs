@@ -177,6 +177,10 @@ struct BuildState {
     /// order, so the scan build narrows its source to them. Set only while
     /// the reader's own subtree is built.
     index_output_columns: Option<Vec<tidb_expr::column::Column>>,
+    /// The reader's `OutputColumns` when its pushed plan is a Limit over a
+    /// pushed Selection: the in-reader Limit narrows its source to them once
+    /// the Selection is in, as the request's `OutputOffsets` do.
+    index_post_filter_columns: Option<Vec<tidb_expr::column::Column>>,
     /// The reader's pushed plan is a Projection of columns over its scan,
     /// which the request lowers as a coprocessor Projection.
     index_cop_projection: bool,
@@ -2639,6 +2643,20 @@ fn column_projection_over_index_scan(plan: &PhysicalPlan) -> Option<Vec<tidb_exp
 
 /// Whether a reader's pushed plan is its IndexScan under zero or more
 /// Limits, which output their child's columns as they are.
+/// A pushed Limit over pushed Limits and Selections down to the IndexScan,
+/// with at least one Selection.
+fn limit_over_selection_chain(plan: &PhysicalPlan) -> bool {
+    fn chain(plan: &PhysicalPlan, selected: bool) -> bool {
+        match plan {
+            PhysicalPlan::IndexScan(_) => selected,
+            PhysicalPlan::Limit(_) => plan.children().first().is_some_and(|child| chain(child, selected)),
+            PhysicalPlan::Selection(_) => plan.children().first().is_some_and(|child| chain(child, true)),
+            _ => false,
+        }
+    }
+    matches!(plan, PhysicalPlan::Limit(_)) && chain(plan, false)
+}
+
 fn limit_chain_over_index_scan(plan: &PhysicalPlan) -> bool {
     match plan {
         PhysicalPlan::IndexScan(_) => true,
@@ -7293,9 +7311,13 @@ fn build_reader_node(
                     .is_some_and(limit_chain_over_index_scan)
                     .then(|| reader.output_columns.clone())
             });
+            state.index_post_filter_columns = (state.index_output_columns.is_none()
+                && reader.index_plan.as_deref().is_some_and(limit_over_selection_chain))
+                .then(|| reader.output_columns.clone());
             let built = build_reader(plan.id(), reader.index_plan.as_deref(), catalog, ctx, state);
             state.index_scan_limit = None;
             state.index_output_columns = None;
+            state.index_post_filter_columns = None;
             state.index_cop_projection = false;
             let mut child = built?;
             // Go `dagReq.OutputOffsets` over a pushed Selection: the request
@@ -7911,6 +7933,25 @@ fn build_with_state(
                 let _ = child
                     .table_access()
                     .is_some_and(|access| access.accept_scan_limit(cap));
+            }
+            // Go `dagReq.OutputOffsets` over `Limit | Selection | IndexScan`:
+            // the request returns the reader's columns of what the Selection
+            // admitted, so the source narrows below this Limit.
+            if state.in_reader {
+                if let Some(outputs) = state.index_post_filter_columns.take() {
+                    let offsets = outputs
+                        .iter()
+                        .map(|output| {
+                            child.schema().columns.iter().position(|column| column.unique_id == output.unique_id)
+                        })
+                        .collect::<Option<Vec<_>>>();
+                    if let Some(offsets) = offsets {
+                        let output = Schema::new(outputs);
+                        let _ = child
+                            .table_access()
+                            .is_some_and(|access| access.accept_post_filter_projection(&offsets, &output));
+                    }
+                }
             }
             // A coprocessor Limit outputs its child's columns; the reader's
             // `OutputColumns` may already have narrowed them at the source.
