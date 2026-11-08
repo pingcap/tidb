@@ -238,7 +238,7 @@ fn write_binary_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
     options: ResultSetOptions,
     batch_size: usize,
 ) -> Result<ResultSetWriteOutcome, BinaryTrackedError> {
-    let mut chunk = source.new_chunk();
+    let mut chunk = source.new_write_chunk();
     let mut batch = if let Some(chunk) = &mut chunk {
         source.next_chunk(chunk).map(|()| Vec::new())
     } else {

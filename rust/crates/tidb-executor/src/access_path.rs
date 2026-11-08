@@ -4490,9 +4490,13 @@ impl tidb_executor_internal_exec::table_access::TableAccess for IndexRangeSource
     }
 
     fn accept_column_prune(&mut self, keep: &[usize]) -> bool {
+        // The synthetic handle and physical-table-id slots sit outside
+        // `self.keep`, so a prune could not carry them.
         if keep.is_empty()
             || keep.iter().any(|offset| *offset >= self.keep.len())
             || self.partial_aggregate.is_some()
+            || self.extra_handle_slot.is_some()
+            || self.physical_table_id_slot.is_some()
         {
             return false;
         }

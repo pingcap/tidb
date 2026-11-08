@@ -569,6 +569,9 @@ impl ResultSetSource for ProcessTrackedResultSet<'_> {
     fn new_chunk(&self) -> Option<tidb_chunk::chunk::Chunk> {
         self.inner.new_chunk()
     }
+    fn new_write_chunk(&self) -> Option<tidb_chunk::chunk::Chunk> {
+        self.inner.new_write_chunk()
+    }
     fn next_chunk(
         &mut self,
         chunk: &mut tidb_chunk::chunk::Chunk,
@@ -632,6 +635,9 @@ impl ResultSetSource for BoxedResultSetSource<'_> {
     }
     fn new_chunk(&self) -> Option<tidb_chunk::chunk::Chunk> {
         self.inner.new_chunk()
+    }
+    fn new_write_chunk(&self) -> Option<tidb_chunk::chunk::Chunk> {
+        self.inner.new_write_chunk()
     }
     fn next_chunk(
         &mut self,

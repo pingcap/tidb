@@ -172,6 +172,11 @@ struct BuildState {
     /// the region request; the local cursor has no request, so the scan build
     /// consumes it here. Set only while the reader's own subtree is built.
     index_scan_limit: Option<u64>,
+    /// A covering `IndexReader`'s `OutputColumns`, when its `IndexPlan` is the
+    /// bare `IndexScan`: Go's `dagReq.OutputOffsets` decode only those, in that
+    /// order, so the scan build narrows its source to them. Set only while
+    /// the reader's own subtree is built.
+    index_output_columns: Option<Vec<tidb_expr::column::Column>>,
     /// Go `getPhysicalPlanIDs(plans)` and `rootPlanID` of the reader whose
     /// pushed subtree is being built: the plan IDs its coprocessor
     /// executors report their summaries under.
@@ -2882,6 +2887,7 @@ fn build_index_reader(
     expect_cnt: Option<u64>,
     lookup_pushdown: bool,
     scan_limit: Option<u64>,
+    output_columns: Option<Vec<tidb_expr::column::Column>>,
     net_bytes: Option<f64>,
     range_group: Option<&tidb_ranger::types::Ranges>,
     catalog: &SessionExtendedInfoSchema,
@@ -3147,6 +3153,23 @@ fn build_index_reader(
     // by `compareExec.compare`. This tier folds that merge into the source;
     // arming it here keeps every other read untouched.
     source.enable_dirty_union_scan_merge();
+    // Go `dagReq.OutputOffsets` of a covering `IndexReader`: the request
+    // returns its `OutputColumns`, in their order, with no projection above.
+    if let Some(output_columns) = output_columns {
+        let keep = output_columns
+            .iter()
+            .map(|output| {
+                source
+                    .schema()
+                    .columns
+                    .iter()
+                    .position(|column| column.unique_id == output.unique_id)
+            })
+            .collect::<Option<Vec<_>>>();
+        if let Some(keep) = keep.filter(|keep| keep.iter().copied().ne(0..source.schema().columns.len())) {
+            let _ = source.accept_column_prune(&keep);
+        }
+    }
     let source: Box<dyn Executor> = if storage.is_mem_buffer() {
         Box::new(source)
     } else {
@@ -7139,8 +7162,11 @@ fn build_reader_node(
                 .as_deref()
                 .and_then(embedded_index_limit)
                 .map(|(offset, count)| offset.saturating_add(count));
+            state.index_output_columns = matches!(reader.index_plan.as_deref(), Some(PhysicalPlan::IndexScan(_)))
+                .then(|| reader.output_columns.clone());
             let built = build_reader(plan.id(), reader.index_plan.as_deref(), catalog, ctx, state);
             state.index_scan_limit = None;
+            state.index_output_columns = None;
             let child = built?;
             // The physical index row is ordered by index keys and handles.
             // Go's reader OutputColumns restores the datasource's output.
@@ -7181,6 +7207,7 @@ fn build_reader_node(
                 reader.pushed_limit,
                 reader.paging.then_some(reader.expect_cnt),
                 reader.index_lookup_push_down,
+                None,
                 None,
                 None,
                 state.range_group.as_ref(),
@@ -7537,6 +7564,7 @@ fn build_with_state(
             None,
             false,
             state.index_scan_limit.take(),
+            state.index_output_columns.take(),
             state.reader_net_bytes,
             state.range_group.as_ref(),
             catalog,

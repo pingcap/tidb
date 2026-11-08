@@ -3041,6 +3041,74 @@ fn strings(values: &[&str]) -> Vec<String> {
 /// `BEGIN` the execute status is `0x0043` and the FETCH `0x0083`. The cursor
 /// bookkeeping is Go's `TestCursorWillBeClosed` / `TestDetachError`
 /// (`pkg/executor/staticrecordset/integration_test.go`).
+/// Go's `clientConn.writeChunks` draws the result chunk from the session's
+/// allocator (`rs.NewChunk(sessVars.GetChunkAllocator())`), whose columns a
+/// later statement's write loop reuses at their grown capacity, and a covering
+/// `IndexReader` returns its `OutputColumns` with no projection chunk above
+/// it (`dagReq.OutputOffsets`). Go reads the target's operator memory through
+/// the target session's current statement (`p.SCtx()`). Captured from a Go
+/// tidb-server over the wire.
+#[test]
+fn explain_for_connection_charges_reused_chunks_like_go() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let store = users();
+    let node = node_over(&store);
+    let worker_node = Arc::clone(&node);
+    std::thread::spawn(move || {
+        for _ in 0..2 {
+            let (stream, peer_addr) = listener.accept().unwrap();
+            let node = Arc::clone(&worker_node);
+            let store = store.clone();
+            let tracker = Arc::clone(&tracker);
+            std::thread::spawn(move || {
+                let _ = serve_mysql_connection(
+                    stream,
+                    peer_addr,
+                    ConnectionCancellation::default(),
+                    node.factory().as_ref(),
+                    &store,
+                    &tracker,
+                    DEFAULT_MAX_ALLOWED_PACKET,
+                );
+            });
+        }
+    });
+    let connect = || {
+        let mut client = TcpStream::connect(address).unwrap();
+        let mut reader = PacketReader::new(client.try_clone().unwrap());
+        authenticate(&mut client, &mut reader);
+        (client, reader)
+    };
+    let (mut target, mut target_reader) = connect();
+    let (mut other, mut other_reader) = connect();
+    run_write(&mut target, &mut target_reader, "CREATE TABLE t (id INT PRIMARY KEY, uk INT, b INT, UNIQUE KEY(uk))");
+    run_write(&mut target, &mut target_reader, "INSERT INTO t VALUES (1,10,0),(2,20,0),(3,30,0)");
+    let id = run_query(&mut target, &mut target_reader, "SELECT connection_id()")[0][0].clone();
+    let root_memory = |client: &mut TcpStream, reader: &mut PacketReader<TcpStream>| {
+        let plan = run_query(client, reader, &format!("EXPLAIN FOR CONNECTION {id}"));
+        (plan[0][0].clone(), plan[0][7].clone())
+    };
+    for (warm, memory) in [
+        ("SELECT 1", "889 Bytes"),
+        ("SELECT id FROM t", "889 Bytes"),
+        ("UPDATE t SET b = b + 1 WHERE b > 100", "1.11 KB"),
+    ] {
+        run_write(&mut target, &mut target_reader, "UPDATE t SET b = 1 WHERE id = 3");
+        if warm.starts_with("SELECT") {
+            run_query(&mut target, &mut target_reader, warm);
+        } else {
+            run_write(&mut target, &mut target_reader, warm);
+        }
+        run_write(&mut target, &mut target_reader, "UPDATE t SET b = b + 1 WHERE id = 1");
+        assert_eq!(root_memory(&mut other, &mut other_reader), ("Update_3".to_owned(), memory.to_owned()), "{warm}");
+    }
+    // The connection explaining itself reads its own current statement's
+    // trackers, which hold no `Update_3`.
+    assert_eq!(root_memory(&mut target, &mut target_reader), ("Update_3".to_owned(), "N/A".to_owned()));
+}
+
 #[test]
 fn lazy_cursor_fetch_detaches_and_tracks_the_cursor_like_go() {
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();

@@ -116,6 +116,27 @@ impl RecordSet {
         &self.current_db
     }
 
+    /// Go `recordSet.NewChunk(alloc)` with an allocator: `alloc.Alloc` over
+    /// the root executor's field types, initial capacity and max chunk size;
+    /// without one, [`Self::new_chunk`].
+    pub fn new_chunk_with_alloc(
+        &self,
+        alloc: Option<&std::sync::Arc<dyn tidb_chunk::alloc::Allocator>>,
+    ) -> Chunk {
+        let Some(alloc) = alloc else {
+            return self.new_chunk();
+        };
+        match &self.executor {
+            Some(executor) => alloc
+                .alloc(executor.ret_field_types(), executor.init_cap(), executor.max_chunk_size())
+                .into_pooled_chunk(),
+            None => {
+                let types: Vec<_> = self.columns.iter().map(|(_, ty)| ty.clone()).collect();
+                alloc.alloc(&types, self.init_cap, self.max_chunk_size).into_pooled_chunk()
+            }
+        }
+    }
+
     /// Go `recordSet.NewChunk(nil)` (how a session drains its own result,
     /// `sqlexec.DrainRecordSet`): `exec.NewFirstChunk`, outside the session's
     /// allocator, retaining schema after the executor closes.

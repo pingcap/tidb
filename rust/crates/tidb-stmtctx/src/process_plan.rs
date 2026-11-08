@@ -157,8 +157,6 @@ pub struct ProcessPlanInfo {
     /// The statement's memory, whose trackers Go's plan reads through its
     /// `SCtx()` (`getRuntimeInfo`'s `StmtCtx.MemTracker` / `DiskTracker`).
     pub statement_memory: Option<StoredPlan>,
-    /// [`Self::statement_memory`] of the previous statement.
-    pub previous_statement_memory: Option<StoredPlan>,
     /// Go's process plan is one `EXPLAIN FOR CONNECTION` renders as no rows:
     /// an `Explain` plan, or the plan of a statement this port runs without a
     /// physical one (SET, USE, DDL, transaction control).

@@ -886,7 +886,10 @@ impl ProcessRegistry {
                         cell.previous_plan.clone().map(|plan| PublishedPlan {
                             plan,
                             runtime_stats_coll: cell.previous_runtime_stats_coll.clone(),
-                            statement_memory: cell.previous_statement_memory.clone(),
+                            // Go reads the plan's memory through its
+                            // session's current `StmtCtx`, whichever plan the
+                            // process info kept.
+                            statement_memory: cell.statement_memory.clone(),
                             brief_binary_plan: cell.previous_brief_binary_plan.clone(),
                             in_execute: cell.previous_in_execute,
                         })

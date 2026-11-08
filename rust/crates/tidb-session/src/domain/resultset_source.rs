@@ -56,6 +56,12 @@ pub trait ResultSetSource {
         None
     }
 
+    /// The chunk the connection writes the result through (Go
+    /// `writeChunks`' `rs.NewChunk(sessVars.GetChunkAllocator())`).
+    fn new_write_chunk(&self) -> Option<tidb_chunk::chunk::Chunk> {
+        self.new_chunk()
+    }
+
     /// Fills the source's reusable chunk.
     fn next_chunk(
         &mut self,
@@ -144,6 +150,10 @@ impl<S: ResultSetSource + ?Sized> ResultSetSource for PullTimedResultSetSource<'
 
     fn new_chunk(&self) -> Option<tidb_chunk::chunk::Chunk> {
         self.inner.new_chunk()
+    }
+
+    fn new_write_chunk(&self) -> Option<tidb_chunk::chunk::Chunk> {
+        self.inner.new_write_chunk()
     }
 
     fn next_chunk(

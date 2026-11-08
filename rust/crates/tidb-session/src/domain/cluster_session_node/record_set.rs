@@ -208,6 +208,9 @@ impl ResultSetSource for ClusterRecordSet<'_> {
     fn new_chunk(&self) -> Option<Chunk> {
         Some(self.state.new_chunk())
     }
+    fn new_write_chunk(&self) -> Option<Chunk> {
+        Some(self.state.new_write_chunk())
+    }
     fn field_types(&self) -> &[FieldType] {
         &self.field_types
     }

@@ -164,6 +164,15 @@ impl StatementRecordSet {
         self.query.record_set.new_chunk()
     }
 
+    /// Go `clientConn.writeChunks`' `rs.NewChunk(sessVars.GetChunkAllocator())`:
+    /// the chunk the connection writes the result through comes from the
+    /// statement's allocator, whose columns later statements reuse.
+    pub fn new_write_chunk(&self) -> Chunk {
+        self.query
+            .record_set
+            .new_chunk_with_alloc(self.query.context.chunk_allocator().as_ref())
+    }
+
     /// Go `recordSet.TryDetach` on the statement's record set: the executor
     /// tree leaves this owner, which keeps only metadata and finishes and
     /// closes the statement as before. A replayed (retained) or already

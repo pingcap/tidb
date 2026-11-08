@@ -171,7 +171,7 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
     options: ResultSetOptions,
     batch_size: usize,
 ) -> Result<ResultSetWriteOutcome, TrackedResultSetWriteError> {
-    if let Some(chunk) = source.new_chunk() {
+    if let Some(chunk) = source.new_write_chunk() {
         return write_chunk_result_set(source, sink, options, chunk);
     }
     let batch_size = batch_size.max(1);

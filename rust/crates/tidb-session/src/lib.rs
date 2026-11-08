@@ -2000,7 +2000,6 @@ impl Session {
             if previous.plan.is_some() || previous.explain_marker {
                 previous.previous_plan = previous.plan.take();
                 previous.previous_runtime_stats_coll = previous.runtime_stats_coll.take();
-                previous.previous_statement_memory = previous.statement_memory.take();
                 previous.previous_explain = previous.explain_marker;
                 previous.previous_brief_binary_plan = std::mem::take(&mut previous.brief_binary_plan);
                 previous.previous_in_execute = previous.in_execute;
@@ -2009,7 +2008,6 @@ impl Session {
             cell.previous_brief_binary_plan = previous.previous_brief_binary_plan;
             cell.previous_in_execute = previous.previous_in_execute;
             cell.previous_runtime_stats_coll = previous.previous_runtime_stats_coll;
-            cell.previous_statement_memory = previous.previous_statement_memory;
             cell.previous_explain = previous.previous_explain;
         }
     }

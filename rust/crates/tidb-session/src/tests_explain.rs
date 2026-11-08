@@ -3562,6 +3562,13 @@ fn a_projection_charges_its_chunks_like_go() {
             vec![("Projection_11(Seed Part)", "0 Bytes"), ("Projection_13(Recursive Part)", "380 Bytes")],
         ),
     ] {
+        // `./gorun`'s session draws no chunk from the connection allocator,
+        // so its charges are those of an empty pool; the recursive part's
+        // reused columns would otherwise depend on what the statements
+        // before it left in this session's pool.
+        if sql.starts_with("WITH RECURSIVE") {
+            session = Session::new();
+        }
         let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
         for (operator, memory) in expected {
             let row = rows
