@@ -398,7 +398,8 @@ func ftsTermColumnDNF(ctx BuildContext, columns []Expression, kind ftsLikeTermKi
 // per-term column-DNFs, and optional terms anchor the result only when no
 // required terms exist (since LIKE cannot rank).
 func buildFTSBooleanModeILikeExpression(ctx BuildContext, columns []Expression, terms *ftsLikeTerms, pattern ftsLikePatternFunc) (Expression, error) {
-	var allPredicates []Expression
+	// +1 for the optional-term DNF added below when there are no required terms.
+	allPredicates := make([]Expression, 0, len(terms.required)+len(terms.excluded)+1)
 
 	// For each required term: (col1 ILIKE %term% OR col2 ILIKE %term% ...)
 	for i, term := range terms.required {
