@@ -9566,3 +9566,43 @@ fn an_index_lookup_pushes_its_table_side_topn_into_each_task_like_go() {
     assert_eq!(row("IndexLookUp_19")[7], "6.31 KB", "{rows:?}");
     assert_eq!(row_text(session.run(sql)).len(), 5);
 }
+
+/// Go's index merge partial workers: the index worker's request charges its
+/// responses to the reader's tracker and its chunk of the handle columns
+/// (capacity `maxChunkSize`, 8440 bytes) to the same tracker, which
+/// `extractTaskHandles`' zero-valued deferred release never gives back; the
+/// table worker is a `TableReaderExecutor` whose own tracker, labelled with
+/// the partial plan, takes its responses. The process worker charges both
+/// tasks' handles and detaches before the table workers run, so the
+/// reader's peak is both chunks and both handle sets (8440 * 2 + 8192 * 2).
+#[test]
+fn an_index_merge_charges_its_partial_workers_like_go() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT PRIMARY KEY, b INT, c VARCHAR(20), d DOUBLE, KEY(b))")
+        .unwrap();
+    let values = (1..=200)
+        .map(|i| format!("({i},{},'s{}',{i}.5)", i % 7, i % 13))
+        .collect::<Vec<_>>()
+        .join(",");
+    session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+    let sql = "SELECT /*+ use_index_merge(t) */ * FROM t WHERE a < 10 OR b = 3";
+    let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+    let row = |operator: &str| {
+        rows.iter()
+            .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()) == operator)
+            .unwrap_or_else(|| panic!("{operator}: {rows:?}"))
+    };
+    assert_eq!(row("IndexMerge_8")[2], "37", "{rows:?}");
+    assert_eq!(row("IndexMerge_8")[7], "32.5 KB", "{rows:?}");
+    // The response's execution summaries carry processing times as varints:
+    // Go's 289 Bytes moves by a few bytes with timing.
+    let partial = &row("TableRangeScan_5(Build)")[7];
+    let bytes: i64 = partial
+        .strip_suffix(" Bytes")
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("{partial}: {rows:?}"));
+    assert!((bytes - 289).abs() <= 12, "{partial} vs Go 289 Bytes: {rows:?}");
+    assert_eq!(row("IndexRangeScan_6(Build)")[7], "N/A", "{rows:?}");
+    assert_eq!(row_text(session.run(sql)).len(), 37);
+}

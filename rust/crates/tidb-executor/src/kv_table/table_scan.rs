@@ -4429,7 +4429,7 @@ impl RemoteIndexHandleCursor {
     /// `indexWorker.getHandle` reads the dense handle columns before building
     /// a lookup task; keeping this conversion here lets both integer and
     /// common handles share the same `readFromChunk` boundary.
-    fn handle_from_chunk_row(
+    pub(crate) fn handle_from_chunk_row(
         &self,
         batch: &Chunk,
         row_index: usize,
@@ -4488,6 +4488,32 @@ impl RemoteIndexHandleCursor {
             || !self.inner.supports_chunks()
             || chk.num_cols() == 0
             || projected.iter().copied().ne(0..chk.num_cols())
+        {
+            return Ok(None);
+        }
+        let filled = self
+            .inner
+            .next_chunk_into(required_rows, chk)
+            .map_err(KvTableError::from)?;
+        self.note_rows();
+        Ok(Some(filled))
+    }
+
+    /// Go `partialIndexWorker.extractTaskHandles`' `idxResult.Next(ctx, chk)`
+    /// for a handle-only request: the response decodes into the worker's
+    /// chunk of the handle columns (`getRetTpsForIndexScan`), a large
+    /// response chunk replacing its columns (`readFromChunk`'s
+    /// `ReuseIntermChk`). `None` when the wire row is not that chunk's row.
+    pub fn next_handle_chunk_into(
+        &mut self,
+        required_rows: usize,
+        chk: &mut Chunk,
+    ) -> Result<Option<bool>, KvTableError> {
+        if self.pending_chunk.is_some()
+            || self.projected_indices.is_some()
+            || !self.inner.supports_chunks()
+            || chk.num_cols() == 0
+            || self.handle_indices.iter().copied().ne(0..chk.num_cols())
         {
             return Ok(None);
         }

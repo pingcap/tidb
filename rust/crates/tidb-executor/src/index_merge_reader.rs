@@ -79,9 +79,11 @@
 //!   whenever `hasGlobalIndex`, precisely because a global index would break
 //!   that disjointness. A single sequential map over `(partition, handle)`
 //!   computes the identical multiset.
-//! * **Table scan workers.** Unordered union produces each task on demand,
-//!   retaining its dedup and LIMIT state across calls, so an outer LIMIT can
-//!   close the pipeline without first draining every partial. Each table
+//! * **Table scan workers.** Unordered union runs ahead of the table tasks
+//!   as Go's process worker does -- by the table workers' count plus
+//!   `workCh`'s one slot -- retaining its dedup and LIMIT state across calls,
+//!   so an outer LIMIT can close the pipeline without first draining every
+//!   partial. Each table
 //!   task completes its reader before exposing rows and owns the result chunks;
 //!   tasks are handed to `resultCh` in the order the process worker created
 //!   them, and `getResultTask` consumes `resultCh` in that order. So the
@@ -89,8 +91,9 @@
 //!   out in the task's handle order. Running the readers one at a time changes
 //!   latency, not row order.
 //!
-//! Sequential execution does not establish parity for latency, speculative
-//! reads, concurrent failure timing or memory use. For result ordering it
+//! Sequential execution does not establish parity for latency or concurrent
+//! failure timing; memory follows Go's modal schedule, in which the partial
+//! and process workers finish ahead of the table workers. For result ordering it
 //! chooses one of the interleavings Go leaves unspecified:
 //!
 //! * **Union output order.** Go's first-writer-wins dedup means which of two
@@ -676,7 +679,12 @@ pub(crate) struct ExecutorPartialHandleSource {
     sort_key_columns: Vec<usize>,
     retained_columns: Vec<usize>,
     memory_label: i64,
-    memory: Option<MergeProcessMemory>,
+    memory: Option<MergeReaderMemory>,
+    /// Go `fetchHandles`' worker chunk, created once per open.
+    chunk: Option<Chunk>,
+    /// Go's partial `TableReaderExecutor.memTracker`, which its request
+    /// charges its responses to.
+    reader_tracker: Option<std::sync::Arc<tidb_memory::Tracker>>,
     batch_size: usize,
     initial_batch_size: usize,
     max_batch_size: usize,
@@ -705,6 +713,8 @@ impl ExecutorPartialHandleSource {
             retained_columns: sort_key_columns.clone(),
             memory_label: 0,
             memory: None,
+            chunk: None,
+            reader_tracker: None,
             sort_key_columns,
             batch_size,
             initial_batch_size: batch_size,
@@ -715,6 +725,11 @@ impl ExecutorPartialHandleSource {
 
     pub(crate) fn with_memory_label(mut self, label: i64) -> Self {
         self.memory_label = label;
+        self
+    }
+
+    pub(crate) fn with_reader_tracker(mut self, tracker: std::sync::Arc<tidb_memory::Tracker>) -> Self {
+        self.reader_tracker = Some(tracker);
         self
     }
 
@@ -776,14 +791,25 @@ impl ExecutorPartialHandleSource {
 impl PartialHandleSource for ExecutorPartialHandleSource {
     fn open(&mut self) -> Result<(), ExecError> {
         self.batch_size = self.initial_batch_size;
-        self.memory = Some(MergeProcessMemory::new(
-            &self.decode_context.expression().statement_memory(),
-            self.memory_label,
-        ));
+        let memory = self.decode_context.expression().statement_memory();
+        // Go `TableReaderExecutor.Open`: `e.memTracker.Reset()` and
+        // `AttachTo(e.stmtMemTracker)`.
+        if let Some(tracker) = &self.reader_tracker {
+            tracker.reset();
+            tracker.attach_to(memory.stmt_tracker());
+        }
+        self.memory = Some(MergeReaderMemory::new(&memory, self.memory_label));
         if let Err(error) = self.executor.open() {
             self.memory = None;
             return Err(error);
         }
+        // Go `fetchHandles`: `w.tableReader.NewChunkWithCapacity(
+        // w.getRetTpsForTableScan(), w.maxChunkSize, w.maxBatchSize)`.
+        self.chunk = Some(Chunk::new(
+            &self.field_types,
+            self.executor.max_chunk_size(),
+            self.max_batch_size,
+        ));
         Ok(())
     }
 
@@ -799,11 +825,29 @@ impl PartialHandleSource for ExecutorPartialHandleSource {
         if target == 0 {
             return Ok(None);
         }
-        let mut scratch = MergeScratchMemory {
-            memory: self.memory.as_ref().expect("partial source is open"),
-            bytes: 0,
-        };
-        let mut chunk = self.executor.new_chunk();
+        let mut chunk = self.chunk.take().expect("partial source is open");
+        let batch = self.extract_task_handles(&mut chunk, target, maximum);
+        self.chunk = Some(chunk);
+        batch
+    }
+
+    fn close(&mut self) -> Result<(), ExecError> {
+        let result = self.executor.close();
+        self.memory = None;
+        self.chunk = None;
+        result
+    }
+}
+
+impl ExecutorPartialHandleSource {
+    /// Go `partialTableWorker.extractTaskHandles` over the worker's chunk.
+    fn extract_task_handles(
+        &mut self,
+        chunk: &mut Chunk,
+        target: usize,
+        maximum: usize,
+    ) -> Result<Option<PartialHandleBatch>, ExecError> {
+        let memory = self.memory.as_ref().expect("partial source is open");
         let mut handles = Vec::with_capacity(target);
         let mut sort_keys = if self.sort_key_columns.is_empty() {
             MergeSortKeys::default()
@@ -818,13 +862,13 @@ impl PartialHandleSource for ExecutorPartialHandleSource {
                 (target - handles.len()) as isize,
                 self.executor.max_chunk_size(),
             );
-            self.executor.next(&mut chunk)?;
+            self.executor.next(chunk)?;
             if chunk.num_rows() == 0 {
                 return Ok(
                     (!handles.is_empty()).then_some(PartialHandleBatch { handles, sort_keys })
                 );
             }
-            scratch.consume(chunk.memory_usage())?;
+            memory.consume_chunk(chunk.memory_usage())?;
             for row_index in 0..chunk.num_rows().min(maximum - handles.len()) {
                 let row = chunk.get_row(row_index);
                 handles.push(HandleRef {
@@ -840,12 +884,6 @@ impl PartialHandleSource for ExecutorPartialHandleSource {
             self.batch_size = self.batch_size.saturating_mul(2).min(self.max_batch_size);
         }
         Ok(Some(PartialHandleBatch { handles, sort_keys }))
-    }
-
-    fn close(&mut self) -> Result<(), ExecError> {
-        let result = self.executor.close();
-        self.memory = None;
-        result
     }
 }
 
@@ -1129,24 +1167,30 @@ impl Drop for MergeProcessMemory {
     }
 }
 
-/// Go extractTaskHandles defers releasing the sum of fetched chunk charges,
-/// while the worker tracker itself survives for later extraction calls.
-struct MergeScratchMemory<'a> {
-    memory: &'a MergeProcessMemory,
-    bytes: i64,
+/// A partial worker's `w.memTracker`, which is the reader's own `e.memTracker`.
+pub(crate) struct MergeReaderMemory {
+    tracker: std::sync::Arc<tidb_memory::Tracker>,
+    memory: crate::StatementMemory,
 }
 
-impl MergeScratchMemory<'_> {
-    fn consume(&mut self, bytes: i64) -> Result<(), ExecError> {
-        self.bytes = self.bytes.saturating_add(bytes);
-        self.memory.consume(bytes)
+impl MergeReaderMemory {
+    pub(crate) fn new(memory: &crate::StatementMemory, label: i64) -> Self {
+        Self {
+            tracker: memory.persistent_operator_tracker(label),
+            memory: memory.clone(),
+        }
     }
-}
 
-impl Drop for MergeScratchMemory<'_> {
-    fn drop(&mut self) {
-        // Cleanup must release the charge even when cancellation is latched.
-        self.memory.tracker.consume(-self.bytes);
+    pub(crate) fn tracker(&self) -> &std::sync::Arc<tidb_memory::Tracker> {
+        &self.tracker
+    }
+
+    /// Go `extractTaskHandles`' `w.memTracker.Consume(memDelta)`. Its
+    /// `defer w.memTracker.Consume(-memUsage)` evaluates `memUsage` when the
+    /// defer is registered, still zero, so the charge is never released.
+    pub(crate) fn consume_chunk(&self, bytes: i64) -> Result<(), ExecError> {
+        self.tracker.consume(bytes);
+        self.memory.check().map_err(ExecError::from)
     }
 }
 
@@ -1279,6 +1323,9 @@ pub struct IndexMergeReaderExecutor {
     tasks: VecDeque<Vec<HandleRef>>,
     /// Unordered union emits one task on demand instead of queuing its full input.
     union_process: Option<UnionProcess>,
+    /// Go's `IndexLookupConcurrency()` table scan workers, which take tasks
+    /// from `workCh` while the process worker runs ahead of them.
+    table_workers: usize,
     /// Go resultCurr: completed rows retained until replacement or Close.
     current: Option<MergeTableTask>,
     /// Go `IndexMergeReaderExecutor.stats`, when collected.
@@ -1320,8 +1367,16 @@ impl IndexMergeReaderExecutor {
             started: false,
             tasks: VecDeque::new(),
             union_process: None,
+            table_workers: 0,
             current: None,
         }
+    }
+
+    /// Go `startIndexMergeTableScanWorker`'s worker count.
+    #[must_use]
+    pub(crate) fn with_table_workers(mut self, workers: usize) -> Self {
+        self.table_workers = workers;
+        self
     }
 
     /// The final table request retains statement settings and average row width.
@@ -1428,18 +1483,22 @@ impl IndexMergeReaderExecutor {
     }
 
     fn next_table_task(&mut self) -> Result<Option<Vec<HandleRef>>, ExecError> {
-        if self.union_process.is_none() {
-            return Ok(self.tasks.pop_front());
+        // Go's process worker runs ahead of the table workers: each worker
+        // holds a task it is executing and `workCh` buffers one more, so the
+        // worker blocks only once those are all taken, and exits (detaching
+        // its tracker) when the partials run dry.
+        while self.union_process.is_some() && self.tasks.len() <= self.table_workers {
+            let result = self.next_union_task();
+            if let Ok(Some(task)) = result {
+                self.tasks.push_back(task);
+                continue;
+            }
+            self.union_process = None;
+            let closed = self.close_partials();
+            result?;
+            closed?;
         }
-        let result = self.next_union_task();
-        if matches!(result, Ok(Some(_))) {
-            return result;
-        }
-        self.union_process = None;
-        let closed = self.close_partials();
-        let task = result?;
-        closed?;
-        Ok(task)
+        Ok(self.tasks.pop_front())
     }
 
     fn close_partials(&mut self) -> Result<(), ExecError> {

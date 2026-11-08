@@ -3586,6 +3586,60 @@ impl IndexRangeSourceExec {
         self.next_handle()
     }
 
+    /// Go `partialIndexWorker`'s `RequestBuilder.SetMemTracker(e.memTracker)`:
+    /// the index merge reader's tracker takes this partial's responses.
+    pub(crate) fn set_select_mem_tracker(&mut self, tracker: Arc<tidb_memory::Tracker>) {
+        self.statement.select_mem_tracker = Some(tracker);
+    }
+
+    /// Go `partialIndexWorker.extractTaskHandles`' one `idxResult.Next(ctx,
+    /// chk)`: up to `required_rows` handles in `chk`, the worker's chunk of
+    /// the handle columns, with their partition ordinals. A remote stream
+    /// decodes its next response into `chk`; the in-process cursor appends
+    /// the handles it walks (a common handle as its encoded key datums).
+    pub(crate) fn next_index_merge_chunk(
+        &mut self,
+        required_rows: usize,
+        chk: &mut Chunk,
+    ) -> Result<Vec<(TableHandle, usize)>, ExecError> {
+        chk.reset();
+        if self.pending_handle.is_none() && self.skipped_handles >= self.lookup_offset {
+            if let Some(remote) = self.remote_index.as_mut() {
+                if remote
+                    .next_handle_chunk_into(required_rows, chk)
+                    .map_err(ExecError::from)?
+                    .is_some()
+                {
+                    let handles = (0..chk.num_rows())
+                        .map(|row| remote.handle_from_chunk_row(chk, row).map(|handle| (handle, 0)))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(ExecError::from)?;
+                    self.scanned.set(self.scanned.get() + handles.len() as u64);
+                    self.produced.set(self.produced.get() + handles.len() as u64);
+                    return Ok(handles);
+                }
+            }
+        }
+        let mut handles = Vec::new();
+        while handles.len() < required_rows {
+            let Some((handle, partition)) = self.next_index_merge_handle()? else {
+                break;
+            };
+            match &handle {
+                TableHandle::Int(value) => chk.append_int64(0, *value),
+                TableHandle::Common(encoded) => {
+                    let datums = tidb_codec::decode(encoded, chk.num_cols())
+                        .map_err(|error| ExecError::internal(format!("common handle decode: {error:?}")))?;
+                    for (column, datum) in datums.iter().enumerate() {
+                        chk.append_datum(column, datum);
+                    }
+                }
+            }
+            handles.push((handle, partition));
+        }
+        Ok(handles)
+    }
+
     /// Go's partial index worker projects handles, not table rows. Preserve
     /// the cursor's partition ordinal through this index-only output path.
     pub(crate) fn next_index_merge_handle(

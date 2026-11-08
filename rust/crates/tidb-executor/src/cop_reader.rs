@@ -669,11 +669,12 @@ pub fn build_resp(
     // Go `TableReaderExecutor`/`IndexReaderExecutor`'s `memTracker`
     // (`NewTracker(e.ID(), -1)` under `StmtCtx.MemTracker`), which the
     // select result charges its responses to. An index lookup's sides
-    // and an index merge's partials report under a pushed root, which
+    // and an index merge's table tasks report under a pushed root, which
     // Go gives no tracker.
     //
     // A reader that names the tracker itself (`SetMemTracker`, an index
-    // lookup's index worker) charges that one.
+    // lookup's index worker, an index merge's partial workers) charges
+    // that one.
     let memory_tracker = request.statement.select_mem_tracker.clone().or_else(|| {
         (!request.statement.select_mem_untracked
             && root_plan_id > 0

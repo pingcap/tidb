@@ -188,6 +188,9 @@ struct BuildState {
     /// pushed subtree is being built: the plan IDs its coprocessor
     /// executors report their summaries under.
     cop_chain: Option<CopChain>,
+    /// Go `TableReaderExecutor.memTracker` of an index merge's partial table
+    /// worker, which its select result charges each response to.
+    reader_mem_tracker: Option<Arc<tidb_memory::Tracker>>,
     reader_net_bytes: Option<f64>,
     /// One task-local replacement for the retained index-merge table scan.
     table_task_source: Option<(i32, Box<dyn Executor>)>,
@@ -1230,6 +1233,7 @@ fn build_table_scan(
     range_group: Option<&tidb_ranger::types::Ranges>,
     storage: &ReaderStorage,
     cop_chain: Option<&CopChain>,
+    reader_mem_tracker: Option<Arc<tidb_memory::Tracker>>,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let (table, store, separated) = storage.table(
         ctx,
@@ -1266,6 +1270,13 @@ fn build_table_scan(
                 })
                 .collect::<Vec<_>>()
         });
+    let mut statement = with_reader_cop_chain(
+        crate::remote_scan::pushdown_statement_context(ctx),
+        plan,
+        None,
+        cop_chain,
+    );
+    statement.select_mem_tracker = reader_mem_tracker;
     let mut source = TableScanExec::new_with_context(
         meta(ctx, plan, schema.clone()),
         std::sync::Arc::unwrap_or_clone(table),
@@ -1273,12 +1284,7 @@ fn build_table_scan(
         RowDecodeContext::for_query(ctx),
         ReaderStorage::statement(
             separated,
-            with_reader_cop_chain(
-                crate::remote_scan::pushdown_statement_context(ctx),
-                plan,
-                None,
-                cop_chain,
-            )
+            statement
             .with_plan_id(i64::from(scan.base.base.id()))
                 .with_estimated_net_bytes(net_bytes.unwrap_or_else(|| {
                     plan.cop_net_data_size(
@@ -6191,6 +6197,26 @@ fn schema_column_slot(schema: &Schema, wanted: &Column) -> Option<usize> {
         })
 }
 
+/// Go `handleCols.GetFieldsTypes()`: the partial index worker's chunk
+/// columns (`getRetTpsForIndexScan` with no by-items).
+fn index_merge_handle_field_types(
+    schema: &Schema,
+    table: &crate::TableCommon,
+) -> Result<Vec<FieldType>, DriverError> {
+    let slots = match partial_handle_columns(schema, table)? {
+        PartialHandleColumns::Int(column) => vec![column],
+        PartialHandleColumns::Common(columns) => columns,
+    };
+    slots
+        .into_iter()
+        .map(|slot| {
+            schema.columns[slot].ret_type.clone().ok_or_else(|| {
+                DriverError::unsupported("an index-merge handle column has no type")
+            })
+        })
+        .collect()
+}
+
 fn partial_handle_columns(
     schema: &Schema,
     table: &crate::TableCommon,
@@ -6274,12 +6300,32 @@ struct IndexPartialHandleSource {
     initial_batch_size: usize,
     batch_size: usize,
     max_batch_size: usize,
+    /// The index merge reader's plan ID: Go's `e.memTracker`, which the
+    /// worker charges its chunk to and its request its responses.
+    memory_label: i64,
+    /// Go `getRetTpsForIndexScan`: the handle columns.
+    chunk_field_types: Vec<FieldType>,
+    max_chunk_size: usize,
+    memory: Option<crate::index_merge_reader::MergeReaderMemory>,
+    /// Go `fetchHandles`' `chunk.NewChunkWithCapacity(tps, w.maxChunkSize)`.
+    chunk: Option<Chunk>,
 }
 
 impl PartialHandleSource for IndexPartialHandleSource {
     fn open(&mut self) -> Result<(), crate::ExecError> {
         self.reported = false;
         self.batch_size = self.initial_batch_size;
+        let memory = crate::index_merge_reader::MergeReaderMemory::new(
+            &self.ctx.statement_memory(),
+            self.memory_label,
+        );
+        self.source.set_select_mem_tracker(Arc::clone(memory.tracker()));
+        self.memory = Some(memory);
+        self.chunk = Some(Chunk::new(
+            &self.chunk_field_types,
+            self.max_chunk_size,
+            self.max_chunk_size,
+        ));
         self.source.open()
     }
 
@@ -6291,19 +6337,29 @@ impl PartialHandleSource for IndexPartialHandleSource {
         &mut self,
         maximum: usize,
     ) -> Result<Option<PartialHandleBatch>, crate::ExecError> {
+        // Go `partialIndexWorker.extractTaskHandles`: each non-empty
+        // `idxResult.Next` charges the chunk.
         let target = self.batch_size.min(maximum);
+        let memory = self.memory.as_ref().expect("partial source is open");
+        let chunk = self.chunk.as_mut().expect("partial source is open");
         let mut handles = Vec::with_capacity(target);
         while handles.len() < target {
-            let Some((handle, partition)) = self.source.next_index_merge_handle()? else {
+            let required = (target - handles.len()).min(self.max_chunk_size);
+            chunk.set_required_rows(required as isize, self.max_chunk_size);
+            let batch = self.source.next_index_merge_chunk(required, chunk)?;
+            if batch.is_empty() {
                 break;
-            };
-            let partition_index = *self.partition_indexes.get(partition).ok_or_else(|| {
-                crate::ExecError::internal("index-merge cursor returned an unknown partition")
-            })?;
-            handles.push(HandleRef {
-                handle,
-                partition_index,
-            });
+            }
+            memory.consume_chunk(chunk.memory_usage())?;
+            for (handle, partition) in batch {
+                let partition_index = *self.partition_indexes.get(partition).ok_or_else(|| {
+                    crate::ExecError::internal("index-merge cursor returned an unknown partition")
+                })?;
+                handles.push(HandleRef {
+                    handle,
+                    partition_index,
+                });
+            }
         }
         if handles.len() == self.batch_size {
             self.batch_size = self.batch_size.saturating_mul(2).min(self.max_batch_size);
@@ -6316,6 +6372,8 @@ impl PartialHandleSource for IndexPartialHandleSource {
 
     fn close(&mut self) -> Result<(), crate::ExecError> {
         let result = self.source.close();
+        self.memory = None;
+        self.chunk = None;
         if !self.reported {
             self.reported = true;
             if let Some(access) = self.source.table_access() {
@@ -6400,6 +6458,7 @@ fn build_index_merge_reader(
                 // a partial whose ranges came out empty (`c1 >= 3 and
                 // c1 <= 1`) reads no keys.
                 let ranges = scan.ranges.clone();
+                let chunk_field_types = index_merge_handle_field_types(&partial_schema, &table)?;
                 let mut source = IndexRangeSourceExec::new_with_statement(
                     meta(ctx, partial, partial_schema),
                     partial_table.clone(),
@@ -6450,6 +6509,11 @@ fn build_index_merge_reader(
                             ),
                         batch_size: 0,
                         max_batch_size: ctx.index_lookup_size(),
+                        memory_label: i64::from(plan.id()),
+                        chunk_field_types,
+                        max_chunk_size: ctx.executor_chunk_sizes().1,
+                        memory: None,
+                        chunk: None,
                     }),
                 ));
                 continue;
@@ -6473,6 +6537,9 @@ fn build_index_merge_reader(
                 Some(groups) => groups.into_iter().map(Some).collect(),
                 None => vec![None],
             };
+        // Go's partial table worker opens one `TableReaderExecutor`, its
+        // tracker labelled with the partial plan, for every partition.
+        let reader_tracker = tidb_memory::Tracker::new(i64::from(partial.id()), -1);
         let streams = selected
             .into_iter()
             .flat_map(|partition_index| {
@@ -6490,8 +6557,14 @@ fn build_index_merge_reader(
             let old_chain = state
                 .cop_chain
                 .replace((cop_plan_chain(partial), i64::from(partial.id())));
+            let old_tracker = if embedded_index_scan(partial).is_none() {
+                state.reader_mem_tracker.replace(Arc::clone(&reader_tracker))
+            } else {
+                state.reader_mem_tracker.take()
+            };
             let executor = build_with_state(&partition_plan, catalog, ctx, state);
             state.cop_chain = old_chain;
+            state.reader_mem_tracker = old_tracker;
             let executor = executor?;
             if executor.schema().len() != partial_schema.len() {
                 return Err(DriverError::unsupported(
@@ -6518,6 +6591,9 @@ fn build_index_merge_reader(
             )
             .with_partition_index(partition_index)
             .with_memory_label(i64::from(plan.id()));
+            if embedded_index_scan(partial).is_none() {
+                source = source.with_reader_tracker(Arc::clone(&reader_tracker));
+            }
             if embedded_index_scan(partial).is_some() {
                 source = source.with_index_row_layout(
                     partial_schema
@@ -6619,7 +6695,8 @@ fn build_index_merge_reader(
         source_schema,
         table_task_builder,
         matches!(table_plan, PhysicalPlan::TableScan(_)),
-    );
+    )
+    .with_table_workers(ctx.index_lookup_concurrency());
     // Go `IndexMergeReaderExecutor`'s `stats` (`Concurrency:
     // IndexLookupConcurrency`) and its partial and table readers' basic stats.
     if let Some(runtime_source) = ctx.executor_runtime_stats_source().filter(|_| !state.untraced) {
@@ -7718,6 +7795,7 @@ fn build_with_state(
             state.range_group.as_ref(),
             &state.reader_storage,
             state.cop_chain.as_ref(),
+            state.reader_mem_tracker.clone(),
         ),
         PhysicalPlan::TableSample(sample) => {
             get_snapshot_ts(ctx);
@@ -10420,18 +10498,18 @@ use super::*;
             } else {
                 assert_eq!(batch.unwrap().unwrap().handles.len(), 5);
                 assert_eq!(memory.stmt_tracker().max_consumed(), 3 * scratch_bytes);
-                loop {
-                    let batch = source.next_batch().unwrap();
-                    assert_eq!(memory.stmt_tracker().bytes_consumed(), 0);
-                    if batch.is_none() {
-                        break;
-                    }
+                // Go's zero-valued deferred release keeps each non-empty
+                // Next's chunk charged: one per two-row chunk.
+                let mut chunks = 3;
+                while let Some(batch) = source.next_batch().unwrap() {
+                    chunks += batch.handles.len().div_ceil(2) as i64;
+                    assert_eq!(memory.stmt_tracker().bytes_consumed(), chunks * scratch_bytes);
                 }
+                assert_eq!(chunks, 11);
             }
             if quota == 1 {
                 assert_eq!(memory.stmt_tracker().max_consumed(), scratch_bytes);
             }
-            assert_eq!(memory.stmt_tracker().bytes_consumed(), 0);
             source.close().unwrap();
         }
         // An ORDER BY handle still occupies a separate key slot before the
@@ -10494,6 +10572,11 @@ use super::*;
                 initial_batch_size: initial,
                 batch_size: 0,
                 max_batch_size: 5,
+                memory_label: 1,
+                chunk_field_types: vec![FieldType::new(FieldTypeCode::LongLong)],
+                max_chunk_size: 1024,
+                memory: None,
+                chunk: None,
             };
             let sources: Vec<(Box<dyn PartialHandleSource>, bool)> =
                 vec![(Box::new(source), true), (Box::new(index_source), false)];
@@ -10632,7 +10715,7 @@ use super::*;
     }
 
     #[test]
-    fn union_merge_delivers_table_tasks_before_draining_partials() {
+    fn union_merge_runs_ahead_of_its_table_tasks_like_go() {
         let mut table =
             crate::TableCommon::new(42, vec![long_column("id", 1), long_column("value", 2)]);
         let mut store = tidb_kv::storage::MemTableStorage::new();
@@ -10677,11 +10760,12 @@ use super::*;
             assert_eq!(chunk.get_row(0).get_int64(0), 3);
             executor.close().unwrap();
             let counters = &state.index_merge_partial_rows;
-            // Go Next fills MaxChunkSize even under an outer LIMIT 1.
-            // Four survivors from the first six-handle task require another
-            // task; adaptive extraction fetches twelve more handles.
-            assert_eq!(counters[&keys[0]].get(), 18);
-            assert_eq!(counters[&keys[1]].get(), 0);
+            // Go's process worker runs ahead of the table workers by their
+            // count plus `workCh`'s one slot, so even under an outer LIMIT 1
+            // both partials' few tasks are fetched before the first table
+            // task runs.
+            assert_eq!(counters[&keys[0]].get(), 19);
+            assert_eq!(counters[&keys[1]].get(), 19);
         }
     }
 

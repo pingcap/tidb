@@ -2086,10 +2086,9 @@ fn physical_explain_operator(
         operator = operator.with_actual_rows(rows);
     }
     // Go `getRuntimeInfo`: `StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())`
-    // and the same on the disk tracker, formatted by `FormatBytes`.
-    // A pushed operator has no tracker in Go (a local fallback's is not
-    // Go's).
-    if runtime && matches!(operator.task, ExplainTask::Root) {
+    // and the same on the disk tracker, formatted by `FormatBytes`, for a
+    // pushed operator too (an index merge's partial table reader).
+    if runtime {
         let memory = statement_context.explain_statement_memory();
         let label = i64::from(plan.id());
         operator.memory_info = memory
