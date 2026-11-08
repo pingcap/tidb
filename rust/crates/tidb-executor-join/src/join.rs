@@ -985,6 +985,11 @@ struct IndexTaskShared<C: Columns> {
     memory: StatementMemory,
     /// Go `innerWorker.stats`.
     stats: Option<Arc<crate::join_stats::IndexLookUpJoinRuntimeStats>>,
+    /// Whether the shared inner reader is open. Go builds the inner executor
+    /// for each task (`buildExecutorForIndexJoin`), so an inner side no task
+    /// reached was never built, opened or timed; this one opens on its first
+    /// lookup and closes with the join only then.
+    inner_opened: std::sync::atomic::AtomicBool,
 }
 
 /// Go `innerWorker.constructLookupContent`, timed as its stats record it.

@@ -2,8 +2,8 @@
   "date": "2026-11-08",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 33,
-    "open": 10,
+    "unresolved": 32,
+    "open": 9,
     "partial": 23
   },
   "findings": [
@@ -222,13 +222,6 @@
       "go_owner": "`pkg/executor/adapter.go` (`ExecStmt.Exec`), `pkg/session/session.go` (`SetProcessInfo`)"
     },
     {
-      "id": "E26",
-      "status": "open",
-      "group": "DML and executor handoff",
-      "finding": "An index join's probe-side reader is built and timed even when no lookup task runs: `EXPLAIN ANALYZE` shows `time:..., loops:0` on `IndexReader(Probe)` where Go, which builds the inner executor per task (`buildExecutorForIndexJoin`), shows no execution info (`SELECT /*+ INL_JOIN(e2) */ * FROM e1 JOIN e2 ON e1.b = e2.b` over an empty `e1`)",
-      "go_owner": "`pkg/executor/index_lookup_join.go`, `pkg/executor/builder.go`"
-    },
-    {
       "id": "O22",
       "status": "open",
       "group": "Domain and process services",
@@ -243,7 +236,7 @@
       "go_owner": "`pkg/executor/table_reader.go` (`newTableReaderExecutorContext`), `pkg/executor/executor.go` (`DDLExec`/`ShowDDLExec`)"
     }
   ],
-  "unresolved": 33,
-  "open": 10,
+  "unresolved": 32,
+  "open": 9,
   "partial": 23
 }

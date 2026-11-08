@@ -8721,10 +8721,18 @@ fn an_operator_that_never_ran_shows_gos_runtime_defaults() {
     let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {query}")));
     let never_ran: Vec<_> = rows
         .iter()
-        .filter(|row| row[0].contains("Selection_27") || row[0].contains("IndexRangeScan_26"))
+        .filter(|row| {
+            row[0].contains("IndexReader_28")
+                || row[0].contains("Selection_27")
+                || row[0].contains("IndexRangeScan_26")
+        })
         .map(|row| (row[2].as_str(), row[3].as_str(), row[5].as_str()))
         .collect();
-    assert_eq!(never_ran, [("0", "cop[tikv]", ""), ("0", "cop[tikv]", "")], "{rows:?}");
+    assert_eq!(
+        never_ran,
+        [("0", "root", ""), ("0", "cop[tikv]", ""), ("0", "cop[tikv]", "")],
+        "{rows:?}"
+    );
     let json = row_text(session.run(&format!("EXPLAIN ANALYZE FORMAT = 'tidb_json' {query}")));
     let plan: serde_json::Value = serde_json::from_str(&json[0][0]).unwrap();
     let probe = &plan[0]["subOperators"][1]["subOperators"][0];

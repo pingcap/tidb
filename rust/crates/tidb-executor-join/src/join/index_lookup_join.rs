@@ -189,6 +189,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> IndexLookUpJoinParts<C> {
             tracker,
             memory,
             stats: stats.clone(),
+            inner_opened: std::sync::atomic::AtomicBool::new(false),
         });
         let worker_ranges_bytes = index_ranges
             .first()
@@ -485,6 +486,9 @@ pub(super) fn handle_lookup<C: Columns>(
                     .map(|probe| (probe.key, probe.bounds))
                     .unzip();
                 let mut source = source.lock().unwrap();
+                if !shared.inner_opened.swap(true, Ordering::SeqCst) {
+                    source.open()?;
+                }
                 source.set_probes(crate::index_lookup::IndexJoinProbes {
                     keys,
                     bound_values,
@@ -513,7 +517,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> Executor for IndexLookUpJoin<C>
             .as_mut()
             .ok_or_else(|| ExecError::internal("index lookup join has no outer child"))?
             .open()?;
-        self.source.lock().unwrap().open()?;
+        self.shared.inner_opened.store(false, Ordering::SeqCst);
         self.finished.store(false, Ordering::SeqCst);
         self.prepared = false;
         Ok(())
@@ -609,7 +613,11 @@ impl<C: Columns + Clone + Send + Sync + 'static> Executor for IndexLookUpJoin<C>
             let _ = worker.join();
         }
         self.prepared = false;
-        let closed = self.source.lock().unwrap().close();
+        let closed = if self.shared.inner_opened.swap(false, Ordering::SeqCst) {
+            self.source.lock().unwrap().close()
+        } else {
+            Ok(())
+        };
         if let Some(child) = self.outer_child.as_mut() {
             child.close()?;
         }

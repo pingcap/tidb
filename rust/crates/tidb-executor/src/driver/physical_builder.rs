@@ -4107,8 +4107,9 @@ fn build_index_lookup_source(
             )
         });
         let runtime_stats = (!state.untraced)
-            .then(|| ctx.executor_runtime_stats_source().and_then(|source| source.for_executor(i64::from(inner.id()))))
-            .flatten();
+            .then(|| ctx.executor_runtime_stats_source())
+            .flatten()
+            .map(|source| IndexJoinInnerStats::new(Arc::clone(source), i64::from(inner.id())));
         if runtime_stats.is_none() && ruv2.is_none() {
             return Ok(IndexLookupSource::Leaf(Box::new(leaf)));
         }
@@ -4127,11 +4128,41 @@ fn build_index_lookup_source(
 /// ([`build_index_lookup_source`]): every task -- the session's own reader
 /// and the ones a lane opens from its fork -- records its `Next`s and
 /// `Close` into the reader plan's stats.
+/// The inner reader's `BasicRuntimeStats` in the statement's
+/// `RuntimeStatsColl`, registered when a task first uses the reader: Go
+/// registers them as `buildExecutorForIndexJoin` builds the reader for a
+/// task, so an inner side no task reached has none.
+#[derive(Clone)]
+struct IndexJoinInnerStats {
+    source: Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>,
+    plan_id: i64,
+    stats: Arc<std::sync::OnceLock<Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStats>>>>,
+}
+
+impl IndexJoinInnerStats {
+    fn new(
+        source: Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>,
+        plan_id: i64,
+    ) -> Self {
+        Self {
+            source,
+            plan_id,
+            stats: Arc::default(),
+        }
+    }
+
+    fn get(&self) -> Option<&Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStats>> {
+        self.stats
+            .get_or_init(|| self.source.for_executor(self.plan_id))
+            .as_ref()
+    }
+}
+
 struct MeteredIndexJoinLookup {
     inner: Box<dyn tidb_executor_join::index_lookup::IndexJoinLookup>,
     /// Go `exec.Next` / `exec.Close`'s `BasicRuntimeStats` of the inner
-    /// reader's plan in the statement's `RuntimeStatsColl`.
-    runtime_stats: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStats>>,
+    /// reader's plan.
+    runtime_stats: Option<IndexJoinInnerStats>,
     ruv2: Option<tidb_executor_internal_exec::ruv2::Ruv2NextCache>,
 }
 
@@ -4145,7 +4176,7 @@ impl Executor for MeteredIndexJoinLookup {
         let inner = &mut self.inner;
         let result =
             tidb_executor_internal_exec::ruv2::next_with_ruv2(self.ruv2.as_ref(), 0, req, |req| inner.next(req));
-        if let Some(stats) = &self.runtime_stats {
+        if let Some(stats) = self.runtime_stats.as_ref().and_then(IndexJoinInnerStats::get) {
             stats.record_next(start.elapsed(), i64::try_from(req.num_rows()).unwrap_or(i64::MAX));
         }
         result
@@ -4154,7 +4185,7 @@ impl Executor for MeteredIndexJoinLookup {
     fn close(&mut self) -> Result<(), crate::ExecError> {
         let start = Instant::now();
         let result = self.inner.close();
-        if let Some(stats) = &self.runtime_stats {
+        if let Some(stats) = self.runtime_stats.as_ref().and_then(IndexJoinInnerStats::get) {
             stats.record_close(start.elapsed());
         }
         result
@@ -4208,7 +4239,7 @@ impl tidb_executor_join::index_lookup::IndexJoinLookup for MeteredIndexJoinLooku
 /// stats.
 struct MeteredIndexJoinLookupFork {
     inner: Box<dyn tidb_executor_join::index_lookup::IndexJoinLookupFork>,
-    runtime_stats: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStats>>,
+    runtime_stats: Option<IndexJoinInnerStats>,
     ruv2: Option<tidb_executor_internal_exec::ruv2::Ruv2NextCache>,
 }
 
