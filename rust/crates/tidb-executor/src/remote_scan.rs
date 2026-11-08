@@ -71,6 +71,7 @@ pub fn pushdown_statement_context(ctx: &crate::StmtContext) -> PushdownStatement
         cop_projection: false,
         lookup_without_identity: false,
         init_chunk_size: ctx.executor_chunk_sizes().0,
+        alloc_pool: ctx.chunk_allocator().map(tidb_distsql::remote_scan::AllocPool),
     }
 }
 

@@ -7665,8 +7665,11 @@ fn an_index_join_charges_its_tasks_like_go() {
 /// 2500 only the 2,600-byte one, 2601 neither).
 #[test]
 fn an_index_lookup_charges_its_tasks_like_go() {
-    let mut session = Session::new();
-    for sql in [
+    // Each statement runs on a fresh session, as each Go value was captured
+    // on a fresh connection: a lookup's task chunks come from the session's
+    // allocator, so an earlier statement changes them
+    // (`an_index_lookup_takes_its_chunks_from_the_session_allocator_like_go`).
+    let setup = [
         "CREATE TABLE t (a INT PRIMARY KEY, b INT, c VARCHAR(20), KEY(b))",
         "INSERT INTO t VALUES (1,1,'x'),(2,2,'y'),(3,3,'z'),(4,4,'w'),(5,5,'v'),(6,6,'u')",
         "CREATE TABLE u (a INT, b INT, c VARCHAR(20), KEY(b))",
@@ -7677,9 +7680,17 @@ fn an_index_lookup_charges_its_tasks_like_go() {
         "INSERT INTO ci VALUES (1,1,1,1),(2,2,2,2),(3,3,3,3),(4,4,4,4),(5,5,5,5),(6,6,6,6)",
         "CREATE TABLE p (a INT PRIMARY KEY, b INT, c VARCHAR(20), KEY(b)) PARTITION BY HASH(a) PARTITIONS 2",
         "INSERT INTO p VALUES (1,1,'x'),(2,2,'y'),(3,3,'z'),(4,4,'w'),(5,5,'v'),(6,6,'u')",
-    ] {
-        session.run(sql).unwrap();
-    }
+    ];
+    let fresh = |query: &str| {
+        let mut session = Session::new();
+        for sql in setup {
+            let table = sql.split_whitespace().nth(2).unwrap_or_default();
+            if query.contains(&format!("FROM {table} ")) {
+                session.run(sql).unwrap();
+            }
+        }
+        session
+    };
     for (sql, operator, memory) in [
         ("SELECT * FROM t WHERE b = 3", "IndexLookUp_7", "2.38 KB"),
         ("SELECT * FROM p USE INDEX(b) WHERE b = 3", "IndexLookUp_7", "2.38 KB"),
@@ -7696,13 +7707,14 @@ fn an_index_lookup_charges_its_tasks_like_go() {
         ("SELECT * FROM ci USE INDEX(c) WHERE c > 1", "IndexLookUp_7", "3.46 KB"),
         ("SELECT * FROM ci USE INDEX(c) WHERE c > 1 ORDER BY c", "IndexLookUp_14", "3.85 KB"),
     ] {
-        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        let rows = row_text(fresh(sql).run(&format!("EXPLAIN ANALYZE {sql}")));
         let row = rows
             .iter()
             .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()) == operator)
             .unwrap_or_else(|| panic!("{sql}: no {operator} in {rows:?}"));
         assert_eq!(row[7], memory, "{sql}: {rows:?}");
     }
+    let mut session = fresh("FROM t ");
     session.run("SET GLOBAL tidb_mem_oom_action = 'CANCEL'").unwrap();
     for (quota, point_cancelled, range_cancelled) in
         [("2440", true, true), ("2500", false, true), ("2599", false, true), ("2601", false, false)]
@@ -9074,4 +9086,79 @@ fn a_pushed_projection_over_a_pushed_selection_runs_in_the_coprocessor_like_go()
     assert_eq!(projection[2], "28", "{rows:?}");
     assert!(projection[5].starts_with("tikv_task:"), "{rows:?}");
     assert_eq!(row_text(session.run(sql)).len(), 28);
+}
+
+/// Go `dagReq.OutputOffsets` over a pushed Selection: a covering reader that
+/// filters on a column its parent does not read returns only its
+/// `OutputColumns` of the rows it admitted. Go tidb-server capture over 199
+/// rows (113 returned): the reader under `a + 1` peaks at 2.07 KB.
+#[test]
+fn a_covering_reader_returns_only_its_output_columns_over_its_pushed_selection_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE i (a INT PRIMARY KEY, b INT, c INT, KEY (b), KEY bc (b, c))").unwrap();
+    let values = (1..=199).map(|x| format!("({x}, {}, {})", 200 - x, x % 7)).collect::<Vec<_>>().join(", ");
+    session.run(&format!("INSERT INTO i VALUES {values}")).unwrap();
+    let sql = "SELECT a + 1 FROM i USE INDEX(bc) WHERE c > 2";
+    let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+    let reader = rows
+        .iter()
+        .find(|row| row[0].contains("IndexReader"))
+        .unwrap_or_else(|| panic!("{rows:?}"));
+    assert_eq!((reader[2].as_str(), reader[7].as_str()), ("113", "2.07 KB"), "{rows:?}");
+    assert_eq!(row_text(session.run(sql)).len(), 113);
+}
+
+/// Go's index worker decodes into one chunk from the session's allocator
+/// (`prepareHandleFetch`: `AllocPool.Alloc(indexTypes, MaxChunkSize,
+/// MaxChunkSize)`) and each table task's reader fills chunks from it
+/// (`TryNewCacheChunk`), so a statement's lookup tasks receive the columns
+/// the previous statement returned to the pool: the index chunk's unused
+/// 1,024-row column lands in a charged task chunk on a second run. Go's
+/// serial `ProjectionExec` takes its child chunk from the pool in `open`;
+/// a parallel one takes none. Values captured from a Go tidb-server, one
+/// connection per query (plain run, then EXPLAIN ANALYZE).
+#[test]
+fn an_index_lookup_takes_its_chunks_from_the_session_allocator_like_go() {
+    let fresh = || {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a INT PRIMARY KEY, b INT, c INT, KEY(b))")
+            .unwrap();
+        let values = (1..=100).map(|i| format!("({i},{i},{i})")).collect::<Vec<_>>().join(",");
+        session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+        session
+    };
+    let mut session = fresh();
+    let memory = |session: &mut Session, sql: &str, operator: &str| {
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        rows.iter()
+            .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()) == operator)
+            .unwrap_or_else(|| panic!("{sql}: no {operator} in {rows:?}"))[7]
+            .clone()
+    };
+    let sql = "SELECT b, c FROM t USE INDEX(b) WHERE b > 1";
+    assert_eq!(memory(&mut session, sql, "IndexLookUp_7"), "6.83 KB");
+    assert_eq!(memory(&mut session, sql, "IndexLookUp_7"), "14.1 KB");
+    for (sql, operator, expected) in [
+        ("SELECT c FROM t USE INDEX(b) WHERE b > 1", "IndexLookUp_8", "6.83 KB"),
+        ("SELECT c FROM t USE INDEX(b) WHERE b > 1 LIMIT 5", "IndexLookUp_14", "9.76 KB"),
+        ("SELECT c FROM t USE INDEX(b) WHERE b > 1 AND c > 50", "Projection_4", "6.07 KB"),
+    ] {
+        let mut session = fresh();
+        session.run(sql).unwrap();
+        assert_eq!(memory(&mut session, sql, operator), expected, "{sql}");
+    }
+    // A table-side Selection runs in the coprocessor and draws nothing from
+    // the allocator in Go; the source's local filter scratch must not either.
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT PRIMARY KEY, b INT, c INT, KEY(b))").unwrap();
+    let values = (1..=10).map(|i| format!("({i},{i},{i})")).collect::<Vec<_>>().join(",");
+    session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+    for (sql, operator, expected) in [
+        ("SELECT c FROM t USE INDEX(b) WHERE b > 1 AND c > 5", "IndexLookUp_9", "2.20 KB"),
+        ("SELECT c FROM t USE INDEX(b) WHERE b > 1 AND c > 5", "IndexLookUp_9", "2.20 KB"),
+        ("SELECT b, c FROM t USE INDEX(b) WHERE b > 1 AND c > 5", "IndexLookUp_8", "10.1 KB"),
+    ] {
+        assert_eq!(memory(&mut session, sql, operator), expected, "{sql}");
+    }
 }

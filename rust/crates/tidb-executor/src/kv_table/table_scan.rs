@@ -1681,6 +1681,7 @@ impl KvTableReader for TableCommon {
             materialization,
             required_rows: required_rows.max(1),
             init_cap: statement.init_chunk_size,
+            alloc_pool: statement.alloc_pool.clone(),
         }))
     }
 
@@ -1771,7 +1772,7 @@ impl KvTableReader for TableCommon {
             loop {
                 let Some(batch) = staged
                     .cursor
-                    .next_raw_chunk_with_handle(staged.init_cap, staged.required_rows)?
+                    .next_raw_chunk_with_handle(staged.init_cap, staged.required_rows, staged.alloc_pool.as_ref())?
                 else {
                     break;
                 };
@@ -1902,7 +1903,7 @@ impl KvTableReader for TableCommon {
         loop {
             let Some(batch) = staged
                 .cursor
-                .next_raw_chunk_with_handle(staged.init_cap, staged.required_rows)?
+                .next_raw_chunk_with_handle(staged.init_cap, staged.required_rows, staged.alloc_pool.as_ref())?
             else {
                 break;
             };
@@ -3522,6 +3523,9 @@ struct StagedPhysicalLookup {
     /// Go `TableReaderExecutor.InitCap()`: the capacity each chunk the
     /// task's reader fills starts with.
     init_cap: usize,
+    /// Go `TableReaderExecutor.AllocPool`, which each of those chunks comes
+    /// from.
+    alloc_pool: Option<tidb_distsql::remote_scan::AllocPool>,
 }
 
 /// [`TableCommon::finish_routed_rows_by_handles`] with Go's
@@ -4281,12 +4285,18 @@ impl RemoteRowCursor {
         &mut self,
         init_cap: usize,
         required_rows: usize,
+        alloc_pool: Option<&tidb_distsql::remote_scan::AllocPool>,
     ) -> Result<Option<Chunk>, KvTableError> {
         if !self.supports_lookup_chunks() {
             return Ok(None);
         }
         let required_rows = required_rows.max(1);
-        let mut batch = Chunk::new(&self.field_types, init_cap.min(required_rows), required_rows);
+        let mut batch = tidb_executor_internal_exec::new_chunk_with_alloc_pool(
+            alloc_pool.map(|pool| &pool.0),
+            &self.field_types,
+            init_cap.min(required_rows),
+            required_rows,
+        );
         let filled = self
             .stream
             .next_chunk_into(required_rows, &mut batch)
@@ -8424,6 +8434,7 @@ mod remote_cursor_tests {
                                 materialization: None,
                                 required_rows: 2,
                                 init_cap: 2,
+                                alloc_pool: None,
                             },
                         ));
                     }
@@ -8537,6 +8548,7 @@ mod remote_cursor_tests {
                             materialization: None,
                             required_rows: 1024,
                             init_cap: 32,
+                            alloc_pool: None,
                         },
                     )],
                     kv_ranges_mem_usage: 0,

@@ -7281,7 +7281,29 @@ fn build_reader_node(
             state.index_scan_limit = None;
             state.index_output_columns = None;
             state.index_cop_projection = false;
-            let child = built?;
+            let mut child = built?;
+            // Go `dagReq.OutputOffsets` over a pushed Selection: the request
+            // returns the reader's `OutputColumns` of the rows it admitted.
+            let output_offsets = reader
+                .output_columns
+                .iter()
+                .map(|output| {
+                    child
+                        .schema()
+                        .columns
+                        .iter()
+                        .position(|column| column.unique_id == output.unique_id)
+                })
+                .collect::<Option<Vec<_>>>();
+            if let Some(offsets) = output_offsets {
+                let output = Schema::new(reader.output_columns.clone());
+                if child
+                    .table_access()
+                    .is_some_and(|access| access.accept_post_filter_projection(&offsets, &output))
+                {
+                    return Ok(child);
+                }
+            }
             // The physical index row is ordered by index keys and handles.
             // Go's reader OutputColumns restores the datasource's output.
             if child.schema().columns.len() == reader.output_columns.len()
@@ -7750,10 +7772,16 @@ fn build_with_state(
                 .collect::<Option<Vec<usize>>>();
             if let Some(offsets) = direct_offsets {
                 let output = plan_schema(plan)?;
-                if child
-                    .table_access()
-                    .is_some_and(|access| access.accept_post_filter_projection(&offsets, &output))
-                {
+                let accepted = child.table_access().is_some_and(|access| {
+                    let accepted = access.accept_post_filter_projection(&offsets, &output);
+                    // Go `PhysicalProjection.ToPB`: a Projection pushed into
+                    // the reader is the request's last executor.
+                    if accepted && state.in_reader {
+                        access.lower_output_as_projection();
+                    }
+                    accepted
+                });
+                if accepted {
                     return Ok(child);
                 }
             }

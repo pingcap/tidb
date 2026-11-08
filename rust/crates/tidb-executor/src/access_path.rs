@@ -2034,6 +2034,11 @@ pub struct IndexRangeSourceExec {
     dirty_added_head: Option<(TableHandle, Vec<Datum>, Option<i64>)>,
     /// Go `getSnapshotRow`'s peeked cursor (`cursor4SnapshotRows`).
     dirty_snapshot_head: Option<(TableHandle, Vec<Datum>, Option<i64>)>,
+    /// Go `indexWorker.prepareHandleFetch`'s `chk`, taken from the session's
+    /// allocator when the index worker starts. This port's index side reads
+    /// through the response decoder's own chunks, so the chunk is never
+    /// filled; what it holds of the allocator is what later statements reuse.
+    index_fetch_chunk: Option<Chunk>,
 }
 
 /// Go's `IndexLookUpExecutor.CalculateBatchSize`.
@@ -2343,6 +2348,7 @@ impl IndexRangeSourceExec {
             dirty_added_queue: std::collections::VecDeque::new(),
             dirty_added_head: None,
             dirty_snapshot_head: None,
+            index_fetch_chunk: None,
         }
     }
 
@@ -2591,10 +2597,43 @@ impl IndexRangeSourceExec {
     /// Returns whether any handle was drawn from the index stream at all,
     /// so the caller can tell an exhausted stream from a batch the pushdown
     /// offset consumed whole.
+    /// Go `IndexLookUpExecutor.getRetTpsForIndexReader`: the handle columns
+    /// (a `Longlong` for an integer handle), then the partition id when the
+    /// index is global or a partitioned read keeps order. A keep-order merge's
+    /// `byItems` are not modelled.
+    fn index_reader_ret_types(&self) -> Vec<FieldType> {
+        let common_handle = self.table.common_handle_offsets();
+        let mut types = if common_handle.is_empty() {
+            vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)]
+        } else {
+            common_handle
+                .iter()
+                .map(|offset| self.table.columns()[*offset].read().field_type.clone())
+                .collect()
+        };
+        let global = self
+            .table
+            .indexes()
+            .iter()
+            .any(|index| index.read().id == self.index_id && index.read().global);
+        if global || (self.table.partition().is_some() && self.keep_order) {
+            types.push(FieldType::new(tidb_datatype::FieldTypeCode::LongLong));
+        }
+        types
+    }
+
     fn fill_handle_batch(&mut self) -> Result<bool, ExecError> {
         self.batch.clear();
         self.batch_at = 0;
         let mut pulled = false;
+        if !self.lookup_pushdown && self.index_fetch_chunk.is_none() {
+            let max_chunk_size = self.meta.max_chunk_size();
+            self.index_fetch_chunk = Some(self.meta.new_chunk_with_capacity(
+                &self.index_reader_ret_types(),
+                max_chunk_size,
+                max_chunk_size,
+            ));
+        }
         // Go's `LocalIndexLookUp` produces its completed rows only on the
         // unordered side ("completedRows is only produced by index lookup
         // push down which does not support keep order"), so the pushdown
@@ -4046,6 +4085,7 @@ impl Executor for IndexRangeSourceExec {
         self.lookup_chunk = None;
         self.lookup_chunk_row = 0;
         self.lookup_filter_complete = false;
+        self.index_fetch_chunk = None;
         self.skipped_handles = 0;
         self.limit_scanned_keys = 0;
         if let Some(limit) = &mut self.prefix_limit {
@@ -4776,10 +4816,11 @@ impl tidb_executor_internal_exec::table_access::TableAccess for IndexRangeSource
             self.meta.max_chunk_size(),
         );
         self.post_filter_projection = Some(keep.to_vec());
-        // Go `PhysicalProjection.ToPB`: the pushed Projection is the
-        // request's last executor.
-        self.statement.cop_projection = true;
         true
+    }
+
+    fn lower_output_as_projection(&mut self) {
+        IndexRangeSourceExec::lower_output_as_projection(self);
     }
 
     fn accept_column_prune(&mut self, keep: &[usize]) -> bool {
@@ -4899,7 +4940,10 @@ impl tidb_executor_internal_exec::table_access::TableAccess for IndexRangeSource
         filter: &tidb_executor_internal_exec::predicate_pushdown::PushedScanFilter,
         ctx: &crate::StmtContext,
     ) -> bool {
-        if filter.is_empty() {
+        // Go's reader returns its `OutputColumns` after the coprocessor
+        // Selection: a Selection offered after that projection is a root
+        // one over the reader's rows, and this filter reads the entry row.
+        if filter.is_empty() || self.post_filter_projection.is_some() {
             return false;
         }
         // The embedded limit stands in for the root `Limit` Go folded into
@@ -4932,7 +4976,7 @@ impl tidb_executor_internal_exec::table_access::TableAccess for IndexRangeSource
                 self.filter = Some(tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe::new(
                     filter.clone(),
                     ctx.clone(),
-                    self.meta.new_chunk(),
+                    self.meta.new_first_chunk(),
                 ));
             }
         }

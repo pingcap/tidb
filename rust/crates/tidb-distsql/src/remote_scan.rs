@@ -538,6 +538,20 @@ pub struct PushdownStatementContext {
     /// Go `SessionVars.InitChunkSize`: the capacity a reader's chunk starts
     /// with (`exec.TryNewCacheChunk`).
     pub init_chunk_size: usize,
+    /// Go `BaseExecutorV2.AllocPool` of a reader built during execution (an
+    /// index lookup task's `TableReaderExecutor`): the session's reusable
+    /// chunk allocator its `TryNewCacheChunk` draws from.
+    pub alloc_pool: Option<AllocPool>,
+}
+
+/// Go `exec.BaseExecutorV2.AllocPool`: `SessionVars.GetChunkAllocator()`.
+#[derive(Clone)]
+pub struct AllocPool(pub Arc<dyn tidb_chunk::alloc::Allocator>);
+
+impl std::fmt::Debug for AllocPool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AllocPool")
+    }
 }
 
 impl Default for PushdownStatementContext {
@@ -589,6 +603,7 @@ impl Default for PushdownStatementContext {
             cop_projection: false,
             lookup_without_identity: false,
             init_chunk_size: tidb_vardef::defaults::DEF_INIT_CHUNK_SIZE as usize,
+            alloc_pool: None,
         }
     }
 }

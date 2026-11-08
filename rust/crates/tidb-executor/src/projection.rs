@@ -146,7 +146,9 @@ impl<C: Columns> ProjectionExec<C> {
         ctx: C,
         avoid_column_evaluator: bool,
     ) -> Self {
-        let child_chunk = child.new_chunk();
+        // Go's `childResult` comes from the pool in `open`, and only for
+        // the serial path; until then nothing of the pool is held.
+        let child_chunk = child.new_first_chunk();
         let program = Arc::new(EvaluatorProgram::new(exprs, avoid_column_evaluator));
         let evaluator_suite = EvaluatorSuite::from_program(Arc::clone(&program));
         ProjectionExec {
@@ -419,8 +421,10 @@ impl<C: ProjectionContext> Executor for ProjectionExec<C> {
         self.parallel = None;
         self.child.open()?;
         self.child_chunk.reset();
-        // Go `open`: the serial path's child result is charged as it stands.
+        // Go `open`: the serial path takes its child result from the pool
+        // (`TryNewCacheChunk`) and charges it as it stands.
         if self.is_unparallel_exec() {
+            self.child_chunk = self.child.new_chunk();
             self.consume(self.child_chunk.memory_usage());
         }
         Ok(())

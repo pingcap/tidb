@@ -162,6 +162,11 @@ pub trait TableAccess {
     /// narrow row only when every predicate was evaluated in the coprocessor.
     /// The source schema must immediately describe the projected row, with
     /// `output`'s column identities.
+    /// Tells a source whose post-filter projection was accepted that the
+    /// projection is a pushed `PhysicalProjection`, which the request lowers
+    /// as its last executor rather than as `OutputOffsets` alone.
+    fn lower_output_as_projection(&mut self) {}
+
     fn accept_post_filter_projection(
         &mut self,
         keep: &[usize],
