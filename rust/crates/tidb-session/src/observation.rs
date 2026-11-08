@@ -261,6 +261,14 @@ impl Session {
         let statement_started = observation.started;
         let ru_details = Arc::clone(&observation.ru_details);
         let user = self.top_ru_user();
+        // Go `ExecStmt.Exec`'s `SetProcessInfo` after `buildExecutor`: the
+        // process row's `State` is the status the build left.
+        let process = self
+            .process
+            .as_ref()
+            .map(|guard| (guard.registry().clone(), guard.id()));
+        let autocommit = self.is_autocommit();
+        let in_trans_after_build = self.server_status_in_trans_after_build();
         Some(Arc::new(move |phase| {
             let mut phases = phases
                 .lock()
@@ -290,6 +298,12 @@ impl Session {
                     // a physical plan-ready notification. Do not fabricate a
                     // compile duration from work that has already executed.
                     phases.compile_finished = true;
+                    if let Some((registry, id)) = &process {
+                        registry.statement_state(
+                            *id,
+                            &crate::txn::server_status_2_str(in_trans_after_build(), autocommit),
+                        );
+                    }
                 }
             }
             // Go `observeStmtBeginForTopProfiling`: non-fast executions are

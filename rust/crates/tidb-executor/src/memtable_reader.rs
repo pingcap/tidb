@@ -944,11 +944,9 @@ pub fn format_process_rows(
                 },
                 Datum::Bytes(row.command.into_bytes()),
                 Datum::Int(i64::try_from(row.time).unwrap_or(i64::MAX)),
-                if row.state.is_empty() {
-                    Datum::Null
-                } else {
-                    Datum::Bytes(row.state.into_bytes())
-                },
+                // Go `ToRowForShow`: `serverStatus2Str(pi.State)`, a string
+                // even when no status bit is set.
+                Datum::Bytes(row.state.into_bytes()),
                 match row.info {
                     Some(info) => {
                         Datum::Bytes(tidb_hack::raw_bytes::str_to_bytes(&info).into_owned())

@@ -2,8 +2,8 @@
   "date": "2026-11-08",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 30,
-    "open": 7,
+    "unresolved": 29,
+    "open": 6,
     "partial": 23
   },
   "findings": [
@@ -208,13 +208,6 @@
       "go_owner": "`pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`)"
     },
     {
-      "id": "E24",
-      "status": "open",
-      "group": "DML and executor handoff",
-      "finding": "Process info is published before the executor is built (`explain.rs` `publish_physical_process_info`) and the process row's `State` is the server status at statement start; Go's `ExecStmt.Exec` calls `SetProcessInfo` after `buildExecutor`, so a transaction the build activates is in its `State` (`in transaction` under autocommit=0: Go tidb-server shows it for the first statement of a transaction that reads a CLUSTER_* table, this port shows NULL)",
-      "go_owner": "`pkg/executor/adapter.go` (`ExecStmt.Exec`), `pkg/session/session.go` (`SetProcessInfo`)"
-    },
-    {
       "id": "O22",
       "status": "partial",
       "group": "Domain and process services",
@@ -222,7 +215,7 @@
       "go_owner": "`cmd/tidb-server/main.go` (`overrideConfig`), `pkg/util/misc.go` (`GetLocalIP`)"
     }
   ],
-  "unresolved": 30,
-  "open": 7,
+  "unresolved": 29,
+  "open": 6,
   "partial": 23
 }

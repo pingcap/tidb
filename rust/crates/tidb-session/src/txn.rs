@@ -268,6 +268,18 @@ fn run_discovering_temporary_overlay<T>(
     (value, discovered)
 }
 
+/// Go `serverStatus2Str` over the two status bits this tier owns, in Go's
+/// `ascServerStatus` order.
+#[must_use]
+pub(crate) fn server_status_2_str(in_trans: bool, autocommit: bool) -> String {
+    match (in_trans, autocommit) {
+        (true, true) => "in transaction; autocommit".to_owned(),
+        (true, false) => "in transaction".to_owned(),
+        (false, true) => "autocommit".to_owned(),
+        (false, false) => String::new(),
+    }
+}
+
 impl Session {
     /// Go `SessionVars.IsAutocommit()`: whether each statement stands on its
     /// own, or joins a transaction the session keeps open for it.
@@ -304,6 +316,18 @@ impl Session {
     #[must_use]
     pub fn in_transaction(&self) -> bool {
         self.txn_ctx.is_some()
+    }
+
+    /// Go's `ServerStatusInTrans` bit as the status word carries it: set by
+    /// `BEGIN` (`EnterNewTxnWithBeginStmt`), and for the pending transaction
+    /// an autocommit-off statement enters (`PrepareTxnCtx`) only once it
+    /// activates (`ActivateTxn`'s `SetInTxn(true)`), so a statement that
+    /// reads no data leaves it clear.
+    #[must_use]
+    pub fn server_status_in_trans(&self) -> bool {
+        self.txn_ctx
+            .as_ref()
+            .is_some_and(|txn| txn.begin_stmt.is_some() || self.current_tso().value() != 0)
     }
 
     /// Go `doCommitWithRetry`'s deferred
@@ -1166,11 +1190,18 @@ impl Session {
     /// bits this tier owns, in the same order as Go's `ascServerStatus`.
     #[must_use]
     pub fn server_status_2_str(&self) -> String {
-        match (self.txn_ctx.is_some(), self.is_autocommit()) {
-            (true, true) => "in transaction; autocommit".to_owned(),
-            (true, false) => "in transaction".to_owned(),
-            (false, true) => "autocommit".to_owned(),
-            (false, false) => String::new(),
-        }
+        server_status_2_str(self.server_status_in_trans(), self.is_autocommit())
+    }
+
+    /// Go `ServerStatusInTrans` as it will read once the statement's executor
+    /// is built: a `BEGIN` transaction, or the pending one once the build
+    /// activated it (published to `CurrentTso`).
+    pub(crate) fn server_status_in_trans_after_build(&self) -> impl Fn() -> bool + Send + Sync + 'static {
+        let (has_txn, begin) = self
+            .txn_ctx
+            .as_ref()
+            .map_or((false, false), |txn| (true, txn.begin_stmt.is_some()));
+        let current_tso = self.current_tso();
+        move || has_txn && (begin || current_tso.value() != 0)
     }
 }

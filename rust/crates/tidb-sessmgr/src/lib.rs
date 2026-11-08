@@ -645,6 +645,14 @@ impl ProcessRegistry {
         });
     }
 
+    /// Go `SetProcessInfo`'s `State` for the connection's running statement,
+    /// which `ExecStmt.Exec` republishes once the executor is built.
+    pub fn statement_state(&self, id: u64, state: &str) {
+        self.with_entry(id, |entry| {
+            entry.state = state.to_owned();
+        });
+    }
+
     /// Go `ProcessInfo`'s affected-row count for the connection's statement.
     pub fn statement_affected_rows(&self, id: u64, affected_rows: u64) {
         self.with_entry(id, |entry| {

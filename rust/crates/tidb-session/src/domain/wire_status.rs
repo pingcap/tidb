@@ -27,5 +27,5 @@ use crate::Session;
 /// drift from the one the session acts on.
 #[must_use]
 pub fn session_status(session: &Session) -> WireStatus {
-    WireStatus::of_facts(session.is_autocommit(), session.in_transaction())
+    WireStatus::of_facts(session.is_autocommit(), session.server_status_in_trans())
 }

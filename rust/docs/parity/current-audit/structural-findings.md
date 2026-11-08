@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**30 unresolved: 7 open, 23 partial.**
+**29 unresolved: 6 open, 23 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -47,7 +47,6 @@ unresolved until it is restated against its Go owner or closed.
 | X01 | partial | SQL/PB signature construction and typed vector execution. The planner's `BuiltinFunctionUsageInc` (`expressionRewriter.newFunction`) is not called: it needs the function's `PbCode`, which a planner-built Rust function only gets at pushdown resolution. Go's `PbConverter` sends each builtin's own `PbCode`; this port resolves a signature again from the function's name, argument types and planned result type (`pushdown_catalog.rs` `resolve`), a second copy of each function class's signature choice that covers the functions Go's `scalarExprSupportedByTiKV` pushes. The planner decides pushability from `infer_pushdown.rs`'s name list and the executor again from that catalog's resolvability: two authorities where Go reads the builtin's `PbCode` once. | `pkg/expression` |
 | Q01 | open | No Cascades memo exploration/implementation in the production optimizer | `pkg/planner/cascades` |
 | E22 | partial | A text `EXECUTE` of a cached prepared write runs inside the `EXECUTE`'s one statement lifecycle (`execute_cached_prepared_dml` no longer opens a nested `run_with_columns_using`), so it has one `StatementMemory` tracker, as Go's one `StmtCtx` does. The process plan follows Go's `SetProcessInfo`. A binary-protocol EXECUTE publishes no plan of its own (`runStmt`'s nil `currentPlan`), so the process info keeps the last valid plan, its brief binary plan and its collector. A SET, USE, DDL or transaction-control statement's plan renders no rows under `EXPLAIN FOR CONNECTION`. Both match a Go tidb-server over the wire (`unistore_cop.rs` `explain_for_connection_follows_gos_process_plan`). Remaining: a binary-protocol `EXECUTE` (`cluster_session_node` `execute`) binds its cached point, SELECT or DML plan before the statement lifecycle begins, so a plan-cache miss builds its planner context under the previous statement's authority, which `begin_statement_execution` then retires. Go's `ExecuteStmt` runs `PrepareTxnCtx` and `ResetContextOfStmt` before `Compile`'s plan-cache lookup. | `pkg/session/session.go` (`ExecutePreparedStmt`, `ExecuteStmt`), `pkg/executor/compiler.go` (`Compile`) |
-| E24 | open | Process info is published before the executor is built (`explain.rs` `publish_physical_process_info`) and the process row's `State` is the server status at statement start; Go's `ExecStmt.Exec` calls `SetProcessInfo` after `buildExecutor`, so a transaction the build activates is in its `State` (`in transaction` under autocommit=0: Go tidb-server shows it for the first statement of a transaction that reads a CLUSTER_* table, this port shows NULL) | `pkg/executor/adapter.go` (`ExecStmt.Exec`), `pkg/session/session.go` (`SetProcessInfo`) |
 
 ### Privileges, wire and administration
 

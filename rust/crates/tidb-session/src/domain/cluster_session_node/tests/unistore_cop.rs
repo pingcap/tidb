@@ -29543,3 +29543,44 @@ fn admin_show_ddl_reports_the_owner_and_running_jobs_like_go() {
         ]
     );
 }
+
+/// Go `SessionVars.InTxn` under autocommit=0: the pending transaction a
+/// statement enters (`PrepareTxnCtx`) sets `ServerStatusInTrans` only once
+/// it activates, so a memory-table read leaves it clear on the wire and in
+/// the process row's `State`; and `ExecStmt.Exec` republishes the process
+/// info after `buildExecutor`, so a statement whose build activates the
+/// transaction shows `in transaction` while it runs (Go tidb-server
+/// captures).
+#[test]
+fn server_status_in_trans_follows_gos_activation() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1193)).unwrap();
+    for sql in [
+        "CREATE TABLE test.ps2 (a INT)",
+        "INSERT INTO test.ps2 VALUES (1)",
+        "SET autocommit = 0",
+    ] {
+        session.node_conn().execute_write(sql).unwrap();
+    }
+    let in_trans = |session: &crate::Session| {
+        crate::domain::wire_status::session_status(session).bits()
+            & tidb_variable::wire_status::SERVER_STATUS_IN_TRANS
+            != 0
+    };
+    let own_state = "SELECT STATE FROM information_schema.PROCESSLIST WHERE ID = CONNECTION_ID()";
+    assert_eq!(displayed(rows(&mut session, own_state)), [[""]]);
+    rows(&mut session, "SELECT COUNT(*) FROM information_schema.ENGINES");
+    assert!(!in_trans(&session));
+    assert_eq!(displayed(rows(&mut session, own_state)), [[""]]);
+    session.node_conn().execute_write("ROLLBACK").unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT p.STATE FROM information_schema.PROCESSLIST p, test.ps2 WHERE p.ID = CONNECTION_ID()",
+        )),
+        [["in transaction"]]
+    );
+    assert!(in_trans(&session));
+    session.node_conn().execute_write("ROLLBACK").unwrap();
+    assert!(!in_trans(&session));
+}
