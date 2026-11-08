@@ -297,12 +297,22 @@ pub(crate) fn extremum_with_signature(
     // `greatest('a' collate utf8mb4_general_ci, 'B')` is `B` and `least(...)`
     // is `a`, the SWAP of the byte answer; and under the PAD SPACE default
     // `greatest('a', 'a ')` is `a`, because the two compare EQUAL and Go keeps
-    // the earlier argument.
+    // the earlier argument. Go's `vecEvalString` keeps the running value only
+    // when it compares strictly ahead of the next argument (`CompareString(
+    // src, arg) > 0` for GREATEST, `< 0` for LEAST), so a vectorized call
+    // answers the LATER of two equal arguments: over a column holding `a`,
+    // `greatest(c, 'a ')` is `a ` (CAPTURED: its length is 2).
     let collator = tidb_datatype::get_collator(collation.name());
+    let vectorized = crate::chunk_executor::in_vec_eval();
     let mut best = extremum_string_value(&vals[0])?;
     for v in &vals[1..] {
         let candidate = extremum_string_value(v)?;
-        if collator.compare(&candidate, &best) == want {
+        let replace = if vectorized {
+            collator.compare(&best, &candidate) != want
+        } else {
+            collator.compare(&candidate, &best) == want
+        };
+        if replace {
             best = candidate;
         }
     }

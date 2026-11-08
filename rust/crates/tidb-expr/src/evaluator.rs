@@ -148,6 +148,7 @@ fn filter_physical_rows<C: Columns>(
     // filter is not vectorizable. Keep the same filter-major order and
     // three-valued truth handling in that branch.
     if row_based {
+        let _vec_eval = crate::chunk_executor::enter_vec_eval(false);
         for filter in filters {
             let int_type = filter
                 .static_type()
@@ -225,7 +226,11 @@ fn filter_physical_rows<C: Columns>(
         };
         if !column_wise {
             // The scalar evaluator is the documented fallback for every
-            // other shape, over the live rows only.
+            // other shape, over the live rows only, answering as Go's
+            // `EvalExpr` would for this filter.
+            let _vec_eval = crate::chunk_executor::enter_vec_eval(
+                vec_enabled && crate::chunk_executor::vectorized(filter),
+            );
             is_zero.clear();
             for &physical in &sel {
                 is_zero.push(typed_truth_code(
@@ -510,7 +515,9 @@ impl EvaluatorSuite {
                 // Go `defaultEvaluator.run`: `vecEnabled && expr.Vectorized()`
                 // is `evalOneVec`, whose builtins size the result column
                 // themselves; the values below then fill it.
-                if vec_enabled && crate::chunk_executor::vectorized(expression) {
+                let vectorized = vec_enabled && crate::chunk_executor::vectorized(expression);
+                let _vec_eval = crate::chunk_executor::enter_vec_eval(vectorized);
+                if vectorized {
                     crate::chunk_executor::eval_one_vec(expression, input, output, *output_index);
                 }
                 if let Expression::ScalarFunction(function) = expression {
@@ -549,6 +556,7 @@ impl EvaluatorSuite {
                 }
             }
         } else {
+            let _vec_eval = crate::chunk_executor::enter_vec_eval(false);
             for row_index in 0..rows {
                 for (output_index, expression) in program
                     .calculated_output_indexes

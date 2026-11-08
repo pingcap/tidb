@@ -135,9 +135,11 @@ impl<C: Columns> SelectionExec<C> {
             .child_chunk
             .as_ref()
             .expect("selection child chunk exists while open");
+        // Go `selectionExecutorContext.enableVectorizedExpression`.
+        let vec_enabled = self.ctx.enable_vectorized_expression();
         let (selected, _) = vectorized_filter_consider_null(
             &self.ctx,
-            true,
+            vec_enabled,
             &self.filters,
             child_chunk,
             Vec::new(),

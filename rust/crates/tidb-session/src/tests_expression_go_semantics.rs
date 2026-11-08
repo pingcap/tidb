@@ -527,3 +527,39 @@ fn values_reads_the_insert_row_as_its_go_signature() {
         [["NULL"], ["1"]]
     );
 }
+
+/// Go's string `GREATEST`/`LEAST` answer a tie differently by body: the row
+/// `evalString` replaces its running value only with a strictly greater
+/// (smaller) argument, the vectorized `vecEvalString` keeps the running value
+/// only when it is strictly ahead, so under PAD SPACE `'a'` against `'a '`
+/// the projection and the filter over a column answer the later argument,
+/// while a folded constant and a non-vectorized session answer the earlier.
+/// Values captured from Go (`gorun`).
+#[test]
+fn a_vectorized_string_extremum_answers_the_later_tie_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (c VARCHAR(10))").unwrap();
+    session.run("INSERT INTO t VALUES ('a')").unwrap();
+    assert_eq!(
+        row_text(session.run(
+            "SELECT greatest(c, 'a '), length(greatest(c, 'a ')), least(c, 'a '), length(least(c, 'a ')) FROM t"
+        )),
+        vec![vec!["a ", "2", "a ", "2"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT length(greatest(c, 'a ', 'a  ')), length(least(c, 'a ', 'a  ')) FROM t")),
+        vec![vec!["3", "3"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT length(greatest('a', 'a ')), length(least('a', 'a '))")),
+        vec![vec!["1", "1"]]
+    );
+    assert_eq!(cell(&mut session, "SELECT count(*) FROM t WHERE length(greatest(c, 'a ')) = 2"), "1");
+    assert_eq!(cell(&mut session, "SELECT count(*) FROM t WHERE length(least(c, 'a ')) = 1"), "0");
+    session.run("SET tidb_enable_vectorized_expression = 0").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT length(greatest(c, 'a ')), length(least(c, 'a ')) FROM t")),
+        vec![vec!["1", "1"]]
+    );
+    assert_eq!(cell(&mut session, "SELECT count(*) FROM t WHERE length(greatest(c, 'a ')) = 2"), "0");
+}

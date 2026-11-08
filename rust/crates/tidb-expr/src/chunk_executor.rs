@@ -322,6 +322,34 @@ fn cast_vec_result(argument: &Expression, target: EvalType) -> Option<VecResult>
     })
 }
 
+thread_local! {
+    static VEC_EVAL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Ends a [`enter_vec_eval`] scope, restoring the mode it replaced.
+#[must_use = "the scope ends when the guard is dropped"]
+pub(crate) struct VecEvalScope(bool);
+
+impl Drop for VecEvalScope {
+    fn drop(&mut self) {
+        VEC_EVAL.with(|flag| flag.set(self.0));
+    }
+}
+
+/// Go `EvalExpr`'s choice for one expression: `VecEval*` when vectorization
+/// is enabled and the expression is `Vectorized()`, `Eval*` row by row
+/// otherwise. The values are still computed by the row evaluators; a builtin
+/// whose Go `vecEval*` answers differently from its `eval*` reads the
+/// choice through [`in_vec_eval`].
+pub(crate) fn enter_vec_eval(vectorized: bool) -> VecEvalScope {
+    VecEvalScope(VEC_EVAL.with(|flag| flag.replace(vectorized)))
+}
+
+/// Whether this thread is evaluating an expression as Go's `VecEval*` would.
+pub(crate) fn in_vec_eval() -> bool {
+    VEC_EVAL.with(std::cell::Cell::get)
+}
+
 /// Go `Expression.Vectorized`: a column or constant is, a scalar function
 /// when its signature is and so are all of its arguments
 /// (`isChildrenVectorized`).
