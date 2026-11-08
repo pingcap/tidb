@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -226,6 +227,112 @@ func TestGetTableInfoAndCancelNonExistJob(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
+}
+
+func TestRefreshMaterializedViewOutOfPlaceCutoverValidation(t *testing.T) {
+	type cutoverInput struct {
+		args        *model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs
+		old, shadow *model.TableInfo
+	}
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+
+	for _, tc := range []struct {
+		name            string
+		mutate          func(*cutoverInput)
+		message         string
+		wantWrongObject bool
+	}{
+		{
+			name: "mismatched old ID", mutate: func(in *cutoverInput) { in.args.OldMViewID = 99 },
+			message: "mismatched old materialized view id",
+		},
+		{
+			name: "same shadow ID", mutate: func(in *cutoverInput) { in.args.ShadowTableID = in.old.ID },
+			message: "shadow table id equals old materialized view id",
+		},
+		{
+			name: "zero build read tso", mutate: func(in *cutoverInput) { in.args.BuildReadTSO = 0 },
+			message: "invalid build read tso",
+		},
+		{
+			name: "not an MV", mutate: func(in *cutoverInput) { in.old.MaterializedView = nil },
+			message: "is not MATERIALIZED VIEW", wantWrongObject: true,
+		},
+		{
+			name: "multiple base tables", mutate: func(in *cutoverInput) { in.old.MaterializedView.BaseTableIDs = []int64{4, 5} },
+			message: "materialized view must reference exactly one base table in Stage-1, got 2", wantWrongObject: true,
+		},
+		{
+			name: "stale revision", mutate: func(in *cutoverInput) { in.old.Revision = 8 },
+			message: "stale old materialized view revision detected before cutover, expected 7 but got 8",
+		},
+		{
+			name: "invalid shadow type", mutate: func(in *cutoverInput) { in.shadow.View = &model.ViewInfo{} },
+			message: "shadow table is not a protected physical table",
+		},
+		{
+			name: "missing shadow metadata", mutate: func(in *cutoverInput) { in.shadow.MaterializedViewShadow = nil },
+			message: "shadow table is missing shadow metadata",
+		},
+		{
+			name: "wrong shadow source", mutate: func(in *cutoverInput) { in.shadow.MaterializedViewShadow.SourceMViewID = 99 },
+			message: "shadow table source materialized view id mismatch",
+		},
+		{
+			name: "non-public shadow", mutate: func(in *cutoverInput) { in.shadow.State = model.StateWriteOnly },
+			message: "shadow table is not in public, but " + model.StateWriteOnly.String(),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			defer func() { require.NoError(t, txn.Rollback()) }()
+			metaMut := meta.NewMutator(txn)
+			require.NoError(t, metaMut.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}))
+			revision := uint64(7)
+			in := &cutoverInput{
+				args: &model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
+					OldMViewID: 2, ShadowTableID: 3, BuildReadTSO: 123, ExpectedOldMViewRevision: &revision,
+				},
+				old: &model.TableInfo{
+					ID: 2, DBID: 1, Name: ast.NewCIStr("mv"), State: model.StatePublic, Revision: revision,
+					MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{4}},
+				},
+				shadow: &model.TableInfo{
+					ID: 3, DBID: 1, Name: ast.NewCIStr("shadow"), State: model.StatePublic,
+					MaterializedViewShadow: &model.MaterializedViewShadowInfo{SourceMViewID: 2},
+				},
+			}
+			tc.mutate(in)
+			require.NoError(t, metaMut.CreateTableOrView(1, in.old))
+			require.NoError(t, metaMut.CreateTableOrView(1, in.shadow))
+			job := &model.Job{
+				Version: model.GetJobVerInUse(), Type: model.ActionMViewRefreshOutOfPlaceCutover,
+				SchemaID: 1, SchemaName: "test", TableID: in.old.ID, TableName: in.old.Name.L,
+				State: model.JobStateRunning,
+			}
+			job.FillArgs(in.args)
+			_, err = job.Encode(true)
+			require.NoError(t, err)
+			ver, err := (&worker{}).onRefreshMaterializedViewCompleteOutOfPlaceCutover(&jobContext{metaMut: metaMut}, job)
+			require.ErrorContains(t, err, tc.message)
+			require.NotContains(t, err.Error(), "%!(EXTRA")
+			if tc.wantWrongObject {
+				require.True(t, dbterror.ErrWrongObject.Equal(err), "%v", err)
+			} else {
+				require.True(t, dbterror.ErrInvalidDDLJob.Equal(err), "%v", err)
+			}
+			require.Equal(t, model.JobStateCancelled, job.State)
+			require.Zero(t, ver)
+			for _, before := range []*model.TableInfo{in.old, in.shadow} {
+				after, err := metaMut.GetTable(1, before.ID)
+				require.NoError(t, err)
+				require.Equal(t, before, after)
+			}
+		})
+	}
 }
 
 func TestUpdateMaterializedViewBaseInfoOnDropPropagatesGetTableError(t *testing.T) {
