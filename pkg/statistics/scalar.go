@@ -86,17 +86,15 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 }
 
 // convertMysqlTimeToScalar maps a types.Time to the float64 scalar used for
-// histogram fraction and out-of-range estimation. The scalar is the duration
-// from the type's minimum bound (MinDatetime for date/datetime, MinTimestamp
-// for timestamp). TIMESTAMP values outside the legal range are clamped just
+// histogram fraction and out-of-range estimation. DATE/DATETIME use calendar
+// microseconds, which fit in int64 over their entire range. TIMESTAMP uses the
+// duration from MinTimestamp. Values outside its legal range are clamped just
 // outside the valid scalar range so estimates stay finite and ordered.
 func convertMysqlTimeToScalar(valueTime types.Time) float64 {
 	var minTime types.Time
 	switch valueTime.Type() {
-	case mysql.TypeDate:
-		minTime = types.NewTime(types.MinDatetime, mysql.TypeDate, types.DefaultFsp)
-	case mysql.TypeDatetime:
-		minTime = types.NewTime(types.MinDatetime, mysql.TypeDatetime, types.DefaultFsp)
+	case mysql.TypeDate, mysql.TypeDatetime:
+		return float64(dateTimeToMicroseconds(valueTime))
 	case mysql.TypeTimestamp:
 		minTime = types.MinTimestamp
 		if valueTime.Compare(types.MinTimestamp) < 0 {
@@ -123,6 +121,34 @@ func convertMysqlTimeToScalar(valueTime types.Time) float64 {
 		}
 	}
 	return float64(valueTime.Sub(UTCWithAllowInvalidDateCtx, &minTime).Duration)
+}
+
+// dateTimeToMicroseconds uses calendar fields, independent of the session time
+// zone. Unlike a nanosecond duration, the full DATE/DATETIME range fits in int64.
+func dateTimeToMicroseconds(value types.Time) int64 {
+	month, day := value.Month(), value.Day()
+	var adjustment int64
+	if month == 0 || day == 0 || day > types.GetLastDay(value.Year(), month) {
+		// Relaxed SQL modes and ranger can retain impossible dates. Do not
+		// normalize February 31 into March: keep gaps in calendar order by
+		// mapping them to the microsecond before the next valid date.
+		if month == 0 {
+			month = 1
+		} else if day != 0 {
+			month++
+		}
+		value.SetCoreTime(types.FromDate(value.Year(), month, 1, 0, 0, 0, 0))
+		adjustment = -1
+	}
+	return time.Date(value.Year(), time.Month(value.Month()), value.Day(),
+		value.Hour(), value.Minute(), value.Second(), value.Microsecond()*1000, time.UTC).UnixMicro() + adjustment
+}
+
+func calcDateTimeFraction(lower, upper, value types.Time) float64 {
+	// Subtract as integers first: an absolute float64 coordinate cannot
+	// distinguish adjacent microseconds across the whole calendar range.
+	origin := dateTimeToMicroseconds(lower)
+	return calcFraction(0, float64(dateTimeToMicroseconds(upper)-origin), float64(dateTimeToMicroseconds(value)-origin))
 }
 
 // PreCalculateScalar converts the lower and upper to scalar. When the datum type is KindString or KindBytes, we also
@@ -173,7 +199,13 @@ func (hg *Histogram) calcFraction(index int, value *types.Datum) float64 {
 		return calcFraction(float64(lower.GetUint64(0)), float64(upper.GetUint64(0)), float64(value.GetUint64()))
 	case types.KindMysqlDuration:
 		return calcFraction(float64(lower.GetDuration(0, 0).Duration), float64(upper.GetDuration(0, 0).Duration), float64(value.GetMysqlDuration().Duration))
-	case types.KindMysqlDecimal, types.KindMysqlTime:
+	case types.KindMysqlTime:
+		valueTime := value.GetMysqlTime()
+		if valueTime.Type() == mysql.TypeDate || valueTime.Type() == mysql.TypeDatetime {
+			return calcDateTimeFraction(lower.GetTime(0), upper.GetTime(0), valueTime)
+		}
+		return calcFraction(hg.Scalars[index].lower, hg.Scalars[index].upper, convertDatumToScalar(value, 0))
+	case types.KindMysqlDecimal:
 		return calcFraction(hg.Scalars[index].lower, hg.Scalars[index].upper, convertDatumToScalar(value, 0))
 	case types.KindBytes, types.KindString:
 		return calcFraction(hg.Scalars[index].lower, hg.Scalars[index].upper, convertDatumToScalar(value, hg.Scalars[index].commonPfxLen))
@@ -247,7 +279,13 @@ func calcFraction4Datums(lower, upper, value *types.Datum) float64 {
 		return calcFraction(float64(lower.GetUint64()), float64(upper.GetUint64()), float64(value.GetUint64()))
 	case types.KindMysqlDuration:
 		return calcFraction(float64(lower.GetMysqlDuration().Duration), float64(upper.GetMysqlDuration().Duration), float64(value.GetMysqlDuration().Duration))
-	case types.KindMysqlDecimal, types.KindMysqlTime:
+	case types.KindMysqlTime:
+		valueTime := value.GetMysqlTime()
+		if valueTime.Type() == mysql.TypeDate || valueTime.Type() == mysql.TypeDatetime {
+			return calcDateTimeFraction(lower.GetMysqlTime(), upper.GetMysqlTime(), valueTime)
+		}
+		return calcFraction(convertDatumToScalar(lower, 0), convertDatumToScalar(upper, 0), convertDatumToScalar(value, 0))
+	case types.KindMysqlDecimal:
 		return calcFraction(convertDatumToScalar(lower, 0), convertDatumToScalar(upper, 0), convertDatumToScalar(value, 0))
 	case types.KindBytes, types.KindString:
 		commonPfxLen := commonPrefixLength(lower.GetBytes(), upper.GetBytes())

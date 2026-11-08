@@ -17,6 +17,7 @@ package statistics
 import (
 	"math"
 	"testing"
+	"time"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -219,6 +220,89 @@ func TestConvertMysqlTimeToScalarTimestampBounds(t *testing.T) {
 	afterMaxTimestamp := types.NewTimeDatum(types.NewTime(types.FromDate(9999, 12, 31, 23, 59, 59, 0), mysql.TypeTimestamp, types.DefaultFsp))
 	afterMaxTimestampScalar := convertDatumToScalar(&afterMaxTimestamp, 0)
 	require.Greater(t, afterMaxTimestampScalar, maxTimestampScalar)
+}
+
+func TestDateTimeHistogramScalars(t *testing.T) {
+	for _, tp := range []byte{mysql.TypeDate, mysql.TypeDatetime} {
+		name := "date"
+		if tp == mysql.TypeDatetime {
+			name = "datetime"
+		}
+		t.Run(name, func(t *testing.T) {
+			datum := func(year, month, day int) types.Datum {
+				return types.NewTimeDatum(getTime(year, month, day, tp))
+			}
+			t.Run("calendar ordering", func(t *testing.T) {
+				leapDay, march := datum(0, 2, 29), datum(0, 3, 1)
+				require.Less(t, convertDatumToScalar(&leapDay, 0), convertDatumToScalar(&march, 0))
+				previous := datum(0, 1, 1)
+				for year := 1; year <= 9999; year++ {
+					current := datum(year, 1, 1)
+					require.Less(t, convertDatumToScalar(&previous, 0), convertDatumToScalar(&current, 0), "%v", current.GetMysqlTime())
+					previous = current
+				}
+			})
+			t.Run("crossing bucket", func(t *testing.T) {
+				lower, upper, value := datum(2045, 7, 5), datum(2049, 5, 20), datum(2046, 6, 1)
+				hg := NewHistogram(0, 100, 0, 0, types.NewFieldType(tp), 1, 0)
+				hg.AppendBucket(&lower, &upper, 100, 0)
+				hg.PreCalculateScalar()
+				// Use calendar distances, independent of the scalar representation.
+				start := time.Date(2045, 7, 5, 0, 0, 0, 0, time.UTC).Unix()
+				end := time.Date(2049, 5, 20, 0, 0, 0, 0, time.UTC).Unix()
+				point := time.Date(2046, 6, 1, 0, 0, 0, 0, time.UTC).Unix()
+				expected := float64(point-start) / float64(end-start)
+				require.InDelta(t, expected, hg.calcFraction(0, &value), eps)
+				require.InDelta(t, expected, calcFraction4Datums(&lower, &upper, &value), eps)
+			})
+			t.Run("out of range", func(t *testing.T) {
+				lower, upper := datum(2020, 1, 1), datum(2026, 12, 31)
+				hg := NewHistogram(0, 2557, 0, 0, types.NewFieldType(tp), 1, 0)
+				hg.AppendBucket(&lower, &upper, 2557, 1)
+				left, reference := datum(2027, 6, 1), datum(2046, 12, 9)
+				ctx := mock.NewContext()
+				expected := hg.OutOfRangeRowCount(ctx, &left, &reference, 4018, 1461, 2557)
+				require.Greater(t, expected.Est, 1.0)
+				for _, right := range []types.Datum{datum(2046, 12, 10), datum(9999, 12, 31)} {
+					require.NotPanics(t, func() {
+						actual := hg.OutOfRangeRowCount(ctx, &left, &right, 4018, 1461, 2557)
+						require.Equal(t, expected, actual)
+					})
+				}
+			})
+			t.Run("zero and invalid bounds", func(t *testing.T) {
+				bounds := []types.Datum{
+					datum(0, 0, 0), datum(1, 1, 1), datum(2017, 0, 0),
+					datum(2017, 1, 0), datum(2017, 1, 1), datum(2017, 2, 28),
+					datum(2017, 2, 29), datum(2017, 2, 30), datum(2017, 2, 31),
+					datum(2017, 3, 0), datum(2017, 3, 1), datum(9999, 12, 31),
+				}
+				for i := 1; i < len(bounds); i++ {
+					require.LessOrEqual(t, convertDatumToScalar(&bounds[i-1], 0), convertDatumToScalar(&bounds[i], 0), "%v <= %v", bounds[i-1].GetMysqlTime(), bounds[i].GetMysqlTime())
+				}
+			})
+		})
+	}
+	t.Run("fractional precision", func(t *testing.T) {
+		for _, year := range []int{0, 1, 2026, 2046, 9999} {
+			for fsp := 0; fsp <= types.MaxFsp; fsp++ {
+				step := int(math.Pow10(types.MaxFsp - fsp))
+				datum := func(offset int) types.Datum {
+					return types.NewTimeDatum(types.NewTime(types.FromDate(year, 12, 31, 12, 0, offset/1e6, offset%1e6), mysql.TypeDatetime, fsp))
+				}
+				lower, upper, value := datum(0), datum(10*step), datum(3*step)
+				hg := NewHistogram(0, 11, 0, 0, types.NewFieldType(mysql.TypeDatetime), 1, 0)
+				hg.AppendBucket(&lower, &upper, 11, 1)
+				hg.PreCalculateScalar()
+				require.InDelta(t, 0.3, hg.calcFraction(0, &value), eps, "year=%d fsp=%d", year, fsp)
+				require.InDelta(t, 0.3, calcFraction4Datums(&lower, &upper, &value), eps, "year=%d fsp=%d", year, fsp)
+				// Out-of-range distances must also be taken before float rounding.
+				left, right := datum(10*step), datum(15*step)
+				shape := hg.OutOfRangeShape(&left, &right, 11)
+				require.InDelta(t, 0.375, shape.TotalPercent, eps, "year=%d fsp=%d", year, fsp)
+			}
+		}
+	})
 }
 
 // TestOutOfRangeRowCountZeroTimestampLowerBound verifies the end-to-end

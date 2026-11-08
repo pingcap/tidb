@@ -1158,6 +1158,22 @@ func (hg *Histogram) OutOfRangeShape(lDatum, rDatum *types.Datum, histNDV int64)
 	// Convert the lower and upper bound of the histogram to scalar value(float64)
 	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)
 	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
+	if hg.GetLower(0).Kind() == types.KindMysqlTime {
+		lowerTime := hg.GetLower(0).GetMysqlTime()
+		if lowerTime.Type() == mysql.TypeDate || lowerTime.Type() == mysql.TypeDatetime {
+			// Use a shared calendar origin before float conversion, preserving
+			// microsecond distances even for histograms near year 9999.
+			origin := dateTimeToMicroseconds(lowerTime)
+			histL = 0
+			histR = float64(dateTimeToMicroseconds(hg.GetUpper(hg.Len()-1).GetMysqlTime()) - origin)
+			if lDatum.Kind() == types.KindMysqlTime {
+				l = float64(dateTimeToMicroseconds(lDatum.GetMysqlTime()) - origin)
+			}
+			if rDatum.Kind() == types.KindMysqlTime {
+				r = float64(dateTimeToMicroseconds(rDatum.GetMysqlTime()) - origin)
+			}
+		}
+	}
 	histWidth := histR - histL
 	// If we find that the histogram width is too small or too large - we still may need to consider
 	// the impact of modifications to the table. Reset the histogram width to 0.
