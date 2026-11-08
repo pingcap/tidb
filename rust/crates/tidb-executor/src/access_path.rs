@@ -2531,6 +2531,13 @@ impl IndexRangeSourceExec {
         self.covering = true;
     }
 
+    /// Go `PhysicalProjection.ToPB` of a Projection of columns pushed over
+    /// this scan: the request returns its output through a coprocessor
+    /// Projection executor rather than `OutputOffsets` alone.
+    pub(crate) fn lower_output_as_projection(&mut self) {
+        self.statement.cop_projection = true;
+    }
+
     /// The next handle to READ A ROW FOR: Go's `lookupTableTask` walk, which
     /// is the index walk regrouped into batches and each batch sorted.
     ///
@@ -4940,6 +4947,7 @@ impl LookupForkTemplate {
             // A fork serves a common-handle prefix lookup; a clustered table
             // has no `_tidb_rowid` to report.
             emit_extra_handle: false,
+            emit_commit_ts: false,
             current_handle: None,
             produced: tidb_executor_internal_exec::RowCount::default(),
             decode_context: self.decode_context.clone(),
@@ -5055,6 +5063,9 @@ pub struct IndexJoinLookupExec {
     /// columns: an inner IndexLookUp over a heap table keeps the handle in
     /// its schema (a Projection above it prunes the column).
     emit_extra_handle: bool,
+    /// Whether each row carries Go's `_tidb_commit_ts` past the partition id
+    /// slot: a DataSource the column pruner left whole keeps it.
+    emit_commit_ts: bool,
     /// The handle of the row [`Self::next_lookup_row`] returned last.
     current_handle: Option<TableHandle>,
     /// Rows produced since `open`, which the trace reads as `actRows`.
@@ -5164,6 +5175,7 @@ impl IndexJoinLookupExec {
             lookup_handles: Vec::new(),
             lookup_row_at: 0,
             emit_extra_handle: false,
+            emit_commit_ts: false,
             current_handle: None,
             produced: tidb_executor_internal_exec::RowCount::default(),
             decode_context,
@@ -5504,6 +5516,13 @@ impl IndexJoinLookupExec {
     /// handle slot, an output offset of `table.columns().len() + 1`.
     pub(crate) fn emit_physical_table_id(&mut self) {
         self.emit_physical_table_id = true;
+    }
+
+    /// Emits Go's `_tidb_commit_ts` as the column past the partition id slot,
+    /// an output offset of `table.columns().len() + 2`, with the value a
+    /// table scan reports for it (`insert_extra_commit_ts`).
+    pub(crate) fn emit_commit_ts(&mut self) {
+        self.emit_commit_ts = true;
     }
 
     /// The live count of rows this source produced.
@@ -5981,7 +6000,7 @@ impl IndexJoinLookupExec {
     /// The decoded column each output column reads, or `None` when an
     /// output column is not among the decoded ones.
     fn chunk_output_columns(&self) -> Option<Vec<usize>> {
-        if self.emit_extra_handle || self.emit_physical_table_id {
+        if self.emit_extra_handle || self.emit_physical_table_id || self.emit_commit_ts {
             return None;
         }
         let sources: Vec<usize> = match &self.output_offsets {
@@ -6483,7 +6502,7 @@ impl Executor for IndexJoinLookupExec {
             if !passes {
                 continue;
             }
-            if self.emit_extra_handle || self.emit_physical_table_id {
+            if self.emit_extra_handle || self.emit_physical_table_id || self.emit_commit_ts {
                 physical.push(
                     self.current_handle
                         .as_ref()
@@ -6496,6 +6515,12 @@ impl Executor for IndexJoinLookupExec {
                     ExecError::internal("index-join lookup lost its physical partition identity")
                 })?;
                 physical.push(Datum::Int(id));
+            } else if self.emit_commit_ts {
+                physical.push(Datum::Null);
+            }
+            if self.emit_commit_ts {
+                // The value a table scan reports for it (`insert_extra_commit_ts`).
+                physical.push(Datum::UInt(0));
             }
             if let Some(offsets) = &self.output_offsets {
                 for (output, source) in offsets.iter().copied().enumerate() {

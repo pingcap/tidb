@@ -29613,3 +29613,39 @@ fn the_pushdown_blacklists_are_the_servers_like_go() {
     crate::domain::cluster_session_node::load_pushdown_blacklists(&stack.factory).unwrap();
     assert_eq!(join(&mut reader), "HashJoin_7");
 }
+
+/// Go `SetFromSessionVars`: every statement's coprocessor requests take
+/// `tidb_distsql_scan_concurrency`, a write's read among them. Go tidb-server
+/// capture over four regions: an UPDATE's reader runs four tasks at once by
+/// default and two under a concurrency of 2, as the same read does.
+#[test]
+fn a_writes_read_takes_the_distsql_scan_concurrency_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(163)).unwrap();
+    rows(&mut session, "USE test");
+    rows(&mut session, "CREATE TABLE t (a INT PRIMARY KEY, b INT)");
+    let values = (1..=100).map(|x| format!("({x}, {x})")).collect::<Vec<_>>().join(", ");
+    rows(&mut session, &format!("INSERT INTO t VALUES {values}"));
+    rows(&mut session, "SPLIT TABLE t BY (25), (50), (75)");
+    let concurrency = |session: &mut Session, sql: &str| {
+        let explained = displayed(rows(session, &format!("EXPLAIN ANALYZE {sql}")));
+        let info = explained
+            .iter()
+            .find(|row| row[0].contains("TableReader"))
+            .unwrap_or_else(|| panic!("{explained:?}"))[5]
+            .clone();
+        assert!(info.contains("num: 4"), "{info}");
+        info.split("max_distsql_concurrency: ")
+            .nth(1)
+            .unwrap()
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect::<String>()
+    };
+    let read = "SELECT * FROM t WHERE b > 0";
+    let write = "UPDATE t SET b = b WHERE b > 0";
+    assert_eq!((concurrency(&mut session, read), concurrency(&mut session, write)), ("1".to_owned(), "4".to_owned()));
+    rows(&mut session, "SET tidb_distsql_scan_concurrency = 2");
+    assert_eq!((concurrency(&mut session, read), concurrency(&mut session, write)), ("2".to_owned(), "2".to_owned()));
+}
+

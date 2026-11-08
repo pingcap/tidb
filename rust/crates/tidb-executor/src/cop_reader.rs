@@ -582,6 +582,36 @@ pub fn build_resp(
             ..crate::dag_request::go_executor(ExecType::TypeTopN)
         });
     }
+    // Go `PhysicalProjection.ToPB` of the reader's pushed Projection of
+    // columns: the executor computes the output, and the reader's
+    // `OutputOffsets` are then all of its columns.
+    if request.statement.cop_projection {
+        let exprs = dag
+            .output_offsets
+            .iter()
+            .map(|&offset| {
+                let column = request.columns.get(offset as usize)?;
+                let mut expression =
+                    tidb_expr::column::Column::new(i64::from(offset) + 1, column.field_type.clone());
+                expression.index = i64::from(offset);
+                tidb_expr::pushdown_catalog::expression_to_pb(
+                    &tidb_expr::expression::Expression::Column(expression),
+                    &|offset| scan_column_descriptor(&columns, offset),
+                )
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| refuse("a coprocessor Projection column cannot be lowered to TiPB"))?;
+        let width = exprs.len() as u32;
+        dag.executors.push(PbExecutor {
+            projection: Some(Box::new(tidb_proto::tipb::Projection {
+                exprs,
+                ..Default::default()
+            })),
+            executor_id: Some(String::new()),
+            ..crate::dag_request::go_executor(ExecType::TypeProjection)
+        });
+        dag.output_offsets = (0..width).collect();
+    }
 
     let key_ranges: Vec<KeyRange> = request
         .ranges
@@ -605,6 +635,9 @@ pub fn build_resp(
         shapes.push(ExecutorShape::new(ExecutorKind::Other));
     }
     if aggregate.is_some() {
+        shapes.push(ExecutorShape::new(ExecutorKind::Other));
+    }
+    if request.statement.cop_projection {
         shapes.push(ExecutorShape::new(ExecutorKind::Other));
     }
     // The wire receipt's DAG shape: the executor list this request
@@ -975,6 +1008,7 @@ fn cop_plan_ids_for(
             Some(ExecType::TypeLimit) => CopPlanKind::Limit,
             Some(ExecType::TypeTopN) => CopPlanKind::TopN,
             Some(ExecType::TypeAggregation | ExecType::TypeStreamAgg) => CopPlanKind::Aggregation,
+            Some(ExecType::TypeProjection) => CopPlanKind::Projection,
             _ => CopPlanKind::Other,
         };
         if let Some(offset) = statement.cop_plan_chain[next..]

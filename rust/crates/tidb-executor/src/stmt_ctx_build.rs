@@ -1843,9 +1843,17 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_executor_chunk_sizes(snapshot.init_chunk_size, snapshot.max_chunk_size)
                 .with_string_type_flags(string_type_flags)
                 .with_stats_handle(self.stats_handle())
-                // Go's optimizer checks the rule blacklist for every
-                // statement's plan, a write's read among them.
+                // Go's optimizer checks the rule blacklist, and
+                // `SetFromSessionVars` sets the scan concurrency, for every
+                // statement's plan and requests, a write's read among them.
                 .with_pushdown_blacklists(self.pushdown_blacklists().snapshot())
+                .with_dist_sql_scan_concurrency(
+                    self.session_vars()
+                        .get_system(tidb_vardef::tidb_vars::TIDB_DIST_SQL_SCAN_CONCURRENCY)
+                        .ok()
+                        .and_then(|value| value.parse::<u64>().ok())
+                        .unwrap_or(tidb_vardef::defaults::DEF_DIST_SQL_SCAN_CONCURRENCY as u64),
+                )
                 .with_process_plan_info_sink(Arc::clone(&self.process_plan_info_ref()))
                 .with_statement_phase_observer(self.statement_phase_observer())
                 .with_phase_durations(self.phase_durations_ref().clone())

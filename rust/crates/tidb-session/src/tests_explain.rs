@@ -8968,3 +8968,31 @@ fn a_covering_index_reader_under_a_pushed_limit_returns_its_output_columns_like_
     assert_eq!(row_text(session.run("SELECT b FROM i ORDER BY b LIMIT 2")), [["1"], ["2"]]);
 }
 
+
+/// Go `PhysicalProjection.ToPB`: a Projection pushed over a covering index
+/// scan runs in the coprocessor, so the response carries only its columns
+/// and the operator reports its own `tikv_task`. Go tidb-server capture over
+/// 199 rows (49 returned): the reader peaks at 641 Bytes.
+#[test]
+fn a_pushed_projection_runs_in_the_coprocessor_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE i (a INT PRIMARY KEY, b INT, KEY (b))").unwrap();
+    let values = (1..=199).map(|x| format!("({x}, {})", 200 - x)).collect::<Vec<_>>().join(", ");
+    session.run(&format!("INSERT INTO i VALUES {values}")).unwrap();
+    let sql = "SELECT a FROM i USE INDEX(b) WHERE b > 150";
+    let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+    let row = |label: &str| {
+        rows.iter()
+            .find(|row| row[0].contains(label))
+            .unwrap_or_else(|| panic!("{label}: {rows:?}"))
+            .clone()
+    };
+    let projection = row("Projection_5");
+    assert_eq!((projection[2].as_str(), projection[3].as_str()), ("49", "cop[tikv]"), "{rows:?}");
+    assert!(projection[5].starts_with("tikv_task:"), "{rows:?}");
+    assert_eq!(row("IndexReader_9")[7], "641 Bytes", "{rows:?}");
+    let mut answer = row_text(session.run(sql));
+    answer.sort();
+    assert_eq!(answer.len(), 49);
+    assert_eq!(answer[0], ["1"]);
+}

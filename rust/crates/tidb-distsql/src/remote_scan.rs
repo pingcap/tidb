@@ -262,6 +262,8 @@ pub enum CopPlanKind {
     TopN,
     /// `PhysicalHashAgg` or `PhysicalStreamAgg`.
     Aggregation,
+    /// `PhysicalProjection`.
+    Projection,
     /// Any other pushed node: it matches no executor this request builds.
     Other,
 }
@@ -525,6 +527,10 @@ pub struct PushdownStatementContext {
     /// `dataReaderBuilder.buildTableReaderBase` builds an index join's inner
     /// table reader with no `SetMemTracker` and never opens it.
     pub select_mem_untracked: bool,
+    /// Whether the reader's pushed plan is a Projection of columns over its
+    /// scan: Go lowers it as a Projection executor (`PhysicalProjection.ToPB`)
+    /// which returns the reader's columns, instead of `OutputOffsets` alone.
+    pub cop_projection: bool,
     /// Go `SessionVars.InitChunkSize`: the capacity a reader's chunk starts
     /// with (`exec.TryNewCacheChunk`).
     pub init_chunk_size: usize,
@@ -576,6 +582,7 @@ impl Default for PushdownStatementContext {
             cop_response_sink: None,
             select_mem_tracker: None,
             select_mem_untracked: false,
+            cop_projection: false,
             init_chunk_size: tidb_vardef::defaults::DEF_INIT_CHUNK_SIZE as usize,
         }
     }

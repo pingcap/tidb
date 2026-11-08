@@ -451,3 +451,33 @@ fn a_write_reads_under_the_optimizer_rule_blacklist_like_go() {
         assert_eq!(got, expected, "{rule}");
     }
 }
+
+/// Go's DataSource keeps `_tidb_commit_ts` when `column_prune` is blacklisted,
+/// and an index join's inner IndexLookUp carries it through to the Projection
+/// above. Go tidb-server capture: both joins answer their two rows.
+#[test]
+fn an_index_join_reads_an_unpruned_commit_ts_column_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE do2 (a INT, b INT)").unwrap();
+    session.run("CREATE TABLE dt (a INT, b INT, KEY (b))").unwrap();
+    session.run("INSERT INTO do2 VALUES (1, 1), (2, 2)").unwrap();
+    session.run("INSERT INTO dt VALUES (1, 1), (2, 2), (3, 3)").unwrap();
+    session.run("INSERT INTO mysql.opt_rule_blacklist VALUES ('column_prune')").unwrap();
+    session.run("ADMIN RELOAD OPT_RULE_BLACKLIST").unwrap();
+    let sorted = |session: &mut Session, sql: &str| {
+        let mut rows = row_text(session.run(sql));
+        rows.sort();
+        rows
+    };
+    let plan = plan(&mut session, "SELECT /*+ INL_JOIN(dt) */ dt._tidb_rowid FROM dt JOIN do2 ON do2.b = dt.b");
+    assert!(plan.contains("IndexLookUp"), "{plan}");
+    assert_eq!(
+        sorted(&mut session, "SELECT /*+ INL_JOIN(dt) */ dt._tidb_rowid FROM dt JOIN do2 ON do2.b = dt.b"),
+        [["1"], ["2"]]
+    );
+    assert_eq!(
+        sorted(&mut session, "SELECT /*+ INL_JOIN(dt) */ dt.a, dt.b FROM dt JOIN do2 ON do2.b = dt.b"),
+        [["1", "1"], ["2", "2"]]
+    );
+}
+

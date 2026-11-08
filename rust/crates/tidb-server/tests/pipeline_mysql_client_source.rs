@@ -3391,4 +3391,3 @@ fn a_stream_agg_takes_its_child_chunk_from_the_pool_when_it_opens_like_go() {
         assert_eq!(stream_agg_memory(&mut scanned, &mut scanned_reader, from), "2.16 KB", "{from}");
     }
 }
-

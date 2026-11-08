@@ -177,6 +177,9 @@ struct BuildState {
     /// order, so the scan build narrows its source to them. Set only while
     /// the reader's own subtree is built.
     index_output_columns: Option<Vec<tidb_expr::column::Column>>,
+    /// The reader's pushed plan is a Projection of columns over its scan,
+    /// which the request lowers as a coprocessor Projection.
+    index_cop_projection: bool,
     /// Go `getPhysicalPlanIDs(plans)` and `rootPlanID` of the reader whose
     /// pushed subtree is being built: the plan IDs its coprocessor
     /// executors report their summaries under.
@@ -416,6 +419,7 @@ fn cop_plan_chain(root: &PhysicalPlan) -> Vec<CopPlanId> {
             PhysicalPlan::Limit(_) => CopPlanKind::Limit,
             PhysicalPlan::TopN(_) => CopPlanKind::TopN,
             PhysicalPlan::HashAgg(_) | PhysicalPlan::StreamAgg(_) => CopPlanKind::Aggregation,
+            PhysicalPlan::Projection(_) => CopPlanKind::Projection,
             _ => CopPlanKind::Other,
         };
         chain.push(CopPlanId {
@@ -2613,6 +2617,26 @@ fn embedded_index_limit(plan: &PhysicalPlan) -> Option<(u64, u64)> {
     }
 }
 
+/// The columns a reader's pushed Projection selects when it projects only
+/// columns of the IndexScan right under it (Go `PhysicalProjection` pushed to
+/// the coprocessor), which is then what the request returns.
+fn column_projection_over_index_scan(plan: &PhysicalPlan) -> Option<Vec<tidb_expr::column::Column>> {
+    let PhysicalPlan::Projection(projection) = plan else {
+        return None;
+    };
+    if !matches!(plan.children().first(), Some(PhysicalPlan::IndexScan(_))) {
+        return None;
+    }
+    projection
+        .exprs
+        .iter()
+        .map(|expr| match expr {
+            Expression::Column(column) => Some(column.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Whether a reader's pushed plan is its IndexScan under zero or more
 /// Limits, which output their child's columns as they are.
 fn limit_chain_over_index_scan(plan: &PhysicalPlan) -> bool {
@@ -2898,6 +2922,7 @@ fn build_index_reader(
     lookup_pushdown: bool,
     scan_limit: Option<u64>,
     output_columns: Option<Vec<tidb_expr::column::Column>>,
+    cop_projection: bool,
     net_bytes: Option<f64>,
     range_group: Option<&tidb_ranger::types::Ranges>,
     catalog: &SessionExtendedInfoSchema,
@@ -3176,8 +3201,13 @@ fn build_index_reader(
                     .position(|column| column.unique_id == output.unique_id)
             })
             .collect::<Option<Vec<_>>>();
-        if let Some(keep) = keep.filter(|keep| keep.iter().copied().ne(0..source.schema().columns.len())) {
-            let _ = source.accept_column_prune(&keep);
+        let narrowed = keep.is_some_and(|keep| {
+            keep.iter().copied().eq(0..source.schema().columns.len()) || source.accept_column_prune(&keep)
+        });
+        // Go `PhysicalProjection.ToPB`: a pushed Projection of these columns
+        // travels as the request's Projection executor.
+        if narrowed && cop_projection {
+            source.lower_output_as_projection();
         }
     }
     let source: Box<dyn Executor> = if storage.is_mem_buffer() {
@@ -3403,6 +3433,10 @@ fn index_inner_output_offsets(
             // The partition id column sits just past the extra handle slot.
             if column.id == tidb_model::column::EXTRA_PHYS_TBL_ID {
                 return Ok(table.columns().len() + 1);
+            }
+            // `_tidb_commit_ts` sits just past the partition id slot.
+            if column.id == tidb_model::column::EXTRA_COMMIT_TS_ID {
+                return Ok(table.columns().len() + 2);
             }
             table
                 .logical_columns()
@@ -3781,6 +3815,10 @@ fn build_index_inner_reader(
         .columns
         .iter()
         .any(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID);
+    let emits_commit_ts = row_schema
+        .columns
+        .iter()
+        .any(|column| column.id == tidb_model::column::EXTRA_COMMIT_TS_ID);
     let index_side = match plan {
         PhysicalPlan::IndexLookUpReader(reader) => reader.index_plan.as_deref(),
         _ => Some(embedded),
@@ -3853,6 +3891,9 @@ fn build_index_inner_reader(
     }
     if emits_physical_table_id {
         source.emit_physical_table_id();
+    }
+    if emits_commit_ts {
+        source.emit_commit_ts();
     }
     if let Some((true, desc)) = index_inner_scan_order(plan) {
         source.set_keep_order(desc);
@@ -7224,14 +7265,22 @@ fn build_reader_node(
             // `OutputColumns` of what its pushed plan outputs. A pushed Limit
             // passes its child's columns through, so a Limit chain over the
             // scan narrows like the bare scan.
-            state.index_output_columns = reader
+            let pushed_projection = reader
                 .index_plan
                 .as_deref()
-                .is_some_and(limit_chain_over_index_scan)
-                .then(|| reader.output_columns.clone());
+                .and_then(column_projection_over_index_scan);
+            state.index_cop_projection = pushed_projection.is_some();
+            state.index_output_columns = pushed_projection.or_else(|| {
+                reader
+                    .index_plan
+                    .as_deref()
+                    .is_some_and(limit_chain_over_index_scan)
+                    .then(|| reader.output_columns.clone())
+            });
             let built = build_reader(plan.id(), reader.index_plan.as_deref(), catalog, ctx, state);
             state.index_scan_limit = None;
             state.index_output_columns = None;
+            state.index_cop_projection = false;
             let child = built?;
             // The physical index row is ordered by index keys and handles.
             // Go's reader OutputColumns restores the datasource's output.
@@ -7274,6 +7323,7 @@ fn build_reader_node(
                 reader.index_lookup_push_down,
                 None,
                 None,
+                false,
                 None,
                 state.range_group.as_ref(),
                 catalog,
@@ -7617,6 +7667,7 @@ fn build_with_state(
             false,
             state.index_scan_limit.take(),
             state.index_output_columns.take(),
+            std::mem::take(&mut state.index_cop_projection),
             state.reader_net_bytes,
             state.range_group.as_ref(),
             catalog,
