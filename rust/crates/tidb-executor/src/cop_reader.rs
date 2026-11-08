@@ -642,7 +642,8 @@ pub fn build_resp(
     // A reader that names the tracker itself (`SetMemTracker`, an index
     // lookup's index worker) charges that one.
     let memory_tracker = request.statement.select_mem_tracker.clone().or_else(|| {
-        (root_plan_id > 0
+        (!request.statement.select_mem_untracked
+            && root_plan_id > 0
             && !request.statement.cop_plan_chain.is_empty()
             && !cop_plan_ids.contains(&root_plan_id))
         .then(|| {

@@ -521,6 +521,10 @@ pub struct PushdownStatementContext {
     /// result charges each response it holds to, when the reader names one
     /// (an index lookup's index worker, `LabelForIndexWorker`).
     pub select_mem_tracker: Option<Arc<tidb_memory::Tracker>>,
+    /// Whether the reader's select result charges no tracker at all: Go's
+    /// `dataReaderBuilder.buildTableReaderBase` builds an index join's inner
+    /// table reader with no `SetMemTracker` and never opens it.
+    pub select_mem_untracked: bool,
     /// Go `SessionVars.InitChunkSize`: the capacity a reader's chunk starts
     /// with (`exec.TryNewCacheChunk`).
     pub init_chunk_size: usize,
@@ -571,6 +575,7 @@ impl Default for PushdownStatementContext {
             keys_read: tidb_kv::keys_read::KeysReadBudget::default(),
             cop_response_sink: None,
             select_mem_tracker: None,
+            select_mem_untracked: false,
             init_chunk_size: tidb_vardef::defaults::DEF_INIT_CHUNK_SIZE as usize,
         }
     }

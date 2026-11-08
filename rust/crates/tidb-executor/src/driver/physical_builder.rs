@@ -3806,7 +3806,11 @@ fn build_index_inner_reader(
         cop_statement = cop_statement
             .with_cop_plan_chain(cop_plan_chain(network_plan), i64::from(plan.id()));
     }
-    let statement = ReaderStorage::statement(separated, cop_statement);
+    let mut statement = ReaderStorage::statement(separated, cop_statement);
+    // Go `buildTableReaderForIndexJoin` -> `buildTableReaderBase`: a table
+    // reader built for a task has no memory tracker.
+    statement.select_mem_untracked =
+        matches!(object, LookupObject::Handle | LookupObject::CommonHandle);
     let mut source = IndexJoinLookupExec::new_with_statement(
         meta(ctx, plan, row_schema.clone()),
         std::sync::Arc::unwrap_or_clone(table),

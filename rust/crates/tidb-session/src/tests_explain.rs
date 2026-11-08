@@ -8773,3 +8773,31 @@ fn a_root_reader_reports_ru_before_its_cop_task_like_go() {
         assert!(ru.is_some() && cop.is_some() && ru < cop, "{query}: {info}");
     }
 }
+
+/// Go `buildTableReaderForIndexJoin` -> `buildTableReaderBase`: an index
+/// join's inner table reader is built per task with no memory tracker and
+/// never opened, so EXPLAIN ANALYZE shows its memory as `N/A` (Go tidb-server
+/// capture), while the build side's reader charges its own.
+#[test]
+fn an_index_join_table_probe_has_no_memory_tracker_like_go() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE o (a INT, b INT)",
+        "CREATE TABLE i (a INT PRIMARY KEY, b INT)",
+        "INSERT INTO o VALUES (1, 1), (2, 2), (3, 3)",
+        "INSERT INTO i VALUES (1, 1), (2, 2), (3, 3)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let rows = row_text(session.run(
+        "EXPLAIN ANALYZE SELECT /*+ INL_JOIN(i) */ COUNT(*) FROM o JOIN i ON o.a = i.a",
+    ));
+    let memory = |label: &str| {
+        rows.iter()
+            .find(|row| row[0].contains(label))
+            .unwrap_or_else(|| panic!("{label}: {rows:?}"))[7]
+            .clone()
+    };
+    assert_eq!(memory("(Probe)"), "N/A", "{rows:?}");
+    assert_ne!(memory("(Build)"), "N/A", "{rows:?}");
+}
