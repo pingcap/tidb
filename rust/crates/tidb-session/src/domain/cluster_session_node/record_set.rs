@@ -171,12 +171,13 @@ impl<'s> ClusterServerSession<'s> {
                 };
                 let source = match output {
                     StmtOutput::Rows { columns, rows } => {
-                        let field_types = columns.iter().map(|(_, field_type)| field_type.clone()).collect();
+                        let field_types: Vec<_> = columns.iter().map(|(_, field_type)| field_type.clone()).collect();
+                        let chunk = self.session.result_write_chunk_for(&field_types);
                         MaterializedResultSetSource::new(
                             crate::domain::pipeline_session::select_fields(&columns),
                             rows,
                         )
-                        .with_write_chunk(self.session.take_result_write_chunk(), field_types)
+                        .with_write_chunk(chunk, field_types)
                     }
                     StmtOutput::Affected(count) => {
                         crate::domain::pipeline_session::affected_rows_source(count)

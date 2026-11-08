@@ -2825,6 +2825,34 @@ impl Session {
             .take()
     }
 
+    /// Go `writeChunks`' `rs.NewChunk(sessVars.GetChunkAllocator())` for a
+    /// result built before it is written: the chunk an executor already
+    /// took, else one from the allocator now, as every record set Go writes
+    /// gets (none for an in-process caller or with chunk reuse off).
+    pub(crate) fn result_write_chunk_for(
+        &self,
+        fields: &[tidb_datatype::FieldType],
+    ) -> Option<tidb_chunk::chunk::Chunk> {
+        if let Some(chunk) = self.take_result_write_chunk() {
+            return Some(chunk);
+        }
+        let var = |name: &str| self.vars.get_system(name).ok();
+        let reuse = var(tidb_vardef::tidb_vars::TIDB_ENABLE_REUSECHUNK)
+            .is_some_and(|value| value.eq_ignore_ascii_case("ON") || value == "1");
+        if !self.connection_writes_results || !reuse || self.vars.restricted_sql {
+            return None;
+        }
+        let size = |name: &str, default: i64| {
+            var(name).and_then(|value| value.parse::<usize>().ok()).unwrap_or(default as usize)
+        };
+        let init_cap = size(tidb_vardef::tidb_vars::TIDB_INIT_CHUNK_SIZE, tidb_vardef::defaults::DEF_INIT_CHUNK_SIZE);
+        let max_chunk_size = size(tidb_vardef::tidb_vars::TIDB_MAX_CHUNK_SIZE, tidb_vardef::defaults::DEF_MAX_CHUNK_SIZE);
+        Some(
+            tidb_chunk::alloc::Allocator::alloc(&self.chunk_alloc, fields, init_cap, max_chunk_size)
+                .into_pooled_chunk(),
+        )
+    }
+
     // Go resets statement state before executor construction. Keep this
     // boundary separate from completion, which belongs to record-set close
     // for queries and to execution itself for statements without results.

@@ -177,6 +177,17 @@ fn handshake_reply(
     additional_capabilities: u32,
     collation: u8,
 ) -> Vec<u8> {
+    handshake_reply_as(client, reader, b"alice", additional_capabilities, collation)
+}
+
+/// [`handshake_reply`] for `user`, whose password is also `secret`.
+fn handshake_reply_as(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    user: &[u8],
+    additional_capabilities: u32,
+    collation: u8,
+) -> Vec<u8> {
     reader.set_sequence(0);
     let initial = reader.read_packet().unwrap();
     assert_eq!(
@@ -196,7 +207,7 @@ fn handshake_reply(
     response.extend_from_slice(&(DEFAULT_MAX_ALLOWED_PACKET as u32).to_le_bytes());
     response.push(collation);
     response.extend_from_slice(&[0; 23]);
-    response.extend_from_slice(b"alice");
+    response.extend_from_slice(user);
     response.push(0);
     let auth = native_response(b"secret", &salt);
     response.push(u8::try_from(auth.len()).unwrap());
@@ -3498,4 +3509,85 @@ fn an_explain_result_is_written_through_its_pooled_chunk_like_go() {
             .unwrap_or_else(|| panic!("{sql}: no {operator} in {plan:?}"));
         assert_eq!(row[7], memory, "{sql}: {plan:?}");
     }
+}
+
+/// Go's `writeChunks` writes every record set through `rs.NewChunk(alloc)`:
+/// a plain EXPLAIN (whose `ExplainExec` builds no executors) and a SHOW draw
+/// their write chunk from the connection's allocator too, so the string
+/// columns they grow reach later statements. Run against the server binary,
+/// whose connection serves the routed session; captured from a Go statement
+/// loop that installs an allocator per statement, as `clientConn` does.
+#[test]
+fn a_plain_explain_and_a_show_write_through_pooled_chunks_like_go() {
+    let free_port = || TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+    let (port, status_port) = (free_port(), free_port());
+    let base = std::env::temp_dir().join(format!("tidb-server-pooled-write-{}", std::process::id()));
+    let users = base.with_extension("users");
+    // `root`, the bootstrapped account, with the harness password `secret`.
+    std::fs::write(&users, "root\t%\tmysql_native_password\t*14E65567ABDB5135D0CFD9A70B3032C179A49EE7\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&users, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    struct Child(std::process::Child);
+    impl Drop for Child {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let _child = Child(
+        std::process::Command::new(env!("CARGO_BIN_EXE_tidb-server"))
+            .args(["--store", "unistore", "--path", base.to_str().unwrap()])
+            .args(["--host", "127.0.0.1", "-P", &port.to_string(), "--socket", ""])
+            .args(["--status-host", "127.0.0.1", "--status", &status_port.to_string()])
+            .args(["--auth-file", users.to_str().unwrap()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("start tidb-server"),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+    let mut client = loop {
+        match TcpStream::connect(("127.0.0.1", port)) {
+            Ok(client) => break client,
+            Err(_) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(error) => panic!("tidb-server did not listen: {error}"),
+        }
+    };
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    // The flags a pymysql client sends, whose text queries the node splits
+    // into statements as Go's `handleQuery` does.
+    let multi = (1 << 16) | (1 << 17);
+    assert_eq!(handshake_reply_as(&mut client, &mut reader, b"root", multi, 46)[0], 0, "auth OK");
+    for sql in [
+        "SET AUTOCOMMIT = 1",
+        "CREATE DATABASE w",
+        "USE w",
+        "CREATE TABLE t (a INT, b VARCHAR(20), KEY(a))",
+        "INSERT INTO t VALUES (1,'x'),(2,'yy'),(2,'zzz'),(3,'w')",
+    ] {
+        run_write(&mut client, &mut reader, sql);
+    }
+    let memory = |client: &mut TcpStream, reader: &mut PacketReader<TcpStream>, sql: &str, operator: &str| {
+        let plan = run_query(client, reader, &format!("EXPLAIN ANALYZE {sql}"));
+        plan.iter()
+            .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()) == operator)
+            .unwrap_or_else(|| panic!("{sql}: no {operator} in {plan:?}"))[7]
+            .clone()
+    };
+    run_query(&mut client, &mut reader, "EXPLAIN SELECT /*+ hash_agg() */ a, group_concat(b) FROM t GROUP BY a");
+    let sql = "SELECT /*+ hash_agg() */ a, group_concat(b) FROM t GROUP BY a";
+    assert_eq!(memory(&mut client, &mut reader, sql, "HashAgg_5"), "16.5 KB");
+    run_query(&mut client, &mut reader, "EXPLAIN FORMAT='brief' SELECT * FROM t WHERE a > 1 ORDER BY b");
+    let sql = "SELECT /*+ hash_agg() */ b, count(a) FROM t GROUP BY b";
+    assert_eq!(memory(&mut client, &mut reader, sql, "HashAgg_9"), "16.9 KB");
+    run_query(&mut client, &mut reader, "SHOW COLUMNS FROM t");
+    let sql = "SELECT * FROM t USE INDEX(a) WHERE a > 0";
+    assert_eq!(memory(&mut client, &mut reader, sql, "IndexLookUp_7"), "2.10 KB");
+    let _ = std::fs::remove_file(&users);
+    let _ = std::fs::remove_dir_all(&base);
 }
