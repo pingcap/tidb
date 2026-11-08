@@ -9049,3 +9049,29 @@ fn an_index_lookup_pushes_its_table_side_partial_aggregate_like_go() {
     assert!(scan[5].starts_with("tikv_task:"), "{rows:?}");
     assert_eq!(row_text(session.run(sql)), [["99"]]);
 }
+
+/// Go `PhysicalProjection.ToPB` over a pushed Selection: a covering reader
+/// evaluates its Selection and then its Projection of columns in the
+/// coprocessor, so the response carries only the projected columns. Go
+/// tidb-server capture over 199 rows (28 returned): the reader peaks at
+/// 469 Bytes and the Projection reports its own `tikv_task`.
+#[test]
+fn a_pushed_projection_over_a_pushed_selection_runs_in_the_coprocessor_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE i (a INT PRIMARY KEY, b INT, c INT, KEY (b), KEY bc (b, c))").unwrap();
+    let values = (1..=199).map(|x| format!("({x}, {}, {})", 200 - x, x % 7)).collect::<Vec<_>>().join(", ");
+    session.run(&format!("INSERT INTO i VALUES {values}")).unwrap();
+    let sql = "SELECT a FROM i USE INDEX(bc) WHERE b > 150 AND c > 2";
+    let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+    let row = |label: &str| {
+        rows.iter()
+            .find(|row| row[0].contains(label))
+            .unwrap_or_else(|| panic!("{label}: {rows:?}"))
+            .clone()
+    };
+    assert_eq!(row("IndexReader_11")[7], "469 Bytes", "{rows:?}");
+    let projection = row("Projection_5");
+    assert_eq!(projection[2], "28", "{rows:?}");
+    assert!(projection[5].starts_with("tikv_task:"), "{rows:?}");
+    assert_eq!(row_text(session.run(sql)).len(), 28);
+}

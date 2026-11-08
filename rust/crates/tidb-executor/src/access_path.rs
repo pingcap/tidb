@@ -1988,6 +1988,12 @@ pub struct IndexRangeSourceExec {
     /// the coprocessor over its handles, as Go's table worker reads the
     /// partial rows of a `TableReaderExecutor` whose plan is the aggregate.
     remote_partial_lookup: bool,
+    /// The covering read's output columns, as positions into the row the
+    /// filter sees (`accept_post_filter_projection`): a pushed Projection of
+    /// columns over the scan and its Selection.
+    post_filter_projection: Option<Vec<usize>>,
+    /// Whether the remote index stream already returns the projected row.
+    remote_rows_projected: bool,
     /// Go `indexLookUpExecutorContext.indexLookupConcurrency`, resolved from
     /// the session before execution starts.
     lookup_concurrency: usize,
@@ -2323,6 +2329,8 @@ impl IndexRangeSourceExec {
             cop_stats: (0, 0),
             partial_done: false,
             remote_partial_lookup: false,
+            post_filter_projection: None,
+            remote_rows_projected: false,
             lookup_concurrency: DEFAULT_LOOKUP_FETCH_CONCURRENCY,
             lookup_pipeline: None,
             lookup_lanes: None,
@@ -3346,7 +3354,8 @@ impl IndexRangeSourceExec {
         skipped: usize,
     ) -> Result<LookupBatchJob, ExecError> {
         let handle_count = handles.len();
-        let allow_lookup_chunks = self
+        let allow_lookup_chunks = self.post_filter_projection.is_none()
+            && self
             .filter
             .as_ref()
             .is_none_or(tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe::fully_pushable);
@@ -3892,6 +3901,15 @@ impl IndexRangeSourceExec {
         })
     }
 
+    /// The covering row a filter admitted, as the accepted post-filter
+    /// projection selects it.
+    fn project_post_filter(&self, row: Vec<Datum>) -> Vec<Datum> {
+        match &self.post_filter_projection {
+            Some(projection) => projection.iter().map(|slot| row[*slot].clone()).collect(),
+            None => row,
+        }
+    }
+
     /// Restores the planner-owned partial output columns after an
     /// index-lookup table plan accepts aggregate pushdown. The generated
     /// source columns carry implementation-local ids; the root final
@@ -4160,6 +4178,13 @@ impl Executor for IndexRangeSourceExec {
         // opening both would issue two full coprocessor requests. If the
         // aggregate shape is refused, retain the ordinary index stream for
         // the local partial fallback and the normal lookup path.
+        // The projected row crosses the wire only when every predicate the
+        // filter holds travels with the request.
+        let projected_keep = self
+            .post_filter_projection
+            .as_ref()
+            .filter(|_| self.filter.is_none() || legacy_index_filter)
+            .map(|projection| projection.iter().map(|slot| self.keep[*slot]).collect::<Vec<_>>());
         if self.partial_remote.is_none() && index_filter_described {
             self.remote_index = self
                 .table
@@ -4209,7 +4234,7 @@ impl Executor for IndexRangeSourceExec {
                     // A covering reader retains its result values instead.
                     !self.covering,
                     (self.covering && self.extra_handle_slot.is_none())
-                        .then_some(self.keep.as_slice()),
+                        .then_some(projected_keep.as_deref().unwrap_or(self.keep.as_slice())),
                     self.covering,
                     // The local partial aggregate reads this stream's handles.
                     self.partial_aggregate.is_some(),
@@ -4219,6 +4244,7 @@ impl Executor for IndexRangeSourceExec {
                 })?;
             self.remote_covering_selected =
                 self.covering && self.extra_handle_slot.is_none() && self.remote_index.is_some();
+            self.remote_rows_projected = projected_keep.is_some() && self.remote_index.is_some();
         }
         // Go pushes a lookup's table-side partial aggregate into each task's
         // `TableReaderExecutor`.
@@ -4378,6 +4404,7 @@ impl Executor for IndexRangeSourceExec {
                         }
                     }
                 }
+                let row = if self.remote_rows_projected { row } else { self.project_post_filter(row) };
                 for (column, value) in row.iter().enumerate() {
                     req.append_datum(column, value);
                 }
@@ -4408,6 +4435,7 @@ impl Executor for IndexRangeSourceExec {
                         continue;
                     }
                 }
+                let row = self.project_post_filter(row);
                 for (column, value) in row.iter().enumerate() {
                     req.append_datum(column, value);
                 }
@@ -4457,6 +4485,7 @@ impl Executor for IndexRangeSourceExec {
                     }
                 }
             }
+            let row = self.project_post_filter(row);
             for (c, value) in row.iter().enumerate() {
                 req.append_datum(c, value);
             }
@@ -4700,6 +4729,56 @@ impl tidb_executor_internal_exec::table_access::TableAccess for IndexRangeSource
         self.partial_aggregate = Some(aggregate.clone());
         self.partial_input_types = Some(input_types);
         self.partial_context = Some(ctx.clone());
+        true
+    }
+
+    fn accept_post_filter_projection(
+        &mut self,
+        keep: &[usize],
+        output: &tidb_expr::schema::Schema,
+    ) -> bool {
+        // Go's covering reader evaluates its pushed Selection and then the
+        // pushed Projection in the coprocessor. A local walk filters the
+        // whole entry row before projecting it, so the filter keeps its
+        // layout here.
+        if !self.covering
+            || self.extra_handle_slot.is_some()
+            || self.physical_table_id_slot.is_some()
+            || self.partial_aggregate.is_some()
+            || self.post_filter_projection.is_some()
+            || self.dirty_merge
+            || self.table.has_dirty_content(&self.statement.staged_writes)
+            || self
+                .filter
+                .as_ref()
+                .is_some_and(|filter| !filter.fully_pushable())
+            || keep.is_empty()
+            || output.len() != keep.len()
+            || keep.iter().any(|offset| *offset >= self.keep.len())
+            || keep.iter().copied().eq(0..self.keep.len())
+        {
+            return false;
+        }
+        let columns = output
+            .columns
+            .iter()
+            .enumerate()
+            .map(|(index, column)| {
+                let mut column = column.clone();
+                column.index = index as i64;
+                column
+            })
+            .collect();
+        self.meta = ExecutorMeta::new(
+            Schema::new(columns),
+            self.meta.id(),
+            self.meta.init_cap(),
+            self.meta.max_chunk_size(),
+        );
+        self.post_filter_projection = Some(keep.to_vec());
+        // Go `PhysicalProjection.ToPB`: the pushed Projection is the
+        // request's last executor.
+        self.statement.cop_projection = true;
         true
     }
 
