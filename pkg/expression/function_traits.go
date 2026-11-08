@@ -65,6 +65,9 @@ var unFoldableFunctions = map[string]struct{}{
 	ast.SetVal:    {},
 	ast.AnyValue:  {},
 	ast.EmbedText: {},
+
+	// FTSLikePattern is evaluated per execution from an `AGAINST(?)` parameter.
+	ast.FTSLikePattern: {},
 }
 
 // DisableFoldFunctions stores functions which prevent child scope functions from being constant folded.
@@ -143,6 +146,9 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 	ast.UUIDShort:            {},
 	ast.Values:               {},
 	ast.Version:              {},
+
+	// FTSLikePattern is internal to the MATCH...AGAINST LIKE fallback.
+	ast.FTSLikePattern: {},
 }
 
 // IsDeferredFunctions checks whether the function is in DeferredFunctions.

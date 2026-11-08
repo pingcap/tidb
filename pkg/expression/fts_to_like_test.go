@@ -15,11 +15,13 @@
 package expression
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -337,4 +339,112 @@ func TestScalarExprSupportedByFlashRejectsNonDefaultFTSModifier(t *testing.T) {
 			require.Equal(t, tc.want, scalarExprSupportedByFlash(ctx.GetEvalCtx(), sf))
 		})
 	}
+}
+
+func TestFTSLikeFallbackShape(t *testing.T) {
+	naturalMode := ast.FulltextSearchModifier(ast.FulltextSearchModifierNaturalLanguageMode)
+	booleanMode := ast.FulltextSearchModifier(ast.FulltextSearchModifierBooleanMode)
+	str := func(s string) types.Datum { return types.NewStringDatum(s) }
+	for _, tc := range []struct {
+		d        types.Datum
+		modifier ast.FulltextSearchModifier
+		shape    string
+	}{
+		{types.NewDatum(nil), naturalMode, "null"},
+		{str("a"), naturalMode | ast.FulltextSearchModifierWithQueryExpansion, "expansion"},
+		{str(""), naturalMode, "k5:false"},
+		{str("   "), booleanMode, "k5:false"},
+		{str("a b"), naturalMode, "k5:n2"},
+		{str("x y"), naturalMode, "k5:n2"},
+		{str("a b c"), naturalMode, "k5:n3"},
+		{str("+a +b -c"), booleanMode, "k5:b2.1.0"},
+		// Optional terms are ignored when there is a required term.
+		{str("+a -c d e"), booleanMode, "k5:b1.1.0"},
+		{str("d e -c"), booleanMode, "k5:b0.1.2"},
+		{str("-a -b"), booleanMode, "k5:false"},
+		{str(`"a b"`), booleanMode, "k5:invalid"},
+		{str("a*"), booleanMode, "k5:invalid"},
+		// Non-string values are shaped by their text and tagged with their kind.
+		{types.NewIntDatum(5), booleanMode, "k1:b0.0.1"},
+		{types.NewIntDatum(-5), booleanMode, "k1:false"},
+	} {
+		require.Equal(t, tc.shape, FTSLikeFallbackShape(tc.d, tc.modifier), "%v %v", tc.d, tc.modifier)
+	}
+}
+
+// TestBuildFTSToILikeExpressionForParam checks that the `AGAINST(?)` form of the
+// LIKE fallback filters exactly like the literal form, and that an expression
+// built for one search string (as a cached plan would hold) filters correctly
+// after the parameter changes to another string with the same shape.
+func TestBuildFTSToILikeExpressionForParam(t *testing.T) {
+	ctx := mock.NewContext()
+	naturalMode := ast.FulltextSearchModifier(ast.FulltextSearchModifierNaturalLanguageMode)
+	booleanMode := ast.FulltextSearchModifier(ast.FulltextSearchModifierBooleanMode)
+	stringTp := types.NewFieldType(mysql.TypeVarchar)
+	columns := []Expression{&Column{Index: 0, RetType: stringTp}, &Column{Index: 1, RetType: stringTp}}
+	rows := [][]any{
+		{"MySQL Tutorial", "basic tutorial"},
+		{"PostgreSQL", nil},
+		{nil, "secure your MySQL database"},
+		{"100% sure_thing", `back\slash`},
+		{"Optimizing", "nothing here"},
+		{nil, nil},
+	}
+	// Each call is a new execution, with its own evaluation context: ILIKE
+	// compiles a deferred pattern once per execution context.
+	eval := func(expr Expression) []string {
+		execCtx := mock.NewContext()
+		out := make([]string, 0, len(rows))
+		for _, r := range rows {
+			row := chunk.MutRowFromValues(r...).ToRow()
+			v, isNull, err := expr.EvalInt(execCtx, row)
+			require.NoError(t, err)
+			if isNull {
+				out = append(out, "NULL")
+			} else {
+				out = append(out, strconv.FormatInt(v, 10))
+			}
+		}
+		return out
+	}
+	// Each group has search strings of one shape.
+	for _, tc := range []struct {
+		modifier ast.FulltextSearchModifier
+		group    []string
+	}{
+		{naturalMode, []string{"mysql", "postgresql", "SECURE", "nowhere"}},
+		{naturalMode, []string{"mysql tutorial", "postgresql optimizing", "database nothing"}},
+		{booleanMode, []string{"+mysql -tutorial", "+mysql -database", "+secure -postgresql"}},
+		{booleanMode, []string{"+mysql +tutorial", "+here +nothing"}},
+		{booleanMode, []string{"postgresql optimizing", "mysql tutorial"}},
+		{booleanMode, []string{"postgresql -mysql", "optimizing -nothing"}},
+		{booleanMode, []string{"+tutorial postgresql -secure", "+mysql nothing -tutorial"}},
+	} {
+		against := &Constant{Value: types.NewStringDatum(tc.group[0]), RetType: stringTp}
+		cached, err := BuildFTSToILikeExpressionForParam(ctx, columns, tc.group[0], tc.modifier, against)
+		require.NoError(t, err)
+		for _, s := range tc.group {
+			literal, err := BuildFTSToILikeExpression(ctx, columns, s, tc.modifier)
+			require.NoError(t, err)
+			fresh, err := BuildFTSToILikeExpressionForParam(ctx, columns, s, tc.modifier,
+				&Constant{Value: types.NewStringDatum(s), RetType: stringTp})
+			require.NoError(t, err)
+			want := eval(literal)
+			require.Equal(t, want, eval(fresh), "fresh %q", s)
+			against.Value = types.NewStringDatum(s)
+			require.Equal(t, want, eval(cached), "cached for %q, now %q", tc.group[0], s)
+			require.Equal(t, FTSLikeFallbackShape(types.NewStringDatum(tc.group[0]), tc.modifier),
+				FTSLikeFallbackShape(types.NewStringDatum(s), tc.modifier))
+		}
+	}
+
+	// A cached expression must never silently match the wrong term when the
+	// shape changes; the plan cache key prevents this, and the pattern
+	// function fails if it is ever violated.
+	against := &Constant{Value: types.NewStringDatum("+a +b"), RetType: stringTp}
+	cached, err := BuildFTSToILikeExpressionForParam(ctx, columns, "+a +b", booleanMode, against)
+	require.NoError(t, err)
+	against.Value = types.NewStringDatum("+a")
+	_, _, err = cached.EvalInt(mock.NewContext(), chunk.MutRowFromValues("a", "b").ToRow())
+	require.ErrorContains(t, err, "has no term 1 of kind 0")
 }

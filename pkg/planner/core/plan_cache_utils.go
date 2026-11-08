@@ -426,6 +426,15 @@ func newPlanCacheKeyWithMatchedBinding(
 		// '|' + each limit count/offset takes 8 bytes + '|'
 		hashLen += 2 + len(stmt.limits)*2*8
 	}
+	var ftsShapes []string
+	if len(stmt.ftsAgainstParams) > 0 {
+		ftsShapes = make([]string, len(stmt.ftsAgainstParams))
+		hashLen++ // leading '|'
+		for i, p := range stmt.ftsAgainstParams {
+			ftsShapes[i] = expression.FTSLikeFallbackShape(p.param.Datum, p.modifier)
+			hashLen += len(ftsShapes[i]) + 1 // shape + '|'
+		}
+	}
 	if vars.PlanCacheInvalidationOnFreshStats && (binding == "" || !vars.PlanCacheSkipStatsOnBinding) {
 		// statsVerHash: skipped when a binding is matched and PlanCacheSkipStatsOnBinding is on,
 		// because a binding pins the plan via hints so stats changes cannot alter the chosen plan.
@@ -500,6 +509,13 @@ func newPlanCacheKeyWithMatchedBinding(
 			}
 		}
 		hash = append(hash, '|')
+	}
+	if len(ftsShapes) > 0 {
+		hash = append(hash, '|')
+		for _, shape := range ftsShapes {
+			hash = append(hash, shape...)
+			hash = append(hash, '|')
+		}
 	}
 
 	// stats ver can affect cached plan, unless a binding is active and PlanCacheSkipStatsOnBinding
@@ -746,6 +762,10 @@ func (f *planCacheStmtProcessor) Enter(in ast.Node) (skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.Limit:
 		f.stmt.limits = append(f.stmt.limits, node)
+	case *ast.MatchAgainst:
+		if param, ok := node.Against.(*driver.ParamMarkerExpr); ok {
+			f.stmt.ftsAgainstParams = append(f.stmt.ftsAgainstParams, ftsAgainstParam{param: param, modifier: node.Modifier})
+		}
 	case *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
 		f.stmt.hasSubquery = true
 	case *ast.TableName:
@@ -760,6 +780,12 @@ func (f *planCacheStmtProcessor) Enter(in ast.Node) (skipChildren bool) {
 // Leave implements InPlaceVisitor interface.
 func (*planCacheStmtProcessor) Leave(ast.Node) (proceed bool) {
 	return true
+}
+
+// ftsAgainstParam is a `MATCH ... AGAINST(?)` parameter and its search modifier.
+type ftsAgainstParam struct {
+	param    *driver.ParamMarkerExpr
+	modifier ast.FulltextSearchModifier
 }
 
 // PointGetExecutorCache caches the PointGetExecutor to further improve its performance.
@@ -806,6 +832,11 @@ type PlanCacheStmt struct {
 	limits      []*ast.Limit
 	hasSubquery bool
 	tables      []table.Table // to capture table stats changes
+
+	// ftsAgainstParams are the `MATCH ... AGAINST(?)` parameters. The plan the
+	// LIKE fallback builds depends on the shape of the search string, so the
+	// plan cache key includes each one's expression.FTSLikeFallbackShape.
+	ftsAgainstParams []ftsAgainstParam
 
 	NormalizedSQL       string
 	NormalizedPlan      string

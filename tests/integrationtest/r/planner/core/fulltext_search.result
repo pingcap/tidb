@@ -187,7 +187,7 @@ select @@last_plan_from_cache;
 deallocate prepare st_fts_lit;
 set @@tidb_enable_prepared_plan_cache=DEFAULT;
 set @@tidb_enable_prepared_plan_cache=1;
-prepare st_fts from 'select id, title from articles where match(title) against(?)';
+prepare st_fts from 'select id, title from articles where match(title) against(?) order by id';
 set @q='MySQL';
 execute st_fts using @q;
 id	title
@@ -205,12 +205,112 @@ id	title
 5	MySQL Security
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 set @q='PostgreSQL';
 execute st_fts using @q;
 id	title
 4	MySQL vs. PostgreSQL
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+set @q='PostgreSQL Security';
+execute st_fts using @q;
+id	title
+4	MySQL vs. PostgreSQL
+5	MySQL Security
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set @q='Tutorial Optimizing';
+execute st_fts using @q;
+id	title
+1	MySQL Tutorial
+3	Optimizing MySQL
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+set @q='Security';
+execute st_fts using @q;
+id	title
+5	MySQL Security
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+set @q='';
+execute st_fts using @q;
+id	title
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set @q='"MySQL Tutorial"';
+execute st_fts using @q;
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST search term '"MySQL' is not supported in the LIKE fallback'
+set @q='Well';
+execute st_fts using @q;
+id	title
+2	How To Use MySQL Well
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
 deallocate prepare st_fts;
+prepare st_fts_b from 'select id from articles where match(title, body) against(? in boolean mode) order by id';
+set @q='+MySQL -tutorial';
+execute st_fts_b using @q;
+id
+4
+5
+set @q='+MySQL -PostgreSQL';
+execute st_fts_b using @q;
+id
+1
+2
+3
+5
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+set @q='+tutorial +MySQL';
+execute st_fts_b using @q;
+id
+1
+2
+3
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set @q='+secure +database';
+execute st_fts_b using @q;
+id
+5
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+set @q='PostgreSQL Security';
+execute st_fts_b using @q;
+id
+4
+5
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set @q='PostgreSQL Optimizing';
+execute st_fts_b using @q;
+id
+3
+4
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+set @q='-MySQL';
+execute st_fts_b using @q;
+id
+set @q='-PostgreSQL';
+execute st_fts_b using @q;
+id
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+deallocate prepare st_fts_b;
 set @@tidb_enable_prepared_plan_cache=DEFAULT;
 set @@tidb_enable_prepared_plan_cache=1;
 prepare st_fts_null from 'select id, title from articles where match(title) against(?)';
@@ -221,6 +321,12 @@ set @q = 'PostgreSQL';
 execute st_fts_null using @q;
 id	title
 4	MySQL vs. PostgreSQL
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set @q = NULL;
+execute st_fts_null using @q;
+id	title
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0

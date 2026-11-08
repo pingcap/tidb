@@ -377,6 +377,9 @@ const (
 	// FTS functions (tidb extension)
 	FTSMatchWord         = "fts_match_word"
 	FTSMysqlMatchAgainst = "match_against"
+	// FTSLikePattern is internal: the ILIKE pattern of one search term in the
+	// MATCH...AGAINST LIKE fallback, for plan-cacheable `AGAINST(?)`.
+	FTSLikePattern = "fts_like_pattern"
 
 	// geospatial functions, as MySQL names them: constructors
 	GeomPoint              = "point"

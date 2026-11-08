@@ -250,35 +250,97 @@ select @@last_plan_from_cache;
 deallocate prepare st_fts_lit;
 set @@tidb_enable_prepared_plan_cache=DEFAULT;
 
-# Test 38: Plan cache - prepared statement with ? in AGAINST must NOT cache.
-# A param marker is mutable across executions; baking the first execution's
-# pattern would silently produce wrong results when the bind value changes.
+# Test 38: Plan cache - prepared statement with ? in AGAINST. The LIKE fallback
+# builds its ILIKE patterns as deferred constants over the parameter, and the
+# plan cache key includes the shape of the search string (how many terms of
+# each kind, or NULL / empty / invalid). A cached plan is reused for another
+# search string with the same shape, with the new words, and a different shape
+# gets its own plan.
 set @@tidb_enable_prepared_plan_cache=1;
-prepare st_fts from 'select id, title from articles where match(title) against(?)';
+prepare st_fts from 'select id, title from articles where match(title) against(?) order by id';
 set @q='MySQL';
 execute st_fts using @q;
 execute st_fts using @q;
 select @@last_plan_from_cache;
-# Bind a different value to confirm results stay correct under the non-cached plan.
+# Same shape (one word), different word: reuses the plan with the new pattern.
 set @q='PostgreSQL';
 execute st_fts using @q;
+select @@last_plan_from_cache;
+# Two words: a different shape, so a new plan...
+set @q='PostgreSQL Security';
+execute st_fts using @q;
+select @@last_plan_from_cache;
+# ...which is reused for other two-word searches.
+set @q='Tutorial Optimizing';
+execute st_fts using @q;
+select @@last_plan_from_cache;
+# The one-word plan is still cached.
+set @q='Security';
+execute st_fts using @q;
+select @@last_plan_from_cache;
+# Empty search: matches nothing and never reuses a word plan (it folds to an
+# empty TableDual, which is not cached).
+set @q='';
+execute st_fts using @q;
+select @@last_plan_from_cache;
+# A search the LIKE fallback rejects still fails, and does not disturb the cache.
+set @q='"MySQL Tutorial"';
+-- error 1235
+execute st_fts using @q;
+set @q='Well';
+execute st_fts using @q;
+select @@last_plan_from_cache;
 deallocate prepare st_fts;
+
+# Test 38b: Boolean mode with required, excluded and optional terms; each
+# combination of term counts is a separate plan, reused across words.
+prepare st_fts_b from 'select id from articles where match(title, body) against(? in boolean mode) order by id';
+set @q='+MySQL -tutorial';
+execute st_fts_b using @q;
+set @q='+MySQL -PostgreSQL';
+execute st_fts_b using @q;
+select @@last_plan_from_cache;
+set @q='+tutorial +MySQL';
+execute st_fts_b using @q;
+select @@last_plan_from_cache;
+set @q='+secure +database';
+execute st_fts_b using @q;
+select @@last_plan_from_cache;
+set @q='PostgreSQL Security';
+execute st_fts_b using @q;
+select @@last_plan_from_cache;
+set @q='PostgreSQL Optimizing';
+execute st_fts_b using @q;
+select @@last_plan_from_cache;
+# Only excluded terms match nothing in boolean mode; like an empty search,
+# that plan is an uncached TableDual.
+set @q='-MySQL';
+execute st_fts_b using @q;
+set @q='-PostgreSQL';
+execute st_fts_b using @q;
+select @@last_plan_from_cache;
+deallocate prepare st_fts_b;
 set @@tidb_enable_prepared_plan_cache=DEFAULT;
 
 # Test 38a: Prepared statement with a NULL first bind followed by a non-NULL
 # bind. Pre-fix the LIKE fallback's NULL fast-path emitted Constant(0) and
 # ran BEFORE the plan-cache skip check, so the prepared plan could cache a
 # constant-false plan that a later non-NULL bind would silently reuse,
-# returning zero rows instead of the matching ones. The fix moves the
-# plan-cache skip ahead of the NULL fast-path (so mutable AGAINST always
-# disables caching) and changes the NULL emission to Constant(NULL) (so
-# NULL three-valued logic is preserved). After the fix, the second execute
-# must return the PostgreSQL row, and @@last_plan_from_cache must be 0.
+# returning zero rows instead of the matching ones. The NULL emission is
+# Constant(NULL) (so NULL three-valued logic is preserved), and NULL is its
+# own search-string shape in the plan cache key, so the NULL plan is never
+# reused for a non-NULL bind: the second execute must return the PostgreSQL
+# row with @@last_plan_from_cache = 0. The NULL plan folds to an empty
+# TableDual, which the plan cache never stores for a parameterized statement,
+# so a later NULL bind is planned again.
 set @@tidb_enable_prepared_plan_cache=1;
 prepare st_fts_null from 'select id, title from articles where match(title) against(?)';
 set @q = NULL;
 execute st_fts_null using @q;
 set @q = 'PostgreSQL';
+execute st_fts_null using @q;
+select @@last_plan_from_cache;
+set @q = NULL;
 execute st_fts_null using @q;
 select @@last_plan_from_cache;
 deallocate prepare st_fts_null;

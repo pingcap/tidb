@@ -2628,16 +2628,23 @@ func (er *expressionRewriter) matchAgainstToLike(v *ast.MatchAgainst, numCols, s
 		return
 	}
 
-	// The LIKE fallback bakes the search value into the produced plan — either
-	// as ILIKE pattern constants (non-NULL case) or as a Constant(NULL)
-	// short-circuit. A cached plan would reuse the first execution's baked
-	// value for later executions, producing wrong results whenever the AGAINST
-	// argument is mutable: a `?` parameter marker, a user variable, or another
-	// deferred expression. In particular, a NULL first bind would bake a
-	// Constant(NULL) plan and reuse it for a later non-NULL bind. Mark the
-	// plan non-cacheable here, before the NULL fast-path and before Eval, so
+	// The LIKE fallback shapes the produced plan from the search value: NULL
+	// becomes Constant(NULL), an empty or all-excluded search becomes
+	// Constant(0), and otherwise the number of terms of each kind decides the
+	// ILIKE expression tree, with the words in its pattern constants.
+	//
+	// For a plain `?` parameter the plan stays cacheable: the plan cache key
+	// includes the parameter's expression.FTSLikeFallbackShape (see
+	// PlanCacheStmt.ftsAgainstParams), so a cached plan is only reused for a
+	// value with the same shape, and the ILIKE patterns are deferred constants
+	// recomputed from the parameter on each execution
+	// (expression.BuildFTSToILikeExpressionForParam). Any other mutable
+	// argument (a user variable, or an expression over a parameter) has no
+	// such key and would bake the first execution's value into the plan, so
+	// skip the plan cache for it, before the NULL fast-path and before Eval so
 	// the skip applies uniformly across all branches below.
-	if expression.MaybeOverOptimized4PlanCache(er.sctx, constExpr) {
+	againstParam := constExpr.ParamMarker != nil && constExpr.DeferredExpr == nil
+	if !againstParam && expression.MaybeOverOptimized4PlanCache(er.sctx, constExpr) {
 		er.sctx.SetSkipPlanCache("MATCH...AGAINST LIKE fallback bakes a mutable search string into plan constants")
 	}
 
@@ -2704,7 +2711,12 @@ func (er *expressionRewriter) matchAgainstToLike(v *ast.MatchAgainst, numCols, s
 
 	er.ctxStackPop(numCols + 1)
 
-	result, err := er.convertMatchAgainstToLike(columns, searchText.GetString(), v.Modifier)
+	var result expression.Expression
+	if againstParam {
+		result, err = expression.BuildFTSToILikeExpressionForParam(er.sctx, columns, searchText.GetString(), v.Modifier, constExpr)
+	} else {
+		result, err = er.convertMatchAgainstToLike(columns, searchText.GetString(), v.Modifier)
+	}
 	if err != nil {
 		er.err = err
 		return
