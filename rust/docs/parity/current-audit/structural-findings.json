@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 32,
-    "open": 9,
-    "partial": 23
+    "open": 8,
+    "partial": 24
   },
   "findings": [
     {
@@ -223,9 +223,9 @@
     },
     {
       "id": "O22",
-      "status": "open",
+      "status": "partial",
       "group": "Domain and process services",
-      "finding": "The node's advertised address: the executable defaults `host` to `127.0.0.1` (`NodeConfig::deployment_defaults`) where Go's default is `0.0.0.0`, and an empty `advertise-address` with host `0.0.0.0` stays empty because `util.GetLocalIP` (the first global-unicast interface address) is unported, so `INSTANCE` columns and server info carry the loopback address where Go's carry the host's IP",
+      "finding": "The executable defaults `host` to `127.0.0.1` (`NodeConfig::deployment_defaults`) where Go's default is `0.0.0.0`, so a node started without `--host` advertises the loopback address (`INSTANCE` columns, server info) where Go's advertises `util.GetLocalIP()`; the loopback default goes with this port's refusal of a non-loopback listener under `--auth-file`, which Go has no counterpart of",
       "go_owner": "`cmd/tidb-server/main.go` (`overrideConfig`), `pkg/util/misc.go` (`GetLocalIP`)"
     },
     {
@@ -237,6 +237,6 @@
     }
   ],
   "unresolved": 32,
-  "open": 9,
-  "partial": 23
+  "open": 8,
+  "partial": 24
 }

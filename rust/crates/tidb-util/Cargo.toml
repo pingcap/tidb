@@ -20,6 +20,7 @@ tidb-datatype = { path = "../tidb-datatype" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-metrics = { path = "../tidb-metrics" }
+nix = { workspace = true, features = ["net"] }
 
 [dev-dependencies]
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }

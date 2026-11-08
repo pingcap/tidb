@@ -8749,6 +8749,7 @@ dependencies = [
 name = "tidb-util"
 version = "0.0.0"
 dependencies = [
+ "nix 0.31.3",
  "tidb-datatype",
  "tidb-dbterror",
  "tidb-errno",

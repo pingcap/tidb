@@ -143,3 +143,82 @@ impl SequenceSchema for NoSequences {
         .gen_with_stack_by_args(&[schema.into(), sequence.into()]))
     }
 }
+
+/// Go `GetLocalIP`: the first global-unicast address among the host's
+/// interface addresses (`net.InterfaceAddrs`), or `""` when there is none.
+#[must_use]
+pub fn get_local_ip() -> String {
+    let Ok(addresses) = nix::ifaddrs::getifaddrs() else {
+        return String::new();
+    };
+    for interface in addresses {
+        let Some(address) = interface.address.as_ref() else {
+            continue;
+        };
+        let ip = if let Some(v4) = address.as_sockaddr_in() {
+            std::net::IpAddr::V4(v4.ip())
+        } else if let Some(v6) = address.as_sockaddr_in6() {
+            std::net::IpAddr::V6(v6.ip())
+        } else {
+            continue;
+        };
+        if is_global_unicast(ip) {
+            return ip.to_string();
+        }
+    }
+    String::new()
+}
+
+/// Go `net.IP.IsGlobalUnicast`: neither the IPv4 limited broadcast address,
+/// unspecified, loopback, multicast nor link-local unicast. Private ranges
+/// are global unicast.
+#[must_use]
+pub fn is_global_unicast(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4 != std::net::Ipv4Addr::BROADCAST
+                && !v4.is_unspecified()
+                && !v4.is_loopback()
+                && !v4.is_multicast()
+                && !v4.is_link_local()
+        }
+        std::net::IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => is_global_unicast(std::net::IpAddr::V4(v4)),
+            None => {
+                !v6.is_unspecified()
+                    && !v6.is_loopback()
+                    && !v6.is_multicast()
+                    && (v6.segments()[0] & 0xffc0) != 0xfe80
+            }
+        },
+    }
+}
+
+#[cfg(test)]
+mod local_ip_tests {
+    use super::is_global_unicast;
+
+    /// Go `net`'s `TestIPAttrs` rows for `IsGlobalUnicast`.
+    #[test]
+    fn global_unicast_follows_go_net() {
+        for (ip, global) in [
+            ("0.0.0.0", false),
+            ("255.255.255.255", false),
+            ("127.0.0.1", false),
+            ("10.0.0.1", true),
+            ("192.168.1.219", true),
+            ("169.254.0.1", false),
+            ("224.0.0.1", false),
+            ("8.8.8.8", true),
+            ("::", false),
+            ("::1", false),
+            ("fe80::1", false),
+            ("ff02::1", false),
+            ("2001:db8::1", true),
+            ("::ffff:192.168.1.1", true),
+            ("::ffff:127.0.0.1", false),
+        ] {
+            assert_eq!(is_global_unicast(ip.parse().unwrap()), global, "{ip}");
+        }
+    }
+}

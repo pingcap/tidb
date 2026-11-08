@@ -263,9 +263,10 @@ pub fn override_config(cfg: &mut Config, flags: &MainFlags) -> Result<(), String
         }
         cfg.advertise_address = advertise.clone();
     }
-    // Go resolves an empty advertise address from the local IP when the host
-    // is the wildcard; the deferred lookup is the node's, not this pass's.
-    if cfg.advertise_address.is_empty() && cfg.host != "0.0.0.0" {
+    if cfg.advertise_address.is_empty() && cfg.host == "0.0.0.0" {
+        cfg.advertise_address = tidb_util::misc::get_local_ip();
+    }
+    if cfg.advertise_address.is_empty() {
         cfg.advertise_address = cfg.host.clone();
     }
     if let Some(port) = &flags.port {
@@ -497,6 +498,22 @@ mod tests {
     /// Go `TestOverrideConfigKeyspaceActivateMode` (`main_test.go:76-95`):
     /// `--keyspace-activate=true` lands on the config, and the starter
     /// params survive verbatim for the manager-client parser downstream.
+    /// Go `overrideConfig`: an empty advertise address on the wildcard host
+    /// is the local IP (`util.GetLocalIP`), and otherwise the host.
+    #[test]
+    fn override_config_advertises_the_local_ip_on_the_wildcard_host() {
+        let wildcard = MainFlags::parse(&["--host=0.0.0.0".to_owned()]).unwrap();
+        let mut cfg = Config::default();
+        override_config(&mut cfg, &wildcard).unwrap();
+        let local_ip = tidb_util::misc::get_local_ip();
+        let expected = if local_ip.is_empty() { "0.0.0.0".to_owned() } else { local_ip };
+        assert_eq!(cfg.advertise_address, expected);
+        let host = MainFlags::parse(&["--host=127.0.0.1".to_owned()]).unwrap();
+        let mut cfg = Config::default();
+        override_config(&mut cfg, &host).unwrap();
+        assert_eq!(cfg.advertise_address, "127.0.0.1");
+    }
+
     #[test]
     fn override_config_keyspace_activate_mode() {
         let flags = MainFlags::parse(&[
