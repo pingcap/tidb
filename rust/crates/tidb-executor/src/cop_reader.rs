@@ -1007,7 +1007,7 @@ struct CopRowStream {
     dag_size: usize,
 }
 
-fn select_response_error(error: tidb_copr::response_channel::ResponseChannelError) -> StorageError {
+pub(crate) fn select_response_error(error: tidb_copr::response_channel::ResponseChannelError) -> StorageError {
     match error {
         // Go `selectResult.fetchResp`: a `SelectResponse` error is
         // `ClassTiKV.Synthesize`d; the iterator's own error is returned as is.

@@ -175,8 +175,8 @@
       "id": "I07",
       "status": "partial",
       "group": "Runtime information-schema providers",
-      "finding": "A CLUSTER_* table's TiDB-store reader sends Go's DAG (`builder_utils.rs`: `ConstructDAGReq`'s list-form `ToPB`, `SetHandleRanges`) and every TiDB rebuilds it with `coprocessor.rs`'s `PBPlanBuilder`; still apart from Go: `TIFLASH_REPLICA`'s TiDB-store reader runs its pushed plan as local executors where Go sends it to the DDL owner (`GetClusterTableCopDestination`, `SetTiDBServerID`); the reader records no cop runtime statistics from the responses (Go `selectResult.updateCopRuntimeStats`), so EXPLAIN ANALYZE's TableReader row lacks `cop_task`/`rpc_info` and its cop[tidb] rows show `N/A` where Go shows 0 rows; the requester answers its own task with its coprocessor handler in-process instead of over its status port",
-      "go_owner": "`pkg/planner/core/pb_to_plan.go`, `pkg/executor/coprocessor.go`, `pkg/executor/builder.go` (`buildTableReader` for `kv.TiDB`), `pkg/store/copr` (`buildTiDBMemCopTasks`), `pkg/distsql` (`selectResult`)"
+      "finding": "A CLUSTER_* table's reader is Go's `TableReaderExecutor` on the `kv.TiDB` store (`table_reader.rs`): its DAG goes through `distsql.SelectWithRuntimeStats` and copr's TiDB tasks (`cluster_peer.rs` `TiDbMemCopClient`, every TiDB including this one over its status port) and every TiDB rebuilds it with `coprocessor.rs`'s `PBPlanBuilder`; still apart from Go: `TIFLASH_REPLICA`'s TiDB-store reader runs its pushed plan as local executors where Go sends it to the DDL owner (`GetClusterTableCopDestination`, `SetTiDBServerID`)",
+      "go_owner": "`pkg/planner/core/pb_to_plan.go`, `pkg/executor/coprocessor.go`, `pkg/executor/builder.go` (`buildTableReader` for `kv.TiDB`), `pkg/store/copr` (`buildTiDBMemCopTasks`)"
     },
     {
       "id": "E07",

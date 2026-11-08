@@ -177,7 +177,9 @@ pub fn decode_tikv_unary_response(
     Ok(CopReadTaskResponse::success(response))
 }
 
-fn request_source(source: &RequestSource) -> String {
+/// Go `RequestSource.GetRequestSource`: the request source a request's
+/// context carries.
+pub fn request_source(source: &RequestSource) -> String {
     if source.source_type.is_empty() && source.explicit_source_type.is_empty() {
         return "unknown".to_owned();
     }

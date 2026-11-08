@@ -1445,6 +1445,45 @@ impl<PdC: PdClient> KvStore<PdC> {
         store_type: EndpointType,
         timeout: Duration,
     ) -> Result<Box<dyn std::any::Any>> {
+        self.send_request_with_store_type_and_stats(address, request, store_type, timeout, None)
+            .await
+    }
+
+    /// [`Self::send_request_with_store_type`] recording the physical RPC in
+    /// `stats`, as client-go's `RegionRequestSender.SendReqCtx` records a
+    /// send to a TiDB's address (`getRPCContext`'s `tikvrpc.TiDB` arm, then
+    /// `sendReqToRegion`'s `RecordRPCRuntimeStats` / `RecordRPCErrorStats`).
+    pub async fn send_request_with_store_type_and_stats(
+        &self,
+        address: &str,
+        request: &mut dyn Request,
+        store_type: EndpointType,
+        timeout: Duration,
+        stats: Option<Arc<crate::RegionRequestRuntimeStats>>,
+    ) -> Result<Box<dyn std::any::Any>> {
+        let started_at = std::time::Instant::now();
+        let label = request.label();
+        let result = self
+            .send_request_with_store_type_unrecorded(address, request, store_type, timeout)
+            .await;
+        if let Some(stats) = &stats {
+            if let Some(command) = crate::store::CommandType::from_request_label(label) {
+                stats.record_rpc(command, started_at.elapsed());
+            }
+            if let Err(error) = &result {
+                stats.record_error(crate::region_request::request_error_message(Some(error)));
+            }
+        }
+        result
+    }
+
+    async fn send_request_with_store_type_unrecorded(
+        &self,
+        address: &str,
+        request: &mut dyn Request,
+        store_type: EndpointType,
+        timeout: Duration,
+    ) -> Result<Box<dyn std::any::Any>> {
         use crate::store::KvClient as _;
         let client =
             PdClient::kv_client_with_store_type(self.pd_client().as_ref(), address, store_type)

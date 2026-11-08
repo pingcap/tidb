@@ -29,7 +29,7 @@ pub use cop_read_task_runtime::{
 };
 pub use native_transport::{NativeCopResponse, NativeCopTransport};
 pub use tikv_rpc_contract::{
-    build_tikv_unary_request, decode_tikv_unary_response, TikvUnaryRequest,
+    build_tikv_unary_request, decode_tikv_unary_response, request_source, TikvUnaryRequest,
 };
 
 use std::sync::Arc;
@@ -223,7 +223,7 @@ const SIZEOF_EXEC_DETAILS: i64 = 160;
 /// Go `copResponse.MemSize`: the response's start key, its `CopRuntimeStats`
 /// when execution info is collected, and its protobuf size. Go counts the
 /// start key's capacity; this counts its length.
-fn cop_response_mem_size(response: &CoprocessorResponse, start_key_len: usize, has_detail: bool) -> i64 {
+pub fn cop_response_mem_size(response: &CoprocessorResponse, start_key_len: usize, has_detail: bool) -> i64 {
     use prost::Message;
     let mut size = start_key_len as i64;
     if has_detail {

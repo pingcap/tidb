@@ -103,6 +103,18 @@ pub trait MemTableRetriever: Send + Sync {
         catalog: &tidb_infoschema::SessionExtendedInfoSchema,
         ctx: &crate::StmtContext,
     ) -> Result<Vec<Vec<Datum>>, tidb_driver_error::DriverError>;
+
+    /// What a reader of `read` on the `kv.TiDB` store sends through (Go
+    /// `dctx.Client`), over the statement's schema image `catalog`; `None`
+    /// when this retriever answers no such reader.
+    fn tidb_store_reader(
+        &self,
+        _read: &MemTableRead,
+        _catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+        _ctx: &crate::StmtContext,
+    ) -> Option<crate::table_reader::TiDbStoreReader> {
+        None
+    }
 }
 
 /// One statement's memory-table retrievals; see the module documentation.

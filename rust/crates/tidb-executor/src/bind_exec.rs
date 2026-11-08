@@ -292,10 +292,12 @@ pub trait SqlBindExec:
         let fields = "stmt_type, schema_name, digest_text, sample_user, prepared, \
                       query_sample_text, charset, collation, plan_hint, plan_digest";
         let literal = plan_digest.replace('\\', "\\\\").replace('\'', "\\'");
+        // Go reads this node's tables under `intest.InTest`.
+        let prefix = if tidb_intest::IN_TEST { "" } else { "cluster_" };
         let sql = format!(
-            "select {fields} from information_schema.cluster_tidb_statements_stats \
+            "select {fields} from information_schema.{prefix}tidb_statements_stats \
              where plan_digest = '{literal}' union distinct \
-             select {fields} from information_schema.cluster_statements_summary_history \
+             select {fields} from information_schema.{prefix}statements_summary_history \
              where plan_digest = '{literal}' order by length(plan_digest) desc"
         );
         let ctx = self.statement_context(false);

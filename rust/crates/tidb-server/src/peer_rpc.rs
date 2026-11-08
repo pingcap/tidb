@@ -295,6 +295,78 @@ mod tests {
         tidb_executor::cluster_peer::ClusterPeerClient::new(store)
     }
 
+    /// A peer coprocessor service on a local port, stopped when dropped.
+    struct ServedPeer(
+        Option<tokio::sync::oneshot::Sender<()>>,
+        Option<std::thread::JoinHandle<()>>,
+    );
+    impl Drop for ServedPeer {
+        fn drop(&mut self) {
+            let _ = self.0.take().unwrap().send(());
+            self.1.take().unwrap().join().unwrap();
+        }
+    }
+
+    /// Serves `service` on a local port.
+    fn serve_peer<S: tikvpb::tikv_server::Tikv>(service: S) -> (std::net::SocketAddr, ServedPeer) {
+        let (ready, receive) = std::sync::mpsc::channel();
+        let (stop, done) = tokio::sync::oneshot::channel();
+        let worker = std::thread::spawn(move || {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async move {
+                    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                    ready.send(listener.local_addr().unwrap()).unwrap();
+                    let incoming = futures::stream::unfold(listener, |listener| async move {
+                        let stream = listener.accept().await.map(|(stream, _)| stream);
+                        Some((stream, listener))
+                    });
+                    tonic::transport::Server::builder()
+                        .add_service(tikvpb::tikv_server::TikvServer::new(service))
+                        .serve_with_incoming_shutdown(incoming, async {
+                            let _ = done.await;
+                        })
+                        .await
+                        .unwrap();
+                });
+        });
+        (receive.recv().unwrap(), ServedPeer(Some(stop), Some(worker)))
+    }
+
+    /// Go `clustertablestest`'s `setUpRPCService`: `session`'s node serves
+    /// its coprocessor (over sessions `configure` prepares, and the node's
+    /// `processes`) at a local port its server info names as the status
+    /// port, so the TiDB task of each CLUSTER_* read reaches it there.
+    fn serve_own_status_port(
+        session: &mut Session,
+        processes: ProcessRegistry,
+        configure: impl Fn(&mut Session) + Send + Sync + 'static,
+    ) -> ServedPeer {
+        let catalog = session.shared_catalog();
+        let (addr, served) = serve_peer(PeerService::new(
+            Arc::new(move || {
+                let mut session = Session::with_catalog(catalog.clone());
+                configure(&mut session);
+                Ok(session)
+            }),
+            processes,
+            PrivilegeRegistry::default(),
+            None,
+        ));
+        let mut local = tidb_domain_serverinfo::serverinfo::ServerInfo::default();
+        local.static_info.id = "self".into();
+        local.static_info.ip = addr.ip().to_string();
+        local.static_info.status_port = addr.port() as usize;
+        session.set_server_info_syncer(Arc::new(
+            tidb_domain_serverinfo::serverinfo_syncer::Syncer::new(local, None),
+        ));
+        session.set_cluster_peer_client(Arc::new(peer_client()));
+        served
+    }
+
     #[derive(Default)]
     struct Target {
         queries: AtomicUsize,
@@ -1063,6 +1135,7 @@ mod tests {
     #[test]
     fn cluster_diagnostics_batch_deadlock_admission() {
         let mut session = Session::new();
+        let _served = serve_own_status_port(&mut session, ProcessRegistry::default(), |_| {});
         session.set_user("diagnostic@%".into(), "diagnostic@localhost".into());
         let error = session
             .run("SELECT * FROM information_schema.CLUSTER_DEADLOCKS")
@@ -1077,9 +1150,63 @@ mod tests {
         );
     }
 
+    /// Go `TableReaderExecutor` on the `kv.TiDB` store, as a Go tidb-server
+    /// shows it: the read goes through `distsql.SelectWithRuntimeStats` and
+    /// copr's TiDB task to the node's own status port, so EXPLAIN ANALYZE
+    /// carries the task's statistics, the select result's memory (the
+    /// response, its 19-byte start key and `sizeofExecDetails`), and pushed
+    /// operators with no execution summary of their own; and the reader's
+    /// start ts makes the statement's transaction the one CLUSTER_TIDB_TRX
+    /// lists.
+    #[test]
+    fn a_cluster_table_reader_reads_through_copr_like_go() {
+        let mut session = Session::new();
+        let processes = ProcessRegistry::default();
+        session.attach_process(
+            7,
+            processes.register(7, "root".into(), "127.0.0.1:1".into(), "test".into(), None),
+        );
+        let _served = serve_own_status_port(&mut session, processes, |session| {
+            session.set_process_privilege(true)
+        });
+        session.set_process_privilege(true);
+        let tidb_session::StmtResult::Rows(rows) = session
+            .run("SELECT COUNT(*) FROM information_schema.CLUSTER_TIDB_TRX")
+            .unwrap()
+        else {
+            panic!("expected rows")
+        };
+        assert_eq!(rows, vec![vec![Datum::Int(1)]]);
+        let tidb_session::StmtResult::Rows(rows) = session
+            .run("EXPLAIN ANALYZE SELECT ID FROM information_schema.CLUSTER_PROCESSLIST WHERE ID > 0")
+            .unwrap()
+        else {
+            panic!("expected rows")
+        };
+        let text = |row: &[Datum], column: usize| {
+            String::from_utf8(row[column].as_raw_bytes().unwrap_or_default().to_vec()).unwrap()
+        };
+        let reader = text(&rows[0], 5);
+        for part in [
+            ", loops:2, ",
+            "cop_task: {num: 1, max: ",
+            ", proc_keys: 0, copr_cache_hit_ratio: 0.00, max_distsql_concurrency: 1}, fetch_resp_duration: ",
+            ", rpc_info:{Cop:{num_rpc:1, total_time:",
+        ] {
+            assert!(reader.contains(part), "{reader}");
+        }
+        assert!(!reader.contains("build_task_duration"), "{reader}");
+        assert_eq!(text(&rows[0], 7), "207 Bytes");
+        for row in &rows[1..] {
+            assert_eq!(text(row, 3), "cop[tidb]");
+            assert_eq!((text(row, 2), text(row, 5)), ("0".to_owned(), String::new()));
+        }
+    }
+
     #[test]
     fn cluster_diagnostics_batch_memory_sql() {
         let mut session = Session::new();
+        let _served = serve_own_status_port(&mut session, ProcessRegistry::default(), |_| {});
         let tidb_session::StmtResult::Rows(rows) = session
             .run("SELECT MEMORY_TOTAL FROM information_schema.CLUSTER_MEMORY_USAGE")
             .unwrap()
@@ -1095,6 +1222,7 @@ mod tests {
     #[test]
     fn cluster_diagnostics_batch_index_sql() {
         let mut session = Session::new();
+        let _served = serve_own_status_port(&mut session, ProcessRegistry::default(), |_| {});
         session.run("CREATE DATABASE diagnostic_batch").unwrap();
         session
             .run("CREATE TABLE diagnostic_batch.t (id INT PRIMARY KEY, v INT, KEY ix(v))")
@@ -1372,6 +1500,7 @@ mod tests {
     #[test]
     fn cluster_summary_batch_sql_tables_share_completed_statements() {
         let mut session = Session::new();
+        let _served = serve_own_status_port(&mut session, ProcessRegistry::default(), |_| {});
         session.set_user("summary_reader@%".into(), "summary_reader@localhost".into());
         session.run("SELECT 918273 + 4").unwrap();
         for table in [
@@ -1698,6 +1827,10 @@ mod tests {
             }
         }
         let _restore = Restore(config, previous, summary.clone());
+        // The user holds PROCESS on the node its task reaches too.
+        let _served = serve_own_status_port(&mut session, ProcessRegistry::default(), |session| {
+            session.set_process_privilege(true)
+        });
         session.set_user("summary_v2@%".into(), "summary_v2@localhost".into());
         session.set_process_privilege(true);
         session.run("SELECT 12 + 19").unwrap();

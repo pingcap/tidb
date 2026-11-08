@@ -27,12 +27,17 @@ use tidb_txnkv::rpc::UnaryCancellation;
 /// Go copr's `SendReqCtx` to a TiDB address (`buildTiDBMemCopTasks`' tasks):
 /// the store's TiKV client, outside region routing.
 trait PeerSender: Send + Sync {
+    /// `kv_context` holds Go's `bo.GetCtx()` values (the statement's
+    /// `RUDetails` the resource-control interceptor charges); `stats` is the
+    /// task's `RegionRequestRuntimeStats`.
     fn send(
         &self,
         address: &str,
         request: coprocessor::Request,
         timeout: Duration,
         cancel: &UnaryCancellation,
+        kv_context: &tidb_txnkv::StatementKvContext,
+        stats: Option<Arc<tikv_client::RegionRequestRuntimeStats>>,
     ) -> Result<coprocessor::Response, tikv_client::Error>;
 }
 
@@ -43,15 +48,21 @@ impl<S: tikv_client::PdClient> PeerSender for TikvStore<S> {
         mut request: coprocessor::Request,
         timeout: Duration,
         cancel: &UnaryCancellation,
+        kv_context: &tidb_txnkv::StatementKvContext,
+        stats: Option<Arc<tikv_client::RegionRequestRuntimeStats>>,
     ) -> Result<coprocessor::Response, tikv_client::Error> {
         self.block_on(async {
             // Go copr's `getEndpointType(kv.TiDB)`: the request's `StoreTp` is
             // TiDB, which never batches and which the mock store redirects.
-            let send = self.store().send_request_with_store_type(
-                address,
-                &mut request,
-                tikv_client::tikv::EndpointType::TiDb,
-                timeout,
+            let send = tidb_copr::cop_store::with_statement_kv_context(
+                kv_context,
+                self.store().send_request_with_store_type_and_stats(
+                    address,
+                    &mut request,
+                    tikv_client::tikv::EndpointType::TiDb,
+                    timeout,
+                    stats,
+                ),
             );
             tokio::pin!(send);
             let response = loop {
@@ -362,6 +373,8 @@ impl ClusterPeerClient {
             request,
             Duration::from_nanos(timeout.max(1) as u64),
             cancel,
+            &tidb_txnkv::StatementKvContext::default(),
+            None,
         );
         if cancel.is_cancelled() {
             return Err("Query execution was interrupted".into());
@@ -430,6 +443,304 @@ impl ClusterPeerClient {
             let result = run(cancel);
             drop(done_tx);
             result
+        })
+    }
+}
+
+/// Go copr's `CopClient` for a request on the `kv.TiDB` store: `Send`
+/// builds `buildTiDBMemCopTasks`' tasks over the TiDBs `servers` lists (Go
+/// `infosync.GetAllServerInfo`, here the session's server-info syncer).
+pub struct TiDbMemCopClient {
+    peer: Arc<ClusterPeerClient>,
+    /// The listed TiDBs, read at each send.
+    servers: Arc<dyn Fn() -> Result<Vec<ServerInfo>, String> + Send + Sync>,
+}
+
+impl TiDbMemCopClient {
+    /// The client sending through `peer` to the TiDBs `servers` lists.
+    pub fn new(
+        peer: Arc<ClusterPeerClient>,
+        servers: Arc<dyn Fn() -> Result<Vec<ServerInfo>, String> + Send + Sync>,
+    ) -> Self {
+        Self { peer, servers }
+    }
+}
+
+impl std::fmt::Debug for TiDbMemCopClient {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("TiDbMemCopClient").finish_non_exhaustive()
+    }
+}
+
+impl tidb_txnkv::Client for TiDbMemCopClient {
+    fn send(
+        &self,
+        request: &tidb_txnkv::TransportRequest,
+    ) -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
+        let servers = (self.servers)()?;
+        let metadata = request.metadata();
+        // Go `buildTiDBMemCopTasks`.
+        let server_id = (metadata.tidb_server_id > 0).then_some(metadata.tidb_server_id);
+        let tasks = peer_addresses(&servers, server_id);
+        // Go `copIterator.concurrency`: the request's, at most one worker
+        // per task and at least one.
+        let concurrency = usize::try_from(metadata.concurrency)
+            .unwrap_or(0)
+            .min(tasks.len())
+            .max(1);
+        let tagger_key = metadata
+            .key_ranges
+            .as_ref()
+            .and_then(|ranges| ranges.first_partition_ranges().first().map(|range| range.start_key.as_bytes().to_vec()))
+            .unwrap_or_default();
+        let context = tidb_proto::kvrpcpb::Context {
+            priority: metadata.priority.raw() as i32,
+            isolation_level: metadata.isolation_level.raw() as i32,
+            not_fill_cache: metadata.not_fill_cache,
+            record_time_stat: true,
+            record_scan_stat: true,
+            task_id: metadata.task_id,
+            resource_group_tag: metadata
+                .resource_group_tagger
+                .as_ref()
+                .map(|tagger| tagger.encode_tag_with_key(&tagger_key))
+                .unwrap_or_default(),
+            request_source: tidb_copr::cop_paging::request_source(&metadata.request_source),
+            resource_control_context: Some(tidb_proto::kvrpcpb::ResourceControlContext {
+                resource_group_name: metadata.resource_group_name.clone(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let cop_request = coprocessor::Request {
+            context: Some(context),
+            tp: metadata.request_type.raw(),
+            start_ts: metadata.start_ts,
+            data: metadata.data.clone().unwrap_or_default().into(),
+            ranges: metadata
+                .key_ranges
+                .as_ref()
+                .map(|ranges| {
+                    ranges
+                        .first_partition_ranges()
+                        .iter()
+                        .map(|range| coprocessor::KeyRange {
+                            start: range.start_key.as_bytes().to_vec().into(),
+                            end: range.end_key.as_bytes().to_vec().into(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            ..Default::default()
+        };
+        Ok(Box::new(TiDbMemCopResponse {
+            sender: Arc::clone(&self.peer.sender),
+            tasks,
+            request: cop_request,
+            kv_context: request.kv_context(),
+            cancellation: request
+                .request_cancellation()
+                .map(|handle| handle.unary_cancellation())
+                .unwrap_or_default(),
+            concurrency,
+            mem_tracker: metadata.mem_tracker.clone(),
+            results: None,
+        }))
+    }
+
+    fn is_request_type_supported(&self, request_type: i64, sub_type: i64) -> bool {
+        tidb_txnkv::RequestTypeSupportedChecker.is_request_type_supported(request_type, sub_type)
+    }
+}
+
+/// Go copr's `copIterator` over TiDB tasks: every task's answer in task
+/// order, each with the `CopRuntimeStats` its worker recorded.
+pub struct TiDbMemCopResponse {
+    sender: Arc<dyn PeerSender>,
+    tasks: Vec<String>,
+    request: coprocessor::Request,
+    kv_context: tidb_txnkv::StatementKvContext,
+    cancellation: UnaryCancellation,
+    concurrency: usize,
+    /// Go `copIterator.memTracker` (the request's `MemTracker`).
+    mem_tracker: Option<Arc<tidb_memory::Tracker>>,
+    /// The tasks' results once the workers ran them (Go's response channel).
+    results: Option<
+        std::collections::VecDeque<
+            Result<(tidb_txnkv::QueryResultSubset, i64), tidb_txnkv::QueryResponseError>,
+        >,
+    >,
+}
+
+impl TiDbMemCopResponse {
+    /// Go `copIteratorWorker.handleTaskOnce` for a TiDB task: the task's
+    /// response and its `copResponse.MemSize`.
+    fn handle_task_once(
+        &self,
+        address: &str,
+    ) -> Result<(tidb_txnkv::QueryResultSubset, i64), tidb_txnkv::QueryResponseError> {
+        // Go's `errors.Errorf`, an unknown (1105) error on the requester.
+        let failed = |message: String| tidb_txnkv::QueryResponseError::Sql { code: 1105, message };
+        let timeout = tidb_config::config_tree::config::get_global_config()
+            .tikv_client
+            .copr_req_timeout;
+        let req_stats = Arc::new(tikv_client::RegionRequestRuntimeStats::new());
+        let started = std::time::Instant::now();
+        let response = self.sender.send(
+            address,
+            self.request.clone(),
+            Duration::from_nanos(timeout.max(1) as u64),
+            &self.cancellation,
+            &self.kv_context,
+            Some(Arc::clone(&req_stats)),
+        );
+        if self.cancellation.is_cancelled() {
+            return Err(tidb_txnkv::QueryResponseError::Cancelled);
+        }
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => return Ok(handle_tidb_send_req_err(&error, address)),
+        };
+        // Go `handleCopResponse` gives every TiDB response a detail and the
+        // task's first start key.
+        let start_key_len = self.request.ranges.first().map_or(0, |range| range.start.len());
+        let mem_size = tidb_copr::cop_paging::cop_response_mem_size(&response, start_key_len, true);
+        let cost_time = started.elapsed();
+        // Go `handleCopResponse`: a TiDB's region error is the response's
+        // error; its other error fails the task.
+        if let Some(error) = response.region_error {
+            return Err(failed(format!("error: {error:?}")));
+        }
+        if response.locked.is_some() {
+            return Err(failed("unexpected lock in TiDB memory-table response".into()));
+        }
+        if !response.other_error.is_empty() {
+            return Err(failed(format!("other error: {}", response.other_error)));
+        }
+        Ok((
+            tidb_txnkv::QueryResultSubset {
+                data: response.data.into(),
+                runtime: Some(tidb_txnkv::ResponseRuntimeStats {
+                    callee_address: address.to_owned(),
+                    request_rpc_stats_present: req_stats.rpc_type_count() > 0,
+                    resp_time: cost_time,
+                    req_stats: Some(tidb_txnkv::RequestStatsSample(req_stats)),
+                    ..Default::default()
+                }),
+            },
+            mem_size,
+        ))
+    }
+}
+
+/// Go `copIteratorWorker.handleTiDBSendReqErr`: a TiDB that cannot be
+/// reached answers a warning, with empty runtime statistics, and its
+/// `copResponse.MemSize`.
+fn handle_tidb_send_req_err(error: &tikv_client::Error, address: &str) -> (tidb_txnkv::QueryResultSubset, i64) {
+    // `errors.Cause`: the connection annotation is not the kind.
+    let (code, message) = if matches!(
+        error.cause(),
+        tikv_client::Error::GrpcAPI(status) if status.code() == tonic::Code::DeadlineExceeded
+    ) {
+        (9002, format!("TiDB server timeout, address is {address}"))
+    } else {
+        (1105, error.to_string())
+    };
+    let response = coprocessor::Response {
+        data: tipb::SelectResponse {
+            warnings: vec![tipb::Error {
+                code: Some(code),
+                msg: Some(message),
+            }],
+            ..Default::default()
+        }
+        .encode_to_vec()
+        .into(),
+        ..Default::default()
+    };
+    let mem_size = tidb_copr::cop_paging::cop_response_mem_size(&response, 0, true);
+    (
+        tidb_txnkv::QueryResultSubset {
+            data: response.data.into(),
+            runtime: None,
+        },
+        mem_size,
+    )
+}
+
+impl tidb_txnkv::Response for TiDbMemCopResponse {
+    fn next(&mut self) -> Result<Option<tidb_txnkv::QueryResultSubset>, tidb_txnkv::QueryResponseError> {
+        if self.results.is_none() {
+            // Go `copIterator.open`'s workers, `concurrency` at a time.
+            let this = &*self;
+            let mut results = std::collections::VecDeque::with_capacity(self.tasks.len());
+            for batch in this.tasks.chunks(this.concurrency) {
+                let answers: Vec<_> = std::thread::scope(|scope| {
+                    let handles: Vec<_> = batch
+                        .iter()
+                        .map(|address| {
+                            scope.spawn(tidb_cpuprofile::labels::inherit(move || {
+                                this.handle_task_once(address)
+                            }))
+                        })
+                        .collect();
+                    handles
+                        .into_iter()
+                        .map(|worker| {
+                            worker.join().unwrap_or_else(|_| {
+                                Err(tidb_txnkv::QueryResponseError::Source(
+                                    "cluster peer worker panicked".to_owned(),
+                                ))
+                            })
+                        })
+                        .collect()
+                });
+                // Go `checkRespOOM`, as each worker's response arrives.
+                for answer in answers.iter().flatten() {
+                    if let Some(tracker) = &self.mem_tracker {
+                        tracker.consume(answer.1);
+                    }
+                }
+                results.extend(answers);
+            }
+            self.results = Some(results);
+        }
+        if self.cancellation.is_cancelled() {
+            return Err(tidb_txnkv::QueryResponseError::Cancelled);
+        }
+        match self.results.as_mut().and_then(std::collections::VecDeque::pop_front) {
+            None => Ok(None),
+            // Go `copIterator.Next`'s `memTrackerConsumeResp`.
+            Some(Ok((subset, mem_size))) => {
+                if let Some(tracker) = &self.mem_tracker {
+                    tracker.consume(-mem_size);
+                }
+                Ok(Some(subset))
+            }
+            Some(Err(error)) => {
+                tidb_txnkv::Response::close(self);
+                Err(error)
+            }
+        }
+    }
+
+    fn close(&mut self) {
+        // The responses never taken leave the tracker with the iterator.
+        for (_, mem_size) in self.results.take().into_iter().flatten().flatten() {
+            if let Some(tracker) = &self.mem_tracker {
+                tracker.consume(-mem_size);
+            }
+        }
+        self.results = Some(std::collections::VecDeque::new());
+    }
+
+    fn cop_info(&self) -> Option<tidb_txnkv::CopInfo> {
+        // Go `BuildCopIterator` times only `buildCopTasks`; the TiDB tasks
+        // leave `buildTaskElapsed` zero.
+        Some(tidb_txnkv::CopInfo {
+            concurrency: self.concurrency,
+            extra_concurrency: 0,
+            build_task_elapsed: Duration::ZERO,
         })
     }
 }

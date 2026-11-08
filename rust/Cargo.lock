@@ -4781,6 +4781,7 @@ dependencies = [
  "tidb-infoschema",
  "tidb-infoschema-issyncer",
  "tidb-infoschema-perfschema",
+ "tidb-intest",
  "tidb-keydecoder",
  "tidb-keyspace",
  "tidb-kv",

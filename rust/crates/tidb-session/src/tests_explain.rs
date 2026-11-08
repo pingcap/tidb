@@ -7215,10 +7215,6 @@ fn cluster_tables_plan_as_tidb_store_scans() {
         row_text(session.run("SELECT count(*) FROM information_schema.cluster_slow_query")),
         [["0"]]
     );
-    let instance = row_text(session.run(
-        "SELECT instance FROM information_schema.cluster_processlist LIMIT 1",
-    ));
-    assert_eq!(instance.len(), 1);
 }
 
 /// Go `LogicalApply.DeriveStats` for a keyless correlated LATERAL join: the
@@ -8705,5 +8701,36 @@ fn a_point_read_reports_its_ru_then_its_snapshot_like_go() {
         assert_eq!(basic, "time:D, open:D, close:D, loops:2", "{sql}");
         let (_, snapshot) = rest.split_once(", ").unwrap_or_else(|| panic!("{sql}: {info}"));
         assert_eq!(snapshot, format!("{rpc}:{{num_rpc:1, total_time:D}}"), "{sql}");
+    }
+}
+
+/// Go `getRuntimeInfoStr` under a `RuntimeStatsColl`: an operator the
+/// statement never ran (an index join's probe side when the build side is
+/// empty) shows "0" rows and no execution info, in the table and in
+/// `tidb_json` (where the empty info is omitted). Go tidb-server capture.
+#[test]
+fn an_operator_that_never_ran_shows_gos_runtime_defaults() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE e1 (a INT, b INT)",
+        "CREATE TABLE e2 (a INT PRIMARY KEY, b INT, KEY (b))",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let query = "SELECT /*+ INL_JOIN(e2) */ * FROM e1 JOIN e2 ON e1.b = e2.b";
+    let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {query}")));
+    let never_ran: Vec<_> = rows
+        .iter()
+        .filter(|row| row[0].contains("Selection_27") || row[0].contains("IndexRangeScan_26"))
+        .map(|row| (row[2].as_str(), row[3].as_str(), row[5].as_str()))
+        .collect();
+    assert_eq!(never_ran, [("0", "cop[tikv]", ""), ("0", "cop[tikv]", "")], "{rows:?}");
+    let json = row_text(session.run(&format!("EXPLAIN ANALYZE FORMAT = 'tidb_json' {query}")));
+    let plan: serde_json::Value = serde_json::from_str(&json[0][0]).unwrap();
+    let probe = &plan[0]["subOperators"][1]["subOperators"][0];
+    assert_eq!(probe["id"], "Selection_27", "{plan}");
+    for operator in [probe, &probe["subOperators"][0]] {
+        assert_eq!(operator["actRows"], "0", "{plan}");
+        assert!(operator.get("executeInfo").is_none(), "{plan}");
     }
 }

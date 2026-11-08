@@ -3707,10 +3707,9 @@ fn explain_info_for_encode(operator: &ExplainOperator, analyze: bool) -> Explain
             operator
                 .actual_rows
                 .map_or_else(|| "N/A".to_owned(), |rows| rows.to_string()),
-            operator
-                .execution_info
-                .clone()
-                .unwrap_or_else(|| "N/A".to_owned()),
+            // Go `getRuntimeInfoStr` under a `RuntimeStatsColl`: no execution
+            // info until the plan's stats say otherwise.
+            operator.execution_info.clone().unwrap_or_default(),
             operator
                 .memory_info
                 .clone()

@@ -744,22 +744,19 @@ use tidb_charset::Collation;
     }
 
 
-    /// Go `TableReaderExecutor` over the `kv.TiDB` store for a cluster
-    /// table: `request` (with the login user Go's `buildTableReader` puts
-    /// on it) goes to every TiDB discovery lists (Go `buildTiDBMemCopTasks`),
-    /// and the reader's rows are the responses' rows. This node's own task
-    /// is answered by its own coprocessor handler -- the one its status port
-    /// serves the peers with -- and comes first; a session with no discovery
-    /// is the only TiDB.
-    pub fn cluster_table_cop_rows(
+    /// Go `dctx.Client` for a reader on the `kv.TiDB` store: copr's TiDB
+    /// tasks over every TiDB the server-info syncer lists (Go
+    /// `infosync.GetAllServerInfo`), each answered at its status port, and
+    /// the login user `buildTableReader` puts on the DAG. A session with no
+    /// syncer or no peer client is the only TiDB and answers with its own
+    /// coprocessor handler.
+    pub fn tidb_store_reader(
         &self,
-        ctx: &crate::StmtContext,
         catalog: &SessionExtendedInfoSchema,
-        request: &crate::builder_utils::TiDBCopRequest,
-    ) -> Result<Vec<Vec<Datum>>, DriverError> {
-        let mut dag = request.dag.clone();
+        ctx: &crate::StmtContext,
+    ) -> crate::table_reader::TiDbStoreReader {
         // Go carries Username/Hostname (the presented login), not AuthHostname.
-        dag.user = self
+        let user = self
             .login_user
             .as_deref()
             .and_then(|identity| identity.split_once('@'))
@@ -767,65 +764,27 @@ use tidb_charset::Collation;
                 user_name: Some(name.to_owned()),
                 user_host: Some(host.to_owned()),
             });
-        let zone = ctx.session_zone();
-        let Some(syncer) = self.server_info_syncer.as_deref() else {
-            return self.handle_cop_request_locally(catalog, &dag, request, &zone);
+        let client: Arc<dyn tidb_txnkv::Client> = match (&self.server_info_syncer, &self.cluster_peer) {
+            (Some(syncer), Some(peer)) => {
+                let syncer = Arc::clone(syncer);
+                Arc::new(crate::cluster_peer::TiDbMemCopClient::new(
+                    Arc::clone(peer),
+                    Arc::new(move || {
+                        // Go ranges over the map; its order is unspecified.
+                        let mut servers: Vec<_> =
+                            syncer.get_all_server_info()?.into_values().collect();
+                        servers.sort_by(|a, b| a.static_info.id.cmp(&b.static_info.id));
+                        Ok(servers)
+                    }),
+                ))
+            }
+            _ => Arc::new(LocalTiDbCopClient {
+                viewer: self.clone(),
+                catalog: catalog.clone(),
+                zone: ctx.session_zone(),
+            }),
         };
-        let local_id = syncer.get_local_server_info().static_info.id;
-        let discovered = syncer.get_all_server_info().map_err(DriverError::unsupported)?;
-        // Go skips the unavailable IPs (`config.UnavailableIP`).
-        let (local, servers): (Vec<_>, Vec<_>) = discovered
-            .into_values()
-            .filter(|server| server.static_info.ip != "<nil>")
-            .partition(|server| server.static_info.id == local_id);
-        let mut rows = if local.is_empty() {
-            Vec::new()
-        } else {
-            self.handle_cop_request_locally(catalog, &dag, request, &zone)?
-        };
-        if servers.is_empty() {
-            return Ok(rows);
-        }
-        let client = self
-            .cluster_peer
-            .as_deref()
-            .ok_or_else(|| DriverError::unsupported("TiDB peer RPC client is not installed"))?;
-        let result = client.select(
-            &servers,
-            &dag,
-            &request.ranges,
-            &request.field_types,
-            ctx,
-            &zone,
-            usize::try_from(ctx.dist_sql_scan_concurrency()).unwrap_or(usize::MAX),
-        )?;
-        for (code, message) in result.warnings {
-            ctx.append_warning_parts(code, &message);
-        }
-        rows.extend(result.rows);
-        Ok(rows)
-    }
-
-    /// This node's coprocessor handler (Go `CoprocessorDAGHandler`) for the
-    /// task it sends itself: `PBPlanBuilder` over the request, run on a
-    /// statement context of the request's zone, whose warnings stay with the
-    /// handler as a peer's do; the encoded response is decoded as a peer's.
-    fn handle_cop_request_locally(
-        &self,
-        catalog: &SessionExtendedInfoSchema,
-        dag: &tidb_proto::tipb::DagRequest,
-        request: &crate::builder_utils::TiDBCopRequest,
-        zone: &tidb_datatype::SessionTimeZone,
-    ) -> Result<Vec<Vec<Datum>>, DriverError> {
-        let ctx = tidb_sessionctx::StmtContext::for_query().with_time_zone(zone.clone());
-        let mut builder = crate::coprocessor::PBPlanBuilder::new(&ctx, &request.ranges);
-        // Go `buildErrorResponse`'s `OtherError`, which copr reports as
-        // `other error: ...` (`handleCopResponse`).
-        let response = builder
-            .build(&dag.executors)
-            .and_then(|plan| self.handle_cop_plan(&ctx, catalog, None, dag, &plan))
-            .map_err(|error| DriverError::unsupported(format!("other error: {error}")))?;
-        crate::cluster_peer::decode_select_response_rows(&response, &request.field_types, zone)
+        crate::table_reader::TiDbStoreReader { client, user }
     }
 
     /// Go `CoprocessorDAGHandler.HandleRequest` for a memory-table plan
@@ -1055,6 +1014,97 @@ impl crate::coprocessor::PbMemTableSource for ViewerMemTableSource<'_> {
     }
 }
 
+/// The `kv.TiDB` store of a session that is the only TiDB: its own
+/// coprocessor handler answers the one task.
+struct LocalTiDbCopClient {
+    viewer: ViewerState,
+    catalog: SessionExtendedInfoSchema,
+    /// The requesting statement's zone, the DAG's.
+    zone: tidb_datatype::SessionTimeZone,
+}
+
+impl std::fmt::Debug for LocalTiDbCopClient {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("LocalTiDbCopClient").finish_non_exhaustive()
+    }
+}
+
+impl tidb_txnkv::Client for LocalTiDbCopClient {
+    fn send(
+        &self,
+        request: &tidb_txnkv::TransportRequest,
+    ) -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
+        use prost::Message;
+        let metadata = request.metadata();
+        // A session that discovers TiDBs but cannot reach them.
+        if let Some(syncer) = self.viewer.server_info_syncer.as_deref() {
+            let local_id = syncer.get_local_server_info().static_info.id;
+            if syncer
+                .get_all_server_info()?
+                .into_values()
+                .any(|server| server.static_info.id != local_id && server.static_info.ip != "<nil>")
+            {
+                return Err("TiDB peer RPC client is not installed".into());
+            }
+        }
+        let dag = tidb_proto::tipb::DagRequest::decode(metadata.data.as_deref().unwrap_or_default())
+            .map_err(|error| error.to_string())?;
+        let ranges: Vec<_> = metadata
+            .key_ranges
+            .as_ref()
+            .map(|ranges| {
+                ranges
+                    .first_partition_ranges()
+                    .iter()
+                    .map(|range| tidb_proto::coprocessor::KeyRange {
+                        start: range.start_key.as_bytes().to_vec().into(),
+                        end: range.end_key.as_bytes().to_vec().into(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let ctx = tidb_sessionctx::StmtContext::for_query().with_time_zone(self.zone.clone());
+        let mut builder = crate::coprocessor::PBPlanBuilder::new(&ctx, &ranges);
+        // Go `buildErrorResponse`'s `OtherError`, which copr reports as
+        // `other error: ...` (`handleCopResponse`).
+        let answer = builder
+            .build(&dag.executors)
+            .and_then(|plan| self.viewer.handle_cop_plan(&ctx, &self.catalog, None, &dag, &plan))
+            .map(|response| tidb_txnkv::QueryResultSubset {
+                data: response.encode_to_vec().into(),
+                runtime: None,
+            })
+            .map_err(|error| tidb_txnkv::QueryResponseError::Sql {
+                code: 1105,
+                message: format!("other error: {error}"),
+            });
+        Ok(Box::new(LocalTiDbCopResponse(Some(answer))))
+    }
+
+    fn is_request_type_supported(&self, request_type: i64, sub_type: i64) -> bool {
+        tidb_txnkv::RequestTypeSupportedChecker.is_request_type_supported(request_type, sub_type)
+    }
+}
+
+/// The one answer of [`LocalTiDbCopClient`].
+struct LocalTiDbCopResponse(
+    Option<Result<tidb_txnkv::QueryResultSubset, tidb_txnkv::QueryResponseError>>,
+);
+
+impl tidb_txnkv::Response for LocalTiDbCopResponse {
+    fn next(&mut self) -> Result<Option<tidb_txnkv::QueryResultSubset>, tidb_txnkv::QueryResponseError> {
+        match self.0.take() {
+            None => Ok(None),
+            Some(Ok(subset)) => Ok(Some(subset)),
+            Some(Err(error)) => Err(error),
+        }
+    }
+
+    fn close(&mut self) {
+        self.0 = None;
+    }
+}
+
 /// The retriever for the diagnostic and cluster tables.
 pub struct ClusterTablesRetriever {
     viewer: ViewerState,
@@ -1067,6 +1117,17 @@ impl ClusterTablesRetriever {
 }
 
 impl crate::mem_table_retrieval::MemTableRetriever for ClusterTablesRetriever {
+    fn tidb_store_reader(
+        &self,
+        read: &crate::mem_table_retrieval::MemTableRead,
+        catalog: &SessionExtendedInfoSchema,
+        ctx: &crate::StmtContext,
+    ) -> Option<crate::table_reader::TiDbStoreReader> {
+        read.cop_request
+            .is_some()
+            .then(|| self.viewer.tidb_store_reader(catalog, ctx))
+    }
+
     fn serves(&self, read: &crate::mem_table_retrieval::MemTableRead) -> bool {
         use tidb_hack::GoCaseCompare;
         if !read
@@ -1109,11 +1170,12 @@ impl crate::mem_table_retrieval::MemTableRetriever for ClusterTablesRetriever {
         let required = columns
             .as_deref()
             .map(|columns| required_columns(read, columns));
+        // A CLUSTER_* table is read by its TiDB-store reader
+        // (`tidb_store_reader`), never retrieved.
         if tidb_infoschema::infoschema_meta::cluster_table_source(table).is_some() {
-            let request = read.cop_request.as_deref().ok_or_else(|| {
-                DriverError::unsupported("a cluster table read carries no coprocessor request")
-            })?;
-            return self.viewer.cluster_table_cop_rows(ctx, catalog, request);
+            return Err(DriverError::unsupported(
+                "a cluster table is read through its TiDB-store reader",
+            ));
         }
         if table.go_lower_eq("TIDB_TRX") || table.go_lower_eq("DEADLOCKS") {
             return self.viewer.diagnostic_rows(

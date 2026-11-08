@@ -36,6 +36,39 @@ pub(crate) fn peer_service(factory: &Arc<Domain>) -> crate::peer_rpc::PeerServic
     .with_broadcast_query_runner(factory.broadcast_query_runner())
 }
 
+/// A free local port for a test node's status listener, which its server
+/// info must name before the node is built.
+#[cfg(test)]
+pub(crate) fn free_status_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|listener| listener.local_addr())
+        .expect("a free local port")
+        .port()
+}
+
+/// Go `startStatusHTTP` for a test node: the status listener at the
+/// configured address, serving the node's coprocessor (the TiDB tasks its
+/// CLUSTER_* readers send) as a running tidb-server does.
+#[cfg(test)]
+pub(crate) fn serve_status_for_test(
+    config: &tidb_domain_core::node_config::NodeConfig,
+    factory: &Arc<Domain>,
+) -> crate::http_status::StatusServer {
+    crate::http_status::start_status_listener_with_routes(
+        &config.status_host,
+        config.status_port,
+        Arc::new(crate::sql_node::ConnectionTracker::default()),
+        "test".into(),
+        "test".into(),
+        crate::http_status::StatusRoutes {
+            peer: Some(peer_service(factory)),
+            server_info: factory.server_info(),
+            ..Default::default()
+        },
+    )
+    .expect("the test node's status listener")
+}
+
 /// The HTTP GLOBAL settings handler of this node.
 pub(crate) fn status_settings(factory: &Arc<Domain>) -> crate::http_settings::Settings {
     crate::http_settings::Settings::new(factory.global_vars(), factory.http_global_setter())
@@ -233,6 +266,156 @@ mod tests {
         ))
         .unwrap());
         tidb_session::domain::unistore_node::unistore_cluster_session_stack(&config, &users, None, None).unwrap()
+    }
+
+    /// [`stack`] whose status port is served, as a running tidb-server's is.
+    fn served_stack() -> (
+        tidb_session::domain::unistore_node::UnistoreClusterStack,
+        crate::http_status::StatusServer,
+    ) {
+        let status_port = free_status_port().to_string();
+        let config = crate::parse_node_config([
+            "tidb-server",
+            "--store",
+            "unistore",
+            "--port",
+            "0",
+            "--status",
+            status_port.as_str(),
+            "--socket",
+            "",
+            "--auth-file",
+            "/dev/null",
+        ])
+        .unwrap();
+        let users = Arc::new(tidb_session::domain::configured_user_store::ConfiguredUserStore::parse(&format!(
+            "root\t%\tmysql_native_password\t{}\n",
+            crate::domain_test_support::ABC_HASH
+        ))
+        .unwrap());
+        let stack =
+            tidb_session::domain::unistore_node::unistore_cluster_session_stack(&config, &users, None, None)
+                .unwrap();
+        let status = serve_status_for_test(&config, &stack.factory);
+        (stack, status)
+    }
+
+    /// A result's rows as the text the wire carries.
+    fn text_rows(
+        result: Result<tidb_session::StmtResult, tidb_driver_error::DriverError>,
+    ) -> Vec<Vec<String>> {
+        let tidb_session::StmtResult::Rows(rows) = result.unwrap() else {
+            panic!("expected rows")
+        };
+        rows.into_iter()
+            .map(|row| {
+                row.into_iter()
+                    .map(|datum| match datum {
+                        tidb_datatype::Datum::Null => "NULL".to_owned(),
+                        tidb_datatype::Datum::Int(value) => value.to_string(),
+                        tidb_datatype::Datum::UInt(value) => value.to_string(),
+                        other => other
+                            .as_raw_bytes()
+                            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+                            .unwrap_or_else(|| format!("{other:?}")),
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// `CREATE BINDING FROM HISTORY USING PLAN DIGEST` builds each binding from the
+    /// statement the summary recorded under that plan digest and the plan hint it
+    /// captured (Go `constructSQLBindOPFromPlanDigest`). Expected rows: Go 1.27 on
+    /// this branch (`TestZZ` probe `BH2`).
+    #[test]
+    fn create_binding_from_history_uses_the_recorded_plan_hint_like_go() {
+        use tidb_session::domain::cluster_session_node::DomainSessions as _;
+        let (stack, _status) = served_stack();
+        let mut session = stack
+            .factory
+            .open_session(crate::domain_test_support::session_context(1134))
+            .unwrap();
+        session.run("SET NAMES utf8mb4 COLLATE utf8mb4_general_ci").unwrap();
+        session.run("CREATE DATABASE IF NOT EXISTS bh1").unwrap();
+        session.run("USE bh1").unwrap();
+        for ddl in [
+            "CREATE TABLE t (a INT PRIMARY KEY, b INT, c INT, KEY ib (b), KEY ic (c))",
+            "CREATE TABLE u (a INT, b INT, KEY ia (a))",
+            "INSERT INTO t VALUES (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8)",
+            "INSERT INTO u VALUES (1,1),(2,2)",
+            "ANALYZE TABLE t, u",
+        ] {
+            session.run(ddl).unwrap();
+        }
+        for query in [
+            "SELECT * FROM t WHERE b = 2",
+            "SELECT * FROM t WHERE c > 5",
+            "SELECT t.a FROM t JOIN u ON t.a = u.a WHERE t.b > 0",
+        ] {
+            session.run(query).unwrap();
+        }
+        for (variable, pattern) in [
+            ("@pd1", "select * from `t` where `b`%"),
+            ("@pd2", "select * from `t` where `c`%"),
+            ("@pd3", "select `t` . `a` from `t` join%"),
+        ] {
+            session.run(&format!(
+                    "SET {variable} = (SELECT plan_digest FROM information_schema.statements_summary \
+                     WHERE schema_name = 'bh1' AND digest_text LIKE '{pattern}' LIMIT 1)"
+                )).unwrap();
+        }
+        session.run("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST @pd1").unwrap();
+        // The second spelling covers the same statement, so Go skips it with a note.
+        session.run("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST @pd2, @pd2").unwrap();
+        assert_eq!(
+            text_rows(session.run( "SHOW WARNINGS")),
+            [["Warning", "1105", "37da0e4188d56394b943d77850b13c70ea2c8b962a72de5ce6700ff3a5d34d9f is ignored because it corresponds to the same SQL digest as another Plan Digest"]]
+        );
+        session.run("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST @pd3").unwrap();
+        assert_eq!(
+            text_rows(session.run(
+                "SELECT original_sql, bind_sql, default_db, status, charset, collation, source, \
+                 sql_digest, plan_digest FROM mysql.bind_info WHERE source = 'history' \
+                 ORDER BY original_sql",
+            )),
+            [
+                [
+                    "select * from `bh1` . `t` where `b` = ?",
+                    "SELECT /*+ use_index(@`sel_1` `bh1`.`t`) no_order_index(@`sel_1` `bh1`.`t` `primary`)*/ * FROM `bh1`.`t` WHERE `b` = 2",
+                    "bh1", "enabled", "utf8mb4", "utf8mb4_general_ci", "history",
+                    "859898f263e060dc0f7e3f98d6b1b676127b047c0e4bc332524fa75bdf1bb7aa",
+                    "ddbd56d504e06fd3d48488e68ac58e7d084ddfd86eac943d609b4b70a9c6e575",
+                ],
+                [
+                    "select * from `bh1` . `t` where `c` > ?",
+                    "SELECT /*+ use_index(@`sel_1` `bh1`.`t`) no_order_index(@`sel_1` `bh1`.`t` `primary`)*/ * FROM `bh1`.`t` WHERE `c` > 5",
+                    "bh1", "enabled", "utf8mb4", "utf8mb4_general_ci", "history",
+                    "b6d21e1ea8c2ce350cdee0dce9d442878d9437ea491a5a3179894d1b39cfb5c6",
+                    "37da0e4188d56394b943d77850b13c70ea2c8b962a72de5ce6700ff3a5d34d9f",
+                ],
+                [
+                    "select `t` . `a` from `bh1` . `t` join `bh1` . `u` on `t` . `a` = `u` . `a` where `t` . `b` > ?",
+                    "SELECT /*+ merge_join(`bh1`.`u`) use_index(@`sel_1` `bh1`.`u` `ia`) order_index(@`sel_1` `bh1`.`u` `ia`) use_index(@`sel_1` `bh1`.`t`) order_index(@`sel_1` `bh1`.`t` `primary`)*/ `t`.`a` FROM `bh1`.`t` JOIN `bh1`.`u` ON `t`.`a` = `u`.`a` WHERE `t`.`b` > 0",
+                    "bh1", "enabled", "utf8mb4", "utf8mb4_general_ci", "history",
+                    "28597854f0874fca45c632da580407490e8ba7ed63f267ab6449e5e2f06c5346",
+                    "900f2884f174fbe7eef63c4e3e582e61db570e297feffbf7ec39994b8e6cc639",
+                ],
+            ]
+        );
+        assert_eq!(
+            session.run("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST 'nosuchdigest'").unwrap_err().to_mysql_error().message,
+            "can't find any plans for 'nosuchdigest'"
+        );
+        assert_eq!(
+            session.run("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST ' , '").unwrap_err().to_mysql_error().message,
+            "plan digest is empty"
+        );
+        session.run("SELECT * FROM t WHERE b = 2").unwrap();
+        assert_eq!(
+            text_rows(session.run( "SELECT @@last_plan_from_binding")),
+            [["1"]]
+        );
     }
 
     fn run(factory: &Arc<Domain>, sql: &str) {

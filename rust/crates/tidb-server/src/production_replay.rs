@@ -249,6 +249,9 @@ fn decode_text_result_set(framed: &[u8]) -> Result<StmtOutput, DriverError> {
 /// A topic's connections over one fresh embedded store.
 struct UnistoreConnections {
     stack: UnistoreClusterStack,
+    /// The node's status listener: the recording server served its CLUSTER_*
+    /// tables' TiDB tasks there.
+    _status: crate::http_status::StatusServer,
     users: Arc<ConfiguredUserStore>,
     sessions: BTreeMap<String, UnistoreSession>,
     current: String,
@@ -342,12 +345,15 @@ impl ReplayBackend for UnistoreConnections {
         let recording_config =
             difftest_result_tests::replay::integrationtest_dir().join("config.toml");
         let recording_config = recording_config.to_string_lossy().into_owned();
+        let status_port = crate::node_status::free_status_port().to_string();
         let config = crate::parse_node_config([
             "tidb-server",
             "--store",
             "unistore",
             "--port",
             "0",
+            "--status",
+            status_port.as_str(),
             "--auth-file",
             "/dev/null",
             "--config",
@@ -367,8 +373,10 @@ impl ReplayBackend for UnistoreConnections {
             stack.factory.expensive_query_handle(),
             stack.factory.session_manager(),
         );
+        let status = crate::node_status::serve_status_for_test(&config, &stack.factory);
         let mut pool = UnistoreConnections {
             stack,
+            _status: status,
             users,
             sessions: BTreeMap::new(),
             current: DEFAULT_CONNECTION.to_owned(),

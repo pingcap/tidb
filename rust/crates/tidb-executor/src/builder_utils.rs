@@ -39,6 +39,11 @@ pub struct TiDBCopRequest {
     pub ranges: Vec<coprocessor::KeyRange>,
     /// The reader's output column types, which decode the responses.
     pub field_types: Vec<FieldType>,
+    /// Go `getPhysicalPlanIDs(TablePlans)`: the pushed plans' IDs in DAG
+    /// order, under which the select result records each executor.
+    pub cop_plan_ids: Vec<isize>,
+    /// Go `kv.Request.TiDBServerID`: the one TiDB to send to, or 0 for all.
+    pub tidb_server_id: u64,
 }
 
 fn unsupported(message: impl Into<String>) -> DriverError {
@@ -522,9 +527,15 @@ pub fn build_tidb_cop_request(
                 .collect()
         })
         .unwrap_or_default();
+    let cop_plan_ids = flatten_push_down_plan(table_plan)
+        .iter()
+        .map(|plan| isize::try_from(plan.id()).unwrap_or(0))
+        .collect();
     Ok(TiDBCopRequest {
         dag,
         ranges,
         field_types,
+        cop_plan_ids,
+        tidb_server_id: 0,
     })
 }

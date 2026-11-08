@@ -6784,6 +6784,19 @@ fn build_cluster_table_reader(
 ) -> Result<Box<dyn Executor>, DriverError> {
     let meta = meta(ctx, plan, plan_schema(plan)?);
     if let Some(retriever) = ctx.mem_table_retrieval().retriever_for(&read) {
+        if let (Some(reader), Some(request)) =
+            (retriever.tidb_store_reader(&read, catalog, ctx), read.cop_request.clone())
+        {
+            // Go `buildTableReader`'s `getSnapshotTS`.
+            let start_ts = ctx.txn_store().map_or(0, |store| store.start_ts());
+            return Ok(Box::new(crate::table_reader::TableReaderExecutor::new(
+                meta,
+                ctx.clone(),
+                request,
+                reader,
+                start_ts,
+            )));
+        }
         let (snapshot, ctx) = (catalog.clone(), ctx.clone());
         return Ok(Box::new(MemTableSourceExec::lazy(
             meta,

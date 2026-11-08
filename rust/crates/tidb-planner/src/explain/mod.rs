@@ -532,10 +532,9 @@ fn render_operator(
                 .access_object
                 .as_ref()
                 .map_or_else(String::new, ToString::to_string),
-            operator
-                .execution_info
-                .clone()
-                .unwrap_or_else(|| "N/A".to_owned()),
+            // Go `getRuntimeInfoStr` under a `RuntimeStatsColl`: no execution
+            // info until the plan's stats say otherwise.
+            operator.execution_info.clone().unwrap_or_default(),
             operator.operator_info.clone(),
             operator
                 .memory_info
