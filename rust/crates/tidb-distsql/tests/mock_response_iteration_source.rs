@@ -247,13 +247,15 @@ fn select_mem_tracker_fills_a_smaller_required_chunk_across_responses() {
     assert_eq!(metadata.row_len, 4);
     let mut iter = result.into_select_iter(Vec::new());
 
-    // Go asserts only that this first budgeted read fills the caller's
-    // three-row capacity (`chk.IsFull()`), then closes.
+    // Go asserts that this first budgeted read fills the caller's three-row
+    // capacity (`chk.IsFull()`): `Decoder.Decode` rounds each two-row
+    // response's take up to eight, so the chunk ends at 4 rows (measured on
+    // Go), then closes.
     let chunk = iter
         .next_chunk_with_required_rows(3)
         .unwrap()
         .expect("a full first chunk");
-    assert_eq!(chunk.row.num_rows(), 3);
+    assert_eq!(chunk.row.num_rows(), 4);
 
     iter.close();
     assert!(closed.load(Ordering::SeqCst));

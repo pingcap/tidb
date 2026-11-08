@@ -32,6 +32,7 @@
 
 use crate::chunk::Chunk;
 use crate::column::Column;
+use crate::go_append::GoAppend;
 use crate::shared_bytes::SharedBytes;
 use std::error::Error;
 use std::fmt;
@@ -431,11 +432,33 @@ impl Decoder {
         }
     }
 
+    /// Go `NewDecoder` over a codec that already carries the column types,
+    /// which a response iterator shares across its responses.
+    #[must_use]
+    pub fn with_codec(intermediate: Chunk, codec: Codec) -> Self {
+        Self {
+            intermediate,
+            codec,
+            remained_rows: 0,
+        }
+    }
+
     /// Go `Decoder.Reset`: decode a complete TypeChunk image into the
     /// intermediate chunk and restart consumption at its first row.
     pub fn reset(&mut self, data: &[u8]) {
         let _remained = self.codec.decode_to_chunk(data, &mut self.intermediate);
         self.remained_rows = self.intermediate.num_rows();
+    }
+
+    /// Checked [`Self::reset`] over a shared response payload: the
+    /// intermediate columns point into `data`, as Go's `decodeColumn` points
+    /// them at the gRPC response.
+    pub fn try_reset_bytes(&mut self, data: &bytes::Bytes) -> Result<(), CodecDecodeError> {
+        let _remained = self
+            .codec
+            .try_decode_bytes_to_chunk(data, &mut self.intermediate)?;
+        self.remained_rows = self.intermediate.num_rows();
+        Ok(())
     }
 
     /// Go `Decoder.IsFinished`.
@@ -464,11 +487,18 @@ impl Decoder {
     /// the source's zero-row bitmap-padding normalization without consuming
     /// the intermediate chunk.
     pub fn decode(&mut self, target: &mut Chunk) {
+        let required_rows = target.required_rows();
+        self.decode_with_required_rows(target, required_rows);
+    }
+
+    /// [`Self::decode`] for a caller that passes the target's `RequiredRows`
+    /// beside the chunk, as the select result's `Next` does.
+    pub fn decode_with_required_rows(&mut self, target: &mut Chunk, required_rows: usize) {
         assert!(
-            target.num_rows() <= target.required_rows(),
+            target.num_rows() <= required_rows,
             "Decoder.Decode target exceeds RequiredRows"
         );
-        let deficit = target.required_rows() - target.num_rows();
+        let deficit = required_rows - target.num_rows();
         let rows = deficit
             .div_ceil(8)
             .saturating_mul(8)
@@ -516,13 +546,13 @@ impl Decoder {
             let delta = destination.offsets[destination.length] - start;
             let first_new_offset = destination.length + 1;
             let last_new_offset = destination.length + rows;
-            destination.offsets.extend_from_slice(&offsets);
+            destination.offsets.go_extend_from_slice(&offsets);
             for offset in &mut destination.offsets[first_new_offset..=last_new_offset] {
                 *offset += delta;
             }
         }
         if destination.length.is_multiple_of(8) {
-            destination.null_bitmap.extend_from_slice(&bitmap);
+            destination.null_bitmap.go_extend_from_slice(&bitmap);
         } else {
             destination.append_multi_same_null_bitmap(false, rows);
             let bitmap_len = destination.null_bitmap.len();
