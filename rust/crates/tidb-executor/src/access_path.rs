@@ -3438,20 +3438,20 @@ impl IndexRangeSourceExec {
         // costs more -- jemalloc tcache init plus first stack touch -- than
         // the fetch itself, and the answer is byte-identical. Larger batches
         // keep the dedicated thread so lookups still overlap planning.
+        // Go's index worker exits fetchHandles and closes its result once
+        // PushedLimit is exhausted, independently of the table worker and
+        // before that worker's reader charges the task: the index stream
+        // stops here, releasing the response it held, before the task runs.
+        if self.table.partition().is_none()
+            && (self.filter.is_none() || self.index_filter)
+            && self.limit.is_some_and(|limit| {
+                self.limit_scanned_keys >= self.lookup_offset.saturating_add(limit)
+            })
+        {
+            self.retain_remote_index_stats();
+            self.remote_index = None;
+        }
         if handles.len() <= INDEX_LOOKUP_INLINE_HANDLES {
-            // Go's index worker exits fetchHandles and closes its result once
-            // PushedLimit is exhausted, independently of the table worker.
-            // Our inline lookup must stop the index producer before blocking
-            // on the table RPC, or it keeps fetching unused region results.
-            if self.table.partition().is_none()
-                && (self.filter.is_none() || self.index_filter)
-                && self.limit.is_some_and(|limit| {
-                    self.limit_scanned_keys >= self.lookup_offset.saturating_add(limit)
-                })
-            {
-                self.retain_remote_index_stats();
-                self.remote_index = None;
-            }
             let started = std::time::Instant::now();
             let outcome = exec_table_task(
                 &mut self.table,

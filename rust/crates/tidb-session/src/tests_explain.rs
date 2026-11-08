@@ -9326,3 +9326,29 @@ fn a_covering_reader_under_a_limit_over_a_selection_returns_its_output_columns_l
         assert_eq!(row_text(session.run(sql)), expected, "{sql}");
     }
 }
+
+/// Go's index worker stops at an exhausted pushed Limit: its next
+/// `extractTaskHandles` returns no handles, `fetchHandles` returns and the
+/// worker closes its index result, releasing the response it held, before
+/// the table worker's reader charges the task. A Go testkit probe of each
+/// statement on a fresh session (100 rows, the connection's allocator with
+/// an unpooled result chunk) shows the IndexLookUp at 4.70 KB and 2.47 KB.
+#[test]
+fn an_index_lookup_under_a_pushed_limit_releases_its_index_response_like_go() {
+    for (limit, go_memory) in [(64, "4.70 KB"), (20, "2.47 KB")] {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a INT PRIMARY KEY, b INT, c INT, KEY(b))")
+            .unwrap();
+        let values = (1..=100).map(|i| format!("({i},{i},{i})")).collect::<Vec<_>>().join(",");
+        session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+        let sql = format!("SELECT b, c FROM t USE INDEX(b) WHERE b > 1 LIMIT {limit}");
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        let lookup = rows
+            .iter()
+            .find(|row| row[0] == "IndexLookUp_14")
+            .unwrap_or_else(|| panic!("{sql}: {rows:?}"));
+        assert_eq!(lookup[7], go_memory, "{sql}: {rows:?}");
+        assert_eq!(row_text(session.run(&sql)).len(), limit, "{sql}");
+    }
+}
