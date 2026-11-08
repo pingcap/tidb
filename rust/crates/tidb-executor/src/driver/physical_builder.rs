@@ -3912,6 +3912,7 @@ fn build_index_inner_reader(
     // reader built for a task has no memory tracker.
     statement.select_mem_untracked =
         matches!(object, LookupObject::Handle | LookupObject::CommonHandle);
+    let double_read = table_lookup_plan.is_some() && !covering && matches!(object, LookupObject::Index(_));
     let mut source = IndexJoinLookupExec::new_with_statement(
         meta(ctx, plan, row_schema.clone()),
         std::sync::Arc::unwrap_or_clone(table),
@@ -3953,6 +3954,22 @@ fn build_index_inner_reader(
     }
     if covering {
         source.mark_covering();
+    }
+    // Go `buildIndexLookUpReaderForIndexJoin`: a double read is an
+    // `IndexLookUpExecutor` built per inner task, its workers started at the
+    // inner worker's first `Next` with that chunk's `RequiredRows`.
+    if double_read {
+        let max_chunk_size = ctx.executor_chunk_sizes().1;
+        source.set_inner_lookup(
+            crate::access_path::calculate_lookup_batch_size_with_cap(
+                embedded_index_scan(network_plan)
+                    .and_then(|scan| scan.base.base.stats_info().map(|stats| stats.row_count())),
+                max_chunk_size,
+                false,
+                ctx.index_lookup_size(),
+            ),
+            ctx.index_lookup_size(),
+        );
     }
     if let Some(shared) = shared {
         source.set_shared_probes(std::sync::Arc::clone(shared));

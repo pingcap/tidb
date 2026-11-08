@@ -5409,6 +5409,7 @@ impl LookupForkTemplate {
             probe_bound_ops: self.probe_bound_ops.clone(),
             probe_bound_target_type: self.probe_bound_target_type.clone(),
             probe_bound_values: Vec::new(),
+            inner_lookup: None,
         };
         task.set_probes(probes)?;
         if task.open_prefetched_common_handle_cursor()? {
@@ -5422,6 +5423,21 @@ impl LookupForkTemplate {
             }))
         }
     }
+}
+
+/// Go's `IndexLookUpExecutor` for an index join's double read, which
+/// `buildIndexLookUpReaderForIndexJoin` builds and opens afresh for every
+/// inner task: its tracker (labelled with the plan) attaches to the
+/// statement's, its index worker's tracker takes the index request's
+/// responses, and the worker cuts tasks of `calculateBatchSize` handles,
+/// doubling up to `IndexLookupSize`.
+struct InnerIndexLookUp {
+    initial_batch: usize,
+    max_batch: usize,
+    /// Go `indexWorker.batchSize` of the current inner task.
+    batch: usize,
+    memory: Option<IndexLookUpMemory>,
+    index_worker: Option<Arc<tidb_memory::Tracker>>,
 }
 
 /// The inner side of an index join: the rows of one table whose join-key
@@ -5542,6 +5558,8 @@ pub struct IndexJoinLookupExec {
     probe_bound_target_type: Option<FieldType>,
     /// The current batch's bound values, aligned with `probes`.
     probe_bound_values: Vec<Vec<Datum>>,
+    /// Go's per-task `IndexLookUpExecutor` of a double read.
+    inner_lookup: Option<InnerIndexLookUp>,
 }
 
 /// Go's IndexHashJoin table reader receives the whole outer task's handles in
@@ -5633,6 +5651,7 @@ impl IndexJoinLookupExec {
             probe_bound_ops: Vec::new(),
             probe_bound_target_type: None,
             probe_bound_values: Vec::new(),
+            inner_lookup: None,
         }
     }
 
@@ -5658,7 +5677,37 @@ impl IndexJoinLookupExec {
         if let Some(mem_tracker) = &probes.mem_tracker {
             self.consume_kv_ranges_for_index_join(mem_tracker)?;
         }
+        // Go `IndexLookUpExecutor.open` of the task's fresh reader.
+        if let Some(inner) = self.inner_lookup.as_mut() {
+            let stmt = Arc::clone(self.decode_context.expression().statement_memory().stmt_tracker());
+            let tracker = tidb_memory::Tracker::new(self.meta.id(), -1);
+            tracker.attach_to(&stmt);
+            let index_worker = tidb_memory::Tracker::new(tidb_memory::LABEL_FOR_INDEX_WORKER, -1);
+            index_worker.attach_to(&tracker);
+            inner.memory = Some(IndexLookUpMemory {
+                tracker,
+                stmt,
+                next_task_id: 0,
+                result_curr: None,
+            });
+            inner.index_worker = Some(index_worker);
+            inner.batch = inner.initial_batch;
+        }
         self.open_remote_index_handles()
+    }
+
+    /// Makes this reader a double read built per inner task (Go
+    /// `buildIndexLookUpReaderForIndexJoin`), its first task of
+    /// `initial_batch` handles.
+    pub(crate) fn set_inner_lookup(&mut self, initial_batch: usize, max_batch: usize) {
+        let max_batch = max_batch.max(1);
+        self.inner_lookup = Some(InnerIndexLookUp {
+            initial_batch: initial_batch.clamp(1, max_batch),
+            max_batch,
+            batch: initial_batch.clamp(1, max_batch),
+            memory: None,
+            index_worker: None,
+        });
     }
 
     /// Go `buildKvRangesForIndexJoin`'s charges to the inner worker's
@@ -5778,7 +5827,16 @@ impl IndexJoinLookupExec {
                 &predicates,
                 None,
                 self.decode_context.zone(),
-                &self.statement,
+                // Go's index worker sends its request with its own tracker
+                // (`SetMemTracker`); the table readers carry none.
+                &match self.inner_lookup.as_ref().and_then(|inner| inner.index_worker.clone()) {
+                    Some(tracker) => {
+                        let mut statement = self.statement.clone();
+                        statement.select_mem_tracker = Some(tracker);
+                        statement
+                    }
+                    None => self.statement.clone(),
+                },
                 self.descending,
                 None,
                 None,
@@ -6649,6 +6707,51 @@ impl IndexJoinLookupExec {
             .unwrap_or_else(|| self.table.visible_offsets());
         let predicates =
             scan_conditions_for_filters(&self.filters, &keep, self.filter_context.as_ref());
+        // Go's table worker executes the task, charged to a tracker of its
+        // own under the reader's; the reader releases the last task's once
+        // it takes this one (`getResultTask`).
+        if let Some(memory) = self.inner_lookup.as_mut().and_then(|inner| inner.memory.as_mut()) {
+            let task_tracker = tidb_memory::Tracker::new(memory.next_task_id, -1);
+            memory.next_task_id += 1;
+            task_tracker.attach_to(&memory.tracker);
+            let accounting = LookupTaskAccounting {
+                tracker: Some(Arc::clone(&task_tracker)),
+                handles_capacity: go_task_handles_capacity(handles.len(), 0, self.meta.max_chunk_size()),
+                keep_order: self.keep_order,
+                partition_handles: self.table.partition().is_some() && self.keep_order,
+                table_reader_ruv2: None,
+                output_cols: self.meta.schema().columns.len(),
+            };
+            let fetch = exec_table_task(
+                &mut self.table,
+                &mut *self.store,
+                handles.to_vec(),
+                physical_ids.unwrap_or_default(),
+                &keep,
+                &predicates,
+                &self.decode_context,
+                &self.statement,
+                self.meta.max_chunk_size(),
+                false,
+                &accounting,
+            )?;
+            let memory = self
+                .inner_lookup
+                .as_mut()
+                .and_then(|inner| inner.memory.as_mut())
+                .expect("inner lookup memory");
+            if let Some(previous) = memory.result_curr.replace(task_tracker) {
+                previous.consume(-previous.bytes_consumed());
+            }
+            return Ok(match fetch {
+                LookupFetch::Remote(rows, ..) => Some(
+                    rows.into_iter()
+                        .map(|(handle, row)| (Some(handle), Some(row)))
+                        .collect(),
+                ),
+                LookupFetch::RemoteChunk(_) | LookupFetch::LocalFallback(_) => None,
+            });
+        }
         let Some(staged) = self
             .table
             .build_table_reader_from_routed_handles(
@@ -6741,9 +6844,13 @@ impl IndexJoinLookupExec {
                 if self.lookup_row_at == self.lookup_rows.len() {
                     self.lookup_rows.clear();
                     self.lookup_row_at = 0;
-                    let mut handles = Vec::with_capacity(INDEX_LOOKUP_BATCH_SIZE);
-                    let mut physical_ids = Vec::with_capacity(INDEX_LOOKUP_BATCH_SIZE);
-                    while handles.len() < INDEX_LOOKUP_BATCH_SIZE {
+                    let window = self
+                        .inner_lookup
+                        .as_ref()
+                        .map_or(INDEX_LOOKUP_BATCH_SIZE, |inner| inner.batch);
+                    let mut handles = Vec::with_capacity(window);
+                    let mut physical_ids = Vec::with_capacity(window);
+                    while handles.len() < window {
                         let Some(handle) = self.next_batched_handle()? else {
                             break;
                         };
@@ -6754,6 +6861,13 @@ impl IndexJoinLookupExec {
                     }
                     if handles.is_empty() {
                         return Ok(None);
+                    }
+                    // Go `extractTaskHandles` doubles the batch after one it
+                    // filled.
+                    if let Some(inner) = self.inner_lookup.as_mut() {
+                        if handles.len() >= inner.batch {
+                            inner.batch = inner.batch.saturating_mul(2).min(inner.max_batch);
+                        }
                     }
                     (self.lookup_handles, self.lookup_rows) = self
                         .window_rows(
