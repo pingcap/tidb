@@ -55,7 +55,7 @@ pub use table_scan::{
     capture_decoded_column_ids, IndexRangeCursor, RemoteIndexHandleCursor, RemoteRowCursor,
     RowCursor, StagedHandlesLookup, TableScanExec,
 };
-pub(crate) use table_scan::{FinishedLookup, FinishedLookupChunk, LookupReaderMemory};
+pub(crate) use table_scan::{lookup_task_reader_memory, FinishedLookup, FinishedLookupChunk, LookupReaderMemory};
 
 #[cfg(test)]
 mod tests;

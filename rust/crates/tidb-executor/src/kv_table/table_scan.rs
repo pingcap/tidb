@@ -3571,6 +3571,20 @@ pub(crate) struct LookupReaderMemory {
     pub(crate) chunks: i64,
 }
 
+/// Go `TableReaderExecutor.memUsage()` of a lookup task's reader over
+/// `handles`: the executor, its `TableHandlesToKVRanges` key ranges and
+/// `dagPB.Size()`.
+pub(crate) fn lookup_task_reader_memory(
+    table_id: i64,
+    handles: &[TableHandle],
+    dag_size: usize,
+) -> Result<i64, KvTableError> {
+    let (ranges, _) = <TableCommon as KvTableReader>::table_reader_handle_key_ranges(table_id, handles)?;
+    Ok(SIZEOF_TABLE_READER_EXECUTOR
+        + handle_kv_ranges_mem_usage([ranges.as_slice()])
+        + i64::try_from(dag_size).unwrap_or(i64::MAX))
+}
+
 /// Go `kv.KeyRangeSliceMemUsage` of the slice `KeyRanges.AppendSelfTo(nil)`
 /// builds from `groups` -- one `append` per group, growing as Go's `append`
 /// does. Go allocates each handle key exactly (`tablecodec.EncodeRowKey`),

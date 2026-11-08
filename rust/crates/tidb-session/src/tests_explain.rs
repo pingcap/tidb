@@ -9019,3 +9019,33 @@ fn an_unordered_index_lookup_reads_only_its_columns_like_go() {
     assert_eq!(answer.len(), 99);
     assert_eq!((answer[0][0].as_str(), answer[98][0].as_str()), ("2", "100"));
 }
+
+/// Go `tableWorker.executeTask` over a table plan whose root is the pushed
+/// partial aggregate: each task's `TableReaderExecutor` sends the aggregate
+/// to the coprocessor over the task's handles and returns its partial rows,
+/// so the aggregate and its scan report their own coprocessor work and the
+/// task is charged its reader and the chunk it filled. Go tidb-server capture
+/// over 100 rows (99 matched): the lookup peaks at 5.29 KB.
+#[test]
+fn an_index_lookup_pushes_its_table_side_partial_aggregate_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT PRIMARY KEY, b INT, c INT, KEY (b))").unwrap();
+    let values = (1..=100).map(|x| format!("({x}, {x}, {})", x % 5)).collect::<Vec<_>>().join(", ");
+    session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+    let sql = "SELECT count(c) FROM t USE INDEX(b) WHERE b > 1";
+    let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+    let row = |label: &str| {
+        rows.iter()
+            .find(|row| row[0].contains(label))
+            .unwrap_or_else(|| panic!("{label}: {rows:?}"))
+            .clone()
+    };
+    assert_eq!(row("IndexLookUp_14")[7], "5.29 KB", "{rows:?}");
+    let aggregate = row("HashAgg_7");
+    assert_eq!(aggregate[2], "1", "{rows:?}");
+    assert!(aggregate[5].contains("cop_task: {num: 1"), "{rows:?}");
+    let scan = row("TableRowIDScan_12");
+    assert_eq!(scan[2], "99", "{rows:?}");
+    assert!(scan[5].starts_with("tikv_task:"), "{rows:?}");
+    assert_eq!(row_text(session.run(sql)), [["99"]]);
+}

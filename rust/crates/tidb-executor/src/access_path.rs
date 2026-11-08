@@ -1984,6 +1984,10 @@ pub struct IndexRangeSourceExec {
     /// Completed remote streams' Go cop task/row totals.
     cop_stats: (u64, u64),
     partial_done: bool,
+    /// Whether each lookup task sends the table plan's partial aggregate to
+    /// the coprocessor over its handles, as Go's table worker reads the
+    /// partial rows of a `TableReaderExecutor` whose plan is the aggregate.
+    remote_partial_lookup: bool,
     /// Go `indexLookUpExecutorContext.indexLookupConcurrency`, resolved from
     /// the session before execution starts.
     lookup_concurrency: usize,
@@ -2318,6 +2322,7 @@ impl IndexRangeSourceExec {
             partial_rows: None,
             cop_stats: (0, 0),
             partial_done: false,
+            remote_partial_lookup: false,
             lookup_concurrency: DEFAULT_LOOKUP_FETCH_CONCURRENCY,
             lookup_pipeline: None,
             lookup_lanes: None,
@@ -3345,6 +3350,19 @@ impl IndexRangeSourceExec {
             .filter
             .as_ref()
             .is_none_or(tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe::fully_pushable);
+        if let Some(aggregate) = self.partial_aggregate.clone().filter(|_| self.remote_partial_lookup) {
+            let accounting = self.lookup_task_accounting(scanned, skipped);
+            let task_tracker = accounting.tracker.clone();
+            let fetch = self.partial_aggregate_table_task(&aggregate, handles, &physical_ids, &accounting)?;
+            return Ok(LookupBatchJob {
+                started: std::time::Instant::now(),
+                physical_ids,
+                handle_count,
+                receiver: None,
+                ready: Some(Ok(fetch)),
+                task_tracker,
+            });
+        }
         if self.partial_aggregate.is_some() {
             // A partial aggregate owns the answer end to end; the plain
             // lookup never ran for this shape.
@@ -3691,6 +3709,147 @@ impl IndexRangeSourceExec {
         crate::local_partial::local_partial_rows(aggregate, &input_types, &context, || {
             self.next_partial_input_row()
         })
+    }
+
+    /// Go `tableWorker.executeTask` over a table plan whose root is the
+    /// pushed partial aggregate: the task's handles travel as
+    /// `TableHandlesToKVRanges` runs and its reader returns the aggregate's
+    /// partial rows, charged to the task as any reader's rows are.
+    fn partial_aggregate_table_task(
+        &mut self,
+        aggregate: &PushdownPartialAggregate,
+        handles: Vec<TableHandle>,
+        physical_ids: &[i64],
+        accounting: &LookupTaskAccounting,
+    ) -> Result<LookupFetch, ExecError> {
+        let mut values = handles
+            .iter()
+            .map(|handle| match handle {
+                TableHandle::Int(value) => Some(*value),
+                TableHandle::Common(_) => None,
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| ExecError::internal("a remote partial lookup holds a common handle"))?;
+        values.sort_unstable();
+        values.dedup();
+        let mut ranges: Vec<Range> = Vec::new();
+        for value in values {
+            if let Some(last) = ranges.last_mut() {
+                if last.high_val == [Datum::Int(value - 1)] {
+                    last.high_val = vec![Datum::Int(value)];
+                    continue;
+                }
+            }
+            let point = vec![Datum::Int(value)];
+            ranges.push(Range {
+                collators: key_collators(&point, &point),
+                low_val: point.clone(),
+                high_val: point,
+                low_exclude: false,
+                high_exclude: false,
+            });
+        }
+        let context = self
+            .partial_context
+            .clone()
+            .ok_or_else(|| ExecError::unsupported("partial aggregation lost its statement context"))?;
+        let statement = self.statement.for_lookup_batch(handles.len());
+        let zone = self.decode_context.zone().clone();
+        let stream = self
+            .table
+            .pushdown_partial_aggregate_cursor(
+                &mut *self.store,
+                &self.keep,
+                &self.pushed,
+                Some(&ranges),
+                aggregate,
+                &context,
+                &zone,
+                &statement,
+                false,
+                false,
+            )
+            .map_err(ExecError::from)?;
+        let Some(mut stream) = stream else {
+            // A shape the coprocessor refuses: the task's rows, read here and
+            // filtered, aggregated by this tier's partial aggregate.
+            let rows = self
+                .table
+                .get_rows_by_routed_handles_projected_with_context(
+                    &mut *self.store,
+                    &handles,
+                    None,
+                    Some(&self.keep),
+                    &self.decode_context,
+                )
+                .map_err(ExecError::from)?;
+            note_found_rows(&self.table, &rows)?;
+            let input_types = self.partial_input_types.clone().ok_or_else(|| {
+                ExecError::unsupported("partial aggregation lost its input schema")
+            })?;
+            let mut rows = rows.into_iter().flatten();
+            let mut filter = self.filter.as_mut();
+            let partial = crate::local_partial::local_partial_rows(aggregate, &input_types, &context, || {
+                for row in rows.by_ref() {
+                    if let Some(filter) = filter.as_mut() {
+                        if !filter.admits(&row)? {
+                            continue;
+                        }
+                    }
+                    return Ok(Some(row));
+                }
+                Ok(None)
+            })?;
+            let indices = (0..partial.len()).collect();
+            return Ok(LookupFetch::Remote(
+                partial.into_iter().map(|row| (TableHandle::Int(0), row)).collect(),
+                true,
+                0,
+                indices,
+                crate::kv_table::LookupReaderMemory::default(),
+            ));
+        };
+        let field_types = self.meta.ret_field_types().to_vec();
+        let mut rows = Vec::new();
+        let mut chunks = 0;
+        if stream.supports_chunks() {
+            // Go `exec.TryNewCacheChunk(tableReader)` per `exec.Next`, each
+            // filled chunk charged with its `MemoryUsage`.
+            let required_rows = self.meta.max_chunk_size();
+            loop {
+                let mut chunk = Chunk::new(
+                    &field_types,
+                    statement.init_chunk_size.min(required_rows),
+                    required_rows,
+                );
+                if !stream.next_chunk_into(required_rows, &mut chunk).map_err(ExecError::from)?
+                    || chunk.num_rows() == 0
+                {
+                    break;
+                }
+                chunks += chunk.memory_usage();
+                rows.extend((0..chunk.num_rows()).map(|row| chunk.get_row(row).get_datum_row(&field_types)));
+            }
+        } else {
+            while let Some(row) = stream.next_row().map_err(ExecError::from)? {
+                rows.push(row);
+            }
+        }
+        let wire_rows = stream.rows_returned();
+        let dag_size = stream.dag_size();
+        stream.close();
+        let reader = crate::kv_table::lookup_task_reader_memory(self.table.table_id(), &handles, dag_size)
+            .map_err(ExecError::from)?;
+        let indices = (0..rows.len()).collect();
+        let fetch = LookupFetch::Remote(
+            rows.into_iter().map(|row| (TableHandle::Int(0), row)).collect(),
+            true,
+            wire_rows,
+            indices,
+            crate::kv_table::LookupReaderMemory { reader, chunks },
+        );
+        accounting.account(&handles, physical_ids, &fetch);
+        Ok(fetch)
     }
 }
 
@@ -4061,6 +4220,18 @@ impl Executor for IndexRangeSourceExec {
             self.remote_covering_selected =
                 self.covering && self.extra_handle_slot.is_none() && self.remote_index.is_some();
         }
+        // Go pushes a lookup's table-side partial aggregate into each task's
+        // `TableReaderExecutor`.
+        self.remote_partial_lookup = !self.covering
+            && self.partial_aggregate.is_some()
+            && self.table.partition().is_none()
+            && self.table.common_handle_offsets().is_empty()
+            && !self.dirty_merge
+            && !self.table.has_dirty_content(&self.statement.staged_writes)
+            && self
+                .filter
+                .as_ref()
+                .is_none_or(tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe::fully_pushable);
         // Go's unordered table worker forwards its rows unmatched: only a
         // keep-order read (`rowIdx`), an output handle, a partition route or
         // the dirty merge needs each row's handle back.
@@ -4132,7 +4303,17 @@ impl Executor for IndexRangeSourceExec {
                 return Ok(());
             }
             if self.partial_rows.is_none() {
-                self.partial_rows = Some(self.local_partial_rows(&aggregate)?.into_iter());
+                let rows = if self.remote_partial_lookup {
+                    // Each task's partial rows, as its reader returned them.
+                    let mut rows = Vec::new();
+                    while let Some(row) = self.next_lookup_row()? {
+                        rows.push(row);
+                    }
+                    rows
+                } else {
+                    self.local_partial_rows(&aggregate)?
+                };
+                self.partial_rows = Some(rows.into_iter());
             }
             let rows = self.partial_rows.as_mut().expect("just initialized");
             while req.num_rows() < cap {
