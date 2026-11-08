@@ -119,7 +119,7 @@
       "id": "O09",
       "status": "partial",
       "group": "Domain and process services",
-      "finding": "`ReportMinStartTS` has no InfoCache recent-schema TS (`GetAndResetRecentInfoSchemaTS`, InfoSchema V2: I04). Lazy cursor fetch answers Go's `executor.Detach` over the physical plan (`tidb_executor::detach`), because the builder's operator tree is not Go's executor tree; A detached statement still publishes its completion through its record set's close, where Go never runs the abandoned `recordSet`'s `CloseRecordSet`",
+      "finding": "`ReportMinStartTS` has no InfoCache recent-schema TS (`GetAndResetRecentInfoSchemaTS`, InfoSchema V2: I04). Lazy cursor fetch answers Go's `executor.Detach` over the physical plan (`tidb_executor::detach`), because the builder's operator tree is not Go's executor tree",
       "go_owner": "`pkg/domain/infosync`, `pkg/executor` (`detach.go`, `adapter.go` `recordSet.TryDetach`)"
     },
     {

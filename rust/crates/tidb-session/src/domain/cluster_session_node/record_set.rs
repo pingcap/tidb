@@ -293,9 +293,9 @@ impl ResultSetSource for ClusterRecordSet<'_> {
     /// fails the cursor and the detached record set are closed again.
     ///
     /// Go never closes the abandoned `recordSet`, so its `CloseRecordSet`
-    /// does not run; this owner still publishes the statement's completion
-    /// through its own close, which also releases the statement's session
-    /// state for the next statement.
+    /// does not run: this owner's close releases the statement's session
+    /// state for the next statement, and the statement is marked detached so
+    /// its observation is not published (`FinishExecuteStmt`).
     fn try_detach(&mut self) -> TryDetach {
         let session = &*self.owner.session;
         if !session.stmt_is_read_only() {
@@ -326,6 +326,7 @@ impl ResultSetSource for ClusterRecordSet<'_> {
         );
         // Now, a transaction is not needed for the detached record set, so
         // the statement finishes and its transaction commits.
+        self.owner.session.statement_detached = true;
         if let Err(error) = self.close() {
             cursor_handle.close();
             if let Err(close_error) = crs.close() {

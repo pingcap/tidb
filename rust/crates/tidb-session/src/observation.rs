@@ -945,6 +945,7 @@ impl Session {
         result_rows: i64,
         error: Option<String>,
     ) {
+        let detached = std::mem::take(&mut self.statement_detached);
         let Some(observation) = self.statement_observation.take() else {
             return;
         };
@@ -975,6 +976,12 @@ impl Session {
         // already committed one itself.
         if succeeded && !self.statement_committed_txn && !self.in_transaction() {
             self.set_txn_isolation_level_one_shot_state_for_next_txn();
+        }
+        // Go `execStmtResult.TryDetach` runs `finishStmt` alone: the abandoned
+        // record set's `Close` never reaches `FinishExecuteStmt`, so a detached
+        // statement is not summarized, slow-logged or counted.
+        if detached {
+            return;
         }
         let phases = observation
             .phases

@@ -435,6 +435,10 @@ pub struct Session {
     /// memory arbitration key; `None` when arbitration is off.
     statement_normalized_sql: Option<String>,
     statement_observation: Option<tidb_executor::exec_stmt_observation::StatementObservation>,
+    /// Whether the running statement's record set was detached for a lazy
+    /// cursor (Go `execStmtResult.TryDetach`): only its `finishStmt` runs,
+    /// never the abandoned record set's `FinishExecuteStmt`.
+    pub(crate) statement_detached: bool,
     pending_observation_parse: Option<(String, Duration)>,
     pending_statement_exec_details: Option<observation::PendingStatementExecDetails>,
     routed_statement_observation_depth: u32,
@@ -940,6 +944,7 @@ impl Session {
             current_sql_digest_key: String::new(),
             statement_normalized_sql: None,
             statement_observation: None,
+            statement_detached: false,
             pending_observation_parse: None,
             pending_statement_exec_details: None,
             routed_statement_observation_depth: 0,

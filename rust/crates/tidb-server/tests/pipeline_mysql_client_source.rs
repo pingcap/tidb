@@ -3270,3 +3270,63 @@ fn lazy_cursor_fetch_detaches_and_tracks_the_cursor_like_go() {
     drop(client);
     assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
 }
+
+/// Go `execStmtResult.TryDetach` finishes a lazily fetched statement with
+/// `finishStmt` alone and abandons its record set, whose `Close`
+/// (`FinishExecuteStmt`) never runs: the statement leaves no statement
+/// summary entry, while the same statement run as a plain query does (Go
+/// testkit probe over `TryDetach`).
+#[test]
+fn a_detached_cursor_statement_is_not_summarized_like_go() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let store = users();
+    let node = node_over(&store);
+    let worker_node = Arc::clone(&node);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            worker_node.factory().as_ref(),
+            &store,
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate(&mut client, &mut reader);
+    run_write(&mut client, &mut reader, "CREATE TABLE lazy_summary (id BIGINT PRIMARY KEY)");
+    run_write(&mut client, &mut reader, "INSERT INTO lazy_summary VALUES (1),(2),(3)");
+    run_write(&mut client, &mut reader, "SET tidb_enable_lazy_cursor_fetch = ON");
+    let summarized = |client: &mut TcpStream, reader: &mut PacketReader<TcpStream>, table: &str| {
+        run_query(
+            client,
+            reader,
+            &format!(
+                "SELECT COUNT(*) FROM information_schema.statements_summary \
+                 WHERE digest_text = 'select `id` from `{table}` where `id` > ?'"
+            ),
+        )[0][0]
+            .clone()
+    };
+    let types = [0x08u8];
+    let (statement, _, _) =
+        prepare_statement(&mut client, &mut reader, "SELECT id FROM lazy_summary WHERE id > 0");
+    let (_, status) = execute_with_cursor(&mut client, &mut reader, statement, &[]);
+    assert_eq!(status, 0x0042);
+    let (rows, status) = fetch_rows(&mut client, &mut reader, statement, 10, &types);
+    assert_eq!((rows.len(), status), (3, 0x0082));
+    assert_eq!(summarized(&mut client, &mut reader, "lazy_summary"), "0");
+    run_query(&mut client, &mut reader, "SELECT id FROM lazy_summary WHERE id > 0");
+    assert_eq!(summarized(&mut client, &mut reader, "lazy_summary"), "1");
+    write_packet(&mut client, 0, &[0x01]);
+    drop(client);
+    assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
+}
