@@ -741,127 +741,111 @@ mod tests {
         }
     }
 
+    /// Go `SQLDigestTextRetriever` as Go's own tests drive it
+    /// (`mockLocalData` / `mockGlobalData` answering `runMockQuery`): the
+    /// texts come from the restricted statements `runFetchDigestQuery`
+    /// issues, the local summaries first and the cluster's for what remains.
     #[test]
-    fn digest_projection_batch_remote_fallback_predicate_and_errors() {
-        use tidb_proto::tikvpb::tikv_server::{Tikv, TikvServer};
-        let config = tidb_config::config_tree::config::get_global_config();
-        struct RestoreConfig(Arc<tidb_config::config_tree::config::Config>);
-        impl Drop for RestoreConfig {
-            fn drop(&mut self) {
-                tidb_config::config_tree::config::store_global_config(self.0.clone());
+    fn digest_text_retrieval_runs_gos_restricted_queries() {
+        use std::collections::HashMap;
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Mutex;
+        const LOCAL: &str = "select digest, digest_text from information_schema.statements_summary \
+                             union distinct select digest, digest_text from \
+                             information_schema.statements_summary_history";
+        const GLOBAL: &str = "select digest, digest_text from information_schema.cluster_statements_summary \
+                              union distinct select digest, digest_text from \
+                              information_schema.cluster_statements_summary_history";
+        struct DigestSql {
+            local: HashMap<String, String>,
+            global: HashMap<String, String>,
+            fail: AtomicBool,
+            queries: Mutex<Vec<(String, Vec<String>)>>,
+        }
+        impl DigestSql {
+            fn queries(&self) -> Vec<(String, Vec<String>)> {
+                self.queries.lock().unwrap().clone()
+            }
+            fn global_queries(&self) -> usize {
+                self.queries().iter().filter(|(sql, _)| sql.starts_with(GLOBAL)).count()
             }
         }
-        let _config = RestoreConfig(config.clone());
-        let mut nonpersistent = (*config).clone();
-        nonpersistent.instance.stmt_summary_enable_persistent = false;
-        tidb_config::config_tree::config::store_global_config(nonpersistent);
-        let captured = Arc::new(std::sync::Mutex::new(Vec::<tipb::DagRequest>::new()));
-        let fail = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        struct DigestPeer(
-            Arc<std::sync::Mutex<Vec<tipb::DagRequest>>>,
-            Arc<std::sync::atomic::AtomicBool>,
-        );
-        #[tonic::async_trait]
-        impl Tikv for DigestPeer {
-            async fn coprocessor(
+        impl tidb_sqlexec::RestrictedSqlExecutor for DigestSql {
+            fn parse_with_params(
                 &self,
-                request: tonic::Request<coprocessor::Request>,
-            ) -> Result<tonic::Response<coprocessor::Response>, tonic::Status> {
-                let dag = tipb::DagRequest::decode(request.into_inner().data.as_slice()).unwrap();
-                self.0.lock().unwrap().push(dag);
-                if self.1.load(Ordering::SeqCst) {
-                    return Ok(tonic::Response::new(coprocessor::Response {
-                        other_error: "digest peer failure".into(),
-                        ..Default::default()
-                    }));
-                }
-                let mut bytes = Vec::new();
-                for (digest, text) in [
-                    ("d1d2", "remote normalized statement"),
-                    ("c1c2", "must not replace local"),
-                ] {
-                    bytes.extend(
-                        tidb_codec::encode_value(&[
-                            Datum::new_string_datum(digest),
-                            Datum::new_string_datum(text),
-                        ])
-                        .unwrap(),
-                    );
-                }
-                Ok(tonic::Response::new(coprocessor::Response {
-                    data: tipb::SelectResponse {
-                        chunks: vec![tipb::Chunk {
-                            rows_data: Some(bytes.into()),
-                            ..Default::default()
-                        }],
-                        ..Default::default()
-                    }
-                    .encode_to_vec()
-                    .into(),
-                    ..Default::default()
-                }))
+                _context: &dyn tidb_sqlexec::ExecutionContext,
+                sql: &str,
+                _arguments: &[tidb_sqlescape::SqlArg<'_>],
+            ) -> tidb_sqlexec::Result<tidb_ast::Stmt> {
+                Err(format!("unparsed {sql}").into())
             }
-        }
-        let (ready, receive) = std::sync::mpsc::channel();
-        let (stop, done) = tokio::sync::oneshot::channel();
-        let service = DigestPeer(captured.clone(), fail.clone());
-        let worker = std::thread::spawn(move || {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap()
-                .block_on(async move {
-                    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-                    ready.send(listener.local_addr().unwrap()).unwrap();
-                    let incoming = futures::stream::unfold(listener, |listener| async move {
-                        let stream = listener.accept().await.map(|(stream, _)| stream);
-                        Some((stream, listener))
-                    });
-                    tonic::transport::Server::builder()
-                        .add_service(TikvServer::new(service))
-                        .serve_with_incoming_shutdown(incoming, async {
-                            let _ = done.await;
+
+            fn exec_restricted_stmt(
+                &self,
+                _context: &dyn tidb_sqlexec::ExecutionContext,
+                _statement: &tidb_ast::Stmt,
+                _options: &[tidb_sqlexec::OptionFuncAlias],
+            ) -> tidb_sqlexec::Result<(Vec<Vec<Datum>>, Vec<tidb_resolve::ResultFieldRef>)> {
+                Err("no statement".into())
+            }
+
+            fn exec_restricted_sql(
+                &self,
+                _context: &dyn tidb_sqlexec::ExecutionContext,
+                _options: &[tidb_sqlexec::OptionFuncAlias],
+                sql: &str,
+                arguments: &[tidb_sqlescape::SqlArg<'_>],
+            ) -> tidb_sqlexec::Result<(Vec<Vec<Datum>>, Vec<tidb_resolve::ResultFieldRef>)> {
+                let in_values: Vec<String> = arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        tidb_sqlescape::SqlArg::String(bytes) => {
+                            String::from_utf8(bytes.to_vec()).unwrap()
+                        }
+                        other => panic!("digest argument {other:?}"),
+                    })
+                    .collect();
+                self.queries.lock().unwrap().push((sql.to_owned(), in_values.clone()));
+                let global = sql.starts_with(GLOBAL);
+                if global && self.fail.load(Ordering::SeqCst) {
+                    return Err("digest peer failure".into());
+                }
+                let data = if global { &self.global } else { &self.local };
+                // Go `runMockQuery`.
+                let rows = if in_values.is_empty() {
+                    data.iter().collect::<Vec<_>>()
+                } else {
+                    in_values
+                        .iter()
+                        .filter_map(|digest| data.get_key_value(digest))
+                        .collect()
+                };
+                Ok((
+                    rows.into_iter()
+                        .map(|(digest, text)| {
+                            vec![
+                                Datum::new_string_datum(digest.as_str()),
+                                Datum::new_string_datum(text.as_str()),
+                            ]
                         })
-                        .await
-                        .unwrap();
-                });
-        });
-        struct StopPeer(
-            Option<tokio::sync::oneshot::Sender<()>>,
-            Option<std::thread::JoinHandle<()>>,
-        );
-        impl Drop for StopPeer {
-            fn drop(&mut self) {
-                let _ = self.0.take().unwrap().send(());
-                self.1.take().unwrap().join().unwrap();
+                        .collect(),
+                    Vec::new(),
+                ))
             }
         }
-        let _peer = StopPeer(Some(stop), Some(worker));
-        let addr = receive.recv().unwrap();
-        let mut remote = tidb_domain_serverinfo::serverinfo::ServerInfo::default();
-        remote.static_info.id = "digest-remote".into();
-        remote.static_info.ip = addr.ip().to_string();
-        remote.static_info.status_port = addr.port() as usize;
-        let discovery = Arc::new(Discovery(vec![(
-            tidb_domain_serverinfo::serverinfo_syncer::server_info_key_path("digest-remote"),
-            remote.marshal().unwrap(),
-        )]));
-        let mut local = tidb_domain_serverinfo::serverinfo::ServerInfo::default();
-        local.static_info.id = "digest-local".into();
-        local.static_info.ip = "127.0.0.1".into();
+        let sql = Arc::new(DigestSql {
+            local: HashMap::from([("c1c2".into(), "local normalized statement".into())]),
+            global: HashMap::from([
+                ("d1d2".into(), "remote normalized statement".into()),
+                ("c1c2".into(), "must not replace local".into()),
+            ]),
+            fail: AtomicBool::new(false),
+            queries: Mutex::default(),
+        });
         let mut session = Session::new();
         session.set_user("digest_reader@%".into(), "digest_reader@localhost".into());
         session.set_process_privilege(true);
-        let syncer = Arc::new(tidb_domain_serverinfo::serverinfo_syncer::Syncer::new(
-            local,
-            Some(discovery),
-        ));
-        let peer = Arc::new(peer_client());
-        session.set_server_info_syncer(syncer.clone());
-        session.set_cluster_peer_client(peer.clone());
-        let mut info = tidb_stmtsummary::v2::record::generate_stmt_exec_info_4_test("c1c2");
-        info.normalized_sql = "local normalized statement".into();
-        tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP.add_statement(&info);
+        session.set_restricted_sql_executor(sql.clone());
         struct Waits(Vec<tidb_kv::lock_waits::DataLockWait>);
         impl tidb_kv::lock_waits::DataLockWaitsProvider for Waits {
             fn lock_waits(&self) -> Result<Vec<tidb_kv::lock_waits::DataLockWait>, String> {
@@ -909,52 +893,18 @@ mod tests {
                 text
             );
         }
-        let requests = captured.lock().unwrap().clone();
-        assert_eq!(requests.len(), 2, "current and history share one fallback");
-        for dag in requests {
-            assert!(
-                dag.user.is_none(),
-                "restricted lookup must not inherit user filtering"
-            );
-            let scan = dag.executors[0].tbl_scan.as_ref().unwrap();
-            let table = if scan.table_id
-                == tidb_infoschema::infoschema_meta::memory_table_id("CLUSTER_STATEMENTS_SUMMARY")
-            {
-                "CLUSTER_STATEMENTS_SUMMARY"
-            } else {
-                assert_eq!(
-                    scan.table_id,
-                    tidb_infoschema::infoschema_meta::memory_table_id("CLUSTER_STATEMENTS_SUMMARY_HISTORY")
-                );
-                "CLUSTER_STATEMENTS_SUMMARY_HISTORY"
-            };
-            let columns = tidb_infoschema::infoschema_meta::table_schema(table).unwrap();
-            assert_eq!(
-                scan.columns.iter().map(|c| c.column_id).collect::<Vec<_>>(),
-                ["DIGEST", "DIGEST_TEXT"]
-                    .iter()
-                    .map(|name| Some(
-                        columns
-                            .iter()
-                            .position(|(column, _)| column == name)
-                            .unwrap() as i64
-                            + 1
-                    ))
-                    .collect::<Vec<_>>()
-            );
-            assert_eq!(dag.output_offsets, vec![0, 1]);
-            assert_eq!(dag.executors.len(), 2, "missing remote digest selection");
-            let selection = dag.executors[1]
-                .selection
-                .as_ref()
-                .expect("digest predicate");
-            assert_eq!(selection.conditions.len(), 1);
-            assert_eq!(
-                selection.conditions[0].sig,
-                Some(tipb::ScalarFuncSig::InString as i32)
-            );
-        }
-        // Text-only receiving scans retain global lookup without metadata.
+        // `RetrieveLocal` lists every digest; `RetrieveGlobal` the unknown.
+        let sorted = |mut values: Vec<String>| {
+            values.sort();
+            values
+        };
+        let queries = sql.queries();
+        assert_eq!(queries.len(), 2);
+        assert_eq!(queries[0].0, format!("{LOCAL} where digest in (%?,%?,%?)"));
+        assert_eq!(sorted(queries[0].1.clone()), ["c1c2", "d1d2", "e1e2"]);
+        assert_eq!(queries[1].0, format!("{GLOBAL} where digest in (%?,%?)"));
+        assert_eq!(sorted(queries[1].1.clone()), ["d1d2", "e1e2"]);
+        // A peer's text-only scan retrieves globally on the receiving node.
         {
             use tidb_deadlockhistory::{
                 DeadlockRecord, WaitChainItem, GLOBAL_DEADLOCK_HISTORY,
@@ -984,13 +934,18 @@ mod tests {
                     key: vec![],
                 }],
             });
+            let catalog = session.shared_catalog();
+            let receiving_sql = sql.clone();
             let receiver = PeerService::new(
-                store_sessions(&session),
+                Arc::new(move || {
+                    let mut session = Session::with_catalog(catalog.clone());
+                    session.set_restricted_sql_executor(receiving_sql.clone());
+                    Ok(session)
+                }),
                 ProcessRegistry::default(),
                 PrivilegeRegistry::default(),
-                Some(syncer),
-            )
-            .with_cluster_peer_client(Some(peer));
+                None,
+            );
             let mut dag = scan(None, tipb::EncodeType::TypeDefault);
             dag.output_offsets = vec![0];
             dag.executors[0].tbl_scan = Some(tipb::TableScan {
@@ -1010,14 +965,14 @@ mod tests {
                     .unwrap()
             );
         }
-        // Known local text never reaches a failing peer.
-        let known_requests = captured.lock().unwrap().len();
-        fail.store(true, Ordering::SeqCst);
+        // Known local text never needs the cluster.
+        let global = sql.global_queries();
+        sql.fail.store(true, Ordering::SeqCst);
         session.set_data_lock_waits_provider(waits(&[[0xc1, 0xc2]]));
         session
             .run("SELECT SQL_DIGEST_TEXT FROM information_schema.DATA_LOCK_WAITS")
             .unwrap();
-        assert_eq!(captured.lock().unwrap().len(), known_requests);
+        assert_eq!(sql.global_queries(), global);
         // Running transactions use only local lookup, including an unknown digest.
         let processes = ProcessRegistry::default();
         let _guard = processes.register(
@@ -1037,38 +992,37 @@ mod tests {
             )
             .unwrap();
         assert_eq!(rows[0][4], Datum::Null);
-        assert_eq!(captured.lock().unwrap().len(), known_requests);
+        assert_eq!(sql.global_queries(), global);
+        // Go builds no retriever when the text is not read.
         session.set_data_lock_waits_provider(waits(&[[0xd1, 0xd2]]));
-        let before = captured.lock().unwrap().len();
-        for sql in [
+        let before = sql.queries().len();
+        for statement in [
             "SELECT SQL_DIGEST FROM information_schema.DATA_LOCK_WAITS",
             "SELECT COUNT(*) FROM information_schema.DATA_LOCK_WAITS",
             "WITH c AS (SELECT SQL_DIGEST FROM information_schema.DATA_LOCK_WAITS) SELECT * FROM c",
         ] {
-            session.run(sql).unwrap();
+            session.run(statement).unwrap();
         }
-        assert_eq!(
-            captured.lock().unwrap().len(),
-            before,
-            "unused text must not contact peers"
-        );
-        for sql in [
+        assert_eq!(sql.queries().len(), before, "unused text must not be retrieved");
+        for statement in [
             "SELECT SQL_DIGEST FROM information_schema.DATA_LOCK_WAITS WHERE SQL_DIGEST_TEXT IS NOT NULL",
             "SELECT SQL_DIGEST FROM information_schema.DATA_LOCK_WAITS ORDER BY SQL_DIGEST_TEXT",
-        ] { assert!(session.run(sql).unwrap_err().to_string().contains("digest peer failure")); }
-        assert!(session
-            .run("SELECT SQL_DIGEST_TEXT FROM information_schema.DATA_LOCK_WAITS")
-            .unwrap_err()
-            .to_string()
-            .contains("digest peer failure"));
-        // Go's 512-request boundary selects bounded IN versus fetch-all.
-        fail.store(false, Ordering::SeqCst);
+            "SELECT SQL_DIGEST_TEXT FROM information_schema.DATA_LOCK_WAITS",
+        ] {
+            assert!(session
+                .run(statement)
+                .unwrap_err()
+                .to_string()
+                .contains("digest peer failure"));
+        }
+        // Go's fetchAllLimit (512) selects bounded IN versus fetch-all.
+        sql.fail.store(false, Ordering::SeqCst);
         for size in [512, 513] {
             let keys: Vec<_> = (0..size)
                 .map(|index| (0x8000_u16 + index as u16).to_be_bytes())
                 .collect();
             session.set_data_lock_waits_provider(waits(&keys));
-            let before = captured.lock().unwrap().len();
+            let before = sql.queries().len();
             let tidb_session::StmtResult::Rows(rows) = session
                 .run("SELECT SQL_DIGEST_TEXT FROM information_schema.DATA_LOCK_WAITS")
                 .unwrap()
@@ -1076,21 +1030,23 @@ mod tests {
                 panic!("rows");
             };
             assert_eq!(rows.len(), size);
-            let requests = captured.lock().unwrap();
-            assert_eq!(requests.len(), before + 2);
-            assert!(requests[before..]
-                .iter()
-                .all(|dag| dag.executors.len() == if size <= 512 { 2 } else { 1 }));
+            let queries = sql.queries();
+            assert_eq!(queries.len(), before + 2);
+            for (query, prefix) in queries[before..].iter().zip([LOCAL, GLOBAL]) {
+                assert!(query.0.starts_with(prefix));
+                assert_eq!(query.1.len(), if size <= 512 { size } else { 0 });
+                assert_eq!(query.0.contains(" where digest in ("), size <= 512);
+            }
         }
-        fail.store(true, Ordering::SeqCst);
-        let count = captured.lock().unwrap().len();
+        sql.fail.store(true, Ordering::SeqCst);
+        let count = sql.queries().len();
         session.set_process_privilege(false);
         assert!(session
             .run("SELECT SQL_DIGEST_TEXT FROM information_schema.DATA_LOCK_WAITS")
             .unwrap_err()
             .to_string()
             .contains("PROCESS"));
-        assert_eq!(captured.lock().unwrap().len(), count);
+        assert_eq!(sql.queries().len(), count);
     }
 
     #[test]

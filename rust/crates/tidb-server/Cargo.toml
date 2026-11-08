@@ -152,6 +152,9 @@ tidb-workloadrepo = { path = "../tidb-workloadrepo" }
 tidb-domain = { path = "../tidb-domain" }
 tidb-stats-handle-metrics = { path = "../tidb-stats-handle-metrics" }
 tidb-parser = { path = "../tidb-parser" }
+# Go `SQLDigestTextRetriever`'s mock data stands behind a restricted executor.
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-resolve = { path = "../tidb-resolve" }
 tidb-protocol = { path = "../tidb-protocol" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-session = { path = "../tidb-session" }

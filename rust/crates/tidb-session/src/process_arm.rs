@@ -41,10 +41,7 @@ impl Session {
     /// builtin that retrieves while evaluating with the session out of reach.
     pub(crate) fn sql_digest_text_retriever(&self) -> SqlDigestTextRetriever {
         SqlDigestTextRetriever {
-            zone: self.session_time_zone(),
-            scan_concurrency: self.dist_sql_scan_concurrency(),
-            server_info_syncer: self.server_info_syncer.clone(),
-            cluster_peer: self.cluster_peer.clone(),
+            restricted_sql: self.restricted_sql_executor(),
         }
     }
 
