@@ -220,6 +220,35 @@ impl std::fmt::Debug for IndexLookUpStatsHandle {
 }
 
 impl IndexLookUpStatsHandle {
+    /// What a table worker records when its task finishes.
+    pub fn table_task_recorder(&self) -> TableTaskRecorder {
+        TableTaskRecorder {
+            stats: Arc::clone(&self.stats),
+            source: Arc::clone(&self.source),
+            table_root_plan_id: self.table_root_plan_id,
+        }
+    }
+
+    /// Go `RegisterStats(e.ID(), e.stats)` from `Close`; the next `Open`
+    /// starts new stats (Go `initRuntimeStats`).
+    pub fn register_and_reset(&mut self) {
+        self.source
+            .register_stats(self.plan_id, Box::new(self.stats.snapshot()));
+        self.stats = Arc::new(IndexLookUpRunTimeStats::new(self.stats.concurrency));
+        self.index_end_recorded = false;
+    }
+}
+
+/// Go `pickAndExecTask`'s stats, which a table worker records for every task
+/// it executes, consumed or not.
+#[derive(Clone)]
+pub struct TableTaskRecorder {
+    stats: Arc<IndexLookUpRunTimeStats>,
+    source: Arc<dyn ExecutorRuntimeStatsSource>,
+    table_root_plan_id: i64,
+}
+
+impl TableTaskRecorder {
     /// One table task finished after `elapsed`, returning `rows`: Go's table
     /// worker's `executeTask` stats and the task's table reader, which Go
     /// builds per task (so a second task makes its basic stats `total_`).
@@ -233,15 +262,6 @@ impl IndexLookUpStatsHandle {
             basic.record_next(Duration::ZERO, 0);
             basic.record_close(Duration::ZERO);
         }
-    }
-
-    /// Go `RegisterStats(e.ID(), e.stats)` from `Close`; the next `Open`
-    /// starts new stats (Go `initRuntimeStats`).
-    pub fn register_and_reset(&mut self) {
-        self.source
-            .register_stats(self.plan_id, Box::new(self.stats.snapshot()));
-        self.stats = Arc::new(IndexLookUpRunTimeStats::new(self.stats.concurrency));
-        self.index_end_recorded = false;
     }
 }
 

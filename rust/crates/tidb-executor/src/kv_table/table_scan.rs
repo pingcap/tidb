@@ -1657,7 +1657,7 @@ impl KvTableReader for TableCommon {
             physical_predicates.as_deref().unwrap_or(predicates),
             None,
             None,
-            None,
+            statement.lookup_table_limit,
             None,
             Some(&range_hints),
             false,
@@ -1675,6 +1675,11 @@ impl KvTableReader for TableCommon {
         else {
             return Ok(None);
         };
+        // The table plan's Limit counts the rows its Selection admits, so a
+        // request that could not apply every predicate cannot carry it.
+        if statement.lookup_table_limit.is_some() && !predicates.is_empty() && !cursor.predicates_applied() {
+            return Ok(None);
+        }
         Ok(Some(StagedPhysicalLookup {
             cursor,
             output_width: scan_keep.len(),

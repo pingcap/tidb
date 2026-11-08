@@ -9224,3 +9224,55 @@ fn a_distinct_aggregate_prefers_its_root_child_candidate_like_go() {
         assert_eq!(actual, expected, "{sql}");
     }
 }
+
+/// Go's index worker seeds its first batch with the first output chunk's
+/// `RequiredRows` (`calculateBatchSize`), makes each table task exactly what
+/// one `extractTaskHandles` returns -- a whole 32-row response chunk through
+/// `ReuseIntermChk` -- and its table workers count every task they execute.
+/// A local index's task reads one partition, whose rows need no handle.
+/// Go tidb-server captures on fresh connections.
+#[test]
+fn an_index_lookup_takes_one_response_chunk_per_task_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT PRIMARY KEY, b INT, c INT, KEY(b))").unwrap();
+    session.run("CREATE TABLE p (a INT, b INT, c INT, KEY(b)) PARTITION BY HASH(a) PARTITIONS 2").unwrap();
+    let values = (1..=100).map(|i| format!("({i},{i},{i})")).collect::<Vec<_>>().join(",");
+    session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+    session.run(&format!("INSERT INTO p VALUES {values}")).unwrap();
+    let lookup = |session: &mut Session, sql: &str| {
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        rows.into_iter()
+            .find(|row| row[0].contains("IndexLookUp"))
+            .unwrap_or_else(|| panic!("{sql}: no IndexLookUp"))
+    };
+    let sql = "SELECT * FROM t USE INDEX(b) WHERE b > 1 AND c > 97 LIMIT 1";
+    let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+    // The table plan's Limit rides each task: only the last one keeps a row.
+    let act_rows: Vec<(&str, &str)> = rows
+        .iter()
+        .map(|row| (row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()), row[2].as_str()))
+        .collect();
+    assert_eq!(
+        act_rows,
+        [
+            ("Limit_9", "1"),
+            ("IndexLookUp_15", "1"),
+            ("IndexRangeScan_11(Build)", "99"),
+            ("Limit_14(Probe)", "1"),
+            ("Selection_13", "3"),
+            ("TableRowIDScan_12", "99"),
+        ],
+        "{rows:?}"
+    );
+    assert!(rows[1][5].contains("table_task: {total_time: ") && rows[1][5].contains("num: 4,"), "{rows:?}");
+    for (sql, memory) in [
+        ("SELECT b, c FROM p PARTITION(p0) USE INDEX(b) WHERE b > 1", "8.50 KB"),
+        ("SELECT b, c FROM p USE INDEX(b) WHERE b > 1", "16.9 KB"),
+    ] {
+        let mut fresh = Session::new();
+        fresh.run("CREATE TABLE p (a INT, b INT, c INT, KEY(b)) PARTITION BY HASH(a) PARTITIONS 2").unwrap();
+        fresh.run(&format!("INSERT INTO p VALUES {values}")).unwrap();
+        let row = lookup(&mut fresh, sql);
+        assert_eq!(row[7], memory, "{sql}: {row:?}");
+    }
+}

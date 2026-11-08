@@ -1542,6 +1542,16 @@ struct LookupBatchJob {
 /// reads it, and charges the task (`tableWorker.executeTask`). A store that
 /// refuses the remote shape hands the handles back for the local byte seam.
 #[allow(clippy::too_many_arguments)]
+/// The rows a table task's reader returned, for its runtime stats.
+fn lookup_fetch_rows(outcome: &Result<LookupFetch, ExecError>) -> usize {
+    match outcome {
+        Ok(LookupFetch::Remote(rows, ..)) => rows.len(),
+        Ok(LookupFetch::RemoteChunk(chunk)) => chunk.request_indices.len(),
+        Ok(LookupFetch::LocalFallback(handles)) => handles.len(),
+        Err(_) => 0,
+    }
+}
+
 fn exec_table_task(
     table: &mut TableCommon,
     store: &mut dyn tidb_kv::storage::TableStorage,
@@ -3165,28 +3175,24 @@ impl IndexRangeSourceExec {
                 } else {
                     Vec::new()
                 };
-                while handles.len() < target {
-                    match self.next_lookup_handle() {
-                        Ok(Some(handle)) => {
-                            if partitioned {
-                                let id = self
-                                    .record_physical_ids
-                                    .get(self.batch_partition)
-                                    .ok_or_else(|| {
-                                        ExecError::internal(
-                                            "index lookup lost its partition ordinal",
-                                        )
-                                    })?;
-                                physical_ids.push(*id);
-                            }
-                            handles.push(handle);
-                        }
-                        Ok(None) => {
-                            ended_inside = true;
-                            break;
-                        }
-                        Err(error) => return Err(error),
-                    };
+                // Go `indexWorker.fetchHandles`: a task is exactly what one
+                // `extractTaskHandles` returns, the handle batch
+                // [`Self::fill_handle_batch`] built (a whole response chunk,
+                // cut at a partition boundary or a pushed limit).
+                while self.batch_at == self.batch.len() {
+                    if !self.fill_handle_batch()? && self.batch.is_empty() {
+                        ended_inside = true;
+                        break;
+                    }
+                }
+                handles.extend(self.batch.drain(self.batch_at..));
+                self.batch_at = self.batch.len();
+                if partitioned && !handles.is_empty() {
+                    let id = self
+                        .record_physical_ids
+                        .get(self.batch_partition)
+                        .ok_or_else(|| ExecError::internal("index lookup lost its partition ordinal"))?;
+                    physical_ids.resize(handles.len(), *id);
                 }
                 if handles.is_empty() {
                     // Go `extractTaskHandles` records the empty chunk that
@@ -3282,13 +3288,6 @@ impl IndexRangeSourceExec {
                     std::time::Duration::ZERO,
                     job.started.elapsed(),
                 );
-                let rows = match &payload {
-                    Ok(LookupFetch::Remote(rows, ..)) => rows.len(),
-                    Ok(LookupFetch::RemoteChunk(chunk)) => chunk.request_indices.len(),
-                    Ok(LookupFetch::LocalFallback(handles)) => handles.len(),
-                    Err(_) => 0,
-                };
-                stats.record_table_task(job.started, rows);
             }
             // Go's tableWorker hands its error to the reader unchanged, so a
             // SQL error (8274 from `tidb_max_keys_read`, say) keeps its code.
@@ -3393,6 +3392,15 @@ impl IndexRangeSourceExec {
         skipped: usize,
     ) -> Result<LookupBatchJob, ExecError> {
         let handle_count = handles.len();
+        // The table plan's Limit rides each task only with the whole
+        // Selection beneath it.
+        if self
+            .filter
+            .as_ref()
+            .is_some_and(|filter| !filter.fully_pushable())
+        {
+            self.statement.lookup_table_limit = None;
+        }
         let allow_lookup_chunks = self.post_filter_projection.is_none()
             && self
             .filter
@@ -3444,6 +3452,7 @@ impl IndexRangeSourceExec {
                 self.retain_remote_index_stats();
                 self.remote_index = None;
             }
+            let started = std::time::Instant::now();
             let outcome = exec_table_task(
                 &mut self.table,
                 &mut *self.store,
@@ -3457,6 +3466,9 @@ impl IndexRangeSourceExec {
                 allow_lookup_chunks,
                 &accounting,
             );
+            if let Some(stats) = &self.lookup_stats {
+                stats.table_task_recorder().record_table_task(started, lookup_fetch_rows(&outcome));
+            }
             return Ok(LookupBatchJob {
                 started: std::time::Instant::now(),
                 physical_ids,
@@ -3479,8 +3491,10 @@ impl IndexRangeSourceExec {
         let worker_statement = self.statement.clone();
         let worker_required_rows = self.meta.max_chunk_size();
         let worker_allow_chunks = allow_lookup_chunks;
+        let recorder = self.lookup_stats.as_ref().map(crate::index_lookup_stats::IndexLookUpStatsHandle::table_task_recorder);
         let worker = move || {
-            exec_table_task(
+            let started = std::time::Instant::now();
+            let outcome = exec_table_task(
                 &mut worker_table,
                 &mut *worker_store,
                 worker_handles,
@@ -3492,7 +3506,11 @@ impl IndexRangeSourceExec {
                 worker_required_rows,
                 worker_allow_chunks,
                 &accounting,
-            )
+            );
+            if let Some(recorder) = &recorder {
+                recorder.record_table_task(started, lookup_fetch_rows(&outcome));
+            }
+            outcome
         };
         // Go's table worker is persistent across lookup tasks. Submit the
         // whole window to the source-owned lane set instead of creating one
@@ -4301,13 +4319,19 @@ impl Executor for IndexRangeSourceExec {
                 .as_ref()
                 .is_none_or(tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe::fully_pushable);
         // Go's unordered table worker forwards its rows unmatched: only a
-        // keep-order read (`rowIdx`), an output handle, a partition route or
-        // the dirty merge needs each row's handle back.
+        // keep-order read (`rowIdx`), an output handle, a global index's
+        // task (whose handles span partitions) or the dirty merge needs each
+        // row's handle back. A local index's task reads one partition.
+        let global_index = self
+            .table
+            .indexes()
+            .iter()
+            .any(|index| index.read().id == self.index_id && index.read().global);
         self.statement.lookup_without_identity = !self.covering
             && self.can_reorder_handles
             && self.extra_handle_slot.is_none()
             && self.physical_table_id_slot.is_none()
-            && self.table.partition().is_none()
+            && !global_index
             && !self.dirty_merge;
         self.covering_row = None;
         self.native_covering = self.covering

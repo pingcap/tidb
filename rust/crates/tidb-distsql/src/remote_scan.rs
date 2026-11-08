@@ -542,6 +542,9 @@ pub struct PushdownStatementContext {
     /// index lookup task's `TableReaderExecutor`): the session's reusable
     /// chunk allocator its `TryNewCacheChunk` draws from.
     pub alloc_pool: Option<AllocPool>,
+    /// Go `tblPlans`' Limit under an index lookup (`Limit | Selection |
+    /// TableRowIDScan`): each table task's request carries it.
+    pub lookup_table_limit: Option<u64>,
 }
 
 /// Go `exec.BaseExecutorV2.AllocPool`: `SessionVars.GetChunkAllocator()`.
@@ -604,6 +607,7 @@ impl Default for PushdownStatementContext {
             lookup_without_identity: false,
             init_chunk_size: tidb_vardef::defaults::DEF_INIT_CHUNK_SIZE as usize,
             alloc_pool: None,
+            lookup_table_limit: None,
         }
     }
 }

@@ -2877,10 +2877,26 @@ fn with_reader_cop_chain(
         _ => statement.with_cop_plan_chain(cop_plan_chain(plan), i64::from(plan.id())),
     };
     match table_lookup_plan {
-        Some(table) => statement
-            .with_lookup_cop_plan_chain(cop_plan_chain(table), i64::from(table.id())),
+        Some(table) => {
+            let mut statement =
+                statement.with_lookup_cop_plan_chain(cop_plan_chain(table), i64::from(table.id()));
+            statement.lookup_table_limit = table_plan_limit(table);
+            statement
+        }
         None => statement,
     }
+}
+
+/// The `offset + count` of the Limit in an index lookup's table plan.
+fn table_plan_limit(table_plan: &PhysicalPlan) -> Option<u64> {
+    let mut node = Some(table_plan);
+    while let Some(plan) = node {
+        if let PhysicalPlan::Limit(limit) = plan {
+            return limit.offset.checked_add(limit.count);
+        }
+        node = plan.children().first();
+    }
+    None
 }
 
 fn cop_reader_statement(
