@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -189,4 +190,36 @@ func TestGrantColumnScope(t *testing.T) {
 
 	tk.MustGetErrMsg("GRANT SUPER(c2) ON test3 TO 'testCol1'@'localhost';",
 		"[executor:1221]Incorrect usage of COLUMN GRANT and NON-COLUMN PRIVILEGES")
+}
+
+func TestShowColumnsForDifferentHost(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec(`CREATE USER u@'%'`)
+	tk.MustExec(`CREATE USER u@'127.0.0.1'`)
+	tk.MustExec(`CREATE TABLE test.t(c1 int, c2 int);`)
+	tk.MustExec(`GRANT SELECT(c1) ON test.t TO u@'%'`)
+	tk.MustExec(`GRANT SELECT(c2) ON test.t TO u@'127.0.0.1'`)
+	tk.MustQuery(`SHOW GRANTS FOR u@'%'`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'u'@'%'", "GRANT SELECT(`c1`) ON `test`.`t` TO 'u'@'%'"))
+	tk.MustQuery(`SHOW GRANTS FOR u@'127.0.0.1'`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'u'@'127.0.0.1'", "GRANT SELECT(`c2`) ON `test`.`t` TO 'u'@'127.0.0.1'"))
+
+	// Column grants of a role are not inherited by a role with the same name
+	// and another host.
+	tk.MustExec(`CREATE ROLE r@'%', r@'127.0.0.1'`)
+	tk.MustExec(`GRANT SELECT(c1) ON test.t TO r@'%'`)
+	tk.MustExec(`GRANT r@'127.0.0.1' TO u@'127.0.0.1'`)
+	tk.MustQuery(`SHOW GRANTS FOR u@'127.0.0.1' USING r@'127.0.0.1'`).Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'u'@'127.0.0.1'",
+		"GRANT SELECT(`c2`) ON `test`.`t` TO 'u'@'127.0.0.1'",
+		"GRANT 'r'@'127.0.0.1' TO 'u'@'127.0.0.1'"))
+
+	// Neither do column grants of another account make a database visible.
+	tk.MustExec(`CREATE DATABASE colpriv_hidden`)
+	tk.MustExec(`CREATE TABLE colpriv_hidden.t(secret int)`)
+	tk.MustExec(`GRANT SELECT(secret) ON colpriv_hidden.t TO u@'%'`)
+	userTk := testkit.NewTestKit(t, store)
+	require.NoError(t, userTk.Session().Auth(&auth.UserIdentity{Username: "u", Hostname: "127.0.0.1"}, nil, nil, nil))
+	userTk.MustQuery(`SHOW DATABASES LIKE 'colpriv_hidden'`).Check(testkit.Rows())
 }

@@ -727,3 +727,35 @@ func MockStateNoneColumnTable() *model.TableInfo {
 	}
 	return table
 }
+
+// MockViewInvoker is only used for plan related tests. It's a SQL SECURITY INVOKER view.
+func MockViewInvoker() *model.TableInfo {
+	selectStmt := "select b,c,d from t"
+	col0 := &model.ColumnInfo{
+		State:  model.StatePublic,
+		Offset: 0,
+		Name:   ast.NewCIStr("b"),
+		ID:     1,
+	}
+	col1 := &model.ColumnInfo{
+		State:  model.StatePublic,
+		Offset: 1,
+		Name:   ast.NewCIStr("c"),
+		ID:     2,
+	}
+	col2 := &model.ColumnInfo{
+		State:  model.StatePublic,
+		Offset: 2,
+		Name:   ast.NewCIStr("d"),
+		ID:     3,
+	}
+	view := &model.ViewInfo{SelectStmt: selectStmt, Security: ast.SecurityInvoker, Definer: &auth.UserIdentity{Username: "root", Hostname: ""}, Cols: []ast.CIStr{col0.Name, col1.Name, col2.Name}}
+	table := &model.TableInfo{
+		ID:      4,
+		Name:    ast.NewCIStr("v2"),
+		Columns: []*model.ColumnInfo{col0, col1, col2},
+		View:    view,
+		State:   model.StatePublic,
+	}
+	return table
+}

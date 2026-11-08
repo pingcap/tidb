@@ -97,6 +97,7 @@ func createPlannerSuite() (s *PlannerSuite) {
 		MockListPartitionTable(),
 		MockStateNoneColumnTable(),
 		MockGlobalIndexHashPartitionTable(),
+		MockViewInvoker(),
 	}
 	id := int64(1)
 	for _, tblInfo := range tblInfos {

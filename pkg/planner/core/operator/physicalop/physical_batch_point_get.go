@@ -84,6 +84,14 @@ type PointGetPlan struct {
 	LockWaitTime     int64
 	Columns          []*model.ColumnInfo `plan-cache-clone:"shallow"`
 
+	// UnfoldFromWildCard indicates whether the FieldName in 'outputNames' is unfolded from wildcard
+	// It is used by checking column privileges. Why do not add the field name to visitInfo onsite?
+	// Because if the PointGetPlan is inside UPDATE or DELETE, we need not to check the SelectPriv of
+	// all output names. In the above two statements, only columns in WHERE clause are needed to check.
+	UnfoldFromWildCard []bool
+	// ColsInWhereClause records the columns in the where clause, whose privileges should be checked.
+	ColsInWhereClause []string
+
 	// required by cost model
 	cost         float64
 	PlanCostInit bool
@@ -521,6 +529,14 @@ type BatchPointGetPlan struct {
 	LockWaitTime  int64
 	Columns       []*model.ColumnInfo `plan-cache-clone:"shallow"`
 	cost          float64
+
+	// UnfoldFromWildCard indicates whether the FieldName in 'outputNames' is unfolded from wildcard
+	// It is used by checking column privileges. Why do not add the field name to visitInfo onsite?
+	// Because if the BatchPointGetPlan is inside UPDATE or DELETE, we need not to check the SelectPriv of
+	// all output names. In the above two statements, only columns in WHERE clause are needed to check.
+	UnfoldFromWildCard []bool
+	// ColsInWhereClause records the columns in the where clause, whose privileges should be checked.
+	ColsInWhereClause []string
 
 	// required by cost model
 	PlanCostInit bool

@@ -26,6 +26,8 @@ go_test(
         "//pkg/kv",
         "//pkg/lightning/common",
         "//pkg/parser/ast",
+        "//pkg/parser/auth",
+        "//pkg/parser/mysql",
         "//pkg/planner/core",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
