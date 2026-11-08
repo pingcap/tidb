@@ -187,9 +187,10 @@ func BuildFTSToILikeExpressionForParam(
 	modifier ast.FulltextSearchModifier,
 	against *Constant,
 ) (Expression, error) {
+	shared := &builtinFuncCache[*ftsLikePatterns]{}
 	return buildFTSToILikeExpression(ctx, columns, searchText, modifier,
 		func(ctx BuildContext, kind ftsLikeTermKind, idx int, term string) (Expression, error) {
-			return deferredFTSLikePattern(ctx, against, modifier, kind, idx, term)
+			return deferredFTSLikePattern(ctx, against, modifier, kind, idx, term, shared)
 		})
 }
 

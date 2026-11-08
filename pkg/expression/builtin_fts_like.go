@@ -47,7 +47,7 @@ func (c *ftsLikePatternFunctionClass) getFunction(ctx BuildContext, args []Expre
 		return nil, err
 	}
 	bf.tp.SetFlen(mysql.MaxFieldVarCharLength)
-	return &builtinFTSLikePatternSig{baseBuiltinFunc: bf}, nil
+	return &builtinFTSLikePatternSig{baseBuiltinFunc: bf, patternCache: &builtinFuncCache[*ftsLikePatterns]{}}, nil
 }
 
 type builtinFTSLikePatternSig struct {
@@ -57,8 +57,12 @@ type builtinFTSLikePatternSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 
 	// patternCache holds the patterns of the search string seen in the
-	// current execution; builtinFuncCache is safe to share across sessions.
-	patternCache builtinFuncCache[*ftsLikePatterns]
+	// current execution. BuildFTSToILikeExpressionForParam gives every
+	// fts_like_pattern() built for one AGAINST(?) the same cache, so the search
+	// string is parsed once per execution rather than once per column and term.
+	// builtinFuncCache is keyed by execution context and safe to share, so
+	// clones share it too.
+	patternCache *builtinFuncCache[*ftsLikePatterns]
 }
 
 // ftsLikePatterns are the ILIKE patterns of one search string, by term kind.
@@ -83,7 +87,7 @@ func newFTSLikePatterns(searchText string, modifier ast.FulltextSearchModifier) 
 }
 
 func (b *builtinFTSLikePatternSig) Clone() builtinFunc {
-	newSig := &builtinFTSLikePatternSig{}
+	newSig := &builtinFTSLikePatternSig{patternCache: b.patternCache}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
@@ -152,8 +156,9 @@ func (b *builtinFTSLikePatternSig) vecEvalString(ctx EvalContext, input *chunk.C
 // deferredFTSLikePattern returns the ILIKE pattern constant for the idx-th
 // term of the given kind of an `AGAINST(?)` parameter: its value is the
 // pattern for the parameter's current value (term), and its DeferredExpr
-// recomputes it from the parameter on each execution of a cached plan.
-func deferredFTSLikePattern(ctx BuildContext, against *Constant, modifier ast.FulltextSearchModifier, kind ftsLikeTermKind, idx int, term string) (Expression, error) {
+// recomputes it from the parameter on each execution of a cached plan, using
+// the patterns in shared.
+func deferredFTSLikePattern(ctx BuildContext, against *Constant, modifier ast.FulltextSearchModifier, kind ftsLikeTermKind, idx int, term string, shared *builtinFuncCache[*ftsLikePatterns]) (Expression, error) {
 	intConst := func(v int64) *Constant {
 		return &Constant{Value: types.NewIntDatum(v), RetType: types.NewFieldType(mysql.TypeLonglong)}
 	}
@@ -161,6 +166,11 @@ func deferredFTSLikePattern(ctx BuildContext, against *Constant, modifier ast.Fu
 		against, intConst(int64(modifier)), intConst(int64(kind)), intConst(int64(idx)))
 	if err != nil {
 		return nil, err
+	}
+	if sf, ok := fn.(*ScalarFunction); ok {
+		if sig, ok := sf.Function.(*builtinFTSLikePatternSig); ok {
+			sig.patternCache = shared
+		}
 	}
 	return &Constant{
 		Value:        types.NewStringDatum(ftsLikePatternOf(term)),

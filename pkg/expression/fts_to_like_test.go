@@ -447,4 +447,44 @@ func TestBuildFTSToILikeExpressionForParam(t *testing.T) {
 	against.Value = types.NewStringDatum("+a")
 	_, _, err = cached.EvalInt(mock.NewContext(), chunk.MutRowFromValues("a", "b").ToRow())
 	require.ErrorContains(t, err, "has no term 1 of kind 0")
+
+	// Every fts_like_pattern() of one AGAINST(?) shares one pattern cache, so
+	// the search string is parsed once per execution, not once per column and
+	// term; clones keep sharing it.
+	patternCachesOf := func(expr Expression) []*builtinFuncCache[*ftsLikePatterns] {
+		var caches []*builtinFuncCache[*ftsLikePatterns]
+		var walk func(Expression)
+		walk = func(e Expression) {
+			switch x := e.(type) {
+			case *Constant:
+				if x.DeferredExpr != nil {
+					walk(x.DeferredExpr)
+				}
+			case *ScalarFunction:
+				if sig, ok := x.Function.(*builtinFTSLikePatternSig); ok {
+					caches = append(caches, sig.patternCache)
+				}
+				for _, arg := range x.GetArgs() {
+					walk(arg)
+				}
+			}
+		}
+		walk(expr)
+		return caches
+	}
+	const manyTerms = "a b c d e f g h"
+	shared, err := BuildFTSToILikeExpressionForParam(ctx, columns, manyTerms, naturalMode,
+		&Constant{Value: types.NewStringDatum(manyTerms), RetType: stringTp})
+	require.NoError(t, err)
+	for _, e := range []Expression{shared, shared.Clone()} {
+		caches := patternCachesOf(e)
+		require.Len(t, caches, len(columns)*8)
+		for _, c := range caches {
+			require.Same(t, caches[0], c)
+		}
+	}
+	other, err := BuildFTSToILikeExpressionForParam(ctx, columns, manyTerms, naturalMode,
+		&Constant{Value: types.NewStringDatum(manyTerms), RetType: stringTp})
+	require.NoError(t, err)
+	require.NotSame(t, patternCachesOf(shared)[0], patternCachesOf(other)[0])
 }

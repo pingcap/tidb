@@ -311,6 +311,34 @@ select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
 deallocate prepare st_fts_b;
+prepare st_fts_w from 'select id from articles where match(title) against((?)) order by id';
+set @q='Security';
+execute st_fts_w using @q;
+id
+5
+set @q='Security PostgreSQL';
+execute st_fts_w using @q;
+id
+4
+5
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+deallocate prepare st_fts_w;
+prepare st_fts_w from 'select id from articles where match(title) against(+?) order by id';
+set @q='Security';
+execute st_fts_w using @q;
+id
+5
+set @q='Security PostgreSQL';
+execute st_fts_w using @q;
+id
+4
+5
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+deallocate prepare st_fts_w;
 set @@tidb_enable_prepared_plan_cache=DEFAULT;
 set @@tidb_enable_prepared_plan_cache=1;
 prepare st_fts_null from 'select id, title from articles where match(title) against(?)';

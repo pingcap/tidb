@@ -320,6 +320,24 @@ set @q='-PostgreSQL';
 execute st_fts_b using @q;
 select @@last_plan_from_cache;
 deallocate prepare st_fts_b;
+
+# Test 38c: A parameter wrapped in an expression (parentheses, unary plus)
+# has no shape in the plan cache key, so its plan is not cached; a second
+# execution with more terms must match on every term.
+prepare st_fts_w from 'select id from articles where match(title) against((?)) order by id';
+set @q='Security';
+execute st_fts_w using @q;
+set @q='Security PostgreSQL';
+execute st_fts_w using @q;
+select @@last_plan_from_cache;
+deallocate prepare st_fts_w;
+prepare st_fts_w from 'select id from articles where match(title) against(+?) order by id';
+set @q='Security';
+execute st_fts_w using @q;
+set @q='Security PostgreSQL';
+execute st_fts_w using @q;
+select @@last_plan_from_cache;
+deallocate prepare st_fts_w;
 set @@tidb_enable_prepared_plan_cache=DEFAULT;
 
 # Test 38a: Prepared statement with a NULL first bind followed by a non-NULL

@@ -2643,7 +2643,13 @@ func (er *expressionRewriter) matchAgainstToLike(v *ast.MatchAgainst, numCols, s
 	// such key and would bake the first execution's value into the plan, so
 	// skip the plan cache for it, before the NULL fast-path and before Eval so
 	// the skip applies uniformly across all branches below.
-	againstParam := constExpr.ParamMarker != nil && constExpr.DeferredExpr == nil
+	//
+	// The AST check must match planCacheStmtProcessor, which records a shape
+	// only when AGAINST's argument is the parameter itself. A wrapped parameter
+	// such as `AGAINST((?))` or `AGAINST(+?)` can still fold to a parameter
+	// constant here, but has no shape in the key.
+	_, againstIsParamMarker := v.Against.(*driver.ParamMarkerExpr)
+	againstParam := againstIsParamMarker && constExpr.ParamMarker != nil && constExpr.DeferredExpr == nil
 	if !againstParam && expression.MaybeOverOptimized4PlanCache(er.sctx, constExpr) {
 		er.sctx.SetSkipPlanCache("MATCH...AGAINST LIKE fallback bakes a mutable search string into plan constants")
 	}
