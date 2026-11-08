@@ -675,11 +675,19 @@ impl StatementMemory {
     /// A fresh operator disk tracker attached to the statement disk root.
     #[must_use]
     pub fn operator_disk_tracker(&self, label: i64) -> Arc<Tracker> {
+        let tracker = self.new_operator_disk_tracker(label);
+        tracker.attach_to(&self.lifetime.disk_stmt);
+        tracker
+    }
+
+    /// Go `disk.NewTracker(e.ID(), -1)` before its `AttachTo`: an operator
+    /// disk tracker its executor attaches only when it may spill.
+    #[must_use]
+    pub fn new_operator_disk_tracker(&self, label: i64) -> Arc<Tracker> {
         let tracker = Tracker::new(label, -1);
         tracker
             .session_id
             .store(self.session.session_id.load(SeqCst), SeqCst);
-        tracker.attach_to(&self.lifetime.disk_stmt);
         tracker
     }
 

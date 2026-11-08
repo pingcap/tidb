@@ -140,7 +140,8 @@ pub struct HashAggExec<C: Columns + Send + Sync + 'static> {
     parallel_agg_spill_action: Option<Arc<ParallelAggSpillDiskAction>>,
 
     mem_tracker: Arc<Tracker>,
-    disk_tracker: Arc<tidb_disk::Tracker>,
+    /// Go `e.diskTracker`: nil until the executor may spill.
+    disk_tracker: Option<Arc<tidb_disk::Tracker>>,
     stats: Option<Arc<HashAggRuntimeStats>>,
     runtime_stats: Option<(Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>, i64)>,
 }
@@ -157,7 +158,6 @@ impl<C: Columns + Send + Sync + 'static> HashAggExec<C> {
         let child_result = Chunk::new(&child_field_types, 0, 0);
         let tmp_chk_for_spill = Chunk::new(&child_field_types, 0, 0);
         let mem_tracker = memory.operator_tracker(meta.id());
-        let disk_tracker = memory.operator_disk_tracker(meta.id());
         Self {
             meta,
             child: Arc::new(Mutex::new(child)),
@@ -196,7 +196,7 @@ impl<C: Columns + Send + Sync + 'static> HashAggExec<C> {
             spill_helper: None,
             parallel_agg_spill_action: None,
             mem_tracker,
-            disk_tracker,
+            disk_tracker: None,
             stats: None,
             runtime_stats: None,
         }
@@ -245,9 +245,9 @@ impl<C: Columns + Send + Sync + 'static> HashAggExec<C> {
         let tmp_chk_for_spill = self.stmt_child().new_chunk();
         self.tmp_chk_for_spill = tmp_chk_for_spill;
         if self.track_aggregate_memory_usage && self.memory.tmp_storage_on_oom() {
-            self.disk_tracker.reset();
-            self.disk_tracker.attach_to(self.memory.stmt_disk_tracker());
-            data_in_disk.disk_tracker().attach_to(&self.disk_tracker);
+            let disk_tracker = self.reset_disk_tracker();
+            disk_tracker.attach_to(self.memory.stmt_disk_tracker());
+            data_in_disk.disk_tracker().attach_to(&disk_tracker);
             let (action, in_spill_mode) = AggSpillDiskAction::new(&self.mem_tracker);
             self.in_spill_mode = in_spill_mode;
             self.memory.session_tracker().fallback_old_and_set_new_action_for_soft_limit(Arc::clone(&action) as ArcAction);
@@ -257,6 +257,22 @@ impl<C: Columns + Send + Sync + 'static> HashAggExec<C> {
     }
 
     /// Go `initForParallelExec`, `initPartialWorkers` and `initFinalWorkers`.
+    /// Go `if e.diskTracker != nil { e.diskTracker.Reset() } else {
+    /// e.diskTracker = disk.NewTracker(e.ID(), -1) }`.
+    fn reset_disk_tracker(&mut self) -> Arc<tidb_disk::Tracker> {
+        match &self.disk_tracker {
+            Some(tracker) => {
+                tracker.reset();
+                Arc::clone(tracker)
+            }
+            None => {
+                let tracker = self.memory.new_operator_disk_tracker(self.meta.id());
+                self.disk_tracker = Some(Arc::clone(&tracker));
+                tracker
+            }
+        }
+    }
+
     fn init_for_parallel_exec(&mut self) -> Result<(), ExecError> {
         let (partial_concurrency, final_concurrency) = (self.partial_concurrency, self.final_concurrency);
         if partial_concurrency == 0 || final_concurrency == 0 {
@@ -286,9 +302,9 @@ impl<C: Columns + Send + Sync + 'static> HashAggExec<C> {
             self.memory.spill_storage(),
         )?);
         if is_tracker_enabled && self.enable_parallel_hashagg_spill && !self.has_distinct {
-            self.disk_tracker.reset();
-            self.disk_tracker.attach_to(self.memory.stmt_disk_tracker());
-            *spill_helper.disk_tracker.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::clone(&self.disk_tracker));
+            let disk_tracker = self.reset_disk_tracker();
+            disk_tracker.attach_to(self.memory.stmt_disk_tracker());
+            *spill_helper.disk_tracker.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(disk_tracker);
             let action = ParallelAggSpillDiskAction::new_for_helper(&self.mem_tracker, Arc::clone(&spill_helper));
             self.memory.session_tracker().fallback_old_and_set_new_action_for_soft_limit(Arc::clone(&action) as ArcAction);
             self.parallel_agg_spill_action = Some(action);

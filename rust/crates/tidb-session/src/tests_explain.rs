@@ -9352,3 +9352,36 @@ fn an_index_lookup_under_a_pushed_limit_releases_its_index_response_like_go() {
         assert_eq!(row_text(session.run(&sql)).len(), limit, "{sql}");
     }
 }
+
+/// Go's `HashAggExec` creates its disk tracker only where it may spill:
+/// `initForUnparallelExec` under `TrackAggregateMemoryUsage` with temporary
+/// storage on OOM, `initForParallelExec` also only without a distinct
+/// aggregate (`!e.HasDistinct`). A distinct aggregate's EXPLAIN ANALYZE disk
+/// is `N/A`, a parallel or serial grouping one's `0 Bytes` (`gorun`).
+#[test]
+fn a_hash_aggregate_tracks_disk_only_where_it_may_spill_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT, b VARCHAR(20), KEY(a))").unwrap();
+    session.run("INSERT INTO t VALUES (1,'x'),(2,'yy'),(2,'zzz'),(3,'w')").unwrap();
+    let disk = |session: &mut Session, sql: &str| {
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        rows.iter()
+            .filter(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()).starts_with("HashAgg") && row[3] == "root")
+            .map(|row| row[8].clone())
+            .collect::<Vec<_>>()
+    };
+    for (sql, expected) in [
+        ("SELECT /*+ hash_agg() */ count(distinct a) FROM t", "N/A"),
+        ("SELECT /*+ hash_agg() */ count(distinct b), sum(a) FROM t", "N/A"),
+        ("SELECT /*+ hash_agg() */ a, group_concat(b) FROM t GROUP BY a", "0 Bytes"),
+    ] {
+        assert_eq!(disk(&mut session, sql), vec![expected], "{sql}");
+    }
+    session
+        .run("SET tidb_hashagg_partial_concurrency = 1, tidb_hashagg_final_concurrency = 1")
+        .unwrap();
+    assert_eq!(
+        disk(&mut session, "SELECT /*+ hash_agg() */ a, count(b) FROM t GROUP BY a"),
+        vec!["0 Bytes"]
+    );
+}
