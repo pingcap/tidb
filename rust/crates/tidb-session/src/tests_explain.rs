@@ -9322,7 +9322,14 @@ fn a_covering_reader_under_a_limit_over_a_selection_returns_its_output_columns_l
             .iter()
             .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()) == reader)
             .unwrap_or_else(|| panic!("{sql}: {rows:?}"));
-        assert_eq!(row[7], memory, "{sql}: {rows:?}");
+        // The reader charges the response, whose execution summaries carry
+        // the executors' processing times as varints: a slow run's response
+        // is a few bytes larger, in Go as here. The narrowing this pins moves
+        // the charge by tens of bytes (`LIMIT 3` un-narrowed: 328 Bytes).
+        let bytes = |text: &str| -> i64 {
+            text.strip_suffix(" Bytes").and_then(|n| n.parse().ok()).unwrap_or_else(|| panic!("{text}"))
+        };
+        assert!((bytes(&row[7]) - bytes(memory)).abs() <= 12, "{sql}: {} vs Go {memory}: {rows:?}", row[7]);
         assert_eq!(row_text(session.run(sql)), expected, "{sql}");
     }
 }
