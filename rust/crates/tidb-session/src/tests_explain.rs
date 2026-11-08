@@ -8734,3 +8734,34 @@ fn an_operator_that_never_ran_shows_gos_runtime_defaults() {
         assert!(operator.get("executeInfo").is_none(), "{plan}");
     }
 }
+
+/// Go `selectResult.closeImpl` registers a reader's runtime stats only when
+/// the reader closes, after `ExplainExec` registered the statement's RU, so
+/// a root reader's execution info carries `RU:` before its `cop_task` (Go
+/// tidb-server capture), for a table and a covering index read alike.
+#[test]
+fn a_root_reader_reports_ru_before_its_cop_task_like_go() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE r (a INT PRIMARY KEY, b INT, KEY (b))",
+        "INSERT INTO r VALUES (1, 1), (2, 2), (3, 3)",
+        "CREATE TABLE h (a INT, c INT)",
+        "INSERT INTO h VALUES (1, 1), (2, 2)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    for query in [
+        "SELECT * FROM h",
+        "SELECT * FROM r",
+        "SELECT b FROM r WHERE b > 1",
+    ] {
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {query}")));
+        let reader = rows
+            .iter()
+            .find(|row| row[0].contains("Reader"))
+            .unwrap_or_else(|| panic!("{query}: {rows:?}"));
+        let info = &reader[5];
+        let (ru, cop) = (info.find("RU:"), info.find("cop_task"));
+        assert!(ru.is_some() && cop.is_some() && ru < cop, "{query}: {info}");
+    }
+}

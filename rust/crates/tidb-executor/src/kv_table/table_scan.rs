@@ -4798,6 +4798,11 @@ pub struct TableScanExec {
     /// index-usage reporter reads them when the executor closes, after the
     /// cursor is gone.
     dropped_cop_stats: Option<(u64, u64)>,
+    /// The remote cursors this run stopped reading (exhausted or past the
+    /// cap), held until the executor closes: Go's reader `Close`s its select
+    /// result only in `TableReaderExecutor.Close`, which is where its
+    /// runtime statistics are registered.
+    retired_remotes: Vec<RemoteRowCursor>,
     /// Logical projection above a remote physical scan, including virtual
     /// columns. Local record cursors already perform this decoding step.
     remote_materialization: Option<RemoteRowMaterialization>,
@@ -4969,14 +4974,15 @@ impl PartialSum {
 }
 
 impl TableScanExec {
-    /// Drops the remote cursor, keeping its coprocessor counts for the
-    /// index-usage report.
+    /// Stops reading the remote cursor, keeping its coprocessor counts for
+    /// the index-usage report; the cursor itself closes with the executor.
     fn drop_remote(&mut self) {
         if let Some(remote) = self.remote.take() {
             let (tasks, rows) = remote.get_cop_count_and_rows();
             let retained = self.dropped_cop_stats.get_or_insert((0, 0));
             retained.0 = retained.0.wrapping_add(tasks);
             retained.1 = retained.1.wrapping_add(rows);
+            self.retired_remotes.push(remote);
         }
     }
 
@@ -5031,6 +5037,7 @@ impl TableScanExec {
             cursor: None,
             remote: None,
             dropped_cop_stats: None,
+            retired_remotes: Vec::new(),
             remote_materialization: None,
             partial_remote: None,
             partial_remote_noted: 0,
@@ -5278,6 +5285,7 @@ impl Executor for TableScanExec {
         self.scanned.set(0);
         self.emitted = 0;
         self.dropped_cop_stats = None;
+        self.retired_remotes.clear();
         self.cursor = None;
         self.partial_remote = None;
         self.partial_remote_noted = 0;
@@ -5533,6 +5541,7 @@ impl Executor for TableScanExec {
     fn close(&mut self) -> Result<(), ExecError> {
         self.cursor = None;
         self.drop_remote();
+        self.retired_remotes.clear();
         self.remote_materialization = None;
         self.partial_remote = None;
         self.partial_pending = None;

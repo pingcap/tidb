@@ -659,7 +659,8 @@ impl SelectResponseIter {
                     return Err(error);
                 }
                 Some(ResponseChannelEvent::Closed) => {
-                    self.report_select_result_close();
+                    // Go `fetchResp`: the ended stream releases its response;
+                    // `Close` registers the select result.
                     self.release_response_memory();
                     self.closed = true;
                     return Ok(None);
@@ -809,7 +810,8 @@ impl SelectResponseIter {
                     return Err(error);
                 }
                 Some(ResponseChannelEvent::Closed) => {
-                    self.report_select_result_close();
+                    // Go `fetchResp`: the ended stream releases its response;
+                    // `Close` registers the select result.
                     self.release_response_memory();
                     self.closed = true;
                     return Ok(output);
@@ -825,6 +827,8 @@ impl SelectResponseIter {
     /// Closes the underlying response source and drops pending decoded rows.
     pub fn close(&mut self) {
         if self.closed {
+            // A drained stream is still registered by its `Close`.
+            self.report_select_result_close();
             return;
         }
         for channel in &mut self.channels {
@@ -848,8 +852,8 @@ impl SelectResponseIter {
         }
     }
 
-    /// Go `selectResult.closeImpl`'s registration, once per select result:
-    /// from `close` or when the source reports its end.
+    /// Go `selectResult.closeImpl`'s registration, once per select result,
+    /// from `close`.
     fn report_select_result_close(&mut self) {
         if self.close_reported {
             return;

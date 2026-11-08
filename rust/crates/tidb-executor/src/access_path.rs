@@ -1954,6 +1954,11 @@ pub struct IndexRangeSourceExec {
     /// A remote coprocessor index stream, when the TiKV backend can serve the
     /// selected index/filter/TopN shape.
     remote_index: Option<crate::kv_table::RemoteIndexHandleCursor>,
+    /// A covering read's remote streams it stopped reading (exhausted or
+    /// past its limit), held until the executor closes: Go's
+    /// `IndexReaderExecutor` `Close`s its select result, which registers its
+    /// runtime statistics, only in its own `Close`.
+    retired_remote_index: Vec<crate::kv_table::RemoteIndexHandleCursor>,
     /// Set once a covering read has selected the remote stream. It prevents a
     /// completed remote stream from falling through to the local cursor and
     /// emitting the same rows a second time.
@@ -2112,6 +2117,15 @@ impl IndexRangeSourceExec {
             let stats = remote.get_cop_count_and_rows();
             self.cop_stats.0 = self.cop_stats.0.wrapping_add(stats.0);
             self.cop_stats.1 = self.cop_stats.1.wrapping_add(stats.1);
+        }
+    }
+
+    /// Stops reading a covering read's remote stream, keeping its counts; the
+    /// stream itself closes with the executor.
+    fn retire_remote_index(&mut self) {
+        self.retain_remote_index_stats();
+        if let Some(remote) = self.remote_index.take() {
+            self.retired_remote_index.push(remote);
         }
     }
 
@@ -2292,6 +2306,7 @@ impl IndexRangeSourceExec {
             lookup_chunk_row: 0,
             lookup_filter_complete: false,
             remote_index: None,
+            retired_remote_index: Vec::new(),
             remote_covering_selected: false,
             decode_context,
             statement,
@@ -3858,6 +3873,7 @@ impl Executor for IndexRangeSourceExec {
         self.partial_rows = None;
         self.partial_done = false;
         self.remote_index = None;
+        self.retired_remote_index.clear();
         self.cop_stats = (0, 0);
         self.remote_covering_selected = false;
         // A DESCENDING lookup must not ride the local cursor on cluster
@@ -4138,8 +4154,7 @@ impl Executor for IndexRangeSourceExec {
                     .is_none_or(tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe::fully_pushable);
             while req.num_rows() < cap {
                 if self.limit.is_some_and(|limit| self.produced.get() >= limit) {
-                    self.retain_remote_index_stats();
-                    self.remote_index = None;
+                    self.retire_remote_index();
                     return Ok(());
                 }
                 let row = self
@@ -4153,8 +4168,7 @@ impl Executor for IndexRangeSourceExec {
                         ))
                     })?;
                 let Some(row) = row else {
-                    self.retain_remote_index_stats();
-                    self.remote_index = None;
+                    self.retire_remote_index();
                     return Ok(());
                 };
                 self.scanned.set(self.scanned.get() + 1);
@@ -4271,6 +4285,7 @@ impl Executor for IndexRangeSourceExec {
         self.partial_done = false;
         self.retain_remote_index_stats();
         self.remote_index = None;
+        self.retired_remote_index.clear();
         self.remote_covering_selected = false;
         self.lookup_chunk = None;
         self.lookup_chunk_row = 0;

@@ -2,8 +2,8 @@
   "date": "2026-11-08",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 35,
-    "open": 12,
+    "unresolved": 34,
+    "open": 11,
     "partial": 23
   },
   "findings": [
@@ -222,13 +222,6 @@
       "go_owner": "`pkg/executor/adapter.go` (`ExecStmt.Exec`), `pkg/session/session.go` (`SetProcessInfo`)"
     },
     {
-      "id": "E25",
-      "status": "open",
-      "group": "DML and executor handoff",
-      "finding": "A select result registers its runtime stats when its source is exhausted (`select_response.rs` `report_select_result_close` on the `Closed` event); Go's `selectResult.closeImpl` registers them only at `Close`. `ExplainExec` registers RU between the last `Next` and the deferred `Close`, so Go prints a reader's `RU:` before its `cop_task`, and this port after it (any root TableReader, e.g. `EXPLAIN ANALYZE SELECT * FROM t`)",
-      "go_owner": "`pkg/distsql/select_result.go` (`closeImpl`), `pkg/executor/explain.go` (`executeAnalyzeExec`)"
-    },
-    {
       "id": "E26",
       "status": "open",
       "group": "DML and executor handoff",
@@ -257,7 +250,7 @@
       "go_owner": "`pkg/executor/table_reader.go` (`newTableReaderExecutorContext`), `pkg/executor/executor.go` (`DDLExec`/`ShowDDLExec`)"
     }
   ],
-  "unresolved": 35,
-  "open": 12,
+  "unresolved": 34,
+  "open": 11,
   "partial": 23
 }
