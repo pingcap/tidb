@@ -144,9 +144,9 @@ func dateTimeToMicroseconds(value types.Time) int64 {
 		value.Hour(), value.Minute(), value.Second(), value.Microsecond()*1000, time.UTC).UnixMicro() + adjustment
 }
 
+// calcDateTimeFraction interpolates using integer calendar differences because
+// absolute float64 coordinates cannot distinguish every supported microsecond.
 func calcDateTimeFraction(lower, upper, value types.Time) float64 {
-	// Subtract as integers first: an absolute float64 coordinate cannot
-	// distinguish adjacent microseconds across the whole calendar range.
 	origin := dateTimeToMicroseconds(lower)
 	return calcFraction(0, float64(dateTimeToMicroseconds(upper)-origin), float64(dateTimeToMicroseconds(value)-origin))
 }
@@ -186,6 +186,8 @@ func (hg *Histogram) PreCalculateScalar() {
 	}
 }
 
+// calcFraction interpolates value within a histogram bucket. DATE/DATETIME use
+// integer-relative distances to retain fractional precision near calendar limits.
 func (hg *Histogram) calcFraction(index int, value *types.Datum) float64 {
 	lower, upper := hg.Bounds.GetRow(2*index), hg.Bounds.GetRow(2*index+1)
 	switch value.Kind() {

@@ -222,6 +222,8 @@ func TestConvertMysqlTimeToScalarTimestampBounds(t *testing.T) {
 	require.Greater(t, afterMaxTimestampScalar, maxTimestampScalar)
 }
 
+// TestDateTimeHistogramScalars checks calendar ordering and interpolation across
+// invalid dates, unbounded ranges, and supported fractional precisions.
 func TestDateTimeHistogramScalars(t *testing.T) {
 	for _, tp := range []byte{mysql.TypeDate, mysql.TypeDatetime} {
 		name := "date"
@@ -280,6 +282,24 @@ func TestDateTimeHistogramScalars(t *testing.T) {
 				for i := 1; i < len(bounds); i++ {
 					require.LessOrEqual(t, convertDatumToScalar(&bounds[i-1], 0), convertDatumToScalar(&bounds[i], 0), "%v <= %v", bounds[i-1].GetMysqlTime(), bounds[i].GetMysqlTime())
 				}
+			})
+			t.Run("null lower bound", func(t *testing.T) {
+				lower, upper := datum(2020, 1, 11), datum(2020, 1, 21)
+				hg := NewHistogram(0, 100, 0, 0, types.NewFieldType(tp), 1, 0)
+				hg.AppendBucket(&lower, &upper, 100, 1)
+				var left types.Datum
+				right := datum(2020, 1, 6)
+				shape := hg.OutOfRangeShape(&left, &right, 100)
+				require.False(t, shape.Impossible)
+				// The predicate covers half the width of the left triangle.
+				require.InDelta(t, 0.125, shape.TotalPercent, eps)
+				require.InDelta(t, 0.25, shape.MaxTotalPercent, eps)
+				minNotNull := types.MinNotNullDatum()
+				require.Equal(t, hg.OutOfRangeShape(&minNotNull, &right, 100), shape)
+				ctx := mock.NewContext()
+				ctx.GetSessionVars().RiskRangeSkewRatio = 0
+				estimate := hg.OutOfRangeRowCount(ctx, &left, &right, 200, 100, 100)
+				require.InDelta(t, 6.25, estimate.Est, eps)
 			})
 		})
 	}

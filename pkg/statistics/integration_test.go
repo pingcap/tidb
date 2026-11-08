@@ -71,6 +71,8 @@ func TestExpBackoffEstimation(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/cardinality/cleanEstResults"))
 }
 
+// TestDateTimeHistogramRangeEstimate checks estimates across the former overflow
+// boundary, session time zones, and reloads of stored DATE/DATETIME statistics.
 func TestDateTimeHistogramRangeEstimate(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	h := dom.StatsHandle()
@@ -92,7 +94,7 @@ func TestDateTimeHistogramRangeEstimate(t *testing.T) {
 			check := func() {
 				for _, zone := range []string{"UTC", "+00:00", "Asia/Shanghai", "America/New_York"} {
 					tk.MustExec("set @@time_zone='" + zone + "'")
-					var estimates []string
+					estimates := make([]string, 0, 3)
 					for _, upper := range []string{"2046-12-09", "2046-12-10", "9999-12-31"} {
 						query := fmt.Sprintf("select * from %s where d between '2027-06-01' and '%s'", table, upper)
 						rows := tk.MustQuery("explain format='brief' " + query).Rows()

@@ -1168,6 +1168,9 @@ func (hg *Histogram) OutOfRangeShape(lDatum, rDatum *types.Datum, histNDV int64)
 			histR = float64(dateTimeToMicroseconds(hg.GetUpper(hg.Len()-1).GetMysqlTime()) - origin)
 			if lDatum.Kind() == types.KindMysqlTime {
 				l = float64(dateTimeToMicroseconds(lDatum.GetMysqlTime()) - origin)
+			} else if lDatum.IsNull() {
+				// NULL is an unbounded lower endpoint, not the calendar origin.
+				l = -math.MaxFloat64
 			}
 			if rDatum.Kind() == types.KindMysqlTime {
 				r = float64(dateTimeToMicroseconds(rDatum.GetMysqlTime()) - origin)
