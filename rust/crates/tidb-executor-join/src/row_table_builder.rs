@@ -502,7 +502,6 @@ impl RowTableBuilder {
                     helper.raw_data_len
                         + helper.total_row_num * 2 * UINT64_LEN as i64
                         + helper.valid_row_num * INT_LEN as i64
-                        + helper.total_row_num * context.meta.col_offset_in_null_map as i64
                 })
                 .sum(),
         );
@@ -639,8 +638,7 @@ impl RowTableBuilder {
         for helper in &self.helpers {
             total_mem_usage += helper.raw_data_len
                 + (helper.total_row_num + helper.total_row_num) * UINT64_LEN as i64
-                + helper.valid_row_num * INT_LEN as i64
-                + helper.total_row_num * meta.col_offset_in_null_map as i64;
+                + helper.valid_row_num * INT_LEN as i64;
         }
         context.consume(total_mem_usage);
         context.check_killed()?;

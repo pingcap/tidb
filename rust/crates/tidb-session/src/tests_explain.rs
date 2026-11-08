@@ -9498,3 +9498,35 @@ fn a_parallel_projection_swaps_in_its_last_output_like_go() {
     assert_eq!(memory(&mut fresh(), union, "Projection_10"), "17.4 KB");
     assert_eq!(memory(&mut fresh(), union, "Projection_13"), "3.92 KB");
 }
+
+/// Go's `rowTableBuilder.preAllocForSegments` charges each row's raw data,
+/// two `uint64` slots (its hash value and start offset) and an `int` for a
+/// valid key, and no more: a join whose rows carry a used flag in the null
+/// map (`colOffsetInNullMap`) charges no extra byte per row for it. A Go
+/// testkit probe after the same `INSERT ... SELECT` shows the hash joins'
+/// charges, the same every run.
+#[test]
+fn a_hash_join_charges_its_row_table_like_go() {
+    for (query, operator, go_memory) in [
+        ("SELECT * FROM t LEFT JOIN u ON t.a = u.a WHERE t.b < 3", "HashJoin_10", "8.05 KB"),
+        ("SELECT a, (SELECT max(b) FROM u WHERE u.a = t.a) FROM t", "HashJoin_17", "11.4 KB"),
+    ] {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a INT PRIMARY KEY, b INT, c VARCHAR(20), d DOUBLE, KEY(b))")
+            .unwrap();
+        let values = (1..=200)
+            .map(|i| format!("({i},{},'s{}',{i}.5)", i % 7, i % 13))
+            .collect::<Vec<_>>()
+            .join(",");
+        session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+        session.run("CREATE TABLE u (a INT, b INT, KEY(a))").unwrap();
+        session.run("INSERT INTO u SELECT a, b FROM t WHERE a <= 50").unwrap();
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {query}")));
+        let row = rows
+            .iter()
+            .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()) == operator)
+            .unwrap_or_else(|| panic!("{query}: {rows:?}"));
+        assert_eq!(row[7], go_memory, "{query}: {rows:?}");
+    }
+}
