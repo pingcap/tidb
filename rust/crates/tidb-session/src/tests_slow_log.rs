@@ -579,3 +579,52 @@ fn slow_log_keeps_the_transaction_a_statement_ended() {
     assert_ne!(ts[9], ts[7], "the BEGIN's own transaction: {entries:?}");
     assert_eq!(ts[10], 0, "no transaction: {entries:?}");
 }
+
+/// Go `builtinGreatestStringSig.vecEvalString` (`builtinLeastStringSig`)
+/// ping-pongs a projection's `result` with two buffers: `result` takes the
+/// first argument (a computed one appends its rows), receives each even
+/// step's running value after a `ReserveString(n)`, and for an even argument
+/// count ends with the last step copied in (`src.CopyConstruct(result)`);
+/// `builtinGreatestCmpStringAsTimeSig` evaluates every argument into
+/// `result` before appending its values. Its capacity follows those appends,
+/// not one append per row of the call's value. A Go testkit
+/// probe of each statement (100 rows, Concurrency:5, the connection's
+/// allocator with an unpooled result chunk) measured the statement tracker's
+/// `MaxConsumed` (the slow log's `Mem_max`).
+#[test]
+fn a_string_extremum_projection_peaks_like_gos_ping_pong() {
+    for (query, go_mem_max) in [
+        ("SELECT greatest(c, concat(c, repeat('x', 30))), a+1 FROM p", "15349"),
+        ("SELECT greatest(c, 'a', concat('t', c, repeat('x', 40)), 'b'), a+1 FROM p", "17269"),
+        ("SELECT least(concat('a', c, repeat('x', 40)), concat('b', c), 'zzz', 'a'), a+1 FROM p", "17178"),
+        ("SELECT least(c, concat('a', c, repeat('x', 40)), 'a'), a+1 FROM p", "12693"),
+        ("SELECT greatest(concat(c, repeat('x', 30)), c), a+1 FROM p", "15898"),
+        ("SELECT least(concat(c, repeat('x', 30)), concat(c, repeat('y', 30))), a+1 FROM p", "15898"),
+        ("SELECT greatest(c, f), a+1 FROM p", "16753"),
+    ] {
+        let dir = log_dir("string-extremum-mem-max");
+        let (slow, _) = install_loggers(&dir);
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE p (a INT PRIMARY KEY, b INT, c VARCHAR(20), d DECIMAL(10,2), e DOUBLE, f DATETIME, g BIGINT UNSIGNED)")
+            .unwrap();
+        let values: Vec<String> = (1..=100)
+            .map(|i| {
+                let b = if i % 10 == 0 { "NULL".to_owned() } else { i.to_string() };
+                format!("({i},{b},'s{i}',{i}.25,{i}.5,'2024-01-{:02} 10:00:00',{})", i % 28 + 1, i * 3)
+            })
+            .collect();
+        session.run(&format!("INSERT INTO p VALUES {}", values.join(","))).unwrap();
+        session
+            .run("SET GLOBAL tidb_slow_log_threshold = 0")
+            .unwrap();
+        session.run(query).unwrap();
+        let log = read(&slow);
+        assert_eq!(
+            field(&entry_for(&log, query), "Mem_max").as_deref(),
+            Some(go_mem_max),
+            "{query}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

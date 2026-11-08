@@ -1895,7 +1895,7 @@ fn cast_to_time_value(
         Ok(parsed) => parsed,
         // Go `builtinCastStringAsTimeSig.vecEvalTime`: a `ParseTime` failure
         // inside strconv is `ErrIncorrectDatetimeValue` with the raw text.
-        Err(Some(tidb_datatype::TimeError::Syntax))
+        Err(Some(tidb_datatype::TimeError::Syntax(_)))
             if matches!(v, Datum::String(_) | Datum::Bytes(_)) =>
         {
             handle_invalid_time_error(
@@ -2413,7 +2413,7 @@ fn real_to_time(
 /// Go `handleInvalidTimeError` -> `errctx.HandleError`: a time conversion
 /// failure belongs to `ErrGroupTruncate`, so it warns in a read or a
 /// non-strict write and fails a strict INSERT/UPDATE/DELETE.
-fn handle_invalid_time_error(
+pub(crate) fn handle_invalid_time_error(
     ctx: &dyn crate::Columns,
     code: u16,
     message: &str,

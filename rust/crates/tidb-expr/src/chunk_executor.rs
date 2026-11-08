@@ -134,8 +134,8 @@ fn builtin_vec_result(function: &ScalarFunction) -> Option<VecResult> {
         // `GreatestString`/`LeastString` ping-pong `result` with two buffers:
         // it takes the first argument, becomes the destination of the
         // second comparison after the first swap (`dst.ReserveString(n)`),
-        // and ends holding the rows (directly, or through `CopyConstruct`
-        // for an even argument count, which appends them the same way).
+        // and ends holding the rows (the evaluator appends each even step's
+        // running value: `Evaluator::run`).
         "greatest" | "least" => match eval_type {
             Int | Real | Decimal => Arg(0),
             Datetime | Timestamp | Duration => Allocate,
@@ -320,6 +320,29 @@ fn cast_vec_result(argument: &Expression, target: EvalType) -> Option<VecResult>
     } else {
         VecResult::Allocate
     })
+}
+
+/// A string `GREATEST`/`LEAST`'s argument count, and whether it compares
+/// its strings directly (`builtinGreatestStringSig`, whose `vecEvalString`
+/// ping-pongs `result` with two buffers) rather than as times
+/// (`builtinGreatestCmpStringAsTimeSig`, which evaluates every argument into
+/// `result`).
+pub(crate) fn string_extremum_arity(expression: &Expression) -> Option<(usize, bool)> {
+    let Expression::ScalarFunction(function) = expression else {
+        return None;
+    };
+    let directly = function.extremum_signature().is_none_or(|signature| {
+        signature.cmp_string_mode == crate::builtin_ext::GlCmpStringMode::Directly
+    });
+    (builtin_vec_result(function) == Some(VecResult::ArgThenReserve(0)))
+        .then_some((function.args.len(), directly))
+}
+
+/// Go `expr.VecEvalString(ctx, input, result)` as far as the buffers it
+/// leaves in `result`: rows a column copies in, or an empty reserved column
+/// a computed expression then appends its rows to.
+pub(crate) fn vec_eval_string(expression: &Expression, input: &Chunk, result: &mut ChunkColumn) {
+    vec_eval(expression, EvalType::String, input, result);
 }
 
 thread_local! {

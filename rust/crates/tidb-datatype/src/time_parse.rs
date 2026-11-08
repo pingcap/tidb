@@ -794,7 +794,15 @@ fn parse_datetime_core<TZ: TimeZone>(
 /// integer fails with the strconv error itself ([`TimeError::Syntax`]); an
 /// integer too wide for a field fails the later `FromDateChecked` range check.
 fn scan_time_arg(part: &str) -> Result<i32, TimeError> {
-    let value = part.parse::<i64>().map_err(|_| TimeError::Syntax)?;
+    let value = part.parse::<i64>().map_err(|error| {
+        let reason = match error.kind() {
+            std::num::IntErrorKind::PosOverflow | std::num::IntErrorKind::NegOverflow => {
+                "value out of range"
+            }
+            _ => "invalid syntax",
+        };
+        TimeError::Syntax(format!("strconv.Atoi: parsing {part:?}: {reason}"))
+    })?;
     i32::try_from(value).map_err(|_| TimeError::InvalidDate)
 }
 

@@ -518,6 +518,22 @@ impl EvaluatorSuite {
                 let vectorized = vec_enabled && crate::chunk_executor::vectorized(expression);
                 let _vec_eval = crate::chunk_executor::enter_vec_eval(vectorized);
                 if vectorized {
+                    if let (Some((arity, directly)), Expression::ScalarFunction(function)) =
+                        (crate::chunk_executor::string_extremum_arity(expression), expression)
+                    {
+                        if !function.has_pb_builtin() {
+                            string_extremum_vec(
+                                function,
+                                arity,
+                                directly,
+                                ctx,
+                                input,
+                                output,
+                                *output_index,
+                            )?;
+                            continue;
+                        }
+                    }
                     crate::chunk_executor::eval_one_vec(expression, input, output, *output_index);
                 }
                 if let Expression::ScalarFunction(function) = expression {
@@ -576,6 +592,82 @@ impl EvaluatorSuite {
         }
         Ok(())
     }
+}
+
+/// Go's string `GREATEST`/`LEAST` `vecEvalString` writing a projection's
+/// `result` (`evalOneVec`). `builtinGreatestStringSig` evaluates its first
+/// argument into `result`, then ping-pongs it with two buffers: each even
+/// step's running value is appended into `result` after a
+/// `ReserveString(n)`, and an even argument count ends with the last step
+/// copied in (`src.CopyConstruct(result)`); an odd one leaves `result`
+/// holding the last step. `builtinGreatestCmpStringAsTimeSig` evaluates
+/// every argument into `result`, then reserves it and appends the values.
+/// An argument evaluated into `result` either copies its rows in (a column)
+/// or leaves it reserved for the rows it appends; those lengths, and the
+/// running values', shape `result`; its rows are the call's values.
+fn string_extremum_vec<C: Columns>(
+    function: &crate::expression::ScalarFunction,
+    arity: usize,
+    directly: bool,
+    ctx: &C,
+    input: &Chunk,
+    output: &mut Chunk,
+    output_index: usize,
+) -> Result<(), EvaluatorError> {
+    let rows = input.num_rows();
+    let mut values = Vec::with_capacity(rows);
+    let mut lengths = Vec::with_capacity(rows);
+    let mut steps = Vec::with_capacity(rows);
+    for row_index in 0..rows {
+        let (value, row_lengths, row_steps) =
+            function.eval_string_extremum_steps(ctx, input.get_row(row_index))?;
+        values.push(value);
+        lengths.push(row_lengths);
+        steps.push(row_steps);
+    }
+    let append_lengths = |result: &mut tidb_chunk::column::Column, index: usize, of: &[Vec<Option<usize>>]| {
+        for row in of {
+            match row[index] {
+                Some(len) => result.append_bytes(&vec![0; len]),
+                None => result.append_null(),
+            }
+        }
+    };
+    {
+        let mut result = output.column_mut(output_index);
+        let evaluated_into_result = if directly { 1 } else { arity };
+        for (index, arg) in function.args.iter().take(evaluated_into_result).enumerate() {
+            crate::chunk_executor::vec_eval_string(arg, input, &mut result);
+            if result.rows() == 0 && rows != 0 {
+                append_lengths(&mut result, index, &lengths);
+            }
+        }
+        result.reserve_string(rows);
+        if directly {
+            // `result` is `dst` at every even step; the last one, for an odd
+            // count, is the call's value appended below.
+            for step in (2..arity).step_by(2).filter(|&step| step != arity - 1) {
+                append_lengths(&mut result, step, &steps);
+                result.reserve_string(rows);
+            }
+        }
+    }
+    if !directly || arity % 2 == 1 {
+        for value in &values {
+            output.append_datum(output_index, value);
+        }
+        return Ok(());
+    }
+    let field_type = function
+        .get_static_type()
+        .cloned()
+        .expect("a vectorized extremum has its result type");
+    let mut src = Chunk::new(std::slice::from_ref(&field_type), rows, rows);
+    for value in &values {
+        src.append_datum(0, value);
+    }
+    src.column(0).copy_construct_to(&mut output.column_mut(output_index));
+    Ok(())
 }
 
 #[cfg(test)]

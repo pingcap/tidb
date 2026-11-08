@@ -276,7 +276,7 @@ pub(crate) fn extremum_with_signature(
             let Some(text) = coerce_str(value)? else {
                 return Ok(Datum::Null);
             };
-            let text = time_conversion_for_gl(cmp_as_date, &text, ctx);
+            let text = time_conversion_for_gl(cmp_as_date, &text, ctx)?;
             let wins = match &best {
                 None => true,
                 Some(best) if want == Ordering::Greater => text > *best,
@@ -317,6 +317,47 @@ pub(crate) fn extremum_with_signature(
         }
     }
     Ok(Datum::new_string_datum(best))
+}
+
+/// The byte length of each value as a string (`None` for NULL): what its
+/// `VecEvalString` appends into a column.
+pub(crate) fn string_lengths(vals: &[Datum]) -> Result<Vec<Option<usize>>, EvalError> {
+    vals.iter()
+        .map(|value| {
+            if value.is_null() {
+                Ok(None)
+            } else {
+                extremum_string_value(value).map(|bytes| Some(bytes.len()))
+            }
+        })
+        .collect()
+}
+
+/// Go `builtinGreatestStringSig.vecEvalString` (`builtinLeastStringSig`): the
+/// byte length of the running value after each argument -- `None` once an
+/// argument is NULL -- which keeps the running value only while it compares
+/// strictly ahead (`CompareString(src, arg) > 0`, `< 0` for LEAST).
+pub(crate) fn string_extremum_steps(
+    vals: &[Datum],
+    want: Ordering,
+    collation: tidb_charset::Collation,
+) -> Result<Vec<Option<usize>>, EvalError> {
+    let collator = tidb_datatype::get_collator(collation.name());
+    let mut steps = Vec::with_capacity(vals.len());
+    let mut best: Option<Vec<u8>> = None;
+    for (index, value) in vals.iter().enumerate() {
+        best = if value.is_null() || (index > 0 && best.is_none()) {
+            None
+        } else {
+            let candidate = extremum_string_value(value)?;
+            match best.take() {
+                Some(src) if collator.compare(&src, &candidate) == want => Some(src),
+                _ => Some(candidate),
+            }
+        };
+        steps.push(best.as_ref().map(Vec::len));
+    }
+    Ok(steps)
 }
 
 /// Go's ETDatetime/ETTimestamp arm (`builtinGreatestTimeSig.evalTime`): every
@@ -553,7 +594,15 @@ fn extremum_string_value(value: &Datum) -> Result<Vec<u8>, EvalError> {
 /// leaves `strVal` untouched. The zero date is NOT rejected here -- this is not
 /// the cast path's `NO_ZERO_DATE` check -- so
 /// `least(<a DATE>, '0000-00-00')` is `0000-00-00`, captured from TiDB.
-fn time_conversion_for_gl(cmp_as_date: bool, value: &str, ctx: &dyn crate::Columns) -> String {
+/// Go `doTimeConversionForGL`: a string that parses as a time compares as
+/// that time's text; one that does not stays itself after Go's
+/// `handleInvalidTimeError` (a read's warning). `parseDatetime`'s own
+/// truncation warning (`ErrTruncatedWrongVal`) is appended either way.
+fn time_conversion_for_gl(
+    cmp_as_date: bool,
+    value: &str,
+    ctx: &dyn crate::Columns,
+) -> Result<String, EvalError> {
     let (kind, fsp) = if cmp_as_date {
         // `types.ParseDate` asks for `MinFsp`; a DATE carries no fraction.
         (tidb_datatype::TimeType::Date, 0)
@@ -574,8 +623,45 @@ fn time_conversion_for_gl(cmp_as_date: bool, value: &str, ctx: &dyn crate::Colum
         &ctx.time_zone(),
     );
     match parsed {
-        Ok(parsed) => parsed.time.to_string(),
-        Err(_) => value.to_owned(),
+        Ok(parsed) => {
+            if parsed.truncated {
+                ctx.append_warning(
+                    tidb_errno::errcode::ErrTruncatedWrongValue,
+                    &format!("Truncated incorrect datetime value: '{value}'"),
+                );
+            }
+            Ok(parsed.time.to_string())
+        }
+        Err(error) => {
+            // Go `checkMonthDay` renders a calendar-invalid date from its
+            // parsed parts, unpadded (`'2020-02-30'` reports `'2020-2-30'`);
+            // a value that does not parse reports its own text.
+            let shown = match error {
+                // Go `handleInvalidTimeError` passes a `strconv` failure through.
+                tidb_datatype::TimeError::Syntax(message) => return Err(EvalError::Raw(message)),
+                tidb_datatype::TimeError::InvalidDate => tidb_datatype::parse_time(
+                    value,
+                    kind,
+                    fsp,
+                    false,
+                    true,
+                    true,
+                    &ctx.time_zone(),
+                )
+                .map(|parsed| {
+                    let core = parsed.time.core_time();
+                    format!("{}-{}-{}", core.year(), core.month(), core.day())
+                })
+                .unwrap_or_else(|_| value.to_owned()),
+                _ => value.to_owned(),
+            };
+            crate::cast::handle_invalid_time_error(
+                ctx,
+                tidb_errno::errcode::ErrTruncatedWrongValue,
+                &format!("Incorrect datetime value: '{shown}'"),
+            )?;
+            Ok(value.to_owned())
+        }
     }
 }
 

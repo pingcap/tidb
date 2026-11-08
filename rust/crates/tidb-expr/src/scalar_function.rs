@@ -352,6 +352,11 @@ pub struct ScalarFunction {
     /// Go `builtinJSONSumCRC32Sig.tp`: the `ARRAY` type `JSON_SUM_CRC32`
     /// converts each element to, distinct from its `BIGINT` result type.
     json_sum_crc32_type: Option<FieldType>,
+    /// Go `builtinGreatest*Sig` / `builtinLeast*Sig`: the signature
+    /// `resolveType4Extremum` chose from the arguments before
+    /// `newBaseBuiltinFuncWithTp` cast them (a compare-as-time call's
+    /// `cmpAsDate` survives its arguments' cast to strings).
+    gl_signature: Option<crate::builtin_ext::GlSignature>,
 
     /// Go embedded collation state (via the `Function`'s `collationInfo`).
     pub collation: CollationInfo,
@@ -1978,6 +1983,104 @@ impl ScalarFunction {
     /// Datum-level implementations. Each returns whatever its operand kinds
     /// produced; reconciling that with the declared result type is
     /// [`Self::eval`]'s job, done once for all of them.
+    /// Go `builtinGreatest*Sig` / `builtinLeast*Sig` over this row's
+    /// argument values, under the signature the arguments select.
+    fn extremum_of(
+        &self,
+        greatest: bool,
+        vals: &[Datum],
+        collation: tidb_charset::Collation,
+        ctx: &dyn Columns,
+    ) -> Result<Datum, EvalError> {
+        let want = if greatest {
+            std::cmp::Ordering::Greater
+        } else {
+            std::cmp::Ordering::Less
+        };
+        // Go casts every argument to DECIMAL at that argument's
+        // OWN decimal (integers at 0), returns the winner raw,
+        // and folds a fully-constant call to the return type's
+        // max-argument scale. The per-argument decimals and the
+        // constness are what the chunk evaluator knows that the
+        // values alone cannot say.
+        let arg_decimals: Vec<i64> = self
+            .args
+            .iter()
+            .map(|a| {
+                a.static_type()
+                    .map_or(tidb_datatype::UNSPECIFIED_LENGTH, |ft| {
+                        // Go `WrapWithCastAsDecimal` pins integer
+                        // arguments to scale 0 regardless of the
+                        // field type's own (often unspecified) value.
+                        if ft.eval_type() == tidb_datatype::EvalType::Int {
+                            0
+                        } else {
+                            ft.decimal()
+                        }
+                    })
+            })
+            .collect();
+        let all_constant = self
+            .args
+            .iter()
+            .all(|a| a.const_level() == crate::expression::ConstLevel::STRICT);
+        crate::builtin_ext::extremum_with_signature(
+            vals,
+            want,
+            self.extremum_signature(),
+            &arg_decimals,
+            all_constant,
+            collation,
+            ctx,
+        )
+    }
+
+    /// Records the GREATEST/LEAST signature chosen at construction.
+    pub(crate) fn set_gl_signature(&mut self, signature: Option<crate::builtin_ext::GlSignature>) {
+        self.gl_signature = signature;
+    }
+
+    /// The GREATEST/LEAST signature: the one chosen at construction, else
+    /// the one the arguments select.
+    pub(crate) fn extremum_signature(&self) -> Option<crate::builtin_ext::GlSignature> {
+        self.gl_signature
+            .or_else(|| crate::rewriter::result_type::gl_signature(&self.args))
+    }
+
+    /// Whether this function evaluates through a protobuf-selected builtin.
+    pub(crate) fn has_pb_builtin(&self) -> bool {
+        self.pb_builtin.is_some()
+    }
+
+    /// Go's string `GREATEST`/`LEAST` `vecEvalString` for one row: the
+    /// call's value, the byte length of each argument's string (`None` for
+    /// NULL), which an argument's `VecEvalString` appends into `result`, and
+    /// of the running extremum after each argument (`None` once one is
+    /// NULL), which the ping-pong appends at its even steps. The arguments
+    /// are evaluated once, as Go's kernel evaluates each column once.
+    pub(crate) fn eval_string_extremum_steps(
+        &self,
+        ctx: &dyn Columns,
+        row: Row<'_>,
+    ) -> Result<(Datum, Vec<Option<usize>>, Vec<Option<usize>>), EvalError> {
+        let vals: Vec<Datum> = self
+            .args
+            .iter()
+            .map(|a| a.eval(ctx, row))
+            .collect::<Result<_, _>>()?;
+        let collation = self.derived_collation();
+        let greatest = self.func_name.lowercase() == "greatest";
+        let want = if greatest {
+            std::cmp::Ordering::Greater
+        } else {
+            std::cmp::Ordering::Less
+        };
+        let lengths = crate::builtin_ext::compare2::string_lengths(&vals)?;
+        let steps = crate::builtin_ext::compare2::string_extremum_steps(&vals, want, collation)?;
+        let value = self.extremum_of(greatest, &vals, collation, ctx)?;
+        Ok((self.coerce_to_ret_type(value)?, lengths, steps))
+    }
+
     fn eval_by_signature(&self, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
         let name = self.func_name.lowercase();
         // Go `builtinValues*Sig` reads the statement's current insert row,
@@ -3052,47 +3155,7 @@ impl ScalarFunction {
                         .iter()
                         .map(|a| a.eval(ctx, row))
                         .collect::<Result<_, _>>()?;
-                    let want = if name == "greatest" {
-                        std::cmp::Ordering::Greater
-                    } else {
-                        std::cmp::Ordering::Less
-                    };
-                    // Go casts every argument to DECIMAL at that argument's
-                    // OWN decimal (integers at 0), returns the winner raw,
-                    // and folds a fully-constant call to the return type's
-                    // max-argument scale. The per-argument decimals and the
-                    // constness are what the chunk evaluator knows that the
-                    // values alone cannot say.
-                    let arg_decimals: Vec<i64> = self
-                        .args
-                        .iter()
-                        .map(|a| {
-                            a.static_type()
-                                .map_or(tidb_datatype::UNSPECIFIED_LENGTH, |ft| {
-                                    // Go `WrapWithCastAsDecimal` pins integer
-                                    // arguments to scale 0 regardless of the
-                                    // field type's own (often unspecified) value.
-                                    if ft.eval_type() == tidb_datatype::EvalType::Int {
-                                        0
-                                    } else {
-                                        ft.decimal()
-                                    }
-                                })
-                        })
-                        .collect();
-                    let all_constant = self
-                        .args
-                        .iter()
-                        .all(|a| a.const_level() == crate::expression::ConstLevel::STRICT);
-                    return crate::builtin_ext::extremum_with_signature(
-                        &vals,
-                        want,
-                        crate::rewriter::result_type::gl_signature(&self.args),
-                        &arg_decimals,
-                        all_constant,
-                        collation,
-                        ctx,
-                    );
+                    return self.extremum_of(name == "greatest", &vals, collation, ctx);
                 }
                 // Go `weightStringFunctionClass`: a NUMERIC argument builds
                 // `builtinWeightStringNullSig` (always NULL) from the

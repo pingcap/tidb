@@ -1199,6 +1199,13 @@ impl Column {
         }
     }
 
+    /// Go `CopyConstruct(dst)` with a destination: each buffer is appended
+    /// onto `dst`'s emptied one, so `dst` keeps its capacity or grows from it.
+    pub fn copy_construct_to(&self, destination: &mut Column) {
+        let taken = std::mem::take(destination);
+        *destination = self.copy_construct_into(Some(taken));
+    }
+
     fn copy_construct_into(&self, destination: Option<Column>) -> Column {
         let Some(mut destination) = destination else {
             return self.copy_construct();

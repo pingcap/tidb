@@ -362,7 +362,12 @@ pub fn new_function_impl(
     // The arithmetic operators keep the rewriter's own operand handling
     // (`prepare_numeric_arguments` below), which `intdiv`'s virtual operand
     // casts depend on, exactly as on the AST path.
+    let mut gl_signature = None;
     if !matches!(func_name, "plus" | "minus" | "mul" | "div" | "mod" | "intdiv") {
+        // Go `resolveType4Extremum` reads the arguments before their casts.
+        gl_signature = matches!(func_name, "greatest" | "least")
+            .then(|| crate::rewriter::result_type::gl_signature(&function.args))
+            .flatten();
         function.args = crate::rewriter::signature_args::wrap_builtin_arguments(
             func_name,
             std::mem::take(&mut function.args),
@@ -382,6 +387,9 @@ pub fn new_function_impl(
         );
     }
     function.prepare_numeric_arguments(ctx);
+    if gl_signature.is_some() {
+        function.set_gl_signature(gl_signature);
+    }
 
     // Go's grouping signature marks its result as an unsigned BIGINT because
     // the returned bits encode multiple grouping flags.

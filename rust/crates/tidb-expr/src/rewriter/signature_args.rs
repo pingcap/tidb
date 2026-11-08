@@ -404,11 +404,10 @@ fn argument_kinds(
                     )
                 });
             // Go casts every argument to a string and compares them as parsed
-            // dates; the evaluator here still reads each argument's own
-            // temporal type to pick the DATE or DATETIME mode, so those
-            // arguments stay uncast until it reads the mode from the node.
+            // dates; the call keeps the mode it chose from the uncast
+            // arguments (`ScalarFunction::set_gl_signature`).
             if compares_as_time {
-                return None;
+                return Some(vec![Text; count]);
             }
             let kind = match ret.eval_type() {
                 EvalType::Int => Int,
@@ -537,7 +536,14 @@ pub(super) fn build_call(
                             | FieldTypeCode::Blob
                     )
                 });
+        // Go `resolveType4Extremum` reads the arguments before their casts.
+        let gl_signature = matches!(name, "greatest" | "least")
+            .then(|| crate::rewriter::result_type::gl_signature(&args))
+            .flatten();
         function.args = wrap_builtin_arguments(name, args, connection, fold, ret.as_ref())?;
+        if gl_signature.is_some() {
+            function.set_gl_signature(gl_signature);
+        }
         if string_field_source {
             // Go "used to adjust FromUnixTime precision #Fixbug35184": a
             // string's cast to an integral DECIMAL gains six fractional digits.

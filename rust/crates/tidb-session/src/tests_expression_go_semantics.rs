@@ -563,3 +563,79 @@ fn a_vectorized_string_extremum_answers_the_later_tie_like_go() {
     );
     assert_eq!(cell(&mut session, "SELECT count(*) FROM t WHERE length(greatest(c, 'a ')) = 2"), "0");
 }
+
+/// Go `greatestFunctionClass` / `leastFunctionClass`: when a string meets a
+/// date or datetime, `resolveType4Extremum` picks the compare-as-time
+/// signature (its `cmpAsDate` read from the uncast arguments) and
+/// `newBaseBuiltinFuncWithTp` casts every argument to a string. Each string
+/// is parsed back with `doTimeConversionForGL`: `parseDatetime`'s truncation
+/// warns `Truncated incorrect datetime value`, a value `Check` refuses warns
+/// through `handleInvalidTimeError` with `checkMonthDay`'s unpadded parts,
+/// and a non-integer part's `strconv.Atoi` error fails the statement (1105).
+/// Captured from Go (`gorun`, and a Go tidb-server for the error).
+#[test]
+fn a_compare_as_time_extremum_casts_and_warns_like_go() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE p (a INT PRIMARY KEY, c VARCHAR(30), d DECIMAL(10,2), e DOUBLE, f DATETIME, g DATE, j JSON)")
+        .unwrap();
+    let plan = row_text(session.run(
+        "EXPLAIN FORMAT='brief' SELECT greatest(a, e), greatest(a, d), greatest(c, a), greatest(c, f), least(f, '2024-01-01'), greatest(j, c), greatest(f, a) FROM p",
+    ));
+    assert_eq!(
+        plan[0][4],
+        "greatest(cast(test.p.a, double BINARY), test.p.e)->Column#9, greatest(cast(test.p.a, decimal(10,0) BINARY), test.p.d)->Column#10, greatest(test.p.c, cast(test.p.a, var_string(20)))->Column#11, greatest(test.p.c, cast(test.p.f, var_string(19)))->Column#12, least(cast(test.p.f, var_string(19)), 2024-01-01)->Column#13, greatest(cast(test.p.j, var_string(4294967295)), test.p.c)->Column#14, greatest(cast(test.p.f, var_string(19)), cast(test.p.a, var_string(20)))->Column#15"
+    );
+    for (a, c) in [(1, "s1"), (2, "2020-02-30"), (3, "2020-2-30"), (4, ""), (5, "2021-03-04 05:06:07.5")] {
+        session
+            .run(&format!("INSERT INTO p (a, c, f, g) VALUES ({a}, '{c}', '2024-01-02 10:00:00', '2024-01-02')"))
+            .unwrap();
+    }
+    assert_eq!(
+        row_text(session.run("SELECT a, greatest(c, f), least(c, g) FROM p ORDER BY a")),
+        vec![
+            vec!["1", "s1", "2024-01-02"],
+            vec!["2", "2024-01-02 10:00:00", "2020-02-30"],
+            vec!["3", "2024-01-02 10:00:00", "2020-2-30"],
+            vec!["4", "2024-01-02 10:00:00", ""],
+            vec!["5", "2024-01-02 10:00:00", "2021-03-04"],
+        ]
+    );
+    let mut warnings: Vec<String> = row_text(session.run("SHOW WARNINGS"))
+        .into_iter()
+        .map(|row| row.join("|"))
+        .collect();
+    warnings.sort();
+    let mut expected: Vec<String> = ["''", "''", "'2020-2-30'", "'2020-2-30'", "'2020-2-30'", "'2020-2-30'", "'s1'", "'s1'"]
+        .iter()
+        .map(|value| format!("Warning|1292|Incorrect datetime value: {value}"))
+        .collect();
+    expected.sort();
+    assert_eq!(warnings, expected);
+
+    session.run("DELETE FROM p").unwrap();
+    session
+        .run("INSERT INTO p (a, c, f, g) VALUES (1, '2020-01-01 10:00:00abc', '2024-01-02 10:00:00', '2024-01-02')")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT greatest(c, f), least(c, g) FROM p")),
+        vec![vec!["2024-01-02 10:00:00", "2020-01-01"]]
+    );
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![
+            vec!["Warning", "1292", "Truncated incorrect datetime value: '2020-01-01 10:00:00abc'"];
+            2
+        ]
+    );
+    session
+        .run("INSERT INTO p (a, c, f, g) VALUES (2, '2020-01-01x', '2024-01-02 10:00:00', '2024-01-02')")
+        .unwrap();
+    for sql in ["SELECT greatest(c, f) FROM p WHERE a = 2", "SELECT least(c, g) FROM p WHERE a = 2"] {
+        assert_eq!(
+            code(&mut session, sql),
+            (1105, "strconv.Atoi: parsing \"01x\": invalid syntax".to_owned()),
+            "{sql}"
+        );
+    }
+}

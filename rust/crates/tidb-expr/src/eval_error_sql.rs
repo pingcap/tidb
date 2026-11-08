@@ -278,7 +278,7 @@ impl EvalErrorSql for EvalError {
                     "a binary operation between a {lhs:?} and a {rhs:?} value is not supported yet"
                 ),
             ),
-            EvalError::Vector(message) => sql_error(1105, message),
+            EvalError::Vector(message) | EvalError::Raw(message) => sql_error(1105, message),
             EvalError::ParamIndexExceedParamCounts => {
                 sql_error(1105, "Param index exceed param counts")
             }

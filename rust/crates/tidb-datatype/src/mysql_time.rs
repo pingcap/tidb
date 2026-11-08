@@ -87,9 +87,10 @@ pub enum TimeError {
     /// Month/day fields do not form an accepted MySQL date.
     InvalidDate,
     /// A delimited date part is not an integer: the `strconv.Atoi` error Go's
-    /// `scanTimeArgs` returns as is, which a string-to-time cast reports as
+    /// `scanTimeArgs` returns as is (its text, `strconv.Atoi: parsing "01x":
+    /// invalid syntax`), which a string-to-time cast reports as
     /// `ErrIncorrectDatetimeValue` with the raw text.
-    Syntax,
+    Syntax(String),
     /// Hour/minute/second fields exceed MySQL's clock range.
     InvalidClock,
     /// TIMESTAMP falls outside TiDB's UTC storage range.
@@ -107,7 +108,7 @@ impl fmt::Display for TimeError {
             Self::ZeroInDate => formatter.write_str("zero month or day in date"),
             Self::ZeroDate => formatter.write_str("zero date"),
             Self::InvalidDate => formatter.write_str("invalid MySQL date"),
-            Self::Syntax => formatter.write_str("invalid syntax"),
+            Self::Syntax(message) => formatter.write_str(message),
             Self::InvalidClock => formatter.write_str("invalid MySQL clock"),
             Self::TimestampOutOfRange => formatter.write_str("timestamp is out of range"),
             Self::InvalidUnit(unit) => write!(formatter, "invalid unit {unit}"),

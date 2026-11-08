@@ -128,6 +128,9 @@ pub enum EvalError {
     /// exposes as a generic execution error rather than changing it into an
     /// unrelated arithmetic-overflow class.
     Vector(String),
+    /// A Go error that is no `terror` (a `strconv` failure returned as is),
+    /// which SQL reports as a generic execution error (1105) with its text.
+    Raw(String),
     /// An integer literal did not fit the supported integer domain.
     IntOverflow,
     /// A floating-point arithmetic result overflowed to infinity.
