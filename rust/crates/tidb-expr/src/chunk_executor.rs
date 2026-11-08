@@ -41,8 +41,10 @@
 //!   fallback `Resize*`s the column; this port always takes the vectorized
 //!   step, which differs only when `IF`'s condition warns before its
 //!   branch was evaluated into the column.
-//! - `GREATEST`/`LEAST` over strings (which swap the result with a buffer
-//!   per argument) are not ported.
+//! - `GREATEST`/`LEAST` over strings: an even argument count copies the
+//!   rows into `result` with `CopyConstruct` (one bulk append) where this
+//!   port appends them row by row; both start from `ReserveString(n)`, so
+//!   they differ only once the rows outgrow its `8 * n` bytes.
 //! - A prepared parameter is shaped by its planned type. Go's
 //!   `Constant.GetType` infers it from this execution's value; reading the
 //!   value here would be a second parameter read the evaluator does not make.
@@ -63,6 +65,10 @@ enum VecResult {
     /// `b.args[i].VecEval*(ctx, input, result)`: the argument writes the
     /// result column, which the builtin then updates in place.
     Arg(usize),
+    /// The argument writes `result`, which the builtin then swaps with a
+    /// buffer and `ReserveString(n)`s before the rows land in it
+    /// (`GreatestString`/`LeastString`).
+    ArgThenReserve(usize),
 }
 
 /// The evaluation type Go's `GetType(ctx).EvalType()` reports, from the
@@ -125,9 +131,15 @@ fn builtin_vec_result(function: &ScalarFunction) -> Option<VecResult> {
         // builtin_compare_vec(_generated).go: every comparison and `In*`
         // resizes an integer result.
         "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "nulleq" | "in" => Allocate,
+        // `GreatestString`/`LeastString` ping-pong `result` with two buffers:
+        // it takes the first argument, becomes the destination of the
+        // second comparison after the first swap (`dst.ReserveString(n)`),
+        // and ends holding the rows (directly, or through `CopyConstruct`
+        // for an even argument count, which appends them the same way).
         "greatest" | "least" => match eval_type {
             Int | Real | Decimal => Arg(0),
             Datetime | Timestamp | Duration => Allocate,
+            String => VecResult::ArgThenReserve(0),
             _ => return None,
         },
         // `Coalesce*` and `CaseWhen*` resize (or reserve and append).
@@ -403,6 +415,10 @@ fn vec_eval(
             match builtin_vec_result(function) {
                 Some(VecResult::Arg(index)) if index < function.args.len() => {
                     vec_eval(&function.args[index], eval_type, input, result);
+                }
+                Some(VecResult::ArgThenReserve(index)) if index < function.args.len() => {
+                    vec_eval(&function.args[index], eval_type, input, result);
+                    result.reserve_string(n);
                 }
                 _ => allocate(eval_type, n, result),
             }
