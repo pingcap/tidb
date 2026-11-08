@@ -3860,49 +3860,27 @@ impl IndexRangeSourceExec {
         physical_ids: &[i64],
         accounting: &LookupTaskAccounting,
     ) -> Result<LookupFetch, ExecError> {
-        let mut values = handles
-            .iter()
-            .map(|handle| match handle {
-                TableHandle::Int(value) => Some(*value),
-                TableHandle::Common(_) => None,
-            })
-            .collect::<Option<Vec<_>>>()
-            .ok_or_else(|| ExecError::internal("a remote partial lookup holds a common handle"))?;
-        values.sort_unstable();
-        values.dedup();
-        let mut ranges: Vec<Range> = Vec::new();
-        for value in values {
-            if let Some(last) = ranges.last_mut() {
-                if last.high_val == [Datum::Int(value - 1)] {
-                    last.high_val = vec![Datum::Int(value)];
-                    continue;
-                }
-            }
-            let point = vec![Datum::Int(value)];
-            ranges.push(Range {
-                collators: key_collators(&point, &point),
-                low_val: point.clone(),
-                high_val: point,
-                low_exclude: false,
-                high_exclude: false,
-            });
-        }
+        // Go `buildTableReaderFromHandles`: the task's reader reads its
+        // handles' `TableHandlesToKVRanges`, integer or common.
+        let (ranges, _) = <TableCommon as KvTableReader>::table_reader_handle_key_ranges(
+            self.table.table_id(),
+            &handles,
+        )
+        .map_err(ExecError::from)?;
         let context = self
             .partial_context
             .clone()
             .ok_or_else(|| ExecError::unsupported("partial aggregation lost its statement context"))?;
         let statement = self.statement.for_lookup_batch(handles.len());
-        let zone = self.decode_context.zone().clone();
         let stream = self
             .table
-            .pushdown_partial_aggregate_cursor(
+            .pushdown_partial_aggregate_cursor_over_key_ranges(
                 &mut *self.store,
                 &self.keep,
                 &self.pushed,
-                Some(&ranges),
+                ranges,
                 aggregate,
                 &context,
-                &zone,
                 &statement,
                 false,
                 false,
@@ -4383,7 +4361,6 @@ impl Executor for IndexRangeSourceExec {
         self.remote_partial_lookup = !self.covering
             && self.partial_aggregate.is_some()
             && self.table.partition().is_none()
-            && self.table.common_handle_offsets().is_empty()
             && !self.dirty_merge
             && !self.table.has_dirty_content(&self.statement.staged_writes)
             && self

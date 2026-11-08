@@ -392,6 +392,22 @@ pub trait KvTableReader {
         keep_order: bool,
     ) -> Result<Option<Box<dyn PushdownRowStream>>, KvTableError>;
 
+    /// [`Self::pushdown_partial_aggregate_cursor`] over record key ranges
+    /// already built (Go `TableHandlesToKVRanges` of a lookup task's handles).
+    #[allow(clippy::too_many_arguments)]
+    fn pushdown_partial_aggregate_cursor_over_key_ranges(
+        &mut self,
+        store: &mut dyn TableStorage,
+        keep: &[usize],
+        predicates: &[Expression],
+        ranges: Vec<(Key, Key)>,
+        aggregate: &PushdownPartialAggregate,
+        context: &crate::StmtContext,
+        statement: &PushdownStatementContext,
+        desc: bool,
+        keep_order: bool,
+    ) -> Result<Option<Box<dyn PushdownRowStream>>, KvTableError>;
+
     /// Index-scan counterpart of [`Self::pushdown_partial_aggregate_cursor`].
     /// Aggregate arguments and group keys are remapped from the pruned scan
     /// schema to the covering index's physical column order.
@@ -1993,6 +2009,24 @@ impl KvTableReader for TableCommon {
         desc: bool,
         keep_order: bool,
     ) -> Result<Option<Box<dyn PushdownRowStream>>, KvTableError> {
+        let ranges = self.record_key_ranges(handle_ranges, zone, false)?;
+        self.pushdown_partial_aggregate_cursor_over_key_ranges(
+            store, keep, predicates, ranges, aggregate, context, statement, desc, keep_order,
+        )
+    }
+
+    fn pushdown_partial_aggregate_cursor_over_key_ranges(
+        &mut self,
+        store: &mut dyn TableStorage,
+        keep: &[usize],
+        predicates: &[Expression],
+        ranges: Vec<(Key, Key)>,
+        aggregate: &PushdownPartialAggregate,
+        context: &crate::StmtContext,
+        statement: &PushdownStatementContext,
+        desc: bool,
+        keep_order: bool,
+    ) -> Result<Option<Box<dyn PushdownRowStream>>, KvTableError> {
         // A partitioned table is one request per pruned partition, as Go's
         // `PartitionTableReader` builds one per physical table; the partial
         // results are chained for the final aggregation. An ORDERED partial
@@ -2004,7 +2038,6 @@ impl KvTableReader for TableCommon {
         {
             return Ok(None);
         }
-        let ranges = self.record_key_ranges(handle_ranges, zone, false)?;
         if ranges.is_empty() {
             return Ok(None);
         }
