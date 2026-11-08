@@ -1740,6 +1740,23 @@ fn dml_identity_batch_index_join_retains_hidden_columns() {
     s.run("ADMIN CHECK TABLE child").unwrap();
 }
 
+/// Go `buildNoRangeIndexReader`: a write's covering index-join inner reader
+/// returns the `_tidb_rowid` handle among its `OutputColumns`, which the
+/// delete consumes (Go tidb-server capture: 2 rows deleted, `(3, 3)` left).
+#[test]
+fn a_covering_index_join_reader_returns_the_handle_a_write_consumes_like_go() {
+    let mut s = Session::new();
+    s.run("CREATE TABLE o(a INT, b INT)").unwrap();
+    s.run("CREATE TABLE t(a INT, b INT, KEY (b))").unwrap();
+    s.run("INSERT INTO o VALUES (1, 1), (2, 2)").unwrap();
+    s.run("INSERT INTO t VALUES (1, 1), (2, 2), (3, 3)").unwrap();
+    let plan = column(&mut s, "EXPLAIN DELETE /*+ INL_JOIN(t) */ t FROM t JOIN o ON o.b = t.b");
+    assert!(plan.iter().any(|row| row.contains("IndexReader") && row.contains("(Probe)")), "{plan:?}");
+    assert_eq!(affected(&mut s, "DELETE /*+ INL_JOIN(t) */ t FROM t JOIN o ON o.b = t.b"), 2);
+    assert_eq!(column(&mut s, "SELECT a, b FROM t"), ["3|3"]);
+    s.run("ADMIN CHECK TABLE t").unwrap();
+}
+
 #[test]
 fn shared_write_constant_rowid_assignment_has_go_admission_error() {
     let mut session = Session::new();

@@ -427,6 +427,8 @@ pub trait KvTableReader {
     /// `allow_prefix_projection` is the selected IndexReader's coverage proof:
     /// prefix columns may remain in its internal schema for null conditions,
     /// while the planner has checked every parent requiring their full values.
+    /// A covering read (`projected_keep`) returns only its projected columns,
+    /// and the handle too when `projected_handle` asks for it.
     #[allow(clippy::too_many_arguments)]
     fn pushdown_index_handle_cursor(
         &mut self,
@@ -447,6 +449,7 @@ pub trait KvTableReader {
         handle_only: bool,
         projected_keep: Option<&[usize]>,
         allow_prefix_projection: bool,
+        projected_handle: bool,
     ) -> Result<Option<RemoteIndexHandleCursor>, KvTableError>;
 
     /// Scans the table's record-key range in key order, decoding each value.
@@ -2484,6 +2487,7 @@ impl KvTableReader for TableCommon {
         handle_only: bool,
         projected_keep: Option<&[usize]>,
         allow_prefix_projection: bool,
+        projected_handle: bool,
     ) -> Result<Option<RemoteIndexHandleCursor>, KvTableError> {
         // The wire contract this request once broke -- reordered and
         // truncated columns on real TiKV -- came from the executor schema
@@ -2827,6 +2831,30 @@ impl KvTableReader for TableCommon {
         } else {
             None
         };
+        // Go `buildNoRangeIndexReader`: a covering IndexReader's
+        // `OutputOffsets` are its `OutputColumns`, so the response carries only
+        // the columns the reader returns, in the index schema's order -- and
+        // the handle when the consumer reads it (a write's inner reader
+        // outputs it).
+        let (output_offsets, projected_indices, cursor_handle_indices) = match projected_indices {
+            Some(projected) => {
+                let mut wire = projected.clone();
+                if projected_handle {
+                    wire.extend_from_slice(&handle_indices);
+                }
+                wire.sort_unstable();
+                wire.dedup();
+                let dense = |index: &usize| wire.binary_search(index).unwrap();
+                let projected = projected.iter().map(dense).collect();
+                let handles = if projected_handle {
+                    handle_indices.iter().map(dense).collect()
+                } else {
+                    Vec::new()
+                };
+                (Some(wire), Some(projected), handles)
+            }
+            None => (output_offsets, None, returned_handle_indices.clone()),
+        };
         let request = PushdownScanRequest {
             table_id: self.table_id(),
             index: Some(PushdownIndexScan {
@@ -2880,7 +2908,7 @@ impl KvTableReader for TableCommon {
         tidb_kv::storage::note_storage_op(|ops| ops.cop_scans += 1);
         Ok(Some(RemoteIndexHandleCursor {
             inner: scan.stream,
-            handle_indices: returned_handle_indices,
+            handle_indices: cursor_handle_indices,
             projected_indices,
             common_handle: !self.common_handle_offsets().is_empty(),
             zone: zone.clone(),
@@ -6337,6 +6365,7 @@ mod remote_cursor_tests {
                 true,
                 None,
                 false,
+                false,
             )
             .unwrap()
             .is_some());
@@ -6456,6 +6485,7 @@ mod remote_cursor_tests {
                     true,
                     None,
                     false,
+                    false,
                 )
                 .unwrap();
             assert_eq!(cursor.is_some(), expected.is_some(), "prefix={prefix}, common={common}, version={version}, new_collation={new_collation}, slot={slot}");
@@ -6547,6 +6577,7 @@ mod remote_cursor_tests {
                         true,
                         None,
                         false,
+                        false,
                     )
                     .unwrap();
                 assert!(cursor.is_some());
@@ -6582,7 +6613,7 @@ mod remote_cursor_tests {
                 table.clear_pk_handle();
                 table.set_common_handle_offsets(vec![0, 1]);
                 table.set_common_handle_version(1);
-                (1, vec![2, 1, 2], vec![1, 2], vec![2])
+                (1, vec![2, 1, 2], vec![1, 2], 2)
             } else {
                 table.indexes_mut()[0].column_offsets = vec![0];
                 table.indexes_mut()[0].info.write().columns = vec![tidb_model::IndexColumn {
@@ -6590,8 +6621,9 @@ mod remote_cursor_tests {
                     ..tidb_model::IndexColumn::default()
                 }]
                 .into();
-                (0, vec![1, 1], vec![1], vec![1])
+                (0, vec![1, 1], vec![1], 1)
             };
+            for projected_handle in [false, true] {
             let cursor = table
                 .pushdown_index_handle_cursor(&mut *store.clone_box(), 
                     7,
@@ -6610,14 +6642,32 @@ mod remote_cursor_tests {
                     false,
                     Some(&[projected]),
                     false,
+                    projected_handle,
                 )
                 .unwrap()
                 .unwrap();
             let request = capture.captured.lock().unwrap().clone().unwrap();
             assert_eq!(request.column_ids(), expected_ids);
-            assert_eq!(cursor.handle_indices, expected_handle);
-            assert_eq!(cursor.projected_indices, Some(expected_projection));
-            assert!(request.narrowed_output().is_none());
+            // Go's covering IndexReader returns its `OutputColumns` only.
+            let mut wire = vec![expected_projection];
+            if projected_handle {
+                wire.extend_from_slice(&expected_handle);
+            }
+            wire.sort_unstable();
+            wire.dedup();
+            let dense = |index: &usize| wire.iter().position(|kept| kept == index).unwrap();
+            let handles: Vec<usize> = if projected_handle {
+                expected_handle.iter().map(dense).collect()
+            } else {
+                Vec::new()
+            };
+            assert_eq!(cursor.handle_indices, handles);
+            assert_eq!(cursor.projected_indices, Some(vec![dense(&expected_projection)]));
+            assert_eq!(
+                request.narrowed_output(),
+                Some(wire.iter().map(|&index| index as u32).collect())
+            );
+            }
         }
     }
 
@@ -6679,6 +6729,7 @@ mod remote_cursor_tests {
                         false,
                         false,
                         Some(&[1]),
+                        false,
                         false,
                     )
                     .unwrap();
@@ -6777,6 +6828,7 @@ mod remote_cursor_tests {
                 false,
                 Some(&[1]),
                 true,
+                false,
             )
             .unwrap()
             .unwrap();
@@ -6832,6 +6884,7 @@ mod remote_cursor_tests {
                 false,
                 Some(&[1]),
                 true,
+                false,
             )
             .unwrap()
             .is_none());

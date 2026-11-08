@@ -4045,6 +4045,8 @@ impl Executor for IndexRangeSourceExec {
                     (self.covering && self.extra_handle_slot.is_none())
                         .then_some(self.keep.as_slice()),
                     self.covering,
+                    // The local partial aggregate reads this stream's handles.
+                    self.partial_aggregate.is_some(),
                 )
                 .map_err(|error| {
                     ExecError::unsupported(format!("remote index scan failed to open: {error:?}"))
@@ -5331,6 +5333,7 @@ impl IndexJoinLookupExec {
                 !self.covering,
                 self.covering.then_some(keep.as_slice()),
                 self.covering,
+                self.emit_extra_handle,
             )
             .map_err(ExecError::from)?
         {
@@ -7483,9 +7486,10 @@ use std::collections::HashMap;
             .unwrap_or_else(|poison| poison.into_inner())
             .clone()
             .expect("the covering index request was opened");
-        assert!(
-            captured.narrowed_output().is_none(),
-            "the index response retains covered values instead of projecting handles only"
+        assert_eq!(
+            captured.narrowed_output(),
+            Some(vec![0]),
+            "the index response returns its covered value (Go's `OutputOffsets`), not the handle"
         );
         assert!(
             captured.keep_order,
