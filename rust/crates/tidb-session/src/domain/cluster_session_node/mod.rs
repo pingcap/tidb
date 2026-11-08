@@ -1194,9 +1194,13 @@ impl<'s> ClusterServerSession<'s> {
         let (spans, started) = recorder.finish();
         let (columns, result_rows) = tidb_executor::trace::render(&trace.format, &spans, started)
             .map_err(SqlQueryError::unknown)?;
+        // Go `writeChunks`' `rs.NewChunk(sessVars.GetChunkAllocator())`.
+        let field_types: Vec<_> = columns.iter().map(|(_, field_type)| field_type.clone()).collect();
+        let chunk = self.session.result_write_chunk_for(&field_types);
         let columns = crate::domain::pipeline_session::select_fields(&columns);
         Ok(QueryResult::new(Box::new(
-            crate::domain::pipeline_session::MaterializedResultSetSource::new(columns, result_rows),
+            crate::domain::pipeline_session::MaterializedResultSetSource::new(columns, result_rows)
+                .with_write_chunk(chunk, field_types),
         )))
     }
 

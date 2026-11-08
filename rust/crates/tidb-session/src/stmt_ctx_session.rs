@@ -29,6 +29,20 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Some(self.chunk_alloc.clone())
     }
 
+    fn chunk_pool_valid(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
+        Some(std::sync::Arc::clone(&self.chunk_pool_valid))
+    }
+
+    fn statement_chunk_pool_slot(
+        &self,
+    ) -> Option<std::sync::Arc<std::sync::Mutex<Option<tidb_executor::stmt_ctx_build::StatementChunkPool>>>> {
+        Some(std::sync::Arc::clone(&self.statement_chunk_pool))
+    }
+
+    fn use_chunk_alloc_flag(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
+        Some(std::sync::Arc::clone(&self.use_chunk_alloc))
+    }
+
     fn result_write_chunk_slot(
         &self,
     ) -> Option<std::sync::Arc<std::sync::Mutex<Option<tidb_chunk::chunk::Chunk>>>> {

@@ -196,12 +196,18 @@ impl<'s> ClusterServerSession<'s> {
         sql: &str,
         stmt: Stmt,
     ) -> Result<StmtOutput, tidb_driver_error::DriverError> {
-        if let Some(mut result) = self
+        let executed = self
             .reborrow()
             .execute_stmt(sql, &stmt)
             .map_err(driver_error)?
-        {
-            return drain_result(result.source()).map_err(tidb_driver_error::DriverError::Mysql);
+            .map(|mut result| drain_result(result.source()).map_err(tidb_driver_error::DriverError::Mysql));
+        if let Some(output) = executed {
+            // Go `writeChunks` takes the result's chunk from the statement's
+            // pool (`rs.NewChunk(sessVars.GetChunkAllocator())`), marking
+            // `useChunkAlloc`; this reader reads it unpooled, as Go's testkit
+            // does, and records the use the connection's writer makes.
+            self.session.mark_result_write_alloc();
+            return output;
         }
         // Go `clientConn.handleQuery`: a LOAD DATA LOCAL or LOAD STATS parks
         // its file request, and the connection answers it with the client's

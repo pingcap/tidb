@@ -3402,6 +3402,34 @@ impl StmtContext {
         self
     }
 
+    /// Go `SessionVars.SetAlloc` as the session installs it for a statement:
+    /// `valid` is the session's own flag for the running statement, shared by
+    /// every context built for it, so a clear by its planning
+    /// (`disableReuseChunkIfNeeded`) holds for the statement's rest.
+    #[must_use]
+    pub fn with_session_chunk_alloc(
+        mut self,
+        valid: Arc<AtomicBool>,
+        allocator: Option<Arc<dyn tidb_chunk::alloc::Allocator>>,
+    ) -> Self {
+        let data = Arc::make_mut(&mut self.0);
+        data.chunk_alloc_valid = valid;
+        data.chunk_allocator = allocator;
+        self
+    }
+
+    /// This statement's reusable chunk pool and whether it is still valid
+    /// (Go `SessionVars.chunkPool` beside `IsAllocValid`), for a session that
+    /// draws from it outside an executor.
+    #[must_use]
+    pub fn statement_chunk_pool(
+        &self,
+    ) -> Option<(Arc<AtomicBool>, Arc<dyn tidb_chunk::alloc::Allocator>)> {
+        self.chunk_allocator
+            .clone()
+            .map(|allocator| (Arc::clone(&self.chunk_alloc_valid), allocator))
+    }
+
     /// Installs the session's result write chunk slot.
     #[must_use]
     pub fn with_result_write_chunk_slot(

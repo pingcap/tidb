@@ -475,6 +475,20 @@ fn last_sql_use_alloc_follows_the_readers_column_widths() {
         // A point get planned by `TryFastPlan` never reaches `postOptimize`,
         // where Go clears the allocator, whatever its columns.
         ("select id1, id3 from t1 where id1 = 1", "1"),
+        // Every result Go writes takes its chunk from the statement's pool
+        // (`writeChunks`), and every statement without one draws a chunk
+        // (`handleNoDelayExecutor`): a Go tidb-server answers 1 after each of
+        // these, except an EXPLAIN whose plan cleared the pool.
+        ("show tables", "1"),
+        ("show create table t1", "1"),
+        ("desc t1", "1"),
+        ("trace select 1", "1"),
+        ("set @x = 1", "1"),
+        ("do 1", "1"),
+        ("explain select id1 from t1 where id2 > '1'", "1"),
+        ("explain select id1, id3 from t1 where id2 > '1'", "0"),
+        ("explain analyze select id1, id3 from t1 where id2 > '1'", "0"),
+        ("explain format='brief' select id1, id5 from t1", "0"),
     ] {
         session.run(sql).unwrap();
         assert_eq!(

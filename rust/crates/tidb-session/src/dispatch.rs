@@ -1588,16 +1588,12 @@ impl Session {
         let execution = execution?;
         // Go runs a statement without a result set through
         // `handleNoDelayExecutor`, whose `TryNewCacheChunk` draws from the
-        // session's reusable allocator and so marks `useChunkAlloc` -- the
-        // value `@@last_sql_use_alloc` reports for the next statement.
+        // statement's pool (marking `useChunkAlloc` through its hook).
         if matches!(
             execution,
             PendingExecution::Complete(StmtOutput::Affected(_) | StmtOutput::Done(_))
         ) {
-            self.vars.use_chunk_alloc = self
-                .vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_REUSECHUNK)
-                .is_ok_and(|value| value.eq_ignore_ascii_case("ON") || value == "1");
+            let _ = self.statement_pool_chunk(&[]);
         }
         Ok(execution)
     }

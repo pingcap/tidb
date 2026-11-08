@@ -1370,9 +1370,24 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             .then(|| self.chunk_allocator())
             .flatten()
             .map(|allocator| {
-            Arc::new(tidb_chunk::alloc::new_sync_allocator(allocator)) as Arc<dyn tidb_chunk::alloc::Allocator>
-        });
-        ctx = ctx.with_statement_chunk_alloc(reuse_chunk, allocator);
+                let allocator = tidb_chunk::alloc::new_sync_allocator(allocator);
+                match self.use_chunk_alloc_flag() {
+                    Some(flag) => Arc::new(tidb_chunk::alloc::new_reuse_hook_allocator(allocator, move || {
+                        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                    })) as Arc<dyn tidb_chunk::alloc::Allocator>,
+                    None => Arc::new(allocator) as Arc<dyn tidb_chunk::alloc::Allocator>,
+                }
+            });
+        ctx = match self.chunk_pool_valid().filter(|_| !self.session_vars().restricted_sql) {
+            Some(valid) => ctx.with_session_chunk_alloc(valid, allocator),
+            None => ctx.with_statement_chunk_alloc(reuse_chunk, allocator),
+        };
+        if !self.session_vars().restricted_sql {
+            if let Some(slot) = self.statement_chunk_pool_slot() {
+                *slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    ctx.statement_chunk_pool();
+            }
+        }
         ctx = ctx.with_result_write_chunk_slot(self.result_write_chunk_slot());
         ctx
     }
@@ -2299,6 +2314,12 @@ impl ResultMaterializationAuthority {
     }
 }
 
+/// A statement's reusable chunk pool and whether it is still valid.
+pub type StatementChunkPool = (
+    std::sync::Arc<std::sync::atomic::AtomicBool>,
+    std::sync::Arc<dyn tidb_chunk::alloc::Allocator>,
+);
+
 /// The session state Go's `ResetContextOfStmt` and the statement-context
 /// builders read: Go's `sctx` and the `SessionVars` fields this tier still
 /// keeps on the session.
@@ -2308,6 +2329,21 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// Go `clientConn.chunkAlloc` as `SetAlloc` installs it: the session's
     /// reusable chunk allocator, or none for a session without one.
     fn chunk_allocator(&self) -> Option<tidb_chunk::alloc::ChunkAllocator> {
+        None
+    }
+    /// Go `SessionVars.chunkPool`'s validity for the running statement, set
+    /// at the statement's `SetAlloc` and cleared by its planning.
+    fn chunk_pool_valid(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
+        None
+    }
+    /// Where the session keeps the running statement's chunk pool, which
+    /// its writer and `handleNoDelayExecutor` draw from.
+    fn statement_chunk_pool_slot(&self) -> Option<std::sync::Arc<std::sync::Mutex<Option<StatementChunkPool>>>> {
+        None
+    }
+    /// Go `StmtCtx.useChunkAlloc`, which the hook `SetAlloc` wraps the
+    /// allocator in sets (`SetUseChunkAlloc`).
+    fn use_chunk_alloc_flag(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
         None
     }
     /// The slot the session's writer takes a result's write chunk from when

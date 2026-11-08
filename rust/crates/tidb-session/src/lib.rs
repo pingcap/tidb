@@ -370,6 +370,18 @@ pub struct Session {
     /// statements draw from under `tidb_enable_reuse_chunk`, reset after
     /// each statement (`chunkAlloc.Reset()`).
     chunk_alloc: tidb_chunk::alloc::ChunkAllocator,
+    /// Go `StmtCtx.useChunkAlloc`: set by the reuse hook `SetAlloc` wraps the
+    /// statement's allocator in, the first time an executor draws from it
+    /// while it can still reuse columns.
+    use_chunk_alloc: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Go `SessionVars.IsAllocValid()` for the running statement: set when
+    /// the statement begins (`SetAlloc` under `tidb_enable_reuse_chunk`),
+    /// cleared by its planning (`disableReuseChunkIfNeeded`).
+    chunk_pool_valid: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// The running statement's chunk pool (Go `SessionVars.chunkPool`, the
+    /// hooked allocator `GetChunkAllocator` returns while it is valid).
+    statement_chunk_pool:
+        std::sync::Arc<std::sync::Mutex<Option<tidb_executor::stmt_ctx_build::StatementChunkPool>>>,
     /// The chunk an executor took from `chunk_alloc` for the connection to
     /// write the statement's result through (Go `ExplainExec`'s record set).
     result_write_chunk: std::sync::Arc<std::sync::Mutex<Option<tidb_chunk::chunk::Chunk>>>,
@@ -929,6 +941,9 @@ impl Session {
         let stats_handle = catalog.stats_handle();
         Session {
             chunk_alloc: tidb_chunk::alloc::ChunkAllocator::new(),
+            use_chunk_alloc: std::sync::Arc::default(),
+            statement_chunk_pool: std::sync::Arc::default(),
+            chunk_pool_valid: std::sync::Arc::default(),
             result_write_chunk: std::sync::Arc::default(),
             connection_writes_results: false,
             chunk_alloc_failed: false,
@@ -2836,21 +2851,51 @@ impl Session {
         if let Some(chunk) = self.take_result_write_chunk() {
             return Some(chunk);
         }
-        let var = |name: &str| self.vars.get_system(name).ok();
-        let reuse = var(tidb_vardef::tidb_vars::TIDB_ENABLE_REUSECHUNK)
-            .is_some_and(|value| value.eq_ignore_ascii_case("ON") || value == "1");
-        if !self.connection_writes_results || !reuse || self.vars.restricted_sql {
+        if !self.connection_writes_results {
             return None;
         }
+        self.statement_pool_chunk(fields)
+    }
+
+    /// Go `reuseHookAllocator.Alloc`'s hook for a draw from the running
+    /// statement's pool, taken without the chunk: the pool is still valid
+    /// and can reuse columns.
+    pub(crate) fn mark_result_write_alloc(&self) {
+        let pool = self
+            .statement_chunk_pool
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if let Some((valid, allocator)) = pool {
+            if valid.load(std::sync::atomic::Ordering::Relaxed) && allocator.check_reuse_alloc_size() {
+                self.use_chunk_alloc.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Go `SessionVars.GetChunkAllocator().Alloc(fields, InitChunkSize,
+    /// MaxChunkSize)`: a chunk from the running statement's pool while it is
+    /// valid (none once the planner cleared it, or with chunk reuse off).
+    pub(crate) fn statement_pool_chunk(
+        &self,
+        fields: &[tidb_datatype::FieldType],
+    ) -> Option<tidb_chunk::chunk::Chunk> {
+        let pool = self
+            .statement_chunk_pool
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let (valid, allocator) = pool?;
+        if !valid.load(std::sync::atomic::Ordering::Relaxed) {
+            return None;
+        }
+        let var = |name: &str| self.vars.get_system(name).ok();
         let size = |name: &str, default: i64| {
             var(name).and_then(|value| value.parse::<usize>().ok()).unwrap_or(default as usize)
         };
         let init_cap = size(tidb_vardef::tidb_vars::TIDB_INIT_CHUNK_SIZE, tidb_vardef::defaults::DEF_INIT_CHUNK_SIZE);
         let max_chunk_size = size(tidb_vardef::tidb_vars::TIDB_MAX_CHUNK_SIZE, tidb_vardef::defaults::DEF_MAX_CHUNK_SIZE);
-        Some(
-            tidb_chunk::alloc::Allocator::alloc(&self.chunk_alloc, fields, init_cap, max_chunk_size)
-                .into_pooled_chunk(),
-        )
+        Some(allocator.alloc(fields, init_cap, max_chunk_size).into_pooled_chunk())
     }
 
     // Go resets statement state before executor construction. Keep this
@@ -2944,7 +2989,15 @@ impl Session {
         // reports the PRECEDING statement rather than itself.
         self.vars.prev_found_in_plan_cache = std::mem::take(&mut self.vars.found_in_plan_cache);
         // Go `ExchangeChunkStatus`, at the same `ResetContextOfStmt` boundary.
-        self.vars.pre_use_chunk_alloc = std::mem::take(&mut self.vars.use_chunk_alloc);
+        self.vars.pre_use_chunk_alloc =
+            self.use_chunk_alloc.swap(false, std::sync::atomic::Ordering::Relaxed);
+        // Go `conn.handleQuery`'s `SetAlloc(cc.chunkAlloc)` for this statement.
+        self.chunk_pool_valid.store(
+            self.vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_REUSECHUNK)
+                .is_ok_and(|value| value.eq_ignore_ascii_case("ON") || value == "1"),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         // Go `clientConn.dispatch`'s tail for the previous statement:
         // `ClearAlloc(&cc.chunkAlloc, err != nil)` (a failed statement's
         // allocator is replaced) then `cc.chunkAlloc.Reset()`, which hands

@@ -414,10 +414,6 @@ pub struct SessionVars {
     /// itself never cacheable and would otherwise always answer 0.
     /// (Go `SessionVars.PrevFoundInPlanCache`.)
     pub prev_found_in_plan_cache: bool,
-    /// Go `StmtCtx.useChunkAlloc` for the running statement: its result was
-    /// produced through a valid reusable chunk allocator.
-    /// (Go `SessionVars.UseChunkAlloc`.)
-    pub use_chunk_alloc: bool,
     /// Go `SessionVars.preUseChunkAlloc`, promoted from the previous
     /// statement by `ExchangeChunkStatus`; `@@last_sql_use_alloc` reads it.
     /// (Go `SessionVars.PreUseChunkAlloc`.)
@@ -598,7 +594,6 @@ impl Default for SessionVars {
             prev_stmt_text: None,
             found_in_plan_cache: false,
             prev_found_in_plan_cache: false,
-            use_chunk_alloc: false,
             pre_use_chunk_alloc: tidb_vardef::defaults::DEF_TIDB_USE_ALLOC,
             current_db: String::new(),
             sandbox_mode: false,
