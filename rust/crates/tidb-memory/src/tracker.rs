@@ -96,6 +96,8 @@ pub const LABEL_FOR_GLOBAL_SIMPLE_LRU_CACHE: i64 = -8;
 pub const LABEL_FOR_CHUNK_DATA_IN_DISK_BY_ROWS: i64 = -9;
 /// `LabelForRowContainer`.
 pub const LABEL_FOR_ROW_CONTAINER: i64 = -10;
+/// Go `LabelForBuildSideResult`: a join's build-side row container.
+pub const LABEL_FOR_BUILD_SIDE_RESULT: i64 = -13;
 /// `LabelForGlobalStorage`: process-wide local temporary-storage accounting.
 pub const LABEL_FOR_GLOBAL_STORAGE: i64 = -11;
 /// `LabelForChunkDataInDiskByChunks`: the chunk-addressed spill file.

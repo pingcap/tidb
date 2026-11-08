@@ -3908,8 +3908,12 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 ) && self.residual_conditions.is_empty()
                     && self.na_keys.is_empty()),
         );
+        // Go `BuildHashTableForList`: the row container's trackers attach
+        // under the join's and take `LabelForBuildSideResult`.
         table.mem_tracker().attach_to(&self.tracker);
+        table.mem_tracker().set_label(tidb_memory::LABEL_FOR_BUILD_SIDE_RESULT);
         table.disk_tracker().attach_to(&self.disk_tracker);
+        table.disk_tracker().set_label(tidb_memory::LABEL_FOR_BUILD_SIDE_RESULT);
         // Go: `if vardef.EnableTmpStorageOnOOM.Load() { ...
         // MemTracker.FallbackOldAndSetNewAction(actionSpill) }`. With the
         // variable OFF no spill action exists, so an overrun goes straight to

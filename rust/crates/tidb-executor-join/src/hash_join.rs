@@ -294,22 +294,25 @@ struct ChainStore {
     entries: Vec<ChainEntry>,
 }
 
-/// The bytes Go's `entryStore` has charged once it holds `entries`: slabs
-/// of 16-byte entries (`unsafe.Sizeof(entry{})`) that start at 64 entries
-/// and double up to 8192 (`initialEntrySliceLen`, `maxEntrySliceLen`), each
-/// charged whole when allocated (`GetStore`). The slab is Go's memory
+/// The bytes Go's `entryStore` has charged past its first slice once it
+/// holds `entries`: slabs of 16-byte entries (`unsafe.Sizeof(entry{})`)
+/// doubling from 64 up to 8192 (`initialEntrySliceLen`, `maxEntrySliceLen`),
+/// each charged whole when `GetStore` allocates it. The first slice is in
+/// `NewConcurrentMapHashTable`'s fixed bytes. The slab is Go's memory
 /// contract for the query quota; the Rust slab is one vector.
-fn go_entry_store_bytes(entries: usize) -> usize {
+fn go_entry_store_growth_bytes(entries: usize) -> usize {
     const ENTRY_BYTES: usize = 16;
     const INITIAL_SLICE_LEN: usize = 64;
     const MAX_SLICE_LEN: usize = 8192;
-    let mut charged = INITIAL_SLICE_LEN;
+    let mut slots = INITIAL_SLICE_LEN;
     let mut slab = INITIAL_SLICE_LEN;
-    while charged < entries {
+    let mut grown = 0;
+    while slots < entries {
         slab = (slab * 2).min(MAX_SLICE_LEN);
-        charged += slab;
+        slots += slab;
+        grown += slab;
     }
-    charged * ENTRY_BYTES
+    grown * ENTRY_BYTES
 }
 
 impl ChainStore {
@@ -1908,19 +1911,12 @@ impl BuildTable {
     }
 
     fn refresh_bucket_memory(&mut self) {
-        let map_slots = self
-            .buckets
-            .capacity()
-            .saturating_mul(std::mem::size_of::<(u64, ChainHead)>() + std::mem::size_of::<usize>());
+        // Go `NewConcurrentMapHashTable`'s fixed bytes, which include the
+        // entry store's first slice, and each later slice `GetStore` takes.
+        // The Rust maps beside it (the hash buckets, the exact-integer
+        // table) have no Go counterpart and charge nothing.
         let retained = GO_V1_HASH_TABLE_FIXED_BYTES
-            .saturating_add(map_slots)
-            .saturating_add(std::mem::size_of::<HashBuckets<ChainHead>>())
-            .saturating_add(go_entry_store_bytes(self.chains.entries.len()))
-            .saturating_add(
-                self.exact_int_buckets
-                    .as_ref()
-                    .map_or(0, ExactIntTable::bytes),
-            )
+            .saturating_add(go_entry_store_growth_bytes(self.chains.entries.len()))
             .saturating_add(self.matched.as_ref().map_or(0, |chunks| {
                 chunks
                     .lock()

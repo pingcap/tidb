@@ -9499,7 +9499,7 @@ fn a_parallel_projection_swaps_in_its_last_output_like_go() {
     assert_eq!(memory(&mut fresh(), union, "Projection_13"), "3.92 KB");
 }
 
-/// Go's `rowTableBuilder.preAllocForSegments` charges each row's raw data,
+/// Go's `rowTableBuilder.preAllocForSegments` (the v2 hash join) charges each row's raw data,
 /// two `uint64` slots (its hash value and start offset) and an `int` for a
 /// valid key, and no more: a join whose rows carry a used flag in the null
 /// map (`colOffsetInNullMap`) charges no extra byte per row for it. A Go
@@ -9510,6 +9510,10 @@ fn a_hash_join_charges_its_row_table_like_go() {
     for (query, operator, go_memory) in [
         ("SELECT * FROM t LEFT JOIN u ON t.a = u.a WHERE t.b < 3", "HashJoin_10", "8.05 KB"),
         ("SELECT a, (SELECT max(b) FROM u WHERE u.a = t.a) FROM t", "HashJoin_17", "11.4 KB"),
+        // A null-aware anti join builds Go's v1 `hashRowContainer`, charged
+        // `NewConcurrentMapHashTable`'s fixed bytes and its entry store's
+        // growth under `LabelForBuildSideResult`.
+        ("SELECT * FROM t WHERE a NOT IN (SELECT a FROM u)", "HashJoin_8", "76.7 KB"),
     ] {
         let mut session = Session::new();
         session
