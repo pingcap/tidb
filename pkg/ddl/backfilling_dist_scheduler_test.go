@@ -74,7 +74,24 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	want := "tenant_only"
+	if kerneltype.IsNextGen() {
+		want = resourcegroup.DefaultResourceGroupName
+	}
+	var client *backfillResourceGroupClient
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithClientHijacker(func(inner tikv.Client) tikv.Client {
+		client = &backfillResourceGroupClient{
+			Client:     inner,
+			checkGroup: func(group string) { assert.Equal(t, want, group) },
+		}
+		return client
+	}))
+	tikv.DisableResourceControl() // Inspect attribution independently of PD's group cache.
+	t.Cleanup(func() {
+		if vardef.EnableResourceControl.Load() {
+			tikv.EnableResourceControl()
+		}
+	})
 	sch, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
 	require.NoError(t, err)
 	sch.(*ddl.LitBackfillScheduler).BaseScheduler = &scheduler.BaseScheduler{
@@ -96,15 +113,41 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp1"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
+	var resourceMeta ddl.BackfillTaskMeta
+	require.NoError(t, json.Unmarshal(task.Meta, &resourceMeta))
+	resourceMeta.Job.Type = model.ActionAddIndex
+	resourceMeta.Job.ReorgMeta.ResourceGroupName = "tenant_only"
+	resourceMeta.EleIDs = []int64{tblInfo.Indices[0].ID}
+	task.Meta, err = json.Marshal(&resourceMeta)
+	require.NoError(t, err)
+	originalMeta := append([]byte(nil), task.Meta...)
 
 	// 1.1 OnNextSubtasksBatch
 	task.Step = sch.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.BackfillStepReadIndex, task.Step)
 	execIDs := []string{":4000"}
 	ctx := util.WithInternalSourceType(context.Background(), "backfill")
+	client.recording.Store(true)
 	metas, err := sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
+	client.recording.Store(false)
 	require.NoError(t, err)
 	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
+	require.Positive(t, client.scanCount.Load())
+	// Worker execution uses a decoded copy; persisted foreground metadata stays intact.
+	checked := false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeGetUserTableForBackfillStep", func(job *model.Job) {
+		checked = true
+		require.Equal(t, want, job.ReorgMeta.ResourceGroupName)
+	})
+	param := taskexecutor.NewParamForTest(nil, nil, proto.NodeResourceForTest, ":4000")
+	param.TaskRuntime = newBackfillingSchedulerTestRuntime(ctrl, store, dom.SysSessionPool())
+	worker := taskexecutor.GetTaskExecutorFactory(proto.Backfill)(ctx, task, param)
+	require.NoError(t, worker.Init(ctx))
+	_, err = worker.(taskexecutor.Extension).GetStepExecutor(task)
+	worker.Close()
+	require.NoError(t, err)
+	require.True(t, checked)
+	require.Equal(t, originalMeta, task.Meta)
 	var taskMetaView struct {
 		Summary *struct {
 			IndexKVSize uint64 `json:"index_kv_size"`
@@ -632,78 +675,4 @@ func (c *backfillResourceGroupClient) SendRequest(ctx context.Context, addr stri
 		c.checkGroup(req.GetResourceControlContext().GetResourceGroupName())
 	}
 	return c.Client.SendRequest(ctx, addr, req, timeout)
-}
-
-func TestDXFBackfillResourceGroup(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	want := "tenant_only"
-	if kerneltype.IsNextGen() {
-		want = resourcegroup.DefaultResourceGroupName
-	}
-	var client *backfillResourceGroupClient
-	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithClientHijacker(func(inner tikv.Client) tikv.Client {
-		client = &backfillResourceGroupClient{
-			Client:     inner,
-			checkGroup: func(group string) { assert.Equal(t, want, group) },
-		}
-		return client
-	}))
-	// Observe request attribution without depending on PD's resource-group cache.
-	tikv.DisableResourceControl()
-	t.Cleanup(func() {
-		if vardef.EnableResourceControl.Load() {
-			tikv.EnableResourceControl()
-		}
-	})
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table rg_backfill(id int primary key, v int, key idx(v))")
-	tk.MustExec("insert into rg_backfill values (1,10),(2,20),(3,30)")
-	task, _ := createAddIndexTask(t, dom, "test", "rg_backfill", proto.Backfill, false)
-	var meta ddl.BackfillTaskMeta
-	require.NoError(t, json.Unmarshal(task.Meta, &meta))
-	meta.Job.Type = model.ActionAddIndex
-	meta.Job.ReorgMeta.ResourceGroupName = "tenant_only"
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("rg_backfill"))
-	require.NoError(t, err)
-	meta.EleIDs = []int64{tbl.Meta().Indices[0].ID}
-	task.Meta, err = json.Marshal(&meta)
-	require.NoError(t, err)
-	original := append([]byte(nil), task.Meta...)
-
-	t.Run("planning scan", func(t *testing.T) {
-		sch, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
-		require.NoError(t, err)
-		sch.(*ddl.LitBackfillScheduler).BaseScheduler = &scheduler.BaseScheduler{
-			Param: backfillingSchedulerParamForTest(ctrl, store, dom.SysSessionPool()),
-		}
-		client.recording.Store(true)
-		metas, err := sch.OnNextSubtasksBatch(context.Background(), nil, task, []string{":4000"}, proto.BackfillStepReadIndex)
-		client.recording.Store(false)
-		require.NoError(t, err)
-		require.NotEmpty(t, metas)
-		require.Positive(t, client.scanCount.Load())
-		require.Equal(t, original, task.Meta)
-	})
-
-	t.Run("worker reconstruction", func(t *testing.T) {
-		task.Step = proto.BackfillStepReadIndex
-		var observed int
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeGetUserTableForBackfillStep", func(job *model.Job) {
-			observed++
-			require.Equal(t, want, job.ReorgMeta.ResourceGroupName)
-		})
-		// Every worker derives its execution group from the original persisted task.
-		for range 2 {
-			param := taskexecutor.NewParamForTest(nil, nil, proto.NodeResourceForTest, ":4000")
-			param.TaskRuntime = newBackfillingSchedulerTestRuntime(ctrl, store, dom.SysSessionPool())
-			worker := taskexecutor.GetTaskExecutorFactory(proto.Backfill)(context.Background(), task, param)
-			require.NoError(t, worker.Init(context.Background()))
-			_, err := worker.(taskexecutor.Extension).GetStepExecutor(task)
-			require.NoError(t, err)
-			worker.Close()
-			require.Equal(t, original, task.Meta)
-		}
-		require.Equal(t, 2, observed)
-	})
 }

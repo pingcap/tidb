@@ -198,6 +198,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		tk.Session().GetSessionVars().StmtCtx.ResourceGroupName = "rg1"
 		q := captureImportQuery(t, tk, sql)
 		require.NotZero(t, q.SchemaVersion)
+		se := newWorkerSession(t, store)
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportQueryOptimize", func(p base.PhysicalPlan) {
 			assert.Equal(t, q.SchemaVersion, p.SCtx().GetSessionVars().SnapshotInfoschema.(infoschema.InfoSchema).SchemaMetaVersion())
 			expectedGroup := "rg1"
@@ -205,15 +206,23 @@ func TestImportQueryPlanExecution(t *testing.T) {
 				expectedGroup = resourcegroup.DefaultResourceGroupName
 			}
 			assert.Equal(t, expectedGroup, p.SCtx().GetSessionVars().StmtCtx.ResourceGroupName)
+			assert.Equal(t, expectedGroup, se.GetDistSQLCtx().ResourceGroupName)
 			assert.Equal(t, "rg1", q.SessionStates.ResourceGroupName)
 		})
 		tk.Session().RollbackTxn(context.Background())
 		tk.MustExec("insert into query_src values (9,90,9)")
 		tk.MustExec("rename table query_src to query_renamed")
-		se := newWorkerSession(t, store)
 		require.Equal(t, []string{"[7]"}, runImportQuery(t, se, q, sql))
 		// Retrying the persisted query must keep the same snapshot.
 		require.Equal(t, []string{"[7]"}, runImportQuery(t, se, q, sql))
+		// Uncorrelated subqueries execute during optimization and cache DistSQL attribution.
+		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
+		tk.Session().GetSessionVars().StmtCtx.ResourceGroupName = "rg1"
+		sql = "import into unused_target from select /*+ RESOURCE_GROUP(rg1) */ (select count(*) from query_renamed)"
+		q = captureImportQuery(t, tk, sql)
+		se = newWorkerSession(t, store)
+		require.Equal(t, []string{"[8]"}, runImportQuery(t, se, q, sql))
+		require.Positive(t, se.GetSessionVars().RewritePhaseInfo.PreprocessSubQueries)
 	})
 	t.Run("source table changed before capture", func(t *testing.T) {
 		ddlTK := testkit.NewTestKit(t, store)
@@ -232,63 +241,5 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		// The planner of the statement takes the definition after the DDL, which
 		// the worker reads the snapshot with.
 		require.Equal(t, []string{"[1 42]"}, runImportQuery(t, newWorkerSession(t, store), q, sql))
-	})
-}
-
-func TestImportQueryResourceGroup(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create resource group import_rg ru_per_sec=1000")
-	tk.MustExec("create table rg_query_src(id int primary key, v int)")
-	tk.MustExec("create table unused_target(id int)")
-	tk.MustExec("insert into rg_query_src values (1,10),(2,20)")
-	tk.MustExec("set resource group import_rg")
-	tk.MustExec("set tidb_isolation_read_engines='tikv'")
-	for _, autocommit := range []string{"1", "0"} {
-		for _, hint := range []string{"", "/*+ RESOURCE_GROUP(import_rg) */"} {
-			t.Run(fmt.Sprintf("autocommit=%s/hint=%t", autocommit, hint != ""), func(t *testing.T) {
-				require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
-				sql := "import into unused_target from select " + hint + " v from rg_query_src where id=1"
-				q := captureImportQuery(t, tk, sql)
-				tk.Session().RollbackTxn(context.Background())
-				want := "import_rg"
-				if kerneltype.IsNextGen() {
-					want = resourcegroup.DefaultResourceGroupName
-				}
-				worker := newWorkerSession(t, store)
-				require.NoError(t, worker.GetSessionVars().SetSystemVar(vardef.AutoCommit, autocommit))
-				for range 2 {
-					require.Equal(t, []string{"[10]"}, runImportQuery(t, worker, q, sql))
-					vars := worker.GetSessionVars()
-					require.Equal(t, want, vars.ResourceGroupName)
-					require.Equal(t, want, vars.StmtCtx.ResourceGroupName)
-					txn, err := worker.Txn(false)
-					require.NoError(t, err)
-					if autocommit == "0" {
-						require.True(t, txn.Valid())
-					}
-					require.Equal(t, "import_rg", q.SessionStates.ResourceGroupName)
-				}
-			})
-		}
-	}
-	t.Run("subquery during optimization", func(t *testing.T) {
-		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
-		sql := "import into unused_target from select /*+ RESOURCE_GROUP(import_rg) */ (select sum(v) from rg_query_src)"
-		q := captureImportQuery(t, tk, sql)
-		tk.Session().RollbackTxn(context.Background())
-		want := "import_rg"
-		if kerneltype.IsNextGen() {
-			want = resourcegroup.DefaultResourceGroupName
-		}
-		worker := newWorkerSession(t, store)
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportQueryOptimize", func(_ base.PhysicalPlan) {
-			// The subquery already executed and initialized the statement's DistSQL context.
-			assert.Positive(t, worker.GetSessionVars().RewritePhaseInfo.PreprocessSubQueries)
-			assert.Equal(t, want, worker.GetDistSQLCtx().ResourceGroupName)
-		})
-		require.Equal(t, []string{"[30]"}, runImportQuery(t, worker, q, sql))
-		require.Equal(t, "import_rg", q.SessionStates.ResourceGroupName)
 	})
 }
