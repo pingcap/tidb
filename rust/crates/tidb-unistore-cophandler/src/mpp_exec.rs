@@ -1455,3 +1455,126 @@ impl<'a> MppExec<'a> for ExchRecvExec<'a> {
         Ok(chk)
     }
 }
+
+/// Go `joinExec`: a hash join on the first key pair (the mock store's join
+/// ignores other conditions), probing row by row and handing each joined
+/// row up as its own chunk.
+pub(crate) struct JoinExec<'a> {
+    pub(crate) base: BaseMppExec<'a>,
+    pub(crate) join_type: tipb::JoinType,
+    pub(crate) hash_map: std::collections::HashMap<Vec<u8>, Vec<Row>>,
+    /// Go `buildKey.Index` / `probeKey.Index`.
+    pub(crate) build_key: usize,
+    pub(crate) probe_key: usize,
+    /// Go `buildSideIdx`: the build child's index in `base.children`.
+    pub(crate) build_side_idx: usize,
+    pub(crate) idx: usize,
+    pub(crate) reserved_rows: Vec<Row>,
+    pub(crate) default_inner: Row,
+    pub(crate) inited: bool,
+    /// Go `comKeyTp`: aligns the types of the join keys.
+    pub(crate) com_key_tp: FieldType,
+}
+
+impl JoinExec<'_> {
+    fn probe_side_idx(&self) -> usize {
+        1 - self.build_side_idx
+    }
+
+    /// Go `getHashKey`.
+    fn get_hash_key(&self, key_col: &Datum) -> Result<Vec<u8>, MppExecError> {
+        use tidb_exprctx::Columns;
+        let zone = self.base.sctx.time_zone();
+        let context = tidb_datatype::ConversionContext::new(
+            self.base.sctx.type_flags(),
+            tidb_datatype::ConversionLocation::from_time_zone(&zone),
+            &tidb_context::IGNORE_CONVERSION_WARNINGS,
+        );
+        let converted = key_col
+            .convert_to_in_context(&self.com_key_tp, &context, &zone)
+            .map_err(|err| MppExecError::Other(format!("{err:?}")))?;
+        if let Some(err) = converted.error {
+            return Err(MppExecError::Other(format!("{err:?}")));
+        }
+        converted.value.sql_bytes().map_err(|err| MppExecError::Other(format!("{err:?}")))
+    }
+
+    /// Go `buildHashTable`.
+    fn build_hash_table(&mut self) -> Result<(), MppExecError> {
+        loop {
+            let chk = self.base.children[self.build_side_idx].next()?;
+            let Some(chk) = chk.filter(|chk| !chk.is_empty()) else {
+                return Ok(());
+            };
+            for row in chk {
+                let key = self.get_hash_key(&row[self.build_key])?;
+                self.hash_map.entry(key).or_default().push(row);
+            }
+        }
+    }
+
+    /// Go `fetchRows`: `true` at the probe side's end.
+    fn fetch_rows(&mut self) -> Result<bool, MppExecError> {
+        let probe = self.probe_side_idx();
+        let chk = self.base.children[probe].next()?;
+        let Some(chk) = chk.filter(|chk| !chk.is_empty()) else {
+            return Ok(true);
+        };
+        self.idx = 0;
+        self.reserved_rows = Vec::new();
+        for row in chk {
+            let key = self.get_hash_key(&row[self.probe_key])?;
+            if let Some(row_set) = self.hash_map.get(&key) {
+                for matched in row_set {
+                    let new_row: Row = if self.build_side_idx == 0 {
+                        matched.iter().chain(&row).cloned().collect()
+                    } else {
+                        row.iter().chain(matched).cloned().collect()
+                    };
+                    self.reserved_rows.push(new_row);
+                }
+            } else if self.join_type == tipb::JoinType::TypeLeftOuterJoin {
+                self.reserved_rows.push(row.iter().chain(&self.default_inner).cloned().collect());
+            } else if self.join_type == tipb::JoinType::TypeRightOuterJoin {
+                self.reserved_rows.push(self.default_inner.iter().chain(&row).cloned().collect());
+            }
+        }
+        Ok(false)
+    }
+}
+
+impl<'a> MppExec<'a> for JoinExec<'a> {
+    fn base(&self) -> &BaseMppExec<'a> {
+        &self.base
+    }
+    fn base_mut(&mut self) -> &mut BaseMppExec<'a> {
+        &mut self.base
+    }
+    fn open(&mut self) -> Result<(), MppExecError> {
+        self.base.children[self.build_side_idx].open()?;
+        let probe = self.probe_side_idx();
+        self.base.children[probe].open()
+    }
+    fn stop(&mut self) -> Result<(), MppExecError> {
+        self.base.children[self.build_side_idx].stop()?;
+        let probe = self.probe_side_idx();
+        self.base.children[probe].stop()
+    }
+    fn next(&mut self) -> Result<Option<Chunk>, MppExecError> {
+        if !self.inited {
+            self.inited = true;
+            self.build_hash_table()?;
+        }
+        loop {
+            if self.idx < self.reserved_rows.len() {
+                let row = self.reserved_rows[self.idx].clone();
+                self.idx += 1;
+                self.base.exec_summary.update_only_rows(1);
+                return Ok(Some(vec![row]));
+            }
+            if self.fetch_rows()? {
+                return Ok(None);
+            }
+        }
+    }
+}

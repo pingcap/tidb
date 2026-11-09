@@ -20,6 +20,7 @@ tidb-unistore-kverrors = { path = "../tidb-unistore-kverrors" }
 tidb-rowcodec = { path = "../tidb-rowcodec" }
 chrono-tz.workspace = true
 tidb-codec = { path = "../tidb-codec" }
+tidb-context = { path = "../tidb-context" }
 crossbeam-channel = "0.5"
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-expr = { path = "../tidb-expr" }

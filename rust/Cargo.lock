@@ -8988,6 +8988,7 @@ dependencies = [
  "tidb-charset",
  "tidb-chunk",
  "tidb-codec",
+ "tidb-context",
  "tidb-datatype",
  "tidb-expr",
  "tidb-exprctx",

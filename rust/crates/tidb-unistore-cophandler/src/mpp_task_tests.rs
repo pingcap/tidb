@@ -178,3 +178,86 @@ fn a_scan_task_hash_sends_through_a_receiver_task_to_tidb() {
     });
     assert_eq!(pairs, (1..=6).map(|h| (Datum::Int(h), Datum::Int(h * 10))).collect::<Vec<_>>());
 }
+
+fn int_expr(tp: tipb::ExprType, value: i64) -> tipb::Expr {
+    let mut val = Vec::new();
+    tidb_codec::encode_int(&mut val, value);
+    tipb::Expr { tp: Some(tp as i32), val: Some(val), field_type: Some(int_field_type()), ..Default::default() }
+}
+
+/// Go `joinExec` (`buildMPPJoin`): a left outer join of the table with its
+/// rows over 30, built on the right; unmatched probe rows carry NULLs.
+#[test]
+fn a_left_outer_join_pads_unmatched_rows_with_nulls() {
+    let mut store = MvccStore::new();
+    for handle in 1..=6 {
+        put(&mut store, handle, handle * 10);
+    }
+    let scan = || tipb::Executor {
+        tp: Some(tipb::ExecType::TypeTableScan as i32),
+        tbl_scan: Some(tipb::TableScan { table_id: Some(90), columns: vec![column(1), column(2)], ..Default::default() }),
+        ..Default::default()
+    };
+    let over_30 = tipb::Executor {
+        tp: Some(tipb::ExecType::TypeSelection as i32),
+        selection: Some(Box::new(tipb::Selection {
+            conditions: vec![tipb::Expr {
+                tp: Some(tipb::ExprType::ScalarFunc as i32),
+                sig: Some(tipb::ScalarFuncSig::GtInt as i32),
+                children: vec![int_expr(tipb::ExprType::ColumnRef, 1), int_expr(tipb::ExprType::Int64, 30)],
+                field_type: Some(int_field_type()),
+                ..Default::default()
+            }],
+            child: Some(Box::new(scan())),
+            ..Default::default()
+        })),
+        ..Default::default()
+    };
+    let join = tipb::Executor {
+        tp: Some(tipb::ExecType::TypeJoin as i32),
+        join: Some(tipb::Join {
+            join_type: Some(tipb::JoinType::TypeLeftOuterJoin as i32),
+            inner_idx: Some(1),
+            left_join_keys: vec![int_expr(tipb::ExprType::ColumnRef, 0)],
+            right_join_keys: vec![int_expr(tipb::ExprType::ColumnRef, 0)],
+            children: vec![scan(), over_30],
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let dag = tipb::DagRequest { root_executor: Some(join), output_offsets: vec![0, 1, 2, 3], ..Default::default() };
+    let (start, end) = tidb_tablecodec::table_key::get_table_handle_key_range(90);
+    let resp = crate::handle_cop_request(
+        &store,
+        &coprocessor::Request {
+            tp: crate::REQ_TYPE_DAG,
+            data: dag.encode_to_vec(),
+            ranges: vec![coprocessor::KeyRange { start, end }],
+            start_ts: 20,
+            ..Default::default()
+        },
+    );
+    assert!(resp.other_error.is_empty(), "{}", resp.other_error);
+    let select = tipb::SelectResponse::decode(resp.data.as_ref()).unwrap();
+    assert_eq!(select.error, None);
+    let mut datums = Vec::new();
+    for chunk in &select.chunks {
+        let mut rest = chunk.rows_data.as_deref().unwrap_or_default();
+        while !rest.is_empty() {
+            let (remaining, datum) = tidb_codec::decode_one(rest).unwrap();
+            datums.push(datum);
+            rest = remaining;
+        }
+    }
+    let rows: Vec<Vec<Datum>> = datums.chunks(4).map(<[Datum]>::to_vec).collect();
+    let expected: Vec<Vec<Datum>> = (1..=6)
+        .map(|h| {
+            if h * 10 > 30 {
+                vec![Datum::Int(h), Datum::Int(h * 10), Datum::Int(h), Datum::Int(h * 10)]
+            } else {
+                vec![Datum::Int(h), Datum::Int(h * 10), Datum::Null, Datum::Null]
+            }
+        })
+        .collect();
+    assert_eq!(rows, expected);
+}

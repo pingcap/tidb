@@ -364,6 +364,65 @@ impl<'a> MppExecBuilder<'a> {
         })
     }
 
+    /// Go `buildMPPJoin`.
+    fn build_mpp_join(&mut self, pb: &tipb::Join, children: &[tipb::Executor]) -> Result<crate::mpp_exec::JoinExec<'a>, String> {
+        let [left, right] = children else {
+            return Err("a join has two children".to_owned());
+        };
+        let left_ch = self.build_mpp_executor(left)?;
+        let right_ch = self.build_mpp_executor(right)?;
+        let mut left_types = left_ch.get_field_types().to_vec();
+        let mut right_types = right_ch.get_field_types().to_vec();
+        let mut default_inner = Vec::new();
+        if pb.join_type() == tipb::JoinType::TypeLeftOuterJoin {
+            for tp in &mut right_types {
+                tp.del_flag(tidb_datatype::FieldTypeFlags::NOT_NULL);
+            }
+            default_inner = vec![tidb_datatype::Datum::Null; right_types.len()];
+        } else if pb.join_type() == tipb::JoinType::TypeRightOuterJoin {
+            for tp in &mut left_types {
+                tp.del_flag(tidb_datatype::FieldTypeFlags::NOT_NULL);
+            }
+            default_inner = vec![tidb_datatype::Datum::Null; left_types.len()];
+        }
+        let column_index = |key: Option<&tipb::Expr>| -> Result<usize, String> {
+            let key = key.ok_or("a join has no key")?;
+            if key.tp() != tipb::ExprType::ColumnRef {
+                return Err("a join key must be a column".to_owned());
+            }
+            let (_, index) = tidb_codec::decode_int(key.val.as_deref().unwrap_or_default()).map_err(|err| format!("{err:?}"))?;
+            usize::try_from(index).map_err(|_| "a join key must be a column".to_owned())
+        };
+        let left_key = column_index(pb.left_join_keys.first())?;
+        let right_key = column_index(pb.right_join_keys.first())?;
+        let inner_idx = usize::try_from(pb.inner_idx()).map_err(|_| "a join's inner index".to_owned())?;
+        let (build_key, probe_key, build_key_tp, probe_key_tp) = if inner_idx == 1 {
+            (right_key, left_key, right_types[right_key].clone(), left_types[left_key].clone())
+        } else {
+            (left_key, right_key, left_types[left_key].clone(), right_types[right_key].clone())
+        };
+        let mut com_key_tp = tidb_datatype::agg_field_type(&[probe_key_tp, build_key_tp]);
+        if com_key_tp.code() == tidb_datatype::FieldTypeCode::NewDecimal {
+            com_key_tp.set_flen(tidb_mysql::MaxDecimalWidth as i64);
+            com_key_tp.set_decimal(tidb_mysql::MaxDecimalScale as i64);
+        }
+        // because the field type is immutable, so this kind of appending is safe.
+        let field_types = left_types.into_iter().chain(right_types).collect();
+        Ok(crate::mpp_exec::JoinExec {
+            base: self.base(vec![left_ch, right_ch], field_types),
+            join_type: pb.join_type(),
+            hash_map: std::collections::HashMap::new(),
+            build_key,
+            probe_key,
+            build_side_idx: inner_idx,
+            idx: 0,
+            reserved_rows: Vec::new(),
+            default_inner,
+            inited: false,
+            com_key_tp,
+        })
+    }
+
     /// Go `buildMPPExecutor`.
     pub(crate) fn build_mpp_executor(
         &mut self,
@@ -401,7 +460,11 @@ impl<'a> MppExecBuilder<'a> {
             tipb::ExecType::TypeExchangeReceiver => Box::new(
                 self.build_mpp_exchange_receiver(body(exec.exchange_receiver.as_ref(), "exchange_receiver")?)?,
             ),
-            tipb::ExecType::TypeIndexLookUp | tipb::ExecType::TypeJoin | tipb::ExecType::TypeExpand => {
+            tipb::ExecType::TypeJoin => {
+                let join = body(exec.join.as_ref(), "join")?;
+                Box::new(self.build_mpp_join(join, &join.children)?)
+            }
+            tipb::ExecType::TypeIndexLookUp | tipb::ExecType::TypeExpand => {
                 return Err(format!("the {tp:?} executor is a later course of this port"))
             }
             _ => return Err(format!("{ERR_EXECUTOR_NOT_SUPPORTED_MSG}{tp:?}")),
