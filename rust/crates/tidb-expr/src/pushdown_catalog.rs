@@ -4390,6 +4390,36 @@ pub fn expression_to_pb_in(
     Some(encoded)
 }
 
+/// Go `expression.PushDownContext` as the aggregate and window lowering
+/// read it: the converter, the evaluation context's rendering, and
+/// `group_concat_max_len`.
+pub trait PushDownContext {
+    /// Go `PbConverter().ExprToPB`.
+    fn expr_to_pb(&self, expr: &Expression) -> Option<Expr>;
+    /// Go `expr.StringWithCtx(ctx.EvalCtx(), errors.RedactLogDisable)`.
+    fn expr_string(&self, expr: &Expression) -> String;
+    /// Go `GetGroupConcatMaxLen`.
+    fn group_concat_max_len(&self) -> u64;
+}
+
+/// Go `ToPBFieldTypeWithCheck`.
+///
+/// # Errors
+/// A TiFlash type whose decimal is invalid, or a type with no PB form.
+pub fn to_pb_field_type_with_check(
+    ft: &FieldType,
+    store_type: tidb_kv::store_type::StoreType,
+) -> Result<tidb_proto::tipb::FieldType, String> {
+    if store_type == tidb_kv::store_type::StoreType::TiFlash && !ft.is_decimal_valid() {
+        return Err(format!(
+            "{ft} can not be pushed to TiFlash because it contains invalid decimal('{}','{}').",
+            ft.flen(),
+            ft.decimal()
+        ));
+    }
+    to_pb_field_type(ft).ok_or_else(|| format!("{ft} has no PB field type"))
+}
+
 /// Go `ToPBFieldType` for a type used by this bounded expression closure.
 #[must_use]
 pub fn to_pb_field_type(field_type: &FieldType) -> Option<tidb_proto::tipb::FieldType> {

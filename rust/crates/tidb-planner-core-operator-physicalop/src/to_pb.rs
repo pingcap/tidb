@@ -33,8 +33,8 @@ use tidb_planner_core_base::PlanError;
 use tidb_proto::tipb;
 
 use crate::{
-    PhysicalExchangeReceiver, PhysicalExchangeSender, PhysicalLimit, PhysicalPlan, PhysicalProjection,
-    PhysicalSelection, PhysicalTableScan, PhysicalTopN,
+    PhysicalExchangeReceiver, PhysicalExchangeSender, PhysicalHashAgg, PhysicalLimit, PhysicalPlan, PhysicalProjection,
+    PhysicalSelection, PhysicalStreamAgg, PhysicalTableScan, PhysicalTopN,
 };
 
 /// Go `planctx.BuildPBContext` (`base.BuildPBContext`): what building a
@@ -77,14 +77,18 @@ fn expr_to_pb(ctx: &BuildPbContext<'_>, expr: &Expression, input: &Schema) -> Op
 /// Go `plannererrors.ErrInternal.GenWithStack("expression %v cannot be
 /// pushed down", expr.StringWithCtx(ctx, errors.RedactLogDisable))`.
 fn cannot_be_pushed_down(ctx: &BuildPbContext<'_>, expr: &Expression) -> PlanError {
-    let text = tidb_expr::explain::physical_expression_text_with_columns(
+    PlanError::internal(format!("expression {} cannot be pushed down", expression_string(ctx, expr)))
+}
+
+/// Go `expr.StringWithCtx(evalCtx, errors.RedactLogDisable)`.
+fn expression_string(ctx: &BuildPbContext<'_>, expr: &Expression) -> String {
+    tidb_expr::explain::physical_expression_text_with_columns(
         ctx.expr_ctx,
         expr,
         &[],
         tidb_expr::explain::ExpressionTextStyle::StringWithCtx,
     )
-    .unwrap_or_default();
-    PlanError::internal(format!("expression {text} cannot be pushed down"))
+    .unwrap_or_default()
 }
 
 /// Go `expression.ExpressionsToPBList`.
@@ -131,7 +135,10 @@ fn column_to_pb_expr(column: &Column) -> Option<tipb::Expr> {
     Some(tipb::Expr {
         tp: Some(tipb::ExprType::ColumnRef as i32),
         val: Some(val),
+        // gogoproto's non-nullable `sig` and `has_distinct` are always sent.
+        sig: Some(tipb::ScalarFuncSig::Unspecified as i32),
         field_type: Some(pushdown_catalog::to_pb_field_type(field_type)?),
+        has_distinct: Some(false),
         ..tipb::Expr::default()
     })
 }
@@ -142,24 +149,28 @@ fn sort_by_item_to_pb(ctx: &BuildPbContext<'_>, expr: &Expression, desc: bool, i
     Some(tipb::ByItem { expr: Some(e), desc: Some(desc), ..tipb::ByItem::default() })
 }
 
-/// Go `expression.ToPBFieldTypeWithCheck`.
-///
-/// # Errors
-/// A TiFlash type whose decimal is invalid.
-pub fn to_pb_field_type_with_check(
-    ft: &tidb_datatype::FieldType,
-    store_type: StoreType,
-) -> Result<tipb::FieldType, PlanError> {
-    if store_type == StoreType::TiFlash && !ft.is_decimal_valid() {
-        return Err(PlanError::internal(format!(
-            "{} can not be pushed to TiFlash because it contains invalid decimal('{}','{}').",
-            ft,
-            ft.flen(),
-            ft.decimal()
-        )));
+/// Go `expression.ToPBFieldTypeWithCheck`, as a planner error.
+fn to_pb_field_type_with_check(ft: &tidb_datatype::FieldType, store_type: StoreType) -> Result<tipb::FieldType, PlanError> {
+    pushdown_catalog::to_pb_field_type_with_check(ft, store_type).map_err(PlanError::internal)
+}
+
+/// Go `util.GetPushDownCtxFromBuildPBContext`: the push-down context over the
+/// operator's input row.
+struct PushDownCtx<'a, 'b> {
+    ctx: &'a BuildPbContext<'b>,
+    input: &'a Schema,
+}
+
+impl pushdown_catalog::PushDownContext for PushDownCtx<'_, '_> {
+    fn expr_to_pb(&self, expr: &Expression) -> Option<tipb::Expr> {
+        expr_to_pb(self.ctx, expr, self.input)
     }
-    pushdown_catalog::to_pb_field_type(ft)
-        .ok_or_else(|| PlanError::internal(format!("{ft} has no PB field type")))
+    fn expr_string(&self, expr: &Expression) -> String {
+        expression_string(self.ctx, expr)
+    }
+    fn group_concat_max_len(&self) -> u64 {
+        self.ctx.group_concat_max_len
+    }
 }
 
 /// Go's zero `tipb.Executor`: gogoproto always sends its non-nullable
@@ -206,6 +217,8 @@ impl PhysicalPlan {
             Self::TableScan(p) => p.to_pb(self, ctx, store_type),
             Self::ExchangeSender(p) => p.to_pb(self, ctx, store_type),
             Self::ExchangeReceiver(p) => p.to_pb(self, ctx),
+            Self::HashAgg(p) => p.to_pb(self, ctx, store_type),
+            Self::StreamAgg(p) => p.to_pb(self, ctx, store_type),
             // Go's base body is exactly this error.
             _ => Err(PlanError::internal(format!("plan {} fails converts to PB", self.explain_id(false)))),
         }
@@ -439,6 +452,79 @@ impl PhysicalExchangeReceiver {
             executor_id: Some(executor_id(plan)),
             fine_grained_shuffle_stream_count: Some(self.base.tiflash_fine_grained_shuffle_stream_count),
             fine_grained_shuffle_batch_size: Some(ctx.tiflash_fine_grained_shuffle_batch_size),
+            ..go_executor()
+        })
+    }
+}
+
+/// The aggregation's group-by items and functions (Go's shared head of
+/// `PhysicalHashAgg.ToPB` and `PhysicalStreamAgg.ToPB`).
+fn aggregation_to_pb(
+    plan: &PhysicalPlan,
+    ctx: &BuildPbContext<'_>,
+    store_type: StoreType,
+    group_by_items: &[Expression],
+    agg_funcs: &[tidb_expression_aggregation::AggFuncDesc],
+) -> Result<tipb::Aggregation, PlanError> {
+    let input = child_schema(plan)?;
+    let group_by_exprs = expressions_to_pb_list(ctx, group_by_items, input)?;
+    // gogoproto's non-nullable `streamed` is always sent; neither Go
+    // `ToPB` sets it.
+    let mut agg_exec = tipb::Aggregation { group_by: group_by_exprs, streamed: Some(false), ..tipb::Aggregation::default() };
+    let push_down_ctx = PushDownCtx { ctx, input };
+    for agg_func in agg_funcs {
+        let agg = tidb_expression_aggregation::agg_func_to_pb_expr(&push_down_ctx, agg_func, store_type)
+            .map_err(PlanError::internal)?;
+        agg_exec.agg_func.push(agg);
+    }
+    Ok(agg_exec)
+}
+
+impl PhysicalHashAgg {
+    /// Go `PhysicalHashAgg.ToPB`.
+    fn to_pb(&self, plan: &PhysicalPlan, ctx: &BuildPbContext<'_>, store_type: StoreType) -> Result<tipb::Executor, PlanError> {
+        let mut agg_exec = aggregation_to_pb(plan, ctx, store_type, &self.group_by_items, &self.agg_funcs)?;
+        let mut executor_id = String::new();
+        if store_type == StoreType::TiFlash {
+            agg_exec.child = Some(child_to_pb(plan, ctx, store_type)?);
+            executor_id = self::executor_id(plan);
+            // If p.TiflashPreAggMode is empty, means no need to consider preagg mode.
+            // For example it's the the second stage of hashagg.
+            if !self.tiflash_pre_agg_mode.is_empty() {
+                let (pre_agg_mode_val, ok) = tidb_variable::session_vars::to_tipb_tiflash_pre_agg_mode(&self.tiflash_pre_agg_mode);
+                if !ok {
+                    return Err(PlanError::internal(format!(
+                        "unexpected tiflash pre agg mode: {}",
+                        self.tiflash_pre_agg_mode
+                    )));
+                }
+                agg_exec.pre_agg_mode = Some(pre_agg_mode_val as i32);
+            }
+        }
+        Ok(tipb::Executor {
+            tp: Some(tipb::ExecType::TypeAggregation as i32),
+            aggregation: Some(Box::new(agg_exec)),
+            executor_id: Some(executor_id),
+            fine_grained_shuffle_stream_count: Some(self.base.tiflash_fine_grained_shuffle_stream_count),
+            fine_grained_shuffle_batch_size: Some(ctx.tiflash_fine_grained_shuffle_batch_size),
+            ..go_executor()
+        })
+    }
+}
+
+impl PhysicalStreamAgg {
+    /// Go `PhysicalStreamAgg.ToPB`.
+    fn to_pb(&self, plan: &PhysicalPlan, ctx: &BuildPbContext<'_>, store_type: StoreType) -> Result<tipb::Executor, PlanError> {
+        let mut agg_exec = aggregation_to_pb(plan, ctx, store_type, &self.group_by_items, &self.agg_funcs)?;
+        let mut executor_id = String::new();
+        if store_type == StoreType::TiFlash {
+            agg_exec.child = Some(child_to_pb(plan, ctx, store_type)?);
+            executor_id = self::executor_id(plan);
+        }
+        Ok(tipb::Executor {
+            tp: Some(tipb::ExecType::TypeStreamAgg as i32),
+            aggregation: Some(Box::new(agg_exec)),
+            executor_id: Some(executor_id),
             ..go_executor()
         })
     }

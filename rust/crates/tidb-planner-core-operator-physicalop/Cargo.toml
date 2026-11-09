@@ -40,3 +40,4 @@ tidb-table = { path = "../tidb-table" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-proto = { path = "../tidb-proto" }
 prost.workspace = true
+tidb-variable = { path = "../tidb-variable" }

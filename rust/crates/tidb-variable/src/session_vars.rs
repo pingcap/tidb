@@ -741,3 +741,16 @@ impl Default for DdlReorgVars {
         }
     }
 }
+
+/// Go `ToTiPBTiFlashPreAggMode`: the PB form of a
+/// `tiflash_hashagg_preaggregation_mode` value, and whether it is one.
+#[must_use]
+pub fn to_tipb_tiflash_pre_agg_mode(mode: &str) -> (tidb_proto::tipb::TiFlashPreAggMode, bool) {
+    use tidb_proto::tipb::TiFlashPreAggMode;
+    match mode {
+        tidb_vardef::tidb_vars::FORCE_PRE_AGG_STR => (TiFlashPreAggMode::ForcePreAgg, true),
+        tidb_vardef::tidb_vars::FORCE_STREAMING_STR => (TiFlashPreAggMode::ForceStreaming, true),
+        tidb_vardef::tidb_vars::AUTO_STR => (TiFlashPreAggMode::Auto, true),
+        _ => (TiFlashPreAggMode::ForcePreAgg, false),
+    }
+}

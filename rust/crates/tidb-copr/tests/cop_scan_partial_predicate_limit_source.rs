@@ -226,10 +226,9 @@ impl QueryTransport for FakeTransport {
                     .aggregation
                     .as_ref()
                     .expect("an aggregation executor carries its descriptor");
-                assert_eq!(
-                    aggregation.streamed, None,
-                    "Go's list DAG carries the mode only in Executor.tp"
-                );
+                // Go's list DAG carries the mode in Executor.tp; gogoproto
+                // still sends the non-nullable `Streamed`, as false.
+                assert_eq!(aggregation.streamed, Some(false));
                 let count = aggregation
                     .agg_func
                     .iter()

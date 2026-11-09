@@ -197,15 +197,8 @@
 //!
 //! # Skipped, with reasons
 //!
-//! - **`agg_to_pb.go` in full** (`GetTiPBExpr`, `AggFuncToPBExpr`,
-//!   `AggFunctionModeToPB`, `PBAggFuncModeToAggFuncMode`,
-//!   `PBExprToAggFuncDesc`, and `window_func.go`'s `WindowFuncToPBExpr`).
-//!   `tidb-proto`'s `select.proto` is a deliberately dependency-closed
-//!   PROJECTION of `tipb`: its `ExprType` enum has five members
-//!   (`Null`/`Int64`/`String`/`ColumnRef`/`ScalarFunc`) and carries NONE of
-//!   the ~25 aggregate/window `ExprType` values these functions switch on.
-//!   The schema now retains `agg_func_mode`, but the complete aggregate/window
-//!   descriptor conversion and order-by contract still require implementation.
+//! - **`agg_to_pb.go`'s `PBExprToAggFuncDesc`**, which decodes a PB
+//!   aggregate (the store side); the plan-to-PB half is `agg_to_pb.rs`.
 //! - **`window_func.go`'s `CanPushDownToTiFlash`** -- needs
 //!   `expression.CanExprsPushDown` over a `PushDownContext` (client +
 //!   converter), a distsql-layer object this crate does not model.
@@ -218,6 +211,7 @@ use tidb_kv::store_type::StoreType;
 use std::collections::HashMap;
 use tidb_datatype::FieldTypeCode;
 
+mod agg_to_pb;
 mod base_func;
 mod descriptor;
 mod dist;
@@ -228,6 +222,7 @@ mod window_func;
 #[cfg(test)]
 mod tests;
 
+pub use agg_to_pb::{agg_func_to_pb_expr, agg_function_mode_to_pb, pb_agg_func_mode_to_agg_func_mode};
 pub use base_func::{approx_percentile_percent, AggDescError, BaseFuncDesc};
 pub use descriptor::{AggFuncDesc, ByItems};
 pub use dist::{DistAggregate, DistAggregateError, DistAggregateState, DistAggregator};

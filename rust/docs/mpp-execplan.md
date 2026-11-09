@@ -44,10 +44,12 @@ the unistore stack.
   table scan carries Go's `Table` and `Columns`. `PhysicalPlan::to_pb`
   (`physicalop` `to_pb.rs`, Go's `BuildPBContext`) for Selection,
   Projection, Limit, TopN, TableScan (not the TiFlash partition scan yet),
-  ExchangeSender and ExchangeReceiver; a planned MPP fragment's `ToPB` is
-  Go's to the byte (`unistore_cop/mpp_to_pb.rs`, Go testkit probe vectors).
-  Left: aggregation, hash join, sort, expand, window, CTE, index scan, local
-  index lookup, the TiFlash partition scan.
+  ExchangeSender, ExchangeReceiver, HashAgg and StreamAgg (Go
+  `agg_to_pb.go`'s plan-to-PB half in `tidb-expression-aggregation`); a
+  planned MPP fragment's `ToPB` is Go's to the byte
+  (`unistore_cop/mpp_to_pb.rs`, Go testkit probe vectors). Left: hash join,
+  sort, expand, window, CTE, index scan, local index lookup, the TiFlash
+  partition scan.
 - [ ] Milestone 2: Go `fragment.go` (`Fragment`, `GenerateRootMPPTasks`,
   `mppTaskGenerator`: fragments, union-all untwisting, CTE task counts,
   `constructMPPTasksImpl` over `MPPClient.ConstructMPPTasks`, partition
@@ -92,6 +94,13 @@ the unistore stack.
   estimate is 125.00 (the limit's expected count over the selection) where
   this port's is 10000.00, and Go's plan ids run two higher
   (`TableFullScan_14` against `_12`).
+- 2026-11-10, two more planner divergences on MPP aggregation (to fix before
+  Milestone 5, whose rows depend on them): `select a, count(*) from t group
+  by a` plans Go's shape but every plan id runs one below Go's
+  (`TableFullScan_21` against `_22`); and `... sum(a) ... group by a` lacks
+  Go's `cast(test.t.a, decimal(10,0) BINARY)` argument (`WrapCastForAggArgs`)
+  and the projection Go injects below the MPP HashAgg to compute it
+  (`Projection_41`).
 
 ## Decision Log
 

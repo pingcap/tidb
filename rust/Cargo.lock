@@ -6573,6 +6573,7 @@ dependencies = [
  "tidb-table",
  "tidb-txnkv",
  "tidb-vardef",
+ "tidb-variable",
 ]
 
 [[package]]
@@ -9123,6 +9124,7 @@ dependencies = [
  "tidb-mysql",
  "tidb-naming",
  "tidb-parser",
+ "tidb-proto",
  "tidb-replayer",
  "tidb-sessionstates",
  "tidb-spill-storage",
