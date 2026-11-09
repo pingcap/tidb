@@ -136,26 +136,34 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 	var rs sqlexec.RecordSet
 	// Lock this row to prevent writing of concurrent analyze.
 	// Add a fake table ID to prevent the deadlock between the batch get and the point get.
-	// That case happens on clusters bootstrapped before v8.5.7. mysql.stats_meta was then a
-	// non-clustered table with a unique key on table_id (UNIQUE INDEX tbl(table_id)).
 	//
 	// Deadlock Issue Explanation:
-	// We encountered a stable deadlock issue during the analyze process where the transaction
-	// ultimately failed and the error was propagated to the top layer. From the deadlock records
-	// in information_schema.deadlocks, it's confirmed that this is a non-retryable deadlock.
 	//
-	// Root Cause:
-	// The point get operation acquires locks in two separate phases: first the index lock, then the row lock.
-	// Meanwhile, another transaction doing a batch point get (e.g. during stats delta dump) acquires both locks
-	// together but in the opposite order (row then index). This creates a circular wait condition where:
-	// 1. Transaction 1 holds index lock and waits for row lock
-	// 2. Transaction 2 holds row lock and waits for index lock
-	// Since the locks are acquired in separate lockKeys calls, TiDB cannot detect and retry this deadlock.
+	// For a cluster bootstrapped before v8.5.7, mysql.stats_meta has no primary
+	// key, only UNIQUE INDEX tbl(table_id). A point get FOR UPDATE locks in two
+	// LockKeys calls: the unique-index key first, then the _tidb_rowid row key. A
+	// batch point get (for example the stats delta dump, table_id IN (...)) uses
+	// one LockKeys call. The executor appends row keys and then index keys, but
+	// client-go sorts before sending. Index keys sort before row keys. The
+	// smallest key is the primary and that batch is locked to completion first;
+	// the remaining region batches are locked in parallel.
 	//
-	// Deadlock Sequence:
-	// txn1: lockKeys on point get (index lock)
-	// txn2: lockKeys on batch point get (row lock) — waits for txn1 for index lock
-	// txn1: lockKeys on point get (row lock) — deadlock occurs here and it's not retryable
+	// Take a point get of table_id 2 concurrent with a batch point get of
+	// table_id IN (1, 2). The batch primary is index(1). This deadlocks when
+	// index(2) is outside that primary batch and row(2) is on another region from
+	// index(2), so those two locks run in parallel:
+	//
+	// Deadlock sequence:
+	// txn1: LockKeys(index of 2) — acquired
+	// txn2: LockKeys primary batch — acquires index of 1
+	// txn2: parallel batches — the row region acquires row(2); the index region
+	// waits for index(2)
+	// txn1: LockKeys(row of 2) — waits for txn2
+	//
+	// If the point get is chosen as the victim, this deadlock is not retryable.
+	// Its second LockKeys contains only the row, and the index it already holds
+	// is absent from that call.
+	//
 	// Pick a fake table ID to reduce lock contention on mysql.stats_meta.
 	// Under repeatable-read, even non-existent keys are locked.
 	// Using the negative table ID keeps it separate from real table IDs and from other fake IDs.
@@ -457,7 +465,7 @@ func InsertColStats2KV(
 	// The negative ID is only a lock key and is not stored.
 	var count int64
 	found := false
-	for i := 0; i < req.NumRows(); i++ {
+	for i := range req.NumRows() {
 		row := req.GetRow(i)
 		if row.GetInt64(0) != physicalID {
 			continue
