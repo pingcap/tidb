@@ -6549,6 +6549,7 @@ dependencies = [
  "tidb-codec",
  "tidb-context",
  "tidb-datatype",
+ "tidb-distsql",
  "tidb-expr",
  "tidb-exprctx",
  "tidb-expression-aggregation",

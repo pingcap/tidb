@@ -69,7 +69,12 @@ the unistore stack.
   `TestFragmentInitSingleton`) and `constructMPPTasksByChildrenTasks`; the
   untwist; `constructMPPTasksImpl` with `distsql.TableHandleRangesToKVRanges`
   and `partitionPruning`; then the CTE sink/source operators and
-  `fillLocalCTECounts` (`TestFillLocalCTECountsUsesLocalTaskCounts`).
+  `fillLocalCTECounts` (`TestFillLocalCTECountsUsesLocalTaskCounts`). Done
+  (2026-11-10): `Fragment.init`, the untwist, `buildFragments`, and the
+  generator (`GenerateRootMPPTasks`, `generateMPPTasksForFragment`,
+  `constructMPPTasksByChildrenTasks`, `constructMPPTasksImpl`) over
+  `MppTaskGeneratorContext`; left: the context's implementation over the
+  session (ranges, pruning, the MPP client) and the MPP CTE pieces.
 - [ ] Milestone 3: the embedded store's MPP (Go
   `pkg/store/mockstore/unistore/cophandler/mpp.go` / `mpp_exec.go`): tunnels
   between tasks, `ExchangeSender` (PassThrough, Broadcast, HashPartition),
