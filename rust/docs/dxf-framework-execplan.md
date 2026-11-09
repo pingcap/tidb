@@ -117,35 +117,37 @@ tidb-server shows the same rows.
   refuses; `ingestctrl.InitializeRateLimiterParam` comes with ingest (D02);
   the `MockDisableDistTask` failpoint has no caller yet (the test stacks do
   not start the loop; the tests that need it start it).
-- [ ] Milestone 5b: Go's framework integration tests. Done: gomock's
+- [x] Milestone 5b: Go's framework tests that need a store. gomock's
   `Controller` and per-mock `Receiver` (`rust/crates/tidb-gomock`), Go's
-  generated mocks the harness uses (`rust/crates/tidb-dxf-mock`), the
-  multi-node harness (`tidb-dxf-testutil`'s `TestDxfContext`,
-  `disttest_util.go`, `executor_util.go`, `scheduler_util.go`), the Go call
-  failpoints they need (`afterRunSubtask`, `mockTiDBShutdown`,
-  `beforeSetFrameworkInfo`, `afterRefreshTask`, `mockOwnerChange`,
-  `cancelBeforeUpdateTask`, `historySubtaskTableGcInterval`,
-  `processCleanupTaskBatch`, `WaitCleanUpFinished`, `beforeSubmitTask`,
-  `mockTaskExecutorNodes` with `MockServerInfo`), and on the unistore stack
-  (`unistore_cop/dxf_integrationtests.rs`) Go's owner-change, scale in/out,
-  cancel, init-failure, run-subtask cancel/fail, cancel-before-update,
-  owner-change-while-scheduling, HA, rollback, error-handling, pause/resume,
-  target-scope, max-nodes and modify tests. Go's running-task modify tests
-  race the executor manager's pick-up of the task against the scheduler's
-  next tick; the port's hook first waits for the executor to have started
-  (Go's intent), as a slow debug build under load loses that race. Left:
-  the scheduler's and executor's own testkit tests (`resource_control_test.go`
-  is ported; no Go test pins the `break` after a preemption in
-  `handleExecutableTasks`: a `continue` there survives all of them). `SET GLOBAL tidb_service_scope` writes the
-  node's role (Go `executor/set.go`'s `InitMetaSession`), with Go's
-  `TestScopeBasic`, `TestSetScope` and the role checks of
-  `TestSetTiDBServiceScopeCaseInsensitive`; a test store that sets the
-  scope first sets the task manager, as Go's bootstrap always does.
-  Under concurrent nextest the
-  long DXF tests can make short neighbours report LEAK (a sibling spawned
-  alongside inherits their pipes, as `.config/nextest.toml` measures); a
-  serial run is leak free.
-- [ ] Milestone 6: `metering` and `dxfmetric` where a classic kernel uses them.
+  generated mocks (`rust/crates/tidb-dxf-mock`, `MockScheduler` among them),
+  the multi-node harness (`tidb-dxf-testutil`'s `TestDxfContext`,
+  `disttest_util.go`, `executor_util.go`, `scheduler_util.go`) and the Go
+  call failpoints they need. On the unistore stack: every
+  `integrationtests` test (`unistore_cop/dxf_integrationtests.rs`), the
+  scheduler's `scheduler_test.go` and `scheduler_manager_test.go`
+  (`dxf_scheduler.rs`, over Go's test-only `GetRunningTaskCnt`,
+  `DelRunningTask` and `DoClean`), the executor's
+  `task_executor_testkit_test.go` (`dxf_taskexecutor.rs`), and
+  `SET GLOBAL tidb_service_scope` writing the node's role (Go
+  `executor/set.go`'s `InitMetaSession`) with `TestScopeBasic`,
+  `TestSetScope` and `TestSetTiDBServiceScopeCaseInsensitive`. A test node
+  publishes port 4000 where Go's `:4000` exec ID is pinned. Go's
+  running-task modify tests race the executor manager's pick-up of the task
+  against the scheduler's next tick; the port's hook first waits for the
+  executor to have started (Go's intent), as a slow debug build under load
+  loses that race. No Go test pins the `break` after a preemption in
+  `handleExecutableTasks` (a `continue` there survives all of them).
+  `TestManagerScheduleLoop`'s next-gen subtest reads `GetScheduleStatus`
+  (O15). Under concurrent nextest the long DXF tests can make short
+  neighbours report LEAK (a sibling spawned alongside inherits their pipes,
+  as `.config/nextest.toml` measures); a serial run is leak free.
+- [x] Milestone 6: `metering` and `dxfmetric` where a classic kernel uses
+  them. `dxfmetric` (`rust/crates/tidb-dxf-dxfmetric`) registers at process
+  init as Go's `RegisterMetrics` does (`tidb-server` `server_metrics::init`);
+  the scheduler manager registers its `Collector`. On a classic kernel
+  `metering`'s `RegisterRecorder` hands out an unregistered recorder and
+  `UnregisterRecorder` / `WriteMeterData` do nothing
+  (`rust/crates/tidb-dxf-metering`); the `Meter` is next-gen's (O15).
 
 ## Surprises & Discoveries
 
@@ -230,7 +232,18 @@ tidb-server shows the same rows.
 
 ## Outcomes & Retrospective
 
-Nothing yet.
+2026-11-10: every milestone is done. A Rust node runs Go's DXF: the domain
+starts the scheduler and task executor managers, Go's `example` task runs to
+`succeed` (`TestExampleApplication`), and Go's framework tests run on the
+unistore stack (unit, nokit, store-backed and integration), mutation-checked
+where they pin a behaviour. What O10 keeps is outside this plan: Go's
+`TaskManager` methods stop in-flight internal SQL when their `ctx` is
+cancelled, which needs cancellation in the Rust internal-SQL path first; and
+the next-gen pieces (`Meter`, `GetScheduleStatus`) are O15's. The task types
+built on the framework (ingest backfill, D02/D11; `IMPORT INTO`, E05) are
+their rows' plans. Lesson: Go's tests race the framework's own loops on
+purpose; a debug build under load loses races a Go build wins, so a port
+waits for the state Go's test intends rather than for a fixed interval.
 
 ## Context and Orientation
 

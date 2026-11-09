@@ -306,15 +306,30 @@ mod tests {
     }
 }
 
-/// Go's process init: `RegisterMetrics` for the server families, then the
-/// dashboard series Go's subsystem startup writes.
+/// Go's process init: `RegisterMetrics` for the server families (with
+/// `dxfmetric.InitDistTaskMetrics`), then the dashboard series Go's
+/// subsystem startup writes.
 pub fn init() {
     tidb_metrics::server::register_metrics();
+    tidb_dxf_dxfmetric::init_dist_task_metrics();
     init_dashboard_series();
 }
 
 #[cfg(test)]
 mod init_tests {
+    /// Go's `RegisterMetrics` registers the DXF families
+    /// (`dxfmetric.InitDistTaskMetrics`) at process init, not on first use.
+    #[test]
+    fn init_registers_dist_task_metrics() {
+        super::init();
+        let worker_count = prometheus::GaugeVec::new(
+            prometheus::Opts::new("worker_count", "Gauge of DXF worker count.").namespace("tidb").subsystem("dxf"),
+            &["type"],
+        )
+        .unwrap();
+        assert!(matches!(prometheus::register(Box::new(worker_count)), Err(prometheus::Error::AlreadyReg)));
+    }
+
     #[test]
     fn init_registers_every_family() {
         super::init();

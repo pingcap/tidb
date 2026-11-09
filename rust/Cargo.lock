@@ -7173,6 +7173,7 @@ dependencies = [
  "tidb-domain-serverinfo",
  "tidb-domainutil",
  "tidb-driver-error",
+ "tidb-dxf-dxfmetric",
  "tidb-errmsg",
  "tidb-errno",
  "tidb-executor",
