@@ -290,8 +290,10 @@ impl TaskManager {
     /// # Errors
     /// The begin, `f` or the commit failed.
     pub fn with_new_txn(&self, f: &mut dyn FnMut(&dyn SessionContext) -> Result<()>) -> Result<()> {
-        // Go `clitutil.WithInternalSourceType(ctx, kv.InternalDistTask)`.
-        let context = BackgroundContext;
+        let context = tikv_client::util::with_internal_source_type(
+            &tikv_client::trace::TraceContext::new(),
+            tidb_txnkv::INTERNAL_DIST_TASK,
+        );
         self.with_new_session(&mut |se| {
             exec_sql(&context, se, "begin", &[])?;
             match f(se) {

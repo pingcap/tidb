@@ -1066,3 +1066,830 @@ fn test_cleanup_tasks_are_batch_limited() {
     assert_eq!(pending_task.base.state, TASK_STATE_PENDING);
     restore();
 }
+
+/// Go `TestTaskHistoryTable`.
+#[test]
+fn test_task_history_table() {
+    use tidb_terror::{annotate, TerrorCode, TerrorError};
+
+    let (_stack, gm) = init_table_test();
+
+    gm.init_meta(":4000", "").unwrap();
+    let first_task_id =
+        gm.create_task("1", &TASK_TYPE_EXAMPLE, "", 1, "", 0, &ExtraParams::default(), b"original").unwrap();
+    let task_id = gm.create_task("2", &TASK_TYPE_EXAMPLE, "", 1, "", 0, &ExtraParams::default(), b"original").unwrap();
+
+    let mut tasks: Vec<Task> = [first_task_id, task_id].iter().map(|id| gm.get_task_by_id(*id).unwrap()).collect();
+    let task_bases = gm.get_task_bases_in_states(&[TASK_STATE_PENDING]).unwrap();
+    assert_eq!(format!("{task_bases:?}"), format!("{:?}", [&tasks[0].base, &tasks[1].base].map(Clone::clone)));
+    for task in &tasks {
+        testutil::insert_subtask(&gm, task.base.id, STEP_ONE, "tidb1", Some(EMPTY_META), &SUBTASK_STATE_RUNNING, &TASK_TYPE_EXAMPLE, 1);
+    }
+    for (i, task) in tasks.iter_mut().enumerate() {
+        task.meta = format!("redacted-{i}").into_bytes();
+    }
+    let untouched_task_id =
+        gm.create_task("3", &TASK_TYPE_EXAMPLE, "", 1, "", 0, &ExtraParams::default(), b"untouched").unwrap();
+    testutil::insert_subtask(&gm, untouched_task_id, STEP_ONE, "tidb1", Some(EMPTY_META), &SUBTASK_STATE_RUNNING, &TASK_TYPE_EXAMPLE, 1);
+    gm.transfer_tasks2_history(&tasks).unwrap();
+
+    let mut untouched_task = gm.get_task_by_id(untouched_task_id).unwrap();
+    assert_eq!(untouched_task.base.state, TASK_STATE_PENDING);
+    assert_eq!(testutil::get_tasks_from_history(&gm).unwrap(), 2);
+    for (i, old_task) in tasks.iter().enumerate() {
+        assert_eq!(testutil::get_subtasks_from_history_by_task_id(&gm, old_task.base.id).unwrap(), 1);
+
+        let history_task = gm.get_task_by_id_with_history(old_task.base.id).unwrap();
+        assert_eq!(history_task.meta, format!("redacted-{i}").into_bytes());
+
+        assert!(testutil::get_subtasks_by_task_id(&gm, old_task.base.id).unwrap().is_empty());
+    }
+
+    assert_eq!(untouched_task.meta, b"untouched");
+    assert_eq!(testutil::get_subtasks_by_task_id(&gm, untouched_task_id).unwrap().len(), 1);
+    assert_eq!(testutil::get_subtasks_from_history_by_task_id(&gm, untouched_task_id).unwrap(), 0);
+
+    gm.get_task_by_id_with_history(task_id).unwrap();
+    gm.get_task_by_key_with_history("1").unwrap();
+
+    // task with fail transfer
+    untouched_task.error = Some(Arc::new(err("mock err")));
+    gm.transfer_tasks2_history(&[untouched_task]).unwrap();
+    assert_eq!(testutil::get_tasks_from_history(&gm).unwrap(), 3);
+
+    // list history tasks with pagination and keyspace
+    for sql in [
+        "delete from mysql.tidb_background_subtask",
+        "delete from mysql.tidb_background_subtask_history",
+        "delete from mysql.tidb_global_task",
+        "delete from mysql.tidb_global_task_history",
+    ] {
+        gm.execute_sql_with_new_session(sql, &[]).unwrap();
+    }
+
+    let task_specs: [(&str, &str, Option<std::io::Error>); 5] = [
+        ("history-task-1", "ks1", None),
+        ("history-task-2", "ks2", None),
+        ("history-task-3", "ks1", None),
+        ("history-task-4", "ks3", None),
+        ("history-task-5", "ks1", Some(err("history task failed"))),
+    ];
+    let mut all_ids = Vec::with_capacity(task_specs.len());
+    let mut tasks_to_transfer = Vec::with_capacity(task_specs.len());
+    for (key, keyspace, task_err) in &task_specs {
+        let id = gm.create_task(key, &IMPORT_INTO, keyspace, 8, "", 0, &ExtraParams::default(), b"meta").unwrap();
+        let task = gm.get_task_by_id(id).unwrap();
+        gm.switch_task_step(&task, &TASK_STATE_RUNNING, STEP_ONE, &[]).unwrap();
+        match task_err {
+            Some(task_err) => gm.fail_task(id, &TASK_STATE_RUNNING, Some(task_err)).unwrap(),
+            None => gm.succeed_task(id).unwrap(),
+        }
+        all_ids.push(id);
+        tasks_to_transfer.push(gm.get_task_by_id(id).unwrap());
+    }
+    gm.transfer_tasks2_history(&tasks_to_transfer).unwrap();
+
+    all_ids.reverse();
+    let first_page = gm.list_history_tasks(2, 0, "").unwrap();
+    assert_eq!(first_page.items.len(), 2);
+    assert_eq!(first_page.approx_total_count, 5);
+    assert!(first_page.has_more);
+    assert_eq!(first_page.items[0].task_base.id, all_ids[0]);
+    assert_eq!(first_page.items[1].task_base.id, all_ids[1]);
+    assert_eq!(first_page.next_page_token, all_ids[1]);
+    assert_eq!(first_page.items[0].task_base.key, "history-task-5");
+    assert_eq!(first_page.items[0].task_base.keyspace, "ks1");
+    assert_eq!(first_page.items[0].task_base.state, TASK_STATE_FAILED);
+    assert!(first_page.items[0].error_code.is_empty());
+    assert_eq!(first_page.items[0].error_category, "failed");
+    assert!(first_page.items[1].error_code.is_empty());
+    assert!(first_page.items[1].error_category.is_empty());
+    assert_ne!(first_page.items[0].task_base.create_time, go_zero_time());
+    assert_ne!(first_page.items[0].start_time, go_zero_time());
+    assert_ne!(first_page.items[0].state_update_time, go_zero_time());
+    assert_ne!(first_page.items[0].end_time, go_zero_time());
+
+    let second_page = gm.list_history_tasks(2, first_page.items[1].task_base.id, "").unwrap();
+    assert_eq!(second_page.items.len(), 2);
+    assert_eq!(second_page.approx_total_count, 5);
+    assert!(second_page.has_more);
+    assert_eq!(second_page.items[0].task_base.id, all_ids[2]);
+    assert_eq!(second_page.items[1].task_base.id, all_ids[3]);
+    assert_eq!(second_page.next_page_token, all_ids[3]);
+
+    let last_page = gm.list_history_tasks(2, second_page.items[1].task_base.id, "").unwrap();
+    assert_eq!(last_page.items.len(), 1);
+    assert_eq!(last_page.approx_total_count, 5);
+    assert!(!last_page.has_more);
+    assert_eq!(last_page.items[0].task_base.id, all_ids[4]);
+    assert_eq!(last_page.next_page_token, 0);
+
+    let filtered_page = gm.list_history_tasks(1, 0, "ks1").unwrap();
+    assert_eq!(filtered_page.items.len(), 1);
+    assert_eq!(filtered_page.approx_total_count, 3);
+    assert!(filtered_page.has_more);
+    assert_eq!(filtered_page.items[0].task_base.keyspace, "ks1");
+    assert!(filtered_page.next_page_token > 0);
+
+    let filtered_page_with_token = gm.list_history_tasks(1, filtered_page.items[0].task_base.id, "ks1").unwrap();
+    assert_eq!(filtered_page_with_token.items.len(), 1);
+    assert_eq!(filtered_page_with_token.approx_total_count, 3);
+    assert!(filtered_page_with_token.has_more);
+    assert_eq!(filtered_page_with_token.items[0].task_base.keyspace, "ks1");
+
+    for page_size in [0, 201] {
+        let error = gm.list_history_tasks(page_size, 0, "").unwrap_err();
+        assert!(error.to_string().contains("page size should be within"), "{error}");
+    }
+
+    // classify history task errors without messages
+    for sql in ["delete from mysql.tidb_global_task", "delete from mysql.tidb_global_task_history"] {
+        gm.execute_sql_with_new_session(sql, &[]).unwrap();
+    }
+
+    let normalize = |message: &str, rfc_code: &str, code: isize| TerrorError::normalize(message, rfc_code, TerrorCode::new(code));
+    let task_specs: Vec<(&str, Box<dyn std::error::Error>, bool)> = vec![
+        (
+            "named-failure",
+            Box::new(annotate(
+                Arc::new(
+                    normalize("sensitive named failure", "DXF:History:Named", 0)
+                        .wrap(Arc::new(err("sensitive inner failure"))),
+                ),
+                "sensitive annotated context",
+            )),
+            false,
+        ),
+        ("two-part-code", Box::new(normalize("sensitive two-part failure", "kv:1062", 0)), false),
+        ("code-less-normalized", Box::new(normalize("sensitive code-less failure", "", 0)), false),
+        ("plain-failure", Box::new(err("sensitive plain failure")), false),
+        ("legacy-kv-code", Box::new(TerrorError::compatible(TerrorCode::new(1062), "sensitive legacy kv failure")), false),
+        (
+            "numeric-code-only",
+            Box::new(TerrorError::compatible(TerrorCode::new(1062), "sensitive numeric-only failure")),
+            false,
+        ),
+        ("cancelled", Box::new(err("cancelled by user")), true),
+        ("data-error", Box::new(err("[Lightning:Restore:ErrEncodeKV]Value conversion failed for column 'a'")), true),
+        ("ordinary-revert", Box::new(err("sensitive ordinary failure")), true),
+    ];
+    let mut tasks_to_transfer = Vec::with_capacity(task_specs.len());
+    for (key, task_err, reverted) in &task_specs {
+        let id = gm.create_task(key, &IMPORT_INTO, "ks1", 8, "", 0, &ExtraParams::default(), b"").unwrap();
+        let task = gm.get_task_by_id(id).unwrap();
+        gm.switch_task_step(&task, &TASK_STATE_RUNNING, STEP_ONE, &[]).unwrap();
+        if *reverted {
+            gm.revert_task(id, &TASK_STATE_RUNNING, Some(task_err.as_ref())).unwrap();
+            gm.reverted_task(id).unwrap();
+        } else {
+            gm.fail_task(id, &TASK_STATE_RUNNING, Some(task_err.as_ref())).unwrap();
+        }
+        tasks_to_transfer.push(gm.get_task_by_id(id).unwrap());
+    }
+    gm.transfer_tasks2_history(&tasks_to_transfer).unwrap();
+    let legacy_errors: [(&str, &[u8]); 2] = [
+        ("legacy-kv-code", br#"{"class":8,"code":1062,"message":"sensitive legacy kv failure","rfccode":""}"#),
+        ("numeric-code-only", br#"{"class":0,"code":1062,"message":"sensitive legacy numeric failure","rfccode":""}"#),
+    ];
+    for (key, error_data) in legacy_errors {
+        gm.execute_sql_with_new_session(
+            "
+\t\t\t\tupdate mysql.tidb_global_task_history
+\t\t\t\tset error = %?
+\t\t\t\twhere task_key = %?",
+            &[tidb_sqlescape::SqlArg::Bytes(Some(error_data)), tidb_sqlescape::SqlArg::String(key.as_bytes())],
+        )
+        .unwrap();
+    }
+
+    let page = gm.list_history_tasks(task_specs.len() as isize, 0, "").unwrap();
+    assert_eq!(page.items.len(), task_specs.len());
+    let items_by_key: std::collections::HashMap<&str, &tidb_dxf_storage::HistoryTaskSummary> =
+        page.items.iter().map(|item| (item.task_base.key.as_str(), item)).collect();
+    assert_eq!(items_by_key["named-failure"].error_code, "DXF:History:Named");
+    assert_eq!(items_by_key["named-failure"].error_category, "failed");
+    assert_eq!(items_by_key["two-part-code"].error_code, "kv:1062");
+    assert_eq!(items_by_key["two-part-code"].error_category, "failed");
+    assert!(items_by_key["code-less-normalized"].error_code.is_empty());
+    assert!(items_by_key["plain-failure"].error_code.is_empty());
+    assert_eq!(items_by_key["plain-failure"].error_category, "failed");
+    assert_eq!(items_by_key["legacy-kv-code"].error_code, "kv:1062");
+    assert_eq!(items_by_key["legacy-kv-code"].error_category, "failed");
+    assert_eq!(items_by_key["numeric-code-only"].error_code, "1062");
+    assert_eq!(items_by_key["numeric-code-only"].error_category, "failed");
+    assert_eq!(items_by_key["cancelled"].error_category, "cancelled");
+    assert_eq!(items_by_key["data-error"].error_category, "data-error");
+    assert_eq!(items_by_key["ordinary-revert"].error_category, "failed");
+}
+
+/// Go `TestPauseAndResume`.
+#[test]
+fn test_pause_and_resume() {
+    let (_stack, sm) = init_table_test();
+
+    for _ in 0..3 {
+        testutil::create_sub_task(&sm, 1, STEP_INIT, "tidb1", Some(b"test"), &TASK_TYPE_EXAMPLE, 11);
+    }
+    // 1.1 pause all subtasks.
+    sm.pause_subtasks("tidb1", 1).unwrap();
+    let cnt_by_states = sm.get_subtask_cnt_group_by_states(1, STEP_INIT).unwrap();
+    assert_eq!(cnt_by_states[&SUBTASK_STATE_PAUSED], 3);
+    // 1.2 resume all subtasks.
+    sm.resume_subtasks(1).unwrap();
+    let cnt_by_states = sm.get_subtask_cnt_group_by_states(1, STEP_INIT).unwrap();
+    assert_eq!(cnt_by_states[&SUBTASK_STATE_PENDING], 3);
+
+    // 2.1 pause 2 subtasks.
+    sm.update_subtask_state_and_error("tidb1", 1, &SUBTASK_STATE_SUCCEED, None).unwrap();
+    sm.pause_subtasks("tidb1", 1).unwrap();
+    let cnt_by_states = sm.get_subtask_cnt_group_by_states(1, STEP_INIT).unwrap();
+    assert_eq!(cnt_by_states[&SUBTASK_STATE_PAUSED], 2);
+    // 2.2 resume 2 subtasks.
+    sm.resume_subtasks(1).unwrap();
+    let cnt_by_states = sm.get_subtask_cnt_group_by_states(1, STEP_INIT).unwrap();
+    assert_eq!(cnt_by_states[&SUBTASK_STATE_PENDING], 2);
+}
+
+/// Go `TestCancelAndExecIdChanged`, its exec-id half. The cancelled-context
+/// half needs Go's context cancellation, which the internal SQL path does
+/// not carry (see the DXF ExecPlan).
+#[test]
+fn test_cancel_and_exec_id_changed() {
+    let (_stack, sm) = init_table_test();
+
+    testutil::create_sub_task(&sm, 1, STEP_INIT, "tidb1", Some(b"test"), &TASK_TYPE_EXAMPLE, 11);
+    let subtask = sm.get_first_subtask_in_states("tidb1", 1, STEP_INIT, &[SUBTASK_STATE_PENDING]).unwrap().unwrap();
+
+    // 2. change the exec_id
+    // exec_id changed
+    testutil::update_subtask_exec_id(&sm, "tidb2", subtask.base.id).unwrap();
+    // exec_id in memory unchanged, call UpdateSubtaskStateAndError.
+    sm.update_subtask_state_and_error(&subtask.base.exec_id, subtask.base.id, &SUBTASK_STATE_FAILED, None).unwrap();
+    let subtask = sm.get_first_subtask_in_states("tidb2", 1, STEP_INIT, &[SUBTASK_STATE_PENDING]).unwrap();
+    // state unchanged
+    assert!(subtask.is_some());
+}
+
+/// Go `TestTaskNotFound`.
+#[test]
+fn test_task_not_found() {
+    let (_stack, gm) = init_table_test();
+    let not_found = |result: tidb_dxf_storage::Result<Task>| {
+        assert!(result.unwrap_err().is(&tidb_dxf_storage::StorageError::TaskNotFound));
+    };
+    not_found(gm.get_task_by_id(1));
+    not_found(gm.get_task_by_id_with_history(1));
+    not_found(gm.get_task_by_key("key"));
+    not_found(gm.get_task_by_key_with_history("key"));
+}
+
+/// Go `TestInitMeta`.
+#[test]
+fn test_init_meta() {
+    let (stack, sm) = init_table_test();
+    let mut tk = stack.factory.open_session(session_context(306)).unwrap();
+    let role = |tk: &mut Session| displayed(rows(tk, r#"select role from mysql.dist_framework_meta where host="tidb1""#));
+    sm.init_meta("tidb1", "").unwrap();
+    assert_eq!(role(&mut tk), [[""]]);
+    sm.init_meta("tidb1", "background").unwrap();
+    assert_eq!(role(&mut tk), [["background"]]);
+    rows(&mut tk, r#"set global tidb_service_scope="""#);
+    assert_eq!(displayed(rows(&mut tk, "select @@global.tidb_service_scope")), [[""]]);
+
+    // 1. delete then start.
+    sm.delete_dead_nodes(&["tidb1".to_owned()]).unwrap();
+    sm.init_meta("tidb1", "").unwrap();
+    assert_eq!(role(&mut tk), [[""]]);
+
+    sm.delete_dead_nodes(&["tidb1".to_owned()]).unwrap();
+    sm.init_meta("tidb1", "background").unwrap();
+    assert_eq!(role(&mut tk), [["background"]]);
+
+    // 2. delete then set.
+    sm.delete_dead_nodes(&["tidb1".to_owned()]).unwrap();
+    rows(&mut tk, r#"set global tidb_service_scope="""#);
+    assert_eq!(displayed(rows(&mut tk, "select @@global.tidb_service_scope")), [[""]]);
+
+    sm.delete_dead_nodes(&["tidb1".to_owned()]).unwrap();
+    rows(&mut tk, r#"set global tidb_service_scope="background""#);
+    assert_eq!(displayed(rows(&mut tk, "select @@global.tidb_service_scope")), [["background"]]);
+    rows(&mut tk, r#"set global tidb_service_scope="""#);
+}
+
+/// Go `TestSubtaskType`.
+#[test]
+fn test_subtask_type() {
+    let (_stack, sm) = init_table_test();
+    let cases = [TASK_TYPE_EXAMPLE, IMPORT_INTO, BACKFILL, tp("")];
+    for (i, c) in cases.iter().enumerate() {
+        let task_id = i as i64 + 1;
+        testutil::insert_subtask(&sm, task_id, STEP_ONE, "tidb-1", Some(b""), &SUBTASK_STATE_RUNNING, c, 12);
+        let subtask =
+            sm.get_first_subtask_in_states("tidb-1", task_id, STEP_ONE, &[SUBTASK_STATE_RUNNING]).unwrap().unwrap();
+        assert_eq!(&subtask.base.tp, c);
+    }
+}
+
+/// Go `TestRunningSubtasksBack2Pending`.
+#[test]
+fn test_running_subtasks_back2_pending() {
+    let (_stack, sm) = init_table_test();
+    // (task id, exec id, state, update time)
+    let mut subtasks = vec![
+        (1, "tidb-1".to_owned(), SUBTASK_STATE_PENDING.to_string(), go_zero_time()),
+        (1, "tidb-1".to_owned(), SUBTASK_STATE_RUNNING.to_string(), go_zero_time()),
+        (1, "tidb-2".to_owned(), SUBTASK_STATE_PENDING.to_string(), go_zero_time()),
+        (2, "tidb-1".to_owned(), SUBTASK_STATE_PENDING.to_string(), go_zero_time()),
+    ];
+    for (task_id, exec_id, state, _) in &subtasks {
+        testutil::insert_subtask(&sm, *task_id, STEP_ONE, exec_id, Some(b""), &SubtaskState::new(state.clone()), &TASK_TYPE_EXAMPLE, 12);
+    }
+
+    let get_all_subtasks = || {
+        sm.execute_sql_with_new_session(
+            "
+\t\t\t\tselect cast(task_key as signed), exec_id, state, state_update_time
+\t\t\t\tfrom mysql.tidb_background_subtask
+\t\t\t\torder by task_key, exec_id, state",
+            &[],
+        )
+        .unwrap()
+        .into_iter()
+        .map(|r| {
+            let displayed = displayed(vec![r.clone()]).remove(0);
+            let update_time = match &r[3] {
+                Datum::Null => go_zero_time(),
+                Datum::Int(seconds) => Local.timestamp_opt(*seconds, 0).unwrap().fixed_offset(),
+                Datum::UInt(seconds) => Local.timestamp_opt(*seconds as i64, 0).unwrap().fixed_offset(),
+                other => panic!("state_update_time {other:?}"),
+            };
+            (displayed[0].parse::<i64>().unwrap(), displayed[1].clone(), displayed[2].clone(), update_time)
+        })
+        .collect::<Vec<_>>()
+    };
+
+    assert_eq!(subtasks, get_all_subtasks());
+    sm.running_subtasks_back2_pending(&[]).unwrap();
+    assert_eq!(subtasks, get_all_subtasks());
+
+    let active_subtasks = sm.get_active_subtasks(1).unwrap();
+    assert_eq!(active_subtasks.len(), 3);
+    let start_time = now_secs();
+    // this list contains running and pending subtasks, just for test.
+    sm.running_subtasks_back2_pending(&active_subtasks).unwrap();
+    let mut all_subtasks = get_all_subtasks();
+    assert!(all_subtasks[1].3 >= start_time);
+    all_subtasks[1].3 = go_zero_time();
+    subtasks[1].2 = SUBTASK_STATE_PENDING.to_string();
+    assert_eq!(subtasks, all_subtasks);
+}
+
+/// Go `TestSubtasksState`.
+#[test]
+fn test_subtasks_state() {
+    let (_stack, sm) = init_table_test();
+    let ts = Local::now().fixed_offset();
+    std::thread::sleep(Duration::from_secs(1));
+    // 1. test FailSubtask do update start/update time
+    testutil::create_sub_task(&sm, 3, STEP_INIT, "for_test", Some(b"test"), &TASK_TYPE_EXAMPLE, 11);
+    sm.fail_subtask("for_test", 3, Some(&err("fail"))).unwrap();
+    let subtask = sm.get_first_subtask_in_states("for_test", 3, STEP_INIT, &[SUBTASK_STATE_FAILED]).unwrap().unwrap();
+    assert_eq!(subtask.base.state, SUBTASK_STATE_FAILED);
+    assert!(subtask.base.start_time > ts);
+    assert!(subtask.update_time > ts);
+
+    let end_time = testutil::get_subtask_end_time(&sm, subtask.base.id).unwrap();
+    assert!(end_time > ts);
+
+    // 2. test FinishSubtask do update update time
+    testutil::create_sub_task(&sm, 4, STEP_INIT, "for_test1", Some(b"test"), &TASK_TYPE_EXAMPLE, 11);
+    let subtask =
+        sm.get_first_subtask_in_states("for_test1", 4, STEP_INIT, &[SUBTASK_STATE_PENDING]).unwrap().unwrap();
+    sm.start_subtask(subtask.base.id, "for_test1").unwrap();
+
+    let subtask =
+        sm.get_first_subtask_in_states("for_test1", 4, STEP_INIT, &[SUBTASK_STATE_RUNNING]).unwrap().unwrap();
+    assert!(subtask.base.start_time > ts);
+    assert!(subtask.update_time > ts);
+    let ts = Local::now().fixed_offset();
+    std::thread::sleep(Duration::from_secs(1));
+    sm.finish_subtask("for_test1", subtask.base.id, &[]).unwrap();
+    let subtask2 =
+        sm.get_first_subtask_in_states("for_test1", 4, STEP_INIT, &[SUBTASK_STATE_SUCCEED]).unwrap().unwrap();
+    assert_eq!(subtask2.base.start_time, subtask.base.start_time);
+    assert!(subtask2.update_time > subtask.update_time);
+    let end_time = testutil::get_subtask_end_time(&sm, subtask.base.id).unwrap();
+    assert!(end_time > ts);
+
+    // 3. test CancelSubtask
+    testutil::create_sub_task(&sm, 3, STEP_INIT, "for_test", Some(b"test"), &TASK_TYPE_EXAMPLE, 11);
+    sm.cancel_subtask("for_test", 3).unwrap();
+    let subtask = sm.get_first_subtask_in_states("for_test", 3, STEP_INIT, &[SUBTASK_STATE_CANCELED]).unwrap().unwrap();
+    assert_eq!(subtask.base.state, SUBTASK_STATE_CANCELED);
+    assert!(subtask.base.start_time > ts);
+    assert!(subtask.update_time > ts);
+
+    let end_time = testutil::get_subtask_end_time(&sm, subtask.base.id).unwrap();
+    assert!(end_time > ts);
+
+    // 4. CancelSubtask should cancel all pending/running subtasks for one exec/task.
+    let subtask_id1 = testutil::create_sub_task(&sm, 5, STEP_INIT, "for_test_multi", Some(b"test"), &TASK_TYPE_EXAMPLE, 11);
+    testutil::create_sub_task(&sm, 5, STEP_INIT, "for_test_multi", Some(b"test"), &TASK_TYPE_EXAMPLE, 11);
+    sm.start_subtask(subtask_id1, "for_test_multi").unwrap();
+    sm.cancel_subtask("for_test_multi", 5).unwrap();
+    let cnt_by_states = sm.get_subtask_cnt_group_by_states(5, STEP_INIT).unwrap();
+    assert_eq!(cnt_by_states[&SUBTASK_STATE_CANCELED], 2);
+    assert_eq!(cnt_by_states.get(&SUBTASK_STATE_PENDING).copied().unwrap_or(0), 0);
+    assert_eq!(cnt_by_states.get(&SUBTASK_STATE_RUNNING).copied().unwrap_or(0), 0);
+}
+
+/// Go `checkBasicTaskEq`.
+fn check_basic_task_eq(expected_task: &TaskBase, task: &TaskBase) {
+    assert_eq!(expected_task.id, task.id);
+    assert_eq!(expected_task.key, task.key);
+    assert_eq!(expected_task.tp, task.tp);
+    assert_eq!(expected_task.state, task.state);
+    assert_eq!(expected_task.step, task.step);
+    assert_eq!(expected_task.priority, task.priority);
+    assert_eq!(expected_task.required_slots, task.required_slots);
+    assert_eq!(expected_task.create_time, task.create_time);
+}
+
+/// Go `TestGetActiveTaskExecInfo`.
+#[test]
+fn test_get_active_task_exec_info() {
+    let (_stack, tm) = init_table_test();
+
+    tm.init_meta(":4000", "").unwrap();
+    let task_states = [TASK_STATE_RUNNING, TASK_STATE_REVERTING, TASK_STATE_REVERTING, TASK_STATE_PAUSING];
+    let mut tasks = Vec::with_capacity(task_states.len());
+    for (i, expected_state) in task_states.iter().enumerate() {
+        let task_id =
+            tm.create_task(&format!("key-{i}"), &TASK_TYPE_EXAMPLE, "", 8, "", 0, &ExtraParams::default(), b"").unwrap();
+        let mut task = tm.get_task_by_id(task_id).unwrap();
+        tm.switch_task_step(&task, &TASK_STATE_RUNNING, STEP_TWO, &[]).unwrap();
+        task.base.state = expected_state.clone();
+        task.base.step = STEP_TWO;
+        if *expected_state == TASK_STATE_REVERTING {
+            tm.revert_task(task.base.id, &TASK_STATE_RUNNING, None).unwrap();
+        } else if *expected_state == TASK_STATE_PAUSING {
+            tm.pause_task(&task.base.key).unwrap();
+        }
+        tasks.push(task);
+    }
+    // mock a pending subtask of step 1, this should not happen, just for test
+    let insert = |task: &Task, step: Step, exec_id: &str, state: &SubtaskState, concurrency: isize| {
+        testutil::insert_subtask(&tm, task.base.id, step, exec_id, Some(b"test"), state, &TASK_TYPE_EXAMPLE, concurrency);
+    };
+    insert(&tasks[0], STEP_ONE, ":4000", &SUBTASK_STATE_PENDING, 4);
+    insert(&tasks[0], STEP_TWO, ":4000", &SUBTASK_STATE_PENDING, 4);
+    insert(&tasks[0], STEP_TWO, ":4000", &SUBTASK_STATE_RUNNING, 4);
+    insert(&tasks[0], STEP_TWO, ":4001", &SUBTASK_STATE_SUCCEED, 4);
+    insert(&tasks[0], STEP_TWO, ":4001", &SUBTASK_STATE_PENDING, 4);
+    // task 1 has no subtask
+    insert(&tasks[2], STEP_TWO, ":4001", &SUBTASK_STATE_PENDING, 6);
+    insert(&tasks[3], STEP_TWO, ":4001", &SUBTASK_STATE_RUNNING, 8);
+
+    tm.get_active_subtasks(1).unwrap();
+    // :4000
+    let task_exec_infos = tm.get_task_exec_info_by_exec_id(":4000").unwrap();
+    assert_eq!(task_exec_infos.len(), 1);
+    check_basic_task_eq(&tasks[0].base, &task_exec_infos[0].task_base);
+    assert_eq!(task_exec_infos[0].subtask_concurrency, 4);
+    // :4001
+    let task_exec_infos = tm.get_task_exec_info_by_exec_id(":4001").unwrap();
+    assert_eq!(task_exec_infos.len(), 3);
+    check_basic_task_eq(&tasks[0].base, &task_exec_infos[0].task_base);
+    assert_eq!(task_exec_infos[0].subtask_concurrency, 4);
+    check_basic_task_eq(&tasks[2].base, &task_exec_infos[1].task_base);
+    assert_eq!(task_exec_infos[1].subtask_concurrency, 6);
+    check_basic_task_eq(&tasks[3].base, &task_exec_infos[2].task_base);
+    assert_eq!(task_exec_infos[2].subtask_concurrency, 8);
+    // :4002, no such subtasks
+    assert!(tm.get_task_exec_info_by_exec_id(":4002").unwrap().is_empty());
+}
+
+/// Go `TestTaskManagerEntrySize`.
+#[test]
+fn test_task_manager_entry_size() {
+    let (stack, tm) = init_table_test();
+    let get_meta = |l: usize| vec![b'a'; l];
+    let insert_subtask = |meta: &[u8]| {
+        let state = SUBTASK_STATE_PENDING.to_string();
+        tm.with_new_session(&mut |se| {
+            tidb_dxf_storage::exec_sql(
+                &tidb_sqlexec::BackgroundContext,
+                se,
+                &format!(
+                    "
+\t\t\tinsert into mysql.tidb_background_subtask({}) values(%?, %?, %?, %?, %?, %?, %?, NULL, CURRENT_TIMESTAMP(), '{{}}', '{{}}')",
+                    tidb_dxf_storage::INSERT_SUBTASK_COLUMNS
+                ),
+                &[
+                    tidb_sqlescape::SqlArg::Signed(1),
+                    tidb_sqlescape::SqlArg::String(b"1"),
+                    tidb_sqlescape::SqlArg::String(b"execID"),
+                    tidb_sqlescape::SqlArg::Bytes(Some(meta)),
+                    tidb_sqlescape::SqlArg::String(state.as_bytes()),
+                    tidb_sqlescape::SqlArg::Signed(type_2_int(&TASK_TYPE_EXAMPLE) as i64),
+                    tidb_sqlescape::SqlArg::Signed(1),
+                ],
+            )
+            .map(drop)
+        })
+    };
+    let meta6m = get_meta(6 << 20);
+    let error = insert_subtask(&meta6m).unwrap_err();
+    assert!(error.to_string().contains("entry too large"), "{error}");
+    let mut tk = stack.factory.open_session(session_context(307)).unwrap();
+    rows(&mut tk, &format!("set global tidb_txn_entry_size_limit = {}", 7 << 20));
+    insert_subtask(&meta6m).unwrap();
+    // TiKV also have a limit raftstore.raft-entry-max-size which is 8M by default,
+    // we won't test that param here
+}
+
+/// Go `TestTaskState` (`task_state_test.go`).
+#[test]
+fn test_task_state() {
+    let (_stack, gm) = init_table_test();
+
+    gm.init_meta(":4000", "").unwrap();
+
+    // 1. cancel task
+    let id = gm.create_task("key1", &tp("test"), "", 4, "", 0, &ExtraParams::default(), b"test").unwrap();
+    gm.cancel_task(id).unwrap();
+    let task = gm.get_task_by_id(id).unwrap();
+    check_task_state_step(&task, &TASK_STATE_CANCELLING, STEP_INIT);
+
+    // 2. cancel task by key session
+    let id = gm.create_task("key2", &tp("test"), "", 4, "", 0, &ExtraParams::default(), b"test").unwrap();
+    gm.with_new_txn(&mut |se| TaskManager::cancel_task_by_key_session(se, "key2")).unwrap();
+    let task = gm.get_task_by_id(id).unwrap();
+    check_task_state_step(&task, &TASK_STATE_CANCELLING, STEP_INIT);
+
+    // 3. fail task
+    let id = gm.create_task("key3", &tp("test"), "", 4, "", 0, &ExtraParams::default(), b"test").unwrap();
+    gm.fail_task(id, &TASK_STATE_PENDING, Some(&err("test err"))).unwrap();
+    let task = gm.get_task_by_id(id).unwrap();
+    check_task_state_step(&task, &TASK_STATE_FAILED, STEP_INIT);
+    assert!(task.error.as_ref().unwrap().to_string().contains("test err"));
+
+    // 4. Reverted task
+    let id = gm.create_task("key4", &tp("test"), "", 4, "", 0, &ExtraParams::default(), b"test").unwrap();
+    let task = gm.get_task_by_id(id).unwrap();
+    check_task_state_step(&task, &TASK_STATE_PENDING, STEP_INIT);
+    gm.revert_task(task.base.id, &TASK_STATE_PENDING, None).unwrap();
+    let task = gm.get_task_by_id(id).unwrap();
+    check_task_state_step(&task, &TASK_STATE_REVERTING, STEP_INIT);
+
+    gm.reverted_task(id).unwrap();
+    let task = gm.get_task_by_id(id).unwrap();
+    check_task_state_step(&task, &TASK_STATE_REVERTED, STEP_INIT);
+
+    // 5. pause task
+    let id = gm.create_task("key5", &tp("test"), "", 4, "", 0, &ExtraParams::default(), b"test").unwrap();
+    assert!(gm.pause_task("key5").unwrap());
+    assert_eq!(gm.get_task_by_id(id).unwrap().base.state, TASK_STATE_PAUSING);
+
+    // 6. paused task
+    gm.paused_task(id).unwrap();
+    assert_eq!(gm.get_task_by_id(id).unwrap().base.state, TASK_STATE_PAUSED);
+
+    // 7. resume task
+    assert!(gm.resume_task("key5").unwrap());
+    assert_eq!(gm.get_task_by_id(id).unwrap().base.state, TASK_STATE_RESUMING);
+    gm.resumed_task(id).unwrap();
+    assert_eq!(gm.get_task_by_id(id).unwrap().base.state, TASK_STATE_RUNNING);
+
+    // 8. succeed task
+    let id = gm.create_task("key6", &tp("test"), "", 4, "", 0, &ExtraParams::default(), b"test").unwrap();
+    let task = gm.get_task_by_id(id).unwrap();
+    check_task_state_step(&task, &TASK_STATE_PENDING, STEP_INIT);
+    gm.switch_task_step(&task, &TASK_STATE_RUNNING, STEP_ONE, &[]).unwrap();
+    let task = gm.get_task_by_id(id).unwrap();
+    check_task_state_step(&task, &TASK_STATE_RUNNING, STEP_ONE);
+    gm.succeed_task(id).unwrap();
+    let task = gm.get_task_by_id(id).unwrap();
+    check_task_state_step(&task, &TASK_STATE_SUCCEED, STEP_DONE);
+}
+
+/// Go `TestPauseTaskOnError`.
+#[test]
+fn test_pause_task_on_error() {
+    use tidb_terror::{TerrorCode, TerrorError};
+
+    let (_stack, gm) = init_table_test();
+    gm.init_meta(":4000", "").unwrap();
+
+    let id =
+        gm.create_task("key-pause-on-error", &tp("test"), "", 4, "", 0, &ExtraParams::default(), b"test").unwrap();
+    let task = gm.get_task_by_id(id).unwrap();
+    let subtasks = [Subtask::new(
+        STEP_ONE,
+        task.base.id,
+        task.base.tp.clone(),
+        ":4000",
+        task.base.required_slots,
+        EMPTY_META.to_vec(),
+        1,
+    )];
+    gm.switch_task_step(&task, &TASK_STATE_RUNNING, STEP_ONE, &subtasks).unwrap();
+    let failed_subtasks = gm.get_all_subtasks_by_step_and_state(task.base.id, STEP_ONE, &SUBTASK_STATE_PENDING).unwrap();
+    assert_eq!(failed_subtasks.len(), 1);
+    // Go `errdef.ErrKVDiskFull` (`pkg/ingestor/errdef`).
+    let err_kv_disk_full = TerrorError::normalize("store disk full", "Ingest:StoreDiskFull", TerrorCode::new(0));
+    let task_err = err_kv_disk_full.gen_with_stack("store 1 disk full");
+    gm.update_subtask_state_and_error(":4000", failed_subtasks[0].base.id, &SUBTASK_STATE_FAILED, Some(&task_err))
+        .unwrap();
+
+    let error = gm.pause_task_on_error(task.base.id, &TASK_STATE_PENDING, STEP_ONE, Some(&task_err)).unwrap_err();
+    assert!(error.is(&tidb_dxf_storage::StorageError::TaskChanged));
+    let paused_subtasks = gm.get_all_subtasks_by_step_and_state(task.base.id, STEP_ONE, &SUBTASK_STATE_PAUSED).unwrap();
+    assert!(paused_subtasks.is_empty());
+
+    gm.pause_task_on_error(task.base.id, &TASK_STATE_RUNNING, STEP_ONE, Some(&task_err)).unwrap();
+    let task = gm.get_task_by_id(id).unwrap();
+    assert_eq!(task.base.state, TASK_STATE_PAUSING);
+    let stored = task.error.as_ref().unwrap();
+    assert_eq!(stored.downcast_ref::<TerrorError>(), Some(&err_kv_disk_full));
+    let paused_subtasks = gm.get_all_subtasks_by_step_and_state(task.base.id, STEP_ONE, &SUBTASK_STATE_PAUSED).unwrap();
+    assert_eq!(paused_subtasks.len(), 1);
+
+    gm.paused_task(id).unwrap();
+    assert!(gm.resume_task("key-pause-on-error").unwrap());
+    let task = gm.get_task_by_id(id).unwrap();
+    assert_eq!(task.base.state, TASK_STATE_RESUMING);
+    assert!(task.error.is_none());
+    gm.resume_subtasks(id).unwrap();
+    let pending_subtasks = gm.get_all_subtasks_by_step_and_state(task.base.id, STEP_ONE, &SUBTASK_STATE_PENDING).unwrap();
+    assert_eq!(pending_subtasks.len(), 1);
+    assert!(gm.get_subtask_errors(id).unwrap().is_empty());
+}
+
+/// Go `TestUpdateTaskExtraParams`.
+#[test]
+fn test_update_task_extra_params() {
+    let (_stack, gm) = init_table_test();
+    gm.init_meta(":4000", "").unwrap();
+    let params = ExtraParams { manual_recovery: true, prepare_mode: PREPARE_MODE_REQUIRED, ..ExtraParams::default() };
+    let id = gm.create_task("key1", &tp("test"), "", 4, "", 0, &params, b"test").unwrap();
+    let task = gm.get_task_by_id(id).unwrap();
+    assert_eq!(format!("{:?}", task.base.extra_params), format!("{params:?}"));
+    let params = ExtraParams { max_runtime_slots: 123, ..ExtraParams::default() };
+    gm.update_task_extra_params(id, &params).unwrap();
+    let task = gm.get_task_by_id(id).unwrap();
+    assert_eq!(format!("{:?}", task.base.extra_params), format!("{params:?}"));
+
+    let params = ExtraParams { target_steps: vec![STEP_ONE], ..ExtraParams::default() };
+    gm.update_task_extra_params(id, &params).unwrap();
+    let task = gm.get_task_by_id(id).unwrap();
+    assert_eq!(format!("{:?}", task.base.extra_params), format!("{params:?}"));
+}
+
+/// Go `checkTaskAfterModify`.
+fn check_task_after_modify(
+    gm: &TaskManager,
+    task_id: i64,
+    expect_concurrency: isize,
+    expect_max_node: isize,
+    expected_meta: &[u8],
+    expected_st_concurrencies: &[isize],
+) {
+    let task = gm.get_task_by_id(task_id).unwrap();
+    assert_eq!(task.base.state, TASK_STATE_RUNNING);
+    assert_eq!(task.base.required_slots, expect_concurrency);
+    assert_eq!(task.base.max_node_count, expect_max_node);
+    assert_eq!(task.meta, expected_meta);
+    assert_eq!(format!("{:?}", task.modify_param), format!("{:?}", ModifyParam::default()));
+    let mut got_subtasks = gm.get_subtasks_with_history(task.base.id, STEP_ONE).unwrap();
+    assert_eq!(got_subtasks.len(), expected_st_concurrencies.len());
+    got_subtasks.sort_by_key(|subtask| subtask.base.ordinal);
+    for (i, expected) in expected_st_concurrencies.iter().enumerate() {
+        assert_eq!(got_subtasks[i].base.concurrency, *expected);
+    }
+}
+
+/// Go `TestModifyTask`.
+#[test]
+fn test_modify_task() {
+    use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+
+    let (_stack, gm) = init_table_test();
+    gm.init_meta(":4000", "").unwrap();
+
+    let id = gm.create_task("key1", &tp("test"), "", 4, "", 1, &ExtraParams::default(), b"test").unwrap();
+
+    let modify = |task_id: i64, prev_state: TaskState| {
+        gm.modify_task_by_id(task_id, &ModifyParam { prev_state, ..ModifyParam::default() })
+    };
+    assert!(modify(id, TASK_STATE_REVERTING).unwrap_err().is(&tidb_dxf_storage::StorageError::TaskStateNotAllow));
+    assert!(modify(123123123, TASK_STATE_PAUSED).unwrap_err().is(&tidb_dxf_storage::StorageError::TaskNotFound));
+    assert!(modify(id, TASK_STATE_PAUSED).unwrap_err().is(&tidb_dxf_storage::StorageError::TaskChanged));
+
+    // task changed in middle of modifying
+    let (tx, rx) = crossbeam_channel::bounded::<()>(0);
+    let counter = Arc::new(AtomicI32::new(0));
+    {
+        let (counter, rx) = (Arc::clone(&counter), rx.clone());
+        fail::cfg_callback("beforeMoveToModifying", move || {
+            if counter.fetch_add(1, Ordering::SeqCst) + 1 == 1 {
+                rx.recv().unwrap();
+                rx.recv().unwrap();
+            }
+        })
+        .unwrap();
+    }
+    let task = gm.get_task_by_id(id).unwrap();
+    assert_eq!(task.base.state, TASK_STATE_PENDING);
+    assert_eq!(task.base.max_node_count, 1);
+    let subtasks: Vec<Subtask> = (0..4)
+        .map(|i| {
+            Subtask::new(STEP_ONE, task.base.id, task.base.tp.clone(), ":4000", task.base.required_slots, EMPTY_META.to_vec(), i + 1)
+        })
+        .collect();
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            tx.send(()).unwrap();
+            gm.switch_task_step(&task, &TASK_STATE_RUNNING, STEP_ONE, &subtasks).unwrap();
+            tx.send(()).unwrap();
+        });
+        assert!(modify(id, TASK_STATE_PENDING).unwrap_err().is(&tidb_dxf_storage::StorageError::TaskChanged));
+    });
+    fail::remove("beforeMoveToModifying");
+
+    // move to 'modifying' success
+    let task = gm.get_task_by_id(id).unwrap();
+    assert_eq!(task.base.state, TASK_STATE_RUNNING);
+    let param = ModifyParam {
+        prev_state: TASK_STATE_RUNNING,
+        modifications: vec![
+            Modification { tp: MODIFY_REQUIRED_SLOTS, to: 2 },
+            Modification { tp: MODIFY_MAX_NODE_COUNT, to: 3 },
+        ],
+    };
+    gm.modify_task_by_id(id, &param).unwrap();
+    let mut task = gm.get_task_by_id(id).unwrap();
+    assert_eq!(task.base.state, TASK_STATE_MODIFYING);
+    assert_eq!(format!("{:?}", task.modify_param), format!("{param:?}"));
+
+    // modified
+    let mut got_subtasks = gm.get_subtasks_with_history(task.base.id, STEP_ONE).unwrap();
+    got_subtasks.sort_by_key(|subtask| subtask.base.ordinal);
+    assert_eq!(got_subtasks.len(), subtasks.len());
+    gm.finish_subtask(&got_subtasks[0].base.exec_id, got_subtasks[0].base.id, &[]).unwrap();
+    gm.start_subtask(got_subtasks[1].base.id, &got_subtasks[1].base.exec_id).unwrap();
+    gm.execute_sql_with_new_session(
+        "update mysql.tidb_background_subtask set state='paused' where id=%?",
+        &[tidb_sqlescape::SqlArg::Signed(got_subtasks[2].base.id)],
+    )
+    .unwrap();
+    task.base.required_slots = 2;
+    task.base.max_node_count = 3;
+    task.meta = b"modified".to_vec();
+    gm.modified_task(&task).unwrap();
+    check_task_after_modify(&gm, task.base.id, 2, 3, b"modified", &[4, 2, 2, 2]);
+
+    // task state changed before move to 'modified'
+    let param = ModifyParam {
+        prev_state: TASK_STATE_RUNNING,
+        modifications: vec![Modification { tp: MODIFY_REQUIRED_SLOTS, to: 3 }],
+    };
+    gm.modify_task_by_id(id, &param).unwrap();
+    let mut task = gm.get_task_by_id(id).unwrap();
+    assert_eq!(task.base.state, TASK_STATE_MODIFYING);
+    assert_eq!(format!("{:?}", task.modify_param), format!("{param:?}"));
+    let (tx, rx) = crossbeam_channel::bounded::<()>(0);
+    let called = Arc::new(AtomicBool::new(false));
+    {
+        let called = Arc::clone(&called);
+        fail::cfg_callback("beforeModifiedTask", move || {
+            if called.swap(true, Ordering::SeqCst) {
+                return;
+            }
+            rx.recv().unwrap();
+            rx.recv().unwrap();
+        })
+        .unwrap();
+    }
+    let mut task_clone = task.clone();
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            tx.send(()).unwrap();
+            // NOTE: this will NOT happen in real case, because the task can NOT move
+            // to 'modifying' again to change modify params.
+            // here just to show that if another client finishes modifying, our modify
+            // will skip silently.
+            task_clone.base.required_slots = 5;
+            task_clone.base.max_node_count = 50;
+            task_clone.meta = b"modified-other".to_vec();
+            gm.modified_task(&task_clone).unwrap();
+            tx.send(()).unwrap();
+        });
+        task.base.required_slots = 3;
+        task.base.max_node_count = 30;
+        task.meta = b"modified2".to_vec();
+        gm.modified_task(&task).unwrap();
+    });
+    fail::remove("beforeModifiedTask");
+    check_task_after_modify(&gm, task.base.id, 5, 50, b"modified-other", &[4, 5, 5, 5]);
+}

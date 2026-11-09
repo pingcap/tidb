@@ -34,4 +34,5 @@ tidb-syssession = { path = "../tidb-syssession" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-vardef = { path = "../tidb-vardef" }
+tikv-client.workspace = true
 tracing = "0.1"

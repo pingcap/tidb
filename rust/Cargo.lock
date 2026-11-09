@@ -4711,6 +4711,7 @@ dependencies = [
  "tidb-terror",
  "tidb-txnkv",
  "tidb-vardef",
+ "tikv-client",
  "tracing",
 ]
 

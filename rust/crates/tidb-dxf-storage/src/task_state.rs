@@ -290,6 +290,8 @@ impl TaskManager {
             if task.state != param.prev_state {
                 return Err(StorageError::TaskChanged);
             }
+            #[cfg(feature = "failpoints")]
+            fail::fail_point!("beforeMoveToModifying");
             let args = [state(&TASK_STATE_MODIFYING), Arg::Json(bytes.clone()), Arg::Int(task_id), state(&param.prev_state)];
             exec_sql(&BackgroundContext, se, "
 			update mysql.tidb_global_task
@@ -313,6 +315,8 @@ impl TaskManager {
     pub fn modified_task(&self, task: &Task) -> Result<()> {
         let prev_state = &task.modify_param.prev_state;
         self.with_new_txn(&mut |se| {
+            #[cfg(feature = "failpoints")]
+            fail::fail_point!("beforeModifiedTask");
             let args = [
                 state(prev_state),
                 Arg::Int(task.base.required_slots as i64),
