@@ -5669,6 +5669,10 @@ func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName a
 }
 
 func checkTableTypeForColumnarIndex(tblInfo *model.TableInfo) error {
+	return checkTableTypeForColumnarIndexWithReplicaOption(tblInfo, false)
+}
+
+func checkTableTypeForColumnarIndexWithReplicaOption(tblInfo *model.TableInfo, addReplica bool) error {
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("create columnar index")
 	}
@@ -5678,7 +5682,7 @@ func checkTableTypeForColumnarIndex(tblInfo *model.TableInfo) error {
 	if tblInfo.GetPartitionInfo() != nil {
 		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported partition table")
 	}
-	if tblInfo.TiFlashReplica == nil || tblInfo.TiFlashReplica.Count == 0 {
+	if !addReplica && (tblInfo.TiFlashReplica == nil || tblInfo.TiFlashReplica.Count == 0) {
 		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("columnar replica must exist to create vector index, columnar index or fulltext index")
 	}
 
@@ -5716,7 +5720,7 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 		}
 	}
 
-	if err := checkTableTypeForColumnarIndex(tblInfo); err != nil {
+	if err := checkTableTypeForColumnarIndexWithReplicaOption(tblInfo, indexOption.AddColumnarReplicaOnDemand > 0); err != nil {
 		return errors.Trace(err)
 	}
 	if err := checkColumnarStorageEnabled(ctx); err != nil {
@@ -5792,6 +5796,10 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	if dbterror.ErrDupKeyName.Equal(err) && ifNotExists {
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
+	}
+	if err == nil && indexOption.AddColumnarReplicaOnDemand > 0 {
+		// Wait after the DDL job completes so replica-availability DDL can run.
+		err = e.waitColumnarReplicaAvailable(ctx, tblInfo.ID, ti)
 	}
 	return errors.Trace(err)
 }

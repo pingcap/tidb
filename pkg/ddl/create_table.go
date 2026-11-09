@@ -1893,3 +1893,27 @@ func BuildViewInfo(s *ast.CreateViewStmt) (*model.ViewInfo, error) {
 	return &model.ViewInfo{Definer: s.Definer, Algorithm: s.Algorithm,
 		Security: s.Security, SelectStmt: sb.String(), CheckOption: s.CheckOption, Cols: nil}, nil
 }
+
+func setTableDefaultReplicaNumForLocalIndex(store kv.Storage, tblInfo *model.TableInfo) error {
+	tiflashEnabled := config.GetGlobalConfig().CSE.IsTiFlashEnabled()
+	if tiflashEnabled {
+		replicas, err := infoschema.GetTiFlashStoreCount(store)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if replicas == 0 {
+			return errors.Trace(dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("columnar store (TiFlash) must be deployed in the cluster in order to use columnar index like vector or fulltext"))
+		}
+	}
+
+	// Always set the TiFlashReplicaInfo.count to 1 which is default.
+	tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:          1,
+		LocationLabels: make([]string, 0),
+	}
+	err := infosync.ConfigureTiFlashPDForTable(tblInfo.ID, 1, &tblInfo.TiFlashReplica.LocationLabels)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}

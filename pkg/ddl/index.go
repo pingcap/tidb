@@ -444,6 +444,9 @@ func BuildIndexInfo(
 	indexOption *ast.IndexOption,
 	state model.SchemaState,
 ) (*model.IndexInfo, error) {
+	if indexOption != nil && indexOption.AddColumnarReplicaOnDemand > 0 && columnarIndexType == model.ColumnarIndexTypeNA {
+		return nil, dbterror.ErrUnsupportedIndexType.FastGen("Unsupported index option: ADD_COLUMNAR_REPLICA_ON_DEMAND can only be used in columnar index")
+	}
 	if err := checkTooLongIndex(indexName); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1104,9 +1107,6 @@ func (w *worker) onCreateColumnarIndex(jobCtx *jobContext, job *model.Job) (ver 
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if err := checkTableTypeForColumnarIndex(tblInfo); err != nil {
-		return ver, errors.Trace(err)
-	}
 
 	args, err := model.GetModifyIndexArgs(job)
 	if err != nil {
@@ -1114,6 +1114,11 @@ func (w *worker) onCreateColumnarIndex(jobCtx *jobContext, job *model.Job) (ver 
 		return ver, errors.Trace(err)
 	}
 	a := args.IndexArgs[0]
+	addReplica := a.IndexOption != nil && a.IndexOption.AddColumnarReplicaOnDemand > 0
+	if err := checkTableTypeForColumnarIndexWithReplicaOption(tblInfo, addReplica && job.SchemaState == model.StateNone); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
 	columnarIndexType := a.GetColumnarIndexType()
 	if columnarIndexType == model.ColumnarIndexTypeVector {
 		a.IndexPartSpecifications[0].Expr, err = generatedexpr.ParseExpression(a.FuncExpr)
@@ -1139,6 +1144,16 @@ func (w *worker) onCreateColumnarIndex(jobCtx *jobContext, job *model.Job) (ver 
 		if err := w.checkColumnarStorageEnabled(1, false); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, wrapColumnarStorageGateForColumnarIndex(err)
+		}
+		if tblInfo.TiFlashReplica == nil || tblInfo.TiFlashReplica.Count == 0 {
+			if err := isTableTiFlashSupported(ast.NewCIStr(job.SchemaName), tblInfo); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+			if err := setTableDefaultReplicaNumForLocalIndex(jobCtx.store, tblInfo); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
 		}
 		// none -> delete only
 		indexInfo.State = model.StateDeleteOnly
