@@ -225,6 +225,13 @@ pub trait MppTaskGeneratorContext {
     /// # Errors
     /// The store could not place the tasks.
     fn construct_mpp_tasks(&self, req: &MppBuildTasksRequest) -> Result<Vec<Arc<dyn MppTaskLocation>>, PlanError>;
+    /// Go `PhysicalTableScan.ResolveCorrelatedColumns`: the scan's ranges
+    /// rebuilt from its access conditions with the correlated columns'
+    /// current values.
+    ///
+    /// # Errors
+    /// The ranges could not be rebuilt.
+    fn resolve_correlated_columns(&self, ts: &PhysicalTableScan) -> Result<Vec<tidb_ranger::types::Range>, PlanError>;
 }
 
 /// Go `tasksAndFrags`: a sink's tasks and the indices of its fragments.
@@ -415,9 +422,20 @@ impl MppTaskGenerator<'_> {
     /// Go `constructMPPTasksImpl`: the tasks of a fragment that reads a
     /// table (a table without partitions, or a single partition of one).
     fn construct_mpp_tasks_impl(&mut self, ts: &PhysicalTableScan) -> Result<Vec<MppTask>, PlanError> {
+        // update ranges according to correlated columns in access conditions like in the Open() of TableReaderExecutor
+        let ranges = if ts.range_rebuild.as_ref().is_some_and(|rebuild| {
+            rebuild
+                .access_conditions
+                .iter()
+                .any(|cond| !tidb_expr::simple_expr::extract_cor_columns(cond).is_empty())
+        }) {
+            self.ctx.resolve_correlated_columns(ts)?
+        } else {
+            ts.ranges.clone()
+        };
         let table = ts.table.as_ref().ok_or_else(|| PlanError::internal("an MPP table scan has no table"))?.read().clone();
         let (splited_ranges, _) =
-            tidb_distsql::split_ranges_across_int64_boundary(ts.ranges.clone(), false, false, table.is_common_handle);
+            tidb_distsql::split_ranges_across_int64_boundary(ranges, false, false, table.is_common_handle);
         // True when:
         // 1. Is partition table.
         // 2. Dynamic prune is not used.
@@ -619,6 +637,12 @@ mod tests {
                 .into_iter()
                 .map(|addr| std::sync::Arc::new(super::MppAddr { addr: addr.to_owned() }) as std::sync::Arc<dyn tidb_txnkv::MppTaskLocation>)
                 .collect())
+        }
+        fn resolve_correlated_columns(
+            &self,
+            ts: &crate::PhysicalTableScan,
+        ) -> Result<Vec<tidb_ranger::types::Range>, tidb_planner_core_base::PlanError> {
+            Ok(ts.ranges.clone())
         }
     }
 

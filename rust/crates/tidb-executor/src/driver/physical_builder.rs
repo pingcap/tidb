@@ -1109,7 +1109,7 @@ fn correlated_index_range_rebuilder(
 /// Go `PhysicalTableScan.ResolveCorrelatedColumns`: the integer handle's
 /// range from `BuildTableRange`, a common handle's from
 /// `DetachCondAndBuildRangeForIndex`, over the substituted access conditions.
-fn correlated_table_range_rebuilder(
+pub(crate) fn correlated_table_range_rebuilder(
     scan: &PhysicalTableScan,
     ctx: &crate::StmtContext,
 ) -> Option<crate::access_path::RangeRebuilder> {

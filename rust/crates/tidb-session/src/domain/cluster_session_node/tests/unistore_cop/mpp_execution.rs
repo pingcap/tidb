@@ -467,6 +467,32 @@ fn test_mpp_apply() {
         &[&["3"]],
     );
     // table range scan with correlated access conditions
+    // A Go testkit probe: the TiFlash scan's range is decided by the
+    // correlated access condition, resolved per outer row as the MPP tasks
+    // are built (`constructMPPTasksImpl`).
+    let plan: Vec<String> = displayed(rows(
+        &mut session,
+        "explain format='brief' select /*+ agg_to_cop(), hash_agg()*/ count(*) from x1 where b > any (select x2.a from x2 where x1.a = x2.a);",
+    ))
+    .into_iter()
+    .map(|row| row.join(" "))
+    .collect();
+    assert_eq!(
+        plan,
+        [
+            "HashAgg 1.00 root  funcs:count(1)->Column#10",
+            "└─Apply 1.92 root  CARTESIAN semi join, left side:TableReader, other cond:or(gt(test.x1.b, Column#7), if(ne(Column#8, 0), NULL, 0))",
+            "  ├─TableReader(Build) 2.40 root  MppVersion: 3, data:ExchangeSender",
+            "  │ └─ExchangeSender 2.40 mpp[tiflash]  ExchangeType: PassThrough",
+            "  │   └─Selection 2.40 mpp[tiflash]  if(isnull(test.x1.b), NULL, 1)",
+            "  │     └─TableFullScan 3.00 mpp[tiflash] table:x1 keep order:false",
+            "  └─Selection(Probe) 1.92 root  ne(Column#9, 0)",
+            "    └─HashAgg 2.40 root  funcs:min(test.x2.a)->Column#7, funcs:sum(0)->Column#8, funcs:count(1)->Column#9",
+            "      └─TableReader 2.40 root  MppVersion: 3, data:ExchangeSender",
+            "        └─ExchangeSender 2.40 mpp[tiflash]  ExchangeType: PassThrough",
+            "          └─TableRangeScan 2.40 mpp[tiflash] table:x2 range: decided by [eq(test.x1.a, test.x2.a)], keep order:false",
+        ]
+    );
     check(
         &mut session,
         "select /*+ agg_to_cop(), hash_agg()*/ count(*) from x1 where b > any (select x2.a from x2 where x1.a = x2.a);",
@@ -923,4 +949,82 @@ fn json_comparison_stays_above_the_mpp_reader_as_go() {
         ]
     );
     assert_eq!(text(&mut session, "show warnings"), [refused, refused]);
+}
+
+/// Go `TestCanGenerateTiFlashCopWithKeepOrer`.
+#[test]
+fn test_can_generate_tiflash_cop_with_keep_orer() {
+    let (stack, mut session) = tiflash_session(1, 2172);
+    rows(&mut session, "create table t1(c1 int, c2 int, primary key(c1));");
+    rows(&mut session, "alter table t1 set tiflash replica 1;");
+    replica_available(&stack, &mut session, "t1");
+    rows(&mut session, "set tidb_isolation_read_engines = 'tiflash';");
+    rows(&mut session, "set @@tidb_allow_batch_cop = 0;");
+
+    let found = (0..100).any(|i| {
+        let sql = format!(
+            "explain format='brief' select /*+ nth_plan({i}), set_var(tidb_allow_tiflash_cop=on) */ * from t1 where c1 < 10 and c2 > 100 order by c1 limit 100"
+        );
+        let explain: String = displayed(rows(&mut session, &sql)).into_iter().map(|row| format!("{row:?}\t")).collect();
+        explain.contains("TableRangeScan") && explain.contains("cop[tiflash]") && explain.contains("keep order:true")
+    });
+    // expected at least one plan contains TableRangeScan, cop[tiflash], and keep order:true"
+    assert!(found);
+}
+
+/// Go `TestIssue59877`.
+#[test]
+fn test_issue_59877() {
+    let (stack, mut session) = tiflash_session(1, 2173);
+    rows(&mut session, "drop table if exists t1, t2, t3");
+    for (table, id) in [("t1", "bigint"), ("t2", "bigint unsigned"), ("t3", "bigint")] {
+        rows(&mut session, &format!("create table {table}(id {id}, v1 int)"));
+        rows(&mut session, &format!("alter table {table} set tiflash replica 1"));
+        replica_available(&stack, &mut session, table);
+    }
+
+    rows(&mut session, "set @@session.tidb_isolation_read_engines=\"tiflash\"");
+    // unistore does not support later materialization
+    rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
+    rows(&mut session, "set @@session.tidb_allow_mpp=ON");
+    rows(&mut session, "set @@session.tidb_enforce_mpp=ON");
+    rows(&mut session, "set tidb_broadcast_join_threshold_size=0");
+    rows(&mut session, "set tidb_broadcast_join_threshold_count=0");
+    rows(&mut session, "set tiflash_fine_grained_shuffle_stream_count=8");
+    rows(&mut session, "set tidb_enforce_mpp=1");
+    let got: Vec<String> = displayed(rows(
+        &mut session,
+        "explain format=\"brief\" select /*+ hash_join_build(t3) */ count(*) from t1 straight_join t2 on t1.id = t2.id straight_join t3 on t1.id = t3.id",
+    ))
+    .into_iter()
+    .map(|row| row.join(" "))
+    .collect();
+    assert_eq!(
+        got,
+        [
+            "HashAgg 1.00 root  funcs:count(Column#21)->Column#13",
+            "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+            "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+            "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#21",
+            "      └─Projection 15609.38 mpp[tiflash]  test.t1.id, Column#17",
+            "        └─HashJoin 15609.38 mpp[tiflash]  inner join, equal:[eq(test.t1.id, test.t3.id)]",
+            "          ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+            "          │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#20, collate: binary]",
+            "          │   └─Projection 9990.00 mpp[tiflash]  test.t3.id, cast(test.t3.id, decimal(20,0))->Column#20",
+            "          │     └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t3.id))",
+            "          │       └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
+            "          └─Projection(Probe) 12487.50 mpp[tiflash]  test.t1.id, Column#17",
+            "            └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t1.id, test.t2.id)]",
+            "              ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+            "              │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#16, collate: binary]",
+            "              │   └─Projection 9990.00 mpp[tiflash]  test.t1.id, cast(test.t1.id, decimal(20,0))->Column#16",
+            "              │     └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t1.id))",
+            "              │       └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+            "              └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
+            "                └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#17, collate: binary]",
+            "                  └─Projection 9990.00 mpp[tiflash]  test.t2.id, cast(test.t2.id, decimal(20,0) UNSIGNED)->Column#17",
+            "                    └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t2.id))",
+            "                      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+        ]
+    );
 }

@@ -213,6 +213,15 @@ impl MppTaskGeneratorContext for GeneratorContext<'_> {
         Ok(ret)
     }
 
+    fn resolve_correlated_columns(
+        &self,
+        ts: &PhysicalTableScan,
+    ) -> Result<Vec<tidb_ranger::types::Range>, PlanError> {
+        let rebuild = crate::driver::physical_builder::correlated_table_range_rebuilder(ts, self.ctx)
+            .ok_or_else(|| PlanError::internal("an MPP scan's correlated access conditions have no range rebuild"))?;
+        rebuild().map_err(|err| PlanError::internal(format!("{err:?}")))
+    }
+
     fn construct_mpp_tasks(
         &self,
         req: &MppBuildTasksRequest,

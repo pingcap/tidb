@@ -3199,6 +3199,27 @@ fn adjust_count_after_access(
     }
 }
 
+/// Go `PhysicalTableScan.AccessCondition`, which a cached plan rebuilds the
+/// scan's ranges from: an integer handle's, or a common handle's over the
+/// path's index columns.
+fn table_range_rebuild(
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
+    path: &tidb_planner_util::path::AccessPath,
+    access_conds: &[tidb_expr::expression::Expression],
+) -> Option<tidb_planner_core_operator_physicalop::range_rebuild::TableRangeRebuild> {
+    use tidb_planner_core_operator_physicalop::range_rebuild::TableRangeRebuild;
+    if access_conds.is_empty() {
+        return None;
+    }
+    if path.index.is_some() {
+        let (columns, lengths) = path.idx_cols.iter().cloned().unzip();
+        return Some(TableRangeRebuild::common_handle(access_conds.to_vec(), columns, lengths));
+    }
+    let (_, handle_type) = crate::access_path::ordinary::table_path_handle(ds);
+    let unsigned = handle_type.is_unsigned();
+    Some(TableRangeRebuild::int_handle(access_conds.to_vec(), handle_type, unsigned))
+}
+
 /// Go `getOriginalPhysicalTableScan`'s stats (`find_best_task.go`): the
 /// table stats scaled to the path's `CountAfterAccess`, or, under an
 /// expected count below the data source's rows,
@@ -3532,8 +3553,6 @@ fn find_best_task_4_logical_data_source_paths(
                 let handle_column = handle_column.as_ref();
                 let handle_type = &handle_type;
                 let common_handle = primary_index.as_ref();
-                let (common_columns, common_lengths): (Vec<_>, Vec<_>) =
-                    table_path.idx_cols.iter().cloned().unzip();
                 // Go `buildDataSource2TableScanByIndexJoinProp`: a common
                 // handle probes through its `indexJoinPathBuild` result, an
                 // integer handle through the full integer range with every
@@ -3674,23 +3693,7 @@ fn find_best_task_4_logical_data_source_paths(
                     );
                 }
                 base.base.set_stats(stats.clone());
-                let table_range_rebuild = if table_access_conds.is_empty() {
-                    None
-                } else if common_handle.is_some() {
-                    Some(
-                        tidb_planner_core_operator_physicalop::range_rebuild::TableRangeRebuild::common_handle(
-                            table_access_conds.clone(),
-                            common_columns.clone(),
-                            common_lengths.clone(),
-                        ),
-                    )
-                } else {
-                    Some(tidb_planner_core_operator_physicalop::range_rebuild::TableRangeRebuild::int_handle(
-                        table_access_conds.clone(),
-                        handle_type.clone(),
-                        handle_type.is_unsigned(),
-                    ))
-                };
+                let table_range_rebuild = table_range_rebuild(ds, table_path, &table_access_conds);
                 let explicit_physical_id = match ds.partition_names.as_slice() {
                     [name] => ds
                         .partition_definition_names()
@@ -4007,7 +4010,16 @@ fn find_best_task_4_logical_data_source_paths(
                 })
             }
             None => {
-                if partial_order.is_some() || cop_multi_read || prop.index_join_prop.is_some() {
+                if partial_order.is_some() || prop.index_join_prop.is_some() {
+                    continue 'paths;
+                }
+                // Go `findBestTask4LogicalDataSource`: "if we already know
+                // the range of the scan is empty, just return a TableDual",
+                // whatever the path's store.
+                if path.ranges.is_empty() {
+                    return Ok(empty_range_dual_task(ds, ctx));
+                }
+                if cop_multi_read {
                     continue 'paths;
                 }
                 let keep_order = ordered;
@@ -4025,9 +4037,9 @@ fn find_best_task_4_logical_data_source_paths(
                 );
                 base.base.set_schema(ds.base.base.schema().cloned());
                 // Go's TiFlash arm reads the same `getOriginalPhysicalTableScan`
-                // scan: its stats scaled to the property's expected count
-                // (`AdjustRowCountForTableScanByLimit`). The TiFlash table path
-                // reads the full range, its filters all the pushed conditions.
+                // scan: the path's ranges, access conditions and table filters,
+                // its stats scaled to the property's expected count
+                // (`AdjustRowCountForTableScanByLimit`).
                 let table_stats = ds
                     .table_stats
                     .clone()
@@ -4042,8 +4054,8 @@ fn find_best_task_4_logical_data_source_paths(
                     count_after_access,
                     keep_order,
                     desc,
-                    &ds.pushed_down_conds,
-                    &[],
+                    &path.table_filters,
+                    &path.access_conds,
                 ));
                 // Go `convertToTableScan`'s TiFlash checks. With TiFlash cop
                 // banned (`tidb_allow_tiflash_cop` off, the default) or a
@@ -4086,7 +4098,13 @@ fn find_best_task_4_logical_data_source_paths(
                     // A TiFlash scan of a partitioned table cannot keep order.
                     continue 'paths;
                 }
-                let ranges = tidb_ranger::points::full_int_range(false);
+                let unsigned_int_handle = ds.pk_is_handle()
+                    && crate::access_path::ordinary::table_path_handle(ds).1.is_unsigned();
+                let scan_kind = if path.ranges.iter().all(|range| range.is_full_range(unsigned_int_handle)) {
+                    tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind::Full
+                } else {
+                    tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind::Range
+                };
                 let scan = PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
                     table: ds.table_info.clone(),
                     columns: ds.columns.clone(),
@@ -4101,8 +4119,8 @@ fn find_best_task_4_logical_data_source_paths(
                     store_type: tidb_kv::store_type::StoreType::TiFlash,
                     keep_order,
                     desc,
-                    ranges,
-                    range_rebuild: None,
+                    ranges: path.ranges.clone(),
+                    range_rebuild: table_range_rebuild(ds, path, &path.access_conds),
                     table_scan_penalty: ds.table_scan_penalty_input(),
                     tikv_pushdown: None,
                     db_name: ds.db_name.clone(),
@@ -4111,16 +4129,16 @@ fn find_best_task_4_logical_data_source_paths(
                     is_temporary: ds.is_temporary(),
                     prop: None,
                     plan_part_info: Some(std::sync::Arc::clone(&phys_plan_part_info)),
-                    filter_condition: Vec::new(),
+                    filter_condition: path.table_filters.clone(),
                     resolved_descriptor: Some(tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableDescriptor::new(
                         ds.physical_table_id,
                         ds.is_common_handle(),
-                        tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind::Full,
+                        scan_kind,
                         tidb_planner_core_operator_logicalop::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
                     )),
                 });
                 let (table_filters, root_task_conds) = tidb_planner_core_operator_physicalop::pushdown::split_scan_filters(
-                    ds.pushed_down_conds.clone(), tidb_kv::store_type::StoreType::TiFlash,
+                    path.table_filters.clone(), tidb_kv::store_type::StoreType::TiFlash,
                     &ctx.expr_pushdown_blacklist,
                     &tidb_planner_core_operator_physicalop::enforce::push_down_reporter(ctx.mpp_warning_sink),
                 );
@@ -6237,7 +6255,12 @@ mod tests {
             physical_table_id: 7,
             all_possible_access_paths: vec![
                 AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
-                AccessPath::table_path(tidb_kv::store_type::StoreType::TiFlash, false, None),
+                // Go `deriveTablePathStats` without conditions: the full
+                // integer range.
+                AccessPath {
+                    ranges: tidb_ranger::points::full_int_range(false),
+                    ..AccessPath::table_path(tidb_kv::store_type::StoreType::TiFlash, false, None)
+                },
             ],
             prefer_store_type: PREFER_TIFLASH,
             ..DataSource::default()
