@@ -13,6 +13,7 @@ autotests = false
 tidb-ttl = { path = "../tidb-ttl" }
 tidb-ttl-ttlworker = { path = "../tidb-ttl-ttlworker" }
 tidb-dxf-storage = { path = "../tidb-dxf-storage" }
+tidb-util-disttask = { path = "../tidb-util-disttask" }
 tidb-domain-sqlsvrapi = { path = "../tidb-domain-sqlsvrapi" }
 tidb-ttl-client = { path = "../tidb-ttl-client" }
 tidb-timer = { path = "../tidb-timer" }

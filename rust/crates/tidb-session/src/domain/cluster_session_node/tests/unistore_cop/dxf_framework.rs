@@ -1894,14 +1894,26 @@ fn test_modify_task() {
     check_task_after_modify(&gm, task.base.id, 5, 50, b"modified-other", &[4, 5, 5, 5]);
 }
 
-/// Go `TestSetTiDBServiceScopeCaseInsensitive` (`pkg/executor/set_test.go`),
-/// without its `mysql.dist_framework_meta` role checks: Go's role follows
-/// through the domain's DXF loop, which a later milestone of the DXF port
-/// composes.
+/// The store's task manager, which Go's `BootstrapSession` always sets
+/// (`InitDistTaskLoop`'s first step, before it may stop for
+/// `MockDisableDistTask`); the test stacks do not start the DXF loop.
+fn bootstrap_task_manager(stack: &UnistoreClusterStack) {
+    set_task_manager(Some(Arc::new(TaskManager::new(stack.factory.dxf_session_pool()))));
+}
+
+/// The node's exec ID (Go's mock infosync answers `:4000`).
+fn local_exec_id(stack: &UnistoreClusterStack) -> String {
+    let syncer = stack.factory.server_info().unwrap();
+    tidb_util_disttask::generate_subtask_exec_id(&syncer, &syncer.get_local_server_info().static_info.id)
+}
+
+/// Go `TestSetTiDBServiceScopeCaseInsensitive` (`pkg/executor/set_test.go`).
 #[test]
 fn test_set_tidb_service_scope_case_insensitive() {
     let (stack, _users) = cop_backed_stack();
+    bootstrap_task_manager(&stack);
     let mut tk = stack.factory.open_session(session_context(308)).unwrap();
+    let role = format!("select role from mysql.dist_framework_meta where host='{}'", local_exec_id(&stack));
 
     let origin_config = tidb_config::config_tree::config::get_global_config();
     let origin_service_scope = tidb_vardef::service_scope();
@@ -1910,14 +1922,57 @@ fn test_set_tidb_service_scope_case_insensitive() {
     assert_eq!(displayed(rows(&mut tk, "select @@global.tidb_service_scope")), [["background"]]);
     assert_eq!(tidb_vardef::service_scope(), "background");
     assert_eq!(tidb_config::config_tree::config::get_global_config().instance.tidb_service_scope, "background");
+    assert_eq!(displayed(rows(&mut tk, &role)), [["background"]]);
 
     rows(&mut tk, "set instance tidb_service_scope='BackGround'");
     assert_eq!(displayed(rows(&mut tk, "select @@global.tidb_service_scope")), [["background"]]);
     assert_eq!(tidb_vardef::service_scope(), "background");
     assert_eq!(tidb_config::config_tree::config::get_global_config().instance.tidb_service_scope, "background");
+    assert_eq!(displayed(rows(&mut tk, &role)), [["background"]]);
 
     tidb_config::config_tree::config::store_global_config(origin_config);
     tidb_vardef::set_service_scope(origin_service_scope);
+}
+
+/// `tidb_service_scope` is a node-wide identifier. Go validates the original
+/// spelling through `pkg/util/naming.Check`, stores its ASCII-lowercase form,
+/// and leaves the previous value untouched when validation fails.
+#[test]
+fn service_scope_uses_the_shared_naming_contract() {
+    let (stack, _users) = cop_backed_stack();
+    bootstrap_task_manager(&stack);
+    let mut first = stack.factory.open_session(session_context(309)).unwrap();
+    let mut second = stack.factory.open_session(session_context(310)).unwrap();
+
+    rows(&mut first, "SET GLOBAL tidb_service_scope = 'Scope_1-A'");
+    assert_eq!(displayed(rows(&mut first, "SELECT @@tidb_service_scope")), [["scope_1-a"]]);
+    assert_eq!(displayed(rows(&mut second, "SELECT @@global.tidb_service_scope")), [["scope_1-a"]]);
+
+    let invalid = "bad scope";
+    let error = first
+        .node_conn()
+        .execute(&format!("SET GLOBAL tidb_service_scope = '{invalid}'"))
+        .err()
+        .expect("an invalid scope is refused");
+    assert_eq!(error.code, 1105, "{error:?}");
+    assert_eq!(
+        error.message,
+        "the value 'bad scope' is invalid. It must be 64 characters or fewer and consist only of letters (a-z, A-Z), numbers (0-9), hyphens (-), and underscores (_)"
+    );
+    assert_eq!(
+        displayed(rows(&mut first, "SELECT @@tidb_service_scope")),
+        [["scope_1-a"]],
+        "a rejected assignment must not mutate the node-wide value"
+    );
+
+    let too_long = "a".repeat(65);
+    let error = first
+        .node_conn()
+        .execute(&format!("SET GLOBAL tidb_service_scope = '{too_long}'"))
+        .err()
+        .expect("a too long scope is refused");
+    assert_eq!(error.code, 1105, "{error:?}");
+    assert!(error.message.contains("64 characters or fewer"));
 }
 
 /// Go `TestScheduleFlag` (`handle/status_testkit_test.go`).
@@ -2049,4 +2104,24 @@ fn test_example_application() {
     let scope = tidb_dxf_handle::get_target_scope();
     let task = tidb_dxf_handle::submit_task("test", &TASK_TYPE_EXAMPLE, "", 1, &scope, 0, &bytes).unwrap();
     tidb_dxf_handle::wait_task_done_by_key(&ctx, &task.base.key).unwrap();
+}
+
+/// Go `TestSetScope` (`integrationtests/framework_scope_test.go`); Go's
+/// `:4000` is the node's exec ID under Go's mock infosync.
+#[test]
+fn test_set_scope() {
+    let (stack, _users) = cop_backed_stack();
+    bootstrap_task_manager(&stack);
+    let mut tk = stack.factory.open_session(session_context(311)).unwrap();
+    let host = local_exec_id(&stack);
+
+    // 1. set rand sys var.
+    rows(&mut tk, "set global tidb_service_scope=rand");
+    // 2. set keyspace id.
+    rows(&mut tk, &format!("update mysql.dist_framework_meta set keyspace_id = 16777216 where host = '{host}'"));
+    assert_eq!(
+        displayed(rows(&mut tk, &format!("select keyspace_id from mysql.dist_framework_meta where host = '{host}'"))),
+        [["16777216"]]
+    );
+    rows(&mut tk, r#"set global tidb_service_scope="""#);
 }

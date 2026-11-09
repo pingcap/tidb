@@ -3759,6 +3759,30 @@ impl tidb_executor::sessionctx::SessionContext for Session {
         self.set_node_wide_sys_var(name, value, false)
     }
 
+    fn init_dist_task_meta_with_service_scope(&mut self) -> Result<(), DriverError> {
+        // SetInstanceSysVar has already updated vardef.ServiceScope in the sysvar hook.
+        // Read it here so InitMetaSession uses the latest canonical (case-insensitive) value.
+        let service_scope = tidb_vardef::service_scope();
+        // Go `disttaskutil.GenerateSubtaskExecID(ctx, dom.DDL().GetID())`:
+        // the DDL ID is the uuid the node's server info publishes.
+        let server_id = self
+            .server_info_syncer
+            .as_ref()
+            .map(|syncer| {
+                let ddl_id = syncer.get_local_server_info().static_info.id;
+                tidb_util_disttask::generate_subtask_exec_id(syncer, &ddl_id)
+            })
+            .unwrap_or_default();
+        let storage_err = |err: tidb_dxf_storage::StorageError| match err {
+            tidb_dxf_storage::StorageError::Terror(err) => DriverError::from(err),
+            err => DriverError::from(tidb_terror::MysqlError::unknown(err.to_string())),
+        };
+        let task_mgr = tidb_dxf_storage::get_task_manager().map_err(storage_err)?;
+        task_mgr
+            .with_new_session(&mut |se| tidb_dxf_storage::TaskManager::init_meta_session(se, &server_id, &service_scope))
+            .map_err(storage_err)
+    }
+
     fn load_snapshot_info_schema_if_needed(
         &mut self,
         old_ts: u64,

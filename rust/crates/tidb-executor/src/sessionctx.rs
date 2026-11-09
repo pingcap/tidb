@@ -72,6 +72,10 @@ pub trait SessionContext {
         name: &str,
         value: String,
     ) -> Result<(), crate::DriverError>;
+    /// Go `SetExecutor.setSysVariable`'s `tidb_service_scope` tail: the
+    /// node's DXF meta (`dist_framework_meta`) takes the new scope as its
+    /// role, through the task manager's `InitMetaSession`.
+    fn init_dist_task_meta_with_service_scope(&mut self) -> Result<(), crate::DriverError>;
     /// Go `SetExecutor`'s tail for `tidb_snapshot` / `tx_read_ts`:
     /// `ValidateSnapshotReadTS`, `gcutil.ValidateSnapshot` and
     /// `loadSnapshotInfoSchemaIfNeeded` for the timestamp just set, restoring

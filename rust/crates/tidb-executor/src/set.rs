@@ -146,6 +146,9 @@ fn set_sys_variable(
         } else {
             ctx.set_instance_sys_var(name, val_str)?;
         }
+        if name == tidb_vardef::tidb_vars::TIDB_SERVICE_SCOPE {
+            ctx.init_dist_task_meta_with_service_scope()?;
+        }
         return Ok(());
     }
     // Set session variable.

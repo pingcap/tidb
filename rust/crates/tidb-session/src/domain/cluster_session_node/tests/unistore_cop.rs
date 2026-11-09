@@ -57,6 +57,18 @@ pub(super) fn cop_backed_stack() -> (UnistoreClusterStack, Arc<ConfiguredUserSto
 fn cop_backed_stack_with_stats_lease(
     stats_lease: Option<tidb_domain_core::node_config::StatsLease>,
 ) -> (UnistoreClusterStack, Arc<ConfiguredUserStore>) {
+    cop_backed_stack_with_config(|config| {
+        if let Some(stats_lease) = stats_lease {
+            config.stats_lease = stats_lease;
+        }
+    })
+}
+
+/// The cop-backed stack with the node config changed by `f` (the stack binds
+/// no port: `port` is what the node's server info publishes).
+pub(super) fn cop_backed_stack_with_config(
+    f: impl FnOnce(&mut tidb_domain_core::node_config::NodeConfig),
+) -> (UnistoreClusterStack, Arc<ConfiguredUserStore>) {
     let mut config = tidb_domain_core::node_config::NodeConfig::with_defaults(
         |config| {
             config.store = tidb_config::store::StoreType("unistore".to_owned());
@@ -70,9 +82,7 @@ fn cop_backed_stack_with_stats_lease(
         },
     )
     .expect("node config");
-    if let Some(stats_lease) = stats_lease {
-        config.stats_lease = stats_lease;
-    }
+    f(&mut config);
     let users = Arc::new(
         ConfiguredUserStore::parse(&format!("root\t%\tmysql_native_password\t{ABC_HASH}\n"))
             .expect("configured user store"),

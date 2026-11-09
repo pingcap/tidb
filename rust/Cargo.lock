@@ -7526,6 +7526,7 @@ dependencies = [
  "tidb-unistore-tikv",
  "tidb-util",
  "tidb-util-config",
+ "tidb-util-disttask",
  "tidb-vardef",
  "tidb-variable",
  "tidb-versioninfo",

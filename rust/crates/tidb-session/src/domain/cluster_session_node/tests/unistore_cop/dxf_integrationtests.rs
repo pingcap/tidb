@@ -1154,3 +1154,73 @@ fn test_modify_task_max_node_count_for_subtask_balance() {
     assert_eq!(task2_base.state, TASK_STATE_SUCCEED);
     *tidb_dxf_scheduler::BEFORE_REFRESH_TASK.write().unwrap() = None;
 }
+
+/// Go `TestScopeBasic`. Go's test store publishes `:4000` (its mock
+/// infosync), which is also the first DXF node, so the session's
+/// `SET GLOBAL tidb_service_scope` writes that node's role; the stack here
+/// publishes port 4000 for the same exec ID.
+#[test]
+fn test_scope_basic() {
+    if tidb_config_kerneltype::is_next_gen() {
+        // target scope in nextgen is fixed to 'dxf_service'
+        return;
+    }
+    let (stack, _users) = cop_backed_stack_with_config(|config| {
+        config.port = 4000;
+        config.global_config.port = 4000;
+    });
+    let task_mgr = Arc::new(TaskManager::new(stack.factory.dxf_session_pool()));
+    let node_cnt = 3;
+    let c = testutil::new_test_dxf_context(task_mgr, node_cnt, 16, true);
+
+    let _registered =
+        register_example_task(&c.mock_ctrl, get_mock_basic_scheduler_ext_for_scope(&c.mock_ctrl, 3), &c.test_context, None);
+    let mut tk = stack.factory.open_session(session_context(4005)).unwrap();
+    let role = |tk: &mut Session, host: &str| {
+        displayed(rows(tk, &format!(r#"select role from mysql.dist_framework_meta where host="{host}""#)))
+    };
+
+    // 1. all "" role.
+    let task_id = submit_task_and_check_success_for_scope(&c.ctx, "😁", node_cnt, "", &c.test_context);
+
+    check_subtask_on_nodes(task_id, vec![":4000".to_owned(), ":4001".to_owned(), ":4002".to_owned()]);
+    for host in [":4000", ":4001", ":4002"] {
+        assert_eq!(role(&mut tk, host), [[""]]);
+    }
+
+    // 2. one "background" role.
+    rows(&mut tk, "set global tidb_service_scope=background");
+    assert_eq!(displayed(rows(&mut tk, "select @@global.tidb_service_scope")), [["background"]]);
+    assert_eq!(displayed(rows(&mut tk, "select @@tidb_service_scope")), [["background"]]);
+
+    let wait_sync_refresh = || {
+        let (ch_tx, ch_rx) = crossbeam_channel::bounded::<()>(0);
+        let counter = AtomicI32::new(0);
+        *tidb_dxf_scheduler::SYNC_REFRESH.write().unwrap() = Some(Arc::new(move || {
+            if counter.fetch_add(1, Ordering::SeqCst) + 1 == 1 {
+                let _ = ch_tx.send(());
+            }
+        }));
+        ch_rx.recv().unwrap();
+    };
+    wait_sync_refresh();
+    let task_id = submit_task_and_check_success_for_scope(&c.ctx, "😊", node_cnt, "background", &c.test_context);
+
+    assert_eq!(role(&mut tk, ":4000"), [["background"]]);
+    assert_eq!(role(&mut tk, ":4001"), [[""]]);
+    assert_eq!(role(&mut tk, ":4002"), [[""]]);
+    check_subtask_on_nodes(task_id, vec![":4000".to_owned()]);
+
+    // 3. 2 "background" role.
+    rows(&mut tk, r#"update mysql.dist_framework_meta set role = "background" where host = ":4001""#);
+    std::thread::sleep(Duration::from_secs(5));
+    wait_sync_refresh();
+    let task_id = submit_task_and_check_success_for_scope(&c.ctx, "😆", node_cnt, "background", &c.test_context);
+    check_subtask_on_nodes(task_id, vec![":4000".to_owned(), ":4001".to_owned()]);
+    assert_eq!(role(&mut tk, ":4000"), [["background"]]);
+    assert_eq!(role(&mut tk, ":4001"), [["background"]]);
+    assert_eq!(role(&mut tk, ":4002"), [[""]]);
+
+    *tidb_dxf_scheduler::SYNC_REFRESH.write().unwrap() = None;
+    rows(&mut tk, "set global tidb_service_scope=''");
+}
