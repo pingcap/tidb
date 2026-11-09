@@ -2614,13 +2614,15 @@ func TestRemoveCompaction(t *testing.T) {
 		ap []string
 		cp []string
 	)
-	for i := 1; i <= 4; i++ {
+	for i := 1; i <= 5; i++ {
 		ap = append(ap, placeholder(aDir(uint64(i))))
 		cp = append(cp, placeholder(cDir(uint64(i))))
 	}
 	mig1 := mig(
 		mCompaction(cDir(1), aDir(1), 10, 40),
 		mCompaction(cDir(2), aDir(2), 35, 50),
+		// Legacy compactions without a timestamp range must survive truncation.
+		mCompaction(cDir(5), aDir(5), 0, 0),
 		// Should not truncate the full dir...
 		mTruncatedTo(30),
 	)
@@ -2636,20 +2638,27 @@ func TestRemoveCompaction(t *testing.T) {
 	requireMigrationsEqual(t, merged, mig(
 		mCompaction(cDir(1), aDir(1), 10, 40),
 		mCompaction(cDir(2), aDir(2), 35, 50),
+		mCompaction(cDir(5), aDir(5), 0, 0),
 		mCompaction("", aDir(4), 15, 25),
 		mCompaction(cDir(3), aDir(3), 5, 29),
 		mTruncatedTo(30),
 	))
 
 	mg := est.migrateTo(ctx, merged)
-	requireMigrationsEqual(t, mg.NewBase, mig(
+	expected := mig(
 		mCompaction(cDir(1), aDir(1), 10, 40),
 		mCompaction(cDir(2), aDir(2), 35, 50),
+		mCompaction(cDir(5), aDir(5), 0, 0),
 		mTruncatedTo(30),
-	))
+	)
+	requireMigrationsEqual(t, mg.NewBase, expected)
+	require.ElementsMatch(t, expected.Compactions, mg.NewBase.Compactions)
 
 	ops := effectsOf(bs.ReadOnlyEffects())
 	require.ElementsMatch(t, maps.Keys(ops.Deletions), []string{ap[2], cp[2], ap[3]})
+	require.NoError(t, bs.Commit(ctx))
+	require.FileExists(t, filepath.Join(s.Base(), ap[4]))
+	require.FileExists(t, filepath.Join(s.Base(), cp[4]))
 }
 
 func TestRetry(t *testing.T) {

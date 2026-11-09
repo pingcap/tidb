@@ -158,7 +158,7 @@ type SnapFileImporter struct {
 	mergeSst bool
 	// retainLatestMVCCVersion means compacted SSTs are downloaded with newest MVCC versions only.
 	retainLatestMVCCVersion bool
-	// peerDownloadRetry means TiKV can safely deduplicate same-uuid download retries inside one peer.
+	// peerDownloadRetry means all participating stores can safely deduplicate same-uuid download retries inside one peer.
 	peerDownloadRetry bool
 }
 
@@ -359,7 +359,7 @@ func (importer *SnapFileImporter) CheckBatchDownloadLatestMVCCSupport(ctx contex
 }
 
 // CheckPeerDownloadRetrySupport checks whether same-uuid peer download retry can be used.
-// The TiKV-side deduplication was released together with BatchDownloadLatestMVCC,
+// Server-side deduplication was released together with BatchDownloadLatestMVCC,
 // so BR uses that RPC as the compatibility signal.
 func (importer *SnapFileImporter) CheckPeerDownloadRetrySupport(ctx context.Context, tikvStores []*metapb.Store) error {
 	storeIDs := make([]uint64, 0, len(tikvStores))

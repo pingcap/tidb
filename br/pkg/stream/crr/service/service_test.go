@@ -55,6 +55,11 @@ func TestServiceTracksSuccessfulCheckpoint(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	// Publish the checkpoint before starting the service so the initial round
+	// cannot consume the files and have its statistics replaced by an empty round.
+	upstreamCheckpoint := h.flushRoundsAndGetCheckpoint([]uint64{1}, 1)
+	h.requireCheckpointAdvancedByTick(initialCheckpoint, upstreamCheckpoint)
+
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	done := make(chan error, 1)
@@ -62,8 +67,6 @@ func TestServiceTracksSuccessfulCheckpoint(t *testing.T) {
 		done <- svc.Run(runCtx)
 	}()
 
-	upstreamCheckpoint := h.flushRoundsAndGetCheckpoint([]uint64{1}, 1)
-	h.requireCheckpointAdvancedByTick(initialCheckpoint, upstreamCheckpoint)
 	h.requireReplicateAllPending()
 
 	sawExpectedStats := false

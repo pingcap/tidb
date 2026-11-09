@@ -787,6 +787,7 @@ func (rs *KS3Storage) CopyFrom(ctx context.Context, e ExternalStorage, spec Copy
 
 			return rs.CopyFrom(ctx, e, spec)
 		}
+		return errors.Trace(err)
 	}
 	return nil
 }

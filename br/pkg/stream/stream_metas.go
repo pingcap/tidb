@@ -1275,7 +1275,7 @@ func (m MigrationExt) processCompactions(ctx context.Context, mig *pb.Migration,
 	// If we are going to truncate some files, for now we still need to use `br log truncate`.
 	for _, compaction := range mig.Compactions {
 		// Can we also remove the compaction when `until-ts` is equal to `truncated-to`...?
-		if compaction.InputMaxTs >= mig.TruncatedTo {
+		if compaction.InputMaxTs == 0 || compaction.InputMaxTs >= mig.TruncatedTo {
 			result.NewBase.Compactions = append(result.NewBase.Compactions, compaction)
 		} else {
 			m.tryRemovePrefix(ctx, compaction.Artifacts, result)
@@ -1305,6 +1305,11 @@ func (m MigrationExt) processExtFullBackup(ctx context.Context, mig *pb.Migratio
 		return false, nil
 	}
 	for err, item := range iter.AsSeq(ctx, groups) {
+		if err != nil {
+			result.Warn(err)
+			result.NewBase.IngestedSstPaths = append(result.NewBase.IngestedSstPaths, mig.IngestedSstPaths...)
+			return
+		}
 		copyToNewMig, err := processGroup(err, item)
 		if err != nil {
 			result.Warn(err)
