@@ -20,12 +20,14 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
 )
@@ -37,6 +39,54 @@ func TestFindBestTaskSuite(t *testing.T) {
 	t.Run("RangeCountComparison", testRangeCountComparison)
 	t.Run("RangeCountSkyline", testRangeCountSkyline)
 	t.Run("MissingStatsIndexVsFullScan", testMissingStatsIndexVsFullScan)
+	t.Run("PhysPlanPartInfoColumnNames", testPhysPlanPartInfoColumnNames)
+}
+
+// testPhysPlanPartInfoColumnNames checks that buildPhysPlanPartInfo only
+// reconstructs the column names, which only partition pruning reads, for
+// partitioned tables.
+func testPhysPlanPartInfoColumnNames(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer domain.GetDomain(ctx).StatsHandle().Close()
+	for _, tc := range []struct {
+		name      string
+		tblInfo   *model.TableInfo
+		wantNames bool
+	}{
+		{"non-partitioned", coretestsdk.MockSignedTable(), false},
+		{"range partitioned", coretestsdk.MockRangePartitionTable(), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ds := logicalop.DataSource{
+				TableInfo: tc.tblInfo,
+				Table:     tables.MockTableFromMeta(tc.tblInfo),
+				DBName:    ast.NewCIStr("test"),
+			}.Init(ctx.GetPlanCtx(), 0)
+			for _, col := range tc.tblInfo.Columns {
+				ds.TblCols = append(ds.TblCols, &expression.Column{
+					ID:       col.ID,
+					UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+					RetType:  &col.FieldType,
+				})
+			}
+			ds.AllConds = []expression.Expression{expression.NewOne()}
+			ds.PartitionNames = []ast.CIStr{ast.NewCIStr("p1")}
+
+			info := buildPhysPlanPartInfo(ds)
+			require.Equal(t, ds.AllConds, info.PruningConds)
+			require.Equal(t, ds.PartitionNames, info.PartitionNames)
+			require.Equal(t, ds.TblCols, info.Columns)
+			if !tc.wantNames {
+				require.Nil(t, info.ColumnNames)
+				return
+			}
+			require.Len(t, info.ColumnNames, len(ds.TblCols))
+			for i, col := range tc.tblInfo.Columns {
+				require.Equal(t, col.Name, info.ColumnNames[i].ColName)
+				require.Equal(t, tc.tblInfo.Name, info.ColumnNames[i].TblName)
+			}
+		})
+	}
 }
 
 func testRangeCountComparison(t *testing.T) {
