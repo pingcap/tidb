@@ -1595,9 +1595,7 @@ func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 			tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(
 				// db, tbl, part, col, is_idx, value, count
 				testkit.Rows("test t  a 0 1 2",
-					"test t  a 0 2 2",
-					"test t  c 0 1 1",
-					"test t  c 0 2 1"))
+					"test t  a 0 2 2"))
 			tk.MustQuery(fmt.Sprintf("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms where table_id = %d", tblID)).Sort().Check(
 				testkit.Rows("0 1 6 1 8 2 1",
 					"0 2 0 0 0 0 0", // column b is not analyzed
@@ -1607,8 +1605,8 @@ func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 				// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
 				testkit.Rows("test t  a 0 0 3 1 3 5 0",
 					"test t  a 0 1 4 1 6 6 0",
-					"test t  c 0 0 4 1 3 6 0",
-					"test t  c 0 1 7 1 7 9 0"))
+					"test t  c 0 0 5 1 1 5 0",
+					"test t  c 0 1 9 1 6 9 0"))
 		}(val)
 	}
 }
@@ -1740,9 +1738,7 @@ func TestAnalyzeColumnsWithClusteredIndex(t *testing.T) {
 				testkit.Rows("0 9"))
 			tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(
 				// db, tbl, part, col, is_idx, value, count
-				testkit.Rows("test t  PRIMARY 1 (1, 1) 1",
-					"test t  PRIMARY 1 (2, 2) 1",
-					"test t  b 0 1 1",
+				testkit.Rows("test t  b 0 1 1",
 					"test t  b 0 2 1",
 					"test t  c 0 6 4",
 					"test t  c 0 7 2",
@@ -1756,8 +1752,8 @@ func TestAnalyzeColumnsWithClusteredIndex(t *testing.T) {
 					"1 1 9 0 18 2 0"))
 			tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(
 				// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
-				testkit.Rows("test t  PRIMARY 1 0 4 1 (3, 3) (6, 6) 0",
-					"test t  PRIMARY 1 1 7 1 (7, 7) (9, 9) 0",
+				testkit.Rows("test t  PRIMARY 1 0 5 1 (1, 1) (5, 5) 0",
+					"test t  PRIMARY 1 1 9 1 (6, 6) (9, 9) 0",
 					"test t  b 0 0 4 1 3 6 0",
 					"test t  b 0 1 7 1 7 9 0",
 					"test t  c 0 0 2 1 8 9 0",
@@ -2843,9 +2839,11 @@ PARTITION BY RANGE ( a ) (
 	require.NoError(t, err)
 	p1, err = h.TableStatsFromStorage(tableInfo, pi.Definitions[1].ID, true, 0)
 	require.NoError(t, err)
-	require.Equal(t, 0, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
-	require.Equal(t, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets), len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
-	require.Equal(t, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets), len(p1.GetCol(tableInfo.Columns[0].ID).Buckets))
+	// The default TopN of column c keeps all values, so c has no buckets. The
+	// primary key a has no TopN, so its buckets cannot show the options.
+	require.Equal(t, 0, len(p0.GetCol(tableInfo.Columns[2].ID).Buckets))
+	require.Equal(t, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets), len(p0.GetCol(tableInfo.Columns[2].ID).Buckets))
+	require.Equal(t, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets), len(p1.GetCol(tableInfo.Columns[2].ID).Buckets))
 	rs = tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "3", rs.Rows()[0][0])
