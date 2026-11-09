@@ -20,8 +20,10 @@
 //! on a session from the framework's session pool.
 
 mod converter;
+mod nodes;
 
 pub use converter::{row2_sub_task, row2_task, task_id_to_key};
+pub use nodes::{get_dxf_cpu_count, get_node_resource, set_node_resource};
 
 use std::sync::Arc;
 
