@@ -117,6 +117,26 @@ tidb-server shows the same rows.
   refuses; `ingestctrl.InitializeRateLimiterParam` comes with ingest (D02);
   the `MockDisableDistTask` failpoint has no caller yet (the test stacks do
   not start the loop; the tests that need it start it).
+- [ ] Milestone 5b: Go's framework integration tests. Done: gomock's
+  `Controller` and per-mock `Receiver` (`rust/crates/tidb-gomock`), Go's
+  generated mocks the harness uses (`rust/crates/tidb-dxf-mock`), the
+  multi-node harness (`tidb-dxf-testutil`'s `TestDxfContext`,
+  `disttest_util.go`, `executor_util.go`, `scheduler_util.go`), the Go call
+  failpoints they need (`afterRunSubtask`, `mockTiDBShutdown`,
+  `beforeSetFrameworkInfo`, `afterRefreshTask`, `mockOwnerChange`,
+  `cancelBeforeUpdateTask`, `historySubtaskTableGcInterval`,
+  `processCleanupTaskBatch`, `WaitCleanUpFinished`, `beforeSubmitTask`,
+  `mockTaskExecutorNodes` with `MockServerInfo`), and on the unistore stack
+  (`unistore_cop/dxf_integrationtests.rs`) Go's owner-change, scale in/out,
+  cancel, init-failure, run-subtask cancel/fail, cancel-before-update,
+  owner-change-while-scheduling, HA and rollback tests. Left:
+  `framework_err_handling_test.go`, `framework_pause_and_resume_test.go`,
+  `framework_scope_test.go`, `modify_test.go`, `resource_control_test.go`,
+  `framework_test.go`'s `WithQuery`/`GC`/`Cleaner`/`MaxRuntimeSlots`, and the
+  scheduler's and executor's own testkit tests. Under concurrent nextest the
+  long DXF tests can make short neighbours report LEAK (a sibling spawned
+  alongside inherits their pipes, as `.config/nextest.toml` measures); a
+  serial run is leak free.
 - [ ] Milestone 6: `metering` and `dxfmetric` where a classic kernel uses them.
 
 ## Surprises & Discoveries

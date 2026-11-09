@@ -1,0 +1,20 @@
+[package]
+name = "tidb-dxf-mock"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/dxf/framework/mock, mock/execute and scheduler/mock: gomock mocks of the DXF interfaces."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-dxf = { path = "../tidb-dxf" }
+tidb-dxf-execute = { path = "../tidb-dxf-execute" }
+tidb-dxf-scheduler = { path = "../tidb-dxf-scheduler" }
+tidb-dxf-storage = { path = "../tidb-dxf-storage" }
+tidb-dxf-taskexecutor = { path = "../tidb-dxf-taskexecutor" }
+tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-gomock = { path = "../tidb-gomock" }

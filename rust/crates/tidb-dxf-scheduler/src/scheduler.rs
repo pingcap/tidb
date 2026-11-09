@@ -64,8 +64,23 @@ impl ServerInfoSource for tidb_domain_serverinfo::serverinfo_syncer::Syncer {
 /// # Errors
 /// The server infos cannot be read, or there are none.
 pub fn get_live_exec_ids(server_info: &dyn ServerInfoSource) -> Result<Vec<String>, String> {
+    #[cfg(any(test, feature = "failpoints"))]
+    if fail::eval("mockTaskExecutorNodes", |_| ()).is_some() {
+        return Ok(MOCK_SERVER_INFO.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone());
+    }
     let server_infos = generate_task_executor_nodes(server_info)?;
     Ok(server_infos.iter().map(tidb_util_disttask::generate_exec_id).collect())
+}
+
+/// Go `MockServerInfo`: the live exec IDs under the `mockTaskExecutorNodes`
+/// failpoint. Exported for tests.
+#[cfg(any(test, feature = "failpoints"))]
+pub static MOCK_SERVER_INFO: RwLock<Vec<String>> = RwLock::new(Vec::new());
+
+/// Go `MockServerInfo.Store`.
+#[cfg(any(test, feature = "failpoints"))]
+pub fn set_mock_server_info(exec_ids: Vec<String>) {
+    *MOCK_SERVER_INFO.write().unwrap_or_else(std::sync::PoisonError::into_inner) = exec_ids;
 }
 
 /// Go `generateTaskExecutorNodes`.
@@ -284,6 +299,8 @@ impl BaseScheduler {
                 self.sample_logger.warn("refresh task failed", &[str_field("error", err.to_string())]);
                 continue;
             }
+            #[cfg(any(test, feature = "failpoints"))]
+            call_hook(&AFTER_REFRESH_TASK, |hook| hook(&self.get_task()));
             let task = self.get_task_clone();
             #[cfg(any(test, feature = "failpoints"))]
             fail::fail_point!("exitScheduler", |_| ());
@@ -355,6 +372,9 @@ impl BaseScheduler {
             if let Err(err) = result {
                 self.sample_logger.info("schedule task meet err, reschedule it", &[str_field("error", err.to_string())]);
             }
+
+            #[cfg(any(test, feature = "failpoints"))]
+            call_hook(&MOCK_OWNER_CHANGE, |hook| hook());
         }
     }
 
@@ -740,6 +760,8 @@ impl BaseScheduler {
                 i as isize + 1,
             ));
         }
+        #[cfg(any(test, feature = "failpoints"))]
+        call_hook(&CANCEL_BEFORE_UPDATE_TASK, |hook| hook(task.base.id));
 
         // as other fields and generated key and index KV takes space too, we limit
         // the size of subtasks to 80% of the transaction limit.
@@ -824,6 +846,31 @@ impl BaseScheduler {
         &self.logger
     }
 }
+
+/// A Go call-failpoint (`failpoint.InjectCall`): the test's function, if set.
+#[cfg(any(test, feature = "failpoints"))]
+pub type CallHook<F> = RwLock<Option<Arc<F>>>;
+
+/// Runs a call-failpoint's function, if a test set one.
+#[cfg(any(test, feature = "failpoints"))]
+pub(crate) fn call_hook<F: ?Sized>(hook: &CallHook<F>, call: impl FnOnce(&F)) {
+    let hook = hook.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    if let Some(hook) = hook {
+        call(&hook);
+    }
+}
+
+/// Go's `mockOwnerChange` call-failpoint, after each round of scheduling.
+#[cfg(any(test, feature = "failpoints"))]
+pub static MOCK_OWNER_CHANGE: CallHook<dyn Fn() + Send + Sync> = RwLock::new(None);
+
+/// Go's `afterRefreshTask` call-failpoint, which receives the task.
+#[cfg(any(test, feature = "failpoints"))]
+pub static AFTER_REFRESH_TASK: CallHook<dyn Fn(&Task) + Send + Sync> = RwLock::new(None);
+
+/// Go's `cancelBeforeUpdateTask` call-failpoint, which receives the task ID.
+#[cfg(any(test, feature = "failpoints"))]
+pub static CANCEL_BEFORE_UPDATE_TASK: CallHook<dyn Fn(i64) + Send + Sync> = RwLock::new(None);
 
 /// Go's `beforeRefreshTask` call-failpoint, which receives the task.
 #[cfg(any(test, feature = "failpoints"))]

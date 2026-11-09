@@ -1,0 +1,11 @@
+[package]
+name = "tidb-gomock"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "go.uber.org/mock/gomock's Controller, as the ports of Go's generated mocks use it."
+
+[lints]
+workspace = true

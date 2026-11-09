@@ -16,11 +16,10 @@
 //! `mock.MockTaskExecutor`, `mock.MockExtension`,
 //! `mockexecute.MockStepExecutor`) and of `sqlsvrapi`.
 //!
-//! One [`Controller`] (Go's `gomock.Controller`) holds every mock's
-//! expectations, in order. A call is keyed `Method|arg|arg`; an expectation's
-//! `*` argument is `gomock.Any()`. Answers are closures of the call's input.
+//! They answer through gomock's [`Controller`] (`tidb-gomock`). Go's
+//! `pkg/dxf/framework/mock` is `tidb-dxf-mock`; these copies exist because a
+//! dev-dependency on it would build this crate twice.
 
-use std::any::Any;
 use std::error::Error as StdError;
 use std::sync::{Arc, Mutex};
 
@@ -31,101 +30,7 @@ use tidb_gocontext::Context;
 
 use crate::{Error, Extension, TaskExecutor, TaskTable};
 
-/// gomock's call counts.
-#[derive(Clone, Copy)]
-pub(crate) enum Times {
-    /// `Times(n)`; the default is once.
-    N(usize),
-    /// `AnyTimes()`.
-    Any,
-}
-
-pub(crate) const ONCE: Times = Times::N(1);
-
-type AnswerFn = Arc<dyn Fn(&dyn Any) -> Box<dyn Any + Send> + Send + Sync>;
-
-struct Expectation {
-    pattern: Vec<String>,
-    remaining: Option<usize>,
-    answer: AnswerFn,
-}
-
-/// Go `gomock.Controller`.
-#[derive(Default)]
-pub(crate) struct Controller {
-    expected: Mutex<Vec<Expectation>>,
-    failures: Mutex<Vec<String>>,
-}
-
-fn matches(pattern: &[String], key: &[&str]) -> bool {
-    pattern.len() == key.len() && pattern.iter().zip(key).all(|(want, got)| want == "*" || want == got)
-}
-
-impl Controller {
-    /// `EXPECT().Method(args).DoAndReturn(f).Times(times)`.
-    pub(crate) fn expect<T: Send + 'static>(
-        &self,
-        key: impl AsRef<str>,
-        times: Times,
-        answer: impl Fn(&dyn Any) -> T + Send + Sync + 'static,
-    ) {
-        self.expected.lock().unwrap().push(Expectation {
-            pattern: key.as_ref().split('|').map(str::to_owned).collect(),
-            remaining: match times {
-                Times::N(n) => Some(n),
-                Times::Any => None,
-            },
-            answer: Arc::new(move |input| Box::new(answer(input))),
-        });
-    }
-
-    /// `EXPECT().Method(args).Return(value)`, once.
-    pub(crate) fn ret<T: Clone + Send + Sync + 'static>(&self, key: impl AsRef<str>, value: T) {
-        self.expect(key, ONCE, move |_| value.clone());
-    }
-
-    /// A call: the first expectation in order that matches and has calls
-    /// left answers it.
-    pub(crate) fn call<T: 'static>(&self, key: &str, input: &dyn Any) -> T {
-        let parts: Vec<&str> = key.split('|').collect();
-        let answer = {
-            let mut expected = self.expected.lock().unwrap();
-            expected.iter_mut().find(|expectation| expectation.remaining != Some(0) && matches(&expectation.pattern, &parts)).map(
-                |expectation| {
-                    if let Some(remaining) = expectation.remaining.as_mut() {
-                        *remaining -= 1;
-                    }
-                    Arc::clone(&expectation.answer)
-                },
-            )
-        };
-        let Some(answer) = answer else {
-            self.failures.lock().unwrap().push(format!("unexpected call {key}"));
-            panic!("unexpected call {key}");
-        };
-        *answer(input).downcast::<T>().unwrap_or_else(|_| panic!("{key} answered with the wrong type"))
-    }
-
-    /// Go `ctrl.Satisfied()`: every expected call was made.
-    pub(crate) fn satisfied(&self) -> bool {
-        self.expected.lock().unwrap().iter().all(|expectation| expectation.remaining.is_none_or(|remaining| remaining == 0))
-    }
-
-    /// Go `ctrl.Finish()`: no unexpected call and no missing call.
-    pub(crate) fn finish(&self) {
-        let failures = self.failures.lock().unwrap().clone();
-        assert!(failures.is_empty(), "{failures:?}");
-        let missing: Vec<String> = self
-            .expected
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|expectation| expectation.remaining.is_some_and(|remaining| remaining > 0))
-            .map(|expectation| expectation.pattern.join("|"))
-            .collect();
-        assert!(missing.is_empty(), "missing calls: {missing:?}");
-    }
-}
+pub(crate) use tidb_gomock::{Controller, Times, ONCE};
 
 fn states(states: &[SubtaskState]) -> String {
     states.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")

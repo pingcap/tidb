@@ -16,8 +16,14 @@
 //! The store and session setup (Go `InitTableTest`) belongs to the test
 //! that builds a node; these helpers need only a `TaskManager`.
 
+mod context;
+mod disttest_util;
+mod scheduler_util;
 mod table_util;
 mod task_util;
 
+pub use context::*;
+pub use disttest_util::*;
+pub use scheduler_util::*;
 pub use table_util::*;
 pub use task_util::*;

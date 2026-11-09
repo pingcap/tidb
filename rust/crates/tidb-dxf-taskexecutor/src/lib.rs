@@ -33,3 +33,5 @@ pub use manager::{Manager, MAX_SUBTASK_CHECK_INTERVAL, SUBTASK_CHECK_INTERVAL, T
 pub use register::{clear_task_executors, get_task_executor_factory, register_task_type, FactoryFn};
 pub use slot::SlotManager;
 pub use task_executor::{BaseTaskExecutor, Param, DETECT_PARAM_MODIFY_INTERVAL};
+#[cfg(any(test, feature = "failpoints"))]
+pub use task_executor::{CallHook, AFTER_RUN_SUBTASK, BEFORE_SET_FRAMEWORK_INFO, MOCK_TIDB_SHUTDOWN};

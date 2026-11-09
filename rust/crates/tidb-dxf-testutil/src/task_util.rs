@@ -153,3 +153,13 @@ pub fn insert_subtask_with_summary(
     .expect("insert subtask with summary");
     id
 }
+
+/// Go `getTaskKS`: the keyspace tests submit tasks to (Go `keyspace.System`
+/// on a next-gen kernel).
+#[must_use]
+pub(crate) fn get_task_ks() -> String {
+    if tidb_config_kerneltype::is_next_gen() {
+        return "SYSTEM".to_owned();
+    }
+    String::new()
+}

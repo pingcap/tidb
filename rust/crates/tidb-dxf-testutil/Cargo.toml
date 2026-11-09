@@ -12,6 +12,19 @@ workspace = true
 
 [dependencies]
 chrono.workspace = true
+crossbeam-channel = "0.5"
+fail = { version = "0.4", features = ["failpoints"] }
+rand = "0.10"
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
+tidb-cpu = { path = "../tidb-cpu", features = ["failpoints"] }
+tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }
+tidb-dxf-handle = { path = "../tidb-dxf-handle" }
+tidb-dxf-mock = { path = "../tidb-dxf-mock" }
+tidb-dxf-scheduler = { path = "../tidb-dxf-scheduler", features = ["failpoints"] }
+tidb-dxf-taskexecutor = { path = "../tidb-dxf-taskexecutor", features = ["failpoints"] }
+tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-gomock = { path = "../tidb-gomock" }
+tidb-logutil = { path = "../tidb-logutil" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-dxf = { path = "../tidb-dxf" }
 tidb-dxf-execute = { path = "../tidb-dxf-execute" }

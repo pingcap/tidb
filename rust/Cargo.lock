@@ -4744,6 +4744,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-dxf-mock"
+version = "0.0.0"
+dependencies = [
+ "tidb-dxf",
+ "tidb-dxf-execute",
+ "tidb-dxf-scheduler",
+ "tidb-dxf-storage",
+ "tidb-dxf-taskexecutor",
+ "tidb-gocontext",
+ "tidb-gomock",
+]
+
+[[package]]
 name = "tidb-dxf-operator"
 version = "0.0.0"
 dependencies = [
@@ -4847,6 +4860,7 @@ dependencies = [
  "tidb-dxf-scheduler",
  "tidb-dxf-storage",
  "tidb-gocontext",
+ "tidb-gomock",
  "tidb-intest",
  "tidb-lightning-log",
  "tidb-log",
@@ -4862,10 +4876,23 @@ name = "tidb-dxf-testutil"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "crossbeam-channel",
+ "fail",
+ "rand 0.10.2",
+ "tidb-config-kerneltype",
+ "tidb-cpu",
  "tidb-datatype",
+ "tidb-domain-serverinfo",
  "tidb-dxf",
  "tidb-dxf-execute",
+ "tidb-dxf-handle",
+ "tidb-dxf-mock",
+ "tidb-dxf-scheduler",
  "tidb-dxf-storage",
+ "tidb-dxf-taskexecutor",
+ "tidb-gocontext",
+ "tidb-gomock",
+ "tidb-logutil",
  "tidb-sqlescape",
  "tidb-sqlexec",
  "tidb-stringutil",
@@ -5627,6 +5654,10 @@ version = "0.0.0"
 dependencies = [
  "crossbeam-channel",
 ]
+
+[[package]]
+name = "tidb-gomock"
+version = "0.0.0"
 
 [[package]]
 name = "tidb-goruntime"
@@ -7362,6 +7393,7 @@ dependencies = [
  "tidb-dxf-example",
  "tidb-dxf-execute",
  "tidb-dxf-handle",
+ "tidb-dxf-mock",
  "tidb-dxf-planner",
  "tidb-dxf-scheduler",
  "tidb-dxf-storage",
@@ -7381,6 +7413,7 @@ dependencies = [
  "tidb-gcutil",
  "tidb-globalconn",
  "tidb-gocontext",
+ "tidb-gomock",
  "tidb-goruntime",
  "tidb-hack",
  "tidb-hint",

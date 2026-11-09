@@ -39,6 +39,17 @@ pub static CHECK_TASK_RUNNING_INTERVAL: RwLock<Duration> = RwLock::new(Duration:
 const DEFAULT_HISTORY_SUBTASK_TABLE_GC_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 /// Go `DefaultCleanUpInterval`: the interval of task cleanup.
 pub static DEFAULT_CLEAN_UP_INTERVAL: RwLock<Duration> = RwLock::new(Duration::from_secs(10 * 60));
+/// Go's `historySubtaskTableGcInterval` call-failpoint, which may change the
+/// interval.
+#[cfg(any(test, feature = "failpoints"))]
+pub static HISTORY_SUBTASK_TABLE_GC_INTERVAL: crate::scheduler::CallHook<dyn Fn(&mut Duration) + Send + Sync> =
+    RwLock::new(None);
+/// Go's `processCleanupTaskBatch` call-failpoint.
+#[cfg(any(test, feature = "failpoints"))]
+pub static PROCESS_CLEANUP_TASK_BATCH: crate::scheduler::CallHook<dyn Fn() + Send + Sync> = RwLock::new(None);
+/// Go's `WaitCleanUpFinished` call-failpoint.
+#[cfg(any(test, feature = "failpoints"))]
+pub static WAIT_CLEAN_UP_FINISHED: crate::scheduler::CallHook<dyn Fn() + Send + Sync> = RwLock::new(None);
 /// Go `defaultCollectMetricsInterval`: metric scraping mostly happens every
 /// 15s, so collecting more often is meaningless.
 const DEFAULT_COLLECT_METRICS_INTERVAL: Duration = Duration::from_secs(15);
@@ -355,7 +366,11 @@ impl Manager {
     /// Go `gcSubtaskHistoryTableLoop`.
     fn gc_subtask_history_table_loop(self: &Arc<Self>) {
         self.logger.info("subtask table gc loop start", &[]);
-        let ticker = crossbeam_channel::tick(DEFAULT_HISTORY_SUBTASK_TABLE_GC_INTERVAL);
+        #[allow(unused_mut)]
+        let mut history_subtask_table_gc_interval = DEFAULT_HISTORY_SUBTASK_TABLE_GC_INTERVAL;
+        #[cfg(any(test, feature = "failpoints"))]
+        crate::scheduler::call_hook(&HISTORY_SUBTASK_TABLE_GC_INTERVAL, |hook| hook(&mut history_subtask_table_gc_interval));
+        let ticker = crossbeam_channel::tick(history_subtask_table_gc_interval);
         let done = self.ctx.done();
         loop {
             crossbeam_channel::select! {
@@ -493,6 +508,9 @@ impl Manager {
         if tasks.is_empty() {
             return false;
         }
+        // Keep the failpoint name stable for existing integration tests.
+        #[cfg(any(test, feature = "failpoints"))]
+        crate::scheduler::call_hook(&PROCESS_CLEANUP_TASK_BATCH, |hook| hook());
         self.logger.info("task cleanup starts", &[]);
         let total = tasks.len();
         let transferred_task_count = match self.clean_finished_tasks(tasks) {
@@ -502,6 +520,8 @@ impl Manager {
                 return false;
             }
         };
+        #[cfg(any(test, feature = "failpoints"))]
+        crate::scheduler::call_hook(&WAIT_CLEAN_UP_FINISHED, |hook| hook());
         let batch_fully_handled = transferred_task_count == total;
         self.logger.info(
             "task cleanup finished",

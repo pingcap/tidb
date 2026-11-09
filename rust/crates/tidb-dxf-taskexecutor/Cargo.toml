@@ -39,5 +39,6 @@ tidb-vardef = { path = "../tidb-vardef" }
 [dev-dependencies]
 fail = { version = "0.4", features = ["failpoints"] }
 tidb-domain-sqlsvrapi = { path = "../tidb-domain-sqlsvrapi" }
+tidb-gomock = { path = "../tidb-gomock" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-syssession = { path = "../tidb-syssession" }

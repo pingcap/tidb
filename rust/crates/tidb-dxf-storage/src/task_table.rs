@@ -35,6 +35,13 @@ use crate::{
     SUBTASK_COLUMNS, TASK_COLUMNS,
 };
 
+/// Go's `beforeSubmitTask` call-failpoint, which may change the required
+/// slots and the extra params.
+#[cfg(feature = "failpoints")]
+pub static BEFORE_SUBMIT_TASK: std::sync::RwLock<
+    Option<std::sync::Arc<dyn Fn(&mut isize, &mut ExtraParams) + Send + Sync>>,
+> = std::sync::RwLock::new(None);
+
 /// Go `TaskExecInfo`: a task's execution information on one node.
 #[derive(Debug, Clone)]
 pub struct TaskExecInfo {
@@ -139,6 +146,17 @@ impl TaskManager {
                 "task required slots({required_slots}) larger than cpu count({cpu_count}) of managed node"
             )));
         }
+        #[cfg(feature = "failpoints")]
+        let (required_slots, extra_params) = {
+            let (mut required_slots, mut extra_params) = (required_slots, extra_params.clone());
+            let hook = BEFORE_SUBMIT_TASK.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+            if let Some(hook) = hook {
+                hook(&mut required_slots, &mut extra_params);
+            }
+            (required_slots, extra_params)
+        };
+        #[cfg(feature = "failpoints")]
+        let extra_params = &extra_params;
         let extra_param_bytes =
             serde_json::to_vec(extra_params).map_err(|error| StorageError::Other(error.to_string()))?;
         let args = [
