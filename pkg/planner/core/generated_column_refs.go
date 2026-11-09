@@ -172,7 +172,7 @@ func (b *PlanBuilder) virtualGeneratedColumnsToSkip(tblInfo *model.TableInfo, co
 			}
 			for dep := range c.Dependences {
 				depsOfBuilt[dep] = struct{}{}
-				if j := offsetByName[dep]; !build[j] && isVirtual(columns[j]) {
+				if j, ok := offsetByName[dep]; ok && !build[j] && isVirtual(columns[j]) {
 					build[j], changed = true, true
 				}
 			}
@@ -183,7 +183,7 @@ func (b *PlanBuilder) virtualGeneratedColumnsToSkip(tblInfo *model.TableInfo, co
 			}
 			for dep := range c.Dependences {
 				_, shared := depsOfBuilt[dep]
-				if j := offsetByName[dep]; shared || (build[j] && isVirtual(columns[j])) {
+				if j, ok := offsetByName[dep]; shared || (ok && build[j] && isVirtual(columns[j])) {
 					build[i], changed = true, true
 					break
 				}
