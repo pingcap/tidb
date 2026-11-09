@@ -287,6 +287,7 @@ members = [
     "crates/tidb-dxf-dxfutil",
     "crates/tidb-dxf-handle",
     "crates/tidb-dxf-planner",
+    "crates/tidb-dxf-scheduler",
     "crates/tidb-dxf-testutil",
     "crates/tidb-domain-sqlsvrapi",
     "crates/tidb-gocontext",

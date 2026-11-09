@@ -1,0 +1,27 @@
+[package]
+name = "tidb-dxf-scheduler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/dxf/framework/scheduler: the owner's schedulers of DXF tasks, their slots and nodes."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
+tidb-cpu = { path = "../tidb-cpu" }
+tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }
+tidb-dxf = { path = "../tidb-dxf" }
+tidb-dxf-execute = { path = "../tidb-dxf-execute" }
+tidb-dxf-handle = { path = "../tidb-dxf-handle" }
+tidb-dxf-storage = { path = "../tidb-dxf-storage" }
+tidb-intest = { path = "../tidb-intest" }
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-util-disttask = { path = "../tidb-util-disttask" }
+
+[dev-dependencies]
+chrono.workspace = true

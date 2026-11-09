@@ -4743,6 +4743,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-dxf-scheduler"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "tidb-config-kerneltype",
+ "tidb-cpu",
+ "tidb-domain-serverinfo",
+ "tidb-dxf",
+ "tidb-dxf-execute",
+ "tidb-dxf-handle",
+ "tidb-dxf-storage",
+ "tidb-intest",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-util-disttask",
+]
+
+[[package]]
 name = "tidb-dxf-storage"
 version = "0.0.0"
 dependencies = [
