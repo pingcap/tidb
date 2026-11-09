@@ -75,11 +75,17 @@ the unistore stack.
   `constructMPPTasksByChildrenTasks`, `constructMPPTasksImpl`) over
   `MppTaskGeneratorContext`; left: the context's implementation over the
   session (ranges, pruning, the MPP client) and the MPP CTE pieces.
-- [ ] Milestone 3: the embedded store's MPP (Go
-  `pkg/store/mockstore/unistore/cophandler/mpp.go` / `mpp_exec.go`): tunnels
-  between tasks, `ExchangeSender` (PassThrough, Broadcast, HashPartition),
-  `ExchangeReceiver`, the MPP joins and `Expand`, and the RPC server's
-  `EstablishMPPConnection` over them.
+- [ ] Milestone 3: the embedded store's MPP. Scope found 2026-11-10: the
+  Rust embedded store serves no MPP at all (`tidb-unistore` `rpc.rs` answers
+  MPP commands "not support") and its cluster has no TiFlash store, so this
+  milestone is: Go `mockstore.WithMockTiFlash(n)` (TiFlash stores labelled
+  `engine=tiflash` in the embedded cluster, as Go's `unistore` bootstraps
+  them); `rpc.go`'s `DispatchMPPTask`, `EstablishMPPConnection`,
+  `CancelMPPTask` and `IsAlive` over `cophandler.HandleMPPDAGReq` and the
+  `MPPTaskHandler` tunnel registry (`mpp.go`); and `mpp_exec.go`'s
+  `exchSenderExec` (PassThrough, Broadcast, HashPartition), `exchRecvExec`,
+  `joinExec`, `expandExec` and `indexLookUpExec`, with `buildMPPExchangeSender`
+  / `Receiver` / `Join` / `Expand` / `IndexLookUp` in `mpp.rs`.
 - [ ] Milestone 4: Go's local MPP coordinator and `MPPGather`
   (`pkg/executor/internal/mpp/local_mpp_coordinator.go`,
   `executor_with_retry.go`, `recovery_handler.go`, `pkg/executor/mpp_gather.go`)
