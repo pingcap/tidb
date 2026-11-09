@@ -91,6 +91,7 @@ func TestDateTimeHistogramRangeEstimate(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("insert into %s with recursive s(d) as (select date'2027-01-01' union all select d + interval 1 day from s where d < '2030-12-31') select d from s", table))
 			tk.MustExec("flush stats_delta *.*")
 			require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+			var referenceEstimates []string
 			check := func() {
 				for _, zone := range []string{"UTC", "+00:00", "Asia/Shanghai", "America/New_York"} {
 					tk.MustExec("set @@time_zone='" + zone + "'")
@@ -100,6 +101,10 @@ func TestDateTimeHistogramRangeEstimate(t *testing.T) {
 						rows := tk.MustQuery("explain format='brief' " + query).Rows()
 						estimates = append(estimates, rows[0][1].(string))
 					}
+					if referenceEstimates == nil {
+						referenceEstimates = estimates
+					}
+					require.Equal(t, referenceEstimates, estimates, "%s", zone)
 					require.NotEqual(t, "1.00", estimates[0], "%s", zone)
 					require.Equal(t, estimates[0], estimates[1], "%s", zone)
 					require.Equal(t, estimates[0], estimates[2], "%s", zone)
