@@ -19,6 +19,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
@@ -321,28 +322,27 @@ func MergeSchema(lSchema, rSchema *Schema) *Schema {
 	return ret
 }
 
-// usedListMapThreshold is the number of used columns from which GetUsedList
+// usedListSetThreshold is the number of used columns from which GetUsedList
 // builds a set of UniqueIDs instead of scanning usedCols for every schema
-// column. Below it, the linear scan is cheaper than building and probing a map.
-const usedListMapThreshold = 32
+// column. Below it, the linear scan avoids building and probing a set.
+const usedListSetThreshold = 32
 
 // GetUsedList shows whether each column in schema is contained in usedCols.
 func GetUsedList(ctx EvalContext, usedCols []*Column, schema *Schema) []bool {
 	used := make([]bool, schema.Len())
 	// Membership is decided by UniqueID only, so a set of UniqueIDs gives the same
-	// answer as Schema.Contains. For wide tables (thousands of columns) this turns
-	// an O(len(schema) * len(usedCols)) scan into O(len(schema) + len(usedCols)).
-	var usedIDs map[int64]struct{}
-	if len(usedCols) >= usedListMapThreshold {
-		usedIDs = make(map[int64]struct{}, len(usedCols))
+	// answer as Schema.Contains, without scanning usedCols for every schema column.
+	var usedIDs intset.FastIntSet
+	useSet := len(usedCols) >= usedListSetThreshold
+	if useSet {
 		for _, col := range usedCols {
-			usedIDs[col.UniqueID] = struct{}{}
+			usedIDs.Insert(int(col.UniqueID))
 		}
 	}
 	for i, col := range schema.Columns {
 		if !used[i] {
-			if usedIDs != nil {
-				_, used[i] = usedIDs[col.UniqueID]
+			if useSet {
+				used[i] = usedIDs.Has(int(col.UniqueID))
 			} else {
 				used[i] = containsUniqueID(usedCols, col.UniqueID)
 			}
