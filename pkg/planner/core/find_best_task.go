@@ -930,7 +930,6 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	if prop.IsSortItemEmpty() || !all || len(path.IdxCols) < len(prop.SortItems) {
 		return property.PropNotMatched
 	}
-
 	// Basically, if `prop.SortItems` is the prefix of `path.IdxCols`, then the property is matched.
 	// However, we need to consider the situations when some columns of `path.IdxCols` are evaluated as constant.
 	// For example:
@@ -951,11 +950,14 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	matchResult := property.PropMatched
 	groupByColIdxs := make([]int, 0)
 	colIdx := 0
+	// Cases 1 and 2 also cover strict matches. Case 3 is needed only when
+	// the skipped index column is a point range in each of multiple ranges.
+	// In that case the property may require a merge sort.
 	for _, sortItem := range prop.SortItems {
 		found := false
 		for ; colIdx < len(path.IdxCols); colIdx++ {
 			// Case 1: this sort item is satisfied by the index column, go to match the next sort item.
-			if path.IdxColLens[colIdx] == types.UnspecifiedLength && sortItem.Col.EqualColumn(path.IdxCols[colIdx]) {
+			if matchFullLengthIndexColumn(path.IdxCols[colIdx], path.IdxColLens, colIdx, sortItem) {
 				found = true
 				colIdx++
 				break
@@ -964,7 +966,7 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 
 			// Case 2: the accessed range on this index column is a single constant value, so we can skip this
 			// column and try to use the next index column to satisfy this sort item.
-			if path.ConstCols != nil && colIdx < len(path.ConstCols) && path.ConstCols[colIdx] {
+			if isConstantIndexColumn(path.ConstCols, colIdx) {
 				continue
 			}
 

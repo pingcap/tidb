@@ -97,6 +97,8 @@ var optRuleList = []base.LogicalOptRule{
 	&DeriveTopNFromWindow{},
 	&PredicateSimplification{},
 	&PushDownTopNOptimizer{},
+	&orderAwareCandidateDetector{},
+	&orderAwareJoinReorder{},
 	&SyncWaitStatsLoadPoint{},
 	&JoinReOrderSolver{},
 	&CorrelateSolver{},
@@ -378,6 +380,8 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 	if logic.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
 		// When we use the straight Join Order hint, we should disable the join reorder optimization.
 		flag &= ^rule.FlagJoinReOrder
+		flag &= ^rule.FlagOrderAwareCandidateDetector
+		flag &= ^rule.FlagOrderAwareJoinReorder
 	}
 	// InternalSQLScanUserTable is for ttl scan.
 	if !logic.SCtx().GetSessionVars().InRestrictedSQL || logic.SCtx().GetSessionVars().InternalSQLScanUserTable {

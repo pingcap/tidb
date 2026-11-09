@@ -836,6 +836,17 @@ func buildAndOptimizeLogicalPlanRound(
 	}
 
 	optFlag := builder.GetOptFlag()
+	// The detector runs only in the baseline Volcano round. Its result is a
+	// scheduling signal used to freeze the alternative-round set; speculative
+	// rounds must not rediscover or mutate that decision.
+	if optFlagAdjust == nil &&
+		sctx.GetSessionVars().EnableAlternativeLogicalPlans &&
+		!sctx.GetSessionVars().GetEnableCascadesPlanner() &&
+		sctx.GetSessionVars().TiDBOptEnableAdvancedJoinReorder &&
+		!sctx.GetSessionVars().StmtCtx.StraightJoinOrder &&
+		optFlag&rule.FlagJoinReOrder != 0 {
+		optFlag |= rule.FlagOrderAwareCandidateDetector
+	}
 	if optFlagAdjust != nil {
 		optFlag = optFlagAdjust(optFlag)
 	}
@@ -864,13 +875,25 @@ func buildAndOptimizeLogicalPlanRound(
 var optimizeCnt int
 
 func shouldTryNonDecorrelationRound(sessVars *variable.SessionVars) bool {
-	return sessVars.EnableAlternativeLogicalPlans &&
+	return canTryAlternativeLogicalPlanRound(sessVars) &&
 		sessVars.StmtCtx.NeedAlternativeLogicalPlanRound()
 }
 
 func shouldTryCorrelateRound(sessVars *variable.SessionVars) bool {
-	return sessVars.EnableAlternativeLogicalPlans &&
+	return canTryAlternativeLogicalPlanRound(sessVars) &&
 		sessVars.StmtCtx.AlternativeLogicalPlanPreferCorrelate
+}
+
+func shouldTryOrderAwareJoinReorderRound(sessVars *variable.SessionVars) bool {
+	return canTryAlternativeLogicalPlanRound(sessVars) &&
+		!sessVars.GetEnableCascadesPlanner() &&
+		sessVars.TiDBOptEnableAdvancedJoinReorder &&
+		sessVars.StmtCtx.NeedAlternativeLogicalPlanOrderAwareJoinReorder()
+}
+
+func canTryAlternativeLogicalPlanRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.CanTryAlternativeLogicalPlanRound()
 }
 
 // alternativeRound describes one alternative logical-plan round.
@@ -901,6 +924,15 @@ var alternativeRounds = [...]alternativeRound{
 				sv.EnableCorrelateSubquery = original
 			}
 		},
+	},
+	{
+		name: "order-aware-join-reorder",
+		adjustFlag: func(flag uint64) uint64 {
+			flag &^= rule.FlagOrderAwareCandidateDetector
+			flag |= rule.FlagOrderAwareJoinReorder
+			return flag
+		},
+		enabled: shouldTryOrderAwareJoinReorderRound,
 	},
 }
 

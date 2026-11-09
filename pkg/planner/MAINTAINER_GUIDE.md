@@ -178,6 +178,29 @@ Round-trip tests should generate `EXPLAIN FORMAT='hint'`, apply the restored
 hint with both join-reorder implementations, and compare the resulting join
 order. Include nested derived tables and duplicate concrete table names.
 
+### 3.3 Order-Aware Join Reorder Must Validate The Enclosing Order
+
+The order-aware collector separates independent TopN discovery (`collect`)
+from order validation (`collectForOrder`). Discovery visits each node once,
+including all join operands, regardless of whether the enclosing order can
+be satisfied. Validation's `true` result must validate that exact
+`requiredOrder`; a nested TopN is a boundary and must not replace it with its
+own order. Validation must never restart discovery on failure: rescanning
+already visited carrier subtrees causes exponential work with nested TopN.
+Annotation de-duplication cannot recover that cost.
+
+Only literal equality predicates fix skipped index columns for the strict
+order precheck. Single-value IN is rewritten to EQ; multi-value IN may need
+range merging and does not qualify as a fixed prefix.
+
+Before scheduling an order-aware round or applying its annotations, validate
+each synthesized LEADING table with `FindAndRemovePlanByAstHint` over the
+complete join operand list, using the group's frozen owner query block. It
+must select exactly the carrier whose order was checked. Matching the carrier
+alone does not rule out ambiguity with another operand. Internal hint
+construction or replay failures are logged at debug level; they must not
+produce user-facing SQL hint warnings.
+
 ## 4. Plan Cache Invariants (Prepared / Non-Prepared / Instance)
 
 The plan cache is a correctness boundary. The common failure mode is treating it

@@ -538,6 +538,10 @@ type StatementContext struct {
 	// build round encountered a non-correlated IN subquery eligible for the
 	// correlate-to-Apply alternative.
 	AlternativeLogicalPlanPreferCorrelate bool
+	// alternativeLogicalPlanOrderAwareJoinReorder indicates that the baseline
+	// logical optimization found a conservative order-aware join reorder candidate.
+	// It is a scheduling signal, not state of the selected plan.
+	alternativeLogicalPlanOrderAwareJoinReorder bool
 	// alternativeLogicalPlanDecorrelatedApply indicates whether the first logical
 	// optimization round decorrelated at least one Apply into Join. This is a scheduling
 	// signal; it does not describe the selected final plan.
@@ -786,6 +790,19 @@ func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 	sc.alternativeLogicalPlanEvaluatedSubquery = false
 	sc.alternativeLogicalPlanDecorrelatedApplyCount = 0
 	sc.alternativeLogicalPlanSameOrderIndexJoinIDs = nil
+	sc.alternativeLogicalPlanOrderAwareJoinReorder = false
+}
+
+// MarkAlternativeLogicalPlanOrderAwareJoinReorder records that the baseline
+// logical optimization found an order-aware join reorder candidate.
+func (sc *StatementContext) MarkAlternativeLogicalPlanOrderAwareJoinReorder() {
+	sc.alternativeLogicalPlanOrderAwareJoinReorder = true
+}
+
+// NeedAlternativeLogicalPlanOrderAwareJoinReorder reports whether the
+// order-aware join reorder alternative should be scheduled.
+func (sc *StatementContext) NeedAlternativeLogicalPlanOrderAwareJoinReorder() bool {
+	return sc.alternativeLogicalPlanOrderAwareJoinReorder
 }
 
 // MarkAlternativeLogicalPlanDecorrelatedApply records that at least one Apply has
@@ -823,11 +840,17 @@ func (sc *StatementContext) MarkAlternativeLogicalPlanEvaluatedSubquery() {
 	sc.alternativeLogicalPlanEvaluatedSubquery = true
 }
 
+// CanTryAlternativeLogicalPlanRound reports whether rebuilding the logical plan
+// is safe with respect to SQL-visible effects from build-time subqueries.
+func (sc *StatementContext) CanTryAlternativeLogicalPlanRound() bool {
+	return !sc.alternativeLogicalPlanEvaluatedSubquery
+}
+
 // NeedAlternativeLogicalPlanRound reports whether the first-round scheduling signals
 // show that it is useful and safe to run the no-decorrelate alternative round.
 func (sc *StatementContext) NeedAlternativeLogicalPlanRound() bool {
 	return sc.alternativeLogicalPlanDecorrelatedApply &&
-		!sc.alternativeLogicalPlanEvaluatedSubquery &&
+		sc.CanTryAlternativeLogicalPlanRound() &&
 		sc.alternativeLogicalPlanDecorrelatedApplyCount > len(sc.alternativeLogicalPlanSameOrderIndexJoinIDs)
 }
 

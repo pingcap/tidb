@@ -104,6 +104,8 @@ func cloneJoin(j *logicalop.LogicalJoin) (*logicalop.LogicalJoin, bool) {
 		return nil, false
 	}
 	clone := *j
+	// InternalHintInfo is immutable after the order-aware rule constructs it, so
+	// the shallow copy intentionally shares it within one logical-build round.
 	clone.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(
 		j.SCtx(), j.TP(), &clone, j.QueryBlockOffset())
 	clone.SetSchema(j.Schema().Clone())

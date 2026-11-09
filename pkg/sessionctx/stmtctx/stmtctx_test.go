@@ -449,7 +449,18 @@ func TestLogicalPlanBuildStateRestoreIndexForce(t *testing.T) {
 
 func TestAlternativeLogicalPlanRoundSignals(t *testing.T) {
 	sc := stmtctx.NewStmtCtx()
+	require.True(t, sc.CanTryAlternativeLogicalPlanRound())
 	require.False(t, sc.NeedAlternativeLogicalPlanRound())
+	require.False(t, sc.NeedAlternativeLogicalPlanOrderAwareJoinReorder())
+	sc.MarkAlternativeLogicalPlanOrderAwareJoinReorder()
+	require.True(t, sc.NeedAlternativeLogicalPlanOrderAwareJoinReorder())
+	state := sc.SaveLogicalPlanBuildState()
+	sc.RestoreLogicalPlanBuildState(state)
+	require.True(t, sc.NeedAlternativeLogicalPlanOrderAwareJoinReorder())
+	sc.ResetAlternativeLogicalPlanSignals()
+	require.False(t, sc.NeedAlternativeLogicalPlanOrderAwareJoinReorder())
+	sc.RestoreLogicalPlanBuildState(state)
+	require.False(t, sc.NeedAlternativeLogicalPlanOrderAwareJoinReorder())
 
 	firstApplyID := sc.MarkAlternativeLogicalPlanDecorrelatedApply()
 	require.True(t, sc.NeedAlternativeLogicalPlanRound())
@@ -473,6 +484,7 @@ func TestAlternativeLogicalPlanRoundSignals(t *testing.T) {
 	sc.MarkAlternativeLogicalPlanDecorrelatedApply()
 	require.True(t, sc.NeedAlternativeLogicalPlanRound())
 	sc.MarkAlternativeLogicalPlanEvaluatedSubquery()
+	require.False(t, sc.CanTryAlternativeLogicalPlanRound())
 	require.False(t, sc.NeedAlternativeLogicalPlanRound())
 }
 

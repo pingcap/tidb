@@ -1,0 +1,136 @@
+drop table if exists oa_order_t1, oa_order_t2, oa_order_t3, oa_order_t4;
+create table oa_order_t1(
+id int not null primary key,
+category varchar(20),
+created_at int,
+key idx_category_created(category, created_at, id)
+);
+create table oa_order_t2(
+id int not null primary key,
+t1_id int not null,
+key idx_t1_id(t1_id)
+);
+create table oa_order_t3(
+id int not null primary key,
+t2_id int not null,
+key idx_t2_id(t2_id)
+);
+create table oa_order_t4(
+id int not null primary key,
+t3_id int not null,
+payload int,
+key idx_payload_t3(payload, t3_id)
+);
+set @@cte_max_recursion_depth = 10000;
+insert into oa_order_t1
+select n, 'hot', n from (
+with recursive seq(n) as (
+select 1
+union all
+select n + 1 from seq where n < 5000
+)
+select n from seq
+) s;
+insert into oa_order_t2
+select n, n from (
+with recursive seq(n) as (
+select 1
+union all
+select n + 1 from seq where n < 5000
+)
+select n from seq
+) s;
+insert into oa_order_t3
+select n, n from (
+with recursive seq(n) as (
+select 1
+union all
+select n + 1 from seq where n < 5000
+)
+select n from seq
+) s;
+insert into oa_order_t4
+select n, n, if(n % 10 = 0, 1, 0) from (
+with recursive seq(n) as (
+select 1
+union all
+select n + 1 from seq where n < 5000
+)
+select n from seq
+) s;
+analyze table oa_order_t1, oa_order_t2, oa_order_t3, oa_order_t4 all columns;
+set @@tidb_opt_join_reorder_through_sel = 1;
+set @@tidb_opt_enable_advanced_join_reorder = 1;
+set @@tidb_opt_enable_alternative_logical_plans = 0;
+explain format = 'brief'
+select oa_order_t1.created_at, oa_order_t4.payload
+from oa_order_t2
+join oa_order_t3 on oa_order_t3.t2_id = oa_order_t2.id
+join oa_order_t1 on oa_order_t1.id = oa_order_t2.t1_id
+join oa_order_t4 on oa_order_t4.t3_id = oa_order_t3.id
+where oa_order_t1.category = 'hot' and oa_order_t4.payload = 1
+order by oa_order_t1.created_at
+limit 15;
+id	estRows	task	access object	operator info
+TopN	15.00	root		planner__core__order_aware_join_reorder.oa_order_t1.created_at, offset:0, count:15
+└─Projection	500.00	root		planner__core__order_aware_join_reorder.oa_order_t1.created_at, planner__core__order_aware_join_reorder.oa_order_t4.payload
+  └─IndexHashJoin	500.00	root		inner join, inner:TableReader, outer key:planner__core__order_aware_join_reorder.oa_order_t2.t1_id, inner key:planner__core__order_aware_join_reorder.oa_order_t1.id, equal cond:eq(planner__core__order_aware_join_reorder.oa_order_t2.t1_id, planner__core__order_aware_join_reorder.oa_order_t1.id)
+    ├─IndexJoin(Build)	500.00	root		inner join, inner:TableReader, outer key:planner__core__order_aware_join_reorder.oa_order_t3.t2_id, inner key:planner__core__order_aware_join_reorder.oa_order_t2.id, equal cond:eq(planner__core__order_aware_join_reorder.oa_order_t3.t2_id, planner__core__order_aware_join_reorder.oa_order_t2.id)
+    │ ├─MergeJoin(Build)	500.00	root		inner join, left key:planner__core__order_aware_join_reorder.oa_order_t4.t3_id, right key:planner__core__order_aware_join_reorder.oa_order_t3.id
+    │ │ ├─TableReader(Build)	5000.00	root		data:TableFullScan
+    │ │ │ └─TableFullScan	5000.00	cop[tikv]	table:oa_order_t3	keep order:true
+    │ │ └─IndexReader(Probe)	500.00	root		index:IndexRangeScan
+    │ │   └─IndexRangeScan	500.00	cop[tikv]	table:oa_order_t4, index:idx_payload_t3(payload, t3_id)	range:[1,1], keep order:true
+    │ └─TableReader(Probe)	500.00	root		data:TableRangeScan
+    │   └─TableRangeScan	500.00	cop[tikv]	table:oa_order_t2	range: decided by [planner__core__order_aware_join_reorder.oa_order_t3.t2_id], keep order:false
+    └─TableReader(Probe)	500.00	root		data:Selection
+      └─Selection	500.00	cop[tikv]		eq(planner__core__order_aware_join_reorder.oa_order_t1.category, "hot")
+        └─TableRangeScan	500.00	cop[tikv]	table:oa_order_t1	range: decided by [planner__core__order_aware_join_reorder.oa_order_t2.t1_id], keep order:false
+set @@tidb_opt_enable_alternative_logical_plans = 1;
+explain format = 'brief'
+select oa_order_t1.created_at, oa_order_t4.payload
+from oa_order_t2
+join oa_order_t3 on oa_order_t3.t2_id = oa_order_t2.id
+join oa_order_t1 on oa_order_t1.id = oa_order_t2.t1_id
+join oa_order_t4 on oa_order_t4.t3_id = oa_order_t3.id
+where oa_order_t1.category = 'hot' and oa_order_t4.payload = 1
+order by oa_order_t1.created_at
+limit 15;
+id	estRows	task	access object	operator info
+Limit	15.00	root		offset:0, count:15
+└─IndexJoin	15.00	root		inner join, inner:IndexReader, outer key:planner__core__order_aware_join_reorder.oa_order_t3.id, inner key:planner__core__order_aware_join_reorder.oa_order_t4.t3_id, equal cond:eq(planner__core__order_aware_join_reorder.oa_order_t3.id, planner__core__order_aware_join_reorder.oa_order_t4.t3_id)
+  ├─IndexHashJoin(Build)	150.00	root		inner join, inner:IndexReader, outer key:planner__core__order_aware_join_reorder.oa_order_t2.id, inner key:planner__core__order_aware_join_reorder.oa_order_t3.t2_id, equal cond:eq(planner__core__order_aware_join_reorder.oa_order_t2.id, planner__core__order_aware_join_reorder.oa_order_t3.t2_id)
+  │ ├─IndexJoin(Build)	150.00	root		inner join, inner:IndexReader, outer key:planner__core__order_aware_join_reorder.oa_order_t1.id, inner key:planner__core__order_aware_join_reorder.oa_order_t2.t1_id, equal cond:eq(planner__core__order_aware_join_reorder.oa_order_t1.id, planner__core__order_aware_join_reorder.oa_order_t2.t1_id)
+  │ │ ├─IndexReader(Build)	150.00	root		index:IndexRangeScan
+  │ │ │ └─IndexRangeScan	150.00	cop[tikv]	table:oa_order_t1, index:idx_category_created(category, created_at, id)	range:["hot","hot"], keep order:true
+  │ │ └─IndexReader(Probe)	150.00	root		index:IndexRangeScan
+  │ │   └─IndexRangeScan	150.00	cop[tikv]	table:oa_order_t2, index:idx_t1_id(t1_id)	range: decided by [eq(planner__core__order_aware_join_reorder.oa_order_t2.t1_id, planner__core__order_aware_join_reorder.oa_order_t1.id)], keep order:false
+  │ └─IndexReader(Probe)	150.00	root		index:IndexRangeScan
+  │   └─IndexRangeScan	150.00	cop[tikv]	table:oa_order_t3, index:idx_t2_id(t2_id)	range: decided by [eq(planner__core__order_aware_join_reorder.oa_order_t3.t2_id, planner__core__order_aware_join_reorder.oa_order_t2.id)], keep order:false
+  └─IndexReader(Probe)	15.00	root		index:IndexRangeScan
+    └─IndexRangeScan	15.00	cop[tikv]	table:oa_order_t4, index:idx_payload_t3(payload, t3_id)	range: decided by [eq(planner__core__order_aware_join_reorder.oa_order_t4.t3_id, planner__core__order_aware_join_reorder.oa_order_t3.id) eq(planner__core__order_aware_join_reorder.oa_order_t4.payload, 1)], keep order:false
+select oa_order_t1.created_at, oa_order_t4.payload
+from oa_order_t2
+join oa_order_t3 on oa_order_t3.t2_id = oa_order_t2.id
+join oa_order_t1 on oa_order_t1.id = oa_order_t2.t1_id
+join oa_order_t4 on oa_order_t4.t3_id = oa_order_t3.id
+where oa_order_t1.category = 'hot' and oa_order_t4.payload = 1
+order by oa_order_t1.created_at
+limit 15;
+created_at	payload
+10	1
+20	1
+30	1
+40	1
+50	1
+60	1
+70	1
+80	1
+90	1
+100	1
+110	1
+120	1
+130	1
+140	1
+150	1
+drop table oa_order_t1, oa_order_t2, oa_order_t3, oa_order_t4;
