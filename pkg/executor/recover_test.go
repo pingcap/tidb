@@ -862,6 +862,55 @@ func TestFlashbackSchemaMaterializedViews(t *testing.T) {
 	}
 }
 
+func TestFlashbackSchemaMaterializedViewEscapedDefinition(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		sqlMode string
+		literal string
+	}{
+		{name: "default", literal: `'x\\y'`},
+		{name: "no_backslash_escapes_and_ansi_quotes", sqlMode: "NO_BACKSLASH_ESCAPES,ANSI_QUOTES", literal: `'x\y'`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := testkit.NewTestKit(t, store)
+			timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+			defer resetGC()
+			tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+			tk.MustExec("create database mv_recover_escaped")
+			tk.MustExec("use mv_recover_escaped")
+			tk.MustExec("create table t (a int not null, s varchar(20) not null)")
+			tk.MustExec("create materialized view log on t (a, s)")
+			tk.MustExec("set sql_mode = '" + tc.sqlMode + "'")
+			definitionSQLMode := tk.Session().GetSessionVars().SQLMode
+			tk.MustExec("create materialized view mv (a, cnt) as select a, count(*) from mv_recover_escaped.t where s = " + tc.literal + " group by a")
+			tk.MustExec("create view v as select a from mv_recover_escaped.t where s = " + tc.literal)
+			tk.MustExec("set sql_mode = default")
+			// Include a row matching the incorrectly doubled literal as well.
+			tk.MustExec("insert into t values (1, x'785c79'), (2, x'785c5c79')")
+			tk.MustExec("refresh materialized view mv fast")
+			tk.MustQuery("select * from mv").Check(testkit.Rows("1 1"))
+
+			dbName := "mv_recover_escaped"
+			for i, newName := range []string{"mv_recovered_escaped", "mv_recovered_escaped_again"} {
+				tk.MustExec("drop database " + dbName)
+				tk.MustExec("flashback database " + dbName + " to " + newName)
+				dbName = newName
+				tk.MustExec("use " + dbName)
+				mv, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr("mv"))
+				require.NoError(t, err)
+				require.Equal(t, definitionSQLMode, mv.Meta().MaterializedView.DefinitionSQLMode)
+				tk.MustQuery("select * from mv").Check(testkit.Rows(fmt.Sprintf("1 %d", i+1)))
+				tk.MustExec("insert into t values (1, x'785c79'), (2, x'785c5c79')")
+				tk.MustExec("refresh materialized view mv fast")
+				rows := testkit.Rows(fmt.Sprintf("1 %d", i+2))
+				tk.MustQuery("select * from mv").Check(rows)
+				tk.MustQuery("select a, count(*) from v group by a").Check(rows)
+			}
+		})
+	}
+}
+
 func TestFlashbackSchemaMaterializedViewLog(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

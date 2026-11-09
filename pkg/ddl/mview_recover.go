@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -113,7 +114,8 @@ func rewriteRecoveredViewSchema(info *model.TableInfo, oldName, newName pmodel.C
 	restoreFlags := format.DefaultRestoreFlags
 	if info.MaterializedView != nil {
 		definition = &info.MaterializedView.SQLContent
-		p.SetSQLMode(info.MaterializedView.DefinitionSQLMode)
+		// Canonical SQL escapes backslashes regardless of the creation SQL mode.
+		p.SetSQLMode(info.MaterializedView.DefinitionSQLMode &^ mysql.ModeNoBackslashEscapes)
 		// Match the canonical form used when materialized views are created.
 		restoreFlags |= format.RestoreStringWithoutCharset
 	} else {
