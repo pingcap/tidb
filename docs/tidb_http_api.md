@@ -638,7 +638,19 @@ timezone.*
      curl http://{TiDBIP}:10080/stats/dump/{db}/{table}
      ```
 
-30. Resume the binlog writing when Pump is recovered.
+30. Download a plan replayer file.
+
+     ```shell
+     curl http://{TiDBIP}:10080/plan_replayer/dump/{filename} --output plan_replayer.zip
+     ```
+
+     Method: `GET`. `{filename}` is the file token that `PLAN REPLAYER DUMP` returns, or a `token` value in `mysql.plan_replayer_status`.
+
+     The response is the ZIP file. If this TiDB instance does not have the file, it requests the file from the other TiDB instances. If no instance has the file, the API returns HTTP 404.
+
+     TiDB returns the file as it is stored and does not add statistics to it. A `capture_replayer_*` file from an older TiDB version can have no statistics, if `tidb_enable_historical_stats_for_capture` was `ON` when TiDB captured it. TiDB writes a warning to its log for each request for a `capture_replayer_*` file.
+
+31. Resume the binlog writing when Pump is recovered.
 
      ```shell
      curl http://{TiDBIP}:10080/binlog/recover
@@ -665,28 +677,28 @@ timezone.*
      - op=reset: reset `SkippedCommitterCounter` to 0 to avoid the problem that `SkippedCommitterCounter` is not cleared due to some unusual cases.
      - op=status: Get the current status of binlog recovery.
 
-31. Enable/disable async commit feature
+32. Enable/disable async commit feature
 
      ```shell
      curl -X POST -d "tidb_enable_async_commit=1" http://{TiDBIP}:10080/settings
      curl -X POST -d "tidb_enable_async_commit=0" http://{TiDBIP}:10080/settings
      ```
 
-32. Enable/disable one-phase commit feature
+33. Enable/disable one-phase commit feature
 
      ```shell
      curl -X POST -d "tidb_enable_1pc=1" http://{TiDBIP}:10080/settings
      curl -X POST -d "tidb_enable_1pc=0" http://{TiDBIP}:10080/settings
      ```
 
-33. Enable/disable the mutation checker
+34. Enable/disable the mutation checker
 
      ```shell
      curl -X POST -d "tidb_enable_mutation_checker=1" http://{TiDBIP}:10080/settings
      curl -X POST -d "tidb_enable_mutation_checker=0" http://{TiDBIP}:10080/settings
      ```
 
-34. Get/Set the size of the Ballast Object
+35. Get/Set the size of the Ballast Object
 
      ```shell
      # get current size of the ballast object
@@ -695,19 +707,19 @@ timezone.*
      curl -v -X POST -d "2147483648" http://{TiDBIP}:10080/debug/ballast-object-sz
      ```
 
-35. Set deadlock history table capacity
+36. Set deadlock history table capacity
 
      ```shell
      curl -X POST -d "deadlock_history_capacity={number}" http://{TiDBIP}:10080/settings
      ```
 
-36. Set whether deadlock history (`DEADLOCKS`) collect retryable deadlocks
+37. Set whether deadlock history (`DEADLOCKS`) collect retryable deadlocks
 
      ```shell
      curl -X POST -d "deadlock_history_collect_retryable={bool_val}" http://{TiDBIP}:10080/settings
      ```
 
-37. Set transaction_id to digest mapping minimum duration threshold, only transactions which last longer than this threshold will be collected into `TRX_SUMMARY`.
+38. Set transaction_id to digest mapping minimum duration threshold, only transactions which last longer than this threshold will be collected into `TRX_SUMMARY`.
 
      ```shell
      curl -X POST -d "transaction_id_digest_min_duration={number}" http://{TiDBIP}:10080/settings
@@ -715,13 +727,13 @@ timezone.*
 
      Unit of duration here is ms.
 
-38. Set transaction summary table (`TRX_SUMMARY`) capacity
+39. Set transaction summary table (`TRX_SUMMARY`) capacity
 
      ```shell
      curl -X POST -d "transaction_summary_capacity={number}" http://{TiDBIP}:10080/settings
      ```
 
-39. The commands are used to handle smooth upgrade mode(refer to the [TiDB Smooth Upgrade](https://github.com/pingcap/docs/blob/4aa0b1d5078617cc06bd1957c5c93e86efb4668d/smooth-upgrade-tidb.md) for details) operations. We can send these upgrade operations to the cluster. The operations here include `start`, `finish` and `show`.
+40. The commands are used to handle smooth upgrade mode(refer to the [TiDB Smooth Upgrade](https://github.com/pingcap/docs/blob/4aa0b1d5078617cc06bd1957c5c93e86efb4668d/smooth-upgrade-tidb.md) for details) operations. We can send these upgrade operations to the cluster. The operations here include `start`, `finish` and `show`.
 
     ```shell
     curl -X POST http://{TiDBIP}:10080/upgrade/{op}
@@ -732,7 +744,7 @@ timezone.*
     "success!"
     ```
 
-40. Set split & scatter regions concurrency before ingest, and ingest request concurrency. Value ranges:
+41. Set split & scatter regions concurrency before ingest, and ingest request concurrency. Value ranges:
     - `max-batch-split-ranges`: `[1, 9223372036854775807]`, default `2048`
     - `max-split-ranges-per-sec`: `[0, 9223372036854775807]`, default `0` (no limit)
     - `max-ingest-per-sec`: `[0, 9223372036854775807]`, default `0` (no limit)
@@ -752,7 +764,7 @@ timezone.*
     curl http://{TiDBIP}:10080/ingest/max-ingest-inflight -X POST -d "{\"value\": 2}"
     ```
 
-41. Get TiDB transaction GC states:
+42. Get TiDB transaction GC states:
 
      ```shell
      curl http://{TiDBIP}:10080/txn-gc-states

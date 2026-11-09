@@ -212,7 +212,7 @@ func (e *PlanReplayerExec) createFile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	e.DumpInfo.File, e.DumpInfo.FileName, err = replayer.GeneratePlanReplayerFile(ctx, storage, false, false, false)
+	e.DumpInfo.File, e.DumpInfo.FileName, err = replayer.GeneratePlanReplayerFile(ctx, storage, false, false)
 	if err != nil {
 		return err
 	}

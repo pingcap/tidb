@@ -41,9 +41,9 @@ type PlanReplayerTaskKey struct {
 }
 
 // GeneratePlanReplayerFile generates plan replayer file
-func GeneratePlanReplayerFile(ctx context.Context, storage storeapi.Storage, isCapture, isContinuesCapture, enableHistoricalStatsForCapture bool) (io.WriteCloser, string, error) {
+func GeneratePlanReplayerFile(ctx context.Context, storage storeapi.Storage, isCapture, isContinuesCapture bool) (io.WriteCloser, string, error) {
 	path := GetPlanReplayerDirName()
-	fileName, err := generatePlanReplayerFileName(isCapture, isContinuesCapture, enableHistoricalStatsForCapture)
+	fileName, err := generatePlanReplayerFileName(isCapture, isContinuesCapture)
 	if err != nil {
 		return nil, "", errors.AddStack(err)
 	}
@@ -74,11 +74,11 @@ func (w *fileWriter) Close() error {
 }
 
 // GeneratePlanReplayerFileName generates plan replayer capture task name
-func GeneratePlanReplayerFileName(isCapture, isContinuesCapture, enableHistoricalStatsForCapture bool) (string, error) {
-	return generatePlanReplayerFileName(isCapture, isContinuesCapture, enableHistoricalStatsForCapture)
+func GeneratePlanReplayerFileName(isCapture, isContinuesCapture bool) (string, error) {
+	return generatePlanReplayerFileName(isCapture, isContinuesCapture)
 }
 
-func generatePlanReplayerFileName(isCapture, isContinuesCapture, enableHistoricalStatsForCapture bool) (string, error) {
+func generatePlanReplayerFileName(isCapture, isContinuesCapture bool) (string, error) {
 	// Generate key and create zip file
 	time := time.Now().UnixNano()
 	failpoint.Inject("InjectPlanReplayerFileNameTimeField", func(val failpoint.Value) {
@@ -91,11 +91,7 @@ func generatePlanReplayerFileName(isCapture, isContinuesCapture, enableHistorica
 		return "", err
 	}
 	key := base64.URLEncoding.EncodeToString(b)
-	// "capture_replayer" in filename has special meaning for the /plan_replayer/dump/ HTTP handler
-	if isContinuesCapture || isCapture && enableHistoricalStatsForCapture {
-		return fmt.Sprintf("capture_replayer_%v_%v.zip", key, time), nil
-	}
-	if isCapture && !enableHistoricalStatsForCapture {
+	if isCapture || isContinuesCapture {
 		return fmt.Sprintf("capture_normal_replayer_%v_%v.zip", key, time), nil
 	}
 	return fmt.Sprintf("replayer_%v_%v.zip", key, time), nil

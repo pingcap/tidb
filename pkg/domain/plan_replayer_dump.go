@@ -27,7 +27,6 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	domain_metrics "github.com/pingcap/tidb/pkg/domain/metrics"
@@ -79,8 +78,6 @@ const (
 	PlanReplayerTaskMetaSQLDigest = "sqlDigest"
 	// PlanReplayerTaskMetaPlanDigest indicates the plan digest of this task
 	PlanReplayerTaskMetaPlanDigest = "planDigest"
-	// PlanReplayerTaskEnableHistoricalStats indicates whether the task is using historical stats
-	PlanReplayerTaskEnableHistoricalStats = "enableHistoricalStats"
 )
 
 type tableNamePair struct {
@@ -323,26 +320,9 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		return err
 	}
 
-	// For continuous capture task, we dump stats in storage only if EnableHistoricalStatsForCapture is disabled.
-	// For manual plan replayer dump command or capture, we directly dump stats in storage
-	if task.IsCapture && task.IsContinuesCapture {
-		if !vardef.EnableHistoricalStatsForCapture.Load() {
-			// Dump stats
-			if err = dumpStats(zw, pairs, do); err != nil {
-				return err
-			}
-		} else {
-			failpoint.Inject("shouldDumpStats", func(val failpoint.Value) {
-				if val.(bool) {
-					panic("shouldDumpStats")
-				}
-			})
-		}
-	} else {
-		// Dump stats
-		if err = dumpStats(zw, pairs, do); err != nil {
-			return err
-		}
+	// Dump stats
+	if err = dumpStats(zw, pairs, do); err != nil {
+		return err
 	}
 
 	if err = dumpStatsMemStatus(zw, pairs, do); err != nil {
@@ -451,7 +431,6 @@ func dumpSQLMeta(zw *zip.Writer, task *PlanReplayerDumpTask) error {
 	varMap[PlanReplayerTaskMetaIsContinues] = strconv.FormatBool(task.IsContinuesCapture)
 	varMap[PlanReplayerTaskMetaSQLDigest] = task.SQLDigest
 	varMap[PlanReplayerTaskMetaPlanDigest] = task.PlanDigest
-	varMap[PlanReplayerTaskEnableHistoricalStats] = strconv.FormatBool(vardef.EnableHistoricalStatsForCapture.Load())
 	if err := toml.NewEncoder(cf).Encode(varMap); err != nil {
 		return errors.AddStack(err)
 	}

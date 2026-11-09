@@ -127,10 +127,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) e
 		end := min(i+dumpDeltaBatchSize, len(tableIDs))
 
 		batchTableIDs := tableIDs[i:end]
-		var (
-			statsVersion uint64
-			batchUpdates []*storage.DeltaUpdate
-		)
+		var batchUpdates []*storage.DeltaUpdate
 		batchStart := time.Now()
 		err := utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 			is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
@@ -163,11 +160,10 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) e
 			// Process all updates in the batch with a single transaction.
 			// Note: batchUpdates may be modified in dumpStatsDeltaToKV. (e.g. sorting, updating IsLocked)
 			failpoint.InjectCall("beforeDumpStatsDeltaToKV")
-			startTs, updated, err := s.dumpStatsDeltaToKV(snapshotTableInfoGetter, sctx, batchUpdates)
+			_, updated, err := s.dumpStatsDeltaToKV(snapshotTableInfoGetter, sctx, batchUpdates)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			statsVersion = startTs
 			// Note: Ensure we use the updated slice after dumpStatsDeltaToKV,
 			// because dumpStatsDeltaToKV may modify the underlying array of batchUpdates.
 			// For example, dumpStatsDeltaToKV may sort the array.
@@ -197,13 +193,9 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) e
 		if err != nil {
 			return errors.Trace(err)
 		}
-		startRecordHistoricalStatsMeta := time.Now()
 		unlockedTableIDs := make([]int64, 0, len(batchUpdates))
 		for _, update := range batchUpdates {
 			if !update.IsLocked {
-				failpoint.Inject("panic-when-record-historical-stats-meta", func() {
-					panic("panic when record historical stats meta")
-				})
 				unlockedTableIDs = append(unlockedTableIDs, update.TableID)
 			}
 		}
@@ -222,20 +214,12 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) e
 					zap.Duration("updateVersionDuration", updateDur),
 					zap.Error(err))
 			} else {
-				statsVersion = newVersion
 				statslogutil.StatsSampleLogger().Info("Updated stats meta version for slow stats delta dump",
 					zap.Int("tableCount", len(unlockedTableIDs)),
 					zap.Duration("dumpDuration", batchDur),
 					zap.Duration("updateVersionDuration", updateDur),
-					zap.Uint64("statsVersion", statsVersion))
+					zap.Uint64("statsVersion", newVersion))
 			}
-		}
-		s.statsHandle.RecordHistoricalStatsMeta(statsVersion, "flush stats", false, unlockedTableIDs...)
-		// Log a warning if recording historical stats meta takes too long, as it can be slow for large table counts
-		if time.Since(startRecordHistoricalStatsMeta) > time.Minute*15 {
-			statslogutil.StatsSampleLogger().Warn("Recording historical stats meta is too slow",
-				zap.Int("tableCount", len(batchUpdates)),
-				zap.Duration("duration", time.Since(startRecordHistoricalStatsMeta)))
 		}
 	}
 
