@@ -21,7 +21,7 @@ use tidb_dxf::{int_2_type, ExtraParams, ModifyParam, Step, Subtask, SubtaskBase,
 
 /// Go's zero `time.Time`, as this port's `proto` values hold it.
 pub(crate) fn zero_time() -> DateTime<FixedOffset> {
-    DateTime::<FixedOffset>::default()
+    tidb_dxf::go_zero_time()
 }
 
 pub(crate) fn is_null(row: &[Datum], idx: usize) -> bool {

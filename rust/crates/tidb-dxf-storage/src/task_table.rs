@@ -459,6 +459,10 @@ pub struct ActiveTaskSummary {
 /// terror's code and the messages of the whole chain; `None` for no error.
 pub(crate) fn serialize_err(in_err: Option<&(dyn std::error::Error + 'static)>) -> Option<Vec<u8>> {
     let in_err = in_err?;
+    let in_err = match in_err.downcast_ref::<StorageError>() {
+        Some(storage_err) => storage_err.as_go_error(),
+        None => in_err,
+    };
     // Go `goerrors.As(inErr, &tErr)`.
     let mut cause = Some(in_err);
     let mut found = None;

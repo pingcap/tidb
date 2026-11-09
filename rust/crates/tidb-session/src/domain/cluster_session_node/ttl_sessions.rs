@@ -33,7 +33,7 @@ fn time_zone_of(zone: SessionTimeZone) -> TimeZone {
     }
 }
 
-fn read_system(state: &ClusterStatsSessionState, name: &str) -> Result<String, String> {
+pub(super) fn read_system(state: &ClusterStatsSessionState, name: &str) -> Result<String, String> {
     state
         .with_session(|session| {
             session
@@ -45,7 +45,7 @@ fn read_system(state: &ClusterStatsSessionState, name: &str) -> Result<String, S
         .map_err(|error| error.to_string())
 }
 
-fn read_global(state: &ClusterStatsSessionState, name: &str) -> Result<String, String> {
+pub(super) fn read_global(state: &ClusterStatsSessionState, name: &str) -> Result<String, String> {
     state
         .with_session(|session| {
             session

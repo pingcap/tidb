@@ -83,6 +83,9 @@ pub enum StorageError {
     /// Go `errors.Annotate(cause, message)`: the message in front of its
     /// cause, which Go's `errors.Is` still finds.
     Annotated(Box<StorageError>, String),
+    /// A `*terror.Error` the session or the SQL layer returned: Go returns
+    /// the terror itself, which keeps its `[class:code]` identity.
+    Terror(tidb_terror::TerrorError),
 }
 
 impl StorageError {
@@ -104,8 +107,10 @@ impl StorageError {
 
 impl std::fmt::Display for StorageError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Self::Annotated(cause, message) = self {
-            return write!(f, "{message}: {cause}");
+        match self {
+            Self::Annotated(cause, message) => return write!(f, "{message}: {cause}"),
+            Self::Terror(t_err) => return write!(f, "{t_err}"),
+            _ => {}
         }
         f.write_str(match self {
             Self::UnstableSubtasks => "unstable subtasks",
@@ -115,6 +120,7 @@ impl std::fmt::Display for StorageError {
             Self::TaskChanged => "task changed by other operation",
             Self::SubtaskNotFound => "subtask not found",
             Self::Other(message) | Self::Annotated(_, message) => message,
+            Self::Terror(_) => unreachable!("written above"),
         })
     }
 }
@@ -123,6 +129,7 @@ impl std::error::Error for StorageError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Annotated(cause, _) => Some(cause.as_ref()),
+            Self::Terror(t_err) => t_err.source(),
             _ => None,
         }
     }
@@ -130,9 +137,36 @@ impl std::error::Error for StorageError {
 
 impl From<tidb_sqlexec::SqlExecError> for StorageError {
     fn from(error: tidb_sqlexec::SqlExecError) -> Self {
-        match error.downcast::<Self>() {
-            Ok(error) => *error,
+        let error = match error.downcast::<Self>() {
+            Ok(error) => return *error,
+            Err(error) => error,
+        };
+        match error.downcast::<tidb_store_driver_error::sql_query_error::SqlQueryError>() {
+            Ok(query_error) => match query_error.identity {
+                // Go `err.Error()` of a class without a description: `[code]message`.
+                Some(identity) if identity.class().description().is_empty() => {
+                    Self::Terror(tidb_terror::TerrorError::compatible(identity.code(), query_error.message))
+                }
+                Some(identity) => Self::Terror(tidb_terror::TerrorError::synthesize(
+                    identity.class(),
+                    identity.code(),
+                    query_error.message,
+                )),
+                None => Self::Other(query_error.message),
+            },
             Err(error) => Self::Other(error.to_string()),
+        }
+    }
+}
+
+impl StorageError {
+    /// The error as Go holds it: a terror the SQL layer returned is the
+    /// terror itself, every other error is this one.
+    #[must_use]
+    pub fn as_go_error(&self) -> &(dyn std::error::Error + 'static) {
+        match self {
+            Self::Terror(t_err) => t_err,
+            _ => self,
         }
     }
 }
@@ -169,6 +203,55 @@ pub trait SessionContext: tidb_syssession::SessionContext {
 /// Go `TaskManager`: the manager of tasks and subtasks.
 pub struct TaskManager {
     se_pool: Arc<dyn tidb_syssession::Pool<dyn SessionContext>>,
+}
+
+/// Go `taskManagerInstance`.
+static TASK_MANAGER_INSTANCE: std::sync::RwLock<Option<Arc<TaskManager>>> = std::sync::RwLock::new(None);
+
+/// Go `dxfSvcTaskMgr`: only used on nextgen, and only initialized in a user
+/// keyspace, where it points to the SYSTEM keyspace.
+static DXF_SVC_TASK_MGR: std::sync::RwLock<Option<Arc<TaskManager>>> = std::sync::RwLock::new(None);
+
+/// Go `GetTaskManager`: the task manager over this instance's storage.
+/// Not only DXF uses it: add-index and import-into reach internal sessions
+/// through it too. On nextgen the DXF service runs only in the SYSTEM
+/// keyspace; [`get_dxf_svc_task_mgr`] reaches it.
+///
+/// # Errors
+/// No task manager is set.
+pub fn get_task_manager() -> Result<Arc<TaskManager>> {
+    TASK_MANAGER_INSTANCE
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+        .ok_or_else(|| StorageError::Other("task manager is not initialized".to_owned()))
+}
+
+/// Go `SetTaskManager`.
+pub fn set_task_manager(is: Arc<TaskManager>) {
+    *TASK_MANAGER_INSTANCE.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(is);
+}
+
+/// Go `GetDXFSvcTaskMgr`: the task manager that reaches the DXF service.
+///
+/// # Errors
+/// The needed task manager is not set.
+pub fn get_dxf_svc_task_mgr() -> Result<Arc<TaskManager>> {
+    if tidb_config_kerneltype::is_next_gen()
+        && tidb_config::config_tree::config::get_global_keyspace_name() != tidb_keyspace::SYSTEM
+    {
+        return DXF_SVC_TASK_MGR
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .ok_or_else(|| StorageError::Other("DXF service task manager is not initialized".to_owned()));
+    }
+    get_task_manager()
+}
+
+/// Go `SetDXFSvcTaskMgr`.
+pub fn set_dxf_svc_task_mgr(mgr: Arc<TaskManager>) {
+    *DXF_SVC_TASK_MGR.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(mgr);
 }
 
 impl TaskManager {

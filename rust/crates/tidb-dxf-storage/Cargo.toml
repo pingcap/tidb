@@ -14,11 +14,15 @@ workspace = true
 chrono.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
+tidb-config = { path = "../tidb-config" }
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-dxf = { path = "../tidb-dxf" }
 tidb-dxf-execute = { path = "../tidb-dxf-execute" }
+tidb-keyspace = { path = "../tidb-keyspace" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-store-driver-error = { path = "../tidb-store-driver-error" }
 tidb-stringutil = { path = "../tidb-stringutil" }
 tidb-syssession = { path = "../tidb-syssession" }
 tidb-terror = { path = "../tidb-terror" }

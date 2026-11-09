@@ -47,6 +47,7 @@ mod go_executor_protocol;
 mod upgrade;
 mod tiflash_partition;
 mod ddl_analyze;
+mod dxf_storage;
 
 pub(super) fn cop_backed_stack() -> (UnistoreClusterStack, Arc<ConfiguredUserStore>) {
     cop_backed_stack_with_stats_lease(None)

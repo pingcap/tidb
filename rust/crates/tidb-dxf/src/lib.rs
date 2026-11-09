@@ -81,7 +81,7 @@ pub use subtask::{
     SUBTASK_STATE_SUCCEED,
 };
 pub use task::{
-    get_max_concurrent_task, set_max_concurrent_task, set_max_concurrent_task_for_test,
+    go_zero_time, get_max_concurrent_task, set_max_concurrent_task, set_max_concurrent_task_for_test,
     get_task_cleanup_batch_size, set_task_cleanup_batch_size, set_task_cleanup_batch_size_for_test,
     TaskCleanupBatchSizeError, DEFAULT_TASK_CLEANUP_BATCH_SIZE, TASK_CLEANUP_BATCH_SIZE_UPPER_BOUND,
     ExtraParams, MaxConcurrentTaskError, PrepareMode, Task, TaskBase, TaskState, TaskType,

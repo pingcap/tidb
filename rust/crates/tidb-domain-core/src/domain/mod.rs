@@ -752,6 +752,10 @@ pub struct Domain {
     /// reference back to the domain-shaped session factory.
     pub(crate) advanced_sys_session_pool:
         std::sync::OnceLock<Arc<crate::sys_session::DomainSysSessionPool>>,
+    /// Go Domain's capacity-100 `dxfSessionPool`, over the same factory.
+    pub(crate) dxf_session_pool: std::sync::OnceLock<Arc<crate::sys_session::DxfSessionPool>>,
+    /// The connection ids the factory gives the pools' sessions.
+    sys_session_connection_ids: Arc<std::sync::atomic::AtomicU64>,
     /// Pinned Go Domain's durable DDL notifier, registered before the stats
     /// owner campaigns and driven by that owner's lifecycle.
     ddl_notifier: std::sync::OnceLock<Arc<tidb_ddl_notifier::DdlNotifier>>,
@@ -915,7 +919,7 @@ impl Domain {
         Arc::clone(self.advanced_sys_session_pool.get_or_init(|| {
             let domain = Arc::downgrade(self);
             let open = self.sys_session_opener;
-            let next_connection_id = Arc::new(std::sync::atomic::AtomicU64::new(1_u64 << 61));
+            let next_connection_id = Arc::clone(&self.sys_session_connection_ids);
             Arc::new(tidb_syssession::AdvancedSessionPool::new(200, move || {
                 let domain = domain.upgrade().ok_or_else(|| {
                     tidb_syssession::SysSessionError::new("cluster session factory is stopped")
@@ -923,6 +927,27 @@ impl Domain {
                 let connection_id =
                     next_connection_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 open(&domain, connection_id).map_err(tidb_syssession::SysSessionError::new)
+            }))
+        }))
+    }
+
+    /// Returns Go Domain's `dxfSessionPool` (Go `dxfSessionPoolSize`, 100),
+    /// whose sessions [`Self::sys_session_opener`] opens like the advanced
+    /// pool's.
+    pub fn dxf_session_pool(self: &Arc<Self>) -> Arc<crate::sys_session::DxfSessionPool> {
+        Arc::clone(self.dxf_session_pool.get_or_init(|| {
+            let domain = Arc::downgrade(self);
+            let open = self.sys_session_opener;
+            let next_connection_id = Arc::clone(&self.sys_session_connection_ids);
+            Arc::new(tidb_syssession::AdvancedSessionPool::new(100, move || {
+                let domain = domain.upgrade().ok_or_else(|| {
+                    tidb_syssession::SysSessionError::new("cluster session factory is stopped")
+                })?;
+                let connection_id =
+                    next_connection_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                open(&domain, connection_id)
+                    .map(crate::sys_session::DomainSysSession::into_dxf_session)
+                    .map_err(tidb_syssession::SysSessionError::new)
             }))
         }))
     }
@@ -1079,6 +1104,8 @@ impl Domain {
             stats_usage_workers: std::sync::OnceLock::new(),
             stats_owner: None,
             advanced_sys_session_pool: std::sync::OnceLock::new(),
+            dxf_session_pool: std::sync::OnceLock::new(),
+            sys_session_connection_ids: Arc::new(std::sync::atomic::AtomicU64::new(1_u64 << 61)),
             ddl_notifier: std::sync::OnceLock::new(),
             analyze_jobs_cleanup_worker: std::sync::OnceLock::new(),
             ru_stats_writer: std::sync::OnceLock::new(),

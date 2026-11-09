@@ -413,7 +413,10 @@ pub(crate) fn format_rfc3339_nano(t: &DateTime<FixedOffset>) -> String {
     format!("{head}.{frac}{suffix}")
 }
 
-pub(crate) fn go_zero_time() -> DateTime<FixedOffset> {
+/// Go's zero `time.Time` (0001-01-01 UTC), which the proto values default
+/// to.
+#[must_use]
+pub fn go_zero_time() -> DateTime<FixedOffset> {
     DateTime::parse_from_rfc3339("0001-01-01T00:00:00Z").expect("Go's zero time is valid RFC3339")
 }
 

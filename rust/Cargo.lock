@@ -4484,6 +4484,7 @@ dependencies = [
  "tidb-domain-globalconfigsync",
  "tidb-domain-serverinfo",
  "tidb-driver-error",
+ "tidb-dxf-storage",
  "tidb-errno",
  "tidb-executor",
  "tidb-expensivequery",
@@ -4694,16 +4695,35 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "tidb-config",
+ "tidb-config-kerneltype",
  "tidb-datatype",
  "tidb-dxf",
  "tidb-dxf-execute",
+ "tidb-keyspace",
  "tidb-sqlescape",
  "tidb-sqlexec",
+ "tidb-store-driver-error",
  "tidb-stringutil",
  "tidb-syssession",
  "tidb-terror",
  "tidb-txnkv",
  "tidb-vardef",
+ "tracing",
+]
+
+[[package]]
+name = "tidb-dxf-testutil"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "tidb-datatype",
+ "tidb-dxf",
+ "tidb-dxf-execute",
+ "tidb-dxf-storage",
+ "tidb-sqlescape",
+ "tidb-sqlexec",
+ "tidb-stringutil",
  "tracing",
 ]
 
@@ -7163,6 +7183,9 @@ dependencies = [
  "tidb-domain-serverinfo",
  "tidb-domainutil",
  "tidb-driver-error",
+ "tidb-dxf",
+ "tidb-dxf-storage",
+ "tidb-dxf-testutil",
  "tidb-errno",
  "tidb-execdetails",
  "tidb-executor",

@@ -13,6 +13,7 @@ test-util = []
 
 [dependencies]
 tidb-ttl-ttlworker = { path = "../tidb-ttl-ttlworker" }
+tidb-dxf-storage = { path = "../tidb-dxf-storage" }
 tidb-ttl-client = { path = "../tidb-ttl-client" }
 tidb-intest = { path = "../tidb-intest" }
 tidb-ddl-jobsubmit = { path = "../tidb-ddl-jobsubmit" }

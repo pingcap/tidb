@@ -12,6 +12,7 @@ autotests = false
 [dependencies]
 tidb-ttl = { path = "../tidb-ttl" }
 tidb-ttl-ttlworker = { path = "../tidb-ttl-ttlworker" }
+tidb-dxf-storage = { path = "../tidb-dxf-storage" }
 tidb-ttl-client = { path = "../tidb-ttl-client" }
 tidb-timer = { path = "../tidb-timer" }
 tidb-timer-tablestore = { path = "../tidb-timer-tablestore" }
@@ -201,6 +202,8 @@ tidb-syssession = { path = "../tidb-syssession" }
 tidb-resolve = { path = "../tidb-resolve" }
 
 [dev-dependencies]
+tidb-dxf = { path = "../tidb-dxf" }
+tidb-dxf-testutil = { path = "../tidb-dxf-testutil" }
 tidb-sqlexec-mock = { path = "../tidb-sqlexec-mock" }
 tidb-topsql-collector = { path = "../tidb-topsql-collector" }
 tidb-topsql-reporter = { path = "../tidb-topsql-reporter" }

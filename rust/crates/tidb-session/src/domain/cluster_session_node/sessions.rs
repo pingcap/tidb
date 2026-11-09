@@ -1269,6 +1269,10 @@ impl tidb_ddl_session::Transaction for NodeDdlTransaction {
 }
 
 impl tidb_domain_core::sys_session::DomainSysSession for ClusterStatsSessionContext {
+    fn into_dxf_session(self: Arc<Self>) -> Arc<dyn tidb_dxf_storage::SessionContext> {
+        self
+    }
+
     fn new_txn(&self, pessimistic: bool) -> Result<(), String> {
         let mode = if pessimistic {
             tidb_ast::TransactionMode::Pessimistic

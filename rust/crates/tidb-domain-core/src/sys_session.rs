@@ -54,6 +54,11 @@ pub trait DomainSysSession:
     /// The session package's own view of this session, which only it
     /// downcasts.
     fn as_any(&self) -> &dyn std::any::Any;
+
+    /// The session as `pkg/dxf/framework/storage` reaches it through
+    /// `sessionctx.Context`: Go's `dxfSessionPool` holds the same sessions
+    /// the factory makes.
+    fn into_dxf_session(self: Arc<Self>) -> Arc<dyn tidb_dxf_storage::SessionContext>;
 }
 
 /// Go `sqlexec.ExecSQL(kv.WithInternalSourceType(ctx, source),
@@ -74,6 +79,10 @@ pub fn exec_sql<S: tidb_syssession::SessionContext + ?Sized>(
 
 /// Go `Domain.AdvancedSysSessionPool()`.
 pub type DomainSysSessionPool = tidb_syssession::AdvancedSessionPool<dyn DomainSysSession>;
+
+/// Go `Domain.dxfSessionPool`: the distributed execution framework's own
+/// internal sessions.
+pub type DxfSessionPool = tidb_syssession::AdvancedSessionPool<dyn tidb_dxf_storage::SessionContext>;
 
 /// A statistics session's failure as its MySQL error: a statement's own, or
 /// an unknown error naming any other failure.

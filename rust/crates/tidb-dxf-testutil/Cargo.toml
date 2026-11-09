@@ -1,0 +1,22 @@
+[package]
+name = "tidb-dxf-testutil"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/dxf/framework/testutil: the distributed execution framework's test helpers."
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono.workspace = true
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-dxf = { path = "../tidb-dxf" }
+tidb-dxf-execute = { path = "../tidb-dxf-execute" }
+tidb-dxf-storage = { path = "../tidb-dxf-storage" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-stringutil = { path = "../tidb-stringutil" }
+tracing = "0.1"
