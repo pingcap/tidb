@@ -726,6 +726,8 @@ fn exhaust_physical_plans(
                 ctx.skew_ratio,
                 ctx.mpp_allowed,
                 &ctx.expr_pushdown_blacklist,
+                ctx.tiflash_in_isolation_read,
+                &tidb_planner_core_operator_physicalop::enforce::push_down_reporter(ctx.mpp_warning_sink),
             ),
         )),
         LogicalPlan::Projection(op) => Ok(one(
@@ -737,6 +739,8 @@ fn exhaust_physical_plans(
                 ctx.allow_projection_push_down,
                 ctx.mpp_allowed,
                 &ctx.expr_pushdown_blacklist,
+                ctx.tiflash_in_isolation_read,
+                &tidb_planner_core_operator_physicalop::enforce::push_down_reporter(ctx.mpp_warning_sink),
             ),
         )),
         LogicalPlan::Sort(op) => Ok(one(tidb_planner_core_operator_physicalop::exhaust_physical_plans_4_logical_sort(

@@ -551,3 +551,60 @@ fn aggregation_push_down_refusals_warn_as_go() {
     warnings.sort();
     assert_eq!(warnings, [mpp_distinct, mpp_distinct, tikv_approx, tikv_approx]);
 }
+
+/// Go `ExhaustPhysicalPlans4LogicalProjection` and `canExprsInJoinPushdown`
+/// report the functions TiFlash cannot evaluate through the push-down
+/// context; plans and warnings are a Go tidb-server's.
+#[test]
+fn projection_and_join_push_down_refusals_warn_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(436)).expect("session opens");
+    for sql in [
+        "CREATE TABLE test.t (a int, b int, j json)",
+        "CREATE TABLE test.s (a int, j json)",
+        "ALTER TABLE test.t SET HYPO TIFLASH REPLICA 1",
+        "ALTER TABLE test.s SET HYPO TIFLASH REPLICA 1",
+    ] {
+        session.node_conn().execute_write(sql).expect(sql);
+    }
+    rows(&mut session, "use test");
+    rows(&mut session, "set @@tidb_allow_mpp=1");
+    let text = |session: &mut Session, sql: &str| -> Vec<String> {
+        displayed(rows(session, sql)).into_iter().map(|row| row.join("|")).collect()
+    };
+    assert_eq!(
+        text(&mut session, "explain format='brief' select /*+ read_from_storage(tiflash[t]) */ json_type(j) from t"),
+        [
+            "Projection|10000.00|root||json_type(test.t.j)->Column#6",
+            "└─TableReader|10000.00|root||MppVersion: 3, data:ExchangeSender",
+            "  └─ExchangeSender|10000.00|mpp[tiflash]||ExchangeType: PassThrough",
+            "    └─TableFullScan|10000.00|mpp[tiflash]|table:t|keep order:false, stats:pseudo",
+        ]
+    );
+    assert_eq!(
+        text(&mut session, "show warnings"),
+        ["Warning|1105|Scalar function 'json_type'(signature: JsonTypeSig, return type: var_string(51)) is not supported to push down to tiflash now."]
+    );
+    assert_eq!(
+        text(
+            &mut session,
+            "explain format='brief' select /*+ read_from_storage(tiflash[t, s]) */ t.a from t join s on t.a = s.a and t.j = s.j"
+        ),
+        [
+            "HashJoin|9990.00|root||inner join, equal:[eq(test.t.a, test.s.a) eq(test.t.j, test.s.j)]",
+            "├─TableReader(Build)|7992.00|root||MppVersion: 3, data:ExchangeSender",
+            "│ └─ExchangeSender|7992.00|mpp[tiflash]||ExchangeType: PassThrough",
+            "│   └─Selection|7992.00|mpp[tiflash]||not(isnull(cast(test.s.j, var_string(4294967295)))), not(isnull(test.s.a))",
+            "│     └─TableFullScan|10000.00|mpp[tiflash]|table:s|keep order:false, stats:pseudo",
+            "└─TableReader(Probe)|7992.00|root||MppVersion: 3, data:ExchangeSender",
+            "  └─ExchangeSender|7992.00|mpp[tiflash]||ExchangeType: PassThrough",
+            "    └─Selection|7992.00|mpp[tiflash]||not(isnull(cast(test.t.j, var_string(4294967295)))), not(isnull(test.t.a))",
+            "      └─TableFullScan|10000.00|mpp[tiflash]|table:t|keep order:false, stats:pseudo",
+        ]
+    );
+    // Go's testkit prints `bigint(1)`; a tidb-server, whose
+    // `deprecate-integer-display-length` defaults on, prints `bigint`.
+    let eq_json =
+        "Warning|1105|Scalar function 'eq'(signature: EQJson, return type: bigint) is not supported to push down to tiflash now.";
+    assert_eq!(text(&mut session, "show warnings"), [eq_json, eq_json]);
+}

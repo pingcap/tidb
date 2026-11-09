@@ -205,8 +205,14 @@ fn can_exprs_in_join_pushdown(op: &LogicalJoin, ctx: &DispatchContext<'_>) -> bo
         .cloned()
         .map(Expression::ScalarFunction)
         .collect();
+    let report = tidb_planner_core_operator_physicalop::enforce::push_down_reporter(ctx.mpp_warning_sink);
     let pushable = |conditions: &[Expression]| {
-        tidb_expr::infer_pushdown::can_exprs_push_down(conditions, StoreType::TiFlash, &ctx.expr_pushdown_blacklist)
+        tidb_expr::infer_pushdown::can_exprs_push_down_reporting(
+            conditions,
+            StoreType::TiFlash,
+            &ctx.expr_pushdown_blacklist,
+            &report,
+        )
     };
     pushable(&equal)
         && pushable(&op.left_conditions)

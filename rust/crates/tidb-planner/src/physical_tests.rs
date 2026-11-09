@@ -1616,8 +1616,7 @@ fn selection_and_projection_emit_tiflash_candidates_when_mpp_is_allowed() {
         &allocator,
         1.0,
         true,
-        &Default::default(),
-    );
+        &Default::default(), true, &|_| {});
     assert_eq!(selection_plans.len(), 2);
     assert_eq!(
         selection_plans[1]
@@ -1641,8 +1640,7 @@ fn selection_and_projection_emit_tiflash_candidates_when_mpp_is_allowed() {
         1.0,
         true,
         true,
-        &Default::default(),
-    );
+        &Default::default(), true, &|_| {});
     assert_eq!(projection_plans.len(), 2);
     assert_eq!(
         projection_plans[1]
@@ -1677,8 +1675,7 @@ fn published_blacklist_prevents_remote_candidate_enumeration() {
             tidb_expr::infer_pushdown::blacklist_store_mask(store),
         )]);
         let selections = exhaust_physical_plans_4_logical_selection_with_mpp(
-            &selection, &prop, &allocator, 1.0, true, &blacklist,
-        );
+            &selection, &prop, &allocator, 1.0, true, &blacklist, true, &|_| {});
         let projections = exhaust_physical_plans_4_logical_projection_with_mpp(
             &projection,
             &prop,
@@ -1686,8 +1683,7 @@ fn published_blacklist_prevents_remote_candidate_enumeration() {
             1.0,
             true,
             true,
-            &blacklist,
-        );
+            &blacklist, true, &|_| {});
         for candidates in [selections, projections] {
             assert_eq!(
                 candidates

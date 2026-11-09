@@ -235,6 +235,8 @@ pub fn exhaust_physical_plans_4_logical_selection(
         skew_ratio,
         false,
         &Default::default(),
+        true,
+        &|_| {},
     )
 }
 
@@ -247,6 +249,8 @@ pub fn exhaust_physical_plans_4_logical_selection_with_mpp(
     skew_ratio: f64,
     mpp_allowed: bool,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    tiflash_in_isolation_read: bool,
+    report: &dyn Fn(String),
 ) -> Vec<PhysicalPlan> {
     let mut child_prop = prop.clone_essential_fields();
     child_prop.index_join_prop = prop.index_join_prop.clone();
@@ -261,15 +265,18 @@ pub fn exhaust_physical_plans_4_logical_selection_with_mpp(
             .any(|column| column.virtual_expr.is_some())
     });
     let mut child_props = vec![child_prop];
-    if prop.task_tp != TaskType::Mpp
-        && mpp_allowed
-        && p.base.has_tiflash()
+    // we lift the p.CanPushDown(kv.TiFlash) check here, which may depend on the children.
+    // Guard with TiFlash availability to avoid emitting TiFlash pushdown warnings when no TiFlash path exists.
+    let can_push_down_to_tiflash = p.base.has_tiflash()
+        && tiflash_in_isolation_read
         && !contains_virtual_column
-        && tidb_expr::infer_pushdown::can_exprs_push_down(
+        && tidb_expr::infer_pushdown::can_exprs_push_down_reporting(
             &p.conditions,
             tidb_kv::store_type::StoreType::TiFlash,
             blacklist,
-        )
+            report,
+        );
+    if prop.task_tp != TaskType::Mpp && mpp_allowed && can_push_down_to_tiflash
     {
         let mut mpp_prop = prop.clone_essential_fields();
         mpp_prop.task_tp = TaskType::Mpp;
@@ -362,6 +369,8 @@ pub fn exhaust_physical_plans_4_logical_projection(
         allow_projection_push_down,
         false,
         &Default::default(),
+        true,
+        &|_| {},
     )
 }
 
@@ -375,6 +384,8 @@ pub fn exhaust_physical_plans_4_logical_projection_with_mpp(
     allow_projection_push_down: bool,
     mpp_allowed: bool,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    tiflash_in_isolation_read: bool,
+    report: &dyn Fn(String),
 ) -> Vec<PhysicalPlan> {
     let Some(child_prop) = p.try_to_get_child_prop(prop) else {
         return Vec::new();
@@ -385,13 +396,16 @@ pub fn exhaust_physical_plans_4_logical_projection_with_mpp(
         .stats_info()
         .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, skew_ratio));
     let mut child_props = vec![child_prop.clone()];
-    if child_prop.task_tp != TaskType::Mpp
+    // lift the recursive check of canPushToCop(tiFlash)
+    if p.base.has_tiflash()
+        && tiflash_in_isolation_read
+        && child_prop.task_tp != TaskType::Mpp
         && mpp_allowed
-        && p.base.has_tiflash()
-        && tidb_expr::infer_pushdown::can_exprs_push_down(
+        && tidb_expr::infer_pushdown::can_exprs_push_down_reporting(
             &p.exprs,
             tidb_kv::store_type::StoreType::TiFlash,
             blacklist,
+            report,
         )
     {
         let mut mpp_prop = child_prop.clone_essential_fields();
@@ -410,12 +424,14 @@ pub fn exhaust_physical_plans_4_logical_projection_with_mpp(
             .iter()
             .any(|column| column.virtual_expr.is_some())
     });
+    // lift the recursive check of canPushToCop(tikv)
     if child_prop.task_tp != TaskType::CopSingleRead
         && allow_projection_push_down
-        && tidb_expr::infer_pushdown::can_exprs_push_down(
+        && tidb_expr::infer_pushdown::can_exprs_push_down_reporting(
             &p.exprs,
             tidb_kv::store_type::StoreType::TiKv,
             blacklist,
+            report,
         )
         && !contains_virtual_column
         && tidb_expr::expr_util::projection_benefits_from_pushed_down(&p.exprs, child_schema_len)
