@@ -377,6 +377,7 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 			MergeSmallRegionKeyCount:  kvconfig.ConfigTerm[uint64]{Value: 0xea600},
 			WithSysTable:              true,
 			ResetSysUsers:             []string{"cloud_admin", "root"},
+			SysCheckCollation:         true,
 		},
 		NoSchema:                 false,
 		Rename:                   []string{},
