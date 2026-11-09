@@ -480,10 +480,40 @@ fn list_columns_pruned_ids(
     )
 }
 
+/// Go `partitionpruning.PartitionPruning(ctx, tbl, conds, partitionNames,
+/// columns, names)` over the catalog's table `table_id`: the ordinals of the
+/// partitions the conditions can reach, in definition order.
+///
+/// # Errors
+/// The table is absent or unpartitioned, or a condition cannot be pruned.
+pub(crate) fn partition_pruning(
+    catalog: &SessionExtendedInfoSchema,
+    table_id: i64,
+    conds: &[Expression],
+    partition_names: &[String],
+    table_columns: &[tidb_expr::column::Column],
+    context: &crate::StmtContext,
+) -> Result<Vec<usize>, tidb_planner_core_base::PlanError> {
+    let table = catalog.kv_table_by_id(table_id).ok_or_else(|| {
+        tidb_planner_core_base::PlanError::internal("partitioned logical table is absent from the catalog")
+    })?;
+    let partition = table.partition().ok_or_else(|| {
+        tidb_planner_core_base::PlanError::internal("partition processor received an unpartitioned table")
+    })?;
+    let pi = table.meta().read().get_partition_info().ok_or_else(|| {
+        tidb_planner_core_base::PlanError::internal("partition processor received an unpartitioned table")
+    })?;
+    let pi = pi.read();
+    let builder = RealFunctionBuilder::new(context);
+    partition_indices_for_spec(partition, &pi, conds, partition_names, table_columns, &builder, context)
+}
+
 fn partition_indices_for_spec(
     partition: &tidb_table::partition_routing::PartitionExpr,
     pi: &tidb_model::partition::PartitionInfo,
-    source: &tidb_planner_core_operator_logicalop::DataSource,
+    conds: &[Expression],
+    partition_names: &[String],
+    table_columns: &[tidb_expr::column::Column],
     builder: &RealFunctionBuilder<'_, crate::StmtContext>,
     context: &crate::StmtContext,
 ) -> Result<Vec<usize>, tidb_planner_core_base::PlanError> {
@@ -495,10 +525,10 @@ fn partition_indices_for_spec(
         partition.kind,
         tidb_table::partition_routing::PartitionKind::Hash
     );
-    if (source.all_conds.is_empty() && !hash) || partition.dependencies.is_empty() {
+    if (conds.is_empty() && !hash) || partition.dependencies.is_empty() {
         return Ok(remap_partition_indices(
             pi,
-            &source.partition_names,
+            partition_names,
             0..pi.definitions.len(),
         ));
     }
@@ -507,8 +537,7 @@ fn partition_indices_for_spec(
         .iter()
         .map(|dependency| {
             let dependency = tidb_ast::CiString::new(dependency);
-            source
-                .table_columns
+            table_columns
                 .iter()
                 .find(|column| {
                     column
@@ -523,12 +552,11 @@ fn partition_indices_for_spec(
     let Some(columns) = columns else {
         return Ok(remap_partition_indices(
             pi,
-            &source.partition_names,
+            partition_names,
             0..pi.definitions.len(),
         ));
     };
-    let conditions = source
-        .all_conds
+    let conditions = conds
         .iter()
         .map(|condition| tidb_expr::expr_util::push_not::push_down_not(condition, builder))
         .collect::<Vec<_>>();
@@ -541,7 +569,7 @@ fn partition_indices_for_spec(
         }
         return Ok(remap_partition_indices(
             pi,
-            &source.partition_names,
+            partition_names,
             surviving,
         ));
     }
@@ -562,7 +590,7 @@ fn partition_indices_for_spec(
         }
         return Ok(remap_partition_indices(
             pi,
-            &source.partition_names,
+            partition_names,
             surviving,
         ));
     }
@@ -578,7 +606,7 @@ fn partition_indices_for_spec(
         }
         return Ok(remap_partition_indices(
             pi,
-            &source.partition_names,
+            partition_names,
             surviving,
         ));
     }
@@ -593,7 +621,7 @@ fn partition_indices_for_spec(
     ) else {
         return Ok(remap_partition_indices(
             pi,
-            &source.partition_names,
+            partition_names,
             0..pi.definitions.len(),
         ));
     };
@@ -605,7 +633,7 @@ fn partition_indices_for_spec(
     }
     Ok(remap_partition_indices(
         pi,
-        &source.partition_names,
+        partition_names,
         surviving,
     ))
 }
@@ -807,7 +835,16 @@ mod list_columns_pruning_tests {
         let builder = RealFunctionBuilder::new(&context);
 
         assert_eq!(
-            partition_indices_for_spec(&spec, &pi, &source, &builder, &context).unwrap(),
+            partition_indices_for_spec(
+                &spec,
+                &pi,
+                &source.all_conds,
+                &source.partition_names,
+                &source.table_columns,
+                &builder,
+                &context
+            )
+            .unwrap(),
             vec![1]
         );
     }
@@ -3216,7 +3253,15 @@ fn optimize_built_logical(
                 )
             })?;
             let pi = pi.read();
-            partition_indices_for_spec(partition, &pi, source, self.builder, self.context)
+            partition_indices_for_spec(
+                partition,
+                &pi,
+                &source.all_conds,
+                &source.partition_names,
+                &source.table_columns,
+                self.builder,
+                self.context,
+            )
         }
 
         // Go `generateHashPartitionExpr` and `MakePartitionByFnCol` each

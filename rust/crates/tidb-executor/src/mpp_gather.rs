@@ -59,6 +59,8 @@ fn collect_plan_ids(plan: &PhysicalPlan, ids: &mut Vec<isize>) {
 pub struct MppGather {
     meta: ExecutorMeta,
     ctx: crate::StmtContext,
+    /// Go `is`.
+    is: tidb_infoschema::SessionExtendedInfoSchema,
     client: Arc<dyn MppClient>,
     original_plan: PhysicalPlan,
     start_ts: u64,
@@ -77,6 +79,7 @@ impl MppGather {
     pub fn build(
         meta: ExecutorMeta,
         ctx: &crate::StmtContext,
+        is: &tidb_infoschema::SessionExtendedInfoSchema,
         v: &PhysicalTableReader,
     ) -> Result<Self, ExecError> {
         let client = ctx
@@ -111,6 +114,7 @@ impl MppGather {
         Ok(Self {
             meta,
             ctx: ctx.clone(),
+            is: is.clone(),
             client,
             original_plan,
             start_ts,
@@ -132,6 +136,7 @@ impl MppGather {
 /// coordinator's `Execute`, and at least one TiFlash node.
 fn setup_mpp_coordinator(
     ctx: &crate::StmtContext,
+    is: &tidb_infoschema::SessionExtendedInfoSchema,
     client: &Arc<dyn MppClient>,
     plan: &PhysicalPlan,
     start_ts: u64,
@@ -140,7 +145,7 @@ fn setup_mpp_coordinator(
     // Make sure gatherID is updated before build coord.
     let gather_id = ctx.mpp_query_info().alloc_gather_id();
     let (coord, kv_ranges) =
-        LocalMppCoordinator::execute(ctx, client, plan, start_ts, mpp_query_id, gather_id)?;
+        LocalMppCoordinator::execute(ctx, is, client, plan, start_ts, mpp_query_id, gather_id)?;
     let node_cnt = coord.node_count();
     if node_cnt == 0 {
         return Err(format!("tiflash node count should be greater than zero: {node_cnt}"));
@@ -156,6 +161,7 @@ impl Executor for MppGather {
         collect_plan_ids(&self.original_plan, &mut plan_ids);
         let (coord, kv_ranges) = setup_mpp_coordinator(
             &self.ctx,
+            &self.is,
             &self.client,
             &self.original_plan,
             self.start_ts,
@@ -170,8 +176,9 @@ impl Executor for MppGather {
         let enable_mpp_recovery = config.disaggregated_tiflash
             && config.use_auto_scaler
             && !statement.allow_tiflash_fallback;
-        let (ctx, client, plan, start_ts, mpp_query_id) = (
+        let (ctx, is, client, plan, start_ts, mpp_query_id) = (
             self.ctx.clone(),
+            self.is.clone(),
             Arc::clone(&self.client),
             self.original_plan.clone(),
             self.start_ts,
@@ -182,7 +189,7 @@ impl Executor for MppGather {
             enable_mpp_recovery,
             statement.memory.clone(),
             Box::new(move || {
-                setup_mpp_coordinator(&ctx, &client, &plan, start_ts, mpp_query_id)
+                setup_mpp_coordinator(&ctx, &is, &client, &plan, start_ts, mpp_query_id)
                     .map(|(coord, _)| Box::new(coord) as Box<dyn MppGatherResponse>)
                     .map_err(QueryResponseError::Source)
             }),

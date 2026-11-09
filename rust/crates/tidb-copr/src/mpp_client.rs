@@ -149,21 +149,26 @@ impl<S: tikv_client::PdClient> MPPClient<S> {
     /// Go `buildBatchCopTasksForNonPartitionedTable` on classic TiFlash:
     /// each region on one of its own TiFlash replicas, balanced across the
     /// alive stores that hold them.
+    /// Go `buildBatchCopTasksForNonPartitionedTable` (`partition_ids`
+    /// empty, one range set) or `buildBatchCopTasksForPartitionedTable` (a
+    /// range set per partition, then `convertRegionInfosToPartitionTableRegions`)
+    /// on classic TiFlash.
     fn classic_tasks(
         &self,
         ctx: &Arc<dyn MppContext>,
-        ranges: &[(tidb_txnkv::Key, tidb_txnkv::Key)],
+        ranges_for_each_physical_table: &[Vec<(tidb_txnkv::Key, tidb_txnkv::Key)>],
+        partition_ids: &[i64],
         replica_read: tidb_tiflash::ReplicaRead,
         kv_context: &tidb_txnkv::StatementKvContext,
         append_warning: &mut dyn FnMut(String),
     ) -> Result<Vec<MppStoreTask>, String> {
-        let (tasks, warnings) =
+        let (mut tasks, warnings) =
             self.store
                 .block_on(crate::cop_store::with_statement_kv_context(
                     kv_context,
                     crate::batch_cop_tasks::build_batch_cop_tasks_core(
                         &self.store,
-                        ranges,
+                        ranges_for_each_physical_table,
                         ctx,
                         replica_read,
                         kv_context,
@@ -172,15 +177,22 @@ impl<S: tikv_client::PdClient> MPPClient<S> {
         for warning in warnings {
             append_warning(warning);
         }
+        let mut partition_table_regions = if partition_ids.is_empty() {
+            vec![Vec::new(); tasks.len()]
+        } else {
+            crate::batch_cop_tasks::convert_region_infos_to_partition_table_regions(&mut tasks, partition_ids)
+        };
         Ok(tasks
             .into_iter()
-            .map(|task| MppStoreTask {
+            .zip(partition_table_regions.drain(..))
+            .map(|(task, partition_table_regions)| MppStoreTask {
                 address: task.store_addr,
                 regions: task
                     .region_infos
                     .into_iter()
                     .map(|region| region.info)
                     .collect(),
+                partition_table_regions,
             })
             .collect())
     }
@@ -321,20 +333,44 @@ impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for MPPClient<S> 
         append_warning: &mut dyn FnMut(String),
     ) -> Result<Vec<MppStoreTask>, MppError> {
         let refuse = |reason: String| MppError::Other(format!("tiflash mpp: {reason}"));
-        let ranges: Vec<(tidb_txnkv::Key, tidb_txnkv::Key)> = request
-            .key_ranges
-            .iter()
-            .flatten()
-            .map(|range| (range.start_key.clone(), range.end_key.clone()))
-            .collect();
+        let to_pairs = |ranges: &[tidb_txnkv::KeyRange]| -> Vec<(tidb_txnkv::Key, tidb_txnkv::Key)> {
+            ranges
+                .iter()
+                .map(|range| (range.start_key.clone(), range.end_key.clone()))
+                .collect()
+        };
         let config = tidb_config::config_tree::config::get_global_config();
         if !config.disaggregated_tiflash {
+            // Go `ConstructMPPTasks`: a partitioned request builds a range set
+            // per partition; otherwise its key ranges must be set.
+            let (ranges_for_each_physical_table, partition_ids): (Vec<_>, Vec<_>) =
+                if request.partition_id_and_ranges.is_empty() {
+                    let Some(key_ranges) = request.key_ranges.as_ref() else {
+                        return Err(refuse("KeyRanges in MPPBuildTasksRequest is nil".to_owned()));
+                    };
+                    (vec![to_pairs(key_ranges)], Vec::new())
+                } else {
+                    request
+                        .partition_id_and_ranges
+                        .iter()
+                        .map(|partition| (to_pairs(&partition.key_ranges), partition.id))
+                        .unzip()
+                };
             return self
-                .classic_tasks(ctx, &ranges, replica_read, kv_context, append_warning)
+                .classic_tasks(
+                    ctx,
+                    &ranges_for_each_physical_table,
+                    &partition_ids,
+                    replica_read,
+                    kv_context,
+                    append_warning,
+                )
                 .map_err(|message| {
                     MppError::after_stop(ctx.as_ref(), format!("tiflash mpp: {message}"))
                 });
         }
+        let ranges: Vec<(tidb_txnkv::Key, tidb_txnkv::Key)> =
+            to_pairs(request.key_ranges.as_deref().unwrap_or_default());
         let regions = locate_mpp_region_infos(&self.store, &ranges, ctx.as_ref(), kv_context)
             .map_err(refuse)?;
         if regions.is_empty() {
@@ -368,10 +404,18 @@ impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for MPPClient<S> 
         rpc_interceptor: &tidb_txnkv::RpcInterceptorOption,
     ) -> Result<(), MppError> {
         let target = self.target(&task.address, rpc_interceptor);
+        // Go: `mppReq.TableRegions = originalTask.PartitionTableRegions`, and a
+        // partitioned task sends no plain regions.
+        let (regions, table_regions) = if task.partition_table_regions.is_empty() {
+            (task.regions, Vec::new())
+        } else {
+            (Vec::new(), task.partition_table_regions)
+        };
         let dispatch_request = encode_dispatch_request(DispatchTaskRequest {
             meta: Some(meta),
             encoded_plan,
-            regions: task.regions,
+            regions,
+            table_regions,
             schema_ver: (self.schema_version)(),
             ..Default::default()
         });
@@ -475,6 +519,7 @@ fn compute_region_tasks(
             tasks.push(MppStoreTask {
                 address,
                 regions: vec![region],
+                partition_table_regions: Vec::new(),
             });
         }
     }
@@ -551,7 +596,8 @@ pub(crate) fn split_key_ranges_by_locations<S: tikv_client::PdClient>(
 ) -> Result<Vec<crate::batch_cop_tasks::LocatedRegion>, String> {
     use crate::cop_store::NativeCopStore;
     if ranges.is_empty() {
-        return Err("the scan carries no key ranges".to_owned());
+        // No range lies in any region.
+        return Ok(Vec::new());
     }
     mpp_memory_error(memory).map_err(|error| error.to_string())?;
     let keys = ranges
@@ -567,7 +613,11 @@ pub(crate) fn split_key_ranges_by_locations<S: tikv_client::PdClient>(
             let info = mpp_region_infos(ranges, std::slice::from_ref(&region))
                 .into_iter()
                 .next()?;
-            Some(crate::batch_cop_tasks::LocatedRegion { region, info })
+            Some(crate::batch_cop_tasks::LocatedRegion {
+                region,
+                info,
+                partition_index: 0,
+            })
         })
         .collect())
 }
@@ -1639,6 +1689,7 @@ mod mpp_read_batch_tests {
                     MppStoreTask {
                         address: fixture.address.clone(),
                         regions: vec![],
+                        partition_table_regions: vec![],
                     },
                     TaskMeta::default(),
                     Vec::new(),

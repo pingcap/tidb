@@ -58,6 +58,8 @@ pub(crate) struct RegionInfo {
     pub(crate) info: tidb_proto::coprocessor::RegionInfo,
     /// Go `AllStores`: the stores that may serve it, the chosen one first.
     pub(crate) all_stores: Vec<u64>,
+    /// Go `PartitionIndex`: the physical table, of the request's, it reads.
+    pub(crate) partition_index: i64,
 }
 
 /// Go `batchCopTask`: the regions one TiFlash store serves.
@@ -81,15 +83,18 @@ struct AliveStores {
 pub(crate) struct LocatedRegion {
     pub(crate) region: tikv_client::RegionWithLeader,
     pub(crate) info: tidb_proto::coprocessor::RegionInfo,
+    /// Go `copTask.partitionIndex`.
+    pub(crate) partition_index: i64,
 }
 
-/// Go `buildBatchCopTasksCore` for one physical table on classic TiFlash
-/// (`isMPP`, `balanceWithContinuity`, `balanceContinuousRegionCount = 20`)
-/// over the regions covering `ranges`. Answers the tasks and the warnings
-/// Go's `appendWarning` receives.
+/// Go `buildBatchCopTasksCore` on classic TiFlash (`isMPP`,
+/// `balanceWithContinuity`, `balanceContinuousRegionCount = 20`) over the
+/// regions covering each physical table's ranges
+/// (`rangesForEachPhysicalTable`), each region tagged with its table's
+/// index. Answers the tasks and the warnings Go's `appendWarning` receives.
 pub(crate) async fn build_batch_cop_tasks_core<S: tikv_client::PdClient>(
     store: &TikvStore<S>,
-    ranges: &[(tidb_txnkv::Key, tidb_txnkv::Key)],
+    ranges_for_each_physical_table: &[Vec<(tidb_txnkv::Key, tidb_txnkv::Key)>],
     memory: &std::sync::Arc<dyn tidb_txnkv::MppContext>,
     mut tiflash_replica_read_policy: ReplicaRead,
     kv_context: &tidb_txnkv::StatementKvContext,
@@ -104,7 +109,27 @@ pub(crate) async fn build_batch_cop_tasks_core<S: tikv_client::PdClient>(
     let tidb_zone = tidb_zone.unwrap_or_default();
     let mut budget = RegionBackoffBudget::new(COP_BUILD_TASK_MAX_BACKOFF);
     loop {
-        let tasks = crate::mpp_client::split_key_ranges_by_locations(store, ranges, memory.as_ref(), kv_context)?;
+        let mut tasks_for_partitions = Vec::with_capacity(ranges_for_each_physical_table.len());
+        for (i, ranges) in ranges_for_each_physical_table.iter().enumerate() {
+            let mut located =
+                crate::mpp_client::split_key_ranges_by_locations(store, ranges, memory.as_ref(), kv_context)?;
+            for task in &mut located {
+                task.partition_index = i as i64;
+            }
+            tasks_for_partitions.push(located);
+        }
+        let tasks: Vec<LocatedRegion> = if tasks_for_partitions.len() == 1 {
+            tasks_for_partitions.pop().unwrap_or_default()
+        } else {
+            tasks_for_partitions.sort_by(|a, b| match (a.first(), b.first()) {
+                (None, _) => std::cmp::Ordering::Less,
+                (_, None) => std::cmp::Ordering::Greater,
+                (Some(a), Some(b)) => first_start_key(a).cmp(first_start_key(b)),
+            });
+            // The ranges corresponding to each partiton do not intersect, so
+            // we can merge tasks directly.
+            tasks_for_partitions.into_iter().flatten().collect()
+        };
         let mut rpc_stores = Vec::with_capacity(tasks.len());
         let mut used_tiflash_stores = Vec::with_capacity(tasks.len());
         let mut used_tiflash_stores_map = BTreeSet::new();
@@ -228,6 +253,36 @@ pub(crate) async fn build_batch_cop_tasks_core<S: tikv_client::PdClient>(
         );
         return Ok((tasks, warnings));
     }
+}
+
+/// Go `ranges.RefAt(0).StartKey`: a located region's first range start.
+fn first_start_key(task: &LocatedRegion) -> &[u8] {
+    task.info.ranges.first().map_or(&[], |range| range.start.as_slice())
+}
+
+/// Go `convertRegionInfosToPartitionTableRegions`: each task's regions by
+/// physical table (empty tables dropped), in place of its region list.
+pub(crate) fn convert_region_infos_to_partition_table_regions(
+    batch_tasks: &mut [BatchCopTask],
+    partition_ids: &[i64],
+) -> Vec<Vec<tidb_proto::coprocessor::TableRegions>> {
+    batch_tasks
+        .iter_mut()
+        .map(|cop_task| {
+            let mut table_regions: Vec<tidb_proto::coprocessor::TableRegions> = partition_ids
+                .iter()
+                .map(|&pid| tidb_proto::coprocessor::TableRegions {
+                    physical_table_id: pid,
+                    ..Default::default()
+                })
+                .collect();
+            for ri in std::mem::take(&mut cop_task.region_infos) {
+                table_regions[ri.partition_index as usize].regions.push(ri.info);
+            }
+            table_regions.retain(|table| !table.regions.is_empty());
+            table_regions
+        })
+        .collect()
 }
 
 /// Go `getAliveStoresAndStoreIDs`.
@@ -403,6 +458,7 @@ fn filter_accessible_stores_and_build_region_info(
         region: task.region,
         info: task.info,
         all_stores,
+        partition_index: task.partition_index,
     })
 }
 
@@ -729,6 +785,7 @@ mod tests {
                 ..Default::default()
             },
             all_stores,
+            partition_index: 0,
         }
     }
 

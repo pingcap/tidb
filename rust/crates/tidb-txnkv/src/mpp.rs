@@ -289,6 +289,9 @@ pub struct MppStoreTask {
     pub address: String,
     /// The regions, clipped to the request's ranges.
     pub regions: Vec<tidb_proto::coprocessor::RegionInfo>,
+    /// Go `batchCopTask.PartitionTableRegions`: a partitioned read's regions
+    /// by physical table, which the dispatch carries as `TableRegions`.
+    pub partition_table_regions: Vec<tidb_proto::coprocessor::TableRegions>,
 }
 
 impl MppTaskLocation for MppStoreTask {

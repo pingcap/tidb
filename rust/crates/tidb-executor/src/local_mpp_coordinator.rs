@@ -123,6 +123,7 @@ pub fn update_executor_table_id(
 /// context and the store's `kv.MPPClient`.
 struct GeneratorContext<'a> {
     ctx: &'a crate::StmtContext,
+    catalog: &'a tidb_infoschema::SessionExtendedInfoSchema,
     statement: &'a PushdownStatementContext,
     client: &'a Arc<dyn MppClient>,
     mpp_ctx: &'a Arc<dyn MppContext>,
@@ -169,10 +170,47 @@ impl MppTaskGeneratorContext for GeneratorContext<'_> {
         ranges.map_err(|err| PlanError::internal(format!("{err:?}")))
     }
 
-    fn partition_pruning(&self, _ts: &PhysicalTableScan) -> Result<Vec<i64>, PlanError> {
-        Err(PlanError::internal(
-            "partition pruning of an MPP table scan is not ported yet",
-        ))
+    /// Go `partitionPruning` (`fragment.go`): the partitions
+    /// `partitionpruning.PartitionPruning` keeps; when none survive, TiFlash
+    /// still gets one to read (the first, or the first named).
+    fn partition_pruning(&self, ts: &PhysicalTableScan) -> Result<Vec<i64>, PlanError> {
+        let info = ts
+            .plan_part_info
+            .as_ref()
+            .ok_or_else(|| PlanError::internal("a partitioned MPP scan has no partition info"))?;
+        let table = ts
+            .table
+            .as_ref()
+            .ok_or_else(|| PlanError::internal("an MPP scan has no table"))?;
+        let table = table.read();
+        let pi = table
+            .get_partition_info()
+            .ok_or_else(|| PlanError::internal("an MPP partition scan's table is unpartitioned"))?;
+        let partition_names: Vec<String> =
+            info.partition_names.iter().map(|name| name.original.clone()).collect();
+        let idx_arr = crate::driver::planner_bridge::partition_pruning(
+            self.catalog,
+            table.id,
+            &info.pruning_conds,
+            &partition_names,
+            &info.columns,
+            self.ctx,
+        )?;
+        let definitions = pi.read().definitions.snapshot();
+        let mut ret: Vec<i64> = idx_arr.iter().map(|&idx| definitions[idx].id).collect();
+        if ret.is_empty() {
+            // TiFlash cannot process an empty task correctly, so choose to
+            // leave it with some data to read.
+            if partition_names.is_empty() {
+                ret = vec![definitions[0].id];
+            } else if let Some(def) = definitions
+                .iter()
+                .find(|def| def.name.lowercase() == partition_names[0].to_lowercase())
+            {
+                ret = vec![def.id];
+            }
+        }
+        Ok(ret)
     }
 
     fn construct_mpp_tasks(
@@ -266,6 +304,7 @@ impl LocalMppCoordinator {
     /// The fragments, their tasks or their DAGs could not be built.
     pub fn execute(
         ctx: &crate::StmtContext,
+        catalog: &tidb_infoschema::SessionExtendedInfoSchema,
         client: &Arc<dyn MppClient>,
         sender: &PhysicalPlan,
         start_ts: u64,
@@ -280,6 +319,7 @@ impl LocalMppCoordinator {
         });
         let gen_ctx = GeneratorContext {
             ctx,
+            catalog,
             statement: &statement,
             client,
             mpp_ctx: &mpp_ctx,
@@ -485,6 +525,7 @@ fn handle_dispatch_req(
         .unwrap_or_else(|| MppStoreTask {
             address: req.meta.address.clone(),
             regions: Vec::new(),
+            partition_table_regions: Vec::new(),
         });
     if let Err(err) = client.dispatch_mpp_task(
         mpp_ctx,

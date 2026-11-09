@@ -7436,7 +7436,19 @@ fn build_reader_node(
             // Go `buildTableReader`: `if useMPPExecution(b.ctx, v) { return
             // b.buildMPPGather(v) }`.
             if crate::mpp_gather::use_mpp_execution(ctx, reader) {
-                let gather = crate::mpp_gather::MppGather::build(meta(ctx, plan, plan_schema(plan)?), ctx, reader)
+                // Go `buildUnionScanFromReader`'s `MPPGather` arm: a union
+                // scan reads the buffer through its own mem table reader over
+                // the gather's single table scan, never through the gather.
+                if state.reader_storage.is_mem_buffer() {
+                    let scan = reader
+                        .table_plan
+                        .as_deref()
+                        .and_then(embedded_table_scan)
+                        .ok_or_else(|| DriverError::unsupported("a union scan's MPP reader has no table scan"))?;
+                    let scan = PhysicalPlan::TableScan(scan.clone());
+                    return build_reader(plan.id(), Some(&scan), catalog, ctx, state);
+                }
+                let gather = crate::mpp_gather::MppGather::build(meta(ctx, plan, plan_schema(plan)?), ctx, catalog, reader)
                     .map_err(DriverError::from)?;
                 ctx.mark_physical_table_reader();
                 return Ok(Box::new(gather));

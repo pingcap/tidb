@@ -75,8 +75,17 @@ the unistore stack.
   `constructMPPTasksByChildrenTasks`, `constructMPPTasksImpl`) over
   `MppTaskGeneratorContext`; the context over the session (2026-11-10,
   `tidb-executor` `local_mpp_coordinator.rs`: `TableHandleRangesToKVRanges`,
-  the MPP client, task ids, MPP version, dynamic prune). Left: its
-  `partitionPruning` (refused by name) and the MPP CTE pieces.
+  the MPP client, task ids, MPP version, dynamic prune, and Go's fragment
+  `partitionPruning` over `partitionpruning.PartitionPruning`, which is the
+  planner's pruning helper with Go's explicit inputs). tidb-copr's
+  `ConstructMPPTasks` builds a partitioned request's tasks per partition
+  (`buildBatchCopTasksCore` over `rangesForEachPhysicalTable`,
+  `convertRegionInfosToPartitionTableRegions`) and dispatches them as
+  `TableRegions`; a union scan over an MPP gather reads the buffer through
+  the fragment's table scan (Go `buildUnionScanFromReader`'s `MPPGather`
+  arm). Go `TestReadPartitionTable` and `TestTiflashEmptyDynamicPruneResult`
+  pass. Left: the MPP CTE pieces, and the disaggregated (consistent-hash)
+  task building for a partitioned request.
 - [ ] Milestone 3: the embedded store's MPP. Scope found 2026-11-10: the
   Rust embedded store serves no MPP at all (`tidb-unistore` `rpc.rs` answers
   MPP commands "not support") and its cluster has no TiFlash store, so this

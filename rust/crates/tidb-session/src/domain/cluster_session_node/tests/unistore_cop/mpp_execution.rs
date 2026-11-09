@@ -473,3 +473,61 @@ fn test_mpp_apply() {
         &[&["2"]],
     );
 }
+
+/// Go `TestReadPartitionTable`.
+#[test]
+fn test_read_partition_table() {
+    let (stack, mut session) = tiflash_session(2, 2160);
+    rows(&mut session, "drop table if exists t");
+    rows(&mut session, "create table t(a int not null primary key, b int not null) partition by hash(a) partitions 2");
+    rows(&mut session, "alter table t set tiflash replica 1");
+    replica_available(&stack, &mut session, "t");
+    rows(&mut session, "insert into t values(1,0)");
+    rows(&mut session, "insert into t values(2,0)");
+    rows(&mut session, "insert into t values(3,0)");
+    rows(&mut session, "set @@session.tidb_isolation_read_engines=\"tiflash\"");
+    // unistore does not support later materialization
+    rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
+    // mock executor does not support use outer table as build side for outer
+    // join, so need to force the inner table as build side
+    rows(&mut session, "set tidb_opt_mpp_outer_join_fixed_build_side=1");
+    check(&mut session, "select /*+ STREAM_AGG() */ count(*) from t", &[&["3"]]);
+    check(&mut session, "select * from t order by a", &[&["1", "0"], &["2", "0"], &["3", "0"]]);
+
+    // test union scan
+    rows(&mut session, "begin");
+    rows(&mut session, "insert into t values(4,0)");
+    check(&mut session, "select /*+ STREAM_AGG() */ count(*) from t", &[&["4"]]);
+    rows(&mut session, "insert into t values(5,0)");
+    check(&mut session, "select /*+ STREAM_AGG() */ count(*) from t", &[&["5"]]);
+    rows(&mut session, "insert into t values(6,0)");
+    check(&mut session, "select /*+ STREAM_AGG() */ count(*) from t", &[&["6"]]);
+    // test dynamic prune + union scan
+    rows(&mut session, "set tidb_partition_prune_mode=dynamic");
+    check(&mut session, "select /*+ STREAM_AGG() */ count(*) from t", &[&["6"]]);
+    // test dynamic prune + batch cop + union scan
+    rows(&mut session, "set tidb_allow_batch_cop=2");
+    check(&mut session, "select /*+ STREAM_AGG() */ count(*) from t", &[&["6"]]);
+    rows(&mut session, "commit");
+}
+
+/// Go `TestTiflashEmptyDynamicPruneResult`.
+#[test]
+fn test_tiflash_empty_dynamic_prune_result() {
+    let (stack, mut session) = tiflash_session(2, 2161);
+    rows(&mut session, "drop table if exists t");
+    rows(&mut session, "CREATE TABLE `IDT_RP24833` (  `COL1` bigint(16) DEFAULT '15' COMMENT 'NUMERIC UNIQUE INDEX',\n  `COL2` varchar(20) DEFAULT NULL,\n  `COL4` datetime DEFAULT NULL,\n  `COL3` bigint(20) DEFAULT NULL,\n  `COL5` float DEFAULT NULL,\n  KEY `UK_COL1` (`COL1`) /*!80000 INVISIBLE */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY RANGE ((`COL1`-57))\n(PARTITION `P0` VALUES LESS THAN (-3503857335115112215),\n PARTITION `P1` VALUES LESS THAN (-2987877108151063747),\n PARTITION `P2` VALUES LESS THAN (-1981049919102122710),\n PARTITION `P3` VALUES LESS THAN (-1635802972727465681),\n PARTITION `P4` VALUES LESS THAN (1186020639986357714),\n PARTITION `P5` VALUES LESS THAN (1220018677454711359),\n PARTITION `PMX` VALUES LESS THAN (MAXVALUE));");
+    rows(&mut session, "alter table IDT_RP24833 set tiflash replica 1");
+    replica_available(&stack, &mut session, "IDT_RP24833");
+
+    rows(&mut session, "insert into IDT_RP24833 values(-8448770111093677011, \"郇鋺篤堯擈斥鍮啸赠璭饱磟朅闑傒聎疫ᛄ怖霃\", \"8781-05-02 04:23:03\", -27252736532807028, -1.34554e38);");
+    rows(&mut session, "set @@tidb_partition_prune_mode = 'dynamic';");
+    rows(&mut session, "set @@session.tidb_isolation_read_engines=\"tiflash\";");
+    // unistore does not support later materialization
+    rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
+    rows(&mut session, "set @@session.tidb_allow_mpp=ON;");
+    rows(&mut session, "set @@session.tidb_enforce_mpp = on;");
+    check(&mut session, "select /*+ read_from_storage(tiflash[t1]) */  * from IDT_RP24833 partition(p3, p4) t1 where t1. col1 between -8448770111093677011 and -8448770111093677011;", &[]);
+    check(&mut session, "select /*+ read_from_storage(tiflash[t2]) */  * from IDT_RP24833 partition(p2) t2 where t2. col1 <= -8448770111093677011;", &[]);
+    check(&mut session, "select /*+ read_from_storage(tiflash[t1, t2]) */  * from IDT_RP24833 partition(p3, p4) t1 join IDT_RP24833 partition(p2) t2 on t1.col1 = t2.col1 where t1. col1 between -8448770111093677011 and -8448770111093677011 and t2. col1 <= -8448770111093677011;", &[]);
+}
