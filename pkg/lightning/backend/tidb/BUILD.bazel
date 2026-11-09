@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "tidb",
-    srcs = ["tidb.go"],
+    srcs = [
+        "pkdb_summary.go",
+        "tidb.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/lightning/backend/tidb",
     visibility = ["//visibility:public"],
     deps = [
@@ -15,10 +18,12 @@ go_library(
         "//pkg/lightning/config",
         "//pkg/lightning/errormanager",
         "//pkg/lightning/log",
+        "//pkg/lightning/pkdbsummary",
         "//pkg/lightning/verification",
         "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
+        "//pkg/sessionctx/stmtctx",
         "//pkg/table",
         "//pkg/types",
         "//pkg/util/dbutil",
@@ -41,7 +46,6 @@ go_test(
     flaky = True,
     shard_count = 17,
     deps = [
-        ":tidb",
         "//pkg/errno",
         "//pkg/lightning/backend",
         "//pkg/lightning/backend/encode",
@@ -50,6 +54,7 @@ go_test(
         "//pkg/lightning/config",
         "//pkg/lightning/errormanager",
         "//pkg/lightning/log",
+        "//pkg/lightning/pkdbsummary",
         "//pkg/lightning/verification",
         "//pkg/meta/model",
         "//pkg/parser/charset",
@@ -58,6 +63,7 @@ go_test(
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/types",
+        ":tidb",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_stretchr_testify//require",

@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/pkdbsummary"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -686,8 +687,8 @@ func (*tidbBackend) ImportEngine(context.Context, uuid.UUID, int64, int64) error
 func (be *tidbBackend) WriteRows(ctx context.Context, tableName string, columnNames []string, rows encode.Rows) error {
 	var err error
 rowLoop:
-	for _, r := range rows.(tidbRows).splitIntoChunks(be.maxChunkSize, be.maxChunkRows) {
-		for i := 0; i < writeRowsMaxRetryTimes; i++ {
+	for _, r := range splitSummaryRows(ctx, rows.(tidbRows), be.maxChunkSize, be.maxChunkRows) {
+		for range writeRowsMaxRetryTimes {
 			// Write in the batch mode first.
 			err = be.WriteBatchRowsToDB(ctx, tableName, columnNames, r)
 			switch {
@@ -707,6 +708,7 @@ rowLoop:
 				}
 				continue rowLoop
 			default:
+				rejectSummaryRows(ctx, r, err)
 				return err
 			}
 		}
@@ -820,33 +822,11 @@ stmtLoop:
 		)
 		for i := 0; i < writeRowsMaxRetryTimes; i++ {
 			query := stmtTask.stmt
-			if be.stmtCache != nil {
-				var prepStmt *sql.Stmt
-				key := &stmtKey{query: query}
-				be.stmtCacheMutex.RLock()
-				stmt, ok := be.stmtCache.Get(key)
-				be.stmtCacheMutex.RUnlock()
-				if ok {
-					prepStmt = stmt.(*sql.Stmt)
-				} else if stmt, err := be.db.PrepareContext(ctx, query); err == nil {
-					be.stmtCacheMutex.Lock()
-					// check again if the key is already in the cache
-					// to avoid override existing stmt without closing it
-					if cachedStmt, ok := be.stmtCache.Get(key); !ok {
-						prepStmt = stmt
-						be.stmtCache.Put(key, stmt)
-					} else {
-						prepStmt = cachedStmt.(*sql.Stmt)
-						stmt.Close()
-					}
-					be.stmtCacheMutex.Unlock()
-				} else {
-					return errors.Trace(err)
-				}
-				result, err = prepStmt.ExecContext(ctx, stmtTask.values...)
-			} else {
-				result, err = be.db.ExecContext(ctx, query)
+			result, err = be.execSummaryStmt(ctx, stmtTask)
+			if isStmtSetupError(err) {
+				return errors.Trace(err)
 			}
+
 			if err == nil {
 				affected, err2 := result.RowsAffected()
 				if err2 != nil {
@@ -878,11 +858,14 @@ stmtLoop:
 			}
 		}
 
+		writeErr := err
+
 		firstRow := stmtTask.rows[0]
 
 		if isDupEntryError(err) {
 			// rowID is ignored in tidb backend
 			if be.conflictCfg.Strategy == config.ErrorOnDup {
+				rejectSummaryRows(ctx, stmtTask.rows, writeErr)
 				be.errorMgr.RecordDuplicateOnce(
 					ctx,
 					log.FromContext(ctx),
@@ -917,8 +900,10 @@ stmtLoop:
 			)
 		}
 		if err != nil {
+			rejectSummaryRows(ctx, stmtTask.rows, writeErr)
 			return errors.Trace(err)
 		}
+		recordConsumedSummaryRow(ctx, stmtTask, writeErr)
 		// max-error not yet reached (error consumed by errorMgr), proceed to next stmtTask.
 	}
 	failpoint.Inject("FailIfImportedSomeRows", func() {
@@ -961,18 +946,62 @@ func (be *tidbBackend) LocalWriter(
 
 // Writer is a writer that writes data to local storage.
 type Writer struct {
-	be        *tidbBackend
-	tableName string
+	summaryMu          sync.Mutex
+	stopSummaryCleanup func() bool
+	summarySession     *summarySession
+	be                 *tidbBackend
+	tableName          string
 }
 
 // Close implements the EngineWriter interface.
-func (*Writer) Close(_ context.Context) (backend.ChunkFlushStatus, error) {
+func (w *Writer) Close(_ context.Context) (backend.ChunkFlushStatus, error) {
+	w.summaryMu.Lock()
+	defer w.summaryMu.Unlock()
+	w.closeSummarySession()
 	return nil, nil
+}
+
+// closeSummarySession requires summaryMu; cancellation can race an active write.
+func (w *Writer) closeSummarySession() {
+	if w.stopSummaryCleanup != nil {
+		w.stopSummaryCleanup()
+		w.stopSummaryCleanup = nil
+	}
+	if w.summarySession != nil {
+		w.summarySession.close()
+		w.summarySession = nil
+	}
 }
 
 // AppendRows implements the EngineWriter interface.
 func (w *Writer) AppendRows(ctx context.Context, columnNames []string, rows encode.Rows) error {
-	return w.be.WriteRows(ctx, w.tableName, columnNames, rows)
+	w.summaryMu.Lock()
+	defer w.summaryMu.Unlock()
+	if pkdbsummary.FromContext(ctx) != nil && len(rows.(tidbRows)) > 0 {
+		if w.summarySession == nil {
+			conn, err := w.be.db.Conn(ctx)
+			if err != nil {
+				return err
+			}
+			w.summarySession = &summarySession{conn: conn, statements: make(map[string]*sql.Stmt)}
+			// The chunk can fail in parsing/encoding after a successful append.
+			// Its cancellation must release our connection even if Close is skipped.
+			session := w.summarySession
+			w.stopSummaryCleanup = context.AfterFunc(ctx, func() {
+				w.summaryMu.Lock()
+				defer w.summaryMu.Unlock()
+				if w.summarySession == session {
+					w.closeSummarySession()
+				}
+			})
+		}
+		ctx = context.WithValue(ctx, summarySessionKey{}, w.summarySession)
+	}
+	err := w.be.WriteRows(ctx, w.tableName, columnNames, rows)
+	if err != nil {
+		w.closeSummarySession()
+	}
+	return err
 }
 
 // IsSynced implements the EngineWriter interface.

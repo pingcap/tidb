@@ -340,6 +340,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 			break
 		}
 		rowNumber++
+		recordSourceRead(ctx)
 		readRowCache = data.row
 		readDur += time.Since(readDurStart)
 

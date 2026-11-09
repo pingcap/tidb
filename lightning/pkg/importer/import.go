@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/lightning/pkdbsummary"
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -215,6 +216,8 @@ type Controller struct {
 
 	errorSummaries errorSummaries
 
+	summary       *pkdbsummary.Ledger
+	summaryFrozen bool
 	checkpointsDB checkpoints.DB
 	saveCpCh      chan saveCp
 	checkpointsWg sync.WaitGroup
@@ -541,14 +544,17 @@ func (rc *Controller) Close() {
 // Run starts the restore task.
 func (rc *Controller) Run(ctx context.Context) error {
 	failpoint.Inject("beforeRun", func() {})
+	rc.summary = pkdbsummary.Open(ctx, nil, false)
 
 	opts := []func(context.Context) error{
 		rc.setGlobalVariables,
 		rc.restoreSchema,
 		rc.preCheckRequirements,
+		rc.initializeImportSummary,
 		rc.initCheckpoint,
 		rc.importTables,
 		rc.fullCompact,
+		rc.freezeImportSummary,
 		rc.cleanCheckpoints,
 	}
 
@@ -580,6 +586,7 @@ outside:
 		rc.waitCheckpointFinish()
 	}
 
+	rc.emitImportSummary(err)
 	task.End(zap.ErrorLevel, err)
 	rc.errorMgr.LogErrorDetails()
 	rc.errorSummaries.emitLog()
@@ -1958,10 +1965,12 @@ var (
 )
 
 type deliveredKVs struct {
-	kvs     encode.Row // if kvs is nil, this indicated we've got the last message.
-	columns []string
-	offset  int64
-	rowID   int64
+	replaced     bool
+	sourceOffset int64
+	kvs          encode.Row // if kvs is nil, this indicated we've got the last message.
+	columns      []string
+	offset       int64
+	rowID        int64
 
 	realOffset int64 // indicates file reader's current position, only used for compressed files
 }

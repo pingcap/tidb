@@ -263,6 +263,8 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 
 	sharedVars.mu.Lock()
 	defer sharedVars.mu.Unlock()
+	sourceRecords := sharedVars.SourceRecords.Load()
+	subtaskMeta.SourceRecords = &sourceRecords
 	subtaskMeta.Checksum = map[int64]Checksum{}
 	for id, c := range sharedVars.Checksum.GetInnerChecksums() {
 		subtaskMeta.Checksum[id] = *newFromKVChecksum(c)

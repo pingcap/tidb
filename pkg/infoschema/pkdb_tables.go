@@ -8,7 +8,15 @@ import (
 	"github.com/tikv/pd/client/clients/pkdb"
 )
 
+// TableImportJobStatistics exposes versioned source statistics with SHOW IMPORT JOB permissions.
+const TableImportJobStatistics = "PKDB_IMPORT_JOB_STATISTICS"
+
 func init() {
+	tableIDMap[TableImportJobStatistics] = autoid.ReservedTablesBaseID + 10
+	tableNameToColumns[TableImportJobStatistics] = []columnInfo{
+		{name: "JOB_ID", tp: mysql.TypeLonglong, flag: mysql.NotNullFlag, size: 21},
+		{name: "STATISTICS", tp: mysql.TypeJSON},
+	}
 	tableIDMap[TableUserLoginHistory] = autoid.ReservedTablesBaseID
 	tableIDMap[ClusterTableAuditLog] = autoid.ReservedTablesBaseID + 1
 	tableIDMap[TableAuditLog] = autoid.ReservedTablesBaseID + 2

@@ -17,12 +17,16 @@ package importinto
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	brstorage "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -148,4 +152,130 @@ func TestIsImporting2TiKV(t *testing.T) {
 	require.False(t, ext.isImporting2TiKV(&proto.Task{TaskBase: proto.TaskBase{Step: proto.ImportStepPostProcess}}))
 	require.True(t, ext.isImporting2TiKV(&proto.Task{TaskBase: proto.TaskBase{Step: proto.ImportStepImport}}))
 	require.True(t, ext.isImporting2TiKV(&proto.Task{TaskBase: proto.TaskBase{Step: proto.ImportStepWriteAndIngest}}))
+}
+
+type sourceStatisticsHandle struct {
+	storage.TaskHandle
+	metas  [][]byte
+	err    error
+	capped bool
+}
+
+func (h sourceStatisticsHandle) GetPreviousSubtaskMetas(_ int64, step proto.Step) ([][]byte, error) {
+	if step == proto.ImportStepCollectConflicts {
+		data, _ := json.Marshal(CollectConflictsStepMeta{TooManyConflictsFromIndex: h.capped})
+		return [][]byte{data}, h.err
+	}
+	return h.metas, h.err
+}
+
+// TestCollectImportSourceStatistics aggregates actual successful subtask inputs,
+// checks source conflict deduplication, and preserves uncertainty for old/capped
+// metadata instead of substituting estimated row IDs or live progress counters.
+func TestCollectImportSourceStatistics(t *testing.T) {
+	for _, scenario := range []string{"ordinary", "conflicts", "old metadata", "capped conflicts", "metadata unavailable"} {
+		t.Run(scenario, func(t *testing.T) {
+			total := uint64(5)
+			data, err := json.Marshal(ImportStepMeta{SourceRecords: &total})
+			require.NoError(t, err)
+			handle := sourceStatisticsHandle{metas: [][]byte{data, data}}
+			meta := &TaskMeta{}
+			meta.Result.LoadedRowCnt = 999999
+			if scenario == "conflicts" {
+				meta.Result.ConflictedRowCnt = 3
+			}
+			if scenario == "old metadata" {
+				handle.metas = append(handle.metas, []byte(`{}`))
+			}
+			if scenario == "capped conflicts" {
+				meta.Plan.CloudStorageURI = "s3://sort"
+				handle.capped = true
+			}
+			if scenario == "metadata unavailable" {
+				handle.err = errors.New("unavailable")
+			}
+			result := collectImportStatistics(handle, &proto.Task{TaskBase: proto.TaskBase{ID: 1}}, meta)
+			if scenario == "old metadata" || scenario == "metadata unavailable" {
+				require.Nil(t, result.Total)
+				require.False(t, result.Complete)
+				return
+			}
+			require.Equal(t, uint64(10), *result.Total)
+			require.Equal(t, uint64(10), result.Outcomes.Count()+*result.Unresolved)
+			if scenario == "capped conflicts" {
+				require.Equal(t, uint64(10), *result.Unresolved)
+				return
+			}
+			require.Equal(t, meta.Result.ConflictedRowCnt, result.Skipped)
+			require.Equal(t, uint64(10)-result.Skipped, result.Imported)
+		})
+	}
+}
+
+// Source counts belong in internal metadata, while source chunks are offloaded.
+// Both serialization paths must support legacy, zero and nonzero source counts.
+func TestImportStepMetaSourceRecordsExternalStorage(t *testing.T) {
+	ctx := context.Background()
+	store, err := brstorage.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	zero, count := uint64(0), uint64(42)
+	cases := []struct {
+		name    string
+		records *uint64
+	}{
+		{name: "legacy"},
+		{name: "zero", records: &zero},
+		{name: "count", records: &count},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			meta := ImportStepMeta{
+				BaseExternalMeta: external.BaseExternalMeta{ExternalPath: tc.name + ".json"},
+				SourceRecords:    tc.records,
+				ID:               7,
+				Chunks:           []Chunk{{Path: "source.csv"}},
+			}
+			internal, err := meta.Marshal()
+			require.NoError(t, err)
+			var internalFields map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(internal, &internalFields))
+			require.NotContains(t, internalFields, "Chunks")
+			if tc.records == nil {
+				require.NotContains(t, internalFields, "source-records")
+			} else {
+				var got uint64
+				require.NoError(t, json.Unmarshal(internalFields["source-records"], &got))
+				require.Equal(t, *tc.records, got)
+			}
+			require.NoError(t, meta.WriteJSONToExternalStorage(ctx, store, &meta))
+			external, err := store.ReadFile(ctx, meta.ExternalPath)
+			require.NoError(t, err)
+			var externalFields map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(external, &externalFields))
+			require.Contains(t, externalFields, "Chunks")
+			require.NotContains(t, externalFields, "source-records")
+			var restored ImportStepMeta
+			require.NoError(t, json.Unmarshal(internal, &restored))
+			require.NoError(t, restored.ReadJSONFromExternalStorage(ctx, store, &restored))
+			require.Equal(t, meta, restored)
+		})
+	}
+}
+
+// TestUpdateResultIsIdempotent starts with stale aggregate values, then repeats
+// result collection to prove scheduler retries replace rather than add counts.
+func TestUpdateResultIsIdempotent(t *testing.T) {
+	source := uint64(5)
+	data, err := json.Marshal(ImportStepMeta{SourceRecords: &source, Result: Result{LoadedRowCnt: 3}})
+	require.NoError(t, err)
+	handle := sourceStatisticsHandle{metas: [][]byte{data, data}}
+	meta := &TaskMeta{Result: Result{LoadedRowCnt: 999}}
+	task := &proto.Task{TaskBase: proto.TaskBase{ID: 1}}
+	for range 2 {
+		require.NoError(t, updateResult(handle, task, meta, false))
+		require.Equal(t, uint64(6), meta.Result.LoadedRowCnt)
+		result := collectImportStatistics(handle, task, meta)
+		require.Equal(t, uint64(10), *result.Total)
+		require.Equal(t, uint64(10), result.Imported)
+	}
 }

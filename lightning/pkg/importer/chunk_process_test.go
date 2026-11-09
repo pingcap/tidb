@@ -17,6 +17,7 @@ package importer
 import (
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/lightning/pkdbsummary"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -262,6 +264,105 @@ func (s *chunkRestoreSuite) TestDeliverLoop() {
 	require.Equal(s.T(), s.cr.chunk.Chunk.EndOffset, s.cr.chunk.Chunk.Offset)
 	require.Equal(s.T(), int64(76), s.cr.chunk.Chunk.PrevRowIDMax)
 	require.Equal(s.T(), uint64(3), s.cr.chunk.Checksum.SumKVS())
+}
+
+// Statistics persistence must not prevent the quota worker from flushing engines.
+// The fence still has to precede both writes, and the acknowledgement must follow them.
+func (s *chunkRestoreSuite) TestDeliverSummaryOutsideDiskQuotaLock() {
+	for failAt, name := range []string{"success", "data-failure", "index-failure"} {
+		s.Run(name, func() {
+			original := s.cr.chunk
+			chunk := *original
+			s.cr.chunk = &chunk
+			defer func() { s.cr.chunk = original }()
+			ctx := context.Background()
+			controller := gomock.NewController(s.T())
+			mockEncBuilder := mock.NewMockEncodingBuilder(controller)
+			mockEncBuilder.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
+			dataWriter := mock.NewMockEngineWriter(controller)
+			indexWriter := mock.NewMockEngineWriter(controller)
+			dataWriter.EXPECT().IsSynced().Return(false).AnyTimes()
+			cfg := config.NewConfig()
+			cfg.TikvImporter.Backend = config.BackendLocal
+			rc := &Controller{cfg: cfg, encBuilder: mockEncBuilder}
+			var saved struct {
+				Units map[string]struct {
+					Fence int64 `json:"fence"`
+					Ack   int64 `json:"ack"`
+				} `json:"units"`
+			}
+			store := &deliverSummaryStore{onSave: func(raw []byte) {
+				require.NoError(s.T(), json.Unmarshal(raw, &saved))
+			}}
+			rc.summary = pkdbsummary.Open(ctx, store, false)
+			key := summaryChunkKey(s.tr.tableName, s.cr.chunk)
+			rc.summary.Ensure(key, s.tr.tableName, 0, 0)
+			rc.summary.Observe(key, 0, pkdbsummary.Outcomes{})
+			writes := 0
+			var quotaAvailable []bool
+			store.onSave = func(raw []byte) {
+				require.NoError(s.T(), json.Unmarshal(raw, &saved))
+				available := rc.diskQuotaLock.TryLock()
+				quotaAvailable = append(quotaAvailable, available)
+				if available {
+					rc.diskQuotaLock.Unlock()
+				}
+				if len(quotaAvailable) == 1 {
+					require.Zero(s.T(), writes)
+				} else {
+					require.Equal(s.T(), 2, writes)
+				}
+			}
+			appendRows := func(context.Context, []string, encode.Rows) error {
+				require.Equal(s.T(), int64(0), saved.Units[key].Fence, "persist the fence before writing")
+				require.Equal(s.T(), int64(-1), saved.Units[key].Ack, "acknowledge only after both engines succeed")
+				available := rc.diskQuotaLock.TryLock()
+				if available {
+					rc.diskQuotaLock.Unlock()
+				}
+				require.False(s.T(), available, "engine writes remain protected from quota flushes")
+				writes++
+				if writes == failAt {
+					return errors.New("engine write failed")
+				}
+				return nil
+			}
+			dataWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(appendRows)
+			if failAt != 1 {
+				indexWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(appendRows)
+			}
+			kvsCh := make(chan []deliveredKVs, 2)
+			kvsCh <- []deliveredKVs{{
+				kvs:          kv.MakeRowFromKvPairs([]common.KvPair{{Key: []byte("txxxxxxxx_ryyyyyyyy"), Val: []byte("value")}}),
+				sourceOffset: 0, offset: s.cr.chunk.Chunk.EndOffset,
+			}}
+			kvsCh <- []deliveredKVs{{offset: s.cr.chunk.Chunk.EndOffset}}
+			_, err := s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataWriter, indexWriter, rc)
+			if failAt == 0 {
+				require.NoError(s.T(), err)
+				require.Equal(s.T(), []bool{true, true}, quotaAvailable, "statistics I/O must allow quota reclamation")
+				require.Equal(s.T(), int64(0), saved.Units[key].Ack)
+			} else {
+				require.EqualError(s.T(), err, "engine write failed")
+				require.Equal(s.T(), []bool{true}, quotaAvailable, "a failed write retains only its fence")
+				require.Equal(s.T(), int64(-1), saved.Units[key].Ack)
+			}
+			available := rc.diskQuotaLock.TryLock()
+			if available {
+				rc.diskQuotaLock.Unlock()
+			}
+			require.True(s.T(), available, "release the quota lock on every exit")
+		})
+	}
+}
+
+type deliverSummaryStore struct{ onSave func([]byte) }
+
+func (*deliverSummaryStore) Load(context.Context) ([]byte, error) { return nil, nil }
+
+func (s *deliverSummaryStore) Save(_ context.Context, raw []byte) error {
+	s.onSave(raw)
+	return nil
 }
 
 func (s *chunkRestoreSuite) TestEncodeLoop() {

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -55,7 +56,11 @@ type TaskMeta struct {
 // Scheduler will split the task into subtasks(FileInfos -> Chunks)
 // All the field should be serializable.
 type ImportStepMeta struct {
+	// Keep the method-bearing embedded metadata first for reflect.StructOf.
 	external.BaseExternalMeta
+	// SourceRecords contains actual reads from one successful subtask attempt.
+	// It is absent in metadata written by older servers.
+	SourceRecords *uint64 `json:"source-records,omitempty"`
 	// this is the engine ID, not the id in tidb_background_subtask table.
 	ID       int32
 	Chunks   []Chunk            `external:"true"`
@@ -201,6 +206,8 @@ type PostProcessStepMeta struct {
 // This is because subtasks cannot directly obtain the results of the minimal subtask.
 // All the fields should be concurrent safe.
 type SharedVars struct {
+	// SourceRecords counts actual reads across concurrent chunks of this attempt.
+	SourceRecords atomic.Uint64
 	TableImporter *importer.TableImporter
 	DataEngine    *backend.OpenedEngine
 	IndexEngine   *backend.OpenedEngine

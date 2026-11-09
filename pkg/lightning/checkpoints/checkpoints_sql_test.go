@@ -16,6 +16,7 @@ package checkpoints_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	gmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
@@ -516,6 +518,7 @@ func TestRemoveOneCheckpoint_SQL(t *testing.T) {
 		ExpectExec("DELETE FROM `mock-schema`\\.`table_v\\d+` WHERE table_name = \\?").
 		WithArgs("`db1`.`t2`").
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.ExpectQuery("SELECT unit_key,statistics .*pkdb_import_statistics_v1").WillReturnError(&gmysql.MySQLError{Number: 1146, Message: "optional table absent"})
 	s.mock.ExpectCommit()
 
 	err := s.cpdb.RemoveCheckpoint(context.Background(), "`db1`.`t2`")
@@ -581,6 +584,7 @@ func TestDestroyAllErrorCheckpoints_SQL(t *testing.T) {
 		ExpectExec("DELETE FROM `mock-schema`\\.`table_v\\d+`").
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 2))
+	s.mock.ExpectQuery("SELECT unit_key,statistics .*pkdb_import_statistics_v1").WillReturnError(&gmysql.MySQLError{Number: 1146, Message: "optional table absent"})
 	s.mock.ExpectCommit()
 
 	dtc, err := s.cpdb.DestroyErrorCheckpoint(context.Background(), "all")
@@ -615,6 +619,7 @@ func TestDestroyOneErrorCheckpoints(t *testing.T) {
 		ExpectExec("DELETE FROM `mock-schema`\\.`table_v\\d+` WHERE table_name = \\?").
 		WithArgs("`db1`.`t2`", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.ExpectQuery("SELECT unit_key,statistics .*pkdb_import_statistics_v1").WillReturnError(&gmysql.MySQLError{Number: 1146, Message: "optional table absent"})
 	s.mock.ExpectCommit()
 
 	dtc, err := s.cpdb.DestroyErrorCheckpoint(context.Background(), "`db1`.`t2`")
@@ -710,4 +715,52 @@ func TestMoveCheckpoints(t *testing.T) {
 
 	err := s.cpdb.MoveCheckpoints(ctx, 12345678)
 	require.NoError(t, err)
+}
+
+// The CLI opens a checkpoint DB without enabling statistics. Both reset commands
+// must still remove persisted units in their existing transaction; failure rolls
+// back the control deletes, while a healthy table's sidecar row is untouched.
+func TestTableResetStatisticsTransaction_SQL(t *testing.T) {
+	for _, mode := range []string{"remove", "destroy"} {
+		for _, fail := range []bool{false, true} {
+			t.Run(mode+"/"+map[bool]string{false: "commit", true: "rollback"}[fail], func(t *testing.T) {
+				s := newCPSQLSuite(t)
+				const table = "`db1`.`t2`"
+				s.mock.ExpectBegin()
+				if mode == "destroy" {
+					s.mock.ExpectQuery("SELECT (?s:.+)table_name = ").WithArgs(table, sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"table_name", "min", "max"}).AddRow(table, -1, 0))
+				}
+				for _, control := range []string{"chunk", "engine", "table"} {
+					e := s.mock.ExpectExec("DELETE FROM `mock-schema`\\.`" + control + "_v[0-9]+`")
+					if mode == "destroy" {
+						e.WithArgs(table, sqlmock.AnyArg())
+					} else {
+						e.WithArgs(table)
+					}
+					e.WillReturnResult(sqlmock.NewResult(0, 1))
+				}
+				s.mock.ExpectQuery("SELECT unit_key,statistics .*pkdb_import_statistics_v1.*FOR UPDATE").WillReturnRows(sqlmock.NewRows([]string{"unit_key", "statistics"}).AddRow("old", []byte(`{"table":"`+table+`"}`)).AddRow("keep", []byte(`{"table":"other"}`)))
+				id := sha256.Sum256([]byte("old"))
+				deletion := s.mock.ExpectExec("DELETE FROM .*pkdb_import_statistics_v1 WHERE id IN ").WithArgs(id[:])
+				if fail {
+					deletion.WillReturnError(errors.New("statistics delete failed"))
+					s.mock.ExpectRollback()
+				} else {
+					deletion.WillReturnResult(sqlmock.NewResult(0, 1))
+					s.mock.ExpectCommit()
+				}
+				var err error
+				if mode == "destroy" {
+					_, err = s.cpdb.DestroyErrorCheckpoint(context.Background(), table)
+				} else {
+					err = s.cpdb.RemoveCheckpoint(context.Background(), table)
+				}
+				if fail {
+					require.Error(t, err)
+				} else {
+					require.NoError(t, err)
+				}
+			})
+		}
+	}
 }

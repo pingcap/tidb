@@ -23,6 +23,8 @@ message CheckpointsModel {
     // key is table_name
     map<string, TableCheckpointModel> checkpoints = 1;
     TaskCheckpointModel task_checkpoint = 2;
+    // Versioned source-record ledger; absent in older checkpoint files.
+    bytes import_statistics = 3;
 }
 
 message TaskCheckpointModel {

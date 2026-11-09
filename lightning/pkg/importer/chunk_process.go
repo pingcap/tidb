@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/lightning/pkdbsummary"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -253,6 +254,8 @@ func (cr *chunkProcessor) encodeLoop(
 	rc *Controller,
 ) (readTotalDur time.Duration, encodeTotalDur time.Duration, err error) {
 	defer close(kvsCh)
+	summaryKey := summaryChunkKey(t.tableName, cr.chunk)
+	rc.summary.Ensure(summaryKey, t.tableName, cr.chunk.Key.Offset, cr.chunk.Chunk.Offset)
 
 	// when AddIndexBySQL, we use all PK and UK to run pre-deduplication, and then we
 	// strip almost all secondary index to run encodeLoop. In encodeLoop when we meet
@@ -330,6 +333,9 @@ func (cr *chunkProcessor) encodeLoop(
 		}()
 	}
 
+	winner := t.summaryWinnerLookup(ctx)
+	defer winner.close()
+
 	for !reachEOF {
 		if err = pauser.Wait(ctx); err != nil {
 			return
@@ -349,6 +355,7 @@ func (cr *chunkProcessor) encodeLoop(
 		var scannedOffsetErr error
 	outLoop:
 		for !canDeliver {
+			freshRead := false
 			readDurStart := time.Now()
 			err = cr.parser.ReadRow()
 			columnNames := cr.parser.Columns()
@@ -368,6 +375,7 @@ func (cr *chunkProcessor) encodeLoop(
 
 			switch errors.Cause(err) {
 			case nil:
+				freshRead = rc.summary.Observe(summaryKey, curOffset, pkdbsummary.Outcomes{})
 				if !initializedColumns {
 					if len(cr.chunk.ColumnPermutation) == 0 {
 						if err = t.initializeColumns(columnNames, cr.chunk); err != nil {
@@ -429,6 +437,7 @@ func (cr *chunkProcessor) encodeLoop(
 					return
 				}
 				if isDupIgnored {
+					rc.summary.ClassifyRead(summaryKey, curOffset, freshRead, pkdbsummary.Outcomes{Skipped: 1})
 					cr.parser.RecycleRow(lastRow)
 					lastOffset := curOffset
 					curOffset = newOffset
@@ -464,11 +473,13 @@ func (cr *chunkProcessor) encodeLoop(
 			}
 
 			// sql -> kv
+			curOffsetBeforeRow := curOffset
 			kvs, encodeErr := kvEncoder.Encode(lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, curOffset)
 			encodeDur += time.Since(encodeDurStart)
 
 			hasIgnoredEncodeErr := false
 			if encodeErr != nil {
+				rc.summary.ClassifyRead(summaryKey, curOffset, freshRead, pkdbsummary.Outcomes{Error: 1})
 				rowText := tidb.EncodeRowForRecord(ctx, t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, cr.chunk.ColumnPermutation)
 				encodeErr = rc.errorMgr.RecordTypeError(ctx, logger, t.tableName, cr.chunk.Key.Path, newOffset, rowText, encodeErr)
 				if encodeErr != nil {
@@ -486,7 +497,7 @@ func (cr *chunkProcessor) encodeLoop(
 				continue
 			}
 
-			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: filteredColumns, offset: newOffset,
+			kvPacket = append(kvPacket, deliveredKVs{replaced: winner.contains(lastRow.RowID), sourceOffset: curOffsetBeforeRow, kvs: kvs, columns: filteredColumns, offset: newOffset,
 				rowID: rowID, realOffset: newScannedOffset})
 			kvSize += kvs.Size()
 			failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
@@ -587,6 +598,8 @@ func (cr *chunkProcessor) deliverLoop(
 	dataEngine, indexEngine backend.EngineWriter,
 	rc *Controller,
 ) (deliverTotalDur time.Duration, err error) {
+	summaryKey := summaryChunkKey(t.tableName, cr.chunk)
+	ctx = pkdbsummary.WithProgress(ctx, rc.summary, summaryKey)
 	deliverLogger := t.logger.With(
 		zap.Int32("engineNumber", engineID),
 		zap.Int("fileIndex", cr.index),
@@ -611,6 +624,8 @@ func (cr *chunkProcessor) deliverLoop(
 			indexChecksum = verify.NewKVChecksumWithKeyspace(keyspace)
 		)
 		var columns []string
+		var sourceRows, replacedRows uint64
+		var sourceEnd int64 = -1
 		var kvPacket []deliveredKVs
 		// init these two field as checkpoint current value, so even if there are no kv pairs delivered,
 		// chunk checkpoint should stay the same
@@ -636,6 +651,14 @@ func (cr *chunkProcessor) deliverLoop(
 						hasMoreKVs = false
 						break populate
 					}
+					sourceEnd = p.sourceOffset
+					if rc.summary.Eligible(summaryKey, p.sourceOffset) {
+						if p.replaced {
+							replacedRows++
+						} else {
+							sourceRows++
+						}
+					}
 					p.kvs.ClassifyAndAppend(&dataKVs, dataChecksum, &indexKVs, indexChecksum)
 					columns = p.columns
 					currOffset = p.offset
@@ -646,6 +669,13 @@ func (cr *chunkProcessor) deliverLoop(
 				err = ctx.Err()
 				return
 			}
+		}
+
+		// Persist the fence before either engine write, without holding up quota
+		// reclamation on a slow statistics store or another chunk's statistics save.
+		localSummary := sourceEnd >= 0 && rc.summary != nil && isLocalBackend(rc.cfg)
+		if localSummary {
+			rc.summary.BeginWrite(ctx, summaryKey, sourceEnd)
 		}
 
 		err = func() error {
@@ -692,6 +722,10 @@ func (cr *chunkProcessor) deliverLoop(
 		}()
 		if err != nil {
 			return
+		}
+		// Only acknowledge both successful writes, after releasing the quota lock.
+		if localSummary {
+			rc.summary.FinishWrite(ctx, summaryKey, sourceEnd, pkdbsummary.Outcomes{}, sourceRows, replacedRows)
 		}
 		dataSynced = false
 

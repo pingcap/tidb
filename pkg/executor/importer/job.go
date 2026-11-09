@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/pkdbsummary"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -102,6 +103,8 @@ func (ip *ImportParameters) String() string {
 
 // JobSummary is the summary info of import into job.
 type JobSummary struct {
+	// ImportStatistics contains confirmed source outcomes after successful ingest.
+	ImportStatistics *pkdbsummary.Result `json:"import-statistics,omitempty"`
 	// ImportedRows is the number of rows imported into TiKV.
 	// if the job is using global-sort, this number will be the rows after conflict
 	// resolution.

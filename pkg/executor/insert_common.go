@@ -1272,6 +1272,7 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 
 func (e *InsertValues) handleDuplicateKey(ctx context.Context, txn kv.Transaction, uk *keyValueWithDupInfo, replace bool, r toBeCheckedRow) (bool, error) {
 	if !replace {
+		e.Ctx().GetSessionVars().StmtCtx.AddDMLSkipped()
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
 		if txnCtx := e.Ctx().GetSessionVars().TxnCtx; txnCtx.IsPessimistic && e.Ctx().GetSessionVars().LockUnchangedKeys {
 			txnCtx.AddUnchangedKeyForLock(uk.newKey, false)
@@ -1332,12 +1333,14 @@ func (e *InsertValues) batchCheckAndInsert(
 	// append warnings and get no duplicated error rows
 	for i, r := range toBeCheckedRows {
 		if r.ignored {
+			sc.AddDMLError()
 			continue
 		}
 		if r.handleKey != nil {
 			_, err := txn.Get(ctx, r.handleKey.newKey)
 			if err == nil {
 				if !replace {
+					sc.AddDMLSkipped()
 					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
 					if txnCtx := e.Ctx().GetSessionVars().TxnCtx; txnCtx.IsPessimistic &&
 						e.Ctx().GetSessionVars().LockUnchangedKeys {
@@ -1412,6 +1415,7 @@ func (e *InsertValues) batchCheckAndInsert(
 		if err != nil {
 			// throw warning when violate check constraint
 			if table.ErrCheckConstraintViolated.Equal(err) {
+				sc.AddDMLError()
 				if !sc.InLoadDataStmt {
 					sc.AppendWarning(err)
 				}
@@ -1419,6 +1423,8 @@ func (e *InsertValues) batchCheckAndInsert(
 			}
 			return err
 		}
+
+		sc.AddDMLImported()
 	}
 	if e.stats != nil {
 		e.stats.CheckInsertTime += time.Since(start)

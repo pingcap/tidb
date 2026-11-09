@@ -63,7 +63,18 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 }
 
 // replaceRow removes all duplicate rows for one row, then inserts it.
-func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow, dupKeyCheck table.DupKeyCheckMode) error {
+func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow, dupKeyCheck table.DupKeyCheckMode) (retErr error) {
+	replaced := false
+	defer func() {
+		if retErr == nil {
+			sc := e.Ctx().GetSessionVars().StmtCtx
+			if replaced {
+				sc.AddDMLReplaced()
+			} else {
+				sc.AddDMLImported()
+			}
+		}
+	}()
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return err
@@ -76,6 +87,7 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow, dupKeyCh
 		}
 
 		if _, err := txn.Get(ctx, r.handleKey.newKey); err == nil {
+			replaced = true
 			rowUnchanged, err := e.removeRow(ctx, txn, handle, r, true)
 			if err != nil {
 				return err
@@ -97,9 +109,11 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow, dupKeyCh
 			return err
 		}
 		if rowUnchanged {
+			replaced = true
 			return nil
 		}
 		if foundDupKey {
+			replaced = true
 			continue
 		}
 		break
@@ -182,6 +196,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	}
 	sessionVars := e.Ctx().GetSessionVars()
 	sessionVars.StmtCtx.AddRecordRows(uint64(len(newRows)))
+	sessionVars.StmtCtx.InitDMLResult(uint64(len(newRows)), e.triggerExec == nil && len(e.fkCascades) == 0)
 	// TODO: seems we can optimize it to `DupKeyCheckSkip` because all conflict rows are deleted in previous steps.
 	dupKeyCheck := optimizeDupKeyCheckForNormalInsert(sessionVars, txn)
 	for _, r := range toBeCheckedRows {

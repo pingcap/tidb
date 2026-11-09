@@ -609,6 +609,8 @@ func updateResult(handle storage.TaskHandle, task *proto.Task, taskMeta *TaskMet
 		}
 		subtaskMetas = append(subtaskMetas, &subtaskMeta)
 	}
+	// Recompute absolute results so retrying the scheduler does not double count.
+	taskMeta.Result.LoadedRowCnt = 0
 	for _, subtaskMeta := range subtaskMetas {
 		taskMeta.Result.LoadedRowCnt += subtaskMeta.Result.LoadedRowCnt
 	}
@@ -702,8 +704,9 @@ func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 	// we have already switch import-mode when switch to post-process step.
 	sch.unregisterTask(ctx, task)
 	summary := &importer.JobSummary{
-		ImportedRows:   taskMeta.Result.LoadedRowCnt,
-		ConflictedRows: taskMeta.Result.ConflictedRowCnt,
+		ImportedRows:     taskMeta.Result.LoadedRowCnt,
+		ConflictedRows:   taskMeta.Result.ConflictedRowCnt,
+		ImportStatistics: collectImportStatistics(taskHandle, task, taskMeta),
 	}
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)

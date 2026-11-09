@@ -1854,6 +1854,10 @@ func (a *ExecStmt) recordLastQueryInfo(err error) {
 			ForUpdateTS:   sessVars.TxnCtx.GetForUpdateTS(),
 			RUConsumption: lastRUConsumption,
 		}
+		if err == nil && sessVars.IsAutocommit() && !sessVars.InTxn() && sessVars.StmtCtx.DMLResult.Valid() {
+			result := *sessVars.StmtCtx.DMLResult
+			sessVars.LastQueryInfo.DMLResult = &result
+		}
 		if err != nil {
 			sessVars.LastQueryInfo.ErrMsg = err.Error()
 		}

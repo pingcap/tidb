@@ -747,8 +747,9 @@ func (*NullCheckpointsDB) Update(context.Context, map[string]*TableCheckpointDif
 
 // MySQLCheckpointsDB is a checkpoints database for MySQL.
 type MySQLCheckpointsDB struct {
-	db     *sql.DB
-	schema string
+	statisticsEnabled bool
+	db                *sql.DB
+	schema            string
 }
 
 // NewMySQLCheckpointsDB creates a new MySQLCheckpointsDB.
@@ -1123,6 +1124,7 @@ type FileCheckpointsDB struct {
 	path        string
 	fileName    string
 	exStorage   storage.ExternalStorage
+	statistics  *fileStatisticsStore
 }
 
 func newFileCheckpointsDB(
@@ -1563,7 +1565,7 @@ func (cpdb *MySQLCheckpointsDB) RemoveCheckpoint(ctx context.Context, tableName 
 		if _, e := tx.ExecContext(c, deleteTableQuery, tableName); e != nil {
 			return errors.Trace(e)
 		}
-		return nil
+		return cpdb.removeImportStatistics(c, tx, []string{tableName})
 	})
 }
 
@@ -1589,6 +1591,7 @@ func (cpdb *MySQLCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int6
 		}
 	}
 
+	cpdb.moveImportStatistics(ctx, newSchema)
 	return nil
 }
 
@@ -1761,7 +1764,11 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 		if _, e := tx.ExecContext(c, deleteTableQuery, args...); e != nil {
 			return errors.Trace(e)
 		}
-		return nil
+		tables := make([]string, 0, len(targetTables))
+		for _, table := range targetTables {
+			tables = append(tables, table.TableName)
+		}
+		return cpdb.removeImportStatistics(c, tx, tables)
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1861,12 +1868,17 @@ func (cpdb *FileCheckpointsDB) RemoveCheckpoint(_ context.Context, tableName str
 	defer cpdb.lock.Unlock()
 
 	if tableName == allTables {
+		generation, _ := statisticsGeneration(cpdb.checkpoints.ImportStatistics)
 		cpdb.checkpoints.Reset()
-		return errors.Trace(cpdb.exStorage.DeleteFile(cpdb.ctx, cpdb.fileName))
+		if err := cpdb.exStorage.DeleteFile(cpdb.ctx, cpdb.fileName); err != nil {
+			return errors.Trace(err)
+		}
+		cpdb.removeStatisticsFiles(cpdb.ctx, generation)
+		cpdb.statistics = nil
+		return nil
 	}
 
-	delete(cpdb.checkpoints.Checkpoints, tableName)
-	return errors.Trace(cpdb.save())
+	return errors.Trace(cpdb.removeTableCheckpoints(cpdb.ctx, []string{tableName}))
 }
 
 // MoveCheckpoints implements CheckpointsDB.MoveCheckpoints.
@@ -1874,6 +1886,7 @@ func (cpdb *FileCheckpointsDB) MoveCheckpoints(_ context.Context, taskID int64) 
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
 
+	cpdb.embedImportStatistics(cpdb.ctx)
 	newFileName := fmt.Sprintf("%s.%d.bak", cpdb.fileName, taskID)
 	return cpdb.exStorage.Rename(cpdb.ctx, cpdb.fileName, newFileName)
 }
@@ -1960,11 +1973,11 @@ func (cpdb *FileCheckpointsDB) DestroyErrorCheckpoint(_ context.Context, targetT
 		}
 	}
 
-	// Delete the checkpoints
+	tables := make([]string, 0, len(targetTables))
 	for _, dtcp := range targetTables {
-		delete(cpdb.checkpoints.Checkpoints, dtcp.TableName)
+		tables = append(tables, dtcp.TableName)
 	}
-	if err := cpdb.save(); err != nil {
+	if err := cpdb.removeTableCheckpoints(cpdb.ctx, tables); err != nil {
 		return nil, errors.Trace(err)
 	}
 

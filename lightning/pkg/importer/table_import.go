@@ -75,6 +75,8 @@ type TableImporter struct {
 
 	// dupIgnoreRows tracks the rowIDs of rows that are duplicated and should be ignored.
 	dupIgnoreRows extsort.ExternalSorter
+	// Summary-only winner metadata never participates in conflict decisions.
+	summaryDuplicates *summaryDuplicates
 
 	ignoreColumns map[string]struct{}
 }
@@ -118,6 +120,7 @@ func (tr *TableImporter) importTable(
 	rc *Controller,
 	cp *checkpoints.TableCheckpoint,
 ) (bool, error) {
+	defer func() { rc.registerSummaryChunks(tr.tableName, cp); tr.summaryDuplicates.close() }()
 	// 1. Load the table info.
 	select {
 	case <-ctx.Done():
@@ -125,6 +128,7 @@ func (tr *TableImporter) importTable(
 	default:
 	}
 
+	rc.registerSummaryChunks(tr.tableName, cp)
 	metaMgr := rc.metaMgrBuilder.TableMetaMgr(tr)
 	// no need to do anything if the chunks are already populated
 	if len(cp.Engines) > 0 {
@@ -184,6 +188,7 @@ func (tr *TableImporter) importTable(
 				tr.logger.Info("checksum before restore table", zap.Object("checksum", &cp.Checksum))
 			}
 		}
+		rc.registerSummaryChunks(tr.tableName, cp)
 		if err := rc.checkpointsDB.InsertEngineCheckpoints(ctx, tr.tableName, cp.Engines); err != nil {
 			return false, errors.Trace(err)
 		}
@@ -231,6 +236,7 @@ func (tr *TableImporter) importTable(
 			return false, errors.Trace(err)
 		}
 		tr.dupIgnoreRows = dupIgnoreRows
+		tr.prepareSummaryDuplicates(cp.Status < checkpoints.CheckpointStatusDupDetected, resultDir)
 
 		if cp.Status < checkpoints.CheckpointStatusDupDetected {
 			err := tr.preDeduplicate(ctx, rc, cp, workingDir)
@@ -245,6 +251,8 @@ func (tr *TableImporter) importTable(
 				return false, errors.Trace(err)
 			}
 		}
+
+		tr.finishSummaryDuplicates(ctx, resultDir)
 
 		failpoint.Inject("FailAfterDuplicateDetection", func() {
 			panic("forcing failure after duplicate detection")
@@ -1083,6 +1091,8 @@ func (tr *TableImporter) postProcess(
 			tr.logger.Debug("set dupIndicator", zap.Bool("has-duplicate", hasDupe))
 			rc.dupIndicator.CompareAndSwap(false, hasDupe)
 		}
+
+		rc.confirmLocalSummary(ctx, tr, hasDupe, needRemoteDupe)
 
 		nextStage := checkpoints.CheckpointStatusChecksummed
 		if rc.cfg.PostRestore.Checksum != config.OpLevelOff && !hasDupe && needChecksum {

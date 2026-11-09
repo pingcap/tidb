@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "pkdbsummary",
+    srcs = [
+        "sql_store.go",
+        "summary.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/lightning/pkdbsummary",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "pkdbsummary_test",
+    srcs = ["summary_test.go"],
+    embed = [":pkdbsummary"],
+    deps = [
+        "@com_github_data_dog_go_sqlmock//:go-sqlmock",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -15,17 +15,23 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/pkdbsummary"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/stretchr/testify/require"
+	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
 func TestSecurityEnhancedMode(t *testing.T) {
@@ -99,4 +105,34 @@ func TestImportIntoValidateColAssignmentsWithEncodeCtx(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestImportJobStatisticsVisibility gives two users different import jobs and
+// queries the new statistics table without mysql-table SELECT privileges. A user
+// sees only their job until explicitly granted IMPORT_JOB_VIEW.
+func TestImportJobStatisticsVisibility(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+	root.MustExec("create user 'statistics_owner'@'localhost'")
+	root.MustExec("create user 'statistics_viewer'@'localhost'")
+	owner := testkit.NewTestKit(t, store)
+	viewer := testkit.NewTestKit(t, store)
+	require.NoError(t, owner.Session().Auth(&auth.UserIdentity{Username: "statistics_owner", Hostname: "localhost"}, nil, nil, nil))
+	require.NoError(t, viewer.Session().Auth(&auth.UserIdentity{Username: "statistics_viewer", Hostname: "localhost"}, nil, nil, nil))
+	ctx := tikvutil.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+	manager, err := storage.GetTaskManager()
+	require.NoError(t, err)
+	require.NoError(t, manager.InitMeta(ctx, ":4000", ""))
+	for _, user := range []*testkit.TestKit{owner, viewer} {
+		id, err := importer.CreateJob(ctx, root.Session().GetSQLExecutor(), "test", "table", 1, user.Session().GetSessionVars().User.String(), &importer.ImportParameters{Format: importer.DataFormatCSV}, 0)
+		require.NoError(t, err)
+		require.NoError(t, importer.StartJob(ctx, root.Session().GetSQLExecutor(), id, importer.JobStepImporting))
+		result := pkdbsummary.NewResult(2, true, pkdbsummary.Outcomes{Imported: 1, Skipped: 1})
+		require.NoError(t, importer.FinishJob(ctx, root.Session().GetSQLExecutor(), id, &importer.JobSummary{ImportStatistics: &result}))
+	}
+	query := "select json_extract(statistics,'$.total'),json_extract(statistics,'$.imported'),json_extract(statistics,'$.skipped') from information_schema.PKDB_IMPORT_JOB_STATISTICS"
+	owner.MustQuery(query).Check(testkit.Rows("2 1 1"))
+	viewer.MustQuery(query).Check(testkit.Rows("2 1 1"))
+	root.MustExec("grant IMPORT_JOB_VIEW on *.* to 'statistics_viewer'@'localhost'")
+	viewer.MustQuery(query).Check(testkit.Rows("2 1 1", "2 1 1"))
 }

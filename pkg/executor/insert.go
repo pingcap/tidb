@@ -80,6 +80,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 		}
 	}
 	sessVars.StmtCtx.AddRecordRows(uint64(len(rows)))
+	sessVars.StmtCtx.InitDMLResult(uint64(len(rows)), len(e.OnDuplicate) == 0 && e.triggerExec == nil && len(e.fkCascades) == 0)
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
 	// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
 	// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
@@ -116,6 +117,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			if err != nil {
 				return err
 			}
+			sessVars.StmtCtx.AddDMLImported()
 		}
 		if e.stats != nil {
 			e.stats.CheckInsertTime += time.Since(start)

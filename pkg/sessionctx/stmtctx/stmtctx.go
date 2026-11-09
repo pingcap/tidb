@@ -271,6 +271,9 @@ type buildPBCtxCache struct {
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
+	// DMLResult contains source-row outcomes of the current INSERT or REPLACE.
+	DMLResult *DMLResult
+
 	// NoCopy indicates that this struct cannot be copied because
 	// copying this object will make the copied TypeCtx field to refer a wrong `AppendWarnings` func.
 	_ nocopy.NoCopy
@@ -1433,6 +1436,7 @@ func (sc *StatementContext) CopyMuForCallProcedure(srcCtx *StatementContext) {
 
 // ResetForRetry resets the changed states during execution.
 func (sc *StatementContext) ResetForRetry() {
+	sc.DMLResult = nil
 	sc.resetMuForRetry()
 	sc.ReservedRowIDAlloc.Reset(0, 0)
 	sc.TableIDs = sc.TableIDs[:0]

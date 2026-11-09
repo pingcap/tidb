@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	syncatomic "sync/atomic"
 	"testing"
 	"time"
 
@@ -312,6 +313,10 @@ func TestProcessChunkWith(t *testing.T) {
 
 	keyspace := store.GetCodec().GetKeyspace()
 	t.Run("file chunk", func(t *testing.T) {
+		// Read a three-row file with one skipped header and a deliberately oversized
+		// RowIDMax estimate; only the two rows read by the import path are counted.
+		var actualRows syncatomic.Uint64
+		ctx := importer.WithSourceRecordCounter(ctx, &actualRows)
 		chunkInfo := &checkpoints.ChunkCheckpoint{
 			FileMeta: mydump.SourceFileMeta{Type: mydump.SourceTypeCSV, Path: "test.csv"},
 			Chunk:    mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
@@ -324,6 +329,7 @@ func TestProcessChunkWith(t *testing.T) {
 		checksum := verify.NewKVGroupChecksumWithKeyspace(keyspace)
 		err := importer.ProcessChunkWithWriter(ctx, chunkInfo, ti, kvWriter, kvWriter, zap.NewExample(), checksum)
 		require.NoError(t, err)
+		require.Equal(t, uint64(2), actualRows.Load())
 		checksumMap := checksum.GetInnerChecksums()
 		require.Len(t, checksumMap, 1)
 		require.Equal(t, verify.MakeKVChecksum(74, 2, 15625182175392723123), *checksumMap[verify.DataKVGroupID])

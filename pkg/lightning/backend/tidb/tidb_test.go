@@ -20,7 +20,9 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"math"
+	"net"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	gmysql "github.com/go-sql-driver/mysql"
@@ -33,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/pkdbsummary"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -1059,4 +1062,311 @@ func TestWriteRowsRecordOneErrorPrepStmt(t *testing.T) {
 	st, err := writer.Close(ctx)
 	require.NoError(t, err)
 	require.Nil(t, st)
+}
+
+// TestWriteRowsSourceSummary writes a multi-source REPLACE using a pinned
+// connection. Telemetry, diagnostic failure and an ambiguous retry must yield
+// disjoint source outcomes without extra DML executions for statistics errors.
+func TestWriteRowsSourceSummary(t *testing.T) {
+	for _, scenario := range []string{"confirmed", "diagnostic failure", "SQL retry", "prepared", "fallback skip", "transport retry"} {
+		t.Run(scenario, func(t *testing.T) {
+			// Build two encoded source rows and make affected rows deliberately differ
+			// from the number of replacement inputs.
+			s := createMysqlSuite(t)
+			defer s.TearDownTest(t)
+			cfg := config.NewConfig()
+			cfg.Conflict.Strategy = config.ReplaceOnDup
+			cfg.Conflict.Threshold = math.MaxInt64
+			if scenario == "fallback skip" {
+				cfg.Conflict.Strategy = config.IgnoreOnDup
+				cfg.Conflict.MaxRecordRows = 100
+			}
+			cfg.TikvImporter.LogicalImportPrepStmt = scenario == "prepared"
+			be := tidb.NewTiDBBackend(context.Background(), s.dbHandle, cfg, errormanager.New(nil, cfg, log.L()))
+			manager := backend.MakeEngineManager(be)
+			ctx := context.Background()
+			ledger := pkdbsummary.Open(ctx, nil, false)
+			ledger.Ensure("chunk", "table", 0, 0)
+			ctx = pkdbsummary.WithProgress(ctx, ledger, "chunk")
+			encoder, err := s.encBuilder.NewEncoder(ctx, &encode.EncodingConfig{Table: s.tbl, Logger: log.L(), SessionOptions: encode.SessionOptions{LogicalImportPrepStmt: scenario == "prepared"}})
+			require.NoError(t, err)
+			defer encoder.Close()
+			dataRows, indexRows := s.encBuilder.MakeEmptyRows(), s.encBuilder.MakeEmptyRows()
+			dataSum, indexSum := verification.MakeKVChecksum(0, 0, 0), verification.MakeKVChecksum(0, 0, 0)
+			for i := int64(0); i < 2; i++ {
+				ledger.Observe("chunk", i, pkdbsummary.Outcomes{})
+				row, err := encoder.Encode([]types.Datum{types.NewIntDatum(i + 1)}, i+1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, i)
+				require.NoError(t, err)
+				row.ClassifyAndAppend(&dataRows, &dataSum, &indexRows, &indexSum)
+			}
+			if scenario == "fallback skip" {
+				for range 3 {
+					s.mockDB.ExpectExec("INSERT INTO").WillReturnError(&gmysql.MySQLError{Number: 1062, Message: "duplicate"})
+				}
+			} else if scenario == "prepared" {
+				s.mockDB.ExpectPrepare("REPLACE INTO").ExpectExec().WithArgs(int64(1), int64(2)).WillReturnResult(sqlmock.NewResult(1, 4))
+			} else {
+				if scenario == "transport retry" {
+					s.mockDB.ExpectExec("REPLACE INTO").WillReturnError(&net.OpError{Op: "read", Net: "tcp", Err: context.DeadlineExceeded})
+				}
+				if scenario == "SQL retry" {
+					s.mockDB.ExpectExec("REPLACE INTO").WillReturnError(&gmysql.MySQLError{Number: 1213, Message: "retry"})
+				}
+				s.mockDB.ExpectExec("REPLACE INTO").WillReturnResult(sqlmock.NewResult(1, 4))
+			}
+			if scenario == "diagnostic failure" {
+				s.mockDB.ExpectQuery("SELECT @@tidb_last_query_info").WillReturnError(sql.ErrConnDone)
+			} else if scenario != "fallback skip" && scenario != "transport retry" {
+				s.mockDB.ExpectQuery("SELECT @@tidb_last_query_info").WillReturnRows(sqlmock.NewRows([]string{"info"}).AddRow(`{"dml_result":{"version":1,"records":2,"imported":1,"replaced":1,"skipped":0,"error":0}}`))
+			}
+			engine, err := manager.OpenEngine(ctx, &backend.EngineConfig{}, "table", 0)
+			require.NoError(t, err)
+			wc := &backend.LocalWriterConfig{}
+			wc.TiDB.TableName = "table"
+			writer, err := engine.LocalWriter(ctx, wc)
+			require.NoError(t, err)
+			require.NoError(t, writer.AppendRows(ctx, []string{"a"}, dataRows))
+			_, err = writer.Close(ctx)
+			require.NoError(t, err)
+			_, result := ledger.Snapshot()
+			require.NotNil(t, result.Total)
+			require.Equal(t, uint64(2), *result.Total)
+			require.Equal(t, uint64(2), result.Outcomes.Count()+*result.Unresolved)
+			if scenario == "confirmed" || scenario == "prepared" || scenario == "SQL retry" {
+				require.Equal(t, pkdbsummary.Outcomes{Imported: 1, Replaced: 1}, result.Outcomes)
+				require.True(t, result.Complete)
+			} else if scenario == "fallback skip" {
+				require.Equal(t, uint64(2), result.Skipped)
+				require.Zero(t, result.Error)
+				require.True(t, result.Complete)
+			} else {
+				require.Equal(t, uint64(2), *result.Unresolved)
+			}
+		})
+	}
+}
+
+// TestPrepareFailurePreservesRows configures row-error tolerance, then fails
+// statement preparation. Setup errors must stop the import without consuming
+// source rows, both with and without source telemetry.
+func TestPrepareFailurePreservesRows(t *testing.T) {
+	for _, summary := range []bool{false, true} {
+		t.Run(fmt.Sprint("summary=", summary), func(t *testing.T) {
+			s := createMysqlSuite(t)
+			defer s.TearDownTest(t)
+			cfg := config.NewConfig()
+			cfg.Conflict.Strategy = config.ReplaceOnDup
+			cfg.App.MaxError.Type.Store(10)
+			cfg.TikvImporter.LogicalImportPrepStmt = true
+			errorMgr := errormanager.New(nil, cfg, log.L())
+			s.backend = tidb.NewTiDBBackend(context.Background(), s.dbHandle, cfg, errorMgr)
+			ctx := context.Background()
+			if summary {
+				ledger := pkdbsummary.Open(ctx, nil, false)
+				ledger.Ensure("chunk", "table", 0, 0)
+				ctx = pkdbsummary.WithProgress(ctx, ledger, "chunk")
+			}
+			setupErr := &gmysql.MySQLError{Number: errno.ErrNoSuchTable, Message: "table invalidated before prepare"}
+			// Batch fallback may try the single-row shape, which must also fail.
+			s.mockDB.ExpectPrepare("REPLACE INTO").WillReturnError(setupErr)
+			s.mockDB.ExpectPrepare("REPLACE INTO").WillReturnError(setupErr)
+			engine, err := backend.MakeEngineManager(s.backend).OpenEngine(ctx, &backend.EngineConfig{}, "table", 0)
+			require.NoError(t, err)
+			wc := &backend.LocalWriterConfig{}
+			wc.TiDB.TableName = "table"
+			writer, err := engine.LocalWriter(ctx, wc)
+			require.NoError(t, err)
+			defer writer.Close(ctx)
+			err = writer.AppendRows(ctx, []string{"a"}, encodeRowsTiDB(t, s.encBuilder, s.tbl))
+			require.ErrorIs(t, err, setupErr)
+			require.Equal(t, int64(10), errorMgr.TypeErrorsRemain())
+		})
+	}
+}
+
+// TestFailedSummaryWriteReleasesConnection fails a logical import with a server
+// SQL error and leaves Close to caller cleanup. An aborted append must
+// already have returned its pinned connection to the pool.
+func TestFailedSummaryWriteReleasesConnection(t *testing.T) {
+	s := createMysqlSuite(t)
+	defer s.TearDownTest(t)
+	cfg := config.NewConfig()
+	cfg.Conflict.Strategy = config.ReplaceOnDup
+	cfg.Conflict.Threshold = 0
+	cfg.Conflict.MaxRecordRows = 0
+	cfg.TikvImporter.LogicalImportPrepStmt = true
+	s.backend = tidb.NewTiDBBackend(context.Background(), s.dbHandle, cfg, errormanager.New(nil, cfg, log.L()))
+	ctx := context.Background()
+	ledger := pkdbsummary.Open(ctx, nil, false)
+	ledger.Ensure("chunk", "table", 0, 0)
+	ctx = pkdbsummary.WithProgress(ctx, ledger, "chunk")
+	writeErr := &gmysql.MySQLError{Number: errno.ErrTruncatedWrongValue, Message: "invalid value"}
+	s.mockDB.ExpectPrepare("REPLACE INTO").ExpectExec().WillReturnError(writeErr)
+	engine, err := backend.MakeEngineManager(s.backend).OpenEngine(ctx, &backend.EngineConfig{}, "table", 0)
+	require.NoError(t, err)
+	wc := &backend.LocalWriterConfig{}
+	wc.TiDB.TableName = "table"
+	writer, err := engine.LocalWriter(ctx, wc)
+	require.NoError(t, err)
+	defer writer.Close(ctx)
+	err = writer.AppendRows(ctx, []string{"a"}, encodeRowsTiDB(t, s.encBuilder, s.tbl))
+	require.ErrorIs(t, err, writeErr)
+	require.Zero(t, s.dbHandle.Stats().InUse)
+}
+
+// TestSummaryReconnectFailurePreservesRows succeeds once but loses the session
+// during the diagnostic read, then makes reacquisition fail. The setup failure
+// must remain fatal despite a positive type-error budget.
+func TestSummaryReconnectFailurePreservesRows(t *testing.T) {
+	s := createMysqlSuite(t)
+	defer s.TearDownTest(t)
+	cfg := config.NewConfig()
+	cfg.Conflict.Strategy = config.ReplaceOnDup
+	cfg.App.MaxError.Type.Store(10)
+	cfg.TikvImporter.LogicalImportPrepStmt = true
+	errorMgr := errormanager.New(nil, cfg, log.L())
+	s.backend = tidb.NewTiDBBackend(context.Background(), s.dbHandle, cfg, errorMgr)
+	ctx := context.Background()
+	ledger := pkdbsummary.Open(ctx, nil, false)
+	ledger.Ensure("chunk", "table", 0, 0)
+	ctx = pkdbsummary.WithProgress(ctx, ledger, "chunk")
+	s.mockDB.ExpectPrepare("REPLACE INTO").ExpectExec().WillReturnResult(sqlmock.NewResult(1, 5))
+	s.mockDB.ExpectQuery("SELECT @@tidb_last_query_info").WillReturnError(sql.ErrConnDone)
+	engine, err := backend.MakeEngineManager(s.backend).OpenEngine(ctx, &backend.EngineConfig{}, "table", 0)
+	require.NoError(t, err)
+	wc := &backend.LocalWriterConfig{}
+	wc.TiDB.TableName = "table"
+	writer, err := engine.LocalWriter(ctx, wc)
+	require.NoError(t, err)
+	defer writer.Close(ctx)
+	rows := encodeRowsTiDB(t, s.encBuilder, s.tbl)
+	require.NoError(t, writer.AppendRows(ctx, []string{"a"}, rows))
+	s.mockDB.ExpectClose()
+	require.NoError(t, s.dbHandle.Close())
+	require.Error(t, writer.AppendRows(ctx, []string{"a"}, rows))
+	require.Equal(t, int64(10), errorMgr.TypeErrorsRemain())
+	_, snapshot := ledger.Snapshot()
+	require.Zero(t, snapshot.Error)
+}
+
+// summaryStartedArgument signals that the delayed mock execution has begun.
+type summaryStartedArgument struct{ started chan struct{} }
+
+func (a summaryStartedArgument) Match(driver.Value) bool {
+	select {
+	case a.started <- struct{}{}:
+	default:
+	}
+	return true
+}
+
+// TestSummaryWriterCancellationReleasesConnection models a parser/encoder
+// failure after a successful append and cancellation while DML is in flight.
+// Without an explicit caller Close, cancellation must release the session.
+func TestSummaryWriterCancellationReleasesConnection(t *testing.T) {
+	for _, inFlight := range []bool{false, true} {
+		t.Run(fmt.Sprint("inFlight=", inFlight), func(t *testing.T) {
+			s := createMysqlSuite(t)
+			defer s.TearDownTest(t)
+			cfg := config.NewConfig()
+			cfg.Conflict.Strategy = config.ReplaceOnDup
+			cfg.TikvImporter.LogicalImportPrepStmt = true
+			s.backend = tidb.NewTiDBBackend(context.Background(), s.dbHandle, cfg, errormanager.New(nil, cfg, log.L()))
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ledger := pkdbsummary.Open(ctx, nil, false)
+			ledger.Ensure("chunk", "table", 0, 0)
+			ctx = pkdbsummary.WithProgress(ctx, ledger, "chunk")
+			statement := s.mockDB.ExpectPrepare("REPLACE INTO").WillBeClosed()
+			execution := statement.ExpectExec().WillReturnResult(sqlmock.NewResult(1, 5))
+			started := make(chan struct{}, 1)
+			if inFlight {
+				execution.WithArgs(summaryStartedArgument{started}, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).WillDelayFor(time.Second)
+			} else {
+				s.mockDB.ExpectQuery("SELECT @@tidb_last_query_info").WillReturnRows(sqlmock.NewRows([]string{"info"}).AddRow(`{}`))
+			}
+			engine, err := backend.MakeEngineManager(s.backend).OpenEngine(ctx, &backend.EngineConfig{}, "table", 0)
+			require.NoError(t, err)
+			wc := &backend.LocalWriterConfig{}
+			wc.TiDB.TableName = "table"
+			writer, err := engine.LocalWriter(ctx, wc)
+			require.NoError(t, err)
+			rows := encodeRowsTiDB(t, s.encBuilder, s.tbl)
+			if inFlight {
+				done := make(chan error, 1)
+				go func() { done <- writer.AppendRows(ctx, []string{"a"}, rows) }()
+				select {
+				case <-started:
+				case <-time.After(time.Second):
+					t.Fatal("DML execution did not start")
+				}
+				cancel()
+				require.Error(t, <-done)
+			} else {
+				require.NoError(t, writer.AppendRows(ctx, []string{"a"}, rows))
+				require.Equal(t, 1, s.dbHandle.Stats().InUse)
+				cancel()
+			}
+			require.Eventually(t, func() bool { return s.dbHandle.Stats().InUse == 0 }, time.Second, time.Millisecond)
+			_, err = writer.Close(context.Background())
+			require.NoError(t, err)
+		})
+	}
+}
+
+// TestPrepareBatchFailureFallsBackToRows models a batch-only prepare limit,
+// such as too many placeholders. Valid single-row statements must still run,
+// and successful fallback must leave the row-error budget untouched.
+func TestPrepareBatchFailureFallsBackToRows(t *testing.T) {
+	for _, summary := range []bool{false, true} {
+		t.Run(fmt.Sprint("summary=", summary), func(t *testing.T) {
+			s := createMysqlSuite(t)
+			defer s.TearDownTest(t)
+			cfg := config.NewConfig()
+			cfg.Conflict.Strategy = config.ReplaceOnDup
+			cfg.App.MaxError.Type.Store(10)
+			cfg.TikvImporter.LogicalImportPrepStmt = true
+			errorMgr := errormanager.New(nil, cfg, log.L())
+			s.backend = tidb.NewTiDBBackend(context.Background(), s.dbHandle, cfg, errorMgr)
+			ctx := context.Background()
+			ledger := pkdbsummary.Open(ctx, nil, false)
+			ledger.Ensure("chunk", "table", 0, 0)
+			if summary {
+				ctx = pkdbsummary.WithProgress(ctx, ledger, "chunk")
+			}
+			encoder, err := s.encBuilder.NewEncoder(ctx, &encode.EncodingConfig{Table: s.tbl, Logger: log.L(), SessionOptions: encode.SessionOptions{LogicalImportPrepStmt: true}})
+			require.NoError(t, err)
+			defer encoder.Close()
+			rows, indexRows := s.encBuilder.MakeEmptyRows(), s.encBuilder.MakeEmptyRows()
+			dataSum, indexSum := verification.MakeKVChecksum(0, 0, 0), verification.MakeKVChecksum(0, 0, 0)
+			for i := int64(1); i <= 2; i++ {
+				ledger.Observe("chunk", i, pkdbsummary.Outcomes{})
+				row, err := encoder.Encode([]types.Datum{types.NewIntDatum(i)}, i, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, i)
+				require.NoError(t, err)
+				row.ClassifyAndAppend(&rows, &dataSum, &indexRows, &indexSum)
+			}
+			s.mockDB.ExpectPrepare("REPLACE INTO").WillReturnError(&gmysql.MySQLError{Number: mysql.ErrPsManyParam, Message: "too many placeholders"})
+			statement := s.mockDB.ExpectPrepare("REPLACE INTO")
+			for range 2 {
+				statement.ExpectExec().WillReturnResult(sqlmock.NewResult(1, 1))
+				if summary {
+					s.mockDB.ExpectQuery("SELECT @@tidb_last_query_info").WillReturnRows(sqlmock.NewRows([]string{"info"}).AddRow(`{"dml_result":{"version":1,"records":1,"imported":1}}`))
+				}
+			}
+			engine, err := backend.MakeEngineManager(s.backend).OpenEngine(ctx, &backend.EngineConfig{}, "table", 0)
+			require.NoError(t, err)
+			wc := &backend.LocalWriterConfig{}
+			wc.TiDB.TableName = "table"
+			writer, err := engine.LocalWriter(ctx, wc)
+			require.NoError(t, err)
+			defer writer.Close(ctx)
+			require.NoError(t, writer.AppendRows(ctx, []string{"a"}, rows))
+			require.Equal(t, int64(10), errorMgr.TypeErrorsRemain())
+			if summary {
+				_, snapshot := ledger.Snapshot()
+				require.Equal(t, uint64(2), snapshot.Imported)
+				require.Zero(t, snapshot.Error)
+			}
+		})
+	}
 }

@@ -739,3 +739,77 @@ func TestInsertDuplicateToGeneratedColumns(t *testing.T) {
 		tk.MustExec("admin check table ttime;")
 	}
 }
+
+// TestDMLSourceOutcomes exercises inserts, multi-key/same-value replacements,
+// duplicate skips, failures and prepared execution against a real session.
+// Every replacement counts its input once regardless of deleted target rows.
+func TestDMLSourceOutcomes(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table source_outcomes (id int primary key, u int unique, v int unique)")
+	check := func(records, imported, replaced, skipped uint64) {
+		t.Helper()
+		result := tk.Session().GetSessionVars().LastQueryInfo.DMLResult
+		require.NotNil(t, result)
+		require.True(t, result.Valid())
+		require.Equal(t, records, result.Records)
+		require.Equal(t, imported, result.Imported)
+		require.Equal(t, replaced, result.Replaced)
+		require.Equal(t, skipped, result.Skipped)
+	}
+	tk.MustExec("insert into source_outcomes values (1,10,100),(2,20,200)")
+	check(2, 2, 0, 0)
+	tk.MustExec("replace into source_outcomes values (3,10,200)")
+	check(1, 0, 1, 0)
+	require.Equal(t, uint64(3), tk.Session().AffectedRows())
+	tk.MustExec("replace into source_outcomes values (3,10,200)")
+	check(1, 0, 1, 0)
+	tk.MustExec("replace into source_outcomes values (4,40,400),(4,41,401)")
+	check(2, 1, 1, 0)
+	tk.MustExec("insert ignore into source_outcomes values (3,10,200),(5,50,500)")
+	check(2, 1, 0, 1)
+	require.Error(t, tk.ExecToErr("insert into source_outcomes values (3,10,200)"))
+	require.Nil(t, tk.Session().GetSessionVars().LastQueryInfo.DMLResult)
+	tk.MustExec("begin")
+	tk.MustExec("insert into source_outcomes values (6,60,600)")
+	require.Nil(t, tk.Session().GetSessionVars().LastQueryInfo.DMLResult)
+	tk.MustExec("rollback")
+	tk.MustExec("prepare source_stmt from 'replace into source_outcomes values (?,?,?)'")
+	tk.MustExec("set @a=3,@b=10,@c=200")
+	tk.MustExec("execute source_stmt using @a,@b,@c")
+	check(1, 0, 1, 0)
+	tk.MustQuery("select json_extract(@@tidb_last_query_info,'$.dml_result.replaced')").Check(testkit.Rows("1"))
+}
+
+// TestDMLSourceOutcomesTriggerIsolation executes UPDATE/DELETE whose triggers
+// perform INSERT/REPLACE. Their internal inputs must never be advertised as
+// the outer statement source outcomes, even when all internal writes succeed.
+func TestDMLSourceOutcomesTriggerIsolation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_procedure = on")
+	defer tk.MustExec("set global tidb_enable_procedure = off")
+	tk.MustExec("create table trigger_source (id int primary key)")
+	tk.MustExec("create table trigger_audit (id int primary key)")
+	tk.MustExec("insert into trigger_source values (1),(2)")
+	tk.MustExec("create trigger source_update after update on trigger_source for each row insert into trigger_audit values (new.id)")
+	tk.MustExec("update trigger_source set id=3 where id=1")
+	require.Nil(t, tk.Session().GetSessionVars().LastQueryInfo.DMLResult)
+	tk.MustExec("prepare trigger_update from 'update trigger_source set id=4 where id=3'")
+	tk.MustExec("execute trigger_update")
+	require.Nil(t, tk.Session().GetSessionVars().LastQueryInfo.DMLResult)
+	tk.MustExec("create trigger source_delete after delete on trigger_source for each row replace into trigger_audit values (old.id)")
+	tk.MustExec("delete from trigger_source where id=2")
+	require.Nil(t, tk.Session().GetSessionVars().LastQueryInfo.DMLResult)
+	tk.MustExec("prepare trigger_delete from 'delete from trigger_source where id=4'")
+	tk.MustExec("execute trigger_delete")
+	require.Nil(t, tk.Session().GetSessionVars().LastQueryInfo.DMLResult)
+	tk.MustExec("create trigger source_insert after insert on trigger_source for each row replace into trigger_audit values (new.id)")
+	tk.MustExec("insert into trigger_source values (5)")
+	require.Nil(t, tk.Session().GetSessionVars().LastQueryInfo.DMLResult)
+	tk.MustExec("replace into trigger_source values (5)")
+	require.Nil(t, tk.Session().GetSessionVars().LastQueryInfo.DMLResult)
+	tk.MustQuery("select id from trigger_audit order by id").Check(testkit.Rows("2", "3", "4", "5"))
+}

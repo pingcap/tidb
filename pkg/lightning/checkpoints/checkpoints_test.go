@@ -393,3 +393,24 @@ func TestTableCheckpointApplyBases(t *testing.T) {
 	require.EqualValues(t, 12, tblCP.AutoIncrBase)
 	require.EqualValues(t, 13, tblCP.AutoRandBase)
 }
+
+// TestImportStatisticsCheckpoint preserves the optional ledger through an old
+// checkpoint model, normal checkpoint saves and a fresh process loading the file.
+func TestImportStatisticsCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "checkpoint.pb")
+	db, err := NewFileCheckpointsDB(ctx, path)
+	require.NoError(t, err)
+	store := ImportStatisticsStore(db)
+	data, err := store.Load(ctx)
+	require.NoError(t, err)
+	require.Empty(t, data)
+	require.NoError(t, store.Save(ctx, []byte(`{"version":1,"units":{}}`)))
+	require.NoError(t, db.Close())
+	restored, err := NewFileCheckpointsDB(ctx, path)
+	require.NoError(t, err)
+	data, err = ImportStatisticsStore(restored).Load(ctx)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"version":1,"units":{}}`, string(data))
+	require.NoError(t, restored.Close())
+}

@@ -12,6 +12,7 @@ go_library(
         "//pkg/errno",
         "//pkg/meta/model",
         "//pkg/parser/types",
+        "//pkg/sessionctx/stmtctx",
         "//pkg/types",
         "//pkg/util/context",
         "//pkg/util/dbterror",

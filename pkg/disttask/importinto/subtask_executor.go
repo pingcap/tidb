@@ -62,6 +62,7 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 	})
 	failpoint.InjectCall("syncBeforeSortChunk")
 	sharedVars := e.mTtask.SharedVars
+	ctx = importer.WithSourceRecordCounter(ctx, &sharedVars.SourceRecords)
 
 	chunkCheckpoint := toChunkCheckpoint(e.mTtask.Chunk)
 	chunkCheckpoint.FileMeta.ParquetMeta = mydump.ParquetFileMeta{

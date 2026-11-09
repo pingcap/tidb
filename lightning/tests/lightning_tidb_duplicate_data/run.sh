@@ -65,3 +65,18 @@ for type in replace ignore error; do
 
     mv $CUR/data/dup.dup.sql.bak $CUR/data/dup.dup.sql
 done
+
+
+# Confirm source outcomes on fresh tasks: ordinary insert, same-value REPLACE,
+# then conflict-policy skips. Each two-row input must conserve its total.
+run_sql 'DROP DATABASE IF EXISTS dup;'
+SUMMARY_LOG="$TEST_DIR/lightning-source-summary.log"
+for expected in 'replace 2 0 0' 'replace 0 2 0' 'ignore 0 0 2'; do
+    set -- $expected
+    rm -f "$SUMMARY_LOG"
+    run_lightning --config "$CUR/$1.toml" --log-file "$SUMMARY_LOG"
+    grep -F '[scope=task]' "$SUMMARY_LOG" | grep -F '[total-records=2]' | \
+        grep -F "[imported-records=$2]" | grep -F "[replaced-records=$3]" | \
+        grep -F "[skipped-records=$4]" | grep -F '[error-records=0]' | \
+        grep -F '[unresolved-records=0]' | grep -F '[statistics-complete=true]'
+done

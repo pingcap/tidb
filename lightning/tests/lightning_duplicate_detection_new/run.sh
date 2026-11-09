@@ -34,6 +34,12 @@ expected_pks=$(run_sql "SELECT group_concat(col1 ORDER BY col1) AS pks FROM test
 
 cleanup
 run_lightning --backend local --config "$CUR/local-replace.toml" --log-file "$LOG_FILE"
+# Pre-deduplication omits 227 of the 401 source inputs. Remaining winners are
+# acknowledged as ordinary insertions or replacements only after target ingest.
+grep -F '[scope=task]' "$LOG_FILE" | grep -F '[total-records=401]' | \
+  grep -F '[skipped-records=227]' | grep -F '[error-records=0]' | \
+  grep -F '[unresolved-records=0]' | grep -F '[statistics-complete=true]'
+grep -F '[scope=task]' "$LOG_FILE" | grep -Eq '\[replaced-records=[1-9][0-9]*\]'
 actual_rows=$(run_sql "SELECT count(*) AS total_count FROM test.dup_detect" | grep "total_count" | awk '{print $2}')
 actual_pks=$(run_sql "SELECT group_concat(col1 ORDER BY col1) AS pks FROM test.dup_detect" | grep "pks" | awk '{print $2}')
 if [ "$expected_rows" != "$actual_rows" ] || [ "$expected_pks" != "$actual_pks" ]; then

@@ -72,6 +72,7 @@ func (d *dupDetector) run(
 	}
 
 	handlerConstructor := makeDupHandlerConstructor(ignoreRows, d.rc.cfg.Conflict.Strategy)
+	handlerConstructor = d.tr.summaryDuplicateHandler(handlerConstructor)
 	numDups, err = detector.Detect(ctx, &duplicate.DetectOptions{
 		Concurrency:        d.rc.cfg.App.RegionConcurrency,
 		HandlerConstructor: handlerConstructor,
