@@ -24,11 +24,11 @@ fn zero_time() -> DateTime<FixedOffset> {
     DateTime::<FixedOffset>::default()
 }
 
-fn is_null(row: &[Datum], idx: usize) -> bool {
+pub(crate) fn is_null(row: &[Datum], idx: usize) -> bool {
     matches!(row.get(idx), None | Some(Datum::Null))
 }
 
-fn get_int64(row: &[Datum], idx: usize) -> i64 {
+pub(crate) fn get_int64(row: &[Datum], idx: usize) -> i64 {
     match row.get(idx) {
         Some(Datum::Int(value)) => *value,
         Some(Datum::UInt(value)) => *value as i64,
@@ -36,7 +36,7 @@ fn get_int64(row: &[Datum], idx: usize) -> i64 {
     }
 }
 
-fn get_bytes(row: &[Datum], idx: usize) -> Vec<u8> {
+pub(crate) fn get_bytes(row: &[Datum], idx: usize) -> Vec<u8> {
     match row.get(idx) {
         Some(Datum::String(value)) => value.bytes().to_vec(),
         Some(Datum::Bytes(value) | Datum::Raw(value)) => value.clone(),
@@ -45,12 +45,12 @@ fn get_bytes(row: &[Datum], idx: usize) -> Vec<u8> {
     }
 }
 
-fn get_string(row: &[Datum], idx: usize) -> String {
+pub(crate) fn get_string(row: &[Datum], idx: usize) -> String {
     String::from_utf8_lossy(&get_bytes(row, idx)).into_owned()
 }
 
 /// Go `r.GetJSON(idx).String()`.
-fn get_json_string(row: &[Datum], idx: usize) -> String {
+pub(crate) fn get_json_string(row: &[Datum], idx: usize) -> String {
     match row.get(idx) {
         Some(Datum::Json(value)) => value.to_string(),
         _ => get_string(row, idx),
@@ -168,7 +168,7 @@ pub fn task_id_to_key(task_id: i64) -> String {
 }
 
 /// Go `row2BasicSubTask`.
-fn row2_basic_sub_task(r: &[Datum]) -> SubtaskBase {
+pub(crate) fn row2_basic_sub_task(r: &[Datum]) -> SubtaskBase {
     let task_id_str = get_string(r, 2);
     let task_id = task_id_str.parse::<i64>().unwrap_or_else(|_| {
         tracing::warn!(subtask_id = %task_id_str, "unexpected subtask id");

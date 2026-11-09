@@ -15,6 +15,7 @@ chrono.workspace = true
 serde_json.workspace = true
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-dxf = { path = "../tidb-dxf" }
+tidb-dxf-execute = { path = "../tidb-dxf-execute" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-syssession = { path = "../tidb-syssession" }

@@ -21,10 +21,12 @@
 
 mod converter;
 mod nodes;
+mod subtask_table;
 mod task_table;
 
 pub use converter::{row2_sub_task, row2_task, task_id_to_key};
 pub use nodes::{get_dxf_cpu_count, get_node_resource, set_node_resource};
+pub use subtask_table::SubtaskError;
 pub use task_table::TaskExecInfo;
 
 use std::sync::Arc;
