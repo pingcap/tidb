@@ -438,6 +438,11 @@ pub fn override_config(cfg: &mut Config, flags: &MainFlags) -> Result<(), String
     if let Some(keyspace) = &flags.keyspace_name {
         cfg.keyspace_name = keyspace.clone();
     }
+    if let Some(scope) = &flags.service_scope {
+        // Go `terror.MustNil(naming.Check(*serviceScope))`.
+        tidb_naming::check(scope).map_err(|error| error.to_string())?;
+        cfg.instance.tidb_service_scope = scope.clone();
+    }
 
     // Standby
     if let Some(standby) = flags.standby_mode {
@@ -529,6 +534,20 @@ mod tests {
             flags.starter_additional_params.as_deref(),
             Some("pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1")
         );
+    }
+
+    /// Go `overrideConfig`: `-tidb-service-scope` lands on
+    /// `Instance.TiDBServiceScope` after `naming.Check`, which refuses a
+    /// value with characters outside its set.
+    #[test]
+    fn override_config_applies_the_checked_service_scope() {
+        let flags = MainFlags::parse(&["--tidb-service-scope=Background".to_owned()]).expect("parses");
+        let mut cfg = Config::default();
+        override_config(&mut cfg, &flags).expect("the override applies");
+        assert_eq!(cfg.instance.tidb_service_scope, "Background");
+
+        let flags = MainFlags::parse(&["--tidb-service-scope=bad scope".to_owned()]).expect("parses");
+        assert!(override_config(&mut Config::default(), &flags).is_err());
     }
 
     /// The set-tracking rule the whole pass rides on: a flag left unwritten

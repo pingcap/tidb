@@ -29,7 +29,7 @@
 //! typed helpers ([`command::trigger_new_ttl_job`]) do.
 
 pub mod command;
-pub mod context;
+pub use tidb_gocontext as context;
 pub mod notification;
 
 pub use command::{

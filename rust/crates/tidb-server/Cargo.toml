@@ -170,6 +170,7 @@ tidb-resourcemanager = { path = "../tidb-resourcemanager" }
 tidb-resourcemanager-pool-workerpool = { path = "../tidb-resourcemanager-pool-workerpool" }
 serde_json = { workspace = true }
 tidb-config = { path = "../tidb-config" }
+tidb-naming = { path = "../tidb-naming" }
 toml.workspace = true
 tidb-stringutil = { path = "../tidb-stringutil" }
 tidb-replayer = { path = "../tidb-replayer" }

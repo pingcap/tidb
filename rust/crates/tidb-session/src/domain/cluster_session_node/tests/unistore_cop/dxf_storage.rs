@@ -1893,3 +1893,29 @@ fn test_modify_task() {
     fail::remove("beforeModifiedTask");
     check_task_after_modify(&gm, task.base.id, 5, 50, b"modified-other", &[4, 5, 5, 5]);
 }
+
+/// Go `TestSetTiDBServiceScopeCaseInsensitive` (`pkg/executor/set_test.go`),
+/// without its `mysql.dist_framework_meta` role checks: Go's role follows
+/// through the domain's DXF loop, which a later milestone of the DXF port
+/// composes.
+#[test]
+fn test_set_tidb_service_scope_case_insensitive() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = stack.factory.open_session(session_context(308)).unwrap();
+
+    let origin_config = tidb_config::config_tree::config::get_global_config();
+    let origin_service_scope = tidb_vardef::service_scope();
+
+    rows(&mut tk, "set global tidb_service_scope='BaCkGround'");
+    assert_eq!(displayed(rows(&mut tk, "select @@global.tidb_service_scope")), [["background"]]);
+    assert_eq!(tidb_vardef::service_scope(), "background");
+    assert_eq!(tidb_config::config_tree::config::get_global_config().instance.tidb_service_scope, "background");
+
+    rows(&mut tk, "set instance tidb_service_scope='BackGround'");
+    assert_eq!(displayed(rows(&mut tk, "select @@global.tidb_service_scope")), [["background"]]);
+    assert_eq!(tidb_vardef::service_scope(), "background");
+    assert_eq!(tidb_config::config_tree::config::get_global_config().instance.tidb_service_scope, "background");
+
+    tidb_config::config_tree::config::store_global_config(origin_config);
+    tidb_vardef::set_service_scope(origin_service_scope);
+}

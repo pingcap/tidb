@@ -154,6 +154,21 @@ pub static ENABLE_CHECK_CONSTRAINT: AtomicBool =
 /// copies into `ReorgMeta.IsFastReorg`.
 pub static ENABLE_FAST_REORG: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_ENABLE_FAST_REORG);
 
+/// Go `vardef.ServiceScope` (`tidb_service_scope`), lowercase: the DXF
+/// target scope of the tasks this instance submits.
+pub static SERVICE_SCOPE: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
+
+/// Go `vardef.ServiceScope.Load()`.
+#[must_use]
+pub fn service_scope() -> String {
+    SERVICE_SCOPE.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+}
+
+/// Go `vardef.ServiceScope.Store(scope)`.
+pub fn set_service_scope(scope: String) {
+    *SERVICE_SCOPE.write().unwrap_or_else(std::sync::PoisonError::into_inner) = scope;
+}
+
 /// Go `vardef.EnableTTLJob`, the process-wide switch used by the TTL worker.
 pub static ENABLE_TTL_JOB: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_TTL_JOB_ENABLE);
 /// Go `vardef.TTLScanBatchSize`.

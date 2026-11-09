@@ -20,7 +20,8 @@ use std::sync::mpsc::{self, Receiver, RecvError, RecvTimeoutError, SyncSender, T
 use std::sync::{Arc, LazyLock, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
-use prometheus::{exponential_buckets, CounterVec, HistogramOpts, HistogramVec, Opts};
+use prometheus::{exponential_buckets, HistogramOpts, HistogramVec};
+use tidb_metrics::ddl::RETRYABLE_ERROR_COUNT;
 use serde::de::{DeserializeSeed, Error as _, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserializer, Serialize};
 use tidb_log::{Field, Value};
@@ -77,20 +78,6 @@ static NEW_SESSION_HISTOGRAM: LazyLock<HistogramVec> = LazyLock::new(|| {
     histogram
 });
 
-static RETRYABLE_ERROR_COUNT: LazyLock<CounterVec> = LazyLock::new(|| {
-    let counter = CounterVec::new(
-        Opts::new(
-            "tidb_ddl_retryable_error_total",
-            "Retryable error count during ddl.",
-        ),
-        &["type"],
-    )
-    .expect("valid retryable-error counter");
-    prometheus::default_registry()
-        .register(Box::new(counter.clone()))
-        .expect("register retryable-error counter");
-    counter
-});
 
 fn register_histogram(name: &str, help: &str, start: f64, count: usize) -> HistogramVec {
     let histogram = HistogramVec::new(
@@ -756,7 +743,7 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    fn counter_total(counter: &CounterVec) -> f64 {
+    fn counter_total(counter: &prometheus::CounterVec) -> f64 {
         counter
             .collect()
             .iter()

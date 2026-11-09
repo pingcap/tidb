@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go's standard `context` package, as `pkg/ttl` uses it: a cancellation
+//! Go's standard `context` package, as `pkg/ttl` and `pkg/dxf` use it: a cancellation
 //! tree whose `Done()` is a channel a `select` can wait on (here a
 //! `crossbeam_channel::Receiver` that disconnects when the context ends),
 //! `Err()`, `WithCancel` and `WithTimeout`. Context values have no
-//! counterpart: `pkg/ttl` passes its phase tracer explicitly instead.
+//! counterpart: callers pass what Go keeps there (`pkg/ttl`'s phase tracer)
+//! explicitly instead.
 
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;

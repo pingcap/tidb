@@ -18,6 +18,7 @@ failpoints = ["dep:fail", "fail/failpoints"]
 tidb-timeutil = { path = "../tidb-timeutil" }
 fail = { version = "0.4", optional = true }
 prometheus = { version = "0.14", default-features = false }
+tidb-metrics = { path = "../tidb-metrics" }
 serde.workspace = true
 serde_json.workspace = true
 tidb-log = { path = "../tidb-log" }

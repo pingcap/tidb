@@ -88,6 +88,14 @@ pub fn set_global_vars(config: &NodeConfig, globals: &GlobalSysvars) {
     ] {
         globals.set_instance_var(name, value);
     }
+    // Go: `if len(cfg.Instance.TiDBServiceScope) > 0 {
+    // vardef.ServiceScope.Store(strings.ToLower(...)) }`, which the
+    // variable's `GetGlobal` reads back.
+    if !instance.tidb_service_scope.is_empty() {
+        let scope = instance.tidb_service_scope.to_lowercase();
+        tidb_vardef::set_service_scope(scope.clone());
+        globals.set_sys_var(tidb_vardef::tidb_vars::TIDB_SERVICE_SCOPE, scope);
+    }
     let source = &config.global_config;
     let on_off = |enabled: bool| if enabled { "ON" } else { "OFF" }.to_owned();
     // Go `vardef.ForcePriority = int32(priority)`, then
@@ -195,6 +203,28 @@ mod tests {
         assert!(!tidb_vardef::ENABLE_RESOURCE_CONTROL.load(std::sync::atomic::Ordering::SeqCst));
         globals.arm_domain_hooks();
         assert!(tidb_vardef::ENABLE_RESOURCE_CONTROL.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    /// Go's `setGlobalVars` tail: a configured `tidb_service_scope` lands,
+    /// lowercase, in `vardef.ServiceScope`, which `@@global` reads back.
+    #[test]
+    fn set_global_vars_stores_the_configured_service_scope_lowercase() {
+        let config = NodeConfig::with_defaults(
+            |config| {
+                config.store = tidb_config::store::StoreType("unistore".to_owned());
+                config.instance.tidb_service_scope = "BackGround".to_owned();
+            },
+            NodeOptions {
+                auth_file: Some("/dev/null".to_owned()),
+                ..NodeOptions::default()
+            },
+        )
+        .expect("parses");
+        let globals = GlobalSysvars::before_domain();
+        set_global_vars(&config, &globals);
+        assert_eq!(tidb_vardef::service_scope(), "background");
+        assert_eq!(globals.get("tidb_service_scope").expect("readable"), "background");
+        tidb_vardef::set_service_scope(String::new());
     }
 
     /// `TestSetGlobalVars` (`cmd/tidb-server/main_test.go:97`), transcreated

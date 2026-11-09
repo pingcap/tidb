@@ -1180,6 +1180,7 @@ impl GlobalSysvars {
                 | TIDB_TTL_DELETE_RATE_LIMIT
                 | TIDB_TTL_JOB_SCHEDULE_WINDOW_START_TIME
                 | TIDB_TTL_JOB_SCHEDULE_WINDOW_END_TIME
+                | TIDB_SERVICE_SCOPE
                 | TIDB_TTL_SCAN_WORKER_COUNT
                 | TIDB_TTL_DELETE_WORKER_COUNT
                 | TIDB_TTL_RUNNING_TASKS
@@ -1252,6 +1253,17 @@ impl GlobalSysvars {
                 SeqCst,
             ),
             TIDB_TTL_JOB_ENABLE => tidb_vardef::ENABLE_TTL_JOB.store(on, SeqCst),
+            // Go `SetGlobal`: `vardef.ServiceScope.Store(strings.ToLower(s))`
+            // and the config's `Instance.TiDBServiceScope`.
+            TIDB_SERVICE_SCOPE => {
+                let new_value = value.to_lowercase();
+                tidb_vardef::set_service_scope(new_value.clone());
+                if tidb_config::config_tree::config::get_global_config().instance.tidb_service_scope != new_value {
+                    tidb_config::config_tree::config::update_global(|config| {
+                        config.instance.tidb_service_scope = new_value;
+                    });
+                }
+            }
             // Go `SetGlobal`: `strconv.ParseInt(s, 10, 64)` then `Store`; the
             // registry has validated the value, so the parse cannot fail.
             TIDB_TTL_SCAN_BATCH_SIZE => {

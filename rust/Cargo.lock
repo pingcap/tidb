@@ -4293,6 +4293,7 @@ dependencies = [
  "serde_json",
  "tidb-ddl-logutil",
  "tidb-log",
+ "tidb-metrics",
  "tidb-model",
  "tidb-pd-client",
  "tidb-timeutil",
@@ -5477,6 +5478,13 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "tidb-timeutil",
+]
+
+[[package]]
+name = "tidb-gocontext"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
 ]
 
 [[package]]
@@ -7001,6 +7009,7 @@ dependencies = [
  "tidb-model",
  "tidb-monotime",
  "tidb-mysql",
+ "tidb-naming",
  "tidb-owner",
  "tidb-param",
  "tidb-parser",
@@ -8630,6 +8639,7 @@ dependencies = [
  "crossbeam-channel",
  "serde",
  "serde_json",
+ "tidb-gocontext",
  "tidb-log",
  "tidb-logutil",
  "tidb-pd-client",

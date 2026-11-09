@@ -37,6 +37,15 @@ fn register<C: prometheus::core::Collector + Clone + 'static>(
 }
 
 /// Go `DDLRunningJobCount` (`pkg/metrics`).
+/// Go `RetryableErrorCount`: retryable errors met by DDL's and DXF's retry
+/// loops, by error text.
+pub static RETRYABLE_ERROR_COUNT: LazyLock<CounterVec> = LazyLock::new(|| {
+    register(CounterVec::new(
+        Opts::new("tidb_ddl_retryable_error_total", "Retryable error count during ddl."),
+        &["type"],
+    ))
+});
+
 pub static DDL_RUNNING_JOB_COUNT: LazyLock<GaugeVec> = LazyLock::new(|| {
     register(GaugeVec::new(
         Opts::new("tidb_ddl_running_job_count", "Running DDL jobs count"),

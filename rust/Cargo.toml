@@ -285,6 +285,7 @@ members = [
     "crates/tidb-dxf-metering",
     "crates/tidb-dxf-storage",
     "crates/tidb-dxf-testutil",
+    "crates/tidb-gocontext",
     "crates/tidb-objstore-recording",
     "crates/tidb-dxf-operator",
     "crates/tidb-br",
