@@ -217,8 +217,23 @@ func (idx *Index) IsAnalyzed() bool {
 // index keeps every non-NULL value of the column or index with the given ID
 // distinct.
 func UniqueBySchema(tblInfo *model.TableInfo, isIndex bool, id int64) bool {
+	return uniqueBySchema(tblInfo, isIndex, id, false)
+}
+
+// UniqueByLocalIndex applies UniqueBySchema's checks to local indexes only.
+func UniqueByLocalIndex(tblInfo *model.TableInfo, isIndex bool, id int64) bool {
+	return uniqueBySchema(tblInfo, isIndex, id, true)
+}
+
+func uniqueBySchema(tblInfo *model.TableInfo, isIndex bool, id int64, localOnly bool) bool {
+	// Partition statistics can come from different ANALYZE snapshots. With a
+	// global unique index, a value can move to another partition and remain in
+	// the old partition's statistics, so summing their NDVs can count it twice.
+	// Local single-column unique indexes include the partition key and keep
+	// each value in one partition. localOnly requires this stronger guarantee;
+	// a single ANALYZE snapshot can use global indexes to prove uniqueness.
 	for _, idx := range tblInfo.Indices {
-		if !IsSingleColNonPrefixUniqueIndex(idx) {
+		if (localOnly && idx.Global) || !IsSingleColNonPrefixUniqueIndex(idx) {
 			continue
 		}
 		if (isIndex && idx.ID == id) || (!isIndex && tblInfo.Columns[idx.Columns[0].Offset].ID == id) {
