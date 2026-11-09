@@ -143,7 +143,17 @@ impl TaskManager for MockTaskManager {
         self.answer("GetAllSubtasks")
     }
     fn get_cleanup_tasks(&self) -> Result<Vec<Task>> {
-        self.answer("GetCleanupTasks")
+        let answer = self
+            .expected
+            .lock()
+            .unwrap()
+            .get_mut("GetCleanupTasks")
+            .and_then(VecDeque::pop_front)
+            .unwrap_or_else(|| panic!("unexpected call of GetCleanupTasks"));
+        match answer.downcast::<Box<dyn FnOnce() -> Result<Vec<Task>> + Send>>() {
+            Ok(answer) => answer(),
+            Err(answer) => *answer.downcast::<Result<Vec<Task>>>().expect("GetCleanupTasks answered with the wrong type"),
+        }
     }
     fn get_task_by_id(&self, _: i64) -> Result<Task> {
         self.answer("GetTaskByID")
@@ -160,7 +170,9 @@ impl TaskManager for MockTaskManager {
     fn delete_dead_nodes(&self, _: &[String]) -> Result<()> {
         self.answer("DeleteDeadNodes")
     }
-    fn transfer_tasks2_history(&self, _: &[Task]) -> Result<()> {
+    fn transfer_tasks2_history(&self, tasks: &[Task]) -> Result<()> {
+        let ids: Vec<i64> = tasks.iter().map(|task| task.base.id).collect();
+        self.record(format!("TransferTasks2History({ids:?})"));
         self.answer("TransferTasks2History")
     }
     fn cancel_task(&self, _: i64) -> Result<()> {

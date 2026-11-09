@@ -716,3 +716,7 @@ impl prometheus::core::Collector for SharedCollector {
         self.0.collect()
     }
 }
+
+#[cfg(test)]
+#[path = "scheduler_manager_nokit_tests.rs"]
+mod nokit_tests;

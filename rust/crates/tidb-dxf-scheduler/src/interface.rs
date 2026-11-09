@@ -516,9 +516,68 @@ pub type CleanerFactoryFn = std::sync::Arc<dyn Fn() -> std::sync::Arc<dyn Cleane
 static CLEANER_FACTORY_MAP: std::sync::LazyLock<std::sync::RwLock<HashMap<tidb_dxf::TaskType, CleanerFactoryFn>>> =
     std::sync::LazyLock::new(Default::default);
 
+/// Go `CleanUpRoutine`: the pre-`Cleaner` cleanup contract, kept for task
+/// types not yet migrated; new code implements [`Cleaner`].
+pub trait CleanUpRoutine: Send + Sync {
+    /// Go `CleanUp`.
+    ///
+    /// # Errors
+    /// The cleanup failed.
+    fn clean_up(&self, ctx: &tidb_gocontext::Context, task: &mut Task) -> std::result::Result<(), Error>;
+
+    /// Go's `legacy.(BatchCleanUpRoutine)` assertion.
+    fn as_batch_clean_up_routine(&self) -> Option<&dyn BatchCleanUpRoutine> {
+        None
+    }
+}
+
+/// Go `BatchCleanUpRoutine`: the pre-`Cleaner` batched cleanup contract.
+pub trait BatchCleanUpRoutine: CleanUpRoutine {
+    /// Go `CleanUpBatch`.
+    ///
+    /// # Errors
+    /// The cleanup failed.
+    fn clean_up_batch(&self, ctx: &tidb_gocontext::Context, tasks: &mut [Task]) -> std::result::Result<(), Error>;
+}
+
+/// Go `legacyCleanerAdapter` and `legacyBatchCleanerAdapter`.
+struct LegacyCleanerAdapter(std::sync::Arc<dyn CleanUpRoutine>);
+
+impl Cleaner for LegacyCleanerAdapter {
+    fn clean(&self, ctx: &tidb_gocontext::Context, task: &mut Task) -> std::result::Result<(), Error> {
+        self.0.clean_up(ctx, task)
+    }
+
+    fn as_batch_cleaner(&self) -> Option<&dyn BatchCleaner> {
+        self.0.as_batch_clean_up_routine().map(|_| self as &dyn BatchCleaner)
+    }
+}
+
+impl BatchCleaner for LegacyCleanerAdapter {
+    fn batch_clean(&self, ctx: &tidb_gocontext::Context, tasks: &mut [Task]) -> std::result::Result<(), Error> {
+        self.0.as_batch_clean_up_routine().expect("adapted as a batch cleaner").clean_up_batch(ctx, tasks)
+    }
+}
+
+/// Go `RegisterSchedulerCleanUpFactory`: adapts the legacy cleanup API, kept
+/// so task types can migrate independently.
+pub fn register_scheduler_clean_up_factory(
+    task_type: tidb_dxf::TaskType,
+    ctor: std::sync::Arc<dyn Fn() -> std::sync::Arc<dyn CleanUpRoutine> + Send + Sync>,
+) {
+    register_cleaner_factory(
+        task_type,
+        std::sync::Arc::new(move || std::sync::Arc::new(LegacyCleanerAdapter(ctor())) as std::sync::Arc<dyn Cleaner>),
+    );
+}
+
+/// Go `ClearSchedulerCleanUpFactory`: clears the legacy cleanup registry.
+pub fn clear_scheduler_clean_up_factory() {
+    clear_cleaner_factory();
+}
+
 /// Go `RegisterCleanerFactory`: registers the cleaner factory of a task
-/// type. (Go's legacy `CleanUpRoutine` adapters exist for Go packages not
-/// yet migrated; no Rust code uses the legacy API.)
+/// type.
 pub fn register_cleaner_factory(task_type: tidb_dxf::TaskType, ctor: CleanerFactoryFn) {
     CLEANER_FACTORY_MAP.write().unwrap_or_else(std::sync::PoisonError::into_inner).insert(task_type, ctor);
 }
