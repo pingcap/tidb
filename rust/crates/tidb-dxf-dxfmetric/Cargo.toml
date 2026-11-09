@@ -1,0 +1,17 @@
+[package]
+name = "tidb-dxf-dxfmetric"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/dxf/framework/dxfmetric: the distributed execution framework's metrics."
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono.workspace = true
+prometheus = { version = "0.14", default-features = false }
+tidb-dxf = { path = "../tidb-dxf" }
+tidb-metrics = { path = "../tidb-metrics" }

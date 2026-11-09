@@ -4643,6 +4643,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-dxf-dxfmetric"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "prometheus 0.14.0",
+ "tidb-dxf",
+ "tidb-metrics",
+]
+
+[[package]]
 name = "tidb-dxf-operator"
 version = "0.0.0"
 dependencies = [

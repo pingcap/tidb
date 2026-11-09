@@ -280,6 +280,7 @@ members = [
     "crates/tidb-unistore-lockwaiter",
     "crates/tidb-unistore-lockstore",
     "crates/tidb-dxf",
+    "crates/tidb-dxf-dxfmetric",
     "crates/tidb-dxf-storage",
     "crates/tidb-objstore-recording",
     "crates/tidb-dxf-operator",
