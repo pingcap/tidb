@@ -554,6 +554,9 @@ pub struct PushdownStatementContext {
     /// Go `SessionVars.TiFlashFineGrainedShuffleBatchSize`, which a pushed
     /// hash aggregation's executor carries (`PhysicalHashAgg.ToPB`).
     pub tiflash_fine_grained_shuffle_batch_size: u64,
+    /// Whether the request waits for its stream's first read before it is
+    /// sent (a partitioned index lookup's later partitions).
+    pub deferred_open: bool,
 }
 
 /// Go `exec.BaseExecutorV2.AllocPool`: `SessionVars.GetChunkAllocator()`.
@@ -619,6 +622,7 @@ impl Default for PushdownStatementContext {
             lookup_table_limit: None,
             lookup_table_topn: None,
             tiflash_fine_grained_shuffle_batch_size: tidb_vardef::defaults::DEF_TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE as u64,
+            deferred_open: false,
         }
     }
 }

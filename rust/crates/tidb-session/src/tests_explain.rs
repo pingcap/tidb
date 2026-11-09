@@ -9710,3 +9710,31 @@ fn an_index_join_charges_its_inner_index_lookup_like_go() {
         assert_eq!(row_text(session.run(sql)).len(), 50);
     }
 }
+
+/// Go's index worker reads a partitioned table's local index one partition
+/// at a time, a partition's request built once the previous result is
+/// drained, and cuts each partition's tasks at its response chunks: a task
+/// never spans two partitions (`tidb_index_lookup_size = 2` over two hash
+/// partitions: two index requests, four tasks of 32, 18, 32 and 17 handles).
+#[test]
+fn a_partitioned_index_lookup_reads_each_partitions_index_remotely_like_go() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT PRIMARY KEY, b INT, c INT, KEY (b)) PARTITION BY HASH(a) PARTITIONS 2")
+        .unwrap();
+    let values = (1..=100).map(|x| format!("({x}, {x}, {})", x % 5)).collect::<Vec<_>>().join(", ");
+    session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+    session.run("SET @@tidb_index_lookup_size = 2").unwrap();
+    let sql = "SELECT * FROM t USE INDEX(b) WHERE b > 1";
+    let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+    let row = |operator: &str| {
+        rows.iter()
+            .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()) == operator)
+            .unwrap_or_else(|| panic!("{operator}: {rows:?}"))
+    };
+    assert!(row("IndexLookUp_7")[5].contains("table_task: {"), "{rows:?}");
+    assert!(row("IndexLookUp_7")[5].contains("num: 4,"), "{rows:?}");
+    assert!(row("IndexRangeScan_5(Build)")[5].contains("cop_task: {num: 2,"), "{rows:?}");
+    assert_eq!(row("IndexLookUp_7")[2], "99", "{rows:?}");
+    assert_eq!(row_text(session.run(sql)).len(), 99);
+}

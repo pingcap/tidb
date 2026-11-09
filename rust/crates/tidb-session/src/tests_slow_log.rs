@@ -639,28 +639,32 @@ fn a_string_extremum_projection_peaks_like_gos_ping_pong() {
 /// `tiflash_fine_grained_shuffle_batch_size`, so each task's `dagPB.Size()`
 /// and the statement's peak are Go's to the byte.
 ///
-/// A clustered table's tasks push the aggregate too, each reading its
-/// handles' `TableHandlesToKVRanges`.
+/// A clustered or partitioned table's tasks push the aggregate too, each
+/// reading its handles' `TableHandlesToKVRanges` in its own partition.
 #[test]
 fn an_index_lookups_partial_aggregate_request_peaks_like_go() {
-    for (clustered, query, go_mem_max) in [
-        (false, "SELECT count(c) FROM t USE INDEX(b) WHERE b > 1", "17916"),
-        (false, "SELECT c, count(c) FROM t USE INDEX(b) WHERE b > 1 GROUP BY c", "27298"),
-        (false, "SELECT avg(c) FROM t USE INDEX(b) WHERE b > 1", "21026"),
-        (true, "SELECT count(c) FROM t USE INDEX(b) WHERE b > 1", "32709"),
-        (true, "SELECT c, count(c) FROM t USE INDEX(b) WHERE b > 1 GROUP BY c", "42091"),
-        (true, "SELECT avg(c) FROM t USE INDEX(b) WHERE b > 1", "35819"),
+    for (table, query, go_mem_max) in [
+        ("int", "SELECT count(c) FROM t USE INDEX(b) WHERE b > 1", "17916"),
+        ("int", "SELECT c, count(c) FROM t USE INDEX(b) WHERE b > 1 GROUP BY c", "27298"),
+        ("int", "SELECT avg(c) FROM t USE INDEX(b) WHERE b > 1", "21026"),
+        ("clustered", "SELECT count(c) FROM t USE INDEX(b) WHERE b > 1", "32709"),
+        ("clustered", "SELECT c, count(c) FROM t USE INDEX(b) WHERE b > 1 GROUP BY c", "42091"),
+        ("clustered", "SELECT avg(c) FROM t USE INDEX(b) WHERE b > 1", "35819"),
+        ("partitioned", "SELECT count(c) FROM t USE INDEX(b) WHERE b > 1", "28230"),
     ] {
         let dir = log_dir("partial-aggregate-mem-max");
         let (slow, _) = install_loggers(&dir);
         let mut session = Session::new();
-        let values = if clustered {
+        let values = if table == "clustered" {
             session
                 .run("CREATE TABLE t (a VARCHAR(10) PRIMARY KEY CLUSTERED, b INT, c INT, KEY (b))")
                 .unwrap();
             (1..=100).map(|x| format!("('k{x}', {x}, {})", x % 5)).collect::<Vec<_>>().join(", ")
         } else {
-            session.run("CREATE TABLE t (a INT PRIMARY KEY, b INT, c INT, KEY (b))").unwrap();
+            let partitioned = if table == "partitioned" { " PARTITION BY HASH(a) PARTITIONS 2" } else { "" };
+            session
+                .run(&format!("CREATE TABLE t (a INT PRIMARY KEY, b INT, c INT, KEY (b)){partitioned}"))
+                .unwrap();
             (1..=100).map(|x| format!("({x}, {x}, {})", x % 5)).collect::<Vec<_>>().join(", ")
         };
         session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
@@ -673,7 +677,7 @@ fn an_index_lookups_partial_aggregate_request_peaks_like_go() {
         assert_eq!(
             field(&entry_for(&log, query), "Mem_max").as_deref(),
             Some(go_mem_max),
-            "clustered={clustered} {query}"
+            "{table} {query}"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

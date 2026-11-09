@@ -174,6 +174,25 @@ pub fn build_resp(
     client: &dyn tidb_txnkv::Client,
     request: &PushdownScanRequest,
 ) -> Result<Box<dyn PushdownRowStream>, PushdownScannerError> {
+    build_resp_with(client, request, None)
+}
+
+/// [`build_resp`] whose request is sent on the stream's first read: Go's
+/// index worker builds a partition's `SelectResult` only once it has drained
+/// the previous partition's (`fetchHandles` per `kvRanges` entry).
+pub fn build_resp_deferred(
+    client: Arc<dyn tidb_txnkv::Client>,
+    request: &PushdownScanRequest,
+) -> Result<Box<dyn PushdownRowStream>, PushdownScannerError> {
+    let borrowed = Arc::clone(&client);
+    build_resp_with(borrowed.as_ref(), request, Some(client))
+}
+
+fn build_resp_with(
+    client: &dyn tidb_txnkv::Client,
+    request: &PushdownScanRequest,
+    deferred: Option<Arc<dyn tidb_txnkv::Client>>,
+) -> Result<Box<dyn PushdownRowStream>, PushdownScannerError> {
     let refuse = |reason: &str| PushdownScannerError::Unsupported(reason.to_owned());
     if request.snapshot_ts == 0 {
         return Err(refuse("the statement's snapshot has no timestamp"));
@@ -735,10 +754,19 @@ pub fn build_resp(
         session_mem_tracker: Arc::clone(request.statement.memory.session_tracker()),
         enabled_rate_limit_action: request.statement.enabled_rate_limit_action,
     };
-    let iter = scan_result(|| open_scan(client, plan))
-        .map_err(|error| PushdownScannerError::Backend(StorageError::Backend(error)))?;
+    let (iter, deferred) = match deferred {
+        Some(client) => (None, Some((client, plan))),
+        None => (
+            Some(
+                scan_result(|| open_scan(client, plan))
+                    .map_err(|error| PushdownScannerError::Backend(StorageError::Backend(error)))?,
+            ),
+            None,
+        ),
+    };
     Ok(Box::new(CopRowStream {
-        iter: Some(iter),
+        iter,
+        deferred,
         pending: None,
         pending_row: 0,
         field_types,
@@ -1042,6 +1070,8 @@ struct CopRowStream {
     exhausted: bool,
     /// Go `dagPB.Size()` of the request this stream reads.
     dag_size: usize,
+    /// A request not yet sent ([`build_resp_deferred`]).
+    deferred: Option<(Arc<dyn tidb_txnkv::Client>, RemoteScanPlan)>,
 }
 
 pub(crate) fn select_response_error(error: tidb_copr::response_channel::ResponseChannelError) -> StorageError {
@@ -1059,10 +1089,19 @@ pub(crate) fn select_response_error(error: tidb_copr::response_channel::Response
 }
 
 impl CopRowStream {
+    /// Sends a deferred request on the stream's first read.
+    fn open_deferred(&mut self) -> Result<(), StorageError> {
+        if let Some((client, plan)) = self.deferred.take() {
+            self.iter = Some(scan_result(|| open_scan(client.as_ref(), plan)).map_err(StorageError::Backend)?);
+        }
+        Ok(())
+    }
+
     fn pull_chunk(&mut self, required_rows: usize) -> Result<Option<Chunk>, StorageError> {
         if self.exhausted {
             return Ok(None);
         }
+        self.open_deferred()?;
         loop {
             let Some(iter) = self.iter.as_mut() else {
                 return Ok(None);
@@ -1084,6 +1123,9 @@ impl CopRowStream {
 
     /// [`Self::pull_chunk`] into the caller's `chk` (Go `readFromChunk`).
     fn pull_chunk_into(&mut self, required_rows: usize, chk: &mut Chunk) -> Result<bool, StorageError> {
+        if !self.exhausted {
+            self.open_deferred()?;
+        }
         loop {
             if self.exhausted {
                 chk.reset();
@@ -1208,6 +1250,7 @@ impl PushdownRowStream for CopRowStream {
             iter.close();
         }
         self.iter = None;
+        self.deferred = None;
         self.exhausted = true;
         self.pending = None;
         self.pending_row = 0;
@@ -1493,6 +1536,7 @@ mod tests {
                 plan_id: 0,
                 exhausted: false,
                 dag_size: 0,
+                deferred: None,
             };
             let error = if chunk {
                 stream.next_chunk(1).unwrap_err()

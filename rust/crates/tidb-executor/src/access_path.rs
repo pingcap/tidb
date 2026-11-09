@@ -1964,6 +1964,10 @@ pub struct IndexRangeSourceExec {
     /// A remote coprocessor index stream, when the TiKV backend can serve the
     /// selected index/filter/TopN shape.
     remote_index: Option<crate::kv_table::RemoteIndexHandleCursor>,
+    /// The partition ordinal `remote_index` reads, and the later partitions'
+    /// cursors, whose requests wait for their first read.
+    remote_partition: usize,
+    remote_partitions: std::collections::VecDeque<(usize, crate::kv_table::RemoteIndexHandleCursor)>,
     /// A covering read's remote streams it stopped reading (exhausted or
     /// past its limit), held until the executor closes: Go's
     /// `IndexReaderExecutor` `Close`s its select result, which registers its
@@ -2143,6 +2147,22 @@ impl IndexRangeSourceExec {
             self.cop_stats.0 = self.cop_stats.0.wrapping_add(stats.0);
             self.cop_stats.1 = self.cop_stats.1.wrapping_add(stats.1);
         }
+    }
+
+    /// Moves to the next partition's index stream once one is drained, as Go
+    /// closes a partition's `SelectResult` before building the next; the
+    /// drained stream's counts are kept.
+    fn advance_remote_partition(&mut self) -> bool {
+        let Some((ordinal, next)) = self.remote_partitions.pop_front() else {
+            return false;
+        };
+        self.retain_remote_index_stats();
+        if let Some(mut drained) = self.remote_index.replace(next) {
+            drained.close();
+            self.retired_remote_index.push(drained);
+        }
+        self.remote_partition = ordinal;
+        true
     }
 
     /// Stops reading a covering read's remote stream, keeping its counts; the
@@ -2331,6 +2351,8 @@ impl IndexRangeSourceExec {
             lookup_chunk_row: 0,
             lookup_filter_complete: false,
             remote_index: None,
+            remote_partition: 0,
+            remote_partitions: std::collections::VecDeque::new(),
             retired_remote_index: Vec::new(),
             remote_covering_selected: false,
             decode_context,
@@ -2751,7 +2773,9 @@ impl IndexRangeSourceExec {
             && !pushdown
             && (self.limit.is_none() || (self.filter.is_some() && !self.index_filter));
         if chunked_handle_batch {
-            if let Some(remote) = self.remote_index.as_mut() {
+            // One task reads one partition's result (Go `extractTaskHandles`
+            // per `SelectResult`); a drained partition hands over to the next.
+            while let Some(remote) = self.remote_index.as_mut() {
                 if let Some(handles) = remote
                     .next_handle_batch(want, self.meta.max_chunk_size())
                     .map_err(|error| {
@@ -2761,7 +2785,12 @@ impl IndexRangeSourceExec {
                     pulled = true;
                     let extracted = handles.len() as u64;
                     self.batch.extend(handles);
+                    self.batch_partition = self.remote_partition;
                     self.limit_scanned_keys += extracted;
+                    break;
+                }
+                if !self.advance_remote_partition() {
+                    break;
                 }
             }
         } else {
@@ -3604,20 +3633,30 @@ impl IndexRangeSourceExec {
     ) -> Result<Vec<(TableHandle, usize)>, ExecError> {
         chk.reset();
         if self.pending_handle.is_none() && self.skipped_handles >= self.lookup_offset {
-            if let Some(remote) = self.remote_index.as_mut() {
-                if remote
+            // A partitioned table's streams are read partition by partition.
+            while let Some(remote) = self.remote_index.as_mut() {
+                let Some(filled) = remote
                     .next_handle_chunk_into(required_rows, chk)
                     .map_err(ExecError::from)?
-                    .is_some()
-                {
-                    let handles = (0..chk.num_rows())
-                        .map(|row| remote.handle_from_chunk_row(chk, row).map(|handle| (handle, 0)))
-                        .collect::<Result<Vec<_>, _>>()
-                        .map_err(ExecError::from)?;
-                    self.scanned.set(self.scanned.get() + handles.len() as u64);
-                    self.produced.set(self.produced.get() + handles.len() as u64);
-                    return Ok(handles);
+                else {
+                    break;
+                };
+                if !filled || chk.num_rows() == 0 {
+                    if self.advance_remote_partition() {
+                        chk.reset();
+                        continue;
+                    }
+                    return Ok(Vec::new());
                 }
+                let partition = self.remote_partition;
+                let remote = self.remote_index.as_ref().expect("the stream just read");
+                let handles = (0..chk.num_rows())
+                    .map(|row| remote.handle_from_chunk_row(chk, row).map(|handle| (handle, partition)))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(ExecError::from)?;
+                self.scanned.set(self.scanned.get() + handles.len() as u64);
+                self.produced.set(self.produced.get() + handles.len() as u64);
+                return Ok(handles);
             }
         }
         let mut handles = Vec::new();
@@ -3660,14 +3699,15 @@ impl IndexRangeSourceExec {
         if let Some(pending) = self.pending_handle.take() {
             return Ok(Some(pending));
         }
-        if let Some(remote) = self.remote_index.as_mut() {
-            // The remote coprocessor stream only opens for an unpartitioned
-            // table (`pushdown_index_handle_cursor` refuses a partitioned
-            // one), so every handle is ordinal 0.
-            return Ok(remote
-                .next_handle()
-                .map_err(ExecError::from)?
-                .map(|handle| (handle, 0)));
+        // A partitioned table's remote streams are read partition by
+        // partition, each handle carrying its partition's ordinal.
+        while let Some(remote) = self.remote_index.as_mut() {
+            if let Some(handle) = remote.next_handle().map_err(ExecError::from)? {
+                return Ok(Some((handle, self.remote_partition)));
+            }
+            if !self.advance_remote_partition() {
+                return Ok(None);
+            }
         }
         loop {
             if self
@@ -3861,12 +3901,26 @@ impl IndexRangeSourceExec {
         accounting: &LookupTaskAccounting,
     ) -> Result<LookupFetch, ExecError> {
         // Go `buildTableReaderFromHandles`: the task's reader reads its
-        // handles' `TableHandlesToKVRanges`, integer or common.
-        let (ranges, _) = <TableCommon as KvTableReader>::table_reader_handle_key_ranges(
-            self.table.table_id(),
-            &handles,
-        )
-        .map_err(ExecError::from)?;
+        // handles' `TableHandlesToKVRanges`, integer or common, under the
+        // partition each handle belongs to.
+        let mut groups: Vec<(i64, Vec<TableHandle>)> = Vec::new();
+        if physical_ids.len() == handles.len() {
+            for (handle, physical_id) in handles.iter().zip(physical_ids) {
+                match groups.iter_mut().find(|(id, _)| id == physical_id) {
+                    Some((_, group)) => group.push(handle.clone()),
+                    None => groups.push((*physical_id, vec![handle.clone()])),
+                }
+            }
+        } else {
+            groups.push((self.table.table_id(), handles.clone()));
+        }
+        let mut ranges = Vec::new();
+        for (physical_id, group) in &groups {
+            let (group_ranges, _) =
+                <TableCommon as KvTableReader>::table_reader_handle_key_ranges(*physical_id, group)
+                    .map_err(ExecError::from)?;
+            ranges.extend(group_ranges);
+        }
         let context = self
             .partial_context
             .clone()
@@ -3955,7 +4009,8 @@ impl IndexRangeSourceExec {
         let wire_rows = stream.rows_returned();
         let dag_size = stream.dag_size();
         stream.close();
-        let reader = crate::kv_table::lookup_task_reader_memory(self.table.table_id(), &handles, dag_size)
+        let reader_table_id = groups.first().map_or(self.table.table_id(), |(id, _)| *id);
+        let reader = crate::kv_table::lookup_task_reader_memory(reader_table_id, &handles, dag_size)
             .map_err(ExecError::from)?;
         let indices = (0..rows.len()).collect();
         let fetch = LookupFetch::Remote(
@@ -4168,6 +4223,8 @@ impl Executor for IndexRangeSourceExec {
         self.partial_done = false;
         self.remote_index = None;
         self.retired_remote_index.clear();
+        self.remote_partitions.clear();
+        self.remote_partition = 0;
         self.cop_stats = (0, 0);
         self.remote_covering_selected = false;
         // A DESCENDING lookup must not ride the local cursor on cluster
@@ -4296,10 +4353,27 @@ impl Executor for IndexRangeSourceExec {
             .filter(|_| self.filter.is_none() || legacy_index_filter)
             .map(|projection| projection.iter().map(|slot| self.keep[*slot]).collect::<Vec<_>>());
         if self.partial_remote.is_none() && index_filter_described {
-            self.remote_index = self
+            // Go's index worker reads a partitioned table's local index one
+            // partition at a time (`fetchHandles` per `kvRanges` entry), each
+            // partition's request built once the previous result is drained.
+            let global_index = self
                 .table
-                .pushdown_index_handle_cursor(
-                    &mut *self.store,
+                .indexes()
+                .iter()
+                .any(|index| index.read().id == self.index_id && index.read().global);
+            let partitioned_walk = self.table.partition().is_some()
+                && !self.covering
+                && self.can_reorder_handles
+                && !self.dirty_merge
+                && !global_index;
+            let base_statement = index_statement.as_ref().unwrap_or(&self.statement).clone();
+            let physical_ids = self.record_physical_ids.clone();
+            let template = partitioned_walk.then(|| self.table.clone());
+            let store = &mut self.store;
+            let mut open = |table: &mut TableCommon, statement: &PushdownStatementContext| {
+                table
+                    .pushdown_index_handle_cursor(
+                    &mut **store,
                     self.index_id,
                     &self.ranges,
                     &self.keep,
@@ -4307,7 +4381,7 @@ impl Executor for IndexRangeSourceExec {
                     &lowered,
                     self.top_n.as_ref(),
                     self.decode_context.zone(),
-                    index_statement.as_ref().unwrap_or(&self.statement),
+                    statement,
                     self.descending,
                     // Go buildIndexLookUpReader plants the sunk PushedLimit
                     // as a Limit offset+count executor under the index DAG,
@@ -4348,10 +4422,45 @@ impl Executor for IndexRangeSourceExec {
                     self.covering,
                     // The local partial aggregate reads this stream's handles.
                     self.partial_aggregate.is_some(),
-                )
-                .map_err(|error| {
-                    ExecError::unsupported(format!("remote index scan failed to open: {error:?}"))
-                })?;
+                    )
+                    .map_err(|error| {
+                        ExecError::unsupported(format!("remote index scan failed to open: {error:?}"))
+                    })
+            };
+            self.remote_index = match template {
+                Some(template) => {
+                    let mut cursors = std::collections::VecDeque::new();
+                    let mut refused = false;
+                    for (ordinal, physical_id) in physical_ids.iter().enumerate() {
+                        let mut physical = template.clone();
+                        physical.set_table_id(*physical_id);
+                        *physical.partition_mut() = None;
+                        *physical.read_partitions_mut() = None;
+                        let mut statement = base_statement.clone();
+                        statement.deferred_open = ordinal > 0;
+                        match open(&mut physical, &statement)? {
+                            Some(cursor) => cursors.push_back((ordinal, cursor)),
+                            None => {
+                                refused = true;
+                                break;
+                            }
+                        }
+                    }
+                    if refused {
+                        for (_, mut cursor) in cursors {
+                            cursor.close();
+                        }
+                        None
+                    } else if let Some((ordinal, first)) = cursors.pop_front() {
+                        self.remote_partition = ordinal;
+                        self.remote_partitions = cursors;
+                        Some(first)
+                    } else {
+                        None
+                    }
+                }
+                None => open(&mut self.table, &base_statement)?,
+            };
             self.remote_covering_selected =
                 self.covering && self.extra_handle_slot.is_none() && self.remote_index.is_some();
             self.remote_rows_projected = projected_keep.is_some() && self.remote_index.is_some();
@@ -4360,7 +4469,6 @@ impl Executor for IndexRangeSourceExec {
         // `TableReaderExecutor`.
         self.remote_partial_lookup = !self.covering
             && self.partial_aggregate.is_some()
-            && self.table.partition().is_none()
             && !self.dirty_merge
             && !self.table.has_dirty_content(&self.statement.staged_writes)
             && self
@@ -4659,6 +4767,8 @@ impl Executor for IndexRangeSourceExec {
         self.retain_remote_index_stats();
         self.remote_index = None;
         self.retired_remote_index.clear();
+        self.remote_partitions.clear();
+        self.remote_partition = 0;
         self.remote_covering_selected = false;
         self.lookup_chunk = None;
         self.lookup_chunk_row = 0;
