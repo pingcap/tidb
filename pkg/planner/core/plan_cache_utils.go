@@ -291,27 +291,27 @@ func hashTableRevisions(b []byte, m map[int64]uint64, latestIS infoschema.InfoSc
 		}
 	}
 	if n == 2 {
-		var id1, id2 int64
-		var revision1, revision2 uint64
+		var k1, k2 int64
+		var v1, v2 uint64
 		i := 0
-		for id, revision := range m {
+		for k, v := range m {
 			if i == 0 {
-				id1, revision1 = id, revision
+				k1, v1 = k, v
 			} else {
-				id2, revision2 = id, revision
+				k2, v2 = k, v
 			}
 			i++
 		}
-		if id1 > id2 {
-			id1, id2 = id2, id1
-			revision1, revision2 = revision2, revision1
+		if k1 > k2 {
+			k1, k2 = k2, k1
+			v1, v2 = v2, v1
 		}
 		var ok bool
-		b, ok = appendTableRevision(b, id1, revision1, latestIS)
+		b, ok = appendTableRevision(b, k1, v1, latestIS)
 		if !ok {
 			return nil, false
 		}
-		return appendTableRevision(b, id2, revision2, latestIS)
+		return appendTableRevision(b, k2, v2, latestIS)
 	}
 
 	keys := tableIDSlicePool.Get()[:0]
