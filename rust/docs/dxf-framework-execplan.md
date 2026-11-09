@@ -104,11 +104,24 @@ that subtasks reserve; the "owner" is the node elected to run schedulers.
 
 ## Plan of Work
 
-Milestone 1 ports `dxfutil` and `storage` into a new crate
-`rust/crates/tidb-dxf-storage` (Go package name kept in the module docs),
-over a session-pool trait the domain implements later. Every `TaskManager`
-method keeps Go's SQL text. Go's `storage` tests (`task_table_test.go` and
-the rest) are transcreated against a unistore node.
+Milestone 1 ports `storage` (then `dxfutil`, which needs `storage` and the
+keyspace runtime, row O15) into a new crate `rust/crates/tidb-dxf-storage`
+(Go package name kept in the module docs). Go's `TaskManager` holds only a
+`util.SessionPool`; every method runs Go's SQL text through
+`WithNewSession` (a pooled session, its `TxnEntrySizeLimit` raised to the
+global value for the call) or `WithNewTxn` (`begin` as SQL, then the
+session's `CommitTxn` / `RollbackTxn`), with `sqlexec.ExecSQL`
+(`ExecuteInternal`, then drain the record set). The Rust shape already
+exists in this tree: `tidb_syssession::Pool<C>` and its sessions, whose
+context gives Go's `SQLExecutor` (`rust/crates/tidb-sqlexec/src/lib.rs`
+`execute_internal`). The crate declares the `sessionctx.Context` subset it
+uses as a trait extending `tidb_syssession::SessionContext` (commit, the
+`TxnEntrySizeLimit` session variable), as TTL does with its
+`SysSessionContext` (`rust/crates/tidb-ttl-ttlworker/src/lib.rs`), and the
+cluster node implements it next to TTL's
+(`rust/crates/tidb-session/src/domain/cluster_session_node/ttl_sessions.rs`).
+Go's `storage` tests (`task_table_test.go` and the rest) are transcreated
+against a unistore node.
 
 Milestone 2 ports `handle` and `planner` next to it. Milestone 3 ports
 `taskexecutor` with `execute`; milestone 4 ports `scheduler`. Each keeps
