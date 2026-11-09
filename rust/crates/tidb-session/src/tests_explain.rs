@@ -9869,11 +9869,16 @@ fn a_narrowed_global_index_lookup_filters_its_entries_in_the_store_like_go() {
 /// A keep-order global index lookup reads its index in order under the
 /// logical table too: its tasks are cut at the response chunks and its
 /// index side counts each `idxResult.Next` (Go: 1 task and 3 loops, 4 tasks
-/// and 5 loops at `tidb_index_lookup_size = 2`), and the rows come back in
-/// index order.
+/// and 5 loops at `tidb_index_lookup_size = 2`). Each task's one table
+/// request spans its partitions and returns `ExtraPhysTblID`, by which the
+/// keep-order worker matches its rows (Go: 2 region tasks at concurrency 2;
+/// 8 sent in 4 store-batched RPCs), and the rows come back in index order.
 #[test]
 fn a_keep_order_global_index_lookup_reads_its_index_remotely_like_go() {
-    for (lookup_size, tasks, loops) in [(None, "num: 1,", "loops:3,"), (Some(2), "num: 4,", "loops:5,")] {
+    for (lookup_size, tasks, loops, table_side) in [
+        (None, "num: 1,", "loops:3,", ["cop_task: {num: 2,", "max_distsql_concurrency: 2}", "num_rpc:2,"]),
+        (Some(2), "num: 4,", "loops:5,", ["cop_task: {num: 8,", "store_batch_num: 4}", "num_rpc:4,"]),
+    ] {
         let mut session = Session::new();
         session
             .run("CREATE TABLE t (a INT, b INT, c INT, PRIMARY KEY (a) NONCLUSTERED, UNIQUE KEY ub (b) GLOBAL) PARTITION BY HASH(a) PARTITIONS 2")
@@ -9894,6 +9899,8 @@ fn a_keep_order_global_index_lookup_reads_its_index_remotely_like_go() {
         assert!(row("IndexLookUp_16")[5].contains(tasks), "{lookup_size:?}: {rows:?}");
         let scan = row("IndexRangeScan_13(Build)");
         assert!(scan[5].contains(loops) && scan[5].contains("proc_keys: 99,"), "{lookup_size:?}: {rows:?}");
+        let probe = row("TableRowIDScan_14(Probe)");
+        assert!(table_side.iter().all(|part| probe[5].contains(part)), "{lookup_size:?}: {rows:?}");
         assert_eq!(
             row_text(session.run(sql)),
             (2..=100).map(|x| vec![x.to_string(), x.to_string(), (x % 5).to_string()]).collect::<Vec<_>>()

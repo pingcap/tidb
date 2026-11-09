@@ -329,6 +329,7 @@ pub trait KvTableReader {
         required_rows: usize,
         key_ranges: &[(Key, Key)],
         range_hints: &[usize],
+        handle_partitions: Option<Vec<i64>>,
     ) -> Result<Option<StagedPhysicalLookup>, KvTableError>;
 
     /// Converts sorted handles using the direct KV range builder shared with
@@ -1257,8 +1258,12 @@ impl KvTableReader for TableCommon {
         // does the staged-row merge below.
         let dirty_partitioned =
             self.partition().is_some() && self.has_dirty_content(&statement.staged_writes);
-        let response_physical_id_index =
-            ((physical_id || dirty_partitioned) && self.partition().is_some()).then(|| {
+        // A request over precomputed ranges may span partitions (Go's
+        // `SetPartitionsAndHandles`): storage fills the column from each
+        // row's key all the same.
+        let response_physical_id_index = (dirty_partitioned
+            || (physical_id && (self.partition().is_some() || precomputed_ranges.is_some())))
+        .then(|| {
                 columns.push(PushdownScanColumn {
                     id: tidb_model::column::EXTRA_PHYS_TBL_ID,
                     field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
@@ -1604,17 +1609,21 @@ impl KvTableReader for TableCommon {
         // (`PartitionHandlesToKVRanges`) in its one request. Its unordered
         // table worker forwards the rows as returned, so no partition's rows
         // need telling apart.
-        let groups = if groups.len() > 1 && statement.lookup_without_identity {
+        // Its keep-order worker matches each row to its handle's partition
+        // by the `ExtraPhysTblID` the reader returns.
+        let (groups, handle_partitions) = if groups.len() > 1 {
             let mut merged = (self.table_id(), Vec::new(), Vec::new(), (Vec::new(), Vec::new()));
-            for (_, handles, positions, (key_ranges, range_hints)) in groups {
+            let mut partitions = Vec::new();
+            for (id, handles, positions, (key_ranges, range_hints)) in groups {
+                partitions.extend(std::iter::repeat(id).take(handles.len()));
                 merged.1.extend(handles);
                 merged.2.extend(positions);
                 merged.3 .0.extend(key_ranges);
                 merged.3 .1.extend(range_hints);
             }
-            vec![merged]
+            (vec![merged], (!statement.lookup_without_identity).then_some(partitions))
         } else {
-            groups
+            (groups, None)
         };
         let statement = statement.for_lookup_batch(handles.len());
         let mut parts = Vec::with_capacity(groups.len());
@@ -1641,6 +1650,7 @@ impl KvTableReader for TableCommon {
                 required_rows,
                 &key_ranges,
                 &range_hints,
+                handle_partitions.clone(),
             )?
             else {
                 // Dropping all previously staged cursors closes their streams.
@@ -1665,6 +1675,7 @@ impl KvTableReader for TableCommon {
         required_rows: usize,
         key_ranges: &[(Key, Key)],
         range_hints: &[usize],
+        handle_partitions: Option<Vec<i64>>,
     ) -> Result<Option<StagedPhysicalLookup>, KvTableError> {
         // Each cursor retains transport identity after the requested projection.
         let keep = scan_keep;
@@ -1704,7 +1715,7 @@ impl KvTableReader for TableCommon {
             // A virtual column's projection reads a heap's row id beside the
             // physical columns, so it keeps the identity.
             !statement.lookup_without_identity || materialization.is_some(),
-            false,
+            handle_partitions.is_some(),
             context,
             &statement,
             tidb_distsql::remote_scan::PushdownReadEngine::TiKv,
@@ -1729,6 +1740,7 @@ impl KvTableReader for TableCommon {
             required_rows: required_rows.max(1),
             init_cap: statement.init_chunk_size,
             alloc_pool: statement.alloc_pool.clone(),
+            handle_partitions,
         }))
     }
 
@@ -1790,7 +1802,19 @@ impl KvTableReader for TableCommon {
         // returns them and never reads their handles back.
         let identity = handle_index.is_some() || common_identity.is_some();
         let wire_width = staged.cursor.width;
+        let physical_id_index = staged.handle_partitions.as_ref().and(staged.cursor.physical_id_index);
+        let mut row_partitions = Vec::new();
         let mut append_row = |mut row: Vec<Datum>| -> Result<(), KvTableError> {
+            if let Some(index) = physical_id_index {
+                row_partitions.push(match row.get(index) {
+                    Some(Datum::Int(id)) => *id,
+                    other => {
+                        return Err(KvTableError::Decode(format!(
+                            "a partition-spanning row carried no partition id, got {other:?}"
+                        )))
+                    }
+                });
+            }
             let handle = if identity {
                 remote_record_handle(handle_index, common_identity.as_ref(), |position| {
                     row.get(position).cloned()
@@ -1848,16 +1872,24 @@ impl KvTableReader for TableCommon {
             let indices = (0..rows.len()).collect();
             return Ok(Some((rows, predicates_applied, wire_rows, indices, chunk_memory)));
         }
+        // A partition-spanning request's handles repeat across partitions.
+        let partition_of = |partitions: Option<&Vec<i64>>, position: usize| {
+            partitions.and_then(|partitions| partitions.get(position).copied())
+        };
         let positions = handles
             .iter()
             .enumerate()
-            .map(|(position, handle)| (handle, position))
+            .map(|(position, handle)| {
+                ((partition_of(staged.handle_partitions.as_ref(), position), handle.clone()), position)
+            })
             .collect::<HashMap<_, _>>();
+        let row_partitions = (!row_partitions.is_empty()).then_some(row_partitions);
         let mut ordered = rows
             .into_iter()
-            .map(|row| {
+            .enumerate()
+            .map(|(ordinal, row)| {
                 positions
-                    .get(&row.0)
+                    .get(&(partition_of(row_partitions.as_ref(), ordinal), row.0.clone()))
                     .copied()
                     .map(|position| (position, row))
                     .ok_or_else(|| {
@@ -1974,7 +2006,16 @@ impl KvTableReader for TableCommon {
                             .then(|| row.get_datum(position, &staged.cursor.field_types[position]))
                     },
                 )?;
-                rows.push((Some(handle), batch_index, row_index));
+                let partition = match staged.handle_partitions.as_ref().and(staged.cursor.physical_id_index) {
+                    Some(index) if index < batch.num_cols() => Some(row.get_int64(index)),
+                    Some(_) => {
+                        return Err(KvTableError::Decode(
+                            "a partition-spanning row carried no partition id".into(),
+                        ))
+                    }
+                    None => None,
+                };
+                rows.push((Some((partition, handle)), batch_index, row_index));
             }
             batches.push(batch);
         }
@@ -1982,7 +2023,13 @@ impl KvTableReader for TableCommon {
         let positions = handles
             .iter()
             .enumerate()
-            .map(|(position, handle)| (handle, position))
+            .map(|(position, handle)| {
+                let partition = staged
+                    .handle_partitions
+                    .as_ref()
+                    .and_then(|partitions| partitions.get(position).copied());
+                ((partition, handle.clone()), position)
+            })
             .collect::<HashMap<_, _>>();
         let mut ordered = rows
             .into_iter()
@@ -3635,6 +3682,10 @@ struct StagedPhysicalLookup {
     /// Go `TableReaderExecutor.AllocPool`, which each of those chunks comes
     /// from.
     alloc_pool: Option<tidb_distsql::remote_scan::AllocPool>,
+    /// The partition of each requested handle when the request spans
+    /// partitions (Go's `kv.PartitionHandle`s): its rows carry
+    /// `ExtraPhysTblID` and match by partition and handle.
+    handle_partitions: Option<Vec<i64>>,
 }
 
 /// [`TableCommon::finish_routed_rows_by_handles`] with Go's
@@ -7394,15 +7445,22 @@ mod remote_cursor_tests {
             )
             .unwrap()
             .unwrap();
-        assert_eq!(
-            captured
-                .lock()
-                .unwrap()
+        // Go `SetPartitionsAndHandles`: the task's one request, under the
+        // logical table, spans both partitions' ranges.
+        {
+            let sent = captured.lock().unwrap();
+            assert_eq!(
+                sent.iter().map(crate::test_region::SentRequest::table_id).collect::<Vec<_>>(),
+                vec![91]
+            );
+            let mut partitions = sent[0]
+                .ranges
                 .iter()
-                .map(crate::test_region::SentRequest::table_id)
-                .collect::<Vec<_>>(),
-            vec![101, 102]
-        );
+                .map(|(start, _)| decode_table_id(start))
+                .collect::<Vec<_>>();
+            partitions.dedup();
+            assert_eq!(partitions, vec![101, 102]);
+        }
         drop(staged);
         captured.lock().unwrap().clear();
         statement.staged_writes.mark_dirty(91);
@@ -7456,12 +7514,12 @@ mod remote_cursor_tests {
         );
         *table.read_partitions_mut() = None;
         // A region cannot refuse a request (that is the lowering's answer,
-        // before any send), so the failing send is what remains to pin.
+        // before any send), so the failing send is what remains to pin: the
+        // task's one request over both partitions fails as a whole.
         let capture = RequestCapture {
-            reject_table: Some(102),
+            reject_table: Some(91),
             ..RequestCapture::default()
         };
-        let closed = capture.closed.clone();
         let store = capture;
         let result = table.build_table_reader_from_routed_handles(&mut *store.clone_box(), 
             &handles,
@@ -7473,10 +7531,6 @@ mod remote_cursor_tests {
             2,
         );
         assert!(result.is_err());
-        assert!(
-            closed.load(std::sync::atomic::Ordering::SeqCst),
-            "a later failure closes the already-open first partition"
-        );
     }
 
 /// Go's `PhysicalIndexReader.ToPB` names the clustered primary's column
@@ -8668,6 +8722,7 @@ mod remote_cursor_tests {
                                 required_rows: 2,
                                 init_cap: 2,
                                 alloc_pool: None,
+                                handle_partitions: None,
                             },
                         ));
                     }
@@ -8782,6 +8837,7 @@ mod remote_cursor_tests {
                             required_rows: 1024,
                             init_cap: 32,
                             alloc_pool: None,
+                            handle_partitions: None,
                         },
                     )],
                     kv_ranges_mem_usage: 0,
