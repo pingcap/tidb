@@ -17,6 +17,7 @@ go_test(
         "//pkg/errno",
         "//pkg/infoschema",
         "//pkg/kv",
+        "//pkg/meta",
         "//pkg/meta/autoid",
         "//pkg/meta/model",
         "//pkg/parser/ast",

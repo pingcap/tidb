@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -280,9 +281,13 @@ func TestFlashbackTable(t *testing.T) {
 	tk.MustExec("create table p (id int primary key)")
 	tk.MustExec("create table c (id int primary key, pid int, foreign key (pid) references p(id))")
 	tk.MustExec("insert into p values (1)")
-	tk.MustExec("insert into c values (1, 1)")
+	tk.MustExec("insert into c values (2, 1)")
 	tk.MustExec("drop table c")
 	tk.MustExec("drop table p")
+	// The old external endpoint must not become an apparent self-reference
+	// when the child is restored under its former parent's name.
+	tk.MustGetErrCode("flashback table c to p", errno.ErrUnsupportedDDLOperation)
+	tk.MustQuery("show tables like 'p'").Check(testkit.Rows())
 	tk.MustExec("create table p (id int primary key)")
 	tk.MustGetErrCode("flashback table c", errno.ErrUnsupportedDDLOperation)
 	tk.MustQuery("show tables like 'c'").Check(testkit.Rows())
@@ -308,6 +313,15 @@ func TestFlashbackTable(t *testing.T) {
 	tk.MustExec("insert into restored_tree values (3, 1)")
 	tk.MustExec("delete from restored_tree where id = 1")
 	tk.MustQuery("select * from restored_tree").Check(testkit.Rows())
+}
+
+type recoverTableSnapshotReadError struct {
+	meta.Reader
+	err error
+}
+
+func (r recoverTableSnapshotReadError) GetTable(int64, int64) (*model.TableInfo, error) {
+	return nil, r.err
 }
 
 func TestFlashbackTableForeignKeyOwnerCheck(t *testing.T) {
@@ -448,6 +462,158 @@ func TestFlashbackTableForeignKeyOwnerCheck(t *testing.T) {
 				tk.MustQuery("select * from p").Check(testkit.Rows("1"))
 			}
 		})
+	}
+
+	for _, version := range []model.JobVersion{model.JobVersion1, model.JobVersion2} {
+		for _, tc := range []struct {
+			name      string
+			external  bool
+			rename    bool
+			transient bool
+		}{
+			{name: "external_rename", external: true, rename: true},
+			{name: "self_rename", rename: true},
+			{name: "self_same_name"},
+			{name: "self_rename_transient", rename: true, transient: true},
+		} {
+			t.Run(fmt.Sprintf("legacy_%s/%s", version, tc.name), func(t *testing.T) {
+				store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec("create database fk_owner_legacy_flashback")
+				tk.MustExec("use fk_owner_legacy_flashback")
+				timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
+				t.Cleanup(resetGC)
+				tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+				require.NoError(t, gcutil.EnableGC(tk.Session()))
+				if tc.external {
+					tk.MustExec("create table p (id int primary key)")
+					tk.MustExec("create table c (id int primary key, pid int, foreign key (pid) references p(id))")
+					tk.MustExec("insert into p values (1)")
+					tk.MustExec("insert into c values (2, 1)")
+				} else {
+					tk.MustExec("create table c (id int primary key, pid int, foreign key (pid) references c(id) on delete cascade)")
+					tk.MustExec("insert into c values (1, null), (2, 1)")
+				}
+				schema, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("fk_owner_legacy_flashback"))
+				require.True(t, ok)
+				child, err := dom.InfoSchema().TableByName(context.Background(), schema.Name, ast.NewCIStr("c"))
+				require.NoError(t, err)
+				restoredTable := child.Meta().Clone()
+				dropJobIDs := make(chan int64, 1)
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+					if job.Type == model.ActionDropTable && job.TableID == restoredTable.ID {
+						select {
+						case dropJobIDs <- job.ID:
+						default:
+						}
+					}
+				})
+				tk.MustExec("drop table c")
+				var dropJobID int64
+				select {
+				case dropJobID = <-dropJobIDs:
+				default:
+					t.Fatal("DROP TABLE did not reach the owner")
+				}
+				dropJob, err := ddl.GetHistoryJobByID(tk.Session(), dropJobID)
+				require.NoError(t, err)
+				require.NotNil(t, dropJob)
+				if tc.external {
+					tk.MustExec("drop table p")
+				}
+				snapshotTS := ddl.GetRecoverSnapshotTS(dropJob)
+				autoIDs, err := dom.GetSnapshotMeta(snapshotTS).GetAutoIDAccessors(schema.ID, restoredTable.ID).Get()
+				require.NoError(t, err)
+
+				var snapshotMu sync.Mutex
+				snapshotCalls := 0
+				if tc.transient {
+					testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/recoverTableForeignKeySnapshot", func(info *model.RecoverTableInfo, reader *meta.Reader) {
+						if info.TableInfo.ID != restoredTable.ID {
+							return
+						}
+						snapshotMu.Lock()
+						defer snapshotMu.Unlock()
+						snapshotCalls++
+						if snapshotCalls == 1 {
+							*reader = recoverTableSnapshotReadError{Reader: *reader, err: kv.ErrTxnRetryable}
+						}
+					})
+				}
+
+				// Submit each persisted argument version directly, as an older
+				// frontend would, without invoking the current frontend guard.
+				if tc.rename {
+					restoredTable.Name = ast.NewCIStr("p")
+					if !tc.external {
+						restoredTable.ForeignKeys[0].RefTable = restoredTable.Name
+					}
+				}
+				restoredTable.State = model.StateNone
+				recoverInfo := &model.RecoverTableInfo{
+					SchemaID:      schema.ID,
+					TableInfo:     restoredTable,
+					DropJobID:     dropJobID,
+					SnapshotTS:    snapshotTS,
+					AutoIDs:       autoIDs,
+					OldSchemaName: schema.Name.L,
+					OldTableName:  "c",
+				}
+				job := &model.Job{
+					Version:    version,
+					SchemaID:   schema.ID,
+					SchemaName: schema.Name.L,
+					TableID:    restoredTable.ID,
+					TableName:  restoredTable.Name.L,
+					Type:       model.ActionRecoverTable,
+					BinlogInfo: &model.HistoryInfo{},
+				}
+				if tc.rename {
+					job.InvolvingSchemaInfo = []model.InvolvingSchemaInfo{
+						{Database: schema.Name.L, Table: "c"},
+						{Database: schema.Name.L, Table: "p"},
+					}
+				}
+				args := &model.RecoverArgs{
+					RecoverInfo: &model.RecoverSchemaInfo{RecoverTableInfos: []*model.RecoverTableInfo{recoverInfo}},
+				}
+				err = dom.DDLExecutor().(ddl.ExecutorForTest).DoDDLJobWrapper(tk.Session(), ddl.NewJobWrapperWithArgs(job, args, true))
+				require.Positive(t, job.ID)
+				history, historyErr := ddl.GetHistoryJobByID(tk.Session(), job.ID)
+				require.NoError(t, historyErr)
+				require.NotNil(t, history)
+				require.Equal(t, version, history.Version)
+				historyArgs, historyErr := model.GetRecoverArgs(history)
+				require.NoError(t, historyErr)
+				historyInfo := historyArgs.RecoverTableInfos()[0]
+				require.Equal(t, "c", historyInfo.OldTableName)
+				require.Equal(t, schema.Name.L, historyInfo.OldSchemaName)
+				require.Equal(t, snapshotTS, historyInfo.SnapshotTS)
+				if tc.external {
+					require.True(t, dbterror.ErrGeneralUnsupportedDDL.Equal(err), "unexpected recovery result: %v", err)
+					require.True(t, history.IsCancelled())
+					require.True(t, dbterror.ErrGeneralUnsupportedDDL.Equal(history.Error))
+					tk.MustQuery("show tables").Check(testkit.Rows())
+					_, exists := dom.InfoSchema().TableByID(context.Background(), restoredTable.ID)
+					require.False(t, exists)
+				} else {
+					require.NoError(t, err)
+					require.True(t, history.IsSynced())
+					target := restoredTable.Name.L
+					tk.MustQuery("select referenced_table_name from information_schema.key_column_usage where table_schema = 'fk_owner_legacy_flashback' and table_name = '" + target + "' and referenced_table_name is not null").Check(testkit.Rows(target))
+					tk.MustQuery("select count(*) from " + target).Check(testkit.Rows("2"))
+					tk.MustExec("insert into " + target + " values (3, 1)")
+					tk.MustExec("delete from " + target + " where id = 1")
+					tk.MustQuery("select * from " + target).Check(testkit.Rows())
+					if tc.transient {
+						snapshotMu.Lock()
+						require.GreaterOrEqual(t, snapshotCalls, 2)
+						snapshotMu.Unlock()
+						require.Positive(t, history.ErrorCount)
+					}
+				}
+			})
+		}
 	}
 }
 

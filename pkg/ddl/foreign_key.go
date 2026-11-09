@@ -183,7 +183,42 @@ func checkTableForeignKeysValid(sctx sessionctx.Context, is infoschema.InfoSchem
 	return nil
 }
 
-func checkRecoverTableForeignKeys(is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo) error {
+func checkRecoverTableForeignKeys(is infoschema.InfoSchema, schema string, recoverInfo *model.RecoverTableInfo, snapshotMeta meta.Reader) error {
+	tbInfo := recoverInfo.TableInfo
+	for _, fk := range tbInfo.ForeignKeys {
+		if fk.Version < model.FKVersion1 {
+			continue
+		}
+		// A legacy submitter may already have renamed the table in the job.
+		// Only the original metadata can distinguish a rewritten self-reference
+		// from an external reference to the new name.
+		if recoverInfo.OldSchemaName == "" || recoverInfo.OldTableName == "" || recoverInfo.SnapshotTS == 0 {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"recover/flashback table without original table metadata")
+		}
+		if recoverInfo.OldTableName == tbInfo.Name.L {
+			break
+		}
+		originalTable, err := snapshotMeta.GetTable(recoverInfo.SchemaID, tbInfo.ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if originalTable == nil {
+			return infoschema.ErrTableNotExists.GenWithStackByArgs(recoverInfo.OldSchemaName, recoverInfo.OldTableName)
+		}
+		if originalTable.Name.L != recoverInfo.OldTableName {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"recover/flashback table with mismatched original table metadata")
+		}
+		for _, originalFK := range originalTable.ForeignKeys {
+			if originalFK.Version >= model.FKVersion1 &&
+				(originalFK.RefSchema.L != recoverInfo.OldSchemaName || originalFK.RefTable.L != originalTable.Name.L) {
+				return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+					"recover/flashback table with foreign keys")
+			}
+		}
+		break
+	}
 	// A standalone recovery cannot prove that an external FK endpoint still
 	// identifies the same table or that rows on both sides still match.
 	for _, fk := range tbInfo.ForeignKeys {
@@ -198,6 +233,11 @@ func checkRecoverTableForeignKeys(is infoschema.InfoSchema, schema string, tbInf
 			"recover/flashback table referenced by foreign keys")
 	}
 	return nil
+}
+
+func isPermanentRecoverTableForeignKeyError(err error) bool {
+	return dbterror.ErrGeneralUnsupportedDDL.Equal(err) ||
+		infoschema.ErrTableNotExists.Equal(err) || meta.ErrDBNotExists.Equal(err)
 }
 
 func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
