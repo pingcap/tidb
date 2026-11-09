@@ -9908,6 +9908,46 @@ fn a_keep_order_global_index_lookup_reads_its_index_remotely_like_go() {
     }
 }
 
+/// Go pushes a reader's Projection that computes (`j->'$.x'`) into the
+/// coprocessor as the request's last executor (`PhysicalProjection.ToPB`),
+/// so only the computed values cross the wire: the reader holds Go's
+/// 1.96 KB over 100 documents of 200-odd bytes, and the cop stats belong to
+/// `Projection_4`. An uncommitted write keeps the projection above the
+/// merged rows.
+#[test]
+fn a_reader_pushes_its_computing_projection_into_the_request_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE jt (a INT, j JSON)").unwrap();
+    let values = (1..=100)
+        .map(|i| format!("({i}, '{{\"x\": {i}, \"y\": \"{}\"}}')", "p".repeat(200)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    session.run(&format!("INSERT INTO jt VALUES {values}")).unwrap();
+    let rows = row_text(session.run("EXPLAIN ANALYZE SELECT j->'$.x' FROM jt"));
+    let row = |name: &str| {
+        rows.iter()
+            .find(|row| row[0].contains(name))
+            .unwrap_or_else(|| panic!("{name}: {rows:?}"))
+            .clone()
+    };
+    assert_eq!(row("TableReader_8")[7], "1.96 KB", "{rows:?}");
+    let projection = row("Projection_4");
+    assert_eq!(projection[2], "100", "{rows:?}");
+    assert!(projection[5].contains("scan_detail: {total_process_keys: 100,"), "{rows:?}");
+    assert_eq!(row_text(session.run("SELECT j->'$.x' FROM jt WHERE a <= 3")), [["1"], ["2"], ["3"]]);
+    assert_eq!(
+        row_text(session.run("SELECT json_extract(j, '$.x'), a FROM jt WHERE a > 98")),
+        [["99", "99"], ["100", "100"]]
+    );
+    session.run("BEGIN").unwrap();
+    session.run("INSERT INTO jt VALUES (101, '{\"x\": 101}')").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT j->'$.x' FROM jt WHERE a > 99")),
+        [["100"], ["101"]]
+    );
+    session.run("ROLLBACK").unwrap();
+}
+
 /// Go's `AddSelectionConditionForGlobalIndex` runs `PartitionPruning`, whose
 /// HASH and plain RANGE pruners `PlanID.Add(1)` before parsing the partition
 /// expression: every global index scan over such a table spends a plan id

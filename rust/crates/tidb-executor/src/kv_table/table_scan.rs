@@ -1515,6 +1515,35 @@ impl KvTableReader for TableCommon {
                 tidb_distsql::remote_scan::ChainedPushdownStream::new(streams)
             }
         };
+        // A computing Projection returns its own rows, which carry no
+        // identity and cannot be re-filtered here.
+        if let Some((_, types)) = &statement.cop_projection_exprs {
+            if !predicates_applied || retain_identity || response_physical_id_index.is_some() {
+                let mut stream = stream;
+                stream.close();
+                return Ok(None);
+            }
+            return Ok(Some(RemoteRowCursor {
+                stream,
+                staged: staged.into_iter(),
+                pending_staged: None,
+                pending_remote: None,
+                pending_chunk: None,
+                pending_chunk_row: 0,
+                field_types: types.clone(),
+                width: types.len(),
+                handle_index: None,
+                common_identity: None,
+                table_id: self.table_id(),
+                physical_id_index: None,
+                merge_staged,
+                unordered_shadowed,
+                unsigned_handle_order: false,
+                noted_rows: 0,
+                descending,
+                predicates_applied,
+            }));
+        }
         Ok(Some(RemoteRowCursor {
             stream,
             staged: staged.into_iter(),
@@ -3671,6 +3700,35 @@ pub struct StagedHandlesLookup {
     kv_ranges_mem_usage: i64,
 }
 
+/// A table source's pushed computing Projection (see
+/// `TableAccess::accept_computed_projection`).
+struct PostFilterExprs {
+    exprs: Vec<Expression>,
+    types: Vec<FieldType>,
+    ctx: crate::StmtContext,
+    /// One row of the scan's types, which the local scan evaluates over.
+    scratch: Chunk,
+}
+
+impl PostFilterExprs {
+    /// Go's Projection over one scan row, computed in this tier.
+    fn compute(&mut self, row: &[Datum]) -> Result<Vec<Datum>, ExecError> {
+        self.scratch.reset();
+        for (column, value) in row.iter().enumerate() {
+            self.scratch.append_datum(column, value);
+        }
+        let row = self.scratch.get_row(0);
+        self.exprs
+            .iter()
+            .map(|expression| {
+                expression
+                    .eval(&self.ctx, row)
+                    .map_err(tidb_driver_error::coprocessor_evaluation_error)
+            })
+            .collect()
+    }
+}
+
 struct StagedPhysicalLookup {
     cursor: RemoteRowCursor,
     output_width: usize,
@@ -5191,6 +5249,10 @@ pub struct TableScanExec {
     /// A remote cursor already returns this projection; the local path
     /// applies it after evaluating the same filter against the wider row.
     post_filter_projection: Option<Vec<usize>>,
+    /// A pushed Projection that computes: its expressions over the scan row,
+    /// their result types, the scan row's types and the statement context a
+    /// local scan evaluates them with.
+    post_filter_exprs: Option<PostFilterExprs>,
     /// A TopN the remote backend may execute after its complete Selection.
     /// The driver retains a local partial TopN as the semantic fallback.
     remote_topn: Option<PushdownTopN>,
@@ -5390,6 +5452,7 @@ impl TableScanExec {
             filter: None,
             pushed: Vec::new(),
             post_filter_projection: None,
+            post_filter_exprs: None,
             remote_topn: None,
             keep_order: false,
             keep,
@@ -5689,6 +5752,12 @@ impl Executor for TableScanExec {
             Some((keep, predicates)) => (keep.as_slice(), predicates.as_slice()),
             None => (self.keep.as_slice(), self.pushed.as_slice()),
         };
+        // Go `PhysicalProjection.ToPB`: a computing Projection is the
+        // request's last executor, over the request's columns (the scan row).
+        self.statement.cop_projection_exprs = self
+            .post_filter_exprs
+            .as_ref()
+            .map(|projection| (projection.exprs.clone(), projection.types.clone()));
         self.remote = self
             .table
             .pushdown_row_cursor_with_physical_id(
@@ -5838,7 +5907,8 @@ impl Executor for TableScanExec {
                 self.drop_remote();
                 return Ok(());
             }
-            let remote_projected = self.remote.is_some() && self.post_filter_projection.is_some();
+            let remote_projected = self.remote.is_some()
+                && (self.post_filter_projection.is_some() || self.post_filter_exprs.is_some());
             let Some(row) = self.next_source_row()? else {
                 return Ok(());
             };
@@ -5852,6 +5922,10 @@ impl Executor for TableScanExec {
             }
             if remote_projected {
                 for (column, value) in row.iter().enumerate() {
+                    req.append_datum(column, value);
+                }
+            } else if let Some(projection) = self.post_filter_exprs.as_mut() {
+                for (column, value) in projection.compute(&row)?.iter().enumerate() {
                     req.append_datum(column, value);
                 }
             } else if let Some(projection) = &self.post_filter_projection {
@@ -6008,6 +6082,11 @@ impl tidb_executor_internal_exec::table_access::TableAccess for TableScanExec {
     /// columns. A clustered handle's later columns need every earlier one
     /// pinned to one value across the read's ranges.
     fn accept_extreme_boundary(&mut self, order_offset: usize, desc: bool) -> bool {
+        // A computing projection already describes this source's rows; an
+        // offer over its scan row no longer applies.
+        if self.post_filter_exprs.is_some() {
+            return false;
+        }
         if self.limit.is_some()
             || self.partial_aggregate.is_some()
             || self.remote_topn.is_some()
@@ -6077,6 +6156,11 @@ impl tidb_executor_internal_exec::table_access::TableAccess for TableScanExec {
         aggregate: &PushdownPartialAggregate,
         ctx: &crate::StmtContext,
     ) -> bool {
+        // A computing projection already describes this source's rows; an
+        // offer over its scan row no longer applies.
+        if self.post_filter_exprs.is_some() {
+            return false;
+        }
         if !self.supports_partial_aggregate(aggregate, ctx) {
             return false;
         }
@@ -6114,6 +6198,11 @@ impl tidb_executor_internal_exec::table_access::TableAccess for TableScanExec {
         filter: &tidb_executor_internal_exec::predicate_pushdown::PushedScanFilter,
         ctx: &crate::StmtContext,
     ) -> bool {
+        // A computing projection already describes this source's rows; an
+        // offer over its scan row no longer applies.
+        if self.post_filter_exprs.is_some() {
+            return false;
+        }
         if filter.is_empty() {
             return false;
         }
@@ -6139,6 +6228,11 @@ impl tidb_executor_internal_exec::table_access::TableAccess for TableScanExec {
         keep: &[usize],
         output: &tidb_expr::schema::Schema,
     ) -> bool {
+        // A computing projection already describes this source's rows; an
+        // offer over its scan row no longer applies.
+        if self.post_filter_exprs.is_some() {
+            return false;
+        }
         // DAGRequest.output_offsets is safe for either clustered-handle
         // family while the table is clean: no UnionScan row needs a handle
         // reconstructed from the narrowed response. Local fallback applies
@@ -6186,7 +6280,71 @@ impl tidb_executor_internal_exec::table_access::TableAccess for TableScanExec {
         true
     }
 
+    fn accept_computed_projection(
+        &mut self,
+        exprs: &[Expression],
+        output: &tidb_expr::schema::Schema,
+        ctx: &crate::StmtContext,
+    ) -> bool {
+        if self.physical_table_id_slot.is_some()
+            || self.extra_handle_slot.is_some()
+            || !self.filter_fully_pushable()
+            || self.table.has_dirty_content(&self.statement.staged_writes)
+            || self.has_virtual_projection()
+            || self.partial_aggregate.is_some()
+            || self.post_filter_projection.is_some()
+            || self.post_filter_exprs.is_some()
+            || self.remote_topn.is_some()
+            || exprs.is_empty()
+            || output.len() != exprs.len()
+            || crate::access_path::expression_column_offsets(exprs)
+                .iter()
+                .any(|offset| *offset >= self.keep.len())
+        {
+            return false;
+        }
+        let Some(types) = output
+            .columns
+            .iter()
+            .map(|column| column.ret_type.clone())
+            .collect::<Option<Vec<_>>>()
+        else {
+            return false;
+        };
+        let input_types = self.meta.ret_field_types().to_vec();
+        let columns: Vec<tidb_expr::column::Column> = output
+            .columns
+            .iter()
+            .enumerate()
+            .map(|(index, column)| {
+                let mut column = column.clone();
+                column.index = index as i64;
+                column
+            })
+            .collect();
+        self.meta = ExecutorMeta::new(
+            Schema::new(columns),
+            self.meta.id(),
+            self.meta.init_cap(),
+            self.meta.max_chunk_size(),
+        );
+        let mut scratch = Chunk::new(&input_types, 1, 1);
+        scratch.reset();
+        self.post_filter_exprs = Some(PostFilterExprs {
+            exprs: exprs.to_vec(),
+            types,
+            ctx: ctx.clone(),
+            scratch,
+        });
+        true
+    }
+
     fn accept_remote_topn(&mut self, topn: &PushdownTopN) -> bool {
+        // A computing projection already describes this source's rows; an
+        // offer over its scan row no longer applies.
+        if self.post_filter_exprs.is_some() {
+            return false;
+        }
         // TopN must see the merged relation. Reordering/capping only the
         // snapshot would break both merge order and replacement semantics.
         if !self.filter_fully_pushable()
@@ -6254,6 +6412,11 @@ impl tidb_executor_internal_exec::table_access::TableAccess for TableScanExec {
     /// Local and remote row cursors retain record identity through the
     /// staged merge. The extra slot is filled after virtual materialization.
     fn accept_extra_handle(&mut self, slot: usize) -> bool {
+        // A computing projection already describes this source's rows; an
+        // offer over its scan row no longer applies.
+        if self.post_filter_exprs.is_some() {
+            return false;
+        }
         // The slot sits immediately after the stored columns this scan
         // emits; anywhere else and the row would not line up with the schema
         // the leaf built. A partial aggregate produces no record handles at
@@ -6291,6 +6454,11 @@ impl tidb_executor_internal_exec::table_access::TableAccess for TableScanExec {
     /// handle this promise holds on the remote path too; a partial aggregate
     /// still cannot make it, because its rows are not table rows at all.
     fn accept_extra_commit_ts(&mut self, slot: usize) -> bool {
+        // A computing projection already describes this source's rows; an
+        // offer over its scan row no longer applies.
+        if self.post_filter_exprs.is_some() {
+            return false;
+        }
         if self.partial_aggregate.is_some()
             || self.extra_commit_ts_slot.is_some()
             || slot != self.meta.schema().columns.len()
@@ -6333,6 +6501,11 @@ impl tidb_executor_internal_exec::table_access::TableAccess for TableScanExec {
     /// in `keep`, so both executable and coprocessor descriptions can be
     /// remapped to the narrowed row without changing the predicate.
     fn accept_column_prune(&mut self, keep: &[usize]) -> bool {
+        // A computing projection already describes this source's rows; an
+        // offer over its scan row no longer applies.
+        if self.post_filter_exprs.is_some() {
+            return false;
+        }
         // `_tidb_rowid` sits beside the stored columns rather than among
         // them, so a projection expressed in stored offsets can no longer
         // describe this row. The leaf offers the handle slot only after it

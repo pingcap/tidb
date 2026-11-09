@@ -425,6 +425,15 @@ fn build_resp_with(
             .collect();
     }
 
+    // A computing Projection's rows are what the response returns.
+    if let Some((_, types)) = &request.statement.cop_projection_exprs {
+        if !predicates_applied || aggregate.is_some() || wire_output_offsets.is_some() {
+            return Err(refuse(
+                "a coprocessor Projection requires a complete Selection and no competing pushdown",
+            ));
+        }
+        field_types = types.clone();
+    }
     if request.topn.is_some() && !predicates_applied {
         return Err(refuse(
             "a coprocessor TopN requires every predicate in the TiKV Selection",
@@ -632,6 +641,27 @@ fn build_resp_with(
         });
         dag.output_offsets = (0..width).collect();
     }
+    if let Some((exprs, _)) = &request.statement.cop_projection_exprs {
+        let exprs = exprs
+            .iter()
+            .map(|expression| {
+                tidb_expr::pushdown_catalog::expression_to_pb(expression, &|offset| {
+                    scan_column_descriptor(&columns, offset)
+                })
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| refuse("a coprocessor Projection expression cannot be lowered to TiPB"))?;
+        let width = exprs.len() as u32;
+        dag.executors.push(PbExecutor {
+            projection: Some(Box::new(tidb_proto::tipb::Projection {
+                exprs,
+                ..Default::default()
+            })),
+            executor_id: Some(String::new()),
+            ..crate::dag_request::go_executor(ExecType::TypeProjection)
+        });
+        dag.output_offsets = (0..width).collect();
+    }
 
     let key_ranges: Vec<KeyRange> = request
         .ranges
@@ -657,7 +687,7 @@ fn build_resp_with(
     if aggregate.is_some() {
         shapes.push(ExecutorShape::new(ExecutorKind::Other));
     }
-    if request.statement.cop_projection {
+    if request.statement.cop_projection || request.statement.cop_projection_exprs.is_some() {
         shapes.push(ExecutorShape::new(ExecutorKind::Other));
     }
     // The wire receipt's DAG shape: the executor list this request

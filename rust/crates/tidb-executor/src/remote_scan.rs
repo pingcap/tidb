@@ -77,6 +77,7 @@ pub fn pushdown_statement_context(ctx: &crate::StmtContext) -> PushdownStatement
         tiflash_fine_grained_shuffle_batch_size: tiflash_fine_grained_shuffle_batch_size(ctx),
         deferred_open: false,
         paging: true,
+        cop_projection_exprs: None,
         need_partition_handle: false,
     }
 }

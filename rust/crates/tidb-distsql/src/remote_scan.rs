@@ -557,6 +557,10 @@ pub struct PushdownStatementContext {
     /// Whether the request waits for its stream's first read before it is
     /// sent (a partitioned index lookup's later partitions).
     pub deferred_open: bool,
+    /// Go `PhysicalProjection.ToPB` of a pushed Projection that computes:
+    /// its expressions over the request's columns and their result types.
+    /// It is the request's last executor, and the response returns its rows.
+    pub cop_projection_exprs: Option<(Vec<Expression>, Vec<tidb_datatype::FieldType>)>,
     /// Go `RequestBuilder.SetPaging`: whether the reader pages its responses
     /// (`tidb_enable_paging`); an index lookup task's `TableReaderExecutor`
     /// never does (`IndexLookUpExecutor.buildTableReader` leaves `paging`
@@ -633,6 +637,7 @@ impl Default for PushdownStatementContext {
             tiflash_fine_grained_shuffle_batch_size: tidb_vardef::defaults::DEF_TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE as u64,
             deferred_open: false,
             paging: true,
+            cop_projection_exprs: None,
             need_partition_handle: false,
         }
     }

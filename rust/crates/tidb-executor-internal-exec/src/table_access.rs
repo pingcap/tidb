@@ -176,6 +176,21 @@ pub trait TableAccess {
         false
     }
 
+    /// Offers a pushed Projection that computes (Go `PhysicalProjection` in a
+    /// reader's `TablePlans`): `exprs` over the scan row, run after an
+    /// accepted scan filter, with `output`'s column identities. A remote scan
+    /// returns the computed rows (the request's last executor); a local one
+    /// computes them from the filtered row.
+    fn accept_computed_projection(
+        &mut self,
+        exprs: &[tidb_expr::expression::Expression],
+        output: &tidb_expr::schema::Schema,
+        ctx: &StmtContext,
+    ) -> bool {
+        let _ = (exprs, output, ctx);
+        false
+    }
+
     /// Offers a coprocessor TopN hint. The caller keeps an equivalent local
     /// TopN, so refusal changes only where rows are reduced, never the answer.
     fn accept_remote_topn(&mut self, topn: &PushdownTopN) -> bool {

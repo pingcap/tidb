@@ -7960,6 +7960,17 @@ fn build_with_state(
                 }
             }
             let expressions = resolve_expressions(&projection.exprs, child.schema())?;
+            // Go `PhysicalProjection.ToPB`: a Projection the planner pushed
+            // into the reader computes in the coprocessor too.
+            if state.in_reader {
+                let output = plan_schema(plan)?;
+                if child
+                    .table_access()
+                    .is_some_and(|access| access.accept_computed_projection(&expressions, &output, ctx))
+                {
+                    return Ok(child);
+                }
+            }
             let meta = meta(ctx, plan, plan_schema(plan)?);
             // Go `newProjectionExec`: `tidb_projection_concurrency` workers,
             // none when the estimated row count is under one chunk ("to
