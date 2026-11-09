@@ -479,6 +479,7 @@ pub fn adjust_three_stage_multi_distinct_with_group_ndv_skew_ratio(
         let Some(grouping_id) = (function.grouping_id > 0).then_some(function.grouping_id) else {
             return Ok(None);
         };
+        let argument_type = argument.static_type().cloned();
         let mut null = Constant::new_null();
         null.ret_type = argument.static_type().cloned();
         let condition = builder
@@ -501,12 +502,10 @@ pub fn adjust_three_stage_multi_distinct_with_group_ndv_skew_ratio(
                 vec![condition, argument, Expression::Constant(null)],
             )
             .map_err(|error| tidb_planner_core_base::PlanError::internal(error.to_string()))?;
+        // Go `caseWhenProjCol.RetType = fun.Args[0].GetType(ectx)`.
         let mut case_column = Column::new(
             column_ids.alloc(),
-            case_when
-                .static_type()
-                .cloned()
-                .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong)),
+            argument_type.unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong)),
         );
         case_column.index = projection_exprs.len() as i64;
         projection_exprs.push(case_when);

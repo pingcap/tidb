@@ -6696,6 +6696,7 @@ dependencies = [
  "tidb-codec",
  "tidb-datatype",
  "tidb-expr",
+ "tidb-exprctx",
  "tidb-funcdep",
  "tidb-intset",
  "tidb-model",

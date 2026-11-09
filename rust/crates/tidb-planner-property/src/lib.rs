@@ -513,7 +513,7 @@ pub fn explain_partition_by(partition_by: &[SortItem], normalized: bool) -> Stri
 }
 
 /// Go `ExplainColumnList`.
-pub fn explain_column_list(columns: &[MppPartitionColumn]) -> Vec<u8> {
+pub fn explain_column_list(ctx: &dyn tidb_exprctx::Columns, columns: &[MppPartitionColumn]) -> Vec<u8> {
     columns
         .iter()
         .map(|column| {
@@ -522,7 +522,15 @@ pub fn explain_column_list(columns: &[MppPartitionColumn]) -> Vec<u8> {
             } else {
                 "N/A".to_owned()
             };
-            format!("[name: {}, collate: {collate}]", column_string(&column.col))
+            // Go `col.Col.ExplainInfo(ctx)`.
+            let name = tidb_expr::explain::physical_expression_text_with_columns(
+                ctx,
+                &tidb_expr::expression::Expression::Column(column.col.clone()),
+                &[],
+                tidb_expr::explain::ExpressionTextStyle::Explain,
+            )
+            .unwrap_or_default();
+            format!("[name: {name}, collate: {collate}]")
         })
         .collect::<Vec<_>>()
         .join(", ")

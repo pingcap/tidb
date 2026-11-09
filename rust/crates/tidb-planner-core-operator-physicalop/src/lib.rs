@@ -2188,7 +2188,7 @@ impl PhysicalExchangeSender {
     /// fine-grained shuffle stream count. Go's `tasks:` suffix only renders
     /// once dispatch has populated the target list.
     #[must_use]
-    pub fn explain_info(&self, ignore_suffix: bool) -> String {
+    pub fn explain_info(&self, ctx: &dyn tidb_exprctx::Columns, ignore_suffix: bool) -> String {
         let mut info = String::from("ExchangeType: ");
         info.push_str(match self.exchange_type {
             ExchangeType::PassThrough => "PassThrough",
@@ -2202,7 +2202,7 @@ impl PhysicalExchangeSender {
         if self.exchange_type == ExchangeType::Hash {
             info.push_str(", Hash Cols: ");
             info.push_str(&String::from_utf8_lossy(
-                &tidb_planner_property::explain_column_list(&self.hash_cols),
+                &tidb_planner_property::explain_column_list(ctx, &self.hash_cols),
             ));
         }
         let stream_count = self.base.tiflash_fine_grained_shuffle_stream_count;

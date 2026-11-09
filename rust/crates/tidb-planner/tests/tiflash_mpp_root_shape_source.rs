@@ -76,8 +76,8 @@ fn passthrough_sender_explain_matches_go() {
     let Some(PhysicalPlan::ExchangeSender(sender)) = reader.table_plan.as_deref() else {
         panic!("the sender hangs off TablePlan");
     };
-    assert_eq!(sender.explain_info(false), "ExchangeType: PassThrough");
-    assert_eq!(sender.explain_info(true), "ExchangeType: PassThrough");
+    assert_eq!(sender.explain_info(&tidb_exprctx::NoColumns, false), "ExchangeType: PassThrough");
+    assert_eq!(sender.explain_info(&tidb_exprctx::NoColumns, true), "ExchangeType: PassThrough");
 }
 
 #[test]
@@ -96,6 +96,6 @@ fn hash_sender_explain_lists_hash_columns_like_go() {
     sender.hash_cols = vec![tidb_planner_property::MppPartitionColumn::new(
         7, -1,
     )];
-    let rendered = sender.explain_info(false);
+    let rendered = sender.explain_info(&tidb_exprctx::NoColumns, false);
     assert!(rendered.starts_with("ExchangeType: HashPartition, Hash Cols: "));
 }

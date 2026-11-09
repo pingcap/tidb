@@ -69,7 +69,12 @@ the unistore stack.
   warnings are Go's to the id (`mpp_three_stage_multi_distinct_expand_explains_like_go`)
   and its fragments' `ToPB` Go's to the byte, as are the join and window
   fragments' executor ids now (`mpp_fragment_to_pb_is_gos_to_the_byte`, Go
-  probe `zzprobe/mppexpand`). Left: (e).
+  probe `zzprobe/mppexpand`). (e) done 2026-11-10: the store's
+  `buildExpand` / `expandExec`; Go `TestMPPMultiDistinct3Stage` (plans,
+  warnings and results over its recorded output) passes. Go's test never
+  splits its table: testkit `MustExec` closes the `SPLIT TABLE` result set
+  without `Next`, and the split runs in `Next`. A plan_tree explain renders
+  the exchange's hash columns through `Column.StringWithCtx` as Go does.
 - [ ] Milestone 2: Go `fragment.go` (`Fragment`, `GenerateRootMPPTasks`,
   `mppTaskGenerator`: fragments, union-all untwisting, CTE task counts,
   `constructMPPTasksImpl` over `MPPClient.ConstructMPPTasks`, partition
@@ -142,7 +147,8 @@ the unistore stack.
   `TestJoinRace`, `TestInjectExtraProj`, `TestMppEnum`, `TestMppUnionAll`
   (less its task-count failpoint), `TestUnionWithEmptyDualTable`,
   `TestAvgOverflow` and `TestMppApply` pass on mock TiFlash stores
-  (`unistore_cop/mpp_execution.rs`); the builder's interim local
+  (`unistore_cop/mpp_execution.rs`), and so does the enforcempp casetest
+  `TestMPPMultiDistinct3Stage`; the builder's interim local
   ExchangeSender / ExchangeReceiver arms are gone (Go has none). Left: the coordinator
   manager (`mppcoordmanager`, task-status reports), zone helper, virtual
   columns over the gather, and retiring the single-fragment path

@@ -531,3 +531,84 @@ fn test_tiflash_empty_dynamic_prune_result() {
     check(&mut session, "select /*+ read_from_storage(tiflash[t2]) */  * from IDT_RP24833 partition(p2) t2 where t2. col1 <= -8448770111093677011;", &[]);
     check(&mut session, "select /*+ read_from_storage(tiflash[t1, t2]) */  * from IDT_RP24833 partition(p3, p4) t1 join IDT_RP24833 partition(p2) t2 on t1.col1 = t2.col1 where t1. col1 between -8448770111093677011 and -8448770111093677011 and t2. col1 <= -8448770111093677011;", &[]);
 }
+
+/// Go `TestMPPMultiDistinct3Stage` (`planner/core/casetest/enforcempp`): the
+/// 3-stage multi-distinct plans (Go's `plan_tree` explain, plan ids
+/// normalized as Go's `checkEnforceMPPPlanRows` does) and results over one
+/// mock TiFlash store, against Go's recorded output.
+#[test]
+fn test_mpp_multi_distinct_3_stage() {
+    let (stack, mut session) = tiflash_session(1, 2160);
+    rows(&mut session, "drop table if exists t");
+    rows(&mut session, "create table t(a int, b int, c int, d int);");
+    rows(&mut session, "alter table t set tiflash replica 1");
+    replica_available(&stack, &mut session, "t");
+    rows(&mut session, "set @@session.tidb_opt_enable_three_stage_multi_distinct_agg=1");
+    rows(&mut session, "set @@session.tidb_isolation_read_engines=\"tiflash\";");
+    rows(&mut session, "set @@session.tidb_enforce_mpp=1");
+    rows(&mut session, "set @@session.tidb_allow_mpp=ON;");
+    // Go's `testKit.MustExec("split table t BETWEEN (0) AND (5000) REGIONS
+    // 5;")` closes the statement without `Next`, and `SplitTableRegionExec`
+    // splits only in `Next`: Go's test never splits (a Go probe that drains
+    // the statement splits, and Go then fails "Cannot find region with TiFlash
+    // peer" on the new regions, as this store does).
+    rows(&mut session, "insert into t values(1000, 1000, 1000, 1),(1000, 1000, 1000, 1),(2000, 2000, 2000, 1),(2000, 2000, 2000, 1),(3000, 3000, 3000, 1),(3000, 3000, 3000, 1),(4000, 4000, 4000, 1),(4000, 4000, 4000, 1),(5000, 5000, 5000, 1),(5000, 5000, 5000, 1)");
+
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../../../../../pkg/planner/core/casetest/enforcempp/testdata/enforce_mpp_suite_out.json"
+    ))
+    .unwrap();
+    let cases = fixture
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|section| section["Name"] == "TestMPPMultiDistinct3Stage")
+        .unwrap()["Cases"]
+        .as_array()
+        .unwrap();
+    // Go `normalizeEnforceMPPPlanRows`: every `_<digits>` becomes `_N`.
+    let normalize = |row: &str| {
+        let mut out = String::with_capacity(row.len());
+        let mut chars = row.chars().peekable();
+        while let Some(c) = chars.next() {
+            out.push(c);
+            if c == '_' && chars.peek().is_some_and(char::is_ascii_digit) {
+                out.push('N');
+                while chars.peek().is_some_and(char::is_ascii_digit) {
+                    chars.next();
+                }
+            }
+        }
+        out
+    };
+    let mut mismatches = Vec::new();
+    for case in cases {
+        let sql = case["SQL"].as_str().unwrap();
+        let is_explain = sql.to_lowercase().trim().starts_with("explain");
+        // Go `ConvertRowsToStrings`: a row's cells joined by a space, NULL
+        // printed as `<nil>`.
+        let got: Vec<String> = displayed(rows(&mut session, sql))
+            .into_iter()
+            .map(|row| row.into_iter().map(|cell| if cell == "NULL" { "<nil>".to_owned() } else { cell }).collect::<Vec<_>>().join(" "))
+            .map(|row| if is_explain { normalize(&row) } else { row })
+            .collect();
+        let want: Vec<String> = case["Plan"]
+            .as_array()
+            .map(|plan| plan.iter().map(|row| row.as_str().unwrap().to_owned()).collect::<Vec<String>>())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|row: String| if is_explain { normalize(&row) } else { row })
+            .collect();
+        // Go `ConvertSQLWarnToStrings` of the statement's warnings.
+        let got_warn: Vec<String> =
+            displayed(rows(&mut session, "show warnings")).into_iter().map(|row| row[2].clone()).collect();
+        let want_warn: Vec<String> = case["Warn"]
+            .as_array()
+            .map(|warn| warn.iter().map(|w| w.as_str().unwrap().to_owned()).collect())
+            .unwrap_or_default();
+        if got != want || got_warn != want_warn {
+            mismatches.push(format!("{sql}\ngot:  {got:#?}\nwant: {want:#?}\ngot warnings:  {got_warn:?}\nwant warnings: {want_warn:?}"));
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
+}

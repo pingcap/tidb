@@ -19,4 +19,5 @@ tidb-size = { path = "../tidb-size" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-expr = { path = "../tidb-expr" }
+tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-funcdep = { path = "../tidb-funcdep" }

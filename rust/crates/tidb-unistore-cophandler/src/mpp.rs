@@ -20,9 +20,8 @@
 //!
 //! * `extractKVRanges` validates and orders the request ranges; the store
 //!   reader carries no region bounds to clip them to.
-//! * `buildIndexLookUp`, `buildMPPJoin`, `buildMPPExchangeSender`,
-//!   `buildMPPExchangeReceiver` and `buildExpand` refuse by name: they need
-//!   region-located extra readers or an MPP task (`HandleMPPDAGReq`).
+//! * `buildIndexLookUp` refuses by name: it needs region-located extra
+//!   readers.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -35,10 +34,10 @@ use tidb_unistore_dbreader::DbReader;
 
 use crate::eval_context::RequestEvalContext;
 use crate::mpp_exec::{
-    AggExec, BaseMppExec, ExecDetail, IndexScanExec, LimitExec, MppExec, ProjExec, RangeCounts,
+    AggExec, BaseMppExec, ExecDetail, ExpandExec, IndexScanExec, LimitExec, MppExec, ProjExec, RangeCounts,
     SelExec, SharedPaging, TableRowDecoder, TableScanExec, TopNExec,
 };
-use crate::{convert_expr_with_context, field_type_from_pb_column, RegionAggregator, TopNSpec};
+use crate::{convert_expr_with_context, field_type_from_pb_column, RegionAggregator, SimpleExpr, TopNSpec};
 
 /// Go `ErrExecutorNotSupportedMsg`.
 pub(crate) const ERR_EXECUTOR_NOT_SUPPORTED_MSG: &str = "executor not supported: ";
@@ -223,6 +222,64 @@ impl<'a> MppExecBuilder<'a> {
         Ok(LimitExec {
             base: self.base(vec![child], field_types),
             limit: pb.limit(),
+        })
+    }
+
+    /// Go `buildExpand`.
+    fn build_expand(&mut self, pb: &tipb::Expand) -> Result<ExpandExec<'a>, String> {
+        let child = self.build_mpp_executor(body(pb.child.as_deref(), "expand child")?)?;
+        let ctx = self.child_ctx(child.as_ref());
+        let child_field_types = child.get_field_types().to_vec();
+        // convert the grouping sets.
+        let mut tidb_gss = Vec::with_capacity(pb.grouping_sets.len());
+        for gs in &pb.grouping_sets {
+            let mut tidb_gs = Vec::with_capacity(gs.grouping_exprs.len());
+            for grouping_exprs in &gs.grouping_exprs {
+                let tidb_grouping_exprs = grouping_exprs
+                    .grouping_expr
+                    .iter()
+                    .map(|pb_expr| convert_expr_with_context(pb_expr, &ctx))
+                    .collect::<Result<Vec<_>, _>>()?;
+                tidb_gs.push(tidb_grouping_exprs);
+            }
+            tidb_gss.push(tidb_gs);
+        }
+        let mut in_grouping_set_map = std::collections::HashSet::new();
+        for gs in &tidb_gss {
+            // for every grouping set, collect column offsets under this grouping set.
+            for grouping_exprs in gs {
+                for grouping_expr in grouping_exprs {
+                    let SimpleExpr::Column(index) = grouping_expr else {
+                        return Err("grouping set expr is not column ref".to_owned());
+                    };
+                    in_grouping_set_map.insert(*index);
+                }
+            }
+        }
+        // change the field types return from children tobe nullable.
+        let mut mutated_field_types: Vec<FieldType> = child_field_types
+            .iter()
+            .enumerate()
+            .map(|(offset, f)| {
+                let mut cf = f.clone();
+                if in_grouping_set_map.contains(&offset) {
+                    // remove the not null flag, make it nullable.
+                    cf.del_flag(tidb_datatype::FieldTypeFlags::NOT_NULL);
+                }
+                cf
+            })
+            .collect();
+        // adding groupingID uint64|not-null as last one field types.
+        let mut grouping_id_field_type = FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+        grouping_id_field_type.set_flag(tidb_datatype::FieldTypeFlags::NOT_NULL | tidb_datatype::FieldTypeFlags::UNSIGNED);
+        mutated_field_types.push(grouping_id_field_type);
+        Ok(ExpandExec {
+            base: self.base(vec![child], mutated_field_types),
+            last_num: 0,
+            last_chunk: None,
+            grouping_sets: tidb_gss,
+            grouping_set_offset_map: Vec::new(),
+            grouping_set_scope: std::collections::HashSet::new(),
         })
     }
 
@@ -465,7 +522,8 @@ impl<'a> MppExecBuilder<'a> {
                 let join = body(exec.join.as_ref(), "join")?;
                 Box::new(self.build_mpp_join(join, &join.children)?)
             }
-            tipb::ExecType::TypeIndexLookUp | tipb::ExecType::TypeExpand => {
+            tipb::ExecType::TypeExpand => Box::new(self.build_expand(body(exec.expand.as_deref(), "expand")?)?),
+            tipb::ExecType::TypeIndexLookUp => {
                 return Err(format!("the {tp:?} executor is a later course of this port"))
             }
             _ => return Err(format!("{ERR_EXECUTOR_NOT_SUPPORTED_MSG}{tp:?}")),

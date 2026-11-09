@@ -38,7 +38,7 @@
 //!   builders refuse by name (`mpp.rs`).
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -1013,6 +1013,122 @@ impl<'a> MppExec<'a> for LimitExec<'a> {
         }
         self.base.exec_summary.update_only_rows(chk.len());
         Ok(Some(chk))
+    }
+}
+
+/// Go `expandExec`: the basic mock logic for the expand executor, which
+/// replicates each child row once per grouping set.
+pub(crate) struct ExpandExec<'a> {
+    pub(crate) base: BaseMppExec<'a>,
+    pub(crate) last_num: usize,
+    pub(crate) last_chunk: Option<Chunk>,
+    /// Go `groupingSets`: per grouping set, its grouping expressions.
+    pub(crate) grouping_sets: Vec<Vec<Vec<SimpleExpr>>>,
+    pub(crate) grouping_set_offset_map: Vec<HashSet<usize>>,
+    pub(crate) grouping_set_scope: HashSet<usize>,
+}
+
+impl ExpandExec<'_> {
+    fn is_grouping_col(&self, index: usize) -> bool {
+        self.grouping_set_scope.contains(&index)
+    }
+
+    /// Go `expression.GroupingSets.IsEmpty`.
+    fn grouping_sets_is_empty(&self) -> bool {
+        self.grouping_sets.iter().all(|gs| gs.iter().all(Vec::is_empty))
+    }
+}
+
+impl<'a> MppExec<'a> for ExpandExec<'a> {
+    fn base(&self) -> &BaseMppExec<'a> {
+        &self.base
+    }
+
+    fn base_mut(&mut self) -> &mut BaseMppExec<'a> {
+        &mut self.base
+    }
+
+    fn open(&mut self) -> Result<(), MppExecError> {
+        self.base.children[0].open()?;
+        // building the quick finding map
+        self.grouping_set_offset_map = Vec::with_capacity(self.grouping_sets.len());
+        self.grouping_set_scope = HashSet::with_capacity(self.grouping_sets.len());
+        for gs in &self.grouping_sets {
+            let mut tmp = HashSet::with_capacity(gs.len());
+            // for every grouping set, collect column offsets under this grouping set.
+            for grouping_exprs in gs {
+                for grouping_expr in grouping_exprs {
+                    let SimpleExpr::Column(index) = grouping_expr else {
+                        return Err(MppExecError::Other("grouping set expr is not column ref".to_owned()));
+                    };
+                    tmp.insert(*index);
+                    self.grouping_set_scope.insert(*index);
+                }
+            }
+            self.grouping_set_offset_map.push(tmp);
+        }
+        Ok(())
+    }
+
+    /// Go `expandExec.next`.
+    fn next(&mut self) -> Result<Option<Chunk>, MppExecError> {
+        if self.grouping_sets_is_empty() {
+            return self.base.children[0].next();
+        }
+        let mut res_chk: Chunk = Vec::with_capacity(DEFAULT_BATCH_SIZE);
+        loop {
+            if self.last_chunk.as_ref().is_none_or(|chk| chk.len() == self.last_num) {
+                // fetch one chunk from children.
+                self.last_chunk = self.base.children[0].next()?;
+                self.last_num = 0;
+                match &self.last_chunk {
+                    Some(chk) if !chk.is_empty() => {
+                        let rows = chk.len();
+                        self.base.exec_summary.update_only_rows(rows);
+                    }
+                    _ => break,
+                }
+            }
+            let last_chunk = self.last_chunk.take().expect("a fetched chunk");
+            let num_rows = last_chunk.len();
+            let num_grouping_offset = self.grouping_sets.len();
+            let num_fields = self.base.field_types.len();
+
+            let mut full = false;
+            for row in &last_chunk[self.last_num..num_rows] {
+                self.last_num += 1;
+                // for every grouping set, expand the base row N times.
+                for g in 0..num_grouping_offset {
+                    let mut repeat_row = Vec::with_capacity(num_fields);
+                    // for every targeted grouping set:
+                    // 1: for every column in this grouping set, setting them as it was.
+                    // 2: for every column in other target grouping set, setting them as null.
+                    // 3: for every column not in any grouping set, setting them as it was.
+                    for datum_offset in 0..num_fields - 1 {
+                        if self.grouping_set_offset_map[g].contains(&datum_offset) || !self.is_grouping_col(datum_offset)
+                        {
+                            repeat_row.push(row[datum_offset].clone());
+                        } else {
+                            repeat_row.push(Datum::Null);
+                        }
+                    }
+                    // the last one column should be groupingID col.
+                    let grouping_id = g as i64 + 1;
+                    repeat_row.push(Datum::Int(grouping_id));
+                    res_chk.push(repeat_row);
+                }
+                if DEFAULT_BATCH_SIZE.saturating_sub(res_chk.len()) < num_grouping_offset {
+                    // no enough room for another repeated N rows, return this chunk immediately.
+                    full = true;
+                    break;
+                }
+            }
+            self.last_chunk = Some(last_chunk);
+            if full {
+                return Ok(Some(res_chk));
+            }
+        }
+        Ok(Some(res_chk))
     }
 }
 

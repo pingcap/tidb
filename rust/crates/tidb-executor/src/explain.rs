@@ -1597,7 +1597,7 @@ fn physical_operator_own_info(
         PhysicalPlan::LocalIndexLookUp(lookup) => {
             format!("index handle offsets:{:?}", lookup.index_handle_offsets)
         }
-        PhysicalPlan::ExchangeSender(sender) => sender.explain_info(ignore_explain_id_suffix),
+        PhysicalPlan::ExchangeSender(sender) => sender.explain_info(eval_ctx, ignore_explain_id_suffix),
         PhysicalPlan::ExchangeReceiver(receiver) => receiver.explain_info(),
         PhysicalPlan::PointGet(point) => {
             let common_handle = catalog
