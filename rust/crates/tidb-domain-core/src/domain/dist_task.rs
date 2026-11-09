@@ -136,15 +136,24 @@ impl Domain {
             node_res,
         );
 
-        if let Err(err) = executor_manager.init_meta() {
+        // Go runs `InitMeta` on the bootstrap goroutine, whose stack grows: its
+        // SQL outgrows a main thread's stack, so it runs on a SQL worker.
+        let init_meta = {
+            let executor_manager = Arc::clone(&executor_manager);
+            tidb_worker_stack::sql_worker_thread("dxf-init-meta")
+                .spawn(move || executor_manager.init_meta())
+                .map_err(|err| err.to_string())?
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+        };
+        if let Err(err) = init_meta {
             // executor manager loop will try to recover meta repeatedly, so we can
             // just log the error here.
             tidb_logutil::bg_logger().warn("init task executor manager meta failed", &[str_field("error", err.to_string())]);
         }
         let (exit_tx, exit_rx) = crossbeam_channel::bounded::<()>(0);
         let domain = Arc::clone(self);
-        let handle = std::thread::Builder::new()
-            .name("distTaskFrameworkLoop".to_owned())
+        let handle = tidb_worker_stack::sql_worker_thread("distTaskFrameworkLoop")
             .spawn(move || {
                 domain.dist_task_framework_loop(&exit_rx, task_manager, &executor_manager, &server_id, node_res);
                 tidb_dxf_storage::set_task_manager(None);
