@@ -9976,8 +9976,13 @@ fn an_index_joins_inner_lookups_register_their_stats_per_task_like_go() {
     };
     assert!(row("IndexJoin_12")[5].contains("task:7,"), "{rows:?}");
     let lookup = row("IndexLookUp_29(Probe)");
+    // A reader per task: Go's basic stats in their merged form.
+    assert!(lookup[5].contains("total_open:") && lookup[5].contains("loops:9,"), "{rows:?}");
     assert!(lookup[5].contains("index_task: {") && lookup[5].contains("num: 2, concurrency: 5}"), "{rows:?}");
+    assert!(lookup[5].contains(", next: {wait_index: "), "{rows:?}");
     assert!(row("TableRowIDScan_27(Probe)")[5].contains("loops:4,"), "{rows:?}");
+    // Each task's index worker reads until its stream's end: Go's 11 loops.
+    assert!(row("Selection_28(Build)")[5].contains("loops:11,"), "{rows:?}");
     assert_eq!(row_text(session.run(sql)).len(), 50);
 }
 

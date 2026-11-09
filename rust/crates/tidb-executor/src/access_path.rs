@@ -5654,6 +5654,9 @@ struct InnerIndexLookUp {
     /// The current task's reader's stats (Go `e.stats`), registered when it
     /// closes.
     stats: Option<crate::index_lookup_stats::IndexLookUpStatsHandle>,
+    /// Whether the task's index stream answered its end: Go's index worker
+    /// then leaves its `fetchHandles` loop and reads no more.
+    index_done: bool,
 }
 
 /// What each inner task's `IndexLookUpExecutor` records its runtime stats
@@ -5939,6 +5942,7 @@ impl IndexJoinLookupExec {
             inner.index_worker = Some(index_worker);
             inner.batch = inner.initial_batch;
             inner.pending = None;
+            inner.index_done = false;
         }
         self.open_remote_index_handles()
     }
@@ -5957,6 +5961,7 @@ impl IndexJoinLookupExec {
             pending: None,
             stats_config: None,
             stats: None,
+            index_done: false,
         });
     }
 
@@ -5982,6 +5987,9 @@ impl IndexJoinLookupExec {
         let (Some(inner), Some(remote)) = (self.inner_lookup.as_mut(), self.remote_handles.as_mut()) else {
             return Ok(Vec::new());
         };
+        if inner.index_done {
+            return Ok(Vec::new());
+        }
         let started = std::time::Instant::now();
         let handles = remote
             .next_handle_batch(inner.batch, max_chunk_size)
@@ -6000,6 +6008,7 @@ impl IndexJoinLookupExec {
                 }
             }
         }
+        inner.index_done = handles.is_empty();
         if handles.len() >= inner.batch {
             inner.batch = inner.batch.saturating_mul(2).min(inner.max_batch);
         }
@@ -7165,10 +7174,20 @@ impl IndexJoinLookupExec {
                         // Go's index worker cuts the next task as soon as it
                         // hands this one off, so the response it drains is
                         // released before the table worker charges this one.
+                        let index_wait = std::time::Instant::now();
                         handles = match self.inner_lookup.as_mut().and_then(|inner| inner.pending.take()) {
                             Some(pending) => pending,
                             None => self.cut_inner_task()?,
                         };
+                        // Go `IndexLookUpExecutor.Next`'s wait for the index
+                        // worker's task.
+                        if let Some(stats) = self.inner_lookup.as_ref().and_then(|inner| inner.stats.as_ref()) {
+                            stats.stats.record_next_wait(
+                                index_wait.elapsed(),
+                                std::time::Duration::ZERO,
+                                std::time::Duration::ZERO,
+                            );
+                        }
                         if !handles.is_empty() {
                             let next = self.cut_inner_task()?;
                             if let Some(inner) = self.inner_lookup.as_mut() {
@@ -7209,8 +7228,14 @@ impl IndexJoinLookupExec {
                         )?
                         .into_iter()
                         .unzip();
-                    // Go's table worker records each task it executes.
+                    // Go's table worker records each task it executes, and
+                    // `Next` its wait for the task's rows.
                     if let Some(stats) = self.inner_lookup.as_ref().and_then(|inner| inner.stats.as_ref()) {
+                        stats.stats.record_next_wait(
+                            std::time::Duration::ZERO,
+                            std::time::Duration::ZERO,
+                            table_task_started.elapsed(),
+                        );
                         stats
                             .table_task_recorder()
                             .record_table_task(table_task_started, self.lookup_rows.len());

@@ -4413,10 +4413,18 @@ impl tidb_executor_join::index_lookup::IndexJoinLookupFork for MeteredIndexJoinL
         >,
         crate::ExecError,
     > {
-        Ok(self.inner.open(probes)?.map(|inner| {
+        // Go's task reader is a new executor: its own basic stats under the
+        // plan (`initNewExecutorStats`, so tasks after the first make them
+        // `total_`). Go opens it directly, so no open time is recorded.
+        let opened = self.inner.open(probes)?;
+        let runtime_stats = self
+            .runtime_stats
+            .as_ref()
+            .map(|stats| IndexJoinInnerStats::new(Arc::clone(&stats.source), stats.plan_id));
+        Ok(opened.map(|inner| {
             Box::new(MeteredIndexJoinLookup {
                 inner,
-                runtime_stats: self.runtime_stats.clone(),
+                runtime_stats,
                 ruv2: self.ruv2.clone(),
             }) as Box<dyn tidb_executor_join::index_lookup::IndexJoinLookup>
         }))
