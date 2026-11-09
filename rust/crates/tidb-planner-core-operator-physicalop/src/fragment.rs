@@ -74,6 +74,101 @@ impl Fragment {
     }
 }
 
+/// Go `untwistPlanAndRemoveUnionAll`: removes every union-all by copying
+/// the plans above it, so each route from the root sink to a leaf (a table
+/// scan or a receiver) becomes its own tree, and so its own fragment. For
+/// `select c1 from t union all select c1 from s` the forest is
+/// `ExchangeSender -> Projection -> TableScan(t)` and
+/// `ExchangeSender -> Projection -> TableScan(s)`.
+///
+/// # Errors
+/// A node with no route to a leaf, or a CTE producer, which this port's MPP
+/// plans do not carry yet.
+pub fn untwist_plan_and_remove_union_all<'a>(
+    stack: &mut Vec<&'a PhysicalPlan>,
+    forest: &mut Vec<PhysicalPlan>,
+) -> Result<(), PlanError> {
+    let cur = *stack.last().expect("the stack holds the route");
+    match cur {
+        // This should be the leaf node.
+        PhysicalPlan::TableScan(_) | PhysicalPlan::ExchangeReceiver(_) => {
+            // Go clones the route top-down, each node a copy whose single
+            // child (a join's probe side) is the next one; built bottom-up
+            // here. A leaf and a join keep their other children's copies.
+            let mut p = cur.clone();
+            for node in stack[..stack.len() - 1].iter().rev() {
+                if matches!(node, PhysicalPlan::UnionAll(_) | PhysicalPlan::Sequence(_)) {
+                    continue;
+                }
+                p = if let Some(inner_child_idx) = node.inner_child_idx().filter(|_| matches!(node, PhysicalPlan::HashJoin(_))) {
+                    let mut join = (*node).clone();
+                    let mut children = join.base_mut().take_children();
+                    children[1 - inner_child_idx] = p;
+                    join.base_mut().set_children(children);
+                    join
+                } else {
+                    let mut ch = node.clone_shallow();
+                    ch.base_mut().set_children(vec![p]);
+                    ch
+                };
+            }
+            if !matches!(p, PhysicalPlan::ExchangeSender(_)) {
+                return Err(PlanError::internal(format!("unexpected sink plan {}", p.explain_id(false))));
+            }
+            forest.push(p);
+        }
+        PhysicalPlan::HashJoin(join) => {
+            stack.push(&cur.children()[1 - join.inner_child_idx]);
+            let result = untwist_plan_and_remove_union_all(stack, forest);
+            stack.pop();
+            return result;
+        }
+        PhysicalPlan::UnionAll(_) => {
+            for ch in cur.children() {
+                stack.push(ch);
+                let result = untwist_plan_and_remove_union_all(stack, forest);
+                stack.pop();
+                result?;
+            }
+        }
+        PhysicalPlan::Sequence(_) | PhysicalPlan::CTE(_) => {
+            // Go's CTE producers and readers (`CTEGroups`, `PhysicalCTESink`,
+            // `PhysicalCTESource`) come with the MPP CTE operators.
+            return Err(PlanError::internal(format!(
+                "MPP CTE {} is not supported by this node's fragments yet",
+                cur.explain_id(false)
+            )));
+        }
+        _ => {
+            let [ch] = cur.children() else {
+                return Err(PlanError::internal(format!("unexpected plan {}", cur.explain_id(false))));
+            };
+            stack.push(ch);
+            let result = untwist_plan_and_remove_union_all(stack, forest);
+            stack.pop();
+            return result;
+        }
+    }
+    Ok(())
+}
+
+/// Go `mppTaskGenerator.buildFragments`: the fragments of a sink's routes.
+///
+/// # Errors
+/// As [`untwist_plan_and_remove_union_all`] and [`Fragment::init`].
+pub fn build_fragments(s: &PhysicalPlan) -> Result<Vec<Fragment>, PlanError> {
+    let mut forest = Vec::with_capacity(1);
+    untwist_plan_and_remove_union_all(&mut vec![s], &mut forest)?;
+    let mut fragments = Vec::with_capacity(forest.len());
+    for s in forest {
+        let mut f = Fragment::default();
+        f.init(&s)?;
+        f.sink = Some(s);
+        fragments.push(f);
+    }
+    Ok(fragments)
+}
+
 #[cfg(test)]
 mod tests {
     use super::Fragment;
@@ -91,6 +186,73 @@ mod tests {
         let mut base = BasePhysicalPlan::with_id(1, "HashJoin", 0);
         base.set_children(vec![left, right]);
         PhysicalPlan::HashJoin(PhysicalHashJoin { base, ..PhysicalHashJoin::default() })
+    }
+
+    fn node(id: i32, tp: &str, children: Vec<PhysicalPlan>) -> crate::BasePhysicalPlan {
+        let mut base = BasePhysicalPlan::with_id(id, tp, 0);
+        base.set_children(children);
+        base
+    }
+
+    fn scan(id: i32) -> PhysicalPlan {
+        PhysicalPlan::TableScan(crate::PhysicalTableScan { base: node(id, "TableScan", vec![]), ..Default::default() })
+    }
+
+    fn ids(plan: &PhysicalPlan) -> String {
+        let children: Vec<String> = plan.children().iter().map(ids).collect();
+        if children.is_empty() {
+            plan.explain_id(false)
+        } else {
+            format!("{}({})", plan.explain_id(false), children.join(","))
+        }
+    }
+
+    /// Go `untwistPlanAndRemoveUnionAll`'s documented example: each route
+    /// through the union becomes its own sink tree.
+    #[test]
+    fn untwist_copies_the_plans_above_a_union_all() {
+        let union = PhysicalPlan::UnionAll(crate::PhysicalUnionAll { base: node(3, "Union", vec![scan(4), scan(5)]), mpp: true });
+        let projection =
+            PhysicalPlan::Projection(crate::PhysicalProjection { base: node(2, "Projection", vec![union]), ..Default::default() });
+        let sender = PhysicalPlan::ExchangeSender(PhysicalExchangeSender {
+            base: node(1, "ExchangeSender", vec![projection]),
+            ..Default::default()
+        });
+        let fragments = super::build_fragments(&sender).unwrap();
+        let shapes: Vec<String> = fragments.iter().map(|f| ids(f.sink.as_ref().unwrap())).collect();
+        assert_eq!(
+            shapes,
+            ["ExchangeSender_1(Projection_2(TableScan_4))", "ExchangeSender_1(Projection_2(TableScan_5))"]
+        );
+        assert_eq!(fragments[0].table_scan, Some(4));
+        assert_eq!(fragments[1].table_scan, Some(5));
+    }
+
+    /// A hash join's routes go through its probe side; its build side is
+    /// copied whole into each.
+    #[test]
+    fn untwist_follows_a_hash_join_probe_side() {
+        let union = PhysicalPlan::UnionAll(crate::PhysicalUnionAll { base: node(4, "Union", vec![scan(5), scan(6)]), mpp: true });
+        let join = PhysicalPlan::HashJoin(PhysicalHashJoin {
+            base: node(2, "HashJoin", vec![receiver(3, ExchangeType::Broadcast), union]),
+            inner_child_idx: 0,
+            ..Default::default()
+        });
+        let sender = PhysicalPlan::ExchangeSender(PhysicalExchangeSender {
+            base: node(1, "ExchangeSender", vec![join]),
+            ..Default::default()
+        });
+        let fragments = super::build_fragments(&sender).unwrap();
+        let shapes: Vec<String> = fragments.iter().map(|f| ids(f.sink.as_ref().unwrap())).collect();
+        assert_eq!(
+            shapes,
+            [
+                "ExchangeSender_1(HashJoin_2(ExchangeReceiver_3(ExchangeSender_103),TableScan_5))",
+                "ExchangeSender_1(HashJoin_2(ExchangeReceiver_3(ExchangeSender_103),TableScan_6))",
+            ]
+        );
+        assert_eq!(fragments[0].exchange_receivers, [3]);
+        assert!(!fragments[0].singleton());
     }
 
     /// Go `TestFragmentInitSingleton`.
