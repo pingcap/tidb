@@ -75,9 +75,7 @@ func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 			tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(
 				// db, tbl, part, col, is_idx, value, count
 				testkit.Rows("test t  a 0 1 2",
-					"test t  a 0 2 2",
-					"test t  c 0 1 1",
-					"test t  c 0 2 1"))
+					"test t  a 0 2 2"))
 			tk.MustQuery(fmt.Sprintf("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms where table_id = %d", tblID)).Sort().Check(
 				testkit.Rows("0 1 6 1 8 2 1",
 					"0 2 0 0 0 0 0", // column b is not analyzed
@@ -87,8 +85,8 @@ func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 				// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
 				testkit.Rows("test t  a 0 0 3 1 3 5 0",
 					"test t  a 0 1 4 1 6 6 0",
-					"test t  c 0 0 4 1 3 6 0",
-					"test t  c 0 1 7 1 7 9 0"))
+					"test t  c 0 0 5 1 1 5 0",
+					"test t  c 0 1 9 1 6 9 0"))
 		}(val)
 	}
 }

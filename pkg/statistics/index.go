@@ -213,19 +213,27 @@ func (idx *Index) IsAnalyzed() bool {
 	return IsAnalyzed(idx.StatsVer)
 }
 
-// UniqueBySchema returns true if a public, non-prefix, single-column unique
-// index keeps every non-NULL value of the column or index with the given ID
-// distinct.
+// UniqueBySchema returns true if the schema keeps every non-NULL value of the
+// column or index with the given ID distinct: the integer handle column, or a
+// public, non-prefix, single-column unique index or its column.
 func UniqueBySchema(tblInfo *model.TableInfo, isIndex bool, id int64) bool {
 	return uniqueBySchema(tblInfo, isIndex, id, false)
 }
 
-// UniqueByLocalIndex applies UniqueBySchema's checks to local indexes only.
+// UniqueByLocalIndex applies UniqueBySchema's checks but excludes global indexes.
 func UniqueByLocalIndex(tblInfo *model.TableInfo, isIndex bool, id int64) bool {
 	return uniqueBySchema(tblInfo, isIndex, id, true)
 }
 
 func uniqueBySchema(tblInfo *model.TableInfo, isIndex bool, id int64, localOnly bool) bool {
+	// A clustered integer primary key has no entry in tblInfo.Indices.
+	// Check its column separately so ANALYZE uses the row count as its NDV
+	// and skips TopN.
+	if !isIndex && tblInfo.PKIsHandle {
+		if pk := tblInfo.GetPkColInfo(); pk != nil && pk.ID == id {
+			return true
+		}
+	}
 	// Partition statistics can come from different ANALYZE snapshots. With a
 	// global unique index, a value can move to another partition and remain in
 	// the old partition's statistics, so summing their NDVs can count it twice.
