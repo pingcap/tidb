@@ -311,7 +311,15 @@ pub fn new_function_impl(
         ),
         _ => None,
     };
+    // The unary operators' classes (`unaryNotFunctionClass`,
+    // `bitNegFunctionClass`, `unaryMinusFunctionClass`) type their result
+    // from their argument, as the AST rewriter's `Expr::Unary` arm does.
+    let unary_type = match func_args.as_slice() {
+        [arg] => crate::builtin_op::infer_unary_op_type(func_name, arg),
+        _ => None,
+    };
     let ret_type = arithmetic_type
+        .or(unary_type)
         .or_else(|| crate::rewriter::result_type::builtin_return_type(func_name, &func_args))
         .filter(|inferred| {
             inferred.code() != FieldTypeCode::Unspecified
@@ -397,6 +405,15 @@ pub fn new_function_impl(
         if let Some(ret_type) = function.ret_type.as_mut() {
             ret_type.add_flags(FieldTypeFlags::UNSIGNED);
         }
+    }
+    if derived.is_none() {
+        // Go derives every call's collation; with no string argument and a
+        // non-string result `deriveCollation` answers `{CoercibilityNumeric,
+        // ASCII, binary, binary}`. Recorded without touching the result
+        // metadata this path keeps.
+        function.collation.set_coercibility(crate::expr_collation::Coercibility::NUMERIC);
+        function.collation.set_repertoire(crate::expr_collation::Repertoire::ASCII);
+        function.collation.set_charset_and_collation("binary", "binary");
     }
     let mut expr = Expression::ScalarFunction(function);
     if let Some(derived) = &derived {

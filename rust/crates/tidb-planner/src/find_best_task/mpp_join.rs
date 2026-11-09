@@ -417,7 +417,8 @@ fn try_to_get_mpp_hash_join(
     }
 
     let (left_join_keys, right_join_keys, is_null_eq, _) = op.get_join_keys();
-    let mut base = BasePhysicalPlan::new(ctx.allocator, op.base.base.tp(), op.base.base.query_block_offset());
+    // Go `PhysicalHashJoin.Init` stores the physical join's own TP.
+    let mut base = BasePhysicalPlan::new(ctx.allocator, "HashJoin", op.base.base.query_block_offset());
     // An MPP join's cost is heavy; a limit above cannot stop it in time, so
     // the count is not scaled.
     base.base.set_stats(op.base.base.stats_info().cloned());

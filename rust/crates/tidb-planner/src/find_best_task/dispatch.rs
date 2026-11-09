@@ -1202,7 +1202,12 @@ fn exhaust_physical_plans(
                 let physical = match strategy {
                     JoinStrategy::Hash(shape) => {
                         PhysicalPlan::HashJoin(tidb_planner_core_operator_physicalop::PhysicalHashJoin {
-                            base,
+                            base: {
+                                let mut base = base;
+                                // Go's `Init` stores the physical join's own TP.
+                                base.base.set_tp("HashJoin");
+                                base
+                            },
                             concurrency: ctx.hash_join_concurrency,
                             join_type: op.join_type,
                             inner_child_idx: shape.inner_idx,
@@ -1252,7 +1257,12 @@ fn exhaust_physical_plans(
                             );
                         }
                         PhysicalPlan::MergeJoin(tidb_planner_core_operator_physicalop::PhysicalMergeJoin {
-                            base,
+                            base: {
+                                let mut base = base;
+                                // Go's `Init` stores the physical join's own TP.
+                                base.base.set_tp("MergeJoin");
+                                base
+                            },
                             join_type: op.join_type,
                             left_join_keys,
                             right_join_keys,
@@ -1276,7 +1286,16 @@ fn exhaust_physical_plans(
                             (right_columns.clone(), left_columns.clone())
                         };
                         PhysicalPlan::IndexJoin(tidb_planner_core_operator_physicalop::PhysicalIndexJoin {
-                            base,
+                            base: {
+                                let mut base = base;
+                                // Go's `Init` stores the physical join's own TP.
+                                base.base.set_tp(match kind {
+                                    tidb_planner_core_operator_physicalop::IndexJoinKind::IndexJoin => "IndexJoin",
+                                    tidb_planner_core_operator_physicalop::IndexJoinKind::IndexHashJoin => "IndexHashJoin",
+                                    tidb_planner_core_operator_physicalop::IndexJoinKind::IndexMergeJoin => "IndexMergeJoin",
+                                });
+                                base
+                            },
                             join_type: op.join_type,
                             inner_child_idx: 1 - outer_idx,
                             kind,
