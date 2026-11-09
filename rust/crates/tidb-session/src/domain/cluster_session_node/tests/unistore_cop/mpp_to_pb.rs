@@ -444,3 +444,55 @@ fn mpp_three_stage_multi_distinct_expand_explains_like_go() {
         ["Warning|1105|Some grouping sets should be merged", "Warning|1105|Some grouping sets should be merged"]
     );
 }
+
+/// Go `ToPB` of an MPP fragment whose scan reads a virtual column: the scan
+/// carries it (the store answers its default) and `MPPGather` computes it
+/// (Go testkit probe `zzprobe/mppvirtual`; t2 is Go's table 117).
+#[test]
+fn mpp_virtual_column_scan_to_pb_is_gos_to_the_byte() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(434)).expect("session opens");
+    for sql in [
+        "CREATE TABLE test.t2 (a int, b int, c int generated always as (a) virtual)",
+        "ALTER TABLE test.t2 SET HYPO TIFLASH REPLICA 1",
+    ] {
+        session.node_conn().execute_write(sql).expect(sql);
+    }
+    rows(&mut session, "use test");
+    rows(&mut session, "set @@session.tidb_isolation_read_engines=\"tiflash\"");
+    rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
+    let t2: i64 = displayed(rows(
+        &mut session,
+        "select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 't2'",
+    ))[0][0]
+        .parse()
+        .unwrap();
+    let sql = "explain select /*+ hash_agg() */ count(*) from t2 where c > 1";
+    assert_eq!(
+        displayed(rows(&mut session, sql)).into_iter().map(|row| row.join("|")).collect::<Vec<_>>(),
+        [
+            "HashAgg_9|1.00|root||funcs:count(1)->Column#6",
+            "└─Selection_15|3333.33|root||gt(test.t2.c, 1)",
+            "  └─TableReader_14|10000.00|root||MppVersion: 3, data:ExchangeSender_13",
+            "    └─ExchangeSender_13|10000.00|mpp[tiflash]||ExchangeType: PassThrough",
+            "      └─TableFullScan_12|10000.00|mpp[tiflash]|table:t2|keep order:false, stats:pseudo",
+        ]
+    );
+    let plan = session.published_plan().expect("the explain publishes its plan");
+    let reader = find_reader(&plan).expect("a TableReader");
+    let table_plan = reader.table_plan.as_deref().expect("the reader has a table plan");
+    let eval_ctx = tidb_exprctx::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
+    let ctx = BuildPbContext {
+        expr_ctx: &eval_ctx,
+        tiflash_fast_scan: false,
+        tiflash_fine_grained_shuffle_batch_size: 8192,
+        group_concat_max_len: 1024,
+        in_explain_stmt: true,
+        use_dynamic_partition_prune: true,
+    };
+    let got = table_plan.to_pb(&ctx, tidb_kv::store_type::StoreType::TiFlash).expect("ToPB");
+    let mut want = tipb::Executor::decode(decode_hex("0809521145786368616e676553656e6465725f313362ac01080022680800124c087512210803100318c1ffffffffffffffff01200b28003080808004420100a80100b00100121b0801100318c1ffffffffffffffff01200b28003000a80100b001001800280040004800600052105461626c6546756c6c5363616e5f3132880100900100321d08031000180b200028c1ffffffffffffffff01320662696e6172794000321d08031000180b200028c1ffffffffffffffff01320662696e6172794000380088010090018040").as_slice()).unwrap();
+    set_table_ids(&mut want, &[(117, t2)]);
+    let hex = |executor: &tipb::Executor| executor.encode_to_vec().iter().map(|b| format!("{b:02x}")).collect::<String>();
+    assert_eq!(hex(&got), hex(&want), "\ngot:  {got:?}\nwant: {want:?}");
+}

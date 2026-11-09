@@ -206,7 +206,10 @@ pub fn fill_virtual_column_values<S: GeneratedColumnSlot>(
     })
 }
 
-pub(crate) fn cast_virtual_column_value(
+/// Go `FillVirtualColumnValue`'s per-value body: cast the evaluated
+/// value, clip a negative one to zero for an unsigned column, and take the
+/// zero value for a NULL in a NOT NULL column.
+pub fn cast_virtual_column_value(
     value: Datum,
     field_type: &FieldType,
     name: &str,

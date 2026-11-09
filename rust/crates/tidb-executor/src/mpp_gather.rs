@@ -16,11 +16,6 @@
 //! reader's fragments through the local coordinator
 //! ([`crate::local_mpp_coordinator`]) under Go's `ExecutorWithRetry`, and
 //! reads the root tasks' rows.
-//!
-//! # Narrowings, by name
-//!
-//! * Virtual columns (`buildVirtualColumnInfo`, `FillVirtualColumnValue`):
-//!   a gather whose schema has one is refused by name.
 
 use std::sync::Arc;
 
@@ -66,9 +61,53 @@ pub struct MppGather {
     start_ts: u64,
     mpp_query_id: MppQueryId,
     resp_iter: Option<SelectResponseIter>,
+    /// Go `columns`: the single table scan's columns.
+    columns: Vec<tidb_model::GoShared<tidb_model::ColumnInfo>>,
+    /// Go `virtualColumnIndex`.
+    virtual_column_index: Vec<usize>,
+    /// Go `virtualColumnRetFieldTypes`.
+    virtual_column_ret_field_types: Vec<FieldType>,
     /// Go `kvRanges`: what a `UnionScan` above reads the mem buffer with.
     kv_ranges: Vec<KeyRange>,
     exhausted: bool,
+}
+
+/// Go `PhysicalTableReader.GetTableScans`: the table scans below the plan.
+fn get_table_scans<'p>(plan: &'p PhysicalPlan, scans: &mut Vec<&'p tidb_planner_core_operator_physicalop::PhysicalTableScan>) {
+    if let PhysicalPlan::TableScan(scan) = plan {
+        scans.push(scan);
+    }
+    for child in plan.children() {
+        get_table_scans(child, scans);
+    }
+}
+
+/// Go `buildVirtualColumnInfo`: the schema's virtual columns ordered by their
+/// column offsets, and their types.
+fn build_virtual_column_info(
+    schema: &Schema,
+    cols: &[tidb_model::GoShared<tidb_model::ColumnInfo>],
+) -> (Vec<usize>, Vec<FieldType>) {
+    let mut virtual_column_index: Vec<usize> =
+        schema.columns.iter().enumerate().filter(|(_, col)| col.virtual_expr.is_some()).map(|(i, _)| i).collect();
+    // Go `FindColumnInfoByID(cols, schema.Columns[i].ID).Offset`.
+    let offset = |i: usize| {
+        cols.iter()
+            .map(|col| col.read())
+            .find(|col| col.id == schema.columns[i].id)
+            .map_or(0, |col| col.offset)
+    };
+    virtual_column_index.sort_by_key(|i| offset(*i));
+    let ret_types = virtual_column_index
+        .iter()
+        .map(|idx| {
+            schema.columns[*idx]
+                .ret_type
+                .clone()
+                .unwrap_or_else(|| FieldType::new(tidb_datatype::FieldTypeCode::Null))
+        })
+        .collect();
+    (virtual_column_index, ret_types)
 }
 
 impl MppGather {
@@ -102,11 +141,28 @@ impl MppGather {
             .columns
             .iter()
             .any(|col| col.virtual_expr.is_some());
-        if has_virtual_col {
-            return Err(ExecError::Internal(
-                "tiflash mpp: virtual columns over an MPP gather are not ported yet".into(),
-            ));
-        }
+        let mut table_scans = Vec::new();
+        get_table_scans(&original_plan, &mut table_scans);
+        // 1. hasVirtualCol: when got virtual column in TableScan, there will be
+        //    no other operators in the MPP fragment.
+        // 2. UnionScan: there won't be any operators like Join between UnionScan
+        //    and TableScan.
+        let (columns, virtual_column_index, virtual_column_ret_field_types) = if table_scans.len() == 1 {
+            let columns = table_scans[0].columns.clone();
+            let (index, ret_types) = if has_virtual_col {
+                build_virtual_column_info(meta.schema(), &columns)
+            } else {
+                (Vec::new(), Vec::new())
+            };
+            (columns, index, ret_types)
+        } else {
+            if has_virtual_col {
+                return Err(ExecError::internal(format!(
+                    "should only have one TableScan in MPP fragment(hasVirtualCol: {has_virtual_col}, encounterUnionScan: false)"
+                )));
+            }
+            (Vec::new(), Vec::new(), Vec::new())
+        };
         // Go `b.getSnapshotTS()`.
         let start_ts = ctx.txn_store().map_or(0, |store| store.start_ts());
         let statement = crate::remote_scan::pushdown_statement_context(ctx);
@@ -120,6 +176,9 @@ impl MppGather {
             start_ts,
             mpp_query_id,
             resp_iter: None,
+            columns,
+            virtual_column_index,
+            virtual_column_ret_field_types,
             kv_ranges: Vec::new(),
             exhausted: false,
         })
@@ -129,6 +188,41 @@ impl MppGather {
     #[must_use]
     pub fn kv_ranges(&self) -> &[KeyRange] {
         &self.kv_ranges
+    }
+}
+
+impl MppGather {
+    /// Go `table.FillVirtualColumnValue` over the gather's virtual columns.
+    fn fill_virtual_column_value(&self, req: &mut Chunk) -> Result<(), ExecError> {
+        if self.virtual_column_index.is_empty() {
+            return Ok(());
+        }
+        let mut vir_cols = Chunk::new_chunk_with_capacity(&self.virtual_column_ret_field_types, req.capacity());
+        let flags = tidb_exprctx::Columns::type_flags(&self.ctx);
+        for (i, &idx) in self.virtual_column_index.iter().enumerate() {
+            let exp_col = &self.meta.schema().columns[idx];
+            let virtual_expr = exp_col
+                .virtual_expr
+                .as_ref()
+                .ok_or_else(|| ExecError::internal("mpp gather: virtual column has no generating expression"))?;
+            let col_info = self.columns[idx].read();
+            for row_idx in 0..req.num_rows() {
+                let datum = virtual_expr.eval(&self.ctx, req.get_row(row_idx))?;
+                // Because the expression might return different type from
+                // the generated column, we should wrap a CAST on the result.
+                let cast_datum = tidb_table::generated_column::cast_virtual_column_value(
+                    datum,
+                    &col_info.field_type,
+                    col_info.name.original(),
+                    &self.ctx,
+                    flags,
+                )
+                .map_err(|error| ExecError::Mysql(error.to_mysql_error()))?;
+                vir_cols.append_datum(i, &cast_datum);
+            }
+            req.set_col(idx, vir_cols.column_handle(i));
+        }
+        Ok(())
     }
 }
 
@@ -241,7 +335,7 @@ impl Executor for MppGather {
                 return Ok(());
             }
             if req.num_rows() > 0 {
-                return Ok(());
+                return self.fill_virtual_column_value(req);
             }
         }
     }

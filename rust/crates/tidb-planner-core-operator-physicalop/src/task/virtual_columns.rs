@@ -39,6 +39,10 @@ pub(super) fn expand(plan: &mut PhysicalPlan) -> Result<(), PlanError> {
                     && column.id != tidb_model::column::EXTRA_PHYS_TBL_ID
             })
             .map_or(0, |position| position + 1);
+        // Go `ts.Columns` follows the schema: each dependency also takes its
+        // column info (`FindColumnInfoByID(ts.Table.Columns, baseCol.ID)`).
+        let columns_follow_schema = scan.columns.len() == original_len;
+        let table_columns = scan.table.as_ref().map(|table| table.read().columns.clone());
         for column in dependencies {
             if schema
                 .columns
@@ -46,6 +50,14 @@ pub(super) fn expand(plan: &mut PhysicalPlan) -> Result<(), PlanError> {
                 .any(|existing| existing.unique_id == column.unique_id)
             {
                 continue;
+            }
+            if columns_follow_schema {
+                if let Some(info) = table_columns
+                    .as_ref()
+                    .and_then(|cols| tidb_model::column::find_column_info_by_id(cols, column.id))
+                {
+                    scan.columns.insert(insert_at, info);
+                }
             }
             schema.columns.insert(insert_at, column);
             insert_at += 1;

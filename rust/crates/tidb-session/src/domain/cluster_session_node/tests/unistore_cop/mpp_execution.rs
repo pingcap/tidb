@@ -612,3 +612,37 @@ fn test_mpp_multi_distinct_3_stage() {
     }
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
 }
+
+/// Go `TestTiFlashVirtualColumn`: `MPPGather` computes a virtual column the
+/// TiFlash scan answers by default (`FillVirtualColumnValue`).
+#[test]
+fn test_tiflash_virtual_column() {
+    let (stack, mut session) = tiflash_session(2, 2161);
+    rows(&mut session, "drop table if exists t1,t2,t3");
+    rows(&mut session, "create table t1 (a bit(4), b bit(4), c bit(4) generated always as (a) virtual)");
+    rows(&mut session, "alter table t1 set tiflash replica 1");
+    replica_available(&stack, &mut session, "t1");
+    rows(&mut session, "insert into t1(a,b) values(b'01',b'01'),(b'10',b'10'),(b'11',b'11')");
+
+    rows(&mut session, "create table t2 (a int, b int, c int generated always as (a) virtual)");
+    rows(&mut session, "alter table t2 set tiflash replica 1");
+    replica_available(&stack, &mut session, "t2");
+    rows(&mut session, "insert into t2(a,b) values(1,1),(2,2),(3,3)");
+
+    rows(&mut session, "create table t3 (a bit(4), b bit(4), c bit(4) generated always as (b'01'+b'10') virtual)");
+    rows(&mut session, "alter table t3 set tiflash replica 1");
+    replica_available(&stack, &mut session, "t3");
+    rows(&mut session, "insert into t3(a,b) values(b'01',b'01'),(b'10',b'10'),(b'11',b'11')");
+
+    rows(&mut session, "set @@session.tidb_isolation_read_engines=\"tiflash\"");
+    // unistore does not support later materialization
+    rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
+    rows(&mut session, "set @@session.tidb_allow_mpp=ON");
+    // mock executor does not support use outer table as build side for outer join, so need to
+    // force the inner table as build side
+    rows(&mut session, "set tidb_opt_mpp_outer_join_fixed_build_side=1");
+
+    check(&mut session, "select /*+ hash_agg() */ count(*) from t1 where c > b'01'", &[&["2"]]);
+    check(&mut session, "select /*+ hash_agg() */ count(*) from t2 where c > 1", &[&["2"]]);
+    check(&mut session, "select /*+ hash_agg() */ count(*) from t3 where c > b'01'", &[&["3"]]);
+}

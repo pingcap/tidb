@@ -149,9 +149,12 @@ the unistore stack.
   `TestAvgOverflow` and `TestMppApply` pass on mock TiFlash stores
   (`unistore_cop/mpp_execution.rs`), and so does the enforcempp casetest
   `TestMPPMultiDistinct3Stage`; the builder's interim local
-  ExchangeSender / ExchangeReceiver arms are gone (Go has none). Left: the coordinator
-  manager (`mppcoordmanager`, task-status reports), zone helper, virtual
-  columns over the gather, and retiring the single-fragment path
+  ExchangeSender / ExchangeReceiver arms are gone (Go has none). Virtual
+  columns over the gather are Go's (2026-11-10: `buildVirtualColumnInfo`,
+  `FillVirtualColumnValue`; `ExpandVirtualColumn` now extends the scan's
+  `Columns` with the schema; Go `TestTiFlashVirtualColumn` passes and the
+  fragment's `ToPB` is Go's to the byte). Left: the coordinator
+  manager (`mppcoordmanager`, task-status reports), zone helper, and retiring the single-fragment path
   (`mpp_coordinator.rs`'s `open_mpp_scan`, the builder's interim local
   ExchangeSender / ExchangeReceiver arms).
 - [ ] Milestone 5: Go's `tiflashtest` tests on the unistore stack, and the
