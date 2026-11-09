@@ -34,3 +34,56 @@ pub mod stats;
 pub mod stmtsummary;
 pub mod telemetry;
 pub mod topsql;
+
+/// client_golang's `MetricVec.DeletePartialMatch(labels)`: removes every
+/// series of the vector whose labels include all of `labels`, and returns
+/// how many it removed.
+pub fn delete_partial_match<M: prometheus::core::Metric + Clone, B: prometheus::core::MetricVecBuilder<M = M>>(
+    vec: &prometheus::core::MetricVec<B>,
+    labels: &[(&str, &str)],
+) -> usize {
+    use prometheus::core::Collector as _;
+    let mut removed = 0;
+    for family in vec.collect() {
+        for metric in family.get_metric() {
+            let pairs = metric.get_label();
+            let matches = labels.iter().all(|(name, value)| {
+                pairs.iter().any(|pair| pair.name() == *name && pair.value() == *value)
+            });
+            if !matches {
+                continue;
+            }
+            // A collected series lists its labels by name, not in the
+            // vector's declaration order, so it is removed by name.
+            let series: std::collections::HashMap<&str, &str> =
+                pairs.iter().map(|pair| (pair.name(), pair.value())).collect();
+            if vec.remove(&series).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    removed
+}
+
+#[cfg(test)]
+mod delete_partial_match_tests {
+    use prometheus::{CounterVec, Opts};
+
+    /// client_golang's `DeletePartialMatch` contract: only the series
+    /// carrying the given label values go.
+    #[test]
+    fn delete_partial_match_removes_only_matching_series() {
+        let vec = CounterVec::new(Opts::new("dpm_test", "test"), &["task_id", "event"]).unwrap();
+        vec.with_label_values(&["1", "retry"]).inc();
+        vec.with_label_values(&["1", "cleanup-failed"]).inc();
+        vec.with_label_values(&["2", "retry"]).inc();
+        assert_eq!(super::delete_partial_match(&vec, &[("task_id", "1")]), 2);
+        let remaining: Vec<String> = prometheus::core::Collector::collect(&vec)[0]
+            .get_metric()
+            .iter()
+            .map(|metric| metric.get_label().iter().map(|pair| pair.value().to_owned()).collect::<Vec<_>>().join("/"))
+            .collect();
+        // Collected labels are listed by name: event, then task_id.
+        assert_eq!(remaining, ["retry/2"]);
+    }
+}
