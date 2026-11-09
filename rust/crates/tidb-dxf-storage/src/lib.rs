@@ -204,6 +204,83 @@ pub trait SessionContext: tidb_syssession::SessionContext {
     fn sql_server(&self) -> Arc<dyn tidb_domain_sqlsvrapi::Server<dyn SessionContext>>;
 }
 
+/// Go `Manager`: the task manager's methods the application side uses,
+/// behind an interface to make tests easier.
+pub trait Manager: Send + Sync {
+    /// Go `GetCPUCountOfNode`.
+    ///
+    /// # Errors
+    /// The query failed or no node has resources.
+    fn get_cpu_count_of_node(&self) -> Result<isize>;
+    /// Go `GetTaskByID`.
+    ///
+    /// # Errors
+    /// No such task, or the query failed.
+    fn get_task_by_id(&self, task_id: i64) -> Result<tidb_dxf::Task>;
+    /// Go `ModifyTaskByID`.
+    ///
+    /// # Errors
+    /// See [`TaskManager::modify_task_by_id`].
+    fn modify_task_by_id(&self, task_id: i64, param: &tidb_dxf::ModifyParam) -> Result<()>;
+}
+
+/// Go `SessionExecutor`: runs SQL on a session.
+pub trait SessionExecutor: Send + Sync {
+    /// Go `WithNewSession`: runs `f` with a new session.
+    ///
+    /// # Errors
+    /// The session or `f` failed.
+    fn with_new_session(&self, f: &mut dyn FnMut(&dyn SessionContext) -> Result<()>) -> Result<()>;
+    /// Go `WithNewTxn`: runs `f` in a new transaction.
+    ///
+    /// # Errors
+    /// The transaction or `f` failed.
+    fn with_new_txn(&self, f: &mut dyn FnMut(&dyn SessionContext) -> Result<()>) -> Result<()>;
+}
+
+/// Go `TaskHandle`: the operations a task type's scheduler extension needs
+/// from the scheduler.
+pub trait TaskHandle: SessionExecutor {
+    /// Go `GetPreviousSubtaskMetas`.
+    ///
+    /// # Errors
+    /// The query failed.
+    fn get_previous_subtask_metas(&self, task_id: i64, step: tidb_dxf::Step) -> Result<Vec<Vec<u8>>>;
+    /// Go `GetPreviousSubtaskSummary`.
+    ///
+    /// # Errors
+    /// The query failed.
+    fn get_previous_subtask_summary(
+        &self,
+        task_id: i64,
+        step: tidb_dxf::Step,
+    ) -> Result<Vec<tidb_dxf_execute::SubtaskSummary>>;
+}
+
+impl Manager for TaskManager {
+    fn get_cpu_count_of_node(&self) -> Result<isize> {
+        TaskManager::get_cpu_count_of_node(self)
+    }
+
+    fn get_task_by_id(&self, task_id: i64) -> Result<tidb_dxf::Task> {
+        TaskManager::get_task_by_id(self, task_id)
+    }
+
+    fn modify_task_by_id(&self, task_id: i64, param: &tidb_dxf::ModifyParam) -> Result<()> {
+        TaskManager::modify_task_by_id(self, task_id, param)
+    }
+}
+
+impl SessionExecutor for TaskManager {
+    fn with_new_session(&self, f: &mut dyn FnMut(&dyn SessionContext) -> Result<()>) -> Result<()> {
+        TaskManager::with_new_session(self, f)
+    }
+
+    fn with_new_txn(&self, f: &mut dyn FnMut(&dyn SessionContext) -> Result<()>) -> Result<()> {
+        TaskManager::with_new_txn(self, f)
+    }
+}
+
 /// Go `TaskManager`: the manager of tasks and subtasks.
 pub struct TaskManager {
     se_pool: Arc<dyn tidb_syssession::Pool<dyn SessionContext>>,
