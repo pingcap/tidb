@@ -29665,3 +29665,65 @@ fn a_writes_read_takes_the_distsql_scan_concurrency_like_go() {
     assert_eq!((concurrency(&mut session, read), concurrency(&mut session, write)), ("2".to_owned(), "2".to_owned()));
 }
 
+
+/// Go `exploreEnforcedPlan` (fix control 46177, default on): with it off, a
+/// DataSource whose unenforced best task is valid returns it without pricing
+/// the enforced (sorted) plan, so `TestIssue46177`'s queries keep the
+/// ordered index scan. Expected plans are a Go tidb-server's.
+#[test]
+fn fix_control_46177_off_skips_the_enforced_data_source_plan_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(46177)).expect("session opens");
+    rows(&mut session, "use test");
+    rows(
+        &mut session,
+        "CREATE TABLE sbtest (id int(10) unsigned NOT NULL AUTO_INCREMENT, k int(10) unsigned NOT NULL DEFAULT '0', \
+         c char(120) NOT NULL DEFAULT '', pad char(60) NOT NULL DEFAULT '', \
+         PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */, KEY k (k))",
+    );
+    let window = "explain format='brief' select row_number() over(order by a.k) from (select * from sbtest where id<10) a";
+    let stream_agg = "explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k";
+    let explain = |session: &mut Session, sql: &str| -> Vec<String> {
+        displayed(rows(session, sql)).into_iter().map(|row| row.join("|")).collect()
+    };
+    assert_eq!(
+        explain(&mut session, window),
+        [
+            "Projection|10.00|root||Column#7->Column#8",
+            "└─Window|10.00|root||row_number()->Column#7 over(order by test.sbtest.k rows between current row and current row)",
+            "  └─Sort|10.00|root||test.sbtest.k",
+            "    └─TableReader|10.00|root||data:TableRangeScan",
+            "      └─TableRangeScan|10.00|cop[tikv]|table:sbtest|range:[0,10), keep order:false, stats:pseudo",
+        ]
+    );
+    assert_eq!(
+        explain(&mut session, stream_agg),
+        [
+            "StreamAgg|1.00|root||group by:test.sbtest.k, funcs:count(1)->Column#6",
+            "└─Sort|1.00|root||test.sbtest.k",
+            "  └─TableReader|1.00|root||data:TableRangeScan",
+            "    └─TableRangeScan|1.00|cop[tikv]|table:sbtest|range:[0,1), keep order:false, stats:pseudo",
+        ]
+    );
+    rows(&mut session, "set @@tidb_opt_fix_control='46177:OFF'");
+    assert_eq!(
+        explain(&mut session, window),
+        [
+            "Projection|10.00|root||Column#7->Column#8",
+            "└─Window|10.00|root||row_number()->Column#7 over(order by test.sbtest.k rows between current row and current row)",
+            "  └─IndexReader|10.00|root||index:Selection",
+            "    └─Selection|10.00|cop[tikv]||lt(test.sbtest.id, 10)",
+            "      └─IndexFullScan|10000.00|cop[tikv]|table:sbtest, index:k(k)|keep order:true, stats:pseudo",
+        ]
+    );
+    assert_eq!(
+        explain(&mut session, stream_agg),
+        [
+            "StreamAgg|1.00|root||group by:test.sbtest.k, funcs:count(Column#7)->Column#6",
+            "└─IndexReader|1.00|root||index:StreamAgg",
+            "  └─StreamAgg|1.00|cop[tikv]||group by:test.sbtest.k, funcs:count(1)->Column#7",
+            "    └─Selection|1.00|cop[tikv]||lt(test.sbtest.id, 1)",
+            "      └─IndexFullScan|10000.00|cop[tikv]|table:sbtest, index:k(k)|keep order:true, stats:pseudo",
+        ]
+    );
+}

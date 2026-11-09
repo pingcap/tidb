@@ -277,27 +277,9 @@ fn mpp_aggregation_injects_gos_projection_below_the_aggregate() {
             ],
         ),
     ];
-    // The MPP exploration numbers its plans and columns differently from
-    // Go's (`docs/mpp-execplan.md`); the shape and the operator info are
-    // compared with those numbers blanked.
-    let blank = |line: &str| {
-        let mut out = String::with_capacity(line.len());
-        let mut chars = line.chars().peekable();
-        while let Some(c) = chars.next() {
-            out.push(c);
-            if (c == '_' || c == '#') && chars.peek().is_some_and(char::is_ascii_digit) {
-                out.push('N');
-                while chars.peek().is_some_and(char::is_ascii_digit) {
-                    chars.next();
-                }
-            }
-        }
-        out
-    };
     for (sql, want) in cases {
-        let got: Vec<String> =
-            displayed(rows(&mut session, sql)).into_iter().map(|row| blank(&row.join("|"))).collect();
-        let want: Vec<String> = want.iter().map(|line| blank(line)).collect();
+        let got: Vec<String> = displayed(rows(&mut session, sql)).into_iter().map(|row| row.join("|")).collect();
+        let want: Vec<String> = want.iter().map(|line| (*line).to_owned()).collect();
         assert_eq!(got, want, "{sql}");
     }
 
@@ -310,7 +292,7 @@ fn mpp_aggregation_injects_gos_projection_below_the_aggregate() {
     let sql = "explain select a from t union all select b from s";
     // Go's testkit prints `bigint(20)`; a tidb-server, whose
     // `deprecate-integer-display-length` defaults on, prints `bigint`.
-    let got: Vec<String> = displayed(rows(&mut session, sql)).into_iter().map(|row| blank(&row.join("|"))).collect();
+    let got: Vec<String> = displayed(rows(&mut session, sql)).into_iter().map(|row| row.join("|")).collect();
     let want: Vec<String> = [
         "TableReader_33|20000.00|root||MppVersion: 3, data:ExchangeSender_32",
         "└─ExchangeSender_32|20000.00|mpp[tiflash]||ExchangeType: PassThrough",
@@ -321,7 +303,7 @@ fn mpp_aggregation_injects_gos_projection_below_the_aggregate() {
         "      └─TableFullScan_27|10000.00|mpp[tiflash]|table:s|keep order:false, stats:pseudo",
     ]
     .iter()
-    .map(|line| blank(line))
+    .map(|line| (*line).to_owned())
     .collect();
     assert_eq!(got, want, "{sql}");
 }

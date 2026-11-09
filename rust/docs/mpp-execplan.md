@@ -205,9 +205,13 @@ the unistore stack.
   were one short of Go's in every MPP plan: Go's `convertToTableScan` draws
   the TiFlash scan's id (`getOriginalPhysicalTableScan`) before refusing the
   path under a cop property; the Rust arm now draws it at the same point,
-  and the LIMIT and scalar-aggregate plans are Go's to the id. A grouped MPP
-  aggregate is now one id past Go's (one more TiFlash-path conversion than
-  Go's skyline pruning lets through); those tests still blank the numbers.
+  and the LIMIT and scalar-aggregate plans are Go's to the id. The MPP
+  aggregate plans are Go's to the id too (2026-11-10): Go's DataSource
+  prices the unenforced property by re-entering `findBestTask`, where a
+  required MPP partitioning is invalid before any scan is built (Rust
+  converted the TiFlash scan under it), and Go's `getStreamAggs` refuses an
+  MPP property first (Rust built two stream aggregates under it). Go's
+  `exploreEnforcedPlan` (fix control 46177) is wired as well.
 - 2026-11-10: `inject_extra_projection` skipped a TiFlash reader's table
   plan and the MPP union arm (written when the planner built no MPP plans),
   so an MPP aggregate's `SUM` lacked `WrapCastForAggArgs`' cast and Go's

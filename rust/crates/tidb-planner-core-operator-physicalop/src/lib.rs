@@ -3689,14 +3689,15 @@ pub struct PhysicalStreamAgg {
 }
 
 /// Go `getStreamAggs` (`physical_stream_agg.go:89`): stream aggregates ride
-/// a child order that COVERS the group-by columns. Go's gates, in order: a
-/// mixed-direction property refuses; a Final-mode aggregate refuses; a
-/// group-by that is not all bare columns refuses ("group by a + b is not
-/// interested in any order"); then one candidate per possible child order
-/// that the required property prefixes, per task type — cop-single and
-/// root (a double read cannot promise the order, Go's own comment).
+/// a child order that COVERS the group-by columns. Go's gates, in order: an
+/// MPP (flash) property refuses; a mixed-direction property refuses; a
+/// Final-mode aggregate refuses; a group-by that is not all bare columns
+/// refuses ("group by a + b is not interested in any order"); then one
+/// candidate per possible child order that the required property prefixes,
+/// per task type — cop-single and root (a double read cannot promise the
+/// order, Go's own comment).
 ///
-/// Narrowings by name: the TiFlash arm, `admitIndexJoinProp`/`Types`, the
+/// Narrowings by name: `admitIndexJoinProp`/`Types`, the
 /// distinct push-down gate (`AllowDistinctAggPushDown` defaults OFF, so a
 /// distinct aggregate is root-only), and the `STREAM_AGG`-hint enforced
 /// candidates (`getEnforcedStreamAggs`).
@@ -3708,6 +3709,10 @@ pub fn get_stream_aggs(
     skew_ratio: f64,
     prefer_agg_type: u32,
 ) -> Vec<PhysicalPlan> {
+    // TODO: support CopTiFlash task type in stream agg
+    if prop.is_flash_prop() {
+        return Vec::new();
+    }
     let (all, desc) = prop.all_same_order();
     if !all {
         return Vec::new();

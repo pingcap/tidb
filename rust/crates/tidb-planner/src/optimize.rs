@@ -494,6 +494,10 @@ pub fn physical_optimize<C: OptimizeContext>(
         ctx.optimizer_fix_control()
             .get_bool_with_default(tidb_fixcontrol::FIX_52869, false),
     )
+    .with_explore_enforced_plan(
+        ctx.optimizer_fix_control()
+            .get_bool_with_default(tidb_fixcontrol::FIX_46177, true),
+    )
     .with_mpp_warning_sink(ctx)
     .with_plan_cache(
         tidb_exprctx::Columns::use_plan_cache(ctx),

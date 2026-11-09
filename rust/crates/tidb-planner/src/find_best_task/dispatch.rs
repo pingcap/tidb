@@ -212,6 +212,8 @@ pub struct DispatchContext<'a> {
     /// Go fix control 52869 (default false): `skylinePruning`'s
     /// `preferMerge`.
     pub prefer_index_merge_by_fix_control: bool,
+    /// Go `exploreEnforcedPlan`: fix control 46177, default true.
+    pub explore_enforced_plan: bool,
     /// Go `BaseLogicalPlan.taskMap`, keyed by the logical plan object and
     /// property. Numeric plan IDs are explain identities and are deliberately
     /// shared by static-partition DataSource copies.
@@ -293,6 +295,7 @@ impl<'a> DispatchContext<'a> {
             // Go `tidb_opt_prefer_range_scan` defaults ON.
             prefer_range_scan: true,
             prefer_index_merge_by_fix_control: false,
+            explore_enforced_plan: true,
             task_map: HashMap::new(),
             forced_partial_order_paths: HashSet::new(),
             hint_reset_aggregations: std::cell::RefCell::new(HashSet::new()),
@@ -673,6 +676,13 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub const fn with_prefer_index_merge_by_fix_control(mut self, value: bool) -> Self {
         self.prefer_index_merge_by_fix_control = value;
+        self
+    }
+
+    /// Go fix control 46177, read by `exploreEnforcedPlan`.
+    #[must_use]
+    pub const fn with_explore_enforced_plan(mut self, value: bool) -> Self {
+        self.explore_enforced_plan = value;
         self
     }
 
@@ -2773,44 +2783,52 @@ fn find_best_task_4_logical_data_source(
     prop: &PhysicalProperty,
     ctx: &mut DispatchContext<'_>,
 ) -> Result<Task, PlanError> {
-    // Go `findBestTask4LogicalDataSource` handles `CanAddEnforcer` inside
-    // the DataSource override, before entering the path loop.  First price
-    // a path that satisfies the requested order directly.  Then clear the
-    // order, price the best unordered path, and enforce the original
-    // property above it.  This branch is what makes
-    // `getEnforcedStreamAggs`' sorted child property executable when no
-    // access path naturally provides the group order.
-    //
     // IndexJoinProp takes Go's earlier, dedicated runtime-range return and
     // therefore never enters the enforcer branch.
-    if prop.can_add_enforcer && prop.index_join_prop.is_none() {
-        let mut direct_prop = prop.clone();
-        direct_prop.can_add_enforcer = false;
-        let direct = find_best_task_4_logical_data_source_without_enforcer(ds, &direct_prop, ctx)?;
-
-        // Go clears the order and the MPP partition requirement alike; the
-        // enforcer adds both back.
-        let mut unordered_prop = prop.clone();
-        unordered_prop.can_add_enforcer = false;
-        unordered_prop.sort_items.clear();
-        unordered_prop.mpp_partition_tp = tidb_planner_property::MppPartitionType::Any;
-        let unordered =
-            find_best_task_4_logical_data_source_without_enforcer(ds, &unordered_prop, ctx)?;
-        let enforced = enforce_property_in(
-            prop,
-            unordered,
-            ctx.allocator,
-            ctx.expression_evaluator,
-            ctx.mpp_warning_sink,
-            &crate::task_attach::CoreTaskAttacher,
-        )?;
-        if compare_task_cost(ctx.coster, &direct, &enforced)? {
-            return Ok(direct);
+    if prop.index_join_prop.is_some() {
+        return find_best_task_4_logical_data_source_without_enforcer(ds, prop, ctx);
+    }
+    // Go `findBestTask4LogicalDataSource` handles `CanAddEnforcer` inside
+    // the DataSource override, before entering the path loop.  First price
+    // the property without the enforcer (Go re-enters through
+    // `physicalop.FindBestTask`, where a required MPP partitioning is
+    // invalid).  Then clear the order and the MPP partition requirement,
+    // price the best path, and enforce the original property above it.
+    // This branch is what makes `getEnforcedStreamAggs`' sorted child
+    // property executable when no access path naturally provides the group
+    // order.
+    if !prop.can_add_enforcer {
+        if prop.mpp_partition_tp != tidb_planner_property::MppPartitionType::Any {
+            return Ok(Task::invalid_task());
         }
-        return Ok(enforced);
+        return find_best_task_4_logical_data_source_without_enforcer(ds, prop, ctx);
+    }
+    let mut direct_prop = prop.clone();
+    direct_prop.can_add_enforcer = false;
+    let direct = find_best_task_4_logical_data_source(ds, &direct_prop, ctx)?;
+    if !direct.invalid() && !ctx.explore_enforced_plan {
+        return Ok(direct);
     }
 
-    find_best_task_4_logical_data_source_without_enforcer(ds, prop, ctx)
+    // Go clears the order and the MPP partition requirement alike; the
+    // enforcer adds both back.
+    let mut unordered_prop = prop.clone();
+    unordered_prop.can_add_enforcer = false;
+    unordered_prop.sort_items.clear();
+    unordered_prop.mpp_partition_tp = tidb_planner_property::MppPartitionType::Any;
+    let unordered = find_best_task_4_logical_data_source_without_enforcer(ds, &unordered_prop, ctx)?;
+    let enforced = enforce_property_in(
+        prop,
+        unordered,
+        ctx.allocator,
+        ctx.expression_evaluator,
+        ctx.mpp_warning_sink,
+        &crate::task_attach::CoreTaskAttacher,
+    )?;
+    if compare_task_cost(ctx.coster, &direct, &enforced)? {
+        return Ok(direct);
+    }
+    Ok(enforced)
 }
 
 fn filter_column_correlation(
