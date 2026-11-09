@@ -32,7 +32,7 @@ pub struct ByteSize(pub u64);
 const BINARY_ABBRS: [&str; 9] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB"];
 
 /// go-units `BytesSize`: binary units, `%.4g` significand.
-fn bytes_size(mut size: f64) -> String {
+pub fn bytes_size(mut size: f64) -> String {
     let mut i = 0;
     while size >= 1024.0 && i < BINARY_ABBRS.len() - 1 {
         size /= 1024.0;

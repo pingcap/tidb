@@ -4653,6 +4653,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-dxf-metering"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "tidb-config-configtypes",
+ "tidb-dxf",
+ "tidb-objstore-recording",
+]
+
+[[package]]
 name = "tidb-dxf-operator"
 version = "0.0.0"
 dependencies = [

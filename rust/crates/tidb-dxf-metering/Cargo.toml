@@ -1,0 +1,17 @@
+[package]
+name = "tidb-dxf-metering"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/dxf/framework/metering: the distributed execution framework's metering recorder (the classic kernel's surface)."
+
+[lints]
+workspace = true
+
+[dependencies]
+serde_json.workspace = true
+tidb-config-configtypes = { path = "../tidb-config-configtypes" }
+tidb-dxf = { path = "../tidb-dxf" }
+tidb-objstore-recording = { path = "../tidb-objstore-recording" }
