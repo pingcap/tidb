@@ -33,7 +33,7 @@ use tidb_planner_core_base::PlanError;
 use tidb_proto::tipb;
 
 use crate::{
-    PhysicalExchangeReceiver, PhysicalExchangeSender, PhysicalHashAgg, PhysicalLimit, PhysicalPlan, PhysicalProjection,
+    PhysicalExchangeReceiver, PhysicalExchangeSender, PhysicalHashAgg, PhysicalHashJoin, PhysicalLimit, PhysicalPlan, PhysicalProjection,
     PhysicalSelection, PhysicalStreamAgg, PhysicalTableScan, PhysicalTopN,
 };
 
@@ -219,6 +219,7 @@ impl PhysicalPlan {
             Self::ExchangeReceiver(p) => p.to_pb(self, ctx),
             Self::HashAgg(p) => p.to_pb(self, ctx, store_type),
             Self::StreamAgg(p) => p.to_pb(self, ctx, store_type),
+            Self::HashJoin(p) => p.to_pb(self, ctx, store_type),
             // Go's base body is exactly this error.
             _ => Err(PlanError::internal(format!("plan {} fails converts to PB", self.explain_id(false)))),
         }
@@ -381,6 +382,10 @@ impl PhysicalTableScan {
     }
 }
 
+fn schema_of(child: &PhysicalPlan) -> Result<&Schema, PlanError> {
+    child.schema().ok_or_else(|| PlanError::internal(format!("plan {} has no schema", child.explain_id(false))))
+}
+
 /// Go `kv.MPPTask.ToPB().Marshal()` of each task.
 fn encoded_tasks(tasks: &[crate::MppTask]) -> Vec<Vec<u8>> {
     use prost::Message;
@@ -525,6 +530,124 @@ impl PhysicalStreamAgg {
             tp: Some(tipb::ExecType::TypeStreamAgg as i32),
             aggregation: Some(Box::new(agg_exec)),
             executor_id: Some(executor_id),
+            ..go_executor()
+        })
+    }
+}
+
+impl PhysicalHashJoin {
+    /// Go `PhysicalHashJoin.ToPB`. The join's keys and side conditions are
+    /// resolved against their own side's child, its other conditions against
+    /// both children's schemas.
+    fn to_pb(&self, plan: &PhysicalPlan, ctx: &BuildPbContext<'_>, store_type: StoreType) -> Result<tipb::Executor, PlanError> {
+        use tidb_planner_core_base::LogicalJoinType;
+
+        // Go `GetNAJoinKeys`: the columns of each null-aware condition.
+        let na_join_keys = |side: usize| -> Vec<Expression> {
+            self.na_equal_conditions.iter().map(|condition| condition.get_args()[side].clone()).collect()
+        };
+        if !self.left_join_keys.is_empty() && !self.na_equal_conditions.is_empty() {
+            return Err(PlanError::internal("join key and na join key can not both exist"));
+        }
+
+        let is_null_aware_semi_join = !self.na_equal_conditions.is_empty();
+        let (left_keys, right_keys) = if is_null_aware_semi_join {
+            (na_join_keys(0), na_join_keys(1))
+        } else {
+            (
+                self.left_join_keys.iter().cloned().map(Expression::Column).collect::<Vec<_>>(),
+                self.right_join_keys.iter().cloned().map(Expression::Column).collect::<Vec<_>>(),
+            )
+        };
+
+        let children = plan.children();
+        let [left_child, right_child] = children else {
+            return Err(PlanError::internal(format!("plan {} is not a two-child join", plan.explain_id(false))));
+        };
+        let l_children = left_child.to_pb(ctx, store_type)?;
+        let r_children = right_child.to_pb(ctx, store_type)?;
+
+        let left_schema = schema_of(left_child)?;
+        let right_schema = schema_of(right_child)?;
+        let merged = tidb_expr::schema::merge_schema(Some(left_schema), Some(right_schema))
+            .ok_or_else(|| PlanError::internal("a join has no merged schema"))?;
+        let left = expressions_to_pb_list(ctx, &left_keys, left_schema)?;
+        let right = expressions_to_pb_list(ctx, &right_keys, right_schema)?;
+
+        let left_conditions = expressions_to_pb_list(ctx, &self.left_conditions, left_schema)?;
+        let right_conditions = expressions_to_pb_list(ctx, &self.right_conditions, right_schema)?;
+
+        let mut other_conditions_in_join = Vec::new();
+        let mut other_eq_conditions_from_in = Vec::new();
+        // For anti join, equal conditions from `in` clause requires additional processing,
+        // for example, treat `null` as true.
+        if matches!(
+            self.join_type,
+            LogicalJoinType::AntiSemi | LogicalJoinType::AntiLeftOuterSemi | LogicalJoinType::LeftOuterSemi
+        ) {
+            for condition in &self.other_conditions {
+                if tidb_expr::expression::is_eq_cond_from_in(condition) {
+                    other_eq_conditions_from_in.push(condition.clone());
+                } else {
+                    other_conditions_in_join.push(condition.clone());
+                }
+            }
+        } else {
+            other_conditions_in_join = self.other_conditions.clone();
+        }
+        let other_conditions = expressions_to_pb_list(ctx, &other_conditions_in_join, &merged)?;
+        let other_eq_conditions = expressions_to_pb_list(ctx, &other_eq_conditions_from_in, &merged)?;
+
+        let pb_join_type = match self.join_type {
+            LogicalJoinType::LeftOuter => tipb::JoinType::TypeLeftOuterJoin,
+            LogicalJoinType::RightOuter => tipb::JoinType::TypeRightOuterJoin,
+            LogicalJoinType::Semi => tipb::JoinType::TypeSemiJoin,
+            LogicalJoinType::AntiSemi => tipb::JoinType::TypeAntiSemiJoin,
+            LogicalJoinType::LeftOuterSemi => tipb::JoinType::TypeLeftOuterSemiJoin,
+            LogicalJoinType::AntiLeftOuterSemi => tipb::JoinType::TypeAntiLeftOuterSemiJoin,
+            _ => tipb::JoinType::TypeInnerJoin,
+        };
+
+        let equal_conditions = if is_null_aware_semi_join { &self.na_equal_conditions } else { &self.equal_conditions };
+        let mut probe_filed_types = Vec::with_capacity(equal_conditions.len());
+        let mut build_filed_types = Vec::with_capacity(equal_conditions.len());
+        for equal_condition in equal_conditions {
+            let mut ret_type = equal_condition
+                .ret_type
+                .clone()
+                .ok_or_else(|| PlanError::internal("an equal condition has no type"))?;
+            let (chs, coll) = equal_condition.collation.charset_and_collation();
+            ret_type.set_charset_name(chs);
+            ret_type.set_collation_name(coll);
+            let ty = to_pb_field_type_with_check(&ret_type, store_type)?;
+            probe_filed_types.push(ty.clone());
+            build_filed_types.push(ty);
+        }
+
+        // runtime filter: this port plans none (Go's empty list).
+        let join = tipb::Join {
+            join_type: Some(pb_join_type as i32),
+            join_exec_type: Some(tipb::JoinExecType::TypeHashJoin as i32),
+            inner_idx: Some(self.inner_child_idx as i64),
+            left_join_keys: left,
+            right_join_keys: right,
+            probe_types: probe_filed_types,
+            build_types: build_filed_types,
+            left_conditions,
+            right_conditions,
+            other_conditions,
+            other_eq_conditions_from_in: other_eq_conditions,
+            children: vec![l_children, r_children],
+            is_null_aware_semi_join: Some(is_null_aware_semi_join),
+            ..tipb::Join::default()
+        };
+
+        Ok(tipb::Executor {
+            tp: Some(tipb::ExecType::TypeJoin as i32),
+            join: Some(join),
+            executor_id: Some(executor_id(plan)),
+            fine_grained_shuffle_stream_count: Some(self.base.tiflash_fine_grained_shuffle_stream_count),
+            fine_grained_shuffle_batch_size: Some(ctx.tiflash_fine_grained_shuffle_batch_size),
             ..go_executor()
         })
     }

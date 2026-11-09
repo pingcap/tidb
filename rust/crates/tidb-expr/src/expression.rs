@@ -294,6 +294,21 @@ const NULL_REJECT_REJECT_NULL_TESTS: &[(&str, NullRejectTestMode)] = &[
     ("isfalse", NullRejectTestMode::ReturnsFalse),
 ];
 
+/// Go `IsEQCondFromIn`: an `eq` with a column of an `IN` operand among its
+/// arguments, at any depth.
+#[must_use]
+pub fn is_eq_cond_from_in(expr: &Expression) -> bool {
+    fn has_in_operand(expr: &Expression) -> bool {
+        match expr {
+            Expression::Column(column) => column.in_operand,
+            Expression::ScalarFunction(function) => function.get_args().iter().any(has_in_operand),
+            _ => false,
+        }
+    }
+    matches!(expr, Expression::ScalarFunction(function)
+        if function.func_name.lowercase() == "eq" && function.get_args().iter().any(has_in_operand))
+}
+
 /// Proves whether a predicate can be true after every listed inner-side
 /// column is replaced by SQL `NULL`.
 ///
