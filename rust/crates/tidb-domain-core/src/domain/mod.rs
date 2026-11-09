@@ -25,6 +25,7 @@ pub mod runaway_owner;
 pub mod ttl_owner;
 mod telemetry;
 pub mod schema_lease;
+pub mod sqlsvr;
 pub mod stats_maintenance;
 
 use std::collections::HashSet;

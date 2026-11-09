@@ -4476,6 +4476,7 @@ dependencies = [
  "tidb-charset",
  "tidb-config",
  "tidb-config-configtypes",
+ "tidb-config-kerneltype",
  "tidb-datatype",
  "tidb-ddl",
  "tidb-ddl-build",
@@ -4484,6 +4485,7 @@ dependencies = [
  "tidb-domain",
  "tidb-domain-globalconfigsync",
  "tidb-domain-serverinfo",
+ "tidb-domain-sqlsvrapi",
  "tidb-driver-error",
  "tidb-dxf-storage",
  "tidb-errno",
@@ -4604,6 +4606,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-domain-sqlsvrapi"
+version = "0.0.0"
+dependencies = [
+ "tidb-syssession",
+]
+
+[[package]]
 name = "tidb-domainutil"
 version = "0.0.0"
 dependencies = [
@@ -4652,6 +4661,16 @@ dependencies = [
  "prometheus 0.14.0",
  "tidb-dxf",
  "tidb-metrics",
+]
+
+[[package]]
+name = "tidb-dxf-dxfutil"
+version = "0.0.0"
+dependencies = [
+ "tidb-domain-sqlsvrapi",
+ "tidb-dxf-storage",
+ "tidb-sqlexec",
+ "tidb-syssession",
 ]
 
 [[package]]
@@ -4735,6 +4754,7 @@ dependencies = [
  "tidb-config",
  "tidb-config-kerneltype",
  "tidb-datatype",
+ "tidb-domain-sqlsvrapi",
  "tidb-dxf",
  "tidb-dxf-execute",
  "tidb-keyspace",
@@ -7231,9 +7251,11 @@ dependencies = [
  "tidb-domain-globalconfigsync",
  "tidb-domain-infosync",
  "tidb-domain-serverinfo",
+ "tidb-domain-sqlsvrapi",
  "tidb-domainutil",
  "tidb-driver-error",
  "tidb-dxf",
+ "tidb-dxf-dxfutil",
  "tidb-dxf-execute",
  "tidb-dxf-handle",
  "tidb-dxf-planner",

@@ -23,6 +23,7 @@ serde_json.workspace = true
 tidb-config = { path = "../tidb-config" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-datatype = { path = "../tidb-datatype" }
+tidb-domain-sqlsvrapi = { path = "../tidb-domain-sqlsvrapi" }
 tidb-dxf = { path = "../tidb-dxf" }
 tidb-dxf-execute = { path = "../tidb-dxf-execute" }
 tidb-keyspace = { path = "../tidb-keyspace" }

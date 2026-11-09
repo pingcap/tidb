@@ -198,6 +198,10 @@ pub trait SessionContext: tidb_syssession::SessionContext {
     /// # Errors
     /// The variable rejects the value.
     fn set_system_var(&self, name: &str, value: &str) -> Result<()>;
+    /// Go `GetStore().GetKeyspace()`: the keyspace of the session's store.
+    fn store_keyspace(&self) -> String;
+    /// Go `GetSQLServer()`.
+    fn sql_server(&self) -> Arc<dyn tidb_domain_sqlsvrapi::Server<dyn SessionContext>>;
 }
 
 /// Go `TaskManager`: the manager of tasks and subtasks.

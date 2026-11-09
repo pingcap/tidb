@@ -65,8 +65,16 @@ tidb-server shows the same rows.
   transaction through the session), `SendRowAndSizeMeterData`, and the
   status port's `GetBusyNodes` / `GetScheduleStatus` (O15). `TestHandle`
   needs the scheduler (milestone 4).
-- [ ] Milestone 3: `dxfutil` (with Go `sqlsvrapi.Runtime` for the node itself), `taskexecutor` (manager, slots, executor; `execute` is done).
-- [ ] Milestone 4: `scheduler` (manager, nodes, slots, balancer, state transitions; autoscaler where it applies to a classic kernel).
+- [ ] Milestone 3: `dxfutil` and `scheduler` (manager, nodes, slots,
+  balancer, state transitions; autoscaler where it applies to a classic
+  kernel).
+  - [x] Go `pkg/domain/sqlsvrapi` (`rust/crates/tidb-domain-sqlsvrapi`),
+    the domain as its server and current-keyspace runtime
+    (`tidb_domain_core::domain::sqlsvr`, with Go `crossks`'s classic
+    refusals), and `dxfutil` (`rust/crates/tidb-dxf-dxfutil`) with Go's
+    `TestAcquireTaskRuntime` and `TestCheckTaskRuntime`.
+  - [ ] `scheduler`.
+- [ ] Milestone 4: `taskexecutor` (manager, slots, executor; `execute` is done).
 - [ ] Milestone 5: composition in the domain (Go `InitDistTaskLoop`, `distTaskFrameworkLoop`) and the `example` task type end to end.
 - [ ] Milestone 6: `metering` and `dxfmetric` where a classic kernel uses them.
 
@@ -106,6 +114,13 @@ tidb-server shows the same rows.
   of these and stay; milestone 6's metering moves ahead of milestone 1's
   remainder.
 
+- 2026-11-09: `scheduler` comes before `taskexecutor`: Go's taskexecutor
+  imports the scheduler package (its SQL retry settings), not the other way.
+- Go's `sqlsvrapi` pool hands out `pools.Resource`; the Rust traits are
+  generic over the session view their user declares. A runtime answers its
+  store's keyspace itself, since the narrowed Rust `kv.Storage` has none;
+  the domain's runtime hands DXF its DXF pool, over the same session
+  factory as Go's `sysSessionPool`.
 - 2026-11-09: O10 is ported before M01 (MPP fragments) and X01 (pushdown
   authority) because one framework unblocks D02, D11 and E05 (user's choice
   over the full register, by gap kind: user-visible capability first).

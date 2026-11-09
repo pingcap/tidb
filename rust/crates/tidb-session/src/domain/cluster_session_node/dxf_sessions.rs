@@ -51,6 +51,17 @@ impl tidb_dxf_storage::SessionContext for ClusterStatsSessionContext {
             .unwrap_or(tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_QUERY)
     }
 
+    fn store_keyspace(&self) -> String {
+        tidb_config::config_tree::config::get_global_keyspace_name()
+    }
+
+    fn sql_server(&self) -> std::sync::Arc<dyn tidb_domain_sqlsvrapi::Server<dyn tidb_dxf_storage::SessionContext>> {
+        let domain = self
+            .with_session(|session| Ok(std::sync::Arc::clone(&session.node.domain)))
+            .expect("a pooled system session is open");
+        std::sync::Arc::new(tidb_domain_core::domain::sqlsvr::DomainSqlServer(domain))
+    }
+
     fn set_system_var(&self, name: &str, value: &str) -> Result<()> {
         self.with_session(|session| {
             session

@@ -13,6 +13,7 @@ autotests = false
 tidb-ttl = { path = "../tidb-ttl" }
 tidb-ttl-ttlworker = { path = "../tidb-ttl-ttlworker" }
 tidb-dxf-storage = { path = "../tidb-dxf-storage" }
+tidb-domain-sqlsvrapi = { path = "../tidb-domain-sqlsvrapi" }
 tidb-ttl-client = { path = "../tidb-ttl-client" }
 tidb-timer = { path = "../tidb-timer" }
 tidb-timer-tablestore = { path = "../tidb-timer-tablestore" }
@@ -204,6 +205,7 @@ tidb-resolve = { path = "../tidb-resolve" }
 [dev-dependencies]
 tidb-dxf = { path = "../tidb-dxf" }
 tidb-dxf-execute = { path = "../tidb-dxf-execute" }
+tidb-dxf-dxfutil = { path = "../tidb-dxf-dxfutil" }
 tidb-dxf-handle = { path = "../tidb-dxf-handle" }
 tidb-dxf-planner = { path = "../tidb-dxf-planner" }
 tidb-dxf-storage = { path = "../tidb-dxf-storage", features = ["failpoints"] }

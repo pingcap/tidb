@@ -1,0 +1,19 @@
+[package]
+name = "tidb-dxf-dxfutil"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/dxf/framework/dxfutil: the task keyspace's runtime for schedulers and executors."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-domain-sqlsvrapi = { path = "../tidb-domain-sqlsvrapi" }
+tidb-dxf-storage = { path = "../tidb-dxf-storage" }
+
+[dev-dependencies]
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-syssession = { path = "../tidb-syssession" }

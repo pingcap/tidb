@@ -1997,3 +1997,24 @@ fn test_planner() {
     assert_eq!(task.base.tp, tp("example"));
     assert!(task.base.extra_params.manual_recovery);
 }
+
+/// Go `dxfutil.AcquireTaskRuntime` and `CheckTaskRuntime` over the node's
+/// own server (Go's `Domain`): a task of the node's keyspace runs on the
+/// domain's runtime; on a classic kernel no other keyspace is reachable,
+/// with Go's `crossks` errors.
+#[test]
+fn dxf_task_runtime_is_the_domain_on_a_classic_kernel() {
+    let (_stack, tm) = init_table_test();
+    let current_ks = tidb_config::config_tree::config::get_global_keyspace_name();
+
+    let (runtime, release) =
+        tidb_dxf_dxfutil::acquire_task_runtime(tm.as_ref(), &current_ks, &tidb_dxf_dxfutil::gen_holder_id("executor", 1))
+            .unwrap();
+    tidb_dxf_dxfutil::check_task_runtime(runtime.as_ref(), &current_ks).unwrap();
+    release();
+
+    let error = tidb_dxf_dxfutil::acquire_task_runtime(tm.as_ref(), "other_ks", "").err().unwrap();
+    assert_eq!(error.to_string(), "cross keyspace runtime holderID must not be empty");
+    let error = tidb_dxf_dxfutil::acquire_task_runtime(tm.as_ref(), "other_ks", "DXF/executor/1").err().unwrap();
+    assert_eq!(error.to_string(), "cross keyspace is not available in classic kernel or current keyspace");
+}
