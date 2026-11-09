@@ -556,19 +556,8 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 		}
 	}
 
-	// This excludes ciphers listed in tls.InsecureCipherSuites() and can be used to filter out more
-	var cipherSuites []uint16
-	var cipherNames []string
-	for _, sc := range tls.CipherSuites() {
-		switch sc.ID {
-		case tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA, tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA:
-			logutil.BgLogger().Info("Disabling weak cipherSuite", zap.String("cipherSuite", sc.Name))
-		default:
-			cipherNames = append(cipherNames, sc.Name)
-			cipherSuites = append(cipherSuites, sc.ID)
-		}
-	}
-	logutil.BgLogger().Info("Enabled ciphersuites", zap.Strings("cipherNames", cipherNames))
+	cipherSuites := tlsutil.DefaultServerCipherSuites()
+	logutil.BgLogger().Info("Enabled ciphersuites", zap.Uint16s("cipherSuites", cipherSuites))
 
 	/* #nosec G402 */
 	tlsConfig = &tls.Config{

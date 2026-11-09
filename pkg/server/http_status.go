@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/printer"
+	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/soheilhy/cmux"
@@ -109,6 +110,8 @@ func (s *Server) listenStatusHTTPServer() error {
 	tlsConfig = s.SetCNChecker(tlsConfig)
 
 	if tlsConfig != nil {
+		tlsConfig.MinVersion = tls.VersionTLS12
+		tlsConfig.CipherSuites = tlsutil.DefaultServerCipherSuites()
 		// The protocols should be listed as the same order we dispatch the connection with cmux.
 		tlsConfig.NextProtos = []string{"http/1.1", "h2"}
 		// we need to manage TLS here for cmux to distinguish between HTTP and gRPC.
