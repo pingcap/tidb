@@ -87,8 +87,6 @@ func (w *adaptiveYieldWindow) totals() (input, output uint64) {
 // AdmissionBlocked fields are wall-clock durations with overlapping waits in
 // the same stage counted once.
 type AdaptiveLimitSnapshot struct {
-	// HasLookupStage reports whether the controller admits outer lookup handles.
-	HasLookupStage bool
 	// DemandRows is the final-row demand derived from LIMIT offset plus count.
 	DemandRows uint64
 	// OutputRows is the cumulative number of final rows observed by the controller.
@@ -125,6 +123,8 @@ type AdaptiveLimitSnapshot struct {
 	// LookupAdmissionBlocked is the wall-clock time with at least one blocked
 	// lookup reserver.
 	LookupAdmissionBlocked time.Duration
+	// HasLookupStage reports whether the controller admits outer lookup handles.
+	HasLookupStage bool
 	// Stopped reports whether the controller rejects future admission.
 	Stopped bool
 }
