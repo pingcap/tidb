@@ -5683,6 +5683,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-ingestor-errdef"
+version = "0.0.0"
+dependencies = [
+ "tidb-terror",
+]
+
+[[package]]
 name = "tidb-intest"
 version = "0.0.0"
 

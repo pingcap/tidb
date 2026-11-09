@@ -291,6 +291,7 @@ members = [
     "crates/tidb-dxf-testutil",
     "crates/tidb-domain-sqlsvrapi",
     "crates/tidb-gocontext",
+    "crates/tidb-ingestor-errdef",
     "crates/tidb-meta-tidbvar",
     "crates/tidb-objstore-recording",
     "crates/tidb-dxf-operator",
