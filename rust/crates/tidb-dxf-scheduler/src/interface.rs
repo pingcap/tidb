@@ -15,7 +15,7 @@
 //! Go `interface.go`.
 
 use std::collections::HashMap;
-use std::error::Error;
+use std::error::Error as StdError;
 
 use tidb_dxf::{ManagedNode, Step, Subtask, SubtaskBase, SubtaskState, Task, TaskBase, TaskState};
 use tidb_dxf_execute::SubtaskSummary;
@@ -93,17 +93,17 @@ pub trait TaskManager: SessionExecutor {
     ///
     /// # Errors
     /// The statement failed.
-    fn fail_task(&self, task_id: i64, current_state: &TaskState, task_err: Option<&(dyn Error + 'static)>) -> Result<()>;
+    fn fail_task(&self, task_id: i64, current_state: &TaskState, task_err: Option<&(dyn StdError + 'static)>) -> Result<()>;
     /// Go `RevertTask`.
     ///
     /// # Errors
     /// The statement failed.
-    fn revert_task(&self, task_id: i64, task_state: &TaskState, task_err: Option<&(dyn Error + 'static)>) -> Result<()>;
+    fn revert_task(&self, task_id: i64, task_state: &TaskState, task_err: Option<&(dyn StdError + 'static)>) -> Result<()>;
     /// Go `AwaitingResolveTask`.
     ///
     /// # Errors
     /// The statement failed.
-    fn awaiting_resolve_task(&self, task_id: i64, task_state: &TaskState, task_err: Option<&(dyn Error + 'static)>) -> Result<()>;
+    fn awaiting_resolve_task(&self, task_id: i64, task_state: &TaskState, task_err: Option<&(dyn StdError + 'static)>) -> Result<()>;
     /// Go `RevertedTask`.
     ///
     /// # Errors
@@ -123,7 +123,7 @@ pub trait TaskManager: SessionExecutor {
         task_id: i64,
         task_state: &TaskState,
         step: Step,
-        task_err: Option<&(dyn Error + 'static)>,
+        task_err: Option<&(dyn StdError + 'static)>,
     ) -> Result<()>;
     /// Go `PausedTask`.
     ///
@@ -254,13 +254,13 @@ impl TaskManager for tidb_dxf_storage::TaskManager {
     fn cancel_task(&self, task_id: i64) -> Result<()> {
         Self::cancel_task(self, task_id)
     }
-    fn fail_task(&self, task_id: i64, current_state: &TaskState, task_err: Option<&(dyn Error + 'static)>) -> Result<()> {
+    fn fail_task(&self, task_id: i64, current_state: &TaskState, task_err: Option<&(dyn StdError + 'static)>) -> Result<()> {
         Self::fail_task(self, task_id, current_state, task_err)
     }
-    fn revert_task(&self, task_id: i64, task_state: &TaskState, task_err: Option<&(dyn Error + 'static)>) -> Result<()> {
+    fn revert_task(&self, task_id: i64, task_state: &TaskState, task_err: Option<&(dyn StdError + 'static)>) -> Result<()> {
         Self::revert_task(self, task_id, task_state, task_err)
     }
-    fn awaiting_resolve_task(&self, task_id: i64, task_state: &TaskState, task_err: Option<&(dyn Error + 'static)>) -> Result<()> {
+    fn awaiting_resolve_task(&self, task_id: i64, task_state: &TaskState, task_err: Option<&(dyn StdError + 'static)>) -> Result<()> {
         Self::awaiting_resolve_task(self, task_id, task_state, task_err)
     }
     fn reverted_task(&self, task_id: i64) -> Result<()> {
@@ -274,7 +274,7 @@ impl TaskManager for tidb_dxf_storage::TaskManager {
         task_id: i64,
         task_state: &TaskState,
         step: Step,
-        task_err: Option<&(dyn Error + 'static)>,
+        task_err: Option<&(dyn StdError + 'static)>,
     ) -> Result<()> {
         Self::pause_task_on_error(self, task_id, task_state, step, task_err)
     }
@@ -336,4 +336,199 @@ impl TaskManager for tidb_dxf_storage::TaskManager {
     fn get_all_subtask_summary_by_step(&self, task_id: i64, step: Step) -> Result<Vec<SubtaskSummary>> {
         Self::get_all_subtask_summary_by_step(self, task_id, step)
     }
+}
+
+/// The error an extension or a scheduler step returns (Go `error`); it can
+/// become the task's error.
+pub type Error = std::sync::Arc<dyn std::error::Error + Send + Sync>;
+
+/// Go `Extension`: what each task type adds to the base scheduler. Go
+/// embeds it in `BaseScheduler` to simulate abstract methods.
+pub trait Extension: Send + Sync {
+    /// Go `OnTick`: periodic work of the task type, every
+    /// `CheckTaskRunningInterval`, only while the task is unfinished and
+    /// error free. Keep it light: it blocks the scheduler.
+    fn on_tick(&self, ctx: &tidb_gocontext::Context, task: &Task);
+
+    /// Go `OnNextSubtasksBatch`: the subtask metas of the next step, when the
+    /// task enters its first step from pending, or all scheduled subtasks
+    /// finished without error. It returns nothing for `StepDone`, and must
+    /// not change the task's state. `exec_ids` are the eligible execution
+    /// nodes, within the task's limits such as its max node count.
+    ///
+    /// # Errors
+    /// The subtasks cannot be generated.
+    fn on_next_subtasks_batch(
+        &self,
+        ctx: &tidb_gocontext::Context,
+        h: &dyn tidb_dxf_storage::TaskHandle,
+        task: &mut Task,
+        exec_ids: &[String],
+        next_step: Step,
+    ) -> std::result::Result<Vec<Vec<u8>>, Error>;
+
+    /// Go `OnDone`: the task is done, succeeded or failed. Not called for a
+    /// task that fails to initialize its scheduler, or of an unknown type.
+    ///
+    /// # Errors
+    /// The task type's finishing work failed.
+    fn on_done(
+        &self,
+        ctx: &tidb_gocontext::Context,
+        h: &dyn tidb_dxf_storage::TaskHandle,
+        task: &mut Task,
+    ) -> std::result::Result<(), Error>;
+
+    /// Go `GetEligibleInstances`: the instances that can run the task, such
+    /// as those with more disk; none means all are eligible.
+    ///
+    /// # Errors
+    /// The instances cannot be decided.
+    fn get_eligible_instances(&self, ctx: &tidb_gocontext::Context, task: &Task) -> std::result::Result<Vec<String>, Error>;
+
+    /// Go `IsRetryableErr`: whether an error met in the scheduler is
+    /// retryable.
+    fn is_retryable_err(&self, err: &(dyn std::error::Error + 'static)) -> bool;
+
+    /// Go `GetNextStep`: the step after the task's current one. A successful
+    /// task goes from `StepInit` through its business steps to `StepDone`;
+    /// in prepare mode the scheduler first persists `StepPrepared`. Do not
+    /// decide it by the task meta; initialize what is needed in `Init`.
+    fn get_next_step(&self, task: &TaskBase) -> Step;
+
+    /// Go `OnPrepare`: the task is pending at init and needs prepare mode. It
+    /// may update the task's meta, required slots and max node count, and
+    /// nothing else.
+    ///
+    /// # Errors
+    /// The preparation failed.
+    fn on_prepare(
+        &self,
+        ctx: &tidb_gocontext::Context,
+        h: &dyn tidb_dxf_storage::TaskHandle,
+        task: &mut Task,
+    ) -> std::result::Result<(), Error>;
+
+    /// Go `ModifyMeta`: the new meta after applying the modifications to the
+    /// old one, while the task is modifying. The task executor notifies the
+    /// change later.
+    ///
+    /// # Errors
+    /// The modification does not apply.
+    fn modify_meta(&self, old_meta: &[u8], modifies: &[tidb_dxf::Modification]) -> std::result::Result<Vec<u8>, Error>;
+}
+
+/// Go `Param`: what a scheduler is created with.
+#[derive(Clone)]
+pub struct Param {
+    pub(crate) task_mgr: std::sync::Arc<dyn TaskManager>,
+    pub(crate) node_mgr: std::sync::Arc<crate::NodeManager>,
+    pub(crate) slot_mgr: std::sync::Arc<crate::SlotManager>,
+    pub(crate) server_id: String,
+    pub(crate) allocated_slots: bool,
+    pub(crate) node_res: Option<tidb_dxf::NodeResource>,
+    /// Go `TaskRuntime`: the task keyspace's runtime view, not owned; the
+    /// managers release it.
+    pub task_runtime: Option<tidb_dxf_dxfutil::TaskRuntime>,
+}
+
+impl Param {
+    /// Go `NewParamForTest`.
+    #[must_use]
+    pub fn new_for_test(
+        task_mgr: std::sync::Arc<dyn TaskManager>,
+        runtime: Option<tidb_dxf_dxfutil::TaskRuntime>,
+    ) -> Self {
+        Self {
+            task_mgr,
+            node_mgr: std::sync::Arc::new(crate::NodeManager::new("")),
+            slot_mgr: std::sync::Arc::new(crate::SlotManager::new()),
+            server_id: String::new(),
+            allocated_slots: false,
+            node_res: None,
+            task_runtime: runtime,
+        }
+    }
+
+    /// Go `GetNodeResource`.
+    #[must_use]
+    pub fn get_node_resource(&self) -> Option<&tidb_dxf::NodeResource> {
+        self.node_res.as_ref()
+    }
+}
+
+/// Go `schedulerFactoryFn`: creates a task type's scheduler.
+pub type SchedulerFactoryFn =
+    std::sync::Arc<dyn Fn(&tidb_gocontext::Context, Task, Param) -> std::sync::Arc<dyn crate::Scheduler> + Send + Sync>;
+
+/// Go `schedulerFactoryMap`.
+static SCHEDULER_FACTORY_MAP: std::sync::LazyLock<std::sync::RwLock<HashMap<tidb_dxf::TaskType, SchedulerFactoryFn>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Go `RegisterSchedulerFactory`: registers the scheduler factory of a task
+/// type, normally before the server starts.
+pub fn register_scheduler_factory(task_type: tidb_dxf::TaskType, ctor: SchedulerFactoryFn) {
+    SCHEDULER_FACTORY_MAP.write().unwrap_or_else(std::sync::PoisonError::into_inner).insert(task_type, ctor);
+}
+
+/// Go `getSchedulerFactory`.
+pub(crate) fn get_scheduler_factory(task_type: &tidb_dxf::TaskType) -> Option<SchedulerFactoryFn> {
+    SCHEDULER_FACTORY_MAP.read().unwrap_or_else(std::sync::PoisonError::into_inner).get(task_type).cloned()
+}
+
+/// Go `ClearSchedulerFactory`: only used in test.
+pub fn clear_scheduler_factory() {
+    SCHEDULER_FACTORY_MAP.write().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
+}
+
+/// Go `Cleaner`: the cleanup of a finished task.
+pub trait Cleaner: Send + Sync {
+    /// Go `Clean`: cleans up one task, which may update its meta, such as to
+    /// redact sensitive info.
+    ///
+    /// # Errors
+    /// The cleanup failed.
+    fn clean(&self, ctx: &tidb_gocontext::Context, task: &mut Task) -> std::result::Result<(), Error>;
+
+    /// Go's `cleaner.(BatchCleaner)` assertion.
+    fn as_batch_cleaner(&self) -> Option<&dyn BatchCleaner> {
+        None
+    }
+}
+
+/// Go `BatchCleaner`: a cleaner the scheduler calls once per pass with a
+/// non-empty group of tasks of the same type. When it succeeds, the whole
+/// group is transferred to history together; when it fails, none is. There
+/// is no atomicity across the cleanup and the transfer, so implementations
+/// must be idempotent and safe to retry.
+pub trait BatchCleaner: Cleaner {
+    /// Go `BatchClean`.
+    ///
+    /// # Errors
+    /// The cleanup failed.
+    fn batch_clean(&self, ctx: &tidb_gocontext::Context, tasks: &mut [Task]) -> std::result::Result<(), Error>;
+}
+
+/// Go `cleanerFactoryFn`.
+pub type CleanerFactoryFn = std::sync::Arc<dyn Fn() -> std::sync::Arc<dyn Cleaner> + Send + Sync>;
+
+/// Go `cleanerFactoryMap`.
+static CLEANER_FACTORY_MAP: std::sync::LazyLock<std::sync::RwLock<HashMap<tidb_dxf::TaskType, CleanerFactoryFn>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Go `RegisterCleanerFactory`: registers the cleaner factory of a task
+/// type. (Go's legacy `CleanUpRoutine` adapters exist for Go packages not
+/// yet migrated; no Rust code uses the legacy API.)
+pub fn register_cleaner_factory(task_type: tidb_dxf::TaskType, ctor: CleanerFactoryFn) {
+    CLEANER_FACTORY_MAP.write().unwrap_or_else(std::sync::PoisonError::into_inner).insert(task_type, ctor);
+}
+
+/// Go `getCleanerFactory`.
+pub(crate) fn get_cleaner_factory(task_type: &tidb_dxf::TaskType) -> Option<CleanerFactoryFn> {
+    CLEANER_FACTORY_MAP.read().unwrap_or_else(std::sync::PoisonError::into_inner).get(task_type).cloned()
+}
+
+/// Go `ClearCleanerFactory`: only used in test.
+pub fn clear_cleaner_factory() {
+    CLEANER_FACTORY_MAP.write().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
 }

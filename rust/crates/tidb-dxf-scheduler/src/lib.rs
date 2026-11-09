@@ -26,10 +26,13 @@ mod slots;
 mod state_transform;
 
 pub use autoscaler::{calc_dist_sql_concurrency, get_exec_cpu_node, ResourceCalc};
-pub use interface::TaskManager;
+pub use interface::{
+    clear_cleaner_factory, clear_scheduler_factory, register_cleaner_factory, register_scheduler_factory,
+    BatchCleaner, Cleaner, CleanerFactoryFn, Error, Extension, Param, SchedulerFactoryFn, TaskManager,
+};
 pub use nodes::NodeManager;
 pub use scheduler::{
-    get_live_exec_ids, ServerInfoSource, CHECK_TASK_FINISHED_INTERVAL, RETRY_SQL_INTERVAL, RETRY_SQL_MAX_INTERVAL,
+    get_live_exec_ids, is_cancelled_err, BaseScheduler, Scheduler, ServerInfoSource, CHECK_TASK_FINISHED_INTERVAL, RETRY_SQL_INTERVAL, RETRY_SQL_MAX_INTERVAL,
     RETRY_SQL_TIMES,
 };
 pub use slots::SlotManager;
