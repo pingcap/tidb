@@ -50,6 +50,43 @@ func newAdaptiveLimitControllerForTest(
 	})
 }
 
+func TestAdaptiveLimitControllerOuterOnly(t *testing.T) {
+	controller := NewAdaptiveLimitOuterJoinController(AdaptiveLimitConfig{
+		DemandRows: 3, InitialOuterWindow: 3, MaxOuterWindow: 12,
+		InitialLookupWindow: 4, MaxLookupWindow: 8,
+	})
+	require.False(t, controller.HasLookupStage())
+	reserved, ok := reserveLookupForTest(t, controller, 1)
+	require.False(t, ok)
+	require.Zero(t, reserved)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err := controller.ReserveLookup(ctx, 1)
+	require.ErrorIs(t, err, context.Canceled)
+
+	reserved, ok = reserveOuterForTest(t, controller, 12)
+	require.True(t, ok)
+	require.Equal(t, 3, reserved)
+	controller.CommitOuter(reserved, reserved)
+	controller.ObserveJoinProgress(reserved, 0)
+	require.Equal(t, uint64(6), controller.Snapshot().OuterWindow)
+
+	reserved, ok = reserveOuterForTest(t, controller, 12)
+	require.True(t, ok)
+	controller.CommitOuter(reserved, 1)
+	controller.ObserveJoinProgress(1, 3)
+	require.True(t, controller.Snapshot().Stopped)
+
+	controller.Reset()
+	snapshot := controller.Snapshot()
+	require.False(t, snapshot.Stopped)
+	require.False(t, snapshot.HasLookupStage)
+	require.Zero(t, snapshot.LookupWindow)
+	require.Zero(t, snapshot.LookupBatchSize)
+	require.Zero(t, snapshot.OuterFetched)
+	require.Equal(t, uint64(3), snapshot.OuterWindow)
+}
+
 func TestAdaptiveLimitControllerUsesCurrentExecutionYield(t *testing.T) {
 	controller := newAdaptiveLimitControllerForTest(1000, 32, 100000, 32, 100000)
 

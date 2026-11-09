@@ -27,6 +27,7 @@ type adaptiveLimitMode uint8
 const (
 	adaptiveLimitIndexJoin adaptiveLimitMode = iota
 	adaptiveLimitDirectIndexLookup
+	adaptiveLimitIndexJoinOuterOnly
 )
 
 // adaptiveAdmissionStage identifies both the admitted unit and the accounting
@@ -86,6 +87,8 @@ func (w *adaptiveYieldWindow) totals() (input, output uint64) {
 // AdmissionBlocked fields are wall-clock durations with overlapping waits in
 // the same stage counted once.
 type AdaptiveLimitSnapshot struct {
+	// HasLookupStage reports whether the controller admits outer lookup handles.
+	HasLookupStage bool
 	// DemandRows is the final-row demand derived from LIMIT offset plus count.
 	DemandRows uint64
 	// OutputRows is the cumulative number of final rows observed by the controller.
@@ -155,10 +158,10 @@ type AdaptiveLimitConfig struct {
 //	outer rows:     ReserveOuter -> CommitOuter -> ObserveJoinProgress
 //	lookup handles: ReserveLookup -> lookup task -> CompleteLookup / AbortLookup
 //
-// Both lifecycles are active for an IndexJoin: lookup admission bounds the
-// index handles used to produce outer rows, while outer admission bounds the
-// rows consumed by the join to produce final rows. A direct IndexLookUp uses
-// only the lookup lifecycle.
+// An IndexJoin uses outer admission to bound the rows it consumes to produce
+// final rows. A double-read outer input also uses lookup admission to bound
+// the index handles used to produce outer rows. A direct IndexLookUp uses
+// only lookup admission.
 //
 // Outer admission is measured in IndexJoin outer rows. Lookup admission is
 // measured in index handles. The accounting must remain separate because a
@@ -243,7 +246,7 @@ type AdaptiveLimitController struct {
 	// lookupInNoOutputPhase suppresses productive lookup-yield adjustment until
 	// a subsequent lookup task returns rows.
 	lookupInNoOutputPhase bool
-	// mode selects IndexJoin accounting or direct IndexLookUp accounting.
+	// mode selects the active admission stages.
 	mode adaptiveLimitMode
 }
 
@@ -257,6 +260,17 @@ func NewAdaptiveLimitController(config AdaptiveLimitConfig) *AdaptiveLimitContro
 // lookup handle budget is initialized.
 func NewAdaptiveLimitLookupController(config AdaptiveLimitConfig) *AdaptiveLimitController {
 	return newAdaptiveLimitController(config, adaptiveLimitDirectIndexLookup)
+}
+
+// NewAdaptiveLimitOuterJoinController admits only outer rows for an IndexJoin
+// whose outer input is a single read.
+func NewAdaptiveLimitOuterJoinController(config AdaptiveLimitConfig) *AdaptiveLimitController {
+	return newAdaptiveLimitController(config, adaptiveLimitIndexJoinOuterOnly)
+}
+
+// HasLookupStage reports whether the controller admits outer lookup handles.
+func (c *AdaptiveLimitController) HasLookupStage() bool {
+	return c.mode != adaptiveLimitIndexJoinOuterOnly
 }
 
 func newAdaptiveLimitController(config AdaptiveLimitConfig, mode adaptiveLimitMode) *AdaptiveLimitController {
@@ -296,6 +310,14 @@ func newAdaptiveLimitController(config AdaptiveLimitConfig, mode adaptiveLimitMo
 		c.initialOuterWindow = 0
 		c.maxOuterWindow = 0
 		c.outerWindow = 0
+	}
+	if !c.HasLookupStage() {
+		c.initialLookupWindow = 0
+		c.maxLookupWindow = 0
+		c.lookupWindow = 0
+		c.initialLookupBatchSize = 0
+		c.maxLookupBatchSize = 0
+		c.lookupBatchSize = 0
 	}
 	if demandRows == 0 {
 		c.stopLocked()
@@ -353,6 +375,9 @@ func (c *AdaptiveLimitController) ReserveOuter(ctx context.Context, maxRows int)
 // The bool is false after LIMIT completion; context cancellation is returned as
 // an error.
 func (c *AdaptiveLimitController) ReserveLookup(ctx context.Context, maxHandles int) (int, bool, error) {
+	if !c.HasLookupStage() {
+		return 0, false, ctx.Err()
+	}
 	return c.reserve(ctx, maxHandles, adaptiveLookupHandlesAdmission)
 }
 
@@ -613,6 +638,7 @@ func (c *AdaptiveLimitController) Snapshot() AdaptiveLimitSnapshot {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return AdaptiveLimitSnapshot{
+		HasLookupStage:          c.HasLookupStage(),
 		DemandRows:              c.demandRows,
 		OutputRows:              c.outputRows,
 		OuterFetched:            c.outerFetched,
