@@ -50,7 +50,16 @@ tidb-server shows the same rows.
     with `TestRequestsRecording`) and `dxfmetric`
     (`rust/crates/tidb-dxf-dxfmetric`: metrics and the collector; Go
     `UsedSlotsGauge` is `tidb-metrics`'s).
-  - [ ] `metering`, then `taskexecutor/execute`, then the rest of `storage`.
+  - [x] `metering` (`rust/crates/tidb-dxf-metering`: the classic kernel's
+    recorder and data with Go's three tests; the next-gen `Meter` and its
+    `metering_sdk` writer belong to row O15).
+  - [x] `taskexecutor/execute` (`rust/crates/tidb-dxf-execute`: the step
+    executor trait, Go's JSON form of subtask summaries,
+    `TestSubtaskSummaryGetSpeed`; Go's reflection-set framework info is an
+    embedded `FrameworkInfoSlot`).
+  - [ ] The rest of `storage`: `task_table.go` from line 618, `task_state.go`,
+    `subtask_state.go`, `history.go`, Go's tests, and the cluster node's
+    session-context implementation.
 - [ ] Milestone 2: `handle` and `planner`.
 - [ ] Milestone 3: `taskexecutor/execute`, `taskexecutor` (manager, slots, executor).
 - [ ] Milestone 4: `scheduler` (manager, nodes, slots, balancer, state transitions; autoscaler where it applies to a classic kernel).
