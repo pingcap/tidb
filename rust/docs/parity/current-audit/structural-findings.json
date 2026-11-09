@@ -154,7 +154,7 @@
       "id": "Q01",
       "status": "open",
       "group": "Expanded subsystem ownership review",
-      "finding": "No Cascades memo exploration/implementation in the production optimizer",
+      "finding": "Go's `doOptimize` takes `CascadesOptimize` (memo exploration and implementation, `pkg/planner/cascades`) when `tidb_enable_cascades_planner` is ON (default OFF, experimental); this port has only `VolcanoOptimize`, so the variable is accepted and changes nothing",
       "go_owner": "`pkg/planner/cascades`"
     },
     {
