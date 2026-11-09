@@ -417,6 +417,104 @@ type ForRangeColumnsPruning struct {
 	// LessThan contains expressions for [Partition][column].
 	// If Maxvalue, then nil
 	LessThan [][]*expression.Expression
+	// lessThanDatums contains the values of LessThan, used to locate a row without
+	// evaluating UpperBounds. If Maxvalue, then nil. It is nil if a bound is not a
+	// plain constant or has an explicit COLLATE.
+	lessThanDatums [][]*types.Datum
+	// collators contains the collator of each partitioning column, for the
+	// NewCollationEnabled value in newCollation. The expressions look up the collator
+	// when evaluated, and NewCollationEnabled may change after this is built (see
+	// issue #32416).
+	collators    []collate.Collator
+	newCollation bool
+}
+
+// initLessThanDatums sets lessThanDatums from LessThan.
+func (rc *ForRangeColumnsPruning) initLessThanDatums(schema *expression.Schema, colOffsets []int) {
+	datums := make([][]*types.Datum, 0, len(rc.LessThan))
+	for _, lessThan := range rc.LessThan {
+		bounds := make([]*types.Datum, len(lessThan))
+		for j, e := range lessThan {
+			if e == nil {
+				continue
+			}
+			// An explicit COLLATE on a bound would decide the collation of the comparison.
+			c, ok := (*e).(*expression.Constant)
+			if !ok || c.DeferredExpr != nil || c.ParamMarker != nil || c.Value.IsNull() ||
+				c.Coercibility() == expression.CoercibilityExplicit {
+				return
+			}
+			d := c.Value
+			bounds[j] = &d
+		}
+		datums = append(datums, bounds)
+	}
+	rc.newCollation = collate.NewCollationEnabled()
+	rc.collators = make([]collate.Collator, len(colOffsets))
+	for j, offset := range colOffsets {
+		rc.collators[j] = collate.GetCollator(schema.Columns[offset].RetType.GetCollate())
+	}
+	rc.lessThanDatums = datums
+}
+
+// locateByDatums returns the index of the first partition whose bound is greater than the
+// row, the same as evaluating UpperBounds. ok is false if a value does not have the kind of
+// its bound, or the collators are outdated, then the caller should evaluate UpperBounds instead.
+func (rc *ForRangeColumnsPruning) locateByDatums(tc types.Context, colOffsets []int, r []types.Datum) (idx int, ok bool) {
+	if rc.newCollation != collate.NewCollationEnabled() {
+		return 0, false
+	}
+	ok = true
+	idx = sort.Search(len(rc.lessThanDatums), func(i int) bool {
+		less, decided := rc.rowLessThan(tc, colOffsets, i, r)
+		if !decided {
+			ok = false
+			return true
+		}
+		return less
+	})
+	return idx, ok
+}
+
+// rowLessThan compares the row with the bound of partition i as (cols) < (bound) does,
+// where NULL is less than any value.
+func (rc *ForRangeColumnsPruning) rowLessThan(tc types.Context, colOffsets []int, i int, r []types.Datum) (less, ok bool) {
+	for j, bound := range rc.lessThanDatums[i] {
+		if bound == nil {
+			// MAXVALUE
+			return true, true
+		}
+		v := &r[colOffsets[j]]
+		if v.IsNull() {
+			return true, true
+		}
+		kind := rangeColumnsKind(v.Kind())
+		if kind == 0 || kind != rangeColumnsKind(bound.Kind()) {
+			return false, false
+		}
+		cmp, err := v.Compare(tc, bound, rc.collators[j])
+		if err != nil {
+			return false, false
+		}
+		if cmp != 0 {
+			return cmp < 0, true
+		}
+	}
+	return false, true
+}
+
+// rangeColumnsKind groups the datum kinds of RANGE COLUMNS values that compare with each
+// other, or returns 0 for other kinds.
+func rangeColumnsKind(k byte) byte {
+	switch k {
+	case types.KindInt64, types.KindUint64:
+		return types.KindInt64
+	case types.KindString, types.KindBytes, types.KindBinaryLiteral:
+		return types.KindString
+	case types.KindMysqlTime:
+		return types.KindMysqlTime
+	}
+	return 0
 }
 
 func dataForRangeColumnsPruning(ctx expression.BuildContext, defs []model.PartitionDefinition, schema *expression.Schema, names []*types.FieldName, p *parser.Parser, colOffsets []int) (*ForRangeColumnsPruning, error) {
@@ -450,6 +548,7 @@ func dataForRangeColumnsPruning(ctx expression.BuildContext, defs []model.Partit
 		}
 		res.LessThan = append(res.LessThan, lessThanCols)
 	}
+	res.initLessThanDatums(schema, colOffsets)
 	return &res, nil
 }
 
@@ -1521,6 +1620,14 @@ func (t *partitionedTable) locateReorgPartition(ctx expression.EvalContext, r []
 
 func (t *partitionedTable) locateRangeColumnPartition(ctx expression.EvalContext, partitionExpr *PartitionExpr, r []types.Datum) (int, error) {
 	upperBounds := partitionExpr.UpperBounds
+	if rc := partitionExpr.ForRangeColumnsPruning; rc != nil && rc.lessThanDatums != nil {
+		if idx, ok := rc.locateByDatums(ctx.TypeCtx(), partitionExpr.ColumnOffset, r); ok {
+			if idx >= len(upperBounds) {
+				return 0, table.ErrNoPartitionForGivenValue.GenWithStackByArgs("from column_list")
+			}
+			return idx, nil
+		}
+	}
 	var lastError error
 	evalBuffer := t.evalBufferPool.Get().(*chunk.MutRow)
 	defer t.evalBufferPool.Put(evalBuffer)
