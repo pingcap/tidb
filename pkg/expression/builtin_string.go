@@ -985,8 +985,9 @@ func soundex(str string, mode soundexMode) string {
 	return buf.String()
 }
 
-// isSoundexLetter reports whether r is a letter for SOUNDEX. MySQL 8.0 takes every non-ASCII character from
-// U+00C0 up as a letter (including U+00D7 and U+00F7) and none below it; a byte of a binary string is a
+// isSoundexLetter reports whether r is a letter for SOUNDEX. For a UTF-8 string MySQL 8.0 takes every non-ASCII
+// character from U+00C0 up as a letter (including U+00D7 and U+00F7) and none below it. For a Latin-1 string it
+// classifies each byte with the character set's own table (see isLatin1Letter). A byte of a binary string is a
 // letter only when it is an ASCII letter.
 func isSoundexLetter(r rune, mode soundexMode) bool {
 	switch {
@@ -994,8 +995,27 @@ func isSoundexLetter(r rune, mode soundexMode) bool {
 		return true
 	case mode == soundexModeBinary:
 		return false
+	case mode == soundexModeLatin1:
+		return isLatin1Letter(byte(r))
 	}
 	return r >= 0xC0
+}
+
+// isLatin1Letter reports whether b is a letter in MySQL's latin1 (cp1252) character class table,
+// strings/ctype-latin1.cc: the ASCII letters, the letters 0x83, 0x8A, 0x8C, 0x8E, 0x9A, 0x9C, 0x9E and 0x9F of the
+// 0x80 to 0x9F block, and 0xC0 to 0xFF except the signs 0xD7 and 0xF7.
+func isLatin1Letter(b byte) bool {
+	switch {
+	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z':
+		return true
+	case b >= 0xC0:
+		return b != 0xD7 && b != 0xF7
+	}
+	switch b {
+	case 0x83, 0x8A, 0x8C, 0x8E, 0x9A, 0x9C, 0x9E, 0x9F:
+		return true
+	}
+	return false
 }
 
 func soundexCode(r rune) byte {

@@ -159,6 +159,14 @@ func TestSoundex(t *testing.T) {
 	tk.MustExec("insert into l values (0xE9616263), (0xC3A9616263), (0x61E9626364), ('abc')")
 	tk.MustQuery("select hex(soundex(a)) from l order by a").Check(testkit.Rows("41313230", "41313233", "C3313230", "E9313230"))
 
+	// MySQL classifies Latin-1 bytes with its own table: 0xD7 and 0xF7 are signs, not letters, and 0x8A and 0x9F are letters.
+	tk.MustQuery("select hex(soundex(_latin1 0xD7616263)), hex(soundex(_latin1 0xF7616263)), hex(soundex(_latin1 0x8A616263)), hex(soundex(_latin1 0x9F616263)), hex(soundex(_latin1 0x80616263))").Check(
+		testkit.Rows("41313230 41313230 8A313230 9F313230 41313230"))
+	tk.MustExec("create table l2 (id int primary key, a varchar(10) character set latin1)")
+	tk.MustExec("insert into l2 values (1, 0xD7616263), (2, 0xF7616263), (3, 0x8A616263), (4, 0x9F616263), (5, 0xD8616263)")
+	tk.MustQuery("select id, hex(soundex(a)) from l2 order by id").Check(
+		testkit.Rows("1 41313230", "2 41313230", "3 8A313230", "4 9F313230", "5 D8313230"))
+
 	// The collation of the result comes from the argument.
 	tk.MustQuery("select collation(soundex(_utf8mb4'abc' collate utf8mb4_unicode_ci)), coercibility(soundex(_utf8mb4'abc' collate utf8mb4_unicode_ci))").Check(
 		testkit.Rows("utf8mb4_unicode_ci 0"))

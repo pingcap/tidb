@@ -793,6 +793,21 @@ func TestSoundex(t *testing.T) {
 		require.Equal(t, c.expect, d.GetString(), "%v", c.input)
 	}
 
+	// A Latin-1 string is classified byte by byte with MySQL 8.0.46's latin1 table (strings/ctype-latin1.cc).
+	// Above 0x7F the letters are 0x83, 0x8A, 0x8C, 0x8E, 0x9A, 0x9C, 0x9E, 0x9F and 0xC0 to 0xFF except 0xD7 and
+	// 0xF7. A letter is kept as it is and has code '0'; any other byte is skipped, so "abc" gives A120.
+	latin1Letters := map[byte]bool{0x83: true, 0x8A: true, 0x8C: true, 0x8E: true, 0x9A: true, 0x9C: true, 0x9E: true, 0x9F: true}
+	for b := 0xC0; b <= 0xFF; b++ {
+		latin1Letters[byte(b)] = b != 0xD7 && b != 0xF7
+	}
+	for b := 0x80; b <= 0xFF; b++ {
+		expect := "A120"
+		if latin1Letters[byte(b)] {
+			expect = string([]byte{byte(b), '1', '2', '0'})
+		}
+		require.Equal(t, expect, soundex(string([]byte{byte(b), 'a', 'b', 'c'}), soundexModeLatin1), "latin1 byte %#x", b)
+	}
+
 	// SOUNDEX needs exactly one argument.
 	_, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums("a", "b")))
 	require.Error(t, err)
