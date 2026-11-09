@@ -606,7 +606,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			// table-level NDV.
 			if *globalHg != nil {
 				ndv := a.globalStatsNDV[item.idx]
-				if isLocalUnique(a.globalTableInfo, isIndex, a.histIDs[item.idx]) {
+				if statistics.UniqueByLocalIndex(a.globalTableInfo, isIndex, a.histIDs[item.idx]) {
 					ndv = uniqueGlobalNDV(wrapper.AllHg, a.globalStats.Count)
 				} else if a.sampledNDV[item.idx] {
 					ndv = sampledGlobalNDV(ndv, *globalHg, a.globalStats.TopN[item.idx], wrapper.missedNotNull, a.globalStats.Count)

@@ -240,26 +240,67 @@ func (idx *Index) IsAnalyzed() bool {
 	return idx.StatsVer != Version0
 }
 
-// UniqueBySchema returns true if a public, non-prefix, single-column unique
-// index keeps every non-NULL value of the column or index with the given ID
-// distinct.
+// UniqueBySchema returns true if the schema keeps every non-NULL value of the
+// column or index with the given ID distinct: the integer handle column, an
+// index that isUniqueKey accepts, or the column of such an index with one
+// column.
 func UniqueBySchema(tblInfo *model.TableInfo, isIndex bool, id int64) bool {
+	return uniqueBySchema(tblInfo, isIndex, id, false)
+}
+
+// UniqueByLocalIndex applies UniqueBySchema's checks but excludes global indexes.
+func UniqueByLocalIndex(tblInfo *model.TableInfo, isIndex bool, id int64) bool {
+	return uniqueBySchema(tblInfo, isIndex, id, true)
+}
+
+func uniqueBySchema(tblInfo *model.TableInfo, isIndex bool, id int64, localOnly bool) bool {
+	// A clustered integer primary key has no entry in tblInfo.Indices.
+	// Check its column separately so ANALYZE uses the row count as its NDV
+	// and skips TopN.
+	if !isIndex && tblInfo.PKIsHandle {
+		if pk := tblInfo.GetPkColInfo(); pk != nil && pk.ID == id {
+			return true
+		}
+	}
+	// Partition statistics can come from different ANALYZE snapshots. With a
+	// global unique index, a value can move to another partition and remain in
+	// the old partition's statistics, so summing their NDVs can count it twice.
+	// Local unique indexes include the partition key, so each key value stays
+	// in one partition. localOnly requires this stronger guarantee;
+	// a single ANALYZE snapshot can use global indexes to prove uniqueness.
 	for _, idx := range tblInfo.Indices {
-		if !IsSingleColNonPrefixUniqueIndex(idx) {
+		if (localOnly && idx.Global) || !isUniqueKey(tblInfo, idx) {
 			continue
 		}
-		if (isIndex && idx.ID == id) || (!isIndex && tblInfo.Columns[idx.Columns[0].Offset].ID == id) {
+		if isIndex && idx.ID == id {
+			return true
+		}
+		if !isIndex && len(idx.Columns) == 1 && tblInfo.Columns[idx.Columns[0].Offset].ID == id {
 			return true
 		}
 	}
 	return false
 }
 
-// IsSingleColNonPrefixUniqueIndex returns true if the index is public, unique
-// (or primary), has exactly one column, and uses neither a prefix nor a
-// partial-index condition.
-func IsSingleColNonPrefixUniqueIndex(idx *model.IndexInfo) bool {
-	return idx.State == model.StatePublic &&
-		(idx.Unique || idx.Primary) && len(idx.Columns) == 1 &&
-		!idx.HasPrefixIndex() && !idx.HasCondition()
+// isUniqueKey returns true for a public unique or primary index with no prefix
+// column and no condition, as the stats of a partial index include the rows
+// outside its condition. A composite key repeats when a column is NULL, so all
+// columns of a composite key must be NOT NULL.
+func isUniqueKey(tblInfo *model.TableInfo, idx *model.IndexInfo) bool {
+	if idx.State != model.StatePublic || !(idx.Unique || idx.Primary) ||
+		idx.HasPrefixIndex() || idx.HasCondition() {
+		return false
+	}
+	if len(idx.Columns) == 1 {
+		return true
+	}
+	// For a single-column index, NULL values are excluded from NDV.
+	// Composite keys such as (1, NULL) are counted, but UNIQUE allows them to
+	// repeat. All columns must be NOT NULL to guarantee NDV equals row count.
+	for _, col := range idx.Columns {
+		if !mysql.HasNotNullFlag(tblInfo.Columns[col.Offset].GetFlag()) {
+			return false
+		}
+	}
+	return true
 }
