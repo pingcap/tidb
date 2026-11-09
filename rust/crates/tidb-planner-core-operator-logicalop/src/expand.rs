@@ -26,26 +26,6 @@
 //!
 //! # Narrowings, by name
 //!
-//! * `RollupGroupingSets expression.GroupingSets`. `pkg/expression`'s
-//!   `GroupingSets`/`GroupingSet`/`GroupingExprs` are NOT transcreated. Every
-//!   body in this Go file reads a grouping set through exactly one method —
-//!   `GroupingSet.AllColIDs()` — and the file-level `AllSetsColIDs()` is their
-//!   union, so [`GroupingSet`] carries that column-id set and nothing
-//!   else. What is lost is the EXPRESSION form of a set, which only
-//!   `expression.GroupingSets.DistinctSize` and the grouping-set builder in
-//!   `pkg/expression/grouping_sets.go` need.
-//! * `DistinctSize`, `RollupGroupingIDs` and `RollupID2GIDS` are the three
-//!   outputs of `expression.GroupingSets.DistinctSize()`, which is that same
-//!   untranscreated file. They are FIELDS here, filled by whoever builds the
-//!   operator; [`LogicalExpand::gen_level_projections`] therefore reads them
-//!   rather than recomputing them, and says so.
-//! * `TrySubstituteExprWithGroupingSetCol` and
-//!   `ResolveGroupingFuncArgsInGroupBy` compare with
-//!   `expression.Expression.CanonicalHashCode`, which normalises a commutative
-//!   function's argument order and is not transcreated. Both bodies below
-//!   compare `HashCode` instead, so a COMMUTED group-by expression is not
-//!   recognised — a false negative, which leaves the expression unsubstituted
-//!   rather than pointing it at the wrong column.
 //! * `ExtractFD` forwards to the schema producer's; `pkg/planner/funcdep` is
 //!   not transcreated (see [`crate::BaseLogicalPlan`]).
 //! * `GroupingMode tipb.GroupingMode`. `tidb-expr` models the same three modes
@@ -58,6 +38,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use tidb_datatype::Datum;
 use tidb_expr::column::Column;
+use tidb_expr::grouping_sets::{GroupingSet, GroupingSets};
 use tidb_expr::constant::Constant;
 use tidb_expr::expression::{CorrelatedColumn, Expression};
 use tidb_expr::schema::Schema;
@@ -81,24 +62,6 @@ pub enum GroupingMode {
     NumericSet,
 }
 
-/// Go `expression.GroupingSet` as `logical_expand.go` uses it: the set of
-/// column unique ids the set groups by. See this module's header.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct GroupingSet {
-    /// Go `GroupingSet.AllColIDs()`.
-    pub col_ids: BTreeSet<i64>,
-}
-
-impl GroupingSet {
-    /// A grouping set over the given column unique ids.
-    #[must_use]
-    pub fn new(col_ids: impl IntoIterator<Item = i64>) -> Self {
-        Self {
-            col_ids: col_ids.into_iter().collect(),
-        }
-    }
-}
-
 /// Go `logicalop.LogicalExpand` (`logical_expand.go:32`).
 #[derive(Clone, Debug, Default)]
 pub struct LogicalExpand {
@@ -115,13 +78,15 @@ pub struct LogicalExpand {
     /// Go `DistinctGbyExprs`: the ORIGINAL group-by expressions, kept so
     /// `grouping(a+b)` can be resolved back to its projected column.
     pub distinct_gby_exprs: Vec<Expression>,
-    /// Go `DistinctSize`; see this module's header.
+    /// Go `DistinctSize`.
     pub distinct_size: i64,
     /// Go `RollupGroupingSets`.
-    pub rollup_grouping_sets: Vec<GroupingSet>,
-    /// Go `RollupID2GIDS`: for `ModeNumericSet`, each column's grouping ids.
+    pub rollup_grouping_sets: GroupingSets,
+    /// Go `RollupID2GIDS`: for `ModeNumericSet`, each column's grouping ids
+    /// (empty is Go's nil map).
     pub rollup_id_to_gids: BTreeMap<i64, BTreeSet<u64>>,
-    /// Go `RollupGroupingIDs`, one per grouping set in order.
+    /// Go `RollupGroupingIDs`, one per grouping set in order, filled only
+    /// past `DistinctSize`'s 64 (empty is Go's nil slice).
     pub rollup_grouping_ids: Vec<u64>,
     /// Go `LevelExprs`, the per-grouping-set projection.
     ///
@@ -247,28 +212,27 @@ impl LogicalExpand {
         Vec::new()
     }
 
+    /// Go `p.DistinctSize, p.RollupGroupingIDs, p.RollupID2GIDS =
+    /// p.RollupGroupingSets.DistinctSize()`.
+    pub fn set_distinct_size(&mut self) {
+        let (size, ids, id_to_gids) = self.rollup_grouping_sets.distinct_size();
+        self.distinct_size = size as i64;
+        self.rollup_grouping_ids = ids.unwrap_or_default();
+        self.rollup_id_to_gids = id_to_gids.map(|map| map.into_iter().collect()).unwrap_or_default();
+    }
+
     /// Go `LogicalExpand.GenLevelProjections()` (`logical_expand.go:191`): one
     /// projection per grouping set, in which a column this set does not group by
     /// becomes a typed NULL and the trailing generated columns become constants.
-    ///
-    /// BOUNDARY: Go's first two lines call
-    /// `expression.GroupingSets.AllSetsColIDs()` and
-    /// `expression.GroupingSets.DistinctSize()`, of which only the former is
-    /// dependency-closed here (it is the union of [`GroupingSet::col_ids`]).
-    /// `DistinctSize` fills [`Self::distinct_size`], [`Self::rollup_grouping_ids`]
-    /// and [`Self::rollup_id_to_gids`]; this body READS those three rather than
-    /// recomputing them, so the builder must have filled them.
     ///
     /// The duplicate-set case is what decides the schema layout: with duplicates
     /// the last TWO schema columns are `gid` and `gpos`, otherwise only the last
     /// is `gid`. Go indexes those positions unconditionally; a schema too narrow
     /// to hold them leaves the level projections untouched here.
     pub fn gen_level_projections(&mut self, schema: &Schema) {
-        let grouping_set_cols: BTreeSet<i64> = self
-            .rollup_grouping_sets
-            .iter()
-            .flat_map(|set| set.col_ids.iter().copied())
-            .collect();
+        // get all the grouping cols.
+        let grouping_set_cols = self.rollup_grouping_sets.all_sets_col_ids();
+        self.set_distinct_size();
         let has_duplicate_grouping_set =
             self.rollup_grouping_sets.len() as i64 != self.distinct_size;
         let generated = if has_duplicate_grouping_set { 2 } else { 1 };
@@ -283,8 +247,8 @@ impl LogicalExpand {
             let cur_set = &self.rollup_grouping_sets[offset];
             let mut level_proj = Vec::with_capacity(schema.columns.len());
             for one_col in non_gen_cols {
-                if grouping_set_cols.contains(&one_col.unique_id)
-                    && !cur_set.col_ids.contains(&one_col.unique_id)
+                if grouping_set_cols.has(one_col.unique_id)
+                    && !cur_set.all_col_ids().has(one_col.unique_id)
                 {
                     // Go `expression.NewNullWithFieldType(col.RetType.Clone())`:
                     // the un-needed column of this set is projected as NULL, and
@@ -323,10 +287,11 @@ impl LogicalExpand {
     /// grouping id, which is exactly what a duplicate set is.
     #[must_use]
     pub fn generate_grouping_id_mode_bit_and(&self, one_set: &GroupingSet) -> u64 {
+        let ids_needed = one_set.all_col_ids();
         let mut res = 0_u64;
         for col in self.distinct_group_by_col.iter().rev() {
             res <<= 1;
-            if one_set.col_ids.contains(&col.unique_id) {
+            if ids_needed.has(col.unique_id) {
                 res |= 1;
             }
         }
@@ -392,8 +357,7 @@ impl LogicalExpand {
     /// column the projection below materialised it as.
     ///
     /// Returns the substituted column and whether it was found; an unfound
-    /// expression comes back unchanged, as in Go. See this module's header for
-    /// the `CanonicalHashCode` narrowing.
+    /// expression comes back unchanged, as in Go.
     #[must_use]
     pub fn try_substitute_expr_with_grouping_set_col(
         &self,
@@ -483,10 +447,14 @@ impl LogicalExpand {
         }
         hasher.hash_int64(self.distinct_size);
         hasher.hash_int(self.rollup_grouping_sets.len() as i64);
-        for set in &self.rollup_grouping_sets {
-            hasher.hash_int(set.col_ids.len() as i64);
-            for id in &set.col_ids {
-                hasher.hash_int64(*id);
+        for one in self.rollup_grouping_sets.iter() {
+            hasher.hash_int(one.len() as i64);
+            for onee in one.iter() {
+                hasher.hash_int(onee.len() as i64);
+                for oneee in onee.iter() {
+                    let mut oneee = oneee.clone();
+                    hasher.hash_bytes(oneee.hash_code());
+                }
             }
         }
         // Go's generated body frames a nil slice apart from an empty one, which
@@ -527,7 +495,7 @@ impl LogicalExpand {
                 &other.distinct_gby_exprs,
             )
             && self.distinct_size == other.distinct_size
-            && self.rollup_grouping_sets == other.rollup_grouping_sets
+            && grouping_sets_equal(&self.rollup_grouping_sets, &other.rollup_grouping_sets)
             && level_exprs_equal(self.level_exprs.as_deref(), other.level_exprs.as_deref())
             && column_options_equal(self.gid.as_deref(), other.gid.as_deref())
             && column_options_equal(self.gpos.as_deref(), other.gpos.as_deref())
@@ -601,6 +569,17 @@ fn column_options_equal(left: Option<&Column>, right: Option<&Column>) -> bool {
         }
         _ => false,
     }
+}
+
+fn grouping_sets_equal(left: &GroupingSets, right: &GroupingSets) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right.iter()).all(|(one, other)| {
+            one.len() == other.len()
+                && one
+                    .iter()
+                    .zip(other.iter())
+                    .all(|(onee, othere)| schema_producer::expression_lists_equal(onee, othere))
+        })
 }
 
 fn level_exprs_equal(left: Option<&[Vec<Expression>]>, right: Option<&[Vec<Expression>]>) -> bool {

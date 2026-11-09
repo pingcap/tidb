@@ -178,21 +178,17 @@ fn attach_hash_agg_to_mpp(
         let PhysicalPlan::HashAgg(hash_agg) = &mut plan else {
             unreachable!("MPP scalar aggregate is a HashAgg");
         };
-        let grouping_sets = tidb_planner_core_operator_physicalop::final_mode_agg::can_use_three_stage_multi_distinct(
-            &hash_agg.agg_funcs,
+        tidb_planner_core_operator_physicalop::final_mode_agg::can_use_3_stage_4_multi_distinct_agg(
+            &mut hash_agg.agg_funcs,
             &hash_agg.group_by_items,
             enable_3_stage_distinct_agg,
             enable_3_stage_multi_distinct_agg,
-        );
-        if let Some(grouping_sets) = &grouping_sets {
-            if !tidb_planner_core_operator_physicalop::final_mode_agg::mark_three_stage_grouping_ids(
-                &mut hash_agg.agg_funcs,
-                grouping_sets,
-            ) {
-                return Ok(Task::invalid_task());
-            }
-        }
-        grouping_sets
+            &mut |message| {
+                if let Some(sink) = session {
+                    sink.append_warning(message);
+                }
+            },
+        )
     } else {
         None
     };
@@ -2867,7 +2863,11 @@ mod attach_tests {
         let Some(PhysicalPlan::Expand(expand)) = projection.base.children().first() else {
             panic!("the partial projection is above the grouping-set Expand");
         };
-        assert_eq!(expand.level_exprs.len(), 2);
+        // Go's 3-stage Expand carries the grouping sets and the grouping-id
+        // column, not level projections.
+        assert!(expand.level_exprs.is_empty());
+        assert_eq!(expand.grouping_sets.len(), 2);
+        assert!(expand.grouping_id_col.is_some());
         assert_eq!(expand.base.base.schema().map(Schema::len), Some(4));
         // Go adjust3StagePhaseAgg replicates rows, then the projection and
         // partial aggregation derive from that same expanded profile.

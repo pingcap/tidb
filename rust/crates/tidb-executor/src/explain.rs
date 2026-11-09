@@ -1698,7 +1698,21 @@ fn physical_operator_own_info(
         PhysicalPlan::Window(window) => window_info(eval_ctx, window),
         // Go `PhysicalExpand.explainInfoV2`: each level is an
         // `ExplainExpressionList` over the Expand's schema, and the schema
-        // columns are joined without a space.
+        // columns are joined without a space. Without level projections Go
+        // prints the grouping sets (`ExplainInfo`).
+        PhysicalPlan::Expand(expand) if expand.level_exprs.is_empty() => {
+            let mut text = format!("group set num:{}", expand.grouping_sets.len());
+            if let Some(grouping_id_col) = &expand.grouping_id_col {
+                text.push_str(", groupingID:");
+                text.push_str(&expression_string_text(
+                    eval_ctx,
+                    &tidb_expr::expression::Expression::Column(grouping_id_col.clone()),
+                ));
+                text.push_str(", ");
+            }
+            text.push_str(&expand.grouping_sets.string_with_ctx(eval_ctx));
+            text
+        }
         PhysicalPlan::Expand(expand) => format!(
             "level-projection:{}; schema: [{}]",
             expand

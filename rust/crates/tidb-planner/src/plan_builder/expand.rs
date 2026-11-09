@@ -22,10 +22,6 @@
 //! | [`PlanBuilder::replace_grouping_func`] | `replaceGroupingFunc` (:1723) + `resolveGroupingTraverseAction` (:1700) |
 //! | [`PlanBuilder::implicit_project_grouping_set_cols`] | `implicitProjectGroupingSetCols` (:1734) |
 //! | [`build_expand_field_name`] | `buildExpandFieldName` (:1509) |
-//! | [`deduplicate_gby_expression`] | `expression.DeduplicateGbyExpression` |
-//! | [`restore_gby_expression`] | `expression.RestoreGbyExpression` |
-//! | [`rollup_grouping_sets`] | `expression.RollupGroupingSets` |
-//! | [`distinct_size`] | `expression.GroupingSets.DistinctSize` |
 //!
 //! # What ROLLUP actually is, once
 //!
@@ -45,24 +41,15 @@
 //! [`PlanBuilder::replace_grouping_func`] here over
 //! [`tidb_planner_core_operator_logicalop::expand::LogicalExpand::resolve_grouping_func_args_in_group_by`].
 //!
-//! # Narrowings, by exact blocking Go symbol
+//! # Notes
 //!
 //! * `expression.AdjustNullabilityFromGroupingSets(rollupGroupingSets,
-//!   expandSchema)`. A grouping column becomes NULLABLE across the Expand,
-//!   because the sets that do not group by it project NULL. Reproduced inline
-//!   below by clearing [`tidb_datatype::FieldTypeFlags::NOT_NULL`] on every
-//!   column whose unique id appears in any grouping set — which is the whole
-//!   content of that function.
-//! * `expression.GroupingSets`/`GroupingSet`/`GroupingExprs` are not
-//!   transcreated; [`tidb_planner_core_operator_logicalop::expand::GroupingSet`]'s own header
-//!   records why, and [`distinct_size`] is the one method of that file the
-//!   builder must supply, ported here against the column-id sets.
-//! * `expression.Expression.CanonicalHashCode`, which
-//!   `TrySubstituteExprWithGroupingSetCol` compares with. The operator's
-//!   header already names this: a COMMUTED group-by expression is not
-//!   recognised, a false negative that leaves the expression unsubstituted.
+//!   expandSchema)` narrows the `RetType` the Expand schema shares (Go's
+//!   `Schema.Clone` is shallow about it) with the projection below and the
+//!   distinct group-by columns, so the builder applies its rule to every
+//!   copy (`tidb_expr::grouping_sets` has the function itself).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use tidb_datatype::{
     FieldName, FieldNameMetadata, FieldType, FieldTypeCode, FieldTypeFlags, IdentifierMetadata,
@@ -74,111 +61,12 @@ use tidb_exprctx::Columns;
 
 use tidb_infoschema::table_source::TableSource;
 use super::{snapshot_schema_and_names, BlockExpand, PlanBuilder};
-use tidb_planner_core_operator_logicalop::expand::{GroupingMode, LogicalExpand, GroupingSet};
+use tidb_expr::grouping_sets::{deduplicate_gby_expression, restore_gby_expression, rollup_grouping_sets};
+use tidb_planner_core_operator_logicalop::expand::{GroupingMode, LogicalExpand};
 use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
 use tidb_planner_core_rule::flags;
 use tidb_planner_core_operator_logicalop::LogicalPlan;
 use tidb_planner_core_base::PlanError;
-
-/// Go `expression.DeduplicateGbyExpression(gbyItems)`: the distinct group-by
-/// expressions, plus for each ORIGINAL item the position of its representative.
-///
-/// `group by a, b, a` has two distinct expressions and the reference positions
-/// `[0, 1, 0]`, which is what lets [`restore_gby_expression`] put the rebuilt
-/// column back in every place the expression was written.
-#[must_use]
-pub fn deduplicate_gby_expression(gby_items: &[Expression]) -> (Vec<Expression>, Vec<usize>) {
-    let mut distinct: Vec<Expression> = Vec::with_capacity(gby_items.len());
-    let mut positions = Vec::with_capacity(gby_items.len());
-    for item in gby_items {
-        let position = distinct
-            .iter()
-            .position(|existing| tidb_planner_core_operator_logicalop::schema_producer::expressions_equal(existing, item))
-            .unwrap_or_else(|| {
-                distinct.push(item.clone());
-                distinct.len() - 1
-            });
-        positions.push(position);
-    }
-    (distinct, positions)
-}
-
-/// Go `expression.RestoreGbyExpression(distinctGbyCols, gbyExprsRefPos)`: the
-/// group-by item list rebuilt over the projected columns.
-#[must_use]
-pub fn restore_gby_expression(
-    distinct_cols: &[Column],
-    ref_positions: &[usize],
-) -> Vec<Expression> {
-    ref_positions
-        .iter()
-        .filter_map(|position| distinct_cols.get(*position))
-        .cloned()
-        .map(Expression::Column)
-        .collect()
-}
-
-/// Go `expression.RollupGroupingSets(newGbyItems)`: `<a,b,c>` becomes
-/// `{}, {a}, {a,b}, {a,b,c}` — every PREFIX of the written group-by list.
-#[must_use]
-pub fn rollup_grouping_sets(gby_items: &[Expression]) -> Vec<GroupingSet> {
-    let ids: Vec<i64> = gby_items
-        .iter()
-        .filter_map(|item| match item {
-            Expression::Column(column) => Some(column.unique_id),
-            _ => None,
-        })
-        .collect();
-    (0..=ids.len())
-        .map(|length| GroupingSet::new(ids[..length].iter().copied()))
-        .collect()
-}
-
-/// Go `expression.GroupingSets.DistinctSize()`: the number of DISTINCT
-/// grouping sets, each set's grouping id, and per column the ids it is present
-/// in.
-///
-/// The rollup sets are prefixes and so are always distinct, but the shape is
-/// Go's and [`LogicalExpand::gen_level_projections`] reads all three fields.
-#[must_use]
-pub fn distinct_size(
-    sets: &[GroupingSet],
-    distinct_cols: &[Column],
-    mode: GroupingMode,
-) -> (i64, Vec<u64>, BTreeMap<i64, BTreeSet<u64>>) {
-    let mut seen: Vec<&BTreeSet<i64>> = Vec::with_capacity(sets.len());
-    let mut ids = Vec::with_capacity(sets.len());
-    let mut id_to_gids: BTreeMap<i64, BTreeSet<u64>> = BTreeMap::new();
-    for (offset, set) in sets.iter().enumerate() {
-        if !seen.contains(&&set.col_ids) {
-            seen.push(&set.col_ids);
-        }
-        // In `ModeNumericSet` the id IS the set's index; otherwise it is the
-        // bitmask, which is what `GenerateGroupingIDModeBitAnd` recomputes.
-        let id = match mode {
-            GroupingMode::NumericSet => offset as u64,
-            _ => bit_and_id(set, distinct_cols),
-        };
-        ids.push(id);
-        for col_id in &set.col_ids {
-            id_to_gids.entry(*col_id).or_default().insert(id);
-        }
-    }
-    (seen.len() as i64, ids, id_to_gids)
-}
-
-/// [`LogicalExpand::generate_grouping_id_mode_bit_and`] before the operator
-/// exists to call it on.
-fn bit_and_id(set: &GroupingSet, distinct_cols: &[Column]) -> u64 {
-    let mut res = 0_u64;
-    for column in distinct_cols.iter().rev() {
-        res <<= 1;
-        if set.col_ids.contains(&column.unique_id) {
-            res |= 1;
-        }
-    }
-    res
-}
 
 /// Go `buildExpandFieldName(ctx, expr, name, genName)`
 /// (`logical_plan_builder.go:1509`).
@@ -306,16 +194,16 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // grouping sets, and every later reader (the aggregation's group-by
         // items, the select fields, a view's column types) hold: they all
         // see the NULLABLE type, not just the Expand's own schema.
-        let grouping_col_ids: BTreeSet<i64> = grouping_sets
-            .iter()
-            .flat_map(|set| set.col_ids.iter().copied())
-            .collect();
+        let grouping_ids = grouping_sets.all_sets_col_ids();
+        let grouping_ids_slice: Vec<_> = grouping_sets.iter().map(|one| one.all_col_ids()).collect();
         let make_nullable = |column: &mut Column| {
-            if !grouping_col_ids.contains(&column.unique_id) {
+            if !grouping_ids.has(column.unique_id) {
                 return;
             }
-            if let Some(ret_type) = column.ret_type.as_mut() {
-                ret_type.set_flag(ret_type.flags() & !FieldTypeFlags::NOT_NULL);
+            if grouping_ids_slice.iter().any(|one_set_ids| !one_set_ids.has(column.unique_id)) {
+                if let Some(ret_type) = column.ret_type.as_mut() {
+                    ret_type.set_flag(ret_type.flags() & !FieldTypeFlags::NOT_NULL);
+                }
             }
         };
         let mut expand_columns = proj_columns;
@@ -339,11 +227,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             GroupingMode::BitAnd
         };
         expand.grouping_mode = Some(mode);
-        let (size, ids, id_to_gids) = distinct_size(&grouping_sets, &distinct_gby_cols, mode);
-        expand.distinct_size = size;
-        expand.rollup_grouping_ids = ids;
-        expand.rollup_id_to_gids = id_to_gids;
         expand.rollup_grouping_sets = grouping_sets;
+        expand.set_distinct_size();
         expand.distinct_group_by_col = distinct_gby_cols.clone();
         expand.distinct_gby_col_names = distinct_gby_col_names;
         let distinct_gby_exprs_for_block = distinct_gby_exprs.clone();

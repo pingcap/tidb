@@ -12,23 +12,33 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Physical grouping-level projections, corresponding to Go PhysicalExpand.
+//! Go `pkg/planner/core/operator/physicalop/physical_expand.go`:
+//! `PhysicalExpand`, which replicates its input per grouping set. A rollup's
+//! carries level projections (`LevelExprs`, the V2 form); the 3-stage
+//! multi-distinct aggregate's carries only `GroupingSets` and the grouping-id
+//! column (the V1 form).
 
 use super::{BasePhysicalPlan, PhysicalPlan};
 use tidb_planner_core_operator_logicalop::LogicalExpand;
 use tidb_planner_property::{MppPartitionType, PhysicalProperty, TaskType};
 use tidb_planner_core_base::PlanIdAllocator;
+use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
+use tidb_expr::grouping_sets::GroupingSets;
 use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 
-/// Expand's output is one projection per grouping level per input batch.
-#[derive(Clone, Debug)]
+/// Go `PhysicalExpand`.
+#[derive(Clone, Debug, Default)]
 pub struct PhysicalExpand {
     /// Shared physical operator state.
     pub base: BasePhysicalPlan,
-    /// Expressions for each grouping level.
+    /// Go `GroupingIDCol`: the generated grouping-id column of the V1 form.
+    pub grouping_id_col: Option<Column>,
+    /// Go `GroupingSets`.
+    pub grouping_sets: GroupingSets,
+    /// Go `LevelExprs`: one projection per grouping set (the V2 form).
     pub level_exprs: Vec<Vec<Expression>>,
-    /// Names of generated grouping identifier columns.
+    /// Go `ExtraGroupingColNames`: the generated columns' names.
     pub extra_grouping_col_names: Vec<String>,
 }
 
@@ -92,6 +102,8 @@ fn candidate(
     base.set_children_req_props(vec![Some(child_prop)]);
     PhysicalPlan::Expand(PhysicalExpand {
         base,
+        grouping_id_col: None,
+        grouping_sets: expand.rollup_grouping_sets.clone(),
         level_exprs: expand
             .level_exprs
             .clone()

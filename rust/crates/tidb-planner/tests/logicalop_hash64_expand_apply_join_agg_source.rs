@@ -22,7 +22,8 @@ use tidb_expr::scalar_function::ScalarFunction;
 
 use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_operator_logicalop::aggregation::LogicalAggregation;
-use tidb_planner_core_operator_logicalop::expand::{LogicalExpand, GroupingSet};
+use tidb_planner_core_operator_logicalop::expand::LogicalExpand;
+use tidb_expr::grouping_sets::{GroupingExprs, GroupingSet, GroupingSets};
 use tidb_planner_core_operator_logicalop::join::LogicalJoin;
 use tidb_planner_core_operator_logicalop::BaseLogicalPlan;
 use tidb_planner_core_base::PossiblePropertiesInfo;
@@ -78,7 +79,7 @@ fn expand_hash64_equals_tracks_distinct_gby_size_sets_levels_and_generated_cols(
             distinct_gby_col_names: Vec::new(),
             distinct_gby_exprs: vec![col_expr(gby_expr, 0)],
             distinct_size,
-            rollup_grouping_sets: sets,
+            rollup_grouping_sets: GroupingSets(sets),
             level_exprs: levels,
             gid,
             gpos,
@@ -152,7 +153,7 @@ fn expand_hash64_equals_tracks_distinct_gby_size_sets_levels_and_generated_cols(
         1,
         1,
         1,
-        vec![GroupingSet::new([1])],
+        vec![grouping_set(&[1])],
         None,
         Some(Box::new(column(1, 0))),
         Some(Box::new(column(1, 0))),
@@ -372,4 +373,8 @@ fn aggregation_possible_properties_orders_belong_to_the_identity_excluding_has_t
     let tiflash = build(vec![vec![column(20, 0)]], true);
     assert_eq!(with_column.hash64(None), tiflash.hash64(None));
     assert!(with_column.equals(None, &tiflash, None));
+}
+
+fn grouping_set(ids: &[i64]) -> GroupingSet {
+    GroupingSet(vec![GroupingExprs(ids.iter().map(|id| col_expr(*id, 0)).collect())])
 }

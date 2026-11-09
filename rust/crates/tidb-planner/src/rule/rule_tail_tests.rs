@@ -26,7 +26,6 @@
 use tidb_planner_property::ColumnSortItem;
 
 use std::cell::RefCell;
-use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use tidb_ast::CiString;
@@ -45,7 +44,8 @@ use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_operator_logicalop::aggregation::{LogicalAggregation, AGG_FUNC_MAX};
 use tidb_planner_core_operator_logicalop::cte::{CteClass, LogicalCTE};
 use tidb_planner_core_operator_logicalop::data_source::DataSource;
-use tidb_planner_core_operator_logicalop::expand::{LogicalExpand, GroupingSet};
+use tidb_planner_core_operator_logicalop::expand::LogicalExpand;
+use tidb_expr::grouping_sets::{GroupingExprs, GroupingSet, GroupingSets};
 use tidb_planner_core_operator_logicalop::join::LogicalJoin;
 use tidb_planner_core_operator_logicalop::limit::LogicalLimit;
 use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
@@ -541,10 +541,10 @@ fn expand_with_two_sets(allocator: &PlanIdAllocator, schema: Schema) -> LogicalP
     let mut expand = LogicalExpand::new(base(allocator, LogicalExpand::TYPE, Some(schema)));
     expand.distinct_group_by_col = vec![column(1)];
     expand.distinct_size = 2;
-    expand.rollup_grouping_sets = vec![
-        GroupingSet::new([1]),
-        GroupingSet::new(BTreeSet::new()),
-    ];
+    expand.rollup_grouping_sets = GroupingSets(vec![
+        grouping_set(&[1]),
+        grouping_set(&[]),
+    ]);
     with_children(
         LogicalPlan::Expand(expand),
         vec![data_source(allocator, &[1])],
@@ -1247,4 +1247,8 @@ fn a_childless_sequence_panics_when_collapsing_like_go() {
         push_down_sequence(&ctx, plan)
     }))
     .is_err());
+}
+
+fn grouping_set(ids: &[i64]) -> GroupingSet {
+    GroupingSet(vec![GroupingExprs(ids.iter().map(|id| Expression::Column(column(*id))).collect())])
 }

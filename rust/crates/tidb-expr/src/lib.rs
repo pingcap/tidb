@@ -361,6 +361,7 @@ mod field_name;
 pub mod fts;
 mod func;
 mod grouping;
+pub mod grouping_sets;
 pub mod infer_pushdown;
 mod like;
 mod math_fn;

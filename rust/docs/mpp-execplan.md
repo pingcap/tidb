@@ -49,8 +49,27 @@ the unistore stack.
   and Window (`WindowFuncToPBExpr`, `FrameBound.ToPB`); a planned MPP
   fragment's `ToPB` is Go's to the byte for a filter, a bare read, a
   two-phase aggregation, a broadcast join and two window functions
-  (`unistore_cop/mpp_to_pb.rs`, Go testkit probe vectors). Left: expand,
-  CTE, index scan, local index lookup, the TiFlash partition scan.
+  (`unistore_cop/mpp_to_pb.rs`, Go testkit probe vectors). Left: CTE,
+  index scan, local index lookup, the TiFlash partition scan.
+  Expand found 2026-11-10: `pkg/expression/grouping_sets.go` was never
+  transcreated, so the planner carries narrowed copies (logicalop
+  `GroupingSet` as a column-id set, `plan_builder/expand.rs`'s
+  `rollup_grouping_sets` / `distinct_size` / `deduplicate_gby_expression`
+  over `expressions_equal` instead of `CanonicalHashCode`), and the 3-stage
+  multi-distinct aggregate builds its Expand from level projections where Go
+  builds it from `GroupingSets` with a `GroupingIDCol` (V1: `tipb.Expand`,
+  explain `group set num:...`). Steps: (a) the whole Go file in `tidb-expr`
+  `grouping_sets.rs` with Go's six tests, its `ToPB` beside
+  `ExpressionsToPBList` in `physicalop` `to_pb.rs`; (b) the planner's copies
+  replaced by it (`LogicalExpand.rollup_grouping_sets: GroupingSets`); (c)
+  `adjust3StagePhaseAgg`'s Expand as Go's; (d) `PhysicalExpand` gains
+  `GroupingIDCol` / `GroupingSets` with Go's V1 explain, clone, resolve and
+  `ToPB` (V1 and V2); (e) unistore's `buildExpand` / `expandExec` (Go's store
+  serves only V1). Done 2026-11-10: (a)-(d); the 3-stage plan and its merge
+  warnings are Go's to the id (`mpp_three_stage_multi_distinct_expand_explains_like_go`)
+  and its fragments' `ToPB` Go's to the byte, as are the join and window
+  fragments' executor ids now (`mpp_fragment_to_pb_is_gos_to_the_byte`, Go
+  probe `zzprobe/mppexpand`). Left: (e).
 - [ ] Milestone 2: Go `fragment.go` (`Fragment`, `GenerateRootMPPTasks`,
   `mppTaskGenerator`: fragments, union-all untwisting, CTE task counts,
   `constructMPPTasksImpl` over `MPPClient.ConstructMPPTasks`, partition

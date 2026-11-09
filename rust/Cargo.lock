@@ -5399,6 +5399,7 @@ dependencies = [
  "tidb-goruntime",
  "tidb-hack",
  "tidb-infoschema-context",
+ "tidb-intset",
  "tidb-kv",
  "tidb-mathutil",
  "tidb-model",

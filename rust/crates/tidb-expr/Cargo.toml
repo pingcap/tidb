@@ -33,6 +33,7 @@ tidb-password-validation = { path = "../tidb-password-validation" }
 tidb-plancodec = { path = "../tidb-plancodec" }
 tidb-printer = { path = "../tidb-printer" }
 tidb-size = { path = "../tidb-size" }
+tidb-intset = { path = "../tidb-intset" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-stringutil = { path = "../tidb-stringutil" }
 tidb-timeutil = { path = "../tidb-timeutil" }

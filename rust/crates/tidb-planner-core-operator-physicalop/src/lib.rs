@@ -5216,6 +5216,8 @@ impl PhysicalPlan {
             }),
             Self::Expand(op) => Self::Expand(expand::PhysicalExpand {
                 base: base_of(&op.base),
+                grouping_id_col: op.grouping_id_col.clone(),
+                grouping_sets: op.grouping_sets.clone(),
                 level_exprs: op.level_exprs.clone(),
                 extra_grouping_col_names: op.extra_grouping_col_names.clone(),
             }),
@@ -5413,6 +5415,11 @@ fn visit_physical_correlated_columns_mut(
         PhysicalPlan::Selection(op) => expressions(&mut op.conditions, visitor),
         PhysicalPlan::Projection(op) => expressions(&mut op.exprs, visitor),
         PhysicalPlan::Expand(op) => {
+            for grouping_set in op.grouping_sets.iter_mut() {
+                for grouping_exprs in grouping_set.iter_mut() {
+                    expressions(grouping_exprs, visitor);
+                }
+            }
             for level in &mut op.level_exprs {
                 expressions(level, visitor);
             }

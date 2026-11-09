@@ -684,8 +684,9 @@ fn test_with_rollup_builds_an_expand_over_a_projection() {
         expand.gpos.is_none(),
         "rollup prefixes are always distinct, so no gpos is needed"
     );
-    // The grouping ids are the bitmasks of the prefixes: {}, {b}, {b,c}.
-    assert_eq!(expand.rollup_grouping_ids, vec![0, 1, 3]);
+    // Go's `DistinctSize` allocates ids only past 64 distinct sets; under it
+    // the gid is the bitmask `GenLevelProjections` computes.
+    assert!(expand.rollup_grouping_ids.is_empty());
 
     // The projection below materialises the group-by expressions.
     let projection = &expand.base.children()[0];
@@ -1029,52 +1030,6 @@ fn test_resolve_from_select_fields_precedence() {
         super::aggregation::resolve_from_select_fields(&["b".to_owned()], &fields, true).unwrap(),
         Some(0)
     );
-}
-
-#[test]
-fn test_rollup_grouping_sets_are_the_prefixes() {
-    let columns: Vec<Expression> = (0..3)
-        .map(|id| {
-            let mut column = tidb_expr::column::Column::default();
-            column.unique_id = id;
-            Expression::Column(column)
-        })
-        .collect();
-    let sets = super::expand::rollup_grouping_sets(&columns);
-    assert_eq!(sets.len(), 4);
-    assert!(sets[0].col_ids.is_empty());
-    assert_eq!(sets[3].col_ids.len(), 3);
-}
-
-#[test]
-fn test_deduplicate_and_restore_gby_expressions_round_trip() {
-    // `group by a, b, a` has two distinct expressions and puts the rebuilt
-    // column back in all three written positions.
-    let make = |id: i64| {
-        let mut column = tidb_expr::column::Column::default();
-        column.unique_id = id;
-        column
-    };
-    let items = vec![
-        Expression::Column(make(1)),
-        Expression::Column(make(2)),
-        Expression::Column(make(1)),
-    ];
-    let (distinct, positions) = super::expand::deduplicate_gby_expression(&items);
-    assert_eq!(distinct.len(), 2);
-    assert_eq!(positions, vec![0, 1, 0]);
-
-    let projected = vec![make(10), make(20)];
-    let restored = super::expand::restore_gby_expression(&projected, &positions);
-    assert_eq!(restored.len(), 3);
-    let ids: Vec<i64> = restored
-        .iter()
-        .map(|expr| match expr {
-            Expression::Column(column) => column.unique_id,
-            _ => panic!("expected a column"),
-        })
-        .collect();
-    assert_eq!(ids, vec![10, 20, 10]);
 }
 
 #[test]

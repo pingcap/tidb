@@ -271,6 +271,10 @@ impl MppWarningSink for tidb_sessionctx::StmtContext {
         self.append_warning_parts(1815, message);
     }
 
+    fn append_warning(&self, message: &str) {
+        self.append_warning_parts(1105, message);
+    }
+
     fn append_planner_note(&self, message: &str) {
         tidb_sessionctx::StmtContext::append_planner_note(self, message);
     }
@@ -352,6 +356,7 @@ mod tests {
                 self.warnings.borrow_mut().push(message.to_owned());
             }
             fn set_hint_warning(&self, _message: &str) {}
+            fn append_warning(&self, _message: &str) {}
             fn append_planner_note(&self, _message: &str) {}
             fn new_collation_enabled(&self) -> bool {
                 true
@@ -428,6 +433,10 @@ pub trait MppWarningSink {
 
     /// Go `StmtCtx.SetHintWarning`: a planner `ErrInternal` hint warning.
     fn set_hint_warning(&self, message: &str);
+
+    /// Go `StmtCtx.AppendWarning(errors.NewNoStackErrorf(message))`: a plain
+    /// warning, which reports as `ErrUnknown`.
+    fn append_warning(&self, message: &str);
 
     /// A planner note: Go `AppendNote` under `EXPLAIN FORMAT='verbose'`
     /// (`InVerboseExplain`), `AppendExtraNote` otherwise.

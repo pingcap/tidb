@@ -36,6 +36,7 @@ use tidb_expression_aggregation::{
     names, need_count, need_value, AggFuncDesc, AggFunctionMode, ByItems,
 };
 use tidb_expr::column::Column;
+use tidb_expr::grouping_sets::{GroupingExprs, GroupingSet, GroupingSets};
 use tidb_expr::constant::Constant;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
@@ -156,151 +157,85 @@ pub fn can_use_3_stage_4_single_distinct_agg(
     distinct_count == 1
 }
 
-/// The grouping sets used by Go's multi-distinct three-stage rewrite. Each
-/// set is the ordered list of column arguments of one `COUNT(DISTINCT ...)`.
-pub type DistinctGroupingSets = Vec<Vec<Column>>;
-
-/// Go `BasePhysicalAgg.canUse3Stage4MultiDistinctAgg`'s admission checks.
-///
-/// The multi-distinct feature is session-gated and intentionally narrow: no
-/// GROUP BY, at least two distinct COUNT descriptors, simple column arguments
-/// for the distinct descriptors, complete input modes, and no aggregate-local
-/// ordering. Duplicate or overlapping grouping sets remain refused exactly as
-/// Go's current implementation does.
-#[must_use]
-pub fn can_use_three_stage_multi_distinct(
-    agg_funcs: &[AggFuncDesc],
+/// Go `BasePhysicalAgg.canUse3Stage4MultiDistinctAgg`: the grouping sets of
+/// a scalar aggregate's `count(distinct ...)`s when the 3-stage multi-distinct
+/// rewrite applies, each aggregate's one-based `GroupingID` set to the set it
+/// reads (cleared again when the rewrite does not apply).
+pub fn can_use_3_stage_4_multi_distinct_agg(
+    agg_funcs: &mut [AggFuncDesc],
     group_by_items: &[Expression],
     enable_3_stage_distinct_agg: bool,
     enable_3_stage_multi_distinct_agg: bool,
-) -> Option<DistinctGroupingSets> {
-    if !enable_3_stage_distinct_agg
-        || !enable_3_stage_multi_distinct_agg
-        || !group_by_items.is_empty()
-    {
+    append_warning: &mut dyn FnMut(&str),
+) -> Option<GroupingSets> {
+    if !enable_3_stage_distinct_agg || !enable_3_stage_multi_distinct_agg || !group_by_items.is_empty() {
         return None;
     }
-    let mut grouping_sets: DistinctGroupingSets = Vec::new();
-    for function in agg_funcs {
-        if function.has_distinct {
-            if function.name() != names::COUNT
-                || function
-                    .base
-                    .args
-                    .iter()
-                    .any(|argument| !matches!(argument, Expression::Column(_)))
-            {
-                return None;
-            }
-            grouping_sets.push(
-                function
-                    .base
-                    .args
-                    .iter()
-                    .filter_map(|argument| match argument {
-                        Expression::Column(column) => Some(column.clone()),
-                        _ => None,
-                    })
-                    .collect(),
-            );
-        } else if function.base.args.len() > 1 {
-            return None;
-        }
-        if !function.order_by_items.is_empty() || function.mode != AggFunctionMode::Complete {
-            return None;
+    let grouping_sets = can_use_3_stage_4_multi_distinct_agg_inner(agg_funcs, append_warning);
+    if grouping_sets.is_none() {
+        // some clean work.
+        for fun in agg_funcs.iter_mut() {
+            fun.grouping_id = 0;
         }
     }
-    if grouping_sets.len() <= 1 {
-        return None;
-    }
-    let mut seen = HashSet::new();
-    if grouping_sets.iter().any(|set| {
-        let mut ids: Vec<_> = set.iter().map(|column| column.unique_id).collect();
-        ids.sort_unstable();
-        !seen.insert(ids)
-    }) {
-        return None;
-    }
-    // Go's GroupingSets.Merge rejects layouts that share a column: the
-    // subsequent NeedCloneColumn check would require duplicating that column
-    // in Expand, which the three-stage path deliberately does not implement.
-    if grouping_sets.iter().enumerate().any(|(index, left)| {
-        grouping_sets[index + 1..].iter().any(|right| {
-            left.iter().any(|column| {
-                right
-                    .iter()
-                    .any(|other| other.unique_id == column.unique_id)
-            })
-        })
-    }) {
-        return None;
-    }
-    let mut marked = agg_funcs.to_vec();
-    if !mark_three_stage_grouping_ids(&mut marked, &grouping_sets) {
-        return None;
-    }
-    Some(grouping_sets)
+    grouping_sets
 }
 
-/// Assigns Go's one-based `GroupingID` to every distinct and ordinary
-/// aggregate descriptor. The caller uses the returned descriptors as a
-/// validation-only copy before applying the same IDs to the physical plan.
-#[must_use]
-pub fn mark_three_stage_grouping_ids(
+fn can_use_3_stage_4_multi_distinct_agg_inner(
     agg_funcs: &mut [AggFuncDesc],
-    grouping_sets: &[Vec<Column>],
-) -> bool {
-    let all_grouping_ids: HashSet<_> = grouping_sets
-        .iter()
-        .flat_map(|set| set.iter().map(|column| column.unique_id))
-        .collect();
-    for function in agg_funcs {
-        if function.has_distinct {
-            // Distinct descriptors were admitted only when every argument is
-            // a simple column, so preserve their grouping-set position.
-            let argument_ids: HashSet<_> = function
-                .base
-                .args
-                .iter()
-                .filter_map(|argument| match argument {
-                    Expression::Column(column) => Some(column.unique_id),
-                    _ => None,
-                })
-                .collect();
-            let Some(index) = grouping_sets.iter().position(|set| {
-                set.iter()
-                    .map(|column| column.unique_id)
-                    .collect::<HashSet<_>>()
-                    == argument_ids
-            }) else {
-                return false;
-            };
-            function.grouping_id = (index + 1) as i32;
-            continue;
+    append_warning: &mut dyn FnMut(&str),
+) -> Option<GroupingSets> {
+    let mut grouping_sets = GroupingSets(Vec::with_capacity(2));
+    for fun in agg_funcs.iter_mut() {
+        if fun.has_distinct {
+            if fun.name() != names::COUNT {
+                // now only for multi count(distinct x)
+                return None;
+            }
+            // bail out when args are not simple column, see GitHub issue #35417
+            if fun.base.args.iter().any(|arg| !matches!(arg, Expression::Column(_))) {
+                return None;
+            }
+            // here it's a valid count distinct agg with normal column args, collecting its distinct expr.
+            grouping_sets.push(GroupingSet(vec![GroupingExprs(fun.base.args.clone())]));
+            // groupingID now is the offset of target grouping in GroupingSets.
+            fun.grouping_id = grouping_sets.len() as i32;
+        } else if fun.base.args.len() > 1 {
+            return None;
         }
-        // GroupingSets.TargetOne chooses the first layout whose null-filled
-        // columns do not intersect the ordinary aggregate's dependencies.
-        // A constant aggregate therefore targets the first layout, as does a
-        // column absent from every distinct grouping set.
-        let argument_ids: HashSet<_> = function
-            .base
-            .args
-            .iter()
-            .flat_map(tidb_expr::expr_util::extract_columns)
-            .map(|column| column.unique_id)
-            .collect();
-        let Some(index) = grouping_sets.iter().position(|set| {
-            let set_ids: HashSet<_> = set.iter().map(|column| column.unique_id).collect();
-            argument_ids.iter().all(|column_id| {
-                set_ids.contains(column_id) || !all_grouping_ids.contains(column_id)
-            })
-        }) else {
-            return false;
-        };
-        function.grouping_id = (index + 1) as i32;
+        // banned group_concat(x order by y)
+        if !fun.order_by_items.is_empty() || fun.mode != AggFunctionMode::Complete {
+            return None;
+        }
     }
-    true
+    let compressed = grouping_sets.merge();
+    if compressed.len() != grouping_sets.len() {
+        append_warning("Some grouping sets should be merged");
+        return None;
+    }
+    if grouping_sets.need_clone_column() {
+        // todo: column clone haven't implemented.
+        return None;
+    }
+    if grouping_sets.len() > 1 {
+        // fill the grouping ID for normal agg.
+        for fun in agg_funcs.iter_mut() {
+            if fun.grouping_id == 0 {
+                // the grouping ID hasn't set. find the targeting grouping set.
+                let grouping_set_offset = grouping_sets.target_one(&fun.base.args);
+                if grouping_set_offset == -1 {
+                    append_warning("couldn't find a proper group set for normal agg");
+                    return None;
+                }
+                // starting with 1
+                fun.grouping_id = grouping_set_offset + 1;
+            }
+        }
+        return Some(grouping_sets);
+    }
+    None
 }
+
 
 /// Go `adjust3StagePhaseAgg`'s single-distinct branch (`task.go:1840`).
 ///
@@ -438,7 +373,7 @@ pub fn adjust_three_stage_multi_distinct(
     partial: crate::PhysicalPlan,
     final_agg: crate::PhysicalPlan,
     child: &crate::PhysicalPlan,
-    grouping_sets: &[Vec<Column>],
+    grouping_sets: &GroupingSets,
     column_ids: &ColumnIdAllocator,
     plan_ids: &tidb_planner_core_base::PlanIdAllocator,
 ) -> Result<Option<MultiDistinctThreeStageAggSplit>, tidb_planner_core_base::PlanError> {
@@ -458,7 +393,7 @@ pub fn adjust_three_stage_multi_distinct_with_group_ndv_skew_ratio(
     partial: crate::PhysicalPlan,
     final_agg: crate::PhysicalPlan,
     child: &crate::PhysicalPlan,
-    grouping_sets: &[Vec<Column>],
+    grouping_sets: &GroupingSets,
     column_ids: &ColumnIdAllocator,
     plan_ids: &tidb_planner_core_base::PlanIdAllocator,
     group_ndv_skew_ratio: f64,
@@ -474,46 +409,17 @@ pub fn adjust_three_stage_multi_distinct_with_group_ndv_skew_ratio(
         return Ok(None);
     };
     let child_schema = child.schema().cloned().unwrap_or_default();
-    let mut grouping_ids = HashSet::new();
-    for set in grouping_sets {
-        grouping_ids.extend(set.iter().map(|column| column.unique_id));
-    }
 
+    // generate a new column as groupingID to identify which this row is targeting for.
     let mut gid_type = FieldType::new(FieldTypeCode::LongLong);
     gid_type.set_flag(gid_type.flags() | FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL);
     let mut grouping_id_col = Column::new(column_ids.alloc(), gid_type.clone());
     grouping_id_col.index = child_schema.columns.len() as i64;
 
+    // append the physical expand op with groupingID column.
     let mut expand_schema_columns = child_schema.columns.clone();
     expand_schema_columns.push(grouping_id_col.clone());
     let expand_schema = Schema::new(expand_schema_columns.clone());
-    let levels = grouping_sets
-        .iter()
-        .enumerate()
-        .map(|(offset, grouping_set)| {
-            let grouping_set_ids: HashSet<_> =
-                grouping_set.iter().map(|column| column.unique_id).collect();
-            let mut level = Vec::with_capacity(expand_schema_columns.len());
-            for column in &child_schema.columns {
-                if grouping_ids.contains(&column.unique_id)
-                    && !grouping_set_ids.contains(&column.unique_id)
-                {
-                    let mut null = Constant::new_null();
-                    null.ret_type = column.ret_type.clone();
-                    level.push(Expression::Constant(null));
-                } else {
-                    level.push(Expression::Column(column.clone()));
-                }
-            }
-            let mut gid = Constant::new(
-                tidb_datatype::Datum::UInt((offset + 1) as u64),
-                gid_type.clone(),
-            );
-            gid.ret_type = Some(gid_type.clone());
-            level.push(Expression::Constant(gid));
-            level
-        })
-        .collect::<Vec<_>>();
     let mut expand_base = BasePhysicalPlan::new(
         plan_ids,
         "Expand",
@@ -530,9 +436,13 @@ pub fn adjust_three_stage_multi_distinct_with_group_ndv_skew_ratio(
     expand_base.base.set_schema(Some(expand_schema.clone()));
     let expand = PhysicalPlan::Expand(PhysicalExpand {
         base: expand_base,
-        level_exprs: levels,
-        extra_grouping_col_names: vec!["gid".to_owned()],
+        grouping_id_col: Some(grouping_id_col.clone()),
+        grouping_sets: grouping_sets.clone(),
+        ..PhysicalExpand::default()
     });
+    // Go clones the final aggregate into the middle one with a new base plan
+    // (its plan id) before it builds `proj4Partial`.
+    let middle_id = plan_ids.alloc();
 
     partial_hash
         .group_by_items
@@ -628,7 +538,7 @@ pub fn adjust_three_stage_multi_distinct_with_group_ndv_skew_ratio(
         enable_3_stage_multi_distinct_agg: final_hash.enable_3_stage_multi_distinct_agg,
         tiflash_pre_agg_mode: final_hash.tiflash_pre_agg_mode.clone(),
     };
-    middle_hash.base.base.set_id(plan_ids.alloc());
+    middle_hash.base.base.set_id(middle_id);
     middle_hash.base.set_children_req_props(vec![Some(
         tidb_planner_property::PhysicalProperty::default(),
     )]);
@@ -713,7 +623,7 @@ pub fn adjust_three_stage_multi_distinct_with_group_ndv_skew_ratio(
 /// retained.
 fn scale_three_stage_multi_distinct_stats(
     partial: &mut crate::PhysicalHashAgg,
-    grouping_sets: &[Vec<Column>],
+    grouping_sets: &GroupingSets,
     grouping_id_col: &Column,
     child_stats: Option<&StatsInfo>,
     group_ndv_skew_ratio: f64,
@@ -721,6 +631,15 @@ fn scale_three_stage_multi_distinct_stats(
     let Some(child_stats) = child_stats else {
         return;
     };
+    // Go `groupingSet.ExtractCols`, in order.
+    let grouping_sets: Vec<Vec<Column>> = grouping_sets
+        .iter()
+        .map(|grouping_set| {
+            let mut cols = Vec::new();
+            grouping_set.extract_cols(&mut cols);
+            cols
+        })
+        .collect();
     let grouping_ids: HashSet<_> = grouping_sets
         .iter()
         .flat_map(|set| set.iter().map(|column| column.unique_id))
@@ -2081,10 +2000,11 @@ mod tests {
             agg(names::COUNT, &b, true),
             agg(names::COUNT, &c, false),
         ];
-        let grouping_sets = can_use_three_stage_multi_distinct(&funcs, &[], true, true)
-            .expect("two independent distinct layouts are admissible");
+        let no_warning = &mut |message: &str| panic!("unexpected warning {message}");
         let mut marked = funcs.clone();
-        assert!(mark_three_stage_grouping_ids(&mut marked, &grouping_sets));
+        let grouping_sets = can_use_3_stage_4_multi_distinct_agg(&mut marked, &[], true, true, no_warning)
+            .expect("two independent distinct layouts are admissible");
+        assert_eq!(grouping_sets.len(), 2);
         assert_eq!(
             marked
                 .iter()
@@ -2092,8 +2012,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             [1, 2, 1]
         );
-        assert!(can_use_three_stage_multi_distinct(&funcs, &[], false, true).is_none());
-        assert!(can_use_three_stage_multi_distinct(&funcs, &[], true, false).is_none());
+        assert!(can_use_3_stage_4_multi_distinct_agg(&mut funcs.clone(), &[], false, true, no_warning).is_none());
+        assert!(can_use_3_stage_4_multi_distinct_agg(&mut funcs.clone(), &[], true, false, no_warning).is_none());
 
         let overlapping = vec![
             AggFuncDesc::new(
@@ -2105,6 +2025,15 @@ mod tests {
             .expect("multi-column distinct descriptor"),
             agg(names::COUNT, &b, true),
         ];
-        assert!(can_use_three_stage_multi_distinct(&overlapping, &[], true, true).is_none());
+        // {a,b} and {b} merge into one set: Go warns and refuses, and clears
+        // the grouping ids it set.
+        let mut warnings = Vec::new();
+        let mut overlapping = overlapping;
+        assert!(can_use_3_stage_4_multi_distinct_agg(&mut overlapping, &[], true, true, &mut |message: &str| {
+            warnings.push(message.to_owned())
+        })
+        .is_none());
+        assert_eq!(warnings, ["Some grouping sets should be merged"]);
+        assert!(overlapping.iter().all(|function| function.grouping_id == 0));
     }
 }

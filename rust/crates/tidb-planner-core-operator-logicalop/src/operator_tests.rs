@@ -40,7 +40,8 @@ use super::cte::{
     LogicalCTETable,
 };
 use super::data_source::{DataSource};
-use super::expand::{GroupingMode, LogicalExpand, GroupingSet};
+use super::expand::{GroupingMode, LogicalExpand};
+use tidb_expr::grouping_sets::{GroupingExprs, GroupingSet, GroupingSets};
 use super::index_scan::{matches_indices_prop, LogicalIndexScan};
 use super::join::{is_eq_cond_from_in, LogicalJoin, OnConditionSplit};
 use super::limit::LogicalLimit;
@@ -3461,16 +3462,16 @@ fn expand_grouping_ids_are_a_bitmask_or_a_stored_index() {
     // Distinct GBY (a, b, c) = (1, 2, 3); the set {a, c} is 0b101.
     let mut expand = expand(&[1, 2, 3]);
     assert_eq!(
-        expand.generate_grouping_id_mode_bit_and(&GroupingSet::new([1, 3])),
+        expand.generate_grouping_id_mode_bit_and(&grouping_set(&[1, 3])),
         0b101
     );
     assert_eq!(
-        expand.generate_grouping_id_mode_bit_and(&GroupingSet::new([])),
+        expand.generate_grouping_id_mode_bit_and(&grouping_set(&[])),
         0
     );
     // A duplicate set names the same columns and so shares the id.
     assert_eq!(
-        expand.generate_grouping_id_mode_bit_and(&GroupingSet::new([1, 1, 3])),
+        expand.generate_grouping_id_mode_bit_and(&grouping_set(&[1, 1, 3])),
         0b101
     );
 
@@ -3515,7 +3516,7 @@ fn expand_grouping_marks_are_per_argument() {
 #[test]
 fn expand_level_projections_null_out_ungrouped_columns() {
     let mut expand = expand(&[1, 2]);
-    expand.rollup_grouping_sets = vec![GroupingSet::new([1, 2]), GroupingSet::new([1])];
+    expand.rollup_grouping_sets = GroupingSets(vec![grouping_set(&[1, 2]), grouping_set(&[1])]);
     expand.distinct_size = 2;
     // Schema: the two group-by columns, an unrelated column, then gid.
     let gid_schema = schema(&[1, 2, 5, 100]);
@@ -3626,7 +3627,7 @@ fn expand_identity_covers_every_generated_field() {
 
     // So are the grouping sets, the distinct size, and the generated columns.
     let mut sets = expand(&[1]);
-    sets.rollup_grouping_sets = vec![GroupingSet::new([1])];
+    sets.rollup_grouping_sets = GroupingSets(vec![grouping_set(&[1])]);
     assert_ne!(first.hash64(None), sets.hash64(None));
     let mut size = expand(&[1]);
     size.distinct_size = 3;
@@ -4247,4 +4248,8 @@ fn possible_properties_take_the_session_tiflash_and_mpp_switches() {
     assert_eq!(has_tiflash(window_over(&source), true, true), (true, true));
     assert_eq!(has_tiflash(window_over(&source), false, true), (false, false));
     assert_eq!(has_tiflash(window_over(&source), true, false), (false, false));
+}
+
+fn grouping_set(ids: &[i64]) -> GroupingSet {
+    GroupingSet(vec![GroupingExprs(ids.iter().map(|id| Expression::Column(column(*id))).collect())])
 }

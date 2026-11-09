@@ -111,6 +111,27 @@ pub fn expressions_to_pb_list(
     exprs.iter().map(|expr| expr_to_pb(ctx, expr, input).ok_or_else(|| cannot_be_pushed_down(ctx, expr))).collect()
 }
 
+/// Go `expression.GroupingSets.ToPB` (`GroupingSet.ToPB` per set).
+///
+/// # Errors
+/// A grouping expression has no PB form.
+pub fn grouping_sets_to_pb(
+    ctx: &BuildPbContext<'_>,
+    gss: &tidb_expr::grouping_sets::GroupingSets,
+    input: &Schema,
+) -> Result<Vec<tipb::GroupingSet>, PlanError> {
+    gss.iter()
+        .map(|gs| {
+            let mut res = tipb::GroupingSet::default();
+            for g_exprs in gs.iter() {
+                let g_exprs_pb = expressions_to_pb_list(ctx, g_exprs, input)?;
+                res.grouping_exprs.push(tipb::GroupingExpr { grouping_expr: g_exprs_pb });
+            }
+            Ok(res)
+        })
+        .collect()
+}
+
 /// Go `expression.ProjectionExpressionsToPBList`: a top-level column is
 /// converted without the type check (`columnToPBExpr(column, false)`), since
 /// it implies no calculation.
@@ -230,6 +251,7 @@ impl PhysicalPlan {
             Self::HashJoin(p) => p.to_pb(self, ctx, store_type),
             Self::Sort(p) => p.to_pb(self, ctx, store_type),
             Self::Window(p) => p.to_pb(self, ctx, store_type),
+            Self::Expand(p) => p.to_pb(self, ctx, store_type),
             // Go's base body is exactly this error.
             _ => Err(PlanError::internal(format!("plan {} fails converts to PB", self.explain_id(false)))),
         }
@@ -271,6 +293,54 @@ impl PhysicalProjection {
             tp: Some(tipb::ExecType::TypeProjection as i32),
             projection: Some(Box::new(proj_exec)),
             executor_id: Some(executor_id(plan)),
+            ..go_executor()
+        })
+    }
+}
+
+impl crate::expand::PhysicalExpand {
+    /// Go `PhysicalExpand.ToPB`.
+    fn to_pb(&self, plan: &PhysicalPlan, ctx: &BuildPbContext<'_>, store_type: StoreType) -> Result<tipb::Executor, PlanError> {
+        if !self.level_exprs.is_empty() {
+            return self.to_pb_v2(plan, ctx, store_type);
+        }
+        let grouping_sets_pb = grouping_sets_to_pb(ctx, &self.grouping_sets, child_schema(plan)?)?;
+        let mut expand = tipb::Expand { grouping_sets: grouping_sets_pb, ..tipb::Expand::default() };
+        let mut executor_id = String::new();
+        if store_type == StoreType::TiFlash {
+            expand.child = Some(child_to_pb(plan, ctx, store_type)?);
+            executor_id = self::executor_id(plan);
+        }
+        Ok(tipb::Executor {
+            tp: Some(tipb::ExecType::TypeExpand as i32),
+            expand: Some(Box::new(expand)),
+            executor_id: Some(executor_id),
+            ..go_executor()
+        })
+    }
+
+    /// Go `PhysicalExpand.toPBV2`.
+    fn to_pb_v2(&self, plan: &PhysicalPlan, ctx: &BuildPbContext<'_>, store_type: StoreType) -> Result<tipb::Executor, PlanError> {
+        let input = child_schema(plan)?;
+        let mut proj_exprs_pb = Vec::with_capacity(self.level_exprs.len());
+        for exprs in &self.level_exprs {
+            let expressions_pb = expressions_to_pb_list(ctx, exprs, input)?;
+            proj_exprs_pb.push(tipb::ExprSlice { exprs: expressions_pb });
+        }
+        let mut expand2 = tipb::Expand2 {
+            proj_exprs: proj_exprs_pb,
+            generated_output_names: self.extra_grouping_col_names.clone(),
+            ..tipb::Expand2::default()
+        };
+        let mut executor_id = String::new();
+        if store_type == StoreType::TiFlash {
+            expand2.child = Some(child_to_pb(plan, ctx, store_type)?);
+            executor_id = self::executor_id(plan);
+        }
+        Ok(tipb::Executor {
+            tp: Some(tipb::ExecType::TypeExpand2 as i32),
+            expand2: Some(Box::new(expand2)),
+            executor_id: Some(executor_id),
             ..go_executor()
         })
     }

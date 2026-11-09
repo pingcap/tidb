@@ -45,18 +45,6 @@ fn collect_senders<'a>(plan: &'a PhysicalPlan, senders: &mut Vec<&'a PhysicalPla
     }
 }
 
-/// Every executor id below `executor`, its operator name kept.
-fn clear_executor_ids(executor: &mut tipb::Executor) {
-    if let Some(id) = executor.executor_id.as_mut() {
-        if let Some(underscore) = id.rfind('_') {
-            id.truncate(underscore);
-        }
-    }
-    for child in executor_children(executor) {
-        clear_executor_ids(child);
-    }
-}
-
 fn executor_children(executor: &mut tipb::Executor) -> Vec<&mut tipb::Executor> {
     [
         executor.exchange_sender.as_mut().and_then(|e| e.child.as_deref_mut()),
@@ -65,6 +53,8 @@ fn executor_children(executor: &mut tipb::Executor) -> Vec<&mut tipb::Executor> 
         executor.aggregation.as_mut().and_then(|e| e.child.as_deref_mut()),
         executor.sort.as_mut().and_then(|e| e.child.as_deref_mut()),
         executor.window.as_mut().and_then(|e| e.child.as_deref_mut()),
+        executor.expand.as_mut().and_then(|e| e.child.as_deref_mut()),
+        executor.expand2.as_mut().and_then(|e| e.child.as_deref_mut()),
     ]
     .into_iter()
     .flatten()
@@ -118,8 +108,11 @@ fn mpp_fragment_to_pb_is_gos_to_the_byte() {
     // Go's probe catalog: t is 117, s is 119, p is 121.
     let table_ids =
         [(117, table_id(&mut session, "t")), (119, table_id(&mut session, "s")), (121, table_id(&mut session, "p"))];
+    // Go's probe enables the 3-stage multi-distinct rewrite for its last case
+    // (the grouping-set Expand); no other case has a multi-distinct aggregate.
+    rows(&mut session, "set @@tidb_opt_enable_three_stage_multi_distinct_agg=1");
 
-    let cases: [(&str, &[&str]); 7] = [
+    let cases: [(&str, &[&str]); 8] = [
         (
             "explain select /*+ read_from_storage(tiflash[t]) */ * from t where a + 1 > 20",
             &["0809521145786368616e676553656e6465725f313262f202080022cc02080222b3020ae90108904e1a8c0108904e1a3008c9011208800000000000000020002a1d08031000180b200028c1ffffffffffffffff01320662696e617279400038001a3008011208800000000000000120002a1e08081081011801200028c1ffffffffffffffff01320662696e6172794000380020cb012a1e08081080011814200028c1ffffffffffffffff01320662696e617279400038001a3008011208800000000000001420002a1e08081081011802200028c1ffffffffffffffff01320662696e6172794000380020782a1f0808108081201801200028c1ffffffffffffffff01320662696e617279400038001a45080012290875121b0801100318c1ffffffffffffffff01200b28003000a80100b001001800280040004800600052105461626c6546756c6c5363616e5f3130880100900100520c53656c656374696f6e5f3131880100900100321d08031000180b200028c1ffffffffffffffff01320662696e6172794000380088010090018040"],
@@ -160,6 +153,14 @@ fn mpp_fragment_to_pb_is_gos_to_the_byte() {
             "explain select /*+ read_from_storage(tiflash[p]) */ a, b from p where b > 3",
             &["0809521145786368616e676553656e6465725f313262cd020800228802080222ef010a8c0108904e1a3008c9011208800000000000000120002a1d08031000180b200028c1ffffffffffffffff01320662696e617279400038001a3008011208800000000000000320002a1e08081081011801200028c1ffffffffffffffff01320662696e6172794000380020782a1f0808108081201801200028c1ffffffffffffffff01320662696e617279400038001a5e080c52105461626c6546756c6c5363616e5f313072420879121b0801100318c1ffffffffffffffff01200b28003000a80100b00100121b0802100318c1ffffffffffffffff01200b28003000a80100b00100180038005000880100900100520c53656c656374696f6e5f3131880100900100321d08031000180b200028c1ffffffffffffffff01320662696e6172794000321d08031000180b200028c1ffffffffffffffff01320662696e6172794000380088010090018040"],
         ),
+        (
+            "explain select /*+ read_from_storage(tiflash[s]) */ count(distinct b), count(distinct c) from s",
+            &[
+                "0809521145786368616e676553656e6465725f3432628204080022bb03080b520d50726f6a656374696f6e5f33336aa1030a3108c9011208800000000000000020002a1e08081081011815200028c1ffffffffffffffff01320662696e617279400038000a3108c9011208800000000000000120002a1e08081081011815200028c1ffffffffffffffff01320662696e617279400038001ab80208032aa002125c08ba171a3108c9011208800000000000000020002a1e08081081011815200028c1ffffffffffffffff01320662696e6172794000380020002a1e08081081011815200028c1ffffffffffffffff01320662696e617279400038004801125c08ba171a3108c9011208800000000000000120002a1e08081081011815200028c1ffffffffffffffff01320662696e6172794000380020002a1e08081081011815200028c1ffffffffffffffff01320662696e61727940003800480118003260080a4240121e08081081011815200028c1ffffffffffffffff01320662696e6172794000121e08081081011815200028c1ffffffffffffffff01320662696e6172794000521345786368616e676552656365697665725f343188010090018040520a486173684167675f333488010090018040880100900100321e08081081011815200028c1ffffffffffffffff01320662696e6172794000321e08081081011815200028c1ffffffffffffffff01320662696e6172794000380088010090018040",
+                "0809521145786368616e676553656e6465725f3430629a03080022d30208032abb02125b08b9171a3008c9011208800000000000000020002a1d08031000180b200028c1ffffffffffffffff01320662696e6172794000380020002a1e08081081011815200028c1ffffffffffffffff01320662696e617279400038014802125b08b9171a3008c9011208800000000000000120002a1d08031000180b200028c1ffffffffffffffff01320662696e6172794000380020002a1e08081081011815200028c1ffffffffffffffff01320662696e6172794000380148021800327d080a425d121d08031000180b200028c1ffffffffffffffff01320662696e6172794000121d08031000180b200028c1ffffffffffffffff01320662696e6172794000121d080810211814200028c1ffffffffffffffff01320662696e6172794000521345786368616e676552656365697665725f333988010090018040520a486173684167675f333688010090018040321e08081081011815200028c1ffffffffffffffff01320662696e6172794000321e08081081011815200028c1ffffffffffffffff01320662696e6172794000380188010090018040",
+                "0809521145786368616e676553656e6465725f333862f30508021a3008c9011208800000000000000020002a1d08031000180b200028c1ffffffffffffffff01320662696e617279400038001a3008c9011208800000000000000120002a1d08031000180b200028c1ffffffffffffffff01320662696e617279400038001a3008c9011208800000000000000220002a1d080810211814200028c1ffffffffffffffff01320662696e61727940003800229c0308032a84030a3008c9011208800000000000000020002a1d08031000180b200028c1ffffffffffffffff01320662696e617279400038000a3008c9011208800000000000000120002a1d08031000180b200028c1ffffffffffffffff01320662696e617279400038000a3008c9011208800000000000000220002a1d080810211814200028c1ffffffffffffffff01320662696e61727940003800180032e701080f5209457870616e645f33358801009001009a01d0010a340a320a3008c9011208800000000000000020002a1d08031000180b200028c1ffffffffffffffff01320662696e617279400038000a340a320a3008c9011208800000000000000120002a1d08031000180b200028c1ffffffffffffffff01320662696e617279400038001262080012460877121b0801100318c1ffffffffffffffff01200b28003000a80100b00100121b0802100318c1ffffffffffffffff01200b28003000a80100b001001800280040004800600052105461626c6546756c6c5363616e5f31368801009001003800520a486173684167675f3332880100900180402a1d08031000180b200028c1ffffffffffffffff01320662696e61727940002a1d08031000180b200028c1ffffffffffffffff01320662696e61727940002a1d080810211814200028c1ffffffffffffffff01320662696e6172794000321d08031000180b200028c1ffffffffffffffff01320662696e6172794000321d08031000180b200028c1ffffffffffffffff01320662696e6172794000321d080810211814200028c1ffffffffffffffff01320662696e6172794000380188010090018040",
+            ],
+        ),
     ];
     for (sql, go_hexes) in cases {
         rows(&mut session, sql);
@@ -182,16 +183,8 @@ fn mpp_fragment_to_pb_is_gos_to_the_byte() {
             let got = sender
                 .to_pb(&ctx, tidb_kv::store_type::StoreType::TiFlash)
                 .unwrap_or_else(|err| panic!("{sql}: {err:?}"));
-            let mut got = got;
             let mut want = tipb::Executor::decode(decode_hex(go_hex).as_slice()).unwrap();
             set_table_ids(&mut want, &table_ids);
-            // The MPP exploration numbers plans differently from Go's (a
-            // planner divergence, `docs/mpp-execplan.md`); these executor
-            // ids are compared as Go's shape, not its numbers.
-            if sql.contains("group by") || sql.contains(" join ") || sql.contains(" over ") {
-                clear_executor_ids(&mut got);
-                clear_executor_ids(&mut want);
-            }
             let hex = |executor: &tipb::Executor| executor.encode_to_vec().iter().map(|b| format!("{b:02x}")).collect::<String>();
             assert_eq!(hex(&got), hex(&want), "{sql}\ngot:  {got:?}\nwant: {want:?}");
         }
@@ -395,4 +388,59 @@ fn mpp_limit_scales_the_tiflash_scan_like_go() {
     .map(|line| (*line).to_owned())
     .collect();
     assert_eq!(got, want, "{sql}");
+}
+
+/// Go `adjust3StagePhaseAgg`'s grouping-set Expand (`GroupingSets` and the
+/// grouping-id column, explained `group set num:...`) and
+/// `canUse3Stage4MultiDistinctAgg`'s merge refusal; plans and warnings are a
+/// Go tidb-server's.
+#[test]
+fn mpp_three_stage_multi_distinct_expand_explains_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(433)).expect("session opens");
+    for sql in ["CREATE TABLE test.t (a int, b int, c int)", "ALTER TABLE test.t SET HYPO TIFLASH REPLICA 1"] {
+        session.node_conn().execute_write(sql).expect(sql);
+    }
+    rows(&mut session, "use test");
+    rows(&mut session, "set @@tidb_opt_enable_three_stage_multi_distinct_agg=1");
+    rows(&mut session, "set @@tidb_enforce_mpp=1");
+    let explain = |session: &mut Session, sql: &str| -> Vec<String> {
+        displayed(rows(session, sql)).into_iter().map(|row| row.join("|")).collect()
+    };
+    assert_eq!(
+        explain(&mut session, "explain select count(distinct a), count(distinct b), count(c) from t"),
+        [
+            "TableReader_52|1.00|root||MppVersion: 3, data:ExchangeSender_51",
+            "└─ExchangeSender_51|1.00|mpp[tiflash]||ExchangeType: PassThrough",
+            "  └─Projection_42|1.00|mpp[tiflash]||Column#6, Column#7, Column#8",
+            "    └─HashAgg_43|1.00|mpp[tiflash]||funcs:sum(Column#20)->Column#6, funcs:sum(Column#21)->Column#7, funcs:sum(Column#22)->Column#8",
+            "      └─ExchangeReceiver_50|1.00|mpp[tiflash]||",
+            "        └─ExchangeSender_49|1.00|mpp[tiflash]||ExchangeType: PassThrough, Compression: FAST",
+            "          └─HashAgg_45|1.00|mpp[tiflash]||funcs:count(distinct test.t.a)->Column#20, funcs:count(distinct test.t.b)->Column#21, funcs:sum(Column#17)->Column#22",
+            "            └─ExchangeReceiver_48|16000.00|mpp[tiflash]||",
+            "              └─ExchangeSender_47|16000.00|mpp[tiflash]||ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], [name: Column#18, collate: binary]",
+            "                └─HashAgg_41|16000.00|mpp[tiflash]||group by:Column#18, test.t.a, test.t.b, funcs:count(Column#19)->Column#17",
+            "                  └─Projection_46|20000.00|mpp[tiflash]||test.t.a, test.t.b, test.t.c, Column#18, case(eq(Column#18, 1), test.t.c, <nil>)->Column#19",
+            "                    └─Expand_44|20000.00|mpp[tiflash]||group set num:2, groupingID:Column#18, [{<test.t.a>},{<test.t.b>}]",
+            "                      └─TableFullScan_21|10000.00|mpp[tiflash]|table:t|keep order:false, stats:pseudo",
+        ]
+    );
+    assert!(rows(&mut session, "show warnings").is_empty());
+    assert_eq!(
+        explain(&mut session, "explain select count(distinct a, b), count(distinct b) from t"),
+        [
+            "TableReader_42|1.00|root||MppVersion: 3, data:ExchangeSender_41",
+            "└─ExchangeSender_41|1.00|mpp[tiflash]||ExchangeType: PassThrough",
+            "  └─Projection_37|1.00|mpp[tiflash]||Column#6, Column#7",
+            "    └─HashAgg_38|1.00|mpp[tiflash]||funcs:count(distinct test.t.a, test.t.b)->Column#6, funcs:count(distinct test.t.b)->Column#7",
+            "      └─ExchangeReceiver_40|1.00|mpp[tiflash]||",
+            "        └─ExchangeSender_39|1.00|mpp[tiflash]||ExchangeType: PassThrough, Compression: FAST",
+            "          └─HashAgg_36|1.00|mpp[tiflash]||group by:test.t.a, test.t.b, ",
+            "            └─TableFullScan_21|10000.00|mpp[tiflash]|table:t|keep order:false, stats:pseudo",
+        ]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "show warnings")).into_iter().map(|row| row.join("|")).collect::<Vec<_>>(),
+        ["Warning|1105|Some grouping sets should be merged", "Warning|1105|Some grouping sets should be merged"]
+    );
 }

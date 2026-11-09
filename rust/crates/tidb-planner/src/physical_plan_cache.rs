@@ -527,6 +527,11 @@ fn bind_plan_expressions(
             }
         }
         PhysicalPlan::Expand(expand) => {
+            for grouping_set in expand.grouping_sets.iter_mut() {
+                for grouping_exprs in grouping_set.iter_mut() {
+                    bind_conditions(grouping_exprs, context)?;
+                }
+            }
             for level in &mut expand.level_exprs {
                 bind_conditions(level, context)?;
             }

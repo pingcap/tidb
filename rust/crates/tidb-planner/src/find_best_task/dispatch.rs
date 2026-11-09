@@ -5683,6 +5683,10 @@ mod tests {
             self.0.borrow_mut().push(message.to_owned());
         }
 
+        fn append_warning(&self, message: &str) {
+            self.0.borrow_mut().push(message.to_owned());
+        }
+
         fn append_planner_note(&self, _message: &str) {}
 
         fn new_collation_enabled(&self) -> bool {
