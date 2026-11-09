@@ -371,3 +371,293 @@ fn test_framework_rollback() {
     *tidb_dxf_scheduler::AFTER_REFRESH_TASK.write().unwrap() = None;
     assert_eq!(task.state, TASK_STATE_REVERTED);
 }
+
+/// Go `TestOnTaskError`.
+#[test]
+fn test_on_task_error() {
+    let (stack, task_mgr) = store_and_task_manager();
+    let c = testutil::new_test_dxf_context(task_mgr, 2, 16, true);
+    let scope = tidb_dxf_handle::get_target_scope();
+
+    // retryable error on OnNextSubtasksBatch
+    {
+        let _registered = register_example_task(
+            &c.mock_ctrl,
+            testutil::get_plan_err_scheduler_ext(&c.mock_ctrl, &c.test_context),
+            &c.test_context,
+            None,
+        );
+        submit_task_and_check_success_for_basic(&c.ctx, "key1", &c.test_context);
+    }
+
+    // non retryable error on OnNextSubtasksBatch
+    {
+        let registered =
+            register_example_task(&c.mock_ctrl, testutil::get_plan_not_retryable_err_scheduler_ext(&c.mock_ctrl), &c.test_context, None);
+        let task = testutil::submit_and_wait_task(&c.ctx, "key2-1", &scope, 1);
+        assert_eq!(task.state, TASK_STATE_REVERTED);
+        drop(registered);
+        let _registered = register_example_task(
+            &c.mock_ctrl,
+            testutil::get_step_two_plan_not_retryable_err_scheduler_ext(&c.mock_ctrl),
+            &c.test_context,
+            None,
+        );
+        let task = testutil::submit_and_wait_task(&c.ctx, "key2-2", &scope, 1);
+        assert_eq!(task.state, TASK_STATE_REVERTED);
+    }
+
+    let prepare_for_awaiting_resolution = |task_key: &str| -> (i64, testutil::RegisteredTaskType) {
+        let subtask_err_retryable = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let ctrl_for_step = Arc::clone(&c.mock_ctrl);
+        let retryable_for_step = Arc::clone(&subtask_err_retryable);
+        let retryable_for_check = Arc::clone(&subtask_err_retryable);
+        let executor_ext = testutil::get_task_executor_ext(
+            &c.mock_ctrl,
+            move |task| {
+                let retryable = Arc::clone(&retryable_for_step);
+                let step_executor = testutil::get_common_step_executor(&ctrl_for_step, task.base.step, move |_, _| {
+                    if !retryable.load(Ordering::SeqCst) {
+                        return Err(Arc::new(std::io::Error::other("non retryable subtask error")));
+                    }
+                    Ok(())
+                });
+                Ok(step_executor as Arc<dyn StepExecutor>)
+            },
+            move |_| retryable_for_check.load(Ordering::SeqCst),
+        );
+        let registered = testutil::register_example_task(
+            testutil::get_plan_err_scheduler_ext(&c.mock_ctrl, &c.test_context),
+            executor_ext,
+            testutil::get_common_cleaner(&c.mock_ctrl),
+        );
+        let tm = tidb_dxf_storage::get_task_manager().unwrap();
+        let task_id = tm
+            .create_task(
+                task_key,
+                &TASK_TYPE_EXAMPLE,
+                "",
+                1,
+                &scope,
+                2,
+                &ExtraParams { manual_recovery: true, ..ExtraParams::default() },
+                &[],
+            )
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while tm.get_task_by_id(task_id).unwrap().base.state != TASK_STATE_AWAITING_RESOLUTION {
+            assert!(std::time::Instant::now() < deadline, "the task did not await resolution");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        subtask_err_retryable.store(true, Ordering::SeqCst);
+        (task_id, registered)
+    };
+
+    // task enter awaiting-resolution state if ManualRecovery set, success after manual recover
+    {
+        let task_key = "key3-1";
+        let (task_id, _registered) = prepare_for_awaiting_resolution(task_key);
+        let mut session = stack.factory.open_session(session_context(4001)).unwrap();
+        rows(
+            &mut session,
+            &format!("update mysql.tidb_background_subtask set state='pending' where state='failed' and task_key= '{task_id}'"),
+        );
+        rows(&mut session, &format!("update mysql.tidb_global_task set state='running' where id = {task_id}"));
+        let task = testutil::wait_task_done(&c.ctx, task_key);
+        assert_eq!(task.state, TASK_STATE_SUCCEED);
+    }
+
+    // task enter awaiting-resolution state if ManualRecovery set, cancel also works
+    {
+        let task_key = "key4-1";
+        let (task_id, _registered) = prepare_for_awaiting_resolution(task_key);
+        c.task_mgr.cancel_task(task_id).unwrap();
+        let task = testutil::wait_task_done(&c.ctx, task_key);
+        assert_eq!(task.state, TASK_STATE_REVERTED);
+    }
+}
+
+/// Go `CheckSubtasksState`.
+fn check_subtasks_state(task_id: i64, state: &SubtaskState, expected_cnt: i64) {
+    let mgr = tidb_dxf_storage::get_task_manager().unwrap();
+    testutil::print_subtask_info(&mgr, task_id);
+    let cnt_by_states_step_one = mgr.get_subtask_cnt_group_by_states(task_id, STEP_ONE).unwrap();
+    let cnt_by_states_step_two = mgr.get_subtask_cnt_group_by_states(task_id, STEP_TWO).unwrap();
+    let history_sub_tasks_cnt = testutil::get_subtasks_from_history_by_task_id(&mgr, task_id).unwrap();
+    // all subtasks moved to history.
+    if history_sub_tasks_cnt != 0 {
+        assert_eq!(history_sub_tasks_cnt as i64, expected_cnt);
+    } else {
+        let cnt = |by_state: &std::collections::HashMap<SubtaskState, i64>| by_state.get(state).copied().unwrap_or(0);
+        assert_eq!(cnt(&cnt_by_states_step_one) + cnt(&cnt_by_states_step_two), expected_cnt);
+    }
+}
+
+/// Go `TestFrameworkPauseAndResume`.
+#[test]
+fn test_framework_pause_and_resume() {
+    let (_stack, task_mgr) = store_and_task_manager();
+    let c = testutil::new_test_dxf_context(task_mgr, 3, 16, true);
+
+    let _registered =
+        register_example_task(&c.mock_ctrl, testutil::get_mock_basic_scheduler_ext(&c.mock_ctrl), &c.test_context, None);
+    // 1. schedule and pause one running task.
+    let counter = Arc::new(AtomicI32::new(0));
+    let pause_in = |state: TaskState| {
+        let (counter, task_mgr) = (Arc::clone(&counter), Arc::clone(&c.task_mgr));
+        counter.store(0, Ordering::SeqCst);
+        *tidb_dxf_scheduler::BEFORE_REFRESH_TASK.write().unwrap() = Some(Arc::new(move |task: &Task| {
+            if counter.fetch_add(1, Ordering::SeqCst) + 1 <= 2 && task.base.state == state {
+                task_mgr.pause_task(&task.base.key).unwrap();
+            }
+        }));
+    };
+    pause_in(TASK_STATE_RUNNING);
+    let scope = tidb_dxf_handle::get_target_scope();
+    let task1 = testutil::submit_and_wait_task(&c.ctx, "key1", &scope, 1);
+    assert_eq!(task1.state, TASK_STATE_PAUSED);
+    *tidb_dxf_scheduler::BEFORE_REFRESH_TASK.write().unwrap() = None;
+    // 4 subtask scheduled.
+    tidb_dxf_handle::resume_task("key1").unwrap();
+    let task1_base = testutil::wait_task_done(&c.ctx, &task1.key);
+    assert_eq!(task1_base.state, TASK_STATE_SUCCEED);
+    check_subtasks_state(task1.id, &SUBTASK_STATE_SUCCEED, 4);
+
+    let mgr = tidb_dxf_storage::get_task_manager().unwrap();
+    assert!(mgr.get_subtask_errors(task1.id).unwrap().is_empty());
+
+    // 2. pause pending task.
+    pause_in(TASK_STATE_PENDING);
+    let task2 = testutil::submit_and_wait_task(&c.ctx, "key2", &scope, 1);
+    assert_eq!(task2.state, TASK_STATE_PAUSED);
+    *tidb_dxf_scheduler::BEFORE_REFRESH_TASK.write().unwrap() = None;
+    // 4 subtask scheduled.
+    tidb_dxf_handle::resume_task("key2").unwrap();
+    let task2_base = testutil::wait_task_done(&c.ctx, &task2.key);
+    assert_eq!(task2_base.state, TASK_STATE_SUCCEED);
+    check_subtasks_state(task2.id, &SUBTASK_STATE_SUCCEED, 4);
+
+    assert!(mgr.get_subtask_errors(task2.id).unwrap().is_empty());
+}
+
+/// Go `getMockBasicSchedulerExtForScope`.
+fn get_mock_basic_scheduler_ext_for_scope(ctrl: &Arc<Controller>, subtask_cnt: usize) -> Arc<tidb_dxf_mock::MockSchedulerExtension> {
+    testutil::get_mock_scheduler_ext(
+        ctrl,
+        testutil::SchedulerInfo {
+            all_error_retryable: true,
+            step_infos: vec![testutil::StepInfo::new(STEP_ONE, subtask_cnt), testutil::StepInfo::new(STEP_TWO, 1)],
+        },
+    )
+}
+
+/// Go `submitTaskAndCheckSuccessForScope`.
+fn submit_task_and_check_success_for_scope(
+    ctx: &Context,
+    task_key: &str,
+    node_cnt: usize,
+    target_scope: &str,
+    test_context: &testutil::TestContext,
+) -> i64 {
+    submit_task_and_check_success(ctx, task_key, target_scope, test_context, &[(STEP_ONE, node_cnt), (STEP_TWO, 1)])
+}
+
+/// Go `checkSubtaskOnNodes`.
+fn check_subtask_on_nodes(task_id: i64, mut expected_nodes: Vec<String>) {
+    let mgr = tidb_dxf_storage::get_task_manager().unwrap();
+    let mut nodes = testutil::get_subtask_nodes(&mgr, task_id).unwrap();
+    nodes.sort();
+    expected_nodes.sort();
+    assert_eq!(nodes, expected_nodes);
+}
+
+/// Go `targetScopeCase`.
+struct TargetScopeCase {
+    scope: String,
+    node_scopes: Vec<String>,
+}
+
+/// Go `generateScopeCase`.
+fn generate_scope_case(node_cnt: usize, scope_cnt: usize) -> TargetScopeCase {
+    let scope = format!("scope-{}", rand::random_range(0..100));
+    let mut node_scopes = vec![String::new(); node_cnt];
+    for node_scope in node_scopes.iter_mut().take(node_cnt - scope_cnt) {
+        *node_scope = format!("scope-{}", rand::random_range(0..100));
+    }
+    for node_scope in node_scopes.iter_mut().skip(node_cnt - scope_cnt) {
+        node_scope.clone_from(&scope);
+    }
+    TargetScopeCase { scope, node_scopes }
+}
+
+/// Go `runTargetScopeCase`.
+fn run_target_scope_case(c: &testutil::TestDxfContext, tk: &mut Session, test_case: &TargetScopeCase, idx: usize, node_cnt: usize) {
+    for (i, node_scope) in test_case.node_scopes.iter().enumerate() {
+        rows(
+            tk,
+            &format!(
+                "update mysql.dist_framework_meta set role = \"{node_scope}\" where host = \"{}\"",
+                c.get_node_id_by_idx(i)
+            ),
+        );
+    }
+    let (ch_tx, ch_rx) = crossbeam_channel::bounded::<()>(0);
+    let counter = AtomicI32::new(0);
+    *tidb_dxf_scheduler::SYNC_REFRESH.write().unwrap() = Some(Arc::new(move || {
+        if counter.fetch_add(1, Ordering::SeqCst) + 1 <= 3 {
+            let _ = ch_tx.send(());
+        }
+    }));
+    for _ in 0..3 {
+        ch_rx.recv().unwrap();
+    }
+    let task_id = submit_task_and_check_success_for_scope(&c.ctx, &format!("task{idx}"), node_cnt, &test_case.scope, &c.test_context);
+    *tidb_dxf_scheduler::SYNC_REFRESH.write().unwrap() = None;
+    let expected = test_case
+        .node_scopes
+        .iter()
+        .enumerate()
+        .filter(|(_, scope)| **scope == test_case.scope)
+        .map(|(i, _)| c.get_node_id_by_idx(i))
+        .collect();
+    check_subtask_on_nodes(task_id, expected);
+}
+
+/// Go `TestTargetScope`.
+#[test]
+fn test_target_scope() {
+    let (stack, task_mgr) = store_and_task_manager();
+    let node_cnt = 10;
+    let c = testutil::new_test_dxf_context(task_mgr, node_cnt, 16, true);
+    let _registered =
+        register_example_task(&c.mock_ctrl, get_mock_basic_scheduler_ext_for_scope(&c.mock_ctrl, node_cnt), &c.test_context, None);
+    let mut tk = stack.factory.open_session(session_context(4002)).unwrap();
+    let case_num = 10;
+    for i in 0..case_num {
+        run_target_scope_case(&c, &mut tk, &generate_scope_case(node_cnt, 5), i, node_cnt);
+    }
+}
+
+/// Go `TestTiDBMaxDistTaskNodesSettings`.
+#[test]
+fn test_tidb_max_dist_task_nodes_settings() {
+    if tidb_config_kerneltype::is_next_gen() {
+        // tidb_max_dist_task_nodes in nextgen is not supported to be changed
+        return;
+    }
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = stack.factory.open_session(session_context(4003)).unwrap();
+    let max_nodes = |tk: &mut Session| displayed(rows(tk, "select @@global.tidb_max_dist_task_nodes"));
+
+    rows(&mut tk, "set global tidb_max_dist_task_nodes=-1");
+    assert_eq!(max_nodes(&mut tk), vec![vec!["-1".to_owned()]]);
+    rows(&mut tk, "set global tidb_max_dist_task_nodes=1");
+    assert_eq!(max_nodes(&mut tk), vec![vec!["1".to_owned()]]);
+    rows(&mut tk, "set global tidb_max_dist_task_nodes=128");
+    assert_eq!(max_nodes(&mut tk), vec![vec!["128".to_owned()]]);
+
+    let err = tk.node_conn().execute("set global tidb_max_dist_task_nodes=0").err().expect("0 is refused");
+    assert!(err.to_string().contains("max_dist_task_nodes should be -1 or [1, 128]"), "{err}");
+    rows(&mut tk, "set global tidb_max_dist_task_nodes=129");
+    assert_eq!(max_nodes(&mut tk), vec![vec!["128".to_owned()]]);
+}

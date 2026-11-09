@@ -133,7 +133,12 @@ tidb-server shows the same rows.
   `framework_err_handling_test.go`, `framework_pause_and_resume_test.go`,
   `framework_scope_test.go`, `modify_test.go`, `resource_control_test.go`,
   `framework_test.go`'s `WithQuery`/`GC`/`Cleaner`/`MaxRuntimeSlots`, and the
-  scheduler's and executor's own testkit tests. Under concurrent nextest the
+  scheduler's and executor's own testkit tests. Also left: Go's
+  `SET GLOBAL tidb_service_scope` (`executor/set.go`) writes the node's role
+  with `InitMetaSession`, which the Rust instance-variable path does not (Go's
+  bootstrap always sets the task manager it uses; the Rust test stacks do
+  not start the loop), so `TestScopeBasic` and `TestSetScope` wait on it.
+  Under concurrent nextest the
   long DXF tests can make short neighbours report LEAK (a sibling spawned
   alongside inherits their pipes, as `.config/nextest.toml` measures); a
   serial run is leak free.

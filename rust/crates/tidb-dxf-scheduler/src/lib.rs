@@ -33,6 +33,8 @@ pub use interface::{
     register_scheduler_clean_up_factory, register_scheduler_factory, BatchCleanUpRoutine, BatchCleaner, CleanUpRoutine, Cleaner, CleanerFactoryFn, Error, Extension, Param, SchedulerFactoryFn, TaskManager,
 };
 pub use nodes::NodeManager;
+#[cfg(any(test, feature = "failpoints"))]
+pub use nodes::SYNC_REFRESH;
 pub use scheduler_manager::{Manager, CHECK_TASK_RUNNING_INTERVAL, DEFAULT_CLEAN_UP_INTERVAL};
 pub use scheduler::{
     get_live_exec_ids, is_cancelled_err, BaseScheduler, Scheduler, ServerInfoSource, CHECK_TASK_FINISHED_INTERVAL, RETRY_SQL_INTERVAL, RETRY_SQL_MAX_INTERVAL,
