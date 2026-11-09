@@ -257,7 +257,6 @@ func newBatchPointGetPlan(
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique || idxInfo.State != model.StatePublic || (idxInfo.Invisible && !ctx.GetSessionVars().OptimizerUseInvisibleIndexes) || idxInfo.MVIndex ||
 			idxInfo.HasCondition() || !indexIsAvailableByHints(
-			ctx.GetSessionVars().CurrentDB,
 			dbName,
 			tblAlias,
 			idxInfo,
@@ -575,7 +574,6 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 	dbName := getLowerDB(tblName.Schema, ctx.GetSessionVars())
 	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 &&
 		indexIsAvailableByHints(
-			ctx.GetSessionVars().CurrentDB,
 			dbName,
 			tblAlias.L,
 			nil,
@@ -616,7 +614,6 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique || idxInfo.State != model.StatePublic || (idxInfo.Invisible && !ctx.GetSessionVars().OptimizerUseInvisibleIndexes) || idxInfo.MVIndex ||
 			idxInfo.HasCondition() || !indexIsAvailableByHints(
-			ctx.GetSessionVars().CurrentDB,
 			dbName,
 			tblAlias,
 			idxInfo,
@@ -680,7 +677,6 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 // indexIsAvailableByHints checks whether this index is filtered by these specified index hints.
 // idxInfo is PK if it's nil
 func indexIsAvailableByHints(
-	currentDB string,
 	dbName string,
 	tblAlias string,
 	idxInfo *model.IndexInfo,
@@ -715,13 +711,11 @@ func indexIsAvailableByHints(
 			intest.Assert(false)
 			continue
 		}
+		// The table name matching logic from getPossibleAccessPaths(): a hint without a database name matches
+		// the table name or alias in any database, see hint.HintedIndex.Match.
 		hintDBName := h.Tables[0].DBName
-		if hintDBName.L == "" {
-			hintDBName = ast.NewCIStr(currentDB)
-		}
-		// The table name matching logic from getPossibleAccessPaths()
 		if h.Tables[0].TableName.L == tblAlias &&
-			(hintDBName.L == dbName || hintDBName.L == "*") {
+			(hintDBName.L == "" || hintDBName.L == dbName || hintDBName.L == "*") {
 			combinedHints = append(combinedHints, &ast.IndexHint{
 				IndexNames: h.Indexes,
 				HintType:   hintType,

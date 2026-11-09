@@ -642,14 +642,25 @@ type HintedTable struct {
 	Partitions   []ast.CIStr // partition information
 	SelectOffset int         // the select block offset of this hint
 	Matched      bool        // whether this hint is applied successfully
+	// ImplicitDB indicates that DBName was not written in the hint and was filled with the current database.
+	// Such a hint matches a table or alias of the same name in any database, see dbNameMatch.
+	ImplicitDB bool
+}
+
+// dbNameMatch checks whether a hint's database name matches a table's database name.
+// A table name or alias is unique within a query block, so a hint without a database name
+// (implicitDB) matches by name alone, like MySQL. Otherwise `SELECT /*+ HASH_JOIN(t) */ ... FROM db1.t ...`
+// would be ignored whenever the current database is not db1, or is empty.
+func dbNameMatch(hintDB ast.CIStr, implicitDB bool, tableDB ast.CIStr) bool {
+	return implicitDB || hintDB.L == tableDB.L ||
+		hintDB.L == "*" || tableDB.L == "*" // for cross-db bindings, e.g. *.t
 }
 
 // Match checks whether the hint is matched with the given dbName and tblName.
 func (hint *HintedTable) Match(other *HintedTable) bool {
 	return hint.SelectOffset == other.SelectOffset &&
 		hint.TblName.L == other.TblName.L &&
-		(hint.DBName.L == other.DBName.L ||
-			hint.DBName.L == "*" || other.DBName.L == "*") // for cross-db bindings, e.g. *.t
+		dbNameMatch(hint.DBName, hint.ImplicitDB || other.ImplicitDB, other.DBName)
 }
 
 // HintedIndex indicates which index this hint should take effect on.
@@ -664,6 +675,8 @@ type HintedIndex struct {
 	// If an HintedIndex is not Matched after building
 	// a Select statement, we will generate a warning for it.
 	Matched bool
+	// ImplicitDB indicates that DBName was filled with the current database, see HintedTable.ImplicitDB.
+	ImplicitDB bool
 }
 
 // HintedColumn indicates which columns this hint should take effect on.
@@ -673,14 +686,15 @@ type HintedColumn struct {
 	SelectOffset int
 	Columns      []ast.CIStr
 	Matched      bool
+	// ImplicitDB indicates that DBName was filled with the current database, see HintedTable.ImplicitDB.
+	ImplicitDB bool
 }
 
 // Match checks whether the hint is matched with the given table alias.
 func (hint *HintedColumn) Match(other *HintedTable) bool {
 	return hint.SelectOffset == other.SelectOffset &&
 		hint.TblName.L == other.TblName.L &&
-		(hint.DBName.L == other.DBName.L ||
-			hint.DBName.L == "*" || other.DBName.L == "*")
+		dbNameMatch(hint.DBName, hint.ImplicitDB || other.ImplicitDB, other.DBName)
 }
 
 // ColumnString formats the HintedColumn as DBName.tableName[, columnNames].
@@ -699,7 +713,7 @@ func (hint *HintedColumn) ColumnString() string {
 // Match checks whether the hint is matched with the given dbName and tblName.
 func (hint *HintedIndex) Match(dbName, tblName ast.CIStr) bool {
 	return hint.TblName.L == tblName.L &&
-		(hint.DBName.L == dbName.L ||
+		(hint.ImplicitDB || hint.DBName.L == dbName.L ||
 			hint.DBName.L == "*") // for universal bindings, e.g. *.t
 }
 
@@ -955,16 +969,19 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 				continue
 			}
 			dbName := hint.Tables[0].DBName
-			if dbName.L == "" {
+			implicitDB := dbName.L == ""
+			if implicitDB {
 				dbName = ast.NewCIStr(currentDB)
 			}
 			noIndexLookUpPushDownTables = append(noIndexLookUpPushDownTables, HintedTable{
-				DBName:  dbName,
-				TblName: hint.Tables[0].TableName,
+				DBName:     dbName,
+				TblName:    hint.Tables[0].TableName,
+				ImplicitDB: implicitDB,
 			})
 		case HintUseIndex, HintIgnoreIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexLookUpPushDown:
 			dbName := hint.Tables[0].DBName
-			if dbName.L == "" {
+			implicitDB := dbName.L == ""
+			if implicitDB {
 				dbName = ast.NewCIStr(currentDB)
 			}
 			var hintType ast.IndexHintType
@@ -998,6 +1015,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 					HintScope:  ast.HintForScan,
 				},
 				PushDownLookUp: pushDownLookUp,
+				ImplicitDB:     implicitDB,
 			})
 		case HintTiFlashLMFilter:
 			// TableOptimizerHint reuses Indexes to store the identifier list after the table name.
@@ -1008,7 +1026,8 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 				continue
 			}
 			dbName := hint.Tables[0].DBName
-			if dbName.L == "" {
+			implicitDB := dbName.L == ""
+			if implicitDB {
 				dbName = ast.NewCIStr(currentDB)
 			}
 			tiflashLMFilters = append(tiflashLMFilters, HintedColumn{
@@ -1016,6 +1035,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 				TblName:      hint.Tables[0].TableName,
 				SelectOffset: hintProcessor.GetHintOffset(getHintTableQBName(hint), currentLevel),
 				Columns:      columns,
+				ImplicitDB:   implicitDB,
 			})
 		case HintReadFromStorage:
 			switch hint.HintData.(ast.CIStr).L {
@@ -1026,7 +1046,8 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			}
 		case HintIndexMerge:
 			dbName := hint.Tables[0].DBName
-			if dbName.L == "" {
+			implicitDB := dbName.L == ""
+			if implicitDB {
 				dbName = ast.NewCIStr(currentDB)
 			}
 			indexMergeHintList = append(indexMergeHintList, HintedIndex{
@@ -1038,6 +1059,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 					HintType:   ast.HintUse,
 					HintScope:  ast.HintForScan,
 				},
+				ImplicitDB: implicitDB,
 			})
 		case HintTimeRange:
 			timeRangeHint = hint.HintData.(ast.HintTimeRange)
@@ -1151,6 +1173,7 @@ func tableNames2HintTableInfo(currentDB, hintName string, hintTables []ast.HintT
 		}
 		if tableInfo.DBName.L == "" {
 			tableInfo.DBName = defaultDBName
+			tableInfo.ImplicitDB = true
 		}
 		switch hintName {
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ,

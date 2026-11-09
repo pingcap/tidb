@@ -16,7 +16,9 @@ package hint
 
 import (
 	"context"
+	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -448,4 +450,69 @@ func TestOptimizerCostFactorHints(t *testing.T) {
 		// Reset table scan cost factor variable to default
 		testKit.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=1")
 	})
+}
+
+func TestHintTableNameWithoutDBName(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database hintdb1")
+	tk.MustExec("create table hintdb1.j (ns bigint, id bigint, primary key (ns, id) clustered)")
+	tk.MustExec("create table hintdb1.c (oid bigint, hlc bigint, ns bigint, sjid bigint, primary key (oid, hlc) clustered, key ns_sjid (ns, sjid))")
+	tk.MustExec("create table hintdb1.u (a int, b int, unique key ub (b))")
+
+	planHas := func(sql, op string) bool {
+		for _, row := range tk.MustQuery("explain format = 'brief' " + sql).Rows() {
+			if strings.Contains(fmt.Sprint(row...), op) {
+				return true
+			}
+		}
+		return false
+	}
+	join := " j.id, %s.oid from hintdb1.j left join hintdb1.c %s on %s.ns = j.ns and %s.sjid = j.id where j.ns = 1 and j.id in (1, 2)"
+	joinSQL := func(hint, alias string) string {
+		name := "c"
+		if alias != "" {
+			name = alias
+		}
+		return "select /*+ " + hint + " */" + fmt.Sprintf(join, name, alias, name, name)
+	}
+
+	// The tables are in hintdb1, which is not the current database (first "test", then none).
+	for _, useDB := range []bool{true, false} {
+		if useDB {
+			tk.MustExec("use test")
+		} else {
+			tk.RefreshSession()
+			require.Equal(t, "", tk.Session().GetSessionVars().CurrentDB)
+		}
+		// A hint table name without a database name matches the table or alias in any database.
+		for _, tc := range []struct{ hint, alias string }{
+			{"hash_join(c)", ""},
+			{"hash_join(x)", "x"},
+			{"hash_join_build(c)", ""},
+		} {
+			sql := joinSQL(tc.hint, tc.alias)
+			require.True(t, planHas(sql, "HashJoin"), sql)
+			tk.MustQuery("show warnings").Check(testkit.Rows())
+		}
+		require.True(t, planHas(joinSQL("inl_join(c)", ""), "IndexJoin"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		require.True(t, planHas(joinSQL("merge_join(c)", ""), "MergeJoin"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		// Index hints, including the point-get fast path.
+		require.True(t, planHas("select /*+ use_index(c, ns_sjid) */ oid from hintdb1.c where ns = 1", "ns_sjid"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		require.True(t, planHas("select /*+ use_index(x, primary) */ oid from hintdb1.c x where ns = 1", "TableFullScan"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		require.True(t, planHas("select * from hintdb1.u where b = 1", "Point_Get"))
+		require.False(t, planHas("select /*+ ignore_index(u, ub) */ * from hintdb1.u where b = 1", "Point_Get"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		// An explicit database name must still match exactly.
+		require.False(t, planHas(joinSQL("hash_join(test.c)", ""), "HashJoin"))
+		tk.MustQuery("show warnings").CheckContain("There are no matching table names for (c)")
+		require.True(t, planHas(joinSQL("hash_join(hintdb1.c)", ""), "HashJoin"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+	}
 }
