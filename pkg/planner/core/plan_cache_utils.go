@@ -276,10 +276,42 @@ var tableIDSlicePool = zeropool.New[[]int64](func() []int64 {
 	return make([]int64, 0, 8)
 })
 
+// hashTableRevisions appends one (table ID, effective revision, latest revision)
+// tuple per table, ordered by table ID so the key is deterministic. The effective
+// revision comes from the statement's RelateVersion; the latest revision comes
+// from the domain InfoSchema and can differ from the transaction's schema.
 func hashTableRevisions(b []byte, m map[int64]uint64, latestIS infoschema.InfoSchema) ([]byte, bool) {
 	n := len(m)
 	if n == 0 {
 		return b, true
+	}
+	if n == 1 {
+		for id, revision := range m {
+			return appendTableRevision(b, id, revision, latestIS)
+		}
+	}
+	if n == 2 {
+		var id1, id2 int64
+		var revision1, revision2 uint64
+		i := 0
+		for id, revision := range m {
+			if i == 0 {
+				id1, revision1 = id, revision
+			} else {
+				id2, revision2 = id, revision
+			}
+			i++
+		}
+		if id1 > id2 {
+			id1, id2 = id2, id1
+			revision1, revision2 = revision2, revision1
+		}
+		var ok bool
+		b, ok = appendTableRevision(b, id1, revision1, latestIS)
+		if !ok {
+			return nil, false
+		}
+		return appendTableRevision(b, id2, revision2, latestIS)
 	}
 
 	keys := tableIDSlicePool.Get()[:0]
@@ -296,16 +328,25 @@ func hashTableRevisions(b []byte, m map[int64]uint64, latestIS infoschema.InfoSc
 	slices.Sort(keys)
 
 	for _, id := range keys {
-		latestTable, ok := latestIS.TableByID(context.Background(), id)
+		var ok bool
+		b, ok = appendTableRevision(b, id, m[id], latestIS)
 		if !ok {
-			// TableByID can also fail when loading metadata, so do not cache
-			// a plan under a key that treats the failure as a missing table.
 			return nil, false
 		}
-		b = codec.EncodeInt(b, id)
-		b = codec.EncodeUint(b, m[id])
-		b = codec.EncodeUint(b, latestTable.Meta().Revision)
 	}
+	return b, true
+}
+
+func appendTableRevision(b []byte, id int64, revision uint64, latestIS infoschema.InfoSchema) ([]byte, bool) {
+	latestTable, ok := latestIS.TableByID(context.Background(), id)
+	if !ok {
+		// TableByID can also fail when loading metadata, so do not cache
+		// a plan under a key that treats the failure as a missing table.
+		return nil, false
+	}
+	b = codec.EncodeInt(b, id)
+	b = codec.EncodeUint(b, revision)
+	b = codec.EncodeUint(b, latestTable.Meta().Revision)
 	return b, true
 }
 
