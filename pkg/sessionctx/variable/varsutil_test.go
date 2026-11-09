@@ -95,6 +95,19 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, int64(DefTiDBTmpTableMaxSize), vars.TMPTableSize)
 	require.Equal(t, defaultIsolationReadEnginesValue(), vars.MVMaintainIsolationReadEngines)
 
+	for _, tc := range []struct {
+		name    string
+		enabled bool
+	}{
+		{TiDBEnableCachePrepareStmt, vars.EnableCachePrepareStmt},
+		{TiDBEnableOnDuplicateExpressionReuse, vars.EnableOnDuplicateExprReuse},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.False(t, tc.enabled)
+			require.Equal(t, Off, GetSysVar(tc.name).Value)
+		})
+	}
+
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.BatchSize))
 }
