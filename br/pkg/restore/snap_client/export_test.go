@@ -146,3 +146,72 @@ func NewSnapFileImporterOptionsForTest(
 func (importer *SnapFileImporter) PaginateScanRegionForTest(ctx context.Context, startKey, endKey []byte) ([]*split.RegionInfo, error) {
 	return importer.paginateScanRegion(ctx, startKey, endKey)
 }
+
+// snapshotPeerDownloadRetryProbe models capability support independently for each store.
+type snapshotPeerDownloadRetryProbe struct {
+	importclient.ImporterClient
+	supported map[uint64]bool
+	probeErr  error
+	probed    []uint64
+}
+
+func (p *snapshotPeerDownloadRetryProbe) IsBatchDownloadLatestMVCCSupported(_ context.Context, stores []uint64) (bool, error) {
+	p.probed = append([]uint64(nil), stores...)
+	if p.probeErr != nil {
+		return false, p.probeErr
+	}
+	for _, id := range stores {
+		if !p.supported[id] {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func TestSnapshotPeerDownloadRetrySupport(t *testing.T) {
+	for _, tt := range []struct {
+		name             string
+		hasTiFlash       bool
+		tiKVSupported    bool
+		tiFlashSupported bool
+		tiFlashState     metapb.StoreState
+		pitr             bool
+		probeErr         error
+		wantRetry        bool
+		wantStores       []uint64
+	}{
+		{name: "TiKV only", tiKVSupported: true, wantRetry: true, wantStores: []uint64{1}},
+		{name: "unsupported TiKV", wantStores: []uint64{1}},
+		{name: "unsupported TiFlash", hasTiFlash: true, tiKVSupported: true, wantStores: []uint64{1, 2}},
+		{name: "supported TiFlash", hasTiFlash: true, tiKVSupported: true, tiFlashSupported: true, wantRetry: true, wantStores: []uint64{1, 2}},
+		{name: "offline TiFlash", hasTiFlash: true, tiKVSupported: true, tiFlashState: metapb.StoreState_Offline, wantRetry: true, wantStores: []uint64{1}},
+		{name: "probe error", hasTiFlash: true, tiKVSupported: true, probeErr: errors.New("probe unavailable"), wantStores: []uint64{1, 2}},
+		{name: "PiTR ignores unsupported TiFlash", hasTiFlash: true, tiKVSupported: true, pitr: true, wantRetry: true, wantStores: []uint64{1}},
+		{name: "PiTR unsupported TiKV", hasTiFlash: true, tiFlashSupported: true, pitr: true, wantStores: []uint64{1}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tiKVStores := []*metapb.Store{{Id: 1, State: metapb.StoreState_Up}}
+			allStores := append([]*metapb.Store(nil), tiKVStores...)
+			if tt.hasTiFlash {
+				allStores = append(allStores, &metapb.Store{
+					Id: 2, State: tt.tiFlashState,
+					Labels: []*metapb.StoreLabel{{Key: "engine", Value: "tiflash"}},
+				})
+			}
+			probe := &snapshotPeerDownloadRetryProbe{
+				supported: map[uint64]bool{1: tt.tiKVSupported, 2: tt.tiFlashSupported},
+				probeErr:  tt.probeErr,
+			}
+			importer := &SnapFileImporter{importClient: probe, peerDownloadRetry: true}
+			ctx := context.Background()
+			rc := &SnapClient{pdClient: split.NewFakePDClient(allStores, false, nil)}
+			rc.SetIsPiTR(tt.pitr)
+			err := rc.checkPeerDownloadRetrySupport(ctx, importer, tiKVStores)
+			require.NoError(t, err)
+			require.Equal(t, tt.wantRetry, importer.peerDownloadRetry)
+			require.Equal(t, tt.wantStores, probe.probed)
+			require.Len(t, tiKVStores, 1)
+			require.Equal(t, uint64(1), tiKVStores[0].Id)
+		})
+	}
+}
