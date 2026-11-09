@@ -48,16 +48,20 @@ func (r *oversizedOuterReader) Next(_ context.Context, req *chunk.Chunk) error {
 
 func TestAdaptiveLimitOuterWorkerOversizedChunk(t *testing.T) {
 	newWorker := func() (*outerWorker, *oversizedOuterReader, *exec.AdaptiveLimitController) {
+		ctx := mock.NewContext()
 		col := &expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)}
 		reader := &oversizedOuterReader{
-			BaseExecutor: exec.NewBaseExecutor(mock.NewContext(), expression.NewSchema(col), 1),
+			BaseExecutor: exec.NewBaseExecutor(ctx, expression.NewSchema(col), 1),
 		}
 		controller := exec.NewAdaptiveLimitOuterJoinController(exec.AdaptiveLimitConfig{
 			DemandRows: 3, InitialOuterWindow: 3, MaxOuterWindow: 3,
 		})
 		worker := &outerWorker{
-			OuterCtx:         OuterCtx{RowTypes: reader.RetFieldTypes()},
-			lookup:           &IndexLookUpJoin{AdaptiveLimitController: controller},
+			OuterCtx: OuterCtx{RowTypes: reader.RetFieldTypes()},
+			lookup: &IndexLookUpJoin{
+				BaseExecutor:            exec.NewBaseExecutor(ctx, nil, 2, reader),
+				AdaptiveLimitController: controller,
+			},
 			executor:         reader,
 			maxBatchSize:     3,
 			parentMemTracker: memory.NewTracker(-1, -1),
