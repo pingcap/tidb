@@ -90,10 +90,27 @@ func upgradeWithMDLMigration(s sessionapi.Session, migration legacyMDLMigration)
 type mdlInitPolicy int
 
 const (
+	// mdlInitForceEnable always writes ON to the metadata key, even if it is
+	// absent or explicitly OFF, and then applies the committed value to the
+	// process-wide MDL setting. Fresh-cluster bootstrap uses this before its
+	// DDL scheduler starts, so bootstrap DDLs use MDL from their first dispatch.
 	mdlInitForceEnable mdlInitPolicy = iota
-	// Normal startup enables a missing key. Upgrades from TiDB v6.4.0 or earlier
-	// keep it disabled until the legacy version-99 migration finishes instead.
+
+	// mdlInitEnableOnNull loads the persisted ON/OFF value, writing ON only if
+	// the metadata key is absent. An explicit OFF is preserved. Normal startup
+	// uses this before starting DDL, including the final normal domain after
+	// upgrade and the case where another TiDB has already finished upgrading.
+	// Reloading here applies any MDL value persisted by the upgrade migration.
 	mdlInitEnableOnNull
+
+	// mdlInitKeepDisabledOnNull reads the persisted ON/OFF value without writing
+	// metadata. An absent key is interpreted as OFF, left absent, and reported
+	// to the caller. Upgrade uses this before its temporary domain starts:
+	// TiDB v6.4.0-or-earlier clusters stay non-MDL for upgrade DDLs. The legacy
+	// version-99 migration then persists ON, which normal startup reloads before
+	// starting the final scheduler. Existing explicit ON/OFF values are honored.
+	// BR also uses this read-only policy so creating a session or domain does
+	// not change the target cluster's MDL setting.
 	mdlInitKeepDisabledOnNull
 )
 
