@@ -19,11 +19,28 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
+
+type partitionItemLookupForbiddenInfoSchema struct {
+	infoschema.InfoSchema
+	t *testing.T
+}
+
+func (is partitionItemLookupForbiddenInfoSchema) TableItemByPartitionID(partitionID int64) (infoschema.TableItem, bool) {
+	is.t.Fatalf("TableItemByPartitionID should not be called for partition ID %d", partitionID)
+	return infoschema.TableItem{}, false
+}
+
+func (is partitionItemLookupForbiddenInfoSchema) TableIDByPartitionID(partitionID int64) (int64, bool) {
+	is.t.Fatalf("TableIDByPartitionID should not be called for partition ID %d", partitionID)
+	return 0, false
+}
 
 func TestIsSpecialGlobalIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -71,4 +88,49 @@ func TestCallSCtxFailed(t *testing.T) {
 	require.Equal(t, "simulated error", err.Error())
 	notReleased := infosync.ContainsInternalSessionForTest(sctxWithFailure)
 	require.False(t, notReleased)
+}
+
+func TestSnapshotTableInfoGetterAvoidsV1PartitionScan(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table normal (a int)")
+	tk.MustExec("create table partitioned (a int) partition by hash(a) partitions 2")
+
+	normalInfo := dom.MustGetTableInfo(t, "test", "normal")
+	partitionedInfo := dom.MustGetTableInfo(t, "test", "partitioned")
+	partitionInfo := partitionedInfo.GetPartitionInfo()
+	require.NotNil(t, partitionInfo)
+	require.NotEmpty(t, partitionInfo.Definitions)
+	partitionID := partitionInfo.Definitions[0].ID
+
+	is := partitionItemLookupForbiddenInfoSchema{
+		InfoSchema: infoschema.MockInfoSchemaWithSchemaVer([]*model.TableInfo{normalInfo, partitionedInfo}, 1),
+		t:          t,
+	}
+	snapshotGetter := util.NewSnapshotTableInfoGetter(is)
+	tbl, ok := snapshotGetter.TableInfoByID(normalInfo.ID)
+	require.True(t, ok)
+	require.Equal(t, normalInfo.ID, tbl.Meta().ID)
+	tbl, ok = snapshotGetter.TableInfoByID(partitionID)
+	require.True(t, ok)
+	require.Equal(t, partitionedInfo.ID, tbl.Meta().ID)
+	_, ok = snapshotGetter.TableInfoByID(1 << 60)
+	require.False(t, ok)
+	item, ok := snapshotGetter.TableItemByID(normalInfo.ID)
+	require.True(t, ok)
+	require.Equal(t, "normal", item.TableName.L)
+	item, ok = snapshotGetter.TableItemByID(partitionID)
+	require.True(t, ok)
+	require.Equal(t, "partitioned", item.TableName.L)
+	_, ok = snapshotGetter.TableItemByID(1 << 60)
+	require.False(t, ok)
+	_, ok = snapshotGetter.ParentTableID(normalInfo.ID)
+	require.False(t, ok)
+	tableID, ok := snapshotGetter.ParentTableID(partitionID)
+	require.True(t, ok)
+	require.Equal(t, partitionedInfo.ID, tableID)
+	_, ok = snapshotGetter.ParentTableID(1 << 60)
+	require.False(t, ok)
 }
