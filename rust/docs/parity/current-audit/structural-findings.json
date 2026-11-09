@@ -2,8 +2,8 @@
   "date": "2026-11-09",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 28,
-    "open": 4,
+    "unresolved": 29,
+    "open": 5,
     "partial": 24
   },
   "findings": [
@@ -133,7 +133,7 @@
       "id": "M01",
       "status": "partial",
       "group": "TiFlash and MPP",
-      "finding": "An MPP reader runs as Go's `MPPGather` over Go's local coordinator (`tidb-executor` `mpp_gather.rs`, `local_mpp_coordinator.rs`): the planner's fragments (`GenerateRootMPPTasks`), each fragment's `ToPB` DAG dispatched to its tasks, the root tasks' packets received; the embedded store serves Go's MPP tasks, tunnels and exchange/join executors, and Go's `tiflashtest` tests pass on mock TiFlash stores (`TestMppExecution`, `TestReadUnsigedPK`, `TestJoinRace`, `TestInjectExtraProj`, `TestMppEnum`, `TestMppUnionAll`, `TestUnionWithEmptyDualTable`, `TestAvgOverflow`, `TestMppApply`, `TestTiFlashVirtualColumn`, `TestAggPushDownApplyAll`, `TestAggPushDownCountStar`, `TestIssue41014`, `TestMPP47766`, `TestAggPushDownUnionAndMPP`, `TestGroupStreamAggOnTiFlash`, `TestIssue50358`, `TestNonsupportCharsetTable`, and the enforcempp casetest `TestMPPMultiDistinct3Stage`; `unistore_cop/mpp_execution.rs`). Partitioned reads are Go's too (the generator's `partitionPruning`, per-partition task building and `TableRegions`, a union scan's buffer read; `TestReadPartitionTable`, `TestTiflashEmptyDynamicPruneResult`). Left: the disaggregated (consistent-hash) task building for a partitioned request, the MPP CTE operators, the local index lookup in `ToPB` and the store, the dispatch meta's SQL and plan digests, and the single-fragment lowering (`mpp_coordinator.rs` `open_mpp_scan`) a non-MPP TiFlash read still takes where Go reads TiFlash through batch-cop or cop (no batch-cop client or `BatchCoprocessor` server here)",
+      "finding": "An MPP reader runs as Go's `MPPGather` over Go's local coordinator (`tidb-executor` `mpp_gather.rs`, `local_mpp_coordinator.rs`): the planner's fragments (`GenerateRootMPPTasks`), each fragment's `ToPB` DAG dispatched to its tasks, the root tasks' packets received; the embedded store serves Go's MPP tasks, tunnels and exchange/join executors, and Go's `tiflashtest` tests pass on mock TiFlash stores (`TestMppExecution`, `TestReadUnsigedPK`, `TestJoinRace`, `TestInjectExtraProj`, `TestMppEnum`, `TestMppUnionAll`, `TestUnionWithEmptyDualTable`, `TestAvgOverflow`, `TestMppApply`, `TestTiFlashVirtualColumn`, `TestAggPushDownApplyAll`, `TestAggPushDownCountStar`, `TestIssue41014`, `TestMPP47766`, `TestAggPushDownUnionAndMPP`, `TestGroupStreamAggOnTiFlash`, `TestIssue50358`, `TestNonsupportCharsetTable`, `TestIssue57149`, and the enforcempp casetest `TestMPPMultiDistinct3Stage`; `unistore_cop/mpp_execution.rs`). Partitioned reads are Go's too (the generator's `partitionPruning`, per-partition task building and `TableRegions`, a union scan's buffer read; `TestReadPartitionTable`, `TestTiflashEmptyDynamicPruneResult`). Left: the disaggregated (consistent-hash) task building for a partitioned request, the MPP CTE operators, the local index lookup in `ToPB` and the store, the dispatch meta's SQL and plan digests, and the single-fragment lowering (`mpp_coordinator.rs` `open_mpp_scan`) a non-MPP TiFlash read still takes where Go reads TiFlash through batch-cop or cop (no batch-cop client or `BatchCoprocessor` server here)",
       "go_owner": "`pkg/planner/core` (MPP fragments), `pkg/executor/mpp_gather.go`, `pkg/store/copr/mpp.go`, `pkg/store/copr/batch_coprocessor.go`"
     },
     {
@@ -161,8 +161,15 @@
       "id": "X01",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "SQL/PB signature construction and typed vector execution. The planner's `BuiltinFunctionUsageInc` (`expressionRewriter.newFunction`) is not called: it needs the function's `PbCode`, which a planner-built Rust function only gets at pushdown resolution. Go's `PbConverter` sends each builtin's own `PbCode`; this port resolves a signature again from the function's name, argument types and planned result type (`pushdown_catalog.rs` `resolve`), a second copy of each function class's signature choice that covers the functions Go's `scalarExprSupportedByTiKV` pushes. The planner decides pushability from `infer_pushdown.rs`'s name list and the executor again from that catalog's resolvability: two authorities where Go reads the builtin's `PbCode` once.",
+      "finding": "SQL/PB signature construction and typed vector execution. The planner's `BuiltinFunctionUsageInc` (`expressionRewriter.newFunction`) is not called: it needs the function's `PbCode`, which a planner-built Rust function only gets at pushdown resolution. Go's `PbConverter` sends each builtin's own `PbCode`; this port resolves a signature again from the function's name, argument types and planned result type (`pushdown_catalog.rs` `resolve`), a second copy of each function class's signature choice that covers the functions Go's `scalarExprSupportedByTiKV` pushes (its Duration, JSON and VectorFloat32 comparisons and every `IN` type were missing until 2026-11-10, so those comparisons resolved as `Unspecified`: TiKV evaluated them locally and an MPP fragment failed `ToPB`). The planner decides pushability from `infer_pushdown.rs`'s name list and the executor again from that catalog's resolvability: two authorities where Go reads the builtin's `PbCode` once.",
       "go_owner": "`pkg/expression`"
+    },
+    {
+      "id": "X02",
+      "status": "open",
+      "group": "Expanded subsystem ownership review",
+      "finding": "Push-down refusal warnings: Go's `canScalarFuncPushDown` appends `Scalar function '...'(signature: ..., return type: ...) is not supported to push down to <store> now.` through the session's `PushDownContext` (statement warnings under EXPLAIN, extra warnings otherwise) at every `PushDownExprs` / `CanExprsPushDown` call. This port reports only at the DataSource's `kv.UnSpecified` split (`predicate_push_down_local`); the physical splits (`physicalop` `pushdown.rs` `split_scan_filters`, the MPP join/agg/projection/selection checks in `task_attach.rs`, `final_mode_agg.rs`, `mpp_join.rs`, index merge) refuse silently, so an EXPLAIN shows none of Go's TiFlash/TiKV refusal warnings (e.g. Go's two `EQJson` warnings for a JSON comparison over an MPP scan, `zzprobe/issue57149`).",
+      "go_owner": "`pkg/expression` (`infer_pushdown.go`), `pkg/planner/core`"
     },
     {
       "id": "I04",
@@ -208,7 +215,7 @@
       "go_owner": "`cmd/tidb-server/main.go` (`overrideConfig`), `pkg/util/misc.go` (`GetLocalIP`)"
     }
   ],
-  "unresolved": 28,
-  "open": 4,
+  "unresolved": 29,
+  "open": 5,
   "partial": 24
 }

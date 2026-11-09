@@ -870,3 +870,52 @@ fn test_nonsupport_charset_table() {
     rows(&mut session, "alter table t set tiflash replica 1");
 }
 
+/// Go `TestIssue57149`.
+#[test]
+fn test_issue_57149() {
+    let (stack, mut session) = tiflash_session(1, 2166);
+    rows(&mut session, "drop table if exists t;");
+    rows(&mut session, "create table t1 (pk int  NOT NULL PRIMARY KEY AUTO_INCREMENT, i INT, j JSON)");
+    rows(&mut session, "alter table test.t1 set tiflash replica 1");
+    replica_available(&stack, &mut session, "t1");
+    rows(&mut session, "INSERT INTO t1(i, j) VALUES (1, '{\"a\": 2}')");
+    rows(&mut session, "analyze table test.t1");
+    rows(&mut session, "set @@tidb_isolation_read_engines = 'tiflash'");
+    // unistore does not support later materialization
+    rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
+    rows(&mut session, "set @@tidb_enforce_mpp = 1");
+    let result = rows(
+        &mut session,
+        "SELECT i, (j = (SELECT j FROM t1 WHERE j = CAST('null' AS JSON))) AS c11, (j = (SELECT j FROM t1 WHERE 1<>1)) AS c13 from t1 ORDER BY i limit 1",
+    );
+    assert_eq!(result.len(), 1);
+}
+
+
+/// Go `scalarExprSupportedByFlash` refuses `EQJson`: the JSON comparison of
+/// `TestIssue57149` stays above the MPP reader (Go testkit probe
+/// `zzprobe/issue57149`; Go's refusal warnings are register row X02).
+#[test]
+fn json_comparison_stays_above_the_mpp_reader_as_go() {
+    let (stack, mut session) = tiflash_session(1, 2171);
+    rows(&mut session, "create table t1 (pk int  NOT NULL PRIMARY KEY AUTO_INCREMENT, i INT, j JSON)");
+    rows(&mut session, "alter table test.t1 set tiflash replica 1");
+    replica_available(&stack, &mut session, "t1");
+    rows(&mut session, "INSERT INTO t1(i, j) VALUES (1, '{\"a\": 2}')");
+    rows(&mut session, "analyze table test.t1");
+    rows(&mut session, "set @@tidb_isolation_read_engines = 'tiflash'");
+    rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
+    rows(&mut session, "set @@tidb_enforce_mpp = 1");
+    let text = |session: &mut Session, sql: &str| -> Vec<String> {
+        displayed(rows(session, sql)).into_iter().map(|row| row.join(" ")).collect()
+    };
+    assert_eq!(
+        text(&mut session, "explain SELECT j FROM t1 WHERE j = CAST('null' AS JSON)"),
+        [
+            "Selection_9 1.00 root  eq(test.t1.j, cast(cast(\"null\", json BINARY), json BINARY))",
+            "└─TableReader_8 1.00 root  MppVersion: 3, data:ExchangeSender_7",
+            "  └─ExchangeSender_7 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+            "    └─TableFullScan_6 1.00 mpp[tiflash] table:t1 keep order:false, stats:partial[j:unInitialized]",
+        ]
+    );
+}

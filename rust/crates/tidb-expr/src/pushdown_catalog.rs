@@ -1060,6 +1060,21 @@ const CMP_TIMESTAMP_DATETIME_PAIR: &[ArgPattern] = &[
     ArgPattern::eval(EvalType::Datetime),
 ];
 const CMP_TIMESTAMP_DATETIME_TYPES: &[EvalType] = &[EvalType::Timestamp, EvalType::Datetime];
+const CMP_DURATION_PAIR: &[ArgPattern] = &[
+    ArgPattern::eval(EvalType::Duration),
+    ArgPattern::eval(EvalType::Duration),
+];
+const CMP_DURATION_TYPES: &[EvalType] = &[EvalType::Duration, EvalType::Duration];
+const CMP_JSON_PAIR: &[ArgPattern] = &[
+    ArgPattern::eval(EvalType::Json),
+    ArgPattern::eval(EvalType::Json),
+];
+const CMP_JSON_TYPES: &[EvalType] = &[EvalType::Json, EvalType::Json];
+const CMP_VECTOR_FLOAT32_PAIR: &[ArgPattern] = &[
+    ArgPattern::eval(EvalType::VectorFloat32),
+    ArgPattern::eval(EvalType::VectorFloat32),
+];
+const CMP_VECTOR_FLOAT32_TYPES: &[EvalType] = &[EvalType::VectorFloat32, EvalType::VectorFloat32];
 
 /// The catalog, in Go's own per-family order.
 ///
@@ -2094,6 +2109,178 @@ pub const CATALOG: &[BuiltinSignature] = &[
         ScalarFuncSig::Length,
         false,
     ),
+    // Go `compareFunctionClass.getFunction` over ETDuration, ETJson and
+    // ETVectorFloat32 (`genCompareFunctionClass`'s `*Duration`, `*Json` and
+    // `*VectorFloat32` signatures); `scalarExprSupportedByTiKV` admits every
+    // comparison.
+    signature(
+        "lt",
+        CMP_DURATION_PAIR,
+        CMP_DURATION_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::LtDuration,
+        false,
+    ),
+    signature(
+        "le",
+        CMP_DURATION_PAIR,
+        CMP_DURATION_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::LeDuration,
+        false,
+    ),
+    signature(
+        "gt",
+        CMP_DURATION_PAIR,
+        CMP_DURATION_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::GtDuration,
+        false,
+    ),
+    signature(
+        "ge",
+        CMP_DURATION_PAIR,
+        CMP_DURATION_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::GeDuration,
+        false,
+    ),
+    signature(
+        "eq",
+        CMP_DURATION_PAIR,
+        CMP_DURATION_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::EqDuration,
+        false,
+    ),
+    signature(
+        "ne",
+        CMP_DURATION_PAIR,
+        CMP_DURATION_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::NeDuration,
+        false,
+    ),
+    signature(
+        "nulleq",
+        CMP_DURATION_PAIR,
+        CMP_DURATION_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::NullEqDuration,
+        false,
+    ),
+    signature(
+        "lt",
+        CMP_JSON_PAIR,
+        CMP_JSON_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::LtJson,
+        false,
+    ),
+    signature(
+        "le",
+        CMP_JSON_PAIR,
+        CMP_JSON_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::LeJson,
+        false,
+    ),
+    signature(
+        "gt",
+        CMP_JSON_PAIR,
+        CMP_JSON_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::GtJson,
+        false,
+    ),
+    signature(
+        "ge",
+        CMP_JSON_PAIR,
+        CMP_JSON_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::GeJson,
+        false,
+    ),
+    signature(
+        "eq",
+        CMP_JSON_PAIR,
+        CMP_JSON_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::EqJson,
+        false,
+    ),
+    signature(
+        "ne",
+        CMP_JSON_PAIR,
+        CMP_JSON_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::NeJson,
+        false,
+    ),
+    signature(
+        "nulleq",
+        CMP_JSON_PAIR,
+        CMP_JSON_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::NullEqJson,
+        false,
+    ),
+    signature(
+        "lt",
+        CMP_VECTOR_FLOAT32_PAIR,
+        CMP_VECTOR_FLOAT32_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::LtVectorFloat32,
+        false,
+    ),
+    signature(
+        "le",
+        CMP_VECTOR_FLOAT32_PAIR,
+        CMP_VECTOR_FLOAT32_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::LeVectorFloat32,
+        false,
+    ),
+    signature(
+        "gt",
+        CMP_VECTOR_FLOAT32_PAIR,
+        CMP_VECTOR_FLOAT32_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::GtVectorFloat32,
+        false,
+    ),
+    signature(
+        "ge",
+        CMP_VECTOR_FLOAT32_PAIR,
+        CMP_VECTOR_FLOAT32_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::GeVectorFloat32,
+        false,
+    ),
+    signature(
+        "eq",
+        CMP_VECTOR_FLOAT32_PAIR,
+        CMP_VECTOR_FLOAT32_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::EqVectorFloat32,
+        false,
+    ),
+    signature(
+        "ne",
+        CMP_VECTOR_FLOAT32_PAIR,
+        CMP_VECTOR_FLOAT32_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::NeVectorFloat32,
+        false,
+    ),
+    signature(
+        "nulleq",
+        CMP_VECTOR_FLOAT32_PAIR,
+        CMP_VECTOR_FLOAT32_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::NullEqVectorFloat32,
+        false,
+    ),
     // `inFunctionClass.getFunction`: the planner has cast every argument to
     // the comparison type, which selects the signature; the selector reads
     // the tested argument and `resolve_in` checks the rest share its type.
@@ -2111,6 +2298,54 @@ pub const CATALOG: &[BuiltinSignature] = &[
         &[EvalType::String],
         EvalType::Int,
         ScalarFuncSig::InString,
+        false,
+    ),
+    signature(
+        "in",
+        &[ArgPattern::eval(EvalType::Real)],
+        &[EvalType::Real],
+        EvalType::Int,
+        ScalarFuncSig::InReal,
+        false,
+    ),
+    signature(
+        "in",
+        &[ArgPattern::eval(EvalType::Decimal)],
+        &[EvalType::Decimal],
+        EvalType::Int,
+        ScalarFuncSig::InDecimal,
+        false,
+    ),
+    signature(
+        "in",
+        &[ArgPattern::eval(EvalType::Datetime)],
+        &[EvalType::Datetime],
+        EvalType::Int,
+        ScalarFuncSig::InTime,
+        false,
+    ),
+    signature(
+        "in",
+        &[ArgPattern::eval(EvalType::Timestamp)],
+        &[EvalType::Timestamp],
+        EvalType::Int,
+        ScalarFuncSig::InTime,
+        false,
+    ),
+    signature(
+        "in",
+        &[ArgPattern::eval(EvalType::Duration)],
+        &[EvalType::Duration],
+        EvalType::Int,
+        ScalarFuncSig::InDuration,
+        false,
+    ),
+    signature(
+        "in",
+        &[ArgPattern::eval(EvalType::Json)],
+        &[EvalType::Json],
+        EvalType::Int,
+        ScalarFuncSig::InJson,
         false,
     ),
     // `coalesceFunctionClass.getFunction`: the result type is inferred from
