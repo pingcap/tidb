@@ -205,11 +205,15 @@ tidb-resolve = { path = "../tidb-resolve" }
 [dev-dependencies]
 tidb-dxf = { path = "../tidb-dxf" }
 tidb-dxf-execute = { path = "../tidb-dxf-execute" }
+tidb-dxf-example = { path = "../tidb-dxf-example" }
 tidb-dxf-dxfutil = { path = "../tidb-dxf-dxfutil" }
 tidb-dxf-handle = { path = "../tidb-dxf-handle" }
 tidb-dxf-planner = { path = "../tidb-dxf-planner" }
+tidb-dxf-scheduler = { path = "../tidb-dxf-scheduler" }
 tidb-dxf-storage = { path = "../tidb-dxf-storage", features = ["failpoints"] }
+tidb-dxf-taskexecutor = { path = "../tidb-dxf-taskexecutor" }
 tidb-dxf-testutil = { path = "../tidb-dxf-testutil" }
+tidb-gocontext = { path = "../tidb-gocontext" }
 tidb-sqlexec-mock = { path = "../tidb-sqlexec-mock" }
 tidb-topsql-collector = { path = "../tidb-topsql-collector" }
 tidb-topsql-reporter = { path = "../tidb-topsql-reporter" }

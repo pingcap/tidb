@@ -1,0 +1,17 @@
+[package]
+name = "tidb-lightning-common"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/lightning/common: Lightning's shared helpers (the storage files so far)."
+
+[lints]
+workspace = true
+
+[dependencies]
+rustix = { workspace = true, features = ["fs"] }
+
+[dev-dependencies]
+tempfile.workspace = true

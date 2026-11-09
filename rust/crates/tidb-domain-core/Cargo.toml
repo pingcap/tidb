@@ -14,6 +14,14 @@ test-util = []
 [dependencies]
 tidb-ttl-ttlworker = { path = "../tidb-ttl-ttlworker" }
 tidb-dxf-storage = { path = "../tidb-dxf-storage" }
+crossbeam-channel = "0.5"
+tidb-cpu = { path = "../tidb-cpu" }
+tidb-dxf = { path = "../tidb-dxf" }
+tidb-dxf-scheduler = { path = "../tidb-dxf-scheduler" }
+tidb-dxf-taskexecutor = { path = "../tidb-dxf-taskexecutor" }
+tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-lightning-common = { path = "../tidb-lightning-common" }
+tidb-util-disttask = { path = "../tidb-util-disttask" }
 tidb-domain-sqlsvrapi = { path = "../tidb-domain-sqlsvrapi" }
 tidb-ttl-client = { path = "../tidb-ttl-client" }
 tidb-intest = { path = "../tidb-intest" }

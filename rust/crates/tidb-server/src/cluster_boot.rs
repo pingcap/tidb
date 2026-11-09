@@ -59,6 +59,14 @@ pub(crate) fn run_cluster_session_node_with_spill(
         )))
     })?;
     stack.workers.insert(1, Box::new(gc_worker));
+    // Go `BootstrapSession` ends with `dom.InitDistTaskLoop()`; the loop
+    // retires before the GC worker, as Go's `Domain.Close` stops it before
+    // the store closes.
+    let dist_task_loop = stack
+        .factory
+        .init_dist_task_loop()
+        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    stack.workers.insert(1, Box::new(dist_task_loop));
     // Go `TestHandler`'s `gcworker.RunResolveLocks(ctx, h.Store,
     // h.RegionCache.PDClient(), safePoint, "testGCWorker", 3)`.
     let gc_deps = tidb_gcworker::node::gc_worker_deps(

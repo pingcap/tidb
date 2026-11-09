@@ -343,14 +343,19 @@ fn optimizer_and_ddl_global_switches_round_trip_like_go() {
         .run(&format!("SET GLOBAL tidb_ddl_disk_quota = {}", 50 * gb))
         .unwrap();
     assert_eq!(quota(&mut session), Some((100 * gb).to_string()));
+    // Go's `GetGlobal` reads `vardef.DDLDiskQuota`, which `SetGlobal` stores.
+    let disk_quota = || tidb_vardef::DDL_DISK_QUOTA.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(disk_quota(), (100 * gb) as u64);
     session
         .run(&format!("SET GLOBAL tidb_ddl_disk_quota = {}", 200 * gb))
         .unwrap();
     assert_eq!(quota(&mut session), Some((200 * gb).to_string()));
+    assert_eq!(disk_quota(), (200 * gb) as u64);
     session
         .run(&format!("SET GLOBAL tidb_ddl_disk_quota = {}", 2 * pb))
         .unwrap();
     assert_eq!(quota(&mut session), Some(pb.to_string()));
+    assert_eq!(disk_quota(), pb as u64);
 
     for (name, default) in [
         ("tidb_opt_agg_push_down", "0"),

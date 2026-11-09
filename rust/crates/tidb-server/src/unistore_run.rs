@@ -117,6 +117,11 @@ pub fn run_unistore_cluster_session(
     // Go `BootstrapSession`: `dom.StartTTLJobManager()` after the stats
     // collector is attached.
     let ttl_job_manager = factory.start_ttl_job_manager();
+    // Go `BootstrapSession` ends with `dom.InitDistTaskLoop()`; its loop
+    // stops with the domain (Go `Domain.Close`), when this guard drops.
+    let _dist_task_loop = factory
+        .init_dist_task_loop()
+        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     let stats_receipt = stats.receipt();
 
     let node = ConcurrentSqlNode::bind(&config, Arc::clone(&factory), Arc::clone(&users))

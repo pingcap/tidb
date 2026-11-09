@@ -1181,6 +1181,7 @@ impl GlobalSysvars {
                 | TIDB_TTL_JOB_SCHEDULE_WINDOW_START_TIME
                 | TIDB_TTL_JOB_SCHEDULE_WINDOW_END_TIME
                 | TIDB_SERVICE_SCOPE
+                | TIDB_DDL_DISK_QUOTA
                 | TIDB_TTL_SCAN_WORKER_COUNT
                 | TIDB_TTL_DELETE_WORKER_COUNT
                 | TIDB_TTL_RUNNING_TASKS
@@ -1264,6 +1265,12 @@ impl GlobalSysvars {
                     });
                 }
             }
+            // Go `SetGlobal`: `vardef.DDLDiskQuota.Store(TidbOptUint64(val,
+            // DefTiDBDDLDiskQuota))`.
+            TIDB_DDL_DISK_QUOTA => tidb_vardef::DDL_DISK_QUOTA.store(
+                value.parse::<u64>().unwrap_or(tidb_vardef::defaults::DEF_TIDB_DDL_DISK_QUOTA as u64),
+                SeqCst,
+            ),
             // Go `SetGlobal`: `strconv.ParseInt(s, 10, 64)` then `Store`; the
             // registry has validated the value, so the parse cannot fail.
             TIDB_TTL_SCAN_BATCH_SIZE => {

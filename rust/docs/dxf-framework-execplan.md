@@ -103,7 +103,20 @@ tidb-server shows the same rows.
   trace. Go's call hooks other than `beforeCallStartTaskExecutor` and the
   `avoidTaskExecutorExitWhenNoSubtask` failpoint come with the testkit tests
   that use them.
-- [ ] Milestone 5: composition in the domain (Go `InitDistTaskLoop`, `distTaskFrameworkLoop`) and the `example` task type end to end.
+- [x] Milestone 5: composition in the domain
+  (`tidb_domain_core::domain::dist_task`: Go `InitDistTaskLoop`,
+  `calculateNodeResource`, `distTaskFrameworkLoop`), started by both server
+  mains where Go's `BootstrapSession` ends, and stopped with the domain (the
+  returned `DistTaskLoop` is Go's `Domain.Close` half). `pkg/dxf/example`
+  (`rust/crates/tidb-dxf-example`) runs end to end in Go's
+  `TestExampleApplication` on the unistore stack. On the way: Go
+  `lightning/common`'s `GetStorageSize`/`SameDisk`
+  (`rust/crates/tidb-lightning-common`) and `vardef.DDLDiskQuota` with its
+  `SetGlobal` hook. Not here: Go's next-gen branches (a user keyspace using
+  the SYSTEM keyspace's DXF service, metering) are O15's, so a next-gen build
+  refuses; `ingestctrl.InitializeRateLimiterParam` comes with ingest (D02);
+  the `MockDisableDistTask` failpoint has no caller yet (the test stacks do
+  not start the loop; the tests that need it start it).
 - [ ] Milestone 6: `metering` and `dxfmetric` where a classic kernel uses them.
 
 ## Surprises & Discoveries

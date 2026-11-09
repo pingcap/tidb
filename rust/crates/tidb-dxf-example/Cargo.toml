@@ -1,0 +1,23 @@
+[package]
+name = "tidb-dxf-example"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/dxf/example: an example application of DXF, two steps that each log a message per subtask."
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tidb-dxf = { path = "../tidb-dxf" }
+tidb-dxf-execute = { path = "../tidb-dxf-execute" }
+tidb-dxf-scheduler = { path = "../tidb-dxf-scheduler" }
+tidb-dxf-storage = { path = "../tidb-dxf-storage" }
+tidb-dxf-taskexecutor = { path = "../tidb-dxf-taskexecutor" }
+tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }

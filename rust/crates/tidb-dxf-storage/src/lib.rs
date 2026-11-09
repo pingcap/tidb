@@ -308,9 +308,9 @@ pub fn get_task_manager() -> Result<Arc<TaskManager>> {
         .ok_or_else(|| StorageError::Other("task manager is not initialized".to_owned()))
 }
 
-/// Go `SetTaskManager`.
-pub fn set_task_manager(is: Arc<TaskManager>) {
-    *TASK_MANAGER_INSTANCE.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(is);
+/// Go `SetTaskManager`; `None` is Go's nil.
+pub fn set_task_manager(is: Option<Arc<TaskManager>>) {
+    *TASK_MANAGER_INSTANCE.write().unwrap_or_else(std::sync::PoisonError::into_inner) = is;
 }
 
 /// Go `GetDXFSvcTaskMgr`: the task manager that reaches the DXF service.

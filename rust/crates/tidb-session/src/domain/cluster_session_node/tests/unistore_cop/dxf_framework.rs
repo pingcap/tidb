@@ -28,7 +28,7 @@ use tidb_dxf_testutil as testutil;
 fn init_table_test() -> (UnistoreClusterStack, Arc<TaskManager>) {
     let (stack, _users) = cop_backed_stack();
     let gm = Arc::new(TaskManager::new(stack.factory.dxf_session_pool()));
-    set_task_manager(Arc::clone(&gm));
+    set_task_manager(Some(Arc::clone(&gm)));
     (stack, gm)
 }
 
@@ -2017,4 +2017,36 @@ fn dxf_task_runtime_is_the_domain_on_a_classic_kernel() {
     assert_eq!(error.to_string(), "cross keyspace runtime holderID must not be empty");
     let error = tidb_dxf_dxfutil::acquire_task_runtime(tm.as_ref(), "other_ks", "DXF/executor/1").err().unwrap();
     assert_eq!(error.to_string(), "cross keyspace is not available in classic kernel or current keyspace");
+}
+
+/// Go `pkg/dxf/example`'s `TestExampleApplication`: the example task runs
+/// through both steps on the node's DXF framework loop.
+#[test]
+fn test_example_application() {
+    use tidb_dxf_example::{new_scheduler, new_task_executor, PostCleanupImpl, TaskMeta};
+
+    tidb_dxf_scheduler::register_scheduler_factory(
+        TASK_TYPE_EXAMPLE,
+        Arc::new(|ctx, task, param| new_scheduler(ctx, task, param) as Arc<dyn tidb_dxf_scheduler::Scheduler>),
+    );
+    tidb_dxf_scheduler::register_scheduler_clean_up_factory(
+        TASK_TYPE_EXAMPLE,
+        Arc::new(|| Arc::new(PostCleanupImpl) as Arc<dyn tidb_dxf_scheduler::CleanUpRoutine>),
+    );
+
+    tidb_dxf_taskexecutor::register_task_type(
+        TASK_TYPE_EXAMPLE,
+        Arc::new(|ctx, task, param| new_task_executor(ctx, task, param) as Arc<dyn tidb_dxf_taskexecutor::TaskExecutor>),
+    );
+
+    // Go `testkit.CreateMockStore`: `BootstrapSession` ends with
+    // `InitDistTaskLoop`.
+    let (stack, _users) = cop_backed_stack();
+    let _dist_task_loop = stack.factory.init_dist_task_loop().unwrap();
+    let ctx = tidb_gocontext::Context::background();
+    let meta = TaskMeta { subtask_count: 3 };
+    let bytes = serde_json::to_vec(&meta).unwrap();
+    let scope = tidb_dxf_handle::get_target_scope();
+    let task = tidb_dxf_handle::submit_task("test", &TASK_TYPE_EXAMPLE, "", 1, &scope, 0, &bytes).unwrap();
+    tidb_dxf_handle::wait_task_done_by_key(&ctx, &task.base.key).unwrap();
 }

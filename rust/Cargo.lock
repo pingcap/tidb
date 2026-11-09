@@ -4468,6 +4468,7 @@ name = "tidb-domain-core"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "crossbeam-channel",
  "rand 0.10.2",
  "serde_json",
  "tidb-ast",
@@ -4477,6 +4478,7 @@ dependencies = [
  "tidb-config",
  "tidb-config-configtypes",
  "tidb-config-kerneltype",
+ "tidb-cpu",
  "tidb-datatype",
  "tidb-ddl",
  "tidb-ddl-build",
@@ -4487,19 +4489,24 @@ dependencies = [
  "tidb-domain-serverinfo",
  "tidb-domain-sqlsvrapi",
  "tidb-driver-error",
+ "tidb-dxf",
+ "tidb-dxf-scheduler",
  "tidb-dxf-storage",
+ "tidb-dxf-taskexecutor",
  "tidb-errno",
  "tidb-executor",
  "tidb-expensivequery",
  "tidb-exprctx",
  "tidb-fastrand",
  "tidb-globalconn",
+ "tidb-gocontext",
  "tidb-infoschema",
  "tidb-infoschema-issyncer",
  "tidb-infoschema-isvalidator",
  "tidb-infoschema-perfschema",
  "tidb-intest",
  "tidb-kv",
+ "tidb-lightning-common",
  "tidb-log",
  "tidb-logutil",
  "tidb-memory",
@@ -4550,6 +4557,7 @@ dependencies = [
  "tidb-ttl-client",
  "tidb-ttl-ttlworker",
  "tidb-txnkv",
+ "tidb-util-disttask",
  "tidb-vardef",
  "tidb-variable",
  "tidb-worker-stack",
@@ -4671,6 +4679,22 @@ dependencies = [
  "tidb-dxf-storage",
  "tidb-sqlexec",
  "tidb-syssession",
+]
+
+[[package]]
+name = "tidb-dxf-example"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tidb-dxf",
+ "tidb-dxf-execute",
+ "tidb-dxf-scheduler",
+ "tidb-dxf-storage",
+ "tidb-dxf-taskexecutor",
+ "tidb-gocontext",
+ "tidb-log",
+ "tidb-logutil",
 ]
 
 [[package]]
@@ -5808,6 +5832,14 @@ dependencies = [
  "tidb-mysql",
  "tidb-parser-tidb",
  "tidb-parser-util",
+]
+
+[[package]]
+name = "tidb-lightning-common"
+version = "0.0.0"
+dependencies = [
+ "rustix 1.1.4",
+ "tempfile",
 ]
 
 [[package]]
@@ -7327,10 +7359,13 @@ dependencies = [
  "tidb-driver-error",
  "tidb-dxf",
  "tidb-dxf-dxfutil",
+ "tidb-dxf-example",
  "tidb-dxf-execute",
  "tidb-dxf-handle",
  "tidb-dxf-planner",
+ "tidb-dxf-scheduler",
  "tidb-dxf-storage",
+ "tidb-dxf-taskexecutor",
  "tidb-dxf-testutil",
  "tidb-errno",
  "tidb-execdetails",
@@ -7345,6 +7380,7 @@ dependencies = [
  "tidb-fixcontrol",
  "tidb-gcutil",
  "tidb-globalconn",
+ "tidb-gocontext",
  "tidb-goruntime",
  "tidb-hack",
  "tidb-hint",

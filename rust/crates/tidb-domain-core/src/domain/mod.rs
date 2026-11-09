@@ -26,6 +26,7 @@ pub mod ttl_owner;
 mod telemetry;
 pub mod schema_lease;
 pub mod sqlsvr;
+pub mod dist_task;
 pub mod stats_maintenance;
 
 use std::collections::HashSet;

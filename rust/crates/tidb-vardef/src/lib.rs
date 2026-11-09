@@ -169,6 +169,10 @@ pub fn set_service_scope(scope: String) {
     *SERVICE_SCOPE.write().unwrap_or_else(std::sync::PoisonError::into_inner) = scope;
 }
 
+/// Go `vardef.DDLDiskQuota` (`tidb_ddl_disk_quota`): the disk quota of
+/// Lightning add index, and the DXF node's disk when the temp dir's size is
+/// unknown.
+pub static DDL_DISK_QUOTA: AtomicU64 = AtomicU64::new(defaults::DEF_TIDB_DDL_DISK_QUOTA as u64);
 /// Go `vardef.EnableTTLJob`, the process-wide switch used by the TTL worker.
 pub static ENABLE_TTL_JOB: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_TTL_JOB_ENABLE);
 /// Go `vardef.TTLScanBatchSize`.
