@@ -16,7 +16,7 @@ unresolved until it is restated against its Go owner or closed.
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| Y01 | partial | The DDL scheduler, systable manager, history and MDL readers scan records instead of running SQL on `DdlSessionPool::sess_pool`; the bootstrap stages raw rows; accounts load eagerly where Go loads per active user | `pkg/ddl` (`systable`, job scheduler), `pkg/session` bootstrap, `pkg/privilege/privileges` (`ensureActiveUser`) |
+| Y01 | partial | The DDL scheduler, systable manager, history and MDL readers scan records instead of running SQL on `DdlSessionPool::sess_pool`; the bootstrap stages raw rows; accounts load eagerly where Go loads per active user (the site-by-site list is the retired `docs/system-table-sql-execplan.md`, in git at `d64db1f96bc`) | `pkg/ddl` (`systable`, job scheduler), `pkg/session` bootstrap, `pkg/privilege/privileges` (`ensureActiveUser`) |
 | I04 | partial | No lazy InfoSchema V2, schema-cache-size loader/evictor or InfoCache timestamp ranges | `pkg/infoschema` |
 | O09 | partial | `ReportMinStartTS` has no InfoCache recent-schema TS (`GetAndResetRecentInfoSchemaTS`, InfoSchema V2: I04). Lazy cursor fetch answers Go's `executor.Detach` over the physical plan (`tidb_executor::detach`), because the builder's operator tree is not Go's executor tree | `pkg/domain/infosync`, `pkg/executor` (`detach.go`, `adapter.go` `recordSet.TryDetach`) |
 
