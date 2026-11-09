@@ -318,6 +318,13 @@ pub fn new_function_impl(
         [arg] => crate::builtin_op::infer_unary_op_type(func_name, arg),
         _ => None,
     };
+    // Go's arithmetic class casts every operand into its own result domain
+    // (`newBaseBuiltinFuncWithTp`) before the caller's `retType` applies.
+    if let Some(class_type) = &arithmetic_type {
+        crate::rewriter::wrap_arithmetic_operands(func_name, class_type, &mut func_args, &|argument| {
+            fold_constant_in_mode(argument, ctx, ConstantFoldMode::Normal);
+        })?;
+    }
     let ret_type = arithmetic_type
         .or(unary_type)
         .or_else(|| crate::rewriter::result_type::builtin_return_type(func_name, &func_args))

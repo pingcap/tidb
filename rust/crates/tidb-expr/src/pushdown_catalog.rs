@@ -4371,7 +4371,28 @@ pub fn expression_to_pb_in(
     columns: &impl Fn(u32) -> Option<ColumnDescriptor>,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Option<Expr> {
-    let described = from_expression(expression)?;
+    described_to_pb_in(expression, from_expression(expression)?, columns, zone)
+}
+
+/// [`expression_to_pb_in`] as Go's `PbConverter.ExprToPB` over a statement:
+/// a deferred constant or correlated column under `expression` is the value
+/// `context` holds for it now (`conOrCorColToPBExpr`).
+pub fn expression_to_pb_in_context(
+    expression: &Expression,
+    context: &dyn crate::Columns,
+    columns: &impl Fn(u32) -> Option<ColumnDescriptor>,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Option<Expr> {
+    let described = from_expression_with_context(expression, context, true).ok().flatten()?;
+    described_to_pb_in(expression, described, columns, zone)
+}
+
+fn described_to_pb_in(
+    expression: &Expression,
+    described: PbScalar,
+    columns: &impl Fn(u32) -> Option<ColumnDescriptor>,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Option<Expr> {
     let mut encoded = to_pb_in(&described, columns, zone)?;
     let mut field_type = expression.static_type()?.clone();
     // Go `scalarFuncToPBExpr`: "put collation information into the RetType

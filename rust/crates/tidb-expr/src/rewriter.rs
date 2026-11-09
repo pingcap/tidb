@@ -1031,6 +1031,102 @@ fn is_newly_built_cast(expression: &Expression) -> bool {
     )
 }
 
+/// Go `arithmeticFunctionClass.getFunction`'s `newBaseBuiltinFuncWithTp`
+/// for `plus`, `minus`, `mul`, `div` and `mod`: every operand is cast into
+/// the domain of the result (`ret_type`), a decimal domain through
+/// `WrapWithCastAsDecimal`, a real one through `WrapWithCastAsReal`, an
+/// integer one through `WrapWithCastAsInt`. Go does this in the function
+/// class, so a function the planner builds (`NewFunctionInternal`) gets the
+/// same casts as one the AST rewriter builds; `fold` folds each new cast.
+pub(crate) fn wrap_arithmetic_operands(
+    name: &str,
+    ret_type: &FieldType,
+    args: &mut [Expression],
+    fold: &dyn Fn(&mut Expression),
+) -> Result<(), EvalError> {
+    if !matches!(name, "plus" | "minus" | "mul" | "div" | "mod") {
+        return Ok(());
+    }
+    match ret_type.eval_type() {
+        tidb_datatype::EvalType::Decimal => {
+            for argument in args.iter_mut() {
+                crate::builtin_compare::wrap_integer_operand_as_decimal(argument);
+                // Go `WrapWithCastAsDecimal` also casts a temporal
+                // or string operand: `d + dt` plans as
+                // `plus(d, cast(dt, decimal(19,0)))`.
+                if !is_hybrid_argument(argument)
+                    && argument.static_type().map(FieldType::eval_type)
+                        != Some(EvalType::Decimal)
+                {
+                    *argument =
+                        crate::wrap_cast::wrap_with_cast_as_decimal(
+                            std::mem::replace(
+                                argument,
+                                Expression::Constant(Constant::new_null()),
+                            ),
+                        )?;
+                    if is_newly_built_cast(argument) {
+                        fold(argument);
+                    }
+                }
+            }
+        }
+        // GO's arithmeticFunctionClass.getFunction coerces BOTH
+        // operands to the arithmetic domain through
+        // newBaseBuiltinFuncWithTp: either real -> [ETReal,
+        // ETReal] (q17 renders `div(Column#, cast(Column#,
+        // double BINARY))`), either decimal -> [ETDecimal,
+        // ETDecimal], else [ETInt, ETInt] -- which is why
+        // q72's `d_date + 5` renders the date operand as
+        // `cast(d_date, bigint BINARY)`.
+        tidb_datatype::EvalType::Real => {
+            for argument in args.iter_mut() {
+                // GO's WrapWithCastAsReal early-returns for a
+                // hybrid argument (hex/bit literals keep their
+                // raw-bytes semantics in arithmetic), so a hybrid
+                // operand never gets a cast node.
+                if is_hybrid_argument(argument) {
+                    continue;
+                }
+                // The placeholder is replaced by the wrap result
+                // before it can ever be read.
+                *argument = crate::wrap_cast::wrap_with_cast_as_real(
+                    std::mem::replace(
+                        argument,
+                        Expression::Constant(Constant::new_null()),
+                    ),
+                )?;
+                // GO's BuildCastFunction folds its newly-built
+                // cast over a strict constant at the same
+                // boundary; a wrap that early-returned leaves the
+                // argument untouched and needs no fold.
+                if is_newly_built_cast(argument) {
+                    fold(argument);
+                }
+            }
+        }
+        tidb_datatype::EvalType::Int => {
+            for argument in args.iter_mut() {
+                if is_hybrid_argument(argument) {
+                    continue;
+                }
+                *argument = crate::wrap_cast::wrap_with_cast_as_int(
+                    std::mem::replace(
+                        argument,
+                        Expression::Constant(Constant::new_null()),
+                    ),
+                    None,
+                )?;
+                if is_newly_built_cast(argument) {
+                    fold(argument);
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn binary_expression(
     op: BinaryOp,
     left: Expression,
@@ -1064,101 +1160,9 @@ fn binary_expression(
                     Some(&ret_type),
                 )?;
             }
-            if matches!(name, "plus" | "minus" | "mul" | "div" | "mod") {
-                match ret_type.eval_type() {
-                    tidb_datatype::EvalType::Decimal => {
-                        for argument in &mut args {
-                            crate::builtin_compare::wrap_integer_operand_as_decimal(argument);
-                            // Go `WrapWithCastAsDecimal` also casts a temporal
-                            // or string operand: `d + dt` plans as
-                            // `plus(d, cast(dt, decimal(19,0)))`.
-                            if !is_hybrid_argument(argument)
-                                && argument.static_type().map(FieldType::eval_type)
-                                    != Some(EvalType::Decimal)
-                            {
-                                *argument =
-                                    crate::wrap_cast::wrap_with_cast_as_decimal(
-                                        std::mem::replace(
-                                            argument,
-                                            Expression::Constant(Constant::new_null()),
-                                        ),
-                                    )?;
-                                if is_newly_built_cast(argument) {
-                                    resolver.fold_constant(argument, ConstantFoldMode::Normal);
-                                }
-                            }
-                        }
-                    }
-                    // GO's arithmeticFunctionClass.getFunction coerces BOTH
-                    // operands to the arithmetic domain through
-                    // newBaseBuiltinFuncWithTp: either real -> [ETReal,
-                    // ETReal] (q17 renders `div(Column#, cast(Column#,
-                    // double BINARY))`), either decimal -> [ETDecimal,
-                    // ETDecimal], else [ETInt, ETInt] -- which is why
-                    // q72's `d_date + 5` renders the date operand as
-                    // `cast(d_date, bigint BINARY)`.
-                    tidb_datatype::EvalType::Real => {
-                        for argument in &mut args {
-                            // GO's WrapWithCastAsReal early-returns for a
-                            // hybrid argument (hex/bit literals keep their
-                            // raw-bytes semantics in arithmetic), so a hybrid
-                            // operand never gets a cast node.
-                            if is_hybrid_argument(argument) {
-                                continue;
-                            }
-                            // The placeholder is replaced by the wrap result
-                            // before it can ever be read.
-                            *argument = crate::wrap_cast::wrap_with_cast_as_real(
-                                std::mem::replace(
-                                    argument,
-                                    Expression::Constant(Constant::new_null()),
-                                ),
-                            )?;
-                            // GO's BuildCastFunction folds its newly-built
-                            // cast over a strict constant at the same
-                            // boundary; a wrap that early-returned leaves the
-                            // argument untouched and needs no fold.
-                            if is_newly_built_cast(argument) {
-                                resolver.fold_constant(argument, ConstantFoldMode::Normal);
-                            }
-                        }
-                    }
-                    tidb_datatype::EvalType::Decimal => {
-                        for argument in &mut args {
-                            if is_hybrid_argument(argument) {
-                                continue;
-                            }
-                            *argument = crate::wrap_cast::wrap_with_cast_as_decimal(
-                                std::mem::replace(
-                                    argument,
-                                    Expression::Constant(Constant::new_null()),
-                                ),
-                            )?;
-                            if is_newly_built_cast(argument) {
-                                resolver.fold_constant(argument, ConstantFoldMode::Normal);
-                            }
-                        }
-                    }
-                    tidb_datatype::EvalType::Int => {
-                        for argument in &mut args {
-                            if is_hybrid_argument(argument) {
-                                continue;
-                            }
-                            *argument = crate::wrap_cast::wrap_with_cast_as_int(
-                                std::mem::replace(
-                                    argument,
-                                    Expression::Constant(Constant::new_null()),
-                                ),
-                                None,
-                            )?;
-                            if is_newly_built_cast(argument) {
-                                resolver.fold_constant(argument, ConstantFoldMode::Normal);
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
+            wrap_arithmetic_operands(name, &ret_type, &mut args, &|argument| {
+                resolver.fold_constant(argument, ConstantFoldMode::Normal);
+            })?;
             // GO `logicAnd/logicOr/logicXorFunctionClass.getFunction`
             // (builtin_op.go:65/128/191): every argument runs through
             // `wrapWithIsTrue(ctx, true, arg, false)` — an ETInt argument

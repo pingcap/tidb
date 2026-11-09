@@ -74,7 +74,12 @@ fn column_descriptor(schema: &Schema, offset: u32) -> Option<ColumnDescriptor> {
 
 /// Go `PbConverter.ExprToPB` over the operator's input row `input`.
 fn expr_to_pb(ctx: &BuildPbContext<'_>, expr: &Expression, input: &Schema) -> Option<tipb::Expr> {
-    pushdown_catalog::expression_to_pb_in(expr, &|offset| column_descriptor(input, offset), &ctx.expr_ctx.time_zone())
+    pushdown_catalog::expression_to_pb_in_context(
+        expr,
+        ctx.expr_ctx,
+        &|offset| column_descriptor(input, offset),
+        &ctx.expr_ctx.time_zone(),
+    )
 }
 
 /// Go `plannererrors.ErrInternal.GenWithStack("expression %v cannot be
