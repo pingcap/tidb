@@ -20,6 +20,7 @@ go_test(
         "//pkg/sessionctx",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
+        "@com_github_jellydator_ttlcache_v3//:ttlcache",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
         "@com_github_stretchr_testify//require",

@@ -513,8 +513,10 @@ CREATE USER cmp_snapshot, cmp_snapshot_stale;
 GRANT SELECT ON privilege__column_masking_policy.t_snapshot_compat TO cmp_snapshot;
 GRANT SELECT ON privilege__column_masking_policy.t_snapshot_compat TO cmp_snapshot_stale;
 GRANT SELECT ON privilege__column_masking_policy.t_snapshot_compat_ts TO cmp_snapshot;
+BEGIN;
 REPLACE INTO privilege__column_masking_policy.t_snapshot_compat_ts VALUES
-('ts0', NOW(6));
+('ts0', TIDB_PARSE_TSO(TIDB_CURRENT_TSO()));
+COMMIT;
 SELECT SLEEP(0.2);
 SLEEP(0.2)
 0
@@ -522,8 +524,10 @@ CREATE MASKING POLICY p_snapshot_compat ON privilege__column_masking_policy.t_sn
 SELECT SLEEP(0.2);
 SLEEP(0.2)
 0
+BEGIN;
 REPLACE INTO privilege__column_masking_policy.t_snapshot_compat_ts VALUES
-('ts1', NOW(6));
+('ts1', TIDB_PARSE_TSO(TIDB_CURRENT_TSO()));
+COMMIT;
 SELECT SLEEP(0.2);
 SLEEP(0.2)
 0
@@ -532,8 +536,10 @@ MODIFY MASKING POLICY p_snapshot_compat SET EXPRESSION = MASK_PARTIAL(c, 1, 1, '
 SELECT SLEEP(0.2);
 SLEEP(0.2)
 0
+BEGIN;
 REPLACE INTO privilege__column_masking_policy.t_snapshot_compat_ts VALUES
-('ts2', NOW(6));
+('ts2', TIDB_PARSE_TSO(TIDB_CURRENT_TSO()));
+COMMIT;
 SELECT SLEEP(0.2);
 SLEEP(0.2)
 0
@@ -541,8 +547,10 @@ ALTER TABLE privilege__column_masking_policy.t_snapshot_compat DISABLE MASKING P
 SELECT SLEEP(0.2);
 SLEEP(0.2)
 0
+BEGIN;
 REPLACE INTO privilege__column_masking_policy.t_snapshot_compat_ts VALUES
-('ts3', NOW(6));
+('ts3', TIDB_PARSE_TSO(TIDB_CURRENT_TSO()));
+COMMIT;
 SELECT SLEEP(0.2);
 SLEEP(0.2)
 0
@@ -550,8 +558,10 @@ ALTER TABLE privilege__column_masking_policy.t_snapshot_compat ENABLE MASKING PO
 SELECT SLEEP(0.2);
 SLEEP(0.2)
 0
+BEGIN;
 REPLACE INTO privilege__column_masking_policy.t_snapshot_compat_ts VALUES
-('ts4', NOW(6));
+('ts4', TIDB_PARSE_TSO(TIDB_CURRENT_TSO()));
+COMMIT;
 SELECT SLEEP(0.2);
 SLEEP(0.2)
 0
@@ -559,8 +569,12 @@ ALTER TABLE privilege__column_masking_policy.t_snapshot_compat DROP MASKING POLI
 SELECT SLEEP(0.2);
 SLEEP(0.2)
 0
+SET timestamp = UNIX_TIMESTAMP() + 3600;
+BEGIN;
 REPLACE INTO privilege__column_masking_policy.t_snapshot_compat_ts VALUES
-('ts5', NOW(6));
+('ts5', TIDB_PARSE_TSO(TIDB_CURRENT_TSO()));
+COMMIT;
+SET timestamp = DEFAULT;
 INSERT IGNORE INTO mysql.tidb VALUES
 ('tikv_gc_safe_point', '20240131-00:00:00.000 +0800', 'mock for masking snapshot compatibility test');
 SET @ts0 = CAST((SELECT ts FROM privilege__column_masking_policy.t_snapshot_compat_ts WHERE name = 'ts0') AS CHAR);

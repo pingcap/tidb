@@ -2166,13 +2166,9 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *logicalop.Logi
 		resultTp.SetCharset(collation.Charset)
 		resultTp.SetCollate(collation.Collation)
 		b.setUnionFlen(resultTp, tmpExprs)
-		firstChildNames := u.Children()[0].OutputNames()
-		names = append(names, &types.FieldName{
-			DBName:      firstChildNames[i].DBName,
-			OrigTblName: firstChildNames[i].OrigTblName,
-			OrigColName: firstChildNames[i].OrigColName,
-			ColName:     firstChildNames[i].ColName,
-		})
+		// UNION outputs have no single source table. Masking resolves policy
+		// provenance through each branch instead of the output field names.
+		names = append(names, &types.FieldName{ColName: u.Children()[0].OutputNames()[i].ColName})
 		unionCols = append(unionCols, &expression.Column{
 			RetType:  resultTp,
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),

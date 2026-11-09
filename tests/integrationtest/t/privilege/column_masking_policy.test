@@ -551,35 +551,52 @@ CREATE USER cmp_snapshot, cmp_snapshot_stale;
 GRANT SELECT ON privilege__column_masking_policy.t_snapshot_compat TO cmp_snapshot;
 GRANT SELECT ON privilege__column_masking_policy.t_snapshot_compat TO cmp_snapshot_stale;
 GRANT SELECT ON privilege__column_masking_policy.t_snapshot_compat_ts TO cmp_snapshot;
+# BEGIN activates a PD timestamp before the marker expression is evaluated.
+# Snapshots must not depend on local clock skew.
+BEGIN;
 REPLACE INTO privilege__column_masking_policy.t_snapshot_compat_ts VALUES
-  ('ts0', NOW(6));
+  ('ts0', TIDB_PARSE_TSO(TIDB_CURRENT_TSO()));
+COMMIT;
 SELECT SLEEP(0.2);
 
 CREATE MASKING POLICY p_snapshot_compat ON privilege__column_masking_policy.t_snapshot_compat(c) AS MASK_FULL(c) ENABLE;
 SELECT SLEEP(0.2);
+BEGIN;
 REPLACE INTO privilege__column_masking_policy.t_snapshot_compat_ts VALUES
-  ('ts1', NOW(6));
+  ('ts1', TIDB_PARSE_TSO(TIDB_CURRENT_TSO()));
+COMMIT;
 SELECT SLEEP(0.2);
 ALTER TABLE privilege__column_masking_policy.t_snapshot_compat
   MODIFY MASKING POLICY p_snapshot_compat SET EXPRESSION = MASK_PARTIAL(c, 1, 1, '*');
 SELECT SLEEP(0.2);
+BEGIN;
 REPLACE INTO privilege__column_masking_policy.t_snapshot_compat_ts VALUES
-  ('ts2', NOW(6));
+  ('ts2', TIDB_PARSE_TSO(TIDB_CURRENT_TSO()));
+COMMIT;
 SELECT SLEEP(0.2);
 ALTER TABLE privilege__column_masking_policy.t_snapshot_compat DISABLE MASKING POLICY p_snapshot_compat;
 SELECT SLEEP(0.2);
+BEGIN;
 REPLACE INTO privilege__column_masking_policy.t_snapshot_compat_ts VALUES
-  ('ts3', NOW(6));
+  ('ts3', TIDB_PARSE_TSO(TIDB_CURRENT_TSO()));
+COMMIT;
 SELECT SLEEP(0.2);
 ALTER TABLE privilege__column_masking_policy.t_snapshot_compat ENABLE MASKING POLICY p_snapshot_compat;
 SELECT SLEEP(0.2);
+BEGIN;
 REPLACE INTO privilege__column_masking_policy.t_snapshot_compat_ts VALUES
-  ('ts4', NOW(6));
+  ('ts4', TIDB_PARSE_TSO(TIDB_CURRENT_TSO()));
+COMMIT;
 SELECT SLEEP(0.2);
 ALTER TABLE privilege__column_masking_policy.t_snapshot_compat DROP MASKING POLICY p_snapshot_compat;
 SELECT SLEEP(0.2);
+# A future session clock must not produce a future snapshot timestamp.
+SET timestamp = UNIX_TIMESTAMP() + 3600;
+BEGIN;
 REPLACE INTO privilege__column_masking_policy.t_snapshot_compat_ts VALUES
-  ('ts5', NOW(6));
+  ('ts5', TIDB_PARSE_TSO(TIDB_CURRENT_TSO()));
+COMMIT;
+SET timestamp = DEFAULT;
 --disable_warnings
 INSERT IGNORE INTO mysql.tidb VALUES
   ('tikv_gc_safe_point', '20240131-00:00:00.000 +0800', 'mock for masking snapshot compatibility test');
