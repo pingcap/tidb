@@ -237,6 +237,15 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagUseCheckpoint)
 
 	flags.Bool(FlagWaitTiFlashReady, false, "whether wait tiflash replica ready if tiflash exists")
+<<<<<<< HEAD
+=======
+	flags.Bool(flagAllowPITRFromIncremental, true, "whether make incremental restore compatible with later log restore"+
+		" default is true, the incremental restore will not perform rewrite on the incremental data"+
+		" meanwhile the incremental restore will not allow to restore 3 backfilled type ddl jobs,"+
+		" these ddl jobs are Add index, Modify column and Reorganize partition")
+	flags.Bool(FlagSysCheckCollation, true, "whether check the privileges table rows to permit to restore the privilege data"+
+		" from utf8mb4_bin collate column to utf8mb4_general_ci collate column")
+>>>>>>> 4a1d652c2f7 (br: set sys check collation true in default (#70309) (#70314))
 
 	DefineRestoreCommonFlags(flags)
 }
