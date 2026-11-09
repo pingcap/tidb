@@ -64,6 +64,7 @@ serde_json = { workspace = true }
 jsonschema = { workspace = true }
 reqwest = { workspace = true }
 fluent-uri = { workspace = true }
+prost = { workspace = true }
 
 [dev-dependencies]
 tidb-exprstatic = { path = "../tidb-exprstatic" }

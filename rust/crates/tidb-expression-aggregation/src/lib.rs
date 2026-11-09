@@ -222,7 +222,7 @@ mod window_func;
 #[cfg(test)]
 mod tests;
 
-pub use agg_to_pb::{agg_func_to_pb_expr, agg_function_mode_to_pb, pb_agg_func_mode_to_agg_func_mode};
+pub use agg_to_pb::{agg_func_to_pb_expr, agg_function_mode_to_pb, pb_agg_func_mode_to_agg_func_mode, window_func_to_pb_expr};
 pub use base_func::{approx_percentile_percent, AggDescError, BaseFuncDesc};
 pub use descriptor::{AggFuncDesc, ByItems};
 pub use dist::{DistAggregate, DistAggregateError, DistAggregateState, DistAggregator};

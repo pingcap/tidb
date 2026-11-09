@@ -34,7 +34,7 @@ use tidb_proto::tipb;
 
 use crate::{
     PhysicalExchangeReceiver, PhysicalExchangeSender, PhysicalHashAgg, PhysicalHashJoin, PhysicalLimit, PhysicalPlan, PhysicalProjection,
-    PhysicalSelection, PhysicalStreamAgg, PhysicalTableScan, PhysicalTopN,
+    PhysicalSelection, PhysicalSort, PhysicalStreamAgg, PhysicalTableScan, PhysicalTopN, PhysicalWindow,
 };
 
 /// Go `planctx.BuildPBContext` (`base.BuildPBContext`): what building a
@@ -220,6 +220,8 @@ impl PhysicalPlan {
             Self::HashAgg(p) => p.to_pb(self, ctx, store_type),
             Self::StreamAgg(p) => p.to_pb(self, ctx, store_type),
             Self::HashJoin(p) => p.to_pb(self, ctx, store_type),
+            Self::Sort(p) => p.to_pb(self, ctx, store_type),
+            Self::Window(p) => p.to_pb(self, ctx, store_type),
             // Go's base body is exactly this error.
             _ => Err(PlanError::internal(format!("plan {} fails converts to PB", self.explain_id(false)))),
         }
@@ -645,6 +647,123 @@ impl PhysicalHashJoin {
         Ok(tipb::Executor {
             tp: Some(tipb::ExecType::TypeJoin as i32),
             join: Some(join),
+            executor_id: Some(executor_id(plan)),
+            fine_grained_shuffle_stream_count: Some(self.base.tiflash_fine_grained_shuffle_stream_count),
+            fine_grained_shuffle_batch_size: Some(ctx.tiflash_fine_grained_shuffle_batch_size),
+            ..go_executor()
+        })
+    }
+}
+
+impl PhysicalSort {
+    /// Go `PhysicalSort.ToPB`: only a partial sort is pushed.
+    fn to_pb(&self, plan: &PhysicalPlan, ctx: &BuildPbContext<'_>, store_type: StoreType) -> Result<tipb::Executor, PlanError> {
+        if !self.is_partial_sort {
+            return Err(PlanError::internal(format!(
+                "sort {} can't convert to pb, because it isn't a partial sort",
+                plan.explain_id(false)
+            )));
+        }
+
+        let input = child_schema(plan)?;
+        let mut sort_exec = tipb::Sort::default();
+        for item in &self.by_items {
+            sort_exec.by_items.extend(sort_by_item_to_pb(ctx, &item.expr, item.desc, input));
+        }
+        sort_exec.is_partial_sort = Some(self.is_partial_sort);
+
+        sort_exec.child = Some(child_to_pb(plan, ctx, store_type)?);
+        Ok(tipb::Executor {
+            tp: Some(tipb::ExecType::TypeSort as i32),
+            sort: Some(Box::new(sort_exec)),
+            executor_id: Some(executor_id(plan)),
+            fine_grained_shuffle_stream_count: Some(self.base.tiflash_fine_grained_shuffle_stream_count),
+            fine_grained_shuffle_batch_size: Some(ctx.tiflash_fine_grained_shuffle_batch_size),
+            ..go_executor()
+        })
+    }
+}
+
+/// Go `FrameBound.ToPB` (`logical_window.go`).
+fn frame_bound_to_pb(
+    ctx: &BuildPbContext<'_>,
+    fb: &tidb_planner_core_operator_logicalop::window::FrameBound,
+    input: &Schema,
+) -> Result<tipb::WindowFrameBound, PlanError> {
+    use tidb_planner_core_operator_logicalop::window::{BoundType, RangeCmpDataType};
+    let mut pb_bound = tipb::WindowFrameBound {
+        r#type: Some(match fb.bound_type {
+            BoundType::Following => tipb::WindowBoundType::Following,
+            BoundType::Preceding => tipb::WindowBoundType::Preceding,
+            BoundType::CurrentRow => tipb::WindowBoundType::CurrentRow,
+        } as i32),
+        unbounded: Some(fb.unbounded),
+        offset: Some(fb.num),
+        ..tipb::WindowFrameBound::default()
+    };
+
+    if fb.is_explicit_range {
+        let range_frame = expressions_to_pb_list(ctx, &fb.calc_funcs, input)?;
+        pb_bound.frame_range = range_frame.into_iter().next();
+        pb_bound.cmp_data_type = Some(match fb.cmp_data_type {
+            RangeCmpDataType::Int => tipb::RangeCmpDataType::Int,
+            RangeCmpDataType::Float => tipb::RangeCmpDataType::Float,
+            RangeCmpDataType::Decimal => tipb::RangeCmpDataType::Decimal,
+            RangeCmpDataType::DateTime => tipb::RangeCmpDataType::DateTime,
+            RangeCmpDataType::Duration => tipb::RangeCmpDataType::Duration,
+        } as i32);
+    }
+    Ok(pb_bound)
+}
+
+impl PhysicalWindow {
+    /// Go `PhysicalWindow.ToPB`.
+    fn to_pb(&self, plan: &PhysicalPlan, ctx: &BuildPbContext<'_>, store_type: StoreType) -> Result<tipb::Executor, PlanError> {
+        use tidb_planner_core_operator_logicalop::window::FrameType;
+        let input = child_schema(plan)?;
+        let push_down_ctx = PushDownCtx { ctx, input };
+        let mut window_exec = tipb::Window::default();
+
+        // Go appends `WindowFuncToPBExpr`'s nil for a function with no PB
+        // form, which its marshalling cannot encode; the planner pushes only
+        // functions `CanPushDownToTiFlash` accepts.
+        window_exec.func_desc = self
+            .window_func_descs
+            .iter()
+            .map(|desc| {
+                tidb_expression_aggregation::window_func_to_pb_expr(&push_down_ctx, desc)
+                    .ok_or_else(|| PlanError::internal(format!("window function {} has no PB form", desc.base.name)))
+            })
+            .collect::<Result<_, _>>()?;
+        for item in &self.partition_by {
+            window_exec.partition_by.extend(sort_by_item_to_pb(ctx, &Expression::Column(item.col.clone()), item.desc, input));
+        }
+        for item in &self.order_by {
+            window_exec.order_by.extend(sort_by_item_to_pb(ctx, &Expression::Column(item.col.clone()), item.desc, input));
+        }
+
+        if let Some(frame) = &self.frame {
+            let mut pb_frame = tipb::WindowFrame {
+                r#type: Some(match frame.frame_type {
+                    FrameType::Rows => tipb::WindowFrameType::Rows,
+                    FrameType::Ranges => tipb::WindowFrameType::Ranges,
+                    FrameType::Groups => tipb::WindowFrameType::Groups,
+                } as i32),
+                ..tipb::WindowFrame::default()
+            };
+            if let Some(start) = &frame.start {
+                pb_frame.start = Some(frame_bound_to_pb(ctx, start, input)?);
+            }
+            if let Some(end) = &frame.end {
+                pb_frame.end = Some(frame_bound_to_pb(ctx, end, input)?);
+            }
+            window_exec.frame = Some(pb_frame);
+        }
+
+        window_exec.child = Some(child_to_pb(plan, ctx, store_type)?);
+        Ok(tipb::Executor {
+            tp: Some(tipb::ExecType::TypeWindow as i32),
+            window: Some(Box::new(window_exec)),
             executor_id: Some(executor_id(plan)),
             fine_grained_shuffle_stream_count: Some(self.base.tiflash_fine_grained_shuffle_stream_count),
             fine_grained_shuffle_batch_size: Some(ctx.tiflash_fine_grained_shuffle_batch_size),

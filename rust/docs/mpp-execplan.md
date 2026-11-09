@@ -44,12 +44,13 @@ the unistore stack.
   table scan carries Go's `Table` and `Columns`. `PhysicalPlan::to_pb`
   (`physicalop` `to_pb.rs`, Go's `BuildPBContext`) for Selection,
   Projection, Limit, TopN, TableScan (not the TiFlash partition scan yet),
-  ExchangeSender, ExchangeReceiver, HashAgg and StreamAgg (Go
-  `agg_to_pb.go`'s plan-to-PB half in `tidb-expression-aggregation`); a
-  planned MPP fragment's `ToPB` is Go's to the byte
-  (`unistore_cop/mpp_to_pb.rs`, Go testkit probe vectors). Left: hash join,
-  sort, expand, window, CTE, index scan, local index lookup, the TiFlash
-  partition scan.
+  ExchangeSender, ExchangeReceiver, HashAgg, StreamAgg (Go `agg_to_pb.go`'s
+  plan-to-PB half in `tidb-expression-aggregation`), HashJoin, Sort (partial)
+  and Window (`WindowFuncToPBExpr`, `FrameBound.ToPB`); a planned MPP
+  fragment's `ToPB` is Go's to the byte for a filter, a bare read, a
+  two-phase aggregation, a broadcast join and two window functions
+  (`unistore_cop/mpp_to_pb.rs`, Go testkit probe vectors). Left: expand,
+  CTE, index scan, local index lookup, the TiFlash partition scan.
 - [ ] Milestone 2: Go `fragment.go` (`Fragment`, `GenerateRootMPPTasks`,
   `mppTaskGenerator`: fragments, union-all untwisting, CTE task counts,
   `constructMPPTasksImpl` over `MPPClient.ConstructMPPTasks`, partition
@@ -102,6 +103,14 @@ the unistore stack.
   Still open: the MPP exploration numbers plans and columns differently from
   Go (`select a, count(*) from t group by a`: `TableFullScan_21` against
   Go's `_22`), so those tests compare MPP plans with numbers blanked.
+
+- The join's bytes exposed three shared mismatches, fixed at their source:
+  `NewFunction` kept the caller's `tinyint` for a planner-built `not()`
+  (Go keeps the builtin's `bigint(1)`); a numeric-only call recorded no
+  collation (Go's is `binary`, which the join's probe types carry); and the
+  physical joins kept the logical `Join` TP, so `ExplainID` said `Join_N`.
+  The window's bytes exposed a fourth: the pushdown catalog's casts carried
+  no `val` (Go encodes each cast's `InUnionMetadata`) and no `has_distinct`.
 
 ## Decision Log
 

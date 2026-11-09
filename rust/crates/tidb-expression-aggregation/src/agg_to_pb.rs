@@ -14,7 +14,7 @@
 
 //! Go `pkg/expression/aggregation/agg_to_pb.go`'s plan-to-PB half:
 //! `GetTiPBExpr`, `AggFuncToPBExpr`, `AggFunctionModeToPB` and
-//! `PBAggFuncModeToAggFuncMode`. Go asks the `kv.Client` whether the
+//! `PBAggFuncModeToAggFuncMode`, with `window_func.go`'s `WindowFuncToPBExpr`. Go asks the `kv.Client` whether the
 //! request type is supported; this port's expression lowering decides from
 //! its pushdown catalog (register row X01), so only a name with no PB type
 //! is refused here.
@@ -178,4 +178,28 @@ pub fn pb_agg_func_mode_to_agg_func_mode(pb_mode: Option<tipb::AggFunctionMode>)
         Some(tipb::AggFunctionMode::DedupMode) => AggFunctionMode::Dedup,
         Some(tipb::AggFunctionMode::Partial1Mode) | None => AggFunctionMode::Partial1,
     }
+}
+
+/// Go `window_func.go`'s `WindowFuncToPBExpr`: `None` when the function or
+/// an argument has no PB form.
+#[must_use]
+pub fn window_func_to_pb_expr(ctx: &dyn PushDownContext, desc: &crate::WindowFuncDesc) -> Option<tipb::Expr> {
+    let tp = desc.base.get_tipb_expr(true);
+    if tp == tipb::ExprType::Null {
+        return None;
+    }
+
+    let mut children = Vec::with_capacity(desc.base.args.len());
+    for arg in &desc.base.args {
+        children.push(ctx.expr_to_pb(arg)?);
+    }
+    Some(tipb::Expr {
+        tp: Some(tp as i32),
+        children,
+        // gogoproto's non-nullable `sig` and `has_distinct` are always sent.
+        sig: Some(tipb::ScalarFuncSig::Unspecified as i32),
+        field_type: Some(tidb_expr::pushdown_catalog::to_pb_field_type(&desc.base.ret_type)?),
+        has_distinct: Some(false),
+        ..tipb::Expr::default()
+    })
 }

@@ -4650,13 +4650,7 @@ pub fn to_pb_in(
             signature,
             arg,
             field_type,
-        } => Some(Expr {
-            tp: Some(ExprType::ScalarFunc as i32),
-            sig: Some(*signature as i32),
-            children: vec![to_pb_in(arg, columns, zone)?],
-            field_type: Some(to_pb_field_type(field_type)?),
-            ..Default::default()
-        }),
+        } => Some(cast_expr(*signature, to_pb_in(arg, columns, zone)?, to_pb_field_type(field_type)?)),
         PbScalar::Call {
             signature,
             args,
@@ -4694,13 +4688,7 @@ pub fn to_pb_in(
                             }
                             (source, target) => cast_signature(source, target)??,
                         };
-                        child = Expr {
-                            tp: Some(ExprType::ScalarFunc as i32),
-                            sig: Some(cast as i32),
-                            children: vec![child],
-                            field_type: Some(target),
-                            ..Default::default()
-                        };
+                        child = cast_expr(cast, child, target);
                     }
                     children.push(child);
                 } else {
@@ -4783,16 +4771,7 @@ fn coerced_to_pb(
                     return to_pb_in(argument, columns, zone);
                 };
                 let field_type = cast_target_field_type(argument, required)?;
-                return Some(Expr {
-                    tp: Some(ExprType::ScalarFunc as i32),
-                    val: None,
-                    children: vec![to_pb_in(argument, columns, zone)?],
-                    sig: Some(cast as i32),
-                    field_type: Some(field_type),
-                    has_distinct: Some(false),
-                    agg_func_mode: None,
-                    ..Default::default()
-                });
+                return Some(cast_expr(cast, to_pb_in(argument, columns, zone)?, field_type));
             }
             _ => None,
         };
@@ -4943,6 +4922,24 @@ fn cast_flags(argument: &PbScalar) -> u32 {
         }
     }
     flags
+}
+
+/// Go `scalarFuncToPBExpr` of a builtin cast: its `metadata()` is
+/// `InUnionMetadata{InUnion: false}` (an in-union cast is not lowered here),
+/// encoded as the expression's `val`.
+fn cast_expr(signature: ScalarFuncSig, child: Expr, field_type: tidb_proto::tipb::FieldType) -> Expr {
+    use prost::Message;
+    Expr {
+        tp: Some(ExprType::ScalarFunc as i32),
+        val: Some(tidb_proto::tipb::InUnionMetadata { in_union: false }.encode_to_vec()),
+        children: vec![child],
+        // Upstream `Expr.sig` and `has_distinct` are gogoproto nullable=false.
+        sig: Some(signature as i32),
+        field_type: Some(field_type),
+        has_distinct: Some(false),
+        agg_func_mode: None,
+        ..Default::default()
+    }
 }
 
 fn leaf(tp: ExprType, val: Vec<u8>, field_type: tidb_proto::tipb::FieldType) -> Expr {
