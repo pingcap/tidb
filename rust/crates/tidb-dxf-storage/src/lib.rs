@@ -43,7 +43,7 @@ use std::sync::Arc;
 
 use tidb_datatype::Datum;
 use tidb_sqlescape::SqlArg;
-use tidb_sqlexec::{BackgroundContext, ExecutionContext};
+use tidb_sqlexec::ExecutionContext;
 
 /// Go `defaultSubtaskKeepDays`.
 pub const DEFAULT_SUBTASK_KEEP_DAYS: i64 = 14;
@@ -88,6 +88,9 @@ pub enum StorageError {
     /// A `*terror.Error` the session or the SQL layer returned: Go returns
     /// the terror itself, which keeps its `[class:code]` identity.
     Terror(tidb_terror::TerrorError),
+    /// A cancelled caller's `ctx.Err()`, which Go returns as is
+    /// (`errors.Is(err, context.Canceled)`).
+    Context(tidb_gocontext::CtxError),
 }
 
 impl StorageError {
@@ -112,6 +115,7 @@ impl std::fmt::Display for StorageError {
         match self {
             Self::Annotated(cause, message) => return write!(f, "{message}: {cause}"),
             Self::Terror(t_err) => return write!(f, "{t_err}"),
+            Self::Context(err) => return write!(f, "{err}"),
             _ => {}
         }
         f.write_str(match self {
@@ -122,7 +126,7 @@ impl std::fmt::Display for StorageError {
             Self::TaskChanged => "task changed by other operation",
             Self::SubtaskNotFound => "subtask not found",
             Self::Other(message) | Self::Annotated(_, message) => message,
-            Self::Terror(_) => unreachable!("written above"),
+            Self::Terror(_) | Self::Context(_) => unreachable!("written above"),
         })
     }
 }
@@ -141,6 +145,10 @@ impl From<tidb_sqlexec::SqlExecError> for StorageError {
     fn from(error: tidb_sqlexec::SqlExecError) -> Self {
         let error = match error.downcast::<Self>() {
             Ok(error) => return *error,
+            Err(error) => error,
+        };
+        let error = match error.downcast::<tidb_gocontext::CtxError>() {
+            Ok(error) => return Self::Context(*error),
             Err(error) => error,
         };
         match error.downcast::<tidb_store_driver_error::sql_query_error::SqlQueryError>() {
@@ -213,17 +221,17 @@ pub trait Manager: Send + Sync {
     ///
     /// # Errors
     /// The query failed or no node has resources.
-    fn get_cpu_count_of_node(&self) -> Result<isize>;
+    fn get_cpu_count_of_node(&self, ctx: &tidb_gocontext::Context) -> Result<isize>;
     /// Go `GetTaskByID`.
     ///
     /// # Errors
     /// No such task, or the query failed.
-    fn get_task_by_id(&self, task_id: i64) -> Result<tidb_dxf::Task>;
+    fn get_task_by_id(&self, ctx: &tidb_gocontext::Context, task_id: i64) -> Result<tidb_dxf::Task>;
     /// Go `ModifyTaskByID`.
     ///
     /// # Errors
     /// See [`TaskManager::modify_task_by_id`].
-    fn modify_task_by_id(&self, task_id: i64, param: &tidb_dxf::ModifyParam) -> Result<()>;
+    fn modify_task_by_id(&self, ctx: &tidb_gocontext::Context, task_id: i64, param: &tidb_dxf::ModifyParam) -> Result<()>;
 }
 
 /// Go `SessionExecutor`: runs SQL on a session.
@@ -237,7 +245,7 @@ pub trait SessionExecutor: Send + Sync {
     ///
     /// # Errors
     /// The transaction or `f` failed.
-    fn with_new_txn(&self, f: &mut dyn FnMut(&dyn SessionContext) -> Result<()>) -> Result<()>;
+    fn with_new_txn(&self, ctx: &tidb_gocontext::Context, f: &mut dyn FnMut(&dyn SessionContext) -> Result<()>) -> Result<()>;
 }
 
 /// Go `TaskHandle`: the operations a task type's scheduler extension needs
@@ -260,16 +268,16 @@ pub trait TaskHandle: SessionExecutor {
 }
 
 impl Manager for TaskManager {
-    fn get_cpu_count_of_node(&self) -> Result<isize> {
-        TaskManager::get_cpu_count_of_node(self)
+    fn get_cpu_count_of_node(&self, ctx: &tidb_gocontext::Context) -> Result<isize> {
+        TaskManager::get_cpu_count_of_node(self, ctx)
     }
 
-    fn get_task_by_id(&self, task_id: i64) -> Result<tidb_dxf::Task> {
-        TaskManager::get_task_by_id(self, task_id)
+    fn get_task_by_id(&self, ctx: &tidb_gocontext::Context, task_id: i64) -> Result<tidb_dxf::Task> {
+        TaskManager::get_task_by_id(self, ctx, task_id)
     }
 
-    fn modify_task_by_id(&self, task_id: i64, param: &tidb_dxf::ModifyParam) -> Result<()> {
-        TaskManager::modify_task_by_id(self, task_id, param)
+    fn modify_task_by_id(&self, ctx: &tidb_gocontext::Context, task_id: i64, param: &tidb_dxf::ModifyParam) -> Result<()> {
+        TaskManager::modify_task_by_id(self, ctx, task_id, param)
     }
 }
 
@@ -278,8 +286,8 @@ impl SessionExecutor for TaskManager {
         TaskManager::with_new_session(self, f)
     }
 
-    fn with_new_txn(&self, f: &mut dyn FnMut(&dyn SessionContext) -> Result<()>) -> Result<()> {
-        TaskManager::with_new_txn(self, f)
+    fn with_new_txn(&self, ctx: &tidb_gocontext::Context, f: &mut dyn FnMut(&dyn SessionContext) -> Result<()>) -> Result<()> {
+        TaskManager::with_new_txn(self, ctx, f)
     }
 }
 
@@ -372,17 +380,25 @@ impl TaskManager {
     ///
     /// # Errors
     /// The begin, `f` or the commit failed.
-    pub fn with_new_txn(&self, f: &mut dyn FnMut(&dyn SessionContext) -> Result<()>) -> Result<()> {
-        let context = tikv_client::util::with_internal_source_type(
-            &tikv_client::trace::TraceContext::new(),
-            tidb_txnkv::INTERNAL_DIST_TASK,
-        );
+    pub fn with_new_txn(
+        &self,
+        ctx: &tidb_gocontext::Context,
+        f: &mut dyn FnMut(&dyn SessionContext) -> Result<()>,
+    ) -> Result<()> {
+        let ctx = with_internal_source_type(ctx, tidb_txnkv::INTERNAL_DIST_TASK);
         self.with_new_session(&mut |se| {
-            exec_sql(&context, se, "begin", &[])?;
+            // Keep BEGIN on the SQL path so the session enters transaction
+            // mode with the usual statement semantics. Commit / rollback use
+            // session methods instead, because cleanup still has to finish
+            // after caller cancellation.
+            exec_sql(&ctx, se, "begin", &[])?;
             match f(se) {
-                Ok(()) => se.commit_txn(&context),
+                Ok(()) => se.commit_txn(&ctx),
                 Err(error) => {
-                    se.rollback_txn(&context);
+                    se.rollback_txn(&with_internal_source_type(
+                        &tidb_gocontext::Context::background(),
+                        tidb_txnkv::INTERNAL_DIST_TASK,
+                    ));
                     Err(error)
                 }
             }
@@ -393,14 +409,28 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn execute_sql_with_new_session(&self, sql: &str, arguments: &[SqlArg<'_>]) -> Result<Vec<Vec<Datum>>> {
+    pub fn execute_sql_with_new_session(&self, ctx: &tidb_gocontext::Context, sql: &str, arguments: &[SqlArg<'_>]) -> Result<Vec<Vec<Datum>>> {
         let mut rows = Vec::new();
         self.with_new_session(&mut |se| {
-            rows = exec_sql(&BackgroundContext, se, sql, arguments)?;
+            rows = exec_sql(ctx, se, sql, arguments)?;
             Ok(())
         })?;
         Ok(rows)
     }
+}
+
+/// Go `util.WithInternalSourceType(ctx, source)`: `ctx` carrying the
+/// internal request source (a trace value, as Go keeps it in the context).
+#[must_use]
+pub fn with_internal_source_type(ctx: &tidb_gocontext::Context, source: &str) -> tidb_gocontext::Context {
+    let trace = ctx
+        .value::<tidb_sqlexec::TraceContextKey, tikv_client::trace::TraceContext>()
+        .cloned()
+        .unwrap_or_default();
+    tidb_gocontext::Context::with_value::<tidb_sqlexec::TraceContextKey, _>(
+        ctx,
+        tikv_client::util::with_internal_source_type(&trace, source),
+    )
 }
 
 /// Go `sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), sql, args...)`.

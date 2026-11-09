@@ -104,23 +104,23 @@ impl SessionExecutor for MockTaskTable {
             None => self.call("WithNewSession"),
         }
     }
-    fn with_new_txn(&self, _: &mut dyn FnMut(&dyn SessionContext) -> Result<()>) -> Result<()> {
+    fn with_new_txn(&self, _ctx: &tidb_gocontext::Context, _: &mut dyn FnMut(&dyn SessionContext) -> Result<()>) -> Result<()> {
         self.call("WithNewTxn")
     }
 }
 
 impl TaskTable for MockTaskTable {
-    fn get_task_exec_info_by_exec_id(&self, exec_id: &str) -> Result<Vec<TaskExecInfo>> {
+    fn get_task_exec_info_by_exec_id(&self, _ctx: &tidb_gocontext::Context, exec_id: &str) -> Result<Vec<TaskExecInfo>> {
         self.call(&format!("GetTaskExecInfoByExecID|{exec_id}"))
     }
-    fn get_task_by_id(&self, task_id: i64) -> Result<Task> {
+    fn get_task_by_id(&self, _ctx: &tidb_gocontext::Context, task_id: i64) -> Result<Task> {
         self.call(&key::get_task_by_id(task_id))
     }
-    fn get_task_base_by_id(&self, task_id: i64) -> Result<TaskBase> {
+    fn get_task_base_by_id(&self, _ctx: &tidb_gocontext::Context, task_id: i64) -> Result<TaskBase> {
         self.call(&format!("GetTaskBaseByID|{task_id}"))
     }
     fn get_subtasks_by_exec_id_and_step_and_states(
-        &self,
+        &self, _ctx: &tidb_gocontext::Context,
         exec_id: &str,
         task_id: i64,
         step: Step,
@@ -129,7 +129,7 @@ impl TaskTable for MockTaskTable {
         self.call(&key::get_subtasks_by_exec_id_and_step_and_states(exec_id, task_id, step, subtask_states))
     }
     fn get_first_subtask_in_states(
-        &self,
+        &self, _ctx: &tidb_gocontext::Context,
         instance_id: &str,
         task_id: i64,
         step: Step,
@@ -137,17 +137,17 @@ impl TaskTable for MockTaskTable {
     ) -> Result<Option<Subtask>> {
         self.call(&key::get_first_subtask_in_states(instance_id, task_id, step, subtask_states))
     }
-    fn init_meta(&self, exec_id: &str, role: &str) -> Result<()> {
+    fn init_meta(&self, _ctx: &tidb_gocontext::Context, exec_id: &str, role: &str) -> Result<()> {
         self.call(&format!("InitMeta|{exec_id}|{role}"))
     }
-    fn recover_meta(&self, exec_id: &str, role: &str) -> Result<()> {
+    fn recover_meta(&self, _ctx: &tidb_gocontext::Context, exec_id: &str, role: &str) -> Result<()> {
         self.call(&format!("RecoverMeta|{exec_id}|{role}"))
     }
-    fn start_subtask(&self, subtask_id: i64, exec_id: &str) -> Result<()> {
+    fn start_subtask(&self, _ctx: &tidb_gocontext::Context, subtask_id: i64, exec_id: &str) -> Result<()> {
         self.call(&key::start_subtask(subtask_id, exec_id))
     }
     fn update_subtask_state_and_error(
-        &self,
+        &self, _ctx: &tidb_gocontext::Context,
         exec_id: &str,
         subtask_id: i64,
         state: &SubtaskState,
@@ -155,27 +155,27 @@ impl TaskTable for MockTaskTable {
     ) -> Result<()> {
         self.call(&key::update_subtask_state_and_error(exec_id, subtask_id, state, &err_text(err)))
     }
-    fn fail_subtask(&self, exec_id: &str, task_id: i64, err: Option<&(dyn StdError + 'static)>) -> Result<()> {
+    fn fail_subtask(&self, _ctx: &tidb_gocontext::Context, exec_id: &str, task_id: i64, err: Option<&(dyn StdError + 'static)>) -> Result<()> {
         self.failed_subtask_errs.lock().unwrap().push(err_text(err));
         self.call(&key::fail_subtask(exec_id, task_id, &err_text(err)))
     }
-    fn cancel_subtask(&self, exec_id: &str, task_id: i64) -> Result<()> {
+    fn cancel_subtask(&self, _ctx: &tidb_gocontext::Context, exec_id: &str, task_id: i64) -> Result<()> {
         self.call(&format!("CancelSubtask|{exec_id}|{task_id}"))
     }
-    fn finish_subtask(&self, exec_id: &str, subtask_id: i64, meta: &[u8]) -> Result<()> {
+    fn finish_subtask(&self, _ctx: &tidb_gocontext::Context, exec_id: &str, subtask_id: i64, meta: &[u8]) -> Result<()> {
         self.call(&format!("FinishSubtask|{exec_id}|{subtask_id}|{}", String::from_utf8_lossy(meta)))
     }
-    fn pause_subtasks(&self, exec_id: &str, task_id: i64) -> Result<()> {
+    fn pause_subtasks(&self, _ctx: &tidb_gocontext::Context, exec_id: &str, task_id: i64) -> Result<()> {
         self.call(&format!("PauseSubtasks|{exec_id}|{task_id}"))
     }
-    fn running_subtasks_back2_pending(&self, subtasks: &[SubtaskBase]) -> Result<()> {
+    fn running_subtasks_back2_pending(&self, _ctx: &tidb_gocontext::Context, subtasks: &[SubtaskBase]) -> Result<()> {
         let subtasks: Vec<String> = subtasks.iter().map(|subtask| format!("{}@{}", subtask.id, subtask.exec_id)).collect();
         self.call(&format!("RunningSubtasksBack2Pending|{}", subtasks.join(",")))
     }
-    fn update_subtask_checkpoint(&self, subtask_id: i64, _: &serde_json::Value) -> Result<()> {
+    fn update_subtask_checkpoint(&self, _ctx: &tidb_gocontext::Context, subtask_id: i64, _: &serde_json::Value) -> Result<()> {
         self.call(&format!("UpdateSubtaskCheckpoint|{subtask_id}"))
     }
-    fn get_subtask_checkpoint(&self, subtask_id: i64) -> Result<String> {
+    fn get_subtask_checkpoint(&self, _ctx: &tidb_gocontext::Context, subtask_id: i64) -> Result<String> {
         self.call(&format!("GetSubtaskCheckpoint|{subtask_id}"))
     }
 }

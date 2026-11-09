@@ -21,7 +21,6 @@ use std::sync::RwLock;
 use tidb_datatype::Datum;
 use tidb_dxf::{schstatus, ManagedNode, NodeResource, SUBTASK_STATE_PENDING, SUBTASK_STATE_RUNNING};
 use tidb_sqlescape::SqlArg;
-use tidb_sqlexec::BackgroundContext;
 
 use crate::{exec_sql, Result, SessionContext, StorageError, TaskManager};
 
@@ -73,8 +72,8 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn init_meta(&self, tidb_id: &str, role: &str) -> Result<()> {
-        self.with_new_session(&mut |se| Self::init_meta_session(se, tidb_id, role))
+    pub fn init_meta(&self, ctx: &tidb_gocontext::Context, tidb_id: &str, role: &str) -> Result<()> {
+        self.with_new_session(&mut |se| Self::init_meta_session(ctx, se, tidb_id, role))
     }
 
     /// Go `InitMetaSession`: inserts the manager, or updates its CPU count
@@ -82,10 +81,9 @@ impl TaskManager {
     ///
     /// # Errors
     /// The statement failed.
-    pub fn init_meta_session(se: &dyn SessionContext, exec_id: &str, role: &str) -> Result<()> {
+    pub fn init_meta_session(ctx: &tidb_gocontext::Context, se: &dyn SessionContext, exec_id: &str, role: &str) -> Result<()> {
         let cpu_count = get_dxf_cpu_count() as i64;
-        exec_sql(
-            &BackgroundContext,
+        exec_sql(ctx,
             se,
             "
 		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
@@ -108,9 +106,9 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn recover_meta(&self, exec_id: &str, role: &str) -> Result<()> {
+    pub fn recover_meta(&self, ctx: &tidb_gocontext::Context, exec_id: &str, role: &str) -> Result<()> {
         let cpu_count = get_dxf_cpu_count() as i64;
-        self.execute_sql_with_new_session(
+        self.execute_sql_with_new_session(ctx, 
             "
 		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
 		values (%?, %?, %?, -1)
@@ -130,7 +128,7 @@ impl TaskManager {
     ///
     /// # Errors
     /// The transaction or the statement failed.
-    pub fn delete_dead_nodes(&self, nodes: &[String]) -> Result<()> {
+    pub fn delete_dead_nodes(&self, ctx: &tidb_gocontext::Context, nodes: &[String]) -> Result<()> {
         if nodes.is_empty() {
             return Ok(());
         }
@@ -139,25 +137,24 @@ impl TaskManager {
             "delete from mysql.dist_framework_meta where host in({})",
             nodes.iter().map(|node| format!("\"{node}\"")).collect::<Vec<_>>().join(", ")
         );
-        self.with_new_txn(&mut |se| exec_sql(&BackgroundContext, se, &delete_sql, &[]).map(drop))
+        self.with_new_txn(ctx, &mut |se| exec_sql(ctx, se, &delete_sql, &[]).map(drop))
     }
 
     /// Go `GetAllNodes`.
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn get_all_nodes(&self) -> Result<Vec<ManagedNode>> {
+    pub fn get_all_nodes(&self, ctx: &tidb_gocontext::Context) -> Result<Vec<ManagedNode>> {
         let mut nodes = Vec::new();
         self.with_new_session(&mut |se| {
-            nodes = Self::get_all_nodes_with_session(se)?;
+            nodes = Self::get_all_nodes_with_session(ctx, se)?;
             Ok(())
         })?;
         Ok(nodes)
     }
 
-    fn get_all_nodes_with_session(se: &dyn SessionContext) -> Result<Vec<ManagedNode>> {
-        let rows = exec_sql(
-            &BackgroundContext,
+    fn get_all_nodes_with_session(ctx: &tidb_gocontext::Context, se: &dyn SessionContext) -> Result<Vec<ManagedNode>> {
+        let rows = exec_sql(ctx,
             se,
             "
 		select host, role, cpu_count
@@ -179,12 +176,11 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn get_busy_nodes(&self) -> Result<Vec<schstatus::Node>> {
+    pub fn get_busy_nodes(&self, ctx: &tidb_gocontext::Context) -> Result<Vec<schstatus::Node>> {
         let mut exec_ids = Vec::new();
         let (pending, running) = (SUBTASK_STATE_PENDING.to_string(), SUBTASK_STATE_RUNNING.to_string());
         self.with_new_session(&mut |se| {
-            let rows = exec_sql(
-                &BackgroundContext,
+            let rows = exec_sql(ctx,
                 se,
                 "
 			select distinct exec_id from mysql.tidb_background_subtask
@@ -212,9 +208,9 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn get_used_slots_on_nodes(&self) -> Result<std::collections::HashMap<String, isize>> {
+    pub fn get_used_slots_on_nodes(&self, ctx: &tidb_gocontext::Context) -> Result<std::collections::HashMap<String, isize>> {
         let (pending, running) = (SUBTASK_STATE_PENDING.to_string(), SUBTASK_STATE_RUNNING.to_string());
-        let rows = self.execute_sql_with_new_session(
+        let rows = self.execute_sql_with_new_session(ctx, 
             "
 		select
 			exec_id, sum(concurrency)
@@ -240,10 +236,10 @@ impl TaskManager {
     ///
     /// # Errors
     /// No node offers CPU, or the session failed.
-    pub fn get_cpu_count_of_node(&self) -> Result<isize> {
+    pub fn get_cpu_count_of_node(&self, ctx: &tidb_gocontext::Context) -> Result<isize> {
         let mut count = 0;
         self.with_new_session(&mut |se| {
-            count = Self::get_cpu_count_of_node_by_role_with_session(se, "", true)?;
+            count = Self::get_cpu_count_of_node_by_role_with_session(ctx, se, "", true)?;
             Ok(())
         })?;
         Ok(count)
@@ -253,10 +249,10 @@ impl TaskManager {
     ///
     /// # Errors
     /// No node of `role` offers CPU, or the session failed.
-    pub fn get_cpu_count_of_node_by_role(&self, role: &str) -> Result<isize> {
+    pub fn get_cpu_count_of_node_by_role(&self, ctx: &tidb_gocontext::Context, role: &str) -> Result<isize> {
         let mut count = 0;
         self.with_new_session(&mut |se| {
-            count = Self::get_cpu_count_of_node_by_role_with_session(se, role, false)?;
+            count = Self::get_cpu_count_of_node_by_role_with_session(ctx, se, role, false)?;
             Ok(())
         })?;
         Ok(count)
@@ -264,12 +260,12 @@ impl TaskManager {
 
     /// Go `getCPUCountOfNodeByRole`: the CPU count of the first managed node
     /// (of `role`, unless `arbitrary`) that has one.
-    pub(crate) fn get_cpu_count_of_node_by_role_with_session(
+    pub(crate) fn get_cpu_count_of_node_by_role_with_session(ctx: &tidb_gocontext::Context, 
         se: &dyn SessionContext,
         role: &str,
         arbitrary: bool,
     ) -> Result<isize> {
-        let nodes = Self::get_all_nodes_with_session(se)?;
+        let nodes = Self::get_all_nodes_with_session(ctx, se)?;
         if nodes.is_empty() {
             return Err(StorageError::Other("no managed nodes".to_owned()));
         }

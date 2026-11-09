@@ -43,6 +43,7 @@ impl Planner {
             .session_ctx
             .ok_or_else(|| StorageError::Other("plan context has no session".to_owned()))?;
         Ok(TaskManager::create_task_with_session(
+            &plan_ctx.ctx,
             se,
             &plan_ctx.task_key,
             &plan_ctx.task_type,

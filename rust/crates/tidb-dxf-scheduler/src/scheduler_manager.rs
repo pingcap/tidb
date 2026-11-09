@@ -207,7 +207,7 @@ impl Manager {
     /// metrics, and maintain and balance the nodes.
     pub fn start(self: &Arc<Self>) {
         // init cached managed nodes
-        self.node_mgr.refresh_nodes(self.task_mgr.as_ref(), &self.slot_mgr);
+        self.node_mgr.refresh_nodes(&self.ctx, self.task_mgr.as_ref(), &self.slot_mgr);
 
         self.spawn("schedule", |sm| sm.schedule_task_loop());
         self.spawn("gc", |sm| sm.gc_subtask_history_table_loop());
@@ -219,7 +219,7 @@ impl Manager {
             loop {
                 crossbeam_channel::select! {
                     recv(done) -> _ => return,
-                    recv(ticker) -> _ => sm.node_mgr.maintain_live_nodes(sm.server_info.as_ref(), sm.task_mgr.as_ref()),
+                    recv(ticker) -> _ => sm.node_mgr.maintain_live_nodes(&sm.ctx, sm.server_info.as_ref(), sm.task_mgr.as_ref()),
                 }
             }
         });
@@ -229,7 +229,7 @@ impl Manager {
             loop {
                 crossbeam_channel::select! {
                     recv(done) -> _ => return,
-                    recv(ticker) -> _ => sm.node_mgr.refresh_nodes(sm.task_mgr.as_ref(), &sm.slot_mgr),
+                    recv(ticker) -> _ => sm.node_mgr.refresh_nodes(&sm.ctx, sm.task_mgr.as_ref(), &sm.slot_mgr),
                 }
             }
         });
@@ -302,9 +302,9 @@ impl Manager {
             // when we have reached the limit of concurrent tasks, we only handle
             // tasks in states that don't need resources, e.g. reverting/cancelling/
             // pausing/modifying.
-            self.task_mgr.get_top_no_need_resource_tasks()
+            self.task_mgr.get_top_no_need_resource_tasks(&self.ctx)
         } else {
-            self.task_mgr.get_top_unfinished_tasks()
+            self.task_mgr.get_top_unfinished_tasks(&self.ctx)
         }
         .map_err(|err| {
             self.logger.warn("get unfinished tasks failed", &[str_field("error", err.to_string())]);
@@ -342,7 +342,7 @@ impl Manager {
         if schedulable_tasks.is_empty() {
             return Ok(());
         }
-        self.slot_mgr.update(&self.node_mgr, self.task_mgr.as_ref()).map_err(|err| {
+        self.slot_mgr.update(&self.ctx, &self.node_mgr, self.task_mgr.as_ref()).map_err(|err| {
             self.logger.warn("update used slot failed", &[str_field("error", err.to_string())]);
             err
         })?;
@@ -378,7 +378,7 @@ impl Manager {
 
     /// Go `failTask`.
     fn fail_task(&self, id: i64, curr_state: &TaskState, err: Error) {
-        match self.task_mgr.fail_task(id, curr_state, Some(as_dyn(err.as_ref()))) {
+        match self.task_mgr.fail_task(&self.ctx, id, curr_state, Some(as_dyn(err.as_ref()))) {
             Err(err2) => self.logger.warn(
                 "failed to update task state to failed",
                 &[Field::new("task-id", Value::I64(id)), str_field("error", err2.to_string())],
@@ -402,7 +402,7 @@ impl Manager {
                     self.logger.info("subtask history table gc loop exits", &[]);
                     return;
                 }
-                recv(ticker) -> _ => match self.task_mgr.gc_subtasks() {
+                recv(ticker) -> _ => match self.task_mgr.gc_subtasks(&self.ctx) {
                     Err(err) => self.logger.warn("subtask history table gc failed", &[str_field("error", err.to_string())]),
                     Ok(()) => self.logger.info("subtask history table gc success", &[]),
                 },
@@ -412,7 +412,7 @@ impl Manager {
 
     /// Go `startScheduler`.
     fn start_scheduler(self: &Arc<Self>, basic_task: &TaskBase, allocate_slots: bool, reserved_exec_id: &str) {
-        let task = match self.task_mgr.get_task_by_id(basic_task.id) {
+        let task = match self.task_mgr.get_task_by_id(&self.ctx, basic_task.id) {
             Ok(task) => task,
             Err(err) => {
                 self.logger.error(
@@ -522,7 +522,7 @@ impl Manager {
     /// global sort's temporary files on S3); whether every task of it moved to
     /// history.
     pub(crate) fn process_clean_task_batch(&self) -> bool {
-        let tasks = match self.task_mgr.get_cleanup_tasks() {
+        let tasks = match self.task_mgr.get_cleanup_tasks(&self.ctx) {
             Ok(tasks) => tasks,
             Err(err) => {
                 self.logger.warn("get cleanup tasks failed", &[str_field("error", err.to_string())]);
@@ -620,7 +620,7 @@ impl Manager {
         #[cfg(any(test, feature = "failpoints"))]
         fail::fail_point!("mockTransferErr", |_| Err(tidb_dxf_storage::StorageError::Other("transfer err".to_owned())));
 
-        self.task_mgr.transfer_tasks2_history(&cleaned_tasks)?;
+        self.task_mgr.transfer_tasks2_history(&self.ctx, &cleaned_tasks)?;
         Ok(cleaned_tasks.len())
     }
 
@@ -654,11 +654,11 @@ impl Manager {
 
     /// Go `collect`.
     fn collect(&self, metric_collector: &tidb_dxf_dxfmetric::Collector) {
-        let tasks = self.task_mgr.get_all_tasks().unwrap_or_else(|err| {
+        let tasks = self.task_mgr.get_all_tasks(&self.ctx).unwrap_or_else(|err| {
             self.logger.warn("get all tasks failed", &[str_field("error", err.to_string())]);
             Vec::new()
         });
-        let subtasks = match self.task_mgr.get_all_subtasks() {
+        let subtasks = match self.task_mgr.get_all_subtasks(&self.ctx) {
             Ok(subtasks) => subtasks,
             Err(err) => {
                 self.logger.warn("get all subtasks failed", &[str_field("error", err.to_string())]);
@@ -681,7 +681,7 @@ impl Manager {
                 return;
             }
         };
-        let (node_count, node_cpu) = match tidb_dxf_handle::get_nodes_info(&manager) {
+        let (node_count, node_cpu) = match tidb_dxf_handle::get_nodes_info(&self.ctx, &manager) {
             Ok(info) => info,
             Err(err) => {
                 self.logger.warn("failed to get nodes info", &[str_field("error", err.to_string())]);

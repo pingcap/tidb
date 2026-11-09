@@ -65,7 +65,7 @@ impl NodeManager {
     /// Go `maintainLiveNodes`: removes the dead nodes from
     /// `dist_framework_meta` (see the task executor's `recoverMetaLoop` for
     /// how a node gets there).
-    pub(crate) fn maintain_live_nodes(&self, server_info: &dyn ServerInfoSource, task_mgr: &dyn TaskManager) {
+    pub(crate) fn maintain_live_nodes(&self, ctx: &tidb_gocontext::Context, server_info: &dyn ServerInfoSource, task_mgr: &dyn TaskManager) {
         // Safe to discard errors since this function can be called at regular intervals.
         let live_exec_ids = match get_live_exec_ids(server_info) {
             Ok(ids) => ids,
@@ -90,7 +90,7 @@ impl NodeManager {
             return;
         }
 
-        let old_nodes = match task_mgr.get_all_nodes() {
+        let old_nodes = match task_mgr.get_all_nodes(ctx) {
             Ok(nodes) => nodes,
             Err(error) => {
                 self.sample_logger.warn("get all nodes met error", &[Field::new("error", Value::Str(error.to_string()))]);
@@ -108,7 +108,7 @@ impl NodeManager {
             "delete dead nodes from dist_framework_meta",
             &[Field::new("dead-nodes", Value::Str(format!("{dead_nodes:?}")))],
         );
-        if let Err(error) = task_mgr.delete_dead_nodes(&dead_nodes) {
+        if let Err(error) = task_mgr.delete_dead_nodes(ctx, &dead_nodes) {
             self.logger.warn(
                 "delete dead nodes from dist_framework_meta failed",
                 &[Field::new("error", Value::Str(error.to_string()))],
@@ -120,8 +120,8 @@ impl NodeManager {
 
     /// Go `refreshNodes`: the nodes the framework manages, and the slot
     /// capacity from their CPU count.
-    pub(crate) fn refresh_nodes(&self, task_mgr: &dyn TaskManager, slot_mgr: &SlotManager) {
-        let new_nodes = match task_mgr.get_all_nodes() {
+    pub(crate) fn refresh_nodes(&self, ctx: &tidb_gocontext::Context, task_mgr: &dyn TaskManager, slot_mgr: &SlotManager) {
+        let new_nodes = match task_mgr.get_all_nodes(ctx) {
             Ok(nodes) => nodes,
             Err(error) => {
                 self.sample_logger.warn("get managed nodes met error", &[Field::new("error", Value::Str(error.to_string()))]);
@@ -190,16 +190,16 @@ mod tests {
 
         let node_mgr = NodeManager::new("");
         mock_task_mgr.expect_get_all_nodes(Err(StorageError::Other("mock error".to_owned())));
-        node_mgr.maintain_live_nodes(&server_info, &mock_task_mgr);
+        node_mgr.maintain_live_nodes(&tidb_gocontext::Context::background(), &server_info, &mock_task_mgr);
         assert!(node_mgr.prev_live_nodes().is_empty());
         mock_task_mgr.assert_satisfied();
         // no change
         mock_task_mgr.expect_get_all_nodes(Ok(vec![node(":4000", 0)]));
-        node_mgr.maintain_live_nodes(&server_info, &mock_task_mgr);
+        node_mgr.maintain_live_nodes(&tidb_gocontext::Context::background(), &server_info, &mock_task_mgr);
         assert_eq!(node_mgr.prev_live_nodes(), set(&[":4000"]));
         mock_task_mgr.assert_satisfied();
         // run again, return fast
-        node_mgr.maintain_live_nodes(&server_info, &mock_task_mgr);
+        node_mgr.maintain_live_nodes(&tidb_gocontext::Context::background(), &server_info, &mock_task_mgr);
         assert_eq!(node_mgr.prev_live_nodes(), set(&[":4000"]));
         mock_task_mgr.assert_satisfied();
 
@@ -209,17 +209,17 @@ mod tests {
         // fail on clean
         mock_task_mgr.expect_get_all_nodes(Ok(vec![node(":4000", 0), node(":4001", 0), node(":4002", 0)]));
         mock_task_mgr.expect_delete_dead_nodes(Err(StorageError::Other("mock error".to_owned())));
-        node_mgr.maintain_live_nodes(&server_info, &mock_task_mgr);
+        node_mgr.maintain_live_nodes(&tidb_gocontext::Context::background(), &server_info, &mock_task_mgr);
         assert_eq!(node_mgr.prev_live_nodes(), set(&[":4000"]));
         mock_task_mgr.assert_satisfied();
         // remove 1 node
         mock_task_mgr.expect_get_all_nodes(Ok(vec![node(":4000", 0), node(":4001", 0), node(":4002", 0)]));
         mock_task_mgr.expect_delete_dead_nodes(Ok(()));
-        node_mgr.maintain_live_nodes(&server_info, &mock_task_mgr);
+        node_mgr.maintain_live_nodes(&tidb_gocontext::Context::background(), &server_info, &mock_task_mgr);
         assert_eq!(node_mgr.prev_live_nodes(), set(&[":4000", ":4001"]));
         mock_task_mgr.assert_satisfied();
         // run again, return fast
-        node_mgr.maintain_live_nodes(&server_info, &mock_task_mgr);
+        node_mgr.maintain_live_nodes(&tidb_gocontext::Context::background(), &server_info, &mock_task_mgr);
         assert_eq!(node_mgr.prev_live_nodes(), set(&[":4000", ":4001"]));
         mock_task_mgr.assert_satisfied();
 
@@ -228,11 +228,11 @@ mod tests {
 
         mock_task_mgr.expect_get_all_nodes(Ok(vec![node(":4000", 0), node(":4001", 0), node(":4002", 0)]));
         mock_task_mgr.expect_delete_dead_nodes(Ok(()));
-        node_mgr.maintain_live_nodes(&server_info, &mock_task_mgr);
+        node_mgr.maintain_live_nodes(&tidb_gocontext::Context::background(), &server_info, &mock_task_mgr);
         assert_eq!(node_mgr.prev_live_nodes(), set(&[":4000"]));
         mock_task_mgr.assert_satisfied();
         // run again, return fast
-        node_mgr.maintain_live_nodes(&server_info, &mock_task_mgr);
+        node_mgr.maintain_live_nodes(&tidb_gocontext::Context::background(), &server_info, &mock_task_mgr);
         assert_eq!(node_mgr.prev_live_nodes(), set(&[":4000"]));
         mock_task_mgr.assert_satisfied();
     }
@@ -245,18 +245,18 @@ mod tests {
 
         let slot_mgr = SlotManager::new();
         mock_task_mgr.expect_get_all_nodes(Err(StorageError::Other("mock error".to_owned())));
-        node_mgr.refresh_nodes(&mock_task_mgr, &slot_mgr);
+        node_mgr.refresh_nodes(&tidb_gocontext::Context::background(), &mock_task_mgr, &slot_mgr);
         assert_eq!(slot_mgr.get_capacity(), tidb_cpu::get_cpu_count() as isize);
         assert!(node_mgr.get_nodes().is_empty());
         mock_task_mgr.assert_satisfied();
 
         mock_task_mgr.expect_get_all_nodes(Ok(vec![node(":4000", 100), node(":4001", 100)]));
-        node_mgr.refresh_nodes(&mock_task_mgr, &slot_mgr);
+        node_mgr.refresh_nodes(&tidb_gocontext::Context::background(), &mock_task_mgr, &slot_mgr);
         assert_eq!(node_mgr.get_nodes(), [node(":4000", 100), node(":4001", 100)]);
         assert_eq!(slot_mgr.get_capacity(), 100);
         mock_task_mgr.assert_satisfied();
         mock_task_mgr.expect_get_all_nodes(Ok(Vec::new()));
-        node_mgr.refresh_nodes(&mock_task_mgr, &slot_mgr);
+        node_mgr.refresh_nodes(&tidb_gocontext::Context::background(), &mock_task_mgr, &slot_mgr);
         assert!(node_mgr.get_nodes().is_empty());
         assert_eq!(slot_mgr.get_capacity(), 100);
         mock_task_mgr.assert_satisfied();

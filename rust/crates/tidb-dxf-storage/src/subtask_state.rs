@@ -20,7 +20,6 @@ use tidb_dxf::{
     SubtaskBase, SubtaskState, SUBTASK_STATE_CANCELED, SUBTASK_STATE_FAILED, SUBTASK_STATE_PENDING,
     SUBTASK_STATE_RUNNING, SUBTASK_STATE_SUCCEED,
 };
-use tidb_sqlexec::BackgroundContext;
 
 use crate::task_table::{serialize_err, sql_args, Arg};
 use crate::{exec_sql, task_id_to_key, Result, StorageError, TaskManager};
@@ -35,10 +34,10 @@ impl TaskManager {
     /// # Errors
     /// No such subtask on the executor (`SubtaskNotFound`), or the session
     /// or the statement failed.
-    pub fn start_subtask(&self, subtask_id: i64, exec_id: &str) -> Result<()> {
-        self.with_new_txn(&mut |se| {
+    pub fn start_subtask(&self, ctx: &tidb_gocontext::Context, subtask_id: i64, exec_id: &str) -> Result<()> {
+        self.with_new_txn(ctx, &mut |se| {
             let args = [state(&SUBTASK_STATE_RUNNING), Arg::Int(subtask_id), Arg::Str(exec_id.to_owned())];
-            exec_sql(&BackgroundContext, se, "update mysql.tidb_background_subtask
+            exec_sql(ctx, se, "update mysql.tidb_background_subtask
 			 set state = %?, start_time = unix_timestamp(), state_update_time = unix_timestamp()
 			 where id = %? and exec_id = %?", &sql_args(&args))?;
             if se.affected_rows() == 0 {
@@ -52,14 +51,14 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn finish_subtask(&self, exec_id: &str, id: i64, meta: &[u8]) -> Result<()> {
+    pub fn finish_subtask(&self, ctx: &tidb_gocontext::Context, exec_id: &str, id: i64, meta: &[u8]) -> Result<()> {
         let args = [
             Arg::Bytes(meta.to_vec()),
             state(&SUBTASK_STATE_SUCCEED),
             Arg::Int(id),
             Arg::Str(exec_id.to_owned()),
         ];
-        self.execute_sql_with_new_session("update mysql.tidb_background_subtask
+        self.execute_sql_with_new_session(ctx, "update mysql.tidb_background_subtask
 		set meta = %?, state = %?, state_update_time = unix_timestamp(), end_time = CURRENT_TIMESTAMP()
 		where id = %? and exec_id = %?", &sql_args(&args))?;
         Ok(())
@@ -70,7 +69,7 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn fail_subtask(&self, exec_id: &str, task_id: i64, err: Option<&(dyn Error + 'static)>) -> Result<()> {
+    pub fn fail_subtask(&self, ctx: &tidb_gocontext::Context, exec_id: &str, task_id: i64, err: Option<&(dyn Error + 'static)>) -> Result<()> {
         if err.is_none() {
             return Ok(());
         }
@@ -82,7 +81,7 @@ impl TaskManager {
             state(&SUBTASK_STATE_PENDING),
             state(&SUBTASK_STATE_RUNNING),
         ];
-        self.execute_sql_with_new_session("update mysql.tidb_background_subtask
+        self.execute_sql_with_new_session(ctx, "update mysql.tidb_background_subtask
 		set state = %?,
 		error = %?,
 		start_time = unix_timestamp(),
@@ -100,7 +99,7 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn cancel_subtask(&self, exec_id: &str, task_id: i64) -> Result<()> {
+    pub fn cancel_subtask(&self, ctx: &tidb_gocontext::Context, exec_id: &str, task_id: i64) -> Result<()> {
         let args = [
             state(&SUBTASK_STATE_CANCELED),
             Arg::Str(exec_id.to_owned()),
@@ -108,7 +107,7 @@ impl TaskManager {
             state(&SUBTASK_STATE_PENDING),
             state(&SUBTASK_STATE_RUNNING),
         ];
-        self.execute_sql_with_new_session("update mysql.tidb_background_subtask
+        self.execute_sql_with_new_session(ctx, "update mysql.tidb_background_subtask
 		set state = %?,
 		start_time = unix_timestamp(),
 		state_update_time = unix_timestamp(),
@@ -124,9 +123,9 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn pause_subtasks(&self, exec_id: &str, task_id: i64) -> Result<()> {
+    pub fn pause_subtasks(&self, ctx: &tidb_gocontext::Context, exec_id: &str, task_id: i64) -> Result<()> {
         let args = [Arg::Str(task_id_to_key(task_id)), Arg::Str(exec_id.to_owned())];
-        self.execute_sql_with_new_session("update mysql.tidb_background_subtask set state = \"paused\" where task_key = %? and state in (\"running\", \"pending\") and exec_id = %?", &sql_args(&args))?;
+        self.execute_sql_with_new_session(ctx, "update mysql.tidb_background_subtask set state = \"paused\" where task_key = %? and state in (\"running\", \"pending\") and exec_id = %?", &sql_args(&args))?;
         Ok(())
     }
 
@@ -134,9 +133,9 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn resume_subtasks(&self, task_id: i64) -> Result<()> {
+    pub fn resume_subtasks(&self, ctx: &tidb_gocontext::Context, task_id: i64) -> Result<()> {
         let args = [Arg::Str(task_id_to_key(task_id))];
-        self.execute_sql_with_new_session("update mysql.tidb_background_subtask set state = \"pending\", error = null where task_key = %? and state = \"paused\"", &sql_args(&args))?;
+        self.execute_sql_with_new_session(ctx, "update mysql.tidb_background_subtask set state = \"pending\", error = null where task_key = %? and state = \"paused\"", &sql_args(&args))?;
         Ok(())
     }
 
@@ -145,12 +144,12 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or a statement failed.
-    pub fn running_subtasks_back2_pending(&self, subtasks: &[SubtaskBase]) -> Result<()> {
+    pub fn running_subtasks_back2_pending(&self, ctx: &tidb_gocontext::Context, subtasks: &[SubtaskBase]) -> Result<()> {
         // skip the update process.
         if subtasks.is_empty() {
             return Ok(());
         }
-        self.with_new_txn(&mut |se| {
+        self.with_new_txn(ctx, &mut |se| {
             for subtask in subtasks {
                 let args = [
                     state(&SUBTASK_STATE_PENDING),
@@ -158,7 +157,7 @@ impl TaskManager {
                     Arg::Str(subtask.exec_id.clone()),
                     state(&SUBTASK_STATE_RUNNING),
                 ];
-                exec_sql(&BackgroundContext, se, "
+                exec_sql(ctx, se, "
 				update mysql.tidb_background_subtask
 				set state = %?, state_update_time = unix_timestamp()
 				where id = %? and exec_id = %? and state = %?", &sql_args(&args))?;
@@ -172,7 +171,7 @@ impl TaskManager {
     /// # Errors
     /// The session or the statement failed.
     pub fn update_subtask_state_and_error(
-        &self,
+        &self, ctx: &tidb_gocontext::Context,
         exec_id: &str,
         id: i64,
         subtask_state: &SubtaskState,
@@ -184,7 +183,7 @@ impl TaskManager {
             Arg::Int(id),
             Arg::Str(exec_id.to_owned()),
         ];
-        self.execute_sql_with_new_session("update mysql.tidb_background_subtask
+        self.execute_sql_with_new_session(ctx, "update mysql.tidb_background_subtask
 		set state = %?, error = %?, state_update_time = unix_timestamp() where id = %? and exec_id = %?", &sql_args(&args))?;
         Ok(())
     }

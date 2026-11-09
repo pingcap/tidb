@@ -51,6 +51,11 @@ impl<T: Any + Send + Sync> ExecutionContext for T {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BackgroundContext;
 
+/// The key a Go-shaped (`tidb_gocontext`) context carries its request trace
+/// values under (Go keeps them in the same `context.Context` it cancels).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TraceContextKey;
+
 /// Go `sysproctrack.TrackProc`, carried opaquely through restricted execution.
 pub trait TrackProc: Any + Send + Sync {}
 

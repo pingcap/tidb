@@ -592,7 +592,7 @@ fn test_fast_respond_no_need_resource_task_when_schedulers_reach_limit() {
     let mgr = new_manager(&Context::background(), Arc::clone(&task_mgr));
     expect_runtime_from_new_session(&task_mgr, new_runtime_with_store(""));
     task_mgr.expect_get_all_nodes(Ok(vec![tidb_dxf::ManagedNode { cpu_count: 8, ..tidb_dxf::ManagedNode::default() }]));
-    mgr.node_mgr.refresh_nodes(task_mgr.as_ref(), &mgr.slot_mgr);
+    mgr.node_mgr.refresh_nodes(&tidb_gocontext::Context::background(), task_mgr.as_ref(), &mgr.slot_mgr);
     let _schedulers = register_test_scheduler_factory();
     for state in [TASK_STATE_CANCELLING, TASK_STATE_REVERTING, TASK_STATE_MODIFYING, TASK_STATE_PAUSING] {
         let (ch_tx, ch_rx) = crossbeam_channel::bounded::<()>(0);

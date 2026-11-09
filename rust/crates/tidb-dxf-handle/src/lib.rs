@@ -112,15 +112,15 @@ pub fn new_sample_err_verbose_logger(fields: &[Field]) -> tidb_logutil::SampledL
 ///
 /// # Errors
 /// No task manager is set, or the query failed.
-pub fn get_cpu_count_of_node() -> Result<isize> {
-    Ok(get_dxf_svc_task_mgr()?.get_cpu_count_of_node()?)
+pub fn get_cpu_count_of_node(ctx: &tidb_gocontext::Context) -> Result<isize> {
+    Ok(get_dxf_svc_task_mgr()?.get_cpu_count_of_node(ctx)?)
 }
 
 /// Go `SubmitTask`.
 ///
 /// # Errors
 /// See [`submit_task_with_extra_params`].
-pub fn submit_task(
+pub fn submit_task(ctx: &tidb_gocontext::Context, 
     task_key: &str,
     task_type: &TaskType,
     keyspace: &str,
@@ -129,7 +129,7 @@ pub fn submit_task(
     max_node_cnt: isize,
     task_meta: &[u8],
 ) -> Result<Task> {
-    submit_task_with_extra_params(
+    submit_task_with_extra_params(ctx, 
         task_key,
         task_type,
         keyspace,
@@ -148,7 +148,7 @@ pub fn submit_task(
 /// A task with the key exists (`TaskAlreadyExists`), or the task manager
 /// failed.
 #[allow(clippy::too_many_arguments)]
-pub fn submit_task_with_extra_params(
+pub fn submit_task_with_extra_params(ctx: &tidb_gocontext::Context, 
     task_key: &str,
     task_type: &TaskType,
     keyspace: &str,
@@ -159,13 +159,13 @@ pub fn submit_task_with_extra_params(
     task_meta: &[u8],
 ) -> Result<Task> {
     let task_manager = get_dxf_svc_task_mgr()?;
-    match task_manager.get_task_by_key_with_history(task_key) {
+    match task_manager.get_task_by_key_with_history(ctx, task_key) {
         Ok(_) => return Err(StorageError::TaskAlreadyExists.into()),
         Err(error) if !error.is(&StorageError::TaskNotFound) => return Err(error.into()),
         Err(_) => {}
     }
 
-    let task_id = task_manager.create_task(
+    let task_id = task_manager.create_task(ctx, 
         task_key,
         task_type,
         keyspace,
@@ -176,7 +176,7 @@ pub fn submit_task_with_extra_params(
         task_meta,
     )?;
 
-    let task = task_manager.get_task_by_id(task_id)?;
+    let task = task_manager.get_task_by_id(ctx, task_id)?;
 
     notify_task_change();
     Ok(task)
@@ -201,7 +201,7 @@ pub fn wait_task_done_or_paused_with_result(ctx: &Context, id: i64) -> Result<Ta
     let logger = tidb_logutil::bg_logger().with_fields(&[Field::new("task-id", Value::I64(id))]);
     wait_task(ctx, id, |t| t.is_done() || t.state == TASK_STATE_PAUSED)?;
     let task_manager = get_dxf_svc_task_mgr()?;
-    let found = task_manager.get_task_by_id_with_history(id)?;
+    let found = task_manager.get_task_by_id_with_history(ctx, id)?;
 
     if found.base.state == TASK_STATE_SUCCEED {
         Ok(found)
@@ -230,7 +230,7 @@ pub fn wait_task_done_or_paused_with_result(ctx: &Context, id: i64) -> Result<Ta
 /// No such task, `ctx` ended, or the task manager failed.
 pub fn wait_task_done_by_key(ctx: &Context, task_key: &str) -> Result<()> {
     let task_manager = get_dxf_svc_task_mgr()?;
-    let task = task_manager.get_task_by_key_with_history(task_key)?;
+    let task = task_manager.get_task_by_key_with_history(ctx, task_key)?;
     wait_task(ctx, task.base.id, TaskBase::is_done).map(drop)
 }
 
@@ -255,7 +255,7 @@ pub fn wait_task(ctx: &Context, id: i64, match_fn: impl Fn(&TaskBase) -> bool) -
         crossbeam_channel::select! {
             recv(done) -> _ => return Err(HandleError::Context(ctx.err().unwrap_or(CtxError::Canceled))),
             recv(ticker) -> _ => {
-                let task = match task_manager.get_task_base_by_id_with_history(id) {
+                let task = match task_manager.get_task_base_by_id_with_history(ctx, id) {
                     Ok(task) => task,
                     Err(error) => {
                         sample_logger.error("cannot get task during waiting", &[Field::new("error", Value::Str(error.to_string()))]);
@@ -274,9 +274,9 @@ pub fn wait_task(ctx: &Context, id: i64, match_fn: impl Fn(&TaskBase) -> bool) -
 ///
 /// # Errors
 /// The task manager failed.
-pub fn cancel_task(task_key: &str) -> Result<()> {
+pub fn cancel_task(ctx: &tidb_gocontext::Context, task_key: &str) -> Result<()> {
     let task_manager = get_dxf_svc_task_mgr()?;
-    let task = match task_manager.get_task_by_key(task_key) {
+    let task = match task_manager.get_task_by_key(ctx, task_key) {
         Ok(task) => task,
         Err(error) if error.is(&StorageError::TaskNotFound) => {
             tidb_logutil::bg_logger().info("task not exist", &[Field::new("taskKey", Value::Str(task_key.into()))]);
@@ -284,17 +284,17 @@ pub fn cancel_task(task_key: &str) -> Result<()> {
         }
         Err(error) => return Err(error.into()),
     };
-    Ok(task_manager.cancel_task(task.base.id)?)
+    Ok(task_manager.cancel_task(ctx, task.base.id)?)
 }
 
 /// Go `PauseTask`: nothing when the task is not pausable.
 ///
 /// # Errors
 /// No task manager is set.
-pub fn pause_task(task_key: &str) -> Result<()> {
+pub fn pause_task(ctx: &tidb_gocontext::Context, task_key: &str) -> Result<()> {
     let task_manager = get_dxf_svc_task_mgr()?;
     // Go's `found` is false on an error, which the not-pausable branch hides.
-    if !task_manager.pause_task(task_key).unwrap_or(false) {
+    if !task_manager.pause_task(ctx, task_key).unwrap_or(false) {
         tidb_logutil::bg_logger().info("task not pausable", &[Field::new("taskKey", Value::Str(task_key.into()))]);
     }
     Ok(())
@@ -304,10 +304,10 @@ pub fn pause_task(task_key: &str) -> Result<()> {
 ///
 /// # Errors
 /// No task manager is set.
-pub fn resume_task(task_key: &str) -> Result<()> {
+pub fn resume_task(ctx: &tidb_gocontext::Context, task_key: &str) -> Result<()> {
     let task_manager = get_dxf_svc_task_mgr()?;
     // Go's `found` is false on an error, which the not-resumable branch hides.
-    if !task_manager.resume_task(task_key).unwrap_or(false) {
+    if !task_manager.resume_task(ctx, task_key).unwrap_or(false) {
         tidb_logutil::bg_logger().info("task not resumable", &[Field::new("taskKey", Value::Str(task_key.into()))]);
     }
     Ok(())
@@ -402,10 +402,10 @@ pub fn get_target_scope() -> String {
 ///
 /// # Errors
 /// No task manager is set, or the statement failed.
-pub fn update_pause_scale_in_flag(flag: &tidb_dxf::schstatus::TtlFlag) -> Result<()> {
+pub fn update_pause_scale_in_flag(ctx: &tidb_gocontext::Context, flag: &tidb_dxf::schstatus::TtlFlag) -> Result<()> {
     let manager = get_task_manager()?;
     let bytes = tidb_stringutil::go_json_marshal(flag);
-    manager.with_new_txn(&mut |se| {
+    manager.with_new_txn(ctx, &mut |se| {
         tidb_dxf_storage::exec_sql(
             &tidb_sqlexec::BackgroundContext,
             se,

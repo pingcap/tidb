@@ -26,20 +26,20 @@ use tidb_gomock::Controller;
 
 /// Go `runOneTask`.
 fn run_one_task(ctx: &Context, mgr: &Arc<TaskManager>, task_key: &str, subtask_cnt: usize) {
-    let task_id = mgr.create_task(task_key, &TASK_TYPE_EXAMPLE, "", 1, "", 0, &ExtraParams::default(), &[]).unwrap();
-    let task = mgr.get_task_by_id(task_id).unwrap();
+    let task_id = mgr.create_task(&ctx, task_key, &TASK_TYPE_EXAMPLE, "", 1, "", 0, &ExtraParams::default(), &[]).unwrap();
+    let task = mgr.get_task_by_id(&ctx, task_id).unwrap();
 
     let check_subtasks = |step: Step, state: SubtaskState| {
-        let subtasks = mgr.get_all_subtasks_by_step_and_state(task_id, step, &state).unwrap();
+        let subtasks = mgr.get_all_subtasks_by_step_and_state(&ctx, task_id, step, &state).unwrap();
         assert_eq!(subtasks.len(), subtask_cnt);
     };
     // 1. stepOne
-    mgr.switch_task_step(&task, &TASK_STATE_RUNNING, STEP_ONE, &[]).unwrap();
+    mgr.switch_task_step(&ctx, &task, &TASK_STATE_RUNNING, STEP_ONE, &[]).unwrap();
     for _ in 0..subtask_cnt {
         testutil::create_sub_task(mgr, task_id, STEP_ONE, ":4000", None, &TASK_TYPE_EXAMPLE, 1);
     }
     check_subtasks(STEP_ONE, SUBTASK_STATE_PENDING);
-    let task = mgr.get_task_by_id(task_id).unwrap();
+    let task = mgr.get_task_by_id(&ctx, task_id).unwrap();
     let factory = tidb_dxf_taskexecutor::get_task_executor_factory(&task.base.tp).expect("the example task executor is registered");
     // Go's `NewParamForTest` passes a nil slot manager: a plain run never
     // exchanges slots.
@@ -56,7 +56,7 @@ fn run_one_task(ctx: &Context, mgr: &Arc<TaskManager>, task_key: &str, subtask_c
     executor.run();
     check_subtasks(STEP_ONE, SUBTASK_STATE_SUCCEED);
     // 2. stepTwo
-    mgr.switch_task_step(&task, &TASK_STATE_RUNNING, STEP_TWO, &[]).unwrap();
+    mgr.switch_task_step(&ctx, &task, &TASK_STATE_RUNNING, STEP_TWO, &[]).unwrap();
     for _ in 0..subtask_cnt {
         testutil::create_sub_task(mgr, task_id, STEP_TWO, ":4000", None, &TASK_TYPE_EXAMPLE, 11);
     }
@@ -109,7 +109,7 @@ fn test_task_executor_basic() {
         }
         Ok(())
     });
-    mgr.init_meta(":4000", "").unwrap();
+    mgr.init_meta(&ctx, ":4000", "").unwrap();
     for i in 0..10 {
         run_one_task(&ctx, &mgr, &format!("key{i}"), i);
     }

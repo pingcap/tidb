@@ -16,9 +16,8 @@
 //! tree whose `Done()` is a channel a `select` can wait on (here a
 //! `crossbeam_channel::Receiver` that disconnects when the context ends),
 //! `Err()`, `WithCancel`, `WithCancelCause` (with `Cause`) and
-//! `WithTimeout`. Context values have no
-//! counterpart: callers pass what Go keeps there (`pkg/ttl`'s phase tracer)
-//! explicitly instead.
+//! `WithTimeout`, and `WithValue` / `Value` (a value chain every derived
+//! context inherits, keyed by a key type as Go keys are by their type).
 
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
@@ -89,10 +88,18 @@ impl Inner {
     }
 }
 
+/// Go `valueCtx`: one key's value over its parent's.
+struct ValueNode {
+    key: std::any::TypeId,
+    value: Arc<dyn std::any::Any + Send + Sync>,
+    parent: Option<Arc<ValueNode>>,
+}
+
 /// Go `context.Context`. The default value is `context.Background()`.
 #[derive(Clone, Default)]
 pub struct Context {
     inner: Option<Arc<Inner>>,
+    values: Option<Arc<ValueNode>>,
 }
 
 impl std::fmt::Debug for Context {
@@ -150,9 +157,37 @@ impl Context {
         (
             Self {
                 inner: Some(Arc::clone(&inner)),
+                values: parent.values.clone(),
             },
             inner,
         )
+    }
+
+    /// Go `context.WithValue(parent, key, val)`, keyed by the key type `K`:
+    /// the parent's cancellation, with `val` answering `Value(K)`.
+    pub fn with_value<K: 'static, V: std::any::Any + Send + Sync>(parent: &Context, value: V) -> Self {
+        Self {
+            inner: parent.inner.clone(),
+            values: Some(Arc::new(ValueNode {
+                key: std::any::TypeId::of::<K>(),
+                value: Arc::new(value),
+                parent: parent.values.clone(),
+            })),
+        }
+    }
+
+    /// Go `ctx.Value(key)` for the key type `K`: the nearest value set under
+    /// it, if it is a `V`.
+    pub fn value<K: 'static, V: std::any::Any + Send + Sync>(&self) -> Option<&V> {
+        let key = std::any::TypeId::of::<K>();
+        let mut node = self.values.as_deref();
+        while let Some(current) = node {
+            if current.key == key {
+                return current.value.downcast_ref::<V>();
+            }
+            node = current.parent.as_deref();
+        }
+        None
     }
 
     /// Go `context.WithCancel(parent)`.
@@ -227,6 +262,25 @@ impl Context {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Go `context.WithValue`: a value reaches every context derived from
+    /// it, the nearest one wins, and cancellation is the parent's.
+    #[test]
+    fn values_reach_derived_contexts_and_the_nearest_wins() {
+        struct Key;
+        struct Other;
+        let (parent, cancel) = Context::with_cancel(&Context::background());
+        let with = Context::with_value::<Key, &str>(&parent, "a");
+        let (child, _cancel) = Context::with_cancel(&with);
+        assert_eq!(child.value::<Key, &str>(), Some(&"a"));
+        assert_eq!(child.value::<Other, &str>(), None);
+        let nearer = Context::with_value::<Key, &str>(&child, "b");
+        assert_eq!(nearer.value::<Key, &str>(), Some(&"b"));
+        assert_eq!(with.value::<Key, &str>(), Some(&"a"));
+        cancel.cancel();
+        assert_eq!(with.err(), Some(CtxError::Canceled));
+        assert_eq!(nearer.err(), Some(CtxError::Canceled));
+    }
 
     #[test]
     fn cancel_reaches_descendants_and_not_ancestors() {

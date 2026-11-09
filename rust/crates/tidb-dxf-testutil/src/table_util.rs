@@ -46,8 +46,8 @@ fn get_string(row: &[Datum], idx: usize) -> String {
 ///
 /// # Errors
 /// The statement failed.
-pub fn get_one_task(mgr: &TaskManager) -> Result<Option<Task>> {
-    let rs = mgr.execute_sql_with_new_session(
+pub fn get_one_task(ctx: &tidb_gocontext::Context, mgr: &TaskManager) -> Result<Option<Task>> {
+    let rs = mgr.execute_sql_with_new_session(ctx, 
         &format!("select {TASK_COLUMNS} from mysql.tidb_global_task t where state = %? limit 1"),
         &[SqlArg::String(TASK_STATE_PENDING.to_string().as_bytes())],
     )?;
@@ -58,18 +58,18 @@ pub fn get_one_task(mgr: &TaskManager) -> Result<Option<Task>> {
 ///
 /// # Errors
 /// The statement failed.
-pub fn get_subtasks_from_history(mgr: &TaskManager) -> Result<usize> {
-    Ok(mgr.execute_sql_with_new_session("select * from mysql.tidb_background_subtask_history", &[])?.len())
+pub fn get_subtasks_from_history(ctx: &tidb_gocontext::Context, mgr: &TaskManager) -> Result<usize> {
+    Ok(mgr.execute_sql_with_new_session(ctx, "select * from mysql.tidb_background_subtask_history", &[])?.len())
 }
 
 /// Go `GetSubtasksFromHistoryByTaskID`.
 ///
 /// # Errors
 /// The statement failed.
-pub fn get_subtasks_from_history_by_task_id(mgr: &TaskManager, task_id: i64) -> Result<usize> {
+pub fn get_subtasks_from_history_by_task_id(ctx: &tidb_gocontext::Context, mgr: &TaskManager, task_id: i64) -> Result<usize> {
     let key = task_id_to_key(task_id);
     Ok(mgr
-        .execute_sql_with_new_session(
+        .execute_sql_with_new_session(ctx, 
             &format!("select {SUBTASK_COLUMNS} from mysql.tidb_background_subtask_history where task_key = %?"),
             &[SqlArg::String(key.as_bytes())],
         )?
@@ -80,9 +80,9 @@ pub fn get_subtasks_from_history_by_task_id(mgr: &TaskManager, task_id: i64) -> 
 ///
 /// # Errors
 /// The statement failed.
-pub fn get_subtasks_by_task_id(mgr: &TaskManager, task_id: i64) -> Result<Vec<Subtask>> {
+pub fn get_subtasks_by_task_id(ctx: &tidb_gocontext::Context, mgr: &TaskManager, task_id: i64) -> Result<Vec<Subtask>> {
     let key = task_id_to_key(task_id);
-    let rs = mgr.execute_sql_with_new_session(
+    let rs = mgr.execute_sql_with_new_session(ctx, 
         &format!("select {SUBTASK_COLUMNS} from mysql.tidb_background_subtask where task_key = %?"),
         &[SqlArg::String(key.as_bytes())],
     )?;
@@ -93,16 +93,16 @@ pub fn get_subtasks_by_task_id(mgr: &TaskManager, task_id: i64) -> Result<Vec<Su
 ///
 /// # Errors
 /// The statement failed.
-pub fn get_tasks_from_history(mgr: &TaskManager) -> Result<usize> {
-    Ok(mgr.execute_sql_with_new_session("select * from mysql.tidb_global_task_history", &[])?.len())
+pub fn get_tasks_from_history(ctx: &tidb_gocontext::Context, mgr: &TaskManager) -> Result<usize> {
+    Ok(mgr.execute_sql_with_new_session(ctx, "select * from mysql.tidb_global_task_history", &[])?.len())
 }
 
 /// Go `GetTaskEndTime`.
 ///
 /// # Errors
 /// The time does not convert.
-pub fn get_task_end_time(mgr: &TaskManager, task_id: i64) -> Result<DateTime<FixedOffset>> {
-    let Ok(rs) = mgr.execute_sql_with_new_session(
+pub fn get_task_end_time(ctx: &tidb_gocontext::Context, mgr: &TaskManager, task_id: i64) -> Result<DateTime<FixedOffset>> {
+    let Ok(rs) = mgr.execute_sql_with_new_session(ctx, 
         "select end_time
 \t\tfrom mysql.tidb_global_task
 \t    where id = %?",
@@ -117,8 +117,8 @@ pub fn get_task_end_time(mgr: &TaskManager, task_id: i64) -> Result<DateTime<Fix
 ///
 /// # Errors
 /// The time does not convert.
-pub fn get_subtask_end_time(mgr: &TaskManager, subtask_id: i64) -> Result<DateTime<FixedOffset>> {
-    let Ok(rs) = mgr.execute_sql_with_new_session(
+pub fn get_subtask_end_time(ctx: &tidb_gocontext::Context, mgr: &TaskManager, subtask_id: i64) -> Result<DateTime<FixedOffset>> {
+    let Ok(rs) = mgr.execute_sql_with_new_session(ctx, 
         "select end_time
 \t\tfrom mysql.tidb_background_subtask
 \t    where id = %?",
@@ -133,9 +133,9 @@ pub fn get_subtask_end_time(mgr: &TaskManager, subtask_id: i64) -> Result<DateTi
 ///
 /// # Errors
 /// The statement failed.
-pub fn get_subtask_nodes(mgr: &TaskManager, task_id: i64) -> Result<Vec<String>> {
+pub fn get_subtask_nodes(ctx: &tidb_gocontext::Context, mgr: &TaskManager, task_id: i64) -> Result<Vec<String>> {
     let key = task_id_to_key(task_id);
-    let rs = mgr.execute_sql_with_new_session(
+    let rs = mgr.execute_sql_with_new_session(ctx, 
         "
 \t\tselect distinct(exec_id) from mysql.tidb_background_subtask where task_key=%?
 \t\tunion
@@ -149,8 +149,8 @@ pub fn get_subtask_nodes(mgr: &TaskManager, task_id: i64) -> Result<Vec<String>>
 ///
 /// # Errors
 /// The statement failed.
-pub fn update_subtask_exec_id(mgr: &TaskManager, tidb_id: &str, subtask_id: i64) -> Result<()> {
-    mgr.execute_sql_with_new_session(
+pub fn update_subtask_exec_id(ctx: &tidb_gocontext::Context, mgr: &TaskManager, tidb_id: &str, subtask_id: i64) -> Result<()> {
+    mgr.execute_sql_with_new_session(ctx, 
         "update mysql.tidb_background_subtask
 \t\t set exec_id = %?, state_update_time = unix_timestamp()
 \t\t where id = %?",
@@ -163,21 +163,21 @@ pub fn update_subtask_exec_id(mgr: &TaskManager, tidb_id: &str, subtask_id: i64)
 ///
 /// # Errors
 /// A statement failed.
-pub fn transfer_sub_tasks2_history(mgr: &TaskManager, task_id: i64) -> Result<()> {
-    mgr.with_new_session(&mut |se| TaskManager::transfer_subtasks2_history_with_session(se, task_id))
+pub fn transfer_sub_tasks2_history(ctx: &tidb_gocontext::Context, mgr: &TaskManager, task_id: i64) -> Result<()> {
+    mgr.with_new_session(&mut |se| TaskManager::transfer_subtasks2_history_with_session(ctx, se, task_id))
 }
 
 /// Go `GetTasksFromHistoryInStates`.
 ///
 /// # Errors
 /// The statement failed.
-pub fn get_tasks_from_history_in_states(mgr: &TaskManager, states: &[TaskState]) -> Result<Vec<Task>> {
+pub fn get_tasks_from_history_in_states(ctx: &tidb_gocontext::Context, mgr: &TaskManager, states: &[TaskState]) -> Result<Vec<Task>> {
     if states.is_empty() {
         return Ok(Vec::new());
     }
     let states: Vec<String> = states.iter().map(ToString::to_string).collect();
     let args: Vec<SqlArg<'_>> = states.iter().map(|state| SqlArg::String(state.as_bytes())).collect();
-    let rs = mgr.execute_sql_with_new_session(
+    let rs = mgr.execute_sql_with_new_session(ctx, 
         &format!(
             "select {TASK_COLUMNS} from mysql.tidb_global_task_history t where state in ({}%?)",
             "%?,".repeat(states.len() - 1)
@@ -191,9 +191,9 @@ pub fn get_tasks_from_history_in_states(mgr: &TaskManager, states: &[TaskState])
 ///
 /// # Errors
 /// The statement failed.
-pub fn delete_subtasks_by_task_id(mgr: &TaskManager, task_id: i64) -> Result<()> {
+pub fn delete_subtasks_by_task_id(ctx: &tidb_gocontext::Context, mgr: &TaskManager, task_id: i64) -> Result<()> {
     let key = task_id_to_key(task_id);
-    mgr.execute_sql_with_new_session(
+    mgr.execute_sql_with_new_session(ctx, 
         "delete from mysql.tidb_background_subtask
 \t\twhere task_key = %?",
         &[SqlArg::String(key.as_bytes())],
@@ -205,8 +205,8 @@ pub fn delete_subtasks_by_task_id(mgr: &TaskManager, task_id: i64) -> Result<()>
 ///
 /// # Errors
 /// The statement failed.
-pub fn is_task_cancelling(mgr: &TaskManager, task_id: i64) -> Result<bool> {
-    let rs = mgr.execute_sql_with_new_session(
+pub fn is_task_cancelling(ctx: &tidb_gocontext::Context, mgr: &TaskManager, task_id: i64) -> Result<bool> {
+    let rs = mgr.execute_sql_with_new_session(ctx, 
         "select 1 from mysql.tidb_global_task where id=%? and state = %?",
         &[SqlArg::Signed(task_id), SqlArg::String(TASK_STATE_CANCELLING.to_string().as_bytes())],
     )?;
@@ -214,17 +214,17 @@ pub fn is_task_cancelling(mgr: &TaskManager, task_id: i64) -> Result<bool> {
 }
 
 /// Go `PrintSubtaskInfo`: logs the task's subtasks.
-pub fn print_subtask_info(mgr: &TaskManager, task_id: i64) {
+pub fn print_subtask_info(ctx: &tidb_gocontext::Context, mgr: &TaskManager, task_id: i64) {
     let key = task_id_to_key(task_id);
     let args = [SqlArg::String(key.as_bytes())];
     let mut rs = mgr
-        .execute_sql_with_new_session(
+        .execute_sql_with_new_session(ctx, 
             &format!("select {SUBTASK_COLUMNS} from mysql.tidb_background_subtask_history where task_key = %?"),
             &args,
         )
         .unwrap_or_default();
     rs.extend(
-        mgr.execute_sql_with_new_session(
+        mgr.execute_sql_with_new_session(ctx, 
             &format!("select {SUBTASK_COLUMNS} from mysql.tidb_background_subtask where task_key = %?"),
             &args,
         )

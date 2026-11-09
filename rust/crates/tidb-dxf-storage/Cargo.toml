@@ -15,6 +15,7 @@ workspace = true
 failpoints = ["dep:fail", "fail/failpoints"]
 
 [dependencies]
+tidb-gocontext = { path = "../tidb-gocontext" }
 chrono.workspace = true
 crossbeam-channel = "0.5"
 fail = { version = "0.4", optional = true }

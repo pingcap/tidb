@@ -157,7 +157,7 @@ fn test_framework_cancel_task() {
         let task_mgr = Arc::clone(&c.task_mgr);
         *tidb_dxf_taskexecutor::AFTER_RUN_SUBTASK.write().unwrap() = Some(Arc::new(move |e, _, _| {
             if counter.fetch_add(1, Ordering::SeqCst) + 1 == 1 {
-                task_mgr.cancel_task(tidb_dxf_taskexecutor::TaskExecutor::get_task_base(e).id).unwrap();
+                task_mgr.cancel_task(&tidb_gocontext::Context::background(), tidb_dxf_taskexecutor::TaskExecutor::get_task_base(e).id).unwrap();
             }
         }));
     }
@@ -233,7 +233,7 @@ fn test_task_cancelled_before_update_task() {
         let task_mgr = Arc::clone(&c.task_mgr);
         *tidb_dxf_scheduler::CANCEL_BEFORE_UPDATE_TASK.write().unwrap() = Some(Arc::new(move |task_id| {
             if counter.fetch_add(1, Ordering::SeqCst) + 1 == 1 {
-                task_mgr.cancel_task(task_id).unwrap();
+                task_mgr.cancel_task(&tidb_gocontext::Context::background(), task_id).unwrap();
             }
         }));
     }
@@ -361,7 +361,7 @@ fn test_framework_rollback() {
         let task_mgr = Arc::clone(&c.task_mgr);
         *tidb_dxf_scheduler::AFTER_REFRESH_TASK.write().unwrap() = Some(Arc::new(move |task| {
             if counter.fetch_add(1, Ordering::SeqCst) + 1 <= 2 && task.base.state == TASK_STATE_RUNNING {
-                task_mgr.cancel_task(task.base.id).unwrap();
+                task_mgr.cancel_task(&tidb_gocontext::Context::background(), task.base.id).unwrap();
             }
         }));
     }
@@ -433,7 +433,7 @@ fn test_on_task_error() {
         );
         let tm = tidb_dxf_storage::get_task_manager().unwrap();
         let task_id = tm
-            .create_task(
+            .create_task(&tidb_gocontext::Context::background(), 
                 task_key,
                 &TASK_TYPE_EXAMPLE,
                 "",
@@ -445,7 +445,7 @@ fn test_on_task_error() {
             )
             .unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        while tm.get_task_by_id(task_id).unwrap().base.state != TASK_STATE_AWAITING_RESOLUTION {
+        while tm.get_task_by_id(&tidb_gocontext::Context::background(), task_id).unwrap().base.state != TASK_STATE_AWAITING_RESOLUTION {
             assert!(std::time::Instant::now() < deadline, "the task did not await resolution");
             std::thread::sleep(Duration::from_millis(100));
         }
@@ -471,7 +471,7 @@ fn test_on_task_error() {
     {
         let task_key = "key4-1";
         let (task_id, _registered) = prepare_for_awaiting_resolution(task_key);
-        c.task_mgr.cancel_task(task_id).unwrap();
+        c.task_mgr.cancel_task(&tidb_gocontext::Context::background(), task_id).unwrap();
         let task = testutil::wait_task_done(&c.ctx, task_key);
         assert_eq!(task.state, TASK_STATE_REVERTED);
     }
@@ -480,10 +480,10 @@ fn test_on_task_error() {
 /// Go `CheckSubtasksState`.
 fn check_subtasks_state(task_id: i64, state: &SubtaskState, expected_cnt: i64) {
     let mgr = tidb_dxf_storage::get_task_manager().unwrap();
-    testutil::print_subtask_info(&mgr, task_id);
-    let cnt_by_states_step_one = mgr.get_subtask_cnt_group_by_states(task_id, STEP_ONE).unwrap();
-    let cnt_by_states_step_two = mgr.get_subtask_cnt_group_by_states(task_id, STEP_TWO).unwrap();
-    let history_sub_tasks_cnt = testutil::get_subtasks_from_history_by_task_id(&mgr, task_id).unwrap();
+    testutil::print_subtask_info(&tidb_gocontext::Context::background(), &mgr, task_id);
+    let cnt_by_states_step_one = mgr.get_subtask_cnt_group_by_states(&tidb_gocontext::Context::background(), task_id, STEP_ONE).unwrap();
+    let cnt_by_states_step_two = mgr.get_subtask_cnt_group_by_states(&tidb_gocontext::Context::background(), task_id, STEP_TWO).unwrap();
+    let history_sub_tasks_cnt = testutil::get_subtasks_from_history_by_task_id(&tidb_gocontext::Context::background(), &mgr, task_id).unwrap();
     // all subtasks moved to history.
     if history_sub_tasks_cnt != 0 {
         assert_eq!(history_sub_tasks_cnt as i64, expected_cnt);
@@ -508,7 +508,7 @@ fn test_framework_pause_and_resume() {
         counter.store(0, Ordering::SeqCst);
         *tidb_dxf_scheduler::BEFORE_REFRESH_TASK.write().unwrap() = Some(Arc::new(move |task: &Task| {
             if counter.fetch_add(1, Ordering::SeqCst) + 1 <= 2 && task.base.state == state {
-                task_mgr.pause_task(&task.base.key).unwrap();
+                task_mgr.pause_task(&tidb_gocontext::Context::background(), &task.base.key).unwrap();
             }
         }));
     };
@@ -518,13 +518,13 @@ fn test_framework_pause_and_resume() {
     assert_eq!(task1.state, TASK_STATE_PAUSED);
     *tidb_dxf_scheduler::BEFORE_REFRESH_TASK.write().unwrap() = None;
     // 4 subtask scheduled.
-    tidb_dxf_handle::resume_task("key1").unwrap();
+    tidb_dxf_handle::resume_task(&tidb_gocontext::Context::background(), "key1").unwrap();
     let task1_base = testutil::wait_task_done(&c.ctx, &task1.key);
     assert_eq!(task1_base.state, TASK_STATE_SUCCEED);
     check_subtasks_state(task1.id, &SUBTASK_STATE_SUCCEED, 4);
 
     let mgr = tidb_dxf_storage::get_task_manager().unwrap();
-    assert!(mgr.get_subtask_errors(task1.id).unwrap().is_empty());
+    assert!(mgr.get_subtask_errors(&tidb_gocontext::Context::background(), task1.id).unwrap().is_empty());
 
     // 2. pause pending task.
     pause_in(TASK_STATE_PENDING);
@@ -532,12 +532,12 @@ fn test_framework_pause_and_resume() {
     assert_eq!(task2.state, TASK_STATE_PAUSED);
     *tidb_dxf_scheduler::BEFORE_REFRESH_TASK.write().unwrap() = None;
     // 4 subtask scheduled.
-    tidb_dxf_handle::resume_task("key2").unwrap();
+    tidb_dxf_handle::resume_task(&tidb_gocontext::Context::background(), "key2").unwrap();
     let task2_base = testutil::wait_task_done(&c.ctx, &task2.key);
     assert_eq!(task2_base.state, TASK_STATE_SUCCEED);
     check_subtasks_state(task2.id, &SUBTASK_STATE_SUCCEED, 4);
 
-    assert!(mgr.get_subtask_errors(task2.id).unwrap().is_empty());
+    assert!(mgr.get_subtask_errors(&tidb_gocontext::Context::background(), task2.id).unwrap().is_empty());
 }
 
 /// Go `getMockBasicSchedulerExtForScope`.
@@ -565,7 +565,7 @@ fn submit_task_and_check_success_for_scope(
 /// Go `checkSubtaskOnNodes`.
 fn check_subtask_on_nodes(task_id: i64, mut expected_nodes: Vec<String>) {
     let mgr = tidb_dxf_storage::get_task_manager().unwrap();
-    let mut nodes = testutil::get_subtask_nodes(&mgr, task_id).unwrap();
+    let mut nodes = testutil::get_subtask_nodes(&tidb_gocontext::Context::background(), &mgr, task_id).unwrap();
     nodes.sort();
     expected_nodes.sort();
     assert_eq!(nodes, expected_nodes);
@@ -824,10 +824,10 @@ fn test_modify_task_concurrency_and_meta() {
                 (std::sync::Once::new(), Arc::clone(&c.task_mgr), scope.clone(), Arc::clone(&the_task));
             *tidb_dxf_scheduler::BEFORE_GET_SCHEDULABLE_TASKS.write().unwrap() = Some(Arc::new(move || {
                 once.call_once(|| {
-                    let task = tidb_dxf_handle::submit_task("k1", &TASK_TYPE_EXAMPLE, "", 3, &scope, 0, b"init").unwrap();
+                    let task = tidb_dxf_handle::submit_task(&tidb_gocontext::Context::background(), "k1", &TASK_TYPE_EXAMPLE, "", 3, &scope, 0, b"init").unwrap();
                     assert_eq!(task.base.required_slots, 3);
-                    task_mgr.modify_task_by_id(task.base.id, &modify_required_slots(TASK_STATE_PENDING, 7)).unwrap();
-                    let got_task = task_mgr.get_task_base_by_id(task.base.id).unwrap();
+                    task_mgr.modify_task_by_id(&tidb_gocontext::Context::background(), task.base.id, &modify_required_slots(TASK_STATE_PENDING, 7)).unwrap();
+                    let got_task = task_mgr.get_task_base_by_id(&tidb_gocontext::Context::background(), task.base.id).unwrap();
                     assert_eq!(got_task.state, TASK_STATE_MODIFYING);
                     assert_eq!(got_task.required_slots, 3);
                     *the_task.lock().unwrap() = Some(task);
@@ -857,12 +857,12 @@ fn test_modify_task_concurrency_and_meta() {
                 }
                 once.call_once(|| {
                     wait_for_running_subtask(&runtime_info);
-                    task_mgr.modify_task_by_id(task.base.id, &modify_required_slots(TASK_STATE_RUNNING, 7)).unwrap();
+                    task_mgr.modify_task_by_id(&tidb_gocontext::Context::background(), task.base.id, &modify_required_slots(TASK_STATE_RUNNING, 7)).unwrap();
                     let _ = modify_sync_rx.recv();
                 });
             }));
         }
-        let task = tidb_dxf_handle::submit_task("k2", &TASK_TYPE_EXAMPLE, "", 3, &scope, 0, &[]).unwrap();
+        let task = tidb_dxf_handle::submit_task(&tidb_gocontext::Context::background(), "k2", &TASK_TYPE_EXAMPLE, "", 3, &scope, 0, &[]).unwrap();
         assert_eq!(task.base.required_slots, 3);
         // finish StepOne
         finish_subtasks(subtask_ch, 2);
@@ -870,7 +870,7 @@ fn test_modify_task_concurrency_and_meta() {
         modify_sync_ch.send(()).unwrap();
         // wait task move back to 'running' state
         eventually(Duration::from_secs(10), Duration::from_millis(100), || {
-            c.task_mgr.get_task_by_id(task.base.id).unwrap().base.state == TASK_STATE_RUNNING
+            c.task_mgr.get_task_by_id(&tidb_gocontext::Context::background(), task.base.id).unwrap().base.state == TASK_STATE_RUNNING
         });
         // finish StepTwo
         finish_subtasks(subtask_ch, 3);
@@ -887,15 +887,15 @@ fn test_modify_task_concurrency_and_meta() {
             let (task_mgr, runtime_info) = (Arc::clone(&c.task_mgr), Arc::clone(runtime_info));
             *tidb_dxf_taskexecutor::BEFORE_GET_TASK_BY_ID_IN_RUN.write().unwrap() = Some(Arc::new(move |task_id| {
                 if runtime_info.subtask_infos.lock().unwrap().len() == 3 {
-                    task_mgr.modify_task_by_id(task_id, &modify_required_slots(TASK_STATE_RUNNING, 7)).unwrap();
+                    task_mgr.modify_task_by_id(&tidb_gocontext::Context::background(), task_id, &modify_required_slots(TASK_STATE_RUNNING, 7)).unwrap();
                     // wait task move back to 'running' state
                     eventually(Duration::from_secs(10), Duration::from_millis(100), || {
-                        task_mgr.get_task_by_id(task_id).unwrap().base.state == TASK_STATE_RUNNING
+                        task_mgr.get_task_by_id(&tidb_gocontext::Context::background(), task_id).unwrap().base.state == TASK_STATE_RUNNING
                     });
                 }
             }));
         }
-        let task = tidb_dxf_handle::submit_task("k2-2", &TASK_TYPE_EXAMPLE, "", 3, &scope, 0, &[]).unwrap();
+        let task = tidb_dxf_handle::submit_task(&tidb_gocontext::Context::background(), "k2-2", &TASK_TYPE_EXAMPLE, "", 3, &scope, 0, &[]).unwrap();
         assert_eq!(task.base.required_slots, 3);
         finish_subtasks(subtask_ch, 5);
         let task2_base = testutil::wait_task_done(&c.ctx, &task.base.key);
@@ -914,9 +914,9 @@ fn test_modify_task_concurrency_and_meta() {
                 (std::sync::Once::new(), Arc::clone(&c.task_mgr), scope.clone(), Arc::clone(&the_task));
             *tidb_dxf_scheduler::BEFORE_GET_SCHEDULABLE_TASKS.write().unwrap() = Some(Arc::new(move || {
                 once.call_once(|| {
-                    let task = tidb_dxf_handle::submit_task("k3", &TASK_TYPE_EXAMPLE, "", 3, &scope, 0, &[]).unwrap();
+                    let task = tidb_dxf_handle::submit_task(&tidb_gocontext::Context::background(), "k3", &TASK_TYPE_EXAMPLE, "", 3, &scope, 0, &[]).unwrap();
                     assert_eq!(task.base.required_slots, 3);
-                    assert!(task_mgr.pause_task(&task.base.key).unwrap());
+                    assert!(task_mgr.pause_task(&tidb_gocontext::Context::background(), &task.base.key).unwrap());
                     *the_task.lock().unwrap() = Some(task);
                     let _ = sync_rx.recv();
                 });
@@ -926,10 +926,10 @@ fn test_modify_task_concurrency_and_meta() {
         let the_task = the_task.lock().unwrap().clone().unwrap();
         let task_base = testutil::wait_task_done_or_paused(&c.ctx, &the_task.base.key);
         assert_eq!(task_base.state, TASK_STATE_PAUSED);
-        c.task_mgr.modify_task_by_id(the_task.base.id, &modify_required_slots(TASK_STATE_PAUSED, 7)).unwrap();
+        c.task_mgr.modify_task_by_id(&tidb_gocontext::Context::background(), the_task.base.id, &modify_required_slots(TASK_STATE_PAUSED, 7)).unwrap();
         let task_base = testutil::wait_task_done_or_paused(&c.ctx, &the_task.base.key);
         assert_eq!(task_base.state, TASK_STATE_PAUSED);
-        assert!(c.task_mgr.resume_task(&the_task.base.key).unwrap());
+        assert!(c.task_mgr.resume_task(&tidb_gocontext::Context::background(), &the_task.base.key).unwrap());
         // finish subtasks
         finish_subtasks(subtask_ch, 5);
         let task2_base = testutil::wait_task_done(&c.ctx, &the_task.base.key);
@@ -948,10 +948,10 @@ fn test_modify_task_concurrency_and_meta() {
                 (std::sync::Once::new(), Arc::clone(&c.task_mgr), scope.clone(), Arc::clone(&the_task));
             *tidb_dxf_scheduler::BEFORE_GET_SCHEDULABLE_TASKS.write().unwrap() = Some(Arc::new(move || {
                 once.call_once(|| {
-                    let task = tidb_dxf_handle::submit_task("k4", &TASK_TYPE_EXAMPLE, "", 3, &scope, 0, &[]).unwrap();
+                    let task = tidb_dxf_handle::submit_task(&tidb_gocontext::Context::background(), "k4", &TASK_TYPE_EXAMPLE, "", 3, &scope, 0, &[]).unwrap();
                     assert_eq!(task.base.required_slots, 3);
-                    task_mgr.modify_task_by_id(task.base.id, &modify_required_slots(TASK_STATE_PENDING, 7)).unwrap();
-                    let got_task = task_mgr.get_task_base_by_id(task.base.id).unwrap();
+                    task_mgr.modify_task_by_id(&tidb_gocontext::Context::background(), task.base.id, &modify_required_slots(TASK_STATE_PENDING, 7)).unwrap();
+                    let got_task = task_mgr.get_task_base_by_id(&tidb_gocontext::Context::background(), task.base.id).unwrap();
                     assert_eq!(got_task.state, TASK_STATE_MODIFYING);
                     assert_eq!(got_task.required_slots, 3);
                     *the_task.lock().unwrap() = Some(task);
@@ -965,8 +965,8 @@ fn test_modify_task_concurrency_and_meta() {
                     assert_eq!(task.base.state, TASK_STATE_MODIFYING);
                     let mut task_clone = task.clone();
                     task_clone.base.required_slots = 7;
-                    task_mgr.modified_task(&task_clone).unwrap();
-                    let got_task = task_mgr.get_task_base_by_id(task.base.id).unwrap();
+                    task_mgr.modified_task(&tidb_gocontext::Context::background(), &task_clone).unwrap();
+                    let got_task = task_mgr.get_task_base_by_id(&tidb_gocontext::Context::background(), task.base.id).unwrap();
                     assert_eq!(got_task.state, TASK_STATE_PENDING);
                     let _ = modify_sync_rx.recv();
                 });
@@ -993,15 +993,15 @@ fn test_modify_task_concurrency_and_meta() {
                 (std::sync::Once::new(), Arc::clone(&c.task_mgr), scope.clone(), Arc::clone(&the_task));
             *tidb_dxf_scheduler::BEFORE_GET_SCHEDULABLE_TASKS.write().unwrap() = Some(Arc::new(move || {
                 once.call_once(|| {
-                    let task = tidb_dxf_handle::submit_task("k5", &TASK_TYPE_EXAMPLE, "", 3, &scope, 0, b"init").unwrap();
+                    let task = tidb_dxf_handle::submit_task(&tidb_gocontext::Context::background(), "k5", &TASK_TYPE_EXAMPLE, "", 3, &scope, 0, b"init").unwrap();
                     assert_eq!(task.base.required_slots, 3);
                     assert_eq!(task.meta, b"init");
                     let param = ModifyParam {
                         prev_state: TASK_STATE_PENDING,
                         modifications: vec![Modification { tp: MODIFY_MAX_WRITE_SPEED, to: 123 }],
                     };
-                    task_mgr.modify_task_by_id(task.base.id, &param).unwrap();
-                    let got_task = task_mgr.get_task_base_by_id(task.base.id).unwrap();
+                    task_mgr.modify_task_by_id(&tidb_gocontext::Context::background(), task.base.id, &param).unwrap();
+                    let got_task = task_mgr.get_task_base_by_id(&tidb_gocontext::Context::background(), task.base.id).unwrap();
                     assert_eq!(got_task.state, TASK_STATE_MODIFYING);
                     assert_eq!(got_task.required_slots, 3);
                     *the_task.lock().unwrap() = Some(task);
@@ -1023,7 +1023,7 @@ fn test_modify_task_concurrency_and_meta() {
     // modify meta and increase/decrease concurrency when subtask is running, and apply success
     for (key, slots, to_slots, speed) in [("k6", 3, 7, 123), ("k7", 9, 5, 456)] {
         t.test_modify_when_subtask_run.store(true, Ordering::SeqCst);
-        let task = tidb_dxf_handle::submit_task(key, &TASK_TYPE_EXAMPLE, "", slots, &scope, 0, b"init").unwrap();
+        let task = tidb_dxf_handle::submit_task(&tidb_gocontext::Context::background(), key, &TASK_TYPE_EXAMPLE, "", slots, &scope, 0, b"init").unwrap();
         assert_eq!(task.base.required_slots, slots);
         assert_eq!(task.meta, b"init");
         t.modify_wait_ch.send(()).unwrap();
@@ -1034,7 +1034,7 @@ fn test_modify_task_concurrency_and_meta() {
                 Modification { tp: MODIFY_MAX_WRITE_SPEED, to: speed },
             ],
         };
-        c.task_mgr.modify_task_by_id(task.base.id, &param).unwrap();
+        c.task_mgr.modify_task_by_id(&tidb_gocontext::Context::background(), task.base.id, &param).unwrap();
         let expected_meta = format!("modify_max_write_speed={speed}").into_bytes();
         eventually(Duration::from_secs(10), Duration::from_millis(100), || {
             runtime_info.meta() == expected_meta && runtime_info.curr_task_concurrency.load(Ordering::SeqCst) == to_slots
@@ -1065,12 +1065,12 @@ fn test_modify_task_concurrency_and_meta() {
                         prev_state: TASK_STATE_RUNNING,
                         modifications: vec![Modification { tp: MODIFY_MAX_NODE_COUNT, to: 200 }],
                     };
-                    task_mgr.modify_task_by_id(task.base.id, &param).unwrap();
+                    task_mgr.modify_task_by_id(&tidb_gocontext::Context::background(), task.base.id, &param).unwrap();
                     let _ = modify_sync_rx.recv();
                 });
             }));
         }
-        let task = tidb_dxf_handle::submit_task("k8", &TASK_TYPE_EXAMPLE, "", 3, &scope, 1, &[]).unwrap();
+        let task = tidb_dxf_handle::submit_task(&tidb_gocontext::Context::background(), "k8", &TASK_TYPE_EXAMPLE, "", 3, &scope, 1, &[]).unwrap();
         assert_eq!(task.base.required_slots, 3);
         assert_eq!(task.base.max_node_count, 1);
         // finish StepOne
@@ -1079,7 +1079,7 @@ fn test_modify_task_concurrency_and_meta() {
         modify_sync_ch.send(()).unwrap();
         // wait task move back to 'running' state, and modified
         eventually(Duration::from_secs(10), Duration::from_millis(100), || {
-            let got_task = c.task_mgr.get_task_by_id(task.base.id).unwrap();
+            let got_task = c.task_mgr.get_task_by_id(&tidb_gocontext::Context::background(), task.base.id).unwrap();
             got_task.base.state == TASK_STATE_RUNNING && got_task.base.max_node_count == 200
         });
         // finish StepTwo
@@ -1113,12 +1113,12 @@ fn test_modify_task_max_node_count_for_subtask_balance() {
                     prev_state: TASK_STATE_RUNNING,
                     modifications: vec![Modification { tp: MODIFY_MAX_NODE_COUNT, to: 2 }],
                 };
-                task_mgr.modify_task_by_id(task.base.id, &param).unwrap();
+                task_mgr.modify_task_by_id(&tidb_gocontext::Context::background(), task.base.id, &param).unwrap();
                 let _ = modify_sync_rx.recv();
             });
         }));
     }
-    let task = tidb_dxf_handle::submit_task("k8", &TASK_TYPE_EXAMPLE, "", 3, &scope, 1, &[]).unwrap();
+    let task = tidb_dxf_handle::submit_task(&tidb_gocontext::Context::background(), "k8", &TASK_TYPE_EXAMPLE, "", 3, &scope, 1, &[]).unwrap();
     assert_eq!(task.base.required_slots, 3);
     assert_eq!(task.base.max_node_count, 1);
     let mut session = stack.factory.open_session(session_context(4004)).unwrap();
@@ -1138,7 +1138,7 @@ fn test_modify_task_max_node_count_for_subtask_balance() {
     modify_sync_ch.send(()).unwrap();
     // wait task move back to 'running' state, and modified
     eventually(Duration::from_secs(10), Duration::from_millis(100), || {
-        let got_task = c.task_mgr.get_task_by_id(task.base.id).unwrap();
+        let got_task = c.task_mgr.get_task_by_id(&tidb_gocontext::Context::background(), task.base.id).unwrap();
         got_task.base.state == TASK_STATE_RUNNING && got_task.base.max_node_count == 2
     });
     // now 2 subtask can be running at the same time
@@ -1268,13 +1268,13 @@ fn test_gc() {
 
     let mgr = tidb_dxf_storage::get_task_manager().unwrap();
     eventually(Duration::from_secs(10), Duration::from_millis(500), || {
-        testutil::get_subtasks_from_history(&mgr).is_ok_and(|cnt| cnt == 4)
+        testutil::get_subtasks_from_history(&tidb_gocontext::Context::background(), &mgr).is_ok_and(|cnt| cnt == 4)
     });
 
     ch_tx.send(()).unwrap();
 
     eventually(Duration::from_secs(10), Duration::from_millis(500), || {
-        testutil::get_subtasks_from_history(&mgr).is_ok_and(|cnt| cnt == 0)
+        testutil::get_subtasks_from_history(&tidb_gocontext::Context::background(), &mgr).is_ok_and(|cnt| cnt == 0)
     });
     *tidb_dxf_scheduler::HISTORY_SUBTASK_TABLE_GC_INTERVAL.write().unwrap() = None;
     fail::remove("subtaskHistoryKeepSeconds");
@@ -1297,16 +1297,16 @@ fn test_framework_cleaner() {
     submit_task_and_check_success_for_basic(&c.ctx, "key1", &c.test_context);
     ch.recv().unwrap();
     let mgr = tidb_dxf_storage::get_task_manager().unwrap();
-    mgr.get_task_by_key_with_history("key1").unwrap();
-    assert!(testutil::get_subtasks_from_history(&mgr).unwrap() > 0);
+    mgr.get_task_by_key_with_history(&tidb_gocontext::Context::background(), "key1").unwrap();
+    assert!(testutil::get_subtasks_from_history(&tidb_gocontext::Context::background(), &mgr).unwrap() > 0);
 
     // transfer err
     fail::cfg("mockTransferErr", "1*return").unwrap();
     submit_task_and_check_success_for_basic(&c.ctx, "key2", &c.test_context);
     ch.recv().unwrap();
     let mgr = tidb_dxf_storage::get_task_manager().unwrap();
-    mgr.get_task_by_key_with_history("key1").unwrap();
-    assert!(testutil::get_subtasks_from_history(&mgr).unwrap() > 0);
+    mgr.get_task_by_key_with_history(&tidb_gocontext::Context::background(), "key1").unwrap();
+    assert!(testutil::get_subtasks_from_history(&tidb_gocontext::Context::background(), &mgr).unwrap() > 0);
 
     fail::remove("mockTransferErr");
     *tidb_dxf_scheduler::WAIT_CLEAN_UP_FINISHED.write().unwrap() = None;
@@ -1341,7 +1341,7 @@ fn test_max_runtime_slots() {
             params.target_steps = vec![STEP_ONE];
         }));
         let scope = tidb_dxf_handle::get_target_scope();
-        assert_eq!(c.task_mgr.get_cpu_count_of_node().unwrap(), 16);
+        assert_eq!(c.task_mgr.get_cpu_count_of_node(&tidb_gocontext::Context::background()).unwrap(), 16);
         let task = testutil::submit_and_wait_task(&c.ctx, "key1", &scope, 16);
         assert_eq!(task.state, TASK_STATE_SUCCEED);
         assert_eq!(call_count.load(Ordering::SeqCst), 2);
@@ -1422,7 +1422,7 @@ fn test_max_runtime_slots() {
         }));
         let scope = tidb_dxf_handle::get_target_scope();
         let task =
-            tidb_dxf_handle::submit_task("prepare-mode-required", &TASK_TYPE_EXAMPLE, "", 1, &scope, 0, INITIAL_TASK_META).unwrap();
+            tidb_dxf_handle::submit_task(&tidb_gocontext::Context::background(), "prepare-mode-required", &TASK_TYPE_EXAMPLE, "", 1, &scope, 0, INITIAL_TASK_META).unwrap();
         let done_task = testutil::wait_task_done(&c.ctx, &task.base.key);
         assert_eq!(done_task.state, TASK_STATE_SUCCEED);
         assert_eq!(on_prepare_called.load(Ordering::SeqCst), 1);
@@ -1479,7 +1479,7 @@ fn test_max_runtime_slots() {
 
         let scope = tidb_dxf_handle::get_target_scope();
         let task =
-            tidb_dxf_handle::submit_task("prepare-mode-disabled", &TASK_TYPE_EXAMPLE, "", 1, &scope, 0, INITIAL_TASK_META).unwrap();
+            tidb_dxf_handle::submit_task(&tidb_gocontext::Context::background(), "prepare-mode-disabled", &TASK_TYPE_EXAMPLE, "", 1, &scope, 0, INITIAL_TASK_META).unwrap();
         let done_task = testutil::wait_task_done(&c.ctx, &task.base.key);
         assert_eq!(done_task.state, TASK_STATE_SUCCEED);
     }
@@ -1570,7 +1570,7 @@ impl ResourceCtrlCaseContext {
         let scope = tidb_dxf_handle::get_target_scope();
         for (i, &slots) in slots_arr.iter().enumerate() {
             let task_key = format!("{prefix}-{i}");
-            tidb_dxf_handle::submit_task(&task_key, &TASK_TYPE_EXAMPLE, "", slots, &scope, 0, &[]).unwrap();
+            tidb_dxf_handle::submit_task(&tidb_gocontext::Context::background(), &task_key, &TASK_TYPE_EXAMPLE, "", slots, &scope, 0, &[]).unwrap();
             let c = Arc::clone(&self.c);
             self.task_wg.lock().unwrap().push(std::thread::spawn(move || {
                 let task = testutil::wait_task_done_or_paused(&c.ctx, &task_key);

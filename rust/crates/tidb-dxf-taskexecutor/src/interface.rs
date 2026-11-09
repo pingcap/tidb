@@ -68,23 +68,23 @@ pub trait TaskTable: SessionExecutor {
     ///
     /// # Errors
     /// The query failed.
-    fn get_task_exec_info_by_exec_id(&self, exec_id: &str) -> Result<Vec<TaskExecInfo>>;
+    fn get_task_exec_info_by_exec_id(&self, ctx: &tidb_gocontext::Context, exec_id: &str) -> Result<Vec<TaskExecInfo>>;
     /// Go `GetTaskByID`.
     ///
     /// # Errors
     /// No such task, or the query failed.
-    fn get_task_by_id(&self, task_id: i64) -> Result<Task>;
+    fn get_task_by_id(&self, ctx: &tidb_gocontext::Context, task_id: i64) -> Result<Task>;
     /// Go `GetTaskBaseByID`.
     ///
     /// # Errors
     /// No such task, or the query failed.
-    fn get_task_base_by_id(&self, task_id: i64) -> Result<TaskBase>;
+    fn get_task_base_by_id(&self, ctx: &tidb_gocontext::Context, task_id: i64) -> Result<TaskBase>;
     /// Go `GetSubtasksByExecIDAndStepAndStates`.
     ///
     /// # Errors
     /// The query failed.
     fn get_subtasks_by_exec_id_and_step_and_states(
-        &self,
+        &self, ctx: &tidb_gocontext::Context,
         exec_id: &str,
         task_id: i64,
         step: Step,
@@ -95,7 +95,7 @@ pub trait TaskTable: SessionExecutor {
     /// # Errors
     /// The query failed.
     fn get_first_subtask_in_states(
-        &self,
+        &self, ctx: &tidb_gocontext::Context,
         instance_id: &str,
         task_id: i64,
         step: Step,
@@ -106,24 +106,24 @@ pub trait TaskTable: SessionExecutor {
     ///
     /// # Errors
     /// The statement failed.
-    fn init_meta(&self, exec_id: &str, role: &str) -> Result<()>;
+    fn init_meta(&self, ctx: &tidb_gocontext::Context, exec_id: &str, role: &str) -> Result<()>;
     /// Go `RecoverMeta`: inserts the node's meta back, periodically.
     ///
     /// # Errors
     /// The statement failed.
-    fn recover_meta(&self, exec_id: &str, role: &str) -> Result<()>;
+    fn recover_meta(&self, ctx: &tidb_gocontext::Context, exec_id: &str, role: &str) -> Result<()>;
     /// Go `StartSubtask`: the subtask runs if the node owns it.
     ///
     /// # Errors
     /// The node does not own the subtask (`ErrSubtaskNotFound`), or the
     /// statement failed.
-    fn start_subtask(&self, subtask_id: i64, exec_id: &str) -> Result<()>;
+    fn start_subtask(&self, ctx: &tidb_gocontext::Context, subtask_id: i64, exec_id: &str) -> Result<()>;
     /// Go `UpdateSubtaskStateAndError`.
     ///
     /// # Errors
     /// The statement failed.
     fn update_subtask_state_and_error(
-        &self,
+        &self, ctx: &tidb_gocontext::Context,
         exec_id: &str,
         subtask_id: i64,
         state: &SubtaskState,
@@ -133,38 +133,38 @@ pub trait TaskTable: SessionExecutor {
     ///
     /// # Errors
     /// The statement failed.
-    fn fail_subtask(&self, exec_id: &str, task_id: i64, err: Option<&(dyn StdError + 'static)>) -> Result<()>;
+    fn fail_subtask(&self, ctx: &tidb_gocontext::Context, exec_id: &str, task_id: i64, err: Option<&(dyn StdError + 'static)>) -> Result<()>;
     /// Go `CancelSubtask`.
     ///
     /// # Errors
     /// The statement failed.
-    fn cancel_subtask(&self, exec_id: &str, task_id: i64) -> Result<()>;
+    fn cancel_subtask(&self, ctx: &tidb_gocontext::Context, exec_id: &str, task_id: i64) -> Result<()>;
     /// Go `FinishSubtask`: stores the subtask meta and marks it succeeded.
     ///
     /// # Errors
     /// The statement failed.
-    fn finish_subtask(&self, exec_id: &str, subtask_id: i64, meta: &[u8]) -> Result<()>;
+    fn finish_subtask(&self, ctx: &tidb_gocontext::Context, exec_id: &str, subtask_id: i64, meta: &[u8]) -> Result<()>;
     /// Go `PauseSubtasks`.
     ///
     /// # Errors
     /// The statement failed.
-    fn pause_subtasks(&self, exec_id: &str, task_id: i64) -> Result<()>;
+    fn pause_subtasks(&self, ctx: &tidb_gocontext::Context, exec_id: &str, task_id: i64) -> Result<()>;
     /// Go `RunningSubtasksBack2Pending`: the node's running subtasks back to
     /// pending.
     ///
     /// # Errors
     /// The statement failed.
-    fn running_subtasks_back2_pending(&self, subtasks: &[SubtaskBase]) -> Result<()>;
+    fn running_subtasks_back2_pending(&self, ctx: &tidb_gocontext::Context, subtasks: &[SubtaskBase]) -> Result<()>;
     /// Go `UpdateSubtaskCheckpoint`.
     ///
     /// # Errors
     /// The statement failed.
-    fn update_subtask_checkpoint(&self, subtask_id: i64, checkpoint: &serde_json::Value) -> Result<()>;
+    fn update_subtask_checkpoint(&self, ctx: &tidb_gocontext::Context, subtask_id: i64, checkpoint: &serde_json::Value) -> Result<()>;
     /// Go `GetSubtaskCheckpoint`.
     ///
     /// # Errors
     /// The query failed.
-    fn get_subtask_checkpoint(&self, subtask_id: i64) -> Result<String>;
+    fn get_subtask_checkpoint(&self, ctx: &tidb_gocontext::Context, subtask_id: i64) -> Result<String>;
     /// Go's `taskTable.(*storage.TaskManager)`.
     fn as_task_manager(&self) -> Option<&tidb_dxf_storage::TaskManager> {
         None
@@ -172,71 +172,71 @@ pub trait TaskTable: SessionExecutor {
 }
 
 impl TaskTable for tidb_dxf_storage::TaskManager {
-    fn get_task_exec_info_by_exec_id(&self, exec_id: &str) -> Result<Vec<TaskExecInfo>> {
-        Self::get_task_exec_info_by_exec_id(self, exec_id)
+    fn get_task_exec_info_by_exec_id(&self, ctx: &tidb_gocontext::Context, exec_id: &str) -> Result<Vec<TaskExecInfo>> {
+        Self::get_task_exec_info_by_exec_id(self, ctx, exec_id)
     }
-    fn get_task_by_id(&self, task_id: i64) -> Result<Task> {
-        Self::get_task_by_id(self, task_id)
+    fn get_task_by_id(&self, ctx: &tidb_gocontext::Context, task_id: i64) -> Result<Task> {
+        Self::get_task_by_id(self, ctx, task_id)
     }
-    fn get_task_base_by_id(&self, task_id: i64) -> Result<TaskBase> {
-        Self::get_task_base_by_id(self, task_id)
+    fn get_task_base_by_id(&self, ctx: &tidb_gocontext::Context, task_id: i64) -> Result<TaskBase> {
+        Self::get_task_base_by_id(self, ctx, task_id)
     }
     fn get_subtasks_by_exec_id_and_step_and_states(
-        &self,
+        &self, ctx: &tidb_gocontext::Context,
         exec_id: &str,
         task_id: i64,
         step: Step,
         states: &[SubtaskState],
     ) -> Result<Vec<Subtask>> {
-        Self::get_subtasks_by_exec_id_and_step_and_states(self, exec_id, task_id, step, states)
+        Self::get_subtasks_by_exec_id_and_step_and_states(self, ctx, exec_id, task_id, step, states)
     }
     fn get_first_subtask_in_states(
-        &self,
+        &self, ctx: &tidb_gocontext::Context,
         instance_id: &str,
         task_id: i64,
         step: Step,
         states: &[SubtaskState],
     ) -> Result<Option<Subtask>> {
-        Self::get_first_subtask_in_states(self, instance_id, task_id, step, states)
+        Self::get_first_subtask_in_states(self, ctx, instance_id, task_id, step, states)
     }
-    fn init_meta(&self, exec_id: &str, role: &str) -> Result<()> {
-        Self::init_meta(self, exec_id, role)
+    fn init_meta(&self, ctx: &tidb_gocontext::Context, exec_id: &str, role: &str) -> Result<()> {
+        Self::init_meta(self, ctx, exec_id, role)
     }
-    fn recover_meta(&self, exec_id: &str, role: &str) -> Result<()> {
-        Self::recover_meta(self, exec_id, role)
+    fn recover_meta(&self, ctx: &tidb_gocontext::Context, exec_id: &str, role: &str) -> Result<()> {
+        Self::recover_meta(self, ctx, exec_id, role)
     }
-    fn start_subtask(&self, subtask_id: i64, exec_id: &str) -> Result<()> {
-        Self::start_subtask(self, subtask_id, exec_id)
+    fn start_subtask(&self, ctx: &tidb_gocontext::Context, subtask_id: i64, exec_id: &str) -> Result<()> {
+        Self::start_subtask(self, ctx, subtask_id, exec_id)
     }
     fn update_subtask_state_and_error(
-        &self,
+        &self, ctx: &tidb_gocontext::Context,
         exec_id: &str,
         subtask_id: i64,
         state: &SubtaskState,
         err: Option<&(dyn StdError + 'static)>,
     ) -> Result<()> {
-        Self::update_subtask_state_and_error(self, exec_id, subtask_id, state, err)
+        Self::update_subtask_state_and_error(self, ctx, exec_id, subtask_id, state, err)
     }
-    fn fail_subtask(&self, exec_id: &str, task_id: i64, err: Option<&(dyn StdError + 'static)>) -> Result<()> {
-        Self::fail_subtask(self, exec_id, task_id, err)
+    fn fail_subtask(&self, ctx: &tidb_gocontext::Context, exec_id: &str, task_id: i64, err: Option<&(dyn StdError + 'static)>) -> Result<()> {
+        Self::fail_subtask(self, ctx, exec_id, task_id, err)
     }
-    fn cancel_subtask(&self, exec_id: &str, task_id: i64) -> Result<()> {
-        Self::cancel_subtask(self, exec_id, task_id)
+    fn cancel_subtask(&self, ctx: &tidb_gocontext::Context, exec_id: &str, task_id: i64) -> Result<()> {
+        Self::cancel_subtask(self, ctx, exec_id, task_id)
     }
-    fn finish_subtask(&self, exec_id: &str, subtask_id: i64, meta: &[u8]) -> Result<()> {
-        Self::finish_subtask(self, exec_id, subtask_id, meta)
+    fn finish_subtask(&self, ctx: &tidb_gocontext::Context, exec_id: &str, subtask_id: i64, meta: &[u8]) -> Result<()> {
+        Self::finish_subtask(self, ctx, exec_id, subtask_id, meta)
     }
-    fn pause_subtasks(&self, exec_id: &str, task_id: i64) -> Result<()> {
-        Self::pause_subtasks(self, exec_id, task_id)
+    fn pause_subtasks(&self, ctx: &tidb_gocontext::Context, exec_id: &str, task_id: i64) -> Result<()> {
+        Self::pause_subtasks(self, ctx, exec_id, task_id)
     }
-    fn running_subtasks_back2_pending(&self, subtasks: &[SubtaskBase]) -> Result<()> {
-        Self::running_subtasks_back2_pending(self, subtasks)
+    fn running_subtasks_back2_pending(&self, ctx: &tidb_gocontext::Context, subtasks: &[SubtaskBase]) -> Result<()> {
+        Self::running_subtasks_back2_pending(self, ctx, subtasks)
     }
-    fn update_subtask_checkpoint(&self, subtask_id: i64, checkpoint: &serde_json::Value) -> Result<()> {
-        Self::update_subtask_checkpoint(self, subtask_id, checkpoint)
+    fn update_subtask_checkpoint(&self, ctx: &tidb_gocontext::Context, subtask_id: i64, checkpoint: &serde_json::Value) -> Result<()> {
+        Self::update_subtask_checkpoint(self, ctx, subtask_id, checkpoint)
     }
-    fn get_subtask_checkpoint(&self, subtask_id: i64) -> Result<String> {
-        Self::get_subtask_checkpoint(self, subtask_id)
+    fn get_subtask_checkpoint(&self, ctx: &tidb_gocontext::Context, subtask_id: i64) -> Result<String> {
+        Self::get_subtask_checkpoint(self, ctx, subtask_id)
     }
     fn as_task_manager(&self) -> Option<&tidb_dxf_storage::TaskManager> {
         Some(self)

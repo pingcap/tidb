@@ -1379,12 +1379,12 @@ fn test_inject() {
         &e,
         &Task { base: TaskBase { step: STEP_ONE, ..TaskBase::default() }, ..Task::default() },
         Arc::clone(&r),
-        Some(Arc::new(move |_: &Context, subtask_id, checkpoint: &serde_json::Value| {
-            crate::TaskTable::update_subtask_checkpoint(update_table.as_ref(), subtask_id, checkpoint)
+        Some(Arc::new(move |ctx: &Context, subtask_id, checkpoint: &serde_json::Value| {
+            crate::TaskTable::update_subtask_checkpoint(update_table.as_ref(), ctx, subtask_id, checkpoint)
                 .map_err(|err| Box::new(err) as tidb_dxf_execute::Error)
         })),
-        Some(Arc::new(move |_: &Context, subtask_id| {
-            crate::TaskTable::get_subtask_checkpoint(get_table.as_ref(), subtask_id)
+        Some(Arc::new(move |ctx: &Context, subtask_id| {
+            crate::TaskTable::get_subtask_checkpoint(get_table.as_ref(), ctx, subtask_id)
                 .map_err(|err| Box::new(err) as tidb_dxf_execute::Error)
         })),
     );

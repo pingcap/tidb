@@ -3778,8 +3778,11 @@ impl tidb_executor::sessionctx::SessionContext for Session {
             err => DriverError::from(tidb_terror::MysqlError::unknown(err.to_string())),
         };
         let task_mgr = tidb_dxf_storage::get_task_manager().map_err(storage_err)?;
+        // Go passes the SET statement's ctx; this tier's statements carry no
+        // Go context, so nothing cancels it.
+        let ctx = tidb_gocontext::Context::background();
         task_mgr
-            .with_new_session(&mut |se| tidb_dxf_storage::TaskManager::init_meta_session(se, &server_id, &service_scope))
+            .with_new_session(&mut |se| tidb_dxf_storage::TaskManager::init_meta_session(&ctx, se, &server_id, &service_scope))
             .map_err(storage_err)
     }
 

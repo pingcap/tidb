@@ -100,12 +100,12 @@ impl Balancer {
         if eligible_nodes.is_empty() {
             return Err(plain("no eligible nodes to balance subtasks"));
         }
-        self.do_balance_subtasks(&task, eligible_nodes)
+        self.do_balance_subtasks(ctx, &task, eligible_nodes)
     }
 
     /// Go `doBalanceSubtasks`.
-    pub(crate) fn do_balance_subtasks(&self, task: &Task, eligible_nodes: Vec<String>) -> Result<(), Error> {
-        let subtasks = self.param.task_mgr.get_active_subtasks(task.base.id).map_err(|err| std::sync::Arc::new(err) as Error)?;
+    pub(crate) fn do_balance_subtasks(&self, ctx: &tidb_gocontext::Context, task: &Task, eligible_nodes: Vec<String>) -> Result<(), Error> {
+        let subtasks = self.param.task_mgr.get_active_subtasks(ctx, task.base.id).map_err(|err| std::sync::Arc::new(err) as Error)?;
         if subtasks.is_empty() {
             return Ok(());
         }
@@ -220,7 +220,7 @@ impl Balancer {
         }
 
         let rescheduled: Vec<SubtaskBase> = subtasks_need_schedule.iter().map(|idx| subtasks[*idx].clone()).collect();
-        self.param.task_mgr.update_subtasks_exec_ids(&rescheduled).map_err(|err| std::sync::Arc::new(err) as Error)?;
+        self.param.task_mgr.update_subtasks_exec_ids(ctx, &rescheduled).map_err(|err| std::sync::Arc::new(err) as Error)?;
         self.logger.info(
             "balance subtasks",
             &[Field::new(

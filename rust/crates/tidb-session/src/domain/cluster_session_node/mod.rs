@@ -2935,6 +2935,9 @@ fn execute_internal_under(
     if let Some(source) = sessions::context_request_source(context) {
         session.set_internal_request_source(&source.source_type);
     }
+    // Go `executeStmtImpl`: "honor a canceled caller before executing the
+    // next statement".
+    sessions::honor_canceled_caller(context)?;
     let (rows, fields) = session
         .node_conn()
         .execute_internal_fields(sql)

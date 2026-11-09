@@ -29,8 +29,8 @@ use crate::{HandleError, Result};
 ///
 /// # Errors
 /// No task manager is set, or the query failed.
-pub fn get_active_task_summary() -> Result<ActiveTaskSummary> {
-    Ok(get_task_manager()?.get_active_task_counts_by_keyspace()?)
+pub fn get_active_task_summary(ctx: &tidb_gocontext::Context) -> Result<ActiveTaskSummary> {
+    Ok(get_task_manager()?.get_active_task_counts_by_keyspace(ctx)?)
 }
 
 /// Go `ListHistoryTasks`: the history tasks, with keyset pagination and an
@@ -39,16 +39,16 @@ pub fn get_active_task_summary() -> Result<ActiveTaskSummary> {
 /// # Errors
 /// No task manager is set, the page size is out of bounds, or the query
 /// failed.
-pub fn list_history_tasks(page_size: isize, page_token: i64, keyspace: &str) -> Result<HistoryTaskPage> {
-    Ok(get_dxf_svc_task_mgr()?.list_history_tasks(page_size, page_token, keyspace)?)
+pub fn list_history_tasks(ctx: &tidb_gocontext::Context, page_size: isize, page_token: i64, keyspace: &str) -> Result<HistoryTaskPage> {
+    Ok(get_dxf_svc_task_mgr()?.list_history_tasks(ctx, page_size, page_token, keyspace)?)
 }
 
 /// Go `GetNodesInfo`: the number of managed nodes and their CPU count.
 ///
 /// # Errors
 /// The query failed.
-pub fn get_nodes_info(manager: &TaskManager) -> Result<(usize, isize)> {
-    let nodes = manager.get_all_nodes()?;
+pub fn get_nodes_info(ctx: &tidb_gocontext::Context, manager: &TaskManager) -> Result<(usize, isize)> {
+    let nodes = manager.get_all_nodes(ctx)?;
     let cpu_count = match nodes.first() {
         Some(node) => node.cpu_count,
         None => {
@@ -116,9 +116,9 @@ pub(crate) fn get_needed_nodes(task: &TaskBase) -> isize {
 ///
 /// # Errors
 /// The query failed or the stored flag does not parse.
-pub fn get_schedule_flags(manager: &TaskManager) -> Result<BTreeMap<Flag, TtlFlag>> {
+pub fn get_schedule_flags(ctx: &tidb_gocontext::Context, manager: &TaskManager) -> Result<BTreeMap<Flag, TtlFlag>> {
     let mut flags = BTreeMap::new();
-    let pause_scale_in = get_pause_scale_in_flag(manager)?;
+    let pause_scale_in = get_pause_scale_in_flag(ctx, manager)?;
     if pause_scale_in.enabled {
         flags.insert(PAUSE_SCALE_IN_FLAG, pause_scale_in);
     }
@@ -126,8 +126,8 @@ pub fn get_schedule_flags(manager: &TaskManager) -> Result<BTreeMap<Flag, TtlFla
 }
 
 /// Go `getPauseScaleInFlag`: the stored flag, reset once expired.
-fn get_pause_scale_in_flag(manager: &TaskManager) -> Result<TtlFlag> {
-    let rs = manager.execute_sql_with_new_session(
+fn get_pause_scale_in_flag(ctx: &tidb_gocontext::Context, manager: &TaskManager) -> Result<TtlFlag> {
+    let rs = manager.execute_sql_with_new_session(ctx, 
         "SELECT VARIABLE_VALUE from mysql.tidb WHERE VARIABLE_NAME = %?",
         &[tidb_sqlescape::SqlArg::String(tidb_meta_tidbvar::DXF_SCHEDULE_PAUSE_SCALE_IN.as_bytes())],
     )?;

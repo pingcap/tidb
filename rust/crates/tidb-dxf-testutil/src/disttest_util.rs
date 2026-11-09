@@ -176,7 +176,7 @@ pub fn init_task_executor(
 /// # Panics
 /// The task cannot be submitted or waited for.
 pub fn submit_and_wait_task(ctx: &Context, task_key: &str, target_scope: &str, concurrency: isize) -> TaskBase {
-    tidb_dxf_handle::submit_task(task_key, &TASK_TYPE_EXAMPLE, &crate::get_task_ks(), concurrency, target_scope, 0, &[]).unwrap();
+    tidb_dxf_handle::submit_task(ctx, task_key, &TASK_TYPE_EXAMPLE, &crate::get_task_ks(), concurrency, target_scope, 0, &[]).unwrap();
     wait_task_done_or_paused(ctx, task_key)
 }
 
@@ -195,6 +195,6 @@ pub fn wait_task_done(ctx: &Context, task_key: &str) -> TaskBase {
 /// Go `waitTaskUntil`.
 fn wait_task_until(ctx: &Context, task_key: &str, f: impl Fn(&TaskBase) -> bool) -> TaskBase {
     let task_mgr = tidb_dxf_storage::get_dxf_svc_task_mgr().unwrap();
-    let got_task = task_mgr.get_task_base_by_key_with_history(task_key).unwrap();
+    let got_task = task_mgr.get_task_base_by_key_with_history(&ctx, task_key).unwrap();
     tidb_dxf_handle::wait_task(ctx, got_task.id, f).unwrap()
 }

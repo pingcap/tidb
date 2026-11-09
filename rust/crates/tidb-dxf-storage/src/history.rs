@@ -20,7 +20,6 @@ use std::error::Error;
 use chrono::{DateTime, FixedOffset};
 use tidb_dxf::{Task, TaskBase, TaskState, TaskType, TASK_STATE_FAILED, TASK_STATE_REVERTED};
 use tidb_sqlescape::SqlArg;
-use tidb_sqlexec::BackgroundContext;
 
 use crate::converter::{get_int64, get_local_time, is_null, row2_task_basic, row2_task_error, zero_time};
 use crate::task_table::{sql_args, Arg};
@@ -109,12 +108,11 @@ impl TaskManager {
     ///
     /// # Errors
     /// A statement failed.
-    pub fn transfer_subtasks2_history_with_session(se: &dyn SessionContext, task_id: i64) -> Result<()> {
+    pub fn transfer_subtasks2_history_with_session(ctx: &tidb_gocontext::Context, se: &dyn SessionContext, task_id: i64) -> Result<()> {
         let args = [Arg::Str(task_id_to_key(task_id))];
-        exec_sql(&BackgroundContext, se, "insert into mysql.tidb_background_subtask_history select * from mysql.tidb_background_subtask where task_key = %?", &sql_args(&args))?;
+        exec_sql(ctx, se, "insert into mysql.tidb_background_subtask_history select * from mysql.tidb_background_subtask where task_key = %?", &sql_args(&args))?;
         // delete taskID subtask
-        exec_sql(
-            &BackgroundContext,
+        exec_sql(ctx,
             se,
             "delete from mysql.tidb_background_subtask where task_key = %?",
             &sql_args(&args),
@@ -127,7 +125,7 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or a statement failed.
-    pub fn transfer_tasks2_history(&self, tasks: &[Task]) -> Result<()> {
+    pub fn transfer_tasks2_history(&self, ctx: &tidb_gocontext::Context, tasks: &[Task]) -> Result<()> {
         if tasks.is_empty() {
             return Ok(());
         }
@@ -148,21 +146,21 @@ impl TaskManager {
         update_meta_sql.push_str(&["
 			end, state_update_time = CURRENT_TIMESTAMP()
 		where id in(", &task_id_list, ")"].concat());
-        self.with_new_txn(&mut |se| {
+        self.with_new_txn(ctx, &mut |se| {
             // sensitive data in meta might be redacted, need update first.
-            exec_sql(&BackgroundContext, se, &update_meta_sql, &sql_args(&update_meta_args))?;
-            exec_sql(&BackgroundContext, se, &["
+            exec_sql(ctx, se, &update_meta_sql, &sql_args(&update_meta_args))?;
+            exec_sql(ctx, se, &["
 			insert into mysql.tidb_global_task_history
 			select * from mysql.tidb_global_task
 			where id in(", &task_id_list, ")"].concat(), &[])?;
-            exec_sql(&BackgroundContext, se, &["
+            exec_sql(ctx, se, &["
 			delete from mysql.tidb_global_task
 			where id in(", &task_id_list, ")"].concat(), &[])?;
-            exec_sql(&BackgroundContext, se, &["
+            exec_sql(ctx, se, &["
 			insert into mysql.tidb_background_subtask_history
 			select * from mysql.tidb_background_subtask
 			where task_key in(", &task_key_list, ")"].concat(), &[])?;
-            exec_sql(&BackgroundContext, se, &["
+            exec_sql(ctx, se, &["
 			delete from mysql.tidb_background_subtask
 			where task_key in(", &task_key_list, ")"].concat(), &[])?;
             Ok(())
@@ -174,7 +172,7 @@ impl TaskManager {
     ///
     /// # Errors
     /// The page size is out of bounds, or the session or a statement failed.
-    pub fn list_history_tasks(&self, page_size: isize, page_token: i64, keyspace: &str) -> Result<HistoryTaskPage> {
+    pub fn list_history_tasks(&self, ctx: &tidb_gocontext::Context, page_size: isize, page_token: i64, keyspace: &str) -> Result<HistoryTaskPage> {
         validate_history_task_page_size(page_size)?;
 
         let mut where_parts = Vec::with_capacity(2);
@@ -191,7 +189,7 @@ impl TaskManager {
         let where_sql = if where_parts.is_empty() { String::new() } else { format!(" where {}", where_parts.join(" and ")) };
         data_args.push(SqlArg::Signed(page_size as i64 + 1));
 
-        let mut rows = self.execute_sql_with_new_session(
+        let mut rows = self.execute_sql_with_new_session(ctx, 
             &["select ", &history_task_summary_columns(), " from mysql.tidb_global_task_history t", &where_sql, " order by t.id desc limit %?"].concat(),
             &data_args,
         )?;
@@ -199,7 +197,7 @@ impl TaskManager {
         // Under concurrent task transfers, Items and ApproxTotalCount may observe slightly
         // different snapshots, which is acceptable for this observability API.
         // Pagination correctness relies on page rows + HasMore/NextPageToken from the page query.
-        let count_rows = self.execute_sql_with_new_session(
+        let count_rows = self.execute_sql_with_new_session(ctx, 
             &["select count(1) from mysql.tidb_global_task_history", if keyspace.is_empty() { "" } else { " where keyspace = %?" }].concat(),
             &count_args,
         )?;
@@ -226,7 +224,7 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn gc_subtasks(&self) -> Result<()> {
+    pub fn gc_subtasks(&self, ctx: &tidb_gocontext::Context) -> Result<()> {
         let subtask_history_keep_seconds = DEFAULT_SUBTASK_KEEP_DAYS * 24 * 60 * 60;
         #[cfg(feature = "failpoints")]
         let subtask_history_keep_seconds = (|| {
@@ -235,7 +233,7 @@ impl TaskManager {
             });
             subtask_history_keep_seconds
         })();
-        self.execute_sql_with_new_session(
+        self.execute_sql_with_new_session(ctx, 
             &format!(
                 "DELETE FROM mysql.tidb_background_subtask_history WHERE state_update_time < UNIX_TIMESTAMP() - {subtask_history_keep_seconds} ;"
             ),

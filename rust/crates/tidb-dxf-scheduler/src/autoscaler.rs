@@ -112,7 +112,7 @@ impl ResourceCalc {
 ///
 /// # Errors
 /// No task manager is set, or the query failed.
-pub fn get_exec_cpu_node() -> tidb_dxf_storage::Result<isize> {
+pub fn get_exec_cpu_node(ctx: &tidb_gocontext::Context) -> tidb_dxf_storage::Result<isize> {
     let mgr = match tidb_dxf_storage::get_dxf_svc_task_mgr() {
         Ok(mgr) => mgr,
         Err(error) => {
@@ -124,7 +124,7 @@ pub fn get_exec_cpu_node() -> tidb_dxf_storage::Result<isize> {
             return Err(error);
         }
     };
-    mgr.get_cpu_count_of_node_by_role(&tidb_dxf_handle::get_target_scope())
+    mgr.get_cpu_count_of_node_by_role(ctx, &tidb_dxf_handle::get_target_scope())
 }
 
 /// Go `CalcDistSQLConcurrency`: the DistSQL concurrency by the thread count,

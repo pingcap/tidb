@@ -150,25 +150,25 @@ impl SessionExecutor for MockTaskManager {
             None => self.answer("WithNewSession"),
         }
     }
-    fn with_new_txn(&self, _: &mut dyn FnMut(&dyn SessionContext) -> Result<()>) -> Result<()> {
+    fn with_new_txn(&self, _ctx: &tidb_gocontext::Context, _: &mut dyn FnMut(&dyn SessionContext) -> Result<()>) -> Result<()> {
         self.answer("WithNewTxn")
     }
 }
 
 impl TaskManager for MockTaskManager {
-    fn get_top_unfinished_tasks(&self) -> Result<Vec<TaskBase>> {
+    fn get_top_unfinished_tasks(&self, _ctx: &tidb_gocontext::Context) -> Result<Vec<TaskBase>> {
         self.answer("GetTopUnfinishedTasks")
     }
-    fn get_top_no_need_resource_tasks(&self) -> Result<Vec<TaskBase>> {
+    fn get_top_no_need_resource_tasks(&self, _ctx: &tidb_gocontext::Context) -> Result<Vec<TaskBase>> {
         self.answer("GetTopNoNeedResourceTasks")
     }
-    fn get_all_tasks(&self) -> Result<Vec<TaskBase>> {
+    fn get_all_tasks(&self, _ctx: &tidb_gocontext::Context) -> Result<Vec<TaskBase>> {
         self.answer("GetAllTasks")
     }
-    fn get_all_subtasks(&self) -> Result<Vec<SubtaskBase>> {
+    fn get_all_subtasks(&self, _ctx: &tidb_gocontext::Context) -> Result<Vec<SubtaskBase>> {
         self.answer("GetAllSubtasks")
     }
-    fn get_cleanup_tasks(&self) -> Result<Vec<Task>> {
+    fn get_cleanup_tasks(&self, _ctx: &tidb_gocontext::Context) -> Result<Vec<Task>> {
         let answer = self
             .expected
             .lock()
@@ -181,106 +181,106 @@ impl TaskManager for MockTaskManager {
             Err(answer) => *answer.downcast::<Result<Vec<Task>>>().expect("GetCleanupTasks answered with the wrong type"),
         }
     }
-    fn get_task_by_id(&self, task_id: i64) -> Result<Task> {
+    fn get_task_by_id(&self, _ctx: &tidb_gocontext::Context, task_id: i64) -> Result<Task> {
         self.answer_for("GetTaskByID", task_id)
     }
-    fn get_task_base_by_id(&self, task_id: i64) -> Result<TaskBase> {
+    fn get_task_base_by_id(&self, _ctx: &tidb_gocontext::Context, task_id: i64) -> Result<TaskBase> {
         self.answer_for("GetTaskBaseByID", task_id)
     }
-    fn gc_subtasks(&self) -> Result<()> {
+    fn gc_subtasks(&self, _ctx: &tidb_gocontext::Context) -> Result<()> {
         self.answer("GCSubtasks")
     }
-    fn get_all_nodes(&self) -> Result<Vec<ManagedNode>> {
+    fn get_all_nodes(&self, _ctx: &tidb_gocontext::Context) -> Result<Vec<ManagedNode>> {
         self.answer("GetAllNodes")
     }
-    fn delete_dead_nodes(&self, _: &[String]) -> Result<()> {
+    fn delete_dead_nodes(&self, _ctx: &tidb_gocontext::Context, _: &[String]) -> Result<()> {
         self.answer("DeleteDeadNodes")
     }
-    fn transfer_tasks2_history(&self, tasks: &[Task]) -> Result<()> {
+    fn transfer_tasks2_history(&self, _ctx: &tidb_gocontext::Context, tasks: &[Task]) -> Result<()> {
         let ids: Vec<i64> = tasks.iter().map(|task| task.base.id).collect();
         self.record(format!("TransferTasks2History({ids:?})"));
         self.answer("TransferTasks2History")
     }
-    fn cancel_task(&self, _: i64) -> Result<()> {
+    fn cancel_task(&self, _ctx: &tidb_gocontext::Context, _: i64) -> Result<()> {
         self.answer("CancelTask")
     }
-    fn fail_task(&self, task_id: i64, state: &TaskState, err: Option<&(dyn Error + 'static)>) -> Result<()> {
+    fn fail_task(&self, _ctx: &tidb_gocontext::Context, task_id: i64, state: &TaskState, err: Option<&(dyn Error + 'static)>) -> Result<()> {
         self.record(format!("FailTask({task_id}, {state}, {})", err_text(err)));
         self.answer("FailTask")
     }
-    fn revert_task(&self, task_id: i64, state: &TaskState, err: Option<&(dyn Error + 'static)>) -> Result<()> {
+    fn revert_task(&self, _ctx: &tidb_gocontext::Context, task_id: i64, state: &TaskState, err: Option<&(dyn Error + 'static)>) -> Result<()> {
         self.record(format!("RevertTask({task_id}, {state}, {})", err_text(err)));
         self.answer("RevertTask")
     }
-    fn awaiting_resolve_task(&self, task_id: i64, state: &TaskState, err: Option<&(dyn Error + 'static)>) -> Result<()> {
+    fn awaiting_resolve_task(&self, _ctx: &tidb_gocontext::Context, task_id: i64, state: &TaskState, err: Option<&(dyn Error + 'static)>) -> Result<()> {
         self.record(format!("AwaitingResolveTask({task_id}, {state}, {})", err_text(err)));
         self.answer("AwaitingResolveTask")
     }
-    fn reverted_task(&self, _: i64) -> Result<()> {
+    fn reverted_task(&self, _ctx: &tidb_gocontext::Context, _: i64) -> Result<()> {
         self.answer("RevertedTask")
     }
-    fn pause_task(&self, _: &str) -> Result<bool> {
+    fn pause_task(&self, _ctx: &tidb_gocontext::Context, _: &str) -> Result<bool> {
         self.answer("PauseTask")
     }
-    fn pause_task_on_error(&self, task_id: i64, state: &TaskState, step: Step, err: Option<&(dyn Error + 'static)>) -> Result<()> {
+    fn pause_task_on_error(&self, _ctx: &tidb_gocontext::Context, task_id: i64, state: &TaskState, step: Step, err: Option<&(dyn Error + 'static)>) -> Result<()> {
         self.record(format!("PauseTaskOnError({task_id}, {state}, {}, {})", step.0, err_text(err)));
         self.answer("PauseTaskOnError")
     }
-    fn paused_task(&self, _: i64) -> Result<()> {
+    fn paused_task(&self, _ctx: &tidb_gocontext::Context, _: i64) -> Result<()> {
         self.answer("PausedTask")
     }
-    fn resumed_task(&self, _: i64) -> Result<()> {
+    fn resumed_task(&self, _ctx: &tidb_gocontext::Context, _: i64) -> Result<()> {
         self.answer("ResumedTask")
     }
-    fn modified_task(&self, _: &Task) -> Result<()> {
+    fn modified_task(&self, _ctx: &tidb_gocontext::Context, _: &Task) -> Result<()> {
         self.answer("ModifiedTask")
     }
-    fn succeed_task(&self, _: i64) -> Result<()> {
+    fn succeed_task(&self, _ctx: &tidb_gocontext::Context, _: i64) -> Result<()> {
         self.answer("SucceedTask")
     }
-    fn switch_task_step(&self, _: &Task, state: &TaskState, step: Step, subtasks: &[Subtask]) -> Result<()> {
+    fn switch_task_step(&self, _ctx: &tidb_gocontext::Context, _: &Task, state: &TaskState, step: Step, subtasks: &[Subtask]) -> Result<()> {
         self.record(format!("SwitchTaskStep({state}, {}, {})", step.0, subtasks.len()));
         self.answer("SwitchTaskStep")
     }
-    fn switch_task_step_in_batch(&self, _: &Task, _: &TaskState, _: Step, _: &[Subtask]) -> Result<()> {
+    fn switch_task_step_in_batch(&self, _ctx: &tidb_gocontext::Context, _: &Task, _: &TaskState, _: Step, _: &[Subtask]) -> Result<()> {
         self.answer("SwitchTaskStepInBatch")
     }
-    fn switch_task_step_after_prepare(&self, task: &Task) -> Result<bool> {
+    fn switch_task_step_after_prepare(&self, _ctx: &tidb_gocontext::Context, task: &Task) -> Result<bool> {
         self.answer_with_task("SwitchTaskStepAfterPrepare", task)
     }
-    fn get_used_slots_on_nodes(&self) -> Result<HashMap<String, isize>> {
+    fn get_used_slots_on_nodes(&self, _ctx: &tidb_gocontext::Context) -> Result<HashMap<String, isize>> {
         if *self.used_slots_any_times.lock().unwrap() {
             return Ok(HashMap::new());
         }
         self.answer("GetUsedSlotsOnNodes")
     }
-    fn get_active_subtasks(&self, _: i64) -> Result<Vec<SubtaskBase>> {
+    fn get_active_subtasks(&self, _ctx: &tidb_gocontext::Context, _: i64) -> Result<Vec<SubtaskBase>> {
         self.answer("GetActiveSubtasks")
     }
-    fn get_subtask_cnt_group_by_states(&self, _: i64, _: Step) -> Result<HashMap<SubtaskState, i64>> {
+    fn get_subtask_cnt_group_by_states(&self, _ctx: &tidb_gocontext::Context, _: i64, _: Step) -> Result<HashMap<SubtaskState, i64>> {
         self.answer("GetSubtaskCntGroupByStates")
     }
     fn get_subtask_state_cnt_and_errors_by_step(
-        &self,
+        &self, _ctx: &tidb_gocontext::Context,
         _: i64,
         _: Step,
     ) -> Result<(HashMap<SubtaskState, i64>, Vec<SubtaskError>)> {
         self.answer("GetSubtaskStateCntAndErrorsByStep")
     }
-    fn resume_subtasks(&self, _: i64) -> Result<()> {
+    fn resume_subtasks(&self, _ctx: &tidb_gocontext::Context, _: i64) -> Result<()> {
         self.answer("ResumeSubtasks")
     }
-    fn get_subtask_errors(&self, _: i64) -> Result<Vec<Option<SubtaskError>>> {
+    fn get_subtask_errors(&self, _ctx: &tidb_gocontext::Context, _: i64) -> Result<Vec<Option<SubtaskError>>> {
         self.answer("GetSubtaskErrors")
     }
-    fn update_subtasks_exec_ids(&self, subtasks: &[SubtaskBase]) -> Result<()> {
+    fn update_subtasks_exec_ids(&self, _ctx: &tidb_gocontext::Context, subtasks: &[SubtaskBase]) -> Result<()> {
         self.updated_exec_ids.lock().unwrap().extend_from_slice(subtasks);
         self.answer("UpdateSubtasksExecIDs")
     }
-    fn get_all_subtasks_by_step_and_state(&self, _: i64, _: Step, _: &SubtaskState) -> Result<Vec<Subtask>> {
+    fn get_all_subtasks_by_step_and_state(&self, _ctx: &tidb_gocontext::Context, _: i64, _: Step, _: &SubtaskState) -> Result<Vec<Subtask>> {
         self.answer("GetAllSubtasksByStepAndState")
     }
-    fn get_all_subtask_summary_by_step(&self, _: i64, _: Step) -> Result<Vec<SubtaskSummary>> {
+    fn get_all_subtask_summary_by_step(&self, _ctx: &tidb_gocontext::Context, _: i64, _: Step) -> Result<Vec<SubtaskSummary>> {
         self.answer("GetAllSubtaskSummaryByStep")
     }
 }

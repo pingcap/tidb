@@ -324,7 +324,7 @@ impl BaseTaskExecutor {
                     .inc();
             }
 
-            let subtasks = match self.param.task_table.get_subtasks_by_exec_id_and_step_and_states(
+            let subtasks = match self.param.task_table.get_subtasks_by_exec_id_and_step_and_states(&ctx, 
                 &self.param.exec_id,
                 task.base.id,
                 task.base.step,
@@ -374,7 +374,7 @@ impl BaseTaskExecutor {
                 extra_running_subtasks.push(st.base.clone());
             }
             if !extra_running_subtasks.is_empty() {
-                match self.param.task_table.running_subtasks_back2_pending(&extra_running_subtasks) {
+                match self.param.task_table.running_subtasks_back2_pending(&ctx, &extra_running_subtasks) {
                     Err(err) => self.logger.error("update running subtasks back to pending failed", &[error_field(&err)]),
                     Ok(()) => self.logger.info(
                         "update extra running subtasks back to pending",
@@ -394,7 +394,7 @@ impl BaseTaskExecutor {
         // A step executor with a summary hands it out every time
         // (hasRealtimeSummary).
         let update_summary = || match step_exec.realtime_summary() {
-            Some(summary) => task_mgr.update_subtask_summary(cur_subtask_id, &summary),
+            Some(summary) => task_mgr.update_subtask_summary(&self.ctx, cur_subtask_id, &summary),
             None => Ok(()),
         };
         loop {
@@ -458,7 +458,7 @@ impl BaseTaskExecutor {
             let old_task = self.get_task();
             #[cfg(any(test, feature = "failpoints"))]
             call_hook(&BEFORE_GET_TASK_BY_ID_IN_RUN, |hook| hook(old_task.base.id));
-            let new_task = match self.param.task_table.get_task_by_id(old_task.base.id) {
+            let new_task = match self.param.task_table.get_task_by_id(&self.ctx, old_task.base.id) {
                 Ok(task) => task,
                 Err(err) if err.is(&StorageError::TaskNotFound) => return,
                 Err(err) => {
@@ -521,7 +521,7 @@ impl BaseTaskExecutor {
                 return;
             }
 
-            let subtask = match self.param.task_table.get_first_subtask_in_states(
+            let subtask = match self.param.task_table.get_first_subtask_in_states(&self.ctx, 
                 &self.param.exec_id,
                 task.base.id,
                 task.base.step,
@@ -614,11 +614,11 @@ impl BaseTaskExecutor {
             step_executor.as_ref(),
             &task,
             Arc::clone(&resource),
-            Some(Arc::new(move |_: &Context, subtask_id, checkpoint: &serde_json::Value| {
-                update_table.update_subtask_checkpoint(subtask_id, checkpoint).map_err(|err| Box::new(err) as tidb_dxf_execute::Error)
+            Some(Arc::new(move |ctx: &Context, subtask_id, checkpoint: &serde_json::Value| {
+                update_table.update_subtask_checkpoint(ctx, subtask_id, checkpoint).map_err(|err| Box::new(err) as tidb_dxf_execute::Error)
             })),
-            Some(Arc::new(move |_: &Context, subtask_id| {
-                get_table.get_subtask_checkpoint(subtask_id).map_err(|err| Box::new(err) as tidb_dxf_execute::Error)
+            Some(Arc::new(move |ctx: &Context, subtask_id| {
+                get_table.get_subtask_checkpoint(ctx, subtask_id).map_err(|err| Box::new(err) as tidb_dxf_execute::Error)
             })),
         );
 
@@ -784,7 +784,7 @@ impl BaseTaskExecutor {
     /// Go `detectAndHandleParamModify`.
     pub(crate) fn detect_and_handle_param_modify(&self, ctx: &Context) -> std::result::Result<(), Error> {
         let old_task = self.get_task();
-        let latest_task = self.param.task_table.get_task_by_id(old_task.base.id).map_err(|err| Arc::new(err) as Error)?;
+        let latest_task = self.param.task_table.get_task_by_id(&ctx, old_task.base.id).map_err(|err| Arc::new(err) as Error)?;
 
         let meta_modified = latest_task.meta != old_task.meta;
         if latest_task.base.required_slots == old_task.base.required_slots && !meta_modified {
@@ -930,7 +930,7 @@ impl BaseTaskExecutor {
         // retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
         let mut backoffer = tidb_dxf_scheduler::new_retry_backoffer();
         tidb_dxf_handle::run_with_retry(ctx, tidb_dxf_scheduler::retry_sql_times(), &mut backoffer, &self.logger, |_| {
-            (true, self.param.task_table.update_subtask_state_and_error(exec_id, subtask_id, state, sub_task_err))
+            (true, self.param.task_table.update_subtask_state_and_error(&ctx, exec_id, subtask_id, state, sub_task_err))
         })
         .map_err(|err| {
             self.logger.error(
@@ -954,7 +954,7 @@ impl BaseTaskExecutor {
         // retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
         let mut backoffer = tidb_dxf_scheduler::new_retry_backoffer();
         tidb_dxf_handle::run_with_retry(ctx, tidb_dxf_scheduler::retry_sql_times(), &mut backoffer, &self.logger, |_| {
-            match self.param.task_table.start_subtask(subtask_id, &self.param.exec_id) {
+            match self.param.task_table.start_subtask(&ctx, subtask_id, &self.param.exec_id) {
                 // No need to retry.
                 Err(err) if err.is(&StorageError::SubtaskNotFound) => (false, Err(err)),
                 result => (true, result),
@@ -982,7 +982,7 @@ impl BaseTaskExecutor {
         // retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
         let mut backoffer = tidb_dxf_scheduler::new_retry_backoffer();
         tidb_dxf_handle::run_with_retry(ctx, tidb_dxf_scheduler::retry_sql_times(), &mut backoffer, &self.logger, |_| {
-            (true, self.param.task_table.finish_subtask(&subtask.base.exec_id, subtask.base.id, &subtask.meta))
+            (true, self.param.task_table.finish_subtask(&ctx, &subtask.base.exec_id, subtask.base.id, &subtask.meta))
         })
         .map_err(|err| {
             self.logger.error(
@@ -1042,7 +1042,7 @@ impl BaseTaskExecutor {
         let mut backoffer = tidb_dxf_scheduler::new_retry_backoffer();
         if let Err(err1) =
             tidb_dxf_handle::run_with_retry(ctx, tidb_dxf_scheduler::retry_sql_times(), &mut backoffer, &self.logger, |_| {
-                (true, self.param.task_table.fail_subtask(&self.param.exec_id, task_id, Some(as_dyn(subtask_err.as_ref()))))
+                (true, self.param.task_table.fail_subtask(&ctx, &self.param.exec_id, task_id, Some(as_dyn(subtask_err.as_ref()))))
             })
         {
             self.logger.error(

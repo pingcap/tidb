@@ -147,7 +147,7 @@ fn test_task_fail_in_manager() {
     let ctrl = Controller::new();
 
     let (sch_manager, mgr) = mock_scheduler_manager(&stack, Some(get_test_scheduler_ext(&ctrl)), None);
-    mgr.init_meta(":4000", &tidb_dxf_handle::get_target_scope()).unwrap();
+    mgr.init_meta(&tidb_gocontext::Context::background(), ":4000", &tidb_dxf_handle::get_target_scope()).unwrap();
     let factory_ctrl = Arc::clone(&ctrl);
     tidb_dxf_scheduler::register_scheduler_factory(
         TASK_TYPE_EXAMPLE,
@@ -160,18 +160,18 @@ fn test_task_fail_in_manager() {
     sch_manager.start();
 
     // unknown task type
-    let task_id = mgr.create_task("test", &TaskType::new("test-type"), "", 1, "", 0, &ExtraParams::default(), &[]).unwrap();
+    let task_id = mgr.create_task(&tidb_gocontext::Context::background(), "test", &TaskType::new("test-type"), "", 1, "", 0, &ExtraParams::default(), &[]).unwrap();
     eventually(Duration::from_secs(10), Duration::from_millis(300), || {
-        let task = mgr.get_task_by_id(task_id).unwrap();
+        let task = mgr.get_task_by_id(&tidb_gocontext::Context::background(), task_id).unwrap();
         task.base.state == TASK_STATE_FAILED
             && task.error.as_ref().is_some_and(|err| err.to_string().contains("unknown task type"))
     });
 
     // scheduler init error
     let ks = if tidb_config_kerneltype::is_next_gen() { tidb_keyspace::SYSTEM } else { "" };
-    let task_id = mgr.create_task("test2", &TASK_TYPE_EXAMPLE, ks, 1, "", 0, &ExtraParams::default(), &[]).unwrap();
+    let task_id = mgr.create_task(&tidb_gocontext::Context::background(), "test2", &TASK_TYPE_EXAMPLE, ks, 1, "", 0, &ExtraParams::default(), &[]).unwrap();
     eventually(Duration::from_secs(10), Duration::from_millis(300), || {
-        let task = mgr.get_task_by_id(task_id).unwrap();
+        let task = mgr.get_task_by_id(&tidb_gocontext::Context::background(), task_id).unwrap();
         task.base.state == TASK_STATE_FAILED
             && task.error.as_ref().is_some_and(|err| err.to_string().contains("mock scheduler init error"))
     });
@@ -213,7 +213,7 @@ fn check_schedule(task_cnt: usize, is_succ: bool, is_cancel: bool, is_subtask_ca
     let keyspace = "";
     let scope = tidb_dxf_handle::get_target_scope();
     let (sch, mgr) = mock_scheduler_manager(&stack, Some(get_number_example_scheduler_ext(&ctrl)), None);
-    mgr.init_meta(":4000", &scope).unwrap();
+    mgr.init_meta(&tidb_gocontext::Context::background(), ":4000", &scope).unwrap();
     sch.start();
     let _stop = StopScheduler { sch: Arc::clone(&sch), restore_max_concurrent_task, ctrl: Arc::clone(&ctrl) };
 
@@ -225,7 +225,7 @@ fn check_schedule(task_cnt: usize, is_succ: bool, is_cancel: bool, is_subtask_ca
     let check_task_running_cnt = || {
         let mut tasks = Vec::new();
         eventually(Duration::from_secs(5), Duration::from_millis(50), || {
-            tasks = mgr.get_task_bases_in_states(&[TASK_STATE_RUNNING]).unwrap();
+            tasks = mgr.get_task_bases_in_states(&tidb_gocontext::Context::background(), &[TASK_STATE_RUNNING]).unwrap();
             tasks.len() == task_cnt
         });
         tasks
@@ -235,7 +235,7 @@ fn check_schedule(task_cnt: usize, is_succ: bool, is_cancel: bool, is_subtask_ca
         for (i, &task_id) in task_ids.iter().enumerate() {
             assert_eq!(task_id, tasks[i].id);
             eventually(Duration::from_secs(5), Duration::from_millis(50), || {
-                let cnt_by_states = mgr.get_subtask_cnt_group_by_states(task_id, STEP_ONE).unwrap();
+                let cnt_by_states = mgr.get_subtask_cnt_group_by_states(&tidb_gocontext::Context::background(), task_id, STEP_ONE).unwrap();
                 SUBTASK_CNT as i64 == cnt_by_states.get(&SUBTASK_STATE_PENDING).copied().unwrap_or(0)
             });
         }
@@ -245,7 +245,7 @@ fn check_schedule(task_cnt: usize, is_succ: bool, is_cancel: bool, is_subtask_ca
     let mut task_ids = Vec::with_capacity(task_cnt);
     for i in 0..task_cnt {
         let task_id =
-            mgr.create_task(&i.to_string(), &TASK_TYPE_EXAMPLE, keyspace, 0, &scope, 0, &ExtraParams::default(), &[]).unwrap();
+            mgr.create_task(&tidb_gocontext::Context::background(), &i.to_string(), &TASK_TYPE_EXAMPLE, keyspace, 0, &scope, 0, &ExtraParams::default(), &[]).unwrap();
         task_ids.push(task_id);
     }
     // test OnNextSubtasksBatch.
@@ -255,7 +255,7 @@ fn check_schedule(task_cnt: usize, is_succ: bool, is_cancel: bool, is_subtask_ca
     // test parallelism control
     if task_cnt == 1 {
         let task_id = mgr
-            .create_task(&task_cnt.to_string(), &TASK_TYPE_EXAMPLE, keyspace, 0, &scope, 0, &ExtraParams::default(), &[])
+            .create_task(&tidb_gocontext::Context::background(), &task_cnt.to_string(), &TASK_TYPE_EXAMPLE, keyspace, 0, &scope, 0, &ExtraParams::default(), &[])
             .unwrap();
         check_get_running_task_cnt(task_cnt);
         // Clean the task.
@@ -266,12 +266,12 @@ fn check_schedule(task_cnt: usize, is_succ: bool, is_cancel: bool, is_subtask_ca
     // test DetectTaskLoop
     let check_get_task_state = |expected_state: TaskState| {
         eventually(Duration::from_secs(10), Duration::from_millis(100), || {
-            let tasks = mgr.get_task_bases_in_states(std::slice::from_ref(&expected_state)).unwrap();
+            let tasks = mgr.get_task_bases_in_states(&tidb_gocontext::Context::background(), std::slice::from_ref(&expected_state)).unwrap();
             if tasks.len() == task_cnt {
                 return true;
             }
             let history_tasks =
-                testutil::get_tasks_from_history_in_states(&mgr, std::slice::from_ref(&expected_state)).unwrap();
+                testutil::get_tasks_from_history_in_states(&tidb_gocontext::Context::background(), &mgr, std::slice::from_ref(&expected_state)).unwrap();
             tasks.len() + history_tasks.len() == task_cnt
         });
     };
@@ -279,7 +279,7 @@ fn check_schedule(task_cnt: usize, is_succ: bool, is_cancel: bool, is_subtask_ca
     if is_succ {
         // Mock subtasks succeed.
         for i in 1..=(SUBTASK_CNT * task_cnt) as i64 {
-            mgr.update_subtask_state_and_error(":4000", i, &SUBTASK_STATE_SUCCEED, None).unwrap();
+            mgr.update_subtask_state_and_error(&tidb_gocontext::Context::background(), ":4000", i, &SUBTASK_STATE_SUCCEED, None).unwrap();
         }
         check_get_task_state(TASK_STATE_SUCCEED);
         assert_eq!(tasks.len(), task_cnt);
@@ -289,32 +289,32 @@ fn check_schedule(task_cnt: usize, is_succ: bool, is_cancel: bool, is_subtask_ca
     }
 
     let subtasks_map: HashMap<i64, Vec<SubtaskBase>> =
-        task_ids.iter().map(|&task_id| (task_id, mgr.get_active_subtasks(task_id).unwrap())).collect();
+        task_ids.iter().map(|&task_id| (task_id, mgr.get_active_subtasks(&tidb_gocontext::Context::background(), task_id).unwrap())).collect();
 
     if is_cancel {
         for &task_id in &task_ids {
-            mgr.cancel_task(task_id).unwrap();
+            mgr.cancel_task(&tidb_gocontext::Context::background(), task_id).unwrap();
         }
     } else if is_pause_and_resume {
         for i in 0..task_cnt {
-            let found = mgr.pause_task(&i.to_string()).unwrap();
+            let found = mgr.pause_task(&tidb_gocontext::Context::background(), &i.to_string()).unwrap();
             assert!(found);
         }
         for sts in subtasks_map.values() {
             for st in sts {
-                mgr.update_subtask_state_and_error(":4000", st.id, &SUBTASK_STATE_PAUSED, None).unwrap();
+                mgr.update_subtask_state_and_error(&tidb_gocontext::Context::background(), ":4000", st.id, &SUBTASK_STATE_PAUSED, None).unwrap();
             }
         }
         check_get_task_state(TASK_STATE_PAUSED);
         for i in 0..task_cnt {
-            let found = mgr.resume_task(&i.to_string()).unwrap();
+            let found = mgr.resume_task(&tidb_gocontext::Context::background(), &i.to_string()).unwrap();
             assert!(found);
         }
 
         // Mock subtasks succeed.
         for sts in subtasks_map.values() {
             for st in sts {
-                mgr.update_subtask_state_and_error(":4000", st.id, &SUBTASK_STATE_SUCCEED, None).unwrap();
+                mgr.update_subtask_state_and_error(&tidb_gocontext::Context::background(), ":4000", st.id, &SUBTASK_STATE_SUCCEED, None).unwrap();
             }
         }
         check_get_task_state(TASK_STATE_SUCCEED);
@@ -322,12 +322,12 @@ fn check_schedule(task_cnt: usize, is_succ: bool, is_cancel: bool, is_subtask_ca
     } else if is_subtask_cancel {
         // Mock a subtask canceled
         for sts in subtasks_map.values() {
-            mgr.update_subtask_state_and_error(":4000", sts[0].id, &SUBTASK_STATE_CANCELED, None).unwrap();
+            mgr.update_subtask_state_and_error(&tidb_gocontext::Context::background(), ":4000", sts[0].id, &SUBTASK_STATE_CANCELED, None).unwrap();
         }
     } else {
         // Mock a subtask fails.
         for sts in subtasks_map.values() {
-            mgr.update_subtask_state_and_error(":4000", sts[0].id, &SUBTASK_STATE_FAILED, None).unwrap();
+            mgr.update_subtask_state_and_error(&tidb_gocontext::Context::background(), ":4000", sts[0].id, &SUBTASK_STATE_FAILED, None).unwrap();
         }
     }
 
@@ -335,7 +335,7 @@ fn check_schedule(task_cnt: usize, is_succ: bool, is_cancel: bool, is_subtask_ca
     assert_eq!(tasks.len(), task_cnt);
     for task in &tasks {
         let subtasks = mgr
-            .get_subtasks_by_exec_id_and_step_and_states(
+            .get_subtasks_by_exec_id_and_step_and_states(&tidb_gocontext::Context::background(), 
                 ":4000",
                 task.id,
                 task.step,
@@ -343,7 +343,7 @@ fn check_schedule(task_cnt: usize, is_succ: bool, is_cancel: bool, is_subtask_ca
             )
             .unwrap();
         for subtask in subtasks {
-            mgr.update_subtask_state_and_error(":4000", subtask.base.id, &SUBTASK_STATE_CANCELED, None).unwrap();
+            mgr.update_subtask_state_and_error(&tidb_gocontext::Context::background(), ":4000", subtask.base.id, &SUBTASK_STATE_CANCELED, None).unwrap();
         }
     }
     check_get_task_state(TASK_STATE_REVERTED);
@@ -480,7 +480,7 @@ fn test_manager_schedule_loop() {
         }),
     );
     let get_running_task_keys = || {
-        let tasks = task_mgr.get_task_bases_in_states(&[TASK_STATE_RUNNING]).unwrap();
+        let tasks = task_mgr.get_task_bases_in_states(&tidb_gocontext::Context::background(), &[TASK_STATE_RUNNING]).unwrap();
         let mut task_keys: Vec<String> = tasks.into_iter().map(|task| task.key).collect();
         task_keys.sort();
         task_keys
@@ -506,7 +506,7 @@ fn test_manager_schedule_loop() {
         }
         for (i, &concurrency) in concurrencies.iter().enumerate() {
             task_mgr
-                .create_task(&format!("key/{i}"), &TASK_TYPE_EXAMPLE, keyspace, concurrency, "", 1, &ExtraParams::default(), b"{}")
+                .create_task(&tidb_gocontext::Context::background(), &format!("key/{i}"), &TASK_TYPE_EXAMPLE, keyspace, concurrency, "", 1, &ExtraParams::default(), b"{}")
                 .unwrap();
         }
         eventually(Duration::from_secs(10), Duration::from_millis(100), || {
@@ -544,21 +544,21 @@ fn test_scheduler_cleaner_drains_bounded_batches() {
     let mock_cleaner = MockCleaner::new(&ctrl);
 
     let (sch, mgr) = mock_scheduler_manager(&stack, None, Some(Arc::clone(&mock_cleaner) as Arc<dyn tidb_dxf_scheduler::Cleaner>));
-    mgr.init_meta(":4000", &tidb_dxf_handle::get_target_scope()).unwrap();
+    mgr.init_meta(&tidb_gocontext::Context::background(), ":4000", &tidb_dxf_handle::get_target_scope()).unwrap();
     mock_cleaner.ret_times("Clean", Times::N(3), Ok::<(), SchedulerError>(()));
     for task_key in ["cleanup-batch-0", "cleanup-batch-1", "cleanup-batch-2"] {
         let task_id = mgr
-            .create_task(task_key, &TASK_TYPE_EXAMPLE, "", 1, &tidb_dxf_handle::get_target_scope(), 1, &ExtraParams::default(), &[])
+            .create_task(&tidb_gocontext::Context::background(), task_key, &TASK_TYPE_EXAMPLE, "", 1, &tidb_dxf_handle::get_target_scope(), 1, &ExtraParams::default(), &[])
             .unwrap();
-        let task = mgr.get_task_by_id(task_id).unwrap();
-        mgr.switch_task_step(&task, &TASK_STATE_RUNNING, STEP_ONE, &[]).unwrap();
-        mgr.succeed_task(task_id).unwrap();
+        let task = mgr.get_task_by_id(&tidb_gocontext::Context::background(), task_id).unwrap();
+        mgr.switch_task_step(&tidb_gocontext::Context::background(), &task, &TASK_STATE_RUNNING, STEP_ONE, &[]).unwrap();
+        mgr.succeed_task(&tidb_gocontext::Context::background(), task_id).unwrap();
     }
 
     sch.do_clean();
-    let history_tasks = testutil::get_tasks_from_history_in_states(&mgr, &[TASK_STATE_SUCCEED]).unwrap();
+    let history_tasks = testutil::get_tasks_from_history_in_states(&tidb_gocontext::Context::background(), &mgr, &[TASK_STATE_SUCCEED]).unwrap();
     assert_eq!(history_tasks.len(), 3);
-    let active_tasks = mgr.get_task_bases_in_states(&[TASK_STATE_SUCCEED]).unwrap();
+    let active_tasks = mgr.get_task_bases_in_states(&tidb_gocontext::Context::background(), &[TASK_STATE_SUCCEED]).unwrap();
     assert!(active_tasks.is_empty());
     sch.stop();
     ctrl.finish();
@@ -588,20 +588,20 @@ fn test_scheduler_cleaner() {
         Some(get_number_example_scheduler_ext(&ctrl)),
         Some(Arc::clone(&mock_cleaner) as Arc<dyn tidb_dxf_scheduler::Cleaner>),
     );
-    mgr.init_meta(":4000", &target_scope).unwrap();
+    mgr.init_meta(&tidb_gocontext::Context::background(), ":4000", &target_scope).unwrap();
     mock_cleaner.ret_times("Clean", Times::Any, Ok::<(), SchedulerError>(()));
     sch.start();
-    let task_id = mgr.create_task("test", &TASK_TYPE_EXAMPLE, "", 1, &target_scope, 1, &ExtraParams::default(), &[]).unwrap();
+    let task_id = mgr.create_task(&tidb_gocontext::Context::background(), "test", &TASK_TYPE_EXAMPLE, "", 1, &target_scope, 1, &ExtraParams::default(), &[]).unwrap();
 
     let check_task_running = || {
         eventually(Duration::from_secs(5), Duration::from_millis(50), || {
-            mgr.get_task_base_by_id(task_id).unwrap().state == TASK_STATE_RUNNING
+            mgr.get_task_base_by_id(&tidb_gocontext::Context::background(), task_id).unwrap().state == TASK_STATE_RUNNING
         });
     };
 
     let check_subtask_cnt = |task_id: i64| {
         eventually(Duration::from_secs(5), Duration::from_millis(50), || {
-            let cnt_by_states = mgr.get_subtask_cnt_group_by_states(task_id, STEP_ONE).unwrap();
+            let cnt_by_states = mgr.get_subtask_cnt_group_by_states(&tidb_gocontext::Context::background(), task_id, STEP_ONE).unwrap();
             SUBTASK_CNT as i64 == cnt_by_states.get(&SUBTASK_STATE_PENDING).copied().unwrap_or(0)
         });
     };
@@ -609,11 +609,11 @@ fn test_scheduler_cleaner() {
     check_task_running();
     check_subtask_cnt(task_id);
     for i in 1..=SUBTASK_CNT as i64 {
-        mgr.update_subtask_state_and_error(":4000", i, &SUBTASK_STATE_SUCCEED, None).unwrap();
+        mgr.update_subtask_state_and_error(&tidb_gocontext::Context::background(), ":4000", i, &SUBTASK_STATE_SUCCEED, None).unwrap();
     }
     sch.do_clean();
     eventually(Duration::from_secs(50), Duration::from_millis(300), || {
-        !testutil::get_tasks_from_history_in_states(&mgr, &[TASK_STATE_SUCCEED]).unwrap().is_empty()
+        !testutil::get_tasks_from_history_in_states(&tidb_gocontext::Context::background(), &mgr, &[TASK_STATE_SUCCEED]).unwrap().is_empty()
     });
     sch.stop();
     ctrl.finish();

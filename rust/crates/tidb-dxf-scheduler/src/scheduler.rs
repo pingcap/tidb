@@ -255,7 +255,7 @@ impl BaseScheduler {
         let task = self.get_task();
         // we only query the base fields of task to reduce memory usage, other fields
         // are refreshed when needed.
-        let new_task_base = self.task_mgr().get_task_base_by_id(task.base.id)?;
+        let new_task_base = self.task_mgr().get_task_base_by_id(&self.ctx, task.base.id)?;
         if new_task_base.state != task.base.state || new_task_base.step != task.base.step {
             self.logger.info(
                 "task state/step changed by user or other scheduler",
@@ -266,7 +266,7 @@ impl BaseScheduler {
                     str_field("new-step", step_2_str(&task.base.tp, new_task_base.step)),
                 ],
             );
-            let new_task = self.task_mgr().get_task_by_id(task.base.id)?;
+            let new_task = self.task_mgr().get_task_by_id(&self.ctx, task.base.id)?;
             self.store_task(new_task);
         }
         Ok(())
@@ -395,7 +395,7 @@ impl BaseScheduler {
             "on pausing state",
             &[str_field("state", task.base.state.to_string()), str_field("step", step_2_str(&task.base.tp, task.base.step))],
         );
-        let cnt_by_states = self.task_mgr().get_subtask_cnt_group_by_states(task.base.id, task.base.step).map_err(|err| {
+        let cnt_by_states = self.task_mgr().get_subtask_cnt_group_by_states(&self.ctx, task.base.id, task.base.step).map_err(|err| {
             self.logger.warn("check task failed", &[str_field("error", err.to_string())]);
             storage(err)
         })?;
@@ -415,7 +415,7 @@ impl BaseScheduler {
         }
 
         self.logger.info("all running subtasks paused, update the task to paused state", &[]);
-        self.task_mgr().paused_task(task.base.id).map_err(storage)?;
+        self.task_mgr().paused_task(&self.ctx, task.base.id).map_err(storage)?;
         task.base.state = TASK_STATE_PAUSED;
         self.store_task(task);
         Ok(())
@@ -436,7 +436,7 @@ impl BaseScheduler {
         }
         let first = sub_task_errs[0].clone();
         self.task_mgr()
-            .pause_task_on_error(task.base.id, &task.base.state, task.base.step, first.as_deref().map(as_dyn))
+            .pause_task_on_error(&self.ctx, task.base.id, &task.base.state, task.base.step, first.as_deref().map(as_dyn))
             .map_err(storage)?;
         task.error = first;
         self.store_task(task.clone());
@@ -461,20 +461,20 @@ impl BaseScheduler {
             "on resuming state",
             &[str_field("state", task.base.state.to_string()), str_field("step", step_2_str(&task.base.tp, task.base.step))],
         );
-        let cnt_by_states = self.task_mgr().get_subtask_cnt_group_by_states(task.base.id, task.base.step).map_err(|err| {
+        let cnt_by_states = self.task_mgr().get_subtask_cnt_group_by_states(&self.ctx, task.base.id, task.base.step).map_err(|err| {
             self.logger.warn("check task failed", &[str_field("error", err.to_string())]);
             storage(err)
         })?;
         if cnt(&cnt_by_states, &SUBTASK_STATE_PAUSED) == 0 {
             // Finish the resuming process.
             self.logger.info("all paused tasks converted to pending state, update the task to running state", &[]);
-            self.task_mgr().resumed_task(task.base.id).map_err(storage)?;
+            self.task_mgr().resumed_task(&self.ctx, task.base.id).map_err(storage)?;
             task.base.state = TASK_STATE_RUNNING;
             self.store_task(task);
             return Ok(());
         }
 
-        self.task_mgr().resume_subtasks(task.base.id).map_err(storage)
+        self.task_mgr().resume_subtasks(&self.ctx, task.base.id).map_err(storage)
     }
 
     /// Go `onReverting`: the task is reverted once its revert subtasks
@@ -485,14 +485,14 @@ impl BaseScheduler {
             "on reverting state",
             &[str_field("state", task.base.state.to_string()), str_field("step", step_2_str(&task.base.tp, task.base.step))],
         );
-        let cnt_by_states = self.task_mgr().get_subtask_cnt_group_by_states(task.base.id, task.base.step).map_err(|err| {
+        let cnt_by_states = self.task_mgr().get_subtask_cnt_group_by_states(&self.ctx, task.base.id, task.base.step).map_err(|err| {
             self.logger.warn("check task failed", &[str_field("error", err.to_string())]);
             storage(err)
         })?;
         let runnable_subtask_cnt = cnt(&cnt_by_states, &SUBTASK_STATE_PENDING) + cnt(&cnt_by_states, &SUBTASK_STATE_RUNNING);
         if runnable_subtask_cnt == 0 {
             self.ext().on_done(&self.ctx, self, &mut task)?;
-            self.task_mgr().reverted_task(task.base.id).map_err(storage)?;
+            self.task_mgr().reverted_task(&self.ctx, task.base.id).map_err(storage)?;
             task.base.state = TASK_STATE_REVERTED;
             let (state, error) = (task.base.state.clone(), task.error.clone());
             self.store_task(task);
@@ -517,7 +517,7 @@ impl BaseScheduler {
             if let Err(err) = self.ext().on_prepare(&self.ctx, self, &mut task) {
                 return self.handle_prepare_or_plan_err(err);
             }
-            let switched = self.task_mgr().switch_task_step_after_prepare(&task).map_err(storage)?;
+            let switched = self.task_mgr().switch_task_step_after_prepare(&self.ctx, &task).map_err(storage)?;
             if !switched {
                 return Ok(());
             }
@@ -538,7 +538,7 @@ impl BaseScheduler {
             &[str_field("state", task.base.state.to_string()), str_field("step", step_2_str(&task.base.tp, task.base.step))],
         );
         // check current step finishes.
-        let cnt_by_states = self.task_mgr().get_subtask_cnt_group_by_states(task.base.id, task.base.step).map_err(|err| {
+        let cnt_by_states = self.task_mgr().get_subtask_cnt_group_by_states(&self.ctx, task.base.id, task.base.step).map_err(|err| {
             self.logger.warn("check task failed", &[str_field("error", err.to_string())]);
             storage(err)
         })?;
@@ -564,7 +564,7 @@ impl BaseScheduler {
             );
             if should_pause_on_kv_disk_full(&task, &cnt_by_states, &sub_task_errs) {
                 self.task_mgr()
-                    .pause_task_on_error(task.base.id, &task.base.state, task.base.step, sub_task_errs[0].as_deref().map(as_dyn))
+                    .pause_task_on_error(&self.ctx, task.base.id, &task.base.state, task.base.step, sub_task_errs[0].as_deref().map(as_dyn))
                     .map_err(storage)?;
                 let mut task_clone = task.as_ref().clone();
                 task_clone.base.state = TASK_STATE_PAUSING;
@@ -594,7 +594,7 @@ impl BaseScheduler {
         if cnt(cnt_by_states, &SUBTASK_STATE_FAILED) == 0 && cnt(cnt_by_states, &SUBTASK_STATE_CANCELED) == 0 {
             return Ok(Vec::new());
         }
-        self.task_mgr().get_subtask_errors(task.base.id).map_err(|err| {
+        self.task_mgr().get_subtask_errors(&self.ctx, task.base.id).map_err(|err| {
             self.logger.warn("collect subtask error failed", &[str_field("error", err.to_string())]);
             storage(err)
         })
@@ -641,7 +641,7 @@ impl BaseScheduler {
             self.logger.info("modify task meta", &[str_field("modifies", format!("{meta_modifies:?}"))]);
             task.meta = self.ext().modify_meta(&task.meta, &meta_modifies)?;
         }
-        self.task_mgr().modified_task(&task).map_err(storage)?;
+        self.task_mgr().modified_task(&self.ctx, &task).map_err(storage)?;
         task.base.state = task.modify_param.prev_state.clone();
         task.modify_param = tidb_dxf::ModifyParam::default();
         self.store_task(task);
@@ -670,7 +670,7 @@ impl BaseScheduler {
 
         if next_step == STEP_DONE {
             self.ext().on_done(&self.ctx, self, &mut task)?;
-            self.task_mgr().succeed_task(task.base.id).map_err(storage)?;
+            self.task_mgr().succeed_task(&self.ctx, task.base.id).map_err(storage)?;
             task.base.step = next_step;
             task.base.state = TASK_STATE_SUCCEED;
             let (state, error) = (task.base.state.clone(), task.error.clone());
@@ -735,7 +735,7 @@ impl BaseScheduler {
         // multiple tasks are switching to next step.
         // balancer will assign the subtasks to the right instance according to
         // the system load of all nodes.
-        self.param.slot_mgr.update(&self.param.node_mgr, self.task_mgr()).map_err(storage)?;
+        self.param.slot_mgr.update(&self.ctx, &self.param.node_mgr, self.task_mgr()).map_err(storage)?;
         let adjusted_eligible_nodes = self.param.slot_mgr.adjust_eligible_nodes(eligible_nodes, task.base.required_slots);
         let mut size: u64 = 0;
         let mut sub_tasks = Vec::with_capacity(metas.len());
@@ -780,9 +780,9 @@ impl BaseScheduler {
         let mut backoffer = new_retry_backoffer();
         tidb_dxf_handle::run_with_retry(&self.ctx, retry_sql_times(), &mut backoffer, &self.logger, |_| {
             let result = if in_batch {
-                self.task_mgr().switch_task_step_in_batch(task, &TASK_STATE_RUNNING, subtask_step, &sub_tasks)
+                self.task_mgr().switch_task_step_in_batch(&self.ctx, task, &TASK_STATE_RUNNING, subtask_step, &sub_tasks)
             } else {
-                self.task_mgr().switch_task_step(task, &TASK_STATE_RUNNING, subtask_step, &sub_tasks)
+                self.task_mgr().switch_task_step(&self.ctx, task, &TASK_STATE_RUNNING, subtask_step, &sub_tasks)
             };
             match result {
                 Err(err) if err.is(&StorageError::UnstableSubtasks) => (false, Err(err)),
@@ -811,7 +811,7 @@ impl BaseScheduler {
     /// Go `revertTask`.
     fn revert_task(&self, task_err: Error) -> std::result::Result<(), Error> {
         let mut task = self.get_task_clone();
-        self.task_mgr().revert_task(task.base.id, &task.base.state, Some(as_dyn(task_err.as_ref()))).map_err(storage)?;
+        self.task_mgr().revert_task(&self.ctx, task.base.id, &task.base.state, Some(as_dyn(task_err.as_ref()))).map_err(storage)?;
         task.base.state = TASK_STATE_REVERTING;
         task.error = Some(task_err);
         self.store_task(task);
@@ -824,7 +824,7 @@ impl BaseScheduler {
         let mut task = self.get_task_clone();
         if task.base.extra_params.manual_recovery {
             self.task_mgr()
-                .awaiting_resolve_task(task.base.id, &task.base.state, Some(as_dyn(task_err.as_ref())))
+                .awaiting_resolve_task(&self.ctx, task.base.id, &task.base.state, Some(as_dyn(task_err.as_ref())))
                 .map_err(storage)?;
             task.base.state = TASK_STATE_AWAITING_RESOLUTION;
             task.error = Some(task_err);
@@ -934,8 +934,12 @@ impl SessionExecutor for BaseScheduler {
     }
 
     /// Go `WithNewTxn`.
-    fn with_new_txn(&self, f: &mut dyn FnMut(&dyn SessionContext) -> tidb_dxf_storage::Result<()>) -> tidb_dxf_storage::Result<()> {
-        self.task_mgr().with_new_txn(f)
+    fn with_new_txn(
+        &self,
+        ctx: &tidb_gocontext::Context,
+        f: &mut dyn FnMut(&dyn SessionContext) -> tidb_dxf_storage::Result<()>,
+    ) -> tidb_dxf_storage::Result<()> {
+        self.task_mgr().with_new_txn(ctx, f)
     }
 }
 
@@ -944,7 +948,7 @@ impl TaskHandle for BaseScheduler {
     /// subtasks.
     fn get_previous_subtask_metas(&self, task_id: i64, step: Step) -> tidb_dxf_storage::Result<Vec<Vec<u8>>> {
         let previous_subtasks =
-            self.task_mgr().get_all_subtasks_by_step_and_state(task_id, step, &SUBTASK_STATE_SUCCEED).map_err(|err| {
+            self.task_mgr().get_all_subtasks_by_step_and_state(&self.ctx, task_id, step, &SUBTASK_STATE_SUCCEED).map_err(|err| {
                 self.logger.warn(
                     "get previous succeed subtask failed",
                     &[str_field("step", step_2_str(&self.get_task().base.tp, step))],
@@ -956,7 +960,7 @@ impl TaskHandle for BaseScheduler {
 
     /// Go `GetPreviousSubtaskSummary`.
     fn get_previous_subtask_summary(&self, task_id: i64, step: Step) -> tidb_dxf_storage::Result<Vec<SubtaskSummary>> {
-        self.task_mgr().get_all_subtask_summary_by_step(task_id, step)
+        self.task_mgr().get_all_subtask_summary_by_step(&self.ctx, task_id, step)
     }
 }
 

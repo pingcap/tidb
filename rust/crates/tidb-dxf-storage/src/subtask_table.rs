@@ -22,7 +22,6 @@ use tidb_dxf::{
     SUBTASK_STATE_RUNNING,
 };
 use tidb_dxf_execute::SubtaskSummary;
-use tidb_sqlexec::BackgroundContext;
 
 use crate::converter::{get_bytes, get_int64, get_json_string, get_string, is_null, row2_basic_sub_task};
 use crate::task_table::{sql_args, Arg};
@@ -55,7 +54,7 @@ impl TaskManager {
     /// # Errors
     /// The session or the statement failed.
     pub fn get_subtasks_by_exec_id_and_step_and_states(
-        &self,
+        &self, ctx: &tidb_gocontext::Context,
         exec_id: &str,
         task_id: i64,
         step: Step,
@@ -63,7 +62,7 @@ impl TaskManager {
     ) -> Result<Vec<Subtask>> {
         let mut args = vec![Arg::Str(exec_id.to_owned()), Arg::Str(task_id_to_key(task_id)), Arg::Int(step.0)];
         args.extend(subtask_state_args(states));
-        let rows = self.execute_sql_with_new_session(
+        let rows = self.execute_sql_with_new_session(ctx, 
             &format!(
                 "select {SUBTASK_COLUMNS} from mysql.tidb_background_subtask
 		where exec_id = %? and task_key = %? and step = %?
@@ -80,7 +79,7 @@ impl TaskManager {
     /// # Errors
     /// The session or the statement failed.
     pub fn get_first_subtask_in_states(
-        &self,
+        &self, ctx: &tidb_gocontext::Context,
         tidb_id: &str,
         task_id: i64,
         step: Step,
@@ -88,7 +87,7 @@ impl TaskManager {
     ) -> Result<Option<Subtask>> {
         let mut args = vec![Arg::Str(tidb_id.to_owned()), Arg::Str(task_id_to_key(task_id)), Arg::Int(step.0)];
         args.extend(subtask_state_args(states));
-        let rows = self.execute_sql_with_new_session(
+        let rows = self.execute_sql_with_new_session(ctx, 
             &format!(
                 "select {SUBTASK_COLUMNS} from mysql.tidb_background_subtask
 		where exec_id = %? and task_key = %? and step = %?
@@ -104,13 +103,13 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn get_active_subtasks(&self, task_id: i64) -> Result<Vec<SubtaskBase>> {
+    pub fn get_active_subtasks(&self, ctx: &tidb_gocontext::Context, task_id: i64) -> Result<Vec<SubtaskBase>> {
         let args = [
             Arg::Str(task_id_to_key(task_id)),
             Arg::Str(SUBTASK_STATE_PENDING.to_string()),
             Arg::Str(SUBTASK_STATE_RUNNING.to_string()),
         ];
-        let rows = self.execute_sql_with_new_session(
+        let rows = self.execute_sql_with_new_session(ctx, 
             &format!(
                 "
 		select {BASIC_SUBTASK_COLUMNS} from mysql.tidb_background_subtask
@@ -126,13 +125,13 @@ impl TaskManager {
     /// # Errors
     /// The session or the statement failed.
     pub fn get_all_subtasks_by_step_and_state(
-        &self,
+        &self, ctx: &tidb_gocontext::Context,
         task_id: i64,
         step: Step,
         state: &SubtaskState,
     ) -> Result<Vec<Subtask>> {
         let args = [Arg::Str(task_id_to_key(task_id)), Arg::Str(state.to_string()), Arg::Int(step.0)];
-        let rows = self.execute_sql_with_new_session(
+        let rows = self.execute_sql_with_new_session(ctx, 
             &format!(
                 "select {SUBTASK_COLUMNS} from mysql.tidb_background_subtask
 		where task_key = %? and state = %? and step = %?"
@@ -147,9 +146,9 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed, or a summary is not Go's JSON.
-    pub fn get_all_subtask_summary_by_step(&self, task_id: i64, step: Step) -> Result<Vec<SubtaskSummary>> {
+    pub fn get_all_subtask_summary_by_step(&self, ctx: &tidb_gocontext::Context, task_id: i64, step: Step) -> Result<Vec<SubtaskSummary>> {
         let args = [Arg::Str(task_id_to_key(task_id)), Arg::Int(step.0)];
-        let rows = self.execute_sql_with_new_session(
+        let rows = self.execute_sql_with_new_session(ctx, 
             "select summary from mysql.tidb_background_subtask
 		where task_key = %? and step = %?",
             &sql_args(&args),
@@ -166,10 +165,10 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn get_subtask_row_count(&self, task_id: i64, step: Step) -> Result<i64> {
+    pub fn get_subtask_row_count(&self, ctx: &tidb_gocontext::Context, task_id: i64, step: Step) -> Result<i64> {
         let key = task_id_to_key(task_id);
         let args = [Arg::Str(key.clone()), Arg::Int(step.0), Arg::Str(key), Arg::Int(step.0)];
-        let rows = self.execute_sql_with_new_session(
+        let rows = self.execute_sql_with_new_session(ctx, 
             "select
     	cast(sum(json_extract(summary, '$.row_count')) as signed) as row_count
 		from (
@@ -186,10 +185,10 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn update_subtask_summary(&self, subtask_id: i64, summary: &SubtaskSummary) -> Result<()> {
+    pub fn update_subtask_summary(&self, ctx: &tidb_gocontext::Context, subtask_id: i64, summary: &SubtaskSummary) -> Result<()> {
         let summary_bytes = serde_json::to_string(summary).map_err(|error| StorageError::Other(error.to_string()))?;
         let args = [Arg::Str(summary_bytes), Arg::Int(subtask_id)];
-        self.execute_sql_with_new_session(
+        self.execute_sql_with_new_session(ctx, 
             "update mysql.tidb_background_subtask set summary = %? where id = %?",
             &sql_args(&args),
         )
@@ -200,9 +199,9 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn get_subtask_cnt_group_by_states(&self, task_id: i64, step: Step) -> Result<HashMap<SubtaskState, i64>> {
+    pub fn get_subtask_cnt_group_by_states(&self, ctx: &tidb_gocontext::Context, task_id: i64, step: Step) -> Result<HashMap<SubtaskState, i64>> {
         let args = [Arg::Str(task_id_to_key(task_id)), Arg::Int(step.0)];
-        let rows = self.execute_sql_with_new_session(
+        let rows = self.execute_sql_with_new_session(ctx, 
             "
 		select state, count(*)
 		from mysql.tidb_background_subtask
@@ -223,12 +222,12 @@ impl TaskManager {
     /// The session or the statement failed, or a stored error is not Go's
     /// JSON.
     pub fn get_subtask_state_cnt_and_errors_by_step(
-        &self,
+        &self, ctx: &tidb_gocontext::Context,
         task_id: i64,
         step: Step,
     ) -> Result<(HashMap<SubtaskState, i64>, Vec<SubtaskError>)> {
         let args = [Arg::Str(task_id_to_key(task_id)), Arg::Int(step.0)];
-        let rows = self.execute_sql_with_new_session(
+        let rows = self.execute_sql_with_new_session(ctx, 
             "select state, error
 			from mysql.tidb_background_subtask
 			where task_key = %? and step = %?",
@@ -254,13 +253,13 @@ impl TaskManager {
     /// # Errors
     /// The session or the statement failed, or a stored error is not Go's
     /// JSON.
-    pub fn get_subtask_errors(&self, task_id: i64) -> Result<Vec<Option<SubtaskError>>> {
+    pub fn get_subtask_errors(&self, ctx: &tidb_gocontext::Context, task_id: i64) -> Result<Vec<Option<SubtaskError>>> {
         let args = [
             Arg::Str(task_id_to_key(task_id)),
             Arg::Str(SUBTASK_STATE_FAILED.to_string()),
             Arg::Str(SUBTASK_STATE_CANCELED.to_string()),
         ];
-        let rows = self.execute_sql_with_new_session(
+        let rows = self.execute_sql_with_new_session(ctx, 
             "select error from mysql.tidb_background_subtask
              where task_key = %? AND state in (%?, %?)",
             &sql_args(&args),
@@ -275,19 +274,18 @@ impl TaskManager {
     ///
     /// # Errors
     /// The transaction or a statement failed.
-    pub fn update_subtasks_exec_ids(&self, subtasks: &[SubtaskBase]) -> Result<()> {
+    pub fn update_subtasks_exec_ids(&self, ctx: &tidb_gocontext::Context, subtasks: &[SubtaskBase]) -> Result<()> {
         if subtasks.is_empty() {
             return Ok(());
         }
-        self.with_new_txn(&mut |se| {
+        self.with_new_txn(ctx, &mut |se| {
             for subtask in subtasks {
                 let args = [
                     Arg::Str(subtask.exec_id.clone()),
                     Arg::Int(subtask.id),
                     Arg::Str(subtask.state.to_string()),
                 ];
-                exec_sql(
-                    &BackgroundContext,
+                exec_sql(ctx,
                     se,
                     "
 				update mysql.tidb_background_subtask

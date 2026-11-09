@@ -89,9 +89,9 @@ impl SlotManager {
     }
 
     /// Go `update`: the used slots of each managed node.
-    pub(crate) fn update(&self, node_mgr: &NodeManager, task_mgr: &dyn TaskManager) -> tidb_dxf_storage::Result<()> {
+    pub(crate) fn update(&self, ctx: &tidb_gocontext::Context, node_mgr: &NodeManager, task_mgr: &dyn TaskManager) -> tidb_dxf_storage::Result<()> {
         let nodes = node_mgr.get_nodes();
-        let slots_on_nodes = task_mgr.get_used_slots_on_nodes()?;
+        let slots_on_nodes = task_mgr.get_used_slots_on_nodes(ctx)?;
         let new_used_slots =
             nodes.iter().map(|node| (node.id.clone(), slots_on_nodes.get(&node.id).copied().unwrap_or(0))).collect();
         self.store_used_slots(new_used_slots);
@@ -401,7 +401,7 @@ mod tests {
         sm.update_capacity(16);
         assert!(sm.load_used_slots().is_empty());
         assert!(sm.reserved_slots().is_empty());
-        sm.update(&node_mgr, &task_mgr).unwrap();
+        sm.update(&tidb_gocontext::Context::background(), &node_mgr, &task_mgr).unwrap();
         assert!(sm.reserved_slots().is_empty());
         assert_eq!(*sm.load_used_slots(), slots(&[("tidb-1", 12), ("tidb-2", 8), ("tidb-3", 0)]));
         task_mgr.assert_satisfied();
@@ -409,13 +409,13 @@ mod tests {
         // some node scaled in, should be reflected
         node_mgr.store_nodes(vec![node("tidb-1")]);
         task_mgr.expect_get_used_slots_on_nodes(Ok(slots(&[("tidb-1", 12), ("tidb-2", 8)])));
-        sm.update(&node_mgr, &task_mgr).unwrap();
+        sm.update(&tidb_gocontext::Context::background(), &node_mgr, &task_mgr).unwrap();
         assert!(sm.reserved_slots().is_empty());
         assert_eq!(*sm.load_used_slots(), slots(&[("tidb-1", 12)]));
         task_mgr.assert_satisfied();
         // on error, the usedSlots should not be changed
         task_mgr.expect_get_used_slots_on_nodes(Err(tidb_dxf_storage::StorageError::Other("mock err".to_owned())));
-        let error = sm.update(&node_mgr, &task_mgr).unwrap_err();
+        let error = sm.update(&tidb_gocontext::Context::background(), &node_mgr, &task_mgr).unwrap_err();
         assert!(error.to_string().contains("mock err"));
         assert!(sm.reserved_slots().is_empty());
         assert_eq!(*sm.load_used_slots(), slots(&[("tidb-1", 12)]));

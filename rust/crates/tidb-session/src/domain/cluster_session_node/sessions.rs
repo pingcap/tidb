@@ -705,6 +705,7 @@ impl tidb_sqlexec::SqlExecutor for ClusterStatsSqlExecutor {
         sql: &str,
     ) -> Result<Vec<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
         self.state.adopt_request_source(context);
+        honor_canceled_caller(context)?;
         Ok(self.materialized_record_set(sql)?.into_iter().collect())
     }
 
@@ -715,6 +716,7 @@ impl tidb_sqlexec::SqlExecutor for ClusterStatsSqlExecutor {
         arguments: &[tidb_sqlescape::SqlArg<'_>],
     ) -> Result<Option<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
         self.state.adopt_request_source(context);
+        honor_canceled_caller(context)?;
         let escaped = super::sql_with_params(sql, arguments)?;
         self.materialized_record_set(&escaped)
     }
@@ -725,6 +727,7 @@ impl tidb_sqlexec::SqlExecutor for ClusterStatsSqlExecutor {
         statement: &tidb_ast::Stmt,
     ) -> Result<Option<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
         self.state.adopt_request_source(context);
+        honor_canceled_caller(context)?;
         let sql = String::from_utf8(statement.original_text().to_vec())?;
         self.materialized_record_set(&sql)
     }
@@ -754,6 +757,7 @@ impl tidb_sqlexec::RestrictedSqlExecutor for ClusterStatsSqlExecutor {
         tidb_sqlexec::SqlExecError,
     > {
         self.state.adopt_request_source(context);
+        honor_canceled_caller(context)?;
         let sql = String::from_utf8(statement.original_text().to_vec())?;
         self.state.materialize(&sql)
     }
@@ -1502,8 +1506,23 @@ pub fn get_snapshot_info_schema(
 /// Go `ctx.Value(kv.RequestSourceKey)`: the request source a caller's
 /// context carries.
 pub(super) fn context_request_source(context: &dyn tidb_sqlexec::ExecutionContext) -> Option<&tikv_client::util::RequestSource> {
-    context
-        .as_any()
-        .downcast_ref::<tikv_client::trace::TraceContext>()
+    let any = context.as_any();
+    any.downcast_ref::<tikv_client::trace::TraceContext>()
+        .or_else(|| {
+            any.downcast_ref::<tidb_gocontext::Context>()
+                .and_then(|ctx| ctx.value::<tidb_sqlexec::TraceContextKey, tikv_client::trace::TraceContext>())
+        })
         .and_then(tikv_client::util::request_source_value)
+}
+
+/// Go `executeStmtImpl`'s `if err := ctx.Err(); err != nil { return nil,
+/// err }`: a statement of a cancelled caller (a `tidb_gocontext` context;
+/// the other contexts are never done) does not run.
+pub(super) fn honor_canceled_caller(
+    context: &dyn tidb_sqlexec::ExecutionContext,
+) -> Result<(), tidb_sqlexec::SqlExecError> {
+    match context.as_any().downcast_ref::<tidb_gocontext::Context>().and_then(tidb_gocontext::Context::err) {
+        Some(err) => Err(Box::new(err)),
+        None => Ok(()),
+    }
 }

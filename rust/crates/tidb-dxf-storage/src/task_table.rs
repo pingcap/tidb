@@ -26,7 +26,6 @@ use tidb_dxf::{
     TASK_STATE_REVERTED, TASK_STATE_REVERTING, TASK_STATE_RUNNING, TASK_STATE_SUCCEED,
 };
 use tidb_sqlescape::SqlArg;
-use tidb_sqlexec::BackgroundContext;
 
 use crate::converter::{get_int64, get_string, is_null, row2_basic_sub_task, row2_task_basic};
 use crate::{
@@ -103,7 +102,7 @@ impl TaskManager {
     /// failed.
     #[allow(clippy::too_many_arguments)]
     pub fn create_task(
-        &self,
+        &self, ctx: &tidb_gocontext::Context,
         key: &str,
         tp: &TaskType,
         keyspace: &str,
@@ -115,7 +114,7 @@ impl TaskManager {
     ) -> Result<i64> {
         let mut task_id = 0;
         self.with_new_session(&mut |se| {
-            task_id = Self::create_task_with_session(
+            task_id = Self::create_task_with_session(ctx, 
                 se, key, tp, keyspace, required_slots, target_scope, max_node_cnt, extra_params, meta,
             )?;
             Ok(())
@@ -129,7 +128,7 @@ impl TaskManager {
     /// The task needs more slots than a managed node has, or a statement
     /// failed.
     #[allow(clippy::too_many_arguments)]
-    pub fn create_task_with_session(
+    pub fn create_task_with_session(ctx: &tidb_gocontext::Context, 
         se: &dyn SessionContext,
         key: &str,
         tp: &TaskType,
@@ -140,7 +139,7 @@ impl TaskManager {
         extra_params: &ExtraParams,
         meta: &[u8],
     ) -> Result<i64> {
-        let cpu_count = Self::get_cpu_count_of_node_by_role_with_session(se, "", true)?;
+        let cpu_count = Self::get_cpu_count_of_node_by_role_with_session(ctx, se, "", true)?;
         if required_slots > cpu_count {
             return Err(StorageError::Other(format!(
                 "task required slots({required_slots}) larger than cpu count({cpu_count}) of managed node"
@@ -172,8 +171,7 @@ impl TaskManager {
             Arg::Json(extra_param_bytes),
             Arg::Str(keyspace.to_owned()),
         ];
-        exec_sql(
-            &BackgroundContext,
+        exec_sql(ctx,
             se,
             &format!(
                 "
@@ -182,7 +180,7 @@ impl TaskManager {
             ),
             &sql_args(&args),
         )?;
-        let rows = exec_sql(&BackgroundContext, se, "select @@last_insert_id", &[])?;
+        let rows = exec_sql(ctx, se, "select @@last_insert_id", &[])?;
         Ok(match rows.first().and_then(|row| row.first()) {
             Some(Datum::UInt(id)) => *id as i64,
             Some(Datum::Int(id)) => *id,
@@ -194,8 +192,8 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn get_top_unfinished_tasks(&self) -> Result<Vec<TaskBase>> {
-        self.get_top_tasks(&[
+    pub fn get_top_unfinished_tasks(&self, ctx: &tidb_gocontext::Context) -> Result<Vec<TaskBase>> {
+        self.get_top_tasks(ctx, &[
             TASK_STATE_PENDING,
             TASK_STATE_RUNNING,
             TASK_STATE_REVERTING,
@@ -210,12 +208,12 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn get_top_no_need_resource_tasks(&self) -> Result<Vec<TaskBase>> {
-        self.get_top_tasks(&[TASK_STATE_REVERTING, TASK_STATE_CANCELLING, TASK_STATE_PAUSING, TASK_STATE_MODIFYING])
+    pub fn get_top_no_need_resource_tasks(&self, ctx: &tidb_gocontext::Context) -> Result<Vec<TaskBase>> {
+        self.get_top_tasks(ctx, &[TASK_STATE_REVERTING, TASK_STATE_CANCELLING, TASK_STATE_PAUSING, TASK_STATE_MODIFYING])
     }
 
     /// Go `getTopTasks`.
-    fn get_top_tasks(&self, states: &[TaskState]) -> Result<Vec<TaskBase>> {
+    fn get_top_tasks(&self, ctx: &tidb_gocontext::Context, states: &[TaskState]) -> Result<Vec<TaskBase>> {
         let sql = format!(
             "select {BASIC_TASK_COLUMNS} from mysql.tidb_global_task t
 		where state in ({})
@@ -225,7 +223,7 @@ impl TaskManager {
         );
         let mut args = state_args(states);
         args.push(Arg::Int(get_max_concurrent_task() as i64 * 2));
-        let rows = self.execute_sql_with_new_session(&sql, &sql_args(&args))?;
+        let rows = self.execute_sql_with_new_session(ctx, &sql, &sql_args(&args))?;
         Ok(rows.iter().map(|row| row2_task_basic(row)).collect())
     }
 
@@ -234,7 +232,7 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or a statement failed.
-    pub fn get_task_exec_info_by_exec_id(&self, exec_id: &str) -> Result<Vec<TaskExecInfo>> {
+    pub fn get_task_exec_info_by_exec_id(&self, ctx: &tidb_gocontext::Context, exec_id: &str) -> Result<Vec<TaskExecInfo>> {
         let mut res = Vec::new();
         self.with_new_session(&mut |se| {
             // A task does not move to its next step while subtasks are in
@@ -244,8 +242,7 @@ impl TaskManager {
                 Arg::Str(SUBTASK_STATE_PENDING.to_string()),
                 Arg::Str(SUBTASK_STATE_RUNNING.to_string()),
             ];
-            let rows = exec_sql(
-                &BackgroundContext,
+            let rows = exec_sql(ctx,
                 se,
                 "select st.task_key, max(st.concurrency) from mysql.tidb_background_subtask st
 			where st.exec_id = %? and st.state in (%?, %?)
@@ -279,8 +276,7 @@ impl TaskManager {
                 Arg::Str(TASK_STATE_REVERTING.to_string()),
                 Arg::Str(TASK_STATE_PAUSING.to_string()),
             ];
-            let rows = exec_sql(
-                &BackgroundContext,
+            let rows = exec_sql(ctx,
                 se,
                 &format!(
                     "select {BASIC_TASK_COLUMNS} from mysql.tidb_global_task t
@@ -308,14 +304,14 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn get_cleanup_tasks(&self) -> Result<Vec<Task>> {
+    pub fn get_cleanup_tasks(&self, ctx: &tidb_gocontext::Context) -> Result<Vec<Task>> {
         let args = [
             Arg::Str(TASK_STATE_FAILED.to_string()),
             Arg::Str(TASK_STATE_REVERTED.to_string()),
             Arg::Str(TASK_STATE_SUCCEED.to_string()),
             Arg::Int(get_task_cleanup_batch_size() as i64),
         ];
-        let rows = self.execute_sql_with_new_session(
+        let rows = self.execute_sql_with_new_session(ctx, 
             &format!("select {TASK_COLUMNS} from mysql.tidb_global_task t where state in (%?, %?, %?) limit %?"),
             &sql_args(&args),
         )?;
@@ -326,11 +322,11 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn get_tasks_in_states(&self, states: &[TaskState]) -> Result<Vec<Task>> {
+    pub fn get_tasks_in_states(&self, ctx: &tidb_gocontext::Context, states: &[TaskState]) -> Result<Vec<Task>> {
         if states.is_empty() {
             return Ok(Vec::new());
         }
-        let rows = self.execute_sql_with_new_session(
+        let rows = self.execute_sql_with_new_session(ctx, 
             &format!(
                 "select {TASK_COLUMNS} from mysql.tidb_global_task t where state in ({}) order by priority asc, create_time asc, id asc",
                 holders(states.len())
@@ -344,11 +340,11 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn get_task_bases_in_states(&self, states: &[TaskState]) -> Result<Vec<TaskBase>> {
+    pub fn get_task_bases_in_states(&self, ctx: &tidb_gocontext::Context, states: &[TaskState]) -> Result<Vec<TaskBase>> {
         if states.is_empty() {
             return Ok(Vec::new());
         }
-        let rows = self.execute_sql_with_new_session(
+        let rows = self.execute_sql_with_new_session(ctx, 
             &format!(
                 "select {BASIC_TASK_COLUMNS} from mysql.tidb_global_task t where state in ({}) order by priority asc, create_time asc, id asc",
                 holders(states.len())
@@ -362,8 +358,8 @@ impl TaskManager {
     ///
     /// # Errors
     /// The task is absent, or the session failed.
-    pub fn get_task_by_id(&self, task_id: i64) -> Result<Task> {
-        let rows = self.execute_sql_with_new_session(
+    pub fn get_task_by_id(&self, ctx: &tidb_gocontext::Context, task_id: i64) -> Result<Task> {
+        let rows = self.execute_sql_with_new_session(ctx, 
             &format!("select {TASK_COLUMNS} from mysql.tidb_global_task t where id = %?"),
             &[SqlArg::Signed(task_id)],
         )?;
@@ -374,19 +370,18 @@ impl TaskManager {
     ///
     /// # Errors
     /// The task is absent, or the session failed.
-    pub fn get_task_base_by_id(&self, task_id: i64) -> Result<TaskBase> {
+    pub fn get_task_base_by_id(&self, ctx: &tidb_gocontext::Context, task_id: i64) -> Result<TaskBase> {
         let mut task = None;
         self.with_new_session(&mut |se| {
-            task = Some(Self::get_task_base_by_id_with_session(se, task_id)?);
+            task = Some(Self::get_task_base_by_id_with_session(ctx, se, task_id)?);
             Ok(())
         })?;
         task.ok_or(StorageError::TaskNotFound)
     }
 
     /// Go `getTaskBaseByID`.
-    pub(crate) fn get_task_base_by_id_with_session(se: &dyn SessionContext, task_id: i64) -> Result<TaskBase> {
-        let rows = exec_sql(
-            &BackgroundContext,
+    pub(crate) fn get_task_base_by_id_with_session(ctx: &tidb_gocontext::Context, se: &dyn SessionContext, task_id: i64) -> Result<TaskBase> {
+        let rows = exec_sql(ctx,
             se,
             &format!("select {BASIC_TASK_COLUMNS} from mysql.tidb_global_task t where id = %?"),
             &[SqlArg::Signed(task_id)],
@@ -398,8 +393,8 @@ impl TaskManager {
     ///
     /// # Errors
     /// The task is in neither table, or the session failed.
-    pub fn get_task_by_id_with_history(&self, task_id: i64) -> Result<Task> {
-        let rows = self.execute_sql_with_new_session(
+    pub fn get_task_by_id_with_history(&self, ctx: &tidb_gocontext::Context, task_id: i64) -> Result<Task> {
+        let rows = self.execute_sql_with_new_session(ctx, 
             &format!(
                 "select {TASK_COLUMNS} from mysql.tidb_global_task t where id = %? union select {TASK_COLUMNS} from mysql.tidb_global_task_history t where id = %?"
             ),
@@ -412,8 +407,8 @@ impl TaskManager {
     ///
     /// # Errors
     /// The task is in neither table, or the session failed.
-    pub fn get_task_base_by_id_with_history(&self, task_id: i64) -> Result<TaskBase> {
-        let rows = self.execute_sql_with_new_session(
+    pub fn get_task_base_by_id_with_history(&self, ctx: &tidb_gocontext::Context, task_id: i64) -> Result<TaskBase> {
+        let rows = self.execute_sql_with_new_session(ctx, 
             &format!(
                 "select {BASIC_TASK_COLUMNS} from mysql.tidb_global_task t where id = %? union select {BASIC_TASK_COLUMNS} from mysql.tidb_global_task_history t where id = %?"
             ),
@@ -426,8 +421,8 @@ impl TaskManager {
     ///
     /// # Errors
     /// The task is absent, or the session failed.
-    pub fn get_task_by_key(&self, key: &str) -> Result<Task> {
-        let rows = self.execute_sql_with_new_session(
+    pub fn get_task_by_key(&self, ctx: &tidb_gocontext::Context, key: &str) -> Result<Task> {
+        let rows = self.execute_sql_with_new_session(ctx, 
             &format!("select {TASK_COLUMNS} from mysql.tidb_global_task t where task_key = %?"),
             &[SqlArg::String(key.as_bytes())],
         )?;
@@ -438,8 +433,8 @@ impl TaskManager {
     ///
     /// # Errors
     /// The task is in neither table, or the session failed.
-    pub fn get_task_by_key_with_history(&self, key: &str) -> Result<Task> {
-        let rows = self.execute_sql_with_new_session(
+    pub fn get_task_by_key_with_history(&self, ctx: &tidb_gocontext::Context, key: &str) -> Result<Task> {
+        let rows = self.execute_sql_with_new_session(ctx, 
             &format!(
                 "select {TASK_COLUMNS} from mysql.tidb_global_task t where task_key = %?union select {TASK_COLUMNS} from mysql.tidb_global_task_history t where task_key = %?"
             ),
@@ -452,8 +447,8 @@ impl TaskManager {
     ///
     /// # Errors
     /// The task is in neither table, or the session failed.
-    pub fn get_task_base_by_key_with_history(&self, key: &str) -> Result<TaskBase> {
-        let rows = self.execute_sql_with_new_session(
+    pub fn get_task_base_by_key_with_history(&self, ctx: &tidb_gocontext::Context, key: &str) -> Result<TaskBase> {
+        let rows = self.execute_sql_with_new_session(ctx, 
             &format!(
                 "select {BASIC_TASK_COLUMNS} from mysql.tidb_global_task t where task_key = %?union select {BASIC_TASK_COLUMNS} from mysql.tidb_global_task_history t where task_key = %?"
             ),
@@ -507,13 +502,13 @@ impl TaskManager {
     /// # Errors
     /// The session or a statement failed.
     pub fn switch_task_step(
-        &self,
+        &self, ctx: &tidb_gocontext::Context,
         task: &Task,
         next_state: &TaskState,
         next_step: Step,
         subtasks: &[Subtask],
     ) -> Result<()> {
-        self.with_new_txn(&mut |se| {
+        self.with_new_txn(ctx, &mut |se| {
             let bak = se.mem_quota_query();
             let raised = bak < tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_QUERY;
             if raised {
@@ -522,7 +517,7 @@ impl TaskManager {
                     &tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_QUERY.to_string(),
                 )?;
             }
-            let outcome = Self::update_task_state_step(se, task, next_state, next_step).and_then(|()| {
+            let outcome = Self::update_task_state_step(ctx, se, task, next_state, next_step).and_then(|()| {
                 if se.affected_rows() == 0 {
                     // on network partition or owner change, there might be multiple
                     // schedulers for the same task, if other scheduler has switched
@@ -530,7 +525,7 @@ impl TaskManager {
                     // Or when there is no such task.
                     return Ok(());
                 }
-                Self::insert_subtasks(se, subtasks)
+                Self::insert_subtasks(ctx, se, subtasks)
             });
             if raised {
                 let _ = se.set_system_var(tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_QUERY, &bak.to_string());
@@ -545,9 +540,9 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn switch_task_step_after_prepare(&self, task: &Task) -> Result<bool> {
+    pub fn switch_task_step_after_prepare(&self, ctx: &tidb_gocontext::Context, task: &Task) -> Result<bool> {
         let mut switched = false;
-        self.with_new_txn(&mut |se| {
+        self.with_new_txn(ctx, &mut |se| {
             let args = [
                 Arg::Int(STEP_PREPARED.0),
                 Arg::Bytes(task.meta.clone()),
@@ -557,8 +552,7 @@ impl TaskManager {
                 Arg::Str(TASK_STATE_PENDING.to_string()),
                 Arg::Int(STEP_INIT.0),
             ];
-            exec_sql(
-                &BackgroundContext,
+            exec_sql(ctx,
                 se,
                 "
 			update mysql.tidb_global_task
@@ -577,7 +571,7 @@ impl TaskManager {
     }
 
     /// Go `updateTaskStateStep`.
-    fn update_task_state_step(se: &dyn SessionContext, task: &Task, next_state: &TaskState, next_step: Step) -> Result<()> {
+    fn update_task_state_step(ctx: &tidb_gocontext::Context, se: &dyn SessionContext, task: &Task, next_state: &TaskState, next_step: Step) -> Result<()> {
         let extra_update_str = if task.base.state == TASK_STATE_PENDING { "start_time = CURRENT_TIMESTAMP()," } else { "" };
         // TODO: during generating subtask, task meta might change, maybe move meta
         // update to another place.
@@ -589,8 +583,7 @@ impl TaskManager {
             Arg::Str(task.base.state.to_string()),
             Arg::Int(task.base.step.0),
         ];
-        exec_sql(
-            &BackgroundContext,
+        exec_sql(ctx,
             se,
             &format!(
                 "
@@ -607,7 +600,7 @@ impl TaskManager {
     }
 
     /// Go `insertSubtasks`: one multi-row insert of pending subtasks.
-    fn insert_subtasks(se: &dyn SessionContext, subtasks: &[Subtask]) -> Result<()> {
+    fn insert_subtasks(ctx: &tidb_gocontext::Context, se: &dyn SessionContext, subtasks: &[Subtask]) -> Result<()> {
         if subtasks.is_empty() {
             return Ok(());
         }
@@ -615,12 +608,12 @@ impl TaskManager {
         fail::fail_point!("waitBeforeInsertSubtasks", |_| {
             let _ = TEST_CHANNEL.1.recv();
             let _ = TEST_CHANNEL.1.recv();
-            Self::insert_subtasks_unchecked(se, subtasks)
+            Self::insert_subtasks_unchecked(ctx, se, subtasks)
         });
-        Self::insert_subtasks_unchecked(se, subtasks)
+        Self::insert_subtasks_unchecked(ctx, se, subtasks)
     }
 
-    fn insert_subtasks_unchecked(se: &dyn SessionContext, subtasks: &[Subtask]) -> Result<()> {
+    fn insert_subtasks_unchecked(ctx: &tidb_gocontext::Context, se: &dyn SessionContext, subtasks: &[Subtask]) -> Result<()> {
         let mut args = Vec::with_capacity(subtasks.len() * 8);
         for subtask in subtasks {
             args.extend([
@@ -639,7 +632,7 @@ impl TaskManager {
             "insert into mysql.tidb_background_subtask({INSERT_SUBTASK_COLUMNS}) values {}",
             marker_list.join(",")
         );
-        exec_sql(&BackgroundContext, se, &sql, &sql_args(&args))?;
+        exec_sql(ctx, se, &sql, &sql_args(&args))?;
         Ok(())
     }
 
@@ -651,7 +644,7 @@ impl TaskManager {
     /// More subtasks exist than expected (`UnstableSubtasks`), or the
     /// session or a statement failed.
     pub fn switch_task_step_in_batch(
-        &self,
+        &self, ctx: &tidb_gocontext::Context,
         task: &Task,
         next_state: &TaskState,
         next_step: Step,
@@ -660,8 +653,7 @@ impl TaskManager {
         self.with_new_session(&mut |se| {
             // some subtasks may be inserted by other schedulers, we can skip them.
             let args = [Arg::Str(task_id_to_key(task.base.id)), Arg::Int(next_step.0)];
-            let rs = exec_sql(
-                &BackgroundContext,
+            let rs = exec_sql(ctx,
                 se,
                 "
 			select count(1) from mysql.tidb_background_subtask
@@ -676,9 +668,9 @@ impl TaskManager {
                 ));
             }
             for batch in Self::split_subtasks(&subtasks[existing_task_cnt..]) {
-                Self::insert_subtasks(se, batch)?;
+                Self::insert_subtasks(ctx, se, batch)?;
             }
-            Self::update_task_state_step(se, task, next_state, next_step)
+            Self::update_task_state_step(ctx, se, task, next_state, next_step)
         })
     }
 
@@ -707,20 +699,18 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or a statement failed.
-    pub fn get_subtasks_with_history(&self, task_id: i64, step: Step) -> Result<Vec<Subtask>> {
+    pub fn get_subtasks_with_history(&self, ctx: &tidb_gocontext::Context, task_id: i64, step: Step) -> Result<Vec<Subtask>> {
         let mut rs = Vec::new();
-        self.with_new_txn(&mut |se| {
+        self.with_new_txn(ctx, &mut |se| {
             let args = [Arg::Str(task_id_to_key(task_id)), Arg::Int(step.0)];
-            rs = exec_sql(
-                &BackgroundContext,
+            rs = exec_sql(ctx,
                 se,
                 &format!("select {SUBTASK_COLUMNS} from mysql.tidb_background_subtask where task_key = %? and step = %?"),
                 &sql_args(&args),
             )?;
             // To avoid the situation that the subtasks has been `TransferTasks2History`
             // when the user show import jobs, we need to check the history table.
-            let rs_from_history = exec_sql(
-                &BackgroundContext,
+            let rs_from_history = exec_sql(ctx,
                 se,
                 &format!(
                     "select {SUBTASK_COLUMNS} from mysql.tidb_background_subtask_history where task_key = %? and step = %?"
@@ -737,8 +727,8 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn get_all_tasks(&self) -> Result<Vec<TaskBase>> {
-        let rs = self.execute_sql_with_new_session(&format!("select {BASIC_TASK_COLUMNS} from mysql.tidb_global_task t"), &[])?;
+    pub fn get_all_tasks(&self, ctx: &tidb_gocontext::Context) -> Result<Vec<TaskBase>> {
+        let rs = self.execute_sql_with_new_session(ctx, &format!("select {BASIC_TASK_COLUMNS} from mysql.tidb_global_task t"), &[])?;
         Ok(rs.iter().map(|r| row2_task_basic(r)).collect())
     }
 
@@ -747,8 +737,8 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn get_active_task_counts_by_keyspace(&self) -> Result<ActiveTaskSummary> {
-        let rs = self.execute_sql_with_new_session(
+    pub fn get_active_task_counts_by_keyspace(&self, ctx: &tidb_gocontext::Context) -> Result<ActiveTaskSummary> {
+        let rs = self.execute_sql_with_new_session(ctx, 
             "select keyspace, count(1) from mysql.tidb_global_task group by keyspace",
             &[],
         )?;
@@ -766,8 +756,8 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn get_all_subtasks(&self) -> Result<Vec<SubtaskBase>> {
-        let rs = self.execute_sql_with_new_session(&format!("select {BASIC_SUBTASK_COLUMNS} from mysql.tidb_background_subtask"), &[])?;
+    pub fn get_all_subtasks(&self, ctx: &tidb_gocontext::Context) -> Result<Vec<SubtaskBase>> {
+        let rs = self.execute_sql_with_new_session(ctx, &format!("select {BASIC_SUBTASK_COLUMNS} from mysql.tidb_background_subtask"), &[])?;
         Ok(rs.iter().map(|r| row2_basic_sub_task(r)).collect())
     }
 
@@ -779,11 +769,10 @@ impl TaskManager {
     ///
     /// # Errors
     /// A statement failed.
-    pub fn adjust_task_overflow_concurrency(&self, se: &dyn SessionContext) -> Result<()> {
-        let cpu_count = Self::get_cpu_count_of_node_by_role_with_session(se, "", true)?;
+    pub fn adjust_task_overflow_concurrency(&self, ctx: &tidb_gocontext::Context, se: &dyn SessionContext) -> Result<()> {
+        let cpu_count = Self::get_cpu_count_of_node_by_role_with_session(ctx, se, "", true)?;
         let args = [Arg::Int(cpu_count as i64), Arg::Int(cpu_count as i64)];
-        exec_sql(
-            &BackgroundContext,
+        exec_sql(ctx,
             se,
             "update mysql.tidb_global_task set concurrency = %? where concurrency > %?;",
             &sql_args(&args),
@@ -796,10 +785,10 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn update_subtask_checkpoint<T: serde::Serialize + ?Sized>(&self, subtask_id: i64, checkpoint: &T) -> Result<()> {
+    pub fn update_subtask_checkpoint<T: serde::Serialize + ?Sized>(&self, ctx: &tidb_gocontext::Context, subtask_id: i64, checkpoint: &T) -> Result<()> {
         let checkpoint_json = tidb_stringutil::go_json_marshal(checkpoint);
         let args = [Arg::Str(checkpoint_json), Arg::Int(subtask_id)];
-        self.execute_sql_with_new_session(
+        self.execute_sql_with_new_session(ctx, 
             "UPDATE mysql.tidb_background_subtask SET checkpoint = %? WHERE id = %?",
             &sql_args(&args),
         )?;
@@ -811,8 +800,8 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn get_subtask_checkpoint(&self, subtask_id: i64) -> Result<String> {
-        let rs = self.execute_sql_with_new_session(
+    pub fn get_subtask_checkpoint(&self, ctx: &tidb_gocontext::Context, subtask_id: i64) -> Result<String> {
+        let rs = self.execute_sql_with_new_session(ctx, 
             "SELECT checkpoint FROM mysql.tidb_background_subtask WHERE id = %?",
             &[SqlArg::Signed(subtask_id)],
         )?;
@@ -826,12 +815,11 @@ impl TaskManager {
     ///
     /// # Errors
     /// The session or the statement failed.
-    pub fn update_task_extra_params(&self, task_id: i64, extra_params: &ExtraParams) -> Result<()> {
+    pub fn update_task_extra_params(&self, ctx: &tidb_gocontext::Context, task_id: i64, extra_params: &ExtraParams) -> Result<()> {
         let extra_param_bytes = tidb_stringutil::go_json_marshal(extra_params).into_bytes();
-        self.with_new_txn(&mut |se| {
+        self.with_new_txn(ctx, &mut |se| {
             let args = [Arg::Json(extra_param_bytes.clone()), Arg::Int(task_id)];
-            exec_sql(
-                &BackgroundContext,
+            exec_sql(ctx,
                 se,
                 "
 			update mysql.tidb_global_task

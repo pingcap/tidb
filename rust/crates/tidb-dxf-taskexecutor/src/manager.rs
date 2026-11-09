@@ -105,7 +105,7 @@ impl Manager {
         self.run_with_retry(
             || {
                 self.task_table
-                    .init_meta(&self.id, &tidb_config::config_tree::config::get_global_config().instance.tidb_service_scope)
+                    .init_meta(&self.ctx, &self.id, &tidb_config::config_tree::config::get_global_config().instance.tidb_service_scope)
             },
             "init meta failed",
         )
@@ -116,7 +116,7 @@ impl Manager {
         self.run_with_retry(
             || {
                 self.task_table
-                    .recover_meta(&self.id, &tidb_config::config_tree::config::get_global_config().instance.tidb_service_scope)
+                    .recover_meta(&self.ctx, &self.id, &tidb_config::config_tree::config::get_global_config().instance.tidb_service_scope)
             },
             "recover meta failed",
         )
@@ -215,7 +215,7 @@ impl Manager {
         // queried out soon as 'modifying' is a fast process.
         // it's possible that after we create task executor for a 'running' task, it
         // enters 'modifying', as slots are allocated already, that's ok.
-        let tasks = match self.task_table.get_task_exec_info_by_exec_id(&self.id) {
+        let tasks = match self.task_table.get_task_exec_info_by_exec_id(&self.ctx, &self.id) {
             Ok(tasks) => tasks,
             Err(err) => {
                 self.sample_logger.error("failed to get executable task", &[error_field(&err)]);
@@ -304,13 +304,13 @@ impl Manager {
         }
         // we pause subtasks belongs to this exec node even when there's no executor running.
         // as balancer might move subtasks to this node when the executor hasn't started.
-        self.task_table.pause_subtasks(&self.id, task_id)
+        self.task_table.pause_subtasks(&self.ctx, &self.id, task_id)
     }
 
     /// Go `handleRevertingTask`.
     pub(crate) fn handle_reverting_task(&self, task_id: i64) -> Result<(), StorageError> {
         self.cancel_running_subtask_of(task_id);
-        self.task_table.cancel_subtask(&self.id, task_id)
+        self.task_table.cancel_subtask(&self.ctx, &self.id, task_id)
     }
 
     /// Go `recoverMetaLoop`: inserts `dist_framework_meta` back for the
@@ -349,7 +349,7 @@ impl Manager {
     /// Go `startTaskExecutor`: starts the runnable task's executor.
     pub(crate) fn start_task_executor(self: &Arc<Self>, task_base: &TaskBase) -> bool {
         // TODO: remove it when we can create task executor with task base.
-        let task = match self.task_table.get_task_by_id(task_base.id) {
+        let task = match self.task_table.get_task_by_id(&self.ctx, task_base.id) {
             Ok(task) => task,
             Err(err) => {
                 self.logger.error(
@@ -489,7 +489,7 @@ impl Manager {
             return;
         }
         let err1 = self.run_with_retry(
-            || self.task_table.fail_subtask(&self.id, task_id, Some(as_dyn(err.as_ref()))),
+            || self.task_table.fail_subtask(&self.ctx, &self.id, task_id, Some(as_dyn(err.as_ref()))),
             "update to subtask failed",
         );
         if err1.is_ok() {

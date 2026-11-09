@@ -4828,6 +4828,7 @@ dependencies = [
  "tidb-domain-sqlsvrapi",
  "tidb-dxf",
  "tidb-dxf-execute",
+ "tidb-gocontext",
  "tidb-keyspace",
  "tidb-sqlescape",
  "tidb-sqlexec",
