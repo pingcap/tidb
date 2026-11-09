@@ -1028,11 +1028,17 @@ func TestMergeJoinPrefetchesOuterSide(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf(sql, "/*+ hash_join(c) */")).Check(want)
 
 	// Later outer chunks are fetched on demand; the results must not change across chunk boundaries.
+	// 200 outer rows and 100 matching inner rows span several 32-row chunks on both sides.
 	tk.MustExec("set @@tidb_max_chunk_size = 32")
-	tk.MustExec("insert into j select 3, a.id * 100 + b.id, 'x' from j a, (select 1 id union all select 2 union all select 3 union all select 4 union all select 5) b, (select 1 union all select 2 union all select 3 union all select 4 union all select 5 union all select 6 union all select 7 union all select 8 union all select 9 union all select 10) d on duplicate key update payload = 'x'")
+	tk.MustExec("insert into j with recursive r(i) as (select 1 union all select i + 1 from r where i < 200) select 3, i, 'x' from r")
 	tk.MustExec("insert into c select id * 7, 1, ns, id from j where ns = 3 and id % 2 = 0")
-	for _, joinType := range []string{"left join", "join"} {
-		q := "select %s count(*), sum(c.oid) from j " + joinType + " c on c.ns = j.ns and c.sjid = j.id where j.ns = 3"
-		tk.MustQuery(fmt.Sprintf(q, "/*+ merge_join(c) */")).Check(tk.MustQuery(fmt.Sprintf(q, "/*+ hash_join(c) */")).Rows())
+	tk.MustQuery("select count(*) from j where ns = 3").Check(testkit.Rows("200"))
+	tk.MustQuery("select count(*) from c where ns = 3").Check(testkit.Rows("100"))
+	for _, tc := range []struct{ joinType, want string }{{"left join", "200 100 70700"}, {"join", "100 100 70700"}} {
+		q := "select %s count(*), count(c.oid), sum(c.oid) from j " + tc.joinType + " c on c.ns = j.ns and c.sjid = j.id where j.ns = 3"
+		mergeJoinQ := fmt.Sprintf(q, "/*+ merge_join(c) */")
+		tk.MustHavePlan(mergeJoinQ, "MergeJoin")
+		tk.MustQuery(mergeJoinQ).Check(testkit.Rows(tc.want))
+		tk.MustQuery(fmt.Sprintf(q, "/*+ hash_join(c) */")).Check(testkit.Rows(tc.want))
 	}
 }
