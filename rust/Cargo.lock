@@ -5921,6 +5921,10 @@ name = "tidb-nocopy"
 version = "0.0.0"
 
 [[package]]
+name = "tidb-objstore-recording"
+version = "0.0.0"
+
+[[package]]
 name = "tidb-owner"
 version = "0.0.0"
 dependencies = [
