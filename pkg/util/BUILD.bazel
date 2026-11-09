@@ -47,9 +47,13 @@ go_library(
         "//pkg/util/execdetails",
         "//pkg/util/intest",
         "//pkg/util/logutil",
+<<<<<<< HEAD
         "//pkg/util/memory",
         "//pkg/util/ppcpuusage",
         "//pkg/util/tls",
+=======
+        "//pkg/util/traceevent",
+>>>>>>> baa826dceda (server: keep client certificates optional with require_secure_transport (#69951))
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
