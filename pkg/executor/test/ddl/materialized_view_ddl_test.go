@@ -666,6 +666,150 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	require.True(t, baseTable.Meta().MaterializedViewBase == nil || (baseTable.Meta().MaterializedViewBase.MLogID == 0 && len(baseTable.Meta().MaterializedViewBase.MViewIDs) == 0))
 }
 
+func TestMaterializedViewDDLProtectsGroupKeyIndex(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		notNull   string
+		composite bool
+		clustered string
+		indexName string
+		isPrimary bool
+	}{
+		{name: "nullable", clustered: "off", indexName: "g1"},
+		{name: "nullable_composite", composite: true, clustered: "on", indexName: "g1"},
+		{name: "primary_nonclustered", notNull: "not null", clustered: "off", indexName: "PRIMARY", isPrimary: true},
+		{name: "primary_int_handle", notNull: "not null", clustered: "on", indexName: "PRIMARY", isPrimary: true},
+		{name: "primary_common_handle", notNull: "not null", composite: true, clustered: "on", indexName: "PRIMARY", isPrimary: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set tidb_enable_clustered_index=" + tc.clustered)
+			tk.MustExec(fmt.Sprintf("create table t (a int %s, b int not null)", tc.notNull))
+			tk.MustExec("insert into t values (1, 10), (1, 20), (2, 30)")
+			if tc.notNull == "" {
+				tk.MustExec("insert into t values (null, 40)")
+			}
+			tk.MustExec("create materialized view log on t (a, b)")
+			groupBy, columns, orderBy := "a", "g1, cnt", "g1"
+			if tc.composite {
+				groupBy, columns, orderBy = "a, b", "g1, g2, cnt", "g1, g2"
+			}
+			tk.MustExec(fmt.Sprintf("create materialized view mv (%s) as select %s, count(*) from t group by %s", columns, groupBy, groupBy))
+			tk.MustExec("create index idx_user on mv (g1)")
+			mv, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+			require.NoError(t, err)
+			index := mv.Meta().FindIndexByName(strings.ToLower(tc.indexName))
+			if mv.Meta().PKIsHandle {
+				require.True(t, tc.isPrimary)
+			} else {
+				require.NotNil(t, index)
+				require.True(t, index.Unique)
+				require.Equal(t, tc.isPrimary, index.Primary)
+			}
+			original := mv.Meta().Clone()
+			rows := tk.MustQuery("select * from mv order by " + orderBy).Rows()
+			caseChangedName := strings.ToUpper(tc.indexName)
+			if caseChangedName == tc.indexName {
+				caseChangedName = strings.ToLower(tc.indexName)
+			}
+			for _, sql := range []string{
+				"drop index `%s` on mv",
+				"drop index if exists `%s` on mv",
+				"alter table mv drop index `%s`",
+				"alter table mv drop index if exists `%s`",
+				"alter table mv rename index `%s` to renamed_group_key",
+				"alter table mv rename key `%s` to renamed_group_key",
+				"alter table mv rename index `%s` to `" + caseChangedName + "`",
+				"alter table mv add index idx_added (cnt), drop index `%s`",
+				"alter table mv rename index idx_user to idx_renamed, drop index `%s`",
+				"alter table mv rename index `%s` to renamed_group_key, add index idx_added (cnt)",
+			} {
+				err := tk.ExecToErr(fmt.Sprintf(sql, tc.indexName))
+				require.ErrorContains(t, err, "on automatically created index "+tc.indexName+" of materialized view mv", sql)
+				current, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+				require.NoError(t, err)
+				require.Equal(t, original, current.Meta().Clone(), sql)
+			}
+			if tc.isPrimary {
+				for _, sql := range []string{
+					"alter table mv drop primary key",
+					"alter table mv add index idx_added (cnt), drop primary key",
+				} {
+					require.ErrorContains(t, tk.ExecToErr(sql), "on automatically created index PRIMARY of materialized view mv", sql)
+				}
+			}
+			tk.MustExec("alter table mv rename index idx_user to idx_renamed")
+			tk.MustExec("alter table mv drop index idx_renamed")
+			tk.MustExec("create index idx_user on mv (cnt)")
+			tk.MustExec("drop index idx_user on mv")
+			tk.MustExec("drop index if exists missing_index on mv")
+			tk.MustExec("create unique index idx_base on t (b)")
+			tk.MustExec("alter table t rename index idx_base to idx_base_renamed")
+			tk.MustExec("drop index idx_base_renamed on t")
+			require.Equal(t, rows, tk.MustQuery("select * from mv order by "+orderBy).Rows())
+			tk.MustExec("insert into t values (1, 10)")
+			tk.MustExec("refresh materialized view mv fast")
+			tk.MustQuery("select * from mv order by " + orderBy).Check(tk.MustQuery(fmt.Sprintf("select %s, count(*) from t group by %s order by %s", groupBy, groupBy, groupBy)).Rows())
+		})
+	}
+}
+
+func TestMaterializedViewDDLProtectsGroupKeyIndexInOwner(t *testing.T) {
+	for _, primary := range []bool{false, true} {
+		for _, rename := range []bool{false, true} {
+			t.Run(fmt.Sprintf("primary=%t/rename=%t", primary, rename), func(t *testing.T) {
+				store, dom := testkit.CreateMockStoreAndDomain(t)
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec("use test")
+				tk.MustExec("set tidb_enable_clustered_index=off")
+				notNull, indexName := "", "g1"
+				action := model.ActionDropIndex
+				if primary {
+					notNull, indexName, action = "not null", "PRIMARY", model.ActionDropPrimaryKey
+				}
+				tk.MustExec("create table t (a int " + notNull + ")")
+				tk.MustExec("create materialized view log on t (a)")
+				tk.MustExec("create materialized view mv (g1, cnt) as select a, count(*) from t group by a")
+				mv, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+				require.NoError(t, err)
+				original := mv.Meta().Clone()
+				schema, ok := dom.InfoSchema().SchemaByName(pmodel.NewCIStr("test"))
+				require.True(t, ok)
+				args := &model.ModifyIndexArgs{
+					IndexArgs: []*model.IndexArg{{IndexName: pmodel.NewCIStr(indexName), IfExist: true}},
+					OpType:    model.OpDropIndex,
+				}
+				if rename {
+					action = model.ActionRenameIndex
+					args.IndexArgs = append(args.IndexArgs, &model.IndexArg{IndexName: pmodel.NewCIStr("renamed_group_key")})
+				}
+				job := &model.Job{
+					Version:     model.GetJobVerInUse(),
+					SchemaID:    schema.ID,
+					SchemaName:  schema.Name.L,
+					TableID:     mv.Meta().ID,
+					TableName:   mv.Meta().Name.L,
+					Type:        action,
+					SchemaState: model.StatePublic,
+					BinlogInfo:  &model.HistoryInfo{},
+				}
+				// Submit directly so the owner must enforce the constraint without the frontend checks.
+				err = dom.DDLExecutor().(ddl.ExecutorForTest).DoDDLJobWrapper(tk.Session(), ddl.NewJobWrapperWithArgs(job, args, false))
+				require.ErrorContains(t, err, "on automatically created index "+indexName+" of materialized view mv")
+				historyJob, err := ddl.GetHistoryJobByID(tk.Session(), job.ID)
+				require.NoError(t, err)
+				require.NotNil(t, historyJob)
+				require.Equal(t, model.JobStateCancelled, historyJob.State)
+				current, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+				require.NoError(t, err)
+				require.Equal(t, original, current.Meta().Clone())
+			})
+		}
+	}
+}
+
 func TestMaterializedViewBaseModifyColumnMultiSchemaInvolvingSchemaInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

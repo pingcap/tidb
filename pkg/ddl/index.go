@@ -495,6 +495,9 @@ func DropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 
 // ValidateRenameIndex checks if index name is ok to be renamed.
 func ValidateRenameIndex(from, to pmodel.CIStr, tbl *model.TableInfo) (ignore bool, err error) {
+	if err := checkMaterializedViewGroupKeyIndexConstraints(tbl, from, "RENAME INDEX"); err != nil {
+		return false, errors.Trace(err)
+	}
 	if fromIdx := tbl.FindIndexByName(from.L); fromIdx == nil {
 		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(from.O, tbl.Name))
 	}
@@ -2054,6 +2057,14 @@ func checkDropIndex(sctx sessionctx.Context, infoCache *infoschema.InfoCache, t 
 	indexInfos := make([]*model.IndexInfo, 0, len(args.IndexArgs))
 	for _, idxArg := range args.IndexArgs {
 		indexInfo := tblInfo.FindIndexByName(idxArg.IndexName.L)
+		// Reject before the first transition; later drop states cannot be safely
+		// cancelled. Rollback of an add-index job must still be able to remove it.
+		if !job.IsRollingback() && (indexInfo == nil || indexInfo.State == model.StatePublic) {
+			if err := checkMaterializedViewGroupKeyIndexConstraints(tblInfo, idxArg.IndexName, "DROP INDEX"); err != nil {
+				job.State = model.JobStateCancelled
+				return nil, nil, false, errors.Trace(err)
+			}
+		}
 		if indexInfo == nil {
 			job.State = model.JobStateCancelled
 			return nil, nil, idxArg.IfExist, dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", idxArg.IndexName)
