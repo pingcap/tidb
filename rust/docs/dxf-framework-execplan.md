@@ -66,6 +66,15 @@ tidb-server shows the same rows.
 
 ## Decision Log
 
+- 2026-11-09: Go's dependency order is deeper than the milestone list first
+  assumed: `storage` uses `execute.SubtaskSummary`, `execute` uses
+  `metering` and `objstore/recording`, and `metering` uses `dxfmetric`. The
+  order is therefore `proto` (done), `objstore/recording`, `dxfmetric`,
+  `metering`, `execute`, then the rest of `storage`, `handle`, `planner`,
+  `taskexecutor`, `scheduler`. The `storage` methods already ported use none
+  of these and stay; milestone 6's metering moves ahead of milestone 1's
+  remainder.
+
 - 2026-11-09: O10 is ported before M01 (MPP fragments) and X01 (pushdown
   authority) because one framework unblocks D02, D11 and E05 (user's choice
   over the full register, by gap kind: user-visible capability first).
