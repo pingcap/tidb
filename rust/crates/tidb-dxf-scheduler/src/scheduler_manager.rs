@@ -654,6 +654,21 @@ impl Manager {
         tidb_dxf_dxfmetric::WORKER_COUNT.with_label_values(&["current"]).set(node_count as f64);
     }
 
+    #[cfg(test)]
+    pub(crate) fn slot_mgr(&self) -> &Arc<SlotManager> {
+        &self.slot_mgr
+    }
+
+    #[cfg(test)]
+    pub(crate) fn node_mgr(&self) -> &Arc<NodeManager> {
+        &self.node_mgr
+    }
+
+    #[cfg(test)]
+    pub(crate) fn add_scheduler_for_test(&self, task_id: i64, scheduler: Arc<dyn Scheduler>) {
+        self.add_scheduler(task_id, scheduler);
+    }
+
     /// Go `MockScheduler`: a scheduler of the task, only used for tests.
     #[must_use]
     pub fn mock_scheduler(&self, task: Task) -> BaseScheduler {

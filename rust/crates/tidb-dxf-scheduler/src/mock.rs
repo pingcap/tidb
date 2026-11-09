@@ -36,6 +36,9 @@ pub(crate) struct MockTaskManager {
     /// The calls that carry an error or a task, as "Method(args)", for
     /// gomock's argument matchers.
     calls: Mutex<Vec<String>>,
+    /// The subtasks `UpdateSubtasksExecIDs` was given: Go's tests read the
+    /// balanced exec IDs back through the shared subtask pointers.
+    updated_exec_ids: Mutex<Vec<SubtaskBase>>,
 }
 
 /// A queued answer computed from the call's task (gomock `DoAndReturn`).
@@ -59,6 +62,16 @@ impl MockTaskManager {
 
     fn record(&self, call: String) {
         self.calls.lock().unwrap().push(call);
+    }
+
+    /// Applies the exec IDs `UpdateSubtasksExecIDs` was given to `subtasks`,
+    /// as Go's in-place update of the shared subtasks shows them.
+    pub(crate) fn apply_updated_exec_ids(&self, subtasks: &mut [SubtaskBase]) {
+        for updated in self.updated_exec_ids.lock().unwrap().iter().cloned() {
+            if let Some(subtask) = subtasks.iter_mut().find(|subtask| subtask.id == updated.id) {
+                subtask.exec_id = updated.exec_id;
+            }
+        }
     }
 
     /// The recorded calls, drained.
@@ -219,7 +232,8 @@ impl TaskManager for MockTaskManager {
     fn get_subtask_errors(&self, _: i64) -> Result<Vec<Option<SubtaskError>>> {
         self.answer("GetSubtaskErrors")
     }
-    fn update_subtasks_exec_ids(&self, _: &[SubtaskBase]) -> Result<()> {
+    fn update_subtasks_exec_ids(&self, subtasks: &[SubtaskBase]) -> Result<()> {
+        self.updated_exec_ids.lock().unwrap().extend_from_slice(subtasks);
         self.answer("UpdateSubtasksExecIDs")
     }
     fn get_all_subtasks_by_step_and_state(&self, _: i64, _: Step, _: &SubtaskState) -> Result<Vec<Subtask>> {
@@ -445,5 +459,67 @@ impl tidb_domain_sqlsvrapi::Runtime<dyn SessionContext> for MockRuntime {
     }
     fn sys_session_pool(&self) -> std::sync::Arc<dyn tidb_syssession::Pool<dyn SessionContext>> {
         std::sync::Arc::clone(self.se_pool.as_ref().expect("the test sets a session pool"))
+    }
+}
+
+/// Go `mock.MockScheduler`: the task it returns, and the extension's
+/// answers.
+pub(crate) struct MockScheduler {
+    pub(crate) task: Mutex<Task>,
+    pub(crate) ext: MockExtension,
+}
+
+impl MockScheduler {
+    pub(crate) fn new(task: Task) -> Self {
+        Self { task: Mutex::new(task), ext: MockExtension::default() }
+    }
+}
+
+impl crate::Extension for MockScheduler {
+    fn on_tick(&self, ctx: &tidb_gocontext::Context, task: &Task) {
+        self.ext.on_tick(ctx, task);
+    }
+    fn on_next_subtasks_batch(
+        &self,
+        ctx: &tidb_gocontext::Context,
+        h: &dyn tidb_dxf_storage::TaskHandle,
+        task: &mut Task,
+        exec_ids: &[String],
+        next_step: Step,
+    ) -> std::result::Result<Vec<Vec<u8>>, crate::Error> {
+        self.ext.on_next_subtasks_batch(ctx, h, task, exec_ids, next_step)
+    }
+    fn on_done(&self, ctx: &tidb_gocontext::Context, h: &dyn tidb_dxf_storage::TaskHandle, task: &mut Task) -> std::result::Result<(), crate::Error> {
+        self.ext.on_done(ctx, h, task)
+    }
+    fn get_eligible_instances(&self, ctx: &tidb_gocontext::Context, task: &Task) -> std::result::Result<Vec<String>, crate::Error> {
+        self.ext.get_eligible_instances(ctx, task)
+    }
+    fn is_retryable_err(&self, err: &(dyn Error + 'static)) -> bool {
+        self.ext.is_retryable_err(err)
+    }
+    fn get_next_step(&self, task: &TaskBase) -> Step {
+        self.ext.get_next_step(task)
+    }
+    fn on_prepare(&self, ctx: &tidb_gocontext::Context, h: &dyn tidb_dxf_storage::TaskHandle, task: &mut Task) -> std::result::Result<(), crate::Error> {
+        self.ext.on_prepare(ctx, h, task)
+    }
+    fn modify_meta(&self, old_meta: &[u8], modifies: &[tidb_dxf::Modification]) -> std::result::Result<Vec<u8>, crate::Error> {
+        self.ext.modify_meta(old_meta, modifies)
+    }
+}
+
+impl crate::Scheduler for MockScheduler {
+    fn init(&self) -> std::result::Result<(), crate::Error> {
+        self.ext.answer("Init")
+    }
+    fn schedule_task(&self) {
+        self.ext.answer::<()>("ScheduleTask");
+    }
+    fn close(&self) {
+        self.ext.answer::<()>("Close");
+    }
+    fn get_task(&self) -> std::sync::Arc<Task> {
+        std::sync::Arc::new(self.task.lock().unwrap().clone())
     }
 }

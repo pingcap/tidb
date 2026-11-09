@@ -127,26 +127,30 @@ impl Balancer {
             return Ok(());
         }
         let adjusted_node_map: HashSet<&String> = adjusted_nodes.iter().collect();
+        // Go balances the subtasks through pointers, so the exec IDs it
+        // rewrites are the subtasks' own, which updateUsedNodes then counts;
+        // here the lists hold indexes into `subtasks`.
+        let mut subtasks = subtasks;
 
         let average_subtask_cnt = subtasks.len() / adjusted_nodes.len();
         let average_subtask_remainder = subtasks.len() - average_subtask_cnt * adjusted_nodes.len();
-        let mut executor_subtasks: HashMap<String, Vec<SubtaskBase>> =
+        let mut executor_subtasks: HashMap<String, Vec<usize>> =
             adjusted_nodes.iter().map(|node| (node.clone(), Vec::with_capacity(average_subtask_cnt + 1))).collect();
         let mut executor_pending_cnts: HashMap<String, usize> = HashMap::with_capacity(adjusted_nodes.len());
-        for subtask in &subtasks {
+        for (idx, subtask) in subtasks.iter().enumerate() {
             // put running subtask in the front of slice.
             // if subtask fail-over, it's possible that there are multiple running
             // subtasks for one task executor.
             let sts = executor_subtasks.entry(subtask.exec_id.clone()).or_default();
             if subtask.state == SUBTASK_STATE_RUNNING {
-                sts.insert(0, subtask.clone());
+                sts.insert(0, idx);
             } else {
-                sts.push(subtask.clone());
+                sts.push(idx);
                 *executor_pending_cnts.entry(subtask.exec_id.clone()).or_insert(0) += 1;
             }
         }
 
-        let mut subtasks_need_schedule: Vec<SubtaskBase> = Vec::new();
+        let mut subtasks_need_schedule: Vec<usize> = Vec::new();
         let mut remainder = average_subtask_remainder;
         let mut executor_with_one_more_subtask: HashSet<String> = HashSet::with_capacity(remainder);
         let nodes: Vec<String> = executor_subtasks.keys().cloned().collect();
@@ -209,18 +213,19 @@ impl Balancer {
                 if executor_with_one_more_subtask.contains(node) { average_subtask_cnt + 1 } else { average_subtask_cnt };
             let mut i = sts_len;
             while i < target_subtask_cnt && fill_idx < subtasks_need_schedule.len() {
-                subtasks_need_schedule[fill_idx].exec_id = node.clone();
+                subtasks[subtasks_need_schedule[fill_idx]].exec_id = node.clone();
                 fill_idx += 1;
                 i += 1;
             }
         }
 
-        self.param.task_mgr.update_subtasks_exec_ids(&subtasks_need_schedule).map_err(|err| std::sync::Arc::new(err) as Error)?;
+        let rescheduled: Vec<SubtaskBase> = subtasks_need_schedule.iter().map(|idx| subtasks[*idx].clone()).collect();
+        self.param.task_mgr.update_subtasks_exec_ids(&rescheduled).map_err(|err| std::sync::Arc::new(err) as Error)?;
         self.logger.info(
             "balance subtasks",
             &[Field::new(
                 "subtasks",
-                Value::Str(format!("{:?}", subtasks_need_schedule.iter().map(ToString::to_string).collect::<Vec<_>>())),
+                Value::Str(format!("{:?}", rescheduled.iter().map(ToString::to_string).collect::<Vec<_>>())),
             )],
         );
         self.update_used_nodes(&task.base, &subtasks);
@@ -267,3 +272,7 @@ pub(crate) fn filter_nodes_by_max_node_cnt(mut nodes: Vec<String>, subtasks: &[S
     nodes.truncate(max_node_cnt as usize);
     nodes
 }
+
+#[cfg(test)]
+#[path = "balancer_tests.rs"]
+mod tests;
