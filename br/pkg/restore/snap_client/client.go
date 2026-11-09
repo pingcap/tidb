@@ -100,6 +100,8 @@ type SnapClient struct {
 	workerPool    *tidbutil.WorkerPool
 
 	noSchema bool
+	// PiTR defers TiFlash replicas until after restoring the snapshot and logs.
+	isPiTR bool
 
 	databases map[string]*metautil.Database
 	ddlJobs   []*model.Job
@@ -211,6 +213,11 @@ func (rc *SnapClient) Close() {
 	}
 
 	log.Info("Restore client closed")
+}
+
+// SetIsPiTR identifies the snapshot phase of a point-in-time restore.
+func (rc *SnapClient) SetIsPiTR(isPiTR bool) {
+	rc.isPiTR = isPiTR
 }
 
 func (rc *SnapClient) SetRateLimit(rateLimit uint64) {
@@ -529,6 +536,20 @@ func SetSpeedLimitFn(ctx context.Context, stores []*metapb.Store, pool *tidbutil
 	}
 }
 
+// Snapshot restore can send downloads to TiFlash peers as well as TiKV peers.
+func (rc *SnapClient) checkPeerDownloadRetrySupport(ctx context.Context, importer *SnapFileImporter, stores []*metapb.Store) error {
+	if rc.isPiTR {
+		return importer.CheckPeerDownloadRetrySupport(ctx, stores)
+	}
+	tiFlashStores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.TiFlashOnly)
+	if err != nil {
+		log.Warn("failed to get TiFlash stores for peer download retry support, fallback to legacy download retry", zap.Error(err))
+		importer.peerDownloadRetry = false
+		return nil
+	}
+	return importer.CheckPeerDownloadRetrySupport(ctx, append(slices.Clone(stores), tiFlashStores...))
+}
+
 func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool,
 	RawStartKey, RawEndKey []byte) error {
 	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
@@ -551,7 +572,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 		return importer.CheckMultiIngestSupport(ctx, stores)
 	})
 	createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
-		return importer.CheckPeerDownloadRetrySupport(ctx, stores)
+		return rc.checkPeerDownloadRetrySupport(ctx, importer, stores)
 	})
 	if rc.rateLimit != 0 {
 		setFn := SetSpeedLimitFn(ctx, stores, rc.workerPool)
