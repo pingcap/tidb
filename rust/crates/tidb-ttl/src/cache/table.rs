@@ -37,8 +37,6 @@
 //! - [`find_primary_index`] `// boundary:` `pkg/table/tables.FindPrimaryIndex`.
 //! - [`TimeUnitType`] `// boundary:` `pkg/parser/ast.TimeUnitType`, not yet in
 //!   `tidb-ast`.
-//! - [`MockExpireTimeKey`] `// boundary:` Go's `context.Context`, which this
-//!   crate does not carry.
 //! - [`eval_expire_time`] carries two further boundaries at its own definition:
 //!   the zone type its DST correctness depends on, and the fact that Go's one
 //!   `exprstatic.ExprContext` serves as both build and eval context where Rust
@@ -977,40 +975,21 @@ impl std::fmt::Display for TimeUnitType {
 /// Go `mockExpireTimeKey`: the unexported `context.Context` key the test-only
 /// expiry override is stored under.
 ///
-/// `// boundary:` Go's `context.Context`. This crate carries no context (see
-/// [`crate::session`]'s header for the same narrowing on `PhaseTracer`), so
-/// the key becomes the value type the context would have carried, passed
-/// explicitly to [`PhysicalTable::eval_expire_time`]. The empty default is the
-/// "context carries no mock time" case Go's type assertion fails on, and
-/// [`set_mock_expire_time`] is the only way to fill it — so, exactly as in Go,
-/// a caller that never calls it cannot observe the override.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MockExpireTimeKey<Tz: chrono::TimeZone>(Option<DateTime<Tz>>);
-
-impl<Tz: chrono::TimeZone> Default for MockExpireTimeKey<Tz> {
-    fn default() -> Self {
-        Self(None)
-    }
-}
-
-impl<Tz: chrono::TimeZone> MockExpireTimeKey<Tz> {
-    /// Go's `ctx.Value(mockExpireTimeKey{}).(time.Time)`, whose comma-ok is
-    /// this `Option`.
-    #[must_use]
-    pub fn get(&self) -> Option<&DateTime<Tz>> {
-        self.0.as_ref()
-    }
-}
+/// Go `mockExpireTimeKey`: the context key a test's mock expire time is
+/// kept under.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MockExpireTimeKey;
 
 /// Go `SetMockExpireTime`: can only be used in test.
-pub fn set_mock_expire_time<Tz: chrono::TimeZone>(
-    ctx: &MockExpireTimeKey<Tz>,
+#[must_use]
+pub fn set_mock_expire_time<Tz: chrono::TimeZone + 'static>(
+    ctx: &tidb_gocontext::Context,
     tm: DateTime<Tz>,
-) -> MockExpireTimeKey<Tz> {
-    // Go derives a child context from `ctx`; the parent carries nothing else
-    // this crate reads, so deriving is replacing.
-    let _ = ctx;
-    MockExpireTimeKey(Some(tm))
+) -> tidb_gocontext::Context
+where
+    DateTime<Tz>: Send + Sync,
+{
+    tidb_gocontext::Context::with_value::<MockExpireTimeKey, _>(ctx, tm)
 }
 
 /// Go's `time.Time.Truncate(time.Second)`.
@@ -1131,17 +1110,18 @@ impl PhysicalTable {
     /// returned time is in the same timezone as the `now` argument.
     pub fn eval_expire_time<Tz, S>(
         &self,
-        ctx: &MockExpireTimeKey<Tz>,
+        ctx: &tidb_gocontext::Context,
         se: &S,
         now: &DateTime<Tz>,
     ) -> Result<DateTime<Tz>>
     where
-        Tz: chrono::TimeZone,
+        Tz: chrono::TimeZone + 'static,
+        DateTime<Tz>: Send + Sync,
         S: crate::session::Session + ?Sized,
     {
         // Go guards this on `intest.InTest`; the value only exists when a test
         // put it there, so the guard and the lookup collapse into one.
-        if let Some(tm) = ctx.get() {
+        if let Some(tm) = ctx.value::<MockExpireTimeKey, DateTime<Tz>>() {
             return Ok(tm.clone());
         }
 
@@ -1156,7 +1136,7 @@ impl PhysicalTable {
         // should be `2021-01-28 16:00:00 UTC` that is not the same as the
         // previous one.
         let global_tz = se
-            .global_time_zone()
+            .global_time_zone(ctx)
             .map_err(|err| error(err.to_string()))?;
 
         let (interval, unit) = {

@@ -486,3 +486,26 @@ pub const INTERNAL_DIST_TASK: &str = "DistTask";
 pub const INTERNAL_TIMER: &str = "Timer";
 /// DDL notifier.
 pub const INTERNAL_DDL_NOTIFIER: &str = "DDLNotifier";
+
+/// The key a Go-shaped (`tidb_gocontext`) context carries its request trace
+/// values under: Go keeps `kv.RequestSourceKey` and its siblings in the same
+/// `context.Context` it cancels.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TraceContextKey;
+
+/// The trace values (`tikv_client`'s `TraceContext`) `ctx` carries.
+#[must_use]
+pub fn trace_context(ctx: &tidb_gocontext::Context) -> Option<&tikv_client::trace::TraceContext> {
+    ctx.value::<TraceContextKey, tikv_client::trace::TraceContext>()
+}
+
+/// Go `kv.WithInternalSourceType(ctx, source)`: `ctx` carrying the internal
+/// request source among its trace values.
+#[must_use]
+pub fn with_internal_source_type(ctx: &tidb_gocontext::Context, source: &str) -> tidb_gocontext::Context {
+    let trace = trace_context(ctx).cloned().unwrap_or_default();
+    tidb_gocontext::Context::with_value::<TraceContextKey, _>(
+        ctx,
+        tikv_client::util::with_internal_source_type(&trace, source),
+    )
+}

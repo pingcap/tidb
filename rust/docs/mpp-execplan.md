@@ -131,13 +131,13 @@ the unistore stack.
   ExchangeSender / ExchangeReceiver arms).
 - [ ] Milestone 5: Go's `tiflashtest` tests on the unistore stack, and the
   register (M01 closed; M04's remainder restated).
-- [ ] Milestone 6 (register O10, outside M01): Go's one `context.Context` for
+- [x] Milestone 6 (register O10, outside M01; resolved 2026-11-10): Go's one `context.Context` for
   internal SQL. Go cancels and carries values in one context; the port split
   it (`tidb_gocontext::Context` cancels, `tikv_client` `TraceContext` holds
   values), so a cancelled DXF caller cannot stop internal SQL. Steps: (1)
   `tidb_gocontext::Context` gains Go `WithValue` / `Value` (done
   2026-11-10); (2) internal SQL reads a Go context's trace value
-  (`tidb_sqlexec::TraceContextKey`) and returns `ctx.Err()` before each
+  (`tidb_txnkv::TraceContextKey`, Go keeps it in `kv`) and returns `ctx.Err()` before each
   statement as Go `executeStmtImpl` does (done 2026-11-10); (3) every DXF
   `TaskManager` method, the scheduler's and task executor's interfaces with
   their mocks, and the handle take Go's `ctx` (`WithNewTxn` with Go's
@@ -145,7 +145,10 @@ the unistore stack.
   2026-11-10); (4) Go `TestCancelAndExecIdChanged` and
   `TestWithNewTxnRollbackOnCanceledCtx` pass (done; Go's `sleep` watches
   only the SQL killer, so the latter runs its 10-second statement as Go's
-  does); (5) TTL's `NewScanSession(ctx)`: left.
+  does); (5) TTL's session takes Go's `ctx` (`ExecuteSQL` under
+  `kv.WithInternalSourceType(ctx, ...)`, `RunInTxn`, `NewScanSession`,
+  `ExecuteSQLWithCheck`, `EvalExpireTime`), with background contexts where
+  Go uses `context.Background()` / `TODO()` (done 2026-11-10).
 
 ## Surprises & Discoveries
 

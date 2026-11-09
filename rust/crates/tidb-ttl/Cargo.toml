@@ -11,6 +11,7 @@ description = "Go pkg/ttl/sqlbuilder: SQL construction for TTL scan and delete t
 workspace = true
 
 [dependencies]
+tidb-gocontext = { path = "../tidb-gocontext" }
 tidb-ttl-metrics = { path = "../tidb-ttl-metrics" }
 tidb-exprstatic = { path = "../tidb-exprstatic" }
 tidb-exprctx = { path = "../tidb-exprctx" }

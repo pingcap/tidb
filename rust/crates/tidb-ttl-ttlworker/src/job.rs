@@ -159,10 +159,10 @@ impl TtlJob {
         debug_assert_eq!(se.get_session_vars().location(), *now.location());
         // at this time, the job.ctx may have been canceled (to cancel this job)
         // even when it's canceled, we'll need to update the states, so use another context
-        se.run_in_txn(
+        se.run_in_txn(&tidb_gocontext::Context::background(), 
             &mut || {
                 let execute = |(sql, args): (&str, Vec<Datum>)| {
-                    se.execute_sql(sql, &args)
+                    se.execute_sql(&tidb_gocontext::Context::background(), sql, &args)
                         .map(drop)
                         .map_err(|err| SessionError(wrap_execute_sql(err, sql)))
                 };

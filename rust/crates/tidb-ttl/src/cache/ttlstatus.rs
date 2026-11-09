@@ -217,9 +217,9 @@ impl TableStatusCache {
     /// Go passes the session location into `RowToTableStatus`; that argument's
     /// only use is the `GoTime` conversion named on [`row_to_table_status`], so
     /// nothing here consumes it.
-    pub fn update<S: Session + ?Sized>(&mut self, se: &S) -> Result<()> {
+    pub fn update<S: Session + ?Sized>(&mut self, ctx: &tidb_gocontext::Context, se: &S) -> Result<()> {
         let rows = se
-            .execute_sql(SELECT_FROM_TTL_TABLE_STATUS, &[])
+            .execute_sql(ctx, SELECT_FROM_TTL_TABLE_STATUS, &[])
             .map_err(|err| super::error(err.to_string()))?;
 
         let mut new_tables = HashMap::with_capacity(rows.len());

@@ -175,13 +175,16 @@ impl tidb_sqlexec::SqlExecutor for MockContext {
         sql: &str,
         _arguments: &[tidb_sqlescape::SqlArg<'_>],
     ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
+        let ctx = context.as_any().downcast_ref::<tidb_gocontext::Context>().expect("ExecuteSQL passes its ctx");
         // Go `ExecuteSQL`'s `kv.WithInternalSourceType(ctx, kv.InternalTxnTTL)`.
-        let source = context
-            .as_any()
-            .downcast_ref::<tikv_client::trace::TraceContext>()
+        let source = tidb_txnkv::trace_context(ctx)
             .and_then(tikv_client::util::request_source_value)
             .expect("ExecuteSQL names its source");
         assert_eq!(source.source_type, "TTL");
+        // Go `executeStmtImpl`'s `if err := ctx.Err(); err != nil { return nil, err }`.
+        if let Some(err) = ctx.err() {
+            return Err(err.to_string().into());
+        }
         self.executed.lock().unwrap().push(sql.to_owned());
         if let Some((failing, message)) = self.fail_on.as_ref() {
             if failing == sql {
@@ -238,7 +241,7 @@ fn test_session_run_in_txn() {
     let tracer = RecordingTracer::default();
 
     assert!(se
-        .run_in_txn(&mut || Ok(()), TxnMode::OPTIMISTIC, tracer.get())
+        .run_in_txn(&tidb_gocontext::Context::background(), &mut || Ok(()), TxnMode::OPTIMISTIC, tracer.get())
         .is_ok());
     assert_eq!(
         se.context().executed(),
@@ -247,7 +250,7 @@ fn test_session_run_in_txn() {
 
     let se = TtlSession::new(MockContext::new(), Box::new(|| {}));
     let err = se
-        .run_in_txn(
+        .run_in_txn(&tidb_gocontext::Context::background(), 
             &mut || Err(SessionError("mockErr".to_owned())),
             TxnMode::OPTIMISTIC,
             tracer.get(),
@@ -262,7 +265,7 @@ fn test_session_run_in_txn() {
     // A third transaction on a fresh session commits as the first one did.
     let se = TtlSession::new(MockContext::new(), Box::new(|| {}));
     assert!(se
-        .run_in_txn(&mut || Ok(()), TxnMode::OPTIMISTIC, tracer.get())
+        .run_in_txn(&tidb_gocontext::Context::background(), &mut || Ok(()), TxnMode::OPTIMISTIC, tracer.get())
         .is_ok());
     assert_eq!(
         se.context().executed(),
@@ -277,7 +280,7 @@ fn test_run_in_txn_modes() {
     let se = TtlSession::new(MockContext::new(), Box::new(|| {}));
     let tracer = RecordingTracer::default();
     assert!(se
-        .run_in_txn(&mut || Ok(()), TxnMode::PESSIMISTIC, tracer.get())
+        .run_in_txn(&tidb_gocontext::Context::background(), &mut || Ok(()), TxnMode::PESSIMISTIC, tracer.get())
         .is_ok());
     assert_eq!(
         se.context().executed(),
@@ -286,7 +289,7 @@ fn test_run_in_txn_modes() {
 
     let se = TtlSession::new(MockContext::new(), Box::new(|| {}));
     let err = se
-        .run_in_txn(&mut || Ok(()), TxnMode(7), tracer.get())
+        .run_in_txn(&tidb_gocontext::Context::background(), &mut || Ok(()), TxnMode(7), tracer.get())
         .unwrap_err();
     assert_eq!(err.to_string(), "unknown transaction mode");
     // Go still rolls back: the `defer` runs even when only the mode check failed.
@@ -304,7 +307,7 @@ fn test_run_in_txn_rolls_back_a_failed_begin() {
 
     let mut body_ran = false;
     let err = se
-        .run_in_txn(
+        .run_in_txn(&tidb_gocontext::Context::background(), 
             &mut || {
                 body_ran = true;
                 Ok(())
@@ -330,7 +333,7 @@ fn test_run_in_txn_phases() {
     let tracer = RecordingTracer::default();
     tracer.get().enter_phase(tidb_ttl_metrics::PHASE_QUERY);
 
-    se.run_in_txn(&mut || Ok(()), TxnMode::OPTIMISTIC, tracer.get())
+    se.run_in_txn(&tidb_gocontext::Context::background(), &mut || Ok(()), TxnMode::OPTIMISTIC, tracer.get())
         .unwrap();
 
     assert_eq!(
@@ -349,7 +352,7 @@ fn test_run_in_txn_phases() {
 #[test]
 fn test_session_reset_time_zone() {
     let se = TtlSession::new(MockContext::new(), Box::new(|| {}));
-    se.reset_with_global_time_zone().unwrap();
+    se.reset_with_global_time_zone(&tidb_gocontext::Context::background()).unwrap();
     assert_eq!(
         se.context().executed(),
         vec!["SET @@time_zone=@@global.time_zone".to_owned()]
@@ -363,7 +366,7 @@ fn test_session_reset_time_zone_short_circuits() {
     let mut sctx = MockContext::new();
     sctx.session_time_zone_var = "UTC".to_owned();
     let se = TtlSession::new(sctx, Box::new(|| {}));
-    se.reset_with_global_time_zone().unwrap();
+    se.reset_with_global_time_zone(&tidb_gocontext::Context::background()).unwrap();
     assert!(se.context().executed().is_empty());
 
     // With no session zone set at all Go skips the comparison entirely and
@@ -372,7 +375,7 @@ fn test_session_reset_time_zone_short_circuits() {
     sctx.session_time_zone = None;
     sctx.session_time_zone_var = "UTC".to_owned();
     let se = TtlSession::new(sctx, Box::new(|| {}));
-    se.reset_with_global_time_zone().unwrap();
+    se.reset_with_global_time_zone(&tidb_gocontext::Context::background()).unwrap();
     assert_eq!(
         se.context().executed(),
         vec!["SET @@time_zone=@@global.time_zone".to_owned()]
@@ -385,13 +388,13 @@ fn test_session_global_time_zone() {
     let mut sctx = MockContext::new();
     sctx.global_time_zone_var = "Asia/Shanghai".to_owned();
     let se = TtlSession::new(sctx, Box::new(|| {}));
-    assert_eq!(se.global_time_zone().unwrap(), shanghai());
+    assert_eq!(se.global_time_zone(&tidb_gocontext::Context::background()).unwrap(), shanghai());
 
     let mut sctx = MockContext::new();
     sctx.global_time_zone_var = "+02:00".to_owned();
     let se = TtlSession::new(sctx, Box::new(|| {}));
     assert_eq!(
-        se.global_time_zone().unwrap(),
+        se.global_time_zone(&tidb_gocontext::Context::background()).unwrap(),
         TimeZone::Fixed {
             name: String::new(),
             offset_secs: 2 * 3600,
@@ -401,7 +404,7 @@ fn test_session_global_time_zone() {
     let mut sctx = MockContext::new();
     sctx.global_time_zone_var = "Not/AZone".to_owned();
     let se = TtlSession::new(sctx, Box::new(|| {}));
-    assert!(se.global_time_zone().is_err());
+    assert!(se.global_time_zone(&tidb_gocontext::Context::background()).is_err());
 }
 
 /// Go `TestSessionKill`, reduced to the half `session.go` owns.
@@ -454,9 +457,21 @@ fn test_session_forwards_session_handles() {
 #[test]
 fn test_session_execute_sql_without_result_set() {
     let se = TtlSession::new(MockContext::new(), Box::new(|| {}));
-    let rows = se.execute_sql("SET @@x=1", &[]).unwrap();
+    let rows = se.execute_sql(&tidb_gocontext::Context::background(), "SET @@x=1", &[]).unwrap();
     assert!(rows.is_empty());
     assert_eq!(se.context().executed(), vec!["SET @@x=1".to_owned()]);
+}
+
+/// Go `ExecuteSQL` derives its context from the caller's: a statement of a
+/// cancelled caller does not run.
+#[test]
+fn test_session_execute_sql_honors_the_callers_context() {
+    let se = TtlSession::new(MockContext::new(), Box::new(|| {}));
+    let (ctx, cancel) = tidb_gocontext::Context::with_cancel(&tidb_gocontext::Context::background());
+    cancel.cancel();
+    let err = se.execute_sql(&ctx, "SET @@x=1", &[]).unwrap_err();
+    assert_eq!(err.to_string(), "context canceled");
+    assert!(se.context().executed().is_empty());
 }
 
 /// `Now` reports the session location.

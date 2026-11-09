@@ -252,7 +252,7 @@ impl TtlDeleteTask {
             tracer.enter_phase(PHASE_OTHER);
 
             let sql_start = Instant::now();
-            let (_, need_retry, err) = se.execute_sql_with_check(tracer, &sql);
+            let (_, need_retry, err) = se.execute_sql_with_check(ctx, tracer, &sql);
             let sql_interval = sql_start.elapsed();
             if let Some(err) = err {
                 DELETE_ERROR_DURATION.observe(sql_interval.as_secs_f64());

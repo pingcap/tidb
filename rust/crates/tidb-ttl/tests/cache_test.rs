@@ -54,7 +54,7 @@ use tidb_tablecodec::table_key::{
 };
 use tidb_ttl::cache::base::BaseCache;
 use tidb_ttl::cache::table::{
-    eval_expire_time, set_mock_expire_time, MockExpireTimeKey, TimeUnitType,
+    eval_expire_time, set_mock_expire_time, TimeUnitType,
 };
 use tidb_ttl::cache::table::{
     get_ascii_prefix_datum_from_bytes, get_next_bytes_handle_datum,
@@ -1843,7 +1843,7 @@ fn test_table_eval_ttl_expire_time() {
     let tz2 = chrono::FixedOffset::east_opt(-2 * 3600).unwrap();
     let now = parse_in_location("1999-02-28 23:00:00", &tz2);
     let tm = ttl_tbl
-        .eval_expire_time(&MockExpireTimeKey::default(), &se, &now)
+        .eval_expire_time(&tidb_gocontext::Context::background(), &se, &now)
         .unwrap();
     // The expired time should be calculated according to the global time zone
     assert_eq!(
@@ -1859,7 +1859,7 @@ fn test_table_eval_ttl_expire_time() {
     let ttl_tbl2 = ttl_interval_table(102, "'1:3'", TimeUnitType::HourMinute);
     let now = parse_in_location("2020-01-01 15:00:00", &tz1);
     let tm = ttl_tbl2
-        .eval_expire_time(&MockExpireTimeKey::default(), &se, &now)
+        .eval_expire_time(&tidb_gocontext::Context::background(), &se, &now)
         .unwrap();
     assert_eq!(format_date_time(&tm), "2020-01-01 13:57:00");
     assert_eq!(tm.timezone(), tz1);
@@ -1867,7 +1867,7 @@ fn test_table_eval_ttl_expire_time() {
     // Go `SetMockExpireTime`: the context value short-circuits every read
     // above, including the session's.
     let mocked = parse_in_location("2021-06-07 08:09:10", &tz1);
-    let ctx = set_mock_expire_time(&MockExpireTimeKey::default(), mocked);
+    let ctx = set_mock_expire_time(&tidb_gocontext::Context::background(), mocked);
     let tm = ttl_tbl2.eval_expire_time(&ctx, &se, &now).unwrap();
     assert_eq!(format_date_time(&tm), "2021-06-07 08:09:10");
 }

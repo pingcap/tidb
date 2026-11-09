@@ -419,19 +419,8 @@ impl TaskManager {
     }
 }
 
-/// Go `util.WithInternalSourceType(ctx, source)`: `ctx` carrying the
-/// internal request source (a trace value, as Go keeps it in the context).
-#[must_use]
-pub fn with_internal_source_type(ctx: &tidb_gocontext::Context, source: &str) -> tidb_gocontext::Context {
-    let trace = ctx
-        .value::<tidb_sqlexec::TraceContextKey, tikv_client::trace::TraceContext>()
-        .cloned()
-        .unwrap_or_default();
-    tidb_gocontext::Context::with_value::<tidb_sqlexec::TraceContextKey, _>(
-        ctx,
-        tikv_client::util::with_internal_source_type(&trace, source),
-    )
-}
+/// Go `util.WithInternalSourceType(ctx, source)`.
+pub use tidb_txnkv::with_internal_source_type;
 
 /// Go `sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), sql, args...)`.
 ///

@@ -1509,8 +1509,7 @@ pub(super) fn context_request_source(context: &dyn tidb_sqlexec::ExecutionContex
     let any = context.as_any();
     any.downcast_ref::<tikv_client::trace::TraceContext>()
         .or_else(|| {
-            any.downcast_ref::<tidb_gocontext::Context>()
-                .and_then(|ctx| ctx.value::<tidb_sqlexec::TraceContextKey, tikv_client::trace::TraceContext>())
+            any.downcast_ref::<tidb_gocontext::Context>().and_then(tidb_txnkv::trace_context)
         })
         .and_then(tikv_client::util::request_source_value)
 }

@@ -28,7 +28,7 @@ use tidb_ttl::session::{SessionError, TxnMode};
 use tidb_ttl_client::context::{CancelFunc, Context};
 use tidb_ttl_metrics::{DELETING_TASK_CNT, SCANNING_TASK_CNT};
 
-use crate::config::get_task_manager_heart_beat_interval;
+use crate::config::{get_task_manager_heart_beat_interval, TTL_INTERNAL_SQL_TIMEOUT};
 use crate::del::{new_delete_worker, TtlDeleteTask};
 use crate::scan::{
     new_scan_worker, ScanTaskExecEndMsg, ScanWorker, Task, TaskTerminateReason, TtlScanTask,
@@ -361,7 +361,7 @@ pub fn new_task_manager(
 
 impl TaskManager {
     fn exec(&self, se: &Session, sql: &str, args: &[Datum]) -> Result<Vec<crate::Row>> {
-        se.execute_sql(sql, args).map_err(|err| wrap_execute_sql(err, sql))
+        se.execute_sql(&self.ctx, sql, args).map_err(|err| wrap_execute_sql(err, sql))
     }
 
     fn cache(&self) -> std::sync::MutexGuard<'_, InfoSchemaCache> {
@@ -617,7 +617,7 @@ impl TaskManager {
         };
 
         let hb_interval = get_task_manager_heart_beat_interval().as_nanos() as i64;
-        se.run_in_txn(
+        se.run_in_txn(&self.ctx, 
             &mut || {
                 // The `for update` here ensures two things:
                 // 1. The instance which will update this row has committed, and we can get the newest information.
@@ -698,9 +698,9 @@ impl TaskManager {
     }
 
     /// Go `updateHeartBeat`: heartbeats every task this instance owns.
-    pub fn update_heart_beat(&self, se: &Session, now: &GoTime) {
+    pub fn update_heart_beat(&self, ctx: &Context, se: &Session, now: &GoTime) {
         for task in &self.running_tasks {
-            if let Err(err) = self.task_heartbeat_or_resign_owner(se, now, task, false) {
+            if let Err(err) = self.task_heartbeat_or_resign_owner(ctx, se, now, task, false) {
                 let mut fields = task.scan_task.task_log_fields();
                 fields.push(field("error", err));
                 self.logger.warn("fail to update task heart beat", &fields);
@@ -711,6 +711,7 @@ impl TaskManager {
     /// Go `taskHeartbeatOrResignOwner`.
     fn task_heartbeat_or_resign_owner(
         &self,
+        ctx: &Context,
         se: &Session,
         now: &GoTime,
         task: &RunningScanTask,
@@ -724,7 +725,7 @@ impl TaskManager {
         } else {
             update_ttl_task_heart_beat_sql(task.job_id(), task.scan_id(), now, &state, &self.id)
         };
-        self.exec(se, sql, &args)?;
+        se.execute_sql(ctx, sql, &args).map_err(|err| wrap_execute_sql(err, sql))?;
         let affected_rows = se.get_session_vars().affected_rows();
         if affected_rows != 1 {
             return Err(format!(
@@ -773,7 +774,7 @@ impl TaskManager {
         task.cancel.cancel();
         // Update the task state with heartbeatTask for the last time.
         // The task will be taken over by another instance after timeout.
-        if let Err(err) = self.task_heartbeat_or_resign_owner(se, now, task, true) {
+        if let Err(err) = self.task_heartbeat_or_resign_owner(&self.ctx, se, now, task, true) {
             fields.push(field("error", err));
             self.logger.warn("fail to update the state before resign the task owner", &fields);
         }
@@ -823,7 +824,10 @@ impl TaskManager {
         let state = task.dump_new_task_state();
         debug_assert_eq!(se.get_session_vars().location(), *now.location());
         let (sql, args) = set_ttl_task_finished_sql(task.job_id(), task.scan_id(), &state, now, &self.id);
-        se.execute_sql(sql, &args).map_err(|err| err.to_string())?;
+        let (timeout_ctx, cancel) = Context::with_timeout(&self.ctx, TTL_INTERNAL_SQL_TIMEOUT);
+        let result = se.execute_sql(&timeout_ctx, sql, &args);
+        cancel.cancel();
+        result.map_err(|err| err.to_string())?;
         let affected_rows = se.get_session_vars().affected_rows();
         if affected_rows != 1 {
             return Err(format!(
@@ -852,7 +856,10 @@ impl TaskManager {
         for task in running_tasks {
             let (sql, args) = cache_task::select_from_ttl_task_with_id(task.job_id(), task.scan_id());
             let mut fields = task.scan_task.task_log_fields();
-            let rows = match se.execute_sql(&sql, &cache_args(args)) {
+            let (timeout_ctx, cancel) = Context::with_timeout(&self.ctx, TTL_INTERNAL_SQL_TIMEOUT);
+            let rows = se.execute_sql(&timeout_ctx, &sql, &cache_args(args));
+            cancel.cancel();
+            let rows = match rows {
                 Ok(rows) => rows,
                 Err(err) => {
                     fields.push(field("sql", sql));

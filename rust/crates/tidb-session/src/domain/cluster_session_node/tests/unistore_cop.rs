@@ -28563,7 +28563,7 @@ fn a_ttl_session_reports_its_last_statements_affected_rows() {
                     Box::new(|| {}),
                 );
                 let run = |sql: &str| {
-                    se.execute_sql(sql, &[])
+                    se.execute_sql(&tidb_gocontext::Context::background(), sql, &[])
                         .map(|_| se.get_session_vars().affected_rows())
                         .map_err(|error| tidb_syssession::SysSessionError::new(error.0))
                 };

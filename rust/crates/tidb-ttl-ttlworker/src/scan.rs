@@ -314,7 +314,7 @@ impl TtlScanTask {
         raw_sess: &Session,
     ) -> Result<()> {
         let now = session_now(raw_sess);
-        let safe_expire = eval_expire_time(&self.tbl, raw_sess, &now)?.add(MINUTE);
+        let safe_expire = eval_expire_time(task_ctx, &self.tbl, raw_sess, &now)?.add(MINUTE);
 
         // Check the expired time to avoid to delete some unexpected rows.
         // It can happen that the table metas used by job and task is different. For example:
@@ -348,7 +348,7 @@ impl TtlScanTask {
             ));
         }
 
-        let (sess, restore_session) = new_scan_session(raw_sess, &self.tbl, &self.task.expire_time)?;
+        let (sess, restore_session) = new_scan_session(scan_ctx, raw_sess, &self.tbl, &self.task.expire_time)?;
         let result = self.scan_with_generator(task_ctx, ctx, scan_ctx, tracer, del_ch, &sess);
         if let Err(err) = restore_session(raw_sess) {
             bg_logger().warn("encountered error", &[field("error", err)]);
@@ -403,7 +403,7 @@ impl TtlScanTask {
             }
 
             let sql_start = std::time::Instant::now();
-            let (rows, retryable, sql_err) = sess.execute_sql_with_check(tracer, &sql);
+            let (rows, retryable, sql_err) = sess.execute_sql_with_check(scan_ctx, tracer, &sql);
             let select_interval = sql_start.elapsed();
             if let Some(sql_err) = sql_err {
                 SELECT_ERROR_DURATION.observe(select_interval.as_secs_f64());

@@ -116,6 +116,7 @@ impl TtlTimersSyncer {
         let pool = Arc::clone(&self.pool);
         with_session(pool.as_ref(), &mut |se| {
             let timer = self.sync_one_timer(
+                ctx,
                 se,
                 &tbl.schema,
                 &tbl.table_info,
@@ -161,7 +162,7 @@ impl TtlTimersSyncer {
             let mut found = false;
             with_session(pool.as_ref(), &mut |se| {
                 let rows = se
-                    .execute_sql("select 1 from mysql.tidb_ttl_job_history where job_id=%?", &[str_arg(&job_id)])
+                    .execute_sql(&ctx, "select 1 from mysql.tidb_ttl_job_history where job_id=%?", &[str_arg(&job_id)])
                     .map_err(|err| err.to_string())?;
                 found = !rows.is_empty();
                 Ok(())
@@ -195,7 +196,7 @@ impl TtlTimersSyncer {
 
     /// Go `SyncTimers`: one timer per TTL physical table, disabling and
     /// later deleting the timers of tables that went away.
-    pub fn sync_timers(&mut self, _ctx: &Context, is: &dyn InfoSchema) {
+    pub fn sync_timers(&mut self, ctx: &Context, is: &dyn InfoSchema) {
         self.last_sync_time = (self.now_func)();
         self.last_sync_ver = is.schema_meta_version();
         if since(&self.last_pull_timers) > FULL_REFRESH_TIMERS_CACHE_INTERVAL {
@@ -216,7 +217,7 @@ impl TtlTimersSyncer {
         let result = with_session(pool.as_ref(), &mut |se| {
             for (db_name, tables) in is.list_ttl_tables() {
                 for tbl_info in tables {
-                    for key in self.sync_timers_for_table(se, &db_name, &tbl_info) {
+                    for key in self.sync_timers_for_table(ctx, se, &db_name, &tbl_info) {
                         current_timer_keys.insert(key);
                     }
                 }
@@ -274,11 +275,11 @@ impl TtlTimersSyncer {
     }
 
     /// Go `syncTimersForTable`.
-    fn sync_timers_for_table(&mut self, se: &Session, schema: &CiString, tbl_info: &GoShared<TableInfo>) -> Vec<String> {
+    fn sync_timers_for_table(&mut self, ctx: &Context, se: &Session, schema: &CiString, tbl_info: &GoShared<TableInfo>) -> Vec<String> {
         let definitions = tbl_info.read().partition.as_ref().map(|partition| partition.read().definitions.snapshot());
         let Some(defs) = definitions else {
             let key = build_timer_key(&tbl_info.read(), None);
-            if let Err(err) = self.sync_one_timer(se, schema, tbl_info, None, false) {
+            if let Err(err) = self.sync_one_timer(ctx, se, schema, tbl_info, None, false) {
                 bg_logger().error("failed to syncOneTimer", &[field("error", err), field("key", key.clone())]);
             }
             return vec![key];
@@ -288,7 +289,7 @@ impl TtlTimersSyncer {
         for partition in &defs {
             let key = build_timer_key(&tbl_info.read(), Some(partition));
             keys.push(key.clone());
-            if let Err(err) = self.sync_one_timer(se, schema, tbl_info, Some(partition), false) {
+            if let Err(err) = self.sync_one_timer(ctx, se, schema, tbl_info, Some(partition), false) {
                 bg_logger().error("failed to syncOneTimer", &[field("error", err), field("key", key)]);
             }
         }
@@ -319,6 +320,7 @@ impl TtlTimersSyncer {
     /// Go `syncOneTimer`.
     fn sync_one_timer(
         &mut self,
+        ctx: &Context,
         se: &Session,
         schema: &CiString,
         tbl_info: &GoShared<TableInfo>,
@@ -342,7 +344,7 @@ impl TtlTimersSyncer {
             Err(TimerError::TimerNotExist) => {
                 self.key2_timers.remove(&key);
                 let mut watermark = GoTime::zero();
-                match get_ttl_table_status(se, &info, partition) {
+                match get_ttl_table_status(ctx, se, &info, partition) {
                     Err(err) => bg_logger().warn(
                         "failed to get TTL table status",
                         &[field("error", err), field("key", key.clone())],
@@ -450,6 +452,7 @@ pub fn build_timer_key_with_id(tbl_id: i64, physical_id: i64) -> String {
 
 /// Go `getTTLTableStatus`.
 fn get_ttl_table_status(
+    ctx: &Context,
     se: &Session,
     tbl_info: &TableInfo,
     partition: Option<&PartitionDefinition>,
@@ -457,7 +460,7 @@ fn get_ttl_table_status(
     let pid = partition.map_or(tbl_info.id, |partition| partition.id);
     let (sql, args) = select_from_ttl_table_status_with_id(pid);
     let args: Vec<_> = args.into_iter().map(tidb_datatype::Datum::new_int).collect();
-    let rows = se.execute_sql(&sql, &args).map_err(|err| err.to_string())?;
+    let rows = se.execute_sql(ctx, &sql, &args).map_err(|err| err.to_string())?;
     let Some(row) = rows.first() else {
         return Ok(None);
     };

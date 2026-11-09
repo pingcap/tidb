@@ -64,8 +64,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tidb_datatype::Datum;
 use tidb_sqlescape::SqlArg;
 use tidb_sqlexec::SqlExecutor;
-use tikv_client::trace::TraceContext;
-use tikv_client::util::with_internal_source_type;
 use tidb_ttl_metrics::{PhaseTracer, PhaseTracerExt, PHASE_BEGIN_TXN, PHASE_COMMIT_TXN, PHASE_OTHER};
 use tidb_sqlkiller::{KillSignal, SqlKiller};
 use tidb_timeutil::{parse_time_zone, TimeZone};
@@ -215,18 +213,19 @@ pub trait Session {
     /// Go `Session.GetSQLExecutor`.
     fn get_sql_executor(&self) -> &dyn SqlExecutor;
     /// Go `Session.ExecuteSQL`.
-    fn execute_sql(&self, sql: &str, args: &[Datum]) -> Result<Vec<Self::Row>>;
+    fn execute_sql(&self, ctx: &tidb_gocontext::Context, sql: &str, args: &[Datum]) -> Result<Vec<Self::Row>>;
     /// Go `Session.RunInTxn`.
     fn run_in_txn(
         &self,
+        ctx: &tidb_gocontext::Context,
         body: &mut dyn FnMut() -> Result<()>,
         txn_mode: TxnMode,
         tracer: Option<&PhaseTracer>,
     ) -> Result<()>;
     /// Go `Session.ResetWithGlobalTimeZone`.
-    fn reset_with_global_time_zone(&self) -> Result<()>;
+    fn reset_with_global_time_zone(&self, ctx: &tidb_gocontext::Context) -> Result<()>;
     /// Go `Session.GlobalTimeZone`.
-    fn global_time_zone(&self) -> Result<TimeZone>;
+    fn global_time_zone(&self, ctx: &tidb_gocontext::Context) -> Result<TimeZone>;
     /// Go `Session.KillStmt`.
     fn kill_stmt(&self);
     /// Go `Session.Now`.
@@ -322,9 +321,9 @@ impl<C: SessionContext> Session for TtlSession<C> {
         self.sctx.get_sql_executor()
     }
 
-    fn execute_sql(&self, sql: &str, args: &[Datum]) -> Result<Vec<Self::Row>> {
+    fn execute_sql(&self, ctx: &tidb_gocontext::Context, sql: &str, args: &[Datum]) -> Result<Vec<Self::Row>> {
         // Go `kv.WithInternalSourceType(ctx, kv.InternalTxnTTL)`.
-        let ctx = with_internal_source_type(&TraceContext::new(), tidb_txnkv::INTERNAL_TXN_TTL);
+        let ctx = tidb_txnkv::with_internal_source_type(ctx, tidb_txnkv::INTERNAL_TXN_TTL);
         let args = sql_args(args)?;
         let rs = self.get_sql_executor().execute_internal(&ctx, sql, &args).map_err(sql_exec_error)?;
         let Some(mut rs) = rs else {
@@ -338,6 +337,7 @@ impl<C: SessionContext> Session for TtlSession<C> {
 
     fn run_in_txn(
         &self,
+        ctx: &tidb_gocontext::Context,
         body: &mut dyn FnMut() -> Result<()>,
         txn_mode: TxnMode,
         tracer: Option<&PhaseTracer>,
@@ -346,18 +346,25 @@ impl<C: SessionContext> Session for TtlSession<C> {
         // even when only the BEGIN failed — a BEGIN killed after its first
         // `Next` has already made the transaction active.
         let restore_phase = tracer.phase();
-        let result = self.run_in_txn_body(body, txn_mode, tracer);
+        let result = self.run_in_txn_body(ctx, body, txn_mode, tracer);
         // Go registers the rollback `defer` first and the phase-restoring one
         // second, so the phase is restored before the rollback runs.
         tracer.enter_phase(&restore_phase);
         if result.is_err() {
-            // Go logs the rollback error through `terror.Log` and drops it.
-            let _ = self.execute_sql("ROLLBACK", &[]);
+            // For now, the "ROLLBACK" can execute successfully even when the
+            // context has already been cancelled. Using another timeout
+            // context to avoid that this behavior will be changed in the
+            // future. Go logs the rollback error through `terror.Log` and
+            // drops it.
+            let (rollback_ctx, cancel) =
+                tidb_gocontext::Context::with_timeout(&tidb_gocontext::Context::background(), std::time::Duration::from_secs(1));
+            let _ = self.execute_sql(&rollback_ctx, "ROLLBACK", &[]);
+            cancel.cancel();
         }
         result
     }
 
-    fn reset_with_global_time_zone(&self) -> Result<()> {
+    fn reset_with_global_time_zone(&self, ctx: &tidb_gocontext::Context) -> Result<()> {
         if self.sctx.time_zone().is_some() {
             let global_tz = self.sctx.get_global_system_var(VAR_TIME_ZONE)?;
             let tz = self.sctx.get_session_or_global_system_var(VAR_TIME_ZONE)?;
@@ -366,11 +373,11 @@ impl<C: SessionContext> Session for TtlSession<C> {
             }
         }
 
-        self.execute_sql("SET @@time_zone=@@global.time_zone", &[])
+        self.execute_sql(ctx, "SET @@time_zone=@@global.time_zone", &[])
             .map(|_| ())
     }
 
-    fn global_time_zone(&self) -> Result<TimeZone> {
+    fn global_time_zone(&self, _ctx: &tidb_gocontext::Context) -> Result<TimeZone> {
         let name = self.sctx.get_global_system_var(VAR_TIME_ZONE)?;
         parse_time_zone(&name).map_err(|err| error(err.to_string()))
     }
@@ -405,6 +412,7 @@ impl<C: SessionContext> TtlSession<C> {
     /// The body of Go's `RunInTxn` between its `defer`s and `success = true`.
     fn run_in_txn_body(
         &self,
+        ctx: &tidb_gocontext::Context,
         body: &mut dyn FnMut() -> Result<()>,
         txn_mode: TxnMode,
         tracer: Option<&PhaseTracer>,
@@ -415,13 +423,13 @@ impl<C: SessionContext> TtlSession<C> {
             TxnMode::PESSIMISTIC => "BEGIN PESSIMISTIC",
             _ => return Err(error("unknown transaction mode")),
         };
-        self.execute_sql(sql, &[])?;
+        self.execute_sql(ctx, sql, &[])?;
         tracer.enter_phase(PHASE_OTHER);
 
         body()?;
 
         tracer.enter_phase(PHASE_COMMIT_TXN);
-        self.execute_sql("COMMIT", &[])?;
+        self.execute_sql(ctx, "COMMIT", &[])?;
         tracer.enter_phase(PHASE_OTHER);
         Ok(())
     }

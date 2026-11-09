@@ -17,6 +17,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
+tidb-gocontext = { path = "../tidb-gocontext" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-log = { path = "../tidb-log" }
 tidb-logutil = { path = "../tidb-logutil" }

@@ -393,7 +393,7 @@ impl JobManagerState {
     }
 
     fn exec(&self, se: &Session, sql: &str, args: &[Datum]) -> Result<Vec<crate::Row>> {
-        se.execute_sql(sql, args).map_err(|err| wrap_execute_sql(err, sql))
+        se.execute_sql(&self.ctx, sql, args).map_err(|err| wrap_execute_sql(err, sql))
     }
 
     /// Go `isLeader`.
@@ -477,7 +477,9 @@ impl JobManagerState {
 
             let current_leader_state = self.is_leader();
             if current_leader_state && !last_leader_state {
-                self.do_gc(se, &now);
+                let (gc_ctx, cancel) = Context::with_timeout(&self.ctx, TTL_INTERNAL_SQL_TIMEOUT);
+                self.do_gc(&gc_ctx, se, &now);
+                cancel.cancel();
             }
             last_leader_state = current_leader_state;
 
@@ -502,9 +504,17 @@ impl JobManagerState {
                         self.logger.warn("fail to update table status cache", &[field("error", err)]);
                     }
                 }
-                recv(gc_ticker) -> _ => self.do_gc(se, &now),
+                recv(gc_ticker) -> _ => {
+                    let (gc_ctx, cancel) = Context::with_timeout(&self.ctx, TTL_INTERNAL_SQL_TIMEOUT);
+                    self.do_gc(&gc_ctx, se, &now);
+                    cancel.cancel();
+                }
                 // Job Schedule loop:
-                recv(update_job_heart_beat_ticker) -> _ => self.update_heart_beat(se, &now),
+                recv(update_job_heart_beat_ticker) -> _ => {
+                    let (update_heart_beat_ctx, cancel) = Context::with_timeout(&self.ctx, TTL_INTERNAL_SQL_TIMEOUT);
+                    self.update_heart_beat(&update_heart_beat_ctx, se, &now);
+                    cancel.cancel();
+                }
                 recv(job_check_ticker) -> _ => {
                     self.check_finished_job(se);
                     self.check_not_own_job();
@@ -544,7 +554,11 @@ impl JobManagerState {
                     self.task_manager.check_finished_task(se, &now);
                 }
                 recv(resize_workers_ticker) -> _ => self.task_manager.resize_workers_with_sys_var(),
-                recv(update_task_heart_beat_ticker) -> _ => self.task_manager.update_heart_beat(se, &now),
+                recv(update_task_heart_beat_ticker) -> _ => {
+                    let (update_heart_beat_ctx, cancel) = Context::with_timeout(&self.ctx, TTL_INTERNAL_SQL_TIMEOUT);
+                    self.task_manager.update_heart_beat(&update_heart_beat_ctx, se, &now);
+                    cancel.cancel();
+                }
                 recv(check_scan_task_finished_ticker) -> _ => {
                     if self.task_manager.handle_scan_finished_task() {
                         self.task_manager.reschedule_tasks(se, &now);
@@ -668,7 +682,7 @@ impl JobManagerState {
             return;
         }
 
-        if let Err(err) = self.table_status_cache.update(se) {
+        if let Err(err) = self.table_status_cache.update(&self.ctx, se) {
             response_err(err.to_string());
             return;
         }
@@ -814,7 +828,7 @@ impl JobManagerState {
         {
             self.last_report_delay_metrics_time = Some(Instant::now());
             self.logger.info("TTL leader to collect delay metrics", &[]);
-            match get_delay_metric_records(se, &GoTime::now()) {
+            match get_delay_metric_records(&self.ctx, se, &GoTime::now()) {
                 Err(err) => self.logger.info("failed to get TTL delay metrics", &[field("error", err)]),
                 Ok(records) => update_delay_metrics(&records),
             }
@@ -840,8 +854,11 @@ impl JobManagerState {
 
     /// Go `findAllTasksForJob`.
     fn find_all_tasks_for_job(&self, se: &Session, job_id: &str) -> Result<Vec<Task>> {
+        let (timeout_job_ctx, cancel) = Context::with_timeout(&self.ctx, TTL_INTERNAL_SQL_TIMEOUT);
         let (sql, args) = cache_task::select_from_ttl_task_with_job_id(job_id);
-        let rows = match se.execute_sql(&sql, &cache_args(args)) {
+        let rows = se.execute_sql(&timeout_job_ctx, &sql, &cache_args(args));
+        cancel.cancel();
+        let rows = match rows {
             Ok(rows) => rows,
             Err(err) => {
                 self.logger.warn("fail to execute sql", &[field("sql", sql), field("error", err.to_string())]);
@@ -1101,7 +1118,7 @@ impl JobManagerState {
         let mut job_id = String::new();
         let mut job_start = GoTime::zero();
         let mut expire_time = GoTime::zero();
-        se.run_in_txn(
+        se.run_in_txn(&self.ctx, 
             &mut || {
                 let table_status = self
                     .get_table_status_for_update_not_wait(se, table_id, parent_table_id, false)
@@ -1140,7 +1157,7 @@ impl JobManagerState {
         check_schedule_interval: bool,
     ) -> Result<TtlJob> {
         let mut expire_time = GoTime::zero();
-        se.run_in_txn(
+        se.run_in_txn(&self.ctx, 
             &mut || {
                 let table_status = self
                     .get_table_status_for_update_not_wait(se, table.id, table.table_info.read().id, true)
@@ -1154,7 +1171,7 @@ impl JobManagerState {
                     return Err(SessionError("couldn't schedule ttl job".to_owned()));
                 }
 
-                expire_time = eval_expire_time(table, se, now).map_err(SessionError)?;
+                expire_time = eval_expire_time(&self.ctx, table, se, now).map_err(SessionError)?;
 
                 debug_assert_eq!(se.get_session_vars().location(), *now.location());
                 debug_assert_eq!(se.get_session_vars().location(), *expire_time.location());
@@ -1212,7 +1229,7 @@ impl JobManagerState {
         // [tikv:3572]Statement aborted because lock(s) could not be acquired immediately and NOWAIT is set.
         // Then this tidb node will not waste resource in calculating the ranges.
         let mut rows = se
-            .execute_sql(&format!("{sql} FOR UPDATE NOWAIT"), &int_args(args))
+            .execute_sql(&self.ctx, &format!("{sql} FOR UPDATE NOWAIT"), &int_args(args))
             .map_err(|err| wrap_execute_sql(err, &sql))?;
         if rows.is_empty() && !create_if_not_exist {
             return Ok(None);
@@ -1224,7 +1241,7 @@ impl JobManagerState {
             self.exec(se, insert_sql, &args)?;
             let (sql, args) = select_from_ttl_table_status_with_id(physical_id);
             rows = se
-                .execute_sql(&format!("{sql} FOR UPDATE NOWAIT"), &int_args(args))
+                .execute_sql(&self.ctx, &format!("{sql} FOR UPDATE NOWAIT"), &int_args(args))
                 .map_err(|err| wrap_execute_sql(err, &sql))?;
             if rows.is_empty() {
                 return Err("table status row still doesn't exist after insertion".to_owned());
@@ -1271,16 +1288,16 @@ impl JobManagerState {
     }
 
     /// Go `updateHeartBeat`: heartbeats the jobs this instance owns.
-    fn update_heart_beat(&mut self, se: &Session, now: &GoTime) {
+    fn update_heart_beat(&mut self, ctx: &Context, se: &Session, now: &GoTime) {
         for job in self.local_jobs() {
-            if let Err(err) = self.update_heart_beat_for_job(se, now, &job) {
+            if let Err(err) = self.update_heart_beat_for_job(ctx, se, now, &job) {
                 self.job_logger(&job).warn("fail to update heartbeat for job", &[field("error", err)]);
             }
         }
     }
 
     /// Go `updateHeartBeatForJob`.
-    fn update_heart_beat_for_job(&mut self, se: &Session, now: &GoTime, job: &TtlJob) -> Result<()> {
+    fn update_heart_beat_for_job(&mut self, ctx: &Context, se: &Session, now: &GoTime, job: &TtlJob) -> Result<()> {
         if job.create_time.add(TTL_JOB_TIMEOUT.as_nanos() as i64).before(now) {
             self.job_logger(job).info("job is timeout", &[]);
             let tasks = self.find_all_tasks_for_job(se, &job.id).unwrap_or_else(|err| {
@@ -1299,7 +1316,7 @@ impl JobManagerState {
 
         debug_assert_eq!(se.get_session_vars().location(), *now.location());
         let (sql, args) = update_heart_beat_sql(job.table_id, now, &self.id);
-        self.exec(se, sql, &args)?;
+        se.execute_sql(ctx, sql, &args).map_err(|err| wrap_execute_sql(err, sql))?;
         let affected_rows = se.get_session_vars().affected_rows();
         if affected_rows != 1 {
             return Err(format!(
@@ -1317,7 +1334,10 @@ impl JobManagerState {
 
     /// Go `updateTableStatusCache`.
     fn update_table_status_cache(&mut self, se: &Session) -> Result<()> {
-        self.table_status_cache.update(se).map_err(|err| err.to_string())
+        let (cache_update_ctx, cancel) = Context::with_timeout(&self.ctx, TTL_INTERNAL_SQL_TIMEOUT);
+        let result = self.table_status_cache.update(&cache_update_ctx, se).map_err(|err| err.to_string());
+        cancel.cancel();
+        result
     }
 
     /// Go `removeJob`.
@@ -1333,7 +1353,7 @@ impl JobManagerState {
     }
 
     /// Go `DoGC`: deletes old job histories and redundant scan tasks.
-    pub fn do_gc(&self, se: &Session, _now: &GoTime) {
+    pub fn do_gc(&self, ctx: &Context, se: &Session, _now: &GoTime) {
         if !self.is_leader() {
             // only the leader can do the GC to reduce the performance impact
             return;
@@ -1347,18 +1367,18 @@ impl JobManagerState {
                 // only remove table status after updating info schema without error
                 let exist_ids: Vec<i64> = self.cache().tables.keys().copied().collect();
                 let sql = gc_ttl_table_status_gc_sql(&exist_ids);
-                if let Err(err) = se.execute_sql(&sql, &[]) {
+                if let Err(err) = se.execute_sql(ctx, &sql, &[]) {
                     self.logger.warn("fail to gc ttl table status", &[field("error", err.to_string())]);
                 }
             }
             Err(err) => self.logger.warn("failed to update info schema cache", &[field("error", err)]),
         }
 
-        if let Err(err) = se.execute_sql(TASK_GC_TEMPLATE, &[]) {
+        if let Err(err) = se.execute_sql(ctx, TASK_GC_TEMPLATE, &[]) {
             self.logger.warn("fail to gc redundant scan task", &[field("error", err.to_string())]);
         }
 
-        if let Err(err) = se.execute_sql(TTL_JOB_HISTORY_GC_TEMPLATE, &[]) {
+        if let Err(err) = se.execute_sql(ctx, TTL_JOB_HISTORY_GC_TEMPLATE, &[]) {
             self.logger.warn("fail to gc ttl job history", &[field("error", err.to_string())]);
         }
     }
@@ -1379,7 +1399,7 @@ impl JobManagerState {
 }
 
 /// Go `GetDelayMetricRecords`.
-pub fn get_delay_metric_records(se: &Session, now: &GoTime) -> Result<HashMap<i64, DelayMetricsRecord>> {
+pub fn get_delay_metric_records(ctx: &Context, se: &Session, now: &GoTime) -> Result<HashMap<i64, DelayMetricsRecord>> {
     let sql = r#"SELECT
     parent_table_id as tid,
     CAST(UNIX_TIMESTAMP(MIN(create_time)) AS SIGNED) as job_ts
@@ -1403,7 +1423,7 @@ FROM
 GROUP BY
     parent_table_id;"#;
 
-    let rows = se.execute_sql(sql, &[]).map_err(|err| err.to_string())?;
+    let rows = se.execute_sql(ctx, sql, &[]).map_err(|err| err.to_string())?;
 
     let unix = |seconds: i64| SystemTime::UNIX_EPOCH + Duration::from_secs(seconds.max(0) as u64);
     let now_system = unix(now.unix());
@@ -1458,7 +1478,7 @@ GROUP BY
             "select TIDB_TABLE_ID, CAST(UNIX_TIMESTAMP(CREATE_TIME) AS SIGNED) from information_schema.tables WHERE TIDB_TABLE_ID in ({})",
             no_record_tables.join(", ")
         );
-        match se.execute_sql(&sql, &[]) {
+        match se.execute_sql(ctx, &sql, &[]) {
             Err(err) => bg_logger().error("failed to exec sql", &[field("error", err.to_string()), field("sql", sql)]),
             Ok(rows) => {
                 for row in &rows {
@@ -1532,6 +1552,8 @@ impl ManagerJobAdapter {
         }
         drop(info);
 
+        let (ctx, cancel) = Context::with_timeout(&Context::background(), Duration::from_secs(5 * 60));
+
         let select_tasks_cnt_sql = "select LOW_PRIORITY COUNT(1) FROM mysql.tidb_ttl_task WHERE status IN ('waiting', 'running')";
         let fields = |extra: Vec<tidb_log::Field>| {
             let mut fields = vec![int_field("physicalID", physical_id), int_field("tableID", table_id)];
@@ -1539,7 +1561,9 @@ impl ManagerJobAdapter {
             fields.push(field("SQL", select_tasks_cnt_sql));
             fields
         };
-        let rs = match se.execute_sql(select_tasks_cnt_sql, &[]) {
+        let rs = se.execute_sql(&ctx, select_tasks_cnt_sql, &[]);
+        cancel.cancel();
+        let rs = match rs {
             Ok(rs) => rs,
             Err(err) => {
                 bg_logger().error("error to query ttl task count", &fields(vec![field("error", err.to_string())]));
@@ -1572,6 +1596,7 @@ impl ManagerJobAdapter {
     /// Go `getJobWithSession`.
     fn get_job_with_session(
         &self,
+        ctx: &Context,
         se: &Session,
         table_id: i64,
         physical_id: i64,
@@ -1579,6 +1604,7 @@ impl ManagerJobAdapter {
     ) -> Result<Option<TtlJobTrace>> {
         let rows = se
             .execute_sql(
+                ctx,
                 "select summary_text, status from mysql.tidb_ttl_job_history where table_id=%? AND parent_table_id=%? AND job_id=%?",
                 &[Datum::new_int(physical_id), Datum::new_int(table_id), str_arg(request_id)],
             )
@@ -1669,10 +1695,10 @@ impl TtlJobAdapter for ManagerJobAdapter {
         }
     }
 
-    fn get_job(&self, _ctx: &Context, table_id: i64, physical_id: i64, request_id: &str) -> Result<Option<TtlJobTrace>> {
+    fn get_job(&self, ctx: &Context, table_id: i64, physical_id: i64, request_id: &str) -> Result<Option<TtlJobTrace>> {
         let mut job = None;
         let result = with_session(self.sess_pool.as_ref(), &mut |se| {
-            job = self.get_job_with_session(se, table_id, physical_id, request_id)?;
+            job = self.get_job_with_session(ctx, se, table_id, physical_id, request_id)?;
             Ok(())
         });
         if let Err(err) = result {
@@ -1685,7 +1711,7 @@ impl TtlJobAdapter for ManagerJobAdapter {
     fn now(&self) -> Result<GoTime> {
         let mut now = GoTime::zero();
         with_session(self.sess_pool.as_ref(), &mut |se| {
-            let tz = se.global_time_zone().map_err(|err| err.to_string())?;
+            let tz = se.global_time_zone(&Context::background()).map_err(|err| err.to_string())?;
             now = session_now(se).in_location(&tz);
             Ok(())
         })?;
