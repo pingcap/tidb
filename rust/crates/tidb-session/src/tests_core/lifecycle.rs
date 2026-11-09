@@ -176,6 +176,29 @@ fn apply_cache_quota_reaches_query_and_dml_statement_contexts() {
     );
 }
 
+/// Go's `SetFromSessionVars` and optimizer read these for every statement,
+/// a write's read among them.
+#[test]
+fn request_variables_reach_query_and_dml_statement_contexts() {
+    let mut session = Session::new();
+    for (name, value) in [
+        ("tidb_store_batch_size", "7"),
+        ("tidb_enable_rate_limit_action", "ON"),
+        ("tiflash_replica_read", "closest_replicas"),
+        ("tidb_opt_derive_topn", "ON"),
+    ] {
+        session.run(&format!("SET @@{name} = '{value}'")).unwrap();
+    }
+    for dml in [false, true] {
+        let ctx = session.statement_context(dml);
+        assert_eq!(ctx.store_batch_size(), 7, "dml={dml}");
+        assert!(ctx.enabled_rate_limit_action(), "dml={dml}");
+        // Go `ClosestReplicas`, the third `ReplicaRead`.
+        assert_eq!(format!("{:?}", ctx.tiflash_replica_read()), "ReplicaRead(2)", "dml={dml}");
+        assert!(ctx.allow_derive_topn(), "dml={dml}");
+    }
+}
+
 #[test]
 fn optimizer_cost_variables_reach_the_statement_snapshot() {
     let mut session = Session::new();

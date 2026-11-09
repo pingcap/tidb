@@ -1749,7 +1749,6 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_apply_cache_capacity(apply_cache_capacity)
                     .with_parallel_apply(enable_parallel_apply)
                     .with_allow_derive_topn(allow_derive_topn)
-                    .with_allow_derive_topn(allow_derive_topn)
                     .with_block_encryption_mode(block_encryption_mode)
                     .with_decode_key_from_string(self.decode_key_from_string())
                     .with_parser_config(self.session_vars().build_parser_switches())
@@ -1859,10 +1858,14 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_executor_chunk_sizes(snapshot.init_chunk_size, snapshot.max_chunk_size)
                 .with_string_type_flags(string_type_flags)
                 .with_stats_handle(self.stats_handle())
-                // Go's optimizer checks the rule blacklist, and
-                // `SetFromSessionVars` sets the scan concurrency, for every
-                // statement's plan and requests, a write's read among them.
+                // Go's optimizer checks the rule blacklist and
+                // `AllowDeriveTopN`, and `SetFromSessionVars` sets the scan
+                // concurrency, store batch size, rate-limit action and TiFlash
+                // replica read, for every statement's plan and requests, a
+                // write's read among them.
                 .with_pushdown_blacklists(self.pushdown_blacklists().snapshot())
+                .with_allow_derive_topn(snapshot.allow_derive_topn)
+                .with_enabled_rate_limit_action(snapshot.rate_limit_action)
                 .with_dist_sql_scan_concurrency(
                     self.session_vars()
                         .get_system(tidb_vardef::tidb_vars::TIDB_DIST_SQL_SCAN_CONCURRENCY)
@@ -1870,6 +1873,19 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                         .and_then(|value| value.parse::<u64>().ok())
                         .unwrap_or(tidb_vardef::defaults::DEF_DIST_SQL_SCAN_CONCURRENCY as u64),
                 )
+                .with_store_batch_size(
+                    self.session_vars()
+                        .get_system(tidb_vardef::tidb_vars::TIDB_STORE_BATCH_SIZE)
+                        .ok()
+                        .and_then(|value| value.parse::<u64>().ok())
+                        .unwrap_or(tidb_vardef::defaults::DEF_TIDB_STORE_BATCH_SIZE as u64),
+                )
+                .with_tiflash_replica_read(tidb_tiflash::get_tiflash_replica_read_by_str(
+                    &self
+                        .session_vars()
+                        .get_system(tidb_vardef::tidb_vars::TIFLASH_REPLICA_READ)
+                        .unwrap_or_default(),
+                ))
                 .with_process_plan_info_sink(Arc::clone(&self.process_plan_info_ref()))
                 .with_statement_phase_observer(self.statement_phase_observer())
                 .with_phase_durations(self.phase_durations_ref().clone())

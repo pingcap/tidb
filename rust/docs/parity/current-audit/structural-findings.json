@@ -2,9 +2,9 @@
   "date": "2026-11-08",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 31,
+    "unresolved": 30,
     "open": 7,
-    "partial": 24
+    "partial": 23
   },
   "findings": [
     {
@@ -165,13 +165,6 @@
       "go_owner": "`pkg/planner/cascades`"
     },
     {
-      "id": "Q02",
-      "status": "partial",
-      "group": "Expanded subsystem ownership review",
-      "finding": "A write's statement context is a second builder chain (`stmt_ctx_build.rs` `session_statement_context`'s DML branch) beside the query's; it carries the rule blacklist and `tidb_distsql_scan_concurrency`, but not `tidb_store_batch_size`, the rate-limit OOM action, `tiflash_replica_read` or `tidb_opt_derive_topn`, which Go's `SetFromSessionVars` and optimizer read for every statement (no observable effect found for these four: a Go server derives no TopN in a write's read either, and the single embedded store never batches a write's region tasks)",
-      "go_owner": "`pkg/executor/compiler.go` / `pkg/session/session.go` (`ResetContextOfStmt`), `pkg/distsql/request_builder.go` (`SetFromSessionVars`), `pkg/executor/builder.go` (`buildIndexLookUpReaderForIndexJoin`)"
-    },
-    {
       "id": "X01",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
@@ -229,7 +222,7 @@
       "go_owner": "`cmd/tidb-server/main.go` (`overrideConfig`), `pkg/util/misc.go` (`GetLocalIP`)"
     }
   ],
-  "unresolved": 31,
+  "unresolved": 30,
   "open": 7,
-  "partial": 24
+  "partial": 23
 }
