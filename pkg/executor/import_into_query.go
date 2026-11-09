@@ -97,8 +97,8 @@ func prepareImportQuery(
 		return nil, nil, err
 	}
 	if kerneltype.IsNextGen() {
-		// Shared DXF workers use dedicated resources and DXF metering, rather
-		// than the submitter's foreground RU quota. Keep q unchanged for retries.
+		// Optimization can execute uncorrelated subqueries and cache their DistSQL
+		// context, so select the execution group before compilation starts.
 		vars.SetResourceGroupName(resourcegroup.DefaultResourceGroupName)
 	}
 	// Without a statistics provider, this worker uses static partition pruning.
