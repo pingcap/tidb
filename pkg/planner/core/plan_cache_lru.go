@@ -79,7 +79,7 @@ func NewLRUPlanCache(capacity uint, guard float64, quota uint64, sctx sessionctx
 }
 
 // Get tries to find the corresponding value according to the given key.
-func (l *LRUPlanCache) Get(key string, paramTypes any) (value any, ok bool) {
+func (l *LRUPlanCache) Get(key string, paramTypes any) (value any, status sessionctx.PlanCacheLookupStatus) {
 	l.lock.RLock()
 	defer l.lock.RUnlock()
 
@@ -87,10 +87,11 @@ func (l *LRUPlanCache) Get(key string, paramTypes any) (value any, ok bool) {
 	if bucketExist {
 		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
 			l.lruList.MoveToFront(element)
-			return element.Value.(*planCacheEntry).PlanValue, true
+			return element.Value.(*planCacheEntry).PlanValue, sessionctx.PlanCacheLookupHit
 		}
+		return nil, sessionctx.PlanCacheLookupParamTypeMismatch
 	}
-	return nil, false
+	return nil, sessionctx.PlanCacheLookupKeyNotFound
 }
 
 // Put puts the (key, value) pair into the LRU Cache.
@@ -241,7 +242,7 @@ func (l *LRUPlanCache) memoryControl() {
 // PickPlanFromBucket pick one plan from bucket
 func (*LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, paramTypes any) (*list.Element, bool) {
 	for k := range bucket {
-		if checkTypesCompatibility4PC(k.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue).paramTypes, paramTypes) {
+		if checkPlanCacheParamCompatibility(k.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue), paramTypes) {
 			return k, true
 		}
 	}

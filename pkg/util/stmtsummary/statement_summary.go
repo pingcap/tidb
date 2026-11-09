@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
@@ -228,6 +229,10 @@ type stmtSummaryByDigestElement struct {
 
 	planCacheUnqualifiedCount int64
 	lastPlanCacheUnqualified  string // the reason why this query is unqualified for the plan cache
+	planCacheMisses           int64
+	planCacheFallbackCounts   *PlanCacheFallbackCounts
+	lastPlanCacheMissReason   string
+	planCacheMissLastSeen     int64
 
 	storageKV  bool // query read from TiKV
 	storageMPP bool // query read from TiFlash
@@ -269,9 +274,68 @@ type StmtExecInfo struct {
 	RUDetail          *util.RUDetails
 	CPUUsages         ppcpuusage.CPUUsages
 
-	PlanCacheUnqualified string
+	PlanCacheUnqualified          string
+	PlanCacheFallbackReason       contextutil.PlanCacheFallbackReason
+	PlanCacheFallbackTimeUnixNano int64
 
 	LazyInfo StmtExecLazyInfo
+}
+
+// PlanCacheFallbackCounts stores one counter for every externally reportable
+// fallback reason. Statement summary records allocate it lazily on their first
+// fallback, so rows that never miss only pay for a nil pointer.
+type PlanCacheFallbackCounts [contextutil.PlanCacheFallbackReasonCount - 1]int64
+
+// Add increments the counter for reason.
+func (counts *PlanCacheFallbackCounts) Add(reason contextutil.PlanCacheFallbackReason) {
+	if reason == contextutil.PlanCacheFallbackNone {
+		return
+	}
+	reason = contextutil.NormalizePlanCacheFallbackReason(reason)
+	counts[reason-1]++
+}
+
+// Count returns the number of fallbacks for a reportable reason.
+func (counts *PlanCacheFallbackCounts) Count(reason contextutil.PlanCacheFallbackReason) int64 {
+	if counts == nil || reason <= contextutil.PlanCacheFallbackNone || reason >= contextutil.PlanCacheFallbackReasonCount {
+		return 0
+	}
+	return counts[reason-1]
+}
+
+// Merge adds every counter in other to counts.
+func (counts *PlanCacheFallbackCounts) Merge(other *PlanCacheFallbackCounts) {
+	if other == nil {
+		return
+	}
+	for i := range counts {
+		counts[i] += other[i]
+	}
+}
+
+// Top returns the most frequent reason and its count. Equal counts are resolved
+// by the stable enum order so aggregation is independent of merge order.
+func (counts *PlanCacheFallbackCounts) Top() (contextutil.PlanCacheFallbackReason, int64) {
+	if counts == nil {
+		return contextutil.PlanCacheFallbackNone, 0
+	}
+	topReason := contextutil.PlanCacheFallbackNone
+	var topCount int64
+	for reason := contextutil.PlanCacheFallbackUnknown; reason < contextutil.PlanCacheFallbackReasonCount; reason++ {
+		count := counts[reason-1]
+		if count > topCount {
+			topReason, topCount = reason, count
+		}
+	}
+	return topReason, topCount
+}
+
+// ShouldUpdatePlanCacheFallback reports whether a fallback event is later than
+// the currently recorded event. The reason is a stable tie-breaker for events
+// with the same non-zero timestamp.
+func ShouldUpdatePlanCacheFallback(currentTime int64, currentReason string, candidateTime int64, candidateReason string) bool {
+	return candidateTime > currentTime ||
+		(candidateTime != 0 && candidateTime == currentTime && candidateReason > currentReason)
 }
 
 // StmtExecLazyInfo is the interface about getting lazy information for StmtExecInfo.
@@ -884,6 +948,19 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		ssElement.planCacheUnqualifiedCount++
 		ssElement.lastPlanCacheUnqualified = sei.PlanCacheUnqualified
 	}
+	if sei.PlanCacheFallbackReason != contextutil.PlanCacheFallbackNone {
+		ssElement.planCacheMisses++
+		if ssElement.planCacheFallbackCounts == nil {
+			ssElement.planCacheFallbackCounts = new(PlanCacheFallbackCounts)
+		}
+		ssElement.planCacheFallbackCounts.Add(sei.PlanCacheFallbackReason)
+		reason := contextutil.NormalizePlanCacheFallbackReason(sei.PlanCacheFallbackReason).String()
+		if ShouldUpdatePlanCacheFallback(ssElement.planCacheMissLastSeen, ssElement.lastPlanCacheMissReason,
+			sei.PlanCacheFallbackTimeUnixNano, reason) {
+			ssElement.planCacheMissLastSeen = sei.PlanCacheFallbackTimeUnixNano
+			ssElement.lastPlanCacheMissReason = reason
+		}
+	}
 
 	// SPM
 	if sei.PlanInBinding {
@@ -990,6 +1067,13 @@ func avgInt(sum int64, count int64) int64 {
 }
 
 func avgFloat(sum int64, count int64) float64 {
+	if count > 0 {
+		return float64(sum) / float64(count)
+	}
+	return 0
+}
+
+func avgFloat4Uint(sum uint64, count int64) float64 {
 	if count > 0 {
 		return float64(sum) / float64(count)
 	}

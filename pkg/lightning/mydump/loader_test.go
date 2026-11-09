@@ -75,6 +75,12 @@ func (s *testMydumpLoaderSuite) touch(t *testing.T, filename ...string) {
 	require.Nil(t, err)
 }
 
+func (s *testMydumpLoaderSuite) writeFile(t *testing.T, filename, content string) {
+	path := filepath.Join(s.sourceDir, filename)
+	err := os.WriteFile(path, []byte(content), 0o644)
+	require.NoError(t, err)
+}
+
 func (s *testMydumpLoaderSuite) mkdir(t *testing.T, dirname string) {
 	path := filepath.Join(s.sourceDir, dirname)
 	err := os.Mkdir(path, 0o755)
@@ -279,7 +285,7 @@ func TestDataNoHostTable(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestViewNoHostDB(t *testing.T) {
+func TestViewWithoutHostDBIsAccepted(t *testing.T) {
 	/*
 		Path/
 			notdb-schema-create.sql
@@ -288,13 +294,37 @@ func TestViewNoHostDB(t *testing.T) {
 	s := newTestMydumpLoaderSuite(t)
 
 	s.touch(t, "notdb-schema-create.sql")
-	s.touch(t, "db.tbl-schema-view.sql")
+	viewSQL := "CREATE VIEW tbl AS SELECT 1;"
+	s.writeFile(t, "db.tbl-schema-view.sql", viewSQL)
 
-	_, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
-	require.Contains(t, err.Error(), `invalid view schema file, miss host table schema for view 'tbl'`)
+	mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
+	require.NoError(t, err)
+	require.Equal(t, []*md.MDDatabaseMeta{
+		{
+			Name:       "notdb",
+			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "notdb", Name: ""}, FileMeta: md.SourceFileMeta{Path: "notdb-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+		},
+		{
+			Name: "db",
+			SchemaFile: md.FileInfo{
+				TableName: filter.Table{
+					Schema: "db",
+					Name:   "",
+				},
+				FileMeta: md.SourceFileMeta{Type: md.SourceTypeSchemaSchema},
+			},
+			Views: []*md.MDTableMeta{{
+				DB:           "db",
+				Name:         "tbl",
+				SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "db", Name: "tbl"}, FileMeta: md.SourceFileMeta{Path: "db.tbl-schema-view.sql", Type: md.SourceTypeViewSchema, FileSize: int64(len(viewSQL)), RealSize: int64(len(viewSQL))}},
+				IndexRatio:   0.0,
+				IsRowOrdered: true,
+			}},
+		},
+	}, mdl.GetDatabases())
 }
 
-func TestViewNoHostTable(t *testing.T) {
+func TestViewWithoutHostTableIsAccepted(t *testing.T) {
 	/*
 		Path/
 			db-schema-create.sql
@@ -303,10 +333,22 @@ func TestViewNoHostTable(t *testing.T) {
 	s := newTestMydumpLoaderSuite(t)
 
 	s.touch(t, "db-schema-create.sql")
-	s.touch(t, "db.tbl-schema-view.sql")
+	viewSQL := "CREATE VIEW tbl AS SELECT 1;"
+	s.writeFile(t, "db.tbl-schema-view.sql", viewSQL)
 
-	_, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
-	require.Contains(t, err.Error(), `invalid view schema file, miss host table schema for view 'tbl'`)
+	mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
+	require.NoError(t, err)
+	require.Equal(t, []*md.MDDatabaseMeta{{
+		Name:       "db",
+		SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "db", Name: ""}, FileMeta: md.SourceFileMeta{Path: "db-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+		Views: []*md.MDTableMeta{{
+			DB:           "db",
+			Name:         "tbl",
+			SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "db", Name: "tbl"}, FileMeta: md.SourceFileMeta{Path: "db.tbl-schema-view.sql", Type: md.SourceTypeViewSchema, FileSize: int64(len(viewSQL)), RealSize: int64(len(viewSQL))}},
+			IndexRatio:   0.0,
+			IsRowOrdered: true,
+		}},
+	}}, mdl.GetDatabases())
 }
 
 func TestDataWithoutSchema(t *testing.T) {
@@ -406,13 +448,20 @@ func TestRouter(t *testing.T) {
 		s.touch(t, "a1.t2.1.sql")
 
 		s.touch(t, "a1.v1-schema.sql")
-		s.touch(t, "a1.v1-schema-view.sql")
+		viewSQL := "CREATE VIEW v1 AS SELECT 1;"
+		s.writeFile(t, "a1.v1-schema-view.sql", viewSQL)
 
 		mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 		require.NoError(t, err)
 		dbs := mdl.GetDatabases()
+		require.Len(t, dbs, 3)
+		require.Equal(t, "a1", dbs[1].Name)
+		require.Len(t, dbs[1].Tables, 1)
+		require.Equal(t, "s1", dbs[1].Tables[0].Name)
+		require.Len(t, dbs[1].Views, 1)
+		require.Equal(t, "v1", dbs[1].Views[0].Name)
 		// hit rules: a0.t0 -> b.u, a0.t1 -> b.0, a1.t2 -> b.u
-		// not hit: a1.s1, a1.v1
+		// not hit: a1.s1, a1.v1 (view placeholder is pruned from Tables)
 		expectedDBS := []*md.MDDatabaseMeta{
 			{
 				Name:       "a0",
@@ -430,20 +479,12 @@ func TestRouter(t *testing.T) {
 						IndexRatio:   0.0,
 						IsRowOrdered: true,
 					},
-					{
-						DB:           "a1",
-						Name:         "v1",
-						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "a1", Name: "v1"}, FileMeta: md.SourceFileMeta{Path: "a1.v1-schema.sql", Type: md.SourceTypeTableSchema}},
-						DataFiles:    []md.FileInfo{},
-						IndexRatio:   0.0,
-						IsRowOrdered: true,
-					},
 				},
 				Views: []*md.MDTableMeta{
 					{
 						DB:           "a1",
 						Name:         "v1",
-						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "a1", Name: "v1"}, FileMeta: md.SourceFileMeta{Path: "a1.v1-schema-view.sql", Type: md.SourceTypeViewSchema}},
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "a1", Name: "v1"}, FileMeta: md.SourceFileMeta{Path: "a1.v1-schema-view.sql", Type: md.SourceTypeViewSchema, FileSize: int64(len(viewSQL)), RealSize: int64(len(viewSQL))}},
 						IndexRatio:   0.0,
 						IsRowOrdered: true,
 					},
@@ -526,7 +567,8 @@ func TestRouter(t *testing.T) {
 		}
 		s.touch(t, "e0-schema-create.sql")
 		s.touch(t, "e0.f0-schema.sql")
-		s.touch(t, "e0.f0-schema-view.sql")
+		viewSQL := "CREATE VIEW f0 AS SELECT 1;"
+		s.writeFile(t, "e0.f0-schema-view.sql", viewSQL)
 
 		mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 		require.NoError(t, err)
@@ -540,21 +582,12 @@ func TestRouter(t *testing.T) {
 			{
 				Name:       "v",
 				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "v", Name: ""}, FileMeta: md.SourceFileMeta{Path: "e0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
-				Tables: []*md.MDTableMeta{
-					{
-						DB:           "v",
-						Name:         "vv",
-						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "v", Name: "vv"}, FileMeta: md.SourceFileMeta{Path: "e0.f0-schema.sql", Type: md.SourceTypeTableSchema}},
-						DataFiles:    []md.FileInfo{},
-						IndexRatio:   0.0,
-						IsRowOrdered: true,
-					},
-				},
+				Tables:     []*md.MDTableMeta{},
 				Views: []*md.MDTableMeta{
 					{
 						DB:           "v",
 						Name:         "vv",
-						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "v", Name: "vv"}, FileMeta: md.SourceFileMeta{Path: "e0.f0-schema-view.sql", Type: md.SourceTypeViewSchema}},
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "v", Name: "vv"}, FileMeta: md.SourceFileMeta{Path: "e0.f0-schema-view.sql", Type: md.SourceTypeViewSchema, FileSize: int64(len(viewSQL)), RealSize: int64(len(viewSQL))}},
 						IndexRatio:   0.0,
 						IsRowOrdered: true,
 					},
@@ -770,7 +803,8 @@ func TestFileRouting(t *testing.T) {
 	s.touch(t, "d1/test1.sql")
 	s.touch(t, "d1/test2.001.sql")
 	s.touch(t, "d1/v1-table.sql")
-	s.touch(t, "d1/v1-view.sql")
+	viewSQL := "CREATE VIEW v1 AS SELECT 1;"
+	s.writeFile(t, "d1/v1-view.sql", viewSQL)
 	s.touch(t, "d1/t1-schema-create.sql")
 	s.touch(t, "d2/schema.sql")
 	s.touch(t, "d2/abc-table.sql")
@@ -807,17 +841,6 @@ func TestFileRouting(t *testing.T) {
 					IndexRatio:   0.0,
 					IsRowOrdered: true,
 				},
-				{
-					DB:   "d1",
-					Name: "v1",
-					SchemaFile: md.FileInfo{
-						TableName: filter.Table{Schema: "d1", Name: "v1"},
-						FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("d1/v1-table.sql"), Type: md.SourceTypeTableSchema},
-					},
-					DataFiles:    []md.FileInfo{},
-					IndexRatio:   0.0,
-					IsRowOrdered: true,
-				},
 			},
 			Views: []*md.MDTableMeta{
 				{
@@ -825,7 +848,12 @@ func TestFileRouting(t *testing.T) {
 					Name: "v1",
 					SchemaFile: md.FileInfo{
 						TableName: filter.Table{Schema: "d1", Name: "v1"},
-						FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("d1/v1-view.sql"), Type: md.SourceTypeViewSchema},
+						FileMeta: md.SourceFileMeta{
+							Path:     filepath.FromSlash("d1/v1-view.sql"),
+							Type:     md.SourceTypeViewSchema,
+							FileSize: int64(len(viewSQL)),
+							RealSize: int64(len(viewSQL)),
+						},
 					},
 					IndexRatio:   0.0,
 					IsRowOrdered: true,

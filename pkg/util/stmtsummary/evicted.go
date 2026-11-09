@@ -355,6 +355,18 @@ func addInfo(addTo *stmtSummaryByDigestElement, addWith *stmtSummaryByDigestElem
 
 	// plan cache
 	addTo.planCacheHits += addWith.planCacheHits
+	addTo.planCacheMisses += addWith.planCacheMisses
+	if addWith.planCacheFallbackCounts != nil {
+		if addTo.planCacheFallbackCounts == nil {
+			addTo.planCacheFallbackCounts = new(PlanCacheFallbackCounts)
+		}
+		addTo.planCacheFallbackCounts.Merge(addWith.planCacheFallbackCounts)
+	}
+	if ShouldUpdatePlanCacheFallback(addTo.planCacheMissLastSeen, addTo.lastPlanCacheMissReason,
+		addWith.planCacheMissLastSeen, addWith.lastPlanCacheMissReason) {
+		addTo.planCacheMissLastSeen = addWith.planCacheMissLastSeen
+		addTo.lastPlanCacheMissReason = addWith.lastPlanCacheMissReason
+	}
 
 	// other
 	addTo.sumAffectedRows += addWith.sumAffectedRows

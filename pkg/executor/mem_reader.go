@@ -427,6 +427,8 @@ func (m *memTableReader) getMemRowsIter(ctx context.Context) (memRowsIter, error
 		cd:             m.buffer.cd,
 		chk:            chunk.New(m.retFieldTypes, 1, 1),
 		datumRow:       make([]types.Datum, len(m.retFieldTypes)),
+		mutableRow:     chunk.MutRowFromTypes(m.retFieldTypes),
+		physTblIDIdx:   findPhysicalTableIDColumn(m.columns),
 		memTableReader: m,
 	}, nil
 }
@@ -439,12 +441,14 @@ func (m *memTableReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 	for i, col := range m.columns {
 		m.offsets[i] = m.colIDs[col.ID]
 	}
+	physTblIDIdx := findPhysicalTableIDColumn(m.columns)
 	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, m.desc, func(key, value []byte) error {
 		var err error
 		resultRows, err = m.decodeRecordKeyValue(key, value, &resultRows)
 		if err != nil {
 			return err
 		}
+		fillPhysicalTableID(key, resultRows, physTblIDIdx)
 
 		mutableRow.SetDatums(resultRows...)
 		matched, _, err := expression.EvalBool(m.ctx.GetExprCtx().GetEvalCtx(), m.conditions, mutableRow.ToRow())
@@ -903,10 +907,12 @@ func (*defaultRowsIter) Close() {}
 
 // memRowsIterForTable combine a kv.Iterator and a kv decoder to get a memRowsIter.
 type memRowsIterForTable struct {
-	kvIter   *txnMemBufferIter // txnMemBufferIter is the kv.Iterator
-	cd       *rowcodec.ChunkDecoder
-	chk      *chunk.Chunk
-	datumRow []types.Datum
+	kvIter       *txnMemBufferIter // txnMemBufferIter is the kv.Iterator
+	cd           *rowcodec.ChunkDecoder
+	chk          *chunk.Chunk
+	datumRow     []types.Datum
+	mutableRow   chunk.MutRow
+	physTblIDIdx int
 	*memTableReader
 }
 
@@ -937,10 +943,10 @@ func (iter *memRowsIterForTable) Next() ([]types.Datum, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			fillPhysicalTableID(key, iter.datumRow, iter.physTblIDIdx)
 
-			mutableRow := chunk.MutRowFromTypes(iter.retFieldTypes)
-			mutableRow.SetDatums(iter.datumRow...)
-			matched, _, err := expression.EvalBool(iter.ctx.GetExprCtx().GetEvalCtx(), iter.conditions, mutableRow.ToRow())
+			iter.mutableRow.SetDatums(iter.datumRow...)
+			matched, _, err := expression.EvalBool(iter.ctx.GetExprCtx().GetEvalCtx(), iter.conditions, iter.mutableRow.ToRow())
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -956,14 +962,24 @@ func (iter *memRowsIterForTable) Next() ([]types.Datum, error) {
 		}
 
 		row := iter.chk.GetRow(0)
-		matched, _, err := expression.EvalBool(iter.ctx.GetExprCtx().GetEvalCtx(), iter.conditions, row)
+		rowForCondition := row
+		if iter.physTblIDIdx >= 0 {
+			ret = row.GetDatumRowWithBuffer(iter.retFieldTypes, iter.datumRow)
+			fillPhysicalTableID(key, ret, iter.physTblIDIdx)
+			iter.mutableRow.SetDatums(ret...)
+			rowForCondition = iter.mutableRow.ToRow()
+		}
+		matched, _, err := expression.EvalBool(iter.ctx.GetExprCtx().GetEvalCtx(), iter.conditions, rowForCondition)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if !matched {
+			ret = nil
 			continue
 		}
-		ret = row.GetDatumRowWithBuffer(iter.retFieldTypes, iter.datumRow)
+		if ret == nil {
+			ret = row.GetDatumRowWithBuffer(iter.retFieldTypes, iter.datumRow)
+		}
 		break
 	}
 	return ret, nil

@@ -16,6 +16,7 @@ package metrics
 
 import (
 	"github.com/pingcap/tidb/pkg/metrics"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -28,6 +29,8 @@ var (
 	preparedPlanCacheMissCounter            prometheus.Counter
 	nonPreparedPlanCacheMissCounter         prometheus.Counter
 	nonPreparedPlanCacheUnsupportedCounter  prometheus.Counter
+	preparedPlanCacheFallbackCounters       [contextutil.PlanCacheFallbackReasonCount]prometheus.Counter
+	nonPreparedPlanCacheFallbackCounters    [contextutil.PlanCacheFallbackReasonCount]prometheus.Counter
 	sessionPlanCacheInstancePlanNumCounter  prometheus.Gauge
 	sessionPlanCacheInstanceMemoryUsage     prometheus.Gauge
 	instancePlanCacheInstancePlanNumCounter prometheus.Gauge
@@ -49,11 +52,28 @@ func InitMetricsVars() {
 	preparedPlanCacheMissCounter = metrics.PlanCacheMissCounter.WithLabelValues("prepared")
 	nonPreparedPlanCacheMissCounter = metrics.PlanCacheMissCounter.WithLabelValues("non-prepared")
 	nonPreparedPlanCacheUnsupportedCounter = metrics.PlanCacheMissCounter.WithLabelValues("non-prepared-unsupported")
+	for reason := contextutil.PlanCacheFallbackUnknown; reason < contextutil.PlanCacheFallbackReasonCount; reason++ {
+		preparedPlanCacheFallbackCounters[reason] = metrics.PlanCacheFallbackCounter.WithLabelValues("prepared", reason.String())
+		nonPreparedPlanCacheFallbackCounters[reason] = metrics.PlanCacheFallbackCounter.WithLabelValues("non-prepared", reason.String())
+	}
 	sessionPlanCacheInstancePlanNumCounter = metrics.PlanCacheInstancePlanNumCounter.WithLabelValues(" session-plan-cache")
 	sessionPlanCacheInstanceMemoryUsage = metrics.PlanCacheInstanceMemoryUsage.WithLabelValues(" session-plan-cache")
 	instancePlanCacheInstancePlanNumCounter = metrics.PlanCacheInstancePlanNumCounter.WithLabelValues(" instance-plan-cache")
 	instancePlanCacheInstanceMemoryUsage = metrics.PlanCacheInstanceMemoryUsage.WithLabelValues(" instance-plan-cache")
 	instancePlanCacheInstanceNumEvict = metrics.PlanCacheInstancePlanNumCounter.WithLabelValues(" instance-plan-cache-last-evict")
+}
+
+// IncPlanCacheFallback increments the pre-bound counter for a fallback reason.
+func IncPlanCacheFallback(isNonPrepared bool, reason contextutil.PlanCacheFallbackReason) {
+	reason = contextutil.NormalizePlanCacheFallbackReason(reason)
+	if reason == contextutil.PlanCacheFallbackNone {
+		return
+	}
+	if isNonPrepared {
+		nonPreparedPlanCacheFallbackCounters[reason].Inc()
+		return
+	}
+	preparedPlanCacheFallbackCounters[reason].Inc()
 }
 
 // GetPlanCacheHitCounter get different plan cache hit counter

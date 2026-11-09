@@ -355,17 +355,48 @@ type RestoreWriter interface {
 	io.StringWriter
 }
 
+// RestoreInterceptor optionally overrides literal output and controls whether
+// an AST node may use its OriginalText fast path.
+//
+// The literal and node arguments are opaque identities to package format.
+// Implementations may type-assert them to concrete types in a higher-level
+// package without introducing a reverse dependency from format.
+type RestoreInterceptor interface {
+	RestoreLiteral(ctx *RestoreCtx, literal any) (handled bool, err error)
+	AllowOriginalText(node any) bool
+}
+
 // RestoreCtx is `Restore` context to hold flags and writer.
 type RestoreCtx struct {
 	Flags     RestoreFlags
 	In        RestoreWriter
 	DefaultDB string
 	CTERestorer
+	interceptor RestoreInterceptor
 }
 
 // NewRestoreCtx returns a new `RestoreCtx`.
 func NewRestoreCtx(flags RestoreFlags, in RestoreWriter) *RestoreCtx {
 	return &RestoreCtx{Flags: flags, In: in, DefaultDB: ""}
+}
+
+// SetRestoreInterceptor sets the optional interceptor for this RestoreCtx.
+// Callers that pool RestoreCtx must clear it before returning the context.
+func (ctx *RestoreCtx) SetRestoreInterceptor(interceptor RestoreInterceptor) {
+	ctx.interceptor = interceptor
+}
+
+// TryRestoreLiteral asks the optional interceptor to restore literal.
+func (ctx *RestoreCtx) TryRestoreLiteral(literal any) (bool, error) {
+	if ctx.interceptor == nil {
+		return false, nil
+	}
+	return ctx.interceptor.RestoreLiteral(ctx, literal)
+}
+
+// CanUseOriginalText reports whether node may bypass structured Restore.
+func (ctx *RestoreCtx) CanUseOriginalText(node any) bool {
+	return ctx.interceptor == nil || ctx.interceptor.AllowOriginalText(node)
 }
 
 // WriteKeyWord writes the `keyWord` into writer.

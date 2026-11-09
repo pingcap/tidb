@@ -47,7 +47,7 @@ var GetEtcdClient = getEtcdClient
 //     1. there is no active job on the target table
 //     2. the total file size > 0
 //     3. if global sort, thread count >= 16 and have required privileges
-//   - target table should be empty
+//     4. if import from file, target table should be empty
 //   - no CDC or PiTR tasks running
 //
 // we check them one by one, and return the first error we meet.
@@ -69,8 +69,10 @@ func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec
 			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("global sort requires at least 8 threads")
 		}
 	}
-	if err := e.checkTableEmpty(ctx, conn); err != nil {
-		return err
+	if e.DataSourceType == DataSourceTypeFile {
+		if err := e.checkTableEmpty(ctx, conn); err != nil {
+			return err
+		}
 	}
 	if !e.DisablePrecheck {
 		if err := e.checkCDCPiTRTasks(ctx); err != nil {

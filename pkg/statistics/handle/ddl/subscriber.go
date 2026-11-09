@@ -77,25 +77,17 @@ func (h subscriber) handle(
 		}
 
 		// Remove the old table stats.
-		droppedIDs, err2 := getPhysicalIDs(sctx, droppedTableInfo)
-		if err2 != nil {
-			return err2
-		}
+		droppedIDs := getPhysicalIDsForDrop(droppedTableInfo)
 		for _, id := range droppedIDs {
-			err2 = h.delayedDeleteStats4PhysicalID(ctx, sctx, id)
-			if err2 != nil {
-				return errors.Trace(err2)
+			if err := h.delayedDeleteStats4PhysicalID(ctx, sctx, id); err != nil {
+				return errors.Trace(err)
 			}
 		}
 	case model.ActionDropTable:
 		droppedTableInfo := change.GetDropTableInfo()
-		ids, err := getPhysicalIDs(sctx, droppedTableInfo)
-		if err != nil {
-			return err
-		}
-		for _, id := range ids {
-			err = h.delayedDeleteStats4PhysicalID(ctx, sctx, id)
-			if err != nil {
+		droppedIDs := getPhysicalIDsForDrop(droppedTableInfo)
+		for _, id := range droppedIDs {
+			if err := h.delayedDeleteStats4PhysicalID(ctx, sctx, id); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -254,12 +246,19 @@ func (h subscriber) handle(
 		intest.Assert(miniDBInfo != nil)
 		for _, table := range miniDBInfo.Tables {
 			// Try best effort to update the stats meta version for gc.
-			if err := h.delayedDeleteStats4PhysicalID(ctx, sctx, table.ID); err != nil {
-				logutil.StatsLogger().Error(
-					"Failed to update stats meta version for gc",
-					zap.Int64("tableID", table.ID),
-					zap.Error(err),
-				)
+			partitionIDs := make([]int64, 0, len(table.Partitions))
+			for _, def := range table.Partitions {
+				partitionIDs = append(partitionIDs, def.ID)
+			}
+			droppedIDs := physicalIDsForDrop(table.ID, partitionIDs)
+			for _, id := range droppedIDs {
+				if err := h.delayedDeleteStats4PhysicalID(ctx, sctx, id); err != nil {
+					logutil.StatsLogger().Error(
+						"Failed to update stats meta version for gc",
+						zap.Int64("tableID", id),
+						zap.Error(err),
+					)
+				}
 			}
 		}
 	default:
@@ -359,6 +358,25 @@ func getPhysicalIDs(
 		ids = append(ids, tblInfo.ID)
 	}
 	return ids, nil
+}
+
+func getPhysicalIDsForDrop(tblInfo *model.TableInfo) []int64 {
+	pi := tblInfo.GetPartitionInfo()
+	if pi == nil {
+		return physicalIDsForDrop(tblInfo.ID, nil)
+	}
+	partitionIDs := make([]int64, 0, len(pi.Definitions))
+	for _, def := range pi.Definitions {
+		partitionIDs = append(partitionIDs, def.ID)
+	}
+	return physicalIDsForDrop(tblInfo.ID, partitionIDs)
+}
+
+func physicalIDsForDrop(tableID int64, partitionIDs []int64) []int64 {
+	ids := make([]int64, 0, len(partitionIDs)+1)
+	ids = append(ids, tableID)
+	ids = append(ids, partitionIDs...)
+	return ids
 }
 
 func getCurrentPruneMode(

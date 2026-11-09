@@ -239,6 +239,8 @@ func MakeTableRegions(
 			dataFileSize := info.FileMeta.FileSize
 			if info.FileMeta.Type == SourceTypeParquet {
 				regions, sizes, err = makeParquetFileRegion(egCtx, cfg, info)
+			} else if info.FileMeta.Type == SourceTypeORC {
+				regions, sizes, err = makeORCFileRegion(ctx, cfg, info)
 			} else if info.FileMeta.Type == SourceTypeCSV && cfg.StrictFormat &&
 				info.FileMeta.Compression == CompressionNone &&
 				dataFileSize > cfg.MaxChunkSize+cfg.MaxChunkSize/largeCSVLowerThresholdRation {
@@ -497,4 +499,35 @@ func SplitLargeCSV(
 		}
 	}
 	return regions, dataFileSizes, nil
+}
+
+// because orc files can't seek efficiently, there is no benefit in split.
+// orc file are column orient, so the offset is read line number
+func makeORCFileRegion(
+	ctx context.Context,
+	cfg *DataDivideConfig,
+	dataFile FileInfo,
+) ([]*TableRegion, []float64, error) {
+	numberRows := dataFile.FileMeta.Rows
+	var err error
+	// for safety
+	if numberRows <= 0 {
+		numberRows, err = ReadOrcFileRowCountByFile(ctx, cfg.Store, dataFile.FileMeta)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	region := &TableRegion{
+		DB:       cfg.TableMeta.DB,
+		Table:    cfg.TableMeta.Name,
+		FileMeta: dataFile.FileMeta,
+		Chunk: Chunk{
+			Offset:       0,
+			EndOffset:    numberRows,
+			RealOffset:   0,
+			PrevRowIDMax: 0,
+			RowIDMax:     numberRows,
+		},
+	}
+	return []*TableRegion{region}, []float64{float64(dataFile.FileMeta.FileSize)}, nil
 }

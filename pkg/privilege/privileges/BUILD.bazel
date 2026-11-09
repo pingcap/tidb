@@ -55,6 +55,7 @@ go_test(
     srcs = [
         "cache_test.go",
         "main_test.go",
+        "pkdb_privileges_test.go",
         "privileges_test.go",
         "tidb_auth_token_test.go",
     ],

@@ -100,6 +100,10 @@ const (
 	DefPluginAuditLogBufferSize = 0
 	// DefPluginAuditLogFlushInterval is the default time interval to flush plugin audit log.
 	DefPluginAuditLogFlushInterval = 30
+	// DefReservedAdminConnections is the default number of connections reserved for administrators.
+	DefReservedAdminConnections = 3
+	// MaxReservedAdminConnections is the maximum number of connections reserved for administrators.
+	MaxReservedAdminConnections = 65535
 	// DefAuthTokenRefreshInterval is the default time interval to refresh tidb auth token.
 	DefAuthTokenRefreshInterval = time.Hour
 	// EnvVarKeyspaceName is the system env name for keyspace name.
@@ -324,6 +328,9 @@ type Config struct {
 	InMemSlowQueryTopNNum int `toml:"in-mem-slow-query-topn-num" json:"in-mem-slow-query-topn-num"`
 	// InMemSlowQueryRecentNum indicates the number of recent slow queries stored in memory.
 	InMemSlowQueryRecentNum int `toml:"in-mem-slow-query-recent-num" json:"in-mem-slow-query-recent-num"`
+
+	// LowerCaseTableNamesOnFirstBootstrap indicates how table names are stored on disk and compared.
+	LowerCaseTableNamesOnFirstBootstrap int `toml:"lower-case-table-names" json:"lower-case-table-names"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -556,12 +563,17 @@ type Instance struct {
 	// PluginAuditLogFlushInterval is the flush interval (in seconds) of plugin audit log, it works only when PluginAuditLogBufferSize is greater than 0.
 	PluginAuditLogFlushInterval int `toml:"plugin_audit_log_flush_interval" json:"plugin_audit_log_flush_interval"`
 	// MaxConnections is the maximum permitted number of simultaneous client connections.
-	MaxConnections       uint32     `toml:"max_connections" json:"max_connections"`
-	TiDBEnableDDL        AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
-	TiDBEnableStatsOwner AtomicBool `toml:"tidb_enable_stats_owner" json:"tidb_enable_stats_owner"`
-	TiDBRCReadCheckTS    bool       `toml:"tidb_rc_read_check_ts" json:"tidb_rc_read_check_ts"`
+	MaxConnections uint32 `toml:"max_connections" json:"max_connections"`
+	// ReservedAdminConnections is the maximum number of extra connections available to administrators.
+	ReservedAdminConnections uint32     `toml:"reserved_admin_connections" json:"reserved_admin_connections"`
+	TiDBEnableDDL            AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
+	TiDBEnableStatsOwner     AtomicBool `toml:"tidb_enable_stats_owner" json:"tidb_enable_stats_owner"`
+	TiDBRCReadCheckTS        bool       `toml:"tidb_rc_read_check_ts" json:"tidb_rc_read_check_ts"`
 	// TiDBServiceScope indicates the role for tidb for distributed task framework.
 	TiDBServiceScope string `toml:"tidb_service_scope" json:"tidb_service_scope"`
+
+	// ServerID indicates the unique ID of the server.
+	ServerID int `toml:"server_id" json:"server_id"`
 }
 
 func (l *Log) getDisableTimestamp() bool {
@@ -622,6 +634,16 @@ type Security struct {
 	AuthTokenRefreshInterval string `toml:"auth-token-refresh-interval" json:"auth-token-refresh-interval"`
 	// Disconnect directly when the password is expired
 	DisconnectOnExpiredPassword bool `toml:"disconnect-on-expired-password" json:"disconnect-on-expired-password"`
+	// EnableWhiteListPlugin indicate whether enable whitelist plugin
+	EnableWhiteListPlugin bool `toml:"enable-whitelist-plugin" json:"enable-whitelist-plugin"`
+	// TidbEnableDutySeparationMode indicates if enable the mode of duty separation.
+	TidbEnableDutySeparationMode bool `toml:"tidb-enable-duty-separation-mode" json:"tidb-enable-duty-separation-mode"`
+	// TLCP config
+	TLCPCA      string `toml:"tlcp-ca" json:"tlcp-ca"`
+	TLCPSigCert string `toml:"tlcp-sig-cert" json:"tlcp-sig-cert"`
+	TLCPSigKey  string `toml:"tlcp-sig-key" json:"tlcp-sig-key"`
+	TLCPEncCert string `toml:"tlcp-enc-cert" json:"tlcp-enc-cert"`
+	TLCPEncKey  string `toml:"tlcp-enc-key" json:"tlcp-enc-key"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -974,6 +996,7 @@ var defaultConf = Config{
 		PluginAuditLogBufferSize:    0,
 		PluginAuditLogFlushInterval: 30,
 		MaxConnections:              0,
+		ReservedAdminConnections:    DefReservedAdminConnections,
 		TiDBEnableDDL:               *NewAtomicBool(true),
 		TiDBEnableStatsOwner:        *NewAtomicBool(true),
 		TiDBRCReadCheckTS:           false,
@@ -1059,13 +1082,15 @@ var defaultConf = Config{
 	Labels:                     make(map[string]string),
 	EnableGlobalIndex:          false,
 	Security: Security{
-		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
-		EnableSEM:                   false,
-		AutoTLS:                     false,
-		RSAKeySize:                  4096,
-		AuthTokenJWKS:               "",
-		AuthTokenRefreshInterval:    DefAuthTokenRefreshInterval.String(),
-		DisconnectOnExpiredPassword: true,
+		SpilledFileEncryptionMethod:  SpilledFileEncryptionMethodPlaintext,
+		EnableSEM:                    false,
+		AutoTLS:                      false,
+		RSAKeySize:                   4096,
+		AuthTokenJWKS:                "",
+		AuthTokenRefreshInterval:     DefAuthTokenRefreshInterval.String(),
+		DisconnectOnExpiredPassword:  true,
+		TidbEnableDutySeparationMode: false,
+		EnableWhiteListPlugin:        false,
 	},
 	DeprecateIntegerDisplayWidth:         true,
 	EnableEnumLengthLimit:                true,
@@ -1086,6 +1111,7 @@ var defaultConf = Config{
 	TiDBEnableExitCheck:                  false,
 	InMemSlowQueryTopNNum:                30,
 	InMemSlowQueryRecentNum:              500,
+	LowerCaseTableNamesOnFirstBootstrap:  2,
 }
 
 var (
@@ -1118,34 +1144,35 @@ func StoreGlobalConfig(config *Config) {
 // they might still be in the config struct to support import,
 // but are not actively used.
 var removedConfig = map[string]struct{}{
-	"pessimistic-txn.ttl":                {},
-	"pessimistic-txn.enable":             {},
-	"log.file.log-rotate":                {},
-	"log.log-slow-query":                 {},
-	"txn-local-latches":                  {},
-	"txn-local-latches.enabled":          {},
-	"txn-local-latches.capacity":         {},
-	"performance.max-memory":             {},
-	"max-txn-time-use":                   {},
-	"experimental.allow-auto-random":     {},
-	"enable-redact-log":                  {}, // use variable tidb_redact_log instead
-	"enable-streaming":                   {},
-	"performance.mem-profile-interval":   {},
-	"security.require-secure-transport":  {},
-	"lower-case-table-names":             {},
-	"stmt-summary":                       {},
-	"stmt-summary.enable":                {},
-	"stmt-summary.enable-internal-query": {},
-	"stmt-summary.max-stmt-count":        {},
-	"stmt-summary.max-sql-length":        {},
-	"stmt-summary.refresh-interval":      {},
-	"stmt-summary.history-size":          {},
-	"enable-batch-dml":                   {}, // use tidb_enable_batch_dml
-	"mem-quota-query":                    {},
-	"log.query-log-max-len":              {},
-	"performance.committer-concurrency":  {},
-	"experimental.enable-global-kill":    {},
-	"performance.run-auto-analyze":       {}, // use tidb_enable_auto_analyze
+	"pessimistic-txn.ttl":                        {},
+	"pessimistic-txn.enable":                     {},
+	"log.file.log-rotate":                        {},
+	"log.log-slow-query":                         {},
+	"txn-local-latches":                          {},
+	"txn-local-latches.enabled":                  {},
+	"txn-local-latches.capacity":                 {},
+	"performance.max-memory":                     {},
+	"max-txn-time-use":                           {},
+	"experimental.allow-auto-random":             {},
+	"experimental.enable-create-table-as-select": {},
+	"enable-redact-log":                          {}, // use variable tidb_redact_log instead
+	"enable-streaming":                           {},
+	"performance.mem-profile-interval":           {},
+	"security.require-secure-transport":          {},
+	"lower-case-table-names":                     {},
+	"stmt-summary":                               {},
+	"stmt-summary.enable":                        {},
+	"stmt-summary.enable-internal-query":         {},
+	"stmt-summary.max-stmt-count":                {},
+	"stmt-summary.max-sql-length":                {},
+	"stmt-summary.refresh-interval":              {},
+	"stmt-summary.history-size":                  {},
+	"enable-batch-dml":                           {}, // use tidb_enable_batch_dml
+	"mem-quota-query":                            {},
+	"log.query-log-max-len":                      {},
+	"performance.committer-concurrency":          {},
+	"experimental.enable-global-kill":            {},
+	"performance.run-auto-analyze":               {}, // use tidb_enable_auto_analyze
 	// use tidb_enable_prepared_plan_cache, tidb_prepared_plan_cache_size and tidb_prepared_plan_cache_memory_guard_ratio
 	"prepared-plan-cache.enabled":            {},
 	"prepared-plan-cache.capacity":           {},
@@ -1361,6 +1388,9 @@ func (c *Config) Valid() error {
 	}
 	if c.Instance.PluginAuditLogFlushInterval <= 0 || c.Instance.PluginAuditLogFlushInterval > MaxPluginAuditLogFlushInterval {
 		return fmt.Errorf("plugin-audit-log-flush-interval should be [%d, %d]", 1, MaxPluginAuditLogFlushInterval)
+	}
+	if c.Instance.ReservedAdminConnections > MaxReservedAdminConnections {
+		return fmt.Errorf("reserved-admin-connections should be between %d and %d", 0, MaxReservedAdminConnections)
 	}
 	// txn-local-latches
 	if err := c.TxnLocalLatches.Valid(); err != nil {

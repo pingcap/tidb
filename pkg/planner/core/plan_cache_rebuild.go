@@ -29,14 +29,18 @@ import (
 
 // RebuildPlan4CachedPlan will rebuild this plan under current user parameters.
 func RebuildPlan4CachedPlan(p base.Plan) (ok bool) {
-	sc := p.SCtx().GetSessionVars().StmtCtx
+	rebuildRoot := planCacheRebuildRoot(p)
+	if rebuildRoot == nil {
+		return false
+	}
+	sc := rebuildRoot.SCtx().GetSessionVars().StmtCtx
 	if !sc.UseCache() {
 		return false // plan-cache is disabled for this query
 	}
 
 	sc.InPreparedPlanBuilding = true
 	defer func() { sc.InPreparedPlanBuilding = false }()
-	if err := rebuildRange(p); err != nil {
+	if err := rebuildRange(rebuildRoot); err != nil {
 		sc.AppendWarning(errors.NewNoStackErrorf("skip plan-cache: plan rebuild failed, %s", err.Error()))
 		return false // fail to rebuild ranges
 	}
@@ -46,6 +50,13 @@ func RebuildPlan4CachedPlan(p base.Plan) (ok bool) {
 		return false
 	}
 	return true
+}
+
+func planCacheRebuildRoot(p base.Plan) base.Plan {
+	if selectInto, ok := p.(*SelectInto); ok {
+		return selectInto.TargetPlan
+	}
+	return p
 }
 
 func updateRange(p base.PhysicalPlan, ranges ranger.Ranges, rangeInfo string) {
@@ -124,6 +135,9 @@ func rebuildRange(p base.Plan) error {
 			return err
 		}
 	case *PointGetPlan:
+		if matched, err := rebuildTiDBRowIDPointGetRange(sctx, x); matched {
+			return err
+		}
 		if x.TblInfo.GetPartitionInfo() != nil {
 			if fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix33031, false) {
 				return errors.NewNoStackError("Fix33031 fix-control set and partitioned table in cached Point Get plan")
@@ -192,6 +206,9 @@ func rebuildRange(p base.Plan) error {
 		}
 		return nil
 	case *BatchPointGetPlan:
+		if matched, err := rebuildTiDBRowIDBatchPointGetRange(sctx, x); matched {
+			return err
+		}
 		if x.TblInfo.GetPartitionInfo() != nil && fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix33031, false) {
 			return errors.NewNoStackError("Fix33031 fix-control set and partitioned table in cached Batch Point Get plan")
 		}
@@ -303,6 +320,10 @@ func rebuildRange(p base.Plan) error {
 		if x.SelectPlan != nil {
 			return rebuildRange(x.SelectPlan)
 		}
+	case *SelectInto:
+		if x.TargetPlan != nil {
+			return rebuildRange(x.TargetPlan)
+		}
 	}
 	return nil
 }
@@ -326,6 +347,9 @@ func convertConstant2Datum(ctx base.PlanContext, con *expression.Constant, targe
 }
 
 func buildRangeForTableScan(sctx base.PlanContext, ts *PhysicalTableScan) (err error) {
+	if matched, err := rebuildTiDBRowIDTableScanRange(sctx, ts); matched {
+		return err
+	}
 	if ts.Table.IsCommonHandle {
 		pk := tables.FindPrimaryIndex(ts.Table)
 		pkCols := make([]*expression.Column, 0, len(pk.Columns))

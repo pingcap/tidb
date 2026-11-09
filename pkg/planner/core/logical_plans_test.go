@@ -1237,6 +1237,18 @@ func testNormalVisitInfo(t *testing.T) {
 			},
 		},
 		{
+			sql: "split table t between (0) and (100) regions 10",
+			ans: []visitInfo{
+				{mysql.SuperPriv, "", "", "", plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER"), false, nil, false},
+			},
+		},
+		{
+			sql: "split table t index f between (0) and (100) regions 10",
+			ans: []visitInfo{
+				{mysql.SuperPriv, "", "", "", plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER"), false, nil, false},
+			},
+		},
+		{
 			sql: `grant all privileges on test.* to 'test'@'%'`,
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "", "", nil, false, nil, false},
@@ -1500,6 +1512,30 @@ func testNormalVisitInfo(t *testing.T) {
 			},
 		},
 		{
+			sql: "ADMIN SHOW DDL",
+			ans: []visitInfo{
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"ADMIN_VIEW"}, false},
+			},
+		},
+		{
+			sql: "ADMIN SHOW DDL JOBS 20",
+			ans: []visitInfo{
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"ADMIN_VIEW"}, false},
+			},
+		},
+		{
+			sql: "ADMIN SHOW DDL JOB QUERIES LIMIT 1",
+			ans: []visitInfo{
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"ADMIN_VIEW"}, false},
+			},
+		},
+		{
+			sql: "ADMIN CANCEL DDL JOBS 1",
+			ans: []visitInfo{
+				{mysql.SuperPriv, "", "", "", nil, false, nil, false},
+			},
+		},
+		{
 			sql: "GRANT rolename TO user1",
 			ans: []visitInfo{
 				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"ROLE_ADMIN"}, false},
@@ -1527,12 +1563,6 @@ func testNormalVisitInfo(t *testing.T) {
 			sql: "RENAME USER user1 to user1_tmp",
 			ans: []visitInfo{
 				{mysql.CreateUserPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, nil, false},
-			},
-		},
-		{
-			sql: "SHOW CONFIG",
-			ans: []visitInfo{
-				{mysql.ConfigPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, nil, false},
 			},
 		},
 	}

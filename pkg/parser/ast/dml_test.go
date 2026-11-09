@@ -24,6 +24,52 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type originalTextPolicy struct {
+	allow        bool
+	restoreValue bool
+}
+
+func (p originalTextPolicy) RestoreLiteral(ctx *format.RestoreCtx, _ any) (bool, error) {
+	if p.restoreValue {
+		ctx.WritePlain("?")
+		return true, nil
+	}
+	return false, nil
+}
+
+func (p originalTextPolicy) AllowOriginalText(any) bool { return p.allow }
+
+func restoreDMLWithPolicy(t *testing.T, node Node, policy format.RestoreInterceptor) string {
+	var output strings.Builder
+	ctx := format.NewRestoreCtx(format.RestoreForNonPrepPlanCache|format.DefaultRestoreFlags, &output)
+	ctx.SetRestoreInterceptor(policy)
+	require.NoError(t, node.Restore(ctx))
+	return output.String()
+}
+
+func TestNonPreparedRestoreOriginalTextPolicy(t *testing.T) {
+	stmt, err := parser.New().ParseOneStmt("select a from t", "", "")
+	require.NoError(t, err)
+	selectStmt := stmt.(*SelectStmt)
+	selectStmt.Fields.Fields[0].SetText(nil, "field_fast")
+	selectStmt.From.SetText(nil, "from_fast")
+	require.Equal(t, "SELECT field_fast FROM from_fast", restoreDMLWithPolicy(t, stmt, originalTextPolicy{allow: true}))
+	require.Equal(t, "SELECT `a` FROM `t`", restoreDMLWithPolicy(t, stmt, originalTextPolicy{allow: false}))
+
+	stmt, err = parser.New().ParseOneStmt("insert into t (a) values (1)", "", "")
+	require.NoError(t, err)
+	insertStmt := stmt.(*InsertStmt)
+	insertStmt.Columns[0].SetText(nil, "column_fast")
+	require.Equal(t, "INSERT INTO `t` (column_fast) VALUES (1)", restoreDMLWithPolicy(t, stmt, originalTextPolicy{allow: true}))
+	require.Equal(t, "INSERT INTO `t` (`a`) VALUES (1)", restoreDMLWithPolicy(t, stmt, originalTextPolicy{allow: false}))
+}
+
+func TestTestDriverValueExprRestoreInterceptor(t *testing.T) {
+	stmt, err := parser.New().ParseOneStmt("select 1", "", "")
+	require.NoError(t, err)
+	require.Equal(t, "SELECT ?", restoreDMLWithPolicy(t, stmt, originalTextPolicy{allow: false, restoreValue: true}))
+}
+
 func TestDMLVisitorCover(t *testing.T) {
 	ce := &checkExpr{}
 

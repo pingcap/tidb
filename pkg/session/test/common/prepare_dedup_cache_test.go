@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/testkit"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/stretchr/testify/require"
 )
 
@@ -104,6 +105,79 @@ func TestPrepareStmtDedupCacheExecute(t *testing.T) {
 	require.Equal(t, []int64{3}, ids)
 
 	tk.MustExec("set tidb_enable_cache_prepare_stmt = default")
+}
+
+func TestPrepareStmtDedupCachePreservesDisabledReason(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_cache_prepare_stmt = 1")
+	tk.MustExec("set tidb_enable_prepared_plan_cache = 0")
+	tk.MustExec("create table dedup_disabled_reason (id int primary key)")
+
+	const sql = "select id from dedup_disabled_reason where id = ?"
+	firstID, _, _, err := tk.Session().PrepareStmt(sql)
+	require.NoError(t, err)
+	tk.MustExec("set tidb_enable_prepared_plan_cache = 1")
+	secondID, _, _, err := tk.Session().PrepareStmt(sql)
+	require.NoError(t, err)
+	require.NotEqual(t, firstID, secondID)
+
+	rs, err := tk.Session().ExecutePreparedStmt(context.Background(), secondID, expression.Args2Expressions4Test(1))
+	require.NoError(t, err)
+	if rs != nil {
+		require.NoError(t, rs.Close())
+	}
+	reason, timestamp := tk.Session().GetSessionVars().StmtCtx.PlanCacheFallback()
+	require.Equal(t, contextutil.PlanCacheFallbackCacheDisabled, reason)
+	require.Positive(t, timestamp)
+}
+
+// TestPrepareStmtDedupCacheDirectWriteParamMatch verifies that the PlanCacheStmt
+// rebuilt by the prepare dedup path retains the direct-write matching contract.
+// The assignment parameter may change source type and still hit, while the
+// predicate parameter remains strict.
+func TestPrepareStmtDedupCacheDirectWriteParamMatch(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_cache_prepare_stmt = 1")
+	tk.MustExec("set tidb_enable_prepared_plan_cache = 1")
+	tk.MustExec("set tidb_enable_plan_cache_dml_param_type_match = 1")
+	tk.MustExec("create table dedup_dml (id bigint primary key, v bigint)")
+	tk.MustExec("insert into dedup_dml values (1, 0)")
+
+	const sql = "update dedup_dml set v = ? where id = ?"
+	firstID, _, _, err := tk.Session().PrepareStmt(sql)
+	require.NoError(t, err)
+	secondID, _, _, err := tk.Session().PrepareStmt(sql)
+	require.NoError(t, err)
+	require.NotEqual(t, firstID, secondID)
+
+	execute := func(args ...any) {
+		rs, execErr := tk.Session().ExecutePreparedStmt(
+			context.Background(), secondID, expression.Args2Expressions4Test(args...),
+		)
+		require.NoError(t, execErr)
+		if rs != nil {
+			require.NoError(t, rs.Close())
+		}
+	}
+
+	// Publish with integer source types.
+	execute(1, 1)
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+
+	// The direct-write value changes source type, but the strict WHERE type is
+	// unchanged, so the statement rebuilt from the dedup cache must hit.
+	execute("2", 1)
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery("select v from dedup_dml where id = 1").Check(testkit.Rows("2"))
+
+	// Changing the strict predicate source type must still miss.
+	execute("3", "1")
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery("select v from dedup_dml where id = 1").Check(testkit.Rows("3"))
 }
 
 // TestPrepareStmtDedupCacheSchemaChange verifies that a DDL (schema version bump)

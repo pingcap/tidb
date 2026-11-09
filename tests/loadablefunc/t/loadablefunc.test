@@ -1,0 +1,23 @@
+set global tidb_enable_procedure = ON;
+use test;
+
+drop function if exists word_count;
+drop function if exists plus_one;
+
+create function word_count returns integer soname 'udf_word_count.so';
+create function plus_one returns integer soname 'udf_plus_one.so';
+
+select name, ret, dl, type from mysql.func where name in ('word_count', 'plus_one') order by name;
+
+select word_count('hello world');
+select word_count('  hello   world  ');
+select word_count('');
+select word_count(NULL);
+
+select plus_one(41);
+select plus_one(NULL);
+
+drop function word_count;
+drop function plus_one;
+
+select name from mysql.func where name in ('word_count', 'plus_one') order by name;

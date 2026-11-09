@@ -27,7 +27,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coreos/go-semver/semver"
+	"git.pingcap.cn/pingkai/semver/coreos/semver"
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -413,6 +414,8 @@ type BackendConfig struct {
 	// 2. data size loaded from LoadIngestData, only for external engine.
 	// 3. region job worker pool size
 	WorkerConcurrency atomic.Int32
+	// concurrency used by conflict precheck workers scanning local data against TiKV.
+	PrecheckConcurrency int
 	// batch kv size when writing to TiKV
 	KVWriteBatchSize       int64
 	RegionSplitBatchSize   int
@@ -463,6 +466,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 		MaxConnPerStore:             cfg.TikvImporter.RangeConcurrency,
 		ConnCompressType:            cfg.TikvImporter.CompressKVPairs,
 		WorkerConcurrency:           *atomic.NewInt32(int32(cfg.TikvImporter.RangeConcurrency) * 2),
+		PrecheckConcurrency:         variable.DefTiDBImportIntoPrecheckConcurrency,
 		BlockSize:                   int(cfg.TikvImporter.BlockSize),
 		KVWriteBatchSize:            int64(cfg.TikvImporter.SendKVSize),
 		RegionSplitBatchSize:        cfg.TikvImporter.RegionSplitBatchSize,
@@ -707,7 +711,7 @@ func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, importClientF
 
 	for _, s := range stores {
 		// skip stores that are not online
-		if s.State != metapb.StoreState_Up || engine.IsTiFlash(s) {
+		if s.State != metapb.StoreState_Up || engine.IsTiFlash(s) || engine.IsReplicator(s) {
 			continue
 		}
 		var err error
@@ -1973,7 +1977,7 @@ func GetRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 		return 0, 0, err
 	}
 	for _, store := range stores {
-		if store.StatusAddress == "" || engine.IsTiFlash(store) {
+		if store.StatusAddress == "" || engine.IsTiFlash(store) || engine.IsReplicator(store) {
 			continue
 		}
 		serverInfo := infoschema.ServerInfo{

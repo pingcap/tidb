@@ -1,0 +1,14 @@
+[lightning]
+table-concurrency = 1
+
+[tikv-importer]
+backend = "tidb"
+
+[checkpoint]
+enable = true
+driver = "mysql"
+keep-after-success = "origin"
+
+[post-restore]
+checksum = "off"
+analyze = "off"

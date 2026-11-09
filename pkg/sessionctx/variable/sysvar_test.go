@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -379,6 +380,17 @@ func TestSessionGetterFuncs(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, BoolToOnOff(vars.PrevFoundInPlanCache), val)
 
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBLastExecutionPlanCacheMissReason)
+	require.NoError(t, err)
+	require.Equal(t, vars.PrevPlanCacheMissReason, val)
+	vars.PrevPlanCacheMissReason = "lookup_miss"
+	var states sessionstates.SessionStates
+	require.NoError(t, vars.EncodeSessionStates(context.Background(), &states))
+	require.Equal(t, "lookup_miss", states.PlanCacheMissReason)
+	restored := NewSessionVars(nil)
+	require.NoError(t, restored.DecodeSessionStates(context.Background(), &states))
+	require.Equal(t, "lookup_miss", restored.PrevPlanCacheMissReason)
+
 	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBFoundInBinding)
 	require.NoError(t, err)
 	require.Equal(t, BoolToOnOff(vars.PrevFoundInBinding), val)
@@ -665,6 +677,38 @@ func TestNetBufferLength(t *testing.T) {
 	val, err = netBufferLength.Validate(vars, "524288", ScopeGlobal)
 	require.NoError(t, err)
 	require.Equal(t, "524288", val) // unchanged
+}
+
+func TestPlanCacheDMLParamTypeMatchSysVar(t *testing.T) {
+	sv := GetSysVar(TiDBEnablePlanCacheDMLParamTypeMatch)
+	require.NotNil(t, sv)
+	require.True(t, sv.HasGlobalScope())
+	require.True(t, sv.HasSessionScope())
+	require.Equal(t, TypeBool, sv.Type)
+	require.Equal(t, On, sv.Value)
+	require.False(t, sv.ReadOnly)
+
+	vars := NewSessionVars(nil)
+	for _, scope := range []ScopeFlag{ScopeGlobal, ScopeSession} {
+		for _, input := range []string{"ON", "on", "1"} {
+			value, err := sv.Validate(vars, input, scope)
+			require.NoError(t, err)
+			require.Equal(t, On, value)
+		}
+		for _, input := range []string{"OFF", "off", "0"} {
+			value, err := sv.Validate(vars, input, scope)
+			require.NoError(t, err)
+			require.Equal(t, Off, value)
+		}
+		for _, input := range []string{"2", "invalid", ""} {
+			_, err := sv.Validate(vars, input, scope)
+			require.Error(t, err)
+		}
+	}
+	require.NoError(t, sv.SetSessionFromHook(vars, On))
+	require.True(t, vars.EnablePlanCacheDMLParamTypeMatch)
+	require.NoError(t, sv.SetSessionFromHook(vars, Off))
+	require.False(t, vars.EnablePlanCacheDMLParamTypeMatch)
 }
 
 func TestTiDBBatchPendingTiFlashCount(t *testing.T) {
@@ -1608,6 +1652,26 @@ func TestTiDBOptTxnAutoRetry(t *testing.T) {
 	}
 }
 
+func TestNonPreparedPlanCacheUnifiedSysVar(t *testing.T) {
+	sv := GetSysVar(TiDBEnableNonPreparedPlanCacheUnified)
+	require.NotNil(t, sv)
+	require.True(t, sv.HasGlobalScope())
+	require.True(t, sv.HasSessionScope())
+	require.Equal(t, Off, sv.Value)
+	require.False(t, sv.IsHintUpdatableVerified)
+
+	vars := NewSessionVars(nil)
+	require.False(t, vars.EnableNonPreparedPlanCacheUnified)
+	value, err := sv.Validate(vars, "ON", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, On, value)
+	require.NoError(t, sv.SetSessionFromHook(vars, value))
+	require.True(t, vars.EnableNonPreparedPlanCacheUnified)
+	value, ok := vars.GetSystemVar(TiDBEnableNonPreparedPlanCacheUnified)
+	require.True(t, ok)
+	require.Equal(t, On, value)
+}
+
 func TestTiDBLowResTSOUpdateInterval(t *testing.T) {
 	sv := GetSysVar(TiDBLowResolutionTSOUpdateInterval)
 	vars := NewSessionVars(nil)
@@ -1779,6 +1843,55 @@ func TestEnableWindowFunction(t *testing.T) {
 	require.Equal(t, vars.EnableWindowFunction, false)
 	require.NoError(t, vars.SetSystemVar(TiDBEnableWindowFunction, "1"))
 	require.Equal(t, vars.EnableWindowFunction, true)
+}
+
+func TestTiDBAnalyzeDefaultBucketAndTopNOptions(t *testing.T) {
+	ctx := context.Background()
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	origBuckets := AnalyzeDefaultNumBuckets.Load()
+	origTopN := AnalyzeDefaultNumTopN.Load()
+	t.Cleanup(func() {
+		AnalyzeDefaultNumBuckets.Store(origBuckets)
+		AnalyzeDefaultNumTopN.Store(origTopN)
+	})
+
+	bucketsVar := GetSysVar(TiDBAnalyzeDefaultNumBuckets)
+	require.NotNil(t, bucketsVar)
+	require.NoError(t, bucketsVar.SetGlobalFromHook(ctx, vars, "100", false))
+	require.Equal(t, uint64(100), AnalyzeDefaultNumBuckets.Load())
+
+	val, err := bucketsVar.GetGlobal(ctx, vars)
+	require.NoError(t, err)
+	require.Equal(t, "100", val)
+
+	val, err = bucketsVar.Validate(vars, "0", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(MinTiDBAnalyzeDefaultNumBuckets, 10), val)
+
+	val, err = bucketsVar.Validate(vars, "100001", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(MaxTiDBAnalyzeDefaultNumBuckets, 10), val)
+
+	topNVar := GetSysVar(TiDBAnalyzeDefaultNumTopN)
+	require.NotNil(t, topNVar)
+	require.NoError(t, topNVar.SetGlobalFromHook(ctx, vars, "50", false))
+	require.Equal(t, uint64(50), AnalyzeDefaultNumTopN.Load())
+
+	val, err = topNVar.GetGlobal(ctx, vars)
+	require.NoError(t, err)
+	require.Equal(t, "50", val)
+
+	val, err = topNVar.Validate(vars, "0", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(MinTiDBAnalyzeDefaultNumTopN, 10), val)
+
+	val, err = topNVar.Validate(vars, "100001", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(MaxTiDBAnalyzeDefaultNumTopN, 10), val)
 }
 
 func TestTiDBHashJoinVersion(t *testing.T) {

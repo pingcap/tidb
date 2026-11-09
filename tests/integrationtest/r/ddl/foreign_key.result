@@ -122,9 +122,6 @@ alter table t2 add foreign key (c) references t1(id), add foreign key (d) refere
 drop table t2;
 create table t2 (a int, b int, index idx1(a), index idx2(b));
 alter table t2 drop index idx1, drop index idx2, add foreign key (a) references t1(id), add foreign key (b) references t1(id);
-Error 1553 (HY000): Cannot drop index 'idx1': needed in a foreign key constraint
-alter table t2 drop index idx1, drop index idx2;
-alter table t2 add foreign key (a) references t1(id), add foreign key (b) references t1(id);
 show create table t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
@@ -230,7 +227,7 @@ drop table if exists child, parent;
 create table parent (ref int, key(ref));
 create table child (ref int, constraint fk1 foreign key(ref) references parent(ref));
 alter table child drop foreign key if exists fk2;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 37 near "if exists fk2;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 37 near "if exists fk2" 
 alter table child drop foreign key if exists fk1;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 37 near "if exists fk1;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 37 near "if exists fk1" 
 drop database test1;

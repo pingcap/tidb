@@ -146,6 +146,14 @@ select @@max_connections;
 @@max_connections
 100
 set @@global.max_connections=0;
+select @@global.reserved_admin_connections;
+@@global.reserved_admin_connections
+3
+set @@global.reserved_admin_connections=20;
+select @@global.reserved_admin_connections;
+@@global.reserved_admin_connections
+20
+set @@global.reserved_admin_connections=default;
 select @@invalid;
 Error 1193 (HY000): Unknown system variable 'invalid'
 select @@global.invalid;

@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -87,6 +88,10 @@ type PointGetPlan struct {
 	probeParents []base.PhysicalPlan
 	// explicit partition selection
 	PartitionNames []pmodel.CIStr
+	// TiDBRowIDCandidates is the immutable locator template used to rebuild
+	// Handle and PartitionIdx for each plan-cache execution.
+	TiDBRowIDCandidates            []expression.Expression
+	TiDBRowIDAllowedPartitionNames []pmodel.CIStr `plan-cache-clone:"shallow"`
 
 	dbName           string
 	schema           *expression.Schema
@@ -353,6 +358,9 @@ func (p *PointGetPlan) LoadTableStats(ctx sessionctx.Context) {
 // PrunePartitions will check which partition to use
 // returns true if no matching partition
 func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
+	if len(p.TiDBRowIDCandidates) > 0 {
+		return p.IsTableDual, nil
+	}
 	pi := p.TblInfo.GetPartitionInfo()
 	if pi == nil {
 		return false, nil
@@ -453,6 +461,10 @@ type BatchPointGetPlan struct {
 	probeParents []base.PhysicalPlan
 	// explicit partition selection
 	PartitionNames []pmodel.CIStr
+	// TiDBRowIDCandidates is the immutable locator template used to rebuild
+	// Handles and PartitionIdxs for each plan-cache execution.
+	TiDBRowIDCandidates            []expression.Expression
+	TiDBRowIDAllowedPartitionNames []pmodel.CIStr `plan-cache-clone:"shallow"`
 
 	ctx              base.PlanContext
 	dbName           string
@@ -732,6 +744,9 @@ func (p *BatchPointGetPlan) getPartitionIdxs(sctx sessionctx.Context) []int {
 // slice of non-duplicated handles (or nil if IndexValues is used)
 // true if no matching partition (TableDual plan can be used)
 func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([]kv.Handle, bool, error) {
+	if len(p.TiDBRowIDCandidates) > 0 {
+		return p.Handles, len(p.Handles) == 0, nil
+	}
 	pi := p.TblInfo.GetPartitionInfo()
 	if p.IndexInfo != nil && p.IndexInfo.Global {
 		// Reading from a global index, i.e. base table ID
@@ -945,6 +960,12 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 		return nil
 	}
 
+	// If label security / LBAC is enabled, the planner may add row filters, so we can't use FastPlan.
+	// TODO: It should check whether the table has been bound to a policy.
+	if variable.EnableLabelSecurity.Load() || variable.EnableLBAC.Load() {
+		return nil
+	}
+
 	ctx.GetSessionVars().PlanID.Store(0)
 	ctx.GetSessionVars().PlanColumnID.Store(0)
 	userName, hostName := auth.GetUserAndHostName(ctx.GetSessionVars().User)
@@ -1149,11 +1170,12 @@ func newBatchPointGetPlan(
 		}
 
 		p := &BatchPointGetPlan{
-			TblInfo:         tbl,
-			Handles:         handles,
-			HandleParams:    handleParams,
-			HandleType:      &handleCol.FieldType,
-			HandleColOffset: handleCol.Offset,
+			TblInfo:           tbl,
+			Handles:           handles,
+			HandleParams:      handleParams,
+			HandleType:        &handleCol.FieldType,
+			HandleColOffset:   handleCol.Offset,
+			colsInWhereClause: whereColNames,
 		}
 
 		return p.Init(ctx, statsInfo, schema, names, 0)
@@ -1308,11 +1330,12 @@ func newBatchPointGetPlan(
 	}
 
 	p := &BatchPointGetPlan{
-		TblInfo:          tbl,
-		IndexInfo:        matchIdxInfo,
-		IndexValues:      indexValues,
-		IndexValueParams: indexValueParams,
-		IndexColTypes:    indexTypes,
+		TblInfo:           tbl,
+		IndexInfo:         matchIdxInfo,
+		IndexValues:       indexValues,
+		IndexValueParams:  indexValueParams,
+		IndexColTypes:     indexTypes,
+		colsInWhereClause: whereColNames,
 	}
 
 	return p.Init(ctx, statsInfo, schema, names, 0)
@@ -1440,7 +1463,7 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 	if selStmt.Having != nil || selStmt.OrderBy != nil {
 		return nil
 	} else if selStmt.Limit != nil {
-		count, offset, err := extractLimitCountOffset(ctx.GetExprCtx(), selStmt.Limit)
+		count, offset, err := extractLimitCountOffset(ctx.GetExprCtx(), selStmt.Limit, ctx.GetSessionVars())
 		if err != nil || count == 0 || offset > 0 {
 			return nil
 		}
@@ -1504,6 +1527,8 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 		if isTableDual {
 			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
 			p.IsTableDual = true
+			p.colsInWhereClause = pairsToColumnNames(pairs)
+			p.unfoldFromWildCard = unfold
 			return p
 		}
 
@@ -1514,12 +1539,14 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 		p.HandleConstant = handlePair.con
 		p.HandleColOffset = pkColOffset
 		p.PartitionNames = tblName.PartitionNames
+		p.colsInWhereClause = pairsToColumnNames(pairs)
+		p.unfoldFromWildCard = unfold
 		return p
 	} else if handlePair.value.Kind() != types.KindNull {
 		return nil
 	}
 
-	return checkTblIndexForPointPlan(ctx, tnW, schema, tblAlias.L, selStmt.TableHints, names, pairs, isTableDual, check)
+	return checkTblIndexForPointPlan(ctx, tnW, schema, tblAlias.L, selStmt.TableHints, names, pairs, isTableDual, check, unfold)
 }
 
 func pairsToColumnNames(pairs []nameValuePair) (res []string) {
@@ -1531,7 +1558,7 @@ func pairsToColumnNames(pairs []nameValuePair) (res []string) {
 
 func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW, schema *expression.Schema,
 	tblAlias string, tblHints []*ast.TableOptimizerHint,
-	names []*types.FieldName, pairs []nameValuePair, isTableDual, check bool) *PointGetPlan {
+	names []*types.FieldName, pairs []nameValuePair, isTableDual, check bool, unfold []bool) *PointGetPlan {
 	check = check || ctx.GetSessionVars().IsIsolation(ast.ReadCommitted)
 	check = check && ctx.GetSessionVars().ConnectionID > 0
 	var latestIndexes map[int64]*model.IndexInfo
@@ -1577,6 +1604,8 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 			}
 			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
 			p.IsTableDual = true
+			p.colsInWhereClause = pairsToColumnNames(pairs)
+			p.unfoldFromWildCard = unfold
 			return p
 		}
 		idxValues, idxConstant, colsFieldType := getIndexValues(idxInfo, pairs)
@@ -1601,6 +1630,8 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 		p.IndexConstants = idxConstant
 		p.ColsFieldType = colsFieldType
 		p.PartitionNames = tblName.PartitionNames
+		p.colsInWhereClause = pairsToColumnNames(pairs)
+		p.unfoldFromWildCard = unfold
 		return p
 	}
 	return nil
@@ -1733,6 +1764,7 @@ func checkFastPlanPrivilege(ctx base.PlanContext, visitInfos ...visitInfo) error
 	return CheckTableLock(ctx, infoSchema, lockVisitInfos)
 }
 
+// The last return value is a flag to indicate whether the FieldName is Unfolded from wildcard
 func buildSchemaFromFields(
 	dbName pmodel.CIStr,
 	tbl *model.TableInfo,
@@ -1747,6 +1779,7 @@ func buildSchemaFromFields(
 	names = make([]*types.FieldName, 0, len(tbl.Columns)+1)
 	unfold = make([]bool, 0, len(tbl.Columns)+1)
 	if len(fields) > 0 {
+		unfold := make([]bool, 0, len(tbl.Columns)+1)
 		for _, field := range fields {
 			if field.WildCard != nil {
 				if field.WildCard.Table.L != "" && field.WildCard.Table.L != tblName.L {
@@ -2262,27 +2295,29 @@ func buildOrderedList(ctx base.PlanContext, pointPlan base.Plan, list []*ast.Ass
 			return nil, nil, true
 		}
 		visitInfos = append(visitInfos, vs...)
-		castToTP := col.GetStaticType()
-		if (castToTP.GetType() == mysql.TypeEnum || castToTP.GetType() == mysql.TypeSet) &&
-			assign.Expr.GetType().EvalType() == types.ETInt {
-			castToTP.AddFlag(mysql.EnumSetAsIntFlag)
-		}
-		// Point-update builds assignment expressions directly in the planner.
-		// Keep the implicit CAST for most target column types so the fast path stays
-		// aligned with normal UPDATE typing, but do not CAST unsigned numeric targets:
-		// CAST(-1 AS UNSIGNED) wraps to MAX_UINT64, while UPDATE assignment conversion
-		// must be decided by executor-side table.CastValue under the current statement
-		// context and sql_mode.
-		//
-		// This applies to more than integer columns. Unsigned decimal/real also uses the
-		// CAST path which treats negative inputs as uint64 (e.g. -1 -> 1844...),
-		// diverging from assignment semantics.
-		isUnsignedNumericTarget := mysql.HasUnsignedFlag(castToTP.GetFlag()) &&
-			(castToTP.EvalType() == types.ETInt ||
-				castToTP.EvalType() == types.ETDecimal ||
-				castToTP.EvalType() == types.ETReal)
-		if !isUnsignedNumericTarget {
-			expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
+		if !ctx.GetSessionVars().StmtCtx.PlanCacheDMLParamTypeMatchEnabled {
+			castToTP := col.GetStaticType()
+			if (castToTP.GetType() == mysql.TypeEnum || castToTP.GetType() == mysql.TypeSet) &&
+				assign.Expr.GetType().EvalType() == types.ETInt {
+				castToTP.AddFlag(mysql.EnumSetAsIntFlag)
+			}
+			// Preserve the legacy PointGet assignment conversion model while the feature
+			// is disabled. It keeps an implicit CAST for most target column types, but
+			// does not CAST unsigned numeric targets:
+			// CAST(-1 AS UNSIGNED) wraps to MAX_UINT64, while UPDATE assignment conversion
+			// must be decided by executor-side table.CastValue under the current statement
+			// context and sql_mode.
+			//
+			// This applies to more than integer columns. Unsigned decimal/real also uses the
+			// CAST path which treats negative inputs as uint64 (e.g. -1 -> 1844...),
+			// diverging from assignment semantics.
+			isUnsignedNumericTarget := mysql.HasUnsignedFlag(castToTP.GetFlag()) &&
+				(castToTP.EvalType() == types.ETInt ||
+					castToTP.EvalType() == types.ETDecimal ||
+					castToTP.EvalType() == types.ETReal)
+			if !isUnsignedNumericTarget {
+				expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
+			}
 		}
 		if allAssignmentsAreConstant {
 			_, isConst := expr.(*expression.Constant)

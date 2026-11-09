@@ -60,7 +60,7 @@ func (h *sessionHandler) OnStmtEvent(tp extension.StmtEventTp, info extension.St
 	tables := make([]stmtctx.TableEntry, len(info.RelatedTables()))
 	copy(tables, info.RelatedTables())
 
-	redactText, _ := info.SQLDigest()
+	redactText := info.RedactedText()
 	r := stmtEventRecord{
 		tp:              tp,
 		user:            info.User(),

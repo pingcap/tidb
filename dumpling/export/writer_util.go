@@ -212,10 +212,15 @@ func WriteInsert(
 
 	selectedField := meta.SelectedField()
 
-	// if has generated column
+	// If has generated column or complete-insert is true.
 	if selectedField != "" && selectedField != "*" {
+		colNames := meta.ColumnNames()
+		quotedColNames := make([]string, 0, len(colNames))
+		for _, name := range colNames {
+			quotedColNames = append(quotedColNames, wrapBackTicks(escapeString(name)))
+		}
 		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s (%s) VALUES\n",
-			wrapBackTicks(escapeString(meta.TableName())), selectedField)
+			wrapBackTicks(escapeString(meta.TableName())), strings.Join(quotedColNames, ","))
 	} else {
 		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s VALUES\n",
 			wrapBackTicks(escapeString(meta.TableName())))

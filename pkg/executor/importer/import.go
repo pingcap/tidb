@@ -80,6 +80,8 @@ const (
 	DataFormatParquet = "parquet"
 	// DataFormatAuto represents format is not set in IMPORT INTO, we will determine format automatically.
 	DataFormatAuto = "auto"
+	// LoadDataFormatORC represents the data source file of LOAD DATA is orc.
+	LoadDataFormatORC = "orc"
 
 	// DefaultDiskQuota is the default disk quota for IMPORT INTO
 	DefaultDiskQuota = config.ByteSize(50 << 30) // 50GiB
@@ -263,6 +265,8 @@ type Plan struct {
 	MaxEngineSize         config.ByteSize
 	CloudStorageURI       string
 	DisablePrecheck       bool
+
+	PrecheckConcurrency int
 
 	// used for checksum in physical mode
 	DistSQLScanConcurrency int
@@ -797,6 +801,12 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 			p.MaxNodeCnt = ddl.GetDXFDefaultMaxNodeCntAuto(seCtx.GetStore())
 		}
 	}
+	if p.PrecheckConcurrency, err = getSessionIntSysVar(ctx, seCtx, variable.TiDBImportIntoPrecheckConcurrency); err != nil {
+		return err
+	}
+	if p.PrecheckConcurrency <= 0 {
+		p.PrecheckConcurrency = variable.DefTiDBImportIntoPrecheckConcurrency
+	}
 
 	// when split-file is set, data file will be split into chunks of 256 MiB.
 	// skip_rows should be 0 or 1, we add this restriction to simplify skip_rows
@@ -1300,6 +1310,8 @@ func (e *LoadDataController) getSourceType() mydump.SourceType {
 	switch e.Format {
 	case DataFormatParquet:
 		return mydump.SourceTypeParquet
+	case LoadDataFormatORC:
+		return mydump.SourceTypeORC
 	case DataFormatDelimitedData, DataFormatCSV:
 		return mydump.SourceTypeCSV
 	default:
@@ -1504,12 +1516,15 @@ func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildCont
 }
 
 func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.BackendConfig {
+	dupDetectEnabled := e.DataSourceType == DataSourceTypeQuery
+	conflictPrecheckConcurrency := e.PrecheckConcurrency
 	backendConfig := local.BackendConfig{
 		PDAddr:                 pdAddr,
 		LocalStoreDir:          dataDir,
 		MaxConnPerStore:        config.DefaultRangeConcurrency,
 		ConnCompressType:       config.CompressionNone,
 		WorkerConcurrency:      *atomic.NewInt32(int32(e.ThreadCnt)),
+		PrecheckConcurrency:    conflictPrecheckConcurrency,
 		KVWriteBatchSize:       config.KVWriteBatchSize,
 		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
 		RegionSplitConcurrency: runtime.GOMAXPROCS(0),
@@ -1518,8 +1533,8 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 		MemTableSize:                config.DefaultEngineMemCacheSize,
 		LocalWriterMemCacheSize:     int64(config.DefaultLocalWriterMemCacheSize),
 		ShouldCheckTiKV:             true,
-		DupeDetectEnabled:           false,
-		DuplicateDetectOpt:          common.DupDetectOpt{ReportErrOnDup: false},
+		DupeDetectEnabled:           dupDetectEnabled,
+		DuplicateDetectOpt:          common.DupDetectOpt{ReportErrOnDup: dupDetectEnabled},
 		StoreWriteBWLimit:           int(e.MaxWriteSpeed),
 		MaxOpenFiles:                int(tidbutil.GenRLimit("table_import")),
 		KeyspaceName:                tidb.GetGlobalKeyspaceName(),

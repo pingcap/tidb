@@ -1,0 +1,342 @@
+# Case 1: basic access control (DDL + DML + row filter + secured column)
+set global pkdb_lbac = 1;
+create security label component it_lbac_classif array ('TOP_SECRET','CONFIDENTIAL');
+create security label component it_lbac_dept set ('FIN','HR');
+create security label component it_lbac_region tree ('WORLD' root, 'US' under 'WORLD', 'CA' under 'WORLD');
+create security policy it_lbac_da_policy components it_lbac_classif, it_lbac_dept, it_lbac_region;
+create security label it_lbac_da_policy.it_lbac_da_top_fin_us component it_lbac_classif 'TOP_SECRET' component it_lbac_dept 'FIN' component it_lbac_region 'US';
+create security label it_lbac_da_policy.it_lbac_da_conf_hr_ca component it_lbac_classif 'CONFIDENTIAL' component it_lbac_dept 'HR' component it_lbac_region 'CA';
+create security label it_lbac_da_policy.it_lbac_da_top_fin_us_col component it_lbac_classif 'TOP_SECRET' component it_lbac_dept 'FIN' component it_lbac_region 'US';
+create table it_lbac_da_sales (
+id int primary key,
+item varchar(16),
+amount int secured with it_lbac_da_top_fin_us_col,
+row_seclabel securitylabel not null
+) security policy it_lbac_da_policy;
+show create table it_lbac_da_sales;
+Table	Create Table
+it_lbac_da_sales	CREATE TABLE `it_lbac_da_sales` (
+  `id` int NOT NULL,
+  `item` varchar(16) DEFAULT NULL,
+  `amount` int DEFAULT NULL SECURED WITH `it_lbac_da_top_fin_us_col`,
+  `row_seclabel` securitylabel NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin SECURITY POLICY `it_lbac_da_policy`
+insert into it_lbac_da_sales values (1, 'Widget', 100, seclabel('IT_LBAC_DA_POLICY', 'TOP_SECRET|FIN|US'));
+insert into it_lbac_da_sales values (2, 'Gizmo', 200, seclabel('IT_LBAC_DA_POLICY', 'CONFIDENTIAL|HR|CA'));
+create user 'lbac_alice'@'%';
+create user 'lbac_bob'@'%';
+grant select, insert, update, delete on lbac.it_lbac_da_sales to 'lbac_alice'@'%';
+grant select, insert, update, delete on lbac.it_lbac_da_sales to 'lbac_bob'@'%';
+grant security label it_lbac_da_policy.it_lbac_da_conf_hr_ca to user 'lbac_alice'@'%' for read access;
+grant security label it_lbac_da_policy.it_lbac_da_top_fin_us to user 'lbac_alice'@'%' for write access;
+grant security label it_lbac_da_policy.it_lbac_da_top_fin_us to user 'lbac_bob'@'%' for read access, write access;
+select id, item from it_lbac_da_sales order by id;
+id	item
+2	Gizmo
+select amount from it_lbac_da_sales;
+Error 1143 (42000): READ command denied to user 'lbac_alice'@'%' for column 'amount' in table 'it_lbac_da_sales'
+select * from it_lbac_da_sales;
+Error 1143 (42000): READ command denied to user 'lbac_alice'@'%' for column 'amount' in table 'it_lbac_da_sales'
+insert into it_lbac_da_sales values (3, 'Gadget', 300, seclabel('IT_LBAC_DA_POLICY', 'TOP_SECRET|FIN|US'));
+insert into it_lbac_da_sales values (4, 'Denied', 400, seclabel('IT_LBAC_DA_POLICY', 'CONFIDENTIAL|HR|CA'));
+Error 8800 (HY000): This row has a unaccessible label, row label [CONFIDENTIAL|HR|CA], user label [it_lbac_da_policy]
+select id, item, amount from it_lbac_da_sales order by id;
+id	item	amount
+1	Widget	100
+3	Gadget	300
+update it_lbac_da_sales set amount = 500 where id = 2;
+Error 8800 (HY000): This row has a unaccessible label, row label [CONFIDENTIAL|HR|CA], user label [it_lbac_da_policy]
+delete from it_lbac_da_sales where id = 1;
+select id, item, amount from it_lbac_da_sales order by id;
+id	item	amount
+2	Gizmo	200
+3	Gadget	300
+# Case 2: write control (OVERRIDE vs RESTRICT)
+create security policy it_lbac_ov_policy components it_lbac_classif, it_lbac_dept, it_lbac_region override not authorized write security label;
+create security policy it_lbac_rs_policy components it_lbac_classif, it_lbac_dept, it_lbac_region restrict not authorized write security label;
+create security label it_lbac_ov_policy.it_lbac_ov_top_fin_us component it_lbac_classif 'TOP_SECRET' component it_lbac_dept 'FIN' component it_lbac_region 'US';
+create security label it_lbac_ov_policy.it_lbac_ov_top_hr_us component it_lbac_classif 'TOP_SECRET' component it_lbac_dept 'HR' component it_lbac_region 'US';
+create security label it_lbac_rs_policy.it_lbac_rs_top_fin_us component it_lbac_classif 'TOP_SECRET' component it_lbac_dept 'FIN' component it_lbac_region 'US';
+create security label it_lbac_rs_policy.it_lbac_rs_top_hr_us component it_lbac_classif 'TOP_SECRET' component it_lbac_dept 'HR' component it_lbac_region 'US';
+create table it_lbac_ov_t (
+id int primary key,
+row_seclabel securitylabel not null
+) security policy it_lbac_ov_policy;
+create table it_lbac_rs_t (
+id int primary key,
+row_seclabel securitylabel not null
+) security policy it_lbac_rs_policy;
+create user 'lbac_writer'@'%';
+grant select, insert, update on lbac.it_lbac_ov_t to 'lbac_writer'@'%';
+grant select, insert, update on lbac.it_lbac_rs_t to 'lbac_writer'@'%';
+grant security label it_lbac_ov_policy.it_lbac_ov_top_fin_us to user 'lbac_writer'@'%' for write access;
+grant security label it_lbac_rs_policy.it_lbac_rs_top_fin_us to user 'lbac_writer'@'%' for write access;
+insert into it_lbac_ov_t values (1, seclabel('IT_LBAC_OV_POLICY', 'TOP_SECRET|HR|US'));
+insert into it_lbac_ov_t values (2, seclabel('IT_LBAC_OV_POLICY', 'TOP_SECRET|FIN|US'));
+update it_lbac_ov_t set row_seclabel = seclabel('IT_LBAC_OV_POLICY', 'TOP_SECRET|HR|US') where id = 2;
+insert into it_lbac_rs_t values (1, seclabel('IT_LBAC_RS_POLICY', 'TOP_SECRET|HR|US'));
+Error 8800 (HY000): This row has a unaccessible label, row label [TOP_SECRET|HR|US], user label [it_lbac_rs_policy]
+insert into it_lbac_rs_t values (2, seclabel('IT_LBAC_RS_POLICY', 'TOP_SECRET|FIN|US'));
+update it_lbac_rs_t set row_seclabel = seclabel('IT_LBAC_RS_POLICY', 'TOP_SECRET|HR|US') where id = 2;
+Error 8800 (HY000): This row has a unaccessible label, row label [TOP_SECRET|HR|US], user label [it_lbac_rs_policy]
+select id, seclabel_to_char('IT_LBAC_OV_POLICY', row_seclabel) from it_lbac_ov_t order by id;
+id	seclabel_to_char('IT_LBAC_OV_POLICY', row_seclabel)
+1	TOP_SECRET|FIN|US
+2	TOP_SECRET|FIN|US
+select id, seclabel_to_char('IT_LBAC_RS_POLICY', row_seclabel) from it_lbac_rs_t order by id;
+id	seclabel_to_char('IT_LBAC_RS_POLICY', row_seclabel)
+2	TOP_SECRET|FIN|US
+# Case 3: DDL validation (security policy / secured column label)
+create security policy it_lbac_ddl_policy components it_lbac_classif, it_lbac_dept, it_lbac_region;
+create security policy it_lbac_ddl_other_policy components it_lbac_classif, it_lbac_dept, it_lbac_region;
+create security label it_lbac_ddl_policy.it_lbac_ddl_a component it_lbac_classif 'CONFIDENTIAL' component it_lbac_dept 'FIN' component it_lbac_region 'US';
+create security label it_lbac_ddl_other_policy.it_lbac_ddl_other_a component it_lbac_classif 'CONFIDENTIAL' component it_lbac_dept 'HR' component it_lbac_region 'US';
+create table it_lbac_ddl_plain (id int primary key);
+create table it_lbac_ddl_sec (
+id int primary key,
+v int secured with it_lbac_ddl_a,
+row_seclabel securitylabel not null
+) security policy it_lbac_ddl_policy;
+create table it_lbac_ddl_missing_policy (id int primary key) security policy it_lbac_missing_policy;
+Error 8803 (HY000): policy not found
+create table it_lbac_ddl_sec_no_policy (id int primary key, v int secured with it_lbac_ddl_a);
+Error 8802 (HY000): security policy missing
+alter table it_lbac_ddl_sec add column v2 int secured with it_lbac_missing_label;
+Error 8803 (HY000): security label not found
+alter table it_lbac_ddl_plain add column v2 int secured with it_lbac_ddl_a;
+Error 8802 (HY000): security policy missing
+alter table it_lbac_ddl_sec modify column v int secured with it_lbac_ddl_other_a;
+Error 8803 (HY000): security label not found
+# Case 4: LBAC DDL privilege check (need CREATE ROLE or CREATE USER)
+create user 'lbac_no_admin'@'%';
+create security label component it_lbac_priv_comp array ('X');
+Error 1227 (42000): Access denied; you need (at least one of) the CREATE ROLE or CREATE USER privilege(s) for this operation
+grant security label it_lbac_da_policy.it_lbac_da_conf_hr_ca to user 'lbac_no_admin'@'%' for read access;
+Error 1227 (42000): Access denied; you need (at least one of) the CREATE ROLE or CREATE USER privilege(s) for this operation
+grant exemption on rule all for it_lbac_da_policy to user 'lbac_no_admin'@'%';
+Error 1227 (42000): Access denied; you need (at least one of) the CREATE ROLE or CREATE USER privilege(s) for this operation
+# Case 5: docs/label-based-access-control.md examples (lbac_doc)
+set global pkdb_lbac = on;
+create database if not exists lbac_doc;
+use lbac_doc;
+drop table if exists sales;
+drop table if exists sales_override;
+drop user if exists 'alice'@'%';
+drop user if exists 'label_user'@'%';
+drop user if exists 'exempt_user'@'%';
+drop user if exists 'writer'@'%';
+create security label component classif array ('TOP','CONF','PUB');
+create security label component dept set ('FIN','HR','ENG');
+create security label component region tree ('WORLD' root, 'AMER' under 'WORLD', 'US' under 'AMER');
+create security policy corp_policy components classif, dept, region;
+create security policy corp_policy_override components classif, dept, region
+override not authorized write security label;
+create security label corp_policy.top_fin_us
+component classif 'TOP'
+component dept 'FIN'
+component region 'US';
+create security label corp_policy.conf_hr_us
+component classif 'CONF'
+component dept 'HR'
+component region 'US';
+create security label corp_policy.top_fin_hr_amer
+component classif 'TOP'
+component dept 'FIN','HR'
+component region 'AMER';
+create security label corp_policy.col_top_fin_us
+component classif 'TOP'
+component dept 'FIN'
+component region 'US';
+create security label corp_policy_override.ov_top_fin_us
+component classif 'TOP'
+component dept 'FIN'
+component region 'US';
+create security label corp_policy_override.ov_top_fin_hr_amer
+component classif 'TOP'
+component dept 'FIN','HR'
+component region 'AMER';
+create security label corp_policy_override.ov_conf_hr_us
+component classif 'CONF'
+component dept 'HR'
+component region 'US';
+create table sales (
+id int primary key,
+item varchar(16),
+amount int secured with col_top_fin_us,
+row_seclabel securitylabel not null
+) security policy corp_policy;
+create table sales_override (
+id int primary key,
+row_seclabel securitylabel not null
+) security policy corp_policy_override;
+create user 'alice'@'%';
+grant select on lbac_doc.sales to 'alice'@'%';
+grant security label corp_policy.conf_hr_us to user 'alice'@'%' for read access;
+create user 'label_user'@'%';
+grant security label corp_policy.top_fin_us to user 'label_user'@'%' for read access, write access;
+revoke security label corp_policy.top_fin_us from user 'label_user'@'%';
+create user 'exempt_user'@'%';
+grant select on lbac_doc.sales to 'exempt_user'@'%';
+create security label component tmp_comp array ('A');
+create security policy tmp_policy components tmp_comp;
+create security label tmp_policy.tmp_label component tmp_comp 'A';
+drop security label tmp_policy.tmp_label;
+drop security policy tmp_policy;
+drop security label component tmp_comp;
+select seclabel_to_char('CORP_POLICY', seclabel('CORP_POLICY','TOP|FIN|US')) as label;
+label
+TOP|FIN|US
+select lbac_dominates(
+seclabel('CORP_POLICY','TOP|FIN,HR|AMER'),
+seclabel('CORP_POLICY','CONF|HR|US')
+) as dominates;
+dominates
+1
+select label_accessible('10:M:R20', '30:M,E:R20,R40') as accessible;
+accessible
+1
+insert into sales values
+(1, 'Widget', 100, seclabel('CORP_POLICY','TOP|FIN|US')),
+(2, 'Gizmo', 200, seclabel('CORP_POLICY','CONF|HR|US'));
+select id, item from sales order by id;
+id	item
+2	Gizmo
+select amount from sales;
+Error 1143 (42000): READ command denied to user 'alice'@'%' for column 'amount' in table 'sales'
+select amount from sales order by id;
+Error 1143 (42000): READ command denied to user 'exempt_user'@'%' for column 'amount' in table 'sales'
+grant exemption on rule all for corp_policy to user 'exempt_user'@'%';
+select amount from sales order by id;
+amount
+100
+200
+revoke exemption on rule all for corp_policy from user 'exempt_user'@'%';
+create user 'writer'@'%';
+grant select, insert, update, delete on lbac_doc.sales to 'writer'@'%';
+grant select, insert on lbac_doc.sales_override to 'writer'@'%';
+insert into sales (id, item, amount, row_seclabel)
+values (3, 'Gadget', 300, seclabel('CORP_POLICY','TOP|FIN|US'));
+Error 1143 (42000): WRITE command denied to user 'writer'@'%' for column 'amount' in table 'sales'
+grant security label corp_policy.col_top_fin_us to user 'writer'@'%' for write access;
+insert into sales (id, item, amount, row_seclabel)
+values (3, 'Gadget', 300, seclabel('CORP_POLICY','TOP|FIN|US'));
+insert into sales (id, item, amount, row_seclabel)
+values (4, 'Widget', 400, seclabel('CORP_POLICY','CONF|HR|US'));
+Error 8800 (HY000): This row has a unaccessible label, row label [CONF|HR|US], user label [corp_policy]
+update sales set item = 'Widget2' where id = 1;
+update sales set item = 'Denied' where id = 2;
+Error 8800 (HY000): This row has a unaccessible label, row label [CONF|HR|US], user label [corp_policy]
+delete from sales where id = 2;
+Error 8800 (HY000): This row has a unaccessible label, row label [CONF|HR|US], user label [corp_policy]
+grant security label corp_policy_override.ov_top_fin_us to user 'writer'@'%' for read access, write access;
+insert into sales_override values
+(1, seclabel('CORP_POLICY_OVERRIDE','CONF|HR|US'));
+select seclabel_to_char('CORP_POLICY_OVERRIDE', row_seclabel)
+from sales_override where id = 1;
+seclabel_to_char('CORP_POLICY_OVERRIDE', row_seclabel)
+TOP|FIN|US
+set global tidb_enable_procedure = on;
+admin lbac enable;
+# Cleanup: drop lbac_doc objects to avoid name conflicts in following cases
+use lbac_doc;
+revoke security label corp_policy.conf_hr_us from user 'alice'@'%';
+revoke security label corp_policy.col_top_fin_us from user 'writer'@'%';
+revoke security label corp_policy_override.ov_top_fin_us from user 'writer'@'%';
+drop table if exists sales;
+drop table if exists sales_override;
+drop user if exists 'alice'@'%';
+drop user if exists 'label_user'@'%';
+drop user if exists 'exempt_user'@'%';
+drop user if exists 'writer'@'%';
+drop security label corp_policy.top_fin_us;
+drop security label corp_policy.conf_hr_us;
+drop security label corp_policy.top_fin_hr_amer;
+drop security label corp_policy.col_top_fin_us;
+drop security label corp_policy_override.ov_top_fin_us;
+drop security label corp_policy_override.ov_top_fin_hr_amer;
+drop security label corp_policy_override.ov_conf_hr_us;
+drop security policy corp_policy;
+drop security policy corp_policy_override;
+drop security label component classif;
+drop security label component dept;
+drop security label component region;
+# Case 6: docs/label-based-access-control.md comprehensive scenario (lbac_company_demo)
+set global pkdb_lbac = on;
+create database if not exists lbac_company_demo;
+use lbac_company_demo;
+drop table if exists salary;
+drop user if exists 'boss'@'%';
+drop user if exists 'hr'@'%';
+drop user if exists 'emp_b'@'%';
+drop user if exists 'guest'@'%';
+create security label component classif array ('TOP','CONF','PUB');
+create security label component dept set ('EXEC','HR','FIN','ENG');
+create security label component region tree ('WORLD' root, 'AMER' under 'WORLD', 'US' under 'AMER', 'EMEA' under 'WORLD');
+create security policy corp_access components classif, dept, region;
+create security label corp_access.exec_top_world
+component classif 'TOP' component dept 'EXEC' component region 'WORLD';
+create security label corp_access.hr_conf_us
+component classif 'CONF' component dept 'HR' component region 'US';
+create security label corp_access.fin_conf_amer
+component classif 'CONF' component dept 'FIN' component region 'AMER';
+create security label corp_access.eng_pub_us
+component classif 'PUB' component dept 'ENG' component region 'US';
+create security label corp_access.hr_non_exec
+component classif 'CONF' component dept 'ENG','HR' component region 'AMER';
+create security label corp_access.salary_top_exec
+component classif 'TOP' component dept 'EXEC' component region 'WORLD';
+create table salary (
+id int primary key,
+name varchar(16),
+dept varchar(8),
+region varchar(8),
+salary int secured with salary_top_exec,
+row_seclabel securitylabel not null
+) security policy corp_access;
+insert into salary values
+(1, 'boss', 'EXEC', 'WORLD', 100000, seclabel('CORP_ACCESS','TOP|EXEC|WORLD')),
+(2, 'hr', 'HR', 'US', 8000, seclabel('CORP_ACCESS','CONF|HR|US')),
+(3, 'fin', 'FIN', 'AMER', 9000, seclabel('CORP_ACCESS','CONF|FIN|AMER')),
+(4, 'emp_b', 'ENG', 'US', 5000, seclabel('CORP_ACCESS','PUB|ENG|US'));
+create user 'boss'@'%';
+create user 'hr'@'%';
+create user 'emp_b'@'%';
+create user 'guest'@'%';
+grant select, insert, update, delete on lbac_company_demo.salary to 'boss'@'%';
+grant select, insert, update, delete on lbac_company_demo.salary to 'hr'@'%';
+grant select, insert, update, delete on lbac_company_demo.salary to 'emp_b'@'%';
+grant select, insert, update, delete on lbac_company_demo.salary to 'guest'@'%';
+grant exemption on rule all for corp_access to user 'boss'@'%';
+grant security label corp_access.hr_non_exec to user 'hr'@'%' for read access, write access;
+grant security label corp_access.eng_pub_us to user 'emp_b'@'%' for read access, write access;
+select id, salary from salary order by id;
+id	salary
+1	100000
+2	8000
+3	9000
+4	5000
+insert into salary values
+(5, 'boss2', 'EXEC', 'WORLD', 110000, seclabel('CORP_ACCESS','TOP|EXEC|WORLD'));
+select id, name from salary order by id;
+id	name
+2	hr
+4	emp_b
+select salary from salary;
+Error 1143 (42000): READ command denied to user 'hr'@'%' for column 'salary' in table 'salary'
+insert into salary values
+(6, 'eng2', 'ENG', 'US', 5200, seclabel('CORP_ACCESS','PUB|ENG|US'));
+Error 1143 (42000): WRITE command denied to user 'hr'@'%' for column 'salary' in table 'salary'
+update salary set name = 'emp_b2' where id = 4;
+update salary set name = 'hacked' where id = 2;
+Error 8800 (HY000): This row has a unaccessible label, row label [CONF|HR|US], user label [corp_access]
+delete from salary where id = 2;
+Error 8800 (HY000): This row has a unaccessible label, row label [CONF|HR|US], user label [corp_access]
+select id from salary order by id;
+id
+revoke exemption on rule all for corp_access from user 'boss'@'%';
+select id from salary order by id;
+id
+select salary from salary;
+Error 1143 (42000): READ command denied to user 'boss'@'%' for column 'salary' in table 'salary'
+set global pkdb_lbac = 0;

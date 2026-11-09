@@ -217,7 +217,15 @@ func (tc *testCase) createTable(args []any) {
 			tc.statusHook.On("onEvict").Return().Once()
 		}
 	}
-	tc.is.Data.add(tableItem{pmodel.NewCIStr(args[1].(string)), tblInfo.DBID, tblInfo.Name, tblInfo.ID, int64(args[4].(int)), false}, internal.MockTable(tc.t, tc.r.Store(), tblInfo))
+	tc.is.Data.add(tableItem{
+		dbName:        pmodel.NewCIStr(args[1].(string)),
+		dbID:          tblInfo.DBID,
+		tableName:     tblInfo.Name,
+		tableID:       tblInfo.ID,
+		updateTS:      tblInfo.UpdateTS,
+		schemaVersion: int64(args[4].(int)),
+		tomb:          false,
+	}, internal.MockTable(tc.t, tc.r.Store(), tblInfo))
 	internal.AddTable(tc.t, tc.r.Store(), tblInfo.DBID, tblInfo)
 }
 

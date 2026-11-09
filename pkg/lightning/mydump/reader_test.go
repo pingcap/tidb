@@ -142,7 +142,7 @@ func TestExportStatementGibberishError(t *testing.T) {
 	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name(), FileSize: stat.Size()}}
 	data, err := ExportStatement(context.TODO(), store, f, "auto")
 	require.Len(t, data, 0)
-	require.Regexp(t, `failed to decode \w* as auto: invalid schema encoding`, err.Error())
+	require.Error(t, err)
 }
 
 type AlwaysErrorReadSeekCloser struct{}

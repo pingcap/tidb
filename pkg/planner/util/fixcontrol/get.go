@@ -50,8 +50,13 @@ const (
 	Fix44830 uint64 = 44830
 	// Fix44823 controls the maximum number of parameters for a query that can be cached in the Plan Cache.
 	Fix44823 uint64 = 44823
-	// Fix44855 controls whether to use a more accurate upper bound when estimating row count of index
-	// range scan under inner side of index join.
+	// Fix44855 controls the row count estimation of the inner side of an index join:
+	//   - When ON (default OFF for this part), the estimated row count of an inner index scan is
+	//     clamped to the upper bound (total row count / NDV of the probed join key columns).
+	//   - When not explicitly OFF (default ON for this part), the estimated row count of the inner
+	//     scan is raised to (total row count / NDV of the used key prefix) when the chosen path can
+	//     only build ranges from a subset of the join keys, since the remaining equality conditions
+	//     are evaluated at the join rather than at the scan (see #69974).
 	Fix44855 uint64 = 44855
 	// Fix45132 controls whether to use access range row count to determine access path on the Skyline pruning.
 	Fix45132 uint64 = 45132
@@ -71,6 +76,9 @@ const (
 	Fix52869 uint64 = 52869
 	// Fix54337 controls whether to apply or not range intersection for index access.
 	Fix54337 uint64 = 54337
+	// Fix70751 controls whether temporal constants and parameters compared with a direct TIME column
+	// are converted to the TIME column type. It is disabled by default. See #70751.
+	Fix70751 uint64 = 70751
 )
 
 // GetStr fetches the given key from the fix control map as a string type.

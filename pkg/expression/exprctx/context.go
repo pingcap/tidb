@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -75,6 +76,8 @@ type EvalContext interface {
 	Location() *time.Location
 	// CurrentDB return the current database name
 	CurrentDB() string
+	// CurrentDBCI returns the current database name in pmodel.CIStr.
+	CurrentDBCI() pmodel.CIStr
 	// CurrentTime returns the current time.
 	// Multiple calls for CurrentTime() should return the same value for the same `CtxID`.
 	CurrentTime() (time.Time, error)
@@ -130,6 +133,13 @@ type BuildContext interface {
 	ConnectionID() uint64
 	// IsReadonlyUserVar checks whether the user variable is readonly.
 	IsReadonlyUserVar(name string) bool
+	// LoadStoredFunction loads stored function info by schema and function name.
+	LoadStoredFunction(schema, funcName string) (*StoredFuncInfo, error)
+}
+
+// StoredFuncInfo contains the information of a stored function.
+type StoredFuncInfo struct {
+	RetType *types.FieldType
 }
 
 // ExprContext contains full context for expression building and evaluating.

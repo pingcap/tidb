@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -320,11 +321,8 @@ func BuildHistAndTopN(
 	sampleNum := int64(len(samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := float64(count) / float64(len(samples))
-	// If a numTopn value other than 100 is passed in, we assume it's a value that the user wants us to honor
-	allowPruning := true
-	if numTopN != 100 {
-		allowPruning = false
-	}
+	// If a numTopN value other than the active analyze default is passed in, we assume it's a value that the user wants us to honor.
+	allowPruning := isAnalyzeDefaultValue(numTopN, variable.AnalyzeDefaultNumTopN.Load())
 
 	// Step1: collect topn from samples
 
@@ -512,6 +510,10 @@ func BuildHistAndTopN(
 	}
 
 	return hg, topn, nil
+}
+
+func isAnalyzeDefaultValue(value int, defaultValue uint64) bool {
+	return value >= 0 && uint64(value) == defaultValue
 }
 
 // pruneTopNItem tries to prune the least common values in the top-n list if it is not significantly more common than the values not in the list.

@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "infoschema_test",
+    timeout = "short",
+    srcs = ["pkdb_infoschema_test.go"],
+    flaky = True,
+    shard_count = 20,
+    deps = [
+        "//pkg/domain",
+        "//pkg/infoschema",
+        "//pkg/parser/model",
+        "//pkg/sessionctx/variable",
+        "//pkg/testkit",
+        "@com_github_stretchr_testify//require",
+    ],
+)

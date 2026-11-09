@@ -23,6 +23,50 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type testRestoreInterceptor struct {
+	literal any
+	node    any
+	err     error
+}
+
+func (i *testRestoreInterceptor) RestoreLiteral(_ *RestoreCtx, literal any) (bool, error) {
+	i.literal = literal
+	return true, i.err
+}
+
+func (i *testRestoreInterceptor) AllowOriginalText(node any) bool {
+	i.node = node
+	return false
+}
+
+func TestRestoreInterceptor(t *testing.T) {
+	var output strings.Builder
+	ctx := NewRestoreCtx(DefaultRestoreFlags, &output)
+	literal := new(int)
+	node := new(string)
+
+	handled, err := ctx.TryRestoreLiteral(literal)
+	require.False(t, handled)
+	require.NoError(t, err)
+	require.True(t, ctx.CanUseOriginalText(node))
+
+	expectedErr := errors.New("restore failed")
+	interceptor := &testRestoreInterceptor{err: expectedErr}
+	ctx.SetRestoreInterceptor(interceptor)
+	handled, err = ctx.TryRestoreLiteral(literal)
+	require.True(t, handled)
+	require.ErrorIs(t, err, expectedErr)
+	require.Same(t, literal, interceptor.literal)
+	require.False(t, ctx.CanUseOriginalText(node))
+	require.Same(t, node, interceptor.node)
+
+	ctx.SetRestoreInterceptor(nil)
+	handled, err = ctx.TryRestoreLiteral(literal)
+	require.False(t, handled)
+	require.NoError(t, err)
+	require.True(t, ctx.CanUseOriginalText(node))
+}
+
 func checkFormat(t *testing.T, f Formatter, buf *bytes.Buffer, str, expect string) {
 	_, err := f.Format(str, 3)
 	require.NoError(t, err)

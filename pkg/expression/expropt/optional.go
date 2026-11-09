@@ -81,6 +81,9 @@ func (o *OptionalEvalPropProviders) Add(val exprctx.OptionalEvalPropProvider) {
 		case exprctx.OptPropPrivilegeChecker:
 			_, ok := val.(PrivilegeCheckerProvider)
 			intest.Assert(ok)
+		case exprctx.OptPropStmtCleanup:
+			_, ok := val.(StmtCleanupPropProvider)
+			intest.Assert(ok)
 		default:
 			intest.Assert(false)
 		}

@@ -547,3 +547,33 @@ func TestPessimisticDeleteYourWrites(t *testing.T) {
 	session2.MustExec("commit;")
 	session2.MustQuery("select * from x").Check(testkit.Rows("1 2"))
 }
+
+func TestExplicitDefaultsForTimestampDML(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("set timestamp = 1700000000")
+	tk.MustExec("create table t (id int primary key, ts timestamp not null)")
+
+	tk.MustExec("set session explicit_defaults_for_timestamp = off")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 explicit_defaults_for_timestamp is deprecated and will be removed in a future release."))
+
+	tk.MustExec("insert into t values (1, null)")
+	tk.MustQuery("select id, ts from t").Check(testkit.Rows("1 2023-11-14 22:13:20"))
+
+	tk.MustExec("update t set ts = null where id = 1")
+	tk.MustQuery("select row_count()").Check(testkit.Rows("0"))
+	tk.MustQuery("select id, ts from t").Check(testkit.Rows("1 2023-11-14 22:13:20"))
+
+	tk.MustExec("insert into t values (1, '2000-01-01') on duplicate key update ts = null")
+	tk.MustQuery("select id, ts from t").Check(testkit.Rows("1 2023-11-14 22:13:20"))
+
+	tk.MustExec("create table nullable_t (ts timestamp null)")
+	tk.MustExec("insert into nullable_t values (null)")
+	tk.MustExec("update nullable_t set ts = null")
+	tk.MustQuery("select ts is null from nullable_t").Check(testkit.Rows("1"))
+
+	tk.MustExec("set session explicit_defaults_for_timestamp = on")
+	require.Error(t, tk.ExecToErr("insert into t values (2, null)"))
+}

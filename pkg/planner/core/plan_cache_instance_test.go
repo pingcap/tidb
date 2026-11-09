@@ -33,14 +33,14 @@ func _put(pc sessionctx.InstancePlanCache, testKey, memUsage, statsHash int64) (
 }
 
 func _hit(t *testing.T, pc sessionctx.InstancePlanCache, testKey, statsHash int) {
-	v, ok := pc.Get(fmt.Sprintf("%v-%v", testKey, statsHash), nil)
-	require.True(t, ok)
+	v, status := pc.Get(fmt.Sprintf("%v-%v", testKey, statsHash), nil)
+	require.Equal(t, sessionctx.PlanCacheLookupHit, status)
 	require.Equal(t, v.(*PlanCacheValue).testKey, int64(testKey))
 }
 
 func _miss(t *testing.T, pc sessionctx.InstancePlanCache, testKey, statsHash int) {
-	_, ok := pc.Get(fmt.Sprintf("%v-%v", testKey, statsHash), nil)
-	require.False(t, ok)
+	_, status := pc.Get(fmt.Sprintf("%v-%v", testKey, statsHash), nil)
+	require.Equal(t, sessionctx.PlanCacheLookupKeyNotFound, status)
 }
 
 func TestInstancePlanCacheBasic(t *testing.T) {
@@ -121,6 +121,15 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	numHeads = 0
 	pcImpl.heads.Range(func(k, v any) bool { numHeads++; return true })
 	require.Equal(t, numHeads, 0)
+}
+
+func TestInstancePlanCacheEmptyHeadIsLookupMiss(t *testing.T) {
+	pc := NewInstancePlanCache(1000, 1000).(*instancePlanCache)
+	require.NotNil(t, pc.getHead("empty", true))
+
+	value, status := pc.Get("empty", nil)
+	require.Nil(t, value)
+	require.Equal(t, sessionctx.PlanCacheLookupKeyNotFound, status)
 }
 
 func TestInstancePlanCacheWithMatchOpts(t *testing.T) {

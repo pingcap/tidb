@@ -253,7 +253,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment, all
 			State:                  kv.MppTaskReady,
 			ResourceGroupName:      rgName,
 			ConnectionID:           c.sessionCtx.GetSessionVars().ConnectionID,
-			ConnectionAlias:        c.sessionCtx.ShowProcess().SessionAlias,
+			ConnectionAlias:        c.sessionCtx.GetSessionVars().SessionAlias,
 		}
 		c.reqMap[req.ID] = &mppRequestReport{mppReq: req, receivedReport: false, errMsg: "", executionSummaries: nil}
 		c.mppReqs = append(c.mppReqs, req)
@@ -664,8 +664,10 @@ func (c *localMppCoordinator) closeWithoutReport() {
 	if atomic.CompareAndSwapUint32(&c.closed, 0, 1) {
 		close(c.finishCh)
 	}
-	c.cancelFunc()
-	<-c.wgDoneChan
+	if c.cancelFunc != nil {
+		c.cancelFunc()
+		<-c.wgDoneChan
+	}
 }
 
 func (c *localMppCoordinator) handleMPPStreamResponse(bo *backoff.Backoffer, response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {

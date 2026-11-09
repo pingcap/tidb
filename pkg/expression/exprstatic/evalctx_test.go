@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -114,7 +115,7 @@ func getEvalCtxOptionsForTest(t *testing.T) ([]EvalCtxOption, *evalCtxOptionsTes
 			errctx.ErrGroupDividedByZero: errctx.LevelWarn,
 		}),
 		WithLocation(loc),
-		WithCurrentDB("db1"),
+		WithCurrentDB(pmodel.NewCIStr("db1")),
 		WithCurrentTime(func() (time.Time, error) {
 			return s.now, nil
 		}),
@@ -459,7 +460,7 @@ func TestMakeEvalContextStatic(t *testing.T) {
 		WithTypeFlags(types.FlagAllowNegativeToUnsigned|types.FlagSkipASCIICheck),
 		WithErrLevelMap(errctx.LevelMap{}),
 		WithLocation(time.UTC),
-		WithCurrentDB("db1"),
+		WithCurrentDB(pmodel.NewCIStr("db1")),
 		WithCurrentTime(func() (time.Time, error) {
 			return time.Now(), nil
 		}),

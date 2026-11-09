@@ -126,6 +126,76 @@ func TestCapturePlanBaseline(t *testing.T) {
 	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` > 10", rows[0][1])
 }
 
+// TestCaptureBindingDigestVocabulary: a captured row's
+// SQLDigest must land in the mysql.bind_info.sql_digest vocabulary, so the
+// GetBinding dedup in CaptureBaselines recognizes an equivalent manual
+// binding instead of creating a near-duplicate row. The single-element
+// in-list shape is load-bearing: equality predicates and multi-element
+// in-lists normalize identically under both vocabularies, so any other shape
+// would stay green even on the unfixed baseline.
+func TestCaptureBindingDigestVocabulary(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
+	defer func() {
+		tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
+	}()
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx_b(b))")
+
+	// A manual binding for the exact shape under capture; its persisted
+	// sql_digest is the vocabulary anchor.
+	tk.MustExec("create global binding for select * from t where a in (1) using select * from t use index(idx_b) where a in (1)")
+	qaWaitBindingCacheLoaded(t, tk)
+	rows := tk.MustQuery("select sql_digest from mysql.bind_info where status = 'enabled' and source = 'manual'").Rows()
+	require.Len(t, rows, 1, "exactly one manual fixture binding")
+	manualDigest := rows[0][0].(string)
+
+	// The vocabulary contrast for this shape: the exec digest of the same
+	// text differs, so a captured digest on the exec side cannot hit the
+	// manual row's key.
+	_, execDigest := parser.NormalizeDigest("select * from t where a in (1)")
+	require.NotEqual(t, execDigest.String(), manualDigest)
+
+	// Dedup: with an equivalent manual binding present, capture must skip.
+	tk.MustExec("select * from t where a in (1)")
+	tk.MustExec("select * from t where a in (1)")
+	tk.MustExec("admin capture bindings")
+	require.Len(t, tk.MustQuery("select sql_digest from mysql.bind_info where source = 'capture'").Rows(), 0,
+		"capture must skip when an equivalent manual binding exists")
+
+	// Three-way equality: the manual row's digest == the normalizer's
+	// binding vocabulary of the same statement (the call every runtime
+	// producer uses) — and, after the drop below, the captured row will
+	// join them on the same value.
+	stmtNode, err := parser.New().ParseOneStmt("select * from t where a in (1)", "", "")
+	require.NoError(t, err)
+	_, normDigest := norm.NormalizeStmtForBinding(stmtNode, norm.WithSpecifiedDB("test"))
+	require.Equal(t, manualDigest, normDigest,
+		"the manual row's sql_digest must be the binding vocabulary of the same statement")
+
+	// Negative control: without the manual binding the capture path runs and
+	// creates the row — in the binding vocabulary, three-way closed.
+	tk.MustExec("drop global binding for select * from t where a in (1)")
+	require.Eventually(t, func() bool {
+		return fmt.Sprint(tk.MustQuery("show binding_cache status").Rows()[0][0]) == "0"
+	}, 10*time.Second, 200*time.Millisecond, "the dropped binding must leave the cache before re-capture")
+	tk.MustExec("select * from t where a in (1)")
+	tk.MustExec("select * from t where a in (1)")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("select sql_digest, original_sql from mysql.bind_info where source = 'capture'").Rows()
+	require.Len(t, rows, 1, "capture must create the row once the equivalent manual binding is gone")
+	require.Equal(t, manualDigest, rows[0][0],
+		"the captured digest must equal the manual row's (captured == manual == normalizer)")
+	require.Contains(t, rows[0][1], "in ( ... )",
+		"the captured original_sql must keep the binding-vocabulary in-list")
+}
+
 func TestCapturePlanBaseline4DisabledStatus(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
@@ -419,7 +489,7 @@ func TestUpdateSubqueryCapture(t *testing.T) {
 	tk.MustExec("admin capture bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
-	bindSQL := "UPDATE /*+ hash_join(`test`.`t2`@`sel_2`), hash_join(`test`.`t1`), use_index(@`upd_1` `test`.`t1` `idx_b`), no_order_index(@`upd_1` `test`.`t1` `idx_b`), use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_2` `test`.`t2` )*/ `test`.`t1` SET `b`=1 WHERE `b` = 2 AND (`a` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1) OR `c` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1))"
+	bindSQL := "UPDATE /*+ hash_join(`test`.`t1`), use_index(@`upd_1` `test`.`t1` `idx_b`), no_order_index(@`upd_1` `test`.`t1` `idx_b`), use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_2` `test`.`t2` )*/ `test`.`t1` SET `b`=1 WHERE `b` = 2 AND (`a` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1) OR `c` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1))"
 	originSQL := "UPDATE `test`.`t1` SET `b`=1 WHERE `b` = 2 AND (`a` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1) OR `c` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1))"
 	require.Equal(t, bindSQL, rows[0][1])
 	tk.MustExec(originSQL)
@@ -527,9 +597,9 @@ func TestIssue25505(t *testing.T) {
 	spmMap["with recursive `cte` ( `a` ) as ( select ? union select `a` + ? from `test` . `t1` where `a` > ? ) select * from `cte`"] =
 		"WITH RECURSIVE `cte` (`a`) AS (SELECT 2 UNION SELECT `a` + 1 FROM `test`.`t1` WHERE `a` > 5) SELECT /*+ hash_agg(@`sel_1`), use_index(@`sel_3` `test`.`t1` `idx_b`), no_order_index(@`sel_3` `test`.`t1` `idx_b`)*/ * FROM `cte`"
 	spmMap["with `cte` as ( with `cte1` as ( select * from `test` . `t2` where `a` > ? and `b` > ? ) select * from `cte1` ) select * from `cte` join `test` . `t1` on `t1` . `a` = `cte` . `a`"] =
-		"WITH `cte` AS (WITH `cte1` AS (SELECT * FROM `test`.`t2` WHERE `a` > 1 AND `b` > 1) SELECT * FROM `cte1`) SELECT /*+ use_index(@`sel_3` `test`.`t2` `idx_ab`), order_index(@`sel_3` `test`.`t2` `idx_ab`), use_index(@`sel_1` `test`.`t1` `idx_ab`), order_index(@`sel_1` `test`.`t1` `idx_ab`)*/ * FROM `cte` JOIN `test`.`t1` ON `t1`.`a` = `cte`.`a`"
+		"WITH `cte` AS (WITH `cte1` AS (SELECT * FROM `test`.`t2` WHERE `a` > 1 AND `b` > 1) SELECT * FROM `cte1`) SELECT /*+ merge_join(`test`.`t1`), use_index(@`sel_3` `test`.`t2` `idx_ab`), order_index(@`sel_3` `test`.`t2` `idx_ab`), use_index(@`sel_1` `test`.`t1` `idx_ab`), order_index(@`sel_1` `test`.`t1` `idx_ab`)*/ * FROM `cte` JOIN `test`.`t1` ON `t1`.`a` = `cte`.`a`"
 	spmMap["with `cte` as ( with `cte1` as ( select * from `test` . `t2` where `a` = ? and `b` = ? ) select * from `cte1` ) select * from `cte` join `test` . `t1` on `t1` . `a` = `cte` . `a`"] =
-		"WITH `cte` AS (WITH `cte1` AS (SELECT * FROM `test`.`t2` WHERE `a` = 1 AND `b` = 1) SELECT * FROM `cte1`) SELECT /*+ use_index(@`sel_3` `test`.`t2` `idx_a`), no_order_index(@`sel_3` `test`.`t2` `idx_a`), use_index(@`sel_1` `test`.`t1` `idx_a`), no_order_index(@`sel_1` `test`.`t1` `idx_a`)*/ * FROM `cte` JOIN `test`.`t1` ON `t1`.`a` = `cte`.`a`"
+		"WITH `cte` AS (WITH `cte1` AS (SELECT * FROM `test`.`t2` WHERE `a` = 1 AND `b` = 1) SELECT * FROM `cte1`) SELECT /*+ inl_hash_join(`test`.`t1`), use_index(@`sel_3` `test`.`t2` `idx_a`), no_order_index(@`sel_3` `test`.`t2` `idx_a`), use_index(@`sel_1` `test`.`t1` `idx_a`), no_order_index(@`sel_1` `test`.`t1` `idx_a`)*/ * FROM `cte` JOIN `test`.`t1` ON `t1`.`a` = `cte`.`a`"
 
 	tk.MustExec("with cte as (with cte1 as (select /*+use_index(t2 idx_a)*/ * from t2 where a = 1 and b = 1) select * from cte1) select /*+use_index(t1 idx_a)*/ * from cte join t1 on t1.a=cte.a;")
 	tk.MustExec("with cte as (with cte1 as (select /*+use_index(t2 idx_a)*/ * from t2 where a = 1 and b = 1) select * from cte1) select /*+use_index(t1 idx_a)*/ * from cte join t1 on t1.a=cte.a;")

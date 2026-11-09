@@ -15,6 +15,8 @@
 package privileges
 
 import (
+	"strings"
+
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -45,20 +47,22 @@ func (f *userAttrFilter) Visible(user, host string) bool {
 	case attrVisAll:
 		return true
 	case attrVisSelf, attrVisNonSystem:
-		record := f.priv.matchUser(user, host)
-		if record != nil && record.match(f.viewerUser, f.viewerHost) {
+		// Account identity uses the authenticated host, not host pattern matching.
+		if user == f.viewerUser && strings.EqualFold(host, f.viewerHost) {
 			return true
 		}
 		if f.mode == attrVisSelf {
 			return false
 		}
-		return !f.priv.RequestDynamicVerification(nil, user, host, "SYSTEM_USER", false)
+		roles := f.priv.getDefaultRoles(user, host)
+		return !f.priv.RequestDynamicVerification(roles, user, host, "SYSTEM_USER", false)
 	default:
 		return false
 	}
 }
 
 // NewUserAttrFilter builds a row filter for INFORMATION_SCHEMA.USER_ATTRIBUTES.
+// viewerUser and viewerHost must identify the authenticated account.
 // See https://dev.mysql.com/doc/refman/8.4/en/information-schema-user-attributes-table.html
 func NewUserAttrFilter(
 	activeRoles []*auth.RoleIdentity,

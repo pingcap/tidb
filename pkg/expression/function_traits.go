@@ -35,7 +35,6 @@ var UnCacheableFunctions = map[string]struct{}{
 	// functions below are incompatible with (non-prep) plan cache, we'll fix them one by one later.
 	ast.JSONObject:       {},
 	ast.JSONArray:        {},
-	ast.Coalesce:         {},
 	ast.Convert:          {},
 	ast.TimeLiteral:      {},
 	ast.DateLiteral:      {},
@@ -46,22 +45,27 @@ var UnCacheableFunctions = map[string]struct{}{
 
 // unFoldableFunctions stores functions which can not be folded duration constant folding stage.
 var unFoldableFunctions = map[string]struct{}{
-	ast.Sysdate:   {},
-	ast.FoundRows: {},
-	ast.Rand:      {},
-	ast.UUID:      {},
-	ast.Sleep:     {},
-	ast.RowFunc:   {},
-	ast.Values:    {},
-	ast.SetVar:    {},
-	ast.GetVar:    {},
-	ast.GetParam:  {},
-	ast.Benchmark: {},
-	ast.DayName:   {},
-	ast.NextVal:   {},
-	ast.LastVal:   {},
-	ast.SetVal:    {},
-	ast.AnyValue:  {},
+	ast.Sysdate:         {},
+	ast.FoundRows:       {},
+	ast.Rand:            {},
+	ast.UUID:            {},
+	ast.UUIDShort:       {},
+	ast.Sleep:           {},
+	ast.RowFunc:         {},
+	ast.Values:          {},
+	ast.SetVar:          {},
+	ast.GetVar:          {},
+	ast.GetParam:        {},
+	ast.Benchmark:       {},
+	ast.DayName:         {},
+	ast.NextVal:         {},
+	ast.LastVal:         {},
+	ast.SetVal:          {},
+	ast.AnyValue:        {},
+	ast.SetProcedureVar: {},
+	ast.GetProcedureVar: {},
+	ast.Seclabel:        {},
+	ast.SeclabelToChar:  {},
 }
 
 // DisableFoldFunctions stores functions which prevent child scope functions from being constant folded.
@@ -122,6 +126,7 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 	ast.Sleep:            {},
 	ast.Sysdate:          {},
 	ast.SystemUser:       {},
+	ast.TiDBRowID:        {},
 	ast.User:             {},
 	ast.Values:           {},
 	ast.Encrypt:          {},
@@ -130,6 +135,8 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 	ast.SetVar:           {},
 	ast.GetVar:           {},
 	ast.ReleaseAllLocks:  {},
+	ast.SetProcedureVar:  {},
+	ast.GetProcedureVar:  {},
 }
 
 // IsDeferredFunctions checks whether the function is in DeferredFunctions.
@@ -240,14 +247,16 @@ var mutableEffectsFunctions = map[string]struct{}{
 	ast.CurrentDate:      {},
 	ast.UTCDate:          {},
 
-	ast.Rand:        {},
-	ast.RandomBytes: {},
-	ast.UUID:        {},
-	ast.UUIDShort:   {},
-	ast.Sleep:       {},
-	ast.SetVar:      {},
-	ast.GetVar:      {},
-	ast.AnyValue:    {},
+	ast.Rand:            {},
+	ast.RandomBytes:     {},
+	ast.UUID:            {},
+	ast.UUIDShort:       {},
+	ast.Sleep:           {},
+	ast.SetVar:          {},
+	ast.GetVar:          {},
+	ast.AnyValue:        {},
+	ast.SetProcedureVar: {},
+	ast.GetProcedureVar: {},
 }
 
 // some functions do NOT have right implementations, but may have noop ones(like with any inputs, always return 1)
@@ -281,4 +290,5 @@ var booleanFunctions = map[string]struct{}{
 	ast.JSONSchemaValid:    {},
 	ast.JSONValid:          {},
 	ast.RegexpLike:         {},
+	ast.LabelAceesible:     {},
 }

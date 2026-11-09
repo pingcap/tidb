@@ -526,6 +526,8 @@ const (
 	ColumnOptionColumnFormat
 	ColumnOptionStorage
 	ColumnOptionAutoRandom
+	ColumnOptionEncryption
+	ColumnOptionSecuredWith
 )
 
 var (
@@ -674,6 +676,9 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 			}
 			return nil
 		})
+	case ColumnOptionSecuredWith:
+		ctx.WriteKeyWord("SECURED WITH ")
+		ctx.WriteName(n.StrValue)
 	default:
 		return errors.New("An error occurred while splicing ColumnOption")
 	}
@@ -1121,8 +1126,12 @@ type CreateTableStmt struct {
 	Constraints    []*Constraint
 	Options        []*TableOption
 	Partition      *PartitionOptions
-	OnDuplicate    OnDuplicateKeyHandlingType
+
+	// used for CREATE TABLE AS SELECT (CTAS)
 	Select         ResultSetNode
+	SelectColumns  []*model.CIStr
+	CTASSnapshotTS uint64
+	OnDuplicate    OnDuplicateKeyHandlingType // 0 means not specified, 1 means IGNORE, 2 means REPLACE
 }
 
 // Restore implements Node interface.
@@ -2520,6 +2529,7 @@ const (
 	TableOptionTableCheckSum
 	TableOptionUnion
 	TableOptionEncryption
+	TableOptionSecurityPolicy
 	TableOptionTTL
 	TableOptionTTLEnable
 	TableOptionTTLJobInterval
@@ -2832,6 +2842,9 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("ENCRYPTION ")
 		ctx.WritePlain("= ")
 		ctx.WriteString(n.StrValue)
+	case TableOptionSecurityPolicy:
+		ctx.WriteKeyWord("SECURITY POLICY ")
+		ctx.WriteName(n.StrValue)
 	case TableOptionPlacementPolicy:
 		if ctx.Flags.HasSkipPlacementRuleForRestoreFlag() {
 			return nil

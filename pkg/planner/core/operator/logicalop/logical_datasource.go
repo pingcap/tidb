@@ -84,7 +84,9 @@ type DataSource struct {
 	// The data source may be a partition, rather than a real table.
 	PartitionDefIdx *int
 	PhysicalTableID int64
-	PartitionNames  []pmodel.CIStr
+	// StaticPrunedPartitionIDs records the partitions selected by static pruning while keeping the datasource dynamic.
+	StaticPrunedPartitionIDs []int64
+	PartitionNames           []pmodel.CIStr
 
 	// handleCol represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.
@@ -129,6 +131,9 @@ type DataSource struct {
 	// NOTE: This list does not distinguish between the type of predicate or usage. It is used in
 	// index pruning early in the planning phase - which is an approximate heuristic.
 	InterestingColumns []*expression.Column
+
+	// TableSplit is a split (range) of the table to read.
+	TableSplit *ast.TableSplit
 }
 
 // Init initializes DataSource.

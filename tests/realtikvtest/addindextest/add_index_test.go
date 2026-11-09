@@ -143,6 +143,21 @@ func TestIssue51162(t *testing.T) {
 	tk.MustExec("admin check table tl")
 }
 
+func TestAddIndexOnGB18030Bin(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+		a varchar(198) COLLATE gb18030_bin NOT NULL,
+		b varchar(178) COLLATE gb18030_bin NOT NULL,
+		PRIMARY KEY (b,a),
+		KEY k1 (b,a),
+		KEY k2 (b)
+	) ENGINE=InnoDB DEFAULT CHARSET=gb18030 COLLATE=gb18030_bin;`)
+	tk.MustExec("insert into t values ('a', 'b');")
+	tk.MustExec("admin check table t;")
+}
+
 func TestAddUKWithSmallIntHandles(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)

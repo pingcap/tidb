@@ -156,8 +156,14 @@ func mergeCreateTableJobs(jobWs []*JobWrapper) ([]*JobWrapper, error) {
 			resJobWs = append(resJobWs, jobW)
 			continue
 		}
-		// ActionCreateTables doesn't support foreign key now.
 		args := jobW.JobArgs.(*model.CreateTableArgs)
+		// CTAS keeps its own per-job load/cancel lifecycle, so it must stay on the
+		// single-table path even when fast create table is enabled.
+		if args.CTASSnapshotTS != 0 || args.CTASSql != "" {
+			resJobWs = append(resJobWs, jobW)
+			continue
+		}
+		// ActionCreateTables doesn't support foreign key now.
 		if len(args.TableInfo.ForeignKeys) > 0 {
 			resJobWs = append(resJobWs, jobW)
 			continue

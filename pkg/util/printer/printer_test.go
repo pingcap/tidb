@@ -50,3 +50,8 @@ func TestPrintResult(t *testing.T) {
 	require.False(t, ok)
 	require.Equal(t, "", result)
 }
+
+func TestGetTiDBInfo(t *testing.T) {
+	info := GetTiDBInfo()
+	require.Contains(t, info, "\nCore Version: v8.5.5")
+}

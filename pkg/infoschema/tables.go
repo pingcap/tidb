@@ -97,7 +97,9 @@ const (
 	tablePlugins    = "PLUGINS"
 	// TableConstraints is the string constant of TABLE_CONSTRAINTS.
 	TableConstraints = "TABLE_CONSTRAINTS"
-	tableTriggers    = "TRIGGERS"
+	// TableTriggers is the string constant of TRIGGERS.
+	TableTriggers = "TRIGGERS"
+	tableTriggers = TableTriggers
 	// TableUserPrivileges is the string constant of infoschema user privilege table.
 	TableUserPrivileges = "USER_PRIVILEGES"
 	// TableSchemaPrivileges provides information about schema privileges
@@ -109,9 +111,11 @@ const (
 	// TableEngines is the string constant of infoschema table.
 	TableEngines = "ENGINES"
 	// TableViews is the string constant of infoschema table.
-	TableViews           = "VIEWS"
-	tableRoutines        = "ROUTINES"
-	tableParameters      = "PARAMETERS"
+	TableViews = "VIEWS"
+	// TableRoutines is the string constant of infoschema table.
+	TableRoutines = "ROUTINES"
+	// TableParameters is the string constant of infoschema table.
+	TableParameters      = "PARAMETERS"
 	tableEvents          = "EVENTS"
 	tableGlobalStatus    = "GLOBAL_STATUS"
 	tableGlobalVariables = "GLOBAL_VARIABLES"
@@ -140,8 +144,12 @@ const (
 	TableTiDBServersInfo = "TIDB_SERVERS_INFO"
 	// TableSlowQuery is the string constant of slow query memory table.
 	TableSlowQuery = "SLOW_QUERY"
+	// TableAuditLog is the string constant of audit log memory table.
+	TableAuditLog = "AUDIT_LOG"
 	// TableClusterInfo is the string constant of cluster info memory table.
 	TableClusterInfo = "CLUSTER_INFO"
+	// TableClusterMonitoring contains the monitoring service address used by METRICS_SCHEMA.
+	TableClusterMonitoring = "CLUSTER_MONITORING"
 	// TableClusterConfig is the string constant of cluster configuration memory table.
 	TableClusterConfig = "CLUSTER_CONFIG"
 	// TableClusterLog is the string constant of cluster log memory table.
@@ -210,6 +218,8 @@ const (
 	TableMemoryUsage = "MEMORY_USAGE"
 	// TableMemoryUsageOpsHistory is the memory control operators history.
 	TableMemoryUsageOpsHistory = "MEMORY_USAGE_OPS_HISTORY"
+	// TableUserLoginHistory is the history of user login.
+	TableUserLoginHistory = "User_LOGIN_HISTORY"
 	// TableResourceGroups is the metadata of resource groups.
 	TableResourceGroups = "RESOURCE_GROUPS"
 	// TableRunawayWatches is the query list of runaway watch.
@@ -222,6 +232,16 @@ const (
 	TableKeywords = "KEYWORDS"
 	// TableTiDBIndexUsage is a table to show the usage stats of indexes in the current instance.
 	TableTiDBIndexUsage = "TIDB_INDEX_USAGE"
+	// TableRegions is the string constant of table regions.
+	TableRegions = "TABLE_REGIONS"
+	// TableLogReplStatusGlobal is the table to show the global log replication status.
+	TableLogReplStatusGlobal = "LR_STATUS_GLOBAL"
+	// TableLogReplClusterStatusGlobal is the table to show the global log replication cluster status.
+	TableLogReplClusterStatusGlobal = "LR_CLUSTER_STATUS_GLOBAL"
+	// TableLogReplWorkflowHistoryGlobal is the table to show the global workflow history.
+	TableLogReplWorkflowHistoryGlobal = "LR_WORKFLOW_HISTORY_GLOBAL"
+	// TableLogReplStatusLocal is the table to show the local log replication status.
+	TableLogReplStatusLocal = "LR_STATUS_LOCAL"
 )
 
 const (
@@ -271,8 +291,8 @@ var tableIDMap = map[string]int64{
 	TableColumnPrivileges:                   autoid.InformationSchemaDBID + 21,
 	TableEngines:                            autoid.InformationSchemaDBID + 22,
 	TableViews:                              autoid.InformationSchemaDBID + 23,
-	tableRoutines:                           autoid.InformationSchemaDBID + 24,
-	tableParameters:                         autoid.InformationSchemaDBID + 25,
+	TableRoutines:                           autoid.InformationSchemaDBID + 24,
+	TableParameters:                         autoid.InformationSchemaDBID + 25,
 	tableEvents:                             autoid.InformationSchemaDBID + 26,
 	tableGlobalStatus:                       autoid.InformationSchemaDBID + 27,
 	tableGlobalVariables:                    autoid.InformationSchemaDBID + 28,
@@ -401,7 +421,7 @@ func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 		Collate: mysql.DefaultCollationName,
 	}
 	for offset, c := range cs {
-		if tblInfo.Name.O == ClusterTableSlowLog && mysql.HasPriKeyFlag(c.flag) {
+		if (tblInfo.Name.O == ClusterTableSlowLog || tblInfo.Name.O == ClusterTableAuditLog) && mysql.HasPriKeyFlag(c.flag) {
 			switch c.tp {
 			case mysql.TypeLong, mysql.TypeLonglong,
 				mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
@@ -488,7 +508,7 @@ var columnsCols = []columnInfo{
 	{name: "COLLATION_NAME", tp: mysql.TypeVarchar, size: 32},
 	{name: "COLUMN_TYPE", tp: mysql.TypeBlob, size: 196606},
 	{name: "COLUMN_KEY", tp: mysql.TypeVarchar, size: 3},
-	{name: "EXTRA", tp: mysql.TypeVarchar, size: 45},
+	{name: "EXTRA", tp: mysql.TypeVarchar, size: 48},
 	{name: "PRIVILEGES", tp: mysql.TypeVarchar, size: 80},
 	{name: "COLUMN_COMMENT", tp: mysql.TypeVarchar, size: 1024},
 	{name: "GENERATION_EXPRESSION", tp: mysql.TypeBlob, size: 589779, flag: mysql.NotNullFlag},
@@ -870,6 +890,7 @@ var tableProcesslistCols = []columnInfo{
 	{name: "ROWS_AFFECTED", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "TIDB_CPU", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, deflt: 0},
 	{name: "TIKV_CPU", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, deflt: 0},
+	{name: "PROXY_HOST", tp: mysql.TypeVarchar, size: 64},
 }
 
 var tableTiDBIndexesCols = []columnInfo{
@@ -976,6 +997,39 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogQuerySQLStr, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 }
 
+var auditLogCols = []columnInfo{
+	{name: "TIME", tp: mysql.TypeTimestamp, size: 26, decimal: 6, flag: mysql.PriKeyFlag | mysql.NotNullFlag | mysql.BinaryFlag},
+	{name: "ID", tp: mysql.TypeVarchar, size: 64},
+	{name: "EVENT", tp: mysql.TypeVarchar, size: 256},
+	{name: "USER", tp: mysql.TypeVarchar, size: 64},
+	{name: "ROLES", tp: mysql.TypeVarchar, size: 256},
+	{name: "CONNECTION_ID", tp: mysql.TypeVarchar, size: 256},
+	{name: "TABLES", tp: mysql.TypeVarchar, size: 256},
+	{name: "STATUS_CODE", tp: mysql.TypeVarchar, size: 20},
+	{name: "REASON", tp: mysql.TypeVarchar, size: 256},
+
+	{name: "CURRENT_DB", tp: mysql.TypeVarchar, size: 64},
+	{name: "SQL_TEXT", tp: mysql.TypeVarchar, size: 1024},
+	{name: "EXECUTE_PARAMS", tp: mysql.TypeVarchar, size: 256},
+	{name: "AFFECTED_ROWS", tp: mysql.TypeVarchar, size: 256},
+
+	{name: "CONNECTION_TYPE", tp: mysql.TypeVarchar, size: 20},
+	{name: "PID", tp: mysql.TypeVarchar, size: 256},
+	{name: "SERVER_VERSION", tp: mysql.TypeVarchar, size: 100},
+	{name: "SSL_VERSION", tp: mysql.TypeVarchar, size: 64},
+	{name: "HOST_IP", tp: mysql.TypeVarchar, size: 64},
+	{name: "HOST_PORT", tp: mysql.TypeVarchar, size: 64},
+	{name: "CLIENT_IP", tp: mysql.TypeVarchar, size: 64},
+	{name: "CLIENT_PORT", tp: mysql.TypeVarchar, size: 64},
+	{name: "AUTH_METHOD", tp: mysql.TypeVarchar, size: 64},
+	{name: "CONN_ATTRS", tp: mysql.TypeVarchar, size: 200},
+
+	{name: "AUDIT_OP_TARGET", tp: mysql.TypeVarchar, size: 256},
+	{name: "AUDIT_OP_ARGS", tp: mysql.TypeVarchar, size: 256},
+
+	{name: "INFO", tp: mysql.TypeVarchar, size: 1024},
+}
+
 // TableTiDBHotRegionsCols is TiDB hot region mem table columns.
 var TableTiDBHotRegionsCols = []columnInfo{
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
@@ -1080,6 +1134,20 @@ var TableTiKVRegionStatusCols = []columnInfo{
 	{name: "APPROXIMATE_KEYS", tp: mysql.TypeLonglong, size: 21},
 	{name: "REPLICATIONSTATUS_STATE", tp: mysql.TypeVarchar, size: 64},
 	{name: "REPLICATIONSTATUS_STATEID", tp: mysql.TypeLonglong, size: 21},
+}
+
+// TableRegionsCols is table regions mem table columns.
+var TableRegionsCols = []columnInfo{
+	{name: "REGION_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "START_KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
+	{name: "END_KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "DB_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "PARTITION_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "PARTITION_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "APPROXIMATE_SIZE", tp: mysql.TypeLonglong, size: 21},
+	{name: "APPROXIMATE_KEYS", tp: mysql.TypeLonglong, size: 21},
 }
 
 // TableTiKVRegionPeersCols is TiKV region peers mem table columns.
@@ -1395,6 +1463,11 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.LastSeenStr, tp: mysql.TypeTimestamp, size: 26, flag: mysql.NotNullFlag, comment: "The time these statements are seen for the last time"},
 	{name: stmtsummary.PlanInCacheStr, tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the last statement hit plan cache"},
 	{name: stmtsummary.PlanCacheHitsStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of times these statements hit plan cache"},
+	{name: stmtsummary.PlanCacheMissesStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of times these statements fall back from plan cache"},
+	{name: stmtsummary.PlanCacheMissTopReasonStr, tp: mysql.TypeVarchar, size: 64, comment: "The most frequent plan cache fallback reason"},
+	{name: stmtsummary.PlanCacheMissTopReasonCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of plan cache fallbacks with the most frequent reason"},
+	{name: stmtsummary.PlanCacheMissLastReasonStr, tp: mysql.TypeVarchar, size: 64, comment: "The reason for the latest plan cache fallback"},
+	{name: stmtsummary.PlanCacheMissLastSeenStr, tp: mysql.TypeTimestamp, size: 26, decimal: 6, comment: "The time of the latest plan cache fallback"},
 	{name: stmtsummary.PlanInBindingStr, tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the last statement is matched with the hints in the binding"},
 	{name: stmtsummary.QuerySampleTextStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled original statement"},
 	{name: stmtsummary.PrevSampleTextStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The previous statement before commit"},
@@ -1415,6 +1488,15 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.PlanCacheUnqualifiedLastReasonStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The last reason why the statement is not supported by the plan cache"},
 	{name: stmtsummary.StorageKVStr, tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the last statement read data from TiKV"},
 	{name: stmtsummary.StorageMPPStr, tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the last statement read data from TiFlash"},
+	// Keep new columns at the end to preserve existing statement-summary column offsets.
+	{name: stmtsummary.PlanCacheMissUnknownCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of plan cache misses with an unknown reason"},
+	{name: stmtsummary.PlanCacheMissCacheDisabledCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of plan cache misses because the cache was disabled"},
+	{name: stmtsummary.PlanCacheMissUnsupportedStatementTypeCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of plan cache misses for unsupported statement types"},
+	{name: stmtsummary.PlanCacheMissNotCacheableCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of plan cache misses because the plan was not cacheable"},
+	{name: stmtsummary.PlanCacheMissParameterTypeMismatchCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of plan cache misses from parameter type mismatch"},
+	{name: stmtsummary.PlanCacheMissLookupMissCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of plan cache misses with no cached candidate"},
+	{name: stmtsummary.PlanCacheMissReuseRejectedCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of plan cache misses after rejecting a cached candidate"},
+	{name: stmtsummary.PlanCacheMissCacheInsertFailedCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of plan cache misses because no cache entry was retained"},
 }
 
 var tableStorageStatsCols = []columnInfo{
@@ -1689,6 +1771,18 @@ var tableMemoryUsageOpsHistoryCols = []columnInfo{
 	{name: "USER", tp: mysql.TypeVarchar, size: 16},
 	{name: "SQL_DIGEST", tp: mysql.TypeVarchar, size: 64},
 	{name: "SQL_TEXT", tp: mysql.TypeVarchar, size: 256},
+}
+
+var tableUserLoginHistoryCols = []columnInfo{
+	{name: "TIME", tp: mysql.TypeDatetime, size: 64},
+	{name: "SERVER_HOST", tp: mysql.TypeVarchar, size: 64},
+	{name: "USER", tp: mysql.TypeVarchar, size: 32},
+	{name: "USER_HOST", tp: mysql.TypeVarchar, size: 64},
+	{name: "DB", tp: mysql.TypeVarchar, size: 64},
+	{name: "CONNECTION_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "RESULT", tp: mysql.TypeVarchar, size: 16},
+	{name: "CLIENT_HOST", tp: mysql.TypeVarchar, size: 64},
+	{name: "DETAIL", tp: mysql.TypeVarchar, size: 1024},
 }
 
 var tableResourceGroupsCols = []columnInfo{
@@ -2339,8 +2433,8 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableColumnPrivileges:                   tableColumnPrivilegesCols,
 	TableEngines:                            tableEnginesCols,
 	TableViews:                              tableViewsCols,
-	tableRoutines:                           tableRoutinesCols,
-	tableParameters:                         tableParametersCols,
+	TableRoutines:                           tableRoutinesCols,
+	TableParameters:                         tableParametersCols,
 	tableEvents:                             tableEventsCols,
 	tableGlobalStatus:                       tableGlobalStatusCols,
 	tableGlobalVariables:                    tableGlobalVariablesCols,
@@ -2351,6 +2445,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableProcesslist:                        tableProcesslistCols,
 	TableTiDBIndexes:                        tableTiDBIndexesCols,
 	TableSlowQuery:                          slowQueryCols,
+	TableAuditLog:                           auditLogCols,
 	TableTiDBHotRegions:                     TableTiDBHotRegionsCols,
 	TableTiDBHotRegionsHistory:              TableTiDBHotRegionsHistoryCols,
 	TableTiKVStoreStatus:                    TableTiKVStoreStatusCols,
@@ -2359,6 +2454,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiKVRegionPeers:                    TableTiKVRegionPeersCols,
 	TableTiDBServersInfo:                    tableTiDBServersInfoCols,
 	TableClusterInfo:                        tableClusterInfoCols,
+	TableClusterMonitoring:                  tableClusterMonitoringCols,
 	TableClusterConfig:                      tableClusterConfigCols,
 	TableClusterLog:                         tableClusterLogCols,
 	TableClusterLoad:                        tableClusterLoadCols,
@@ -2399,6 +2495,12 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBCheckConstraints:               tableTiDBCheckConstraintsCols,
 	TableKeywords:                           tableKeywords,
 	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
+	TableUserLoginHistory:                   tableUserLoginHistoryCols,
+	TableRegions:                            TableRegionsCols,
+	TableLogReplStatusGlobal:                TableLogReplStatusGlobalCols,
+	TableLogReplClusterStatusGlobal:         TableLogReplClusterStatusGlobalCols,
+	TableLogReplWorkflowHistoryGlobal:       TableLogReplWorkflowHistoryGlobalCols,
+	TableLogReplStatusLocal:                 TableLogReplStatusLocalCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {

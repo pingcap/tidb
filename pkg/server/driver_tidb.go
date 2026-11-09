@@ -20,11 +20,13 @@ import (
 	"fmt"
 	"strings"
 
+	"gitee.com/Trisia/gotlcp/tlcp"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -257,6 +259,17 @@ func (ts *TiDBStatement) Close() error {
 		}
 	}
 
+	if ts.ctx.GetSessionVars().EnablePreparedPlanCache && !ts.ctx.GetSessionVars().IgnorePreparedCacheCloseStmt {
+		preparedPointer := ts.ctx.GetSessionVars().PreparedStmts[ts.id]
+		preparedObj, ok := preparedPointer.(*core.PlanCacheStmt)
+		if !ok {
+			return errors.Errorf("invalid PlanCacheStmt type")
+		}
+		if err := core.DeletePreparedPlanCacheVariants(ts.ctx, preparedObj); err != nil {
+			return err
+		}
+	}
+
 	// TODO close at tidb level
 	if ts.ctx.GetSessionVars().TxnCtx != nil && ts.ctx.GetSessionVars().TxnCtx.CouldRetry {
 		err := ts.ctx.DropPreparedStmt(ts.id)
@@ -264,20 +277,6 @@ func (ts *TiDBStatement) Close() error {
 			return err
 		}
 	} else {
-		if ts.ctx.GetSessionVars().EnablePreparedPlanCache {
-			preparedPointer := ts.ctx.GetSessionVars().PreparedStmts[ts.id]
-			preparedObj, ok := preparedPointer.(*core.PlanCacheStmt)
-			if !ok {
-				return errors.Errorf("invalid PlanCacheStmt type")
-			}
-			cacheKey, _, _, _, err := core.NewPlanCacheKey(ts.ctx, preparedObj)
-			if err != nil {
-				return err
-			}
-			if !ts.ctx.GetSessionVars().IgnorePreparedCacheCloseStmt { // keep the plan in cache
-				ts.ctx.GetSessionPlanCache().Delete(cacheKey)
-			}
-		}
 		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
 	}
 	delete(ts.ctx.stmts, int(ts.id))
@@ -306,12 +305,13 @@ func (ts *TiDBStatement) GetRowContainer() *chunk.RowContainer {
 
 // OpenCtx implements IDriver.
 func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8, _ string,
-	tlsState *tls.ConnectionState, extensions *extension.SessionExtensions) (*TiDBContext, error) {
+	tlsState *tls.ConnectionState, tlcpState *tlcp.ConnectionState, extensions *extension.SessionExtensions) (*TiDBContext, error) {
 	se, err := session.CreateSession(qd.store)
 	if err != nil {
 		return nil, err
 	}
 	se.SetTLSState(tlsState)
+	se.SetTLCPState(tlcpState)
 	err = se.SetCollation(int(collation))
 	if err != nil {
 		return nil, err
@@ -484,15 +484,19 @@ func (tc *TiDBContext) DecodeSessionStates(ctx context.Context, _ sessionctx.Con
 	sessionVars := tc.Session.GetSessionVars()
 	savedPreparedStmtID := sessionVars.GetNextPreparedStmtID()
 	savedCurrentDB := sessionVars.CurrentDB
+	savedCurrentDBCI := sessionVars.CurrentDBCI
 	defer func() {
 		sessionVars.SetNextPreparedStmtID(savedPreparedStmtID - 1)
 		sessionVars.CurrentDB = savedCurrentDB
+		sessionVars.CurrentDBCI = savedCurrentDBCI
 	}()
 
 	for id, preparedStmtInfo := range sessionStates.PreparedStmts {
 		// Set the next id and currentDB manually.
 		sessionVars.SetNextPreparedStmtID(id - 1)
 		sessionVars.CurrentDB = preparedStmtInfo.StmtDB
+		// TODO(lower_case_table_names): update preparedStmtInfo struct to use StmtDBCI instead of StmtDB string.
+		sessionVars.CurrentDBCI = pmodel.NewCIStr(preparedStmtInfo.StmtDB)
 		if preparedStmtInfo.Name == "" {
 			// Binary protocol: add to sessionVars.PreparedStmts and TiDBContext.stmts.
 			stmt, _, _, err := tc.Prepare(preparedStmtInfo.StmtText)

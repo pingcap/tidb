@@ -26,13 +26,16 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
@@ -86,9 +89,9 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 			continue
 		}
-		name := strings.ToLower(v.Name)
 		if !v.IsSystem {
 			// Set user variable.
+			name := v.Name
 			value, err := v.Expr.Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
@@ -102,6 +105,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			continue
 		}
 
+		name := strings.ToLower(v.Name)
 		if err := e.setSysVariable(ctx, name, v); err != nil {
 			return err
 		}
@@ -109,12 +113,95 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+func updateTriggerPseudoRecord(
+	ctx context.Context,
+	sessCtx sessionctx.Context,
+	v *expression.VarAssignment,
+) (bool, error) {
+	lhs := v.Name
+	ss := strings.Split(lhs, ".")
+	if len(ss) != 2 {
+		return false, nil
+	}
+	tableRef, colName := ss[0], ss[1]
+	if strings.ToLower(tableRef) != "new" {
+		return false, nil
+	}
+	sessVars := sessCtx.GetSessionVars()
+	triggerCtx := sessVars.StmtCtx.TriggerCtx
+	if !triggerCtx.InTrigger {
+		return false, nil
+	}
+	// MySQL semantics: NEW is only writable in BEFORE INSERT/UPDATE triggers.
+	// TiDB uses TriggerCtx.NewData/Updated to indicate whether NEW exists / is writable.
+	if exec, ok := triggerCtx.Exec.(*TriggerExec); ok {
+		if exec.currentEvent() == ast.TriggerEventDelete {
+			return true, dbterror.ErrTrgNoSuchRowInTrg.FastGenByArgs("NEW", exec.currentEvent().String())
+		}
+		if exec.currentTiming() == ast.TriggerTimingAfter {
+			return true, dbterror.ErrTrgCantChangeRow.FastGenByArgs("NEW", exec.currentTiming().String()+" ")
+		}
+	}
+	if len(triggerCtx.NewData) == 0 {
+		// e.g. DELETE trigger.
+		return true, dbterror.ErrTrgNoSuchRowInTrg.FastGenByArgs("NEW", "")
+	}
+	if len(triggerCtx.Updated) == 0 {
+		// e.g. AFTER trigger.
+		return true, dbterror.ErrTrgCantChangeRow.FastGenByArgs("NEW", "")
+	}
+	tblInfo := triggerCtx.TableInfo
+	if tblInfo == nil {
+		return true, errors.New("trigger table info is nil")
+	}
+	colIdx := -1
+	for i, col := range tblInfo.Columns {
+		if col.Name.L == strings.ToLower(colName) {
+			colIdx = i
+		}
+	}
+	if colIdx == -1 {
+		return false, dbterror.ErrBadField.FastGenByArgs(colName, tableRef)
+	}
+	if colIdx >= len(triggerCtx.NewData) || colIdx >= len(triggerCtx.Updated) {
+		return true, errors.Errorf("trigger pseudo record index out of range: colIdx=%d, newLen=%d, updatedLen=%d", colIdx, len(triggerCtx.NewData), len(triggerCtx.Updated))
+	}
+	evalVal, err := v.Expr.Eval(sessCtx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+	if err != nil {
+		return true, err
+	}
+	triggerCtx.NewData[colIdx] = evalVal
+	triggerCtx.Updated[colIdx] = true
+	return true, nil
+}
+
 func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expression.VarAssignment) error {
+	// According to the grammar rule, the procedure local variable is parsed as a system variable.
+	// VariableName EqOrAssignmentEq SetExpr
+	// $$ = &ast.VariableAssignment{Name: $1, Value: $3, IsSystem: true}
+	if v.IsSystem && v.CanSPVariable {
+		notFind, err := e.setSPVariable(name, v)
+		if err != nil {
+			return err
+		}
+		if !notFind {
+			return nil
+		}
+	}
 	sessionVars := e.Ctx().GetSessionVars()
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
 		if variable.IsRemovedSysVar(name) {
 			return nil // removed vars permit parse-but-ignore
+		}
+		if sessionVars.StmtCtx.TriggerCtx.InTrigger {
+			ok, err := updateTriggerPseudoRecord(ctx, e.Ctx(), v)
+			if err != nil {
+				return err
+			}
+			if ok {
+				return nil
+			}
 		}
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
@@ -145,6 +232,21 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		// and append a warning saying this will not be supported in future.
 		v.IsGlobal = true
 		sessionVars.StmtCtx.AppendWarning(exeerrors.ErrInstanceScope.FastGenByArgs(sysVar.Name))
+	}
+
+	if v.IsGlobal && name == variable.TiDBEnableProcedure {
+		valStr, err := e.getVarValue(ctx, v, sysVar)
+		if err != nil {
+			return err
+		}
+		if variable.TiDBOptOn(valStr) {
+			// For user initiated SET GLOBAL, also change the value of TiDBEnableSPParamSubstitute
+			sessionVars.EnableSPParamSubstitute = true
+			err := sessionVars.GlobalVarsAccessor.SetGlobalSysVar(ctx, variable.TiDBEnableSPParamSubstitute, variable.On)
+			if err != nil {
+				return err
+			}
+		}
 	}
 
 	if v.IsGlobal {
@@ -205,18 +307,27 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 			sessionVars.TxnReadTS.SetTxnReadTS(oldSnapshotTS)
 		}
 	}
+	isolationChangedInTxn := false
 	if sessionVars.InTxn() {
-		if name == variable.TxnIsolationOneShot ||
-			name == variable.TiDBTxnReadTS {
+		if name == variable.TiDBTxnReadTS {
 			return errors.Trace(exeerrors.ErrCantChangeTxCharacteristics)
 		}
 		if name == variable.TiDBSnapshot && sessionVars.TxnCtx.IsStaleness {
 			return errors.Trace(exeerrors.ErrCantChangeTxCharacteristics)
 		}
+		if name == variable.TxnIsolationOneShot {
+			if !variable.EnableEAL.Load() {
+				return errors.Trace(exeerrors.ErrCantChangeTxCharacteristics)
+			}
+			isolationChangedInTxn = true
+		}
 	}
 	err = sessionVars.SetSystemVar(name, valStr)
 	if err != nil {
 		return err
+	}
+	if isolationChangedInTxn {
+		sessiontxn.GetTxnManager(e.Ctx()).ChangeIsolationInTxn()
 	}
 	newSnapshotTS := getSnapshotTSByName()
 	newSnapshotIsSet := newSnapshotTS > 0 && newSnapshotTS != oldSnapshotTS
@@ -352,4 +463,33 @@ func loadSnapshotInfoSchemaIfNeeded(sctx sessionctx.Context, snapshotTS uint64) 
 
 	vars.SnapshotInfoschema = temptable.AttachLocalTemporaryTableInfoSchema(sctx, snapInfo)
 	return nil
+}
+
+func (e *SetExecutor) setSPVariable(name string, v *expression.VarAssignment) (bool, error) {
+	sessVars := e.Ctx().GetSessionVars()
+	if !sessVars.GetCallProcedure() {
+		return true, nil
+	}
+	_, _, notFind := sessVars.GetProcedureVariable(name)
+	if notFind {
+		return true, nil
+	}
+	var originalCtx *variable.ProcedureContext
+	if pCtx := sessVars.GetProcedureContext(); pCtx != nil {
+		originalCtx = pCtx.Context
+	}
+	datum, err := v.Expr.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), chunk.Row{})
+	if originalCtx != nil {
+		restoreErr := sessVars.SetProcedureContext(originalCtx)
+		if err == nil && restoreErr != nil {
+			err = restoreErr
+		}
+	}
+	if err != nil {
+		return false, err
+	}
+	sc := sessVars.StmtCtx
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(false))
+	err = core.UpdateVariableVar(name, datum, sessVars)
+	return false, err
 }

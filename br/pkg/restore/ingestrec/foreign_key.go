@@ -84,7 +84,7 @@ func NewForeignKeyRecordManagerForTables(
 		referredFKRecordMap: make(map[ForeignKeyRecordKey]*ForeignKeyRecord),
 	}
 	tableFKs := tableInfo.ForeignKeys
-	tableReferredFKs := infoSchema.GetTableReferredForeignKeys(dbName.L, tableInfo.Name.L)
+	tableReferredFKs := infoSchema.GetTableReferredForeignKeys(dbName, tableInfo.Name)
 	for _, tableFK := range tableFKs {
 		if tableInfo.PKIsHandle && len(tableFK.Cols) == 1 {
 			refColInfo := model.FindColumnInfo(tableInfo.Columns, tableFK.Cols[0].L)

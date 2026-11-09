@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -191,6 +192,48 @@ func TestBuildStatsOnRowSample(t *testing.T) {
 		"num: 200 lower_bound: 405 upper_bound: 604 repeats: 1 ndv: 0\n"+
 		"num: 200 lower_bound: 605 upper_bound: 804 repeats: 1 ndv: 0\n"+
 		"num: 196 lower_bound: 805 upper_bound: 1000 repeats: 1 ndv: 0", hist.ToString(0))
+}
+
+func TestBuildHistAndTopNUsesAnalyzeDefaultTopN(t *testing.T) {
+	origTopN := variable.AnalyzeDefaultNumTopN.Load()
+	t.Cleanup(func() {
+		variable.AnalyzeDefaultNumTopN.Store(origTopN)
+	})
+	variable.AnalyzeDefaultNumTopN.Store(4)
+
+	ctx := mock.NewContext()
+	sketch := NewFMSketch(1000)
+	data := make([]*SampleItem, 0, 35)
+	for value, count := range map[int64]int{
+		1: 20,
+		2: 3,
+		3: 3,
+		4: 3,
+		5: 3,
+		6: 3,
+	} {
+		for i := 0; i < count; i++ {
+			d := types.NewIntDatum(value)
+			require.NoError(t, sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d))
+			data = append(data, &SampleItem{Value: d})
+		}
+	}
+	collector := &SampleCollector{
+		Samples:   data,
+		NullCount: 0,
+		Count:     int64(len(data)),
+		FMSketch:  sketch,
+		TotalSize: int64(len(data)) * 8,
+	}
+
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	_, topN, err := BuildHistAndTopN(ctx, 4, 4, 1, collector, tp, true, nil, true)
+	require.NoError(t, err)
+	require.Len(t, topN.TopN, 1)
+
+	_, explicitTopN, err := BuildHistAndTopN(ctx, 4, 5, 1, collector, tp, true, nil, true)
+	require.NoError(t, err)
+	require.Len(t, explicitTopN.TopN, 5)
 }
 
 type testSampleSuite struct {

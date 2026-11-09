@@ -226,6 +226,10 @@ const (
 	InternalTimer = "Timer"
 	// InternalDDLNotifier is the type of DDL notifier
 	InternalDDLNotifier = "DDLNotifier"
+	// InternalTxnProcedure is the type of procedure txn.
+	InternalTxnProcedure = "Procedure"
+	// InternalTxnLabelSecurity is the type of LabelSecurity txn.
+	InternalTxnLabelSecurity = "LabelSecurity"
 )
 
 // The bitmap:

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -386,22 +387,25 @@ func (helper *extractHelper) extractLikePatternCol(
 			continue
 		}
 
-		var canBuildPattern bool
+		var canBuildPattern, isPrefilter bool
 		var pattern string
 		// We use '|' to combine DNF regular expression: .*a.*|.*b.*
 		// e.g:
 		// SELECT * FROM t WHERE c LIKE '%a%' OR c LIKE '%b%'
 		if fn.FuncName.L == ast.LogicOr && !toLower {
-			canBuildPattern, pattern = helper.extractOrLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp)
+			canBuildPattern, pattern, isPrefilter = helper.extractOrLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
 		} else {
-			canBuildPattern, pattern = helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp)
+			canBuildPattern, pattern, isPrefilter = helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
 		}
 		if canBuildPattern && toLower {
 			pattern = strings.ToLower(pattern)
 		}
 		if canBuildPattern {
 			patterns = append(patterns, pattern)
-		} else {
+		}
+		// A prefilter narrows the scan but is not exactly equivalent to the
+		// predicate, so it is pushed down *and* kept for a scalar recheck.
+		if !canBuildPattern || isPrefilter {
 			remained = append(remained, expr)
 		}
 	}
@@ -414,40 +418,51 @@ func (helper extractHelper) extractOrLikePattern(
 	extractColName string,
 	extractCols map[int64]*types.FieldName,
 	needLike2Regexp bool,
+	toLower bool,
 ) (
 	ok bool,
 	pattern string,
+	isPrefilter bool,
 ) {
 	predicates := expression.SplitDNFItems(orFunc)
 	if len(predicates) == 0 {
-		return false, ""
+		return false, "", false
 	}
 
 	patternBuilder := make([]string, 0, len(predicates))
 	for _, predicate := range predicates {
 		fn, ok := predicate.(*expression.ScalarFunction)
 		if !ok {
-			return false, ""
+			return false, "", false
 		}
 
-		ok, partPattern := helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp)
+		ok, partPattern, partIsPrefilter := helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
 		if !ok {
-			return false, ""
+			return false, "", false
 		}
+		// One inexact branch makes the whole disjunction inexact.
+		isPrefilter = isPrefilter || partIsPrefilter
 		patternBuilder = append(patternBuilder, partPattern)
 	}
-	return true, strings.Join(patternBuilder, "|")
+	return true, strings.Join(patternBuilder, "|"), isPrefilter
 }
 
+// extractLikePattern builds the pushed-down pattern for a single predicate.
+// toLower reports whether the caller folds case on both the pattern and the
+// scanned value, which decides how a case-insensitive ILIKE is represented.
+// isPrefilter reports that the pattern only narrows the scan and is not exactly
+// equivalent to the predicate, so the caller must keep a scalar recheck.
 func (helper extractHelper) extractLikePattern(
 	ctx base.PlanContext,
 	fn *expression.ScalarFunction,
 	extractColName string,
 	extractCols map[int64]*types.FieldName,
 	needLike2Regexp bool,
+	toLower bool,
 ) (
 	ok bool,
 	pattern string,
+	isPrefilter bool,
 ) {
 	var colName string
 	var datums []types.Datum
@@ -456,21 +471,64 @@ func (helper extractHelper) extractLikePattern(
 		colName, datums = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
 	}
 	if colName != extractColName {
-		return false, ""
+		return false, "", false
 	}
 	switch fn.FuncName.L {
 	case ast.EQ:
-		return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
+		return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$", false
 	case ast.Like, ast.Ilike:
-		if needLike2Regexp {
-			return true, stringutil.CompileLike2Regexp(datums[0].GetString())
+		// The pushed-down pattern must honour the LIKE ESCAPE so it does not
+		// diverge from the original predicate (issue #69653). The escape has to
+		// be resolvable at plan time: for a constant escape (including the
+		// default '\' and the empty escape of NO_BACKSLASH_ESCAPES) we compile
+		// the regexp with it; a non-constant/deferred escape can't be resolved
+		// here, so we skip extraction and let the scalar predicate be rechecked.
+		escape, ok := likeEscapeConst(fn)
+		if !ok {
+			return false, "", false
 		}
-		return true, datums[0].GetString()
+		if !needLike2Regexp {
+			return true, datums[0].GetString(), false
+		}
+		pattern = stringutil.CompileLike2Regexp(datums[0].GetString(), escape)
+		// Unicode lowercasing can move a literal outside its regexp case-fold
+		// class (for example, İ becomes i). Such a prefilter can lose valid
+		// LIKE/ILIKE matches before the scalar recheck, so skip extraction.
+		if toLower && !strings.EqualFold(pattern, strings.ToLower(pattern)) {
+			return false, "", false
+		}
+		// The cluster log path sends the pattern verbatim in SearchLogRequest.Patterns.
+		// Add a case-insensitive group so an "ERROR" line matches `message ILIKE '%error%'`.
+		// Scope the flag so it cannot affect other branches of a disjunction.
+		// Regexp case folding is broader than ILIKE's ASCII folding, so keep a recheck.
+		if fn.FuncName.L == ast.Ilike && !toLower {
+			return true, "(?i:" + pattern + ")", true
+		}
+		// Case-folding extractors only provide a prefilter: LIKE may be
+		// case-sensitive, while ILIKE folds only ASCII rather than Unicode.
+		return true, pattern, toLower
 	case ast.Regexp, ast.RegexpLike:
-		return true, datums[0].GetString()
+		return true, datums[0].GetString(), false
 	default:
-		return false, ""
+		return false, "", false
 	}
+}
+
+// likeEscapeConst returns the ESCAPE byte of a LIKE/ILIKE ScalarFunction when
+// it is a plan-time constant (ok=true). The escape must be constant so the
+// pushed-down pattern can be compiled to match the predicate exactly (issue
+// #69653); a non-constant, deferred, or parameterized escape returns ok=false,
+// telling the caller to skip pushdown and keep a scalar recheck.
+func likeEscapeConst(fn *expression.ScalarFunction) (byte, bool) {
+	args := fn.GetArgs()
+	if len(args) < 3 {
+		return 0, false
+	}
+	escape, ok := args[2].(*expression.Constant)
+	if !ok || escape.DeferredExpr != nil || escape.ParamMarker != nil {
+		return 0, false
+	}
+	return byte(escape.Value.GetInt64()), true
 }
 
 func (extractHelper) findColumn(schema *expression.Schema, names []*types.FieldName, colName string) map[int64]*types.FieldName {
@@ -528,6 +586,11 @@ func (extractHelper) getStringFunctionName(fn *expression.ScalarFunction) string
 // extracts the time range column, e.g:
 // SELECT * FROM t WHERE time='2019-10-10 10:10:10'
 // SELECT * FROM t WHERE time>'2019-10-10 10:10:10' AND time<'2019-10-11 10:10:10'
+// Omitting strictStep preserves the legacy log-search time conversion and
+// one-millisecond adjustment. Providing it also validates dates and nanosecond
+// timestamp representability; validation failure returns predicates, 0, 0.
+// A zero step preserves inclusive candidate bounds; callers must retain the
+// original predicates and fall back when no range can be extracted.
 func (helper extractHelper) extractTimeRange(
 	ctx base.PlanContext,
 	schema *expression.Schema,
@@ -535,12 +598,17 @@ func (helper extractHelper) extractTimeRange(
 	predicates []expression.Expression,
 	extractColName string,
 	timezone *time.Location,
+	strictStep ...time.Duration,
 ) (
 	remained []expression.Expression,
 	// unix timestamp in nanoseconds
 	startTime int64,
 	endTime int64,
 ) {
+	step := time.Millisecond
+	if len(strictStep) > 0 {
+		step = strictStep[0]
+	}
 	remained = make([]expression.Expression, 0, len(predicates))
 	extractCols := helper.findColumn(schema, names, extractColName)
 	if len(extractCols) == 0 {
@@ -572,15 +640,29 @@ func (helper extractHelper) extractTimeRange(
 			}
 
 			mysqlTime := timeDatum.GetMysqlTime()
-			timestamp := time.Date(mysqlTime.Year(),
-				time.Month(mysqlTime.Month()),
-				mysqlTime.Day(),
-				mysqlTime.Hour(),
-				mysqlTime.Minute(),
-				mysqlTime.Second(),
-				mysqlTime.Microsecond()*1000,
-				timezone,
-			).UnixNano()
+			var timestamp int64
+			if len(strictStep) > 0 {
+				// Candidate filtering must not normalize invalid dates or use
+				// overflowing nanosecond timestamps to exclude valid rows.
+				t, err := mysqlTime.GoTime(timezone)
+				if err != nil {
+					return predicates, 0, 0
+				}
+				timestamp = t.UnixNano()
+				if !time.Unix(0, timestamp).Equal(t) {
+					return predicates, 0, 0
+				}
+			} else {
+				timestamp = time.Date(mysqlTime.Year(),
+					time.Month(mysqlTime.Month()),
+					mysqlTime.Day(),
+					mysqlTime.Hour(),
+					mysqlTime.Minute(),
+					mysqlTime.Second(),
+					mysqlTime.Microsecond()*1000,
+					timezone,
+				).UnixNano()
+			}
 
 			switch fnName {
 			case ast.EQ:
@@ -592,14 +674,14 @@ func (helper extractHelper) extractTimeRange(
 				}
 			case ast.GT:
 				// FixMe: add 1ms is not absolutely correct here, just because the log search precision is millisecond.
-				startTime = max(startTime, timestamp+int64(time.Millisecond))
+				startTime = max(startTime, timestamp+int64(step))
 			case ast.GE:
 				startTime = max(startTime, timestamp)
 			case ast.LT:
 				if endTime == 0 {
-					endTime = timestamp - int64(time.Millisecond)
+					endTime = timestamp - int64(step)
 				} else {
-					endTime = min(endTime, timestamp-int64(time.Millisecond))
+					endTime = min(endTime, timestamp-int64(step))
 				}
 			case ast.LE:
 				if endTime == 0 {
@@ -615,6 +697,115 @@ func (helper extractHelper) extractTimeRange(
 		}
 	}
 	return
+}
+
+// extracts the uint64 range column as a half-open interval [start, end), e.g:
+// SELECT * FROM t WHERE id=10
+// SELECT * FROM t WHERE id>=10 AND id<20
+func (helper extractHelper) extractUint64Range(
+	ctx base.PlanContext,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+	extractColName string,
+) (
+	remained []expression.Expression,
+	start uint64,
+	end uint64,
+	skip bool,
+) {
+	remained = make([]expression.Expression, 0, len(predicates))
+	startIsSet := false
+	endIsSet := false
+	extractCols := helper.findColumn(schema, names, extractColName)
+	if len(extractCols) == 0 {
+		return predicates, start, end, false
+	}
+
+	for _, expr := range predicates {
+		fn, ok := expr.(*expression.ScalarFunction)
+		if !ok {
+			remained = append(remained, expr)
+			continue
+		}
+
+		fnName := fn.FuncName.L
+		switch fnName {
+		case ast.EQ, ast.GT, ast.GE, ast.LT, ast.LE:
+		default:
+			remained = append(remained, expr)
+			continue
+		}
+
+		colName, datums := helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
+		if colName != extractColName {
+			remained = append(remained, expr)
+			continue
+		}
+
+		switch datums[0].Kind() {
+		case types.KindUint64, types.KindInt64:
+		default:
+			remained = append(remained, expr)
+			continue
+		}
+		uintValue := datums[0].GetUint64()
+
+		switch fnName {
+		case ast.EQ:
+			if (startIsSet && uintValue < start) || (endIsSet && uintValue >= end) {
+				skip = true
+				break
+			}
+			start = uintValue
+			startIsSet = true
+			if uintValue < math.MaxUint64 {
+				end = uintValue + 1
+				endIsSet = true
+			} else {
+				end = 0
+				endIsSet = false
+			}
+		case ast.GT:
+			if uintValue == math.MaxUint64 {
+				skip = true
+				break
+			}
+			startValue := uintValue + 1
+			if !startIsSet || startValue > start {
+				start = startValue
+				startIsSet = true
+			}
+		case ast.GE:
+			if !startIsSet || uintValue > start {
+				start = uintValue
+				startIsSet = true
+			}
+		case ast.LT:
+			if !endIsSet || uintValue < end {
+				end = uintValue
+				endIsSet = true
+			}
+		case ast.LE:
+			if uintValue < math.MaxUint64 {
+				endValue := uintValue + 1
+				if !endIsSet || endValue < end {
+					end = endValue
+					endIsSet = true
+				}
+			}
+		}
+
+		if startIsSet && endIsSet && start >= end {
+			skip = true
+			break
+		}
+	}
+
+	if skip {
+		return nil, start, end, true
+	}
+	return remained, start, end, false
 }
 
 func (extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 {
@@ -1278,17 +1469,144 @@ func (e *InspectionRuleTableExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	return r.String()
 }
 
+// AuditLogExtractor is used to extract some predicates of `audit_log`
+type AuditLogExtractor struct {
+	extractHelper
+
+	SkipRequest bool
+	TimeRanges  []*TimeRange
+	// Enable is true means the executor should use the time range to locate the audit-log file that need to be parsed.
+	// Enable is false, means the executor should keep the behavior compatible with before, which is only parse the
+	// current audit-log file.
+	Enable bool
+	Desc   bool
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *AuditLogExtractor) Extract(
+	ctx base.PlanContext,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) []expression.Expression {
+	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, predicates, "time", ctx.GetSessionVars().StmtCtx.TimeZone())
+	e.setTimeRange(startTime, endTime)
+	e.SkipRequest = e.Enable && e.TimeRanges[0].StartTime.After(e.TimeRanges[0].EndTime)
+	if e.SkipRequest {
+		return nil
+	}
+	return remained
+}
+
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (e *AuditLogExtractor) ExplainInfo(pp base.PhysicalPlan) string {
+	p := pp.(*PhysicalMemTable)
+	if e.SkipRequest {
+		return "skip_request: true"
+	}
+	if !e.Enable {
+		return fmt.Sprintf("only search in the current '%v' file", p.SCtx().GetSessionVars().SlowQueryFile)
+	}
+	startTime := e.TimeRanges[0].StartTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone())
+	endTime := e.TimeRanges[0].EndTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone())
+	return fmt.Sprintf("start_time:%v, end_time:%v",
+		types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String(),
+		types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String())
+}
+
+func (e *AuditLogExtractor) setTimeRange(start, end int64) {
+	const defaultAuditLogDuration = 24 * time.Hour
+	var startTime, endTime time.Time
+	if start == 0 && end == 0 {
+		return
+	}
+	if start != 0 {
+		startTime = e.convertToTime(start)
+	}
+	if end != 0 {
+		endTime = e.convertToTime(end)
+	}
+	if start == 0 {
+		startTime = endTime.Add(-defaultAuditLogDuration)
+	}
+	if end == 0 {
+		endTime = time.Now()
+	}
+	timeRange := &TimeRange{
+		StartTime: startTime,
+		EndTime:   endTime,
+	}
+	e.TimeRanges = append(e.TimeRanges, timeRange)
+	e.Enable = true
+}
+
+func (e *AuditLogExtractor) buildTimeRangeFromKeyRange(keyRanges []*coprocessor.KeyRange) error {
+	for _, kr := range keyRanges {
+		startTime, err := e.decodeBytesToTime(kr.Start)
+		if err != nil {
+			return err
+		}
+		endTime, err := e.decodeBytesToTime(kr.End)
+		if err != nil {
+			return err
+		}
+		e.setTimeRange(startTime, endTime)
+	}
+	return nil
+}
+
+func (e *AuditLogExtractor) decodeBytesToTime(bs []byte) (int64, error) {
+	if len(bs) >= tablecodec.RecordRowKeyLen {
+		t, err := tablecodec.DecodeRowKey(bs)
+		if err != nil {
+			return 0, nil
+		}
+		return e.decodeToTime(t)
+	}
+	return 0, nil
+}
+
+func (*AuditLogExtractor) decodeToTime(handle kv.Handle) (int64, error) {
+	tp := types.NewFieldType(mysql.TypeDatetime)
+	col := rowcodec.ColInfo{Ft: tp}
+	chk := chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 1)
+	coder := codec.NewDecoder(chk, nil)
+	_, err := coder.DecodeOne(handle.EncodedCol(0), 0, col.Ft)
+	if err != nil {
+		return 0, err
+	}
+	datum := chk.GetRow(0).GetDatum(0, tp)
+	mysqlTime := (&datum).GetMysqlTime()
+	timestampInNano := time.Date(mysqlTime.Year(),
+		time.Month(mysqlTime.Month()),
+		mysqlTime.Day(),
+		mysqlTime.Hour(),
+		mysqlTime.Minute(),
+		mysqlTime.Second(),
+		mysqlTime.Microsecond()*1000,
+		time.UTC,
+	).UnixNano()
+	return timestampInNano, err
+}
+
 // SlowQueryExtractor is used to extract some predicates of `slow_query`
 type SlowQueryExtractor struct {
 	extractHelper
 
 	SkipRequest bool
 	TimeRanges  []*TimeRange
+	// Digests contains the SQL digests used for parse-time filtering.
+	// An empty set means no Digest filter, as in StatementsSummaryExtractor.
+	Digests set.StringSet
 	// Enable is true means the executor should use the time range to locate the slow-log file that need to be parsed.
 	// Enable is false, means the executor should keep the behavior compatible with before, which is only parse the
 	// current slow-log file.
 	Enable bool
 	Desc   bool
+	// Limit is a hint for early-exit optimizations when scanning slow log files.
+	// It is usually derived from a pushed down LIMIT/TopN (offset+count).
+	// A value of 0 means "no limit hint".
+	Limit uint64
 }
 
 // TimeRange is used to check whether a given log should be extracted.
@@ -1297,12 +1615,33 @@ type TimeRange struct {
 	EndTime   time.Time
 }
 
+// SetRowLimitHint implements base.MemTableRowLimitHintSetter.
+func (e *SlowQueryExtractor) SetRowLimitHint(limit uint64) {
+	if limit == 0 {
+		return
+	}
+	if e.Limit == 0 || limit < e.Limit {
+		e.Limit = limit
+	}
+}
+
+// SetDesc implements base.MemTableDescHintSetter.
+func (e *SlowQueryExtractor) SetDesc(desc bool) {
+	e.Desc = desc
+}
+
 // Extract implements the MemTablePredicateExtractor Extract interface
 func (e *SlowQueryExtractor) Extract(ctx base.PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) []expression.Expression {
+	// Ignore remained to preserve Digest predicates for Selection and remote
+	// planning, including logs without Digest. Ignore skip because raw-string
+	// intersections may reject compatible comparisons; an empty set disables
+	// this scan hint.
+	_, _, digests := e.extractCol(ctx, schema, names, predicates, "digest", false)
+	e.Digests = digests
 	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, predicates, "time", ctx.GetSessionVars().StmtCtx.TimeZone())
 	e.setTimeRange(startTime, endTime)
 	e.SkipRequest = e.Enable && e.TimeRanges[0].StartTime.After(e.TimeRanges[0].EndTime)
@@ -1441,14 +1780,18 @@ func (e *SlowQueryExtractor) ExplainInfo(pp base.PhysicalPlan) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
+	digestInfo := ""
+	if !e.Digests.Empty() {
+		digestInfo = fmt.Sprintf(", digests:[%s]", extractStringFromStringSet(e.Digests))
+	}
 	if !e.Enable {
-		return fmt.Sprintf("only search in the current '%v' file", p.SCtx().GetSessionVars().SlowQueryFile)
+		return fmt.Sprintf("only search in the current '%v' file%s", p.SCtx().GetSessionVars().SlowQueryFile, digestInfo)
 	}
 	startTime := e.TimeRanges[0].StartTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone())
 	endTime := e.TimeRanges[0].EndTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone())
-	return fmt.Sprintf("start_time:%v, end_time:%v",
+	return fmt.Sprintf("start_time:%v, end_time:%v%s",
 		types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String(),
-		types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String())
+		types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String(), digestInfo)
 }
 
 // TiFlashSystemTableExtractor is used to extract some predicates of tiflash system table.
@@ -1724,4 +2067,195 @@ func (e *TiKVRegionStatusExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 // GetTablesID returns TablesID
 func (e *TiKVRegionStatusExtractor) GetTablesID() []int64 {
 	return e.tablesID
+}
+
+// TableRegionsExtractor is used to extract single schema and table from predictions
+type TableRegionsExtractor struct {
+	extractHelper
+	schemaName, tableName pmodel.CIStr
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *TableRegionsExtractor) Extract(ctx base.PlanContext,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	// TODO: support more push down strategies, for example, only table_name or only db_name, or multiple table_name/db_name.
+	remained, _, dbNameSet := e.extractCol(ctx, schema, names, predicates, "db_name", true)
+	if dbNameSet.Count() != 1 {
+		return predicates
+	}
+	remained, _, tableNameSet := e.extractCol(ctx, schema, names, remained, "table_name", true)
+	if tableNameSet.Count() != 1 {
+		return predicates
+	}
+	for dbName := range dbNameSet {
+		for tableName := range tableNameSet {
+			e.schemaName = pmodel.NewCIStr(dbName)
+			e.tableName = pmodel.NewCIStr(tableName)
+		}
+	}
+	return remained
+}
+
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (e *TableRegionsExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+	r := new(bytes.Buffer)
+	if e.schemaName.String() != "" {
+		r.WriteString("schema name: ")
+		r.WriteString(e.schemaName.String())
+	}
+	if e.tableName.String() != "" {
+		r.WriteString(", table name: ")
+		r.WriteString(e.tableName.String())
+	}
+	return r.String()
+}
+
+// GetSchemaName return the extracted schema name
+func (e *TableRegionsExtractor) GetSchemaName() pmodel.CIStr {
+	return e.schemaName
+}
+
+// GetTableName return the extracted table name
+func (e *TableRegionsExtractor) GetTableName() pmodel.CIStr {
+	return e.tableName
+}
+
+// LogReplStatusGlobalExtractor extracts predicates for LR_STATUS_GLOBAL table
+type LogReplStatusGlobalExtractor struct {
+	extractHelper
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (*LogReplStatusGlobalExtractor) Extract(
+	_ base.PlanContext,
+	_ *expression.Schema,
+	_ []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	// TODO: Implement predicate push-down for log replication status
+	// For now, return all predicates as they cannot be pushed down
+	return predicates
+}
+
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (*LogReplStatusGlobalExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+	return ""
+}
+
+// LogReplClusterStatusGlobalExtractor extracts predicates for LR_CLUSTER_STATUS_GLOBAL table
+type LogReplClusterStatusGlobalExtractor struct {
+	extractHelper
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (*LogReplClusterStatusGlobalExtractor) Extract(
+	_ base.PlanContext,
+	_ *expression.Schema,
+	_ []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	// TODO: Implement predicate push-down for cluster status
+	return predicates
+}
+
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (*LogReplClusterStatusGlobalExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+	return ""
+}
+
+// LogReplWorkflowHistoryGlobalExtractor extracts predicates for LR_WORKFLOW_HISTORY_GLOBAL table
+type LogReplWorkflowHistoryGlobalExtractor struct {
+	extractHelper
+
+	// SkipRequest means the workflow_id predicates cannot match any workflow.
+	SkipRequest bool
+	// StartWorkflowID is the inclusive start ID extracted from workflow_id predicates.
+	StartWorkflowID uint64
+	// EndWorkflowID is the exclusive end ID extracted from workflow_id predicates.
+	EndWorkflowID uint64
+	// Limit is the maximum number of rows to request from PD for this scan.
+	// A value of 0 means no limit is pushed down to PD.
+	Limit uint64
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *LogReplWorkflowHistoryGlobalExtractor) Extract(
+	ctx base.PlanContext,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	remained, e.StartWorkflowID, e.EndWorkflowID, e.SkipRequest = e.extractUint64Range(
+		ctx,
+		schema,
+		names,
+		predicates,
+		"workflow_id",
+	)
+	if e.SkipRequest {
+		e.Limit = 0
+		return nil
+	}
+	return remained
+}
+
+// SetRowLimitHint implements base.MemTableRowLimitHintSetter.
+func (e *LogReplWorkflowHistoryGlobalExtractor) SetRowLimitHint(limit uint64) {
+	if limit == 0 {
+		return
+	}
+
+	if e.SkipRequest {
+		e.Limit = 0
+		return
+	}
+	if e.StartWorkflowID > 0 && e.EndWorkflowID > 0 {
+		rangeLimit := e.EndWorkflowID - e.StartWorkflowID
+		limit = min(rangeLimit, limit)
+	}
+	if e.Limit == 0 || limit < e.Limit {
+		e.Limit = limit
+	}
+}
+
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (e *LogReplWorkflowHistoryGlobalExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+	if e.SkipRequest {
+		return "skip_request:true"
+	}
+	items := make([]string, 0, 3)
+	if e.StartWorkflowID > 0 {
+		items = append(items, fmt.Sprintf("start_workflow_id:%d", e.StartWorkflowID))
+	}
+	if e.EndWorkflowID > 0 {
+		items = append(items, fmt.Sprintf("end_workflow_id:%d", e.EndWorkflowID))
+	}
+	if e.Limit > 0 {
+		items = append(items, fmt.Sprintf("limit:%d", e.Limit))
+	}
+	return strings.Join(items, ", ")
+}
+
+// LogReplStatusLocalExtractor extracts predicates for LR_STATUS_LOCAL table
+type LogReplStatusLocalExtractor struct {
+	extractHelper
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (*LogReplStatusLocalExtractor) Extract(
+	_ base.PlanContext,
+	_ *expression.Schema,
+	_ []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	// TODO: Implement predicate push-down for local status
+	return predicates
+}
+
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (*LogReplStatusLocalExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+	return ""
 }

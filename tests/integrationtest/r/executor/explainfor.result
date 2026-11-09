@@ -352,7 +352,7 @@ c1
 4
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute stmt using @c, @b;
 c1
 2
@@ -360,7 +360,7 @@ c1
 4
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 prepare stmt from 'with recursive cte1 as (select 1 c1 union all select 2 c1 union all select c1 + 1 c1 from cte1 where c1 < ?) select * from cte1 order by c1;';
 set @a=10, @b=2;
 execute stmt using @a;
@@ -391,7 +391,7 @@ c1
 2
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 prepare stmt from 'with recursive cte1 as (select 1 c1 union all select 2 c1 union all select c1 + 1 c1 from cte1 where c1 < ? union all select c1 + ? c1 from cte1 where c1 < ?) select * from cte1 order by c1;';
 set @a=1, @b=2, @c=3, @d=4, @e=5;
 execute stmt using @c, @b, @e;
@@ -423,7 +423,7 @@ c1
 4
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 drop table if exists t1;
 create table t1(a int);
 insert into t1 values(1);
@@ -431,7 +431,6 @@ insert into t1 values(2);
 prepare stmt from 'SELECT * FROM t1 dt WHERE EXISTS(WITH RECURSIVE qn AS (SELECT a*? AS b UNION ALL SELECT b+? FROM qn WHERE b=?) SELECT * FROM qn WHERE b=a);';
 show warnings;
 Level	Code	Message
-Warning	1105	skip prepared plan-cache: find table executor__explainfor.qn failed: [schema:1146]Table 'executor__explainfor.qn' doesn't exist
 set @a=1, @b=2, @c=3, @d=4, @e=5, @f=0;
 execute stmt using @f, @a, @f;
 a
@@ -450,7 +449,6 @@ a
 prepare stmt from 'with recursive c(p) as (select ?), cte(a, b) as (select 1, 1 union select a+?, 1 from cte, c where a < ?)  select * from cte order by 1, 2;';
 show warnings;
 Level	Code	Message
-Warning	1105	skip prepared plan-cache: find table executor__explainfor.cte failed: [schema:1146]Table 'executor__explainfor.cte' doesn't exist
 execute stmt using @a, @a, @e;
 a	b
 1	1
@@ -464,7 +462,7 @@ a	b
 3	1
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 set tidb_enable_prepared_plan_cache=default;
 set @@tidb_enable_collect_execution_info=default;
 set tidb_enable_prepared_plan_cache=1;

@@ -140,6 +140,12 @@ var nullRejectNullPreservingFunctions = map[string]struct{}{
 	ast.Upper:           {},
 	ast.WeightString:    {},
 
+	// Security label functions.
+	ast.LabelAceesible: {},
+	ast.Seclabel:       {},
+	ast.SeclabelToChar: {},
+	ast.LBACDominates:  {},
+
 	// Date and time functions.
 	ast.AddDate:       {},
 	ast.DateAdd:       {},

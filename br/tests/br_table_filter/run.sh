@@ -17,6 +17,11 @@
 set -eux
 DB="$TEST_NAME"
 
+# start a new cluster
+. run_services
+echo "restart a services"
+restart_services
+
 run_sql "create schema $DB;"
 
 run_sql "create table $DB.one(c int);"

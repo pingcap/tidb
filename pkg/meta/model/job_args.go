@@ -39,8 +39,8 @@ type RecoverTableInfo struct {
 	DropJobID     int64
 	SnapshotTS    uint64
 	AutoIDs       AutoIDGroup
-	OldSchemaName string
-	OldTableName  string
+	OldSchemaName pmodel.CIStr
+	OldTableName  pmodel.CIStr
 }
 
 // RecoverSchemaInfo contains information needed by DDL.RecoverSchema.
@@ -206,6 +206,13 @@ func GetModifySchemaArgs(job *Job) (*ModifySchemaArgs, error) {
 	return getOrDecodeArgs[*ModifySchemaArgs](&ModifySchemaArgs{}, job)
 }
 
+// CreateTableCTASArgs is the arguments for create table as select
+type CreateTableCTASArgs struct {
+	CTASSnapshotTS  uint64                         `json:"ctas_snapshot_ts,omitempty"`
+	CTASSql         string                         `json:"ctas_sql,omitempty"`
+	CTASOnDuplicate ast.OnDuplicateKeyHandlingType `json:"on_duplicate,omitempty"`
+}
+
 // CreateTableArgs is the arguments for create table/view/sequence job.
 type CreateTableArgs struct {
 	TableInfo *TableInfo `json:"table_info,omitempty"`
@@ -214,12 +221,21 @@ type CreateTableArgs struct {
 	OldViewTblID   int64 `json:"old_view_tbl_id,omitempty"`
 	// used for create table.
 	FKCheck bool `json:"fk_check,omitempty"`
+
+	// used for CTAS operation
+	CreateTableCTASArgs
+
+	// DXF submitter locator for CTAS load phase.
+	// The owner uses ExecID to pin the subtask to the submitter node.
+	CTASSubmitterExecID string `json:"ctas_submitter_exec_id,omitempty"`
+	// Connection ID of the frontend session on that node.
+	CTASSubmitterConnID uint64 `json:"ctas_submitter_conn_id,omitempty"`
 }
 
 func (a *CreateTableArgs) getArgsV1(job *Job) []any {
 	switch job.Type {
 	case ActionCreateTable:
-		return []any{a.TableInfo, a.FKCheck}
+		return []any{a.TableInfo, a.FKCheck, a.CTASSnapshotTS, a.CTASSql, a.CTASOnDuplicate, a.CTASSubmitterExecID, a.CTASSubmitterConnID}
 	case ActionCreateView:
 		return []any{a.TableInfo, a.OnExistReplace, a.OldViewTblID}
 	case ActionCreateSequence:
@@ -232,7 +248,7 @@ func (a *CreateTableArgs) decodeV1(job *Job) error {
 	a.TableInfo = &TableInfo{}
 	switch job.Type {
 	case ActionCreateTable:
-		return errors.Trace(job.decodeArgs(a.TableInfo, &a.FKCheck))
+		return errors.Trace(job.decodeArgs(a.TableInfo, &a.FKCheck, &a.CTASSnapshotTS, &a.CTASSql, &a.CTASOnDuplicate, &a.CTASSubmitterExecID, &a.CTASSubmitterConnID))
 	case ActionCreateView:
 		return errors.Trace(job.decodeArgs(a.TableInfo, &a.OnExistReplace, &a.OldViewTblID))
 	case ActionCreateSequence:
@@ -1331,7 +1347,7 @@ const (
 // Below lists used fields for each type (listed in order of the layout in v1)
 //
 //	Adding NonPK: Unique, IndexName, IndexPartSpecifications, IndexOption, SQLMode, Warning(not stored, always nil), Global
-//	Adding PK: Unique, IndexName, IndexPartSpecifications, IndexOptions, HiddelCols, Global
+//	Adding PK: Unique, IndexName, IndexPartSpecifications, IndexOptions, SQLMode, Unused(nil), Global
 //	Adding vector index: IndexName, IndexPartSpecifications, IndexOption, FuncExpr
 //	Drop index: IndexName, IfExist, IndexID
 //	Rollback add index: IndexName, IfExist, IsVector
@@ -1383,15 +1399,17 @@ func (a *ModifyIndexArgs) getArgsV1(job *Job) []any {
 	// Drop index
 	if job.Type == ActionDropIndex || job.Type == ActionDropPrimaryKey {
 		if len(a.IndexArgs) == 1 {
-			return []any{a.IndexArgs[0].IndexName, a.IndexArgs[0].IfExist}
+			return []any{a.IndexArgs[0].IndexName, a.IndexArgs[0].IfExist, a.IndexArgs[0].IndexID}
 		}
 		indexNames := make([]pmodel.CIStr, len(a.IndexArgs))
 		ifExists := make([]bool, len(a.IndexArgs))
+		indexIDs := make([]int64, len(a.IndexArgs))
 		for i, idxArg := range a.IndexArgs {
 			indexNames[i] = idxArg.IndexName
 			ifExists[i] = idxArg.IfExist
+			indexIDs[i] = idxArg.IndexID
 		}
-		return []any{indexNames, ifExists}
+		return []any{indexNames, ifExists, indexIDs}
 	}
 
 	// Add vector index
@@ -1404,8 +1422,8 @@ func (a *ModifyIndexArgs) getArgsV1(job *Job) []any {
 	if job.Type == ActionAddPrimaryKey {
 		arg := a.IndexArgs[0]
 
-		// The sixth argument is set and never used.
-		// Leave it as nil to make it compatible with history job.
+		// The sixth argument is a historical unused slot kept for v1 compatibility.
+		// Append new fields to the tail instead of reusing existing positions.
 		return []any{
 			arg.Unique, arg.IndexName, arg.IndexPartSpecifications,
 			arg.IndexOption, arg.SQLMode, nil, arg.Global,
@@ -1470,17 +1488,28 @@ func (a *ModifyIndexArgs) decodeRenameIndexV1(job *Job) error {
 func (a *ModifyIndexArgs) decodeDropIndexV1(job *Job) error {
 	indexNames := make([]pmodel.CIStr, 1)
 	ifExists := make([]bool, 1)
-	if err := job.decodeArgs(&indexNames[0], &ifExists[0]); err != nil {
-		if err = job.decodeArgs(&indexNames, &ifExists); err != nil {
-			return errors.Trace(err)
+	indexIDs := make([]int64, 1)
+	if err := job.decodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0]); err != nil {
+		if err = job.decodeArgs(&indexNames, &ifExists, &indexIDs); err != nil {
+			indexIDs = indexIDs[:0]
+			if err = job.decodeArgs(&indexNames[0], &ifExists[0]); err != nil {
+				if err = job.decodeArgs(&indexNames, &ifExists); err != nil {
+					return errors.Trace(err)
+				}
+			}
 		}
 	}
 
 	a.IndexArgs = make([]*IndexArg, len(indexNames))
 	for i, indexName := range indexNames {
+		var indexID int64
+		if i < len(indexIDs) {
+			indexID = indexIDs[i]
+		}
 		a.IndexArgs[i] = &IndexArg{
 			IndexName: indexName,
 			IfExist:   ifExists[i],
+			IndexID:   indexID,
 		}
 	}
 	return nil

@@ -102,6 +102,8 @@ func TestGlobalMemoryControl(t *testing.T) {
 func TestPBMemoryLeak(t *testing.T) {
 	// will timeout when data race enabled
 	skip.UnderShort(t)
+	// The stabilization below is adapted from upstream/master commit 86b0785057
+	// (pingcap/tidb#67880), not release-7.1.9-0. No local release tag contains it.
 	debug.SetGCPercent(1000)
 	defer debug.SetGCPercent(100)
 	store := testkit.CreateMockStore(t)
@@ -122,31 +124,27 @@ func TestPBMemoryLeak(t *testing.T) {
 
 	// read data
 	runtime.GC()
-	allocatedBegin, inUseBegin := readMem()
-	records, err := tk.Session().Execute(context.Background(), "select * from t")
-	require.NoError(t, err)
-	record := records[0]
-	rowCnt := 0
-	chk := record.NewChunk(nil)
-	for {
-		require.NoError(t, record.Next(context.Background(), chk))
-		rowCnt += chk.NumRows()
-		if chk.NumRows() == 0 {
-			break
-		}
-	}
+	allocatedBegin, _ := readMem()
+	rowCnt := readAllRowsAndClose(t, tk, "select * from t")
 	require.Equal(t, int(numRows), rowCnt)
 
-	// check memory before close
+	// Check memory after the first scan and close. The first scan warms up
+	// reusable buffers, so its retained memory is not evidence of a leak.
 	runtime.GC()
-	allocatedAfter, inUseAfter := readMem()
-	require.GreaterOrEqual(t, allocatedAfter-allocatedBegin, totalSize)
-	require.Less(t, memDiff(inUseAfter, inUseBegin), delta)
+	allocatedAfterWarmup, inUseAfterWarmup := readMem()
+	require.GreaterOrEqual(t, allocatedAfterWarmup-allocatedBegin, totalSize)
+
+	// Scan again to ensure memory usage does not keep increasing.
+	rowCnt = readAllRowsAndClose(t, tk, "select * from t")
+	require.Equal(t, int(numRows), rowCnt)
 
 	runtime.GC()
-	allocatedFinal, inUseFinal := readMem()
-	require.Less(t, allocatedFinal-allocatedAfter, delta)
-	require.Less(t, memDiff(inUseFinal, inUseAfter), delta)
+	_, inUseAfterSecondScan := readMem()
+	heapGrowth := int64(inUseAfterSecondScan) - int64(inUseAfterWarmup)
+	if heapGrowth < 0 {
+		heapGrowth = 0
+	}
+	require.Less(t, heapGrowth, int64(delta))
 }
 
 // nolint:unused
@@ -154,6 +152,25 @@ func readMem() (allocated, heapInUse uint64) {
 	var stat runtime.MemStats
 	runtime.ReadMemStats(&stat)
 	return stat.TotalAlloc, stat.HeapInuse
+}
+
+func readAllRowsAndClose(t *testing.T, tk *testkit.TestKit, sql string) int {
+	t.Helper()
+
+	records, err := tk.Session().Execute(context.Background(), sql)
+	require.NoError(t, err)
+	record := records[0]
+	defer func() { require.NoError(t, record.Close()) }()
+
+	rowCnt := 0
+	chk := record.NewChunk(nil)
+	for {
+		require.NoError(t, record.Next(context.Background(), chk))
+		rowCnt += chk.NumRows()
+		if chk.NumRows() == 0 {
+			return rowCnt
+		}
+	}
 }
 
 // nolint:unused

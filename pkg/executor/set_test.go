@@ -1152,6 +1152,15 @@ func TestValidateSetVar(t *testing.T) {
 	err = tk.ExecToErr("set @@global.max_connections='hello'")
 	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar))
 
+	tk.MustQuery("select @@global.reserved_admin_connections").Check(testkit.Rows("3"))
+	tk.MustExec("set @@global.reserved_admin_connections=65536")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect reserved_admin_connections value: '65536'"))
+	tk.MustQuery("select @@global.reserved_admin_connections").Check(testkit.Rows("65535"))
+	tk.MustExec("set @@global.reserved_admin_connections=-1")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect reserved_admin_connections value: '-1'"))
+	tk.MustQuery("select @@global.reserved_admin_connections").Check(testkit.Rows("0"))
+	tk.MustExec("set @@global.reserved_admin_connections=3")
+
 	tk.MustExec("set @@global.thread_pool_size=65")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect thread_pool_size value: '65'"))
 	result = tk.MustQuery("select @@global.thread_pool_size;")
@@ -1516,6 +1525,16 @@ func TestSetConcurrency(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select @@tidb_index_serial_scan_concurrency;").Check(testkit.Rows("4"))
 	require.Equal(t, 4, vars.IndexSerialScanConcurrency())
+
+	// tidb_merge_partition_stats_concurrency is deprecated: setting to 1 is silent, other values warn, value always stays 1.
+	tk.MustExec("set @@tidb_merge_partition_stats_concurrency=1")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select @@tidb_merge_partition_stats_concurrency").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_merge_partition_stats_concurrency=4")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1287 tidb_merge_partition_stats_concurrency is deprecated: the merge no longer runs concurrently, so this setting has no effect. Kept for backward compatibility."))
+	tk.MustQuery("select @@tidb_merge_partition_stats_concurrency").Check(testkit.Rows("1"))
+	// Global getter is overridden too, a stale persisted non-1 value must not leak through.
+	tk.MustQuery("select @@global.tidb_merge_partition_stats_concurrency").Check(testkit.Rows("1"))
 
 	// test setting deprecated value unset
 	tk.MustExec("set @@tidb_index_lookup_concurrency=-1;")

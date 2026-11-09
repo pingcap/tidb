@@ -98,6 +98,18 @@ func updateRecord(
 	sessVars := sctx.GetSessionVars()
 	sc := sessVars.StmtCtx
 
+	if ts, ok := sctx.GetTableCtx().GetTriggerSupport(); ok {
+		if err := ts.OnUpdateBefore(t.Meta(), oldData, newData); err != nil {
+			retErr = err
+			return
+		}
+		defer func() {
+			if retErr == nil {
+				retErr = ts.OnUpdateAfter(t.Meta(), oldData, newData)
+			}
+		}()
+	}
+
 	// changed, handleChanged indicated whether row/handle is changed
 	changed, handleChanged := false, false
 	// onUpdateNeedModify is for "UPDATE SET ts_field = old_value".
@@ -163,7 +175,10 @@ func updateRecord(
 	// After these are done, we can finally update the record.
 
 	// Step 2: compare already evaluated columns and update changed, handleChanged and handleChanged flags.
-	for i := range cols {
+	for i, col := range cols {
+		if err := handleExplicitDefaultsForTimestampNull(sctx, col, &newData[i]); err != nil {
+			return false, false, err
+		}
 		if err := checkColumnFunc(i, true); err != nil {
 			return false, false, err
 		}
@@ -345,6 +360,23 @@ func updateRecord(
 	sc.AddCopiedRows(1)
 
 	return true, false, nil
+}
+
+func handleExplicitDefaultsForTimestampNull(sctx sessionctx.Context, col *table.Column, value *types.Datum) error {
+	if !value.IsNull() ||
+		sctx.GetSessionVars().ExplicitDefaultsForTimestamp ||
+		col.IsGenerated() ||
+		col.GetType() != mysql.TypeTimestamp ||
+		!mysql.HasNotNullFlag(col.GetFlag()) {
+		return nil
+	}
+
+	now, err := expression.GetTimeCurrentTimestamp(sctx.GetExprCtx().GetEvalCtx(), col.GetType(), col.GetDecimal())
+	if err != nil {
+		return err
+	}
+	*value = now
+	return nil
 }
 
 const (

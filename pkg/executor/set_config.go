@@ -21,6 +21,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	pd "github.com/tikv/pd/client/http"
 )
 
@@ -98,6 +100,11 @@ func (s *SetConfigExec) Next(_ context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
+	// always skip set config for replicator nodes
+	serversInfo = slices.DeleteFunc(serversInfo, func(info infoschema.ServerInfo) bool {
+		return info.ServerType == tikvrpc.Replicator.Name()
+	})
+
 	nodeTypes := set.NewStringSet()
 	nodeAddrs := set.NewStringSet()
 	if s.p.Type != "" {

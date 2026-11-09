@@ -74,6 +74,28 @@ func TestMPPDecimalConvert(t *testing.T) {
 	testDecimalConvert(t, 0, 40, 0, 60, false, false, 0, 60)
 }
 
+func TestCapShuffleConcurrencyByNDV(t *testing.T) {
+	testCases := []struct {
+		name        string
+		concurrency int
+		ndv         float64
+		expected    int
+	}{
+		{name: "lower NDV", concurrency: 5, ndv: 2.9, expected: 2},
+		{name: "equal NDV", concurrency: 5, ndv: 5, expected: 5},
+		{name: "higher NDV", concurrency: 5, ndv: 10, expected: 5},
+		{name: "maximum finite NDV", concurrency: 5, ndv: math.MaxFloat64, expected: 5},
+		{name: "infinite NDV", concurrency: 5, ndv: math.Inf(1), expected: 5},
+		{name: "unknown NDV", concurrency: 5, ndv: math.NaN(), expected: 5},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			require.Equal(t, testCase.expected, capShuffleConcurrencyByNDV(testCase.concurrency, testCase.ndv))
+		})
+	}
+}
+
 func testJoinKeyTypeConvert(t *testing.T, leftType, rightType, retType *types.FieldType, lConvert, rConvert bool) {
 	cType, lCon, rCon := negotiateCommonType(leftType, rightType)
 	require.Equal(t, retType.GetType(), cType.GetType())

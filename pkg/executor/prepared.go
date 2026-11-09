@@ -215,12 +215,10 @@ func (e *DeallocateExec) Next(context.Context, *chunk.Chunk) error {
 	}
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if e.Ctx().GetSessionVars().EnablePreparedPlanCache {
-		cacheKey, _, _, _, err := plannercore.NewPlanCacheKey(e.Ctx(), preparedObj)
-		if err != nil {
-			return err
-		}
 		if !vars.IgnorePreparedCacheCloseStmt { // keep the plan in cache
-			e.Ctx().GetSessionPlanCache().Delete(cacheKey)
+			if err := plannercore.DeletePreparedPlanCacheVariants(e.Ctx(), preparedObj); err != nil {
+				return err
+			}
 		}
 	}
 	vars.RemovePreparedStmt(id)

@@ -241,7 +241,7 @@ alter table test_drop_columns add column c2 int first, add column c3 int after c
 alter table test_drop_columns drop column c1, drop column c2, drop column c3;
 -- error 1060
 alter table test_drop_columns drop column c1, add column c2 int;
--- error 8200
+-- error 1091
 alter table test_drop_columns drop column c1, drop column c1;
 -- error 1072
 alter table test_error_code_succ add index idx (c_not_exist);

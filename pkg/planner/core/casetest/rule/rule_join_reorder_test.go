@@ -106,3 +106,32 @@ func TestJoinOrderHint4DynamicPartitionTable(t *testing.T) {
 	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 	runJoinReorderTestData(t, tk, "TestJoinOrderHint4DynamicPartitionTable")
 }
+
+func TestJoinOrderHint4NestedLeading(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2, t3, t4, t5, t6;")
+	tk.MustExec("set @@tidb_allow_mpp=0; set @@tidb_enforce_mpp=0;")
+	tk.MustExec("create table t(a int, b int, key(a));")
+	tk.MustExec("create table t1(a int, b int, key(a));")
+	tk.MustExec("create table t2(a int, b int, key(a));")
+	tk.MustExec("create table t3(a int, b int, key(a));")
+	tk.MustExec("create table t4(a int, b int, key(a));")
+	tk.MustExec("create table t5(a int, b int, key(a));")
+	tk.MustExec("create table t6(a int, b int, key(a));")
+	runJoinReorderTestData(t, tk, "TestJoinOrderHint4NestedLeading")
+}
+
+func TestJoinOrderHint4NestedLeadingPK(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3, t4;")
+	tk.MustExec("set @@tidb_allow_mpp=0; set @@tidb_enforce_mpp=0;")
+	tk.MustExec("create table t1(a int not null, b int, key(a));")
+	tk.MustExec("create table t2(a int not null, b int, key(a));")
+	tk.MustExec("create table t3(a int not null, b int not null, primary key(a));")
+	tk.MustExec("create table t4(a int not null, b int not null, primary key(b));")
+	runJoinReorderTestData(t, tk, "TestJoinOrderHint4NestedLeadingPK")
+}

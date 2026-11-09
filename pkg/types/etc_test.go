@@ -332,6 +332,10 @@ func TestNeedRestoredData(t *testing.T) {
 		{mysql.TypeVarString, "gbk", "gbk_bin", true},
 		{mysql.TypeString, "gbk", "gbk_chinese_ci", true},
 		{mysql.TypeVarString, "gbk", "gbk_chinese_ci", true},
+		{mysql.TypeString, "gb18030", "gb18030_bin", true},
+		{mysql.TypeVarString, "gb18030", "gb18030_bin", true},
+		{mysql.TypeString, "gb18030", "gb18030_chinese_ci", true},
+		{mysql.TypeVarString, "gb18030", "gb18030_chinese_ci", true},
 	}
 
 	for _, c := range cases {

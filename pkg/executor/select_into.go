@@ -24,11 +24,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
 // SelectIntoExec represents a SelectInto executor.
@@ -50,38 +53,65 @@ type SelectIntoExec struct {
 
 // Open implements the Executor Open interface.
 func (s *SelectIntoExec) Open(ctx context.Context) error {
-	// only 'select ... into outfile' is supported now
-	if s.intoOpt.Tp != ast.SelectIntoOutfile {
+	if s.intoOpt.Tp == ast.SelectIntoOutfile {
+		// MySQL-compatible behavior: allow files to be group-readable
+		f, err := os.OpenFile(s.intoOpt.FileName, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0640) // #nosec G302
+		if err != nil {
+			return errors.Trace(err)
+		}
+		s.started = true
+		s.dstFile = f
+		s.writer = bufio.NewWriter(s.dstFile)
+		s.chk = exec.TryNewCacheChunk(s.Children(0))
+		s.lineBuf = make([]byte, 0, 1024)
+		s.fieldBuf = make([]byte, 0, 64)
+		s.escapeBuf = make([]byte, 0, 64)
+	} else if s.intoOpt.Tp == ast.SelectIntoVars {
+		if len(s.intoOpt.VarList) > 0 && len(s.intoOpt.ProcedureVarList) > 0 {
+			return errors.New("User defined variable and procedure variable are not supported in same SelectInto clause")
+		}
+		varNum := len(s.intoOpt.VarList) + len(s.intoOpt.ProcedureVarList)
+		if s.Children(0).Schema().Len() != varNum {
+			return mysql.NewErr(mysql.ErrWrongNumberOfColumnsInSelect)
+		}
+		s.chk = exec.TryNewCacheChunk(s.Children(0))
+	} else {
 		return errors.New("unsupported SelectInto type")
 	}
 
-	// MySQL-compatible behavior: allow files to be group-readable
-	f, err := os.OpenFile(s.intoOpt.FileName, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0640) // #nosec G302
-	if err != nil {
-		return errors.Trace(err)
-	}
-	s.started = true
-	s.dstFile = f
-	s.writer = bufio.NewWriter(s.dstFile)
-	s.chk = exec.TryNewCacheChunk(s.Children(0))
-	s.lineBuf = make([]byte, 0, 1024)
-	s.fieldBuf = make([]byte, 0, 64)
-	s.escapeBuf = make([]byte, 0, 64)
 	return s.BaseExecutor.Open(ctx)
 }
 
 // Next implements the Executor Next interface.
 func (s *SelectIntoExec) Next(ctx context.Context, _ *chunk.Chunk) error {
-	for {
+	if s.intoOpt.Tp == ast.SelectIntoOutfile {
+		for {
+			if err := exec.Next(ctx, s.Children(0), s.chk); err != nil {
+				return err
+			}
+			if s.chk.NumRows() == 0 {
+				break
+			}
+			if err := s.dumpToOutfile(); err != nil {
+				return err
+			}
+		}
+	} else if s.intoOpt.Tp == ast.SelectIntoVars {
 		if err := exec.Next(ctx, s.Children(0), s.chk); err != nil {
 			return err
 		}
 		if s.chk.NumRows() == 0 {
-			break
+			s.Ctx().GetSessionVars().StmtCtx.AppendWarning(exeerrors.ErrSpFetchNoData)
+			return nil
+		} else if s.chk.NumRows() > 1 {
+			return mysql.NewErr(mysql.ErrTooManyRows)
 		}
-		if err := s.dumpToOutfile(); err != nil {
+
+		if err := s.assignToVars(s.chk.GetRow(0)); err != nil {
 			return err
 		}
+	} else {
+		return errors.New("unsupported SelectInto type")
 	}
 	return nil
 }
@@ -215,18 +245,21 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 
 // Close implements the Executor Close interface.
 func (s *SelectIntoExec) Close() error {
-	if !s.started {
-		return nil
+	if s.intoOpt.Tp == ast.SelectIntoOutfile {
+		if !s.started {
+			return nil
+		}
+		err1 := s.writer.Flush()
+		err2 := s.dstFile.Close()
+		err3 := s.BaseExecutor.Close()
+		if err1 != nil {
+			return errors.Trace(err1)
+		} else if err2 != nil {
+			return errors.Trace(err2)
+		}
+		return err3
 	}
-	err1 := s.writer.Flush()
-	err2 := s.dstFile.Close()
-	err3 := s.BaseExecutor.Close()
-	if err1 != nil {
-		return errors.Trace(err1)
-	} else if err2 != nil {
-		return errors.Trace(err2)
-	}
-	return err3
+	return nil
 }
 
 const (
@@ -253,4 +286,48 @@ func DumpRealOutfile(realBuf, lineBuf []byte, v float64, tp *types.FieldType) ([
 		lineBuf = strconv.AppendFloat(lineBuf, v, 'f', prec, 64)
 	}
 	return realBuf, lineBuf
+}
+
+func (s *SelectIntoExec) assignToVars(r chunk.Row) error {
+	cols := s.Children(0).Schema().Columns
+	if len(s.intoOpt.VarList) > 0 {
+		return s.assignToUserDefinedVars(cols, r)
+	} else if len(s.intoOpt.ProcedureVarList) > 0 {
+		return s.assignToProcedureVars(cols, r)
+	}
+	return nil
+}
+
+func (s *SelectIntoExec) assignToUserDefinedVars(cols []*expression.Column, r chunk.Row) error {
+	sessionVars := s.Ctx().GetSessionVars()
+	for i, col := range cols {
+		name := s.intoOpt.VarList[i].(*ast.VariableExpr).Name
+		tp := col.GetType(s.Ctx().GetExprCtx().GetEvalCtx())
+		d := r.GetDatum(i, tp)
+		if d.IsNull() {
+			sessionVars.UnsetUserVar(name)
+		} else {
+			sessionVars.SetUserVarVal(name, d)
+		}
+	}
+	return nil
+}
+
+func (s *SelectIntoExec) assignToProcedureVars(cols []*expression.Column, r chunk.Row) error {
+	sessionVars := s.Ctx().GetSessionVars()
+	if !sessionVars.GetCallProcedure() {
+		return errors.New("Select into procedure variable is only allowed in stored procedure")
+	}
+
+	for i, col := range cols {
+		name := s.intoOpt.ProcedureVarList[i].(*ast.ColumnNameExpr).Name.Name.O
+		_, _, notFind := sessionVars.GetProcedureVariable(name)
+		if notFind {
+			return plannererrors.ErrSpUndeclaredVar.GenWithStackByArgs(name)
+		}
+		tp := col.GetType(s.Ctx().GetExprCtx().GetEvalCtx())
+		d := r.GetDatum(i, tp)
+		core.UpdateVariableVar(name, d, sessionVars)
+	}
+	return nil
 }

@@ -587,6 +587,14 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 			return errors.Trace(err)
 		}
 
+		tsString, err := flags.GetString(FlagStreamRestoreTS)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if cfg.RestoreTS, err = ParseTSString(tsString, true); err != nil {
+			return errors.Trace(err)
+		}
+
 		// iops: gp3 [3,000-16,000]; io1/io2 [100-32,000]
 		// throughput: gp3 [125, 1000]; io1/io2 cannot set throughput
 		// io1 and io2 volumes support up to 64,000 IOPS only on Instances built on the Nitro System.
@@ -1850,6 +1858,10 @@ func getStores(ctx context.Context, mgr *conn.Mgr) (stores *http.StoresInfo, err
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	stores.Stores = slices.DeleteFunc(stores.Stores, func(store http.StoreInfo) bool {
+		return engine.IsReplicatorHTTPResp(&store.Store)
+	})
+	stores.Count = len(stores.Stores)
 	return stores, nil
 }
 
@@ -2364,7 +2376,7 @@ func PreCheckTableClusterIndex(
 		if job.Type == model.ActionCreateTable {
 			tableInfo := job.BinlogInfo.TableInfo
 			if tableInfo != nil {
-				oldTableInfo, err := restore.GetTableSchema(dom, pmodel.NewCIStr(job.SchemaName), tableInfo.Name)
+				oldTableInfo, err := restore.GetTableSchema(dom, job.GetSchemaName(), tableInfo.Name)
 				// table exists in database
 				if err == nil {
 					if tableInfo.IsCommonHandle != oldTableInfo.IsCommonHandle {

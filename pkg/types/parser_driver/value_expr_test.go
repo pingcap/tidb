@@ -15,13 +15,76 @@
 package driver
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
+
+type valueExprRestoreInterceptor struct {
+	selected *ValueExpr
+	err      error
+}
+
+func (i *valueExprRestoreInterceptor) RestoreLiteral(ctx *format.RestoreCtx, literal any) (bool, error) {
+	if literal != i.selected {
+		return false, nil
+	}
+	if i.err != nil {
+		return true, i.err
+	}
+	ctx.WritePlain("?")
+	return true, nil
+}
+
+func (*valueExprRestoreInterceptor) AllowOriginalText(any) bool { return true }
+
+func TestValueExprRestoreInterceptor(t *testing.T) {
+	selected := &ValueExpr{Datum: types.NewIntDatum(1)}
+	unselected := &ValueExpr{Datum: types.NewIntDatum(2)}
+	var output strings.Builder
+	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &output)
+	ctx.SetRestoreInterceptor(&valueExprRestoreInterceptor{selected: selected})
+	require.NoError(t, selected.Restore(ctx))
+	ctx.WritePlain(",")
+	require.NoError(t, unselected.Restore(ctx))
+	require.Equal(t, "?,2", output.String())
+
+	expectedErr := errors.New("restore failed")
+	ctx.SetRestoreInterceptor(&valueExprRestoreInterceptor{selected: selected, err: expectedErr})
+	require.ErrorIs(t, selected.Restore(ctx), expectedErr)
+}
+
+func BenchmarkValueExprRestoreInterceptor(b *testing.B) {
+	expr := &ValueExpr{Datum: types.NewIntDatum(1)}
+	notSelected := &ValueExpr{Datum: types.NewIntDatum(2)}
+	benchmarks := []struct {
+		name        string
+		interceptor format.RestoreInterceptor
+	}{
+		{name: "default_nil_interceptor"},
+		{name: "non_selected_interceptor", interceptor: &valueExprRestoreInterceptor{selected: notSelected}},
+		{name: "selected_interceptor", interceptor: &valueExprRestoreInterceptor{selected: expr}},
+	}
+	for _, benchmark := range benchmarks {
+		b.Run(benchmark.name, func(b *testing.B) {
+			var output strings.Builder
+			ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &output)
+			ctx.SetRestoreInterceptor(benchmark.interceptor)
+			b.ReportAllocs()
+			for b.Loop() {
+				output.Reset()
+				if err := expr.Restore(ctx); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
 
 func TestValueExprRestore(t *testing.T) {
 	tests := []struct {
@@ -50,6 +113,40 @@ func TestValueExprRestore(t *testing.T) {
 			err := expr.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
 			require.NoError(t, err)
 			require.Equalf(t, test.expect, sb.String(), "datum: %#v", test.datum)
+		})
+	}
+}
+
+func TestValueExprRestorePreservesBinaryLiteralToken(t *testing.T) {
+	for _, test := range []struct {
+		token     string
+		canonical string
+	}{
+		{token: "b'0001'", canonical: "b'1'"},
+		{token: "B'0001'", canonical: "b'1'"},
+		{token: "0b0001", canonical: "b'1'"},
+		{token: "X'0A'", canonical: "x'0a'"},
+		{token: "x'0A'", canonical: "x'0a'"},
+		{token: "0x0A", canonical: "x'0a'"},
+	} {
+		t.Run(test.token, func(t *testing.T) {
+			var err error
+			var value any
+			if test.token[0] == 'b' || test.token[0] == 'B' || test.token[:2] == "0b" {
+				value, err = ast.NewBitLiteral(test.token)
+			} else {
+				value, err = ast.NewHexLiteral(test.token)
+			}
+			require.NoError(t, err)
+			expr := ast.NewValueExpr(value, "", "")
+			var sb strings.Builder
+			err = expr.Restore(format.NewRestoreCtx(format.RestoreForNonPrepPlanCache, &sb))
+			require.NoError(t, err)
+			require.Equal(t, test.token, sb.String())
+			sb.Reset()
+			err = expr.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+			require.NoError(t, err)
+			require.Equal(t, test.canonical, sb.String())
 		})
 	}
 }

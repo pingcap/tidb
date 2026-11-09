@@ -68,15 +68,15 @@ func TestRedactExplain(t *testing.T) {
 			"  └─Point_Get_8 1.00 root table:t handle:‹1›"))
 	// expression partition key
 	tk.MustQuery("explain select *, row_number() over (partition by deptid+1) FROM employee").Check(testkit.Rows(
-		"TableReader_31 10000.00 root  MppVersion: 2, data:ExchangeSender_30",
-		"└─ExchangeSender_30 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"TableReader_32 10000.00 root  MppVersion: 2, data:ExchangeSender_31",
+		"└─ExchangeSender_31 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"  └─Projection_7 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, Column#7, stream_count: 8",
-		"    └─Window_29 10000.00 mpp[tiflash]  row_number()->Column#7 over(partition by Column#6 rows between current row and current row), stream_count: 8",
-		"      └─Sort_14 10000.00 mpp[tiflash]  Column#6, stream_count: 8",
-		"        └─ExchangeReceiver_13 10000.00 mpp[tiflash]  stream_count: 8",
-		"          └─ExchangeSender_12 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#6, collate: binary], stream_count: 8",
-		"            └─Projection_10 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, plus(test.employee.deptid, ‹1›)->Column#6", // <- here
-		"              └─TableFullScan_11 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"))
+		"    └─Window_30 10000.00 mpp[tiflash]  row_number()->Column#7 over(partition by Column#6 rows between current row and current row), stream_count: 8",
+		"      └─Sort_15 10000.00 mpp[tiflash]  Column#6, stream_count: 8",
+		"        └─ExchangeReceiver_14 10000.00 mpp[tiflash]  stream_count: 8",
+		"          └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#6, collate: binary], stream_count: 8",
+		"            └─Projection_11 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, plus(test.employee.deptid, ‹1›)->Column#6", // <- here
+		"              └─TableFullScan_12 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"))
 	tk.MustQuery("explain format = 'brief' select * from tlist where a in (2)").Check(testkit.Rows(
 		"TableReader 10.00 root partition:p0 data:Selection",
 		"└─Selection 10.00 cop[tikv]  eq(test.tlist.a, ‹2›)",
@@ -141,15 +141,15 @@ func TestRedactExplain(t *testing.T) {
 			"  └─Point_Get_8 1.00 root table:t handle:?"))
 	// expression partition key
 	tk.MustQuery("explain select *, row_number() over (partition by deptid+1) FROM employee").Check(testkit.Rows(
-		"TableReader_31 10000.00 root  MppVersion: 2, data:ExchangeSender_30",
-		"└─ExchangeSender_30 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"TableReader_32 10000.00 root  MppVersion: 2, data:ExchangeSender_31",
+		"└─ExchangeSender_31 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"  └─Projection_7 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, Column#7, stream_count: 8",
-		"    └─Window_29 10000.00 mpp[tiflash]  row_number()->Column#7 over(partition by Column#6 rows between current row and current row), stream_count: 8",
-		"      └─Sort_14 10000.00 mpp[tiflash]  Column#6, stream_count: 8",
-		"        └─ExchangeReceiver_13 10000.00 mpp[tiflash]  stream_count: 8",
-		"          └─ExchangeSender_12 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#6, collate: binary], stream_count: 8",
-		"            └─Projection_10 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, plus(test.employee.deptid, ?)->Column#6", // <- here
-		"              └─TableFullScan_11 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"))
+		"    └─Window_30 10000.00 mpp[tiflash]  row_number()->Column#7 over(partition by Column#6 rows between current row and current row), stream_count: 8",
+		"      └─Sort_15 10000.00 mpp[tiflash]  Column#6, stream_count: 8",
+		"        └─ExchangeReceiver_14 10000.00 mpp[tiflash]  stream_count: 8",
+		"          └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#6, collate: binary], stream_count: 8",
+		"            └─Projection_11 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, plus(test.employee.deptid, ?)->Column#6", // <- here
+		"              └─TableFullScan_12 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"))
 	tk.MustQuery("explain format = 'brief' select * from tlist where a in (2)").Check(testkit.Rows(
 		"TableReader 10.00 root partition:p0 data:Selection",
 		"└─Selection 10.00 cop[tikv]  eq(test.tlist.a, ?)",

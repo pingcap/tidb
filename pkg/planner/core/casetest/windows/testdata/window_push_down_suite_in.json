@@ -14,7 +14,16 @@
       "explain select *, rank() over (partition by deptid) FROM  (select *, row_number() over () a from employee) tmp -- 6.1 multi window from sub query",
       // "explain select *, max(salary) over (), max(salary) over (partition by deptid order by salary), row_number() over (partition by deptid order by salary), max(salary) over (partition by deptid order by empid), row_number() over (partition by deptid order by empid), count(empid) over (partition by salary order by deptid) from employee; -- 7. complex",
       "explain select *, sum(a) over (partition by deptid) FROM  (select *, row_number() over (order by md5(deptid)) a from employee) tmp; -- 8. some scalar function not supported.",
-      "explain select deptid, row_number() OVER() from (select deptid from employee group by deptid) t;"
+      "explain select deptid, row_number() OVER() from (select deptid from employee group by deptid) t;",
+      "set @@tidb_enforce_mpp=0",
+      "drop table if exists ordered_window_t",
+      "create table ordered_window_t(a int, b int, c int, key idx_ab(a, b))",
+      "insert into ordered_window_t values (1, 1, 11), (1, 2, 12), (2, 1, 21), (2, 3, 23)",
+      "explain format = 'brief' select a, row_number() over(partition by a) as rn from ordered_window_t",
+      "explain format = 'brief' select a, b, row_number() over(partition by a order by b) as rn from ordered_window_t",
+      "select a, b, row_number() over(partition by a order by b) as rn from ordered_window_t order by a, b",
+      "explain format = 'brief' select a, b, rank() over(partition by a order by b) as rk from ordered_window_t",
+      "explain format = 'brief' select a, c, row_number() over(partition by a order by c) as rn from ordered_window_t"
     ]
   },
   {

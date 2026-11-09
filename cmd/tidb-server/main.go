@@ -39,6 +39,8 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
 	_ "github.com/pingcap/tidb/pkg/extension/_import"
+	"github.com/pingcap/tidb/pkg/extension/enterprise/audit"
+	"github.com/pingcap/tidb/pkg/extension/enterprise/whitelist"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -287,7 +289,13 @@ func main() {
 		checkTempStorageQuota()
 	}
 	setupLog()
+	// register extensions
+	audit.Register()
+	executor.GetGlobalAuditLogPathAndType = func() (string, string) {
+		return audit.GlobalLogManager.GetLogPath(), audit.GlobalLogManager.GetLogFormat()
+	}
 	memory.InitMemoryHook()
+	whitelist.Register()
 	setupExtensions()
 	setupStmtSummary()
 
@@ -324,7 +332,7 @@ func main() {
 	svr := createServer(storage, dom)
 
 	exited := make(chan struct{})
-	signal.SetupSignalHandler(func() {
+	signal.SetupSignalHandler(func(_ os.Signal) {
 		svr.Close()
 		cleanup(svr, storage, dom)
 		cpuprofile.StopCPUProfiler()
@@ -779,6 +787,7 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.TiDBEnforceMPPExecution, variable.BoolToOnOff(config.GetGlobalConfig().Performance.EnforceMPP))
 	variable.MemoryUsageAlarmRatio.Store(cfg.Instance.MemoryUsageAlarmRatio)
 	variable.SetSysVar(variable.TiDBConstraintCheckInPlacePessimistic, variable.BoolToOnOff(cfg.PessimisticTxn.ConstraintCheckInPlacePessimistic))
+	variable.SetSysVar(variable.PKDBEnableWhitelist, variable.BoolToOnOff(cfg.Security.EnableWhiteListPlugin))
 	if hostname, err := os.Hostname(); err == nil {
 		variable.SetSysVar(variable.Hostname, hostname)
 	}

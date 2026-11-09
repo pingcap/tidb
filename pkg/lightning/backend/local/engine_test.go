@@ -50,6 +50,33 @@ func makePebbleDB(t *testing.T, opt *pebble.Options) (*pebble.DB, string) {
 	return db, tmpPath
 }
 
+func TestAppendRowsSortedWithReusedKeyBuffer(t *testing.T) {
+	keyAdapter := common.DupDetectKeyAdapter{}
+	w := &Writer{
+		engine: &Engine{
+			sstDir:     t.TempDir(),
+			keyAdapter: keyAdapter,
+			logger:     log.L(),
+		},
+		isKVSorted: true,
+	}
+	kvs := []common.KvPair{
+		{Key: []byte("a"), Val: []byte("1"), RowID: common.EncodeIntRowID(1)},
+		{Key: []byte("b"), Val: []byte("2"), RowID: common.EncodeIntRowID(1)},
+	}
+
+	var expectedSize int64
+	for _, pair := range kvs {
+		require.NoError(t, w.appendRowsSorted([]common.KvPair{pair}))
+		expectedSize += int64(keyAdapter.EncodedLen(pair.Key, pair.RowID) + len(pair.Val))
+	}
+
+	meta, err := w.writer.Load().close()
+	require.NoError(t, err)
+	require.Equal(t, int64(len(kvs)), meta.totalCount)
+	require.Equal(t, expectedSize, meta.totalSize)
+}
+
 func TestGetEngineSizeWhenImport(t *testing.T) {
 	opt := &pebble.Options{
 		MemTableSize:             1024 * 1024,

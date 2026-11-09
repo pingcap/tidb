@@ -25,7 +25,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coreos/go-semver/semver"
+	"git.pingcap.cn/pingkai/semver/coreos/semver"
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -1359,6 +1359,10 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		// it's nil when checksum=off
+		if manager != nil {
+			defer manager.Close()
+		}
 		ctx = context.WithValue(ctx, &checksumManagerKey, manager)
 
 		undo, err := rc.registerTaskToPD(ctx)
@@ -1485,7 +1489,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 					for _, chunk := range eng.Chunks {
 						// for parquet files filesize is more accurate, we can calculate correct unfinished bytes unless
 						//  we set up the reader, so we directly use filesize here
-						if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+						if chunk.FileMeta.Type == mydump.SourceTypeParquet || chunk.FileMeta.Type == mydump.SourceTypeORC {
 							totalDataSizeToRestore += chunk.FileMeta.FileSize
 							if m, ok := metric.FromContext(ctx); ok {
 								m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(chunk.UnfinishedSize()))

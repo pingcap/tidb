@@ -233,6 +233,15 @@ create table t5(a int, b int) partition by hash(a) partitions 5;
 create table t6(a int, b int) partition by hash(b) partitions 3;
 set @@tidb_partition_prune_mode="static";
 set @@tidb_enable_outer_join_reorder=true;
+# Under static partition pruning each partitioned operand enters the join
+# group as a PartitionUnion wrapper. The LEADING matcher resolves operand
+# identity through such wrappers, so LEADING now applies under static
+# pruning exactly as it already did under dynamic pruning, instead of being
+# reported inapplicable. This is the intended static/dynamic consistency
+# fix. Consequence, same as dynamic pruning: when the leading prefix has no
+# join condition between its operands (e.g. leading(t1, t3) below, where
+# t1 and t3 only meet through t2), honoring the user-specified order
+# produces a CARTESIAN join with the accordingly large estRows.
 --enable_warnings
 explain format = 'brief' select /*+ straight_join() */ * from t, t1, t2 where t.a = t1.a and t1.b=t2.b;
 explain format = 'brief' select /*+ straight_join() */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;

@@ -40,10 +40,7 @@ import (
 )
 
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
-// idxCols is used to recognize virtual columns inside expBackoffEstimation.
-// It can be nil, in which case virtual-column fallback is skipped.
-// When exp-backoff cannot estimate a virtual column, prefer the composite-index estimate as a fallback.
-// This may improve estimation but remains subject to encoded index histogram interpolation accuracy.
+// idxCols lets exponential backoff recognize virtual columns and can be nil.
 func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range, idxCols []*expression.Column) (result float64, err error) {
 	var name string
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
@@ -435,14 +432,18 @@ func estimateRowCountWithUniformDistribution(
 		// We have no histograms, but c.Histogram.NDV > c.TopN.Num().
 		// This can happen when sampling collects fewer than all NDV.
 		if histNDV > 0 && modifyCount == 0 {
-			topNMinCount := uint64(0)
-			if topN != nil && len(topN.TopN) > 0 {
-				topNMinCount = topN.TopN[0].Count
-				for _, item := range topN.TopN {
-					topNMinCount = min(topNMinCount, item.Count)
-				}
+			if topN == nil || len(topN.TopN) == 0 {
+				return 1
 			}
-			return max(float64(topNMinCount-1), 1)
+			topNMinCount := topN.TopN[0].Count
+			for _, item := range topN.TopN {
+				topNMinCount = min(topNMinCount, item.Count)
+			}
+			// topNMinCount is uint64, so guard before subtracting 1.
+			if topNMinCount <= 1 {
+				return 1
+			}
+			return float64(topNMinCount - 1)
 		}
 		// If histNDV is zero - we have all NDV's in TopN - and no histograms. This function uses
 		// idx.TotalRowCount rather than idx.Histogram.NotNullCount() since the histograms are empty.
@@ -516,8 +517,11 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	histCnt, matched := idx.Histogram.EqualRowCount(sctx, val, true)
 	// Calculate histNDV here as it's needed for both the underrepresented check and later calculations
 	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
+	// A zero Repeat means no point frequency was recorded for this upper
+	// bound, not that the value has no rows. See equalRowCount in
+	// row_count_column.go.
 	// also check if this last bucket end value is underrepresented
-	if matched && !IsLastBucketEndValueUnderrepresented(sctx,
+	if matched && histCnt > 0 && !IsLastBucketEndValueUnderrepresented(sctx,
 		&idx.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
 		return histCnt
 	}
@@ -585,13 +589,15 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 				if idxStats == nil || statistics.IndexStatsIsInvalid(sctx, idxStats, coll, idxID) {
 					continue
 				}
-				foundStats = true
 				count, err = GetRowCountByIndexRanges(sctx, coll, idxID, tmpRan, nil)
-				if err == nil {
-					break
+				failpoint.InjectCall("afterRecursiveIndexEstimation", idxID, &count, &err)
+				if err != nil {
+					continue
 				}
 				realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idxStats)
 				selectivity = count / float64(realtimeCnt)
+				foundStats = true
+				break
 			}
 		}
 		if !foundStats {

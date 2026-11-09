@@ -20,6 +20,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -52,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
@@ -136,6 +138,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 		varsMutable:        make(map[string]struct{}),
 		varsReadonly:       make(map[string]struct{}),
 		resolveCtx:         node.GetResolveContext(),
+		userDefStoredFuncs: make([][2]string, 0),
 	}
 	for _, optFn := range preprocessOpt {
 		optFn(&v)
@@ -145,13 +148,171 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 		v.PreprocessorReturn = &PreprocessorReturn{}
 	}
 	node.Node.Accept(&v)
+	v.resolveCtx.FinishTiDBRowIDQueryBlockScan()
 	// InfoSchema must be non-nil after preprocessing
 	v.ensureInfoSchema()
 	sctx.GetPlanCtx().SetReadonlyUserVarMap(v.varsReadonly)
 	if len(v.varsReadonly) > 0 {
 		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("read-only variables are used")
 	}
+	// Check if user defined variables can be replaced by constant values
+	if sctx.GetSessionVars().EnableUDVSubstitute {
+		extractReplaceAbleVarsForUDV(sctx, v.userDefVarsTypeGet, v.userDefVarsTypeSet)
+	}
+	if err := preloadUserStoredFunction(ctx, sctx, v.userDefStoredFuncs); err != nil {
+		return err
+	}
 	return errors.Trace(v.err)
+}
+
+func collectUserDefinedStoredFunctions(node ast.Node) [][2]string {
+	if node == nil {
+		return nil
+	}
+	collector := userDefStoredFuncCollector{funcNames: make([][2]string, 0)}
+	node.Accept(&collector)
+	return collector.funcNames
+}
+
+func isUserDefinedStoredFunction(x *ast.FuncCallExpr) bool {
+	return x.Schema.L != "" || !expression.IsFunctionSupported(x.FnName.L)
+}
+
+type userDefStoredFuncCollector struct {
+	funcNames [][2]string
+}
+
+func (*userDefStoredFuncCollector) Enter(in ast.Node) (ast.Node, bool) {
+	return in, false
+}
+
+func (c *userDefStoredFuncCollector) Leave(in ast.Node) (ast.Node, bool) {
+	if x, ok := in.(*ast.FuncCallExpr); ok && isUserDefinedStoredFunction(x) {
+		c.funcNames = append(c.funcNames, [2]string{x.Schema.L, x.FnName.L})
+	}
+	return in, true
+}
+
+func preloadUserStoredFunction(ctx context.Context, sctx sessionctx.Context, funcNames [][2]string) error {
+	if len(funcNames) == 0 {
+		return nil
+	}
+	sc := sctx.GetSessionVars().StmtCtx
+	sc.UserFuncCtx.Lock()
+	if sc.UserFuncCtx.StoredFuncName == nil {
+		sc.UserFuncCtx.StoredFuncName = make(map[[2]string]*types.FieldType)
+	}
+	sc.UserFuncCtx.Unlock()
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+	var (
+		do         *domain.Domain
+		sysSession sessionctx.Context
+		sysRes     pools.Resource
+	)
+	defer func() {
+		if sysSession == nil {
+			return
+		}
+		sysSession.RollbackTxn(ctx)
+		do.SysSessionPool().Put(sysRes)
+	}()
+	// TODO(udf): optimize multiple function loading
+	for _, funcName := range funcNames {
+		schema := funcName[0]
+		name := funcName[1]
+		if schema == "" {
+			schema = sctx.GetSessionVars().CurrentDB
+		}
+		schemaLookup := pmodel.NewCIStr(schema).L
+		key := [2]string{schema, name}
+		sc.UserFuncCtx.Lock()
+		if _, exists := sc.UserFuncCtx.StoredFuncName[key]; exists {
+			sc.UserFuncCtx.Unlock()
+			continue
+		}
+		sc.UserFuncCtx.Unlock()
+		routine, ok := is.RoutineByName(pmodel.NewCIStr(schema), pmodel.NewCIStr(name), "FUNCTION")
+		internalExecCtx := ctx
+		if ok && routine.RetType != nil {
+			sc.UserFuncCtx.Lock()
+			sc.UserFuncCtx.StoredFuncName[key] = routine.RetType
+			sc.UserFuncCtx.Unlock()
+		} else {
+			// Fallback to querying mysql.routines to avoid false negatives when routine cache is unavailable.
+			if sysSession == nil {
+				do = domain.GetDomain(sctx)
+				se, err := do.SysSessionPool().Get()
+				if err != nil {
+					logutil.BgLogger().Warn("preloadUserStoredFunction: get sys session failed", zap.Error(err))
+					return errors.Trace(err)
+				}
+				sysRes = se
+				sysSession = se.(sessionctx.Context)
+			}
+			internalExecCtx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+			rs, err := sysSession.GetSQLExecutor().ExecuteInternal(
+				internalExecCtx,
+				"SELECT definition_utf8, sql_mode, character_set_client, connection_collation FROM %n.%n WHERE lower(route_schema) = %? AND name = %? AND type = 'FUNCTION'",
+				mysql.SystemDB,
+				mysql.Routines,
+				schemaLookup,
+				name,
+			)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			rows, err := sqlexec.DrainRecordSet(internalExecCtx, rs, 1)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			err = rs.Close()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if len(rows) == 0 {
+				sc.UserFuncCtx.Lock()
+				sc.UserFuncCtx.StoredFuncName[key] = nil
+				sc.UserFuncCtx.Unlock()
+				// Don't return error here, the function-not-exist error will be reported during
+				// plan building. Continue preloading the remaining function names so that a
+				// missing/non-stored function earlier in the list doesn't block later stored
+				// functions in the same statement.
+				continue
+			}
+			definition := rows[0].GetString(0)
+			sqlModeStr := rows[0].GetSet(1).String()
+			charset := rows[0].GetString(2)
+			collation := rows[0].GetString(3)
+			retType, err := parseStoredFunctionReturnType(definition, sqlModeStr, charset, collation)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			sc.UserFuncCtx.Lock()
+			sc.UserFuncCtx.StoredFuncName[key] = retType
+			sc.UserFuncCtx.Unlock()
+		}
+	}
+	return nil
+}
+
+func parseStoredFunctionReturnType(definition, sqlModeStr, charset, collation string) (*types.FieldType, error) {
+	sqlMode, err := mysql.GetSQLMode(sqlModeStr)
+	if err != nil {
+		return nil, err
+	}
+
+	p := parser.New()
+	p.SetSQLMode(sqlMode)
+
+	stmt, err := p.ParseOneStmt("create function p() "+definition, charset, collation)
+	if err != nil {
+		return nil, err
+	}
+	createFn, ok := stmt.(*ast.CreateProcedureInfo)
+	if !ok || createFn.FunctionInfo.RetType == nil {
+		return nil, errors.Errorf("invalid create function statement")
+	}
+	return createFn.FunctionInfo.RetType, nil
 }
 
 type preprocessorFlag uint64
@@ -178,6 +339,14 @@ const (
 	inImportInto
 	// inAnalyze is set when visiting an analyze statement.
 	inAnalyze
+	// inCreateRoutine is set when visiting routine.
+	// skip table && execute precheck
+	inCreateRoutine
+	// inExplainRoutineName skips routine-name resolution while still allowing
+	// normal table resolution in EXPLAIN ROUTINE argument expressions.
+	inExplainRoutineName
+	// inCreateOrDropTrigger is set when visiting create or drop trigger statement.
+	inCreateOrDropTrigger
 )
 
 // Make linter happy.
@@ -254,8 +423,64 @@ type preprocessor struct {
 	// values that may be returned
 	*PreprocessorReturn
 	err error
+	// for udv push down
+	userDefVarsTypeGet     map[string]struct{}
+	userDefVarsTypeSet     map[string]struct{}
+	userDefStoredFuncs     [][2]string
+	resolveCtx             *resolve.Context
+	ctasForUpdate          []createTableAsSelectForUpdateInfo
+	tiDBRowIDDMLQueryBlock ast.Node
+}
 
-	resolveCtx *resolve.Context
+func (p *preprocessor) currentTiDBRowIDQueryBlock() ast.Node {
+	if lockCtx := p.getLockSelectCtxStackTop(); lockCtx != nil {
+		return lockCtx.queryBlock
+	}
+	return p.tiDBRowIDDMLQueryBlock
+}
+
+type createTableAsSelectForUpdateInfo struct {
+	targetTableName string
+	sourceTableName string
+	found           bool
+}
+
+func (p *preprocessor) enterCreateTableAsSelect(stmt *ast.CreateTableStmt) {
+	if stmt.Select == nil {
+		return
+	}
+	p.ctasForUpdate = append(p.ctasForUpdate, createTableAsSelectForUpdateInfo{
+		targetTableName: stmt.Table.Name.O,
+	})
+}
+
+func (p *preprocessor) recordCreateTableAsSelectForUpdate(stmt *ast.SelectStmt) {
+	if p.err != nil || len(p.ctasForUpdate) == 0 {
+		return
+	}
+	info := &p.ctasForUpdate[len(p.ctasForUpdate)-1]
+	if info.found || !isCreateTableAsSelectForUpdateLock(stmt.LockInfo) {
+		return
+	}
+	info.found = true
+	info.sourceTableName = firstLockedTableName(stmt.LockInfo, stmt.From)
+}
+
+func (p *preprocessor) leaveCreateTableAsSelect(stmt *ast.CreateTableStmt) {
+	if stmt.Select == nil {
+		return
+	}
+	idx := len(p.ctasForUpdate) - 1
+	info := p.ctasForUpdate[idx]
+	p.ctasForUpdate = p.ctasForUpdate[:idx]
+	if p.err != nil || !info.found {
+		return
+	}
+	sourceTableName := info.sourceTableName
+	if sourceTableName == "" {
+		sourceTableName = info.targetTableName
+	}
+	p.err = plannererrors.ErrCantUpdateTableInCreateTableSelect.GenWithStackByArgs(sourceTableName, info.targetTableName)
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -264,6 +489,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkAdminCheckTableGrammar(node)
 	case *ast.DeleteStmt:
 		p.stmtTp = TypeDelete
+		p.tiDBRowIDDMLQueryBlock = node
 	case *ast.SelectStmt:
 		p.stmtTp = TypeSelect
 		if node.With != nil {
@@ -273,12 +499,14 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		// SelectStmt.Accept visits FROM before LockInfo, so one per-SELECT context can collect FROM
 		// table refs during traversal and later bind LockInfo targets without re-walking the FROM tree.
 		p.pushLockSelectCtx(node)
+		p.recordCreateTableAsSelectForUpdate(node)
 	case *ast.SetOprStmt:
 		if node.With != nil {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
 		}
 	case *ast.UpdateStmt:
 		p.stmtTp = TypeUpdate
+		p.tiDBRowIDDMLQueryBlock = node
 	case *ast.InsertStmt:
 		p.stmtTp = TypeInsert
 		// handle the insert table name imminently
@@ -292,6 +520,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.flag |= inCreateOrDropTable
 		p.resolveCreateTableStmt(node)
 		p.checkCreateTableGrammar(node)
+		p.enterCreateTableAsSelect(node)
 	case *ast.CreateViewStmt:
 		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
@@ -391,10 +620,6 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.FnName.L == ast.NextVal || node.FnName.L == ast.LastVal || node.FnName.L == ast.SetVal {
 			p.flag |= inSequenceFunction
 		}
-		// not support procedure right now.
-		if node.Schema.L != "" {
-			p.err = expression.ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", node.Schema.L+"."+node.FnName.L)
-		}
 	case *ast.BRIEStmt:
 		if node.Kind == ast.BRIEKindRestore {
 			p.flag |= inCreateOrDropTable
@@ -437,6 +662,15 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.AnalyzeTableStmt:
 		p.flag |= inAnalyze
+	case *ast.CreateProcedureInfo:
+		p.flag |= inCreateRoutine
+	case *ast.ExplainRoutineStmt:
+		p.flag |= inExplainRoutineName
+	case *ast.CreateTriggerStmt:
+		p.flag |= inCreateOrDropTrigger
+		p.checkCreateTriggerGrammar(node)
+	case *ast.DropTriggerStmt:
+		p.flag |= inCreateOrDropTrigger
 	case *ast.VariableExpr:
 		// Use lowercase for consistency with how user variables are stored (session.go) and
 		// looked up in convertReadonlyVarToConst (builtin_other.go), which uses the lowercased
@@ -523,14 +757,14 @@ func bindableStmtType(node ast.StmtNode) byte {
 }
 
 func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
-	currentDB := p.sctx.GetSessionVars().CurrentDB
+	currentDB := p.sctx.GetSessionVars().CurrentDBCI
 	if tn.Schema.String() != "" {
-		currentDB = tn.Schema.L
+		currentDB = tn.Schema
 	}
-	if currentDB == "" {
+	if currentDB.L == "" {
 		return nil, errors.Trace(plannererrors.ErrNoDB)
 	}
-	sName := pmodel.NewCIStr(currentDB)
+	sName := currentDB
 	is := p.ensureInfoSchema()
 
 	// for 'SHOW CREATE VIEW/SEQUENCE ...' statement, ignore local temporary tables.
@@ -616,6 +850,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		p.flag &= ^inCreateOrDropTable
 		p.checkAutoIncrement(x)
 		p.checkContainDotColumn(x)
+		p.leaveCreateTableAsSelect(x)
 	case *ast.CreateViewStmt:
 		p.flag &= ^inCreateOrDropTable
 	case *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
@@ -639,6 +874,17 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		if !valid {
 			p.err = plannererrors.ErrUnknownExplainFormat.GenWithStackByArgs(x.Format)
 		}
+	case *ast.ExplainRoutineStmt:
+		valid := false
+		for i, length := 0, len(types.ExplainFormats); i < length; i++ {
+			if strings.ToLower(x.Format) == types.ExplainFormats[i] {
+				valid = true
+				break
+			}
+		}
+		if x.Format != "" && !valid {
+			p.err = plannererrors.ErrUnknownExplainFormat.GenWithStackByArgs(x.Format)
+		}
 	case *ast.TableName:
 		// Skip resolving TableName nodes that come from locking clauses; they are bound later against FROM aliases.
 		if lockCtx := p.getLockSelectCtxStackTop(); lockCtx != nil {
@@ -658,6 +904,9 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 			p.tableAliasInJoin = p.tableAliasInJoin[:len(p.tableAliasInJoin)-1]
 		}
 	case *ast.FuncCallExpr:
+		if queryBlock := p.currentTiDBRowIDQueryBlock(); x.FnName.L == ast.TiDBRowID && queryBlock != nil {
+			p.resolveCtx.MarkTiDBRowIDQueryBlock(queryBlock)
+		}
 		// The arguments for builtin NAME_CONST should be constants
 		// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_name-const for details
 		if x.FnName.L == ast.NameConst {
@@ -688,6 +937,10 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		if x.FnName.L == ast.NextVal || x.FnName.L == ast.LastVal || x.FnName.L == ast.SetVal {
 			p.flag &= ^inSequenceFunction
 		}
+		// When schema is specified, it should resolve stored function first to match MySQL compatibility.
+		if isUserDefinedStoredFunction(x) && !expression.HasLoadableFunction(x.FnName.L) {
+			p.userDefStoredFuncs = append(p.userDefStoredFuncs, [2]string{x.Schema.L, x.FnName.L})
+		}
 	case *ast.RepairTableStmt:
 		p.flag &= ^inRepairTable
 	case *ast.CreateSequenceStmt:
@@ -717,6 +970,10 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 			p.checkLockClauseTables(x, lockCtx)
 			p.popLockSelectCtx()
 		}
+	case *ast.UpdateStmt, *ast.DeleteStmt:
+		p.tiDBRowIDDMLQueryBlock = nil
+	case *ast.CreateProcedureInfo:
+		p.flag &= ^inCreateOrDropTable
 	case *ast.SetOprStmt:
 		if x.With != nil {
 			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
@@ -842,6 +1099,16 @@ func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
 		case *ast.SetOprSelectList:
 			p.checkSetOprSelectList(s)
 		}
+	}
+	last := stmt.Selects[len(stmt.Selects)-1]
+	switch s := last.(type) {
+	case *ast.SelectStmt:
+		if s.SelectIntoOpt != nil {
+			p.err = plannererrors.ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")
+			return
+		}
+	case *ast.SetOprSelectList:
+		p.checkSetOprSelectList(s)
 	}
 }
 
@@ -987,13 +1254,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	if p.err = checkUnsupportedTableOptions(stmt.Options); p.err != nil {
 		return
 	}
-	if stmt.Select != nil {
-		// FIXME: a temp error noticing 'not implemented' (issue 4754)
-		// Note: if we implement it later, please clear it's MDL related tables for
-		// it like what CREATE VIEW does.
-		p.err = errors.New("'CREATE TABLE ... SELECT' is not implemented yet")
-		return
-	} else if len(stmt.Cols) == 0 && stmt.ReferTable == nil {
+	if stmt.Select == nil && len(stmt.Cols) == 0 && stmt.ReferTable == nil {
 		p.err = dbterror.ErrTableMustHaveColumns
 		return
 	}
@@ -1020,6 +1281,20 @@ func (p *preprocessor) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
 			p.err = dbterror.ErrWrongColumnName.GenWithStackByArgs(col)
 			return
 		}
+	}
+	if len(stmt.Definer.Username) > auth.UserNameMaxLength {
+		p.err = dbterror.ErrWrongStringLength.GenWithStackByArgs(stmt.Definer.Username, "user name", auth.UserNameMaxLength)
+		return
+	}
+	if len(stmt.Definer.Hostname) > auth.HostNameMaxLength {
+		p.err = dbterror.ErrWrongStringLength.GenWithStackByArgs(stmt.Definer.Hostname, "host name", auth.HostNameMaxLength)
+		return
+	}
+}
+
+func (p *preprocessor) checkCreateTriggerGrammar(stmt *ast.CreateTriggerStmt) {
+	if stmt.Definer == nil {
+		return
 	}
 	if len(stmt.Definer.Username) > auth.UserNameMaxLength {
 		p.err = dbterror.ErrWrongStringLength.GenWithStackByArgs(stmt.Definer.Username, "user name", auth.UserNameMaxLength)
@@ -1061,6 +1336,77 @@ func (p *preprocessor) checkCreateViewWithSelectGrammar(stmt *ast.CreateViewStmt
 			}
 		}
 	}
+}
+
+func isCreateTableAsSelectForUpdateLock(lock *ast.SelectLockInfo) bool {
+	if lock == nil {
+		return false
+	}
+	return lock.LockType == ast.SelectLockForUpdate ||
+		lock.LockType == ast.SelectLockForUpdateNoWait ||
+		lock.LockType == ast.SelectLockForUpdateWaitN ||
+		lock.LockType == ast.SelectLockForUpdateSkipLocked
+}
+
+func firstLockedTableName(lock *ast.SelectLockInfo, from *ast.TableRefsClause) string {
+	if lock != nil {
+		for _, table := range lock.Tables {
+			if table != nil && table.Name.O != "" {
+				return table.Name.O
+			}
+		}
+	}
+	return firstTableNameInTableRefs(from)
+}
+
+func firstTableNameInTableRefs(from *ast.TableRefsClause) string {
+	if from == nil || from.TableRefs == nil {
+		return ""
+	}
+	return firstTableNameInResultSet(from.TableRefs)
+}
+
+func firstTableNameInSetOprSelectList(selectList *ast.SetOprSelectList) string {
+	if selectList == nil {
+		return ""
+	}
+	for _, selectNode := range selectList.Selects {
+		switch stmt := selectNode.(type) {
+		case *ast.SelectStmt:
+			if name := firstTableNameInTableRefs(stmt.From); name != "" {
+				return name
+			}
+		case *ast.SetOprSelectList:
+			if name := firstTableNameInSetOprSelectList(stmt); name != "" {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
+func firstTableNameInResultSet(resultSet ast.ResultSetNode) string {
+	switch x := resultSet.(type) {
+	case *ast.TableName:
+		return x.Name.O
+	case *ast.TableSource:
+		if x.Source == nil {
+			return ""
+		}
+		return firstTableNameInResultSet(x.Source)
+	case *ast.Join:
+		if name := firstTableNameInResultSet(x.Left); name != "" {
+			return name
+		}
+		if x.Right != nil {
+			return firstTableNameInResultSet(x.Right)
+		}
+	case *ast.SelectStmt:
+		return firstTableNameInTableRefs(x.From)
+	case *ast.SetOprStmt:
+		return firstTableNameInSetOprSelectList(x.SelectList)
+	}
+	return ""
 }
 
 func (p *preprocessor) checkDropSequenceGrammar(stmt *ast.DropSequenceStmt) {
@@ -1613,6 +1959,14 @@ func (p *preprocessor) stmtType() string {
 }
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
+	// Creating routine doesn't check tables exist or not.
+	if p.flag&inCreateRoutine == inCreateRoutine {
+		return
+	}
+	if p.flag&inExplainRoutineName == inExplainRoutineName {
+		p.flag &= ^inExplainRoutineName
+		return
+	}
 	if tn.Schema.L == "" {
 		for _, cte := range p.preprocessWith.cteCanUsed {
 			if cte == tn.Name.L {
@@ -1628,6 +1982,9 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		}
 
 		tn.Schema = pmodel.NewCIStr(currentDB)
+	}
+	if p.flag&inCreateOrDropTrigger == inCreateOrDropTrigger {
+		return
 	}
 
 	if p.flag&inCreateOrDropTable > 0 {
@@ -1665,7 +2022,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	}
 
 	if !p.skipLockMDL() {
-		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.ctx, p.sctx.GetPlanCtx(), pmodel.NewCIStr(tn.Schema.L), table, p.ensureInfoSchema())
+		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.ctx, p.sctx.GetPlanCtx(), tn.Schema, table, p.ensureInfoSchema())
 		if err != nil {
 			p.err = err
 			return
@@ -1695,6 +2052,7 @@ type lockRef struct {
 }
 
 type lockSelectCtx struct {
+	queryBlock *ast.SelectStmt
 	// lockClauseTables are the TableName nodes that syntactically belong to this SELECT's locking
 	// clause. They skip handleTableName because they are resolved later against the FROM clause.
 	lockClauseTables map[*ast.TableName]struct{}
@@ -1749,7 +2107,9 @@ func (p *preprocessor) pushLockSelectCtx(sel *ast.SelectStmt) {
 	if sel.LockInfo != nil {
 		lockTables = sel.LockInfo.Tables
 	}
-	p.lockSelectCtxStack = append(p.lockSelectCtxStack, newLockSelectCtx(lockTables))
+	lockCtx := newLockSelectCtx(lockTables)
+	lockCtx.queryBlock = sel
+	p.lockSelectCtxStack = append(p.lockSelectCtxStack, lockCtx)
 }
 
 func (p *preprocessor) getLockSelectCtxStackTop() *lockSelectCtx {
@@ -1909,6 +2269,9 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 }
 
 func (p *preprocessor) resolveExecuteStmt(node *ast.ExecuteStmt) {
+	if p.flag&inCreateRoutine == inCreateRoutine || p.flag&inCreateOrDropTrigger == inCreateOrDropTrigger {
+		return
+	}
 	prepared, err := GetPreparedStmt(node, p.sctx.GetSessionVars())
 	if err != nil {
 		p.err = err
@@ -2065,7 +2428,10 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		// This function may return a new table, so we need to check the return value in the `defer` block.
 		if err == nil {
 			if retTbl.Meta().State != model.StatePublic {
-				err = infoschema.ErrTableNotExists.FastGenByArgs(dbName.L, retTbl.Meta().Name.L)
+				err = infoschema.ErrTableNotExists.FastGenByArgs(
+					pmodel.NewCIStr(model.NameAsID(dbName)),
+					retTbl.Meta().Name,
+				)
 				retTbl = nil
 			}
 		}
@@ -2259,4 +2625,37 @@ func getTableRefsAlias(tableRefs ast.ResultSetNode) *pmodel.CIStr {
 
 func (*aliasChecker) Leave(in ast.Node) (ast.Node, bool) {
 	return in, true
+}
+
+func (p *preprocessor) checkUserDefineVariable(node *ast.VariableExpr) {
+	if node.IsGlobal || node.IsSystem {
+		return
+	}
+	if node.Value == nil {
+		if p.userDefVarsTypeGet == nil {
+			p.userDefVarsTypeGet = make(map[string]struct{})
+		}
+		p.userDefVarsTypeGet[strings.ToLower(node.Name)] = struct{}{}
+	} else {
+		if p.userDefVarsTypeSet == nil {
+			p.userDefVarsTypeSet = make(map[string]struct{})
+		}
+		p.userDefVarsTypeSet[strings.ToLower(node.Name)] = struct{}{}
+	}
+}
+
+func extractReplaceAbleVarsForUDV(sctx sessionctx.Context, getV, setV map[string]struct{}) {
+	// always substitute ReplaceAbleUserDefVars
+	if len(getV) == 0 || len(setV) == 0 {
+		sctx.GetSessionVars().ReplaceAbleUserDefVars = getV
+		return
+	}
+
+	replaceAbleVars := make(map[string]struct{})
+	for colName := range getV {
+		if _, ok := setV[colName]; !ok {
+			replaceAbleVars[colName] = struct{}{}
+		}
+	}
+	sctx.GetSessionVars().ReplaceAbleUserDefVars = replaceAbleVars
 }

@@ -105,6 +105,7 @@ import (
 type ConflictDetector struct {
 	ctx           base.PlanContext
 	groupRoot     base.LogicalPlan
+	groupOwnerQB  int
 	groupVertexes []*Node
 	innerEdges    []*edge
 	nonInnerEdges []*edge
@@ -226,6 +227,22 @@ func validateCumCost(cost float64) error {
 	}
 }
 
+// normalizeCumCost sanitizes cumulative costs that cannot be compared or
+// validated. NaN, -Inf and negative values come from degenerate row-count/NDV
+// estimates; leaving them as-is would fail validateCumCost (aborting the whole
+// query) or make every cost comparison false. Treating them as 0 lets join
+// reorder keep running (and fall back to the original order) instead of failing.
+//
+// +Inf is intentionally preserved: it is the penalty marker for cartesian
+// joins (see applyCartesianFactor), and DP relies on it to avoid choosing such
+// plans early.
+func normalizeCumCost(cost float64) float64 {
+	if math.IsNaN(cost) || math.IsInf(cost, -1) || cost < 0 {
+		return 0
+	}
+	return cost
+}
+
 func calcCumCost(p base.LogicalPlan, node1, node2 *Node) float64 {
 	var cost1, cost2 float64
 	if node1 != nil {
@@ -260,6 +277,7 @@ func newConflictDetector(ctx base.PlanContext) *ConflictDetector {
 // It returns the list of leaf Nodes (vertexes) of current join group, which will be merged to new join by the enumerator.
 func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 	d.groupRoot = group.root
+	d.groupOwnerQB = group.ownerOffset
 	d.allInnerJoin = group.allInnerJoin
 
 	vertexMap := make(map[int]*Node, len(group.vertexes))
@@ -270,7 +288,7 @@ func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 		vertexMap[v.ID()] = &Node{
 			bitSet:  intset.NewFastIntSet(i),
 			p:       v,
-			cumCost: calcCumCostByChildren(v),
+			cumCost: normalizeCumCost(calcCumCostByChildren(v)),
 		}
 		if err := validateCumCost(vertexMap[v.ID()].cumCost); err != nil {
 			return nil, err
@@ -683,12 +701,12 @@ func (d *ConflictDetector) MakeJoin(checkResult *CheckConnectionResult, vertexHi
 	// Note that non-inner edges should be processed first then inner edges,
 	// because inner joins can be appended to existing non-inner join as selections.
 	if numNonInnerEdges > 0 {
-		if newJoin, err = makeNonInnerJoin(d.ctx, checkResult, vertexHints); err != nil {
+		if newJoin, err = makeNonInnerJoin(d.ctx, checkResult, vertexHints, d.groupOwnerQB); err != nil {
 			return nil, err
 		}
 	}
 	if numInnerEdges > 0 {
-		if p, err = makeInnerJoin(d.ctx, checkResult, newJoin, vertexHints); err != nil {
+		if p, err = makeInnerJoin(d.ctx, checkResult, newJoin, vertexHints, d.groupOwnerQB); err != nil {
 			return nil, err
 		}
 	} else {
@@ -712,7 +730,7 @@ func (d *ConflictDetector) MakeJoin(checkResult *CheckConnectionResult, vertexHi
 	}
 	maps.Copy(usedEdges, node1.usedEdges)
 	maps.Copy(usedEdges, node2.usedEdges)
-	cumCost := calcCumCost(p, node1, node2)
+	cumCost := normalizeCumCost(calcCumCost(p, node1, node2))
 	if err := validateCumCost(cumCost); err != nil {
 		return nil, err
 	}
@@ -765,7 +783,7 @@ func alignEQConds(ctx base.PlanContext, left, right base.LogicalPlan, eqConds []
 	return left, right, res, nil
 }
 
-func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, vertexHints map[int]*JoinMethodHint) (*logicalop.LogicalJoin, error) {
+func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, vertexHints map[int]*JoinMethodHint, ownerQB int) (*logicalop.LogicalJoin, error) {
 	e := checkResult.appliedNonInnerEdge
 	var alignedEQConds []*expression.ScalarFunction
 	var err error
@@ -778,7 +796,7 @@ func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, 
 	left := checkResult.node1.p
 	right := checkResult.node2.p
 
-	join, err := newCartesianJoin(ctx, e.joinType, left, right, vertexHints)
+	join, err := newCartesianJoin(ctx, e.joinType, left, right, vertexHints, ownerQB)
 	if err != nil {
 		return nil, err
 	}
@@ -872,7 +890,7 @@ func alignNotNullWithSchema(expr expression.Expression, schema *expression.Schem
 	}
 }
 
-func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, existingJoin *logicalop.LogicalJoin, vertexHints map[int]*JoinMethodHint) (base.LogicalPlan, error) {
+func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, existingJoin *logicalop.LogicalJoin, vertexHints map[int]*JoinMethodHint, ownerQB int) (base.LogicalPlan, error) {
 	if existingJoin != nil {
 		// Append selections to existing join.
 		// For example: (R1 LEFT JOIN R2 ON R1.c1 = R2.c1) INNER JOIN R3 ON R2.c2 = R3.c2 and (R1.c3 = R2.c3 and R1.c4 IS NULL)
@@ -907,7 +925,7 @@ func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, exi
 		newEqConds = append(newEqConds, alignedEQConds...)
 		newOtherConds = append(newOtherConds, e.nonEQConds...)
 	}
-	join, err := newCartesianJoin(ctx, checkResult.appliedInnerEdges[0].joinType, checkResult.node1.p, checkResult.node2.p, vertexHints)
+	join, err := newCartesianJoin(ctx, checkResult.appliedInnerEdges[0].joinType, checkResult.node1.p, checkResult.node2.p, vertexHints, ownerQB)
 	if err != nil {
 		return nil, err
 	}
@@ -917,16 +935,11 @@ func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, exi
 	return join, nil
 }
 
-func newCartesianJoin(ctx base.PlanContext, joinType logicalop.JoinType, left, right base.LogicalPlan, vertexHints map[int]*JoinMethodHint) (*logicalop.LogicalJoin, error) {
-	offset := left.QueryBlockOffset()
-	if offset != right.QueryBlockOffset() {
-		offset = -1
-	}
-
+func newCartesianJoin(ctx base.PlanContext, joinType logicalop.JoinType, left, right base.LogicalPlan, vertexHints map[int]*JoinMethodHint, ownerQB int) (*logicalop.LogicalJoin, error) {
 	join := logicalop.LogicalJoin{
 		JoinType:  joinType,
 		Reordered: true,
-	}.Init(ctx, offset)
+	}.Init(ctx, ownerQB)
 	join.SetSchema(expression.MergeSchema(left.Schema(), right.Schema()))
 	join.SetChildren(left, right)
 	join.MergeSchema()

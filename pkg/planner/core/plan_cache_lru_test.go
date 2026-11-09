@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -39,6 +40,35 @@ func randomPlanCacheValue(types []*types.FieldType) *PlanCacheValue {
 	return &PlanCacheValue{
 		Plan:       plans[random.Int()%len(plans)],
 		paramTypes: types,
+	}
+}
+
+func TestCheckTypesCompatibility4PCDecimalCapacity(t *testing.T) {
+	decimalType := func(flen, decimal int) *types.FieldType {
+		return types.NewFieldTypeBuilder().
+			SetType(mysql.TypeNewDecimal).
+			SetFlen(flen).
+			SetDecimal(decimal).
+			BuildP()
+	}
+
+	testCases := []struct {
+		name     string
+		expected *types.FieldType
+		actual   *types.FieldType
+		match    bool
+	}{
+		{name: "same metadata", expected: decimalType(10, 8), actual: decimalType(10, 8), match: true},
+		{name: "smaller integer capacity", expected: decimalType(10, 8), actual: decimalType(9, 8), match: true},
+		{name: "smaller fractional capacity", expected: decimalType(10, 8), actual: decimalType(9, 7), match: true},
+		{name: "larger integer capacity", expected: decimalType(10, 8), actual: decimalType(9, 0), match: false},
+		{name: "larger fractional capacity", expected: decimalType(10, 8), actual: decimalType(11, 9), match: false},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			require.Equal(t, testCase.match, checkTypesCompatibility4PC(
+				[]*types.FieldType{testCase.expected}, []*types.FieldType{testCase.actual}))
+		})
 	}
 }
 
@@ -149,18 +179,21 @@ func TestLRUPCGet(t *testing.T) {
 		lru.Put(keys[i], vals[i], opts)
 	}
 
-	// test for non-existent elements
-	for i := 0; i < 2; i++ {
-		opts := pTypes[i]
-		value, exists := lru.Get(keys[i], opts)
-		require.False(t, exists)
-		require.Nil(t, value)
-	}
+	// The fifth entry shares key-0 with the first entry, so the bucket still
+	// exists after eviction but contains no plan with compatible parameter types.
+	value, status := lru.Get(keys[0], pTypes[0])
+	require.Equal(t, sessionctx.PlanCacheLookupParamTypeMismatch, status)
+	require.Nil(t, value)
+
+	// The second entry and its bucket have both been evicted.
+	value, status = lru.Get(keys[1], pTypes[1])
+	require.Equal(t, sessionctx.PlanCacheLookupKeyNotFound, status)
+	require.Nil(t, value)
 
 	for i := 2; i < 5; i++ {
 		opts := pTypes[i]
-		value, exists := lru.Get(keys[i], opts)
-		require.True(t, exists)
+		value, status := lru.Get(keys[i], opts)
+		require.Equal(t, sessionctx.PlanCacheLookupHit, status)
 		require.NotNil(t, value)
 		require.Equal(t, vals[i], value)
 		require.Equal(t, uint(3), lru.size)
@@ -205,16 +238,16 @@ func TestLRUPCDelete(t *testing.T) {
 
 	lru.Delete(keys[1])
 
-	value, exists := lru.Get(keys[1], pTypes[1])
-	require.False(t, exists)
+	value, status := lru.Get(keys[1], pTypes[1])
+	require.Equal(t, sessionctx.PlanCacheLookupKeyNotFound, status)
 	require.Nil(t, value)
 	require.Equal(t, 2, int(lru.size))
 
-	_, exists = lru.Get(keys[0], pTypes[0])
-	require.True(t, exists)
+	_, status = lru.Get(keys[0], pTypes[0])
+	require.Equal(t, sessionctx.PlanCacheLookupHit, status)
 
-	_, exists = lru.Get(keys[2], pTypes[2])
-	require.True(t, exists)
+	_, status = lru.Get(keys[2], pTypes[2])
+	require.Equal(t, sessionctx.PlanCacheLookupHit, status)
 }
 
 func TestLRUPCDeleteAll(t *testing.T) {
@@ -243,8 +276,8 @@ func TestLRUPCDeleteAll(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		opts := pTypes[i]
-		value, exists := lru.Get(keys[i], opts)
-		require.False(t, exists)
+		value, status := lru.Get(keys[i], opts)
+		require.Equal(t, sessionctx.PlanCacheLookupKeyNotFound, status)
 		require.Nil(t, value)
 		require.Equal(t, 0, int(lru.size))
 	}

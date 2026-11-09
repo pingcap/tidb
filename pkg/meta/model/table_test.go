@@ -191,6 +191,21 @@ func TestModelBasic(t *testing.T) {
 	require.Equal(t, charset.CollationBin, extraPK.GetCollate())
 }
 
+func TestTableInfoCloneDeepCopySecurityPolicy(t *testing.T) {
+	securityPolicy := model.NewCIStr("policy1")
+	tbl := &TableInfo{
+		SecurityPolicy: &securityPolicy,
+	}
+
+	cloned := tbl.Clone()
+	require.NotNil(t, cloned.SecurityPolicy)
+	require.NotSame(t, tbl.SecurityPolicy, cloned.SecurityPolicy)
+	require.Equal(t, *tbl.SecurityPolicy, *cloned.SecurityPolicy)
+
+	*tbl.SecurityPolicy = model.NewCIStr("policy2")
+	require.Equal(t, model.NewCIStr("policy1"), *cloned.SecurityPolicy)
+}
+
 func TestTTLInfoClone(t *testing.T) {
 	ttlInfo := &TTLInfo{
 		ColumnName:       model.NewCIStr("test"),

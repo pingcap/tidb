@@ -8,6 +8,7 @@ go_library(
         "constraint.go",
         "constraints.go",
         "errors.go",
+        "pkdb_common.go",
         "rule.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/ddl/placement",

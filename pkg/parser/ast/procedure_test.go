@@ -11,14 +11,18 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// Copyright 2023-2024 PingCAP, Inc.
+
 package ast_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,7 +37,7 @@ func TestProcedureVisitorCover(t *testing.T) {
 	}
 	stmts2 := []ast.StmtNode{
 		&ast.ProcedureBlock{},
-		&ast.ProcedureInfo{ProcedureBody: &ast.ProcedureBlock{}},
+		&ast.CreateProcedureInfo{ProcedureBody: &ast.ProcedureBlock{}},
 		&ast.DropProcedureStmt{},
 	}
 	for _, v := range stmts2 {
@@ -99,6 +103,21 @@ func TestProcedure(t *testing.T) {
 		`create procedure proc_2() begin labelname: while id < 10 do set id = id + 1; select 1; end while; end`,
 		`create procedure proc_2() begin labelname: while id < 10 do set id = id + 1; select 1; end while labelname; end`,
 		`create procedure proc_2(id int) begin labelname: REPEAT set id = id + 1; select 1; UNTIL id < 10 end REPEAT labelname; end`,
+		`create procedure proc_2() comment "11" begin declare a int;declare continue handler for SQLWARNING,NOT FOUND,SQLEXCEPTION select 1 ; end;`,
+		`create procedure proc_2() comment "11" comment "22" begin declare a int;declare continue handler for SQLWARNING,NOT FOUND,SQLEXCEPTION select 1 ; end;`,
+		`create procedure proc_2() begin start transaction; end;`,
+		`create DEFINER='test' procedure proc_2() begin start transaction; end;`,
+		`create DEFINER='test'@'192.16.1.2' procedure proc_2() begin start transaction; end;`,
+		`create DEFINER='test'@'%' procedure proc_2() begin start transaction; end;`,
+		`create DEFINER= CURRENT_USER procedure proc_2() begin start transaction; end;`,
+		`create DEFINER= CURRENT_USER() procedure proc_2() begin start transaction; end;`,
+		`create procedure proc_2() SQL SECURITY DEFINER begin start transaction; end;`,
+		`create procedure proc_2() SQL SECURITY INVOKER begin start transaction; end;`,
+		`create procedure proc_2() begin labelname: loop set id = id + 1; select 1; end loop; end`,
+		`create procedure proc_2() begin loop set id = id + 1; select 1; end loop; end`,
+		`create procedure proc_2() loop set id = id + 1; select 1; end loop;`,
+		`create procedure proc_2(id char(30) character set 'utf8' collate utf8_bin ) loop set id = id + 1; select 1; end loop;`,
+		`create procedure proc_2() begin declare id char(30) character set 'utf8' collate utf8_bin; loop set id = id + 1; select 1; end loop; end`,
 	}
 	for _, testcase := range testcases {
 		stmt, _, err := p.Parse(testcase, "", "")
@@ -106,8 +125,28 @@ func TestProcedure(t *testing.T) {
 			fmt.Println(testcase)
 		}
 		require.NoError(t, err)
-		_, ok := stmt[0].(*ast.ProcedureInfo)
+		_, ok := stmt[0].(*ast.CreateProcedureInfo)
 		require.True(t, ok, testcase)
+	}
+}
+
+func TestStoredFunctionCharacteristics(t *testing.T) {
+	p := parser.New()
+	testcases := []string{
+		`create function func_det() returns int deterministic return 1;`,
+		`create function func_not_det() returns int not deterministic return 1;`,
+		`create function func_no_sql() returns int no sql return 1;`,
+		`create function func_reads() returns int reads sql data return 1;`,
+		`create function func_modifies() returns int modifies sql data begin return 1; end;`,
+		`create function func_contains() returns int contains sql begin return 1; end;`,
+		`create function func_lang() returns int language sql return 1;`,
+	}
+	for _, testcase := range testcases {
+		stmt, _, err := p.Parse(testcase, "", "")
+		require.NoError(t, err)
+		info, ok := stmt[0].(*ast.CreateProcedureInfo)
+		require.True(t, ok, testcase)
+		require.NotNil(t, info.FunctionInfo.RetType, testcase)
 	}
 }
 
@@ -123,11 +162,30 @@ func TestShowCreateProcedure(t *testing.T) {
 	require.True(t, ok)
 }
 
+func TestAlterProcdure(t *testing.T) {
+	p := parser.New()
+	testcases := []string{
+		`alter procedure proc_2`,
+		`alter procedure test.proc_2`,
+		`alter procedure test.proc_2 comment '1'`,
+		`alter procedure test.proc_2 comment '2' comment '1'`,
+		`alter procedure test.proc_2 SQL SECURITY INVOKER`,
+		`alter procedure test.proc_2 SQL SECURITY DEFINER`,
+	}
+	for _, testcase := range testcases {
+		stmt, _, err := p.Parse(testcase, "", "")
+		require.NoError(t, err)
+		_, ok := stmt[0].(*ast.AlterProcedureStmt)
+		require.True(t, ok)
+	}
+}
+
 func TestProcedureVisitor(t *testing.T) {
 	sqls := []string{
 		"create procedure proc_2(in id bigint,in id2 varchar(100),in id3 decimal(30,2)) begin declare s varchar(100) DEFAULT FROM_UNIXTIME(1447430881);select s;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111);END;",
 		"show create procedure proc_2;",
 		"drop procedure proc_2;",
+		"alter procedure proc_2",
 	}
 	parse := parser.New()
 	for _, sql := range sqls {
@@ -140,86 +198,253 @@ func TestProcedureVisitor(t *testing.T) {
 	}
 }
 
+func TestProcedureJumpRestoreUsesIdentifierLabel(t *testing.T) {
+	testCases := []struct {
+		name     string
+		isLeave  bool
+		expected string
+	}{
+		{
+			name:     "leave",
+			isLeave:  true,
+			expected: "LEAVE `labeltri`",
+		},
+		{
+			name:     "iterate",
+			isLeave:  false,
+			expected: "ITERATE `labeltri`",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			jump := &ast.ProcedureJump{
+				Name:    "labeltri",
+				IsLeave: testCase.isLeave,
+			}
+			var sb strings.Builder
+			err := jump.Restore(format.NewRestoreCtx(
+				format.RestoreStringSingleQuotes|format.RestoreKeyWordUppercase|format.RestoreNameBackQuotes,
+				&sb,
+			))
+			require.NoError(t, err)
+			require.Equal(t, testCase.expected, sb.String())
+		})
+	}
+}
+
 func TestProcedureRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
-		{"CREATE PROCEDURE `proc_2`( IN `id` BIGINT(20), IN `id2` VARCHAR(100), IN `id3` DECIMAL(30,2)) BEGIN DECLARE `s` VARCHAR(100) DEFAULT FROM_UNIXTIME(1447430881);SELECT `s`;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111); END",
-			"CREATE PROCEDURE `proc_2`( IN `id` BIGINT(20), IN `id2` VARCHAR(100), IN `id3` DECIMAL(30,2)) BEGIN DECLARE `s` VARCHAR(100) DEFAULT FROM_UNIXTIME(1447430881);SELECT `s`;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111); END",
+		{"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`( IN `id` BIGINT(20), IN `id2` VARCHAR(100), IN `id3` DECIMAL(30,2)) BEGIN DECLARE `s` VARCHAR(100) DEFAULT FROM_UNIXTIME(1447430881);SELECT `s`;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111); END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`(IN `id` bigint(20), IN `id2` varchar(100), IN `id3` decimal(30,2)) BEGIN DECLARE `s` VARCHAR(100) DEFAULT FROM_UNIXTIME(1447430881);SELECT `s`;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111); END",
 		},
 		{
-			"CREATE PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;ELSEIF `i`=3 THEN SELECT 4;ELSE SELECT 5;END IF; END",
-			"CREATE PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;ELSEIF `i`=3 THEN SELECT 4;ELSE SELECT 5;END IF; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;ELSEIF `i`=3 THEN SELECT 4;ELSE SELECT 5;END IF; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;ELSEIF `i`=3 THEN SELECT 4;ELSE SELECT 5;END IF; END",
 		},
 		{
-			"CREATE PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;ELSEIF `i`=3 THEN SELECT 4;END IF; END",
-			"CREATE PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;ELSEIF `i`=3 THEN SELECT 4;END IF; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;ELSEIF `i`=3 THEN SELECT 4;END IF; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;ELSEIF `i`=3 THEN SELECT 4;END IF; END",
 		},
 		{
-			"CREATE PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;END IF; END",
-			"CREATE PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;END IF; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;END IF; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;END IF; END",
 		},
 		{
-			"CREATE PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;ELSE SELECT 5;END IF; END",
-			"CREATE PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;ELSE SELECT 5;END IF; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;ELSE SELECT 5;END IF; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;ELSE SELECT 5;END IF; END",
 		},
 		{
-			"CREATE PROCEDURE `proc_2`( IN `id` INT(11)) BEGIN WHILE `id`<10 DO SET @@SESSION.`id`=`id`+1;SELECT 1;END WHILE; END",
-			"CREATE PROCEDURE `proc_2`( IN `id` INT(11)) BEGIN WHILE `id`<10 DO SET @@SESSION.`id`=`id`+1;SELECT 1;END WHILE; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`( IN `id` INT(11)) BEGIN WHILE `id`<10 DO SET @@SESSION.`id`=`id`+1;SELECT 1;END WHILE; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`(IN `id` int(11)) BEGIN WHILE `id`<10 DO SET @@SESSION.`id`=`id`+1;SELECT 1;END WHILE; END",
 		},
 		{
-			"CREATE PROCEDURE `proc_2`() BEGIN DECLARE `a` INT(11);DECLARE TEST1 CURSOR FOR SELECT 1;SELECT 1;OPEN TEST1;FETCH TEST1 INTO A;CLOSE TEST1; END",
-			"CREATE PROCEDURE `proc_2`() BEGIN DECLARE `a` INT(11);DECLARE TEST1 CURSOR FOR SELECT 1;SELECT 1;OPEN TEST1;FETCH TEST1 INTO A;CLOSE TEST1; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN DECLARE `a` INT(11);DECLARE TEST1 CURSOR FOR SELECT 1;SELECT 1;OPEN TEST1;FETCH TEST1 INTO A;CLOSE TEST1; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN DECLARE `a` INT(11);DECLARE TEST1 CURSOR FOR SELECT 1;SELECT 1;OPEN TEST1;FETCH TEST1 INTO A;CLOSE TEST1; END",
 		},
 		{
-			"CREATE PROCEDURE `proc_2`() BEGIN DECLARE `a` INT(11);DECLARE EXIT HANDLER FOR SQLWARNING, NOT FOUND, SQLEXCEPTION SELECT 1; END",
-			"CREATE PROCEDURE `proc_2`() BEGIN DECLARE `a` INT(11);DECLARE EXIT HANDLER FOR SQLWARNING, NOT FOUND, SQLEXCEPTION SELECT 1; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN DECLARE `a` INT(11);DECLARE CLOSE CURSOR FOR SELECT 1;SELECT 1;OPEN CLOSE;FETCH CLOSE INTO A;CLOSE CLOSE; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN DECLARE `a` INT(11);DECLARE CLOSE CURSOR FOR SELECT 1;SELECT 1;OPEN CLOSE;FETCH CLOSE INTO A;CLOSE CLOSE; END",
 		},
 		{
-			"CREATE PROCEDURE `proc_2`( INOUT `id` BIGINT(20), OUT `id1` BIGINT(20)) BEGIN DECLARE `a` INT(11);DECLARE CONTINUE HANDLER FOR 1211, SQLSTATE 'xdw' SELECT 1; END",
-			"CREATE PROCEDURE `proc_2`( INOUT `id` BIGINT(20), OUT `id1` BIGINT(20)) BEGIN DECLARE `a` INT(11);DECLARE CONTINUE HANDLER FOR 1211, SQLSTATE 'xdw' SELECT 1; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN DECLARE `a` INT(11);DECLARE EXIT HANDLER FOR SQLWARNING, NOT FOUND, SQLEXCEPTION SELECT 1; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN DECLARE `a` INT(11);DECLARE EXIT HANDLER FOR SQLWARNING, NOT FOUND, SQLEXCEPTION SELECT 1; END",
 		},
 		{
-			"CREATE PROCEDURE `proc_2`() BEGIN DECLARE `a` INT(11);DECLARE CONTINUE HANDLER FOR SQLSTATE 'ssss' WHILE `id`<10 DO SET @@SESSION.`id`=`id`+1;SELECT 1;END WHILE; END",
-			"CREATE PROCEDURE `proc_2`() BEGIN DECLARE `a` INT(11);DECLARE CONTINUE HANDLER FOR SQLSTATE 'ssss' WHILE `id`<10 DO SET @@SESSION.`id`=`id`+1;SELECT 1;END WHILE; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`( INOUT `id` BIGINT(20), OUT `id1` BIGINT(20)) BEGIN DECLARE `a` INT(11);DECLARE CONTINUE HANDLER FOR 1211, SQLSTATE 'xdw' SELECT 1; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`(INOUT `id` bigint(20), OUT `id1` bigint(20)) BEGIN DECLARE `a` INT(11);DECLARE CONTINUE HANDLER FOR 1211, SQLSTATE 'xdw' SELECT 1; END",
 		},
 		{
-			"CREATE PROCEDURE `proc_2`() CASE NOW() WHEN _UTF8MB4'1980-10-01' THEN SELECT 1; END CASE",
-			"CREATE PROCEDURE `proc_2`() CASE NOW() WHEN _UTF8MB4'1980-10-01' THEN SELECT 1; END CASE",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN DECLARE `a` INT(11);DECLARE CONTINUE HANDLER FOR SQLSTATE 'ssss' WHILE `id`<10 DO SET @@SESSION.`id`=`id`+1;SELECT 1;END WHILE; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN DECLARE `a` INT(11);DECLARE CONTINUE HANDLER FOR SQLSTATE 'ssss' WHILE `id`<10 DO SET @@SESSION.`id`=`id`+1;SELECT 1;END WHILE; END",
 		},
 		{
-			"CREATE PROCEDURE `proc_2`() CASE NOW() WHEN _UTF8MB4'1980-10-01' THEN SELECT 1;WHEN _UTF8MB4'1980-10-02' THEN SELECT 2; END CASE",
-			"CREATE PROCEDURE `proc_2`() CASE NOW() WHEN _UTF8MB4'1980-10-01' THEN SELECT 1;WHEN _UTF8MB4'1980-10-02' THEN SELECT 2; END CASE",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() CASE NOW() WHEN _UTF8MB4'1980-10-01' THEN SELECT 1; END CASE",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() CASE NOW() WHEN _UTF8MB4'1980-10-01' THEN SELECT 1; END CASE",
 		},
 		{
-			"CREATE PROCEDURE `proc_2`() CASE NOW() WHEN _UTF8MB4'1980-10-01' THEN SELECT 1;WHEN _UTF8MB4'1980-10-02' THEN SELECT 2; ELSE SELECT 3; END CASE",
-			"CREATE PROCEDURE `proc_2`() CASE NOW() WHEN _UTF8MB4'1980-10-01' THEN SELECT 1;WHEN _UTF8MB4'1980-10-02' THEN SELECT 2; ELSE SELECT 3; END CASE",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() CASE NOW() WHEN _UTF8MB4'1980-10-01' THEN SELECT 1;WHEN _UTF8MB4'1980-10-02' THEN SELECT 2; END CASE",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() CASE NOW() WHEN _UTF8MB4'1980-10-01' THEN SELECT 1;WHEN _UTF8MB4'1980-10-02' THEN SELECT 2; END CASE",
 		},
 		{
-			"CREATE PROCEDURE `proc_2`() CASE WHEN _UTF8MB4'1980-10-01' THEN SELECT 1; END CASE",
-			"CREATE PROCEDURE `proc_2`() CASE WHEN _UTF8MB4'1980-10-01' THEN SELECT 1; END CASE",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() CASE NOW() WHEN _UTF8MB4'1980-10-01' THEN SELECT 1;WHEN _UTF8MB4'1980-10-02' THEN SELECT 2; ELSE SELECT 3; END CASE",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() CASE NOW() WHEN _UTF8MB4'1980-10-01' THEN SELECT 1;WHEN _UTF8MB4'1980-10-02' THEN SELECT 2; ELSE SELECT 3; END CASE",
 		},
 		{
-			"CREATE PROCEDURE `proc_2`() CASE WHEN _UTF8MB4'1980-10-01' THEN SELECT 1;WHEN _UTF8MB4'1980-10-02' THEN SELECT 2; END CASE",
-			"CREATE PROCEDURE `proc_2`() CASE WHEN _UTF8MB4'1980-10-01' THEN SELECT 1;WHEN _UTF8MB4'1980-10-02' THEN SELECT 2; END CASE",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() CASE WHEN _UTF8MB4'1980-10-01' THEN SELECT 1; END CASE",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() CASE WHEN _UTF8MB4'1980-10-01' THEN SELECT 1; END CASE",
 		},
 		{
-			"CREATE PROCEDURE `proc_2`() CASE WHEN _UTF8MB4'1980-10-01' THEN SELECT 1;WHEN _UTF8MB4'1980-10-02' THEN SELECT 2; ELSE SELECT 3; END CASE",
-			"CREATE PROCEDURE `proc_2`() CASE WHEN _UTF8MB4'1980-10-01' THEN SELECT 1;WHEN _UTF8MB4'1980-10-02' THEN SELECT 2; ELSE SELECT 3; END CASE",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() CASE WHEN _UTF8MB4'1980-10-01' THEN SELECT 1;WHEN _UTF8MB4'1980-10-02' THEN SELECT 2; END CASE",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() CASE WHEN _UTF8MB4'1980-10-01' THEN SELECT 1;WHEN _UTF8MB4'1980-10-02' THEN SELECT 2; END CASE",
 		},
 		{
-			"CREATE PROCEDURE `proc_2`() `labelname`: BEGIN DECLARE `a` INT(11);DECLARE CONTINUE HANDLER FOR SQLWARNING, NOT FOUND, SQLEXCEPTION SELECT 1; END `labelname`",
-			"CREATE PROCEDURE `proc_2`() `labelname`: BEGIN DECLARE `a` INT(11);DECLARE CONTINUE HANDLER FOR SQLWARNING, NOT FOUND, SQLEXCEPTION SELECT 1; END `labelname`",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() CASE WHEN _UTF8MB4'1980-10-01' THEN SELECT 1;WHEN _UTF8MB4'1980-10-02' THEN SELECT 2; ELSE SELECT 3; END CASE",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() CASE WHEN _UTF8MB4'1980-10-01' THEN SELECT 1;WHEN _UTF8MB4'1980-10-02' THEN SELECT 2; ELSE SELECT 3; END CASE",
 		},
 		{
-			"CREATE PROCEDURE `proc_2`() BEGIN `labelname`: WHILE `id`<10 DO SET @@SESSION.`id`=`id`+1;SELECT 1;END WHILE `labelname`; END",
-			"CREATE PROCEDURE `proc_2`() BEGIN `labelname`: WHILE `id`<10 DO SET @@SESSION.`id`=`id`+1;SELECT 1;END WHILE `labelname`; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() `labelname`: BEGIN DECLARE `a` INT(11);DECLARE CONTINUE HANDLER FOR SQLWARNING, NOT FOUND, SQLEXCEPTION SELECT 1; END `labelname`",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() `labelname`: BEGIN DECLARE `a` INT(11);DECLARE CONTINUE HANDLER FOR SQLWARNING, NOT FOUND, SQLEXCEPTION SELECT 1; END `labelname`",
 		},
 		{
-			"CREATE PROCEDURE `proc_2`( IN `id` INT(11)) BEGIN `labelname`: REPEAT SET @@SESSION.`id`=`id`+1;SELECT 1;UNTIL `id`<10 END REPEAT `labelname`; END",
-			"CREATE PROCEDURE `proc_2`( IN `id` INT(11)) BEGIN `labelname`: REPEAT SET @@SESSION.`id`=`id`+1;SELECT 1;UNTIL `id`<10 END REPEAT `labelname`; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN `labelname`: WHILE `id`<10 DO SET @@SESSION.`id`=`id`+1;SELECT 1;END WHILE `labelname`; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN `labelname`: WHILE `id`<10 DO SET @@SESSION.`id`=`id`+1;SELECT 1;END WHILE `labelname`; END",
+		},
+		{
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`( IN `id` INT(11)) BEGIN `labelname`: REPEAT SET @@SESSION.`id`=`id`+1;SELECT 1;UNTIL `id`<10 END REPEAT `labelname`; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`(IN `id` int(11)) BEGIN `labelname`: REPEAT SET @@SESSION.`id`=`id`+1;SELECT 1;UNTIL `id`<10 END REPEAT `labelname`; END",
+		},
+		{
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() COMMENT '11' BEGIN DECLARE `a` INT(11);DECLARE EXIT HANDLER FOR SQLWARNING, NOT FOUND, SQLEXCEPTION SELECT 1; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() COMMENT '11' BEGIN DECLARE `a` INT(11);DECLARE EXIT HANDLER FOR SQLWARNING, NOT FOUND, SQLEXCEPTION SELECT 1; END",
+		},
+		{
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() SQL SECURITY DEFINER BEGIN DECLARE `a` INT(11);DECLARE EXIT HANDLER FOR SQLWARNING, NOT FOUND, SQLEXCEPTION SELECT 1; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() SQL SECURITY DEFINER BEGIN DECLARE `a` INT(11);DECLARE EXIT HANDLER FOR SQLWARNING, NOT FOUND, SQLEXCEPTION SELECT 1; END",
+		},
+		{
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() SQL SECURITY INVOKER BEGIN DECLARE `a` INT(11);DECLARE EXIT HANDLER FOR SQLWARNING, NOT FOUND, SQLEXCEPTION SELECT 1; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() SQL SECURITY INVOKER BEGIN DECLARE `a` INT(11);DECLARE EXIT HANDLER FOR SQLWARNING, NOT FOUND, SQLEXCEPTION SELECT 1; END",
+		},
+		{
+			"CREATE DEFINER = `root`@`%` PROCEDURE `proc_2`() SQL SECURITY INVOKER BEGIN DECLARE `a` INT(11);DECLARE EXIT HANDLER FOR SQLWARNING, NOT FOUND, SQLEXCEPTION SELECT 1; END",
+			"CREATE DEFINER = `root`@`%` PROCEDURE `proc_2`() SQL SECURITY INVOKER BEGIN DECLARE `a` INT(11);DECLARE EXIT HANDLER FOR SQLWARNING, NOT FOUND, SQLEXCEPTION SELECT 1; END",
+		},
+		{
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN `labelname`: LOOP SET @@SESSION.`id`=`id`+1;SELECT 1; END LOOP `labelname`; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN `labelname`: LOOP SET @@SESSION.`id`=`id`+1;SELECT 1; END LOOP `labelname`; END",
+		},
+		{
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN LOOP SET @@SESSION.`id`=`id`+1;SELECT 1; END LOOP; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN LOOP SET @@SESSION.`id`=`id`+1;SELECT 1; END LOOP; END",
+		},
+		{
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() LOOP SET @@SESSION.`id`=`id`+1;SELECT 1; END LOOP",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() LOOP SET @@SESSION.`id`=`id`+1;SELECT 1; END LOOP",
+		},
+		{
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`( IN `id` CHAR(30) CHARACTER SET UTF8 COLLATE UTF8_BIN) LOOP SET @@SESSION.`id`=`id`+1;SELECT 1; END LOOP",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`(IN `id` char(30) CHARACTER SET utf8 COLLATE utf8_bin) LOOP SET @@SESSION.`id`=`id`+1;SELECT 1; END LOOP",
+		},
+		{
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`( INOUT `id` CHAR(30) CHARACTER SET UTF8 COLLATE UTF8_BIN) LOOP SET @@SESSION.`id`=`id`+1;SELECT 1; END LOOP",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`(INOUT `id` char(30) CHARACTER SET utf8 COLLATE utf8_bin) LOOP SET @@SESSION.`id`=`id`+1;SELECT 1; END LOOP",
+		},
+		{
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN DECLARE `id` CHAR(30) CHARACTER SET UTF8 COLLATE UTF8_BIN;LOOP SET @@SESSION.`id`=`id`+1;SELECT 1; END LOOP; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN DECLARE `id` CHAR(30) CHARACTER SET UTF8 COLLATE UTF8_BIN;LOOP SET @@SESSION.`id`=`id`+1;SELECT 1; END LOOP; END",
 		},
 	}
 	extractNodeFunc := func(node ast.Node) ast.Node {
-		return node.(*ast.ProcedureInfo)
+		return node.(*ast.CreateProcedureInfo)
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
+func TestAlterProcedureRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{
+			"ALTER PROCEDURE `proc_2` ;",
+			"ALTER PROCEDURE `proc_2`",
+		},
+		{
+			"ALTER PROCEDURE `proc_2` COMMENT '11';",
+			"ALTER PROCEDURE `proc_2` COMMENT '11'",
+		},
+		{
+			"ALTER PROCEDURE `proc_2` COMMENT '11' COMMENT '12';",
+			"ALTER PROCEDURE `proc_2` COMMENT '11' COMMENT '12'",
+		},
+		{
+			"ALTER PROCEDURE `proc_2` SQL SECURITY INVOKER;",
+			"ALTER PROCEDURE `proc_2` SQL SECURITY INVOKER",
+		},
+		{
+			"ALTER PROCEDURE `proc_2` SQL SECURITY DEFINER;",
+			"ALTER PROCEDURE `proc_2` SQL SECURITY DEFINER",
+		},
+	}
+	extractNodeFunc := func(node ast.Node) ast.Node {
+		return node.(*ast.AlterProcedureStmt)
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
+func TestProcedureLimit(t *testing.T) {
+	p := parser.New()
+	testcases := []string{
+		"select * from t1 limit a;",
+		"select * from t1 limit a,b;",
+	}
+	for _, testcase := range testcases {
+		stmt, _, err := p.Parse(testcase, "", "")
+		if err != nil {
+			fmt.Println(testcase)
+		}
+		require.NoError(t, err)
+		_, ok := stmt[0].(*ast.SelectStmt)
+		require.True(t, ok, testcase)
+	}
+}
+
+func TestProcedureRestoreLimit(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{
+			"SELECT * FROM `t1` LIMIT a",
+			"SELECT * FROM `t1` LIMIT a",
+		},
+		{
+			"SELECT * FROM `t1` LIMIT a,b",
+			"SELECT * FROM `t1` LIMIT a,b",
+		},
+		{
+			"UPDATE `t1` SET `a` = 1 LIMIT a",
+			"UPDATE `t1` SET `a`=1 LIMIT a",
+		},
+		{
+			"DELETE FROM `t1` WHERE `a` = 1 LIMIT a",
+			"DELETE FROM `t1` WHERE `a`=1 LIMIT a",
+		},
+	}
+	extractNodeFunc := func(node ast.Node) ast.Node {
+		return node
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
+func TestSelectIntoVarsAtEndRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{
+			"SELECT `a` FROM `t` INTO v_temp",
+			"SELECT `a` INTO `v_temp` FROM `t`",
+		},
+		{
+			"SELECT `a`, `b` FROM `t` WHERE `id`=1 INTO v_a, v_b",
+			"SELECT `a`,`b` INTO `v_a`,`v_b` FROM `t` WHERE `id`=1",
+		},
+	}
+	extractNodeFunc := func(node ast.Node) ast.Node {
+		return node.(*ast.SelectStmt)
 	}
 	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }

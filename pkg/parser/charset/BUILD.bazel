@@ -12,6 +12,8 @@ go_library(
         "encoding_latin1.go",
         "encoding_table.go",
         "encoding_utf8.go",
+        "pkdb_encoding_gb18030.go",
+        "pkdb_encoding_gb18030_data.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/parser/charset",
     visibility = ["//visibility:public"],
@@ -41,7 +43,7 @@ go_test(
     ],
     embed = [":charset"],
     flaky = True,
-    shard_count = 8,
+    shard_count = 9,
     deps = [
         "@com_github_stretchr_testify//require",
         "@org_golang_x_text//transform",

@@ -17,6 +17,7 @@ package core
 import (
 	"cmp"
 	"context"
+	"encoding/hex"
 	"slices"
 	"sync/atomic"
 	"time"
@@ -65,7 +66,11 @@ type cteGroupInFragment struct {
 	StorageFragments []*Fragment
 }
 
-const emptyFragmentSize = int64(unsafe.Sizeof(Fragment{}))
+const (
+	emptyFragmentSize              = int64(unsafe.Sizeof(Fragment{}))
+	noMPPTasksForTableScanErrorMsg = "In mpp mode, the number of tasks for table scan should not be zero. " +
+		"Please set tidb_allow_mpp = 0, and then rerun sql."
+)
 
 // MemoryUsage return the memory usage of Fragment
 func (f *Fragment) MemoryUsage() (sum int64) {
@@ -387,9 +392,7 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 	if f.TableScan != nil {
 		tasks, err = e.constructMPPTasksImpl(context.Background(), f.TableScan)
 		if err == nil && len(tasks) == 0 {
-			err = errors.New(
-				"In mpp mode, the number of tasks for table scan should not be zero. " +
-					"Please set tidb_allow_mpp = 0, and then rerun sql.")
+			err = errors.New(noMPPTasksForTableScanErrorMsg)
 		}
 	} else {
 		childrenTasks := make([]*kv.MPPTask, 0)
@@ -528,6 +531,21 @@ func partitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []
 	return ret, nil
 }
 
+func tableSplitRangeFromTableScan(ts *PhysicalTableScan) (start, end []byte, ok bool, err error) {
+	if ts.TableSplit == nil {
+		return nil, nil, false, nil
+	}
+	start, err = hex.DecodeString(ts.TableSplit.Start)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	end, err = hex.DecodeString(ts.TableSplit.End)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	return start, end, true, nil
+}
+
 // single physical table means a table without partitions or a single partition in a partition table.
 func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *PhysicalTableScan) ([]*kv.MPPTask, error) {
 	// update ranges according to correlated columns in access conditions like in the Open() of TableReaderExecutor
@@ -545,6 +563,10 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	var allPartitionsIDs []int64
 	var err error
 	splitedRanges, _ := distsql.SplitRangesAcrossInt64Boundary(ts.Ranges, false, false, ts.Table.IsCommonHandle)
+	start, end, hasTableSplit, err := tableSplitRangeFromTableScan(ts)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	// True when:
 	// 1. Is partition table.
 	// 2. Dynamic prune is not used.
@@ -560,21 +582,36 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			req, allPartitionsIDs, err = e.constructMPPBuildTaskReqForPartitionedTable(ts, splitedRanges, partitions)
+			if len(ts.TiDBRowIDRangeOps) > 0 {
+				req, allPartitionsIDs = constructTiDBRowIDMPPBuildTaskReq(ts, partitions)
+			} else {
+				req, allPartitionsIDs, err = e.constructMPPBuildTaskReqForPartitionedTable(ts, splitedRanges, partitions, start, end, hasTableSplit)
+			}
 			for _, partitionKVRanges := range req.PartitionIDAndRanges {
 				e.KVRanges = append(e.KVRanges, partitionKVRanges.KeyRanges...)
 			}
 		} else {
 			singlePartTbl := tbl.GetPartition(ts.physicalTableID)
-			req, err = e.constructMPPBuildTaskForNonPartitionTable(singlePartTbl.GetPhysicalID(), ts.Table.IsCommonHandle, splitedRanges)
+			if len(ts.TiDBRowIDRangeOps) > 0 {
+				req = constructTiDBRowIDMPPBuildTaskForPhysicalTable(ts, singlePartTbl.GetPhysicalID())
+			} else {
+				req, err = e.constructMPPBuildTaskForNonPartitionTable(singlePartTbl.GetPhysicalID(), ts.Table.IsCommonHandle, splitedRanges, start, end, hasTableSplit)
+			}
 			e.KVRanges = append(e.KVRanges, req.KeyRanges...)
 		}
 	} else {
-		req, err = e.constructMPPBuildTaskForNonPartitionTable(ts.Table.ID, ts.Table.IsCommonHandle, splitedRanges)
+		if len(ts.TiDBRowIDRangeOps) > 0 {
+			req = constructTiDBRowIDMPPBuildTaskForPhysicalTable(ts, ts.Table.ID)
+		} else {
+			req, err = e.constructMPPBuildTaskForNonPartitionTable(ts.Table.ID, ts.Table.IsCommonHandle, splitedRanges, start, end, hasTableSplit)
+		}
 		e.KVRanges = append(e.KVRanges, req.KeyRanges...)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if len(ts.TiDBRowIDRangeOps) > 0 && len(req.KeyRanges) == 0 && len(req.PartitionIDAndRanges) == 0 {
+		return nil, errEmptyTiDBRowIDMPPRange
 	}
 
 	// ttl is always 0, `tidb_mpp_store_fail_ttl` variable has been deprecated
@@ -623,7 +660,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	return tasks, nil
 }
 
-func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *PhysicalTableScan, splitedRanges []*ranger.Range, partitions []table.PhysicalTable) (*kv.MPPBuildTasksRequest, []int64, error) {
+func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *PhysicalTableScan, splitedRanges []*ranger.Range, partitions []table.PhysicalTable, start, end []byte, hasTableSplit bool) (*kv.MPPBuildTasksRequest, []int64, error) {
 	slices.SortFunc(partitions, func(i, j table.PhysicalTable) int {
 		return cmp.Compare(i.GetPhysicalID(), j.GetPhysicalID())
 	})
@@ -637,6 +674,9 @@ func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *Physi
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+		if hasTableSplit {
+			kvRanges.Intersect(start, end)
+		}
 		partitionIDAndRanges[i].ID = pid
 		partitionIDAndRanges[i].KeyRanges = kvRanges.FirstPartitionRange()
 		allPartitionsIDs[i] = pid
@@ -644,10 +684,13 @@ func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *Physi
 	return &kv.MPPBuildTasksRequest{PartitionIDAndRanges: partitionIDAndRanges}, allPartitionsIDs, nil
 }
 
-func (e *mppTaskGenerator) constructMPPBuildTaskForNonPartitionTable(tid int64, isCommonHandle bool, splitedRanges []*ranger.Range) (*kv.MPPBuildTasksRequest, error) {
+func (e *mppTaskGenerator) constructMPPBuildTaskForNonPartitionTable(tid int64, isCommonHandle bool, splitedRanges []*ranger.Range, start, end []byte, hasTableSplit bool) (*kv.MPPBuildTasksRequest, error) {
 	kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetDistSQLCtx(), []int64{tid}, isCommonHandle, splitedRanges)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if hasTableSplit {
+		kvRanges.Intersect(start, end)
 	}
 	return &kv.MPPBuildTasksRequest{KeyRanges: kvRanges.FirstPartitionRange()}, nil
 }

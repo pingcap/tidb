@@ -14,7 +14,7 @@ import (
 	"text/template/parse"
 	"time"
 
-	"github.com/coreos/go-semver/semver"
+	"git.pingcap.cn/pingkai/semver/coreos/semver"
 	"github.com/docker/go-units"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
@@ -77,6 +77,7 @@ const (
 	flagTransactionalConsistency = "transactional-consistency"
 	flagCompress                 = "compress"
 	flagCsvOutputDialect         = "csv-output-dialect"
+	flagExportTiDBRowID          = "export-tidb-rowid"
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
@@ -117,6 +118,16 @@ var DialectBinaryFormatMap = map[CSVDialect]BinaryFormat{
 	CSVDialectBigQuery:  BinaryFormatBase64,
 }
 
+// ExportTiDBRowIDMode controls the export of the `_tidb_rowid` column when dumping from TiDB
+type ExportTiDBRowIDMode int
+
+const (
+	// ExportTiDBRowIDModeOff disables exporting the `_tidb_rowid` column
+	ExportTiDBRowIDModeOff ExportTiDBRowIDMode = iota
+	// ExportTiDBRowIDModeIntPKAutoInc exports the `_tidb_rowid` column as an integer primary key with auto-increment
+	ExportTiDBRowIDModeIntPKAutoInc
+)
+
 // Config is the dump config for dumpling
 type Config struct {
 	storage.BackendOptions
@@ -136,11 +147,15 @@ type Config struct {
 	PosAfterConnect          bool
 	CompressType             storage.CompressType
 
-	Host     string
-	Port     int
-	Threads  int
-	User     string
-	Password string `json:"-"`
+	Host    string
+	Port    int
+	Threads int
+	User    string
+
+	Password              string `json:"-"`
+	PasswordEncryptedFile string
+	PasswordKeyFile       string
+
 	Security struct {
 		TLS          *tls.Config `json:"-"`
 		CAPath       string
@@ -180,6 +195,7 @@ type Config struct {
 	Tables              DatabaseTables
 	CollationCompatible string
 	CsvOutputDialect    CSVDialect
+	ExportTiDBRowIDMode ExportTiDBRowIDMode
 
 	Labels        prometheus.Labels       `json:"-"`
 	PromFactory   promutil.Factory        `json:"-"`
@@ -239,6 +255,7 @@ func DefaultConfig() *Config {
 		CollationCompatible:      LooseCollationCompatible,
 		CsvOutputDialect:         CSVDialectDefault,
 		SpecifiedTables:          false,
+		ExportTiDBRowIDMode:      ExportTiDBRowIDModeOff,
 		PromFactory:              promutil.NewDefaultFactory(),
 		PromRegistry:             promutil.NewDefaultRegistry(),
 		TransactionalConsistency: true,
@@ -313,6 +330,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.StringP(flagUser, "u", "root", "Username with privileges to run the dump")
 	flags.IntP(flagPort, "P", 4000, "TCP/IP port to connect to")
 	flags.StringP(flagPassword, "p", "", "User password")
+	defineCredentialFlags(flags)
 	flags.Bool(flagAllowCleartextPasswords, false, "Allow passwords to be sent in cleartext (warning: don't use without TLS)")
 	flags.IntP(flagThreads, "t", 4, "Number of goroutines to use, default 4")
 	flags.StringP(flagFilesize, "F", "", "The approximate size of output file")
@@ -358,6 +376,9 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagTransactionalConsistency)
 	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'snappy', 'zstd', 'no-compression' now")
 	flags.String(flagCsvOutputDialect, "", "The dialect of output CSV file, support 'snowflake', 'redshift', 'bigquery' now")
+	flags.String(flagExportTiDBRowID, "", "Controls the export of the '_tidb_rowid' column when dumping from TiDB. "+
+		"Options: 'off' (default) or 'int-pk-auto-inc'. 'int-pk-auto-inc' exports '_tidb_rowid' only for tables with "+
+		"a single INT-family PRIMARY KEY with AUTO_INCREMENT, using the PK value as '_tidb_rowid' if it does not exist in the table.")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -383,6 +404,9 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	conf.Password, err = flags.GetString(flagPassword)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if err = conf.parseCredentialFlags(flags); err != nil {
+		return err
 	}
 	conf.AllowCleartextPasswords, err = flags.GetBool(flagAllowCleartextPasswords)
 	if err != nil {
@@ -616,6 +640,15 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
+	exportMode, err := flags.GetString(flagExportTiDBRowID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ExportTiDBRowIDMode, err = ParseExportTiDBRowIDMode(exportMode)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	return nil
 }
 
@@ -816,6 +849,18 @@ func ParseOutputDialect(outputDialect string) (CSVDialect, error) {
 	}
 }
 
+// ParseExportTiDBRowIDMode parses export-tidb-rowid string to ExportTiDBRowIDMode
+func ParseExportTiDBRowIDMode(mode string) (ExportTiDBRowIDMode, error) {
+	switch mode {
+	case "", "off":
+		return ExportTiDBRowIDModeOff, nil
+	case "int-pk-auto-inc":
+		return ExportTiDBRowIDModeIntPKAutoInc, nil
+	default:
+		return ExportTiDBRowIDModeOff, errors.Errorf("unknown export-tidb-rowid value %q (supported: off, int-pk-auto-inc)", mode)
+	}
+}
+
 func (conf *Config) createExternalStorage(ctx context.Context) (storage.ExternalStorage, error) {
 	if conf.ExtStorage != nil {
 		return conf.ExtStorage, nil
@@ -906,6 +951,12 @@ func adjustFileFormat(conf *Config) error {
 	case FileFormatCSVString:
 	default:
 		return errors.Errorf("unknown config.FileType '%s'", conf.FileType)
+	}
+	// When exporting an extra `_tidb_rowid` column in SQL output, we must use
+	// complete-insert to keep INSERT statements consistent with the selected
+	// columns.
+	if conf.ExportTiDBRowIDMode != ExportTiDBRowIDModeOff && conf.FileType == FileFormatSQLTextString {
+		conf.CompleteInsert = true
 	}
 	return nil
 }

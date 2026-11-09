@@ -6,6 +6,7 @@ go_test(
     srcs = [
         "cursor_test.go",
         "main_test.go",
+        "pkdb_password_lock_time_test.go",
         "tidb_test.go",
     ],
     flaky = True,
@@ -14,6 +15,7 @@ go_test(
         "//pkg/config",
         "//pkg/ddl/util",
         "//pkg/extension",
+        "//pkg/extension/enterprise/whitelist",
         "//pkg/metrics",
         "//pkg/parser",
         "//pkg/parser/ast",

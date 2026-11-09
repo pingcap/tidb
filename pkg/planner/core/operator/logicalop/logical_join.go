@@ -164,8 +164,14 @@ type LogicalJoin struct {
 
 	// FromDecorrelatedApply marks joins that come from decorrelating an Apply in the
 	// first logical round. It is only used to decide whether an equivalent same-order
-	// PhysicalIndexJoin candidate has already been generated.
+	// PhysicalIndexJoin candidate has already been generated. A rule that reconstructs
+	// the join tree must not copy this provenance unless it can prove the new join keeps
+	// the original Apply's outer/inner relationship; losing the marker only causes a
+	// conservative extra alternative round.
 	FromDecorrelatedApply bool
+	// DecorrelatedApplyID identifies the Apply that produced this Join in the
+	// alternative logical plan first round.
+	DecorrelatedApplyID int
 }
 
 // Init initializes LogicalJoin.
@@ -1425,8 +1431,8 @@ func (p *LogicalJoin) SetPreferredJoinTypeAndOrder(hintInfo *utilhint.PlanHints)
 		return
 	}
 
-	lhsAlias := util.ExtractTableAlias(p.Children()[0], p.QueryBlockOffset())
-	rhsAlias := util.ExtractTableAlias(p.Children()[1], p.QueryBlockOffset())
+	lhsAlias := util.ExtractJoinHintTableAlias(p.Children()[0], p.QueryBlockOffset())
+	rhsAlias := util.ExtractJoinHintTableAlias(p.Children()[1], p.QueryBlockOffset())
 	if hintInfo.IfPreferMergeJoin(lhsAlias) {
 		p.PreferJoinType |= utilhint.PreferMergeJoin
 		p.LeftPreferJoinType |= utilhint.PreferMergeJoin

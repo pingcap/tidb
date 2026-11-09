@@ -48,6 +48,7 @@ var (
 	TimeJumpBackCounter             prometheus.Counter
 	PlanCacheCounter                *prometheus.CounterVec
 	PlanCacheMissCounter            *prometheus.CounterVec
+	PlanCacheFallbackCounter        *prometheus.CounterVec
 	PlanCacheInstanceMemoryUsage    *prometheus.GaugeVec
 	PlanCacheInstancePlanNumCounter *prometheus.GaugeVec
 	ReadFromTableCacheCounter       prometheus.Counter
@@ -190,6 +191,14 @@ func InitServerMetrics() {
 			Name:      "plan_cache_miss_total",
 			Help:      "Counter of plan cache miss.",
 		}, []string{LblType})
+
+	PlanCacheFallbackCounter = NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_cache_fallback_total",
+			Help:      "Counter of attempts to generate a plan after a plan cache fallback, including optimization failures, by reason.",
+		}, []string{LblType, "reason"})
 
 	PlanCacheInstanceMemoryUsage = NewGaugeVec(
 		prometheus.GaugeOpts{

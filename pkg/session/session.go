@@ -28,7 +28,6 @@ import (
 	"fmt"
 	"iter"
 	"maps"
-	"math"
 	"math/rand"
 	"runtime/pprof"
 	"strconv"
@@ -37,6 +36,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"gitee.com/Trisia/gotlcp/tlcp"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	pkdbrepl "github.com/pingcap/tidb/pkg/domain/pkdb_repl"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/staticrecordset"
@@ -240,9 +241,21 @@ type session struct {
 
 	// Used to wait for all async commit background jobs to finish.
 	commitWaitGroup sync.WaitGroup
+
+	writeResultset sessionctx.SessionExec
 }
 
 var parserPool = &sync.Pool{New: func() any { return parser.New() }}
+
+// GetTraceCtx returns the trace context of the session.
+func (s *session) GetTraceCtx() context.Context {
+	return s.currentCtx
+}
+
+// SetTraceCtx updates the trace context of the session.
+func (s *session) SetTraceCtx(ctx context.Context) {
+	s.currentCtx = ctx
+}
 
 // AddTableLock adds table lock to the session lock map.
 func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
@@ -315,33 +328,13 @@ func (s *session) cleanRetryInfo() {
 	}
 
 	planCacheEnabled := s.GetSessionVars().EnablePreparedPlanCache
-	var cacheKey string
-	var err error
-	var preparedObj *plannercore.PlanCacheStmt
-	if planCacheEnabled {
-		firstStmtID := retryInfo.DroppedPreparedStmtIDs[0]
-		if preparedPointer, ok := s.sessionVars.PreparedStmts[firstStmtID]; ok {
-			preparedObj, ok = preparedPointer.(*plannercore.PlanCacheStmt)
-			if ok {
-				cacheKey, _, _, _, err = plannercore.NewPlanCacheKey(s, preparedObj)
-				if err != nil {
-					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
-					return
-				}
-			}
-		}
-	}
-	for i, stmtID := range retryInfo.DroppedPreparedStmtIDs {
-		if planCacheEnabled {
-			if i > 0 && preparedObj != nil {
-				cacheKey, _, _, _, err = plannercore.NewPlanCacheKey(s, preparedObj)
-				if err != nil {
-					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
-					return
-				}
-			}
-			if !s.sessionVars.IgnorePreparedCacheCloseStmt { // keep the plan in cache
-				s.GetSessionPlanCache().Delete(cacheKey)
+	for _, stmtID := range retryInfo.DroppedPreparedStmtIDs {
+		preparedPointer, exists := s.sessionVars.PreparedStmts[stmtID]
+		preparedObj, ok := preparedPointer.(*plannercore.PlanCacheStmt)
+		if planCacheEnabled && exists && ok && !s.sessionVars.IgnorePreparedCacheCloseStmt {
+			if err := plannercore.DeletePreparedPlanCacheVariants(s, preparedObj); err != nil {
+				logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
+				return
 			}
 		}
 		s.sessionVars.RemovePreparedStmt(stmtID)
@@ -379,6 +372,13 @@ func (s *session) SetTLSState(tlsState *tls.ConnectionState) {
 	// If user is not connected via TLS, then tlsState == nil.
 	if tlsState != nil {
 		s.sessionVars.TLSConnectionState = tlsState
+	}
+}
+
+func (s *session) SetTLCPState(tlcpState *tlcp.ConnectionState) {
+	// If user is not connected via TLS, then tlsState == nil.
+	if tlcpState != nil {
+		s.sessionVars.TLCPConnectionState = tlcpState
 	}
 }
 
@@ -1388,6 +1388,10 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 	defer tracing.StartRegion(ctx, "ParseSQL").End()
 
 	p := parserPool.Get().(*parser.Parser)
+	if s.sessionVars.GetCallProcedure() {
+		p.InProcedure()
+		defer p.OutProcedure()
+	}
 	defer parserPool.Put(p)
 
 	sqlMode := s.sessionVars.SQLMode
@@ -1438,7 +1442,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		DB:                    s.sessionVars.CurrentDB,
 		Command:               command,
 		Plan:                  p,
-		PlanExplainRows:       plannercore.GetExplainRowsForPlan(p),
+		BriefBinaryPlan:       plannercore.GetBriefBinaryPlan(p),
 		RuntimeStatsColl:      s.sessionVars.StmtCtx.RuntimeStatsColl,
 		Time:                  t,
 		State:                 s.Status(),
@@ -1460,15 +1464,16 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		ResourceGroupName:     s.sessionVars.StmtCtx.ResourceGroupName,
 		SessionAlias:          s.sessionVars.SessionAlias,
 		CursorTracker:         s.cursorTracker,
+		ProxyHost:             s.sessionVars.ProxyHost,
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {
 		// Store the last valid plan when the current plan is nil.
 		// This is for `explain for connection` statement has the ability to query the last valid plan.
-		if oldPi != nil && oldPi.Plan != nil && len(oldPi.PlanExplainRows) > 0 {
+		if oldPi != nil && oldPi.Plan != nil && len(oldPi.BriefBinaryPlan) > 0 {
 			pi.Plan = oldPi.Plan
-			pi.PlanExplainRows = oldPi.PlanExplainRows
 			pi.RuntimeStatsColl = oldPi.RuntimeStatsColl
+			pi.BriefBinaryPlan = oldPi.BriefBinaryPlan
 		}
 	}
 	// We set process info before building plan, so we extended execution time.
@@ -1482,7 +1487,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	_, digest := s.sessionVars.StmtCtx.SQLDigest()
 	pi.Digest = digest.String()
 	// DO NOT reset the currentPlan to nil until this query finishes execution, otherwise reentrant calls
-	// of SetProcessInfo would override Plan and PlanExplainRows to nil.
+	// of SetProcessInfo would override Plan and BriefBinaryPlan to nil.
 	if command == mysql.ComSleep {
 		s.currentPlan = nil
 	}
@@ -2035,6 +2040,10 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
+		if preparedCore, ok := execStmt.PrepStmt.(*plannercore.PlanCacheStmt); ok {
+			preparedCore.InUse = true
+			defer func() { preparedCore.InUse = false }()
+		}
 		if binParam, ok := execStmt.BinaryArgs.([]param.BinaryParam); ok {
 			args, err := expression.ExecBinaryParam(s.GetSessionVars().StmtCtx.TypeCtx(), binParam)
 			if err != nil {
@@ -2239,7 +2248,7 @@ func (s *session) validateStatementInTxn(stmtNode ast.StmtNode) error {
 
 func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) error {
 	vars := s.GetSessionVars()
-	if !vars.TxnCtx.IsStaleness && vars.TxnReadTS.PeakTxnReadTS() == 0 && !vars.EnableExternalTSRead || vars.InRestrictedSQL {
+	if !vars.TxnCtx.IsStaleness && vars.TxnReadTS.PeakTxnReadTS() == 0 && !vars.EnableExternalTSRead && !pkdbrepl.IsStandbyMode() || vars.InRestrictedSQL {
 		return nil
 	}
 	errMsg := "only support read-only statement during read-only staleness transactions"
@@ -2626,8 +2635,6 @@ func (s *session) rebuildFromPrepareCache(
 		SQLDigest:           cached.Stmt.SQLDigest,
 		ForUpdateRead:       cached.Stmt.ForUpdateRead,
 		SnapshotTSEvaluator: cached.Stmt.SnapshotTSEvaluator,
-		StmtCacheable:       cached.Stmt.StmtCacheable,
-		UncacheableReason:   cached.Stmt.UncacheableReason,
 		SchemaVersion:       cached.Stmt.SchemaVersion,
 
 		// Mutable containers – clone so each stmt has independent state:
@@ -2636,11 +2643,12 @@ func (s *session) rebuildFromPrepareCache(
 		// NormalizedPlan / PlanDigest are left as zero values; they will be
 		// populated on the first plan-cache miss during Execute.
 	}
+	newStmt.CopyCacheabilityFrom(cached.Stmt)
 
 	// Walk the new AST to populate limits, hasSubquery, and tables.
 	// These fields hold pointers into the AST, so they must refer to the
 	// newly-parsed tree rather than the cached one.
-	plannercore.CollectPlanCacheStmtInfo(ctx, is, newStmt, stmtNode)
+	plannercore.FinalizePreparedPlanCacheStmtInfo(ctx, ret.InfoSchema, newStmt, stmtNode)
 
 	// dbName and tbls are only read during Execute (not written to by
 	// CollectPlanCacheStmtInfo since that populates tables, not tbls).
@@ -2946,6 +2954,11 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte, aut
 			return err
 		}
 		if lockStatusChanged {
+			s.extensions.OnConnectionEvent(extension.ConnConnected, &extension.ConnEventInfo{
+				ConnectionInfo: s.sessionVars.ConnectionInfo,
+				ActiveRoles:    s.sessionVars.ActiveRoles,
+				Info:           fmt.Sprintf("lock %s@%s for consecutive incorrect password", authUser.Username, authUser.Hostname),
+			})
 			// Notification auto unlock.
 			err = domain.GetDomain(s).NotifyUpdatePrivilege([]string{authUser.Username})
 			if err != nil {
@@ -3035,18 +3048,18 @@ func authSuccessClearCount(s *session, user string, host string) error {
 	// If the account is locked, it may be caused by the untimely update of the cache,
 	// directly report the account lock.
 	if passwordLocking.AutoAccountLocked {
-		if passwordLocking.PasswordLockTimeDays == -1 {
+		if passwordLocking.PasswordLockSecs == -1 {
 			return privileges.GenerateAccountAutoLockErr(passwordLocking.FailedLoginAttempts, user, host,
 				"unlimited", "unlimited")
 		}
 
-		lds := strconv.FormatInt(passwordLocking.PasswordLockTimeDays, 10)
+		lds := privileges.FormatPasswordLockTime(passwordLocking.PasswordLockSecs)
 		return privileges.GenerateAccountAutoLockErr(passwordLocking.FailedLoginAttempts, user, host, lds, lds)
 	}
 	if passwordLocking.FailedLoginCount != 0 {
 		// If the number of account login failures is not zero, it will be updated to 0.
 		passwordLockingJSON := privileges.BuildSuccessPasswordLockingJSON(passwordLocking.FailedLoginAttempts,
-			passwordLocking.PasswordLockTimeDays)
+			passwordLocking.PasswordLockSecs)
 		if passwordLockingJSON != "" {
 			if err := s.passwordLocking(user, host, passwordLockingJSON); err != nil {
 				return err
@@ -3080,20 +3093,25 @@ func verifyAccountAutoLock(s *session, user, host string) (bool, error) {
 	}
 	if pl.AutoAccountLocked {
 		// If it is locked, need to check whether it can be automatically unlocked.
-		lockTimeDay := pl.PasswordLockTimeDays
-		if lockTimeDay == -1 {
+		lockTimeSecs := pl.PasswordLockSecs
+		if lockTimeSecs == -1 {
 			return false, privileges.GenerateAccountAutoLockErr(pl.FailedLoginAttempts, user, host, "unlimited", "unlimited")
 		}
 		lastChanged := pl.AutoLockedLastChanged
 		d := time.Now().Unix() - lastChanged
-		if d <= lockTimeDay*24*60*60 {
-			lds := strconv.FormatInt(lockTimeDay, 10)
-			rds := strconv.FormatInt(int64(math.Ceil(float64(lockTimeDay)-float64(d)/(24*60*60))), 10)
+		if d <= lockTimeSecs {
+			lds := privileges.FormatPasswordLockTime(lockTimeSecs)
+			rds := privileges.FormatPasswordLockTime(lockTimeSecs - d)
 			return false, privileges.GenerateAccountAutoLockErr(pl.FailedLoginAttempts, user, host, lds, rds)
 		}
 		// Generate unlock json string.
 		plJSON = privileges.BuildPasswordLockingJSON(pl.FailedLoginAttempts,
-			pl.PasswordLockTimeDays, "N", 0, time.Now().Format(time.UnixDate))
+			pl.PasswordLockSecs, "N", 0, time.Now().Format(time.UnixDate))
+		s.GetExtensions().OnConnectionEvent(extension.ConnConnected, &extension.ConnEventInfo{
+			ConnectionInfo: s.sessionVars.ConnectionInfo,
+			ActiveRoles:    s.sessionVars.ActiveRoles,
+			Info:           fmt.Sprintf("unlock %s@%s automatically", user, host),
+		})
 	}
 	if plJSON != "" {
 		lockStatusChanged = true
@@ -3127,11 +3145,11 @@ func autolockAction(s *session, passwordLocking *privileges.PasswordLocking, use
 	}
 	// The number of failed login attempts reaches FAILED_LOGIN_ATTEMPTS.
 	// An error message is displayed indicating permission denial and account lock.
-	if passwordLocking.PasswordLockTimeDays == -1 {
+	if passwordLocking.PasswordLockSecs == -1 {
 		return privileges.GenerateAccountAutoLockErr(passwordLocking.FailedLoginAttempts, user, host,
 			"unlimited", "unlimited")
 	}
-	lds := strconv.FormatInt(passwordLocking.PasswordLockTimeDays, 10)
+	lds := privileges.FormatPasswordLockTime(passwordLocking.PasswordLockSecs)
 	return privileges.GenerateAccountAutoLockErr(passwordLocking.FailedLoginAttempts, user, host, lds, lds)
 }
 
@@ -3208,17 +3226,17 @@ func userAutoAccountLocked(s *session, user string, host string, pl *privileges.
 	failedLoginCount := pl.FailedLoginCount + 1
 	// If the cache is not updated, but it is already locked, it will report that the account is locked.
 	if pl.AutoAccountLocked {
-		if pl.PasswordLockTimeDays == -1 {
+		if pl.PasswordLockSecs == -1 {
 			return false, privileges.GenerateAccountAutoLockErr(pl.FailedLoginAttempts, user, host,
 				"unlimited", "unlimited")
 		}
-		lds := strconv.FormatInt(pl.PasswordLockTimeDays, 10)
+		lds := privileges.FormatPasswordLockTime(pl.PasswordLockSecs)
 		return false, privileges.GenerateAccountAutoLockErr(pl.FailedLoginAttempts, user, host, lds, lds)
 	}
 
 	autoAccountLocked := "N"
 	autoLockedLastChanged := ""
-	if pl.FailedLoginAttempts == 0 || pl.PasswordLockTimeDays == 0 {
+	if pl.FailedLoginAttempts == 0 || pl.PasswordLockSecs == 0 {
 		return false, nil
 	}
 
@@ -3229,7 +3247,7 @@ func userAutoAccountLocked(s *session, user string, host string, pl *privileges.
 	}
 
 	newAttributesStr := privileges.BuildPasswordLockingJSON(pl.FailedLoginAttempts,
-		pl.PasswordLockTimeDays, autoAccountLocked, failedLoginCount, autoLockedLastChanged)
+		pl.PasswordLockSecs, autoAccountLocked, failedLoginCount, autoLockedLastChanged)
 	if newAttributesStr != "" {
 		return lockStatusChanged, s.passwordLocking(user, host, newAttributesStr)
 	}
@@ -3378,6 +3396,27 @@ func loadCollationParameter(ctx context.Context, se *session) (bool, error) {
 type tableBasicInfo struct {
 	SQL string
 	id  int64
+}
+
+// loadLowerCaseTableNames loads lower_case_table_names parameter from mysql.tidb.
+func loadLowerCaseTableNames(ctx context.Context, se *session) (int, error) {
+	para, err := se.getTableValue(ctx, mysql.TiDBTable, lowerCaseTableNames)
+	if err != nil {
+		return 0, err
+	}
+	switch para {
+	case "0":
+		return 0, nil
+	case "1":
+		return 1, nil
+	case "2":
+		return 2, nil
+	default:
+		logutil.BgLogger().Warn(
+			"Unexpected value of 'lower_case_table_names' in 'mysql.tidb', use '2' instead",
+			zap.String("value", para))
+		return 2, nil
+	}
 }
 
 var (
@@ -3595,6 +3634,62 @@ func InitMDLVariable(store kv.Storage) error {
 	return err
 }
 
+func executeDutySeparation(s types.Session, sql string, args ...any) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
+	_, err := s.ExecuteInternal(ctx, sql, args...)
+	defer cancel()
+	if err != nil {
+		logutil.BgLogger().Fatal("failed to execute grant admin role", zap.Error(err))
+	}
+	return err
+}
+
+// GrantDutySeparation creates the 4 admin roles and grants corresponding privilege.
+func GrantDutySeparation(s types.Session) error {
+	for _, sqls := range executor.DutyRoles {
+		for _, sql := range sqls {
+			if err := executeDutySeparation(s, sql); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// checkAndGrantDutySeparation checks duty separation, grant it if need.
+func checkAndGrantDutySeparation(store kv.Storage) error {
+	sess, err := CreateSession(store)
+	if err != nil {
+		logutil.BgLogger().Error("failed to create session", zap.Error(err))
+		return err
+	}
+
+	// if the TiDBEnableDutySeparationMode is On already, do not need to grant duty repeatedly.
+	if variable.EnableDutySeparationMode.Load() {
+		return nil
+	}
+
+	if err = GrantDutySeparation(sess); err != nil {
+		logutil.BgLogger().Error("failed to grant admin role", zap.Error(err))
+		return err
+	}
+
+	if err = sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVarOnly(
+		context.TODO(),
+		variable.TiDBEnableDutySeparationMode,
+		variable.BoolToOnOff(true),
+		true,
+	); err != nil {
+		logutil.BgLogger().Error("failed to set config", zap.String("item", variable.TiDBEnableDutySeparationMode), zap.Error(err))
+		return err
+	}
+
+	logutil.BgLogger().Info("set duty separation successfully", zap.Bool("duty-separation", variable.EnableDutySeparationMode.Load()))
+	return nil
+}
+
 // BootstrapSession bootstrap session and domain.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	return bootstrapSessionImpl(context.Background(), store, createSessions)
@@ -3633,6 +3728,10 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if err != nil {
 		return nil, err
 	}
+	// Set the lower_case_table_names before bootstrap to initialize infoschema cache correctly.
+	// The validity will be checked later before reading system table mysql.tidb.
+	model.SetLowerCaseTableNamesOnBootstrap(cfg.LowerCaseTableNamesOnFirstBootstrap)
+
 	err = InitMDLTable(store)
 	if err != nil {
 		return nil, err
@@ -3650,8 +3749,10 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		return nil, err
 	}
 	ver := getStoreBootstrapVersionWithCache(store)
-	if ver < currentBootstrapVersion {
-		runInBootstrapSession(store, ver)
+	verEE := getStoreEEBootstrapVersion(store)
+	startMode := ddl.Normal
+	if ver < currentBootstrapVersion || verEE < currentEEBootstrapVersion {
+		startMode = runInBootstrapSession(store, ver, verEE)
 	} else {
 		err = InitMDLVariable(store)
 		if err != nil {
@@ -3670,6 +3771,18 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		proto.ImportInto,
 		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
 			return importinto.NewImportExecutor(ctx, task, param, store)
+		},
+	)
+	scheduler.RegisterSchedulerFactory(
+		proto.CTAS,
+		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
+			return executor.NewCTASScheduler(ctx, task, param)
+		},
+	)
+	taskexecutor.RegisterTaskType(
+		proto.CTAS,
+		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
+			return executor.NewCTASTaskExecutor(ctx, task, param)
 		},
 	)
 
@@ -3702,6 +3815,17 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	}
 	collate.SetNewCollationEnabledForTest(newCollationEnabled)
 
+	lowerCaseTableNames, err := loadLowerCaseTableNames(ctx, ses[0])
+	if err != nil {
+		return nil, err
+	}
+	if cfg.LowerCaseTableNamesOnFirstBootstrap != lowerCaseTableNames {
+		return nil, fmt.Errorf("lower_case_table_names in config (%d) does not match the value in mysql.tidb (%d)", cfg.LowerCaseTableNamesOnFirstBootstrap, lowerCaseTableNames)
+	}
+	model.SetLowerCaseTableNamesOnBootstrap(lowerCaseTableNames)
+
+	infoschema.BootstrapFinishGlobalVars.Store(true)
+
 	// only start the domain after we have initialized some global variables.
 	dom := domain.GetDomain(ses[0])
 	err = dom.Start(ddl.Normal)
@@ -3715,6 +3839,13 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if !config.GetGlobalConfig().Security.SkipGrantTable {
 		err = dom.LoadPrivilegeLoop(ses[3])
 		if err != nil {
+			return nil, err
+		}
+	}
+
+	// check TiDBEnableDutySeparationMode config and grant duty separation
+	if (startMode == ddl.Bootstrap || startMode == ddl.Upgrade) && cfg.Security.TidbEnableDutySeparationMode {
+		if err := checkAndGrantDutySeparation(store); err != nil {
 			return nil, err
 		}
 	}
@@ -3879,21 +4010,21 @@ func GetOrCreateDomainWithFilter(store kv.Storage, filter issyncer.Filter) (*dom
 	return domap.GetOrCreateWithFilter(store, filter)
 }
 
-func getStartMode(ver int64) ddl.StartMode {
-	if ver == notBootstrapped {
+func getStartMode(ver, verEE int64) ddl.StartMode {
+	if ver >= currentBootstrapVersion && verEE >= currentEEBootstrapVersion {
+		return ddl.Normal
+	} else if ver == notBootstrapped && verEE == notBootstrapped {
 		return ddl.Bootstrap
-	} else if ver < currentBootstrapVersion {
-		return ddl.Upgrade
 	}
-	return ddl.Normal
+	return ddl.Upgrade
 }
 
 // runInBootstrapSession create a special session for bootstrap to run.
 // If no bootstrap and storage is remote, we must use a little lease time to
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
 // TODO: Using a bootstrap tool for doing this may be better later.
-func runInBootstrapSession(store kv.Storage, ver int64) {
-	startMode := getStartMode(ver)
+func runInBootstrapSession(store kv.Storage, ver, verEE int64) ddl.StartMode {
+	startMode := getStartMode(ver, verEE)
 
 	if startMode == ddl.Upgrade {
 		// TODO at this time domain must not be created, else it will register server
@@ -3905,7 +4036,8 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 		}
 		defer releaseFn()
 		currVer := mustGetStoreBootstrapVersion(store)
-		if currVer >= currentBootstrapVersion {
+		currEEVersion := mustGetStoreEEBootstrapVersion(store)
+		if currVer >= currentBootstrapVersion && currEEVersion >= currentEEBootstrapVersion {
 			// It is already bootstrapped/upgraded by another TiDB instance, but
 			// we still need to go through the following domain Start/Close code
 			// right now as we have already initialized it when creating the session,
@@ -3955,6 +4087,8 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 		infosync.MockGlobalServerInfoManagerEntry.Close()
 	}
 	domap.Delete(store)
+
+	return startMode
 }
 
 func createSessions(store kv.Storage, cnt int) ([]*session, error) {
@@ -4103,6 +4237,22 @@ func mustGetStoreBootstrapVersion(store kv.Storage) int64 {
 	return ver
 }
 
+func mustGetStoreEEBootstrapVersion(store kv.Storage) int64 {
+	var ver int64
+	// check in kv store
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+		var err error
+		t := meta.NewMutator(txn)
+		ver, err = t.GetBootstrapEEVersion()
+		return err
+	})
+	if err != nil {
+		logutil.BgLogger().Fatal("get store bootstrap version failed", zap.Error(err))
+	}
+	return ver
+}
+
 func getStoreBootstrapVersionWithCache(store kv.Storage) int64 {
 	storeBootstrappedLock.Lock()
 	defer storeBootstrappedLock.Unlock()
@@ -4123,6 +4273,25 @@ func getStoreBootstrapVersionWithCache(store kv.Storage) int64 {
 	return ver
 }
 
+func getStoreEEBootstrapVersion(store kv.Storage) int64 {
+	storeBootstrappedLock.Lock()
+	defer storeBootstrappedLock.Unlock()
+	// check in memory
+	_, ok := storeEEBootstrapped[store.UUID()]
+	if ok {
+		return currentEEBootstrapVersion
+	}
+
+	ver := mustGetStoreEEBootstrapVersion(store)
+
+	if ver > notBootstrapped {
+		// here means memory is not ok, but other server has already finished it
+		storeEEBootstrapped[store.UUID()] = true
+	}
+
+	return ver
+}
+
 func finishBootstrap(store kv.Storage) {
 	setStoreBootstrapped(store.UUID())
 
@@ -4130,6 +4299,10 @@ func finishBootstrap(store kv.Storage) {
 	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMutator(txn)
 		err := t.FinishBootstrap(currentBootstrapVersion)
+		if err != nil {
+			return err
+		}
+		err = t.FinishBootstrapEE(currentEEBootstrapVersion)
 		return err
 	})
 	if err != nil {
@@ -4313,6 +4486,8 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 		*ast.DropDatabaseStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt,
 		*ast.RenameUserStmt:
 		isCrucial = true
+	case *ast.AdminStmt:
+		isCrucial = isAdminLogReplStmt(stmt.Tp)
 	}
 
 	if isCrucial {
@@ -4892,7 +5067,8 @@ func (s *session) usePipelinedDmlOrWarn(ctx context.Context) bool {
 			stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used on sequence. Fallback to standard mode"))
 			return false
 		}
-		if vars.ForeignKeyChecks && (len(tbl.Meta().ForeignKeys) > 0 || len(is.GetTableReferredForeignKeys(t.DB, t.Table)) > 0) {
+		// TODO(lower_case_table_names): stmtctx.TableEntry should use CIStr for DB and Table.
+		if vars.ForeignKeyChecks && (len(tbl.Meta().ForeignKeys) > 0 || len(is.GetTableReferredForeignKeys(pmodel.NewCIStr(t.DB), pmodel.NewCIStr(t.Table))) > 0) {
 			stmtCtx.AppendWarning(
 				errors.New(
 					"Pipelined DML can not be used on table with foreign keys when foreign_key_checks = ON. Fallback to standard mode",
@@ -4989,6 +5165,14 @@ func (s *session) GetCursorTracker() cursor.Tracker {
 // GetCommitWaitGroup returns the internal `sync.WaitGroup` for async commit and secondary key lock cleanup
 func (s *session) GetCommitWaitGroup() *sync.WaitGroup {
 	return &s.commitWaitGroup
+}
+
+func (s *session) SetSessionExec(cc sessionctx.SessionExec) {
+	s.writeResultset = cc
+}
+
+func (s *session) GetSessionExec() sessionctx.SessionExec {
+	return s.writeResultset
 }
 
 // GetDomain get domain from session.

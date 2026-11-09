@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -108,7 +109,7 @@ func TestUserPrivileges(t *testing.T) {
 		Username: "constraints_tester",
 		Hostname: "127.0.0.1",
 	}, nil, nil, nil))
-	constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS WHERE TABLE_NAME != 'CLUSTER_SLOW_QUERY';").Check([][]any{})
+	constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS WHERE TABLE_NAME != 'CLUSTER_SLOW_QUERY' AND TABLE_NAME != 'CLUSTER_AUDIT_LOG';").Check([][]any{})
 
 	// test the privilege of user with privilege of mysql.gc_delete_range for information_schema.table_constraints
 	tk.MustExec("CREATE ROLE r_gc_delete_range ;")
@@ -127,7 +128,7 @@ func TestUserPrivileges(t *testing.T) {
 		Username: "tester1",
 		Hostname: "127.0.0.1",
 	}, nil, nil, nil))
-	tk1.MustQuery("select * from information_schema.STATISTICS WHERE TABLE_NAME != 'CLUSTER_SLOW_QUERY';").Check([][]any{})
+	tk1.MustQuery(";select * from information_schema.STATISTICS WHERE TABLE_NAME != 'CLUSTER_SLOW_QUERY' AND TABLE_NAME != 'CLUSTER_AUDIT_LOG'").Check([][]any{})
 
 	// test the privilege of user with some privilege for information_schema
 	tk.MustExec("create user tester2")
@@ -162,6 +163,64 @@ func TestUserPrivileges(t *testing.T) {
 	require.Greater(t, len(rows), 0)
 	rows = tk3.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='tables_priv' and COLUMN_NAME='Host';").Rows()
 	require.Greater(t, len(rows), 0)
+}
+
+func TestUserAttributesVisibility(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+
+	root.MustExec(`CREATE USER ua_target_regular ATTRIBUTE '{"type":"regular"}'`)
+	root.MustExec(`CREATE USER ua_target_system ATTRIBUTE '{"type":"system"}'`)
+	root.MustExec("GRANT SYSTEM_USER ON *.* TO ua_target_system")
+
+	root.MustExec("CREATE USER ua_viewer_regular")
+	root.MustExec("CREATE USER ua_viewer_system")
+	root.MustExec("GRANT SYSTEM_USER ON *.* TO ua_viewer_system")
+	root.MustExec("CREATE USER ua_viewer_create")
+	root.MustExec("GRANT CREATE USER ON *.* TO ua_viewer_create")
+	root.MustExec("CREATE USER ua_viewer_create_system")
+	root.MustExec("GRANT CREATE USER, SYSTEM_USER ON *.* TO ua_viewer_create_system")
+	root.MustExec("CREATE USER ua_viewer_super")
+	root.MustExec("GRANT CREATE USER, SUPER ON *.* TO ua_viewer_super")
+	root.MustExec("CREATE USER ua_viewer_select")
+	root.MustExec("GRANT SELECT ON mysql.* TO ua_viewer_select")
+	root.MustExec("CREATE USER ua_viewer_update")
+	root.MustExec("GRANT UPDATE ON mysql.* TO ua_viewer_update")
+	root.MustExec("CREATE USER ua_viewer_table_select")
+	root.MustExec("GRANT SELECT ON mysql.user TO ua_viewer_table_select")
+	root.MustExec("CREATE USER ua_viewer_table_update")
+	root.MustExec("GRANT UPDATE ON mysql.user TO ua_viewer_table_update")
+	root.MustExec("CREATE USER ua_viewer_role")
+	root.MustExec("CREATE ROLE ua_user_admin_role")
+	root.MustExec("GRANT CREATE USER, SYSTEM_USER ON *.* TO ua_user_admin_role")
+	root.MustExec("GRANT ua_user_admin_role TO ua_viewer_role")
+
+	queryAs := func(user string, activeRole string, expectedRows ...string) {
+		tk := testkit.NewTestKit(t, store)
+		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: user, Hostname: "127.0.0.1"}, nil, nil, nil))
+		if activeRole != "" {
+			tk.MustExec("SET ROLE " + activeRole)
+		}
+		query := fmt.Sprintf(`SELECT user FROM information_schema.user_attributes
+			WHERE user IN ('root', 'ua_target_regular', 'ua_target_system', '%s') ORDER BY user`, user)
+		tk.MustQuery(query).Check(testkit.Rows(expectedRows...))
+	}
+
+	queryAs("ua_viewer_regular", "", "ua_viewer_regular")
+	queryAs("ua_viewer_system", "", "ua_viewer_system")
+	queryAs("ua_viewer_create", "", "ua_target_regular", "ua_viewer_create")
+	queryAs("ua_viewer_create_system", "", "root", "ua_target_regular", "ua_target_system", "ua_viewer_create_system")
+	queryAs("ua_viewer_super", "", "root", "ua_target_regular", "ua_target_system", "ua_viewer_super")
+	queryAs("ua_viewer_select", "", "root", "ua_target_regular", "ua_target_system", "ua_viewer_select")
+	queryAs("ua_viewer_update", "", "root", "ua_target_regular", "ua_target_system", "ua_viewer_update")
+	queryAs("ua_viewer_table_select", "", "root", "ua_target_regular", "ua_target_system", "ua_viewer_table_select")
+	queryAs("ua_viewer_table_update", "", "root", "ua_target_regular", "ua_target_system", "ua_viewer_table_update")
+	queryAs("ua_viewer_role", "ua_user_admin_role", "root", "ua_target_regular", "ua_target_system", "ua_viewer_role")
+
+	originalSkipWithGrant := privileges.SkipWithGrant
+	privileges.SkipWithGrant = true
+	defer func() { privileges.SkipWithGrant = originalSkipWithGrant }()
+	queryAs("ua_viewer_regular", "", "root", "ua_target_regular", "ua_target_system", "ua_viewer_regular")
 }
 
 func TestDataForTableStatsField(t *testing.T) {
@@ -610,6 +669,9 @@ func TestTablesTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, selectTables)
 	require.Equal(t, totalTables, remainTables+selectTables)
+
+	tk.MustExec("create table test.`$a$a` (a int)")
+	tk.MustQuery("select count(*) from information_schema.tables where table_name like '$a$%'").Check(testkit.Rows("1"))
 }
 
 func TestColumnTable(t *testing.T) {
@@ -667,6 +729,39 @@ func TestColumnTable(t *testing.T) {
 	tk.MustQuery(`select count(*) from information_schema.columns
 				where TABLE_SCHEMA = 'test' and TABLE_NAME in ('tbl1', 'tbl2', 'view1');`).Check(
 		testkit.RowsWithSep("|", "9"))
+
+	tk.MustExec("create table newline_column (`a\nb` int)")
+	tk.MustQuery(`select hex(column_name), column_name like '%', column_name like 'a_b',
+			column_name like 'a%b' from information_schema.columns
+			where table_schema = 'test' and table_name = 'newline_column'`).
+		Check(testkit.Rows("610A62 1 1 1"))
+	for _, pattern := range []string{"%", "a_b", "a%b"} {
+		tk.MustQuery(fmt.Sprintf(`select count(*) from information_schema.columns
+			where table_schema = 'test' and table_name = 'newline_column'
+			and column_name like '%s'`, pattern)).Check(testkit.Rows("1"))
+	}
+}
+
+func TestInformationSchemaColumnsFromDecimalView(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database crash_test")
+	tk.MustExec("use crash_test")
+
+	tk.MustExec("create table t1 (id int, val decimal(10,2))")
+	tk.MustExec("create table t2 (id int, val decimal(10,2))")
+	tk.MustExec(`create view v_crash as
+		select a.id, a.val, count(*) as cnt
+		from t1 a join t2 b on a.id = b.id
+		group by a.id`)
+
+	tk.MustQuery(`select table_name, column_name from information_schema.columns
+		where table_schema = 'crash_test' and data_type = 'decimal'
+		order by table_name, ordinal_position`).Check(testkit.Rows(
+		"t1 val",
+		"t2 val",
+		"v_crash val",
+	))
 }
 
 func TestIndexUsageTable(t *testing.T) {
@@ -919,22 +1014,22 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE table_name = "t1";`).Check(testkit.RowsWithSep("|",
-		"133|add index|public|126|131|t1|synced",
-		"132|create table|public|126|131|t1|synced",
-		"119|add index|public|112|117|t1|synced",
-		"118|create table|public|112|117|t1|synced",
+		"165|add index|public|158|163|t1|synced",
+		"164|create table|public|158|163|t1|synced",
+		"151|add index|public|144|149|t1|synced",
+		"150|create table|public|144|149|t1|synced",
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d1" and JOB_TYPE LIKE "add index%%";`).Check(testkit.RowsWithSep("|",
-		"139|add index|public|126|137|t3|synced",
-		"136|add index|public|126|134|t2|synced",
-		"133|add index|public|126|131|t1|synced",
-		"130|add index|public|126|128|t0|synced",
+		"171|add index|public|158|169|t3|synced",
+		"168|add index|public|158|166|t2|synced",
+		"165|add index|public|158|163|t1|synced",
+		"162|add index|public|158|160|t0|synced",
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and table_name = "t3";`).Check(testkit.RowsWithSep("|",
-		"125|add index|public|112|123|t3|synced",
-		"124|create table|public|112|123|t3|synced",
+		"157|add index|public|144|155|t3|synced",
+		"156|create table|public|144|155|t3|synced",
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 					FROM information_schema.ddl_jobs WHERE state = "running";`).Check(testkit.Rows())
@@ -945,15 +1040,15 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 		if job.SchemaState == model.StateWriteOnly && loaded.CompareAndSwap(false, true) {
 			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE table_name = "t0" and state = "running";`).Check(testkit.RowsWithSep("|",
-				"140 add index write only 112 114 t0 running",
+				"172|add index|write only|144|146|t0|running",
 			))
 			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and state = "running";`).Check(testkit.RowsWithSep("|",
-				"140 add index write only 112 114 t0 running",
+				"172|add index|write only|144|146|t0|running",
 			))
 			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE state = "running";`).Check(testkit.RowsWithSep("|",
-				"140 add index write only 112 114 t0 running",
+				"172|add index|write only|144|146|t0|running",
 			))
 		}
 	})
@@ -969,8 +1064,8 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 	tk.MustExec("create table test2.t1(id int)")
 	tk.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "test2" and table_name = "t1"`).Check(testkit.RowsWithSep("|",
-		"149|create table|public|146|148|t1|synced",
-		"144|create table|public|141|143|t1|synced",
+		"181|create table|public|178|180|t1|synced",
+		"176|create table|public|173|175|t1|synced",
 	))
 
 	// Test explain output, since the output may change in future.
@@ -1026,6 +1121,7 @@ func TestInfoSchemaConditionWorks(t *testing.T) {
 			strings.HasPrefix(tableName, "METRICS_") ||
 			strings.HasPrefix(tableName, "TIFLASH_") ||
 			strings.HasPrefix(tableName, "TIKV_") ||
+			strings.HasPrefix(tableName, "LR_") ||
 			strings.HasPrefix(tableName, "USER_") ||
 			tableName == "TABLE_STORAGE_STATS" ||
 			strings.Contains(tableName, "REGION") {

@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
 	promtestutils "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -445,7 +446,7 @@ func TestInitialHandshake(t *testing.T) {
 	err = binary.Write(expected, binary.LittleEndian, uint16((defaultCapability>>16)&0xFFFF)) // Extended Server Capability
 	require.NoError(t, err)
 	expected.WriteByte(0x15)                                                                             // Authentication Plugin Length
-	expected.Write([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})                   // Unused
+	expected.Write([]byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})                   // the first is used to indicate tlcp, remained 9 Unused
 	expected.Write([]byte{0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x00}) // Salt
 	expected.WriteString("mysql_native_password")                                                        // Authentication Plugin
 	expected.WriteByte(0x00)                                                                             // NULL
@@ -723,6 +724,29 @@ func TestQueryEndWithZero(t *testing.T) {
 	}
 
 	testDispatch(t, inputs, 0)
+}
+
+func TestComInitDBEscapesDatabaseName(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	server := CreateMockServer(t, store)
+	defer server.Close()
+	conn := CreateMockConn(t, server)
+	defer conn.Close()
+
+	dbName := "quo`te/database"
+	escapedDBName := stringutil.Escape(dbName, mysql.ModeNone)
+	// This regression sends COM_INIT_DB with a raw database name containing a
+	// backtick and slash, then checks that the server escapes it before parsing USE.
+	_, err := conn.Context().Session.Execute(context.Background(), "CREATE DATABASE "+escapedDBName)
+	require.NoError(t, err)
+	defer func() {
+		_, err := conn.Context().Session.Execute(context.Background(), "DROP DATABASE "+escapedDBName)
+		require.NoError(t, err)
+	}()
+
+	err = conn.Dispatch(context.Background(), append([]byte{mysql.ComInitDB}, []byte(dbName)...))
+	require.NoError(t, err)
+	require.Equal(t, dbName, conn.Context().Session.GetSessionVars().CurrentDB)
 }
 
 func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
@@ -1830,7 +1854,7 @@ func TestAuthSessionTokenPlugin(t *testing.T) {
 	tk.MustExec("CREATE USER auth_session_token")
 	tk.MustExec("CREATE USER another_user")
 
-	tc, err := drv.OpenCtx(uint64(0), 0, uint8(mysql.DefaultCollationID), "", nil, nil)
+	tc, err := drv.OpenCtx(uint64(0), 0, uint8(mysql.DefaultCollationID), "", nil, nil, nil)
 	require.NoError(t, err)
 	cc := &clientConn{
 		connectionID: 1,

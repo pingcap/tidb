@@ -44,6 +44,26 @@ func parseExpr(t *testing.T, expr string) ast.ExprNode {
 	return stmt.Fields.Fields[0].Expr
 }
 
+func TestPreprocessorCollectsSchemaQualifiedStoredFunction(t *testing.T) {
+	p := &preprocessor{
+		userDefStoredFuncs: make([][2]string, 0),
+	}
+
+	_, ok := p.Leave(&ast.FuncCallExpr{
+		Schema: pmodel.NewCIStr(""),
+		FnName: pmodel.NewCIStr("abs"),
+	})
+	require.True(t, ok)
+	require.Empty(t, p.userDefStoredFuncs)
+
+	_, ok = p.Leave(&ast.FuncCallExpr{
+		Schema: pmodel.NewCIStr("test"),
+		FnName: pmodel.NewCIStr("abs"),
+	})
+	require.True(t, ok)
+	require.Equal(t, [2]string{"test", "abs"}, p.userDefStoredFuncs[0])
+}
+
 func buildExpr(t *testing.T, ctx expression.BuildContext, exprNode any, opts ...expression.BuildOption) (expr expression.Expression, err error) {
 	switch x := exprNode.(type) {
 	case string:

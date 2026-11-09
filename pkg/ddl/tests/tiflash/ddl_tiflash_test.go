@@ -104,6 +104,7 @@ func createTiFlashContext(t *testing.T) (*tiflashContext, func()) {
 	s.dom.SetStatsUpdating(true)
 
 	tearDown := func() {
+		// Close domain first to stop background DDL polling before shutting down the mock TiFlash server.
 		s.dom.Close()
 		s.tiflash.Lock()
 		if s.tiflash.StatusServer != nil {

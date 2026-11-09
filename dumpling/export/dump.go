@@ -17,7 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/coreos/go-semver/semver"
+	"git.pingcap.cn/pingkai/semver/coreos/semver"
 	// import mysql driver
 	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/pkdbcredential"
 	pd "github.com/tikv/pd/client"
 	gatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -72,6 +73,15 @@ type Dumper struct {
 
 // NewDumper returns a new Dumper
 func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
+	password, err := pkdbcredential.ResolvePassword(
+		conf.Password,
+		conf.PasswordEncryptedFile,
+		conf.PasswordKeyFile,
+	)
+	if err != nil {
+		return nil, err
+	}
+	conf.Password = password
 	failpoint.Inject("setExtStorage", func(val failpoint.Value) {
 		path := val.(string)
 		b, err := storage.ParseBackend(path, nil)
@@ -93,8 +103,6 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
 		speedRecorder:             NewSpeedRecorder(),
 	}
-
-	var err error
 
 	d.metrics = newMetrics(conf.PromFactory, conf.Labels)
 	d.metrics.registerTo(conf.PromRegistry)
@@ -312,6 +320,12 @@ func (d *Dumper) Dump() (dumpErr error) {
 	})
 	baseConn := newBaseConn(metaConn, true, rebuildMetaConn)
 
+	am := newAccessMeta(conf, d.extStore)
+	err = am.getUserGrants(metaConn)
+	if err != nil {
+		return err
+	}
+
 	if conf.SQL == "" {
 		if err = d.dumpDatabases(writerCtx, baseConn, taskIn); err != nil && !errors.ErrorEqual(err, context.Canceled) {
 			return err
@@ -325,7 +339,6 @@ func (d *Dumper) Dump() (dumpErr error) {
 		time.Sleep(1 * time.Second)
 		tctx.L().Debug("progress ready, sleep 1s")
 	})
-	_ = baseConn.DBConn.Close()
 	if err := wg.Wait(); err != nil {
 		summary.CollectFailureUnit("dump table data", err)
 		return errors.Trace(err)
@@ -334,6 +347,12 @@ func (d *Dumper) Dump() (dumpErr error) {
 
 	summary.SetSuccessStatus(true)
 	m.recordFinishTime(time.Now())
+	am.setDumpEndTime()
+	err = am.writeAccessMeta(d.tctx)
+	if err != nil {
+		tctx.L().Error("write access meta fail, " + err.Error())
+		return err
+	}
 	return nil
 }
 
@@ -1206,6 +1225,33 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 		hasImplicitRowID, err = SelectTiDBRowID(tctx, conn, db, tbl)
 		if err != nil {
 			tctx.L().Info("check implicit rowID failed", zap.String("database", db), zap.String("table", tbl), log.ShortError(err))
+		}
+
+		var extraField string
+		switch conf.ExportTiDBRowIDMode {
+		case ExportTiDBRowIDModeIntPKAutoInc:
+			pkCol, ok, err := getIntAutoIncPrimaryKeyColumn(tctx, conn, db, tbl)
+			if err != nil {
+				tctx.L().Info("check int auto-inc primary key failed", zap.String("database", db), zap.String("table", tbl), log.ShortError(err))
+				return nil, err
+			}
+			if ok {
+				if hasImplicitRowID {
+					extraField = "_tidb_rowid"
+				} else {
+					extraField = fmt.Sprintf("%s AS %s", wrapBackTicks(escapeString(pkCol)), wrapBackTicks("_tidb_rowid"))
+				}
+
+			}
+		}
+
+		if extraField != "" {
+			if selectField == "" {
+				selectField = extraField
+			} else {
+				selectField = selectField + "," + extraField
+			}
+			selectLen++
 		}
 	}
 

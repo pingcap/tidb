@@ -233,6 +233,7 @@ func TestSelectClusterTable(t *testing.T) {
 				ID:           1,
 				User:         "root",
 				Host:         "127.0.0.1",
+				ProxyHost:    "10.0.0.1:12345",
 				Command:      mysql.ComQuery,
 				SessionAlias: "alias456",
 			},
@@ -256,6 +257,9 @@ func TestSelectClusterTable(t *testing.T) {
 	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("2"))
 	tk.MustQuery("select time from `CLUSTER_SLOW_QUERY` where time='2019-02-12 19:33:56.571953'").Check(testkit.RowsWithSep("|", "2019-02-12 19:33:56.571953"))
 	tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
+	// The cluster RPC returns both the forwarded client address and the actual
+	// proxy peer from the remote TiDB node without conflating their semantics.
+	tk.MustQuery("select host, proxy_host from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("127.0.0.1 10.0.0.1:12345"))
 	// skip instance and host column because it now includes the TCP socket details (unstable)
 	tk.MustQuery("select id, user, db, command, time, state, info, digest, mem, disk, txnstart, session_alias from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf("1 root <nil> Query 9223372036 %s <nil>  0 0  alias456", "")))
 	tk.MustQuery("select query_time, conn_id, session_alias from `CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6 "))
@@ -377,7 +381,7 @@ select * from t3;
 	tk.MustQuery("select count(*) from `SLOW_QUERY`").Check(testkit.Rows("4"))
 	tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf(
-		":10080 1 root 127.0.0.1 <nil> Query 9223372036 %s <nil>  0 0    <nil> 0 0", "")))
+		":10080 1 root 127.0.0.1 <nil> Query 9223372036 %s <nil>  0 0    <nil> 0 0 <nil>", "")))
 	tk.MustExec("create user user1")
 	tk.MustExec("create user user2")
 	user1 := testkit.NewTestKit(t, s.store)
@@ -697,6 +701,64 @@ func TestStmtSummaryResultRows(t *testing.T) {
 		Check(testkit.Rows("10 30 20"))
 	tk.MustQuery("select MIN_RESULT_ROWS,MAX_RESULT_ROWS,AVG_RESULT_ROWS from information_schema.cluster_statements_summary where query_sample_text like 'select%test.t limit%' and MAX_RESULT_ROWS > 10").
 		Check(testkit.Rows("10 30 20"))
+}
+
+func TestStmtSummaryPlanCacheMiss(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+
+	tk := s.newTestKitWithRoot(t)
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval=999999999")
+	tk.MustExec("set global tidb_stmt_summary_history_size=24")
+	tk.MustExec("set global tidb_enable_stmt_summary=0")
+	tk.MustExec("set global tidb_enable_stmt_summary=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table stmt_summary_plan_cache_miss(a int primary key)")
+	tk.MustExec("insert into stmt_summary_plan_cache_miss values (1)")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("prepare stmt_summary_pc from 'select a from stmt_summary_plan_cache_miss where a=?'")
+	tk.MustExec("set @a=1")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=0")
+	tk.MustQuery("execute stmt_summary_pc using @a").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt_summary_pc using @a").Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustQuery("execute stmt_summary_pc using @a").Check(testkit.Rows("1"))
+
+	where := " where table_names like '%test.stmt_summary_plan_cache_miss%' and stmt_type='Select'"
+	for _, tableName := range []string{
+		"statements_summary",
+		"statements_summary_history",
+		"cluster_statements_summary",
+		"cluster_statements_summary_history",
+	} {
+		tk.MustQuery("select sum(plan_cache_miss_cache_disabled_count), " +
+			"sum(plan_cache_miss_lookup_miss_count), sum(plan_cache_miss_reuse_rejected_count) " +
+			"from information_schema." + tableName + where).
+			Check(testkit.Rows("2 1 0"))
+		tk.MustQuery("select sum(plan_cache_misses), max(plan_cache_miss_top_reason), " +
+			"max(plan_cache_miss_top_reason_count), max(plan_cache_miss_last_reason), " +
+			"count(plan_cache_miss_last_seen) from information_schema." + tableName + where).
+			Check(testkit.Rows("3 cache_disabled 2 lookup_miss 1"))
+	}
+
+	tk.MustQuery("execute stmt_summary_pc using @a").Check(testkit.Rows("1"))
+	for _, tableName := range []string{
+		"statements_summary",
+		"statements_summary_history",
+		"cluster_statements_summary",
+		"cluster_statements_summary_history",
+	} {
+		tk.MustQuery("select sum(plan_cache_misses), sum(plan_cache_hits), max(plan_cache_miss_top_reason), " +
+			"max(plan_cache_miss_top_reason_count), " +
+			"max(plan_cache_miss_last_reason), count(plan_cache_miss_last_seen) " +
+			"from information_schema." + tableName + where).
+			Check(testkit.Rows("3 1 cache_disabled 2 lookup_miss 1"))
+	}
 }
 
 func TestSlowQueryOOM(t *testing.T) {
@@ -1026,7 +1088,7 @@ func TestQuickBinding(t *testing.T) {
 		{`select /*+ hash_agg(), use_index(t1, primary), agg_to_cop() */ count(*), b from t1 where a<? group by b`, "hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), agg_to_cop(@`sel_1`)", nil},
 		{`select /*+ stream_agg(), use_index(t1, primary), agg_to_cop() */ count(*) from t1 where a<?`, "stream_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), agg_to_cop(@`sel_1`)", nil},
 		{`select /*+ stream_agg(), use_index(t1, primary), agg_to_cop() */ count(*), b from t1 where a<? group by b`, "stream_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`)", nil},
-		{`select a+b+? from (select /*+ stream_agg() */ count(*) as a from t1) tt1, (select /*+ hash_agg() */ count(*) as b from t1) tt2`, "stream_agg(@`sel_2`), use_index(@`sel_2` `test`.`t1` `k_a`), no_order_index(@`sel_2` `test`.`t1` `k_a`), agg_to_cop(@`sel_2`), hash_agg(@`sel_3`), use_index(@`sel_3` `test`.`t1` `k_a`), no_order_index(@`sel_3` `test`.`t1` `k_a`), agg_to_cop(@`sel_3`)", nil},
+		{`select a+b+? from (select /*+ stream_agg() */ count(*) as a from t1) tt1, (select /*+ hash_agg() */ count(*) as b from t1) tt2`, "hash_join_build(`test`.`tt2`), stream_agg(@`sel_2`), use_index(@`sel_2` `test`.`t1` `k_a`), no_order_index(@`sel_2` `test`.`t1` `k_a`), agg_to_cop(@`sel_2`), hash_agg(@`sel_3`), use_index(@`sel_3` `test`.`t1` `k_a`), no_order_index(@`sel_3` `test`.`t1` `k_a`), agg_to_cop(@`sel_3`)", nil},
 
 		// 2-way hash joins
 		{`select /*+ hash_join(t1, t2), use_index(t1), use_index(t2) */ t1.* from t1, t2 where t1.a=t2.a and t1.a<?`,
@@ -1109,12 +1171,12 @@ func TestQuickBinding(t *testing.T) {
 		},
 
 		{`select /*+ leading(t2,t1) */ * from t1 join t2 join (select * from t3) n join t4 where t1.a = t2.a and t2.b = n.b and n.a = t4.a and n.c = ?`,
-			"leading(`test`.`t2`, `test`.`t1`, `test`.`n`, `test`.`t4`), hash_join_build(`test`.`t2`), use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_2` `test`.`t3` `k_bc`), no_order_index(@`sel_2` `test`.`t3` `k_bc`), use_index(@`sel_1` `test`.`t4` `k_a`), no_order_index(@`sel_1` `test`.`t4` `k_a`)",
+			"inl_hash_join(`test`.`t4`), leading(`test`.`t2`, `test`.`t1`, `test`.`n`, `test`.`t4`), hash_join_build(`test`.`n`), hash_join_build(`test`.`t2`), use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_2` `test`.`t3` `k_bc`), no_order_index(@`sel_2` `test`.`t3` `k_bc`), use_index(@`sel_1` `test`.`t4` `k_a`), no_order_index(@`sel_1` `test`.`t4` `k_a`)",
 			nil,
 		},
 
-		{`update /*+ hash_join(t1),leading(t1,t2@sel_2) */ t1 set b = 1 where c in (select a from t2 where c = 1) and c in (select a from t2 where c = ?)`,
-			"leading(`test`.`t1`, `test`.`t2`@`sel_2`, `test`.`t2`@`sel_1`), use_index(@`upd_1` `test`.`t1` ), no_order_index(@`upd_1` `test`.`t1` `primary`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t2` ), agg_to_cop(@`sel_2`), hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t2` ), agg_to_cop(@`sel_1`)",
+		{`update /*+ leading(t2@sel_1,t1,t2@sel_2) */ t1 set b = 1 where c in (select a from t2 where c = 1) and c in (select a from t2 where c = ?)`,
+			"leading(`test`.`t2`@`sel_1`, `test`.`t1`, `test`.`t2`@`sel_2`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t2` ), agg_to_cop(@`sel_2`), hash_join_probe(`test`.`t1`), hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t2` ), agg_to_cop(@`sel_1`), use_index(@`upd_1` `test`.`t1` ), no_order_index(@`upd_1` `test`.`t1` `primary`)",
 			nil,
 		},
 	}

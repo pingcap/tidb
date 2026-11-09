@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"sync"
 	"testing"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -96,6 +98,96 @@ func TestInTxnPSProtoPointGet(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, txn.Valid())
 	tk.MustExec("commit")
+}
+
+func TestTiDBRowIDLifecycleAndRanges(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table locator_rt (a bigint primary key clustered, b int) partition by range (a) (partition p0 values less than (3), partition p1 values less than (5), partition p2 values less than (maxvalue))")
+	tk.MustExec("insert into locator_rt values (1, 10), (2, 20), (3, 30), (4, 40), (5, 50)")
+	tokens := tk.MustQuery("select tidb_row_id(), a from locator_rt order by a").Rows()
+
+	lowerPID, _, lowerKey, _, err := tablecodec.DecodeTiDBRowID(tokens[1][0].(string))
+	require.NoError(t, err)
+	upperPID, _, upperKey, _, err := tablecodec.DecodeTiDBRowID(tokens[3][0].(string))
+	require.NoError(t, err)
+	require.NotEqual(t, lowerPID, upperPID)
+	expectedRanges := []kv.KeyRange{
+		{StartKey: lowerKey, EndKey: tablecodec.EncodeRowKeyWithHandle(lowerPID, kv.IntHandle(math.MaxInt64)).Next()},
+		{StartKey: tablecodec.EncodeRowKeyWithHandle(upperPID, kv.IntHandle(math.MinInt64)), EndKey: upperKey.Next()},
+	}
+	dispatchedRanges := make([]kv.KeyRange, 0, len(expectedRanges))
+	requestCtx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
+		req.KeyRanges.ForEachPartition(func(ranges []kv.KeyRange) {
+			dispatchedRanges = append(dispatchedRanges, ranges...)
+		})
+	})
+	tk.MustQueryWithContext(
+		requestCtx,
+		"select a from locator_rt where tidb_row_id() between ? and ? order by a",
+		tokens[1][0],
+		tokens[3][0],
+	).Check(testkit.Rows("2", "3", "4"))
+	require.ElementsMatch(t, expectedRanges, dispatchedRanges)
+	lastPID, _, _, _, err := tablecodec.DecodeTiDBRowID(tokens[4][0].(string))
+	require.NoError(t, err)
+	require.Greater(t, lastPID, upperPID)
+	expectedGreaterRanges := []kv.KeyRange{
+		{StartKey: upperKey.Next(), EndKey: tablecodec.EncodeRowKeyWithHandle(upperPID, kv.IntHandle(math.MaxInt64)).Next()},
+		{StartKey: tablecodec.EncodeRowKeyWithHandle(lastPID, kv.IntHandle(math.MinInt64)), EndKey: tablecodec.EncodeRowKeyWithHandle(lastPID, kv.IntHandle(math.MaxInt64)).Next()},
+	}
+	dispatchedRanges = dispatchedRanges[:0]
+	greaterRows := tk.MustQueryWithContext(
+		requestCtx,
+		"select a from locator_rt where tidb_row_id() > ? order by a",
+		tokens[3][0],
+	).Rows()
+	require.ElementsMatch(t, expectedGreaterRanges, dispatchedRanges)
+	tk.MustQuery(
+		"select a from locator_rt partition (p2) where tidb_row_id() > ? order by a",
+		tokens[3][0],
+	).Check(testkit.Rows("5"))
+	require.Equal(t, testkit.Rows("5"), greaterRows)
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into locator_rt values (6, 60)")
+	tk.MustQuery("select a from locator_rt where tidb_row_id() > ? order by a", tokens[3][0]).Check(testkit.Rows("5", "6"))
+	tk.MustExec("rollback")
+	tk.MustExec("create table locator_common_rt (a varchar(10), b int, primary key (a, b) clustered) partition by range columns (a) (partition p0 values less than ('g'), partition p1 values less than ('n'), partition p2 values less than (maxvalue))")
+	tk.MustExec("insert into locator_common_rt values ('a', 1), ('b', 2), ('h', 3), ('i', 4), ('o', 5)")
+	commonTokens := tk.MustQuery("select tidb_row_id(), a from locator_common_rt order by a").Rows()
+	tk.MustQuery("select a from locator_common_rt where tidb_row_id() > ? order by a", commonTokens[3][0]).Check(testkit.Rows("o"))
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select a from locator_rt where tidb_row_id() = ? for update", tokens[2][0]).Check(testkit.Rows("3"))
+	tk2.MustExec("begin pessimistic")
+	tk2.MustGetErrCode(
+		"select a from locator_rt where tidb_row_id() = '"+tokens[2][0].(string)+"' for update nowait",
+		errno.ErrLockAcquireFailAndNoWaitSet,
+	)
+	tk2.MustExec("rollback")
+	tk.MustExec("update locator_rt set b = 31 where tidb_row_id() = ?", tokens[2][0])
+	tk.MustExec("commit")
+	tk.MustQuery("select a, b from locator_rt order by a").Check(testkit.Rows("1 10", "2 20", "3 31", "4 40", "5 50"))
+
+	tk.MustExec("set tidb_enable_exchange_partition = 1")
+	tk.MustExec("create table locator_exchange_rt (a int, b int, primary key (a) nonclustered) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200))")
+	tk.MustExec("create table locator_plain_rt (a int, b int, primary key (a) nonclustered)")
+	tk.MustExec("insert into locator_exchange_rt values (1, 10), (2, 20)")
+	tk.MustExec("insert into locator_plain_rt values (101, 110), (102, 120)")
+	plainTokens := tk.MustQuery("select tidb_row_id(), a from locator_plain_rt order by a").Rows()
+	tk.MustExec("alter table locator_exchange_rt exchange partition p1 with table locator_plain_rt")
+	exchangedRows := tk.MustQuery("select tidb_row_id(), _tidb_rowid, a from locator_exchange_rt order by a").Rows()
+	require.Equal(t, plainTokens[0][0], exchangedRows[2][0])
+	require.Equal(t, plainTokens[1][0], exchangedRows[3][0])
+	tk.MustQuery("select _tidb_rowid, a from locator_exchange_rt order by a").Check(
+		testkit.Rows("1 1", "2 2", "1 101", "2 102"),
+	)
+	tk.MustQuery("select a from locator_exchange_rt where tidb_row_id() = ?", plainTokens[0][0]).Check(testkit.Rows("101"))
+	tk.MustQuery("select a from locator_plain_rt where tidb_row_id() = ?", plainTokens[0][0]).Check(testkit.Rows())
 }
 
 func TestTxnGoString(t *testing.T) {

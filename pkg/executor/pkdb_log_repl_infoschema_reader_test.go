@@ -1,0 +1,274 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package executor
+
+import (
+	"testing"
+	"time"
+
+	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
+)
+
+// TestBuildLogReplStatusLocalRow builds primary and standby rows and validates
+// values and nullable columns after the count column is appended.
+func TestBuildLogReplStatusLocalRow(t *testing.T) {
+	requireNull := func(t *testing.T, row []types.Datum, idx int) {
+		require.Equal(t, types.KindNull, row[idx].Kind())
+	}
+	requireEnum := func(t *testing.T, row []types.Datum, idx int, name string) {
+		require.Equal(t, name, row[idx].GetMysqlEnum().Name)
+	}
+
+	t.Run("primary", func(t *testing.T) {
+		row, err := buildLogReplStatusLocalRow(&pdpb.LogReplicationLocalStatus{
+			Status: &pdpb.LogReplicationStatus{
+				ReplicaClusterId:   1001,
+				ReplicaClusterName: "prod-east",
+			},
+			HasReplica:         true,
+			LastGlobalUpdateTs: 1710000000,
+		})
+		require.NoError(t, err)
+		require.Len(t, row, 20)
+		require.Equal(t, uint64(1001), row[0].GetUint64()) // CLUSTER_ID
+		require.Equal(t, "prod-east", row[1].GetString())  // CLUSTER_NAME
+		requireEnum(t, row, 2, "PRIMARY")                  // ROLE
+		require.Equal(t, int64(1), row[3].GetInt64())      // HAS_REPLICA
+		require.Equal(t,
+			types.NewTime(types.FromGoTime(time.Unix(1710000000, 0)), mysql.TypeTimestamp, types.DefaultFsp),
+			row[4].GetMysqlTime(), // LAST_GLOBAL_UPDATE
+		)
+		requireNull(t, row, 5)  // REPLICATION_NAME
+		requireNull(t, row, 6)  // SOURCE_CLUSTER_ID
+		requireNull(t, row, 7)  // SOURCE_CLUSTER_NAME
+		requireNull(t, row, 8)  // SOURCE_PD_ADDRS
+		requireNull(t, row, 9)  // PROTECTION_MODE
+		requireNull(t, row, 10) // DEGRADE_TIMEOUT
+		requireNull(t, row, 11) // REPLICATION_STATE
+		requireNull(t, row, 12) // REPLICATION_MODE
+		requireNull(t, row, 13) // CHECKPOINT_TS
+		requireNull(t, row, 14) // CHECKPOINT_TIME
+		requireNull(t, row, 15) // CHECKPOINT_LAG
+		requireNull(t, row, 16) // SWITCHOVER_READY
+		requireNull(t, row, 17) // FAILOVER_READY
+		requireNull(t, row, 18) // PROGRESS
+	})
+
+	t.Run("standby full status", func(t *testing.T) {
+		const checkpointTS = uint64(449123456789000000)
+		row, err := buildLogReplStatusLocalRow(&pdpb.LogReplicationLocalStatus{
+			Status: &pdpb.LogReplicationStatus{
+				Name:                 "dr_east",
+				ReplicaClusterId:     1002,
+				ReplicaClusterName:   "prod-dr",
+				SourceClusterId:      1001,
+				SourceClusterName:    "prod-east",
+				SourcePdAddrs:        []string{"127.0.0.1:2379", "127.0.0.2:2379"},
+				State:                "SYNC_REPLICATING",
+				ReplicationMode:      "SYNC",
+				ProtectionMode:       pdpb.ProtectionMode_MAXIMUM_AVAILABILITY,
+				DegradeTimeoutSec:    30,
+				CheckpointTs:         checkpointTS,
+				CheckpointLagSec:     3,
+				InitializingProgress: 88.5,
+				SwitchoverReady:      "YES",
+				FailoverReady:        "NO",
+			},
+			HasReplica:         false,
+			LastGlobalUpdateTs: 1710000001,
+		})
+		require.NoError(t, err)
+		require.Len(t, row, 20)
+		require.Equal(t, uint64(1002), row[0].GetUint64()) // CLUSTER_ID
+		require.Equal(t, "prod-dr", row[1].GetString())    // CLUSTER_NAME
+		requireEnum(t, row, 2, "STANDBY")                  // ROLE
+		require.Equal(t, int64(0), row[3].GetInt64())      // HAS_REPLICA
+		require.Equal(t, "dr_east", row[5].GetString())
+		require.Equal(t, uint64(1001), row[6].GetUint64())
+		require.Equal(t, "prod-east", row[7].GetString()) // SOURCE_CLUSTER_NAME
+		require.Equal(t, "127.0.0.1:2379,127.0.0.2:2379", row[8].GetString())
+		requireEnum(t, row, 9, "MAXIMUM_AVAILABILITY")
+		require.Equal(t, uint64(30), row[10].GetUint64())
+		require.Equal(t, "SYNC_REPLICATING", row[11].GetString())
+		requireEnum(t, row, 12, "SYNC")
+		require.Equal(t, checkpointTS, row[13].GetUint64())
+		require.Equal(t,
+			types.NewTime(types.FromGoTime(oracle.GetTimeFromTS(checkpointTS)), mysql.TypeTimestamp, types.DefaultFsp),
+			row[14].GetMysqlTime(),
+		)
+		require.Equal(t, uint64(3), row[15].GetUint64())
+		requireEnum(t, row, 16, "YES")
+		requireEnum(t, row, 17, "NO")
+		requireNull(t, row, 18) // PROGRESS
+	})
+
+	t.Run("standby empty ready status", func(t *testing.T) {
+		row, err := buildLogReplStatusLocalRow(&pdpb.LogReplicationLocalStatus{
+			Status: &pdpb.LogReplicationStatus{
+				ReplicaClusterId: 1002,
+				SourceClusterId:  1001,
+				ProtectionMode:   pdpb.ProtectionMode_MAXIMUM_PERFORMANCE,
+			},
+		})
+		require.NoError(t, err)
+		requireEnum(t, row, 9, "MAXIMUM_PERFORMANCE")
+		requireNull(t, row, 10) // DEGRADE_TIMEOUT
+		requireEnum(t, row, 12, "UNKNOWN")
+		requireEnum(t, row, 16, "UNKNOWN")
+		requireEnum(t, row, 17, "UNKNOWN")
+		requireNull(t, row, 1) // CLUSTER_NAME
+		requireNull(t, row, 7) // SOURCE_CLUSTER_NAME
+	})
+
+	t.Run("standby no checkpoint", func(t *testing.T) {
+		row, err := buildLogReplStatusLocalRow(&pdpb.LogReplicationLocalStatus{
+			Status: &pdpb.LogReplicationStatus{
+				ReplicaClusterId: 1002,
+				SourceClusterId:  1001,
+				CheckpointLagSec: 3,
+				ProtectionMode:   pdpb.ProtectionMode_MAXIMUM_PROTECTION,
+			},
+		})
+		require.NoError(t, err)
+		requireEnum(t, row, 9, "MAXIMUM_PROTECTION")
+		requireNull(t, row, 10) // DEGRADE_TIMEOUT
+		requireNull(t, row, 13) // CHECKPOINT_TS
+		requireNull(t, row, 14) // CHECKPOINT_TIME
+		requireNull(t, row, 15) // CHECKPOINT_LAG
+		requireNull(t, row, 1)  // CLUSTER_NAME
+		requireNull(t, row, 7)  // SOURCE_CLUSTER_NAME
+	})
+
+	t.Run("standby unknown checkpoint lag", func(t *testing.T) {
+		row, err := buildLogReplStatusLocalRow(&pdpb.LogReplicationLocalStatus{
+			Status: &pdpb.LogReplicationStatus{
+				ReplicaClusterId: 1002,
+				SourceClusterId:  1001,
+				CheckpointTs:     449123456789000000,
+				CheckpointLagSec: -1,
+				ProtectionMode:   pdpb.ProtectionMode_MAXIMUM_PROTECTION,
+			},
+		})
+		require.NoError(t, err)
+		require.Equal(t, uint64(449123456789000000), row[13].GetUint64())
+		requireNull(t, row, 15) // CHECKPOINT_LAG
+		requireNull(t, row, 1)  // CLUSTER_NAME
+		requireNull(t, row, 7)  // SOURCE_CLUSTER_NAME
+	})
+
+	t.Run("unsupported protection mode", func(t *testing.T) {
+		row, err := buildLogReplStatusLocalRow(&pdpb.LogReplicationLocalStatus{
+			Status: &pdpb.LogReplicationStatus{
+				ReplicaClusterId: 1002,
+				SourceClusterId:  1001,
+				ProtectionMode:   pdpb.ProtectionMode(99),
+			},
+		})
+		require.NoError(t, err)
+		requireEnum(t, row, 9, "UNKNOWN")
+		requireNull(t, row, 1) // CLUSTER_NAME
+		requireNull(t, row, 7) // SOURCE_CLUSTER_NAME
+	})
+}
+
+func TestBuildLogReplStatusGlobalRow(t *testing.T) {
+	requireNull := func(t *testing.T, row []types.Datum, idx int) {
+		require.Equal(t, types.KindNull, row[idx].Kind())
+	}
+
+	const checkpointTS = uint64(449123456789000000)
+
+	t.Run("known checkpoint lag", func(t *testing.T) {
+		row := buildLogReplStatusGlobalRow(&pdpb.LogReplicationStatus{
+			Name:             "dr_east",
+			ReplicaClusterId: 1002,
+			CheckpointTs:     checkpointTS,
+			CheckpointLagSec: 5,
+		})
+		require.Len(t, row, 15)
+		require.Equal(t, checkpointTS, row[9].GetUint64()) // CHECKPOINT_TS
+		require.Equal(t, uint64(5), row[11].GetUint64())   // CHECKPOINT_LAG
+	})
+
+	t.Run("unknown checkpoint lag is null", func(t *testing.T) {
+		row := buildLogReplStatusGlobalRow(&pdpb.LogReplicationStatus{
+			Name:             "dr_east",
+			ReplicaClusterId: 1002,
+			CheckpointTs:     checkpointTS,
+			CheckpointLagSec: -1,
+		})
+		require.Len(t, row, 15)
+		require.Equal(t, checkpointTS, row[9].GetUint64()) // CHECKPOINT_TS
+		requireNull(t, row, 11)                            // CHECKPOINT_LAG
+	})
+
+	t.Run("no checkpoint", func(t *testing.T) {
+		row := buildLogReplStatusGlobalRow(&pdpb.LogReplicationStatus{
+			Name:             "dr_east",
+			ReplicaClusterId: 1002,
+		})
+		requireNull(t, row, 9)  // CHECKPOINT_TS
+		requireNull(t, row, 11) // CHECKPOINT_LAG
+	})
+}
+
+// TestLearnerCountStatusRows builds global and local rows for unknown and
+// configured targets, checking the appended column and primary NULL behavior.
+func TestLearnerCountStatusRows(t *testing.T) {
+	for _, count := range []uint32{0, 1, 2, 3, ^uint32(0)} {
+		status := &pdpb.LogReplicationStatus{ReplicaClusterId: 2, SourceClusterId: 1, LearnerCount: count}
+		global := buildLogReplStatusGlobalRow(status)
+		local, err := buildLogReplStatusLocalRow(&pdpb.LogReplicationLocalStatus{Status: status})
+		require.NoError(t, err)
+		require.Len(t, global, 15)
+		require.Len(t, local, 20)
+		for _, value := range []types.Datum{global[14], local[19]} {
+			if count == 0 {
+				require.True(t, value.IsNull())
+			} else {
+				require.Equal(t, uint64(count), value.GetUint64())
+			}
+		}
+	}
+	primary, err := buildLogReplStatusLocalRow(&pdpb.LogReplicationLocalStatus{Status: &pdpb.LogReplicationStatus{ReplicaClusterId: 1}})
+	require.NoError(t, err)
+	require.True(t, primary[19].IsNull())
+}
+
+func TestLogReplicationProgressByState(t *testing.T) {
+	for _, state := range []pdpb.LogReplication_State{
+		pdpb.LogReplication_UNKNOWN, pdpb.LogReplication_INITIALIZING,
+		pdpb.LogReplication_RESUMING, pdpb.LogReplication_REPLICATING,
+		pdpb.LogReplication_PAUSED, pdpb.LogReplication_SUSPENDED, pdpb.LogReplication_DROPPED,
+	} {
+		t.Run(state.String(), func(t *testing.T) {
+			status := &pdpb.LogReplicationStatus{SourceClusterId: 1, State: state.String(), InitializingProgress: 42.5}
+			global := buildLogReplStatusGlobalRow(status)
+			local, err := buildLogReplStatusLocalRow(&pdpb.LogReplicationLocalStatus{Status: status})
+			require.NoError(t, err)
+			for _, value := range []types.Datum{global[12], local[18]} {
+				if state == pdpb.LogReplication_INITIALIZING || state == pdpb.LogReplication_RESUMING {
+					require.Equal(t, float32(42.5), value.GetFloat32())
+				} else {
+					require.True(t, value.IsNull())
+				}
+			}
+		})
+	}
+}

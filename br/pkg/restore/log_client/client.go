@@ -1483,6 +1483,7 @@ func (rc *LogClient) SetTableModeToNormal(ctx context.Context, schemaReplace *st
 // its cached in-memory base can remain stale and hand out already-restored IDs,
 // producing duplicate-key errors on the first insert after restore. Reading the
 // persisted value and force-rebasing the allocator repairs the stale cache.
+// Any failure to synchronize an allocator must prevent the restore from succeeding.
 // See https://github.com/pingcap/tidb/issues/69485.
 func (rc *LogClient) RebaseAutoIncrementIDForSepAutoIncTables(ctx context.Context, schemaReplace *stream.SchemasReplace) error {
 	infoSchema := rc.dom.InfoSchema()
@@ -1496,13 +1497,9 @@ func (rc *LogClient) RebaseAutoIncrementIDForSepAutoIncTables(ctx context.Contex
 				continue
 			}
 			if err := rc.rebaseAutoIncrementIDForTable(ctx, store, infoSchema, dbReplace.DbID, tableReplace.TableID); err != nil {
-				// Best effort: a single table failing to rebase must not abort the
-				// whole restore, so log and continue.
-				log.Warn("failed to rebase auto-increment allocator after PiTR log replay",
-					zap.Int64("schemaID", dbReplace.DbID),
-					zap.Int64("tableID", tableReplace.TableID),
-					zap.String("tableName", tableReplace.Name),
-					zap.Error(err))
+				return errors.Annotatef(err,
+					"failed to rebase auto-increment allocator after PiTR log replay for table %s (schema ID %d, table ID %d)",
+					tableReplace.Name, dbReplace.DbID, tableReplace.TableID)
 			}
 		}
 	}
@@ -1536,7 +1533,8 @@ func (rc *LogClient) rebaseAutoIncrementIDForTable(ctx context.Context, store kv
 	}); err != nil {
 		return errors.Trace(err)
 	}
-	if persisted <= 0 {
+	// Unsigned auto-increment counters above MaxInt64 are stored as negative int64 values.
+	if persisted == 0 || (persisted < 0 && !tblInfo.IsAutoIncColUnsigned()) {
 		return nil
 	}
 	// The persisted value is the last allocated ID, so ForceRebase makes the next

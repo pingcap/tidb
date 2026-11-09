@@ -239,8 +239,7 @@ func (indexMap) JoinWithNil(_ Lattice) (Lattice, error) {
 }
 
 const (
-	tableInfoTupleIndexCharset = iota
-	tableInfoTupleIndexCollate
+	tableInfoTupleIndexCollate = iota
 	tableInfoTupleIndexColumns
 	tableInfoTupleIndexIndices
 	// nolint:unused, varcheck, deadcode
@@ -271,8 +270,7 @@ func encodeTableInfoToLattice(ti *model.TableInfo) Tuple {
 	}
 
 	return Tuple{
-		Singleton(ti.Charset),
-		Singleton(ti.Collate),
+		Collation(ti.Collate),
 		Map(columns),
 		Map(indices),
 		// TODO ForeignKeys?
@@ -324,14 +322,11 @@ func restoreTableInfoFromUnwrapped(ctx *format.RestoreCtx, table []any, tableNam
 	}
 
 	ctx.WritePlain(")")
-	if charset := table[tableInfoTupleIndexCharset].(string); charset != "" {
-		ctx.WriteKeyWord(" CHARSET ")
-		ctx.WriteKeyWord(charset)
-	}
-	if collate := table[tableInfoTupleIndexCollate].(string); collate != "" {
-		ctx.WriteKeyWord(" COLLATE ")
-		ctx.WriteKeyWord(collate)
-	}
+
+	collate := table[tableInfoTupleIndexCollate].(string)
+	ctx.WriteKeyWord(" COLLATE ")
+	ctx.WritePlain(collate)
+
 	if bits := table[tableInfoTupleIndexShardRowIDBits].(uint64); bits > 0 {
 		ctx.WriteKeyWord(" SHARD_ROW_ID_BITS ")
 		ctx.WritePlainf("%d", bits)

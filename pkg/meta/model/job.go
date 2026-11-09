@@ -117,6 +117,10 @@ const (
 	ActionAlterTableAffinity                    ActionType = 78
 	ActionAlterTableSoftDeleteInfo              ActionType = 79 // reserve for soft-delete feature
 	ActionModifySchemaSoftDeleteAndActiveActive ActionType = 80 // reserve for soft-delete and active-active feature
+
+	// 200 ~ 255 are reserved for pkdb usage.
+	// 200 ~ 204 are reserved for udf.
+	// 205 ~ 207 are reserved for tablegroup.
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -192,6 +196,11 @@ var ActionMap = map[ActionType]string{
 	ActionAlterTableMode:                        "alter table mode",
 	ActionRefreshMeta:                           "refresh meta",
 	ActionAlterTableAffinity:                    "alter table affinity",
+	ActionCreateTrigger:                         "create trigger",
+	ActionDropTrigger:                           "drop trigger",
+	ActionCreateProcedure:                       "create procedure",
+	ActionDropProcedure:                         "drop procedure",
+	ActionAlterProcedure:                        "alter procedure",
 	ActionAlterTableSoftDeleteInfo:              "alter soft delete info",
 	ActionModifySchemaSoftDeleteAndActiveActive: "modify schema soft delete and active active",
 
@@ -360,6 +369,9 @@ type Job struct {
 	// It's only used by modify column and not the accurate value.
 	NeedReorg bool `json:"-"`
 
+	FullSchemaName model.CIStr `json:"full_schema_name"`
+	FullTableName  model.CIStr `json:"full_table_name"`
+
 	// it's a temporary place to cache job args.
 	// when Version is JobVersion2, Args contains a single element of type JobArgs.
 	args []any
@@ -439,6 +451,22 @@ type Job struct {
 
 	// SessionVars store session variables
 	SessionVars map[string]string `json:"session_vars,omitempty"`
+}
+
+// GetSchemaName returns the schema name of the job.
+func (job *Job) GetSchemaName() model.CIStr {
+	if len(job.FullSchemaName.L) > 0 && len(job.FullSchemaName.O) > 0 {
+		return job.FullSchemaName
+	}
+	return model.NewCIStr(job.SchemaName)
+}
+
+// GetTableName returns the table name of the job.
+func (job *Job) GetTableName() model.CIStr {
+	if len(job.FullTableName.L) > 0 && len(job.FullTableName.O) > 0 {
+		return job.FullTableName
+	}
+	return model.NewCIStr(job.TableName)
 }
 
 // FinishTableJob is called when a job is finished.
@@ -877,6 +905,12 @@ func (job *Job) MayNeedReorg() bool {
 			}
 		}
 		return false
+	case ActionCreateTable:
+		args, err := GetCreateTableArgs(job)
+		if err != nil || args == nil {
+			return false
+		}
+		return args.CTASSnapshotTS != 0
 	default:
 		return false
 	}
@@ -999,39 +1033,47 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		reorgMeta.Stage = sub.ReorgStage
 		reorgMeta.AnalyzeState = sub.AnalyzeState
 	}
+	var primaryKeyReplaceInfo *PKDBPrimaryKeyReplaceInfo
+	if parentJob.MultiSchemaInfo != nil {
+		primaryKeyReplaceInfo = parentJob.MultiSchemaInfo.PKDBPrimaryKeyReplaceInfo
+	}
 	return Job{
-		Version:         parentJob.Version,
-		ID:              parentJob.ID,
-		Type:            sub.Type,
-		SchemaID:        parentJob.SchemaID,
-		TableID:         parentJob.TableID,
-		SchemaName:      parentJob.SchemaName,
-		State:           sub.State,
-		Warning:         sub.Warning,
-		Error:           nil,
-		ErrorCount:      0,
-		RowCount:        sub.RowCount,
-		Mu:              sync.Mutex{},
-		NeedReorg:       sub.NeedReorg,
-		args:            sub.args,
-		RawArgs:         sub.RawArgs,
-		SchemaState:     sub.SchemaState,
-		SnapshotVer:     sub.SnapshotVer,
-		RealStartTS:     sub.RealStartTS,
-		StartTS:         parentJob.StartTS,
-		DependencyID:    parentJob.DependencyID,
-		Query:           parentJob.Query,
-		BinlogInfo:      parentJob.BinlogInfo,
-		ReorgMeta:       reorgMeta,
-		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq)},
-		Priority:        parentJob.Priority,
-		SeqNum:          parentJob.SeqNum,
-		Charset:         parentJob.Charset,
-		Collate:         parentJob.Collate,
-		AdminOperator:   parentJob.AdminOperator,
-		TraceInfo:       parentJob.TraceInfo,
-		SQLMode:         parentJob.SQLMode,
-		SessionVars:     parentJob.SessionVars,
+		Version:      parentJob.Version,
+		ID:           parentJob.ID,
+		Type:         sub.Type,
+		SchemaID:     parentJob.SchemaID,
+		TableID:      parentJob.TableID,
+		SchemaName:   parentJob.SchemaName,
+		State:        sub.State,
+		Warning:      sub.Warning,
+		Error:        nil,
+		ErrorCount:   0,
+		RowCount:     sub.RowCount,
+		Mu:           sync.Mutex{},
+		NeedReorg:    sub.NeedReorg,
+		args:         sub.args,
+		RawArgs:      sub.RawArgs,
+		SchemaState:  sub.SchemaState,
+		SnapshotVer:  sub.SnapshotVer,
+		RealStartTS:  sub.RealStartTS,
+		StartTS:      parentJob.StartTS,
+		DependencyID: parentJob.DependencyID,
+		Query:        parentJob.Query,
+		BinlogInfo:   parentJob.BinlogInfo,
+		ReorgMeta:    reorgMeta,
+		MultiSchemaInfo: &MultiSchemaInfo{
+			Revertible:                sub.Revertible,
+			Seq:                       int32(seq),
+			PKDBPrimaryKeyReplaceInfo: primaryKeyReplaceInfo,
+		},
+		Priority:      parentJob.Priority,
+		SeqNum:        parentJob.SeqNum,
+		Charset:       parentJob.Charset,
+		Collate:       parentJob.Collate,
+		AdminOperator: parentJob.AdminOperator,
+		TraceInfo:     parentJob.TraceInfo,
+		SQLMode:       parentJob.SQLMode,
+		SessionVars:   parentJob.SessionVars,
 	}
 }
 
@@ -1077,6 +1119,11 @@ type MultiSchemaInfo struct {
 	Revertible bool      `json:"revertible"`
 	Seq        int32     `json:"seq"`
 
+	// PKDBPrimaryKeyReplaceInfo identifies a nonclustered primary-key replacement.
+	// It is persisted on the parent job and copied to proxy jobs so every owner can
+	// validate the replacement by immutable metadata identity.
+	PKDBPrimaryKeyReplaceInfo *PKDBPrimaryKeyReplaceInfo `json:"pkdb_primary_key_replace_info,omitempty"`
+
 	// SkipVersion is used to control whether generating a new schema version for a sub-job.
 	SkipVersion bool `json:"-"`
 
@@ -1091,6 +1138,11 @@ type MultiSchemaInfo struct {
 
 	RelativeColumns []model.CIStr `json:"-"`
 	PositionColumns []model.CIStr `json:"-"`
+}
+
+// PKDBPrimaryKeyReplaceInfo is the durable identity of a nonclustered primary-key replacement.
+type PKDBPrimaryKeyReplaceInfo struct {
+	OldPrimaryKeyID int64 `json:"old_primary_key_id"`
 }
 
 // AddForeignKeyInfo contains foreign key information.
@@ -1390,7 +1442,7 @@ type TraceInfo struct {
 	SessionAlias string `json:"session_alias"`
 }
 
-// JobW is a wrapper of model.Job, it contains the job and the binary representation
+// JobW is a wrapper of Job, it contains the job and the binary representation
 // of the job.
 type JobW struct {
 	*Job

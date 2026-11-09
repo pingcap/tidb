@@ -88,6 +88,10 @@ func TestPatternMatch(t *testing.T) {
 		{`\%a`, `aa`, '\\', false},
 		{`\_a`, `_a`, '\\', true},
 		{`\_a`, `aa`, '\\', false},
+		{`_`, "\n", '\\', true},
+		{`%`, "a\nb", '\\', true},
+		{`a_b`, "a\nb", '\\', true},
+		{`a%b`, "a\nb", '\\', true},
 		{`\\_a`, `\xa`, '\\', true},
 		{`\a\b`, `\a\b`, '\\', false},
 		{`\a\b`, `ab`, '\\', true},
@@ -116,21 +120,24 @@ func TestCompileLike2Regexp(t *testing.T) {
 		{``, `^$`},
 		{`a`, `^a$`},
 		{`aA`, `^aA$`},
-		{`_`, `^.$`},
-		{`__`, `^..$`},
-		{`%`, `^.*$`},
-		{`%b`, `^.*b$`},
-		{`%a%`, `^.*a.*$`},
-		{`a%`, `^a.*$`},
+		{`$a$%`, `^\$a\$(?s:.*)$`},
+		{`a.b%`, `^a\.b(?s:.*)$`},
+		{`a+b`, `^a\+b$`},
+		{`_`, `^(?s:.)$`},
+		{`__`, `^(?s:.)(?s:.)$`},
+		{`%`, `^(?s:.*)$`},
+		{`%b`, `^(?s:.*)b$`},
+		{`%a%`, `^(?s:.*)a(?s:.*)$`},
+		{`a%`, `^a(?s:.*)$`},
 		{`\%a`, `^%a$`},
 		{`\_a`, `^_a$`},
-		{`\\_a`, `^\.a$`},
+		{`\\_a`, `^\\(?s:.)a$`},
 		{`\a\b`, `^ab$`},
-		{`%%_`, `^..*$`},
-		{`%_%_aA`, "^...*aA$"},
+		{`%%_`, `^(?s:.)(?s:.*)$`},
+		{`%_%_aA`, `^(?s:.)(?s:.)(?s:.*)aA$`},
 	}
 	for _, v := range tbl {
-		result := CompileLike2Regexp(v.pattern)
+		result := CompileLike2Regexp(v.pattern, '\\')
 		require.Equalf(t, v.regexp, result, "source %v", v)
 	}
 }

@@ -126,15 +126,21 @@ func TestIndexReaderWithPaging(t *testing.T) {
 	tk.MustQuery("select count(c) from t use index(idx);").Check(testkit.Rows("1024")) // full scan to resolve uncommitted lock.
 	tk.MustQuery("select count(b) from t use index(idx2);").Check(testkit.Rows("1024"))
 	tk.MustQuery("select count(id) from t ignore index(idx, idx2)").Check(testkit.Rows("1024"))
-	// Test Index Lookup Reader query.
+	checkIndexRangeScanRPC := func(explain string) {
+		if strings.Contains(explain, "ResolveLock") {
+			require.Regexp(t, ".*IndexRangeScan.*rpc_info.*Cop:{num_rpc:[2-9][0-9]*, total_time:.*", explain)
+			return
+		}
+		require.Regexp(t, ".*IndexRangeScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", explain)
+	}
 	rows := tk.MustQuery("explain analyze select * from t use index(idx) where b>0 and b < 1024;").Rows()
 	require.Len(t, rows, 3)
 	explain := fmt.Sprintf("%v", rows[1])
-	require.Regexp(t, ".*IndexRangeScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", explain)
+	checkIndexRangeScanRPC(explain)
 	// Test Index Merge Reader query.
 	rows = tk.MustQuery("explain analyze select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where b > 0 or c > 0;").Rows()
 	require.Len(t, rows, 4)
 	require.Regexp(t, "IndexMerge.*", fmt.Sprintf("%v", rows[0]))
-	require.Regexp(t, ".*IndexRangeScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", fmt.Sprintf("%v", rows[1]))
-	require.Regexp(t, ".*IndexRangeScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", fmt.Sprintf("%v", rows[2]))
+	checkIndexRangeScanRPC(fmt.Sprintf("%v", rows[1]))
+	checkIndexRangeScanRPC(fmt.Sprintf("%v", rows[2]))
 }

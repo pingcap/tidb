@@ -182,8 +182,8 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 		rows [][]types.Datum
 		err  error
 	}
-	if !hasPriv(sctx, mysql.ConfigPriv) {
-		return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
+	if err := checkConfigReadPriv(sctx); err != nil {
+		return nil, err
 	}
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	failpoint.Inject("mockClusterConfigServerInfo", func(val failpoint.Value) {
@@ -226,6 +226,8 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 					url = fmt.Sprintf("%s://%s/tso/api/v1/config", util.InternalHTTPSchema(), statusAddr)
 				case "scheduling":
 					url = fmt.Sprintf("%s://%s/scheduling/api/v1/config", util.InternalHTTPSchema(), statusAddr)
+				case "replicator":
+					return
 				default:
 					ch <- result{err: errors.Errorf("currently we do not support get config from node type: %s(%s)", typ, address)}
 					return
@@ -328,8 +330,8 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 			return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 		}
 	case diagnosticspb.ServerInfoType_HardwareInfo:
-		if !hasPriv(sctx, mysql.ConfigPriv) {
-			return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
+		if err := checkConfigReadPriv(sctx); err != nil {
+			return nil, err
 		}
 	}
 	if e.extractor.SkipRequest || e.retrieved {

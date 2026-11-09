@@ -21,6 +21,11 @@ import (
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	stmtsummaryv1 "github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,6 +42,12 @@ func TestColumn(t *testing.T) {
 		{Name: pmodel.NewCIStr(ExecCountStr)},
 		{Name: pmodel.NewCIStr(SumLatencyStr)},
 		{Name: pmodel.NewCIStr(MaxLatencyStr)},
+		{Name: pmodel.NewCIStr(AvgRocksdbDeleteSkippedCountStr)},
+		{Name: pmodel.NewCIStr(AvgRocksdbKeySkippedCountStr)},
+		{Name: pmodel.NewCIStr(AvgRocksdbBlockCacheHitCountStr)},
+		{Name: pmodel.NewCIStr(AvgRocksdbBlockReadCountStr)},
+		{Name: pmodel.NewCIStr(AvgRocksdbBlockReadByteStr)},
+		{Name: pmodel.NewCIStr(AvgAffectedRowsStr)},
 		{Name: pmodel.NewCIStr(AvgTidbCPUTimeStr)},
 		{Name: pmodel.NewCIStr(AvgTikvCPUTimeStr)},
 	}
@@ -44,9 +55,32 @@ func TestColumn(t *testing.T) {
 	info := GenerateStmtExecInfo4Test("digest")
 	record := NewStmtRecord(info)
 	record.Add(info)
+	const rocksdbSum = uint64(1 << 63)
+	record.SumRocksdbDeleteSkippedCount = rocksdbSum
+	record.SumRocksdbKeySkippedCount = rocksdbSum
+	record.SumRocksdbBlockCacheHitCount = rocksdbSum
+	record.SumRocksdbBlockReadCount = rocksdbSum
+	record.SumRocksdbBlockReadByte = rocksdbSum
+	record.SumAffectedRows = rocksdbSum
+	avgRocksdbSum := float64(rocksdbSum) / float64(record.ExecCount)
+	doubleColumnExpected := map[string]float64{
+		AvgRocksdbDeleteSkippedCountStr: avgRocksdbSum,
+		AvgRocksdbKeySkippedCountStr:    avgRocksdbSum,
+		AvgRocksdbBlockCacheHitCountStr: avgRocksdbSum,
+		AvgRocksdbBlockReadCountStr:     avgRocksdbSum,
+		AvgRocksdbBlockReadByteStr:      avgRocksdbSum,
+		AvgAffectedRowsStr:              avgRocksdbSum,
+	}
 	for n, f := range factories {
 		column := f(mockColumnInfo{}, record)
-		switch columns[n].Name.O {
+		columnName := columns[n].Name.O
+		if expected, ok := doubleColumnExpected[columnName]; ok {
+			datum := types.NewDatum(column)
+			row := chunk.MutRowFromTypes([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)})
+			row.SetDatums(datum)
+			require.Equal(t, expected, row.ToRow().GetFloat64(0), columnName)
+		}
+		switch columnName {
 		case ClusterTableInstanceColumnNameStr:
 			require.Equal(t, "instance_addr", column)
 		case StmtTypeStr:
@@ -69,11 +103,53 @@ func TestColumn(t *testing.T) {
 			require.Equal(t, int64(record.SumLatency), column)
 		case MaxLatencyStr:
 			require.Equal(t, int64(record.MaxLatency), column)
+		case AvgRocksdbDeleteSkippedCountStr:
+			require.Equal(t, avgRocksdbSum, column)
+		case AvgRocksdbKeySkippedCountStr:
+			require.Equal(t, avgRocksdbSum, column)
+		case AvgRocksdbBlockCacheHitCountStr:
+			require.Equal(t, avgRocksdbSum, column)
+		case AvgRocksdbBlockReadCountStr:
+			require.Equal(t, avgRocksdbSum, column)
+		case AvgRocksdbBlockReadByteStr:
+			require.Equal(t, avgRocksdbSum, column)
+		case AvgAffectedRowsStr:
+			require.Equal(t, avgRocksdbSum, column)
 		case AvgTidbCPUTimeStr:
 			require.Equal(t, int64(record.SumTidbCPU), column)
 		case AvgTikvCPUTimeStr:
 			require.Equal(t, int64(record.SumTikvCPU), column)
 		}
+	}
+
+	smallRecord := &StmtRecord{
+		ExecCount:                    1,
+		SumRocksdbDeleteSkippedCount: 7,
+		SumRocksdbKeySkippedCount:    19,
+		SumRocksdbBlockCacheHitCount: 60,
+		SumRocksdbBlockReadCount:     21103,
+		SumRocksdbBlockReadByte:      4096,
+		SumAffectedRows:              3,
+	}
+	smallCases := []struct {
+		name     string
+		expected float64
+	}{
+		{name: AvgRocksdbDeleteSkippedCountStr, expected: 7},
+		{name: AvgRocksdbKeySkippedCountStr, expected: 19},
+		{name: AvgRocksdbBlockCacheHitCountStr, expected: 60},
+		{name: AvgRocksdbBlockReadCountStr, expected: 21103},
+		{name: AvgRocksdbBlockReadByteStr, expected: 4096},
+		{name: AvgAffectedRowsStr, expected: 3},
+	}
+	for _, tc := range smallCases {
+		factory, ok := columnFactoryMap[tc.name]
+		require.Truef(t, ok, "missing column factory: %s", tc.name)
+		datum := types.NewDatum(factory(mockColumnInfo{}, smallRecord))
+
+		row := chunk.MutRowFromTypes([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)})
+		row.SetDatums(datum)
+		require.Equal(t, tc.expected, row.ToRow().GetFloat64(0), tc.name)
 	}
 }
 
@@ -86,4 +162,36 @@ func (mockColumnInfo) getInstanceAddr() string {
 func (mockColumnInfo) getTimeLocation() *time.Location {
 	loc, _ := time.LoadLocation("Asia/Shanghai")
 	return loc
+}
+
+func TestPlanCacheMissColumns(t *testing.T) {
+	occurredAt := time.Date(2026, 9, 10, 12, 34, 56, 123456000, time.UTC)
+	counts := new(stmtsummaryv1.PlanCacheFallbackCounts)
+	counts.Add(contextutil.PlanCacheFallbackLookupMiss)
+	counts.Add(contextutil.PlanCacheFallbackLookupMiss)
+	counts.Add(contextutil.PlanCacheFallbackReuseRejected)
+	record := &StmtRecord{
+		PlanCacheMisses:         3,
+		PlanCacheFallbackCounts: counts,
+		PlanCacheMissLastReason: "lookup_miss",
+		PlanCacheMissLastSeen:   occurredAt.UnixNano(),
+	}
+	info := mockColumnInfo{}
+	require.Equal(t, int64(3), columnFactoryMap[PlanCacheMissesStr](info, record))
+	require.Equal(t, "lookup_miss", columnFactoryMap[PlanCacheMissTopReasonStr](info, record))
+	require.Equal(t, int64(2), columnFactoryMap[PlanCacheMissTopReasonCountStr](info, record))
+	require.Equal(t, int64(2), columnFactoryMap[PlanCacheMissLookupMissCountStr](info, record))
+	require.Equal(t, int64(1), columnFactoryMap[PlanCacheMissReuseRejectedCountStr](info, record))
+	require.Equal(t, int64(0), columnFactoryMap[PlanCacheMissCacheDisabledCountStr](info, record))
+	require.Equal(t, "lookup_miss", columnFactoryMap[PlanCacheMissLastReasonStr](info, record))
+	lastSeen := columnFactoryMap[PlanCacheMissLastSeenStr](info, record).(types.Time)
+	require.Equal(t, "2026-09-10 20:34:56.123456", lastSeen.String())
+
+	record.PlanCacheMissLastSeen = 0
+	require.Nil(t, columnFactoryMap[PlanCacheMissLastReasonStr](info, record))
+	require.Nil(t, columnFactoryMap[PlanCacheMissLastSeenStr](info, record))
+	record.PlanCacheFallbackCounts = nil
+	require.Nil(t, columnFactoryMap[PlanCacheMissTopReasonStr](info, record))
+	require.Equal(t, int64(0), columnFactoryMap[PlanCacheMissTopReasonCountStr](info, record))
+	require.Equal(t, int64(0), columnFactoryMap[PlanCacheMissLookupMissCountStr](info, record))
 }

@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "plancache_test",
+    timeout = "short",
+    srcs = [
+        "pkdb_invalid_zero_plan_cache_test.go",
+        "pkdb_time_column_temporal_comparison_test.go",
+    ],
+    flaky = True,
+    deps = [
+        "//pkg/parser/mysql",
+        "//pkg/testkit",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -35,16 +35,17 @@ func TestKeywords(t *testing.T) {
 	require.Equal(t, found, true, "TiDBKeyword ADMIN is part of the list")
 }
 
+// TestKeywordsLength checks the catalog size and counts reserved entries, so
+// extension keywords such as LEARNER_COUNT cannot accidentally become reserved.
 func TestKeywordsLength(t *testing.T) {
-	require.Equal(t, 662, len(parser.Keywords))
-
+	require.Equal(t, 741, len(parser.Keywords))
 	reservedNr := 0
 	for _, kw := range parser.Keywords {
 		if kw.Reserved {
 			reservedNr += 1
 		}
 	}
-	require.Equal(t, 233, reservedNr)
+	require.Equal(t, 243, reservedNr)
 }
 
 func TestKeywordsSorting(t *testing.T) {

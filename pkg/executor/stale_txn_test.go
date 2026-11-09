@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -364,14 +365,20 @@ func TestStalenessAndHistoryRead(t *testing.T) {
 
 	time1 := time.Now()
 	time1TS := oracle.GoTimeToTS(time1)
-	schemaVer1 := tk.Session().GetInfoSchema().SchemaMetaVersion()
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key);")
 	tk.MustExec(`drop table if exists t`)
 	time.Sleep(50 * time.Millisecond)
 	time2 := time.Now()
 	time2TS := oracle.GoTimeToTS(time2)
-	schemaVer2 := tk.Session().GetInfoSchema().SchemaMetaVersion()
+	dom := domain.GetDomain(tk.Session())
+	// Assert against the infoschema at the stale read timestamp instead of the latest session schema.
+	expectedIS1, err := dom.GetSnapshotInfoSchema(time1TS)
+	require.NoError(t, err)
+	expectedIS2, err := dom.GetSnapshotInfoSchema(time2TS)
+	require.NoError(t, err)
+	schemaVer1 := expectedIS1.SchemaMetaVersion()
+	schemaVer2 := expectedIS2.SchemaMetaVersion()
 
 	// test set txn as of will flush/mutex tidb_snapshot
 	tk.MustExec(fmt.Sprintf(`set @@tidb_snapshot="%s"`, time1.Format("2006-1-2 15:04:05.000")))
@@ -417,7 +424,7 @@ func TestStalenessAndHistoryRead(t *testing.T) {
 	require.Equal(t, time2TS, tk.Session().GetSessionVars().TxnCtx.StartTS)
 	require.Nil(t, tk.Session().GetSessionVars().SnapshotInfoschema)
 	require.Equal(t, schemaVer2, tk.Session().GetInfoSchema().SchemaMetaVersion())
-	err := tk.ExecToErr(`set @@tidb_snapshot="2020-10-08 16:45:26";`)
+	err = tk.ExecToErr(`set @@tidb_snapshot="2020-10-08 16:45:26";`)
 	require.Regexp(t, ".*Transaction characteristics can't be changed while a transaction is in progress", err.Error())
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().SnapshotTS)
 	require.Nil(t, tk.Session().GetSessionVars().SnapshotInfoschema)

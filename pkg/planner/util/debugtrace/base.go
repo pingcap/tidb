@@ -62,6 +62,42 @@ type baseDebugTraceContext struct {
 	parentCtx *baseDebugTraceContext
 }
 
+// CloneForLogicalPlanBuild returns an independent debug trace context tree for
+// an alternative logical-plan build round. Trace step payloads are immutable
+// after they are recorded, so only the context nodes and their step slices need
+// to be cloned.
+func (root *OptimizerDebugTraceRoot) CloneForLogicalPlanBuild() any {
+	if root == nil {
+		return nil
+	}
+
+	clonedRoot := &OptimizerDebugTraceRoot{}
+	clonedContexts := map[*baseDebugTraceContext]*baseDebugTraceContext{
+		&root.traceCtx: &clonedRoot.traceCtx,
+	}
+	var cloneContext func(*baseDebugTraceContext, *baseDebugTraceContext)
+	cloneContext = func(src, dst *baseDebugTraceContext) {
+		dst.name = src.name
+		dst.steps = make([]any, 0, len(src.steps))
+		for _, step := range src.steps {
+			child, ok := step.(*baseDebugTraceContext)
+			if !ok {
+				dst.steps = append(dst.steps, step)
+				continue
+			}
+			clonedChild := &baseDebugTraceContext{parentCtx: dst}
+			clonedContexts[child] = clonedChild
+			cloneContext(child, clonedChild)
+			dst.steps = append(dst.steps, clonedChild)
+		}
+	}
+
+	clonedRoot.traceCtx.parentCtx = &clonedRoot.traceCtx
+	cloneContext(&root.traceCtx, &clonedRoot.traceCtx)
+	clonedRoot.currentCtx = clonedContexts[root.currentCtx]
+	return clonedRoot
+}
+
 func (c *baseDebugTraceContext) MarshalJSON() ([]byte, error) {
 	var tmp, content any
 	if len(c.steps) > 1 {

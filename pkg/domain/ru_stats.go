@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	pkdbrepl "github.com/pingcap/tidb/pkg/domain/pkdb_repl"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -82,6 +83,7 @@ func (do *Domain) requestUnitsWriterLoop() {
 				if err == nil {
 					break
 				}
+				pkdbrepl.CheckStandbyBlocking(do.ctx)
 				logutil.BgLogger().Error("failed to insert request_unit_by_group data", zap.Error(err), zap.Int("retry", count))
 				count++
 				if count > maxRetryCount {

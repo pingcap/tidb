@@ -1765,3 +1765,21 @@ set @@tidb_enable_cache_prepare_stmt=default;
 select @@tidb_enable_cache_prepare_stmt;
 @@tidb_enable_cache_prepare_stmt
 0
+set @@global.tidb_enable_sp_param_substitute = off;
+set @@global.tidb_enable_procedure = off;
+set @@tidb_enable_sp_param_substitute = off;
+show global variables like 'tidb_enable_sp_param_substitute';
+Variable_name	Value
+tidb_enable_sp_param_substitute	OFF
+select @@tidb_enable_sp_param_substitute;
+@@tidb_enable_sp_param_substitute
+0
+set @@global.tidb_enable_procedure = on;
+show global variables like 'tidb_enable_sp_param_substitute';
+Variable_name	Value
+tidb_enable_sp_param_substitute	ON
+select @@tidb_enable_sp_param_substitute;
+@@tidb_enable_sp_param_substitute
+1
+set @@global.tidb_enable_procedure = default;
+set @@global.tidb_enable_sp_param_substitute = default;

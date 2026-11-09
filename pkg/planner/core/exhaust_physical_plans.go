@@ -585,6 +585,11 @@ func constructIndexJoin(
 		DefaultValues:   p.DefaultValues,
 	}
 
+	fromDecorrelatedApply := p.FromDecorrelatedApply && outerIdx == 0
+	decorrelatedApplyID := 0
+	if fromDecorrelatedApply {
+		decorrelatedApplyID = p.DecorrelatedApplyID
+	}
 	join := PhysicalIndexJoin{
 		basePhysicalJoin: baseJoin,
 		innerPlan:        innerTask.Plan(),
@@ -594,7 +599,8 @@ func constructIndexJoin(
 		OuterHashKeys:    outerHashKeys,
 		InnerHashKeys:    innerHashKeys,
 		// Only count candidates that keep the original Apply outer/inner order.
-		FromDecorrelatedApply: p.FromDecorrelatedApply && outerIdx == 0,
+		FromDecorrelatedApply: fromDecorrelatedApply,
+		DecorrelatedApplyID:   decorrelatedApplyID,
 	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
 	if path != nil {
 		join.IdxColLens = path.IdxColLens
@@ -780,11 +786,15 @@ func getIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.PhysicalPro
 		return nil
 	}
 
-	joins = buildIndexJoinInner2TableScan(p, prop, innerChildWrapper, innerJoinKeys, outerJoinKeys, outerIdx, avgInnerRowCnt)
-	if joins != nil {
+	var tablePathMaxOneRow bool
+	joins, tablePathMaxOneRow = buildIndexJoinInner2TableScan(p, prop, innerChildWrapper, innerJoinKeys, outerJoinKeys, outerIdx, avgInnerRowCnt)
+	if joins != nil && tablePathMaxOneRow {
 		return
 	}
-	return buildIndexJoinInner2IndexScan(p, prop, innerChildWrapper, innerJoinKeys, outerJoinKeys, outerIdx, avgInnerRowCnt)
+	// A CommonHandle table path that cannot guarantee at most one row per probe may scan many rows.
+	// Keep the secondary-index alternatives so the optimizer can compare their costs instead of
+	// always preferring the table path when it is available.
+	return append(joins, buildIndexJoinInner2IndexScan(p, prop, innerChildWrapper, innerJoinKeys, outerJoinKeys, outerIdx, avgInnerRowCnt)...)
 }
 
 func getProbeFullScanRowsForIndexJoinPrune(p base.LogicalPlan) float64 {
@@ -877,6 +887,11 @@ childLoop:
 				return nil
 			}
 			wrapper.zippedChildren = append(wrapper.zippedChildren, child)
+		case *logicalop.LogicalWindow:
+			if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern || !CanUseOrderedWindow(child) {
+				return nil
+			}
+			wrapper.zippedChildren = append(wrapper.zippedChildren, child)
 		case *logicalop.LogicalUnionScan:
 			wrapper.hasDitryWrite = true
 			wrapper.zippedChildren = append(wrapper.zippedChildren, child)
@@ -890,16 +905,113 @@ childLoop:
 	return wrapper
 }
 
+func (wrapper *indexJoinInnerChildWrapper) containsLogicalWindow() bool {
+	for _, child := range wrapper.zippedChildren {
+		if _, ok := child.(*logicalop.LogicalWindow); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func checkIndexJoinInnerTaskWithWindow(lw *logicalop.LogicalWindow, innerJoinKeys []*expression.Column, dataSourceSchema *expression.Schema) bool {
+	if len(lw.PartitionBy) == 0 {
+		return false
+	}
+	partitionByCols := make(map[int64]struct{}, len(lw.PartitionBy))
+	for _, item := range lw.PartitionBy {
+		partitionByCols[item.Col.UniqueID] = struct{}{}
+	}
+	usedDataSourceKey := false
+	for _, key := range innerJoinKeys {
+		if !expression.ExprFromSchema(key, dataSourceSchema) {
+			continue
+		}
+		usedDataSourceKey = true
+		if _, ok := partitionByCols[key.UniqueID]; !ok {
+			return false
+		}
+	}
+	return usedDataSourceKey
+}
+
+func (wrapper *indexJoinInnerChildWrapper) orderedWindowSortCandidatesForDataSource(innerJoinKeys []*expression.Column) ([]*property.PhysicalProperty, bool) {
+	windowIdx := -1
+	var lw *logicalop.LogicalWindow
+	for i, child := range wrapper.zippedChildren {
+		if x, ok := child.(*logicalop.LogicalWindow); ok {
+			if lw != nil {
+				return nil, false
+			}
+			windowIdx = i
+			lw = x
+		}
+	}
+	if lw == nil {
+		return nil, true
+	}
+	if !CanUseOrderedWindow(lw) || !checkIndexJoinInnerTaskWithWindow(lw, innerJoinKeys, wrapper.ds.Schema()) {
+		return nil, false
+	}
+	byItems := buildWindowChildSortItems(lw.PartitionBy, lw.OrderBy)
+	if len(byItems) == 0 {
+		return nil, false
+	}
+
+	props := make([]*property.PhysicalProperty, 0, 2)
+	for _, orderedByItems := range buildOrderedWindowChildSortItems(byItems, lw.PartitionBy, lw.OrderBy) {
+		childProp := &property.PhysicalProperty{
+			ExpectedCnt:    math.MaxFloat64,
+			SortItems:      orderedByItems,
+			CanAddEnforcer: false,
+		}
+		ok := true
+		for _, child := range wrapper.zippedChildren[windowIdx+1:] {
+			switch x := child.(type) {
+			case *logicalop.LogicalProjection:
+				childProp, ok = x.TryToGetChildProp(childProp)
+			case *logicalop.LogicalSelection:
+				// Selection preserves input order.
+			default:
+				ok = false
+			}
+			if !ok {
+				break
+			}
+		}
+		if ok && !childProp.IsSortItemEmpty() {
+			props = append(props, childProp)
+		}
+	}
+	return props, len(props) > 0
+}
+
+func (wrapper *indexJoinInnerChildWrapper) chooseOrderedWindowPropForIndexJoin(innerJoinKeys []*expression.Column, path *util.AccessPath) (*property.PhysicalProperty, bool) {
+	props, ok := wrapper.orderedWindowSortCandidatesForDataSource(innerJoinKeys)
+	if !ok {
+		return nil, false
+	}
+	if len(props) == 0 {
+		return nil, true
+	}
+	for _, prop := range props {
+		if matchProperty(wrapper.ds, path, prop).Matched() {
+			return prop, true
+		}
+	}
+	return nil, false
+}
+
 // buildIndexJoinInner2TableScan builds a TableScan as the inner child for an
 // IndexJoin if possible.
-// If the inner side of a index join is a TableScan, only one tuple will be
-// fetched from the inner side for every tuple from the outer side. This will be
-// promised to be no worse than building IndexScan as the inner child.
+// An IntHandle lookup fetches at most one tuple for every outer tuple, while a
+// CommonHandle lookup can scan multiple tuples when only a primary-key prefix
+// is usable.
 func buildIndexJoinInner2TableScan(
 	p *logicalop.LogicalJoin,
 	prop *property.PhysicalProperty, wrapper *indexJoinInnerChildWrapper,
 	innerJoinKeys, outerJoinKeys []*expression.Column,
-	outerIdx int, avgInnerRowCnt float64) (joins []base.PhysicalPlan) {
+	outerIdx int, avgInnerRowCnt float64) (joins []base.PhysicalPlan, maxOneRow bool) {
 	ds := wrapper.ds
 	var tblPath *util.AccessPath
 	for _, path := range ds.PossibleAccessPaths {
@@ -909,7 +1021,20 @@ func buildIndexJoinInner2TableScan(
 		}
 	}
 	if tblPath == nil {
-		return nil
+		return nil, false
+	}
+	var orderedWindowProp *property.PhysicalProperty
+	if wrapper.containsLogicalWindow() {
+		var ok bool
+		orderedWindowProp, ok = wrapper.chooseOrderedWindowPropForIndexJoin(innerJoinKeys, tblPath)
+		if !ok {
+			return nil, false
+		}
+	}
+	orderedWindowKeepOrder := orderedWindowProp != nil
+	orderedWindowDesc := false
+	if orderedWindowKeepOrder {
+		_, orderedWindowDesc = orderedWindowProp.AllSameOrder()
 	}
 	keyOff2IdxOff := make([]int, len(innerJoinKeys))
 	newOuterJoinKeys := make([]*expression.Column, 0)
@@ -919,23 +1044,25 @@ func buildIndexJoinInner2TableScan(
 	if ds.TableInfo.IsCommonHandle {
 		indexJoinResult, keyOff2IdxOff = getBestIndexJoinPathResult(p, ds, innerJoinKeys, outerJoinKeys, func(path *util.AccessPath) bool { return path.IsCommonHandlePath })
 		if indexJoinResult == nil {
-			return nil
+			return nil, false
 		}
-		rangeInfo := indexJoinPathRangeInfo(p.SCtx(), outerJoinKeys, indexJoinResult)
-		innerTask = constructInnerTableScanTask(p, prop, wrapper, indexJoinResult.chosenRanges.Range(), outerJoinKeys, rangeInfo, false, false, avgInnerRowCnt)
+		var rangeInfo string
+		rangeInfo, maxOneRow = indexJoinPathGetRangeInfoAndMaxOneRow(p.SCtx(), outerJoinKeys, indexJoinResult)
+		accessRowsFloor := indexJoinProbeAccessRowsFloor(ds, innerJoinKeys, indexJoinResult)
+		innerTask = constructInnerTableScanTask(p, prop, wrapper, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, orderedWindowKeepOrder, orderedWindowDesc, avgInnerRowCnt, accessRowsFloor, maxOneRow)
 		// The index merge join's inner plan is different from index join, so we
 		// should construct another inner plan for it.
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
 		// we can't construct index merge join.
 		if !wrapper.hasDitryWrite {
-			innerTask2 = constructInnerTableScanTask(p, prop, wrapper, indexJoinResult.chosenRanges.Range(), outerJoinKeys, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
+			innerTask2 = constructInnerTableScanTask(p, prop, wrapper, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, true, orderedWindowDesc || (!orderedWindowKeepOrder && !prop.IsSortItemEmpty() && prop.SortItems[0].Desc), avgInnerRowCnt, accessRowsFloor, maxOneRow)
 		}
 		ranges = indexJoinResult.chosenRanges
 	} else {
 		pkMatched := false
 		pkCol := ds.GetPKIsHandleCol()
 		if pkCol == nil {
-			return nil
+			return nil, false
 		}
 		for i, key := range innerJoinKeys {
 			if !key.EqualColumn(pkCol) {
@@ -949,7 +1076,7 @@ func buildIndexJoinInner2TableScan(
 		}
 		outerJoinKeys = newOuterJoinKeys
 		if !pkMatched {
-			return nil
+			return nil, false
 		}
 		ranges := ranger.FullIntRange(mysql.HasUnsignedFlag(pkCol.RetType.GetFlag()))
 		var buffer strings.Builder
@@ -962,13 +1089,15 @@ func buildIndexJoinInner2TableScan(
 		}
 		buffer.WriteString("]")
 		rangeInfo := buffer.String()
-		innerTask = constructInnerTableScanTask(p, prop, wrapper, ranges, outerJoinKeys, rangeInfo, false, false, avgInnerRowCnt)
+		// For IntHandle (integer primary key), it's always a unique match.
+		maxOneRow = true
+		innerTask = constructInnerTableScanTask(p, prop, wrapper, ranges, ds.PushedDownConds, nil, rangeInfo, orderedWindowKeepOrder, orderedWindowDesc, avgInnerRowCnt, 0, maxOneRow)
 		// The index merge join's inner plan is different from index join, so we
 		// should construct another inner plan for it.
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
 		// we can't construct index merge join.
 		if !wrapper.hasDitryWrite {
-			innerTask2 = constructInnerTableScanTask(p, prop, wrapper, ranges, outerJoinKeys, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
+			innerTask2 = constructInnerTableScanTask(p, prop, wrapper, ranges, ds.PushedDownConds, nil, rangeInfo, true, orderedWindowDesc || (!orderedWindowKeepOrder && !prop.IsSortItemEmpty() && prop.SortItems[0].Desc), avgInnerRowCnt, 0, maxOneRow)
 		}
 	}
 	var (
@@ -982,7 +1111,7 @@ func buildIndexJoinInner2TableScan(
 	joins = make([]base.PhysicalPlan, 0, 3)
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
 		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
-			failpoint.Return(constructIndexHashJoin(p, prop, outerIdx, innerTask, nil, keyOff2IdxOff, path, lastColMng))
+			failpoint.Return(constructIndexHashJoin(p, prop, outerIdx, innerTask, nil, keyOff2IdxOff, path, lastColMng), maxOneRow)
 		}
 	})
 	joins = append(joins, constructIndexJoin(p, prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, lastColMng, true)...)
@@ -992,7 +1121,7 @@ func buildIndexJoinInner2TableScan(
 	if innerTask2 != nil {
 		joins = append(joins, constructIndexMergeJoin(p, prop, outerIdx, innerTask2, ranges, keyOff2IdxOff, path, lastColMng)...)
 	}
-	return joins
+	return joins, maxOneRow
 }
 
 func buildIndexJoinInner2IndexScan(
@@ -1018,19 +1147,23 @@ func buildIndexJoinInner2IndexScan(
 	if indexJoinResult == nil {
 		return nil
 	}
-	joins = make([]base.PhysicalPlan, 0, 3)
-	rangeInfo := indexJoinPathRangeInfo(p.SCtx(), outerJoinKeys, indexJoinResult)
-	maxOneRow := false
-	if indexJoinResult.chosenPath.Index.Unique && indexJoinResult.usedColsLen == len(indexJoinResult.chosenPath.FullIdxCols) {
-		l := len(indexJoinResult.chosenAccess)
-		if l == 0 {
-			maxOneRow = true
-		} else {
-			sf, ok := indexJoinResult.chosenAccess[l-1].(*expression.ScalarFunction)
-			maxOneRow = ok && (sf.FuncName.L == ast.EQ)
+	var orderedWindowProp *property.PhysicalProperty
+	if wrapper.containsLogicalWindow() {
+		var ok bool
+		orderedWindowProp, ok = wrapper.chooseOrderedWindowPropForIndexJoin(innerJoinKeys, indexJoinResult.chosenPath)
+		if !ok {
+			return nil
 		}
 	}
-	innerTask := constructInnerIndexScanTask(p, prop, wrapper, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, innerJoinKeys, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
+	orderedWindowKeepOrder := orderedWindowProp != nil
+	orderedWindowDesc := false
+	if orderedWindowKeepOrder {
+		_, orderedWindowDesc = orderedWindowProp.AllSameOrder()
+	}
+	joins = make([]base.PhysicalPlan, 0, 3)
+	rangeInfo, maxOneRow := indexJoinPathGetRangeInfoAndMaxOneRow(p.SCtx(), outerJoinKeys, indexJoinResult)
+	accessRowsFloor := indexJoinProbeAccessRowsFloor(ds, innerJoinKeys, indexJoinResult)
+	innerTask := constructInnerIndexScanTask(p, prop, wrapper, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, innerJoinKeys, indexJoinResult.idxOff2KeyOff, rangeInfo, orderedWindowKeepOrder, orderedWindowDesc, avgInnerRowCnt, accessRowsFloor, maxOneRow)
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
 		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL && innerTask != nil {
 			failpoint.Return(constructIndexHashJoin(p, prop, outerIdx, innerTask, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager))
@@ -1047,12 +1180,48 @@ func buildIndexJoinInner2IndexScan(
 	// Because we can't keep order for union scan, if there is a union scan in inner task,
 	// we can't construct index merge join.
 	if !wrapper.hasDitryWrite {
-		innerTask2 := constructInnerIndexScanTask(p, prop, wrapper, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, innerJoinKeys, indexJoinResult.idxOff2KeyOff, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt, maxOneRow)
+		innerTask2 := constructInnerIndexScanTask(p, prop, wrapper, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, innerJoinKeys, indexJoinResult.idxOff2KeyOff, rangeInfo, true, orderedWindowDesc || (!orderedWindowKeepOrder && !prop.IsSortItemEmpty() && prop.SortItems[0].Desc), avgInnerRowCnt, accessRowsFloor, maxOneRow)
 		if innerTask2 != nil {
 			joins = append(joins, constructIndexMergeJoin(p, prop, outerIdx, innerTask2, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager)...)
 		}
 	}
 	return joins
+}
+
+// indexJoinProbeAccessRowsFloor returns a lower bound on the rows-after-access of an index join
+// probe-side scan, or 0 when no adjustment applies. The row count passed to the inner scan tasks
+// is derived from the join output cardinality, which accounts for all equality join conditions.
+// When the chosen path builds ranges from only a subset of the join keys, the remaining equality
+// conditions are evaluated at the join rather than at the scan, so each probe still reads every
+// row matching the used key prefix: approximately total row count / NDV of the used equality columns.
+// See #69974.
+func indexJoinProbeAccessRowsFloor(ds *logicalop.DataSource, innerJoinKeys []*expression.Column, indexJoinResult *indexJoinPathResult) float64 {
+	if indexJoinResult == nil || ds.TableStats == nil || indexJoinResult.usedColsNDV <= 0 {
+		return 0
+	}
+	// A range on the last used column narrows the scan beyond the equality prefix, so the
+	// prefix NDV would overestimate the scanned rows. Skip the adjustment in that case.
+	if indexJoinResult.lastColIsRange || indexJoinResult.lastColManager != nil {
+		return 0
+	}
+	usedKeys := make(map[int]struct{}, len(innerJoinKeys))
+	for idxOff, keyOff := range indexJoinResult.idxOff2KeyOff {
+		if idxOff >= indexJoinResult.usedColsLen {
+			break
+		}
+		if keyOff >= 0 {
+			usedKeys[keyOff] = struct{}{}
+		}
+	}
+	if len(usedKeys) >= len(innerJoinKeys) {
+		return 0
+	}
+	// This adjustment shares Fix44855 with the existing NDV-based upper bound in
+	// constructInnerIndexScanTask, but defaults to ON: setting 44855:OFF disables both.
+	if !fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44855, true) {
+		return 0
+	}
+	return ds.TableStats.RowCount / indexJoinResult.usedColsNDV
 }
 
 // constructInnerTableScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
@@ -1061,11 +1230,14 @@ func constructInnerTableScanTask(
 	prop *property.PhysicalProperty,
 	wrapper *indexJoinInnerChildWrapper,
 	ranges ranger.Ranges,
-	_ []*expression.Column,
+	filterConds []expression.Expression,
+	accessConds []expression.Expression,
 	rangeInfo string,
 	keepOrder bool,
 	desc bool,
 	rowCount float64,
+	accessRowsFloor float64,
+	maxOneRow bool,
 ) base.Task {
 	ds := wrapper.ds
 	// If `ds.TableInfo.GetPartitionInfo() != nil`,
@@ -1079,7 +1251,7 @@ func constructInnerTableScanTask(
 		Columns:         ds.Columns,
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
-		filterCondition: ds.PushedDownConds,
+		filterCondition: filterConds,
 		Ranges:          ranges,
 		rangeInfo:       rangeInfo,
 		KeepOrder:       keepOrder,
@@ -1088,6 +1260,7 @@ func constructInnerTableScanTask(
 		isPartition:     ds.PartitionDefIdx != nil,
 		tblCols:         ds.TblCols,
 		tblColHists:     ds.TblColHists,
+		TableSplit:      ds.TableSplit,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetSchema(ds.Schema().Clone())
 	if rowCount <= 0 {
@@ -1106,9 +1279,18 @@ func constructInnerTableScanTask(
 		// i.e, rowCount equals to `countAfterAccess * selectivity`.
 		countAfterAccess = rowCount / selectivity
 	}
+	// The ranges only encode the join keys this path can use; equality conditions on the remaining
+	// join keys are evaluated at the join, so the scan reads at least the rows matching the used prefix.
+	countAfterAccess = math.Max(countAfterAccess, accessRowsFloor)
+	// Only apply the 1-row limit when we can guarantee at most one row per outer row.
+	// For CommonHandle, this requires matching ALL primary key columns with equality conditions.
+	// For prefix scans (e.g., only matching first column of a composite PK), we trust the statistical estimation.
+	finalRowCount := countAfterAccess
+	if maxOneRow {
+		finalRowCount = math.Min(1.0, countAfterAccess)
+	}
 	ts.SetStats(&property.StatsInfo{
-		// TableScan as inner child of IndexJoin can return at most 1 tuple for each outer row.
-		RowCount:     math.Min(1.0, countAfterAccess),
+		RowCount:     finalRowCount,
 		StatsVersion: ds.StatsInfo().StatsVersion,
 		// NDV would not be used in cost computation of IndexJoin, set leave it as default nil.
 	})
@@ -1129,9 +1311,76 @@ func constructInnerTableScanTask(
 		ColumnNames:    ds.OutputNames(),
 	}
 	ts.PlanPartInfo = copTask.physPlanPartInfo
+	var rootTaskConds []expression.Expression
+	// For IndexJoin probe-side scans, predicates that contain very large IN-lists and are not part of
+	// range construction can be expensive to execute in coprocessor. Keep them in TiDB.
+	ts.filterCondition, rootTaskConds = splitLargeInListFiltersForIndexJoinProbe(ts.filterCondition, indexJoinProbeSideLargeInNotInThreshold)
+	// Keep explicit probe-side selections for access predicates to preserve the previous
+	// plan shape (`TableReader data:Selection`) even when those predicates are already used
+	// to build ranges. This does not change range pruning or result correctness.
+	// NOTE: only keep predicates that are fully evaluable on the inner schema. Correlated
+	// access conditions (for example, `t2.col <= t1.col`) must not be attached here,
+	// otherwise later schema checks may fail when validating/cop-pushing table filters.
+	innerOnlyAccessConds := make([]expression.Expression, 0, len(accessConds))
+	for _, cond := range accessConds {
+		if expression.ExprFromSchema(cond, ds.Schema()) {
+			innerOnlyAccessConds = append(innerOnlyAccessConds, cond)
+		}
+	}
+	ts.filterCondition = ranger.AppendConditionsIfNotExist(ds.SCtx().GetExprCtx().GetEvalCtx(), ts.filterCondition, innerOnlyAccessConds)
+	copTask.rootTaskConds = append(copTask.rootTaskConds, rootTaskConds...)
 	selStats := ts.StatsInfo().Scale(selectivity)
 	ts.addPushedDownSelection(copTask, selStats)
 	return constructIndexJoinInnerSideTaskWithAggCheck(p, prop, copTask, ds, nil, wrapper)
+}
+
+// splitLargeInListFiltersForIndexJoinProbe keeps most filters pushdown-able, but moves
+// predicates that contain large IN-lists to root execution for IndexJoin probe-side scans.
+func splitLargeInListFiltersForIndexJoinProbe(filters []expression.Expression, threshold int) (pushDownFilters, rootTaskFilters []expression.Expression) {
+	if len(filters) == 0 || threshold <= 0 {
+		return filters, nil
+	}
+	pushDownFilters = make([]expression.Expression, 0, len(filters))
+	for _, filter := range filters {
+		if containsLargeInList(filter, threshold) {
+			rootTaskFilters = append(rootTaskFilters, filter)
+			continue
+		}
+		pushDownFilters = append(pushDownFilters, filter)
+	}
+	return pushDownFilters, rootTaskFilters
+}
+
+// containsLargeInList checks whether an expression tree contains a large IN-list.
+// This is intentionally recursive so predicates like `a = 1 OR b IN (...)` are also captured.
+// NOTE: `NOT IN` is represented as `NOT(IN(...))`, so recursion naturally covers it.
+func containsLargeInList(expr expression.Expression, threshold int) bool {
+	if getInListLength(expr) > threshold {
+		return true
+	}
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+	for _, arg := range sf.GetArgs() {
+		if containsLargeInList(arg, threshold) {
+			return true
+		}
+	}
+	return false
+}
+
+// getInListLength returns the element count of `a IN (...)`.
+// It returns -1 for non-IN predicates.
+func getInListLength(filter expression.Expression) int {
+	sf, ok := filter.(*expression.ScalarFunction)
+	if !ok {
+		return -1
+	}
+	if sf.FuncName.L == ast.In {
+		return max(len(sf.GetArgs())-1, 0)
+	}
+	return -1
 }
 
 func constructIndexJoinInnerSideTask(curTask base.Task, prop *property.PhysicalProperty, zippedChildren []base.LogicalPlan, skipAgg bool) base.Task {
@@ -1143,6 +1392,8 @@ func constructIndexJoinInnerSideTask(curTask base.Task, prop *property.PhysicalP
 			curTask = constructInnerProj(prop, x, curTask.Plan()).Attach2Task(curTask)
 		case *logicalop.LogicalSelection:
 			curTask = constructInnerSel(prop, x, curTask.Plan()).Attach2Task(curTask)
+		case *logicalop.LogicalWindow:
+			curTask = constructInnerOrderedWindow(prop, x, curTask.Plan()).Attach2Task(curTask)
 		case *logicalop.LogicalAggregation:
 			if skipAgg {
 				continue
@@ -1154,6 +1405,29 @@ func constructIndexJoinInnerSideTask(curTask base.Task, prop *property.PhysicalP
 		}
 	}
 	return curTask
+}
+
+func constructInnerOrderedWindow(prop *property.PhysicalProperty, window *logicalop.LogicalWindow, child base.PhysicalPlan) base.PhysicalPlan {
+	if window == nil {
+		return child
+	}
+	byItems := buildWindowChildSortItems(window.PartitionBy, window.OrderBy)
+	childProp := &property.PhysicalProperty{
+		ExpectedCnt:       math.MaxFloat64,
+		SortItems:         byItems,
+		CanAddEnforcer:    false,
+		CTEProducerStatus: prop.CTEProducerStatus,
+	}
+	orderedWindow := PhysicalOrderedWindow{
+		PhysicalWindow: PhysicalWindow{
+			WindowFuncDescs: window.WindowFuncDescs,
+			PartitionBy:     window.PartitionBy,
+			OrderBy:         window.OrderBy,
+			Frame:           window.Frame,
+		},
+	}.Init(window.SCtx(), window.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), window.QueryBlockOffset(), childProp)
+	orderedWindow.SetSchema(window.Schema())
+	return orderedWindow
 }
 
 func constructInnerAgg(prop *property.PhysicalProperty, logicalAgg *logicalop.LogicalAggregation, child base.PhysicalPlan) base.PhysicalPlan {
@@ -1263,6 +1537,7 @@ func constructInnerIndexScanTask(
 	keepOrder bool,
 	desc bool,
 	rowCount float64,
+	accessRowsFloor float64,
 	maxOneRow bool,
 ) base.Task {
 	ds := wrapper.ds
@@ -1314,6 +1589,7 @@ func constructInnerIndexScanTask(
 			physicalTableID: ds.PhysicalTableID,
 			tblCols:         ds.TblCols,
 			tblColHists:     ds.TblColHists,
+			TableSplit:      ds.TableSplit,
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
 		ts.schema = is.dataSourceSchema.Clone()
 		if ds.TableInfo.IsCommonHandle {
@@ -1350,6 +1626,10 @@ func constructInnerIndexScanTask(
 	}
 	is.initSchema(append(path.FullIdxCols, ds.CommonHandleCols...), cop.tablePlan != nil)
 	indexConds, tblConds := splitIndexFilterConditions(ds, filterConds, path.FullIdxCols, path.FullIdxColLens)
+	// Only apply this gate to residual filters (not range builders) for IndexJoin probe side.
+	// Range-deriving predicates are decided earlier and remain unchanged.
+	pushDownIndexConds, rootTaskIndexConds := splitLargeInListFiltersForIndexJoinProbe(indexConds, indexJoinProbeSideLargeInNotInThreshold)
+	pushDownTblConds, rootTaskTblConds := splitLargeInListFiltersForIndexJoinProbe(tblConds, indexJoinProbeSideLargeInNotInThreshold)
 
 	// Note: due to a regression in JOB workload, we use the optimizer fix control to enable this for now.
 	//
@@ -1386,8 +1666,8 @@ func constructInnerIndexScanTask(
 		rowCount = math.Min(rowCount, 1.0)
 	}
 	tmpPath := &util.AccessPath{
-		IndexFilters:     indexConds,
-		TableFilters:     tblConds,
+		IndexFilters:     pushDownIndexConds,
+		TableFilters:     pushDownTblConds,
 		CountAfterIndex:  rowCount,
 		CountAfterAccess: rowCount,
 	}
@@ -1425,12 +1705,24 @@ func constructInnerIndexScanTask(
 		}
 		tmpPath.CountAfterAccess = cnt
 	}
+	// The ranges only encode the join keys this path can use; equality conditions on the remaining
+	// join keys are evaluated at the join, so the scan reads at least the rows matching the used prefix.
+	if !maxOneRow && accessRowsFloor > tmpPath.CountAfterAccess {
+		scale := 1.0
+		if tmpPath.CountAfterAccess > 0 {
+			scale = tmpPath.CountAfterIndex / tmpPath.CountAfterAccess
+		}
+		tmpPath.CountAfterAccess = accessRowsFloor
+		tmpPath.CountAfterIndex = accessRowsFloor * scale
+	}
 	is.SetStats(ds.TableStats.ScaleByExpectCnt(tmpPath.CountAfterAccess))
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
 	if usedStats != nil && usedStats.GetUsedInfo(is.physicalTableID) != nil {
 		is.usedStatsInfo = usedStats.GetUsedInfo(is.physicalTableID)
 	}
 	finalStats := ds.TableStats.ScaleByExpectCnt(rowCount)
+	cop.rootTaskConds = append(cop.rootTaskConds, rootTaskIndexConds...)
+	cop.rootTaskConds = append(cop.rootTaskConds, rootTaskTblConds...)
 	if err := is.addPushedDownSelection(cop, ds, tmpPath, finalStats); err != nil {
 		logutil.BgLogger().Warn("unexpected error happened during addPushedDownSelection function", zap.Error(err))
 		return nil
@@ -1613,6 +1905,10 @@ const (
 	indexJoinMethod      = 0
 	indexHashJoinMethod  = 1
 	indexMergeJoinMethod = 2
+
+	// A fixed guardrail for step-1: do not push down probe-side residual predicates
+	// that contain IN-lists whose size is greater than this threshold.
+	indexJoinProbeSideLargeInNotInThreshold = 10000
 )
 
 func getIndexJoinSideAndMethod(join base.PhysicalPlan) (innerSide, joinMethod int, ok bool) {
@@ -2709,12 +3005,37 @@ func exhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.Phys
 	if prop.TaskTp == property.MppTaskType {
 		return windows, true, nil
 	}
-	var byItems []property.SortItem
-	byItems = append(byItems, lw.PartitionBy...)
-	byItems = append(byItems, lw.OrderBy...)
+	// Prefer OrderedWindow only when the child naturally satisfies the full
+	// partition/order requirement. Once a Sort enforcer is needed, the plan must
+	// fall back to the regular window path. If there is no partition/order
+	// requirement, use the regular window path to avoid implying ordered input.
+	byItems := buildWindowChildSortItems(lw.PartitionBy, lw.OrderBy)
+	if len(byItems) > 0 && CanUseOrderedWindow(lw) {
+		for _, orderedByItems := range buildOrderedWindowChildSortItems(byItems, lw.PartitionBy, lw.OrderBy) {
+			orderedChildProperty := &property.PhysicalProperty{
+				ExpectedCnt:       math.MaxFloat64,
+				SortItems:         orderedByItems,
+				CanAddEnforcer:    false,
+				CTEProducerStatus: prop.CTEProducerStatus,
+			}
+			if !prop.IsPrefix(orderedChildProperty) {
+				continue
+			}
+			orderedWindow := PhysicalOrderedWindow{
+				PhysicalWindow: PhysicalWindow{
+					WindowFuncDescs: lw.WindowFuncDescs,
+					PartitionBy:     lw.PartitionBy,
+					OrderBy:         lw.OrderBy,
+					Frame:           lw.Frame,
+				},
+			}.Init(lw.SCtx(), lw.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), lw.QueryBlockOffset(), orderedChildProperty)
+			orderedWindow.SetSchema(lw.Schema())
+			windows = append(windows, orderedWindow)
+		}
+	}
 	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: byItems, CanAddEnforcer: true, CTEProducerStatus: prop.CTEProducerStatus}
 	if !prop.IsPrefix(childProperty) {
-		return nil, true, nil
+		return windows, true, nil
 	}
 	window := PhysicalWindow{
 		WindowFuncDescs: lw.WindowFuncDescs,
@@ -2726,6 +3047,60 @@ func exhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.Phys
 
 	windows = append(windows, window)
 	return windows, true, nil
+}
+
+func buildWindowChildSortItems(partitionBy, orderBy []property.SortItem) []property.SortItem {
+	byItems := make([]property.SortItem, 0, len(partitionBy)+len(orderBy))
+	byItems = append(byItems, partitionBy...)
+	byItems = append(byItems, orderBy...)
+	return byItems
+}
+
+// Partition key direction does not affect window partition boundaries. When all
+// order keys are DESC, also try DESC partition keys so a backward index scan can
+// satisfy the whole ordered-window property.
+func buildOrderedWindowChildSortItems(byItems, partitionBy, orderBy []property.SortItem) [][]property.SortItem {
+	candidates := [][]property.SortItem{byItems}
+	if len(partitionBy) == 0 || len(orderBy) == 0 {
+		return candidates
+	}
+	orderDesc := orderBy[0].Desc
+	if !orderDesc {
+		return candidates
+	}
+	for _, item := range orderBy[1:] {
+		if item.Desc != orderDesc {
+			return candidates
+		}
+	}
+	alignedByItems := make([]property.SortItem, 0, len(byItems))
+	for _, item := range partitionBy {
+		alignedByItems = append(alignedByItems, property.SortItem{Col: item.Col, Desc: orderDesc})
+	}
+	alignedByItems = append(alignedByItems, orderBy...)
+	candidates = append(candidates, alignedByItems)
+	return candidates
+}
+
+// CanUseOrderedWindow reports whether the logical window belongs to the subset
+// currently supported by PhysicalOrderedWindow. The property requirement is
+// checked separately during physical plan enumeration.
+func CanUseOrderedWindow(lw *logicalop.LogicalWindow) bool {
+	if len(lw.WindowFuncDescs) != 1 {
+		return false
+	}
+	if lw.WindowFuncDescs[0].Name != ast.WindowFuncRowNumber {
+		return false
+	}
+	if lw.Frame == nil {
+		return false
+	}
+	// Keep the admission rule aligned with the current execution contract: the
+	// ordered-input path only handles the default row_number frame and should
+	// fall back to the generic window executor for explicit frame variants.
+	return lw.Frame.Type == ast.Rows &&
+		lw.Frame.Start != nil && lw.Frame.Start.Type == ast.CurrentRow && !lw.Frame.Start.UnBounded &&
+		lw.Frame.End != nil && lw.Frame.End.Type == ast.CurrentRow && !lw.Frame.End.UnBounded
 }
 
 func getEnforcedStreamAggs(la *logicalop.LogicalAggregation, prop *property.PhysicalProperty) []base.PhysicalPlan {

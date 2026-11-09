@@ -1,0 +1,1 @@
+CREATE DATABASE lightning_encrypted_password;

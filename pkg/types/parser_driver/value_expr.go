@@ -54,17 +54,35 @@ func init() {
 	}
 	ast.NewHexLiteral = func(str string) (any, error) {
 		h, err := types.NewHexLiteral(str)
-		return h, err
+		if err != nil {
+			return nil, err
+		}
+		return rawBinaryLiteral{value: h, text: str}, nil
 	}
 	ast.NewBitLiteral = func(str string) (any, error) {
 		b, err := types.NewBitLiteral(str)
-		return b, err
+		if err != nil {
+			return nil, err
+		}
+		return rawBinaryLiteral{value: b, text: str}, nil
 	}
+}
+
+// rawBinaryLiteral keeps the token spelling while the datum stores its
+// normalized binary value for expression evaluation.
+type rawBinaryLiteral struct {
+	value any
+	text  string
+}
+
+func (r rawBinaryLiteral) ToString() string {
+	return r.value.(interface{ ToString() string }).ToString()
 }
 
 var (
 	_ ast.ParamMarkerExpr = &ParamMarkerExpr{}
 	_ ast.ValueExpr       = &ValueExpr{}
+	_ ast.BinaryLiteral   = rawBinaryLiteral{}
 )
 
 // ValueExpr is the simple value expression.
@@ -81,6 +99,9 @@ func (n *ValueExpr) SetValue(res any) {
 
 // Restore implements Node interface.
 func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
+	if handled, err := ctx.TryRestoreLiteral(n); handled || err != nil {
+		return err
+	}
 	switch n.Kind() {
 	case types.KindNull:
 		ctx.WriteKeyWord("NULL")
@@ -116,6 +137,10 @@ func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 	case types.KindMysqlDecimal:
 		ctx.WritePlain(n.GetMysqlDecimal().String())
 	case types.KindBinaryLiteral:
+		if ctx.Flags.HasRestoreForNonPrepPlanCache() && n.OriginalText() != "" && ctx.CanUseOriginalText(n) {
+			ctx.WritePlain(n.OriginalText())
+			return nil
+		}
 		if n.Type.GetFlag()&mysql.UnsignedFlag != 0 {
 			ctx.WritePlainf("x'%x'", n.GetBytes())
 		} else {
@@ -206,11 +231,19 @@ func newValueExpr(value any, charset string, collate string) ast.ValueExpr {
 	if ve, ok := value.(*ValueExpr); ok {
 		return ve
 	}
+	var originalText string
+	if raw, ok := value.(rawBinaryLiteral); ok {
+		value = raw.value
+		originalText = raw.text
+	}
 	ve := &ValueExpr{}
 	// We need to keep the ve.Type.GetCollate() equals to ve.Datum.collation.
 	types.DefaultTypeForValue(value, &ve.Type, charset, collate)
 	ve.Datum.SetValue(value, &ve.Type)
 	ve.projectionOffset = -1
+	if originalText != "" {
+		ve.SetText(nil, originalText)
+	}
 	return ve
 }
 

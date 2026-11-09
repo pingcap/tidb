@@ -66,6 +66,24 @@ func TestSysVar(t *testing.T) {
 	f = GetSysVar("tidb_enable_vectorized_expression")
 	require.Equal(t, "ON", f.Value)
 
+	f = GetSysVar(TiDBEnableTiKVShortCircuitExpression)
+	require.NotNil(t, f)
+	require.True(t, f.HasGlobalScope())
+	require.True(t, f.HasSessionScope())
+	require.True(t, f.IsHintUpdatableVerified)
+	require.Equal(t, TypeBool, f.Type)
+	require.Equal(t, Off, f.Value)
+
+	vars := NewSessionVars(nil)
+	require.False(t, vars.EnableTiKVShortCircuitExpression)
+	require.False(t, vars.StmtCtx.EnableTiKVShortCircuitExpression)
+	require.NoError(t, f.SetSessionFromHook(vars, On))
+	require.True(t, vars.EnableTiKVShortCircuitExpression)
+	require.True(t, vars.StmtCtx.EnableTiKVShortCircuitExpression)
+	require.NoError(t, f.SetSessionFromHook(vars, Off))
+	require.False(t, vars.EnableTiKVShortCircuitExpression)
+	require.False(t, vars.StmtCtx.EnableTiKVShortCircuitExpression)
+
 	autoBuildStats := GetSysVar(TiDBAutoBuildStatsConcurrency)
 	require.NotNil(t, autoBuildStats)
 	buildStats := GetSysVar(TiDBBuildStatsConcurrency)
@@ -77,6 +95,43 @@ func TestSysVar(t *testing.T) {
 	analyzeScan := GetSysVar(TiDBAnalyzeDistSQLScanConcurrency)
 	require.NotNil(t, analyzeScan)
 	require.Equal(t, analyzeScan.Value, sysProcScan.Value)
+}
+
+func TestExplicitDefaultsForTimestampSysVar(t *testing.T) {
+	vars := NewSessionVars(nil)
+
+	require.NoError(t, vars.SetSystemVar(ExplicitDefaultsForTimestamp, "0"))
+	val, err := vars.GetSessionOrGlobalSystemVar(context.Background(), ExplicitDefaultsForTimestamp)
+	require.NoError(t, err)
+	require.Equal(t, Off, val)
+	require.False(t, vars.ExplicitDefaultsForTimestamp)
+
+	warnings := vars.StmtCtx.GetWarnings()
+	require.Len(t, warnings, 1)
+	warn := warnings[0].Err
+	require.Equal(t, "[variable:1681]explicit_defaults_for_timestamp is deprecated and will be removed in a future release.", warn.Error())
+
+	require.NoError(t, vars.SetSystemVar(ExplicitDefaultsForTimestamp, "OFF"))
+	require.Len(t, vars.StmtCtx.GetWarnings(), 1)
+	require.False(t, vars.ExplicitDefaultsForTimestamp)
+
+	require.NoError(t, vars.SetSystemVar(ExplicitDefaultsForTimestamp, "ON"))
+	require.Len(t, vars.StmtCtx.GetWarnings(), 1)
+	require.True(t, vars.ExplicitDefaultsForTimestamp)
+
+	require.NoError(t, vars.SetSystemVar(ExplicitDefaultsForTimestamp, "OFF"))
+	require.Len(t, vars.StmtCtx.GetWarnings(), 2)
+	require.False(t, vars.ExplicitDefaultsForTimestamp)
+
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	require.NoError(t, mock.SetGlobalSysVar(context.Background(), ExplicitDefaultsForTimestamp, "OFF"))
+	val, err = mock.GetGlobalSysVar(ExplicitDefaultsForTimestamp)
+	require.NoError(t, err)
+	require.Equal(t, Off, val)
+	require.Len(t, vars.StmtCtx.GetWarnings(), 3)
 }
 
 func TestError(t *testing.T) {

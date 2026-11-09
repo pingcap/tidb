@@ -184,9 +184,9 @@ Error 1105 (HY000): Duplicate require ISSUER clause
 CREATE USER 'u9'@'%' require subject '/CN=TiDB\OU=PingCAP' subject '/CN=TiDB\OU=PingCAP2';
 Error 1105 (HY000): Duplicate require SUBJECT clause
 CREATE USER 'u9'@'%' require ssl ssl;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 36 near "ssl;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 36 near "ssl" 
 CREATE USER 'u9'@'%' require x509 x509;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 38 near "x509;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 38 near "x509" 
 drop user if exists 'maint_auth_str1'@'%';
 CREATE USER 'maint_auth_str1'@'%' IDENTIFIED BY 'foo';
 SELECT authentication_string FROM mysql.user WHERE `Host` = '%' and `User` = 'maint_auth_str1';

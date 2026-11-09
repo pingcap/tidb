@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/bindinfo/internal/logutil"
+	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -169,8 +170,46 @@ func (h *globalBindingHandle) CaptureBaselines() {
 			}
 		}
 		dbName := utilparser.GetDefaultDB(stmt, bindableStmt.Schema)
-		normalizedSQL, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, dbName, bindableStmt.Query))
-		if r := h.getCache().GetBinding(digest.String()); HasAvailableBinding(r) {
+		// Binding vocabulary: the captured row's SQLDigest must
+		// land in the mysql.bind_info.sql_digest vocabulary — the same one
+		// CREATE BINDING persists — so the GetBinding dedup below recognizes
+		// an equivalent manual binding instead of creating a near-duplicate
+		// row. The two normalizers differ only on in-list shapes, which is
+		// exactly where the old exec-vocabulary digest missed.
+		//
+		// Upgrade note: rows captured before this vocabulary change keep
+		// their old exec-vocabulary sql_digest and original_sql forever.
+		// That is fine for execution — matching re-derives the lookup
+		// digest from each binding's BindSQL with the current vocabulary,
+		// so old bindings keep matching and taking effect — but while an
+		// old row exists:
+		//
+		//  1. the GetBinding dedup below does not recognize it, so capture
+		//     re-creates the same binding under the new digest: a logically
+		//     duplicate old+new row pair;
+		//  2. the old row cannot be dropped or disabled by SQL text: DROP
+		//     matches the binding-vocabulary sql_digest and SET BINDING
+		//     STATUS matches the binding-vocabulary original_sql, and the
+		//     old row's exec-vocabulary values never matched either — a
+		//     pre-existing mismatch, not one this change introduces; only
+		//     DROP ... FOR DIGEST '<old digest>' reaches it;
+		//  3. dropping the NEW row by SQL text works, but the next capture
+		//     round still misses (the old row remains keyed under the old
+		//     digest) and re-creates it — the duplicate resurrects until
+		//     the old row is removed by digest.
+		//
+		// A new slow log Binding_digest will likewise not join against old
+		// capture rows' sql_digest — a historical-data reconciliation
+		// limitation, not an execution compatibility issue.
+		normalizedSQL, digest := norm.NormalizeStmtForBinding(stmt, norm.WithSpecifiedDB(dbName))
+		if digest == "" {
+			// A restore failure must not be captured as the digest-of-empty-
+			// string trap constant — skip this statement.
+			logutil.BindLogger().Debug("skip baseline capture: SQL cannot be normalized (restore failed)",
+				zap.String("SQL", bindableStmt.Query))
+			continue
+		}
+		if r := h.getCache().GetBinding(digest); HasAvailableBinding(r) {
 			continue
 		}
 		bindSQL := GenerateBindingSQL(stmt, bindableStmt.PlanHint, true, dbName)
@@ -191,7 +230,7 @@ func (h *globalBindingHandle) CaptureBaselines() {
 			Charset:     charset,
 			Collation:   collation,
 			Source:      Capture,
-			SQLDigest:   digest.String(),
+			SQLDigest:   digest,
 		}
 		// We don't need to pass the `sctx` because the BindSQL has been validated already.
 		err = h.CreateGlobalBinding(nil, []*Binding{&binding})

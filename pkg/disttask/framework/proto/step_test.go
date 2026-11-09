@@ -48,6 +48,12 @@ func TestStep(t *testing.T) {
 	require.Equal(t, "done", Step2Str(TaskTypeExample, StepDone))
 	require.Equal(t, "unknown step 333", Step2Str(TaskTypeExample, 333))
 
+	// CTAS
+	require.Equal(t, "init", Step2Str(CTAS, StepInit))
+	require.Equal(t, "load", Step2Str(CTAS, StepOne))
+	require.Equal(t, "done", Step2Str(CTAS, StepDone))
+	require.Equal(t, "unknown step 444", Step2Str(CTAS, 444))
+
 	// unknown type
 	require.Equal(t, "unknown type 123", Step2Str(TaskType("123"), 123))
 }

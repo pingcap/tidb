@@ -33,8 +33,16 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPhysicalIndexJoinMemoryUsageIncludesAlternativePlanMetadata(t *testing.T) {
+	join := &PhysicalIndexJoin{}
+	expected := join.basePhysicalJoin.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfSlice*4 +
+		size.SizeOfPointer + size.SizeOfBool + size.SizeOfInt
+	require.Equal(t, expected, join.MemoryUsage())
+}
 
 func rewriteSimpleExpr(ctx expression.BuildContext, str string, schema *expression.Schema, names types.NameSlice) ([]expression.Expression, error) {
 	if str == "" {
@@ -200,7 +208,7 @@ func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase 
 		joinOtherConditions:   others,
 		outerJoinKeys:         testCase.innerKeys,
 		innerJoinKeys:         testCase.innerKeys,
-		innerStats:            dataSourceNode.StatsInfo(),
+		innerTableStats:       dataSourceNode.TableStats,
 		innerSchema:           dataSourceNode.Schema(),
 		innerPushedConditions: dataSourceNode.PushedDownConds}
 	result, _, err := indexJoinPathBuild(ctx, testCtx.path, indexJoinInfo, testCase.rebuildMode)

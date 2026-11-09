@@ -112,7 +112,7 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx base.PlanContext) *Physica
 	if ndv <= 1 {
 		return nil
 	}
-	concurrency = min(concurrency, int(ndv))
+	concurrency = capShuffleConcurrencyByNDV(concurrency, ndv)
 
 	byItems := make([]expression.Expression, 0, len(pp.PartitionBy))
 	for _, item := range pp.PartitionBy {
@@ -153,7 +153,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx base.PlanContext) *P
 	if ndv <= 1 {
 		return nil
 	}
-	concurrency = min(concurrency, int(ndv))
+	concurrency = capShuffleConcurrencyByNDV(concurrency, ndv)
 
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
@@ -164,6 +164,15 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx base.PlanContext) *P
 		ByItemArrays: [][]expression.Expression{util.CloneExprs(pp.GroupByItems)},
 	}.Init(ctx, pp.StatsInfo(), pp.QueryBlockOffset(), reqProp)
 	return shuffle
+}
+
+func capShuffleConcurrencyByNDV(concurrency int, ndv float64) int {
+	// Compare before converting because an out-of-range float-to-int conversion
+	// is implementation-specific and may produce a negative worker count.
+	if ndv > 1 && ndv < float64(concurrency) {
+		return int(ndv)
+	}
+	return concurrency
 }
 
 func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx base.PlanContext) *PhysicalShuffle {

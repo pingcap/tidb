@@ -33,6 +33,12 @@ func (do *Domain) MockInfoCacheAndLoadInfoSchema(is infoschema.InfoSchema) {
 	do.infoCache.Insert(is, 0)
 }
 
+// MarkLoadableFunctionReconcileNeededForTest marks loadable functions to be
+// reconciled on the next non-snapshot infoschema reload. It is only used in tests.
+func (do *Domain) MarkLoadableFunctionReconcileNeededForTest() {
+	do.loadableFunctionReconcileNeeded.Store(true)
+}
+
 // MustGetTableInfo returns the table info. Only used in unit tests.
 func (do *Domain) MustGetTableInfo(t *testing.T, dbName, tableName string) *model.TableInfo {
 	tbl, err := do.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tableName))

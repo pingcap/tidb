@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -233,12 +235,21 @@ type Execute struct {
 // Because GetVar use String to represent BinaryLiteral, here we need to convert string back to BinaryLiteral.
 func isGetVarBinaryLiteral(sctx base.PlanContext, expr expression.Expression) (res bool) {
 	scalarFunc, ok := expr.(*expression.ScalarFunction)
-	if ok && scalarFunc.FuncName.L == ast.GetVar {
-		name, isNull, err := scalarFunc.GetArgs()[0].EvalString(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
-		if err != nil || isNull {
-			res = false
-		} else if dt, ok2 := sctx.GetSessionVars().GetUserVarVal(name); ok2 {
-			res = dt.Kind() == types.KindBinaryLiteral
+	if ok {
+		if scalarFunc.FuncName.L == ast.GetVar {
+			name, isNull, err := scalarFunc.GetArgs()[0].EvalString(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+			if err != nil || isNull {
+				res = false
+			} else if dt, ok2 := sctx.GetSessionVars().GetUserVarVal(name); ok2 {
+				res = dt.Kind() == types.KindBinaryLiteral
+			}
+		} else if scalarFunc.FuncName.L == ast.GetProcedureVar {
+			name, isNull, err := scalarFunc.GetArgs()[0].EvalString(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+			if err != nil || isNull {
+				res = false
+			} else if _, dt, notFind := sctx.GetSessionVars().GetProcedureVariable(name); !notFind {
+				res = dt.Kind() == types.KindBinaryLiteral
+			}
 		}
 	}
 	return res
@@ -256,6 +267,11 @@ type Set struct {
 	baseSchemaProducer
 
 	VarAssigns []*expression.VarAssignment
+
+	// explainScalarSubQueries keeps SET RHS subquery plans that have already
+	// been evaluated and folded, so routine EXPLAIN ANALYZE can still render
+	// drill-down rows for the SET statement.
+	explainScalarSubQueries []*ScalarSubqueryEvalCtx
 }
 
 // SetConfig represents a plan for set config stmt.
@@ -434,6 +450,11 @@ type Insert struct {
 
 	FKChecks   []*FKCheck   `plan-cache-clone:"must-nil"`
 	FKCascades []*FKCascade `plan-cache-clone:"must-nil"`
+
+	// LabelSecurityInfo
+	PolicyName  string // The label policy name binded to this table.
+	UserLabel   string // The label binded to current user.
+	LabelColumn string // The column name of this table used to store label value.
 }
 
 // MemoryUsage return the memory usage of Insert
@@ -504,6 +525,11 @@ type Update struct {
 
 	FKChecks   map[int64][]*FKCheck   `plan-cache-clone:"must-nil"`
 	FKCascades map[int64][]*FKCascade `plan-cache-clone:"must-nil"`
+
+	// LabelSecurityInfo
+	PolicyName  string // The label policy name binded to this table.
+	UserLabel   string // The label binded to current user.
+	LabelColumn string // The column name of this table used to store label value.
 }
 
 // MemoryUsage return the memory usage of Update
@@ -839,24 +865,29 @@ type Explain struct {
 	ExecStmt         ast.StmtNode
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 
-	Rows        [][]string
-	ExplainRows [][]string
+	Rows            [][]string
+	BriefBinaryPlan string
+
+	decodedBriefBinaryPlan *tipb.ExplainData
 }
 
-// GetExplainRowsForPlan get explain rows for plan.
-func GetExplainRowsForPlan(plan base.Plan) (rows [][]string) {
-	explain := &Explain{
-		TargetPlan: plan,
-		Format:     types.ExplainFormatROW,
-		Analyze:    false,
+// GetBriefBinaryPlan returns the binary plan of the plan for explainfor.
+func GetBriefBinaryPlan(p base.Plan, runtimeStatsColl ...*execdetails.RuntimeStatsColl) string {
+	var plan base.Plan = p
+	if plan == nil {
+		return ""
 	}
-	if plan != nil {
-		explain.SetSCtx(plan.SCtx())
+	// If the plan is a prepared statement, get execute.Plan.
+	if exec, ok := p.(*Execute); ok {
+		plan = exec.Plan
 	}
-	if err := explain.RenderResult(); err != nil {
-		return rows
+	// Get plan context and statement context
+	planCtx := plan.SCtx()
+	if planCtx == nil {
+		return ""
 	}
-	return explain.Rows
+	flat := FlattenPhysicalPlan(plan, true)
+	return BinaryPlanStrFromFlatPlan(planCtx, flat, true, runtimeStatsColl...)
 }
 
 // GetExplainAnalyzeRowsForPlan get explain rows for plan.
@@ -870,19 +901,44 @@ func GetExplainAnalyzeRowsForPlan(plan *Explain) (rows [][]string) {
 	return plan.Rows
 }
 
+func (e *Explain) getDecodedBriefBinaryPlan() (*tipb.ExplainData, error) {
+	if e.BriefBinaryPlan == "" {
+		return nil, nil
+	}
+	if e.decodedBriefBinaryPlan != nil {
+		return e.decodedBriefBinaryPlan, nil
+	}
+	// Cache the parsed binary plan so local and remote EXPLAIN FOR CONNECTION
+	// paths do not decompress and unmarshal the same payload twice.
+	pb, err := plancodec.ParseBinaryPlan(e.BriefBinaryPlan)
+	if err != nil {
+		return nil, err
+	}
+	e.decodedBriefBinaryPlan = pb
+	return pb, nil
+}
+
 // prepareSchema prepares explain's result schema.
 func (e *Explain) prepareSchema() error {
 	var fieldNames []string
 	format := strings.ToLower(e.Format)
+	hasRuntimeStats := e.Analyze || e.RuntimeStatsColl != nil
+	if !hasRuntimeStats && e.BriefBinaryPlan != "" {
+		pb, err := e.getDecodedBriefBinaryPlan()
+		if err != nil {
+			return err
+		}
+		hasRuntimeStats = pb.WithRuntimeStats
+	}
 	if format == types.ExplainFormatTraditional {
 		format = types.ExplainFormatROW
 		e.Format = types.ExplainFormatROW
 	}
 	switch {
-	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (!e.Analyze && e.RuntimeStatsColl == nil):
+	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && !hasRuntimeStats:
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
 	case format == types.ExplainFormatVerbose:
-		if e.Analyze || e.RuntimeStatsColl != nil {
+		if hasRuntimeStats {
 			fieldNames = []string{"id", "estRows", "estCost", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 		} else {
 			fieldNames = []string{"id", "estRows", "estCost", "task", "access object", "operator info"}
@@ -890,12 +946,12 @@ func (e *Explain) prepareSchema() error {
 	case format == types.ExplainFormatTrueCardCost:
 		fieldNames = []string{"id", "estRows", "estCost", "costFormula", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case format == types.ExplainFormatCostTrace:
-		if e.Analyze || e.RuntimeStatsColl != nil {
+		if hasRuntimeStats {
 			fieldNames = []string{"id", "estRows", "estCost", "costFormula", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 		} else {
 			fieldNames = []string{"id", "estRows", "estCost", "costFormula", "task", "access object", "operator info"}
 		}
-	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (e.Analyze || e.RuntimeStatsColl != nil):
+	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && hasRuntimeStats:
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case format == types.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
@@ -922,8 +978,78 @@ func (e *Explain) prepareSchema() error {
 	return nil
 }
 
+// RenderFlatResult renders the explain result for a pre-flattened plan.
+func (e *Explain) RenderFlatResult(flat *FlatPhysicalPlan) error {
+	sctx := e.SCtx()
+	if sctx != nil && sctx.GetSessionVars() != nil {
+		sctx.GetSessionVars().StmtCtx.InExplainStmt = true
+	}
+	switch strings.ToLower(e.Format) {
+	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache:
+		e.Rows = nil
+		e.explainFlatPlanInRowFormat(flat)
+		if e.Analyze && len(e.Rows) > 0 && len(e.Rows[0]) > 7 && sctx != nil && sctx.GetSessionVars() != nil &&
+			sctx.GetSessionVars().MemoryDebugModeMinHeapInUse != 0 &&
+			sctx.GetSessionVars().MemoryDebugModeAlarmRatio > 0 {
+			row := e.Rows[0]
+			tracker := sctx.GetSessionVars().MemTracker
+			row[7] = row[7] + "(Total: " + tracker.FormatBytes(tracker.MaxConsumed()) + ")"
+		}
+	case types.ExplainFormatTiDBJSON:
+		encodes := e.explainFlatPlanInJSONFormat(flat)
+		if e.Analyze && len(encodes) > 0 && sctx != nil && sctx.GetSessionVars() != nil &&
+			sctx.GetSessionVars().MemoryDebugModeMinHeapInUse != 0 &&
+			sctx.GetSessionVars().MemoryDebugModeAlarmRatio > 0 {
+			encodeRoot := encodes[0]
+			tracker := sctx.GetSessionVars().MemTracker
+			encodeRoot.TotalMemoryConsumed = tracker.FormatBytes(tracker.MaxConsumed())
+		}
+		str, err := JSONToString(encodes)
+		if err != nil {
+			return err
+		}
+		e.Rows = append(e.Rows, []string{str})
+	default:
+		return errors.Errorf("explain format '%s' is not supported now", e.Format)
+	}
+	return nil
+}
+
+func (e *Explain) shouldDecodeBriefBinaryPlan() bool {
+	if e.BriefBinaryPlan == "" {
+		return false
+	}
+	if e.TargetPlan == nil {
+		return true
+	}
+	if e.RuntimeStatsColl == nil {
+		return true
+	}
+	// Prepared Execute plans can keep ParamMarker or DeferredExpr nodes whose values
+	// belong to the original execution context, so live rendering may evaluate missing params.
+	_, isExecute := e.TargetPlan.(*Execute)
+	return isExecute
+}
+
 // RenderResult renders the explain result as specified format.
 func (e *Explain) RenderResult() error {
+	// EXPLAIN FOR CONNECTION should prefer the live runtime stats collector because
+	// BriefBinaryPlan is only a snapshot taken when ProcessInfo was recorded.
+	if e.shouldDecodeBriefBinaryPlan() {
+		if strings.ToLower(e.Format) != types.ExplainFormatBrief && strings.ToLower(e.Format) != types.ExplainFormatROW && strings.ToLower(e.Format) != types.ExplainFormatVerbose {
+			return errors.Errorf("explain format '%s' for connection is not supported now", e.Format)
+		}
+		pb, err := e.getDecodedBriefBinaryPlan()
+		if err != nil {
+			return err
+		}
+		rows, err := plancodec.DecodeBinaryPlan4ConnectionFromData(pb, strings.ToLower(e.Format), false)
+		if err != nil {
+			return err
+		}
+		e.Rows = rows
+		return nil
+	}
 	if e.TargetPlan == nil {
 		return nil
 	}
@@ -967,18 +1093,12 @@ func (e *Explain) RenderResult() error {
 			e.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("'explain format=true_card_cost' cannot support this plan"))
 		}
 	}
-
 	switch strings.ToLower(e.Format) {
 	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache:
 		if e.Rows == nil || e.Analyze {
 			flat := FlattenPhysicalPlan(e.TargetPlan, true)
-			e.explainFlatPlanInRowFormat(flat)
-			if e.Analyze &&
-				e.SCtx().GetSessionVars().MemoryDebugModeMinHeapInUse != 0 &&
-				e.SCtx().GetSessionVars().MemoryDebugModeAlarmRatio > 0 {
-				row := e.Rows[0]
-				tracker := e.SCtx().GetSessionVars().MemTracker
-				row[7] = row[7] + "(Total: " + tracker.FormatBytes(tracker.MaxConsumed()) + ")"
+			if err := e.RenderFlatResult(flat); err != nil {
+				return err
 			}
 		}
 	case types.ExplainFormatDOT:
@@ -987,28 +1107,43 @@ func (e *Explain) RenderResult() error {
 		}
 	case types.ExplainFormatHint:
 		flat := FlattenPhysicalPlan(e.TargetPlan, false)
-		hints := GenHintsFromFlatPlan(flat)
-		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt, nil)...)
+		hints := GenHintsFromFlatPlanForExplain(flat)
+		originalHints := hint.ExtractTableHintsFromStmtNode(e.ExecStmt, nil)
+		hasOriginalLeading := false
+		for _, originalHint := range originalHints {
+			if originalHint.HintName.L == hint.HintLeading {
+				hasOriginalLeading = true
+				break
+			}
+		}
+		if hasOriginalLeading {
+			// TODO(#70238): Reconcile LEADING hints by query-block identity.
+			// Blast radius of this temporary measure: ANY original LEADING —
+			// even one scoped to an unrelated query block — suppresses ALL
+			// generated LEADING hints, across every query block, not just the
+			// block owning that original hint. Scoping the filter requires
+			// resolving each original hint's QB (originalHints come from the
+			// raw AST here, where QBName is often implicit), which is the
+			// actual #70238 work.
+			filtered := hints[:0]
+			for _, generatedHint := range hints {
+				if generatedHint.HintName.L != hint.HintLeading {
+					filtered = append(filtered, generatedHint)
+				}
+			}
+			hints = filtered
+		}
+		hints = append(hints, originalHints...)
 		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
 	case types.ExplainFormatBinary:
 		flat := FlattenPhysicalPlan(e.TargetPlan, false)
-		str := BinaryPlanStrFromFlatPlan(e.SCtx(), flat)
+		str := BinaryPlanStrFromFlatPlan(e.SCtx(), flat, false)
 		e.Rows = append(e.Rows, []string{str})
 	case types.ExplainFormatTiDBJSON:
 		flat := FlattenPhysicalPlan(e.TargetPlan, true)
-		encodes := e.explainFlatPlanInJSONFormat(flat)
-		if e.Analyze && len(encodes) > 0 &&
-			e.SCtx().GetSessionVars().MemoryDebugModeMinHeapInUse != 0 &&
-			e.SCtx().GetSessionVars().MemoryDebugModeAlarmRatio > 0 {
-			encodeRoot := encodes[0]
-			tracker := e.SCtx().GetSessionVars().MemTracker
-			encodeRoot.TotalMemoryConsumed = tracker.FormatBytes(tracker.MaxConsumed())
-		}
-		str, err := JSONToString(encodes)
-		if err != nil {
+		if err := e.RenderFlatResult(flat); err != nil {
 			return err
 		}
-		e.Rows = append(e.Rows, []string{str})
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -1016,7 +1151,7 @@ func (e *Explain) RenderResult() error {
 }
 
 func (e *Explain) explainFlatPlanInRowFormat(flat *FlatPhysicalPlan) {
-	if flat == nil || len(flat.Main) == 0 || flat.InExplain {
+	if flat == nil || flat.InExplain {
 		return
 	}
 	for _, flatOp := range flat.Main {
@@ -1035,16 +1170,24 @@ func (e *Explain) explainFlatPlanInRowFormat(flat *FlatPhysicalPlan) {
 }
 
 func (e *Explain) explainFlatPlanInJSONFormat(flat *FlatPhysicalPlan) (encodes []*ExplainInfoForEncode) {
-	if flat == nil || len(flat.Main) == 0 || flat.InExplain {
+	if flat == nil || flat.InExplain {
 		return
 	}
 	// flat.Main[0] must be the root node of tree
-	encodes = append(encodes, e.explainOpRecursivelyInJSONFormat(flat.Main[0], flat.Main))
+	if len(flat.Main) > 0 {
+		encodes = append(encodes, e.explainOpRecursivelyInJSONFormat(flat.Main[0], flat.Main))
+	}
 
 	for _, cte := range flat.CTEs {
+		if len(cte) == 0 {
+			continue
+		}
 		encodes = append(encodes, e.explainOpRecursivelyInJSONFormat(cte[0], cte))
 	}
 	for _, subQ := range flat.ScalarSubQueries {
+		if len(subQ) == 0 {
+			continue
+		}
 		encodes = append(encodes, e.explainOpRecursivelyInJSONFormat(subQ[0], subQ))
 	}
 	return
@@ -1058,9 +1201,8 @@ func (e *Explain) explainOpRecursivelyInJSONFormat(flatOp *FlatOperator, flats F
 		taskTp = flatOp.ReqType.Name() + "[" + flatOp.StoreType.Name() + "]"
 	}
 	explainID := flatOp.Origin.ExplainID().String() + flatOp.Label.String()
-	textTreeExplainID := texttree.PrettyIdentifier(explainID, flatOp.TextTreeIndent, flatOp.IsLastChild)
 
-	cur := e.prepareOperatorInfoForJSONFormat(flatOp.Origin, taskTp, textTreeExplainID, explainID)
+	cur := e.prepareOperatorInfoForJSONFormat(flatOp.Origin, taskTp, explainID)
 
 	for _, idx := range flatOp.ChildrenIdx {
 		cur.SubOperators = append(cur.SubOperators,
@@ -1143,7 +1285,7 @@ func (e *Explain) prepareOperatorInfo(p base.Plan, taskType, id string) {
 		return
 	}
 
-	estRows, estCost, costFormula, accessObject, operatorInfo := e.getOperatorInfo(p, id)
+	estRows, estCost, costFormula, accessObject, operatorInfo := e.getOperatorInfo(p)
 
 	var row []string
 	if e.Analyze || e.RuntimeStatsColl != nil {
@@ -1170,12 +1312,12 @@ func (e *Explain) prepareOperatorInfo(p base.Plan, taskType, id string) {
 	e.Rows = append(e.Rows, row)
 }
 
-func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, id string, explainID string) *ExplainInfoForEncode {
+func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, explainID string) *ExplainInfoForEncode {
 	if p.ExplainID().String() == "_0" {
 		return nil
 	}
 
-	estRows, _, _, accessObject, operatorInfo := e.getOperatorInfo(p, id)
+	estRows, _, _, accessObject, operatorInfo := e.getOperatorInfo(p)
 	jsonRow := &ExplainInfoForEncode{
 		ID:           explainID,
 		EstRows:      estRows,
@@ -1191,17 +1333,7 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, id str
 	return jsonRow
 }
 
-func (e *Explain) getOperatorInfo(p base.Plan, id string) (estRows, estCost, costFormula, accessObject, operatorInfo string) {
-	// For `explain for connection` statement, `e.ExplainRows` will be set.
-	for _, row := range e.ExplainRows {
-		if len(row) < 5 {
-			panic("should never happen")
-		}
-		if row[0] == id {
-			return row[1], "N/A", "N/A", row[3], row[4]
-		}
-	}
-
+func (e *Explain) getOperatorInfo(p base.Plan) (estRows, estCost, costFormula, accessObject, operatorInfo string) {
 	pp, isPhysicalPlan := p.(base.PhysicalPlan)
 	estRows = "N/A"
 	estCost = "N/A"
@@ -1235,8 +1367,12 @@ func (e *Explain) getOperatorInfo(p base.Plan, id string) (estRows, estCost, cos
 }
 
 // BinaryPlanStrFromFlatPlan generates the compressed and encoded binary plan from a FlatPhysicalPlan.
-func BinaryPlanStrFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan) string {
-	binary := binaryDataFromFlatPlan(explainCtx, flat)
+func BinaryPlanStrFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan, briefBinaryPlan bool, runtimeStatsColl ...*execdetails.RuntimeStatsColl) string {
+	var coll *execdetails.RuntimeStatsColl
+	if len(runtimeStatsColl) > 0 {
+		coll = runtimeStatsColl[0]
+	}
+	binary := binaryDataFromFlatPlan(explainCtx, flat, briefBinaryPlan, coll)
 	if binary == nil {
 		return ""
 	}
@@ -1248,7 +1384,7 @@ func BinaryPlanStrFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPl
 	return str
 }
 
-func binaryDataFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan) *tipb.ExplainData {
+func binaryDataFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan, briefBinaryPlan bool, runtimeStatsColl *execdetails.RuntimeStatsColl) *tipb.ExplainData {
 	if len(flat.Main) == 0 {
 		return nil
 	}
@@ -1260,31 +1396,54 @@ func binaryDataFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan)
 	res := &tipb.ExplainData{}
 	for _, op := range flat.Main {
 		// We assume that runtime stats are available to this plan tree if any operator in the "Main" has runtime stats.
-		rootStats, copStats, _, _ := getRuntimeInfo(explainCtx, op.Origin, nil)
+		rootStats, copStats, _, _ := getRuntimeInfo(explainCtx, op.Origin, runtimeStatsColl)
 		if rootStats != nil || copStats != nil {
 			res.WithRuntimeStats = true
 			break
 		}
 	}
-	res.Main = binaryOpTreeFromFlatOps(explainCtx, flat.Main)
+	res.Main = binaryOpTreeFromFlatOps(explainCtx, flat.Main, briefBinaryPlan, runtimeStatsColl)
 	for _, explainedCTE := range flat.CTEs {
-		res.Ctes = append(res.Ctes, binaryOpTreeFromFlatOps(explainCtx, explainedCTE))
+		res.Ctes = append(res.Ctes, binaryOpTreeFromFlatOps(explainCtx, explainedCTE, briefBinaryPlan, runtimeStatsColl))
 	}
 	return res
 }
 
-func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree) *tipb.ExplainOperator {
-	s := make([]tipb.ExplainOperator, len(ops))
+func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree, briefBinaryPlan bool, runtimeStatsColl *execdetails.RuntimeStatsColl) *tipb.ExplainOperator {
+	operators := make([]tipb.ExplainOperator, len(ops))
+
+	// First phase: Generate all operators with normal processing (including ID suffix)
 	for i, op := range ops {
-		binaryOpFromFlatOp(explainCtx, op, &s[i])
+		binaryOpFromFlatOp(explainCtx, op, &operators[i], runtimeStatsColl)
+	}
+
+	// Second phase: If briefBinaryPlan is true, set IgnoreExplainIDSuffix and generate BriefName
+	if briefBinaryPlan && len(ops) > 0 && ops[0].Origin.SCtx() != nil {
+		stmtCtx := ops[0].Origin.SCtx().GetSessionVars().StmtCtx
+		originalIgnore := stmtCtx.IgnoreExplainIDSuffix
+		stmtCtx.IgnoreExplainIDSuffix = true
+
+		for i, op := range ops {
+			operators[i].BriefName = op.Origin.ExplainID().String()
+			switch op.Origin.(type) {
+			case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalHashJoin, *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalMergeJoin:
+				operators[i].BriefOperatorInfo = op.Origin.ExplainInfo()
+			}
+		}
+
+		stmtCtx.IgnoreExplainIDSuffix = originalIgnore
+	}
+
+	// Build the tree structure
+	for i, op := range ops {
 		for _, idx := range op.ChildrenIdx {
-			s[i].Children = append(s[i].Children, &s[idx])
+			operators[i].Children = append(operators[i].Children, &operators[idx])
 		}
 	}
-	return &s[0]
+	return &operators[0]
 }
 
-func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tipb.ExplainOperator) {
+func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tipb.ExplainOperator, runtimeStatsColl *execdetails.RuntimeStatsColl) {
 	out.Name = fop.Origin.ExplainID().String()
 	switch fop.Label {
 	case BuildSide:
@@ -1326,7 +1485,7 @@ func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tip
 	}
 
 	// Runtime info
-	rootStats, copStats, memTracker, diskTracker := getRuntimeInfo(explainCtx, fop.Origin, nil)
+	rootStats, copStats, memTracker, diskTracker := getRuntimeInfo(explainCtx, fop.Origin, runtimeStatsColl)
 	if rootStats != nil {
 		basic, groups := rootStats.MergeStats()
 		if basic != nil {
@@ -1361,7 +1520,6 @@ func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tip
 	} else {
 		out.OperatorInfo = fop.Origin.ExplainInfo()
 	}
-
 	// Access object
 	switch p := fop.Origin.(type) {
 	case dataAccesser:
@@ -1504,4 +1662,70 @@ func IsAutoCommitTxn(vars *variable.SessionVars) bool {
 // AdminShowBDRRole represents a show bdr role plan.
 type AdminShowBDRRole struct {
 	baseSchemaProducer
+}
+
+// CallStmt call plan
+type CallStmt struct {
+	baseSchemaProducer
+	Callstmt        *ast.CallStmt
+	Is              infoschema.InfoSchema
+	ProcedureSQLMod string
+	// Whether the operating environment is in strict mode
+	IsStrictMode        bool
+	Plan                *ProcedurePlan
+	CachedProcedurePlan *RoutineCacahe
+}
+
+// TriggerProcedure trigger procedure plan.
+type TriggerProcedure struct {
+	baseSchemaProducer
+	Plan *ProcedurePlan
+}
+
+// SignalInfo record signal information item
+type SignalInfo struct {
+	Name int
+	Expr expression.Expression
+}
+
+// Signal create procedure plan
+type Signal struct {
+	baseSchemaProducer
+	SQLState   string
+	SignalCons []*SignalInfo
+}
+
+// DiagnosticsStatement records the object of reading variables
+type DiagnosticsStatement struct {
+	Name       string
+	IsVariable bool
+	Con        int
+}
+
+// UpdateVariable saves the reading record
+func (state *DiagnosticsStatement) UpdateVariable(ctx sessionctx.Context, fd *types.FieldType, d types.Datum) error {
+	if state.IsVariable {
+		ctx.GetSessionVars().SetUserVarVal(state.Name, d)
+		ctx.GetSessionVars().SetUserVarType(state.Name, fd)
+	} else {
+		err := UpdateVariableVar(state.Name, d, ctx.GetSessionVars())
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// DiagnosticsCondition is condition information in get diagnostics statements
+type DiagnosticsCondition struct {
+	ConditionID expression.Expression
+	Cons        []*DiagnosticsStatement
+}
+
+// GetDiagnostics creates procedure plan
+type GetDiagnostics struct {
+	baseSchemaProducer
+	Area       int
+	Statements []*DiagnosticsStatement
+	Con        *DiagnosticsCondition
 }

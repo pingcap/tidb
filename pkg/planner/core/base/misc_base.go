@@ -68,3 +68,19 @@ type MemTablePredicateExtractor interface {
 	// ExplainInfo give the basic desc of this mem extractor, `p` indicates a PhysicalPlan here.
 	ExplainInfo(p PhysicalPlan) string
 }
+
+// MemTableRowLimitHintSetter is an optional interface for memtable predicate extractors.
+//
+// The input limit is a hint for early-exit optimizations (e.g. stop scanning after enough rows are produced).
+// It must NOT change query semantics by itself.
+type MemTableRowLimitHintSetter interface {
+	SetRowLimitHint(limit uint64)
+}
+
+// MemTableDescHintSetter is an optional interface for memtable predicate extractors.
+//
+// The input desc is a hint that the executor is expected to produce rows in descending order (if supported).
+// It must NOT change query semantics by itself.
+type MemTableDescHintSetter interface {
+	SetDesc(desc bool)
+}

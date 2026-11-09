@@ -20,6 +20,7 @@ package session
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -37,11 +38,13 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	tidbtypes "github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -50,6 +53,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"go.uber.org/zap"
+)
+
+const (
+	// commitFailAuditLogStr is the audit log string template of commit failure.
+	commitFailAuditLogStr = "[Commit failed error info: %s]"
 )
 
 type domainMap struct {
@@ -141,6 +149,7 @@ var (
 	// TODO this memory flag is meaningless, a store is always bootstrapped once,
 	// we can always get the version from the store, remove it later.
 	storeBootstrapped     = make(map[string]bool)
+	storeEEBootstrapped   = make(map[string]bool)
 	storeBootstrappedLock sync.Mutex
 
 	// schemaLease is lease of info schema, we use this to check whether info schema
@@ -168,6 +177,7 @@ func setStoreBootstrapped(storeUUID string) {
 	storeBootstrappedLock.Lock()
 	defer storeBootstrappedLock.Unlock()
 	storeBootstrapped[storeUUID] = true
+	storeEEBootstrapped[storeUUID] = true
 }
 
 // unsetStoreBootstrapped delete store uuid from stored bootstrapped map.
@@ -176,6 +186,7 @@ func unsetStoreBootstrapped(storeUUID string) {
 	storeBootstrappedLock.Lock()
 	defer storeBootstrappedLock.Unlock()
 	delete(storeBootstrapped, storeUUID)
+	delete(storeEEBootstrapped, storeUUID)
 }
 
 // SetSchemaLease changes the default schema lease time for DDL.
@@ -255,7 +266,16 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 	if !readOnly {
 		// All the history should be added here.
 		if meetsErr == nil && sessVars.TxnCtx.CouldRetry {
-			GetHistory(se).Add(sql, sessVars.StmtCtx)
+			// Add only retry-safe write statements to StmtHistory.
+			// LOAD DATA LOCAL INFILE uses a one-shot client file stream via
+			// the 0xfb protocol; retrying would desync the connection.
+			// Disable retry instead of recording it. Only LOCAL is affected;
+			// non-LOCAL reads from server/remote storage and can be safely retried.
+			if isLoadDataLocal(sql) {
+				sessVars.TxnCtx.CouldRetry = false
+			} else {
+				GetHistory(se).Add(sql, sessVars.StmtCtx)
+			}
 		}
 
 		// Handle the stmt commit/rollback.
@@ -338,6 +358,7 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 
 	if !sessVars.InTxn() {
 		if err := se.CommitTxn(ctx); err != nil {
+			sessionctx.OnExtensionSecurity(se, fmt.Sprintf(commitFailAuditLogStr, err.Error()), se.GetSessionVars().StmtCtx)
 			if _, ok := sql.(*executor.ExecStmt).StmtNode.(*ast.CommitStmt); ok {
 				err = errors.Annotatef(err, "previous statement: %s", se.GetSessionVars().PrevStmt)
 			}
@@ -436,7 +457,18 @@ func ResultSetToStringSlice(ctx context.Context, s types.Session, rs sqlexec.Rec
 			if row.IsNull(j) {
 				iRow[j] = "<nil>"
 			} else {
-				d := row.GetDatum(j, &rs.Fields()[j].Column.FieldType)
+				ft := &rs.Fields()[j].Column.FieldType
+				d := row.GetDatum(j, ft)
+				switch ft.GetSubType() {
+				case mysql.SubTypeIntervalYearToMonth:
+					iRow[j] = tidbtypes.FormatIntervalYearToMonth(d.GetInt64())
+					continue
+				case mysql.SubTypeIntervalDayToSecond:
+					iRow[j] = tidbtypes.FormatIntervalDayToSecond(d.GetInt64())
+					continue
+				default:
+					// fall through to base type output.
+				}
 				iRow[j], err = d.ToString()
 				if err != nil {
 					return nil, err

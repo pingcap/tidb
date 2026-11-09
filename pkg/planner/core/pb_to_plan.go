@@ -77,6 +77,8 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan base.Physical
 		p, err = b.pbToAgg(e, true)
 	case tipb.ExecType_TypeKill:
 		p, err = b.pbToKill(e)
+	case tipb.ExecType_TypeExplainForConnection:
+		p, err = b.pbToExplainForConnection(e)
 	case tipb.ExecType_TypeBroadcastQuery:
 		p, err = b.pbToBroadcastQuery(e)
 	default:
@@ -92,6 +94,15 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan base.Physical
 		limit.SetSchema(p.Children()[0].Schema().Clone())
 		for i, col := range limit.Schema().Columns {
 			col.Index = i
+		}
+		if memTable, ok := p.Children()[0].(*PhysicalMemTable); ok {
+			if extractor, ok := memTable.Extractor.(*SlowQueryExtractor); ok {
+				end := limit.Offset + limit.Count
+				if end < limit.Offset {
+					end = ^uint64(0)
+				}
+				extractor.SetRowLimitHint(end)
+			}
 		}
 	}
 	return p, err
@@ -125,6 +136,16 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (base.PhysicalPlan, erro
 	switch strings.ToUpper(p.Table.Name.O) {
 	case infoschema.ClusterTableSlowLog:
 		extractor := &SlowQueryExtractor{}
+		extractor.Desc = tblScan.Desc
+		if b.ranges != nil {
+			err := extractor.buildTimeRangeFromKeyRange(b.ranges)
+			if err != nil {
+				return nil, err
+			}
+		}
+		p.Extractor = extractor
+	case infoschema.ClusterTableAuditLog:
+		extractor := &AuditLogExtractor{}
 		extractor.Desc = tblScan.Desc
 		if b.ranges != nil {
 			err := extractor.buildTimeRangeFromKeyRange(b.ranges)
@@ -273,6 +294,13 @@ func (*PBPlanBuilder) pbToKill(e *tipb.Executor) (base.PhysicalPlan, error) {
 	}
 	simple := Simple{Statement: node, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
 	return &PhysicalSimpleWrapper{Inner: simple}, nil
+}
+
+func (b *PBPlanBuilder) pbToExplainForConnection(e *tipb.Executor) (base.PhysicalPlan, error) {
+	if e.ExplainForConnection == nil {
+		return nil, errors.New("missing explain for connection executor")
+	}
+	return NewExplainForConnection(b.sctx, e.ExplainForConnection.ConnectionId), nil
 }
 
 func (b *PBPlanBuilder) pbToBroadcastQuery(e *tipb.Executor) (base.PhysicalPlan, error) {

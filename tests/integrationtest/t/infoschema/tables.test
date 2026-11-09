@@ -137,6 +137,7 @@ set global tidb_enable_stmt_summary = default;
 # TestPerformanceSchemaforPlanCache
 set global tidb_enable_stmt_summary = 0;
 set global tidb_enable_stmt_summary = 1;
+set tidb_enable_prepared_plan_cache = 1;
 drop table if exists t;
 create table t(a int);
 prepare stmt from 'select * from t';
@@ -145,7 +146,9 @@ select plan_cache_hits, plan_in_cache from information_schema.statements_summary
 execute stmt;
 execute stmt;
 execute stmt;
-select plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`';
+execute stmt;
+select plan_cache_hits >= 3, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`';
+set tidb_enable_prepared_plan_cache = default;
 set global tidb_enable_stmt_summary = default;
 
 # TestInfoSchemaDeadlockPrivilege
@@ -177,6 +180,7 @@ SELECT * FROM variables_info WHERE variable_name = 'innodb_compression_level';
 SET GLOBAL innodb_compression_level = DEFAULT;
 SELECT * FROM variables_info WHERE variable_name = 'tidb_txn_mode';
 SELECT * FROM variables_info WHERE variable_name = 'max_connections' AND is_noop='NO';
+SELECT * FROM variables_info WHERE variable_name = 'reserved_admin_connections' AND is_noop='NO';
 SELECT * FROM variables_info WHERE variable_name = 'tidb_checksum_table_concurrency';
 SELECT * FROM variables_info WHERE variable_name = 'tidb_prepared_plan_cache_memory_guard_ratio';
 SELECT * FROM variables_info WHERE variable_name = 'tidb_metric_query_step';
@@ -215,3 +219,19 @@ SELECT CONSTRAINT_SCHEMA, CONSTRAINT_NAME, CHECK_CLAUSE, TABLE_NAME FROM informa
 DROP TABLE t2;
 SELECT CONSTRAINT_SCHEMA, CONSTRAINT_NAME, CHECK_CLAUSE, TABLE_NAME FROM information_schema.TIDB_CHECK_CONSTRAINTS where CONSTRAINT_NAME = 't2_chk_1';
 SET GLOBAL tidb_enable_check_constraint = default;
+
+# Case-folded metadata prefilters must retain the original LIKE condition.
+CREATE DATABASE issue70825;
+CREATE TABLE issue70825.test70825(a INT);
+SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='issue70825' AND table_name LIKE 'T%';
+SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='issue70825' AND table_name NOT LIKE 'T%';
+SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='issue70825' AND table_name LIKE 'T%' AND table_name NOT LIKE 'T%';
+SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='issue70825' AND table_name LIKE 't%';
+SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='issue70825' AND table_name ILIKE 'T%';
+SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='issue70825' AND column_name LIKE 'A%';
+SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='issue70825' AND column_name LIKE 'a%';
+# Literal regexp metacharacters must not bypass the case-sensitive LIKE recheck.
+CREATE TABLE issue70825.`a[b]`(a INT);
+SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='issue70825' AND table_name LIKE 'A[B%';
+SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='issue70825' AND table_name LIKE 'a[b%';
+DROP DATABASE issue70825;

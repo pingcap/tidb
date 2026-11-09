@@ -14,6 +14,7 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/domain",
+        "//pkg/domain/pkdb_repl",
         "//pkg/expression",
         "//pkg/infoschema",
         "//pkg/kv",

@@ -939,6 +939,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 	vars.StmtCtx.SetVarHintRestore = nil
 	var sc *stmtctx.StatementContext
+	lastMissReason, _ := vars.StmtCtx.PlanCacheFallback()
 	if vars.TxnCtx.CouldRetry || vars.HasStatusFlag(mysql.ServerStatusCursorExists) {
 		// Must construct new statement context object, the retry history need context for every statement.
 		// TODO: Maybe one day we can get rid of transaction retry, then this logic can be deleted.
@@ -946,7 +947,16 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else {
 		sc = vars.InitStatementContext()
 	}
+	// If it's a stmt in procedure, the flag associated with sql_mode needs to be reset.
+	if ctx.GetSessionVars().GetCallProcedure() {
+		plannercore.ResetFlagBySQLMode(sc, vars)
+	}
+	if vars.StmtCtx.TriggerCtx.InTrigger {
+		// Inherit the trigger context.
+		sc.TriggerCtx = vars.StmtCtx.TriggerCtx
+	}
 	sc.SetTimeZone(vars.Location())
+	sc.PlanCacheDMLParamTypeMatchEnabled = vars.EnablePlanCacheDMLParamTypeMatch
 	sc.TaskID = stmtctx.AllocateTaskID()
 	if sc.CTEStorageMap == nil {
 		sc.CTEStorageMap = map[int]*CTEStorages{}
@@ -993,6 +1003,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.StatsLoad.ResultCh = nil
 
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
+	sc.EnableTiKVShortCircuitExpression = vars.EnableTiKVShortCircuitExpression
 
 	vars.MemTracker.Detach()
 	vars.MemTracker.UnbindActions()
@@ -1021,7 +1032,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		vars.MemTracker.SetBytesLimit(-1)
 		vars.MemTracker.AttachTo(GlobalAnalyzeMemoryTracker)
 	} else {
-		sc.InitMemTracker(memory.LabelForSQLText, -1)
+		// call stmt will not directly read tikv data and does not require initialization track.
+		// call stmt will be initialized indirectly from the ExecRestrictedSQL interface.
+		if _, ok := s.(*ast.CallStmt); !ok {
+			sc.InitMemTracker(memory.LabelForSQLText, -1)
+		}
 	}
 	logOnQueryExceedMemQuota := domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota
 	switch variable.OOMAction.Load() {
@@ -1036,9 +1051,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		action.SetLogHook(logOnQueryExceedMemQuota)
 		vars.MemTracker.SetActionOnExceed(action)
 	}
-	sc.MemTracker.SessionID.Store(vars.ConnectionID)
-	sc.MemTracker.AttachTo(vars.MemTracker)
-	sc.InitDiskTracker(memory.LabelForSQLText, -1)
+	if _, ok := s.(*ast.CallStmt); !ok {
+		sc.MemTracker.SessionID.Store(vars.ConnectionID)
+		sc.MemTracker.AttachTo(vars.MemTracker)
+		sc.InitDiskTracker(memory.LabelForSQLText, -1)
+	}
 	globalConfig := config.GetGlobalConfig()
 	if variable.EnableTmpStorageOnOOM.Load() && sc.DiskTracker != nil {
 		sc.DiskTracker.AttachTo(vars.DiskTracker)
@@ -1054,6 +1071,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		s = prepareStmt.PreparedAst.Stmt
 		sc.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
 		// For `execute stmt` SQL, should reset the SQL digest with the prepare SQL digest.
+		//
+		// The binding digest is NOT computed here: it is consumer-driven —
+		// the slow-log fills (rule evaluation / flush)
+		// resolve the prepared statement on demand at their own sites, so an
+		// EXECUTE nobody logs costs no binding normalization at all.
 		goCtx := context.Background()
 		if variable.EnablePProfSQLCPU.Load() && len(prepareStmt.NormalizedSQL) > 0 {
 			goCtx = pprof.WithLabels(goCtx, pprof.Labels("sql", FormatSQL(prepareStmt.NormalizedSQL).String()))
@@ -1078,6 +1100,15 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreExplainIDSuffix = strings.ToLower(explainStmt.Format) == types.ExplainFormatBrief
 		sc.InVerboseExplain = strings.ToLower(explainStmt.Format) == types.ExplainFormatVerbose
 		s = explainStmt.Stmt
+	} else if explainRoutineStmt, ok := s.(*ast.ExplainRoutineStmt); ok {
+		sc.InExplainStmt = true
+		sc.ExplainFormat = strings.ToLower(explainRoutineStmt.Format)
+		if sc.ExplainFormat == "" || sc.ExplainFormat == types.ExplainFormatTraditional {
+			sc.ExplainFormat = types.ExplainFormatROW
+		}
+		sc.InExplainAnalyzeStmt = explainRoutineStmt.Analyze
+		sc.IgnoreExplainIDSuffix = sc.ExplainFormat == types.ExplainFormatBrief
+		sc.InVerboseExplain = sc.ExplainFormat == types.ExplainFormatVerbose
 	} else {
 		sc.ExplainFormat = ""
 	}
@@ -1183,6 +1214,23 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			WithIgnoreTruncateErr(true).
 			WithIgnoreZeroInDate(true).
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
+	case *ast.CallStmt, *ast.CreateProcedureInfo:
+		sc.SetTypeFlags(sc.TypeFlags().
+			WithTruncateAsWarning(!strictSQLMode).
+			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
+			WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() ||
+				!vars.SQLMode.HasNoZeroDateMode() ||
+				!strictSQLMode ||
+				vars.SQLMode.HasAllowInvalidDatesMode()))
+		errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
+			!vars.SQLMode.HasErrorForDivisionByZeroMode(), !strictSQLMode)
+	case *ast.Signal:
+		sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(!strictSQLMode))
+	case *ast.GetDiagnosticsStmt:
+		sc.InDiagnostics = true
+		sc.LastWarningNum = len(vars.StmtCtx.GetWarnings())
+		sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(!strictSQLMode))
+		sc.SetWarnings(vars.StmtCtx.GetWarnings())
 	default:
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithIgnoreTruncateErr(true).
@@ -1218,6 +1266,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.PrevAffectedRows = int64(vars.StmtCtx.AffectedRows())
 	} else if vars.StmtCtx.InSelectStmt {
 		sc.PrevAffectedRows = -1
+	} else if _, ok := s.(*ast.GetDiagnosticsStmt); ok {
+		sc.PrevAffectedRows = vars.StmtCtx.PrevAffectedRows
 	}
 	if globalConfig.Instance.EnableCollectExecutionInfo.Load() {
 		// In ExplainFor case, RuntimeStatsColl should not be reset for reuse,
@@ -1247,6 +1297,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.ExchangeChunkStatus()
 	vars.StmtCtx = sc
 	vars.PrevFoundInPlanCache = vars.FoundInPlanCache
+	vars.PrevPlanCacheMissReason = lastMissReason.String()
 	vars.FoundInPlanCache = false
 	vars.PrevFoundInBinding = vars.FoundInBinding
 	vars.FoundInBinding = false

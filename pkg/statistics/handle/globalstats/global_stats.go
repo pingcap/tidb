@@ -28,13 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/tiancaiamao/gp"
 	"go.uber.org/zap"
-)
-
-const (
-	// MaxPartitionMergeBatchSize indicates the max batch size for a worker to merge partition stats
-	MaxPartitionMergeBatchSize = 256
 )
 
 // statsGlobalImpl implements util.StatsGlobal
@@ -48,18 +42,19 @@ func NewStatsGlobal(statsHandler statstypes.StatsHandle) statstypes.StatsGlobal 
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
+// The returned boolean reports whether at least one global stats record was persisted.
 func (sg *statsGlobalImpl) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
 	info *statstypes.GlobalStatsInfo,
 	physicalID int64,
-) (err error) {
+) (updated bool, err error) {
 	globalStats, err := MergePartitionStats2GlobalStatsByTableID(sc, sg.statsHandler, opts, is, physicalID, info.IsIndex == 1, info.HistIDs)
 	if err != nil {
 		if types.ErrPartitionStatsMissing.Equal(err) || types.ErrPartitionColumnStatsMissing.Equal(err) {
 			// When we find some partition-level stats are missing, we need to report warning.
 			sc.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
-		return err
+		return false, err
 	}
 	return WriteGlobalStatsToStorage(sg.statsHandler, globalStats, info, physicalID)
 }
@@ -121,7 +116,7 @@ func MergePartitionStats2GlobalStats(
 		zap.Int64("tableID", globalTableInfo.ID),
 		zap.String("table", globalTableInfo.Name.L),
 	)
-	return blockingMergePartitionStats2GlobalStats(sc, statsHandle.GPool(), opts, is, globalTableInfo, isIndex, histIDs, nil, statsHandle)
+	return blockingMergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, nil, statsHandle)
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
@@ -175,7 +170,6 @@ var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 // It is the old algorithm to merge partition-level stats to global-level stats. It will happen the OOM. because it will load all the partition-level stats into memory.
 func blockingMergePartitionStats2GlobalStats(
 	sc sessionctx.Context,
-	gpool *gp.Pool,
 	opts map[ast.AnalyzeOptionType]uint64,
 	is infoschema.InfoSchema,
 	globalTableInfo *model.TableInfo,
@@ -339,39 +333,37 @@ func blockingMergePartitionStats2GlobalStats(
 				return
 			}
 		}
+		allCms[i] = nil // Release for GC.
 
-		// Merge topN.
-		// Note: We need to merge TopN before merging the histogram.
-		// Because after merging TopN, some numbers will be left.
-		// These remaining topN numbers will be used as a separate bucket for later histogram merging.
-		var poppedTopN []statistics.TopNMeta
-		wrapper := NewStatsWrapper(allHg[i], allTopN[i])
-		globalStats.TopN[i], poppedTopN, allHg[i], err = mergeGlobalStatsTopN(gpool, sc, wrapper,
-			sc.GetSessionVars().StmtCtx.TimeZone(), sc.GetSessionVars().AnalyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex)
+		// Combined TopN + histogram merge that extracts
+		// histogram upper-bound Repeat counts into the TopN counter.
+		killer := &sc.GetSessionVars().SQLKiller
+		globalStats.TopN[i], globalStats.Hg[i], err = statistics.MergePartTopNAndHistToGlobal(
+			sc.GetSessionVars().StmtCtx, killer,
+			allTopN[i], allHg[i],
+			uint32(opts[ast.AnalyzeOptNumTopN]),
+			int64(opts[ast.AnalyzeOptNumBuckets]),
+			isIndex,
+		)
+		allTopN[i] = nil // Release for GC.
+		allHg[i] = nil   // Release for GC.
 		if err != nil {
 			return
 		}
 
-		// Merge histogram.
-		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc.GetSessionVars().StmtCtx, allHg[i], poppedTopN,
-			int64(opts[ast.AnalyzeOptNumBuckets]), isIndex)
-		if err != nil {
-			return
-		}
-
-		// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
+		// MergePartTopNAndHistToGlobal already leaves bucket NDV = 0; here
+		// we just set the table-level NDV.
 		if globalStats.Hg[i] != nil {
-			for j := range globalStats.Hg[i].Buckets {
-				globalStats.Hg[i].Buckets[j].NDV = 0
-			}
 			globalStats.Hg[i].NDV = globalStatsNDV
 		}
 	}
 	return
 }
 
-// WriteGlobalStatsToStorage is to write global stats to storage
-func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *GlobalStats, info *statstypes.GlobalStatsInfo, gid int64) (err error) {
+// WriteGlobalStatsToStorage writes global stats to storage. It continues after
+// individual write errors, reports whether at least one histogram was persisted,
+// and returns the first write error.
+func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *GlobalStats, info *statstypes.GlobalStatsInfo, gid int64) (updated bool, firstErr error) {
 	// Dump global-level stats to kv.
 	for i := 0; i < globalStats.Num; i++ {
 		hg, cms, topN := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i]
@@ -380,7 +372,7 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 			continue
 		}
 		// fms for global stats doesn't need to dump to kv.
-		err = statsHandle.SaveColOrIdxStatsToStorage(gid,
+		saveErr := statsHandle.SaveColOrIdxStatsToStorage(gid,
 			globalStats.Count,
 			globalStats.ModifyCount,
 			info.IsIndex,
@@ -392,10 +384,15 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 			true,
 			util.StatsMetaHistorySourceAnalyze,
 		)
-		if err != nil {
+		if saveErr != nil {
+			if firstErr == nil {
+				firstErr = saveErr
+			}
 			statslogutil.StatsLogger().Error("save global-level stats to storage failed",
-				zap.Int64("histID", hg.ID), zap.Error(err), zap.Int64("tableID", gid))
+				zap.Int64("histID", hg.ID), zap.Error(saveErr), zap.Int64("tableID", gid))
+		} else {
+			updated = true
 		}
 	}
-	return err
+	return updated, firstErr
 }

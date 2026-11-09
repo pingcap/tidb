@@ -281,6 +281,18 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 
 	ctx = kv.WithInternalSourceType(ctx, getDDLRequestSource(job.Type))
 	switch job.Type {
+	case model.ActionCreateTable:
+		tableIDs, err := getRollbackCTASDeleteRangeTableIDs(job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for i := 0; i < len(tableIDs); i += batchInsertDeleteRangeSize {
+			batchEnd := min(len(tableIDs), i+batchInsertDeleteRangeSize)
+			if err := doBatchDeleteTablesRange(ctx, wrapper, job.ID, tableIDs[i:batchEnd], ea, "rollback CTAS: table IDs"); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
 	case model.ActionDropSchema:
 		args, err := model.GetFinishedDropSchemaArgs(job)
 		if err != nil {

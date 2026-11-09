@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -48,8 +49,9 @@ var (
 )
 
 type rowToEncode struct {
-	row   []types.Datum
-	rowID int64
+	row          []types.Datum
+	rowID        int64
+	autoIDAssign autoIDAssignment
 	// endOffset represents the offset of lower level reader after parsing the
 	// current row , it mostly > the offset where parser has parsed.
 	// we use this offset for progress reporting, we meet a case in lightning
@@ -64,11 +66,11 @@ type rowToEncode struct {
 	resetFn  func()
 }
 
-type encodeReaderFn func(ctx context.Context) (data rowToEncode, closed bool, err error)
+type encodeReaderFn func(ctx context.Context, row []types.Datum) (data rowToEncode, closed bool, err error)
 
 // parserEncodeReader wraps a mydump.Parser as a encodeReaderFn.
 func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) encodeReaderFn {
-	return func(context.Context) (data rowToEncode, closed bool, err error) {
+	return func(context.Context, []types.Datum) (data rowToEncode, closed bool, err error) {
 		readPos, _ := parser.Pos()
 		if readPos >= endOffset {
 			closed = true
@@ -89,8 +91,11 @@ func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) 
 		}
 		lastRow := parser.LastRow()
 		data = rowToEncode{
-			row:       lastRow.Row,
-			rowID:     lastRow.RowID,
+			row:   lastRow.Row,
+			rowID: lastRow.RowID,
+			autoIDAssign: autoIDAssignment{
+				incrementID: lastRow.RowID,
+			},
 			endOffset: currOffset,
 			startPos:  readPos,
 			resetFn:   func() { parser.RecycleRow(lastRow) },
@@ -99,27 +104,70 @@ func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) 
 	}
 }
 
-// queryRowEncodeReader wraps a QueryRow channel as a encodeReaderFn.
-func queryRowEncodeReader(rowCh <-chan QueryRow) encodeReaderFn {
-	return func(ctx context.Context) (data rowToEncode, closed bool, err error) {
+type queryChunkEncodeReader struct {
+	chunkCh <-chan QueryChunk
+	currChk QueryChunk
+	cursor  int
+	numRows int
+}
+
+func (r *queryChunkEncodeReader) readRow(ctx context.Context, row []types.Datum) (data rowToEncode, closed bool, err error) {
+	if r.currChk.Chk == nil || r.cursor >= r.numRows {
 		select {
 		case <-ctx.Done():
 			err = ctx.Err()
 			return
-		case row, ok := <-rowCh:
+		case currChk, ok := <-r.chunkCh:
 			if !ok {
 				closed = true
 				return
 			}
-			data = rowToEncode{
-				row:       row.Data,
-				rowID:     row.ID,
-				endOffset: -1,
-				startPos:  -1,
-				resetFn:   func() {},
-			}
-			return
+			r.currChk = currChk
+			r.cursor = 0
+			r.numRows = r.currChk.Chk.NumRows()
 		}
+	}
+
+	chkRow := r.currChk.Chk.GetRow(r.cursor)
+	rowLen := chkRow.Len()
+	if cap(row) < rowLen {
+		row = make([]types.Datum, rowLen)
+	} else {
+		row = row[:0]
+		for range rowLen {
+			row = append(row, types.Datum{}) // nozero
+		}
+	}
+	row = chkRow.GetDatumRowWithBuffer(r.currChk.Fields, row)
+	r.cursor++
+	rowID := r.currChk.RowIDOffset + int64(r.cursor)
+	autoIDAssign := autoIDAssignment{
+		incrementID: rowID,
+	}
+	if r.currChk.AutoIDOptions != nil {
+		autoIDOptions := r.currChk.AutoIDOptions
+		autoIDAssign = autoIDAssignment{
+			incrementID: autoIDOptions.AutoIncrementIDOffset + int64(r.cursor)*autoIDOptions.AutoIncrementIDIncrement,
+			randomShard: autoIDOptions.AutoRandomShard,
+			randomID:    autoIDOptions.AutoRandomIDBase + int64(r.cursor)*autoIDOptions.AutoRandomIDIncrement,
+		}
+	}
+	data = rowToEncode{
+		row:          row,
+		rowID:        rowID,
+		autoIDAssign: autoIDAssign,
+		endOffset:    -1,
+		startPos:     -1,
+		resetFn:      func() {},
+	}
+	return
+}
+
+// queryRowEncodeReader wraps a queryChunkEncodeReader as a encodeReaderFn.
+func queryRowEncodeReader(chunkCh <-chan QueryChunk) encodeReaderFn {
+	reader := queryChunkEncodeReader{chunkCh: chunkCh}
+	return func(ctx context.Context, row []types.Datum) (data rowToEncode, closed bool, err error) {
+		return reader.readRow(ctx, row)
 	}
 }
 
@@ -143,8 +191,9 @@ func (b *encodedKVGroupBatch) reset() {
 	b.memBuf = nil
 }
 
-func newEncodedKVGroupBatch(keyspace []byte) *encodedKVGroupBatch {
+func newEncodedKVGroupBatch(keyspace []byte, count int) *encodedKVGroupBatch {
 	return &encodedKVGroupBatch{
+		dataKVs:       make([]common.KvPair, 0, count),
 		indexKVs:      make(map[int64][]common.KvPair, 8),
 		groupChecksum: verify.NewKVGroupChecksumWithKeyspace(keyspace),
 	}
@@ -160,6 +209,9 @@ func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) error {
 			indexID, err := tablecodec.DecodeIndexID(pair.Key)
 			if err != nil {
 				return errors.Trace(err)
+			}
+			if len(b.indexKVs[indexID]) == 0 {
+				b.indexKVs[indexID] = make([]common.KvPair, 0, cap(b.dataKVs))
 			}
 			b.indexKVs[indexID] = append(b.indexKVs[indexID], pair)
 			b.groupChecksum.UpdateOneIndexKV(indexID, pair)
@@ -251,8 +303,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		p.encodeTotalDur += encodeDur
 		p.readTotalDur += readDur
 
-		kvGroupBatch := newEncodedKVGroupBatch(p.keyspace)
-
+		kvGroupBatch := newEncodedKVGroupBatch(p.keyspace, rowCount)
 		for _, kvs := range rowBatch {
 			if err := kvGroupBatch.add(kvs); err != nil {
 				return errors.Trace(err)
@@ -275,10 +326,13 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		return nil
 	}
 
-	var rowNumber int
+	var (
+		readRowCache []types.Datum
+		rowNumber    int
+	)
 	for {
 		readDurStart := time.Now()
-		data, closed, err := p.readFn(ctx)
+		data, closed, err := p.readFn(ctx, readRowCache)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -286,10 +340,11 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 			break
 		}
 		rowNumber++
+		readRowCache = data.row
 		readDur += time.Since(readDurStart)
 
 		encodeDurStart := time.Now()
-		kvs, encodeErr := p.encoder.Encode(data.row, data.rowID)
+		kvs, encodeErr := p.encoder.encodeWithAutoIDAssignment(data.row, data.rowID, data.autoIDAssign)
 		currOffset = data.endOffset
 		data.resetFn()
 		if encodeErr != nil {
@@ -504,14 +559,25 @@ func (p *dataDeliver) summaryFields() []zap.Field {
 	}
 }
 
-// QueryRow is a row from query result.
-type QueryRow struct {
-	ID   int64
-	Data []types.Datum
+// AutoIDOptions contains options on auto allocate id
+type AutoIDOptions struct {
+	AutoIncrementIDOffset    int64
+	AutoIncrementIDIncrement int64
+	AutoRandomShard          int64
+	AutoRandomIDBase         int64
+	AutoRandomIDIncrement    int64
+}
+
+// QueryChunk is a chunk from query result.
+type QueryChunk struct {
+	Fields        []*types.FieldType
+	Chk           *chunk.Chunk
+	RowIDOffset   int64
+	AutoIDOptions *AutoIDOptions
 }
 
 func newQueryChunkProcessor(
-	rowCh chan QueryRow,
+	chunkCh chan QueryChunk,
 	encoder *TableKVEncoder,
 	keyspace []byte,
 	logger *zap.Logger,
@@ -534,7 +600,7 @@ func newQueryChunkProcessor(
 		deliver:    deliver,
 		enc: newChunkEncoder(
 			chunkName,
-			queryRowEncodeReader(rowCh),
+			queryRowEncodeReader(chunkCh),
 			-1,
 			deliver.sendEncodedData,
 			chunkLogger,

@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -339,6 +340,19 @@ func TestSlowLogFormat(t *testing.T) {
 	require.Equal(t, resultFields+"\n"+"use test;\n"+sql, logString)
 	require.False(t, seVar.CurrentDBChanged)
 
+	// Binding_digest: omitted from the slow log when empty
+	// (the golden assertions above already pin the empty shape),
+	// and emitted right after Digest when the statement carries a
+	// binding-vocabulary digest.
+	bindingStmt, err := parser.New().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	_, bindingDigest := norm.NormalizeStmtForBinding(bindingStmt, norm.WithSpecifiedDB(seVar.CurrentDB))
+	require.NotEmpty(t, bindingDigest)
+	logItems.BindingDigest = bindingDigest
+	logString = seVar.SlowLogFormat(logItems)
+	require.Contains(t, logString, "# Digest: "+digest.String()+"\n# Binding_digest: "+bindingDigest+"\n")
+	logItems.BindingDigest = ""
+
 	// Verify SessionConnectAttrs serialization.
 	logItems.SessionConnectAttrs = map[string]string{
 		"_client_name": "libmysql",
@@ -376,7 +390,11 @@ func TestSlowLogFormat(t *testing.T) {
 	// Restore for subsequent assertions.
 	logItems.SessionConnectAttrs = nil
 
-	// test PrepareSlowLogItemsForRules and CompleteSlowLogItemsForRules
+	// test PrepareSlowLogItemsForRules and CompleteSlowLogItemsForRules.
+	// Note: this synthetic flow does not run ResetContextOfStmt, so the
+	// stmtctx still carries the previous statement's binding-digest memo —
+	// the Binding_digest flush producer is covered end-to-end (against the
+	// persisted bind_info vocabulary) in pkg/bindinfo's slow log gate.
 	seVar.SlowLogRules = slowlogrule.NewSessionSlowLogRules(&slowlogrule.SlowLogRules{
 		Fields: map[string]struct{}{
 			strings.ToLower(variable.SlowLogDBStr):          {},
@@ -427,7 +445,7 @@ func compareSlowLogItems(t *testing.T, expected, actual *variable.SlowQueryLogIt
 
 	// Some fields are hard to mock, so we skip them.
 	skipFields := []string{"KeyspaceID", "KeyspaceName", "TimeTotal", "Prepared", "ResultRows", "ResultRows", "Plan", "BinaryPlan",
-		"UsedStats", "CopTasks", "RewriteInfo", "ExecRetryTime", "Warnings", "RUDetails", "MemMax", "DiskMax", "StorageKV"}
+		"UsedStats", "CopTasks", "RewriteInfo", "ExecRetryTime", "Warnings", "RUDetails", "MemMax", "DiskMax", "StorageKV", "BindingDigest"}
 	skipFieldsFunc := func(res string, fields []string) bool {
 		for _, f := range fields {
 			if res == f {
@@ -568,6 +586,73 @@ func TestNonPreparedPlanCacheStmt(t *testing.T) {
 	sessVars.AddNonPreparedPlanCacheStmt(sql2, new(plannercore.PlanCacheStmt))
 	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
 	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql2))
+
+	t.Run("LRU capacity", func(t *testing.T) {
+		lruVars := variable.NewSessionVars(nil)
+		lruVars.SessionPlanCacheSize = 2
+		stmt1, stmt2, stmt3 := new(plannercore.PlanCacheStmt), new(plannercore.PlanCacheStmt), new(plannercore.PlanCacheStmt)
+		lruSQL1 := "select * from t where a>?"
+		lruSQL2 := "select * from t where a<?"
+		lruSQL3 := "select * from t where a=?"
+
+		lruVars.AddNonPreparedPlanCacheStmt(lruSQL1, stmt1)
+		lruVars.AddNonPreparedPlanCacheStmt(lruSQL2, stmt2)
+		// Touch lruSQL1 so lruSQL2 is the least recently used entry.
+		require.Same(t, stmt1, lruVars.GetNonPreparedPlanCacheStmt(lruSQL1))
+		lruVars.AddNonPreparedPlanCacheStmt(lruSQL3, stmt3)
+		require.Same(t, stmt1, lruVars.GetNonPreparedPlanCacheStmt(lruSQL1))
+		require.Nil(t, lruVars.GetNonPreparedPlanCacheStmt(lruSQL2))
+		require.Same(t, stmt3, lruVars.GetNonPreparedPlanCacheStmt(lruSQL3))
+	})
+
+	t.Run("parser context isolation", func(t *testing.T) {
+		contextVars := variable.NewSessionVars(nil)
+		contextVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
+		contextVars.SessionPlanCacheSize = 10
+		stmt := new(plannercore.PlanCacheStmt)
+		const sql = "select * from t where a>?"
+
+		contextVars.AddNonPreparedPlanCacheStmt(sql, stmt)
+		require.Same(t, stmt, contextVars.GetNonPreparedPlanCacheStmt(sql))
+
+		originalDB := contextVars.CurrentDB
+		contextVars.CurrentDB = "another_db"
+		require.Nil(t, contextVars.GetNonPreparedPlanCacheStmt(sql))
+		contextVars.CurrentDB = originalDB
+		require.Same(t, stmt, contextVars.GetNonPreparedPlanCacheStmt(sql))
+
+		originalSQLMode := contextVars.SQLMode
+		contextVars.SQLMode = mysql.ModePipesAsConcat
+		require.Nil(t, contextVars.GetNonPreparedPlanCacheStmt(sql))
+		contextVars.SQLMode = originalSQLMode
+		require.Same(t, stmt, contextVars.GetNonPreparedPlanCacheStmt(sql))
+
+		originalCharset, originalCollation := contextVars.GetCharsetInfo()
+		require.NoError(t, contextVars.SetSystemVar(variable.CharacterSetConnection, "latin1"))
+		require.Nil(t, contextVars.GetNonPreparedPlanCacheStmt(sql))
+		require.NoError(t, contextVars.SetSystemVar(variable.CharacterSetConnection, originalCharset))
+		require.NoError(t, contextVars.SetSystemVar(variable.CollationConnection, originalCollation))
+		require.Same(t, stmt, contextVars.GetNonPreparedPlanCacheStmt(sql))
+
+		originalClient, err := contextVars.GetSessionOrGlobalSystemVar(context.Background(), variable.CharacterSetClient)
+		require.NoError(t, err)
+		require.NoError(t, contextVars.SetSystemVar(variable.CharacterSetClient, "latin1"))
+		require.Nil(t, contextVars.GetNonPreparedPlanCacheStmt(sql))
+		require.NoError(t, contextVars.SetSystemVar(variable.CharacterSetClient, originalClient))
+		require.Same(t, stmt, contextVars.GetNonPreparedPlanCacheStmt(sql))
+
+		originalWindowFunction := contextVars.EnableWindowFunction
+		contextVars.EnableWindowFunction = !originalWindowFunction
+		require.Nil(t, contextVars.GetNonPreparedPlanCacheStmt(sql))
+		contextVars.EnableWindowFunction = originalWindowFunction
+		require.Same(t, stmt, contextVars.GetNonPreparedPlanCacheStmt(sql))
+
+		originalStrictDoubleCheck := contextVars.EnableStrictDoubleTypeCheck
+		contextVars.EnableStrictDoubleTypeCheck = !originalStrictDoubleCheck
+		require.Nil(t, contextVars.GetNonPreparedPlanCacheStmt(sql))
+		contextVars.EnableStrictDoubleTypeCheck = originalStrictDoubleCheck
+		require.Same(t, stmt, contextVars.GetNonPreparedPlanCacheStmt(sql))
+	})
 }
 
 func TestHookContext(t *testing.T) {

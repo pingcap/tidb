@@ -34,9 +34,12 @@ go_library(
 go_test(
     name = "prepare_snap_test",
     timeout = "short",
-    srcs = ["prepare_test.go"],
+    srcs = [
+        "pkdb_prepare_test.go",
+        "prepare_test.go",
+    ],
     flaky = True,
-    shard_count = 10,
+    shard_count = 11,
     deps = [
         ":prepare_snap",
         "//br/pkg/utils",
@@ -49,6 +52,7 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//opt",
         "@org_uber_go_zap//zapcore",
     ],
 )

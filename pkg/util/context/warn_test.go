@@ -62,6 +62,43 @@ func TestSQLWarn(t *testing.T) {
 	}
 }
 
+func TestPlanCacheFallbackReason(t *testing.T) {
+	tests := []struct {
+		reason PlanCacheFallbackReason
+		label  string
+	}{
+		{PlanCacheFallbackUnknown, "unknown"},
+		{PlanCacheFallbackCacheDisabled, "cache_disabled"},
+		{PlanCacheFallbackUnsupportedStatementType, "unsupported_statement_type"},
+		{PlanCacheFallbackNotCacheable, "not_cacheable"},
+		{PlanCacheFallbackParameterTypeMismatch, "parameter_type_mismatch"},
+		{PlanCacheFallbackLookupMiss, "lookup_miss"},
+		{PlanCacheFallbackReuseRejected, "reuse_rejected"},
+		{PlanCacheFallbackCacheInsertFailed, "cache_insert_failed"},
+	}
+	for _, tt := range tests {
+		require.Equal(t, tt.label, tt.reason.String())
+		require.Equal(t, tt.reason, NormalizePlanCacheFallbackReason(tt.reason))
+	}
+
+	require.Empty(t, PlanCacheFallbackNone.String())
+	require.Equal(t, PlanCacheFallbackNone, NormalizePlanCacheFallbackReason(PlanCacheFallbackNone))
+	require.Equal(t, PlanCacheFallbackUnknown, NormalizePlanCacheFallbackReason(PlanCacheFallbackReason(255)))
+
+	tracker := NewPlanCacheTracker(nil)
+	reason, timestamp := tracker.PlanCacheFallback()
+	require.Equal(t, PlanCacheFallbackNone, reason)
+	require.Zero(t, timestamp)
+	tracker.SetPlanCacheFallback(PlanCacheFallbackLookupMiss, 123)
+	reason, timestamp = tracker.PlanCacheFallback()
+	require.Equal(t, PlanCacheFallbackLookupMiss, reason)
+	require.Equal(t, int64(123), timestamp)
+	tracker.SetPlanCacheFallback(PlanCacheFallbackNone, 0)
+	reason, timestamp = tracker.PlanCacheFallback()
+	require.Equal(t, PlanCacheFallbackNone, reason)
+	require.Zero(t, timestamp)
+}
+
 func TestIgnoreWarn(t *testing.T) {
 	require.Equal(t, 0, IgnoreWarn.WarningCount())
 

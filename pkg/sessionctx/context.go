@@ -26,9 +26,11 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	tablelock "github.com/pingcap/tidb/pkg/lock/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
@@ -51,7 +53,7 @@ type SessionStatesHandler interface {
 
 // SessionPlanCache is an interface for prepare and non-prepared plan cache
 type SessionPlanCache interface {
-	Get(key string, paramTypes any) (value any, ok bool)
+	Get(key string, paramTypes any) (value any, status PlanCacheLookupStatus)
 	Put(key string, value, paramTypes any)
 	Delete(key string)
 	DeleteAll()
@@ -60,11 +62,26 @@ type SessionPlanCache interface {
 	Close()
 }
 
+// PlanCacheLookupStatus describes the result of a plan cache lookup without
+// exposing planner implementation details through the session context package.
+type PlanCacheLookupStatus uint8
+
+const (
+	// PlanCacheLookupStatusUnknown is the defensive status for an unclassified result.
+	PlanCacheLookupStatusUnknown PlanCacheLookupStatus = iota
+	// PlanCacheLookupHit means a compatible cached plan was found.
+	PlanCacheLookupHit
+	// PlanCacheLookupKeyNotFound means the lookup key has no cache bucket.
+	PlanCacheLookupKeyNotFound
+	// PlanCacheLookupParamTypeMismatch means the bucket has no compatible parameter type.
+	PlanCacheLookupParamTypeMismatch
+)
+
 // InstancePlanCache represents the instance/node level plan cache.
 // Value and Opts should always be *PlanCacheValue and *PlanCacheMatchOpts, use any to avoid cycle-import.
 type InstancePlanCache interface {
 	// Get gets the cached value from the cache according to key and opts.
-	Get(key string, paramTypes any) (value any, ok bool)
+	Get(key string, paramTypes any) (value any, status PlanCacheLookupStatus)
 	// Put puts the key and value into the cache.
 	Put(key string, value, paramTypes any) (succ bool)
 	// Evict evicts some cached values.
@@ -213,6 +230,18 @@ type Context interface {
 	GetCursorTracker() cursor.Tracker
 	// GetCommitWaitGroup returns the wait group for async commit and secondary lock cleanup background goroutines
 	GetCommitWaitGroup() *sync.WaitGroup
+	// SetSessionExec set procedure interface.
+	SetSessionExec(cc SessionExec)
+	// GetSessionExec get procedure interface.
+	GetSessionExec() SessionExec
+	// GetTraceCtx returns the context bind with trace information.
+	// The trace information is set when entering server/conn.dispatch and reset after dispatch returns.
+	// The context only contains the initial trace information, which is used to track the execution of the current statement.
+	// During the execution of the statement, additional information may be added to the context, like context.WithValue(), that is not included.
+	GetTraceCtx() context.Context
+	// SetTraceCtx updates the trace context of the current statement.
+	// It is used by nested routine execution to temporarily propagate a child trace context.
+	SetTraceCtx(context.Context)
 }
 
 // TxnFuture is an interface where implementations have a kv.Transaction field and after
@@ -252,4 +281,73 @@ const (
 // statements that don't make reading operation immediately).
 func ValidateSnapshotReadTS(ctx context.Context, store kv.Storage, readTS uint64, isStaleRead bool) error {
 	return store.GetOracle().ValidateReadTS(ctx, readTS, isStaleRead, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+}
+
+// SessionExec procedure implementation interface
+type SessionExec interface {
+	MultiHanldeNodeWithResult(ctx context.Context, stmt ast.StmtNode) error
+}
+
+// OnExtensionSecurity writes security-level audit logs if possible
+func OnExtensionSecurity(s Context, info string, sc *stmtctx.StatementContext) {
+	if s.GetExtensions() == nil {
+		return
+	}
+
+	if !s.GetExtensions().HasSecurityEventListeners() {
+		return
+	}
+
+	tp := extension.SecurityEvent
+	user, host := "", ""
+
+	if sessVars := s.GetSessionVars(); sessVars != nil {
+		if u := sessVars.User; u != nil {
+			user, host = u.Username, u.Hostname
+		}
+	}
+
+	eventInfo := &SecurityEventInfo{
+		info: info,
+		user: user,
+		host: host,
+		sc:   sc,
+	}
+	s.GetExtensions().OnSecurityEvent(tp, eventInfo)
+}
+
+// SecurityEventInfo saves the security event of audit log.
+type SecurityEventInfo struct {
+	info string
+	user string
+	host string
+	sc   *stmtctx.StatementContext
+}
+
+// SecurityInfo returns the message that needs to be printed.
+func (e *SecurityEventInfo) SecurityInfo() string {
+	return e.info
+}
+
+// User returns the login username
+func (e *SecurityEventInfo) User() string { return e.user }
+
+// Host returns the login user-host.
+func (e *SecurityEventInfo) Host() string { return e.host }
+
+// OriginalText returns the original sql text (if possible)
+func (e *SecurityEventInfo) OriginalText() string {
+	if e.sc == nil {
+		return ""
+	}
+	return e.sc.OriginalSQL
+}
+
+// RedactedText returns the redacted sql text (if possible)
+func (e *SecurityEventInfo) RedactedText() (normalized string) {
+	if e.sc == nil {
+		return ""
+	}
+	normalized, _ = e.sc.SQLDigest()
+	return
 }

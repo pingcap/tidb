@@ -44,11 +44,20 @@ func TestBuiltinFunctionsUsage(t *testing.T) {
 	require.Equal(t, map[string]uint32{}, usage)
 
 	tk.MustExec("create table t (id int)")
+	// The setup above may trigger background/internal sessions, e.g. InfoSchema reloads.
+	// Clear them before executing the statement whose builtin usage is under test.
+	telemetry.GlobalBuiltinFunctionsUsage.Dump()
+
+	expected := map[string]uint32{"PlusInt": 1, "MinusInt": 1}
 	tk.MustQuery("select id + 1 - 2 from t")
-	// Should manually invoke `Session.Close()` to report the usage information
+	require.Equal(t, expected, tk.Session().GetBuiltinFunctionUsage())
+
+	// Should manually invoke `Session.Close()` to report the usage information.
 	tk.Session().Close()
 	usage = telemetry.GlobalBuiltinFunctionsUsage.Dump()
-	require.Equal(t, map[string]uint32{"PlusInt": 1, "MinusInt": 1}, usage)
+	for name, count := range expected {
+		require.Equal(t, count, usage[name])
+	}
 }
 
 // withMockTiFlash sets the mockStore to have N TiFlash stores (naming as tiflash0, tiflash1, ...).

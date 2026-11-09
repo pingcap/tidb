@@ -261,6 +261,10 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 // deriveTablePathStats will fulfill the information that the AccessPath need.
 // isIm indicates whether this function is called to generate the partial path for IndexMerge.
 func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression, isIm bool) error {
+	matched, err := deriveTiDBRowIDTablePathStats(ds, path, conds)
+	if err != nil || matched {
+		return err
+	}
 	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(ds.SCtx())
 		defer debugtrace.LeaveContextCommon(ds.SCtx())
@@ -268,7 +272,6 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 	if path.IsCommonHandlePath {
 		return deriveCommonHandleTablePathStats(ds, path, conds, isIm)
 	}
-	var err error
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	path.TableFilters = conds
 	var pkCol *expression.Column
@@ -411,7 +414,11 @@ func detachCondAndBuildRangeForPath(
 			path.ConstCols[i] = res.ColumnValues[i] != nil
 		}
 	}
-	path.CountAfterAccess, err = cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges, path.IdxCols)
+	idxCols := path.IdxCols
+	if len(idxCols) > len(path.Index.Columns) {
+		idxCols = idxCols[:len(path.Index.Columns)]
+	}
+	path.CountAfterAccess, err = cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges, idxCols)
 	return err
 }
 
@@ -510,7 +517,7 @@ func initStats(ds *logicalop.DataSource, colGroups [][]*expression.Column) {
 		return
 	}
 	if ds.StatisticTable == nil {
-		ds.StatisticTable = getStatsTable(ds.SCtx(), ds.TableInfo, ds.PhysicalTableID)
+		ds.StatisticTable = getStatsTable(ds.SCtx(), ds.TableInfo, ds.PhysicalTableID, ds.StaticPrunedPartitionIDs)
 	}
 	tableStats := &property.StatsInfo{
 		RowCount:     float64(ds.StatisticTable.RealtimeCount),
@@ -730,7 +737,7 @@ func loadTableStats(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
 	}
 
 	pctx := ctx.GetPlanCtx()
-	tableStats := getStatsTable(pctx, tblInfo, pid)
+	tableStats := getStatsTable(pctx, tblInfo, pid, nil)
 
 	name := tblInfo.Name.O
 	partInfo := tblInfo.GetPartitionInfo()

@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	litkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -61,6 +62,8 @@ type ImportIntoExec struct {
 	plan       *plannercore.ImportInto
 	tbl        table.Table
 	dataFilled bool
+
+	ctasFlag bool
 }
 
 var (
@@ -68,7 +71,7 @@ var (
 )
 
 func newImportIntoExec(b exec.BaseExecutor, selectExec exec.Executor, userSctx sessionctx.Context,
-	plan *plannercore.ImportInto, tbl table.Table) (*ImportIntoExec, error) {
+	plan *plannercore.ImportInto, tbl table.Table, ctasFlag bool) (*ImportIntoExec, error) {
 	return &ImportIntoExec{
 		BaseExecutor: b,
 		selectExec:   selectExec,
@@ -76,6 +79,7 @@ func newImportIntoExec(b exec.BaseExecutor, selectExec exec.Executor, userSctx s
 		stmt:         plan.Stmt,
 		plan:         plan,
 		tbl:          tbl,
+		ctasFlag:     ctasFlag,
 	}, nil
 }
 
@@ -243,7 +247,7 @@ func (*ImportIntoExec) waitTask(ctx context.Context, jobID int64, task *proto.Ta
 	return err
 }
 
-func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
+func (e *ImportIntoExec) importFromSelect(ctx context.Context) (err error) {
 	e.dataFilled = true
 	// must use a new session as:
 	// 	- pre-check will execute other sql, the stmt in show processlist will be changed.
@@ -255,11 +259,70 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	defer CloseSession(newSCtx)
 
 	sqlExec := newSCtx.GetSQLExecutor()
-	if err2 = e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
-		return err2
+	if !e.ctasFlag {
+		if err := e.controller.CheckRequirements(ctx, sqlExec); err != nil {
+			return err
+		}
 	}
+
 	if err := e.controller.InitTiKVConfigs(ctx, newSCtx); err != nil {
 		return err
+	}
+
+	var (
+		rowIDBase                int64
+		autoIncrementIDBase      int64
+		autoIncrementIDIncrement int64 = 1
+		autoIncrementIDOffset    int64 = 1
+		autoIncreAlloc           autoid.Allocator
+		autoRandomAlloc          autoid.Allocator
+		autoRandomIDIncrement    int64
+		autoRandomIDOffset       int64
+	)
+	getAutoRandomShard := func(int) int64 { return 0 }
+	tblMeta := e.tbl.Meta()
+	hasAutoIncrementID := tblMeta.GetAutoIncrementColInfo() != nil
+	hasAutoRandomID := tblMeta.ContainsAutoRandomBits()
+	if !e.ctasFlag {
+		allocators := e.tbl.Allocators(newSCtx.GetTableCtx())
+
+		if !tblMeta.PKIsHandle && !tblMeta.IsCommonHandle {
+			rowIDAlloc := allocators.Get(autoid.RowIDAllocType)
+			nextRowID, err := rowIDAlloc.NextGlobalAutoID()
+			if err != nil {
+				return err
+			}
+			rowIDBase = nextRowID - 1
+		}
+		if hasAutoIncrementID {
+			userVars := e.userSctx.GetSessionVars()
+			autoIncrementIDIncrement = int64(userVars.AutoIncrementIncrement)
+			autoIncrementIDOffset = int64(userVars.AutoIncrementOffset)
+			if autoIncrementIDIncrement == 0 {
+				autoIncrementIDIncrement = 1
+			}
+			if autoIncrementIDOffset > autoIncrementIDIncrement {
+				autoIncrementIDOffset = 1
+			}
+			autoIncreAlloc = allocators.Get(autoid.AutoIncrementType)
+			nextAutoIncreID, err := autoIncreAlloc.NextGlobalAutoID()
+			if err == nil {
+				autoIncrementIDBase = nextAutoIncreID - 1
+			} else {
+				return err
+			}
+		}
+
+		if hasAutoRandomID {
+			autoRandomAlloc = allocators.Get(autoid.AutoRandomType)
+			userVars := e.userSctx.GetSessionVars()
+			autoRandomIDIncrement = int64(userVars.AutoIncrementIncrement)
+			autoRandomIDOffset = int64(userVars.AutoIncrementOffset)
+			getAutoRandomShard = userVars.GetRowIDShardGenerator().GetCurrentShard
+			if _, err := e.userSctx.Txn(true); err != nil {
+				return err
+			}
+		}
 	}
 
 	importID := uuid.New().String()
@@ -276,8 +339,8 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 			logutil.Logger(ctx).Error("close importer failed", zap.Error(err))
 		}
 	}()
-	selectedRowCh := make(chan importer.QueryRow)
-	ti.SetSelectedRowCh(selectedRowCh)
+	selectedChunkCh := make(chan importer.QueryChunk, 1)
+	ti.SetSelectedChunkCh(selectedChunkCh)
 
 	var importResult *importer.JobImportResult
 	eg, egCtx := errgroup.WithContext(ctx)
@@ -287,13 +350,15 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 		return err
 	})
 	eg.Go(func() error {
-		defer close(selectedRowCh)
+		defer close(selectedChunkCh)
 		fields := exec.RetTypes(e.selectExec)
-		var idAllocator int64
+		rowIDAllocator := rowIDBase
+		autoIncrementIDAllocator := autoIncrementIDBase
+		chkSize := e.selectExec.InitCap()
+		maxChkSize := e.selectExec.MaxChunkSize()
 		for {
 			// rows will be consumed concurrently, we cannot use chunk pool in session ctx.
-			chk := exec.NewFirstChunk(e.selectExec)
-			iter := chunk.NewIterator4Chunk(chk)
+			chk := chunk.New(e.selectExec.RetFieldTypes(), chkSize, maxChkSize)
 			err := exec.Next(egCtx, e.selectExec, chk)
 			if err != nil {
 				return err
@@ -301,16 +366,56 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 			if chk.NumRows() == 0 {
 				break
 			}
-			for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
-				idAllocator++
-				select {
-				case selectedRowCh <- importer.QueryRow{
-					ID:   idAllocator,
-					Data: innerChunkRow.GetDatumRow(fields),
-				}:
-				case <-egCtx.Done():
-					return egCtx.Err()
+			var autoIDOptions *importer.AutoIDOptions
+			if !e.ctasFlag && (hasAutoIncrementID || hasAutoRandomID) {
+				autoIncrementIDBase = autoIncrementIDAllocator
+				if hasAutoIncrementID {
+					firstAutoIncrementID := int64(autoid.SeekToFirstAutoIDUnSigned(
+						uint64(autoIncrementIDAllocator),
+						uint64(autoIncrementIDIncrement),
+						uint64(autoIncrementIDOffset),
+					))
+					autoIncrementIDBase = firstAutoIncrementID - autoIncrementIDIncrement
 				}
+				autoRandomShard := int64(0)
+				autoRandomIDBase := int64(0)
+				if hasAutoRandomID {
+					_, maxAutoRandomID, err := autoRandomAlloc.Alloc(
+						egCtx, uint64(chk.NumRows()), autoRandomIDIncrement, autoRandomIDOffset,
+					)
+					if err != nil {
+						return err
+					}
+					// Alloc returns (min, max]. When auto_increment_increment/offset is not 1/1,
+					// min may not be the previous valid ID, so derive the per-chunk base from max.
+					autoRandomIDBase = maxAutoRandomID - int64(chk.NumRows())*autoRandomIDIncrement
+					autoRandomShard = getAutoRandomShard(chk.NumRows())
+				}
+				autoIDOptions = &importer.AutoIDOptions{
+					AutoIncrementIDOffset:    autoIncrementIDBase,
+					AutoIncrementIDIncrement: autoIncrementIDIncrement,
+					AutoRandomShard:          autoRandomShard,
+					AutoRandomIDBase:         autoRandomIDBase,
+					AutoRandomIDIncrement:    autoRandomIDIncrement,
+				}
+			}
+			select {
+			case selectedChunkCh <- importer.QueryChunk{
+				Fields:        fields,
+				Chk:           chk,
+				RowIDOffset:   rowIDAllocator,
+				AutoIDOptions: autoIDOptions,
+			}:
+				rowIDAllocator += int64(chk.NumRows())
+				if autoIDOptions != nil {
+					autoIncrementIDAllocator = autoIncrementIDBase + int64(chk.NumRows())*autoIncrementIDIncrement
+				}
+			case <-egCtx.Done():
+				return egCtx.Err()
+			}
+			if chkSize < maxChkSize {
+				chkSize = chkSize * 2
+				chkSize = min(chkSize, maxChkSize)
 			}
 		}
 		return nil
@@ -372,7 +477,7 @@ func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, mana
 	if err := manager.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.GetSQLExecutor()
 		var err2 error
-		info, err2 = importer.GetJob(ctx, exec, e.jobID, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
+		info, err2 = importer.GetJob(ctx, exec, e.jobID, e.Ctx().GetSessionVars().User.String(), hasSuperPriv, true)
 		return err2
 	}); err != nil {
 		return err

@@ -137,6 +137,12 @@ select @@global.max_connections;
 select @@session.max_connections;
 -- error 1238
 select @@local.max_connections;
+select @@reserved_admin_connections;
+select @@global.reserved_admin_connections;
+-- error 1238
+select @@session.reserved_admin_connections;
+-- error 1238
+select @@local.reserved_admin_connections;
 select @@performance_schema_max_mutex_classes;
 select @@global.performance_schema_max_mutex_classes;
 # For issue 19524, test

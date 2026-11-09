@@ -127,7 +127,7 @@ func (t *TableCommon) Copy() TableCommon {
 	return newTable
 }
 
-// MockTableFromMeta only serves for test.
+// MockTableFromMeta converts a model.TableInfo into a table.Table.
 func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 	columns := make([]*table.Column, 0, len(tblInfo.Columns))
 	for _, colInfo := range tblInfo.Columns {
@@ -868,7 +868,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 			} else {
 				// If `AddRecord` is called by an insert and the col is in write only or write reorganization state, we must
 				// add it with its default value.
-				value, err = table.GetColOriginDefaultValue(sctx.GetExprCtx(), col.ToInfo())
+				value, err = pkdbGetWriteOnlyColumnInsertValue(ctx, sctx, t, col)
 				if err != nil {
 					return nil, err
 				}
@@ -1431,7 +1431,9 @@ func tryDecodeColumnFromCommonHandle(col *table.Column, handle kv.Handle, pkIds 
 // The defaultVals is used to avoid calculating the default value multiple times.
 func GetColDefaultValue(ctx exprctx.BuildContext, col *table.Column, defaultVals []types.Datum) (
 	colVal types.Datum, err error) {
-	if col.GetOriginDefaultValue() == nil && mysql.HasNotNullFlag(col.GetFlag()) {
+	// For AUTO_INCREMENT columns, TiDB treats missing default as zero.
+	// Keep consistent with table.GetColOriginDefaultValue/getColDefaultValueFromNil().
+	if col.GetOriginDefaultValue() == nil && mysql.HasNotNullFlag(col.GetFlag()) && !mysql.HasAutoIncrementFlag(col.GetFlag()) {
 		return colVal, errors.New("Miss column")
 	}
 	if defaultVals[col.Offset].IsNull() {
@@ -1612,8 +1614,9 @@ type sequenceCommon struct {
 	end  int64
 	base int64
 	// round is used to count the cycle times.
-	round int64
-	mu    sync.RWMutex
+	round      int64
+	cacheEpoch uint64
+	mu         sync.RWMutex
 }
 
 // GetSequenceBaseEndRound is used in test.
@@ -1626,7 +1629,7 @@ func (s *sequenceCommon) GetSequenceBaseEndRound() (int64, int64, int64) {
 // GetSequenceNextVal implements util.SequenceTable GetSequenceNextVal interface.
 // Caching the sequence value in table, we can easily be notified with the cache empty,
 // and write the binlogInfo in table level rather than in allocator.
-func (t *TableCommon) GetSequenceNextVal(ctx any, dbName, seqName string) (nextVal int64, err error) {
+func (t *TableCommon) GetSequenceNextVal(ctx any, dbName, seqName string, sequenceCacheEpoch uint64) (nextVal int64, err error) {
 	seq := t.sequence
 	if seq == nil {
 		// TODO: refine the error.
@@ -1634,6 +1637,7 @@ func (t *TableCommon) GetSequenceNextVal(ctx any, dbName, seqName string) (nextV
 	}
 	seq.mu.Lock()
 	defer seq.mu.Unlock()
+	seq.invalidateCacheIfNeeded(sequenceCacheEpoch)
 
 	err = func() error {
 		// Check if need to update the cache batch from storage.
@@ -1702,7 +1706,7 @@ func (t *TableCommon) GetSequenceNextVal(ctx any, dbName, seqName string) (nextV
 
 // SetSequenceVal implements util.SequenceTable SetSequenceVal interface.
 // The returned bool indicates the newVal is already under the base.
-func (t *TableCommon) SetSequenceVal(ctx any, newVal int64, dbName, seqName string) (int64, bool, error) {
+func (t *TableCommon) SetSequenceVal(ctx any, newVal int64, dbName, seqName string, sequenceCacheEpoch uint64) (int64, bool, error) {
 	seq := t.sequence
 	if seq == nil {
 		// TODO: refine the error.
@@ -1710,6 +1714,7 @@ func (t *TableCommon) SetSequenceVal(ctx any, newVal int64, dbName, seqName stri
 	}
 	seq.mu.Lock()
 	defer seq.mu.Unlock()
+	seq.invalidateCacheIfNeeded(sequenceCacheEpoch)
 
 	if seq.meta.Increment > 0 {
 		if newVal <= t.sequence.base {
@@ -1748,6 +1753,14 @@ func (t *TableCommon) SetSequenceVal(ctx any, newVal int64, dbName, seqName stri
 	// Because no cache (base, end keep 0), so the second setval won't return NULL.
 	t.sequence.base, t.sequence.end = newVal, newVal
 	return res, alreadySatisfied, nil
+}
+
+func (s *sequenceCommon) invalidateCacheIfNeeded(currentEpoch uint64) {
+	if s.cacheEpoch == currentEpoch {
+		return
+	}
+	s.base = s.end
+	s.cacheEpoch = currentEpoch
 }
 
 // getOffset is used in under GetSequenceNextVal & SetSequenceVal, which mu is locked.

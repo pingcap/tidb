@@ -15,8 +15,6 @@
 package expression
 
 import (
-	"strings"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -191,7 +189,7 @@ func (b *builtinSetStringVarSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 			result.AppendNull()
 			continue
 		}
-		varName := strings.ToLower(buf0.GetString(i))
+		varName := buf0.GetString(i)
 		res := buf1.GetString(i)
 		sessionVars.SetUserVarVal(varName, types.NewCollationStringDatum(stringutil.Copy(res), collation))
 		result.AppendString(res)
@@ -232,7 +230,7 @@ func (b *builtinSetIntVarSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 			result.SetNull(i, true)
 			continue
 		}
-		varName := strings.ToLower(buf0.GetString(i))
+		varName := buf0.GetString(i)
 		res := buf1.GetInt64(i)
 		sessionVars.SetUserVarVal(varName, types.NewIntDatum(res))
 		i64s[i] = res
@@ -273,7 +271,7 @@ func (b *builtinSetRealVarSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, 
 			result.SetNull(i, true)
 			continue
 		}
-		varName := strings.ToLower(buf0.GetString(i))
+		varName := buf0.GetString(i)
 		res := buf1.GetFloat64(i)
 		sessionVars.SetUserVarVal(varName, types.NewFloat64Datum(res))
 		f64s[i] = res
@@ -314,7 +312,7 @@ func (b *builtinSetDecimalVarSig) vecEvalDecimal(ctx EvalContext, input *chunk.C
 			result.SetNull(i, true)
 			continue
 		}
-		varName := strings.ToLower(buf0.GetString(i))
+		varName := buf0.GetString(i)
 		res := buf1.GetDecimal(i)
 		sessionVars.SetUserVarVal(varName, types.NewDecimalDatum(res))
 		decs[i] = *res
@@ -351,7 +349,7 @@ func (b *builtinGetStringVarSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 			result.AppendNull()
 			continue
 		}
-		varName := strings.ToLower(buf0.GetString(i))
+		varName := buf0.GetString(i)
 		if v, ok := userVars.GetUserVarVal(varName); ok {
 			res, err := v.ToString()
 			if err != nil {
@@ -387,7 +385,7 @@ func (b *builtinGetIntVarSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 		if result.IsNull(i) {
 			continue
 		}
-		varName := strings.ToLower(buf0.GetString(i))
+		varName := buf0.GetString(i)
 		if v, ok := userVars.GetUserVarVal(varName); ok {
 			i64s[i] = v.GetInt64()
 			continue
@@ -421,7 +419,7 @@ func (b *builtinGetRealVarSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, 
 		if result.IsNull(i) {
 			continue
 		}
-		varName := strings.ToLower(buf0.GetString(i))
+		varName := buf0.GetString(i)
 		if v, ok := userVars.GetUserVarVal(varName); ok {
 			d, err := v.ToFloat64(typeCtx(ctx))
 			if err != nil {
@@ -459,7 +457,7 @@ func (b *builtinGetDecimalVarSig) vecEvalDecimal(ctx EvalContext, input *chunk.C
 		if result.IsNull(i) {
 			continue
 		}
-		varName := strings.ToLower(buf0.GetString(i))
+		varName := buf0.GetString(i)
 		if v, ok := userVars.GetUserVarVal(varName); ok {
 			d, err := v.ToDecimal(typeCtx(ctx))
 			if err != nil {

@@ -33,8 +33,10 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
+	"github.com/pingcap/tidb/pkg/privilege/lbac"
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -59,6 +61,9 @@ var dynamicPrivs = []string{
 	"SYSTEM_VARIABLES_ADMIN",
 	"ROLE_ADMIN",
 	"CONNECTION_ADMIN",
+	"ADMIN_VIEW",
+	"CONFIG_VIEW",
+	"IMPORT_JOB_VIEW",
 	"PLACEMENT_ADMIN",                 // Can Create/Drop/Alter PLACEMENT POLICY
 	"DASHBOARD_CLIENT",                // Can login to the TiDB-Dashboard.
 	"RESTRICTED_TABLES_ADMIN",         // Can see system tables when SEM is enabled
@@ -72,6 +77,18 @@ var dynamicPrivs = []string{
 }
 var dynamicPrivLock sync.Mutex
 var defaultTokenLife = 15 * time.Minute
+
+var dutySeparationPrivTables = map[string]struct{}{
+	strings.ToLower(mysql.UserTable):        {},
+	strings.ToLower(mysql.DBTable):          {},
+	strings.ToLower(mysql.TablePrivTable):   {},
+	strings.ToLower(mysql.ColumnPrivTable):  {},
+	strings.ToLower(mysql.GlobalPrivTable):  {},
+	"global_grants":                         {},
+	strings.ToLower(mysql.RoleEdgeTable):    {},
+	strings.ToLower(mysql.DefaultRoleTable): {},
+	strings.ToLower(mysql.ProcsPriv):        {},
+}
 
 // UserPrivileges implements privilege.Manager interface.
 // This is used to check privilege for the current user.
@@ -171,6 +188,19 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 		}
 	}
 
+	// In duty separation mode, only users with RESTRICTED_USER_ADMIN can modify privilege tables.
+	// This prevents roles like database_admin from bypassing CREATE USER/ROLE via direct DML.
+	if variable.EnableDutySeparationMode.Load() && dbLowerName == mysql.SystemDB {
+		if _, ok := dutySeparationPrivTables[tblLowerName]; ok {
+			switch priv {
+			case mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
+				if !p.HasExplicitlyGrantedDynamicPrivilege(activeRoles, "RESTRICTED_USER_ADMIN", false) {
+					return false
+				}
+			}
+		}
+	}
+
 	if util.IsMemDB(dbLowerName) {
 		switch priv {
 		case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.CreateViewPriv,
@@ -201,6 +231,67 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 		return false
 	}
 	return p.authPluginRequestVerification == nil || p.authPluginRequestVerification(p.user, p.host, activeRoles, db, table, column, priv)
+}
+
+// RequestProcedureVerification implements the procedure Manager interface.
+func (p *UserPrivileges) RequestProcedureVerification(activeRoles []*auth.RoleIdentity, db, routeName string, priv mysql.PrivilegeType) bool {
+	if SkipWithGrant {
+		return true
+	}
+
+	if p.user == "" && p.host == "" {
+		return true
+	}
+
+	// Skip check for system databases.
+	// See https://dev.mysql.com/doc/refman/5.7/en/information-schema.html
+	dbLowerName := strings.ToLower(db)
+	procsLowerName := strings.ToLower(routeName)
+	// If SEM is enabled and the user does not have the RESTRICTED_TABLES_ADMIN privilege
+	// There are some hard rules which overwrite system tables and schemas as read-only at most.
+	semEnabled := sem.IsEnabled()
+	if semEnabled && !p.RequestDynamicVerification(activeRoles, "RESTRICTED_TABLES_ADMIN", false) {
+		if sem.IsInvisibleTable(dbLowerName, "") {
+			return false
+		}
+		if util.IsMemOrSysDB(dbLowerName) {
+			switch priv {
+			case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.CreateViewPriv,
+				mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
+				return false
+			}
+		}
+	}
+
+	if util.IsMemDB(dbLowerName) {
+		switch priv {
+		case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.CreateViewPriv,
+			mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv, mysql.ReferencesPriv, mysql.ExecutePriv,
+			mysql.ShowViewPriv, mysql.LockTablesPriv:
+			return false
+		}
+		if dbLowerName == util.InformationSchemaName.L {
+			return true
+		} else if dbLowerName == util.MetricSchemaName.L {
+			// PROCESS is the same with SELECT for metrics_schema.
+			if priv == mysql.SelectPriv && infoschema.IsMetricTable("") {
+				priv |= mysql.ProcessPriv
+			}
+		}
+	}
+
+	for _, fn := range p.extensionAccessCheckFuncs {
+		for _, dynPriv := range fn(db, "", "", priv, semEnabled) {
+			if !p.RequestDynamicVerification(activeRoles, dynPriv, false) {
+				return false
+			}
+		}
+	}
+	mysqlPriv := p.Handle.Get()
+	if mysqlPriv.RequestVerification(activeRoles, p.user, p.host, db, "", "", priv) {
+		return true
+	}
+	return mysqlPriv.RequestProcedureVerification(activeRoles, p.user, p.host, db, procsLowerName, priv)
 }
 
 // RequestVerificationWithUser implements the Manager interface.
@@ -314,6 +405,33 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 	return false
 }
 
+// GetUserResources gets the maximum number of connections for the current user
+func (p *UserPrivileges) GetUserResources(user, host string) (int64, error) {
+	if SkipWithGrant {
+		return 0, nil
+	}
+	terror.Log(p.Handle.ensureActiveUser(user))
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+	if record == nil {
+		logutil.BgLogger().Error("get user privilege record fail",
+			zap.String("user", user), zap.String("host", host))
+		return 0, errors.New("Failed to get user record")
+	}
+	if p.isValidHash(record) {
+		return record.MaxUserConnections, nil
+	}
+	return 0, errors.New("Failed to get max user connections")
+}
+
+// GetSecurityLabelCache exposes the LBAC metadata cache for access checks.
+func (p *UserPrivileges) GetSecurityLabelCache() *lbac.SecurityLabelCache {
+	if SkipWithGrant || p.Handle == nil {
+		return nil
+	}
+	return p.Handle.Get().GetSecurityLabelCache()
+}
+
 // GetEncodedPassword implements the Manager interface.
 func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 	if SkipWithGrant {
@@ -330,24 +448,6 @@ func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 		return record.AuthenticationString
 	}
 	return ""
-}
-
-// GetUserResources gets the maximum number of connections for the current user
-func (p *UserPrivileges) GetUserResources(user, host string) (int64, error) {
-	if SkipWithGrant {
-		return 0, nil
-	}
-	mysqlPriv := p.Handle.Get()
-	record := mysqlPriv.connectionVerification(user, host)
-	if record == nil {
-		logutil.BgLogger().Error("get user privilege record fail",
-			zap.String("user", user), zap.String("host", host))
-		return 0, errors.New("failed to get user record")
-	}
-	if p.isValidHash(record) {
-		return record.MaxUserConnections, nil
-	}
-	return 0, errors.New("failed to get max user connections")
 }
 
 // GetAuthPluginForConnection gets the authentication plugin used in connection establishment.
@@ -526,7 +626,7 @@ func (*UserPrivileges) CheckPasswordExpired(sessionVars *variable.SessionVars, r
 func GenerateAccountAutoLockErr(failedLoginAttempts int64,
 	user, host, lockTime, remainTime string) error {
 	logutil.BgLogger().Error(fmt.Sprintf("Access denied for user '%s'@'%s'."+
-		" Account is blocked for %s day(s) (%s day(s) remaining) due to %d "+
+		" Account is blocked for %s (%s remaining) due to %d "+
 		"consecutive failed logins.", user, host, lockTime,
 		remainTime, failedLoginAttempts))
 	return ErUserAccessDeniedForUserAccountBlockedByPasswordLock.FastGenByArgs(user, host,
@@ -545,17 +645,17 @@ func (p *UserPrivileges) VerifyAccountAutoLockInMemory(user string, host string)
 
 	if record.AutoAccountLocked {
 		// If it is locked, need to check whether it can be automatically unlocked.
-		lockTime := record.PasswordLockTimeDays
+		lockTime := record.PasswordLockSecs
 		if lockTime == -1 {
 			return record.AutoAccountLocked, GenerateAccountAutoLockErr(record.FailedLoginAttempts, user, host, "unlimited", "unlimited")
 		}
 		lastChanged := record.AutoLockedLastChanged
 		d := time.Now().Unix() - lastChanged
-		if d > lockTime*24*60*60 {
+		if d > lockTime {
 			return record.AutoAccountLocked, nil
 		}
-		lds := strconv.FormatInt(lockTime, 10)
-		rds := strconv.FormatInt(int64(math.Ceil(float64(lockTime)-float64(d)/(24*60*60))), 10)
+		lds := FormatPasswordLockTime(lockTime)
+		rds := FormatPasswordLockTime(lockTime - d)
 		return record.AutoAccountLocked, GenerateAccountAutoLockErr(record.FailedLoginAttempts, user, host, lds, rds)
 	}
 	return record.AutoAccountLocked, nil
@@ -578,24 +678,25 @@ func (p *UserPrivileges) IsAccountAutoLockEnabled(user string, host string) bool
 	// For failed-login tracking and temporary locking to occur, an account's FAILED_LOGIN_ATTEMPTS
 	// and PASSWORD_LOCK_TIME options both must be nonzero.
 	// https://dev.mysql.com/doc/refman/8.0/en/create-user.html
-	if record.FailedLoginAttempts == 0 || record.PasswordLockTimeDays == 0 {
+	if record.FailedLoginAttempts == 0 || record.PasswordLockSecs == 0 {
 		return false
 	}
 	return true
 }
 
 // BuildSuccessPasswordLockingJSON builds success PasswordLocking JSON string.
-func BuildSuccessPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays int64) string {
-	return BuildPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays, "N", 0, time.Now().Format(time.UnixDate))
+func BuildSuccessPasswordLockingJSON(failedLoginAttempts, passwordLockSecs int64) string {
+	return BuildPasswordLockingJSON(failedLoginAttempts, passwordLockSecs, "N", 0, time.Now().Format(time.UnixDate))
 }
 
 // BuildPasswordLockingJSON builds PasswordLocking JSON string.
 func BuildPasswordLockingJSON(failedLoginAttempts int64,
-	passwordLockTimeDays int64, autoAccountLocked string, failedLoginCount int64, autoLockedLastChanged string) string {
+	passwordLockSecs int64, autoAccountLocked string, failedLoginCount int64, autoLockedLastChanged string) string {
 	var passwordLockingArray []string
 	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_count\": %d", failedLoginCount))
 	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_attempts\": %d", failedLoginAttempts))
-	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"password_lock_time_days\": %d", passwordLockTimeDays))
+	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"password_lock_secs\": %d", passwordLockSecs))
+	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"password_lock_time_days\": %d", PasswordLockTimeSecondsToDays(passwordLockSecs)))
 	if autoAccountLocked != "" {
 		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_account_locked\": \"%s\"", autoAccountLocked))
 	}
@@ -1121,7 +1222,7 @@ func init() {
 // It records information about failed-login tracking and temporary account locking.
 type PasswordLocking struct {
 	FailedLoginCount      int64
-	PasswordLockTimeDays  int64
+	PasswordLockSecs      int64
 	AutoAccountLocked     bool
 	AutoLockedLastChanged int64
 	FailedLoginAttempts   int64
@@ -1139,13 +1240,22 @@ func (passwordLocking *PasswordLocking) ParseJSON(passwordLockingJSON types.Bina
 	passwordLocking.FailedLoginAttempts = min(passwordLocking.FailedLoginAttempts, math.MaxInt16)
 	passwordLocking.FailedLoginAttempts = max(passwordLocking.FailedLoginAttempts, 0)
 
-	passwordLocking.PasswordLockTimeDays, err =
-		extractInt64FromJSON(passwordLockingJSON, "$.Password_locking.password_lock_time_days")
+	var secondsFound bool
+	passwordLocking.PasswordLockSecs, secondsFound, err =
+		extractOptionalInt64FromJSON(passwordLockingJSON, "$.Password_locking.password_lock_secs")
 	if err != nil {
 		return err
 	}
-	passwordLocking.PasswordLockTimeDays = min(passwordLocking.PasswordLockTimeDays, math.MaxInt16)
-	passwordLocking.PasswordLockTimeDays = max(passwordLocking.PasswordLockTimeDays, -1)
+	if !secondsFound {
+		oldDays, found, oldErr := extractOptionalInt64FromJSON(passwordLockingJSON, "$.Password_locking.password_lock_time_days")
+		if oldErr != nil {
+			return oldErr
+		}
+		if found {
+			passwordLocking.PasswordLockSecs = PasswordLockTimeDaysToSeconds(oldDays)
+		}
+	}
+	passwordLocking.PasswordLockSecs = clampPasswordLockSecs(passwordLocking.PasswordLockSecs)
 
 	passwordLocking.FailedLoginCount, err =
 		extractInt64FromJSON(passwordLockingJSON, "$.Password_locking.failed_login_count")
@@ -1168,14 +1278,19 @@ func (passwordLocking *PasswordLocking) ParseJSON(passwordLockingJSON types.Bina
 }
 
 func extractInt64FromJSON(json types.BinaryJSON, pathExpr string) (val int64, err error) {
+	val, _, err = extractOptionalInt64FromJSON(json, pathExpr)
+	return val, err
+}
+
+func extractOptionalInt64FromJSON(json types.BinaryJSON, pathExpr string) (val int64, found bool, err error) {
 	jsonPath, err := types.ParseJSONPathExpr(pathExpr)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	if BJ, found := json.Extract([]types.JSONPathExpression{jsonPath}); found {
-		return BJ.GetInt64(), nil
+		return BJ.GetInt64(), true, nil
 	}
-	return 0, nil
+	return 0, false, nil
 }
 
 func extractTimeUnixFromJSON(json types.BinaryJSON, pathExpr string) (int64, error) {

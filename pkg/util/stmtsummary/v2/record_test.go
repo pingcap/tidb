@@ -15,8 +15,11 @@
 package stmtsummary
 
 import (
+	"encoding/json"
 	"testing"
 
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	stmtsummaryv1 "github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/stretchr/testify/require"
 )
 
@@ -77,4 +80,56 @@ func TestStmtRecord(t *testing.T) {
 	require.Equal(t, info.RUDetail.RUWaitDuration()*2, record2.SumRUWaitDuration)
 	require.Equal(t, info.CPUUsages.TidbCPUTime*2, record2.SumTidbCPU)
 	require.Equal(t, info.CPUUsages.TikvCPUTime*2, record2.SumTikvCPU)
+}
+
+func TestPlanCacheMissSummary(t *testing.T) {
+	info := GenerateStmtExecInfo4Test("digest")
+	info.PlanCacheFallbackReason = contextutil.PlanCacheFallbackLookupMiss
+	info.PlanCacheFallbackTimeUnixNano = 200
+	record := NewStmtRecord(info)
+	record.Add(info)
+	require.Equal(t, int64(1), record.PlanCacheMisses)
+	require.Equal(t, "lookup_miss", record.PlanCacheMissLastReason)
+	require.Equal(t, int64(200), record.PlanCacheMissLastSeen)
+	topReason, topCount := record.PlanCacheFallbackCounts.Top()
+	require.Equal(t, contextutil.PlanCacheFallbackLookupMiss, topReason)
+	require.Equal(t, int64(1), topCount)
+
+	info.PlanCacheFallbackReason = contextutil.PlanCacheFallbackReuseRejected
+	info.PlanCacheFallbackTimeUnixNano = 100
+	record.Add(info)
+	require.Equal(t, int64(2), record.PlanCacheMisses)
+	require.Equal(t, "lookup_miss", record.PlanCacheMissLastReason)
+
+	other := NewStmtRecord(info)
+	other.PlanCacheMisses = 3
+	other.PlanCacheFallbackCounts = new(stmtsummaryv1.PlanCacheFallbackCounts)
+	other.PlanCacheFallbackCounts.Add(contextutil.PlanCacheFallbackParameterTypeMismatch)
+	other.PlanCacheFallbackCounts.Add(contextutil.PlanCacheFallbackParameterTypeMismatch)
+	other.PlanCacheFallbackCounts.Add(contextutil.PlanCacheFallbackParameterTypeMismatch)
+	other.PlanCacheMissLastReason = "parameter_type_mismatch"
+	other.PlanCacheMissLastSeen = 200
+	record.Merge(other)
+	require.Equal(t, int64(5), record.PlanCacheMisses)
+	require.Equal(t, "parameter_type_mismatch", record.PlanCacheMissLastReason)
+	require.Equal(t, int64(200), record.PlanCacheMissLastSeen)
+	topReason, topCount = record.PlanCacheFallbackCounts.Top()
+	require.Equal(t, contextutil.PlanCacheFallbackParameterTypeMismatch, topReason)
+	require.Equal(t, int64(3), topCount)
+
+	encoded, err := json.Marshal(record)
+	require.NoError(t, err)
+	var decoded StmtRecord
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
+	require.Equal(t, record.PlanCacheMisses, decoded.PlanCacheMisses)
+	require.Equal(t, record.PlanCacheMissLastReason, decoded.PlanCacheMissLastReason)
+	require.Equal(t, record.PlanCacheMissLastSeen, decoded.PlanCacheMissLastSeen)
+	require.Equal(t, record.PlanCacheFallbackCounts, decoded.PlanCacheFallbackCounts)
+
+	var oldRecord StmtRecord
+	require.NoError(t, json.Unmarshal([]byte(`{"plan_cache_hits":1}`), &oldRecord))
+	require.Zero(t, oldRecord.PlanCacheMisses)
+	require.Empty(t, oldRecord.PlanCacheMissLastReason)
+	require.Zero(t, oldRecord.PlanCacheMissLastSeen)
+	require.Nil(t, oldRecord.PlanCacheFallbackCounts)
 }

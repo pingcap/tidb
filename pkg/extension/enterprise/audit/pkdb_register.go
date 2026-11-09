@@ -1,0 +1,376 @@
+package audit
+
+import (
+	"context"
+	"encoding/json"
+	"flag"
+	"strconv"
+	"strings"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
+)
+
+// ExtensionName is the extension name for audit log
+const ExtensionName = "Audit"
+
+const (
+	// PrivAuditAdmin is the dynamic privilege that allows the admin of audit log
+	PrivAuditAdmin = "AUDIT_ADMIN"
+	// PrivRestrictedAuditAdmin is the same with `PRIV_AUDIT_ADMIN` but used in sem mode.
+	PrivRestrictedAuditAdmin = "RESTRICTED_AUDIT_ADMIN"
+)
+
+const (
+	// TiDBAuditEnabled is a system variable that used to enable/disable audit feature
+	TiDBAuditEnabled = "tidb_audit_enabled"
+	// TiDBAuditLog is a system variable that used to set audit log file path
+	TiDBAuditLog = "tidb_audit_log"
+	// TiDBAuditLogFormat is a system variable that used to set the output format of the audit log
+	TiDBAuditLogFormat = "tidb_audit_log_format"
+	// TiDBAuditLogMaxFileSize is a system variable that used to control the max size of a log file
+	TiDBAuditLogMaxFileSize = "tidb_audit_log_max_filesize"
+	// TiDBAuditLogMaxLifetime is a system variable that used to control the max lifetime of a log file
+	TiDBAuditLogMaxLifetime = "tidb_audit_log_max_lifetime"
+	// TiDBAuditLogReservedBackups is a system variable that used to control the max backup count of the logs
+	TiDBAuditLogReservedBackups = "tidb_audit_log_reserved_backups"
+	// TiDBAuditLogMaxReservedDays is a system variable that used to control the max days of the reserved log
+	TiDBAuditLogMaxReservedDays = "tidb_audit_log_reserved_days"
+	// TiDBAuditRedactLog is a system variable that used to switch on/off of redact log
+	TiDBAuditRedactLog = "tidb_audit_log_redacted"
+
+	auditRuleWarning = "audit is enabled, but no effective business audit rule is configured; you can configure rules using SELECT audit_log_convenient_rule('filter_name', 'user_name', 'event_type')"
+)
+
+const (
+	convenientRuleDefaultUsers      = "%@%"
+	convenientRuleDefaultEventTypes = "CONNECTION,QUERY_DDL,QUERY_DCL"
+)
+
+const (
+	// FuncAuditLogRotate is used to rotate audit log
+	FuncAuditLogRotate = "audit_log_rotate"
+)
+
+// GlobalLogManager is the audit log manager used by the running TiDB instance.
+var GlobalLogManager *LogManager
+
+var enableAuditExtension bool
+
+// Register registers enterprise extension
+func Register() {
+	flag.BoolVar(&enableAuditExtension, "enable-audit-extension", true, "enable audit extension or not")
+	err := extension.RegisterFactory(ExtensionName, extensionOptionsFactory)
+	terror.MustNil(err)
+}
+
+func requirePrivileges(sem bool) []string {
+	if sem {
+		return []string{PrivRestrictedAuditAdmin}
+	}
+	return []string{PrivAuditAdmin}
+}
+
+func extensionOptionsFactory() ([]extension.Option, error) {
+	if !enableAuditExtension {
+		return nil, nil
+	}
+
+	manager, err := NewAuditLogManager()
+	if err != nil {
+		return nil, err
+	}
+	GlobalLogManager = manager
+	if intest.InTest {
+		globalManagerForTest = manager
+	}
+
+	setGlobalFunc := func(sysVar string, fn func(context.Context, *variable.SessionVars, string) error) func(context.Context, *variable.SessionVars, string) error {
+		return func(ctx context.Context, vars *variable.SessionVars, val string) (err error) {
+			defer func() {
+				manager.ForceLogEntry(newAuditEntryWithSetGlobalVar(sysVar, val, vars, err))
+			}()
+			return fn(ctx, vars, val)
+		}
+	}
+
+	statusFunc := func(name string, fn func(extension.FunctionContext, []types.Datum) error) func(ctx extension.FunctionContext, row chunk.Row) (string, bool, error) {
+		return func(ctx extension.FunctionContext, row chunk.Row) (_ string, _ bool, err error) {
+			var args []types.Datum
+			defer func() {
+				manager.ForceLogEntry(newAuditFuncCallEntry(name, args, ctx, err))
+			}()
+
+			args, err = ctx.EvalArgs(row)
+			if err != nil {
+				return "", false, err
+			}
+
+			if err = fn(ctx, args); err != nil {
+				return "", false, err
+			}
+			return "OK", false, nil
+		}
+	}
+
+	sysVarPrivileges := func(_ bool, sem bool) []string {
+		return requirePrivileges(sem)
+	}
+
+	sysVars := []*variable.SysVar{
+		{
+			Name:  TiDBAuditEnabled,
+			Scope: variable.ScopeGlobal,
+			Type:  variable.TypeBool,
+			Value: variable.BoolToOnOff(manager.Enabled()),
+			SetGlobal: setGlobalFunc(TiDBAuditEnabled, func(_ context.Context, sessVars *variable.SessionVars, s string) (err error) {
+				enable := variable.TiDBOptOn(s)
+				wasEnabled := manager.Enabled()
+				if err := manager.SetEnabled(enable); err != nil {
+					return err
+				}
+				// Warn only when audit switches from disabled to enabled without an enabled
+				// rule for events other than audit management events.
+				if enable && !wasEnabled && !manager.hasEnabledRuleExceptAuditMgmt() && sessVars != nil && sessVars.StmtCtx != nil {
+					sessVars.StmtCtx.AppendWarning(errors.NewNoStackError(auditRuleWarning))
+				}
+				return nil
+			}),
+			RequireDynamicPrivileges: sysVarPrivileges,
+		},
+		{
+			Name:  TiDBAuditLog,
+			Scope: variable.ScopeGlobal,
+			Type:  variable.TypeStr,
+			Value: manager.GetLogConfigPath(),
+			SetGlobal: setGlobalFunc(TiDBAuditLog, func(_ context.Context, _ *variable.SessionVars, s string) error {
+				return manager.SetLogConfigPath(s)
+			}),
+			RequireDynamicPrivileges: sysVarPrivileges,
+		},
+		{
+			Name:           TiDBAuditLogFormat,
+			Scope:          variable.ScopeGlobal,
+			Type:           variable.TypeEnum,
+			Value:          LogFormatText,
+			PossibleValues: []string{LogFormatText, LogFormatJSON},
+			SetGlobal: setGlobalFunc(TiDBAuditLogFormat, func(_ context.Context, _ *variable.SessionVars, s string) error {
+				return manager.SetLogFormat(s)
+			}),
+			RequireDynamicPrivileges: sysVarPrivileges,
+		},
+		{
+			Name:     TiDBAuditLogMaxFileSize,
+			Scope:    variable.ScopeGlobal,
+			Type:     variable.TypeInt,
+			Value:    strconv.FormatInt(manager.GetFileMaxSize(), 10),
+			MinValue: 0,
+			MaxValue: MaxAuditLogFileMaxSize,
+			Validation: func(vars *variable.SessionVars, normalizedValue string, originalValue string, scope variable.ScopeFlag) (string, error) {
+				val, err := strconv.ParseInt(normalizedValue, 10, 64)
+				if err != nil {
+					return normalizedValue, err
+				}
+				if val == 0 {
+					return strconv.FormatInt(DefAuditLogFileMaxSize, 10), err
+				}
+				return normalizedValue, err
+			},
+			SetGlobal: setGlobalFunc(TiDBAuditLogMaxFileSize, func(_ context.Context, _ *variable.SessionVars, s string) error {
+				val, err := strconv.ParseInt(s, 10, 64)
+				if err != nil {
+					return err
+				}
+				return manager.SetFileMaxSize(val)
+			}),
+			RequireDynamicPrivileges: sysVarPrivileges,
+		},
+		{
+			Name:     TiDBAuditLogMaxLifetime,
+			Scope:    variable.ScopeGlobal,
+			Type:     variable.TypeInt,
+			Value:    strconv.FormatInt(manager.GetFileMaxLifetime(), 10),
+			MinValue: 0,
+			MaxValue: MaxAuditLogFileMaxLifetime,
+			SetGlobal: setGlobalFunc(TiDBAuditLogMaxLifetime, func(_ context.Context, _ *variable.SessionVars, s string) error {
+				val, err := strconv.ParseInt(s, 10, 64)
+				if err != nil {
+					return err
+				}
+				return manager.SetFileMaxLifetime(val)
+			}),
+			RequireDynamicPrivileges: sysVarPrivileges,
+		},
+		{
+			Name:     TiDBAuditLogReservedBackups,
+			Scope:    variable.ScopeGlobal,
+			Type:     variable.TypeInt,
+			Value:    strconv.Itoa(manager.GetFileReservedBackups()),
+			MinValue: 0,
+			MaxValue: MaxAuditLogFileReservedBackups,
+			SetGlobal: setGlobalFunc(TiDBAuditLogReservedBackups, func(ctx context.Context, vars *variable.SessionVars, s string) error {
+				val, err := strconv.Atoi(s)
+				if err != nil {
+					return err
+				}
+				return manager.SetFileReservedBackups(val)
+			}),
+			RequireDynamicPrivileges: sysVarPrivileges,
+		},
+		{
+			Name:     TiDBAuditLogMaxReservedDays,
+			Scope:    variable.ScopeGlobal,
+			Type:     variable.TypeInt,
+			Value:    strconv.Itoa(manager.GetFileReservedDays()),
+			MinValue: 0,
+			MaxValue: MaxAuditLogFileReservedDays,
+			SetGlobal: setGlobalFunc(TiDBAuditLogMaxReservedDays, func(ctx context.Context, vars *variable.SessionVars, s string) error {
+				val, err := strconv.Atoi(s)
+				if err != nil {
+					return err
+				}
+				return manager.SetFileReservedDays(val)
+			}),
+			RequireDynamicPrivileges: sysVarPrivileges,
+		},
+		{
+			Name:  TiDBAuditRedactLog,
+			Scope: variable.ScopeGlobal,
+			Type:  variable.TypeBool,
+			Value: variable.BoolToOnOff(manager.RedactLog()),
+			SetGlobal: setGlobalFunc(TiDBAuditRedactLog, func(_ context.Context, _ *variable.SessionVars, s string) error {
+				return manager.SetRedactLog(variable.TiDBOptOn(s))
+			}),
+			RequireDynamicPrivileges: sysVarPrivileges,
+		},
+	}
+
+	functions := []*extension.FunctionDef{
+		{
+			Name:   FuncAuditLogRotate,
+			EvalTp: types.ETString,
+			EvalStringFunc: statusFunc(FuncAuditLogRotate, func(ctx extension.FunctionContext, _ []types.Datum) error {
+				return manager.GlobalRotateLog()
+			}),
+			RequireDynamicPrivileges: requirePrivileges,
+		},
+		{
+			Name:            FuncAuditLogCreateFilter,
+			EvalTp:          types.ETString,
+			ArgTps:          []types.EvalType{types.ETString, types.ETString, types.ETInt},
+			OptionalArgsLen: 1,
+			EvalStringFunc: statusFunc(FuncAuditLogCreateFilter, func(ctx extension.FunctionContext, args []types.Datum) error {
+				filterName := args[0].GetString()
+				var filter LogFilter
+				if err := json.Unmarshal(args[1].GetBytes(), &filter); err != nil {
+					return err
+				}
+
+				replace := false
+				if len(args) > 2 {
+					replace = args[2].GetInt64() == 1
+				}
+
+				filter.Name = filterName
+				return manager.CreateLogFilter(&filter, replace)
+			}),
+			RequireDynamicPrivileges: requirePrivileges,
+		},
+		{
+			Name:            FuncAuditLogConvenientRule,
+			EvalTp:          types.ETString,
+			ArgTps:          []types.EvalType{types.ETString, types.ETString, types.ETString},
+			OptionalArgsLen: 3,
+			EvalStringFunc: statusFunc(FuncAuditLogConvenientRule, func(ctx extension.FunctionContext, args []types.Datum) error {
+				filterName := ""
+				users := convenientRuleDefaultUsers
+				eventTypes := convenientRuleDefaultEventTypes
+				if len(args) > 0 {
+					filterName = args[0].GetString()
+				}
+				if len(args) > 1 && args[1].GetString() != "" {
+					users = args[1].GetString()
+				}
+				if len(args) > 2 && args[2].GetString() != "" {
+					eventTypes = args[2].GetString()
+				}
+
+				filter := &LogFilter{Name: filterName}
+				if !strings.EqualFold(strings.TrimSpace(eventTypes), "all") {
+					classes := strings.Split(eventTypes, ",")
+					for i := range classes {
+						classes[i] = strings.TrimSpace(classes[i])
+					}
+					filter.Filter = []FilterSpec{{Classes: classes}}
+				}
+				return manager.CreateConvenientRule(filter, users)
+			}),
+			RequireDynamicPrivileges: requirePrivileges,
+		},
+		{
+			Name:   FuncAuditLogRemoveFilter,
+			EvalTp: types.ETString,
+			ArgTps: []types.EvalType{types.ETString},
+			EvalStringFunc: statusFunc(FuncAuditLogRemoveFilter, func(ctx extension.FunctionContext, args []types.Datum) error {
+				return manager.RemoveLogFilter(args[0].GetString())
+			}),
+			RequireDynamicPrivileges: requirePrivileges,
+		},
+		{
+			Name:            FuncAuditLogCreateRule,
+			EvalTp:          types.ETString,
+			ArgTps:          []types.EvalType{types.ETString, types.ETString, types.ETInt},
+			OptionalArgsLen: 1,
+			EvalStringFunc: statusFunc(FuncAuditLogCreateRule, func(ctx extension.FunctionContext, args []types.Datum) error {
+				replace := false
+				if len(args) > 2 {
+					replace = args[2].GetInt64() == 1
+				}
+				return manager.CreateLogFilterRule(args[0].GetString(), args[1].GetString(), replace)
+			}),
+			RequireDynamicPrivileges: requirePrivileges,
+		},
+		{
+			Name:   FuncAuditLogRemoveRule,
+			EvalTp: types.ETString,
+			ArgTps: []types.EvalType{types.ETString, types.ETString},
+			EvalStringFunc: statusFunc(FuncAuditLogRemoveRule, func(ctx extension.FunctionContext, args []types.Datum) error {
+				return manager.RemoveLogFilterRule(args[0].GetString(), args[1].GetString())
+			}),
+			RequireDynamicPrivileges: requirePrivileges,
+		},
+		{
+			Name:   FuncAuditLogEnableRule,
+			EvalTp: types.ETString,
+			ArgTps: []types.EvalType{types.ETString, types.ETString},
+			EvalStringFunc: statusFunc(FuncAuditLogEnableRule, func(ctx extension.FunctionContext, args []types.Datum) error {
+				return manager.SwitchLogFilterRuleEnabled(args[0].GetString(), args[1].GetString(), true)
+			}),
+			RequireDynamicPrivileges: requirePrivileges,
+		},
+		{
+			Name:   FuncAuditLogDisableRule,
+			EvalTp: types.ETString,
+			ArgTps: []types.EvalType{types.ETString, types.ETString},
+			EvalStringFunc: statusFunc(FuncAuditLogDisableRule, func(ctx extension.FunctionContext, args []types.Datum) error {
+				return manager.SwitchLogFilterRuleEnabled(args[0].GetString(), args[1].GetString(), false)
+			}),
+			RequireDynamicPrivileges: requirePrivileges,
+		},
+	}
+
+	return []extension.Option{
+		extension.WithCustomDynPrivs([]string{PrivAuditAdmin, PrivRestrictedAuditAdmin}),
+		extension.WithCustomSysVariables(sysVars),
+		extension.WithSessionHandlerFactory(manager.GetSessionHandler),
+		extension.WithCustomFunctions(functions),
+		extension.WithBootstrap(manager.Bootstrap),
+		extension.WithCustomAccessCheck(checkTableAccess),
+		extension.WithClose(manager.Stop),
+	}, nil
+}

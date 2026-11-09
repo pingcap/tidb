@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"go.uber.org/zap"
@@ -121,6 +122,11 @@ const (
 	LastSeenStr                       = "LAST_SEEN"
 	PlanInCacheStr                    = "PLAN_IN_CACHE"
 	PlanCacheHitsStr                  = "PLAN_CACHE_HITS"
+	PlanCacheMissesStr                = "PLAN_CACHE_MISSES"
+	PlanCacheMissTopReasonStr         = "PLAN_CACHE_MISS_TOP_REASON"
+	PlanCacheMissTopReasonCountStr    = "PLAN_CACHE_MISS_TOP_REASON_COUNT"
+	PlanCacheMissLastReasonStr        = "PLAN_CACHE_MISS_LAST_REASON"
+	PlanCacheMissLastSeenStr          = "PLAN_CACHE_MISS_LAST_SEEN"
 	PlanCacheUnqualifiedStr           = "PLAN_CACHE_UNQUALIFIED"
 	PlanCacheUnqualifiedLastReasonStr = "PLAN_CACHE_UNQUALIFIED_LAST_REASON"
 	PlanInBindingStr                  = "PLAN_IN_BINDING"
@@ -273,31 +279,31 @@ var columnFactoryMap = map[string]columnFactory{
 		return record.MaxProcessedKeys
 	},
 	AvgRocksdbDeleteSkippedCountStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumRocksdbDeleteSkippedCount), record.ExecCount)
+		return avgFloat4Uint(record.SumRocksdbDeleteSkippedCount, record.ExecCount)
 	},
 	MaxRocksdbDeleteSkippedCountStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxRocksdbDeleteSkippedCount
 	},
 	AvgRocksdbKeySkippedCountStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumRocksdbKeySkippedCount), record.ExecCount)
+		return avgFloat4Uint(record.SumRocksdbKeySkippedCount, record.ExecCount)
 	},
 	MaxRocksdbKeySkippedCountStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxRocksdbKeySkippedCount
 	},
 	AvgRocksdbBlockCacheHitCountStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumRocksdbBlockCacheHitCount), record.ExecCount)
+		return avgFloat4Uint(record.SumRocksdbBlockCacheHitCount, record.ExecCount)
 	},
 	MaxRocksdbBlockCacheHitCountStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxRocksdbBlockCacheHitCount
 	},
 	AvgRocksdbBlockReadCountStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumRocksdbBlockReadCount), record.ExecCount)
+		return avgFloat4Uint(record.SumRocksdbBlockReadCount, record.ExecCount)
 	},
 	MaxRocksdbBlockReadCountStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxRocksdbBlockReadCount
 	},
 	AvgRocksdbBlockReadByteStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumRocksdbBlockReadByte), record.ExecCount)
+		return avgFloat4Uint(record.SumRocksdbBlockReadByte, record.ExecCount)
 	},
 	MaxRocksdbBlockReadByteStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxRocksdbBlockReadByte
@@ -417,7 +423,7 @@ var columnFactoryMap = map[string]columnFactory{
 		return record.Prepared
 	},
 	AvgAffectedRowsStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgFloat(int64(record.SumAffectedRows), record.ExecCount)
+		return avgFloat4Uint(record.SumAffectedRows, record.ExecCount)
 	},
 	FirstSeenStr: func(info columnInfo, record *StmtRecord) any {
 		firstSeen := record.FirstSeen
@@ -438,6 +444,57 @@ var columnFactoryMap = map[string]columnFactory{
 	},
 	PlanCacheHitsStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.PlanCacheHits
+	},
+	PlanCacheMissesStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.PlanCacheMisses
+	},
+	PlanCacheMissTopReasonStr: func(_ columnInfo, record *StmtRecord) any {
+		reason, count := record.PlanCacheFallbackCounts.Top()
+		if count == 0 {
+			return nil
+		}
+		return reason.String()
+	},
+	PlanCacheMissTopReasonCountStr: func(_ columnInfo, record *StmtRecord) any {
+		_, count := record.PlanCacheFallbackCounts.Top()
+		return count
+	},
+	PlanCacheMissUnknownCountStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.PlanCacheFallbackCounts.Count(contextutil.PlanCacheFallbackUnknown)
+	},
+	PlanCacheMissCacheDisabledCountStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.PlanCacheFallbackCounts.Count(contextutil.PlanCacheFallbackCacheDisabled)
+	},
+	PlanCacheMissUnsupportedStatementTypeCountStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.PlanCacheFallbackCounts.Count(contextutil.PlanCacheFallbackUnsupportedStatementType)
+	},
+	PlanCacheMissNotCacheableCountStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.PlanCacheFallbackCounts.Count(contextutil.PlanCacheFallbackNotCacheable)
+	},
+	PlanCacheMissParameterTypeMismatchCountStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.PlanCacheFallbackCounts.Count(contextutil.PlanCacheFallbackParameterTypeMismatch)
+	},
+	PlanCacheMissLookupMissCountStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.PlanCacheFallbackCounts.Count(contextutil.PlanCacheFallbackLookupMiss)
+	},
+	PlanCacheMissReuseRejectedCountStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.PlanCacheFallbackCounts.Count(contextutil.PlanCacheFallbackReuseRejected)
+	},
+	PlanCacheMissCacheInsertFailedCountStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.PlanCacheFallbackCounts.Count(contextutil.PlanCacheFallbackCacheInsertFailed)
+	},
+	PlanCacheMissLastReasonStr: func(_ columnInfo, record *StmtRecord) any {
+		if record.PlanCacheMissLastSeen == 0 {
+			return nil
+		}
+		return record.PlanCacheMissLastReason
+	},
+	PlanCacheMissLastSeenStr: func(info columnInfo, record *StmtRecord) any {
+		if record.PlanCacheMissLastSeen == 0 {
+			return nil
+		}
+		lastSeen := time.Unix(0, record.PlanCacheMissLastSeen).In(info.getTimeLocation())
+		return types.NewTime(types.FromGoTime(lastSeen), mysql.TypeTimestamp, 6)
 	},
 	PlanInBindingStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.PlanInBinding
@@ -560,6 +617,13 @@ func avgInt(sum int64, count int64) int64 {
 }
 
 func avgFloat(sum int64, count int64) float64 {
+	if count > 0 {
+		return float64(sum) / float64(count)
+	}
+	return 0
+}
+
+func avgFloat4Uint(sum uint64, count int64) float64 {
 	if count > 0 {
 		return float64(sum) / float64(count)
 	}

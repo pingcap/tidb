@@ -72,7 +72,7 @@ func analyzeColumnsPushDownEntry(ctx context.Context, gp *gp.Pool, e *AnalyzeCol
 	if e.AnalyzeInfo.StatsVersion >= statistics.Version2 {
 		return e.toV2().analyzeColumnsPushDownV2(ctx, gp)
 	}
-	return e.toV1().analyzeColumnsPushDownV1()
+	return e.toV1().analyzeColumnsPushDownV1(ctx)
 }
 
 func (e *AnalyzeColumnsExec) toV1() *AnalyzeColumnsExecV1 {
@@ -141,8 +141,8 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 	return result, nil
 }
 
-func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats bool) (hists []*statistics.Histogram, cms []*statistics.CMSketch, topNs []*statistics.TopN, fms []*statistics.FMSketch, extStats *statistics.ExtendedStatsColl, err error) {
-	if err = e.open(context.TODO(), ranges); err != nil {
+func (e *AnalyzeColumnsExec) buildStats(ctx context.Context, ranges []*ranger.Range, needExtStats bool) (hists []*statistics.Histogram, cms []*statistics.CMSketch, topNs []*statistics.TopN, fms []*statistics.FMSketch, extStats *statistics.ExtendedStatsColl, err error) {
+	if err = e.open(ctx, ranges); err != nil {
 		return nil, nil, nil, nil, nil, err
 	}
 	defer func() {
@@ -177,6 +177,17 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			CMSketch:      statistics.NewCMSketch(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth])),
 		}
 	}
+	destroyCollector := func(i int) {
+		if collectors[i] != nil {
+			collectors[i].Destroy()
+			collectors[i] = nil
+		}
+	}
+	defer func() {
+		for i := range collectors {
+			destroyCollector(i)
+		}
+	}()
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	for {
 		failpoint.Inject("mockKillRunningV1AnalyzeJob", func() {
@@ -284,11 +295,17 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		collectors[i].CMSketch.CalcDefaultValForAnalyze(uint64(hg.NDV))
 		cms = append(cms, collectors[i].CMSketch)
 		fms = append(fms, collectors[i].FMSketch)
+		if !needExtStats {
+			destroyCollector(i)
+		}
 	}
 	if needExtStats {
 		extStats, err = statistics.BuildExtendedStats(e.ctx, e.TableID.GetStatisticsID(), e.colsInfo, collectors)
 		if err != nil {
 			return nil, nil, nil, nil, nil, err
+		}
+		for i := range collectors {
+			destroyCollector(i)
 		}
 	}
 	if handleHist != nil {
@@ -312,7 +329,7 @@ type AnalyzeColumnsExecV1 struct {
 	*AnalyzeColumnsExec
 }
 
-func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1() *statistics.AnalyzeResults {
+func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1(ctx context.Context) *statistics.AnalyzeResults {
 	var ranges []*ranger.Range
 	if hc := e.handleCols; hc != nil {
 		if hc.IsInt() {
@@ -324,7 +341,7 @@ func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1() *statistics.AnalyzeRes
 		ranges = ranger.FullIntRange(false)
 	}
 	collExtStats := e.ctx.GetSessionVars().EnableExtendedStats
-	hists, cms, topNs, fms, extStats, err := e.buildStats(ranges, collExtStats)
+	hists, cms, topNs, fms, extStats, err := e.buildStats(ctx, ranges, collExtStats)
 	if err != nil {
 		return &statistics.AnalyzeResults{Err: err, Job: e.job}
 	}

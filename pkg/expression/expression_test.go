@@ -223,7 +223,26 @@ func TestVectorizable(t *testing.T) {
 	exprs = append(exprs, sf)
 	sf = newFunctionWithMockCtx(ast.SetVal, column1, column2)
 	exprs = append(exprs, sf)
+	sf = newFunctionWithMockCtx(ast.GetProcedureVar, column0)
+	exprs = append(exprs, sf)
+	sf = newFunctionWithMockCtx(ast.SetProcedureVar, column1, column2)
+	exprs = append(exprs, sf)
 	require.False(t, Vectorizable(exprs))
+
+	exprs = exprs[:0]
+	exprs = append(exprs, &ScalarFunction{
+		FuncName: pmodel.NewCIStr("test.stored_func"),
+		Function: &storedFuncSig{},
+	})
+	require.False(t, Vectorizable(exprs))
+
+	loadableFunc := &ScalarFunction{
+		FuncName: pmodel.NewCIStr("test_loadable_func"),
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		Function: &loadableFuncSig{},
+	}
+	require.False(t, Vectorizable([]Expression{loadableFunc}))
+	require.False(t, Vectorizable([]Expression{newFunctionWithMockCtx(ast.Abs, loadableFunc)}))
 }
 
 type testTableBuilder struct {

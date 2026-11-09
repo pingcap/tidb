@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
+	"github.com/pingcap/tidb/pkg/privilege/lbac"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -73,6 +74,13 @@ type Manager interface {
 	// RequestDynamicVerification verifies user privilege for a DYNAMIC privilege.
 	// Dynamic privileges are only assignable globally, and have their own grantable attribute.
 	RequestDynamicVerification(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool
+
+	// RequestProcedureVerification verifies user privilege for the routine request.
+	// If routeName is "", only check global/db scope privileges.
+	// If routeName is not "", check global/db/routine scope privileges.
+	// priv should be a defined constant like CreatePriv, if pass AllPrivMask to priv,
+	// this means any privilege would be OK.
+	RequestProcedureVerification(activeRoles []*auth.RoleIdentity, db, routeName string, priv mysql.PrivilegeType) bool
 
 	// RequestDynamicVerificationWithUser verifies a DYNAMIC privilege for a specific user.
 	RequestDynamicVerificationWithUser(privName string, grantable bool, user *auth.UserIdentity) bool
@@ -128,6 +136,8 @@ type Manager interface {
 	// GetAuthPlugin gets the authentication plugin for the account identified by the user and host
 	GetAuthPlugin(user, host string) (string, error)
 
+	GetSecurityLabelCache() *lbac.SecurityLabelCache
+
 	// GetUserResources gets the max user connections for the account identified by the user and host
 	GetUserResources(user, host string) (int64, error)
 }
@@ -150,4 +160,17 @@ func GetPrivilegeManager(ctx privilegeManagerKeyProvider) Manager {
 		return v
 	}
 	return nil
+}
+
+// GetSecurityLabelCache returns the LBAC cache stored in the privilege manager of ctx.
+func GetSecurityLabelCache(ctx privilegeManagerKeyProvider) (*lbac.SecurityLabelCache, error) {
+	pm := GetPrivilegeManager(ctx)
+	if pm == nil {
+		return nil, lbac.ErrLBACCacheUnavailable
+	}
+	cache := pm.GetSecurityLabelCache()
+	if cache == nil {
+		return nil, lbac.ErrLBACCacheUnavailable
+	}
+	return cache, nil
 }

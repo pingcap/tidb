@@ -32,6 +32,68 @@ const (
 	SessionNonPrepared
 )
 
+// PlanCacheFallbackReason classifies why a statement that entered the plan
+// cache path attempted to generate a new plan. Optimization can still fail.
+type PlanCacheFallbackReason uint8
+
+const (
+	// PlanCacheFallbackNone means the statement did not fall back from plan cache.
+	PlanCacheFallbackNone PlanCacheFallbackReason = iota
+	// PlanCacheFallbackUnknown is the defensive fallback for an unclassified miss.
+	PlanCacheFallbackUnknown
+	// PlanCacheFallbackCacheDisabled means the relevant plan cache switch was disabled.
+	PlanCacheFallbackCacheDisabled
+	// PlanCacheFallbackUnsupportedStatementType means the statement type is unsupported.
+	PlanCacheFallbackUnsupportedStatementType
+	// PlanCacheFallbackNotCacheable means the statement or cache key is not cacheable.
+	PlanCacheFallbackNotCacheable
+	// PlanCacheFallbackParameterTypeMismatch means a key bucket existed without a compatible parameter type.
+	PlanCacheFallbackParameterTypeMismatch
+	// PlanCacheFallbackLookupMiss means no cache bucket existed for the lookup key.
+	PlanCacheFallbackLookupMiss
+	// PlanCacheFallbackReuseRejected means a cached candidate could not be safely reused.
+	PlanCacheFallbackReuseRejected
+	// PlanCacheFallbackCacheInsertFailed means a cacheable plan was generated but no cache entry was retained.
+	PlanCacheFallbackCacheInsertFailed
+	// PlanCacheFallbackReasonCount is the number of internal enum values.
+	PlanCacheFallbackReasonCount
+)
+
+// NormalizePlanCacheFallbackReason converts invalid values to the externally
+// reportable defensive fallback. None remains a no-event value.
+func NormalizePlanCacheFallbackReason(reason PlanCacheFallbackReason) PlanCacheFallbackReason {
+	if reason >= PlanCacheFallbackReasonCount {
+		return PlanCacheFallbackUnknown
+	}
+	return reason
+}
+
+// String returns the stable external label for a fallback reason.
+func (r PlanCacheFallbackReason) String() string {
+	switch r {
+	case PlanCacheFallbackNone:
+		return ""
+	case PlanCacheFallbackCacheDisabled:
+		return "cache_disabled"
+	case PlanCacheFallbackUnsupportedStatementType:
+		return "unsupported_statement_type"
+	case PlanCacheFallbackNotCacheable:
+		return "not_cacheable"
+	case PlanCacheFallbackParameterTypeMismatch:
+		return "parameter_type_mismatch"
+	case PlanCacheFallbackLookupMiss:
+		return "lookup_miss"
+	case PlanCacheFallbackReuseRejected:
+		return "reuse_rejected"
+	case PlanCacheFallbackCacheInsertFailed:
+		return "cache_insert_failed"
+	case PlanCacheFallbackUnknown:
+		fallthrough
+	default:
+		return "unknown"
+	}
+}
+
 // PlanCacheTracker PlanCacheTracker `PlanCacheTracker`. `PlanCacheTracker` is thread-safe.
 type PlanCacheTracker struct {
 	mu sync.Mutex
@@ -41,8 +103,31 @@ type PlanCacheTracker struct {
 	planCacheUnqualified string
 	forcePlanCache       bool // force the optimizer to use plan cache even if there is risky optimization, see #49736.
 	alwaysWarnSkipCache  bool
+	fallbackReason       PlanCacheFallbackReason
+	fallbackTimeUnixNano int64
 
 	warnHandler WarnAppender
+}
+
+// SetPlanCacheFallback records a fallback reason and occurrence time together.
+func (h *PlanCacheTracker) SetPlanCacheFallback(reason PlanCacheFallbackReason, timeUnixNano int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.fallbackReason = NormalizePlanCacheFallbackReason(reason)
+	if h.fallbackReason == PlanCacheFallbackNone {
+		h.fallbackTimeUnixNano = 0
+	} else {
+		h.fallbackTimeUnixNano = timeUnixNano
+	}
+}
+
+// PlanCacheFallback returns the fallback reason and occurrence time together.
+func (h *PlanCacheTracker) PlanCacheFallback() (PlanCacheFallbackReason, int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return h.fallbackReason, h.fallbackTimeUnixNano
 }
 
 // WarnSkipPlanCache output the reason why this query can't hit the plan cache.

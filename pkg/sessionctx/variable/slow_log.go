@@ -170,6 +170,12 @@ const (
 	SlowLogIsInternalStr = "Is_internal"
 	// SlowLogDigestStr is slow log field name.
 	SlowLogDigestStr = "Digest"
+	// SlowLogBindingDigest is used to record the binding-vocabulary SQL
+	// digest of the statement — the same vocabulary as
+	// mysql.bind_info.sql_digest, unlike Digest which serves execution
+	// aggregation. Only output when non-empty: statements without binding
+	// semantics carry no binding digest.
+	SlowLogBindingDigest = "Binding_digest"
 	// SlowLogNumCopTasksStr is the number of cop-tasks.
 	SlowLogNumCopTasksStr = "Num_cop_tasks"
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
@@ -235,11 +241,15 @@ func CollectWarningsForSlowLog(stmtCtx *stmtctx.StatementContext) []JSONSQLWarnF
 // SlowQueryLogItems is a collection of items that should be included in the
 // slow query log.
 type SlowQueryLogItems struct {
-	TxnTS             uint64
-	KeyspaceName      string
-	KeyspaceID        uint32
-	SQL               string
-	Digest            string
+	TxnTS        uint64
+	KeyspaceName string
+	KeyspaceID   uint32
+	SQL          string
+	Digest       string
+	// BindingDigest is the binding-vocabulary digest (the
+	// mysql.bind_info.sql_digest vocabulary). Empty for statements without
+	// binding semantics — the slow log omits the field then.
+	BindingDigest     string
 	TimeTotal         time.Duration
 	IndexNames        string
 	CopTasks          *execdetails.CopTasksDetails
@@ -377,6 +387,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogIsInternalStr, strconv.FormatBool(s.InRestrictedSQL))
 	if len(logItems.Digest) > 0 {
 		writeSlowLogItem(&buf, SlowLogDigestStr, logItems.Digest)
+	}
+	if len(logItems.BindingDigest) > 0 {
+		writeSlowLogItem(&buf, SlowLogBindingDigest, logItems.BindingDigest)
 	}
 	keys := logItems.UsedStats.Keys()
 	if len(keys) > 0 {
@@ -746,6 +759,25 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 		},
 		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
 			return MatchEqual(threshold, items.Digest)
+		},
+	},
+	strings.ToLower(SlowLogBindingDigest): {
+		Parse: ParseString,
+		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
+			// Reads the memoized binding digest (filled, if at all, by an
+			// earlier on-demand computation of this same statement). The memo
+			// may legitimately be absent (nobody needed the digest; non-DML);
+			// the accessor cannot compute on demand itself — it has no AST —
+			// so the rule-eval caller in LogSlowQuery fills the value first
+			// via executor.prepareBindingDigestForRules, and the flush-time
+			// fill in SetSlowLogItems decides the final value —
+			// never the exec digest.
+			if digest, ok := seVars.StmtCtx.BindingDigest(); ok {
+				items.BindingDigest = digest
+			}
+		},
+		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
+			return MatchEqual(threshold, items.BindingDigest)
 		},
 	},
 	strings.ToLower(SlowLogNumCopTasksStr): {

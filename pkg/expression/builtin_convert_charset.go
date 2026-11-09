@@ -311,8 +311,9 @@ var convertActionMap = map[funcProp][]string{
 	},
 	funcPropAuto: {
 		/* string functions */ ast.Concat, ast.ConcatWS, ast.ExportSet, ast.Field, ast.FindInSet,
-		ast.InsertFunc, ast.Instr, ast.Lpad, ast.Locate, ast.Lpad, ast.MakeSet, ast.Position,
+		ast.InsertFunc, ast.Instr, ast.LabelAceesible, ast.Lpad, ast.Locate, ast.Lpad, ast.MakeSet, ast.Position,
 		ast.Replace, ast.Rpad, ast.SubstringIndex, ast.Trim, ast.Elt,
+		ast.Seclabel, ast.SeclabelToChar, ast.LBACDominates,
 		/* operators */
 		ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ, ast.NE, ast.NullEQ, ast.If, ast.Ifnull, ast.In,
 		ast.Case, ast.Cast,

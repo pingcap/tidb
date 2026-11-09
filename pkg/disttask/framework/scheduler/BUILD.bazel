@@ -19,6 +19,7 @@ go_library(
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
         "//pkg/domain/infosync",
+        "//pkg/domain/pkdb_repl",
         "//pkg/kv",
         "//pkg/lightning/log",
         "//pkg/sessionctx",

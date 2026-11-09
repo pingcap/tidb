@@ -1,0 +1,15 @@
+schema_version: 1
+repo_id: tidb
+modules:
+  - id: root
+    type: go
+    path: .
+    dependencies:
+      - id: kvproto
+        repo: kvproto
+        package: github.com/pingcap/kvproto
+        branch: release-7.1.9-0
+      - id: client-go
+        repo: client-go
+        package: github.com/tikv/client-go/v2
+        branch: release-7.1.9-0

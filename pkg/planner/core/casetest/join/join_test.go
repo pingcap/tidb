@@ -15,9 +15,14 @@
 package join
 
 import (
+	"fmt"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSemiJoinOrder(t *testing.T) {
@@ -93,6 +98,66 @@ func TestSemiJoinOrder(t *testing.T) {
 		"Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for semi join, please check the hint"))
 }
 
+func TestJoinReorderLimitZeroCTEOuterJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (a int)")
+	tk.MustExec("set tidb_opt_enable_advanced_join_reorder = on")
+
+	query := `
+with
+  c1 as (select a from t1 limit 0),
+  c2 as (select a from t2 limit 0),
+  c3 as (select c1.a from c1 left join c2 on c1.a = c2.a)
+select * from c3`
+	derived := `select t1.a from (select 1 as a from t1, t2) v0, t2 left join t1 on t2.a = t1.a`
+
+	for _, threshold := range []string{"0", "10"} {
+		tk.MustExec("set tidb_opt_join_reorder_threshold = " + threshold)
+		tk.MustQuery(query).Check(testkit.Rows())
+		tk.MustQuery("explain " + query)
+		tk.MustQuery(derived)
+	}
+}
+
+func TestJoinReorderConstantPropagationOuterJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table modules (id bigint primary key, module_id bigint)")
+	tk.MustExec("create table items (id bigint primary key, module_id bigint)")
+	tk.MustExec("create table details (item_id bigint, user_id bigint, score int)")
+	tk.MustExec("create table employees (id bigint primary key)")
+	tk.MustExec("insert into modules values (1, 10), (2, 20)")
+	tk.MustExec("insert into items values (101, 1), (102, 1), (201, 2)")
+	tk.MustExec("insert into details values (101, 12345, 7), (102, 99999, 9), (201, null, 11)")
+	tk.MustExec("set tidb_opt_enable_advanced_join_reorder = on")
+	tk.MustExec("set tidb_enable_outer_join_reorder = on")
+
+	query := `select m.module_id, i.id, d.score
+		from modules m join items i on i.module_id = m.id
+		left join (
+			select d.item_id, d.score from details d
+			join employees e on e.id = d.user_id where e.id = 12345
+		) d on d.item_id = i.id order by i.id`
+	for _, employeeExists := range []bool{false, true} {
+		if employeeExists {
+			tk.MustExec("insert into employees values (12345)")
+		}
+		for _, threshold := range []string{"0", "3", "4", "10"} {
+			tk.MustExec("set tidb_opt_join_reorder_threshold = " + threshold)
+			tk.MustQuery("explain " + query)
+			if employeeExists {
+				tk.MustQuery(query).Check(testkit.Rows("10 101 7", "10 102 <nil>", "20 201 <nil>"))
+			} else {
+				tk.MustQuery(query).Check(testkit.Rows("10 101 <nil>", "10 102 <nil>", "20 201 <nil>"))
+			}
+		}
+	}
+}
+
 func TestJoinWithNullEQ(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -141,4 +206,123 @@ func TestJoinWithNullEQ(t *testing.T) {
          LEFT JOIN (SELECT (0) AS col_0
                           FROM tt0) as subQuery1 ON ((subQuery1.col_0) = (tt1.c0))
          INNER JOIN tt0 ON (subQuery1.col_0 <=> tt0.c0);`).Check(testkit.Rows())
+}
+
+func TestIndexJoinLargeInListProbePredicate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t1 (a int, b int, c int, KEY idx_a (a))`)
+	tk.MustExec(`CREATE TABLE t2 (a int, b int, c int, KEY idx_a (a))`)
+
+	const largeInListThreshold = 10000
+	const largeInListLength = largeInListThreshold + 1
+	var inListBuilder strings.Builder
+	for i := 1; i <= largeInListLength; i++ {
+		if i > 1 {
+			inListBuilder.WriteByte(',')
+		}
+		inListBuilder.WriteString(strconv.Itoa(i))
+	}
+
+	rows := tk.MustQuery("explain format = 'brief' select /*+ INL_HASH_JOIN(t1, t2) */ * from t1 join t2 on t1.a = t2.a " +
+		"where t2.b = 1 or t2.c in (" + inListBuilder.String() + ")").Rows()
+	require.NotEmpty(t, rows)
+
+	// The join hint should keep this query on IndexJoin family, and the large IN-list
+	// predicate should stay at root instead of cop[tikv] on the probe side.
+	plan := fmt.Sprint(rows)
+	require.True(t,
+		strings.Contains(plan, "IndexJoin") || strings.Contains(plan, "IndexHashJoin") || strings.Contains(plan, "IndexMergeJoin"),
+		"expected index join family plan under INL_HASH_JOIN hint")
+	probePredicateAtRoot := false
+	for _, row := range rows {
+		if len(row) < 5 || !strings.Contains(fmt.Sprint(row[0]), "Selection(Probe)") ||
+			!strings.Contains(fmt.Sprint(row[4]), "or(eq(test.t2.b, 1), in(test.t2.c") {
+			continue
+		}
+		require.Equal(t, "root", fmt.Sprint(row[2]))
+		probePredicateAtRoot = true
+	}
+	require.True(t, probePredicateAtRoot, "expected the large IN-list probe predicate in a root Selection")
+}
+
+func TestIndexJoinWithOrderedWindowInner(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, probe_rows, inner_rows")
+	tk.MustExec("create table t1(a int, key(a))")
+	tk.MustExec("create table t2(a int, b int, c int, key idx_abc(a, b, c))")
+	tk.MustExec("create table probe_rows(probe_key varchar(20) not null, probe_time datetime not null, filter_code varchar(20), flag1 int, flag2 int, flag3 int, key idx_filter_time(filter_code, probe_time, flag1, flag2, flag3), key idx_probe_key(probe_key))")
+	tk.MustExec("create table inner_rows(partition_key varchar(20) not null, order_time datetime not null, type_code int, state_code int, payload varchar(20), key idx_partition_order(partition_key, order_time))")
+	tk.MustExec("insert into t1 values (1), (2), (3)")
+	tk.MustExec("insert into t2 values (1, 1, 11), (1, 2, 12), (2, 1, 21), (2, 3, 23), (3, 4, 34)")
+	tk.MustExec("insert into probe_rows values ('K001', '2026-02-04 10:00:00', 'filter_001', 0, 0, 0), ('K002', '2026-02-04 11:00:00', 'filter_001', 0, 0, 0), ('K003', '2026-02-04 12:00:00', 'filter_001', 0, 0, 0), ('K004', '2026-02-04 13:00:00', 'filter_002', 0, 0, 0)")
+	tk.MustExec("insert into inner_rows values ('K001', '2026-02-04 09:00:00', 4, 2, 'old_payload_1'), ('K001', '2026-02-04 15:00:00', 4, 2, 'new_payload_1'), ('K002', '2026-02-04 08:00:00', 3, 2, 'old_payload_2'), ('K002', '2026-02-04 16:00:00', 4, 1, 'new_payload_2'), ('K004', '2026-02-04 17:00:00', 4, 2, 'new_payload_4')")
+	tk.MustExec("set @@tidb_enable_inl_join_inner_multi_pattern=1")
+
+	var input []string
+	var output []struct {
+		Plan   []string
+		Result []string
+	}
+	suiteData := getJoinSuiteData()
+	suiteData.LoadTestCases(t, &input, &output)
+	for i, sql := range input {
+		testdata.OnRecord(func() {
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("EXPLAIN FORMAT='brief' " + sql).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Sort().Rows())
+		})
+		tk.MustQuery("EXPLAIN FORMAT='brief' " + sql).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(sql).Sort().Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func TestIndexJoinInnerRowCountUsesUsableJoinKeys(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (k1 int not null, k2 int not null)")
+	tk.MustExec(`create table t2 (
+		k1 int not null,
+		id int not null,
+		k2 int not null,
+		pad varchar(100),
+		primary key (k1, id) clustered,
+		key idx_k1_k2 (k1, k2))`)
+	tk.MustExec("insert into t1 values (1, 1), (2, 1)")
+	// For each k1 value, 1000 rows share the same primary-key prefix; only one row matches each k2.
+	for _, k1 := range []int{1, 2} {
+		var sb strings.Builder
+		sb.WriteString("insert into t2 values ")
+		for n := 1; n <= 1000; n++ {
+			if n > 1 {
+				sb.WriteString(",")
+			}
+			fmt.Fprintf(&sb, "(%d, %d, %d, repeat('x', 50))", k1, n, n)
+		}
+		tk.MustExec(sb.String())
+	}
+	tk.MustExec("analyze table t1, t2")
+	// Without an index hint, the secondary index should compete with the CommonHandle prefix scan.
+	preferredQuery := `select /*+ inl_hash_join(i) */ o.k1, i.pad from t1 o join t2 i on i.k1 = o.k1 and i.k2 = o.k2`
+	tk.MustUseIndex(preferredQuery, "idx_k1_k2")
+
+	// Issue 69974: the clustered PK can only use the k1 join key, so each probe scans ~1000 rows,
+	// while idx_k1_k2 covers both join keys and reads a single row per probe. Verify both estimates
+	// directly in addition to the automatic path selection above.
+	primaryQuery := `select /*+ inl_hash_join(i) */ o.k1, i.pad from t1 o join t2 i use index(primary) on i.k1 = o.k1 and i.k2 = o.k2`
+	primaryPlan := fmt.Sprint(tk.MustQuery("explain format='brief' " + primaryQuery).Rows())
+	require.Contains(t, primaryPlan, "TableReader(Probe) 2000.00 root")
+
+	secondaryQuery := `select /*+ inl_hash_join(i) */ o.k1, i.pad from t1 o join t2 i use index(idx_k1_k2) on i.k1 = o.k1 and i.k2 = o.k2`
+	secondaryPlan := fmt.Sprint(tk.MustQuery("explain format='brief' " + secondaryQuery).Rows())
+	require.Contains(t, secondaryPlan, "IndexRangeScan(Build) 2.00 cop[tikv]")
+
+	// Disabling the fix restores the old post-join estimate for the PK range-scan probe.
+	tk.MustExec("set tidb_opt_fix_control = '44855:OFF'")
+	primaryPlan = fmt.Sprint(tk.MustQuery("explain format='brief' " + primaryQuery).Rows())
+	require.Contains(t, primaryPlan, "TableReader(Probe) 2.00 root")
+	tk.MustExec("set tidb_opt_fix_control = ''")
 }

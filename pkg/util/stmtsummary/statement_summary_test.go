@@ -30,6 +30,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -849,6 +851,72 @@ func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryRead
 	return reader
 }
 
+func TestColumnValueFactoryDoubleUintMetrics(t *testing.T) {
+	const uintMetricSum = uint64(1 << 63)
+	ssElement := &stmtSummaryByDigestElement{
+		execCount:                    2,
+		sumRocksdbDeleteSkippedCount: uintMetricSum,
+		sumRocksdbKeySkippedCount:    uintMetricSum,
+		sumRocksdbBlockCacheHitCount: uintMetricSum,
+		sumRocksdbBlockReadCount:     uintMetricSum,
+		sumRocksdbBlockReadByte:      uintMetricSum,
+		sumAffectedRows:              uintMetricSum,
+	}
+	avgUintMetric := float64(uintMetricSum) / float64(ssElement.execCount)
+	cases := []struct {
+		name     string
+		expected float64
+	}{
+		{name: AvgRocksdbDeleteSkippedCountStr, expected: avgUintMetric},
+		{name: AvgRocksdbKeySkippedCountStr, expected: avgUintMetric},
+		{name: AvgRocksdbBlockCacheHitCountStr, expected: avgUintMetric},
+		{name: AvgRocksdbBlockReadCountStr, expected: avgUintMetric},
+		{name: AvgRocksdbBlockReadByteStr, expected: avgUintMetric},
+		{name: AvgAffectedRowsStr, expected: avgUintMetric},
+	}
+
+	for _, tc := range cases {
+		factory, ok := columnValueFactoryMap[tc.name]
+		require.Truef(t, ok, "missing column value factory: %s", tc.name)
+		datum := types.NewDatum(factory(nil, ssElement, nil))
+		require.Equal(t, tc.expected, datum.GetValue(), tc.name)
+
+		row := chunk.MutRowFromTypes([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)})
+		row.SetDatums(datum)
+		require.Equal(t, tc.expected, row.ToRow().GetFloat64(0), tc.name)
+	}
+
+	smallElement := &stmtSummaryByDigestElement{
+		execCount:                    1,
+		sumRocksdbDeleteSkippedCount: 7,
+		sumRocksdbKeySkippedCount:    19,
+		sumRocksdbBlockCacheHitCount: 60,
+		sumRocksdbBlockReadCount:     21103,
+		sumRocksdbBlockReadByte:      4096,
+		sumAffectedRows:              3,
+	}
+	smallCases := []struct {
+		name     string
+		expected float64
+	}{
+		{name: AvgRocksdbDeleteSkippedCountStr, expected: 7},
+		{name: AvgRocksdbKeySkippedCountStr, expected: 19},
+		{name: AvgRocksdbBlockCacheHitCountStr, expected: 60},
+		{name: AvgRocksdbBlockReadCountStr, expected: 21103},
+		{name: AvgRocksdbBlockReadByteStr, expected: 4096},
+		{name: AvgAffectedRowsStr, expected: 3},
+	}
+	for _, tc := range smallCases {
+		factory, ok := columnValueFactoryMap[tc.name]
+		require.Truef(t, ok, "missing column value factory: %s", tc.name)
+		datum := types.NewDatum(factory(nil, smallElement, nil))
+
+		row := chunk.MutRowFromTypes([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)})
+		row.SetDatums(datum)
+		require.Equal(t, tc.expected, row.ToRow().GetFloat64(0), tc.name)
+	}
+}
+
 // Test stmtSummaryByDigest.ToDatum.
 func TestToDatum(t *testing.T) {
 	ssMap := newStmtSummaryByDigestMap()
@@ -1517,4 +1585,59 @@ func TestAccessPrivilege(t *testing.T) {
 	reader.hasProcessPriv = true
 	datums = reader.GetStmtSummaryHistoryRows()
 	require.Len(t, datums, loops)
+}
+
+func TestPlanCacheMissSummary(t *testing.T) {
+	info := generateAnyExecInfo()
+	info.PlanCacheFallbackReason = contextutil.PlanCacheFallbackLookupMiss
+	info.PlanCacheFallbackTimeUnixNano = 200
+	element := newStmtSummaryByDigestElement(info, time.Now().Unix(), 60)
+	require.Equal(t, int64(1), element.planCacheMisses)
+	require.Equal(t, "lookup_miss", element.lastPlanCacheMissReason)
+	require.Equal(t, int64(200), element.planCacheMissLastSeen)
+	topReason, topCount := element.planCacheFallbackCounts.Top()
+	require.Equal(t, contextutil.PlanCacheFallbackLookupMiss, topReason)
+	require.Equal(t, int64(1), topCount)
+
+	info.PlanCacheFallbackReason = contextutil.PlanCacheFallbackReuseRejected
+	info.PlanCacheFallbackTimeUnixNano = 100
+	element.add(info, 60)
+	require.Equal(t, int64(2), element.planCacheMisses)
+	require.Equal(t, "lookup_miss", element.lastPlanCacheMissReason)
+	require.Equal(t, int64(200), element.planCacheMissLastSeen)
+
+	info.PlanCacheFallbackReason = contextutil.PlanCacheFallbackParameterTypeMismatch
+	info.PlanCacheFallbackTimeUnixNano = 200
+	element.add(info, 60)
+	require.Equal(t, int64(3), element.planCacheMisses)
+	require.Equal(t, "parameter_type_mismatch", element.lastPlanCacheMissReason)
+	topReason, topCount = element.planCacheFallbackCounts.Top()
+	require.Equal(t, contextutil.PlanCacheFallbackParameterTypeMismatch, topReason)
+	require.Equal(t, int64(1), topCount)
+	require.Equal(t, int64(200), element.planCacheMissLastSeen)
+
+	info.PlanCacheFallbackReason = contextutil.PlanCacheFallbackNone
+	info.PlanCacheFallbackTimeUnixNano = 0
+	element.add(info, 60)
+	require.Equal(t, int64(3), element.planCacheMisses)
+	require.Equal(t, "parameter_type_mismatch", element.lastPlanCacheMissReason)
+
+	olderCounts := new(PlanCacheFallbackCounts)
+	olderCounts.Add(contextutil.PlanCacheFallbackReuseRejected)
+	olderCounts.Add(contextutil.PlanCacheFallbackReuseRejected)
+	older := &stmtSummaryByDigestElement{
+		planCacheMisses:         2,
+		planCacheFallbackCounts: olderCounts,
+		lastPlanCacheMissReason: "reuse_rejected",
+		planCacheMissLastSeen:   150,
+	}
+	addInfo(element, older)
+	require.Equal(t, int64(5), element.planCacheMisses)
+	require.Equal(t, "parameter_type_mismatch", element.lastPlanCacheMissReason)
+	topReason, topCount = element.planCacheFallbackCounts.Top()
+	require.Equal(t, contextutil.PlanCacheFallbackReuseRejected, topReason)
+	require.Equal(t, int64(3), topCount)
+	require.Equal(t, int64(1), element.planCacheFallbackCounts.Count(contextutil.PlanCacheFallbackLookupMiss))
+	require.Equal(t, int64(3), element.planCacheFallbackCounts.Count(contextutil.PlanCacheFallbackReuseRejected))
+	require.Zero(t, element.planCacheFallbackCounts.Count(contextutil.PlanCacheFallbackCacheDisabled))
 }

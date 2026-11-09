@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -587,7 +588,7 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whitePathList, white
 }
 
 func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
-	require.Equal(t, len(analyzeOptionDefault), len(analyzeOptionDefaultV2), "analyzeOptionDefault and analyzeOptionDefaultV2 should have the same length")
+	require.Equal(t, len(analyzeOptionDefault), len(analyzeOptionDefaultV2()), "analyzeOptionDefault and analyzeOptionDefaultV2 should have the same length")
 
 	tests := []struct {
 		name        string
@@ -692,6 +693,45 @@ func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAnalyzeBucketAndTopNDefaultsFromGlobalVars(t *testing.T) {
+	origBuckets := variable.AnalyzeDefaultNumBuckets.Load()
+	origTopN := variable.AnalyzeDefaultNumTopN.Load()
+	t.Cleanup(func() {
+		variable.AnalyzeDefaultNumBuckets.Store(origBuckets)
+		variable.AnalyzeDefaultNumTopN.Store(origTopN)
+	})
+
+	variable.AnalyzeDefaultNumBuckets.Store(512)
+	variable.AnalyzeDefaultNumTopN.Store(150)
+
+	explicitOpts, err := handleAnalyzeOptionsV2(nil)
+	require.NoError(t, err)
+	require.Empty(t, explicitOpts)
+
+	filledOpts := fillAnalyzeOptionsV2(explicitOpts)
+	require.Equal(t, uint64(512), filledOpts[ast.AnalyzeOptNumBuckets])
+	require.Equal(t, uint64(150), filledOpts[ast.AnalyzeOptNumTopN])
+
+	v2Opts, err := handleAnalyzeOptions(nil, statistics.Version2)
+	require.NoError(t, err)
+	require.Equal(t, uint64(512), v2Opts[ast.AnalyzeOptNumBuckets])
+	require.Equal(t, uint64(150), v2Opts[ast.AnalyzeOptNumTopN])
+
+	v1Opts, err := handleAnalyzeOptions(nil, statistics.Version1)
+	require.NoError(t, err)
+	require.Equal(t, uint64(256), v1Opts[ast.AnalyzeOptNumBuckets])
+	require.Equal(t, uint64(20), v1Opts[ast.AnalyzeOptNumTopN])
+
+	explicitOpts, err = handleAnalyzeOptionsV2([]ast.AnalyzeOpt{{
+		Type:  ast.AnalyzeOptNumBuckets,
+		Value: ast.NewValueExpr(1024, "", ""),
+	}})
+	require.NoError(t, err)
+	filledOpts = fillAnalyzeOptionsV2(explicitOpts)
+	require.Equal(t, uint64(1024), filledOpts[ast.AnalyzeOptNumBuckets])
+	require.Equal(t, uint64(150), filledOpts[ast.AnalyzeOptNumTopN])
 }
 
 func TestGetFullAnalyzeColumnsInfo(t *testing.T) {

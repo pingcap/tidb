@@ -107,23 +107,31 @@ func TestMysqlTablesWithoutClusteredPK(t *testing.T) {
 
 	expected := []string{
 		"advisory_locks",
+		"audit_log_filter_rules",
+		"audit_log_filters",
 		"bind_info",
 		"columns_priv",
 		"db",
 		"default_roles",
 		"dist_framework_meta",
 		"expr_pushdown_blacklist",
+		"func",
 		"gc_delete_range",
 		"gc_delete_range_done",
 		"global_grants",
 		"global_priv",
 		"global_variables",
+		"login_history",
 		"opt_rule_blacklist",
 		"password_history",
 		"plan_replayer_status",
 		"plan_replayer_task",
 		"request_unit_by_group",
 		"role_edges",
+		"routines",
+		"security_label_components",
+		"security_labels",
+		"security_policies",
 		"stats_extended",
 		"stats_feedback",
 		"stats_top_n",
@@ -131,11 +139,17 @@ func TestMysqlTablesWithoutClusteredPK(t *testing.T) {
 		"tidb",
 		"tidb_ddl_reorg",
 		"tidb_kernel_options",
+		"tidb_ls_elements",
+		"tidb_ls_policies",
+		"tidb_ls_tables",
+		"tidb_ls_users",
 		"tidb_pitr_id_map",
 		"tidb_runaway_queries",
 		"tidb_ttl_job_history",
 		"tidb_ttl_task",
 		"user",
+		"user_exemptions",
+		"user_security_labels",
 	}
 	tk.MustQuery(
 		"SELECT LOWER(table_name) FROM information_schema.tables " +
@@ -1104,6 +1118,50 @@ func TestUpgradeWithAnalyzeColumnOptions(t *testing.T) {
 		require.Equal(t, "PREDICATE", row.GetString(0))
 		domCurrent.Close()
 	})
+}
+
+func TestUpgradeBackfillsAnalyzeDefaultOptions(t *testing.T) {
+	ctx := context.Background()
+	origBuckets := variable.AnalyzeDefaultNumBuckets.Load()
+	origTopN := variable.AnalyzeDefaultNumTopN.Load()
+	t.Cleanup(func() {
+		variable.AnalyzeDefaultNumBuckets.Store(origBuckets)
+		variable.AnalyzeDefaultNumTopN.Store(origTopN)
+	})
+
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	seV240 := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(240))
+	require.NoError(t, txn.Commit(ctx))
+	revertVersionAndVariables(t, seV240, 240)
+
+	for _, name := range []string{
+		variable.TiDBAnalyzeDefaultNumBuckets,
+		variable.TiDBAnalyzeDefaultNumTopN,
+	} {
+		session.MustExec(t, seV240, fmt.Sprintf("delete from mysql.global_variables where variable_name='%s'", name))
+	}
+	session.MustExec(t, seV240, "commit")
+	session.UnsetStoreBootstrapped(store.UUID())
+	dom.Close()
+
+	domCurrent, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurrent.Close()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select variable_value from mysql.global_variables where variable_name=?", variable.TiDBAnalyzeDefaultNumBuckets).
+		Check(testkit.Rows(strconv.FormatUint(variable.DefTiDBAnalyzeDefaultNumBuckets, 10)))
+	tk.MustQuery("select variable_value from mysql.global_variables where variable_name=?", variable.TiDBAnalyzeDefaultNumTopN).
+		Check(testkit.Rows(strconv.FormatUint(variable.DefTiDBAnalyzeDefaultNumTopN, 10)))
+	tk.MustExec("set global tidb_analyze_default_num_buckets = 512")
+	tk.MustExec("set global tidb_analyze_default_num_topn = 150")
+	tk.MustQuery("select @@global.tidb_analyze_default_num_buckets, @@global.tidb_analyze_default_num_topn").
+		Check(testkit.Rows("512 150"))
 }
 
 func TestAnalyzeDistsqlConcurrencyByUpgrade750To850(t *testing.T) {

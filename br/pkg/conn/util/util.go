@@ -66,6 +66,9 @@ func GetAllTiKVStores(
 		if !isTiFlash && storeBehavior == TiFlashOnly {
 			continue
 		}
+		if engine.IsReplicator(store) {
+			continue
+		}
 		stores[j] = store
 		j++
 	}

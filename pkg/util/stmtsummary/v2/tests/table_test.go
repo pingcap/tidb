@@ -417,6 +417,33 @@ func TestStmtSummaryPreparedStatements(t *testing.T) {
 		where digest_text like "select ?"`).Check(testkit.Rows("1"))
 }
 
+func TestStmtSummaryPlanCacheMissReasonColumns(t *testing.T) {
+	setupStmtSummary()
+	defer closeStmtSummary()
+
+	store := testkit.CreateMockStore(t)
+	tk := newTestKitWithPlanCache(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key)")
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	tk.MustExec("set tidb_enable_prepared_plan_cache = 1")
+	tk.MustExec("prepare stmt from 'select a from t where a=?'")
+	tk.MustExec("set @number = 1")
+	tk.MustExec("execute stmt using @number")
+	tk.MustExec("execute stmt using @number")
+
+	tk.MustQuery(`select exec_count, plan_cache_misses, plan_cache_miss_top_reason,
+		plan_cache_miss_top_reason_count, plan_cache_miss_unknown_count,
+		plan_cache_miss_cache_disabled_count, plan_cache_miss_unsupported_statement_type_count,
+		plan_cache_miss_not_cacheable_count, plan_cache_miss_parameter_type_mismatch_count,
+		plan_cache_miss_lookup_miss_count, plan_cache_miss_reuse_rejected_count,
+		plan_cache_miss_cache_insert_failed_count
+		from information_schema.statements_summary
+		where digest_text like 'select%from%t%where%'`).Check(
+		testkit.Rows("2 1 lookup_miss 1 0 0 0 0 0 1 0 0"))
+}
+
 func TestStmtSummarySensitiveQuery(t *testing.T) {
 	setupStmtSummary()
 	defer closeStmtSummary()

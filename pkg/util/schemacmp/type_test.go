@@ -74,6 +74,18 @@ var (
 	// CHAR(123)
 	typeChar123 = types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(0).SetFlen(123).SetDecimal(0).SetCharset(mysql.UTF8MB4Charset).SetCollate(mysql.UTF8MB4DefaultCollation).SetElems(nil).BuildP()
 
+	// VARCHAR(10) CHARSET utf8 COLLATE utf8_bin
+	typeVarchar10UTF8Bin = types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).SetFlag(0).SetFlen(10).SetDecimal(0).SetCharset(mysql.UTF8Charset).SetCollate("utf8_bin").SetElems(nil).BuildP()
+
+	// VARCHAR(10) CHARSET utf8 COLLATE utf8_general_ci
+	typeVarchar10UTF8GeneralCI = types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).SetFlag(0).SetFlen(10).SetDecimal(0).SetCharset(mysql.UTF8Charset).SetCollate("utf8_general_ci").SetElems(nil).BuildP()
+
+	// VARCHAR(10) CHARSET utf8mb4 COLLATE utf8mb4_bin
+	typeVarchar10UTF8MB4Bin = types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).SetFlag(0).SetFlen(10).SetDecimal(0).SetCharset(mysql.UTF8MB4Charset).SetCollate(mysql.UTF8MB4DefaultCollation).SetElems(nil).BuildP()
+
+	// VARCHAR(10) CHARSET latin1 COLLATE latin1_bin
+	typeVarchar10Latin1Bin = types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).SetFlag(0).SetFlen(10).SetDecimal(0).SetCharset("latin1").SetCollate("latin1_bin").SetElems(nil).BuildP()
+
 	// VARCHAR(65432) CHARSET ascii
 	typeVarchar65432CharsetASCII = types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).SetFlag(0).SetFlen(65432).SetDecimal(0).SetCharset("ascii").SetCollate("ascii_bin").SetElems(nil).BuildP()
 
@@ -123,6 +135,10 @@ func TestTypeUnwrap(t *testing.T) {
 		typeTime6,
 		typeYear4,
 		typeChar123,
+		typeVarchar10UTF8Bin,
+		typeVarchar10UTF8GeneralCI,
+		typeVarchar10UTF8MB4Bin,
+		typeVarchar10Latin1Bin,
 		typeVarchar65432CharsetASCII,
 		typeBinary69,
 		typeVarBinary420,
@@ -167,6 +183,34 @@ func TestTypeCompareJoin(t *testing.T) {
 			b:             typeIntNotNull,
 			compareResult: 1,
 			join:          typeInt,
+		},
+		{
+			// utf8 < utf8mb4 (both charset and collation are ordered).
+			a:             typeVarchar10UTF8Bin,
+			b:             typeVarchar10UTF8MB4Bin,
+			compareResult: -1,
+			join:          typeVarchar10UTF8MB4Bin,
+		},
+		{
+			// latin1 < utf8mb4 (both charset and collation are ordered).
+			a:             typeVarchar10Latin1Bin,
+			b:             typeVarchar10UTF8MB4Bin,
+			compareResult: -1,
+			join:          typeVarchar10UTF8MB4Bin,
+		},
+		{
+			// latin1 and utf8 are not comparable, but their join is utf8mb4.
+			a:            typeVarchar10Latin1Bin,
+			b:            typeVarchar10UTF8Bin,
+			compareError: `at tuple index \d+: incompatible charset.*`,
+			join:         typeVarchar10UTF8MB4Bin,
+		},
+		{
+			// Only collations with the same suffix can be ordered/joined.
+			a:            typeVarchar10UTF8GeneralCI,
+			b:            typeVarchar10UTF8MB4Bin,
+			compareError: `at tuple index \d+: incompatible collation.*`,
+			joinError:    `at tuple index \d+: incompatible collation.*`,
 		},
 		{
 			// Cannot join DEFAULT NULL with AUTO_INCREMENT.

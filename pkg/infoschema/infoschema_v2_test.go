@@ -45,7 +45,14 @@ func TestV2Basic(t *testing.T) {
 	internal.AddDB(t, r.Store(), dbInfo)
 	tblInfo := internal.MockTableInfo(t, r.Store(), tableName.O)
 	tblInfo.DBID = dbInfo.ID
-	is.Data.add(tableItem{schemaName, dbInfo.ID, tableName, tblInfo.ID, 2, false}, internal.MockTable(t, r.Store(), tblInfo))
+	is.Data.add(tableItem{
+		dbName:        schemaName,
+		dbID:          dbInfo.ID,
+		tableName:     tableName,
+		tableID:       tblInfo.ID,
+		updateTS:      tblInfo.UpdateTS,
+		schemaVersion: 2,
+	}, internal.MockTable(t, r.Store(), tblInfo))
 	internal.AddTable(t, r.Store(), dbInfo.ID, tblInfo)
 	is.base().schemaMetaVersion = 1
 	require.Equal(t, 1, len(is.AllSchemas()))
@@ -442,7 +449,7 @@ func TestReferredFKInfo(t *testing.T) {
 	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
 	require.Equal(t, v2.Data.referredForeignKeys.Load().Len(), 1)
-	ref := v2.GetTableReferredForeignKeys(tblInfo.ForeignKeys[0].RefSchema.L, tblInfo.ForeignKeys[0].RefTable.L)
+	ref := v2.GetTableReferredForeignKeys(tblInfo.ForeignKeys[0].RefSchema, tblInfo.ForeignKeys[0].RefTable)
 	require.Equal(t, len(ref), 1)
 	require.Equal(t, ref[0].ChildFKName, tblInfo.ForeignKeys[0].Name)
 
@@ -460,7 +467,7 @@ func TestReferredFKInfo(t *testing.T) {
 	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionAddForeignKey, Version: 3, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
 	require.Equal(t, v2.Data.referredForeignKeys.Load().Len(), 2)
-	ref = v2.GetTableReferredForeignKeys(tblInfo.ForeignKeys[0].RefSchema.L, tblInfo.ForeignKeys[0].RefTable.L)
+	ref = v2.GetTableReferredForeignKeys(tblInfo.ForeignKeys[0].RefSchema, tblInfo.ForeignKeys[0].RefTable)
 	require.Equal(t, len(ref), 2)
 	require.Equal(t, ref[1].ChildFKName, tblInfo.ForeignKeys[1].Name)
 
@@ -472,7 +479,7 @@ func TestReferredFKInfo(t *testing.T) {
 	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionDropForeignKey, Version: 4, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
 	require.Equal(t, v2.Data.referredForeignKeys.Load().Len(), 3)
-	ref = v2.GetTableReferredForeignKeys(tblInfo.ForeignKeys[0].RefSchema.L, tblInfo.ForeignKeys[0].RefTable.L)
+	ref = v2.GetTableReferredForeignKeys(tblInfo.ForeignKeys[0].RefSchema, tblInfo.ForeignKeys[0].RefTable)
 	require.Equal(t, len(ref), 1)
 	require.Equal(t, ref[0].ChildFKName, tblInfo.ForeignKeys[0].Name)
 
@@ -483,7 +490,7 @@ func TestReferredFKInfo(t *testing.T) {
 	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionDropTable, Version: 5, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
 	require.Equal(t, v2.Data.referredForeignKeys.Load().Len(), 4)
-	ref = v2.GetTableReferredForeignKeys(tblInfo.ForeignKeys[0].RefSchema.L, tblInfo.ForeignKeys[0].RefTable.L)
+	ref = v2.GetTableReferredForeignKeys(tblInfo.ForeignKeys[0].RefSchema, tblInfo.ForeignKeys[0].RefTable)
 	require.Equal(t, len(ref), 0)
 }
 
@@ -810,9 +817,9 @@ func TestGCOldFKVersion(t *testing.T) {
 
 	// GC entries older than version 4
 	deleted := data.gcOldFKVersion(4)
-	require.Equal(t, 3, deleted) // versions 3,2,1 for group1
+	require.Equal(t, 2, deleted) // versions 2,1 for group1; keep pivot version 3
 	after := data.referredForeignKeys.Load().Len()
-	require.Equal(t, 3, after) // kept version 5 & 4 for group1, and the single group2
+	require.Equal(t, 4, after) // kept versions 5,4,3 for group1, and the single group2
 
 	// verify surviving versions
 	var vers []int64
@@ -820,9 +827,11 @@ func TestGCOldFKVersion(t *testing.T) {
 		vers = append(vers, item.schemaVersion)
 		return true
 	})
-	require.Equal(t, []int64{4, 5, 1}, vers)
+	require.Equal(t, []int64{3, 4, 5, 1}, vers)
 
 	// ensure getTableReferredForeignKeys respects GC boundary
+	require.NotEmpty(t, data.getTableReferredForeignKeys("db1", "table1", 3))
+	require.Empty(t, data.getTableReferredForeignKeys("db1", "table1", 4))
 	got := data.getTableReferredForeignKeys("db1", "table1", 5)
 	require.Equal(t, &model.ReferredFKInfo{
 		ChildSchema: pmodel.NewCIStr("s"),

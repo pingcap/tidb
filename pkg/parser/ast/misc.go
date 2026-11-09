@@ -40,6 +40,7 @@ var (
 	_ StmtNode = &DoStmt{}
 	_ StmtNode = &ExecuteStmt{}
 	_ StmtNode = &ExplainStmt{}
+	_ StmtNode = &ExplainRoutineStmt{}
 	_ StmtNode = &GrantStmt{}
 	_ StmtNode = &PrepareStmt{}
 	_ StmtNode = &RollbackStmt{}
@@ -211,6 +212,87 @@ type ExplainStmt struct {
 	Stmt    StmtNode
 	Format  string
 	Analyze bool
+}
+
+const (
+	// ExplainRoutineTypeFunction indicates EXPLAIN ROUTINE FUNCTION.
+	ExplainRoutineTypeFunction = "FUNCTION"
+	// ExplainRoutineTypeProcedure indicates EXPLAIN ROUTINE PROCEDURE.
+	ExplainRoutineTypeProcedure = "PROCEDURE"
+)
+
+// ExplainRoutineStmt is a statement to provide information about static SQL statements inside a stored routine.
+type ExplainRoutineStmt struct {
+	stmtNode
+
+	Format               string
+	Analyze              bool
+	RoutineType          string
+	Name                 *TableName
+	Args                 []ExprNode
+	HasTargetStmtOrdinal bool
+	TargetStmtOrdinal    uint64
+}
+
+// Restore implements Node interface.
+func (n *ExplainRoutineStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("EXPLAIN ")
+	if n.Analyze {
+		ctx.WriteKeyWord("ANALYZE ")
+	}
+	if n.Format != "" && strings.ToLower(n.Format) != "row" {
+		ctx.WriteKeyWord("FORMAT ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.Format)
+		ctx.WritePlain(" ")
+	}
+	ctx.WriteKeyWord("ROUTINE ")
+	ctx.WriteKeyWord(n.RoutineType)
+	ctx.WritePlain(" ")
+	if err := n.Name.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore ExplainRoutineStmt.Name")
+	}
+	ctx.WritePlain("(")
+	for i, arg := range n.Args {
+		if i > 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := arg.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore ExplainRoutineStmt.Args[%d]", i)
+		}
+	}
+	ctx.WritePlain(")")
+	if n.HasTargetStmtOrdinal {
+		ctx.WritePlain(" ")
+		ctx.WriteKeyWord("FOR ")
+		ctx.WriteKeyWord("STMT ")
+		ctx.WritePlain(strconv.FormatUint(n.TargetStmtOrdinal, 10))
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *ExplainRoutineStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ExplainRoutineStmt)
+	if n.Name != nil {
+		node, ok := n.Name.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Name = node.(*TableName)
+	}
+	for i, arg := range n.Args {
+		node, ok := arg.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Args[i] = node.(ExprNode)
+	}
+	return v.Leave(n)
 }
 
 // Restore implements Node interface.
@@ -809,6 +891,9 @@ type VariableAssignment struct {
 	IsGlobal bool
 	IsSystem bool
 
+	// The syntax can be used to stored procedure internal variables
+	CanSPVariable bool
+
 	// ExtendValue is a way to store extended info.
 	// VariableAssignment should be able to store information for SetCharset/SetPWD Stmt.
 	// For SetCharsetStmt, Value is charset, ExtendValue is collation.
@@ -818,16 +903,18 @@ type VariableAssignment struct {
 
 // Restore implements Node interface.
 func (n *VariableAssignment) Restore(ctx *format.RestoreCtx) error {
-	if n.IsSystem {
-		ctx.WritePlain("@@")
-		if n.IsGlobal {
-			ctx.WriteKeyWord("GLOBAL")
-		} else {
-			ctx.WriteKeyWord("SESSION")
+	if !n.CanSPVariable {
+		if n.IsSystem {
+			ctx.WritePlain("@@")
+			if n.IsGlobal {
+				ctx.WriteKeyWord("GLOBAL")
+			} else {
+				ctx.WriteKeyWord("SESSION")
+			}
+			ctx.WritePlain(".")
+		} else if n.Name != SetNames && n.Name != SetCharset {
+			ctx.WriteKeyWord("@")
 		}
-		ctx.WritePlain(".")
-	} else if n.Name != SetNames && n.Name != SetCharset {
-		ctx.WriteKeyWord("@")
 	}
 	if n.Name == SetNames {
 		ctx.WriteKeyWord("NAMES ")
@@ -1617,6 +1704,7 @@ const (
 type PasswordOrLockOption struct {
 	Type  int
 	Count int64
+	Unit  string
 }
 
 func (p *PasswordOrLockOption) Restore(ctx *format.RestoreCtx) error {
@@ -1640,7 +1728,11 @@ func (p *PasswordOrLockOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlainf(" %d", p.Count)
 	case PasswordLockTime:
 		ctx.WriteKeyWord("PASSWORD_LOCK_TIME")
-		ctx.WritePlainf(" %d", p.Count)
+		if p.Unit == "" {
+			ctx.WritePlainf(" %d", p.Count)
+		} else {
+			ctx.WritePlainf(" %d%s", p.Count, p.Unit)
+		}
 	case PasswordLockTimeUnbounded:
 		ctx.WriteKeyWord("PASSWORD_LOCK_TIME UNBOUNDED")
 	case PasswordHistory:
@@ -2493,6 +2585,18 @@ const (
 	AdminShowBDRRole
 	AdminUnsetBDRRole
 	AdminAlterDDLJob
+	AdminLBACEnable
+	AdminCreateLogReplication
+	AdminAlterLogReplication
+	AdminPauseLogReplication
+	AdminResumeLogReplication
+	AdminDropLogReplication
+	AdminSwitchOverPrimary
+	AdminSwitchOverAsPrimary
+	AdminActivateStandby
+	AdminCancelLogReplicationWorkflow
+	// adminTpCount is the total number of admin statement types.
+	adminTpCount
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -2618,6 +2722,17 @@ type AdminStmt struct {
 	LimitSimple     LimitSimple
 	BDRRole         BDRRole
 	AlterJobOptions []*AlterJobOption
+
+	// pkdb
+	CreateLogReplication         *CreateLogReplication
+	AlterLogReplication          *AlterLogReplication
+	PauseLogReplication          *PauseLogReplication
+	ResumeLogReplication         *ResumeLogReplication
+	DropLogReplication           *DropLogReplication
+	SwitchOverPrimary            *SwitchOverPrimary
+	SwitchOverAsPrimary          *SwitchOverAsPrimary
+	ActivateStandby              *ActivateStandby
+	CancelLogReplicationWorkflow *CancelLogReplicationWorkflow
 }
 
 // Restore implements Node interface.
@@ -2793,6 +2908,42 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 				return errors.Annotatef(err, "An error occurred while restore AdminStmt.AlterJobOptions[%d]", i)
 			}
 		}
+	case AdminCreateLogReplication:
+		if err := n.CreateLogReplication.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AdminStmt.CreateLogReplication")
+		}
+	case AdminAlterLogReplication:
+		if err := n.AlterLogReplication.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AdminStmt.AlterLogReplication")
+		}
+	case AdminPauseLogReplication:
+		if err := n.PauseLogReplication.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AdminStmt.PauseLogReplication")
+		}
+	case AdminResumeLogReplication:
+		if err := n.ResumeLogReplication.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AdminStmt.ResumeLogReplication")
+		}
+	case AdminDropLogReplication:
+		if err := n.DropLogReplication.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AdminStmt.DropLogReplication")
+		}
+	case AdminSwitchOverPrimary:
+		if err := n.SwitchOverPrimary.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AdminStmt.SwitchOverPrimary")
+		}
+	case AdminSwitchOverAsPrimary:
+		if err := n.SwitchOverAsPrimary.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AdminStmt.SwitchOverAsPrimary")
+		}
+	case AdminActivateStandby:
+		if err := n.ActivateStandby.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AdminStmt.ActivateStandby")
+		}
+	case AdminCancelLogReplicationWorkflow:
+		if err := n.CancelLogReplicationWorkflow.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AdminStmt.CancelLogReplicationWorkflow")
+		}
 	default:
 		return errors.New("Unsupported AdminStmt type")
 	}
@@ -2940,6 +3091,11 @@ func (n ObjectTypeType) Restore(ctx *format.RestoreCtx) error {
 		return errors.New("Unsupported object type")
 	}
 	return nil
+}
+
+// IsRoutineType checks whether it is a routine type
+func (n ObjectTypeType) IsRoutineType() bool {
+	return n == ObjectTypeProcedure || n == ObjectTypeFunction
 }
 
 // GrantLevelType is the type for grant level.
@@ -3964,6 +4120,10 @@ func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
 	}
 }
 
+// RestoreWithQB renders a LEADING operand list. isTop and qbOnTable are
+// retained only to keep this exported method's signature stable across the
+// parser module boundary; neither parameter currently affects the rendered
+// output.
 func (lt *LeadingList) RestoreWithQB(ctx *format.RestoreCtx, qbName model.CIStr, needParen bool, isTop bool, qbOnTable bool) error {
 	if lt == nil || len(lt.Items) == 0 {
 		return nil
@@ -3981,15 +4141,13 @@ func (lt *LeadingList) RestoreWithQB(ctx *format.RestoreCtx, qbName model.CIStr,
 
 		switch t := item.(type) {
 		case *HintTable:
-			if i == 0 && currentQBName.L != "" && !qbOnTable {
+			if i == 0 && currentQBName.L != "" {
 				ctx.WriteKeyWord("@")
 				ctx.WriteName(currentQBName.String())
 				ctx.WritePlain(" ")
-				t.Restore(ctx)
-				currentQBName = model.CIStr{}
-			} else {
-				t.Restore(ctx)
 			}
+			t.Restore(ctx)
+			currentQBName = model.CIStr{}
 		case *LeadingList:
 			if err := t.RestoreWithQB(ctx, currentQBName, true, false, qbOnTable); err != nil {
 				return err
@@ -4143,10 +4301,14 @@ type BinaryLiteral interface {
 // NewDecimal creates a types.Decimal value, it's provided by parser driver.
 var NewDecimal func(string) (interface{}, error)
 
-// NewHexLiteral creates a types.HexLiteral value, it's provided by parser driver.
+// NewHexLiteral creates a hexadecimal literal value using the parser driver.
+// The concrete return type is driver-defined and implements BinaryLiteral. Callers
+// should normally pass it to NewValueExpr instead of assuming it is types.HexLiteral.
 var NewHexLiteral func(string) (interface{}, error)
 
-// NewBitLiteral creates a types.BitLiteral value, it's provided by parser driver.
+// NewBitLiteral creates a bit literal value using the parser driver.
+// The concrete return type is driver-defined and implements BinaryLiteral. Callers
+// should normally pass it to NewValueExpr instead of assuming it is types.BitLiteral.
 var NewBitLiteral func(string) (interface{}, error)
 
 // SetResourceGroupStmt is a statement to set the resource group name for current session.

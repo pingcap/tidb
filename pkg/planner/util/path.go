@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -135,6 +136,22 @@ type AccessPath struct {
 	//     so PartIdxCondNotAlwaysValid is true (the index path is not always valid).
 	// We add this field to make the plan cache usable for partial indexes in these limited cases.
 	PartIdxCondNotAlwaysValid bool
+
+	// TiDBRowIDCandidates contains the immutable constant expressions from a
+	// direct TIDB_ROW_ID equality or IN predicate. The other TiDBRowID fields
+	// are the resolved state for the current execution.
+	TiDBRowIDCandidates            []expression.Expression
+	TiDBRowIDHandles               []kv.Handle
+	TiDBRowIDPartitionIdxs         []int
+	TiDBRowIDAllowedPartitionNames []pmodel.CIStr
+
+	// TiDBRowIDRangeOps and TiDBRowIDRangeBounds are the immutable template
+	// for direct ordered locator predicates. The physical IDs and key ranges
+	// are rebuilt from that template for each execution of a cached plan.
+	TiDBRowIDRangeOps         []expression.TiDBRowIDRangeOp
+	TiDBRowIDRangeBounds      []expression.Expression
+	TiDBRowIDRangePhysicalIDs []int64
+	TiDBRowIDKeyRanges        []kv.KeyRange
 }
 
 // Clone returns a deep copy of the original AccessPath.
@@ -175,6 +192,14 @@ func (path *AccessPath) Clone() *AccessPath {
 		GroupByColIdxs:               slices.Clone(path.GroupByColIdxs),
 		PartIdxCondNotAlwaysValid:    path.PartIdxCondNotAlwaysValid,
 	}
+	ret.TiDBRowIDCandidates = CloneExprs(path.TiDBRowIDCandidates)
+	ret.TiDBRowIDHandles = slices.Clone(path.TiDBRowIDHandles)
+	ret.TiDBRowIDPartitionIdxs = slices.Clone(path.TiDBRowIDPartitionIdxs)
+	ret.TiDBRowIDAllowedPartitionNames = slices.Clone(path.TiDBRowIDAllowedPartitionNames)
+	ret.TiDBRowIDRangeOps = slices.Clone(path.TiDBRowIDRangeOps)
+	ret.TiDBRowIDRangeBounds = CloneExprs(path.TiDBRowIDRangeBounds)
+	ret.TiDBRowIDRangePhysicalIDs = slices.Clone(path.TiDBRowIDRangePhysicalIDs)
+	ret.TiDBRowIDKeyRanges = cloneTiDBRowIDKeyRanges(path.TiDBRowIDKeyRanges)
 	if path.IndexMergeORSourceFilter != nil {
 		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
 	}

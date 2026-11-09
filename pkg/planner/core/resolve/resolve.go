@@ -53,9 +53,16 @@ func NewNodeWWithCtx(node ast.Node, resolveCtx *Context) *NodeW {
 
 // CloneWithNewNode creates a new NodeW with the given ast.Node.
 func (n *NodeW) CloneWithNewNode(newNode ast.Node) *NodeW {
+	n.resolveCtx.cloneTiDBRowIDQueryBlock(n.Node, newNode)
 	return &NodeW{
 		Node:       newNode,
 		resolveCtx: n.resolveCtx,
+	}
+}
+
+func (c *Context) cloneTiDBRowIDQueryBlock(from, to ast.Node) {
+	if _, ok := c.tiDBRowIDQueryBlocks[from]; ok {
+		c.MarkTiDBRowIDQueryBlock(to)
 	}
 }
 
@@ -66,7 +73,9 @@ func (n *NodeW) GetResolveContext() *Context {
 
 // Context is used to store the context and result of resolving AST tree.
 type Context struct {
-	tableNames map[*ast.TableName]*TableNameW
+	tableNames                  map[*ast.TableName]*TableNameW
+	tiDBRowIDQueryBlocks        map[ast.Node]struct{}
+	tiDBRowIDQueryBlockScanDone bool
 }
 
 // NewContext creates a Context.
@@ -92,4 +101,25 @@ func (c *Context) GetTableName(tableName *ast.TableName) *TableNameW {
 // GetTableNames returns the inner map contain all TableNameW in the Context in pre-process phase.
 func (c *Context) GetTableNames() map[*ast.TableName]*TableNameW {
 	return c.tableNames
+}
+
+// MarkTiDBRowIDQueryBlock records that a query block contains TIDB_ROW_ID.
+func (c *Context) MarkTiDBRowIDQueryBlock(node ast.Node) {
+	if c.tiDBRowIDQueryBlocks == nil {
+		c.tiDBRowIDQueryBlocks = make(map[ast.Node]struct{})
+	}
+	c.tiDBRowIDQueryBlocks[node] = struct{}{}
+}
+
+// FinishTiDBRowIDQueryBlockScan records that preprocessing inspected every
+// function call in the AST for TIDB_ROW_ID.
+func (c *Context) FinishTiDBRowIDQueryBlockScan() {
+	c.tiDBRowIDQueryBlockScanDone = true
+}
+
+// TiDBRowIDQueryBlockStatus reports whether preprocessing completed the scan
+// and whether the specified query block contains TIDB_ROW_ID.
+func (c *Context) TiDBRowIDQueryBlockStatus(node ast.Node) (scanDone, found bool) {
+	_, found = c.tiDBRowIDQueryBlocks[node]
+	return c.tiDBRowIDQueryBlockScanDone, found
 }

@@ -57,6 +57,10 @@ set @@global.max_connections=100;
 select @@global.max_connections;
 select @@max_connections;
 set @@global.max_connections=0;
+select @@global.reserved_admin_connections;
+set @@global.reserved_admin_connections=20;
+select @@global.reserved_admin_connections;
+set @@global.reserved_admin_connections=default;
 -- error 1193
 select @@invalid;
 -- error 1193
