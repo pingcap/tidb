@@ -557,6 +557,10 @@ pub struct PushdownStatementContext {
     /// Whether the request waits for its stream's first read before it is
     /// sent (a partitioned index lookup's later partitions).
     pub deferred_open: bool,
+    /// Go `IndexLookUpExecutor.needPartitionHandle(getHandleFromIndex)`: a
+    /// global index's request reads each entry's `ExtraPhysTblID`, and its
+    /// handles are `kv.PartitionHandle`s.
+    pub need_partition_handle: bool,
 }
 
 /// Go `exec.BaseExecutorV2.AllocPool`: `SessionVars.GetChunkAllocator()`.
@@ -623,6 +627,7 @@ impl Default for PushdownStatementContext {
             lookup_table_topn: None,
             tiflash_fine_grained_shuffle_batch_size: tidb_vardef::defaults::DEF_TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE as u64,
             deferred_open: false,
+            need_partition_handle: false,
         }
     }
 }

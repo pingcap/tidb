@@ -9767,6 +9767,32 @@ fn a_global_index_lookups_task_spans_partitions_like_go() {
     assert_eq!(answer[0], vec!["10", "10", "0"]);
 }
 
+/// Go's global index lookup reads its index remotely under the logical
+/// table and cuts a task at each response chunk (`extractTaskHandles` over
+/// `ReuseIntermChk`): at `tidb_index_lookup_size = 2`, 99 handles over two
+/// hash partitions make Go's 4 tasks, each spanning partitions.
+#[test]
+fn a_global_index_lookup_cuts_its_tasks_at_response_chunks_like_go() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT, b INT, c INT, PRIMARY KEY (a) NONCLUSTERED, UNIQUE KEY ub (b) GLOBAL) PARTITION BY HASH(a) PARTITIONS 2")
+        .unwrap();
+    let values = (1..=100).map(|x| format!("({x}, {x}, {})", x % 5)).collect::<Vec<_>>().join(", ");
+    session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+    session.run("SET tidb_index_lookup_size = 2").unwrap();
+    let sql = "SELECT * FROM t USE INDEX(ub) WHERE b > 1";
+    let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+    let lookup = rows
+        .iter()
+        .find(|row| row[0].starts_with("IndexLookUp_"))
+        .unwrap_or_else(|| panic!("{rows:?}"));
+    assert_eq!(lookup[2], "99", "{rows:?}");
+    assert!(lookup[5].contains("table_task: {") && lookup[5].contains("num: 4,"), "{rows:?}");
+    let mut answer = row_text(session.run(sql));
+    answer.sort_by_key(|row| row[0].parse::<i64>().unwrap());
+    assert_eq!(answer, (2..=100).map(|x| vec![x.to_string(), x.to_string(), (x % 5).to_string()]).collect::<Vec<_>>());
+}
+
 /// Go's `AddSelectionConditionForGlobalIndex` runs `PartitionPruning`, whose
 /// HASH and plain RANGE pruners `PlanID.Add(1)` before parsing the partition
 /// expression: every global index scan over such a table spends a plan id

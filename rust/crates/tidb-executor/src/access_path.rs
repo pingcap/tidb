@@ -2165,6 +2165,19 @@ impl IndexRangeSourceExec {
                 .any(|index| index.read().id == self.index_id && index.read().global)
     }
 
+    /// The pruned-partition ordinal of a remote index handle: a global
+    /// index's entry names its partition, a local index's stream is one
+    /// partition's.
+    fn remote_handle_partition(&self, physical_id: Option<i64>) -> Result<usize, ExecError> {
+        let Some(id) = physical_id else {
+            return Ok(self.remote_partition);
+        };
+        self.record_physical_ids
+            .iter()
+            .position(|candidate| *candidate == id)
+            .ok_or_else(|| ExecError::internal(format!("a global index entry names partition {id} outside the read")))
+    }
+
     /// Moves to the next partition's index stream once one is drained, as Go
     /// closes a partition's `SelectResult` before building the next; the
     /// drained stream's counts are kept.
@@ -2804,14 +2817,23 @@ impl IndexRangeSourceExec {
             // per `SelectResult`); a drained partition hands over to the next.
             while let Some(remote) = self.remote_index.as_mut() {
                 if let Some(handles) = remote
-                    .next_handle_batch(want, self.meta.max_chunk_size())
+                    .next_partition_handle_batch(want, self.meta.max_chunk_size())
                     .map_err(|error| {
                         ExecError::unsupported(format!("index row failed to decode: {error:?}"))
                     })?
                 {
                     pulled = true;
                     let extracted = handles.len() as u64;
-                    self.batch.extend(handles);
+                    // A global index's task spans the partitions its
+                    // handles name.
+                    let spans_partitions = self.global_index_batch();
+                    for (handle, physical_id) in handles {
+                        if spans_partitions {
+                            let partition = self.remote_handle_partition(physical_id)?;
+                            self.batch_partitions.push(partition);
+                        }
+                        self.batch.push(handle);
+                    }
                     self.batch_partition = self.remote_partition;
                     self.limit_scanned_keys += extracted;
                     break;
@@ -3759,8 +3781,8 @@ impl IndexRangeSourceExec {
         // A partitioned table's remote streams are read partition by
         // partition, each handle carrying its partition's ordinal.
         while let Some(remote) = self.remote_index.as_mut() {
-            if let Some(handle) = remote.next_handle().map_err(ExecError::from)? {
-                return Ok(Some((handle, self.remote_partition)));
+            if let Some((handle, physical_id)) = remote.next_partition_handle().map_err(ExecError::from)? {
+                return Ok(Some((handle, self.remote_handle_partition(physical_id)?)));
             }
             if !self.advance_remote_partition() {
                 return Ok(None);
@@ -4423,7 +4445,22 @@ impl Executor for IndexRangeSourceExec {
                 && self.can_reorder_handles
                 && !self.dirty_merge
                 && !global_index;
-            let base_statement = index_statement.as_ref().unwrap_or(&self.statement).clone();
+            let mut base_statement = index_statement.as_ref().unwrap_or(&self.statement).clone();
+            // Go's global index lookup reads `kv.PartitionHandle`s under the
+            // logical table, in one request (`needPartitionHandle`).
+            // A read narrowed to some partitions, or over a table adding or
+            // dropping some, filters its entries with Go's `_tidb_tid`
+            // Selection (`AddSelectionConditionForGlobalIndex`), which is
+            // still this port's native walk.
+            let reads_every_partition = self.table.read_partitions().is_none()
+                && self.table.meta().read().get_partition_info().is_some_and(|partition| {
+                    let partition = partition.read();
+                    partition.adding_definitions.is_empty() && partition.dropping_definitions.is_empty()
+                });
+            base_statement.need_partition_handle = !self.covering
+                && self.can_reorder_handles
+                && reads_every_partition
+                && self.global_index_batch();
             let physical_ids = self.record_physical_ids.clone();
             let template = partitioned_walk.then(|| self.table.clone());
             let store = &mut self.store;

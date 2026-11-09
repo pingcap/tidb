@@ -2565,10 +2565,7 @@ impl KvTableReader for TableCommon {
         // `is.InitSchema(append(path.FullIdxCols, ds.CommonHandleCols...))`,
         // and a covering prefix read of bmsql_oorder_idx1 plus the ecasdb
         // max(dtlno) stream answer correctly against the real backend again.
-        if self.has_dirty_content(&statement.staged_writes)
-            || self.partition().is_some()
-            || ranges.is_empty()
-        {
+        if self.has_dirty_content(&statement.staged_writes) || ranges.is_empty() {
             return Ok(None);
         }
         if scan_extra_handle_slot.is_some_and(|slot| slot > scan_keep.len()) {
@@ -2577,6 +2574,14 @@ impl KvTableReader for TableCommon {
         let Some(index) = self.indexes().iter().find(|index| index.read().id == index_id) else {
             return Ok(None);
         };
+        // A partitioned table's own index request is a global index's, read
+        // under the logical table for its partition handles; a local index's
+        // request names its partition.
+        if self.partition().is_some()
+            && !(statement.need_partition_handle && index.read().global && projected_keep.is_none())
+        {
+            return Ok(None);
+        }
         // The compact layout is the source's current schema after column
         // pruning. An absent value is represented by usize::MAX and causes a
         // predicate/order key that needs it to fail closed below.
@@ -2752,9 +2757,20 @@ impl KvTableReader for TableCommon {
                 }
             })
             .collect::<Option<Vec<_>>>();
-        let Some(columns) = columns else {
+        let Some(mut columns) = columns else {
             return Ok(None);
         };
+        // Go's global index scan schema ends with `ExtraPhysTblID`, which
+        // storage fills from each entry's partition id.
+        let physical_id_column = statement.need_partition_handle.then(|| {
+            columns.push(PushdownScanColumn {
+                id: tidb_model::column::EXTRA_PHYS_TBL_ID,
+                field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                is_handle: false,
+                origin_default: None,
+            });
+            columns.len() - 1
+        });
         let handle_indices = if self.common_handle_offsets().is_empty() {
             vec![table_offsets
                 .iter()
@@ -2834,7 +2850,10 @@ impl KvTableReader for TableCommon {
         // afterward, like Go's buildIndexScanOutputOffsets. Before consuming
         // the stream below, require all predicates to have been applied.
         let narrow_to_handles = handle_only;
-        let output_offsets = narrow_to_handles.then(|| handle_indices.clone());
+        let output_offsets = narrow_to_handles
+            .then(|| handle_indices.iter().copied().chain(physical_id_column).collect::<Vec<_>>());
+        let physical_id_index = physical_id_column
+            .map(|column| if narrow_to_handles { handle_indices.len() } else { column });
         let returned_handle_indices = if narrow_to_handles {
             (0..handle_indices.len()).collect::<Vec<_>>()
         } else {
@@ -2986,6 +3005,7 @@ impl KvTableReader for TableCommon {
             common_handle_version: self.common_handle_version(),
             pending_chunk: None,
             pending_chunk_row: 0,
+            physical_id_index,
         }))
     }
 
@@ -4402,6 +4422,9 @@ pub struct RemoteIndexHandleCursor {
     common_handle_version: u16,
     pending_chunk: Option<Chunk>,
     pending_chunk_row: usize,
+    /// Where a global index's `ExtraPhysTblID` sits in the response (Go
+    /// `needPartitionHandle`): each handle's partition.
+    physical_id_index: Option<usize>,
 }
 
 impl RemoteIndexHandleCursor {
@@ -4544,6 +4567,7 @@ impl RemoteIndexHandleCursor {
     ) -> Result<Option<bool>, KvTableError> {
         if self.pending_chunk.is_some()
             || self.projected_indices.is_some()
+            || self.physical_id_index.is_some()
             || !self.inner.supports_chunks()
             || chk.num_cols() == 0
             || self.handle_indices.iter().copied().ne(0..chk.num_cols())
@@ -4608,11 +4632,14 @@ impl RemoteIndexHandleCursor {
     /// indexWorker iterates the SelectResult chunk and extracts only the
     /// handle columns; materializing a one-column Vec<Datum> for every index
     /// entry is unnecessary and especially costly for wide ranges.
-    fn next_handle_from_chunk(&mut self) -> Result<Option<TableHandle>, KvTableError> {
+    fn next_handle_from_chunk(&mut self) -> Result<Option<(TableHandle, Option<i64>)>, KvTableError> {
         loop {
             if let Some(batch) = self.pending_chunk.as_ref() {
                 if self.pending_chunk_row < batch.num_rows() {
-                    let handle = self.handle_from_chunk_row(batch, self.pending_chunk_row)?;
+                    let handle = (
+                        self.handle_from_chunk_row(batch, self.pending_chunk_row)?,
+                        self.physical_id_from_chunk_row(batch, self.pending_chunk_row),
+                    );
                     let last = self.pending_chunk_row + 1 == batch.num_rows();
                     self.pending_chunk_row += 1;
                     if last {
@@ -4645,13 +4672,25 @@ impl RemoteIndexHandleCursor {
         required_rows: usize,
         max_chunk_size: usize,
     ) -> Result<Option<Vec<TableHandle>>, KvTableError> {
+        Ok(self
+            .next_partition_handle_batch(required_rows, max_chunk_size)?
+            .map(|handles| handles.into_iter().map(|(handle, _)| handle).collect()))
+    }
+
+    /// [`Self::next_handle_batch`] with each handle's partition, for a
+    /// global index's request (Go `kv.PartitionHandle`s).
+    pub fn next_partition_handle_batch(
+        &mut self,
+        required_rows: usize,
+        max_chunk_size: usize,
+    ) -> Result<Option<Vec<(TableHandle, Option<i64>)>>, KvTableError> {
         if required_rows == 0 {
             return Ok(Some(Vec::new()));
         }
         if !self.inner.supports_chunks() {
             let mut handles = Vec::with_capacity(required_rows);
             while handles.len() < required_rows {
-                let Some(handle) = self.next_handle()? else {
+                let Some(handle) = self.next_partition_handle()? else {
                     break;
                 };
                 handles.push(handle);
@@ -4697,7 +4736,7 @@ impl RemoteIndexHandleCursor {
                 .expect("a non-empty pending chunk was just checked");
             for row_index in start..end {
                 let handle = self.handle_from_chunk_row(chunk, row_index)?;
-                handles.push(handle);
+                handles.push((handle, self.physical_id_from_chunk_row(chunk, row_index)));
             }
             self.pending_chunk = None;
             self.pending_chunk_row = 0;
@@ -4707,6 +4746,12 @@ impl RemoteIndexHandleCursor {
 
     /// Returns the next row handle in the remote index order.
     pub fn next_handle(&mut self) -> Result<Option<TableHandle>, KvTableError> {
+        Ok(self.next_partition_handle()?.map(|(handle, _)| handle))
+    }
+
+    /// [`Self::next_handle`] with the handle's partition, for a global
+    /// index's request (Go `kv.PartitionHandle`).
+    pub fn next_partition_handle(&mut self) -> Result<Option<(TableHandle, Option<i64>)>, KvTableError> {
         if (self.handle_is_unsigned.is_some() || self.common_handle) && self.inner.supports_chunks()
         {
             return self.next_handle_from_chunk();
@@ -4715,7 +4760,23 @@ impl RemoteIndexHandleCursor {
             return Ok(None);
         };
         self.note_rows();
-        self.handle_from_row(&row).map(Some)
+        let physical_id = match self.physical_id_index.map(|index| row.get(index)) {
+            None => None,
+            Some(Some(Datum::Int(id))) => Some(*id),
+            Some(other) => {
+                return Err(KvTableError::Decode(format!(
+                    "a global index row carried no partition id, got {other:?}"
+                )))
+            }
+        };
+        Ok(Some((self.handle_from_row(&row)?, physical_id)))
+    }
+
+    /// Go `getHandle`'s `kv.NewPartitionHandle(pid, handle)`: the
+    /// `ExtraPhysTblID` of a global index's response row.
+    fn physical_id_from_chunk_row(&self, batch: &Chunk, row_index: usize) -> Option<i64> {
+        self.physical_id_index
+            .map(|index| batch.get_row(row_index).get_int64(index))
     }
 
     /// The handle one decoded index response row carries.
@@ -7792,6 +7853,7 @@ mod remote_cursor_tests {
             common_handle_version: 1,
             pending_chunk: None,
             pending_chunk_row: 0,
+            physical_id_index: None,
         };
         assert_eq!(
             cursor.next_projected_row().unwrap(),
@@ -8013,6 +8075,7 @@ mod remote_cursor_tests {
             common_handle_version: 1,
             pending_chunk: None,
             pending_chunk_row: 0,
+            physical_id_index: None,
         };
 
         assert_eq!(cursor.next_handle().unwrap(), Some(TableHandle::Int(7)));
@@ -8050,6 +8113,7 @@ mod remote_cursor_tests {
                 common_handle_version: 1,
                 pending_chunk: None,
                 pending_chunk_row: 0,
+                physical_id_index: None,
             }
         };
 
@@ -8088,6 +8152,7 @@ mod remote_cursor_tests {
             common_handle_version: 1,
             pending_chunk: None,
             pending_chunk_row: 0,
+            physical_id_index: None,
         };
 
         // Go's readFromChunk keeps a whole typed response chunk when it is
@@ -8129,6 +8194,7 @@ mod remote_cursor_tests {
             common_handle_version: 1,
             pending_chunk: None,
             pending_chunk_row: 0,
+            physical_id_index: None,
         };
 
         assert_eq!(
@@ -8177,6 +8243,7 @@ mod remote_cursor_tests {
             common_handle_version: 1,
             pending_chunk: None,
             pending_chunk_row: 0,
+            physical_id_index: None,
         };
         let identity = RemoteCommonHandle {
             parts: vec![
@@ -8234,6 +8301,7 @@ mod remote_cursor_tests {
             common_handle_version: 1,
             pending_chunk: None,
             pending_chunk_row: 0,
+            physical_id_index: None,
         };
         let expected = |text: &str, value| {
             Encoder::new(false)
