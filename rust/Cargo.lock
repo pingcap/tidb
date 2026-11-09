@@ -4655,6 +4655,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-dxf-storage"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "serde_json",
+ "tidb-datatype",
+ "tidb-dxf",
+ "tidb-sqlescape",
+ "tidb-sqlexec",
+ "tidb-syssession",
+ "tracing",
+]
+
+[[package]]
 name = "tidb-encrypt"
 version = "0.0.0"
 dependencies = [

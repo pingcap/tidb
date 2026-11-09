@@ -1,0 +1,21 @@
+[package]
+name = "tidb-dxf-storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/dxf/framework/storage: the distributed execution framework's task and subtask tables."
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono.workspace = true
+serde_json.workspace = true
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-dxf = { path = "../tidb-dxf" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-syssession = { path = "../tidb-syssession" }
+tracing = "0.1"
