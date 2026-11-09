@@ -146,7 +146,6 @@ explain format = 'brief' select /*+ hash_join_probe(t) */ * from t where exists 
 drop table if exists t;
 create table t(a int);
 insert into t values (0), (1);
-set @@tidb_opt_enable_semi_join_rewrite = on;
 with c as (select * from t)
 select max(t.a)
 from t
@@ -156,11 +155,10 @@ where exists (
   where c.a < 1
 )
 and exists (
-  select 1
+  select /*+ SEMI_JOIN_REWRITE() */ 1
   from c
   where c.a < 2
 );
-set @@tidb_opt_enable_semi_join_rewrite = default;
 
 # TestDecorrelateLimitInSubquery
 drop table if exists test;
