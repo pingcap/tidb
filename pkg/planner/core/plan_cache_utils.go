@@ -271,52 +271,17 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	return preparedObj, p, paramCount, nil
 }
 
-// tableIDSlicePool is a pool for int64 slices used in hashInt64Uint64Map.
+// tableIDSlicePool is a pool for int64 slices used in hashTableRevisions.
 var tableIDSlicePool = zeropool.New[[]int64](func() []int64 {
 	return make([]int64, 0, 8)
 })
 
-func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
+func hashTableRevisions(b []byte, m map[int64]uint64, latestIS infoschema.InfoSchema) ([]byte, bool) {
 	n := len(m)
-
-	// Fast path for common cases (covers most scenarios)
 	if n == 0 {
-		return b
-	}
-	if n == 1 {
-		// Single table: no need for allocation or sorting
-		for k, v := range m {
-			b = codec.EncodeInt(b, k)
-			b = codec.EncodeUint(b, v)
-			return b
-		}
-	}
-	if n == 2 {
-		// Two tables: direct comparison without array allocation
-		var k1, k2 int64
-		var v1, v2 uint64
-		i := 0
-		for k, v := range m {
-			if i == 0 {
-				k1, v1 = k, v
-			} else {
-				k2, v2 = k, v
-			}
-			i++
-		}
-		// Ensure sorted order
-		if k1 > k2 {
-			k1, k2 = k2, k1
-			v1, v2 = v2, v1
-		}
-		b = codec.EncodeInt(b, k1)
-		b = codec.EncodeUint(b, v1)
-		b = codec.EncodeInt(b, k2)
-		b = codec.EncodeUint(b, v2)
-		return b
+		return b, true
 	}
 
-	// Slow path for multiple tables
 	keys := tableIDSlicePool.Get()[:0]
 	defer tableIDSlicePool.Put(keys)
 
@@ -330,17 +295,21 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 	}
 	slices.Sort(keys)
 
-	for _, k := range keys {
-		v := m[k]
-		b = codec.EncodeInt(b, k)
-		b = codec.EncodeUint(b, v)
+	for _, id := range keys {
+		latestTable, ok := latestIS.TableByID(context.Background(), id)
+		if !ok {
+			// TableByID can also fail when loading metadata, so do not cache
+			// a plan under a key that treats the failure as a missing table.
+			return nil, false
+		}
+		b = codec.EncodeInt(b, id)
+		b = codec.EncodeUint(b, m[id])
+		b = codec.EncodeUint(b, latestTable.Meta().Revision)
 	}
-	return b
+	return b, true
 }
 
 // NewPlanCacheKey creates the plan cache key for this statement.
-// Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
-// differentiate the cache key. In other cases, it will be 0.
 // All information that might affect the plan should be considered in this function.
 func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding string, cacheable bool, reason string, err error) {
 	return newPlanCacheKeyWithMatchedBinding(sctx, stmt, nil, false)
@@ -358,16 +327,6 @@ func newPlanCacheKeyWithMatchedBinding(
 	if bindingMatched && matchedBinding != nil {
 		// Record the matched binding SQL so the plan cache key reflects the effective hints.
 		binding = matchedBinding.BindSQL
-	}
-
-	// In rc or for update read, we need the latest schema version to decide whether we need to
-	// rebuild the plan. So we set this value in rc or for update read. In other cases, let it be 0.
-	var latestSchemaVersion int64
-	if sctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || stmt.ForUpdateRead {
-		// In Rc or ForUpdateRead, we should check if the information schema has been changed since
-		// last time. If it changed, we should rebuild the plan. Here, we use a different and more
-		// up-to-date schema version which can lead plan cache miss and thus, the plan will be rebuilt.
-		latestSchemaVersion = domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
 	}
 
 	// rebuild key to exclude kv.TiFlash when stmt is not read only
@@ -390,6 +349,19 @@ func newPlanCacheKeyWithMatchedBinding(
 	}
 	if len(stmt.limits) > 0 && !vars.EnablePlanCacheForParamLimit {
 		return "", "", false, "the switch 'tidb_enable_plan_cache_for_param_limit' is off", nil
+	}
+	// A new foreign key on another table can change a DML plan's checks
+	// without changing the revision of any table recorded by the statement.
+	var useGlobalSchemaVersion bool
+	if vars.ForeignKeyChecks && stmt.PreparedAst != nil {
+		switch stmt.PreparedAst.Stmt.(type) {
+		case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
+			useGlobalSchemaVersion = true
+		}
+	}
+	var latestSchemaVersion int64
+	if useGlobalSchemaVersion && (vars.IsIsolation(ast.ReadCommitted) || stmt.ForUpdateRead) {
+		latestSchemaVersion = domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
 	}
 
 	stmtDB := stmt.StmtDB
@@ -416,10 +388,14 @@ func newPlanCacheKeyWithMatchedBinding(
 	// to update hashLen accordingly
 	// basic informations
 	hashLen := len(userName) + len(hostName) + len(stmtDB) + len(stmt.StmtText)
-	// schemaVersion + relateVersion + pruneMode
-	hashLen += 8 + len(stmt.RelateVersion)*16 + len(pruneMode)
-	// latestSchemaVersion + sqlMode + enableNoBackslashEscapesInLike + timeZoneOffset + isolationReadEngines + selectLimit
-	hashLen += 8 + 8 + 1 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
+	// table ID + effective revision + latest revision, for each related table, + pruneMode
+	hashLen += len(stmt.RelateVersion)*24 + len(pruneMode)
+	if useGlobalSchemaVersion {
+		// schemaVersion + latestSchemaVersion
+		hashLen += 16
+	}
+	// sqlMode + enableNoBackslashEscapesInLike + timeZoneOffset + isolationReadEngines + selectLimit
+	hashLen += 8 + 1 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
 	// binding + connCharset + connCollation + inRestrictedSQL + readOnly + superReadOnly + exprPushdownBlacklistReloadTimeStamp + hasSubquery + foreignKeyChecks
 	hashLen += len(binding) + len(connCharset) + len(connCollation) + 3 + 8 + 2
 	if len(stmt.limits) > 0 {
@@ -443,14 +419,18 @@ func newPlanCacheKeyWithMatchedBinding(
 	hash = append(hash, hostName...)
 	hash = append(hash, stmtDB...)
 	hash = append(hash, stmt.StmtText...)
-	hash = codec.EncodeInt(hash, stmt.SchemaVersion)
-	hash = hashInt64Uint64Map(hash, stmt.RelateVersion)
+	if useGlobalSchemaVersion {
+		hash = codec.EncodeInt(hash, stmt.SchemaVersion)
+		hash = codec.EncodeInt(hash, latestSchemaVersion)
+	}
+	if len(stmt.RelateVersion) > 0 {
+		var ok bool
+		hash, ok = hashTableRevisions(hash, stmt.RelateVersion, domain.GetDomain(sctx).InfoSchema())
+		if !ok {
+			return "", "", false, "failed to get latest table metadata", nil
+		}
+	}
 	hash = append(hash, pruneMode...)
-	// Only be set in rc or for update read and leave it default otherwise.
-	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
-	// If it changed, we should rebuild the plan. lastUpdatedSchemaVersion help us to decide whether we should rebuild
-	// the plan in rc or for update read.
-	hash = codec.EncodeInt(hash, latestSchemaVersion)
 	hash = codec.EncodeInt(hash, int64(vars.SQLMode))
 	hash = append(hash, bool2Byte(vars.EnableNoBackslashEscapesInLike))
 	hash = codec.EncodeInt(hash, int64(timezoneOffset))
