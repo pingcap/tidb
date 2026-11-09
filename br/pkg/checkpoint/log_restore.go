@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -234,6 +235,8 @@ const (
 	InSnapshotRestore RestoreProgress = iota
 	// Only when the id-maps is persist, status turns into it.
 	InLogRestoreAndIdMapPersist
+	// Log replay, ingest-index repair and TiFlash restoration are complete; only MV repair remains.
+	InMaterializedViewRepair
 )
 
 type CheckpointProgress struct {
@@ -255,6 +258,17 @@ func SaveCheckpointProgress(
 	meta *CheckpointProgress,
 ) error {
 	return insertCheckpointMeta(ctx, se, LogRestoreCheckpointDatabaseName, checkpointProgressTableName, meta)
+}
+
+// UpdateCheckpointProgress advances an existing single-row progress checkpoint.
+func UpdateCheckpointProgress(ctx context.Context, se glue.Session, meta *CheckpointProgress) error {
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return se.ExecuteInternal(
+		ctx, insertCheckpointMetaSQLTemplate, LogRestoreCheckpointDatabaseName, checkpointProgressTableName, 0, data,
+	)
 }
 
 func ExistsCheckpointProgress(
@@ -346,7 +360,37 @@ func SaveCheckpointIngestIndexRepairSQLs(
 	return insertCheckpointMeta(ctx, se, LogRestoreCheckpointDatabaseName, checkpointIngestTableName, meta)
 }
 
+// LoadCheckpointMaterializedViews loads definitions saved with the ID map.
+func LoadCheckpointMaterializedViews(
+	ctx context.Context,
+	execCtx sqlexec.RestrictedSQLExecutor,
+) (*stream.MaterializedViewRecorder, error) {
+	recorder := stream.NewMaterializedViewRecorder()
+	err := selectCheckpointMeta(
+		ctx, execCtx, LogRestoreCheckpointDatabaseName, checkpointMaterializedViewTableName, recorder,
+	)
+	return recorder, errors.Trace(err)
+}
+
+// SaveCheckpointMaterializedViews persists the final definitions before the ID-map checkpoint is published.
+func SaveCheckpointMaterializedViews(
+	ctx context.Context,
+	se glue.Session,
+	recorder *stream.MaterializedViewRecorder,
+) error {
+	// A previous attempt may have stopped while writing the definitions. The
+	// ID-map progress is published only after this complete replacement succeeds.
+	if err := se.ExecuteInternal(ctx, "DROP TABLE IF EXISTS %n.%n",
+		LogRestoreCheckpointDatabaseName, checkpointMaterializedViewTableName); err != nil {
+		return errors.Trace(err)
+	}
+	return insertCheckpointMeta(ctx, se, LogRestoreCheckpointDatabaseName, checkpointMaterializedViewTableName, recorder)
+}
+
 func RemoveCheckpointDataForLogRestore(ctx context.Context, dom *domain.Domain, se glue.Session) error {
 	return dropCheckpointTables(ctx, dom, se, LogRestoreCheckpointDatabaseName,
-		[]string{checkpointDataTableName, checkpointMetaTableName, checkpointProgressTableName, checkpointIngestTableName})
+		[]string{
+			checkpointDataTableName, checkpointMetaTableName, checkpointProgressTableName, checkpointIngestTableName,
+			checkpointMaterializedViewTableName,
+		})
 }

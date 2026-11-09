@@ -17,6 +17,7 @@ go_library(
         "batch_point_get.go",
         "bind.go",
         "brie.go",
+        "brie_materialized_view.go",
         "brie_utils.go",
         "builder.go",
         "check_table_index.go",
@@ -97,6 +98,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/glue",
+        "//br/pkg/restore",
         "//br/pkg/storage",
         "//br/pkg/task",
         "//br/pkg/task/show",

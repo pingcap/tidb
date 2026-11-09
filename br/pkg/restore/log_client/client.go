@@ -739,6 +739,7 @@ func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
 	ctx context.Context,
 	cfg *InitSchemaConfig,
 	cipherInfo *backuppb.CipherInfo,
+	recorder *stream.MaterializedViewRecorder,
 ) (map[stream.UpstreamID]*stream.DBReplace, error) {
 	dbReplaces := make(map[stream.UpstreamID]*stream.DBReplace)
 	if cfg.FullBackupStorage == nil {
@@ -775,6 +776,18 @@ func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
 			// If the db is empty, skip it.
 			continue
 		}
+		recorder.Seed(t.DB.ID, t.Info)
+		if recorder.Skipped[t.Info.ID] {
+			// MV/mlog schemas and data are skipped during replay and rebuilt through DDL
+			// afterward. Reserve IDs for ID-map construction and delete-range rewriting;
+			// these IDs are not used by the rebuilt objects.
+			newID, err := rc.GenGlobalID(ctx)
+			if err != nil {
+				return nil, err
+			}
+			dbReplace.TableMap[t.Info.ID] = stream.NewTableReplace(t.Info.Name.O, newID)
+			continue
+		}
 		newTableInfo, err := restore.GetTableSchema(rc.GetDomain(), dbName, t.Info.Name)
 		if err != nil {
 			log.Info("table not existed", zap.String("tablename", dbName.String()+"."+t.Info.Name.String()))
@@ -798,6 +811,7 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 	cfg *InitSchemaConfig,
 	cipherInfo *backuppb.CipherInfo,
 ) (*stream.SchemasReplace, error) {
+	recorder := stream.NewMaterializedViewRecorder()
 	var (
 		err    error
 		dbMaps []*backuppb.PitrDBMap
@@ -815,10 +829,21 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		if rc.useCheckpoint && len(dbMaps) > 0 {
+			recorder, err = checkpoint.LoadCheckpointMaterializedViews(ctx, rc.se.GetSessionCtx().GetRestrictedSQLExecutor())
+			if err != nil {
+				return nil, errors.Annotate(err, "failed to load materialized view definitions saved with the ID map")
+			}
+		}
 	}
 
 	// a new task, but without full snapshot restore, tries to load
 	// schemas map whose `restore-ts`` is the task's `start-ts`.
+	//
+	// MV restore intentionally excludes compatibility with chained log-only restore
+	// tasks (T0->T1 followed by T1->T2 without a new full restore). Checkpoint retries
+	// within the same restore task are supported. This legacy ID-map reuse path does
+	// not carry MV recorder state or rebuilt MV/MLog IDs across task boundaries.
 	if len(dbMaps) <= 0 && cfg.FullBackupStorage == nil {
 		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
 		needConstructIdMap = true
@@ -841,7 +866,7 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 	if len(dbMaps) <= 0 {
 		log.Info("no id maps, build the table replaces from cluster and full backup schemas")
 		needConstructIdMap = true
-		dbReplaces, err = rc.generateDBReplacesFromFullBackupStorage(ctx, cfg, cipherInfo)
+		dbReplaces, err = rc.generateDBReplacesFromFullBackupStorage(ctx, cfg, cipherInfo, recorder)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -867,9 +892,23 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 	}
 
 	rp := stream.NewSchemasReplace(
-		dbReplaces, needConstructIdMap, cfg.TiFlashRecorder, rc.currentTS, cfg.TableFilter, rc.GenGlobalID, rc.GenGlobalIDs,
+		dbReplaces, needConstructIdMap,
+		cfg.TiFlashRecorder, recorder,
+		rc.currentTS, cfg.TableFilter,
+		rc.GenGlobalID, rc.GenGlobalIDs,
 		rc.RecordDeleteRange)
 	return rp, nil
+}
+
+// CheckpointMaterializedViewRepair marks replay/index/TiFlash repair complete before
+// native DDL creates new metadata that must not be overwritten on retries.
+func (rc *LogClient) CheckpointMaterializedViewRepair(ctx context.Context) error {
+	if !rc.useCheckpoint {
+		return nil
+	}
+	return checkpoint.UpdateCheckpointProgress(ctx, rc.se, &checkpoint.CheckpointProgress{
+		Progress: checkpoint.InMaterializedViewRepair,
+	})
 }
 
 func SortMetaKVFiles(files []*backuppb.DataFileInfo) []*backuppb.DataFileInfo {
@@ -976,6 +1015,8 @@ func (rc *LogClient) PreConstructAndSaveIDMap(
 		return errors.Trace(err)
 	}
 
+	sr.MaterializedViewRecorder.FinishRecording()
+
 	if err := rc.saveIDMap(ctx, sr); err != nil {
 		return errors.Trace(err)
 	}
@@ -994,6 +1035,9 @@ func (rc *LogClient) constructIDMap(
 		}
 
 		for _, entry := range entries {
+			if err := sr.MaterializedViewRecorder.RecordEntry(&entry.E, f.Cf); err != nil {
+				return err
+			}
 			if _, err := sr.RewriteKvEntry(&entry.E, f.GetCf()); err != nil {
 				return errors.Trace(err)
 			}
@@ -1651,6 +1695,9 @@ func (rc *LogClient) saveIDMap(
 	}
 
 	if rc.useCheckpoint {
+		if err := checkpoint.SaveCheckpointMaterializedViews(ctx, rc.se, sr.MaterializedViewRecorder); err != nil {
+			return errors.Trace(err)
+		}
 		log.Info("save checkpoint task info with InLogRestoreAndIdMapPersist status")
 		if err := checkpoint.SaveCheckpointProgress(ctx, rc.se, &checkpoint.CheckpointProgress{
 			Progress: checkpoint.InLogRestoreAndIdMapPersist,

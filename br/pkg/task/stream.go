@@ -1390,7 +1390,7 @@ func restoreStream(
 	}
 	// load the id maps only when the checkpoint mode is used and not the first execution
 	newTask := true
-	if taskInfo != nil && taskInfo.Progress == checkpoint.InLogRestoreAndIdMapPersist {
+	if taskInfo != nil && taskInfo.Progress >= checkpoint.InLogRestoreAndIdMapPersist {
 		newTask = false
 	}
 	// get the schemas ID replace information.
@@ -1416,6 +1416,22 @@ func restoreStream(
 		tableInfo.TiFlashReplica = nil
 	}
 
+	finishRestore := func() error {
+		// Native MV builds can use the restored TiFlash replicas.
+		return errors.Annotate(repairMaterializedViews(ctx, g, mgr.GetDomain(), cfg, schemasReplace),
+			"failed to rebuild materialized views")
+	}
+	// Definitions are already checkpointed with the ID map. The progress marker
+	// separately prevents replay from overwriting base links created by repair.
+	if taskInfo != nil && taskInfo.Progress == checkpoint.InMaterializedViewRepair {
+		log.Info("resume materialized view rebuild after completed log replay")
+		if err := finishRestore(); err != nil {
+			return err
+		}
+		gcDisabledRestorable = true
+		return nil
+	}
+
 	updateStats := func(kvCount uint64, size uint64) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -1436,6 +1452,9 @@ func restoreStream(
 	}
 
 	rewriteRules := initRewriteRules(schemasReplace)
+	for tableID := range schemasReplace.MaterializedViewRecorder.Skipped {
+		delete(rewriteRules, tableID)
+	}
 
 	ingestRecorder := schemasReplace.GetIngestRecorder()
 	if err := rangeFilterFromIngestRecorder(ingestRecorder, rewriteRules); err != nil {
@@ -1533,6 +1552,12 @@ func restoreStream(
 		if err != nil {
 			return err
 		}
+	}
+	if err := client.CheckpointMaterializedViewRepair(ctx); err != nil {
+		return err
+	}
+	if err := finishRestore(); err != nil {
+		return err
 	}
 
 	failpoint.Inject("do-checksum-with-rewrite-rules", func(_ failpoint.Value) {

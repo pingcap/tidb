@@ -6,9 +6,11 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -21,6 +23,100 @@ import (
 )
 
 var increaseID int64 = 100
+
+func TestMaterializedViewRecorder(t *testing.T) {
+	base := &model.TableInfo{ID: 1, Name: pmodel.NewCIStr("base"), State: model.StatePublic, MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: 2, MViewIDs: []int64{3}}}
+	mv := &model.TableInfo{ID: 3, Name: pmodel.NewCIStr("mv"), State: model.StatePublic, MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{1}}}
+	entry := func(dbID, tableID int64, ts uint64, value []byte) *kv.Entry {
+		return &kv.Entry{Key: (&RawMetaKey{Key: meta.DBkey(dbID), Field: meta.TableKey(tableID), Ts: ts + (1 << 60)}).EncodeMetaKey(), Value: value}
+	}
+	encoded := func(info *model.TableInfo) []byte {
+		fields := map[string]any{"id": info.ID, "name": info.Name, "state": info.State}
+		if info.MaterializedView != nil {
+			fields["materialized_view"] = map[string]any{"base_table_ids": info.MaterializedView.BaseTableIDs}
+		}
+		if info.MaterializedViewBase != nil {
+			fields["materialized_view_base"] = info.MaterializedViewBase
+		}
+		value, err := json.Marshal(fields)
+		require.NoError(t, err)
+		return value
+	}
+	put := func(dbID int64, info *model.TableInfo, commitTS, startTS uint64, short bool) *kv.Entry {
+		write := &RawWriteCFValue{t: WriteTypePut, startTs: startTS + (1 << 60)}
+		if short {
+			write.UpdateShortValue(encoded(info))
+		}
+		return entry(dbID, info.ID, commitTS, write.EncodeTo())
+	}
+	for _, short := range []bool{false, true} {
+		t.Run(fmt.Sprint("short=", short), func(t *testing.T) {
+			recorder := NewMaterializedViewRecorder()
+			recorder.Seed(10, base)
+			recorder.Seed(10, mv)
+			final := mv.Clone()
+			final.Name = pmodel.NewCIStr("renamed_mv")
+			require.NoError(t, recorder.RecordEntry(put(10, final, 40, 35, short), WriteCF))
+			require.NoError(t, recorder.RecordEntry(put(10, mv, 20, 15, short), WriteCF), "out-of-order older commit")
+			require.NoError(t, recorder.RecordEntry(entry(10, 3, 45, (&RawWriteCFValue{t: WriteTypeRollback, startTs: 45 + (1 << 60)}).EncodeTo()), WriteCF))
+			if !short {
+				require.NoError(t, recorder.RecordEntry(entry(10, 3, 35, encoded(final)), DefaultCF))
+				require.NoError(t, recorder.RecordEntry(entry(10, 3, 15, encoded(mv)), DefaultCF))
+				require.NoError(t, recorder.RecordEntry(entry(10, 3, 45, encoded(mv)), DefaultCF), "uncommitted default value")
+			}
+			require.Equal(t, "renamed_mv", recorder.Tables[3].Info.Name.O)
+			require.Equal(t, "mv", mv.Name.O, "seed is immutable")
+			require.True(t, recorder.Skipped[3])
+			require.False(t, recorder.Skipped[1])
+			// A deleted object is excluded from rebuilding but its data stays skipped.
+			require.NoError(t, recorder.RecordEntry(entry(10, 3, 50, (&RawWriteCFValue{t: WriteTypeDelete, startTs: 48 + (1 << 60)}).EncodeTo()), WriteCF))
+			require.NoError(t, recorder.RecordEntry(entry(10, 3, 35, encoded(final)), DefaultCF))
+			require.NotContains(t, recorder.Tables, int64(3))
+			require.True(t, recorder.Skipped[3])
+		})
+	}
+	for _, deleteFirst := range []bool{false, true} {
+		recorder := NewMaterializedViewRecorder()
+		recorder.Seed(10, mv)
+		remove := entry(10, 3, 50, (&RawWriteCFValue{t: WriteTypeDelete, startTs: 48 + (1 << 60)}).EncodeTo())
+		add := put(11, mv, 50, 48, true)
+		entries := []*kv.Entry{add, remove}
+		if deleteFirst {
+			entries = []*kv.Entry{remove, add}
+		}
+		for _, e := range entries {
+			require.NoError(t, recorder.RecordEntry(e, WriteCF))
+		}
+		require.Equal(t, int64(11), recorder.Tables[3].DBID)
+	}
+	t.Run("cleared base links", func(t *testing.T) {
+		recorder := NewMaterializedViewRecorder()
+		recorder.Seed(10, base)
+		ordinary := base.Clone()
+		ordinary.MaterializedViewBase = nil
+		require.NoError(t, recorder.RecordEntry(put(10, ordinary, 40, 35, false), WriteCF))
+		require.NoError(t, recorder.RecordEntry(entry(10, base.ID, 35, encoded(ordinary)), DefaultCF))
+		require.NotContains(t, recorder.Tables, base.ID)
+	})
+	// Metadata replay strips reverse links even when a referenced log/MV is
+	// filtered out and has no mapping, and skips every materialized table key.
+	db := NewDBReplace("test", 100)
+	db.TableMap[1] = NewTableReplace("base", 101)
+	db.TableMap[3] = NewTableReplace("mv", 103)
+	sr := MockEmptySchemasReplace(nil, map[int64]*DBReplace{10: db})
+	sr.MaterializedViewRecorder.Seed(10, mv)
+	sr.SetRestoreKVStatus()
+	rewritten, err := sr.RewriteKvEntry(entry(10, base.ID, 35, encoded(base)), DefaultCF)
+	require.NoError(t, err)
+	require.NotNil(t, rewritten)
+	var restored model.TableInfo
+	require.NoError(t, json.Unmarshal(rewritten.Value, &restored))
+	require.Equal(t, int64(101), restored.ID)
+	require.Nil(t, restored.MaterializedViewBase)
+	rewritten, err = sr.RewriteKvEntry(put(10, mv, 40, 35, true), WriteCF)
+	require.NoError(t, err)
+	require.Nil(t, rewritten)
+}
 
 func mockGenGenGlobalID(ctx context.Context) (int64, error) {
 	increaseID++
@@ -37,6 +133,7 @@ func MockEmptySchemasReplace(midr *mockInsertDeleteRange, dbMap map[UpstreamID]*
 	return NewSchemasReplace(
 		dbMap,
 		true,
+		nil,
 		nil,
 		9527,
 		filter.All(),
@@ -84,7 +181,7 @@ func TestTidySchemaMaps(t *testing.T) {
 	drs[oldDBID] = dr
 
 	// create schemas replace and test TidySchemaMaps().
-	sr := NewSchemasReplace(drs, true, nil, 0, filter.All(), nil, nil, nil)
+	sr := NewSchemasReplace(drs, true, nil, nil, 0, filter.All(), nil, nil, nil)
 	globalTableIdMap := sr.globalTableIdMap
 	require.Equal(t, len(globalTableIdMap), 3)
 	require.Equal(t, globalTableIdMap[oldTblID], newTblID)
@@ -491,6 +588,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 	sr := NewSchemasReplace(
 		dbMap,
 		true,
+		nil,
 		nil,
 		0,
 		filter.All(),

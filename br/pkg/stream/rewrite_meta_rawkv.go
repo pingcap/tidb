@@ -71,11 +71,12 @@ type SchemasReplace struct {
 	globalTableIdMap   map[UpstreamID]DownstreamID
 	needConstructIdMap bool
 
-	delRangeRecorder *brDelRangeExecWrapper
-	ingestRecorder   *ingestrec.IngestRecorder
-	TiflashRecorder  *tiflashrec.TiFlashRecorder
-	RewriteTS        uint64        // used to rewrite commit ts in meta kv.
-	TableFilter      filter.Filter // used to filter schema/table
+	delRangeRecorder         *brDelRangeExecWrapper
+	ingestRecorder           *ingestrec.IngestRecorder
+	TiflashRecorder          *tiflashrec.TiFlashRecorder
+	MaterializedViewRecorder *MaterializedViewRecorder
+	RewriteTS                uint64        // used to rewrite commit ts in meta kv.
+	TableFilter              filter.Filter // used to filter schema/table
 
 	genGenGlobalID  func(ctx context.Context) (int64, error)
 	genGenGlobalIDs func(ctx context.Context, n int) ([]int64, error)
@@ -107,12 +108,16 @@ func NewSchemasReplace(
 	dbMap map[UpstreamID]*DBReplace,
 	needConstructIdMap bool,
 	tiflashRecorder *tiflashrec.TiFlashRecorder,
+	materializedViewRecorder *MaterializedViewRecorder,
 	restoreTS uint64,
 	tableFilter filter.Filter,
 	genID func(ctx context.Context) (int64, error),
 	genIDs func(ctx context.Context, n int) ([]int64, error),
 	recordDeleteRange func(*PreDelRangeQuery),
 ) *SchemasReplace {
+	if materializedViewRecorder == nil {
+		materializedViewRecorder = NewMaterializedViewRecorder()
+	}
 	globalTableIdMap := make(map[UpstreamID]DownstreamID)
 	for _, dr := range dbMap {
 		for tblID, tr := range dr.TableMap {
@@ -124,16 +129,17 @@ func NewSchemasReplace(
 	}
 
 	return &SchemasReplace{
-		DbMap:              dbMap,
-		globalTableIdMap:   globalTableIdMap,
-		needConstructIdMap: needConstructIdMap,
-		delRangeRecorder:   newDelRangeExecWrapper(globalTableIdMap, recordDeleteRange),
-		ingestRecorder:     ingestrec.New(),
-		TiflashRecorder:    tiflashRecorder,
-		RewriteTS:          restoreTS,
-		TableFilter:        tableFilter,
-		genGenGlobalID:     genID,
-		genGenGlobalIDs:    genIDs,
+		DbMap:                    dbMap,
+		globalTableIdMap:         globalTableIdMap,
+		needConstructIdMap:       needConstructIdMap,
+		delRangeRecorder:         newDelRangeExecWrapper(globalTableIdMap, recordDeleteRange),
+		ingestRecorder:           ingestrec.New(),
+		TiflashRecorder:          tiflashRecorder,
+		MaterializedViewRecorder: materializedViewRecorder,
+		RewriteTS:                restoreTS,
+		TableFilter:              tableFilter,
+		genGenGlobalID:           genID,
+		genGenGlobalIDs:          genIDs,
 	}
 }
 
@@ -461,6 +467,13 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, er
 		return nil, nil
 	}
 
+	// PITR rebuilds materialized objects through DDL after replay. Base table
+	// metadata must stay ordinary until the recorder's final definitions apply.
+	tableInfo.MaterializedView = nil
+	tableInfo.MaterializedViewBase = nil
+	tableInfo.MaterializedViewLog = nil
+	tableInfo.MaterializedViewShadow = nil
+
 	// Force to disable TTL_ENABLE when restore
 	if tableInfo.TTLInfo != nil {
 		tableInfo.TTLInfo.Enable = false
@@ -661,6 +674,27 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, err
 		return sr.rewriteEntryForDB(e, cf)
 	} else if !meta.IsDBkey(rawKey.Key) {
 		return nil, nil
+	}
+	if sr.IsRestoreKVStatus() {
+		var tableID int64
+		switch {
+		case meta.IsTableKey(rawKey.Field):
+			tableID, err = meta.ParseTableKey(rawKey.Field)
+		case meta.IsAutoIncrementIDKey(rawKey.Field):
+			tableID, err = meta.ParseAutoIncrementIDKey(rawKey.Field)
+		case meta.IsAutoTableIDKey(rawKey.Field):
+			tableID, err = meta.ParseAutoTableIDKey(rawKey.Field)
+		case meta.IsSequenceKey(rawKey.Field):
+			tableID, err = meta.ParseSequenceKey(rawKey.Field)
+		case meta.IsAutoRandomTableIDKey(rawKey.Field):
+			tableID, err = meta.ParseAutoRandomTableIDKey(rawKey.Field)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if sr.MaterializedViewRecorder.Skipped[tableID] {
+			return nil, nil
+		}
 	}
 	if meta.IsTableKey(rawKey.Field) {
 		return sr.rewriteEntryForTable(e, cf)

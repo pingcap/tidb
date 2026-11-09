@@ -393,6 +393,16 @@ func (*SchemaTracker) CreateMaterializedView(sessionctx.Context, *ast.CreateMate
 	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW is not supported in schema tracker")
 }
 
+// CreateMaterializedViewWithInfo implements the DDL interface.
+func (*SchemaTracker) CreateMaterializedViewWithInfo(sessionctx.Context, pmodel.CIStr, *model.TableInfo, ...ddl.CreateTableOption) error {
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW WITH INFO is not supported in schema tracker")
+}
+
+// CreateMaterializedViewLogWithInfo implements the DDL interface.
+func (*SchemaTracker) CreateMaterializedViewLogWithInfo(sessionctx.Context, pmodel.CIStr, *model.TableInfo, ...ddl.CreateTableOption) error {
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW LOG WITH INFO is not supported in schema tracker")
+}
+
 // DropMaterializedView implements the DDL interface.
 func (*SchemaTracker) DropMaterializedView(sessionctx.Context, *ast.DropMaterializedViewStmt) error {
 	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("DROP MATERIALIZED VIEW is not supported in schema tracker")

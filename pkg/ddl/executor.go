@@ -110,6 +110,11 @@ type Executor interface {
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
 	CreateMaterializedView(ctx sessionctx.Context, stmt *ast.CreateMaterializedViewStmt) error
 	CreateMaterializedViewLog(ctx sessionctx.Context, stmt *ast.CreateMaterializedViewLogStmt) error
+	// WithInfo entry points restore physical schemas through the MV-specific DDL jobs.
+	CreateMaterializedViewWithInfo(ctx sessionctx.Context, dbName pmodel.CIStr,
+		info *model.TableInfo, cs ...CreateTableOption) error
+	CreateMaterializedViewLogWithInfo(ctx sessionctx.Context, dbName pmodel.CIStr,
+		info *model.TableInfo, cs ...CreateTableOption) error
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
 	DropMaterializedView(ctx sessionctx.Context, stmt *ast.DropMaterializedViewStmt) error
@@ -1211,38 +1216,12 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 		PurgeScheduleSQLMode:     ctx.GetSessionVars().SQLMode,
 	}
 
-	involvingSchemas := []model.InvolvingSchemaInfo{
-		{Database: schema.Name.L, Table: mlogTableInfo.Name.L},
-		{Database: schema.Name.L, Table: baseTableInfo.Name.L},
+	onExist := OnExistError
+	if s.IfNotExists {
+		onExist = OnExistIgnore
 	}
-	job := &model.Job{
-		Version:             model.GetJobVerInUse(),
-		SchemaID:            schema.ID,
-		SchemaName:          schema.Name.L,
-		TableName:           mlogTableInfo.Name.L,
-		Type:                model.ActionCreateMaterializedViewLog,
-		BinlogInfo:          &model.HistoryInfo{},
-		InvolvingSchemaInfo: involvingSchemas,
-		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
-		SQLMode:             ctx.GetSessionVars().SQLMode,
-		SessionVars:         make(map[string]string),
-	}
-	job.AddSessionVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
-	jobW := NewJobWrapperWithArgs(job, &model.CreateMaterializedViewLogArgs{TableInfo: mlogTableInfo}, false)
-	if err := e.DoDDLJobWrapper(ctx, jobW); err != nil {
-		// A concurrent creator may have won after the existence precheck.
-		if s.IfNotExists && infoschema.ErrTableExists.Equal(err) {
-			ctx.GetSessionVars().StmtCtx.AppendNote(err)
-			return nil
-		}
-		return errors.Trace(err)
-	}
-
-	var scatterScope string
-	if val, ok := jobW.GetSessionVars(variable.TiDBScatterRegion); ok {
-		scatterScope = val
-	}
-	return errors.Trace(e.createTableWithInfoPost(ctx, mlogTableInfo, jobW.SchemaID, scatterScope))
+	return e.submitCreateMaterializedViewLogJob(ctx, schema, mlogTableInfo, baseTableInfo,
+		CreateTableConfig{OnExist: onExist})
 }
 
 // FieldTypeForMaterializedViewLogColumn returns the field type used to copy a
