@@ -932,3 +932,7 @@ fn get_metric_state(state: &TaskState, task_err: Option<&(dyn std::error::Error 
 pub fn is_cancelled_err(err: Option<&(dyn std::error::Error + 'static)>) -> bool {
     tidb_dxf_storage::is_cancelled_err(err)
 }
+
+#[cfg(test)]
+#[path = "scheduler_nokit_tests.rs"]
+mod nokit_tests;

@@ -34,3 +34,9 @@ tidb-vardef = { path = "../tidb-vardef" }
 
 [dev-dependencies]
 chrono.workspace = true
+tidb-domain-sqlsvrapi = { path = "../tidb-domain-sqlsvrapi" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-syssession = { path = "../tidb-syssession" }
+tidb-terror = { path = "../tidb-terror" }
+serde_json.workspace = true
+prometheus = { version = "0.14", default-features = false }
