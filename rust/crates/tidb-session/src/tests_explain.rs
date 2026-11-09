@@ -9829,8 +9829,10 @@ fn a_global_index_tasks_batched_rows_follow_their_parent_like_go() {
 /// tidb-server, fresh connection per statement.
 #[test]
 fn a_narrowed_global_index_lookup_filters_its_entries_in_the_store_like_go() {
-    for (lookup_size, tasks, memory, ru, scan_loops) in
-        [(None, "num: 1,", "10.2 KB", "RU:0.95,", "loops:3,"), (Some(2), "num: 2,", "11.5 KB", "RU:1.42,", "loops:5,")]
+    // (Go's RU, 0.95 and 1.42, counts the store's processing time, which
+    // varies with load, so it is not pinned.)
+    for (lookup_size, tasks, memory, scan_loops) in
+        [(None, "num: 1,", "10.2 KB", "loops:3,"), (Some(2), "num: 2,", "11.5 KB", "loops:5,")]
     {
         let mut session = Session::new();
         session
@@ -9851,7 +9853,7 @@ fn a_narrowed_global_index_lookup_filters_its_entries_in_the_store_like_go() {
         };
         let lookup = row("IndexLookUp_9");
         assert_eq!((lookup[2].as_str(), lookup[7].as_str()), ("49", memory), "{lookup_size:?}: {rows:?}");
-        assert!(lookup[5].contains(ru) && lookup[5].contains(tasks), "{lookup_size:?}: {rows:?}");
+        assert!(lookup[5].contains(tasks), "{lookup_size:?}: {rows:?}");
         let selection = row("Selection_8(Build)");
         assert_eq!(selection[2], "49", "{lookup_size:?}: {rows:?}");
         assert!(selection[5].contains("loops:3,") && selection[5].contains("proc_keys: 99,"), "{lookup_size:?}: {rows:?}");

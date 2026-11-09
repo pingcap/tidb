@@ -5540,6 +5540,12 @@ pub(crate) struct LookupForkTemplate {
     output_offsets: Option<Vec<usize>>,
     probe_bound_ops: Vec<LookupProbeBoundOp>,
     probe_bound_target_type: Option<FieldType>,
+    emit_extra_handle: bool,
+    emit_commit_ts: bool,
+    emit_physical_table_id: bool,
+    /// Go `buildIndexLookUpReaderForIndexJoin`'s batch sizes, when the inner
+    /// reader is a double read.
+    inner_lookup: Option<(usize, usize)>,
 }
 
 impl LookupForkTemplate {
@@ -5572,15 +5578,13 @@ impl LookupForkTemplate {
             remote_handles: None,
             last_partition_id: None,
             lookup_physical_ids: Vec::new(),
-            emit_physical_table_id: false,
+            emit_physical_table_id: self.emit_physical_table_id,
             current_physical_id: None,
             lookup_rows: Vec::new(),
             lookup_handles: Vec::new(),
             lookup_row_at: 0,
-            // A fork serves a common-handle prefix lookup; a clustered table
-            // has no `_tidb_rowid` to report.
-            emit_extra_handle: false,
-            emit_commit_ts: false,
+            emit_extra_handle: self.emit_extra_handle,
+            emit_commit_ts: self.emit_commit_ts,
             current_handle: None,
             produced: tidb_executor_internal_exec::RowCount::default(),
             decode_context: self.decode_context.clone(),
@@ -5602,6 +5606,17 @@ impl LookupForkTemplate {
             probe_bound_values: Vec::new(),
             inner_lookup: None,
         };
+        if let Some((initial_batch, max_batch)) = self.inner_lookup {
+            task.set_inner_lookup(initial_batch, max_batch);
+        }
+        // Go's `BuildExecutorForIndexJoin`: every task's reader is built and
+        // opened afresh. A common-handle prefix task prepares its cursor
+        // here, off the session thread.
+        if !task.common_handle_prefix_lookup() {
+            task.open()?;
+            task.set_probes(probes)?;
+            return Ok(Ok(task));
+        }
         task.set_probes(probes)?;
         if task.open_prefetched_common_handle_cursor()? {
             Ok(Ok(task))
@@ -6078,14 +6093,7 @@ impl IndexJoinLookupExec {
     /// tasks and requests of a batch are prepared off the session thread;
     /// each fork keeps its own cursor and row counters.
     pub(crate) fn fork_template(&self) -> Option<LookupForkTemplate> {
-        let complete_common_handle = matches!(self.object, LookupObject::CommonHandle)
-            && self.probe_tails.is_empty()
-            && (self.probe_parts.is_empty()
-                || self.probe_parts.len() == self.table.common_handle_offsets().len());
-        if !matches!(self.object, LookupObject::CommonHandle)
-            || complete_common_handle
-            || self.shared_probes.is_some()
-        {
+        if self.shared_probes.is_some() {
             return None;
         }
         Some(LookupForkTemplate {
@@ -6115,6 +6123,13 @@ impl IndexJoinLookupExec {
             output_offsets: self.output_offsets.clone(),
             probe_bound_ops: self.probe_bound_ops.clone(),
             probe_bound_target_type: self.probe_bound_target_type.clone(),
+            emit_extra_handle: self.emit_extra_handle,
+            emit_commit_ts: self.emit_commit_ts,
+            emit_physical_table_id: self.emit_physical_table_id,
+            inner_lookup: self
+                .inner_lookup
+                .as_ref()
+                .map(|inner| (inner.initial_batch, inner.max_batch)),
         })
     }
 
