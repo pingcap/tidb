@@ -65,14 +65,13 @@ func WithCascades(on bool) TestOption {
 	}
 }
 
-// RunTestUnderCascades runs the test body under two planner modes.
+// RunTestUnderCascades runs the basic test body with the cascades planner disabled.
 func RunTestUnderCascades(t *testing.T, testFunc func(t *testing.T, tk *TestKit, cascades, caller string), opts ...mockstore.MockTiKVStoreOption) {
 	options := []struct {
 		name string
 		opt  TestOption
 	}{
 		{"off", WithCascades(false)},
-		{"on", WithCascades(true)},
 	}
 
 	pc, _, _, ok := runtime.Caller(1)

@@ -421,23 +421,17 @@ func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx s
 	if len(chunkRows) == 0 {
 		return nil
 	}
-
-	checker := privilege.GetPrivilegeManager(sctx)
-	showAllRows := checker == nil
-	canViewOtherRegularUsers := false
-	var currentUser, currentHost string
-	if checker != nil {
-		sessionVars := sctx.GetSessionVars()
-		currentUser, currentHost = auth.GetUserAndHostName(sessionVars.User)
-		activeRoles := sessionVars.ActiveRoles
-		hasCreateUserPriv := checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv)
-		hasSystemUserPriv := checker.RequestDynamicVerification(activeRoles, "SYSTEM_USER", false)
-		showAllRows = checker.RequestVerification(activeRoles, mysql.SystemDB, "", "", mysql.SelectPriv) ||
-			checker.RequestVerification(activeRoles, mysql.SystemDB, "", "", mysql.UpdatePriv) ||
-			(hasCreateUserPriv && hasSystemUserPriv)
-		canViewOtherRegularUsers = hasCreateUserPriv
+	var filter privileges.UserAttrFilter
+	viewer := sctx.GetSessionVars().User
+	if viewer != nil {
+		user, host := auth.GetUserAndHostName(viewer)
+		filter = privileges.NewUserAttrFilter(
+			sctx.GetSessionVars().ActiveRoles,
+			user,
+			host,
+			privilege.GetPrivilegeManager(sctx),
+		)
 	}
-
 	rows := make([][]types.Datum, 0, len(chunkRows))
 	for _, chunkRow := range chunkRows {
 		if chunkRow.Len() != 3 {
@@ -445,15 +439,8 @@ func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx s
 		}
 		user := chunkRow.GetString(0)
 		host := chunkRow.GetString(1)
-		isCurrentUser := user == currentUser && strings.EqualFold(host, currentHost)
-		if !showAllRows && !isCurrentUser {
-			if !canViewOtherRegularUsers {
-				continue
-			}
-			targetUser := &auth.UserIdentity{Username: user, Hostname: host}
-			if checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, targetUser) {
-				continue
-			}
+		if filter != nil && !filter.Visible(user, host) {
+			continue
 		}
 		// Compatible with results in MySQL
 		var attribute any

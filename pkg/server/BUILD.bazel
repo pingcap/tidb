@@ -183,6 +183,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/planner/core/resolve",
+        "//pkg/resourcegroup",
         "//pkg/server/err",
         "//pkg/server/internal",
         "//pkg/server/internal/column",

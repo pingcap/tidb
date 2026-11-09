@@ -8,12 +8,14 @@ OK
 select audit_log_create_rule('%@%', 'audit_log_system_table_all');
 audit_log_create_rule('%@%', 'audit_log_system_table_all')
 OK
+do sleep(1);
 select 'audit_log_system_table_marker';
 audit_log_system_table_marker
 audit_log_system_table_marker
 select audit_log_rotate();
 audit_log_rotate()
 OK
+do sleep(1);
 select count(*) from information_schema.audit_log
 where SQL_TEXT like '%audit_log_system_table_marker%' and SQL_TEXT not like '%COUNT(*)%';
 count(*)

@@ -588,7 +588,7 @@ generate_grafana_scripts:
 bazel_ci_prepare:
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable -prune
-	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror:mirror -- --mirror> tmp.txt
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror:mirror > tmp.txt
 	mv tmp.txt DEPS.bzl
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  \
 		--run_under="cd $(CURDIR) && " \
@@ -609,7 +609,7 @@ bazel_prepare: ## Update and generate BUILD.bazel files. Please run this before 
 		--run_under="cd $(CURDIR) && " \
 		 //tools/tazel:tazel
 	$(eval $@TMP_OUT := $(shell mktemp -d -t tidbbzl.XXXXXX))
-	bazel run  //cmd/mirror -- --mirror> $($@TMP_OUT)/tmp.txt
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //cmd/mirror > $($@TMP_OUT)/tmp.txt
 	cp $($@TMP_OUT)/tmp.txt DEPS.bzl
 	rm -rf $($@TMP_OUT)
 
@@ -836,7 +836,7 @@ docker-test:
 .PHONY: bazel_mirror
 bazel_mirror:
 	$(eval $@TMP_OUT := $(shell mktemp -d -t tidbbzl.XXXXXX))
-	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror:mirror -- --mirror> $($@TMP_OUT)/tmp.txt
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) --norun_validations //cmd/mirror:mirror > $($@TMP_OUT)/tmp.txt
 	cp $($@TMP_OUT)/tmp.txt DEPS.bzl
 	rm -rf $($@TMP_OUT)
 
@@ -846,7 +846,7 @@ bazel_sync:
 
 .PHONY: bazel_mirror_upload
 bazel_mirror_upload:
-	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror -- --mirror --upload
+	@echo "bazel_mirror_upload is deprecated; Go modules are resolved through GOPROXY. Run 'make bazel_mirror' to regenerate DEPS.bzl."
 
 .PHONY: bazel_check_abi
 bazel_check_abi:

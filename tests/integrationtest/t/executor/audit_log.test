@@ -9,8 +9,13 @@ set global tidb_audit_log_redacted = 0;
 set global tidb_audit_enabled = 1;
 select audit_log_create_filter('audit_log_system_table_all', '{}');
 select audit_log_create_rule('%@%', 'audit_log_system_table_all');
+# TiKV-backed audit rules are reloaded asynchronously through etcd.
+# ponytail: 1s grace period; switch to polling if CI propagation exceeds it.
+do sleep(1);
 select 'audit_log_system_table_marker';
 select audit_log_rotate();
+# Rotation is also delivered through the asynchronous etcd watcher.
+do sleep(1);
 
 select count(*) from information_schema.audit_log
   where SQL_TEXT like '%audit_log_system_table_marker%' and SQL_TEXT not like '%COUNT(*)%';

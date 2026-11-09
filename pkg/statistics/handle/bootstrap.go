@@ -334,6 +334,9 @@ func (h *Handle) initStatsHistogramsLite(ctx context.Context, cache statstypes.S
 			break
 		}
 		h.initStatsHistograms4ChunkLite(cache, iter)
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
 	}
 	return nil
 }
@@ -357,6 +360,9 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache statstypes.
 			break
 		}
 		h.initStatsHistograms4Chunk(is, cache, iter, false)
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
 	}
 	return nil
 }
@@ -394,6 +400,9 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 			break
 		}
 		h.initStatsHistograms4Chunk(is, cache, iter, IsFullCacheFunc(cache, totalMemory))
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
 	}
 	return nil
 }
@@ -486,6 +495,9 @@ func (h *Handle) initStatsTopN(cache statstypes.StatsCache, totalMemory uint64) 
 			break
 		}
 		h.initStatsTopN4Chunk(cache, iter, totalMemory)
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
 	}
 	return nil
 }
@@ -522,6 +534,9 @@ func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initsta
 			break
 		}
 		h.initStatsTopN4Chunk(cache, iter, totalMemory)
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
 	}
 	return nil
 }
@@ -599,6 +614,9 @@ func (h *Handle) initStatsFMSketch(cache statstypes.StatsCache) error {
 			break
 		}
 		h.initStatsFMSketch4Chunk(cache, iter)
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
 	}
 	return nil
 }
@@ -684,6 +702,9 @@ func (h *Handle) initStatsBuckets(cache statstypes.StatsCache, totalMemory uint6
 				break
 			}
 			h.initStatsBuckets4Chunk(cache, iter)
+			// The same table may continue in the next chunk. Drain LFU async admission/rejection
+			// before the next chunk reads or mutates it again.
+			cache.WaitForAsyncUpdates()
 		}
 	}
 	tables := cache.Values()
@@ -726,6 +747,9 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 			break
 		}
 		h.initStatsBuckets4Chunk(cache, iter)
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
 	}
 	return nil
 }
@@ -780,6 +804,9 @@ func (h *Handle) InitStatsLite(ctx context.Context) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Required: initStatsMeta adds new tables without an internal wait; histogram loading
+	// reads them immediately.
+	cache.WaitForAsyncUpdates()
 	statslogutil.StatsLogger().Info("Complete loading the stats meta in the lite mode", zap.Duration("duration", time.Since(start)))
 	start = time.Now()
 	err = h.initStatsHistogramsLite(ctx, cache)
@@ -820,6 +847,9 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Required: initStatsMeta adds new tables without an internal wait; histogram loading
+	// reads them immediately.
+	cache.WaitForAsyncUpdates()
 	statslogutil.StatsLogger().Info("Complete loading the stats meta", zap.Duration("duration", time.Since(start)))
 	initstats.InitStatsPercentage.Store(initStatsPercentageInterval)
 	start = time.Now()
@@ -857,6 +887,8 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// CalcPreScalar writes tables back; drain before replacing/publishing the cache.
+	cache.WaitForAsyncUpdates()
 	h.Replace(cache)
 	return nil
 }

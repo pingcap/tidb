@@ -90,7 +90,7 @@ go_library(
         "@com_github_tikv_pd_client//http",
         "@com_github_tikv_pd_client//pkg/retry",
         "@io_etcd_go_etcd_client_v3//:client",
-        "@net_pingcap_git_pingkai_semver//coreos/semver",
+        "@cn_pingcap_git_pingkai_semver//coreos/semver",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",

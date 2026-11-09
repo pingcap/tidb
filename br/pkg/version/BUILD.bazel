@@ -17,7 +17,7 @@ go_library(
         "@com_github_pingcap_log//:log",
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//opt",
-        "@net_pingcap_git_pingkai_semver//coreos/semver",
+        "@cn_pingcap_git_pingkai_semver//coreos/semver",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -37,6 +37,6 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//opt",
-        "@net_pingcap_git_pingkai_semver//coreos/semver",
+        "@cn_pingcap_git_pingkai_semver//coreos/semver",
     ],
 )

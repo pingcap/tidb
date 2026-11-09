@@ -603,7 +603,10 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 		if !foundStats {
 			// A virtual column never has column statistics, so skipping it would
 			// drop what may be the most selective column of the index. Fall back
-			// to the index-stats-based estimation when index statistics exist.
+			// to the index-stats-based estimation instead, provided the index has
+			// statistics. See https://github.com/pingcap/tidb/issues/69134.
+			// Any other column lacking statistics keeps the existing behavior:
+			// skip it and estimate from the remaining columns.
 			if i < len(idxCols) && idxCols[i] != nil && idxCols[i].VirtualExpr != nil &&
 				(idx.Histogram.Len() > 0 || idx.TopN.Num() > 0) {
 				return 0, false, nil

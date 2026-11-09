@@ -2446,6 +2446,7 @@ func TestAlterPartitioningWithPlacementPolicy(t *testing.T) {
 		}
 	}(util.IsEmulatorGCEnable())
 	util.EmulatorGCDisable()
+	t.Cleanup(util.EmulatorGCEnable)
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	gcWorker, err := gcworker.NewMockGCWorker(store)
 	require.NoError(t, err)

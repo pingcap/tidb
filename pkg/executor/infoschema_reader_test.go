@@ -213,8 +213,8 @@ func TestUserAttributesVisibility(t *testing.T) {
 	queryAs("ua_viewer_super", "", "root", "ua_target_regular", "ua_target_system", "ua_viewer_super")
 	queryAs("ua_viewer_select", "", "root", "ua_target_regular", "ua_target_system", "ua_viewer_select")
 	queryAs("ua_viewer_update", "", "root", "ua_target_regular", "ua_target_system", "ua_viewer_update")
-	queryAs("ua_viewer_table_select", "", "ua_viewer_table_select")
-	queryAs("ua_viewer_table_update", "", "ua_viewer_table_update")
+	queryAs("ua_viewer_table_select", "", "root", "ua_target_regular", "ua_target_system", "ua_viewer_table_select")
+	queryAs("ua_viewer_table_update", "", "root", "ua_target_regular", "ua_target_system", "ua_viewer_table_update")
 	queryAs("ua_viewer_role", "ua_user_admin_role", "root", "ua_target_regular", "ua_target_system", "ua_viewer_role")
 
 	originalSkipWithGrant := privileges.SkipWithGrant

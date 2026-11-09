@@ -5544,7 +5544,7 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 				}
 			case model.ActionModifyColumn:
 				setReorgParam()
-				if job.NeedReorg {
+				if sub.NeedReorg {
 					err := setDistTaskParam()
 					if err != nil {
 						return err
@@ -5573,15 +5573,6 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		zap.Int("maxNodeCount", m.MaxNodeCount),
 	)
 	return nil
-}
-
-func modifyColumnNeedReorg(jobCtxVars []any) bool {
-	if len(jobCtxVars) > 0 {
-		if v, ok := jobCtxVars[0].(bool); ok {
-			return v
-		}
-	}
-	return false
 }
 
 // LastReorgMetaFastReorgDisabled is used for test.
