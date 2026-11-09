@@ -29,6 +29,7 @@ import (
 func TestPrepareStmtDedupCacheBasic(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_enable_cache_prepare_stmt=on")
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id bigint primary key, age int, city varchar(32))")
 
@@ -56,6 +57,7 @@ func TestPrepareStmtDedupCacheBasic(t *testing.T) {
 func TestPrepareStmtDedupCacheExecute(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_enable_cache_prepare_stmt=on")
 	tk.MustExec("use test")
 	tk.MustExec("create table t2 (id bigint primary key, val int)")
 	tk.MustExec("insert into t2 values (1, 10), (2, 20), (3, 30)")
@@ -107,6 +109,7 @@ func TestPrepareStmtDedupCacheExecute(t *testing.T) {
 func TestPrepareStmtDedupCacheSchemaChange(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_enable_cache_prepare_stmt=on")
 	tk.MustExec("use test")
 	tk.MustExec("create table t3 (id bigint primary key, name varchar(32))")
 
@@ -143,6 +146,7 @@ func TestPrepareStmtDedupCacheSchemaChange(t *testing.T) {
 func TestPrepareStmtDedupCacheIsolatedByDB(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_enable_cache_prepare_stmt=on")
 	tk.MustExec("create database if not exists db1")
 	tk.MustExec("create database if not exists db2")
 	tk.MustExec("use db1")
@@ -174,6 +178,7 @@ func TestPrepareStmtDedupCacheIsolatedByDB(t *testing.T) {
 func TestPrepareStmtDedupCachePrepareExecuteCloseLoop(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_enable_cache_prepare_stmt=on")
 	tk.MustExec("use test")
 	tk.MustExec("create table t4 (id bigint primary key, score int)")
 	tk.MustExec("insert into t4 values (1,100),(2,200),(3,300)")

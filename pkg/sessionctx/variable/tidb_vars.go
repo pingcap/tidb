@@ -1441,7 +1441,7 @@ const (
 	DefEnableStrictDoubleTypeCheck          = true
 	DefEnableVectorizedExpression           = true
 	// DefTiDBEnableOnDuplicateExpressionReuse is the default value for tidb_enable_on_duplicate_expression_reuse.
-	DefTiDBEnableOnDuplicateExpressionReuse = true
+	DefTiDBEnableOnDuplicateExpressionReuse = false
 	DefTiDBOptJoinReorderThreshold          = 0
 	DefTiDBDDLSlowOprThreshold              = 300
 	DefTiDBUseFastAnalyze                   = false
@@ -1683,7 +1683,7 @@ const (
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
 	DefTiDBLoadBindingTimeout                         = 200
-	DefEnableCachePrepareStmt                         = true
+	DefEnableCachePrepareStmt                         = false
 )
 
 // Process global variables.

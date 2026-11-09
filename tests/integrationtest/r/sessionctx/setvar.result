@@ -1713,26 +1713,29 @@ select @@max_execution_time;
 @@max_execution_time
 2000
 set @@global.max_execution_time=default;
+select @@global.tidb_enable_cache_prepare_stmt;
+@@global.tidb_enable_cache_prepare_stmt
+0
 select /*+ set_var(tidb_enable_cache_prepare_stmt=0) */ @@tidb_enable_cache_prepare_stmt;
 @@tidb_enable_cache_prepare_stmt
 0
 select @@tidb_enable_cache_prepare_stmt;
 @@tidb_enable_cache_prepare_stmt
-1
+0
 set @@tidb_enable_cache_prepare_stmt=default;
 select @@tidb_enable_cache_prepare_stmt;
 @@tidb_enable_cache_prepare_stmt
-1
+0
 select /*+ set_var(tidb_enable_cache_prepare_stmt=1) */ @@tidb_enable_cache_prepare_stmt;
 @@tidb_enable_cache_prepare_stmt
 1
 select @@tidb_enable_cache_prepare_stmt;
 @@tidb_enable_cache_prepare_stmt
-1
+0
 set @@tidb_enable_cache_prepare_stmt=default;
 select @@tidb_enable_cache_prepare_stmt;
 @@tidb_enable_cache_prepare_stmt
-1
+0
 set @@tidb_enable_cache_prepare_stmt=off;
 select @@tidb_enable_cache_prepare_stmt;
 @@tidb_enable_cache_prepare_stmt
@@ -1744,4 +1747,21 @@ select @@tidb_enable_cache_prepare_stmt;
 set @@tidb_enable_cache_prepare_stmt=default;
 select @@tidb_enable_cache_prepare_stmt;
 @@tidb_enable_cache_prepare_stmt
+0
+select @@session.tidb_enable_on_duplicate_expression_reuse, @@global.tidb_enable_on_duplicate_expression_reuse;
+@@session.tidb_enable_on_duplicate_expression_reuse	@@global.tidb_enable_on_duplicate_expression_reuse
+0	0
+select /*+ set_var(tidb_enable_on_duplicate_expression_reuse=on) */ @@tidb_enable_on_duplicate_expression_reuse;
+@@tidb_enable_on_duplicate_expression_reuse
 1
+select @@tidb_enable_on_duplicate_expression_reuse;
+@@tidb_enable_on_duplicate_expression_reuse
+0
+set @@tidb_enable_on_duplicate_expression_reuse=on;
+select @@tidb_enable_on_duplicate_expression_reuse;
+@@tidb_enable_on_duplicate_expression_reuse
+1
+set @@tidb_enable_on_duplicate_expression_reuse=default;
+select @@tidb_enable_on_duplicate_expression_reuse;
+@@tidb_enable_on_duplicate_expression_reuse
+0
