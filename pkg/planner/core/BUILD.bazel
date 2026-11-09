@@ -298,6 +298,7 @@ go_test(
         "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/core/resolve",
         "//pkg/planner/core/rule",
+        "//pkg/planner/funcdep",
         "//pkg/planner/mview",
         "//pkg/planner/planctx",
         "//pkg/planner/property",
