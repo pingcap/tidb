@@ -13,11 +13,12 @@
 // limitations under the License.
 
 //! Go's generated DXF mocks: `pkg/dxf/framework/mock` (the task executor's
-//! `MockExtension`, `MockCleaner`), `mock/execute` (`MockStepExecutor`) and
-//! `scheduler/mock` (the scheduler's `MockExtension`), over gomock's
-//! [`Controller`](tidb_gomock::Controller). A call's key is
-//! `Method|arg|...`; its answer gets the call's arguments as the tuple each
-//! method documents. The other generated mocks come with their tests.
+//! `MockExtension`, `MockCleaner`, `MockScheduler`), `mock/execute`
+//! (`MockStepExecutor`) and `scheduler/mock` (the scheduler's
+//! `MockExtension`), over gomock's [`Controller`](tidb_gomock::Controller).
+//! A call's key is `Method|arg|...`; its answer gets the call's arguments as
+//! the tuple each method documents. The other generated mocks come with
+//! their tests.
 
 use std::error::Error as StdError;
 use std::sync::{Arc, Mutex};
@@ -224,6 +225,81 @@ impl tidb_dxf_scheduler::Extension for MockSchedulerExtension {
     /// `ModifyMeta`, answered with `(old_meta, modifies)`.
     fn modify_meta(&self, old_meta: &[u8], modifies: &[Modification]) -> Result<Vec<u8>, tidb_dxf_scheduler::Error> {
         self.ctrl.call("ModifyMeta", &(old_meta.to_vec(), modifies.to_vec()))
+    }
+}
+
+/// Go `mock.MockScheduler`: its `Extension` methods are the scheduler
+/// extension mock's, on the same receiver.
+pub struct MockScheduler {
+    ext: MockSchedulerExtension,
+}
+
+impl MockScheduler {
+    /// Go `mock.NewMockScheduler`.
+    #[must_use]
+    pub fn new(ctrl: &Arc<Controller>) -> Arc<Self> {
+        Arc::new(Self { ext: MockSchedulerExtension { ctrl: Receiver::new(ctrl) } })
+    }
+}
+
+impl tidb_dxf_scheduler::Extension for MockScheduler {
+    fn on_tick(&self, ctx: &Context, task: &Task) {
+        self.ext.on_tick(ctx, task);
+    }
+    fn on_next_subtasks_batch(
+        &self,
+        ctx: &Context,
+        task_handle: &dyn TaskHandle,
+        task: &mut Task,
+        exec_ids: &[String],
+        next_step: Step,
+    ) -> Result<Vec<Vec<u8>>, tidb_dxf_scheduler::Error> {
+        self.ext.on_next_subtasks_batch(ctx, task_handle, task, exec_ids, next_step)
+    }
+    fn on_done(&self, ctx: &Context, task_handle: &dyn TaskHandle, task: &mut Task) -> Result<(), tidb_dxf_scheduler::Error> {
+        self.ext.on_done(ctx, task_handle, task)
+    }
+    fn get_eligible_instances(&self, ctx: &Context, task: &Task) -> Result<Vec<String>, tidb_dxf_scheduler::Error> {
+        self.ext.get_eligible_instances(ctx, task)
+    }
+    fn is_retryable_err(&self, err: &(dyn StdError + 'static)) -> bool {
+        self.ext.is_retryable_err(err)
+    }
+    fn get_next_step(&self, task: &TaskBase) -> Step {
+        self.ext.get_next_step(task)
+    }
+    fn on_prepare(&self, ctx: &Context, task_handle: &dyn TaskHandle, task: &mut Task) -> Result<(), tidb_dxf_scheduler::Error> {
+        self.ext.on_prepare(ctx, task_handle, task)
+    }
+    fn modify_meta(&self, old_meta: &[u8], modifies: &[Modification]) -> Result<Vec<u8>, tidb_dxf_scheduler::Error> {
+        self.ext.modify_meta(old_meta, modifies)
+    }
+}
+
+impl tidb_dxf_scheduler::Scheduler for MockScheduler {
+    /// `Init`.
+    fn init(&self) -> Result<(), tidb_dxf_scheduler::Error> {
+        self.ext.ctrl.call("Init", &())
+    }
+    /// `ScheduleTask`.
+    fn schedule_task(&self) {
+        self.ext.ctrl.call::<()>("ScheduleTask", &());
+    }
+    /// `Close`.
+    fn close(&self) {
+        self.ext.ctrl.call::<()>("Close", &());
+    }
+    /// `GetTask`.
+    fn get_task(&self) -> Arc<Task> {
+        self.ext.ctrl.call("GetTask", &())
+    }
+}
+
+/// The mock's `EXPECT()`.
+impl std::ops::Deref for MockScheduler {
+    type Target = Receiver;
+    fn deref(&self) -> &Receiver {
+        &self.ext.ctrl
     }
 }
 

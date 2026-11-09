@@ -49,6 +49,8 @@ mod tiflash_partition;
 mod ddl_analyze;
 mod dxf_framework;
 mod dxf_integrationtests;
+mod dxf_scheduler;
+mod dxf_taskexecutor;
 
 pub(super) fn cop_backed_stack() -> (UnistoreClusterStack, Arc<ConfiguredUserStore>) {
     cop_backed_stack_with_stats_lease(None)

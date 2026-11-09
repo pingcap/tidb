@@ -141,6 +141,25 @@ impl Manager {
         })
     }
 
+    /// Go `GetRunningTaskCnt` (`main_test.go`).
+    #[cfg(any(test, feature = "failpoints"))]
+    #[must_use]
+    pub fn get_running_task_cnt(&self) -> usize {
+        self.get_scheduler_count()
+    }
+
+    /// Go `DelRunningTask` (`main_test.go`).
+    #[cfg(any(test, feature = "failpoints"))]
+    pub fn del_running_task(&self, id: i64) {
+        self.del_scheduler(id);
+    }
+
+    /// Go `DoClean` (`main_test.go`): runs task cleanup synchronously.
+    #[cfg(any(test, feature = "failpoints"))]
+    pub fn do_clean(&self) {
+        self.drain_clean_task_batches();
+    }
+
     fn get_scheduler_count(&self) -> usize {
         self.mu.read().unwrap_or_else(std::sync::PoisonError::into_inner).scheduler_map.len()
     }
