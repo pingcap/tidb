@@ -169,15 +169,26 @@ the unistore stack.
   20 limit 100` on a pseudo-stats table plans Go's shape but Go's scan
   estimate is 125.00 (the limit's expected count over the selection) where
   this port's is 10000.00, and Go's plan ids run two higher
-  (`TableFullScan_14` against `_12`).
+  (`TableFullScan_14` against `_12`). Fixed 2026-11-10: Rust's
+  `ExhaustPhysicalPlans4LogicalLimit` never appended Go's MPP candidate
+  (its doc assumed no TiFlash), and the TiFlash path built its scan with
+  unscaled table stats where Go's `getOriginalPhysicalTableScan` serves both
+  paths (`original_table_scan_stats`, `adjust_count_after_access`); the
+  estimates are Go's (`mpp_limit_scales_the_tiflash_scan_like_go`). The ids
+  were one short of Go's in every MPP plan: Go's `convertToTableScan` draws
+  the TiFlash scan's id (`getOriginalPhysicalTableScan`) before refusing the
+  path under a cop property; the Rust arm now draws it at the same point,
+  and the LIMIT and scalar-aggregate plans are Go's to the id. A grouped MPP
+  aggregate is now one id past Go's (one more TiFlash-path conversion than
+  Go's skyline pruning lets through); those tests still blank the numbers.
 - 2026-11-10: `inject_extra_projection` skipped a TiFlash reader's table
   plan and the MPP union arm (written when the planner built no MPP plans),
   so an MPP aggregate's `SUM` lacked `WrapCastForAggArgs`' cast and Go's
   projection below it, and an MPP union's child lacked its cast projection.
   Both are Go's now (`mpp_aggregation_injects_gos_projection_below_the_aggregate`).
-  Still open: the MPP exploration numbers plans and columns differently from
-  Go (`select a, count(*) from t group by a`: `TableFullScan_21` against
-  Go's `_22`), so those tests compare MPP plans with numbers blanked.
+  Still open: a grouped MPP aggregate's plan numbers run one past Go's (see
+  the LIMIT note below), so those tests compare MPP plans with numbers
+  blanked.
 
 - The join's bytes exposed three shared mismatches, fixed at their source:
   `NewFunction` kept the caller's `tinyint` for a planner-built `not()`

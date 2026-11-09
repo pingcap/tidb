@@ -356,3 +356,61 @@ fn mpp_partition_table_scan_explains_like_go() {
         ]
     );
 }
+
+/// Go `ExhaustPhysicalPlans4LogicalLimit`'s MPP candidate and
+/// `getOriginalPhysicalTableScan` on the TiFlash path: a limit's expected
+/// count reaches the MPP scan, whose estimate is
+/// `AdjustRowCountForTableScanByLimit`'s; the scan draws its plan id where
+/// Go's does, so the plans are Go's to the id.
+#[test]
+fn mpp_limit_scales_the_tiflash_scan_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(433)).expect("session opens");
+    for sql in ["CREATE TABLE test.t (a int, b int)", "ALTER TABLE test.t SET HYPO TIFLASH REPLICA 1"] {
+        session.node_conn().execute_write(sql).expect(sql);
+    }
+    rows(&mut session, "use test");
+    let cases: [(&str, &[&str]); 2] = [
+        (
+            "explain select /*+ read_from_storage(tiflash[t]) */ * from t where a + 1 > 20 limit 100",
+            &[
+                "Limit_11|100.00|root||offset:0, count:100",
+                "└─TableReader_17|100.00|root||MppVersion: 3, data:ExchangeSender_16",
+                "  └─ExchangeSender_16|100.00|mpp[tiflash]||ExchangeType: PassThrough",
+                "    └─Selection_15|100.00|mpp[tiflash]||gt(plus(test.t.a, 1), 20)",
+                "      └─TableFullScan_14|125.00|mpp[tiflash]|table:t|keep order:false, stats:pseudo",
+            ],
+        ),
+        (
+            "explain select /*+ read_from_storage(tiflash[t]) */ * from t limit 100",
+            &[
+                "Limit_10|100.00|root||offset:0, count:100",
+                "└─TableReader_15|100.00|root||MppVersion: 3, data:ExchangeSender_14",
+                "  └─ExchangeSender_14|100.00|mpp[tiflash]||ExchangeType: PassThrough",
+                "    └─TableFullScan_13|100.00|mpp[tiflash]|table:t|keep order:false, stats:pseudo",
+            ],
+        ),
+    ];
+    for (sql, want) in cases {
+        let got: Vec<String> =
+            displayed(rows(&mut session, sql)).into_iter().map(|row| row.join("|")).collect();
+        let want: Vec<String> = want.iter().map(|line| (*line).to_owned()).collect();
+        assert_eq!(got, want, "{sql}");
+    }
+    // Under an enforced MPP the limit's MPP candidate wins: Go's
+    // `PhysicalLimit.Attach2Task` pushes a limit into the fragment.
+    rows(&mut session, "set @@tidb_enforce_mpp = 1");
+    let sql = "explain select * from t limit 100";
+    let got: Vec<String> = displayed(rows(&mut session, sql)).into_iter().map(|row| row.join("|")).collect();
+    let want: Vec<String> = [
+        "Limit_11|100.00|root||offset:0, count:100",
+        "└─TableReader_24|100.00|root||MppVersion: 3, data:ExchangeSender_23",
+        "  └─ExchangeSender_23|100.00|mpp[tiflash]||ExchangeType: PassThrough",
+        "    └─Limit_22|100.00|mpp[tiflash]||offset:0, count:100",
+        "      └─TableFullScan_21|100.00|mpp[tiflash]|table:t|keep order:false, stats:pseudo",
+    ]
+    .iter()
+    .map(|line| (*line).to_owned())
+    .collect();
+    assert_eq!(got, want, "{sql}");
+}

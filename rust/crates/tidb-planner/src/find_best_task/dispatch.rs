@@ -739,6 +739,8 @@ fn exhaust_physical_plans(
             op,
             prop,
             ctx.allocator,
+            ctx.tiflash_in_isolation_read,
+            ctx.mpp_allowed,
         ))),
         // Go `ExhaustPhysicalPlans4LogicalUnionScan`: a TiFlash property cannot
         // be met (the union scan is a root operator), and says so.
@@ -3155,6 +3157,138 @@ fn find_best_task_4_logical_data_source_without_enforcer(
     Ok(task)
 }
 
+/// Go `adjustCountAfterAccess`: a path count after access below the data
+/// source's rows (by more than the tolerance) is raised to the rows over the
+/// selection factor, at most the table's.
+fn adjust_count_after_access(
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
+    table_stats: Option<&tidb_planner_property::stats_info::StatsInfo>,
+    count_after_access: Option<&mut f64>,
+) {
+    if let (Some(count), Some(ds_stats), Some(base_stats)) =
+        (count_after_access, ds.base.base.stats_info(), table_stats)
+    {
+        if *count + tidb_planner_core_cost::TOLERANCE_FACTOR < ds_stats.row_count() {
+            *count = (ds_stats.row_count() / tidb_planner_core_cost::SELECTION_FACTOR)
+                .min(base_stats.row_count());
+        }
+    }
+}
+
+/// Go `getOriginalPhysicalTableScan`'s stats (`find_best_task.go`): the
+/// table stats scaled to the path's `CountAfterAccess`, or, under an
+/// expected count below the data source's rows,
+/// `AdjustRowCountForTableScanByLimit`'s estimate. Go builds every table
+/// scan through it, the TiFlash one included.
+#[allow(clippy::too_many_arguments)]
+fn original_table_scan_stats(
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
+    prop: &PhysicalProperty,
+    ctx: &DispatchContext<'_>,
+    table_stats: Option<&tidb_planner_property::stats_info::StatsInfo>,
+    count_after_access: Option<f64>,
+    keep_order: bool,
+    desc: bool,
+    table_filters: &[tidb_expr::expression::Expression],
+    table_access_conds: &[tidb_expr::expression::Expression],
+) -> Option<tidb_planner_property::stats_info::StatsInfo> {
+    let mut stats = table_stats.map(|stats| {
+        stats.scale_by_expect_cnt(
+            count_after_access.unwrap_or_else(|| stats.row_count()),
+            ctx.skew_ratio,
+        )
+    });
+    if prop.index_join_prop.is_none() {
+        if let (Some(path_stats), Some(ds_stats), Some(table_stats)) = (
+            stats.as_ref(),
+            ds.base.base.stats_info(),
+            ds.table_stats.as_ref(),
+        ) {
+            let count_after_access = path_stats.row_count();
+            let original_row_count = ds_stats.row_count();
+            if prop.expected_cnt + tidb_planner_core_cost::TOLERANCE_FACTOR
+                < original_row_count
+                || (keep_order
+                    && original_row_count.min(prop.expected_cnt) < count_after_access
+                    && !table_access_conds.is_empty())
+            {
+                let mut row_count = count_after_access;
+                if prop.expected_cnt < original_row_count {
+                    let selectivity = original_row_count / count_after_access;
+                    let uniform_est =
+                        count_after_access.min(prop.expected_cnt / selectivity);
+                    let correlation_options = ctx.correlation_options;
+                    let (column_count, correlation_column, correlation) =
+                        if correlation_options.enabled
+                            && !table_filters.is_empty()
+                            && !table_stats
+                                .hist_coll()
+                                .is_some_and(|hist| hist.pseudo)
+                        {
+                            filter_column_correlation(
+                                table_stats,
+                                table_filters,
+                                correlation_options.threshold,
+                            )
+                        } else {
+                            (0, None, 0.0)
+                        };
+                    let abs_correlation = correlation.abs();
+                    let cross_estimate = if column_count == 1
+                        && correlation_column.is_some()
+                        && table_access_conds.is_empty()
+                    {
+                        let source_hist_coll = ds
+                            .base
+                            .base
+                            .stats_info()
+                            .and_then(|stats| stats.hist_coll());
+                        let table_hist_coll = table_stats.hist_coll();
+                        match (source_hist_coll, table_hist_coll, correlation_column) {
+                            (Some(source), Some(table), Some(column)) => Some(
+                                tidb_planner_cardinality::cross_estimation::cross_estimate_row_count(
+                                    source,
+                                    table,
+                                    table_filters,
+                                    &column,
+                                    correlation,
+                                    prop.expected_cnt,
+                                    count_after_access,
+                                    desc,
+                                    ctx.range_max_size,
+                                    ctx.expression_evaluator,
+                                    ctx.estimator_options.clone(),
+                                ),
+                            ),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    let (cross_count, cross_ok, fallback_correlation) =
+                        cross_estimate.unwrap_or((0.0, false, correlation));
+                    if cross_ok {
+                        row_count = uniform_est.max(cross_count);
+                    } else if fallback_correlation.abs() < 1.0 {
+                        let correlation_factor = (1.0 - abs_correlation)
+                            .powf(correlation_options.exponent as f64);
+                        row_count =
+                            count_after_access.min(uniform_est / correlation_factor);
+                    }
+                }
+                if keep_order && count_after_access > row_count {
+                    let ratio = ctx.ordering_index_selectivity_ratio;
+                    if ratio > 0.0 {
+                        row_count += (count_after_access - row_count).max(0.0) * ratio;
+                    }
+                }
+                stats =
+                    Some(table_stats.scale_by_expect_cnt(row_count, ctx.skew_ratio));
+            }
+        }
+    }    stats
+}
+
 fn find_best_task_4_logical_data_source_paths(
     ds: &tidb_planner_core_operator_logicalop::DataSource,
     prop: &PhysicalProperty,
@@ -3436,16 +3570,8 @@ fn find_best_task_4_logical_data_source_paths(
                 // `adjustCountAfterAccess` for a correlated integer handle.
                 let correlated_int_handle =
                     common_handle.is_none() && table_path.correlated_access_count > 0;
-                if let (Some(count), Some(ds_stats), Some(base_stats), false) = (
-                    count_after_access.as_mut(),
-                    ds.base.base.stats_info(),
-                    table_stats.as_ref(),
-                    correlated_int_handle,
-                ) {
-                    if *count + tidb_planner_core_cost::TOLERANCE_FACTOR < ds_stats.row_count() {
-                        *count = (ds_stats.row_count() / tidb_planner_core_cost::SELECTION_FACTOR)
-                            .min(base_stats.row_count());
-                    }
+                if !correlated_int_handle {
+                    adjust_count_after_access(ds, table_stats.as_ref(), count_after_access.as_mut());
                 }
                 if read_type_refused {
                     continue 'paths;
@@ -3460,101 +3586,17 @@ fn find_best_task_4_logical_data_source_paths(
                     ds.base.base.query_block_offset(),
                 );
                 base.base.set_schema(ds.base.base.schema().cloned());
-                let mut stats = table_stats.as_ref().map(|stats| {
-                    stats.scale_by_expect_cnt(
-                        count_after_access.unwrap_or_else(|| stats.row_count()),
-                        ctx.skew_ratio,
-                    )
-                });
-                if prop.index_join_prop.is_none() {
-                    if let (Some(path_stats), Some(ds_stats), Some(table_stats)) = (
-                        stats.as_ref(),
-                        ds.base.base.stats_info(),
-                        ds.table_stats.as_ref(),
-                    ) {
-                        let count_after_access = path_stats.row_count();
-                        let original_row_count = ds_stats.row_count();
-                        if prop.expected_cnt + tidb_planner_core_cost::TOLERANCE_FACTOR
-                            < original_row_count
-                            || (keep_order
-                                && original_row_count.min(prop.expected_cnt) < count_after_access
-                                && !table_access_conds.is_empty())
-                        {
-                            let mut row_count = count_after_access;
-                            if prop.expected_cnt < original_row_count {
-                                let selectivity = original_row_count / count_after_access;
-                                let uniform_est =
-                                    count_after_access.min(prop.expected_cnt / selectivity);
-                                let correlation_options = ctx.correlation_options;
-                                let (column_count, correlation_column, correlation) =
-                                    if correlation_options.enabled
-                                        && !table_filters.is_empty()
-                                        && !table_stats
-                                            .hist_coll()
-                                            .is_some_and(|hist| hist.pseudo)
-                                    {
-                                        filter_column_correlation(
-                                            table_stats,
-                                            &table_filters,
-                                            correlation_options.threshold,
-                                        )
-                                    } else {
-                                        (0, None, 0.0)
-                                    };
-                                let abs_correlation = correlation.abs();
-                                let cross_estimate = if column_count == 1
-                                    && correlation_column.is_some()
-                                    && table_access_conds.is_empty()
-                                {
-                                    let source_hist_coll = ds
-                                        .base
-                                        .base
-                                        .stats_info()
-                                        .and_then(|stats| stats.hist_coll());
-                                    let table_hist_coll = table_stats.hist_coll();
-                                    match (source_hist_coll, table_hist_coll, correlation_column) {
-                                        (Some(source), Some(table), Some(column)) => Some(
-                                            tidb_planner_cardinality::cross_estimation::cross_estimate_row_count(
-                                                source,
-                                                table,
-                                                &table_filters,
-                                                &column,
-                                                correlation,
-                                                prop.expected_cnt,
-                                                count_after_access,
-                                                desc,
-                                                ctx.range_max_size,
-                                                ctx.expression_evaluator,
-                                                ctx.estimator_options.clone(),
-                                            ),
-                                        ),
-                                        _ => None,
-                                    }
-                                } else {
-                                    None
-                                };
-                                let (cross_count, cross_ok, fallback_correlation) =
-                                    cross_estimate.unwrap_or((0.0, false, correlation));
-                                if cross_ok {
-                                    row_count = uniform_est.max(cross_count);
-                                } else if fallback_correlation.abs() < 1.0 {
-                                    let correlation_factor = (1.0 - abs_correlation)
-                                        .powf(correlation_options.exponent as f64);
-                                    row_count =
-                                        count_after_access.min(uniform_est / correlation_factor);
-                                }
-                            }
-                            if keep_order && count_after_access > row_count {
-                                let ratio = ctx.ordering_index_selectivity_ratio;
-                                if ratio > 0.0 {
-                                    row_count += (count_after_access - row_count).max(0.0) * ratio;
-                                }
-                            }
-                            stats =
-                                Some(table_stats.scale_by_expect_cnt(row_count, ctx.skew_ratio));
-                        }
-                    }
-                }
+                let mut stats = original_table_scan_stats(
+                    ds,
+                    prop,
+                    ctx,
+                    table_stats.as_ref(),
+                    count_after_access,
+                    keep_order,
+                    desc,
+                    &table_filters,
+                    &table_access_conds,
+                );
                 let probe_selectivity =
                     if prop.index_join_prop.is_none() || residual_table_filters.is_empty() {
                         1.0
@@ -3948,6 +3990,36 @@ fn find_best_task_4_logical_data_source_paths(
                 if keep_order && !matched {
                     continue 'paths;
                 }
+                // Go `getOriginalPhysicalTableScan` builds the scan (drawing its
+                // plan id) before `convertToTableScan` refuses a TiFlash path
+                // below.
+                let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
+                    ctx.allocator,
+                    "TableScan",
+                    ds.base.base.query_block_offset(),
+                );
+                base.base.set_schema(ds.base.base.schema().cloned());
+                // Go's TiFlash arm reads the same `getOriginalPhysicalTableScan`
+                // scan: its stats scaled to the property's expected count
+                // (`AdjustRowCountForTableScanByLimit`). The TiFlash table path
+                // reads the full range, its filters all the pushed conditions.
+                let table_stats = ds
+                    .table_stats
+                    .clone()
+                    .or_else(|| ds.base.base.stats_info().cloned());
+                let mut count_after_access = path.count_after_access();
+                adjust_count_after_access(ds, table_stats.as_ref(), count_after_access.as_mut());
+                base.base.set_stats(original_table_scan_stats(
+                    ds,
+                    prop,
+                    ctx,
+                    table_stats.as_ref(),
+                    count_after_access,
+                    keep_order,
+                    desc,
+                    &ds.pushed_down_conds,
+                    &[],
+                ));
                 // Go `convertToTableScan`'s TiFlash checks. With TiFlash cop
                 // banned (`tidb_allow_tiflash_cop` off, the default) or a
                 // disaggregated TiFlash, a root read is an MPP task converted
@@ -3989,17 +4061,6 @@ fn find_best_task_4_logical_data_source_paths(
                     // A TiFlash scan of a partitioned table cannot keep order.
                     continue 'paths;
                 }
-                let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
-                    ctx.allocator,
-                    "TableScan",
-                    ds.base.base.query_block_offset(),
-                );
-                base.base.set_schema(ds.base.base.schema().cloned());
-                base.base.set_stats(
-                    ds.table_stats
-                        .clone()
-                        .or_else(|| ds.base.base.stats_info().cloned()),
-                );
                 let ranges = tidb_ranger::points::full_int_range(false);
                 let scan = PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
                     table: ds.table_info.clone(),

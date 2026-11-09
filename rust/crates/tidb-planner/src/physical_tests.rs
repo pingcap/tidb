@@ -1838,14 +1838,14 @@ fn a_limit_enumerates_the_three_task_types_in_order() {
     let limit = LogicalLimit::new(base, 5, 20);
 
     let sorted = PhysicalProperty::new(TaskType::Root, &[1], false, f64::MAX, false);
-    assert!(exhaust_physical_plans_4_logical_limit(&limit, &sorted, &allocator).is_empty());
+    assert!(exhaust_physical_plans_4_logical_limit(&limit, &sorted, &allocator, true, true).is_empty());
 
     let required = PhysicalProperty {
         cte_producer_status: tidb_planner_property::CteProducerStatus::AllCteCanMpp,
         no_cop_push_down: true,
         ..PhysicalProperty::default()
     };
-    let plans = exhaust_physical_plans_4_logical_limit(&limit, &required, &allocator);
+    let plans = exhaust_physical_plans_4_logical_limit(&limit, &required, &allocator, true, true);
     assert_eq!(plans.len(), 3);
     let expected = [
         TaskType::CopSingleRead,
@@ -2323,7 +2323,7 @@ fn limit_candidates_wrap_uint64_row_bounds_like_go() {
         );
         let prop = PhysicalProperty::default();
         for plans in [
-            exhaust_physical_plans_4_logical_limit(&limit, &prop, &allocator),
+            exhaust_physical_plans_4_logical_limit(&limit, &prop, &allocator, true, true),
             get_phys_limits(&topn, &prop, &allocator),
         ] {
             assert_eq!(plans.len(), 3);

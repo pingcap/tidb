@@ -1122,24 +1122,30 @@ impl PhysicalLimit {
 /// child property `{TaskTp, ExpectedCnt: Count + Offset}` and the logical
 /// limit's stats, schema and partition order.
 ///
-/// Go appends an MPP candidate when TiFlash is present and MPP allowed;
-/// with no TiFlash tier that guard evaluates false exactly as on a
-/// TiFlash-less Go cluster. Every child property also preserves the
-/// parent's `CTEProducerStatus` and `NoCopPushDown` requirements.
+/// Go appends an MPP candidate when `util.ShouldCheckTiFlashPushDown`
+/// (the plan has TiFlash and TiFlash is an isolation read engine) and the
+/// session allows MPP. Every child property also preserves the parent's
+/// `CTEProducerStatus` and `NoCopPushDown` requirements.
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_limit(
     p: &tidb_planner_core_operator_logicalop::LogicalLimit,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
+    tiflash_in_isolation_read: bool,
+    mpp_allowed: bool,
 ) -> Vec<PhysicalPlan> {
     if !prop.is_sort_item_empty() {
         return Vec::new();
     }
-    let all_task_types = [
+    let mut all_task_types = vec![
         TaskType::CopSingleRead,
         TaskType::CopMultiRead,
         TaskType::Root,
     ];
+    // lift the recursive check of canPushToCop(tiFlash)
+    if p.base.has_tiflash() && tiflash_in_isolation_read && mpp_allowed {
+        all_task_types.push(TaskType::Mpp);
+    }
     let mut ret = Vec::with_capacity(all_task_types.len());
     for tp in all_task_types {
         let result_prop = PhysicalProperty {
