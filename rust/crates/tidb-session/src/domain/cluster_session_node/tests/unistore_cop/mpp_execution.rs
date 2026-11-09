@@ -646,3 +646,227 @@ fn test_tiflash_virtual_column() {
     check(&mut session, "select /*+ hash_agg() */ count(*) from t2 where c > 1", &[&["2"]]);
     check(&mut session, "select /*+ hash_agg() */ count(*) from t3 where c > b'01'", &[&["3"]]);
 }
+
+/// Go `TestAggPushDownApplyAll`.
+#[test]
+fn test_agg_push_down_apply_all() {
+    let (_stack, mut session) = tiflash_session(2, 2162);
+    rows(&mut session, "drop table if exists foo");
+    rows(&mut session, "drop table if exists bar");
+    rows(&mut session, "create table foo(a int, b int)");
+    rows(&mut session, "create table bar(a double not null, b decimal(65,0) not null)");
+    rows(&mut session, "alter table foo set tiflash replica 1");
+    rows(&mut session, "alter table bar set tiflash replica 1");
+    rows(&mut session, "insert into foo values(0, NULL)");
+    rows(&mut session, "insert into bar values(0, 0)");
+
+    rows(&mut session, "set @@session.tidb_allow_mpp=1");
+    rows(&mut session, "set @@session.tidb_enforce_mpp=1");
+    // unistore does not support later materialization
+    rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
+
+    check(&mut session, "select * from foo where a=all(select a from bar where bar.b=foo.b)", &[&["0", "NULL"]]);
+}
+
+/// Go `TestAggPushDownCountStar`.
+#[test]
+fn test_agg_push_down_count_star() {
+    let (stack, mut session) = tiflash_session(2, 2163);
+    rows(&mut session, "drop table if exists c");
+    rows(&mut session, "drop table if exists o");
+    rows(&mut session, "create table c(c_id bigint primary key)");
+    rows(&mut session, "create table o(o_id bigint primary key, c_id bigint not null)");
+    rows(&mut session, "alter table c set tiflash replica 1");
+    replica_available(&stack, &mut session, "c");
+    rows(&mut session, "alter table o set tiflash replica 1");
+    replica_available(&stack, &mut session, "o");
+    rows(&mut session, "insert into c values(1),(2),(3),(4),(5)");
+    rows(&mut session, "insert into o values(1,1),(2,1),(3,2),(4,2),(5,2)");
+
+    rows(&mut session, "set @@tidb_enforce_mpp=1");
+    rows(&mut session, "set @@tidb_opt_agg_push_down=1");
+
+    check(&mut session, "select count(*) from c, o where c.c_id=o.c_id", &[&["5"]]);
+}
+
+/// Go `TestIssue41014`.
+#[test]
+fn test_issue_41014() {
+    let (_stack, mut session) = tiflash_session(2, 2164);
+    rows(&mut session, "CREATE TABLE `tai1` (\n  `aid` int(11) DEFAULT NULL,\n  `rid` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin");
+    rows(&mut session, "CREATE TABLE `tai2` (\n  `rid` int(11) DEFAULT NULL,\n  `prilan` varchar(20) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin");
+    rows(&mut session, "alter table tai1 set tiflash replica 1");
+    rows(&mut session, "alter table tai2 set tiflash replica 1");
+    rows(&mut session, "alter table tai2 add index idx((lower(prilan)));");
+    rows(&mut session, "set @@tidb_opt_distinct_agg_push_down = 1;");
+    // Keep the estimate stable; this regression checks that a physical plan can be found.
+    rows(&mut session, "set @@tidb_default_string_match_selectivity = 0.8;");
+
+    let got: Vec<String> = displayed(rows(
+        &mut session,
+        "explain format='brief' select count(distinct tai1.aid) as cb from tai1 inner join tai2 on tai1.rid = tai2.rid where lower(prilan)  LIKE LOWER('%python%');",
+    ))
+    .into_iter()
+    .map(|row| row.join(" "))
+    .collect();
+    assert_eq!(
+        got,
+        [
+            "HashAgg 1.00 root  funcs:count(distinct test.tai1.aid)->Column#10",
+            "└─HashJoin 9990.00 root  inner join, equal:[eq(test.tai2.rid, test.tai1.rid)]",
+            "  ├─Selection(Build) 8000.00 root  like(lower(test.tai2.prilan), \"%python%\", 92)",
+            "  │ └─Projection 10000.00 root  test.tai2.rid, lower(test.tai2.prilan)",
+            "  │   └─TableReader 9990.00 root  data:Selection",
+            "  │     └─Selection 9990.00 cop[tikv]  not(isnull(test.tai2.rid))",
+            "  │       └─TableFullScan 10000.00 cop[tikv] table:tai2 keep order:false, stats:pseudo",
+            "  └─TableReader(Probe) 9990.00 root  data:Selection",
+            "    └─Selection 9990.00 cop[tikv]  not(isnull(test.tai1.rid))",
+            "      └─TableFullScan 10000.00 cop[tikv] table:tai1 keep order:false, stats:pseudo",
+        ]
+    );
+    check(
+        &mut session,
+        "select count(distinct tai1.aid) as cb from tai1 inner join tai2 on tai1.rid = tai2.rid where lower(prilan)  LIKE LOWER('%python%');",
+        &[&["0"]],
+    );
+}
+
+/// Go `TestMPP47766`.
+#[test]
+fn test_mpp_47766() {
+    let (stack, mut session) = tiflash_session(1, 2165);
+    rows(&mut session, "set @@session.tidb_allow_mpp=1");
+    rows(&mut session, "set @@session.tidb_enforce_mpp=1");
+    rows(&mut session, "set @@session.tidb_allow_tiflash_cop=off");
+
+    rows(
+        &mut session,
+        "CREATE TABLE `traces` (  `test_time` timestamp NOT NULL,  `test_time_gen` date GENERATED ALWAYS AS (date(`test_time`)) VIRTUAL,  KEY `traces_date_idx` (`test_time_gen`))",
+    );
+    rows(&mut session, "alter table `traces` set tiflash replica 1");
+    replica_available(&stack, &mut session, "traces");
+    let explain = |session: &mut Session, sql: &str| -> Vec<String> {
+        displayed(rows(session, sql)).into_iter().map(|row| row.join(" ")).collect()
+    };
+    assert_eq!(
+        explain(&mut session, "explain select date(test_time), count(1) as test_date from `traces` group by 1"),
+        [
+            "Projection_4 8000.00 root  test.traces.test_time_gen->Column#6, Column#5",
+            "└─HashAgg_8 8000.00 root  group by:test.traces.test_time_gen, funcs:count(1)->Column#5, funcs:firstrow(test.traces.test_time_gen)->test.traces.test_time_gen",
+            "  └─TableReader_20 10000.00 root  MppVersion: 3, data:ExchangeSender_19",
+            "    └─ExchangeSender_19 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+            "      └─TableFullScan_18 10000.00 mpp[tiflash] table:traces keep order:false, stats:pseudo",
+        ]
+    );
+    assert_eq!(
+        explain(
+            &mut session,
+            "explain select /*+ read_from_storage(tiflash[traces]) */ date(test_time) as test_date, count(1) from `traces` group by 1"
+        ),
+        [
+            "TableReader_31 8000.00 root  MppVersion: 3, data:ExchangeSender_30",
+            "└─ExchangeSender_30 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+            "  └─Projection_5 8000.00 mpp[tiflash]  date(test.traces.test_time)->Column#6, Column#5",
+            "    └─Projection_26 8000.00 mpp[tiflash]  Column#5, test.traces.test_time",
+            "      └─HashAgg_27 8000.00 mpp[tiflash]  group by:Column#14, funcs:sum(Column#15)->Column#5, funcs:firstrow(Column#16)->test.traces.test_time",
+            "        └─ExchangeReceiver_29 8000.00 mpp[tiflash]  ",
+            "          └─ExchangeSender_28 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#14, collate: binary]",
+            "            └─HashAgg_25 8000.00 mpp[tiflash]  group by:Column#18, funcs:count(1)->Column#15, funcs:firstrow(Column#17)->Column#16",
+            "              └─Projection_32 10000.00 mpp[tiflash]  test.traces.test_time->Column#17, date(test.traces.test_time)->Column#18",
+            "                └─TableFullScan_15 10000.00 mpp[tiflash] table:traces keep order:false, stats:pseudo",
+        ]
+    );
+}
+
+/// Go `TestAggPushDownUnionAndMPP`.
+#[test]
+fn test_agg_push_down_union_and_mpp() {
+    let (_stack, mut session) = tiflash_session(2, 2167);
+    rows(&mut session, "create table t (a int, b int)");
+    rows(&mut session, "alter table t set tiflash replica 1");
+    for _ in 0..5 {
+        rows(&mut session, "insert into t values (1, 1);");
+    }
+    rows(&mut session, "set @@tidb_allow_mpp=1;");
+    rows(&mut session, "set @@tidb_enforce_mpp=1;");
+    rows(&mut session, "set @@tidb_opt_agg_push_down=1");
+
+    rows(&mut session, "create table c(c_id int)");
+    rows(&mut session, "create table o(o_id int, c_id int)");
+    rows(&mut session, "insert into c values(1),(1),(1),(1)");
+    rows(&mut session, "insert into o values(1,1),(1,1),(1,2)");
+    rows(&mut session, "alter table c set tiflash replica 1");
+    rows(&mut session, "alter table o set tiflash replica 1");
+
+    check(
+        &mut session,
+        "select a, count(*) from (select a, b from t union all select a, b from t) t group by a order by a limit 10;",
+        &[&["1", "10"]],
+    );
+    check(&mut session, "select o.o_id, count(*) from c, o where c.c_id=o.o_id group by o.o_id", &[&["1", "12"]]);
+}
+
+/// Go `TestGroupStreamAggOnTiFlash`.
+#[test]
+fn test_group_stream_agg_on_tiflash() {
+    let (stack, mut session) = tiflash_session(2, 2168);
+    rows(&mut session, "drop table if exists foo");
+    rows(&mut session, "create table foo(a int, b int, c int, d int, primary key(a,b,c,d))");
+    rows(&mut session, "alter table foo set tiflash replica 1");
+    rows(&mut session, "insert into foo values(1,2,3,1),(1,2,3,6),(1,2,3,5),(1,2,3,2),(1,2,3,4),(1,2,3,7),(1,2,3,3),(1,2,3,0)");
+    replica_available(&stack, &mut session, "foo");
+    rows(&mut session, "set @@tidb_allow_mpp=0");
+    let sql = "select a,b,c,count(*) from foo group by a,b,c order by a,b,c";
+    check(&mut session, sql, &[&["1", "2", "3", "8"]]);
+    for row in displayed(rows(&mut session, &format!("explain {sql}"))) {
+        let res = row.join(" ");
+        // StreamAgg with group keys on TiFlash is not supported
+        if res.contains("tiflash") {
+            assert!(!res.contains("StreamAgg"), "{res}");
+        }
+    }
+}
+
+/// Go `TestIssue50358`.
+#[test]
+fn test_issue_50358() {
+    let (stack, mut session) = tiflash_session(1, 2169);
+    rows(&mut session, "drop table if exists t");
+    rows(&mut session, "create table t(a int not null primary key, b int not null)");
+    rows(&mut session, "alter table t set tiflash replica 1");
+    replica_available(&stack, &mut session, "t");
+    rows(&mut session, "insert into t values(1,0)");
+    rows(&mut session, "insert into t values(2,0)");
+
+    rows(&mut session, "drop table if exists t1");
+    rows(&mut session, "create table t1(c int not null primary key)");
+    rows(&mut session, "alter table t1 set tiflash replica 1");
+    replica_available(&stack, &mut session, "t1");
+    rows(&mut session, "insert into t1 values(3)");
+
+    rows(&mut session, "set @@session.tidb_isolation_read_engines=\"tiflash\"");
+    // unistore does not support later materialization
+    rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
+    rows(&mut session, "set @@session.tidb_allow_mpp=ON");
+    for _ in 0..20 {
+        // test if it is stable.
+        check(&mut session, "select 8 from t join t1", &[&["8"], &["8"]]);
+    }
+}
+
+/// Go `TestNonsupportCharsetTable`.
+#[test]
+fn test_nonsupport_charset_table() {
+    let (_stack, mut session) = tiflash_session(2, 2170);
+    rows(&mut session, "drop table if exists t");
+    rows(&mut session, "create table t(a int, b char(10) charset gbk collate gbk_bin)");
+    assert_eq!(
+        super::query_error(&mut session, "alter table t set tiflash replica 1"),
+        (8200, "Unsupported `set TiFlash replica` settings for table contains gbk charset".to_owned())
+    );
+
+    rows(&mut session, "drop table if exists t");
+    rows(&mut session, "create table t(a char(10) charset utf8)");
+    rows(&mut session, "alter table t set tiflash replica 1");
+}
+
