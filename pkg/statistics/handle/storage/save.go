@@ -443,14 +443,13 @@ func InsertColStats2KV(
 	// waits for stats_meta, while ANALYZE holds stats_meta and waits for the histogram.
 	// Before v8.5.7, mysql.stats_meta is a non-clustered table with a unique key on
 	// table_id. Querying only table_id can deadlock with the analyze batch point get,
-	// as explained in SaveAnalyzeResultToStorage, so this query includes a fake ID.
-	fakeID := -physicalID
-	tableIDStrs := []string{strconv.FormatInt(fakeID, 10), strconv.FormatInt(physicalID, 10)}
+	// as explained in SaveAnalyzeResultToStorage.
+	// TODO: fix this later after discussing whether it should be fixed on the transaction side.
 	var rs sqlexec.RecordSet
 	rs, err = util.ExecWithCtx(
 		ctx, sctx,
-		"select table_id, count from mysql.stats_meta where table_id in (%?) for update",
-		tableIDStrs,
+		"select count from mysql.stats_meta where table_id = %? for update",
+		physicalID,
 	)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -462,21 +461,10 @@ func InsertColStats2KV(
 		return 0, errors.Trace(err)
 	}
 	// If no row is returned, it means the stats of this table does not exist.
-	// The negative ID is only a lock key and is not stored.
-	var count int64
-	found := false
-	for i := range req.NumRows() {
-		row := req.GetRow(i)
-		if row.GetInt64(0) != physicalID {
-			continue
-		}
-		count = row.GetInt64(1)
-		found = true
-		break
-	}
-	if !found {
+	if req.NumRows() == 0 {
 		return startTS, nil
 	}
+	count := req.GetRow(0).GetInt64(0)
 	hasStatsUpdate := false
 	for _, colInfo := range colInfos {
 		if colInfo.IsVirtualGenerated() {
