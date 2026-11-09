@@ -182,7 +182,7 @@
       "id": "O10",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "The DXF framework is ported and composed: storage, handle, planner, dxfutil, the scheduler and task executor managers (with Go's nokit and unit tests), and the domain's `InitDistTaskLoop` on both server mains; Go's example application runs end to end on the unistore stack. Unported: Go's multi-node test harness (`framework/testutil`'s `TestDXFContext`) and the tests on it (`integrationtests`: HA, pause/resume, rollback, modify, scope; the store-backed `scheduler_test.go`, `scheduler_manager_test.go`, `task_executor_testkit_test.go`), metering (next-gen, O15), and cancelling in-flight internal SQL through the context (the storage methods take none)",
+      "finding": "The DXF framework is ported and composed: storage, handle, planner, dxfutil, the scheduler and task executor managers (with Go's nokit and unit tests), and the domain's `InitDistTaskLoop` on both server mains; Go's example application and the multi-node harness (`TestDXFContext`) run on the unistore stack with Go's owner-change, scale, cancel, error-handling, pause/resume, HA, rollback and target-scope integration tests. Unported: `modify_test.go`, `resource_control_test.go`, `framework_test.go`'s GC/cleaner/runtime-slots tests, the store-backed `scheduler_test.go`, `scheduler_manager_test.go` and `task_executor_testkit_test.go`; `SET GLOBAL tidb_service_scope` writing the node's role (Go `executor/set.go` `InitMetaSession`); metering (next-gen, O15); cancelling in-flight internal SQL through the context (the storage methods take none)",
       "go_owner": "`pkg/dxf/framework`"
     },
     {
