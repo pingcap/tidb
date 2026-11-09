@@ -52,6 +52,10 @@ pub(crate) struct MppExecBuilder<'a> {
     pub(crate) counts: Option<Rc<RefCell<RangeCounts>>>,
     pub(crate) paging: Option<SharedPaging>,
     pub(crate) paging_size: u64,
+    /// Go `mppCtx`: set when the DAG runs as an MPP task.
+    pub(crate) mpp_ctx: Option<Arc<crate::mpp_task::MppCtx>>,
+    /// Go `dagReq.OutputOffsets`, which an exchange sender sends.
+    pub(crate) output_offsets: Vec<u32>,
 }
 
 /// Go's `%v` rendering of a `[]byte`: space-separated decimals in brackets.
@@ -304,6 +308,62 @@ impl<'a> MppExecBuilder<'a> {
         })
     }
 
+    fn mpp_ctx(&self) -> Result<Arc<crate::mpp_task::MppCtx>, String> {
+        self.mpp_ctx.clone().ok_or_else(|| "an exchange runs only in an MPP task".to_owned())
+    }
+
+    /// Go `buildMPPExchangeSender`.
+    fn build_mpp_exchange_sender(&mut self, pb: &tipb::ExchangeSender) -> Result<crate::mpp_exec::ExchSenderExec<'a>, String> {
+        let child = self.build_mpp_executor(body(pb.child.as_deref(), "child")?)?;
+        let field_types = child.get_field_types().to_vec();
+        let mpp_ctx = self.mpp_ctx()?;
+
+        let mut hash_key_offsets = Vec::new();
+        let mut hash_key_types = Vec::new();
+        if pb.tp() == tipb::ExchangeType::Hash {
+            // remove the limitation of len(pb.PartitionKeys) == 1
+            for partition_key in &pb.partition_keys {
+                if partition_key.tp() != tipb::ExprType::ColumnRef {
+                    return Err("Hash key must be column type".to_owned());
+                }
+                let (_, offset) = tidb_codec::decode_int(partition_key.val.as_deref().unwrap_or_default())
+                    .map_err(|err| format!("{err:?}"))?;
+                let offset = usize::try_from(offset).map_err(|_| "Hash key must be column type".to_owned())?;
+                hash_key_offsets.push(offset);
+                hash_key_types.push(field_types[offset].clone());
+            }
+        }
+
+        let mut tunnels = Vec::with_capacity(pb.encoded_task_meta.len());
+        for task_meta in &pb.encoded_task_meta {
+            use prost::Message;
+            let target_task = tidb_proto::mpp::TaskMeta::decode(task_meta.as_slice()).map_err(|err| err.to_string())?;
+            let tunnel = Arc::new(crate::mpp_task::ExchangerTunnel::new(mpp_ctx.task_handler.meta.clone(), target_task));
+            tunnels.push(Arc::clone(&tunnel));
+            mpp_ctx.task_handler.register_tunnel(tunnel)?;
+        }
+        Ok(crate::mpp_exec::ExchSenderExec {
+            base: self.base(vec![child], field_types),
+            tunnels,
+            output_offsets: self.output_offsets.clone(),
+            exchange_tp: pb.tp(),
+            hash_key_offsets,
+            hash_key_types,
+        })
+    }
+
+    /// Go `buildMPPExchangeReceiver`.
+    fn build_mpp_exchange_receiver(&mut self, pb: &tipb::ExchangeReceiver) -> Result<crate::mpp_exec::ExchRecvExec<'a>, String> {
+        let field_types = pb.field_types.iter().map(tidb_expr::distsql_builtin::pb_type_to_field_type).collect();
+        Ok(crate::mpp_exec::ExchRecvExec {
+            base: self.base(Vec::new(), field_types),
+            exchange_receiver: pb.clone(),
+            mpp_ctx: self.mpp_ctx()?,
+            chk: None,
+            inited: false,
+        })
+    }
+
     /// Go `buildMPPExecutor`.
     pub(crate) fn build_mpp_executor(
         &mut self,
@@ -335,11 +395,13 @@ impl<'a> MppExecBuilder<'a> {
             tipb::ExecType::TypePartitionTableScan => Box::new(self.build_mpp_partition_table_scan(
                 body(exec.partition_table_scan.as_ref(), "partition_table_scan")?,
             )?),
-            tipb::ExecType::TypeIndexLookUp
-            | tipb::ExecType::TypeJoin
-            | tipb::ExecType::TypeExchangeSender
-            | tipb::ExecType::TypeExchangeReceiver
-            | tipb::ExecType::TypeExpand => {
+            tipb::ExecType::TypeExchangeSender => Box::new(
+                self.build_mpp_exchange_sender(body(exec.exchange_sender.as_deref(), "exchange_sender")?)?,
+            ),
+            tipb::ExecType::TypeExchangeReceiver => Box::new(
+                self.build_mpp_exchange_receiver(body(exec.exchange_receiver.as_ref(), "exchange_receiver")?)?,
+            ),
+            tipb::ExecType::TypeIndexLookUp | tipb::ExecType::TypeJoin | tipb::ExecType::TypeExpand => {
                 return Err(format!("the {tp:?} executor is a later course of this port"))
             }
             _ => return Err(format!("{ERR_EXECUTOR_NOT_SUPPORTED_MSG}{tp:?}")),

@@ -1225,3 +1225,233 @@ impl<'a> MppExec<'a> for ProjExec<'a> {
         Ok(Some(new_chunk))
     }
 }
+
+/// Go `hash/fnv.New64` (FNV-1) over `bytes`.
+fn fnv64(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for &byte in bytes {
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        hash ^= u64::from(byte);
+    }
+    hash
+}
+
+/// Go `exchSenderExec`: sends its child's rows through a tunnel to each
+/// target task (all of them to each, or each row to one by its hash).
+pub(crate) struct ExchSenderExec<'a> {
+    pub(crate) base: BaseMppExec<'a>,
+    pub(crate) tunnels: Vec<Arc<crate::mpp_task::ExchangerTunnel>>,
+    pub(crate) output_offsets: Vec<u32>,
+    pub(crate) exchange_tp: tipb::ExchangeType,
+    pub(crate) hash_key_offsets: Vec<usize>,
+    pub(crate) hash_key_types: Vec<FieldType>,
+}
+
+impl ExchSenderExec<'_> {
+    /// Go `toTiPBChunk`: the rows' output columns, datum-encoded in the
+    /// request's zone.
+    fn to_tipb_chunk(&self, chk: &[Row]) -> Result<Vec<tipb::Chunk>, String> {
+        let rows: Vec<Row> = chk
+            .iter()
+            .map(|row| self.output_offsets.iter().map(|&offset| row[offset as usize].clone()).collect())
+            .collect();
+        let mut chunks = Vec::new();
+        crate::use_default_encoding(&rows, &self.base.sctx.zone, &mut chunks)?;
+        Ok(chunks)
+    }
+
+    fn send_err(&self, err: String) {
+        for tunnel in &self.tunnels {
+            tunnel.send_err(err.clone());
+        }
+    }
+
+    /// The loop of Go's `next`, before its deferred close.
+    fn run(&mut self) {
+        loop {
+            let chk = match self.base.children[0].next() {
+                Err(err) => {
+                    self.send_err(format!("{err:?}"));
+                    return;
+                }
+                Ok(chk) => match chk {
+                    Some(chk) if !chk.is_empty() => chk,
+                    _ => return,
+                },
+            };
+            self.base.exec_summary.update_only_rows(chk.len());
+            if self.exchange_tp == tipb::ExchangeType::Hash {
+                let mut target_chunks: Vec<Chunk> = vec![Vec::new(); self.tunnels.len()];
+                for row in chk {
+                    // use hash values to get unique uint64 to mod.
+                    // collect all the hash key datum.
+                    let hashed = match tidb_codec::hash_row(&row, &self.hash_key_types, &self.hash_key_offsets) {
+                        Ok(hashed) => hashed,
+                        Err(err) => {
+                            self.send_err(format!("{err:?}"));
+                            return;
+                        }
+                    };
+                    let hash_key = fnv64(&hashed) % self.tunnels.len() as u64;
+                    target_chunks[hash_key as usize].push(row);
+                }
+                for (i, tunnel) in self.tunnels.iter().enumerate() {
+                    if !target_chunks[i].is_empty() {
+                        match self.to_tipb_chunk(&target_chunks[i]) {
+                            Ok(tipb_chunks) => tipb_chunks.into_iter().for_each(|chunk| tunnel.send_chunk(chunk)),
+                            Err(err) => {
+                                self.send_err(err);
+                                return;
+                            }
+                        }
+                    }
+                }
+            } else {
+                for tunnel in &self.tunnels {
+                    match self.to_tipb_chunk(&chk) {
+                        Ok(tipb_chunks) => tipb_chunks.into_iter().for_each(|chunk| tunnel.send_chunk(chunk)),
+                        Err(err) => {
+                            self.send_err(err);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl<'a> MppExec<'a> for ExchSenderExec<'a> {
+    fn base(&self) -> &BaseMppExec<'a> {
+        &self.base
+    }
+    fn base_mut(&mut self) -> &mut BaseMppExec<'a> {
+        &mut self.base
+    }
+    fn open(&mut self) -> Result<(), MppExecError> {
+        self.base.children[0].open()
+    }
+    /// Go `exchSenderExec.next`: sends every chunk, then (Go's defer) waits
+    /// for each tunnel's receiver to connect, closes the tunnels and stops.
+    fn next(&mut self) -> Result<Option<Chunk>, MppExecError> {
+        self.run();
+        for tunnel in &self.tunnels {
+            tunnel.wait_connected();
+            tunnel.close();
+        }
+        self.stop().unwrap_or_else(|err| panic!("{err:?}"));
+        Ok(None)
+    }
+}
+
+/// Go `exchRecvExec`: the rows every sender task of the receiver sent this
+/// task, received once.
+pub(crate) struct ExchRecvExec<'a> {
+    pub(crate) base: BaseMppExec<'a>,
+    pub(crate) exchange_receiver: tipb::ExchangeReceiver,
+    pub(crate) mpp_ctx: Arc<crate::mpp_task::MppCtx>,
+    pub(crate) chk: Option<Chunk>,
+    pub(crate) inited: bool,
+}
+
+impl ExchRecvExec<'_> {
+    /// Go `init`: one tunnel worker per sender task, all awaited.
+    fn init(&mut self) -> Result<(), MppExecError> {
+        let mut server_metas = Vec::with_capacity(self.exchange_receiver.encoded_task_meta.len());
+        for encoded_meta in &self.exchange_receiver.encoded_task_meta {
+            use prost::Message;
+            let meta = tidb_proto::mpp::TaskMeta::decode(encoded_meta.as_slice())
+                .map_err(|err| MppExecError::Other(err.to_string()))?;
+            server_metas.push(meta);
+        }
+        let field_types = &self.base.field_types;
+        let handler = &self.mpp_ctx.task_handler;
+        // for receiver: open conn worker for every receive meta.
+        let results: Vec<Result<Chunk, String>> = std::thread::scope(|scope| {
+            let workers: Vec<_> = server_metas
+                .into_iter()
+                .map(|meta| scope.spawn(move || run_tunnel_worker(handler, &meta, field_types)))
+                .collect();
+            workers.into_iter().map(|worker| worker.join().unwrap_or_else(|_| Err("tunnel worker panicked".to_owned()))).collect()
+        });
+        let mut chk = Vec::new();
+        let mut err = None;
+        for result in results {
+            match result {
+                Ok(rows) => chk.extend(rows),
+                Err(e) => err = Some(e),
+            }
+        }
+        self.chk = Some(chk);
+        err.map_or(Ok(()), |err| Err(MppExecError::Other(err)))
+    }
+}
+
+/// Go `EstablishConnAndReceiveData` and `runTunnelWorker`: the rows the
+/// sender task `meta` sends `h`'s task.
+fn run_tunnel_worker(
+    h: &crate::mpp_task::MppTaskHandler,
+    meta: &tidb_proto::mpp::TaskMeta,
+    field_types: &[FieldType],
+) -> Result<Chunk, String> {
+    let req = tidb_proto::mpp::EstablishMppConnectionRequest {
+        receiver_meta: Some(h.meta.clone()),
+        sender_meta: Some(meta.clone()),
+        ..Default::default()
+    };
+    let resp = h.rpc_client.establish_mpp_conn(&meta.address, req)?;
+    let mut rows = Vec::new();
+    for mpp_data in resp {
+        if let Some(error) = mpp_data.error {
+            return Err(error.msg);
+        }
+        use prost::Message;
+        let select_resp = tipb::SelectResponse::decode(mpp_data.data.as_slice()).map_err(|err| err.to_string())?;
+        for tipb_chunk in select_resp.chunks {
+            rows.extend(pb_chunk_to_chunk(&tipb_chunk, field_types)?);
+        }
+    }
+    Ok(rows)
+}
+
+/// Go `pbChunkToChunk`: a datum-encoded chunk's rows, decoded in the
+/// system location.
+fn pb_chunk_to_chunk(pb_chk: &tipb::Chunk, field_types: &[FieldType]) -> Result<Chunk, String> {
+    let mut rows_data = pb_chk.rows_data.as_deref().unwrap_or_default();
+    let mut rows = Vec::new();
+    while !rows_data.is_empty() {
+        let mut row = Vec::with_capacity(field_types.len());
+        for field_type in field_types {
+            let (rest, datum) =
+                tidb_codec::decode_one_typed_in_timezone(rows_data, field_type, Some(&SessionTimeZone::Local))
+                    .map_err(|err| format!("{err:?}"))?;
+            rows_data = rest;
+            row.push(datum);
+        }
+        rows.push(row);
+    }
+    Ok(rows)
+}
+
+impl<'a> MppExec<'a> for ExchRecvExec<'a> {
+    fn base(&self) -> &BaseMppExec<'a> {
+        &self.base
+    }
+    fn base_mut(&mut self) -> &mut BaseMppExec<'a> {
+        &mut self.base
+    }
+    fn open(&mut self) -> Result<(), MppExecError> {
+        Ok(())
+    }
+    fn next(&mut self) -> Result<Option<Chunk>, MppExecError> {
+        if !self.inited {
+            self.inited = true;
+            self.init()?;
+        }
+        let chk = self.chk.take();
+        if let Some(chk) = &chk {
+            self.base.exec_summary.update_only_rows(chk.len());
+        }
+        Ok(chk)
+    }
+}

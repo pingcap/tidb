@@ -8982,6 +8982,7 @@ name = "tidb-unistore-cophandler"
 version = "0.0.0"
 dependencies = [
  "chrono-tz",
+ "crossbeam-channel",
  "flate2",
  "prost 0.14.4",
  "tidb-charset",

@@ -31,6 +31,7 @@ mod analyze;
 mod eval_context;
 mod mpp;
 mod mpp_exec;
+pub mod mpp_task;
 
 #[cfg(test)]
 #[path = "region_group_tests.rs"]
@@ -39,6 +40,8 @@ mod region_group_tests;
 #[cfg(test)]
 #[path = "mpp_exec_tests.rs"]
 mod mpp_exec_tests;
+#[cfg(test)]
+mod mpp_task_tests;
 
 use tidb_datatype::CollationCollator;
 use eval_context::{RequestEvalContext, SharedExpression};
@@ -140,6 +143,45 @@ pub fn handle_cop_request(
         },
         other => other_error(&format!("unsupported request type {other}")),
     }
+}
+
+/// Go `HandleMPPDAGReq`: runs `req`'s DAG as the MPP task `mpp_ctx` names;
+/// its root exchange sender sends every row through the task's tunnels.
+/// Go panics when the task cannot build, open or run.
+///
+/// # Panics
+/// As Go's: a build, open or running error.
+pub fn handle_mpp_dag_req(
+    store: &dyn tidb_unistore_dbreader::DbReader,
+    req: &coprocessor::Request,
+    mpp_ctx: Arc<mpp_task::MppCtx>,
+) -> coprocessor::Response {
+    let context = match build_dag(req) {
+        Ok(context) => context,
+        Err(message) => return other_error(&message),
+    };
+    let root_exec = match &context.dag_req.root_executor {
+        Some(root) => root.clone(),
+        None => match executor_lists_to_tree(&context.dag_req.executors) {
+            Ok(root) => root,
+            Err(message) => return other_error(&message),
+        },
+    };
+    let mut builder = mpp::MppExecBuilder {
+        sctx: Arc::clone(&context.expression_context),
+        db_reader: store,
+        key_ranges: context.key_ranges.clone(),
+        start_ts: context.start_ts,
+        counts: None,
+        paging: None,
+        paging_size: 0,
+        mpp_ctx: Some(mpp_ctx),
+        output_offsets: context.dag_req.output_offsets.clone(),
+    };
+    let mut mpp_exec = builder.build_mpp_executor(&root_exec).unwrap_or_else(|err| panic!("build error: {err}"));
+    mpp_exec.open().unwrap_or_else(|err| panic!("open phase find error: {err:?}"));
+    mpp_exec.next().unwrap_or_else(|err| panic!("running phase find error: {err:?}"));
+    coprocessor::Response::default()
 }
 
 fn other_error(message: &str) -> coprocessor::Response {
@@ -267,6 +309,8 @@ fn build_and_run_mpp_executor<'a>(
         counts: counts.clone(),
         paging: paging.clone(),
         paging_size: context.paging_size,
+        mpp_ctx: None,
+        output_offsets: Vec::new(),
     };
     let mut exec = builder.build_mpp_executor(&root_exec)?;
     let (chunks, err) = mpp_execute(exec.as_mut(), dag_req, context.paging_size);
@@ -542,7 +586,7 @@ fn encode_chunks(
 /// A table/index decoder has already converted TIMESTAMP from UTC into the
 /// request location, so the encoder must flatten it back to UTC before the
 /// TiDB-side default-row decoder applies that same location.
-fn use_default_encoding(
+pub(crate) fn use_default_encoding(
     chk: &[mpp_exec::Row],
     timezone: &tidb_datatype::SessionTimeZone,
     chunks: &mut Vec<tipb::Chunk>,
