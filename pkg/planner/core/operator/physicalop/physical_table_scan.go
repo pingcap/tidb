@@ -93,7 +93,8 @@ func buildFullTextIndexExtra(indexInfo *model.IndexInfo, queryInfo *tipb.FTSQuer
 	}
 }
 
-func (p *PhysicalTableScan) hasFullTextIndexPushDown() bool {
+// HasFullTextIndexPushDown reports whether the scan executes a full-text index query.
+func (p *PhysicalTableScan) HasFullTextIndexPushDown() bool {
 	for _, idx := range p.UsedColumnarIndexes {
 		if idx.QueryInfo != nil && idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeFulltext {
 			return true

@@ -7,6 +7,7 @@ go_library(
         "config_util.go",
         "const.go",
         "external_workload.go",
+        "fts.go",
         "keyspace_observability.go",
         "store.go",
         "tiflash.go",

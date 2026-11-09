@@ -4243,6 +4243,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *physicalop.PhysicalTableRead
 		tablePlan:                  v.GetTablePlan(),
 		storeType:                  v.StoreType,
 		batchCop:                   v.ReadReqType == physicalop.BatchCop,
+		isFTS:                      ts.HasFullTextIndexPushDown(),
 	}
 	e.buildVirtualColumnInfo()
 
