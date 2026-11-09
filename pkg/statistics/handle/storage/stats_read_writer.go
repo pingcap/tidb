@@ -121,12 +121,22 @@ func (s *statsReadWriter) UpdateStatsMetaVersionForGC(physicalID int64) (err err
 	}, util.FlagWrapTxn)
 }
 
+<<<<<<< HEAD
 // UpdateStatsVersion will set statistics version to the newest TS,
 // then tidb-server will reload automatic.
 func (s *statsReadWriter) UpdateStatsVersion() error {
 	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		return UpdateStatsVersion(util.StatsCtx, sctx)
 	}, util.FlagWrapTxn)
+=======
+// IsStatsMetaWriteTooSlow reports whether a stats_meta write that took dur can be missed by the
+// stats cache Update of other TiDB nodes, which looks back only LeaseOffset * lease from its newest version.
+func IsStatsMetaWriteTooSlow(lease, dur time.Duration) bool {
+	// Note: In unit tests, the lease is set to a value less than 0, which means the lease is disabled.
+	// This is why we need to explicitly check the lease here. Without this check,
+	// the duration validation would always evaluate to true, which is not the intended behavior.
+	return lease > 0 && dur >= cache.LeaseOffset*lease
+>>>>>>> 249288e17a4 (statistics: fix stats cache missing slow stats delta dumps (#72812))
 }
 
 // handleSlowStatsSaving is used to handle the slow stats saving process.
@@ -136,10 +146,7 @@ func (s *statsReadWriter) UpdateStatsVersion() error {
 // See more at stats cache's Update function.
 func (s *statsReadWriter) handleSlowStatsSaving(tableID int64, start time.Time) (uint64, error) {
 	dur := time.Since(start)
-	// Note: In unit tests, the lease is set to a value less than 0, which means the lease is disabled.
-	// This is why we need to explicitly check the lease here. Without this check,
-	// the duration validation would always evaluate to true, which is not the intended behavior.
-	isLoadIntervalExceeded := s.statsHandler.Lease() > 0 && dur >= cache.LeaseOffset*s.statsHandler.Lease()
+	isLoadIntervalExceeded := IsStatsMetaWriteTooSlow(s.statsHandler.Lease(), dur)
 	// Use failpoint to simulate slow saving.
 	failpoint.Inject("slowStatsSaving", func(val failpoint.Value) {
 		if val.(bool) {
