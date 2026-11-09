@@ -9735,3 +9735,53 @@ fn a_global_index_lookups_task_spans_partitions_like_go() {
     assert_eq!(answer.len(), 99);
     assert_eq!(answer[0], vec!["10", "10", "0"]);
 }
+
+/// Go's `AddSelectionConditionForGlobalIndex` runs `PartitionPruning`, whose
+/// HASH and plain RANGE pruners `PlanID.Add(1)` before parsing the partition
+/// expression: every global index scan over such a table spends a plan id
+/// after its scans, before its Selection and reader (oracle-captured on a
+/// real tidb-server; RANGE COLUMNS, KEY and LIST spend none).
+#[test]
+fn a_global_index_scan_spends_gos_partition_pruning_plan_id() {
+    let mut session = Session::new();
+    for sql in [
+        "create table h (a int, b int, c int, primary key (a) nonclustered, unique key ub (b) global, key kc (c)) partition by hash(a) partitions 2",
+        "create table r (a int, b int, c int, primary key (a) nonclustered, unique key ub (b) global) partition by range(a) (partition p0 values less than (10), partition p1 values less than (maxvalue))",
+        "create table rc (a int, b int, c int, primary key (a) nonclustered, unique key ub (b) global) partition by range columns(a) (partition p0 values less than (10), partition p1 values less than (maxvalue))",
+        "create table k (a int, b int, c int, primary key (a) nonclustered, unique key ub (b) global) partition by key(a) partitions 2",
+        "create table l (a int, b int, c int, primary key (a) nonclustered, unique key ub (b) global) partition by list(a) (partition p0 values in (1,2), partition p1 values in (3,4))",
+    ] {
+        session.run(sql).unwrap_or_else(|err| panic!("{sql}: {err:?}"));
+    }
+    let lookup = |reader: &str| vec![reader.to_owned(), "├─IndexRangeScan_5(Build)".into(), "└─TableRowIDScan_6(Probe)".into()];
+    for (sql, ids) in [
+        ("explain select * from h use index(ub) where b > 1", lookup("IndexLookUp_8")),
+        ("explain select b from h use index(ub) where b > 1", vec!["IndexReader_7".into(), "└─IndexRangeScan_5".into()]),
+        (
+            "explain select * from h partition(p1) use index(ub) where b > 1",
+            vec![
+                "IndexLookUp_9".into(),
+                "├─Selection_8(Build)".into(),
+                "│ └─IndexRangeScan_5".into(),
+                "└─TableRowIDScan_6(Probe)".into(),
+            ],
+        ),
+        (
+            "explain select /*+ use_index_merge(h, ub, kc) */ * from h where b > 1 or c > 1",
+            vec![
+                "IndexMerge_9".into(),
+                "├─IndexRangeScan_5(Build)".into(),
+                "├─IndexRangeScan_7(Build)".into(),
+                "└─TableRowIDScan_8(Probe)".into(),
+            ],
+        ),
+        ("explain select * from r use index(ub) where b > 1", lookup("IndexLookUp_8")),
+        ("explain select * from rc use index(ub) where b > 1", lookup("IndexLookUp_7")),
+        ("explain select * from k use index(ub) where b > 1", lookup("IndexLookUp_7")),
+        ("explain select * from l use index(ub) where b > 1", lookup("IndexLookUp_7")),
+    ] {
+        let rows = row_text(session.run(sql));
+        let got = rows.iter().map(|row| row[0].clone()).collect::<Vec<_>>();
+        assert_eq!(got, ids, "{sql}: {rows:?}");
+    }
+}

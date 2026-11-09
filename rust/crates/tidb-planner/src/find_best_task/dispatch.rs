@@ -2220,7 +2220,14 @@ fn has_v0_new_collation_string_handle(ds: &tidb_planner_core_operator_logicalop:
 /// `in(_tidb_tid, ids)` over the partition id each entry records, or the
 /// impossible id -1 when none survive. A full partition set adds nothing
 /// (no partition here is hidden by an in-flight DDL).
+///
+/// Go reaches the surviving set through `partitionpruning.PartitionPruning`,
+/// whose HASH and plain RANGE pruners `PlanID.Add(1)` before parsing the
+/// partition expression (`generateHashPartitionExpr`,
+/// `MakePartitionByFnCol`): every global index scan over such a table spends
+/// one plan id here, whatever survives.
 pub(super) fn add_selection_condition_for_global_index(
+    allocator: &PlanIdAllocator,
     ds: &tidb_planner_core_operator_logicalop::DataSource,
     index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     scan_schema: Option<&tidb_expr::schema::Schema>,
@@ -2229,15 +2236,27 @@ pub(super) fn add_selection_condition_for_global_index(
     if !index.read().global {
         return None;
     }
-    let access = ds.dynamic_partition_access.as_ref()?;
-    if access.all_partitions {
-        return None;
-    }
     let column = scan_schema?
         .columns
         .iter()
         .find(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID)?
         .clone();
+    let spends_plan_id = ds
+        .table_info
+        .as_ref()
+        .and_then(|info| info.read().get_partition_info())
+        .is_some_and(|partition| {
+            let partition = partition.read();
+            partition.partition_type == tidb_ast::PartitionType::HASH
+                || (partition.partition_type == tidb_ast::PartitionType::RANGE && partition.columns.is_empty())
+        });
+    if spends_plan_id {
+        allocator.alloc();
+    }
+    let access = ds.dynamic_partition_access.as_ref()?;
+    if access.all_partitions {
+        return None;
+    }
     let ids = access
         .partitions
         .iter()
@@ -4701,8 +4720,18 @@ fn find_best_task_4_logical_data_source_paths(
                 };
                 let has_root_filters = !virtual_table_filters.is_empty()
                     || !rejected_index_filters.is_empty() || !rejected_table_filters.is_empty();
+                // Go `convertToIndexScan` builds the lookup's table side
+                // before `addPushedDownSelection4PhysicalIndexScan` adds the
+                // global index's partition filter.
+                let table_base = (!single_scan).then(|| {
+                    tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
+                        ctx.allocator,
+                        "TableScan",
+                        ds.base.base.query_block_offset(),
+                    )
+                });
                 let global_partition_filter =
-                    add_selection_condition_for_global_index(ds, source_index, scan.schema());
+                    add_selection_condition_for_global_index(ctx.allocator, ds, source_index, scan.schema());
                 // Go `(*CopTask).finishIndexPlan`: the lookup's table side
                 // takes the INDEX PLAN's stats -- the index Selection's when
                 // one exists, else the scan's.
@@ -4712,85 +4741,81 @@ fn find_best_task_4_logical_data_source_paths(
                     } else {
                         runtime_index_selection_stats.clone()
                     };
-                let (mut table_side, mut root_task_conds) = if single_scan {
+                let (mut table_side, mut root_task_conds) = match table_base {
                     // A condition that is not covered by the index key (for
                     // example an unsigned integer handle predicate) remains
                     // above the covering IndexReader as Go's
                     // `CopTask.RootTaskConds`; it must never disappear merely
                     // because no table probe is required.
-                    (None, rejected_table_filters.clone())
-                } else {
+                    None => (None, rejected_table_filters.clone()),
                     // Go `convertToIndexScan` builds the lookup's table side
                     // over the source's schema and stats.
-                    let mut table_base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
-                        ctx.allocator,
-                        "TableScan",
-                        ds.base.base.query_block_offset(),
-                    );
-                    table_base
-                        .base
-                        .set_stats(runtime_table_side_stats.clone().or_else(|| {
-                            scan.base().base.stats_info().cloned().map(|stats| {
-                                // Go `convertToIndexScan`:
-                                // `ts.SetStats(&property.StatsInfo{StatsVersion:
-                                // ds.TableStats.StatsVersion})` — the table
-                                // side carries the TABLE stats' VERSION (the
-                                // row counts are filled from the index plan
-                                // in `(*copTask).finishIndexPlan`). Inheriting
-                                // the cop Limit's fresh stats verbatim left
-                                // the pseudo version on an analyzed table.
-                                let version = ds
-                                    .table_stats
-                                    .as_ref()
-                                    .map(|table_stats| table_stats.stats_version())
-                                    .or_else(|| {
-                                        ds.base
-                                            .base
-                                            .stats_info()
-                                            .map(|ds_stats| ds_stats.stats_version())
-                                    });
-                                if let Some(version) = version {
-                                    stats.with_stats_version(version)
-                                } else {
-                                    stats
-                                }
-                            })
-                        }));
-                    table_base.base.set_schema(ds.base.base.schema().cloned());
-                    let table_scan = PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
-                        by_items: Vec::new(),
-                        group_by_col_idxs: Vec::new(),
-                        base: table_base,
-                        table_id: ds.physical_table_id,
-                        table_as_name: ds.table_as_name.clone(),
-                        dynamic_partition_access: ds.dynamic_partition_access.clone(),
-                        cost_columns: ds.table_columns.clone(),
-                        store_type: tidb_kv::store_type::StoreType::TiKv,
-                        keep_order: false,
-                        desc: false,
-                        // The lookup's table side reads BY HANDLE from
-                        // the index rows, not by its own ranges.
-                        ranges: tidb_ranger::types::Ranges::new(),
-                        range_rebuild: None,
-                        table_scan_penalty: ds.table_scan_penalty_input(),
-                        tikv_pushdown: None,
-                        db_name: ds.db_name.clone(),
-                        table_name: ds.table_name(),
-                        handle_col_unique_id: ds.handle_cols.first().map(|column| column.unique_id),
-                        is_temporary: ds.is_temporary(),
-                        prop: None,
-                        plan_part_info: None,
-                        filter_condition: Vec::new(),
-                        resolved_descriptor: Some(
-                            tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableDescriptor::new(
-                                ds.physical_table_id,
-                                !ds.common_handle_cols.is_empty(),
-                                tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind::RowId,
-                                tidb_planner_core_operator_logicalop::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
+                    Some(mut table_base) => {
+                        table_base
+                            .base
+                            .set_stats(runtime_table_side_stats.clone().or_else(|| {
+                                scan.base().base.stats_info().cloned().map(|stats| {
+                                    // Go `convertToIndexScan`:
+                                    // `ts.SetStats(&property.StatsInfo{StatsVersion:
+                                    // ds.TableStats.StatsVersion})` — the table
+                                    // side carries the TABLE stats' VERSION (the
+                                    // row counts are filled from the index plan
+                                    // in `(*copTask).finishIndexPlan`). Inheriting
+                                    // the cop Limit's fresh stats verbatim left
+                                    // the pseudo version on an analyzed table.
+                                    let version = ds
+                                        .table_stats
+                                        .as_ref()
+                                        .map(|table_stats| table_stats.stats_version())
+                                        .or_else(|| {
+                                            ds.base
+                                                .base
+                                                .stats_info()
+                                                .map(|ds_stats| ds_stats.stats_version())
+                                        });
+                                    if let Some(version) = version {
+                                        stats.with_stats_version(version)
+                                    } else {
+                                        stats
+                                    }
+                                })
+                            }));
+                        table_base.base.set_schema(ds.base.base.schema().cloned());
+                        let table_scan = PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
+                            by_items: Vec::new(),
+                            group_by_col_idxs: Vec::new(),
+                            base: table_base,
+                            table_id: ds.physical_table_id,
+                            table_as_name: ds.table_as_name.clone(),
+                            dynamic_partition_access: ds.dynamic_partition_access.clone(),
+                            cost_columns: ds.table_columns.clone(),
+                            store_type: tidb_kv::store_type::StoreType::TiKv,
+                            keep_order: false,
+                            desc: false,
+                            // The lookup's table side reads BY HANDLE from
+                            // the index rows, not by its own ranges.
+                            ranges: tidb_ranger::types::Ranges::new(),
+                            range_rebuild: None,
+                            table_scan_penalty: ds.table_scan_penalty_input(),
+                            tikv_pushdown: None,
+                            db_name: ds.db_name.clone(),
+                            table_name: ds.table_name(),
+                            handle_col_unique_id: ds.handle_cols.first().map(|column| column.unique_id),
+                            is_temporary: ds.is_temporary(),
+                            prop: None,
+                            plan_part_info: None,
+                            filter_condition: Vec::new(),
+                            resolved_descriptor: Some(
+                                tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableDescriptor::new(
+                                    ds.physical_table_id,
+                                    !ds.common_handle_cols.is_empty(),
+                                    tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind::RowId,
+                                    tidb_planner_core_operator_logicalop::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
+                                ),
                             ),
-                        ),
-                    });
-                    (Some(Box::new(table_scan)), rejected_table_filters)
+                        });
+                        (Some(Box::new(table_scan)), rejected_table_filters)
+                    }
                 };
                 // Go records virtual table predicates first, then rejected
                 // index predicates, then the remaining rejected table predicates.

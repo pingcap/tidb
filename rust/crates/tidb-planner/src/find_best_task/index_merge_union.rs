@@ -886,6 +886,7 @@ fn push_index_partial(
         pk_is_handle_col: ds.pk_is_handle().then(|| ds.handle_cols.first().cloned()).flatten(),
     }));
     let global_partition_filter = super::dispatch::add_selection_condition_for_global_index(
+        ctx.allocator,
         ds,
         source_index,
         partial_plans_raw.last().and_then(PhysicalPlan::schema),
