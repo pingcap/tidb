@@ -173,6 +173,64 @@ pub fn set_max_concurrent_task_for_test(value: isize) -> impl FnOnce() {
     move || MAX_CONCURRENT_TASK.store(old as i64, AtomicOrdering::SeqCst)
 }
 
+/// Go `taskCleanupBatchSizeLowerBound`.
+const TASK_CLEANUP_BATCH_SIZE_LOWER_BOUND: isize = 1;
+/// Go `TaskCleanupBatchSizeUpperBound`: the maximum DXF task cleanup batch
+/// size.
+pub const TASK_CLEANUP_BATCH_SIZE_UPPER_BOUND: isize = 1000;
+/// Go `DefaultTaskCleanupBatchSize`: the default DXF task cleanup batch size.
+pub const DEFAULT_TASK_CLEANUP_BATCH_SIZE: isize = 20;
+
+/// Go `taskCleanupBatchSize`: an owner-local tuning knob for DXF task
+/// cleanup, kept in memory only (reset on restart, affecting only the node
+/// that receives the update).
+static TASK_CLEANUP_BATCH_SIZE: AtomicI64 = AtomicI64::new(DEFAULT_TASK_CLEANUP_BATCH_SIZE as i64);
+
+/// Go `GetTaskCleanupBatchSize`.
+#[must_use]
+pub fn get_task_cleanup_batch_size() -> isize {
+    TASK_CLEANUP_BATCH_SIZE.load(AtomicOrdering::SeqCst) as isize
+}
+
+/// Go's `fmt.Errorf` value from `SetTaskCleanupBatchSize`.
+#[derive(Debug)]
+pub struct TaskCleanupBatchSizeError {
+    /// The rejected value.
+    value: isize,
+}
+
+impl fmt::Display for TaskCleanupBatchSizeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "task_cleanup_batch_size {} is out of range [{}, {}]",
+            self.value, TASK_CLEANUP_BATCH_SIZE_LOWER_BOUND, TASK_CLEANUP_BATCH_SIZE_UPPER_BOUND
+        )
+    }
+}
+
+impl std::error::Error for TaskCleanupBatchSizeError {}
+
+/// Go `SetTaskCleanupBatchSize`.
+///
+/// # Errors
+/// `value` is outside `[1, 1000]`.
+pub fn set_task_cleanup_batch_size(value: isize) -> Result<(), TaskCleanupBatchSizeError> {
+    if !(TASK_CLEANUP_BATCH_SIZE_LOWER_BOUND..=TASK_CLEANUP_BATCH_SIZE_UPPER_BOUND).contains(&value) {
+        return Err(TaskCleanupBatchSizeError { value });
+    }
+    TASK_CLEANUP_BATCH_SIZE.store(value as i64, AtomicOrdering::SeqCst);
+    Ok(())
+}
+
+/// Go `SetTaskCleanupBatchSizeForTest`: sets the knob, bypassing the range
+/// check, and hands back the restore.
+pub fn set_task_cleanup_batch_size_for_test(value: isize) -> impl FnOnce() {
+    let old = get_task_cleanup_batch_size();
+    TASK_CLEANUP_BATCH_SIZE.store(value as i64, AtomicOrdering::SeqCst);
+    move || TASK_CLEANUP_BATCH_SIZE.store(old as i64, AtomicOrdering::SeqCst)
+}
+
 /// Go `ExtraParams`: the extra params of a task.
 ///
 /// Note: only params that are not used for filter or sort live here.

@@ -82,6 +82,8 @@ pub use subtask::{
 };
 pub use task::{
     get_max_concurrent_task, set_max_concurrent_task, set_max_concurrent_task_for_test,
+    get_task_cleanup_batch_size, set_task_cleanup_batch_size, set_task_cleanup_batch_size_for_test,
+    TaskCleanupBatchSizeError, DEFAULT_TASK_CLEANUP_BATCH_SIZE, TASK_CLEANUP_BATCH_SIZE_UPPER_BOUND,
     ExtraParams, MaxConcurrentTaskError, PrepareMode, Task, TaskBase, TaskState, TaskType,
     DEFAULT_MAX_CONCURRENT_TASK, EMPTY_META, MAX_CONCURRENT_TASK_UPPER_BOUND, NORMAL_PRIORITY,
     PREPARE_MODE_DISABLED, PREPARE_MODE_REQUIRED, TASK_ID_LABEL_NAME,

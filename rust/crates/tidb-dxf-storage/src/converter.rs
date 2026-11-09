@@ -76,7 +76,7 @@ fn unix_local(seconds: i64) -> DateTime<FixedOffset> {
 }
 
 /// Go `row2TaskBasic`.
-fn row2_task_basic(r: &[Datum]) -> TaskBase {
+pub(crate) fn row2_task_basic(r: &[Datum]) -> TaskBase {
     let create_time = get_local_time(r, 7);
     let mut extra_params = ExtraParams::default();
     if !is_null(r, 10) {
