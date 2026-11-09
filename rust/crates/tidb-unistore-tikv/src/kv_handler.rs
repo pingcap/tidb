@@ -46,6 +46,8 @@ use std::sync::Arc;
 use tidb_proto::coprocessor;
 use tidb_proto::errorpb;
 use tidb_proto::kvrpcpb;
+use tidb_proto::mpp;
+use tidb_unistore_cophandler::mpp_task::{MppRpcClient, MppTaskHandler};
 use tidb_proto::KvrpcKeyError;
 
 use crate::mvcc_store::{
@@ -221,6 +223,28 @@ struct RequestDbReader<'a> {
 impl tidb_unistore_dbreader::DbReader for RequestDbReader<'_> {
     fn scan(&self, req: &tidb_unistore_dbreader::ScanReq) -> Vec<tidb_unistore_dbreader::KvPair> {
         self.store.scan_with(&self.ctx, req)
+    }
+}
+
+/// Go `dbreader.DBReader` as an MPP task's goroutine holds it: the shared
+/// store, locked for each scan, read under the task's request context.
+pub struct SharedDbReader {
+    handler: Arc<std::sync::Mutex<KvHandler>>,
+    ctx: ReadContext,
+}
+
+impl SharedDbReader {
+    /// The reader of `handler`'s store under `ctx`.
+    #[must_use]
+    pub fn new(handler: Arc<std::sync::Mutex<KvHandler>>, ctx: ReadContext) -> Self {
+        Self { handler, ctx }
+    }
+}
+
+impl tidb_unistore_dbreader::DbReader for SharedDbReader {
+    fn scan(&self, req: &tidb_unistore_dbreader::ScanReq) -> Vec<tidb_unistore_dbreader::KvPair> {
+        let handler = self.handler.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        handler.store.scan_with(&self.ctx, req)
     }
 }
 
@@ -1020,6 +1044,111 @@ impl KvHandler {
             });
         }
         batch_resps
+    }
+
+    /// Go `Server.IsAlive`.
+    #[must_use]
+    pub fn is_alive(&self, _req: &mpp::IsAliveRequest) -> mpp::IsAliveResponse {
+        mpp::IsAliveResponse {
+            available: true,
+            ..mpp::IsAliveResponse::default()
+        }
+    }
+
+    /// Go `executeMPPDispatch` up to its goroutine: the read context of the
+    /// task's first region (Go: "this is a hack to reuse task id in
+    /// kvContext to pass mpp task id"; a region error is not checked), and
+    /// the coprocessor request over every region's ranges.
+    #[must_use]
+    pub fn mpp_dispatch_request(
+        &self,
+        req: &mpp::DispatchTaskRequest,
+        store_id: u64,
+        task_id: i64,
+    ) -> (ReadContext, coprocessor::Request) {
+        // Simple unistore logic for PartitionTableScan.
+        let mut regions = req.regions.clone();
+        for table_regions in &req.table_regions {
+            regions.extend(table_regions.regions.iter().cloned());
+        }
+        let read_ctx = match regions.first() {
+            Some(region) => {
+                let kv_context = kvrpcpb::Context {
+                    region_id: region.region_id,
+                    region_epoch: region.region_epoch.clone(),
+                    task_id: task_id as u64,
+                    peer: Some(tidb_proto::metapb::Peer {
+                        store_id,
+                        ..tidb_proto::metapb::Peer::default()
+                    }),
+                    ..kvrpcpb::Context::default()
+                };
+                self.new_request_ctx(Some(&kv_context)).0.read_context()
+            }
+            None => ReadContext::default(),
+        };
+        let cop_req = coprocessor::Request {
+            tp: tidb_unistore_cophandler::REQ_TYPE_DAG,
+            data: req.encoded_plan.clone(),
+            start_ts: req.meta.as_ref().map_or(0, |meta| meta.start_ts),
+            ranges: regions.iter().flat_map(|region| region.ranges.iter().cloned()).collect(),
+            ..coprocessor::Request::default()
+        };
+        (read_ctx, cop_req)
+    }
+
+    /// Go `Server.GetMPPTaskHandler`: the store's task, `None` when it is not
+    /// there (yet).
+    ///
+    /// # Errors
+    /// The store has no MPP task set.
+    pub fn get_mpp_task_handler(&self, task_id: i64, store_id: u64) -> Result<Option<Arc<MppTaskHandler>>, String> {
+        let set = self
+            .regions
+            .get_mpp_task_set(store_id)
+            .ok_or_else(|| "cannot find mpp task set for store".to_owned())?;
+        let task_handlers = set.task_handlers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(task_handlers.get(&task_id).cloned())
+    }
+
+    /// Go `Server.RemoveMPPTaskHandler`.
+    ///
+    /// # Errors
+    /// The store has no MPP task set, or no such task.
+    pub fn remove_mpp_task_handler(&self, task_id: i64, store_id: u64) -> Result<(), String> {
+        let set = self
+            .regions
+            .get_mpp_task_set(store_id)
+            .ok_or_else(|| "cannot find mpp task set for store".to_owned())?;
+        let mut task_handlers = set.task_handlers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if task_handlers.remove(&task_id).is_some() {
+            return Ok(());
+        }
+        Err("cannot find mpp task".to_owned())
+    }
+
+    /// Go `Server.CreateMPPTaskHandler`; Go's handler takes the server's
+    /// `RPCClient`, here the client that dispatched the task.
+    ///
+    /// # Errors
+    /// The store has no MPP task set, or the task was created already.
+    pub fn create_mpp_task_handler(
+        &self,
+        meta: &mpp::TaskMeta,
+        store_id: u64,
+        rpc_client: Arc<dyn MppRpcClient>,
+    ) -> Result<Arc<MppTaskHandler>, String> {
+        let set = self
+            .regions
+            .get_mpp_task_set(store_id)
+            .ok_or_else(|| "cannot find mpp task set for store".to_owned())?;
+        let mut task_handlers = set.task_handlers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if task_handlers.contains_key(&meta.task_id) {
+            return Err(format!("Task {} has been created", meta.task_id));
+        }
+        let handler = Arc::new(MppTaskHandler::new(meta.clone(), rpc_client));
+        task_handlers.insert(meta.task_id, Arc::clone(&handler));
+        Ok(handler)
     }
 
     /// Go `Server.CheckLockObserver`: no observer is implemented, so the

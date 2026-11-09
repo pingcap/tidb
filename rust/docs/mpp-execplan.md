@@ -85,7 +85,17 @@ the unistore stack.
   `MPPTaskHandler` tunnel registry (`mpp.go`); and `mpp_exec.go`'s
   `exchSenderExec` (PassThrough, Broadcast, HashPartition), `exchRecvExec`,
   `joinExec`, `expandExec` and `indexLookUpExec`, with `buildMPPExchangeSender`
-  / `Receiver` / `Join` / `Expand` / `IndexLookUp` in `mpp.rs`.
+  / `Receiver` / `Join` / `Expand` / `IndexLookUp` in `mpp.rs`. Done
+  (2026-11-10): `MPPTaskHandler`, `ExchangerTunnel`, `HandleMPPDAGReq`, the
+  exchange sender/receiver and join executors; the store's MPP task sets
+  (`AddStore` / `RemoveStore`, `Create` / `Get` / `RemoveMPPTaskHandler`);
+  `rpc.go`'s `DispatchMPPTaskWithStoreID` (the task on its own thread, reading
+  the store under a per-scan lock), `EstablishMPPConnectionWithStoreID` (the
+  collected packets as client-go's mock stream, a buffered
+  `MppStreamResponse::from_packets` in the client fork) and `IsAlive`; the
+  RPC client is the tasks' `MppRpcClient`. Mock TiFlash stores
+  (`with_mock_tiflash`) already existed. Left: `expandExec`,
+  `indexLookUpExec`, `CancelMPPTask` (Go panics "todo" too).
 - [ ] Milestone 4: Go's local MPP coordinator and `MPPGather`
   (`pkg/executor/internal/mpp/local_mpp_coordinator.go`,
   `executor_with_retry.go`, `recovery_handler.go`, `pkg/executor/mpp_gather.go`)

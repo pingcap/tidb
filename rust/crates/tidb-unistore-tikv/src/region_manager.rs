@@ -33,9 +33,10 @@
 //!   does not hold the store; they arrive with the store-holding cluster.
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use tidb_proto::{errorpb, kvrpcpb, metapb};
+use tidb_unistore_cophandler::mpp_task::MppTaskHandler;
 
 use crate::mvcc_store::INTERNAL_KEY_PREFIX;
 
@@ -194,6 +195,20 @@ fn stale_epoch(region: &RegionCtx) -> errorpb::Error {
     }
 }
 
+/// Go `MPPTaskHandlerMap`: a store's MPP tasks, by task id.
+#[derive(Default)]
+pub struct MppTaskHandlerMap {
+    /// Go `mu` and `taskHandlers`.
+    pub task_handlers: Mutex<HashMap<i64, Arc<MppTaskHandler>>>,
+}
+
+impl std::fmt::Debug for MppTaskHandlerMap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let task_handlers = self.task_handlers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        f.debug_struct("MppTaskHandlerMap").field("task_ids", &task_handlers.keys().collect::<Vec<_>>()).finish()
+    }
+}
+
 #[derive(Debug, Default)]
 struct State {
     /// Go `regionManager.storeMeta`: the store requests are checked against.
@@ -208,6 +223,8 @@ struct State {
     id: u64,
     /// Go `IsBootstrapped`'s `InternalStoreMetaKey`.
     bootstrapped: bool,
+    /// Go `mppTaskSet`: the MPP tasks of each store `AddStore` added.
+    mpp_task_set: HashMap<u64, Arc<MppTaskHandlerMap>>,
 }
 
 impl State {
@@ -659,7 +676,8 @@ impl MockRegionManager {
 
     /// Go `AddStore`.
     pub fn add_store(&self, store_id: u64, addr: &str, labels: Vec<metapb::StoreLabel>) {
-        self.state().stores.insert(
+        let mut state = self.state();
+        state.stores.insert(
             store_id,
             metapb::Store {
                 id: store_id,
@@ -668,11 +686,19 @@ impl MockRegionManager {
                 ..metapb::Store::default()
             },
         );
+        state.mpp_task_set.insert(store_id, Arc::default());
+    }
+
+    /// Go `getMPPTaskSet`.
+    pub fn get_mpp_task_set(&self, store_id: u64) -> Option<Arc<MppTaskHandlerMap>> {
+        self.state().mpp_task_set.get(&store_id).cloned()
     }
 
     /// Go `RemoveStore`.
     pub fn remove_store(&self, store_id: u64) {
-        self.state().stores.remove(&store_id);
+        let mut state = self.state();
+        state.stores.remove(&store_id);
+        state.mpp_task_set.remove(&store_id);
     }
 
     /// Go `AddPeer`.
