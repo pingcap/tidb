@@ -20,7 +20,7 @@ use tidb_datatype::Datum;
 use tidb_dxf::{int_2_type, ExtraParams, ModifyParam, Step, Subtask, SubtaskBase, SubtaskState, Task, TaskBase, TaskState, TaskType};
 
 /// Go's zero `time.Time`, as this port's `proto` values hold it.
-fn zero_time() -> DateTime<FixedOffset> {
+pub(crate) fn zero_time() -> DateTime<FixedOffset> {
     DateTime::<FixedOffset>::default()
 }
 
@@ -58,7 +58,7 @@ pub(crate) fn get_json_string(row: &[Datum], idx: usize) -> String {
 }
 
 /// Go `r.GetTime(idx).GoTime(time.Local)`, its error ignored.
-fn get_local_time(row: &[Datum], idx: usize) -> DateTime<FixedOffset> {
+pub(crate) fn get_local_time(row: &[Datum], idx: usize) -> DateTime<FixedOffset> {
     match row.get(idx) {
         Some(Datum::Time(value)) => value
             .go_time(&chrono::Local)
@@ -116,7 +116,7 @@ impl std::fmt::Display for TaskError {
 impl std::error::Error for TaskError {}
 
 /// Go `row2TaskError`: Go's `*errors.Error` read back from its JSON.
-fn row2_task_error(r: &[Datum], idx: usize) -> Option<std::sync::Arc<dyn std::error::Error + Send + Sync>> {
+pub(crate) fn row2_task_error(r: &[Datum], idx: usize) -> Option<std::sync::Arc<dyn std::error::Error + Send + Sync>> {
     if is_null(r, idx) {
         return None;
     }

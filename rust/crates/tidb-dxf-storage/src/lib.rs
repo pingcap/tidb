@@ -20,13 +20,21 @@
 //! on a session from the framework's session pool.
 
 mod converter;
+mod history;
 mod nodes;
+mod subtask_state;
 mod subtask_table;
+mod task_state;
 mod task_table;
 
 pub use converter::{row2_sub_task, row2_task, task_id_to_key};
+pub use history::{
+    classify_task_error, validate_history_task_page_size, HistoryTaskPage, HistoryTaskSummary, TaskCleanupInfo,
+    DEFAULT_HISTORY_TASK_PAGE_SIZE, MAX_HISTORY_TASK_PAGE_SIZE, MIN_HISTORY_TASK_PAGE_SIZE,
+};
 pub use nodes::{get_dxf_cpu_count, get_node_resource, set_node_resource};
 pub use subtask_table::SubtaskError;
+pub use task_state::{is_cancelled_err, TASK_CANCEL_MESSAGE};
 pub use task_table::{ActiveTaskSummary, TaskExecInfo};
 
 use std::sync::Arc;

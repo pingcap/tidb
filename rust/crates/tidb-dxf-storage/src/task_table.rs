@@ -49,6 +49,8 @@ pub(crate) enum Arg {
     Str(String),
     Int(i64),
     Bytes(Vec<u8>),
+    /// Go's `[]byte` that may be nil, written as NULL.
+    OptBytes(Option<Vec<u8>>),
     Json(Vec<u8>),
 }
 
@@ -58,6 +60,7 @@ impl Arg {
             Self::Str(value) => SqlArg::String(value.as_bytes()),
             Self::Int(value) => SqlArg::Signed(*value),
             Self::Bytes(value) => SqlArg::Bytes(Some(value)),
+            Self::OptBytes(value) => SqlArg::Bytes(value.as_deref()),
             Self::Json(value) => SqlArg::RawJson(value),
         }
     }
