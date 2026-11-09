@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 29,
-    "open": 6,
-    "partial": 23
+    "open": 5,
+    "partial": 24
   },
   "findings": [
     {
@@ -180,10 +180,10 @@
     },
     {
       "id": "O10",
-      "status": "open",
+      "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "No DXF scheduler/executor managers composed",
-      "go_owner": "`pkg/disttask/framework`"
+      "finding": "The DXF framework is ported and composed: storage, handle, planner, dxfutil, the scheduler and task executor managers (with Go's nokit and unit tests), and the domain's `InitDistTaskLoop` on both server mains; Go's example application runs end to end on the unistore stack. Unported: Go's multi-node test harness (`framework/testutil`'s `TestDXFContext`) and the tests on it (`integrationtests`: HA, pause/resume, rollback, modify, scope; the store-backed `scheduler_test.go`, `scheduler_manager_test.go`, `task_executor_testkit_test.go`), metering (next-gen, O15), and cancelling in-flight internal SQL through the context (the storage methods take none)",
+      "go_owner": "`pkg/dxf/framework`"
     },
     {
       "id": "O11",
@@ -216,6 +216,6 @@
     }
   ],
   "unresolved": 29,
-  "open": 6,
-  "partial": 23
+  "open": 5,
+  "partial": 24
 }
