@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -714,11 +715,40 @@ func (e *DDLExec) getRecoverDBByName(schemaName pmodel.CIStr) (recoverSchemaInfo
 			if schemaInfo.Name.L != schemaName.L {
 				continue
 			}
+			if job.BinlogInfo == nil || job.BinlogInfo.SchemaVersion <= 0 {
+				return false, errors.New("flashback database: dropped database has no final schema version")
+			}
+			currentMeta := dom.GetSnapshotMeta(txn.StartTS())
+			diff, err := currentMeta.GetSchemaDiff(job.BinlogInfo.SchemaVersion)
+			if err != nil {
+				return false, err
+			}
+			if diff == nil || diff.Version != job.BinlogInfo.SchemaVersion || diff.Type != model.ActionDropSchema || diff.SchemaID != job.SchemaID {
+				return false, errors.New("flashback database: final drop schema diff is missing or inconsistent")
+			}
+			commitTS, err := meta.GetSchemaDiffCommitTS(currentMeta, dom.Store(), diff.Version, txn.StartTS())
+			if err != nil {
+				return false, errors.Annotate(err, "flashback database: cannot determine drop commit timestamp")
+			}
+			if commitTS <= job.StartTS {
+				return false, errors.New("flashback database: invalid drop commit timestamp")
+			}
+			// The job's submission snapshot can precede the last refresh/purge.
+			// Recover both metadata and maintenance state immediately before the
+			// transaction that removed the database and its maintenance records.
+			snapshotTS := commitTS - 1
+			schemaInfo, err = dom.GetSnapshotMeta(snapshotTS).GetDatabase(job.SchemaID)
+			if err != nil {
+				return false, err
+			}
+			if schemaInfo == nil || schemaInfo.Name.L != schemaName.L {
+				return false, errors.New("flashback database: schema metadata missing before drop commit")
+			}
 			recoverSchemaInfo = &model.RecoverSchemaInfo{
 				DBInfo:              schemaInfo,
 				LoadTablesOnExecute: true,
 				DropJobID:           job.ID,
-				SnapshotTS:          job.StartTS,
+				SnapshotTS:          snapshotTS,
 				OldSchemaName:       schemaName,
 			}
 			return true, nil
