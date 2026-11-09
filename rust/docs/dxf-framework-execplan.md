@@ -36,9 +36,16 @@ tidb-server shows the same rows.
   - [x] 2026-11-09: crate `rust/crates/tidb-dxf-storage` with Go's column
     lists, sentinel errors, the session-context trait, `WithNewSession`,
     `WithNewTxn`, `ExecuteSQLWithNewSession` and `converter.go`.
-  - [ ] `nodes.go` (needed by `CreateTask`), `task_table.go`, `task_state.go`,
-    `subtask_state.go`, `history.go`; their Go tests; the cluster node's
-    session-context implementation.
+  - [x] `nodes.go` (`nodes.rs`).
+  - [x] `task_table.go` group 1 (`task_table.rs`): `CreateTask`,
+    `CreateTaskWithSession`, the top-task, exec-info, cleanup and state
+    queries, lookups by id and key (with history); `proto`'s task cleanup
+    batch size.
+  - [ ] `task_table.go` group 2: the subtask queries and updates (Go lines
+    618-890), then the step switches and subtask inserts (889-1060), then the
+    rest (1061-1265).
+  - [ ] `task_state.go`, `subtask_state.go`, `history.go`; the Go tests; the
+    cluster node's session-context implementation.
 - [ ] Milestone 2: `handle` and `planner`.
 - [ ] Milestone 3: `taskexecutor/execute`, `taskexecutor` (manager, slots, executor).
 - [ ] Milestone 4: `scheduler` (manager, nodes, slots, balancer, state transitions; autoscaler where it applies to a classic kernel).
