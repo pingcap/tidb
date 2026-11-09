@@ -44,6 +44,9 @@ pub static DEFAULT_CLEAN_UP_INTERVAL: RwLock<Duration> = RwLock::new(Duration::f
 #[cfg(any(test, feature = "failpoints"))]
 pub static HISTORY_SUBTASK_TABLE_GC_INTERVAL: crate::scheduler::CallHook<dyn Fn(&mut Duration) + Send + Sync> =
     RwLock::new(None);
+/// Go's `beforeGetSchedulableTasks` call-failpoint.
+#[cfg(any(test, feature = "failpoints"))]
+pub static BEFORE_GET_SCHEDULABLE_TASKS: crate::scheduler::CallHook<dyn Fn() + Send + Sync> = RwLock::new(None);
 /// Go's `processCleanupTaskBatch` call-failpoint.
 #[cfg(any(test, feature = "failpoints"))]
 pub static PROCESS_CLEANUP_TASK_BATCH: crate::scheduler::CallHook<dyn Fn() + Send + Sync> = RwLock::new(None);
@@ -261,6 +264,8 @@ impl Manager {
                 recv(task_changed) -> _ => {}
             }
 
+            #[cfg(any(test, feature = "failpoints"))]
+            crate::scheduler::call_hook(&BEFORE_GET_SCHEDULABLE_TASKS, |hook| hook());
             let Ok(schedulable_tasks) = self.get_schedulable_tasks() else {
                 continue;
             };

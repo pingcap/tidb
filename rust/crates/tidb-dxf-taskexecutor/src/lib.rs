@@ -34,4 +34,6 @@ pub use register::{clear_task_executors, get_task_executor_factory, register_tas
 pub use slot::SlotManager;
 pub use task_executor::{BaseTaskExecutor, Param, DETECT_PARAM_MODIFY_INTERVAL};
 #[cfg(any(test, feature = "failpoints"))]
-pub use task_executor::{CallHook, AFTER_RUN_SUBTASK, BEFORE_SET_FRAMEWORK_INFO, MOCK_TIDB_SHUTDOWN};
+pub use task_executor::{
+    CallHook, AFTER_RUN_SUBTASK, BEFORE_GET_TASK_BY_ID_IN_RUN, BEFORE_SET_FRAMEWORK_INFO, MOCK_TIDB_SHUTDOWN,
+};

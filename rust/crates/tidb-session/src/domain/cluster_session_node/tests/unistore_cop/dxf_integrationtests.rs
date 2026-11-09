@@ -661,3 +661,496 @@ fn test_tidb_max_dist_task_nodes_settings() {
     rows(&mut tk, "set global tidb_max_dist_task_nodes=129");
     assert_eq!(max_nodes(&mut tk), vec![vec!["128".to_owned()]]);
 }
+
+/// Go `require.Eventually`.
+fn eventually(timeout: Duration, tick: Duration, mut condition: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + timeout;
+    while !condition() {
+        assert!(std::time::Instant::now() < deadline, "the condition was not met in {timeout:?}");
+        std::thread::sleep(tick);
+    }
+}
+
+/// Go `collectedRuntimeInfo`.
+#[derive(Default)]
+struct CollectedRuntimeInfo {
+    curr_task_meta: std::sync::Mutex<Option<Vec<u8>>>,
+    curr_task_concurrency: std::sync::atomic::AtomicI64,
+    active_subtask_count: std::sync::atomic::AtomicI64,
+    /// Go `subtaskRuntimeInfo`s: each subtask's step and concurrency.
+    subtask_infos: std::sync::Mutex<Vec<(Step, isize)>>,
+}
+
+impl CollectedRuntimeInfo {
+    /// Go's `*runtimeInfo = collectedRuntimeInfo{}`.
+    fn reset(&self) {
+        *self.curr_task_meta.lock().unwrap() = None;
+        self.curr_task_concurrency.store(0, Ordering::SeqCst);
+        self.active_subtask_count.store(0, Ordering::SeqCst);
+        self.subtask_infos.lock().unwrap().clear();
+    }
+
+    fn meta(&self) -> Vec<u8> {
+        self.curr_task_meta.lock().unwrap().clone().expect("a step executor was created")
+    }
+}
+
+/// What Go's `prepareModifyTaskTest` returns. The channels drop before the
+/// context (fields drop in order): a failed assertion then ends the blocked
+/// subtasks instead of leaving the context's close waiting on them.
+struct ModifyTaskTest {
+    subtask_ch: crossbeam_channel::Sender<()>,
+    modify_wait_ch: crossbeam_channel::Sender<()>,
+    runtime_info: Arc<CollectedRuntimeInfo>,
+    test_modify_when_subtask_run: Arc<std::sync::atomic::AtomicBool>,
+    c: Arc<testutil::TestDxfContext>,
+    _registered: testutil::RegisteredTaskType,
+}
+
+/// Go `prepareModifyTaskTest`.
+fn prepare_modify_task_test(task_mgr: Arc<TaskManager>, node_count: usize) -> ModifyTaskTest {
+    let c = testutil::new_test_dxf_context(task_mgr, node_count, 16, true);
+    let scheduler_ext = testutil::get_mock_scheduler_ext(
+        &c.mock_ctrl,
+        testutil::SchedulerInfo {
+            all_error_retryable: true,
+            step_infos: vec![testutil::StepInfo::new(STEP_ONE, 2), testutil::StepInfo::new(STEP_TWO, 3)],
+        },
+    );
+    let (subtask_ch, subtask_rx) = crossbeam_channel::bounded::<()>(0);
+    let runtime_info = Arc::new(CollectedRuntimeInfo::default());
+    let test_modify_when_subtask_run = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (modify_wait_ch, modify_wait_rx) = crossbeam_channel::bounded::<()>(0);
+
+    let run_subtask_fn: RunSubtaskFn = {
+        let (runtime_info, test_modify_when_subtask_run) = (Arc::clone(&runtime_info), Arc::clone(&test_modify_when_subtask_run));
+        Arc::new(move |ctx, subtask| {
+            runtime_info.active_subtask_count.fetch_add(1, Ordering::SeqCst);
+            struct Done<'a>(&'a std::sync::atomic::AtomicI64);
+            impl Drop for Done<'_> {
+                fn drop(&mut self) {
+                    self.0.fetch_sub(1, Ordering::SeqCst);
+                }
+            }
+            let _done = Done(&runtime_info.active_subtask_count);
+            if test_modify_when_subtask_run.load(Ordering::SeqCst) {
+                let _ = modify_wait_rx.recv();
+                let _ = modify_wait_rx.recv();
+            }
+            crossbeam_channel::select! {
+                recv(subtask_rx) -> _ => {
+                    runtime_info.subtask_infos.lock().unwrap().push((subtask.base.step, subtask.base.concurrency));
+                }
+                recv(ctx.done()) -> _ => return Err(Arc::new(ctx.err().expect("the context ended"))),
+            }
+            Ok(())
+        })
+    };
+
+    let ctrl = Arc::clone(&c.mock_ctrl);
+    let info = Arc::clone(&runtime_info);
+    let executor_ext = testutil::get_common_task_executor_ext(&c.mock_ctrl, move |task| {
+        *info.curr_task_meta.lock().unwrap() = Some(task.meta.clone());
+        info.curr_task_concurrency.store(task.base.required_slots as i64, Ordering::SeqCst);
+        let executor = MockStepExecutor::new(&ctrl);
+        executor.ret_times("Init", Times::Any, StepResult::Ok(()));
+        let run_subtask_fn = Arc::clone(&run_subtask_fn);
+        executor.expect("RunSubtask|*", Times::Any, move |input| {
+            let (ctx, subtask) = input.downcast_ref::<(Context, Subtask)>().expect("RunSubtask gets (ctx, subtask)");
+            run_subtask_fn(ctx, subtask)
+        });
+        executor.ret_times("GetStep", Times::Any, task.base.step);
+        executor.ret_times("Cleanup", Times::Any, StepResult::Ok(()));
+        executor.ret_times("RealtimeSummary", Times::Any, None::<Arc<tidb_dxf_execute::SubtaskSummary>>);
+        let meta_info = Arc::clone(&info);
+        executor.expect("TaskMetaModified", Times::Any, move |input| -> StepResult {
+            *meta_info.curr_task_meta.lock().unwrap() = Some(input.downcast_ref::<Vec<u8>>().expect("the new meta").clone());
+            Ok(())
+        });
+        let resource_info = Arc::clone(&info);
+        executor.expect("ResourceModified", Times::Any, move |input| -> StepResult {
+            let (cpu, _) = input.downcast_ref::<(i64, i64)>().expect("the new resource");
+            resource_info.curr_task_concurrency.store(*cpu, Ordering::SeqCst);
+            Ok(())
+        });
+        Ok(executor as Arc<dyn StepExecutor>)
+    });
+    let registered = testutil::register_example_task(scheduler_ext, executor_ext, testutil::get_common_cleaner(&c.mock_ctrl));
+    ModifyTaskTest { subtask_ch, modify_wait_ch, runtime_info, test_modify_when_subtask_run, c, _registered: registered }
+}
+
+/// Waits until the task's executor started: a subtask runs or has run. Go's
+/// running-task modifications race the executor manager, which starts an
+/// executor only for a `running` task, against the scheduler's next tick,
+/// after which the hook moves the task to `modifying`: if no executor started
+/// by then, no subtask ever receives the test's completions. Go's test means
+/// the executor to have started when the modification lands; a slow debug
+/// build under load loses the race.
+fn wait_for_running_subtask(runtime_info: &CollectedRuntimeInfo) {
+    eventually(Duration::from_secs(10), Duration::from_millis(10), || {
+        runtime_info.active_subtask_count.load(Ordering::SeqCst) >= 1
+            || !runtime_info.subtask_infos.lock().unwrap().is_empty()
+    });
+}
+
+fn modify_required_slots(prev_state: TaskState, to: i64) -> ModifyParam {
+    ModifyParam { prev_state, modifications: vec![Modification { tp: MODIFY_REQUIRED_SLOTS, to }] }
+}
+
+fn finish_subtasks(subtask_ch: &crossbeam_channel::Sender<()>, n: usize) {
+    for _ in 0..n {
+        subtask_ch.send(()).unwrap();
+    }
+}
+
+/// Go `TestModifyTaskConcurrencyAndMeta`.
+#[test]
+fn test_modify_task_concurrency_and_meta() {
+    let (_stack, task_mgr) = store_and_task_manager();
+    let t = prepare_modify_task_test(task_mgr, 1);
+    let (c, runtime_info, subtask_ch) = (&t.c, &t.runtime_info, &t.subtask_ch);
+    let scope = tidb_dxf_handle::get_target_scope();
+    let subtask_infos = || runtime_info.subtask_infos.lock().unwrap().clone();
+    let all = |concurrencies: [isize; 5]| -> Vec<(Step, isize)> {
+        [STEP_ONE, STEP_ONE, STEP_TWO, STEP_TWO, STEP_TWO].into_iter().zip(concurrencies).collect()
+    };
+
+    // modify pending task concurrency
+    {
+        let (modify_sync_ch, modify_sync_rx) = crossbeam_channel::bounded::<()>(0);
+        let the_task = Arc::new(std::sync::Mutex::new(None::<Task>));
+        {
+            let (once, task_mgr, scope, the_task) =
+                (std::sync::Once::new(), Arc::clone(&c.task_mgr), scope.clone(), Arc::clone(&the_task));
+            *tidb_dxf_scheduler::BEFORE_GET_SCHEDULABLE_TASKS.write().unwrap() = Some(Arc::new(move || {
+                once.call_once(|| {
+                    let task = tidb_dxf_handle::submit_task("k1", &TASK_TYPE_EXAMPLE, "", 3, &scope, 0, b"init").unwrap();
+                    assert_eq!(task.base.required_slots, 3);
+                    task_mgr.modify_task_by_id(task.base.id, &modify_required_slots(TASK_STATE_PENDING, 7)).unwrap();
+                    let got_task = task_mgr.get_task_base_by_id(task.base.id).unwrap();
+                    assert_eq!(got_task.state, TASK_STATE_MODIFYING);
+                    assert_eq!(got_task.required_slots, 3);
+                    *the_task.lock().unwrap() = Some(task);
+                    let _ = modify_sync_rx.recv();
+                });
+            }));
+        }
+        modify_sync_ch.send(()).unwrap();
+        // finish subtasks
+        finish_subtasks(subtask_ch, 5);
+        let key = the_task.lock().unwrap().clone().unwrap().base.key;
+        let task2_base = testutil::wait_task_done(&c.ctx, &key);
+        assert_eq!(task2_base.state, TASK_STATE_SUCCEED);
+        assert_eq!(subtask_infos(), all([7, 7, 7, 7, 7]));
+        *tidb_dxf_scheduler::BEFORE_GET_SCHEDULABLE_TASKS.write().unwrap() = None;
+        runtime_info.reset();
+    }
+
+    // modify running task concurrency at step two
+    {
+        let (modify_sync_ch, modify_sync_rx) = crossbeam_channel::bounded::<()>(0);
+        {
+            let (once, task_mgr, runtime_info) = (std::sync::Once::new(), Arc::clone(&c.task_mgr), Arc::clone(runtime_info));
+            *tidb_dxf_scheduler::BEFORE_REFRESH_TASK.write().unwrap() = Some(Arc::new(move |task: &Task| {
+                if task.base.state != TASK_STATE_RUNNING && task.base.step != STEP_TWO {
+                    return;
+                }
+                once.call_once(|| {
+                    wait_for_running_subtask(&runtime_info);
+                    task_mgr.modify_task_by_id(task.base.id, &modify_required_slots(TASK_STATE_RUNNING, 7)).unwrap();
+                    let _ = modify_sync_rx.recv();
+                });
+            }));
+        }
+        let task = tidb_dxf_handle::submit_task("k2", &TASK_TYPE_EXAMPLE, "", 3, &scope, 0, &[]).unwrap();
+        assert_eq!(task.base.required_slots, 3);
+        // finish StepOne
+        finish_subtasks(subtask_ch, 2);
+        // wait task move to 'modifying' state
+        modify_sync_ch.send(()).unwrap();
+        // wait task move back to 'running' state
+        eventually(Duration::from_secs(10), Duration::from_millis(100), || {
+            c.task_mgr.get_task_by_id(task.base.id).unwrap().base.state == TASK_STATE_RUNNING
+        });
+        // finish StepTwo
+        finish_subtasks(subtask_ch, 3);
+        let task2_base = testutil::wait_task_done(&c.ctx, &task.base.key);
+        assert_eq!(task2_base.state, TASK_STATE_SUCCEED);
+        assert_eq!(subtask_infos(), all([3, 3, 7, 7, 7]));
+        *tidb_dxf_scheduler::BEFORE_REFRESH_TASK.write().unwrap() = None;
+        runtime_info.reset();
+    }
+
+    // modify running task concurrency at second subtask of step two
+    {
+        {
+            let (task_mgr, runtime_info) = (Arc::clone(&c.task_mgr), Arc::clone(runtime_info));
+            *tidb_dxf_taskexecutor::BEFORE_GET_TASK_BY_ID_IN_RUN.write().unwrap() = Some(Arc::new(move |task_id| {
+                if runtime_info.subtask_infos.lock().unwrap().len() == 3 {
+                    task_mgr.modify_task_by_id(task_id, &modify_required_slots(TASK_STATE_RUNNING, 7)).unwrap();
+                    // wait task move back to 'running' state
+                    eventually(Duration::from_secs(10), Duration::from_millis(100), || {
+                        task_mgr.get_task_by_id(task_id).unwrap().base.state == TASK_STATE_RUNNING
+                    });
+                }
+            }));
+        }
+        let task = tidb_dxf_handle::submit_task("k2-2", &TASK_TYPE_EXAMPLE, "", 3, &scope, 0, &[]).unwrap();
+        assert_eq!(task.base.required_slots, 3);
+        finish_subtasks(subtask_ch, 5);
+        let task2_base = testutil::wait_task_done(&c.ctx, &task.base.key);
+        assert_eq!(task2_base.state, TASK_STATE_SUCCEED);
+        assert_eq!(subtask_infos(), all([3, 3, 3, 7, 7]));
+        *tidb_dxf_taskexecutor::BEFORE_GET_TASK_BY_ID_IN_RUN.write().unwrap() = None;
+        runtime_info.reset();
+    }
+
+    // modify paused task concurrency
+    {
+        let (sync_ch, sync_rx) = crossbeam_channel::bounded::<()>(0);
+        let the_task = Arc::new(std::sync::Mutex::new(None::<Task>));
+        {
+            let (once, task_mgr, scope, the_task) =
+                (std::sync::Once::new(), Arc::clone(&c.task_mgr), scope.clone(), Arc::clone(&the_task));
+            *tidb_dxf_scheduler::BEFORE_GET_SCHEDULABLE_TASKS.write().unwrap() = Some(Arc::new(move || {
+                once.call_once(|| {
+                    let task = tidb_dxf_handle::submit_task("k3", &TASK_TYPE_EXAMPLE, "", 3, &scope, 0, &[]).unwrap();
+                    assert_eq!(task.base.required_slots, 3);
+                    assert!(task_mgr.pause_task(&task.base.key).unwrap());
+                    *the_task.lock().unwrap() = Some(task);
+                    let _ = sync_rx.recv();
+                });
+            }));
+        }
+        sync_ch.send(()).unwrap();
+        let the_task = the_task.lock().unwrap().clone().unwrap();
+        let task_base = testutil::wait_task_done_or_paused(&c.ctx, &the_task.base.key);
+        assert_eq!(task_base.state, TASK_STATE_PAUSED);
+        c.task_mgr.modify_task_by_id(the_task.base.id, &modify_required_slots(TASK_STATE_PAUSED, 7)).unwrap();
+        let task_base = testutil::wait_task_done_or_paused(&c.ctx, &the_task.base.key);
+        assert_eq!(task_base.state, TASK_STATE_PAUSED);
+        assert!(c.task_mgr.resume_task(&the_task.base.key).unwrap());
+        // finish subtasks
+        finish_subtasks(subtask_ch, 5);
+        let task2_base = testutil::wait_task_done(&c.ctx, &the_task.base.key);
+        assert_eq!(task2_base.state, TASK_STATE_SUCCEED);
+        assert_eq!(subtask_infos(), all([7, 7, 7, 7, 7]));
+        *tidb_dxf_scheduler::BEFORE_GET_SCHEDULABLE_TASKS.write().unwrap() = None;
+        runtime_info.reset();
+    }
+
+    // modify pending task concurrency, but other owner already done it
+    {
+        let (modify_sync_ch, modify_sync_rx) = crossbeam_channel::bounded::<()>(0);
+        let the_task = Arc::new(std::sync::Mutex::new(None::<Task>));
+        {
+            let (once, task_mgr, scope, the_task) =
+                (std::sync::Once::new(), Arc::clone(&c.task_mgr), scope.clone(), Arc::clone(&the_task));
+            *tidb_dxf_scheduler::BEFORE_GET_SCHEDULABLE_TASKS.write().unwrap() = Some(Arc::new(move || {
+                once.call_once(|| {
+                    let task = tidb_dxf_handle::submit_task("k4", &TASK_TYPE_EXAMPLE, "", 3, &scope, 0, &[]).unwrap();
+                    assert_eq!(task.base.required_slots, 3);
+                    task_mgr.modify_task_by_id(task.base.id, &modify_required_slots(TASK_STATE_PENDING, 7)).unwrap();
+                    let got_task = task_mgr.get_task_base_by_id(task.base.id).unwrap();
+                    assert_eq!(got_task.state, TASK_STATE_MODIFYING);
+                    assert_eq!(got_task.required_slots, 3);
+                    *the_task.lock().unwrap() = Some(task);
+                });
+            }));
+        }
+        {
+            let (once, task_mgr) = (std::sync::Once::new(), Arc::clone(&c.task_mgr));
+            *tidb_dxf_scheduler::AFTER_REFRESH_TASK.write().unwrap() = Some(Arc::new(move |task: &Task| {
+                once.call_once(|| {
+                    assert_eq!(task.base.state, TASK_STATE_MODIFYING);
+                    let mut task_clone = task.clone();
+                    task_clone.base.required_slots = 7;
+                    task_mgr.modified_task(&task_clone).unwrap();
+                    let got_task = task_mgr.get_task_base_by_id(task.base.id).unwrap();
+                    assert_eq!(got_task.state, TASK_STATE_PENDING);
+                    let _ = modify_sync_rx.recv();
+                });
+            }));
+        }
+        modify_sync_ch.send(()).unwrap();
+        // finish subtasks
+        finish_subtasks(subtask_ch, 5);
+        let key = the_task.lock().unwrap().clone().unwrap().base.key;
+        let task2_base = testutil::wait_task_done(&c.ctx, &key);
+        assert_eq!(task2_base.state, TASK_STATE_SUCCEED);
+        assert_eq!(subtask_infos(), all([7, 7, 7, 7, 7]));
+        *tidb_dxf_scheduler::BEFORE_GET_SCHEDULABLE_TASKS.write().unwrap() = None;
+        *tidb_dxf_scheduler::AFTER_REFRESH_TASK.write().unwrap() = None;
+        runtime_info.reset();
+    }
+
+    // modify pending task meta, only check the scheduler part
+    {
+        let (modify_sync_ch, modify_sync_rx) = crossbeam_channel::bounded::<()>(0);
+        let the_task = Arc::new(std::sync::Mutex::new(None::<Task>));
+        {
+            let (once, task_mgr, scope, the_task) =
+                (std::sync::Once::new(), Arc::clone(&c.task_mgr), scope.clone(), Arc::clone(&the_task));
+            *tidb_dxf_scheduler::BEFORE_GET_SCHEDULABLE_TASKS.write().unwrap() = Some(Arc::new(move || {
+                once.call_once(|| {
+                    let task = tidb_dxf_handle::submit_task("k5", &TASK_TYPE_EXAMPLE, "", 3, &scope, 0, b"init").unwrap();
+                    assert_eq!(task.base.required_slots, 3);
+                    assert_eq!(task.meta, b"init");
+                    let param = ModifyParam {
+                        prev_state: TASK_STATE_PENDING,
+                        modifications: vec![Modification { tp: MODIFY_MAX_WRITE_SPEED, to: 123 }],
+                    };
+                    task_mgr.modify_task_by_id(task.base.id, &param).unwrap();
+                    let got_task = task_mgr.get_task_base_by_id(task.base.id).unwrap();
+                    assert_eq!(got_task.state, TASK_STATE_MODIFYING);
+                    assert_eq!(got_task.required_slots, 3);
+                    *the_task.lock().unwrap() = Some(task);
+                    let _ = modify_sync_rx.recv();
+                });
+            }));
+        }
+        modify_sync_ch.send(()).unwrap();
+        // finish subtasks
+        finish_subtasks(subtask_ch, 5);
+        let key = the_task.lock().unwrap().clone().unwrap().base.key;
+        let task2_base = testutil::wait_task_done(&c.ctx, &key);
+        assert_eq!(task2_base.state, TASK_STATE_SUCCEED);
+        assert_eq!(runtime_info.meta(), b"modify_max_write_speed=123");
+        *tidb_dxf_scheduler::BEFORE_GET_SCHEDULABLE_TASKS.write().unwrap() = None;
+        runtime_info.reset();
+    }
+
+    // modify meta and increase/decrease concurrency when subtask is running, and apply success
+    for (key, slots, to_slots, speed) in [("k6", 3, 7, 123), ("k7", 9, 5, 456)] {
+        t.test_modify_when_subtask_run.store(true, Ordering::SeqCst);
+        let task = tidb_dxf_handle::submit_task(key, &TASK_TYPE_EXAMPLE, "", slots, &scope, 0, b"init").unwrap();
+        assert_eq!(task.base.required_slots, slots);
+        assert_eq!(task.meta, b"init");
+        t.modify_wait_ch.send(()).unwrap();
+        let param = ModifyParam {
+            prev_state: TASK_STATE_RUNNING,
+            modifications: vec![
+                Modification { tp: MODIFY_REQUIRED_SLOTS, to: to_slots },
+                Modification { tp: MODIFY_MAX_WRITE_SPEED, to: speed },
+            ],
+        };
+        c.task_mgr.modify_task_by_id(task.base.id, &param).unwrap();
+        let expected_meta = format!("modify_max_write_speed={speed}").into_bytes();
+        eventually(Duration::from_secs(10), Duration::from_millis(100), || {
+            runtime_info.meta() == expected_meta && runtime_info.curr_task_concurrency.load(Ordering::SeqCst) == to_slots
+        });
+        t.test_modify_when_subtask_run.store(false, Ordering::SeqCst);
+        t.modify_wait_ch.send(()).unwrap();
+        // finish subtasks
+        finish_subtasks(subtask_ch, 5);
+        let task2_base = testutil::wait_task_done(&c.ctx, &task.base.key);
+        assert_eq!(task2_base.state, TASK_STATE_SUCCEED);
+        assert_eq!(runtime_info.meta(), expected_meta);
+        assert_eq!(runtime_info.curr_task_concurrency.load(Ordering::SeqCst), to_slots);
+        runtime_info.reset();
+    }
+
+    // modify running task max node count
+    {
+        let (modify_sync_ch, modify_sync_rx) = crossbeam_channel::bounded::<()>(0);
+        {
+            let (once, task_mgr, runtime_info) = (std::sync::Once::new(), Arc::clone(&c.task_mgr), Arc::clone(runtime_info));
+            *tidb_dxf_scheduler::BEFORE_REFRESH_TASK.write().unwrap() = Some(Arc::new(move |task: &Task| {
+                if task.base.state != TASK_STATE_RUNNING && task.base.step != STEP_ONE {
+                    return;
+                }
+                once.call_once(|| {
+                    wait_for_running_subtask(&runtime_info);
+                    let param = ModifyParam {
+                        prev_state: TASK_STATE_RUNNING,
+                        modifications: vec![Modification { tp: MODIFY_MAX_NODE_COUNT, to: 200 }],
+                    };
+                    task_mgr.modify_task_by_id(task.base.id, &param).unwrap();
+                    let _ = modify_sync_rx.recv();
+                });
+            }));
+        }
+        let task = tidb_dxf_handle::submit_task("k8", &TASK_TYPE_EXAMPLE, "", 3, &scope, 1, &[]).unwrap();
+        assert_eq!(task.base.required_slots, 3);
+        assert_eq!(task.base.max_node_count, 1);
+        // finish StepOne
+        finish_subtasks(subtask_ch, 2);
+        // wait task move to 'modifying' state
+        modify_sync_ch.send(()).unwrap();
+        // wait task move back to 'running' state, and modified
+        eventually(Duration::from_secs(10), Duration::from_millis(100), || {
+            let got_task = c.task_mgr.get_task_by_id(task.base.id).unwrap();
+            got_task.base.state == TASK_STATE_RUNNING && got_task.base.max_node_count == 200
+        });
+        // finish StepTwo
+        finish_subtasks(subtask_ch, 3);
+        let task2_base = testutil::wait_task_done(&c.ctx, &task.base.key);
+        assert_eq!(task2_base.state, TASK_STATE_SUCCEED);
+        *tidb_dxf_scheduler::BEFORE_REFRESH_TASK.write().unwrap() = None;
+        runtime_info.reset();
+    }
+}
+
+/// Go `TestModifyTaskMaxNodeCountForSubtaskBalance`.
+#[test]
+fn test_modify_task_max_node_count_for_subtask_balance() {
+    let (stack, task_mgr) = store_and_task_manager();
+    let t = prepare_modify_task_test(task_mgr, 3);
+    let (c, runtime_info, subtask_ch) = (&t.c, &t.runtime_info, &t.subtask_ch);
+    let scope = tidb_dxf_handle::get_target_scope();
+
+    // modify running task max node count, task can use more node after balance
+    let (modify_sync_ch, modify_sync_rx) = crossbeam_channel::bounded::<()>(0);
+    {
+        let (once, task_mgr) = (std::sync::Once::new(), Arc::clone(&c.task_mgr));
+        *tidb_dxf_scheduler::BEFORE_REFRESH_TASK.write().unwrap() = Some(Arc::new(move |task: &Task| {
+            if task.base.state != TASK_STATE_RUNNING && task.base.step != STEP_ONE {
+                return;
+            }
+            once.call_once(|| {
+                let _ = modify_sync_rx.recv();
+                let param = ModifyParam {
+                    prev_state: TASK_STATE_RUNNING,
+                    modifications: vec![Modification { tp: MODIFY_MAX_NODE_COUNT, to: 2 }],
+                };
+                task_mgr.modify_task_by_id(task.base.id, &param).unwrap();
+                let _ = modify_sync_rx.recv();
+            });
+        }));
+    }
+    let task = tidb_dxf_handle::submit_task("k8", &TASK_TYPE_EXAMPLE, "", 3, &scope, 1, &[]).unwrap();
+    assert_eq!(task.base.required_slots, 3);
+    assert_eq!(task.base.max_node_count, 1);
+    let mut session = stack.factory.open_session(session_context(4004)).unwrap();
+    let exec_ids = |session: &mut Session| {
+        displayed(rows(
+            session,
+            &format!("select count(distinct exec_id) from mysql.tidb_background_subtask where task_key = '{}'", task.base.id),
+        ))
+    };
+    // only 1 subtask can be running at the same time
+    eventually(Duration::from_secs(10), Duration::from_millis(100), || {
+        runtime_info.active_subtask_count.load(Ordering::SeqCst) == 1
+    });
+    assert_eq!(exec_ids(&mut session), vec![vec!["1".to_owned()]]);
+    // task move to 'modifying' state
+    modify_sync_ch.send(()).unwrap();
+    modify_sync_ch.send(()).unwrap();
+    // wait task move back to 'running' state, and modified
+    eventually(Duration::from_secs(10), Duration::from_millis(100), || {
+        let got_task = c.task_mgr.get_task_by_id(task.base.id).unwrap();
+        got_task.base.state == TASK_STATE_RUNNING && got_task.base.max_node_count == 2
+    });
+    // now 2 subtask can be running at the same time
+    eventually(Duration::from_secs(10), Duration::from_millis(100), || {
+        runtime_info.active_subtask_count.load(Ordering::SeqCst) == 2
+    });
+    assert_eq!(exec_ids(&mut session), vec![vec!["2".to_owned()]]);
+    // finish StepOne
+    finish_subtasks(subtask_ch, 2);
+    // finish StepTwo
+    finish_subtasks(subtask_ch, 3);
+    let task2_base = testutil::wait_task_done(&c.ctx, &task.base.key);
+    assert_eq!(task2_base.state, TASK_STATE_SUCCEED);
+    *tidb_dxf_scheduler::BEFORE_REFRESH_TASK.write().unwrap() = None;
+}

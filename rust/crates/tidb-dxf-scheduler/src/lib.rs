@@ -45,6 +45,6 @@ pub use scheduler::{
     set_mock_server_info, CallHook, AFTER_REFRESH_TASK, BEFORE_REFRESH_TASK, CANCEL_BEFORE_UPDATE_TASK, MOCK_OWNER_CHANGE, MOCK_SERVER_INFO,
 };
 #[cfg(any(test, feature = "failpoints"))]
-pub use scheduler_manager::{HISTORY_SUBTASK_TABLE_GC_INTERVAL, PROCESS_CLEANUP_TASK_BATCH, WAIT_CLEAN_UP_FINISHED};
+pub use scheduler_manager::{BEFORE_GET_SCHEDULABLE_TASKS, HISTORY_SUBTASK_TABLE_GC_INTERVAL, PROCESS_CLEANUP_TASK_BATCH, WAIT_CLEAN_UP_FINISHED};
 pub use slots::SlotManager;
 pub use state_transform::verify_task_state_transform;

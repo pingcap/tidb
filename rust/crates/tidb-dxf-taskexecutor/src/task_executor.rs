@@ -51,6 +51,10 @@ fn call_hook<F: ?Sized>(hook: &CallHook<F>, call: impl FnOnce(&F)) {
 pub static AFTER_RUN_SUBTASK: CallHook<dyn Fn(&BaseTaskExecutor, &mut Option<Error>, &Context) + Send + Sync> =
     RwLock::new(None);
 
+/// Go's `beforeGetTaskByIDInRun` call-failpoint, which receives the task ID.
+#[cfg(any(test, feature = "failpoints"))]
+pub static BEFORE_GET_TASK_BY_ID_IN_RUN: CallHook<dyn Fn(i64) + Send + Sync> = RwLock::new(None);
+
 /// Go's `mockTiDBShutdown` call-failpoint: the executor, its node's exec ID
 /// and the task, after each subtask runs.
 #[cfg(any(test, feature = "failpoints"))]
@@ -452,6 +456,8 @@ impl BaseTaskExecutor {
             }
             skip_backoff = false;
             let old_task = self.get_task();
+            #[cfg(any(test, feature = "failpoints"))]
+            call_hook(&BEFORE_GET_TASK_BY_ID_IN_RUN, |hook| hook(old_task.base.id));
             let new_task = match self.param.task_table.get_task_by_id(old_task.base.id) {
                 Ok(task) => task,
                 Err(err) if err.is(&StorageError::TaskNotFound) => return,
