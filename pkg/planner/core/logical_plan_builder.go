@@ -6009,8 +6009,7 @@ func pruneAndBuildColPositionInfoForDelete(
 	})
 	nonPruned := bitset.New(uint(len(names)))
 	nonPruned.SetAll()
-	// Drop _tidb_commit_ts from the delete row image. It is not a stored column.
-	// Filters built above this projection, including materialized view log purge, still see it.
+	// Always prune the `_tidb_commit_ts` column.
 	for i, name := range names {
 		if name.ColName.L == model.ExtraCommitTSName.L {
 			nonPruned.Clear(uint(i))

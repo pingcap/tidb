@@ -240,8 +240,14 @@ type preprocessor struct {
 	flag   preprocessorFlag
 	stmtTp byte
 	showTp ast.ShowStmtType
-	// commitTSStmtStack is the DML statement nesting for _tidb_commit_ts checks.
-	// It is independent of stmtTp, which inner statements overwrite and do not restore.
+	// commitTSStmtStack records the nesting of DML statements while checking
+	// _tidb_commit_ts references. It must be kept separately from stmtTp because
+	// stmtTp is overwritten by an inner statement and is not restored when that
+	// statement is left. For example, while preprocessing
+	// `UPDATE t SET a = (SELECT 1) WHERE _tidb_commit_ts > 0`, the inner SELECT
+	// changes stmtTp to TypeSelect. The stack records [TypeUpdate, TypeSelect]
+	// inside the subquery and [TypeUpdate] again after leaving it, so the
+	// _tidb_commit_ts reference in the outer UPDATE is still rejected.
 	commitTSStmtStack []byte
 
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
