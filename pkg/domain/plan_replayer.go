@@ -575,14 +575,13 @@ type PlanReplayerDumpTask struct {
 	TblStats map[int64]any
 
 	// variables used to dump the plan
-	StartTS           uint64
-	SessionBindings   [][]*bindinfo.Binding
-	EncodedPlan       string
-	SessionVars       *variable.SessionVars
-	ExecStmts         []ast.StmtNode
-	Analyze           bool
-	HistoricalStatsTS uint64
-	DebugTrace        []any
+	StartTS         uint64
+	SessionBindings [][]*bindinfo.Binding
+	EncodedPlan     string
+	SessionVars     *variable.SessionVars
+	ExecStmts       []ast.StmtNode
+	Analyze         bool
+	DebugTrace      []any
 
 	FileName     string
 	PresignedURL string

@@ -141,6 +141,11 @@ func TestPlanReplayer(t *testing.T) {
 	tk.MustQuery("plan replayer dump explain select * from v2")
 	require.True(t, len(tk.Session().GetSessionVars().LastPlanReplayerToken) > 0)
 
+	// Keep accepting the legacy syntax, but reject its execution because the
+	// historical statistics feature has been removed.
+	tk.MustGetErrMsg("plan replayer dump with stats as of timestamp '2023-06-28 12:34:00' explain select * from t where a=10",
+		"WITH STATS AS OF TIMESTAMP is no longer supported because the historical statistics feature has been removed; remove the clause to dump the current statistics")
+
 	// clear the status table and assert
 	tk.MustExec("delete from mysql.plan_replayer_status")
 	tk.MustQuery("plan replayer dump explain select * from v2")
