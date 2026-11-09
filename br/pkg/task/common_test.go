@@ -251,6 +251,7 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 	defaultConfig.Concurrency = defaultRestoreConcurrency
 	return RestoreConfig{
 		Config: defaultConfig,
+<<<<<<< HEAD
 		RestoreCommonConfig: RestoreCommonConfig{Online: false,
 			MergeSmallRegionSizeBytes: 0x6000000,
 			MergeSmallRegionKeyCount:  0xea600,
@@ -262,6 +263,33 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 		DdlBatchSize:        0x80,
 		WithPlacementPolicy: "STRICT",
 		UseCheckpoint:       true,
+=======
+		RestoreCommonConfig: RestoreCommonConfig{
+			Online:                    false,
+			Granularity:               "coarse-grained",
+			ConcurrencyPerStore:       kvconfig.ConfigTerm[uint]{Value: conn.DefaultImportNumGoroutines},
+			MergeSmallRegionSizeBytes: kvconfig.ConfigTerm[uint64]{Value: 0x6000000},
+			MergeSmallRegionKeyCount:  kvconfig.ConfigTerm[uint64]{Value: 0xea600},
+			WithSysTable:              true,
+			ResetSysUsers:             []string{"cloud_admin", "root"},
+			SysCheckCollation:         true,
+		},
+		NoSchema:                 false,
+		Rename:                   []string{},
+		LoadStats:                true,
+		FastLoadSysTables:        true,
+		PDConcurrency:            0x1,
+		StatsConcurrency:         0xc,
+		BatchFlushInterval:       16000000000,
+		DdlBatchSize:             0x80,
+		RegionScanConcurrency:    256,
+		WithPlacementPolicy:      "STRICT",
+		Layout:                   repo.LayoutLegacy,
+		UseCheckpoint:            true,
+		AllowPITRFromIncremental: true,
+		nameRouter:               emptyRouter,
+		nameRouterRules:          []string{},
+>>>>>>> 4a1d652c2f7 (br: set sys check collation true in default (#70309) (#70314))
 	}
 }
 
