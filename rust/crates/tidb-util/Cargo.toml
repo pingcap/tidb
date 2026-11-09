@@ -17,6 +17,9 @@ tidb-parser = { path = "../tidb-parser" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-errno = { path = "../tidb-errno" }
 tidb-datatype = { path = "../tidb-datatype" }
+tidb-model = { path = "../tidb-model" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-proto = { path = "../tidb-proto" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-metrics = { path = "../tidb-metrics" }

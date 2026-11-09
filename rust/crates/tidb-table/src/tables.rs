@@ -47,6 +47,7 @@ pub mod partition_reorg;
 pub use partition_reorg::{PartitionDoubleWrite, PartitionIndexMode};
 use tidb_hack::GoCaseCompare;
 pub mod row_decoder;
+pub mod scan_from_infos;
 pub mod state_remote;
 pub mod table_meta;
 

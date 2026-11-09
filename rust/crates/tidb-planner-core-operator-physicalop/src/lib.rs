@@ -1172,6 +1172,10 @@ pub fn exhaust_physical_plans_4_logical_limit(
 pub struct PhysicalTableScan {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
+    /// Go `Table`: the scanned table's `*model.TableInfo`.
+    pub table: Option<tidb_model::GoShared<tidb_model::TableInfo>>,
+    /// Go `Columns`: the scanned columns' `*model.ColumnInfo`s.
+    pub columns: Vec<tidb_model::GoShared<tidb_model::ColumnInfo>>,
     /// Go `Table.ID`.
     pub table_id: i64,
     /// Go `TableAsName`: the query-visible alias, when one was written.
@@ -4899,6 +4903,8 @@ impl PhysicalPlan {
                 prefix_len: op.prefix_len,
             }),
             Self::TableScan(op) => Self::TableScan(PhysicalTableScan {
+                table: op.table.clone(),
+                columns: op.columns.clone(),
                 group_by_col_idxs: op.group_by_col_idxs.clone(),
                 by_items: op.by_items.clone(),
                 base: base_of(&op.base),

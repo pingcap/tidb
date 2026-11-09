@@ -44,6 +44,7 @@ tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-model = { path = "../tidb-model" }
+tidb-proto = { path = "../tidb-proto" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-txnkv = { path = "../tidb-txnkv" }

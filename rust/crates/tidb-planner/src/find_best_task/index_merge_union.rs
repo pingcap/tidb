@@ -483,6 +483,8 @@ pub(super) fn build_converged_union_index_merge_task(
                 .set_schema(Some(tidb_expr::schema::Schema::new(schema_columns)));
             partial_plans_raw.push(PhysicalPlan::TableScan(
                 tidb_planner_core_operator_physicalop::PhysicalTableScan {
+                    table: ds.table_info.clone(),
+                    columns: ds.columns.clone(),
                     by_items: Vec::new(),
                     group_by_col_idxs: groups.clone(),
                     base,
@@ -623,6 +625,8 @@ pub(super) fn build_converged_union_index_merge_task(
         )));
         Box::new(PhysicalPlan::TableScan(
             tidb_planner_core_operator_physicalop::PhysicalTableScan {
+                table: ds.table_info.clone(),
+                columns: ds.columns.clone(),
                 by_items: Vec::new(),
                 group_by_col_idxs: Vec::new(),
                 base,
