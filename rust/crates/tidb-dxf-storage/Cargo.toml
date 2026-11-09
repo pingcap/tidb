@@ -12,11 +12,16 @@ workspace = true
 
 [dependencies]
 chrono.workspace = true
+serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-dxf = { path = "../tidb-dxf" }
 tidb-dxf-execute = { path = "../tidb-dxf-execute" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-stringutil = { path = "../tidb-stringutil" }
 tidb-syssession = { path = "../tidb-syssession" }
+tidb-terror = { path = "../tidb-terror" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-vardef = { path = "../tidb-vardef" }
 tracing = "0.1"

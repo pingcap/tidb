@@ -24,7 +24,7 @@ use tidb_dxf::{
 use tidb_dxf_execute::SubtaskSummary;
 use tidb_sqlexec::BackgroundContext;
 
-use crate::converter::{get_bytes, get_int64, get_json_string, get_string, is_null, row2_basic_sub_task, TaskError};
+use crate::converter::{get_bytes, get_int64, get_json_string, get_string, is_null, row2_basic_sub_task};
 use crate::task_table::{sql_args, Arg};
 use crate::{exec_sql, row2_sub_task, task_id_to_key, Result, StorageError, TaskManager, BASIC_SUBTASK_COLUMNS, SUBTASK_COLUMNS};
 
@@ -36,11 +36,9 @@ fn unmarshal_subtask_error(err_bytes: &[u8], null: bool) -> Result<Option<Subtas
     if null || err_bytes.is_empty() {
         return Ok(None);
     }
-    // Go's `*errors.Error` marshals its message under "message".
-    let value: serde_json::Value =
+    let std_err: tidb_terror::TerrorError =
         serde_json::from_slice(err_bytes).map_err(|error| StorageError::Other(error.to_string()))?;
-    let message = value.get("message").and_then(serde_json::Value::as_str).unwrap_or_default().to_owned();
-    Ok(Some(std::sync::Arc::new(TaskError(message))))
+    Ok(Some(std::sync::Arc::new(std_err)))
 }
 
 fn subtask_state_args(states: &[SubtaskState]) -> Vec<Arg> {

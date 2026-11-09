@@ -27,7 +27,7 @@ mod task_table;
 pub use converter::{row2_sub_task, row2_task, task_id_to_key};
 pub use nodes::{get_dxf_cpu_count, get_node_resource, set_node_resource};
 pub use subtask_table::SubtaskError;
-pub use task_table::TaskExecInfo;
+pub use task_table::{ActiveTaskSummary, TaskExecInfo};
 
 use std::sync::Arc;
 
@@ -72,10 +72,33 @@ pub enum StorageError {
     /// An error the session or the SQL layer returned, or Go's
     /// `errors.Errorf` text.
     Other(String),
+    /// Go `errors.Annotate(cause, message)`: the message in front of its
+    /// cause, which Go's `errors.Is` still finds.
+    Annotated(Box<StorageError>, String),
+}
+
+impl StorageError {
+    /// Go `errors.Annotate` / `errors.Annotatef`.
+    #[must_use]
+    pub fn annotate(cause: Self, message: impl Into<String>) -> Self {
+        Self::Annotated(Box::new(cause), message.into())
+    }
+
+    /// Go `errors.Is(err, target)` over the annotations.
+    #[must_use]
+    pub fn is(&self, target: &Self) -> bool {
+        match self {
+            Self::Annotated(cause, _) => self == target || cause.is(target),
+            _ => self == target,
+        }
+    }
 }
 
 impl std::fmt::Display for StorageError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Self::Annotated(cause, message) = self {
+            return write!(f, "{message}: {cause}");
+        }
         f.write_str(match self {
             Self::UnstableSubtasks => "unstable subtasks",
             Self::TaskNotFound => "task not found",
@@ -83,12 +106,19 @@ impl std::fmt::Display for StorageError {
             Self::TaskStateNotAllow => "task state not allow to do the operation",
             Self::TaskChanged => "task changed by other operation",
             Self::SubtaskNotFound => "subtask not found",
-            Self::Other(message) => message,
+            Self::Other(message) | Self::Annotated(_, message) => message,
         })
     }
 }
 
-impl std::error::Error for StorageError {}
+impl std::error::Error for StorageError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Annotated(cause, _) => Some(cause.as_ref()),
+            _ => None,
+        }
+    }
+}
 
 impl From<tidb_sqlexec::SqlExecError> for StorageError {
     fn from(error: tidb_sqlexec::SqlExecError) -> Self {
@@ -116,6 +146,16 @@ pub trait SessionContext: tidb_syssession::SessionContext {
     fn set_txn_entry_size_limit(&self, limit: u64);
     /// Go `vardef.TxnEntrySizeLimit.Load()`, the global value.
     fn global_txn_entry_size_limit(&self) -> u64;
+    /// Go `GetSessionVars().StmtCtx.AffectedRows()`: the rows the last
+    /// statement changed.
+    fn affected_rows(&self) -> u64;
+    /// Go `GetSessionVars().MemQuotaQuery`.
+    fn mem_quota_query(&self) -> i64;
+    /// Go `GetSessionVars().SetSystemVar(name, value)`.
+    ///
+    /// # Errors
+    /// The variable rejects the value.
+    fn set_system_var(&self, name: &str, value: &str) -> Result<()>;
 }
 
 /// Go `TaskManager`: the manager of tasks and subtasks.

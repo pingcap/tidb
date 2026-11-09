@@ -4692,13 +4692,18 @@ name = "tidb-dxf-storage"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "serde",
  "serde_json",
  "tidb-datatype",
  "tidb-dxf",
  "tidb-dxf-execute",
  "tidb-sqlescape",
  "tidb-sqlexec",
+ "tidb-stringutil",
  "tidb-syssession",
+ "tidb-terror",
+ "tidb-txnkv",
+ "tidb-vardef",
  "tracing",
 ]
 

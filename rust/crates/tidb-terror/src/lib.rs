@@ -65,6 +65,8 @@ pub struct TerrorError {
     message: Cow<'static, str>,
     redact_arg_pos: &'static [usize],
     stack: Option<Arc<Backtrace>>,
+    /// Source `cause`, set by `Wrap`.
+    cause: Option<Arc<dyn Error + Send + Sync>>,
 }
 
 impl TerrorError {
@@ -76,6 +78,7 @@ impl TerrorError {
             message: Cow::Owned(message.into()),
             redact_arg_pos: &[],
             stack: None,
+            cause: None,
         }
     }
 
@@ -89,6 +92,7 @@ impl TerrorError {
             message: Cow::Owned(message.into()),
             redact_arg_pos: &[],
             stack: None,
+            cause: None,
         }
     }
 
@@ -102,6 +106,7 @@ impl TerrorError {
             message: Cow::Borrowed(message.raw),
             redact_arg_pos: message.redact_arg_pos,
             stack: None,
+            cause: None,
         }
     }
 
@@ -125,6 +130,23 @@ impl TerrorError {
             message: Cow::Owned(message.into()),
             redact_arg_pos: &[],
             stack: None,
+            cause: None,
+        }
+    }
+
+    /// Source `errors.Normalize(message, errors.RFCCodeText(rfc_code),
+    /// errors.MySQLErrorCode(code))`: an unregistered error with the given
+    /// identity text and code.
+    pub fn normalize(message: impl Into<String>, rfc_code: impl Into<String>, code: TerrorCode) -> Self {
+        let rfc_code = rfc_code.into();
+        let class = class_for_rfc_code(&rfc_code).unwrap_or_else(|| TerrorClass::from_value(0));
+        Self {
+            identity: TerrorIdentity::new(class, code),
+            rfc_code: Cow::Owned(rfc_code),
+            message: Cow::Owned(message.into()),
+            redact_arg_pos: &[],
+            stack: None,
+            cause: None,
         }
     }
 
@@ -136,7 +158,16 @@ impl TerrorError {
             message: Cow::Owned(message.into()),
             redact_arg_pos: self.redact_arg_pos,
             stack: None,
+            cause: self.cause.clone(),
         }
+    }
+
+    /// Source `Wrap`: a copy of the error with `err` as its cause.
+    #[must_use]
+    pub fn wrap(&self, err: Arc<dyn Error + Send + Sync>) -> Self {
+        let mut new_err = self.clone();
+        new_err.cause = Some(err);
+        new_err
     }
 
     /// Source `GenWithStack`, using Rust's native captured backtrace.
@@ -219,7 +250,7 @@ impl TerrorError {
         other
             .map(root_cause)
             .and_then(|other| other.downcast_ref::<Self>())
-            .is_some_and(|other| self.error_id() == other.error_id())
+            .is_some_and(|other| self.id() == other.id())
     }
 
     /// Source `ToSQLError`. Synthesized/unregistered identities deliberately
@@ -245,7 +276,9 @@ impl TerrorError {
         u16::try_from(self.code().value()).unwrap_or(errcode::ErrUnknown)
     }
 
-    fn error_id(&self) -> Cow<'_, str> {
+    /// Source `ID` (and `RFCCode`): the RFC code text, or the code when the
+    /// error has none.
+    pub fn id(&self) -> Cow<'_, str> {
         if self.rfc_code.is_empty() {
             Cow::Owned(self.code().value().to_string())
         } else {
@@ -256,7 +289,7 @@ impl TerrorError {
 
 impl PartialEq for TerrorError {
     fn eq(&self, other: &Self) -> bool {
-        self.error_id() == other.error_id()
+        self.id() == other.id()
     }
 }
 
@@ -269,11 +302,70 @@ impl fmt::Display for TerrorError {
         } else {
             self.rfc_code.to_string()
         };
-        write!(formatter, "[{identity}]{}", self.message)
+        write!(formatter, "[{identity}]{}", self.message)?;
+        if let Some(cause) = &self.cause {
+            write!(formatter, ": {cause}")?;
+        }
+        Ok(())
     }
 }
 
-impl Error for TerrorError {}
+impl Error for TerrorError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.cause.as_deref().map(|cause| cause as &(dyn Error + 'static))
+    }
+}
+
+/// Source `errors.Annotate`'s `withMessage`: a message in front of its cause.
+#[derive(Debug, Clone)]
+pub struct WithMessage {
+    cause: Arc<dyn Error + Send + Sync>,
+    msg: String,
+}
+
+impl fmt::Display for WithMessage {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}: {}", self.msg, self.cause)
+    }
+}
+
+impl Error for WithMessage {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&*self.cause)
+    }
+}
+
+/// Source `errors.Annotate`: `err` with `message` in front of it.
+pub fn annotate(err: Arc<dyn Error + Send + Sync>, message: impl Into<String>) -> WithMessage {
+    WithMessage {
+        cause: err,
+        msg: message.into(),
+    }
+}
+
+/// Source `errors.GetErrStackMsg`: the messages along the error chain
+/// without their error codes, joined by ": ".
+pub fn get_err_stack_msg(err: Option<&(dyn Error + 'static)>) -> String {
+    let Some(err) = err else {
+        return String::new();
+    };
+    // Go's `messenger`s: `*Error` and `withMessage`.
+    let msg = if let Some(t_err) = err.downcast_ref::<TerrorError>() {
+        t_err.message()
+    } else if let Some(with_message) = err.downcast_ref::<WithMessage>() {
+        &with_message.msg
+    } else {
+        return err.to_string();
+    };
+    let cause_msg = get_err_stack_msg(err.source());
+    if msg.is_empty() {
+        cause_msg
+    } else if cause_msg.is_empty() {
+        msg.to_owned()
+    } else {
+        format!("{msg}: {cause_msg}")
+    }
+}
 
 #[derive(Serialize)]
 struct CompatibleJsonRef<'a> {
@@ -337,6 +429,7 @@ impl<'de> Deserialize<'de> for TerrorError {
             message: Cow::Owned(compatible.message.unwrap_or_default()),
             redact_arg_pos: &[],
             stack: None,
+            cause: None,
         })
     }
 }
@@ -377,9 +470,8 @@ fn legacy_rfc_class(class: isize) -> Option<&'static str> {
 }
 
 fn legacy_class_for_rfc(rfc_code: &str) -> isize {
-    let Some((class, _)) = rfc_code.split_once(':') else {
-        return 0;
-    };
+    // Go `strings.Split(string(e.codeText), ":")[0]`.
+    let class = rfc_code.split(':').next().unwrap_or_default();
     (1_isize..=27)
         .find(|candidate| legacy_rfc_class(*candidate) == Some(class))
         .unwrap_or(0)
@@ -420,7 +512,7 @@ pub fn terror_error_equal(
         left.downcast_ref::<TerrorError>(),
         right.downcast_ref::<TerrorError>(),
     ) {
-        (Some(left), Some(right)) => left.error_id() == right.error_id(),
+        (Some(left), Some(right)) => left.id() == right.id(),
         _ => left.to_string() == right.to_string(),
     }
 }

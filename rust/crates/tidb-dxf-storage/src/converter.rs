@@ -102,8 +102,8 @@ pub(crate) fn row2_task_basic(r: &[Datum]) -> TaskBase {
     }
 }
 
-/// A task's stored error (Go `errors.Normalize("")` read back from its
-/// JSON, or the raw text when that fails).
+/// Go `errors.New(text)`: a stored error that is not Go's `*errors.Error`
+/// JSON, kept as its raw text.
 #[derive(Debug)]
 pub struct TaskError(pub String);
 
@@ -115,25 +115,19 @@ impl std::fmt::Display for TaskError {
 
 impl std::error::Error for TaskError {}
 
-/// Go `row2TaskError`.
+/// Go `row2TaskError`: Go's `*errors.Error` read back from its JSON.
 fn row2_task_error(r: &[Datum], idx: usize) -> Option<std::sync::Arc<dyn std::error::Error + Send + Sync>> {
     if is_null(r, idx) {
         return None;
     }
-    let bytes = get_bytes(r, idx);
-    // Go's `*errors.Error` marshals its message under "message".
-    let message = match serde_json::from_slice::<serde_json::Value>(&bytes) {
-        Ok(value) => value
-            .get("message")
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_owned)
-            .unwrap_or_default(),
+    let err_bytes = get_bytes(r, idx);
+    match serde_json::from_slice::<tidb_terror::TerrorError>(&err_bytes) {
+        Ok(std_err) => Some(std::sync::Arc::new(std_err)),
         Err(error) => {
             tracing::error!(%error, "unmarshal task error");
-            String::from_utf8_lossy(&bytes).into_owned()
+            Some(std::sync::Arc::new(TaskError(String::from_utf8_lossy(&err_bytes).into_owned())))
         }
-    };
-    Some(std::sync::Arc::new(TaskError(message)))
+    }
 }
 
 /// Go `Row2Task`.
