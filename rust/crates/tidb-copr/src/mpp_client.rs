@@ -1110,7 +1110,7 @@ mod dispatch_context_tests {
 #[cfg(test)]
 mod mpp_read_batch_tests {
     use super::*;
-    use tidb_executor::mpp_coordinator::{ExecutorWithRetry, MppTaskResponses};
+    use tidb_executor::mpp_coordinator::{ExecutorWithRetry, MppGatherResponse, MppTaskResponses};
     use tidb_txnkv::Response as _;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
@@ -1694,10 +1694,10 @@ mod mpp_read_batch_tests {
         let next_fixture = fixture.clone();
         let next_memory = memory.clone();
         let mut response = ExecutorWithRetry::new(
-            MppTaskResponses {
+            Box::new(MppTaskResponses {
                 streams: [Box::new(initial) as Box<dyn MppStreamResponse>].into(),
                 node_count: 1,
-            },
+            }),
             true,
             memory.clone(),
             Box::new(move || {
@@ -1705,10 +1705,10 @@ mod mpp_read_batch_tests {
                 let raw = next_fixture
                     .open_with_memory(next_memory.clone())
                     .map_err(QueryResponseError::Source)?;
-                Ok(MppTaskResponses {
+                Ok(Box::new(MppTaskResponses {
                     streams: [Box::new(raw) as Box<dyn MppStreamResponse>].into(),
                     node_count: 1,
-                })
+                }) as Box<dyn MppGatherResponse>)
             }),
             Box::new(|nodes| {
                 assert_eq!(nodes, 1);
@@ -1733,10 +1733,10 @@ mod mpp_read_batch_tests {
         let memory = tidb_variable::mem_quota::StatementMemory::default();
         let raw = fixture.open_with_memory(memory.clone()).unwrap();
         let mut response = ExecutorWithRetry::new(
-            MppTaskResponses {
+            Box::new(MppTaskResponses {
                 streams: [Box::new(raw) as Box<dyn MppStreamResponse>].into(),
                 node_count: 1,
-            },
+            }),
             true,
             memory.clone(),
             Box::new(|| panic!("no retry")),
