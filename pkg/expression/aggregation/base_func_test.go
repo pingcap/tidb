@@ -244,3 +244,19 @@ func TestBaseFunc_InferMaxMinCountRetType(t *testing.T) {
 		}
 	}
 }
+
+func TestWindowFuncOverEnumOrSetKeepsArgumentCollation(t *testing.T) {
+	ctx := mock.NewContext()
+	for _, tp := range []byte{mysql.TypeEnum, mysql.TypeSet} {
+		argTp := types.NewFieldTypeBuilder().SetType(tp).SetElems([]string{"X", "y"}).
+			SetCharset(charset.CharsetUTF8MB4).SetCollate("utf8mb4_0900_ai_ci").BuildP()
+		args := []expression.Expression{&expression.Column{UniqueID: 0, RetType: argTp}}
+		for _, name := range []string{ast.WindowFuncFirstValue, ast.WindowFuncLastValue, ast.WindowFuncLag, ast.WindowFuncLead} {
+			desc, err := NewWindowFuncDesc(ctx, name, args, false)
+			require.NoError(t, err)
+			require.Equal(t, mysql.TypeString, desc.RetTp.GetType(), name)
+			require.Equal(t, charset.CharsetUTF8MB4, desc.RetTp.GetCharset(), name)
+			require.Equal(t, "utf8mb4_0900_ai_ci", desc.RetTp.GetCollate(), name)
+		}
+	}
+}
