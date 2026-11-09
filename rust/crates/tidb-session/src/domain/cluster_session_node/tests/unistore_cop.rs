@@ -52,6 +52,7 @@ mod dxf_integrationtests;
 mod dxf_scheduler;
 mod dxf_taskexecutor;
 mod mpp_to_pb;
+mod mpp_execution;
 
 pub(super) fn cop_backed_stack() -> (UnistoreClusterStack, Arc<ConfiguredUserStore>) {
     cop_backed_stack_with_stats_lease(None)

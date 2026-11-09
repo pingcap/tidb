@@ -73,8 +73,10 @@ the unistore stack.
   (2026-11-10): `Fragment.init`, the untwist, `buildFragments`, and the
   generator (`GenerateRootMPPTasks`, `generateMPPTasksForFragment`,
   `constructMPPTasksByChildrenTasks`, `constructMPPTasksImpl`) over
-  `MppTaskGeneratorContext`; left: the context's implementation over the
-  session (ranges, pruning, the MPP client) and the MPP CTE pieces.
+  `MppTaskGeneratorContext`; the context over the session (2026-11-10,
+  `tidb-executor` `local_mpp_coordinator.rs`: `TableHandleRangesToKVRanges`,
+  the MPP client, task ids, MPP version, dynamic prune). Left: its
+  `partitionPruning` (refused by name) and the MPP CTE pieces.
 - [ ] Milestone 3: the embedded store's MPP. Scope found 2026-11-10: the
   Rust embedded store serves no MPP at all (`tidb-unistore` `rpc.rs` answers
   MPP commands "not support") and its cluster has no TiFlash store, so this
@@ -101,10 +103,47 @@ the unistore stack.
   `executor_with_retry.go`, `recovery_handler.go`, `pkg/executor/mpp_gather.go`)
   replacing the single-fragment lowering: the reader keeps its physical plan,
   the coordinator dispatches every fragment's tasks and reads the root's.
+  Done (2026-11-10): `localMppCoordinator` (`Execute`, `appendMPPDispatchReq`
+  over `ConstructDAGReq`, `dispatchAll` / `handleDispatchReq` /
+  `receiveResults` on threads, `respChan`, kill checks every 3 s, cancel on
+  close) and `UpdateExecutorTableID` in `local_mpp_coordinator.rs`;
+  `MPPGather` and `useMPPExecution` in `mpp_gather.rs` under the existing
+  `ExecutorWithRetry`; `buildTableReader` routes MPP readers to it; the
+  embedded node now has Go mockstore's `GetMPPClient` (copr's `MPPClient`
+  over the unistore RPC client). Go `TestMppExecution`, `TestReadUnsigedPK`,
+  `TestJoinRace`, `TestInjectExtraProj`, `TestMppEnum`, `TestMppUnionAll`
+  (less its task-count failpoint), `TestUnionWithEmptyDualTable`,
+  `TestAvgOverflow` and `TestMppApply` pass on mock TiFlash stores
+  (`unistore_cop/mpp_execution.rs`); the builder's interim local
+  ExchangeSender / ExchangeReceiver arms are gone (Go has none). Left: the coordinator
+  manager (`mppcoordmanager`, task-status reports), zone helper, virtual
+  columns over the gather, and retiring the single-fragment path
+  (`mpp_coordinator.rs`'s `open_mpp_scan`, the builder's interim local
+  ExchangeSender / ExchangeReceiver arms).
 - [ ] Milestone 5: Go's `tiflashtest` tests on the unistore stack, and the
   register (M01 closed; M04's remainder restated).
 
 ## Surprises & Discoveries
+
+- 2026-11-10: the first end-to-end run found three port bugs the unit tests
+  had not: Rust `HandleMPPDAGReq` went through `buildDAG` and refused a
+  receiver-only task's empty ranges (Go never calls `buildDAG` there);
+  `aggExec.processAllRows` lacked Go's decimal-to-BIGINT conversion of the
+  final count's `sum`; and `getGroupKey` / `useDefaultEncoding` /
+  `toTiPBChunk` failed on the decimal truncation Go's `sc.HandleError`
+  downgrades (Go's `EncodeValue` answers bytes and error together; the
+  codec now has that shape, `encode_value_in_timezone_with_error`).
+- 2026-11-10, from the next Go tests: Go's MPP `tableScanExec` reads through
+  `dbreader.DBReader.Scan`, which never consults the lock store (only the
+  coprocessor path checks locks); the Rust reader went through
+  `MVCCStore.Scan`'s lock collection and aborted on an async-commit
+  secondary (`MvccStore::db_reader_scan` now). Go casts arithmetic operands
+  in the function class (`newBaseBuiltinFuncWithTp`), so the planner's
+  `NewFunctionInternal(ast.Div, ...)` (avg -> sum / count) gets
+  `cast(case(...) as decimal)`; Rust cast them only in the AST rewriter
+  (`wrap_arithmetic_operands`, now shared with `new_function`). And `ToPB`
+  must read correlated columns' current values (`conOrCorColToPBExpr`):
+  an Apply's inner MPP reader re-dispatches per outer row.
 
 - 2026-11-10: the planner side is already Go's (multi-fragment EXPLAIN);
   `pkg/store/copr/mpp.go` is ported (`tidb-copr` `mpp_client.rs`). The

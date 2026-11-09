@@ -75,11 +75,18 @@ impl MppVersion {
 pub trait MppTaskLocation: std::fmt::Debug + Send + Sync {
     /// Go `GetAddress`: the TiFlash address.
     fn address(&self) -> &str;
+    /// The concrete location, as Go's `DispatchMPPTask` asserts
+    /// `req.Meta.(*batchCopTask)`.
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 impl<T: MppTaskLocation + ?Sized> MppTaskLocation for Arc<T> {
     fn address(&self) -> &str {
         (**self).address()
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        (**self).as_any()
     }
 }
 
@@ -97,6 +104,10 @@ pub struct MppQueryId {
 impl MppTaskLocation for MppTaskMeta {
     fn address(&self) -> &str {
         &self.address
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -283,6 +294,10 @@ pub struct MppStoreTask {
 impl MppTaskLocation for MppStoreTask {
     fn address(&self) -> &str {
         &self.address
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

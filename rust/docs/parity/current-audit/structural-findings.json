@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 29,
-    "open": 5,
-    "partial": 24
+    "open": 4,
+    "partial": 25
   },
   "findings": [
     {
@@ -131,10 +131,10 @@
     },
     {
       "id": "M01",
-      "status": "open",
+      "status": "partial",
       "group": "TiFlash and MPP",
-      "finding": "The MPP coordinator lowers a hand-built single-fragment scan DAG and refuses every pushed Selection, TopN and aggregation, where Go builds the fragment/task graph from the physical plan (including disaggregated compute placement)",
-      "go_owner": "`pkg/planner/core` (MPP fragments), `pkg/executor/mpp_gather.go`, `pkg/store/copr/mpp.go`"
+      "finding": "An MPP reader runs as Go's `MPPGather` over Go's local coordinator (`tidb-executor` `mpp_gather.rs`, `local_mpp_coordinator.rs`): the planner's fragments (`GenerateRootMPPTasks`), each fragment's `ToPB` DAG dispatched to its tasks, the root tasks' packets received; the embedded store serves Go's MPP tasks, tunnels and exchange/join executors, and nine of Go's `tiflashtest` tests pass on mock TiFlash stores (`TestMppExecution`, `TestReadUnsigedPK`, `TestJoinRace`, `TestInjectExtraProj`, `TestMppEnum`, `TestMppUnionAll`, `TestUnionWithEmptyDualTable`, `TestAvgOverflow`, `TestMppApply`; `unistore_cop/mpp_execution.rs`). Left: the generator's `partitionPruning` (Go `partitionpruning.PartitionPruning` has no port; a dynamically pruned partitioned MPP read is refused by name), the MPP CTE operators, `Expand` / local index lookup in `ToPB` and the store, virtual columns over the gather, the dispatch meta's SQL and plan digests, and the single-fragment lowering (`mpp_coordinator.rs` `open_mpp_scan`) a non-MPP TiFlash read still takes where Go reads TiFlash through batch-cop or cop (no batch-cop client or `BatchCoprocessor` server here)",
+      "go_owner": "`pkg/planner/core` (MPP fragments), `pkg/executor/mpp_gather.go`, `pkg/store/copr/mpp.go`, `pkg/store/copr/batch_coprocessor.go`"
     },
     {
       "id": "M04",
@@ -216,6 +216,6 @@
     }
   ],
   "unresolved": 29,
-  "open": 5,
-  "partial": 24
+  "open": 4,
+  "partial": 25
 }

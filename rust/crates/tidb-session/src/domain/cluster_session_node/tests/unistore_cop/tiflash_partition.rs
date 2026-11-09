@@ -69,7 +69,7 @@ fn partition_names(session: &mut Session) -> Vec<Vec<String>> {
     ))
 }
 
-fn tiflash_stack(nodes: usize) -> UnistoreClusterStack {
+pub(super) fn tiflash_stack(nodes: usize) -> UnistoreClusterStack {
     // Go's tests never split a table (`ddl.EnableSplitTableRegion` stays 0
     // outside tidb-server's main), so the mock TiFlash peer of the store's
     // one region covers every new partition.

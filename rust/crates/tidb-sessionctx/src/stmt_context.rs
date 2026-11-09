@@ -319,6 +319,8 @@ pub struct CostSessionValues {
     pub projection_concurrency: f64,
     /// Go `SessionVars.IsMPPEnforced()`.
     pub mpp_enforced: bool,
+    /// Go `SessionVars.IsMPPAllowed()` (`tidb_allow_mpp`).
+    pub mpp_allowed: bool,
 }
 
 impl Default for CostSessionValues {
@@ -330,6 +332,7 @@ impl Default for CostSessionValues {
             index_lookup_size: 20000.0,
             projection_concurrency: 5.0,
             mpp_enforced: false,
+            mpp_allowed: true,
         }
     }
 }
@@ -1064,6 +1067,8 @@ pub struct StmtContextData {
     /// Go `SessionVars.ChooseMppVersion()`: `mpp_version`, the newest when
     /// unspecified.
     mpp_version: tidb_txnkv::MppVersion,
+    /// Go `SessionVars.TiFlashFastScan` (`tiflash_fastscan`).
+    tiflash_fast_scan: bool,
     /// The TiFlash servers Go's `handleFineGrainedShuffle` sizes streams
     /// from; `None` where the statement has no cluster to ask.
     tiflash_cluster_info: Option<Arc<dyn TiFlashClusterInfo>>,
@@ -2514,6 +2519,13 @@ context_configuration! {
         self
     }
 
+    /// Sets Go `SessionVars.TiFlashFastScan` for this statement.
+    #[must_use]
+    pub fn with_tiflash_fast_scan(mut self, enabled: bool) -> Self {
+        self.tiflash_fast_scan = enabled;
+        self
+    }
+
     /// Sets the compression an enforced MPP exchange takes.
     #[must_use]
     pub fn with_mpp_exchange_compression_mode(mut self, mode: tidb_vardef::modes::ExchangeCompressionMode) -> Self {
@@ -3064,6 +3076,7 @@ impl StmtContext {
             tiflash_fine_grained_shuffle: TiFlashFineGrainedShuffleSession::default(),
             mpp_exchange_compression_mode: tidb_vardef::modes::ExchangeCompressionMode::RECOMMENDED,
             mpp_version: tidb_txnkv::MppVersion::NEWEST,
+            tiflash_fast_scan: false,
             tiflash_cluster_info: None,
             weak_consistency: false,
             row_encoding_config: tidb_tblctx::RowEncodingConfig::default(),
@@ -5120,6 +5133,12 @@ impl StmtContext {
     #[must_use]
     pub fn mpp_version(&self) -> tidb_txnkv::MppVersion {
         self.mpp_version
+    }
+
+    /// Go `SessionVars.TiFlashFastScan`.
+    #[must_use]
+    pub fn tiflash_fast_scan(&self) -> bool {
+        self.tiflash_fast_scan
     }
 
     /// The compression an enforced MPP exchange takes.

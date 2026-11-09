@@ -7433,6 +7433,14 @@ fn build_reader_node(
 ) -> Result<Box<dyn Executor>, DriverError> {
     match plan {
         PhysicalPlan::TableReader(reader) => {
+            // Go `buildTableReader`: `if useMPPExecution(b.ctx, v) { return
+            // b.buildMPPGather(v) }`.
+            if crate::mpp_gather::use_mpp_execution(ctx, reader) {
+                let gather = crate::mpp_gather::MppGather::build(meta(ctx, plan, plan_schema(plan)?), ctx, reader)
+                    .map_err(DriverError::from)?;
+                ctx.mark_physical_table_reader();
+                return Ok(Box::new(gather));
+            }
             let executor = build_reader(plan.id(), reader.table_plan.as_deref(), catalog, ctx, state)?;
             ctx.mark_physical_table_reader();
             Ok(executor)
@@ -8400,17 +8408,6 @@ fn build_with_state(
         PhysicalPlan::NominalSort(_) => build_with_state(only_child(plan)?, catalog, ctx, state),
         PhysicalPlan::UnionScan(union_scan) => {
             build_union_scan(plan, union_scan, catalog, ctx, state)
-        }
-        // Interim M1 seam: a PassThrough sender adds no local semantics, so
-        // the fragment still executes in place. M2 replaces this with real
-        // DispatchMPPTask routing to the TiFlash store.
-        PhysicalPlan::ExchangeSender(_) => build_with_state(only_child(plan)?, catalog, ctx, state),
-        // The planner-side MPP receiver is likewise a transport boundary. Until
-        // the native fragment scheduler owns task metadata, execute its sender
-        // child in the local plan so enforcing a partition property does not
-        // make an otherwise valid statement unbuildable.
-        PhysicalPlan::ExchangeReceiver(_) => {
-            build_with_state(only_child(plan)?, catalog, ctx, state)
         }
         PhysicalPlan::CTE(cte) => build_cte(plan, cte, catalog, ctx, state),
         PhysicalPlan::CTETable(table) => build_cte_table(plan, table, state, ctx),

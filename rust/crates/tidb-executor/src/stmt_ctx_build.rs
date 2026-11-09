@@ -1797,6 +1797,11 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_pessimistic_txn_provider(self.pessimistic_txn_provider())
                     .with_mpp_exchange_compression_mode(self.mpp_exchange_compression_mode())
                     .with_mpp_version(self.choose_mpp_version())
+                    .with_tiflash_fast_scan(
+                        self.session_vars()
+                            .get_system(tidb_vardef::tidb_vars::TIFLASH_FAST_SCAN)
+                            .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("ON")),
+                    )
                     .with_tiflash_fine_grained_shuffle(
                         self.tiflash_fine_grained_shuffle_session(),
                         self.tiflash_cluster_info(),
@@ -1997,6 +2002,11 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_pessimistic_txn_provider(self.pessimistic_txn_provider())
                     .with_mpp_exchange_compression_mode(self.mpp_exchange_compression_mode())
                     .with_mpp_version(self.choose_mpp_version())
+                    .with_tiflash_fast_scan(
+                        self.session_vars()
+                            .get_system(tidb_vardef::tidb_vars::TIFLASH_FAST_SCAN)
+                            .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("ON")),
+                    )
                     .with_tiflash_fine_grained_shuffle(
                         self.tiflash_fine_grained_shuffle_session(),
                         self.tiflash_cluster_info(),

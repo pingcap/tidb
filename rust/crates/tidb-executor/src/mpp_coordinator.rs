@@ -269,11 +269,12 @@ pub fn open_mpp_scan(
     let retry_client = Arc::clone(client);
     let retry_request = request.clone();
     let response = ExecutorWithRetry::new(
-        response,
+        Box::new(response),
         enabled,
         request.statement.memory.clone(),
         Box::new(move || {
             open_gather(&retry_client, &retry_request)
+                .map(|gather| Box::new(gather) as Box<dyn MppGatherResponse>)
                 .map_err(|error| QueryResponseError::Source(error.to_string()))
         }),
         Box::new(|node_count| {
@@ -443,8 +444,21 @@ impl Drop for MppTaskResponses {
     }
 }
 
+/// Go `kv.MppCoordinator` as `ExecutorWithRetry` drives it: the gather's
+/// response and `GetNodeCnt`.
+pub trait MppGatherResponse: tidb_txnkv::Response + Send {
+    /// Go `GetNodeCnt`: the nodes the gather's tasks run on.
+    fn node_count(&self) -> usize;
+}
+
+impl MppGatherResponse for MppTaskResponses {
+    fn node_count(&self) -> usize {
+        self.node_count
+    }
+}
+
 /// Reopens a gather for a recovery attempt.
-pub type MppReopen = Box<dyn FnMut() -> Result<MppTaskResponses, QueryResponseError> + Send>;
+pub type MppReopen = Box<dyn FnMut() -> Result<Box<dyn MppGatherResponse>, QueryResponseError> + Send>;
 /// Recovers the compute topology for a gather of the given node count.
 pub type MppRecover = Box<dyn FnMut(usize) -> Result<(), String> + Send>;
 
@@ -452,7 +466,7 @@ pub type MppRecover = Box<dyn FnMut(usize) -> Result<(), String> + Send>;
 /// retries a TiFlash memory-limit failure at most three times. Once any
 /// response is exposed to `SelectResponseIter`, replay is permanently unsafe.
 pub struct ExecutorWithRetry {
-    gather: MppTaskResponses,
+    gather: Box<dyn MppGatherResponse>,
     recovering: bool,
     attempts: u32,
     held: VecDeque<QueryResultSubset>,
@@ -467,7 +481,7 @@ impl ExecutorWithRetry {
     /// TiFlash under the autoscaler, without TiFlash fallback).
     #[must_use]
     pub fn new(
-        gather: MppTaskResponses,
+        gather: Box<dyn MppGatherResponse>,
         enabled: bool,
         memory: StatementMemory,
         open: MppReopen,
@@ -496,7 +510,7 @@ impl ExecutorWithRetry {
     fn pull(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         mpp_memory_error(&self.memory)?;
         while self.recovering && self.held.len() < 2 {
-            match tidb_txnkv::Response::next(&mut self.gather) {
+            match self.gather.next() {
                 Ok(Some(packet)) => {
                     self.memory.stmt_tracker().consume(packet.data.len() as i64);
                     self.held.push_back(packet);
@@ -513,10 +527,10 @@ impl ExecutorWithRetry {
                         return Err(error);
                     }
                     self.attempts += 1;
-                    if (self.recover)(self.gather.node_count).is_err() {
+                    if (self.recover)(self.gather.node_count()).is_err() {
                         return Err(error);
                     }
-                    tidb_txnkv::Response::close(&mut self.gather);
+                    self.gather.close();
                     let replacement = (self.open.as_mut().expect("open recovery response"))()
                         .map_err(|_| error)?;
                     self.clear_held();
@@ -531,7 +545,7 @@ impl ExecutorWithRetry {
                 .consume(-(packet.data.len() as i64));
             return Ok(Some(packet));
         }
-        tidb_txnkv::Response::next(&mut self.gather)
+        self.gather.next()
     }
 }
 
@@ -553,7 +567,7 @@ impl tidb_txnkv::Response for ExecutorWithRetry {
         }
         self.closed = true;
         self.clear_held();
-        tidb_txnkv::Response::close(&mut self.gather);
+        self.gather.close();
         self.open = None;
     }
 }
@@ -725,15 +739,15 @@ mod recovery_tests {
     fn gather(
         rows: Vec<Result<QueryResultSubset, QueryResponseError>>,
         closed: Arc<std::sync::atomic::AtomicUsize>,
-    ) -> MppTaskResponses {
-        MppTaskResponses {
+    ) -> Box<dyn MppGatherResponse> {
+        Box::new(MppTaskResponses {
             streams: [Box::new(Packets {
                 rows: rows.into(),
                 closed,
             }) as Box<dyn MppStreamResponse>]
             .into(),
             node_count: 2,
-        }
+        })
     }
     fn memory_error() -> QueryResponseError {
         QueryResponseError::Source("Memory limit exceeded".into())

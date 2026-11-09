@@ -63,6 +63,7 @@ fn cost_session_values(env: &CostEnv) -> CostSessionValues {
         index_lookup_size: env.session.index_lookup_size,
         projection_concurrency: env.session.projection_concurrency,
         mpp_enforced: env.session.mpp_enforced,
+        mpp_allowed: env.session.mpp_allowed,
     }
 }
 

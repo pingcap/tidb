@@ -112,6 +112,8 @@ pub mod ddl;
 pub mod ddl_sequence;
 pub mod cop_reader;
 pub mod mpp_coordinator;
+pub mod local_mpp_coordinator;
+pub mod mpp_gather;
 #[cfg(test)]
 pub(crate) mod test_region;
 #[cfg(test)]

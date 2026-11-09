@@ -183,6 +183,10 @@ impl MppTaskLocation for MppAddr {
     fn address(&self) -> &str {
         &self.addr
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 /// What Go's `mppTaskGenerator` reads off its `sessionctx.Context`.

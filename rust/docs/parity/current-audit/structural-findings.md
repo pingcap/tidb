@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**29 unresolved: 5 open, 24 partial.**
+**29 unresolved: 4 open, 25 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -73,6 +73,6 @@ unresolved until it is restated against its Go owner or closed.
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
 | P03 | partial | PD's `serviceDiscovery` (`servicediscovery/service_discovery.go`) is not one owner here: member updates and the leader connection live in `pd/cluster.rs` / `pd/retry.rs`, with no per-member `serviceClient`, no `apiCandidateNodes` / `GetServiceClientByKind` (how Go picks a follower for a follower-handled region API) and no `checkServiceModeChanged` | PD client `servicediscovery` |
-| M01 | open | The MPP coordinator lowers a hand-built single-fragment scan DAG and refuses every pushed Selection, TopN and aggregation, where Go builds the fragment/task graph from the physical plan (including disaggregated compute placement) | `pkg/planner/core` (MPP fragments), `pkg/executor/mpp_gather.go`, `pkg/store/copr/mpp.go` |
+| M01 | partial | An MPP reader runs as Go's `MPPGather` over Go's local coordinator (`tidb-executor` `mpp_gather.rs`, `local_mpp_coordinator.rs`): the planner's fragments (`GenerateRootMPPTasks`), each fragment's `ToPB` DAG dispatched to its tasks, the root tasks' packets received; the embedded store serves Go's MPP tasks, tunnels and exchange/join executors, and nine of Go's `tiflashtest` tests pass on mock TiFlash stores (`TestMppExecution`, `TestReadUnsigedPK`, `TestJoinRace`, `TestInjectExtraProj`, `TestMppEnum`, `TestMppUnionAll`, `TestUnionWithEmptyDualTable`, `TestAvgOverflow`, `TestMppApply`; `unistore_cop/mpp_execution.rs`). Left: the generator's `partitionPruning` (Go `partitionpruning.PartitionPruning` has no port; a dynamically pruned partitioned MPP read is refused by name), the MPP CTE operators, `Expand` / local index lookup in `ToPB` and the store, virtual columns over the gather, the dispatch meta's SQL and plan digests, and the single-fragment lowering (`mpp_coordinator.rs` `open_mpp_scan`) a non-MPP TiFlash read still takes where Go reads TiFlash through batch-cop or cop (no batch-cop client or `BatchCoprocessor` server here) | `pkg/planner/core` (MPP fragments), `pkg/executor/mpp_gather.go`, `pkg/store/copr/mpp.go`, `pkg/store/copr/batch_coprocessor.go` |
 | M04 | partial | `pkg/executor/mppcoordmanager` (`MPPCoordinatorManager`: coordinator registration, `detectAndDelete` expiry, the server address) and the RPC server's `ReportMPPTaskStatus` have no port, so TiFlash's task-status reports reach no coordinator; Go's coordinator only asks TiFlash for reports when its plan has a Limit above the table reader (`needReportExecutionSummary`), which the single-fragment scan never builds (M01) | `pkg/executor/internal/mpp` |
 

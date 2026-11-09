@@ -632,6 +632,15 @@ pub fn unistore_cluster_session_stack_from(
     let store_discovery: Arc<dyn tidb_domain::cluster_topology::ClusterDiscovery> = Arc::new(
         tidb_domain::cluster_discovery::EmbeddedStoreDiscovery::new((*tikv_store).clone()),
     );
+    // Go mockstore's `GetMPPClient`: copr's `MPPClient` over the embedded
+    // store's RPC client.
+    let mpp_client: Arc<dyn tidb_txnkv::MppClient> = {
+        let catalog = Arc::clone(&catalog);
+        Arc::new(tidb_copr::mpp_client::MPPClient::new(
+            (*tikv_store).clone(),
+            move || catalog.get_latest().schema_meta_version(),
+        ))
+    };
     let transport_factory = Arc::new(InProcessReadSessionFactory { tikv_store });
     // This node's own server-info record: the id Go mints with `uuid.New()`
     // for its DDL owner, and the address/ports/labels a peer would read.
@@ -744,6 +753,7 @@ pub fn unistore_cluster_session_stack_from(
         crate::domain::cluster_session_node::open_pool_session,
     )
     .with_kv_client(kv_client)
+    .with_mpp_client(mpp_client)
     .with_region_store(region_store)
     .with_server_info(Arc::clone(&server_info))
     .with_cluster_topology(Arc::new(tidb_domain::cluster_topology::ClusterTopology::new(
