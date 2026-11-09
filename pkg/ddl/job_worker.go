@@ -709,6 +709,8 @@ func (w *worker) transitOneJobStep(
 				w.cleanupMViewOutOfPlaceCutoverAfterCommit(jobCtx, job)
 			case model.ActionTruncateTable:
 				cleanupTruncateTableAffinityGroupsAfterCommit(jobCtx, job)
+			case model.ActionAlterTableAffinity:
+				cleanupAlterTableAffinityGroupsAfterCommit(jobCtx, job)
 			}
 			job.State = model.JobStateSynced
 		}

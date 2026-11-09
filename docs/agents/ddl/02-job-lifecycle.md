@@ -55,13 +55,13 @@ TRUNCATE TABLE when masking-policy SQL has already flushed the old table deletio
 `sess.Reset()` alone only discards the current statement buffer.
 
 Rolling back the DDL transaction does not undo changes a step has made in PD.
-For TRUNCATE TABLE, affinity groups follow two rules:
+Affinity groups follow two rules:
 
 - Groups that the new metadata replaces stay until the job commits as done.
-  TRUNCATE TABLE deletes the old groups in the done-job branch of
-  `transitOneJobStep`.
-- When a TRUNCATE TABLE job ends cancelled,
-  `deleteAffinityGroupsOfCancelledJob` runs in the
+  TRUNCATE TABLE and ALTER TABLE ... AFFINITY delete the old groups in the
+  done-job branch of `transitOneJobStep`.
+- When a CREATE TABLE, batch create, TRUNCATE TABLE, or ALTER TABLE ... AFFINITY
+  job ends cancelled, `deleteAffinityGroupsOfCancelledJob` runs in the
   cancellation branch of `transitOneJobStep`, before the cancellation commits.
   It deletes the groups the job may have created, as identified by the job
   arguments, that the metadata in that transaction does not use. This covers PD

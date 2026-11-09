@@ -1447,3 +1447,18 @@ func TestModifyColumnsArgs(t *testing.T) {
 	require.NoError(t, json.Unmarshal(j2.RawArgs, &rawArgs))
 	require.Len(t, rawArgs, 5)
 }
+
+func TestAlterTableAffinityArgs(t *testing.T) {
+	for _, version := range []JobVersion{JobVersion1, JobVersion2} {
+		for _, newAffinity := range []*TableAffinityInfo{nil, {Level: ast.TableAffinityLevelPartition}} {
+			for _, oldAffinity := range []*TableAffinityInfo{nil, {Level: ast.TableAffinityLevelTable}, {Level: ast.TableAffinityLevelPartition}} {
+				args := &AlterTableAffinityArgs{Affinity: newAffinity, OldAffinity: oldAffinity}
+				job := &Job{}
+				require.NoError(t, job.Decode(getJobBytes(t, args, version, ActionAlterTableAffinity)))
+				decoded, err := GetAlterTableAffinityArgs(job)
+				require.NoError(t, err)
+				require.Equal(t, args, decoded)
+			}
+		}
+	}
+}
