@@ -396,7 +396,10 @@ func TestAdvisoryLockWithoutProcessInfo(t *testing.T) {
 
 	se, err := createSession(store)
 	require.NoError(t, err)
-	defer se.Close()
+	defer func() {
+		se.Close()
+		require.Zero(t, se.advisoryLockOwnerID.Load())
+	}()
 	require.Nil(t, se.ShowProcess())
 	lockName := t.Name()
 	require.Zero(t, se.IsUsedAdvisoryLock(lockName))

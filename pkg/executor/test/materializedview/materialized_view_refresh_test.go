@@ -107,6 +107,7 @@ func TestMaterializedViewRefreshStatementResult(t *testing.T) {
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
 			tk := setupMaterializedViewRefreshStatementResultTest(t)
+			require.NotNil(t, tk.Session().Value(sessionctx.LastExecuteDDL))
 			if tc.mode == "fast as of timestamp" {
 				tk.MustExec("set time_zone = '+00:00'")
 			}
@@ -126,6 +127,7 @@ func TestMaterializedViewRefreshStatementResult(t *testing.T) {
 			}
 
 			tk.MustExec(refreshSQL)
+			require.Nil(t, tk.Session().Value(sessionctx.LastExecuteDDL))
 			requireRefreshMVStatementResult(t, tk, tc.insertRows, tc.updateRows, tc.deleteRows)
 			if tc.mode == "fast" {
 				require.Equal(t, 3.0, readAffectedRowsMetricValue(t, "RefreshMV")-beforeRefreshMV)
