@@ -406,17 +406,13 @@ func TestValidator(t *testing.T) {
 		{"SELECT * FROM t, LATERAL (SELECT t.a) AS dt", false, nil},
 		{"SELECT * FROM t LEFT JOIN LATERAL (SELECT t.a) AS dt ON true", false, nil},
 
-		// _tidb_commit_ts reads are reserved for materialized view maintenance.
-		{"SELECT _tidb_commit_ts FROM t WHERE a = 1", false,
-			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
-		{"SELECT a FROM t WHERE _tidb_commit_ts > 0", false,
-			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
-		{"SELECT _tidb_commit_ts FROM t UNION ALL SELECT _tidb_commit_ts FROM t", false,
-			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
+		// _tidb_commit_ts reads and deletes do not depend on tidb_mview_enable.
+		{"SELECT _tidb_commit_ts FROM t WHERE a = 1", false, nil},
+		{"SELECT a FROM t WHERE _tidb_commit_ts > 0", false, nil},
+		{"SELECT _tidb_commit_ts FROM t UNION ALL SELECT _tidb_commit_ts FROM t", false, nil},
 		{"UPDATE t SET a = a + 1 WHERE _tidb_commit_ts > 0", false,
 			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
-		{"DELETE FROM t WHERE _tidb_commit_ts > 0", false,
-			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
+		{"DELETE FROM t WHERE _tidb_commit_ts > 0", false, nil},
 		{"UPDATE t SET a = (SELECT 1) WHERE _tidb_commit_ts > 0", false,
 			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
 		{"INSERT INTO t SELECT _tidb_commit_ts FROM t", false,
@@ -432,7 +428,7 @@ func TestValidator(t *testing.T) {
 		runSQL(t, tk.Session(), is, tt.sql, tt.inPrepare, tt.err)
 	}
 
-	// Materialized view maintenance sessions explicitly enable the capability.
+	// The same access boundary applies when materialized view DDL is enabled.
 	tk.MustExec("set tidb_mview_enable = on")
 	for _, sql := range []string{
 		"SELECT _tidb_commit_ts FROM t WHERE a = 1",

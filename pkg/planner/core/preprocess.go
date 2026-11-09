@@ -282,7 +282,8 @@ func (p *preprocessor) popCommitTSStmt() {
 }
 
 // extraCommitTSColumnDenied reports whether this _tidb_commit_ts reference is rejected.
-// Materialized view maintenance reads the column and deletes rows by it. Updates do not.
+// Reads and deletes can access the column regardless of tidb_mview_enable. Updates and
+// inserts remain rejected because _tidb_commit_ts is not a writable column.
 func (p *preprocessor) extraCommitTSColumnDenied() bool {
 	hasUpdate := false
 	hasInsert := false
@@ -302,11 +303,11 @@ func (p *preprocessor) extraCommitTSColumnDenied() bool {
 	}
 	switch p.commitTSStmtStack[len(p.commitTSStmtStack)-1] {
 	case TypeSelect, TypeSetOpr, TypeDelete:
-		// INSERT ... SELECT is not used by materialized view maintenance.
+		// INSERT ... SELECT is not allowed to read the synthetic column as an input.
 		if hasInsert {
 			return true
 		}
-		return !p.sctx.GetSessionVars().EnableMView
+		return false
 	default:
 		return false
 	}
@@ -560,9 +561,9 @@ func (p *preprocessor) Enter(in ast.Node) bool {
 		// Used in ALTER TABLE or CREATE TABLE
 		p.checkConstraintGrammar(node)
 	case *ast.ColumnName:
-		// Reads and deletes are enabled only for materialized view maintenance, which
-		// sets tidb_mview_enable. UPDATE always stays rejected, including references
-		// that appear after a nested SELECT has overwritten stmtTp.
+		// Reads and deletes are independent of tidb_mview_enable. UPDATE always stays
+		// rejected, including references that appear after a nested SELECT has
+		// overwritten stmtTp.
 		if node.Name.L == model.ExtraCommitTSName.L && p.extraCommitTSColumnDenied() {
 			p.err = plannererrors.ErrInternal.GenWithStack("Usage of column name '%s' is not supported for now",
 				model.ExtraCommitTSName.O)
