@@ -53,7 +53,18 @@ tidb-server shows the same rows.
     cancelled-context half of `TestCancelAndExecIdChanged` (see Surprises).
   - [ ] `dxfutil` moves to milestone 3: it needs Go's `sqlsvrapi.Runtime`
     (on a classic kernel, the node's own runtime; other keyspaces are O15).
-- [ ] Milestone 2: `handle` and `planner`.
+- [x] Milestone 2: `handle` (`rust/crates/tidb-dxf-handle`) and `planner`
+  (`rust/crates/tidb-dxf-planner`), with Go's `TestRunWithRetry`,
+  `TestGetTargetScope`, `TestGetDefaultRegionSplitConfig`,
+  `TestCalculateRequiredNodes`, `TestGetNeededNodes`, `TestPhysicalPlan`,
+  and, on a unistore node, `TestScheduleFlag` and `TestPlanner`. Go's
+  `vardef.ServiceScope` now exists (`tidb_vardef::SERVICE_SCOPE`, with its
+  `SET GLOBAL` hook and the server flag); Go's `context` package moved to
+  `rust/crates/tidb-gocontext`. Waiting on their callers: `GetCloudStorageURI`
+  and `NewObjStore*` (Go `pkg/objstore`), `GetScheduleTuneFactors` (a meta
+  transaction through the session), `SendRowAndSizeMeterData`, and the
+  status port's `GetBusyNodes` / `GetScheduleStatus` (O15). `TestHandle`
+  needs the scheduler (milestone 4).
 - [ ] Milestone 3: `dxfutil` (with Go `sqlsvrapi.Runtime` for the node itself), `taskexecutor` (manager, slots, executor; `execute` is done).
 - [ ] Milestone 4: `scheduler` (manager, nodes, slots, balancer, state transitions; autoscaler where it applies to a classic kernel).
 - [ ] Milestone 5: composition in the domain (Go `InitDistTaskLoop`, `distTaskFrameworkLoop`) and the `example` task type end to end.

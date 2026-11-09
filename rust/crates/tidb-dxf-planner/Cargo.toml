@@ -1,0 +1,18 @@
+[package]
+name = "tidb-dxf-planner"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/dxf/framework/planner: logical and physical plans of DXF tasks."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-dxf = { path = "../tidb-dxf" }
+tidb-dxf-handle = { path = "../tidb-dxf-handle" }
+tidb-dxf-storage = { path = "../tidb-dxf-storage" }
+tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-txnkv = { path = "../tidb-txnkv" }

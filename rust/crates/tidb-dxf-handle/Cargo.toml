@@ -1,0 +1,30 @@
+[package]
+name = "tidb-dxf-handle"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/dxf/framework/handle: submitting, waiting for and controlling DXF tasks, and the schedule status."
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono.workspace = true
+crossbeam-channel = "0.5"
+serde_json.workspace = true
+tidb-backoff = { path = "../tidb-backoff" }
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-dxf = { path = "../tidb-dxf" }
+tidb-dxf-storage = { path = "../tidb-dxf-storage" }
+tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-meta-tidbvar = { path = "../tidb-meta-tidbvar" }
+tidb-metrics = { path = "../tidb-metrics" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-stringutil = { path = "../tidb-stringutil" }
+tidb-vardef = { path = "../tidb-vardef" }

@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/dxf/framework/storage`'s tests that need a store
-//! (`table_test.go`, `task_state_test.go`), over the embedded unistore
-//! node's DXF session pool.
+//! Go `pkg/dxf/framework`'s tests that need a store (`storage`'s
+//! `table_test.go` and `task_state_test.go`, `handle`'s and `planner`'s),
+//! over the embedded unistore node's DXF session pool.
 
 use super::*;
 use chrono::{DateTime, FixedOffset, Local, TimeZone as _};
@@ -1918,4 +1918,82 @@ fn test_set_tidb_service_scope_case_insensitive() {
 
     tidb_config::config_tree::config::store_global_config(origin_config);
     tidb_vardef::set_service_scope(origin_service_scope);
+}
+
+/// Go `TestScheduleFlag` (`handle/status_testkit_test.go`).
+#[test]
+fn test_schedule_flag() {
+    use tidb_dxf::schstatus::{TtlFlag, TtlInfo, PAUSE_SCALE_IN_FLAG};
+
+    let (_stack, task_mgr) = init_table_test();
+    // not set
+    assert!(tidb_dxf_handle::get_schedule_flags(&task_mgr).unwrap().is_empty());
+    // enabled flag
+    // in CI, the stored and unmarshalled time might have different time zone,
+    // so unify to UTC.
+    let expire_time = chrono::Utc.timestamp_opt(Local::now().timestamp() + 3600, 0).unwrap().fixed_offset();
+    let hour_nanos = 3_600_000_000_000;
+    let mut flag = TtlFlag { enabled: true, ttl_info: TtlInfo { ttl_nanoseconds: hour_nanos, expire_time } };
+    tidb_dxf_handle::update_pause_scale_in_flag(&flag).unwrap();
+    let flags = tidb_dxf_handle::get_schedule_flags(&task_mgr).unwrap();
+    assert_eq!(flags.len(), 1);
+    let mut got_flag = flags[&PAUSE_SCALE_IN_FLAG].clone();
+    got_flag.ttl_info.expire_time = got_flag.ttl_info.expire_time.with_timezone(&chrono::Utc).fixed_offset();
+    assert_eq!(got_flag, flag);
+    // expired flag
+    flag.ttl_info.expire_time = (Local::now() - chrono::Duration::hours(1)).fixed_offset();
+    tidb_dxf_handle::update_pause_scale_in_flag(&flag).unwrap();
+    assert!(tidb_dxf_handle::get_schedule_flags(&task_mgr).unwrap().is_empty());
+    // disabled flag
+    let flag = TtlFlag { enabled: false, ..TtlFlag::default() };
+    tidb_dxf_handle::update_pause_scale_in_flag(&flag).unwrap();
+    assert!(tidb_dxf_handle::get_schedule_flags(&task_mgr).unwrap().is_empty());
+}
+
+/// Go `TestPlanner` (`planner/planner_test.go`). Go's mock store runs the
+/// domain's DXF loop, which registers the node in
+/// `mysql.dist_framework_meta`; the Rust domain composes that loop in a
+/// later milestone, so the test registers the node itself.
+#[test]
+fn test_planner() {
+    use tidb_dxf_planner::{LogicalPlan, PhysicalPlan, PlanCtx, PlanError, Planner};
+
+    /// Go `mock.MockLogicalPlan`, as the test sets its expectations.
+    struct MockLogicalPlan;
+
+    impl LogicalPlan for MockLogicalPlan {
+        fn get_task_extra_params(&self) -> ExtraParams {
+            ExtraParams { manual_recovery: true, ..ExtraParams::default() }
+        }
+        fn to_task_meta(&self) -> Result<Vec<u8>, PlanError> {
+            Ok(b"mock".to_vec())
+        }
+        fn from_task_meta(&mut self, _: &[u8]) -> Result<(), PlanError> {
+            unreachable!("the test sets no expectation")
+        }
+        fn to_physical_plan(&self, _: &PlanCtx<'_>) -> Result<PhysicalPlan, PlanError> {
+            unreachable!("the test sets no expectation")
+        }
+    }
+
+    let (_stack, mgr) = init_table_test();
+    mgr.init_meta(":4000", "").unwrap();
+    let p = Planner::new();
+    let mut task_id = 0;
+    mgr.with_new_session(&mut |se| {
+        let p_ctx = PlanCtx {
+            session_ctx: Some(se),
+            task_key: "1".to_owned(),
+            task_type: tp("example"),
+            thread_cnt: 1,
+            ..PlanCtx::default()
+        };
+        task_id = p.run(&p_ctx, &MockLogicalPlan, &mgr).map_err(|error| tidb_dxf_storage::StorageError::Other(error.to_string()))?;
+        Ok(())
+    })
+    .unwrap();
+    let task = mgr.get_task_by_id(task_id).unwrap();
+    assert_eq!(task.base.required_slots, 1);
+    assert_eq!(task.base.tp, tp("example"));
+    assert!(task.base.extra_params.manual_recovery);
 }

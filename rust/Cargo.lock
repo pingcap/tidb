@@ -4668,6 +4668,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-dxf-handle"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "crossbeam-channel",
+ "serde_json",
+ "tidb-backoff",
+ "tidb-config-kerneltype",
+ "tidb-datatype",
+ "tidb-dxf",
+ "tidb-dxf-storage",
+ "tidb-gocontext",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-meta-tidbvar",
+ "tidb-metrics",
+ "tidb-sqlescape",
+ "tidb-sqlexec",
+ "tidb-stringutil",
+ "tidb-vardef",
+]
+
+[[package]]
 name = "tidb-dxf-metering"
 version = "0.0.0"
 dependencies = [
@@ -4687,6 +4710,17 @@ dependencies = [
  "tidb-resourcemanager-pool-workerpool",
  "tidb-resourcemanager-poolmanager",
  "tidb-resourcemanager-util",
+]
+
+[[package]]
+name = "tidb-dxf-planner"
+version = "0.0.0"
+dependencies = [
+ "tidb-dxf",
+ "tidb-dxf-handle",
+ "tidb-dxf-storage",
+ "tidb-gocontext",
+ "tidb-txnkv",
 ]
 
 [[package]]
@@ -5900,6 +5934,10 @@ dependencies = [
  "tidb-tablecodec",
  "tidb-terror",
 ]
+
+[[package]]
+name = "tidb-meta-tidbvar"
+version = "0.0.0"
 
 [[package]]
 name = "tidb-metabuild"
@@ -7197,6 +7235,8 @@ dependencies = [
  "tidb-driver-error",
  "tidb-dxf",
  "tidb-dxf-execute",
+ "tidb-dxf-handle",
+ "tidb-dxf-planner",
  "tidb-dxf-storage",
  "tidb-dxf-testutil",
  "tidb-errno",
