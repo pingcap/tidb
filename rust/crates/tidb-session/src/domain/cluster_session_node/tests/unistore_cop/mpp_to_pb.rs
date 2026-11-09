@@ -496,3 +496,58 @@ fn mpp_virtual_column_scan_to_pb_is_gos_to_the_byte() {
     let hex = |executor: &tipb::Executor| executor.encode_to_vec().iter().map(|b| format!("{b:02x}")).collect::<String>();
     assert_eq!(hex(&got), hex(&want), "\ngot:  {got:?}\nwant: {want:?}");
 }
+
+/// Go `checkCanPushDownToMPP` / `CheckAggCanPushCop` report each refusal
+/// (`Aggregation can not be pushed to <store> because <reason>`) through the
+/// push-down context; plans and warnings are a Go tidb-server's.
+#[test]
+fn aggregation_push_down_refusals_warn_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(435)).expect("session opens");
+    for sql in ["CREATE TABLE test.t (a int, b int, j json)", "ALTER TABLE test.t SET HYPO TIFLASH REPLICA 1"] {
+        session.node_conn().execute_write(sql).expect(sql);
+    }
+    rows(&mut session, "use test");
+    rows(&mut session, "set @@tidb_allow_mpp=1");
+    let text = |session: &mut Session, sql: &str| -> Vec<String> {
+        displayed(rows(session, sql)).into_iter().map(|row| row.join("|")).collect()
+    };
+    let mpp_distinct =
+        "Warning|1105|Aggregation can not be pushed to storage layer in mpp mode because it contains agg function with distinct";
+    assert_eq!(
+        text(&mut session, "explain format='brief' select sum(distinct a), count(b) from t"),
+        [
+            "HashAgg|1.00|root||funcs:sum(distinct Column#10)->Column#6, funcs:count(Column#11)->Column#7",
+            "└─Projection|10000.00|root||cast(test.t.a, decimal(10,0) BINARY)->Column#10, test.t.b->Column#11",
+            "  └─TableReader|10000.00|root||MppVersion: 3, data:ExchangeSender",
+            "    └─ExchangeSender|10000.00|mpp[tiflash]||ExchangeType: PassThrough",
+            "      └─TableFullScan|10000.00|mpp[tiflash]|table:t|keep order:false, stats:pseudo",
+        ]
+    );
+    assert_eq!(text(&mut session, "show warnings"), [mpp_distinct, mpp_distinct]);
+    assert_eq!(
+        text(&mut session, "explain format='brief' select /*+ read_from_storage(tikv[t]) */ max(j) from t group by a"),
+        [
+            "HashAgg|8000.00|root||group by:test.t.a, funcs:max(Column#7)->Column#6",
+            "└─TableReader|8000.00|root||data:HashAgg",
+            "  └─HashAgg|8000.00|cop[tikv]||group by:test.t.a, funcs:max(test.t.j)->Column#7",
+            "    └─TableFullScan|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
+        ]
+    );
+    assert!(text(&mut session, "show warnings").is_empty());
+    assert_eq!(
+        text(&mut session, "explain format='brief' select approx_count_distinct(a) from t"),
+        [
+            "HashAgg|1.00|root||funcs:approx_count_distinct(test.t.a)->Column#6",
+            "└─TableReader|10000.00|root||MppVersion: 3, data:ExchangeSender",
+            "  └─ExchangeSender|10000.00|mpp[tiflash]||ExchangeType: PassThrough",
+            "    └─TableFullScan|10000.00|mpp[tiflash]|table:t|keep order:false, stats:pseudo",
+        ]
+    );
+    let tikv_approx = "Warning|1105|Aggregation can not be pushed to tikv because AggFunc `approx_count_distinct` is not supported now";
+    // Go reports both MPP refusals before the TiKV ones; this port's
+    // exploration interleaves them (register X02), so the set is compared.
+    let mut warnings = text(&mut session, "show warnings");
+    warnings.sort();
+    assert_eq!(warnings, [mpp_distinct, mpp_distinct, tikv_approx, tikv_approx]);
+}

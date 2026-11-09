@@ -229,6 +229,7 @@ fn attach_hash_agg_to_mpp(
                 plan,
                 allocator,
                 blacklist,
+                &tidb_planner_core_operator_physicalop::enforce::push_down_reporter(session),
             )? else {
                 return Ok(Task::invalid_task());
             };
@@ -302,6 +303,7 @@ fn attach_hash_agg_to_mpp(
                 plan,
                 allocator,
                 blacklist,
+                &tidb_planner_core_operator_physicalop::enforce::push_down_reporter(session),
             )?;
             let task = if let Some(partial) = partial {
                 attach_plan_2_task(partial, Task::Mpp(mpp))
@@ -364,6 +366,7 @@ fn attach_hash_agg_to_mpp(
                 plan,
                 allocator,
                 blacklist,
+                &tidb_planner_core_operator_physicalop::enforce::push_down_reporter(session),
             )?;
             if can_use_three_stage {
                 let Some(partial) = partial else {
@@ -1006,21 +1009,23 @@ fn attach_agg_over_cop(
     allocator: &tidb_planner_core_base::PlanIdAllocator,
     evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    session: Option<&dyn tidb_planner_core_operator_physicalop::enforce::MppWarningSink>,
 ) -> Result<Task, PlanError> {
     let Some(column_ids) = column_ids else {
         return Err(PlanError::internal(
             "the aggregate cop push needs the caller's column id allocator",
         ));
     };
+    let report = tidb_planner_core_operator_physicalop::enforce::push_down_reporter(session);
     // Go's expression context is consulted only for argument TYPES during
     // the split's TypeInfer; a column-free context is exact for that.
     let ctx = tidb_exprctx::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
     let query_block_offset = plan.query_block_offset();
     // Go `NewPartialAggregate(cop.GetStoreType(), false)`.
     let (partial, final_plan) = if cop.get_store_type() == StoreType::TiDb {
-        tidb_planner_core_operator_physicalop::final_mode_agg::new_partial_aggregate_tidb(&ctx, column_ids, plan, allocator, blacklist)?
+        tidb_planner_core_operator_physicalop::final_mode_agg::new_partial_aggregate_tidb(&ctx, column_ids, plan, allocator, blacklist, &report)?
     } else {
-        tidb_planner_core_operator_physicalop::final_mode_agg::new_partial_aggregate(&ctx, column_ids, plan, allocator, blacklist)?
+        tidb_planner_core_operator_physicalop::final_mode_agg::new_partial_aggregate(&ctx, column_ids, plan, allocator, blacklist, &report)?
     };
     let Some(mut partial) = partial else {
         // Go `NewPartialAggregate` answers `(nil, p.Self)` when the split is
@@ -2037,7 +2042,7 @@ pub(crate) fn attach2_task_in(
                     let t = Task::Cop(cop).into_root_task_in(allocator, evaluate)?;
                     Ok(attach_plan_2_task(plan, t))
                 } else {
-                    attach_agg_over_cop(plan, cop, column_ids, allocator, evaluate, blacklist)
+                    attach_agg_over_cop(plan, cop, column_ids, allocator, evaluate, blacklist, session)
                 }
             }
             Task::Mpp(mpp) => {
@@ -2051,7 +2056,7 @@ pub(crate) fn attach2_task_in(
         PhysicalPlan::HashAgg(_) => match first {
             Task::Cop(cop) => {
                 if cop.root_task_conds.is_empty() && cop.idx_merge_part_plans.is_empty() {
-                    attach_agg_over_cop(plan, cop, column_ids, allocator, evaluate, blacklist)
+                    attach_agg_over_cop(plan, cop, column_ids, allocator, evaluate, blacklist, session)
                 } else {
                     let t = Task::Cop(cop).into_root_task_in(allocator, evaluate)?;
                     Ok(attach_plan_2_task(plan, t))

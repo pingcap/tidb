@@ -3374,6 +3374,8 @@ pub fn get_hash_aggs_with_mpp(
         false,
         tidb_vardef::defaults::DEF_TIFLASH_PRE_AGG_MODE,
         &Default::default(),
+        true,
+        &|_| {},
     )
 }
 
@@ -3391,16 +3393,20 @@ pub fn get_hash_aggs_with_mpp_options(
     enable_3_stage_multi_distinct_agg: bool,
     tiflash_pre_agg_mode: &str,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    tiflash_in_isolation_read: bool,
+    report: &dyn Fn(String),
 ) -> Vec<PhysicalPlan> {
     if !prop.is_sort_item_empty() {
         return Vec::new();
     }
-    let can_push_mpp = mpp_allowed
-        && agg.base.has_tiflash()
-        && check_agg_can_push_mpp(agg, blacklist);
-    if prop.task_tp == TaskType::Mpp && !can_push_mpp {
+    // Go `ShouldCheckTiFlashPushDown`: a TiFlash replica the session may read.
+    let can_push_down_to_mpp =
+        agg.base.has_tiflash() && tiflash_in_isolation_read && check_agg_can_push_mpp(agg, blacklist, report);
+    if prop.task_tp == TaskType::Mpp && !can_push_down_to_mpp {
         return Vec::new();
     }
+    // lift the recursive check of canPushToCop(tiFlash)
+    let can_push_mpp = can_push_down_to_mpp && mpp_allowed;
     let task_types: &[TaskType] = if prop.is_flash_prop() {
         &[TaskType::Mpp]
     } else if prop.no_cop_push_down {
@@ -3473,8 +3479,12 @@ pub fn get_hash_aggs_with_mpp_options(
 /// Go `checkCanPushDownToMPP` plus the TiFlash half of
 /// `CheckAggCanPushCop`.  The caller has already established the TiFlash
 /// replica and MPP session gates.
-fn check_agg_can_push_mpp(agg: &tidb_planner_core_operator_logicalop::LogicalAggregation, blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist) -> bool {
-    crate::final_mode_agg::check_can_push_down_to_mpp(&agg.agg_funcs, &agg.group_by_items, blacklist)
+fn check_agg_can_push_mpp(
+    agg: &tidb_planner_core_operator_logicalop::LogicalAggregation,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    report: &dyn Fn(String),
+) -> bool {
+    crate::final_mode_agg::check_can_push_down_to_mpp(&agg.agg_funcs, &agg.group_by_items, blacklist, report)
 }
 
 fn get_mpp_hash_aggs(

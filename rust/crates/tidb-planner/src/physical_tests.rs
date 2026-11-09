@@ -1337,7 +1337,7 @@ fn mpp_hash_agg_enumeration_matches_go_run_modes() {
         )]);
         let candidates = tidb_planner_core_operator_physicalop::get_hash_aggs_with_mpp_options(
             &aggregation, &root, &allocator, 1.0, true, false, true, false,
-            tidb_vardef::defaults::DEF_TIFLASH_PRE_AGG_MODE, &blacklist,
+            tidb_vardef::defaults::DEF_TIFLASH_PRE_AGG_MODE, &blacklist, true, &|_| {},
         );
         assert_eq!(candidates.iter().any(|candidate| matches!(candidate,
             PhysicalPlan::HashAgg(agg) if agg.mpp_run_mode != AggMppRunMode::NoMpp

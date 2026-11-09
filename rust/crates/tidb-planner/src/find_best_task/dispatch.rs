@@ -898,6 +898,8 @@ fn exhaust_physical_plans(
                 ctx.enable_3_stage_multi_distinct_agg,
                 &ctx.tiflash_pre_agg_mode,
                 &ctx.expr_pushdown_blacklist,
+                ctx.tiflash_in_isolation_read,
+                &tidb_planner_core_operator_physicalop::enforce::push_down_reporter(ctx.mpp_warning_sink),
             );
             if !hash_aggs.is_empty() && prefer_hash {
                 return Ok((vec![hash_aggs], true));

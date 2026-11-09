@@ -1338,54 +1338,66 @@ fn contain_correlated_column(exprs: &[Expression]) -> bool {
 /// the same two group-by checks. Go's final `AggFuncToPBExpr != nil` probe
 /// includes the client request capability check from `pkg/kv/checker.go`:
 /// having a PB mapping alone does not make JSON or variance aggregates
-/// pushable. Go's refusal WARNING
-/// (`Aggregation can not be pushed to ...`) narrows with the same unported
-/// statement-context channel the other attach refusals name.
+/// pushable.
 #[must_use]
 pub fn check_agg_can_push_cop_tikv(
     agg_funcs: &[AggFuncDesc],
     group_by_items: &[Expression],
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    report: &dyn Fn(String),
 ) -> bool {
     check_agg_can_push_cop(
         agg_funcs,
         group_by_items,
         tidb_kv::store_type::StoreType::TiKv,
         blacklist,
+        report,
     )
 }
 
-/// Go `CheckAggCanPushCop` for a cop task served by `store` (TiKV, or TiDB
-/// for a cluster table's scan).
+/// Go `CheckAggCanPushCop` for a task served by `store`. Each refusal is
+/// reported (`report`: Go's push-down context, the statement's warnings under
+/// EXPLAIN and its extra warnings otherwise), the push-down checks' own
+/// refusals first, then `Aggregation can not be pushed to <store> because
+/// <reason>`.
 #[must_use]
 pub fn check_agg_can_push_cop(
     agg_funcs: &[AggFuncDesc],
     group_by_items: &[Expression],
     store: tidb_kv::store_type::StoreType,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    report: &dyn Fn(String),
 ) -> bool {
+    let mut ret = true;
+    let mut reason = String::new();
     for agg_func in agg_funcs {
+        // if the aggFunc contain VirtualColumn or CorrelatedColumn, it can not be pushed down.
         if contain_virtual_column(&agg_func.base.args)
             || contain_correlated_column(&agg_func.base.args)
         {
-            return false;
+            reason = format!(
+                "expressions of AggFunc `{}` contain virtual column or correlated column, which is not supported now",
+                agg_func.name()
+            );
+            ret = false;
+            break;
         }
-        if !tidb_expression_aggregation::check_agg_push_down(
-            agg_func,
-            store,
-            blacklist,
-        ) {
-            return false;
+        if !tidb_expression_aggregation::check_agg_push_down(agg_func, store, blacklist) {
+            reason = format!("AggFunc `{}` is not supported now", agg_func.name());
+            ret = false;
+            break;
         }
         // Go passes `aggFunc.Name == ast.AggFuncSum` as `canEnumPush`, a
-        // TiFlash-only enum carve-out (`canExprPushDown`); for TiKV the
-        // plain check is the same function.
-        if !tidb_expr::infer_pushdown::can_exprs_push_down(
+        // TiFlash-only enum carve-out (`canExprPushDown`).
+        if !tidb_expr::infer_pushdown::can_exprs_push_down_reporting(
             &agg_func.base.args,
             store,
             blacklist,
+            report,
         ) {
-            return false;
+            reason = format!("arguments of AggFunc `{}` contains unsupported exprs", agg_func.name());
+            ret = false;
+            break;
         }
         if !agg_func.order_by_items.is_empty() {
             let exprs: Vec<Expression> = agg_func
@@ -1393,12 +1405,13 @@ pub fn check_agg_can_push_cop(
                 .iter()
                 .map(|item| item.expr.clone())
                 .collect();
-            if !tidb_expr::infer_pushdown::can_exprs_push_down(
-                &exprs,
-                store,
-                blacklist,
-            ) {
-                return false;
+            if !tidb_expr::infer_pushdown::can_exprs_push_down_reporting(&exprs, store, blacklist, report) {
+                reason = format!(
+                    "arguments of AggFunc `{}` contains unsupported exprs in order-by clause",
+                    agg_func.name()
+                );
+                ret = false;
+                break;
             }
         }
         // AggFuncToPBExpr asks RequestTypeSupportedChecker before encoding.
@@ -1420,73 +1433,54 @@ pub fn check_agg_can_push_cop(
                 | names::APPROX_COUNT_DISTINCT
                 | names::GROUP_CONCAT
         ) {
-            return false;
+            reason = format!("AggFunc `{}` can not be converted to pb expr", agg_func.name());
+            ret = false;
+            break;
         }
     }
-    if contain_virtual_column(group_by_items) {
-        return false;
+    if ret && contain_virtual_column(group_by_items) {
+        reason = "groupByItems contain virtual columns, which is not supported now".to_owned();
+        ret = false;
     }
-    tidb_expr::infer_pushdown::can_exprs_push_down(
-        group_by_items,
-        store,
-        blacklist,
-    )
+    if ret && !tidb_expr::infer_pushdown::can_exprs_push_down_reporting(group_by_items, store, blacklist, report) {
+        reason = "groupByItems contain unsupported exprs".to_owned();
+        ret = false;
+    }
+    if !ret {
+        let storage_name = if store == tidb_kv::store_type::StoreType::Unspecified {
+            "storage layer"
+        } else {
+            store.name()
+        };
+        report(format!("Aggregation can not be pushed to {storage_name} because {reason}"));
+    }
+    ret
 }
 
-/// Go `checkCanPushDownToMPP` together with the TiFlash branch of
-/// `CheckAggCanPushCop`.  TiFlash MPP currently permits DISTINCT only for
-/// COUNT and GROUP_CONCAT, and does not admit APPROX_COUNT_DISTINCT.
+/// Go `checkCanPushDownToMPP`: MPP does not support DISTINCT except for
+/// COUNT and GROUP_CONCAT, nor APPROX_COUNT_DISTINCT; the rest is
+/// `CheckAggCanPushCop(TiFlash)`.
 #[must_use]
 pub fn check_can_push_down_to_mpp(
     agg_funcs: &[AggFuncDesc],
     group_by_items: &[Expression],
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    report: &dyn Fn(String),
 ) -> bool {
-    for agg_func in agg_funcs {
-        if contain_virtual_column(&agg_func.base.args)
-            || contain_correlated_column(&agg_func.base.args)
-        {
-            return false;
-        }
-        if agg_func.has_distinct
-            && agg_func.name() != names::COUNT
-            && agg_func.name() != names::GROUP_CONCAT
-        {
-            return false;
-        }
-        if agg_func.name() == names::APPROX_COUNT_DISTINCT
-            || !tidb_expression_aggregation::check_agg_push_down(
-                agg_func,
-                tidb_kv::store_type::StoreType::TiFlash,
-                blacklist,
-            )
-            || !tidb_expr::infer_pushdown::can_exprs_push_down(
-                &agg_func.base.args,
-                tidb_kv::store_type::StoreType::TiFlash,
-                blacklist,
-            )
-        {
-            return false;
-        }
-        let order_by_exprs: Vec<Expression> = agg_func
-            .order_by_items
-            .iter()
-            .map(|item| item.expr.clone())
-            .collect();
-        if !tidb_expr::infer_pushdown::can_exprs_push_down(
-            &order_by_exprs,
-            tidb_kv::store_type::StoreType::TiFlash,
-            blacklist,
-        ) {
-            return false;
-        }
+    let has_unsupported_distinct = agg_funcs.iter().any(|agg| {
+        // MPP does not support distinct except count distinct now
+        (agg.has_distinct && agg.name() != names::COUNT && agg.name() != names::GROUP_CONCAT)
+            // MPP does not support AggFuncApproxCountDistinct now
+            || agg.name() == names::APPROX_COUNT_DISTINCT
+    });
+    if has_unsupported_distinct {
+        report(
+            "Aggregation can not be pushed to storage layer in mpp mode because it contains agg function with distinct"
+                .to_owned(),
+        );
+        return false;
     }
-    !contain_virtual_column(group_by_items)
-        && tidb_expr::infer_pushdown::can_exprs_push_down(
-            group_by_items,
-            tidb_kv::store_type::StoreType::TiFlash,
-            blacklist,
-        )
+    check_agg_can_push_cop(agg_funcs, group_by_items, tidb_kv::store_type::StoreType::TiFlash, blacklist, report)
 }
 
 /// Go `BasePhysicalAgg.NewPartialAggregate` (`base_physical_agg.go:279`) for
@@ -1505,6 +1499,7 @@ pub fn new_partial_aggregate(
     plan: crate::PhysicalPlan,
     plan_ids: &tidb_planner_core_base::PlanIdAllocator,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    report: &dyn Fn(String),
 ) -> Result<
     (
         Option<crate::PhysicalPlan>,
@@ -1512,7 +1507,7 @@ pub fn new_partial_aggregate(
     ),
     tidb_planner_core_base::PlanError,
 > {
-    new_partial_aggregate_with_mode(ctx, alloc, plan, plan_ids, false, blacklist)
+    new_partial_aggregate_with_mode(ctx, alloc, plan, plan_ids, false, blacklist, report)
 }
 
 /// Go `BasePhysicalAgg.NewPartialAggregate(kv.TiFlash, true)` for an MPP
@@ -1525,6 +1520,7 @@ pub fn new_partial_aggregate_mpp(
     plan: crate::PhysicalPlan,
     plan_ids: &tidb_planner_core_base::PlanIdAllocator,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    report: &dyn Fn(String),
 ) -> Result<
     (
         Option<crate::PhysicalPlan>,
@@ -1532,7 +1528,7 @@ pub fn new_partial_aggregate_mpp(
     ),
     tidb_planner_core_base::PlanError,
 > {
-    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, tidb_kv::store_type::StoreType::TiFlash, true, blacklist)
+    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, tidb_kv::store_type::StoreType::TiFlash, true, blacklist, report)
 }
 
 /// Go `BasePhysicalAgg.NewPartialAggregate(kv.TiDB, false)` for a cop task
@@ -1543,6 +1539,7 @@ pub fn new_partial_aggregate_tidb(
     plan: crate::PhysicalPlan,
     plan_ids: &tidb_planner_core_base::PlanIdAllocator,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    report: &dyn Fn(String),
 ) -> Result<
     (
         Option<crate::PhysicalPlan>,
@@ -1550,7 +1547,7 @@ pub fn new_partial_aggregate_tidb(
     ),
     tidb_planner_core_base::PlanError,
 > {
-    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, tidb_kv::store_type::StoreType::TiDb, false, blacklist)
+    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, tidb_kv::store_type::StoreType::TiDb, false, blacklist, report)
 }
 
 /// Go `NewPartialAggregate(kv.TiFlash, false)` for the MPP-TiDB mode: the
@@ -1562,6 +1559,7 @@ pub fn new_partial_aggregate_mpp_tidb(
     plan: crate::PhysicalPlan,
     plan_ids: &tidb_planner_core_base::PlanIdAllocator,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    report: &dyn Fn(String),
 ) -> Result<
     (
         Option<crate::PhysicalPlan>,
@@ -1569,7 +1567,7 @@ pub fn new_partial_aggregate_mpp_tidb(
     ),
     tidb_planner_core_base::PlanError,
 > {
-    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, tidb_kv::store_type::StoreType::TiFlash, false, blacklist)
+    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, tidb_kv::store_type::StoreType::TiFlash, false, blacklist, report)
 }
 
 fn new_partial_aggregate_with_mode(
@@ -1579,6 +1577,7 @@ fn new_partial_aggregate_with_mode(
     plan_ids: &tidb_planner_core_base::PlanIdAllocator,
     is_mpp: bool,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    report: &dyn Fn(String),
 ) -> Result<
     (
         Option<crate::PhysicalPlan>,
@@ -1586,7 +1585,7 @@ fn new_partial_aggregate_with_mode(
     ),
     tidb_planner_core_base::PlanError,
 > {
-    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, tidb_kv::store_type::StoreType::TiKv, is_mpp, blacklist)
+    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, tidb_kv::store_type::StoreType::TiKv, is_mpp, blacklist, report)
 }
 
 fn new_partial_aggregate_for_store(
@@ -1597,6 +1596,7 @@ fn new_partial_aggregate_for_store(
     store: tidb_kv::store_type::StoreType,
     is_mpp: bool,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    report: &dyn Fn(String),
 ) -> Result<
     (
         Option<crate::PhysicalPlan>,
@@ -1620,11 +1620,8 @@ fn new_partial_aggregate_for_store(
         }
     };
     let is_tiflash = store == tidb_kv::store_type::StoreType::TiFlash;
-    let can_push = if is_tiflash {
-        check_can_push_down_to_mpp(agg_funcs, group_by_items, blacklist)
-    } else {
-        check_agg_can_push_cop(agg_funcs, group_by_items, store, blacklist)
-    };
+    // Check if this aggregation can push down.
+    let can_push = check_agg_can_push_cop(agg_funcs, group_by_items, store, blacklist, report);
     if !can_push {
         return Ok((None, plan));
     }
@@ -1737,11 +1734,11 @@ mod tests {
         let a = bigint_col(1);
         let sum = agg(names::SUM, &a, false);
         let blacklist = HashMap::from([("sum".into(), blacklist_store_mask("tikv"))]);
-        assert!(!check_agg_can_push_cop_tikv(std::slice::from_ref(&sum), &[], &blacklist));
-        assert!(check_can_push_down_to_mpp(std::slice::from_ref(&sum), &[], &blacklist));
+        assert!(!check_agg_can_push_cop_tikv(std::slice::from_ref(&sum), &[], &blacklist, &|_| {}));
+        assert!(check_can_push_down_to_mpp(std::slice::from_ref(&sum), &[], &blacklist, &|_| {}));
         let blacklist = HashMap::from([("sum".into(), blacklist_store_mask("tiflash"))]);
-        assert!(check_agg_can_push_cop_tikv(std::slice::from_ref(&sum), &[], &blacklist));
-        assert!(!check_can_push_down_to_mpp(std::slice::from_ref(&sum), &[], &blacklist));
+        assert!(check_agg_can_push_cop_tikv(std::slice::from_ref(&sum), &[], &blacklist, &|_| {}));
+        assert!(!check_can_push_down_to_mpp(std::slice::from_ref(&sum), &[], &blacklist, &|_| {}));
         let expr = Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
             tidb_ast::CiString::new("gt"), FieldType::new(FieldTypeCode::LongLong),
             vec![Expression::Column(a.clone()), Expression::Column(a.clone())],
@@ -1749,9 +1746,9 @@ mod tests {
         let count = AggFuncDesc::new(&ctx(), names::COUNT, vec![expr.clone()], false).unwrap();
         let blacklist = HashMap::from([("gt.gtint".into(), blacklist_store_mask("tikv,tiflash,tidb"))]);
         for check in [check_agg_can_push_cop_tikv, check_can_push_down_to_mpp] {
-            assert!(check(std::slice::from_ref(&count), &[], &Default::default()));
-            assert!(!check(std::slice::from_ref(&count), &[], &blacklist));
-            assert!(!check(std::slice::from_ref(&sum), std::slice::from_ref(&expr), &blacklist));
+            assert!(check(std::slice::from_ref(&count), &[], &Default::default(), &|_| {}));
+            assert!(!check(std::slice::from_ref(&count), &[], &blacklist, &|_| {}));
+            assert!(!check(std::slice::from_ref(&sum), std::slice::from_ref(&expr), &blacklist, &|_| {}));
         }
     }
 
@@ -1772,11 +1769,11 @@ mod tests {
                 vec![Expression::Column(a.clone())]
             };
             let descriptor = AggFuncDesc::new(&ctx(), name, args, false).unwrap();
-            assert!(!check_agg_can_push_cop_tikv(&[descriptor], &[], &Default::default()), "{name}");
+            assert!(!check_agg_can_push_cop_tikv(&[descriptor], &[], &Default::default(), &|_| {}), "{name}");
         }
         for name in [names::COUNT, names::SUM, names::AVG, names::MIN, names::MAX] {
             assert!(
-                check_agg_can_push_cop_tikv(&[agg(name, &a, false)], &[], &Default::default()),
+                check_agg_can_push_cop_tikv(&[agg(name, &a, false)], &[], &Default::default(), &|_| {}),
                 "{name}"
             );
         }
