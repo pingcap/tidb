@@ -54,7 +54,22 @@ the unistore stack.
 - [ ] Milestone 2: Go `fragment.go` (`Fragment`, `GenerateRootMPPTasks`,
   `mppTaskGenerator`: fragments, union-all untwisting, CTE task counts,
   `constructMPPTasksImpl` over `MPPClient.ConstructMPPTasks`, partition
-  pruning), with Go's fragment tests.
+  pruning), with Go's fragment tests. Design (2026-11-10): Go's fragments
+  hold pointers into cloned plan trees and fill each sink's `TargetTasks` /
+  `Tasks` and each receiver's `Tasks` in place. Here a `Fragment` owns its
+  sink tree (`untwistPlanAndRemoveUnionAll` already clones per route); the
+  generator owns every fragment in `frags` (bottom-up, as Go appends them)
+  and addresses a receiver or a lower fragment's sink by plan id and fragment
+  index, so the in-place writes become indexed writes. The sender gains Go's
+  `Tasks` (self tasks). The session side (`ConnectionID`, `SessionAlias`,
+  `ChooseMppVersion`, `AllocMPPTaskID`, dynamic prune, `TiFlashReplicaRead`,
+  the dispatch policy, `AppendWarning`, `GetMPPClient`, the distsql context,
+  the infoschema) reaches the generator through one context trait, as Go's
+  `sessionctx.Context` does. Steps: `Fragment.init` (Go
+  `TestFragmentInitSingleton`) and `constructMPPTasksByChildrenTasks`; the
+  untwist; `constructMPPTasksImpl` with `distsql.TableHandleRangesToKVRanges`
+  and `partitionPruning`; then the CTE sink/source operators and
+  `fillLocalCTECounts` (`TestFillLocalCTECountsUsesLocalTaskCounts`).
 - [ ] Milestone 3: the embedded store's MPP (Go
   `pkg/store/mockstore/unistore/cophandler/mpp.go` / `mpp_exec.go`): tunnels
   between tasks, `ExchangeSender` (PassThrough, Broadcast, HashPartition),

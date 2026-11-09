@@ -47,6 +47,7 @@ fn mpp_reader_over_sender(sender_id: i32) -> PhysicalTableReader {
                 hash_cols: Vec::new(),
                 compression_mode: Default::default(),
                 target_tasks: Vec::new(),
+                tasks: Vec::new(),
             },
         ))),
         store_type: StoreType::TiFlash,

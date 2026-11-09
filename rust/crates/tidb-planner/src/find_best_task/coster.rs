@@ -1400,6 +1400,7 @@ mod tests {
             hash_cols: Vec::new(),
             compression_mode: Default::default(),
             target_tasks: Vec::new(),
+            tasks: Vec::new(),
         });
         let mut receiver_base = BasePhysicalPlan::new(&allocator, "ExchangeReceiver", 0);
         receiver_base.base.set_stats(Some(StatsInfo::new(5.0, [])));

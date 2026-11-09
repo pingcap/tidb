@@ -113,6 +113,7 @@ impl MppTask {
             hash_cols: required.mpp_partition_cols.clone(),
             compression_mode: session.map_or(tidb_vardef::modes::ExchangeCompressionMode::NONE, |session| session.mpp_exchange_compression_mode()),
             target_tasks: Vec::new(),
+            tasks: Vec::new(),
         });
         let mut receiver_base = crate::BasePhysicalPlan::new(
             allocator,

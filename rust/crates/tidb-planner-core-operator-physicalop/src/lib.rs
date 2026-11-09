@@ -43,6 +43,7 @@ pub mod task;
 pub mod to_pb;
 pub mod enforce;
 pub mod final_mode_agg;
+pub mod fragment;
 pub mod fk_plan;
 pub mod physical_table_reader;
 pub mod pushdown;
@@ -2170,6 +2171,8 @@ pub struct PhysicalExchangeSender {
     /// Go `TargetTasks`: the tasks this sender sends to, filled by fragment
     /// generation.
     pub target_tasks: Vec<MppTask>,
+    /// Go `Tasks`: the mpp tasks of this sender's own fragment.
+    pub tasks: Vec<MppTask>,
 }
 
 impl PhysicalExchangeSender {
@@ -5045,6 +5048,7 @@ impl PhysicalPlan {
                 // Go's `Clone` leaves `TargetTasks` (and the receiver's
                 // `Tasks`) to fragment generation.
                 target_tasks: Vec::new(),
+                tasks: Vec::new(),
             }),
             Self::ExchangeReceiver(op) => Self::ExchangeReceiver(PhysicalExchangeReceiver {
                 base: base_of(&op.base),

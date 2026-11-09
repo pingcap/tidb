@@ -426,6 +426,7 @@ impl MppTask {
             hash_cols: Vec::new(),
             compression_mode: Default::default(),
             target_tasks: Vec::new(),
+            tasks: Vec::new(),
         });
 
         let mut reader_base = crate::BasePhysicalPlan::new(
