@@ -156,29 +156,38 @@ pub fn handle_mpp_dag_req(
     req: &coprocessor::Request,
     mpp_ctx: Arc<mpp_task::MppCtx>,
 ) -> coprocessor::Response {
-    let context = match build_dag(req) {
-        Ok(context) => context,
-        Err(message) => return other_error(&message),
+    let dag_req = match tipb::DagRequest::decode(req.data.as_slice()) {
+        Ok(dag_req) => dag_req,
+        Err(err) => return other_error(&err.to_string()),
     };
-    let root_exec = match &context.dag_req.root_executor {
-        Some(root) => root.clone(),
-        None => match executor_lists_to_tree(&context.dag_req.executors) {
-            Ok(root) => root,
-            Err(message) => return other_error(&message),
-        },
+    // Go `flagsAndTzToSessionContext(dagReq.Flags, tz)`; Go drops the error
+    // `ConstructTimeZone` answers, leaving the nil (UTC) location.
+    let time_zone = match dag_req.time_zone_name() {
+        "" => TimeZoneSpec::FixedOffset(dag_req.time_zone_offset()),
+        "System" => TimeZoneSpec::System,
+        name => TimeZoneSpec::Named(name.to_owned()),
     };
+    let sctx = RequestEvalContext::new(
+        time_zone.resolve().unwrap_or_else(|_| tidb_datatype::SessionTimeZone::utc()),
+        4,
+        dag_req.flags.unwrap_or(0),
+    );
     let mut builder = mpp::MppExecBuilder {
-        sctx: Arc::clone(&context.expression_context),
+        sctx: Arc::new(sctx),
         db_reader: store,
-        key_ranges: context.key_ranges.clone(),
-        start_ts: context.start_ts,
+        key_ranges: req.ranges.clone(),
+        start_ts: req.start_ts,
         counts: None,
         paging: None,
         paging_size: 0,
         mpp_ctx: Some(mpp_ctx),
-        output_offsets: context.dag_req.output_offsets.clone(),
+        output_offsets: dag_req.output_offsets.clone(),
     };
-    let mut mpp_exec = builder.build_mpp_executor(&root_exec).unwrap_or_else(|err| panic!("build error: {err}"));
+    let root_exec = dag_req
+        .root_executor
+        .as_ref()
+        .unwrap_or_else(|| panic!("build error: the DAG has no root executor"));
+    let mut mpp_exec = builder.build_mpp_executor(root_exec).unwrap_or_else(|err| panic!("build error: {err}"));
     mpp_exec.open().unwrap_or_else(|err| panic!("open phase find error: {err:?}"));
     mpp_exec.next().unwrap_or_else(|err| panic!("running phase find error: {err:?}"));
     coprocessor::Response::default()
@@ -571,7 +580,7 @@ fn encode_chunks(
     }
     let mut encoded = Vec::new();
     for chk in &chunks {
-        use_default_encoding(chk, &context.expression_context.zone, &mut encoded)?;
+        use_default_encoding(chk, &context.expression_context, &mut encoded)?;
     }
     Ok(EncodedChunks {
         chunks: encoded,
@@ -588,14 +597,23 @@ fn encode_chunks(
 /// TiDB-side default-row decoder applies that same location.
 pub(crate) fn use_default_encoding(
     chk: &[mpp_exec::Row],
-    timezone: &tidb_datatype::SessionTimeZone,
+    sctx: &RequestEvalContext,
     chunks: &mut Vec<tipb::Chunk>,
 ) -> Result<(), String> {
+    use tidb_exprctx::Columns;
     for rows in chk.chunks(ROWS_PER_CHUNK) {
         let mut rows_data = Vec::new();
         for row in rows {
-            let buf = tidb_codec::encode_value_in_timezone(timezone, row)
-                .map_err(|error| format!("encode row failed: {error:?}"))?;
+            let (buf, err) = tidb_codec::encode_value_in_timezone_with_error(&sctx.zone, row);
+            // Go `err = errCtx.HandleError(err)`: a truncated decimal follows
+            // the request's truncate level.
+            match err {
+                Ok(()) => {}
+                Err(tidb_codec::CodecError::DecimalTruncated) => sctx
+                    .handle_truncate_error(tidb_datatype::types_errors::ERR_TRUNCATED.gen_with_stack_by_args(&[]))
+                    .map_err(|error| format!("encode row failed: {error:?}"))?,
+                Err(error) => return Err(format!("encode row failed: {error:?}")),
+            }
             rows_data.extend_from_slice(&buf);
         }
         chunks.push(tipb::Chunk {
@@ -2682,7 +2700,8 @@ mod tests {
             .map(|value| vec![tidb_datatype::Datum::Int(value)])
             .collect::<Vec<_>>();
         let mut chunks = Vec::new();
-        use_default_encoding(&rows, &zone(), &mut chunks).expect("encodes");
+        let sctx = RequestEvalContext::new(zone(), 4, 0);
+        use_default_encoding(&rows, &sctx, &mut chunks).expect("encodes");
         assert_eq!(chunks.len(), 2);
         let first = tidb_codec::decode(chunks[0].rows_data.as_deref().expect("rows"), 64)
             .expect("64 datums");

@@ -147,18 +147,24 @@ fn a_scan_task_hash_sends_through_a_receiver_task_to_tidb() {
         }),
         ..Default::default()
     };
-    let recv_dag = dag(sender(tipb::ExchangeType::PassThrough, std::slice::from_ref(&tidb_task), Vec::new(), receiver));
+    // A receiver-only fragment's task reads no region, so its request has no
+    // ranges (Go `HandleMPPDAGReq` never asks for any).
+    let mut recv_dag = dag(sender(tipb::ExchangeType::PassThrough, std::slice::from_ref(&tidb_task), Vec::new(), receiver));
+    recv_dag.ranges.clear();
 
-    let packets = std::thread::scope(|scope| {
-        let store = &store;
-        scope.spawn(|| crate::handle_mpp_dag_req(store, &scan_dag, ctx(&scan_task)));
-        scope.spawn(|| crate::handle_mpp_dag_req(store, &recv_dag, ctx(&recv_task)));
-        rpc.establish_mpp_conn(
+    // The tasks run detached, as the store's do: a task that never gets its
+    // connection blocks its own thread, not the test.
+    let store = Arc::new(store);
+    for (dag, ctx) in [(scan_dag, ctx(&scan_task)), (recv_dag, ctx(&recv_task))] {
+        let store = Arc::clone(&store);
+        std::thread::spawn(move || crate::handle_mpp_dag_req(&*store, &dag, ctx));
+    }
+    let packets = rpc
+        .establish_mpp_conn(
             "tiflash0",
             mpp::EstablishMppConnectionRequest { sender_meta: Some(recv_task.clone()), receiver_meta: Some(tidb_task.clone()), ..Default::default() },
         )
-        .unwrap()
-    });
+        .unwrap();
     let mut rows = Vec::new();
     for packet in packets {
         assert!(packet.error.is_none(), "{:?}", packet.error);

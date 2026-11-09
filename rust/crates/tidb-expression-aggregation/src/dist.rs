@@ -322,8 +322,16 @@ impl DistAggregator {
                     .map_err(|error| DistAggregateError::from(error).to_string())
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let key = tidb_codec::encode_value_in_timezone(zone, &keys)
-            .map_err(|error| format!("encode group key failed: {error:?}"))?;
+        let (key, err) = tidb_codec::encode_value_in_timezone_with_error(zone, &keys);
+        // Go `err = sc.HandleError(err)`: a truncated decimal key follows the
+        // request's truncate level.
+        match err {
+            Ok(()) => {}
+            Err(tidb_codec::CodecError::DecimalTruncated) => ctx
+                .handle_truncate_error(tidb_datatype::types_errors::ERR_TRUNCATED.gen_with_stack_by_args(&[]))
+                .map_err(|error| format!("encode group key failed: {error:?}"))?,
+            Err(error) => return Err(format!("encode group key failed: {error:?}")),
+        }
         let functions = &self.functions;
         let groups = &mut self.groups;
         let index = *self.group_indices.entry(key).or_insert_with(|| {

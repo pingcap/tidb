@@ -36,7 +36,8 @@ pub use bytes::{
 };
 pub use datum::{
     cut_one, decode, decode_one, decode_range, encode_key, encode_key_in_timezone, encode_value,
-    encode_value_in_timezone, estimate_value_size, hash_code, pre_realloc_size, DecodeRangeError,
+    encode_value_in_timezone, encode_value_in_timezone_with_error, estimate_value_size, hash_code,
+    pre_realloc_size, DecodeRangeError,
     Encoder,
     BYTES_FLAG, COMPACT_BYTES_FLAG, DECIMAL_FLAG, DURATION_FLAG, FLOAT_FLAG, INT_FLAG, JSON_FLAG,
     MAX_FLAG, NIL_FLAG, UINT_FLAG, UVARINT_FLAG, VARINT_FLAG, VECTOR_FLOAT32_FLAG,

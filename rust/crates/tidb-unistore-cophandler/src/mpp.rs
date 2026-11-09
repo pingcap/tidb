@@ -304,6 +304,7 @@ impl<'a> MppExecBuilder<'a> {
         Ok(AggExec {
             base: self.base(vec![ch_exec], field_types),
             aggregator: Some(aggregator),
+            agg_exprs_len: agg.agg_func.len(),
             processed: false,
         })
     }

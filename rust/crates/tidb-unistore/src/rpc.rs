@@ -564,6 +564,29 @@ mod tests {
         for handle in 1..=6 {
             put(&rpc.handler, handle, handle * 10);
         }
+        // An uncommitted write in the range: Go's MPP table scan reads
+        // committed data only (`DBReader.Scan`), never the lock.
+        let locked = tidb_tablecodec::table_key::encode_row_key_with_handle(
+            90,
+            &tidb_tablecodec::table_key::RecordHandle::Int(7),
+        );
+        rpc.handler
+            .lock()
+            .unwrap()
+            .store
+            .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
+                mutations: vec![tidb_proto::KvrpcMutation {
+                    op: tidb_proto::KvrpcOp::Put as i32,
+                    key: locked.clone(),
+                    value: tidb_codec::encode_value(&[tidb_datatype::Datum::Int(2), tidb_datatype::Datum::Int(70)])
+                        .unwrap(),
+                    ..Default::default()
+                }],
+                primary_lock: locked,
+                start_version: 15,
+                ..Default::default()
+            })
+            .unwrap();
 
         let meta = |task_id| mpp::TaskMeta {
             task_id,

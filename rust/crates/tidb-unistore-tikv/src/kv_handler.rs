@@ -227,7 +227,8 @@ impl tidb_unistore_dbreader::DbReader for RequestDbReader<'_> {
 }
 
 /// Go `dbreader.DBReader` as an MPP task's goroutine holds it: the shared
-/// store, locked for each scan, read under the task's request context.
+/// store, locked for each scan, read under the task's request context; Go's
+/// MPP table scan reads committed data only (`DBReader.Scan`), no lock.
 pub struct SharedDbReader {
     handler: Arc<std::sync::Mutex<KvHandler>>,
     ctx: ReadContext,
@@ -244,7 +245,7 @@ impl SharedDbReader {
 impl tidb_unistore_dbreader::DbReader for SharedDbReader {
     fn scan(&self, req: &tidb_unistore_dbreader::ScanReq) -> Vec<tidb_unistore_dbreader::KvPair> {
         let handler = self.handler.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        handler.store.scan_with(&self.ctx, req)
+        handler.store.db_reader_scan(&self.ctx, req)
     }
 }
 

@@ -279,7 +279,27 @@ pub fn encode_value_in_timezone<TZ: TimeZone + 'static>(
     timezone: &TZ,
     values: &[Datum],
 ) -> Result<Vec<u8>, CodecError> {
+    let (output, result) = encode_value_in_timezone_with_error(timezone, values);
+    result.map(|()| output)
+}
+
+/// Go `EncodeValue`'s `(b, err)`: a decimal that does not fit its shape
+/// still encodes (truncated) and the encoding goes on; the bytes come back
+/// beside the error for the caller's statement context to judge
+/// (`sc.HandleError`).
+pub fn encode_value_in_timezone_with_error<TZ: TimeZone + 'static>(
+    timezone: &TZ,
+    values: &[Datum],
+) -> (Vec<u8>, Result<(), CodecError>) {
     let mut output = Vec::with_capacity(pre_realloc_size(values, false).unwrap_or(0));
+    let mut err = Ok(());
+    macro_rules! try_encode {
+        ($result:expr) => {
+            if let Err(error) = $result {
+                return (output, Err(error));
+            }
+        };
+    }
     for value in values {
         match value {
             Datum::Null => output.push(NIL_FLAG),
@@ -295,7 +315,7 @@ pub fn encode_value_in_timezone<TZ: TimeZone + 'static>(
             }
             Datum::Decimal(value) => {
                 output.push(DECIMAL_FLAG);
-                encode_decimal(&mut output, value)?;
+                err = encode_decimal(&mut output, value);
             }
             Datum::Real(value) | Datum::Float32(value) => {
                 output.push(FLOAT_FLAG);
@@ -311,7 +331,10 @@ pub fn encode_value_in_timezone<TZ: TimeZone + 'static>(
             }
             Datum::BinaryLiteral(value) | Datum::Bit(value) => {
                 output.push(UVARINT_FLAG);
-                encode_uvarint(&mut output, binary_literal_uint(value)?);
+                match binary_literal_uint(value) {
+                    Ok(value) => encode_uvarint(&mut output, value),
+                    Err(error) => return (output, Err(error)),
+                }
             }
             Datum::Duration(value) => {
                 output.push(DURATION_FLAG);
@@ -327,7 +350,7 @@ pub fn encode_value_in_timezone<TZ: TimeZone + 'static>(
             }
             Datum::Time(value) => {
                 output.push(UINT_FLAG);
-                crate::package::encode_mysql_time(timezone, *value, None, &mut output)?;
+                try_encode!(crate::package::encode_mysql_time(timezone, *value, None, &mut output));
             }
             Datum::Json(value) => {
                 output.push(JSON_FLAG);
@@ -337,10 +360,10 @@ pub fn encode_value_in_timezone<TZ: TimeZone + 'static>(
                 output.push(VECTOR_FLOAT32_FLAG);
                 value.serialize_to(&mut output);
             }
-            Datum::Raw(_) => return Err(CodecError::UnsupportedDatum("raw")),
+            Datum::Raw(_) => return (output, Err(CodecError::UnsupportedDatum("raw"))),
         }
     }
-    Ok(output)
+    (output, err)
 }
 
 /// Returns the exact length of one `EncodeValue` datum.

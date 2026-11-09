@@ -1083,6 +1083,8 @@ impl<'a> MppExec<'a> for TopNExec<'a> {
 pub(crate) struct AggExec<'a> {
     pub(crate) base: BaseMppExec<'a>,
     pub(crate) aggregator: Option<RegionAggregator>,
+    /// Go `len(aggExprs)`: the leading output columns the aggregates fill.
+    pub(crate) agg_exprs_len: usize,
     pub(crate) processed: bool,
 }
 
@@ -1103,7 +1105,28 @@ impl<'a> AggExec<'a> {
                 aggregator.update(row).map_err(MppExecError::Other)?;
             }
         }
-        let chk = aggregator.finish();
+        let mut chk = aggregator.finish();
+        use tidb_exprctx::Columns;
+        for row in &mut chk {
+            for i in 0..self.agg_exprs_len {
+                let field_type = &self.base.field_types[i];
+                if field_type.code() == tidb_datatype::FieldTypeCode::LongLong && matches!(row[i], Datum::Decimal(_)) {
+                    let zone = self.base.sctx.time_zone();
+                    let context = tidb_datatype::ConversionContext::new(
+                        self.base.sctx.type_flags(),
+                        tidb_datatype::ConversionLocation::from_time_zone(&zone),
+                        &tidb_context::IGNORE_CONVERSION_WARNINGS,
+                    );
+                    let converted = row[i]
+                        .convert_to_in_context(field_type, &context, &zone)
+                        .map_err(|err| MppExecError::Other(format!("{err:?}")))?;
+                    if let Some(err) = converted.error {
+                        return Err(MppExecError::Other(format!("{err:?}")));
+                    }
+                    row[i] = converted.value;
+                }
+            }
+        }
         self.base.exec_summary.update_only_rows(chk.len());
         Ok(Some(chk))
     }
@@ -1256,7 +1279,7 @@ impl ExchSenderExec<'_> {
             .map(|row| self.output_offsets.iter().map(|&offset| row[offset as usize].clone()).collect())
             .collect();
         let mut chunks = Vec::new();
-        crate::use_default_encoding(&rows, &self.base.sctx.zone, &mut chunks)?;
+        crate::use_default_encoding(&rows, &self.base.sctx, &mut chunks)?;
         Ok(chunks)
     }
 

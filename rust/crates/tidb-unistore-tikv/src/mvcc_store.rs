@@ -1367,6 +1367,30 @@ pub struct MvccInfo {
     pub writes: Vec<MvccWrite>,
 }
 
+/// The span `req` scans: an open end takes the region's (Go's `reqCtx`
+/// bounds), and a forward walk never reaches the internal keys.
+fn scan_bounds(ctx: &ReadContext, req: &ScanReq) -> (Vec<u8>, Vec<u8>) {
+    if req.reverse {
+        let start = if req.end_key.is_empty() {
+            ctx.region_raw_start.clone()
+        } else {
+            req.end_key.clone()
+        };
+        (start, req.start_key.clone())
+    } else {
+        let mut end = if req.end_key.is_empty() {
+            ctx.region_raw_end.clone()
+        } else {
+            req.end_key.clone()
+        };
+        if end.is_empty() {
+            // Go: "Don't scan internal keys."
+            end = INTERNAL_KEY_PREFIX.to_vec();
+        }
+        (req.start_key.clone(), end)
+    }
+}
+
 /// Go `requestCtx.rpcCtx`, the slice the read paths consult: the isolation
 /// level and the two timestamp sets `checkLock` switches on.
 #[derive(Clone, Debug, Default)]
@@ -1607,44 +1631,29 @@ impl MvccStore {
         self.scan_with(&ReadContext::default(), req)
     }
 
-    /// [`Self::scan`] under an explicit read context: `RC` collects no lock
-    /// pairs at all; SI and `RCCheckTS` collect through their `checkLock`
-    /// arms.
+    /// Go `dbreader.DBReader.Scan` over the read context's region: the
+    /// committed data alone, no lock consulted -- what Go's MPP
+    /// `tableScanExec` reads (only the coprocessor path checks locks).
     #[must_use]
-    pub fn scan_with(&self, ctx: &ReadContext, req: &ScanReq) -> Vec<KvPair> {
-        let (start_key, end_key) = if req.reverse {
-            let start = if req.end_key.is_empty() {
-                ctx.region_raw_start.clone()
-            } else {
-                req.end_key.clone()
-            };
-            (start, req.start_key.clone())
-        } else {
-            let mut end = if req.end_key.is_empty() {
-                ctx.region_raw_end.clone()
-            } else {
-                req.end_key.clone()
-            };
-            if end.is_empty() {
-                // Go: "Don't scan internal keys."
-                end = INTERNAL_KEY_PREFIX.to_vec();
-            }
-            (req.start_key.clone(), end)
-        };
-        let mut limit = req.limit;
-        let mut lock_pairs = Vec::new();
-        if req.sample_step == 0 {
-            if ctx.is_snapshot_isolation() || ctx.is_rc_check_ts() {
-                let (lo, hi) = if start_key <= end_key {
-                    (&start_key, &end_key)
-                } else {
-                    (&end_key, &start_key)
-                };
-                lock_pairs = self.collect_range_lock(ctx, req.version, lo, hi);
-            }
-        } else {
-            limit *= req.sample_step;
+    pub fn db_reader_scan(&self, ctx: &ReadContext, req: &ScanReq) -> Vec<KvPair> {
+        let (start_key, end_key) = scan_bounds(ctx, req);
+        match self.db_reader_scan_range(ctx, req, &start_key, &end_key) {
+            Ok(scanned) => scanned,
+            Err(error_pair) => vec![error_pair],
         }
+    }
+
+    /// Go `dbreader.Scan` over `[start_key, end_key)`: newest version at or
+    /// below the read ts per key, sampled every `sample_step`-th key; an
+    /// `RCCheckTS` violation answers Go's single keyless error pair.
+    fn db_reader_scan_range(
+        &self,
+        ctx: &ReadContext,
+        req: &ScanReq,
+        start_key: &[u8],
+        end_key: &[u8],
+    ) -> Result<Vec<KvPair>, KvPair> {
+        let limit = if req.sample_step == 0 { req.limit } else { req.limit * req.sample_step };
         // Go `kvScanProcessor` over `dbreader.Scan`: newest version at or
         // below the read ts per key, sampled every `sample_step`-th key.
         let mut scanned = Vec::new();
@@ -1691,12 +1700,12 @@ impl MvccStore {
             if let Some((value, meta)) = self.engine.get_at(&key, read_ts) {
                 if ctx.is_rc_check_ts() {
                     if let Err(err) = check_write_meta_rc_check_ts(req.version, meta) {
-                        return vec![KvPair {
+                        return Err(KvPair {
                             commit_ts: 0,
                             key: Vec::new(),
                             value: Vec::new(),
                             error: Some(Box::new(err)),
-                        }];
+                        });
                     }
                 }
                 // Go `if item.IsEmpty() { continue }`, ahead of the count: a
@@ -1711,6 +1720,29 @@ impl MvccStore {
                 }
             }
         }
+        Ok(scanned)
+    }
+
+    /// [`Self::scan`] under an explicit read context: `RC` collects no lock
+    /// pairs at all; SI and `RCCheckTS` collect through their `checkLock`
+    /// arms.
+    #[must_use]
+    pub fn scan_with(&self, ctx: &ReadContext, req: &ScanReq) -> Vec<KvPair> {
+        let (start_key, end_key) = scan_bounds(ctx, req);
+        let mut lock_pairs = Vec::new();
+        if req.sample_step == 0 && (ctx.is_snapshot_isolation() || ctx.is_rc_check_ts()) {
+            let (lo, hi) = if start_key <= end_key {
+                (&start_key, &end_key)
+            } else {
+                (&end_key, &start_key)
+            };
+            lock_pairs = self.collect_range_lock(ctx, req.version, lo, hi);
+        }
+        let scanned = match self.db_reader_scan_range(ctx, req, &start_key, &end_key) {
+            Ok(scanned) => scanned,
+            Err(error_pair) => return vec![error_pair],
+        };
+        let limit = if req.sample_step == 0 { req.limit } else { req.limit * req.sample_step };
         let mut pairs = lock_pairs;
         pairs.extend(scanned);
         pairs.sort_by(|a, b| {
