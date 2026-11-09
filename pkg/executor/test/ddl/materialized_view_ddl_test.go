@@ -707,6 +707,7 @@ func TestMaterializedViewDDLProtectsGroupKeyIndex(t *testing.T) {
 				require.NotNil(t, index)
 				require.True(t, index.Unique)
 				require.Equal(t, tc.isPrimary, index.Primary)
+				require.False(t, index.Invisible)
 			}
 			original := mv.Meta().Clone()
 			rows := tk.MustQuery("select * from mv order by " + orderBy).Rows()
@@ -725,6 +726,10 @@ func TestMaterializedViewDDLProtectsGroupKeyIndex(t *testing.T) {
 				"alter table mv add index idx_added (cnt), drop index `%s`",
 				"alter table mv rename index idx_user to idx_renamed, drop index `%s`",
 				"alter table mv rename index `%s` to renamed_group_key, add index idx_added (cnt)",
+				"alter table mv alter index `%s` invisible",
+				"alter table mv add index idx_added (cnt), alter index `%s` invisible",
+				"alter table mv rename index idx_user to idx_renamed, alter index `%s` invisible",
+				"alter table mv alter index `%s` invisible, add index idx_added (cnt)",
 			} {
 				err := tk.ExecToErr(fmt.Sprintf(sql, tc.indexName))
 				require.ErrorContains(t, err, "on automatically created index "+tc.indexName+" of materialized view mv", sql)
@@ -740,6 +745,17 @@ func TestMaterializedViewDDLProtectsGroupKeyIndex(t *testing.T) {
 					require.ErrorContains(t, tk.ExecToErr(sql), "on automatically created index PRIMARY of materialized view mv", sql)
 				}
 			}
+			if !mv.Meta().PKIsHandle {
+				tk.MustExec(fmt.Sprintf("alter table mv alter index `%s` visible", tc.indexName))
+			}
+			tk.MustExec("alter table mv alter index idx_user invisible")
+			mv, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+			require.NoError(t, err)
+			require.True(t, mv.Meta().FindIndexByName("idx_user").Invisible)
+			tk.MustExec("alter table mv alter index idx_user visible")
+			mv, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+			require.NoError(t, err)
+			require.False(t, mv.Meta().FindIndexByName("idx_user").Invisible)
 			tk.MustExec("alter table mv rename index idx_user to idx_renamed")
 			tk.MustExec("alter table mv drop index idx_renamed")
 			tk.MustExec("create index idx_user on mv (cnt)")
@@ -758,8 +774,8 @@ func TestMaterializedViewDDLProtectsGroupKeyIndex(t *testing.T) {
 
 func TestMaterializedViewDDLProtectsGroupKeyIndexInOwner(t *testing.T) {
 	for _, primary := range []bool{false, true} {
-		for _, rename := range []bool{false, true} {
-			t.Run(fmt.Sprintf("primary=%t/rename=%t", primary, rename), func(t *testing.T) {
+		for _, operation := range []string{"drop", "rename", "invisible"} {
+			t.Run(fmt.Sprintf("primary=%t/operation=%s", primary, operation), func(t *testing.T) {
 				store, dom := testkit.CreateMockStoreAndDomain(t)
 				tk := testkit.NewTestKit(t, store)
 				tk.MustExec("use test")
@@ -777,13 +793,15 @@ func TestMaterializedViewDDLProtectsGroupKeyIndexInOwner(t *testing.T) {
 				original := mv.Meta().Clone()
 				schema, ok := dom.InfoSchema().SchemaByName(pmodel.NewCIStr("test"))
 				require.True(t, ok)
-				args := &model.ModifyIndexArgs{
-					IndexArgs: []*model.IndexArg{{IndexName: pmodel.NewCIStr(indexName), IfExist: true}},
-					OpType:    model.OpDropIndex,
-				}
-				if rename {
+				indexArgs := []*model.IndexArg{{IndexName: pmodel.NewCIStr(indexName), IfExist: true}}
+				if operation == "rename" {
 					action = model.ActionRenameIndex
-					args.IndexArgs = append(args.IndexArgs, &model.IndexArg{IndexName: pmodel.NewCIStr("renamed_group_key")})
+					indexArgs = append(indexArgs, &model.IndexArg{IndexName: pmodel.NewCIStr("renamed_group_key")})
+				}
+				var args model.JobArgs = &model.ModifyIndexArgs{IndexArgs: indexArgs, OpType: model.OpDropIndex}
+				if operation == "invisible" {
+					action = model.ActionAlterIndexVisibility
+					args = &model.AlterIndexVisibilityArgs{IndexName: pmodel.NewCIStr(indexName), Invisible: true}
 				}
 				job := &model.Job{
 					Version:     model.GetJobVerInUse(),

@@ -541,6 +541,11 @@ func onRenameIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 }
 
 func validateAlterIndexVisibility(ctx sessionctx.Context, indexName pmodel.CIStr, invisible bool, tbl *model.TableInfo) (bool, error) {
+	if invisible {
+		if err := checkMaterializedViewGroupKeyIndexConstraints(tbl, indexName, "ALTER INDEX INVISIBLE"); err != nil {
+			return false, errors.Trace(err)
+		}
+	}
 	var idx *model.IndexInfo
 	if idx = tbl.FindIndexByName(indexName.L); idx == nil || idx.State != model.StatePublic {
 		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(indexName.O, tbl.Name))
