@@ -358,7 +358,7 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 			}
 			for i, tbl := range tblHint.Tables {
 				if tbl.DBName.String() == "" {
-					tblHint.Tables[i].DBName = ast.NewCIStr(db)
+					tblHint.Tables[i].DBName = processor.resolveHintDBName(processor.GetHintOffset(tbl.QBName, offset), tbl.TableName, db)
 				}
 			}
 			newHints = append(newHints, tblHint)

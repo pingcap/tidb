@@ -711,8 +711,8 @@ func indexIsAvailableByHints(
 			intest.Assert(false)
 			continue
 		}
-		// The table name matching logic from getPossibleAccessPaths(): a hint without a database name matches
-		// the table name or alias in any database, see hint.HintedIndex.Match.
+		// The table name matching logic from getPossibleAccessPaths(). The fast path has a single table, so a hint
+		// without a database name refers to it whatever its database, see QBHintHandler.resolveHintDBName.
 		hintDBName := h.Tables[0].DBName
 		if h.Tables[0].TableName.L == tblAlias &&
 			(hintDBName.L == "" || hintDBName.L == dbName || hintDBName.L == "*") {

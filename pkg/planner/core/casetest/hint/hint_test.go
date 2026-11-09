@@ -515,4 +515,40 @@ func TestHintTableNameWithoutDBName(t *testing.T) {
 		require.True(t, planHas(joinSQL("hash_join(hintdb1.c)", ""), "HashJoin"))
 		tk.MustQuery("show warnings").Check(testkit.Rows())
 	}
+
+	// The same table name in two databases: the table in the current database wins, as before,
+	// and with neither in the current database the name is ambiguous and the hint does not match.
+	tk.MustExec("create database hintdb2")
+	tk.MustExec("create table hintdb1.t (a int, key ia1 (a))")
+	tk.MustExec("create table hintdb2.t (a int, key ia2 (a))")
+	twoSchemas := "select /*+ %s */ * from hintdb1.t join hintdb2.t on hintdb1.t.a = hintdb2.t.a"
+	buildSideIndex := func(hint string) string {
+		rows := tk.MustQuery("explain format = 'brief' " + fmt.Sprintf(twoSchemas, hint)).Rows()
+		require.Contains(t, fmt.Sprint(rows[0]), "HashJoin")
+		require.Contains(t, fmt.Sprint(rows[1]), "(Build)")
+		return fmt.Sprint(rows[2])
+	}
+	// `t` must match only hintdb1.t (index ia1). If it also matched hintdb2.t, both join sides would be
+	// hinted, the hints would conflict and a warning would be raised.
+	tk.MustExec("use hintdb1")
+	require.Contains(t, buildSideIndex("hash_join_build(t)"), "index:ia1(a)")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	require.Contains(t, buildSideIndex("hash_join_probe(t)"), "index:ia2(a)")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("use test")
+	tk.MustQuery("explain format = 'brief' " + fmt.Sprintf(twoSchemas, "hash_join_build(t)"))
+	tk.MustQuery("show warnings").CheckContain("There are no matching table names for (t)")
+	require.Contains(t, buildSideIndex("hash_join_build(hintdb2.t)"), "index:ia2(a)")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	// A binding resolves the unqualified hint name the same way when it is created.
+	tk.MustExec("create table test.j (ns bigint, id bigint, primary key (ns, id) clustered)")
+	bindingQuery := "select j.id, c.oid from j left join hintdb1.c on c.ns = j.ns and c.sjid = j.id where j.ns = 1 and j.id in (1, 2)"
+	tk.MustExec("create global binding for " + bindingQuery + " using " +
+		strings.Replace(bindingQuery, "select ", "select /*+ hash_join(c) */ ", 1))
+	require.True(t, planHas(bindingQuery, "HashJoin"))
+	tk.MustQuery("explain format = 'brief' " + bindingQuery)
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("drop global binding for " + bindingQuery)
 }
