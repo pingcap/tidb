@@ -18,7 +18,7 @@
 //! and `extractFiltersForIndexMerge`.
 
 use tidb_expr::expression::Expression;
-use tidb_expr::infer_pushdown::{can_exprs_push_down, push_down_exprs};
+use tidb_expr::infer_pushdown::{can_exprs_push_down_reporting, push_down_exprs_reporting};
 
 /// Go SplitSelCondsWithVirtualColumn followed by PushDownExprs for scan filters.
 /// The second list remains on the root task until reader conversion.
@@ -26,9 +26,10 @@ pub fn split_scan_filters(
     filters: Vec<Expression>,
     store: tidb_kv::store_type::StoreType,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    report: &dyn Fn(String),
 ) -> (Vec<Expression>, Vec<Expression>) {
     let (ordinary, mut root) = split_virtual_column_filters(filters);
-    let (pushed, rejected) = push_down_exprs(ordinary, store, blacklist);
+    let (pushed, rejected) = push_down_exprs_reporting(ordinary, store, blacklist, report);
     root.extend(rejected);
     (pushed, root)
 }
@@ -40,18 +41,20 @@ pub fn split_scan_filters(
 pub fn extract_filters_for_index_merge(
     filters: Vec<Expression>,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    report: &dyn Fn(String),
 ) -> (Vec<Expression>, Vec<Expression>) {
     use tidb_kv::store_type::StoreType;
 
     let mut pushed = Vec::new();
     let mut remaining = Vec::new();
     for expr in filters {
-        if can_exprs_push_down(std::slice::from_ref(&expr), StoreType::TiKv, blacklist) {
+        if can_exprs_push_down_reporting(std::slice::from_ref(&expr), StoreType::TiKv, blacklist, report) {
             pushed.push(expr);
-        } else if can_exprs_push_down(
+        } else if can_exprs_push_down_reporting(
             std::slice::from_ref(&expr),
             StoreType::Unspecified,
             blacklist,
+            report,
         ) {
             remaining.push(expr);
         }
@@ -65,8 +68,9 @@ pub fn extract_filters_for_index_merge(
 pub fn split_index_merge_table_filters(
     filters: Vec<Expression>,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    report: &dyn Fn(String),
 ) -> (Vec<Expression>, Vec<Expression>) {
-    let (pushed, mut remaining) = extract_filters_for_index_merge(filters, blacklist);
+    let (pushed, mut remaining) = extract_filters_for_index_merge(filters, blacklist, report);
     let (pushed, virtual_remaining) = split_virtual_column_filters(pushed);
     remaining.extend(virtual_remaining);
     (pushed, remaining)

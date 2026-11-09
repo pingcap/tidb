@@ -85,6 +85,7 @@ pub(super) fn build_prepared_index_merge_task(
             let (pushed, rest) = tidb_planner_core_operator_physicalop::pushdown::extract_filters_for_index_merge(
                 partial.index_filters.clone(),
                 &ctx.expr_pushdown_blacklist,
+                &tidb_planner_core_operator_physicalop::enforce::push_down_reporter(ctx.mpp_warning_sink),
             );
             partial_remaining.extend(rest);
             let mut selection = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
@@ -158,6 +159,7 @@ pub(super) fn build_prepared_index_merge_task(
     let (table_filters, table_remaining) = tidb_planner_core_operator_physicalop::pushdown::split_index_merge_table_filters(
         path.table_filters.clone(),
         &ctx.expr_pushdown_blacklist,
+        &tidb_planner_core_operator_physicalop::enforce::push_down_reporter(ctx.mpp_warning_sink),
     );
     let mut root_task_conds = partial_remaining;
     root_task_conds.extend(table_remaining);

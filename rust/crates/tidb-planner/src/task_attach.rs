@@ -1375,7 +1375,7 @@ pub(crate) fn attach2_task_in(
                 let PhysicalPlan::Selection(selection) = &plan else {
                     unreachable!("the arm matched Selection");
                 };
-                if tidb_expr::infer_pushdown::can_exprs_push_down(&selection.conditions, tidb_kv::store_type::StoreType::TiFlash, blacklist) {
+                if tidb_expr::infer_pushdown::can_exprs_push_down_reporting(&selection.conditions, tidb_kv::store_type::StoreType::TiFlash, blacklist, &tidb_planner_core_operator_physicalop::enforce::push_down_reporter(session)) {
                     Ok(attach_plan_2_task(plan, first))
                 } else {
                     let converted = first.into_root_task_in(allocator, evaluate)?;
@@ -1444,7 +1444,7 @@ pub(crate) fn attach2_task_in(
                 };
                 let pushable = cop_ref.root_task_conds.is_empty()
                     && cop_ref.idx_merge_part_plans.is_empty()
-                    && tidb_expr::infer_pushdown::can_exprs_push_down(&projection.exprs, tidb_kv::store_type::StoreType::TiKv, blacklist);
+                    && tidb_expr::infer_pushdown::can_exprs_push_down_reporting(&projection.exprs, tidb_kv::store_type::StoreType::TiKv, blacklist, &tidb_planner_core_operator_physicalop::enforce::push_down_reporter(session));
                 if pushable {
                     let Task::Cop(mut cop) = first else {
                         unreachable!("the arm matched Cop");
@@ -1468,7 +1468,7 @@ pub(crate) fn attach2_task_in(
                 let PhysicalPlan::Projection(projection) = &plan else {
                     unreachable!("the arm matched Projection");
                 };
-                if tidb_expr::infer_pushdown::can_exprs_push_down(&projection.exprs, tidb_kv::store_type::StoreType::TiFlash, blacklist) {
+                if tidb_expr::infer_pushdown::can_exprs_push_down_reporting(&projection.exprs, tidb_kv::store_type::StoreType::TiFlash, blacklist, &tidb_planner_core_operator_physicalop::enforce::push_down_reporter(session)) {
                     Ok(attach_plan_2_task(plan, first))
                 } else {
                     let converted = first.into_root_task_in(allocator, evaluate)?;
@@ -1858,7 +1858,7 @@ pub(crate) fn attach2_task_in(
                         }
                     }
                     let pushable = need_push_down
-                        && tidb_expr::infer_pushdown::can_exprs_push_down(&by_exprs, tidb_kv::store_type::StoreType::TiKv, blacklist)
+                        && tidb_expr::infer_pushdown::can_exprs_push_down_reporting(&by_exprs, tidb_kv::store_type::StoreType::TiKv, blacklist, &tidb_planner_core_operator_physicalop::enforce::push_down_reporter(session))
                         && cop.root_task_conds.is_empty();
                     if pushable {
                         if !cop.index_plan_finished && !cop.idx_merge_is_intersection {
@@ -1943,7 +1943,7 @@ pub(crate) fn attach2_task_in(
                         tidb_expr::simple_expr::extract_columns_from_expressions(&by_exprs, None);
                     let need_push_down = !columns.is_empty();
                     let pushable = need_push_down
-                        && tidb_expr::infer_pushdown::can_exprs_push_down(&by_exprs, tidb_kv::store_type::StoreType::TiFlash, blacklist)
+                        && tidb_expr::infer_pushdown::can_exprs_push_down_reporting(&by_exprs, tidb_kv::store_type::StoreType::TiFlash, blacklist, &tidb_planner_core_operator_physicalop::enforce::push_down_reporter(session))
                         && !contains_virtual_column_in_plan(
                             &by_exprs,
                             mpp.plan.as_deref().ok_or_else(|| {

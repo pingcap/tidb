@@ -663,6 +663,7 @@ pub(super) fn build_converged_union_index_merge_task(
     let (pushed_filters, table_remaining) = tidb_planner_core_operator_physicalop::pushdown::split_index_merge_table_filters(
         table_filters.clone(),
         &ctx.expr_pushdown_blacklist,
+        &tidb_planner_core_operator_physicalop::enforce::push_down_reporter(ctx.mpp_warning_sink),
     );
     let mut table_plan = table_plan;
     // Go `BuildIndexMergeTableScan`: an ordered merge reads the row handle
@@ -910,6 +911,7 @@ fn push_index_partial(
                 .chain(global_partition_filter)
                 .collect(),
             &ctx.expr_pushdown_blacklist,
+            &tidb_planner_core_operator_physicalop::enforce::push_down_reporter(ctx.mpp_warning_sink),
         );
         remaining = rest;
         let scan = partial_plans_raw

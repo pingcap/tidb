@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 29,
-    "open": 5,
-    "partial": 24
+    "open": 4,
+    "partial": 25
   },
   "findings": [
     {
@@ -166,9 +166,9 @@
     },
     {
       "id": "X02",
-      "status": "open",
+      "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "Push-down refusal warnings: Go's `canScalarFuncPushDown` appends `Scalar function '...'(signature: ..., return type: ...) is not supported to push down to <store> now.` through the session's `PushDownContext` (statement warnings under EXPLAIN, extra warnings otherwise) at every `PushDownExprs` / `CanExprsPushDown` call. This port reports only at the DataSource's `kv.UnSpecified` split (`predicate_push_down_local`); the physical splits (`physicalop` `pushdown.rs` `split_scan_filters`, the MPP join/agg/projection/selection checks in `task_attach.rs`, `final_mode_agg.rs`, `mpp_join.rs`, index merge) refuse silently, so an EXPLAIN shows none of Go's TiFlash/TiKV refusal warnings (e.g. Go's two `EQJson` warnings for a JSON comparison over an MPP scan, `zzprobe/issue57149`).",
+      "finding": "Push-down refusal warnings: Go's `canScalarFuncPushDown` appends `Scalar function '...'(signature: ..., return type: ...) is not supported to push down to <store> now.` through the session's `PushDownContext` (statement warnings under EXPLAIN, extra warnings otherwise; `MppWarningSink::append_push_down_warning`) at every `PushDownExprs` / `CanExprsPushDown` call. Reporting now: the DataSource's `kv.UnSpecified` split, the scan-filter splits (`split_scan_filters` for TiKV and TiFlash table scans and index lookups, index merge's `extractFiltersForIndexMerge`), and `task_attach.rs`'s selection, projection and TopN checks (Go's two `EQJson` warnings over an MPP scan, `json_comparison_stays_above_the_mpp_reader_as_go`). Silent: `CheckAggCanPushCop` / `checkCanPushDownToMPP` (also without Go's `Aggregation can not be pushed to <store> because <reason>` warning), the MPP join conditions (`exhaust_physical_plans.go`), window frames, the index-merge path builders (`indexmerge_path.go`, `indexmerge_unfinished_path.go`) and the physical projection/selection `CanPushToCop` checks. An EXPLAIN over a scalar subquery shows Go's warnings once where Go shows them twice (Go's subquery scan also shows `stats:partial[...]`).",
       "go_owner": "`pkg/expression` (`infer_pushdown.go`), `pkg/planner/core`"
     },
     {
@@ -216,6 +216,6 @@
     }
   ],
   "unresolved": 29,
-  "open": 5,
-  "partial": 24
+  "open": 4,
+  "partial": 25
 }

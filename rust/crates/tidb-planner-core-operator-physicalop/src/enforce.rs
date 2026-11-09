@@ -261,6 +261,16 @@ pub fn enforce_property_in(
 }
 
 
+/// Go `util.GetPushDownCtx(sctx)`'s warning half: the reporter a push-down
+/// check hands each refusal to.
+pub fn push_down_reporter(session: Option<&dyn MppWarningSink>) -> impl Fn(String) + '_ {
+    move |message: String| {
+        if let Some(session) = session {
+            session.append_push_down_warning(&message);
+        }
+    }
+}
+
 /// The statement context is where Go's `RaiseWarningWhenMPPEnforced` writes.
 impl MppWarningSink for tidb_sessionctx::StmtContext {
     fn raise_mpp_warning(&self, message: &str) {
@@ -273,6 +283,14 @@ impl MppWarningSink for tidb_sessionctx::StmtContext {
 
     fn append_warning(&self, message: &str) {
         self.append_warning_parts(1105, message);
+    }
+
+    fn append_push_down_warning(&self, message: &str) {
+        if self.in_explain_stmt() {
+            self.append_warning_parts(1105, message);
+        } else {
+            self.append_extra_warning_parts(1105, message);
+        }
     }
 
     fn append_planner_note(&self, message: &str) {
@@ -357,6 +375,7 @@ mod tests {
             }
             fn set_hint_warning(&self, _message: &str) {}
             fn append_warning(&self, _message: &str) {}
+            fn append_push_down_warning(&self, _message: &str) {}
             fn append_planner_note(&self, _message: &str) {}
             fn new_collation_enabled(&self) -> bool {
                 true
@@ -437,6 +456,10 @@ pub trait MppWarningSink {
     /// Go `StmtCtx.AppendWarning(errors.NewNoStackErrorf(message))`: a plain
     /// warning, which reports as `ErrUnknown`.
     fn append_warning(&self, message: &str);
+
+    /// Go `PushDownContext.AppendWarning` (`util.GetPushDownCtx`): the
+    /// statement's warnings under EXPLAIN, its extra warnings otherwise.
+    fn append_push_down_warning(&self, message: &str);
 
     /// A planner note: Go `AppendNote` under `EXPLAIN FORMAT='verbose'`
     /// (`InVerboseExplain`), `AppendExtraNote` otherwise.

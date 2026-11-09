@@ -3839,6 +3839,7 @@ fn find_best_task_4_logical_data_source_paths(
                 let (table_filters, root_task_conds) = tidb_planner_core_operator_physicalop::pushdown::split_scan_filters(
                     table_filters, tidb_kv::store_type::StoreType::TiKv,
                     &ctx.expr_pushdown_blacklist,
+                    &tidb_planner_core_operator_physicalop::enforce::push_down_reporter(ctx.mpp_warning_sink),
                 );
                 // Go `PhysicalTableScan.IsFullScan`: `len(p.RangeInfo) > 0 ||
                 // p.haveCorCol()` short-circuits to "not full" before the
@@ -4115,6 +4116,7 @@ fn find_best_task_4_logical_data_source_paths(
                 let (table_filters, root_task_conds) = tidb_planner_core_operator_physicalop::pushdown::split_scan_filters(
                     ds.pushed_down_conds.clone(), tidb_kv::store_type::StoreType::TiFlash,
                     &ctx.expr_pushdown_blacklist,
+                    &tidb_planner_core_operator_physicalop::enforce::push_down_reporter(ctx.mpp_warning_sink),
                 );
                 let table_plan = if table_filters.is_empty() {
                     scan
@@ -4812,15 +4814,17 @@ fn find_best_task_4_logical_data_source_paths(
                 // Go `addPushedDownSelection4PhysicalIndexScan` splits only the
                 // TABLE filters by virtual column; the index filters go
                 // through `PushDownExprs` alone.
-                let (index_filters, mut rejected_index_filters) = tidb_expr::infer_pushdown::push_down_exprs(
+                // One `util.GetPushDownCtx` reports both splits' refusals.
+                let report = tidb_planner_core_operator_physicalop::enforce::push_down_reporter(ctx.mpp_warning_sink);
+                let (index_filters, mut rejected_index_filters) = tidb_expr::infer_pushdown::push_down_exprs_reporting(
                     index_filters, tidb_kv::store_type::StoreType::TiKv,
-                    &ctx.expr_pushdown_blacklist,
+                    &ctx.expr_pushdown_blacklist, &report,
                 );
                 let (table_filters, rejected_table_filters) = if single_scan {
                     (Vec::new(), table_filters)
                 } else {
                     tidb_planner_core_operator_physicalop::pushdown::split_scan_filters(table_filters,
-                        tidb_kv::store_type::StoreType::TiKv, &ctx.expr_pushdown_blacklist)
+                        tidb_kv::store_type::StoreType::TiKv, &ctx.expr_pushdown_blacklist, &report)
                 };
                 let has_root_filters = !virtual_table_filters.is_empty()
                     || !rejected_index_filters.is_empty() || !rejected_table_filters.is_empty();
@@ -5684,6 +5688,10 @@ mod tests {
         }
 
         fn append_warning(&self, message: &str) {
+            self.0.borrow_mut().push(message.to_owned());
+        }
+
+        fn append_push_down_warning(&self, message: &str) {
             self.0.borrow_mut().push(message.to_owned());
         }
 

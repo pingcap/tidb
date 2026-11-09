@@ -680,6 +680,19 @@ pub fn push_down_exprs(
     })
 }
 
+/// [`push_down_exprs`] that reports each refusal as Go's `PushDownContext`
+/// does (`canScalarFuncPushDown`'s warning).
+pub fn push_down_exprs_reporting(
+    filters: Vec<Expression>,
+    store: crate::infer_pushdown::StoreType,
+    blacklist: &crate::infer_pushdown::ExprPushDownBlacklist,
+    report: &dyn Fn(String),
+) -> (Vec<Expression>, Vec<Expression>) {
+    filters.into_iter().partition(|condition| {
+        can_exprs_push_down_reporting(std::slice::from_ref(condition), store, blacklist, report)
+    })
+}
+
 fn can_expr_push_down_tikv(expr: &Expression) -> bool {
     can_expr_push_down(
         expr,

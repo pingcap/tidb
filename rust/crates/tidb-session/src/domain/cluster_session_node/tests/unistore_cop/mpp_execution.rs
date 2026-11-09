@@ -893,8 +893,8 @@ fn test_issue_57149() {
 
 
 /// Go `scalarExprSupportedByFlash` refuses `EQJson`: the JSON comparison of
-/// `TestIssue57149` stays above the MPP reader (Go testkit probe
-/// `zzprobe/issue57149`; Go's refusal warnings are register row X02).
+/// `TestIssue57149` stays above the MPP reader, with Go's refusal warnings
+/// (Go testkit probe `zzprobe/issue57149`).
 #[test]
 fn json_comparison_stays_above_the_mpp_reader_as_go() {
     let (stack, mut session) = tiflash_session(1, 2171);
@@ -909,6 +909,10 @@ fn json_comparison_stays_above_the_mpp_reader_as_go() {
     let text = |session: &mut Session, sql: &str| -> Vec<String> {
         displayed(rows(session, sql)).into_iter().map(|row| row.join(" ")).collect()
     };
+    // Go's testkit prints `bigint(1)`; a tidb-server, whose
+    // `deprecate-integer-display-length` defaults on, prints `bigint`.
+    let refused =
+        "Warning 1105 Scalar function 'eq'(signature: EQJson, return type: bigint) is not supported to push down to tiflash now.";
     assert_eq!(
         text(&mut session, "explain SELECT j FROM t1 WHERE j = CAST('null' AS JSON)"),
         [
@@ -918,4 +922,5 @@ fn json_comparison_stays_above_the_mpp_reader_as_go() {
             "    └─TableFullScan_6 1.00 mpp[tiflash] table:t1 keep order:false, stats:partial[j:unInitialized]",
         ]
     );
+    assert_eq!(text(&mut session, "show warnings"), [refused, refused]);
 }
