@@ -397,30 +397,11 @@ func (d *rangeDetacher) intersectAppendedRanges(res *DetachRangeResult, best *cn
 	if !fixcontrol.GetBoolWithDefault(d.sctx.OptimizerFixControl, fixcontrol.Fix54337, false) || best == nil || best.rangeResult == nil {
 		return
 	}
-	intersection := make(Ranges, 0)
-	var memUsage int64
-	for _, left := range res.Ranges {
-		for _, right := range best.rangeResult.Ranges {
-			if !checkCollators(left, right, min(len(left.LowVal), len(right.LowVal))) {
-				return
-			}
-			r, err := left.IntersectRange(d.sctx.TypeCtx, right)
-			if err != nil {
-				return
-			}
-			if r == nil {
-				continue
-			}
-			memUsage += r.MemUsage()
-			if d.rangeMaxSize > 0 && memUsage > d.rangeMaxSize {
-				d.sctx.RecordRangeFallback(d.rangeMaxSize)
-				return
-			}
-			intersection = append(intersection, r)
-		}
+	intersection, fallback, err := IntersectSortedRanges(d.sctx, res.Ranges, best.rangeResult.Ranges, d.rangeMaxSize, d.mergeConsecutive)
+	if fallback {
+		d.sctx.RecordRangeFallback(d.rangeMaxSize)
 	}
-	intersection, err := UnionRanges(d.sctx, intersection, d.mergeConsecutive)
-	if err != nil {
+	if err != nil || fallback {
 		return
 	}
 	res.Ranges = intersection

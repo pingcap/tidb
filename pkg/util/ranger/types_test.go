@@ -15,6 +15,7 @@
 package ranger_test
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -611,4 +612,102 @@ func TestIntersectionOverlap(t *testing.T) {
 	}
 
 	domain.GetDomain(ctx).StatsHandle().Close()
+}
+
+func TestIntersectSortedRanges(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer domain.GetDomain(ctx).StatsHandle().Close()
+	rctx := ctx.GetRangerCtx()
+	// Exercise open/closed endpoints, nullable suffixes and unequal widths.
+	for _, open := range []bool{false, true} {
+		left := ranger.Ranges{}
+		right := ranger.Ranges{}
+		for i := int64(0); i < 32; i++ {
+			left = append(left, &ranger.Range{LowVal: types.MakeDatums(i * 3), HighVal: types.MakeDatums(i*3 + 1), LowExclude: open, Collators: collate.GetBinaryCollatorSlice(1)})
+			right = append(right, &ranger.Range{LowVal: types.MakeDatums(i*3, nil), HighVal: types.MakeDatums(i*3+2, 2), HighExclude: open, Collators: collate.GetBinaryCollatorSlice(2)})
+		}
+		for _, merge := range []bool{false, true} {
+			want, err := ranger.UnionRanges(rctx, left.IntersectRanges(rctx.TypeCtx, right), merge)
+			require.NoError(t, err)
+			for _, reverse := range []bool{false, true} {
+				l, r := left, right
+				if reverse {
+					l, r = r, l
+				}
+				got, fallback, err := ranger.IntersectSortedRanges(rctx, l, r, 0, merge)
+				require.NoError(t, err)
+				require.False(t, fallback)
+				require.Equal(t, fmt.Sprint(want), fmt.Sprint(got))
+				_, fallback, err = ranger.IntersectSortedRanges(rctx, l, r, 1, merge)
+				require.NoError(t, err)
+				require.True(t, fallback)
+			}
+		}
+	}
+	makeRange := func(low, high int) *ranger.Range {
+		return &ranger.Range{LowVal: types.MakeDatums(low), HighVal: types.MakeDatums(high), Collators: collate.GetBinaryCollatorSlice(1)}
+	}
+	// One interval can intersect many intervals on the opposite side; adjacent
+	// encoded keys must be coalesced only when requested.
+	left := ranger.Ranges{makeRange(0, 10)}
+	right := ranger.Ranges{makeRange(0, 1), makeRange(2, 3), makeRange(4, 10)}
+	for _, merge := range []bool{false, true} {
+		for _, reverse := range []bool{false, true} {
+			l, r := left, right
+			if reverse {
+				l, r = r, l
+			}
+			before := fmt.Sprint(l, r)
+			want, err := ranger.UnionRanges(rctx, l.IntersectRanges(rctx.TypeCtx, r), merge)
+			require.NoError(t, err)
+			got, fallback, err := ranger.IntersectSortedRanges(rctx, l, r, 0, merge)
+			require.NoError(t, err)
+			require.False(t, fallback)
+			require.Equal(t, fmt.Sprint(want), fmt.Sprint(got))
+			require.Equal(t, before, fmt.Sprint(l, r))
+		}
+	}
+	for _, right := range []ranger.Ranges{nil, {makeRange(11, 12)}} {
+		got, fallback, err := ranger.IntersectSortedRanges(rctx, left, right, 0, true)
+		require.NoError(t, err)
+		require.False(t, fallback)
+		require.Empty(t, got)
+	}
+	for _, invalid := range []ranger.Ranges{
+		{makeRange(3, 4), makeRange(0, 1)},
+		{makeRange(0, 3), makeRange(2, 4)},
+	} {
+		_, fallback, err := ranger.IntersectSortedRanges(rctx, left, invalid, 0, true)
+		require.Error(t, err)
+		require.False(t, fallback)
+	}
+
+}
+
+func BenchmarkIntersectSortedRanges(b *testing.B) {
+	ctx := coretestsdk.MockContext()
+	defer domain.GetDomain(ctx).StatsHandle().Close()
+	for _, size := range []int{16, 128, 1024} {
+		for _, disjoint := range []bool{false, true} {
+			b.Run(fmt.Sprintf("n=%d/disjoint=%t", size, disjoint), func(b *testing.B) {
+				left, right := ranger.Ranges{}, ranger.Ranges{}
+				for i := 0; i < size; i++ {
+					left = append(left, &ranger.Range{LowVal: types.MakeDatums(i * 4), HighVal: types.MakeDatums(i*4 + 1), Collators: collate.GetBinaryCollatorSlice(1)})
+					x := i * 4
+					if disjoint {
+						x += 2
+					}
+					right = append(right, &ranger.Range{LowVal: types.MakeDatums(x), HighVal: types.MakeDatums(x + 1), Collators: collate.GetBinaryCollatorSlice(1)})
+				}
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					_, fallback, err := ranger.IntersectSortedRanges(ctx.GetRangerCtx(), left, right, 0, true)
+					if err != nil || fallback {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
 }
