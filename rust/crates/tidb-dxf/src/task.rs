@@ -234,7 +234,7 @@ pub fn set_task_cleanup_batch_size_for_test(value: isize) -> impl FnOnce() {
 /// Go `ExtraParams`: the extra params of a task.
 ///
 /// Note: only params that are not used for filter or sort live here.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ExtraParams {
     /// Whether the task can be recovered manually. If enabled, the task enters
     /// `awaiting-resolution` when it fails, and the user can then recover it
@@ -275,7 +275,7 @@ fn is_zero_i64(v: &isize) -> bool {
 
 /// Go `TaskBase`: the basic information of a task, split out so that the
 /// possibly very large task meta need not be loaded into memory.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TaskBase {
     /// Task ID.
     pub id: i64,

@@ -4805,6 +4805,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-dxf-taskexecutor"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
+ "fail",
+ "serde_json",
+ "tidb-backoff",
+ "tidb-config",
+ "tidb-domain-sqlsvrapi",
+ "tidb-dxf",
+ "tidb-dxf-dxfmetric",
+ "tidb-dxf-dxfutil",
+ "tidb-dxf-execute",
+ "tidb-dxf-handle",
+ "tidb-dxf-metering",
+ "tidb-dxf-scheduler",
+ "tidb-dxf-storage",
+ "tidb-gocontext",
+ "tidb-intest",
+ "tidb-lightning-log",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-metrics",
+ "tidb-sqlexec",
+ "tidb-syssession",
+ "tidb-vardef",
+]
+
+[[package]]
 name = "tidb-dxf-testutil"
 version = "0.0.0"
 dependencies = [
@@ -5809,6 +5838,7 @@ dependencies = [
  "regex",
  "rustix 1.1.4",
  "serde",
+ "tidb-gocontext",
  "tidb-log",
  "tidb-logutil",
  "tonic",

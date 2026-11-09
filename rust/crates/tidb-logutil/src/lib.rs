@@ -37,6 +37,7 @@
 pub mod file_sink;
 pub mod hex;
 mod log_bridge;
+pub mod observer;
 mod tracing_bridge;
 
 use std::collections::HashMap;
@@ -190,6 +191,8 @@ struct LoggerInner {
     // lumberjack.
     output: Arc<dyn WriteSyncer>,
     level: AtomicLevel,
+    /// zap's `observer` core: entries kept in memory instead of written.
+    observer: Option<Arc<observer::ObservedLogs>>,
 }
 
 /// A logger handle (the zap `*zap.Logger` stand-in).
@@ -213,6 +216,7 @@ impl Logger {
                 sink,
                 output,
                 level,
+                observer: None,
             }),
         }
     }
@@ -238,6 +242,7 @@ impl Logger {
                 sink: Arc::clone(&self.inner.sink),
                 output: Arc::clone(&self.inner.output),
                 level: self.inner.level.clone(),
+                observer: self.inner.observer.clone(),
             }),
         }
     }
@@ -269,6 +274,10 @@ impl Logger {
     /// entry that did not come from a `#[track_caller]` call site).
     pub fn emit_at(&self, level: Level, file: &str, line: u32, msg: &str, fields: &[Field]) {
         if !self.enabled(level) {
+            return;
+        }
+        if let Some(observer) = &self.inner.observer {
+            observer.add(level, msg);
             return;
         }
         let now: DateTime<FixedOffset> = Local::now().fixed_offset();
@@ -859,6 +868,19 @@ impl SampledLogger {
         }
         window.count = window.count.wrapping_add(1);
         window.count <= self.first
+    }
+}
+
+impl From<Logger> for SampledLogger {
+    /// Go `zap.New(core)` where a sampled logger is expected: the same
+    /// logger type, without sampling.
+    fn from(logger: Logger) -> Self {
+        SampledLogger {
+            inner: logger,
+            tick: Duration::from_secs(1),
+            first: u64::MAX,
+            state: Arc::new(Mutex::new(SamplerState { windows: HashMap::new() })),
+        }
     }
 }
 

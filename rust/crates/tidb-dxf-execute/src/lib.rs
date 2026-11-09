@@ -389,16 +389,22 @@ pub trait StepExecFrameworkInfo {
     }
 }
 
-/// The field a step executor embeds for the framework's information, set
-/// once by [`set_framework_info`].
+/// The field a step executor embeds for the framework's information, which
+/// every [`set_framework_info`] replaces.
 #[derive(Default)]
-pub struct FrameworkInfoSlot(std::sync::OnceLock<FrameworkInfo>);
+pub struct FrameworkInfoSlot(RwLock<Option<Arc<FrameworkInfo>>>);
 
 impl FrameworkInfoSlot {
     /// The framework's information; Go's methods dereference a nil field
     /// before `SetFrameworkInfo`, which this panic stands for.
-    fn get(&self) -> &FrameworkInfo {
-        self.0.get().expect("the framework sets its info before the step executor's Init")
+    fn get(&self) -> Arc<FrameworkInfo> {
+        Arc::clone(
+            self.0
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_ref()
+                .expect("the framework sets its info before the step executor's Init"),
+        )
     }
 }
 
@@ -418,8 +424,9 @@ pub fn set_framework_info(
         update_checkpoint_func,
         get_checkpoint_func,
     };
-    // Go sets the field once per executor.
-    let _ = exec.framework_info_slot().0.set(info);
+    // Go sets the field on every call: a step executor the task executor
+    // creates again gets the new step and resource.
+    *exec.framework_info_slot().0.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::new(info));
 }
 
 #[cfg(test)]

@@ -1,0 +1,43 @@
+[package]
+name = "tidb-dxf-taskexecutor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/dxf/framework/taskexecutor: every node's executors of DXF tasks' subtasks, within the node's slots."
+
+[lints]
+workspace = true
+
+[features]
+# Test-only fault injection: Go's `failpoint.Inject`s.
+failpoints = ["dep:fail", "fail/failpoints"]
+
+[dependencies]
+crossbeam-channel = "0.5"
+fail = { version = "0.4", optional = true }
+serde_json.workspace = true
+tidb-backoff = { path = "../tidb-backoff" }
+tidb-config = { path = "../tidb-config" }
+tidb-dxf = { path = "../tidb-dxf" }
+tidb-dxf-dxfmetric = { path = "../tidb-dxf-dxfmetric" }
+tidb-dxf-dxfutil = { path = "../tidb-dxf-dxfutil" }
+tidb-dxf-execute = { path = "../tidb-dxf-execute" }
+tidb-dxf-handle = { path = "../tidb-dxf-handle" }
+tidb-dxf-metering = { path = "../tidb-dxf-metering" }
+tidb-dxf-scheduler = { path = "../tidb-dxf-scheduler" }
+tidb-dxf-storage = { path = "../tidb-dxf-storage" }
+tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-intest = { path = "../tidb-intest" }
+tidb-lightning-log = { path = "../tidb-lightning-log" }
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-metrics = { path = "../tidb-metrics" }
+tidb-vardef = { path = "../tidb-vardef" }
+
+[dev-dependencies]
+fail = { version = "0.4", features = ["failpoints"] }
+tidb-domain-sqlsvrapi = { path = "../tidb-domain-sqlsvrapi" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-syssession = { path = "../tidb-syssession" }

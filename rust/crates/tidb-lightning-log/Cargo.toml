@@ -11,6 +11,7 @@ description = "TiDB lightning/log: Go pkg/lightning/log (Rust rewrite)."
 workspace = true
 
 [dependencies]
+tidb-gocontext = { path = "../tidb-gocontext" }
 tidb-logutil = { path = "../tidb-logutil" }
 rustix = { workspace = true, features = ["fs", "pipe", "stdio", "system", "thread"] }
 tonic.workspace = true

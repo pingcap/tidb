@@ -79,6 +79,9 @@ impl Config {
 #[derive(Clone)]
 enum Backend {
     Zap(ZapLogger),
+    /// A `logutil` logger: Go's `*zap.Logger` from `logutil`, which Lightning
+    /// wraps as it wraps any zap logger.
+    LogUtil(tidb_logutil::Logger),
     Test {
         encoder: TextEncoder,
         buffer: Arc<TestBuffer>,
@@ -139,6 +142,7 @@ impl Logger {
     fn enabled(&self, level: Level) -> bool {
         match &self.backend {
             Backend::Zap(logger) => logger.enabled(level),
+            Backend::LogUtil(logger) => logger.enabled(level),
             Backend::Test { .. } => true,
         }
     }
@@ -199,6 +203,10 @@ impl Logger {
         all_fields.extend_from_slice(fields);
         match &self.backend {
             Backend::Zap(logger) => logger.log_at(level, message, &all_fields),
+            Backend::LogUtil(logger) => {
+                let caller = std::panic::Location::caller();
+                logger.emit_at(level, caller.file(), caller.line(), message, &all_fields);
+            }
             Backend::Test { encoder, buffer } => {
                 Self::write_test(encoder, buffer, level, message, &all_fields)
             }
@@ -250,6 +258,7 @@ impl Logger {
     pub fn sync(&self) -> io::Result<()> {
         match &self.backend {
             Backend::Zap(logger) => logger.sync(),
+            Backend::LogUtil(_) => tidb_logutil::sync(),
             Backend::Test { .. } => Ok(()),
         }
     }
@@ -503,6 +512,8 @@ pub fn is_context_canceled_error(error: Option<&(dyn Error + 'static)>) -> bool 
     let mut current = error;
     while let Some(error) = current {
         if error.downcast_ref::<ContextCanceled>().is_some()
+            // Go's `context.Canceled` as the Go context port returns it.
+            || error.downcast_ref::<tidb_gocontext::CtxError>() == Some(&tidb_gocontext::CtxError::Canceled)
             || error.downcast_ref::<SmithyCanceledError>().is_some()
             || error
                 .downcast_ref::<tonic::Status>()
@@ -709,6 +720,18 @@ pub fn begin_task(logger: ZapLogger, name: &str) -> Task {
     Logger::from_zap(logger).begin(Level::Info, name)
 }
 
+/// Go `BeginTask` over a `logutil` logger (Go's `logutil` hands out the
+/// same `*zap.Logger` type Lightning wraps).
+#[track_caller]
+pub fn begin_logutil_task(logger: tidb_logutil::Logger, name: &str) -> Task {
+    Logger {
+        backend: Backend::LogUtil(logger),
+        fields: Vec::new(),
+        filters: Arc::new(Vec::new()),
+    }
+    .begin(Level::Info, name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -884,6 +907,10 @@ mod tests {
 
         let grpc = tonic::Status::cancelled("");
         assert!(super::is_context_canceled_error(Some(&grpc)));
+
+        // Go's one `context.Canceled`, as the Go context port returns it.
+        assert!(super::is_context_canceled_error(Some(&tidb_gocontext::CtxError::Canceled)));
+        assert!(!super::is_context_canceled_error(Some(&tidb_gocontext::CtxError::DeadlineExceeded)));
 
         let annotated = Annotated {
             source: ContextCanceled,

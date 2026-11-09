@@ -36,7 +36,7 @@ pub use nodes::NodeManager;
 pub use scheduler_manager::{Manager, CHECK_TASK_RUNNING_INTERVAL, DEFAULT_CLEAN_UP_INTERVAL};
 pub use scheduler::{
     get_live_exec_ids, is_cancelled_err, BaseScheduler, Scheduler, ServerInfoSource, CHECK_TASK_FINISHED_INTERVAL, RETRY_SQL_INTERVAL, RETRY_SQL_MAX_INTERVAL,
-    RETRY_SQL_TIMES,
+    RETRY_SQL_TIMES, retry_sql_times, new_retry_backoffer,
 };
 pub use slots::SlotManager;
 pub use state_transform::verify_task_state_transform;

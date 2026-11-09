@@ -86,7 +86,23 @@ tidb-server shows the same rows.
     or the `failpoints` feature. The testkit tests (`scheduler_test.go`,
     `scheduler_manager_test.go`) need the executor and the domain
     composition (milestones 4 and 5).
-- [ ] Milestone 4: `taskexecutor` (manager, slots, executor; `execute` is done).
+- [x] Milestone 4: `taskexecutor` (`rust/crates/tidb-dxf-taskexecutor`): the
+  TaskTable/TaskExecutor/Extension interfaces, `BaseStepExecutor`, the
+  factories, the slot manager, `BaseTaskExecutor` and the Manager, with Go's
+  `slot_test.go`, `register_test.go`, `manager_test.go` and
+  `task_executor_test.go` over gomock-style mocks (one ordered `Controller`
+  per test, `src/mock.rs`). `task_executor_testkit_test.go` needs a store
+  (milestone 5). Prerequisites ported on the way: Go's
+  `context.WithCancelCause`/`Cause`, zap's `observer`, Lightning's
+  `BeginTask` over a `logutil` logger, and the scheduler's `RetrySQL*` as the
+  Go vars they are. Not ported, waiting on their packages: the step log's
+  `mem-limit-percent` (gctuner) and `server-mem-limit`
+  (`memory.ServerMemoryLimitOriginText`) fields, the
+  `GlobalSortUploadWorkerCount` gauge (`objstore`), the DXF chaos failpoint
+  `DXFRandomError` (storage omits it too) and the per-loop flight-recorder
+  trace. Go's call hooks other than `beforeCallStartTaskExecutor` and the
+  `avoidTaskExecutorExitWhenNoSubtask` failpoint come with the testkit tests
+  that use them.
 - [ ] Milestone 5: composition in the domain (Go `InitDistTaskLoop`, `distTaskFrameworkLoop`) and the `example` task type end to end.
 - [ ] Milestone 6: `metering` and `dxfmetric` where a classic kernel uses them.
 
@@ -114,6 +130,18 @@ tidb-server shows the same rows.
   (bytes pinned by an overlay test in Go's own package).
 - Go's zero `time.Time` is 0001-01-01, not the Unix epoch; NULL times read
   back as `tidb_dxf::go_zero_time()`.
+- 2026-11-09: Go's `SetFrameworkInfo` replaces the step executor's field on
+  every call, and the task executor calls it each time it creates a step
+  executor again; the Rust slot kept only the first value, so a recreated
+  executor saw the old resource. Go's "notify failed, will recreate" run
+  test pins it.
+- The task executor calls `TaskMetaModified`/`ResourceModified` from its
+  param-modify goroutine while `RunSubtask` runs, so `StepExecutor` takes
+  `&self` and Go's `context.Context` (cancelled with a cause by
+  `CancelRunningSubtask`); `runSubtask`'s helper goroutines are scoped
+  threads whose panics are logged, as `RunWithLog` does.
+- Go's tests set `scheduler.RetrySQLTimes` and `RetrySQLInterval`: they are
+  Go vars, not constants.
 
 ## Decision Log
 

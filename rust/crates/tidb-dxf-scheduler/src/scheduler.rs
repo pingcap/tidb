@@ -15,6 +15,7 @@
 //! Go `scheduler.go`.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::RwLock;
 use std::time::Duration;
 
@@ -23,12 +24,19 @@ use tidb_domain_serverinfo::serverinfo::ServerInfo;
 /// Go `CheckTaskFinishedInterval`: the scheduler's tick. Exported for
 /// testing.
 pub static CHECK_TASK_FINISHED_INTERVAL: RwLock<Duration> = RwLock::new(Duration::from_millis(500));
-/// Go `RetrySQLTimes`: the max retries of a SQL statement.
-pub const RETRY_SQL_TIMES: usize = 30;
+/// Go `RetrySQLTimes`: the max retries of a SQL statement. Tests reduce it.
+pub static RETRY_SQL_TIMES: AtomicUsize = AtomicUsize::new(30);
 /// Go `RetrySQLInterval`: the initial interval between two SQL retries.
-pub const RETRY_SQL_INTERVAL: Duration = Duration::from_secs(3);
+/// Tests reduce it.
+pub static RETRY_SQL_INTERVAL: RwLock<Duration> = RwLock::new(Duration::from_secs(3));
 /// Go `RetrySQLMaxInterval`: the max interval between two SQL retries.
-pub const RETRY_SQL_MAX_INTERVAL: Duration = Duration::from_secs(30);
+pub static RETRY_SQL_MAX_INTERVAL: RwLock<Duration> = RwLock::new(Duration::from_secs(30));
+
+/// Go `RetrySQLTimes`'s current value.
+#[must_use]
+pub fn retry_sql_times() -> usize {
+    RETRY_SQL_TIMES.load(AtomicOrdering::SeqCst)
+}
 
 /// Go `CheckTaskFinishedInterval`'s current value.
 pub(crate) fn check_task_finished_interval() -> Duration {
@@ -748,7 +756,7 @@ impl BaseScheduler {
         }
 
         let mut backoffer = new_retry_backoffer();
-        tidb_dxf_handle::run_with_retry(&self.ctx, RETRY_SQL_TIMES, &mut backoffer, &self.logger, |_| {
+        tidb_dxf_handle::run_with_retry(&self.ctx, retry_sql_times(), &mut backoffer, &self.logger, |_| {
             let result = if in_batch {
                 self.task_mgr().switch_task_step_in_batch(task, &TASK_STATE_RUNNING, subtask_step, &sub_tasks)
             } else {
@@ -921,11 +929,12 @@ fn retry_error(err: tidb_dxf_handle::RetryError<StorageError>) -> Error {
 }
 
 /// Go `backoff.NewExponential(RetrySQLInterval, 2, RetrySQLMaxInterval)`.
-pub(crate) fn new_retry_backoffer() -> tidb_backoff::Exponential {
+#[must_use]
+pub fn new_retry_backoffer() -> tidb_backoff::Exponential {
     tidb_backoff::new_exponential(
-        RETRY_SQL_INTERVAL.as_nanos() as i64,
+        RETRY_SQL_INTERVAL.read().unwrap_or_else(std::sync::PoisonError::into_inner).as_nanos() as i64,
         2.0,
-        RETRY_SQL_MAX_INTERVAL.as_nanos() as i64,
+        RETRY_SQL_MAX_INTERVAL.read().unwrap_or_else(std::sync::PoisonError::into_inner).as_nanos() as i64,
     )
 }
 

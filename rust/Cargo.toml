@@ -284,6 +284,7 @@ members = [
     "crates/tidb-dxf-execute",
     "crates/tidb-dxf-metering",
     "crates/tidb-dxf-storage",
+    "crates/tidb-dxf-taskexecutor",
     "crates/tidb-dxf-dxfutil",
     "crates/tidb-dxf-handle",
     "crates/tidb-dxf-planner",
