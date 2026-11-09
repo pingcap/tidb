@@ -95,6 +95,8 @@ type jobContext struct {
 	eventPublishStore             notifier.Store
 	sysTblMgr                     systable.Manager
 	storageClassTransitionManager *storageClassTransitionManager
+	// isLegacyNextGen indicates that this NextGen keyspace retains Classic system-table IDs.
+	isLegacyNextGen bool
 
 	// per job fields, they are not changed in the life cycle of this context.
 

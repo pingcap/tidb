@@ -783,25 +783,102 @@ func TestCreateMySQLDatabase(t *testing.T) {
 		require.NoError(t, store.Close())
 	}()
 
-	txn, err := store.Begin()
-	require.NoError(t, err)
+	for _, tc := range []struct {
+		name    string
+		mysqlID int64
+	}{
+		{name: "fresh"},
+		{name: "bootstrapped classic", mysqlID: 1},
+		{name: "bootstrapped classic at scan boundary", mysqlID: 10},
+		{name: "existing reserved ID", mysqlID: metadef.SystemDatabaseID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, txn.Rollback()) })
+			m := meta.NewMutator(txn)
+			if tc.mysqlID != 0 {
+				// Seed the schema and bootstrap marker retained across a binary replacement.
+				require.NoError(t, m.CreateSysDatabaseByID("mysql", tc.mysqlID))
+				require.NoError(t, m.FinishBootstrap(1))
+			}
+			if kerneltype.IsNextGen() {
+				m = meta.NewMutator(systemDBPointReadTxn{txn})
+			}
 
-	m := meta.NewMutator(txn)
+			want := tc.mysqlID
+			if want == 0 {
+				want = 1
+				if kerneltype.IsNextGen() {
+					want = metadef.SystemDatabaseID
+				}
+			}
+			dbID, err := m.CreateMySQLDatabaseIfNotExists()
+			require.NoError(t, err)
+			require.Equal(t, want, dbID)
 
-	dbID, err := m.CreateMySQLDatabaseIfNotExists()
-	require.NoError(t, err)
-	if kerneltype.IsNextGen() {
-		require.Equal(t, metadef.SystemDatabaseID, dbID)
-	} else {
-		require.EqualValues(t, 1, dbID)
+			anotherDBID, err := m.CreateMySQLDatabaseIfNotExists()
+			require.NoError(t, err)
+			require.Equal(t, dbID, anotherDBID)
+			if tc.mysqlID != 0 && tc.mysqlID != metadef.SystemDatabaseID {
+				reservedDB, err := m.GetDatabase(metadef.SystemDatabaseID)
+				require.NoError(t, err)
+				require.Nil(t, reservedDB)
+			}
+		})
 	}
+}
 
-	anotherDBID, err := m.CreateMySQLDatabaseIfNotExists()
-	require.NoError(t, err)
-	require.Equal(t, dbID, anotherDBID)
+// systemDBPointReadTxn rejects range scans to verify NextGen discovery stays bounded.
+type systemDBPointReadTxn struct {
+	kv.Transaction
+}
 
-	err = txn.Rollback()
+func (systemDBPointReadTxn) Iter(kv.Key, kv.Key) (kv.Iterator, error) {
+	return nil, errors.New("unexpected database range scan")
+}
+
+func TestGetSystemDBID(t *testing.T) {
+	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+
+	for _, tc := range []struct {
+		name    string
+		mysqlID int64
+		want    int64
+	}{
+		{name: "missing"},
+		{name: "reserved", mysqlID: metadef.SystemDatabaseID, want: metadef.SystemDatabaseID},
+		{name: "legacy", mysqlID: 1, want: 1},
+		{name: "legacy boundary", mysqlID: 10, want: 10},
+		{name: "outside legacy range", mysqlID: 11, want: 11},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, txn.Rollback()) })
+			m := meta.NewMutator(txn)
+			// A database in the early range must match by name.
+			require.NoError(t, m.CreateSysDatabaseByID("other", 2))
+			if tc.mysqlID != 0 {
+				require.NoError(t, m.CreateSysDatabaseByID("mysql", tc.mysqlID))
+			}
+			want := tc.want
+			if kerneltype.IsNextGen() {
+				m = meta.NewMutator(systemDBPointReadTxn{txn})
+				if tc.mysqlID == 11 {
+					want = 0
+				}
+			}
+			isLegacyNextGen, err := m.IsLegacyNextGen()
+			require.NoError(t, err)
+			require.Equal(t, kerneltype.IsNextGen() && tc.mysqlID != metadef.SystemDatabaseID, isLegacyNextGen)
+			id, err := m.GetSystemDBID()
+			require.NoError(t, err)
+			require.Equal(t, want, id)
+		})
+	}
 }
 
 func TestIsTableInfoMustLoad(t *testing.T) {

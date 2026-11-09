@@ -16,6 +16,7 @@ package issyncer
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -97,6 +98,10 @@ type Loader struct {
 	// CachedTable need internal session to access some system tables, such as
 	// mysql.table_cache_meta
 	sysExecutorFactory func() (pools.Resource, error)
+	// legacyNextGen records whether the target is a NextGen keyspace retaining
+	// Classic system-table IDs.
+	// A nil pointer means the layout has not been initialized yet.
+	legacyNextGen atomic.Pointer[bool]
 }
 
 func newLoader(store kv.Storage, infoCache *infoschema.InfoCache, deferFn *deferFn, filter Filter) *Loader {
@@ -122,6 +127,11 @@ func NewLoaderForCrossKS(store kv.Storage, infoCache *infoschema.InfoCache) *Loa
 		crossKS:   true,
 		logger:    logutil.BgLogger().With(zap.String("targetKS", store.GetKeyspace()), zap.Stringer("mode", mode)),
 	}
+}
+
+func (l *Loader) isLegacyNextGen() bool {
+	val := l.legacyNextGen.Load()
+	return val != nil && *val
 }
 
 // initFields initializes some fields of the Loader.
@@ -152,6 +162,13 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 	// the meta region leader is slow.
 	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
 	m := meta.NewReader(snapshot)
+	if l.legacyNextGen.Load() == nil {
+		val, err := m.IsLegacyNextGen()
+		if err != nil {
+			return nil, false, 0, nil, errors.Trace(err)
+		}
+		l.legacyNextGen.CompareAndSwap(nil, &val)
+	}
 	neededSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		return nil, false, 0, nil, err
@@ -295,27 +312,62 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 	return is, false, currentSchemaVersion, nil, nil
 }
 
-func (l *Loader) skipLoadingDiff(diff *model.SchemaDiff) bool {
+func (l *Loader) skipLoadingDiff(m meta.Reader, diff *model.SchemaDiff) (bool, error) {
 	if l.filter != nil {
 		var latestIS infoschema.InfoSchema
 		if l.infoCache != nil {
 			latestIS = l.infoCache.GetLatest()
 		}
 		if l.filter.SkipLoadDiff(diff, latestIS) {
-			return true
+			return true, nil
 		}
 	}
 
 	if !l.crossKS {
-		return false
+		return false, nil
 	}
 
 	// for cross keyspace loader, we only load diff related to system tables.
 	// we don't check AffectedOpts, as we forbid doing DDL which involve multiple
 	// table IDs on system tables in nextgen, such as RenameTables, TruncateTable,
 	// ExchangePartition, etc.
-	isRelatedToSystemTables := metadef.IsReservedID(diff.TableID) || metadef.IsReservedID(diff.OldTableID)
-	return !isRelatedToSystemTables
+	is := l.infoCache.GetLatest()
+	isLegacyNextGen := l.isLegacyNextGen()
+	isRelatedToSystemTables := infoschema.IsSystemTableInNextGen(is, isLegacyNextGen, diff.TableID) ||
+		infoschema.IsSystemTableInNextGen(is, isLegacyNextGen, diff.OldTableID)
+	if isRelatedToSystemTables || !isLegacyNextGen {
+		return !isRelatedToSystemTables, nil
+	}
+
+	// A newly created legacy built-in is absent from the cached schema. Resolve
+	// unknown IDs from the same snapshot used to apply the diffs, including later
+	// changes in this batch, so assumed servers can acknowledge the table's MDL.
+	oldSchemaID := diff.OldSchemaID
+	if oldSchemaID == 0 {
+		oldSchemaID = diff.SchemaID
+	}
+	for _, ref := range [...]struct{ schemaID, tableID int64 }{
+		{diff.SchemaID, diff.TableID}, {oldSchemaID, diff.OldTableID},
+	} {
+		if ref.tableID == 0 {
+			continue
+		}
+		if _, ok := is.TableItemByID(ref.tableID); ok {
+			continue
+		}
+		db, ok := is.SchemaByID(ref.schemaID)
+		if !ok || !metadef.IsSystemDB(db.Name.L) {
+			continue
+		}
+		tbl, err := m.GetTable(ref.schemaID, ref.tableID)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if tbl != nil && metadef.IsBuiltinSystemTable(db.Name.L, tbl.Name.L) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // tryLoadSchemaDiffs tries to only load latest schema changes.
@@ -369,7 +421,11 @@ func (l *Loader) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, newV
 	actions := make([]uint64, 0, len(diffs))
 	diffTypes := make([]string, 0, len(diffs))
 	for _, diff := range diffs {
-		if l.skipLoadingDiff(diff) {
+		skip, err := l.skipLoadingDiff(m, diff)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if skip {
 			// we still need to set the schema version even if we skip loading
 			// the diff to reflect where the I_S has been synced to.
 			builder.SetSchemaVersion(diff.Version)
@@ -421,7 +477,14 @@ func (l *Loader) fetchAllSchemasWithTables(m meta.Reader, schemaCacheSize uint64
 	allSchemas []*model.DBInfo, err error) {
 	if l.crossKS {
 		var dbInfo *model.DBInfo
-		dbInfo, err = m.GetDatabase(metadef.SystemDatabaseID)
+		systemDBID, err := m.GetSystemDBID()
+		if err != nil {
+			return nil, err
+		}
+		if systemDBID == 0 {
+			return nil, errors.New("system database not found")
+		}
+		dbInfo, err = m.GetDatabase(systemDBID)
 		if err != nil {
 			return nil, err
 		}
