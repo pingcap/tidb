@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"database/sql"
 	"encoding/hex"
+	goerrors "errors"
 	"math"
 	"net"
 	"net/http"
@@ -70,6 +71,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	pderr "github.com/tikv/pd/client/errs"
 	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
 	"github.com/tikv/pd/client/pkg/caller"
@@ -1803,9 +1805,43 @@ func (local *Backend) SetTSBeforeImportEngine(ctx context.Context, engineUUID uu
 	}
 	defer e.unlock()
 	if ts == 0 {
-		p, l, err := local.pdCli.GetTS(ctx)
+		var (
+			p, l     int64
+			err      error
+			attempts int
+		)
+	retryTS:
+		for range maxRetryTimes {
+			if err = ctx.Err(); err != nil {
+				break
+			}
+			attempts++
+			p, l, err = local.pdCli.GetTS(ctx)
+			if err == nil {
+				break
+			}
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				err = ctxErr
+				break
+			}
+			// PD can cancel an internal TSO stream while the caller is still active.
+			if !common.IsContextCanceledError(err) &&
+				!goerrors.Is(err, pderr.ErrClientCreateTSOStream) &&
+				!common.IsRetryableError(err) {
+				break
+			}
+			select {
+			case <-time.After(100 * time.Millisecond):
+			case <-ctx.Done():
+				err = ctx.Err()
+				break retryTS
+			}
+		}
 		if err != nil {
-			return errors.Trace(err)
+			if ctx.Err() == context.Canceled {
+				return errors.Trace(ctx.Err())
+			}
+			return errdef.ErrSetTSBeforeImport.GenWithStackByArgs(engineUUID.String(), attempts, err)
 		}
 		failpoint.Inject("afterSetTSBeforeImportEngine", func(_ failpoint.Value) {
 			failpoint.Return(errors.Errorf("mock err"))
