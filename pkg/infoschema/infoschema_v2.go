@@ -1065,7 +1065,7 @@ func (is *infoschemaV2) tableInfosByNames(ctx context.Context, schema ast.CIStr,
 	is.keepAlive()
 	db, ok := is.SchemaByName(schema)
 	if !ok {
-		return nil, ctx.Err()
+		return nil, nil
 	}
 	cached := make([]*model.TableInfo, 0, len(names))
 	missing := make([]int64, 0, len(names))

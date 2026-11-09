@@ -134,16 +134,26 @@ func TestTableInfosByNames(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	require.Empty(t, store.batchSizes)
 	for _, input := range []struct {
-		schema ast.CIStr
-		names  []ast.CIStr
+		name         string
+		schema       ast.CIStr
+		names        []ast.CIStr
+		wantCanceled bool
 	}{
-		{db.Name, nil},
-		{db.Name, names[:1]},
-		{db.Name, []ast.CIStr{ast.NewCIStr("missing")}},
-		{ast.NewCIStr("missing_schema"), names},
+		{"empty_names", db.Name, nil, false},
+		{"warm_cache", db.Name, names[:1], true},
+		{"missing_table", db.Name, []ast.CIStr{ast.NewCIStr("missing")}, true},
+		{"missing_schema", ast.NewCIStr("missing_schema"), names, false},
 	} {
-		_, err = TableInfosByNames(canceled, &is, input.schema, input.names)
-		require.ErrorIs(t, err, context.Canceled)
+		t.Run(input.name, func(t *testing.T) {
+			got, err := TableInfosByNames(canceled, &is, input.schema, input.names)
+			require.Empty(t, store.batchSizes)
+			if input.wantCanceled {
+				require.ErrorIs(t, err, context.Canceled)
+			} else {
+				require.NoError(t, err)
+				require.Empty(t, got)
+			}
+		})
 	}
 	store.batchErr = errors.New("batch read failed")
 	_, err = TableInfosByNames(ctx, &is, db.Name, names[1:2])

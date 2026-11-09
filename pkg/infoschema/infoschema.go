@@ -272,7 +272,7 @@ func (is *infoSchema) TableByName(ctx stdctx.Context, schema, table ast.CIStr) (
 // cache. Result order is unspecified; session table overrides take precedence.
 func TableInfosByNames(ctx stdctx.Context, is InfoSchema, schema ast.CIStr, names []ast.CIStr) ([]*model.TableInfo, error) {
 	if len(names) == 0 {
-		return nil, ctx.Err()
+		return nil, nil
 	}
 	switch v := is.(type) {
 	case *infoschemaV2:
