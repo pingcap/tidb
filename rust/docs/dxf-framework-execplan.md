@@ -46,6 +46,11 @@ tidb-server shows the same rows.
     rest (1061-1265).
   - [ ] `task_state.go`, `subtask_state.go`, `history.go`; the Go tests; the
     cluster node's session-context implementation.
+  - [x] Go `pkg/objstore/recording` (`rust/crates/tidb-objstore-recording`,
+    with `TestRequestsRecording`) and `dxfmetric`
+    (`rust/crates/tidb-dxf-dxfmetric`: metrics and the collector; Go
+    `UsedSlotsGauge` is `tidb-metrics`'s).
+  - [ ] `metering`, then `taskexecutor/execute`, then the rest of `storage`.
 - [ ] Milestone 2: `handle` and `planner`.
 - [ ] Milestone 3: `taskexecutor/execute`, `taskexecutor` (manager, slots, executor).
 - [ ] Milestone 4: `scheduler` (manager, nodes, slots, balancer, state transitions; autoscaler where it applies to a classic kernel).
